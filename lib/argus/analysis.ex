@@ -31,7 +31,8 @@ defmodule Argus.Analysis do
   @builtin_analyses %{
     cfg: "cfg.dl",
     callgraph: "callgraph.dl",
-    reachability: "reachability.dl"
+    reachability: "reachability.dl",
+    supervision: "supervision.dl"
   }
 
   @doc """

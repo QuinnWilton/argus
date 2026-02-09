@@ -1,0 +1,65 @@
+// Supervision tree analysis.
+//
+// Detects common supervision anti-patterns:
+// - Transient children depended upon by permanent children.
+// - Coupled siblings under one_for_one without links.
+// - Children started before their dependencies (wrong order).
+
+.include "base.dl"
+
+.decl supervisor(mod: symbol, strategy: symbol)
+.input supervisor
+
+.decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
+.input supervisor_child
+
+.decl sync_call(caller_func: symbol, callee_mod: symbol)
+.input sync_call
+
+.decl async_cast(caller_func: symbol, callee_mod: symbol)
+.input async_cast
+
+.decl process_link(from_mod: symbol, to_mod: symbol)
+.input process_link
+
+.decl named_process(mod: symbol, name: symbol)
+.input named_process
+
+.decl implements_behaviour(mod: symbol, behaviour: symbol)
+.input implements_behaviour
+
+// Permanent child that depends on a transient child.
+.decl suspect_transient_dependency(sup: symbol, permanent: symbol, transient: symbol)
+.output suspect_transient_dependency
+
+suspect_transient_dependency(sup, perm, trans) :-
+  supervisor_child(sup, _, perm, "permanent", _),
+  supervisor_child(sup, _, trans, "transient", _),
+  sync_call(perm_func, trans),
+  function_def(perm_func, perm, _, _, _, _).
+
+// one_for_one siblings that communicate but aren't linked.
+.decl unlinked_coupled_siblings(sup: symbol, a: symbol, b: symbol)
+.output unlinked_coupled_siblings
+
+unlinked_coupled_siblings(sup, a, b) :-
+  supervisor(sup, "one_for_one"),
+  supervisor_child(sup, _, a, _, _),
+  supervisor_child(sup, _, b, _, _),
+  sync_call(a_func, b),
+  function_def(a_func, a, _, _, _, _),
+  !process_link(a, b),
+  !process_link(b, a),
+  a != b.
+
+// Child started before a dependency (wrong order under any strategy).
+.decl wrong_start_order(sup: symbol, child: symbol, dep: symbol, child_pos: number, dep_pos: number)
+.output wrong_start_order
+
+wrong_start_order(sup, child, dep, cpos, dpos) :-
+  supervisor(sup, _),
+  supervisor_child(sup, cpos, child, _, _),
+  supervisor_child(sup, dpos, dep, _, _),
+  sync_call(child_func, dep),
+  function_def(child_func, child, _, _, _, _),
+  cpos < dpos.
