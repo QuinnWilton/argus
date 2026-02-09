@@ -82,16 +82,25 @@ defmodule Argus.Emitter do
 
   # Emit facts for a sequence of normalized instructions within a function.
   defp emit_instructions(facts, func_id, normalized) do
-    normalized
-    |> Enum.with_index()
-    |> Enum.reduce(facts, fn {{id, instr}, _idx}, acc ->
-      # Get the numeric index from the ID.
-      idx = id |> String.split("#") |> List.last()
+    emit_instructions_loop(facts, func_id, normalized, 0)
+  end
 
-      acc = emit_instruction_fact(acc, id, func_id, idx, instr)
-      acc = emit_next_fact(acc, id, normalized)
-      acc
-    end)
+  defp emit_instructions_loop(facts, _func_id, [], _idx), do: facts
+
+  defp emit_instructions_loop(facts, func_id, [{id, instr} | rest], idx) do
+    facts = emit_instruction_fact(facts, id, func_id, to_string(idx), instr)
+
+    facts =
+      if terminator?(instr) do
+        facts
+      else
+        case rest do
+          [{next_id, _} | _] -> add_fact(facts, :next, [id, next_id])
+          [] -> facts
+        end
+      end
+
+    emit_instructions_loop(facts, func_id, rest, idx + 1)
   end
 
   # Record the instruction fact and dispatch to specific emitters.
@@ -99,31 +108,6 @@ defmodule Argus.Emitter do
     op = instruction_op(instr)
     facts = add_fact(facts, :instruction, [id, func_id, idx, to_string(op)])
     emit_specific(facts, id, instr)
-  end
-
-  # Emit next (fallthrough) facts — connect each instruction to its successor,
-  # except after terminators.
-  defp emit_next_fact(facts, id, normalized) do
-    idx = instruction_index(id)
-
-    case Enum.at(normalized, idx + 1) do
-      nil ->
-        facts
-
-      {next_id, _next_instr} ->
-        # Don't emit next for terminators.
-        {_this_id, this_instr} = Enum.at(normalized, idx)
-
-        if terminator?(this_instr) do
-          facts
-        else
-          add_fact(facts, :next, [id, next_id])
-        end
-    end
-  end
-
-  defp instruction_index(id) do
-    id |> String.split("#") |> List.last() |> String.to_integer()
   end
 
   defp terminator?(:return), do: true
