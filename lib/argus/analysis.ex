@@ -98,15 +98,17 @@ defmodule Argus.Analysis do
   end
 
   defp create_work_dir do
-    dir =
-      Path.join(
-        System.tmp_dir!(),
-        "argus_#{System.unique_integer([:positive])}"
-      )
+    case System.tmp_dir() do
+      nil ->
+        {:error, :no_tmp_dir}
 
-    case File.mkdir_p(dir) do
-      :ok -> {:ok, dir}
-      {:error, reason} -> {:error, {:mkdir_failed, reason}}
+      tmp ->
+        dir = Path.join(tmp, "argus_#{System.unique_integer([:positive])}")
+
+        case File.mkdir_p(dir) do
+          :ok -> {:ok, dir}
+          {:error, reason} -> {:error, {:mkdir_failed, reason}}
+        end
     end
   end
 end

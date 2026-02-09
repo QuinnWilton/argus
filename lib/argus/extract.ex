@@ -47,8 +47,9 @@ defmodule Argus.Extract do
             throw({:extraction_error, reason})
         end)
 
-      write_facts(merged, output_dir)
-      {:ok, output_dir}
+      with :ok <- write_facts(merged, output_dir) do
+        {:ok, output_dir}
+      end
     end
   catch
     {:extraction_error, reason} -> {:error, reason}
@@ -154,34 +155,43 @@ defmodule Argus.Extract do
 
   # ── .facts file I/O ────────────────────────────────────────────────
 
-  @doc """
-  Writes a facts map to tab-separated `.facts` files in the given directory.
-
-  One file per relation, named `<relation>.facts`. Each line is a
-  tab-separated row of values.
-  """
-  @spec write_facts(Emitter.facts(), Path.t()) :: :ok
-  def write_facts(facts, output_dir) do
+  @spec write_facts(Emitter.facts(), Path.t()) :: :ok | {:error, term()}
+  defp write_facts(facts, output_dir) do
     # Create empty files for all known relations so Souffle never fails
     # on missing .input files.
-    for name <- Argus.Schema.names() do
-      path = Path.join(output_dir, "#{name}.facts")
+    init_result =
+      Enum.reduce_while(Argus.Schema.names(), :ok, fn name, :ok ->
+        path = Path.join(output_dir, "#{name}.facts")
 
-      unless File.exists?(path) do
-        File.write!(path, "")
-      end
+        if File.exists?(path) do
+          {:cont, :ok}
+        else
+          case File.write(path, "") do
+            :ok -> {:cont, :ok}
+            {:error, reason} -> {:halt, {:error, {:write_failed, path, reason}}}
+          end
+        end
+      end)
+
+    case init_result do
+      :ok ->
+        Enum.reduce_while(facts, :ok, fn {relation, rows}, :ok ->
+          path = Path.join(output_dir, "#{relation}.facts")
+
+          content =
+            rows
+            |> Enum.reverse()
+            |> Enum.map_join("\n", fn row -> Enum.join(row, "\t") end)
+
+          case File.write(path, content <> "\n") do
+            :ok -> {:cont, :ok}
+            {:error, reason} -> {:halt, {:error, {:write_failed, path, reason}}}
+          end
+        end)
+
+      {:error, _} = error ->
+        error
     end
-
-    Enum.each(facts, fn {relation, rows} ->
-      path = Path.join(output_dir, "#{relation}.facts")
-
-      content =
-        rows
-        |> Enum.reverse()
-        |> Enum.map_join("\n", fn row -> Enum.join(row, "\t") end)
-
-      File.write!(path, content <> "\n")
-    end)
   end
 
   @doc """
