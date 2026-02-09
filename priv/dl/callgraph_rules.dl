@@ -1,0 +1,22 @@
+// Shared call_edge derivation rules.
+//
+// Include this file after declaring `.decl call_edge(caller: symbol, callee: symbol)`.
+// Requires base.dl relations: remote_call, bif_call, local_call, instruction, function_def.
+
+// Remote call: caller function -> "mod:func/arity" string.
+call_edge(caller_func, callee) :-
+  remote_call(id, mod, func, arity),
+  instruction(id, caller_func, _, _),
+  callee = cat(mod, cat(":", cat(func, cat("/", to_string(arity))))).
+
+// BIF call: caller function -> "mod:func/arity".
+call_edge(caller_func, callee) :-
+  bif_call(id, mod, func, arity, _),
+  instruction(id, caller_func, _, _),
+  callee = cat(mod, cat(":", cat(func, cat("/", to_string(arity))))).
+
+// Local call: target is an MFA string matching a function_def's func field.
+call_edge(caller_func, target) :-
+  local_call(id, target, _),
+  instruction(id, caller_func, _, _),
+  function_def(target, _, _, _, _, _).

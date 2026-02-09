@@ -11,23 +11,7 @@
 .decl call_edge(caller: symbol, callee: symbol)
 .output call_edge
 
-// Remote call.
-call_edge(caller_func, callee) :-
-  remote_call(id, mod, func, arity),
-  instruction(id, caller_func, _, _),
-  callee = cat(mod, cat(":", cat(func, cat("/", to_string(arity))))).
-
-// BIF call.
-call_edge(caller_func, callee) :-
-  bif_call(id, mod, func, arity, _),
-  instruction(id, caller_func, _, _),
-  callee = cat(mod, cat(":", cat(func, cat("/", to_string(arity))))).
-
-// Local call.
-call_edge(caller_func, target) :-
-  local_call(id, target, _),
-  instruction(id, caller_func, _, _),
-  function_def(target, _, _, _, _, _).
+.include "callgraph_rules.dl"
 
 // Instruction-level reachability within functions.
 .decl cfg_reachable(from: symbol, to: symbol)
