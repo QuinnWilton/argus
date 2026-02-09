@@ -8,6 +8,9 @@ defmodule Argus.Souffle.CLI do
 
   @behaviour Argus.Souffle
 
+  # 5 minutes default timeout for Souffle execution.
+  @default_souffle_timeout 300_000
+
   @impl true
   @spec run(Path.t(), Path.t(), keyword()) :: {:ok, Argus.Souffle.result()} | {:error, term()}
   def run(facts_dir, rules_path, opts \\ []) do
@@ -18,9 +21,11 @@ defmodule Argus.Souffle.CLI do
         {:error, :souffle_not_found}
 
       bin ->
+        timeout = Keyword.get(opts, :souffle_timeout, @default_souffle_timeout)
+
         case resolve_output_dir(opts) do
           {:ok, output_dir} ->
-            run_souffle(bin, facts_dir, rules_path, output_dir)
+            run_souffle(bin, facts_dir, rules_path, output_dir, timeout)
 
           {:error, _} = error ->
             error
@@ -64,7 +69,7 @@ defmodule Argus.Souffle.CLI do
     end
   end
 
-  defp run_souffle(bin, facts_dir, rules_path, output_dir) do
+  defp run_souffle(bin, facts_dir, rules_path, output_dir, timeout) do
     args = [
       "-F",
       facts_dir,
@@ -73,12 +78,17 @@ defmodule Argus.Souffle.CLI do
       rules_path
     ]
 
-    case System.cmd(bin, args, stderr_to_stdout: true) do
-      {_output, 0} ->
+    task = Task.async(fn -> System.cmd(bin, args, stderr_to_stdout: true) end)
+
+    case Task.yield(task, timeout) || Task.shutdown(task) do
+      {:ok, {_output, 0}} ->
         parse_output(output_dir)
 
-      {output, exit_code} ->
+      {:ok, {output, exit_code}} ->
         {:error, {:souffle_error, exit_code, output}}
+
+      nil ->
+        {:error, :souffle_timeout}
     end
   end
 

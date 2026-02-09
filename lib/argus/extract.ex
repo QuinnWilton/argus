@@ -11,8 +11,11 @@ defmodule Argus.Extract do
 
   @type extract_opts :: [
           concurrency: pos_integer(),
-          extractors: [module()]
+          extractors: [module()],
+          timeout: timeout()
         ]
+
+  @default_timeout 120_000
 
   @doc """
   Extracts facts from the given modules and writes `.facts` files to `output_dir`.
@@ -25,6 +28,7 @@ defmodule Argus.Extract do
   def run(modules, output_dir, opts \\ []) do
     concurrency = Keyword.get(opts, :concurrency, System.schedulers_online())
     extractors = Keyword.get(opts, :extractors, [])
+    task_timeout = Keyword.get(opts, :timeout, @default_timeout)
 
     with :ok <- File.mkdir_p(output_dir),
          {:ok, paths} <- resolve_modules(modules) do
@@ -34,7 +38,7 @@ defmodule Argus.Extract do
           fn path -> extract_module(path, extractors) end,
           max_concurrency: concurrency,
           ordered: false,
-          timeout: :infinity
+          timeout: task_timeout
         )
         |> Enum.reduce(%{}, fn
           {:ok, {:ok, module_facts}}, acc ->
@@ -64,6 +68,7 @@ defmodule Argus.Extract do
   def extract(modules, opts \\ []) do
     concurrency = Keyword.get(opts, :concurrency, System.schedulers_online())
     extractors = Keyword.get(opts, :extractors, [])
+    task_timeout = Keyword.get(opts, :timeout, @default_timeout)
 
     with {:ok, paths} <- resolve_modules(modules) do
       merged =
@@ -72,7 +77,7 @@ defmodule Argus.Extract do
           fn path -> extract_module(path, extractors) end,
           max_concurrency: concurrency,
           ordered: false,
-          timeout: :infinity
+          timeout: task_timeout
         )
         |> Enum.reduce(%{}, fn
           {:ok, {:ok, module_facts}}, acc ->
