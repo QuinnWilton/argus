@@ -16,7 +16,7 @@ defmodule Argus do
       Argus.analyze([Enum, :lists], :callgraph)
 
       # Run custom Datalog rules.
-      Argus.analyze([MyApp.Worker], custom: "path/to/rules.dl")
+      Argus.analyze([MyApp.Worker], {:custom, "path/to/rules.dl"})
 
   ## Architecture
 
@@ -28,4 +28,13 @@ defmodule Argus do
   Both layers feed into Souffle, which evaluates Datalog rules and returns
   derived relations as results.
   """
+
+  @doc """
+  Runs an analysis against the given modules.
+
+  See `Argus.Analysis.run/3` for details.
+  """
+  @spec analyze([atom() | String.t()], Argus.Analysis.analysis(), keyword()) ::
+          {:ok, Argus.Analysis.result()} | {:error, term()}
+  defdelegate analyze(modules, analysis, opts \\ []), to: Argus.Analysis, as: :run
 end
