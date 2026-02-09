@@ -77,6 +77,19 @@ defmodule Argus.ExtractTest do
     end
   end
 
+  describe "extract/2 edge cases" do
+    test "empty module list returns empty facts" do
+      assert {:ok, facts} = Extract.extract([])
+      assert facts == %{}
+    end
+  end
+
+  describe "run/3 edge cases" do
+    test "empty module list returns ok with output dir", %{tmp_dir: tmp_dir} do
+      assert {:ok, ^tmp_dir} = Extract.run([], tmp_dir)
+    end
+  end
+
   describe "read_facts/1" do
     test "reads TSV correctly", %{tmp_dir: tmp_dir} do
       path = Path.join(tmp_dir, "test.facts")

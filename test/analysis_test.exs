@@ -79,6 +79,11 @@ defmodule Argus.AnalysisTest do
       assert {:error, {:not_found, :fake_module_xyz}} =
                Argus.analyze([:fake_module_xyz], :cfg)
     end
+
+    test "custom analysis with non-existent rules file returns error" do
+      assert {:error, {:rules_not_found, "/tmp/nonexistent_rules.dl"}} =
+               Argus.analyze([:lists], {:custom, "/tmp/nonexistent_rules.dl"})
+    end
   end
 
   describe "Analysis.builtin_analyses/0" do

@@ -248,6 +248,87 @@ defmodule Argus.EmitterTest do
     end
   end
 
+  describe "swap facts" do
+    test "emits def and use for both operands" do
+      facts = emit_func([{:swap, {:x, 0}, {:x, 1}}])
+      defs = Enum.map(facts[:def], fn [_, reg] -> reg end)
+      uses = Enum.map(facts[:use], fn [_, reg] -> reg end)
+      assert "x0" in defs
+      assert "x1" in defs
+      assert "x0" in uses
+      assert "x1" in uses
+    end
+  end
+
+  describe "dynamic call facts" do
+    test "emits def x0 for call_fun" do
+      facts = emit_func([{:call_fun, 2}])
+      assert Enum.any?(facts[:def], fn [_, reg] -> reg == "x0" end)
+    end
+
+    test "emits def x0 for apply" do
+      facts = emit_func([{:apply, 2}])
+      assert Enum.any?(facts[:def], fn [_, reg] -> reg == "x0" end)
+    end
+  end
+
+  describe "wait instructions" do
+    test "wait does not crash" do
+      facts = emit_func([{:wait, {:f, 5}}])
+      assert Enum.any?(facts[:instruction], fn [_, _, _, op] -> op == "wait" end)
+    end
+
+    test "wait_timeout does not crash" do
+      facts = emit_func([{:wait_timeout, {:f, 5}, {:integer, 1000}}])
+      assert Enum.any?(facts[:instruction], fn [_, _, _, op] -> op == "wait_timeout" end)
+    end
+  end
+
+  describe "float instruction facts" do
+    test "emits use and def for fconv" do
+      facts = emit_func([{:fconv, {:x, 0}, {:fr, 0}}])
+      assert Enum.any?(facts[:use], fn [_, reg] -> reg == "x0" end)
+      assert Enum.any?(facts[:def], fn [_, reg] -> reg == "fr0" end)
+    end
+
+    test "emits move, def, use for fmove" do
+      facts = emit_func([{:fmove, {:fr, 0}, {:x, 0}}])
+      assert [[_, "fr0", "x0"]] = facts[:move]
+      assert Enum.any?(facts[:def], fn [_, reg] -> reg == "x0" end)
+      assert Enum.any?(facts[:use], fn [_, reg] -> reg == "fr0" end)
+    end
+  end
+
+  describe "set_tuple_element facts" do
+    test "emits use for value and tuple" do
+      facts = emit_func([{:set_tuple_element, {:x, 0}, {:x, 1}, 2}])
+      uses = Enum.map(facts[:use], fn [_, reg] -> reg end)
+      assert "x0" in uses
+      assert "x1" in uses
+    end
+  end
+
+  describe "update_record facts" do
+    test "emits use for source and def for dest" do
+      facts =
+        emit_func([
+          {:update_record, :update, 3, {:x, 0}, {:x, 1}, 2, {:list, [{:integer, 1}, {:x, 2}]}}
+        ])
+
+      assert Enum.any?(facts[:use], fn [_, reg] -> reg == "x0" end)
+      assert Enum.any?(facts[:def], fn [_, reg] -> reg == "x1" end)
+    end
+  end
+
+  describe "bs_start_match4 facts" do
+    test "emits bs_start, use, and def" do
+      facts = emit_func([{:bs_start_match4, {:f, 5}, 1, {:x, 0}, {:x, 1}}])
+      assert [[_, "5"]] = facts[:bs_start]
+      assert Enum.any?(facts[:use], fn [_, reg] -> reg == "x0" end)
+      assert Enum.any?(facts[:def], fn [_, reg] -> reg == "x1" end)
+    end
+  end
+
   describe "real module integration" do
     test "emits facts for :lists without crashing" do
       {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(:lists)))

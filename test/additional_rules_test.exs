@@ -55,8 +55,8 @@ defmodule Argus.AdditionalRulesTest do
       skip_without_souffle()
 
       assert {:ok, results} = Argus.analyze([:lists], :tail_call)
-      # stack_growth_risk may or may not have results.
-      assert Map.has_key?(results, "stack_growth_risk") or true
+      # stack_growth_risk may or may not have results, but the analysis should succeed.
+      assert is_map(results)
     end
   end
 

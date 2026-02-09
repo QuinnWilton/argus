@@ -43,5 +43,37 @@ defmodule Mix.Tasks.ArgusTest do
 
       capture_io(fn -> Mix.Tasks.Argus.run(["cfg", "--modules", ":maps"]) end)
     end
+
+    test "--format json produces inspected map" do
+      skip_without_souffle()
+
+      output =
+        capture_io(fn ->
+          Mix.Tasks.Argus.run(["cfg", "--modules", ":maps", "--format", "json"])
+        end)
+
+      assert output =~ "%{"
+    end
+
+    test "--format dot produces digraph output" do
+      skip_without_souffle()
+
+      output =
+        capture_io(fn ->
+          Mix.Tasks.Argus.run(["callgraph", "--modules", ":lists", "--format", "dot"])
+        end)
+
+      assert output =~ "digraph"
+    end
+
+    test "--fail-above 0 raises when results exist" do
+      skip_without_souffle()
+
+      assert_raise Mix.Error, ~r/threshold/, fn ->
+        capture_io(fn ->
+          Mix.Tasks.Argus.run(["cfg", "--modules", ":lists", "--fail-above", "0"])
+        end)
+      end
+    end
   end
 end
