@@ -6,15 +6,6 @@ defmodule Argus.RulesTest do
 
   @moduletag :tmp_dir
 
-  setup do
-    unless CLI.available?() do
-      IO.puts("Skipping Souffle tests: souffle not installed")
-      :ok
-    else
-      :ok
-    end
-  end
-
   defp skip_without_souffle do
     unless CLI.available?(), do: flunk("souffle not installed")
   end

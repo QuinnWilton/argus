@@ -1,6 +1,8 @@
 defmodule Mix.Tasks.ArgusTest do
   use ExUnit.Case
 
+  import ExUnit.CaptureIO
+
   alias Argus.Souffle.CLI
 
   defp skip_without_souffle do
@@ -25,20 +27,21 @@ defmodule Mix.Tasks.ArgusTest do
     test "runs cfg analysis with --modules" do
       skip_without_souffle()
 
-      # Capture output — this should succeed without raising.
-      Mix.Tasks.Argus.run(["cfg", "--modules", ":lists"])
+      output = capture_io(fn -> Mix.Tasks.Argus.run(["cfg", "--modules", ":lists"]) end)
+      assert output =~ "cfg_edge"
     end
 
     test "runs callgraph analysis" do
       skip_without_souffle()
 
-      Mix.Tasks.Argus.run(["callgraph", "--modules", "Enum"])
+      output = capture_io(fn -> Mix.Tasks.Argus.run(["callgraph", "--modules", "Enum"]) end)
+      assert output =~ "call_edge"
     end
 
     test "parses Erlang module names" do
       skip_without_souffle()
 
-      Mix.Tasks.Argus.run(["cfg", "--modules", ":maps"])
+      capture_io(fn -> Mix.Tasks.Argus.run(["cfg", "--modules", ":maps"]) end)
     end
   end
 end

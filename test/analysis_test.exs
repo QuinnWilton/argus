@@ -3,14 +3,6 @@ defmodule Argus.AnalysisTest do
 
   alias Argus.Souffle.CLI
 
-  setup do
-    unless CLI.available?() do
-      IO.puts("Skipping: souffle not installed")
-    end
-
-    :ok
-  end
-
   defp skip_without_souffle do
     unless CLI.available?(), do: flunk("souffle not installed")
   end
