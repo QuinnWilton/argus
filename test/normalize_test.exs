@@ -30,8 +30,7 @@ defmodule Argus.NormalizeTest do
       func =
         {:function, :bar, 1, 1,
          [
-           {:gc_bif, :+, {:f, 0}, 1, [{:tr, {:x, 0}, {:t_integer, :any}}, {:integer, 1}],
-            {:x, 0}}
+           {:gc_bif, :+, {:f, 0}, 1, [{:tr, {:x, 0}, {:t_integer, :any}}, {:integer, 1}], {:x, 0}}
          ]}
 
       [{_id, instr}] = Normalize.normalize_function(MyMod, func)

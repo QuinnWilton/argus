@@ -30,7 +30,10 @@ defmodule Argus.Normalize do
   Takes a module name and a function tuple from `:beam_disasm` and returns
   a list of `{id, instruction}` pairs with normalized instructions.
   """
-  @spec normalize_function(atom(), {:function, atom(), non_neg_integer(), non_neg_integer(), list()}) ::
+  @spec normalize_function(
+          atom(),
+          {:function, atom(), non_neg_integer(), non_neg_integer(), list()}
+        ) ::
           [normalized()]
   def normalize_function(module, {:function, name, arity, _entry, instructions}) do
     func_id = func_id(module, name, arity)
