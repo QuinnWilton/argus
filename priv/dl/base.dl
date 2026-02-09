@@ -1,0 +1,32 @@
+// Base fact declarations shared across analyses.
+// Include this file instead of redeclaring relations.
+
+.decl instruction(id: symbol, func: symbol, idx: number, op: symbol)
+.input instruction
+
+.decl next(from: symbol, to: symbol)
+.input next
+
+.decl jump(id: symbol, target: number)
+.input jump
+
+.decl branch(id: symbol, on_true: number, on_false: number)
+.input branch
+
+.decl label_at(label: number, id: symbol)
+.input label_at
+
+.decl select_branch(id: symbol, val: symbol, target: number)
+.input select_branch
+
+.decl function_def(func: symbol, mod: symbol, name: symbol, arity: number, entry: number, exported: number)
+.input function_def
+
+.decl local_call(id: symbol, target: symbol, arity: number)
+.input local_call
+
+.decl remote_call(id: symbol, mod: symbol, func: symbol, arity: number)
+.input remote_call
+
+.decl bif_call(id: symbol, mod: symbol, func: symbol, arity: number, fail: number)
+.input bif_call

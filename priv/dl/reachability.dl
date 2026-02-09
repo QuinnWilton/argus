@@ -1,0 +1,44 @@
+// Reachability analysis.
+//
+// Transitive closure over cfg_edge (instruction-level) and call_edge
+// (function-level).
+
+.include "cfg.dl"
+
+// Call graph (shares base.dl via cfg.dl include).
+
+// Derived: call graph edge from caller function to callee function.
+.decl call_edge(caller: symbol, callee: symbol)
+.output call_edge
+
+// Remote call.
+call_edge(caller_func, callee) :-
+  remote_call(id, mod, func, arity),
+  instruction(id, caller_func, _, _),
+  callee = cat(mod, cat(":", cat(func, cat("/", to_string(arity))))).
+
+// BIF call.
+call_edge(caller_func, callee) :-
+  bif_call(id, mod, func, arity, _),
+  instruction(id, caller_func, _, _),
+  callee = cat(mod, cat(":", cat(func, cat("/", to_string(arity))))).
+
+// Local call.
+call_edge(caller_func, target) :-
+  local_call(id, target, _),
+  instruction(id, caller_func, _, _),
+  function_def(target, _, _, _, _, _).
+
+// Instruction-level reachability within functions.
+.decl cfg_reachable(from: symbol, to: symbol)
+.output cfg_reachable
+
+cfg_reachable(a, b) :- cfg_edge(a, b).
+cfg_reachable(a, c) :- cfg_reachable(a, b), cfg_edge(b, c).
+
+// Function-level reachability across the call graph.
+.decl call_reachable(from: symbol, to: symbol)
+.output call_reachable
+
+call_reachable(a, b) :- call_edge(a, b).
+call_reachable(a, c) :- call_reachable(a, b), call_edge(b, c).

@@ -1,0 +1,35 @@
+// Control flow graph derivation.
+//
+// Derives cfg_edge from base facts: sequential next, jumps, branches,
+// and select_branch arms. Maps label numbers to instruction IDs via label_at.
+
+.include "base.dl"
+
+// Derived: control flow graph edge.
+.decl cfg_edge(from: symbol, to: symbol)
+.output cfg_edge
+
+// Sequential fallthrough.
+cfg_edge(from, to) :- next(from, to).
+
+// Unconditional jump.
+cfg_edge(id, target_id) :-
+  jump(id, target),
+  label_at(target, target_id).
+
+// Conditional branch — true arm.
+cfg_edge(id, target_id) :-
+  branch(id, on_true, _),
+  on_true != 0,
+  label_at(on_true, target_id).
+
+// Conditional branch — false arm (when explicit, not fallthrough).
+cfg_edge(id, target_id) :-
+  branch(id, _, on_false),
+  on_false != 0,
+  label_at(on_false, target_id).
+
+// Select branch arms.
+cfg_edge(id, target_id) :-
+  select_branch(id, _, target),
+  label_at(target, target_id).

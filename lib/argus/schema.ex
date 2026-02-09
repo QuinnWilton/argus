@@ -189,10 +189,10 @@ defmodule Argus.Schema do
     layer: 1,
     fields: [
       {:id, :symbol, "instruction ID"},
-      {:target, :number, "target label number"},
+      {:target, :symbol, "target label or MFA string"},
       {:arity, :number, "call arity"}
     ],
-    doc: "Call to a local (same-module) function by label."
+    doc: "Call to a local (same-module) function by label or MFA."
   }
 
   @remote_call %{
