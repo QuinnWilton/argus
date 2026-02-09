@@ -76,13 +76,13 @@ defmodule Mix.Tasks.Argus do
   end
 
   defp parse_analysis(name) do
-    atom = String.to_atom(name)
+    case Enum.find(Analysis.builtin_analyses(), &(to_string(&1) == name)) do
+      nil ->
+        {:error,
+         "Unknown analysis: #{name}\nAvailable: #{Enum.join(Analysis.builtin_analyses(), ", ")}"}
 
-    if atom in Analysis.builtin_analyses() do
-      {:ok, atom}
-    else
-      {:error,
-       "Unknown analysis: #{name}\nAvailable: #{Enum.join(Analysis.builtin_analyses(), ", ")}"}
+      atom ->
+        {:ok, atom}
     end
   end
 
@@ -129,7 +129,12 @@ defmodule Mix.Tasks.Argus do
   end
 
   defp parse_module(":" <> erlang_mod) do
-    String.to_atom(erlang_mod)
+    try do
+      String.to_existing_atom(erlang_mod)
+    rescue
+      ArgumentError ->
+        Mix.raise("Unknown Erlang module: :#{erlang_mod}")
+    end
   end
 
   defp parse_module(elixir_mod) do
@@ -148,7 +153,7 @@ defmodule Mix.Tasks.Argus do
       Enum.map(beam_files, fn path ->
         path
         |> Path.basename(".beam")
-        |> String.to_atom()
+        |> String.to_existing_atom()
       end)
 
     if Keyword.get(opts, :include_deps, false) do
@@ -171,7 +176,7 @@ defmodule Mix.Tasks.Argus do
         |> Path.join("*.beam")
         |> Path.wildcard()
         |> Enum.map(fn p ->
-          p |> Path.basename(".beam") |> String.to_atom()
+          p |> Path.basename(".beam") |> String.to_existing_atom()
         end)
       end)
     end)
