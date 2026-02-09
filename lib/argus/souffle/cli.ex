@@ -9,6 +9,7 @@ defmodule Argus.Souffle.CLI do
   @behaviour Argus.Souffle
 
   @impl true
+  @spec run(Path.t(), Path.t(), keyword()) :: {:ok, Argus.Souffle.result()} | {:error, term()}
   def run(facts_dir, rules_path, opts \\ []) do
     souffle_bin = Keyword.get(opts, :souffle_bin, find_souffle())
 

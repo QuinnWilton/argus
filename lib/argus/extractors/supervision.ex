@@ -24,6 +24,7 @@ defmodule Argus.Extractors.Supervision do
   @strategies [:one_for_one, :one_for_all, :rest_for_one, :simple_one_for_one]
 
   @impl true
+  @spec extract(Argus.Extractor.module_data()) :: Argus.Emitter.facts()
   def extract(module_data) do
     mod = module_data.module
     mod_str = inspect(mod)

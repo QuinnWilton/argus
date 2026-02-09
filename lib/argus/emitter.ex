@@ -628,19 +628,18 @@ defmodule Argus.Emitter do
     Map.update(facts, relation, [row], &[row | &1])
   end
 
-  @doc false
-  def format_operand({:x, n}), do: "x#{n}"
-  def format_operand({:y, n}), do: "y#{n}"
-  def format_operand({:fr, n}), do: "fr#{n}"
-  def format_operand({:atom, a}), do: inspect(a)
-  def format_operand({:integer, n}), do: to_string(n)
-  def format_operand({:float, f}), do: to_string(f)
-  def format_operand({:literal, val}), do: inspect(val)
-  def format_operand(nil), do: "nil"
-  def format_operand(a) when is_atom(a), do: inspect(a)
-  def format_operand(n) when is_integer(n), do: to_string(n)
-  def format_operand({:f, n}), do: "f#{n}"
-  def format_operand(other), do: inspect(other)
+  defp format_operand({:x, n}), do: "x#{n}"
+  defp format_operand({:y, n}), do: "y#{n}"
+  defp format_operand({:fr, n}), do: "fr#{n}"
+  defp format_operand({:atom, a}), do: inspect(a)
+  defp format_operand({:integer, n}), do: to_string(n)
+  defp format_operand({:float, f}), do: to_string(f)
+  defp format_operand({:literal, val}), do: inspect(val)
+  defp format_operand(nil), do: "nil"
+  defp format_operand(a) when is_atom(a), do: inspect(a)
+  defp format_operand(n) when is_integer(n), do: to_string(n)
+  defp format_operand({:f, n}), do: "f#{n}"
+  defp format_operand(other), do: inspect(other)
 
   defp format_mfa({mod, name, arity}) do
     "#{inspect(mod)}:#{name}/#{arity}"

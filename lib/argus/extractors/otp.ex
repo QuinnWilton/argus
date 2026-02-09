@@ -17,6 +17,7 @@ defmodule Argus.Extractors.OTP do
   alias Argus.Normalize
 
   @impl true
+  @spec extract(Argus.Extractor.module_data()) :: Argus.Emitter.facts()
   def extract(module_data) do
     mod = module_data.module
     mod_str = inspect(mod)
