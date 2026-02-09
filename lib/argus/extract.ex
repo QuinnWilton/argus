@@ -162,6 +162,16 @@ defmodule Argus.Extract do
   """
   @spec write_facts(Emitter.facts(), Path.t()) :: :ok
   def write_facts(facts, output_dir) do
+    # Create empty files for all known relations so Souffle never fails
+    # on missing .input files.
+    for name <- Argus.Schema.names() do
+      path = Path.join(output_dir, "#{name}.facts")
+
+      unless File.exists?(path) do
+        File.write!(path, "")
+      end
+    end
+
     Enum.each(facts, fn {relation, rows} ->
       path = Path.join(output_dir, "#{relation}.facts")
 

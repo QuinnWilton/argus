@@ -1,0 +1,47 @@
+// Tail call analysis.
+//
+// Identifies functions that make tail calls, functions that don't (and thus
+// may grow the stack on recursion), and recursive call chains.
+
+.include "base.dl"
+
+.decl tail_call(id: symbol)
+.input tail_call
+
+// Functions that contain at least one tail call.
+.decl has_tail_call(func: symbol)
+.output has_tail_call
+
+has_tail_call(func) :-
+  tail_call(id),
+  instruction(id, func, _, _).
+
+// Functions that contain a non-tail local call (potential stack growth).
+.decl has_non_tail_call(func: symbol, callee: symbol)
+.output has_non_tail_call
+
+has_non_tail_call(func, target) :-
+  local_call(id, target, _),
+  instruction(id, func, _, _),
+  !tail_call(id).
+
+// Direct recursion: function calls itself.
+.decl direct_recursion(func: symbol, is_tail: symbol)
+.output direct_recursion
+
+direct_recursion(func, "tail") :-
+  local_call(id, func, _),
+  instruction(id, func, _, _),
+  tail_call(id).
+
+direct_recursion(func, "non_tail") :-
+  local_call(id, func, _),
+  instruction(id, func, _, _),
+  !tail_call(id).
+
+// Non-tail recursive functions: may grow stack indefinitely.
+.decl stack_growth_risk(func: symbol)
+.output stack_growth_risk
+
+stack_growth_risk(func) :-
+  direct_recursion(func, "non_tail").

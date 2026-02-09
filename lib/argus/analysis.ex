@@ -32,7 +32,11 @@ defmodule Argus.Analysis do
     cfg: "cfg.dl",
     callgraph: "callgraph.dl",
     reachability: "reachability.dl",
-    supervision: "supervision.dl"
+    supervision: "supervision.dl",
+    reaching_def: "reaching_def.dl",
+    liveness: "liveness.dl",
+    tail_call: "tail_call.dl",
+    message_flow: "message_flow.dl"
   }
 
   @doc """

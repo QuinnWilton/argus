@@ -1,0 +1,68 @@
+// Message flow analysis.
+//
+// Pairs message send instructions with receive (loop_rec) instructions
+// within the same function or across function boundaries via the call graph.
+
+.include "base.dl"
+
+.decl send_msg(id: symbol)
+.input send_msg
+
+.decl recv_start(id: symbol, fail: number)
+.input recv_start
+
+.decl recv_end(id: symbol)
+.input recv_end
+
+// Functions that send messages.
+.decl sender_function(func: symbol)
+.output sender_function
+
+sender_function(func) :-
+  send_msg(id),
+  instruction(id, func, _, _).
+
+// Functions that receive messages.
+.decl receiver_function(func: symbol)
+.output receiver_function
+
+receiver_function(func) :-
+  recv_start(id, _),
+  instruction(id, func, _, _).
+
+// Functions that both send and receive (potential self-messaging).
+.decl send_recv_function(func: symbol)
+.output send_recv_function
+
+send_recv_function(func) :-
+  sender_function(func),
+  receiver_function(func).
+
+// Call graph for message flow: which sender can reach which receiver
+// through the call graph.
+.decl call_edge(caller: symbol, callee: symbol)
+
+call_edge(caller_func, callee) :-
+  remote_call(id, mod, func, arity),
+  instruction(id, caller_func, _, _),
+  callee = cat(mod, cat(":", cat(func, cat("/", to_string(arity))))).
+
+call_edge(caller_func, target) :-
+  local_call(id, target, _),
+  instruction(id, caller_func, _, _),
+  function_def(target, _, _, _, _, _).
+
+.decl call_reachable(from: symbol, to: symbol)
+call_reachable(a, b) :- call_edge(a, b).
+call_reachable(a, c) :- call_reachable(a, b), call_edge(b, c).
+
+// A sender can potentially deliver to a receiver if they're in the same
+// function or the sender can reach the receiver through calls.
+.decl potential_message_path(sender_func: symbol, receiver_func: symbol)
+.output potential_message_path
+
+potential_message_path(f, f) :- send_recv_function(f).
+potential_message_path(s, r) :-
+  sender_function(s),
+  receiver_function(r),
+  call_reachable(s, r).
