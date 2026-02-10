@@ -17,9 +17,27 @@ lib/
 │   ├── schema.ex                    # Fact relation definitions
 │   ├── emitter.ex                   # Instructions → fact tuples
 │   ├── extractor.ex                 # Behaviour for domain extractors
+│   ├── extractor/
+│   │   └── helpers.ex               # Shared helpers (add_fact, resolve_register, etc.)
 │   ├── extractors/
 │   │   ├── supervision.ex           # Supervisor + Application child spec extraction
-│   │   └── otp.ex                   # OTP callback pattern detection
+│   │   ├── otp.ex                   # OTP callback pattern detection
+│   │   └── ets.ex                   # ETS table creation and access extraction
+│   ├── analyses/
+│   │   ├── cfg.ex                   # Control flow graph
+│   │   ├── callgraph.ex             # Call graph
+│   │   ├── reachability.ex          # Code reachability
+│   │   ├── reaching_def.ex          # Reaching definitions
+│   │   ├── liveness.ex              # Live variable analysis
+│   │   ├── tail_call.ex             # Tail call and recursion detection
+│   │   ├── message_flow.ex          # Message passing analysis
+│   │   ├── supervision.ex           # Supervision tree anti-patterns
+│   │   ├── one_for_one_coupling.ex  # Cross-branch coupling under one_for_one
+│   │   ├── ets.ex                   # ETS table lifecycle analysis
+│   │   ├── call_cycle.ex            # Sync-call cycle (deadlock) detection
+│   │   ├── unlinked_spawn.ex        # Orphan process detection
+│   │   ├── sync_call_in_init.ex     # Startup deadlock detection
+│   │   └── process_bottleneck.ex    # Sync call fan-in detection
 │   ├── souffle.ex                   # Souffle execution behaviour
 │   ├── souffle/
 │   │   └── cli.ex                   # Shell-out implementation
