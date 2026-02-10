@@ -1,18 +1,39 @@
 # Analyzes an external Elixir (Mix) or Erlang (Rebar3) project with Argus.
 #
 # Usage:
-#   mix run scripts/analyze_project.exs /path/to/project [analysis]
+#   mix run scripts/analyze_project.exs /path/to/project [analyses...]
+#
+# Examples:
+#   mix run scripts/analyze_project.exs /path/to/project           # run all correctness analyses
+#   mix run scripts/analyze_project.exs /path/to/project all       # run every analysis
+#   mix run scripts/analyze_project.exs /path/to/project ets       # run one analysis
+#   mix run scripts/analyze_project.exs /path/to/project ets supervision  # run several
 #
 # The project must already be compiled. This script:
 # 1. Adds the project's ebin directories to the code path
 # 2. Discovers project modules (skipping deps)
-# 3. Runs the specified analysis (default: one_for_one_coupling)
+# 3. Runs the specified analyses (default: all correctness/bug-detection analyses)
 # 4. Pretty-prints supervision structure and findings
 
 defmodule Argus.Scripts.AnalyzeProject do
+  # Analyses that detect bugs, correctness issues, or anti-patterns.
+  # Structural/informational analyses (cfg, callgraph, reachability,
+  # reaching_def, liveness, tail_call, message_flow) are excluded
+  # from the default set.
+  @correctness_analyses [
+    :call_cycle,
+    :ets,
+    :one_for_one_coupling,
+    :process_bottleneck,
+    :supervision,
+    :sync_call_in_init,
+    :unlinked_spawn,
+    :unsafe_task
+  ]
+
   @doc false
   def run(args) do
-    {project_path, analysis} = parse_args(args)
+    {project_path, analyses} = parse_args(args)
     project_path = Path.expand(project_path)
 
     unless File.dir?(project_path) do
@@ -20,7 +41,9 @@ defmodule Argus.Scripts.AnalyzeProject do
     end
 
     IO.puts("Analyzing: #{project_path}")
-    IO.puts("Analysis: #{analysis}")
+
+    IO.puts("Analyses:  #{Enum.map_join(analyses, ", ", &to_string/1)}")
+
     IO.puts("")
 
     # Add project ebin dirs to code path.
@@ -50,33 +73,123 @@ defmodule Argus.Scripts.AnalyzeProject do
     # Print supervision structure first.
     print_supervision_structure(modules)
 
-    # Run the analysis. Extractors are declared by each analysis module
-    # and applied automatically by Argus.Analysis.run/3.
-    IO.puts("--- Running #{analysis} analysis ---")
-    IO.puts("")
+    # Run each analysis and collect results.
+    {results, failures} = run_analyses(modules, analyses)
 
-    case Argus.analyze(modules, analysis) do
-      {:ok, results} ->
-        print_results(results, analysis)
+    # Print results grouped by analysis.
+    print_all_results(results)
 
-      {:error, reason} ->
-        abort("Analysis failed: #{inspect(reason)}")
+    # Print summary.
+    print_summary(results, failures)
+
+    if failures != [] do
+      System.halt(1)
     end
   end
 
-  defp parse_args([project_path]) do
-    {project_path, :one_for_one_coupling}
-  end
-
-  defp parse_args([project_path, analysis_str]) do
-    case Enum.find(Argus.Analysis.builtin_analyses(), &(to_string(&1) == analysis_str)) do
-      nil -> abort("Unknown analysis: #{analysis_str}")
-      analysis -> {project_path, analysis}
-    end
+  defp parse_args([project_path | rest]) do
+    analyses = parse_analysis_args(rest)
+    {project_path, analyses}
   end
 
   defp parse_args(_) do
-    abort("Usage: mix run scripts/analyze_project.exs /path/to/project [analysis]")
+    abort("""
+    Usage: mix run scripts/analyze_project.exs /path/to/project [analyses...]
+
+    When no analyses are specified, runs all correctness analyses:
+      #{Enum.map_join(@correctness_analyses, ", ", &to_string/1)}
+
+    Pass "all" to run every available analysis.\
+    """)
+  end
+
+  defp parse_analysis_args([]), do: @correctness_analyses
+
+  defp parse_analysis_args(["all"]), do: Enum.sort(Argus.Analysis.builtin_analyses())
+
+  defp parse_analysis_args(names) do
+    builtin = Argus.Analysis.builtin_analyses()
+
+    Enum.map(names, fn name ->
+      case Enum.find(builtin, &(to_string(&1) == name)) do
+        nil ->
+          abort(
+            "Unknown analysis: #{name}\nAvailable: #{Enum.map_join(builtin, ", ", &to_string/1)}"
+          )
+
+        analysis ->
+          analysis
+      end
+    end)
+  end
+
+  defp run_analyses(modules, analyses) do
+    analyses
+    |> Enum.reduce({[], []}, fn analysis, {ok_acc, err_acc} ->
+      IO.puts("--- Running #{analysis} ---")
+
+      case Argus.analyze(modules, analysis) do
+        {:ok, results} ->
+          {[{analysis, results} | ok_acc], err_acc}
+
+        {:error, reason} ->
+          IO.puts(:stderr, "  Error: #{inspect(reason)}")
+          {ok_acc, [{analysis, reason} | err_acc]}
+      end
+    end)
+    |> then(fn {ok, err} -> {Enum.reverse(ok), Enum.reverse(err)} end)
+  end
+
+  defp print_all_results(results) do
+    IO.puts("")
+
+    Enum.each(results, fn {analysis, result} ->
+      print_results(result, analysis)
+    end)
+  end
+
+  defp print_summary(results, failures) do
+    IO.puts("--- Summary ---")
+    IO.puts("")
+
+    total_findings = 0
+
+    total_findings =
+      Enum.reduce(results, total_findings, fn {analysis, result}, acc ->
+        allowed = output_relation_names(analysis)
+
+        count =
+          result
+          |> then(fn rs ->
+            if allowed, do: Enum.filter(rs, fn {name, _} -> name in allowed end), else: rs
+          end)
+          |> Enum.reject(fn {_, rows} -> rows == [] end)
+          |> Enum.map(fn {_, rows} -> length(rows) end)
+          |> Enum.sum()
+
+        label = if count == 0, do: "pass", else: "#{count} finding(s)"
+        IO.puts("  #{to_string(analysis)}: #{label}")
+        acc + count
+      end)
+
+    Enum.each(failures, fn {analysis, reason} ->
+      IO.puts("  #{to_string(analysis)}: FAILED (#{inspect(reason)})")
+    end)
+
+    IO.puts("")
+
+    cond do
+      failures != [] ->
+        IO.puts("#{length(failures)} analysis(es) failed, #{total_findings} total finding(s).")
+
+      total_findings == 0 ->
+        IO.puts("All clear — no findings across #{length(results)} analysis(es).")
+
+      true ->
+        IO.puts("#{total_findings} total finding(s) across #{length(results)} analysis(es).")
+    end
+
+    IO.puts("")
   end
 
   defp discover_ebin_dirs(project_path) do
@@ -212,16 +325,19 @@ defmodule Argus.Scripts.AnalyzeProject do
       |> Enum.reject(fn {_, rows} -> rows == [] end)
 
     if findings == [] do
-      IO.puts("No findings.")
+      :ok
     else
+      IO.puts("=== #{analysis} ===")
+      IO.puts("")
+
       findings
       |> Enum.sort_by(fn {name, _} -> name end)
       |> Enum.each(fn {relation, rows} ->
-        IO.puts("=== #{relation} (#{length(rows)} findings) ===")
+        IO.puts("  #{relation} (#{length(rows)} findings)")
         IO.puts("")
 
         Enum.each(rows, fn row ->
-          IO.puts("  #{Enum.join(row, "  |  ")}")
+          IO.puts("    #{Enum.join(row, "  |  ")}")
         end)
 
         IO.puts("")

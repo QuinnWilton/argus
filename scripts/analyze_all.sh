@@ -46,25 +46,31 @@ for project in "$dir"/*/; do
   echo "════════════════════════════════════════════════════════════"
   echo
 
+  compile_log=$(mktemp)
   echo "Compiling $project..."
   case "$build" in
     mix)
-      if ! (cd "$project" && mix deps.get --quiet && mix compile --quiet); then
+      if ! (cd "$project" && mix deps.get --quiet && mix compile --quiet) >"$compile_log" 2>&1; then
         echo "FAILED to compile: $project" >&2
+        cat "$compile_log" >&2
+        rm -f "$compile_log"
         failed=$((failed + 1))
         echo
         continue
       fi
       ;;
     rebar3)
-      if ! (cd "$project" && rebar3 compile); then
+      if ! (cd "$project" && rebar3 compile) >"$compile_log" 2>&1; then
         echo "FAILED to compile: $project" >&2
+        cat "$compile_log" >&2
+        rm -f "$compile_log"
         failed=$((failed + 1))
         echo
         continue
       fi
       ;;
   esac
+  rm -f "$compile_log"
   echo
 
   if mix run scripts/analyze_project.exs "$project" $analysis; then
