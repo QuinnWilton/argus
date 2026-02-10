@@ -5,21 +5,28 @@ defmodule Argus.AnalysisTest do
   alias Argus.Souffle.CLI
 
   @expected_analyses [
+    :atom_safety,
     :call_cycle,
     :callgraph,
     :callgraph_ctx,
     :cfg,
     :constant_propagation,
+    :distributed,
     :dominators,
+    :error_handling,
     :ets,
     :function_summary,
+    :gen_statem,
     :liveness,
     :loops,
     :message_flow,
     :one_for_one_coupling,
+    :phoenix_security,
     :process_bottleneck,
+    :process_registry,
     :reachability,
     :reaching_def,
+    :resource_lifecycle,
     :supervision,
     :sync_call_in_init,
     :tail_call,
@@ -35,9 +42,9 @@ defmodule Argus.AnalysisTest do
   # -- Discovery ---------------------------------------------------------------
 
   describe "discovery" do
-    test "finds all 21 built-in analysis modules" do
+    test "finds all 28 built-in analysis modules" do
       modules = Analysis.builtin_analysis_modules()
-      assert length(modules) == 21
+      assert length(modules) == 28
     end
 
     test "builtin_analyses/0 returns all names sorted" do
