@@ -1,0 +1,55 @@
+// Atom safety analysis.
+//
+// Detects atom table exhaustion risks, unsafe deserialization, and
+// dynamic code execution reachable from exported functions.
+
+.include "../clientlib/imports.dl"
+
+// Layer 2 input declarations.
+.decl unsafe_atom_creation(id: symbol, func: symbol, api: symbol)
+.input unsafe_atom_creation
+
+.decl unsafe_deserialization(id: symbol, func: symbol, api: symbol, safety: symbol)
+.input unsafe_deserialization
+
+.decl code_execution(id: symbol, func: symbol, api: symbol)
+.input code_execution
+
+// ── Atom exhaustion risk ─────────────────────────────────────────
+
+// Unsafe atom creation in a function reachable from an exported function.
+.decl atom_exhaustion_risk(func: symbol, api: symbol)
+.output atom_exhaustion_risk
+
+atom_exhaustion_risk(func, api) :-
+  unsafe_atom_creation(_, func, api),
+  function_def(func, _, _, _, _, 1).
+
+atom_exhaustion_risk(func, api) :-
+  unsafe_atom_creation(_, target_func, api),
+  call_reachable(func, target_func),
+  function_def(func, _, _, _, _, 1).
+
+// ── Unsafe deserialization ───────────────────────────────────────
+
+// binary_to_term without :safe option.
+.decl unsafe_deserialization_finding(func: symbol, api: symbol)
+.output unsafe_deserialization_finding
+
+unsafe_deserialization_finding(func, api) :-
+  unsafe_deserialization(_, func, api, "unsafe").
+
+// ── Code injection ───────────────────────────────────────────────
+
+// Dynamic code execution reachable from exported functions.
+.decl code_injection_risk(func: symbol, api: symbol)
+.output code_injection_risk
+
+code_injection_risk(func, api) :-
+  code_execution(_, func, api),
+  function_def(func, _, _, _, _, 1).
+
+code_injection_risk(func, api) :-
+  code_execution(_, target_func, api),
+  call_reachable(func, target_func),
+  function_def(func, _, _, _, _, 1).
