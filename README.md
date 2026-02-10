@@ -1,6 +1,24 @@
 # Argus
 
+[![CI](https://github.com/QuinnWilton/argus/actions/workflows/ci.yml/badge.svg)](https://github.com/QuinnWilton/argus/actions/workflows/ci.yml)
+[![Hex.pm](https://img.shields.io/hexpm/v/argus.svg)](https://hex.pm/packages/argus)
+[![Docs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/argus)
+
 BEAM program analysis via [Souffle](https://souffle-lang.github.io/) Datalog.
+
+## Installation
+
+Add `argus` to your list of dependencies in `mix.exs`:
+
+```elixir
+def deps do
+  [
+    {:argus, "~> 0.1.0"}
+  ]
+end
+```
+
+[Souffle](https://souffle-lang.github.io/install) must be installed and available on your `PATH`.
 
 ## Approach
 
@@ -13,10 +31,6 @@ Argus extracts Datalog facts directly from BEAM bytecode and evaluates them with
 ```
 
 **Layer 1** walks every BEAM instruction and emits base facts about instructions, registers, control flow, and calls. **Layer 2** (domain extractors) produces higher-level semantic facts by interpreting OTP patterns, supervision trees, ETS usage, and other BEAM-specific constructs. Both layers feed into Souffle, which evaluates Datalog rules and returns derived relations.
-
-## Prerequisites
-
-[Souffle](https://souffle-lang.github.io/install) must be installed and available on your `PATH`.
 
 ## Quick start
 
@@ -57,3 +71,7 @@ Argus.analyze([Enum, :lists], :callgraph)
 # Run custom Datalog rules.
 Argus.analyze([MyApp.Worker], {:custom, "path/to/rules.dl"})
 ```
+
+## License
+
+MIT
