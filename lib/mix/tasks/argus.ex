@@ -13,7 +13,11 @@ defmodule Mix.Tasks.Argus do
   - `cfg` — control flow graph edges
   - `callgraph` — call graph edges
   - `reachability` — transitive CFG and call reachability
-  - `supervision` — supervision tree anti-pattern detection
+  - `reaching_def` — reaching definitions and def-use chains
+  - `liveness` — live variable analysis and dead definition detection
+  - `tail_call` — tail call identification and recursion detection
+  - `message_flow` — message send/receive pairing across functions
+  - `supervision` — supervision tree structure and anti-patterns
 
   ## Custom analysis
 

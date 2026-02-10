@@ -10,6 +10,11 @@ defmodule Argus.Analysis do
   - `:cfg` — control flow graph edges
   - `:callgraph` — call graph edges
   - `:reachability` — transitive CFG and call reachability
+  - `:reaching_def` — reaching definitions and def-use chains
+  - `:liveness` — live variable analysis and dead definition detection
+  - `:tail_call` — tail call identification and recursion detection
+  - `:message_flow` — message send/receive pairing across functions
+  - `:supervision` — supervision tree structure and anti-patterns
 
   ## Custom analyses
 
@@ -24,6 +29,11 @@ defmodule Argus.Analysis do
           :cfg
           | :callgraph
           | :reachability
+          | :reaching_def
+          | :liveness
+          | :tail_call
+          | :message_flow
+          | :supervision
           | {:custom, Path.t()}
 
   @type result :: %{String.t() => [[String.t()]]}

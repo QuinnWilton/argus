@@ -46,7 +46,7 @@ priv/
 
 ### Design principles
 
-- **Exhaustive pattern matching** on BEAM instructions, inspired by `BeamSpy.Opcodes` compile-time completeness checking.
+- **Exhaustive pattern matching** on BEAM instructions, inspired by exhaustive opcode cataloging patterns.
 - **Parallel extraction** — per-module disassembly/emission is embarrassingly parallel.
 - **Layered facts** — layer 1 (generic bytecode) + layer 2 (domain extractors) compose cleanly.
 - **Souffle as external tool** — shell out initially, design the behaviour for future compiled mode.
