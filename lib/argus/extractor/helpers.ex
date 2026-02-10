@@ -113,15 +113,31 @@ defmodule Argus.Extractor.Helpers do
   # Walk the reversed instruction list looking for the most recent write
   # to the target register. Each instruction is consumed once — the tail
   # is passed forward to prevent revisiting.
+  #
+  # Barrier instructions (return, tail calls) mark execution path
+  # boundaries — code before them belongs to a different clause or
+  # branch, so any register values found there are stale.
   defp do_resolve([], _reg), do: :dynamic
 
   defp do_resolve([instr | rest], reg) do
-    if writes_to?(instr, reg) do
-      interpret(instr, rest, reg)
-    else
-      do_resolve(rest, reg)
+    cond do
+      barrier?(instr) -> :dynamic
+      writes_to?(instr, reg) -> interpret(instr, rest, reg)
+      true -> do_resolve(rest, reg)
     end
   end
+
+  # Control-flow-terminating instructions mark the end of an execution
+  # path. In the flat BEAM instruction list, code before a barrier
+  # belongs to a different clause or branch — register values from
+  # that code are not reachable on the path leading to our call site.
+  defp barrier?(:return), do: true
+  defp barrier?({:call_only, _, _}), do: true
+  defp barrier?({:call_ext_only, _, _}), do: true
+  defp barrier?({:call_last, _, _, _}), do: true
+  defp barrier?({:call_ext_last, _, _, _}), do: true
+  defp barrier?({:apply_last, _}), do: true
+  defp barrier?(_), do: false
 
   # Check whether an instruction writes to the target register,
   # accounting for `{:tr, reg, _type}` wrappers.

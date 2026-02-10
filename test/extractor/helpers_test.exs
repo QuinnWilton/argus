@@ -442,5 +442,92 @@ defmodule Argus.Extractor.HelpersTest do
 
       assert Helpers.resolve_register(instrs, 2, {:x, 0}) == {:ok, {:heir, :dynamic, nil}}
     end
+
+    test "stops at return barrier instead of picking up stale value" do
+      # Simulates multi-clause bytecode: clause 1 sets x0 = :ok then returns,
+      # clause 2 code follows. Without barrier detection, the resolver crosses
+      # the return and finds :ok.
+      instrs = [
+        {:move, {:atom, :ok}, {:x, 0}},
+        :return,
+        {:label, 7},
+        {:call_ext, 1, {:extfunc, :erlang, :atom_to_list, 1}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 3, {:x, 0}) == :dynamic
+    end
+
+    test "stops at call_only barrier" do
+      instrs = [
+        {:move, {:atom, :stale}, {:x, 0}},
+        {:call_only, 1, {:f, 20}},
+        {:label, 8},
+        {:call_ext, 1, {:extfunc, :ets, :lookup, 2}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 3, {:x, 0}) == :dynamic
+    end
+
+    test "stops at call_ext_only barrier" do
+      instrs = [
+        {:move, {:atom, :stale}, {:x, 0}},
+        {:call_ext_only, 1, {:extfunc, :erlang, :error, 1}},
+        {:label, 9},
+        {:call_ext, 1, {:extfunc, :ets, :lookup, 2}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 3, {:x, 0}) == :dynamic
+    end
+
+    test "stops at call_last barrier" do
+      instrs = [
+        {:move, {:atom, :stale}, {:x, 0}},
+        {:call_last, 1, {:f, 30}, 2},
+        {:label, 10},
+        {:call_ext, 1, {:extfunc, :ets, :lookup, 2}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 3, {:x, 0}) == :dynamic
+    end
+
+    test "stops at call_ext_last barrier" do
+      instrs = [
+        {:move, {:atom, :stale}, {:x, 0}},
+        {:call_ext_last, 1, {:extfunc, :erlang, :error, 1}, 2},
+        {:label, 11},
+        {:call_ext, 1, {:extfunc, :ets, :lookup, 2}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 3, {:x, 0}) == :dynamic
+    end
+
+    test "barrier does not affect resolution within the same execution path" do
+      # The write to x0 is AFTER the barrier (closer to the call site),
+      # so the barrier is never reached.
+      instrs = [
+        {:move, {:atom, :stale}, {:x, 0}},
+        :return,
+        {:label, 7},
+        {:move, {:atom, :fresh}, {:x, 0}},
+        {:call_ext, 1, {:extfunc, :erlang, :atom_to_list, 1}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 4, {:x, 0}) == {:ok, :fresh}
+    end
+
+    test "barrier stops indirect resolution through y-register" do
+      # The y0 save is before the return barrier (different clause), so
+      # tracing x0 → y0 → x0 should hit the barrier and return :dynamic.
+      instrs = [
+        {:move, {:atom, :stale}, {:x, 0}},
+        {:move, {:x, 0}, {:y, 0}},
+        :return,
+        {:label, 7},
+        {:move, {:y, 0}, {:x, 0}},
+        {:call_ext, 1, {:extfunc, :ets, :lookup, 2}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 5, {:x, 0}) == :dynamic
+    end
   end
 end

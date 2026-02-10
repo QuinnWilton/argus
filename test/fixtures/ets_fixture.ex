@@ -57,3 +57,17 @@ defmodule Argus.Test.Fixtures.EtsWellConfigured do
     {:ok, table}
   end
 end
+
+defmodule Argus.Test.Fixtures.EtsParamTable do
+  @moduledoc false
+
+  # Multi-clause function where the table reference comes from a parameter.
+  # Clause 1 returns :ok (writing :ok to x0 before return), clause 2 uses
+  # the parameter as an ETS table. Without barrier detection, the backward
+  # resolver crosses the return boundary and picks up :ok as the table name.
+  def lookup(:not_a_table), do: :ok
+  def lookup(tab), do: :ets.lookup(tab, :key)
+
+  def insert(:not_a_table, _record), do: :ok
+  def insert(tab, record), do: :ets.insert(tab, record)
+end

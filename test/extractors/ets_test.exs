@@ -76,6 +76,22 @@ defmodule Argus.Extractors.ETSTest do
       assert ":my_cache" in refs
     end
 
+    test "resolves parameter table references as dynamic, not stale atoms" do
+      facts = ETS.extract(disassemble(Argus.Test.Fixtures.EtsParamTable))
+
+      assert Map.has_key?(facts, :ets_op)
+      ops = facts[:ets_op]
+
+      # All table references should be "dynamic" — not ":ok" or other
+      # stale values leaked from the preceding clause's return path.
+      refs = Enum.map(ops, fn [_, _, ref, _, _] -> ref end)
+
+      assert Enum.all?(refs, &(&1 == "dynamic")),
+             "expected all refs to be dynamic, got: #{inspect(refs)}"
+
+      refute ":ok" in refs
+    end
+
     test "returns empty for non-ets module" do
       facts = ETS.extract(disassemble(Argus.Test.Fixtures.PlainModule))
       assert facts == %{}
