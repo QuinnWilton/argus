@@ -1,0 +1,15 @@
+// Shared rules for identifying GenServer synchronous API functions.
+//
+// An exported function in a GenServer module that calls GenServer.call
+// is a synchronous API entry point. Callers of this function have a
+// synchronous dependency on the module, even though the sync_call fact
+// lives inside the GenServer module itself.
+//
+// Requires: function_def, implements_behaviour, sync_call (declared by consumer).
+
+.decl genserver_sync_api(func: symbol, mod: symbol)
+
+genserver_sync_api(func, mod) :-
+  function_def(func, mod, _, _, _, 1),
+  implements_behaviour(mod, "GenServer"),
+  sync_call(func, _).
