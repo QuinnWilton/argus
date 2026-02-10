@@ -119,18 +119,22 @@ defmodule Argus.Extractors.Supervision do
 
   # Detect the supervision strategy by finding the Supervisor.init/2 or
   # Supervisor.start_link/2 call and resolving the options argument.
+  # Falls back to scanning literals for Erlang-style {:ok, {flags, _}} returns.
   defp detect_strategy(instrs) do
-    instrs
-    |> Enum.with_index()
-    |> Enum.find_value(:unknown, fn {instr, idx} ->
-      case match_remote_call(instr) do
-        {:ok, Supervisor, func, 2} when func in [:init, :start_link] ->
-          extract_strategy_from_opts(instrs, idx)
+    from_call =
+      instrs
+      |> Enum.with_index()
+      |> Enum.find_value(fn {instr, idx} ->
+        case match_remote_call(instr) do
+          {:ok, Supervisor, func, 2} when func in [:init, :start_link] ->
+            extract_strategy_from_opts(instrs, idx)
 
-        _ ->
-          nil
-      end
-    end)
+          _ ->
+            nil
+        end
+      end)
+
+    from_call || extract_strategy_from_literals(instrs) || :unknown
   end
 
   defp extract_strategy_from_opts(instrs, call_idx) do
@@ -140,6 +144,22 @@ defmodule Argus.Extractors.Supervision do
       _ -> nil
     end
   end
+
+  # Scan literals for Erlang-style {:ok, {flags, children}} return values
+  # and extract the strategy from the flags.
+  defp extract_strategy_from_literals(instrs) do
+    Enum.find_value(instrs, fn
+      {:move, {:literal, {:ok, {flags, children}}}, _} when is_list(children) ->
+        extract_strategy_from_flags(flags)
+
+      _ ->
+        nil
+    end)
+  end
+
+  defp extract_strategy_from_flags(flags) when is_map(flags), do: Map.get(flags, :strategy)
+  defp extract_strategy_from_flags({strategy, _intensity, _period}), do: strategy
+  defp extract_strategy_from_flags(_), do: nil
 
   # Extract child modules from literal values and tuple construction.
   # Child specs appear as literals like {Module, args} or %{id: ..., start: {Mod, ...}}.
@@ -166,6 +186,11 @@ defmodule Argus.Extractors.Supervision do
 
   defp extract_child_from_literal(list) when is_list(list) do
     Enum.flat_map(list, &extract_single_child_spec/1)
+  end
+
+  # Erlang-style supervisor init returns {:ok, {flags, children}}.
+  defp extract_child_from_literal({:ok, {_flags, children}}) when is_list(children) do
+    extract_child_from_literal(children)
   end
 
   defp extract_child_from_literal(val) do
