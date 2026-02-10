@@ -4,22 +4,26 @@ defmodule Argus.AnalysesTest do
   alias Argus.Analysis
 
   @expected_analyses [
+    :call_cycle,
     :callgraph,
     :cfg,
     :ets,
     :liveness,
     :message_flow,
     :one_for_one_coupling,
+    :process_bottleneck,
     :reachability,
     :reaching_def,
     :supervision,
-    :tail_call
+    :sync_call_in_init,
+    :tail_call,
+    :unlinked_spawn
   ]
 
   describe "discovery" do
-    test "finds all 10 built-in analysis modules" do
+    test "finds all 14 built-in analysis modules" do
       modules = Analysis.builtin_analysis_modules()
-      assert length(modules) == 10
+      assert length(modules) == 14
     end
 
     test "builtin_analyses/0 returns all names sorted" do

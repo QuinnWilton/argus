@@ -78,4 +78,101 @@ defmodule Argus.AdditionalRulesTest do
       assert Map.has_key?(results, "potential_message_path")
     end
   end
+
+  describe "call_cycle.dl" do
+    test "detects mutual sync-call cycle between fixture GenServers" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.CycleServerA,
+        Argus.Test.Fixtures.CycleServerB
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :call_cycle)
+      assert Map.has_key?(results, "call_cycle")
+      assert Map.has_key?(results, "call_cycle_path")
+
+      cycles = results["call_cycle"]
+      assert length(cycles) > 0
+
+      # The two fixture modules should form a cycle.
+      cycle_mods = cycles |> List.flatten() |> Enum.sort()
+
+      assert "Argus.Test.Fixtures.CycleServerA" in cycle_mods
+      assert "Argus.Test.Fixtures.CycleServerB" in cycle_mods
+    end
+
+    test "runs without error on module with no cycles" do
+      skip_without_souffle()
+
+      assert {:ok, results} = Argus.analyze([:maps], :call_cycle)
+      assert Map.has_key?(results, "call_cycle")
+    end
+  end
+
+  describe "unlinked_spawn.dl" do
+    test "detects bare spawn calls in fixture" do
+      skip_without_souffle()
+
+      assert {:ok, results} =
+               Argus.analyze([Argus.Test.Fixtures.UnlinkedSpawner], :unlinked_spawn)
+
+      assert Map.has_key?(results, "unlinked_spawn")
+      unlinked = results["unlinked_spawn"]
+      assert length(unlinked) > 0
+
+      # Should only flag spawn, not spawn_link or spawn_monitor.
+      funcs = Enum.map(unlinked, fn [func, _id] -> func end)
+
+      assert Enum.any?(funcs, &String.contains?(&1, "spawn_unlinked"))
+      refute Enum.any?(funcs, &String.contains?(&1, "spawn_linked"))
+      refute Enum.any?(funcs, &String.contains?(&1, "spawn_monitored"))
+    end
+  end
+
+  describe "sync_call_in_init.dl" do
+    test "detects sync call in init/1 for fixture" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.SyncInitServer,
+        Argus.Test.Fixtures.WorkerA
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :sync_call_in_init)
+      assert Map.has_key?(results, "sync_call_in_init")
+
+      init_calls = results["sync_call_in_init"]
+      assert length(init_calls) > 0
+
+      # SyncInitServer's init calls WorkerA.
+      assert Enum.any?(init_calls, fn [mod, _callee] ->
+               mod == "Argus.Test.Fixtures.SyncInitServer"
+             end)
+    end
+  end
+
+  describe "process_bottleneck.dl" do
+    test "computes sync call fan-in" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.CycleServerA,
+        Argus.Test.Fixtures.CycleServerB,
+        Argus.Test.Fixtures.MyGenServer
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :process_bottleneck)
+      assert Map.has_key?(results, "sync_caller")
+      assert Map.has_key?(results, "sync_call_fan_in")
+    end
+
+    test "runs without error on modules with no sync calls" do
+      skip_without_souffle()
+
+      assert {:ok, results} = Argus.analyze([:maps], :process_bottleneck)
+      assert Map.has_key?(results, "sync_caller")
+      assert Map.has_key?(results, "sync_call_fan_in")
+    end
+  end
 end
