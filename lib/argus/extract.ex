@@ -155,7 +155,7 @@ defmodule Argus.Extract do
   # ── Fact merging ───────────────────────────────────────────────────
 
   defp merge_facts(left, right) do
-    Map.merge(left, right, fn _key, l, r -> l ++ r end)
+    Map.merge(left, right, fn _key, l, r -> r ++ l end)
   end
 
   # ── .facts file I/O ────────────────────────────────────────────────
