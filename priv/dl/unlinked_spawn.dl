@@ -1,0 +1,17 @@
+// Unlinked spawn detection.
+//
+// Flags calls to erlang:spawn/* (without _link or _monitor) that create
+// processes with no supervision or failure propagation link. These
+// "orphan" processes silently disappear on crash.
+
+.include "base.dl"
+
+.decl spawn_call(id: symbol, mod: symbol, func: symbol, arity: number, variant: symbol)
+.input spawn_call
+
+.decl unlinked_spawn(func: symbol, id: symbol)
+.output unlinked_spawn
+
+unlinked_spawn(func, id) :-
+  spawn_call(id, _, _, _, "spawn"),
+  instruction(id, func, _, _).
