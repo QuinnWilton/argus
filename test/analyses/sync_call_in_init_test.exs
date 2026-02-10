@@ -1,0 +1,98 @@
+defmodule Argus.Analyses.SyncCallInInitTest do
+  use ExUnit.Case
+
+  alias Argus.Souffle.CLI
+
+  defp skip_without_souffle do
+    unless CLI.available?(), do: flunk("souffle not installed")
+  end
+
+  describe "sync_call_in_init.dl" do
+    test "detects sync call in init/1 for fixture" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.SyncInitServer,
+        Argus.Test.Fixtures.WorkerA
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :sync_call_in_init)
+      assert Map.has_key?(results, "sync_call_in_init")
+
+      init_calls = results["sync_call_in_init"]
+      assert length(init_calls) > 0
+
+      # SyncInitServer's init calls WorkerA.
+      assert Enum.any?(init_calls, fn [mod, _callee] ->
+               mod == "Argus.Test.Fixtures.SyncInitServer"
+             end)
+    end
+
+    test "filters safe sibling ordering (dep starts before caller)" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.SafeOrderSupervisor,
+        Argus.Test.Fixtures.SyncInitServer,
+        Argus.Test.Fixtures.WorkerA
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :sync_call_in_init)
+
+      # WorkerA starts before SyncInitServer — safe, should be filtered.
+      assert results["sync_call_in_init"] == []
+
+      # The filtering relation should have the entry.
+      assert length(results["init_safe_sibling"]) > 0
+    end
+
+    test "filters cross-supervisor calls (disjoint supervisor trees)" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.DisjointSupervisor,
+        Argus.Test.Fixtures.CallerSupervisor,
+        Argus.Test.Fixtures.SyncInitServer,
+        Argus.Test.Fixtures.WorkerA
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :sync_call_in_init)
+
+      # Disjoint supervisors — callee already running, should be filtered.
+      assert results["sync_call_in_init"] == []
+
+      assert length(results["init_safe_cross_supervisor"]) > 0
+    end
+
+    test "preserves deadlock risk when dep starts after caller" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.DeadlockOrderSupervisor,
+        Argus.Test.Fixtures.SyncInitServer,
+        Argus.Test.Fixtures.WorkerA
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :sync_call_in_init)
+
+      # WorkerA starts AFTER SyncInitServer — NOT safe, deadlock risk.
+      init_calls = results["sync_call_in_init"]
+      assert length(init_calls) > 0
+
+      assert Enum.any?(init_calls, fn [mod, callee] ->
+               mod == "Argus.Test.Fixtures.SyncInitServer" and
+                 callee == "Argus.Test.Fixtures.WorkerA"
+             end)
+
+      # init_deadlock_risk should detect this.
+      deadlock_risks = results["init_deadlock_risk"]
+      assert length(deadlock_risks) > 0
+
+      assert Enum.any?(deadlock_risks, fn [sup, child, dep, _cpos, _dpos] ->
+               sup == "Argus.Test.Fixtures.DeadlockOrderSupervisor" and
+                 child == "Argus.Test.Fixtures.SyncInitServer" and
+                 dep == "Argus.Test.Fixtures.WorkerA"
+             end)
+    end
+  end
+end
