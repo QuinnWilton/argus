@@ -152,6 +152,29 @@ defmodule Argus.Extractors.Supervision do
       {:move, {:literal, {:ok, {flags, children}}}, _} when is_list(children) ->
         extract_strategy_from_flags(flags)
 
+      # Erlang-style flags tuple may appear as a standalone move literal
+      # or as an element inside a put_tuple2 when the full {:ok, {flags, children}}
+      # can't be folded due to runtime children.
+      {:move, {:literal, {strategy, intensity, period}}, _}
+      when strategy in [:one_for_one, :one_for_all, :rest_for_one, :simple_one_for_one] and
+             is_integer(intensity) and is_integer(period) ->
+        strategy
+
+      {:put_tuple2, _, {:list, elements}} ->
+        extract_strategy_from_elements(elements)
+
+      _ ->
+        nil
+    end)
+  end
+
+  defp extract_strategy_from_elements(elements) do
+    Enum.find_value(elements, fn
+      {:literal, {strategy, intensity, period}}
+      when strategy in [:one_for_one, :one_for_all, :rest_for_one, :simple_one_for_one] and
+             is_integer(intensity) and is_integer(period) ->
+        strategy
+
       _ ->
         nil
     end)
@@ -172,6 +195,21 @@ defmodule Argus.Extractors.Supervision do
         _ -> []
       end)
 
+    # Map-based child specs: Erlang supervisors (and some Elixir ones) build
+    # child spec maps at runtime via put_map_assoc/put_map_exact when the args
+    # contain runtime values. We identify these by the presence of a :start key.
+    from_maps =
+      instrs
+      |> Enum.with_index()
+      |> Enum.flat_map(fn
+        {{op, _, _, _, _, {:list, pairs}}, idx}
+        when op in [:put_map_assoc, :put_map_exact] ->
+          extract_child_from_map_pairs(pairs, instrs, idx)
+
+        _ ->
+          []
+      end)
+
     from_tuples =
       instrs
       |> Enum.flat_map(fn
@@ -180,8 +218,68 @@ defmodule Argus.Extractors.Supervision do
       end)
       |> Enum.reverse()
 
-    (from_literals ++ from_tuples)
+    (from_literals ++ from_maps ++ from_tuples)
     |> Enum.uniq_by(fn {mod, _, _} -> mod end)
+  end
+
+  # Check if a put_map instruction's pairs represent a child spec (has :start key),
+  # resolve the start module, and extract :restart/:type metadata.
+  defp extract_child_from_map_pairs(pairs, instrs, idx) do
+    case find_map_pair(pairs, :start) do
+      nil ->
+        []
+
+      start_val ->
+        case resolve_start_module(start_val, instrs, idx) do
+          nil ->
+            []
+
+          mod ->
+            restart = extract_map_atom(pairs, :restart, :permanent)
+            type = extract_map_atom(pairs, :type, :worker)
+            [{mod, restart, type}]
+        end
+    end
+  end
+
+  # Find a value by atom key in a flat alternating [key, val, ...] pair list.
+  defp find_map_pair(pairs, key) do
+    pairs
+    |> Enum.chunk_every(2)
+    |> Enum.find_value(fn
+      [{:atom, ^key}, val] -> val
+      _ -> nil
+    end)
+  end
+
+  # Resolve the start module from a child spec map's :start value.
+  # The value may be a literal tuple, a bare atom, or a register.
+  defp resolve_start_module({:literal, {mod, _, _}}, _instrs, _idx) when is_atom(mod), do: mod
+  defp resolve_start_module({:literal, {mod, _}}, _instrs, _idx) when is_atom(mod), do: mod
+  defp resolve_start_module({:atom, mod}, _instrs, _idx) when is_atom(mod), do: mod
+
+  defp resolve_start_module({:tr, inner, _}, instrs, idx),
+    do: resolve_start_module_reg(inner, instrs, idx)
+
+  defp resolve_start_module({kind, _} = reg, instrs, idx) when kind in [:x, :y],
+    do: resolve_start_module_reg(reg, instrs, idx)
+
+  defp resolve_start_module(_, _, _), do: nil
+
+  defp resolve_start_module_reg(reg, instrs, idx) do
+    case resolve_register(instrs, idx, reg) do
+      {:ok, {mod, _, _}} when is_atom(mod) -> mod
+      {:ok, {mod, _}} when is_atom(mod) -> mod
+      _ -> nil
+    end
+  end
+
+  # Extract an atom value from a flat pair list, with a default.
+  defp extract_map_atom(pairs, key, default) do
+    case find_map_pair(pairs, key) do
+      {:atom, val} -> val
+      _ -> default
+    end
   end
 
   defp extract_child_from_literal(list) when is_list(list) do

@@ -101,3 +101,34 @@ defmodule Argus.Test.Fixtures.RuntimeCallSupervisor do
     Supervisor.init(children, strategy: :one_for_one)
   end
 end
+
+defmodule Argus.Test.Fixtures.MapSpecSupervisor do
+  @moduledoc false
+  @behaviour :supervisor
+
+  def start_link(arg) do
+    :supervisor.start_link(__MODULE__, arg)
+  end
+
+  # Uses map child specs with a runtime variable in the start args to
+  # force the compiler to emit put_map_assoc instead of literal folding.
+  @impl true
+  def init(arg) do
+    children = [
+      %{
+        id: :worker_a,
+        start: {Argus.Test.Fixtures.WorkerA, :start_link, [arg]},
+        restart: :permanent,
+        type: :worker
+      },
+      %{
+        id: :worker_b,
+        start: {Argus.Test.Fixtures.WorkerB, :start_link, [arg]},
+        restart: :transient,
+        type: :worker
+      }
+    ]
+
+    {:ok, {{:one_for_one, 5, 10}, children}}
+  end
+end

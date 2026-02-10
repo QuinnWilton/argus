@@ -91,6 +91,51 @@ defmodule Argus.Extractors.SupervisionTest do
     end
   end
 
+  describe "map-based child specs" do
+    setup do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(
+          to_string(:code.which(Argus.Test.Fixtures.MapSpecSupervisor))
+        )
+
+      %{facts: Supervision.extract(data)}
+    end
+
+    test "extracts children from map child specs", %{facts: facts} do
+      assert Map.has_key?(facts, :supervisor_child)
+      children = facts[:supervisor_child]
+      child_mods = Enum.map(children, fn [_, _, mod, _, _] -> mod end)
+
+      assert "Argus.Test.Fixtures.WorkerA" in child_mods
+      assert "Argus.Test.Fixtures.WorkerB" in child_mods
+    end
+
+    test "preserves correct child ordering", %{facts: facts} do
+      children = facts[:supervisor_child]
+
+      positions =
+        Map.new(children, fn [_, pos, mod, _, _] -> {mod, String.to_integer(pos)} end)
+
+      assert positions["Argus.Test.Fixtures.WorkerA"] < positions["Argus.Test.Fixtures.WorkerB"]
+    end
+
+    test "extracts restart and type metadata", %{facts: facts} do
+      children = facts[:supervisor_child]
+      worker_b = Enum.find(children, fn [_, _, mod, _, _] -> String.contains?(mod, "WorkerB") end)
+      assert worker_b
+      [_, _, _, restart, type] = worker_b
+      assert restart == "transient"
+      assert type == "worker"
+    end
+
+    test "detects supervisor behaviour and strategy", %{facts: facts} do
+      assert Map.has_key?(facts, :supervisor)
+      [mod_str, strategy] = hd(facts[:supervisor])
+      assert mod_str == "Argus.Test.Fixtures.MapSpecSupervisor"
+      assert strategy == "one_for_one"
+    end
+  end
+
   describe "integration with extract pipeline" do
     test "extractor is usable via Extract.extract/2" do
       assert {:ok, facts} =
