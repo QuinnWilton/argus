@@ -430,6 +430,17 @@ defmodule Argus.Schema do
     doc: "GenServer.cast target detected in code."
   }
 
+  @sync_call_timeout %{
+    name: :sync_call_timeout,
+    layer: 2,
+    fields: [
+      {:caller_func, :symbol, "calling function ID"},
+      {:callee_mod, :symbol, "target GenServer module"},
+      {:timeout_ms, :number, "timeout in ms (-1=infinity, 0=dynamic)"}
+    ],
+    doc: "GenServer.call timeout value at call site."
+  }
+
   # Layer 2: ETS extractor facts.
 
   @ets_new %{
@@ -510,6 +521,7 @@ defmodule Argus.Schema do
     @implements_behaviour,
     @sync_call,
     @async_cast,
+    @sync_call_timeout,
     @ets_new,
     @ets_option,
     @ets_op
