@@ -119,6 +119,81 @@ defmodule Argus.Extractors.OTPTest do
     end
   end
 
+  describe "extract/1 — sync_call_timeout emission" do
+    test "GenServer.call/2 emits timeout 5000" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(
+          to_string(:code.which(Argus.Test.Fixtures.ExplicitTimeoutCaller))
+        )
+
+      facts = OTP.extract(data)
+
+      assert Map.has_key?(facts, :sync_call_timeout)
+      timeouts = facts[:sync_call_timeout]
+
+      # call_with_default uses GenServer.call/2 → 5000.
+      assert Enum.any?(timeouts, fn [func, _callee, t] ->
+               String.contains?(func, "call_with_default") and t == "5000"
+             end)
+    end
+
+    test "GenServer.call/3 with integer literal emits resolved value" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(
+          to_string(:code.which(Argus.Test.Fixtures.ExplicitTimeoutCaller))
+        )
+
+      facts = OTP.extract(data)
+      timeouts = facts[:sync_call_timeout]
+
+      # call_with_explicit uses GenServer.call/3 with 10_000.
+      assert Enum.any?(timeouts, fn [func, _callee, t] ->
+               String.contains?(func, "call_with_explicit") and t == "10000"
+             end)
+    end
+
+    test "GenServer.call/3 with :infinity emits -1" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(
+          to_string(:code.which(Argus.Test.Fixtures.ExplicitTimeoutCaller))
+        )
+
+      facts = OTP.extract(data)
+      timeouts = facts[:sync_call_timeout]
+
+      # call_with_infinity uses GenServer.call/3 with :infinity.
+      assert Enum.any?(timeouts, fn [func, _callee, t] ->
+               String.contains?(func, "call_with_infinity") and t == "-1"
+             end)
+    end
+
+    test ":gen_server.call/3 with integer emits resolved value" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(
+          to_string(:code.which(Argus.Test.Fixtures.ExplicitTimeoutCaller))
+        )
+
+      facts = OTP.extract(data)
+      timeouts = facts[:sync_call_timeout]
+
+      # erlang_call_with_timeout uses :gen_server.call/3 with 15_000.
+      assert Enum.any?(timeouts, fn [func, _callee, t] ->
+               String.contains?(func, "erlang_call_with_timeout") and t == "15000"
+             end)
+    end
+
+    test "GenServer.multi_call emits -1 (infinity)" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.MultiCallModule)))
+
+      facts = OTP.extract(data)
+
+      assert Map.has_key?(facts, :sync_call_timeout)
+      timeouts = facts[:sync_call_timeout]
+      assert Enum.any?(timeouts, fn [_func, _callee, t] -> t == "-1" end)
+    end
+  end
+
   describe "extract/1 — link/monitor detection" do
     test "detects Process.link as process_link" do
       {:ok, data} =

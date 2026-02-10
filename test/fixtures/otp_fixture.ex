@@ -53,3 +53,12 @@ defmodule Argus.Test.Fixtures.LinkMonitorModule do
   def monitor_proc(pid), do: Process.monitor(pid)
   def erlang_monitor(pid), do: :erlang.monitor(:process, pid)
 end
+
+defmodule Argus.Test.Fixtures.ExplicitTimeoutCaller do
+  @moduledoc false
+
+  def call_with_default(server), do: GenServer.call(server, :ping)
+  def call_with_explicit(server), do: GenServer.call(server, :ping, 10_000)
+  def call_with_infinity(server), do: GenServer.call(server, :ping, :infinity)
+  def erlang_call_with_timeout(server), do: :gen_server.call(server, :ping, 15_000)
+end

@@ -9,6 +9,7 @@ defmodule Argus.Extractors.OTP do
 
   - `implements_behaviour(mod, behaviour)` — module implements a behaviour
   - `sync_call(caller_func, callee_mod)` — GenServer.call target detected
+  - `sync_call_timeout(caller_func, callee_mod, timeout_ms)` — timeout value at call site
   - `async_cast(caller_func, callee_mod)` — GenServer.cast target detected
   """
 
@@ -61,45 +62,108 @@ defmodule Argus.Extractors.OTP do
     |> Enum.with_index()
     |> Enum.reduce(facts, fn {instr, idx}, acc ->
       case match_remote_call(instr) do
-        # GenServer.call/2,3.
-        {:ok, GenServer, :call, arity} when arity in [2, 3] ->
+        # GenServer.call/2 — default 5000ms timeout.
+        {:ok, GenServer, :call, 2} ->
           callee = resolve_callee(instrs, idx)
-          add_fact(acc, :sync_call, [func_id, callee])
+
+          acc
+          |> add_fact(:sync_call, [func_id, callee])
+          |> add_fact(:sync_call_timeout, [func_id, callee, "5000"])
+
+        # GenServer.call/3 — explicit timeout in x2.
+        {:ok, GenServer, :call, 3} ->
+          callee = resolve_callee(instrs, idx)
+          timeout = resolve_timeout(instrs, idx, {:x, 2})
+
+          acc
+          |> add_fact(:sync_call, [func_id, callee])
+          |> add_fact(:sync_call_timeout, [func_id, callee, timeout])
 
         # GenServer.cast/2.
         {:ok, GenServer, :cast, 2} ->
           callee = resolve_callee(instrs, idx)
           add_fact(acc, :async_cast, [func_id, callee])
 
-        # GenServer.multi_call/2,3,4 — synchronous multi-node call.
+        # GenServer.multi_call/2,3,4 — synchronous multi-node call, infinity default.
         {:ok, GenServer, :multi_call, arity} when arity in [2, 3, 4] ->
           callee = resolve_callee(instrs, idx)
-          add_fact(acc, :sync_call, [func_id, callee])
 
-        # Erlang-style :gen_server.call/2,3.
-        {:ok, :gen_server, :call, arity} when arity in [2, 3] ->
+          acc
+          |> add_fact(:sync_call, [func_id, callee])
+          |> add_fact(:sync_call_timeout, [func_id, callee, "-1"])
+
+        # Erlang-style :gen_server.call/2 — default 5000ms timeout.
+        {:ok, :gen_server, :call, 2} ->
           callee = resolve_callee(instrs, idx)
-          add_fact(acc, :sync_call, [func_id, callee])
+
+          acc
+          |> add_fact(:sync_call, [func_id, callee])
+          |> add_fact(:sync_call_timeout, [func_id, callee, "5000"])
+
+        # Erlang-style :gen_server.call/3 — explicit timeout in x2.
+        {:ok, :gen_server, :call, 3} ->
+          callee = resolve_callee(instrs, idx)
+          timeout = resolve_timeout(instrs, idx, {:x, 2})
+
+          acc
+          |> add_fact(:sync_call, [func_id, callee])
+          |> add_fact(:sync_call_timeout, [func_id, callee, timeout])
 
         # Erlang-style :gen_server.cast/2.
         {:ok, :gen_server, :cast, 2} ->
           callee = resolve_callee(instrs, idx)
           add_fact(acc, :async_cast, [func_id, callee])
 
-        # Agent.get/2,3.
-        {:ok, Agent, :get, arity} when arity in [2, 3] ->
+        # Agent.get/2 — default 5000ms timeout.
+        {:ok, Agent, :get, 2} ->
           callee = resolve_callee(instrs, idx)
-          add_fact(acc, :sync_call, [func_id, callee])
 
-        # Agent.update/2,3.
-        {:ok, Agent, :update, arity} when arity in [2, 3] ->
-          callee = resolve_callee(instrs, idx)
-          add_fact(acc, :sync_call, [func_id, callee])
+          acc
+          |> add_fact(:sync_call, [func_id, callee])
+          |> add_fact(:sync_call_timeout, [func_id, callee, "5000"])
 
-        # Agent.get_and_update/2,3.
-        {:ok, Agent, :get_and_update, arity} when arity in [2, 3] ->
+        # Agent.get/3 — explicit timeout in x2.
+        {:ok, Agent, :get, 3} ->
           callee = resolve_callee(instrs, idx)
-          add_fact(acc, :sync_call, [func_id, callee])
+          timeout = resolve_timeout(instrs, idx, {:x, 2})
+
+          acc
+          |> add_fact(:sync_call, [func_id, callee])
+          |> add_fact(:sync_call_timeout, [func_id, callee, timeout])
+
+        # Agent.update/2 — default 5000ms timeout.
+        {:ok, Agent, :update, 2} ->
+          callee = resolve_callee(instrs, idx)
+
+          acc
+          |> add_fact(:sync_call, [func_id, callee])
+          |> add_fact(:sync_call_timeout, [func_id, callee, "5000"])
+
+        # Agent.update/3 — explicit timeout in x2.
+        {:ok, Agent, :update, 3} ->
+          callee = resolve_callee(instrs, idx)
+          timeout = resolve_timeout(instrs, idx, {:x, 2})
+
+          acc
+          |> add_fact(:sync_call, [func_id, callee])
+          |> add_fact(:sync_call_timeout, [func_id, callee, timeout])
+
+        # Agent.get_and_update/2 — default 5000ms timeout.
+        {:ok, Agent, :get_and_update, 2} ->
+          callee = resolve_callee(instrs, idx)
+
+          acc
+          |> add_fact(:sync_call, [func_id, callee])
+          |> add_fact(:sync_call_timeout, [func_id, callee, "5000"])
+
+        # Agent.get_and_update/3 — explicit timeout in x2.
+        {:ok, Agent, :get_and_update, 3} ->
+          callee = resolve_callee(instrs, idx)
+          timeout = resolve_timeout(instrs, idx, {:x, 2})
+
+          acc
+          |> add_fact(:sync_call, [func_id, callee])
+          |> add_fact(:sync_call_timeout, [func_id, callee, timeout])
 
         _ ->
           acc
@@ -151,6 +215,16 @@ defmodule Argus.Extractors.OTP do
     case resolve_register(instrs, idx, {:x, 0}) do
       {:ok, atom} when is_atom(atom) -> inspect(atom)
       _ -> "dynamic"
+    end
+  end
+
+  # Resolve a timeout argument to its string representation for facts.
+  # Positive integer → milliseconds, :infinity → "-1", anything else → "0" (dynamic).
+  defp resolve_timeout(instrs, idx, register) do
+    case resolve_register(instrs, idx, register) do
+      {:ok, n} when is_integer(n) and n > 0 -> to_string(n)
+      {:ok, :infinity} -> "-1"
+      _ -> "0"
     end
   end
 end
