@@ -44,10 +44,10 @@ defmodule Argus.Extractors.Supervision do
     behaviours = get_behaviours(attrs)
 
     cond do
-      Supervisor in behaviours ->
+      Supervisor in behaviours or :supervisor in behaviours ->
         extract_supervisor(mod_str, module_data)
 
-      Application in behaviours ->
+      Application in behaviours or :application in behaviours ->
         extract_application(mod_str, module_data)
 
       true ->
