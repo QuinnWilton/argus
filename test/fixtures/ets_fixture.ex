@@ -92,6 +92,16 @@ defmodule Argus.Test.Fixtures.EtsPermanentSupervisor do
   end
 end
 
+defmodule Argus.Test.Fixtures.EtsAdminOps do
+  @moduledoc false
+
+  def delete_all(tab), do: :ets.delete_all_objects(tab)
+  def give_away(tab, pid), do: :ets.give_away(tab, pid, :gift)
+  def rename_table(tab, name), do: :ets.rename(tab, name)
+  def set_opts(tab), do: :ets.setopts(tab, [{:heir, self(), nil}])
+  def fix_table(tab), do: :ets.safe_fixtable(tab, true)
+end
+
 defmodule Argus.Test.Fixtures.ErlangStyleEtsSupervisor do
   @moduledoc false
   @behaviour :supervisor

@@ -92,6 +92,38 @@ defmodule Argus.Extractors.ETSTest do
       refute ":ok" in refs
     end
 
+    test "classifies delete_all_objects as write" do
+      facts = ETS.extract(disassemble(Argus.Test.Fixtures.EtsAdminOps))
+
+      assert Map.has_key?(facts, :ets_op)
+      ops = facts[:ets_op]
+
+      assert Enum.any?(ops, fn [_, _, _, op, kind] ->
+               op == "delete_all_objects" and kind == "write"
+             end)
+    end
+
+    test "classifies give_away, rename, setopts as write" do
+      facts = ETS.extract(disassemble(Argus.Test.Fixtures.EtsAdminOps))
+
+      ops = facts[:ets_op]
+
+      for op_name <- ~w(give_away rename setopts) do
+        assert Enum.any?(ops, fn [_, _, _, op, kind] -> op == op_name and kind == "write" end),
+               "expected #{op_name} to be classified as write"
+      end
+    end
+
+    test "classifies safe_fixtable as read" do
+      facts = ETS.extract(disassemble(Argus.Test.Fixtures.EtsAdminOps))
+
+      ops = facts[:ets_op]
+
+      assert Enum.any?(ops, fn [_, _, _, op, kind] ->
+               op == "safe_fixtable" and kind == "read"
+             end)
+    end
+
     test "returns empty for non-ets module" do
       facts = ETS.extract(disassemble(Argus.Test.Fixtures.PlainModule))
       assert facts == %{}

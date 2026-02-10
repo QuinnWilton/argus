@@ -20,10 +20,11 @@ defmodule Argus.Extractors.ETS do
   alias Argus.Normalize
 
   @read_ops ~w(lookup lookup_element match match_object select member
-               first next last prev tab2list info foldl foldr select_count)a
+               first next last prev tab2list info foldl foldr select_count
+               safe_fixtable)a
 
-  @write_ops ~w(insert insert_new delete_object update_element
-                update_counter select_delete select_replace)a
+  @write_ops ~w(insert insert_new delete_object delete_all_objects update_element
+                update_counter select_delete select_replace give_away rename setopts)a
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Emitter.facts()
@@ -126,5 +127,5 @@ defmodule Argus.Extractors.ETS do
   defp classify_op(:delete, _arity), do: "write"
   defp classify_op(func, _arity) when func in @read_ops, do: "read"
   defp classify_op(func, _arity) when func in @write_ops, do: "write"
-  defp classify_op(_func, _arity), do: "read"
+  defp classify_op(_func, _arity), do: "unknown"
 end
