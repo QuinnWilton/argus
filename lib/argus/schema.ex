@@ -478,6 +478,311 @@ defmodule Argus.Schema do
     doc: "ETS read/write/delete operation."
   }
 
+  # Layer 2: Atom safety extractor facts.
+
+  @unsafe_atom_creation %{
+    name: :unsafe_atom_creation,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:func, :symbol, "containing function ID"},
+      {:api, :symbol, "API name (e.g. String.to_atom/1)"}
+    ],
+    doc: "Unsafe atom creation from dynamic input."
+  }
+
+  @unsafe_deserialization %{
+    name: :unsafe_deserialization,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:func, :symbol, "containing function ID"},
+      {:api, :symbol, "API name"},
+      {:safety, :symbol, "safe or unsafe"}
+    ],
+    doc: "Binary-to-term deserialization call with safety classification."
+  }
+
+  @code_execution %{
+    name: :code_execution,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:func, :symbol, "containing function ID"},
+      {:api, :symbol, "API name (e.g. Code.eval_string/1)"}
+    ],
+    doc: "Dynamic code execution or OS command call."
+  }
+
+  # Layer 2: Error handling extractor facts.
+
+  @bare_rescue %{
+    name: :bare_rescue,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID of try_start"},
+      {:func, :symbol, "containing function ID"}
+    ],
+    doc: "Try/catch handler that catches all exceptions without filtering or reraising."
+  }
+
+  @trap_exit %{
+    name: :trap_exit,
+    layer: 2,
+    fields: [
+      {:func, :symbol, "containing function ID"},
+      {:mod, :symbol, "module name"}
+    ],
+    doc: "Process.flag(:trap_exit, true) call site."
+  }
+
+  @exit_call %{
+    name: :exit_call,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:func, :symbol, "containing function ID"},
+      {:target, :symbol, "exit target (pid or dynamic)"}
+    ],
+    doc: "Explicit Process.exit/2 or :erlang.exit/1,2 call."
+  }
+
+  @ignored_error_result %{
+    name: :ignored_error_result,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:func, :symbol, "containing function ID"},
+      {:callee, :symbol, "called function returning {:ok,_}|{:error,_}"}
+    ],
+    doc: "Call to function returning tagged tuple where result is not pattern matched."
+  }
+
+  # Layer 2: Resource lifecycle extractor facts.
+
+  @resource_open %{
+    name: :resource_open,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:func, :symbol, "containing function ID"},
+      {:type, :symbol, "resource type (file, socket, port)"}
+    ],
+    doc: "Resource open operation."
+  }
+
+  @resource_close %{
+    name: :resource_close,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:func, :symbol, "containing function ID"},
+      {:type, :symbol, "resource type (file, socket, port)"}
+    ],
+    doc: "Resource close operation."
+  }
+
+  @port_open %{
+    name: :port_open,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:func, :symbol, "containing function ID"},
+      {:port_type, :symbol, "port type (spawn, fd)"}
+    ],
+    doc: "Port open via :erlang.open_port/2."
+  }
+
+  # Layer 2: Process registry & naming extractor facts.
+
+  @process_register %{
+    name: :process_register,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:func, :symbol, "containing function ID"},
+      {:name, :symbol, "registered name atom"},
+      {:method, :symbol, "registration method (register, start_link, start)"}
+    ],
+    doc: "Process name registration."
+  }
+
+  @registry_op %{
+    name: :registry_op,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:func, :symbol, "containing function ID"},
+      {:registry, :symbol, "registry module"},
+      {:op, :symbol, "operation (register, lookup, dispatch, etc.)"},
+      {:key, :symbol, "registry key"}
+    ],
+    doc: "Registry module operation."
+  }
+
+  @via_tuple %{
+    name: :via_tuple,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:func, :symbol, "containing function ID"},
+      {:registry, :symbol, "registry module"},
+      {:key, :symbol, "registry key"}
+    ],
+    doc: "{:via, Registry, {reg, key}} tuple construction."
+  }
+
+  @whereis_call %{
+    name: :whereis_call,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:func, :symbol, "containing function ID"},
+      {:name, :symbol, "process name"}
+    ],
+    doc: "Process.whereis/1 or :erlang.whereis/1 call."
+  }
+
+  # Layer 2: Phoenix/Plug security extractor facts.
+
+  @plug_pipeline %{
+    name: :plug_pipeline,
+    layer: 2,
+    fields: [
+      {:mod, :symbol, "module defining the pipeline"},
+      {:plug_mod, :symbol, "plug module"},
+      {:position, :number, "position in pipeline"}
+    ],
+    doc: "Plug in a module's plug pipeline."
+  }
+
+  @controller_action %{
+    name: :controller_action,
+    layer: 2,
+    fields: [
+      {:mod, :symbol, "controller module"},
+      {:action, :symbol, "action function name"},
+      {:arity, :number, "function arity"}
+    ],
+    doc: "Phoenix controller action function."
+  }
+
+  @raw_sql_call %{
+    name: :raw_sql_call,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:func, :symbol, "containing function ID"},
+      {:api, :symbol, "SQL API (e.g. Ecto.Adapters.SQL.query/3)"}
+    ],
+    doc: "Raw SQL query call without parameterization."
+  }
+
+  @redirect_call %{
+    name: :redirect_call,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:func, :symbol, "containing function ID"},
+      {:target_type, :symbol, "target origin (static or dynamic)"}
+    ],
+    doc: "Phoenix redirect call."
+  }
+
+  # Layer 2: Distributed systems extractor facts.
+
+  @rpc_call %{
+    name: :rpc_call,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:func, :symbol, "containing function ID"},
+      {:variant, :symbol, "RPC variant (rpc, erpc, multicall)"},
+      {:timeout, :symbol, "timeout value (ms, infinity, or dynamic)"}
+    ],
+    doc: "RPC call with timeout information."
+  }
+
+  @global_register %{
+    name: :global_register,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:func, :symbol, "containing function ID"},
+      {:name, :symbol, "global name"}
+    ],
+    doc: ":global.register_name call."
+  }
+
+  @node_operation %{
+    name: :node_operation,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:func, :symbol, "containing function ID"},
+      {:op, :symbol, "operation (connect, disconnect, spawn, ping, etc.)"}
+    ],
+    doc: "Node or :net_kernel operation."
+  }
+
+  @distributed_store_op %{
+    name: :distributed_store_op,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:func, :symbol, "containing function ID"},
+      {:store, :symbol, "store type (mnesia or dets)"},
+      {:op, :symbol, "operation name"}
+    ],
+    doc: "Mnesia or DETS distributed store operation."
+  }
+
+  # Layer 2: gen_statem extractor facts.
+
+  @statem_module %{
+    name: :statem_module,
+    layer: 2,
+    fields: [
+      {:mod, :symbol, "module name"},
+      {:callback_mode, :symbol, "state_functions or handle_event_function"}
+    ],
+    doc: "Module implementing gen_statem behaviour."
+  }
+
+  @statem_state %{
+    name: :statem_state,
+    layer: 2,
+    fields: [
+      {:mod, :symbol, "module name"},
+      {:state, :symbol, "state atom"}
+    ],
+    doc: "State in a gen_statem state machine."
+  }
+
+  @statem_transition %{
+    name: :statem_transition,
+    layer: 2,
+    fields: [
+      {:mod, :symbol, "module name"},
+      {:from_state, :symbol, "source state"},
+      {:event, :symbol, "event type"},
+      {:to_state, :symbol, "target state"}
+    ],
+    doc: "State transition in a gen_statem."
+  }
+
+  @statem_timeout %{
+    name: :statem_timeout,
+    layer: 2,
+    fields: [
+      {:mod, :symbol, "module name"},
+      {:state, :symbol, "state setting the timeout"},
+      {:type, :symbol, "timeout type (state_timeout, event_timeout, generic)"},
+      {:value, :symbol, "timeout value"}
+    ],
+    doc: "Timeout set in a gen_statem state."
+  }
+
   # All relations indexed by name.
 
   @layer_1_relations [
@@ -524,7 +829,40 @@ defmodule Argus.Schema do
     @sync_call_timeout,
     @ets_new,
     @ets_option,
-    @ets_op
+    @ets_op,
+    # Atom safety.
+    @unsafe_atom_creation,
+    @unsafe_deserialization,
+    @code_execution,
+    # Error handling.
+    @bare_rescue,
+    @trap_exit,
+    @exit_call,
+    @ignored_error_result,
+    # Resource lifecycle.
+    @resource_open,
+    @resource_close,
+    @port_open,
+    # Process registry & naming.
+    @process_register,
+    @registry_op,
+    @via_tuple,
+    @whereis_call,
+    # Phoenix/Plug security.
+    @plug_pipeline,
+    @controller_action,
+    @raw_sql_call,
+    @redirect_call,
+    # Distributed systems.
+    @rpc_call,
+    @global_register,
+    @node_operation,
+    @distributed_store_op,
+    # gen_statem.
+    @statem_module,
+    @statem_state,
+    @statem_transition,
+    @statem_timeout
   ]
 
   @all_relations @layer_1_relations ++ @layer_2_relations
