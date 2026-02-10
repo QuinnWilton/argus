@@ -344,6 +344,24 @@ defmodule Argus.AdditionalRulesTest do
              end)
     end
 
+    test "suppresses unprotected_owner for Erlang-style supervisor children" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.EtsOwner,
+        Argus.Test.Fixtures.ErlangStyleEtsSupervisor
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :ets)
+
+      # EtsOwner is a permanent child under an Erlang-style supervisor.
+      unprotected = results["ets_unprotected_owner"]
+
+      refute Enum.any?(unprotected, fn [_name, mod] ->
+               mod == "Argus.Test.Fixtures.EtsOwner"
+             end)
+    end
+
     test "EtsOwner without supervisor still fires unprotected_owner" do
       skip_without_souffle()
 

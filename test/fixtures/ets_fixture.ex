@@ -91,3 +91,28 @@ defmodule Argus.Test.Fixtures.EtsPermanentSupervisor do
     Supervisor.init(children, strategy: :one_for_one)
   end
 end
+
+defmodule Argus.Test.Fixtures.ErlangStyleEtsSupervisor do
+  @moduledoc false
+  @behaviour :supervisor
+
+  # Erlang-style supervisor returning {:ok, {flags, children}} directly.
+  # Supervises EtsOwner as a permanent child.
+  def start_link do
+    :supervisor.start_link({:local, __MODULE__}, __MODULE__, [])
+  end
+
+  @impl true
+  def init(_args) do
+    {:ok,
+     {%{strategy: :one_for_one, intensity: 5, period: 10},
+      [
+        %{
+          id: Argus.Test.Fixtures.EtsOwner,
+          start: {Argus.Test.Fixtures.EtsOwner, :start_link, [[]]},
+          restart: :permanent,
+          type: :worker
+        }
+      ]}}
+  end
+end
