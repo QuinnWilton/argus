@@ -61,6 +61,10 @@ defmodule Argus.Souffle.CLI do
           tmp ->
             dir = Path.join(tmp, "argus_souffle_#{System.unique_integer([:positive])}")
 
+            # Remove any stale output from a previous VM that picked the
+            # same integer, then create a fresh directory.
+            File.rm_rf(dir)
+
             case File.mkdir_p(dir) do
               :ok -> {:ok, dir}
               {:error, reason} -> {:error, {:mkdir_failed, reason}}
