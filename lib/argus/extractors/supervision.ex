@@ -29,6 +29,7 @@ defmodule Argus.Extractors.Supervision do
       add_fact: 3,
       find_function: 3,
       get_behaviours: 1,
+      match_local_call: 1,
       match_remote_call: 1,
       resolve_register: 3
     ]
@@ -61,22 +62,22 @@ defmodule Argus.Extractors.Supervision do
         add_fact(%{}, :supervisor, [mod_str, "unknown"])
 
       instrs ->
-        extract_from_instructions(%{}, mod_str, instrs)
+        extract_from_instructions(%{}, mod_str, instrs, module_data.functions)
     end
   end
 
   defp extract_application(mod_str, module_data) do
     case find_function(module_data.functions, :start, 2) do
       nil -> %{}
-      instrs -> extract_from_instructions(%{}, mod_str, instrs)
+      instrs -> extract_from_instructions(%{}, mod_str, instrs, module_data.functions)
     end
   end
 
-  defp extract_from_instructions(facts, mod_str, instrs) do
+  defp extract_from_instructions(facts, mod_str, instrs, all_functions) do
     strategy = detect_strategy(instrs)
     facts = add_fact(facts, :supervisor, [mod_str, to_string(strategy)])
 
-    children = extract_children(instrs)
+    children = extract_children_with_helpers(instrs, all_functions)
 
     children
     |> Enum.with_index()
@@ -89,6 +90,31 @@ defmodule Argus.Extractors.Supervision do
         to_string(type)
       ])
     end)
+  end
+
+  # Extract children from the given instructions, then follow local calls
+  # one level deep to find children in helper functions. This catches the
+  # common pattern where init/1 delegates to *_children helper functions
+  # that return child spec lists.
+  defp extract_children_with_helpers(instrs, all_functions) do
+    direct = extract_children(instrs)
+
+    from_helpers =
+      Enum.flat_map(instrs, fn instr ->
+        case match_local_call(instr) do
+          {:ok, _mod, func, arity} ->
+            case find_function(all_functions, func, arity) do
+              nil -> []
+              helper_instrs -> extract_children(helper_instrs)
+            end
+
+          :none ->
+            []
+        end
+      end)
+
+    (direct ++ from_helpers)
+    |> Enum.uniq_by(fn {mod, _, _} -> mod end)
   end
 
   # Detect the supervision strategy by finding the Supervisor.init/2 or
