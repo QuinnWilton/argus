@@ -55,6 +55,24 @@ defmodule Argus.Analyses.TimeoutChain do
           {:target, :symbol, "sync call target module"}
         ],
         doc: "handle_cast/2 that makes a synchronous call."
+      },
+      %{
+        name: :timeout_insufficient,
+        fields: [
+          {:caller, :symbol, "calling GenServer module"},
+          {:callee, :symbol, "called GenServer module"},
+          {:caller_timeout, :number, "caller's timeout (ms)"},
+          {:callee_downstream_timeout, :number, "callee's downstream timeout (ms)"}
+        ],
+        doc: "Caller's timeout cannot accommodate callee's downstream sync call."
+      },
+      %{
+        name: :infinity_timeout_in_chain,
+        fields: [
+          {:mod, :symbol, "GenServer module using :infinity timeout"},
+          {:target, :symbol, "sync call target module"}
+        ],
+        doc: "Sync call in a chain uses :infinity timeout, can block forever."
       }
     ]
   end

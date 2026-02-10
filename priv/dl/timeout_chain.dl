@@ -21,6 +21,9 @@
 .decl sync_call(caller_func: symbol, callee_mod: symbol)
 .input sync_call
 
+.decl sync_call_timeout(caller_func: symbol, callee_mod: symbol, timeout_ms: number)
+.input sync_call_timeout
+
 .decl async_cast(caller_func: symbol, callee_mod: symbol)
 .input async_cast
 
@@ -153,3 +156,64 @@ blocking_cast_handler(mod, target_mod) :-
   handle_cast_function(mod, func),
   call_reachable(func, g),
   genserver_sync_api(g, target_mod).
+
+// ── Timeout-aware sync dependency ──────────────────────────────────
+
+// Like callback_sync_dep, but carries the timeout value from the call site.
+.decl callback_sync_dep_timeout(from_mod: symbol, to_mod: symbol, timeout_ms: number)
+
+// Direct: handle_call itself has sync_call_timeout.
+callback_sync_dep_timeout(from_mod, to_mod, timeout_ms) :-
+  handle_call_function(from_mod, func),
+  sync_call_timeout(func, to_mod, timeout_ms),
+  to_mod != "dynamic",
+  from_mod != to_mod.
+
+// Transitive: handle_call reaches a function with sync_call_timeout.
+callback_sync_dep_timeout(from_mod, to_mod, timeout_ms) :-
+  handle_call_function(from_mod, func),
+  call_reachable(func, g),
+  sync_call_timeout(g, to_mod, timeout_ms),
+  to_mod != "dynamic",
+  from_mod != to_mod.
+
+// Via GenServer sync API: use the API function's own sync_call_timeout.
+callback_sync_dep_timeout(from_mod, to_mod, timeout_ms) :-
+  handle_call_function(from_mod, func),
+  call_edge(func, g),
+  genserver_sync_api(g, to_mod),
+  sync_call_timeout(g, _, timeout_ms),
+  from_mod != to_mod.
+
+callback_sync_dep_timeout(from_mod, to_mod, timeout_ms) :-
+  handle_call_function(from_mod, func),
+  call_reachable(func, g),
+  genserver_sync_api(g, to_mod),
+  sync_call_timeout(g, _, timeout_ms),
+  from_mod != to_mod.
+
+// ── Output: timeout insufficient ───────────────────────────────────
+
+// A calls B with T_AB, B's handle_call calls someone with T_BC.
+// If T_AB <= T_BC: A's budget cannot accommodate B's downstream work.
+.decl timeout_insufficient(caller: symbol, callee: symbol,
+                           caller_timeout: number, callee_downstream_timeout: number)
+.output timeout_insufficient
+
+timeout_insufficient(a, b, t_ab, t_bc) :-
+  callback_sync_dep_timeout(a, b, t_ab),
+  callback_sync_dep_timeout(b, _, t_bc),
+  t_ab > 0,     // not dynamic
+  t_ab != -1,   // not infinity
+  t_bc > 0,     // not dynamic
+  t_ab <= t_bc.
+
+// ── Output: infinity timeout in chain ──────────────────────────────
+
+// Sync call in a chain uses :infinity timeout — can block forever.
+.decl infinity_timeout_in_chain(mod: symbol, target: symbol)
+.output infinity_timeout_in_chain
+
+infinity_timeout_in_chain(mod, target) :-
+  callback_sync_dep_timeout(mod, target, -1),
+  implements_behaviour(target, "GenServer").

@@ -67,3 +67,40 @@ defmodule Argus.Test.Fixtures.TimeoutChain.BlockingCastServer do
     {:noreply, state}
   end
 end
+
+defmodule Argus.Test.Fixtures.TimeoutChain.ServerWithExplicitTimeout do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  def request(server), do: GenServer.call(server, :request)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call(:request, _from, state) do
+    # Calls ServerC with 10_000ms — when called by ServerA (default 5000ms),
+    # the outer timeout cannot accommodate this downstream call.
+    val = GenServer.call(state.server_c, :lookup, 10_000)
+    {:reply, val, state}
+  end
+end
+
+defmodule Argus.Test.Fixtures.TimeoutChain.ServerWithInfinityTimeout do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  def request(server), do: GenServer.call(server, :request)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call(:request, _from, state) do
+    # Calls ServerC with :infinity — can block the caller forever.
+    val = GenServer.call(state.server_c, :lookup, :infinity)
+    {:reply, val, state}
+  end
+end
