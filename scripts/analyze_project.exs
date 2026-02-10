@@ -58,7 +58,7 @@ defmodule Argus.Scripts.AnalyzeProject do
 
     case Argus.analyze(modules, analysis, extractors: extractors) do
       {:ok, results} ->
-        print_results(results)
+        print_results(results, analysis)
 
       {:error, reason} ->
         abort("Analysis failed: #{inspect(reason)}")
@@ -164,13 +164,21 @@ defmodule Argus.Scripts.AnalyzeProject do
     end)
   end
 
-  # Intermediate relations produced by Souffle that aren't findings.
-  @noise_relations ~w(call_edge call_reachable module_reaches)
+  # Output relations that represent actual findings per analysis.
+  # Anything not listed here is an intermediate relation (call_edge, etc.).
+  @finding_relations %{
+    coupled_siblings: ~w(coupled_siblings wrong_start_order),
+    supervision: ~w(suspect_transient_dependency unlinked_coupled_siblings wrong_start_order)
+  }
 
-  defp print_results(results) do
+  defp print_results(results, analysis) do
+    allowed = Map.get(@finding_relations, analysis)
+
     findings =
       results
-      |> Enum.reject(fn {name, _} -> name in @noise_relations end)
+      |> then(fn rs ->
+        if allowed, do: Enum.filter(rs, fn {name, _} -> name in allowed end), else: rs
+      end)
       |> Enum.reject(fn {_, rows} -> rows == [] end)
 
     if findings == [] do

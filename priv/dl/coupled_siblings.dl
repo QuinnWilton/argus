@@ -1,9 +1,9 @@
 // Coupled sibling analysis.
 //
 // Combines callgraph with supervision structure to find siblings under
-// one_for_one that transitively depend on each other. Unlike supervision.dl
-// which only checks direct sync_call, this uses transitive call_reachable
-// to catch indirect coupling through intermediate modules.
+// one_for_one that are coupled through GenServer message passing. Uses
+// sync_call/async_cast facts to distinguish stateful process dependencies
+// from plain function calls to code that happens to live in a sibling.
 
 .include "base.dl"
 
@@ -46,11 +46,81 @@ module_reaches(from_mod, to_mod) :-
   function_def(callee, to_mod, _, _, _, _),
   from_mod != to_mod.
 
+// ── Stateful module dependency ──────────────────────────────────────
+
+// Module-level dependency through GenServer message passing (sync_call
+// or async_cast). Distinguishes stateful process coupling from plain
+// function calls.
+.decl stateful_module_dep(from_mod: symbol, to_mod: symbol)
+
+// Resolved target: a function in from_mod transitively reaches a
+// function that makes a sync_call/async_cast to a known target module.
+stateful_module_dep(from_mod, to_mod) :-
+  function_def(f, from_mod, _, _, _, _),
+  call_reachable(f, g),
+  sync_call(g, to_mod),
+  to_mod != "dynamic",
+  from_mod != to_mod.
+
+stateful_module_dep(from_mod, to_mod) :-
+  function_def(f, from_mod, _, _, _, _),
+  call_reachable(f, g),
+  async_cast(g, to_mod),
+  to_mod != "dynamic",
+  from_mod != to_mod.
+
+// Direct: the function itself (not just a callee) has the call/cast.
+stateful_module_dep(from_mod, to_mod) :-
+  function_def(f, from_mod, _, _, _, _),
+  sync_call(f, to_mod),
+  to_mod != "dynamic",
+  from_mod != to_mod.
+
+stateful_module_dep(from_mod, to_mod) :-
+  function_def(f, from_mod, _, _, _, _),
+  async_cast(f, to_mod),
+  to_mod != "dynamic",
+  from_mod != to_mod.
+
+// Per-function heuristic: from_mod reaches a function in to_mod that
+// itself makes a sync_call/async_cast with any target (including
+// dynamic). This catches GenServer modules whose API functions
+// internally call GenServer.call(server, ...) with a runtime pid/name.
+stateful_module_dep(from_mod, to_mod) :-
+  function_def(f, from_mod, _, _, _, _),
+  call_reachable(f, g),
+  function_def(g, to_mod, _, _, _, _),
+  sync_call(g, _),
+  from_mod != to_mod.
+
+stateful_module_dep(from_mod, to_mod) :-
+  function_def(f, from_mod, _, _, _, _),
+  call_reachable(f, g),
+  function_def(g, to_mod, _, _, _, _),
+  async_cast(g, _),
+  from_mod != to_mod.
+
+// Module-level heuristic: from_mod reaches to_mod through the call
+// graph, and to_mod has any function with sync_call/async_cast. This
+// catches facade modules (e.g. Oban.Notifier) that delegate to
+// concrete GenServer implementations via dynamic dispatch — the
+// reached function itself has no sync_call fact, but the module as a
+// whole manages process state.
+stateful_module_dep(from_mod, to_mod) :-
+  module_reaches(from_mod, to_mod),
+  function_def(h, to_mod, _, _, _, _),
+  sync_call(h, _).
+
+stateful_module_dep(from_mod, to_mod) :-
+  module_reaches(from_mod, to_mod),
+  function_def(h, to_mod, _, _, _, _),
+  async_cast(h, _).
+
 // ── Coupled siblings ─────────────────────────────────────────────────
 
-// Two children under one_for_one where one module's functions
-// transitively call the other's. Under one_for_one, if callee_mod
-// crashes, caller_mod keeps running in a degraded state.
+// Two children under one_for_one where one depends on the other through
+// GenServer message passing. Under one_for_one, if callee_mod crashes,
+// caller_mod keeps running in a degraded state.
 .decl coupled_siblings(sup: symbol, caller_mod: symbol, callee_mod: symbol)
 .output coupled_siblings
 
@@ -58,7 +128,7 @@ coupled_siblings(sup, caller_mod, callee_mod) :-
   supervisor(sup, "one_for_one"),
   supervisor_child(sup, _, caller_mod, _, _),
   supervisor_child(sup, _, callee_mod, _, _),
-  module_reaches(caller_mod, callee_mod),
+  stateful_module_dep(caller_mod, callee_mod),
   caller_mod != callee_mod.
 
 // ── Wrong start order ────────────────────────────────────────────────
