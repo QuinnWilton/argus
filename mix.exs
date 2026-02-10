@@ -12,6 +12,10 @@ defmodule Argus.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
       dialyzer: dialyzer(),
+      description: "BEAM program analysis via Souffle Datalog",
+      package: package(),
+      name: "Argus",
+      docs: docs(),
 
       # Test
       test_coverage: [
@@ -28,21 +32,37 @@ defmodule Argus.MixProject do
 
   defp deps do
     [
-      # BEAM file analysis (workspace sibling).
-      {:beam_spy, path: "../beam_spy"},
+      # BEAM file analysis.
+      {:beam_spy, "~> 0.1.0"},
 
       # Dev/Test
       {:stream_data, "~> 1.0", only: [:test, :dev]},
-      {:dialyxir, "~> 1.4", only: :dev, runtime: false}
+      {:dialyxir, "~> 1.4", only: :dev, runtime: false},
+      {:ex_doc, "~> 0.31", only: :dev, runtime: false}
     ]
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/fixtures"]
   defp elixirc_paths(_), do: ["lib"]
 
+  defp package do
+    [
+      licenses: ["MIT"],
+      links: %{"GitHub" => "https://github.com/QuinnWilton/argus"}
+    ]
+  end
+
+  defp docs do
+    [
+      main: "readme",
+      extras: ["README.md"]
+    ]
+  end
+
   defp dialyzer do
     [
-      plt_add_apps: [:mix]
+      plt_add_apps: [:mix],
+      plt_file: {:no_warn, "priv/plts/dialyzer.plt"}
     ]
   end
 end

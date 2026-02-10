@@ -22,3 +22,6 @@ erl_crash.dump
 # Ignore package tarball (built via "mix hex.build").
 argus-*.tar
 
+# Dialyzer PLT cache.
+/priv/plts/
+
