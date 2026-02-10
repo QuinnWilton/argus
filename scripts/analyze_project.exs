@@ -2,18 +2,23 @@
 #
 # Usage:
 #   mix run scripts/analyze_project.exs /path/to/project [analyses...]
+#   mix run scripts/analyze_project.exs /path/to/project --json /output.json [analyses...]
 #
 # Examples:
 #   mix run scripts/analyze_project.exs /path/to/project           # run all correctness analyses
 #   mix run scripts/analyze_project.exs /path/to/project all       # run every analysis
 #   mix run scripts/analyze_project.exs /path/to/project ets       # run one analysis
-#   mix run scripts/analyze_project.exs /path/to/project ets supervision  # run several
+#   mix run scripts/analyze_project.exs /path/to/project --json /tmp/out.json ets supervision
+#
+# When --json PATH is provided, all output is written as structured JSON to PATH
+# instead of pretty-printing to the console. Per-analysis errors are recorded in
+# the JSON rather than halting the script.
 #
 # The project must already be compiled. This script:
 # 1. Adds the project's ebin directories to the code path
 # 2. Discovers project modules (skipping deps)
 # 3. Runs the specified analyses (default: all correctness/bug-detection analyses)
-# 4. Pretty-prints supervision structure and findings
+# 4. Pretty-prints supervision structure and findings (or writes JSON)
 
 defmodule Argus.Scripts.AnalyzeProject do
   # Analyses that detect bugs, correctness issues, or anti-patterns.
@@ -33,18 +38,19 @@ defmodule Argus.Scripts.AnalyzeProject do
 
   @doc false
   def run(args) do
-    {project_path, analyses} = parse_args(args)
+    {opts, positional} = parse_opts(args)
+    {project_path, analyses} = parse_positional(positional)
     project_path = Path.expand(project_path)
 
     unless File.dir?(project_path) do
       abort("Project path does not exist: #{project_path}")
     end
 
-    IO.puts("Analyzing: #{project_path}")
+    json_path = opts[:json]
 
-    IO.puts("Analyses:  #{Enum.map_join(analyses, ", ", &to_string/1)}")
-
-    IO.puts("")
+    unless json_path, do: IO.puts("Analyzing: #{project_path}")
+    unless json_path, do: IO.puts("Analyses:  #{Enum.map_join(analyses, ", ", &to_string/1)}")
+    unless json_path, do: IO.puts("")
 
     # Add project ebin dirs to code path.
     ebin_dirs = discover_ebin_dirs(project_path)
@@ -57,7 +63,7 @@ defmodule Argus.Scripts.AnalyzeProject do
       Code.prepend_path(dir)
     end)
 
-    IO.puts("Added #{length(ebin_dirs)} ebin directories to code path")
+    unless json_path, do: IO.puts("Added #{length(ebin_dirs)} ebin directories to code path")
 
     # Discover project modules (from the project's own ebins, not deps).
     project_ebins = find_project_ebins(project_path)
@@ -67,14 +73,51 @@ defmodule Argus.Scripts.AnalyzeProject do
       abort("No modules found in project ebin")
     end
 
-    IO.puts("Found #{length(modules)} project modules")
-    IO.puts("")
+    unless json_path, do: IO.puts("Found #{length(modules)} project modules")
+    unless json_path, do: IO.puts("")
 
+    if json_path do
+      run_json(project_path, modules, analyses, json_path)
+    else
+      run_pretty(project_path, modules, analyses)
+    end
+  end
+
+  # JSON output mode — collects all results (including errors) and writes JSON.
+  defp run_json(project_path, modules, analyses, json_path) do
+    start_time = System.monotonic_time(:millisecond)
+
+    analysis_results =
+      Enum.map(analyses, fn analysis ->
+        {analysis, Argus.analyze(modules, analysis)}
+      end)
+
+    duration_ms = System.monotonic_time(:millisecond) - start_time
+
+    meta = %{
+      "name" => Path.basename(project_path),
+      "path" => project_path,
+      "build_system" => detect_build_system(project_path),
+      "module_count" => length(modules),
+      "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "duration_ms" => duration_ms
+    }
+
+    report = Argus.Report.build_project_report(meta, analysis_results)
+
+    case Argus.Report.write_json(report, json_path) do
+      :ok -> :ok
+      {:error, reason} -> abort("Failed to write JSON: #{inspect(reason)}")
+    end
+  end
+
+  # Pretty-print mode — original behavior.
+  defp run_pretty(_project_path, modules, analyses) do
     # Print supervision structure first.
     print_supervision_structure(modules)
 
     # Run each analysis and collect results.
-    {results, failures} = run_analyses(modules, analyses)
+    {results, failures} = run_analyses_pretty(modules, analyses)
 
     # Print results grouped by analysis.
     print_all_results(results)
@@ -87,19 +130,29 @@ defmodule Argus.Scripts.AnalyzeProject do
     end
   end
 
-  defp parse_args([project_path | rest]) do
+  defp parse_opts(args) do
+    {opts, positional, _} =
+      OptionParser.parse(args, strict: [json: :string])
+
+    {opts, positional}
+  end
+
+  defp parse_positional([project_path | rest]) do
     analyses = parse_analysis_args(rest)
     {project_path, analyses}
   end
 
-  defp parse_args(_) do
+  defp parse_positional(_) do
     abort("""
-    Usage: mix run scripts/analyze_project.exs /path/to/project [analyses...]
+    Usage: mix run scripts/analyze_project.exs /path/to/project [--json PATH] [analyses...]
 
     When no analyses are specified, runs all correctness analyses:
       #{Enum.map_join(@correctness_analyses, ", ", &to_string/1)}
 
-    Pass "all" to run every available analysis.\
+    Pass "all" to run every available analysis.
+
+    Options:
+      --json PATH   Write structured JSON results to PATH instead of console output\
     """)
   end
 
@@ -123,7 +176,7 @@ defmodule Argus.Scripts.AnalyzeProject do
     end)
   end
 
-  defp run_analyses(modules, analyses) do
+  defp run_analyses_pretty(modules, analyses) do
     analyses
     |> Enum.reduce({[], []}, fn analysis, {ok_acc, err_acc} ->
       IO.puts("--- Running #{analysis} ---")
@@ -265,6 +318,14 @@ defmodule Argus.Scripts.AnalyzeProject do
   defp detect_app_name_rebar(app_src_path) do
     app_src_path
     |> Path.basename(".app.src")
+  end
+
+  defp detect_build_system(project_path) do
+    cond do
+      File.exists?(Path.join(project_path, "mix.exs")) -> "mix"
+      File.exists?(Path.join(project_path, "rebar.config")) -> "rebar3"
+      true -> "unknown"
+    end
   end
 
   defp discover_modules(ebin_dir) do
