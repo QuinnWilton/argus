@@ -1,0 +1,69 @@
+// gen_statem state machine correctness analysis.
+//
+// Detects state machine bugs: unreachable states, terminal states
+// without stop, and related structural issues.
+
+.include "../clientlib/imports.dl"
+
+// Layer 2 input declarations.
+.decl statem_module(mod: symbol, callback_mode: symbol)
+.input statem_module
+
+.decl statem_state(mod: symbol, state: symbol)
+.input statem_state
+
+.decl statem_transition(mod: symbol, from_state: symbol, event: symbol, to_state: symbol)
+.input statem_transition
+
+.decl statem_timeout(mod: symbol, state: symbol, type: symbol, value: symbol)
+.input statem_timeout
+
+// ── State reachability ───────────────────────────────────────────
+
+// A state is the target of at least one transition.
+.decl state_has_incoming(mod: symbol, state: symbol)
+
+state_has_incoming(mod, state) :-
+  statem_transition(mod, _, _, state),
+  state != "stop",
+  state != "dynamic".
+
+// Initial state — the first state in init/1 (heuristic: the first
+// state declared, or the source of the first transition).
+.decl initial_state(mod: symbol, state: symbol)
+
+initial_state(mod, state) :-
+  statem_transition(mod, state, _, _),
+  !state_has_incoming(mod, state),
+  statem_state(mod, state).
+
+// Unreachable state — defined but no transition leads to it and
+// it's not the initial state.
+.decl unreachable_state(mod: symbol, state: symbol)
+.output unreachable_state
+
+unreachable_state(mod, state) :-
+  statem_state(mod, state),
+  !state_has_incoming(mod, state),
+  !initial_state(mod, state),
+  state != "stop",
+  state != "dynamic".
+
+// ── Terminal states ──────────────────────────────────────────────
+
+// A state has at least one outgoing transition.
+.decl state_has_outgoing(mod: symbol, state: symbol)
+
+state_has_outgoing(mod, state) :-
+  statem_transition(mod, state, _, _).
+
+// Terminal state without stop — a state with no outgoing transitions
+// that doesn't transition to "stop".
+.decl terminal_without_stop(mod: symbol, state: symbol)
+.output terminal_without_stop
+
+terminal_without_stop(mod, state) :-
+  statem_state(mod, state),
+  !state_has_outgoing(mod, state),
+  state != "stop",
+  state != "dynamic".
