@@ -1,0 +1,53 @@
+// Process registry and naming analysis.
+//
+// Detects naming issues: duplicate process name registration across
+// modules and TOCTOU races on Process.whereis.
+
+.include "../clientlib/imports.dl"
+
+// Layer 2 input declarations.
+.decl process_register(id: symbol, func: symbol, name: symbol, method: symbol)
+.input process_register
+
+.decl registry_op(id: symbol, func: symbol, registry: symbol, op: symbol, key: symbol)
+.input registry_op
+
+.decl via_tuple(id: symbol, func: symbol, registry: symbol, key: symbol)
+.input via_tuple
+
+.decl whereis_call(id: symbol, func: symbol, name: symbol)
+.input whereis_call
+
+// ── Duplicate process names ──────────────────────────────────────
+
+// Module that registers a specific name.
+.decl module_registers_name(mod: symbol, name: symbol)
+
+module_registers_name(mod, name) :-
+  process_register(_, func, name, _),
+  name != "dynamic",
+  name != ":dynamic",
+  function_def(func, mod, _, _, _, _).
+
+// Same name registered by two different modules.
+.decl duplicate_process_name(name: symbol, mod1: symbol, mod2: symbol)
+.output duplicate_process_name
+
+duplicate_process_name(name, mod1, mod2) :-
+  module_registers_name(mod1, name),
+  module_registers_name(mod2, name),
+  mod1 < mod2.
+
+// ── Whereis race (TOCTOU) ────────────────────────────────────────
+
+// Process.whereis followed by usage without nil check.
+// This is a heuristic: we flag all whereis calls as potential races
+// since checking whether the result is nil-checked requires deeper
+// dataflow analysis than we currently perform.
+.decl whereis_race(func: symbol, name: symbol)
+.output whereis_race
+
+whereis_race(func, name) :-
+  whereis_call(_, func, name),
+  name != "dynamic",
+  name != ":dynamic".
