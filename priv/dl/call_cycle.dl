@@ -1,0 +1,68 @@
+// Call cycle (deadlock) detection.
+//
+// Derives module-level synchronous dependency cycles: A sync-calls B and
+// B sync-calls A (directly or transitively through the call graph).
+// A cycle between two GenServer modules means each can block waiting for
+// the other, producing a deadlock.
+
+.include "base.dl"
+
+// ── Layer 2 facts ──────────────────────────────────────────────────────
+
+.decl sync_call(caller_func: symbol, callee_mod: symbol)
+.input sync_call
+
+.decl implements_behaviour(mod: symbol, behaviour: symbol)
+.input implements_behaviour
+
+// ── Callgraph ──────────────────────────────────────────────────────────
+
+.decl call_edge(caller: symbol, callee: symbol)
+.include "callgraph_rules.dl"
+
+.decl call_reachable(from: symbol, to: symbol)
+.include "call_reachable_rules.dl"
+
+// ── Synchronous dependency ─────────────────────────────────────────────
+
+// Direct: a function in from_mod makes a sync_call to to_mod.
+.decl sync_dep(from_mod: symbol, to_mod: symbol)
+
+sync_dep(from_mod, to_mod) :-
+  function_def(f, from_mod, _, _, _, _),
+  sync_call(f, to_mod),
+  to_mod != "dynamic", from_mod != to_mod.
+
+// Transitive: a function in from_mod reaches (through the call graph)
+// a function that sync-calls to_mod.
+.decl sync_dep_transitive(from_mod: symbol, to_mod: symbol)
+
+sync_dep_transitive(from_mod, to_mod) :- sync_dep(from_mod, to_mod).
+
+sync_dep_transitive(from_mod, to_mod) :-
+  function_def(f, from_mod, _, _, _, _),
+  call_reachable(f, g),
+  sync_call(g, to_mod),
+  to_mod != "dynamic", from_mod != to_mod.
+
+// ── Cycle detection ────────────────────────────────────────────────────
+
+// Two modules that mutually depend on each other synchronously.
+// The a < b constraint avoids duplicate (b, a) pairs.
+.decl call_cycle(mod_a: symbol, mod_b: symbol)
+.output call_cycle
+
+call_cycle(a, b) :-
+  sync_dep_transitive(a, b),
+  sync_dep_transitive(b, a),
+  a < b.
+
+// Full path of transitive sync dependencies for cycle participants.
+.decl call_cycle_path(from_mod: symbol, to_mod: symbol)
+.output call_cycle_path
+
+call_cycle_path(from_mod, to_mod) :-
+  call_cycle(a, b),
+  sync_dep_transitive(from_mod, to_mod),
+  (from_mod = a ; from_mod = b),
+  (to_mod = a ; to_mod = b).
