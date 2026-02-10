@@ -175,4 +175,64 @@ defmodule Argus.AdditionalRulesTest do
       assert Map.has_key?(results, "sync_call_fan_in")
     end
   end
+
+  describe "supervision.dl" do
+    test "analyzes supervisor fixtures" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.GoodSupervisor,
+        Argus.Test.Fixtures.BadOrderSupervisor,
+        Argus.Test.Fixtures.WorkerA,
+        Argus.Test.Fixtures.WorkerB
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :supervision)
+
+      assert Map.has_key?(results, "suspect_transient_dependency")
+      assert Map.has_key?(results, "unlinked_coupled_siblings")
+      assert Map.has_key?(results, "wrong_start_order")
+    end
+  end
+
+  describe "ets.dl" do
+    test "detects ETS ownership and access patterns" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.EtsOwner,
+        Argus.Test.Fixtures.EtsReader,
+        Argus.Test.Fixtures.EtsWriter,
+        Argus.Test.Fixtures.EtsUnnamed,
+        Argus.Test.Fixtures.EtsWellConfigured,
+        Argus.Test.Fixtures.EtsParamTable
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :ets)
+
+      assert Map.has_key?(results, "ets_owner_process")
+      assert Map.has_key?(results, "ets_reader_module")
+      assert Map.has_key?(results, "ets_writer_module")
+
+      # EtsOwner creates a table, so there should be at least one owner entry.
+      assert length(results["ets_owner_process"]) > 0
+    end
+  end
+
+  describe "one_for_one_coupling.dl" do
+    test "analyzes coupling under one_for_one supervisors" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.GoodSupervisor,
+        Argus.Test.Fixtures.WorkerA,
+        Argus.Test.Fixtures.WorkerB
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :one_for_one_coupling)
+
+      assert Map.has_key?(results, "one_for_one_coupling")
+      assert Map.has_key?(results, "wrong_start_order")
+    end
+  end
 end
