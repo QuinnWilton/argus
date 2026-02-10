@@ -1,65 +1,74 @@
 defmodule Argus.Analysis do
   @moduledoc """
-  High-level analysis API.
+  Behaviour and API for BEAM program analyses.
 
-  Orchestrates the full pipeline: extract facts from modules, run Souffle
-  rules, and return results as Elixir terms.
+  Each analysis is a module that implements this behaviour, declaring its
+  name, description, Souffle rules file, required extractors, and output
+  relations. The system discovers these modules at runtime from the
+  `:argus` application's module list.
+
+  ## Defining a custom analysis
+
+  Create a module that implements `@behaviour Argus.Analysis`:
+
+      defmodule MyApp.Analyses.Unused do
+        @behaviour Argus.Analysis
+
+        @impl true
+        def name, do: :unused
+
+        @impl true
+        def description, do: "find unused functions"
+
+        @impl true
+        def rules_file, do: "unused.dl"
+
+        @impl true
+        def extractors, do: []
+
+        @impl true
+        def output_relations do
+          [
+            %{
+              name: :unused_function,
+              fields: [{:func, :symbol, "function ID"}],
+              doc: "Function that is never called."
+            }
+          ]
+        end
+      end
+
+  You can also pass `{:custom, "path/to/rules.dl"}` to `run/3` to run
+  ad-hoc Datalog rules without defining a module.
 
   ## Built-in analyses
 
-  - `:cfg` — control flow graph edges
-  - `:callgraph` — call graph edges
-  - `:reachability` — transitive CFG and call reachability
-  - `:reaching_def` — reaching definitions and def-use chains
-  - `:liveness` — live variable analysis and dead definition detection
-  - `:tail_call` — tail call identification and recursion detection
-  - `:message_flow` — message send/receive pairing across functions
-  - `:supervision` — supervision tree structure and anti-patterns
-  - `:ets` — ETS table ownership, concurrency, and lifecycle analysis
-  - `:coupled_siblings` — siblings under one_for_one with transitive coupling
-
-  ## Custom analyses
-
-  Pass `{:custom, "path/to/rules.dl"}` to run your own Datalog rules
-  against the extracted facts.
+  See modules under `Argus.Analyses.*` for the full list. Use
+  `builtin_analyses/0` or `builtin_analysis_modules/0` to discover them
+  at runtime.
   """
 
   alias Argus.Extract
   alias Argus.Souffle.CLI
 
-  @type analysis ::
-          :cfg
-          | :callgraph
-          | :reachability
-          | :reaching_def
-          | :liveness
-          | :tail_call
-          | :message_flow
-          | :supervision
-          | :ets
-          | :coupled_siblings
-          | {:custom, Path.t()}
+  # Behaviour callbacks.
 
+  @type output_relation :: %{
+          name: atom(),
+          fields: [Argus.Schema.field()],
+          doc: String.t()
+        }
+
+  @callback name() :: atom()
+  @callback description() :: String.t()
+  @callback rules_file() :: String.t()
+  @callback extractors() :: [module()]
+  @callback output_relations() :: [output_relation()]
+
+  # Public API types.
+
+  @type analysis :: atom() | {:custom, Path.t()}
   @type result :: %{String.t() => [[String.t()]]}
-
-  @builtin_analyses %{
-    cfg: "cfg.dl",
-    callgraph: "callgraph.dl",
-    reachability: "reachability.dl",
-    supervision: "supervision.dl",
-    reaching_def: "reaching_def.dl",
-    liveness: "liveness.dl",
-    tail_call: "tail_call.dl",
-    message_flow: "message_flow.dl",
-    ets: "ets.dl",
-    coupled_siblings: "coupled_siblings.dl"
-  }
-
-  @analysis_extractors %{
-    supervision: [Argus.Extractors.Supervision, Argus.Extractors.OTP],
-    ets: [Argus.Extractors.ETS, Argus.Extractors.OTP],
-    coupled_siblings: [Argus.Extractors.Supervision, Argus.Extractors.OTP]
-  }
 
   @doc """
   Runs an analysis against the given modules.
@@ -76,7 +85,7 @@ defmodule Argus.Analysis do
   @spec run(modules :: [atom() | String.t()], analysis(), keyword()) ::
           {:ok, result()} | {:error, term()}
   def run(modules, analysis, opts \\ []) do
-    default_extractors = Map.get(@analysis_extractors, analysis, [])
+    default_extractors = default_extractors_for(analysis)
     opts = Keyword.update(opts, :extractors, default_extractors, &(default_extractors ++ &1))
 
     with {:ok, rules_path} <- resolve_rules(analysis),
@@ -92,7 +101,60 @@ defmodule Argus.Analysis do
   Returns the list of built-in analysis names.
   """
   @spec builtin_analyses() :: [atom()]
-  def builtin_analyses, do: Map.keys(@builtin_analyses)
+  def builtin_analyses do
+    Enum.map(discover_analyses(), & &1.name())
+  end
+
+  @doc """
+  Returns all discovered built-in analysis modules.
+  """
+  @spec builtin_analysis_modules() :: [module()]
+  def builtin_analysis_modules do
+    discover_analyses()
+  end
+
+  @doc """
+  Looks up a built-in analysis module by name.
+
+  Returns `{:ok, module}` or `:error` if not found.
+  """
+  @spec fetch_module(atom()) :: {:ok, module()} | :error
+  def fetch_module(name) when is_atom(name) do
+    case Enum.find(discover_analyses(), &(&1.name() == name)) do
+      nil -> :error
+      mod -> {:ok, mod}
+    end
+  end
+
+  @doc """
+  Returns output relations for a named built-in analysis.
+
+  Returns `{:ok, relations}` or `:error` if the analysis is not found.
+  """
+  @spec output_relations(atom()) :: {:ok, [output_relation()]} | :error
+  def output_relations(name) when is_atom(name) do
+    case fetch_module(name) do
+      {:ok, mod} -> {:ok, mod.output_relations()}
+      :error -> :error
+    end
+  end
+
+  # Discovery.
+
+  defp discover_analyses do
+    {:ok, modules} = :application.get_key(:argus, :modules)
+
+    modules
+    |> Enum.filter(fn mod ->
+      Code.ensure_loaded?(mod) and
+        function_exported?(mod, :name, 0) and
+        function_exported?(mod, :rules_file, 0) and
+        function_exported?(mod, :output_relations, 0)
+    end)
+    |> Enum.sort_by(& &1.name())
+  end
+
+  # Rules resolution.
 
   defp resolve_rules({:custom, path}) do
     if File.exists?(path) do
@@ -103,9 +165,9 @@ defmodule Argus.Analysis do
   end
 
   defp resolve_rules(name) when is_atom(name) do
-    case Map.fetch(@builtin_analyses, name) do
-      {:ok, filename} ->
-        path = priv_dl(filename)
+    case fetch_module(name) do
+      {:ok, mod} ->
+        path = priv_dl(mod.rules_file())
 
         if File.exists?(path) do
           {:ok, path}
@@ -115,6 +177,15 @@ defmodule Argus.Analysis do
 
       :error ->
         {:error, {:unknown_analysis, name}}
+    end
+  end
+
+  defp default_extractors_for({:custom, _}), do: []
+
+  defp default_extractors_for(name) when is_atom(name) do
+    case fetch_module(name) do
+      {:ok, mod} -> mod.extractors()
+      :error -> []
     end
   end
 

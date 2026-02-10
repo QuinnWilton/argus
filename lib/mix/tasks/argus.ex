@@ -8,18 +8,7 @@ defmodule Mix.Tasks.Argus do
 
       mix argus ANALYSIS [options]
 
-  ## Built-in analyses
-
-  - `cfg` — control flow graph edges
-  - `callgraph` — call graph edges
-  - `reachability` — transitive CFG and call reachability
-  - `reaching_def` — reaching definitions and def-use chains
-  - `liveness` — live variable analysis and dead definition detection
-  - `tail_call` — tail call identification and recursion detection
-  - `message_flow` — message send/receive pairing across functions
-  - `supervision` — supervision tree structure and anti-patterns
-  - `ets` — ETS table ownership, concurrency, and lifecycle analysis
-  - `coupled_siblings` — siblings under one_for_one with transitive coupling
+  Run `mix argus --list` to see all available analyses with descriptions.
 
   ## Custom analysis
 
@@ -32,6 +21,7 @@ defmodule Mix.Tasks.Argus do
   - `--format` — output format: text (default), json, dot
   - `--fail-above N` — exit with non-zero status if more than N results
   - `--concurrency N` — number of parallel workers (default: number of schedulers)
+  - `--list` — list all available analyses with descriptions
 
   ## Examples
 
@@ -40,20 +30,16 @@ defmodule Mix.Tasks.Argus do
       mix argus callgraph --format dot | dot -Tsvg -o graph.svg
       mix argus supervision --fail-above 0
       mix argus custom my_rules.dl
+      mix argus --list
   """
 
   use Mix.Task
 
   alias Argus.Analysis
-  alias Argus.Souffle.CLI
 
   @impl true
   def run(args) do
     Mix.Task.run("compile", [])
-
-    unless CLI.available?() do
-      Mix.raise("souffle binary not found on PATH. Install Souffle to use Argus.")
-    end
 
     {opts, positional, _} =
       OptionParser.parse(args,
@@ -62,30 +48,61 @@ defmodule Mix.Tasks.Argus do
           include_deps: :boolean,
           format: :string,
           fail_above: :integer,
-          concurrency: :integer
+          concurrency: :integer,
+          list: :boolean
         ]
       )
 
-    case positional do
-      [] ->
-        Mix.raise("Usage: mix argus ANALYSIS [options]\nRun `mix help argus` for details.")
+    if opts[:list] do
+      print_analyses()
+    else
+      unless Argus.Souffle.CLI.available?() do
+        Mix.raise("souffle binary not found on PATH. Install Souffle to use Argus.")
+      end
 
-      ["custom", rules_path | _] ->
-        run_analysis({:custom, rules_path}, opts)
+      case positional do
+        [] ->
+          Mix.raise(
+            "Usage: mix argus ANALYSIS [options]\nRun `mix argus --list` for available analyses."
+          )
 
-      [analysis_name | _] ->
-        case parse_analysis(analysis_name) do
-          {:ok, analysis} -> run_analysis(analysis, opts)
-          {:error, msg} -> Mix.raise(msg)
-        end
+        ["custom", rules_path | _] ->
+          run_analysis({:custom, rules_path}, opts)
+
+        [analysis_name | _] ->
+          case parse_analysis(analysis_name) do
+            {:ok, analysis} -> run_analysis(analysis, opts)
+            {:error, msg} -> Mix.raise(msg)
+          end
+      end
+    end
+  end
+
+  defp print_analyses do
+    modules = Analysis.builtin_analysis_modules()
+
+    if modules == [] do
+      Mix.shell().info("No analyses found.")
+    else
+      header = "Available analyses:\n"
+
+      lines =
+        Enum.map_join(modules, "\n", fn mod ->
+          "  #{mod.name()} — #{mod.description()}"
+        end)
+
+      Mix.shell().info(header <> lines)
     end
   end
 
   defp parse_analysis(name) do
     case Enum.find(Analysis.builtin_analyses(), &(to_string(&1) == name)) do
       nil ->
-        {:error,
-         "Unknown analysis: #{name}\nAvailable: #{Enum.join(Analysis.builtin_analyses(), ", ")}"}
+        available =
+          Analysis.builtin_analysis_modules()
+          |> Enum.map_join("\n  ", fn mod -> "#{mod.name()} — #{mod.description()}" end)
+
+        {:error, "Unknown analysis: #{name}\n\nAvailable analyses:\n  #{available}"}
 
       atom ->
         {:ok, atom}
