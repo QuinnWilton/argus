@@ -77,11 +77,11 @@ Ran `coupled_siblings` analysis against Oban's 69 project modules.
 
 ```
 Oban (one_for_one)
-  ├── Harbor
-  ├── Sonar
-  ├── Peer
-  ├── Nursery
-  └── Notifier
+  ├── 0. Notifier
+  ├── 1. Nursery
+  ├── 2. Peer
+  ├── 3. Sonar
+  └── 4. Harbor
 ```
 
 **Finding: coupled siblings under one_for_one.** `Oban.Sonar` transitively
@@ -92,16 +92,9 @@ continues running but cannot listen or broadcast, leading to silent
 degradation of the pubsub health monitoring system.
 
 In practice this is mitigated by Oban's design: Notifier starts before Sonar
-(position 0 vs 3 in source), and Sonar uses periodic pings that would
-eventually detect the failure. A `rest_for_one` strategy would provide
-stronger guarantees by restarting Sonar (and everything after) when Notifier
-crashes.
-
-**Known limitation.** Child spec positions extracted from bytecode can be
-reversed from source order when the compiler builds the children list
-bottom-up. The `wrong_start_order` finding was a false positive here — the
-actual source order is correct. Accurate position tracking requires either
-source-level analysis or smarter literal decompilation.
+(position 0 vs 3), and Sonar uses periodic pings that would eventually detect
+the failure. A `rest_for_one` strategy would provide stronger guarantees by
+restarting Sonar (and everything after) when Notifier crashes.
 
 ```bash
 # Reproduce:

@@ -135,15 +135,26 @@ defmodule Argus.Extractors.Supervision do
     end)
   end
 
-  # Extract child modules from literal values in init/1.
+  # Extract child modules from literal values and tuple construction.
   # Child specs appear as literals like {Module, args} or %{id: ..., start: {Mod, ...}}.
+  # When children are constructed at runtime, the compiler emits put_tuple2
+  # instructions in reverse order (lists are built tail-first via cons cells).
   defp extract_children(instrs) do
-    instrs
-    |> Enum.flat_map(fn
-      {:move, {:literal, val}, _} -> extract_child_from_literal(val)
-      {:put_tuple2, _, {:list, elements}} -> extract_child_from_tuple_elements(elements)
-      _ -> []
-    end)
+    from_literals =
+      Enum.flat_map(instrs, fn
+        {:move, {:literal, val}, _} -> extract_child_from_literal(val)
+        _ -> []
+      end)
+
+    from_tuples =
+      instrs
+      |> Enum.flat_map(fn
+        {:put_tuple2, _, {:list, elements}} -> extract_child_from_tuple_elements(elements)
+        _ -> []
+      end)
+      |> Enum.reverse()
+
+    (from_literals ++ from_tuples)
     |> Enum.uniq_by(fn {mod, _, _} -> mod end)
   end
 
@@ -159,8 +170,11 @@ defmodule Argus.Extractors.Supervision do
   # {Module, args} — shorthand
   # %{id: _, start: {Mod, :start_link, args}, restart: _, type: _} — full map
   # Module — bare module name (uses Module.child_spec/1)
+  #
+  # Keyword pairs like {:strategy, :one_for_one} also match {atom, value},
+  # so we filter with module_name?/1 to reject non-module atoms.
   defp extract_single_child_spec({mod, _args}) when is_atom(mod) do
-    [{mod, :permanent, :worker}]
+    if module_name?(mod), do: [{mod, :permanent, :worker}], else: []
   end
 
   defp extract_single_child_spec(%{start: {mod, _, _}} = spec) when is_atom(mod) do
@@ -170,10 +184,19 @@ defmodule Argus.Extractors.Supervision do
   end
 
   defp extract_single_child_spec(mod) when is_atom(mod) do
-    [{mod, :permanent, :worker}]
+    if module_name?(mod), do: [{mod, :permanent, :worker}], else: []
   end
 
   defp extract_single_child_spec(_), do: []
+
+  # Elixir modules are atoms starting with "Elixir." internally.
+  # Erlang modules are lowercase atoms — accept those only if loadable.
+  defp module_name?(atom) when is_atom(atom) do
+    case Atom.to_string(atom) do
+      "Elixir." <> _ -> true
+      _ -> Code.ensure_loaded?(atom)
+    end
+  end
 
   defp extract_child_from_tuple_elements(elements) do
     # Look for module atoms in tuple construction that look like child specs.
