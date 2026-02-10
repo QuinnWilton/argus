@@ -5,11 +5,26 @@
 // synchronous dependency on the module, even though the sync_call fact
 // lives inside the GenServer module itself.
 //
-// Requires: function_def, implements_behaviour, sync_call (declared by consumer).
+// Handles delegation through private helpers: if an exported function
+// reaches a private function (in the same module) that has the sync_call,
+// the exported function is still a sync API entry point.
+//
+// Requires: function_def, implements_behaviour, sync_call,
+//           call_reachable (declared by consumer).
 
 .decl genserver_sync_api(func: symbol, mod: symbol)
 
+// Direct: exported function itself has sync_call.
 genserver_sync_api(func, mod) :-
   function_def(func, mod, _, _, _, 1),
   implements_behaviour(mod, "GenServer"),
   sync_call(func, _).
+
+// Delegation: exported function reaches a private helper in the same
+// module that has sync_call.
+genserver_sync_api(func, mod) :-
+  function_def(func, mod, _, _, _, 1),
+  implements_behaviour(mod, "GenServer"),
+  call_reachable(func, g),
+  sync_call(g, _),
+  function_def(g, mod, _, _, _, _).
