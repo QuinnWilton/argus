@@ -14,6 +14,9 @@ defmodule Argus.Extractors.OTP do
 
   @behaviour Argus.Extractor
 
+  import Argus.Extractor.Helpers,
+    only: [add_fact: 3, get_behaviours: 1, match_remote_call: 1, resolve_register: 3]
+
   alias Argus.Normalize
 
   @impl true
@@ -30,18 +33,12 @@ defmodule Argus.Extractors.OTP do
     facts = extract_behaviours(facts, mod_str, attrs)
 
     # Scan bytecode for GenServer.call/cast patterns.
-    facts = extract_genserver_calls(facts, mod, functions)
-
-    facts
+    extract_genserver_calls(facts, mod, functions)
   end
 
   defp extract_behaviours(facts, mod_str, attrs) do
-    behaviours =
-      Keyword.get_values(attrs, :behaviour) ++
-        Keyword.get_values(attrs, :behavior)
-
-    behaviours
-    |> List.flatten()
+    attrs
+    |> get_behaviours()
     |> Enum.reduce(facts, fn behaviour, acc ->
       add_fact(acc, :implements_behaviour, [mod_str, inspect(behaviour)])
     end)
@@ -55,43 +52,32 @@ defmodule Argus.Extractors.OTP do
   end
 
   # Scan instructions for GenServer.call/cast patterns.
-  # GenServer.call(server, request) compiles to a call_ext to GenServer.call/2 or /3.
-  # The server argument is typically in x0 just before the call.
-  # We look for a move of an atom/literal into x0 followed by a GenServer call.
+  # Uses match_remote_call/1 to recognize call variants and resolve_register/3
+  # to attempt resolving the server argument (x0).
   defp scan_for_genserver_calls(facts, func_id, instrs) do
     instrs
-    |> Enum.chunk_every(2, 1, :discard)
-    |> Enum.reduce(facts, fn
-      [_prev, {:call_ext, _arity, {:extfunc, GenServer, :call, arity}}], acc
-      when arity in [2, 3] ->
-        # Look back for the module being called — we'd need the preceding move.
-        # For now, emit with the caller func only. The callee would require
-        # more sophisticated dataflow analysis.
-        add_fact(acc, :sync_call, [func_id, "dynamic"])
+    |> Enum.with_index()
+    |> Enum.reduce(facts, fn {instr, idx}, acc ->
+      case match_remote_call(instr) do
+        {:ok, GenServer, :call, arity} when arity in [2, 3] ->
+          callee = resolve_callee(instrs, idx)
+          add_fact(acc, :sync_call, [func_id, callee])
 
-      [_prev, {:call_ext, _arity, {:extfunc, GenServer, :cast, 2}}], acc ->
-        add_fact(acc, :async_cast, [func_id, "dynamic"])
+        {:ok, GenServer, :cast, 2} ->
+          callee = resolve_callee(instrs, idx)
+          add_fact(acc, :async_cast, [func_id, callee])
 
-      [_prev, {:call_ext_only, _arity, {:extfunc, GenServer, :call, arity}}], acc
-      when arity in [2, 3] ->
-        add_fact(acc, :sync_call, [func_id, "dynamic"])
-
-      [_prev, {:call_ext_only, _arity, {:extfunc, GenServer, :cast, 2}}], acc ->
-        add_fact(acc, :async_cast, [func_id, "dynamic"])
-
-      [_prev, {:call_ext_last, _arity, {:extfunc, GenServer, :call, arity}, _}], acc
-      when arity in [2, 3] ->
-        add_fact(acc, :sync_call, [func_id, "dynamic"])
-
-      [_prev, {:call_ext_last, _arity, {:extfunc, GenServer, :cast, 2}, _}], acc ->
-        add_fact(acc, :async_cast, [func_id, "dynamic"])
-
-      _, acc ->
-        acc
+        _ ->
+          acc
+      end
     end)
   end
 
-  defp add_fact(facts, relation, row) do
-    Map.update(facts, relation, [row], &[row | &1])
+  # Resolve the GenServer target from x0 at the call site.
+  defp resolve_callee(instrs, idx) do
+    case resolve_register(instrs, idx, {:x, 0}) do
+      {:ok, atom} when is_atom(atom) -> inspect(atom)
+      _ -> "dynamic"
+    end
   end
 end
