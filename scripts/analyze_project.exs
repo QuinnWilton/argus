@@ -69,14 +69,10 @@ defmodule Argus.Scripts.AnalyzeProject do
   end
 
   defp parse_args([project_path, analysis_str]) do
-    analysis =
-      try do
-        String.to_existing_atom(analysis_str)
-      rescue
-        ArgumentError -> abort("Unknown analysis: #{analysis_str}")
-      end
-
-    {project_path, analysis}
+    case Enum.find(Argus.Analysis.builtin_analyses(), &(to_string(&1) == analysis_str)) do
+      nil -> abort("Unknown analysis: #{analysis_str}")
+      analysis -> {project_path, analysis}
+    end
   end
 
   defp parse_args(_) do
