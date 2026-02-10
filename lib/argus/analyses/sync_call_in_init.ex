@@ -7,12 +7,20 @@ defmodule Argus.Analyses.SyncCallInInit do
   combined with supervision ordering, detects guaranteed deadlocks: a child's
   init blocks on a sibling that hasn't started yet.
 
+  Supervision-aware filtering removes proven-safe findings:
+
+  - **Safe sibling**: the callee starts earlier under the same supervisor,
+    so it is already running when the caller's `init/1` executes.
+  - **Safe cross-supervisor**: the caller and callee are under disjoint
+    supervisor trees, so the callee was started by a different supervisor
+    and is already running.
+
   Requires the OTP and Supervision extractors for `sync_call`,
   `implements_behaviour`, `supervisor`, and `supervisor_child` facts.
 
   ## Output relations
 
-  - `sync_call_in_init(mod, callee_mod)` — module whose init/1 sync-calls callee_mod.
+  - `sync_call_in_init(mod, callee_mod)` — module whose init/1 sync-calls callee_mod (after filtering proven-safe cases).
   - `init_deadlock_risk(sup, child, dep, child_pos, dep_pos)` — child's init calls a later-starting sibling.
   """
 

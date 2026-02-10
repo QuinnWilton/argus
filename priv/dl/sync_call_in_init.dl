@@ -4,6 +4,10 @@
 // synchronous calls (directly or transitively). When combined with
 // supervision ordering, detects guaranteed deadlocks: a child's init
 // blocks on a sibling that hasn't started yet.
+//
+// Supervision-aware filtering removes proven-safe findings:
+// - Safe sibling: callee starts EARLIER under the same supervisor.
+// - Safe cross-supervisor: caller and callee are under disjoint supervisors.
 
 .include "base.dl"
 
@@ -43,23 +47,103 @@ init_function(mod, func) :-
   function_def(func, mod, "init", 1, _, _),
   implements_behaviour(mod, _).
 
-// ── Sync calls reachable from init ─────────────────────────────────────
+// ── GenServer API identification ───────────────────────────────────────
 
-.decl sync_call_in_init(mod: symbol, callee: symbol)
-.output sync_call_in_init
+.include "genserver_api_rules.dl"
+
+// ── Raw sync calls reachable from init ─────────────────────────────────
+
+.decl raw_sync_call_in_init(mod: symbol, callee: symbol)
 
 // Direct: init/1 itself makes the sync_call.
-sync_call_in_init(mod, callee) :-
+raw_sync_call_in_init(mod, callee) :-
   init_function(mod, func),
   sync_call(func, callee),
   callee != "dynamic".
 
 // Transitive: init/1 reaches a function that makes the sync_call.
-sync_call_in_init(mod, callee) :-
+raw_sync_call_in_init(mod, callee) :-
   init_function(mod, func),
   call_reachable(func, g),
   sync_call(g, callee),
   callee != "dynamic".
+
+// Indirect via GenServer API: init/1 calls a sync API function.
+raw_sync_call_in_init(mod, target_mod) :-
+  init_function(mod, func),
+  call_edge(func, g),
+  genserver_sync_api(g, target_mod),
+  mod != target_mod.
+
+// Transitive via GenServer API: init/1 reaches a sync API function.
+raw_sync_call_in_init(mod, target_mod) :-
+  init_function(mod, func),
+  call_reachable(func, g),
+  genserver_sync_api(g, target_mod),
+  mod != target_mod.
+
+// ── Supervision-aware filtering ────────────────────────────────────────
+
+// True when both modules appear under a common supervisor's subtree.
+.decl shares_supervisor(child: symbol, dep: symbol)
+
+shares_supervisor(child, dep) :-
+  child_subtree(sup, _, child),
+  child_subtree(sup, _, dep),
+  child != dep.
+
+// A module with a behaviour and start_link/1 is very likely supervised,
+// even when we can't statically determine which supervisor owns it.
+.decl likely_supervised(mod: symbol)
+
+likely_supervised(mod) :- child_subtree(_, _, mod).
+
+likely_supervised(mod) :-
+  implements_behaviour(mod, _),
+  function_def(_, mod, "start_link", 1, _, _).
+
+// Callee starts earlier under the same supervisor — already running.
+.decl init_safe_sibling(child: symbol, dep: symbol)
+.output init_safe_sibling
+
+init_safe_sibling(child, dep) :-
+  raw_sync_call_in_init(child, dep),
+  supervisor(sup, _),
+  child_subtree(sup, child_branch, child),
+  child_subtree(sup, dep_branch, dep),
+  supervisor_child(sup, cpos, child_branch, _, _),
+  supervisor_child(sup, dpos, dep_branch, _, _),
+  dpos < cpos,
+  child_branch != dep_branch.
+
+// Both likely supervised but under disjoint supervisor trees — callee
+// is already running because it was started by a different supervisor.
+// At least one must be provably supervised (in a child_subtree) to
+// prevent false negatives when no supervision facts exist at all.
+.decl init_safe_cross_supervisor(child: symbol, dep: symbol)
+.output init_safe_cross_supervisor
+
+init_safe_cross_supervisor(child, dep) :-
+  raw_sync_call_in_init(child, dep),
+  child_subtree(_, _, child),
+  likely_supervised(dep),
+  !shares_supervisor(child, dep).
+
+init_safe_cross_supervisor(child, dep) :-
+  raw_sync_call_in_init(child, dep),
+  likely_supervised(child),
+  child_subtree(_, _, dep),
+  !shares_supervisor(child, dep).
+
+// ── Filtered output ────────────────────────────────────────────────────
+
+.decl sync_call_in_init(mod: symbol, callee: symbol)
+.output sync_call_in_init
+
+sync_call_in_init(mod, callee) :-
+  raw_sync_call_in_init(mod, callee),
+  !init_safe_sibling(mod, callee),
+  !init_safe_cross_supervisor(mod, callee).
 
 // ── Init deadlock risk ─────────────────────────────────────────────────
 
@@ -75,6 +159,6 @@ init_deadlock_risk(sup, child, dep, cpos, dpos) :-
   child_subtree(sup, dep_branch, dep),
   supervisor_child(sup, cpos, child_branch, _, _),
   supervisor_child(sup, dpos, dep_branch, _, _),
-  sync_call_in_init(child, dep),
+  raw_sync_call_in_init(child, dep),
   cpos < dpos,
   child_branch != dep_branch.
