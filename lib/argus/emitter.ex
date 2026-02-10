@@ -238,8 +238,8 @@ defmodule Argus.Emitter do
     end)
   end
 
-  # Update record.
-  defp emit_specific(facts, id, {:update_record, _hint, _size, src, dst, _regs, {:list, updates}}) do
+  # Update record (6-element: {op, hint, size, src, dst, {:list, updates}}).
+  defp emit_specific(facts, id, {:update_record, _hint, _size, src, dst, {:list, updates}}) do
     facts = add_fact(facts, :use, [id, format_operand(src)])
     facts = add_fact(facts, :def, [id, format_operand(dst)])
 
@@ -293,6 +293,14 @@ defmodule Argus.Emitter do
   defp emit_specific(facts, id, {:test, _test_name, {:f, fail}, _live, args})
        when is_list(args) do
     facts = add_fact(facts, :branch, [id, to_string(fail), "0"])
+    emit_operand_uses(facts, id, args)
+  end
+
+  # 6-element test form: {:test, name, fail, live, args, dst} (e.g. bs_start_match3, bs_get_binary2).
+  defp emit_specific(facts, id, {:test, _test_name, {:f, fail}, _live, args, dst})
+       when is_list(args) do
+    facts = add_fact(facts, :branch, [id, to_string(fail), "0"])
+    facts = add_fact(facts, :def, [id, format_operand(dst)])
     emit_operand_uses(facts, id, args)
   end
 
@@ -362,6 +370,20 @@ defmodule Argus.Emitter do
       to_string(func),
       to_string(length(args)),
       to_string(fail)
+    ])
+    |> add_fact(:def, [id, format_operand(dst)])
+    |> emit_operand_uses(id, args)
+  end
+
+  # BIFs that cannot fail use :nofail instead of {:f, 0} (e.g. self/0, node/0).
+  defp emit_specific(facts, id, {:bif, func, :nofail, args, dst}) do
+    facts
+    |> add_fact(:bif_call, [
+      id,
+      ":erlang",
+      to_string(func),
+      to_string(length(args)),
+      "0"
     ])
     |> add_fact(:def, [id, format_operand(dst)])
     |> emit_operand_uses(id, args)
@@ -459,6 +481,10 @@ defmodule Argus.Emitter do
     facts
   end
 
+  defp emit_specific(facts, _id, :timeout) do
+    facts
+  end
+
   # Exception handling.
   defp emit_specific(facts, id, {:try, reg, {:f, handler}}) do
     facts
@@ -525,6 +551,14 @@ defmodule Argus.Emitter do
     |> add_fact(:def, [id, format_operand(dst)])
   end
 
+  # bs_start_match4 with {:atom, :no_fail} or {:atom, :resume} (OTP 28+).
+  defp emit_specific(facts, id, {:bs_start_match4, {:atom, _mode}, _live, src, dst}) do
+    facts
+    |> add_fact(:bs_start, [id, "0"])
+    |> add_fact(:use, [id, format_operand(src)])
+    |> add_fact(:def, [id, format_operand(dst)])
+  end
+
   defp emit_specific(facts, id, {:bs_match, {:f, fail}, ctx, {:commands, _commands}}) do
     facts
     |> add_fact(:bs_start, [id, to_string(fail)])
@@ -585,6 +619,14 @@ defmodule Argus.Emitter do
   end
 
   defp emit_specific(facts, _id, {:case_end, _val}) do
+    facts
+  end
+
+  defp emit_specific(facts, _id, {:badrecord, _val}) do
+    facts
+  end
+
+  defp emit_specific(facts, _id, :if_end) do
     facts
   end
 

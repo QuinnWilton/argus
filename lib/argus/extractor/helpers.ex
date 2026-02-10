@@ -153,6 +153,7 @@ defmodule Argus.Extractor.Helpers do
   defp writes_to?({:get_tuple_element, _, _, dst}, reg), do: reg_matches?(dst, reg)
   defp writes_to?({:get_hd, _, dst}, reg), do: reg_matches?(dst, reg)
   defp writes_to?({:get_tl, _, dst}, reg), do: reg_matches?(dst, reg)
+  defp writes_to?({:update_record, _, _, _, dst, _}, reg), do: reg_matches?(dst, reg)
   defp writes_to?({:bs_create_bin, _, _, _, _, dst, _}, reg), do: reg_matches?(dst, reg)
 
   # swap writes to both registers.
@@ -248,6 +249,7 @@ defmodule Argus.Extractor.Helpers do
     end
   end
 
+  defp interpret({:update_record, _, _, _, _dst, _}, _rest, _reg), do: :dynamic
   defp interpret({:bs_create_bin, _, _, _, _, _dst, _}, _rest, _reg), do: :dynamic
   defp interpret({:call, _, _}, _rest, _reg), do: :dynamic
   defp interpret({:call_ext, _, _}, _rest, _reg), do: :dynamic

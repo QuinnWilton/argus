@@ -327,7 +327,7 @@ defmodule Argus.EmitterTest do
     test "emits use for source and def for dest" do
       facts =
         emit_func([
-          {:update_record, :update, 3, {:x, 0}, {:x, 1}, 2, {:list, [{:integer, 1}, {:x, 2}]}}
+          {:update_record, :update, 3, {:x, 0}, {:x, 1}, {:list, [{:integer, 1}, {:x, 2}]}}
         ])
 
       assert Enum.any?(facts[:use], fn [_, reg] -> reg == "x0" end)
