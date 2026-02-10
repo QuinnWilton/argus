@@ -18,7 +18,7 @@ lib/
 │   ├── emitter.ex                   # Instructions → fact tuples
 │   ├── extractor.ex                 # Behaviour for domain extractors
 │   ├── extractors/
-│   │   ├── supervision.ex           # Supervisor child spec extraction
+│   │   ├── supervision.ex           # Supervisor + Application child spec extraction
 │   │   └── otp.ex                   # OTP callback pattern detection
 │   ├── souffle.ex                   # Souffle execution behaviour
 │   ├── souffle/
@@ -36,7 +36,10 @@ priv/
     ├── liveness.dl
     ├── tail_call.dl
     ├── message_flow.dl
-    └── supervision.dl
+    ├── supervision.dl
+    └── coupled_siblings.dl
+scripts/
+└── analyze_project.exs              # Analyze external projects
 ```
 
 ### Key dependencies
@@ -63,6 +66,49 @@ Examples:
 - `[schema] define layer 1 fact relations`
 - `[emitter] exhaustive instruction-to-fact extraction`
 - `[extract] parallel multi-module pipeline with .facts I/O`
+
+## Example analyses
+
+### Oban (v2.x, ~7k GitHub stars)
+
+Ran `coupled_siblings` analysis against Oban's 69 project modules.
+
+**Supervision structure found:**
+
+```
+Oban (one_for_one)
+  ├── Harbor
+  ├── Sonar
+  ├── Peer
+  ├── Nursery
+  └── Notifier
+```
+
+**Finding: coupled siblings under one_for_one.** `Oban.Sonar` transitively
+depends on `Oban.Notifier` — it calls `Notifier.listen/2` and
+`Notifier.notify/3` during its `handle_continue(:start, ...)` callback. Both
+are siblings under a `one_for_one` supervisor. If Notifier crashes, Sonar
+continues running but cannot listen or broadcast, leading to silent
+degradation of the pubsub health monitoring system.
+
+In practice this is mitigated by Oban's design: Notifier starts before Sonar
+(position 0 vs 3 in source), and Sonar uses periodic pings that would
+eventually detect the failure. A `rest_for_one` strategy would provide
+stronger guarantees by restarting Sonar (and everything after) when Notifier
+crashes.
+
+**Known limitation.** Child spec positions extracted from bytecode can be
+reversed from source order when the compiler builds the children list
+bottom-up. The `wrong_start_order` finding was a false positive here — the
+actual source order is correct. Accurate position tracking requires either
+source-level analysis or smarter literal decompilation.
+
+```bash
+# Reproduce:
+cd /tmp && git clone --depth 1 https://github.com/oban-bg/oban.git
+cd oban && mix deps.get && mix compile
+cd /path/to/argus && mix run scripts/analyze_project.exs /tmp/oban
+```
 
 ## Quick reference
 
