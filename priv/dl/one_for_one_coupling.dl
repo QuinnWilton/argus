@@ -32,8 +32,7 @@
 
 // Transitive closure of call_edge.
 .decl call_reachable(from: symbol, to: symbol)
-call_reachable(a, b) :- call_edge(a, b).
-call_reachable(a, c) :- call_reachable(a, b), call_edge(b, c).
+.include "call_reachable_rules.dl"
 
 // ── Helper: module-level reachability ────────────────────────────────
 

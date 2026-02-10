@@ -45,8 +45,7 @@ send_recv_function(func) :-
 .include "callgraph_rules.dl"
 
 .decl call_reachable(from: symbol, to: symbol)
-call_reachable(a, b) :- call_edge(a, b).
-call_reachable(a, c) :- call_reachable(a, b), call_edge(b, c).
+.include "call_reachable_rules.dl"
 
 // A sender can potentially deliver to a receiver if they're in the same
 // function or the sender can reach the receiver through calls.

@@ -24,5 +24,4 @@ cfg_reachable(a, c) :- cfg_reachable(a, b), cfg_edge(b, c).
 .decl call_reachable(from: symbol, to: symbol)
 .output call_reachable
 
-call_reachable(a, b) :- call_edge(a, b).
-call_reachable(a, c) :- call_reachable(a, b), call_edge(b, c).
+.include "call_reachable_rules.dl"

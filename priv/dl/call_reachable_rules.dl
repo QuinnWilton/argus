@@ -1,0 +1,7 @@
+// Shared call_reachable derivation rules.
+//
+// Include this file after declaring `.decl call_reachable(from: symbol, to: symbol)`.
+// Requires call_edge.
+
+call_reachable(a, b) :- call_edge(a, b).
+call_reachable(a, c) :- call_reachable(a, b), call_edge(b, c).
