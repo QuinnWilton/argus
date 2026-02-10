@@ -668,8 +668,8 @@ defmodule Argus.Emitter do
   defp maybe_literal(facts, _id, _dst, _other), do: facts
 
   defp maybe_spawn(facts, id, :erlang, func, arity)
-       when func in [:spawn, :spawn_link, :spawn_monitor] and arity in [3, 4] do
-    add_fact(facts, :spawn_call, [id, "dynamic", "dynamic", to_string(arity)])
+       when func in [:spawn, :spawn_link, :spawn_monitor] and arity in [1, 2, 3, 4] do
+    add_fact(facts, :spawn_call, [id, "dynamic", "dynamic", to_string(arity), to_string(func)])
   end
 
   defp maybe_spawn(facts, _id, _mod, _func, _arity), do: facts

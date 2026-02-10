@@ -149,9 +149,24 @@ defmodule Argus.EmitterTest do
       assert [[_id, ":erlang", "+", "2", "0"]] = facts[:bif_call]
     end
 
-    test "emits spawn_call for erlang:spawn" do
+    test "emits spawn_call for erlang:spawn/3" do
       facts = emit_func([{:call_ext, 3, {:extfunc, :erlang, :spawn, 3}}])
-      assert [[_id, "dynamic", "dynamic", "3"]] = facts[:spawn_call]
+      assert [[_id, "dynamic", "dynamic", "3", "spawn"]] = facts[:spawn_call]
+    end
+
+    test "emits spawn_call for erlang:spawn_link/3" do
+      facts = emit_func([{:call_ext, 3, {:extfunc, :erlang, :spawn_link, 3}}])
+      assert [[_id, "dynamic", "dynamic", "3", "spawn_link"]] = facts[:spawn_call]
+    end
+
+    test "emits spawn_call for erlang:spawn_monitor/1" do
+      facts = emit_func([{:call_ext, 1, {:extfunc, :erlang, :spawn_monitor, 1}}])
+      assert [[_id, "dynamic", "dynamic", "1", "spawn_monitor"]] = facts[:spawn_call]
+    end
+
+    test "emits spawn_call for erlang:spawn/1" do
+      facts = emit_func([{:call_ext, 1, {:extfunc, :erlang, :spawn, 1}}])
+      assert [[_id, "dynamic", "dynamic", "1", "spawn"]] = facts[:spawn_call]
     end
   end
 

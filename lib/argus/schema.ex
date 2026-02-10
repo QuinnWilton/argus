@@ -287,7 +287,8 @@ defmodule Argus.Schema do
       {:id, :symbol, "instruction ID"},
       {:mod, :symbol, "spawned module"},
       {:func, :symbol, "spawned function"},
-      {:arity, :number, "spawned function arity"}
+      {:arity, :number, "spawned function arity"},
+      {:variant, :symbol, "spawn variant (spawn, spawn_link, spawn_monitor)"}
     ],
     doc: "Process spawn detected via erlang:spawn* calls."
   }
