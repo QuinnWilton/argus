@@ -35,6 +35,12 @@ task_async_call(func, id) :-
   remote_call(id, "Task", "async", _),
   instruction(id, func, _, _).
 
+// Also detect Task.Supervisor.async (returns a Task that must be
+// awaited/yielded, just like Task.async).
+task_async_call(func, id) :-
+  remote_call(id, "Task.Supervisor", "async", _),
+  instruction(id, func, _, _).
+
 // Also detect Task.Supervisor.async_nolink (returns a Task that must
 // be awaited/yielded, just like Task.async).
 task_async_call(func, id) :-
