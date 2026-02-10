@@ -12,6 +12,8 @@ defmodule Argus.Emitter do
   where each row is a list of strings (ready for TSV output).
   """
 
+  require Logger
+
   alias Argus.Normalize
 
   import Argus.Extractor.Helpers, only: [add_fact: 3]
@@ -613,7 +615,8 @@ defmodule Argus.Emitter do
 
   # Catch-all for unhandled instructions — emit no additional facts
   # beyond the base instruction record.
-  defp emit_specific(facts, _id, _instr) do
+  defp emit_specific(facts, _id, instr) do
+    Logger.debug("Emitter: unhandled instruction opcode: #{instruction_op(instr)}")
     facts
   end
 
