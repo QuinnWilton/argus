@@ -1,0 +1,87 @@
+// Error handling analysis.
+//
+// Detects error handling anti-patterns: swallowed errors, trap_exit without
+// handlers, exit in callbacks, and ignored start results.
+
+.include "../clientlib/imports.dl"
+
+// Layer 2 input declarations.
+.decl bare_rescue(id: symbol, func: symbol)
+.input bare_rescue
+
+.decl trap_exit(func: symbol, mod: symbol)
+.input trap_exit
+
+.decl exit_call(id: symbol, func: symbol, target: symbol)
+.input exit_call
+
+.decl ignored_error_result(id: symbol, func: symbol, callee: symbol)
+.input ignored_error_result
+
+.decl implements_behaviour(mod: symbol, behaviour: symbol)
+.input implements_behaviour
+
+// ── Swallowed errors ─────────────────────────────────────────────
+
+// Catch-all rescue that silently discards exceptions.
+.decl swallowed_error(func: symbol)
+.output swallowed_error
+
+swallowed_error(func) :-
+  bare_rescue(_, func).
+
+// ── Trap exit without handler ────────────────────────────────────
+
+// Module traps exits but defines no handle_info callback that could
+// receive {:EXIT, ...} messages. This is a heuristic — we check if
+// the module has any handle_info function.
+.decl has_handle_info(mod: symbol)
+
+has_handle_info(mod) :-
+  function_def(_, mod, "handle_info", _, _, _).
+
+.decl trap_exit_without_handler(mod: symbol)
+.output trap_exit_without_handler
+
+trap_exit_without_handler(mod) :-
+  trap_exit(_, mod),
+  !has_handle_info(mod).
+
+// ── Exit in GenServer callback ───────────────────────────────────
+
+// Detect explicit Process.exit/2 in GenServer callbacks.
+.decl genserver_callback(func: symbol, mod: symbol)
+
+genserver_callback(func, mod) :-
+  function_def(func, mod, "handle_call", _, _, _),
+  implements_behaviour(mod, "GenServer").
+
+genserver_callback(func, mod) :-
+  function_def(func, mod, "handle_cast", _, _, _),
+  implements_behaviour(mod, "GenServer").
+
+genserver_callback(func, mod) :-
+  function_def(func, mod, "handle_info", _, _, _),
+  implements_behaviour(mod, "GenServer").
+
+.decl exit_in_callback(func: symbol, target: symbol)
+.output exit_in_callback
+
+exit_in_callback(func, target) :-
+  exit_call(_, func, target),
+  genserver_callback(func, _).
+
+exit_in_callback(func, target) :-
+  exit_call(_, callee_func, target),
+  call_reachable(func, callee_func),
+  genserver_callback(func, _).
+
+// ── Ignored start results ────────────────────────────────────────
+
+// GenServer/Supervisor start result not checked.
+.decl ignored_start_result(func: symbol, callee: symbol)
+.output ignored_start_result
+
+ignored_start_result(func, callee) :-
+  ignored_error_result(_, func, callee),
+  (contains(callee, "start_link") ; contains(callee, "start/")).
