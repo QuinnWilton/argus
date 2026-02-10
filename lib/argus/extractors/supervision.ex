@@ -2,15 +2,18 @@ defmodule Argus.Extractors.Supervision do
   @moduledoc """
   Supervision tree extractor.
 
-  Analyzes modules that implement the `Supervisor` behaviour to extract
-  child specifications, restart strategies, and supervision structure.
+  Analyzes modules that implement the `Supervisor` or `Application`
+  behaviour to extract child specifications, restart strategies, and
+  supervision structure.
 
   ## Approach
 
-  Reads the module's attributes to detect `@behaviour Supervisor`, then
-  inspects the `init/1` function's literal table for child spec data.
-  Since child specs are often built at compile time and stored in the
-  literal table, we can extract them without full dataflow analysis.
+  Reads the module's attributes to detect `@behaviour Supervisor` or
+  `use Application`. For supervisors, inspects `init/1`; for application
+  modules, inspects `start/2`. Both paths scan the function's literal
+  table for child spec data. Since child specs are often built at compile
+  time and stored in the literal table, we can extract them without full
+  dataflow analysis.
 
   ## Emitted facts
 
@@ -30,23 +33,25 @@ defmodule Argus.Extractors.Supervision do
     mod_str = inspect(mod)
     attrs = module_data.attributes
 
-    # Only process supervisor modules.
     behaviours =
       (Keyword.get_values(attrs, :behaviour) ++ Keyword.get_values(attrs, :behavior))
       |> List.flatten()
 
-    if Supervisor in behaviours do
-      extract_supervisor(mod_str, module_data)
-    else
-      %{}
+    cond do
+      Supervisor in behaviours ->
+        extract_supervisor(mod_str, module_data)
+
+      Application in behaviours ->
+        extract_application(mod_str, module_data)
+
+      true ->
+        %{}
     end
   end
 
   defp extract_supervisor(mod_str, module_data) do
     functions = module_data.functions
-    facts = %{}
 
-    # Find init/1 function and scan for supervision patterns.
     init_func =
       Enum.find(functions, fn
         {:function, :init, 1, _, _} -> true
@@ -56,21 +61,35 @@ defmodule Argus.Extractors.Supervision do
     case init_func do
       nil ->
         # Supervisor without init/1 — just record the behaviour.
-        add_fact(facts, :supervisor, [mod_str, "unknown"])
+        add_fact(%{}, :supervisor, [mod_str, "unknown"])
 
       {:function, :init, 1, _, instrs} ->
-        facts = extract_from_init(facts, mod_str, instrs)
-        facts
+        extract_from_instructions(%{}, mod_str, instrs)
     end
   end
 
-  defp extract_from_init(facts, mod_str, instrs) do
-    # Look for the strategy in literal values or atoms moved before
-    # the Supervisor.init call.
+  defp extract_application(mod_str, module_data) do
+    functions = module_data.functions
+
+    start_func =
+      Enum.find(functions, fn
+        {:function, :start, 2, _, _} -> true
+        _ -> false
+      end)
+
+    case start_func do
+      nil ->
+        %{}
+
+      {:function, :start, 2, _, instrs} ->
+        extract_from_instructions(%{}, mod_str, instrs)
+    end
+  end
+
+  defp extract_from_instructions(facts, mod_str, instrs) do
     strategy = detect_strategy(instrs)
     facts = add_fact(facts, :supervisor, [mod_str, to_string(strategy)])
 
-    # Extract child specs from literal table values in the instructions.
     children = extract_children(instrs)
 
     children

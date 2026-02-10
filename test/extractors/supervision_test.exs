@@ -52,6 +52,45 @@ defmodule Argus.Extractors.SupervisionTest do
     end
   end
 
+  describe "Application modules" do
+    test "detects application module as supervisor" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.AppSupervisor)))
+
+      facts = Supervision.extract(data)
+
+      assert Map.has_key?(facts, :supervisor)
+      [mod_str, _strategy] = hd(facts[:supervisor])
+      assert mod_str == "Argus.Test.Fixtures.AppSupervisor"
+    end
+
+    test "detects strategy from Application start/2" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.AppSupervisor)))
+
+      facts = Supervision.extract(data)
+      [_mod, strategy] = hd(facts[:supervisor])
+      assert strategy == "one_for_one"
+    end
+
+    test "extracts children from Application start/2" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.AppSupervisor)))
+
+      facts = Supervision.extract(data)
+
+      if Map.has_key?(facts, :supervisor_child) do
+        children = facts[:supervisor_child]
+        assert length(children) >= 1
+
+        child_mods = Enum.map(children, fn [_, _, mod, _, _] -> mod end)
+
+        assert Enum.any?(child_mods, &String.contains?(&1, "WorkerA")) or
+                 Enum.any?(child_mods, &String.contains?(&1, "WorkerB"))
+      end
+    end
+  end
+
   describe "integration with extract pipeline" do
     test "extractor is usable via Extract.extract/2" do
       assert {:ok, facts} =
