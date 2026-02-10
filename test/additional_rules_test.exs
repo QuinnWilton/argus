@@ -150,12 +150,80 @@ defmodule Argus.AdditionalRulesTest do
                mod == "Argus.Test.Fixtures.SyncInitServer"
              end)
     end
+
+    test "filters safe sibling ordering (dep starts before caller)" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.SafeOrderSupervisor,
+        Argus.Test.Fixtures.SyncInitServer,
+        Argus.Test.Fixtures.WorkerA
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :sync_call_in_init)
+
+      # WorkerA starts before SyncInitServer — safe, should be filtered.
+      assert results["sync_call_in_init"] == []
+
+      # The filtering relation should have the entry.
+      assert length(results["init_safe_sibling"]) > 0
+    end
+
+    test "filters cross-supervisor calls (disjoint supervisor trees)" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.DisjointSupervisor,
+        Argus.Test.Fixtures.CallerSupervisor,
+        Argus.Test.Fixtures.SyncInitServer,
+        Argus.Test.Fixtures.WorkerA
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :sync_call_in_init)
+
+      # Disjoint supervisors — callee already running, should be filtered.
+      assert results["sync_call_in_init"] == []
+
+      assert length(results["init_safe_cross_supervisor"]) > 0
+    end
+
+    test "preserves deadlock risk when dep starts after caller" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.DeadlockOrderSupervisor,
+        Argus.Test.Fixtures.SyncInitServer,
+        Argus.Test.Fixtures.WorkerA
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :sync_call_in_init)
+
+      # WorkerA starts AFTER SyncInitServer — NOT safe, deadlock risk.
+      init_calls = results["sync_call_in_init"]
+      assert length(init_calls) > 0
+
+      assert Enum.any?(init_calls, fn [mod, callee] ->
+               mod == "Argus.Test.Fixtures.SyncInitServer" and
+                 callee == "Argus.Test.Fixtures.WorkerA"
+             end)
+
+      # init_deadlock_risk should detect this.
+      deadlock_risks = results["init_deadlock_risk"]
+      assert length(deadlock_risks) > 0
+
+      assert Enum.any?(deadlock_risks, fn [sup, child, dep, _cpos, _dpos] ->
+               sup == "Argus.Test.Fixtures.DeadlockOrderSupervisor" and
+                 child == "Argus.Test.Fixtures.SyncInitServer" and
+                 dep == "Argus.Test.Fixtures.WorkerA"
+             end)
+    end
   end
 
   describe "process_bottleneck.dl" do
-    test "computes sync call fan-in" do
+    test "below-threshold fan-in produces no findings" do
       skip_without_souffle()
 
+      # 3 modules with sync calls — below the >= 5 threshold.
       modules = [
         Argus.Test.Fixtures.CycleServerA,
         Argus.Test.Fixtures.CycleServerB,
@@ -163,15 +231,49 @@ defmodule Argus.AdditionalRulesTest do
       ]
 
       assert {:ok, results} = Argus.analyze(modules, :process_bottleneck)
-      assert Map.has_key?(results, "sync_caller")
+      assert Map.has_key?(results, "bottleneck_caller")
       assert Map.has_key?(results, "sync_call_fan_in")
+
+      # Below threshold — no fan-in results.
+      assert results["sync_call_fan_in"] == []
+      assert results["bottleneck_caller"] == []
+    end
+
+    test "5 callers exceeds threshold" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.BottleneckTarget,
+        Argus.Test.Fixtures.BottleneckCallerA,
+        Argus.Test.Fixtures.BottleneckCallerB,
+        Argus.Test.Fixtures.BottleneckCallerC,
+        Argus.Test.Fixtures.BottleneckCallerD,
+        Argus.Test.Fixtures.BottleneckCallerE
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :process_bottleneck)
+
+      fan_in = results["sync_call_fan_in"]
+      assert length(fan_in) == 1
+
+      assert Enum.any?(fan_in, fn [mod, cnt] ->
+               mod == "Argus.Test.Fixtures.BottleneckTarget" and cnt == "5"
+             end)
+
+      callers = results["bottleneck_caller"]
+      assert length(callers) == 5
+
+      caller_mods = Enum.map(callers, fn [caller, _target] -> caller end) |> Enum.sort()
+
+      assert "Argus.Test.Fixtures.BottleneckCallerA" in caller_mods
+      assert "Argus.Test.Fixtures.BottleneckCallerE" in caller_mods
     end
 
     test "runs without error on modules with no sync calls" do
       skip_without_souffle()
 
       assert {:ok, results} = Argus.analyze([:maps], :process_bottleneck)
-      assert Map.has_key?(results, "sync_caller")
+      assert Map.has_key?(results, "bottleneck_caller")
       assert Map.has_key?(results, "sync_call_fan_in")
     end
   end
@@ -196,7 +298,7 @@ defmodule Argus.AdditionalRulesTest do
   end
 
   describe "ets.dl" do
-    test "detects ETS ownership and access patterns" do
+    test "detects ETS anti-patterns" do
       skip_without_souffle()
 
       modules = [
@@ -210,12 +312,50 @@ defmodule Argus.AdditionalRulesTest do
 
       assert {:ok, results} = Argus.analyze(modules, :ets)
 
-      assert Map.has_key?(results, "ets_owner_process")
-      assert Map.has_key?(results, "ets_reader_module")
-      assert Map.has_key?(results, "ets_writer_module")
+      # Informational relations are no longer output.
+      refute Map.has_key?(results, "ets_owner_process")
+      refute Map.has_key?(results, "ets_reader_module")
+      refute Map.has_key?(results, "ets_writer_module")
 
-      # EtsOwner creates a table, so there should be at least one owner entry.
-      assert length(results["ets_owner_process"]) > 0
+      # EtsOwner without a supervisor still fires as unprotected.
+      assert Map.has_key?(results, "ets_unprotected_owner")
+      unprotected = results["ets_unprotected_owner"]
+
+      assert Enum.any?(unprotected, fn [_name, mod] ->
+               mod == "Argus.Test.Fixtures.EtsOwner"
+             end)
+    end
+
+    test "suppresses unprotected_owner for permanent supervisor children" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.EtsOwner,
+        Argus.Test.Fixtures.EtsPermanentSupervisor
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :ets)
+
+      # EtsOwner is a permanent child — table recreated on restart.
+      unprotected = results["ets_unprotected_owner"]
+
+      refute Enum.any?(unprotected, fn [_name, mod] ->
+               mod == "Argus.Test.Fixtures.EtsOwner"
+             end)
+    end
+
+    test "EtsOwner without supervisor still fires unprotected_owner" do
+      skip_without_souffle()
+
+      modules = [Argus.Test.Fixtures.EtsOwner]
+
+      assert {:ok, results} = Argus.analyze(modules, :ets)
+
+      unprotected = results["ets_unprotected_owner"]
+
+      assert Enum.any?(unprotected, fn [_name, mod] ->
+               mod == "Argus.Test.Fixtures.EtsOwner"
+             end)
     end
   end
 
@@ -233,6 +373,117 @@ defmodule Argus.AdditionalRulesTest do
 
       assert Map.has_key?(results, "one_for_one_coupling")
       assert Map.has_key?(results, "wrong_start_order")
+    end
+
+    test "wrong_start_order ignores runtime-only call paths" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.RuntimeCallSupervisor,
+        Argus.Test.Fixtures.RuntimeCallerWorker,
+        Argus.Test.Fixtures.WorkerA
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :one_for_one_coupling)
+
+      # RuntimeCallerWorker calls WorkerA only from handle_call, not init.
+      # wrong_start_order should be empty.
+      assert results["wrong_start_order"] == []
+    end
+  end
+
+  describe "unsafe_task.dl" do
+    test "detects leaked async task" do
+      skip_without_souffle()
+
+      assert {:ok, results} =
+               Argus.analyze([Argus.Test.Fixtures.LeakedTaskModule], :unsafe_task)
+
+      assert Map.has_key?(results, "leaked_async_task")
+      leaked = results["leaked_async_task"]
+      assert length(leaked) > 0
+
+      # fire_and_forget creates a task but never awaits.
+      funcs = Enum.map(leaked, fn [func, _id] -> func end)
+      assert Enum.any?(funcs, &String.contains?(&1, "fire_and_forget"))
+
+      # safe_async awaits its task, so it should NOT be flagged.
+      refute Enum.any?(funcs, &String.contains?(&1, "safe_async"))
+    end
+
+    test "suppresses leaked_async_task for GenServer with handle_info/2" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.GenServerTaskConsumer,
+        Argus.Test.Fixtures.LeakedTaskModule
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :unsafe_task)
+
+      leaked = results["leaked_async_task"]
+
+      # GenServerTaskConsumer handles task results via handle_info — not leaked.
+      refute Enum.any?(leaked, fn [func, _id] ->
+               String.contains?(func, "GenServerTaskConsumer")
+             end)
+
+      # LeakedTaskModule.fire_and_forget is still flagged.
+      assert Enum.any?(leaked, fn [func, _id] ->
+               String.contains?(func, "fire_and_forget")
+             end)
+    end
+
+    test "detects unchecked start_child" do
+      skip_without_souffle()
+
+      assert {:ok, results} =
+               Argus.analyze([Argus.Test.Fixtures.UncheckedStartChild], :unsafe_task)
+
+      assert Map.has_key?(results, "unchecked_start_child")
+      unchecked = results["unchecked_start_child"]
+
+      funcs = Enum.map(unchecked, fn [func, _id] -> func end)
+
+      # start_unchecked ignores the result.
+      assert Enum.any?(funcs, &String.contains?(&1, "start_unchecked"))
+
+      # start_checked uses case on the result — should NOT be flagged.
+      refute Enum.any?(funcs, &String.contains?(&1, "start_checked"))
+
+      # start_tail is a tail call — result propagated, should NOT be flagged.
+      refute Enum.any?(funcs, &String.contains?(&1, "start_tail"))
+    end
+
+    test "suppresses task factory (tail-position async)" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.TaskFactory,
+        Argus.Test.Fixtures.LeakedTaskModule
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :unsafe_task)
+
+      leaked = results["leaked_async_task"]
+
+      # TaskFactory returns the task in tail position — not a leak.
+      refute Enum.any?(leaked, fn [func, _id] ->
+               String.contains?(func, "TaskFactory")
+             end)
+
+      # LeakedTaskModule.fire_and_forget is still flagged.
+      assert Enum.any?(leaked, fn [func, _id] ->
+               String.contains?(func, "fire_and_forget")
+             end)
+    end
+
+    test "runs without error on modules with no task calls" do
+      skip_without_souffle()
+
+      assert {:ok, results} = Argus.analyze([:maps], :unsafe_task)
+      assert Map.has_key?(results, "leaked_async_task")
+      assert Map.has_key?(results, "unchecked_start_child")
     end
   end
 end
