@@ -1,4 +1,4 @@
-# Analyzes an external Elixir/Erlang project with Argus.
+# Analyzes an external Elixir (Mix) or Erlang (Rebar3) project with Argus.
 #
 # Usage:
 #   mix run scripts/analyze_project.exs /path/to/project [analysis]
@@ -6,7 +6,7 @@
 # The project must already be compiled. This script:
 # 1. Adds the project's ebin directories to the code path
 # 2. Discovers project modules (skipping deps)
-# 3. Runs the specified analysis (default: coupled_siblings)
+# 3. Runs the specified analysis (default: one_for_one_coupling)
 # 4. Pretty-prints supervision structure and findings
 
 defmodule Argus.Scripts.AnalyzeProject do
@@ -36,9 +36,9 @@ defmodule Argus.Scripts.AnalyzeProject do
 
     IO.puts("Added #{length(ebin_dirs)} ebin directories to code path")
 
-    # Discover project modules (from the project's own ebin, not deps).
-    project_ebin = find_project_ebin(project_path)
-    modules = discover_modules(project_ebin)
+    # Discover project modules (from the project's own ebins, not deps).
+    project_ebins = find_project_ebins(project_path)
+    modules = Enum.flat_map(project_ebins, &discover_modules/1) |> Enum.sort()
 
     if modules == [] do
       abort("No modules found in project ebin")
@@ -50,13 +50,12 @@ defmodule Argus.Scripts.AnalyzeProject do
     # Print supervision structure first.
     print_supervision_structure(modules)
 
-    # Run the analysis.
+    # Run the analysis. Extractors are declared by each analysis module
+    # and applied automatically by Argus.Analysis.run/3.
     IO.puts("--- Running #{analysis} analysis ---")
     IO.puts("")
 
-    extractors = [Argus.Extractors.Supervision, Argus.Extractors.OTP]
-
-    case Argus.analyze(modules, analysis, extractors: extractors) do
+    case Argus.analyze(modules, analysis) do
       {:ok, results} ->
         print_results(results, analysis)
 
@@ -66,7 +65,7 @@ defmodule Argus.Scripts.AnalyzeProject do
   end
 
   defp parse_args([project_path]) do
-    {project_path, :coupled_siblings}
+    {project_path, :one_for_one_coupling}
   end
 
   defp parse_args([project_path, analysis_str]) do
@@ -91,33 +90,72 @@ defmodule Argus.Scripts.AnalyzeProject do
     |> Enum.filter(&File.dir?/1)
   end
 
-  defp find_project_ebin(project_path) do
-    # The project's own compiled beam files live under
-    # _build/dev/lib/<app_name>/ebin. Detect app name from mix.exs.
-    app_name = detect_app_name(project_path)
+  defp find_project_ebins(project_path) do
+    apps_dir = Path.join(project_path, "apps")
 
-    candidates = [
-      Path.join([project_path, "_build", "dev", "lib", app_name, "ebin"]),
-      Path.join([project_path, "_build", "prod", "lib", app_name, "ebin"])
-    ]
+    app_names =
+      if File.dir?(apps_dir) do
+        # Umbrella / multi-app project — each subdir under apps/ is a project app.
+        apps_dir
+        |> File.ls!()
+        |> Enum.filter(fn name ->
+          File.dir?(Path.join(apps_dir, name))
+        end)
+      else
+        [detect_app_name(project_path)]
+      end
 
-    Enum.find(candidates, &File.dir?/1) ||
-      abort("Could not find project ebin directory for app '#{app_name}'")
+    build_envs = ["dev", "prod", "default"]
+
+    ebins =
+      Enum.flat_map(app_names, fn app ->
+        build_envs
+        |> Enum.map(fn env ->
+          Path.join([project_path, "_build", env, "lib", app, "ebin"])
+        end)
+        |> Enum.find(&File.dir?/1)
+        |> List.wrap()
+      end)
+
+    if ebins == [] do
+      app_label = Enum.join(app_names, ", ")
+      abort("Could not find project ebin directories for apps: #{app_label}")
+    end
+
+    ebins
   end
 
   defp detect_app_name(project_path) do
-    mix_exs = Path.join(project_path, "mix.exs")
+    cond do
+      File.exists?(Path.join(project_path, "mix.exs")) ->
+        detect_app_name_mix(project_path)
 
-    unless File.exists?(mix_exs) do
-      abort("No mix.exs found at #{project_path}")
+      app_src = find_app_src(project_path) ->
+        detect_app_name_rebar(app_src)
+
+      true ->
+        Path.basename(project_path)
     end
+  end
 
-    content = File.read!(mix_exs)
+  defp detect_app_name_mix(project_path) do
+    content = File.read!(Path.join(project_path, "mix.exs"))
 
     case Regex.run(~r/app:\s*:(\w+)/, content) do
       [_, name] -> name
       _ -> Path.basename(project_path)
     end
+  end
+
+  defp find_app_src(project_path) do
+    Path.join(project_path, "src/*.app.src")
+    |> Path.wildcard()
+    |> List.first()
+  end
+
+  defp detect_app_name_rebar(app_src_path) do
+    app_src_path
+    |> Path.basename(".app.src")
   end
 
   defp discover_modules(ebin_dir) do
@@ -164,15 +202,11 @@ defmodule Argus.Scripts.AnalyzeProject do
     end)
   end
 
-  # Output relations that represent actual findings per analysis.
-  # Anything not listed here is an intermediate relation (call_edge, etc.).
-  @finding_relations %{
-    coupled_siblings: ~w(coupled_siblings wrong_start_order),
-    supervision: ~w(suspect_transient_dependency unlinked_coupled_siblings wrong_start_order)
-  }
-
+  # Filter results to only output relations declared by the analysis module.
+  # Intermediate relations (call_edge, cfg_edge, etc.) are excluded when the
+  # analysis declares its outputs.
   defp print_results(results, analysis) do
-    allowed = Map.get(@finding_relations, analysis)
+    allowed = output_relation_names(analysis)
 
     findings =
       results
@@ -183,24 +217,28 @@ defmodule Argus.Scripts.AnalyzeProject do
 
     if findings == [] do
       IO.puts("No findings.")
-      return()
-    end
+    else
+      findings
+      |> Enum.sort_by(fn {name, _} -> name end)
+      |> Enum.each(fn {relation, rows} ->
+        IO.puts("=== #{relation} (#{length(rows)} findings) ===")
+        IO.puts("")
 
-    findings
-    |> Enum.sort_by(fn {name, _} -> name end)
-    |> Enum.each(fn {relation, rows} ->
-      IO.puts("=== #{relation} (#{length(rows)} findings) ===")
-      IO.puts("")
+        Enum.each(rows, fn row ->
+          IO.puts("  #{Enum.join(row, "  |  ")}")
+        end)
 
-      Enum.each(rows, fn row ->
-        IO.puts("  #{Enum.join(row, "  |  ")}")
+        IO.puts("")
       end)
-
-      IO.puts("")
-    end)
+    end
   end
 
-  defp return, do: :ok
+  defp output_relation_names(analysis) do
+    case Argus.Analysis.output_relations(analysis) do
+      {:ok, relations} -> Enum.map(relations, &Atom.to_string(&1.name))
+      :error -> nil
+    end
+  end
 
   defp abort(msg) do
     IO.puts(:stderr, "Error: #{msg}")
