@@ -82,5 +82,59 @@ defmodule Argus.Souffle.CLITest do
       assert {:error, :souffle_not_found} =
                CLI.run(facts_dir, rules_path, souffle_bin: nil)
     end
+
+    @tag :tmp_dir
+    test "returns souffle_error when output_dir does not exist", %{tmp_dir: tmp_dir} do
+      if not CLI.available?(), do: flunk("souffle not installed")
+
+      facts_dir = Path.join(tmp_dir, "facts")
+      rules_path = Path.join(tmp_dir, "rules.dl")
+
+      File.mkdir_p!(facts_dir)
+
+      File.write!(rules_path, """
+      .decl dummy(x: symbol)
+      .output dummy
+      """)
+
+      # Passing a nonexistent output_dir — Souffle will fail because
+      # the directory doesn't exist. The mkdir_failed path in
+      # resolve_output_dir only triggers for auto-generated temp dirs
+      # (no explicit output_dir), which requires mocking System.tmp_dir.
+      assert {:error, {:souffle_error, _, _}} =
+               CLI.run(facts_dir, rules_path, output_dir: "/dev/null/impossible")
+    end
+
+    @tag :tmp_dir
+    test "returns souffle_timeout when execution exceeds limit", %{tmp_dir: tmp_dir} do
+      if not CLI.available?(), do: flunk("souffle not installed")
+
+      facts_dir = Path.join(tmp_dir, "facts")
+      output_dir = Path.join(tmp_dir, "output")
+      rules_path = Path.join(tmp_dir, "slow.dl")
+
+      File.mkdir_p!(facts_dir)
+      File.mkdir_p!(output_dir)
+
+      # Generate a large fact file to keep Souffle busy.
+      rows = Enum.map_join(1..1000, "\n", fn i -> "n#{i}\tn#{i + 1}" end)
+      File.write!(Path.join(facts_dir, "edge.facts"), rows)
+
+      # Transitive closure over 1000 nodes — heavy enough to exceed 1ms.
+      File.write!(rules_path, """
+      .decl edge(x: symbol, y: symbol)
+      .input edge
+
+      .decl path(x: symbol, y: symbol)
+      .output path
+
+      path(x, y) :- edge(x, y).
+      path(x, z) :- path(x, y), edge(y, z).
+      """)
+
+      # 1ms timeout should be too short for transitive closure.
+      assert {:error, :souffle_timeout} =
+               CLI.run(facts_dir, rules_path, output_dir: output_dir, souffle_timeout: 1)
+    end
   end
 end
