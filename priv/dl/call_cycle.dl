@@ -23,6 +23,10 @@
 .decl call_reachable(from: symbol, to: symbol)
 .include "call_reachable_rules.dl"
 
+// ── GenServer API identification ───────────────────────────────────────
+
+.include "genserver_api_rules.dl"
+
 // ── Synchronous dependency ─────────────────────────────────────────────
 
 // Direct: a function in from_mod makes a sync_call to to_mod.
@@ -32,6 +36,15 @@ sync_dep(from_mod, to_mod) :-
   function_def(f, from_mod, _, _, _, _),
   sync_call(f, to_mod),
   to_mod != "dynamic", from_mod != to_mod.
+
+// Indirect via GenServer API: a function in from_mod calls a sync API
+// function exported by to_mod. The API function wraps GenServer.call
+// internally, so the caller has a synchronous dependency.
+sync_dep(from_mod, to_mod) :-
+  function_def(f, from_mod, _, _, _, _),
+  call_edge(f, g),
+  genserver_sync_api(g, to_mod),
+  from_mod != to_mod.
 
 // Transitive: a function in from_mod reaches (through the call graph)
 // a function that sync-calls to_mod.
@@ -44,6 +57,13 @@ sync_dep_transitive(from_mod, to_mod) :-
   call_reachable(f, g),
   sync_call(g, to_mod),
   to_mod != "dynamic", from_mod != to_mod.
+
+// Transitive via GenServer API.
+sync_dep_transitive(from_mod, to_mod) :-
+  function_def(f, from_mod, _, _, _, _),
+  call_reachable(f, g),
+  genserver_sync_api(g, to_mod),
+  from_mod != to_mod.
 
 // ── Cycle detection ────────────────────────────────────────────────────
 

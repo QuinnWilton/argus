@@ -15,16 +15,45 @@
 .decl implements_behaviour(mod: symbol, behaviour: symbol)
 .input implements_behaviour
 
-// ── Direct module-level sync callers ───────────────────────────────────
+// ── Callgraph ──────────────────────────────────────────────────────────
+
+.decl call_edge(caller: symbol, callee: symbol)
+.include "callgraph_rules.dl"
+
+.decl call_reachable(from: symbol, to: symbol)
+.include "call_reachable_rules.dl"
+
+// ── GenServer API identification ───────────────────────────────────────
+
+.include "genserver_api_rules.dl"
+
+// ── Module-level sync callers ──────────────────────────────────────────
 
 // Module caller_mod has at least one function that sync-calls target_mod.
 .decl sync_caller(caller_mod: symbol, target_mod: symbol)
-.output sync_caller
 
+// Direct: a function in caller_mod has a sync_call with resolved target.
 sync_caller(caller_mod, target_mod) :-
   function_def(f, caller_mod, _, _, _, _),
   sync_call(f, target_mod),
   target_mod != "dynamic",
+  caller_mod != target_mod.
+
+// Indirect via callgraph: a function in caller_mod reaches a function
+// that has a sync_call with resolved target.
+sync_caller(caller_mod, target_mod) :-
+  function_def(f, caller_mod, _, _, _, _),
+  call_reachable(f, g),
+  sync_call(g, target_mod),
+  target_mod != "dynamic",
+  caller_mod != target_mod.
+
+// Indirect via GenServer API: a function in caller_mod calls an exported
+// sync API function of target_mod.
+sync_caller(caller_mod, target_mod) :-
+  function_def(f, caller_mod, _, _, _, _),
+  call_edge(f, g),
+  genserver_sync_api(g, target_mod),
   caller_mod != target_mod.
 
 // ── Fan-in aggregation ─────────────────────────────────────────────────
@@ -36,4 +65,16 @@ sync_caller(caller_mod, target_mod) :-
 sync_call_fan_in(target_mod, cnt) :-
   implements_behaviour(target_mod, "GenServer"),
   cnt = count : { sync_caller(_, target_mod) },
-  cnt > 0.
+  cnt >= 5.
+
+// ── Bottleneck callers ──────────────────────────────────────────────────
+
+// Sync callers filtered to only targets that exceed the fan-in threshold.
+// This separates normal centralized services (1–4 callers) from true
+// serialization bottlenecks.
+.decl bottleneck_caller(caller_mod: symbol, target_mod: symbol)
+.output bottleneck_caller
+
+bottleneck_caller(caller_mod, target_mod) :-
+  sync_caller(caller_mod, target_mod),
+  sync_call_fan_in(target_mod, _).

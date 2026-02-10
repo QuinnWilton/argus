@@ -46,6 +46,42 @@ module_reaches(from_mod, to_mod) :-
   function_def(callee, to_mod, _, _, _, _),
   from_mod != to_mod.
 
+// ── Init-time reachability ──────────────────────────────────────────
+
+// init/1 in a behaviour module — only these functions run at start time.
+.decl init_function(mod: symbol, func: symbol)
+
+init_function(mod, func) :-
+  function_def(func, mod, "init", 1, _, _),
+  implements_behaviour(mod, _).
+
+// Module `from_mod` reaches `to_mod` during init — the call originates
+// from an init/1 function (directly or transitively).
+.decl init_reaches(from_mod: symbol, to_mod: symbol)
+
+init_reaches(from_mod, to_mod) :-
+  init_function(from_mod, func),
+  call_reachable(func, callee),
+  function_def(callee, to_mod, _, _, _, _),
+  from_mod != to_mod.
+
+init_reaches(from_mod, to_mod) :-
+  init_function(from_mod, func),
+  function_def(func, _, _, _, _, _),
+  call_edge(func, callee),
+  function_def(callee, to_mod, _, _, _, _),
+  from_mod != to_mod.
+
+// ── GenServer API identification ───────────────────────────────────────
+
+.include "genserver_api_rules.dl"
+
+.decl genserver_async_api(func: symbol, mod: symbol)
+genserver_async_api(func, mod) :-
+  function_def(func, mod, _, _, _, 1),
+  implements_behaviour(mod, "GenServer"),
+  async_cast(func, _).
+
 // ── Stateful module dependency ──────────────────────────────────────
 
 // Module-level dependency through GenServer message passing (sync_call
@@ -116,6 +152,19 @@ stateful_module_dep(from_mod, to_mod) :-
   function_def(h, to_mod, _, _, _, _),
   async_cast(h, _).
 
+// GenServer API: from_mod directly calls a sync/async API function of to_mod.
+stateful_module_dep(from_mod, to_mod) :-
+  function_def(f, from_mod, _, _, _, _),
+  call_edge(f, g),
+  genserver_sync_api(g, to_mod),
+  from_mod != to_mod.
+
+stateful_module_dep(from_mod, to_mod) :-
+  function_def(f, from_mod, _, _, _, _),
+  call_edge(f, g),
+  genserver_async_api(g, to_mod),
+  from_mod != to_mod.
+
 // ── Child subtree ──────────────────────────────────────────────────
 
 .include "child_subtree.dl"
@@ -138,9 +187,12 @@ one_for_one_coupling(sup, caller_mod, callee_mod) :-
 
 // ── Wrong start order ────────────────────────────────────────────────
 
-// Module in an earlier branch transitively calls a module in a later
-// branch. The later branch may not be started yet when the earlier
+// Module in an earlier branch reaches a module in a later branch during
+// init. The later branch may not be started yet when the earlier
 // branch's init runs, causing init-time failures.
+//
+// Scoped to init_reaches (not module_reaches) to avoid false positives
+// from runtime-only call paths.
 .decl wrong_start_order(sup: symbol, early_mod: symbol, late_mod: symbol, early_pos: number, late_pos: number)
 .output wrong_start_order
 
@@ -150,6 +202,6 @@ wrong_start_order(sup, early_mod, late_mod, early_pos, late_pos) :-
   child_subtree(sup, late_branch, late_mod),
   supervisor_child(sup, early_pos, early_branch, _, _),
   supervisor_child(sup, late_pos, late_branch, _, _),
-  module_reaches(early_mod, late_mod),
+  init_reaches(early_mod, late_mod),
   early_pos < late_pos,
   early_branch != late_branch.
