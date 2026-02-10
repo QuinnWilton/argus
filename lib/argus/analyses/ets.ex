@@ -6,15 +6,15 @@ defmodule Argus.Analyses.Ets do
   concurrency options, unprotected owners, unnamed tables in processes,
   and ordered_set contention across modules.
 
-  Requires the ETS and OTP domain extractors for layer 2 facts about table
-  creation, options, and access patterns.
+  Requires the ETS, OTP, and Supervision domain extractors for layer 2 facts
+  about table creation, options, access patterns, and supervisor children.
+
+  Tables owned by permanent supervisor children are suppressed from
+  `ets_unprotected_owner` since the table is recreated on restart.
 
   ## Output relations
 
-  - `ets_owner_process(name, mod, behaviour)` — table owner and its OTP behaviour.
-  - `ets_unprotected_owner(name, mod)` — table owner lacks proper access protection.
-  - `ets_reader_module(name, mod)` — module reads from the table.
-  - `ets_writer_module(name, mod)` — module writes to the table.
+  - `ets_unprotected_owner(name, mod)` — table owner lacks heir protection (excludes permanent children).
   - `ets_missing_read_concurrency(name)` — table lacks read_concurrency option.
   - `ets_missing_write_concurrency(name)` — table lacks write_concurrency option.
   - `ets_ordered_set_contention(name, mod1, mod2)` — ordered_set accessed by multiple modules.
@@ -33,34 +33,15 @@ defmodule Argus.Analyses.Ets do
   def rules_file, do: "ets.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.ETS, Argus.Extractors.OTP]
+  def extractors, do: [Argus.Extractors.ETS, Argus.Extractors.OTP, Argus.Extractors.Supervision]
 
   @impl true
   def output_relations do
     [
       %{
-        name: :ets_owner_process,
-        fields: [
-          {:name, :symbol, "table name"},
-          {:mod, :symbol, "owner module"},
-          {:behaviour, :symbol, "OTP behaviour"}
-        ],
-        doc: "Table owner and its OTP behaviour."
-      },
-      %{
         name: :ets_unprotected_owner,
         fields: [{:name, :symbol, "table name"}, {:mod, :symbol, "owner module"}],
-        doc: "Table owner lacks proper access protection."
-      },
-      %{
-        name: :ets_reader_module,
-        fields: [{:name, :symbol, "table name"}, {:mod, :symbol, "reader module"}],
-        doc: "Module reads from the table."
-      },
-      %{
-        name: :ets_writer_module,
-        fields: [{:name, :symbol, "table name"}, {:mod, :symbol, "writer module"}],
-        doc: "Module writes to the table."
+        doc: "Table owner lacks heir protection (excludes permanent children)."
       },
       %{
         name: :ets_missing_read_concurrency,

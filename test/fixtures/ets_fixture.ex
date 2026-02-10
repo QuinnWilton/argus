@@ -71,3 +71,23 @@ defmodule Argus.Test.Fixtures.EtsParamTable do
   def insert(:not_a_table, _record), do: :ok
   def insert(tab, record), do: :ets.insert(tab, record)
 end
+
+defmodule Argus.Test.Fixtures.EtsPermanentSupervisor do
+  @moduledoc false
+  use Supervisor
+
+  # Supervises EtsOwner as a permanent child. The table will be
+  # recreated on restart, so missing heir is not a real risk.
+  def start_link(opts) do
+    Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+  end
+
+  @impl true
+  def init(_opts) do
+    children = [
+      {Argus.Test.Fixtures.EtsOwner, []}
+    ]
+
+    Supervisor.init(children, strategy: :one_for_one)
+  end
+end

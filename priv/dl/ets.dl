@@ -31,7 +31,6 @@
 
 // Module that creates a table and implements a behaviour (is a process).
 .decl ets_owner_process(name: symbol, mod: symbol, behaviour: symbol)
-.output ets_owner_process
 
 ets_owner_process(name, mod, behaviour) :-
   ets_new(id, func, name),
@@ -39,8 +38,17 @@ ets_owner_process(name, mod, behaviour) :-
   function_def(func, mod, _, _, _, _),
   implements_behaviour(mod, behaviour).
 
+// Owner under a permanent supervisor child — the table will be
+// recreated on restart, so the missing heir is not a real risk.
+.decl ets_permanent_owner(name: symbol, mod: symbol)
+
+ets_permanent_owner(name, mod) :-
+  ets_owner_process(name, mod, _),
+  supervisor_child(_, _, mod, "permanent", _).
+
 // Table without heir protection in a behaviour process.
 // If the owner crashes, the table vanishes.
+// Suppressed for permanent supervisor children (table recreated on restart).
 .decl ets_unprotected_owner(name: symbol, mod: symbol)
 .output ets_unprotected_owner
 
@@ -48,13 +56,13 @@ ets_unprotected_owner(name, mod) :-
   ets_owner_process(name, mod, _),
   ets_new(id, _, name),
   name != "dynamic",
-  !ets_option(id, "heir", "true").
+  !ets_option(id, "heir", "true"),
+  !ets_permanent_owner(name, mod).
 
 // ── Concurrent access patterns ─────────────────────────────────────
 
 // Module reading from a table.
 .decl ets_reader_module(name: symbol, mod: symbol)
-.output ets_reader_module
 
 ets_reader_module(name, mod) :-
   ets_op(_, func, name, _, "read"),
@@ -63,7 +71,6 @@ ets_reader_module(name, mod) :-
 
 // Module writing to a table.
 .decl ets_writer_module(name: symbol, mod: symbol)
-.output ets_writer_module
 
 ets_writer_module(name, mod) :-
   ets_op(_, func, name, _, "write"),
