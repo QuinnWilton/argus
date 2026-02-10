@@ -37,7 +37,8 @@ lib/
 │   │   ├── call_cycle.ex            # Sync-call cycle (deadlock) detection
 │   │   ├── unlinked_spawn.ex        # Orphan process detection
 │   │   ├── sync_call_in_init.ex     # Startup deadlock detection
-│   │   └── process_bottleneck.ex    # Sync call fan-in detection
+│   │   ├── process_bottleneck.ex    # Sync call fan-in detection
+│   │   └── timeout_chain.ex        # GenServer timeout chain detection
 │   ├── souffle.ex                   # Souffle execution behaviour
 │   ├── souffle/
 │   │   └── cli.ex                   # Shell-out implementation
@@ -60,11 +61,15 @@ priv/
     ├── message_flow.dl              # Message passing paths
     ├── supervision.dl               # Supervision tree anti-patterns
     ├── child_subtree.dl             # Child subtree helpers
+    ├── genserver_api_rules.dl        # Shared GenServer sync API rules
+    ├── init_function_rules.dl       # Shared init function identification
+    ├── stateful_module_dep_rules.dl # Shared stateful module dependency rules
     ├── one_for_one_coupling.dl      # Cross-branch coupling
     ├── ets.dl                       # ETS table analysis
     ├── unlinked_spawn.dl            # Orphan process detection
     ├── sync_call_in_init.dl         # Startup deadlock detection
-    └── process_bottleneck.dl        # Sync call fan-in
+    ├── process_bottleneck.dl        # Sync call fan-in
+    └── timeout_chain.dl             # GenServer timeout chain detection
 scripts/
 └── analyze_project.exs              # Analyze external projects
 ```
