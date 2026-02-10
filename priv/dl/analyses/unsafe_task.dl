@@ -59,6 +59,10 @@ task_await_call(func, id) :-
   remote_call(id, "Task", "yield_many", _),
   instruction(id, func, _, _).
 
+task_await_call(func, id) :-
+  remote_call(id, "Task", "shutdown", _),
+  instruction(id, func, _, _).
+
 // ── Function-level await reachability ──────────────────────────────────
 
 // Function has an await/yield (directly or through callees).
@@ -67,13 +71,37 @@ task_await_call(func, id) :-
 has_await(func) :- task_await_call(func, _).
 has_await(func) :- call_reachable(func, g), task_await_call(g, _).
 
-// ── GenServer task handler suppression ────────────────────────────────
+// ── Process task handler suppression ─────────────────────────────────
 
-// GenServer with handle_info/2 consumes task messages via its mailbox.
-.decl genserver_task_handler(mod: symbol)
-genserver_task_handler(mod) :-
+// Process module with a message-receiving callback that can consume
+// task results from its mailbox. Covers GenServer, LiveView,
+// gen_statem, and similar process-hosting behaviours.
+.decl process_task_handler(mod: symbol)
+
+// GenServer with handle_info/2.
+process_task_handler(mod) :-
   implements_behaviour(mod, "GenServer"),
   function_def(_, mod, "handle_info", 2, _, _).
+
+// Phoenix.LiveView with handle_info/2.
+process_task_handler(mod) :-
+  implements_behaviour(mod, "Phoenix.LiveView"),
+  function_def(_, mod, "handle_info", 2, _, _).
+
+// Phoenix.LiveComponent with handle_info/2.
+process_task_handler(mod) :-
+  implements_behaviour(mod, "Phoenix.LiveComponent"),
+  function_def(_, mod, "handle_info", 2, _, _).
+
+// :gen_statem with handle_event/4.
+process_task_handler(mod) :-
+  implements_behaviour(mod, ":gen_statem"),
+  function_def(_, mod, "handle_event", 4, _, _).
+
+// GenStateMachine (Elixir wrapper) with handle_event/4.
+process_task_handler(mod) :-
+  implements_behaviour(mod, "GenStateMachine"),
+  function_def(_, mod, "handle_event", 4, _, _).
 
 // ── Task factory suppression ─────────────────────────────────────────
 
@@ -92,8 +120,9 @@ task_factory(func, id) :-
 // transitively). The task reference is either discarded or returned
 // to a caller that may not await it.
 //
-// Suppressed for GenServers with handle_info/2, which consume task
-// results through their mailbox rather than explicit await/yield.
+// Suppressed for process modules with message-receiving callbacks,
+// which consume task results through their mailbox rather than
+// explicit await/yield.
 // Suppressed for task factories that return the task to the caller.
 .decl leaked_async_task(func: symbol, id: symbol)
 .output leaked_async_task
@@ -102,7 +131,7 @@ leaked_async_task(func, id) :-
   task_async_call(func, id),
   !has_await(func),
   function_def(func, mod, _, _, _, _),
-  !genserver_task_handler(mod),
+  !process_task_handler(mod),
   !task_factory(func, id).
 
 // ── Task.Supervisor.start_child detection ──────────────────────────────

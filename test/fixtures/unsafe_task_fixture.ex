@@ -77,3 +77,69 @@ defmodule Argus.Test.Fixtures.TaskFactory do
     Task.Supervisor.async_nolink(sup, fun)
   end
 end
+
+# Stub behaviour for testing LiveView suppression.
+# Phoenix.LiveView is not a dependency of argus.
+defmodule Phoenix.LiveView do
+  @moduledoc false
+  @callback mount(term(), term(), term()) :: term()
+  @callback handle_info(term(), term()) :: term()
+  @callback render(term()) :: term()
+end
+
+defmodule Argus.Test.Fixtures.LiveViewTaskConsumer do
+  @moduledoc false
+
+  # LiveView that dispatches async tasks and consumes results via handle_info.
+  # Should NOT be flagged by leaked_async_task.
+  @behaviour Phoenix.LiveView
+
+  def mount(_params, _session, socket), do: {:ok, socket}
+
+  def render(assigns), do: assigns
+
+  def handle_info({ref, _result}, socket) when is_reference(ref) do
+    Process.demonitor(ref, [:flush])
+    {:noreply, socket}
+  end
+
+  # This function creates an async task without awaiting.
+  # Suppressed because LiveView consumes task messages via handle_info.
+  def dispatch_task(socket) do
+    Task.async(fn -> :work end)
+    {:noreply, socket}
+  end
+end
+
+defmodule Argus.Test.Fixtures.GenStatemTaskConsumer do
+  @moduledoc false
+
+  # gen_statem that dispatches async tasks and consumes results via handle_event/4.
+  # Should NOT be flagged by leaked_async_task.
+  @behaviour :gen_statem
+
+  def callback_mode, do: :handle_event_function
+
+  def init(state), do: {:ok, :idle, state}
+
+  def handle_event(:info, {ref, _result}, _state, data) when is_reference(ref) do
+    Process.demonitor(ref, [:flush])
+    {:keep_state, data}
+  end
+
+  def handle_event(:internal, :dispatch, _state, data) do
+    Task.async(fn -> :work end)
+    {:keep_state, data}
+  end
+end
+
+defmodule Argus.Test.Fixtures.TaskShutdownUser do
+  @moduledoc false
+
+  # Module that creates an async task and consumes it via Task.shutdown.
+  # Should NOT be flagged by leaked_async_task.
+  def run_with_timeout(fun) do
+    task = Task.async(fun)
+    Task.shutdown(task, :brutal_kill)
+  end
+end

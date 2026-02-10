@@ -13,9 +13,10 @@ defmodule Argus.Analyses.UnsafeTask do
      position and no branch instruction follows it, indicating the `{:ok, pid}`
      / `{:error, reason}` result is ignored.
 
-  Suppresses `leaked_async_task` for GenServer modules with `handle_info/2`,
-  which consume task results through their mailbox rather than explicit
-  await/yield.
+  Suppresses `leaked_async_task` for process modules with message-receiving
+  callbacks (GenServer, LiveView, LiveComponent, gen_statem) that consume
+  task results through their mailbox rather than explicit await/yield.
+  Also recognizes `Task.shutdown/1,2` as a valid way to consume a task.
 
   Requires the OTP extractor for `implements_behaviour` facts.
 
