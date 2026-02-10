@@ -2,16 +2,19 @@ defmodule Argus.Analyses.ProcessBottleneck do
   @moduledoc """
   Process bottleneck detection.
 
-  Identifies GenServer modules with high synchronous call fan-in: many distinct
-  caller modules make `GenServer.call` to the same target. These are
+  Identifies GenServer modules with high synchronous call fan-in: 5 or more
+  distinct caller modules make `GenServer.call` to the same target. These are
   serialization points that can become throughput bottlenecks under load.
+
+  Low fan-in GenServers (1–4 callers) are normal centralized services and are
+  not reported.
 
   Requires the OTP extractor for `sync_call` and `implements_behaviour` facts.
 
   ## Output relations
 
-  - `sync_caller(caller_mod, target_mod)` — module-level sync call dependency.
-  - `sync_call_fan_in(target_mod, count)` — number of distinct callers for each GenServer.
+  - `bottleneck_caller(caller_mod, target_mod)` — caller of a high-fan-in GenServer.
+  - `sync_call_fan_in(target_mod, count)` — number of distinct callers (>= 5 only).
   """
 
   @behaviour Argus.Analysis
@@ -32,12 +35,12 @@ defmodule Argus.Analyses.ProcessBottleneck do
   def output_relations do
     [
       %{
-        name: :sync_caller,
+        name: :bottleneck_caller,
         fields: [
           {:caller_mod, :symbol, "module making the sync call"},
           {:target_mod, :symbol, "target GenServer module"}
         ],
-        doc: "Module-level synchronous call dependency."
+        doc: "Caller of a high-fan-in (>= 5) GenServer."
       },
       %{
         name: :sync_call_fan_in,
@@ -45,7 +48,7 @@ defmodule Argus.Analyses.ProcessBottleneck do
           {:target_mod, :symbol, "target GenServer module"},
           {:cnt, :number, "number of distinct caller modules"}
         ],
-        doc: "Synchronous call fan-in count for a GenServer."
+        doc: "Synchronous call fan-in count for a GenServer (>= 5 only)."
       }
     ]
   end

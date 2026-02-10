@@ -63,3 +63,41 @@ defmodule Argus.Test.Fixtures.WorkerB do
     {:reply, :ok, state}
   end
 end
+
+defmodule Argus.Test.Fixtures.RuntimeCallerWorker do
+  @moduledoc false
+  use GenServer
+
+  # Calls WorkerA only from handle_call (runtime), never from init.
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+  def call_a(server), do: GenServer.call(server, :call_a)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call(:call_a, _from, state) do
+    GenServer.call(Argus.Test.Fixtures.WorkerA, :ping)
+    {:reply, :ok, state}
+  end
+end
+
+defmodule Argus.Test.Fixtures.RuntimeCallSupervisor do
+  @moduledoc false
+  use Supervisor
+
+  # RuntimeCallerWorker started before WorkerA — only calls it at runtime.
+  def start_link(opts) do
+    Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+  end
+
+  @impl true
+  def init(_opts) do
+    children = [
+      {Argus.Test.Fixtures.RuntimeCallerWorker, []},
+      {Argus.Test.Fixtures.WorkerA, []}
+    ]
+
+    Supervisor.init(children, strategy: :one_for_one)
+  end
+end
