@@ -47,16 +47,24 @@ lib/
 │       └── argus.ex                 # mix argus <analysis> [modules...]
 priv/
 └── dl/                              # Souffle rule files
-    ├── cfg.dl
-    ├── callgraph.dl
-    ├── reachability.dl
-    ├── reaching_def.dl
-    ├── liveness.dl
-    ├── tail_call.dl
-    ├── message_flow.dl
-    ├── supervision.dl
-    ├── child_subtree.dl
-    └── one_for_one_coupling.dl
+    ├── base.dl                      # Shared declarations
+    ├── cfg.dl                       # Control flow graph
+    ├── callgraph.dl                 # Call graph entry point
+    ├── callgraph_rules.dl           # Call graph derivation rules
+    ├── call_reachable_rules.dl      # Transitive call reachability
+    ├── call_cycle.dl                # Sync-call cycle detection
+    ├── reachability.dl              # Code reachability
+    ├── reaching_def.dl              # Reaching definitions
+    ├── liveness.dl                  # Live variable analysis
+    ├── tail_call.dl                 # Tail call / recursion
+    ├── message_flow.dl              # Message passing paths
+    ├── supervision.dl               # Supervision tree anti-patterns
+    ├── child_subtree.dl             # Child subtree helpers
+    ├── one_for_one_coupling.dl      # Cross-branch coupling
+    ├── ets.dl                       # ETS table analysis
+    ├── unlinked_spawn.dl            # Orphan process detection
+    ├── sync_call_in_init.dl         # Startup deadlock detection
+    └── process_bottleneck.dl        # Sync call fan-in
 scripts/
 └── analyze_project.exs              # Analyze external projects
 ```
