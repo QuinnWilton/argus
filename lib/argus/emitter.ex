@@ -14,6 +14,8 @@ defmodule Argus.Emitter do
 
   alias Argus.Normalize
 
+  import Argus.Extractor.Helpers, only: [add_fact: 3]
+
   @type facts :: %{atom() => [[String.t()]]}
 
   @doc """
@@ -27,7 +29,7 @@ defmodule Argus.Emitter do
   def emit_module(module, exports, imports, attributes, functions) do
     mod_str = inspect(module)
 
-    facts = new_facts()
+    facts = %{}
 
     # Module-level facts.
     facts = add_fact(facts, :module_info, [mod_str, mod_str])
@@ -619,14 +621,6 @@ defmodule Argus.Emitter do
 
   defp instruction_op(atom) when is_atom(atom), do: atom
   defp instruction_op(tuple) when is_tuple(tuple), do: elem(tuple, 0)
-
-  defp new_facts do
-    %{}
-  end
-
-  defp add_fact(facts, relation, row) do
-    Map.update(facts, relation, [row], &[row | &1])
-  end
 
   defp format_operand({:x, n}), do: "x#{n}"
   defp format_operand({:y, n}), do: "y#{n}"
