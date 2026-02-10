@@ -87,6 +87,88 @@ defmodule Argus.Extractor.Helpers do
     end)
   end
 
+  # --- Label scanning ---
+
+  @doc """
+  Return instructions starting from a given label number.
+
+  Scans forward through the instruction list for `{:label, label_num}` and
+  returns all instructions from that label onward (inclusive). Returns `[]`
+  if the label is not found.
+  """
+  @spec instructions_from_label([term()], non_neg_integer()) :: [term()]
+  def instructions_from_label(instrs, label_num) do
+    case Enum.drop_while(instrs, fn
+           {:label, ^label_num} -> false
+           _ -> true
+         end) do
+      [] -> []
+      from_label -> from_label
+    end
+  end
+
+  # --- Return tuple scanning ---
+
+  @doc """
+  Scan instructions for return value construction patterns.
+
+  Finds `put_tuple2` instructions whose destination flows to `{:x, 0}`
+  before a return, indicating constructed return tuples. Returns a list
+  of `{index, elements}` pairs where `elements` is the flat element list
+  from the `put_tuple2` instruction.
+
+  Used by extractors that need to detect return shapes like `{:next_state, ...}`
+  or `{:error, ...}`.
+  """
+  @spec scan_return_tuples([term()]) :: [{non_neg_integer(), [term()]}]
+  def scan_return_tuples(instrs) do
+    instrs
+    |> Enum.with_index()
+    |> Enum.flat_map(fn
+      {{:put_tuple2, dst, {:list, elements}}, idx} ->
+        if tuple_flows_to_return?(instrs, idx, dst), do: [{idx, elements}], else: []
+
+      _ ->
+        []
+    end)
+  end
+
+  # Check whether a put_tuple2 destination register flows to x0 before
+  # a return instruction. Handles direct writes to x0 and single-step
+  # moves from the destination to x0.
+  defp tuple_flows_to_return?(instrs, idx, dst) do
+    rest = Enum.drop(instrs, idx + 1)
+
+    case normalize_reg(dst) do
+      {:x, 0} ->
+        # Already in x0 — just check that a return follows without
+        # another write to x0.
+        Enum.any?(rest, fn
+          :return -> true
+          instr -> barrier?(instr)
+        end)
+
+      other_reg ->
+        # Look for a move from the dst register to x0 before return.
+        Enum.reduce_while(rest, false, fn
+          {:move, src, {:x, 0}}, _acc ->
+            if normalize_reg(src) == other_reg, do: {:halt, true}, else: {:cont, false}
+
+          {:move, src, {:tr, {:x, 0}, _}}, _acc ->
+            if normalize_reg(src) == other_reg, do: {:halt, true}, else: {:cont, false}
+
+          :return, _acc ->
+            {:halt, false}
+
+          instr, _acc ->
+            if barrier?(instr), do: {:halt, false}, else: {:cont, false}
+        end)
+    end
+  end
+
+  defp normalize_reg({:tr, reg, _}), do: reg
+  defp normalize_reg(reg), do: reg
+
   # --- Backward register resolution ---
 
   @doc """
