@@ -71,6 +71,82 @@ defmodule Argus.Extractors.OTPTest do
     end
   end
 
+  describe "extract/1 — Agent sync call detection" do
+    test "detects Agent.get as sync_call" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.AgentCaller)))
+
+      facts = OTP.extract(data)
+
+      assert Map.has_key?(facts, :sync_call)
+      calls = facts[:sync_call]
+      assert length(calls) >= 3
+    end
+  end
+
+  describe "extract/1 — Erlang-style :gen_server detection" do
+    test "detects :gen_server.call as sync_call" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(
+          to_string(:code.which(Argus.Test.Fixtures.ErlangStyleCaller))
+        )
+
+      facts = OTP.extract(data)
+
+      assert Map.has_key?(facts, :sync_call)
+    end
+
+    test "detects :gen_server.cast as async_cast" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(
+          to_string(:code.which(Argus.Test.Fixtures.ErlangStyleCaller))
+        )
+
+      facts = OTP.extract(data)
+
+      assert Map.has_key?(facts, :async_cast)
+    end
+  end
+
+  describe "extract/1 — GenServer.multi_call detection" do
+    test "detects GenServer.multi_call as sync_call" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.MultiCallModule)))
+
+      facts = OTP.extract(data)
+
+      assert Map.has_key?(facts, :sync_call)
+    end
+  end
+
+  describe "extract/1 — link/monitor detection" do
+    test "detects Process.link as process_link" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(
+          to_string(:code.which(Argus.Test.Fixtures.LinkMonitorModule))
+        )
+
+      facts = OTP.extract(data)
+
+      assert Map.has_key?(facts, :process_link)
+      links = facts[:process_link]
+      assert length(links) >= 2
+    end
+
+    test "detects Process.monitor as process_monitor" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(
+          to_string(:code.which(Argus.Test.Fixtures.LinkMonitorModule))
+        )
+
+      facts = OTP.extract(data)
+
+      assert Map.has_key?(facts, :process_monitor)
+      monitors = facts[:process_monitor]
+      assert length(monitors) >= 2
+    end
+  end
+
   describe "integration with extract pipeline" do
     test "extractor is usable via Extract.extract/2" do
       assert {:ok, facts} =
