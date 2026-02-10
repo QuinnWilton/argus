@@ -39,13 +39,7 @@
 
 // ── Init function identification ───────────────────────────────────────
 
-// A function is an init function if it is named "init" with arity 1
-// in a module that implements a behaviour.
-.decl init_function(mod: symbol, func: symbol)
-
-init_function(mod, func) :-
-  function_def(func, mod, "init", 1, _, _),
-  implements_behaviour(mod, _).
+.include "init_function_rules.dl"
 
 // ── GenServer API identification ───────────────────────────────────────
 

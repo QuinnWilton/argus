@@ -1,0 +1,11 @@
+// Shared rules for identifying init functions.
+//
+// init/1 in a behaviour module — only these functions run at start time.
+//
+// Requires: function_def, implements_behaviour (declared by consumer).
+
+.decl init_function(mod: symbol, func: symbol)
+
+init_function(mod, func) :-
+  function_def(func, mod, "init", 1, _, _),
+  implements_behaviour(mod, _).

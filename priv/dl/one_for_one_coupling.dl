@@ -34,26 +34,14 @@
 .decl call_reachable(from: symbol, to: symbol)
 .include "call_reachable_rules.dl"
 
-// ── Helper: module-level reachability ────────────────────────────────
+// ── GenServer API and stateful module dependency ───────────────────
 
-// A function defined in module `from_mod` transitively reaches a
-// function defined in module `to_mod`.
-.decl module_reaches(from_mod: symbol, to_mod: symbol)
-
-module_reaches(from_mod, to_mod) :-
-  function_def(caller, from_mod, _, _, _, _),
-  call_reachable(caller, callee),
-  function_def(callee, to_mod, _, _, _, _),
-  from_mod != to_mod.
+.include "genserver_api_rules.dl"
+.include "stateful_module_dep_rules.dl"
 
 // ── Init-time reachability ──────────────────────────────────────────
 
-// init/1 in a behaviour module — only these functions run at start time.
-.decl init_function(mod: symbol, func: symbol)
-
-init_function(mod, func) :-
-  function_def(func, mod, "init", 1, _, _),
-  implements_behaviour(mod, _).
+.include "init_function_rules.dl"
 
 // Module `from_mod` reaches `to_mod` during init — the call originates
 // from an init/1 function (directly or transitively).
@@ -70,99 +58,6 @@ init_reaches(from_mod, to_mod) :-
   function_def(func, _, _, _, _, _),
   call_edge(func, callee),
   function_def(callee, to_mod, _, _, _, _),
-  from_mod != to_mod.
-
-// ── GenServer API identification ───────────────────────────────────────
-
-.include "genserver_api_rules.dl"
-
-.decl genserver_async_api(func: symbol, mod: symbol)
-genserver_async_api(func, mod) :-
-  function_def(func, mod, _, _, _, 1),
-  implements_behaviour(mod, "GenServer"),
-  async_cast(func, _).
-
-// ── Stateful module dependency ──────────────────────────────────────
-
-// Module-level dependency through GenServer message passing (sync_call
-// or async_cast). Distinguishes stateful process coupling from plain
-// function calls.
-.decl stateful_module_dep(from_mod: symbol, to_mod: symbol)
-
-// Resolved target: a function in from_mod transitively reaches a
-// function that makes a sync_call/async_cast to a known target module.
-stateful_module_dep(from_mod, to_mod) :-
-  function_def(f, from_mod, _, _, _, _),
-  call_reachable(f, g),
-  sync_call(g, to_mod),
-  to_mod != "dynamic",
-  from_mod != to_mod.
-
-stateful_module_dep(from_mod, to_mod) :-
-  function_def(f, from_mod, _, _, _, _),
-  call_reachable(f, g),
-  async_cast(g, to_mod),
-  to_mod != "dynamic",
-  from_mod != to_mod.
-
-// Direct: the function itself (not just a callee) has the call/cast.
-stateful_module_dep(from_mod, to_mod) :-
-  function_def(f, from_mod, _, _, _, _),
-  sync_call(f, to_mod),
-  to_mod != "dynamic",
-  from_mod != to_mod.
-
-stateful_module_dep(from_mod, to_mod) :-
-  function_def(f, from_mod, _, _, _, _),
-  async_cast(f, to_mod),
-  to_mod != "dynamic",
-  from_mod != to_mod.
-
-// Per-function heuristic: from_mod reaches a function in to_mod that
-// itself makes a sync_call/async_cast with any target (including
-// dynamic). This catches GenServer modules whose API functions
-// internally call GenServer.call(server, ...) with a runtime pid/name.
-stateful_module_dep(from_mod, to_mod) :-
-  function_def(f, from_mod, _, _, _, _),
-  call_reachable(f, g),
-  function_def(g, to_mod, _, _, _, _),
-  sync_call(g, _),
-  from_mod != to_mod.
-
-stateful_module_dep(from_mod, to_mod) :-
-  function_def(f, from_mod, _, _, _, _),
-  call_reachable(f, g),
-  function_def(g, to_mod, _, _, _, _),
-  async_cast(g, _),
-  from_mod != to_mod.
-
-// Module-level heuristic: from_mod reaches to_mod through the call
-// graph, and to_mod has any function with sync_call/async_cast. This
-// catches facade modules (e.g. Oban.Notifier) that delegate to
-// concrete GenServer implementations via dynamic dispatch — the
-// reached function itself has no sync_call fact, but the module as a
-// whole manages process state.
-stateful_module_dep(from_mod, to_mod) :-
-  module_reaches(from_mod, to_mod),
-  function_def(h, to_mod, _, _, _, _),
-  sync_call(h, _).
-
-stateful_module_dep(from_mod, to_mod) :-
-  module_reaches(from_mod, to_mod),
-  function_def(h, to_mod, _, _, _, _),
-  async_cast(h, _).
-
-// GenServer API: from_mod directly calls a sync/async API function of to_mod.
-stateful_module_dep(from_mod, to_mod) :-
-  function_def(f, from_mod, _, _, _, _),
-  call_edge(f, g),
-  genserver_sync_api(g, to_mod),
-  from_mod != to_mod.
-
-stateful_module_dep(from_mod, to_mod) :-
-  function_def(f, from_mod, _, _, _, _),
-  call_edge(f, g),
-  genserver_async_api(g, to_mod),
   from_mod != to_mod.
 
 // ── Child subtree ──────────────────────────────────────────────────
