@@ -1,0 +1,80 @@
+// Synchronous calls in init/1 detection.
+//
+// Identifies GenServer/Supervisor modules whose init/1 callback makes
+// synchronous calls (directly or transitively). When combined with
+// supervision ordering, detects guaranteed deadlocks: a child's init
+// blocks on a sibling that hasn't started yet.
+
+.include "base.dl"
+
+// ── Layer 2 facts ──────────────────────────────────────────────────────
+
+.decl implements_behaviour(mod: symbol, behaviour: symbol)
+.input implements_behaviour
+
+.decl sync_call(caller_func: symbol, callee_mod: symbol)
+.input sync_call
+
+.decl supervisor(mod: symbol, strategy: symbol)
+.input supervisor
+
+.decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
+.input supervisor_child
+
+// ── Callgraph ──────────────────────────────────────────────────────────
+
+.decl call_edge(caller: symbol, callee: symbol)
+.include "callgraph_rules.dl"
+
+.decl call_reachable(from: symbol, to: symbol)
+.include "call_reachable_rules.dl"
+
+// ── Child subtree ──────────────────────────────────────────────────────
+
+.include "child_subtree.dl"
+
+// ── Init function identification ───────────────────────────────────────
+
+// A function is an init function if it is named "init" with arity 1
+// in a module that implements a behaviour.
+.decl init_function(mod: symbol, func: symbol)
+
+init_function(mod, func) :-
+  function_def(func, mod, "init", 1, _, _),
+  implements_behaviour(mod, _).
+
+// ── Sync calls reachable from init ─────────────────────────────────────
+
+.decl sync_call_in_init(mod: symbol, callee: symbol)
+.output sync_call_in_init
+
+// Direct: init/1 itself makes the sync_call.
+sync_call_in_init(mod, callee) :-
+  init_function(mod, func),
+  sync_call(func, callee),
+  callee != "dynamic".
+
+// Transitive: init/1 reaches a function that makes the sync_call.
+sync_call_in_init(mod, callee) :-
+  init_function(mod, func),
+  call_reachable(func, g),
+  sync_call(g, callee),
+  callee != "dynamic".
+
+// ── Init deadlock risk ─────────────────────────────────────────────────
+
+// A child's init sync-calls a dependency that starts later under the
+// same supervisor. The dependency's process doesn't exist yet, so the
+// call will block (or crash) during startup.
+.decl init_deadlock_risk(sup: symbol, child: symbol, dep: symbol, child_pos: number, dep_pos: number)
+.output init_deadlock_risk
+
+init_deadlock_risk(sup, child, dep, cpos, dpos) :-
+  supervisor(sup, _),
+  child_subtree(sup, child_branch, child),
+  child_subtree(sup, dep_branch, dep),
+  supervisor_child(sup, cpos, child_branch, _, _),
+  supervisor_child(sup, dpos, dep_branch, _, _),
+  sync_call_in_init(child, dep),
+  cpos < dpos,
+  child_branch != dep_branch.
