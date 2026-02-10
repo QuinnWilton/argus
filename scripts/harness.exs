@@ -4,7 +4,7 @@
 #   mix run scripts/harness.exs INPUT_DIR OUTPUT_DIR [options]
 #
 # Options:
-#   --concurrency N     Parallel project pipelines (default: schedulers_online)
+#   --concurrency N     Parallel project pipelines (default: 4)
 #   --skip-compile      Assume projects already compiled
 #   --resume            Skip projects with existing results.json
 #   --analyses a,b,c    Comma-separated analysis names (default: correctness set)
@@ -26,6 +26,12 @@
 defmodule Argus.Scripts.Harness do
   @default_timeout 900
   @argus_dir File.cwd!()
+
+  # Compute ebin paths once at compile time so we can shell out with `elixir`
+  # directly, bypassing the Mix build lock that prevents parallel execution.
+  @ebin_dirs Path.join([@argus_dir, "_build", "dev", "lib", "*", "ebin"])
+             |> Path.wildcard()
+             |> Enum.sort()
 
   def run(args) do
     {opts, positional} = parse_opts(args)
@@ -159,7 +165,9 @@ defmodule Argus.Scripts.Harness do
         aliases: [c: :concurrency, t: :timeout]
       )
 
-    concurrency = opts[:concurrency] || System.schedulers_online()
+    # Each project spawns a full BEAM VM + Souffle, so keep concurrency low
+    # to avoid exhausting system memory.
+    concurrency = opts[:concurrency] || 4
     timeout = opts[:timeout] || @default_timeout
     skip_compile = opts[:skip_compile] || false
     resume = opts[:resume] || false
@@ -193,7 +201,7 @@ defmodule Argus.Scripts.Harness do
     Usage: mix run scripts/harness.exs INPUT_DIR OUTPUT_DIR [options]
 
     Options:
-      --concurrency N     Parallel project pipelines (default: schedulers_online)
+      --concurrency N     Parallel project pipelines (default: 4)
       --skip-compile      Assume projects already compiled
       --resume            Skip projects with existing results.json
       --analyses a,b,c    Comma-separated analysis names (default: correctness set)
@@ -256,65 +264,86 @@ defmodule Argus.Scripts.Harness do
   end
 
   defp compile_project(path, "mix", compile_log_path) do
+    # Use File.stream! to write raw bytes — IO.stream goes through Erlang's
+    # IO protocol which crashes on non-latin1 output.
+    File.write!(compile_log_path, "")
+    log = File.stream!(compile_log_path, [:append])
+
     case System.cmd("mix", ["deps.get", "--quiet"],
            cd: path,
-           stderr_to_stdout: true
+           stderr_to_stdout: true,
+           into: log
          ) do
-      {output, 0} ->
+      {_, 0} ->
         case System.cmd("mix", ["compile", "--quiet"],
                cd: path,
-               stderr_to_stdout: true
+               stderr_to_stdout: true,
+               into: log
              ) do
-          {compile_output, 0} ->
-            File.write!(compile_log_path, output <> compile_output)
-            :ok
-
-          {compile_output, _} ->
-            File.write!(compile_log_path, output <> compile_output)
-            {:error, "compile_failed"}
+          {_, 0} -> :ok
+          {_, _} -> {:error, "compile_failed"}
         end
 
-      {output, _} ->
-        File.write!(compile_log_path, output)
+      {_, _} ->
         {:error, "deps_get_failed"}
     end
   end
 
   defp compile_project(path, "rebar3", compile_log_path) do
+    File.write!(compile_log_path, "")
+    log = File.stream!(compile_log_path, [:append])
+
     case System.cmd("rebar3", ["compile"],
            cd: path,
-           stderr_to_stdout: true
+           stderr_to_stdout: true,
+           into: log
          ) do
-      {output, 0} ->
-        File.write!(compile_log_path, output)
-        :ok
-
-      {output, _} ->
-        File.write!(compile_log_path, output)
-        {:error, "compile_failed"}
+      {_, 0} -> :ok
+      {_, _} -> {:error, "compile_failed"}
     end
   end
 
   defp run_analysis_subprocess(project_path, results_path, opts) do
     script = Path.join(@argus_dir, "scripts/analyze_project.exs")
-    args = ["run", script, project_path, "--json", results_path | opts.analyses]
 
-    # System.cmd doesn't support :timeout — we rely on Task.async_stream's
-    # timeout to kill long-running subprocesses.
-    case System.cmd("mix", args,
-           cd: @argus_dir,
+    # Use `elixir` directly instead of `mix run` to avoid the Mix build lock.
+    # Each subprocess gets the compiled ebin paths via -pa flags.
+    pa_flags = Enum.flat_map(@ebin_dirs, fn dir -> ["-pa", dir] end)
+
+    # Can't combine -e with a script file — elixir treats everything after -e
+    # as argv. Instead, use a single -e that loads the app and requires the script,
+    # passing project args via --argv.
+    script_args = [project_path, "--json", results_path | opts.analyses]
+
+    boot_code =
+      "Application.load(:argus); System.argv(#{inspect(script_args)}); Code.require_file(#{inspect(script)})"
+
+    args = pa_flags ++ ["-e", boot_code]
+
+    # Stream output to a log file to avoid buffering in the parent process.
+    # Use File.stream! for raw bytes — IO.stream crashes on non-latin1 output.
+    error_log = Path.join(Path.dirname(results_path), "error.log")
+    File.write!(error_log, "")
+    log = File.stream!(error_log, [:append])
+
+    case System.cmd("elixir", args,
            stderr_to_stdout: true,
-           env: [{"MIX_ENV", "dev"}]
+           into: log
          ) do
-      {_output, 0} ->
-        :ok
+      {_, 0} ->
+        if File.exists?(results_path) do
+          :ok
+        else
+          {:error, "subprocess exited 0 but no results.json produced (see error.log)"}
+        end
 
-      {output, code} ->
-        {:error, "analyze_project exited with code #{code}: #{String.slice(output, 0, 500)}"}
+      {_, code} ->
+        {:error, "analyze_project exited with code #{code} (see error.log)"}
     end
   end
 
-  # Reads the results.json produced by the subprocess.
+  # Reads just the summary from results.json — avoids holding the full report
+  # in memory across all projects simultaneously.
   defp read_project_result(name, results_path, duration_ms) do
     case File.read(results_path) do
       {:ok, json} ->
@@ -326,8 +355,7 @@ defmodule Argus.Scripts.Harness do
              %{
                "name" => name,
                "total_findings" => total_findings,
-               "duration_ms" => duration_ms,
-               "report" => report
+               "duration_ms" => duration_ms
              }}
 
           _ ->
@@ -398,30 +426,15 @@ defmodule Argus.Scripts.Harness do
   end
 
   defp build_triage(output_dir, statuses) do
-    # Collect findings across all successful projects.
-    by_analysis =
+    # Collect findings by reading each project's results.json from disk one at
+    # a time, so we never hold all reports in memory simultaneously.
+    by_analysis_acc =
       statuses
       |> Enum.flat_map(fn {name, result} ->
         case result do
-          {:ok, info} ->
-            report = info["report"]
-            analyses = report["analyses"] || %{}
-
-            Enum.flat_map(analyses, fn {analysis_name, entry} ->
-              findings = entry["findings"] || %{}
-
-              count =
-                findings
-                |> Map.values()
-                |> Enum.map(&length/1)
-                |> Enum.sum()
-
-              if count > 0 do
-                [{analysis_name, name, count}]
-              else
-                []
-              end
-            end)
+          {:ok, _} ->
+            results_path = Path.join([output_dir, name, "results.json"])
+            extract_finding_counts(name, results_path)
 
           {:error, _} ->
             []
@@ -448,13 +461,28 @@ defmodule Argus.Scripts.Harness do
       end)
       |> Enum.sort_by(& &1["total_findings"], :desc)
 
-    # Read per-project results.json for the analysis-level detail.
-    # We already have reports in memory so we use those instead of re-reading.
-
     %{
-      "by_analysis" => by_analysis,
+      "by_analysis" => by_analysis_acc,
       "by_project" => by_project
     }
+  end
+
+  # Reads a single results.json and returns [{analysis_name, project_name, count}]
+  # for analyses with findings. The file is read and discarded per-project.
+  defp extract_finding_counts(project_name, results_path) do
+    case File.read(results_path) do
+      {:ok, json} ->
+        report = :json.decode(json)
+        analyses = report["analyses"] || %{}
+
+        Enum.flat_map(analyses, fn {analysis_name, entry} ->
+          count = entry["finding_count"] || 0
+          if count > 0, do: [{analysis_name, project_name, count}], else: []
+        end)
+
+      {:error, _} ->
+        []
+    end
   end
 
   defp abort(msg) do
