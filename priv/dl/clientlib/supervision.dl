@@ -1,0 +1,58 @@
+// Supervision tree helpers for client analyses.
+//
+// Provides child subtree mapping and init-time reachability.
+//
+// Prerequisites: include clientlib/imports.dl and clientlib/otp.dl before
+// this file, and declare/input the supervision facts needed below.
+//
+// Usage:
+//   .include "../clientlib/imports.dl"
+//
+//   .decl implements_behaviour(mod: symbol, behaviour: symbol)
+//   .input implements_behaviour
+//   .decl sync_call(caller_func: symbol, callee_mod: symbol)
+//   .input sync_call
+//   .decl async_cast(caller_func: symbol, callee_mod: symbol)
+//   .input async_cast
+//   .decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
+//   .input supervisor_child
+//
+//   .include "../clientlib/otp.dl"
+//   .include "../clientlib/supervision.dl"
+//
+// Provides:
+//   child_subtree(sup, branch, mod)
+//   init_reaches(from_mod, to_mod)
+
+// ── Child subtree ─────────────────────────────────────────────────────
+
+// Maps every module in a supervisor's subtree to the direct child
+// branch it belongs to. A direct child is its own branch root.
+
+.decl child_subtree(sup: symbol, branch: symbol, mod: symbol)
+
+child_subtree(sup, child, child) :- supervisor_child(sup, _, child, _, _).
+
+child_subtree(sup, branch, descendant) :-
+  child_subtree(sup, branch, intermediate),
+  supervisor_child(intermediate, _, descendant, _, _).
+
+// ── Init-time reachability ────────────────────────────────────────────
+
+// Module `from_mod` reaches `to_mod` during init — the call originates
+// from an init/1 function (directly or transitively).
+
+.decl init_reaches(from_mod: symbol, to_mod: symbol)
+
+init_reaches(from_mod, to_mod) :-
+  init_function(from_mod, func),
+  call_reachable(func, callee),
+  function_def(callee, to_mod, _, _, _, _),
+  from_mod != to_mod.
+
+init_reaches(from_mod, to_mod) :-
+  init_function(from_mod, func),
+  function_def(func, _, _, _, _, _),
+  call_edge(func, callee),
+  function_def(callee, to_mod, _, _, _, _),
+  from_mod != to_mod.

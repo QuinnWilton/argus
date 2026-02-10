@@ -22,7 +22,7 @@ defmodule Argus.Analyses.TailCall do
   def description, do: "tail call identification and recursion detection"
 
   @impl true
-  def rules_file, do: "tail_call.dl"
+  def rules_file, do: "analyses/tail_call.dl"
 
   @impl true
   def extractors, do: []

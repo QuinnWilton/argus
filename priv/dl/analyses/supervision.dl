@@ -8,7 +8,7 @@
 // Uses transitive stateful_module_dep to catch indirect dependencies
 // (e.g. A calls helper H which calls GenServer.call(B)).
 
-.include "base.dl"
+.include "../clientlib/imports.dl"
 
 .decl supervisor(mod: symbol, strategy: symbol)
 .input supervisor
@@ -31,40 +31,13 @@
 .decl implements_behaviour(mod: symbol, behaviour: symbol)
 .input implements_behaviour
 
-// ── Callgraph ────────────────────────────────────────────────────────
+// ── OTP helpers ──────────────────────────────────────────────────────
 
-.decl call_edge(caller: symbol, callee: symbol)
-.include "callgraph_rules.dl"
+.include "../clientlib/otp.dl"
 
-.decl call_reachable(from: symbol, to: symbol)
-.include "call_reachable_rules.dl"
+// ── Supervision helpers ──────────────────────────────────────────────
 
-// ── Shared rules ─────────────────────────────────────────────────────
-
-.include "genserver_api_rules.dl"
-.include "stateful_module_dep_rules.dl"
-.include "init_function_rules.dl"
-
-// ── Child subtree ──────────────────────────────────────────────────
-
-.include "child_subtree.dl"
-
-// ── Init-time reachability ──────────────────────────────────────────
-
-.decl init_reaches(from_mod: symbol, to_mod: symbol)
-
-init_reaches(from_mod, to_mod) :-
-  init_function(from_mod, func),
-  call_reachable(func, callee),
-  function_def(callee, to_mod, _, _, _, _),
-  from_mod != to_mod.
-
-init_reaches(from_mod, to_mod) :-
-  init_function(from_mod, func),
-  function_def(func, _, _, _, _, _),
-  call_edge(func, callee),
-  function_def(callee, to_mod, _, _, _, _),
-  from_mod != to_mod.
+.include "../clientlib/supervision.dl"
 
 // ── Derived process links ────────────────────────────────────────────
 

@@ -24,7 +24,7 @@ defmodule Argus.Analyses.CallCycle do
   def description, do: "module-level synchronous call cycle (deadlock) detection"
 
   @impl true
-  def rules_file, do: "call_cycle.dl"
+  def rules_file, do: "analyses/call_cycle.dl"
 
   @impl true
   def extractors, do: [Argus.Extractors.OTP]

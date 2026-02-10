@@ -22,7 +22,7 @@ defmodule Argus.Analyses.UnlinkedSpawn do
   def description, do: "unlinked (orphan) process spawn detection"
 
   @impl true
-  def rules_file, do: "unlinked_spawn.dl"
+  def rules_file, do: "analyses/unlinked_spawn.dl"
 
   @impl true
   def extractors, do: []

@@ -1,0 +1,25 @@
+// Message flow analysis.
+//
+// Pairs message send instructions with receive (loop_rec) instructions
+// within the same function or across function boundaries via the call graph.
+
+.include "../clientlib/imports.dl"
+
+.decl send_msg(id: symbol)
+.input send_msg
+
+.decl recv_start(id: symbol, fail: number)
+.input recv_start
+
+.decl recv_end(id: symbol)
+.input recv_end
+
+.decl spawn_call(id: symbol, mod: symbol, func: symbol, arity: number, variant: symbol)
+.input spawn_call
+
+.include "../clientlib/concurrency.dl"
+
+.output sender_function
+.output receiver_function
+.output send_recv_function
+.output potential_message_path

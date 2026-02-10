@@ -25,7 +25,7 @@ defmodule Argus.Analyses.OneForOneCoupling do
   def description, do: "cross-branch coupling under one_for_one supervisors"
 
   @impl true
-  def rules_file, do: "one_for_one_coupling.dl"
+  def rules_file, do: "analyses/one_for_one_coupling.dl"
 
   @impl true
   def extractors, do: [Argus.Extractors.Supervision, Argus.Extractors.OTP]

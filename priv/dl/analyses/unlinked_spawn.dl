@@ -4,7 +4,9 @@
 // processes with no supervision or failure propagation link. These
 // "orphan" processes silently disappear on crash.
 
-.include "base.dl"
+.include "../clientlib/cfg.dl"
+
+// base.dl relations (instruction) are included transitively through cfg.dl.
 
 .decl spawn_call(id: symbol, mod: symbol, func: symbol, arity: number, variant: symbol)
 .input spawn_call

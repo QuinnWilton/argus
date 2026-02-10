@@ -1,0 +1,69 @@
+// Concurrency pattern helpers for client analyses.
+//
+// Provides sender/receiver function identification, message path analysis,
+// and spawn pattern detection.
+//
+// Prerequisites: include clientlib/imports.dl before this file, and
+// declare/input the layer 1 facts needed below.
+//
+// Usage:
+//   .include "clientlib/imports.dl"
+//
+//   .decl send_msg(id: symbol)
+//   .input send_msg
+//   .decl recv_start(id: symbol, fail: number)
+//   .input recv_start
+//   .decl recv_end(id: symbol)
+//   .input recv_end
+//   .decl spawn_call(id: symbol, mod: symbol, func: symbol, arity: number, variant: symbol)
+//   .input spawn_call
+//
+//   .include "clientlib/concurrency.dl"
+
+// ── Message passing ──────────────────────────────────────────────────
+
+// Functions that send messages.
+.decl sender_function(func: symbol)
+
+sender_function(func) :-
+  send_msg(id),
+  instruction(id, func, _, _).
+
+// Functions that receive messages.
+.decl receiver_function(func: symbol)
+
+receiver_function(func) :-
+  recv_start(id, _),
+  instruction(id, func, _, _).
+
+// Functions that both send and receive.
+.decl send_recv_function(func: symbol)
+
+send_recv_function(func) :-
+  sender_function(func),
+  receiver_function(func).
+
+// A sender can potentially deliver to a receiver if they're in the same
+// function or connected via the call graph.
+.decl potential_message_path(sender_func: symbol, receiver_func: symbol)
+
+potential_message_path(f, f) :- send_recv_function(f).
+potential_message_path(s, r) :-
+  sender_function(s),
+  receiver_function(r),
+  call_reachable(s, r).
+
+// ── Spawn patterns ───────────────────────────────────────────────────
+
+// Functions that spawn processes.
+.decl spawner_function(func: symbol, variant: symbol)
+
+spawner_function(func, variant) :-
+  spawn_call(id, _, _, _, variant),
+  instruction(id, func, _, _).
+
+// Unlinked spawns: spawns without spawn_link or spawn_monitor.
+.decl unlinked_spawner(func: symbol)
+
+unlinked_spawner(func) :-
+  spawner_function(func, "spawn").

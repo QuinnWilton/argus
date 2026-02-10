@@ -33,7 +33,7 @@ defmodule Argus.Analyses.SyncCallInInit do
   def description, do: "synchronous calls in init/1 (startup deadlock) detection"
 
   @impl true
-  def rules_file, do: "sync_call_in_init.dl"
+  def rules_file, do: "analyses/sync_call_in_init.dl"
 
   @impl true
   def extractors, do: [Argus.Extractors.OTP, Argus.Extractors.Supervision]

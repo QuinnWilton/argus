@@ -3,7 +3,7 @@
 // Derives cfg_edge from base facts: sequential next, jumps, branches,
 // and select_branch arms. Maps label numbers to instruction IDs via label_at.
 
-.include "base.dl"
+.include "../base.dl"
 
 // Derived: control flow graph edge.
 .decl cfg_edge(from: symbol, to: symbol)

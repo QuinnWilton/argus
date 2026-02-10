@@ -1,0 +1,10 @@
+// Reachability analysis (entry point).
+//
+// Transitive closure over cfg_edge (instruction-level) and call_edge
+// (function-level).
+
+.include "../clientlib/imports.dl"
+
+.output call_edge
+.output cfg_reachable
+.output call_reachable

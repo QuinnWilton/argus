@@ -30,7 +30,7 @@ defmodule Argus.Analyses.Ets do
   def description, do: "ETS table ownership, concurrency, and lifecycle analysis"
 
   @impl true
-  def rules_file, do: "ets.dl"
+  def rules_file, do: "analyses/ets.dl"
 
   @impl true
   def extractors, do: [Argus.Extractors.ETS, Argus.Extractors.OTP, Argus.Extractors.Supervision]

@@ -9,7 +9,7 @@
 // - Safe sibling: callee starts EARLIER under the same supervisor.
 // - Safe cross-supervisor: caller and callee are under disjoint supervisors.
 
-.include "base.dl"
+.include "../clientlib/imports.dl"
 
 // ── Layer 2 facts ──────────────────────────────────────────────────────
 
@@ -19,31 +19,22 @@
 .decl sync_call(caller_func: symbol, callee_mod: symbol)
 .input sync_call
 
+.decl async_cast(caller_func: symbol, callee_mod: symbol)
+.input async_cast
+
 .decl supervisor(mod: symbol, strategy: symbol)
 .input supervisor
 
 .decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
 .input supervisor_child
 
-// ── Callgraph ──────────────────────────────────────────────────────────
+// ── OTP helpers ─────────────────────────────────────────────────────────
 
-.decl call_edge(caller: symbol, callee: symbol)
-.include "callgraph_rules.dl"
+.include "../clientlib/otp.dl"
 
-.decl call_reachable(from: symbol, to: symbol)
-.include "call_reachable_rules.dl"
+// ── Child subtree + init reaches ────────────────────────────────────────
 
-// ── Child subtree ──────────────────────────────────────────────────────
-
-.include "child_subtree.dl"
-
-// ── Init function identification ───────────────────────────────────────
-
-.include "init_function_rules.dl"
-
-// ── GenServer API identification ───────────────────────────────────────
-
-.include "genserver_api_rules.dl"
+.include "../clientlib/supervision.dl"
 
 // ── Raw sync calls reachable from init ─────────────────────────────────
 

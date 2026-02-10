@@ -19,7 +19,7 @@ defmodule Argus.Analyses.Callgraph do
   def description, do: "call graph edges"
 
   @impl true
-  def rules_file, do: "callgraph.dl"
+  def rules_file, do: "analyses/callgraph.dl"
 
   @impl true
   def extractors, do: []

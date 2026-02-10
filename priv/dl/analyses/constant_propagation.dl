@@ -1,0 +1,91 @@
+// Constant propagation and value tracking.
+//
+// Propagates literal values through move chains. At each program point,
+// determines which registers hold known constant values (atoms, integers,
+// etc. that were loaded via literal_value).
+//
+// Seeds from literal_value facts, then propagates through move instructions
+// that don't redefine the register with a non-constant value.
+
+.include "../clientlib/cfg.dl"
+
+.decl def(id: symbol, reg: symbol)
+.input def
+
+.decl move(id: symbol, src: symbol, dst: symbol)
+.input move
+
+.decl literal_value(id: symbol, reg: symbol, val: symbol)
+.input literal_value
+
+// ── Value at point ───────────────────────────────────────────────────
+
+// value_at(id, reg, val): at instruction id, register reg holds value val.
+
+// Seed: a literal_value instruction assigns a known value.
+.decl value_at(id: symbol, reg: symbol, val: symbol)
+.output value_at
+
+value_at(id, reg, val) :- literal_value(id, reg, val).
+
+// Propagate through CFG: if a value is known at a point and flows to the
+// next instruction without being redefined, it's still known.
+value_at(to, reg, val) :-
+  value_at(from, reg, val),
+  cfg_edge(from, to),
+  !def(to, reg).
+
+// Move propagation: if src holds a known value and a move copies src to
+// dst at instruction id, then dst holds that value at id.
+value_at(id, dst, val) :-
+  move(id, src, dst),
+  value_at(id, src, val).
+
+// ── Constant register at point ───────────────────────────────────────
+
+// A register has a unique constant value at a point if exactly one value
+// reaches it (multiple reaching values = not constant).
+.decl unique_value_at(id: symbol, reg: symbol, val: symbol)
+.output unique_value_at
+
+// Helper: register has multiple reaching values at a point.
+.decl multi_value(id: symbol, reg: symbol)
+
+multi_value(id, reg) :-
+  value_at(id, reg, v1),
+  value_at(id, reg, v2),
+  v1 != v2.
+
+unique_value_at(id, reg, val) :-
+  value_at(id, reg, val),
+  !multi_value(id, reg).
+
+// ── Resolved call targets ────────────────────────────────────────────
+
+// When a remote_call's module or function argument is in a register
+// that holds a known constant, we can resolve the dynamic target.
+
+// remote_call is declared via base.dl (included through cfg.dl).
+
+// Calls where the module argument is "dynamic" but we can resolve it
+// via constant propagation.
+.decl resolved_call_target(id: symbol, mod: symbol, func: symbol, arity: number)
+.output resolved_call_target
+
+// Direct: remote_call already has concrete module.
+resolved_call_target(id, mod, func, arity) :-
+  remote_call(id, mod, func, arity),
+  mod != "dynamic".
+
+// ── Constant definitions ─────────────────────────────────────────────
+
+// Summary: which instructions produce constant values.
+.decl constant_def(id: symbol, reg: symbol, val: symbol)
+.output constant_def
+
+constant_def(id, reg, val) :- literal_value(id, reg, val).
+
+// Move of a constant: the destination also gets a constant value.
+constant_def(id, dst, val) :-
+  move(id, src, dst),
+  unique_value_at(id, src, val).

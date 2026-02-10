@@ -6,7 +6,7 @@
 // to the direct child branch it belongs to, catching coupling that spans
 // nested supervisors (not just direct siblings).
 
-.include "base.dl"
+.include "../clientlib/imports.dl"
 
 // ── Supervision facts ────────────────────────────────────────────────
 
@@ -25,44 +25,13 @@
 .decl async_cast(caller_func: symbol, callee_mod: symbol)
 .input async_cast
 
-// ── Callgraph ────────────────────────────────────────────────────────
+// ── OTP helpers ──────────────────────────────────────────────────────
 
-.decl call_edge(caller: symbol, callee: symbol)
-.include "callgraph_rules.dl"
+.include "../clientlib/otp.dl"
 
-// Transitive closure of call_edge.
-.decl call_reachable(from: symbol, to: symbol)
-.include "call_reachable_rules.dl"
+// ── Supervision helpers ──────────────────────────────────────────────
 
-// ── GenServer API and stateful module dependency ───────────────────
-
-.include "genserver_api_rules.dl"
-.include "stateful_module_dep_rules.dl"
-
-// ── Init-time reachability ──────────────────────────────────────────
-
-.include "init_function_rules.dl"
-
-// Module `from_mod` reaches `to_mod` during init — the call originates
-// from an init/1 function (directly or transitively).
-.decl init_reaches(from_mod: symbol, to_mod: symbol)
-
-init_reaches(from_mod, to_mod) :-
-  init_function(from_mod, func),
-  call_reachable(func, callee),
-  function_def(callee, to_mod, _, _, _, _),
-  from_mod != to_mod.
-
-init_reaches(from_mod, to_mod) :-
-  init_function(from_mod, func),
-  function_def(func, _, _, _, _, _),
-  call_edge(func, callee),
-  function_def(callee, to_mod, _, _, _, _),
-  from_mod != to_mod.
-
-// ── Child subtree ──────────────────────────────────────────────────
-
-.include "child_subtree.dl"
+.include "../clientlib/supervision.dl"
 
 // ── One-for-one coupling ───────────────────────────────────────────
 

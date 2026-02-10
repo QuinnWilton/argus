@@ -22,7 +22,7 @@ defmodule Argus.Analyses.Liveness do
   def description, do: "live variable analysis and dead definition detection"
 
   @impl true
-  def rules_file, do: "liveness.dl"
+  def rules_file, do: "analyses/liveness.dl"
 
   @impl true
   def extractors, do: []

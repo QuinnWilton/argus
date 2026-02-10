@@ -3,7 +3,7 @@
 // A register is live at a program point if there exists a path from that
 // point to a use of the register without an intervening definition.
 
-.include "cfg.dl"
+.include "../clientlib/cfg.dl"
 
 .decl def(id: symbol, reg: symbol)
 .input def

@@ -1,0 +1,133 @@
+// Structured loop detection.
+//
+// Identifies loops via back-edges in the dominator tree. A back-edge is a
+// CFG edge where the target dominates the source — this indicates a loop.
+//
+// Also classifies loops by BEAM-specific patterns: receive loops,
+// recursive loops, and computation loops.
+//
+// Adapted from Gigahorse's clientlib/loops.dl.
+
+.include "dominators.dl"
+
+// local_call is declared via base.dl (included transitively through
+// dominators.dl -> clientlib/cfg.dl -> base.dl).
+
+.decl recv_start(id: symbol, fail: number)
+.input recv_start
+
+.decl recv_end(id: symbol)
+.input recv_end
+
+.decl tail_call(id: symbol)
+.input tail_call
+
+// ── Back-edges ───────────────────────────────────────────────────────
+
+// A back-edge is a CFG edge from source to target where target dominates
+// source. The target is the loop head.
+.decl back_edge(source: symbol, target: symbol, func: symbol)
+.output back_edge
+
+back_edge(source, target, func) :-
+  cfg_edge(source, target),
+  dominates(target, source, func).
+
+// ── Loop heads ───────────────────────────────────────────────────────
+
+// A loop head is the target of a back-edge.
+.decl loop_head(id: symbol, func: symbol)
+.output loop_head
+
+loop_head(target, func) :-
+  back_edge(_, target, func).
+
+// ── Loop membership ──────────────────────────────────────────────────
+
+// An instruction is in a loop if it's on a path from the loop head back
+// to the back-edge source that stays within the dominated region.
+//
+// We compute this by working backwards from the back-edge source: any
+// node that can reach the back-edge source without leaving the loop
+// head's dominated region is in the loop.
+
+// The back-edge source and loop head are both in the loop.
+.decl in_loop(id: symbol, head: symbol, func: symbol)
+.output in_loop
+
+in_loop(head, head, func) :- loop_head(head, func).
+in_loop(source, head, func) :- back_edge(source, head, func).
+
+// Work backwards: if node is in the loop and predecessor flows to node,
+// and predecessor is dominated by the loop head, then predecessor is in
+// the loop too.
+in_loop(pred, head, func) :-
+  in_loop(node, head, func),
+  cfg_edge(pred, node),
+  dominates(head, pred, func),
+  pred != head.
+
+// ── Loop exits ───────────────────────────────────────────────────────
+
+// A loop exit is a CFG edge from inside the loop to outside.
+.decl loop_exit(from: symbol, to: symbol, head: symbol, func: symbol)
+.output loop_exit
+
+loop_exit(from, to, head, func) :-
+  in_loop(from, head, func),
+  cfg_edge(from, to),
+  !in_loop(to, head, func).
+
+// ── Loop nesting ─────────────────────────────────────────────────────
+
+// Loop A is nested inside loop B if A's head is in B's loop body and
+// A != B.
+.decl nested_loop(inner_head: symbol, outer_head: symbol, func: symbol)
+.output nested_loop
+
+nested_loop(inner, outer, func) :-
+  loop_head(inner, func),
+  loop_head(outer, func),
+  in_loop(inner, outer, func),
+  inner != outer.
+
+// ── Loop classification (BEAM-specific) ──────────────────────────────
+
+// Receive loop: loop body contains a recv_start instruction.
+.decl receive_loop(head: symbol, func: symbol)
+.output receive_loop
+
+receive_loop(head, func) :-
+  loop_head(head, func),
+  in_loop(id, head, func),
+  recv_start(id, _).
+
+// Recursive loop: loop body contains a local call (self-recursion is
+// already a loop via the dominator back-edge, but this catches mutual
+// recursion patterns within the CFG).
+.decl recursive_loop(head: symbol, func: symbol)
+.output recursive_loop
+
+recursive_loop(head, func) :-
+  loop_head(head, func),
+  in_loop(id, head, func),
+  local_call(id, _, _).
+
+// Tail-recursive loop: loop contains a tail call.
+.decl tail_recursive_loop(head: symbol, func: symbol)
+.output tail_recursive_loop
+
+tail_recursive_loop(head, func) :-
+  loop_head(head, func),
+  in_loop(id, head, func),
+  tail_call(id).
+
+// ── Loop size ────────────────────────────────────────────────────────
+
+// Number of instructions in a loop body.
+.decl loop_size(head: symbol, func: symbol, size: number)
+.output loop_size
+
+loop_size(head, func, n) :-
+  loop_head(head, func),
+  n = count : { in_loop(_, head, func) }.

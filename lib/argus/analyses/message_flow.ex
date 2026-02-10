@@ -22,7 +22,7 @@ defmodule Argus.Analyses.MessageFlow do
   def description, do: "message send/receive pairing across functions"
 
   @impl true
-  def rules_file, do: "message_flow.dl"
+  def rules_file, do: "analyses/message_flow.dl"
 
   @impl true
   def extractors, do: []

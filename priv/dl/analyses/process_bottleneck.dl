@@ -5,7 +5,7 @@
 // These are serialization points that can become throughput bottlenecks
 // under load.
 
-.include "base.dl"
+.include "../clientlib/imports.dl"
 
 // ── Layer 2 facts ──────────────────────────────────────────────────────
 
@@ -15,17 +15,14 @@
 .decl implements_behaviour(mod: symbol, behaviour: symbol)
 .input implements_behaviour
 
-// ── Callgraph ──────────────────────────────────────────────────────────
-
-.decl call_edge(caller: symbol, callee: symbol)
-.include "callgraph_rules.dl"
-
-.decl call_reachable(from: symbol, to: symbol)
-.include "call_reachable_rules.dl"
-
 // ── GenServer API identification ───────────────────────────────────────
 
-.include "genserver_api_rules.dl"
+// otp.dl requires async_cast — declare an empty relation since
+// process_bottleneck only uses sync paths.
+.decl async_cast(caller_func: symbol, callee_mod: symbol)
+.input async_cast
+
+.include "../clientlib/otp.dl"
 
 // ── Module-level sync callers ──────────────────────────────────────────
 

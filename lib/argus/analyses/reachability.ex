@@ -23,7 +23,7 @@ defmodule Argus.Analyses.Reachability do
   def description, do: "transitive CFG and call reachability"
 
   @impl true
-  def rules_file, do: "reachability.dl"
+  def rules_file, do: "analyses/reachability.dl"
 
   @impl true
   def extractors, do: []

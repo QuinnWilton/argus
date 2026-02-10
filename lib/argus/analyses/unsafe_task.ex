@@ -34,7 +34,7 @@ defmodule Argus.Analyses.UnsafeTask do
   def description, do: "leaked async tasks and unchecked Task.Supervisor.start_child"
 
   @impl true
-  def rules_file, do: "unsafe_task.dl"
+  def rules_file, do: "analyses/unsafe_task.dl"
 
   @impl true
   def extractors, do: [Argus.Extractors.OTP]

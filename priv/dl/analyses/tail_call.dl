@@ -3,7 +3,10 @@
 // Identifies functions that make tail calls, functions that don't (and thus
 // may grow the stack on recursion), and recursive call chains.
 
-.include "base.dl"
+.include "../clientlib/cfg.dl"
+
+// base.dl relations (instruction, local_call, function_def) are included
+// transitively through cfg.dl.
 
 .decl tail_call(id: symbol)
 .input tail_call

@@ -1,0 +1,29 @@
+// Standard imports for Argus client analyses.
+//
+// Include this single file to get all base fact declarations, the control
+// flow graph, call graph, and reachability. This is the recommended starting
+// point for writing new analyses.
+//
+// Usage:
+//   .include "../clientlib/imports.dl"
+//
+// Provides:
+//   Base facts:     instruction, next, jump, branch, label_at, select_branch,
+//                   function_def, local_call, remote_call, bif_call
+//   Derived:        cfg_edge, call_edge, call_reachable, cfg_reachable
+
+.include "cfg.dl"
+
+// Call graph.
+.decl call_edge(caller: symbol, callee: symbol)
+.include "callgraph_rules.dl"
+
+// Transitive call reachability.
+.decl call_reachable(from: symbol, to: symbol)
+.include "call_reachable_rules.dl"
+
+// Instruction-level reachability.
+.decl cfg_reachable(from: symbol, to: symbol)
+
+cfg_reachable(a, b) :- cfg_edge(a, b).
+cfg_reachable(a, c) :- cfg_reachable(a, b), cfg_edge(b, c).

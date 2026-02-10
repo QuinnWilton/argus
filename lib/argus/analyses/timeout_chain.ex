@@ -31,7 +31,7 @@ defmodule Argus.Analyses.TimeoutChain do
   def description, do: "GenServer timeout chain and blocking cast handler detection"
 
   @impl true
-  def rules_file, do: "timeout_chain.dl"
+  def rules_file, do: "analyses/timeout_chain.dl"
 
   @impl true
   def extractors, do: [Argus.Extractors.OTP]

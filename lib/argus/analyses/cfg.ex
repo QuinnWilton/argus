@@ -20,7 +20,7 @@ defmodule Argus.Analyses.Cfg do
   def description, do: "control flow graph edges"
 
   @impl true
-  def rules_file, do: "cfg.dl"
+  def rules_file, do: "analyses/cfg.dl"
 
   @impl true
   def extractors, do: []

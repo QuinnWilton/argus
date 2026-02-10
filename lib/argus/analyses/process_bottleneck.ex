@@ -26,7 +26,7 @@ defmodule Argus.Analyses.ProcessBottleneck do
   def description, do: "synchronous call fan-in (serialization bottleneck) detection"
 
   @impl true
-  def rules_file, do: "process_bottleneck.dl"
+  def rules_file, do: "analyses/process_bottleneck.dl"
 
   @impl true
   def extractors, do: [Argus.Extractors.OTP]

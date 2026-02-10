@@ -3,7 +3,7 @@
 // Computes which register definitions (writes) can reach which uses (reads)
 // through the control flow graph.
 
-.include "cfg.dl"
+.include "../clientlib/cfg.dl"
 
 .decl def(id: symbol, reg: symbol)
 .input def

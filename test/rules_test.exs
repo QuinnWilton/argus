@@ -20,7 +20,7 @@ defmodule Argus.RulesTest do
       facts_dir = Path.join(tmp_dir, "facts")
       {:ok, _} = Extract.run([:lists], facts_dir)
 
-      assert {:ok, results} = CLI.run(facts_dir, priv_dl("cfg.dl"))
+      assert {:ok, results} = CLI.run(facts_dir, priv_dl("analyses/cfg.dl"))
       assert Map.has_key?(results, "cfg_edge")
 
       edges = results["cfg_edge"]
@@ -42,7 +42,7 @@ defmodule Argus.RulesTest do
       facts_dir = Path.join(tmp_dir, "facts")
       {:ok, _} = Extract.run([Enum], facts_dir)
 
-      assert {:ok, results} = CLI.run(facts_dir, priv_dl("callgraph.dl"))
+      assert {:ok, results} = CLI.run(facts_dir, priv_dl("analyses/callgraph.dl"))
       assert Map.has_key?(results, "call_edge")
 
       edges = results["call_edge"]
@@ -63,7 +63,7 @@ defmodule Argus.RulesTest do
       # Use a small module for speed.
       {:ok, _} = Extract.run([:maps], facts_dir)
 
-      assert {:ok, results} = CLI.run(facts_dir, priv_dl("reachability.dl"))
+      assert {:ok, results} = CLI.run(facts_dir, priv_dl("analyses/reachability.dl"))
 
       # Should have both CFG and call reachability results.
       assert Map.has_key?(results, "cfg_reachable")

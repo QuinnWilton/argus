@@ -1,0 +1,5 @@
+// Control flow graph analysis (entry point).
+//
+// Derives cfg_edge from base facts.
+
+.include "../clientlib/cfg.dl"

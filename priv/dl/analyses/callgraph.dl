@@ -1,0 +1,7 @@
+// Call graph derivation (entry point).
+//
+// Derives call_edge from local_call, remote_call, and bif_call facts.
+
+.include "../clientlib/imports.dl"
+
+.output call_edge

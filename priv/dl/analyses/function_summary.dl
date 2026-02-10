@@ -1,0 +1,110 @@
+// Function summary analysis.
+//
+// Computes summary facts for small wrapper/delegate functions. When a
+// function's body just calls another function (possibly after some moves),
+// this analysis identifies the effective call target.
+//
+// This enables analyses to "see through" wrappers like:
+//   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+//   def get(key), do: Agent.get(__MODULE__, fn state -> Map.get(state, key) end)
+//
+// Uses constant propagation facts when available to resolve dynamic targets.
+
+.include "../clientlib/cfg.dl"
+
+.decl def(id: symbol, reg: symbol)
+.input def
+
+.decl move(id: symbol, src: symbol, dst: symbol)
+.input move
+
+.decl literal_value(id: symbol, reg: symbol, val: symbol)
+.input literal_value
+
+.decl tail_call(id: symbol)
+.input tail_call
+
+// remote_call, local_call, function_def are from base.dl via cfg.dl.
+
+// ── Small function detection ─────────────────────────────────────────
+
+// Count instructions per function.
+.decl function_size(func: symbol, size: number)
+
+function_size(func, n) :-
+  function_def(func, _, _, _, _, _),
+  n = count : { instruction(_, func, _, _) }.
+
+// A function is small enough to summarize (heuristic: <= 12 instructions).
+// This covers most Elixir wrappers (moves + call + return).
+.decl small_function(func: symbol)
+
+small_function(func) :- function_size(func, n), n <= 12.
+
+// ── Delegate detection ───────────────────────────────────────────────
+
+// A function is a delegate/wrapper if it's small and contains exactly one
+// remote call (the effective target).
+
+// Count remote calls per function.
+.decl function_remote_call_count(func: symbol, n: number)
+
+function_remote_call_count(func, n) :-
+  function_def(func, _, _, _, _, _),
+  n = count : { remote_call(id, _, _, _), instruction(id, func, _, _) }.
+
+// Single-call delegate: small function with exactly one remote call.
+.decl single_call_delegate(func: symbol)
+
+single_call_delegate(func) :-
+  small_function(func),
+  function_remote_call_count(func, 1).
+
+// ── Function summaries ───────────────────────────────────────────────
+
+// function_summary_call: calling func effectively calls target_mod:target_func/target_arity.
+.decl function_summary_call(func: symbol, target_mod: symbol, target_func: symbol, target_arity: number)
+.output function_summary_call
+
+// A delegate function's summary is its single remote call target.
+function_summary_call(func, mod, f, arity) :-
+  single_call_delegate(func),
+  remote_call(id, mod, f, arity),
+  instruction(id, func, _, _).
+
+// ── Tail call delegates ──────────────────────────────────────────────
+
+// A tail-call delegate is a delegate whose call is a tail call (no work
+// after the call). This is the cleanest delegation pattern.
+.decl tail_call_delegate(func: symbol, target_mod: symbol, target_func: symbol, target_arity: number)
+.output tail_call_delegate
+
+tail_call_delegate(func, mod, f, arity) :-
+  function_summary_call(func, mod, f, arity),
+  remote_call(id, mod, f, arity),
+  instruction(id, func, _, _),
+  tail_call(id).
+
+// ── Transitive summaries ─────────────────────────────────────────────
+
+// If func delegates to another function that itself delegates, compute
+// the transitive target.
+.decl transitive_summary(func: symbol, target_mod: symbol, target_func: symbol, target_arity: number)
+.output transitive_summary
+
+// Base: direct summary.
+transitive_summary(func, mod, f, arity) :-
+  function_summary_call(func, mod, f, arity).
+
+// Step: if func delegates to a local function g that has a summary,
+// use g's summary as func's transitive target.
+transitive_summary(func, mod, f, arity) :-
+  small_function(func),
+  local_call(id, g, _),
+  instruction(id, func, _, _),
+  function_summary_call(g, mod, f, arity).
+
+// ── Output: function size for analysis ───────────────────────────────
+
+.output function_size
+.output small_function

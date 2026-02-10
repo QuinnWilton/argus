@@ -9,15 +9,7 @@
 //    result is not examined — the call is not in tail position and no
 //    branch/test instruction follows it in the function.
 
-.include "base.dl"
-
-// ── Callgraph ──────────────────────────────────────────────────────────
-
-.decl call_edge(caller: symbol, callee: symbol)
-.include "callgraph_rules.dl"
-
-.decl call_reachable(from: symbol, to: symbol)
-.include "call_reachable_rules.dl"
+.include "../clientlib/imports.dl"
 
 // ── Additional base facts ──────────────────────────────────────────────
 

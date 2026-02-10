@@ -21,7 +21,7 @@ defmodule Argus.Analyses.ReachingDef do
   def description, do: "reaching definitions and def-use chains"
 
   @impl true
-  def rules_file, do: "reaching_def.dl"
+  def rules_file, do: "analyses/reaching_def.dl"
 
   @impl true
   def extractors, do: []

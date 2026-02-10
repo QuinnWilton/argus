@@ -25,7 +25,7 @@ defmodule Argus.Analyses.Supervision do
   def description, do: "supervision tree structure and anti-patterns"
 
   @impl true
-  def rules_file, do: "supervision.dl"
+  def rules_file, do: "analyses/supervision.dl"
 
   @impl true
   def extractors, do: [Argus.Extractors.Supervision, Argus.Extractors.OTP]
