@@ -1,0 +1,77 @@
+// Coupled sibling analysis.
+//
+// Combines callgraph with supervision structure to find siblings under
+// one_for_one that transitively depend on each other. Unlike supervision.dl
+// which only checks direct sync_call, this uses transitive call_reachable
+// to catch indirect coupling through intermediate modules.
+
+.include "base.dl"
+
+// ── Supervision facts ────────────────────────────────────────────────
+
+.decl supervisor(mod: symbol, strategy: symbol)
+.input supervisor
+
+.decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
+.input supervisor_child
+
+.decl implements_behaviour(mod: symbol, behaviour: symbol)
+.input implements_behaviour
+
+.decl sync_call(caller_func: symbol, callee_mod: symbol)
+.input sync_call
+
+.decl async_cast(caller_func: symbol, callee_mod: symbol)
+.input async_cast
+
+// ── Callgraph ────────────────────────────────────────────────────────
+
+.decl call_edge(caller: symbol, callee: symbol)
+.include "callgraph_rules.dl"
+
+// Transitive closure of call_edge.
+.decl call_reachable(from: symbol, to: symbol)
+call_reachable(a, b) :- call_edge(a, b).
+call_reachable(a, c) :- call_reachable(a, b), call_edge(b, c).
+
+// ── Helper: module-level reachability ────────────────────────────────
+
+// A function defined in module `from_mod` transitively reaches a
+// function defined in module `to_mod`.
+.decl module_reaches(from_mod: symbol, to_mod: symbol)
+
+module_reaches(from_mod, to_mod) :-
+  function_def(caller, from_mod, _, _, _, _),
+  call_reachable(caller, callee),
+  function_def(callee, to_mod, _, _, _, _),
+  from_mod != to_mod.
+
+// ── Coupled siblings ─────────────────────────────────────────────────
+
+// Two children under one_for_one where one module's functions
+// transitively call the other's. Under one_for_one, if callee_mod
+// crashes, caller_mod keeps running in a degraded state.
+.decl coupled_siblings(sup: symbol, caller_mod: symbol, callee_mod: symbol)
+.output coupled_siblings
+
+coupled_siblings(sup, caller_mod, callee_mod) :-
+  supervisor(sup, "one_for_one"),
+  supervisor_child(sup, _, caller_mod, _, _),
+  supervisor_child(sup, _, callee_mod, _, _),
+  module_reaches(caller_mod, callee_mod),
+  caller_mod != callee_mod.
+
+// ── Wrong start order ────────────────────────────────────────────────
+
+// Child at earlier position transitively calls child at later position.
+// The later child may not be started yet when the earlier child's
+// init runs, causing init-time failures.
+.decl wrong_start_order(sup: symbol, early_mod: symbol, late_mod: symbol, early_pos: number, late_pos: number)
+.output wrong_start_order
+
+wrong_start_order(sup, early_mod, late_mod, early_pos, late_pos) :-
+  supervisor(sup, _),
+  supervisor_child(sup, early_pos, early_mod, _, _),
+  supervisor_child(sup, late_pos, late_mod, _, _),
+  module_reaches(early_mod, late_mod),
+  early_pos < late_pos.

@@ -15,6 +15,8 @@ defmodule Argus.Analysis do
   - `:tail_call` — tail call identification and recursion detection
   - `:message_flow` — message send/receive pairing across functions
   - `:supervision` — supervision tree structure and anti-patterns
+  - `:ets` — ETS table ownership, concurrency, and lifecycle analysis
+  - `:coupled_siblings` — siblings under one_for_one with transitive coupling
 
   ## Custom analyses
 
@@ -34,6 +36,8 @@ defmodule Argus.Analysis do
           | :tail_call
           | :message_flow
           | :supervision
+          | :ets
+          | :coupled_siblings
           | {:custom, Path.t()}
 
   @type result :: %{String.t() => [[String.t()]]}
@@ -46,7 +50,15 @@ defmodule Argus.Analysis do
     reaching_def: "reaching_def.dl",
     liveness: "liveness.dl",
     tail_call: "tail_call.dl",
-    message_flow: "message_flow.dl"
+    message_flow: "message_flow.dl",
+    ets: "ets.dl",
+    coupled_siblings: "coupled_siblings.dl"
+  }
+
+  @analysis_extractors %{
+    supervision: [Argus.Extractors.Supervision, Argus.Extractors.OTP],
+    ets: [Argus.Extractors.ETS, Argus.Extractors.OTP],
+    coupled_siblings: [Argus.Extractors.Supervision, Argus.Extractors.OTP]
   }
 
   @doc """
@@ -64,6 +76,9 @@ defmodule Argus.Analysis do
   @spec run(modules :: [atom() | String.t()], analysis(), keyword()) ::
           {:ok, result()} | {:error, term()}
   def run(modules, analysis, opts \\ []) do
+    default_extractors = Map.get(@analysis_extractors, analysis, [])
+    opts = Keyword.update(opts, :extractors, default_extractors, &(default_extractors ++ &1))
+
     with {:ok, rules_path} <- resolve_rules(analysis),
          {:ok, work_dir} <- create_work_dir(),
          facts_dir = Path.join(work_dir, "facts"),

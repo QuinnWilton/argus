@@ -18,6 +18,8 @@ defmodule Mix.Tasks.Argus do
   - `tail_call` — tail call identification and recursion detection
   - `message_flow` — message send/receive pairing across functions
   - `supervision` — supervision tree structure and anti-patterns
+  - `ets` — ETS table ownership, concurrency, and lifecycle analysis
+  - `coupled_siblings` — siblings under one_for_one with transitive coupling
 
   ## Custom analysis
 
