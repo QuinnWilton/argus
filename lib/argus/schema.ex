@@ -429,6 +429,43 @@ defmodule Argus.Schema do
     doc: "GenServer.cast target detected in code."
   }
 
+  # Layer 2: ETS extractor facts.
+
+  @ets_new %{
+    name: :ets_new,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID of the :ets.new/2 call"},
+      {:func, :symbol, "containing function ID"},
+      {:name, :symbol, "table name atom (or \"dynamic\")"}
+    ],
+    doc: "ETS table creation point."
+  }
+
+  @ets_option %{
+    name: :ets_option,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID (same as ets_new)"},
+      {:key, :symbol, "option category"},
+      {:value, :symbol, "option value as string"}
+    ],
+    doc: "Parsed option from :ets.new/2."
+  }
+
+  @ets_op %{
+    name: :ets_op,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:func, :symbol, "containing function ID"},
+      {:table_ref, :symbol, "table name atom (or \"dynamic\")"},
+      {:op, :symbol, "ETS function name"},
+      {:kind, :symbol, "read, write, or delete"}
+    ],
+    doc: "ETS read/write/delete operation."
+  }
+
   # All relations indexed by name.
 
   @layer_1_relations [
@@ -471,7 +508,10 @@ defmodule Argus.Schema do
     @process_monitor,
     @implements_behaviour,
     @sync_call,
-    @async_cast
+    @async_cast,
+    @ets_new,
+    @ets_option,
+    @ets_op
   ]
 
   @all_relations @layer_1_relations ++ @layer_2_relations

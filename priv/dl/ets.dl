@@ -1,0 +1,110 @@
+// ETS table ownership, concurrency, and lifecycle analysis.
+//
+// Detects common ETS anti-patterns:
+// - Tables owned by processes without heir protection.
+// - Cross-module access without concurrency settings.
+// - Write contention on ordered_set tables.
+// - Unnamed tables in processes (stale reference risk).
+
+.include "base.dl"
+
+.decl ets_new(id: symbol, func: symbol, name: symbol)
+.input ets_new
+
+.decl ets_option(id: symbol, key: symbol, value: symbol)
+.input ets_option
+
+.decl ets_op(id: symbol, func: symbol, table_ref: symbol, op: symbol, kind: symbol)
+.input ets_op
+
+.decl implements_behaviour(mod: symbol, behaviour: symbol)
+.input implements_behaviour
+
+.decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
+.input supervisor_child
+
+// ── Ownership & lifecycle ──────────────────────────────────────────
+
+// Module that creates a table and implements a behaviour (is a process).
+.decl ets_owner_process(name: symbol, mod: symbol, behaviour: symbol)
+.output ets_owner_process
+
+ets_owner_process(name, mod, behaviour) :-
+  ets_new(id, func, name),
+  function_def(func, mod, _, _, _, _),
+  implements_behaviour(mod, behaviour).
+
+// Table without heir protection in a behaviour process.
+// If the owner crashes, the table vanishes.
+.decl ets_unprotected_owner(name: symbol, mod: symbol)
+.output ets_unprotected_owner
+
+ets_unprotected_owner(name, mod) :-
+  ets_owner_process(name, mod, _),
+  ets_new(id, _, name),
+  !ets_option(id, "heir", "true").
+
+// ── Concurrent access patterns ─────────────────────────────────────
+
+// Module reading from a table.
+.decl ets_reader_module(name: symbol, mod: symbol)
+.output ets_reader_module
+
+ets_reader_module(name, mod) :-
+  ets_op(_, func, name, _, "read"),
+  function_def(func, mod, _, _, _, _).
+
+// Module writing to a table.
+.decl ets_writer_module(name: symbol, mod: symbol)
+.output ets_writer_module
+
+ets_writer_module(name, mod) :-
+  ets_op(_, func, name, _, "write"),
+  function_def(func, mod, _, _, _, _).
+
+// Cross-module reads without read_concurrency.
+.decl ets_missing_read_concurrency(name: symbol)
+.output ets_missing_read_concurrency
+
+ets_missing_read_concurrency(name) :-
+  ets_reader_module(name, m1),
+  ets_reader_module(name, m2),
+  m1 != m2,
+  ets_new(id, _, name),
+  !ets_option(id, "read_concurrency", "true").
+
+// Cross-module writes without write_concurrency.
+.decl ets_missing_write_concurrency(name: symbol)
+.output ets_missing_write_concurrency
+
+ets_missing_write_concurrency(name) :-
+  ets_writer_module(name, m1),
+  ets_writer_module(name, m2),
+  m1 != m2,
+  ets_new(id, _, name),
+  !ets_option(id, "write_concurrency", "true"),
+  !ets_option(id, "write_concurrency", "auto").
+
+// Write contention on ordered_set (higher lock contention).
+.decl ets_ordered_set_contention(name: symbol, mod1: symbol, mod2: symbol)
+.output ets_ordered_set_contention
+
+ets_ordered_set_contention(name, mod1, mod2) :-
+  ets_writer_module(name, mod1),
+  ets_writer_module(name, mod2),
+  mod1 != mod2,
+  ets_new(id, _, name),
+  ets_option(id, "type", "ordered_set").
+
+// ── Stale reference risk ───────────────────────────────────────────
+
+// Table created without named_table by a process —
+// the reference becomes invalid if the owner restarts.
+.decl ets_unnamed_in_process(name: symbol, mod: symbol)
+.output ets_unnamed_in_process
+
+ets_unnamed_in_process(name, mod) :-
+  ets_new(id, func, name),
+  function_def(func, mod, _, _, _, _),
+  implements_behaviour(mod, _),
+  !ets_option(id, "named_table", "true").
