@@ -28,6 +28,12 @@
 .decl implements_behaviour(mod: symbol, behaviour: symbol)
 .input implements_behaviour
 
+// ── Child subtree ──────────────────────────────────────────────────
+
+.include "child_subtree.dl"
+
+// ── Anti-patterns ────────────────────────────────────────────────
+
 // Permanent child that depends on a transient child.
 .decl suspect_transient_dependency(sup: symbol, permanent: symbol, transient: symbol)
 .output suspect_transient_dependency
@@ -44,13 +50,13 @@ suspect_transient_dependency(sup, perm, trans) :-
 
 unlinked_coupled_siblings(sup, a, b) :-
   supervisor(sup, "one_for_one"),
-  supervisor_child(sup, _, a, _, _),
-  supervisor_child(sup, _, b, _, _),
+  child_subtree(sup, a_branch, a),
+  child_subtree(sup, b_branch, b),
   sync_call(a_func, b),
   function_def(a_func, a, _, _, _, _),
   !process_link(a, b),
   !process_link(b, a),
-  a != b.
+  a_branch != b_branch.
 
 // Child started before a dependency (wrong order under any strategy).
 .decl wrong_start_order(sup: symbol, child: symbol, dep: symbol, child_pos: number, dep_pos: number)
@@ -58,8 +64,11 @@ unlinked_coupled_siblings(sup, a, b) :-
 
 wrong_start_order(sup, child, dep, cpos, dpos) :-
   supervisor(sup, _),
-  supervisor_child(sup, cpos, child, _, _),
-  supervisor_child(sup, dpos, dep, _, _),
+  child_subtree(sup, child_branch, child),
+  child_subtree(sup, dep_branch, dep),
+  supervisor_child(sup, cpos, child_branch, _, _),
+  supervisor_child(sup, dpos, dep_branch, _, _),
   sync_call(child_func, dep),
   function_def(child_func, child, _, _, _, _),
-  cpos < dpos.
+  cpos < dpos,
+  child_branch != dep_branch.

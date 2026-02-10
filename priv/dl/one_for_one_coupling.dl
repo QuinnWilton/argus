@@ -1,9 +1,10 @@
-// Coupled sibling analysis.
+// One-for-one coupling analysis.
 //
-// Combines callgraph with supervision structure to find siblings under
-// one_for_one that are coupled through GenServer message passing. Uses
-// sync_call/async_cast facts to distinguish stateful process dependencies
-// from plain function calls to code that happens to live in a sibling.
+// Combines callgraph with supervision structure to find modules under
+// one_for_one that are coupled through GenServer message passing across
+// different child branches. Uses child_subtree to map every descendant
+// to the direct child branch it belongs to, catching coupling that spans
+// nested supervisors (not just direct siblings).
 
 .include "base.dl"
 
@@ -116,32 +117,40 @@ stateful_module_dep(from_mod, to_mod) :-
   function_def(h, to_mod, _, _, _, _),
   async_cast(h, _).
 
-// ── Coupled siblings ─────────────────────────────────────────────────
+// ── Child subtree ──────────────────────────────────────────────────
 
-// Two children under one_for_one where one depends on the other through
-// GenServer message passing. Under one_for_one, if callee_mod crashes,
-// caller_mod keeps running in a degraded state.
-.decl coupled_siblings(sup: symbol, caller_mod: symbol, callee_mod: symbol)
-.output coupled_siblings
+.include "child_subtree.dl"
 
-coupled_siblings(sup, caller_mod, callee_mod) :-
+// ── One-for-one coupling ───────────────────────────────────────────
+
+// Two modules under a one_for_one supervisor where one depends on the
+// other through GenServer message passing, and they belong to different
+// child branches. Under one_for_one, if the callee's branch crashes,
+// the caller's branch keeps running in a degraded state.
+.decl one_for_one_coupling(sup: symbol, caller_mod: symbol, callee_mod: symbol)
+.output one_for_one_coupling
+
+one_for_one_coupling(sup, caller_mod, callee_mod) :-
   supervisor(sup, "one_for_one"),
-  supervisor_child(sup, _, caller_mod, _, _),
-  supervisor_child(sup, _, callee_mod, _, _),
+  child_subtree(sup, caller_branch, caller_mod),
+  child_subtree(sup, callee_branch, callee_mod),
   stateful_module_dep(caller_mod, callee_mod),
-  caller_mod != callee_mod.
+  caller_branch != callee_branch.
 
 // ── Wrong start order ────────────────────────────────────────────────
 
-// Child at earlier position transitively calls child at later position.
-// The later child may not be started yet when the earlier child's
-// init runs, causing init-time failures.
+// Module in an earlier branch transitively calls a module in a later
+// branch. The later branch may not be started yet when the earlier
+// branch's init runs, causing init-time failures.
 .decl wrong_start_order(sup: symbol, early_mod: symbol, late_mod: symbol, early_pos: number, late_pos: number)
 .output wrong_start_order
 
 wrong_start_order(sup, early_mod, late_mod, early_pos, late_pos) :-
   supervisor(sup, _),
-  supervisor_child(sup, early_pos, early_mod, _, _),
-  supervisor_child(sup, late_pos, late_mod, _, _),
+  child_subtree(sup, early_branch, early_mod),
+  child_subtree(sup, late_branch, late_mod),
+  supervisor_child(sup, early_pos, early_branch, _, _),
+  supervisor_child(sup, late_pos, late_branch, _, _),
   module_reaches(early_mod, late_mod),
-  early_pos < late_pos.
+  early_pos < late_pos,
+  early_branch != late_branch.

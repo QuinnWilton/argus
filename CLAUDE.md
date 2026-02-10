@@ -37,7 +37,8 @@ priv/
     ├── tail_call.dl
     ├── message_flow.dl
     ├── supervision.dl
-    └── coupled_siblings.dl
+    ├── child_subtree.dl
+    └── one_for_one_coupling.dl
 scripts/
 └── analyze_project.exs              # Analyze external projects
 ```

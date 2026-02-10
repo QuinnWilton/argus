@@ -4,7 +4,7 @@ PR: https://github.com/oban-bg/oban/pull/1413
 
 ## Discovery
 
-Ran argus `coupled_siblings` analysis against Oban's 69 project modules.
+Ran argus `one_for_one_coupling` analysis against Oban's 69 project modules.
 
 **Supervision structure found:**
 
