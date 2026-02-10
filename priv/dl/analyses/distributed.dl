@@ -1,0 +1,104 @@
+// Distributed systems analysis.
+//
+// Detects distributed system anti-patterns: RPC calls without timeout,
+// RPC in GenServer callbacks, global registration without conflict
+// resolution, and distributed operations in init/1.
+
+.include "../clientlib/imports.dl"
+
+// Layer 2 input declarations.
+.decl rpc_call(id: symbol, func: symbol, variant: symbol, timeout: symbol)
+.input rpc_call
+
+.decl global_register(id: symbol, func: symbol, name: symbol)
+.input global_register
+
+.decl node_operation(id: symbol, func: symbol, op: symbol)
+.input node_operation
+
+.decl distributed_store_op(id: symbol, func: symbol, store: symbol, op: symbol)
+.input distributed_store_op
+
+.decl implements_behaviour(mod: symbol, behaviour: symbol)
+.input implements_behaviour
+
+// ── RPC without timeout ──────────────────────────────────────────
+
+// RPC call using default infinity timeout — hangs on netsplit.
+.decl rpc_without_timeout(func: symbol, variant: symbol)
+.output rpc_without_timeout
+
+rpc_without_timeout(func, variant) :-
+  rpc_call(_, func, variant, "infinity").
+
+// ── RPC in GenServer callback ────────────────────────────────────
+
+// RPC inside a GenServer callback compounds timeout risk — the
+// GenServer's own timeout plus the RPC timeout can cascade.
+.decl genserver_callback_func(func: symbol)
+
+genserver_callback_func(func) :-
+  function_def(func, mod, "handle_call", _, _, _),
+  implements_behaviour(mod, "GenServer").
+
+genserver_callback_func(func) :-
+  function_def(func, mod, "handle_cast", _, _, _),
+  implements_behaviour(mod, "GenServer").
+
+genserver_callback_func(func) :-
+  function_def(func, mod, "handle_info", _, _, _),
+  implements_behaviour(mod, "GenServer").
+
+.decl rpc_in_genserver_callback(func: symbol, variant: symbol)
+.output rpc_in_genserver_callback
+
+rpc_in_genserver_callback(func, variant) :-
+  rpc_call(_, func, variant, _),
+  genserver_callback_func(func).
+
+rpc_in_genserver_callback(func, variant) :-
+  rpc_call(_, callee_func, variant, _),
+  call_reachable(func, callee_func),
+  genserver_callback_func(func).
+
+// ── Global register without conflict resolution ──────────────────
+
+// :global.register_name/2 (without resolve function) is race-prone
+// during network partitions.
+.decl global_register_risk(func: symbol, name: symbol)
+.output global_register_risk
+
+global_register_risk(func, name) :-
+  global_register(_, func, name).
+
+// ── Distributed operations in init ───────────────────────────────
+
+// RPC or global ops in init/1 block supervisor startup.
+.decl init_function(func: symbol)
+
+init_function(func) :-
+  function_def(func, _, "init", 1, _, _).
+
+.decl distributed_in_init(func: symbol, op: symbol)
+.output distributed_in_init
+
+distributed_in_init(func, op) :-
+  rpc_call(_, func, op, _),
+  init_function(func).
+
+distributed_in_init(func, op) :-
+  global_register(_, func, _),
+  init_function(func),
+  op = "global_register".
+
+// Node operations in init — exclude non-blocking ops like monitor_nodes
+// and list that return immediately.
+distributed_in_init(func, op) :-
+  node_operation(_, func, op),
+  init_function(func),
+  op != "list",
+  op != "monitor".
+
+distributed_in_init(func, op) :-
+  distributed_store_op(_, func, _, op),
+  init_function(func).
