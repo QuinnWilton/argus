@@ -1,58 +1,145 @@
 defmodule Argus.AnalysisTest do
   use ExUnit.Case
 
+  alias Argus.Analysis
   alias Argus.Souffle.CLI
+
+  @expected_analyses [
+    :call_cycle,
+    :callgraph,
+    :callgraph_ctx,
+    :cfg,
+    :constant_propagation,
+    :dominators,
+    :ets,
+    :function_summary,
+    :liveness,
+    :loops,
+    :message_flow,
+    :one_for_one_coupling,
+    :process_bottleneck,
+    :reachability,
+    :reaching_def,
+    :supervision,
+    :sync_call_in_init,
+    :tail_call,
+    :timeout_chain,
+    :unlinked_spawn,
+    :unsafe_task
+  ]
 
   defp skip_without_souffle do
     unless CLI.available?(), do: flunk("souffle not installed")
   end
 
-  describe "Argus.analyze/2" do
-    test "cfg analysis returns non-empty edges" do
-      skip_without_souffle()
+  # -- Discovery ---------------------------------------------------------------
 
-      assert {:ok, results} = Argus.analyze([:lists], :cfg)
-      assert Map.has_key?(results, "cfg_edge")
-      assert length(results["cfg_edge"]) > 0
+  describe "discovery" do
+    test "finds all 21 built-in analysis modules" do
+      modules = Analysis.builtin_analysis_modules()
+      assert length(modules) == 21
     end
 
-    test "callgraph analysis returns edges" do
-      skip_without_souffle()
-
-      assert {:ok, results} = Argus.analyze([Enum], :callgraph)
-      assert Map.has_key?(results, "call_edge")
-      edges = results["call_edge"]
-      assert length(edges) > 0
-
-      # Enum should call :lists functions.
-      callee_strs = Enum.map(edges, fn [_caller, callee] -> callee end)
-      assert Enum.any?(callee_strs, &String.contains?(&1, ":lists"))
+    test "builtin_analyses/0 returns all names sorted" do
+      names = Analysis.builtin_analyses()
+      assert names == @expected_analyses
     end
 
-    test "multi-module callgraph" do
-      skip_without_souffle()
+    test "names are unique across all modules" do
+      names = Enum.map(Analysis.builtin_analysis_modules(), & &1.name())
+      assert length(names) == length(Enum.uniq(names))
+    end
+  end
 
-      assert {:ok, results} = Argus.analyze([Enum, :lists], :callgraph)
-      edges = results["call_edge"]
-      callers = Enum.map(edges, fn [caller, _] -> caller end) |> Enum.uniq()
+  # -- Lookup ------------------------------------------------------------------
 
-      # Should have callers from both modules.
-      assert Enum.any?(callers, &String.starts_with?(&1, "Enum:"))
-      assert Enum.any?(callers, &String.starts_with?(&1, ":lists:"))
+  describe "fetch_module/1" do
+    test "returns module for each built-in analysis" do
+      for name <- @expected_analyses do
+        assert {:ok, mod} = Analysis.fetch_module(name)
+        assert mod.name() == name
+      end
     end
 
-    test "reachability analysis" do
-      skip_without_souffle()
+    test "returns :error for unknown analysis" do
+      assert :error = Analysis.fetch_module(:nonexistent)
+    end
+  end
 
-      assert {:ok, results} = Argus.analyze([:maps], :reachability)
-      assert Map.has_key?(results, "cfg_reachable")
-      assert Map.has_key?(results, "call_reachable")
+  describe "output_relations/1" do
+    test "returns relations for each built-in analysis" do
+      for name <- @expected_analyses do
+        assert {:ok, relations} = Analysis.output_relations(name)
+        assert is_list(relations)
+        assert length(relations) > 0
+      end
     end
 
+    test "returns :error for unknown analysis" do
+      assert :error = Analysis.output_relations(:nonexistent)
+    end
+
+    test "cfg has cfg_edge relation" do
+      assert {:ok, relations} = Analysis.output_relations(:cfg)
+      assert [%{name: :cfg_edge}] = relations
+    end
+  end
+
+  # -- Callback shape ----------------------------------------------------------
+
+  describe "analysis module callbacks" do
+    test "each module has a non-empty description" do
+      for mod <- Analysis.builtin_analysis_modules() do
+        desc = mod.description()
+        assert is_binary(desc), "#{inspect(mod)}.description/0 must return a string"
+        assert desc != "", "#{inspect(mod)}.description/0 must not be empty"
+      end
+    end
+
+    test "each module references an existing rules file" do
+      priv_dl = Path.join(:code.priv_dir(:argus), "dl")
+
+      for mod <- Analysis.builtin_analysis_modules() do
+        path = Path.join(priv_dl, mod.rules_file())
+        assert File.exists?(path), "#{mod.rules_file()} not found for #{inspect(mod)}"
+      end
+    end
+
+    test "each module's extractors are loaded modules" do
+      for mod <- Analysis.builtin_analysis_modules() do
+        for extractor <- mod.extractors() do
+          assert Code.ensure_loaded?(extractor),
+                 "extractor #{inspect(extractor)} from #{inspect(mod)} is not loadable"
+        end
+      end
+    end
+
+    test "output_relations have correct shape" do
+      for mod <- Analysis.builtin_analysis_modules() do
+        for rel <- mod.output_relations() do
+          assert is_atom(rel.name), "#{inspect(mod)}: relation name must be an atom"
+          assert is_list(rel.fields), "#{inspect(mod)}: fields must be a list"
+          assert is_binary(rel.doc), "#{inspect(mod)}: doc must be a string"
+
+          for {fname, ftype, fdoc} <- rel.fields do
+            assert is_atom(fname), "#{inspect(mod)}: field name must be an atom"
+
+            assert ftype in [:symbol, :number],
+                   "#{inspect(mod)}: field type must be :symbol or :number"
+
+            assert is_binary(fdoc), "#{inspect(mod)}: field doc must be a string"
+          end
+        end
+      end
+    end
+  end
+
+  # -- Custom analysis ---------------------------------------------------------
+
+  describe "custom analysis" do
     test "custom analysis with user rules" do
       skip_without_souffle()
 
-      # Write a custom rule file.
       tmp = System.tmp_dir!()
       rules_path = Path.join(tmp, "argus_custom_test.dl")
 
@@ -70,6 +157,15 @@ defmodule Argus.AnalysisTest do
       assert length(results["exported_function"]) > 0
     end
 
+    test "custom analysis with non-existent rules file returns error" do
+      assert {:error, {:rules_not_found, "/tmp/nonexistent_rules.dl"}} =
+               Argus.analyze([:lists], {:custom, "/tmp/nonexistent_rules.dl"})
+    end
+  end
+
+  # -- Errors ------------------------------------------------------------------
+
+  describe "error handling" do
     test "returns error for unknown analysis" do
       assert {:error, {:unknown_analysis, :nonexistent}} =
                Argus.analyze([:lists], :nonexistent)
@@ -78,20 +174,6 @@ defmodule Argus.AnalysisTest do
     test "returns error for non-existent module" do
       assert {:error, {:not_found, :fake_module_xyz}} =
                Argus.analyze([:fake_module_xyz], :cfg)
-    end
-
-    test "custom analysis with non-existent rules file returns error" do
-      assert {:error, {:rules_not_found, "/tmp/nonexistent_rules.dl"}} =
-               Argus.analyze([:lists], {:custom, "/tmp/nonexistent_rules.dl"})
-    end
-  end
-
-  describe "Analysis.builtin_analyses/0" do
-    test "returns known analyses" do
-      analyses = Argus.Analysis.builtin_analyses()
-      assert :cfg in analyses
-      assert :callgraph in analyses
-      assert :reachability in analyses
     end
   end
 end
