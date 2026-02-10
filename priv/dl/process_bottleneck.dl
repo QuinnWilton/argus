@@ -1,0 +1,39 @@
+// Process bottleneck detection.
+//
+// Identifies GenServer modules with high synchronous call fan-in:
+// many distinct caller modules make GenServer.call to the same target.
+// These are serialization points that can become throughput bottlenecks
+// under load.
+
+.include "base.dl"
+
+// ── Layer 2 facts ──────────────────────────────────────────────────────
+
+.decl sync_call(caller_func: symbol, callee_mod: symbol)
+.input sync_call
+
+.decl implements_behaviour(mod: symbol, behaviour: symbol)
+.input implements_behaviour
+
+// ── Direct module-level sync callers ───────────────────────────────────
+
+// Module caller_mod has at least one function that sync-calls target_mod.
+.decl sync_caller(caller_mod: symbol, target_mod: symbol)
+.output sync_caller
+
+sync_caller(caller_mod, target_mod) :-
+  function_def(f, caller_mod, _, _, _, _),
+  sync_call(f, target_mod),
+  target_mod != "dynamic",
+  caller_mod != target_mod.
+
+// ── Fan-in aggregation ─────────────────────────────────────────────────
+
+// Count of distinct caller modules for each GenServer target.
+.decl sync_call_fan_in(target_mod: symbol, cnt: number)
+.output sync_call_fan_in
+
+sync_call_fan_in(target_mod, cnt) :-
+  implements_behaviour(target_mod, "GenServer"),
+  cnt = count : { sync_caller(_, target_mod) },
+  cnt > 0.
