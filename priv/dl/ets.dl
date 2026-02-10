@@ -5,6 +5,10 @@
 // - Cross-module access without concurrency settings.
 // - Write contention on ordered_set tables.
 // - Unnamed tables in processes (stale reference risk).
+//
+// Tables whose name resolves to "dynamic" are excluded from derived rules
+// because their identity is unknown — joining on "dynamic" conflates
+// independent tables and produces false positives.
 
 .include "base.dl"
 
@@ -31,6 +35,7 @@
 
 ets_owner_process(name, mod, behaviour) :-
   ets_new(id, func, name),
+  name != "dynamic",
   function_def(func, mod, _, _, _, _),
   implements_behaviour(mod, behaviour).
 
@@ -42,6 +47,7 @@ ets_owner_process(name, mod, behaviour) :-
 ets_unprotected_owner(name, mod) :-
   ets_owner_process(name, mod, _),
   ets_new(id, _, name),
+  name != "dynamic",
   !ets_option(id, "heir", "true").
 
 // ── Concurrent access patterns ─────────────────────────────────────
@@ -52,6 +58,7 @@ ets_unprotected_owner(name, mod) :-
 
 ets_reader_module(name, mod) :-
   ets_op(_, func, name, _, "read"),
+  name != "dynamic",
   function_def(func, mod, _, _, _, _).
 
 // Module writing to a table.
@@ -60,6 +67,7 @@ ets_reader_module(name, mod) :-
 
 ets_writer_module(name, mod) :-
   ets_op(_, func, name, _, "write"),
+  name != "dynamic",
   function_def(func, mod, _, _, _, _).
 
 // Cross-module reads without read_concurrency.
@@ -69,7 +77,8 @@ ets_writer_module(name, mod) :-
 ets_missing_read_concurrency(name) :-
   ets_reader_module(name, m1),
   ets_reader_module(name, m2),
-  m1 != m2,
+  name != "dynamic",
+  m1 < m2,
   ets_new(id, _, name),
   !ets_option(id, "read_concurrency", "true").
 
@@ -80,7 +89,8 @@ ets_missing_read_concurrency(name) :-
 ets_missing_write_concurrency(name) :-
   ets_writer_module(name, m1),
   ets_writer_module(name, m2),
-  m1 != m2,
+  name != "dynamic",
+  m1 < m2,
   ets_new(id, _, name),
   !ets_option(id, "write_concurrency", "true"),
   !ets_option(id, "write_concurrency", "auto").
@@ -92,7 +102,8 @@ ets_missing_write_concurrency(name) :-
 ets_ordered_set_contention(name, mod1, mod2) :-
   ets_writer_module(name, mod1),
   ets_writer_module(name, mod2),
-  mod1 != mod2,
+  name != "dynamic",
+  mod1 < mod2,
   ets_new(id, _, name),
   ets_option(id, "type", "ordered_set").
 
@@ -105,6 +116,7 @@ ets_ordered_set_contention(name, mod1, mod2) :-
 
 ets_unnamed_in_process(name, mod) :-
   ets_new(id, func, name),
+  name != "dynamic",
   function_def(func, mod, _, _, _, _),
   implements_behaviour(mod, _),
   !ets_option(id, "named_table", "true").
