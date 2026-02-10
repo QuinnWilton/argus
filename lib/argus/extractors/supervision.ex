@@ -24,7 +24,14 @@ defmodule Argus.Extractors.Supervision do
 
   @behaviour Argus.Extractor
 
-  @strategies [:one_for_one, :one_for_all, :rest_for_one, :simple_one_for_one]
+  import Argus.Extractor.Helpers,
+    only: [
+      add_fact: 3,
+      find_function: 3,
+      get_behaviours: 1,
+      match_remote_call: 1,
+      resolve_register: 3
+    ]
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Emitter.facts()
@@ -33,9 +40,7 @@ defmodule Argus.Extractors.Supervision do
     mod_str = inspect(mod)
     attrs = module_data.attributes
 
-    behaviours =
-      (Keyword.get_values(attrs, :behaviour) ++ Keyword.get_values(attrs, :behavior))
-      |> List.flatten()
+    behaviours = get_behaviours(attrs)
 
     cond do
       Supervisor in behaviours ->
@@ -50,39 +55,20 @@ defmodule Argus.Extractors.Supervision do
   end
 
   defp extract_supervisor(mod_str, module_data) do
-    functions = module_data.functions
-
-    init_func =
-      Enum.find(functions, fn
-        {:function, :init, 1, _, _} -> true
-        _ -> false
-      end)
-
-    case init_func do
+    case find_function(module_data.functions, :init, 1) do
       nil ->
         # Supervisor without init/1 — just record the behaviour.
         add_fact(%{}, :supervisor, [mod_str, "unknown"])
 
-      {:function, :init, 1, _, instrs} ->
+      instrs ->
         extract_from_instructions(%{}, mod_str, instrs)
     end
   end
 
   defp extract_application(mod_str, module_data) do
-    functions = module_data.functions
-
-    start_func =
-      Enum.find(functions, fn
-        {:function, :start, 2, _, _} -> true
-        _ -> false
-      end)
-
-    case start_func do
-      nil ->
-        %{}
-
-      {:function, :start, 2, _, instrs} ->
-        extract_from_instructions(%{}, mod_str, instrs)
+    case find_function(module_data.functions, :start, 2) do
+      nil -> %{}
+      instrs -> extract_from_instructions(%{}, mod_str, instrs)
     end
   end
 
@@ -105,34 +91,28 @@ defmodule Argus.Extractors.Supervision do
     end)
   end
 
-  # Detect the supervision strategy from init/1 instructions.
-  # Look for atoms like :one_for_one, :one_for_all, :rest_for_one
-  # that appear as literal values or atom operands.
+  # Detect the supervision strategy by finding the Supervisor.init/2 or
+  # Supervisor.start_link/2 call and resolving the options argument.
   defp detect_strategy(instrs) do
-    Enum.find_value(instrs, :unknown, fn
-      {:move, {:atom, atom}, _} when atom in @strategies -> atom
-      {:move, {:literal, kw}, _} when is_list(kw) -> Keyword.get(kw, :strategy)
-      {:put_tuple2, _, {:list, elements}} -> find_strategy_in_elements(elements)
-      {:put_map_assoc, _, _, _, _, {:list, pairs}} -> find_strategy_in_pairs(pairs)
-      {:put_map_exact, _, _, _, _, {:list, pairs}} -> find_strategy_in_pairs(pairs)
-      _ -> nil
+    instrs
+    |> Enum.with_index()
+    |> Enum.find_value(:unknown, fn {instr, idx} ->
+      case match_remote_call(instr) do
+        {:ok, Supervisor, func, 2} when func in [:init, :start_link] ->
+          extract_strategy_from_opts(instrs, idx)
+
+        _ ->
+          nil
+      end
     end)
   end
 
-  defp find_strategy_in_elements(elements) do
-    Enum.find_value(elements, nil, fn
-      {:atom, atom} when atom in @strategies -> atom
+  defp extract_strategy_from_opts(instrs, call_idx) do
+    case resolve_register(instrs, call_idx, {:x, 1}) do
+      {:ok, opts} when is_list(opts) -> Keyword.get(opts, :strategy)
+      {:ok, opts} when is_map(opts) -> Map.get(opts, :strategy)
       _ -> nil
-    end)
-  end
-
-  defp find_strategy_in_pairs(pairs) do
-    pairs
-    |> Enum.chunk_every(2)
-    |> Enum.find_value(nil, fn
-      [{:atom, :strategy}, {:atom, strategy}] when strategy in @strategies -> strategy
-      _ -> nil
-    end)
+    end
   end
 
   # Extract child modules from literal values and tuple construction.
@@ -210,9 +190,5 @@ defmodule Argus.Extractors.Supervision do
       [{:atom, mod} | _] -> [{mod, :permanent, :worker}]
       _ -> []
     end
-  end
-
-  defp add_fact(facts, relation, row) do
-    Map.update(facts, relation, [row], &[row | &1])
   end
 end
