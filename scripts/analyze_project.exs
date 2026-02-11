@@ -26,12 +26,20 @@ defmodule Argus.Scripts.AnalyzeProject do
   # reaching_def, liveness, tail_call, message_flow) are excluded
   # from the default set.
   @correctness_analyses [
+    :atom_safety,
     :call_cycle,
+    :distributed,
+    :error_handling,
     :ets,
+    :gen_statem,
     :one_for_one_coupling,
+    :phoenix_security,
     :process_bottleneck,
+    :process_registry,
+    :resource_lifecycle,
     :supervision,
     :sync_call_in_init,
+    :timeout_chain,
     :unlinked_spawn,
     :unsafe_task
   ]
