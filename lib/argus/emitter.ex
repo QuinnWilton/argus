@@ -652,6 +652,7 @@ defmodule Argus.Emitter do
   defp emit_specific(facts, _id, {:executable_line, _, _}), do: facts
   defp emit_specific(facts, _id, {:debug_line, _}), do: facts
   defp emit_specific(facts, _id, :int_code_end), do: facts
+  defp emit_specific(facts, _id, :on_load), do: facts
   defp emit_specific(facts, _id, {:on_load, _}), do: facts
   defp emit_specific(facts, _id, :nif_start), do: facts
 
