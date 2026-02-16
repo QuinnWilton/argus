@@ -70,6 +70,29 @@ defmodule Argus.Analyses.UnsafeTaskTest do
       refute Enum.any?(funcs, &String.contains?(&1, "start_tail"))
     end
 
+    test "does not flag Task.Supervisor.async_nolink as leaked" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.SupervisedFireAndForget,
+        Argus.Test.Fixtures.LeakedTaskModule
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :unsafe_task)
+
+      leaked = results["leaked_async_task"]
+
+      # async_nolink is managed by the supervisor — not a leak.
+      refute Enum.any?(leaked, fn [func, _id] ->
+               String.contains?(func, "SupervisedFireAndForget")
+             end)
+
+      # Bare Task.async without await is still flagged.
+      assert Enum.any?(leaked, fn [func, _id] ->
+               String.contains?(func, "fire_and_forget")
+             end)
+    end
+
     test "suppresses task factory (tail-position async)" do
       skip_without_souffle()
 

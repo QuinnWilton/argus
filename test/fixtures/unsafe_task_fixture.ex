@@ -68,6 +68,17 @@ defmodule Argus.Test.Fixtures.UncheckedStartChild do
   end
 end
 
+defmodule Argus.Test.Fixtures.SupervisedFireAndForget do
+  @moduledoc false
+
+  # Uses Task.Supervisor.async_nolink without await and without being
+  # a GenServer. The supervisor manages the lifecycle — not a leak.
+  def dispatch(sup) do
+    Task.Supervisor.async_nolink(sup, fn -> :work end)
+    :ok
+  end
+end
+
 defmodule Argus.Test.Fixtures.TaskFactory do
   @moduledoc false
 

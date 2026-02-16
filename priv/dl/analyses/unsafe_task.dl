@@ -33,11 +33,9 @@ task_async_call(func, id) :-
   remote_call(id, "Task.Supervisor", "async", _),
   instruction(id, func, _, _).
 
-// Also detect Task.Supervisor.async_nolink (returns a Task that must
-// be awaited/yielded, just like Task.async).
-task_async_call(func, id) :-
-  remote_call(id, "Task.Supervisor", "async_nolink", _),
-  instruction(id, func, _, _).
+// Task.Supervisor.async_nolink is intentionally excluded: it returns a
+// task that is NOT linked to the caller. The supervisor manages the
+// lifecycle, making it safe for fire-and-forget patterns.
 
 // ── Task.await/yield detection ─────────────────────────────────────────
 
