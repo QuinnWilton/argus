@@ -28,4 +28,18 @@ defmodule Argus.Test.Fixtures.RedirectModule do
   def dynamic_redirect(conn, url) do
     Phoenix.Controller.redirect(conn, external: url)
   end
+
+  def static_external_redirect(conn) do
+    Phoenix.Controller.redirect(conn, external: "https://example.com")
+  end
+end
+
+defmodule Argus.Test.Fixtures.NonControllerWithActions do
+  @moduledoc false
+
+  # Module with delete/2 and update/2 but no Phoenix markers.
+  # Should NOT emit controller_action facts.
+  def delete(repo, id), do: {repo, id}
+  def update(repo, data), do: {repo, data}
+  def index(conn, params), do: {conn, params}
 end

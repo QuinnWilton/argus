@@ -124,19 +124,7 @@ defmodule Argus.Extractors.PhoenixSecurity do
         end
       end)
     else
-      # Even without explicit controller detection, exported 2-arity functions
-      # matching action names are likely controller actions.
-      Enum.reduce(functions, facts, fn
-        {:function, name, 2, _entry, _instrs}, acc ->
-          if name in @action_names do
-            add_fact(acc, :controller_action, [mod_str, to_string(name), "2"])
-          else
-            acc
-          end
-
-        {:function, _name, _arity, _entry, _instrs}, acc ->
-          acc
-      end)
+      facts
     end
   end
 
@@ -192,9 +180,17 @@ defmodule Argus.Extractors.PhoenixSecurity do
     case resolve_register(instrs, idx, {:x, 1}) do
       {:ok, opts} when is_list(opts) ->
         cond do
-          Keyword.has_key?(opts, :to) -> "static"
-          Keyword.has_key?(opts, :external) -> "dynamic"
-          true -> "dynamic"
+          Keyword.has_key?(opts, :to) ->
+            "static"
+
+          Keyword.has_key?(opts, :external) ->
+            case Keyword.get(opts, :external) do
+              url when is_binary(url) -> "static"
+              _ -> "dynamic"
+            end
+
+          true ->
+            "dynamic"
         end
 
       _ ->

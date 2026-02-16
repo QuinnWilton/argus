@@ -21,6 +21,45 @@ defmodule Argus.Extractors.PhoenixSecurityTest do
     end
   end
 
+  describe "extract/1 — redirect target classification" do
+    test "classifies static external redirect as static" do
+      facts = PhoenixSecurity.extract(disassemble(Argus.Test.Fixtures.RedirectModule))
+
+      assert Map.has_key?(facts, :redirect_call)
+      rows = facts[:redirect_call]
+
+      # static_external_redirect uses a literal URL — should be "static".
+      static_externals =
+        Enum.filter(rows, fn [_id, func, target_type] ->
+          String.contains?(func, "static_external_redirect") and target_type == "static"
+        end)
+
+      assert length(static_externals) >= 1
+    end
+
+    test "classifies dynamic external redirect as dynamic" do
+      facts = PhoenixSecurity.extract(disassemble(Argus.Test.Fixtures.RedirectModule))
+
+      rows = facts[:redirect_call]
+
+      dynamic_externals =
+        Enum.filter(rows, fn [_id, func, target_type] ->
+          String.contains?(func, "dynamic_redirect") and target_type == "dynamic"
+        end)
+
+      assert length(dynamic_externals) >= 1
+    end
+  end
+
+  describe "extract/1 — controller detection" do
+    test "does not tag non-controller modules as controllers" do
+      facts =
+        PhoenixSecurity.extract(disassemble(Argus.Test.Fixtures.NonControllerWithActions))
+
+      refute Map.has_key?(facts, :controller_action)
+    end
+  end
+
   describe "extract/1 — clean module" do
     test "returns empty for plain module" do
       facts = PhoenixSecurity.extract(disassemble(Argus.Test.Fixtures.PlainModule))
