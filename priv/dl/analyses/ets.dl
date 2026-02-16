@@ -49,9 +49,16 @@ ets_permanent_owner(name, mod) :-
   ets_owner_process(name, mod, _),
   supervisor_child(_, _, mod, "permanent", _).
 
+// Application modules live for the entire app — table loss is not practical.
+.decl ets_application_owner(name: symbol, mod: symbol)
+
+ets_application_owner(name, mod) :-
+  ets_owner_process(name, mod, "Application").
+
 // Table without heir protection in a behaviour process.
 // If the owner crashes, the table vanishes.
-// Suppressed for permanent supervisor children (table recreated on restart).
+// Suppressed for permanent supervisor children (table recreated on restart)
+// and Application modules (live for the entire app lifetime).
 .decl ets_unprotected_owner(name: symbol, mod: symbol)
 .output ets_unprotected_owner
 
@@ -60,7 +67,8 @@ ets_unprotected_owner(name, mod) :-
   ets_new(id, _, name),
   name != "dynamic",
   !ets_option(id, "heir", "true"),
-  !ets_permanent_owner(name, mod).
+  !ets_permanent_owner(name, mod),
+  !ets_application_owner(name, mod).
 
 // ── Concurrent access patterns ─────────────────────────────────────
 

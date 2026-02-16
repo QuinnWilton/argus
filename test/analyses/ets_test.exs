@@ -72,6 +72,23 @@ defmodule Argus.Analyses.EtsTest do
              end)
     end
 
+    test "suppresses unprotected_owner for Application modules" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.EtsApplicationOwner
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :ets)
+
+      # Application modules live for the entire app — not a real risk.
+      unprotected = results["ets_unprotected_owner"]
+
+      refute Enum.any?(unprotected, fn [_name, mod] ->
+               mod == "Argus.Test.Fixtures.EtsApplicationOwner"
+             end)
+    end
+
     test "EtsOwner without supervisor still fires unprotected_owner" do
       skip_without_souffle()
 

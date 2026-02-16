@@ -92,6 +92,22 @@ defmodule Argus.Test.Fixtures.EtsPermanentSupervisor do
   end
 end
 
+defmodule Argus.Test.Fixtures.EtsApplicationOwner do
+  @moduledoc false
+  @behaviour Application
+
+  # Application module that creates an ETS table. Lives for the entire
+  # app lifetime — table loss is not a practical concern.
+  @impl true
+  def start(_type, _args) do
+    :ets.new(:app_cache, [:set, :public, :named_table])
+    Supervisor.start_link([], strategy: :one_for_one)
+  end
+
+  @impl true
+  def stop(_state), do: :ok
+end
+
 defmodule Argus.Test.Fixtures.EtsAdminOps do
   @moduledoc false
 
