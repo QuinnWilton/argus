@@ -14,7 +14,7 @@ defmodule Argus.Extractors.AtomSafety do
   - `unsafe_deserialization(id, func, api, safety)` — `:erlang.binary_to_term/1` (always unsafe),
     `/2` (resolved for `[:safe]` option)
   - `code_execution(id, func, api)` — `Code.eval_string`, `Code.compile_string`,
-    `:os.cmd`, `System.cmd`
+    `:os.cmd`, `System.cmd` (only when command or args are dynamic)
   """
 
   @behaviour Argus.Extractor
@@ -42,8 +42,6 @@ defmodule Argus.Extractors.AtomSafety do
     {Code, :compile_string, 2},
     {:os, :cmd, 1},
     {:os, :cmd, 2},
-    {System, :cmd, 2},
-    {System, :cmd, 3},
     {System, :shell, 1},
     {System, :shell, 2}
   ]
@@ -71,7 +69,7 @@ defmodule Argus.Extractors.AtomSafety do
           acc
           |> maybe_atom_creation(id, func_id, mod, func, arity)
           |> maybe_deserialization(id, func_id, mod, func, arity, instrs, idx)
-          |> maybe_code_execution(id, func_id, mod, func, arity)
+          |> maybe_code_execution(id, func_id, mod, func, arity, instrs, idx)
 
         :none ->
           acc
@@ -117,7 +115,24 @@ defmodule Argus.Extractors.AtomSafety do
 
   defp maybe_deserialization(facts, _id, _func_id, _mod, _func, _arity, _instrs, _idx), do: facts
 
-  defp maybe_code_execution(facts, id, func_id, mod, func, arity) do
+  # System.cmd uses execve (no shell) — only flag when command or args
+  # are dynamic. Static command + static args = no injection vector.
+  defp maybe_code_execution(facts, id, func_id, System, :cmd, arity, instrs, idx)
+       when arity in [2, 3] do
+    cmd_static? = match?({:ok, cmd} when is_binary(cmd), resolve_register(instrs, idx, {:x, 0}))
+
+    args_static? =
+      match?({:ok, args} when is_list(args), resolve_register(instrs, idx, {:x, 1}))
+
+    if cmd_static? and args_static? do
+      facts
+    else
+      api = "System.cmd/#{arity}"
+      add_fact(facts, :code_execution, [id, func_id, api])
+    end
+  end
+
+  defp maybe_code_execution(facts, id, func_id, mod, func, arity, _instrs, _idx) do
     if {mod, func, arity} in @code_exec_apis do
       api = "#{inspect(mod)}.#{func}/#{arity}"
       add_fact(facts, :code_execution, [id, func_id, api])

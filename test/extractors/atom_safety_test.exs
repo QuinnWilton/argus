@@ -77,12 +77,26 @@ defmodule Argus.Extractors.AtomSafetyTest do
       assert Enum.any?(apis, &String.contains?(&1, "cmd"))
     end
 
-    test "detects System.cmd" do
+    test "detects System.cmd with dynamic args" do
       facts = AtomSafety.extract(disassemble(Argus.Test.Fixtures.CodeExecution))
 
       rows = facts[:code_execution]
       apis = Enum.map(rows, fn [_, _, api] -> api end)
       assert Enum.any?(apis, &String.contains?(&1, "System.cmd"))
+    end
+
+    test "skips System.cmd with static command and args" do
+      facts = AtomSafety.extract(disassemble(Argus.Test.Fixtures.CodeExecution))
+
+      rows = facts[:code_execution] || []
+
+      # static_system_cmd calls System.cmd("echo", ["hello"]) — no injection vector.
+      static_cmds =
+        Enum.filter(rows, fn [_id, func, _api] ->
+          String.contains?(func, "static_system_cmd")
+        end)
+
+      assert static_cmds == []
     end
   end
 

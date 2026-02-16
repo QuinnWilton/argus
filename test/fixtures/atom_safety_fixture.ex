@@ -20,6 +20,7 @@ defmodule Argus.Test.Fixtures.CodeExecution do
   def eval(code), do: Code.eval_string(code)
   def os_cmd(cmd), do: :os.cmd(cmd)
   def system_cmd(cmd, args), do: System.cmd(cmd, args)
+  def static_system_cmd, do: System.cmd("echo", ["hello"])
 end
 
 defmodule Argus.Test.Fixtures.SafeModule do
