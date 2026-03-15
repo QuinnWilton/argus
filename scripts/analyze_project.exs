@@ -3,12 +3,16 @@
 # Usage:
 #   mix run scripts/analyze_project.exs /path/to/project [analyses...]
 #   mix run scripts/analyze_project.exs /path/to/project --json /output.json [analyses...]
+#   mix run scripts/analyze_project.exs /path/to/project --explain [analyses...]
+#   mix run scripts/analyze_project.exs /path/to/project --enrich [analyses...]
 #
 # Examples:
 #   mix run scripts/analyze_project.exs /path/to/project           # run all correctness analyses
 #   mix run scripts/analyze_project.exs /path/to/project all       # run every analysis
 #   mix run scripts/analyze_project.exs /path/to/project ets       # run one analysis
 #   mix run scripts/analyze_project.exs /path/to/project --json /tmp/out.json ets supervision
+#   mix run scripts/analyze_project.exs /path/to/project --explain call_cycle
+#   mix run scripts/analyze_project.exs /path/to/project --enrich ets call_cycle
 #
 # When --json PATH is provided, all output is written as structured JSON to PATH
 # instead of pretty-printing to the console. Per-analysis errors are recorded in
@@ -55,9 +59,14 @@ defmodule Argus.Scripts.AnalyzeProject do
     end
 
     json_path = opts[:json]
+    analysis_opts = build_analysis_opts(opts)
 
     unless json_path, do: IO.puts("Analyzing: #{project_path}")
     unless json_path, do: IO.puts("Analyses:  #{Enum.map_join(analyses, ", ", &to_string/1)}")
+
+    if analysis_opts[:explain], do: IO.puts("LLM explain: enabled")
+    if analysis_opts[:enrich], do: IO.puts("LLM enrich:  enabled")
+
     unless json_path, do: IO.puts("")
 
     # Add project ebin dirs to code path.
@@ -85,19 +94,19 @@ defmodule Argus.Scripts.AnalyzeProject do
     unless json_path, do: IO.puts("")
 
     if json_path do
-      run_json(project_path, modules, analyses, json_path)
+      run_json(project_path, modules, analyses, json_path, analysis_opts)
     else
-      run_pretty(project_path, modules, analyses)
+      run_pretty(project_path, modules, analyses, analysis_opts)
     end
   end
 
   # JSON output mode — collects all results (including errors) and writes JSON.
-  defp run_json(project_path, modules, analyses, json_path) do
+  defp run_json(project_path, modules, analyses, json_path, analysis_opts) do
     start_time = System.monotonic_time(:millisecond)
 
     analysis_results =
       Enum.map(analyses, fn analysis ->
-        {analysis, Argus.analyze(modules, analysis)}
+        {analysis, Argus.analyze(modules, analysis, analysis_opts)}
       end)
 
     duration_ms = System.monotonic_time(:millisecond) - start_time
@@ -120,12 +129,12 @@ defmodule Argus.Scripts.AnalyzeProject do
   end
 
   # Pretty-print mode — original behavior.
-  defp run_pretty(_project_path, modules, analyses) do
+  defp run_pretty(_project_path, modules, analyses, analysis_opts) do
     # Print supervision structure first.
     print_supervision_structure(modules)
 
     # Run each analysis and collect results.
-    {results, failures} = run_analyses_pretty(modules, analyses)
+    {results, failures} = run_analyses_pretty(modules, analyses, analysis_opts)
 
     # Print results grouped by analysis.
     print_all_results(results)
@@ -140,7 +149,9 @@ defmodule Argus.Scripts.AnalyzeProject do
 
   defp parse_opts(args) do
     {opts, positional, _} =
-      OptionParser.parse(args, strict: [json: :string])
+      OptionParser.parse(args,
+        strict: [json: :string, explain: :boolean, enrich: :boolean, enrich_audit: :string]
+      )
 
     {opts, positional}
   end
@@ -160,7 +171,10 @@ defmodule Argus.Scripts.AnalyzeProject do
     Pass "all" to run every available analysis.
 
     Options:
-      --json PATH   Write structured JSON results to PATH instead of console output\
+      --json PATH   Write structured JSON results to PATH instead of console output
+      --explain     Append LLM-generated explanation of findings
+      --enrich      Resolve dynamic values via LLM before analysis
+      --enrich-audit PATH  Write enrichment audit log (TSV) to PATH\
     """)
   end
 
@@ -184,12 +198,12 @@ defmodule Argus.Scripts.AnalyzeProject do
     end)
   end
 
-  defp run_analyses_pretty(modules, analyses) do
+  defp run_analyses_pretty(modules, analyses, analysis_opts) do
     analyses
     |> Enum.reduce({[], []}, fn analysis, {ok_acc, err_acc} ->
       IO.puts("--- Running #{analysis} ---")
 
-      case Argus.analyze(modules, analysis) do
+      case Argus.analyze(modules, analysis, analysis_opts) do
         {:ok, results} ->
           {[{analysis, results} | ok_acc], err_acc}
 
@@ -384,10 +398,12 @@ defmodule Argus.Scripts.AnalyzeProject do
   # Intermediate relations (call_edge, cfg_edge, etc.) are excluded when the
   # analysis declares its outputs.
   defp print_results(results, analysis) do
+    {explanation, results} = Map.pop(results, "_explanation")
     allowed = output_relation_names(analysis)
 
     findings =
       results
+      |> Enum.reject(fn {name, _} -> String.starts_with?(name, "_") end)
       |> then(fn rs ->
         if allowed, do: Enum.filter(rs, fn {name, _} -> name in allowed end), else: rs
       end)
@@ -411,6 +427,17 @@ defmodule Argus.Scripts.AnalyzeProject do
 
         IO.puts("")
       end)
+
+      case explanation do
+        [[text]] when is_binary(text) ->
+          IO.puts("  --- Explanation ---")
+          IO.puts("")
+          IO.puts("  " <> String.replace(text, "\n", "\n  "))
+          IO.puts("")
+
+        _ ->
+          :ok
+      end
     end
   end
 
@@ -419,6 +446,18 @@ defmodule Argus.Scripts.AnalyzeProject do
       {:ok, relations} -> Enum.map(relations, &Atom.to_string(&1.name))
       :error -> nil
     end
+  end
+
+  defp build_analysis_opts(opts) do
+    Enum.reduce(
+      [{:explain, opts[:explain]}, {:enrich, opts[:enrich]}, {:enrich_audit, opts[:enrich_audit]}],
+      [],
+      fn
+        {_key, nil}, acc -> acc
+        {_key, false}, acc -> acc
+        {key, val}, acc -> [{key, val} | acc]
+      end
+    )
   end
 
   defp abort(msg) do

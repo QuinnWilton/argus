@@ -21,6 +21,9 @@ defmodule Mix.Tasks.Argus do
   - `--format` — output format: text (default), json, dot
   - `--fail-above N` — exit with non-zero status if more than N results
   - `--concurrency N` — number of parallel workers (default: number of schedulers)
+  - `--explain` — append an LLM-generated explanation of findings
+  - `--enrich` — resolve dynamic values via LLM before analysis
+  - `--enrich-audit PATH` — write enrichment audit log to PATH (TSV)
   - `--list` — list all available analyses with descriptions
 
   ## Examples
@@ -49,6 +52,9 @@ defmodule Mix.Tasks.Argus do
           format: :string,
           fail_above: :integer,
           concurrency: :integer,
+          explain: :boolean,
+          enrich: :boolean,
+          enrich_audit: :string,
           list: :boolean
         ]
       )
@@ -115,19 +121,29 @@ defmodule Mix.Tasks.Argus do
     fail_above = Keyword.get(opts, :fail_above)
 
     analysis_opts =
-      if concurrency = opts[:concurrency] do
-        [concurrency: concurrency]
-      else
-        []
-      end
+      Enum.reduce(
+        [
+          {:concurrency, opts[:concurrency]},
+          {:explain, opts[:explain]},
+          {:enrich, opts[:enrich]},
+          {:enrich_audit, opts[:enrich_audit]}
+        ],
+        [],
+        fn
+          {_key, nil}, acc -> acc
+          {_key, false}, acc -> acc
+          {key, val}, acc -> [{key, val} | acc]
+        end
+      )
 
     case Analysis.run(modules, analysis, analysis_opts) do
       {:ok, results} ->
-        output = format_results(results, format)
+        filtered = filter_to_output_relations(results, analysis)
+        output = format_results(filtered, format)
         Mix.shell().info(output)
 
         if fail_above do
-          total = count_results(results)
+          total = count_results(filtered)
 
           if total > fail_above do
             Mix.raise("Analysis found #{total} results (threshold: #{fail_above})")
@@ -136,6 +152,24 @@ defmodule Mix.Tasks.Argus do
 
       {:error, reason} ->
         Mix.raise("Analysis failed: #{inspect(reason)}")
+    end
+  end
+
+  # Filters raw Souffle output to only the analysis's declared output relations.
+  # Custom analyses pass everything through since they have no declared outputs.
+  defp filter_to_output_relations(results, {:custom, _}), do: results
+
+  defp filter_to_output_relations(results, name) when is_atom(name) do
+    case Analysis.output_relations(name) do
+      {:ok, relations} ->
+        allowed = MapSet.new(relations, &Atom.to_string(&1.name))
+
+        Map.filter(results, fn {key, _} ->
+          String.starts_with?(key, "_") or MapSet.member?(allowed, key)
+        end)
+
+      :error ->
+        results
     end
   end
 
@@ -242,21 +276,32 @@ defmodule Mix.Tasks.Argus do
   end
 
   defp format_results(results, _text) do
-    results
-    |> Enum.sort_by(fn {name, _} -> name end)
-    |> Enum.map_join("\n\n", fn {relation, rows} ->
-      header = "=== #{relation} (#{length(rows)} rows) ==="
+    {explanation, data} = Map.pop(results, "_explanation")
 
-      body =
-        rows
-        |> Enum.take(100)
-        |> Enum.map_join("\n", fn row -> "  " <> Enum.join(row, "\t") end)
+    table =
+      data
+      |> Enum.sort_by(fn {name, _} -> name end)
+      |> Enum.map_join("\n\n", fn {relation, rows} ->
+        header = "=== #{relation} (#{length(rows)} rows) ==="
 
-      truncated =
-        if length(rows) > 100, do: "\n  ... (#{length(rows) - 100} more rows)", else: ""
+        body =
+          rows
+          |> Enum.take(100)
+          |> Enum.map_join("\n", fn row -> "  " <> Enum.join(row, "\t") end)
 
-      header <> "\n" <> body <> truncated
-    end)
+        truncated =
+          if length(rows) > 100, do: "\n  ... (#{length(rows) - 100} more rows)", else: ""
+
+        header <> "\n" <> body <> truncated
+      end)
+
+    case explanation do
+      [[text]] when is_binary(text) ->
+        table <> "\n\n=== Explanation ===\n" <> text
+
+      _ ->
+        table
+    end
   end
 
   defp escape_dot(str) do
@@ -266,6 +311,9 @@ defmodule Mix.Tasks.Argus do
   end
 
   defp count_results(results) do
-    Enum.reduce(results, 0, fn {_, rows}, acc -> acc + length(rows) end)
+    Enum.reduce(results, 0, fn
+      {"_" <> _, _}, acc -> acc
+      {_, rows}, acc -> acc + length(rows)
+    end)
   end
 end

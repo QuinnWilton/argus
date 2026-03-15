@@ -81,6 +81,9 @@ defmodule Argus.Analysis do
   - `:concurrency` — number of parallel extraction workers (default: schedulers)
   - `:extractors` — list of domain extractor modules to run
   - `:souffle_bin` — path to souffle binary (default: auto-detect)
+  - `:explain` — when true, appends an LLM explanation of findings (default: false)
+  - `:enrich` — when true, resolves dynamic values via LLM before Souffle (default: false)
+  - `:llm_bin` — path to LLM binary for explain/enrich (default: auto-detect)
   """
   @spec run(modules :: [atom() | String.t()], analysis(), keyword()) ::
           {:ok, result()} | {:error, term()}
@@ -92,8 +95,9 @@ defmodule Argus.Analysis do
          {:ok, work_dir} <- create_work_dir(),
          facts_dir = Path.join(work_dir, "facts"),
          {:ok, _} <- Extract.run(modules, facts_dir, opts),
+         :ok <- maybe_enrich(facts_dir, opts),
          {:ok, results} <- CLI.run(facts_dir, rules_path, opts) do
-      {:ok, results}
+      maybe_explain(results, analysis, modules, opts)
     end
   end
 
@@ -191,6 +195,28 @@ defmodule Argus.Analysis do
 
   defp priv_dl(filename) do
     Path.join(:code.priv_dir(:argus), "dl/#{filename}")
+  end
+
+  defp maybe_enrich(facts_dir, opts) do
+    if Keyword.get(opts, :enrich, false) and Argus.LLM.available?(opts) do
+      case Argus.LLM.Enrich.enrich(facts_dir, opts) do
+        :ok -> :ok
+        {:error, _} -> :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  defp maybe_explain(results, analysis, modules, opts) do
+    if Keyword.get(opts, :explain, false) and Argus.LLM.available?(opts) do
+      case Argus.LLM.Explain.explain(results, analysis, modules, opts) do
+        {:ok, text} -> {:ok, Map.put(results, "_explanation", [[text]])}
+        {:error, _} -> {:ok, results}
+      end
+    else
+      {:ok, results}
+    end
   end
 
   defp create_work_dir do
