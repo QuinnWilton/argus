@@ -163,6 +163,11 @@ defmodule Argus.Extractors.ProcessRegistry do
   # GenServer.start_link(mod, args, name: Name) — name in options keyword list (x2).
   # The first argument (x0) is the module being started; if it resolves to a
   # literal atom we can also emit named_process(mod, name).
+  #
+  # For tail-called start_links where options don't resolve, suppress the
+  # imprecision — the wrapper is just forwarding args from its caller, so
+  # the name registration (if any) should be attributed to the call site
+  # that builds the options, not this intermediary.
   defp maybe_named_start(facts, ctx, method) do
     case resolve_register(ctx.instrs, ctx.idx, {:x, 2}) do
       {:ok, opts} when is_list(opts) ->
@@ -186,7 +191,13 @@ defmodule Argus.Extractors.ProcessRegistry do
         end
 
       _ ->
-        track_imprecision(facts, ctx, :gen_server_start_name, :process_register, :skipped)
+        # Options didn't resolve. If this is a tail call, the wrapper is
+        # just forwarding — skip rather than emit imprecision.
+        if tail_call?(ctx.instrs, ctx.idx) do
+          facts
+        else
+          track_imprecision(facts, ctx, :gen_server_start_name, :process_register, :skipped)
+        end
     end
   end
 
@@ -202,7 +213,20 @@ defmodule Argus.Extractors.ProcessRegistry do
         |> maybe_emit_named_process_for_erlang_start(ctx, inspect(name))
 
       _ ->
-        track_imprecision(facts, ctx, :gen_server_start_name, :process_register, :skipped)
+        if tail_call?(ctx.instrs, ctx.idx) do
+          facts
+        else
+          track_imprecision(facts, ctx, :gen_server_start_name, :process_register, :skipped)
+        end
+    end
+  end
+
+  # Check whether the instruction at `idx` is a tail call variant.
+  defp tail_call?(instrs, idx) do
+    case Enum.at(instrs, idx) do
+      {:call_ext_only, _, _} -> true
+      {:call_ext_last, _, _, _} -> true
+      _ -> false
     end
   end
 
