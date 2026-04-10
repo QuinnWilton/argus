@@ -17,9 +17,8 @@ defmodule Argus.Extractors.Distributed do
 
   @behaviour Argus.Extractor
 
-  import Argus.Extractor.Helpers, only: [add_fact: 3, match_remote_call: 1, resolve_register: 3]
-
-  alias Argus.Normalize
+  import Argus.Extractor.Helpers,
+    only: [add_fact: 3, resolve_register: 3, scan_remote_calls: 3]
 
   # Node operations to detect.
   @node_ops [
@@ -93,32 +92,14 @@ defmodule Argus.Extractors.Distributed do
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Emitter.facts()
   def extract(module_data) do
-    mod = module_data.module
-    functions = module_data.functions
+    scan_remote_calls(module_data.module, module_data.functions, fn facts, ctx, {mod, func, arity} ->
+      id = "#{ctx.func_id}##{ctx.idx}"
 
-    Enum.reduce(functions, %{}, fn {:function, name, arity, _entry, instrs}, facts ->
-      func_id = Normalize.func_id(mod, name, arity)
-      scan_instructions(facts, func_id, instrs)
-    end)
-  end
-
-  defp scan_instructions(facts, func_id, instrs) do
-    instrs
-    |> Enum.with_index()
-    |> Enum.reduce(facts, fn {instr, idx}, acc ->
-      case match_remote_call(instr) do
-        {:ok, mod, func, arity} ->
-          id = "#{func_id}##{idx}"
-
-          acc
-          |> maybe_rpc(id, func_id, mod, func, arity, instrs, idx)
-          |> maybe_global_register(id, func_id, mod, func, arity, instrs, idx)
-          |> maybe_node_op(id, func_id, mod, func, arity)
-          |> maybe_distributed_store(id, func_id, mod, func, arity)
-
-        :none ->
-          acc
-      end
+      facts
+      |> maybe_rpc(id, ctx.func_id, mod, func, arity, ctx.instrs, ctx.idx)
+      |> maybe_global_register(id, ctx.func_id, mod, func, arity, ctx.instrs, ctx.idx)
+      |> maybe_node_op(id, ctx.func_id, mod, func, arity)
+      |> maybe_distributed_store(id, ctx.func_id, mod, func, arity)
     end)
   end
 

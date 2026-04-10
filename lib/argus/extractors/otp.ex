@@ -11,33 +11,33 @@ defmodule Argus.Extractors.OTP do
   - `sync_call(caller_func, callee_mod)` — GenServer.call target detected
   - `sync_call_timeout(caller_func, callee_mod, timeout_ms)` — timeout value at call site
   - `async_cast(caller_func, callee_mod)` — GenServer.cast target detected
+  - `process_link(from_mod, to_mod)` — Process.link / :erlang.link call
+  - `process_monitor(from_mod, to_mod)` — Process.monitor / :erlang.monitor call
   """
 
   @behaviour Argus.Extractor
 
   import Argus.Extractor.Helpers,
-    only: [add_fact: 3, get_behaviours: 1, match_remote_call: 1, resolve_register: 3]
-
-  alias Argus.Normalize
+    only: [
+      add_fact: 3,
+      get_behaviours: 1,
+      resolve_atom: 3,
+      resolve_callee: 1,
+      resolve_register: 3,
+      scan_remote_calls: 4
+    ]
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Emitter.facts()
   def extract(module_data) do
     mod = module_data.module
     mod_str = inspect(mod)
-    attrs = module_data.attributes
     functions = module_data.functions
 
-    facts = %{}
-
-    # Extract behaviour implementations from attributes.
-    facts = extract_behaviours(facts, mod_str, attrs)
-
-    # Scan bytecode for GenServer.call/cast patterns.
-    facts = extract_genserver_calls(facts, mod, functions)
-
-    # Scan for link/monitor calls.
-    extract_link_monitor_calls(facts, mod, functions)
+    %{}
+    |> extract_behaviours(mod_str, module_data.attributes)
+    |> extract_genserver_calls(mod, functions)
+    |> extract_link_monitor_calls(mod_str, mod, functions)
   end
 
   defp extract_behaviours(facts, mod_str, attrs) do
@@ -49,174 +49,95 @@ defmodule Argus.Extractors.OTP do
   end
 
   defp extract_genserver_calls(facts, mod, functions) do
-    Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
-      func_id = Normalize.func_id(mod, name, arity)
-      scan_for_genserver_calls(acc, func_id, instrs)
+    scan_remote_calls(mod, functions, facts, fn acc, ctx, mfa ->
+      handle_genserver_call(acc, ctx, mfa)
     end)
   end
 
-  # Scan instructions for sync/async call patterns across GenServer, Agent,
-  # and Erlang-style :gen_server.
-  defp scan_for_genserver_calls(facts, func_id, instrs) do
-    instrs
-    |> Enum.with_index()
-    |> Enum.reduce(facts, fn {instr, idx}, acc ->
-      case match_remote_call(instr) do
-        # GenServer.call/2 — default 5000ms timeout.
-        {:ok, GenServer, :call, 2} ->
-          callee = resolve_callee(instrs, idx)
+  # Default-timeout sync calls (5000ms): {Module, function, arity} → match.
+  @default_timeout_sync [
+    {GenServer, :call, 2},
+    {:gen_server, :call, 2},
+    {Agent, :get, 2},
+    {Agent, :update, 2},
+    {Agent, :get_and_update, 2}
+  ]
 
-          acc
-          |> add_fact(:sync_call, [func_id, callee])
-          |> add_fact(:sync_call_timeout, [func_id, callee, "5000"])
+  # Explicit-timeout sync calls (timeout in x2).
+  @explicit_timeout_sync [
+    {GenServer, :call, 3},
+    {:gen_server, :call, 3},
+    {Agent, :get, 3},
+    {Agent, :update, 3},
+    {Agent, :get_and_update, 3}
+  ]
 
-        # GenServer.call/3 — explicit timeout in x2.
-        {:ok, GenServer, :call, 3} ->
-          callee = resolve_callee(instrs, idx)
-          timeout = resolve_timeout(instrs, idx, {:x, 2})
+  # Async cast calls.
+  @async_cast_calls [
+    {GenServer, :cast, 2},
+    {:gen_server, :cast, 2}
+  ]
 
-          acc
-          |> add_fact(:sync_call, [func_id, callee])
-          |> add_fact(:sync_call_timeout, [func_id, callee, timeout])
+  defp handle_genserver_call(facts, ctx, mfa) when mfa in @default_timeout_sync do
+    callee = resolve_callee(ctx)
 
-        # GenServer.cast/2.
-        {:ok, GenServer, :cast, 2} ->
-          callee = resolve_callee(instrs, idx)
-          add_fact(acc, :async_cast, [func_id, callee])
+    facts
+    |> add_fact(:sync_call, [ctx.func_id, callee])
+    |> add_fact(:sync_call_timeout, [ctx.func_id, callee, "5000"])
+  end
 
-        # GenServer.multi_call/2,3,4 — synchronous multi-node call, infinity default.
-        {:ok, GenServer, :multi_call, arity} when arity in [2, 3, 4] ->
-          callee = resolve_callee(instrs, idx)
+  defp handle_genserver_call(facts, ctx, mfa) when mfa in @explicit_timeout_sync do
+    callee = resolve_callee(ctx)
+    timeout = resolve_timeout(ctx.instrs, ctx.idx, {:x, 2})
 
-          acc
-          |> add_fact(:sync_call, [func_id, callee])
-          |> add_fact(:sync_call_timeout, [func_id, callee, "-1"])
+    facts
+    |> add_fact(:sync_call, [ctx.func_id, callee])
+    |> add_fact(:sync_call_timeout, [ctx.func_id, callee, timeout])
+  end
 
-        # Erlang-style :gen_server.call/2 — default 5000ms timeout.
-        {:ok, :gen_server, :call, 2} ->
-          callee = resolve_callee(instrs, idx)
+  defp handle_genserver_call(facts, ctx, mfa) when mfa in @async_cast_calls do
+    callee = resolve_callee(ctx)
+    add_fact(facts, :async_cast, [ctx.func_id, callee])
+  end
 
-          acc
-          |> add_fact(:sync_call, [func_id, callee])
-          |> add_fact(:sync_call_timeout, [func_id, callee, "5000"])
+  # GenServer.multi_call/2,3,4 — synchronous multi-node call, infinity default.
+  defp handle_genserver_call(facts, ctx, {GenServer, :multi_call, arity})
+       when arity in [2, 3, 4] do
+    callee = resolve_callee(ctx)
 
-        # Erlang-style :gen_server.call/3 — explicit timeout in x2.
-        {:ok, :gen_server, :call, 3} ->
-          callee = resolve_callee(instrs, idx)
-          timeout = resolve_timeout(instrs, idx, {:x, 2})
+    facts
+    |> add_fact(:sync_call, [ctx.func_id, callee])
+    |> add_fact(:sync_call_timeout, [ctx.func_id, callee, "-1"])
+  end
 
-          acc
-          |> add_fact(:sync_call, [func_id, callee])
-          |> add_fact(:sync_call_timeout, [func_id, callee, timeout])
+  defp handle_genserver_call(facts, _ctx, _mfa), do: facts
 
-        # Erlang-style :gen_server.cast/2.
-        {:ok, :gen_server, :cast, 2} ->
-          callee = resolve_callee(instrs, idx)
-          add_fact(acc, :async_cast, [func_id, callee])
-
-        # Agent.get/2 — default 5000ms timeout.
-        {:ok, Agent, :get, 2} ->
-          callee = resolve_callee(instrs, idx)
-
-          acc
-          |> add_fact(:sync_call, [func_id, callee])
-          |> add_fact(:sync_call_timeout, [func_id, callee, "5000"])
-
-        # Agent.get/3 — explicit timeout in x2.
-        {:ok, Agent, :get, 3} ->
-          callee = resolve_callee(instrs, idx)
-          timeout = resolve_timeout(instrs, idx, {:x, 2})
-
-          acc
-          |> add_fact(:sync_call, [func_id, callee])
-          |> add_fact(:sync_call_timeout, [func_id, callee, timeout])
-
-        # Agent.update/2 — default 5000ms timeout.
-        {:ok, Agent, :update, 2} ->
-          callee = resolve_callee(instrs, idx)
-
-          acc
-          |> add_fact(:sync_call, [func_id, callee])
-          |> add_fact(:sync_call_timeout, [func_id, callee, "5000"])
-
-        # Agent.update/3 — explicit timeout in x2.
-        {:ok, Agent, :update, 3} ->
-          callee = resolve_callee(instrs, idx)
-          timeout = resolve_timeout(instrs, idx, {:x, 2})
-
-          acc
-          |> add_fact(:sync_call, [func_id, callee])
-          |> add_fact(:sync_call_timeout, [func_id, callee, timeout])
-
-        # Agent.get_and_update/2 — default 5000ms timeout.
-        {:ok, Agent, :get_and_update, 2} ->
-          callee = resolve_callee(instrs, idx)
-
-          acc
-          |> add_fact(:sync_call, [func_id, callee])
-          |> add_fact(:sync_call_timeout, [func_id, callee, "5000"])
-
-        # Agent.get_and_update/3 — explicit timeout in x2.
-        {:ok, Agent, :get_and_update, 3} ->
-          callee = resolve_callee(instrs, idx)
-          timeout = resolve_timeout(instrs, idx, {:x, 2})
-
-          acc
-          |> add_fact(:sync_call, [func_id, callee])
-          |> add_fact(:sync_call_timeout, [func_id, callee, timeout])
-
-        _ ->
-          acc
-      end
+  defp extract_link_monitor_calls(facts, mod_str, mod, functions) do
+    scan_remote_calls(mod, functions, facts, fn acc, ctx, mfa ->
+      handle_link_monitor(acc, mod_str, ctx, mfa)
     end)
   end
 
-  # Scan instructions for Process.link/1, :erlang.link/1, Process.monitor/1,2,
-  # :erlang.monitor/2. Emit process_link and process_monitor facts.
-  defp extract_link_monitor_calls(facts, mod, functions) do
-    mod_str = inspect(mod)
-
-    Enum.reduce(functions, facts, fn {:function, _name, _arity, _entry, instrs}, acc ->
-      instrs
-      |> Enum.with_index()
-      |> Enum.reduce(acc, fn {instr, idx}, inner_acc ->
-        case match_remote_call(instr) do
-          {:ok, Process, :link, 1} ->
-            target = resolve_callee(instrs, idx)
-            add_fact(inner_acc, :process_link, [mod_str, target])
-
-          {:ok, :erlang, :link, 1} ->
-            target = resolve_callee(instrs, idx)
-            add_fact(inner_acc, :process_link, [mod_str, target])
-
-          {:ok, Process, :monitor, arity} when arity in [1, 2] ->
-            target = resolve_callee(instrs, idx)
-            add_fact(inner_acc, :process_monitor, [mod_str, target])
-
-          {:ok, :erlang, :monitor, 2} ->
-            # x0 is the monitor type (:process), x1 is the target.
-            target =
-              case resolve_register(instrs, idx, {:x, 1}) do
-                {:ok, atom} when is_atom(atom) -> inspect(atom)
-                _ -> "dynamic"
-              end
-
-            add_fact(inner_acc, :process_monitor, [mod_str, target])
-
-          _ ->
-            inner_acc
-        end
-      end)
-    end)
+  defp handle_link_monitor(facts, mod_str, ctx, {Process, :link, 1}) do
+    add_fact(facts, :process_link, [mod_str, resolve_callee(ctx)])
   end
 
-  # Resolve the GenServer target from x0 at the call site.
-  defp resolve_callee(instrs, idx) do
-    case resolve_register(instrs, idx, {:x, 0}) do
-      {:ok, atom} when is_atom(atom) -> inspect(atom)
-      _ -> "dynamic"
-    end
+  defp handle_link_monitor(facts, mod_str, ctx, {:erlang, :link, 1}) do
+    add_fact(facts, :process_link, [mod_str, resolve_callee(ctx)])
   end
+
+  defp handle_link_monitor(facts, mod_str, ctx, {Process, :monitor, arity})
+       when arity in [1, 2] do
+    add_fact(facts, :process_monitor, [mod_str, resolve_callee(ctx)])
+  end
+
+  defp handle_link_monitor(facts, mod_str, ctx, {:erlang, :monitor, 2}) do
+    # x0 is the monitor type (:process), x1 is the target.
+    target = resolve_atom(ctx.instrs, ctx.idx, {:x, 1})
+    add_fact(facts, :process_monitor, [mod_str, target])
+  end
+
+  defp handle_link_monitor(facts, _mod_str, _ctx, _mfa), do: facts
 
   # Resolve a timeout argument to its string representation for facts.
   # Positive integer → milliseconds, :infinity → "-1", anything else → "0" (dynamic).

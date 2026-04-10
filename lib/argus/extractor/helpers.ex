@@ -5,15 +5,31 @@ defmodule Argus.Extractor.Helpers do
   Provides shared capabilities that extractors commonly need:
 
   - **`add_fact/3`** — accumulate a row into a relation map
+  - **`scan_functions/4`** — walk every function and instruction with a handler
+  - **`scan_remote_calls/4`** — like `scan_functions/4`, pre-filtered to remote calls
+  - **`resolve_callee/1`** — resolve the `{:x, 0}` argument as an atom string
+  - **`resolve_atom/3`** — resolve any register as an atom string
   - **`match_remote_call/1`** — recognize `call_ext` variants as `{mod, func, arity}`
+  - **`match_local_call/1`** — recognize intra-module `call` variants
   - **`resolve_register/3`** — backward dataflow: determine a register's value
     at a specific call site by walking preceding instructions
   - **`get_behaviours/1`** — extract behaviour modules from attributes
-  - **`match_local_call/1`** — recognize intra-module `call` variants as `{mod, func, arity}`
   - **`find_function/3`** — look up a function's instructions by name and arity
   """
 
+  alias Argus.Normalize
+
   @type register :: {:x, non_neg_integer()} | {:y, non_neg_integer()}
+
+  @typedoc """
+  Per-instruction context passed to scan handlers. Carries everything an
+  extractor needs to call `resolve_register/3` against the surrounding code.
+  """
+  @type instr_ctx :: %{
+          func_id: String.t(),
+          instrs: [tuple()],
+          idx: non_neg_integer()
+        }
 
   # --- Fact accumulation ---
 
@@ -23,6 +39,81 @@ defmodule Argus.Extractor.Helpers do
   @spec add_fact(Argus.Emitter.facts(), atom(), [String.t()]) :: Argus.Emitter.facts()
   def add_fact(facts, relation, row) do
     Map.update(facts, relation, [row], &[row | &1])
+  end
+
+  # --- Per-instruction scanning ---
+
+  @doc """
+  Walk every function in `functions` and every instruction within each
+  function, calling `handler.(facts, ctx, instr)` for each instruction.
+
+  `ctx` is a map with `:func_id`, `:instrs`, and `:idx` — everything an
+  extractor needs to call `resolve_register/3` on the surrounding code.
+
+  This is the standard outer loop for instruction-driven extractors.
+  """
+  @spec scan_functions(
+          module(),
+          [tuple()],
+          Argus.Emitter.facts(),
+          (Argus.Emitter.facts(), instr_ctx(), tuple() -> Argus.Emitter.facts())
+        ) :: Argus.Emitter.facts()
+  def scan_functions(mod, functions, facts \\ %{}, handler) do
+    Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
+      func_id = Normalize.func_id(mod, name, arity)
+
+      instrs
+      |> Enum.with_index()
+      |> Enum.reduce(acc, fn {instr, idx}, inner ->
+        handler.(inner, %{func_id: func_id, instrs: instrs, idx: idx}, instr)
+      end)
+    end)
+  end
+
+  @doc """
+  Like `scan_functions/4` but only invokes the handler when the instruction
+  matches `match_remote_call/1`. The handler receives the resolved
+  `{module, function, arity}` tuple in place of the raw instruction.
+  """
+  @spec scan_remote_calls(
+          module(),
+          [tuple()],
+          Argus.Emitter.facts(),
+          (Argus.Emitter.facts(), instr_ctx(), {module(), atom(), arity()} ->
+             Argus.Emitter.facts())
+        ) :: Argus.Emitter.facts()
+  def scan_remote_calls(mod, functions, facts \\ %{}, handler) do
+    scan_functions(mod, functions, facts, fn inner, ctx, instr ->
+      case match_remote_call(instr) do
+        {:ok, m, f, a} -> handler.(inner, ctx, {m, f, a})
+        :none -> inner
+      end
+    end)
+  end
+
+  @doc """
+  Resolve `{:x, 0}` at the current instruction context, returning the
+  inspected atom or `"dynamic"`.
+
+  This is the standard pattern for extracting the target module/atom from
+  the first argument of a remote call.
+  """
+  @spec resolve_callee(instr_ctx()) :: String.t()
+  def resolve_callee(%{instrs: instrs, idx: idx}) do
+    resolve_atom(instrs, idx, {:x, 0})
+  end
+
+  @doc """
+  Resolve `register` at instruction `idx` and return its inspected atom
+  string, or `"dynamic"` if the value cannot be statically determined or
+  is not an atom.
+  """
+  @spec resolve_atom([tuple()], non_neg_integer(), register()) :: String.t()
+  def resolve_atom(instrs, idx, register) do
+    case resolve_register(instrs, idx, register) do
+      {:ok, atom} when is_atom(atom) -> inspect(atom)
+      _ -> "dynamic"
+    end
   end
 
   # --- Attribute helpers ---

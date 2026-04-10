@@ -29,10 +29,10 @@ defmodule Argus.Extractors.ErrorHandling do
       add_fact: 3,
       instructions_from_label: 2,
       match_remote_call: 1,
-      resolve_register: 3
+      resolve_atom: 3,
+      resolve_register: 3,
+      scan_functions: 4
     ]
-
-  alias Argus.Normalize
 
   # Functions known to return {:ok, _} | {:error, _} whose result should
   # be checked. Only widely-used stdlib functions are included.
@@ -73,36 +73,26 @@ defmodule Argus.Extractors.ErrorHandling do
   def extract(module_data) do
     mod = module_data.module
     mod_str = inspect(mod)
-    functions = module_data.functions
 
-    Enum.reduce(functions, %{}, fn {:function, name, arity, _entry, instrs}, facts ->
-      func_id = Normalize.func_id(mod, name, arity)
-
+    scan_functions(mod, module_data.functions, %{}, fn facts, ctx, instr ->
       facts
-      |> scan_bare_rescues(func_id, instrs)
-      |> scan_calls(func_id, mod_str, instrs)
+      |> maybe_bare_rescue(ctx, instr)
+      |> maybe_error_handling_call(mod_str, ctx, instr)
     end)
   end
 
-  # Scan for try instructions and check if handlers are bare rescues.
   # The BEAM try instruction is {:try, register, {:f, handler_label}}.
   # After the handler label, {:try_case, register} begins the catch handler.
-  defp scan_bare_rescues(facts, func_id, instrs) do
-    instrs
-    |> Enum.with_index()
-    |> Enum.reduce(facts, fn
-      {{:try, _reg, {:f, handler_label}}, idx}, acc ->
-        if bare_handler?(instrs, handler_label) do
-          id = "#{func_id}##{idx}"
-          add_fact(acc, :bare_rescue, [id, func_id])
-        else
-          acc
-        end
-
-      _, acc ->
-        acc
-    end)
+  defp maybe_bare_rescue(facts, ctx, {:try, _reg, {:f, handler_label}}) do
+    if bare_handler?(ctx.instrs, handler_label) do
+      id = "#{ctx.func_id}##{ctx.idx}"
+      add_fact(facts, :bare_rescue, [id, ctx.func_id])
+    else
+      facts
+    end
   end
+
+  defp maybe_bare_rescue(facts, _ctx, _instr), do: facts
 
   # Check whether a handler starting at the given label is a bare rescue.
   # A bare rescue catches all exceptions without filtering the exception
@@ -154,106 +144,50 @@ defmodule Argus.Extractors.ErrorHandling do
     end)
   end
 
-  # Scan for trap_exit, exit calls, and ignored error results.
-  defp scan_calls(facts, func_id, mod_str, instrs) do
-    instrs
-    |> Enum.with_index()
-    |> Enum.reduce(facts, fn {instr, idx}, acc ->
-      case match_remote_call(instr) do
-        # Process.flag(:trap_exit, true).
-        {:ok, Process, :flag, 2} ->
-          maybe_trap_exit(acc, func_id, mod_str, instrs, idx)
-
-        {:ok, :erlang, :process_flag, 2} ->
-          maybe_trap_exit(acc, func_id, mod_str, instrs, idx)
-
-        # Process.exit/2.
-        {:ok, Process, :exit, 2} ->
-          id = "#{func_id}##{idx}"
-          target = resolve_target(instrs, idx)
-          add_fact(acc, :exit_call, [id, func_id, target])
-
-        # :erlang.exit/1,2.
-        {:ok, :erlang, :exit, arity} when arity in [1, 2] ->
-          id = "#{func_id}##{idx}"
-
-          target =
-            if arity == 2, do: resolve_target(instrs, idx), else: "self"
-
-          add_fact(acc, :exit_call, [id, func_id, target])
-
-        # Check for ignored error results.
-        {:ok, mod, func, arity} ->
-          if MapSet.member?(@ok_error_apis, {mod, func, arity}) do
-            maybe_ignored_result(acc, func_id, instrs, idx, mod, func, arity)
-          else
-            acc
-          end
-
-        :none ->
-          acc
-      end
-    end)
-  end
-
-  defp maybe_trap_exit(facts, func_id, mod_str, instrs, idx) do
-    case resolve_register(instrs, idx, {:x, 0}) do
-      {:ok, :trap_exit} ->
-        case resolve_register(instrs, idx, {:x, 1}) do
-          {:ok, true} -> add_fact(facts, :trap_exit, [func_id, mod_str])
-          _ -> facts
-        end
-
-      _ ->
-        facts
+  # Handle remote calls relevant to error-handling: trap_exit, exit calls,
+  # and ignored error results from known {ok, _} | {error, _} APIs.
+  defp maybe_error_handling_call(facts, mod_str, ctx, instr) do
+    case match_remote_call(instr) do
+      {:ok, Process, :flag, 2} -> maybe_trap_exit(facts, ctx, mod_str)
+      {:ok, :erlang, :process_flag, 2} -> maybe_trap_exit(facts, ctx, mod_str)
+      {:ok, Process, :exit, 2} -> emit_exit_call(facts, ctx, resolve_atom(ctx.instrs, ctx.idx, {:x, 0}))
+      {:ok, :erlang, :exit, 1} -> emit_exit_call(facts, ctx, "self")
+      {:ok, :erlang, :exit, 2} -> emit_exit_call(facts, ctx, resolve_atom(ctx.instrs, ctx.idx, {:x, 0}))
+      {:ok, mod, func, arity} -> maybe_ignored_result(facts, ctx, mod, func, arity)
+      :none -> facts
     end
   end
 
-  defp resolve_target(instrs, idx) do
-    case resolve_register(instrs, idx, {:x, 0}) do
-      {:ok, atom} when is_atom(atom) -> inspect(atom)
-      _ -> "dynamic"
+  defp emit_exit_call(facts, ctx, target) do
+    id = "#{ctx.func_id}##{ctx.idx}"
+    add_fact(facts, :exit_call, [id, ctx.func_id, target])
+  end
+
+  defp maybe_trap_exit(facts, ctx, mod_str) do
+    with {:ok, :trap_exit} <- resolve_register(ctx.instrs, ctx.idx, {:x, 0}),
+         {:ok, true} <- resolve_register(ctx.instrs, ctx.idx, {:x, 1}) do
+      add_fact(facts, :trap_exit, [ctx.func_id, mod_str])
+    else
+      _ -> facts
     end
   end
 
   # Check if the result of a call is ignored — if the instruction after the
   # call does not test/branch on the result register (x0).
-  defp maybe_ignored_result(facts, func_id, instrs, idx, mod, func, arity) do
-    following = Enum.drop(instrs, idx + 1)
-
-    ignored? =
-      case following do
-        # Result immediately overwritten — ignored.
-        [{:move, _, {:x, 0}} | _] -> true
-        [{:move, _, {:tr, {:x, 0}, _}} | _] -> true
-        # Result tested — not ignored.
-        [{:test, _, _, _} | _] -> false
-        # Result pattern matched via tuple element extraction.
-        [{:get_tuple_element, {:x, 0}, _, _} | _] -> false
-        [{:get_tuple_element, {:tr, {:x, 0}, _}, _, _} | _] -> false
-        # Result moved to another register and likely used.
-        [{:move, {:x, 0}, _} | _] -> false
-        [{:move, {:tr, {:x, 0}, _}, _} | _] -> false
-        # Return immediately — result passed through (not ignored).
-        [:return | _] -> false
-        # Call or tail call immediately — result passed as argument.
-        [{:call_ext, _, _} | _] -> false
-        [{:call_ext_only, _, _} | _] -> false
-        [{:call_ext_last, _, _, _} | _] -> false
-        [{:call, _, _} | _] -> false
-        # Branching on result.
-        [{:select_val, {:x, 0}, _, _} | _] -> false
-        [{:select_val, {:tr, {:x, 0}, _}, _, _} | _] -> false
-        # Default: if we can't tell, don't flag it.
-        _ -> false
-      end
-
-    if ignored? do
-      id = "#{func_id}##{idx}"
+  defp maybe_ignored_result(facts, ctx, mod, func, arity) do
+    if MapSet.member?(@ok_error_apis, {mod, func, arity}) and
+         result_ignored?(Enum.drop(ctx.instrs, ctx.idx + 1)) do
+      id = "#{ctx.func_id}##{ctx.idx}"
       callee = "#{inspect(mod)}.#{func}/#{arity}"
-      add_fact(facts, :ignored_error_result, [id, func_id, callee])
+      add_fact(facts, :ignored_error_result, [id, ctx.func_id, callee])
     else
       facts
     end
   end
+
+  # Result is overwritten before being read — ignored.
+  defp result_ignored?([{:move, _, {:x, 0}} | _]), do: true
+  defp result_ignored?([{:move, _, {:tr, {:x, 0}, _}} | _]), do: true
+  # Anything else is conservatively considered "used".
+  defp result_ignored?(_), do: false
 end

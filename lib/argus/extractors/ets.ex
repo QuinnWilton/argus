@@ -15,9 +15,8 @@ defmodule Argus.Extractors.ETS do
 
   @behaviour Argus.Extractor
 
-  import Argus.Extractor.Helpers, only: [add_fact: 3, match_remote_call: 1, resolve_register: 3]
-
-  alias Argus.Normalize
+  import Argus.Extractor.Helpers,
+    only: [add_fact: 3, resolve_atom: 3, resolve_register: 3, scan_remote_calls: 3]
 
   @read_ops ~w(lookup lookup_element match match_object select member
                first next last prev tab2list info foldl foldr select_count
@@ -29,60 +28,33 @@ defmodule Argus.Extractors.ETS do
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Emitter.facts()
   def extract(module_data) do
-    mod = module_data.module
-    functions = module_data.functions
-
-    Enum.reduce(functions, %{}, fn {:function, name, arity, _entry, instrs}, facts ->
-      func_id = Normalize.func_id(mod, name, arity)
-      scan_instructions(facts, func_id, instrs)
-    end)
+    scan_remote_calls(module_data.module, module_data.functions, &handle_call/3)
   end
 
-  defp scan_instructions(facts, func_id, instrs) do
-    instrs
-    |> Enum.with_index()
-    |> Enum.reduce(facts, fn {instr, idx}, acc ->
-      case match_remote_call(instr) do
-        {:ok, :ets, :new, 2} ->
-          id = "#{func_id}##{idx}"
-          {table_name, options} = extract_new_args(instrs, idx)
-          acc = add_fact(acc, :ets_new, [id, func_id, table_name])
-          emit_options(acc, id, options)
+  defp handle_call(facts, ctx, {:ets, :new, 2}) do
+    id = "#{ctx.func_id}##{ctx.idx}"
+    table_name = resolve_atom(ctx.instrs, ctx.idx, {:x, 0})
+    options = resolve_options(ctx.instrs, ctx.idx)
 
-        {:ok, :ets, func, arity} ->
-          id = "#{func_id}##{idx}"
-          table_ref = extract_table_ref(instrs, idx)
-          kind = classify_op(func, arity)
-          add_fact(acc, :ets_op, [id, func_id, table_ref, to_string(func), kind])
-
-        _ ->
-          acc
-      end
-    end)
+    facts
+    |> add_fact(:ets_new, [id, ctx.func_id, table_name])
+    |> emit_options(id, options)
   end
 
-  # Extract table name (x0) and options (x1) from preceding instructions.
-  defp extract_new_args(instrs, call_idx) do
-    table_name =
-      case resolve_register(instrs, call_idx, {:x, 0}) do
-        {:ok, atom} when is_atom(atom) -> inspect(atom)
-        _ -> "dynamic"
-      end
-
-    options =
-      case resolve_register(instrs, call_idx, {:x, 1}) do
-        {:ok, opts} when is_list(opts) -> opts
-        _ -> []
-      end
-
-    {table_name, options}
+  defp handle_call(facts, ctx, {:ets, func, arity}) do
+    id = "#{ctx.func_id}##{ctx.idx}"
+    table_ref = resolve_atom(ctx.instrs, ctx.idx, {:x, 0})
+    kind = classify_op(func, arity)
+    add_fact(facts, :ets_op, [id, ctx.func_id, table_ref, to_string(func), kind])
   end
 
-  # Extract table reference (x0) from preceding instructions.
-  defp extract_table_ref(instrs, call_idx) do
-    case resolve_register(instrs, call_idx, {:x, 0}) do
-      {:ok, atom} when is_atom(atom) -> inspect(atom)
-      _ -> "dynamic"
+  defp handle_call(facts, _ctx, _mfa), do: facts
+
+  # Resolve the options list passed as the second argument to :ets.new/2.
+  defp resolve_options(instrs, call_idx) do
+    case resolve_register(instrs, call_idx, {:x, 1}) do
+      {:ok, opts} when is_list(opts) -> opts
+      _ -> []
     end
   end
 
