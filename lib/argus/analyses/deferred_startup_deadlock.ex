@@ -47,7 +47,8 @@ defmodule Argus.Analyses.DeferredStartupDeadlock do
   def rules_file, do: "analyses/deferred_startup_deadlock.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.OTP, Argus.Extractors.Supervision]
+  def extractors,
+    do: [Argus.Extractors.OTP, Argus.Extractors.Supervision, Argus.Extractors.GenEvent]
 
   @impl true
   def output_relations do

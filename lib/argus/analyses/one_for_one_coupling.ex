@@ -28,7 +28,8 @@ defmodule Argus.Analyses.OneForOneCoupling do
   def rules_file, do: "analyses/one_for_one_coupling.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.Supervision, Argus.Extractors.OTP]
+  def extractors,
+    do: [Argus.Extractors.Supervision, Argus.Extractors.OTP, Argus.Extractors.GenEvent]
 
   @impl true
   def output_relations do

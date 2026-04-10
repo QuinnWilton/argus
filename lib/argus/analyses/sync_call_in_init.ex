@@ -36,7 +36,8 @@ defmodule Argus.Analyses.SyncCallInInit do
   def rules_file, do: "analyses/sync_call_in_init.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.OTP, Argus.Extractors.Supervision]
+  def extractors,
+    do: [Argus.Extractors.OTP, Argus.Extractors.Supervision, Argus.Extractors.GenEvent]
 
   @impl true
   def output_relations do

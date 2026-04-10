@@ -21,6 +21,62 @@ defmodule Argus.Test.Fixtures.MyEventHandler do
   def code_change(_old, state, _extra), do: {:ok, state}
 end
 
+defmodule Argus.Test.Fixtures.GenEventCycleA do
+  @moduledoc false
+  @behaviour :gen_event
+
+  @impl :gen_event
+  def init(_), do: {:ok, %{}}
+
+  @impl :gen_event
+  def handle_event(_event, state) do
+    # Sync-notifies the OTHER cycle module by atom name. Combined with
+    # GenEventCycleB sync-notifying back, this forms a synchronous
+    # dependency cycle that call_cycle should detect through the gen_event
+    # facts (sync_call) — proving the gen_event extractor is wired in.
+    :gen_event.sync_notify(Argus.Test.Fixtures.GenEventCycleB, :ping)
+    {:ok, state}
+  end
+
+  @impl :gen_event
+  def handle_call(_request, state), do: {:ok, :ok, state}
+
+  @impl :gen_event
+  def handle_info(_msg, state), do: {:ok, state}
+
+  @impl :gen_event
+  def terminate(_reason, _state), do: :ok
+
+  @impl :gen_event
+  def code_change(_old, state, _extra), do: {:ok, state}
+end
+
+defmodule Argus.Test.Fixtures.GenEventCycleB do
+  @moduledoc false
+  @behaviour :gen_event
+
+  @impl :gen_event
+  def init(_), do: {:ok, %{}}
+
+  @impl :gen_event
+  def handle_event(_event, state) do
+    :gen_event.sync_notify(Argus.Test.Fixtures.GenEventCycleA, :ping)
+    {:ok, state}
+  end
+
+  @impl :gen_event
+  def handle_call(_request, state), do: {:ok, :ok, state}
+
+  @impl :gen_event
+  def handle_info(_msg, state), do: {:ok, state}
+
+  @impl :gen_event
+  def terminate(_reason, _state), do: :ok
+
+  @impl :gen_event
+  def code_change(_old, state, _extra), do: {:ok, state}
+end
+
 defmodule Argus.Test.Fixtures.GenEventEmitter do
   @moduledoc false
 

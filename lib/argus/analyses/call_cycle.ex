@@ -27,7 +27,7 @@ defmodule Argus.Analyses.CallCycle do
   def rules_file, do: "analyses/call_cycle.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.OTP]
+  def extractors, do: [Argus.Extractors.OTP, Argus.Extractors.GenEvent]
 
   @impl true
   def output_relations do
