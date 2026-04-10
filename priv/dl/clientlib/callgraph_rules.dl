@@ -20,3 +20,10 @@ call_edge(caller_func, target) :-
   local_call(id, target, _),
   instruction(id, caller_func, _, _),
   function_def(target, _, _, _, _, _).
+
+// Closure construction is treated as a static call edge so that call_reachable
+// follows execution into closures passed to higher-order callees like Enum.map,
+// :telemetry.span, Task.async, and Phoenix.PubSub callbacks. The Elixir compiler
+// lifts closure bodies into top-level functions and references them via make_fun3,
+// so they show up here as concrete function IDs.
+call_edge(parent, child) :- closure_def(parent, child).

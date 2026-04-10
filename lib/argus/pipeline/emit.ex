@@ -537,9 +537,12 @@ defmodule Argus.Pipeline.Emit do
          id,
          {:make_fun3, {_mod, _name, _arity} = mfa, _index, _uniq, dst, {:list, env}}
        ) do
+    closure_func = format_mfa(mfa)
+
     facts
-    |> add_fact(:make_fun, [id, format_mfa(mfa), to_string(length(env))])
+    |> add_fact(:make_fun, [id, closure_func, to_string(length(env))])
     |> add_fact(:def, [id, format_operand(dst)])
+    |> add_fact(:closure_def, [parent_func_id(id), closure_func])
     |> emit_operand_uses(id, env)
   end
 
@@ -667,6 +670,12 @@ defmodule Argus.Pipeline.Emit do
 
   defp instruction_op(atom) when is_atom(atom), do: atom
   defp instruction_op(tuple) when is_tuple(tuple), do: elem(tuple, 0)
+
+  # Strip the "#idx" suffix from an instruction ID to recover the function ID
+  # that contains it. Instruction IDs have the shape "mod:func/arity#idx".
+  defp parent_func_id(instruction_id) do
+    instruction_id |> String.split("#", parts: 2) |> hd()
+  end
 
   defp format_operand({:x, n}), do: "x#{n}"
   defp format_operand({:y, n}), do: "y#{n}"

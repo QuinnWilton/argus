@@ -30,3 +30,6 @@
 
 .decl bif_call(id: symbol, mod: symbol, func: symbol, arity: number, fail: number)
 .input bif_call
+
+.decl closure_def(parent_func: symbol, closure_func: symbol)
+.input closure_def

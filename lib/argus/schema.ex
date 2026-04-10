@@ -323,6 +323,25 @@ defmodule Argus.Schema do
     doc: "Lambda/closure creation."
   }
 
+  @closure_def %{
+    name: :closure_def,
+    layer: 1,
+    fields: [
+      {:parent_func, :symbol, "function constructing the closure"},
+      {:closure_func, :symbol, "function ID of the closure body"}
+    ],
+    doc: """
+    Closure construction edge: `parent_func` builds a closure pointing at \
+    `closure_func`. Treated as a static call edge in the call graph so that \
+    `call_reachable` follows execution into closure bodies passed to \
+    higher-order callees (`Enum.map`, `:telemetry.span`, `Task.async`, etc.).
+
+    Only emitted when the `make_fun3` target is a concrete `{Mod, Func, Arity}` \
+    triple. Closures targeting raw labels (rare in modern BEAM) are skipped \
+    because we don't have the closure's function ID at emit time.
+    """
+  }
+
   @bs_start %{
     name: :bs_start,
     layer: 1,
@@ -732,6 +751,7 @@ defmodule Argus.Schema do
     @try_start,
     @try_end,
     @make_fun,
+    @closure_def,
     @bs_start,
     @line_info
   ]
