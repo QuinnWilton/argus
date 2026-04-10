@@ -16,6 +16,9 @@
 .decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
 .input supervisor_child
 
+.decl dynamic_child(sup: symbol, child_mod: symbol, caller_func: symbol)
+.input dynamic_child
+
 .decl implements_behaviour(mod: symbol, behaviour: symbol)
 .input implements_behaviour
 

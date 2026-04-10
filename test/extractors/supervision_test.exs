@@ -136,6 +136,41 @@ defmodule Argus.Extractors.SupervisionTest do
     end
   end
 
+  describe "extract/1 — dynamic_child" do
+    test "emits dynamic_child for DynamicSupervisor.start_child with bare module" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(
+          to_string(:code.which(Argus.Test.Fixtures.DynSupSpawner))
+        )
+
+      facts = Supervision.extract(data)
+
+      assert Map.has_key?(facts, :dynamic_child)
+      rows = facts[:dynamic_child]
+
+      assert Enum.any?(rows, fn [sup, child, _caller] ->
+               sup == "MyApp.WorkerSupervisor" and child == "MyApp.Worker"
+             end)
+    end
+
+    test "emits dynamic_child for DynamicSupervisor.start_child with {Module, args} tuple" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(
+          to_string(:code.which(Argus.Test.Fixtures.DynSupSpawner))
+        )
+
+      facts = Supervision.extract(data)
+      rows = facts[:dynamic_child]
+
+      # spawn_worker_tuple/1 passes {MyApp.Worker, arg}.
+      assert Enum.any?(rows, fn [sup, child, caller] ->
+               sup == "MyApp.WorkerSupervisor" and
+                 child == "MyApp.Worker" and
+                 String.contains?(caller, "spawn_worker_tuple")
+             end)
+    end
+  end
+
   describe "integration with extract pipeline" do
     test "extractor is usable via Pipeline.extract/2" do
       assert {:ok, facts} =

@@ -45,6 +45,9 @@ defmodule Argus.Clientlib.SupervisionTest do
       .decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
       .input supervisor_child
 
+      .decl dynamic_child(sup: symbol, child_mod: symbol, caller_func: symbol)
+      .input dynamic_child
+
       .include "#{Path.join(priv_dl(), "clientlib/otp.dl")}"
       .include "#{Path.join(priv_dl(), "clientlib/supervision.dl")}"
 

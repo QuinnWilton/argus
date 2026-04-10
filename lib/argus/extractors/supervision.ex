@@ -31,7 +31,8 @@ defmodule Argus.Extractors.Supervision do
       get_behaviours: 1,
       match_local_call: 1,
       match_remote_call: 1,
-      resolve_register: 3
+      resolve_register: 3,
+      scan_remote_calls: 4
     ]
 
   @impl true
@@ -43,15 +44,75 @@ defmodule Argus.Extractors.Supervision do
 
     behaviours = get_behaviours(attrs)
 
-    cond do
-      Supervisor in behaviours or :supervisor in behaviours ->
-        extract_supervisor(mod_str, module_data)
+    base_facts =
+      cond do
+        Supervisor in behaviours or :supervisor in behaviours ->
+          extract_supervisor(mod_str, module_data)
 
-      Application in behaviours or :application in behaviours ->
-        extract_application(mod_str, module_data)
+        Application in behaviours or :application in behaviours ->
+          extract_application(mod_str, module_data)
 
-      true ->
-        %{}
+        true ->
+          %{}
+      end
+
+    # DynamicSupervisor.start_child can fire from any module, regardless of
+    # whether the enclosing module is itself a supervisor — connection pools
+    # and per-tenant systems often spawn workers from non-supervisor code.
+    extract_dynamic_children(base_facts, mod, module_data.functions)
+  end
+
+  defp extract_dynamic_children(facts, mod, functions) do
+    scan_remote_calls(mod, functions, facts, fn acc, ctx, mfa ->
+      handle_dynamic_start(acc, ctx, mfa)
+    end)
+  end
+
+  defp handle_dynamic_start(facts, ctx, {DynamicSupervisor, :start_child, 2}) do
+    sup = resolve_atom_or_dynamic(ctx.instrs, ctx.idx, {:x, 0})
+    child = resolve_dynamic_child_module(ctx.instrs, ctx.idx)
+
+    if child == "dynamic" do
+      facts
+    else
+      add_fact(facts, :dynamic_child, [sup, child, ctx.func_id])
+    end
+  end
+
+  defp handle_dynamic_start(facts, _ctx, _mfa), do: facts
+
+  defp resolve_atom_or_dynamic(instrs, idx, register) do
+    case resolve_register(instrs, idx, register) do
+      {:ok, atom} when is_atom(atom) -> inspect(atom)
+      _ -> "dynamic"
+    end
+  end
+
+  # The child argument to DynamicSupervisor.start_child can be:
+  #   - A bare module atom: `DynamicSupervisor.start_child(sup, MyWorker)`
+  #   - A 2-tuple: `DynamicSupervisor.start_child(sup, {MyWorker, args})`
+  #   - A child spec map: `%{id: _, start: {MyWorker, :start_link, [args]}}`
+  # We try each shape; failure is "dynamic".
+  defp resolve_dynamic_child_module(instrs, idx) do
+    case resolve_register(instrs, idx, {:x, 1}) do
+      {:ok, mod} when is_atom(mod) ->
+        if module_atom?(mod), do: inspect(mod), else: "dynamic"
+
+      {:ok, {mod, _args}} when is_atom(mod) ->
+        if module_atom?(mod), do: inspect(mod), else: "dynamic"
+
+      {:ok, %{start: {mod, _, _}}} when is_atom(mod) ->
+        inspect(mod)
+
+      _ ->
+        "dynamic"
+    end
+  end
+
+  defp module_atom?(atom) when is_atom(atom) do
+    case Atom.to_string(atom) do
+      "Elixir." <> _ -> true
+      _ -> false
     end
   end
 

@@ -16,6 +16,8 @@
 //   .input async_cast
 //   .decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
 //   .input supervisor_child
+//   .decl dynamic_child(sup: symbol, child_mod: symbol, caller_func: symbol)
+//   .input dynamic_child
 //
 //   .include "../clientlib/otp.dl"
 //   .include "../clientlib/supervision.dl"
@@ -36,6 +38,16 @@ child_subtree(sup, child, child) :- supervisor_child(sup, _, child, _, _).
 child_subtree(sup, branch, descendant) :-
   child_subtree(sup, branch, intermediate),
   supervisor_child(intermediate, _, descendant, _, _).
+
+// Dynamic children added via DynamicSupervisor.start_child are full
+// members of their supervisor's subtree even though they don't appear
+// in any static init/1 spec. They become their own branch root the
+// same way static children do.
+child_subtree(sup, child, child) :- dynamic_child(sup, child, _).
+
+child_subtree(sup, branch, descendant) :-
+  child_subtree(sup, branch, intermediate),
+  dynamic_child(intermediate, descendant, _).
 
 // ── Init-time reachability ────────────────────────────────────────────
 

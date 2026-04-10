@@ -435,6 +435,22 @@ defmodule Argus.Schema do
     doc: "Child specification within a supervisor."
   }
 
+  @dynamic_child %{
+    name: :dynamic_child,
+    layer: 2,
+    fields: [
+      {:sup, :symbol, "supervisor module (or 'dynamic' if not statically resolvable)"},
+      {:child_mod, :symbol, "child module being started"},
+      {:caller_func, :symbol, "function that calls start_child"}
+    ],
+    doc: """
+    Runtime-spawned child via `DynamicSupervisor.start_child/2`. Captured \
+    so analyses like `one_for_one_coupling` can see workers added at \
+    runtime (connection pools, per-tenant supervisors, plugin systems) \
+    that wouldn't appear in any static `init/1` child spec scan.
+    """
+  }
+
   @named_process %{
     name: :named_process,
     layer: 2,
@@ -816,6 +832,7 @@ defmodule Argus.Schema do
   @layer_2_relations [
     @supervisor,
     @supervisor_child,
+    @dynamic_child,
     @named_process,
     @process_link,
     @implements_behaviour,
