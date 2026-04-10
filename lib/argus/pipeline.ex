@@ -15,12 +15,14 @@ defmodule Argus.Pipeline do
     tab-separated). `extract/2` returns the merged facts in memory.
   """
 
+  alias Argus.Extractor.Helpers
   alias Argus.Pipeline.{Disassemble, Emit}
 
   @type extract_opts :: [
           concurrency: pos_integer(),
           extractors: [module()],
-          timeout: timeout()
+          timeout: timeout(),
+          trace_imprecision: boolean()
         ]
 
   @default_timeout 120_000
@@ -51,12 +53,13 @@ defmodule Argus.Pipeline do
     concurrency = Keyword.get(opts, :concurrency, System.schedulers_online())
     extractors = Keyword.get(opts, :extractors, [])
     task_timeout = Keyword.get(opts, :timeout, @default_timeout)
+    trace_imprecision = Keyword.get(opts, :trace_imprecision, false)
 
     with {:ok, paths} <- Disassemble.resolve_paths(modules) do
       merged =
         paths
         |> Task.async_stream(
-          fn path -> extract_module(path, extractors) end,
+          fn path -> extract_module(path, extractors, trace_imprecision) end,
           max_concurrency: concurrency,
           ordered: false,
           timeout: task_timeout
@@ -79,24 +82,34 @@ defmodule Argus.Pipeline do
   end
 
   # Per-module extraction: disassemble, emit Layer 1 facts, run Layer 2
-  # extractors, merge.
-  defp extract_module(path, extractors) do
-    with {:ok, data} <- Disassemble.disassemble_path(path) do
-      base_facts =
-        Emit.emit_module(
-          data.module,
-          data.exports,
-          data.imports,
-          data.attributes,
-          data.functions
-        )
+  # extractors, merge. Enables imprecision tracing in the worker process
+  # when requested — the flag lives in the worker's process dictionary,
+  # which is naturally scoped to this Task.async_stream worker, and the
+  # try/after guarantees the flag is cleared before the worker returns
+  # to the async pool.
+  defp extract_module(path, extractors, trace_imprecision) do
+    if trace_imprecision, do: Helpers.enable_tracing()
 
-      extractor_facts =
-        Enum.reduce(extractors, %{}, fn extractor, acc ->
-          merge_facts(acc, extractor.extract(data))
-        end)
+    try do
+      with {:ok, data} <- Disassemble.disassemble_path(path) do
+        base_facts =
+          Emit.emit_module(
+            data.module,
+            data.exports,
+            data.imports,
+            data.attributes,
+            data.functions
+          )
 
-      {:ok, merge_facts(base_facts, extractor_facts)}
+        extractor_facts =
+          Enum.reduce(extractors, %{}, fn extractor, acc ->
+            merge_facts(acc, extractor.extract(data))
+          end)
+
+        {:ok, merge_facts(base_facts, extractor_facts)}
+      end
+    after
+      if trace_imprecision, do: Helpers.disable_tracing()
     end
   end
 

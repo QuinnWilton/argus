@@ -90,6 +90,62 @@ defmodule Argus.PipelineTest do
     end
   end
 
+  describe "extract/2 imprecision tracing" do
+    # MyGenServer.get_value/1 calls GenServer.call(server, :get) where
+    # `server` is a parameter — resolve_callee returns "dynamic", which
+    # the OTP extractor tracks as :genserver_callee imprecision. Gives us
+    # a deterministic single-module test that exercises the gating.
+    @imprecision_module Argus.Test.Fixtures.MyGenServer
+
+    test "default run produces no imprecision facts" do
+      {:ok, facts} =
+        Pipeline.extract([@imprecision_module], extractors: [Argus.Extractors.OTP])
+
+      assert facts[:imprecision] in [nil, []]
+    end
+
+    test "explicit trace_imprecision: false produces no imprecision facts" do
+      {:ok, facts} =
+        Pipeline.extract([@imprecision_module],
+          extractors: [Argus.Extractors.OTP],
+          trace_imprecision: false
+        )
+
+      assert facts[:imprecision] in [nil, []]
+    end
+
+    test "trace_imprecision: true records dynamic fallbacks" do
+      {:ok, facts} =
+        Pipeline.extract([@imprecision_module],
+          extractors: [Argus.Extractors.OTP],
+          trace_imprecision: true
+        )
+
+      imprecision = facts[:imprecision] || []
+      assert length(imprecision) > 0
+
+      assert Enum.any?(imprecision, fn [category, _func, relation, reason] ->
+               category == "genserver_callee" and relation == "sync_call" and
+                 reason == "dynamic"
+             end)
+    end
+
+    test "tracing flag is cleared in the worker after extraction", %{tmp_dir: _} do
+      # Run with tracing then without — the second run should see a clean
+      # worker process (the first run's try/after must have cleared the flag).
+      {:ok, _} =
+        Pipeline.extract([@imprecision_module],
+          extractors: [Argus.Extractors.OTP],
+          trace_imprecision: true
+        )
+
+      {:ok, facts} =
+        Pipeline.extract([@imprecision_module], extractors: [Argus.Extractors.OTP])
+
+      assert facts[:imprecision] in [nil, []]
+    end
+  end
+
   describe "read_facts/1" do
     test "reads TSV correctly", %{tmp_dir: tmp_dir} do
       path = Path.join(tmp_dir, "test.facts")

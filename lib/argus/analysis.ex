@@ -86,7 +86,11 @@ defmodule Argus.Analysis do
           {:ok, result()} | {:error, term()}
   def run(modules, analysis, opts \\ []) do
     default_extractors = default_extractors_for(analysis)
-    opts = Keyword.update(opts, :extractors, default_extractors, &(default_extractors ++ &1))
+
+    opts =
+      opts
+      |> Keyword.update(:extractors, default_extractors, &(default_extractors ++ &1))
+      |> maybe_enable_imprecision_tracing(analysis)
 
     with {:ok, rules_path} <- resolve_rules(analysis),
          {:ok, work_dir} <- create_work_dir(),
@@ -96,6 +100,16 @@ defmodule Argus.Analysis do
       {:ok, results}
     end
   end
+
+  # Imprecision tracking is off by default so every non-coverage analysis
+  # pays only the cost of a single process-dict read per fallback site.
+  # The coverage analysis is the only one that needs the extra data, so
+  # we flip the flag here rather than asking callers to remember it.
+  defp maybe_enable_imprecision_tracing(opts, :coverage) do
+    Keyword.put_new(opts, :trace_imprecision, true)
+  end
+
+  defp maybe_enable_imprecision_tracing(opts, _analysis), do: opts
 
   @doc """
   Returns the list of built-in analysis names.
