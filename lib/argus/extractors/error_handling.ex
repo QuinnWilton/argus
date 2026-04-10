@@ -205,16 +205,18 @@ defmodule Argus.Extractors.ErrorHandling do
   # Check if the result of a call is ignored — if the instruction after the
   # call does not test/branch on the result register (x0).
   #
-  # Three outcomes:
+  # Four outcomes:
   # 1. Tail call (call_ext_only / call_ext_last) — result IS the function's
   #    return value, so it's definitively used. No fact, no imprecision.
   # 2. Non-tail call where the next instruction overwrites x0 — result IS
   #    ignored. Emit ignored_error_result fact.
-  # 3. Non-tail call where we can't confirm the result is dropped — the
-  #    heuristic gives up. Emit imprecision event.
+  # 3. Non-tail call where the next instruction reads/tests/saves x0 —
+  #    result IS actively used. No fact, no imprecision.
+  # 4. None of the above — the heuristic gives up. Emit imprecision event.
   defp maybe_ignored_result(facts, ctx, mod, func, arity) do
     if MapSet.member?(@ok_error_apis, {mod, func, arity}) do
       instr = Enum.at(ctx.instrs, ctx.idx)
+      after_call = Enum.drop(ctx.instrs, ctx.idx + 1)
 
       cond do
         # Tail calls return their result to the caller — not ignored.
@@ -222,12 +224,17 @@ defmodule Argus.Extractors.ErrorHandling do
           facts
 
         # Non-tail call where x0 is immediately overwritten.
-        result_ignored?(Enum.drop(ctx.instrs, ctx.idx + 1)) ->
+        result_ignored?(after_call) ->
           id = "#{ctx.func_id}##{ctx.idx}"
           callee = "#{inspect(mod)}.#{func}/#{arity}"
           add_fact(facts, :ignored_error_result, [id, ctx.func_id, callee])
 
-        # Non-tail call where we can't determine the result's fate.
+        # Non-tail call where x0 is actively consumed (saved, tested,
+        # destructured, or branched on).
+        result_used?(after_call) ->
+          facts
+
+        # Can't determine the result's fate.
         true ->
           track_imprecision(
             facts,
@@ -250,6 +257,23 @@ defmodule Argus.Extractors.ErrorHandling do
   # Result is overwritten before being read — ignored.
   defp result_ignored?([{:move, _, {:x, 0}} | _]), do: true
   defp result_ignored?([{:move, _, {:tr, {:x, 0}, _}} | _]), do: true
-  # Anything else is conservatively considered "used".
   defp result_ignored?(_), do: false
+
+  # Result is actively consumed by the next instruction — used.
+  # Saved to a y-register (stack) for use across subsequent calls.
+  defp result_used?([{:move, {:x, 0}, {:y, _}} | _]), do: true
+  defp result_used?([{:move, {:tr, {:x, 0}, _}, {:y, _}} | _]), do: true
+  defp result_used?([{:move, {:x, 0}, {:tr, {:y, _}, _}} | _]), do: true
+  # Pattern matching / branching on x0.
+  defp result_used?([{:test, _, _, [{:x, 0} | _]} | _]), do: true
+  defp result_used?([{:test, _, _, [_, {:x, 0}]} | _]), do: true
+  defp result_used?([{:test, _, _, [{:tr, {:x, 0}, _} | _]} | _]), do: true
+  defp result_used?([{:select_val, {:x, 0}, _, _} | _]), do: true
+  # Tuple destructuring of x0 (e.g. {:ok, value} = call()).
+  defp result_used?([{:get_tuple_element, {:x, 0}, _, _} | _]), do: true
+  defp result_used?([{:get_tuple_element, {:tr, {:x, 0}, _}, _, _} | _]), do: true
+  # x0 used as argument to the next call (passed forward).
+  defp result_used?([{:call_ext, _, _} | _]), do: true
+  defp result_used?([{:call, _, _} | _]), do: true
+  defp result_used?(_), do: false
 end
