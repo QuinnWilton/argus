@@ -514,6 +514,23 @@ defmodule Argus.Schema do
     doc: "GenServer.call timeout value at call site."
   }
 
+  @deferred_reply %{
+    name: :deferred_reply,
+    layer: 2,
+    fields: [
+      {:handler_func, :symbol, "function calling GenServer.reply/2"},
+      {:from_arg, :symbol, "resolution of the from argument: 'arg:N' | 'state_field' | 'dynamic'"}
+    ],
+    doc: """
+    Records `GenServer.reply/2` call sites — the deferred-reply pattern \
+    where a handle_call clause stores the from reference and replies later \
+    from a different callback (handle_info, handle_continue, an awaited \
+    Task). No analysis consumes this fact yet; it's infrastructure for \
+    future timeout-window analysis where the original caller's GenServer.call \
+    timeout has to cover the entire delayed-reply path.
+    """
+  }
+
   @delayed_message %{
     name: :delayed_message,
     layer: 2,
@@ -893,6 +910,7 @@ defmodule Argus.Schema do
     @sync_call_timeout,
     @sync_call_via,
     @delayed_message,
+    @deferred_reply,
     @gen_event_handler,
     @ets_new,
     @ets_option,

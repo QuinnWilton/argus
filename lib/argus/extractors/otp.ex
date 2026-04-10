@@ -15,6 +15,7 @@ defmodule Argus.Extractors.OTP do
   - `process_link(from_mod, to_mod)` — Process.link / :erlang.link call
   - `delayed_message(sender_func, target, message)` — Process.send_after, :timer.send_after,
     :timer.apply_after — implicit handle_info sources
+  - `deferred_reply(handler_func, from_arg)` — `GenServer.reply/2` call site
   """
 
   @behaviour Argus.Extractor
@@ -40,6 +41,36 @@ defmodule Argus.Extractors.OTP do
     |> extract_genserver_calls(mod, functions)
     |> extract_link_calls(mod_str, mod, functions)
     |> extract_delayed_messages(mod, functions)
+    |> extract_deferred_replies(mod, functions)
+  end
+
+  defp extract_deferred_replies(facts, mod, functions) do
+    scan_remote_calls(mod, functions, facts, fn acc, ctx, mfa ->
+      handle_deferred_reply(acc, ctx, mfa)
+    end)
+  end
+
+  defp handle_deferred_reply(facts, ctx, {GenServer, :reply, 2}) do
+    from_arg = resolve_from_arg(ctx.instrs, ctx.idx)
+    add_fact(facts, :deferred_reply, [ctx.func_id, from_arg])
+  end
+
+  defp handle_deferred_reply(facts, ctx, {:gen_server, :reply, 2}) do
+    from_arg = resolve_from_arg(ctx.instrs, ctx.idx)
+    add_fact(facts, :deferred_reply, [ctx.func_id, from_arg])
+  end
+
+  defp handle_deferred_reply(facts, _ctx, _mfa), do: facts
+
+  # GenServer.reply(from, response) — first arg is the from reference.
+  # Most commonly it's a parameter (handle_call's `from`) stored in state
+  # and read back later. We record arg:N when it's a parameter, "dynamic"
+  # otherwise.
+  defp resolve_from_arg(instrs, idx) do
+    case Argus.Extractor.Helpers.arg_position(instrs, idx, {:x, 0}) do
+      {:ok, n} -> "arg:#{n}"
+      :no -> "dynamic"
+    end
   end
 
   defp extract_delayed_messages(facts, mod, functions) do

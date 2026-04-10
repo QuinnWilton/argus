@@ -210,6 +210,38 @@ defmodule Argus.Extractors.OTPTest do
 
   end
 
+  describe "extract/1 — deferred_reply" do
+    test "records GenServer.reply/2 with from as a function parameter" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(
+          to_string(:code.which(Argus.Test.Fixtures.DeferredReplyServer))
+        )
+
+      facts = OTP.extract(data)
+
+      assert Map.has_key?(facts, :deferred_reply)
+      replies = facts[:deferred_reply]
+
+      assert Enum.any?(replies, fn [func, from] ->
+               String.contains?(func, "reply_immediately") and from == "arg:0"
+             end)
+    end
+
+    test "records :gen_server.reply/2 the same way" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(
+          to_string(:code.which(Argus.Test.Fixtures.DeferredReplyServer))
+        )
+
+      facts = OTP.extract(data)
+      replies = facts[:deferred_reply]
+
+      assert Enum.any?(replies, fn [func, _from] ->
+               String.contains?(func, "erlang_reply")
+             end)
+    end
+  end
+
   describe "extract/1 — delayed_message" do
     test "records Process.send_after to self with literal atom message" do
       {:ok, data} =

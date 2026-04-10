@@ -63,6 +63,22 @@ defmodule Argus.Test.Fixtures.ExplicitTimeoutCaller do
   def erlang_call_with_timeout(server), do: :gen_server.call(server, :ping, 15_000)
 end
 
+defmodule Argus.Test.Fixtures.DeferredReplyServer do
+  @moduledoc false
+
+  # Stashes the from reference in state, replies later from handle_info.
+  # The OTP extractor records GenServer.reply/2 as a deferred_reply fact
+  # with the from arg classified as a function parameter.
+
+  def reply_immediately(from, value) do
+    GenServer.reply(from, value)
+  end
+
+  def erlang_reply(from, value) do
+    :gen_server.reply(from, value)
+  end
+end
+
 defmodule Argus.Test.Fixtures.DelayedMessageSender do
   @moduledoc false
 
