@@ -558,41 +558,6 @@ defmodule Argus.Schema do
     doc: "Call to function returning tagged tuple where result is not pattern matched."
   }
 
-  # Layer 2: Resource lifecycle extractor facts.
-
-  @resource_open %{
-    name: :resource_open,
-    layer: 2,
-    fields: [
-      {:id, :symbol, "instruction ID"},
-      {:func, :symbol, "containing function ID"},
-      {:type, :symbol, "resource type (file, socket, port)"}
-    ],
-    doc: "Resource open operation."
-  }
-
-  @resource_close %{
-    name: :resource_close,
-    layer: 2,
-    fields: [
-      {:id, :symbol, "instruction ID"},
-      {:func, :symbol, "containing function ID"},
-      {:type, :symbol, "resource type (file, socket, port)"}
-    ],
-    doc: "Resource close operation."
-  }
-
-  @port_open %{
-    name: :port_open,
-    layer: 2,
-    fields: [
-      {:id, :symbol, "instruction ID"},
-      {:func, :symbol, "containing function ID"},
-      {:port_type, :symbol, "port type (spawn, fd)"}
-    ],
-    doc: "Port open via :erlang.open_port/2."
-  }
-
   # Layer 2: Process registry & naming extractor facts.
 
   @process_register %{
@@ -641,52 +606,6 @@ defmodule Argus.Schema do
       {:name, :symbol, "process name"}
     ],
     doc: "Process.whereis/1 or :erlang.whereis/1 call."
-  }
-
-  # Layer 2: Phoenix/Plug security extractor facts.
-
-  @plug_pipeline %{
-    name: :plug_pipeline,
-    layer: 2,
-    fields: [
-      {:mod, :symbol, "module defining the pipeline"},
-      {:plug_mod, :symbol, "plug module"},
-      {:position, :number, "position in pipeline"}
-    ],
-    doc: "Plug in a module's plug pipeline."
-  }
-
-  @controller_action %{
-    name: :controller_action,
-    layer: 2,
-    fields: [
-      {:mod, :symbol, "controller module"},
-      {:action, :symbol, "action function name"},
-      {:arity, :number, "function arity"}
-    ],
-    doc: "Phoenix controller action function."
-  }
-
-  @raw_sql_call %{
-    name: :raw_sql_call,
-    layer: 2,
-    fields: [
-      {:id, :symbol, "instruction ID"},
-      {:func, :symbol, "containing function ID"},
-      {:api, :symbol, "SQL API (e.g. Ecto.Adapters.SQL.query/3)"}
-    ],
-    doc: "Raw SQL query call without parameterization."
-  }
-
-  @redirect_call %{
-    name: :redirect_call,
-    layer: 2,
-    fields: [
-      {:id, :symbol, "instruction ID"},
-      {:func, :symbol, "containing function ID"},
-      {:target_type, :symbol, "target origin (static or dynamic)"}
-    ],
-    doc: "Phoenix redirect call."
   }
 
   # Layer 2: Distributed systems extractor facts.
@@ -839,20 +758,11 @@ defmodule Argus.Schema do
     @trap_exit,
     @exit_call,
     @ignored_error_result,
-    # Resource lifecycle.
-    @resource_open,
-    @resource_close,
-    @port_open,
     # Process registry & naming.
     @process_register,
     @registry_op,
     @via_tuple,
     @whereis_call,
-    # Phoenix/Plug security.
-    @plug_pipeline,
-    @controller_action,
-    @raw_sql_call,
-    @redirect_call,
     # Distributed systems.
     @rpc_call,
     @global_register,
