@@ -7,6 +7,7 @@ defmodule Argus.AnalysisTest do
   @expected_analyses [
     :atom_safety,
     :call_cycle,
+    :coverage,
     :deferred_startup_deadlock,
     :distributed,
     :error_handling,
@@ -29,9 +30,9 @@ defmodule Argus.AnalysisTest do
   # -- Discovery ---------------------------------------------------------------
 
   describe "discovery" do
-    test "finds all 15 built-in analysis modules" do
+    test "finds all 16 built-in analysis modules" do
       modules = Analysis.builtin_analysis_modules()
-      assert length(modules) == 15
+      assert length(modules) == 16
     end
 
     test "builtin_analyses/0 returns all names sorted" do

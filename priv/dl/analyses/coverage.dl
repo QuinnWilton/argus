@@ -1,0 +1,140 @@
+// Coverage and precision meta-analysis.
+//
+// Measures where the extractor pipeline either fell back to a dynamic
+// placeholder (active instrumentation) or recognized a BEAM/OTP shape
+// but couldn't recover its detail (passive shape-gap queries). Together
+// these surface the "recall-side" gaps: places where a smarter extractor
+// could produce more concrete facts.
+//
+// The active side flows through the :imprecision fact relation (only
+// populated when the pipeline runs with trace_imprecision: true, which
+// Argus.Analysis sets automatically for this analysis). The passive side
+// is derived from the existing Layer 2 fact base — no extractor changes
+// required, which means adding a new shape-gap rule is a pure .dl edit.
+//
+// Output is intentionally raw events plus shape-level counts; aggregation
+// into category histograms happens in the consumer so diff tools can
+// slice the data however they want.
+
+.include "../clientlib/imports.dl"
+
+// ── Input facts ──────────────────────────────────────────────────────
+
+.decl imprecision(category: symbol, func: symbol, relation: symbol, reason: symbol)
+.input imprecision
+
+.decl supervisor(mod: symbol, strategy: symbol)
+.input supervisor
+
+.decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
+.input supervisor_child
+
+.decl dynamic_child(sup: symbol, child_mod: symbol, caller_func: symbol)
+.input dynamic_child
+
+.decl implements_behaviour(mod: symbol, behaviour: symbol)
+.input implements_behaviour
+
+.decl sync_call(caller_func: symbol, callee_mod: symbol)
+.input sync_call
+
+.decl async_cast(caller_func: symbol, callee_mod: symbol)
+.input async_cast
+
+.decl ets_new(id: symbol, func: symbol, name: symbol)
+.input ets_new
+
+.decl ets_op(id: symbol, func: symbol, table_ref: symbol, op: symbol, kind: symbol)
+.input ets_op
+
+.decl statem_module(mod: symbol, callback_mode: symbol)
+.input statem_module
+
+.decl statem_state(mod: symbol, state: symbol)
+.input statem_state
+
+.decl statem_transition(mod: symbol, from_state: symbol, event: symbol, to_state: symbol)
+.input statem_transition
+
+.decl named_process(mod: symbol, name: symbol)
+.input named_process
+
+// ── Active instrumentation passthrough ──────────────────────────────
+//
+// Expose the raw imprecision events so the consumer can aggregate them
+// however it wants (by category, by function, by relation, etc.).
+// No Datalog aggregation is done here — keeping the rule trivial makes
+// it easy to extend without rewriting the schema.
+
+.decl imprecision_event(category: symbol, func: symbol, relation: symbol, reason: symbol)
+.output imprecision_event
+
+imprecision_event(c, f, r, why) :- imprecision(c, f, r, why).
+
+// ── Passive shape-gap queries ───────────────────────────────────────
+
+// A supervisor that was recognized (we extracted its strategy) but no
+// static children — neither supervisor_child nor dynamic_child fires.
+// Either init/1 builds children at runtime via Enum.map/comprehensions,
+// or the child spec shape isn't recognized by the extractor. Both are
+// recall gaps worth surfacing.
+.decl coverage_supervisor_no_children(sup: symbol)
+.output coverage_supervisor_no_children
+
+coverage_supervisor_no_children(sup) :-
+  supervisor(sup, _),
+  !supervisor_child(sup, _, _, _, _),
+  !dynamic_child(sup, _, _).
+
+// A GenServer behaviour module that is never the target of a sync_call
+// or async_cast. Either the module is leaf-only (called from outside the
+// analyzed corpus, which is common for libraries) or every call site's
+// resolve_callee returned "dynamic". Users looking at this list can
+// decide which case applies to each hit.
+.decl coverage_genserver_isolated(mod: symbol)
+.output coverage_genserver_isolated
+
+coverage_genserver_isolated(mod) :-
+  implements_behaviour(mod, "GenServer"),
+  !sync_call(_, mod),
+  !async_cast(_, mod).
+
+// An ETS table was created with a statically known name but we see no
+// read or write operations against that name anywhere in the corpus.
+// Most commonly means all access sites fell through to "dynamic" and
+// lost the table name. Excluding "dynamic" itself from the join is
+// critical — otherwise every project with any dynamic ETS access would
+// fire this on every statically-named table.
+.decl coverage_ets_unused(name: symbol)
+.output coverage_ets_unused
+
+coverage_ets_unused(name) :-
+  ets_new(_, _, name),
+  name != "dynamic",
+  !ets_op(_, _, name, _, _).
+
+// gen_statem module with recognized states but no extracted transitions.
+// State detection fires on function names in state_functions mode and
+// on select_val patterns in handle_event_function mode, but transitions
+// require recognizing the return tuple shape. A mismatch means the
+// return-tuple scanner is missing a case.
+.decl coverage_statem_no_transitions(mod: symbol)
+.output coverage_statem_no_transitions
+
+coverage_statem_no_transitions(mod) :-
+  statem_module(mod, _),
+  statem_state(mod, _),
+  !statem_transition(mod, _, _, _).
+
+// A named process was registered but no sync or async traffic targets it.
+// Either the registration name is referenced only outside the corpus, or
+// the extractor couldn't connect the registration to its callers (common
+// when the sync_call target is resolved to a module atom instead of the
+// registered name). Both are worth investigating.
+.decl coverage_named_process_unreachable(name: symbol, mod: symbol)
+.output coverage_named_process_unreachable
+
+coverage_named_process_unreachable(name, mod) :-
+  named_process(mod, name),
+  !sync_call(_, name),
+  !async_cast(_, name).
