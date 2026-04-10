@@ -26,7 +26,11 @@ A rough, measurable goal. Example:
 
 ## Open hypotheses
 
+- [x] `ignored_result_unknown_api`: detect tail calls (call_ext_only/last) as "result used" — tail-called APIs return their result to the caller, not ignored (2026-04-10)
+
 ## Wins
+
+- 2026-04-10 — `ignored_result_unknown_api`: -18 (22→4) via tail-call detection in result_ignored? heuristic. Also eliminated 3 categories and reduced net imprecision by 48 (95→47). [commit 81655cf]
 
 ## Dead ends
 
