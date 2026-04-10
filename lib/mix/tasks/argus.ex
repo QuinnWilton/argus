@@ -18,17 +18,16 @@ defmodule Mix.Tasks.Argus do
 
   - `--modules` — comma-separated list of modules to analyze (default: all project modules)
   - `--include-deps` — include dependency modules in analysis
-  - `--format` — output format: text (default), json, dot
+  - `--format` — output format: text (default) or json
   - `--fail-above N` — exit with non-zero status if more than N results
   - `--concurrency N` — number of parallel workers (default: number of schedulers)
   - `--list` — list all available analyses with descriptions
 
   ## Examples
 
-      mix argus cfg
-      mix argus callgraph --modules Enum,:lists
-      mix argus callgraph --format dot | dot -Tsvg -o graph.svg
-      mix argus supervision --fail-above 0
+      mix argus supervision
+      mix argus ets --modules MyApp.Cache
+      mix argus unsafe_task --fail-above 0
       mix argus custom my_rules.dl
       mix argus --list
   """
@@ -165,44 +164,42 @@ defmodule Mix.Tasks.Argus do
   end
 
   defp discover_project_modules(opts) do
-    compile_path = Mix.Project.compile_path()
-
-    beam_files =
-      compile_path
-      |> Path.join("*.beam")
-      |> Path.wildcard()
-
-    modules =
-      Enum.map(beam_files, fn path ->
-        path
-        |> Path.basename(".beam")
-        |> String.to_existing_atom()
-      end)
+    modules = beams_in(Mix.Project.compile_path())
 
     if Keyword.get(opts, :include_deps, false) do
-      dep_modules = discover_dep_modules()
-      modules ++ dep_modules
+      modules ++ discover_dep_modules()
     else
       modules
     end
   end
 
   defp discover_dep_modules do
-    Mix.Project.deps_paths()
-    |> Enum.flat_map(fn {_dep, path} ->
-      ebin = Path.join([path, "_build", to_string(Mix.env()), "lib", "*", "ebin"])
+    build_lib = Path.join(Mix.Project.build_path(), "lib")
 
-      ebin
-      |> Path.wildcard()
-      |> Enum.flat_map(fn dir ->
-        dir
-        |> Path.join("*.beam")
-        |> Path.wildcard()
-        |> Enum.map(fn p ->
-          p |> Path.basename(".beam") |> String.to_existing_atom()
-        end)
-      end)
+    Mix.Project.deps_apps()
+    |> Enum.flat_map(fn app ->
+      ebin = Path.join([build_lib, to_string(app), "ebin"])
+      if File.dir?(ebin), do: beams_in(ebin), else: []
     end)
+  end
+
+  defp beams_in(ebin_dir) do
+    ebin_dir
+    |> Path.join("*.beam")
+    |> Path.wildcard()
+    |> Enum.flat_map(&beam_path_to_module/1)
+  end
+
+  defp beam_path_to_module(path) do
+    name = Path.basename(path, ".beam")
+
+    try do
+      [String.to_existing_atom(name)]
+    rescue
+      ArgumentError ->
+        # Stale .beam for a module that's no longer loaded — silently skip.
+        []
+    end
   end
 
   defp format_results(results, "json") do
@@ -212,33 +209,6 @@ defmodule Mix.Tasks.Argus do
       end)
 
     inspect(data, pretty: true, limit: :infinity)
-  end
-
-  defp format_results(results, "dot") do
-    # Generate DOT format for graph relations (cfg_edge, call_edge).
-    edges =
-      results
-      |> Enum.flat_map(fn
-        {name, rows} when name in ["cfg_edge", "call_edge", "cfg_reachable", "call_reachable"] ->
-          Enum.map(rows, fn [from, to] -> {from, to} end)
-
-        _ ->
-          []
-      end)
-
-    edge_lines =
-      Enum.map_join(edges, "\n", fn {from, to} ->
-        ~s(  "#{escape_dot(from)}" -> "#{escape_dot(to)}";)
-      end)
-
-    """
-    digraph argus {
-      rankdir=LR;
-      node [shape=box, fontname="monospace"];
-
-    #{edge_lines}
-    }
-    """
   end
 
   defp format_results(results, _text) do
@@ -257,12 +227,6 @@ defmodule Mix.Tasks.Argus do
 
       header <> "\n" <> body <> truncated
     end)
-  end
-
-  defp escape_dot(str) do
-    str
-    |> String.replace("\\", "\\\\")
-    |> String.replace("\"", "\\\"")
   end
 
   defp count_results(results) do
