@@ -11,6 +11,9 @@ defmodule Argus.Analyses.Distributed do
   - `rpc_without_timeout(func, variant)` — RPC call with default infinity timeout.
   - `rpc_in_genserver_callback(func, variant)` — RPC inside GenServer callback.
   - `global_register_risk(func, name)` — global.register_name without conflict resolution.
+  - `global_blocking_op(func, op, retries)` — `:global.set_lock` / `:global.trans` with
+    blocking retries (`infinity` or positive integer; `0` is excluded).
+  - `global_blocking_in_init(func, op)` — blocking `:global` op reachable from `init/1`.
   - `distributed_in_init(func, op)` — distributed operation in init/1 blocking supervisor.
   """
 
@@ -55,6 +58,24 @@ defmodule Argus.Analyses.Distributed do
           {:name, :symbol, "global name"}
         ],
         doc: "global.register_name without conflict resolution callback."
+      },
+      %{
+        name: :global_blocking_op,
+        fields: [
+          {:func, :symbol, "function calling :global"},
+          {:op, :symbol, "operation: set_lock | trans | ..."},
+          {:retries, :symbol, "resolved retries argument: infinity | positive integer"}
+        ],
+        doc:
+          "Blocking :global synchronization (set_lock or trans with infinity or positive retries)."
+      },
+      %{
+        name: :global_blocking_in_init,
+        fields: [
+          {:func, :symbol, "init function (or transitively reachable from one)"},
+          {:op, :symbol, ":global operation"}
+        ],
+        doc: "Blocking :global op reachable from init/1 — hangs supervisor startup on netsplit."
       },
       %{
         name: :distributed_in_init,
