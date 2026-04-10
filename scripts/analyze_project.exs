@@ -21,10 +21,8 @@
 # 4. Pretty-prints supervision structure and findings (or writes JSON)
 
 defmodule Argus.Scripts.AnalyzeProject do
-  # Analyses that detect bugs, correctness issues, or anti-patterns.
-  # Structural/informational analyses (cfg, callgraph, reachability,
-  # reaching_def, liveness, tail_call, message_flow) are excluded
-  # from the default set.
+  # Default set of analyses to run when none are specified. These are the
+  # BEAM/OTP correctness checks; pass `all` to run every available analysis.
   @correctness_analyses [
     :atom_safety,
     :call_cycle,

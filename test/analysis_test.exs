@@ -7,29 +7,17 @@ defmodule Argus.AnalysisTest do
   @expected_analyses [
     :atom_safety,
     :call_cycle,
-    :callgraph,
-    :callgraph_ctx,
-    :cfg,
-    :constant_propagation,
     :distributed,
-    :dominators,
     :error_handling,
     :ets,
-    :function_summary,
     :gen_statem,
-    :liveness,
-    :loops,
-    :message_flow,
     :one_for_one_coupling,
     :phoenix_security,
     :process_bottleneck,
     :process_registry,
-    :reachability,
-    :reaching_def,
     :resource_lifecycle,
     :supervision,
     :sync_call_in_init,
-    :tail_call,
     :timeout_chain,
     :unlinked_spawn,
     :unsafe_task
@@ -42,9 +30,9 @@ defmodule Argus.AnalysisTest do
   # -- Discovery ---------------------------------------------------------------
 
   describe "discovery" do
-    test "finds all 28 built-in analysis modules" do
+    test "finds all 16 built-in analysis modules" do
       modules = Analysis.builtin_analysis_modules()
-      assert length(modules) == 28
+      assert length(modules) == 16
     end
 
     test "builtin_analyses/0 returns all names sorted" do
@@ -86,9 +74,10 @@ defmodule Argus.AnalysisTest do
       assert :error = Analysis.output_relations(:nonexistent)
     end
 
-    test "cfg has cfg_edge relation" do
-      assert {:ok, relations} = Analysis.output_relations(:cfg)
-      assert [%{name: :cfg_edge}] = relations
+    test "supervision exposes its anti-pattern relations" do
+      assert {:ok, relations} = Analysis.output_relations(:supervision)
+      names = Enum.map(relations, & &1.name)
+      assert :unlinked_coupled_siblings in names
     end
   end
 
@@ -180,7 +169,7 @@ defmodule Argus.AnalysisTest do
 
     test "returns error for non-existent module" do
       assert {:error, {:not_found, :fake_module_xyz}} =
-               Argus.analyze([:fake_module_xyz], :cfg)
+               Argus.analyze([:fake_module_xyz], :supervision)
     end
   end
 end
