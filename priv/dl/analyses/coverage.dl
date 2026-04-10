@@ -87,17 +87,19 @@ coverage_supervisor_no_children(sup) :-
   !dynamic_child(sup, _, _).
 
 // A GenServer behaviour module that is never the target of a sync_call
-// or async_cast. Either the module is leaf-only (called from outside the
-// analyzed corpus, which is common for libraries) or every call site's
-// resolve_callee returned "dynamic". Users looking at this list can
-// decide which case applies to each hit.
+// or async_cast AND is not a supervisor child (static or dynamic).
+// Supervised modules are definitively reachable — the supervisor starts
+// them — so they shouldn't be flagged as "isolated" even when we can't
+// see their callers.
 .decl coverage_genserver_isolated(mod: symbol)
 .output coverage_genserver_isolated
 
 coverage_genserver_isolated(mod) :-
   implements_behaviour(mod, "GenServer"),
   !sync_call(_, mod),
-  !async_cast(_, mod).
+  !async_cast(_, mod),
+  !supervisor_child(_, _, mod, _, _),
+  !dynamic_child(_, mod, _).
 
 // An ETS table was created with a statically known name but we see no
 // read or write operations against that name anywhere in the corpus.
@@ -105,13 +107,29 @@ coverage_genserver_isolated(mod) :-
 // lost the table name. Excluding "dynamic" itself from the join is
 // critical — otherwise every project with any dynamic ETS access would
 // fire this on every statically-named table.
+//
+// Also excluded: tables whose creating module has ANY ets_ops (even
+// with dynamic table refs). When a module creates one named table and
+// also accesses ETS via a tid parameter, the dynamic ops almost
+// certainly refer to the same table — the name-based join just can't
+// see the connection. Flagging these as "unused" is misleading.
+.decl ets_module_has_ops(name: symbol, mod: symbol)
+
+ets_module_has_ops(name, mod) :-
+  ets_new(_, create_func, name),
+  name != "dynamic",
+  function_def(create_func, mod, _, _, _, _),
+  ets_op(_, op_func, _, _, _),
+  function_def(op_func, mod, _, _, _, _).
+
 .decl coverage_ets_unused(name: symbol)
 .output coverage_ets_unused
 
 coverage_ets_unused(name) :-
   ets_new(_, _, name),
   name != "dynamic",
-  !ets_op(_, _, name, _, _).
+  !ets_op(_, _, name, _, _),
+  !ets_module_has_ops(name, _).
 
 // gen_statem module with recognized states but no extracted transitions.
 // State detection fires on function names in state_functions mode and
@@ -127,14 +145,13 @@ coverage_statem_no_transitions(mod) :-
   !statem_transition(mod, _, _, _).
 
 // A named process was registered but no sync or async traffic targets it.
-// Either the registration name is referenced only outside the corpus, or
-// the extractor couldn't connect the registration to its callers (common
-// when the sync_call target is resolved to a module atom instead of the
-// registered name). Both are worth investigating.
+// Excludes "dynamic" names — they can't be meaningfully joined with
+// callers, so flagging them as unreachable is vacuous.
 .decl coverage_named_process_unreachable(name: symbol, mod: symbol)
 .output coverage_named_process_unreachable
 
 coverage_named_process_unreachable(name, mod) :-
   named_process(mod, name),
+  name != "dynamic",
   !sync_call(_, name),
   !async_cast(_, name).
