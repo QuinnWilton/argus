@@ -1,3 +1,8 @@
+---
+name: argus-autoresearch
+description: Iterative coverage improvement loop for the argus extractor pipeline. Use when improving coverage, reducing imprecision, or working on extractor targets.
+---
+
 # Argus Autoresearch
 
 Iterative coverage improvement loop for the argus extractor pipeline.
