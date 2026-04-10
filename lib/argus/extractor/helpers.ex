@@ -296,6 +296,33 @@ defmodule Argus.Extractor.Helpers do
 
   defp call_target(_), do: :none
 
+  # Apply a whitelisted pure BIF to its resolved arguments. Returns
+  # `{:ok, result}` if every argument resolved to a concrete value AND
+  # the operation is well-defined; returns `:dynamic` otherwise.
+  #
+  # Each clause is paranoid about argument shapes: we never call BIFs
+  # like `:erlang.element/2` with the wrong types because that raises,
+  # which would crash extraction. We bail to `:dynamic` on any mismatch.
+  defp apply_pure_bif(:element, [idx, tuple])
+       when is_integer(idx) and is_tuple(tuple) and idx > 0 and idx <= tuple_size(tuple) do
+    {:ok, elem(tuple, idx - 1)}
+  end
+
+  defp apply_pure_bif(:tuple_size, [tuple]) when is_tuple(tuple), do: {:ok, tuple_size(tuple)}
+  defp apply_pure_bif(:map_size, [map]) when is_map(map), do: {:ok, map_size(map)}
+  defp apply_pure_bif(:byte_size, [bin]) when is_binary(bin), do: {:ok, byte_size(bin)}
+  defp apply_pure_bif(:length, [list]) when is_list(list), do: {:ok, length(list)}
+  defp apply_pure_bif(:hd, [[h | _]]), do: {:ok, h}
+  defp apply_pure_bif(:tl, [[_ | t]]), do: {:ok, t}
+
+  defp apply_pure_bif(:atom_to_binary, [atom]) when is_atom(atom) and not is_nil(atom) do
+    {:ok, Atom.to_string(atom)}
+  end
+
+  defp apply_pure_bif(:++, [a, b]) when is_list(a) and is_list(b), do: {:ok, a ++ b}
+
+  defp apply_pure_bif(_op, _args), do: :dynamic
+
   # --- Backward register resolution ---
 
   @doc """
@@ -483,7 +510,49 @@ defmodule Argus.Extractor.Helpers do
     resolve_source(rest, other)
   end
 
+  # Pure BIF whitelist: when both args resolve to literals we can compute
+  # the result statically. The whitelist only includes BIFs whose result
+  # is fully determined by their arguments — no clock, no process state,
+  # no atom-table mutation.
+  defp interpret({:bif, :element, _, [idx_op, tuple_op], _dst}, rest, _reg) do
+    apply_pure_bif(:element, [resolve_element(rest, idx_op), resolve_element(rest, tuple_op)])
+  end
+
+  defp interpret({:bif, :tuple_size, _, [tuple_op], _dst}, rest, _reg) do
+    apply_pure_bif(:tuple_size, [resolve_element(rest, tuple_op)])
+  end
+
+  defp interpret({:bif, :map_size, _, [map_op], _dst}, rest, _reg) do
+    apply_pure_bif(:map_size, [resolve_element(rest, map_op)])
+  end
+
+  defp interpret({:bif, :byte_size, _, [bin_op], _dst}, rest, _reg) do
+    apply_pure_bif(:byte_size, [resolve_element(rest, bin_op)])
+  end
+
+  defp interpret({:bif, :hd, _, [list_op], _dst}, rest, _reg) do
+    apply_pure_bif(:hd, [resolve_element(rest, list_op)])
+  end
+
+  defp interpret({:bif, :tl, _, [list_op], _dst}, rest, _reg) do
+    apply_pure_bif(:tl, [resolve_element(rest, list_op)])
+  end
+
+  defp interpret({:bif, :atom_to_binary, _, [atom_op], _dst}, rest, _reg) do
+    apply_pure_bif(:atom_to_binary, [resolve_element(rest, atom_op)])
+  end
+
   defp interpret({:bif, _, _, _, _dst}, _rest, _reg), do: :dynamic
+
+  # gc_bif has the same shape as bif plus a `live` count between fail and args.
+  defp interpret({:gc_bif, :length, _, _live, [list_op], _dst}, rest, _reg) do
+    apply_pure_bif(:length, [resolve_element(rest, list_op)])
+  end
+
+  defp interpret({:gc_bif, :++, _, _live, [a_op, b_op], _dst}, rest, _reg) do
+    apply_pure_bif(:++, [resolve_element(rest, a_op), resolve_element(rest, b_op)])
+  end
+
   defp interpret({:gc_bif, _, _, _, _, _dst}, _rest, _reg), do: :dynamic
 
   defp interpret({:get_tuple_element, src, idx, _dst}, rest, _reg) do

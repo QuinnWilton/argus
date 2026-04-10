@@ -673,6 +673,94 @@ defmodule Argus.Extractor.HelpersTest do
     end
   end
 
+  describe "resolve_register/3 — pure BIF whitelist" do
+    test "resolves :erlang.element/2 of a literal tuple" do
+      # x0 = elem({:a, :b, :c}, 2) => :b. Compiles to a `bif element` with
+      # the tuple in x1 (or as a literal operand) and index 2.
+      instrs = [
+        {:func_info, {:atom, MyMod}, {:atom, :test}, 0},
+        {:label, 1},
+        {:move, {:literal, {:a, :b, :c}}, {:x, 1}},
+        {:bif, :element, {:f, 0}, [{:integer, 2}, {:x, 1}], {:x, 0}},
+        {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 4, {:x, 0}) == {:ok, :b}
+    end
+
+    test "resolves :erlang.tuple_size/1 of a literal tuple" do
+      instrs = [
+        {:func_info, {:atom, MyMod}, {:atom, :test}, 0},
+        {:label, 1},
+        {:move, {:literal, {:a, :b, :c}}, {:x, 1}},
+        {:bif, :tuple_size, {:f, 0}, [{:x, 1}], {:x, 0}},
+        {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 4, {:x, 0}) == {:ok, 3}
+    end
+
+    test "resolves :erlang.length/1 (gc_bif) of a literal list" do
+      instrs = [
+        {:func_info, {:atom, MyMod}, {:atom, :test}, 0},
+        {:label, 1},
+        {:move, {:literal, [1, 2, 3, 4]}, {:x, 1}},
+        {:gc_bif, :length, {:f, 0}, 1, [{:x, 1}], {:x, 0}},
+        {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 4, {:x, 0}) == {:ok, 4}
+    end
+
+    test "resolves :erlang.atom_to_binary/1 of a literal atom" do
+      instrs = [
+        {:func_info, {:atom, MyMod}, {:atom, :test}, 0},
+        {:label, 1},
+        {:move, {:atom, :hello}, {:x, 1}},
+        {:bif, :atom_to_binary, {:f, 0}, [{:x, 1}], {:x, 0}},
+        {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 4, {:x, 0}) == {:ok, "hello"}
+    end
+
+    test "returns :dynamic when the BIF arg is not statically resolvable" do
+      instrs = [
+        {:func_info, {:atom, MyMod}, {:atom, :test}, 1},
+        {:label, 1},
+        {:bif, :tuple_size, {:f, 0}, [{:x, 0}], {:x, 1}},
+        {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
+      ]
+
+      # x0 is the function parameter — we don't know its value,
+      # so tuple_size(x0) is :dynamic.
+      assert Helpers.resolve_register(instrs, 3, {:x, 1}) == :dynamic
+    end
+
+    test "returns :dynamic for non-whitelisted BIFs" do
+      instrs = [
+        {:func_info, {:atom, MyMod}, {:atom, :test}, 0},
+        {:label, 1},
+        {:bif, :phash2, {:f, 0}, [{:atom, :foo}], {:x, 0}},
+        {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 3, {:x, 0}) == :dynamic
+    end
+
+    test "returns :dynamic when element index is out of range (no crash)" do
+      instrs = [
+        {:func_info, {:atom, MyMod}, {:atom, :test}, 0},
+        {:label, 1},
+        {:move, {:literal, {:a, :b}}, {:x, 1}},
+        {:bif, :element, {:f, 0}, [{:integer, 99}, {:x, 1}], {:x, 0}},
+        {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 4, {:x, 0}) == :dynamic
+    end
+  end
+
   describe "resolve_to_arg_or_atom/3" do
     test "returns {:atom, _} for literal atoms" do
       instrs = [
