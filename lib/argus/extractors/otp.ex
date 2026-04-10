@@ -12,7 +12,6 @@ defmodule Argus.Extractors.OTP do
   - `sync_call_timeout(caller_func, callee_mod, timeout_ms)` — timeout value at call site
   - `async_cast(caller_func, callee_mod)` — GenServer.cast target detected
   - `process_link(from_mod, to_mod)` — Process.link / :erlang.link call
-  - `process_monitor(from_mod, to_mod)` — Process.monitor / :erlang.monitor call
   """
 
   @behaviour Argus.Extractor
@@ -37,7 +36,7 @@ defmodule Argus.Extractors.OTP do
     %{}
     |> extract_behaviours(mod_str, module_data.attributes)
     |> extract_genserver_calls(mod, functions)
-    |> extract_link_monitor_calls(mod_str, mod, functions)
+    |> extract_link_calls(mod_str, mod, functions)
   end
 
   defp extract_behaviours(facts, mod_str, attrs) do
@@ -112,32 +111,21 @@ defmodule Argus.Extractors.OTP do
 
   defp handle_genserver_call(facts, _ctx, _mfa), do: facts
 
-  defp extract_link_monitor_calls(facts, mod_str, mod, functions) do
+  defp extract_link_calls(facts, mod_str, mod, functions) do
     scan_remote_calls(mod, functions, facts, fn acc, ctx, mfa ->
-      handle_link_monitor(acc, mod_str, ctx, mfa)
+      handle_link(acc, mod_str, ctx, mfa)
     end)
   end
 
-  defp handle_link_monitor(facts, mod_str, ctx, {Process, :link, 1}) do
+  defp handle_link(facts, mod_str, ctx, {Process, :link, 1}) do
     add_fact(facts, :process_link, [mod_str, resolve_callee(ctx)])
   end
 
-  defp handle_link_monitor(facts, mod_str, ctx, {:erlang, :link, 1}) do
+  defp handle_link(facts, mod_str, ctx, {:erlang, :link, 1}) do
     add_fact(facts, :process_link, [mod_str, resolve_callee(ctx)])
   end
 
-  defp handle_link_monitor(facts, mod_str, ctx, {Process, :monitor, arity})
-       when arity in [1, 2] do
-    add_fact(facts, :process_monitor, [mod_str, resolve_callee(ctx)])
-  end
-
-  defp handle_link_monitor(facts, mod_str, ctx, {:erlang, :monitor, 2}) do
-    # x0 is the monitor type (:process), x1 is the target.
-    target = resolve_atom(ctx.instrs, ctx.idx, {:x, 1})
-    add_fact(facts, :process_monitor, [mod_str, target])
-  end
-
-  defp handle_link_monitor(facts, _mod_str, _ctx, _mfa), do: facts
+  defp handle_link(facts, _mod_str, _ctx, _mfa), do: facts
 
   # Resolve a timeout argument to its string representation for facts.
   # Positive integer → milliseconds, :infinity → "-1", anything else → "0" (dynamic).

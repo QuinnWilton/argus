@@ -10,6 +10,7 @@ defmodule Argus.Extractors.ProcessRegistry do
   ## Emitted facts
 
   - `process_register(id, func, name, method)` — direct registration and GenServer `name:` option
+  - `named_process(mod, name)` — module-level: a process implemented by `mod` is registered as `name`
   - `registry_op(id, func, registry, op, key)` — `Registry.register/lookup/dispatch`
   - `via_tuple(id, func, registry, key)` — `{:via, Registry, {reg, key}}` tuple construction
   - `whereis_call(id, func, name)` — `Process.whereis/1`, `:erlang.whereis/1`
@@ -41,22 +42,24 @@ defmodule Argus.Extractors.ProcessRegistry do
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
+    mod_str = inspect(module_data.module)
+
     scan_functions(module_data.module, module_data.functions, %{}, fn facts, ctx, instr ->
       facts
-      |> maybe_register_call(ctx, instr)
+      |> maybe_register_call(mod_str, ctx, instr)
       |> maybe_via_tuple(ctx, instr)
     end)
   end
 
-  defp maybe_register_call(facts, ctx, instr) do
+  defp maybe_register_call(facts, mod_str, ctx, instr) do
     case match_remote_call(instr) do
       # Process.register/2 — Process.register(pid, name), name is x1.
       {:ok, Process, :register, 2} ->
-        emit_register(facts, ctx, {:x, 1}, "register")
+        emit_register(facts, mod_str, ctx, {:x, 1}, "register")
 
       # :erlang.register/2 — :erlang.register(name, pid), name is x0.
       {:ok, :erlang, :register, 2} ->
-        emit_register(facts, ctx, {:x, 0}, "register")
+        emit_register(facts, mod_str, ctx, {:x, 0}, "register")
 
       {:ok, GenServer, :start_link, 3} ->
         maybe_named_start(facts, ctx, "start_link")
@@ -84,10 +87,25 @@ defmodule Argus.Extractors.ProcessRegistry do
     end
   end
 
-  defp emit_register(facts, ctx, name_reg, method) do
+  defp emit_register(facts, mod_str, ctx, name_reg, method) do
     id = "#{ctx.func_id}##{ctx.idx}"
     name = resolve_name(ctx.instrs, ctx.idx, name_reg)
-    add_fact(facts, :process_register, [id, ctx.func_id, name, method])
+
+    facts
+    |> add_fact(:process_register, [id, ctx.func_id, name, method])
+    |> maybe_emit_named_process(mod_str, name)
+  end
+
+  # Direct register/2 calls inside a module's own code typically register
+  # `self()` under a name — so the enclosing module owns the name. We
+  # can't statically prove the registered pid is `self()`, but the
+  # convention is strong enough in practice (Process.register(self(), :foo)
+  # is the dominant pattern) that emitting named_process here is more
+  # useful than skipping it.
+  defp maybe_emit_named_process(facts, _mod_str, "dynamic"), do: facts
+
+  defp maybe_emit_named_process(facts, mod_str, name) do
+    add_fact(facts, :named_process, [mod_str, name])
   end
 
   defp emit_whereis(facts, ctx) do
@@ -129,6 +147,8 @@ defmodule Argus.Extractors.ProcessRegistry do
   defp maybe_via_tuple(facts, _ctx, _instr), do: facts
 
   # GenServer.start_link(mod, args, name: Name) — name in options keyword list (x2).
+  # The first argument (x0) is the module being started; if it resolves to a
+  # literal atom we can also emit named_process(mod, name).
   defp maybe_named_start(facts, ctx, method) do
     case resolve_register(ctx.instrs, ctx.idx, {:x, 2}) do
       {:ok, opts} when is_list(opts) ->
@@ -138,7 +158,10 @@ defmodule Argus.Extractors.ProcessRegistry do
 
           name when is_atom(name) ->
             id = "#{ctx.func_id}##{ctx.idx}"
-            add_fact(facts, :process_register, [id, ctx.func_id, inspect(name), method])
+
+            facts
+            |> add_fact(:process_register, [id, ctx.func_id, inspect(name), method])
+            |> maybe_emit_named_process_for_start(ctx, inspect(name))
 
           {:via, _reg, {reg_mod, key}} when is_atom(reg_mod) ->
             id = "#{ctx.func_id}##{ctx.idx}"
@@ -154,14 +177,34 @@ defmodule Argus.Extractors.ProcessRegistry do
   end
 
   # Erlang-style :gen_server.start_link({:local, Name}, mod, args, opts).
+  # The module is x1 in the Erlang shape; resolve it to enrich named_process.
   defp maybe_named_start_erlang(facts, ctx, method) do
     case resolve_register(ctx.instrs, ctx.idx, {:x, 0}) do
       {:ok, {kind, name}} when kind in [:local, :global] and is_atom(name) ->
         id = "#{ctx.func_id}##{ctx.idx}"
-        add_fact(facts, :process_register, [id, ctx.func_id, inspect(name), method])
+
+        facts
+        |> add_fact(:process_register, [id, ctx.func_id, inspect(name), method])
+        |> maybe_emit_named_process_for_erlang_start(ctx, inspect(name))
 
       _ ->
         facts
+    end
+  end
+
+  # For GenServer.start_link, the module being started is x0.
+  defp maybe_emit_named_process_for_start(facts, ctx, name) do
+    case resolve_register(ctx.instrs, ctx.idx, {:x, 0}) do
+      {:ok, mod} when is_atom(mod) -> add_fact(facts, :named_process, [inspect(mod), name])
+      _ -> facts
+    end
+  end
+
+  # For :gen_server.start_link({:local, name}, mod, ...), the module is x1.
+  defp maybe_emit_named_process_for_erlang_start(facts, ctx, name) do
+    case resolve_register(ctx.instrs, ctx.idx, {:x, 1}) do
+      {:ok, mod} when is_atom(mod) -> add_fact(facts, :named_process, [inspect(mod), name])
+      _ -> facts
     end
   end
 

@@ -455,16 +455,6 @@ defmodule Argus.Schema do
     doc: "Process link between modules."
   }
 
-  @process_monitor %{
-    name: :process_monitor,
-    layer: 2,
-    fields: [
-      {:from_mod, :symbol, "monitoring module"},
-      {:to_mod, :symbol, "monitored module"}
-    ],
-    doc: "Process monitor between modules."
-  }
-
   # Layer 2: OTP pattern extractor facts.
 
   @implements_behaviour %{
@@ -812,7 +802,6 @@ defmodule Argus.Schema do
     @supervisor_child,
     @named_process,
     @process_link,
-    @process_monitor,
     @implements_behaviour,
     @sync_call,
     @async_cast,

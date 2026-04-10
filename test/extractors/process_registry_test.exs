@@ -73,6 +73,21 @@ defmodule Argus.Extractors.ProcessRegistryTest do
     end
   end
 
+  describe "extract/1 — named_process" do
+    test "emits named_process for direct register/2 with the enclosing module" do
+      facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.ProcessRegisterer))
+
+      assert Map.has_key?(facts, :named_process)
+      rows = facts[:named_process]
+
+      # Direct Process.register(self(), :my_process) — emit
+      # named_process(<enclosing module>, :my_process).
+      assert Enum.any?(rows, fn [mod, name] ->
+               mod == "Argus.Test.Fixtures.ProcessRegisterer" and name == ":my_process"
+             end)
+    end
+  end
+
   describe "integration with extract pipeline" do
     test "extractor is usable via Pipeline.extract/2" do
       assert {:ok, facts} =

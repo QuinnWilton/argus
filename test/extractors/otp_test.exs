@@ -208,18 +208,6 @@ defmodule Argus.Extractors.OTPTest do
       assert length(links) >= 2
     end
 
-    test "detects Process.monitor as process_monitor" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(
-          to_string(:code.which(Argus.Test.Fixtures.LinkMonitorModule))
-        )
-
-      facts = OTP.extract(data)
-
-      assert Map.has_key?(facts, :process_monitor)
-      monitors = facts[:process_monitor]
-      assert length(monitors) >= 2
-    end
   end
 
   describe "integration with extract pipeline" do
