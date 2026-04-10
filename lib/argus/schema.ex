@@ -890,6 +890,32 @@ defmodule Argus.Schema do
     doc: "Timeout set in a gen_statem state."
   }
 
+  # Coverage / precision instrumentation. Populated only when the active
+  # analysis run has imprecision tracking enabled (i.e. running the
+  # `coverage` analysis).
+
+  @imprecision %{
+    name: :imprecision,
+    layer: 2,
+    fields: [
+      {:category, :symbol, "what we were trying to resolve (e.g. genserver_callee, ets_table_name)"},
+      {:func, :symbol, "function ID where the fallback occurred"},
+      {:relation, :symbol, "the fact relation that received the dynamic placeholder"},
+      {:reason, :symbol, "why imprecision: dynamic | unresolvable | skipped | missing"}
+    ],
+    doc: """
+    Tracks every fallback to a "dynamic" placeholder or an outright \
+    skipped fact emission. Populated only when imprecision tracing is \
+    enabled for the current pipeline run — the `coverage` analysis turns \
+    it on, every other analysis runs with tracing off and produces no \
+    rows in this relation.
+
+    The `category` vocabulary is documented in `lib/argus/extractor/helpers.ex` \
+    and is treated as a versioned API: changes are noted in CHANGELOG so \
+    coverage diff tooling can keep stable keys.
+    """
+  }
+
   # All relations indexed by name.
 
   @layer_1_relations [
@@ -971,7 +997,9 @@ defmodule Argus.Schema do
     @statem_module,
     @statem_state,
     @statem_transition,
-    @statem_timeout
+    @statem_timeout,
+    # Coverage instrumentation (populated only by the coverage analysis).
+    @imprecision
   ]
 
   @all_relations @layer_1_relations ++ @layer_2_relations

@@ -41,6 +41,114 @@ defmodule Argus.Extractor.Helpers do
     Map.update(facts, relation, [row], &[row | &1])
   end
 
+  # --- Coverage instrumentation ---
+  #
+  # The `imprecision` Layer 2 fact records every fallback to "dynamic" or
+  # an outright skipped emission. The tracking is gated on a process-
+  # dictionary flag so non-coverage analyses pay zero cost: every
+  # `track_*` call becomes a single sub-microsecond `Process.get/2`.
+  #
+  # The pipeline runner sets the flag (via `enable_tracing/0`) only when
+  # the active analysis is `coverage`, then clears it (via
+  # `disable_tracing/0`) on the way out. The state is process-local so
+  # concurrent analysis runs from different processes don't interfere.
+
+  @tracing_key :argus_trace_imprecision
+
+  @doc """
+  Enable imprecision tracking for the current Erlang process. Subsequent
+  `track_imprecision/5` and `track_dynamic/5` calls will record events.
+  """
+  @spec enable_tracing() :: :ok
+  def enable_tracing do
+    Process.put(@tracing_key, true)
+    :ok
+  end
+
+  @doc """
+  Disable imprecision tracking for the current Erlang process. Subsequent
+  `track_*` calls become no-ops. Always called from the pipeline's
+  `try/after` so the flag is cleared even on extractor errors.
+  """
+  @spec disable_tracing() :: :ok
+  def disable_tracing do
+    Process.delete(@tracing_key)
+    :ok
+  end
+
+  @doc """
+  Returns whether imprecision tracking is currently enabled for this process.
+  Useful in tests; production code should just call the `track_*` helpers
+  and rely on them to no-op when tracing is off.
+  """
+  @spec tracing_enabled?() :: boolean()
+  def tracing_enabled? do
+    Process.get(@tracing_key, false) == true
+  end
+
+  @doc """
+  Record an imprecision event explicitly. Use directly when the extractor
+  decided to skip a fact emission entirely (the "intentional skip" case
+  is still information — the value was missing, not just dynamic).
+
+  No-op unless tracing is enabled for the current process.
+  """
+  @spec track_imprecision(
+          Argus.Pipeline.Emit.facts(),
+          instr_ctx(),
+          atom(),
+          atom(),
+          atom() | String.t()
+        ) :: Argus.Pipeline.Emit.facts()
+  def track_imprecision(facts, ctx, category, relation, reason \\ :dynamic) do
+    if tracing_enabled?() do
+      add_fact(facts, :imprecision, [
+        to_string(category),
+        ctx.func_id,
+        to_string(relation),
+        to_string(reason)
+      ])
+    else
+      facts
+    end
+  end
+
+  @doc """
+  Conditional wrapper around `track_imprecision/5`. When `value` indicates
+  a dynamic fallback (the string `"dynamic"` or the atom `:dynamic`),
+  records the event. No-op otherwise AND no-op when tracing is disabled.
+
+  This is the right helper for wrapping an existing `resolve_callee` /
+  `resolve_atom` call site — the wrapper is essentially free in the
+  non-coverage case (a single `Process.get/2`).
+  """
+  @spec track_dynamic(
+          Argus.Pipeline.Emit.facts(),
+          term(),
+          instr_ctx(),
+          atom(),
+          atom()
+        ) :: Argus.Pipeline.Emit.facts()
+  def track_dynamic(facts, value, ctx, category, relation) do
+    if tracing_enabled?() and dynamic_value?(value) do
+      add_fact(facts, :imprecision, [
+        to_string(category),
+        ctx.func_id,
+        to_string(relation),
+        "dynamic"
+      ])
+    else
+      facts
+    end
+  end
+
+  # Arg-position results like `{:arg, 0}` are NOT dynamic — they carry
+  # concrete information about which parameter the value came from.
+  defp dynamic_value?("dynamic"), do: true
+  defp dynamic_value?(:dynamic), do: true
+  defp dynamic_value?({:arg, _}), do: false
+  defp dynamic_value?(_), do: false
+
   # --- Per-instruction scanning ---
 
   @doc """

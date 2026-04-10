@@ -24,6 +24,118 @@ defmodule Argus.Extractor.HelpersTest do
     end
   end
 
+  describe "imprecision tracing" do
+    # Each ExUnit test runs in its own process, so the process dictionary
+    # state is naturally isolated — no need to setup/teardown the flag.
+
+    @ctx %{func_id: "MyMod:my_func/1", instrs: [], idx: 0}
+
+    test "tracing is disabled by default" do
+      refute Helpers.tracing_enabled?()
+    end
+
+    test "enable_tracing flips the flag for the current process only" do
+      Helpers.enable_tracing()
+      assert Helpers.tracing_enabled?()
+
+      # Spawn another process and confirm it doesn't see this process's flag.
+      parent = self()
+
+      spawn(fn ->
+        send(parent, {:other, Helpers.tracing_enabled?()})
+      end)
+
+      assert_receive {:other, false}, 1000
+    end
+
+    test "disable_tracing clears the flag" do
+      Helpers.enable_tracing()
+      assert Helpers.tracing_enabled?()
+
+      Helpers.disable_tracing()
+      refute Helpers.tracing_enabled?()
+    end
+
+    test "track_imprecision is a no-op when tracing is disabled" do
+      facts = %{existing: [["row"]]}
+      result = Helpers.track_imprecision(facts, @ctx, :test_category, :test_relation)
+      assert result == facts
+      refute Map.has_key?(result, :imprecision)
+    end
+
+    test "track_imprecision emits a fact when tracing is enabled" do
+      Helpers.enable_tracing()
+
+      result = Helpers.track_imprecision(%{}, @ctx, :test_category, :test_relation, :dynamic)
+
+      assert result == %{
+               imprecision: [
+                 ["test_category", "MyMod:my_func/1", "test_relation", "dynamic"]
+               ]
+             }
+    end
+
+    test "track_imprecision uses the explicit reason argument" do
+      Helpers.enable_tracing()
+
+      result = Helpers.track_imprecision(%{}, @ctx, :supervisor_child, :supervisor_child, :skipped)
+
+      assert result == %{
+               imprecision: [
+                 ["supervisor_child", "MyMod:my_func/1", "supervisor_child", "skipped"]
+               ]
+             }
+    end
+
+    test "track_dynamic is a no-op on concrete values even when tracing is enabled" do
+      Helpers.enable_tracing()
+
+      assert Helpers.track_dynamic(%{}, "MyServer", @ctx, :genserver_callee, :sync_call) == %{}
+      assert Helpers.track_dynamic(%{}, ":foo", @ctx, :ets_table_name, :ets_new) == %{}
+      assert Helpers.track_dynamic(%{}, {:arg, 0}, @ctx, :delayed_target, :delayed_message) == %{}
+    end
+
+    test "track_dynamic emits a fact for the string \"dynamic\"" do
+      Helpers.enable_tracing()
+
+      result = Helpers.track_dynamic(%{}, "dynamic", @ctx, :genserver_callee, :sync_call)
+
+      assert result == %{
+               imprecision: [
+                 ["genserver_callee", "MyMod:my_func/1", "sync_call", "dynamic"]
+               ]
+             }
+    end
+
+    test "track_dynamic emits a fact for the atom :dynamic" do
+      Helpers.enable_tracing()
+
+      result = Helpers.track_dynamic(%{}, :dynamic, @ctx, :genserver_callee, :sync_call)
+
+      assert result.imprecision == [
+               ["genserver_callee", "MyMod:my_func/1", "sync_call", "dynamic"]
+             ]
+    end
+
+    test "track_dynamic is a no-op when tracing is disabled even for dynamic values" do
+      result = Helpers.track_dynamic(%{}, "dynamic", @ctx, :genserver_callee, :sync_call)
+      assert result == %{}
+    end
+
+    test "multiple track_dynamic calls accumulate" do
+      Helpers.enable_tracing()
+
+      facts =
+        %{}
+        |> Helpers.track_dynamic("dynamic", @ctx, :cat_a, :rel_a)
+        |> Helpers.track_dynamic("dynamic", @ctx, :cat_b, :rel_b)
+        |> Helpers.track_dynamic("MyServer", @ctx, :cat_c, :rel_c)
+
+      # Two events for the dynamic categories, one no-op for the concrete one.
+      assert length(facts.imprecision) == 2
+    end
+  end
+
   describe "get_behaviours/1" do
     test "extracts :behaviour attribute" do
       assert Helpers.get_behaviours(behaviour: [GenServer]) == [GenServer]
