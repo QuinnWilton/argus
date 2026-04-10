@@ -36,6 +36,8 @@ A rough, measurable goal. Example:
 
 ## Dead ends
 
+- `coverage_supervisor_no_children` (closure scanning): tried 2026-04-10, reverted. Scanning all `make_fun3` closures in init/1 for child specs is unsound — closures may be used for non-child-spec purposes (telemetry handlers, filter predicates, config builders) and any `{Module, args}` tuple in them would be incorrectly classified as a supervised child. A sound fix would need to trace the closure's return value to confirm it flows into `Supervisor.init/2`'s children argument. REVISIT IF argus gains dataflow tracking for closure return values.
+
 ## Parking lot
 
 - Measurement variance: consecutive measure runs can produce different counts (e.g. 47 vs 73 vs 146 for the same code). Root cause appears to be subprocess cold-start effects — counts stabilize after 1-2 runs. Consider adding a warm-up run or taking the median of N runs for reliable diffing.
