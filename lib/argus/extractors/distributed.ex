@@ -92,7 +92,9 @@ defmodule Argus.Extractors.Distributed do
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
-    scan_remote_calls(module_data.module, module_data.functions, fn facts, ctx, {mod, func, arity} ->
+    scan_remote_calls(module_data.module, module_data.functions, fn facts,
+                                                                    ctx,
+                                                                    {mod, func, arity} ->
       id = "#{ctx.func_id}##{ctx.idx}"
 
       facts

@@ -58,14 +58,29 @@ defmodule Argus.Extractors.ProcessRegistry do
       {:ok, :erlang, :register, 2} ->
         emit_register(facts, ctx, {:x, 0}, "register")
 
-      {:ok, GenServer, :start_link, 3} -> maybe_named_start(facts, ctx, "start_link")
-      {:ok, GenServer, :start, 3} -> maybe_named_start(facts, ctx, "start")
-      {:ok, :gen_server, :start_link, 4} -> maybe_named_start_erlang(facts, ctx, "start_link")
-      {:ok, :gen_server, :start, 4} -> maybe_named_start_erlang(facts, ctx, "start")
-      {:ok, Registry, func, arity} -> maybe_registry_op(facts, ctx, func, arity)
-      {:ok, Process, :whereis, 1} -> emit_whereis(facts, ctx)
-      {:ok, :erlang, :whereis, 1} -> emit_whereis(facts, ctx)
-      _ -> facts
+      {:ok, GenServer, :start_link, 3} ->
+        maybe_named_start(facts, ctx, "start_link")
+
+      {:ok, GenServer, :start, 3} ->
+        maybe_named_start(facts, ctx, "start")
+
+      {:ok, :gen_server, :start_link, 4} ->
+        maybe_named_start_erlang(facts, ctx, "start_link")
+
+      {:ok, :gen_server, :start, 4} ->
+        maybe_named_start_erlang(facts, ctx, "start")
+
+      {:ok, Registry, func, arity} ->
+        maybe_registry_op(facts, ctx, func, arity)
+
+      {:ok, Process, :whereis, 1} ->
+        emit_whereis(facts, ctx)
+
+      {:ok, :erlang, :whereis, 1} ->
+        emit_whereis(facts, ctx)
+
+      _ ->
+        facts
     end
   end
 

@@ -10,68 +10,65 @@ Argus is a BEAM program analysis framework that extracts Datalog facts from BEAM
 
 ```
 lib/
-├── argus.ex                         # Public API
+├── argus.ex                         # Public API (delegates to Argus.Analysis)
 ├── argus/
-│   ├── extract.ex                   # Parallel extraction pipeline orchestrator
-│   ├── normalize.ex                 # Thin normalization pass (IDs, canonicalization)
-│   ├── schema.ex                    # Fact relation definitions
-│   ├── emitter.ex                   # Instructions → fact tuples
-│   ├── extractor.ex                 # Behaviour for domain extractors
+│   ├── analysis.ex                  # Analysis behaviour + runtime registry
+│   ├── extractor.ex                 # Layer 2 extractor behaviour
 │   ├── extractor/
-│   │   └── helpers.ex               # Shared helpers (add_fact, resolve_register, etc.)
-│   ├── extractors/
-│   │   ├── supervision.ex           # Supervisor + Application child spec extraction
-│   │   ├── otp.ex                   # OTP callback pattern detection
-│   │   └── ets.ex                   # ETS table creation and access extraction
-│   ├── analyses/
-│   │   ├── cfg.ex                   # Control flow graph
-│   │   ├── callgraph.ex             # Call graph
-│   │   ├── reachability.ex          # Code reachability
-│   │   ├── reaching_def.ex          # Reaching definitions
-│   │   ├── liveness.ex              # Live variable analysis
-│   │   ├── tail_call.ex             # Tail call and recursion detection
-│   │   ├── message_flow.ex          # Message passing analysis
-│   │   ├── supervision.ex           # Supervision tree anti-patterns
-│   │   ├── one_for_one_coupling.ex  # Cross-branch coupling under one_for_one
-│   │   ├── ets.ex                   # ETS table lifecycle analysis
-│   │   ├── call_cycle.ex            # Sync-call cycle (deadlock) detection
-│   │   ├── unlinked_spawn.ex        # Orphan process detection
-│   │   ├── sync_call_in_init.ex     # Startup deadlock detection
-│   │   ├── process_bottleneck.ex    # Sync call fan-in detection
-│   │   └── timeout_chain.ex        # GenServer timeout chain detection
-│   ├── souffle.ex                   # Souffle execution behaviour
-│   ├── souffle/
-│   │   └── cli.ex                   # Shell-out implementation
-│   └── analysis.ex                  # High-level analysis API
-├── mix/
-│   └── tasks/
-│       └── argus.ex                 # mix argus <analysis> [modules...]
-priv/
-└── dl/                              # Souffle rule files
-    ├── base.dl                      # Shared declarations
-    ├── cfg.dl                       # Control flow graph
-    ├── callgraph.dl                 # Call graph entry point
-    ├── callgraph_rules.dl           # Call graph derivation rules
-    ├── call_reachable_rules.dl      # Transitive call reachability
-    ├── call_cycle.dl                # Sync-call cycle detection
-    ├── reachability.dl              # Code reachability
-    ├── reaching_def.dl              # Reaching definitions
-    ├── liveness.dl                  # Live variable analysis
-    ├── tail_call.dl                 # Tail call / recursion
-    ├── message_flow.dl              # Message passing paths
-    ├── supervision.dl               # Supervision tree anti-patterns
-    ├── child_subtree.dl             # Child subtree helpers
-    ├── genserver_api_rules.dl        # Shared GenServer sync API rules
-    ├── init_function_rules.dl       # Shared init function identification
-    ├── stateful_module_dep_rules.dl # Shared stateful module dependency rules
-    ├── one_for_one_coupling.dl      # Cross-branch coupling
-    ├── ets.dl                       # ETS table analysis
-    ├── unlinked_spawn.dl            # Orphan process detection
-    ├── sync_call_in_init.dl         # Startup deadlock detection
-    ├── process_bottleneck.dl        # Sync call fan-in
-    └── timeout_chain.dl             # GenServer timeout chain detection
+│   │   └── helpers.ex               # scan_functions, scan_remote_calls, resolve_*, add_fact
+│   ├── pipeline.ex                  # Top-level orchestrator (was Argus.Extract)
+│   ├── pipeline/
+│   │   ├── disassemble.ex           # .beam path resolution + BEAM file loading
+│   │   ├── normalize.ex             # IDs, register canonicalization
+│   │   └── emit.ex                  # Layer 1 fact emission (was Argus.Emitter)
+│   ├── schema.ex                    # Layer 1 + Layer 2 relation definitions
+│   ├── souffle.ex                   # souffle binary shell-out
+│   ├── report.ex                    # JSON report builder
+│   ├── extractors/                  # Layer 2 domain extractors
+│   │   ├── supervision.ex           # Supervisor + Application child specs
+│   │   ├── otp.ex                   # GenServer / behaviour patterns
+│   │   ├── ets.ex                   # ETS create/options/ops
+│   │   ├── atom_safety.ex           # unsafe atom creation, deserialization, eval
+│   │   ├── distributed.ex           # rpc, global, node operations
+│   │   ├── error_handling.ex        # bare rescues, trap_exit, ignored results
+│   │   ├── gen_statem.ex            # gen_statem state machines
+│   │   └── process_registry.ex      # named processes, Registry, via tuples
+│   └── analyses/                    # 14 user-facing checks (one .ex per analysis)
+│       ├── supervision.ex
+│       ├── one_for_one_coupling.ex
+│       ├── sync_call_in_init.ex
+│       ├── unlinked_spawn.ex
+│       ├── call_cycle.ex
+│       ├── process_bottleneck.ex
+│       ├── timeout_chain.ex
+│       ├── unsafe_task.ex
+│       ├── process_registry.ex
+│       ├── ets.ex
+│       ├── atom_safety.ex
+│       ├── error_handling.ex
+│       ├── gen_statem.ex
+│       └── distributed.ex
+└── mix/tasks/argus.ex               # mix argus <analysis> [options]
+
+priv/dl/
+├── base.dl                          # Layer 1 fact declarations
+├── analyses/                        # one .dl rules file per analysis (14 files)
+└── clientlib/                       # shared rule library
+    ├── imports.dl                   # standard entrypoint (cfg + callgraph + reachable)
+    ├── cfg.dl                       # CFG derivation
+    ├── callgraph_rules.dl           # call_edge derivation
+    ├── call_reachable_rules.dl      # transitive call reachability
+    ├── otp.dl                       # init / sync_api / stateful_module_dep
+    ├── genserver_api_rules.dl       # included by otp.dl
+    ├── init_function_rules.dl       # included by otp.dl
+    ├── stateful_module_dep_rules.dl # included by otp.dl
+    ├── supervision.dl               # child_subtree / init_reaches helpers
+    └── callbacks.dl                 # handle_call / handle_cast detection
+
 scripts/
-└── analyze_project.exs              # Analyze external projects
+├── analyze_project.exs              # Analyze an external Mix or Rebar3 project
+├── harness.exs                      # Batch harness for analyzing many projects
+└── analyze_all.sh                   # Shell wrapper around harness.exs
 ```
 
 ### Key dependencies
@@ -81,10 +78,12 @@ scripts/
 
 ### Design principles
 
-- **Exhaustive pattern matching** on BEAM instructions, inspired by exhaustive opcode cataloging patterns.
+- **Exhaustive pattern matching** on BEAM instructions in `Argus.Pipeline.Emit`.
 - **Parallel extraction** — per-module disassembly/emission is embarrassingly parallel.
-- **Layered facts** — layer 1 (generic bytecode) + layer 2 (domain extractors) compose cleanly.
-- **Souffle as external tool** — shell out initially, design the behaviour for future compiled mode.
+- **Layered facts** — Layer 1 (generic bytecode) + Layer 2 (domain extractors) compose cleanly.
+- **Souffle as external tool** — shell out via `Argus.Souffle` to a `souffle` binary on PATH.
+- **BEAM/OTP focus** — every shipped analysis targets a BEAM-specific bug class. Generic
+  dataflow primitives belong in `priv/dl/clientlib/`, not in the user-facing analysis surface.
 
 ## Commit message style
 
@@ -142,6 +141,8 @@ mix deps.get             # Fetch dependencies
 mix compile              # Compile
 mix test                 # Run tests
 mix format               # Format code
-mix argus cfg            # Run CFG analysis on project modules
-mix argus callgraph      # Run callgraph analysis
+mix argus --list         # List available analyses
+mix argus supervision    # Detect supervision-tree anti-patterns
+mix argus ets            # Detect ETS misuse
+mix argus unsafe_task    # Detect leaked Task.async results
 ```

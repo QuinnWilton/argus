@@ -148,13 +148,26 @@ defmodule Argus.Extractors.ErrorHandling do
   # and ignored error results from known {ok, _} | {error, _} APIs.
   defp maybe_error_handling_call(facts, mod_str, ctx, instr) do
     case match_remote_call(instr) do
-      {:ok, Process, :flag, 2} -> maybe_trap_exit(facts, ctx, mod_str)
-      {:ok, :erlang, :process_flag, 2} -> maybe_trap_exit(facts, ctx, mod_str)
-      {:ok, Process, :exit, 2} -> emit_exit_call(facts, ctx, resolve_atom(ctx.instrs, ctx.idx, {:x, 0}))
-      {:ok, :erlang, :exit, 1} -> emit_exit_call(facts, ctx, "self")
-      {:ok, :erlang, :exit, 2} -> emit_exit_call(facts, ctx, resolve_atom(ctx.instrs, ctx.idx, {:x, 0}))
-      {:ok, mod, func, arity} -> maybe_ignored_result(facts, ctx, mod, func, arity)
-      :none -> facts
+      {:ok, Process, :flag, 2} ->
+        maybe_trap_exit(facts, ctx, mod_str)
+
+      {:ok, :erlang, :process_flag, 2} ->
+        maybe_trap_exit(facts, ctx, mod_str)
+
+      {:ok, Process, :exit, 2} ->
+        emit_exit_call(facts, ctx, resolve_atom(ctx.instrs, ctx.idx, {:x, 0}))
+
+      {:ok, :erlang, :exit, 1} ->
+        emit_exit_call(facts, ctx, "self")
+
+      {:ok, :erlang, :exit, 2} ->
+        emit_exit_call(facts, ctx, resolve_atom(ctx.instrs, ctx.idx, {:x, 0}))
+
+      {:ok, mod, func, arity} ->
+        maybe_ignored_result(facts, ctx, mod, func, arity)
+
+      :none ->
+        facts
     end
   end
 
