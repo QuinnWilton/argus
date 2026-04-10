@@ -25,13 +25,12 @@
 
 defmodule Argus.Scripts.Harness do
   @default_timeout 900
-  @argus_dir File.cwd!()
 
-  # Compute ebin paths once at compile time so we can shell out with `elixir`
-  # directly, bypassing the Mix build lock that prevents parallel execution.
-  @ebin_dirs Path.join([@argus_dir, "_build", "dev", "lib", "*", "ebin"])
-             |> Path.wildcard()
-             |> Enum.sort()
+  # Parallel measurement primitive lives in Argus.Autoresearch.Measure
+  # so the autoresearch loop and the harness share one subprocess-
+  # fanout implementation. Ebin discovery happens at runtime there
+  # via :code.get_path/0.
+  alias Argus.Autoresearch.Measure
 
   def run(args) do
     {opts, positional} = parse_opts(args)
@@ -304,41 +303,20 @@ defmodule Argus.Scripts.Harness do
   end
 
   defp run_analysis_subprocess(project_path, results_path, opts) do
-    script = Path.join(@argus_dir, "scripts/analyze_project.exs")
+    # Delegate to the shared Measure primitive so harness and the
+    # autoresearch loop use identical subprocess invocation logic.
+    case Measure.run_analysis_subprocess(project_path, results_path, opts.analyses) do
+      :ok ->
+        :ok
 
-    # Use `elixir` directly instead of `mix run` to avoid the Mix build lock.
-    # Each subprocess gets the compiled ebin paths via -pa flags.
-    pa_flags = Enum.flat_map(@ebin_dirs, fn dir -> ["-pa", dir] end)
+      {:error, {:no_output, error_log}} ->
+        {:error, "subprocess exited 0 but no results.json produced (see #{error_log})"}
 
-    # Can't combine -e with a script file — elixir treats everything after -e
-    # as argv. Instead, use a single -e that loads the app and requires the script,
-    # passing project args via --argv.
-    script_args = [project_path, "--json", results_path | opts.analyses]
+      {:error, {:exit_code, code, error_log}} ->
+        {:error, "analyze_project exited with code #{code} (see #{error_log})"}
 
-    boot_code =
-      "Application.load(:argus); System.argv(#{inspect(script_args)}); Code.require_file(#{inspect(script)})"
-
-    args = pa_flags ++ ["-e", boot_code]
-
-    # Stream output to a log file to avoid buffering in the parent process.
-    # Use File.stream! for raw bytes — IO.stream crashes on non-latin1 output.
-    error_log = Path.join(Path.dirname(results_path), "error.log")
-    File.write!(error_log, "")
-    log = File.stream!(error_log, [:append])
-
-    case System.cmd("elixir", args,
-           stderr_to_stdout: true,
-           into: log
-         ) do
-      {_, 0} ->
-        if File.exists?(results_path) do
-          :ok
-        else
-          {:error, "subprocess exited 0 but no results.json produced (see error.log)"}
-        end
-
-      {_, code} ->
-        {:error, "analyze_project exited with code #{code} (see error.log)"}
+      {:error, reason} ->
+        {:error, "analyze_project failed: #{inspect(reason)}"}
     end
   end
 
