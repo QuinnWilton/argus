@@ -358,11 +358,21 @@ defmodule Argus.Extractors.Supervision do
 
   # Child spec formats:
   # {Module, args} — shorthand
+  # {PartitionSupervisor, opts} — wrapper that replicates :child_spec across partitions
   # %{id: _, start: {Mod, :start_link, args}, restart: _, type: _} — full map
   # Module — bare module name (uses Module.child_spec/1)
   #
   # Keyword pairs like {:strategy, :one_for_one} also match {atom, value},
   # so we filter with module_name?/1 to reject non-module atoms.
+  defp extract_single_child_spec({PartitionSupervisor, opts}) when is_list(opts) do
+    # PartitionSupervisor is a wrapper — extract the underlying child_spec
+    # so analyses see the real worker module instead of PartitionSupervisor.
+    case Keyword.get(opts, :child_spec) do
+      nil -> [{PartitionSupervisor, :permanent, :supervisor}]
+      child_spec -> extract_single_child_spec(child_spec)
+    end
+  end
+
   defp extract_single_child_spec({mod, _args}) when is_atom(mod) do
     if module_name?(mod), do: [{mod, :permanent, :worker}], else: []
   end

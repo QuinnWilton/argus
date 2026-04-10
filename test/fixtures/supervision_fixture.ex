@@ -17,6 +17,25 @@ defmodule Argus.Test.Fixtures.GoodSupervisor do
   end
 end
 
+defmodule Argus.Test.Fixtures.PartitionSupervisorParent do
+  @moduledoc false
+  use Supervisor
+
+  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts) do
+    # PartitionSupervisor wraps the underlying child_spec across N partitions.
+    # The supervision extractor should pierce the wrapper and emit
+    # WorkerA as the supervised module.
+    children = [
+      {PartitionSupervisor, child_spec: Argus.Test.Fixtures.WorkerA, name: WorkerAPartition}
+    ]
+
+    Supervisor.init(children, strategy: :one_for_one)
+  end
+end
+
 defmodule Argus.Test.Fixtures.BadOrderSupervisor do
   @moduledoc false
   use Supervisor

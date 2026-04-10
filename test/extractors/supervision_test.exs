@@ -136,6 +136,28 @@ defmodule Argus.Extractors.SupervisionTest do
     end
   end
 
+  describe "extract/1 — PartitionSupervisor" do
+    test "pierces PartitionSupervisor wrapper to extract the underlying child" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(
+          to_string(:code.which(Argus.Test.Fixtures.PartitionSupervisorParent))
+        )
+
+      facts = Supervision.extract(data)
+      children = facts[:supervisor_child]
+
+      # The underlying WorkerA module should be the recorded child, not
+      # PartitionSupervisor itself.
+      assert Enum.any?(children, fn [_sup, _pos, child, _restart, _type] ->
+               child == "Argus.Test.Fixtures.WorkerA"
+             end)
+
+      refute Enum.any?(children, fn [_sup, _pos, child, _restart, _type] ->
+               child == "PartitionSupervisor"
+             end)
+    end
+  end
+
   describe "extract/1 — dynamic_child" do
     test "emits dynamic_child for DynamicSupervisor.start_child with bare module" do
       {:ok, data} =
