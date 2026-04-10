@@ -30,8 +30,11 @@ A rough, measurable goal. Example:
 
 ## Wins
 
+- 2026-04-10 — `ignored_result_unknown_api`: -4 (4→0, fully eliminated) via result_used? heuristic recognizing x0-consumed patterns (save-to-y, test, destructure, pass-forward). [commit da3102c]
 - 2026-04-10 — `ignored_result_unknown_api`: -18 (22→4) via tail-call detection in result_ignored? heuristic. Also eliminated 3 categories and reduced net imprecision by 48 (95→47). [commit 81655cf]
 
 ## Dead ends
 
 ## Parking lot
+
+- Measurement variance: consecutive measure runs can produce different counts (e.g. 47 vs 73 vs 146 for the same code). Root cause appears to be subprocess cold-start effects — counts stabilize after 1-2 runs. Consider adding a warm-up run or taking the median of N runs for reliable diffing.
