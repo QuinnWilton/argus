@@ -56,7 +56,7 @@ defmodule Mix.Tasks.Argus do
     if opts[:list] do
       print_analyses()
     else
-      unless Argus.Souffle.CLI.available?() do
+      unless Argus.Souffle.available?() do
         Mix.raise("souffle binary not found on PATH. Install Souffle to use Argus.")
       end
 

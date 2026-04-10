@@ -2,12 +2,12 @@ defmodule Argus.Clientlib.StatefulModuleDepRulesTest do
   use ExUnit.Case
 
   alias Argus.Extract
-  alias Argus.Souffle.CLI
+  alias Argus.Souffle
 
   @moduletag :tmp_dir
 
   defp skip_without_souffle do
-    unless CLI.available?(), do: flunk("souffle not installed")
+    unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
   defp priv_dl, do: Path.join(:code.priv_dir(:argus), "dl")
@@ -46,7 +46,7 @@ defmodule Argus.Clientlib.StatefulModuleDepRulesTest do
       rules_path = Path.join(tmp_dir, "test_stateful_dep.dl")
       File.write!(rules_path, rules)
 
-      assert {:ok, results} = CLI.run(facts_dir, rules_path)
+      assert {:ok, results} = Souffle.run(facts_dir, rules_path)
 
       assert Map.has_key?(results, "stateful_module_dep")
       deps = results["stateful_module_dep"]

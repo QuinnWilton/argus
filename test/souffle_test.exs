@@ -1,13 +1,13 @@
-defmodule Argus.Souffle.CLITest do
+defmodule Argus.SouffleTest do
   use ExUnit.Case, async: true
 
-  alias Argus.Souffle.CLI
+  alias Argus.Souffle
 
   @moduletag :tmp_dir
 
   # Skip all tests if souffle is not installed.
   setup do
-    unless CLI.available?() do
+    unless Souffle.available?() do
       ExUnit.configure(exclude: [tmp_dir: true])
     end
 
@@ -16,14 +16,14 @@ defmodule Argus.Souffle.CLITest do
 
   describe "available?/0" do
     test "returns a boolean" do
-      assert is_boolean(CLI.available?())
+      assert is_boolean(Souffle.available?())
     end
   end
 
   describe "run/3" do
     @tag :tmp_dir
     test "runs a trivial Datalog program", %{tmp_dir: tmp_dir} do
-      if not CLI.available?(), do: flunk("souffle not installed")
+      if not Souffle.available?(), do: flunk("souffle not installed")
 
       facts_dir = Path.join(tmp_dir, "facts")
       output_dir = Path.join(tmp_dir, "output")
@@ -47,7 +47,7 @@ defmodule Argus.Souffle.CLITest do
       path(x, z) :- path(x, y), edge(y, z).
       """)
 
-      assert {:ok, results} = CLI.run(facts_dir, rules_path, output_dir: output_dir)
+      assert {:ok, results} = Souffle.run(facts_dir, rules_path, output_dir: output_dir)
       assert Map.has_key?(results, "path")
 
       paths = results["path"]
@@ -60,7 +60,7 @@ defmodule Argus.Souffle.CLITest do
 
     @tag :tmp_dir
     test "returns error for invalid rules", %{tmp_dir: tmp_dir} do
-      if not CLI.available?(), do: flunk("souffle not installed")
+      if not Souffle.available?(), do: flunk("souffle not installed")
 
       facts_dir = Path.join(tmp_dir, "facts")
       rules_path = Path.join(tmp_dir, "bad.dl")
@@ -68,7 +68,7 @@ defmodule Argus.Souffle.CLITest do
       File.mkdir_p!(facts_dir)
       File.write!(rules_path, "this is not valid datalog!!!")
 
-      assert {:error, {:souffle_error, _, _}} = CLI.run(facts_dir, rules_path)
+      assert {:error, {:souffle_error, _, _}} = Souffle.run(facts_dir, rules_path)
     end
 
     @tag :tmp_dir
@@ -80,12 +80,12 @@ defmodule Argus.Souffle.CLITest do
       File.write!(rules_path, "")
 
       assert {:error, :souffle_not_found} =
-               CLI.run(facts_dir, rules_path, souffle_bin: nil)
+               Souffle.run(facts_dir, rules_path, souffle_bin: nil)
     end
 
     @tag :tmp_dir
     test "returns souffle_error when output_dir does not exist", %{tmp_dir: tmp_dir} do
-      if not CLI.available?(), do: flunk("souffle not installed")
+      if not Souffle.available?(), do: flunk("souffle not installed")
 
       facts_dir = Path.join(tmp_dir, "facts")
       rules_path = Path.join(tmp_dir, "rules.dl")
@@ -102,12 +102,12 @@ defmodule Argus.Souffle.CLITest do
       # resolve_output_dir only triggers for auto-generated temp dirs
       # (no explicit output_dir), which requires mocking System.tmp_dir.
       assert {:error, {:souffle_error, _, _}} =
-               CLI.run(facts_dir, rules_path, output_dir: "/dev/null/impossible")
+               Souffle.run(facts_dir, rules_path, output_dir: "/dev/null/impossible")
     end
 
     @tag :tmp_dir
     test "returns souffle_timeout when execution exceeds limit", %{tmp_dir: tmp_dir} do
-      if not CLI.available?(), do: flunk("souffle not installed")
+      if not Souffle.available?(), do: flunk("souffle not installed")
 
       facts_dir = Path.join(tmp_dir, "facts")
       output_dir = Path.join(tmp_dir, "output")
@@ -134,7 +134,7 @@ defmodule Argus.Souffle.CLITest do
 
       # 1ms timeout should be too short for transitive closure.
       assert {:error, :souffle_timeout} =
-               CLI.run(facts_dir, rules_path, output_dir: output_dir, souffle_timeout: 1)
+               Souffle.run(facts_dir, rules_path, output_dir: output_dir, souffle_timeout: 1)
     end
   end
 end

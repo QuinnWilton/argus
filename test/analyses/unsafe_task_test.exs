@@ -1,10 +1,10 @@
 defmodule Argus.Analyses.UnsafeTaskTest do
   use ExUnit.Case
 
-  alias Argus.Souffle.CLI
+  alias Argus.Souffle
 
   defp skip_without_souffle do
-    unless CLI.available?(), do: flunk("souffle not installed")
+    unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
   describe "unsafe_task.dl" do

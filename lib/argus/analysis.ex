@@ -49,7 +49,7 @@ defmodule Argus.Analysis do
   """
 
   alias Argus.Extract
-  alias Argus.Souffle.CLI
+  alias Argus.Souffle
 
   # Behaviour callbacks.
 
@@ -92,7 +92,7 @@ defmodule Argus.Analysis do
          {:ok, work_dir} <- create_work_dir(),
          facts_dir = Path.join(work_dir, "facts"),
          {:ok, _} <- Extract.run(modules, facts_dir, opts),
-         {:ok, results} <- CLI.run(facts_dir, rules_path, opts) do
+         {:ok, results} <- Souffle.run(facts_dir, rules_path, opts) do
       {:ok, results}
     end
   end

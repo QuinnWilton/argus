@@ -2,7 +2,7 @@ defmodule Argus.AnalysisTest do
   use ExUnit.Case
 
   alias Argus.Analysis
-  alias Argus.Souffle.CLI
+  alias Argus.Souffle
 
   @expected_analyses [
     :atom_safety,
@@ -22,7 +22,7 @@ defmodule Argus.AnalysisTest do
   ]
 
   defp skip_without_souffle do
-    unless CLI.available?(), do: flunk("souffle not installed")
+    unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
   # -- Discovery ---------------------------------------------------------------

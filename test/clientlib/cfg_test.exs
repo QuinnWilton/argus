@@ -2,12 +2,12 @@ defmodule Argus.Clientlib.CfgTest do
   use ExUnit.Case
 
   alias Argus.Extract
-  alias Argus.Souffle.CLI
+  alias Argus.Souffle
 
   @moduletag :tmp_dir
 
   defp skip_without_souffle do
-    unless CLI.available?(), do: flunk("souffle not installed")
+    unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
   defp clientlib_path(name), do: Path.join(:code.priv_dir(:argus), "dl/clientlib/#{name}")
@@ -22,7 +22,7 @@ defmodule Argus.Clientlib.CfgTest do
 
       # cfg.dl already declares .output cfg_edge, so we can include it directly.
       rules_path = clientlib_path("cfg.dl")
-      assert {:ok, results} = CLI.run(facts_dir, rules_path)
+      assert {:ok, results} = Souffle.run(facts_dir, rules_path)
 
       assert Map.has_key?(results, "cfg_edge")
       edges = results["cfg_edge"]
