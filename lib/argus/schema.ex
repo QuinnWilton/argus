@@ -498,6 +498,22 @@ defmodule Argus.Schema do
     doc: "GenServer.call timeout value at call site."
   }
 
+  @sync_call_via %{
+    name: :sync_call_via,
+    layer: 2,
+    fields: [
+      {:caller_func, :symbol, "calling function ID"},
+      {:registry, :symbol, "registry module from the {:via, _, _} tuple"},
+      {:key, :symbol, "registry key (e.g. :worker_a or a module atom)"}
+    ],
+    doc: """
+    Sync call whose target was constructed as a `{:via, Registry, {reg, key}}` \
+    tuple — the OTP extractor can't reduce this to a single callee module \
+    without consulting the registry, so it emits the via shape and lets \
+    Datalog rules cross-reference with `process_register` / `via_tuple` facts.
+    """
+  }
+
   # Layer 2: ETS extractor facts.
 
   @ets_new %{
@@ -806,6 +822,7 @@ defmodule Argus.Schema do
     @sync_call,
     @async_cast,
     @sync_call_timeout,
+    @sync_call_via,
     @ets_new,
     @ets_option,
     @ets_op,

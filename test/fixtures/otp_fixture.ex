@@ -62,3 +62,18 @@ defmodule Argus.Test.Fixtures.ExplicitTimeoutCaller do
   def call_with_infinity(server), do: GenServer.call(server, :ping, :infinity)
   def erlang_call_with_timeout(server), do: :gen_server.call(server, :ping, 15_000)
 end
+
+defmodule Argus.Test.Fixtures.ViaTupleCaller do
+  @moduledoc false
+
+  # Calls through a literal {:via, Registry, _} tuple. The OTP extractor
+  # should resolve x0 to the via shape and emit a sync_call_via fact for
+  # the registry/key pair, alongside the regular sync_call.
+  def get(key) do
+    GenServer.call({:via, Registry, {MyApp.Registry, key}}, :get)
+  end
+
+  def cast_to(key, msg) do
+    GenServer.cast({:via, Registry, {MyApp.Registry, key}}, msg)
+  end
+end

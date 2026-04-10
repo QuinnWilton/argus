@@ -210,6 +210,42 @@ defmodule Argus.Extractors.OTPTest do
 
   end
 
+  describe "extract/1 — :via tuple resolution" do
+    test "emits sync_call_via with the registry instance for {:via, _, _} target" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(
+          to_string(:code.which(Argus.Test.Fixtures.ViaTupleCaller))
+        )
+
+      facts = OTP.extract(data)
+
+      assert Map.has_key?(facts, :sync_call_via)
+      via_calls = facts[:sync_call_via]
+
+      # ViaTupleCaller.get/1 builds {:via, Registry, {MyApp.Registry, key}}.
+      # The third element's first component (MyApp.Registry) is the named
+      # registry process that owns the key.
+      assert Enum.any?(via_calls, fn [_caller_func, registry, _key] ->
+               registry == "MyApp.Registry"
+             end)
+    end
+
+    test "still emits sync_call with a synthetic via:<RegistryInstance> callee tag" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(
+          to_string(:code.which(Argus.Test.Fixtures.ViaTupleCaller))
+        )
+
+      facts = OTP.extract(data)
+
+      sync_calls = facts[:sync_call]
+
+      assert Enum.any?(sync_calls, fn [_caller, callee] ->
+               callee == "via:MyApp.Registry"
+             end)
+    end
+  end
+
   describe "integration with extract pipeline" do
     test "extractor is usable via Pipeline.extract/2" do
       assert {:ok, facts} =
