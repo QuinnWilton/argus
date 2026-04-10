@@ -161,9 +161,7 @@ defmodule Argus.Extractors.SupervisionTest do
   describe "extract/1 — dynamic_child" do
     test "emits dynamic_child for DynamicSupervisor.start_child with bare module" do
       {:ok, data} =
-        BeamSpy.BeamFile.disassemble(
-          to_string(:code.which(Argus.Test.Fixtures.DynSupSpawner))
-        )
+        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.DynSupSpawner)))
 
       facts = Supervision.extract(data)
 
@@ -177,9 +175,7 @@ defmodule Argus.Extractors.SupervisionTest do
 
     test "emits dynamic_child for DynamicSupervisor.start_child with {Module, args} tuple" do
       {:ok, data} =
-        BeamSpy.BeamFile.disassemble(
-          to_string(:code.which(Argus.Test.Fixtures.DynSupSpawner))
-        )
+        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.DynSupSpawner)))
 
       facts = Supervision.extract(data)
       rows = facts[:dynamic_child]

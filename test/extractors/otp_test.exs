@@ -207,7 +207,6 @@ defmodule Argus.Extractors.OTPTest do
       links = facts[:process_link]
       assert length(links) >= 2
     end
-
   end
 
   describe "extract/1 — deferred_reply" do
@@ -324,9 +323,7 @@ defmodule Argus.Extractors.OTPTest do
   describe "extract/1 — :via tuple resolution" do
     test "emits sync_call_via with the registry instance for {:via, _, _} target" do
       {:ok, data} =
-        BeamSpy.BeamFile.disassemble(
-          to_string(:code.which(Argus.Test.Fixtures.ViaTupleCaller))
-        )
+        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.ViaTupleCaller)))
 
       facts = OTP.extract(data)
 
@@ -343,9 +340,7 @@ defmodule Argus.Extractors.OTPTest do
 
     test "still emits sync_call with a synthetic via:<RegistryInstance> callee tag" do
       {:ok, data} =
-        BeamSpy.BeamFile.disassemble(
-          to_string(:code.which(Argus.Test.Fixtures.ViaTupleCaller))
-        )
+        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.ViaTupleCaller)))
 
       facts = OTP.extract(data)
 

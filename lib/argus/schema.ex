@@ -898,7 +898,8 @@ defmodule Argus.Schema do
     name: :imprecision,
     layer: 2,
     fields: [
-      {:category, :symbol, "what we were trying to resolve (e.g. genserver_callee, ets_table_name)"},
+      {:category, :symbol,
+       "what we were trying to resolve (e.g. genserver_callee, ets_table_name)"},
       {:func, :symbol, "function ID where the fallback occurred"},
       {:relation, :symbol, "the fact relation that received the dynamic placeholder"},
       {:reason, :symbol, "why imprecision: dynamic | unresolvable | skipped | missing"}

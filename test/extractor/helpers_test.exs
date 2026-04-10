@@ -78,7 +78,8 @@ defmodule Argus.Extractor.HelpersTest do
     test "track_imprecision uses the explicit reason argument" do
       Helpers.enable_tracing()
 
-      result = Helpers.track_imprecision(%{}, @ctx, :supervisor_child, :supervisor_child, :skipped)
+      result =
+        Helpers.track_imprecision(%{}, @ctx, :supervisor_child, :supervisor_child, :skipped)
 
       assert result == %{
                imprecision: [
