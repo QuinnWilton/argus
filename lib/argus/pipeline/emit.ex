@@ -175,10 +175,16 @@ defmodule Argus.Pipeline.Emit do
   end
 
   # Get tuple element.
-  defp emit_specific(facts, id, {:get_tuple_element, src, _index, dst}) do
+  defp emit_specific(facts, id, {:get_tuple_element, src, index, dst}) do
     facts
     |> add_fact(:use, [id, format_operand(src)])
     |> add_fact(:def, [id, format_operand(dst)])
+    |> add_fact(:tuple_field_access, [
+      id,
+      format_operand(src),
+      to_string(index),
+      format_operand(dst)
+    ])
   end
 
   # Get map elements.
@@ -277,9 +283,11 @@ defmodule Argus.Pipeline.Emit do
   end
 
   # Test instructions (conditional branches).
-  defp emit_specific(facts, id, {:test, _test_name, {:f, fail}, args}) when is_list(args) do
-    facts = add_fact(facts, :branch, [id, to_string(fail), "0"])
-    emit_operand_uses(facts, id, args)
+  defp emit_specific(facts, id, {:test, test_name, {:f, fail}, args}) when is_list(args) do
+    facts
+    |> add_fact(:branch, [id, to_string(fail), "0"])
+    |> maybe_emit_type_test(id, test_name, args, fail)
+    |> emit_operand_uses(id, args)
   end
 
   # 5-element test form: {:test, name, fail, src_reg, {:list, fields}} (e.g. has_map_fields).
@@ -290,10 +298,12 @@ defmodule Argus.Pipeline.Emit do
   end
 
   # 5-element test form with live count: {:test, name, fail, live, args}.
-  defp emit_specific(facts, id, {:test, _test_name, {:f, fail}, _live, args})
+  defp emit_specific(facts, id, {:test, test_name, {:f, fail}, _live, args})
        when is_list(args) do
-    facts = add_fact(facts, :branch, [id, to_string(fail), "0"])
-    emit_operand_uses(facts, id, args)
+    facts
+    |> add_fact(:branch, [id, to_string(fail), "0"])
+    |> maybe_emit_type_test(id, test_name, args, fail)
+    |> emit_operand_uses(id, args)
   end
 
   # 6-element test form: {:test, name, fail, live, args, dst} (e.g. bs_start_match3, bs_get_binary2).
@@ -659,11 +669,13 @@ defmodule Argus.Pipeline.Emit do
   defp emit_specific(facts, _id, {:on_load, _}), do: facts
   defp emit_specific(facts, _id, :nif_start), do: facts
 
-  # Catch-all for unhandled instructions — emit no additional facts
-  # beyond the base instruction record.
-  defp emit_specific(facts, _id, instr) do
-    Logger.debug("Emitter: unhandled instruction opcode: #{instruction_op(instr)}")
-    facts
+  # Catch-all for unhandled instructions — log at debug level and record
+  # an `unhandled_op` fact so we can audit production runs to find
+  # opcodes the emitter is silently dropping (e.g. pre-OTP-24 shapes).
+  defp emit_specific(facts, id, instr) do
+    op = instruction_op(instr)
+    Logger.debug("Emitter: unhandled instruction opcode: #{op}")
+    add_fact(facts, :unhandled_op, [id, to_string(op)])
   end
 
   # ── Helpers ────────────────────────────────────────────────────────
@@ -676,6 +688,26 @@ defmodule Argus.Pipeline.Emit do
   defp parent_func_id(instruction_id) do
     instruction_id |> String.split("#", parts: 2) |> hd()
   end
+
+  # Unary type-test instructions narrow the type of a register on the success
+  # edge. Capture the test name (which the generic `branch` fact discards)
+  # so downstream analyses can reason about which register is what type.
+  @type_test_names ~w(
+    is_atom is_binary is_bitstring is_boolean is_float is_function is_integer
+    is_list is_map is_nil is_number is_pid is_port is_reference is_tuple
+  )a
+
+  defp maybe_emit_type_test(facts, id, test_name, [reg | _], fail)
+       when test_name in @type_test_names do
+    add_fact(facts, :type_test, [
+      id,
+      to_string(test_name),
+      format_operand(reg),
+      to_string(fail)
+    ])
+  end
+
+  defp maybe_emit_type_test(facts, _id, _test_name, _args, _fail), do: facts
 
   defp format_operand({:x, n}), do: "x#{n}"
   defp format_operand({:y, n}), do: "y#{n}"

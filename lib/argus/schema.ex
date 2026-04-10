@@ -342,6 +342,54 @@ defmodule Argus.Schema do
     """
   }
 
+  @tuple_field_access %{
+    name: :tuple_field_access,
+    layer: 1,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:src, :symbol, "source tuple register"},
+      {:idx, :number, "extracted field index (0-based)"},
+      {:dst, :symbol, "destination register holding the extracted field"}
+    ],
+    doc: """
+    Records the index of a `get_tuple_element` extraction. Lets analyses \
+    that follow pattern-matched destructuring (e.g. `{:ok, val} = call()`) \
+    know which field of the source tuple was placed in the destination.
+    """
+  }
+
+  @type_test %{
+    name: :type_test,
+    layer: 1,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:test, :symbol, "type test name (is_integer, is_atom, is_tuple, ...)"},
+      {:src, :symbol, "register being type-tested"},
+      {:fail, :number, "fail label if the test does not hold (0 = fallthrough)"}
+    ],
+    doc: """
+    Unary type-test instructions emitted by the compiler for guard \
+    narrowing. Captures the test name (which the generic `branch` fact \
+    discards) so type-narrowing dataflow analyses can reason about which \
+    register has which inferred type on the success edge.
+    """
+  }
+
+  @unhandled_op %{
+    name: :unhandled_op,
+    layer: 1,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:op, :symbol, "BEAM opcode name that the emitter did not specialize"}
+    ],
+    doc: """
+    Records every instruction that fell through to the catch-all clause in \
+    `Argus.Pipeline.Emit`. Used for offline auditing — running this against \
+    a real corpus surfaces opcodes Argus is silently dropping (e.g. \
+    pre-OTP-24 instruction shapes still emitted by older compilers).
+    """
+  }
+
   @bs_start %{
     name: :bs_start,
     layer: 1,
@@ -752,6 +800,9 @@ defmodule Argus.Schema do
     @try_end,
     @make_fun,
     @closure_def,
+    @tuple_field_access,
+    @type_test,
+    @unhandled_op,
     @bs_start,
     @line_info
   ]

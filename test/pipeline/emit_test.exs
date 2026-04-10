@@ -254,6 +254,73 @@ defmodule Argus.Pipeline.EmitTest do
       assert [[_id, target, "1"]] = fun_facts
       assert target == "MyMod:-fun/1-/2"
     end
+
+    test "emits closure_def edge from parent func to closure body for MFA target" do
+      facts =
+        emit_func(
+          [{:make_fun3, {TestMod, :"-test_func/0-fun-0-", 1}, 0, 0, {:x, 0}, {:list, []}}],
+          name: :test_func,
+          arity: 0
+        )
+
+      assert [[parent, closure]] = facts[:closure_def]
+      assert parent == "TestMod:test_func/0"
+      assert closure == "TestMod:-test_func/0-fun-0-/1"
+    end
+
+    test "does not emit closure_def for label-targeted make_fun3" do
+      facts = emit_func([{:make_fun3, {:f, 15}, 0, 0, {:x, 0}, {:list, []}}])
+      assert facts[:closure_def] == nil
+    end
+  end
+
+  describe "tuple_field_access facts" do
+    test "records the index of get_tuple_element" do
+      facts = emit_func([{:get_tuple_element, {:x, 0}, 1, {:x, 2}}])
+      assert [[_id, "x0", "1", "x2"]] = facts[:tuple_field_access]
+    end
+
+    test "still emits use and def for the source and destination" do
+      facts = emit_func([{:get_tuple_element, {:x, 0}, 1, {:x, 2}}])
+      assert Enum.any?(facts[:use], fn [_, reg] -> reg == "x0" end)
+      assert Enum.any?(facts[:def], fn [_, reg] -> reg == "x2" end)
+    end
+  end
+
+  describe "type_test facts" do
+    test "emits type_test for is_atom against the source register" do
+      facts = emit_func([{:test, :is_atom, {:f, 3}, [{:x, 0}]}])
+      assert [[_id, "is_atom", "x0", "3"]] = facts[:type_test]
+    end
+
+    test "emits type_test for is_integer in the live-count form" do
+      facts = emit_func([{:test, :is_integer, {:f, 4}, 1, [{:x, 1}]}])
+      assert [[_id, "is_integer", "x1", "4"]] = facts[:type_test]
+    end
+
+    test "does not emit type_test for non-type tests like is_eq_exact" do
+      facts = emit_func([{:test, :is_eq_exact, {:f, 5}, [{:x, 0}, {:atom, :ok}]}])
+      assert facts[:type_test] == nil
+    end
+
+    test "still emits the generic branch fact alongside type_test" do
+      facts = emit_func([{:test, :is_tuple, {:f, 6}, [{:x, 0}]}])
+      assert [[_id, "6", "0"]] = facts[:branch]
+      assert [[_id2, "is_tuple", "x0", "6"]] = facts[:type_test]
+    end
+  end
+
+  describe "unhandled_op facts" do
+    test "records opcodes that fall through to the catch-all" do
+      # Use an instruction shape that no clause matches.
+      facts = emit_func([{:totally_made_up_opcode, :foo, :bar}])
+      assert [[_id, "totally_made_up_opcode"]] = facts[:unhandled_op]
+    end
+
+    test "does not emit unhandled_op for known opcodes" do
+      facts = emit_func([{:move, {:atom, :ok}, {:x, 0}}])
+      assert facts[:unhandled_op] == nil
+    end
   end
 
   describe "line_info facts" do
