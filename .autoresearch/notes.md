@@ -30,6 +30,7 @@ A rough, measurable goal. Example:
 
 ## Wins
 
+- 2026-04-10 — `gen_server_start_name`: -5 (5→0, fully eliminated) via tail-call suppression in maybe_named_start/maybe_named_start_erlang. [commit 0b0b6b7]
 - 2026-04-10 — `ignored_result_unknown_api`: -4 (4→0, fully eliminated) via result_used? heuristic recognizing x0-consumed patterns (save-to-y, test, destructure, pass-forward). [commit da3102c]
 - 2026-04-10 — `ignored_result_unknown_api`: -18 (22→4) via tail-call detection in result_ignored? heuristic. Also eliminated 3 categories and reduced net imprecision by 48 (95→47). [commit 81655cf]
 
