@@ -2,7 +2,7 @@ defmodule Argus.PropertyTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
 
-  alias Argus.Normalize
+  alias Argus.Pipeline.Normalize
   alias Argus.Extractor.Helpers
 
   # ── Generators ──────────────────────────────────────────────────────

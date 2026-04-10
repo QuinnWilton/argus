@@ -35,7 +35,7 @@ defmodule Argus.Extractors.Supervision do
     ]
 
   @impl true
-  @spec extract(Argus.Extractor.module_data()) :: Argus.Emitter.facts()
+  @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     mod = module_data.module
     mod_str = inspect(mod)

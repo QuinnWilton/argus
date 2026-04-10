@@ -137,9 +137,9 @@ defmodule Argus.Extractors.SupervisionTest do
   end
 
   describe "integration with extract pipeline" do
-    test "extractor is usable via Extract.extract/2" do
+    test "extractor is usable via Pipeline.extract/2" do
       assert {:ok, facts} =
-               Argus.Extract.extract(
+               Argus.Pipeline.extract(
                  [Argus.Test.Fixtures.GoodSupervisor],
                  extractors: [Supervision]
                )

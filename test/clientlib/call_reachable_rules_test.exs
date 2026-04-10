@@ -1,7 +1,7 @@
 defmodule Argus.Clientlib.CallReachableRulesTest do
   use ExUnit.Case
 
-  alias Argus.Extract
+  alias Argus.Pipeline
   alias Argus.Souffle
 
   @moduletag :tmp_dir
@@ -18,7 +18,7 @@ defmodule Argus.Clientlib.CallReachableRulesTest do
       skip_without_souffle()
 
       facts_dir = Path.join(tmp_dir, "facts")
-      {:ok, _} = Extract.run([Enum, :lists], facts_dir)
+      {:ok, _} = Pipeline.run([Enum, :lists], facts_dir)
 
       # Use imports.dl which bundles cfg + callgraph + call_reachable.
       rules = """

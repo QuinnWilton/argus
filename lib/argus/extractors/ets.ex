@@ -26,7 +26,7 @@ defmodule Argus.Extractors.ETS do
                 update_counter select_delete select_replace give_away rename setopts)a
 
   @impl true
-  @spec extract(Argus.Extractor.module_data()) :: Argus.Emitter.facts()
+  @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     scan_remote_calls(module_data.module, module_data.functions, &handle_call/3)
   end

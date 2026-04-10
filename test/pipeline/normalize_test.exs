@@ -1,7 +1,7 @@
-defmodule Argus.NormalizeTest do
+defmodule Argus.Pipeline.NormalizeTest do
   use ExUnit.Case, async: true
 
-  alias Argus.Normalize
+  alias Argus.Pipeline.Normalize
 
   describe "func_id/3" do
     test "formats Elixir module" do

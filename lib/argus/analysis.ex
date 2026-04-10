@@ -48,7 +48,7 @@ defmodule Argus.Analysis do
   at runtime.
   """
 
-  alias Argus.Extract
+  alias Argus.Pipeline
   alias Argus.Souffle
 
   # Behaviour callbacks.
@@ -91,7 +91,7 @@ defmodule Argus.Analysis do
     with {:ok, rules_path} <- resolve_rules(analysis),
          {:ok, work_dir} <- create_work_dir(),
          facts_dir = Path.join(work_dir, "facts"),
-         {:ok, _} <- Extract.run(modules, facts_dir, opts),
+         {:ok, _} <- Pipeline.run(modules, facts_dir, opts),
          {:ok, results} <- Souffle.run(facts_dir, rules_path, opts) do
       {:ok, results}
     end

@@ -1,7 +1,7 @@
-defmodule Argus.EmitterTest do
+defmodule Argus.Pipeline.EmitTest do
   use ExUnit.Case, async: true
 
-  alias Argus.Emitter
+  alias Argus.Pipeline.Emit
 
   # Helper to emit facts for a single function in a minimal module.
   defp emit_func(instructions, opts \\ []) do
@@ -11,7 +11,7 @@ defmodule Argus.EmitterTest do
     entry = Keyword.get(opts, :entry, 1)
     exports = Keyword.get(opts, :exports, [{name, arity, entry}])
 
-    Emitter.emit_module(
+    Emit.emit_module(
       mod,
       exports,
       [],
@@ -22,7 +22,7 @@ defmodule Argus.EmitterTest do
 
   describe "module-level facts" do
     test "emits module_info" do
-      facts = Emitter.emit_module(MyMod, [], [], [], [])
+      facts = Emit.emit_module(MyMod, [], [], [], [])
       assert [["MyMod", "MyMod"]] = facts[:module_info]
     end
 
@@ -36,7 +36,7 @@ defmodule Argus.EmitterTest do
 
     test "marks non-exported functions" do
       facts =
-        Emitter.emit_module(
+        Emit.emit_module(
           MyMod,
           [{:public_fn, 0, 1}],
           [],
@@ -56,12 +56,12 @@ defmodule Argus.EmitterTest do
     end
 
     test "emits import_ref" do
-      facts = Emitter.emit_module(MyMod, [], [{:erlang, :+, 2}], [], [])
+      facts = Emit.emit_module(MyMod, [], [{:erlang, :+, 2}], [], [])
       assert [[":erlang", "+", "2"]] = facts[:import_ref]
     end
 
     test "emits module_attribute" do
-      facts = Emitter.emit_module(MyMod, [], [], [behaviour: [GenServer]], [])
+      facts = Emit.emit_module(MyMod, [], [], [behaviour: [GenServer]], [])
       assert [[_, "behaviour", "GenServer"]] = facts[:module_attribute]
     end
   end
@@ -349,7 +349,7 @@ defmodule Argus.EmitterTest do
       {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(:lists)))
 
       facts =
-        Emitter.emit_module(
+        Emit.emit_module(
           data.module,
           data.exports,
           [],
@@ -366,7 +366,7 @@ defmodule Argus.EmitterTest do
       {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(Enum)))
 
       facts =
-        Emitter.emit_module(
+        Emit.emit_module(
           data.module,
           data.exports,
           [],
@@ -383,7 +383,7 @@ defmodule Argus.EmitterTest do
       {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(GenServer)))
 
       facts =
-        Emitter.emit_module(
+        Emit.emit_module(
           data.module,
           data.exports,
           [],

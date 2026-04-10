@@ -1,7 +1,7 @@
 defmodule Argus.Clientlib.StatefulModuleDepRulesTest do
   use ExUnit.Case
 
-  alias Argus.Extract
+  alias Argus.Pipeline
   alias Argus.Souffle
 
   @moduletag :tmp_dir
@@ -24,7 +24,7 @@ defmodule Argus.Clientlib.StatefulModuleDepRulesTest do
         Argus.Test.Fixtures.CycleServerB
       ]
 
-      {:ok, _} = Extract.run(modules, facts_dir, extractors: [Argus.Extractors.OTP])
+      {:ok, _} = Pipeline.run(modules, facts_dir, extractors: [Argus.Extractors.OTP])
 
       rules = """
       .include "#{Path.join(priv_dl(), "clientlib/imports.dl")}"

@@ -1,10 +1,10 @@
-defmodule Argus.Emitter do
+defmodule Argus.Pipeline.Emit do
   @moduledoc """
-  Transforms normalized BEAM instructions into fact tuples.
+  Transforms normalized BEAM instructions into Layer 1 fact tuples.
 
-  Takes the output of `Argus.Normalize` (a list of `{id, instruction}` pairs)
-  and produces fact tuples grouped by relation name. Each fact tuple is a list
-  of values matching the field order defined in `Argus.Schema`.
+  Takes the output of `Argus.Pipeline.Normalize` (a list of `{id, instruction}`
+  pairs) and produces fact tuples grouped by relation name. Each fact tuple is
+  a list of values matching the field order defined in `Argus.Schema`.
 
   ## Fact format
 
@@ -14,7 +14,7 @@ defmodule Argus.Emitter do
 
   require Logger
 
-  alias Argus.Normalize
+  alias Argus.Pipeline.Normalize
 
   import Argus.Extractor.Helpers, only: [add_fact: 3]
 

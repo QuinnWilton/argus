@@ -1,7 +1,7 @@
 defmodule Argus.Clientlib.InitFunctionRulesTest do
   use ExUnit.Case
 
-  alias Argus.Extract
+  alias Argus.Pipeline
   alias Argus.Souffle
 
   @moduletag :tmp_dir
@@ -20,7 +20,7 @@ defmodule Argus.Clientlib.InitFunctionRulesTest do
       facts_dir = Path.join(tmp_dir, "facts")
 
       {:ok, _} =
-        Extract.run(
+        Pipeline.run(
           [Argus.Test.Fixtures.MyGenServer],
           facts_dir,
           extractors: [Argus.Extractors.OTP]
@@ -60,7 +60,7 @@ defmodule Argus.Clientlib.InitFunctionRulesTest do
 
       facts_dir = Path.join(tmp_dir, "facts")
 
-      {:ok, _} = Extract.run([:maps], facts_dir, extractors: [Argus.Extractors.OTP])
+      {:ok, _} = Pipeline.run([:maps], facts_dir, extractors: [Argus.Extractors.OTP])
 
       rules = """
       .include "#{Path.join(priv_dl(), "base.dl")}"

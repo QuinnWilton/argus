@@ -1,7 +1,7 @@
 defmodule Argus.Clientlib.GenserverApiRulesTest do
   use ExUnit.Case
 
-  alias Argus.Extract
+  alias Argus.Pipeline
   alias Argus.Souffle
 
   @moduletag :tmp_dir
@@ -20,7 +20,7 @@ defmodule Argus.Clientlib.GenserverApiRulesTest do
       facts_dir = Path.join(tmp_dir, "facts")
 
       {:ok, _} =
-        Extract.run([Argus.Test.Fixtures.MyGenServer], facts_dir,
+        Pipeline.run([Argus.Test.Fixtures.MyGenServer], facts_dir,
           extractors: [Argus.Extractors.OTP]
         )
 

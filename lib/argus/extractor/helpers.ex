@@ -17,7 +17,7 @@ defmodule Argus.Extractor.Helpers do
   - **`find_function/3`** — look up a function's instructions by name and arity
   """
 
-  alias Argus.Normalize
+  alias Argus.Pipeline.Normalize
 
   @type register :: {:x, non_neg_integer()} | {:y, non_neg_integer()}
 
@@ -36,7 +36,7 @@ defmodule Argus.Extractor.Helpers do
   @doc """
   Append a row to the given relation in a facts map.
   """
-  @spec add_fact(Argus.Emitter.facts(), atom(), [String.t()]) :: Argus.Emitter.facts()
+  @spec add_fact(Argus.Pipeline.Emit.facts(), atom(), [String.t()]) :: Argus.Pipeline.Emit.facts()
   def add_fact(facts, relation, row) do
     Map.update(facts, relation, [row], &[row | &1])
   end
@@ -55,9 +55,9 @@ defmodule Argus.Extractor.Helpers do
   @spec scan_functions(
           module(),
           [tuple()],
-          Argus.Emitter.facts(),
-          (Argus.Emitter.facts(), instr_ctx(), tuple() -> Argus.Emitter.facts())
-        ) :: Argus.Emitter.facts()
+          Argus.Pipeline.Emit.facts(),
+          (Argus.Pipeline.Emit.facts(), instr_ctx(), tuple() -> Argus.Pipeline.Emit.facts())
+        ) :: Argus.Pipeline.Emit.facts()
   def scan_functions(mod, functions, facts \\ %{}, handler) do
     Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
       func_id = Normalize.func_id(mod, name, arity)
@@ -78,10 +78,10 @@ defmodule Argus.Extractor.Helpers do
   @spec scan_remote_calls(
           module(),
           [tuple()],
-          Argus.Emitter.facts(),
-          (Argus.Emitter.facts(), instr_ctx(), {module(), atom(), arity()} ->
-             Argus.Emitter.facts())
-        ) :: Argus.Emitter.facts()
+          Argus.Pipeline.Emit.facts(),
+          (Argus.Pipeline.Emit.facts(), instr_ctx(), {module(), atom(), arity()} ->
+             Argus.Pipeline.Emit.facts())
+        ) :: Argus.Pipeline.Emit.facts()
   def scan_remote_calls(mod, functions, facts \\ %{}, handler) do
     scan_functions(mod, functions, facts, fn inner, ctx, instr ->
       case match_remote_call(instr) do

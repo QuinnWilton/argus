@@ -18,7 +18,7 @@ defmodule Argus.Extractor do
         end
       end
 
-  Pass extractors via the `:extractors` option to `Argus.Extract.run/3`
+  Pass extractors via the `:extractors` option to `Argus.Pipeline.run/3`
   or `Argus.analyze/3`.
   """
 
@@ -30,5 +30,5 @@ defmodule Argus.Extractor do
           functions: list()
         }
 
-  @callback extract(module_data()) :: Argus.Emitter.facts()
+  @callback extract(module_data()) :: Argus.Pipeline.Emit.facts()
 end

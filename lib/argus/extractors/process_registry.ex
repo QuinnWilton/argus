@@ -39,7 +39,7 @@ defmodule Argus.Extractors.ProcessRegistry do
   ]
 
   @impl true
-  @spec extract(Argus.Extractor.module_data()) :: Argus.Emitter.facts()
+  @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     scan_functions(module_data.module, module_data.functions, %{}, fn facts, ctx, instr ->
       facts

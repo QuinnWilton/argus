@@ -35,7 +35,7 @@ defmodule Argus.Extractors.GenStatem do
       scan_return_tuples: 1
     ]
 
-  alias Argus.Normalize
+  alias Argus.Pipeline.Normalize
 
   # Standard gen_statem callbacks that are not state functions.
   @non_state_callbacks MapSet.new([
@@ -100,7 +100,7 @@ defmodule Argus.Extractors.GenStatem do
                    ])
 
   @impl true
-  @spec extract(Argus.Extractor.module_data()) :: Argus.Emitter.facts()
+  @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     mod = module_data.module
     attrs = module_data.attributes

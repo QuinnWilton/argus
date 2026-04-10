@@ -1,7 +1,7 @@
 defmodule Argus.Clientlib.SupervisionTest do
   use ExUnit.Case
 
-  alias Argus.Extract
+  alias Argus.Pipeline
   alias Argus.Souffle
 
   @moduletag :tmp_dir
@@ -26,7 +26,7 @@ defmodule Argus.Clientlib.SupervisionTest do
       ]
 
       {:ok, _} =
-        Extract.run(modules, facts_dir,
+        Pipeline.run(modules, facts_dir,
           extractors: [Argus.Extractors.OTP, Argus.Extractors.Supervision]
         )
 

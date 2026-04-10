@@ -1,7 +1,7 @@
 defmodule Argus.Clientlib.CallgraphRulesTest do
   use ExUnit.Case
 
-  alias Argus.Extract
+  alias Argus.Pipeline
   alias Argus.Souffle
 
   @moduletag :tmp_dir
@@ -18,7 +18,7 @@ defmodule Argus.Clientlib.CallgraphRulesTest do
       skip_without_souffle()
 
       facts_dir = Path.join(tmp_dir, "facts")
-      {:ok, _} = Extract.run([Enum], facts_dir)
+      {:ok, _} = Pipeline.run([Enum], facts_dir)
 
       # Write a custom .dl that includes the clientlib and outputs call_edge.
       rules = """

@@ -1,10 +1,10 @@
-defmodule Argus.Normalize do
+defmodule Argus.Pipeline.Normalize do
   @moduledoc """
   Thin normalization pass over disassembled BEAM instructions.
 
   Assigns globally-unique instruction IDs, canonicalizes allocation variants,
   and strips typed register annotations. The goal is to simplify downstream
-  pattern matching in the emitter without losing information.
+  pattern matching in `Argus.Pipeline.Emit` without losing information.
 
   ## Instruction ID format
 

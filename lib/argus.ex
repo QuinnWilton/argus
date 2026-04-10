@@ -9,11 +9,11 @@ defmodule Argus do
 
   ## Quick start
 
-      # Analyze a single module's control flow graph.
-      Argus.analyze([:lists], :cfg)
+      # Detect supervision-tree anti-patterns in a project.
+      Argus.analyze([MyApp.Supervisor, MyApp.Worker], :supervision)
 
-      # Analyze call graph across modules.
-      Argus.analyze([Enum, :lists], :callgraph)
+      # Find ETS tables created without heir protection.
+      Argus.analyze([MyApp.Cache], :ets)
 
       # Run custom Datalog rules.
       Argus.analyze([MyApp.Worker], {:custom, "path/to/rules.dl"})

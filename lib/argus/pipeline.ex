@@ -1,13 +1,21 @@
-defmodule Argus.Extract do
+defmodule Argus.Pipeline do
   @moduledoc """
   Orchestrates parallel fact extraction from BEAM modules.
 
-  Resolves modules to `.beam` file paths, disassembles them in parallel,
-  runs normalization and emission per module, then merges all per-module
-  facts into unified `.facts` files (tab-separated, one file per relation).
+  The pipeline runs in stages:
+
+      modules → Disassemble → Emit (Layer 1) + Extractors (Layer 2) → write .facts
+
+  - `Argus.Pipeline.Disassemble` resolves module names to `.beam` paths and
+    reads BEAM files into normalized module data.
+  - `Argus.Pipeline.Emit` produces base bytecode facts from each module.
+  - User-supplied extractors implementing `Argus.Extractor` produce
+    domain-specific Layer 2 facts.
+  - `run/3` writes the merged facts to `.facts` files (one per relation,
+    tab-separated). `extract/2` returns the merged facts in memory.
   """
 
-  alias Argus.Emitter
+  alias Argus.Pipeline.{Disassemble, Emit}
 
   @type extract_opts :: [
           concurrency: pos_integer(),
@@ -26,37 +34,11 @@ defmodule Argus.Extract do
   @spec run(modules :: [atom() | String.t()], output_dir :: Path.t(), extract_opts()) ::
           {:ok, Path.t()} | {:error, term()}
   def run(modules, output_dir, opts \\ []) do
-    concurrency = Keyword.get(opts, :concurrency, System.schedulers_online())
-    extractors = Keyword.get(opts, :extractors, [])
-    task_timeout = Keyword.get(opts, :timeout, @default_timeout)
-
     with :ok <- File.mkdir_p(output_dir),
-         {:ok, paths} <- resolve_modules(modules) do
-      merged =
-        paths
-        |> Task.async_stream(
-          fn path -> extract_module(path, extractors) end,
-          max_concurrency: concurrency,
-          ordered: false,
-          timeout: task_timeout
-        )
-        |> Enum.reduce(%{}, fn
-          {:ok, {:ok, module_facts}}, acc ->
-            merge_facts(acc, module_facts)
-
-          {:ok, {:error, reason}}, _acc ->
-            throw({:extraction_error, reason})
-
-          {:exit, reason}, _acc ->
-            throw({:extraction_error, reason})
-        end)
-
-      with :ok <- write_facts(merged, output_dir) do
-        {:ok, output_dir}
-      end
+         {:ok, merged} <- extract(modules, opts),
+         :ok <- write_facts(merged, output_dir) do
+      {:ok, output_dir}
     end
-  catch
-    {:extraction_error, reason} -> {:error, reason}
   end
 
   @doc """
@@ -64,13 +46,13 @@ defmodule Argus.Extract do
   without writing to disk.
   """
   @spec extract(modules :: [atom() | String.t()], extract_opts()) ::
-          {:ok, Emitter.facts()} | {:error, term()}
+          {:ok, Emit.facts()} | {:error, term()}
   def extract(modules, opts \\ []) do
     concurrency = Keyword.get(opts, :concurrency, System.schedulers_online())
     extractors = Keyword.get(opts, :extractors, [])
     task_timeout = Keyword.get(opts, :timeout, @default_timeout)
 
-    with {:ok, paths} <- resolve_modules(modules) do
+    with {:ok, paths} <- Disassemble.resolve_paths(modules) do
       merged =
         paths
         |> Task.async_stream(
@@ -96,63 +78,27 @@ defmodule Argus.Extract do
     {:extraction_error, reason} -> {:error, reason}
   end
 
-  # ── Module resolution ──────────────────────────────────────────────
-
-  defp resolve_modules(modules) do
-    results =
-      Enum.map(modules, fn
-        path when is_binary(path) ->
-          if File.exists?(path), do: {:ok, path}, else: {:error, {:not_found, path}}
-
-        module when is_atom(module) ->
-          case :code.which(module) do
-            :non_existing -> {:error, {:not_found, module}}
-            :cover_compiled -> {:error, {:cover_compiled, module}}
-            path when is_list(path) -> {:ok, List.to_string(path)}
-          end
-      end)
-
-    case Enum.find(results, &match?({:error, _}, &1)) do
-      nil -> {:ok, Enum.map(results, fn {:ok, path} -> path end)}
-      error -> error
-    end
-  end
-
-  # ── Per-module extraction ──────────────────────────────────────────
-
+  # Per-module extraction: disassemble, emit Layer 1 facts, run Layer 2
+  # extractors, merge.
   defp extract_module(path, extractors) do
-    case BeamSpy.BeamFile.disassemble(path) do
-      {:ok, data} ->
-        base_facts =
-          Emitter.emit_module(
-            data.module,
-            data.exports,
-            fetch_imports(path),
-            data.attributes,
-            data.functions
-          )
+    with {:ok, data} <- Disassemble.disassemble_path(path) do
+      base_facts =
+        Emit.emit_module(
+          data.module,
+          data.exports,
+          data.imports,
+          data.attributes,
+          data.functions
+        )
 
-        # Run domain extractors and merge their facts.
-        extractor_facts =
-          Enum.reduce(extractors, %{}, fn extractor, acc ->
-            merge_facts(acc, extractor.extract(data))
-          end)
+      extractor_facts =
+        Enum.reduce(extractors, %{}, fn extractor, acc ->
+          merge_facts(acc, extractor.extract(data))
+        end)
 
-        {:ok, merge_facts(base_facts, extractor_facts)}
-
-      {:error, _} = error ->
-        error
+      {:ok, merge_facts(base_facts, extractor_facts)}
     end
   end
-
-  defp fetch_imports(path) do
-    case BeamSpy.BeamFile.read_imports(path) do
-      {:ok, imports} -> imports
-      {:error, _} -> []
-    end
-  end
-
-  # ── Fact merging ───────────────────────────────────────────────────
 
   defp merge_facts(left, right) do
     Map.merge(left, right, fn _key, l, r -> r ++ l end)
@@ -160,7 +106,7 @@ defmodule Argus.Extract do
 
   # ── .facts file I/O ────────────────────────────────────────────────
 
-  @spec write_facts(Emitter.facts(), Path.t()) :: :ok | {:error, term()}
+  @spec write_facts(Emit.facts(), Path.t()) :: :ok | {:error, term()}
   defp write_facts(facts, output_dir) do
     # Create empty files for all known relations so Souffle never fails
     # on missing .input files.

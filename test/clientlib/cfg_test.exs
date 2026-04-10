@@ -1,7 +1,7 @@
 defmodule Argus.Clientlib.CfgTest do
   use ExUnit.Case
 
-  alias Argus.Extract
+  alias Argus.Pipeline
   alias Argus.Souffle
 
   @moduletag :tmp_dir
@@ -18,7 +18,7 @@ defmodule Argus.Clientlib.CfgTest do
       skip_without_souffle()
 
       facts_dir = Path.join(tmp_dir, "facts")
-      {:ok, _} = Extract.run([:maps], facts_dir)
+      {:ok, _} = Pipeline.run([:maps], facts_dir)
 
       # cfg.dl already declares .output cfg_edge, so we can include it directly.
       rules_path = clientlib_path("cfg.dl")
