@@ -514,6 +514,20 @@ defmodule Argus.Schema do
     doc: "GenServer.call timeout value at call site."
   }
 
+  @gen_event_handler %{
+    name: :gen_event_handler,
+    layer: 2,
+    fields: [
+      {:event_mgr, :symbol, "event manager (the gen_event process)"},
+      {:handler_mod, :symbol, "module added as a handler"}
+    ],
+    doc: """
+    Records `:gen_event.add_handler(Manager, Handler, Args)` registrations \
+    so analyses can reason about which handler modules belong to which \
+    event manager.
+    """
+  }
+
   @sync_call_via %{
     name: :sync_call_via,
     layer: 2,
@@ -840,6 +854,7 @@ defmodule Argus.Schema do
     @async_cast,
     @sync_call_timeout,
     @sync_call_via,
+    @gen_event_handler,
     @ets_new,
     @ets_option,
     @ets_op,
