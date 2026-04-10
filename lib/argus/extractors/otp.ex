@@ -13,6 +13,8 @@ defmodule Argus.Extractors.OTP do
   - `sync_call_via(caller_func, registry, key)` — sync call to a `{:via, _, _}` target
   - `async_cast(caller_func, callee_mod)` — GenServer.cast target detected
   - `process_link(from_mod, to_mod)` — Process.link / :erlang.link call
+  - `delayed_message(sender_func, target, message)` — Process.send_after, :timer.send_after,
+    :timer.apply_after — implicit handle_info sources
   """
 
   @behaviour Argus.Extractor
@@ -37,6 +39,92 @@ defmodule Argus.Extractors.OTP do
     |> extract_behaviours(mod_str, module_data.attributes)
     |> extract_genserver_calls(mod, functions)
     |> extract_link_calls(mod_str, mod, functions)
+    |> extract_delayed_messages(mod, functions)
+  end
+
+  defp extract_delayed_messages(facts, mod, functions) do
+    scan_remote_calls(mod, functions, facts, fn acc, ctx, mfa ->
+      handle_delayed(acc, ctx, mfa)
+    end)
+  end
+
+  # Process.send_after(dest, message, time) — dest in x0, message in x1.
+  defp handle_delayed(facts, ctx, {Process, :send_after, arity}) when arity in [3, 4] do
+    emit_delayed(facts, ctx, {:x, 0}, {:x, 1})
+  end
+
+  # :erlang.send_after(time, dest, message) — dest in x1, message in x2.
+  defp handle_delayed(facts, ctx, {:erlang, :send_after, arity}) when arity in [3, 4] do
+    emit_delayed(facts, ctx, {:x, 1}, {:x, 2})
+  end
+
+  # :timer.send_after(time, message) and (time, dest, message). Two arities.
+  defp handle_delayed(facts, ctx, {:timer, :send_after, 2}) do
+    # send_after(time, message) — message in x1, target is self()
+    emit_delayed_to_self(facts, ctx, {:x, 1})
+  end
+
+  defp handle_delayed(facts, ctx, {:timer, :send_after, 3}) do
+    # send_after(time, dest, message) — dest in x1, message in x2
+    emit_delayed(facts, ctx, {:x, 1}, {:x, 2})
+  end
+
+  # :timer.apply_after(time, mod, func, args) — fires apply, not send.
+  # Modeled with target = "<mod>:<func>/<arity>" and message = "apply".
+  defp handle_delayed(facts, ctx, {:timer, :apply_after, 4}) do
+    target = Argus.Extractor.Helpers.resolve_atom(ctx.instrs, ctx.idx, {:x, 1})
+    add_fact(facts, :delayed_message, [ctx.func_id, target, "apply"])
+  end
+
+  defp handle_delayed(facts, _ctx, _mfa), do: facts
+
+  defp emit_delayed(facts, ctx, target_reg, msg_reg) do
+    target = resolve_target(ctx.instrs, ctx.idx, target_reg)
+    message = resolve_message(ctx.instrs, ctx.idx, msg_reg)
+    add_fact(facts, :delayed_message, [ctx.func_id, target, message])
+  end
+
+  defp emit_delayed_to_self(facts, ctx, msg_reg) do
+    message = resolve_message(ctx.instrs, ctx.idx, msg_reg)
+    add_fact(facts, :delayed_message, [ctx.func_id, "self", message])
+  end
+
+  # The target of a send_after can be self(), a registered name, a pid, or
+  # a function parameter. We try to recover the most useful classification.
+  defp resolve_target(instrs, idx, register) do
+    case Argus.Extractor.Helpers.resolve_register(instrs, idx, register) do
+      {:ok, atom} when is_atom(atom) ->
+        # Whether it's a process name (:my_proc) or a module (MyMod).
+        inspect(atom)
+
+      _ ->
+        case Argus.Extractor.Helpers.last_call_writer(instrs, idx, register) do
+          {:ok, {:erlang, :self, 0}} ->
+            "self"
+
+          _ ->
+            case Argus.Extractor.Helpers.arg_position(instrs, idx, register) do
+              {:ok, n} -> "arg:#{n}"
+              :no -> "dynamic"
+            end
+        end
+    end
+  end
+
+  # The message body is typically a literal atom (`:tick`) or a tagged
+  # tuple. We capture the leading atom for handler matching.
+  defp resolve_message(instrs, idx, register) do
+    case Argus.Extractor.Helpers.resolve_register(instrs, idx, register) do
+      {:ok, atom} when is_atom(atom) -> inspect(atom)
+      {:ok, tuple} when is_tuple(tuple) and tuple_size(tuple) > 0 ->
+        case elem(tuple, 0) do
+          a when is_atom(a) -> inspect(a)
+          _ -> "dynamic"
+        end
+
+      _ ->
+        "dynamic"
+    end
   end
 
   defp extract_behaviours(facts, mod_str, attrs) do

@@ -63,6 +63,41 @@ defmodule Argus.Test.Fixtures.ExplicitTimeoutCaller do
   def erlang_call_with_timeout(server), do: :gen_server.call(server, :ping, 15_000)
 end
 
+defmodule Argus.Test.Fixtures.DelayedMessageSender do
+  @moduledoc false
+
+  # Common patterns that schedule a future message to a process. The OTP
+  # extractor records each as a delayed_message fact.
+
+  def schedule_self_tick do
+    Process.send_after(self(), :tick, 1000)
+  end
+
+  def schedule_named_tick do
+    Process.send_after(:my_named_proc, :tick, 1000)
+  end
+
+  def schedule_with_options(target) do
+    Process.send_after(target, {:retry, 3}, 5000, abs: false)
+  end
+
+  def erlang_send_after do
+    :erlang.send_after(1000, :my_named_proc, :erlang_tick)
+  end
+
+  def timer_send_after_self do
+    :timer.send_after(1000, :timer_tick)
+  end
+
+  def timer_send_after_dest do
+    :timer.send_after(1000, :my_named_proc, :timer_tick)
+  end
+
+  def timer_apply_after do
+    :timer.apply_after(5000, MyModule, :do_work, [])
+  end
+end
+
 defmodule Argus.Test.Fixtures.ViaTupleCaller do
   @moduledoc false
 

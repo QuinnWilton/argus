@@ -210,6 +210,85 @@ defmodule Argus.Extractors.OTPTest do
 
   end
 
+  describe "extract/1 — delayed_message" do
+    test "records Process.send_after to self with literal atom message" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(
+          to_string(:code.which(Argus.Test.Fixtures.DelayedMessageSender))
+        )
+
+      facts = OTP.extract(data)
+
+      assert Map.has_key?(facts, :delayed_message)
+      msgs = facts[:delayed_message]
+
+      assert Enum.any?(msgs, fn [func, target, msg] ->
+               String.contains?(func, "schedule_self_tick") and
+                 target == "self" and msg == ":tick"
+             end)
+    end
+
+    test "records Process.send_after to a named process" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(
+          to_string(:code.which(Argus.Test.Fixtures.DelayedMessageSender))
+        )
+
+      facts = OTP.extract(data)
+      msgs = facts[:delayed_message]
+
+      assert Enum.any?(msgs, fn [func, target, _msg] ->
+               String.contains?(func, "schedule_named_tick") and
+                 target == ":my_named_proc"
+             end)
+    end
+
+    test "records :erlang.send_after with named target" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(
+          to_string(:code.which(Argus.Test.Fixtures.DelayedMessageSender))
+        )
+
+      facts = OTP.extract(data)
+      msgs = facts[:delayed_message]
+
+      assert Enum.any?(msgs, fn [func, target, msg] ->
+               String.contains?(func, "erlang_send_after") and
+                 target == ":my_named_proc" and msg == ":erlang_tick"
+             end)
+    end
+
+    test "records :timer.send_after/2 to self" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(
+          to_string(:code.which(Argus.Test.Fixtures.DelayedMessageSender))
+        )
+
+      facts = OTP.extract(data)
+      msgs = facts[:delayed_message]
+
+      assert Enum.any?(msgs, fn [func, target, msg] ->
+               String.contains?(func, "timer_send_after_self") and
+                 target == "self" and msg == ":timer_tick"
+             end)
+    end
+
+    test "records :timer.apply_after with target module" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(
+          to_string(:code.which(Argus.Test.Fixtures.DelayedMessageSender))
+        )
+
+      facts = OTP.extract(data)
+      msgs = facts[:delayed_message]
+
+      assert Enum.any?(msgs, fn [func, target, msg] ->
+               String.contains?(func, "timer_apply_after") and
+                 target == "MyModule" and msg == "apply"
+             end)
+    end
+  end
+
   describe "extract/1 — :via tuple resolution" do
     test "emits sync_call_via with the registry instance for {:via, _, _} target" do
       {:ok, data} =

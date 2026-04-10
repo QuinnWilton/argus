@@ -352,6 +352,24 @@ defmodule Argus.Extractor.Helpers do
   end
 
   @doc """
+  Find the MFA of the most recent remote call (`call_ext` /
+  `call_ext_only` / `call_ext_last`) that wrote to `register` within
+  the current execution path. Returns `{:ok, {mod, func, arity}}` or
+  `:no`.
+
+  Walks back from `call_idx` honoring the same control-flow barriers
+  as `resolve_register/3`. Useful for recognizing patterns like
+  `Process.send_after(self(), :tick, _)` where the target register was
+  populated by `:erlang.self/0` immediately before the call site.
+  """
+  @spec last_call_writer([term()], non_neg_integer(), register()) ::
+          {:ok, {module(), atom(), arity()}} | :no
+  def last_call_writer(instrs, call_idx, register) do
+    preceding = instrs |> Enum.take(call_idx) |> Enum.reverse()
+    do_last_call_writer(preceding, normalize_reg(register))
+  end
+
+  @doc """
   Determine whether `register` is a function parameter at instruction
   index `call_idx`. Returns `{:ok, n}` if it's the n-th parameter (so
   `{:x, n}` for `n < arity`), or `:no` otherwise.
@@ -432,6 +450,42 @@ defmodule Argus.Extractor.Helpers do
       barrier?(instr) -> :no
       writes_to?(instr, reg) -> :no
       true -> do_arg_position(rest, reg)
+    end
+  end
+
+  defp do_last_call_writer([], _reg), do: :no
+
+  defp do_last_call_writer([instr | rest], reg) do
+    cond do
+      barrier?(instr) ->
+        :no
+
+      writes_to?(instr, reg) ->
+        case instr do
+          {:call_ext, _, {:extfunc, m, f, a}} ->
+            {:ok, {m, f, a}}
+
+          {:call_ext_only, _, {:extfunc, m, f, a}} ->
+            {:ok, {m, f, a}}
+
+          {:call_ext_last, _, {:extfunc, m, f, a}, _} ->
+            {:ok, {m, f, a}}
+
+          # BIFs are implicit :erlang functions; the arity is the length
+          # of the args list. This catches `self()`, `node()`, and other
+          # Erlang built-ins that resolve_register doesn't reach.
+          {:bif, name, _, args, _dst} ->
+            {:ok, {:erlang, name, length(args)}}
+
+          {:gc_bif, name, _, _live, args, _dst} ->
+            {:ok, {:erlang, name, length(args)}}
+
+          _ ->
+            :no
+        end
+
+      true ->
+        do_last_call_writer(rest, reg)
     end
   end
 

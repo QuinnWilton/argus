@@ -514,6 +514,23 @@ defmodule Argus.Schema do
     doc: "GenServer.call timeout value at call site."
   }
 
+  @delayed_message %{
+    name: :delayed_message,
+    layer: 2,
+    fields: [
+      {:sender_func, :symbol, "function calling send_after / apply_after"},
+      {:target, :symbol, "target resolution: 'self' | inspected name | 'dynamic'"},
+      {:message, :symbol, "stringified message pattern (atom literal or 'dynamic')"}
+    ],
+    doc: """
+    Records `Process.send_after/3,4`, `:timer.send_after/2,3`, and \
+    `:timer.apply_after/4` as implicit message sources. These functions \
+    cause a `handle_info/2` callback to fire later — invisible to the \
+    static call graph until we connect the message pattern to its \
+    matching handler clause.
+    """
+  }
+
   @gen_event_handler %{
     name: :gen_event_handler,
     layer: 2,
@@ -875,6 +892,7 @@ defmodule Argus.Schema do
     @async_cast,
     @sync_call_timeout,
     @sync_call_via,
+    @delayed_message,
     @gen_event_handler,
     @ets_new,
     @ets_option,
