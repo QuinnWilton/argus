@@ -514,6 +514,36 @@ defmodule Argus.Schema do
     doc: "GenServer.call timeout value at call site."
   }
 
+  @init_continues_to %{
+    name: :init_continues_to,
+    layer: 2,
+    fields: [
+      {:mod, :symbol, "module whose init/1 (or any handler) returns {:continue, _}"},
+      {:tag, :symbol, "the continue tag (inspected atom or 'dynamic')"}
+    ],
+    doc: """
+    Records that a GenServer module returns `{:ok, _, {:continue, tag}}` from
+    `init/1` or `{:noreply, _, {:continue, tag}}` from any handler. The
+    deferred-startup-deadlock analysis uses this to identify modules whose
+    `handle_continue/2` clauses run during the startup phase.
+    """
+  }
+
+  @handle_continue_clause %{
+    name: :handle_continue_clause,
+    layer: 2,
+    fields: [
+      {:mod, :symbol, "module containing the handle_continue clause"},
+      {:tag, :symbol, "the matched continue tag (inspected atom or 'dynamic')"},
+      {:func_id, :symbol, "function ID of the clause"}
+    ],
+    doc: """
+    A `handle_continue(tag, _)` clause defined by a module. The
+    deferred-startup-deadlock analysis pairs this with `init_continues_to`
+    to find handle_continue bodies reachable from a module's init.
+    """
+  }
+
   @deferred_reply %{
     name: :deferred_reply,
     layer: 2,
@@ -911,6 +941,8 @@ defmodule Argus.Schema do
     @sync_call_via,
     @delayed_message,
     @deferred_reply,
+    @init_continues_to,
+    @handle_continue_clause,
     @gen_event_handler,
     @ets_new,
     @ets_option,

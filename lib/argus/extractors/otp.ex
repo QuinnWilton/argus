@@ -16,6 +16,8 @@ defmodule Argus.Extractors.OTP do
   - `delayed_message(sender_func, target, message)` — Process.send_after, :timer.send_after,
     :timer.apply_after — implicit handle_info sources
   - `deferred_reply(handler_func, from_arg)` — `GenServer.reply/2` call site
+  - `init_continues_to(mod, tag)` — module's init/1 returns `{:continue, tag}`
+  - `handle_continue_clause(mod, tag, func_id)` — handle_continue/2 clause matching `tag`
   """
 
   @behaviour Argus.Extractor
@@ -42,6 +44,118 @@ defmodule Argus.Extractors.OTP do
     |> extract_link_calls(mod_str, mod, functions)
     |> extract_delayed_messages(mod, functions)
     |> extract_deferred_replies(mod, functions)
+    |> extract_continue_facts(mod, mod_str, functions)
+  end
+
+  # Two facts:
+  #   - init_continues_to(mod, tag) when init/1 returns {:ok, _, {:continue, tag}}
+  #   - handle_continue_clause(mod, tag, func_id) for each handle_continue/2 clause
+  defp extract_continue_facts(facts, mod, mod_str, functions) do
+    facts
+    |> extract_init_continues(mod, mod_str, functions)
+    |> extract_handle_continue_clauses(mod, mod_str, functions)
+  end
+
+  defp extract_init_continues(facts, _mod, mod_str, functions) do
+    case Argus.Extractor.Helpers.find_function(functions, :init, 1) do
+      nil ->
+        facts
+
+      instrs ->
+        # Two shapes are common in real BEAM bytecode:
+        #   1. The whole return is a literal: `move {literal, {:ok, _, {:continue, tag}}}, x0`.
+        #      The compiler folds the entire term when the state is also a literal.
+        #   2. The return is built at runtime via `put_tuple2`. The third element
+        #      is either a literal `{:continue, tag}` or another `put_tuple2`.
+        (tags_from_literals(instrs) ++ tags_from_put_tuples(instrs))
+        |> Enum.uniq()
+        |> Enum.reduce(facts, fn tag, acc ->
+          add_fact(acc, :init_continues_to, [mod_str, tag])
+        end)
+    end
+  end
+
+  defp tags_from_literals(instrs) do
+    Enum.flat_map(instrs, fn
+      {:move, {:literal, {:ok, _state, {:continue, tag}}}, _dst} when is_atom(tag) ->
+        [inspect(tag)]
+
+      {:move, {:literal, {:noreply, _state, {:continue, tag}}}, _dst} when is_atom(tag) ->
+        [inspect(tag)]
+
+      _ ->
+        []
+    end)
+  end
+
+  defp tags_from_put_tuples(instrs) do
+    instrs
+    |> Argus.Extractor.Helpers.scan_return_tuples()
+    |> Enum.flat_map(fn {_idx, elements} ->
+      case continue_tag(elements) do
+        nil -> []
+        tag -> [tag]
+      end
+    end)
+  end
+
+  # Look for {:ok, _state, {:continue, tag}} or {:noreply, _state, {:continue, tag}}
+  # shapes in a put_tuple2 element list.
+  defp continue_tag([{:atom, :ok}, _state, third]), do: extract_continue_from_element(third)
+
+  defp continue_tag([{:atom, :noreply}, _state, third]),
+    do: extract_continue_from_element(third)
+
+  defp continue_tag(_), do: nil
+
+  defp extract_continue_from_element({:literal, {:continue, tag}}) when is_atom(tag),
+    do: inspect(tag)
+
+  defp extract_continue_from_element(_), do: nil
+
+  # For handle_continue clauses, identify them by name + arity.
+  defp extract_handle_continue_clauses(facts, _mod, mod_str, functions) do
+    Enum.reduce(functions, facts, fn
+      {:function, :handle_continue, 2, _entry, instrs}, acc ->
+        func_id = "#{mod_str}:handle_continue/2"
+
+        # The clause head dispatches on the first argument (the tag). We
+        # can't easily separate clauses without more analysis, but we can
+        # detect tag literals from the test instructions at the top.
+        tags = clause_tags(instrs)
+
+        if tags == [] do
+          add_fact(acc, :handle_continue_clause, [mod_str, "dynamic", func_id])
+        else
+          Enum.reduce(tags, acc, fn tag, inner ->
+            add_fact(inner, :handle_continue_clause, [mod_str, tag, func_id])
+          end)
+        end
+
+      _, acc ->
+        acc
+    end)
+  end
+
+  # Find tag literals matched by `is_eq_exact` or `select_val` against x0
+  # at the top of handle_continue/2.
+  defp clause_tags(instrs) do
+    Enum.flat_map(instrs, fn
+      {:test, :is_eq_exact, _, [{:x, 0}, {:atom, tag}]} when is_atom(tag) ->
+        [inspect(tag)]
+
+      {:select_val, {:x, 0}, _fail, {:list, pairs}} ->
+        pairs
+        |> Enum.chunk_every(2)
+        |> Enum.flat_map(fn
+          [{:atom, tag}, _label] when is_atom(tag) -> [inspect(tag)]
+          _ -> []
+        end)
+
+      _ ->
+        []
+    end)
+    |> Enum.uniq()
   end
 
   defp extract_deferred_replies(facts, mod, functions) do

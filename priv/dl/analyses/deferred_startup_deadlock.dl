@@ -1,0 +1,152 @@
+// Deferred startup deadlock analysis.
+//
+// handle_continue/2 runs after init/1 returns, so a sync call from inside
+// handle_continue does NOT block the parent supervisor — that's why this
+// is a SEPARATE analysis from sync_call_in_init. But three specific
+// patterns make handle_continue sync calls genuinely problematic:
+//
+//   1. Mutual continue cycle: A.handle_continue calls B sync, B.handle_continue
+//      calls A sync. Both processes return from init, the supervisor
+//      proceeds, but neither child ever processes any mailbox messages.
+//
+//   2. handle_continue calls a sibling started LATER under :one_for_one.
+//      The sibling may not be ready yet — race window or :noproc crash.
+//
+//   3. handle_continue calls back into the parent supervisor while the
+//      supervisor is still mid-start_link. The supervisor isn't reading
+//      its mailbox yet, so the call hangs.
+//
+// The defensive variant (try/catch :exit around the call) catches the
+// literal deadlock but creates a startup crash loop — flagged as a
+// separate finding type.
+
+.include "../clientlib/imports.dl"
+
+// Layer 2 input declarations.
+.decl supervisor(mod: symbol, strategy: symbol)
+.input supervisor
+
+.decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
+.input supervisor_child
+
+.decl dynamic_child(sup: symbol, child_mod: symbol, caller_func: symbol)
+.input dynamic_child
+
+.decl implements_behaviour(mod: symbol, behaviour: symbol)
+.input implements_behaviour
+
+.decl sync_call(caller_func: symbol, callee_mod: symbol)
+.input sync_call
+
+.decl async_cast(caller_func: symbol, callee_mod: symbol)
+.input async_cast
+
+.decl init_continues_to(mod: symbol, tag: symbol)
+.input init_continues_to
+
+.decl handle_continue_clause(mod: symbol, tag: symbol, func_id: symbol)
+.input handle_continue_clause
+
+.decl try_start(id: symbol, handler: number)
+.input try_start
+
+.include "../clientlib/otp.dl"
+.include "../clientlib/supervision.dl"
+
+// ── Continue-handler reachability ────────────────────────────────────
+
+// A function is "continue-startup reachable from MOD" if it's the body
+// of one of MOD's handle_continue clauses, or if it's transitively called
+// from such a body. This is the call graph rooted at handle_continue.
+.decl continue_reachable_from(mod: symbol, func: symbol)
+
+continue_reachable_from(mod, func) :-
+  init_continues_to(mod, _),
+  handle_continue_clause(mod, _, func).
+
+continue_reachable_from(mod, callee) :-
+  continue_reachable_from(mod, caller),
+  call_reachable(caller, callee).
+
+// A module sync-calls another module from a continue handler if the
+// continue body (or anything reachable from it) emits a sync_call.
+.decl continue_sync_calls(from_mod: symbol, to_mod: symbol)
+
+continue_sync_calls(from_mod, to_mod) :-
+  continue_reachable_from(from_mod, func),
+  sync_call(func, to_mod),
+  from_mod != to_mod.
+
+// ── Pattern 1: mutual continue cycle ────────────────────────────────
+
+// A.handle_continue sync-calls B AND B.handle_continue sync-calls A.
+// Both processes are alive but neither ever processes its mailbox.
+.decl mutual_continue_deadlock(mod_a: symbol, mod_b: symbol)
+.output mutual_continue_deadlock
+
+mutual_continue_deadlock(mod_a, mod_b) :-
+  continue_sync_calls(mod_a, mod_b),
+  continue_sync_calls(mod_b, mod_a),
+  mod_a < mod_b.  // Order to dedupe (a, b) and (b, a).
+
+// ── Pattern 2: handle_continue calls later-started sibling ───────────
+
+// Caller and callee are both static children of the same supervisor,
+// caller is at an earlier position, and the caller's handle_continue
+// sync-calls the callee.
+.decl continue_to_later_sibling(sup: symbol, caller: symbol, callee: symbol, caller_pos: number, callee_pos: number)
+.output continue_to_later_sibling
+
+continue_to_later_sibling(sup, caller, callee, caller_pos, callee_pos) :-
+  supervisor_child(sup, caller_pos, caller, _, _),
+  supervisor_child(sup, callee_pos, callee, _, _),
+  caller_pos < callee_pos,
+  continue_sync_calls(caller, callee).
+
+// ── Pattern 3: handle_continue calls back into parent supervisor ─────
+
+// The worker's handle_continue calls one of the supervisor query/management
+// functions on its parent supervisor while the parent is still mid-
+// start_link. We detect this via call_reachable from the continue handler
+// to a Supervisor or :supervisor function whose first arg is a literal
+// supervisor module.
+
+// To keep this conservative without a full inter-procedural data flow,
+// we look for any sync_call from continue_reachable_from(worker) to a
+// module that we know is a supervisor (worker's own parent). The
+// approximation: if MOD's continue calls a process registered as a
+// supervisor, AND that supervisor has MOD as a child, it's the parent.
+.decl continue_to_parent_supervisor(worker: symbol, sup: symbol)
+.output continue_to_parent_supervisor
+
+continue_to_parent_supervisor(worker, sup) :-
+  continue_sync_calls(worker, sup),
+  supervisor(sup, _),
+  supervisor_child(sup, _, worker, _, _).
+
+// ── Defensive variant: try/catch wraps the call ──────────────────────
+
+// We don't have a `try_start` consumer wired into Datalog yet, but the
+// emit layer captures it via the existing try_start fact. Detect
+// "any try in handle_continue" and report as a crash-loop risk on top
+// of pattern 2 — the literal deadlock is suppressed by the catch but
+// the supervisor restart loop is still a bug.
+.decl try_in_handle_continue(mod: symbol)
+
+try_in_handle_continue(mod) :-
+  handle_continue_clause(mod, _, func),
+  instruction(id, func, _, "try"),
+  try_start(id, _).
+
+// Also accept catch (older syntax).
+try_in_handle_continue(mod) :-
+  handle_continue_clause(mod, _, func),
+  instruction(id, func, _, "catch"),
+  try_start(id, _).
+
+.decl continue_crash_loop_risk(sup: symbol, worker: symbol)
+.output continue_crash_loop_risk
+
+continue_crash_loop_risk(sup, worker) :-
+  continue_to_later_sibling(sup, worker, _, _, _),
+  try_in_handle_continue(worker).
