@@ -26,6 +26,7 @@ defmodule Argus.Scripts.AnalyzeProject do
   @correctness_analyses [
     :atom_safety,
     :call_cycle,
+    :deferred_startup_deadlock,
     :distributed,
     :error_handling,
     :ets,
