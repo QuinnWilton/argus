@@ -204,28 +204,48 @@ defmodule Argus.Extractors.ErrorHandling do
 
   # Check if the result of a call is ignored — if the instruction after the
   # call does not test/branch on the result register (x0).
+  #
+  # Three outcomes:
+  # 1. Tail call (call_ext_only / call_ext_last) — result IS the function's
+  #    return value, so it's definitively used. No fact, no imprecision.
+  # 2. Non-tail call where the next instruction overwrites x0 — result IS
+  #    ignored. Emit ignored_error_result fact.
+  # 3. Non-tail call where we can't confirm the result is dropped — the
+  #    heuristic gives up. Emit imprecision event.
   defp maybe_ignored_result(facts, ctx, mod, func, arity) do
     if MapSet.member?(@ok_error_apis, {mod, func, arity}) do
-      if result_ignored?(Enum.drop(ctx.instrs, ctx.idx + 1)) do
-        id = "#{ctx.func_id}##{ctx.idx}"
-        callee = "#{inspect(mod)}.#{func}/#{arity}"
-        add_fact(facts, :ignored_error_result, [id, ctx.func_id, callee])
-      else
-        # Whitelisted API but our shallow "result_ignored?" heuristic
-        # couldn't confirm the result is dropped. This is an upper bound
-        # on the cases where improving the heuristic might uncover bugs.
-        track_imprecision(
-          facts,
-          ctx,
-          :ignored_result_unknown_api,
-          :ignored_error_result,
-          :skipped
-        )
+      instr = Enum.at(ctx.instrs, ctx.idx)
+
+      cond do
+        # Tail calls return their result to the caller — not ignored.
+        tail_call?(instr) ->
+          facts
+
+        # Non-tail call where x0 is immediately overwritten.
+        result_ignored?(Enum.drop(ctx.instrs, ctx.idx + 1)) ->
+          id = "#{ctx.func_id}##{ctx.idx}"
+          callee = "#{inspect(mod)}.#{func}/#{arity}"
+          add_fact(facts, :ignored_error_result, [id, ctx.func_id, callee])
+
+        # Non-tail call where we can't determine the result's fate.
+        true ->
+          track_imprecision(
+            facts,
+            ctx,
+            :ignored_result_unknown_api,
+            :ignored_error_result,
+            :skipped
+          )
       end
     else
       facts
     end
   end
+
+  # Tail call variants — the function returns whatever the callee returns.
+  defp tail_call?({:call_ext_only, _, _}), do: true
+  defp tail_call?({:call_ext_last, _, _, _}), do: true
+  defp tail_call?(_), do: false
 
   # Result is overwritten before being read — ignored.
   defp result_ignored?([{:move, _, {:x, 0}} | _]), do: true
