@@ -22,43 +22,12 @@ A rough, measurable goal. Example:
 
 ## Current focus
 
-<!--
-The category the LLM is actively working on right now. "(none)"
-if between attempts.
--->
 (none)
 
 ## Open hypotheses
 
-<!--
-Ideas currently being explored. One bullet per hypothesis. Move to
-Wins when accepted, to Dead ends when abandoned.
-
-- [ ] <category>: <one-line hypothesis> (last tried: YYYY-MM-DD)
--->
-
 ## Wins
-
-<!--
-Accepted improvements, most recent first. Include the commit SHA
-so the baseline commit can be found quickly.
-
-- YYYY-MM-DD — `<category>`: -N via <brief description> [commit XXX]
--->
 
 ## Dead ends
 
-<!--
-Categories that have been attempted and abandoned. Document *why*
-so future sessions don't retry them. Include a "REVISIT IF" condition
-when a future change could unblock the idea.
-
-- `<category>`: tried YYYY-MM-DD ×N, <reason>. REVISIT IF <condition>.
--->
-
 ## Parking lot
-
-<!--
-Ideas worth trying eventually but not now — lower priority or
-blocked on something else. No format requirements; just notes.
--->

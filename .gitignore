@@ -25,3 +25,7 @@ argus-*.tar
 # Dialyzer PLT cache.
 /priv/plts/
 
+# Autoresearch runtime state (session logs, current snapshots).
+# Baseline and config are committed; session and current are ephemeral.
+/.autoresearch/current/
+/.autoresearch/session/
