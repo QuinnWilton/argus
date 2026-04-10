@@ -260,6 +260,42 @@ defmodule Argus.Extractor.Helpers do
   defp normalize_reg({:tr, reg, _}), do: reg
   defp normalize_reg(reg), do: reg
 
+  # Walk the (already-reversed) tail looking for the most recent writer of
+  # `src_reg`. If it's a remote call, return `{:ok, {:call_field, mfa, idx}}`
+  # so the caller can correlate this register with the call's return.
+  # Stops at barriers since code past them isn't on the current execution path.
+  defp find_call_writer([], _src_reg, _idx), do: :dynamic
+
+  defp find_call_writer([instr | rest], src_reg, idx) do
+    cond do
+      barrier?(instr) ->
+        :dynamic
+
+      writes_to?(instr, src_reg) ->
+        case call_target(instr) do
+          {:ok, mfa} -> {:ok, {:call_field, mfa, idx}}
+          :none -> :dynamic
+        end
+
+      true ->
+        find_call_writer(rest, src_reg, idx)
+    end
+  end
+
+  defp call_target({:call_ext, _, {:extfunc, mod, func, arity}}) do
+    {:ok, "#{inspect(mod)}:#{func}/#{arity}"}
+  end
+
+  defp call_target({:call_ext_only, _, {:extfunc, mod, func, arity}}) do
+    {:ok, "#{inspect(mod)}:#{func}/#{arity}"}
+  end
+
+  defp call_target({:call_ext_last, _, {:extfunc, mod, func, arity}, _}) do
+    {:ok, "#{inspect(mod)}:#{func}/#{arity}"}
+  end
+
+  defp call_target(_), do: :none
+
   # --- Backward register resolution ---
 
   @doc """
@@ -277,17 +313,35 @@ defmodule Argus.Extractor.Helpers do
   structures use `:dynamic` as a placeholder for unknown components
   (e.g. `{:ok, {:heir, :dynamic, nil}}`).
 
-  When backward resolution walks past the function-entry `func_info`
-  instruction, an `{:x, n}` register matching a function parameter
-  (`n < arity`) resolves to `{:ok, {:arg, n}}` rather than `:dynamic`.
-  This lets callers tell "I don't know" apart from "this is parameter N",
-  which matters for client-API functions like
-  `def get(pid), do: GenServer.call(pid, :get)`.
+  Function parameters and pattern-matched-destructure-of-call-result are
+  represented via separate helpers (`arg_position/3` and the
+  `{:call_field, mfa, idx}` shape returned for `get_tuple_element` of a
+  call result) to keep this function's value contract free of markers.
   """
   @spec resolve_register([term()], non_neg_integer(), register()) :: {:ok, term()} | :dynamic
   def resolve_register(instrs, call_idx, register) do
     preceding = instrs |> Enum.take(call_idx) |> Enum.reverse()
     do_resolve(preceding, normalize_reg(register))
+  end
+
+  @doc """
+  Determine whether `register` is a function parameter at instruction
+  index `call_idx`. Returns `{:ok, n}` if it's the n-th parameter (so
+  `{:x, n}` for `n < arity`), or `:no` otherwise.
+
+  A register is "still a parameter" at index `call_idx` if walking back
+  through the preceding instructions hits the function-entry `func_info`
+  without crossing a write to that register or a control-flow barrier.
+
+  This lets extractors distinguish "I don't know" from "this is
+  parameter N", which matters for client-API functions like
+  `def get(pid), do: GenServer.call(pid, :get)`.
+  """
+  @spec arg_position([term()], non_neg_integer(), register()) ::
+          {:ok, non_neg_integer()} | :no
+  def arg_position(instrs, call_idx, register) do
+    preceding = instrs |> Enum.take(call_idx) |> Enum.reverse()
+    do_arg_position(preceding, normalize_reg(register))
   end
 
   @doc """
@@ -309,9 +363,14 @@ defmodule Argus.Extractor.Helpers do
           {:atom, String.t()} | {:arg, non_neg_integer()} | :dynamic
   def resolve_to_arg_or_atom(instrs, idx, register) do
     case resolve_register(instrs, idx, register) do
-      {:ok, {:arg, n}} -> {:arg, n}
-      {:ok, atom} when is_atom(atom) -> {:atom, inspect(atom)}
-      _ -> :dynamic
+      {:ok, atom} when is_atom(atom) ->
+        {:atom, inspect(atom)}
+
+      _ ->
+        case arg_position(instrs, idx, register) do
+          {:ok, n} -> {:arg, n}
+          :no -> :dynamic
+        end
     end
   end
 
@@ -324,21 +383,28 @@ defmodule Argus.Extractor.Helpers do
   # branch, so any register values found there are stale.
   defp do_resolve([], _reg), do: :dynamic
 
-  # Function-entry barrier: walking back past `func_info` means we've
-  # reached the start of the function. If the target register is
-  # `{:x, n}` for `n < arity`, it's the n-th parameter — the only valid
-  # x-register read at function entry.
-  defp do_resolve([{:func_info, _, _, arity} | _rest], {:x, n}) when n < arity do
-    {:ok, {:arg, n}}
-  end
-
-  defp do_resolve([{:func_info, _, _, _} | _rest], _reg), do: :dynamic
-
   defp do_resolve([instr | rest], reg) do
     cond do
       barrier?(instr) -> :dynamic
       writes_to?(instr, reg) -> interpret(instr, rest, reg)
       true -> do_resolve(rest, reg)
+    end
+  end
+
+  # Walk back looking for the function entry. If we hit it without finding
+  # a write or a barrier, the register is still in its function-arg state.
+  defp do_arg_position([], _reg), do: :no
+
+  defp do_arg_position([{:func_info, _, _, arity} | _], {:x, n}) when n < arity,
+    do: {:ok, n}
+
+  defp do_arg_position([{:func_info, _, _, _} | _], _reg), do: :no
+
+  defp do_arg_position([instr | rest], reg) do
+    cond do
+      barrier?(instr) -> :no
+      writes_to?(instr, reg) -> :no
+      true -> do_arg_position(rest, reg)
     end
   end
 
@@ -426,7 +492,13 @@ defmodule Argus.Extractor.Helpers do
         {:ok, elem(tuple, idx)}
 
       _ ->
-        :dynamic
+        # Source isn't a known literal tuple. If a remote call wrote it
+        # most recently, surface that as `{:call_field, mfa, idx}` so
+        # callers can recognize "this register is field N of <call>'s
+        # return". This is the resolution shape that lets pattern-matched
+        # destructuring (`{:ok, val} = call()`) be traceable through the
+        # backward dataflow.
+        find_call_writer(rest, normalize_reg(src), idx)
     end
   end
 

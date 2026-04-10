@@ -530,9 +530,24 @@ defmodule Argus.Extractor.HelpersTest do
       assert Helpers.resolve_register(instrs, 5, {:x, 0}) == :dynamic
     end
 
-    test "func_info barrier resolves x0 to {:arg, 0} for arity 1 functions" do
+    test "resolve_register stays :dynamic for unwritten function parameters" do
+      # Function-arg classification is via arg_position/3 — resolve_register
+      # itself preserves its existing :dynamic-for-unknowns contract so that
+      # downstream value-extractors (get_tuple_element, get_hd, etc.) don't
+      # see marker shapes mixed in with literal values.
+      instrs = [
+        {:func_info, {:atom, MyMod}, {:atom, :get}, 1},
+        {:label, 1},
+        {:call_ext, 1, {:extfunc, :erlang, :node, 0}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 2, {:x, 0}) == :dynamic
+    end
+  end
+
+  describe "arg_position/3" do
+    test "classifies x0 as parameter 0 for arity 1 functions" do
       # Mimics a tiny client wrapper: def get(pid), do: GenServer.call(pid, :get).
-      # x0 is the function parameter; walking back hits func_info first.
       instrs = [
         {:func_info, {:atom, MyMod}, {:atom, :get}, 1},
         {:label, 1},
@@ -540,12 +555,10 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 2, {:extfunc, GenServer, :call, 2}}
       ]
 
-      # x0 wasn't written by anything in the function body — it's the
-      # arity-1 parameter, so resolve to {:arg, 0}.
-      assert Helpers.resolve_register(instrs, 3, {:x, 0}) == {:ok, {:arg, 0}}
+      assert Helpers.arg_position(instrs, 3, {:x, 0}) == {:ok, 0}
     end
 
-    test "func_info barrier resolves x1 to {:arg, 1} for arity 2 functions" do
+    test "classifies x1 as parameter 1 for arity 2 functions" do
       instrs = [
         {:func_info, {:atom, MyMod}, {:atom, :call_with_timeout}, 2},
         {:label, 1},
@@ -553,42 +566,110 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 2, {:extfunc, GenServer, :call, 2}}
       ]
 
-      # x1 is the second parameter (the timeout); never written, walks back to func_info.
-      assert Helpers.resolve_register(instrs, 3, {:x, 1}) == {:ok, {:arg, 1}}
+      assert Helpers.arg_position(instrs, 3, {:x, 1}) == {:ok, 1}
     end
 
-    test "func_info barrier returns :dynamic for x register beyond arity" do
+    test "returns :no for x register beyond arity" do
       instrs = [
         {:func_info, {:atom, MyMod}, {:atom, :unary}, 1},
         {:label, 1},
         {:call_ext, 1, {:extfunc, :erlang, :node, 0}}
       ]
 
-      # x2 is not a parameter (arity is 1), so walking back past func_info
-      # gives :dynamic, not {:arg, 2}.
-      assert Helpers.resolve_register(instrs, 2, {:x, 2}) == :dynamic
+      assert Helpers.arg_position(instrs, 2, {:x, 2}) == :no
     end
 
-    test "func_info barrier does not classify y registers as args" do
+    test "returns :no for y registers (never function parameters)" do
       instrs = [
         {:func_info, {:atom, MyMod}, {:atom, :test}, 1},
         {:label, 1},
         {:call_ext, 1, {:extfunc, :erlang, :node, 0}}
       ]
 
-      # Y registers are stack-allocated locals, never function parameters.
-      assert Helpers.resolve_register(instrs, 2, {:y, 0}) == :dynamic
+      assert Helpers.arg_position(instrs, 2, {:y, 0}) == :no
     end
 
-    test "func_info barrier handles {:tr, _, _} typed register input" do
+    test "handles {:tr, _, _} typed register input" do
       instrs = [
         {:func_info, {:atom, MyMod}, {:atom, :get}, 1},
         {:label, 1},
         {:call_ext, 1, {:extfunc, :erlang, :node, 0}}
       ]
 
-      # Typed register wrapper around x0 should still resolve to arg 0.
-      assert Helpers.resolve_register(instrs, 2, {:tr, {:x, 0}, :pid}) == {:ok, {:arg, 0}}
+      assert Helpers.arg_position(instrs, 2, {:tr, {:x, 0}, :pid}) == {:ok, 0}
+    end
+
+    test "returns :no when the register has been written by the function body" do
+      instrs = [
+        {:func_info, {:atom, MyMod}, {:atom, :get}, 1},
+        {:label, 1},
+        {:move, {:atom, :replaced}, {:x, 0}},
+        {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
+      ]
+
+      # x0 was rewritten by the move, so it's no longer the original parameter.
+      assert Helpers.arg_position(instrs, 3, {:x, 0}) == :no
+    end
+  end
+
+  describe "resolve_register/3 — call_field shape" do
+    test "resolves get_tuple_element of remote call result to {:call_field, mfa, idx}" do
+      # Mimics `{:ok, val} = File.read(path); use(val)`. We ask for the value
+      # of x2 at the point of `use` — by then x2 has been written by the
+      # get_tuple_element, so we walk back through it to the call.
+      instrs = [
+        {:func_info, {:atom, MyMod}, {:atom, :read_file}, 1},
+        {:label, 1},
+        {:call_ext, 1, {:extfunc, File, :read, 1}},
+        {:test, :is_tuple, {:f, 9}, [{:x, 0}]},
+        {:test, :test_arity, {:f, 9}, [{:x, 0}, 2]},
+        {:get_tuple_element, {:x, 0}, 1, {:x, 2}},
+        {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 6, {:x, 2}) ==
+               {:ok, {:call_field, "File:read/1", 1}}
+    end
+
+    test "resolves field 0 (the :ok tag) the same way" do
+      instrs = [
+        {:func_info, {:atom, MyMod}, {:atom, :start}, 0},
+        {:label, 1},
+        {:call_ext, 2, {:extfunc, GenServer, :start_link, 2}},
+        {:test, :is_tuple, {:f, 9}, [{:x, 0}]},
+        {:get_tuple_element, {:x, 0}, 0, {:x, 1}},
+        {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 5, {:x, 1}) ==
+               {:ok, {:call_field, "GenServer:start_link/2", 0}}
+    end
+
+    test "still resolves get_tuple_element of literal tuple to the literal element" do
+      # Backward-compat: literal tuple resolution must still work.
+      instrs = [
+        {:func_info, {:atom, MyMod}, {:atom, :test}, 0},
+        {:label, 1},
+        {:move, {:literal, {:ok, :first, :second}}, {:x, 0}},
+        {:get_tuple_element, {:x, 0}, 1, {:x, 1}},
+        {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 4, {:x, 1}) == {:ok, :first}
+    end
+
+    test "returns :dynamic when the source register has no remote-call writer" do
+      # Source written by a local move from a parameter — not a call.
+      instrs = [
+        {:func_info, {:atom, MyMod}, {:atom, :test}, 1},
+        {:label, 1},
+        {:get_tuple_element, {:x, 0}, 1, {:x, 1}},
+        {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
+      ]
+
+      # x0 is the function arg; get_tuple_element of an arg is :dynamic
+      # because we don't know the arg's structure.
+      assert Helpers.resolve_register(instrs, 3, {:x, 1}) == :dynamic
     end
   end
 
