@@ -4,6 +4,66 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.0 — Unreleased
+
+Coverage and precision instrumentation — Argus can now measure its own
+extractor pipeline. Every fallback to a dynamic placeholder is recorded
+as a fact, and passive Datalog rules derive "recognized shape but no
+detail extracted" findings from the existing fact base. This closes
+the feedback loop for iterative precision work: run coverage, change a
+resolver, re-run, see whether the imprecision count dropped.
+
+### Added
+
+- **`coverage` analysis** — new built-in meta-analysis measuring the
+  extractor pipeline itself. Exposes raw `imprecision_event` events
+  (one row per extractor fallback site that fired) plus five shape-gap
+  relations derived from the existing fact base:
+  - `coverage_supervisor_no_children` — supervisor recognized but no
+    static or dynamic children recovered
+  - `coverage_genserver_isolated` — GenServer with zero observed
+    sync/async traffic in the corpus
+  - `coverage_ets_unused` — concretely-named table with no observed
+    read or write operations
+  - `coverage_statem_no_transitions` — gen_statem with states but no
+    transitions extracted
+  - `coverage_named_process_unreachable` — registered name with no
+    traffic targeting it
+  Not in the default correctness set — it's a developer-facing
+  meta-analysis. Users opt in via `mix argus coverage`.
+- **`imprecision` Layer 2 fact relation** — records extractor
+  fallback events (`category`, `func`, `relation`, `reason`). Categories
+  are namespaced (`genserver_*`, `supervisor_*`, `ets_*`, `statem_*`,
+  etc.) and documented in CHANGELOG as a versioned vocabulary.
+- **`track_dynamic/5`, `track_imprecision/5`, `enable_tracing/0`,
+  `disable_tracing/0` helpers** — gated on a per-process flag so
+  non-coverage runs incur only a single process-dict read per
+  fallback site. `Argus.Analysis.run/3` flips the flag on
+  automatically when the analysis is `:coverage`.
+- **28 tracking call sites across 8 extractors** — every `resolve_*`
+  fallback site now either calls `track_dynamic` (when a dynamic
+  placeholder is emitted) or `track_imprecision` with reason `:skipped`
+  / `:missing` / `:unresolvable` (when the fact is suppressed entirely).
+  Coverage categories shipped: `genserver_callee`, `process_link_target`,
+  `delayed_target`, `delayed_message_pattern`, `deferred_reply_from`,
+  `sync_call_timeout`, `dynamic_supervisor_parent`,
+  `dynamic_supervisor_child`, `supervisor_child_module`,
+  `supervisor_strategy`, `ets_table_name_new`, `ets_table_ref_op`,
+  `ets_options_unresolved`, `process_register_name`, `registry_op_key`,
+  `via_tuple_registry`, `via_tuple_key`, `whereis_target`,
+  `gen_server_start_name`, `rpc_timeout`, `global_register_name`,
+  `global_op_retries`, `exit_call_target`, `trap_exit_unresolved`,
+  `ignored_result_unknown_api`, `statem_transition_target`,
+  `statem_timeout_value`, `statem_callback_mode_unknown`,
+  `unsafe_deserialization_safety`, `gen_event_handler_unresolved`.
+
+### Notes
+
+`mix argus --list` now shows 16 analyses. Existing 15 analyses are
+unchanged — the imprecision side-channel is purely additive and gated
+off by default, so `mix argus <anything-but-coverage>` incurs no cost
+and produces empty `imprecision.facts`.
+
 ## 0.3.0 — Unreleased
 
 Bytecode-analysis precision improvements and one new analysis built on
