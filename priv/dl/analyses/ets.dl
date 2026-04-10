@@ -30,6 +30,9 @@
 .decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
 .input supervisor_child
 
+.decl dynamic_child(sup: symbol, child_mod: symbol, caller_func: symbol)
+.input dynamic_child
+
 // ── Ownership & lifecycle ──────────────────────────────────────────
 
 // Module that creates a table and implements a behaviour (is a process).
@@ -48,6 +51,14 @@ ets_owner_process(name, mod, behaviour) :-
 ets_permanent_owner(name, mod) :-
   ets_owner_process(name, mod, _),
   supervisor_child(_, _, mod, "permanent", _).
+
+// Owner under a DynamicSupervisor.start_child — we don't know the
+// child spec's restart strategy without further analysis, but the
+// module is at least supervised, which is a strong enough signal
+// that we shouldn't false-positive on missing-heir for it.
+ets_permanent_owner(name, mod) :-
+  ets_owner_process(name, mod, _),
+  dynamic_child(_, mod, _).
 
 // Application modules live for the entire app — table loss is not practical.
 .decl ets_application_owner(name: symbol, mod: symbol)
