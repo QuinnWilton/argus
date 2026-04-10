@@ -18,7 +18,7 @@ defmodule Argus.Extractors.Distributed do
   @behaviour Argus.Extractor
 
   import Argus.Extractor.Helpers,
-    only: [add_fact: 3, resolve_register: 3, scan_remote_calls: 3]
+    only: [add_fact: 3, resolve_register: 3, scan_remote_calls: 3, track_dynamic: 5]
 
   # Node operations to detect.
   @node_ops [
@@ -98,107 +98,131 @@ defmodule Argus.Extractors.Distributed do
       id = "#{ctx.func_id}##{ctx.idx}"
 
       facts
-      |> maybe_rpc(id, ctx.func_id, mod, func, arity, ctx.instrs, ctx.idx)
-      |> maybe_global_register(id, ctx.func_id, mod, func, arity, ctx.instrs, ctx.idx)
-      |> maybe_global_op(id, ctx.func_id, mod, func, arity, ctx.instrs, ctx.idx)
+      |> maybe_rpc(id, ctx, mod, func, arity)
+      |> maybe_global_register(id, ctx, mod, func, arity)
+      |> maybe_global_op(id, ctx, mod, func, arity)
       |> maybe_node_op(id, ctx.func_id, mod, func, arity)
       |> maybe_distributed_store(id, ctx.func_id, mod, func, arity)
     end)
   end
 
   # RPC calls with timeout resolution.
-  defp maybe_rpc(facts, id, func_id, :rpc, :call, 4, _instrs, _idx) do
+  defp maybe_rpc(facts, id, ctx, :rpc, :call, 4) do
     # :rpc.call/4 — uses default infinity timeout.
-    add_fact(facts, :rpc_call, [id, func_id, "rpc", "infinity"])
+    add_fact(facts, :rpc_call, [id, ctx.func_id, "rpc", "infinity"])
   end
 
-  defp maybe_rpc(facts, id, func_id, :rpc, :call, 5, instrs, idx) do
+  defp maybe_rpc(facts, id, ctx, :rpc, :call, 5) do
     # :rpc.call/5 — timeout is x4.
-    timeout = resolve_timeout(instrs, idx, {:x, 4})
-    add_fact(facts, :rpc_call, [id, func_id, "rpc", timeout])
+    timeout = resolve_timeout(ctx.instrs, ctx.idx, {:x, 4})
+
+    facts
+    |> track_dynamic(timeout, ctx, :rpc_timeout, :rpc_call)
+    |> add_fact(:rpc_call, [id, ctx.func_id, "rpc", timeout])
   end
 
-  defp maybe_rpc(facts, id, func_id, :rpc, :multicall, arity, _instrs, _idx)
+  defp maybe_rpc(facts, id, ctx, :rpc, :multicall, arity)
        when arity in [2, 3, 4] do
     # :rpc.multicall — default infinity timeout for 2,3,4-arity variants.
-    add_fact(facts, :rpc_call, [id, func_id, "multicall", "infinity"])
+    add_fact(facts, :rpc_call, [id, ctx.func_id, "multicall", "infinity"])
   end
 
-  defp maybe_rpc(facts, id, func_id, :rpc, :multicall, 5, instrs, idx) do
-    timeout = resolve_timeout(instrs, idx, {:x, 4})
-    add_fact(facts, :rpc_call, [id, func_id, "multicall", timeout])
+  defp maybe_rpc(facts, id, ctx, :rpc, :multicall, 5) do
+    timeout = resolve_timeout(ctx.instrs, ctx.idx, {:x, 4})
+
+    facts
+    |> track_dynamic(timeout, ctx, :rpc_timeout, :rpc_call)
+    |> add_fact(:rpc_call, [id, ctx.func_id, "multicall", timeout])
   end
 
-  defp maybe_rpc(facts, id, func_id, :erpc, :call, 4, instrs, idx) do
+  defp maybe_rpc(facts, id, ctx, :erpc, :call, 4) do
     # :erpc.call/4 — timeout is x3.
-    timeout = resolve_timeout(instrs, idx, {:x, 3})
-    add_fact(facts, :rpc_call, [id, func_id, "erpc", timeout])
+    timeout = resolve_timeout(ctx.instrs, ctx.idx, {:x, 3})
+
+    facts
+    |> track_dynamic(timeout, ctx, :rpc_timeout, :rpc_call)
+    |> add_fact(:rpc_call, [id, ctx.func_id, "erpc", timeout])
   end
 
-  defp maybe_rpc(facts, id, func_id, :erpc, :call, 5, instrs, idx) do
+  defp maybe_rpc(facts, id, ctx, :erpc, :call, 5) do
     # :erpc.call/5 — timeout is x4.
-    timeout = resolve_timeout(instrs, idx, {:x, 4})
-    add_fact(facts, :rpc_call, [id, func_id, "erpc", timeout])
+    timeout = resolve_timeout(ctx.instrs, ctx.idx, {:x, 4})
+
+    facts
+    |> track_dynamic(timeout, ctx, :rpc_timeout, :rpc_call)
+    |> add_fact(:rpc_call, [id, ctx.func_id, "erpc", timeout])
   end
 
-  defp maybe_rpc(facts, id, func_id, :erpc, :multicall, arity, instrs, idx)
+  defp maybe_rpc(facts, id, ctx, :erpc, :multicall, arity)
        when arity in [4, 5] do
     timeout_reg = {:x, arity - 1}
-    timeout = resolve_timeout(instrs, idx, timeout_reg)
-    add_fact(facts, :rpc_call, [id, func_id, "erpc_multicall", timeout])
+    timeout = resolve_timeout(ctx.instrs, ctx.idx, timeout_reg)
+
+    facts
+    |> track_dynamic(timeout, ctx, :rpc_timeout, :rpc_call)
+    |> add_fact(:rpc_call, [id, ctx.func_id, "erpc_multicall", timeout])
   end
 
-  defp maybe_rpc(facts, _id, _func_id, _mod, _func, _arity, _instrs, _idx), do: facts
+  defp maybe_rpc(facts, _id, _ctx, _mod, _func, _arity), do: facts
 
-  defp maybe_global_register(facts, id, func_id, :global, :register_name, arity, instrs, idx)
+  defp maybe_global_register(facts, id, ctx, :global, :register_name, arity)
        when arity in [2, 3] do
-    name = resolve_name(instrs, idx)
-    add_fact(facts, :global_register, [id, func_id, name])
+    name = resolve_name(ctx.instrs, ctx.idx)
+
+    facts
+    |> track_dynamic(name, ctx, :global_register_name, :global_register)
+    |> add_fact(:global_register, [id, ctx.func_id, name])
   end
 
-  defp maybe_global_register(facts, _id, _func_id, _mod, _func, _arity, _instrs, _idx),
+  defp maybe_global_register(facts, _id, _ctx, _mod, _func, _arity),
     do: facts
 
   # :global.set_lock/2 — uses default :infinity retries.
-  defp maybe_global_op(facts, id, func_id, :global, :set_lock, 2, _instrs, _idx) do
-    add_fact(facts, :global_op, [id, func_id, "set_lock", "infinity"])
+  defp maybe_global_op(facts, id, ctx, :global, :set_lock, 2) do
+    add_fact(facts, :global_op, [id, ctx.func_id, "set_lock", "infinity"])
   end
 
   # :global.set_lock/3 — explicit retries argument in x2.
-  defp maybe_global_op(facts, id, func_id, :global, :set_lock, 3, instrs, idx) do
-    retries = resolve_retries(instrs, idx, {:x, 2})
-    add_fact(facts, :global_op, [id, func_id, "set_lock", retries])
+  defp maybe_global_op(facts, id, ctx, :global, :set_lock, 3) do
+    retries = resolve_retries(ctx.instrs, ctx.idx, {:x, 2})
+
+    facts
+    |> track_dynamic(retries, ctx, :global_op_retries, :global_op)
+    |> add_fact(:global_op, [id, ctx.func_id, "set_lock", retries])
   end
 
   # :global.del_lock/1,2 — non-blocking cleanup, retries don't apply but
   # we record it with "0" so blocking-classification rules treat it as safe.
-  defp maybe_global_op(facts, id, func_id, :global, :del_lock, arity, _instrs, _idx)
+  defp maybe_global_op(facts, id, ctx, :global, :del_lock, arity)
        when arity in [1, 2] do
-    add_fact(facts, :global_op, [id, func_id, "del_lock", "0"])
+    add_fact(facts, :global_op, [id, ctx.func_id, "del_lock", "0"])
   end
 
   # :global.trans/2,3 — internally calls set_lock with infinity retries.
-  defp maybe_global_op(facts, id, func_id, :global, :trans, arity, _instrs, _idx)
+  defp maybe_global_op(facts, id, ctx, :global, :trans, arity)
        when arity in [2, 3] do
-    add_fact(facts, :global_op, [id, func_id, "trans", "infinity"])
+    add_fact(facts, :global_op, [id, ctx.func_id, "trans", "infinity"])
   end
 
   # :global.trans/4 — explicit retries argument in x3.
-  defp maybe_global_op(facts, id, func_id, :global, :trans, 4, instrs, idx) do
-    retries = resolve_retries(instrs, idx, {:x, 3})
-    add_fact(facts, :global_op, [id, func_id, "trans", retries])
+  defp maybe_global_op(facts, id, ctx, :global, :trans, 4) do
+    retries = resolve_retries(ctx.instrs, ctx.idx, {:x, 3})
+
+    facts
+    |> track_dynamic(retries, ctx, :global_op_retries, :global_op)
+    |> add_fact(:global_op, [id, ctx.func_id, "trans", retries])
   end
 
   # :global.whereis_name/1, :global.send/2 — non-blocking lookups.
-  defp maybe_global_op(facts, id, func_id, :global, :whereis_name, 1, _instrs, _idx) do
-    add_fact(facts, :global_op, [id, func_id, "whereis_name", "0"])
+  defp maybe_global_op(facts, id, ctx, :global, :whereis_name, 1) do
+    add_fact(facts, :global_op, [id, ctx.func_id, "whereis_name", "0"])
   end
 
-  defp maybe_global_op(facts, id, func_id, :global, :send, 2, _instrs, _idx) do
-    add_fact(facts, :global_op, [id, func_id, "send", "0"])
+  defp maybe_global_op(facts, id, ctx, :global, :send, 2) do
+    add_fact(facts, :global_op, [id, ctx.func_id, "send", "0"])
   end
 
-  defp maybe_global_op(facts, _id, _func_id, _mod, _func, _arity, _instrs, _idx), do: facts
+  defp maybe_global_op(facts, _id, _ctx, _mod, _func, _arity), do: facts
 
   # Resolve the retries argument: positive integer → string, :infinity →
   # "infinity", anything else → "dynamic". 0 retries means "try once and

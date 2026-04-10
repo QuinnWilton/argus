@@ -19,7 +19,14 @@ defmodule Argus.Extractors.ProcessRegistry do
   @behaviour Argus.Extractor
 
   import Argus.Extractor.Helpers,
-    only: [add_fact: 3, match_remote_call: 1, resolve_register: 3, scan_functions: 4]
+    only: [
+      add_fact: 3,
+      match_remote_call: 1,
+      resolve_register: 3,
+      scan_functions: 4,
+      track_dynamic: 5,
+      track_imprecision: 5
+    ]
 
   # Registry operations to detect, mapped to arity.
   @registry_ops [
@@ -92,6 +99,7 @@ defmodule Argus.Extractors.ProcessRegistry do
     name = resolve_name(ctx.instrs, ctx.idx, name_reg)
 
     facts
+    |> track_dynamic(name, ctx, :process_register_name, :process_register)
     |> add_fact(:process_register, [id, ctx.func_id, name, method])
     |> maybe_emit_named_process(mod_str, name)
   end
@@ -111,7 +119,10 @@ defmodule Argus.Extractors.ProcessRegistry do
   defp emit_whereis(facts, ctx) do
     id = "#{ctx.func_id}##{ctx.idx}"
     name = resolve_name(ctx.instrs, ctx.idx, {:x, 0})
-    add_fact(facts, :whereis_call, [id, ctx.func_id, name])
+
+    facts
+    |> track_dynamic(name, ctx, :whereis_target, :whereis_call)
+    |> add_fact(:whereis_call, [id, ctx.func_id, name])
   end
 
   # Scan for {:via, Registry, {reg, key}} tuple construction patterns.
@@ -135,7 +146,10 @@ defmodule Argus.Extractors.ProcessRegistry do
         _ -> "dynamic"
       end
 
-    add_fact(facts, :via_tuple, [id, ctx.func_id, registry, key])
+    facts
+    |> track_dynamic(registry, ctx, :via_tuple_registry, :via_tuple)
+    |> track_dynamic(key, ctx, :via_tuple_key, :via_tuple)
+    |> add_fact(:via_tuple, [id, ctx.func_id, registry, key])
   end
 
   defp maybe_via_tuple(facts, ctx, {:move, {:literal, {:via, registry, {reg, key}}}, _})
@@ -168,11 +182,11 @@ defmodule Argus.Extractors.ProcessRegistry do
             add_fact(facts, :via_tuple, [id, ctx.func_id, inspect(reg_mod), inspect(key)])
 
           _ ->
-            facts
+            track_imprecision(facts, ctx, :gen_server_start_name, :process_register, :skipped)
         end
 
       _ ->
-        facts
+        track_imprecision(facts, ctx, :gen_server_start_name, :process_register, :skipped)
     end
   end
 
@@ -188,7 +202,7 @@ defmodule Argus.Extractors.ProcessRegistry do
         |> maybe_emit_named_process_for_erlang_start(ctx, inspect(name))
 
       _ ->
-        facts
+        track_imprecision(facts, ctx, :gen_server_start_name, :process_register, :skipped)
     end
   end
 
@@ -222,7 +236,9 @@ defmodule Argus.Extractors.ProcessRegistry do
             "dynamic"
         end
 
-      add_fact(facts, :registry_op, [id, ctx.func_id, registry, to_string(func), key])
+      facts
+      |> track_dynamic(key, ctx, :registry_op_key, :registry_op)
+      |> add_fact(:registry_op, [id, ctx.func_id, registry, to_string(func), key])
     else
       facts
     end

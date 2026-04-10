@@ -20,7 +20,7 @@ defmodule Argus.Extractors.AtomSafety do
   @behaviour Argus.Extractor
 
   import Argus.Extractor.Helpers,
-    only: [add_fact: 3, resolve_register: 3, scan_remote_calls: 3]
+    only: [add_fact: 3, resolve_register: 3, scan_remote_calls: 3, track_dynamic: 5]
 
   # APIs that create atoms from dynamic input. These can grow the atom
   # table unboundedly. The `*_to_existing_atom` variants are excluded
@@ -55,7 +55,7 @@ defmodule Argus.Extractors.AtomSafety do
 
       facts
       |> maybe_atom_creation(id, ctx.func_id, mod, func, arity)
-      |> maybe_deserialization(id, ctx.func_id, mod, func, arity, ctx.instrs, ctx.idx)
+      |> maybe_deserialization(id, ctx, mod, func, arity)
       |> maybe_code_execution(id, ctx.func_id, mod, func, arity, ctx.instrs, ctx.idx)
     end)
   end
@@ -69,18 +69,18 @@ defmodule Argus.Extractors.AtomSafety do
     end
   end
 
-  defp maybe_deserialization(facts, id, func_id, :erlang, :binary_to_term, 1, _instrs, _idx) do
+  defp maybe_deserialization(facts, id, ctx, :erlang, :binary_to_term, 1) do
     add_fact(facts, :unsafe_deserialization, [
       id,
-      func_id,
+      ctx.func_id,
       ":erlang.binary_to_term/1",
       "unsafe"
     ])
   end
 
-  defp maybe_deserialization(facts, id, func_id, :erlang, :binary_to_term, 2, instrs, idx) do
+  defp maybe_deserialization(facts, id, ctx, :erlang, :binary_to_term, 2) do
     safety =
-      case resolve_register(instrs, idx, {:x, 1}) do
+      case resolve_register(ctx.instrs, ctx.idx, {:x, 1}) do
         {:ok, opts} when is_list(opts) ->
           if :safe in opts, do: "safe", else: "unsafe"
 
@@ -88,15 +88,17 @@ defmodule Argus.Extractors.AtomSafety do
           "dynamic"
       end
 
-    add_fact(facts, :unsafe_deserialization, [
+    facts
+    |> track_dynamic(safety, ctx, :unsafe_deserialization_safety, :unsafe_deserialization)
+    |> add_fact(:unsafe_deserialization, [
       id,
-      func_id,
+      ctx.func_id,
       ":erlang.binary_to_term/2",
       safety
     ])
   end
 
-  defp maybe_deserialization(facts, _id, _func_id, _mod, _func, _arity, _instrs, _idx), do: facts
+  defp maybe_deserialization(facts, _id, _ctx, _mod, _func, _arity), do: facts
 
   # System.cmd uses execve (no shell) — only flag when command or args
   # are dynamic. Static command + static args = no injection vector.

@@ -32,7 +32,9 @@ defmodule Argus.Extractors.Supervision do
       match_local_call: 1,
       match_remote_call: 1,
       resolve_register: 3,
-      scan_remote_calls: 4
+      scan_remote_calls: 4,
+      track_dynamic: 5,
+      track_imprecision: 5
     ]
 
   @impl true
@@ -73,9 +75,14 @@ defmodule Argus.Extractors.Supervision do
     child = resolve_dynamic_child_module(ctx.instrs, ctx.idx)
 
     if child == "dynamic" do
-      facts
+      # We can't extract a useful row, but we still want coverage to know
+      # the call site existed. Reason :skipped distinguishes this from
+      # the "we emitted a row but the field was dynamic" case.
+      track_imprecision(facts, ctx, :dynamic_supervisor_child, :dynamic_child, :skipped)
     else
-      add_fact(facts, :dynamic_child, [sup, child, ctx.func_id])
+      facts
+      |> track_dynamic(sup, ctx, :dynamic_supervisor_parent, :dynamic_child)
+      |> add_fact(:dynamic_child, [sup, child, ctx.func_id])
     end
   end
 
@@ -120,7 +127,15 @@ defmodule Argus.Extractors.Supervision do
     case find_function(module_data.functions, :init, 1) do
       nil ->
         # Supervisor without init/1 — just record the behaviour.
-        add_fact(%{}, :supervisor, [mod_str, "unknown"])
+        # The "unknown" strategy is a coverage gap worth surfacing.
+        %{}
+        |> track_imprecision(
+          synthetic_ctx(mod_str, "init/1"),
+          :supervisor_strategy,
+          :supervisor,
+          :missing
+        )
+        |> add_fact(:supervisor, [mod_str, "unknown"])
 
       instrs ->
         extract_from_instructions(%{}, mod_str, instrs, module_data.functions)
@@ -140,6 +155,22 @@ defmodule Argus.Extractors.Supervision do
 
     children = extract_children_with_helpers(instrs, all_functions)
 
+    facts =
+      if children == [] do
+        # init/1 was found but no static child specs were extracted —
+        # the children might be runtime-built (Enum.map, comprehensions)
+        # or use a shape we don't recognize. Mark as a skipped extraction.
+        track_imprecision(
+          facts,
+          synthetic_ctx(mod_str, "init/1"),
+          :supervisor_child_module,
+          :supervisor_child,
+          :missing
+        )
+      else
+        facts
+      end
+
     children
     |> Enum.with_index()
     |> Enum.reduce(facts, fn {{child_mod, restart, type}, idx}, acc ->
@@ -151,6 +182,14 @@ defmodule Argus.Extractors.Supervision do
         to_string(type)
       ])
     end)
+  end
+
+  # The literal child-spec scanners don't run inside scan_functions and
+  # therefore don't have a real instruction context. Build a synthetic ctx
+  # naming the supervisor's init/1 (or start/2) so coverage events can
+  # still be attributed to a function.
+  defp synthetic_ctx(mod_str, func_label) do
+    %{func_id: "#{mod_str}:#{func_label}", instrs: [], idx: 0}
   end
 
   # Extract children from the given instructions, then follow local calls

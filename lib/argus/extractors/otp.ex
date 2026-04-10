@@ -28,7 +28,9 @@ defmodule Argus.Extractors.OTP do
       get_behaviours: 1,
       resolve_callee: 1,
       resolve_register: 3,
-      scan_remote_calls: 4
+      scan_remote_calls: 4,
+      track_dynamic: 5,
+      track_imprecision: 4
     ]
 
   @impl true
@@ -166,12 +168,18 @@ defmodule Argus.Extractors.OTP do
 
   defp handle_deferred_reply(facts, ctx, {GenServer, :reply, 2}) do
     from_arg = resolve_from_arg(ctx.instrs, ctx.idx)
-    add_fact(facts, :deferred_reply, [ctx.func_id, from_arg])
+
+    facts
+    |> track_dynamic(from_arg, ctx, :deferred_reply_from, :deferred_reply)
+    |> add_fact(:deferred_reply, [ctx.func_id, from_arg])
   end
 
   defp handle_deferred_reply(facts, ctx, {:gen_server, :reply, 2}) do
     from_arg = resolve_from_arg(ctx.instrs, ctx.idx)
-    add_fact(facts, :deferred_reply, [ctx.func_id, from_arg])
+
+    facts
+    |> track_dynamic(from_arg, ctx, :deferred_reply_from, :deferred_reply)
+    |> add_fact(:deferred_reply, [ctx.func_id, from_arg])
   end
 
   defp handle_deferred_reply(facts, _ctx, _mfa), do: facts
@@ -218,7 +226,10 @@ defmodule Argus.Extractors.OTP do
   # Modeled with target = "<mod>:<func>/<arity>" and message = "apply".
   defp handle_delayed(facts, ctx, {:timer, :apply_after, 4}) do
     target = Argus.Extractor.Helpers.resolve_atom(ctx.instrs, ctx.idx, {:x, 1})
-    add_fact(facts, :delayed_message, [ctx.func_id, target, "apply"])
+
+    facts
+    |> track_dynamic(target, ctx, :delayed_target, :delayed_message)
+    |> add_fact(:delayed_message, [ctx.func_id, target, "apply"])
   end
 
   defp handle_delayed(facts, _ctx, _mfa), do: facts
@@ -226,12 +237,19 @@ defmodule Argus.Extractors.OTP do
   defp emit_delayed(facts, ctx, target_reg, msg_reg) do
     target = resolve_target(ctx.instrs, ctx.idx, target_reg)
     message = resolve_message(ctx.instrs, ctx.idx, msg_reg)
-    add_fact(facts, :delayed_message, [ctx.func_id, target, message])
+
+    facts
+    |> track_dynamic(target, ctx, :delayed_target, :delayed_message)
+    |> track_dynamic(message, ctx, :delayed_message_pattern, :delayed_message)
+    |> add_fact(:delayed_message, [ctx.func_id, target, message])
   end
 
   defp emit_delayed_to_self(facts, ctx, msg_reg) do
     message = resolve_message(ctx.instrs, ctx.idx, msg_reg)
-    add_fact(facts, :delayed_message, [ctx.func_id, "self", message])
+
+    facts
+    |> track_dynamic(message, ctx, :delayed_message_pattern, :delayed_message)
+    |> add_fact(:delayed_message, [ctx.func_id, "self", message])
   end
 
   # The target of a send_after can be self(), a registered name, a pid, or
@@ -260,7 +278,9 @@ defmodule Argus.Extractors.OTP do
   # tuple. We capture the leading atom for handler matching.
   defp resolve_message(instrs, idx, register) do
     case Argus.Extractor.Helpers.resolve_register(instrs, idx, register) do
-      {:ok, atom} when is_atom(atom) -> inspect(atom)
+      {:ok, atom} when is_atom(atom) ->
+        inspect(atom)
+
       {:ok, tuple} when is_tuple(tuple) and tuple_size(tuple) > 0 ->
         case elem(tuple, 0) do
           a when is_atom(a) -> inspect(a)
@@ -323,6 +343,7 @@ defmodule Argus.Extractors.OTP do
     timeout = resolve_timeout(ctx.instrs, ctx.idx, {:x, 2})
 
     facts
+    |> track_timeout_imprecision(timeout, ctx)
     |> add_fact(:sync_call, [ctx.func_id, callee])
     |> add_fact(:sync_call_timeout, [ctx.func_id, callee, timeout])
   end
@@ -369,9 +390,19 @@ defmodule Argus.Extractors.OTP do
         {callee, facts}
 
       _ ->
+        facts = track_imprecision(facts, ctx, :genserver_callee, :sync_call)
         {"dynamic", facts}
     end
   end
+
+  # The "0" in sync_call_timeout is a sentinel for "we couldn't resolve
+  # the timeout argument" — record it as imprecision so the coverage
+  # report knows about it.
+  defp track_timeout_imprecision(facts, "0", ctx) do
+    track_imprecision(facts, ctx, :sync_call_timeout, :sync_call_timeout)
+  end
+
+  defp track_timeout_imprecision(facts, _other, _ctx), do: facts
 
   defp extract_link_calls(facts, mod_str, mod, functions) do
     scan_remote_calls(mod, functions, facts, fn acc, ctx, mfa ->
@@ -380,11 +411,19 @@ defmodule Argus.Extractors.OTP do
   end
 
   defp handle_link(facts, mod_str, ctx, {Process, :link, 1}) do
-    add_fact(facts, :process_link, [mod_str, resolve_callee(ctx)])
+    callee = resolve_callee(ctx)
+
+    facts
+    |> track_dynamic(callee, ctx, :process_link_target, :process_link)
+    |> add_fact(:process_link, [mod_str, callee])
   end
 
   defp handle_link(facts, mod_str, ctx, {:erlang, :link, 1}) do
-    add_fact(facts, :process_link, [mod_str, resolve_callee(ctx)])
+    callee = resolve_callee(ctx)
+
+    facts
+    |> track_dynamic(callee, ctx, :process_link_target, :process_link)
+    |> add_fact(:process_link, [mod_str, callee])
   end
 
   defp handle_link(facts, _mod_str, _ctx, _mfa), do: facts

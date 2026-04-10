@@ -31,7 +31,9 @@ defmodule Argus.Extractors.ErrorHandling do
       match_remote_call: 1,
       resolve_atom: 3,
       resolve_register: 3,
-      scan_functions: 4
+      scan_functions: 4,
+      track_dynamic: 5,
+      track_imprecision: 5
     ]
 
   # Functions known to return {:ok, _} | {:error, _} whose result should
@@ -173,26 +175,53 @@ defmodule Argus.Extractors.ErrorHandling do
 
   defp emit_exit_call(facts, ctx, target) do
     id = "#{ctx.func_id}##{ctx.idx}"
-    add_fact(facts, :exit_call, [id, ctx.func_id, target])
+
+    facts
+    |> track_dynamic(target, ctx, :exit_call_target, :exit_call)
+    |> add_fact(:exit_call, [id, ctx.func_id, target])
   end
 
   defp maybe_trap_exit(facts, ctx, mod_str) do
-    with {:ok, :trap_exit} <- resolve_register(ctx.instrs, ctx.idx, {:x, 0}),
-         {:ok, true} <- resolve_register(ctx.instrs, ctx.idx, {:x, 1}) do
-      add_fact(facts, :trap_exit, [ctx.func_id, mod_str])
-    else
-      _ -> facts
+    case resolve_register(ctx.instrs, ctx.idx, {:x, 0}) do
+      {:ok, :trap_exit} ->
+        case resolve_register(ctx.instrs, ctx.idx, {:x, 1}) do
+          {:ok, true} ->
+            add_fact(facts, :trap_exit, [ctx.func_id, mod_str])
+
+          {:ok, false} ->
+            # Explicit Process.flag(:trap_exit, false) — not imprecision.
+            facts
+
+          _ ->
+            track_imprecision(facts, ctx, :trap_exit_unresolved, :trap_exit, :skipped)
+        end
+
+      _ ->
+        # Not a trap_exit call (e.g. Process.flag(:priority, :high)).
+        facts
     end
   end
 
   # Check if the result of a call is ignored — if the instruction after the
   # call does not test/branch on the result register (x0).
   defp maybe_ignored_result(facts, ctx, mod, func, arity) do
-    if MapSet.member?(@ok_error_apis, {mod, func, arity}) and
-         result_ignored?(Enum.drop(ctx.instrs, ctx.idx + 1)) do
-      id = "#{ctx.func_id}##{ctx.idx}"
-      callee = "#{inspect(mod)}.#{func}/#{arity}"
-      add_fact(facts, :ignored_error_result, [id, ctx.func_id, callee])
+    if MapSet.member?(@ok_error_apis, {mod, func, arity}) do
+      if result_ignored?(Enum.drop(ctx.instrs, ctx.idx + 1)) do
+        id = "#{ctx.func_id}##{ctx.idx}"
+        callee = "#{inspect(mod)}.#{func}/#{arity}"
+        add_fact(facts, :ignored_error_result, [id, ctx.func_id, callee])
+      else
+        # Whitelisted API but our shallow "result_ignored?" heuristic
+        # couldn't confirm the result is dropped. This is an upper bound
+        # on the cases where improving the heuristic might uncover bugs.
+        track_imprecision(
+          facts,
+          ctx,
+          :ignored_result_unknown_api,
+          :ignored_error_result,
+          :skipped
+        )
+      end
     else
       facts
     end

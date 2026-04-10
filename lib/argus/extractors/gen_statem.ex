@@ -32,7 +32,9 @@ defmodule Argus.Extractors.GenStatem do
       add_fact: 3,
       find_function: 3,
       get_behaviours: 1,
-      scan_return_tuples: 1
+      scan_return_tuples: 1,
+      track_dynamic: 5,
+      track_imprecision: 5
     ]
 
   alias Argus.Pipeline.Normalize
@@ -119,7 +121,10 @@ defmodule Argus.Extractors.GenStatem do
 
     callback_mode = detect_callback_mode(functions)
 
-    facts = add_fact(%{}, :statem_module, [mod_str, to_string(callback_mode)])
+    facts =
+      %{}
+      |> maybe_track_unknown_callback_mode(mod_str, callback_mode)
+      |> add_fact(:statem_module, [mod_str, to_string(callback_mode)])
 
     case callback_mode do
       :state_functions ->
@@ -131,6 +136,32 @@ defmodule Argus.Extractors.GenStatem do
       :unknown ->
         facts
     end
+  end
+
+  # Surface gen_statem modules whose callback_mode/0 couldn't be resolved
+  # — they may declare valid state machines but we can't pick the right
+  # extraction path without the mode.
+  defp maybe_track_unknown_callback_mode(facts, mod_str, :unknown) do
+    track_imprecision(
+      facts,
+      synthetic_ctx(mod_str, "callback_mode/0"),
+      :statem_callback_mode_unknown,
+      :statem_module,
+      :missing
+    )
+  end
+
+  defp maybe_track_unknown_callback_mode(facts, _mod_str, _mode), do: facts
+
+  # gen_statem extractors operate on whole functions, not single
+  # instructions — build a synthetic ctx so tracking helpers have a
+  # func_id to attribute events to.
+  defp synthetic_ctx(func_id) when is_binary(func_id) do
+    %{func_id: func_id, instrs: [], idx: 0}
+  end
+
+  defp synthetic_ctx(mod_str, func_label) do
+    synthetic_ctx("#{mod_str}:#{func_label}")
   end
 
   # Detect the callback mode by finding the callback_mode/0 function and
@@ -244,8 +275,9 @@ defmodule Argus.Extractors.GenStatem do
 
   # Extract transitions from return tuples. Look for {:next_state, target, ...}
   # patterns in put_tuple2 instructions.
-  defp extract_transitions(facts, mod_str, from_state, instrs, _func_id) do
+  defp extract_transitions(facts, mod_str, from_state, instrs, func_id) do
     return_tuples = scan_return_tuples(instrs)
+    ctx = synthetic_ctx(func_id)
 
     Enum.reduce(return_tuples, facts, fn {_idx, elements}, acc ->
       case elements do
@@ -254,6 +286,7 @@ defmodule Argus.Extractors.GenStatem do
           to_state = resolve_element_value(target)
 
           acc
+          |> track_dynamic(to_state, ctx, :statem_transition_target, :statem_transition)
           |> add_fact(:statem_transition, [mod_str, from_state, "event", to_state])
           |> maybe_add_target_state(mod_str, to_state)
 
@@ -290,13 +323,15 @@ defmodule Argus.Extractors.GenStatem do
   # 2. As literal lists embedded in the elements of a return tuple put_tuple2,
   #    e.g. {:put_tuple2, _, {:list, [atom: :next_state, atom: :processing, x: 2,
   #           literal: [{:state_timeout, 5000, :timeout}]]}}.
-  defp extract_timeouts(facts, mod_str, state_name, instrs, _func_id) do
+  defp extract_timeouts(facts, mod_str, state_name, instrs, func_id) do
+    ctx = synthetic_ctx(func_id)
+
     instrs
     |> Enum.with_index()
     |> Enum.reduce(facts, fn
       {{:put_tuple2, _, {:list, elements}}, _idx}, acc ->
         acc
-        |> maybe_timeout_tuple(mod_str, state_name, elements)
+        |> maybe_timeout_tuple(mod_str, state_name, elements, ctx)
         |> extract_timeouts_from_elements(mod_str, state_name, elements)
 
       {{:move, {:literal, actions}, _}, _idx}, acc when is_list(actions) ->
@@ -308,17 +343,35 @@ defmodule Argus.Extractors.GenStatem do
   end
 
   # Check if this put_tuple2 is itself a timeout tuple.
-  defp maybe_timeout_tuple(facts, mod_str, state_name, [{:atom, :state_timeout}, timeout_val | _]) do
+  defp maybe_timeout_tuple(
+         facts,
+         mod_str,
+         state_name,
+         [{:atom, :state_timeout}, timeout_val | _],
+         ctx
+       ) do
     value = resolve_element_value(timeout_val)
-    add_fact(facts, :statem_timeout, [mod_str, state_name, "state_timeout", value])
+
+    facts
+    |> track_dynamic(value, ctx, :statem_timeout_value, :statem_timeout)
+    |> add_fact(:statem_timeout, [mod_str, state_name, "state_timeout", value])
   end
 
-  defp maybe_timeout_tuple(facts, mod_str, state_name, [{:atom, :timeout}, timeout_val | _]) do
+  defp maybe_timeout_tuple(
+         facts,
+         mod_str,
+         state_name,
+         [{:atom, :timeout}, timeout_val | _],
+         ctx
+       ) do
     value = resolve_element_value(timeout_val)
-    add_fact(facts, :statem_timeout, [mod_str, state_name, "event_timeout", value])
+
+    facts
+    |> track_dynamic(value, ctx, :statem_timeout_value, :statem_timeout)
+    |> add_fact(:statem_timeout, [mod_str, state_name, "event_timeout", value])
   end
 
-  defp maybe_timeout_tuple(facts, _mod_str, _state_name, _elements), do: facts
+  defp maybe_timeout_tuple(facts, _mod_str, _state_name, _elements, _ctx), do: facts
 
   # Scan literal elements inside a put_tuple2 for action lists containing timeouts.
   defp extract_timeouts_from_elements(facts, mod_str, state_name, elements) do
