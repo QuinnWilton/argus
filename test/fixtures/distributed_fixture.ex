@@ -26,6 +26,30 @@ defmodule Argus.Test.Fixtures.GlobalRegisterModule do
   end
 end
 
+defmodule Argus.Test.Fixtures.GlobalLockModule do
+  @moduledoc false
+
+  # :global.set_lock/2 — defaults to :infinity retries → blocking.
+  def lock_default(key, nodes), do: :global.set_lock({key, self()}, nodes)
+
+  # :global.set_lock/3 with explicit 0 retries → non-blocking.
+  def try_lock_once(key, nodes), do: :global.set_lock({key, self()}, nodes, 0)
+
+  # :global.set_lock/3 with explicit infinity retries → blocking.
+  def lock_infinity(key, nodes), do: :global.set_lock({key, self()}, nodes, :infinity)
+
+  # :global.set_lock/3 with positive integer retries → blocking with backoff.
+  def lock_with_retries(key, nodes), do: :global.set_lock({key, self()}, nodes, 5)
+
+  def trans_default(key, fun), do: :global.trans({key, self()}, fun)
+
+  def trans_zero_retries(key, fun, nodes),
+    do: :global.trans({key, self()}, fun, nodes, 0)
+
+  def del(key, nodes), do: :global.del_lock({key, self()}, nodes)
+  def whereis(name), do: :global.whereis_name(name)
+end
+
 defmodule Argus.Test.Fixtures.NodeOperationsModule do
   @moduledoc false
 

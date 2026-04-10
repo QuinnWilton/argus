@@ -43,6 +43,67 @@ defmodule Argus.Extractors.DistributedTest do
     end
   end
 
+  describe "extract/1 — :global synchronization" do
+    test "records :global.set_lock/2 with infinity retries" do
+      facts = Distributed.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
+
+      assert Map.has_key?(facts, :global_op)
+      ops = facts[:global_op]
+
+      assert Enum.any?(ops, fn [_id, func, op, retries] ->
+               String.contains?(func, "lock_default") and
+                 op == "set_lock" and retries == "infinity"
+             end)
+    end
+
+    test "records :global.set_lock/3 with retries=0 as non-blocking" do
+      facts = Distributed.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
+      ops = facts[:global_op]
+
+      assert Enum.any?(ops, fn [_id, func, op, retries] ->
+               String.contains?(func, "try_lock_once") and
+                 op == "set_lock" and retries == "0"
+             end)
+    end
+
+    test "records :global.set_lock/3 with explicit infinity retries" do
+      facts = Distributed.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
+      ops = facts[:global_op]
+
+      assert Enum.any?(ops, fn [_id, func, _op, retries] ->
+               String.contains?(func, "lock_infinity") and retries == "infinity"
+             end)
+    end
+
+    test "records :global.set_lock/3 with positive integer retries" do
+      facts = Distributed.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
+      ops = facts[:global_op]
+
+      assert Enum.any?(ops, fn [_id, func, _op, retries] ->
+               String.contains?(func, "lock_with_retries") and retries == "5"
+             end)
+    end
+
+    test "records :global.trans/2 as blocking with infinity retries" do
+      facts = Distributed.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
+      ops = facts[:global_op]
+
+      assert Enum.any?(ops, fn [_id, func, op, retries] ->
+               String.contains?(func, "trans_default") and
+                 op == "trans" and retries == "infinity"
+             end)
+    end
+
+    test "records :global.del_lock as non-blocking" do
+      facts = Distributed.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
+      ops = facts[:global_op]
+
+      assert Enum.any?(ops, fn [_id, _func, op, retries] ->
+               op == "del_lock" and retries == "0"
+             end)
+    end
+  end
+
   describe "extract/1 — global registration" do
     test "detects :global.register_name" do
       facts = Distributed.extract(disassemble(Argus.Test.Fixtures.GlobalRegisterModule))

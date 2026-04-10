@@ -13,6 +13,9 @@
 .decl global_register(id: symbol, func: symbol, name: symbol)
 .input global_register
 
+.decl global_op(id: symbol, func: symbol, op: symbol, retries: symbol)
+.input global_op
+
 .decl node_operation(id: symbol, func: symbol, op: symbol)
 .input node_operation
 
@@ -70,6 +73,35 @@ rpc_in_genserver_callback(func, variant) :-
 
 global_register_risk(func, name) :-
   global_register(_, func, name).
+
+// ── Blocking :global synchronization ─────────────────────────────
+
+// :global.set_lock and :global.trans block on netsplit when retries
+// is :infinity or any positive integer (which retries with backoff).
+// retries = "0" means try once and return immediately — non-blocking.
+.decl global_blocking_op(func: symbol, op: symbol, retries: symbol)
+.output global_blocking_op
+
+global_blocking_op(func, op, retries) :-
+  global_op(_, func, op, retries),
+  retries != "0",
+  retries != "dynamic".
+
+// ── Blocking :global op in init/1 ────────────────────────────────
+
+// Catches the worst case: blocking on :global from supervisor startup
+// (init/1 or transitively from init/1). Hangs the supervisor.
+.decl global_blocking_in_init(func: symbol, op: symbol)
+.output global_blocking_in_init
+
+global_blocking_in_init(func, op) :-
+  global_blocking_op(func, op, _),
+  init_function(func).
+
+global_blocking_in_init(func, op) :-
+  global_blocking_op(callee_func, op, _),
+  call_reachable(func, callee_func),
+  init_function(func).
 
 // ── Distributed operations in init ───────────────────────────────
 

@@ -100,6 +100,7 @@ defmodule Argus.Extractors.Distributed do
       facts
       |> maybe_rpc(id, ctx.func_id, mod, func, arity, ctx.instrs, ctx.idx)
       |> maybe_global_register(id, ctx.func_id, mod, func, arity, ctx.instrs, ctx.idx)
+      |> maybe_global_op(id, ctx.func_id, mod, func, arity, ctx.instrs, ctx.idx)
       |> maybe_node_op(id, ctx.func_id, mod, func, arity)
       |> maybe_distributed_store(id, ctx.func_id, mod, func, arity)
     end)
@@ -157,6 +158,59 @@ defmodule Argus.Extractors.Distributed do
 
   defp maybe_global_register(facts, _id, _func_id, _mod, _func, _arity, _instrs, _idx),
     do: facts
+
+  # :global.set_lock/2 — uses default :infinity retries.
+  defp maybe_global_op(facts, id, func_id, :global, :set_lock, 2, _instrs, _idx) do
+    add_fact(facts, :global_op, [id, func_id, "set_lock", "infinity"])
+  end
+
+  # :global.set_lock/3 — explicit retries argument in x2.
+  defp maybe_global_op(facts, id, func_id, :global, :set_lock, 3, instrs, idx) do
+    retries = resolve_retries(instrs, idx, {:x, 2})
+    add_fact(facts, :global_op, [id, func_id, "set_lock", retries])
+  end
+
+  # :global.del_lock/1,2 — non-blocking cleanup, retries don't apply but
+  # we record it with "0" so blocking-classification rules treat it as safe.
+  defp maybe_global_op(facts, id, func_id, :global, :del_lock, arity, _instrs, _idx)
+       when arity in [1, 2] do
+    add_fact(facts, :global_op, [id, func_id, "del_lock", "0"])
+  end
+
+  # :global.trans/2,3 — internally calls set_lock with infinity retries.
+  defp maybe_global_op(facts, id, func_id, :global, :trans, arity, _instrs, _idx)
+       when arity in [2, 3] do
+    add_fact(facts, :global_op, [id, func_id, "trans", "infinity"])
+  end
+
+  # :global.trans/4 — explicit retries argument in x3.
+  defp maybe_global_op(facts, id, func_id, :global, :trans, 4, instrs, idx) do
+    retries = resolve_retries(instrs, idx, {:x, 3})
+    add_fact(facts, :global_op, [id, func_id, "trans", retries])
+  end
+
+  # :global.whereis_name/1, :global.send/2 — non-blocking lookups.
+  defp maybe_global_op(facts, id, func_id, :global, :whereis_name, 1, _instrs, _idx) do
+    add_fact(facts, :global_op, [id, func_id, "whereis_name", "0"])
+  end
+
+  defp maybe_global_op(facts, id, func_id, :global, :send, 2, _instrs, _idx) do
+    add_fact(facts, :global_op, [id, func_id, "send", "0"])
+  end
+
+  defp maybe_global_op(facts, _id, _func_id, _mod, _func, _arity, _instrs, _idx), do: facts
+
+  # Resolve the retries argument: positive integer → string, :infinity →
+  # "infinity", anything else → "dynamic". 0 retries means "try once and
+  # return immediately if locked" — the only non-blocking variant.
+  defp resolve_retries(instrs, idx, register) do
+    case resolve_register(instrs, idx, register) do
+      {:ok, 0} -> "0"
+      {:ok, n} when is_integer(n) and n > 0 -> to_string(n)
+      {:ok, :infinity} -> "infinity"
+      _ -> "dynamic"
+    end
+  end
 
   defp maybe_node_op(facts, id, func_id, mod, func, arity) do
     if {mod, func, arity} in @node_ops do

@@ -736,6 +736,27 @@ defmodule Argus.Schema do
     doc: ":global.register_name call."
   }
 
+  @global_op %{
+    name: :global_op,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID"},
+      {:func, :symbol, "containing function ID"},
+      {:op, :symbol, "operation: set_lock | trans | del_lock | whereis_name | send"},
+      {:retries, :symbol, "retry count: \"infinity\" | \"0\" | integer | \"dynamic\""}
+    ],
+    doc: """
+    `:global` synchronization primitives. The retries field is the third \
+    argument of `:global.set_lock/3` (or `:global.trans/4`); analyses use \
+    it to distinguish blocking calls (`infinity` or large positive \
+    integers) from non-blocking try-once calls (`0`).
+
+    `:global.set_lock/2` and `:global.trans/2,3` default to infinity \
+    retries — recorded as `"infinity"` even when the source code omits \
+    the argument.
+    """
+  }
+
   @node_operation %{
     name: :node_operation,
     layer: 2,
@@ -875,6 +896,7 @@ defmodule Argus.Schema do
     # Distributed systems.
     @rpc_call,
     @global_register,
+    @global_op,
     @node_operation,
     @distributed_store_op,
     # gen_statem.
