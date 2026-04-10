@@ -529,5 +529,101 @@ defmodule Argus.Extractor.HelpersTest do
 
       assert Helpers.resolve_register(instrs, 5, {:x, 0}) == :dynamic
     end
+
+    test "func_info barrier resolves x0 to {:arg, 0} for arity 1 functions" do
+      # Mimics a tiny client wrapper: def get(pid), do: GenServer.call(pid, :get).
+      # x0 is the function parameter; walking back hits func_info first.
+      instrs = [
+        {:func_info, {:atom, MyMod}, {:atom, :get}, 1},
+        {:label, 1},
+        {:move, {:atom, :get}, {:x, 1}},
+        {:call_ext, 2, {:extfunc, GenServer, :call, 2}}
+      ]
+
+      # x0 wasn't written by anything in the function body — it's the
+      # arity-1 parameter, so resolve to {:arg, 0}.
+      assert Helpers.resolve_register(instrs, 3, {:x, 0}) == {:ok, {:arg, 0}}
+    end
+
+    test "func_info barrier resolves x1 to {:arg, 1} for arity 2 functions" do
+      instrs = [
+        {:func_info, {:atom, MyMod}, {:atom, :call_with_timeout}, 2},
+        {:label, 1},
+        {:move, {:atom, :ping}, {:x, 0}},
+        {:call_ext, 2, {:extfunc, GenServer, :call, 2}}
+      ]
+
+      # x1 is the second parameter (the timeout); never written, walks back to func_info.
+      assert Helpers.resolve_register(instrs, 3, {:x, 1}) == {:ok, {:arg, 1}}
+    end
+
+    test "func_info barrier returns :dynamic for x register beyond arity" do
+      instrs = [
+        {:func_info, {:atom, MyMod}, {:atom, :unary}, 1},
+        {:label, 1},
+        {:call_ext, 1, {:extfunc, :erlang, :node, 0}}
+      ]
+
+      # x2 is not a parameter (arity is 1), so walking back past func_info
+      # gives :dynamic, not {:arg, 2}.
+      assert Helpers.resolve_register(instrs, 2, {:x, 2}) == :dynamic
+    end
+
+    test "func_info barrier does not classify y registers as args" do
+      instrs = [
+        {:func_info, {:atom, MyMod}, {:atom, :test}, 1},
+        {:label, 1},
+        {:call_ext, 1, {:extfunc, :erlang, :node, 0}}
+      ]
+
+      # Y registers are stack-allocated locals, never function parameters.
+      assert Helpers.resolve_register(instrs, 2, {:y, 0}) == :dynamic
+    end
+
+    test "func_info barrier handles {:tr, _, _} typed register input" do
+      instrs = [
+        {:func_info, {:atom, MyMod}, {:atom, :get}, 1},
+        {:label, 1},
+        {:call_ext, 1, {:extfunc, :erlang, :node, 0}}
+      ]
+
+      # Typed register wrapper around x0 should still resolve to arg 0.
+      assert Helpers.resolve_register(instrs, 2, {:tr, {:x, 0}, :pid}) == {:ok, {:arg, 0}}
+    end
+  end
+
+  describe "resolve_to_arg_or_atom/3" do
+    test "returns {:atom, _} for literal atoms" do
+      instrs = [
+        {:func_info, {:atom, MyMod}, {:atom, :test}, 0},
+        {:label, 1},
+        {:move, {:atom, MyServer}, {:x, 0}},
+        {:call_ext, 1, {:extfunc, GenServer, :stop, 1}}
+      ]
+
+      assert Helpers.resolve_to_arg_or_atom(instrs, 3, {:x, 0}) == {:atom, "MyServer"}
+    end
+
+    test "returns {:arg, n} for function parameters" do
+      instrs = [
+        {:func_info, {:atom, MyMod}, {:atom, :get}, 1},
+        {:label, 1},
+        {:call_ext, 1, {:extfunc, GenServer, :stop, 1}}
+      ]
+
+      assert Helpers.resolve_to_arg_or_atom(instrs, 2, {:x, 0}) == {:arg, 0}
+    end
+
+    test "returns :dynamic when value cannot be statically determined" do
+      instrs = [
+        {:func_info, {:atom, MyMod}, {:atom, :test}, 0},
+        {:label, 1},
+        {:call_ext, 0, {:extfunc, :erlang, :self, 0}},
+        {:call_ext, 1, {:extfunc, GenServer, :stop, 1}}
+      ]
+
+      # x0 holds the result of :erlang.self() — call result is :dynamic.
+      assert Helpers.resolve_to_arg_or_atom(instrs, 3, {:x, 0}) == :dynamic
+    end
   end
 end

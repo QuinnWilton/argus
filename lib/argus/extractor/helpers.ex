@@ -276,11 +276,43 @@ defmodule Argus.Extractor.Helpers do
   when the value cannot be statically determined. Partially resolvable
   structures use `:dynamic` as a placeholder for unknown components
   (e.g. `{:ok, {:heir, :dynamic, nil}}`).
+
+  When backward resolution walks past the function-entry `func_info`
+  instruction, an `{:x, n}` register matching a function parameter
+  (`n < arity`) resolves to `{:ok, {:arg, n}}` rather than `:dynamic`.
+  This lets callers tell "I don't know" apart from "this is parameter N",
+  which matters for client-API functions like
+  `def get(pid), do: GenServer.call(pid, :get)`.
   """
   @spec resolve_register([term()], non_neg_integer(), register()) :: {:ok, term()} | :dynamic
   def resolve_register(instrs, call_idx, register) do
     preceding = instrs |> Enum.take(call_idx) |> Enum.reverse()
-    do_resolve(preceding, register)
+    do_resolve(preceding, normalize_reg(register))
+  end
+
+  @doc """
+  Resolve `register` at instruction `idx` and classify the result as a
+  literal atom, a function parameter, or dynamic.
+
+  Returns one of:
+
+  - `{:atom, inspected}` — the register holds a literal atom (the value
+    is `inspect/1`'d so it's safe to use as a fact field)
+  - `{:arg, n}` — the register is the n-th function parameter
+  - `:dynamic` — the value cannot be statically determined
+
+  This is the right helper for extractors that need to distinguish "this
+  call goes to a known module" from "this call goes to a parameter we
+  could correlate via the call graph" from "we have no idea".
+  """
+  @spec resolve_to_arg_or_atom([term()], non_neg_integer(), register()) ::
+          {:atom, String.t()} | {:arg, non_neg_integer()} | :dynamic
+  def resolve_to_arg_or_atom(instrs, idx, register) do
+    case resolve_register(instrs, idx, register) do
+      {:ok, {:arg, n}} -> {:arg, n}
+      {:ok, atom} when is_atom(atom) -> {:atom, inspect(atom)}
+      _ -> :dynamic
+    end
   end
 
   # Walk the reversed instruction list looking for the most recent write
@@ -291,6 +323,16 @@ defmodule Argus.Extractor.Helpers do
   # boundaries — code before them belongs to a different clause or
   # branch, so any register values found there are stale.
   defp do_resolve([], _reg), do: :dynamic
+
+  # Function-entry barrier: walking back past `func_info` means we've
+  # reached the start of the function. If the target register is
+  # `{:x, n}` for `n < arity`, it's the n-th parameter — the only valid
+  # x-register read at function entry.
+  defp do_resolve([{:func_info, _, _, arity} | _rest], {:x, n}) when n < arity do
+    {:ok, {:arg, n}}
+  end
+
+  defp do_resolve([{:func_info, _, _, _} | _rest], _reg), do: :dynamic
 
   defp do_resolve([instr | rest], reg) do
     cond do
