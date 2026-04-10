@@ -4,6 +4,87 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.0 — Unreleased
+
+Autoresearch loop — the tooling layer that turns the 0.4.0 measurement
+surface into an iterative improvement workflow. Measure a corpus,
+baseline the results, edit an extractor, re-measure, diff, accept or
+revert, repeat. Inspired by pi-autoresearch's event-log + living-doc
+pattern, adapted for Argus's multi-dimensional categorical metrics.
+
+### Added
+
+- **`mix argus.autoresearch` Mix task** with 9 subcommands:
+  `init`, `measure`, `diff`, `rank`, `checks`, `accept`, `revert`,
+  `status`, `note`. Each wraps a public API function in
+  `Argus.Autoresearch` so the logic is unit-testable.
+- **Corpus measurement** (`Argus.Autoresearch.Measure`) — parallel
+  per-project subprocess fanout extracted from `scripts/harness.exs`.
+  One implementation, two entry points. Ebin discovery via runtime
+  `:code.get_path/0` (replaces harness's compile-time `Path.wildcard`).
+- **Canonicalized snapshot** (`Argus.Autoresearch.Snapshot`) — reduces
+  per-project coverage reports to a deterministic, diffable form.
+  Strips nondeterministic fields (timestamp, duration), sorts all
+  lists, caps sample_funcs at 10. JSON round-trip preserving.
+- **Structural diff** (`Argus.Autoresearch.Diff`) — per-category and
+  per-shape-gap deltas with improvements/regressions views, net total,
+  and new/removed category tracking. Schema-version-aware (refuses
+  cross-version diffs).
+- **Priority ranker** (`Argus.Autoresearch.Ranker`) — scores by
+  `delta_weight × severity × spread_bonus × stickiness_dampener`.
+  Shape-gaps get 3× severity. Dead-end exclusion from notes.md.
+  `suggested_extractor` maps 25 category prefixes to source files.
+- **Checks barrier** (`Argus.Autoresearch.Checks`) — configurable
+  command sequence (default: format + compile + test + dialyzer) plus
+  canary correctness cross-check against a committed fixture.
+- **Session event log** (`Argus.Autoresearch.Session`) — append-only
+  JSONL with event types: baseline_set, measure, rank, attempt_start,
+  checks, remeasure, attempt_end, baseline_promoted, revert, note.
+- **Baseline store** (`Argus.Autoresearch.Baseline`) — committed
+  `.autoresearch/baseline/` with snapshot.json, metadata.json, and
+  canary_correctness.json. Promote/read/exists? API.
+- **Config** (`Argus.Autoresearch.Config`) — `.autoresearch/config.exs`
+  with named corpus tiers (fast/medium/full), canary project, barrier
+  commands, concurrency settings.
+- **Claude Code skill** at `.claude/skills/argus-autoresearch/SKILL.md`
+  — 9-step iteration workflow with two confirmation gates, commit
+  protocol (two commits per accepted iteration), dead-end protocol,
+  and safety rules.
+- **Initial baseline** for the fast-tier corpus (poolboy, phoenix_pubsub,
+  plug, jason, bandit): 95 imprecision events across 12 categories,
+  19 shape-gap rows.
+
+### Changed
+
+- **`scripts/harness.exs`** — subprocess invocation delegated to
+  `Argus.Autoresearch.Measure.run_analysis_subprocess/4`. The harness
+  still owns compile orchestration and triage; only the subprocess
+  primitive is shared.
+
+### Notes
+
+Day-zero baseline counts (fast tier):
+
+| Category | Count |
+|---|---|
+| ets_table_ref_op | 30 |
+| ignored_result_unknown_api | 22 |
+| genserver_callee | 19 |
+| registry_op_key | 8 |
+| gen_server_start_name | 5 |
+| deferred_reply_from | 2 |
+| ets_table_name_new | 2 |
+| process_link_target | 2 |
+| supervisor_child_module | 2 |
+| delayed_target | 1 |
+| exit_call_target | 1 |
+| sync_call_timeout | 1 |
+| **Total imprecision** | **95** |
+
+Shape-gap rows: 19 across 4 relations
+(coverage_genserver_isolated: 11, coverage_ets_unused: 3,
+coverage_named_process_unreachable: 3, coverage_supervisor_no_children: 2).
+
 ## 0.4.0 — Unreleased
 
 Coverage and precision instrumentation — Argus can now measure its own

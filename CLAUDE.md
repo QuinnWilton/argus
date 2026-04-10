@@ -145,4 +145,14 @@ mix argus --list         # List available analyses
 mix argus supervision    # Detect supervision-tree anti-patterns
 mix argus ets            # Detect ETS misuse
 mix argus unsafe_task    # Detect leaked Task.async results
+mix argus coverage       # Measure extractor precision
+
+# Autoresearch loop (iterative coverage improvement)
+mix argus.autoresearch init       # scaffold .autoresearch/
+mix argus.autoresearch measure    # run coverage on corpus tier
+mix argus.autoresearch diff       # diff current vs baseline
+mix argus.autoresearch rank       # ranked priority list
+mix argus.autoresearch checks     # pre-accept barrier
+mix argus.autoresearch accept     # promote current → baseline
+mix argus.autoresearch status     # session summary ("resume" command)
 ```
