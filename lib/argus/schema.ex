@@ -917,6 +917,26 @@ defmodule Argus.Schema do
     """
   }
 
+  @call_arg %{
+    name: :call_arg,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID of the call site"},
+      {:caller, :symbol, "calling function ID"},
+      {:callee, :symbol, "callee function ID (mod:func/arity)"},
+      {:arg_pos, :number, "0-based argument position"},
+      {:value, :symbol,
+       "resolved value: literal atom string, 'arg:N' for forwarded param, or 'dynamic'"}
+    ],
+    doc: """
+    Resolved argument value at a call site. Enables interprocedural \
+    constant propagation: Datalog rules in `clientlib/interprocedural.dl` \
+    trace literal values from call sites through forwarding chains to \
+    derive additional `sync_call`/`async_cast` rows that the extractors \
+    couldn't resolve statically.
+    """
+  }
+
   # All relations indexed by name.
 
   @layer_1_relations [
@@ -999,6 +1019,8 @@ defmodule Argus.Schema do
     @statem_state,
     @statem_transition,
     @statem_timeout,
+    # Interprocedural constant propagation.
+    @call_arg,
     # Coverage instrumentation (populated only by the coverage analysis).
     @imprecision
   ]
