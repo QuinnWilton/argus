@@ -555,11 +555,32 @@ defmodule Argus.Extractor.Helpers do
 
   defp do_arg_position([instr | rest], reg) do
     cond do
-      barrier?(instr) -> :no
-      writes_to?(instr, reg) -> :no
-      true -> do_arg_position(rest, reg)
+      barrier?(instr) ->
+        :no
+
+      # A register-to-register move doesn't destroy the arg-position
+      # information — it just shifts it. Follow the chain by tracing
+      # the source register instead of giving up. This handles the
+      # common pattern where `def f(_unused, useful)` compiles to
+      # `move x1, x0` before the call site: x0 IS param 1.
+      move_source(instr, reg) != nil ->
+        do_arg_position(rest, move_source(instr, reg))
+
+      writes_to?(instr, reg) ->
+        :no
+
+      true ->
+        do_arg_position(rest, reg)
     end
   end
+
+  # If `instr` is a simple move that writes to `dst_reg`, return the
+  # normalized source register. Otherwise nil.
+  defp move_source({:move, src, dst}, dst_reg) do
+    if normalize_reg(dst) == dst_reg, do: normalize_reg(src), else: nil
+  end
+
+  defp move_source(_, _), do: nil
 
   defp do_last_call_writer([], _reg), do: :no
 
