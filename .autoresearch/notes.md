@@ -30,6 +30,7 @@ A rough, measurable goal. Example:
 
 ## Wins
 
+- 2026-04-10 — interprocedural constant propagation: new call_arg fact + Datalog resolved_arg rules derive additional sync_call/async_cast rows by tracing literals through wrapper call chains. All correctness analyses benefit via enriched call graph. Oban baseline preserved (7 findings unchanged). [commits 9dd8434, 522edd5, c08d3e8]
 - 2026-04-10 — shape-gap rules: -6 rows (20→14) via 3 Datalog fixes: exclude supervised GenServers from isolated, exclude same-module-ops tables from unused, filter dynamic names from unreachable. [commit fd23c33]
 - 2026-04-10 — `gen_server_start_name`: -5 (5→0, fully eliminated) via tail-call suppression in maybe_named_start/maybe_named_start_erlang. [commit 0b0b6b7]
 - 2026-04-10 — `ignored_result_unknown_api`: -4 (4→0, fully eliminated) via result_used? heuristic recognizing x0-consumed patterns (save-to-y, test, destructure, pass-forward). [commit da3102c]
