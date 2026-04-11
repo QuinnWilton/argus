@@ -194,12 +194,18 @@ defmodule Argus.Analysis do
     end
   end
 
-  defp default_extractors_for({:custom, _}), do: []
+  # CallArgs is a universal extractor — it emits call_arg facts that
+  # the interprocedural.dl rules use to derive additional sync_call /
+  # async_cast rows. Including it for every analysis means the enriched
+  # call graph is always available when Datalog rules consume it.
+  @universal_extractors [Argus.Extractors.CallArgs]
+
+  defp default_extractors_for({:custom, _}), do: @universal_extractors
 
   defp default_extractors_for(name) when is_atom(name) do
     case fetch_module(name) do
-      {:ok, mod} -> mod.extractors()
-      :error -> []
+      {:ok, mod} -> @universal_extractors ++ mod.extractors()
+      :error -> @universal_extractors
     end
   end
 
