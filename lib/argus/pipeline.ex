@@ -22,7 +22,8 @@ defmodule Argus.Pipeline do
           concurrency: pos_integer(),
           extractors: [module()],
           timeout: timeout(),
-          trace_imprecision: boolean()
+          trace_imprecision: boolean(),
+          format: :raw | :typed
         ]
 
   @default_timeout 120_000
@@ -46,14 +47,19 @@ defmodule Argus.Pipeline do
   @doc """
   Extracts facts from the given modules and returns them as a map
   without writing to disk.
+
+  With `format: :typed`, rows are decoded against the schema via
+  `Argus.Facts.decode/1` (field-name-keyed maps, integers, `Argus.InstrId`
+  structs) instead of the raw string lists that `.facts` files use.
   """
   @spec extract(modules :: [atom() | String.t()], extract_opts()) ::
-          {:ok, Emit.facts()} | {:error, term()}
+          {:ok, Emit.facts() | Argus.Facts.t()} | {:error, term()}
   def extract(modules, opts \\ []) do
     concurrency = Keyword.get(opts, :concurrency, System.schedulers_online())
     extractors = Keyword.get(opts, :extractors, [])
     task_timeout = Keyword.get(opts, :timeout, @default_timeout)
     trace_imprecision = Keyword.get(opts, :trace_imprecision, false)
+    format = Keyword.get(opts, :format, :raw)
 
     with {:ok, paths} <- Disassemble.resolve_paths(modules) do
       merged =
@@ -75,7 +81,10 @@ defmodule Argus.Pipeline do
             throw({:extraction_error, reason})
         end)
 
-      {:ok, merged}
+      case format do
+        :raw -> {:ok, merged}
+        :typed -> {:ok, Argus.Facts.decode(merged)}
+      end
     end
   catch
     {:extraction_error, reason} -> {:error, reason}

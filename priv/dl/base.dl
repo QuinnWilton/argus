@@ -10,7 +10,7 @@
 .decl jump(id: symbol, target: number)
 .input jump
 
-.decl branch(id: symbol, on_true: number, on_false: number)
+.decl branch(id: symbol, fail: number, reserved: number)
 .input branch
 
 .decl label_at(label: number, id: symbol)

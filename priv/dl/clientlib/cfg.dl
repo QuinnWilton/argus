@@ -17,17 +17,12 @@ cfg_edge(id, target_id) :-
   jump(id, target),
   label_at(target, target_id).
 
-// Conditional branch — true arm.
+// Conditional branch — the fail edge. Tests fall through on success (that
+// edge comes from `next`); the emitted label is taken when the test fails.
 cfg_edge(id, target_id) :-
-  branch(id, on_true, _),
-  on_true != 0,
-  label_at(on_true, target_id).
-
-// Conditional branch — false arm (when explicit, not fallthrough).
-cfg_edge(id, target_id) :-
-  branch(id, _, on_false),
-  on_false != 0,
-  label_at(on_false, target_id).
+  branch(id, fail, _),
+  fail != 0,
+  label_at(fail, target_id).
 
 // Select branch arms.
 cfg_edge(id, target_id) :-

@@ -23,8 +23,8 @@ defmodule Argus.SchemaTest do
         assert is_atom(fname),
                "field name must be an atom: #{inspect(rel.name)}.#{inspect(fname)}"
 
-        assert ftype in [:symbol, :number],
-               "field type must be :symbol or :number: #{inspect(rel.name)}.#{inspect(fname)}"
+        assert ftype in [:symbol, :number, :instr_id, :func_id, :label],
+               "unknown field type #{inspect(ftype)}: #{inspect(rel.name)}.#{inspect(fname)}"
 
         assert is_binary(fdoc),
                "field doc must be a string: #{inspect(rel.name)}.#{inspect(fname)}"

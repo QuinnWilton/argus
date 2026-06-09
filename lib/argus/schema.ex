@@ -12,7 +12,19 @@ defmodule Argus.Schema do
   - **Layer 2** — domain-specific facts from pluggable extractors.
   """
 
-  @type field_type :: :symbol | :number
+  @typedoc """
+  The semantic kind of a relation field.
+
+  `:symbol` and `:number` are the raw Souffle types. The richer kinds drive
+  `Argus.Facts.decode/1` for in-process consumers while serializing to the
+  same Souffle types (`:instr_id`/`:func_id` → `symbol`, `:label` → `number`):
+
+  - `:instr_id` — an instruction ID (`"Mod:func/arity#idx"`), decoded to
+    `Argus.InstrId.t()`.
+  - `:func_id` — a function ID (`"Mod:func/arity"`), kept as a string.
+  - `:label` — a BEAM label number (0 conventionally means "no label").
+  """
+  @type field_type :: :symbol | :number | :instr_id | :func_id | :label
   @type field :: {atom(), field_type(), String.t()}
 
   @type relation :: %{
@@ -21,6 +33,12 @@ defmodule Argus.Schema do
           fields: [field()],
           doc: String.t()
         }
+
+  # Bump whenever a relation is added/removed or any field changes name,
+  # position, or kind — in-process consumers (e.g. lowdown) assert against
+  # this at compile time. Independent of the package version; record bumps in
+  # CHANGELOG.md.
+  @schema_version 1
 
   # Layer 1: Module-level facts.
 
@@ -38,11 +56,11 @@ defmodule Argus.Schema do
     name: :function_def,
     layer: 1,
     fields: [
-      {:func, :symbol, "function ID (mod:name/arity)"},
+      {:func, :func_id, "function ID (mod:name/arity)"},
       {:mod, :symbol, "module name"},
       {:name, :symbol, "function name"},
       {:arity, :number, "function arity"},
-      {:entry, :number, "entry label number"},
+      {:entry, :label, "entry label number"},
       {:exported, :number, "1 if exported, 0 if local"}
     ],
     doc: "Function definition within a module."
@@ -76,8 +94,8 @@ defmodule Argus.Schema do
     name: :instruction,
     layer: 1,
     fields: [
-      {:id, :symbol, "unique instruction ID"},
-      {:func, :symbol, "containing function ID"},
+      {:id, :instr_id, "unique instruction ID"},
+      {:func, :func_id, "containing function ID"},
       {:idx, :number, "instruction index within function"},
       {:op, :symbol, "opcode name"}
     ],
@@ -88,8 +106,8 @@ defmodule Argus.Schema do
     name: :next,
     layer: 1,
     fields: [
-      {:from, :symbol, "instruction ID"},
-      {:to, :symbol, "next instruction ID (fallthrough)"}
+      {:from, :instr_id, "instruction ID"},
+      {:to, :instr_id, "next instruction ID (fallthrough)"}
     ],
     doc: "Sequential (fallthrough) instruction ordering."
   }
@@ -100,7 +118,7 @@ defmodule Argus.Schema do
     name: :move,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"},
+      {:id, :instr_id, "instruction ID"},
       {:src, :symbol, "source operand"},
       {:dst, :symbol, "destination operand"}
     ],
@@ -111,7 +129,7 @@ defmodule Argus.Schema do
     name: :def,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"},
+      {:id, :instr_id, "instruction ID"},
       {:reg, :symbol, "defined register"}
     ],
     doc: "Register definition (write)."
@@ -121,7 +139,7 @@ defmodule Argus.Schema do
     name: :use,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"},
+      {:id, :instr_id, "instruction ID"},
       {:reg, :symbol, "used register"}
     ],
     doc: "Register use (read)."
@@ -131,7 +149,7 @@ defmodule Argus.Schema do
     name: :literal_value,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"},
+      {:id, :instr_id, "instruction ID"},
       {:reg, :symbol, "destination register"},
       {:val, :symbol, "literal value (stringified)"}
     ],
@@ -144,8 +162,8 @@ defmodule Argus.Schema do
     name: :jump,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"},
-      {:target, :number, "target label number"}
+      {:id, :instr_id, "instruction ID"},
+      {:target, :label, "target label number"}
     ],
     doc: "Unconditional jump to a label."
   }
@@ -154,19 +172,19 @@ defmodule Argus.Schema do
     name: :branch,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"},
-      {:on_true, :number, "label if condition holds"},
-      {:on_false, :number, "label if condition fails (0 = fallthrough)"}
+      {:id, :instr_id, "instruction ID"},
+      {:fail, :label, "label taken when the test fails (tests fall through on success)"},
+      {:reserved, :number, "always 0 (kept for arity stability)"}
     ],
-    doc: "Conditional branch (test instructions)."
+    doc: "Conditional branch (test instructions): the emitted label is the fail edge."
   }
 
   @label_at %{
     name: :label_at,
     layer: 1,
     fields: [
-      {:label, :number, "label number"},
-      {:id, :symbol, "instruction ID of the label"}
+      {:label, :label, "label number"},
+      {:id, :instr_id, "instruction ID of the label"}
     ],
     doc: "Maps a label number to the instruction at that position."
   }
@@ -175,9 +193,9 @@ defmodule Argus.Schema do
     name: :select_branch,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"},
+      {:id, :instr_id, "instruction ID"},
       {:val, :symbol, "matched value (stringified)"},
-      {:target, :number, "target label number"}
+      {:target, :label, "target label number"}
     ],
     doc: "One arm of a select_val or select_tuple_arity."
   }
@@ -188,7 +206,7 @@ defmodule Argus.Schema do
     name: :local_call,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"},
+      {:id, :instr_id, "instruction ID"},
       {:target, :symbol, "target label or MFA string"},
       {:arity, :number, "call arity"}
     ],
@@ -199,7 +217,7 @@ defmodule Argus.Schema do
     name: :remote_call,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"},
+      {:id, :instr_id, "instruction ID"},
       {:mod, :symbol, "target module"},
       {:func, :symbol, "target function"},
       {:arity, :number, "call arity"}
@@ -211,7 +229,7 @@ defmodule Argus.Schema do
     name: :tail_call,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"}
+      {:id, :instr_id, "instruction ID"}
     ],
     doc: "Marks an instruction as a tail call."
   }
@@ -220,11 +238,11 @@ defmodule Argus.Schema do
     name: :bif_call,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"},
+      {:id, :instr_id, "instruction ID"},
       {:mod, :symbol, "BIF module"},
       {:func, :symbol, "BIF function"},
       {:arity, :number, "BIF arity"},
-      {:fail, :number, "failure label (0 = no fail)"}
+      {:fail, :label, "failure label (0 = no fail)"}
     ],
     doc: "Built-in function call."
   }
@@ -235,7 +253,7 @@ defmodule Argus.Schema do
     name: :allocate,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"},
+      {:id, :instr_id, "instruction ID"},
       {:stack, :number, "stack words allocated"},
       {:live, :number, "live X registers"}
     ],
@@ -246,7 +264,7 @@ defmodule Argus.Schema do
     name: :deallocate,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"},
+      {:id, :instr_id, "instruction ID"},
       {:stack, :number, "stack words deallocated"}
     ],
     doc: "Stack frame deallocation."
@@ -256,7 +274,7 @@ defmodule Argus.Schema do
     name: :send_msg,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"}
+      {:id, :instr_id, "instruction ID"}
     ],
     doc: "Message send instruction."
   }
@@ -265,8 +283,8 @@ defmodule Argus.Schema do
     name: :recv_start,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"},
-      {:fail, :number, "failure label"}
+      {:id, :instr_id, "instruction ID"},
+      {:fail, :label, "failure label"}
     ],
     doc: "Start of a receive loop (loop_rec)."
   }
@@ -275,7 +293,7 @@ defmodule Argus.Schema do
     name: :recv_end,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"}
+      {:id, :instr_id, "instruction ID"}
     ],
     doc: "End of a receive clause (remove_message)."
   }
@@ -284,7 +302,7 @@ defmodule Argus.Schema do
     name: :spawn_call,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"},
+      {:id, :instr_id, "instruction ID"},
       {:mod, :symbol, "spawned module"},
       {:func, :symbol, "spawned function"},
       {:arity, :number, "spawned function arity"},
@@ -297,8 +315,8 @@ defmodule Argus.Schema do
     name: :try_start,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"},
-      {:handler, :number, "handler label"}
+      {:id, :instr_id, "instruction ID"},
+      {:handler, :label, "handler label"}
     ],
     doc: "Start of a try block."
   }
@@ -307,7 +325,7 @@ defmodule Argus.Schema do
     name: :try_end,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"}
+      {:id, :instr_id, "instruction ID"}
     ],
     doc: "End of a try block."
   }
@@ -316,8 +334,9 @@ defmodule Argus.Schema do
     name: :make_fun,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"},
-      {:target, :number, "lambda body label"},
+      {:id, :instr_id, "instruction ID"},
+      {:target, :symbol,
+       "lambda body label number, or the function ID for funs over named functions"},
       {:num_free, :number, "number of captured variables"}
     ],
     doc: "Lambda/closure creation."
@@ -327,8 +346,8 @@ defmodule Argus.Schema do
     name: :closure_def,
     layer: 1,
     fields: [
-      {:parent_func, :symbol, "function constructing the closure"},
-      {:closure_func, :symbol, "function ID of the closure body"}
+      {:parent_func, :func_id, "function constructing the closure"},
+      {:closure_func, :func_id, "function ID of the closure body"}
     ],
     doc: """
     Closure construction edge: `parent_func` builds a closure pointing at \
@@ -346,7 +365,7 @@ defmodule Argus.Schema do
     name: :tuple_field_access,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"},
+      {:id, :instr_id, "instruction ID"},
       {:src, :symbol, "source tuple register"},
       {:idx, :number, "extracted field index (0-based)"},
       {:dst, :symbol, "destination register holding the extracted field"}
@@ -362,10 +381,10 @@ defmodule Argus.Schema do
     name: :type_test,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"},
+      {:id, :instr_id, "instruction ID"},
       {:test, :symbol, "type test name (is_integer, is_atom, is_tuple, ...)"},
       {:src, :symbol, "register being type-tested"},
-      {:fail, :number, "fail label if the test does not hold (0 = fallthrough)"}
+      {:fail, :label, "fail label if the test does not hold (0 = fallthrough)"}
     ],
     doc: """
     Unary type-test instructions emitted by the compiler for guard \
@@ -379,7 +398,7 @@ defmodule Argus.Schema do
     name: :unhandled_op,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"},
+      {:id, :instr_id, "instruction ID"},
       {:op, :symbol, "BEAM opcode name that the emitter did not specialize"}
     ],
     doc: """
@@ -394,8 +413,8 @@ defmodule Argus.Schema do
     name: :bs_start,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"},
-      {:fail, :number, "failure label"}
+      {:id, :instr_id, "instruction ID"},
+      {:fail, :label, "failure label"}
     ],
     doc: "Start of binary matching."
   }
@@ -404,7 +423,7 @@ defmodule Argus.Schema do
     name: :line_info,
     layer: 1,
     fields: [
-      {:id, :symbol, "instruction ID"},
+      {:id, :instr_id, "instruction ID"},
       {:line, :number, "source line number"}
     ],
     doc: "Source line number annotation."
@@ -1030,6 +1049,15 @@ defmodule Argus.Schema do
   @relations_by_name Map.new(@all_relations, fn r -> {r.name, r} end)
 
   @doc """
+  The fact-schema version, asserted by in-process consumers at compile time.
+
+  Bumped whenever a relation is added/removed or any field changes name,
+  position, or kind. Independent of the package version.
+  """
+  @spec version() :: pos_integer()
+  def version, do: @schema_version
+
+  @doc """
   Returns all relation definitions.
   """
   @spec all() :: [relation()]
@@ -1087,6 +1115,9 @@ defmodule Argus.Schema do
 
   @doc """
   Returns the Souffle type declaration string for a relation.
+
+  The semantic field kinds collapse to their Souffle representation, so the
+  `.decl`/`.facts` surface is unchanged by kind enrichment.
   """
   @spec souffle_decl(atom()) :: String.t()
   def souffle_decl(name) do
@@ -1094,11 +1125,17 @@ defmodule Argus.Schema do
 
     fields_str =
       rel.fields
-      |> Enum.map(fn {fname, ftype, _doc} -> "#{fname}: #{ftype}" end)
+      |> Enum.map(fn {fname, ftype, _doc} -> "#{fname}: #{souffle_type(ftype)}" end)
       |> Enum.join(", ")
 
     ".decl #{name}(#{fields_str})"
   end
+
+  defp souffle_type(:symbol), do: :symbol
+  defp souffle_type(:instr_id), do: :symbol
+  defp souffle_type(:func_id), do: :symbol
+  defp souffle_type(:number), do: :number
+  defp souffle_type(:label), do: :number
 
   @doc """
   Returns all relation names.

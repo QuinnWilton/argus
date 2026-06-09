@@ -14,6 +14,16 @@ pattern, adapted for Argus's multi-dimensional categorical metrics.
 
 ### Added
 
+- **Typed fact API for in-process consumers.** `Argus.Pipeline.extract/2`
+  accepts `format: :typed`, decoding rows against the schema via the new
+  `Argus.Facts.decode/1` — field-name-keyed maps with integers for
+  `number`/`label` fields and `Argus.InstrId` structs (right-anchored parse,
+  safe for generated `-fun-N-` names) for instruction IDs. The Souffle
+  `.decl`/`.facts` surface is byte-identical: the new semantic field kinds
+  (`:instr_id`, `:func_id`, `:label`) collapse to `symbol`/`number`.
+- **`Argus.Schema.version/0`** — a fact-schema version (now 1) for consumers
+  to assert against at compile time; bumped on any relation/field change.
+
 - **`mix argus.autoresearch` Mix task** with 9 subcommands:
   `init`, `measure`, `diff`, `rank`, `checks`, `accept`, `revert`,
   `status`, `note`. Each wraps a public API function in
@@ -60,6 +70,14 @@ pattern, adapted for Argus's multi-dimensional categorical metrics.
   `Argus.Autoresearch.Measure.run_analysis_subprocess/4`. The harness
   still owns compile orchestration and triage; only the subprocess
   primitive is shared.
+
+### Fixed
+
+- **`branch` relation fields told the wrong story.** The emitter has always
+  put the test's *fail* label in the field documented as `on_true` ("label if
+  condition holds"). Fields are now `fail`/`reserved` (names only — `.facts`
+  output is positional and unchanged), and the never-firing false-arm rule in
+  `clientlib/cfg.dl` is gone.
 
 ### Notes
 
