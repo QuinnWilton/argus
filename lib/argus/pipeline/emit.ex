@@ -468,27 +468,34 @@ defmodule Argus.Pipeline.Emit do
     |> add_fact(:def, [id, "x0"])
   end
 
-  # Receive.
+  # Receive. The loop's control flow is real control flow: loop_rec falls
+  # through on a message and branches to its fail label (the wait block) on an
+  # empty mailbox; loop_rec_end and wait transfer back to the loop label; and
+  # wait_timeout re-enters the loop on a message or falls through on timeout.
+  # Without these edges, receive loops have no back edges in the CFG.
   defp emit_specific(facts, id, {:loop_rec, {:f, fail}, dst}) do
     facts
     |> add_fact(:recv_start, [id, to_string(fail)])
+    |> add_fact(:branch, [id, to_string(fail), "0"])
     |> add_fact(:def, [id, format_operand(dst)])
   end
 
-  defp emit_specific(facts, id, {:loop_rec_end, {:f, _label}}) do
-    add_fact(facts, :recv_end, [id])
+  defp emit_specific(facts, id, {:loop_rec_end, {:f, label}}) do
+    facts
+    |> add_fact(:recv_end, [id])
+    |> add_fact(:jump, [id, to_string(label)])
   end
 
   defp emit_specific(facts, id, :remove_message) do
     add_fact(facts, :recv_end, [id])
   end
 
-  defp emit_specific(facts, _id, {:wait, {:f, _label}}) do
-    facts
+  defp emit_specific(facts, id, {:wait, {:f, label}}) do
+    add_fact(facts, :jump, [id, to_string(label)])
   end
 
-  defp emit_specific(facts, _id, {:wait_timeout, {:f, _label}, _timeout}) do
-    facts
+  defp emit_specific(facts, id, {:wait_timeout, {:f, label}, _timeout}) do
+    add_fact(facts, :branch, [id, to_string(label), "0"])
   end
 
   defp emit_specific(facts, _id, :timeout) do

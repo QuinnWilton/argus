@@ -173,10 +173,13 @@ defmodule Argus.Schema do
     layer: 1,
     fields: [
       {:id, :instr_id, "instruction ID"},
-      {:fail, :label, "label taken when the test fails (tests fall through on success)"},
+      {:fail, :label, "the branch's label edge; falls through otherwise"},
       {:reserved, :number, "always 0 (kept for arity stability)"}
     ],
-    doc: "Conditional branch (test instructions): the emitted label is the fail edge."
+    doc:
+      "Conditional two-way control transfer: the label edge plus fallthrough. " <>
+        "For test instructions the label is the fail edge; for receive-loop " <>
+        "control (loop_rec, wait_timeout) it is the empty-mailbox/loop-again edge."
   }
 
   @label_at %{

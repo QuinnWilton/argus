@@ -23,6 +23,17 @@ pattern, adapted for Argus's multi-dimensional categorical metrics.
   (`:instr_id`, `:func_id`, `:label`) collapse to `symbol`/`number`.
 - **`Argus.Schema.version/0`** — a fact-schema version (now 1) for consumers
   to assert against at compile time; bumped on any relation/field change.
+- **`Argus.Cfg`** — basic-block control-flow graphs from Layer-1 facts:
+  leader-algorithm blocks with typed edges (fallthrough/jump/branch-pass/
+  branch-fail/select-arm/select-fail/exception), a dominator tree (iterative
+  Cooper–Harvey–Kennedy over reverse postorder), natural-loop headers, and
+  per-function entry resolved from `function_def`'s entry label (instruction
+  0 is the func_info failure pad, not the entry). Region/dominance helpers
+  on `Argus.Cfg.Function`.
+- **Receive-loop control-flow facts.** `loop_rec` now emits its empty-mailbox
+  branch, `loop_rec_end`/`wait` their loop-back jumps, and `wait_timeout` its
+  message-arrival branch — receive loops previously had no back edges in the
+  fact base, so no analysis could see them as loops.
 
 - **`mix argus.autoresearch` Mix task** with 9 subcommands:
   `init`, `measure`, `diff`, `rank`, `checks`, `accept`, `revert`,
