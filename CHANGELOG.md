@@ -27,6 +27,14 @@ pattern, adapted for Argus's multi-dimensional categorical metrics.
 
 ### Added
 
+- **`Argus.Dataflow`** — reaching definitions over Layer-1 facts:
+  `def_use_edges/1` returns the def→use edge set (which instruction's
+  register write feeds which read), computed block-locally (straight-line
+  chains, gen/kill summaries, worklist fixpoint, one local resolution walk).
+  The successor relation comes from the explicit control-transfer facts
+  (`next`/`jump`/`branch`/`select_branch`); exception and bif-fail edges
+  are deliberately not followed (the handler's VM-materialized `x0`–`x2`
+  have no `def` facts, so following them would fabricate flows).
 - **`type_test` facts for the structural pattern tests.** `is_nonempty_list`
   and `is_tagged_tuple` now emit `type_test` rows alongside the guard-style
   unary tests. Both type-test their first operand (the `src` field);
