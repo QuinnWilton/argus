@@ -48,12 +48,13 @@ defmodule Argus.Dataflow do
   def def_use_edges(facts) when is_map(facts) do
     defs = regs_by_instr(Map.get(facts, :def, []))
     uses = regs_by_instr(Map.get(facts, :use, []))
+    succs = successors(facts)
 
     facts
     |> Map.get(:instruction, [])
     |> Enum.group_by(&InstrId.fa(&1.id), & &1.id)
     |> Enum.map(fn {fa, ids} ->
-      function_edges(Enum.sort_by(ids, & &1.idx), Map.get(successors(facts), fa, %{}), defs, uses)
+      function_edges(Enum.sort_by(ids, & &1.idx), Map.get(succs, fa, %{}), defs, uses)
     end)
     |> Enum.reduce(MapSet.new(), &MapSet.union/2)
   end
@@ -175,26 +176,43 @@ defmodule Argus.Dataflow do
     {gen, MapSet.new(Map.keys(last_def))}
   end
 
-  # Worklist fixpoint over the block graph.
+  # Worklist fixpoint over the block graph: a queue with a pending set, so
+  # membership checks and re-enqueues stay constant-time on wide graphs.
   defp solve(block_ids, block_succs, block_preds, summaries) do
     out = Map.new(block_ids, &{&1, MapSet.new()})
-    iterate(block_ids, block_succs, block_preds, summaries, out)
+    queue = :queue.from_list(block_ids)
+    iterate(queue, MapSet.new(block_ids), block_succs, block_preds, summaries, out)
   end
 
-  defp iterate([], _succs, _preds, _summaries, out), do: out
+  defp iterate(queue, pending, succs, preds, summaries, out) do
+    case :queue.out(queue) do
+      {:empty, _queue} ->
+        out
 
-  defp iterate([n | rest], succs, preds, summaries, out) do
-    {gen, kill} = Map.fetch!(summaries, n)
-    in_set = block_in(n, preds, out)
-    surviving = Enum.reject(in_set, fn {_id, reg} -> MapSet.member?(kill, reg) end)
-    new_out = MapSet.union(gen, MapSet.new(surviving))
+      {{:value, n}, queue} ->
+        pending = MapSet.delete(pending, n)
+        {gen, kill} = Map.fetch!(summaries, n)
+        in_set = block_in(n, preds, out)
+        surviving = Enum.reject(in_set, fn {_id, reg} -> MapSet.member?(kill, reg) end)
+        new_out = MapSet.union(gen, MapSet.new(surviving))
 
-    if MapSet.equal?(new_out, Map.fetch!(out, n)) do
-      iterate(rest, succs, preds, summaries, out)
-    else
-      changed = Map.get(succs, n, []) -- rest
-      iterate(rest ++ changed, succs, preds, summaries, Map.put(out, n, new_out))
+        if MapSet.equal?(new_out, Map.fetch!(out, n)) do
+          iterate(queue, pending, succs, preds, summaries, out)
+        else
+          {queue, pending} = enqueue(Map.get(succs, n, []), queue, pending)
+          iterate(queue, pending, succs, preds, summaries, Map.put(out, n, new_out))
+        end
     end
+  end
+
+  defp enqueue(blocks, queue, pending) do
+    Enum.reduce(blocks, {queue, pending}, fn n, {q, p} ->
+      if MapSet.member?(p, n) do
+        {q, p}
+      else
+        {:queue.in(n, q), MapSet.put(p, n)}
+      end
+    end)
   end
 
   defp block_in(n, preds, out) do
