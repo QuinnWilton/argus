@@ -14,6 +14,11 @@ pattern, adapted for Argus's multi-dimensional categorical metrics.
 
 ### Added
 
+- **`type_test` facts for the structural pattern tests.** `is_nonempty_list`
+  and `is_tagged_tuple` now emit `type_test` rows alongside the guard-style
+  unary tests. Both type-test their first operand (the `src` field);
+  `is_tagged_tuple`'s arity/tag operands are not recorded. The relation
+  shape is unchanged — only its row coverage grows.
 - **Typed fact API for in-process consumers.** `Argus.Pipeline.extract/2`
   accepts `format: :typed`, decoding rows against the schema via the new
   `Argus.Facts.decode/1` — field-name-keyed maps with integers for

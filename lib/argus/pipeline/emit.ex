@@ -696,12 +696,16 @@ defmodule Argus.Pipeline.Emit do
     instruction_id |> String.split("#", parts: 2) |> hd()
   end
 
-  # Unary type-test instructions narrow the type of a register on the success
+  # Type-test instructions narrow the type of a register on the success
   # edge. Capture the test name (which the generic `branch` fact discards)
   # so downstream analyses can reason about which register is what type.
+  # Most are unary; `is_tagged_tuple` carries arity/tag operands and
+  # `is_nonempty_list` narrows to a cons cell — both still type-test their
+  # first operand, which is what the `src` field records.
   @type_test_names ~w(
     is_atom is_binary is_bitstring is_boolean is_float is_function is_integer
-    is_list is_map is_nil is_number is_pid is_port is_reference is_tuple
+    is_list is_map is_nil is_nonempty_list is_number is_pid is_port
+    is_reference is_tagged_tuple is_tuple
   )a
 
   defp maybe_emit_type_test(facts, id, test_name, [reg | _], fail)

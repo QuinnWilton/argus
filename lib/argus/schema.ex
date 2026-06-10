@@ -390,10 +390,13 @@ defmodule Argus.Schema do
       {:fail, :label, "fail label if the test does not hold (0 = fallthrough)"}
     ],
     doc: """
-    Unary type-test instructions emitted by the compiler for guard \
-    narrowing. Captures the test name (which the generic `branch` fact \
-    discards) so type-narrowing dataflow analyses can reason about which \
-    register has which inferred type on the success edge.
+    Type-test instructions emitted by the compiler for guard and \
+    pattern-match narrowing (`is_integer`, `is_tuple`, and the structural \
+    `is_nonempty_list`/`is_tagged_tuple`, whose extra operands are not \
+    recorded — `src` is always the tested register). Captures the test \
+    name (which the generic `branch` fact discards) so type-narrowing \
+    dataflow analyses can reason about which register has which inferred \
+    type on the success edge.
     """
   }
 

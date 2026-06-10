@@ -303,6 +303,16 @@ defmodule Argus.Pipeline.EmitTest do
       assert facts[:type_test] == nil
     end
 
+    test "emits type_test for the structural is_nonempty_list" do
+      facts = emit_func([{:test, :is_nonempty_list, {:f, 7}, [{:x, 0}]}])
+      assert [[_id, "is_nonempty_list", "x0", "7"]] = facts[:type_test]
+    end
+
+    test "emits type_test for is_tagged_tuple with src as the tested register" do
+      facts = emit_func([{:test, :is_tagged_tuple, {:f, 8}, [{:x, 0}, 2, {:atom, :ok}]}])
+      assert [[_id, "is_tagged_tuple", "x0", "8"]] = facts[:type_test]
+    end
+
     test "still emits the generic branch fact alongside type_test" do
       facts = emit_func([{:test, :is_tuple, {:f, 6}, [{:x, 0}]}])
       assert [[_id, "6", "0"]] = facts[:branch]
