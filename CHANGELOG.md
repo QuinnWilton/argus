@@ -12,6 +12,19 @@ baseline the results, edit an extractor, re-measure, diff, accept or
 revert, repeat. Inspired by pi-autoresearch's event-log + living-doc
 pattern, adapted for Argus's multi-dimensional categorical metrics.
 
+### Fixed (schema version 2)
+
+- **`line_info` now carries real source lines.** The emitter passed
+  beam_disasm's `{:line, ref}` operand straight through, so the `line`
+  field held a Line-chunk *reference* despite being documented as a
+  source line number. The Disassemble stage now parses the module's Line
+  chunk (`BeamSpy.Source.parse_line_table/1`) and the emitter resolves
+  every marker at emit time. No-location markers (reference 0, on
+  compiler-generated code) and modules without a parseable Line chunk
+  emit no rows — `line_info` never contains raw references. The schema
+  version is bumped to **2** for this meaning change; the relation's
+  shape is unchanged.
+
 ### Added
 
 - **`type_test` facts for the structural pattern tests.** `is_nonempty_list`
@@ -82,6 +95,9 @@ pattern, adapted for Argus's multi-dimensional categorical metrics.
 
 ### Changed
 
+- **beam_spy is now a workspace path dependency** (was hex `~> 0.1.0`):
+  argus needs beam_spy's unreleased Line-chunk table fix for `line_info`
+  resolution, and lowdown already overrides the dep to the sibling.
 - **`scripts/harness.exs`** — subprocess invocation delegated to
   `Argus.Autoresearch.Measure.run_analysis_subprocess/4`. The harness
   still owns compile orchestration and triage; only the subprocess

@@ -15,6 +15,7 @@ defmodule Argus.Pipeline.Disassemble do
           required(:attributes) => keyword(),
           required(:functions) => list(),
           required(:imports) => list(),
+          required(:line_table) => %{pos_integer() => pos_integer()},
           optional(any()) => any()
         }
 
@@ -46,15 +47,23 @@ defmodule Argus.Pipeline.Disassemble do
   end
 
   @doc """
-  Disassembles a `.beam` file into module data, bundling its imports.
+  Disassembles a `.beam` file into module data, bundling its imports and
+  its Line-chunk table.
 
   Returns `{:ok, data}` where `data` has the standard BeamSpy disassembly
-  shape plus an `:imports` field, or `{:error, reason}` on failure.
+  shape plus `:imports` and `:line_table` fields, or `{:error, reason}`
+  on failure. The line table maps the disassembly's `{:line, ref}`
+  references to real source lines (reference 0 — "no location" — has no
+  entry); it is empty when the module has no parseable Line chunk, in
+  which case no `line_info` facts can be emitted.
   """
   @spec disassemble_path(String.t()) :: {:ok, module_data()} | {:error, term()}
   def disassemble_path(path) do
     with {:ok, data} <- BeamSpy.BeamFile.disassemble(path) do
-      {:ok, Map.put(data, :imports, fetch_imports(path))}
+      {:ok,
+       data
+       |> Map.put(:imports, fetch_imports(path))
+       |> Map.put(:line_table, fetch_line_table(path))}
     end
   end
 
@@ -62,6 +71,13 @@ defmodule Argus.Pipeline.Disassemble do
     case BeamSpy.BeamFile.read_imports(path) do
       {:ok, imports} -> imports
       {:error, _} -> []
+    end
+  end
+
+  defp fetch_line_table(path) do
+    case BeamSpy.Source.parse_line_table(path) do
+      {:ok, table} -> table
+      {:error, _} -> %{}
     end
   end
 end

@@ -10,13 +10,15 @@ defmodule Argus.Pipeline.EmitTest do
     arity = Keyword.get(opts, :arity, 0)
     entry = Keyword.get(opts, :entry, 1)
     exports = Keyword.get(opts, :exports, [{name, arity, entry}])
+    line_table = Keyword.get(opts, :line_table, %{})
 
     Emit.emit_module(
       mod,
       exports,
       [],
       [],
-      [{:function, name, arity, entry, instructions}]
+      [{:function, name, arity, entry, instructions}],
+      line_table
     )
   end
 
@@ -334,9 +336,24 @@ defmodule Argus.Pipeline.EmitTest do
   end
 
   describe "line_info facts" do
-    test "emits line_info" do
-      facts = emit_func([{:line, 42}])
+    test "resolves the Line-chunk reference to a real source line" do
+      facts = emit_func([{:line, 2}], line_table: %{1 => 10, 2 => 42})
       assert [[_id, "42"]] = facts[:line_info]
+    end
+
+    test "emits nothing for reference 0 (no location)" do
+      facts = emit_func([{:line, 0}], line_table: %{1 => 10})
+      assert facts[:line_info] == nil
+    end
+
+    test "emits nothing without a line table (no Line chunk)" do
+      facts = emit_func([{:line, 42}])
+      assert facts[:line_info] == nil
+    end
+
+    test "still records the marker in the instruction relation" do
+      facts = emit_func([{:line, 0}], line_table: %{})
+      assert Enum.any?(facts[:instruction], fn [_id, _func, _idx, op] -> op == "line" end)
     end
   end
 

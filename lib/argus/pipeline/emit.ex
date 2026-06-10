@@ -24,11 +24,13 @@ defmodule Argus.Pipeline.Emit do
   Emits facts for a single module's disassembly data.
 
   Takes the module name, the list of exports (for marking exported functions),
-  the list of imports, the attributes, and the function definitions.
+  the list of imports, the attributes, the function definitions, and the
+  module's Line-chunk table (`BeamSpy.Source.parse_line_table/1`, used to
+  resolve `{:line, ref}` markers to real source lines for `line_info`).
   Returns a map of relation name to list of fact rows.
   """
-  @spec emit_module(atom(), list(), list(), keyword(), list()) :: facts()
-  def emit_module(module, exports, imports, attributes, functions) do
+  @spec emit_module(atom(), list(), list(), keyword(), list(), map()) :: facts()
+  def emit_module(module, exports, imports, attributes, functions, line_table \\ %{}) do
     mod_str = inspect(module)
 
     facts = %{}
@@ -80,19 +82,19 @@ defmodule Argus.Pipeline.Emit do
         ])
 
       normalized = Normalize.normalize_function(module, func)
-      emit_instructions(acc, func_id, normalized)
+      emit_instructions(acc, func_id, normalized, line_table)
     end)
   end
 
   # Emit facts for a sequence of normalized instructions within a function.
-  defp emit_instructions(facts, func_id, normalized) do
-    emit_instructions_loop(facts, func_id, normalized, 0)
+  defp emit_instructions(facts, func_id, normalized, line_table) do
+    emit_instructions_loop(facts, func_id, normalized, 0, line_table)
   end
 
-  defp emit_instructions_loop(facts, _func_id, [], _idx), do: facts
+  defp emit_instructions_loop(facts, _func_id, [], _idx, _line_table), do: facts
 
-  defp emit_instructions_loop(facts, func_id, [{id, instr} | rest], idx) do
-    facts = emit_instruction_fact(facts, id, func_id, to_string(idx), instr)
+  defp emit_instructions_loop(facts, func_id, [{id, instr} | rest], idx, line_table) do
+    facts = emit_instruction_fact(facts, id, func_id, to_string(idx), instr, line_table)
 
     facts =
       if terminator?(instr) do
@@ -104,14 +106,31 @@ defmodule Argus.Pipeline.Emit do
         end
       end
 
-    emit_instructions_loop(facts, func_id, rest, idx + 1)
+    emit_instructions_loop(facts, func_id, rest, idx + 1, line_table)
   end
 
-  # Record the instruction fact and dispatch to specific emitters.
-  defp emit_instruction_fact(facts, id, func_id, idx, instr) do
+  # Record the instruction fact and dispatch to specific emitters. Line
+  # markers are handled here because they are the only instruction whose
+  # fact needs the module-level line table.
+  defp emit_instruction_fact(facts, id, func_id, idx, instr, line_table) do
     op = instruction_op(instr)
     facts = add_fact(facts, :instruction, [id, func_id, idx, to_string(op)])
-    emit_specific(facts, id, instr)
+
+    case instr do
+      {:line, ref} -> emit_line_info(facts, id, ref, line_table)
+      _ -> emit_specific(facts, id, instr)
+    end
+  end
+
+  # Resolve the marker's Line-chunk reference to a real source line.
+  # Reference 0 ("no location", on compiler-generated code) and references
+  # the table cannot resolve produce no fact: `line_info` carries source
+  # lines, never raw chunk references.
+  defp emit_line_info(facts, id, ref, line_table) do
+    case Map.get(line_table, ref) do
+      nil -> facts
+      line -> add_fact(facts, :line_info, [id, to_string(line)])
+    end
   end
 
   defp terminator?(:return), do: true
@@ -129,11 +148,6 @@ defmodule Argus.Pipeline.Emit do
   # Label.
   defp emit_specific(facts, id, {:label, n}) do
     add_fact(facts, :label_at, [to_string(n), id])
-  end
-
-  # Line info.
-  defp emit_specific(facts, id, {:line, n}) do
-    add_fact(facts, :line_info, [id, to_string(n)])
   end
 
   # Move.

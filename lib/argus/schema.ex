@@ -34,11 +34,15 @@ defmodule Argus.Schema do
           doc: String.t()
         }
 
-  # Bump whenever a relation is added/removed or any field changes name,
-  # position, or kind — in-process consumers (e.g. lowdown) assert against
-  # this at compile time. Independent of the package version; record bumps in
-  # CHANGELOG.md.
-  @schema_version 1
+  # Bump whenever a relation is added/removed, any field changes name,
+  # position, or kind, or a field's *meaning* changes — in-process consumers
+  # (e.g. lowdown) assert against this at compile time. Independent of the
+  # package version; record bumps in CHANGELOG.md.
+  #
+  # Version 2: line_info.line became a real source line (the emitter now
+  # resolves the Line chunk's references); under version 1 it carried the
+  # raw chunk reference despite the field's documentation.
+  @schema_version 2
 
   # Layer 1: Module-level facts.
 
@@ -432,7 +436,12 @@ defmodule Argus.Schema do
       {:id, :instr_id, "instruction ID"},
       {:line, :number, "source line number"}
     ],
-    doc: "Source line number annotation."
+    doc: """
+    Source line number annotation: the marker's Line-chunk reference \
+    resolved to a real source line at emit time. No-location markers \
+    (reference 0, on compiler-generated code) and modules without a \
+    parseable Line chunk emit no rows.
+    """
   }
 
   # Layer 2: Supervision extractor facts.
@@ -1057,8 +1066,9 @@ defmodule Argus.Schema do
   @doc """
   The fact-schema version, asserted by in-process consumers at compile time.
 
-  Bumped whenever a relation is added/removed or any field changes name,
-  position, or kind. Independent of the package version.
+  Bumped whenever a relation is added/removed, any field changes name,
+  position, or kind, or a field's meaning changes. Independent of the
+  package version.
   """
   @spec version() :: pos_integer()
   def version, do: @schema_version

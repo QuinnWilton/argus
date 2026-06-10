@@ -107,7 +107,8 @@ defmodule Argus.Pipeline do
             data.exports,
             data.imports,
             data.attributes,
-            data.functions
+            data.functions,
+            data.line_table
           )
 
         extractor_facts =
