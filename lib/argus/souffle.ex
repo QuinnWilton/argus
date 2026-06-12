@@ -82,10 +82,16 @@ defmodule Argus.Souffle do
             {:error, :no_tmp_dir}
 
           tmp ->
-            dir = Path.join(tmp, "argus_souffle_#{System.unique_integer([:positive])}")
+            # OS pid + VM-unique integer: see Argus.Analysis.create_work_dir/0
+            # — unique_integer alone collides across concurrent VMs.
+            dir =
+              Path.join(
+                tmp,
+                "argus_souffle_#{:os.getpid()}_#{System.unique_integer([:positive])}"
+              )
 
-            # Remove any stale output from a previous VM that picked the
-            # same integer, then create a fresh directory.
+            # Remove any stale output from a dead VM that had the same OS
+            # pid and picked the same integer, then create a fresh directory.
             File.rm_rf(dir)
 
             case File.mkdir_p(dir) do

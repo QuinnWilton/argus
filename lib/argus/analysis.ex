@@ -294,10 +294,15 @@ defmodule Argus.Analysis do
         {:error, :no_tmp_dir}
 
       tmp ->
-        dir = Path.join(tmp, "argus_#{System.unique_integer([:positive])}")
+        # The OS pid distinguishes concurrently running VMs —
+        # System.unique_integer/1 alone is VM-local, so two `elixir`
+        # subprocesses started together pick the SAME integer and
+        # silently clobber each other's facts mid-run (the cause of the
+        # autoresearch corpus measurement variance).
+        dir = Path.join(tmp, "argus_#{:os.getpid()}_#{System.unique_integer([:positive])}")
 
-        # Remove any stale data from a previous VM that picked the
-        # same integer, then create a fresh directory.
+        # Remove any stale data from a dead VM that had the same OS pid
+        # and picked the same integer, then create a fresh directory.
         File.rm_rf(dir)
 
         case File.mkdir_p(dir) do
