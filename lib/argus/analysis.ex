@@ -231,9 +231,7 @@ defmodule Argus.Analysis do
   # Discovery.
 
   defp discover_analyses do
-    {:ok, modules} = :application.get_key(:argus, :modules)
-
-    modules
+    argus_modules()
     |> Enum.filter(fn mod ->
       Code.ensure_loaded?(mod) and
         function_exported?(mod, :name, 0) and
@@ -241,6 +239,26 @@ defmodule Argus.Analysis do
         function_exported?(mod, :output_relations, 0)
     end)
     |> Enum.sort_by(& &1.name())
+  end
+
+  # The :modules key only exists once the application is *loaded* — which
+  # plain code-path embedding (escripts, sandbox VMs that only call
+  # :code.add_paths/1) never does. Loading is cheap, idempotent, and does
+  # not start anything, so do it on demand rather than crash.
+  defp argus_modules do
+    case :application.get_key(:argus, :modules) do
+      {:ok, modules} ->
+        modules
+
+      :undefined ->
+        case :application.load(:argus) do
+          ok when ok in [:ok, {:error, {:already_loaded, :argus}}] -> :ok
+          {:error, reason} -> raise "could not load the :argus application: #{inspect(reason)}"
+        end
+
+        {:ok, modules} = :application.get_key(:argus, :modules)
+        modules
+    end
   end
 
   # Rules resolution.
