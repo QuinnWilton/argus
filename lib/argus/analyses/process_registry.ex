@@ -9,9 +9,18 @@ defmodule Argus.Analyses.ProcessRegistry do
 
   - `duplicate_process_name(name, mod1, mod2)` — same atom name registered by multiple modules.
   - `whereis_race(func, name)` — `Process.whereis` without nil check (TOCTOU risk).
+
+  ## Finding severities
+
+  - `duplicate_process_name` — `:error`. Name registration is exclusive;
+    whichever process registers second crashes at runtime.
+  - `whereis_race` — `:warning`. The looked-up process can die between
+    lookup and use; whether that window matters depends on the call site.
   """
 
   @behaviour Argus.Analysis
+
+  alias Argus.Findings
 
   @impl true
   def name, do: :process_registry
@@ -46,5 +55,31 @@ defmodule Argus.Analyses.ProcessRegistry do
         doc: "Process.whereis without nil check (TOCTOU risk)."
       }
     ]
+  end
+
+  @impl true
+  def finding(:duplicate_process_name, [name, mod1, mod2]) do
+    Findings.new(
+      :error,
+      "Process name registered by two modules",
+      "Both #{mod1} and #{mod2} register the name #{name}. Name registration " <>
+        "is exclusive — whichever process registers second crashes with " <>
+        "ArgumentError (or its start_link returns {:error, {:already_started, " <>
+        "pid}}). At most one of these can ever run at a time.",
+      at: Findings.at_module(mod1),
+      related: [Findings.related("other registrant", Findings.at_module(mod2))]
+    )
+  end
+
+  def finding(:whereis_race, [func, name]) do
+    Findings.new(
+      :warning,
+      "whereis result used without a nil check",
+      "#{func} looks up #{name} with Process.whereis and uses the result " <>
+        "without handling nil. The target can die (or not yet be registered) " <>
+        "between lookup and use — the classic time-of-check/time-of-use race. " <>
+        "Send to the registered name directly, or handle nil explicitly.",
+      at: Findings.at_func(func)
+    )
   end
 end

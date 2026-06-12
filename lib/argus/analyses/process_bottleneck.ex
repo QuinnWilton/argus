@@ -15,9 +15,19 @@ defmodule Argus.Analyses.ProcessBottleneck do
 
   - `bottleneck_caller(caller_mod, target_mod)` — caller of a high-fan-in GenServer.
   - `sync_call_fan_in(target_mod, count)` — number of distinct callers (>= 5 only).
+
+  ## Finding severities
+
+  - `sync_call_fan_in` — `:warning`. The headline finding: a single
+    process serializing five or more caller modules is a throughput
+    ceiling waiting for load.
+  - `bottleneck_caller` — `:info`. Supporting evidence: one row per
+    caller of the bottleneck.
   """
 
   @behaviour Argus.Analysis
+
+  alias Argus.Findings
 
   @impl true
   def name, do: :process_bottleneck
@@ -51,5 +61,30 @@ defmodule Argus.Analyses.ProcessBottleneck do
         doc: "Synchronous call fan-in count for a GenServer (>= 5 only)."
       }
     ]
+  end
+
+  @impl true
+  def finding(:sync_call_fan_in, [target_mod, cnt]) do
+    Findings.new(
+      :warning,
+      "High synchronous fan-in (#{cnt} caller modules)",
+      "#{cnt} distinct modules make GenServer.call into #{target_mod}. A " <>
+        "single process serializes all of them — under load, queue depth and " <>
+        "call latency grow together until callers start timing out. Consider " <>
+        "sharding, ETS for reads, or casts where replies aren't needed.",
+      at: Findings.at_module(target_mod)
+    )
+  end
+
+  def finding(:bottleneck_caller, [caller_mod, target_mod]) do
+    Findings.new(
+      :info,
+      "Caller of a high fan-in GenServer",
+      "#{caller_mod} synchronously calls #{target_mod}, one of #{target_mod}'s " <>
+        "five-plus caller modules. Each such call competes for the same " <>
+        "serialized mailbox.",
+      at: Findings.at_module(caller_mod),
+      related: [Findings.related("bottleneck", Findings.at_module(target_mod))]
+    )
   end
 end

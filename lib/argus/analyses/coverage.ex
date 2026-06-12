@@ -50,6 +50,8 @@ defmodule Argus.Analyses.Coverage do
   @impl true
   def rules_file, do: "analyses/coverage.dl"
 
+  alias Argus.Findings
+
   @impl true
   def extractors do
     # Every Layer 2 extractor, since coverage spans the whole pipeline.
@@ -115,5 +117,72 @@ defmodule Argus.Analyses.Coverage do
           "Named process with no sync or async traffic targeting the registered name in the corpus."
       }
     ]
+  end
+
+  # Coverage measures the extractor pipeline, not the analyzed code, so
+  # every finding is `:info` — these are developer-facing observations,
+  # not defect reports. Excluded from `Argus.run_analyses/2`'s `:all`
+  # selection; request it by name to get these.
+  @impl true
+  def finding(:imprecision_event, [category, func, relation, reason]) do
+    Findings.new(
+      :info,
+      "Extractor fell back to a placeholder",
+      "While resolving #{category} in #{func}, the #{relation} fact received " <>
+        "a dynamic placeholder (#{reason}). Analyses consuming that relation " <>
+        "see less than the bytecode contains.",
+      at: Findings.at_func(func)
+    )
+  end
+
+  def finding(:coverage_supervisor_no_children, [sup]) do
+    Findings.new(
+      :info,
+      "Supervisor with no recovered children",
+      "#{sup} is recognized as a supervisor, but no static or dynamic child " <>
+        "specs were extracted — its subtree is invisible to every " <>
+        "supervision-aware analysis.",
+      at: Findings.at_module(sup)
+    )
+  end
+
+  def finding(:coverage_genserver_isolated, [mod]) do
+    Findings.new(
+      :info,
+      "GenServer with no observed traffic",
+      "#{mod} implements GenServer but no sync_call or async_cast traffic " <>
+        "targeting it was extracted — either nothing in the corpus talks to " <>
+        "it, or the call-site resolution missed the pattern.",
+      at: Findings.at_module(mod)
+    )
+  end
+
+  def finding(:coverage_ets_unused, [name]) do
+    Findings.new(
+      :info,
+      "ETS table with no observed operations",
+      "Table #{name} is created with a concrete name, but no reads or writes " <>
+        "against it were extracted from the corpus."
+    )
+  end
+
+  def finding(:coverage_statem_no_transitions, [mod]) do
+    Findings.new(
+      :info,
+      "gen_statem with no extracted transitions",
+      "#{mod} has recognized states but zero extracted transitions — the " <>
+        "return-tuple scanner is missing a shape this module uses.",
+      at: Findings.at_module(mod)
+    )
+  end
+
+  def finding(:coverage_named_process_unreachable, [name, mod]) do
+    Findings.new(
+      :info,
+      "Registered name with no traffic",
+      "#{mod} registers #{name}, but no sync or async traffic targeting that " <>
+        "name was extracted from the corpus.",
+      at: Findings.at_module(mod)
+    )
   end
 end

@@ -15,9 +15,22 @@ defmodule Argus.Analyses.Distributed do
     blocking retries (`infinity` or positive integer; `0` is excluded).
   - `global_blocking_in_init(func, op)` — blocking `:global` op reachable from `init/1`.
   - `distributed_in_init(func, op)` — distributed operation in init/1 blocking supervisor.
+
+  ## Finding severities
+
+  - `global_blocking_in_init` — `:error`. init blocks the supervisor and
+    the lock blocks on cluster-wide agreement; a netsplit turns local
+    startup into an indefinite hang.
+  - `rpc_without_timeout`, `rpc_in_genserver_callback`,
+    `global_register_risk`, `distributed_in_init` — `:warning`. Remote
+    latency or partition behavior leaking into local liveness.
+  - `global_blocking_op` — `:info`. Cluster-wide locking is legitimate
+    when deliberate; flagged so the serialization point is visible.
   """
 
   @behaviour Argus.Analysis
+
+  alias Argus.Findings
 
   @impl true
   def name, do: :distributed
@@ -86,5 +99,77 @@ defmodule Argus.Analyses.Distributed do
         doc: "Distributed operation in init/1 blocking supervisor startup."
       }
     ]
+  end
+
+  @impl true
+  def finding(:rpc_without_timeout, [func, variant]) do
+    Findings.new(
+      :warning,
+      "RPC without a timeout",
+      "#{func} uses #{variant} with the default infinity timeout. A " <>
+        "partitioned, overloaded, or restarting peer blocks this process " <>
+        "indefinitely — distributed calls need explicit deadlines.",
+      at: Findings.at_func(func)
+    )
+  end
+
+  def finding(:rpc_in_genserver_callback, [func, variant]) do
+    Findings.new(
+      :warning,
+      "RPC inside a GenServer callback",
+      "#{func} performs #{variant} while its GenServer is blocked in a " <>
+        "callback. Remote latency becomes local unavailability: every queued " <>
+        "caller waits on the network round-trip, and a peer outage stalls " <>
+        "the whole server.",
+      at: Findings.at_func(func)
+    )
+  end
+
+  def finding(:global_register_risk, [func, name]) do
+    Findings.new(
+      :warning,
+      ":global registration without conflict resolution",
+      "#{func} registers #{name} via :global without a resolve function. " <>
+        "After a netsplit heals, both partitions hold the name and the " <>
+        "default resolution kills one of the processes at random — state " <>
+        "loss decided by a coin flip.",
+      at: Findings.at_func(func)
+    )
+  end
+
+  def finding(:global_blocking_op, [func, op, retries]) do
+    Findings.new(
+      :info,
+      "Cluster-wide :global synchronization",
+      "#{func} calls :global.#{op} with retries = #{retries}. :global " <>
+        "operations serialize across the whole cluster — fine when " <>
+        "deliberate, but every caller shares one distributed lock, and " <>
+        "partition recovery stalls them all.",
+      at: Findings.at_func(func)
+    )
+  end
+
+  def finding(:global_blocking_in_init, [func, op]) do
+    Findings.new(
+      :error,
+      "Cluster-wide lock during init",
+      "#{func} reaches :global.#{op} from init/1. init blocks the " <>
+        "supervisor's start sequence, and the :global op blocks on " <>
+        "cluster-wide agreement — local startup now hangs whenever the " <>
+        "cluster is partitioned or slow. Defer to handle_continue.",
+      at: Findings.at_func(func)
+    )
+  end
+
+  def finding(:distributed_in_init, [func, op]) do
+    Findings.new(
+      :warning,
+      "Distributed operation in init/1",
+      "#{func} performs #{op} during init, while the supervisor's start " <>
+        "sequence waits. A slow or partitioned peer stalls local startup; " <>
+        "defer remote work to handle_continue so the tree boots without the " <>
+        "network.",
+      at: Findings.at_func(func)
+    )
   end
 end

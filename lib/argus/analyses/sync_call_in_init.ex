@@ -22,9 +22,20 @@ defmodule Argus.Analyses.SyncCallInInit do
 
   - `sync_call_in_init(mod, callee_mod)` — module whose init/1 sync-calls callee_mod (after filtering proven-safe cases).
   - `init_deadlock_risk(sup, child, dep, child_pos, dep_pos)` — child's init calls a later-starting sibling.
+
+  ## Finding severities
+
+  - `sync_call_in_init` — `:warning`. The target's liveness couldn't be
+    proven either way; the call stalls startup whenever the target is
+    slow or absent.
+  - `init_deadlock_risk` — `:error`. Supervisors start children in order
+    and `init/1` blocks that sequence, so an init that waits on a
+    later-starting sibling is a deadlock by construction.
   """
 
   @behaviour Argus.Analysis
+
+  alias Argus.Findings
 
   @impl true
   def name, do: :sync_call_in_init
@@ -62,5 +73,36 @@ defmodule Argus.Analyses.SyncCallInInit do
         doc: "Child's init sync-calls a sibling that starts later."
       }
     ]
+  end
+
+  @impl true
+  def finding(:sync_call_in_init, [mod, callee]) do
+    Findings.new(
+      :warning,
+      "init/1 blocks on a synchronous call",
+      "#{mod}.init/1 makes a synchronous call to #{callee} (directly or " <>
+        "transitively). init runs inside the supervisor's start sequence, so " <>
+        "the whole tree's startup stalls whenever #{callee} is slow, absent, " <>
+        "or not yet started. Defer the call with handle_continue.",
+      at: Findings.at_mfa(mod, :init, 1),
+      related: [Findings.related("call target", Findings.at_module(callee))]
+    )
+  end
+
+  def finding(:init_deadlock_risk, [sup, child, dep, child_pos, dep_pos]) do
+    Findings.new(
+      :error,
+      "Startup deadlock: init waits on a later sibling",
+      "#{child} (position #{child_pos}) blocks in init/1 on #{dep}, which " <>
+        "#{sup} only starts later (position #{dep_pos}). The supervisor " <>
+        "cannot reach #{dep} until #{child}'s init returns, and #{child}'s " <>
+        "init cannot return until #{dep} answers — the tree never finishes " <>
+        "booting.",
+      at: Findings.at_mfa(child, :init, 1),
+      related: [
+        Findings.related("supervisor", Findings.at_module(sup)),
+        Findings.related("later dependency", Findings.at_module(dep))
+      ]
+    )
   end
 end

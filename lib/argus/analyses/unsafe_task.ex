@@ -24,9 +24,17 @@ defmodule Argus.Analyses.UnsafeTask do
 
   - `leaked_async_task(func, id)` — async task created but never awaited.
   - `unchecked_start_child(func, id)` — start_child result not checked.
+
+  ## Finding severities
+
+  Both relations are `:warning`: leaked tasks crash their caller or pile
+  up unread result messages; unchecked starts make failed launches look
+  like success. Neither is a guaranteed failure on every execution.
   """
 
   @behaviour Argus.Analysis
+
+  alias Argus.Findings
 
   @impl true
   def name, do: :unsafe_task
@@ -60,5 +68,31 @@ defmodule Argus.Analyses.UnsafeTask do
         doc: "Task.Supervisor.start_child result discarded without error handling."
       }
     ]
+  end
+
+  @impl true
+  def finding(:leaked_async_task, [func, id]) do
+    Findings.new(
+      :warning,
+      "Async task never awaited",
+      "#{func} starts a task with Task.async (or async_nolink) but nothing " <>
+        "awaits or yields it. Task.async links to the caller and always sends " <>
+        "a result message: a crashing task takes the caller down, and " <>
+        "completed results accumulate unread in the mailbox. Use await/yield, " <>
+        "or Task.Supervisor.start_child for fire-and-forget.",
+      at: Findings.at_instr(id)
+    )
+  end
+
+  def finding(:unchecked_start_child, [func, id]) do
+    Findings.new(
+      :warning,
+      "start_child result not checked",
+      "#{func} discards the result of Task.Supervisor.start_child. A " <>
+        "{:error, reason} return — supervisor at max_children, not yet " <>
+        "started, bad child spec — is silently ignored, so failed launches " <>
+        "look exactly like successful ones.",
+      at: Findings.at_instr(id)
+    )
   end
 end

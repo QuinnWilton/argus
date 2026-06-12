@@ -49,6 +49,28 @@ defmodule Argus.InstrId do
   @spec format(t()) :: String.t()
   def format(%__MODULE__{module: m, func: f, arity: a, idx: i}), do: "#{m}:#{f}/#{a}##{i}"
 
+  @doc """
+  Parse a function ID string — an instruction ID without the `#idx` part.
+
+  Function IDs (`"Mod:func/arity"`) are how Layer 2 facts and analysis
+  output rows refer to functions. The same right-anchored rules as
+  `parse/1` apply.
+
+      iex> Argus.InstrId.parse_func("Demo:-points/2-fun-0-/3")
+      {:ok, %{module: "Demo", func: "-points/2-fun-0-", arity: 3}}
+
+      iex> Argus.InstrId.parse_func("dynamic")
+      :error
+  """
+  @spec parse_func(String.t()) ::
+          {:ok, %{module: String.t(), func: String.t(), arity: non_neg_integer()}} | :error
+  def parse_func(func_id) when is_binary(func_id) do
+    with {:ok, mod_func, arity} <- split_trailing_int(func_id, "/"),
+         {:ok, module, func} <- split_last(mod_func, ":") do
+      {:ok, %{module: module, func: func, arity: arity}}
+    end
+  end
+
   @doc "The `{func, arity}` pair, the usual per-function grouping key."
   @spec fa(t()) :: {String.t(), non_neg_integer()}
   def fa(%__MODULE__{func: func, arity: arity}), do: {func, arity}

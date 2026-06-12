@@ -11,9 +11,17 @@ defmodule Argus.Analyses.UnlinkedSpawn do
   ## Output relations
 
   - `unlinked_spawn(func, id)` — function and instruction where a bare spawn occurs.
+
+  ## Finding severities
+
+  - `unlinked_spawn` — `:warning`. The spawned process may be deliberately
+    fire-and-forget, but its crashes are invisible: no link, no monitor,
+    no supervisor ever observes them.
   """
 
   @behaviour Argus.Analysis
+
+  alias Argus.Findings
 
   @impl true
   def name, do: :unlinked_spawn
@@ -39,5 +47,18 @@ defmodule Argus.Analyses.UnlinkedSpawn do
         doc: "Bare erlang:spawn call without link or monitor."
       }
     ]
+  end
+
+  @impl true
+  def finding(:unlinked_spawn, [func, id]) do
+    Findings.new(
+      :warning,
+      "Unlinked process spawned",
+      "#{func} spawns a process with bare spawn — no link, no monitor. If the " <>
+        "process crashes, nothing observes it: no restart, no log, no cleanup. " <>
+        "Use spawn_link, spawn_monitor, or a Task/Supervisor so failures " <>
+        "propagate somewhere.",
+      at: Findings.at_instr(id)
+    )
   end
 end

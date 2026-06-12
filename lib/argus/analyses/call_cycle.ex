@@ -13,9 +13,19 @@ defmodule Argus.Analyses.CallCycle do
 
   - `call_cycle(mod_a, mod_b)` — pair of modules with mutual synchronous dependency.
   - `call_cycle_path(from_mod, to_mod)` — transitive sync dependency edges within cycle participants.
+
+  ## Finding severities
+
+  - `call_cycle` — `:error`. A mutual synchronous dependency deadlocks the
+    moment both directions are in flight; timeouts only convert the
+    deadlock into cascading crashes.
+  - `call_cycle_path` — `:info`. Supporting evidence: the individual edges
+    behind a `call_cycle` finding.
   """
 
   @behaviour Argus.Analysis
+
+  alias Argus.Findings
 
   @impl true
   def name, do: :call_cycle
@@ -49,5 +59,31 @@ defmodule Argus.Analyses.CallCycle do
         doc: "Transitive sync dependency edge between cycle participants."
       }
     ]
+  end
+
+  @impl true
+  def finding(:call_cycle, [mod_a, mod_b]) do
+    Findings.new(
+      :error,
+      "Synchronous call cycle",
+      "#{mod_a} and #{mod_b} synchronously call each other, directly or through " <>
+        "intermediaries. If both directions are ever in flight at once, each " <>
+        "process blocks waiting on the other's mailbox — a deadlock that " <>
+        "GenServer.call timeouts only turn into cascading crashes. Break one " <>
+        "direction with a cast or a message.",
+      at: Findings.at_module(mod_a),
+      related: [Findings.related("cycle partner", Findings.at_module(mod_b))]
+    )
+  end
+
+  def finding(:call_cycle_path, [from_mod, to_mod]) do
+    Findings.new(
+      :info,
+      "Cycle edge: #{from_mod} → #{to_mod}",
+      "Synchronous dependency edge between call-cycle participants — the " <>
+        "evidence behind a call_cycle finding.",
+      at: Findings.at_module(from_mod),
+      related: [Findings.related("callee", Findings.at_module(to_mod))]
+    )
   end
 end

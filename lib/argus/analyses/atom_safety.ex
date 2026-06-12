@@ -12,9 +12,23 @@ defmodule Argus.Analyses.AtomSafety do
   - `atom_exhaustion_risk(func, api)` — unsafe atom creation reachable from exported function.
   - `unsafe_deserialization_finding(func, api)` — `binary_to_term` without `:safe` option.
   - `code_injection_risk(func, api)` — `Code.eval_string` / `:os.cmd` reachable from exports.
+
+  ## Finding severities
+
+  - `atom_exhaustion_risk` — `:warning`. Whether the input is attacker
+    influenced can't be decided statically; when it is, this is a
+    node-killing DoS.
+  - `unsafe_deserialization_finding` — `:error`. `binary_to_term` without
+    `:safe` on untrusted bytes interns unbounded atoms and materializes
+    funs/ports/refs — a known remote DoS vector.
+  - `code_injection_risk` — `:error`. Dynamic evaluation reachable from
+    the module's public surface is arbitrary code execution if any
+    caller-controlled data flows in.
   """
 
   @behaviour Argus.Analysis
+
+  alias Argus.Findings
 
   @impl true
   def name, do: :atom_safety
@@ -48,5 +62,42 @@ defmodule Argus.Analyses.AtomSafety do
         doc: "Dynamic code execution reachable from exports."
       }
     ]
+  end
+
+  @impl true
+  def finding(:atom_exhaustion_risk, [func, api]) do
+    Findings.new(
+      :warning,
+      "Dynamic atom creation reachable from an exported function",
+      "#{func} reaches #{api} from the module's public surface. The BEAM atom " <>
+        "table is never garbage collected (default cap 1,048,576 entries); if " <>
+        "caller-influenced input reaches that call, every new value permanently " <>
+        "consumes a slot until the node dies. Prefer String.to_existing_atom " <>
+        "or an explicit whitelist.",
+      at: Findings.at_func(func)
+    )
+  end
+
+  def finding(:unsafe_deserialization_finding, [func, api]) do
+    Findings.new(
+      :error,
+      "binary_to_term without :safe",
+      "#{func} deserializes with #{api} and no :safe option. Untrusted bytes " <>
+        "can intern unbounded atoms and materialize funs, ports, and " <>
+        "references — a well-known denial-of-service vector. Pass [:safe] and " <>
+        "validate the decoded shape.",
+      at: Findings.at_func(func)
+    )
+  end
+
+  def finding(:code_injection_risk, [func, api]) do
+    Findings.new(
+      :error,
+      "Dynamic code execution reachable from exports",
+      "#{func} reaches #{api} from an exported function. If any " <>
+        "caller-controlled data flows into that call, it is arbitrary code " <>
+        "execution inside the node.",
+      at: Findings.at_func(func)
+    )
   end
 end

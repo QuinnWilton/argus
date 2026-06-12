@@ -18,6 +18,9 @@ defmodule Argus do
       # Run custom Datalog rules.
       Argus.analyze([MyApp.Worker], {:custom, "path/to/rules.dl"})
 
+      # Run every built-in analysis and get structured findings.
+      Argus.run_analyses([MyApp.Supervisor, MyApp.Worker])
+
   ## Architecture
 
   Layer 1 (generic) walks every BEAM instruction and emits base facts about
@@ -37,4 +40,20 @@ defmodule Argus do
   @spec analyze([atom() | String.t()], Argus.Analysis.analysis(), keyword()) ::
           {:ok, Argus.Analysis.result()} | {:error, term()}
   defdelegate analyze(modules, analysis, opts \\ []), to: Argus.Analysis, as: :run
+
+  @doc """
+  Runs analyses and returns structured findings.
+
+  Extracts facts from the given modules (atoms or `.beam` paths) once,
+  evaluates each selected analysis against them, and converts every result
+  row into a finding with severity, prose, and code anchors.
+
+  See `Argus.Findings.run/2` for options and the degradation contract.
+
+      {:ok, findings} = Argus.run_analyses([MyApp.Cache], analyses: [:ets])
+      Enum.each(findings.findings, &IO.puts(&1.title))
+  """
+  @spec run_analyses([atom() | String.t()], keyword()) ::
+          {:ok, Argus.Findings.t()} | {:error, term()}
+  defdelegate run_analyses(modules, opts \\ []), to: Argus.Findings, as: :run
 end

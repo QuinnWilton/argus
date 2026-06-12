@@ -14,9 +14,17 @@ defmodule Argus.Analyses.OneForOneCoupling do
 
   - `one_for_one_coupling(sup, caller_mod, callee_mod)` — cross-branch coupling under one_for_one.
   - `wrong_start_order(sup, early_mod, late_mod, early_pos, late_pos)` — dependency starts after dependent.
+
+  ## Finding severities
+
+  Both relations are `:warning`: restart isolation and ordering hazards
+  surface as stale references and failed calls during crash/boot windows,
+  not as immediate failures.
   """
 
   @behaviour Argus.Analysis
+
+  alias Argus.Findings
 
   @impl true
   def name, do: :one_for_one_coupling
@@ -55,5 +63,38 @@ defmodule Argus.Analyses.OneForOneCoupling do
         doc: "Dependency starts after the child that depends on it."
       }
     ]
+  end
+
+  @impl true
+  def finding(:one_for_one_coupling, [sup, caller_mod, callee_mod]) do
+    Findings.new(
+      :warning,
+      "Coupled children under one_for_one",
+      "#{caller_mod} calls #{callee_mod}, but both are children of the " <>
+        "one_for_one supervisor #{sup}. When #{callee_mod} crashes and " <>
+        "restarts, #{caller_mod} is not restarted with it and keeps any " <>
+        "stale pid, monitor, or cached state it held.",
+      at: Findings.at_module(caller_mod),
+      related: [
+        Findings.related("supervisor", Findings.at_module(sup)),
+        Findings.related("called sibling", Findings.at_module(callee_mod))
+      ]
+    )
+  end
+
+  def finding(:wrong_start_order, [sup, early_mod, late_mod, early_pos, late_pos]) do
+    Findings.new(
+      :warning,
+      "Child starts before the sibling it calls",
+      "#{early_mod} (position #{early_pos}) starts before #{late_mod} " <>
+        "(position #{late_pos}) under #{sup}, yet calls it. Until the tree " <>
+        "finishes booting, those calls target a process that does not exist " <>
+        "yet.",
+      at: Findings.at_module(early_mod),
+      related: [
+        Findings.related("supervisor", Findings.at_module(sup)),
+        Findings.related("later dependency", Findings.at_module(late_mod))
+      ]
+    )
   end
 end

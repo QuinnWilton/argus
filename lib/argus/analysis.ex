@@ -65,6 +65,20 @@ defmodule Argus.Analysis do
   @callback extractors() :: [module()]
   @callback output_relations() :: [output_relation()]
 
+  @doc """
+  Converts one output-relation row into finding attributes.
+
+  Receives the relation name (as declared in `output_relations/0`) and the
+  raw row (a list of strings, one per declared field). Implementations
+  assign a severity, write title/detail prose, and attach the most precise
+  anchor the row allows — see `Argus.Findings` for the construction
+  helpers. Optional: analyses without it fall back to a generic
+  `:info`-severity rendering of the relation's declared doc.
+  """
+  @callback finding(relation :: atom(), row :: [String.t()]) :: Argus.Findings.attrs()
+
+  @optional_callbacks finding: 2
+
   # Public API types.
 
   @type analysis :: atom() | {:custom, Path.t()}

@@ -33,6 +33,16 @@ defmodule Argus.Analyses.DeferredStartupDeadlock do
     sync-calls back into its parent supervisor.
   - `continue_crash_loop_risk(sup, worker)` — defensive try/catch around
     the call converts the deadlock into a supervisor restart loop.
+
+  ## Finding severities
+
+  - `mutual_continue_deadlock` — `:error`. Both processes block before
+    ever reading their mailboxes; neither can answer the other, by
+    construction.
+  - `continue_to_later_sibling`, `continue_to_parent_supervisor`,
+    `continue_crash_loop_risk` — `:warning`. Startup races and restart
+    loops whose outcome depends on timing rather than being guaranteed
+    on every boot.
   """
 
   @behaviour Argus.Analysis
@@ -49,6 +59,8 @@ defmodule Argus.Analyses.DeferredStartupDeadlock do
   @impl true
   def extractors,
     do: [Argus.Extractors.OTP, Argus.Extractors.Supervision, Argus.Extractors.GenEvent]
+
+  alias Argus.Findings
 
   @impl true
   def output_relations do
@@ -93,5 +105,63 @@ defmodule Argus.Analyses.DeferredStartupDeadlock do
           "Defensive try/catch :exit suppresses the literal deadlock but creates a supervisor restart loop."
       }
     ]
+  end
+
+  @impl true
+  def finding(:mutual_continue_deadlock, [mod_a, mod_b]) do
+    Findings.new(
+      :error,
+      "Mutual handle_continue deadlock",
+      "#{mod_a} and #{mod_b} sync-call each other from handle_continue/2. " <>
+        "Both return from init — the supervisor proceeds happily — then each " <>
+        "blocks calling the other before ever reading its own mailbox. " <>
+        "Neither can reply; both calls time out, forever, on every boot.",
+      at: Findings.at_mfa(mod_a, :handle_continue, 2),
+      related: [Findings.related("cycle partner", Findings.at_mfa(mod_b, :handle_continue, 2))]
+    )
+  end
+
+  def finding(:continue_to_later_sibling, [sup, caller, callee, caller_pos, callee_pos]) do
+    Findings.new(
+      :warning,
+      "handle_continue races a later sibling",
+      "#{caller} (position #{caller_pos}) sync-calls #{callee} (position " <>
+        "#{callee_pos}) from handle_continue under #{sup}. The continue runs " <>
+        "concurrently with the supervisor's start sequence, so whether " <>
+        "#{callee} is alive when the call lands is a boot-time race — it " <>
+        "works on the fast machine and fails in CI.",
+      at: Findings.at_mfa(caller, :handle_continue, 2),
+      related: [
+        Findings.related("supervisor", Findings.at_module(sup)),
+        Findings.related("later sibling", Findings.at_module(callee))
+      ]
+    )
+  end
+
+  def finding(:continue_to_parent_supervisor, [worker, sup]) do
+    Findings.new(
+      :warning,
+      "handle_continue calls its own supervisor",
+      "#{worker}'s handle_continue sync-calls its parent #{sup} while the " <>
+        "supervisor may still be mid-start_link, not yet reading its mailbox. " <>
+        "The worker blocks until the whole child list finishes starting — and " <>
+        "if any later child waits on #{worker}, startup deadlocks.",
+      at: Findings.at_mfa(worker, :handle_continue, 2),
+      related: [Findings.related("parent supervisor", Findings.at_module(sup))]
+    )
+  end
+
+  def finding(:continue_crash_loop_risk, [sup, worker]) do
+    Findings.new(
+      :warning,
+      "Defensive continue turns deadlock into a restart loop",
+      "#{worker} wraps its handle_continue sync call in try/catch :exit. The " <>
+        "catch suppresses the deadlock symptom, but the call still fails " <>
+        "during the startup race — so #{worker} either initializes with wrong " <>
+        "state or crashes and restarts repeatedly under #{sup}, hiding the " <>
+        "real ordering bug.",
+      at: Findings.at_mfa(worker, :handle_continue, 2),
+      related: [Findings.related("supervisor", Findings.at_module(sup))]
+    )
   end
 end
