@@ -786,6 +786,43 @@ defmodule Argus.Extractor.HelpersTest do
     end
   end
 
+  describe "resolve_register/3 — placeholder normalization" do
+    test "top-level :dynamic placeholder is unresolved, not a value" do
+      # x1 = [<unknown>], x0 = hd(x1). The list resolves partially with
+      # the :dynamic placeholder as its head, so hd surfaces the
+      # placeholder itself — that's "unresolved", never {:ok, :dynamic}
+      # (which inspect/1 would forge into a ":dynamic" fact field).
+      instrs = [
+        {:put_list, {:x, 9}, nil, {:x, 1}},
+        {:bif, :hd, {:f, 0}, [{:x, 1}], {:x, 0}},
+        {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 2, {:x, 0}) == :dynamic
+    end
+
+    test "placeholders nested inside structures still pass through" do
+      instrs = [
+        {:put_list, {:x, 9}, nil, {:x, 1}},
+        {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 1, {:x, 1}) == {:ok, [:dynamic]}
+    end
+
+    test "a literal :dynamic atom is indistinguishable from the placeholder" do
+      # Deliberate: the "dynamic" string is the pipeline-wide unknown
+      # marker, so a module literally using the atom :dynamic reads as
+      # unresolved rather than forging a distinct ":dynamic" field.
+      instrs = [
+        {:move, {:atom, :dynamic}, {:x, 0}},
+        {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 1, {:x, 0}) == :dynamic
+    end
+  end
+
   describe "resolve_register/3 — pure BIF whitelist" do
     test "resolves :erlang.element/2 of a literal tuple" do
       # x0 = elem({:a, :b, :c}, 2) => :b. Compiles to a `bif element` with

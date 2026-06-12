@@ -86,6 +86,29 @@ defmodule Argus.Extractors.ProcessRegistryTest do
                mod == "Argus.Test.Fixtures.ProcessRegisterer" and name == ":my_process"
              end)
     end
+
+    test "a statically unknowable name records imprecision, never \":dynamic\"" do
+      # `name: Keyword.fetch!(opts, :name)` resolves the options list
+      # partially — the name slot holds the :dynamic placeholder atom.
+      # Inspecting it would forge a ":dynamic" name that evades every
+      # `!= "dynamic"` filter in the Datalog rules (seen as bogus
+      # coverage_named_process_unreachable rows on phoenix_pubsub).
+      Argus.Extractor.Helpers.enable_tracing()
+      facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.DynamicNameServer))
+
+      for [_mod, name] <- Map.get(facts, :named_process, []) do
+        refute name == ":dynamic"
+      end
+
+      for [_id, _func, name, _method] <- Map.get(facts, :process_register, []) do
+        refute name == ":dynamic"
+      end
+
+      assert Enum.any?(Map.get(facts, :imprecision, []), fn
+               [category, func, _relation, _reason] ->
+                 category == "gen_server_start_name" and func =~ "DynamicNameServer"
+             end)
+    end
   end
 
   describe "integration with extract pipeline" do

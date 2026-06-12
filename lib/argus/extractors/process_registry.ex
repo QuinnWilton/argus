@@ -175,6 +175,12 @@ defmodule Argus.Extractors.ProcessRegistry do
           nil ->
             facts
 
+          # The options list resolved, but the name VALUE inside it is the
+          # placeholder — `name: opts[:name]` and friends. Inspecting it
+          # would forge a ":dynamic" name that evades the dynamic filters.
+          :dynamic ->
+            track_imprecision(facts, ctx, :gen_server_start_name, :process_register, :dynamic)
+
           name when is_atom(name) ->
             id = "#{ctx.func_id}##{ctx.idx}"
 
@@ -182,7 +188,7 @@ defmodule Argus.Extractors.ProcessRegistry do
             |> add_fact(:process_register, [id, ctx.func_id, inspect(name), method])
             |> maybe_emit_named_process_for_start(ctx, inspect(name))
 
-          {:via, _reg, {reg_mod, key}} when is_atom(reg_mod) ->
+          {:via, _reg, {reg_mod, key}} when is_atom(reg_mod) and reg_mod != :dynamic ->
             id = "#{ctx.func_id}##{ctx.idx}"
             add_fact(facts, :via_tuple, [id, ctx.func_id, inspect(reg_mod), inspect(key)])
 
@@ -205,7 +211,8 @@ defmodule Argus.Extractors.ProcessRegistry do
   # The module is x1 in the Erlang shape; resolve it to enrich named_process.
   defp maybe_named_start_erlang(facts, ctx, method) do
     case resolve_register(ctx.instrs, ctx.idx, {:x, 0}) do
-      {:ok, {kind, name}} when kind in [:local, :global] and is_atom(name) ->
+      {:ok, {kind, name}}
+      when kind in [:local, :global] and is_atom(name) and name != :dynamic ->
         id = "#{ctx.func_id}##{ctx.idx}"
 
         facts

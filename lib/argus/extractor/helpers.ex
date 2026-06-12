@@ -456,7 +456,18 @@ defmodule Argus.Extractor.Helpers do
   @spec resolve_register([term()], non_neg_integer(), register()) :: {:ok, term()} | :dynamic
   def resolve_register(instrs, call_idx, register) do
     preceding = instrs |> Enum.take(call_idx) |> Enum.reverse()
-    do_resolve(preceding, normalize_reg(register))
+
+    case do_resolve(preceding, normalize_reg(register)) do
+      # Partial resolution can surface the `:dynamic` placeholder itself as
+      # the top-level value (hd of a half-known list, element of a
+      # half-known tuple). "Resolved to the unknown marker" is just
+      # unresolved — without this, `{:ok, atom}` consumers inspect/1 the
+      # placeholder into ":dynamic", which evades every "dynamic" filter
+      # downstream. Placeholders nested inside structures still pass
+      # through; consumers of partial structures handle them per-field.
+      {:ok, :dynamic} -> :dynamic
+      other -> other
+    end
   end
 
   @doc """

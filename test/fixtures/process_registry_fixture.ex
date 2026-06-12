@@ -51,3 +51,18 @@ defmodule Argus.Test.Fixtures.RegistryUser do
     Registry.lookup(registry, key)
   end
 end
+
+defmodule Argus.Test.Fixtures.DynamicNameServer do
+  @moduledoc false
+  # The registered name comes out of the caller's options — statically
+  # unknowable. The extractor must record imprecision here, NOT a forged
+  # ":dynamic" name (the inspect/1 rendering of the placeholder atom).
+  use GenServer
+
+  def start_link(opts) do
+    GenServer.start_link(__MODULE__, opts, name: Keyword.fetch!(opts, :name))
+  end
+
+  @impl true
+  def init(opts), do: {:ok, opts}
+end

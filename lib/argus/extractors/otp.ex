@@ -383,7 +383,11 @@ defmodule Argus.Extractors.OTP do
       {:ok, atom} when is_atom(atom) ->
         {inspect(atom), facts}
 
-      {:ok, {:via, _via_mod, {reg_instance, key}}} when is_atom(reg_instance) ->
+      # reg_instance != :dynamic: a partially resolved via tuple carries the
+      # placeholder atom in the registry slot — inspecting it would forge a
+      # "via::dynamic" callee that the dynamic filters don't recognize.
+      {:ok, {:via, _via_mod, {reg_instance, key}}}
+      when is_atom(reg_instance) and reg_instance != :dynamic ->
         registry = inspect(reg_instance)
         callee = "via:#{registry}"
         facts = add_fact(facts, :sync_call_via, [ctx.func_id, registry, inspect(key)])
