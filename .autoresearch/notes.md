@@ -30,6 +30,19 @@ A rough, measurable goal. Example:
 
 ## Wins
 
+- 2026-06-12 — **measurement variance ROOT-CAUSED AND FIXED** (parking-lot item):
+  work/output dirs were named with System.unique_integer alone, which is
+  VM-local — concurrent measure subprocesses all picked the same /tmp/argus_<N>
+  and clobbered each other's facts (3 of 5 projects could return byte-identical
+  reports for the wrong codebase). Names now include :os.getpid(). Three
+  consecutive measures agree exactly (69 events / 12 shape-gap rows). All
+  pre-fix corpus diffs were untrustworthy. [commit 440233f]
+- 2026-06-12 — placeholder-atom leak: resolve_register could surface the
+  :dynamic marker inside {:ok, _} and inspect/1 forged ":dynamic" fact fields
+  that evade every dynamic filter. Fixed at the resolve_register boundary +
+  nested keyword/tuple consumers. coverage_named_process_unreachable -2 (3→1,
+  the PG2Worker/Tracker.Shard ghosts), gen_server_start_name +2 (honest
+  imprecision for what was previously emitted as fact). [commit 76ae89a]
 - 2026-04-10 — interprocedural constant propagation: new call_arg fact + Datalog resolved_arg rules derive additional sync_call/async_cast rows by tracing literals through wrapper call chains. All correctness analyses benefit via enriched call graph. Oban baseline preserved (7 findings unchanged). [commits 9dd8434, 522edd5, c08d3e8]
 - 2026-04-10 — shape-gap rules: -6 rows (20→14) via 3 Datalog fixes: exclude supervised GenServers from isolated, exclude same-module-ops tables from unused, filter dynamic names from unreachable. [commit fd23c33]
 - 2026-04-10 — `gen_server_start_name`: -5 (5→0, fully eliminated) via tail-call suppression in maybe_named_start/maybe_named_start_erlang. [commit 0b0b6b7]
@@ -42,4 +55,7 @@ A rough, measurable goal. Example:
 
 ## Parking lot
 
-- Measurement variance: consecutive measure runs can produce different counts (e.g. 47 vs 73 vs 146 for the same code). Root cause appears to be subprocess cold-start effects — counts stabilize after 1-2 runs. Consider adding a warm-up run or taking the median of N runs for reliable diffing.
+- ~~Measurement variance~~ RESOLVED 2026-06-12: not cold-start effects — concurrent
+  subprocess VMs shared the same VM-local-unique temp dir names and raced on the
+  facts directories. Fixed by adding :os.getpid() to the names (commit 440233f).
+  Measures are now exactly reproducible.
