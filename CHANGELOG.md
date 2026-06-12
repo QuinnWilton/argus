@@ -25,8 +25,52 @@ pattern, adapted for Argus's multi-dimensional categorical metrics.
   version is bumped to **2** for this meaning change; the relation's
   shape is unchanged.
 
+### Fixed
+
+- **Concurrent VMs no longer share temp directories.** Analysis work
+  dirs and Souffle output dirs were named with `System.unique_integer/1`
+  alone — a VM-local counter — so concurrent `elixir` subprocesses
+  (e.g. `mix argus.autoresearch measure`'s per-project workers) drew the
+  same names and silently clobbered each other's facts mid-run, making
+  corpus measurements nondeterministic (the long-standing "47 vs 73 vs
+  146" variance; three of five projects could return byte-identical
+  reports for the wrong codebase). Names now include `:os.getpid()`.
+  Consecutive corpus measures are exactly reproducible.
+- **The `:dynamic` placeholder atom can no longer leak into facts.**
+  Partial register resolution marks unknown structure components with
+  the `:dynamic` atom; three paths let it escape into fact fields as
+  the string `":dynamic"`, which every `"dynamic"` filter in the rules
+  fails to match. `resolve_register/3` now reports a top-level
+  placeholder as unresolved, and the GenServer `name:` option /
+  `{:local, name}` / via-tuple consumers guard their nested slots.
+  On the corpus this removed two forged
+  `coverage_named_process_unreachable` rows (phoenix_pubsub) and
+  surfaced two honest `gen_server_start_name` imprecision events in
+  their place.
+
+### Changed
+
+- **`atom_safety` and `whereis_race` rows anchor at the call site.**
+  `atom_exhaustion_risk`, `unsafe_deserialization_finding`,
+  `code_injection_risk` (now `(id, func, api)`) and `whereis_race` (now
+  `(id, func, name)`) carry the offending instruction ID, and the
+  exhaustion/injection rules key rows by site instead of by reaching
+  export (one row per unsafe call, anchored where the fix goes, rather
+  than one per exported entry). Consumers of these output relations
+  must account for the new leading `id` field.
+
 ### Added
 
+- **`Argus.Extractor.Helpers.call_result_origin/3`** — traces a register
+  back to the remote call whose result it holds, following move chains
+  with sound register lifetimes (y registers survive calls; non-x0 x
+  registers stop at call boundaries). The ETS extractor uses it to map
+  operations on table references back to their same-function
+  `:ets.new/2` site, so create-and-seed patterns join their `ets_new`
+  rows by name instead of falling back to `"dynamic"`. (Both corpus
+  tiers are unchanged by this — their remaining ref-based ops live in
+  different functions than the creation, which needs cross-function
+  dataflow.)
 - **`Argus.run_analyses/2` — structured findings API.** Runs a selection
   of built-in analyses (`:all` by default, excluding the `coverage`
   meta-analysis) against one shared fact extraction and returns

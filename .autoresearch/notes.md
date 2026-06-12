@@ -49,6 +49,14 @@ A rough, measurable goal. Example:
 - 2026-04-10 — `ignored_result_unknown_api`: -4 (4→0, fully eliminated) via result_used? heuristic recognizing x0-consumed patterns (save-to-y, test, destructure, pass-forward). [commit da3102c]
 - 2026-04-10 — `ignored_result_unknown_api`: -18 (22→4) via tail-call detection in result_ignored? heuristic. Also eliminated 3 categories and reduced net imprecision by 48 (95→47). [commit 81655cf]
 
+- 2026-06-12 — `ets_table_ref_op` (in-function slice): ops on a table ref now
+  inherit the same-function :ets.new site's name via Helpers.call_result_origin
+  (move-chain walk with sound x/y register lifetimes). Corpus-NEUTRAL on both
+  fast and medium tiers — every remaining event there is a state-held table
+  created in another function. Pinned by EtsRefOps fixture. REVISIT the
+  remaining 30 events IF argus gains cross-function value tracking (same
+  condition as the coverage_supervisor_no_children dead end). [commit 9b8f6c7]
+
 ## Dead ends
 
 - `coverage_supervisor_no_children` (closure scanning): tried 2026-04-10, reverted. Scanning all `make_fun3` closures in init/1 for child specs is unsound — closures may be used for non-child-spec purposes (telemetry handlers, filter predicates, config builders) and any `{Module, args}` tuple in them would be incorrectly classified as a supervised child. A sound fix would need to trace the closure's return value to confirm it flows into `Supervisor.init/2`'s children argument. REVISIT IF argus gains dataflow tracking for closure return values.
