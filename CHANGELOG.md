@@ -27,6 +27,25 @@ pattern, adapted for Argus's multi-dimensional categorical metrics.
 
 ### Added
 
+- **`Argus.run_analyses/2` — structured findings API.** Runs a selection
+  of built-in analyses (`:all` by default, excluding the `coverage`
+  meta-analysis) against one shared fact extraction and returns
+  `{:ok, %Argus.Findings{}}`: every output-relation row becomes a finding
+  map (`%{analysis, severity, title, detail, module, mfa, instr,
+  related}`) with prose explaining why it matters and the most precise
+  code anchor the row allows (instruction ID → `Argus.InstrId`, function
+  ID → `{m, f, a}`, module string → module atom). Severities are assigned
+  per relation by each analysis module's new optional `finding/2`
+  callback and documented in its moduledoc. Degradation is explicit:
+  missing Souffle → `{:error, :souffle_not_found}`; a single failing
+  analysis → a `degraded` note while the others still run. Analyses
+  share one facts directory (new `Argus.Analysis.extract_facts/3` +
+  `run_rules/3`, which `Argus.Analysis.run/3`, the mix task, and the
+  report builder now all compose) and evaluate in parallel — all 15
+  analyses finish in ~250 ms for a single module.
+- **`Argus.InstrId.parse_func/1`** — parses function ID strings
+  (`"Mod:func/arity"`, the instruction ID format without `#idx`) with
+  the same right-anchored rules as `parse/1`.
 - **`Argus.Dataflow`** — reaching definitions over Layer-1 facts:
   `def_use_edges/1` returns the def→use edge set (which instruction's
   register write feeds which read), computed block-locally (straight-line
