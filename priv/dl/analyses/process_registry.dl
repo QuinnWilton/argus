@@ -44,10 +44,11 @@ duplicate_process_name(name, mod1, mod2) :-
 // This is a heuristic: we flag all whereis calls as potential races
 // since checking whether the result is nil-checked requires deeper
 // dataflow analysis than we currently perform.
-.decl whereis_race(func: symbol, name: symbol)
+// `id` anchors the finding at the whereis call instruction.
+.decl whereis_race(id: symbol, func: symbol, name: symbol)
 .output whereis_race
 
-whereis_race(func, name) :-
-  whereis_call(_, func, name),
+whereis_race(id, func, name) :-
+  whereis_call(id, func, name),
   name != "dynamic",
   name != ":dynamic".

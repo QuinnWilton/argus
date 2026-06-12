@@ -128,7 +128,7 @@ defmodule Argus.FindingsTest do
       assert finding.detail =~ "read_concurrency"
     end
 
-    test "atom_safety findings carry mfa anchors and security severities" do
+    test "atom_safety findings carry instruction anchors and security severities" do
       skip_without_souffle()
 
       modules = [
@@ -143,7 +143,9 @@ defmodule Argus.FindingsTest do
       Enum.each(result.findings, &assert_finding_shape/1)
       assert result.findings != []
 
-      # Function-ID rows parse to full mfa anchors.
+      # Every row anchors at the offending call instruction, which also
+      # yields the full mfa.
+      assert Enum.all?(result.findings, &match?(%InstrId{}, &1.instr))
       assert Enum.all?(result.findings, &match?({_m, _f, _a}, &1.mfa))
 
       deser = Enum.filter(result.findings, &(&1.title =~ "binary_to_term"))

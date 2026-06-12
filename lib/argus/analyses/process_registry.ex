@@ -8,7 +8,7 @@ defmodule Argus.Analyses.ProcessRegistry do
   ## Output relations
 
   - `duplicate_process_name(name, mod1, mod2)` — same atom name registered by multiple modules.
-  - `whereis_race(func, name)` — `Process.whereis` without nil check (TOCTOU risk).
+  - `whereis_race(id, func, name)` — `Process.whereis` without nil check (TOCTOU risk), anchored at the call instruction.
 
   ## Finding severities
 
@@ -49,6 +49,7 @@ defmodule Argus.Analyses.ProcessRegistry do
       %{
         name: :whereis_race,
         fields: [
+          {:id, :symbol, "instruction ID of the whereis call"},
           {:func, :symbol, "function calling whereis"},
           {:name, :symbol, "process name"}
         ],
@@ -71,7 +72,7 @@ defmodule Argus.Analyses.ProcessRegistry do
     )
   end
 
-  def finding(:whereis_race, [func, name]) do
+  def finding(:whereis_race, [id, func, name]) do
     Findings.new(
       :warning,
       "whereis result used without a nil check",
@@ -79,7 +80,7 @@ defmodule Argus.Analyses.ProcessRegistry do
         "without handling nil. The target can die (or not yet be registered) " <>
         "between lookup and use — the classic time-of-check/time-of-use race. " <>
         "Send to the registered name directly, or handle nil explicitly.",
-      at: Findings.at_func(func)
+      at: Findings.at_instr(id)
     )
   end
 end

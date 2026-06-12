@@ -15,41 +15,50 @@
 .decl code_execution(id: symbol, func: symbol, api: symbol)
 .input code_execution
 
+// ── Export reachability ──────────────────────────────────────────
+
+// A function is attack-surface-adjacent when it is exported, or when
+// some exported function reaches it through the call graph.
+.decl reachable_from_export(func: symbol)
+
+reachable_from_export(func) :-
+  function_def(func, _, _, _, _, 1).
+
+reachable_from_export(func) :-
+  call_reachable(entry, func),
+  function_def(entry, _, _, _, _, 1).
+
 // ── Atom exhaustion risk ─────────────────────────────────────────
 
-// Unsafe atom creation in a function reachable from an exported function.
-.decl atom_exhaustion_risk(func: symbol, api: symbol)
+// Unsafe atom creation reachable from an exported function. One row
+// per call SITE (`id` is the instruction), anchored at the function
+// that contains the call — that's the place to fix. Previously rows
+// were keyed (entry_func, api): the anchor pointed at the exported
+// entry instead of the unsafe call, and one site fanned out into a
+// row per reaching export.
+.decl atom_exhaustion_risk(id: symbol, func: symbol, api: symbol)
 .output atom_exhaustion_risk
 
-atom_exhaustion_risk(func, api) :-
-  unsafe_atom_creation(_, func, api),
-  function_def(func, _, _, _, _, 1).
-
-atom_exhaustion_risk(func, api) :-
-  unsafe_atom_creation(_, target_func, api),
-  call_reachable(func, target_func),
-  function_def(func, _, _, _, _, 1).
+atom_exhaustion_risk(id, func, api) :-
+  unsafe_atom_creation(id, func, api),
+  reachable_from_export(func).
 
 // ── Unsafe deserialization ───────────────────────────────────────
 
-// binary_to_term without :safe option.
-.decl unsafe_deserialization_finding(func: symbol, api: symbol)
+// binary_to_term without :safe option, anchored at the call site.
+.decl unsafe_deserialization_finding(id: symbol, func: symbol, api: symbol)
 .output unsafe_deserialization_finding
 
-unsafe_deserialization_finding(func, api) :-
-  unsafe_deserialization(_, func, api, "unsafe").
+unsafe_deserialization_finding(id, func, api) :-
+  unsafe_deserialization(id, func, api, "unsafe").
 
 // ── Code injection ───────────────────────────────────────────────
 
-// Dynamic code execution reachable from exported functions.
-.decl code_injection_risk(func: symbol, api: symbol)
+// Dynamic code execution reachable from exported functions, anchored
+// at the call site (same shape rationale as atom_exhaustion_risk).
+.decl code_injection_risk(id: symbol, func: symbol, api: symbol)
 .output code_injection_risk
 
-code_injection_risk(func, api) :-
-  code_execution(_, func, api),
-  function_def(func, _, _, _, _, 1).
-
-code_injection_risk(func, api) :-
-  code_execution(_, target_func, api),
-  call_reachable(func, target_func),
-  function_def(func, _, _, _, _, 1).
+code_injection_risk(id, func, api) :-
+  code_execution(id, func, api),
+  reachable_from_export(func).
