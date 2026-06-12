@@ -122,7 +122,7 @@ defmodule Mix.Tasks.Argus do
 
     case Analysis.run(modules, analysis, analysis_opts) do
       {:ok, results} ->
-        filtered = filter_to_outputs(results, analysis)
+        filtered = Analysis.filter_to_outputs(results, analysis)
         output = format_results(filtered, format)
         Mix.shell().info(output)
 
@@ -136,22 +136,6 @@ defmodule Mix.Tasks.Argus do
 
       {:error, reason} ->
         Mix.raise("Analysis failed: #{inspect(reason)}")
-    end
-  end
-
-  # When running a built-in analysis, hide intermediate clientlib relations
-  # (call_reachable, cfg_edge, etc.) and show only what the analysis itself
-  # declares as its output. Custom analyses get every relation back.
-  defp filter_to_outputs(results, {:custom, _}), do: results
-
-  defp filter_to_outputs(results, name) when is_atom(name) do
-    case Analysis.output_relations(name) do
-      {:ok, relations} ->
-        allowed = MapSet.new(relations, &Atom.to_string(&1.name))
-        Map.take(results, MapSet.to_list(allowed))
-
-      :error ->
-        results
     end
   end
 

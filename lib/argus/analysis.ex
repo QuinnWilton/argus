@@ -85,19 +85,78 @@ defmodule Argus.Analysis do
   @spec run(modules :: [atom() | String.t()], analysis(), keyword()) ::
           {:ok, result()} | {:error, term()}
   def run(modules, analysis, opts \\ []) do
-    default_extractors = default_extractors_for(analysis)
+    with {:ok, rules_path} <- resolve_rules(analysis),
+         {:ok, facts_dir} <- extract_facts(modules, [analysis], opts) do
+      Souffle.run(facts_dir, rules_path, opts)
+    end
+  end
+
+  @doc """
+  Extracts facts from the given modules once, for one or more analyses.
+
+  Runs the pipeline with the union of the analyses' default extractors
+  (plus any extra `:extractors` from `opts`), writing `.facts` files to a
+  fresh temporary directory. Because the pipeline always materializes
+  every schema relation (empty files included), the resulting directory
+  can feed `run_rules/3` for each of the analyses without re-extraction.
+
+  Returns `{:ok, facts_dir}` or `{:error, reason}`.
+  """
+  @spec extract_facts(modules :: [atom() | String.t()], [analysis()], keyword()) ::
+          {:ok, Path.t()} | {:error, term()}
+  def extract_facts(modules, analyses, opts \\ []) do
+    default_extractors =
+      analyses
+      |> Enum.flat_map(&default_extractors_for/1)
+      |> Enum.uniq()
 
     opts =
       opts
-      |> Keyword.update(:extractors, default_extractors, &(default_extractors ++ &1))
-      |> maybe_enable_imprecision_tracing(analysis)
+      |> Keyword.update(:extractors, default_extractors, &Enum.uniq(default_extractors ++ &1))
+      |> maybe_enable_imprecision_tracing(analyses)
 
-    with {:ok, rules_path} <- resolve_rules(analysis),
-         {:ok, work_dir} <- create_work_dir(),
+    with {:ok, work_dir} <- create_work_dir(),
          facts_dir = Path.join(work_dir, "facts"),
-         {:ok, _} <- Pipeline.run(modules, facts_dir, opts),
-         {:ok, results} <- Souffle.run(facts_dir, rules_path, opts) do
-      {:ok, results}
+         {:ok, _} <- Pipeline.run(modules, facts_dir, opts) do
+      {:ok, facts_dir}
+    end
+  end
+
+  @doc """
+  Runs a single analysis's Datalog rules against an existing facts directory.
+
+  The facts directory must contain `.facts` files for every relation the
+  analysis declares as input — `extract_facts/3` guarantees this when the
+  analysis was included in its analyses list.
+
+  Returns `{:ok, results}` or `{:error, reason}`.
+  """
+  @spec run_rules(Path.t(), analysis(), keyword()) :: {:ok, result()} | {:error, term()}
+  def run_rules(facts_dir, analysis, opts \\ []) do
+    with {:ok, rules_path} <- resolve_rules(analysis) do
+      Souffle.run(facts_dir, rules_path, opts)
+    end
+  end
+
+  @doc """
+  Restricts raw Souffle results to the relations a built-in analysis
+  declares as its outputs.
+
+  Intermediate clientlib relations (`call_reachable`, `cfg_edge`, ...) and
+  bookkeeping keys (`_argus_mode`) are dropped. Custom analyses and unknown
+  names pass through unchanged — there is no declaration to filter against.
+  """
+  @spec filter_to_outputs(result(), analysis()) :: result()
+  def filter_to_outputs(results, {:custom, _path}), do: results
+
+  def filter_to_outputs(results, name) when is_atom(name) do
+    case output_relations(name) do
+      {:ok, relations} ->
+        allowed = Enum.map(relations, &Atom.to_string(&1.name))
+        Map.take(results, allowed)
+
+      :error ->
+        results
     end
   end
 
@@ -105,11 +164,13 @@ defmodule Argus.Analysis do
   # pays only the cost of a single process-dict read per fallback site.
   # The coverage analysis is the only one that needs the extra data, so
   # we flip the flag here rather than asking callers to remember it.
-  defp maybe_enable_imprecision_tracing(opts, :coverage) do
-    Keyword.put_new(opts, :trace_imprecision, true)
+  defp maybe_enable_imprecision_tracing(opts, analyses) do
+    if :coverage in analyses do
+      Keyword.put_new(opts, :trace_imprecision, true)
+    else
+      opts
+    end
   end
-
-  defp maybe_enable_imprecision_tracing(opts, _analysis), do: opts
 
   @doc """
   Returns the list of built-in analysis names.

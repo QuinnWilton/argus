@@ -80,8 +80,10 @@ defmodule Argus.Report do
 
   # Builds a single analysis entry, filtering to output relations only.
   defp build_analysis_entry(name, {:ok, result}) do
-    allowed = output_relation_names(name)
-    filtered = filter_relations(result, allowed)
+    filtered =
+      result
+      |> Argus.Analysis.filter_to_outputs(name)
+      |> Map.reject(fn {_name, rows} -> rows == [] end)
 
     finding_count =
       filtered
@@ -103,26 +105,5 @@ defmodule Argus.Report do
       "finding_count" => 0,
       "error" => inspect(reason)
     }
-  end
-
-  # Returns the set of output relation name strings for a built-in analysis,
-  # or nil if the analysis is unknown (e.g. custom rules).
-  defp output_relation_names(name) do
-    case Argus.Analysis.output_relations(name) do
-      {:ok, relations} -> Enum.map(relations, &Atom.to_string(&1.name))
-      :error -> nil
-    end
-  end
-
-  # Filters a result map to only include allowed relations.
-  # When allowed is nil (unknown analysis), all non-empty relations pass through.
-  defp filter_relations(result, nil) do
-    Map.reject(result, fn {_name, rows} -> rows == [] end)
-  end
-
-  defp filter_relations(result, allowed) do
-    result
-    |> Map.take(allowed)
-    |> Map.reject(fn {_name, rows} -> rows == [] end)
   end
 end
