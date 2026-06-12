@@ -142,3 +142,25 @@ defmodule Argus.Test.Fixtures.ErlangStyleEtsSupervisor do
       ]}}
   end
 end
+
+defmodule Argus.Test.Fixtures.EtsRefOps do
+  @moduledoc false
+  # Operations on a table REFERENCE (not a name atom) created in the
+  # same function — the extractor should map the ref back to the
+  # :ets.new site and attribute ops to :ref_table.
+
+  def build do
+    table = :ets.new(:ref_table, [:set])
+    :ets.insert(table, {:a, 1})
+    :ets.lookup(table, :a)
+  end
+
+  def build_across_call do
+    table = :ets.new(:ref_table_two, [:set])
+    seed = entropy()
+    :ets.insert(table, {:seed, seed})
+    table
+  end
+
+  defp entropy, do: :erlang.unique_integer()
+end

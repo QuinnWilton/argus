@@ -471,6 +471,84 @@ defmodule Argus.Extractor.Helpers do
   end
 
   @doc """
+  Trace `register` at instruction `call_idx` back to the remote call
+  whose RESULT it holds, following register-to-register move chains.
+
+  Returns `{:ok, {mod, func, arity}, origin_idx}` where `origin_idx` is
+  the absolute instruction index of the originating call — useful for
+  resolving that call's own arguments (e.g. mapping an ETS table
+  reference back to the `:ets.new/2` site that created it, then reading
+  the table name from x0 there). Returns `:no` when the register holds
+  anything else.
+
+  The walk is sound about register lifetimes: x registers do not
+  survive calls (only x0 carries the result), so tracing an `{:x, n}`
+  with `n != 0` hits a call boundary and stops. y registers survive
+  calls and are followed through. Tail calls and `return` are path
+  barriers, as in `resolve_register/3`.
+  """
+  @spec call_result_origin([term()], non_neg_integer(), register()) ::
+          {:ok, {module(), atom(), arity()}, non_neg_integer()} | :no
+  def call_result_origin(instrs, call_idx, register) do
+    preceding =
+      instrs
+      |> Enum.with_index()
+      |> Enum.take(call_idx)
+      |> Enum.reverse()
+
+    walk_origin(preceding, normalize_reg(register))
+  end
+
+  defp walk_origin([], _reg), do: :no
+
+  defp walk_origin([{instr, idx} | rest], reg) do
+    src = move_source(instr, reg)
+
+    cond do
+      # A move into our register: keep tracing through its source —
+      # unless the source is a literal, which is by definition not a
+      # call result.
+      src != nil ->
+        case src do
+          {:x, _} -> walk_origin(rest, src)
+          {:y, _} -> walk_origin(rest, src)
+          _ -> :no
+        end
+
+      barrier?(instr) ->
+        :no
+
+      # The most recent writer is a call: x0 holds its result.
+      call_instr?(instr) and reg == {:x, 0} ->
+        case call_target_mfa(instr) do
+          {:ok, mfa} -> {:ok, mfa, idx}
+          :none -> :no
+        end
+
+      # Calls clobber every x register except the x0 result — an x value
+      # from before the call cannot be what we observed after it.
+      call_instr?(instr) and match?({:x, _}, reg) ->
+        :no
+
+      writes_to?(instr, reg) ->
+        :no
+
+      true ->
+        walk_origin(rest, reg)
+    end
+  end
+
+  defp call_instr?({:call, _, _}), do: true
+  defp call_instr?({:call_ext, _, _}), do: true
+  defp call_instr?({:call_fun, _}), do: true
+  defp call_instr?({:call_fun2, _, _, _}), do: true
+  defp call_instr?({:apply, _}), do: true
+  defp call_instr?(_), do: false
+
+  defp call_target_mfa({:call_ext, _, {:extfunc, m, f, a}}), do: {:ok, {m, f, a}}
+  defp call_target_mfa(_), do: :none
+
+  @doc """
   Find the MFA of the most recent remote call (`call_ext` /
   `call_ext_only` / `call_ext_last`) that wrote to `register` within
   the current execution path. Returns `{:ok, {mod, func, arity}}` or

@@ -18,6 +18,7 @@ defmodule Argus.Extractors.ETS do
   import Argus.Extractor.Helpers,
     only: [
       add_fact: 3,
+      call_result_origin: 3,
       resolve_atom: 3,
       resolve_register: 3,
       scan_remote_calls: 3,
@@ -51,7 +52,7 @@ defmodule Argus.Extractors.ETS do
 
   defp handle_call(facts, ctx, {:ets, func, arity}) do
     id = "#{ctx.func_id}##{ctx.idx}"
-    table_ref = resolve_atom(ctx.instrs, ctx.idx, {:x, 0})
+    table_ref = resolve_table(ctx)
     kind = classify_op(func, arity)
 
     facts
@@ -60,6 +61,29 @@ defmodule Argus.Extractors.ETS do
   end
 
   defp handle_call(facts, _ctx, _mfa), do: facts
+
+  # Resolve the table operand (x0) of an ETS operation.
+  #
+  # The common miss is a table REFERENCE: `t = :ets.new(:cache, opts)`
+  # followed by `:ets.insert(t, ...)` — x0 holds an opaque ref, not the
+  # name atom. When the ref traces back (through move chains) to an
+  # `:ets.new/2` call in the same function, the op inherits that
+  # creation site's table name, so ops join `ets_new` rows in the
+  # Datalog rules exactly like named-table ops do. Refs that cross
+  # function boundaries (tables held in state) stay "dynamic" — honest,
+  # since the walk cannot see the creating function.
+  defp resolve_table(ctx) do
+    case resolve_atom(ctx.instrs, ctx.idx, {:x, 0}) do
+      "dynamic" ->
+        case call_result_origin(ctx.instrs, ctx.idx, {:x, 0}) do
+          {:ok, {:ets, :new, 2}, new_idx} -> resolve_atom(ctx.instrs, new_idx, {:x, 0})
+          _ -> "dynamic"
+        end
+
+      name ->
+        name
+    end
+  end
 
   # Resolve the options list passed as the second argument to :ets.new/2.
   # Track imprecision when x1 doesn't resolve to a list — we lose the

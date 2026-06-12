@@ -786,6 +786,62 @@ defmodule Argus.Extractor.HelpersTest do
     end
   end
 
+  describe "call_result_origin/3" do
+    test "finds the call whose result the register holds, with its index" do
+      instrs = [
+        {:call_ext, 2, {:extfunc, :ets, :new, 2}},
+        {:move, {:x, 0}, {:y, 0}},
+        {:move, {:y, 0}, {:x, 0}},
+        {:call_ext, 2, {:extfunc, :ets, :insert, 2}}
+      ]
+
+      assert Helpers.call_result_origin(instrs, 3, {:x, 0}) == {:ok, {:ets, :new, 2}, 0}
+    end
+
+    test "follows y registers across intervening calls" do
+      instrs = [
+        {:call_ext, 2, {:extfunc, :ets, :new, 2}},
+        {:move, {:x, 0}, {:y, 0}},
+        {:call, 0, {SomeMod, :side_effect, 0}},
+        {:move, {:y, 0}, {:x, 0}},
+        {:call_ext, 2, {:extfunc, :ets, :insert, 2}}
+      ]
+
+      assert Helpers.call_result_origin(instrs, 4, {:x, 0}) == {:ok, {:ets, :new, 2}, 0}
+    end
+
+    test "x registers other than x0 do not survive a call" do
+      # x1 was set before the call, but calls clobber it — whatever x1
+      # held at idx 2 is NOT the pre-call value.
+      instrs = [
+        {:move, {:atom, :tab}, {:x, 1}},
+        {:call_ext, 1, {:extfunc, :erlang, :self, 0}},
+        {:call_ext, 2, {:extfunc, :ets, :insert, 2}}
+      ]
+
+      assert Helpers.call_result_origin(instrs, 2, {:x, 1}) == :no
+    end
+
+    test "a literal move means the register is not a call result" do
+      instrs = [
+        {:move, {:atom, :my_table}, {:x, 0}},
+        {:call_ext, 2, {:extfunc, :ets, :insert, 2}}
+      ]
+
+      assert Helpers.call_result_origin(instrs, 1, {:x, 0}) == :no
+    end
+
+    test "stops at path barriers" do
+      instrs = [
+        {:call_ext, 2, {:extfunc, :ets, :new, 2}},
+        :return,
+        {:call_ext, 2, {:extfunc, :ets, :insert, 2}}
+      ]
+
+      assert Helpers.call_result_origin(instrs, 2, {:x, 0}) == :no
+    end
+  end
+
   describe "resolve_register/3 — placeholder normalization" do
     test "top-level :dynamic placeholder is unresolved, not a value" do
       # x1 = [<unknown>], x0 = hd(x1). The list resolves partially with

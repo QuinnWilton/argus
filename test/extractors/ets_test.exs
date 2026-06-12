@@ -76,6 +76,27 @@ defmodule Argus.Extractors.ETSTest do
       assert ":my_cache" in refs
     end
 
+    test "maps ops on a table ref back to the same-function :ets.new name" do
+      facts = ETS.extract(disassemble(Argus.Test.Fixtures.EtsRefOps))
+
+      ops = facts[:ets_op]
+
+      # `table = :ets.new(:ref_table, ...)` then insert/lookup via the
+      # ref: both ops inherit the creation site's table name.
+      build_refs =
+        for [_, func, ref, op, _] <- ops, func =~ ":build/0", do: {op, ref}
+
+      assert {"insert", ":ref_table"} in build_refs
+      assert {"lookup", ":ref_table"} in build_refs
+
+      # The ref survives an intervening call in a y register; the walk
+      # follows the move chain across it.
+      across_refs =
+        for [_, func, ref, op, _] <- ops, func =~ "build_across_call", do: {op, ref}
+
+      assert {"insert", ":ref_table_two"} in across_refs
+    end
+
     test "resolves parameter table references as dynamic, not stale atoms" do
       facts = ETS.extract(disassemble(Argus.Test.Fixtures.EtsParamTable))
 
