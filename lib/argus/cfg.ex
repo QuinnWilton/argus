@@ -119,6 +119,7 @@ defmodule Argus.Cfg do
     entry = entry_block(fun, block_of)
     rpo = reverse_postorder(entry, succs)
     idom = dominators(entry, rpo, preds)
+    ipdom = postdominators(succs, preds)
     structs = block_structs(fun, blocks, succs, preds)
 
     %Function{
@@ -129,6 +130,7 @@ defmodule Argus.Cfg do
       rpo: rpo,
       idom: idom,
       dom_children: invert_idom(idom),
+      ipdom: ipdom,
       loop_headers: loop_headers(succs, entry, idom),
       labels: Map.new(fun.labels, fn {label, idx} -> {label, Map.fetch!(block_of, idx)} end),
       selects: select_tables(fun, block_of)
@@ -332,6 +334,29 @@ defmodule Argus.Cfg do
       true ->
         intersect(b1, idom[b2], idom, position)
     end
+  end
+
+  # Immediate post-dominators: dominators of the reversed CFG, rooted at
+  # a virtual :exit that precedes every terminal block (no successors —
+  # return, tail call, raise). The same CHK fixpoint runs over the
+  # reversed edge maps. Blocks with no path to the exit (genuine
+  # infinite loops) have no post-dominator and are absent from the map;
+  # a block whose ipdom is the virtual exit maps to `:exit`.
+  defp postdominators(succs, preds) do
+    terminals = for {id, out} <- succs, out == [], do: id
+
+    succs_rev =
+      preds
+      |> Map.put(:exit, Enum.map(terminals, &{&1, :virtual}))
+
+    preds_rev =
+      terminals
+      |> Enum.reduce(succs, fn t, acc ->
+        Map.update(acc, t, [{:exit, :virtual}], &[{:exit, :virtual} | &1])
+      end)
+
+    rpo_rev = reverse_postorder(:exit, succs_rev)
+    dominators(:exit, rpo_rev, preds_rev)
   end
 
   defp invert_idom(idom) do

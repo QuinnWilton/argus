@@ -83,6 +83,55 @@ defmodule Argus.CfgBuildTest do
     assert merge.id in Function.region(fun, branch.id)
   end
 
+  test "if/else: post-dominators and control dependence over the diamond" do
+    cfgs =
+      cfg_for("""
+      defmodule CfgPdom do
+        def m(x) do
+          y =
+            if x > 0 do
+              x + 1
+            else
+              x - 1
+            end
+
+          Integer.to_string(y)
+        end
+      end
+      """)
+
+    fun = cfgs[{"m", 1}]
+
+    branch =
+      Enum.find_value(fun.blocks, fn {_id, b} -> if b.terminator == :branch, do: b end)
+
+    arms = Enum.map(branch.succs, fn {to, _kind} -> to end)
+
+    merge =
+      Enum.find_value(fun.blocks, fn {_id, b} ->
+        if length(b.preds) >= 2 and Enum.any?(b.preds, &match?({_, :jump}, &1)), do: b
+      end)
+
+    # The merge post-dominates the branch and both arms; the arms
+    # post-dominate nothing but themselves.
+    assert Function.postdominates?(fun, merge.id, branch.id)
+    assert Enum.all?(arms, &Function.postdominates?(fun, merge.id, &1))
+    refute Enum.any?(arms, &Function.postdominates?(fun, &1, branch.id))
+
+    # Each arm is control-dependent on the branch; the merge runs
+    # regardless, so it is not.
+    deps = Function.control_deps(fun)
+    assert Enum.all?(arms, fn arm -> branch.id in Map.get(deps, arm, []) end)
+    refute branch.id in Map.get(deps, merge.id, [])
+
+    # The virtual exit is the terminal block's post-dominator (here the
+    # merge tail-calls Integer.to_string, so the merge is terminal).
+    terminal =
+      Enum.find_value(fun.blocks, fn {_id, b} -> if b.succs == [] and b.id in fun.rpo, do: b end)
+
+    assert fun.ipdom[terminal.id] == :exit
+  end
+
   test "a literal case compiles to a select with value-tagged arm edges" do
     cfgs =
       cfg_for("""
