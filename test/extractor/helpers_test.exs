@@ -840,6 +840,109 @@ defmodule Argus.Extractor.HelpersTest do
 
       assert Helpers.call_result_origin(instrs, 2, {:x, 0}) == :no
     end
+
+    test "reports a local (intra-module) call origin" do
+      # `x0 = foreman(conf)` then used — a local `defp` helper the caller
+      # may want to step into.
+      instrs = [
+        {:call, 1, {MyApp.Worker, :foreman, 1}},
+        {:put_tuple2, {:x, 1}, {:list, [atom: MyApp.Child, x: 0]}},
+        {:call_ext, 2, {:extfunc, DynamicSupervisor, :start_child, 2}}
+      ]
+
+      assert Helpers.call_result_origin(instrs, 2, {:x, 0}) ==
+               {:ok, {MyApp.Worker, :foreman, 1}, 0}
+    end
+  end
+
+  describe "recent_writer/3" do
+    test "returns the most recent writer instruction and its index" do
+      instrs = [
+        {:move, {:atom, :a}, {:x, 0}},
+        {:move, {:atom, :b}, {:x, 0}}
+      ]
+
+      assert Helpers.recent_writer(instrs, 2, {:x, 0}) == {:ok, {:move, {:atom, :b}, {:x, 0}}, 1}
+    end
+
+    test "returns a put_list writer without following the move chain" do
+      instrs = [
+        {:put_list, {:x, 1}, nil, {:x, 0}},
+        {:call_ext, 1, {:extfunc, Foo, :bar, 1}}
+      ]
+
+      assert Helpers.recent_writer(instrs, 1, {:x, 0}) ==
+               {:ok, {:put_list, {:x, 1}, nil, {:x, 0}}, 0}
+    end
+
+    test "a call is the writer of its x0 result" do
+      instrs = [{:call_ext, 1, {:extfunc, Foo, :bar, 1}}, {:move, {:x, 0}, {:x, 1}}]
+      assert {:ok, {:call_ext, 1, _}, 0} = Helpers.recent_writer(instrs, 1, {:x, 0})
+    end
+
+    test "a non-x0 x register does not survive a call" do
+      instrs = [
+        {:move, {:atom, :v}, {:x, 1}},
+        {:call_ext, 0, {:extfunc, Foo, :bar, 0}}
+      ]
+
+      assert Helpers.recent_writer(instrs, 2, {:x, 1}) == :no
+    end
+
+    test "stops at path barriers" do
+      instrs = [{:move, {:atom, :v}, {:x, 0}}, :return]
+      assert Helpers.recent_writer(instrs, 2, {:x, 0}) == :no
+    end
+  end
+
+  describe "keyword_value_register/4" do
+    test "finds the value register of a runtime-built keyword pair" do
+      # opts = [name: <y0>] built as a cons of a {:name, y0} tuple.
+      instrs = [
+        {:call_ext, 2, {:extfunc, MyApp.Registry, :via, 2}},
+        {:move, {:x, 0}, {:y, 0}},
+        {:put_tuple2, {:x, 1}, {:list, [atom: :name, y: 0]}},
+        {:put_list, {:x, 1}, nil, {:x, 1}},
+        {:put_tuple2, {:x, 0}, {:list, [atom: MyApp.Child, x: 1]}},
+        {:call_ext, 2, {:extfunc, Supervisor, :init, 2}}
+      ]
+
+      # The child tuple is at idx 4; its opts operand is x1.
+      assert Helpers.keyword_value_register(instrs, 4, {:x, 1}, :name) == {:ok, {:y, 0}, 2}
+    end
+
+    test "walks past a non-matching leading pair to a later key" do
+      # opts = [conf: y1, name: y0]
+      instrs = [
+        {:put_tuple2, {:x, 1}, {:list, [atom: :name, y: 0]}},
+        {:put_list, {:x, 1}, nil, {:x, 1}},
+        {:put_tuple2, {:x, 2}, {:list, [atom: :conf, y: 1]}},
+        {:put_list, {:x, 2}, {:x, 1}, {:x, 0}},
+        {:move, {:atom, :sentinel}, {:x, 3}}
+      ]
+
+      assert Helpers.keyword_value_register(instrs, 4, {:x, 0}, :name) == {:ok, {:y, 0}, 0}
+    end
+
+    test "returns :no when the key's value is a literal (no register)" do
+      instrs = [
+        {:put_tuple2, {:x, 1}, {:list, [atom: :name, atom: :static]}},
+        {:put_list, {:x, 1}, nil, {:x, 0}},
+        {:move, {:atom, :sentinel}, {:x, 2}}
+      ]
+
+      assert Helpers.keyword_value_register(instrs, 2, {:x, 0}, :name) == :no
+    end
+
+    test "returns :no when the key is absent" do
+      instrs = [
+        {:put_tuple2, {:x, 1}, {:list, [atom: :conf, y: 1]}},
+        {:put_list, {:x, 1}, nil, {:x, 0}},
+        {:move, {:atom, :sentinel}, {:x, 2}}
+      ]
+
+      assert Helpers.keyword_value_register(instrs, 2, {:x, 0}, :name) == :no
+    end
   end
 
   describe "resolve_register/3 — placeholder normalization" do

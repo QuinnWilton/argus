@@ -471,15 +471,17 @@ defmodule Argus.Extractor.Helpers do
   end
 
   @doc """
-  Trace `register` at instruction `call_idx` back to the remote call
-  whose RESULT it holds, following register-to-register move chains.
+  Trace `register` at instruction `call_idx` back to the call whose
+  RESULT it holds, following register-to-register move chains.
 
   Returns `{:ok, {mod, func, arity}, origin_idx}` where `origin_idx` is
   the absolute instruction index of the originating call — useful for
   resolving that call's own arguments (e.g. mapping an ETS table
   reference back to the `:ets.new/2` site that created it, then reading
-  the table name from x0 there). Returns `:no` when the register holds
-  anything else.
+  the table name from x0 there), or for stepping into a local `defp`
+  helper that produced the value. Both remote (`call_ext`) and local
+  (`call`) non-tail calls are reported; tail-call forms are path
+  barriers. Returns `:no` when the register holds anything else.
 
   The walk is sound about register lifetimes: x registers do not
   survive calls (only x0 carries the result), so tracing an `{:x, n}`
@@ -545,7 +547,135 @@ defmodule Argus.Extractor.Helpers do
   defp call_instr?({:apply, _}), do: true
   defp call_instr?(_), do: false
 
+  @doc """
+  The instruction that most recently wrote `register` strictly before
+  `idx`, as `{:ok, instruction, writer_idx}`, or `:no`.
+
+  Unlike `resolve_register/3` (which reconstructs a *value*), this returns
+  the raw writer, so callers can inspect provenance — was it a `put_list`,
+  a `put_tuple2`, a `move`, a call? Honors the same control-flow barriers
+  (tail calls, `return`) and register lifetimes (a non-x0 `x` register does
+  not survive a call) as the resolution walkers, so a writer reported here
+  is reachable on the path to `idx`. Moves are returned as-is — the caller
+  decides whether to keep following the chain.
+  """
+  @spec recent_writer([term()], non_neg_integer(), register()) ::
+          {:ok, term(), non_neg_integer()} | :no
+  def recent_writer(instrs, idx, register) do
+    instrs
+    |> Enum.take(idx)
+    |> Enum.with_index()
+    |> Enum.reverse()
+    |> do_recent_writer(normalize_reg(register))
+  end
+
+  defp do_recent_writer([], _reg), do: :no
+
+  defp do_recent_writer([{instr, i} | rest], reg) do
+    cond do
+      writes_to?(instr, reg) -> {:ok, instr, i}
+      barrier?(instr) -> :no
+      # A call clobbers every x register except its x0 result — a pre-call
+      # value of x1..xN cannot be what a later instruction observes.
+      call_instr?(instr) and clobbered_x_reg?(reg) -> :no
+      true -> do_recent_writer(rest, reg)
+    end
+  end
+
+  defp clobbered_x_reg?({:x, n}), do: n != 0
+  defp clobbered_x_reg?(_), do: false
+
+  @doc """
+  Find the register holding `key`'s value in a keyword list built at
+  runtime and pointed to by `list_reg` at instruction `idx`.
+
+  Returns `{:ok, value_register, value_idx}` — the register that holds the
+  value and the index where the `{key, value}` pair was constructed — or
+  `:no`. This is the provenance hook for reading a runtime option's
+  *source*: e.g. a `{DynamicSupervisor, name: some_call(...)}` child spec
+  whose `:name` is computed, where you want to trace the value back to the
+  call that produced it (via `call_result_origin/3`).
+
+  Walks the cons cells (`put_list`) and pair tuples (`put_tuple2`) of the
+  list, following `move` chains. Only pairs whose value is a *register*
+  match — a literal value has no register to return (use
+  `resolve_register/3` for those).
+  """
+  @spec keyword_value_register([term()], non_neg_integer(), register(), atom()) ::
+          {:ok, register(), non_neg_integer()} | :no
+  def keyword_value_register(instrs, idx, list_reg, key) do
+    do_keyword_value_register(instrs, idx, normalize_reg(list_reg), key)
+  end
+
+  defp do_keyword_value_register(instrs, idx, list_reg, key) do
+    case recent_writer(instrs, idx, list_reg) do
+      {:ok, {:move, src, _}, widx} ->
+        do_keyword_value_register(instrs, widx, normalize_reg(src), key)
+
+      {:ok, {:put_list, head, tail, _}, widx} ->
+        case pair_value_register(instrs, widx, head, key) do
+          {:ok, _, _} = hit -> hit
+          :no -> follow_kw_tail(instrs, widx, tail, key)
+        end
+
+      _ ->
+        :no
+    end
+  end
+
+  # The list tail is another cons register, or `nil`/a literal (list end).
+  defp follow_kw_tail(instrs, idx, {kind, _} = tail, key) when kind in [:x, :y],
+    do: do_keyword_value_register(instrs, idx, normalize_reg(tail), key)
+
+  defp follow_kw_tail(instrs, idx, {:tr, reg, _}, key),
+    do: do_keyword_value_register(instrs, idx, normalize_reg(reg), key)
+
+  defp follow_kw_tail(_instrs, _idx, _tail, _key), do: :no
+
+  # A cons head is the `{key, value}` pair. Reachable as a register (a
+  # runtime-built tuple) — resolve it to its put_tuple2 and read the value
+  # operand when the key matches and the value is itself a register.
+  defp pair_value_register(instrs, idx, {kind, _} = head, key) when kind in [:x, :y],
+    do: pair_from_reg(instrs, idx, normalize_reg(head), key)
+
+  defp pair_value_register(instrs, idx, {:tr, reg, _}, key),
+    do: pair_from_reg(instrs, idx, normalize_reg(reg), key)
+
+  defp pair_value_register(_instrs, _idx, _head, _key), do: :no
+
+  defp pair_from_reg(instrs, idx, reg, key) do
+    case recent_writer(instrs, idx, reg) do
+      {:ok, {:move, src, _}, widx} ->
+        pair_from_reg(instrs, widx, normalize_reg(src), key)
+
+      {:ok, {:put_tuple2, _, {:list, [k_elem, v_elem]}}, widx} ->
+        if pair_key_matches?(k_elem, key) and value_register(v_elem) do
+          {:ok, normalize_reg(v_elem), widx}
+        else
+          :no
+        end
+
+      _ ->
+        :no
+    end
+  end
+
+  defp pair_key_matches?({:atom, k}, key), do: k == key
+  defp pair_key_matches?({:literal, k}, key), do: k == key
+  defp pair_key_matches?(_, _), do: false
+
+  defp value_register({:x, _}), do: true
+  defp value_register({:y, _}), do: true
+  defp value_register({:tr, {:x, _}, _}), do: true
+  defp value_register({:tr, {:y, _}, _}), do: true
+  defp value_register(_), do: false
+
   defp call_target_mfa({:call_ext, _, {:extfunc, m, f, a}}), do: {:ok, {m, f, a}}
+  # Local (intra-module) calls carry a bare `{mod, func, arity}` target. A
+  # register holding a local call's result traces to that MFA, so callers
+  # can step into the callee (e.g. a `defp helper` that returns the value
+  # being tracked). Tail-call forms are barriers, handled before this.
+  defp call_target_mfa({:call, _, {m, f, a}}), do: {:ok, {m, f, a}}
   defp call_target_mfa(_), do: :none
 
   @doc """
