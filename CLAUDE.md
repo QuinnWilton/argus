@@ -102,7 +102,7 @@ Examples:
 
 ### Oban (v2.x, ~7k GitHub stars)
 
-Ran `coupled_siblings` analysis against Oban's 69 project modules.
+Ran the `one_for_one_coupling` analysis against Oban's 69 project modules.
 
 **Supervision structure found:**
 

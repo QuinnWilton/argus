@@ -12,6 +12,119 @@ baseline the results, edit an extractor, re-measure, diff, accept or
 revert, repeat. Inspired by pi-autoresearch's event-log + living-doc
 pattern, adapted for Argus's multi-dimensional categorical metrics.
 
+### Added
+
+- **Dataflow primitives for value provenance.** `Argus.Extractor.Helpers`
+  gains `recent_writer/3` (the most recent instruction that wrote a
+  register, raw — for inspecting provenance) and `keyword_value_register/4`
+  (the register holding a given key's value in a runtime-built keyword
+  list — for tracing a computed option like `name:` back to its source).
+  `call_result_origin/3` now also reports **local** (`call`) origins, not
+  just remote ones, so a value produced by a `defp` helper can be traced
+  into that helper. General-purpose backward-dataflow building blocks.
+- **Via-tuple (`Registry`) registration names.** The supervision extractor
+  recognizes children registered under `{:via, Registry, _}` tuples built
+  by a `*.Registry.via(name, role)` helper (the Oban idiom), recording the
+  static *role* as the child's registered name — on both the registration
+  side (`{DynamicSupervisor, name: Registry.via(conf.name, Foreman)}`) and
+  the `start_child` side (`start_child(Registry.via(conf.name, Foreman),
+  _)`, resolved through one level of local helper). So a queue supervisor
+  Oban starts into the "Foreman" via nests under the DynamicSupervisor that
+  holds it, instead of appearing unanchored. The runtime registry name is
+  dropped — anchoring matches on the role alone, a deliberate
+  over-approximation (correct for a single library instance).
+- **`supervisor_child_name` relation (schema version 4).** A child spec's
+  registered `:name` option — the `MyApp.Pool` in
+  `{DynamicSupervisor, name: MyApp.Pool}` — recorded alongside
+  `supervisor_child` by `{sup, position}`. Lets a consumer anchor a
+  `dynamic_child` parented by a registered name (the parent of
+  `DynamicSupervisor.start_child(MyApp.Pool, _)` is the *name*, not any
+  module) to the child that registers it. Only atom names are recorded;
+  `{:via, _, _}`/`{:global, _}` names are not, since name-based
+  `start_child` targets are always atoms.
+- **`use DynamicSupervisor` modules recognized as supervisors.** The
+  supervision extractor now emits a `supervisor` fact for
+  `DynamicSupervisor` behaviour modules (strategy read from
+  `DynamicSupervisor.init/1`, `:one_for_one` otherwise — the only strategy
+  the behaviour accepts). A `start_child` call whose supervisor argument
+  can't be resolved to an atom now anchors to the enclosing module when
+  that module is itself a supervisor (the idiomatic `start_x(sup, …)`
+  helper), instead of dropping to the `"dynamic"` sentinel.
+- **In-memory embedding surface.** `Argus.Pipeline.extract/2` accepts
+  raw beam data binaries alongside module atoms and `.beam` paths
+  (recognized via `BeamSpy.BeamFile.beam_data?/1`), and
+  `Argus.Pipeline.write_facts/2` is public, so embedders that hold
+  bytecode in memory and merge per-module fact maps themselves can
+  produce a Souffle-ready facts directory without temp-file round
+  trips. Together with `Argus.Analysis.run_rules/3` and
+  `Argus.Analysis.filter_to_outputs/2`, this is the blessed surface for
+  incremental consumers (the lowdown pattern: assert
+  `Argus.Schema.version/0` at compile time and decode with
+  `Argus.Facts.decode/1`).
+- **Post-dominators and control dependence on `Argus.Cfg`.**
+  `Cfg.Function` gains `ipdom` (immediate post-dominators — the same
+  Cooper–Harvey–Kennedy fixpoint over the reversed CFG from a virtual
+  `:exit`; blocks that never reach the exit are absent),
+  `postdominates?/3`, and `control_deps/1` (Ferrante–Ottenstein–Warren
+  block-level control dependence). In-process API only — no fact-schema
+  change. Powers planchette's flowistry-style slicing.
+- **`Argus.Lines`** — line tables built from `line_info` facts
+  (`from_facts/1`, `from_facts_dir/1`) with best-effort `resolve/2` for
+  instruction IDs (exact line), function IDs and MFAs (first line), and
+  `Argus.InstrId` structs. `mix argus` text output and
+  `scripts/analyze_project.exs` now annotate every resolvable ID cell
+  with its source line.
+
+### Changed (schema version 3) — per-line finding anchors
+
+- **`line_info` covers every instruction.** Rows were emitted only at
+  the `{:line, ref}` markers themselves, but anchors name *call-site*
+  instruction IDs — so an exact `by_instr` lookup could never hit and
+  every consumer silently degraded to function-first-line resolution.
+  The emitter now tracks the line in effect and stamps it onto each
+  instruction until the next marker; a no-location marker (reference 0,
+  compiler-generated code) resets it to unknown, so generated code never
+  inherits a source line it isn't from. Instruction-level anchors now
+  resolve to their exact source line.
+- **`supervisor` gained a `site` column** — the instruction ID of the
+  `Supervisor.init`/`start_link` call (or Erlang-style flags literal)
+  that defines the tree, `"dynamic"` when not statically found — and
+  **`statem_state` gained a `site` column** (the state function in
+  `state_functions` mode, the matching instruction in `handle_event`
+  mode). Both are trailing additions; the schema version bump to **3**
+  covers the `line_info` meaning change and these shape changes.
+- **Every module-anchored finding now carries a per-line anchor.**
+  Analysis output relations gained witness columns threaded from their
+  rule bodies (`stateful_module_dep`, `init_reaches`, `module_reaches`,
+  `sync_dep`, `sync_caller` and friends now carry the witnessing
+  function; `ets`/`process_registry`/`distributed` relations carry the
+  already-bound instruction), and `finding/2` anchors upgraded from
+  `at_module` (line 1) to the witness. Only `coverage`'s absence
+  findings stay module-level — they have no code location by nature.
+- **Supervision-family findings anchor at the tree definition.**
+  `one_for_one_coupling`, `wrong_start_order`, and
+  `suspect_transient_dependency` now anchor at the supervisor's
+  strategy line — the defect is the composition and that is where the
+  fix goes — with the coupling call demoted to a labelled related
+  location in the child.
+- **The coupling analyses no longer overlap.**
+  `unlinked_coupled_siblings` was `one_for_one_coupling`'s rule plus a
+  link-negation — a strict subset, so running both analyses reported
+  every unlinked coupled pair twice (four stacked diagnostics on one
+  strategy line). The link-exclusion now lives inside
+  `one_for_one_coupling` itself (a linked pair's exit propagates and
+  both restart together — the hazard is already mitigated, so this is
+  also a precision win), `unlinked_coupled_siblings` is removed, and
+  the duplicated `wrong_start_order` keeps a single home in the
+  `supervision` analysis. On eusapia: `one_for_one_coupling: 2`
+  (unchanged), `supervision` now passes.
+- **Witness rows deduplicate deterministically.** A relation provable
+  through several call sites yields one Souffle row per witness; output
+  relations now declare a `:key` (the fields that identify a logical
+  finding) and `Argus.Findings.dedupe_rows/2` — public for in-process
+  embedders — keeps the lexicographically least row per key, so finding
+  counts never depend on witness multiplicity or row order.
+
 ### Fixed (schema version 2)
 
 - **`line_info` now carries real source lines.** The emitter passed
@@ -27,6 +140,39 @@ pattern, adapted for Argus's multi-dimensional categorical metrics.
 
 ### Fixed
 
+- **Same-module supervisor children no longer collapse.** Child spec
+  dedup keyed on the module alone, so three `{DynamicSupervisor, name: …}`
+  children (or two `Livebook.Utils.SupervisionStep` steps) were recorded
+  as one. Dedup now keys on `{module, registered_name}`, so children that
+  register different names stay distinct; nameless same-module duplicates
+  still collapse (nothing distinguishes them).
+- **`debug_line` markers resolve to source lines.** OTP 28 debug builds
+  (`beam_debug_info`) carry a `debug_line/4` on every executable line;
+  the emitter now treats it as a line marker (same sticky semantics as
+  `line`), so `line_info` covers debug twins — including the pure-data
+  lines the production build never marks. `executable_line` stays
+  ignored.
+- **Calls now carry def/use facts.** No call form emitted `use` facts
+  for its argument registers (x0..x(arity-1)), and label-form local
+  calls missed their `def x0` — so data dependence broke at every call
+  boundary and a pipeline (a chain of calls threading x0) produced no
+  def→use edges at all. Every call form (`call`/`call_ext`/`call_fun`/
+  `call_fun2`/`apply` and the tail variants) now emits argument uses,
+  and returning forms define x0. `Argus.Dataflow` edges flow through
+  call chains; lowdown's line-mapping goldens moved where Rule A can
+  now pull argument-setup moves to their consuming call's line — the
+  drift its goldens had documented as a known-coarse gap.
+- **Supervision children survive runtime list construction.** One
+  runtime element in a children list (the stock Phoenix `Application`
+  shape — `{DNSCluster, query: Application.get_env(...)}`) splits the
+  list into cons cells, and the extractor missed every literal member
+  riding in `put_list` operands (bare module heads, the literal tail) —
+  zero children extracted, `⚠ children not statically resolved`. The
+  extractor now recovers members from cons construction (membership
+  over perfect ordering: elements interleaved with runtime construction
+  can land out of position), and the runtime-tuple scan accepts any
+  `Elixir.`-prefixed module atom instead of requiring the module to be
+  loadable in the analyzing VM — the analyzed project's deps never are.
 - **Concurrent VMs no longer share temp directories.** Analysis work
   dirs and Souffle output dirs were named with `System.unique_integer/1`
   alone — a VM-local counter — so concurrent `elixir` subprocesses
