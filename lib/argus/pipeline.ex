@@ -31,10 +31,15 @@ defmodule Argus.Pipeline do
   @doc """
   Extracts facts from the given modules and writes `.facts` files to `output_dir`.
 
-  Modules can be atoms (resolved via `:code.which/1`) or string paths to
-  `.beam` files. Returns `{:ok, output_dir}` or `{:error, reason}`.
+  Modules can be atoms (resolved via `:code.which/1`), string paths to
+  `.beam` files, or raw beam data binaries. Returns `{:ok, output_dir}`
+  or `{:error, reason}`.
   """
-  @spec run(modules :: [atom() | String.t()], output_dir :: Path.t(), extract_opts()) ::
+  @spec run(
+          modules :: [Disassemble.module_input()],
+          output_dir :: Path.t(),
+          extract_opts()
+        ) ::
           {:ok, Path.t()} | {:error, term()}
   def run(modules, output_dir, opts \\ []) do
     with :ok <- File.mkdir_p(output_dir),
@@ -52,7 +57,7 @@ defmodule Argus.Pipeline do
   `Argus.Facts.decode/1` (field-name-keyed maps, integers, `Argus.InstrId`
   structs) instead of the raw string lists that `.facts` files use.
   """
-  @spec extract(modules :: [atom() | String.t()], extract_opts()) ::
+  @spec extract(modules :: [Disassemble.module_input()], extract_opts()) ::
           {:ok, Emit.facts() | Argus.Facts.t()} | {:error, term()}
   def extract(modules, opts \\ []) do
     concurrency = Keyword.get(opts, :concurrency, System.schedulers_online())
@@ -129,8 +134,20 @@ defmodule Argus.Pipeline do
 
   # ── .facts file I/O ────────────────────────────────────────────────
 
+  @doc """
+  Writes extracted facts to `.facts` files in `output_dir` (one
+  tab-separated file per relation).
+
+  Empty files are materialized for every schema relation so Souffle never
+  fails on a missing `.input` file. Callers that merge per-module fact
+  maps themselves (rather than going through `run/3`) can use this to
+  produce a Souffle-ready facts directory from in-memory facts.
+
+  Expects raw-format facts (string rows, as returned by `extract/2` with
+  the default `format: :raw`). The directory must already exist.
+  """
   @spec write_facts(Emit.facts(), Path.t()) :: :ok | {:error, term()}
-  defp write_facts(facts, output_dir) do
+  def write_facts(facts, output_dir) do
     # Create empty files for all known relations so Souffle never fails
     # on missing .input files.
     init_result =

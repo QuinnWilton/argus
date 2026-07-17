@@ -118,6 +118,39 @@ defmodule Argus.PipelineTest do
       assert {:ok, facts} = Pipeline.extract([])
       assert facts == %{}
     end
+
+    test "accepts raw beam data binaries, yielding identical facts to paths" do
+      path = to_string(:code.which(:lists))
+      data = File.read!(path)
+
+      assert {:ok, from_data} = Pipeline.extract([data])
+      assert {:ok, from_path} = Pipeline.extract([path])
+      assert from_data == from_path
+    end
+
+    test "returns error for a binary that is neither beam data nor a path" do
+      assert {:error, {:not_found, "no/such/file.beam"}} =
+               Pipeline.extract(["no/such/file.beam"])
+    end
+  end
+
+  describe "write_facts/2" do
+    test "writes an in-memory fact map to a Souffle-ready directory", %{tmp_dir: tmp_dir} do
+      {:ok, facts} = Pipeline.extract([:lists])
+
+      assert :ok = Pipeline.write_facts(facts, tmp_dir)
+
+      # Extracted relations round-trip through the TSV files.
+      {:ok, rows} = Pipeline.read_facts(Path.join(tmp_dir, "module_info.facts"))
+      assert Enum.any?(rows, fn [mod, _] -> mod == ":lists" end)
+
+      # Every schema relation gets a file, even when no facts were
+      # extracted for it — Souffle fails on missing .input files.
+      for name <- Argus.Schema.names() do
+        assert File.exists?(Path.join(tmp_dir, "#{name}.facts")),
+               "missing .facts file for #{name}"
+      end
+    end
   end
 
   describe "run/3 edge cases" do

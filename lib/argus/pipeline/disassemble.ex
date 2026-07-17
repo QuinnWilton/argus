@@ -3,12 +3,12 @@ defmodule Argus.Pipeline.Disassemble do
   Resolves module identifiers to `.beam` paths and disassembles them.
 
   This is the first stage of `Argus.Pipeline`: a thin wrapper around
-  `BeamSpy.BeamFile` that handles both module-atom and string-path inputs
-  and bundles imports into the disassembled data so the emitter has
-  everything it needs in one place.
+  `BeamSpy.BeamFile` that handles module-atom, string-path, and raw
+  beam-data inputs and bundles imports into the disassembled data so the
+  emitter has everything it needs in one place.
   """
 
-  @type module_input :: atom() | String.t()
+  @type module_input :: atom() | String.t() | binary()
   @type module_data :: %{
           required(:module) => atom(),
           required(:exports) => list(),
@@ -20,17 +20,28 @@ defmodule Argus.Pipeline.Disassemble do
         }
 
   @doc """
-  Resolves a list of module atoms or `.beam` file paths to a list of paths.
+  Resolves a list of module atoms, `.beam` file paths, or raw beam data
+  binaries to a list of disassembly inputs.
 
-  Returns `{:ok, paths}` or `{:error, {:not_found, ref}}` on the first
+  Raw beam data (recognized by `BeamSpy.BeamFile.beam_data?/1` — the
+  `"FOR1"` IFF header or gzip magic) passes through untouched; every
+  downstream `BeamSpy` reader accepts data and paths interchangeably.
+  This lets callers holding in-memory bytecode (e.g. straight from
+  `Code.compile_string/2`) analyze it without a temp-file round trip.
+
+  Returns `{:ok, inputs}` or `{:error, {:not_found, ref}}` on the first
   unresolved entry.
   """
-  @spec resolve_paths([module_input()]) :: {:ok, [String.t()]} | {:error, term()}
+  @spec resolve_paths([module_input()]) :: {:ok, [String.t() | binary()]} | {:error, term()}
   def resolve_paths(modules) do
     results =
       Enum.map(modules, fn
-        path when is_binary(path) ->
-          if File.exists?(path), do: {:ok, path}, else: {:error, {:not_found, path}}
+        data_or_path when is_binary(data_or_path) ->
+          cond do
+            BeamSpy.BeamFile.beam_data?(data_or_path) -> {:ok, data_or_path}
+            File.exists?(data_or_path) -> {:ok, data_or_path}
+            true -> {:error, {:not_found, data_or_path}}
+          end
 
         module when is_atom(module) ->
           case :code.which(module) do
@@ -47,8 +58,8 @@ defmodule Argus.Pipeline.Disassemble do
   end
 
   @doc """
-  Disassembles a `.beam` file into module data, bundling its imports and
-  its Line-chunk table.
+  Disassembles a `.beam` file (by path or raw beam data) into module data,
+  bundling its imports and its Line-chunk table.
 
   Returns `{:ok, data}` where `data` has the standard BeamSpy disassembly
   shape plus `:imports` and `:line_table` fields, or `{:error, reason}`
@@ -57,7 +68,7 @@ defmodule Argus.Pipeline.Disassemble do
   entry); it is empty when the module has no parseable Line chunk, in
   which case no `line_info` facts can be emitted.
   """
-  @spec disassemble_path(String.t()) :: {:ok, module_data()} | {:error, term()}
+  @spec disassemble_path(String.t() | binary()) :: {:ok, module_data()} | {:error, term()}
   def disassemble_path(path) do
     with {:ok, data} <- BeamSpy.BeamFile.disassemble(path) do
       {:ok,
