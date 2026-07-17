@@ -120,20 +120,21 @@ defmodule Mix.Tasks.Argus do
         []
       end
 
-    case Analysis.run(modules, analysis, analysis_opts) do
-      {:ok, results} ->
-        filtered = Analysis.filter_to_outputs(results, analysis)
-        output = format_results(filtered, format)
-        Mix.shell().info(output)
+    with {:ok, facts_dir} <- Analysis.extract_facts(modules, [analysis], analysis_opts),
+         {:ok, results} <- Analysis.run_rules(facts_dir, analysis, analysis_opts) do
+      filtered = Analysis.filter_to_outputs(results, analysis)
+      lines = Argus.Lines.from_facts_dir(facts_dir)
+      output = format_results(filtered, format, lines)
+      Mix.shell().info(output)
 
-        if fail_above do
-          total = count_results(filtered)
+      if fail_above do
+        total = count_results(filtered)
 
-          if total > fail_above do
-            Mix.raise("Analysis found #{total} results (threshold: #{fail_above})")
-          end
+        if total > fail_above do
+          Mix.raise("Analysis found #{total} results (threshold: #{fail_above})")
         end
-
+      end
+    else
       {:error, reason} ->
         Mix.raise("Analysis failed: #{inspect(reason)}")
     end
@@ -203,7 +204,7 @@ defmodule Mix.Tasks.Argus do
     end
   end
 
-  defp format_results(results, "json") do
+  defp format_results(results, "json", _lines) do
     data =
       Map.new(results, fn {relation, rows} ->
         {relation, Enum.map(rows, &List.to_tuple/1)}
@@ -212,7 +213,7 @@ defmodule Mix.Tasks.Argus do
     inspect(data, pretty: true, limit: :infinity)
   end
 
-  defp format_results(results, _text) do
+  defp format_results(results, _text, lines) do
     results
     |> Enum.sort_by(fn {name, _} -> name end)
     |> Enum.map_join("\n\n", fn {relation, rows} ->
@@ -221,13 +222,25 @@ defmodule Mix.Tasks.Argus do
       body =
         rows
         |> Enum.take(100)
-        |> Enum.map_join("\n", fn row -> "  " <> Enum.join(row, "\t") end)
+        |> Enum.map_join("\n", fn row ->
+          "  " <> Enum.map_join(row, "\t", &annotate_cell(&1, lines))
+        end)
 
       truncated =
         if length(rows) > 100, do: "\n  ... (#{length(rows) - 100} more rows)", else: ""
 
       header <> "\n" <> body <> truncated
     end)
+  end
+
+  # Cells holding instruction or function IDs resolve to a source line
+  # (schema v3 stamps every instruction); anything else — module names,
+  # counts, placeholders — misses the tables and passes through as-is.
+  defp annotate_cell(cell, lines) do
+    case Argus.Lines.resolve(lines, cell) do
+      nil -> cell
+      line -> "#{cell} (line #{line})"
+    end
   end
 
   defp count_results(results) do

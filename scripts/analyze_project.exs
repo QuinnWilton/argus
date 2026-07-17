@@ -124,8 +124,8 @@ defmodule Argus.Scripts.AnalyzeProject do
     # Run each analysis and collect results.
     {results, failures} = run_analyses_pretty(modules, analyses)
 
-    # Print results grouped by analysis.
-    print_all_results(results)
+    # Print results grouped by analysis, with anchors resolved to lines.
+    print_all_results(results, line_tables(modules))
 
     # Print summary.
     print_summary(results, failures)
@@ -188,7 +188,7 @@ defmodule Argus.Scripts.AnalyzeProject do
 
       case Argus.analyze(modules, analysis) do
         {:ok, results} ->
-          {[{analysis, results} | ok_acc], err_acc}
+          {[{analysis, dedupe_results(analysis, results)} | ok_acc], err_acc}
 
         {:error, reason} ->
           IO.puts(:stderr, "  Error: #{inspect(reason)}")
@@ -198,12 +198,43 @@ defmodule Argus.Scripts.AnalyzeProject do
     |> then(fn {ok, err} -> {Enum.reverse(ok), Enum.reverse(err)} end)
   end
 
-  defp print_all_results(results) do
+  defp print_all_results(results, lines) do
     IO.puts("")
 
     Enum.each(results, fn {analysis, result} ->
-      print_results(result, analysis)
+      print_results(result, analysis, lines)
     end)
+  end
+
+  # Relations with witness columns yield one row per witnessing site;
+  # collapse to logical findings (the same identity rule as
+  # Argus.Findings) so printed rows and summary counts stay stable.
+  defp dedupe_results(analysis, results) do
+    case Argus.Analysis.output_relations(analysis) do
+      {:ok, relations} ->
+        by_name = Map.new(relations, &{Atom.to_string(&1.name), &1})
+
+        Map.new(results, fn {name, rows} ->
+          case by_name do
+            %{^name => relation} -> {name, Argus.Findings.dedupe_rows(relation, rows)}
+            _ -> {name, rows}
+          end
+        end)
+
+      :error ->
+        results
+    end
+  end
+
+  # Line tables for anchor resolution in the printed rows. Extraction
+  # here is a second pass over the beams, but it is cheap next to the
+  # Souffle runs and keeps the printing path independent of analyze/2's
+  # internal facts directory.
+  defp line_tables(modules) do
+    case Argus.Pipeline.extract(modules) do
+      {:ok, facts} -> Argus.Lines.from_facts(facts)
+      {:error, _} -> Argus.Lines.from_facts(%{})
+    end
   end
 
   defp print_summary(results, failures) do
@@ -357,7 +388,7 @@ defmodule Argus.Scripts.AnalyzeProject do
           facts = Argus.Extractors.Supervision.extract(data)
 
           if Map.has_key?(facts, :supervisor) do
-            [mod_str, strategy] = hd(facts[:supervisor])
+            [mod_str, strategy, _site] = hd(facts[:supervisor])
             IO.puts("  #{mod_str} (#{strategy})")
 
             children = Map.get(facts, :supervisor_child, [])
@@ -380,7 +411,7 @@ defmodule Argus.Scripts.AnalyzeProject do
   # Filter results to only output relations declared by the analysis module.
   # Intermediate relations (call_edge, cfg_edge, etc.) are excluded when the
   # analysis declares its outputs.
-  defp print_results(results, analysis) do
+  defp print_results(results, analysis, lines) do
     allowed = output_relation_names(analysis)
 
     findings =
@@ -403,11 +434,20 @@ defmodule Argus.Scripts.AnalyzeProject do
         IO.puts("")
 
         Enum.each(rows, fn row ->
-          IO.puts("    #{Enum.join(row, "  |  ")}")
+          IO.puts("    #{Enum.map_join(row, "  |  ", &annotate_cell(&1, lines))}")
         end)
 
         IO.puts("")
       end)
+    end
+  end
+
+  # Cells holding instruction or function IDs resolve to a source line;
+  # anything else passes through untouched.
+  defp annotate_cell(cell, lines) do
+    case Argus.Lines.resolve(lines, cell) do
+      nil -> cell
+      line -> "#{cell} (line #{line})"
     end
   end
 
