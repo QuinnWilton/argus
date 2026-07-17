@@ -88,13 +88,14 @@ defmodule Argus.Pipeline.Emit do
 
   # Emit facts for a sequence of normalized instructions within a function.
   defp emit_instructions(facts, func_id, normalized, line_table) do
-    emit_instructions_loop(facts, func_id, normalized, 0, line_table)
+    emit_instructions_loop(facts, func_id, normalized, 0, line_table, nil)
   end
 
-  defp emit_instructions_loop(facts, _func_id, [], _idx, _line_table), do: facts
+  defp emit_instructions_loop(facts, _func_id, [], _idx, _line_table, _line), do: facts
 
-  defp emit_instructions_loop(facts, func_id, [{id, instr} | rest], idx, line_table) do
-    facts = emit_instruction_fact(facts, id, func_id, to_string(idx), instr, line_table)
+  defp emit_instructions_loop(facts, func_id, [{id, instr} | rest], idx, line_table, line) do
+    {facts, line} =
+      emit_instruction_fact(facts, id, func_id, to_string(idx), instr, line_table, line)
 
     facts =
       if terminator?(instr) do
@@ -106,32 +107,42 @@ defmodule Argus.Pipeline.Emit do
         end
       end
 
-    emit_instructions_loop(facts, func_id, rest, idx + 1, line_table)
+    emit_instructions_loop(facts, func_id, rest, idx + 1, line_table, line)
   end
 
-  # Record the instruction fact and dispatch to specific emitters. Line
-  # markers are handled here because they are the only instruction whose
-  # fact needs the module-level line table.
-  defp emit_instruction_fact(facts, id, func_id, idx, instr, line_table) do
+  # Record the instruction fact and dispatch to specific emitters, threading
+  # the source line currently in effect so every instruction gets a
+  # `line_info` fact — anchors are call-site instruction IDs, so a fact only
+  # at the marker itself would leave every real anchor without a line.
+  defp emit_instruction_fact(facts, id, func_id, idx, instr, line_table, line) do
     op = instruction_op(instr)
     facts = add_fact(facts, :instruction, [id, func_id, idx, to_string(op)])
 
     case instr do
-      {:line, ref} -> emit_line_info(facts, id, ref, line_table)
-      _ -> emit_specific(facts, id, instr)
+      # A marker switches the line in effect. Reference 0 ("no location")
+      # and references the table cannot resolve switch it to unknown —
+      # compiler-generated code must not inherit the previous source line.
+      {:line, ref} ->
+        line = Map.get(line_table, ref)
+        {emit_line_info(facts, id, line), line}
+
+      # OTP 28 debug builds (`beam_debug_info`) carry a debug_line marker
+      # on every executable line — same Line-chunk reference space, same
+      # sticky semantics.
+      {:debug_line, _kind, ref, _index, _live} ->
+        line = Map.get(line_table, ref)
+        {emit_line_info(facts, id, line), line}
+
+      _ ->
+        {facts |> emit_line_info(id, line) |> emit_specific(id, instr), line}
     end
   end
 
-  # Resolve the marker's Line-chunk reference to a real source line.
-  # Reference 0 ("no location", on compiler-generated code) and references
-  # the table cannot resolve produce no fact: `line_info` carries source
-  # lines, never raw chunk references.
-  defp emit_line_info(facts, id, ref, line_table) do
-    case Map.get(line_table, ref) do
-      nil -> facts
-      line -> add_fact(facts, :line_info, [id, to_string(line)])
-    end
-  end
+  # Instructions with no line in effect (before the first marker, or under
+  # a no-location marker) produce no fact: `line_info` carries source
+  # lines, never guesses.
+  defp emit_line_info(facts, _id, nil), do: facts
+  defp emit_line_info(facts, id, line), do: add_fact(facts, :line_info, [id, to_string(line)])
 
   defp terminator?(:return), do: true
   defp terminator?({:jump, _}), do: true
@@ -329,38 +340,50 @@ defmodule Argus.Pipeline.Emit do
   end
 
   # Local calls — modern beam_disasm uses {Module, :func, arity} tuples.
+  # Calls pass arguments in x0..x(arity-1) and return in x0 — the def/use
+  # facts say so, or data dependences would break at every call and a
+  # pipeline (a chain of calls threading x0) would carry no flow at all.
+  # Tail calls consume their arguments but never return here: uses, no def.
   defp emit_specific(facts, id, {:call, arity, {:f, label}}) do
-    add_fact(facts, :local_call, [id, to_string(label), to_string(arity)])
+    facts
+    |> add_fact(:local_call, [id, to_string(label), to_string(arity)])
+    |> add_fact(:def, [id, "x0"])
+    |> emit_call_arg_uses(id, arity)
   end
 
   defp emit_specific(facts, id, {:call, arity, {_mod, _name, _a} = mfa}) do
     facts
     |> add_fact(:local_call, [id, format_mfa(mfa), to_string(arity)])
     |> add_fact(:def, [id, "x0"])
+    |> emit_call_arg_uses(id, arity)
   end
 
   defp emit_specific(facts, id, {:call_only, arity, {:f, label}}) do
     facts
     |> add_fact(:local_call, [id, to_string(label), to_string(arity)])
     |> add_fact(:tail_call, [id])
+    |> emit_call_arg_uses(id, arity)
   end
 
   defp emit_specific(facts, id, {:call_only, arity, {_mod, _name, _a} = mfa}) do
     facts
     |> add_fact(:local_call, [id, format_mfa(mfa), to_string(arity)])
     |> add_fact(:tail_call, [id])
+    |> emit_call_arg_uses(id, arity)
   end
 
   defp emit_specific(facts, id, {:call_last, arity, {:f, label}, _dealloc}) do
     facts
     |> add_fact(:local_call, [id, to_string(label), to_string(arity)])
     |> add_fact(:tail_call, [id])
+    |> emit_call_arg_uses(id, arity)
   end
 
   defp emit_specific(facts, id, {:call_last, arity, {_mod, _name, _a} = mfa, _dealloc}) do
     facts
     |> add_fact(:local_call, [id, format_mfa(mfa), to_string(arity)])
     |> add_fact(:tail_call, [id])
+    |> emit_call_arg_uses(id, arity)
   end
 
   # External calls.
@@ -368,6 +391,7 @@ defmodule Argus.Pipeline.Emit do
     facts
     |> add_fact(:remote_call, [id, inspect(mod), to_string(func), to_string(arity)])
     |> add_fact(:def, [id, "x0"])
+    |> emit_call_arg_uses(id, arity)
     |> maybe_spawn(id, mod, func, arity)
   end
 
@@ -375,6 +399,7 @@ defmodule Argus.Pipeline.Emit do
     facts
     |> add_fact(:remote_call, [id, inspect(mod), to_string(func), to_string(arity)])
     |> add_fact(:tail_call, [id])
+    |> emit_call_arg_uses(id, arity)
     |> maybe_spawn(id, mod, func, arity)
   end
 
@@ -382,6 +407,7 @@ defmodule Argus.Pipeline.Emit do
     facts
     |> add_fact(:remote_call, [id, inspect(mod), to_string(func), to_string(arity)])
     |> add_fact(:tail_call, [id])
+    |> emit_call_arg_uses(id, arity)
     |> maybe_spawn(id, mod, func, arity)
   end
 
@@ -427,20 +453,36 @@ defmodule Argus.Pipeline.Emit do
   end
 
   # Dynamic calls.
-  defp emit_specific(facts, id, {:call_fun, _arity}) do
-    add_fact(facts, :def, [id, "x0"])
+  # call_fun reads the fun from x(arity), apply its module/function from
+  # x(arity)/x(arity+1) — after the arguments in x0..x(arity-1).
+  defp emit_specific(facts, id, {:call_fun, arity}) do
+    facts
+    |> add_fact(:def, [id, "x0"])
+    |> emit_call_arg_uses(id, arity)
+    |> add_fact(:use, [id, "x#{arity}"])
   end
 
-  defp emit_specific(facts, id, {:call_fun2, _, _, _}) do
-    add_fact(facts, :def, [id, "x0"])
+  defp emit_specific(facts, id, {:call_fun2, _tag, arity, func}) do
+    facts
+    |> add_fact(:def, [id, "x0"])
+    |> emit_call_arg_uses(id, arity)
+    |> add_fact(:use, [id, format_operand(func)])
   end
 
-  defp emit_specific(facts, id, {:apply, _arity}) do
-    add_fact(facts, :def, [id, "x0"])
+  defp emit_specific(facts, id, {:apply, arity}) do
+    facts
+    |> add_fact(:def, [id, "x0"])
+    |> emit_call_arg_uses(id, arity)
+    |> add_fact(:use, [id, "x#{arity}"])
+    |> add_fact(:use, [id, "x#{arity + 1}"])
   end
 
-  defp emit_specific(facts, id, {:apply_last, _arity, _dealloc}) do
-    add_fact(facts, :tail_call, [id])
+  defp emit_specific(facts, id, {:apply_last, arity, _dealloc}) do
+    facts
+    |> add_fact(:tail_call, [id])
+    |> emit_call_arg_uses(id, arity)
+    |> add_fact(:use, [id, "x#{arity}"])
+    |> add_fact(:use, [id, "x#{arity + 1}"])
   end
 
   # Allocate / deallocate.
@@ -684,7 +726,6 @@ defmodule Argus.Pipeline.Emit do
 
   # Meta instructions.
   defp emit_specific(facts, _id, {:executable_line, _, _}), do: facts
-  defp emit_specific(facts, _id, {:debug_line, _}), do: facts
   defp emit_specific(facts, _id, :int_code_end), do: facts
   defp emit_specific(facts, _id, :on_load), do: facts
   defp emit_specific(facts, _id, {:on_load, _}), do: facts
@@ -779,6 +820,15 @@ defmodule Argus.Pipeline.Emit do
   end
 
   defp maybe_spawn(facts, _id, _mod, _func, _arity), do: facts
+
+  # Argument registers of a call: x0..x(arity-1).
+  defp emit_call_arg_uses(facts, _id, 0), do: facts
+
+  defp emit_call_arg_uses(facts, id, arity) do
+    Enum.reduce(0..(arity - 1), facts, fn i, acc ->
+      add_fact(acc, :use, [id, "x#{i}"])
+    end)
+  end
 
   defp emit_operand_uses(facts, id, operands) when is_list(operands) do
     Enum.reduce(operands, facts, fn operand, acc ->

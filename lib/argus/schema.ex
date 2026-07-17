@@ -437,10 +437,13 @@ defmodule Argus.Schema do
       {:line, :number, "source line number"}
     ],
     doc: """
-    Source line number annotation: the marker's Line-chunk reference \
-    resolved to a real source line at emit time. No-location markers \
-    (reference 0, on compiler-generated code) and modules without a \
-    parseable Line chunk emit no rows.
+    The source line in effect at this instruction: line markers are \
+    resolved through the Line chunk at emit time and stamped onto every \
+    following instruction until the next marker, so any instruction ID \
+    an anchor names resolves to its exact line. Instructions with no \
+    line in effect — before the first marker, under a no-location marker \
+    (reference 0, on compiler-generated code), or in modules without a \
+    parseable Line chunk — emit no rows.
     """
   }
 

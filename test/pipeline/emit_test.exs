@@ -355,6 +355,63 @@ defmodule Argus.Pipeline.EmitTest do
       facts = emit_func([{:line, 0}], line_table: %{})
       assert Enum.any?(facts[:instruction], fn [_id, _func, _idx, op] -> op == "line" end)
     end
+
+    test "stamps the line in effect onto every following instruction" do
+      facts =
+        emit_func(
+          [
+            {:line, 1},
+            {:move, {:atom, :ok}, {:x, 0}},
+            {:line, 2},
+            {:call_ext, 1, {:extfunc, :erlang, :whereis, 1}}
+          ],
+          line_table: %{1 => 10, 2 => 20}
+        )
+
+      assert [
+               ["TestMod:test_func/0#0", "10"],
+               ["TestMod:test_func/0#1", "10"],
+               ["TestMod:test_func/0#2", "20"],
+               ["TestMod:test_func/0#3", "20"]
+             ] = Enum.sort(facts[:line_info])
+    end
+
+    test "a no-location marker resets the line in effect" do
+      facts =
+        emit_func(
+          [
+            {:line, 1},
+            {:move, {:atom, :ok}, {:x, 0}},
+            {:line, 0},
+            {:call_ext, 1, {:extfunc, :erlang, :whereis, 1}}
+          ],
+          line_table: %{1 => 10}
+        )
+
+      # Compiler-generated code after the reset must not inherit line 10.
+      assert [
+               ["TestMod:test_func/0#0", "10"],
+               ["TestMod:test_func/0#1", "10"]
+             ] = Enum.sort(facts[:line_info])
+    end
+
+    test "instructions before the first marker carry no line" do
+      facts =
+        emit_func(
+          [
+            {:label, 1},
+            {:move, {:atom, :ok}, {:x, 0}},
+            {:line, 1},
+            :return
+          ],
+          line_table: %{1 => 10}
+        )
+
+      assert [
+               ["TestMod:test_func/0#2", "10"],
+               ["TestMod:test_func/0#3", "10"]
+             ] = Enum.sort(facts[:line_info])
+    end
   end
 
   describe "swap facts" do
