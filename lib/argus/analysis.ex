@@ -54,9 +54,10 @@ defmodule Argus.Analysis do
   # Behaviour callbacks.
 
   @type output_relation :: %{
-          name: atom(),
-          fields: [Argus.Schema.field()],
-          doc: String.t()
+          required(:name) => atom(),
+          required(:fields) => [Argus.Schema.field()],
+          required(:doc) => String.t(),
+          optional(:key) => [atom()]
         }
 
   @callback name() :: atom()
@@ -74,6 +75,14 @@ defmodule Argus.Analysis do
   anchor the row allows — see `Argus.Findings` for the construction
   helpers. Optional: analyses without it fall back to a generic
   `:info`-severity rendering of the relation's declared doc.
+
+  Relations that carry witness columns (a call site that evidences the
+  defect) can produce several rows for one logical finding — one per
+  witnessing site. Such a relation declares `:key`: the field names that
+  identify the finding. Rows agreeing on the key fields are deduplicated
+  before conversion, and `finding/2` receives one deterministic
+  representative (the lexicographically least row), so finding counts do
+  not depend on how many sites witness the same defect.
   """
   @callback finding(relation :: atom(), row :: [String.t()]) :: Argus.Findings.attrs()
 

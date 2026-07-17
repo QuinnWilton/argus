@@ -206,7 +206,7 @@ defmodule Argus.Findings do
 
     for {relation_string, rows} <- Enum.sort(results),
         relation = Map.fetch!(relations, relation_string),
-        row <- rows do
+        row <- dedupe_rows(relation, rows) do
       attrs =
         if has_builder? do
           mod.finding(relation.name, row)
@@ -217,6 +217,38 @@ defmodule Argus.Findings do
       Map.put(attrs, :analysis, mod.name())
     end
   end
+
+  @doc """
+  Deduplicates a relation's rows down to one per logical finding.
+
+  Relations with witness columns yield one row per witnessing site; rows
+  that agree on the relation's declared `:key` fields describe the same
+  finding. Keeps the lexicographically least row of each group — a
+  deterministic representative, so finding counts and anchors never
+  depend on Souffle's row order or on how many sites witness the same
+  defect. Relations without a `:key` pass through unchanged.
+
+  Public because in-process embedders that build findings themselves
+  (the planchette pattern) must apply the same identity rule or their
+  counts drift from `run/2`'s.
+  """
+  @spec dedupe_rows(Analysis.output_relation(), [[String.t()]]) :: [[String.t()]]
+  def dedupe_rows(%{key: key_fields, fields: fields}, rows) when is_list(key_fields) do
+    positions =
+      for key_field <- key_fields do
+        case Enum.find_index(fields, fn {name, _kind, _doc} -> name == key_field end) do
+          nil -> raise ArgumentError, "key field #{inspect(key_field)} not in #{inspect(fields)}"
+          position -> position
+        end
+      end
+
+    rows
+    |> Enum.group_by(fn row -> Enum.map(positions, &Enum.at(row, &1)) end)
+    |> Enum.map(fn {_key, group} -> Enum.min(group) end)
+    |> Enum.sort()
+  end
+
+  def dedupe_rows(_relation, rows), do: rows
 
   # Fallback for behaviour implementors that don't define finding/2:
   # severity :info, prose from the relation's declared doc, anchor from
@@ -374,6 +406,24 @@ defmodule Argus.Findings do
   @spec at_module(String.t()) :: anchor()
   def at_module(module_string) when is_binary(module_string) do
     %{module: module_atom(module_string), mfa: nil, instr: nil}
+  end
+
+  @doc """
+  Anchor for a site ID of either precision, falling back to a module.
+
+  Witness columns hold an instruction ID where the extractor had one and
+  a function ID otherwise; extractors mark sites they cannot resolve
+  with a `"dynamic"` placeholder. This tries the most precise parse
+  first — instruction, then function, then the module fallback — so a
+  finding never loses its module anchor to an unresolvable site.
+  """
+  @spec at_site(String.t(), String.t()) :: anchor()
+  def at_site(id, module_string)
+      when is_binary(id) and is_binary(module_string) do
+    with %{instr: nil} <- at_instr(id),
+         %{mfa: nil} <- at_func(id) do
+      at_module(module_string)
+    end
   end
 
   @doc """

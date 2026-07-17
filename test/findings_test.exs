@@ -246,6 +246,50 @@ defmodule Argus.FindingsTest do
     end
   end
 
+  describe "dedupe_rows/2" do
+    @keyed_relation %{
+      name: :coupled,
+      fields: [
+        {:sup, :symbol, "supervisor"},
+        {:caller, :symbol, "caller"},
+        {:witness, :func_id, "witnessing call site"}
+      ],
+      key: [:sup, :caller],
+      doc: "test relation"
+    }
+
+    test "keeps one deterministic representative per key" do
+      rows = [
+        ["Sup", "Queue", "Queue:handle_call/3"],
+        ["Sup", "Queue", "Queue:handle_cast/2"],
+        ["Sup", "Sonar", "Sonar:init/1"]
+      ]
+
+      assert Findings.dedupe_rows(@keyed_relation, rows) == [
+               ["Sup", "Queue", "Queue:handle_call/3"],
+               ["Sup", "Sonar", "Sonar:init/1"]
+             ]
+
+      # Row order must not affect the outcome.
+      assert Findings.dedupe_rows(@keyed_relation, Enum.reverse(rows)) ==
+               Findings.dedupe_rows(@keyed_relation, rows)
+    end
+
+    test "relations without a key pass through unchanged" do
+      relation = Map.delete(@keyed_relation, :key)
+      rows = [["Sup", "Queue", "a"], ["Sup", "Queue", "b"]]
+      assert Findings.dedupe_rows(relation, rows) == rows
+    end
+
+    test "raises on a key field the relation does not declare" do
+      relation = %{@keyed_relation | key: [:nonexistent]}
+
+      assert_raise ArgumentError, fn ->
+        Findings.dedupe_rows(relation, [["Sup", "Queue", "a"]])
+      end
+    end
+  end
+
   describe "anchor parsing" do
     test "module_atom round-trips inspect renderings" do
       assert Findings.module_atom("Argus.Findings") == Argus.Findings
