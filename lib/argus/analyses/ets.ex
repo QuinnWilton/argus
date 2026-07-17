@@ -53,7 +53,12 @@ defmodule Argus.Analyses.Ets do
     [
       %{
         name: :ets_unprotected_owner,
-        fields: [{:name, :symbol, "table name"}, {:mod, :symbol, "owner module"}],
+        fields: [
+          {:name, :symbol, "table name"},
+          {:mod, :symbol, "owner module"},
+          {:site, :symbol, "instruction ID of the :ets.new/2 call"}
+        ],
+        key: [:name, :mod],
         doc: "Table owner lacks heir protection (excludes permanent children)."
       },
       %{
@@ -71,20 +76,27 @@ defmodule Argus.Analyses.Ets do
         fields: [
           {:name, :symbol, "table name"},
           {:mod1, :symbol, "first accessor module"},
-          {:mod2, :symbol, "second accessor module"}
+          {:mod2, :symbol, "second accessor module"},
+          {:site, :symbol, "instruction ID of the :ets.new/2 call"}
         ],
+        key: [:name, :mod1, :mod2],
         doc: "Ordered_set table accessed by multiple modules."
       },
       %{
         name: :ets_unnamed_in_process,
-        fields: [{:name, :symbol, "table name"}, {:mod, :symbol, "owner module"}],
+        fields: [
+          {:name, :symbol, "table name"},
+          {:mod, :symbol, "owner module"},
+          {:site, :symbol, "instruction ID of the :ets.new/2 call"}
+        ],
+        key: [:name, :mod],
         doc: "Unnamed table created in a process."
       }
     ]
   end
 
   @impl true
-  def finding(:ets_unprotected_owner, [name, mod]) do
+  def finding(:ets_unprotected_owner, [name, mod, site]) do
     Findings.new(
       :warning,
       "ETS table dies with its owner",
@@ -92,7 +104,7 @@ defmodule Argus.Analyses.Ets do
         "permanent supervisor child. ETS tables are deleted when their owner " <>
         "exits — one crash and the data is gone. Set an heir or move " <>
         "ownership to a supervised process that rebuilds the table.",
-      at: Findings.at_module(mod)
+      at: Findings.at_site(site, mod)
     )
   end
 
@@ -116,7 +128,7 @@ defmodule Argus.Analyses.Ets do
     )
   end
 
-  def finding(:ets_ordered_set_contention, [name, mod1, mod2]) do
+  def finding(:ets_ordered_set_contention, [name, mod1, mod2, site]) do
     Findings.new(
       :info,
       "ordered_set shared across modules",
@@ -124,12 +136,12 @@ defmodule Argus.Analyses.Ets do
         "#{mod2}. ordered_set operations are O(log n) and contend harder " <>
         "than hash-based tables under concurrent access — worth checking " <>
         "that the ordering is actually needed.",
-      at: Findings.at_module(mod1),
+      at: Findings.at_site(site, mod1),
       related: [Findings.related("other accessor", Findings.at_module(mod2))]
     )
   end
 
-  def finding(:ets_unnamed_in_process, [name, mod]) do
+  def finding(:ets_unnamed_in_process, [name, mod, site]) do
     Findings.new(
       :info,
       "Unnamed table held by a process",
@@ -137,7 +149,7 @@ defmodule Argus.Analyses.Ets do
         "The table is reachable only through its reference — if the owner " <>
         "loses or never shares it, nothing else can read or clean up the " <>
         "table.",
-      at: Findings.at_module(mod)
+      at: Findings.at_site(site, mod)
     )
   end
 end

@@ -10,7 +10,7 @@
 
 // ── Supervision facts ────────────────────────────────────────────────
 
-.decl supervisor(mod: symbol, strategy: symbol)
+.decl supervisor(mod: symbol, strategy: symbol, site: symbol)
 .input supervisor
 
 .decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
@@ -18,6 +18,9 @@
 
 .decl dynamic_child(sup: symbol, child_mod: symbol, caller_func: symbol)
 .input dynamic_child
+
+.decl process_link(from_mod: symbol, to_mod: symbol)
+.input process_link
 
 .decl implements_behaviour(mod: symbol, behaviour: symbol)
 .input implements_behaviour
@@ -38,37 +41,33 @@
 
 // ── One-for-one coupling ───────────────────────────────────────────
 
+// Supervisors are implicitly linked to their children.
+.decl derived_process_link(from_mod: symbol, to_mod: symbol)
+
+derived_process_link(a, b) :- process_link(a, b).
+derived_process_link(sup, child) :- supervisor_child(sup, _, child, _, _).
+
 // Two modules under a one_for_one supervisor where one depends on the
 // other through GenServer message passing, and they belong to different
 // child branches. Under one_for_one, if the callee's branch crashes,
 // the caller's branch keeps running in a degraded state.
-.decl one_for_one_coupling(sup: symbol, caller_mod: symbol, callee_mod: symbol)
+//
+// Linked pairs are excluded: an exit propagates through the link, both
+// processes restart together, and no stale state survives — the hazard
+// this analysis reports is already mitigated.
+//
+// sup_site anchors the finding at the instruction that defines the tree
+// (the strategy line); witness is a function in caller_mod through which
+// the coupling flows. One row per witness — finding builders dedupe on
+// (sup, caller_mod, callee_mod).
+.decl one_for_one_coupling(sup: symbol, caller_mod: symbol, callee_mod: symbol, sup_site: symbol, witness: symbol)
 .output one_for_one_coupling
 
-one_for_one_coupling(sup, caller_mod, callee_mod) :-
-  supervisor(sup, "one_for_one"),
+one_for_one_coupling(sup, caller_mod, callee_mod, sup_site, witness) :-
+  supervisor(sup, "one_for_one", sup_site),
   child_subtree(sup, caller_branch, caller_mod),
   child_subtree(sup, callee_branch, callee_mod),
-  stateful_module_dep(caller_mod, callee_mod),
+  stateful_module_dep(caller_mod, callee_mod, witness),
+  !derived_process_link(caller_mod, callee_mod),
+  !derived_process_link(callee_mod, caller_mod),
   caller_branch != callee_branch.
-
-// ── Wrong start order ────────────────────────────────────────────────
-
-// Module in an earlier branch reaches a module in a later branch during
-// init. The later branch may not be started yet when the earlier
-// branch's init runs, causing init-time failures.
-//
-// Scoped to init_reaches (not module_reaches) to avoid false positives
-// from runtime-only call paths.
-.decl wrong_start_order(sup: symbol, early_mod: symbol, late_mod: symbol, early_pos: number, late_pos: number)
-.output wrong_start_order
-
-wrong_start_order(sup, early_mod, late_mod, early_pos, late_pos) :-
-  supervisor(sup, _),
-  child_subtree(sup, early_branch, early_mod),
-  child_subtree(sup, late_branch, late_mod),
-  supervisor_child(sup, early_pos, early_branch, _, _),
-  supervisor_child(sup, late_pos, late_branch, _, _),
-  init_reaches(early_mod, late_mod),
-  early_pos < late_pos,
-  early_branch != late_branch.

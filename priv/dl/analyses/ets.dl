@@ -70,10 +70,11 @@ ets_application_owner(name, mod) :-
 // If the owner crashes, the table vanishes.
 // Suppressed for permanent supervisor children (table recreated on restart)
 // and Application modules (live for the entire app lifetime).
-.decl ets_unprotected_owner(name: symbol, mod: symbol)
+// site is the :ets.new/2 instruction — the creation line.
+.decl ets_unprotected_owner(name: symbol, mod: symbol, site: symbol)
 .output ets_unprotected_owner
 
-ets_unprotected_owner(name, mod) :-
+ets_unprotected_owner(name, mod, id) :-
   ets_owner_process(name, mod, _),
   ets_new(id, _, name),
   name != "dynamic",
@@ -125,10 +126,11 @@ ets_missing_write_concurrency(name) :-
   !ets_option(id, "write_concurrency", "auto").
 
 // Write contention on ordered_set (higher lock contention).
-.decl ets_ordered_set_contention(name: symbol, mod1: symbol, mod2: symbol)
+// site is the :ets.new/2 instruction that chose ordered_set.
+.decl ets_ordered_set_contention(name: symbol, mod1: symbol, mod2: symbol, site: symbol)
 .output ets_ordered_set_contention
 
-ets_ordered_set_contention(name, mod1, mod2) :-
+ets_ordered_set_contention(name, mod1, mod2, id) :-
   ets_writer_module(name, mod1),
   ets_writer_module(name, mod2),
   name != "dynamic",
@@ -140,10 +142,11 @@ ets_ordered_set_contention(name, mod1, mod2) :-
 
 // Table created without named_table by a process —
 // the reference becomes invalid if the owner restarts.
-.decl ets_unnamed_in_process(name: symbol, mod: symbol)
+// site is the :ets.new/2 instruction — the creation line.
+.decl ets_unnamed_in_process(name: symbol, mod: symbol, site: symbol)
 .output ets_unnamed_in_process
 
-ets_unnamed_in_process(name, mod) :-
+ets_unnamed_in_process(name, mod, id) :-
   ets_new(id, func, name),
   name != "dynamic",
   function_def(func, mod, _, _, _, _),

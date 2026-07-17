@@ -40,11 +40,13 @@ swallowed_error(func) :-
 has_handle_info(mod) :-
   function_def(_, mod, "handle_info", _, _, _).
 
-.decl trap_exit_without_handler(mod: symbol)
+// `witness` is the function that sets trap_exit. One row per witness —
+// finding builders dedupe on (mod).
+.decl trap_exit_without_handler(mod: symbol, witness: symbol)
 .output trap_exit_without_handler
 
-trap_exit_without_handler(mod) :-
-  trap_exit(_, mod),
+trap_exit_without_handler(mod, func) :-
+  trap_exit(func, mod),
   !has_handle_info(mod).
 
 // ── Exit in GenServer callback ───────────────────────────────────

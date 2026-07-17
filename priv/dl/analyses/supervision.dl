@@ -10,7 +10,7 @@
 
 .include "../clientlib/imports.dl"
 
-.decl supervisor(mod: symbol, strategy: symbol)
+.decl supervisor(mod: symbol, strategy: symbol, site: symbol)
 .input supervisor
 
 .decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
@@ -24,9 +24,6 @@
 
 .decl async_cast(caller_func: symbol, callee_mod: symbol)
 .input async_cast
-
-.decl process_link(from_mod: symbol, to_mod: symbol)
-.input process_link
 
 .decl named_process(mod: symbol, name: symbol)
 .input named_process
@@ -42,49 +39,33 @@
 
 .include "../clientlib/supervision.dl"
 
-// ── Derived process links ────────────────────────────────────────────
-
-// Supervisors are implicitly linked to their children.
-.decl derived_process_link(from_mod: symbol, to_mod: symbol)
-
-derived_process_link(a, b) :- process_link(a, b).
-derived_process_link(sup, child) :- supervisor_child(sup, _, child, _, _).
-
 // ── Anti-patterns ────────────────────────────────────────────────
 
 // Permanent child that depends on a transient child (transitively).
-.decl suspect_transient_dependency(sup: symbol, permanent: symbol, transient: symbol)
+// sup_site anchors at the tree definition; witness is a function in the
+// permanent child through which the dependency flows. One row per
+// witness — finding builders dedupe on (sup, permanent, transient).
+.decl suspect_transient_dependency(sup: symbol, permanent: symbol, transient: symbol, sup_site: symbol, witness: symbol)
 .output suspect_transient_dependency
 
-suspect_transient_dependency(sup, perm, trans) :-
+suspect_transient_dependency(sup, perm, trans, sup_site, witness) :-
+  supervisor(sup, _, sup_site),
   supervisor_child(sup, _, perm, "permanent", _),
   supervisor_child(sup, _, trans, "transient", _),
-  stateful_module_dep(perm, trans).
-
-// one_for_one siblings that communicate but aren't linked.
-.decl unlinked_coupled_siblings(sup: symbol, a: symbol, b: symbol)
-.output unlinked_coupled_siblings
-
-unlinked_coupled_siblings(sup, a, b) :-
-  supervisor(sup, "one_for_one"),
-  child_subtree(sup, a_branch, a),
-  child_subtree(sup, b_branch, b),
-  stateful_module_dep(a, b),
-  !derived_process_link(a, b),
-  !derived_process_link(b, a),
-  a_branch != b_branch.
+  stateful_module_dep(perm, trans, witness).
 
 // Child started before a dependency (wrong order under any strategy).
 // Scoped to init_reaches to avoid false positives from runtime paths.
-.decl wrong_start_order(sup: symbol, child: symbol, dep: symbol, child_pos: number, dep_pos: number)
+// sup_site anchors at the tree definition; witness is the child's init/1.
+.decl wrong_start_order(sup: symbol, child: symbol, dep: symbol, child_pos: number, dep_pos: number, sup_site: symbol, witness: symbol)
 .output wrong_start_order
 
-wrong_start_order(sup, child, dep, cpos, dpos) :-
-  supervisor(sup, _),
+wrong_start_order(sup, child, dep, cpos, dpos, sup_site, witness) :-
+  supervisor(sup, _, sup_site),
   child_subtree(sup, child_branch, child),
   child_subtree(sup, dep_branch, dep),
   supervisor_child(sup, cpos, child_branch, _, _),
   supervisor_child(sup, dpos, dep_branch, _, _),
-  init_reaches(child, dep),
+  init_reaches(child, dep, witness),
   cpos < dpos,
   child_branch != dep_branch.

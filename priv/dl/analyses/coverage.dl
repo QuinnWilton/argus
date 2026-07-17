@@ -23,7 +23,7 @@
 .decl imprecision(category: symbol, func: symbol, relation: symbol, reason: symbol)
 .input imprecision
 
-.decl supervisor(mod: symbol, strategy: symbol)
+.decl supervisor(mod: symbol, strategy: symbol, site: symbol)
 .input supervisor
 
 .decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
@@ -50,7 +50,7 @@
 .decl statem_module(mod: symbol, callback_mode: symbol)
 .input statem_module
 
-.decl statem_state(mod: symbol, state: symbol)
+.decl statem_state(mod: symbol, state: symbol, site: symbol)
 .input statem_state
 
 .decl statem_transition(mod: symbol, from_state: symbol, event: symbol, to_state: symbol)
@@ -82,7 +82,7 @@ imprecision_event(c, f, r, why) :- imprecision(c, f, r, why).
 .output coverage_supervisor_no_children
 
 coverage_supervisor_no_children(sup) :-
-  supervisor(sup, _),
+  supervisor(sup, _, _),
   !supervisor_child(sup, _, _, _, _),
   !dynamic_child(sup, _, _).
 
@@ -141,7 +141,7 @@ coverage_ets_unused(name) :-
 
 coverage_statem_no_transitions(mod) :-
   statem_module(mod, _),
-  statem_state(mod, _),
+  statem_state(mod, _, _),
   !statem_transition(mod, _, _, _).
 
 // A named process was registered but no sync or async traffic targets it.

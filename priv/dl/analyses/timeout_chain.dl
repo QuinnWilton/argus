@@ -72,7 +72,7 @@ callback_sync_dep(from_mod, to_mod) :-
 // Via stateful_module_dep (catches heuristic cases).
 callback_sync_dep(from_mod, to_mod) :-
   handle_call_function(from_mod, _),
-  stateful_module_dep(from_mod, to_mod),
+  stateful_module_dep(from_mod, to_mod, _),
   implements_behaviour(to_mod, "GenServer"),
   from_mod != to_mod.
 

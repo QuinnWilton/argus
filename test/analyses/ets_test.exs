@@ -31,7 +31,7 @@ defmodule Argus.Analyses.EtsTest do
       assert Map.has_key?(results, "ets_unprotected_owner")
       unprotected = results["ets_unprotected_owner"]
 
-      assert Enum.any?(unprotected, fn [_name, mod] ->
+      assert Enum.any?(unprotected, fn [_name, mod, _site] ->
                mod == "Argus.Test.Fixtures.EtsOwner"
              end)
     end
@@ -98,7 +98,7 @@ defmodule Argus.Analyses.EtsTest do
 
       unprotected = results["ets_unprotected_owner"]
 
-      assert Enum.any?(unprotected, fn [_name, mod] ->
+      assert Enum.any?(unprotected, fn [_name, mod, _site] ->
                mod == "Argus.Test.Fixtures.EtsOwner"
              end)
     end

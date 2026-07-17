@@ -47,7 +47,11 @@ defmodule Argus.Analyses.ErrorHandling do
       },
       %{
         name: :trap_exit_without_handler,
-        fields: [{:mod, :symbol, "module"}],
+        fields: [
+          {:mod, :symbol, "module"},
+          {:witness, :symbol, "function that sets trap_exit"}
+        ],
+        key: [:mod],
         doc: "Module traps exits but has no handle_info({:EXIT,...},_) callback."
       },
       %{
@@ -82,7 +86,7 @@ defmodule Argus.Analyses.ErrorHandling do
     )
   end
 
-  def finding(:trap_exit_without_handler, [mod]) do
+  def finding(:trap_exit_without_handler, [mod, witness]) do
     Findings.new(
       :warning,
       "trap_exit without an :EXIT handler",
@@ -90,7 +94,7 @@ defmodule Argus.Analyses.ErrorHandling do
         "clause. Exit signals from linked processes arrive as plain mailbox " <>
         "messages and fall through to the default handle_info — a crash or a " <>
         "noisy log, exactly what trapping was meant to prevent.",
-      at: Findings.at_module(mod)
+      at: Findings.at_func(witness)
     )
   end
 

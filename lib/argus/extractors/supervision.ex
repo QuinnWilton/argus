@@ -17,7 +17,10 @@ defmodule Argus.Extractors.Supervision do
 
   ## Emitted facts
 
-  - `supervisor(mod, strategy)` — module is a supervisor with given strategy
+  - `supervisor(mod, strategy, site)` — module is a supervisor with given
+    strategy; `site` is the instruction ID of the call (or literal) that
+    defines the tree — the strategy line — or `"dynamic"` when no such
+    instruction was found
   - `supervisor_child(sup, position, child_mod, restart, type)` — child spec
   - `named_process(mod, name)` — named process registration detected
   """
@@ -27,8 +30,10 @@ defmodule Argus.Extractors.Supervision do
   import Argus.Extractor.Helpers,
     only: [
       add_fact: 3,
+      call_result_origin: 3,
       find_function: 3,
       get_behaviours: 1,
+      keyword_value_register: 4,
       match_local_call: 1,
       match_remote_call: 1,
       resolve_register: 3,
@@ -54,6 +59,13 @@ defmodule Argus.Extractors.Supervision do
         Application in behaviours or :application in behaviours ->
           extract_application(mod_str, module_data)
 
+        # A `use DynamicSupervisor` module is a supervisor whose children are
+        # all runtime-spawned — no static child specs, but it IS a supervisor
+        # node, and its own `start_child` helpers target it (see the
+        # self-anchor path below), so recording it lets those children attach.
+        DynamicSupervisor in behaviours ->
+          extract_dynamic_supervisor(mod_str, module_data)
+
         true ->
           %{}
       end
@@ -61,17 +73,29 @@ defmodule Argus.Extractors.Supervision do
     # DynamicSupervisor.start_child can fire from any module, regardless of
     # whether the enclosing module is itself a supervisor — connection pools
     # and per-tenant systems often spawn workers from non-supervisor code.
-    extract_dynamic_children(base_facts, mod, module_data.functions)
+    extract_dynamic_children(base_facts, mod, behaviours, module_data.functions)
   end
 
-  defp extract_dynamic_children(facts, mod, functions) do
+  defp extract_dynamic_children(facts, mod, behaviours, functions) do
+    # When the `start_child` supervisor argument can't be resolved to an atom
+    # but the enclosing module is itself a supervisor, the call almost always
+    # targets that supervisor (the idiomatic `def start_x(sup, ...), do:
+    # DynamicSupervisor.start_child(sup, ...)` helper on a `use
+    # DynamicSupervisor` module). Anchor to self in that case rather than
+    # dropping the child to "dynamic".
+    self_sup = if supervisor_behaviour?(behaviours), do: inspect(mod), else: nil
+
     scan_remote_calls(mod, functions, facts, fn acc, ctx, mfa ->
-      handle_dynamic_start(acc, ctx, mfa)
+      handle_dynamic_start(acc, ctx, mfa, self_sup, functions)
     end)
   end
 
-  defp handle_dynamic_start(facts, ctx, {DynamicSupervisor, :start_child, 2}) do
-    sup = resolve_atom_or_dynamic(ctx.instrs, ctx.idx, {:x, 0})
+  defp supervisor_behaviour?(behaviours) do
+    Enum.any?(behaviours, &(&1 in [Supervisor, :supervisor, DynamicSupervisor]))
+  end
+
+  defp handle_dynamic_start(facts, ctx, {DynamicSupervisor, :start_child, 2}, self_sup, functions) do
+    sup = resolve_start_child_sup(ctx.instrs, ctx.idx, self_sup, functions)
     child = resolve_dynamic_child_module(ctx.instrs, ctx.idx)
 
     if child == "dynamic" do
@@ -86,12 +110,22 @@ defmodule Argus.Extractors.Supervision do
     end
   end
 
-  defp handle_dynamic_start(facts, _ctx, _mfa), do: facts
+  defp handle_dynamic_start(facts, _ctx, _mfa, _self_sup, _functions), do: facts
 
-  defp resolve_atom_or_dynamic(instrs, idx, register) do
-    case resolve_register(instrs, idx, register) do
-      {:ok, atom} when is_atom(atom) -> inspect(atom)
-      _ -> "dynamic"
+  # The supervisor argument to `start_child` is a registered name, a pid, or
+  # a variable. A resolved atom (name or module) becomes the parent; a
+  # `{:via, Registry, _}` tuple built by a `*.Registry.via(name, role)`
+  # helper resolves to that via registration name (so it anchors to the
+  # child registered under the same role); an unresolved argument falls back
+  # to the enclosing supervisor module when there is one (`self_sup`), else
+  # the honest "dynamic" sentinel.
+  defp resolve_start_child_sup(instrs, idx, self_sup, functions) do
+    case resolve_register(instrs, idx, {:x, 0}) do
+      {:ok, atom} when is_atom(atom) ->
+        inspect(atom)
+
+      _ ->
+        resolve_via_name(instrs, idx, {:x, 0}, functions) || self_sup || "dynamic"
     end
   end
 
@@ -123,6 +157,77 @@ defmodule Argus.Extractors.Supervision do
     end
   end
 
+  # Registry via-tuple registration names.
+  #
+  # Libraries register dynamic children under `{:via, Registry, {mod, key}}`
+  # tuples built by a `<Something>.Registry.via(name, role)` helper (Oban's
+  # `Registry.via(conf.name, Foreman)`, and the like). The registry *name*
+  # is a runtime value, but the *role* — the second argument — is a
+  # compile-time literal shared between the child that registers under the
+  # via and the `start_child` that targets it. Anchoring on that role lets
+  # a dynamically-started supervisor nest under the DynamicSupervisor that
+  # holds it, instead of floating unanchored.
+  #
+  # CAVEAT: the runtime registry name is dropped, so two instances of the
+  # same library share a role — a deliberate over-approximation (correct
+  # for the common single-instance case).
+  #
+  # `resolve_via_name` traces `register` to the via call — directly, or
+  # through one level of local helper (`defp foreman(conf), do:
+  # Registry.via(conf.name, Foreman)`) — and returns the name string, or nil.
+  defp resolve_via_name(instrs, idx, register, functions) do
+    case call_result_origin(instrs, idx, register) do
+      {:ok, {mod, :via, arity}, origin_idx} when arity in [2, 3] ->
+        if via_registry_module?(mod), do: via_role_name(instrs, origin_idx, mod)
+
+      {:ok, {_mod, func, arity}, _origin_idx} ->
+        # A local helper produced the value — resolve the via it returns.
+        case find_function(functions, func, arity) do
+          nil -> nil
+          helper_instrs -> via_name_in_function(helper_instrs)
+        end
+
+      :no ->
+        nil
+    end
+  end
+
+  # A `via/2`|`via/3` on a `*.Registry` module builds a registry via-tuple.
+  defp via_registry_module?(mod) when is_atom(mod) do
+    case Atom.to_string(mod) do
+      "Elixir." <> rest -> rest == "Registry" or String.ends_with?(rest, ".Registry")
+      _ -> false
+    end
+  end
+
+  # The role is the second argument (x1) at the via call site.
+  defp via_role_name(instrs, via_idx, mod) do
+    case resolve_register(instrs, via_idx, {:x, 1}) do
+      {:ok, role} -> via_name(mod, role)
+      _ -> nil
+    end
+  end
+
+  # Scan a helper function for the registry via-call it returns, and name it.
+  defp via_name_in_function(instrs) do
+    instrs
+    |> Enum.with_index()
+    |> Enum.find_value(fn {instr, idx} ->
+      case match_remote_call(instr) do
+        {:ok, mod, :via, arity} when arity in [2, 3] ->
+          if via_registry_module?(mod), do: via_role_name(instrs, idx, mod)
+
+        _ ->
+          nil
+      end
+    end)
+  end
+
+  # A stable, human-readable registration name: `Oban.Registry.via(Foreman)`.
+  # Identical on both the registration and the `start_child` sides, so they
+  # match; distinct per role, so siblings stay distinct.
+  defp via_name(mod, role), do: "#{inspect(mod)}.via(#{inspect(role)})"
+
   defp extract_supervisor(mod_str, module_data) do
     case find_function(module_data.functions, :init, 1) do
       nil ->
@@ -135,23 +240,65 @@ defmodule Argus.Extractors.Supervision do
           :supervisor,
           :missing
         )
-        |> add_fact(:supervisor, [mod_str, "unknown"])
+        |> add_fact(:supervisor, [mod_str, "unknown", "dynamic"])
 
       instrs ->
-        extract_from_instructions(%{}, mod_str, instrs, module_data.functions)
+        extract_from_instructions(%{}, mod_str, "init/1", instrs, module_data.functions)
     end
   end
 
   defp extract_application(mod_str, module_data) do
     case find_function(module_data.functions, :start, 2) do
       nil -> %{}
-      instrs -> extract_from_instructions(%{}, mod_str, instrs, module_data.functions)
+      instrs -> extract_from_instructions(%{}, mod_str, "start/2", instrs, module_data.functions)
     end
   end
 
-  defp extract_from_instructions(facts, mod_str, instrs, all_functions) do
-    strategy = detect_strategy(instrs)
-    facts = add_fact(facts, :supervisor, [mod_str, to_string(strategy)])
+  # A `use DynamicSupervisor` module has no static child specs — every child
+  # is spawned via `start_child` at runtime — so we record the supervisor
+  # node and its strategy but no `supervisor_child` rows. `DynamicSupervisor`
+  # only supports `:one_for_one`, so that is the honest default when
+  # `init/1` can't be read.
+  defp extract_dynamic_supervisor(mod_str, module_data) do
+    {strategy, site} =
+      case find_function(module_data.functions, :init, 1) do
+        nil -> {:one_for_one, "dynamic"}
+        instrs -> detect_dynamic_strategy(mod_str, instrs)
+      end
+
+    add_fact(%{}, :supervisor, [mod_str, to_string(strategy), site])
+  end
+
+  # DynamicSupervisor.init/1 takes the flags as its sole argument:
+  # `DynamicSupervisor.init(strategy: :one_for_one, ...)`. Resolve that
+  # options list; fall back to :one_for_one (the only strategy the behaviour
+  # accepts) when it can't be read.
+  defp detect_dynamic_strategy(mod_str, instrs) do
+    strategy_idx =
+      instrs
+      |> Enum.with_index()
+      |> Enum.find_value(fn {instr, idx} ->
+        case match_remote_call(instr) do
+          {:ok, DynamicSupervisor, :init, 1} ->
+            case resolve_register(instrs, idx, {:x, 0}) do
+              {:ok, opts} when is_list(opts) -> {Keyword.get(opts, :strategy, :one_for_one), idx}
+              _ -> {:one_for_one, idx}
+            end
+
+          _ ->
+            nil
+        end
+      end)
+
+    case strategy_idx do
+      {strategy, idx} -> {strategy, "#{mod_str}:init/1##{idx}"}
+      nil -> {:one_for_one, "dynamic"}
+    end
+  end
+
+  defp extract_from_instructions(facts, mod_str, func_label, instrs, all_functions) do
+    {strategy, site} = detect_strategy(mod_str, func_label, instrs)
+    facts = add_fact(facts, :supervisor, [mod_str, to_string(strategy), site])
 
     children = extract_children_with_helpers(instrs, all_functions)
 
@@ -173,14 +320,23 @@ defmodule Argus.Extractors.Supervision do
 
     children
     |> Enum.with_index()
-    |> Enum.reduce(facts, fn {{child_mod, restart, type}, idx}, acc ->
-      add_fact(acc, :supervisor_child, [
-        mod_str,
-        to_string(idx),
-        inspect(child_mod),
-        to_string(restart),
-        to_string(type)
-      ])
+    |> Enum.reduce(facts, fn {{child_mod, restart, type, name}, idx}, acc ->
+      acc =
+        add_fact(acc, :supervisor_child, [
+          mod_str,
+          to_string(idx),
+          inspect(child_mod),
+          to_string(restart),
+          to_string(type)
+        ])
+
+      # A registered `:name` rides alongside the child at the same position,
+      # so a name-keyed `start_child` can later anchor to this exact child.
+      if name do
+        add_fact(acc, :supervisor_child_name, [mod_str, to_string(idx), name])
+      else
+        acc
+      end
     end)
   end
 
@@ -197,7 +353,7 @@ defmodule Argus.Extractors.Supervision do
   # common pattern where init/1 delegates to *_children helper functions
   # that return child spec lists.
   defp extract_children_with_helpers(instrs, all_functions) do
-    direct = extract_children(instrs)
+    direct = extract_children(instrs, all_functions)
 
     from_helpers =
       Enum.flat_map(instrs, fn instr ->
@@ -205,7 +361,7 @@ defmodule Argus.Extractors.Supervision do
           {:ok, _mod, func, arity} ->
             case find_function(all_functions, func, arity) do
               nil -> []
-              helper_instrs -> extract_children(helper_instrs)
+              helper_instrs -> extract_children(helper_instrs, all_functions)
             end
 
           :none ->
@@ -214,27 +370,40 @@ defmodule Argus.Extractors.Supervision do
       end)
 
     (direct ++ from_helpers)
-    |> Enum.uniq_by(fn {mod, _, _} -> mod end)
+    |> Enum.uniq_by(fn {mod, _, _, name} -> {mod, name} end)
   end
 
   # Detect the supervision strategy by finding the Supervisor.init/2 or
   # Supervisor.start_link/2 call and resolving the options argument.
   # Falls back to scanning literals for Erlang-style {:ok, {flags, _}} returns.
-  defp detect_strategy(instrs) do
-    from_call =
-      instrs
-      |> Enum.with_index()
-      |> Enum.find_value(fn {instr, idx} ->
-        case match_remote_call(instr) do
-          {:ok, Supervisor, func, 2} when func in [:init, :start_link] ->
-            extract_strategy_from_opts(instrs, idx)
+  #
+  # Returns `{strategy, site}` where `site` is the instruction ID of the
+  # detection point — the line that defines the tree, so findings about
+  # the supervisor's composition can anchor where the fix goes. Instruction
+  # indexes here match Layer-1 IDs because `Normalize`, the extractor
+  # helpers, and this scan all number the same raw instruction list.
+  defp detect_strategy(mod_str, func_label, instrs) do
+    case detect_strategy_call(instrs) || detect_strategy_literal(instrs) do
+      {strategy, idx} -> {strategy, "#{mod_str}:#{func_label}##{idx}"}
+      nil -> {:unknown, "dynamic"}
+    end
+  end
 
-          _ ->
-            nil
-        end
-      end)
+  defp detect_strategy_call(instrs) do
+    instrs
+    |> Enum.with_index()
+    |> Enum.find_value(fn {instr, idx} ->
+      case match_remote_call(instr) do
+        {:ok, Supervisor, func, 2} when func in [:init, :start_link] ->
+          case extract_strategy_from_opts(instrs, idx) do
+            nil -> nil
+            strategy -> {strategy, idx}
+          end
 
-    from_call || extract_strategy_from_literals(instrs) || :unknown
+        _ ->
+          nil
+      end
+    end)
   end
 
   defp extract_strategy_from_opts(instrs, call_idx) do
@@ -246,9 +415,20 @@ defmodule Argus.Extractors.Supervision do
   end
 
   # Scan literals for Erlang-style {:ok, {flags, children}} return values
-  # and extract the strategy from the flags.
-  defp extract_strategy_from_literals(instrs) do
-    Enum.find_value(instrs, fn
+  # and extract the strategy (and its defining instruction) from the flags.
+  defp detect_strategy_literal(instrs) do
+    instrs
+    |> Enum.with_index()
+    |> Enum.find_value(fn {instr, idx} ->
+      case strategy_from_literal_instr(instr) do
+        nil -> nil
+        strategy -> {strategy, idx}
+      end
+    end)
+  end
+
+  defp strategy_from_literal_instr(instr) do
+    case instr do
       {:move, {:literal, {:ok, {flags, children}}}, _} when is_list(children) ->
         extract_strategy_from_flags(flags)
 
@@ -265,7 +445,7 @@ defmodule Argus.Extractors.Supervision do
 
       _ ->
         nil
-    end)
+    end
   end
 
   defp extract_strategy_from_elements(elements) do
@@ -288,11 +468,30 @@ defmodule Argus.Extractors.Supervision do
   # Child specs appear as literals like {Module, args} or %{id: ..., start: {Mod, ...}}.
   # When children are constructed at runtime, the compiler emits put_tuple2
   # instructions in reverse order (lists are built tail-first via cons cells).
-  defp extract_children(instrs) do
+  defp extract_children(instrs, functions) do
     from_literals =
       Enum.flat_map(instrs, fn
         {:move, {:literal, val}, _} -> extract_child_from_literal(val)
         _ -> []
+      end)
+
+    # A single runtime element (a tuple whose options call out at
+    # runtime — the stock Phoenix Application shape) splits the list
+    # into cons cells: literal specs survive as put_list operands (bare
+    # module heads, a literal tail carrying the rest), never reaching a
+    # move-literal. Reverse instruction order approximates source order
+    # (lists are built tail-first), though elements interleaved with
+    # runtime construction can land out of position — membership over
+    # perfect ordering.
+    from_cons =
+      instrs
+      |> Enum.reverse()
+      |> Enum.flat_map(fn
+        {:put_list, head, tail, _dst} ->
+          extract_child_from_cons_operand(head) ++ extract_child_from_cons_tail(tail)
+
+        _ ->
+          []
       end)
 
     # Map-based child specs: Erlang supervisors (and some Elixir ones) build
@@ -312,15 +511,37 @@ defmodule Argus.Extractors.Supervision do
 
     from_tuples =
       instrs
+      |> Enum.with_index()
       |> Enum.flat_map(fn
-        {:put_tuple2, _, {:list, elements}} -> extract_child_from_tuple_elements(elements)
-        _ -> []
+        {{:put_tuple2, _, {:list, elements}}, idx} ->
+          extract_child_from_tuple_elements(elements, instrs, idx, functions)
+
+        _ ->
+          []
       end)
       |> Enum.reverse()
 
-    (from_literals ++ from_maps ++ from_tuples)
-    |> Enum.uniq_by(fn {mod, _, _} -> mod end)
+    # Dedup by {module, registered name}: two children of the same module
+    # are distinct when they register under different names (three
+    # `{DynamicSupervisor, name: ...}` children are three supervisors, not
+    # one). Same module and same name (or both nameless) still collapse —
+    # without a distinguishing name there is nothing to tell them apart.
+    (from_literals ++ from_cons ++ from_maps ++ from_tuples)
+    |> Enum.uniq_by(fn {mod, _, _, name} -> {mod, name} end)
   end
+
+  defp extract_child_from_cons_operand({:atom, mod}) when is_atom(mod) do
+    if module_name?(mod), do: [{mod, :permanent, :worker, nil}], else: []
+  end
+
+  defp extract_child_from_cons_operand({:literal, val}), do: extract_single_child_spec(val)
+  defp extract_child_from_cons_operand(_), do: []
+
+  defp extract_child_from_cons_tail({:literal, list}) when is_list(list) do
+    extract_child_from_literal(list)
+  end
+
+  defp extract_child_from_cons_tail(_), do: []
 
   # Check if a put_map instruction's pairs represent a child spec (has :start key),
   # resolve the start module, and extract :restart/:type metadata.
@@ -337,7 +558,9 @@ defmodule Argus.Extractors.Supervision do
           mod ->
             restart = extract_map_atom(pairs, :restart, :permanent)
             type = extract_map_atom(pairs, :type, :worker)
-            [{mod, restart, type}]
+            # A map spec's registered name lives inside its :start MFA args,
+            # too deep to read reliably here — leave it unrecorded.
+            [{mod, restart, type, nil}]
         end
     end
   end
@@ -407,26 +630,40 @@ defmodule Argus.Extractors.Supervision do
     # PartitionSupervisor is a wrapper — extract the underlying child_spec
     # so analyses see the real worker module instead of PartitionSupervisor.
     case Keyword.get(opts, :child_spec) do
-      nil -> [{PartitionSupervisor, :permanent, :supervisor}]
+      nil -> [{PartitionSupervisor, :permanent, :supervisor, child_name(opts)}]
       child_spec -> extract_single_child_spec(child_spec)
     end
   end
 
-  defp extract_single_child_spec({mod, _args}) when is_atom(mod) do
-    if module_name?(mod), do: [{mod, :permanent, :worker}], else: []
+  defp extract_single_child_spec({mod, args}) when is_atom(mod) do
+    if module_name?(mod), do: [{mod, :permanent, :worker, child_name(args)}], else: []
   end
 
   defp extract_single_child_spec(%{start: {mod, _, _}} = spec) when is_atom(mod) do
     restart = Map.get(spec, :restart, :permanent)
     type = Map.get(spec, :type, :worker)
-    [{mod, restart, type}]
+    [{mod, restart, type, nil}]
   end
 
   defp extract_single_child_spec(mod) when is_atom(mod) do
-    if module_name?(mod), do: [{mod, :permanent, :worker}], else: []
+    if module_name?(mod), do: [{mod, :permanent, :worker, nil}], else: []
   end
 
   defp extract_single_child_spec(_), do: []
+
+  # A child spec's `:name` option registers the process under a name — the
+  # same name a `DynamicSupervisor.start_child(name, _)` call later targets.
+  # Only atoms are name-anchorable; `{:via, _, _}`/`{:global, _}` names are
+  # skipped. The scan tolerates non-keyword option lists (mixed positional
+  # args) by matching `{:name, atom}` pairs directly.
+  defp child_name(opts) when is_list(opts) do
+    Enum.find_value(opts, fn
+      {:name, name} when is_atom(name) and not is_nil(name) -> inspect(name)
+      _ -> nil
+    end)
+  end
+
+  defp child_name(_), do: nil
 
   # Elixir modules are atoms starting with "Elixir." internally.
   # Erlang modules are lowercase atoms — accept those only if loadable.
@@ -437,17 +674,48 @@ defmodule Argus.Extractors.Supervision do
     end
   end
 
-  defp extract_child_from_tuple_elements(elements) do
-    # Look for module atoms in tuple construction that look like child specs.
+  defp extract_child_from_tuple_elements(elements, instrs, idx, functions) do
+    # Look for module atoms in tuple construction that look like child
+    # specs. module_name?/1, not Code.ensure_loaded?/1: the analyzed
+    # project's modules are rarely loadable in the analyzing VM, and an
+    # Elixir-prefixed atom is a module name regardless.
     modules =
       Enum.filter(elements, fn
-        {:atom, mod} when is_atom(mod) -> Code.ensure_loaded?(mod)
+        {:atom, mod} when is_atom(mod) -> module_name?(mod)
         _ -> false
       end)
 
     case modules do
-      [{:atom, mod} | _] -> [{mod, :permanent, :worker}]
-      _ -> []
+      # The `name:` is runtime-built, so a literal read finds nothing — but
+      # a `{:via, Registry, _}` registration is still recoverable by tracing
+      # the opts through its construction to the via call.
+      [{:atom, mod} | _] ->
+        [{mod, :permanent, :worker, via_child_name(elements, instrs, idx, functions)}]
+
+      _ ->
+        []
+    end
+  end
+
+  # The child spec's opts is a register operand of the same tuple; trace its
+  # `:name` value back to a via registration.
+  defp via_child_name(elements, instrs, idx, functions) do
+    Enum.find_value(elements, fn
+      {kind, _} = reg when kind in [:x, :y] ->
+        via_name_from_opts(reg, instrs, idx, functions)
+
+      {:tr, {kind, _} = reg, _} when kind in [:x, :y] ->
+        via_name_from_opts(reg, instrs, idx, functions)
+
+      _ ->
+        nil
+    end)
+  end
+
+  defp via_name_from_opts(opts_reg, instrs, idx, functions) do
+    case keyword_value_register(instrs, idx, opts_reg, :name) do
+      {:ok, name_reg, name_idx} -> resolve_via_name(instrs, name_idx, name_reg, functions)
+      :no -> nil
     end
   end
 end

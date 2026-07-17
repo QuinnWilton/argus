@@ -20,22 +20,24 @@
 
 // ── Duplicate process names ──────────────────────────────────────
 
-// Module that registers a specific name.
-.decl module_registers_name(mod: symbol, name: symbol)
+// Module that registers a specific name. `site` is the registration
+// instruction — anchor-grade evidence.
+.decl module_registers_name(mod: symbol, name: symbol, site: symbol)
 
-module_registers_name(mod, name) :-
-  process_register(_, func, name, _),
+module_registers_name(mod, name, id) :-
+  process_register(id, func, name, _),
   name != "dynamic",
   name != ":dynamic",
   function_def(func, mod, _, _, _, _).
 
-// Same name registered by two different modules.
-.decl duplicate_process_name(name: symbol, mod1: symbol, mod2: symbol)
+// Same name registered by two different modules. One row per pair of
+// registration sites — finding builders dedupe on (name, mod1, mod2).
+.decl duplicate_process_name(name: symbol, mod1: symbol, mod2: symbol, site1: symbol, site2: symbol)
 .output duplicate_process_name
 
-duplicate_process_name(name, mod1, mod2) :-
-  module_registers_name(mod1, name),
-  module_registers_name(mod2, name),
+duplicate_process_name(name, mod1, mod2, site1, site2) :-
+  module_registers_name(mod1, name, site1),
+  module_registers_name(mod2, name, site2),
   mod1 < mod2.
 
 // ── Whereis race (TOCTOU) ────────────────────────────────────────

@@ -24,7 +24,7 @@
 //
 // Provides:
 //   child_subtree(sup, branch, mod)
-//   init_reaches(from_mod, to_mod)
+//   init_reaches(from_mod, to_mod, witness)
 
 // ── Child subtree ─────────────────────────────────────────────────────
 
@@ -52,17 +52,18 @@ child_subtree(sup, branch, descendant) :-
 // ── Init-time reachability ────────────────────────────────────────────
 
 // Module `from_mod` reaches `to_mod` during init — the call originates
-// from an init/1 function (directly or transitively).
+// from an init/1 function (directly or transitively). `witness` is that
+// init/1 function ID, the anchor-grade evidence for the edge.
 
-.decl init_reaches(from_mod: symbol, to_mod: symbol)
+.decl init_reaches(from_mod: symbol, to_mod: symbol, witness: symbol)
 
-init_reaches(from_mod, to_mod) :-
+init_reaches(from_mod, to_mod, func) :-
   init_function(from_mod, func),
   call_reachable(func, callee),
   function_def(callee, to_mod, _, _, _, _),
   from_mod != to_mod.
 
-init_reaches(from_mod, to_mod) :-
+init_reaches(from_mod, to_mod, func) :-
   init_function(from_mod, func),
   function_def(func, _, _, _, _, _),
   call_edge(func, callee),

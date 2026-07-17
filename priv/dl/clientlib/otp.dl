@@ -23,8 +23,8 @@
 //   init_function(mod, func)
 //   genserver_sync_api(func, mod)
 //   genserver_async_api(func, mod)
-//   stateful_module_dep(from_mod, to_mod)
-//   module_reaches(from_mod, to_mod)
+//   stateful_module_dep(from_mod, to_mod, witness)
+//   module_reaches(from_mod, to_mod, witness)
 
 .include "init_function_rules.dl"
 .include "genserver_api_rules.dl"

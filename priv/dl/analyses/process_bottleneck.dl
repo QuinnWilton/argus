@@ -27,10 +27,13 @@
 // ── Module-level sync callers ──────────────────────────────────────────
 
 // Module caller_mod has at least one function that sync-calls target_mod.
-.decl sync_caller(caller_mod: symbol, target_mod: symbol)
+// The witnessed variant carries the calling function; the bare pair
+// relation projects it away so the fan-in aggregate below counts caller
+// modules, not call sites.
+.decl sync_caller_witness(caller_mod: symbol, target_mod: symbol, witness: symbol)
 
 // Direct: a function in caller_mod has a sync_call with resolved target.
-sync_caller(caller_mod, target_mod) :-
+sync_caller_witness(caller_mod, target_mod, f) :-
   function_def(f, caller_mod, _, _, _, _),
   sync_call(f, target_mod),
   target_mod != "dynamic",
@@ -38,7 +41,7 @@ sync_caller(caller_mod, target_mod) :-
 
 // Indirect via callgraph: a function in caller_mod reaches a function
 // that has a sync_call with resolved target.
-sync_caller(caller_mod, target_mod) :-
+sync_caller_witness(caller_mod, target_mod, f) :-
   function_def(f, caller_mod, _, _, _, _),
   call_reachable(f, g),
   sync_call(g, target_mod),
@@ -47,11 +50,15 @@ sync_caller(caller_mod, target_mod) :-
 
 // Indirect via GenServer API: a function in caller_mod calls an exported
 // sync API function of target_mod.
-sync_caller(caller_mod, target_mod) :-
+sync_caller_witness(caller_mod, target_mod, f) :-
   function_def(f, caller_mod, _, _, _, _),
   call_edge(f, g),
   genserver_sync_api(g, target_mod),
   caller_mod != target_mod.
+
+.decl sync_caller(caller_mod: symbol, target_mod: symbol)
+
+sync_caller(caller_mod, target_mod) :- sync_caller_witness(caller_mod, target_mod, _).
 
 // ── Fan-in aggregation ─────────────────────────────────────────────────
 
@@ -68,10 +75,11 @@ sync_call_fan_in(target_mod, cnt) :-
 
 // Sync callers filtered to only targets that exceed the fan-in threshold.
 // This separates normal centralized services (1–4 callers) from true
-// serialization bottlenecks.
-.decl bottleneck_caller(caller_mod: symbol, target_mod: symbol)
+// serialization bottlenecks. One row per witness — finding builders
+// dedupe on (caller_mod, target_mod).
+.decl bottleneck_caller(caller_mod: symbol, target_mod: symbol, witness: symbol)
 .output bottleneck_caller
 
-bottleneck_caller(caller_mod, target_mod) :-
-  sync_caller(caller_mod, target_mod),
+bottleneck_caller(caller_mod, target_mod, witness) :-
+  sync_caller_witness(caller_mod, target_mod, witness),
   sync_call_fan_in(target_mod, _).

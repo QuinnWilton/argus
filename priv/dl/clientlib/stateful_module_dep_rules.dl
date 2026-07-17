@@ -11,10 +11,11 @@
 // ── Helper: module-level reachability ────────────────────────────────
 
 // A function defined in module `from_mod` transitively reaches a
-// function defined in module `to_mod`.
-.decl module_reaches(from_mod: symbol, to_mod: symbol)
+// function defined in module `to_mod`. `witness` is the reaching
+// function in `from_mod` — the anchor-grade evidence for the edge.
+.decl module_reaches(from_mod: symbol, to_mod: symbol, witness: symbol)
 
-module_reaches(from_mod, to_mod) :-
+module_reaches(from_mod, to_mod, caller) :-
   function_def(caller, from_mod, _, _, _, _),
   call_reachable(caller, callee),
   function_def(callee, to_mod, _, _, _, _),
@@ -32,19 +33,23 @@ genserver_async_api(func, mod) :-
 
 // Module-level dependency through GenServer message passing (sync_call
 // or async_cast). Distinguishes stateful process coupling from plain
-// function calls.
-.decl stateful_module_dep(from_mod: symbol, to_mod: symbol)
+// function calls. `witness` is a function ID in `from_mod` through
+// which the dependency flows — always in `from_mod`, so findings about
+// the depending module can anchor at a real line of that module. A
+// dependency provable through several functions yields one row per
+// witness; finding builders deduplicate on the module pair.
+.decl stateful_module_dep(from_mod: symbol, to_mod: symbol, witness: symbol)
 
 // Resolved target: a function in from_mod transitively reaches a
 // function that makes a sync_call/async_cast to a known target module.
-stateful_module_dep(from_mod, to_mod) :-
+stateful_module_dep(from_mod, to_mod, f) :-
   function_def(f, from_mod, _, _, _, _),
   call_reachable(f, g),
   sync_call(g, to_mod),
   to_mod != "dynamic",
   from_mod != to_mod.
 
-stateful_module_dep(from_mod, to_mod) :-
+stateful_module_dep(from_mod, to_mod, f) :-
   function_def(f, from_mod, _, _, _, _),
   call_reachable(f, g),
   async_cast(g, to_mod),
@@ -52,13 +57,13 @@ stateful_module_dep(from_mod, to_mod) :-
   from_mod != to_mod.
 
 // Direct: the function itself (not just a callee) has the call/cast.
-stateful_module_dep(from_mod, to_mod) :-
+stateful_module_dep(from_mod, to_mod, f) :-
   function_def(f, from_mod, _, _, _, _),
   sync_call(f, to_mod),
   to_mod != "dynamic",
   from_mod != to_mod.
 
-stateful_module_dep(from_mod, to_mod) :-
+stateful_module_dep(from_mod, to_mod, f) :-
   function_def(f, from_mod, _, _, _, _),
   async_cast(f, to_mod),
   to_mod != "dynamic",
@@ -68,14 +73,14 @@ stateful_module_dep(from_mod, to_mod) :-
 // itself makes a sync_call/async_cast with any target (including
 // dynamic). This catches GenServer modules whose API functions
 // internally call GenServer.call(server, ...) with a runtime pid/name.
-stateful_module_dep(from_mod, to_mod) :-
+stateful_module_dep(from_mod, to_mod, f) :-
   function_def(f, from_mod, _, _, _, _),
   call_reachable(f, g),
   function_def(g, to_mod, _, _, _, _),
   sync_call(g, _),
   from_mod != to_mod.
 
-stateful_module_dep(from_mod, to_mod) :-
+stateful_module_dep(from_mod, to_mod, f) :-
   function_def(f, from_mod, _, _, _, _),
   call_reachable(f, g),
   function_def(g, to_mod, _, _, _, _),
@@ -88,24 +93,24 @@ stateful_module_dep(from_mod, to_mod) :-
 // concrete GenServer implementations via dynamic dispatch — the
 // reached function itself has no sync_call fact, but the module as a
 // whole manages process state.
-stateful_module_dep(from_mod, to_mod) :-
-  module_reaches(from_mod, to_mod),
+stateful_module_dep(from_mod, to_mod, w) :-
+  module_reaches(from_mod, to_mod, w),
   function_def(h, to_mod, _, _, _, _),
   sync_call(h, _).
 
-stateful_module_dep(from_mod, to_mod) :-
-  module_reaches(from_mod, to_mod),
+stateful_module_dep(from_mod, to_mod, w) :-
+  module_reaches(from_mod, to_mod, w),
   function_def(h, to_mod, _, _, _, _),
   async_cast(h, _).
 
 // GenServer API: from_mod directly calls a sync/async API function of to_mod.
-stateful_module_dep(from_mod, to_mod) :-
+stateful_module_dep(from_mod, to_mod, f) :-
   function_def(f, from_mod, _, _, _, _),
   call_edge(f, g),
   genserver_sync_api(g, to_mod),
   from_mod != to_mod.
 
-stateful_module_dep(from_mod, to_mod) :-
+stateful_module_dep(from_mod, to_mod, f) :-
   function_def(f, from_mod, _, _, _, _),
   call_edge(f, g),
   genserver_async_api(g, to_mod),

@@ -46,23 +46,28 @@ defmodule Argus.Analyses.CallCycle do
         name: :call_cycle,
         fields: [
           {:mod_a, :symbol, "first module in cycle"},
-          {:mod_b, :symbol, "second module in cycle"}
+          {:mod_b, :symbol, "second module in cycle"},
+          {:witness_a, :symbol, "function in mod_a carrying the a→b dependency"},
+          {:witness_b, :symbol, "function in mod_b carrying the b→a return path"}
         ],
+        key: [:mod_a, :mod_b],
         doc: "Pair of modules with mutual synchronous dependency."
       },
       %{
         name: :call_cycle_path,
         fields: [
           {:from_mod, :symbol, "source module"},
-          {:to_mod, :symbol, "target module"}
+          {:to_mod, :symbol, "target module"},
+          {:witness, :symbol, "function in from_mod carrying the dependency"}
         ],
+        key: [:from_mod, :to_mod],
         doc: "Transitive sync dependency edge between cycle participants."
       }
     ]
   end
 
   @impl true
-  def finding(:call_cycle, [mod_a, mod_b]) do
+  def finding(:call_cycle, [mod_a, mod_b, witness_a, witness_b]) do
     Findings.new(
       :error,
       "Synchronous call cycle",
@@ -71,18 +76,18 @@ defmodule Argus.Analyses.CallCycle do
         "process blocks waiting on the other's mailbox — a deadlock that " <>
         "GenServer.call timeouts only turn into cascading crashes. Break one " <>
         "direction with a cast or a message.",
-      at: Findings.at_module(mod_a),
-      related: [Findings.related("cycle partner", Findings.at_module(mod_b))]
+      at: Findings.at_func(witness_a),
+      related: [Findings.related("return path", Findings.at_func(witness_b))]
     )
   end
 
-  def finding(:call_cycle_path, [from_mod, to_mod]) do
+  def finding(:call_cycle_path, [from_mod, to_mod, witness]) do
     Findings.new(
       :info,
       "Cycle edge: #{from_mod} → #{to_mod}",
       "Synchronous dependency edge between call-cycle participants — the " <>
         "evidence behind a call_cycle finding.",
-      at: Findings.at_module(from_mod),
+      at: Findings.at_func(witness),
       related: [Findings.related("callee", Findings.at_module(to_mod))]
     )
   end

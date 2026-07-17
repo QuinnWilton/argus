@@ -98,7 +98,7 @@ defmodule Argus.Analyses.TimeoutChain do
         "the deadlines compose unpredictably: a slow leaf times out every " <>
         "caller above it, and each level retries or crashes on its own " <>
         "schedule.",
-      at: Findings.at_module(from),
+      at: Findings.at_mfa(from, :handle_call, 3),
       related: [Findings.related("innermost callee", Findings.at_module(to))]
     )
   end
@@ -125,7 +125,7 @@ defmodule Argus.Analyses.TimeoutChain do
         "The outer call can time out — crashing or retrying — while the inner " <>
         "work is still legitimately running, leaving duplicated effort and " <>
         "inconsistent state.",
-      at: Findings.at_module(caller),
+      at: Findings.at_mfa(caller, :handle_call, 3),
       related: [Findings.related("callee", Findings.at_module(callee))]
     )
   end
@@ -137,7 +137,7 @@ defmodule Argus.Analyses.TimeoutChain do
       "#{mod} calls #{target} with timeout :infinity while itself serving " <>
         "synchronous callers. If anything downstream hangs, this process " <>
         "hangs forever with it — no timeout ever unblocks the chain.",
-      at: Findings.at_module(mod),
+      at: Findings.at_mfa(mod, :handle_call, 3),
       related: [Findings.related("call target", Findings.at_module(target))]
     )
   end

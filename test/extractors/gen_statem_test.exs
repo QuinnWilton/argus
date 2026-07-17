@@ -26,7 +26,7 @@ defmodule Argus.Extractors.GenStatemTest do
 
       assert Map.has_key?(facts, :statem_state)
       rows = facts[:statem_state]
-      states = Enum.map(rows, fn [_, state] -> state end) |> Enum.uniq()
+      states = Enum.map(rows, fn [_, state, _site] -> state end) |> Enum.uniq()
 
       assert "idle" in states
       assert "running" in states

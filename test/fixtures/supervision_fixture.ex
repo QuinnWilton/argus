@@ -151,3 +151,47 @@ defmodule Argus.Test.Fixtures.MapSpecSupervisor do
     {:ok, {{:one_for_one, 5, 10}, children}}
   end
 end
+
+defmodule Argus.Test.Fixtures.MixedChildrenApp do
+  @moduledoc false
+  use Application
+
+  # The stock Phoenix Application shape: one runtime element (options
+  # computed at runtime) splits the children list into cons cells — a
+  # bare module head, a runtime-built tuple, and a literal tail. The
+  # extractor must recover the literal members from the put_list
+  # operands, and the runtime tuple's module without it being loadable.
+  @impl true
+  def start(_type, _args) do
+    children = [
+      Argus.Test.Fixtures.WorkerA,
+      {Argus.Test.Fixtures.RuntimeCallerWorker, timeout: System.get_env("ARGUS_T") || :none},
+      {Argus.Test.Fixtures.WorkerB, name: :mixed_b},
+      Argus.Test.Fixtures.GoodSupervisor
+    ]
+
+    opts = [strategy: :one_for_one, name: __MODULE__.Sup]
+    Supervisor.start_link(children, opts)
+  end
+end
+
+defmodule Argus.Test.Fixtures.NamedPoolSupervisor do
+  @moduledoc false
+  use Supervisor
+
+  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  # Two children of the same module (DynamicSupervisor) registered under
+  # different names: they are two distinct supervisors, so dedup must keep
+  # both, and each registered name must be recorded so a name-keyed
+  # start_child can anchor to the right one.
+  @impl true
+  def init(_) do
+    children = [
+      {DynamicSupervisor, name: Argus.Test.Fixtures.PoolA, strategy: :one_for_one},
+      {DynamicSupervisor, name: Argus.Test.Fixtures.PoolB, strategy: :one_for_one}
+    ]
+
+    Supervisor.init(children, strategy: :one_for_one)
+  end
+end

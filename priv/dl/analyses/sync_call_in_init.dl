@@ -22,7 +22,7 @@
 .decl async_cast(caller_func: symbol, callee_mod: symbol)
 .input async_cast
 
-.decl supervisor(mod: symbol, strategy: symbol)
+.decl supervisor(mod: symbol, strategy: symbol, site: symbol)
 .input supervisor
 
 .decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
@@ -96,7 +96,7 @@ likely_supervised(mod) :-
 
 init_safe_sibling(child, dep) :-
   raw_sync_call_in_init(child, dep),
-  supervisor(sup, _),
+  supervisor(sup, _, _),
   child_subtree(sup, child_branch, child),
   child_subtree(sup, dep_branch, dep),
   supervisor_child(sup, cpos, child_branch, _, _),
@@ -142,7 +142,7 @@ sync_call_in_init(mod, callee) :-
 .output init_deadlock_risk
 
 init_deadlock_risk(sup, child, dep, cpos, dpos) :-
-  supervisor(sup, _),
+  supervisor(sup, _, _),
   child_subtree(sup, child_branch, child),
   child_subtree(sup, dep_branch, dep),
   supervisor_child(sup, cpos, child_branch, _, _),

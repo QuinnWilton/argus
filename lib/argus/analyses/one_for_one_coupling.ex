@@ -4,22 +4,21 @@ defmodule Argus.Analyses.OneForOneCoupling do
 
   Detects cross-branch coupling under one_for_one supervisors: when one child
   calls another's API, a crash of the callee won't restart the caller, leaving
-  it with a stale reference. Also detects children started in the wrong order
-  relative to their call dependencies.
+  it with a stale reference. Pairs linked to each other (directly or through
+  the supervisor hierarchy) are excluded — the exit propagates and both
+  restart together, so the stale-reference hazard is already mitigated.
 
   Requires the supervision and OTP domain extractors for layer 2 facts
   about supervisor children and inter-process communication.
 
   ## Output relations
 
-  - `one_for_one_coupling(sup, caller_mod, callee_mod)` — cross-branch coupling under one_for_one.
-  - `wrong_start_order(sup, early_mod, late_mod, early_pos, late_pos)` — dependency starts after dependent.
+  - `one_for_one_coupling(sup, caller_mod, callee_mod, sup_site, witness)` — cross-branch coupling under one_for_one.
 
   ## Finding severities
 
-  Both relations are `:warning`: restart isolation and ordering hazards
-  surface as stale references and failed calls during crash/boot windows,
-  not as immediate failures.
+  `:warning`: restart isolation hazards surface as stale references and
+  failed calls during crash windows, not as immediate failures.
   """
 
   @behaviour Argus.Analysis
@@ -47,26 +46,22 @@ defmodule Argus.Analyses.OneForOneCoupling do
         fields: [
           {:sup, :symbol, "supervisor module"},
           {:caller_mod, :symbol, "calling child module"},
-          {:callee_mod, :symbol, "called child module"}
+          {:callee_mod, :symbol, "called child module"},
+          {:sup_site, :symbol, "instruction ID of the tree definition"},
+          {:witness, :symbol, "function in caller_mod carrying the coupling"}
         ],
+        key: [:sup, :caller_mod, :callee_mod],
         doc: "Cross-branch coupling under a one_for_one supervisor."
-      },
-      %{
-        name: :wrong_start_order,
-        fields: [
-          {:sup, :symbol, "supervisor module"},
-          {:early_mod, :symbol, "module started early"},
-          {:late_mod, :symbol, "module started late"},
-          {:early_pos, :number, "early child position"},
-          {:late_pos, :number, "late child position"}
-        ],
-        doc: "Dependency starts after the child that depends on it."
       }
     ]
   end
 
+  # The defect is the supervisor's composition, not the caller's code —
+  # the same call is fine under rest_for_one — so the finding anchors at
+  # the tree definition (where the fix goes) and the coupling call site
+  # becomes labelled evidence.
   @impl true
-  def finding(:one_for_one_coupling, [sup, caller_mod, callee_mod]) do
+  def finding(:one_for_one_coupling, [sup, caller_mod, callee_mod, sup_site, witness]) do
     Findings.new(
       :warning,
       "Coupled children under one_for_one",
@@ -74,26 +69,10 @@ defmodule Argus.Analyses.OneForOneCoupling do
         "one_for_one supervisor #{sup}. When #{callee_mod} crashes and " <>
         "restarts, #{caller_mod} is not restarted with it and keeps any " <>
         "stale pid, monitor, or cached state it held.",
-      at: Findings.at_module(caller_mod),
+      at: Findings.at_site(sup_site, sup),
       related: [
-        Findings.related("supervisor", Findings.at_module(sup)),
+        Findings.related("coupling call", Findings.at_func(witness)),
         Findings.related("called sibling", Findings.at_module(callee_mod))
-      ]
-    )
-  end
-
-  def finding(:wrong_start_order, [sup, early_mod, late_mod, early_pos, late_pos]) do
-    Findings.new(
-      :warning,
-      "Child starts before the sibling it calls",
-      "#{early_mod} (position #{early_pos}) starts before #{late_mod} " <>
-        "(position #{late_pos}) under #{sup}, yet calls it. Until the tree " <>
-        "finishes booting, those calls target a process that does not exist " <>
-        "yet.",
-      at: Findings.at_module(early_mod),
-      related: [
-        Findings.related("supervisor", Findings.at_module(sup)),
-        Findings.related("later dependency", Findings.at_module(late_mod))
       ]
     )
   end

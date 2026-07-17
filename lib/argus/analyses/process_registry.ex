@@ -42,8 +42,11 @@ defmodule Argus.Analyses.ProcessRegistry do
         fields: [
           {:name, :symbol, "registered name"},
           {:mod1, :symbol, "first registering module"},
-          {:mod2, :symbol, "second registering module"}
+          {:mod2, :symbol, "second registering module"},
+          {:site1, :symbol, "registration instruction in mod1"},
+          {:site2, :symbol, "registration instruction in mod2"}
         ],
+        key: [:name, :mod1, :mod2],
         doc: "Same atom name registered by multiple modules."
       },
       %{
@@ -59,7 +62,7 @@ defmodule Argus.Analyses.ProcessRegistry do
   end
 
   @impl true
-  def finding(:duplicate_process_name, [name, mod1, mod2]) do
+  def finding(:duplicate_process_name, [name, mod1, mod2, site1, site2]) do
     Findings.new(
       :error,
       "Process name registered by two modules",
@@ -67,8 +70,8 @@ defmodule Argus.Analyses.ProcessRegistry do
         "is exclusive — whichever process registers second crashes with " <>
         "ArgumentError (or its start_link returns {:error, {:already_started, " <>
         "pid}}). At most one of these can ever run at a time.",
-      at: Findings.at_module(mod1),
-      related: [Findings.related("other registrant", Findings.at_module(mod2))]
+      at: Findings.at_site(site1, mod1),
+      related: [Findings.related("other registrant", Findings.at_site(site2, mod2))]
     )
   end
 

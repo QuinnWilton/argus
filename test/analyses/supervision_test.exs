@@ -21,7 +21,6 @@ defmodule Argus.Analyses.SupervisionTest do
       assert {:ok, results} = Argus.analyze(modules, :supervision)
 
       assert Map.has_key?(results, "suspect_transient_dependency")
-      assert Map.has_key?(results, "unlinked_coupled_siblings")
       assert Map.has_key?(results, "wrong_start_order")
     end
   end

@@ -9,7 +9,7 @@
 .decl statem_module(mod: symbol, callback_mode: symbol)
 .input statem_module
 
-.decl statem_state(mod: symbol, state: symbol)
+.decl statem_state(mod: symbol, state: symbol, site: symbol)
 .input statem_state
 
 .decl statem_transition(mod: symbol, from_state: symbol, event: symbol, to_state: symbol)
@@ -35,15 +35,16 @@ state_has_incoming(mod, state) :-
 initial_state(mod, state) :-
   statem_transition(mod, state, _, _),
   !state_has_incoming(mod, state),
-  statem_state(mod, state).
+  statem_state(mod, state, _).
 
 // Unreachable state — defined but no transition leads to it and
-// it's not the initial state.
-.decl unreachable_state(mod: symbol, state: symbol)
+// it's not the initial state. One row per discovery site — finding
+// builders dedupe on (mod, state).
+.decl unreachable_state(mod: symbol, state: symbol, site: symbol)
 .output unreachable_state
 
-unreachable_state(mod, state) :-
-  statem_state(mod, state),
+unreachable_state(mod, state, site) :-
+  statem_state(mod, state, site),
   !state_has_incoming(mod, state),
   !initial_state(mod, state),
   state != "stop",
@@ -58,12 +59,13 @@ state_has_outgoing(mod, state) :-
   statem_transition(mod, state, _, _).
 
 // Terminal state without stop — a state with no outgoing transitions
-// that doesn't transition to "stop".
-.decl terminal_without_stop(mod: symbol, state: symbol)
+// that doesn't transition to "stop". One row per discovery site —
+// finding builders dedupe on (mod, state).
+.decl terminal_without_stop(mod: symbol, state: symbol, site: symbol)
 .output terminal_without_stop
 
-terminal_without_stop(mod, state) :-
-  statem_state(mod, state),
+terminal_without_stop(mod, state, site) :-
+  statem_state(mod, state, site),
   !state_has_outgoing(mod, state),
   state != "stop",
   state != "dynamic".

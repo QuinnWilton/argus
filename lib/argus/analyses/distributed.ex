@@ -52,8 +52,10 @@ defmodule Argus.Analyses.Distributed do
         name: :rpc_without_timeout,
         fields: [
           {:func, :symbol, "function with infinity RPC"},
-          {:variant, :symbol, "RPC variant"}
+          {:variant, :symbol, "RPC variant"},
+          {:site, :symbol, "instruction ID of the RPC call"}
         ],
+        key: [:func, :variant],
         doc: "RPC call with default infinity timeout."
       },
       %{
@@ -68,8 +70,10 @@ defmodule Argus.Analyses.Distributed do
         name: :global_register_risk,
         fields: [
           {:func, :symbol, "function"},
-          {:name, :symbol, "global name"}
+          {:name, :symbol, "global name"},
+          {:site, :symbol, "instruction ID of the registration"}
         ],
+        key: [:func, :name],
         doc: "global.register_name without conflict resolution callback."
       },
       %{
@@ -77,8 +81,10 @@ defmodule Argus.Analyses.Distributed do
         fields: [
           {:func, :symbol, "function calling :global"},
           {:op, :symbol, "operation: set_lock | trans | ..."},
-          {:retries, :symbol, "resolved retries argument: infinity | positive integer"}
+          {:retries, :symbol, "resolved retries argument: infinity | positive integer"},
+          {:site, :symbol, "instruction ID of the :global call"}
         ],
+        key: [:func, :op, :retries],
         doc:
           "Blocking :global synchronization (set_lock or trans with infinity or positive retries)."
       },
@@ -94,22 +100,24 @@ defmodule Argus.Analyses.Distributed do
         name: :distributed_in_init,
         fields: [
           {:func, :symbol, "init function"},
-          {:op, :symbol, "operation"}
+          {:op, :symbol, "operation"},
+          {:site, :symbol, "instruction ID of the operation inside init"}
         ],
+        key: [:func, :op],
         doc: "Distributed operation in init/1 blocking supervisor startup."
       }
     ]
   end
 
   @impl true
-  def finding(:rpc_without_timeout, [func, variant]) do
+  def finding(:rpc_without_timeout, [func, variant, site]) do
     Findings.new(
       :warning,
       "RPC without a timeout",
       "#{func} uses #{variant} with the default infinity timeout. A " <>
         "partitioned, overloaded, or restarting peer blocks this process " <>
         "indefinitely — distributed calls need explicit deadlines.",
-      at: Findings.at_func(func)
+      at: Findings.at_instr(site)
     )
   end
 
@@ -125,7 +133,7 @@ defmodule Argus.Analyses.Distributed do
     )
   end
 
-  def finding(:global_register_risk, [func, name]) do
+  def finding(:global_register_risk, [func, name, site]) do
     Findings.new(
       :warning,
       ":global registration without conflict resolution",
@@ -133,11 +141,11 @@ defmodule Argus.Analyses.Distributed do
         "After a netsplit heals, both partitions hold the name and the " <>
         "default resolution kills one of the processes at random — state " <>
         "loss decided by a coin flip.",
-      at: Findings.at_func(func)
+      at: Findings.at_instr(site)
     )
   end
 
-  def finding(:global_blocking_op, [func, op, retries]) do
+  def finding(:global_blocking_op, [func, op, retries, site]) do
     Findings.new(
       :info,
       "Cluster-wide :global synchronization",
@@ -145,7 +153,7 @@ defmodule Argus.Analyses.Distributed do
         "operations serialize across the whole cluster — fine when " <>
         "deliberate, but every caller shares one distributed lock, and " <>
         "partition recovery stalls them all.",
-      at: Findings.at_func(func)
+      at: Findings.at_instr(site)
     )
   end
 
@@ -161,7 +169,7 @@ defmodule Argus.Analyses.Distributed do
     )
   end
 
-  def finding(:distributed_in_init, [func, op]) do
+  def finding(:distributed_in_init, [func, op, site]) do
     Findings.new(
       :warning,
       "Distributed operation in init/1",
@@ -169,7 +177,7 @@ defmodule Argus.Analyses.Distributed do
         "sequence waits. A slow or partitioned peer stalls local startup; " <>
         "defer remote work to handle_continue so the tree boots without the " <>
         "network.",
-      at: Findings.at_func(func)
+      at: Findings.at_instr(site)
     )
   end
 end

@@ -42,7 +42,18 @@ defmodule Argus.Schema do
   # Version 2: line_info.line became a real source line (the emitter now
   # resolves the Line chunk's references); under version 1 it carried the
   # raw chunk reference despite the field's documentation.
-  @schema_version 2
+  #
+  # Version 3: line_info covers every instruction (the line in effect,
+  # sticky from the last resolvable marker) rather than only the markers
+  # themselves, so call-site instruction IDs resolve to exact lines; and
+  # supervisor gained a trailing site column (the instruction that defines
+  # the tree) so supervision findings can anchor at the strategy line.
+  #
+  # Version 4: added the supervisor_child_name relation — a child spec's
+  # registered :name, paired with the child by {sup, position} — so a
+  # dynamic_child parented by a registered name can be anchored to the
+  # child that registers it.
+  @schema_version 4
 
   # Layer 1: Module-level facts.
 
@@ -454,7 +465,11 @@ defmodule Argus.Schema do
     layer: 2,
     fields: [
       {:mod, :symbol, "supervisor module"},
-      {:strategy, :symbol, "restart strategy"}
+      {:strategy, :symbol, "restart strategy"},
+      {:site, :symbol,
+       "instruction ID of the Supervisor.init/start_link call (or Erlang-style " <>
+         "flags literal) that defines the tree — the strategy line; 'dynamic' " <>
+         "when not statically found"}
     ],
     doc: "Module that implements the Supervisor behaviour."
   }
@@ -470,6 +485,26 @@ defmodule Argus.Schema do
       {:type, :symbol, "child type (worker/supervisor)"}
     ],
     doc: "Child specification within a supervisor."
+  }
+
+  @supervisor_child_name %{
+    name: :supervisor_child_name,
+    layer: 2,
+    fields: [
+      {:sup, :symbol, "supervisor module"},
+      {:position, :number, "child start order — matches the paired supervisor_child.position"},
+      {:name, :symbol, "registered name from the child spec's :name option"}
+    ],
+    doc: """
+    Registered name declared in a child spec's `:name` option — e.g. \
+    the `MyApp.Pool` in `{DynamicSupervisor, name: MyApp.Pool}`. Recorded \
+    alongside `supervisor_child` (same `sup`/`position`) so a \
+    `dynamic_child` whose parent is a registered name can be anchored to \
+    the child that registers it: a `DynamicSupervisor.start_child(MyApp.Pool, _)` \
+    call resolves to the named child instead of appearing unanchored. \
+    Only atom names are recorded — `{:via, _, _}` and `{:global, _}` names \
+    are not, since name-based `start_child` targets are always atoms.
+    """
   }
 
   @dynamic_child %{
@@ -898,7 +933,10 @@ defmodule Argus.Schema do
     layer: 2,
     fields: [
       {:mod, :symbol, "module name"},
-      {:state, :symbol, "state atom"}
+      {:state, :symbol, "state atom"},
+      {:site, :symbol,
+       "where the state was found: the state function's ID in state_functions " <>
+         "mode, the matching instruction in handle_event mode"}
     ],
     doc: "State in a gen_statem state machine."
   }
@@ -1015,6 +1053,7 @@ defmodule Argus.Schema do
   @layer_2_relations [
     @supervisor,
     @supervisor_child,
+    @supervisor_child_name,
     @dynamic_child,
     @named_process,
     @process_link,

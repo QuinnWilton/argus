@@ -48,8 +48,10 @@ defmodule Argus.Analyses.ProcessBottleneck do
         name: :bottleneck_caller,
         fields: [
           {:caller_mod, :symbol, "module making the sync call"},
-          {:target_mod, :symbol, "target GenServer module"}
+          {:target_mod, :symbol, "target GenServer module"},
+          {:witness, :symbol, "function in caller_mod making the call"}
         ],
+        key: [:caller_mod, :target_mod],
         doc: "Caller of a high-fan-in (>= 5) GenServer."
       },
       %{
@@ -72,18 +74,18 @@ defmodule Argus.Analyses.ProcessBottleneck do
         "single process serializes all of them — under load, queue depth and " <>
         "call latency grow together until callers start timing out. Consider " <>
         "sharding, ETS for reads, or casts where replies aren't needed.",
-      at: Findings.at_module(target_mod)
+      at: Findings.at_mfa(target_mod, :handle_call, 3)
     )
   end
 
-  def finding(:bottleneck_caller, [caller_mod, target_mod]) do
+  def finding(:bottleneck_caller, [caller_mod, target_mod, witness]) do
     Findings.new(
       :info,
       "Caller of a high fan-in GenServer",
       "#{caller_mod} synchronously calls #{target_mod}, one of #{target_mod}'s " <>
         "five-plus caller modules. Each such call competes for the same " <>
         "serialized mailbox.",
-      at: Findings.at_module(caller_mod),
+      at: Findings.at_func(witness),
       related: [Findings.related("bottleneck", Findings.at_module(target_mod))]
     )
   end

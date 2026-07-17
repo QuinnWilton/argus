@@ -52,15 +52,18 @@ defmodule Argus.Clientlib.StatefulModuleDepRulesTest do
       deps = results["stateful_module_dep"]
       assert length(deps) > 0
 
-      # CycleServerA depends on CycleServerB and vice versa.
-      assert Enum.any?(deps, fn [from, to] ->
+      # CycleServerA depends on CycleServerB and vice versa; the witness
+      # is a function of the depending module.
+      assert Enum.any?(deps, fn [from, to, witness] ->
                from == "Argus.Test.Fixtures.CycleServerA" and
-                 to == "Argus.Test.Fixtures.CycleServerB"
+                 to == "Argus.Test.Fixtures.CycleServerB" and
+                 String.starts_with?(witness, "Argus.Test.Fixtures.CycleServerA:")
              end)
 
-      assert Enum.any?(deps, fn [from, to] ->
+      assert Enum.any?(deps, fn [from, to, witness] ->
                from == "Argus.Test.Fixtures.CycleServerB" and
-                 to == "Argus.Test.Fixtures.CycleServerA"
+                 to == "Argus.Test.Fixtures.CycleServerA" and
+                 String.starts_with?(witness, "Argus.Test.Fixtures.CycleServerB:")
              end)
     end
   end

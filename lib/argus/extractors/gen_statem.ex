@@ -197,10 +197,11 @@ defmodule Argus.Extractors.GenStatem do
         arity == 3 and not MapSet.member?(@non_state_callbacks, name)
       end)
 
-    # Register all states.
+    # Register all states. In state_functions mode the state IS a
+    # function — its ID is the natural site.
     facts =
-      Enum.reduce(state_funs, facts, fn {:function, name, _, _, _}, acc ->
-        add_fact(acc, :statem_state, [mod_str, to_string(name)])
+      Enum.reduce(state_funs, facts, fn {:function, name, arity, _, _}, acc ->
+        add_fact(acc, :statem_state, [mod_str, to_string(name), "#{mod_str}:#{name}/#{arity}"])
       end)
 
     # Extract transitions and timeouts from each state function.
@@ -223,7 +224,7 @@ defmodule Argus.Extractors.GenStatem do
       instrs ->
         # Look for state atoms in pattern matches and transitions.
         facts
-        |> extract_states_from_instrs(mod_str, instrs)
+        |> extract_states_from_instrs(mod_str, "#{mod_str}:handle_event/4", instrs)
         |> extract_transitions(mod_str, "handle_event", instrs, "#{mod_str}:handle_event/4")
         |> extract_timeouts(mod_str, "handle_event", instrs, "#{mod_str}:handle_event/4")
     end
@@ -232,39 +233,47 @@ defmodule Argus.Extractors.GenStatem do
   # Extract state atoms from instructions — looks for atom comparisons
   # and select_val patterns that indicate state matching. Filters out
   # known non-state atoms (event types, protocol atoms) to reduce FPs.
-  defp extract_states_from_instrs(facts, mod_str, instrs) do
-    Enum.reduce(instrs, facts, fn
-      {:select_val, _, _, {:list, pairs}}, acc ->
-        pairs
-        |> Enum.take_every(2)
-        |> Enum.reduce(acc, fn
-          {:atom, state}, inner_acc ->
-            if state_candidate?(state) do
-              add_fact(inner_acc, :statem_state, [mod_str, to_string(state)])
-            else
+  # The site is the matching instruction, so state findings anchor at
+  # the exact line even in handle_event mode.
+  defp extract_states_from_instrs(facts, mod_str, func_id, instrs) do
+    instrs
+    |> Enum.with_index()
+    |> Enum.reduce(facts, fn {instr, idx}, acc ->
+      site = "#{func_id}##{idx}"
+
+      case instr do
+        {:select_val, _, _, {:list, pairs}} ->
+          pairs
+          |> Enum.take_every(2)
+          |> Enum.reduce(acc, fn
+            {:atom, state}, inner_acc ->
+              if state_candidate?(state) do
+                add_fact(inner_acc, :statem_state, [mod_str, to_string(state), site])
+              else
+                inner_acc
+              end
+
+            _, inner_acc ->
               inner_acc
-            end
+          end)
 
-          _, inner_acc ->
-            inner_acc
-        end)
+        {:test, :is_eq_exact, _, [{:x, _}, {:atom, state}]} ->
+          if state_candidate?(state) do
+            add_fact(acc, :statem_state, [mod_str, to_string(state), site])
+          else
+            acc
+          end
 
-      {:test, :is_eq_exact, _, [{:x, _}, {:atom, state}]}, acc ->
-        if state_candidate?(state) do
-          add_fact(acc, :statem_state, [mod_str, to_string(state)])
-        else
+        {:test, :is_eq_exact, _, [{:atom, state}, {:x, _}]} ->
+          if state_candidate?(state) do
+            add_fact(acc, :statem_state, [mod_str, to_string(state), site])
+          else
+            acc
+          end
+
+        _ ->
           acc
-        end
-
-      {:test, :is_eq_exact, _, [{:atom, state}, {:x, _}]}, acc ->
-        if state_candidate?(state) do
-          add_fact(acc, :statem_state, [mod_str, to_string(state)])
-        else
-          acc
-        end
-
-      _, acc ->
-        acc
+      end
     end)
   end
 
@@ -279,7 +288,7 @@ defmodule Argus.Extractors.GenStatem do
     return_tuples = scan_return_tuples(instrs)
     ctx = synthetic_ctx(func_id)
 
-    Enum.reduce(return_tuples, facts, fn {_idx, elements}, acc ->
+    Enum.reduce(return_tuples, facts, fn {idx, elements}, acc ->
       case elements do
         # {:next_state, target_state, data} or {:next_state, target_state, data, actions}.
         [{:atom, :next_state}, target | _] ->
@@ -288,7 +297,7 @@ defmodule Argus.Extractors.GenStatem do
           acc
           |> track_dynamic(to_state, ctx, :statem_transition_target, :statem_transition)
           |> add_fact(:statem_transition, [mod_str, from_state, "event", to_state])
-          |> maybe_add_target_state(mod_str, to_state)
+          |> maybe_add_target_state(mod_str, to_state, "#{func_id}##{idx}")
 
         # {:keep_state, ...} — self-transition.
         [{:atom, :keep_state} | _] ->
@@ -308,10 +317,11 @@ defmodule Argus.Extractors.GenStatem do
     end)
   end
 
-  # Also scan for literal return values moved to x0.
-  defp maybe_add_target_state(facts, mod_str, to_state) do
+  # Also scan for literal return values moved to x0. The site is the
+  # return-tuple construction naming the target state.
+  defp maybe_add_target_state(facts, mod_str, to_state, site) do
     if to_state != "dynamic" and to_state != "stop" do
-      add_fact(facts, :statem_state, [mod_str, to_state])
+      add_fact(facts, :statem_state, [mod_str, to_state, site])
     else
       facts
     end

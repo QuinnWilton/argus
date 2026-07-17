@@ -48,10 +48,11 @@ defmodule Argus.Analyses.ProcessBottleneckTest do
                mod == "Argus.Test.Fixtures.BottleneckTarget" and cnt == "5"
              end)
 
+      # Raw rows carry one entry per witnessing function; finding
+      # builders dedupe on (caller, target), so count distinct callers.
       callers = results["bottleneck_caller"]
-      assert length(callers) == 5
-
-      caller_mods = Enum.map(callers, fn [caller, _target] -> caller end) |> Enum.sort()
+      caller_mods = Enum.map(callers, fn [caller | _] -> caller end) |> Enum.uniq() |> Enum.sort()
+      assert length(caller_mods) == 5
 
       assert "Argus.Test.Fixtures.BottleneckCallerA" in caller_mods
       assert "Argus.Test.Fixtures.BottleneckCallerE" in caller_mods

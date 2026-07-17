@@ -63,7 +63,7 @@ defmodule Argus.FindingsTest do
       assert result.degraded == []
     end
 
-    test "supervision findings carry module anchors and related locations" do
+    test "supervision findings anchor at the tree definition with witness evidence" do
       skip_without_souffle()
 
       modules = [
@@ -73,24 +73,31 @@ defmodule Argus.FindingsTest do
         Fixtures.WorkerB
       ]
 
-      assert {:ok, result} = Argus.run_analyses(modules, analyses: [:supervision])
+      assert {:ok, result} = Argus.run_analyses(modules, analyses: [:one_for_one_coupling])
 
       assert result.findings != []
       Enum.each(result.findings, &assert_finding_shape/1)
 
-      coupled = Enum.filter(result.findings, &(&1.title =~ "Coupled siblings"))
+      coupled = Enum.filter(result.findings, &(&1.title =~ "Coupled children"))
       assert coupled != []
 
       for finding <- coupled do
         assert finding.severity == :warning
-        assert finding.module == Fixtures.SyncInitServer
 
+        # The defect is the supervisor's composition, so the primary
+        # anchor is the tree definition — instruction-precise, inside the
+        # supervisor's init/1.
+        assert finding.module == Fixtures.DeadlockOrderSupervisor
+        assert %InstrId{func: "init", arity: 1} = finding.instr
+
+        # The coupling call is labelled evidence in the depending child.
         labels = Enum.map(finding.related, & &1.label)
-        assert "supervisor" in labels
-        assert "coupled sibling" in labels
+        assert "coupling call" in labels
+        assert "called sibling" in labels
 
-        supervisor = Enum.find(finding.related, &(&1.label == "supervisor"))
-        assert supervisor.module == Fixtures.DeadlockOrderSupervisor
+        witness = Enum.find(finding.related, &(&1.label == "coupling call"))
+        assert witness.module == Fixtures.SyncInitServer
+        assert {Fixtures.SyncInitServer, _func, _arity} = witness.mfa
       end
     end
 
@@ -170,7 +177,7 @@ defmodule Argus.FindingsTest do
       cycles = Enum.filter(result.findings, &(&1.severity == :error))
       assert cycles != []
       assert Enum.any?(cycles, &(&1.module in modules))
-      assert Enum.any?(cycles, fn f -> Enum.any?(f.related, &(&1.label == "cycle partner")) end)
+      assert Enum.any?(cycles, fn f -> Enum.any?(f.related, &(&1.label == "return path")) end)
 
       paths = Enum.filter(result.findings, &(&1.severity == :info))
       assert paths != []

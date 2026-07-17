@@ -28,11 +28,13 @@
 // ── RPC without timeout ──────────────────────────────────────────
 
 // RPC call using default infinity timeout — hangs on netsplit.
-.decl rpc_without_timeout(func: symbol, variant: symbol)
+// site is the rpc call instruction. One row per site — finding
+// builders dedupe on (func, variant).
+.decl rpc_without_timeout(func: symbol, variant: symbol, site: symbol)
 .output rpc_without_timeout
 
-rpc_without_timeout(func, variant) :-
-  rpc_call(_, func, variant, "infinity").
+rpc_without_timeout(func, variant, id) :-
+  rpc_call(id, func, variant, "infinity").
 
 // ── RPC in GenServer callback ────────────────────────────────────
 
@@ -67,23 +69,25 @@ rpc_in_genserver_callback(func, variant) :-
 // ── Global register without conflict resolution ──────────────────
 
 // :global.register_name/2 (without resolve function) is race-prone
-// during network partitions.
-.decl global_register_risk(func: symbol, name: symbol)
+// during network partitions. site is the registration instruction.
+.decl global_register_risk(func: symbol, name: symbol, site: symbol)
 .output global_register_risk
 
-global_register_risk(func, name) :-
-  global_register(_, func, name).
+global_register_risk(func, name, id) :-
+  global_register(id, func, name).
 
 // ── Blocking :global synchronization ─────────────────────────────
 
 // :global.set_lock and :global.trans block on netsplit when retries
 // is :infinity or any positive integer (which retries with backoff).
 // retries = "0" means try once and return immediately — non-blocking.
-.decl global_blocking_op(func: symbol, op: symbol, retries: symbol)
+// site is the :global call instruction. One row per site — finding
+// builders dedupe on (func, op, retries).
+.decl global_blocking_op(func: symbol, op: symbol, retries: symbol, site: symbol)
 .output global_blocking_op
 
-global_blocking_op(func, op, retries) :-
-  global_op(_, func, op, retries),
+global_blocking_op(func, op, retries, id) :-
+  global_op(id, func, op, retries),
   retries != "0",
   retries != "dynamic".
 
@@ -95,11 +99,11 @@ global_blocking_op(func, op, retries) :-
 .output global_blocking_in_init
 
 global_blocking_in_init(func, op) :-
-  global_blocking_op(func, op, _),
+  global_blocking_op(func, op, _, _),
   init_function(func).
 
 global_blocking_in_init(func, op) :-
-  global_blocking_op(callee_func, op, _),
+  global_blocking_op(callee_func, op, _, _),
   call_reachable(func, callee_func),
   init_function(func).
 
@@ -111,26 +115,28 @@ global_blocking_in_init(func, op) :-
 init_function(func) :-
   function_def(func, _, "init", 1, _, _).
 
-.decl distributed_in_init(func: symbol, op: symbol)
+// site is the distributed-op instruction inside init. One row per
+// site — finding builders dedupe on (func, op).
+.decl distributed_in_init(func: symbol, op: symbol, site: symbol)
 .output distributed_in_init
 
-distributed_in_init(func, op) :-
-  rpc_call(_, func, op, _),
+distributed_in_init(func, op, id) :-
+  rpc_call(id, func, op, _),
   init_function(func).
 
-distributed_in_init(func, op) :-
-  global_register(_, func, _),
+distributed_in_init(func, op, id) :-
+  global_register(id, func, _),
   init_function(func),
   op = "global_register".
 
 // Node operations in init — exclude non-blocking ops like monitor_nodes
 // and list that return immediately.
-distributed_in_init(func, op) :-
-  node_operation(_, func, op),
+distributed_in_init(func, op, id) :-
+  node_operation(id, func, op),
   init_function(func),
   op != "list",
   op != "monitor".
 
-distributed_in_init(func, op) :-
-  distributed_store_op(_, func, _, op),
+distributed_in_init(func, op, id) :-
+  distributed_store_op(id, func, _, op),
   init_function(func).
