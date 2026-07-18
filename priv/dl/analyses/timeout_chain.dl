@@ -157,24 +157,40 @@ callback_sync_dep_timeout(from_mod, to_mod, timeout_ms) :-
   from_mod != to_mod.
 
 // Via GenServer sync API: use the API function's own sync_call_timeout.
+//
+// The timeout row's callee must be to_mod itself or "dynamic" — an API
+// wrapper's call target is usually a runtime pid/name that resolves to
+// "dynamic" even though genserver_sync_api already ties the wrapper to
+// to_mod. A wildcard here would instead attribute the timeout of any
+// OTHER resolved sync call in the wrapper to to_mod.
 callback_sync_dep_timeout(from_mod, to_mod, timeout_ms) :-
   handle_call_function(from_mod, func),
   call_edge(func, g),
   genserver_sync_api(g, to_mod),
-  sync_call_timeout(g, _, timeout_ms),
+  sync_call_timeout(g, callee, timeout_ms),
+  (callee = to_mod ; callee = "dynamic"),
   from_mod != to_mod.
 
 callback_sync_dep_timeout(from_mod, to_mod, timeout_ms) :-
   handle_call_function(from_mod, func),
   call_reachable(func, g),
   genserver_sync_api(g, to_mod),
-  sync_call_timeout(g, _, timeout_ms),
+  sync_call_timeout(g, callee, timeout_ms),
+  (callee = to_mod ; callee = "dynamic"),
   from_mod != to_mod.
 
 // ── Output: timeout insufficient ───────────────────────────────────
 
 // A calls B with T_AB, B's handle_call calls someone with T_BC.
-// If T_AB <= T_BC: A's budget cannot accommodate B's downstream work.
+// If T_AB < T_BC: A's budget strictly cannot accommodate B's downstream
+// work — B may legitimately wait longer than A is willing to.
+//
+// Equality is deliberately NOT flagged: the extractor encodes the
+// GenServer.call default as 5000, so T_AB = T_BC almost always means
+// "both sides use the default" — the universal configuration, not a
+// misconfiguration. The boundary case is real (equal budgets leave B
+// zero processing slack) but flagging it would mark nearly every
+// two-hop chain in real code as an error.
 .decl timeout_insufficient(caller: symbol, callee: symbol,
                            caller_timeout: number, callee_downstream_timeout: number)
 .output timeout_insufficient
@@ -185,7 +201,7 @@ timeout_insufficient(a, b, t_ab, t_bc) :-
   t_ab > 0,     // not dynamic
   t_ab != -1,   // not infinity
   t_bc > 0,     // not dynamic
-  t_ab <= t_bc.
+  t_ab < t_bc.
 
 // ── Output: infinity timeout in chain ──────────────────────────────
 

@@ -104,3 +104,38 @@ defmodule Argus.Test.Fixtures.TimeoutChain.ServerWithInfinityTimeout do
     {:reply, val, state}
   end
 end
+
+defmodule Argus.Test.Fixtures.TimeoutChain.DeepServer do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call(:fetch, _from, state) do
+    # Downstream budget: the default 5000ms.
+    val = GenServer.call(Argus.Test.Fixtures.TimeoutChain.ServerC, :lookup)
+    {:reply, val, state}
+  end
+end
+
+defmodule Argus.Test.Fixtures.TimeoutChain.TightBudgetServer do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call(:go, _from, state) do
+    # 1000ms budget for DeepServer, whose own downstream call waits up
+    # to 5000ms — the outer timeout strictly cannot accommodate it.
+    val = GenServer.call(Argus.Test.Fixtures.TimeoutChain.DeepServer, :fetch, 1000)
+    {:reply, val, state}
+  end
+end

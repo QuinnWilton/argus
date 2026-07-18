@@ -85,4 +85,47 @@ defmodule Argus.Analyses.TimeoutChainTest do
       assert Map.has_key?(results, "blocking_cast_handler")
     end
   end
+
+  describe "timeout_insufficient" do
+    test "flags a caller whose budget is strictly smaller than the downstream hop" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.TimeoutChain.TightBudgetServer,
+        Argus.Test.Fixtures.TimeoutChain.DeepServer,
+        Argus.Test.Fixtures.TimeoutChain.ServerC
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :timeout_chain)
+
+      # TightBudgetServer gives DeepServer 1000ms, but DeepServer's own
+      # downstream call waits up to the 5000ms default.
+      assert Enum.any?(results["timeout_insufficient"], fn [caller, callee, t_ab, t_bc] ->
+               String.contains?(caller, "TightBudgetServer") and
+                 String.contains?(callee, "DeepServer") and
+                 t_ab == "1000" and t_bc == "5000"
+             end)
+    end
+
+    test "does not flag equal timeouts (the default-vs-default chain)" do
+      skip_without_souffle()
+
+      # ServerA -> ServerB -> ServerC all use the GenServer.call default
+      # (5000ms at every hop). Equal budgets are the universal
+      # configuration, not a misconfiguration — must not be an :error.
+      modules = [
+        Argus.Test.Fixtures.TimeoutChain.ServerA,
+        Argus.Test.Fixtures.TimeoutChain.ServerB,
+        Argus.Test.Fixtures.TimeoutChain.ServerC
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :timeout_chain)
+
+      # The chain itself is still reported as a risk...
+      assert results["timeout_chain_risk"] != []
+
+      # ...but no hop is "insufficient".
+      assert results["timeout_insufficient"] == []
+    end
+  end
 end
