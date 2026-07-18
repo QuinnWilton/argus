@@ -89,6 +89,11 @@ defmodule Argus.Scripts.AnalyzeProject do
   end
 
   # JSON output mode — collects all results (including errors) and writes JSON.
+  #
+  # Two views of the same run land in the report: the raw relation rows
+  # ("analyses" — the count-stable interface autoresearch consumes) and
+  # severity-ranked findings with line-resolved anchors ("otp_findings" —
+  # the reviewable interface for triage across projects).
   defp run_json(project_path, modules, analyses, json_path) do
     start_time = System.monotonic_time(:millisecond)
 
@@ -96,6 +101,18 @@ defmodule Argus.Scripts.AnalyzeProject do
       Enum.map(analyses, fn analysis ->
         {analysis, Argus.analyze(modules, analysis)}
       end)
+
+    findings =
+      case analyses -- [:coverage] do
+        [] ->
+          nil
+
+        findings_analyses ->
+          case Argus.run_analyses(modules, analyses: findings_analyses) do
+            {:ok, findings} -> findings
+            {:error, _reason} -> nil
+          end
+      end
 
     duration_ms = System.monotonic_time(:millisecond) - start_time
 
@@ -108,7 +125,11 @@ defmodule Argus.Scripts.AnalyzeProject do
       "duration_ms" => duration_ms
     }
 
-    report = Argus.Report.build_project_report(meta, analysis_results)
+    report =
+      Argus.Report.build_project_report(meta, analysis_results,
+        findings: findings,
+        lines: findings && line_tables(modules)
+      )
 
     case Argus.Report.write_json(report, json_path) do
       :ok -> :ok

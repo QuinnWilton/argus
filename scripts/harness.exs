@@ -171,10 +171,16 @@ defmodule Argus.Scripts.Harness do
     skip_compile = opts[:skip_compile] || false
     resume = opts[:resume] || false
 
+    # Default to every shipped analysis except coverage (which measures
+    # the extractor pipeline, not the analyzed code). Discovered at
+    # runtime so the harness never lags behind newly-added analyses.
     analyses =
       case opts[:analyses] do
         nil ->
-          ~w(call_cycle ets one_for_one_coupling process_bottleneck supervision sync_call_in_init unlinked_spawn unsafe_task)
+          Argus.Analysis.builtin_analyses()
+          |> List.delete(:coverage)
+          |> Enum.map(&Atom.to_string/1)
+          |> Enum.sort()
 
         str ->
           String.split(str, ",", trim: true)
@@ -403,63 +409,114 @@ defmodule Argus.Scripts.Harness do
     }
   end
 
+  # Severity rank for sorting triage entries most-urgent-first.
+  @severity_rank %{"error" => 0, "warning" => 1, "info" => 2}
+
+  # How many findings to inline in triage.json. Everything is still in the
+  # per-project results.json — this is the cross-project review surface.
+  @triage_findings_cap 200
+
   defp build_triage(output_dir, statuses) do
     # Collect findings by reading each project's results.json from disk one at
     # a time, so we never hold all reports in memory simultaneously.
-    by_analysis_acc =
+    per_project =
       statuses
       |> Enum.flat_map(fn {name, result} ->
         case result do
           {:ok, _} ->
             results_path = Path.join([output_dir, name, "results.json"])
-            extract_finding_counts(name, results_path)
+            [extract_project_triage(name, results_path)]
 
           {:error, _} ->
             []
         end
       end)
-      |> Enum.group_by(fn {analysis, _project, _count} -> analysis end)
+
+    by_analysis =
+      per_project
+      |> Enum.flat_map(fn %{name: project, findings: findings} ->
+        Enum.map(findings, &{&1["analysis"], project, &1["severity"]})
+      end)
+      |> Enum.group_by(fn {analysis, _project, _severity} -> analysis end)
       |> Map.new(fn {analysis, entries} ->
-        total = Enum.map(entries, fn {_, _, count} -> count end) |> Enum.sum()
-        projects = Enum.map(entries, fn {_, project, _} -> project end) |> Enum.sort()
-        {analysis, %{"total_findings" => total, "projects" => projects}}
+        severities =
+          entries |> Enum.frequencies_by(fn {_, _, severity} -> severity end)
+
+        projects =
+          entries |> Enum.map(fn {_, project, _} -> project end) |> Enum.uniq() |> Enum.sort()
+
+        {analysis,
+         %{
+           "total_findings" => length(entries),
+           "by_severity" => severities,
+           "projects" => projects
+         }}
       end)
 
-    # Per-project totals sorted descending by finding count.
     by_project =
-      statuses
-      |> Enum.flat_map(fn {name, result} ->
-        case result do
-          {:ok, info} ->
-            [%{"name" => name, "total_findings" => info["total_findings"]}]
-
-          {:error, _} ->
-            []
-        end
+      per_project
+      |> Enum.map(fn %{name: name, findings: findings} ->
+        %{
+          "name" => name,
+          "total_findings" => length(findings),
+          "by_severity" => Enum.frequencies_by(findings, & &1["severity"])
+        }
       end)
       |> Enum.sort_by(& &1["total_findings"], :desc)
 
+    # The reviewable index: every finding across the corpus, most severe
+    # first, capped. Detail prose stays in the per-project results.json.
+    findings_index =
+      per_project
+      |> Enum.flat_map(fn %{name: project, findings: findings} ->
+        Enum.map(findings, fn f ->
+          f
+          |> Map.take(["analysis", "severity", "title", "module", "mfa", "line"])
+          |> Map.put("project", project)
+        end)
+      end)
+      |> Enum.sort_by(fn f -> {@severity_rank[f["severity"]] || 3, f["project"], f["title"]} end)
+      |> Enum.take(@triage_findings_cap)
+
     %{
-      "by_analysis" => by_analysis_acc,
-      "by_project" => by_project
+      "by_analysis" => by_analysis,
+      "by_project" => by_project,
+      "findings" => findings_index
     }
   end
 
-  # Reads a single results.json and returns [{analysis_name, project_name, count}]
-  # for analyses with findings. The file is read and discarded per-project.
-  defp extract_finding_counts(project_name, results_path) do
+  # Reads a single results.json and returns the project's findings for
+  # triage. Prefers the severity-ranked "otp_findings" section; falls back
+  # to synthesizing entries from raw relation counts for reports produced
+  # by older runs. The file is read and discarded per-project.
+  defp extract_project_triage(project_name, results_path) do
     case File.read(results_path) do
       {:ok, json} ->
         report = :json.decode(json)
-        analyses = report["analyses"] || %{}
 
-        Enum.flat_map(analyses, fn {analysis_name, entry} ->
-          count = entry["finding_count"] || 0
-          if count > 0, do: [{analysis_name, project_name, count}], else: []
-        end)
+        findings =
+          case report do
+            %{"otp_findings" => %{"findings" => findings}} ->
+              findings
+
+            %{"analyses" => analyses} ->
+              Enum.flat_map(analyses, fn {analysis_name, entry} ->
+                count = entry["finding_count"] || 0
+
+                List.duplicate(
+                  %{"analysis" => analysis_name, "severity" => "info", "title" => "(raw row)"},
+                  count
+                )
+              end)
+
+            _ ->
+              []
+          end
+
+        %{name: project_name, findings: findings}
 
       {:error, _} ->
-        []
+        %{name: project_name, findings: []}
     end
   end
 
