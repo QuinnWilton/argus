@@ -10,7 +10,7 @@ defmodule Argus.Extractors.Distributed do
   ## Emitted facts
 
   - `rpc_call(id, func, variant, timeout)` — `:rpc.call/4,5`, `:erpc.call/4,5`
-  - `global_register(id, func, name)` — `:global.register_name/2,3`
+  - `global_register(id, func, name, arity)` — `:global.register_name/2,3`
   - `node_operation(id, func, op)` — `Node.connect/disconnect/spawn`, `:net_kernel`
   - `distributed_store_op(id, func, store, op)` — `:mnesia.read/write/transaction`
   """
@@ -171,7 +171,7 @@ defmodule Argus.Extractors.Distributed do
 
     facts
     |> track_dynamic(name, ctx, :global_register_name, :global_register)
-    |> add_fact(:global_register, [id, ctx.func_id, name])
+    |> add_fact(:global_register, [id, ctx.func_id, name, to_string(arity)])
   end
 
   defp maybe_global_register(facts, _id, _ctx, _mod, _func, _arity),

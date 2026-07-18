@@ -10,7 +10,7 @@
 .decl rpc_call(id: symbol, func: symbol, variant: symbol, timeout: symbol)
 .input rpc_call
 
-.decl global_register(id: symbol, func: symbol, name: symbol)
+.decl global_register(id: symbol, func: symbol, name: symbol, arity: symbol)
 .input global_register
 
 .decl global_op(id: symbol, func: symbol, op: symbol, retries: symbol)
@@ -69,12 +69,14 @@ rpc_in_genserver_callback(func, variant) :-
 // ── Global register without conflict resolution ──────────────────
 
 // :global.register_name/2 (without resolve function) is race-prone
-// during network partitions. site is the registration instruction.
+// during network partitions. register_name/3 supplies an explicit
+// conflict-resolution function — the fixed form — so only /2 is
+// flagged. site is the registration instruction.
 .decl global_register_risk(func: symbol, name: symbol, site: symbol)
 .output global_register_risk
 
 global_register_risk(func, name, id) :-
-  global_register(id, func, name).
+  global_register(id, func, name, "2").
 
 // ── Blocking :global synchronization ─────────────────────────────
 
@@ -100,20 +102,21 @@ global_blocking_op(func, op, retries, id) :-
 
 global_blocking_in_init(func, op) :-
   global_blocking_op(func, op, _, _),
-  init_function(func).
+  init_function(_, func).
 
 global_blocking_in_init(func, op) :-
   global_blocking_op(callee_func, op, _, _),
   call_reachable(func, callee_func),
-  init_function(func).
+  init_function(_, func).
 
 // ── Distributed operations in init ───────────────────────────────
 
 // RPC or global ops in init/1 block supervisor startup.
-.decl init_function(func: symbol)
-
-init_function(func) :-
-  function_def(func, _, "init", 1, _, _).
+//
+// init_function comes from the clientlib: init/1 in a behaviour module.
+// Only those init/1 functions run under a supervisor at start time — a
+// plain module's init/1 is an ordinary function and must not be flagged.
+.include "../clientlib/init_function_rules.dl"
 
 // site is the distributed-op instruction inside init. One row per
 // site — finding builders dedupe on (func, op).
@@ -122,21 +125,24 @@ init_function(func) :-
 
 distributed_in_init(func, op, id) :-
   rpc_call(id, func, op, _),
-  init_function(func).
+  init_function(_, func).
 
 distributed_in_init(func, op, id) :-
-  global_register(id, func, _),
-  init_function(func),
+  global_register(id, func, _, _),
+  init_function(_, func),
   op = "global_register".
 
-// Node operations in init — exclude non-blocking ops like monitor_nodes
-// and list that return immediately.
+// Node operations in init — exclude the non-blocking ops that return
+// immediately: Node.list ("list"), Node.monitor ("monitor"), and
+// :net_kernel.monitor_nodes ("monitor_nodes" — a subscription flag, not
+// a connection attempt).
 distributed_in_init(func, op, id) :-
   node_operation(id, func, op),
-  init_function(func),
+  init_function(_, func),
   op != "list",
-  op != "monitor".
+  op != "monitor",
+  op != "monitor_nodes".
 
 distributed_in_init(func, op, id) :-
   distributed_store_op(id, func, _, op),
-  init_function(func).
+  init_function(_, func).

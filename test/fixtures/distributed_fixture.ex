@@ -78,3 +78,83 @@ defmodule Argus.Test.Fixtures.MnesiaModule do
     :mnesia.write(table, record, :write)
   end
 end
+
+defmodule Argus.Test.Fixtures.RpcInInit do
+  @moduledoc false
+  use GenServer
+
+  def start_link(node), do: GenServer.start_link(__MODULE__, node)
+
+  # RPC during init/1 blocks supervisor startup — flagged.
+  @impl true
+  def init(node) do
+    peers = :rpc.call(node, Node, :list, [])
+    {:ok, peers}
+  end
+
+  @impl true
+  def handle_call(:get, _from, state), do: {:reply, state, state}
+end
+
+defmodule Argus.Test.Fixtures.PlainInit do
+  @moduledoc false
+
+  # Not a behaviour module: this init/1 is an ordinary function that
+  # nothing calls at supervisor start time — must NOT be flagged.
+  def init(node) do
+    :rpc.call(node, Node, :list, [])
+  end
+end
+
+defmodule Argus.Test.Fixtures.NodeMonitorServer do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  # monitor_nodes is a subscription flag, not a connection attempt —
+  # non-blocking, must NOT be flagged in init.
+  @impl true
+  def init(_opts) do
+    :net_kernel.monitor_nodes(true)
+    {:ok, %{}}
+  end
+
+  @impl true
+  def handle_info({:nodeup, _node}, state), do: {:noreply, state}
+  def handle_info({:nodedown, _node}, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Fixtures.ConnectInInit do
+  @moduledoc false
+  use GenServer
+
+  def start_link(node), do: GenServer.start_link(__MODULE__, node)
+
+  # Node.connect attempts a connection — blocking, flagged in init.
+  @impl true
+  def init(node) do
+    true = Node.connect(node)
+    {:ok, node}
+  end
+
+  @impl true
+  def handle_call(:get, _from, state), do: {:reply, state, state}
+end
+
+defmodule Argus.Test.Fixtures.RpcInCallback do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts), do: {:ok, opts}
+
+  # RPC inside handle_call stacks the RPC timeout inside the caller's
+  # GenServer.call timeout — flagged.
+  @impl true
+  def handle_call({:fetch, node}, _from, state) do
+    {:reply, :rpc.call(node, Node, :list, []), state}
+  end
+end

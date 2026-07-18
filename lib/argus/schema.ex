@@ -53,7 +53,12 @@ defmodule Argus.Schema do
   # registered :name, paired with the child by {sup, position} — so a
   # dynamic_child parented by a registered name can be anchored to the
   # child that registers it.
-  @schema_version 4
+  #
+  # Version 5: global_register gained a trailing arity column so the
+  # distributed analysis can distinguish :global.register_name/2 (default
+  # conflict resolution, race-prone on partition) from /3 (explicit
+  # resolver — the fixed form, which must not be flagged).
+  @schema_version 5
 
   # Layer 1: Module-level facts.
 
@@ -867,9 +872,15 @@ defmodule Argus.Schema do
     fields: [
       {:id, :symbol, "instruction ID"},
       {:func, :symbol, "containing function ID"},
-      {:name, :symbol, "global name"}
+      {:name, :symbol, "global name"},
+      {:arity, :symbol,
+       "call arity: '2' (default conflict resolution) or '3' (explicit resolver)"}
     ],
-    doc: ":global.register_name call."
+    doc: """
+    `:global.register_name` call. Arity distinguishes the race-prone \
+    default (`/2`) from a call that supplies its own conflict-resolution \
+    function (`/3`).
+    """
   }
 
   @global_op %{
