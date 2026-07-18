@@ -66,3 +66,23 @@ defmodule Argus.Test.Fixtures.DynamicNameServer do
   @impl true
   def init(opts), do: {:ok, opts}
 end
+
+defmodule Argus.Test.Fixtures.DuplicateRegisterer do
+  @moduledoc false
+
+  # Registers the same :my_process name as ProcessRegisterer — whichever
+  # runs second crashes with :badarg.
+  def claim(pid) do
+    Process.register(pid, :my_process)
+  end
+end
+
+defmodule Argus.Test.Fixtures.StaticWhereis do
+  @moduledoc false
+
+  # whereis with a static name — the result can be nil at any moment
+  # (TOCTOU) and this call site is what whereis_race flags.
+  def lookup do
+    Process.whereis(:my_process)
+  end
+end

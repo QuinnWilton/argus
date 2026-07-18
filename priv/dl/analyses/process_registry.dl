@@ -6,14 +6,13 @@
 .include "../clientlib/imports.dl"
 
 // Layer 2 input declarations.
+//
+// The extractor also emits registry_op and via_tuple facts; no rule
+// here consumes them yet (Registry-keyed duplicate detection would need
+// literal keys, which are rare — dynamic keys are the interesting ones
+// and they are invisible statically).
 .decl process_register(id: symbol, func: symbol, name: symbol, method: symbol)
 .input process_register
-
-.decl registry_op(id: symbol, func: symbol, registry: symbol, op: symbol, key: symbol)
-.input registry_op
-
-.decl via_tuple(id: symbol, func: symbol, registry: symbol, key: symbol)
-.input via_tuple
 
 .decl whereis_call(id: symbol, func: symbol, name: symbol)
 .input whereis_call
