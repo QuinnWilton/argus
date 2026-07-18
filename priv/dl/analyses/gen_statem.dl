@@ -15,8 +15,29 @@
 .decl statem_transition(mod: symbol, from_state: symbol, event: symbol, to_state: symbol)
 .input statem_transition
 
-.decl statem_timeout(mod: symbol, state: symbol, type: symbol, value: symbol)
-.input statem_timeout
+// ── Extraction confidence ────────────────────────────────────────
+//
+// Both structural rules reason over the extracted transition graph, so
+// they are only sound where extraction produced one. A module whose
+// return tuples the extractor could not read yields states but no
+// transitions — under-extraction, not a machine with no edges — and
+// without this gate every such state would be flagged both unreachable
+// and terminal. The coverage analysis (coverage_statem_no_transitions)
+// reports those modules as extraction gaps instead.
+
+// At least one transition with a concrete target was extracted.
+.decl module_has_resolved_transition(mod: symbol)
+
+module_has_resolved_transition(mod) :-
+  statem_transition(mod, _, _, to),
+  to != "dynamic".
+
+// Some transition's target is runtime-computed — it could land on any
+// state, so no unreachability claim about this module is sound.
+.decl module_has_dynamic_transition(mod: symbol)
+
+module_has_dynamic_transition(mod) :-
+  statem_transition(mod, _, _, "dynamic").
 
 // ── State reachability ───────────────────────────────────────────
 
@@ -40,11 +61,20 @@ initial_state(mod, state) :-
 // Unreachable state — defined but no transition leads to it and
 // it's not the initial state. One row per discovery site — finding
 // builders dedupe on (mod, state).
+//
+// NOTE the initial_state heuristic above suppresses any no-incoming
+// state that has outgoing transitions (it looks like a start state), so
+// in practice this fires for states with no extracted transitions in
+// either direction — dead state code. Reading the true initial state
+// from init/1's return would sharpen this; until then the heuristic
+// trades missed findings for zero false initial-state accusations.
 .decl unreachable_state(mod: symbol, state: symbol, site: symbol)
 .output unreachable_state
 
 unreachable_state(mod, state, site) :-
   statem_state(mod, state, site),
+  module_has_resolved_transition(mod),
+  !module_has_dynamic_transition(mod),
   !state_has_incoming(mod, state),
   !initial_state(mod, state),
   state != "stop",
@@ -66,6 +96,7 @@ state_has_outgoing(mod, state) :-
 
 terminal_without_stop(mod, state, site) :-
   statem_state(mod, state, site),
+  module_has_resolved_transition(mod),
   !state_has_outgoing(mod, state),
   state != "stop",
   state != "dynamic".

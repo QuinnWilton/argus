@@ -53,3 +53,59 @@ defmodule Argus.Test.Fixtures.TimeoutStatem do
   @impl true
   def terminate(_reason, _state, _data), do: :ok
 end
+
+defmodule Argus.Test.Fixtures.OrphanStateStatem do
+  @moduledoc false
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :state_functions
+
+  @impl true
+  def init(_args), do: {:ok, :idle, %{}}
+
+  def idle(:cast, :go, data) do
+    {:next_state, :running, data}
+  end
+
+  def running(:cast, :stop, data) do
+    {:next_state, :idle, data}
+  end
+
+  # Dead state: nothing transitions to it and it never transitions out —
+  # unreachable AND terminal.
+  def abandoned(_event, _msg, _data) do
+    exit(:unreachable)
+  end
+
+  @impl true
+  def terminate(_reason, _state, _data), do: :ok
+end
+
+defmodule Argus.Test.Fixtures.DelegatingStatem do
+  @moduledoc false
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :state_functions
+
+  @impl true
+  def init(_args), do: {:ok, :idle, %{}}
+
+  # Both state functions delegate to a helper, so the extractor sees the
+  # states but none of their transitions — an extraction gap, not a
+  # machine with no edges. Must produce zero structural findings.
+  #
+  # The helper chain is two levels deep because an arity-3 helper is
+  # itself picked up as a state function, and a recognizable return
+  # tuple in it would count as an extracted transition.
+  def idle(type, msg, data), do: dispatch(type, msg, data)
+  def busy(type, msg, data), do: dispatch(type, msg, data)
+
+  defp dispatch(_type, _msg, data), do: keep(data)
+
+  defp keep(data), do: {:keep_state, data}
+
+  @impl true
+  def terminate(_reason, _state, _data), do: :ok
+end

@@ -2,13 +2,16 @@ defmodule Argus.Analyses.GenStatem do
   @moduledoc """
   gen_statem state machine correctness analysis.
 
-  Detects state machine bugs: unreachable states, terminal states without
-  stop, missing timeout handlers, and nondeterministic transitions.
+  Detects structural state machine bugs: unreachable states and terminal
+  states that never stop. Both rules reason over the extracted transition
+  graph, so they only fire in modules where transition extraction
+  produced concrete edges — an unextractable machine is a coverage gap
+  (`coverage_statem_no_transitions`), not a machine with no transitions.
 
   ## Output relations
 
-  - `unreachable_state(mod, state)` — state defined but no transition leads to it.
-  - `terminal_without_stop(mod, state)` — state with no outgoing transitions that doesn't stop.
+  - `unreachable_state(mod, state, site)` — state defined but no transition leads to it.
+  - `terminal_without_stop(mod, state, site)` — state with no outgoing transitions that doesn't stop.
 
   ## Finding severities
 
@@ -28,7 +31,7 @@ defmodule Argus.Analyses.GenStatem do
 
   @impl true
   def description,
-    do: "gen_statem correctness: unreachable states, missing transitions, timeout issues"
+    do: "gen_statem correctness: unreachable states and terminal states that never stop"
 
   @impl true
   def rules_file, do: "analyses/gen_statem.dl"
