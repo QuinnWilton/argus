@@ -25,6 +25,36 @@ defmodule Argus.Test.Fixtures.FilteredRescue do
   end
 end
 
+defmodule Argus.Test.Fixtures.ReifyingRescue do
+  @moduledoc false
+
+  # Catches all classes but reifies the exception into a returned value —
+  # the caller sees the error, nothing is swallowed. Must NOT be flagged.
+  def to_result(f) do
+    try do
+      f.()
+    catch
+      kind, reason -> {:error, {kind, reason}}
+    end
+  end
+end
+
+defmodule Argus.Test.Fixtures.ReraisingRescue do
+  @moduledoc false
+
+  # Catches all classes, runs cleanup, then re-raises with the original
+  # stacktrace — compiles to the raw_raise opcode. Must NOT be flagged.
+  def cleanup_and_reraise(f, cleanup) do
+    try do
+      f.()
+    catch
+      kind, reason ->
+        cleanup.()
+        :erlang.raise(kind, reason, __STACKTRACE__)
+    end
+  end
+end
+
 defmodule Argus.Test.Fixtures.TrapExitModule do
   @moduledoc false
   use GenServer
@@ -103,5 +133,41 @@ defmodule Argus.Test.Fixtures.ExitingServer do
   def handle_cast({:kill, pid}, state) do
     Process.exit(pid, :kill)
     {:noreply, state}
+  end
+end
+
+defmodule Argus.Test.Fixtures.StatemTrapExit do
+  @moduledoc false
+  @behaviour :gen_statem
+
+  def callback_mode, do: :state_functions
+
+  # Traps exits and has no handle_info — but delivers {:EXIT, ...} to its
+  # state functions, which it handles. Must NOT be flagged
+  # trap_exit_without_handler.
+  def init(_args) do
+    Process.flag(:trap_exit, true)
+    {:ok, :idle, %{}}
+  end
+
+  def idle(:info, {:EXIT, _pid, _reason}, data), do: {:keep_state, data}
+  def idle(_type, _content, data), do: {:keep_state, data}
+end
+
+defmodule Argus.Test.Fixtures.SelfCrashCallback do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  # exit/1 raises an exit in THIS process (let-it-crash on an impossible
+  # state) — supervision-visible, not an imperative kill of another
+  # process. Must NOT be flagged exit_in_callback.
+  @impl true
+  def handle_call(:bad, _from, _state) do
+    exit(:impossible_state)
   end
 end

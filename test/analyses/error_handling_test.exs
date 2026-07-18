@@ -24,6 +24,26 @@ defmodule Argus.Analyses.ErrorHandlingTest do
       assert Enum.any?(funcs, &String.contains?(&1, "BareRescue"))
       refute Enum.any?(funcs, &String.contains?(&1, "FilteredRescue"))
     end
+
+    test "does not flag a handler that reifies the exception into a value" do
+      skip_without_souffle()
+
+      # catch kind, reason -> {:error, {kind, reason}} — the caller sees
+      # the error; nothing is swallowed.
+      results = analyze([Argus.Test.Fixtures.ReifyingRescue])
+
+      assert results["swallowed_error"] == []
+    end
+
+    test "does not flag a handler that re-raises via raw_raise" do
+      skip_without_souffle()
+
+      # :erlang.raise(kind, reason, __STACKTRACE__) compiles to the
+      # raw_raise opcode, not a call to :erlang.raise/3.
+      results = analyze([Argus.Test.Fixtures.ReraisingRescue])
+
+      assert results["swallowed_error"] == []
+    end
   end
 
   describe "trap_exit_without_handler" do
@@ -51,10 +71,21 @@ defmodule Argus.Analyses.ErrorHandlingTest do
 
       assert results["trap_exit_without_handler"] == []
     end
+
+    test "does not flag a gen_statem that traps exits" do
+      skip_without_souffle()
+
+      # gen_statem delivers {:EXIT, ...} to its state functions, not to a
+      # handle_info callback, so the has_handle_info heuristic would
+      # false-positive every trapping gen_statem.
+      results = analyze([Argus.Test.Fixtures.StatemTrapExit])
+
+      assert results["trap_exit_without_handler"] == []
+    end
   end
 
   describe "exit_in_callback" do
-    test "flags Process.exit inside a GenServer callback" do
+    test "flags an exit signal sent from a GenServer callback" do
       skip_without_souffle()
 
       results = analyze([Argus.Test.Fixtures.ExitingServer])
@@ -62,6 +93,17 @@ defmodule Argus.Analyses.ErrorHandlingTest do
       assert Enum.any?(results["exit_in_callback"], fn [func, _target] ->
                String.contains?(func, "ExitingServer:handle_cast/2")
              end)
+    end
+
+    test "does not flag exit/1 (a self-crash), only exit signals to a target" do
+      skip_without_souffle()
+
+      # exit(:impossible_state) raises in the current process — let-it-
+      # crash, supervision-visible — not an imperative kill of another
+      # process.
+      results = analyze([Argus.Test.Fixtures.SelfCrashCallback])
+
+      assert results["exit_in_callback"] == []
     end
 
     test "does not flag Process.exit outside process callbacks" do

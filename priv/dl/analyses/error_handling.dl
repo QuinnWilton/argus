@@ -40,6 +40,16 @@ swallowed_error(func) :-
 has_handle_info(mod) :-
   function_def(_, mod, "handle_info", _, _, _).
 
+// gen_statem / GenStateMachine modules deliver info events (including
+// {:EXIT, ...}) to their state functions or handle_event/4, not to a
+// handle_info callback, so the has_handle_info check is meaningless for
+// them — every trapping gen_statem would be a false positive (Swarm's
+// Tracker even matches {:EXIT, ...} explicitly). Exclude them.
+.decl statem_like(mod: symbol)
+
+statem_like(mod) :- implements_behaviour(mod, ":gen_statem").
+statem_like(mod) :- implements_behaviour(mod, "GenStateMachine").
+
 // `witness` is the function that sets trap_exit. One row per witness —
 // finding builders dedupe on (mod).
 .decl trap_exit_without_handler(mod: symbol, witness: symbol)
@@ -47,7 +57,8 @@ has_handle_info(mod) :-
 
 trap_exit_without_handler(mod, func) :-
   trap_exit(func, mod),
-  !has_handle_info(mod).
+  !has_handle_info(mod),
+  !statem_like(mod).
 
 // ── Exit in GenServer callback ───────────────────────────────────
 
@@ -66,17 +77,26 @@ genserver_callback(func, mod) :-
   function_def(func, mod, "handle_info", _, _, _),
   implements_behaviour(mod, "GenServer").
 
+// Only exit *signals* — Process.exit/2, :erlang.exit/2 — count here.
+// `:erlang.exit/1` (target "self") *raises* an exit in the current
+// process: the "let it crash on an impossible state" idiom
+// (`exit(:unexpected_checkout)`) and ordinary client-call failure
+// propagation, both fully supervision-visible and not a bypass. It is
+// excluded via `target != "self"`, the sentinel the extractor uses for
+// the /1 form.
 .decl exit_in_callback(func: symbol, target: symbol)
 .output exit_in_callback
 
 exit_in_callback(func, target) :-
   exit_call(_, func, target),
-  genserver_callback(func, _).
+  genserver_callback(func, _),
+  target != "self".
 
 exit_in_callback(func, target) :-
   exit_call(_, callee_func, target),
   call_reachable(func, callee_func),
-  genserver_callback(func, _).
+  genserver_callback(func, _),
+  target != "self".
 
 // ── Ignored start results ────────────────────────────────────────
 

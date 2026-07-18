@@ -8,16 +8,23 @@ defmodule Argus.Analyses.ErrorHandling do
 
   ## Output relations
 
-  - `swallowed_error(func)` — catch-all rescue that silently discards exceptions.
+  - `swallowed_error(func)` — catch-all rescue that silently discards
+    exceptions (a handler that reifies the exception into a returned/
+    logged value or re-raises it is not flagged).
   - `trap_exit_without_handler(mod)` — traps exits but no handle_info({:EXIT,...},_) callback.
-  - `exit_in_callback(func, target)` — explicit Process.exit/2 inside GenServer callback.
+  - `exit_in_callback(func, target)` — an exit *signal* (Process.exit/2)
+    sent from a GenServer callback.
   - `ignored_start_result(func, callee)` — GenServer/Supervisor start result not checked.
 
   ## Finding severities
 
-  All four relations are `:warning`: each silently discards failure
+  `swallowed_error`, `trap_exit_without_handler`, and
+  `ignored_start_result` are `:warning`: each silently discards failure
   information — errors, exit signals, or failed starts — so the bug
-  surfaces later, far from its cause.
+  surfaces later, far from its cause. `exit_in_callback` is `:info`:
+  imperatively killing a process is frequently a deliberate protocol
+  (handoff, conflict resolution), so it is surfaced for confirmation
+  rather than flagged as a defect.
   """
 
   @behaviour Argus.Analysis
@@ -100,12 +107,14 @@ defmodule Argus.Analyses.ErrorHandling do
 
   def finding(:exit_in_callback, [func, target]) do
     Findings.new(
-      :warning,
+      :info,
       "Process.exit inside a GenServer callback",
-      "#{func} calls Process.exit on #{target} from inside a callback. " <>
-        "Killing processes imperatively bypasses supervision: the target's " <>
-        "supervisor sees an abnormal exit it didn't orchestrate, and restart " <>
-        "intensity accounting absorbs a failure that was really control flow.",
+      "#{func} sends an exit signal to #{target} from inside a callback. " <>
+        "This is often deliberate — process-manager handoff, registry " <>
+        "name-conflict resolution, an ownership watcher killing dependents — " <>
+        "but killing a process imperatively bypasses the supervisor that " <>
+        "started it, so it is worth confirming the target is meant to be " <>
+        "torn down this way rather than stopped through its own protocol.",
       at: Findings.at_func(func)
     )
   end
