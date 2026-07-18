@@ -195,3 +195,90 @@ defmodule Argus.Test.Fixtures.NamedPoolSupervisor do
     Supervisor.init(children, strategy: :one_for_one)
   end
 end
+
+# ── wrong_start_order: process dependency vs pure-function reach ──────
+
+defmodule Argus.Test.Fixtures.InitDepWorker do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  # A pure function — calling it does not require this process to be alive.
+  def compute(x), do: x * 2
+
+  @impl true
+  def handle_call(:ping, _from, state), do: {:reply, :pong, state}
+end
+
+defmodule Argus.Test.Fixtures.InitProcessCaller do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  # Synchronously calls InitDepWorker's process during init — a genuine
+  # start-order dependency: InitDepWorker must already be running.
+  @impl true
+  def init(opts) do
+    :pong = GenServer.call(Argus.Test.Fixtures.InitDepWorker, :ping)
+    {:ok, opts}
+  end
+end
+
+defmodule Argus.Test.Fixtures.InitPureCaller do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  # Calls only a PURE function defined in InitDepWorker's module — no
+  # dependency on InitDepWorker's process. Must NOT be a start-order
+  # hazard (the Horde.RegistryImpl -> NodeListener.make_members shape).
+  @impl true
+  def init(opts) do
+    _ = Argus.Test.Fixtures.InitDepWorker.compute(21)
+    {:ok, opts}
+  end
+end
+
+defmodule Argus.Test.Fixtures.ProcessDepSupervisor do
+  @moduledoc false
+  use Supervisor
+
+  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  # Caller (position 0) starts before InitDepWorker (position 1) and
+  # sync-calls it in init — wrong order.
+  @impl true
+  def init(_opts) do
+    children = [
+      Argus.Test.Fixtures.InitProcessCaller,
+      Argus.Test.Fixtures.InitDepWorker
+    ]
+
+    Supervisor.init(children, strategy: :one_for_one)
+  end
+end
+
+defmodule Argus.Test.Fixtures.PureDepSupervisor do
+  @moduledoc false
+  use Supervisor
+
+  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  # Caller (position 0) starts before InitDepWorker (position 1) but only
+  # calls a pure function in its module — not a start-order hazard.
+  @impl true
+  def init(_opts) do
+    children = [
+      Argus.Test.Fixtures.InitPureCaller,
+      Argus.Test.Fixtures.InitDepWorker
+    ]
+
+    Supervisor.init(children, strategy: :one_for_one)
+  end
+end

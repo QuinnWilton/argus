@@ -60,8 +60,53 @@ suspect_nonpermanent_dependency(sup, perm, sibling, restart, sup_site, witness) 
   (restart = "transient" ; restart = "temporary"),
   stateful_module_dep(perm, sibling, witness).
 
-// Child started before a dependency (wrong order under any strategy).
-// Scoped to init_reaches to avoid false positives from runtime paths.
+// A child's init/1 depends on the dependency's *process* — it makes a
+// synchronous call or cast to it during startup, so the dependency must
+// already be alive. This is stricter than init_reaches (which fires when
+// init merely calls any function defined in the dependency's module,
+// including a pure helper): a start-order hazard exists only when the
+// dependency's process is actually needed at init time.
+//
+// witness is the child's init/1 function, the anchor-grade evidence.
+.decl init_process_dep(child: symbol, dep: symbol, witness: symbol)
+
+init_process_dep(child, dep, func) :-
+  init_function(child, func),
+  sync_call(func, dep),
+  dep != "dynamic",
+  child != dep.
+
+init_process_dep(child, dep, func) :-
+  init_function(child, func),
+  call_reachable(func, g),
+  sync_call(g, dep),
+  dep != "dynamic",
+  child != dep.
+
+init_process_dep(child, dep, func) :-
+  init_function(child, func),
+  async_cast(func, dep),
+  dep != "dynamic",
+  child != dep.
+
+init_process_dep(child, dep, func) :-
+  init_function(child, func),
+  call_reachable(func, g),
+  async_cast(g, dep),
+  dep != "dynamic",
+  child != dep.
+
+// Through a GenServer client-API wrapper of the dependency.
+init_process_dep(child, dep, func) :-
+  init_function(child, func),
+  call_reachable(func, g),
+  genserver_sync_api(g, dep),
+  child != dep.
+
+// Child started before a dependency it needs at startup (wrong order
+// under any strategy). Scoped to init_process_dep — a genuine init-time
+// process dependency — so calling a pure helper that merely lives in the
+// dependency's module is not mistaken for a start-order hazard.
 // sup_site anchors at the tree definition; witness is the child's init/1.
 .decl wrong_start_order(sup: symbol, child: symbol, dep: symbol, child_pos: number, dep_pos: number, sup_site: symbol, witness: symbol)
 .output wrong_start_order
@@ -72,6 +117,6 @@ wrong_start_order(sup, child, dep, cpos, dpos, sup_site, witness) :-
   child_subtree(sup, dep_branch, dep),
   supervisor_child(sup, cpos, child_branch, _, _),
   supervisor_child(sup, dpos, dep_branch, _, _),
-  init_reaches(child, dep, witness),
+  init_process_dep(child, dep, witness),
   cpos < dpos,
   child_branch != dep_branch.

@@ -25,6 +25,45 @@ defmodule Argus.Analyses.SupervisionTest do
     end
   end
 
+  describe "wrong_start_order" do
+    test "flags a child whose init sync-calls a later-started sibling" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.ProcessDepSupervisor,
+        Argus.Test.Fixtures.InitProcessCaller,
+        Argus.Test.Fixtures.InitDepWorker
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :supervision)
+
+      assert Enum.any?(results["wrong_start_order"], fn [_sup, child, dep | _] ->
+               String.contains?(child, "InitProcessCaller") and
+                 String.contains?(dep, "InitDepWorker")
+             end)
+    end
+
+    test "does not flag init calling only a pure function in the sibling's module" do
+      skip_without_souffle()
+
+      # The Horde.RegistryImpl -> NodeListener.make_members shape: init
+      # reaches a function DEFINED in the dependency's module, but it is a
+      # pure function — no dependency on the dependency's process, so no
+      # start-order hazard.
+      modules = [
+        Argus.Test.Fixtures.PureDepSupervisor,
+        Argus.Test.Fixtures.InitPureCaller,
+        Argus.Test.Fixtures.InitDepWorker
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :supervision)
+
+      refute Enum.any?(results["wrong_start_order"], fn [_sup, child, _dep | _] ->
+               String.contains?(child, "InitPureCaller")
+             end)
+    end
+  end
+
   describe "suspect_nonpermanent_dependency" do
     # Hand-authored facts pin the rule exactly: P is a permanent child
     # that sync-calls its sibling S under the same supervisor. The
