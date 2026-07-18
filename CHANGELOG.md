@@ -125,6 +125,59 @@ pattern, adapted for Argus's multi-dimensional categorical metrics.
   embedders — keeps the lexicographically least row per key, so finding
   counts never depend on witness multiplicity or row order.
 
+### Fixed (analysis rules; schema version 5)
+
+Five shipped rules produced wrong output; all five lived in analyses
+that had **no analysis-level tests** (only their input extractors were
+tested), which is how they shipped. Each fix lands with a new
+`test/analyses/` file pinning positive and negative cases through real
+Souffle — every analysis now has one.
+
+- **`ignored_start_result` had never fired.** Souffle's
+  `contains(needle, haystack)` takes the needle first; the rule asked
+  "is the callee a substring of `'start_link'`" — false for every real
+  callee, so the relation had never produced a row. Fixed the argument
+  order and matched the delimited name (`.start_link/`, `.start/`) so
+  `Mod.restart_link/1` cannot substring-match. Audited every other
+  `contains()` in `priv/dl`: none had a swapped needle.
+- **`timeout_insufficient` flagged the default-vs-default chain.**
+  `t_ab <= t_bc` marked two chained calls both using the
+  `GenServer.call` default (5000 vs 5000) as an `:error` — the
+  universal configuration. The comparison is now strict (the equality
+  trade-off is documented in the rule), and the via-API timeout rules
+  no longer attribute an unrelated resolved sync call's timeout to the
+  wrapper's module (callee must be the target module or `"dynamic"`).
+- **`distributed` flagged any module's `init/1`.** Its local
+  `init_function` had no behaviour gate, so a plain module's ordinary
+  `init/1` was treated as supervisor startup; now uses the clientlib's
+  behaviour-gated rule. Also: `:net_kernel.monitor_nodes` in init was
+  flagged (the exclusion tested `"monitor"` but the extractor emits
+  `"monitor_nodes"` — a subscription flag, not a connection attempt),
+  and `global_register_risk` fired on `:global.register_name/3` — the
+  arity that supplies a conflict resolver, i.e. the fix for the race
+  being reported. `global_register` gained a trailing arity column
+  (**schema version 5**) and the rule flags only `/2`.
+- **`gen_statem` structural rules gated on extraction confidence.** A
+  module whose transitions failed to extract (delegating state
+  functions, unrecognized return shapes) had every state flagged both
+  unreachable AND terminal — extraction-gap noise presented as
+  findings. Both rules now require a concretely-resolved transition in
+  the module (`coverage_statem_no_transitions` still reports the gap),
+  and `unreachable_state` requires no dynamic-target transition. The
+  unused `statem_timeout` input and the moduledoc's advertised-but-
+  unimplemented timeout/nondeterminism checks are gone.
+- **`supervision` now flags `:temporary` siblings.**
+  `suspect_transient_dependency` matched only `:transient`, missing the
+  strictly-worse case (a temporary child is never restarted, not even
+  after a crash). Renamed to `suspect_nonpermanent_dependency` with a
+  `restart` column covering both policies.
+- Known limitation now pinned by a test: `trap_exit_without_handler`
+  cannot fire for `use GenServer` modules — the macro compiles a
+  default `handle_info/2` into every module, so the
+  function-existence heuristic is vacuous for idiomatic Elixir code. A
+  real fix needs clause-level pattern facts. Also dropped the unused
+  `registry_op`/`via_tuple`/`named_process` input declarations.
+
 ### Fixed (schema version 2)
 
 - **`line_info` now carries real source lines.** The emitter passed
