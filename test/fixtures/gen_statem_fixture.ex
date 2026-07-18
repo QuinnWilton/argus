@@ -109,3 +109,34 @@ defmodule Argus.Test.Fixtures.DelegatingStatem do
   @impl true
   def terminate(_reason, _state, _data), do: :ok
 end
+
+defmodule Argus.Test.Fixtures.PrivateHelperStatem do
+  @moduledoc false
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :state_functions
+
+  @impl true
+  def init(_args), do: {:ok, :idle, %{items: []}}
+
+  # Real states — exported, arity 3.
+  def idle(:cast, :go, data), do: {:next_state, :running, normalize(data)}
+
+  def running(:cast, :stop, data) do
+    # An anonymous closure the compiler lifts to a private arity-3
+    # top-level function (`-running/3-fun-0-`). It must not register as a
+    # state.
+    filtered = Enum.map(data.items, fn item -> {item, :running, data} end)
+    {:next_state, :idle, %{data | items: filtered}}
+  end
+
+  # A private arity-3 helper — same shape as a state function but not a
+  # state. Must not register as a state.
+  defp normalize(data, extra \\ [], _opts \\ []) do
+    %{data | items: data.items ++ extra}
+  end
+
+  @impl true
+  def terminate(_reason, _state, _data), do: :ok
+end

@@ -118,6 +118,7 @@ defmodule Argus.Extractors.GenStatem do
   defp extract_statem(mod, module_data) do
     mod_str = inspect(mod)
     functions = module_data.functions
+    exports = export_set(module_data)
 
     callback_mode = detect_callback_mode(functions)
 
@@ -128,7 +129,7 @@ defmodule Argus.Extractors.GenStatem do
 
     case callback_mode do
       :state_functions ->
-        extract_state_functions(facts, mod_str, functions)
+        extract_state_functions(facts, mod_str, functions, exports)
 
       :handle_event_function ->
         extract_handle_event(facts, mod_str, functions)
@@ -164,6 +165,18 @@ defmodule Argus.Extractors.GenStatem do
     synthetic_ctx("#{mod_str}:#{func_label}")
   end
 
+  # The module's exported {name, arity} pairs. Handles both beam_disasm
+  # export shapes (same normalization as Argus.Pipeline.Emit); an absent
+  # or malformed exports list yields an empty set.
+  defp export_set(module_data) do
+    module_data
+    |> Map.get(:exports, [])
+    |> MapSet.new(fn
+      {name, arity, _label} -> {name, arity}
+      {:atom, name, arity, _label} -> {name, arity}
+    end)
+  end
+
   # Detect the callback mode by finding the callback_mode/0 function and
   # resolving its return value.
   defp detect_callback_mode(functions) do
@@ -189,12 +202,22 @@ defmodule Argus.Extractors.GenStatem do
     end
   end
 
-  # In state_functions mode, each 3-arity exported function whose name isn't
-  # a standard callback is a state handler.
-  defp extract_state_functions(facts, mod_str, functions) do
+  # In state_functions mode, each 3-arity *exported* function whose name
+  # isn't a standard callback is a state handler. The export check is
+  # load-bearing: gen_statem dispatches to a state by calling
+  # `Module:StateName(EventType, EventContent, Data)`, which only reaches
+  # exported functions. Without it, every arity-3 private helper
+  # (`setopts/3`) and every compiler-lifted closure
+  # (`-handle_pubsub_msg/2-fun-0-`, which the compiler emits as a private
+  # arity-3 top-level function) was registered as a state — then flagged
+  # both unreachable and terminal, since no transition targets a helper.
+  # On the corpus this was the single largest false-positive source.
+  defp extract_state_functions(facts, mod_str, functions, exports) do
     state_funs =
       Enum.filter(functions, fn {:function, name, arity, _entry, _instrs} ->
-        arity == 3 and not MapSet.member?(@non_state_callbacks, name)
+        arity == 3 and
+          MapSet.member?(exports, {name, arity}) and
+          not MapSet.member?(@non_state_callbacks, name)
       end)
 
     # Register all states. In state_functions mode the state IS a

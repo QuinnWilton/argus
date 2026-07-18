@@ -32,6 +32,23 @@ defmodule Argus.Extractors.GenStatemTest do
       assert "running" in states
     end
 
+    test "registers only exported functions as states" do
+      facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.PrivateHelperStatem))
+
+      states = Enum.map(facts[:statem_state], fn [_, state, _site] -> state end)
+
+      # Real states.
+      assert "idle" in states
+      assert "running" in states
+
+      # A private arity-3 helper is not a state.
+      refute "normalize" in states
+
+      # Compiler-lifted closures (private arity-3 top-level functions with
+      # mangled names) are not states.
+      refute Enum.any?(states, &String.starts_with?(&1, "-"))
+    end
+
     test "detects transitions" do
       facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.SimpleStatem))
 
