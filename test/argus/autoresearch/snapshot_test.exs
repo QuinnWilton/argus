@@ -111,10 +111,10 @@ defmodule Argus.Autoresearch.SnapshotTest do
     end
 
     test "omits shape-gap relations with zero rows across the corpus" do
-      # Plug has no statem or named_process findings.
+      # Plug has no supervisor-shape or named_process findings.
       snapshot = Snapshot.from_reports([{"plug", plug_report()}])
 
-      refute Map.has_key?(snapshot.counts.shape_gaps, "coverage_statem_no_transitions")
+      refute Map.has_key?(snapshot.counts.shape_gaps, "coverage_supervisor_no_children")
       refute Map.has_key?(snapshot.counts.shape_gaps, "coverage_named_process_unreachable")
     end
 

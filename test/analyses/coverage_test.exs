@@ -16,7 +16,6 @@ defmodule Argus.Analyses.CoverageTest do
     Argus.Test.Fixtures.CoverageDynamicCalls,
     Argus.Test.Fixtures.CoverageEmptySupervisor,
     Argus.Test.Fixtures.CoverageDeadEts,
-    Argus.Test.Fixtures.CoverageStatemNoTransitions,
     Argus.Test.Fixtures.CoverageIsolatedGenServer
   ]
 
@@ -40,18 +39,6 @@ defmodule Argus.Analyses.CoverageTest do
 
       unused = results["coverage_ets_unused"] || []
       assert Enum.any?(unused, fn [name] -> name == ":coverage_dead_cache" end)
-    end
-
-    test "coverage_statem_no_transitions matches a module with only keep_state" do
-      skip_without_souffle()
-
-      assert {:ok, results} = Argus.analyze(@fixtures, :coverage)
-
-      no_trans = results["coverage_statem_no_transitions"] || []
-
-      assert Enum.any?(no_trans, fn [mod] ->
-               mod == "Argus.Test.Fixtures.CoverageStatemNoTransitions"
-             end)
     end
 
     test "coverage_genserver_isolated matches a GenServer with no callers" do

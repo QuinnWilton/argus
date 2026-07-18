@@ -46,7 +46,6 @@ defmodule Argus.Autoresearch.Snapshot do
     coverage_supervisor_no_children
     coverage_genserver_isolated
     coverage_ets_unused
-    coverage_statem_no_transitions
     coverage_named_process_unreachable
   )
 

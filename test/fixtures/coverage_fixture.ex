@@ -59,32 +59,6 @@ defmodule Argus.Test.Fixtures.CoverageDeadEts do
   end
 end
 
-defmodule Argus.Test.Fixtures.CoverageStatemNoTransitions do
-  @moduledoc false
-  @behaviour :gen_statem
-
-  # gen_statem with two states whose handlers return the bare atom
-  # :keep_state_and_data instead of a tuple. Bare atom returns don't
-  # flow through put_tuple2 so scan_return_tuples sees nothing —
-  # statem_state facts still fire (one per state function), but
-  # statem_transition fires zero times, which is exactly the shape
-  # coverage_statem_no_transitions is meant to catch.
-  def callback_mode, do: :state_functions
-
-  def init(_), do: {:ok, :idle, %{}}
-
-  def idle(:info, _event, _data) do
-    :keep_state_and_data
-  end
-
-  def busy(:info, _event, _data) do
-    :keep_state_and_data
-  end
-
-  def terminate(_reason, _state, _data), do: :ok
-  def code_change(_old, state, data, _extra), do: {:ok, state, data}
-end
-
 defmodule Argus.Test.Fixtures.CoverageIsolatedGenServer do
   @moduledoc false
   use GenServer

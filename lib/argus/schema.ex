@@ -58,7 +58,11 @@ defmodule Argus.Schema do
   # distributed analysis can distinguish :global.register_name/2 (default
   # conflict resolution, race-prone on partition) from /3 (explicit
   # resolver — the fixed form, which must not be flagged).
-  @schema_version 5
+  #
+  # Version 6: added the statem_initial relation — the gen_statem initial
+  # state read from init/1's return — so the reachability analysis stops
+  # guessing the entry point topologically.
+  @schema_version 6
 
   # Layer 1: Module-level facts.
 
@@ -952,6 +956,23 @@ defmodule Argus.Schema do
     doc: "State in a gen_statem state machine."
   }
 
+  @statem_initial %{
+    name: :statem_initial,
+    layer: 2,
+    fields: [
+      {:mod, :symbol, "module name"},
+      {:state, :symbol, "initial state atom"}
+    ],
+    doc: """
+    Initial state declared by `init/1`'s `{:ok, State, Data}` return \
+    (one row per resolvable clause — a machine with multiple init clauses \
+    has several). Read directly from the return rather than inferred \
+    topologically, so the reachability analysis knows which no-incoming \
+    state is the legitimate entry point. Only literal-atom states are \
+    recorded; a computed initial state emits no row.
+    """
+  }
+
   @statem_transition %{
     name: :statem_transition,
     layer: 2,
@@ -1104,6 +1125,7 @@ defmodule Argus.Schema do
     # gen_statem.
     @statem_module,
     @statem_state,
+    @statem_initial,
     @statem_transition,
     @statem_timeout,
     # Interprocedural constant propagation.

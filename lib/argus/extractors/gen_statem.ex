@@ -51,56 +51,6 @@ defmodule Argus.Extractors.GenStatem do
                          :module_info
                        ])
 
-  # Atoms that appear in gen_statem bytecode but are event types, protocol
-  # atoms, or common result atoms — not state names. Filtering these
-  # reduces false positives in handle_event_function mode where we can't
-  # easily distinguish state-argument matches from event-type matches.
-  # Atoms that appear in gen_statem bytecode but are event types, protocol
-  # atoms, or common result atoms — not state names. Filtering these
-  # reduces false positives in handle_event_function mode where we can't
-  # easily distinguish state-argument matches from event-type matches.
-  @non_state_atoms MapSet.new([
-                     # Event types.
-                     :cast,
-                     :call,
-                     :info,
-                     :internal,
-                     :timeout,
-                     :state_timeout,
-                     :event_timeout,
-                     :"$gen_call",
-                     :"$gen_cast",
-                     # Result/control atoms.
-                     :ok,
-                     :error,
-                     true,
-                     false,
-                     :undefined,
-                     :noreply,
-                     :reply,
-                     :stop,
-                     :normal,
-                     :shutdown,
-                     :hibernate,
-                     :postpone,
-                     :keep_state,
-                     :keep_state_and_data,
-                     :next_state,
-                     :next_event,
-                     # Transport / protocol atoms common in connection state machines.
-                     :tcp,
-                     :tcp_closed,
-                     :tcp_error,
-                     :ssl,
-                     :ssl_closed,
-                     :ssl_error,
-                     :http,
-                     :http2,
-                     # Common non-state atoms.
-                     :no_state,
-                     :backoff
-                   ])
-
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
@@ -119,6 +69,7 @@ defmodule Argus.Extractors.GenStatem do
     mod_str = inspect(mod)
     functions = module_data.functions
     exports = export_set(module_data)
+    locally_called = locally_called_set(mod, functions)
 
     callback_mode = detect_callback_mode(functions)
 
@@ -127,9 +78,11 @@ defmodule Argus.Extractors.GenStatem do
       |> maybe_track_unknown_callback_mode(mod_str, callback_mode)
       |> add_fact(:statem_module, [mod_str, to_string(callback_mode)])
 
+    facts = extract_initial_states(facts, mod_str, functions)
+
     case callback_mode do
       :state_functions ->
-        extract_state_functions(facts, mod_str, functions, exports)
+        extract_state_functions(facts, mod_str, functions, exports, locally_called)
 
       :handle_event_function ->
         extract_handle_event(facts, mod_str, functions)
@@ -137,6 +90,53 @@ defmodule Argus.Extractors.GenStatem do
       :unknown ->
         facts
     end
+  end
+
+  # The initial state(s) from init/1's `{:ok, State, Data}` /
+  # `{:ok, State, Data, Actions}` return — read directly rather than
+  # inferred from the transition graph's topology. A machine with several
+  # init clauses (Redix's Cluster.Manager returns :ready or :disconnected)
+  # emits one row per resolvable clause; a computed state emits none.
+  defp extract_initial_states(facts, mod_str, functions) do
+    case find_function(functions, :init, 1) do
+      nil -> facts
+      instrs -> Enum.reduce(instrs, facts, &initial_state_from_instr(&1, mod_str, &2))
+    end
+  end
+
+  # `{:ok, State, Data}` returns take two bytecode shapes: a put_tuple2
+  # when Data is runtime-built (the connection-machine case), or a single
+  # move of a fully-literal tuple when every element is constant
+  # (`{:ok, :idle, %{}}`). Handle both — missing the literal form leaves
+  # the analysis with no init state, and the topological fallback then
+  # misreads any no-incoming source (a dead state) as the entry point.
+  defp initial_state_from_instr({:put_tuple2, _dst, {:list, elements}}, mod_str, facts) do
+    case elements do
+      [{:atom, :ok}, {:atom, state} | _] -> add_initial(facts, mod_str, state)
+      _ -> facts
+    end
+  end
+
+  defp initial_state_from_instr({:move, {:literal, {:ok, state, _data}}, _dst}, mod_str, facts)
+       when is_atom(state) do
+    add_initial(facts, mod_str, state)
+  end
+
+  defp initial_state_from_instr(
+         {:move, {:literal, {:ok, state, _data, _acts}}, _dst},
+         mod_str,
+         facts
+       )
+       when is_atom(state) do
+    add_initial(facts, mod_str, state)
+  end
+
+  defp initial_state_from_instr(_instr, _mod_str, facts), do: facts
+
+  defp add_initial(facts, _mod_str, state) when state in [nil, :ok], do: facts
+
+  defp add_initial(facts, mod_str, state) do
+    add_fact(facts, :statem_initial, [mod_str, to_string(state)])
   end
 
   # Surface gen_statem modules whose callback_mode/0 couldn't be resolved
@@ -177,6 +177,46 @@ defmodule Argus.Extractors.GenStatem do
     end)
   end
 
+  # The {name, arity} pairs called directly by some function in this
+  # module. gen_statem dispatches to a state function externally
+  # (`apply(Mod, State, [EventType, EventContent, Data])`), so a real
+  # state is never the target of a local call. A helper that happens to
+  # be exported, arity-3, and returns a gen_statem action tuple on behalf
+  # of its caller (Redix's `disconnect(data, reason, flag)` returning
+  # `{:next_state, :disconnected, …}`) IS locally called — that is what
+  # separates it from a genuine dead state. (A state function delegating
+  # by a direct call to a sibling state would be excluded, a rare and
+  # acceptable false negative.)
+  defp locally_called_set(mod, functions) do
+    labels =
+      for {:function, name, arity, entry, _instrs} <- functions,
+          into: %{},
+          do: {entry, {name, arity}}
+
+    for {:function, _n, _a, _e, instrs} <- functions,
+        instr <- instrs,
+        fa = local_call_target(instr, mod, labels),
+        fa != nil,
+        into: MapSet.new() do
+      fa
+    end
+  end
+
+  defp local_call_target({:call, _arity, target}, mod, labels),
+    do: resolve_call_fa(target, mod, labels)
+
+  defp local_call_target({:call_only, _arity, target}, mod, labels),
+    do: resolve_call_fa(target, mod, labels)
+
+  defp local_call_target({:call_last, _arity, target, _dealloc}, mod, labels),
+    do: resolve_call_fa(target, mod, labels)
+
+  defp local_call_target(_instr, _mod, _labels), do: nil
+
+  defp resolve_call_fa({mod, func, arity}, mod, _labels), do: {func, arity}
+  defp resolve_call_fa({:f, label}, _mod, labels), do: Map.get(labels, label)
+  defp resolve_call_fa(_target, _mod, _labels), do: nil
+
   # Detect the callback mode by finding the callback_mode/0 function and
   # resolving its return value.
   defp detect_callback_mode(functions) do
@@ -202,22 +242,33 @@ defmodule Argus.Extractors.GenStatem do
     end
   end
 
-  # In state_functions mode, each 3-arity *exported* function whose name
-  # isn't a standard callback is a state handler. The export check is
-  # load-bearing: gen_statem dispatches to a state by calling
-  # `Module:StateName(EventType, EventContent, Data)`, which only reaches
-  # exported functions. Without it, every arity-3 private helper
-  # (`setopts/3`) and every compiler-lifted closure
-  # (`-handle_pubsub_msg/2-fun-0-`, which the compiler emits as a private
-  # arity-3 top-level function) was registered as a state — then flagged
-  # both unreachable and terminal, since no transition targets a helper.
-  # On the corpus this was the single largest false-positive source.
-  defp extract_state_functions(facts, mod_str, functions, exports) do
+  # In state_functions mode, a state handler is an arity-3 function that
+  # is exported, not a standard callback, not called locally, and returns
+  # a gen_statem action. Each filter removes a distinct false-positive
+  # class seen on the corpus:
+  #
+  #   * exported — gen_statem dispatches a state via
+  #     `Module:StateName(EventType, EventContent, Data)`, which only
+  #     reaches exported functions; excludes private helpers (`setopts/3`)
+  #     and compiler-lifted closures (`-handle_pubsub_msg/2-fun-0-`,
+  #     emitted as private arity-3 top-level functions).
+  #   * not locally called — a state is dispatched externally, never by a
+  #     sibling; excludes exported helpers a state calls directly.
+  #   * returns an action — every state clause returns a gen_statem action
+  #     tuple/atom; excludes exported client wrappers (`connect_to_node/3`
+  #     returning a `:gen_statem.call` result) and plain lookup helpers
+  #     (`get_connection/3`).
+  #
+  # Together these cut the corpus's gen_statem findings from 108 (all
+  # false) to the genuine dead-state cases.
+  defp extract_state_functions(facts, mod_str, functions, exports, locally_called) do
     state_funs =
-      Enum.filter(functions, fn {:function, name, arity, _entry, _instrs} ->
+      Enum.filter(functions, fn {:function, name, arity, _entry, instrs} ->
         arity == 3 and
           MapSet.member?(exports, {name, arity}) and
-          not MapSet.member?(@non_state_callbacks, name)
+          not MapSet.member?(@non_state_callbacks, name) and
+          not MapSet.member?(locally_called, {name, arity}) and
+          returns_statem_action?(instrs)
       end)
 
     # Register all states. In state_functions mode the state IS a
@@ -238,80 +289,83 @@ defmodule Argus.Extractors.GenStatem do
     end)
   end
 
-  # In handle_event_function mode, analyze handle_event/4 for state patterns.
+  # gen_statem callback-result atoms. A real state function's body always
+  # returns one of these (the behaviour requires it); a client-API wrapper
+  # (`:gen_statem.call`) or a plain lookup helper never does. Requiring an
+  # action return separates the two — on the corpus it excluded exported
+  # arity-3 helpers like `connect_to_node/3` and `get_connection/3` that
+  # the export filter alone could not.
+  @statem_action_heads MapSet.new([
+                         :next_state,
+                         :keep_state,
+                         :keep_state_and_data,
+                         :repeat_state,
+                         :repeat_state_and_data,
+                         :stop,
+                         :stop_and_reply
+                       ])
+
+  # The two actions that are also valid as bare atoms (not just tuples).
+  @statem_bare_actions MapSet.new([:keep_state_and_data, :repeat_state_and_data])
+
+  defp returns_statem_action?(instrs) do
+    tuple_action_return?(instrs) or bare_action_return?(instrs)
+  end
+
+  defp tuple_action_return?(instrs) do
+    instrs
+    |> scan_return_tuples()
+    |> Enum.any?(fn
+      {_idx, [{:atom, head} | _]} -> MapSet.member?(@statem_action_heads, head)
+      _ -> false
+    end)
+  end
+
+  # A bare `:keep_state_and_data` / `:repeat_state_and_data` return loads
+  # the atom into a register. Those atoms are used only as gen_statem
+  # returns, so their presence anywhere in the body is a safe signal.
+  defp bare_action_return?(instrs) do
+    Enum.any?(instrs, fn
+      {:move, {:atom, atom}, _dst} -> MapSet.member?(@statem_bare_actions, atom)
+      _ -> false
+    end)
+  end
+
+  # In handle_event_function mode there is a single handle_event/4 callback
+  # and states are ordinary data values. We record transitions (real
+  # `{:next_state, X}` targets) but do NOT harvest candidate states from
+  # atom comparisons in the body: that swept in message tags (`:DOWN`,
+  # `:EXIT`), command atoms, module aliases, and compiler error atoms
+  # (`:badarg`) as phantom states. The structural rules
+  # (unreachable_state, terminal_without_stop) are scoped to
+  # state_functions mode, where states are real callback functions, so no
+  # candidate-state harvesting is needed here.
   defp extract_handle_event(facts, mod_str, functions) do
     case find_function(functions, :handle_event, 4) do
       nil ->
         facts
 
       instrs ->
-        # Look for state atoms in pattern matches and transitions.
         facts
-        |> extract_states_from_instrs(mod_str, "#{mod_str}:handle_event/4", instrs)
         |> extract_transitions(mod_str, "handle_event", instrs, "#{mod_str}:handle_event/4")
         |> extract_timeouts(mod_str, "handle_event", instrs, "#{mod_str}:handle_event/4")
     end
   end
 
-  # Extract state atoms from instructions — looks for atom comparisons
-  # and select_val patterns that indicate state matching. Filters out
-  # known non-state atoms (event types, protocol atoms) to reduce FPs.
-  # The site is the matching instruction, so state findings anchor at
-  # the exact line even in handle_event mode.
-  defp extract_states_from_instrs(facts, mod_str, func_id, instrs) do
-    instrs
-    |> Enum.with_index()
-    |> Enum.reduce(facts, fn {instr, idx}, acc ->
-      site = "#{func_id}##{idx}"
-
-      case instr do
-        {:select_val, _, _, {:list, pairs}} ->
-          pairs
-          |> Enum.take_every(2)
-          |> Enum.reduce(acc, fn
-            {:atom, state}, inner_acc ->
-              if state_candidate?(state) do
-                add_fact(inner_acc, :statem_state, [mod_str, to_string(state), site])
-              else
-                inner_acc
-              end
-
-            _, inner_acc ->
-              inner_acc
-          end)
-
-        {:test, :is_eq_exact, _, [{:x, _}, {:atom, state}]} ->
-          if state_candidate?(state) do
-            add_fact(acc, :statem_state, [mod_str, to_string(state), site])
-          else
-            acc
-          end
-
-        {:test, :is_eq_exact, _, [{:atom, state}, {:x, _}]} ->
-          if state_candidate?(state) do
-            add_fact(acc, :statem_state, [mod_str, to_string(state), site])
-          else
-            acc
-          end
-
-        _ ->
-          acc
-      end
-    end)
-  end
-
-  defp state_candidate?(atom) do
-    is_atom(atom) and atom != nil and atom != :"" and
-      not MapSet.member?(@non_state_atoms, atom)
-  end
-
   # Extract transitions from return tuples. Look for {:next_state, target, ...}
   # patterns in put_tuple2 instructions.
   defp extract_transitions(facts, mod_str, from_state, instrs, func_id) do
-    return_tuples = scan_return_tuples(instrs)
     ctx = synthetic_ctx(func_id)
 
-    Enum.reduce(return_tuples, facts, fn {idx, elements}, acc ->
+    facts
+    |> transitions_from_tuples(mod_str, from_state, instrs, func_id, ctx)
+    |> transitions_from_bare_actions(mod_str, from_state, instrs)
+  end
+
+  defp transitions_from_tuples(facts, mod_str, from_state, instrs, func_id, ctx) do
+    instrs
+    |> scan_return_tuples()
+    |> Enum.reduce(facts, fn {idx, elements}, acc ->
       case elements do
         # {:next_state, target_state, data} or {:next_state, target_state, data, actions}.
         [{:atom, :next_state}, target | _] ->
@@ -322,22 +376,34 @@ defmodule Argus.Extractors.GenStatem do
           |> add_fact(:statem_transition, [mod_str, from_state, "event", to_state])
           |> maybe_add_target_state(mod_str, to_state, "#{func_id}##{idx}")
 
-        # {:keep_state, ...} — self-transition.
-        [{:atom, :keep_state} | _] ->
+        # {:keep_state, …} / {:keep_state_and_data, …} / {:repeat_state, …} /
+        # {:repeat_state_and_data, …} — the machine stays in the current
+        # state, so the edge is a self-transition (outgoing, so the state
+        # is not terminal).
+        [{:atom, action} | _]
+        when action in [:keep_state, :keep_state_and_data, :repeat_state, :repeat_state_and_data] ->
           add_fact(acc, :statem_transition, [mod_str, from_state, "event", from_state])
 
-        # {:keep_state_and_data, ...} — self-transition.
-        [{:atom, :keep_state_and_data} | _] ->
-          add_fact(acc, :statem_transition, [mod_str, from_state, "event", from_state])
-
-        # {:stop, ...} — terminal transition.
-        [{:atom, :stop} | _] ->
+        # {:stop, …} / {:stop_and_reply, …} — terminal transition.
+        [{:atom, action} | _] when action in [:stop, :stop_and_reply] ->
           add_fact(acc, :statem_transition, [mod_str, from_state, "event", "stop"])
 
         _ ->
           acc
       end
     end)
+  end
+
+  # Bare `:keep_state_and_data` / `:repeat_state_and_data` returns (the
+  # atom, not a tuple) are self-transitions the return-tuple scan cannot
+  # see. Recording them keeps a state that only ever returns a bare
+  # keep/repeat from being misread as an outgoing-less terminal state.
+  defp transitions_from_bare_actions(facts, mod_str, from_state, instrs) do
+    if bare_action_return?(instrs) do
+      add_fact(facts, :statem_transition, [mod_str, from_state, "event", from_state])
+    else
+      facts
+    end
   end
 
   # Also scan for literal return values moved to x0. The site is the

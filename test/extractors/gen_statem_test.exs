@@ -44,6 +44,10 @@ defmodule Argus.Extractors.GenStatemTest do
       # A private arity-3 helper is not a state.
       refute "normalize" in states
 
+      # An exported, arity-3, action-returning helper that a state calls
+      # directly is not a state (gen_statem never calls a state locally).
+      refute "finalize" in states
+
       # Compiler-lifted closures (private arity-3 top-level functions with
       # mangled names) are not states.
       refute Enum.any?(states, &String.starts_with?(&1, "-"))

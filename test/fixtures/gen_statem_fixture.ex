@@ -61,6 +61,9 @@ defmodule Argus.Test.Fixtures.OrphanStateStatem do
   @impl true
   def callback_mode, do: :state_functions
 
+  # init/1 declares :idle as the entry point — read directly, so :idle is
+  # never mistaken for an unreachable state despite having no incoming
+  # transition of its own.
   @impl true
   def init(_args), do: {:ok, :idle, %{}}
 
@@ -72,10 +75,11 @@ defmodule Argus.Test.Fixtures.OrphanStateStatem do
     {:next_state, :idle, data}
   end
 
-  # Dead state: nothing transitions to it and it never transitions out —
-  # unreachable AND terminal.
-  def abandoned(_event, _msg, _data) do
-    exit(:unreachable)
+  # Dead state: it returns a real gen_statem action (so it IS a state
+  # function, not a helper), but no transition ever targets it and it is
+  # not the initial state — genuinely unreachable dead code.
+  def abandoned(:cast, :never, data) do
+    {:next_state, :running, data}
   end
 
   @impl true
@@ -128,13 +132,54 @@ defmodule Argus.Test.Fixtures.PrivateHelperStatem do
     # top-level function (`-running/3-fun-0-`). It must not register as a
     # state.
     filtered = Enum.map(data.items, fn item -> {item, :running, data} end)
-    {:next_state, :idle, %{data | items: filtered}}
+    # A locally-called, exported, arity-3 helper that returns a gen_statem
+    # action tuple on the caller's behalf — the Redix `disconnect/3`
+    # shape. It must not register as a state.
+    finalize(%{data | items: filtered}, :idle, [])
+  end
+
+  def finalize(data, target, _opts) do
+    {:next_state, target, data}
   end
 
   # A private arity-3 helper — same shape as a state function but not a
   # state. Must not register as a state.
   defp normalize(data, extra \\ [], _opts \\ []) do
     %{data | items: data.items ++ extra}
+  end
+
+  @impl true
+  def terminate(_reason, _state, _data), do: :ok
+end
+
+defmodule Argus.Test.Fixtures.HandleEventStatem do
+  @moduledoc false
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :handle_event_function
+
+  # Single sentinel state, à la DBConnection.Connection. The body matches
+  # many atoms (message tags, commands) that are NOT states — the old
+  # atom-harvesting extraction wrongly registered each as a phantom state.
+  @impl true
+  def init(_args), do: {:ok, :no_state, %{}}
+
+  @impl true
+  def handle_event({:call, from}, :connect, :no_state, data) do
+    {:keep_state, data, [{:reply, from, :ok}]}
+  end
+
+  def handle_event(:info, {:DOWN, _ref, :process, _pid, _reason}, :no_state, data) do
+    {:stop, :shutdown, data}
+  end
+
+  def handle_event(:info, {:EXIT, _pid, _reason}, :no_state, data) do
+    {:keep_state, data}
+  end
+
+  def handle_event(:cast, :ping, :no_state, data) do
+    :keep_state_and_data
   end
 
   @impl true

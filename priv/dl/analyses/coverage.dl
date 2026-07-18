@@ -131,19 +131,6 @@ coverage_ets_unused(name) :-
   !ets_op(_, _, name, _, _),
   !ets_module_has_ops(name, _).
 
-// gen_statem module with recognized states but no extracted transitions.
-// State detection fires on function names in state_functions mode and
-// on select_val patterns in handle_event_function mode, but transitions
-// require recognizing the return tuple shape. A mismatch means the
-// return-tuple scanner is missing a case.
-.decl coverage_statem_no_transitions(mod: symbol)
-.output coverage_statem_no_transitions
-
-coverage_statem_no_transitions(mod) :-
-  statem_module(mod, _),
-  statem_state(mod, _, _),
-  !statem_transition(mod, _, _, _).
-
 // A named process was registered but no sync or async traffic targets it.
 // Excludes "dynamic" names — they can't be meaningfully joined with
 // callers, so flagging them as unreachable is vacuous.

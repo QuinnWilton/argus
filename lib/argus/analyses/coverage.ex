@@ -32,8 +32,6 @@ defmodule Argus.Analyses.Coverage do
     observed sync_call/async_cast traffic.
   - `coverage_ets_unused(name)` — named ETS table with no observed
     read or write operations.
-  - `coverage_statem_no_transitions(mod)` — gen_statem with states but
-    no transitions extracted.
   - `coverage_named_process_unreachable(name, mod)` — registered name
     with no sync or async traffic targeting it.
   """
@@ -102,12 +100,6 @@ defmodule Argus.Analyses.Coverage do
           "ETS table created with a concrete name but no read or write operations observed against it."
       },
       %{
-        name: :coverage_statem_no_transitions,
-        fields: [{:mod, :symbol, "gen_statem module"}],
-        doc:
-          "gen_statem module with recognized states but no transitions extracted — the return-tuple scanner is missing a shape."
-      },
-      %{
         name: :coverage_named_process_unreachable,
         fields: [
           {:name, :symbol, "registered name"},
@@ -163,16 +155,6 @@ defmodule Argus.Analyses.Coverage do
       "ETS table with no observed operations",
       "Table #{name} is created with a concrete name, but no reads or writes " <>
         "against it were extracted from the corpus."
-    )
-  end
-
-  def finding(:coverage_statem_no_transitions, [mod]) do
-    Findings.new(
-      :info,
-      "gen_statem with no extracted transitions",
-      "#{mod} has recognized states but zero extracted transitions — the " <>
-        "return-tuple scanner is missing a shape this module uses.",
-      at: Findings.at_module(mod)
     )
   end
 

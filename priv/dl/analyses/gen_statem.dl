@@ -15,15 +15,29 @@
 .decl statem_transition(mod: symbol, from_state: symbol, event: symbol, to_state: symbol)
 .input statem_transition
 
+.decl statem_initial(mod: symbol, state: symbol)
+.input statem_initial
+
+// ── Mode scoping ─────────────────────────────────────────────────
+//
+// The structural rules below reason over a graph of state-function
+// callbacks. That graph only exists in state_functions mode; in
+// handle_event_function mode there is a single handle_event/4 callback
+// and states are ordinary data values, so "unreachable state function"
+// and "terminal state function" are not well-defined and the extractor
+// cannot build a per-state transition graph. Scope both rules to
+// state_functions modules.
+.decl state_functions_mode(mod: symbol)
+
+state_functions_mode(mod) :- statem_module(mod, "state_functions").
+
 // ── Extraction confidence ────────────────────────────────────────
 //
 // Both structural rules reason over the extracted transition graph, so
 // they are only sound where extraction produced one. A module whose
-// return tuples the extractor could not read yields states but no
-// transitions — under-extraction, not a machine with no edges — and
-// without this gate every such state would be flagged both unreachable
-// and terminal. The coverage analysis (coverage_statem_no_transitions)
-// reports those modules as extraction gaps instead.
+// return tuples the extractor could not read yields no resolved
+// transitions; without this gate its states would be flagged both
+// unreachable and terminal from an empty graph.
 
 // At least one transition with a concrete target was extracted.
 .decl module_has_resolved_transition(mod: symbol)
@@ -49,14 +63,26 @@ state_has_incoming(mod, state) :-
   state != "stop",
   state != "dynamic".
 
-// Initial state — the first state in init/1 (heuristic: the first
-// state declared, or the source of the first transition).
+// Initial state. Authoritative when init/1's return was resolvable
+// (statem_initial); otherwise a topological fallback — a state that is a
+// transition source with no incoming edge. The fallback is used only for
+// modules with no resolved init state, so a machine whose real entry
+// point was read from init/1 never has a second state misclassified as
+// initial by the heuristic.
+.decl module_has_initial(mod: symbol)
+
+module_has_initial(mod) :- statem_initial(mod, _).
+
 .decl initial_state(mod: symbol, state: symbol)
+
+initial_state(mod, state) :-
+  statem_initial(mod, state).
 
 initial_state(mod, state) :-
   statem_transition(mod, state, _, _),
   !state_has_incoming(mod, state),
-  statem_state(mod, state, _).
+  statem_state(mod, state, _),
+  !module_has_initial(mod).
 
 // Unreachable state — defined but no transition leads to it and
 // it's not the initial state. One row per discovery site — finding
@@ -73,6 +99,7 @@ initial_state(mod, state) :-
 
 unreachable_state(mod, state, site) :-
   statem_state(mod, state, site),
+  state_functions_mode(mod),
   module_has_resolved_transition(mod),
   !module_has_dynamic_transition(mod),
   !state_has_incoming(mod, state),
@@ -96,6 +123,7 @@ state_has_outgoing(mod, state) :-
 
 terminal_without_stop(mod, state, site) :-
   statem_state(mod, state, site),
+  state_functions_mode(mod),
   module_has_resolved_transition(mod),
   !state_has_outgoing(mod, state),
   state != "stop",

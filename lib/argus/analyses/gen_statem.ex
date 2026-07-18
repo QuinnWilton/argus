@@ -4,9 +4,12 @@ defmodule Argus.Analyses.GenStatem do
 
   Detects structural state machine bugs: unreachable states and terminal
   states that never stop. Both rules reason over the extracted transition
-  graph, so they only fire in modules where transition extraction
-  produced concrete edges — an unextractable machine is a coverage gap
-  (`coverage_statem_no_transitions`), not a machine with no transitions.
+  graph and are scoped to `state_functions` mode; in
+  `handle_event_function` mode there is a single callback and states are
+  data values, so a per-state graph cannot be built. A state is a state
+  only if it is an exported arity-3 function that returns a gen_statem
+  action, and the entry point is read from `init/1` rather than guessed
+  topologically.
 
   ## Output relations
 
