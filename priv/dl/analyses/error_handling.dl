@@ -81,9 +81,19 @@ exit_in_callback(func, target) :-
 // ── Ignored start results ────────────────────────────────────────
 
 // GenServer/Supervisor start result not checked.
+//
+// callee is rendered as "Mod.func/arity", so the function name is
+// always preceded by "." and followed by "/" — matching the delimited
+// name keeps a callee like "Mod.restart_link/1" from substring-matching
+// "start_link".
+//
+// NOTE Souffle's contains(needle, haystack) takes the needle FIRST. The
+// rule originally wrote contains(callee, "start_link") — "is the callee
+// a substring of 'start_link'" — which is false for every real callee,
+// so this relation had never produced a single row.
 .decl ignored_start_result(func: symbol, callee: symbol)
 .output ignored_start_result
 
 ignored_start_result(func, callee) :-
   ignored_error_result(_, func, callee),
-  (contains(callee, "start_link") ; contains(callee, "start/")).
+  (contains(".start_link/", callee) ; contains(".start/", callee)).
