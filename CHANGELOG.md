@@ -12,6 +12,73 @@ baseline the results, edit an extractor, re-measure, diff, accept or
 revert, repeat. Inspired by pi-autoresearch's event-log + living-doc
 pattern, adapted for Argus's multi-dimensional categorical metrics.
 
+### Fixed (precision — 15-project OTP corpus audit)
+
+Ran every analysis against 15 OTP libraries (bandit, broadway, cachex,
+commanded, db_connection, finch, gen_stage, horde, libcluster,
+nimble_pool, oban, phoenix_pubsub, quantum, redix, swarm) and verified
+each finding against source. Total findings fell from ~260 to 88 with no
+true positive lost; the remaining findings are the verified real ones
+(the two `atom_safety` errors, Oban's coupling, the genuine timeout
+chains) plus intentional-pattern warnings. Five analyses had systematic
+false-positive mechanisms:
+
+- **`gen_statem` (108 → 0, all false).** Three root causes.
+  `state_functions` mode treated every arity-3 function as a state; it is
+  now an arity-3 function that is exported, not called locally, and
+  returns a gen_statem action — which excludes private helpers, compiler
+  closures, exported client wrappers (`connect_to_node/3`), and
+  action-returning helpers a state calls (`disconnect/3`). The initial
+  state was inferred topologically, letting a dead state that transitions
+  out masquerade as the entry point; it is now read from `init/1`'s
+  return (schema v6 `statem_initial`). `handle_event_function` mode
+  harvested every atom in `handle_event/4` (`:DOWN`, `:badarg`, module
+  aliases) as a state; the structural rules are now scoped to
+  `state_functions` mode. `extract_transitions` also models the remaining
+  action forms (`repeat_state`, `stop_and_reply`, bare
+  `:keep_state_and_data`), so every state now implies a transition —
+  making `coverage_statem_no_transitions` unfireable, and it is removed.
+- **`timeout_chain` (32 → 3).** All 29 false positives came from one
+  `callback_sync_dep` clause built on `stateful_module_dep`, which (via
+  its module-level heuristic) counted reaching a *pure* function
+  (`Config.get/2`, an ETS read) as calling that module's server, never
+  tied the dependency to the handle_call, and pulled `async_cast` edges
+  into a "synchronous" chain. The clause is removed; the genuine chains
+  derive from the `genserver_sync_api` rules. `timeout_chain_risk` gains a
+  `[:from, :to]` dedup key so a cycle yields one finding, not one per
+  depth.
+- **`error_handling` (25 → 8).** `swallowed_error` never checked that the
+  handler discards the exception — the idiom
+  `catch kind, reason -> {:error, …}` was flagged; a liveness scan now
+  clears a handler that reads the caught exception registers before
+  overwriting them, and `raw_raise` (the OTP-21 compiled form of
+  `:erlang.raise/3`) is recognized as a re-raise.
+  `trap_exit_without_handler` no longer fires on gen_statem modules
+  (which receive `{:EXIT, …}` in state functions). `exit_in_callback` no
+  longer treats `:erlang.exit/1` (a let-it-crash self-exit) as an
+  imperative kill, and is downgraded to `:info` since a `Process.exit/2`
+  in a callback is usually a deliberate protocol.
+- **`distributed` (21 → 5).** `rpc_in_genserver_callback` reported RPCs
+  reachable transitively through a guarded dispatcher (Cachex's
+  `Router.route`, whose clauses the function-granularity call graph
+  collapses) — all 13 corpus findings were false; only an RPC directly in
+  a callback is now reported, and the sites stay covered by
+  `rpc_without_timeout` (whose message no longer claims "default" for an
+  explicit `:infinity`).
+- **`supervision` (1 → 0).** `wrong_start_order` fired on `init_reaches`,
+  which counts a child's `init/1` calling any function in a dependency's
+  module — including a pure helper (Horde's
+  `NodeListener.make_members/1`). It now requires an actual process
+  interaction (sync call / cast) to the dependency at init.
+
+The harness (`scripts/harness.exs`, `analyze_project.exs`) was
+modernized for this audit: it runs every analysis by default, and the
+report gains an `otp_findings` section — severity-ranked findings with
+source-line-resolved anchors — feeding a cross-project `triage.json`
+index. Fixes along the way: ebin discovery now finds `_build/shared`
+(projects with `build_per_environment: false`), and `--resume` rebuilds
+the triage index from all results on disk rather than clobbering it.
+
 ### Added
 
 - **Dataflow primitives for value provenance.** `Argus.Extractor.Helpers`
