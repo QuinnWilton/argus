@@ -86,6 +86,29 @@ defmodule Argus.Analyses.TimeoutChainTest do
     end
   end
 
+  describe "no chain through a pure-function reach" do
+    test "a handle_call reaching only a pure function is not a chain hop" do
+      skip_without_souffle()
+
+      # ChainOuter.handle_call reaches only ChainMiddle.pure/1 (pure);
+      # ChainMiddle really does sync-call ChainInner. The old
+      # stateful_module_dep clause manufactured ChainOuter -> ChainMiddle
+      # -> ChainInner from the pure reach plus "ChainMiddle has a
+      # GenServer.call somewhere".
+      modules = [
+        Argus.Test.Fixtures.TimeoutChain.ChainOuter,
+        Argus.Test.Fixtures.TimeoutChain.ChainMiddle,
+        Argus.Test.Fixtures.TimeoutChain.ChainInner
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :timeout_chain)
+
+      refute Enum.any?(results["timeout_chain_risk"], fn [from | _] ->
+               String.contains?(from, "ChainOuter")
+             end)
+    end
+  end
+
   describe "timeout_insufficient" do
     test "flags a caller whose budget is strictly smaller than the downstream hop" do
       skip_without_souffle()

@@ -139,3 +139,61 @@ defmodule Argus.Test.Fixtures.TimeoutChain.TightBudgetServer do
     {:reply, val, state}
   end
 end
+
+# ── Regression: pure-function reach must not manufacture a chain ──────
+# Mirrors the commanded FP: a handle_call that reaches only a PURE
+# function in another GenServer's module was chained to that module
+# because the module has a GenServer.call *somewhere* else.
+
+defmodule Argus.Test.Fixtures.TimeoutChain.ChainInner do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  def sync(server), do: GenServer.call(server, :x)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call(:x, _from, state), do: {:reply, :ok, state}
+end
+
+defmodule Argus.Test.Fixtures.TimeoutChain.ChainMiddle do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  # A PURE, exported function — no process interaction.
+  def pure(k), do: k * 2
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  # This module DOES have a sync call — but only here, to ChainInner.
+  @impl true
+  def handle_call(:go, _from, state) do
+    _ = Argus.Test.Fixtures.TimeoutChain.ChainInner.sync(state.inner)
+    {:reply, :ok, state}
+  end
+end
+
+defmodule Argus.Test.Fixtures.TimeoutChain.ChainOuter do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  # Reaches only ChainMiddle.pure/1 — a pure function. This must NOT be
+  # read as a synchronous dependency on the ChainMiddle process, so no
+  # ChainOuter -> ChainMiddle -> ChainInner timeout chain exists.
+  @impl true
+  def handle_call(:req, _from, state) do
+    _ = Argus.Test.Fixtures.TimeoutChain.ChainMiddle.pure(21)
+    {:reply, :ok, state}
+  end
+end

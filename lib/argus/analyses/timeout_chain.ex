@@ -57,6 +57,11 @@ defmodule Argus.Analyses.TimeoutChain do
           {:to, :symbol, "innermost GenServer module"},
           {:depth, :number, "chain depth (>= 2)"}
         ],
+        # One finding per (from, to) module pair. The depth relation is
+        # recursive with only a `from != to` guard, so a genuine cycle
+        # emits a row at every depth up to the cap; keying on the pair
+        # collapses those to a single finding instead of one per depth.
+        key: [:from, :to],
         doc: "Timeout chain through GenServer handle_call callbacks."
       },
       %{

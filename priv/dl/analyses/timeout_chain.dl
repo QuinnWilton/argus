@@ -69,12 +69,17 @@ callback_sync_dep(from_mod, to_mod) :-
   genserver_sync_api(g, to_mod),
   from_mod != to_mod.
 
-// Via stateful_module_dep (catches heuristic cases).
-callback_sync_dep(from_mod, to_mod) :-
-  handle_call_function(from_mod, _),
-  stateful_module_dep(from_mod, to_mod, _),
-  implements_behaviour(to_mod, "GenServer"),
-  from_mod != to_mod.
+// NOTE deliberately no `stateful_module_dep` clause here. It was
+// `handle_call_function(from_mod, _), stateful_module_dep(from_mod,
+// to_mod, _)` — an existence check that (a) never tied the dependency to
+// the handle_call (the dep could flow from init/1 or a cast handler),
+// (b) inherited stateful_module_dep's module-level heuristic (reaching a
+// PURE function like an ETS-read `Config.get/2` counts as calling the
+// Config server, because the module has a GenServer.call *somewhere*),
+// and (c) pulled async_cast edges into a "synchronous" chain. On a
+// 15-project corpus this clause produced every one of the analysis's 29
+// false positives (0 came from it that were real); the genuine chains
+// all derive from the genserver_sync_api rules above.
 
 // ── Timeout chain computation ────────────────────────────────────────
 
