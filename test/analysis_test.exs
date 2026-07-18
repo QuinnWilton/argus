@@ -77,7 +77,7 @@ defmodule Argus.AnalysisTest do
     test "supervision exposes its anti-pattern relations" do
       assert {:ok, relations} = Analysis.output_relations(:supervision)
       names = Enum.map(relations, & &1.name)
-      assert :suspect_transient_dependency in names
+      assert :suspect_nonpermanent_dependency in names
       assert :wrong_start_order in names
     end
   end

@@ -2,17 +2,19 @@ defmodule Argus.Analyses.Supervision do
   @moduledoc """
   Supervision tree analysis.
 
-  Detects anti-patterns in supervision tree structure: transient processes
-  depended on by permanent ones, and children started in the wrong order
-  relative to their dependencies. Cross-branch coupling under one_for_one
-  is the `one_for_one_coupling` analysis's job — the two do not overlap.
+  Detects anti-patterns in supervision tree structure: permanent
+  processes depending on transient or temporary siblings (which their
+  restart policy can leave permanently dead), and children started in
+  the wrong order relative to their dependencies. Cross-branch coupling
+  under one_for_one is the `one_for_one_coupling` analysis's job — the
+  two do not overlap.
 
   Requires the supervision and OTP domain extractors for layer 2 facts
   about supervisor children, restart strategies, and behaviour implementations.
 
   ## Output relations
 
-  - `suspect_transient_dependency(sup, permanent, transient, sup_site, witness)` — permanent child depends on transient sibling.
+  - `suspect_nonpermanent_dependency(sup, permanent, sibling, restart, sup_site, witness)` — permanent child depends on a transient or temporary sibling.
   - `wrong_start_order(sup, child, dep, child_pos, dep_pos, sup_site, witness)` — child starts before its dependency.
 
   ## Finding severities
@@ -43,16 +45,17 @@ defmodule Argus.Analyses.Supervision do
   def output_relations do
     [
       %{
-        name: :suspect_transient_dependency,
+        name: :suspect_nonpermanent_dependency,
         fields: [
           {:sup, :symbol, "supervisor module"},
           {:permanent, :symbol, "permanent child module"},
-          {:transient, :symbol, "transient child module"},
+          {:sibling, :symbol, "depended-on sibling module"},
+          {:restart, :symbol, "the sibling's restart policy: transient | temporary"},
           {:sup_site, :symbol, "instruction ID of the tree definition"},
           {:witness, :symbol, "function in the permanent child carrying the dependency"}
         ],
-        key: [:sup, :permanent, :transient],
-        doc: "Permanent child depends on a transient sibling."
+        key: [:sup, :permanent, :sibling],
+        doc: "Permanent child depends on a transient or temporary sibling."
       },
       %{
         name: :wrong_start_order,
@@ -75,18 +78,33 @@ defmodule Argus.Analyses.Supervision do
   # child order — so findings anchor at the tree definition (where the
   # fix goes) and the dependency's call path becomes labelled evidence.
   @impl true
-  def finding(:suspect_transient_dependency, [sup, permanent, transient, sup_site, witness]) do
+  def finding(:suspect_nonpermanent_dependency, [
+        sup,
+        permanent,
+        sibling,
+        restart,
+        sup_site,
+        witness
+      ]) do
+    consequence =
+      case restart do
+        "temporary" ->
+          "A temporary child is never restarted — not even after a crash —"
+
+        _ ->
+          "A transient child that stops normally is never restarted,"
+      end
+
     Findings.new(
       :warning,
-      "Permanent child depends on a transient sibling",
-      "#{permanent} is a permanent child of #{sup} but depends on its transient " <>
-        "sibling #{transient}. A transient child that stops normally is never " <>
-        "restarted, so #{permanent} keeps running against a process that no " <>
-        "longer exists.",
+      "Permanent child depends on a #{restart} sibling",
+      "#{permanent} is a permanent child of #{sup} but depends on its #{restart} " <>
+        "sibling #{sibling}. #{consequence} so #{permanent} keeps running " <>
+        "against a process that no longer exists.",
       at: Findings.at_site(sup_site, sup),
       related: [
         Findings.related("dependency call", Findings.at_func(witness)),
-        Findings.related("transient sibling", Findings.at_module(transient))
+        Findings.related("#{restart} sibling", Findings.at_module(sibling))
       ]
     )
   end

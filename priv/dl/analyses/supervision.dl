@@ -25,8 +25,8 @@
 .decl async_cast(caller_func: symbol, callee_mod: symbol)
 .input async_cast
 
-.decl named_process(mod: symbol, name: symbol)
-.input named_process
+// (The supervision extractor also emits named_process; no rule here
+// consumes it.)
 
 .decl implements_behaviour(mod: symbol, behaviour: symbol)
 .input implements_behaviour
@@ -41,18 +41,24 @@
 
 // ── Anti-patterns ────────────────────────────────────────────────
 
-// Permanent child that depends on a transient child (transitively).
+// Permanent child that depends (transitively) on a sibling whose
+// restart policy can leave it dead: a transient child that stops
+// normally is never restarted, and a temporary child is never restarted
+// at all — strictly worse. Either way the permanent child keeps running
+// against a process that no longer exists.
+//
 // sup_site anchors at the tree definition; witness is a function in the
 // permanent child through which the dependency flows. One row per
-// witness — finding builders dedupe on (sup, permanent, transient).
-.decl suspect_transient_dependency(sup: symbol, permanent: symbol, transient: symbol, sup_site: symbol, witness: symbol)
-.output suspect_transient_dependency
+// witness — finding builders dedupe on (sup, permanent, sibling).
+.decl suspect_nonpermanent_dependency(sup: symbol, permanent: symbol, sibling: symbol, restart: symbol, sup_site: symbol, witness: symbol)
+.output suspect_nonpermanent_dependency
 
-suspect_transient_dependency(sup, perm, trans, sup_site, witness) :-
+suspect_nonpermanent_dependency(sup, perm, sibling, restart, sup_site, witness) :-
   supervisor(sup, _, sup_site),
   supervisor_child(sup, _, perm, "permanent", _),
-  supervisor_child(sup, _, trans, "transient", _),
-  stateful_module_dep(perm, trans, witness).
+  supervisor_child(sup, _, sibling, restart, _),
+  (restart = "transient" ; restart = "temporary"),
+  stateful_module_dep(perm, sibling, witness).
 
 // Child started before a dependency (wrong order under any strategy).
 // Scoped to init_reaches to avoid false positives from runtime paths.
