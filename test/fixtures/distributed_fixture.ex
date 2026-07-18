@@ -158,3 +158,25 @@ defmodule Argus.Test.Fixtures.RpcInCallback do
     {:reply, :rpc.call(node, Node, :list, []), state}
   end
 end
+
+defmodule Argus.Test.Fixtures.RpcViaHelperCallback do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts), do: {:ok, opts}
+
+  # The RPC is one hop away, in a private helper. rpc_in_genserver_callback
+  # deliberately reports only RPCs *directly* in a callback — the transitive
+  # form was removed because call_reachable through a guarded dispatcher
+  # produced only false positives on the corpus. The RPC site is still
+  # surfaced by rpc_without_timeout.
+  @impl true
+  def handle_call({:fetch, node}, _from, state) do
+    {:reply, do_fetch(node), state}
+  end
+
+  defp do_fetch(node), do: :rpc.call(node, Node, :list, [])
+end

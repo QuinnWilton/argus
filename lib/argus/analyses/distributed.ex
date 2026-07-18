@@ -9,7 +9,7 @@ defmodule Argus.Analyses.Distributed do
   ## Output relations
 
   - `rpc_without_timeout(func, variant)` — RPC call with default infinity timeout.
-  - `rpc_in_genserver_callback(func, variant)` — RPC inside GenServer callback.
+  - `rpc_in_genserver_callback(func, variant)` — RPC directly inside a GenServer callback.
   - `global_register_risk(func, name)` — global.register_name without conflict resolution.
   - `global_blocking_op(func, op, retries)` — `:global.set_lock` / `:global.trans` with
     blocking retries (`infinity` or positive integer; `0` is excluded).
@@ -113,8 +113,9 @@ defmodule Argus.Analyses.Distributed do
   def finding(:rpc_without_timeout, [func, variant, site]) do
     Findings.new(
       :warning,
-      "RPC without a timeout",
-      "#{func} uses #{variant} with the default infinity timeout. A " <>
+      "RPC without a bounded timeout",
+      "#{func} makes a #{variant} call with an infinity timeout (the " <>
+        "default when none is passed, or `:infinity` given explicitly). A " <>
         "partitioned, overloaded, or restarting peer blocks this process " <>
         "indefinitely — distributed calls need explicit deadlines.",
       at: Findings.at_instr(site)
