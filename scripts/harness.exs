@@ -416,19 +416,23 @@ defmodule Argus.Scripts.Harness do
   # per-project results.json — this is the cross-project review surface.
   @triage_findings_cap 200
 
-  defp build_triage(output_dir, statuses) do
-    # Collect findings by reading each project's results.json from disk one at
-    # a time, so we never hold all reports in memory simultaneously.
+  defp build_triage(output_dir, _statuses) do
+    # Triage is a corpus-wide artifact: derive it from every results.json
+    # on disk, not from this run's statuses — under --resume this run may
+    # have analyzed only a few stragglers, and building triage from those
+    # alone would clobber the full index. Files are read one at a time so
+    # we never hold all reports in memory simultaneously.
     per_project =
-      statuses
-      |> Enum.flat_map(fn {name, result} ->
-        case result do
-          {:ok, _} ->
-            results_path = Path.join([output_dir, name, "results.json"])
-            [extract_project_triage(name, results_path)]
+      output_dir
+      |> File.ls!()
+      |> Enum.sort()
+      |> Enum.flat_map(fn name ->
+        results_path = Path.join([output_dir, name, "results.json"])
 
-          {:error, _} ->
-            []
+        if File.exists?(results_path) do
+          [extract_project_triage(name, results_path)]
+        else
+          []
         end
       end)
 

@@ -324,16 +324,21 @@ defmodule Argus.Scripts.AnalyzeProject do
         [detect_app_name(project_path)]
       end
 
-    build_envs = ["dev", "prod", "default"]
+    # Any build env counts — projects with build_per_environment: false
+    # compile into _build/shared, and custom envs are legal. Prefer dev
+    # when several exist, else take whichever is present.
+    env_preference = ["dev", "shared", "prod", "default"]
 
     ebins =
       Enum.flat_map(app_names, fn app ->
-        build_envs
-        |> Enum.map(fn env ->
-          Path.join([project_path, "_build", env, "lib", app, "ebin"])
+        Path.join([project_path, "_build", "*", "lib", app, "ebin"])
+        |> Path.wildcard()
+        |> Enum.filter(&File.dir?/1)
+        |> Enum.sort_by(fn path ->
+          env = path |> Path.split() |> Enum.at(-4)
+          Enum.find_index(env_preference, &(&1 == env)) || length(env_preference)
         end)
-        |> Enum.find(&File.dir?/1)
-        |> List.wrap()
+        |> Enum.take(1)
       end)
 
     if ebins == [] do
