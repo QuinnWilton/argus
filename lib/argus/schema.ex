@@ -62,7 +62,11 @@ defmodule Argus.Schema do
   # Version 6: added the statem_initial relation — the gen_statem initial
   # state read from init/1's return — so the reachability analysis stops
   # guessing the entry point topologically.
-  @schema_version 6
+  #
+  # Version 7: added the port_open relation — external port creation sites
+  # (Port.open, System.cmd, ...), owned by the opening process, so consumers
+  # can attribute ports to their process in the supervision tree.
+  @schema_version 7
 
   # Layer 1: Module-level facts.
 
@@ -726,6 +730,23 @@ defmodule Argus.Schema do
     doc: "ETS read/write/delete operation."
   }
 
+  @port_open %{
+    name: :port_open,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID of the port-opening call"},
+      {:func, :symbol, "containing function ID"},
+      {:mechanism, :symbol,
+       "how the port is opened: \"Port.open\", \"erlang.open_port\", " <>
+         "\"System.cmd\", \"System.shell\", or \"os.cmd\""},
+      {:target, :symbol, "the spawned command / executable / driver, or \"dynamic\""}
+    ],
+    doc:
+      "Port creation point. A port is owned by the opening process and dies " <>
+        "when it terminates — so, like an ETS table, it attributes to that " <>
+        "process in the supervision tree."
+  }
+
   # Layer 2: Atom safety extractor facts.
 
   @unsafe_atom_creation %{
@@ -1102,6 +1123,7 @@ defmodule Argus.Schema do
     @ets_new,
     @ets_option,
     @ets_op,
+    @port_open,
     # Atom safety.
     @unsafe_atom_creation,
     @unsafe_deserialization,
