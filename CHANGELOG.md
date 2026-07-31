@@ -12,6 +12,17 @@ baseline the results, edit an extractor, re-measure, diff, accept or
 revert, repeat. Inspired by pi-autoresearch's event-log + living-doc
 pattern, adapted for Argus's multi-dimensional categorical metrics.
 
+### Fixed (performance)
+
+- `clientlib/cfg.dl` no longer forces `.output cfg_edge`. The directive
+  made Souffle materialize and write the control-flow graph on every
+  solve even though no analysis reads `cfg_edge` or `cfg_reachable`, and
+  every consumer then parsed the CSV back in only to discard it. Over a
+  555-beam corpus that was ~10.3M rows / ~1.07GB written per solve; a
+  single `unsafe_task` run went from 4.03s to 0.56s (7.2×), with
+  byte-identical output. Analyses and tests that genuinely want the
+  relation now declare `.output cfg_edge` themselves.
+
 ### Fixed (precision — 15-project OTP corpus audit)
 
 Ran every analysis against 15 OTP libraries (bandit, broadway, cachex,
@@ -81,6 +92,14 @@ the triage index from all results on disk rather than clobbering it.
 
 ### Added
 
+- **`port_open` relation + Ports extractor (schema version 7).** A new
+  `Argus.Extractors.Ports` records external port creation sites —
+  `Port.open`/`:erlang.open_port` (Elixir's `Port.open` compiles to the
+  latter), `System.cmd`, `System.shell`, `:os.cmd` — as
+  `port_open(id, func, mechanism, target)`, with the spawned
+  command/executable resolved when it's a literal. A port is owned by the
+  opening process and dies with it, so consumers can attribute it to that
+  process in the supervision tree, the same way ETS tables are.
 - **Dataflow primitives for value provenance.** `Argus.Extractor.Helpers`
   gains `recent_writer/3` (the most recent instruction that wrote a
   register, raw — for inspecting provenance) and `keyword_value_register/4`

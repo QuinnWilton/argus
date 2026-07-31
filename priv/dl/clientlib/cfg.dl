@@ -6,8 +6,15 @@
 .include "../base.dl"
 
 // Derived: control flow graph edge.
+//
+// Deliberately NOT `.output`: cfg_edge is an intermediate, and forcing it
+// out makes Souffle materialize and write it even when no rule reads it.
+// It is quadratic-ish in module size — over a 555-beam corpus it reaches
+// ~10.3M rows / ~1GB per solve, which every consumer then parses and
+// discards. Without the directive Souffle prunes the whole CFG subgraph
+// unless an analysis actually uses it. Analyses (and tests) that want the
+// relation declare `.output cfg_edge` themselves.
 .decl cfg_edge(from: symbol, to: symbol)
-.output cfg_edge
 
 // Sequential fallthrough.
 cfg_edge(from, to) :- next(from, to).
