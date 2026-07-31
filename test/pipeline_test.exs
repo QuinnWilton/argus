@@ -90,9 +90,10 @@ defmodule Argus.PipelineTest do
       {:ok, rows} = Pipeline.read_facts(Path.join(tmp_dir, "function_def.facts"))
       assert length(rows) > 0
 
-      # function_def has 6 fields per the schema.
+      # function_def has 5 fields per the schema — the entry label lives in
+      # function_entry, split out because it is positional.
       for row <- rows do
-        assert length(row) == 6, "expected 6 fields, got #{length(row)}: #{inspect(row)}"
+        assert length(row) == 5, "expected 5 fields, got #{length(row)}: #{inspect(row)}"
       end
     end
 

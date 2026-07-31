@@ -240,7 +240,8 @@ defmodule Argus.Extractors.Supervision do
           :supervisor,
           :missing
         )
-        |> add_fact(:supervisor, [mod_str, "unknown", "dynamic"])
+        |> add_fact(:supervisor, [mod_str, "unknown"])
+        |> add_fact(:supervisor_site, [mod_str, "dynamic"])
 
       instrs ->
         extract_from_instructions(%{}, mod_str, "init/1", instrs, module_data.functions)
@@ -266,7 +267,9 @@ defmodule Argus.Extractors.Supervision do
         instrs -> detect_dynamic_strategy(mod_str, instrs)
       end
 
-    add_fact(%{}, :supervisor, [mod_str, to_string(strategy), site])
+    %{}
+    |> add_fact(:supervisor, [mod_str, to_string(strategy)])
+    |> add_fact(:supervisor_site, [mod_str, site])
   end
 
   # DynamicSupervisor.init/1 takes the flags as its sole argument:
@@ -298,7 +301,11 @@ defmodule Argus.Extractors.Supervision do
 
   defp extract_from_instructions(facts, mod_str, func_label, instrs, all_functions) do
     {strategy, site} = detect_strategy(mod_str, func_label, instrs)
-    facts = add_fact(facts, :supervisor, [mod_str, to_string(strategy), site])
+
+    facts =
+      facts
+      |> add_fact(:supervisor, [mod_str, to_string(strategy)])
+      |> add_fact(:supervisor_site, [mod_str, site])
 
     children = extract_children_with_helpers(instrs, all_functions)
 

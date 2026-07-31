@@ -23,7 +23,7 @@
 .decl imprecision(category: symbol, func: symbol, relation: symbol, reason: symbol)
 .input imprecision
 
-.decl supervisor(mod: symbol, strategy: symbol, site: symbol)
+.decl supervisor(mod: symbol, strategy: symbol)
 .input supervisor
 
 .decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
@@ -82,7 +82,7 @@ imprecision_event(c, f, r, why) :- imprecision(c, f, r, why).
 .output coverage_supervisor_no_children
 
 coverage_supervisor_no_children(sup) :-
-  supervisor(sup, _, _),
+  supervisor(sup, _),
   !supervisor_child(sup, _, _, _, _),
   !dynamic_child(sup, _, _).
 
@@ -118,9 +118,9 @@ coverage_genserver_isolated(mod) :-
 ets_module_has_ops(name, mod) :-
   ets_new(_, create_func, name),
   name != "dynamic",
-  function_def(create_func, mod, _, _, _, _),
+  function_def(create_func, mod, _, _, _),
   ets_op(_, op_func, _, _, _),
-  function_def(op_func, mod, _, _, _, _).
+  function_def(op_func, mod, _, _, _).
 
 .decl coverage_ets_unused(name: symbol)
 .output coverage_ets_unused

@@ -7,5 +7,5 @@
 .decl init_function(mod: symbol, func: symbol)
 
 init_function(mod, func) :-
-  function_def(func, mod, "init", 1, _, _),
+  function_def(func, mod, "init", 1, _),
   implements_behaviour(mod, _).

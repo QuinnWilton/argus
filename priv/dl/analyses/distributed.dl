@@ -43,15 +43,15 @@ rpc_without_timeout(func, variant, id) :-
 .decl genserver_callback_func(func: symbol)
 
 genserver_callback_func(func) :-
-  function_def(func, mod, "handle_call", _, _, _),
+  function_def(func, mod, "handle_call", _, _),
   implements_behaviour(mod, "GenServer").
 
 genserver_callback_func(func) :-
-  function_def(func, mod, "handle_cast", _, _, _),
+  function_def(func, mod, "handle_cast", _, _),
   implements_behaviour(mod, "GenServer").
 
 genserver_callback_func(func) :-
-  function_def(func, mod, "handle_info", _, _, _),
+  function_def(func, mod, "handle_info", _, _),
   implements_behaviour(mod, "GenServer").
 
 // Only the RPC directly in the callback is reported. The transitive

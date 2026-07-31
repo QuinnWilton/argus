@@ -72,14 +72,16 @@ defmodule Argus.Pipeline.Emit do
         if MapSet.member?(export_set, {name, arity}), do: "1", else: "0"
 
       acc =
-        add_fact(acc, :function_def, [
+        acc
+        |> add_fact(:function_def, [
           func_id,
           mod_str,
           to_string(name),
           to_string(arity),
-          to_string(entry),
           exported
         ])
+        # Positional, and split out for that reason — see Schema.
+        |> add_fact(:function_entry, [func_id, to_string(entry)])
 
       normalized = Normalize.normalize_function(module, func)
       emit_instructions(acc, func_id, normalized, line_table)

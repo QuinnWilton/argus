@@ -13,7 +13,7 @@ defmodule Argus.Extractors.SupervisionTest do
       assert Map.has_key?(facts, :supervisor)
       sups = facts[:supervisor]
       assert length(sups) == 1
-      [mod_str, _strategy, _site] = hd(sups)
+      [mod_str, _strategy] = hd(sups)
       assert mod_str == "Argus.Test.Fixtures.GoodSupervisor"
     end
 
@@ -22,7 +22,9 @@ defmodule Argus.Extractors.SupervisionTest do
         BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.GoodSupervisor)))
 
       facts = Supervision.extract(data)
-      [_mod, strategy, site] = hd(facts[:supervisor])
+      [_mod, strategy] = hd(facts[:supervisor])
+      # The anchor site is a separate relation since schema v8.
+      [_smod, site] = hd(facts[:supervisor_site])
       assert strategy == "one_for_one"
 
       # The site names the instruction that defines the tree, inside init/1.
@@ -63,7 +65,7 @@ defmodule Argus.Extractors.SupervisionTest do
       facts = Supervision.extract(data)
 
       assert Map.has_key?(facts, :supervisor)
-      [mod_str, _strategy, _site] = hd(facts[:supervisor])
+      [mod_str, _strategy] = hd(facts[:supervisor])
       assert mod_str == "Argus.Test.Fixtures.AppSupervisor"
     end
 
@@ -72,7 +74,9 @@ defmodule Argus.Extractors.SupervisionTest do
         BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.AppSupervisor)))
 
       facts = Supervision.extract(data)
-      [_mod, strategy, site] = hd(facts[:supervisor])
+      [_mod, strategy] = hd(facts[:supervisor])
+      # The anchor site is a separate relation since schema v8.
+      [_smod, site] = hd(facts[:supervisor_site])
       assert strategy == "one_for_one"
 
       # Application trees are wired in start/2, not init/1.
@@ -159,7 +163,7 @@ defmodule Argus.Extractors.SupervisionTest do
 
     test "detects supervisor behaviour and strategy", %{facts: facts} do
       assert Map.has_key?(facts, :supervisor)
-      [mod_str, strategy, _site] = hd(facts[:supervisor])
+      [mod_str, strategy] = hd(facts[:supervisor])
       assert mod_str == "Argus.Test.Fixtures.MapSpecSupervisor"
       assert strategy == "one_for_one"
     end
@@ -268,7 +272,8 @@ defmodule Argus.Extractors.SupervisionTest do
 
       facts = Supervision.extract(data)
 
-      assert [mod, strategy, site] = hd(facts[:supervisor])
+      assert [mod, strategy] = hd(facts[:supervisor])
+      assert [_smod, site] = hd(facts[:supervisor_site])
       assert mod == "Argus.Test.Fixtures.SelfAnchoringDynSup"
       assert strategy == "one_for_one"
       assert site =~ ~r/^Argus\.Test\.Fixtures\.SelfAnchoringDynSup:init\/1#\d+$/

@@ -27,7 +27,7 @@ module_registers_name(mod, name, id) :-
   process_register(id, func, name, _),
   name != "dynamic",
   name != ":dynamic",
-  function_def(func, mod, _, _, _, _).
+  function_def(func, mod, _, _, _).
 
 // Same name registered by two different modules. One row per pair of
 // registration sites — finding builders dedupe on (name, mod1, mod2).

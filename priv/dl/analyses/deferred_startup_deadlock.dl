@@ -23,7 +23,7 @@
 .include "../clientlib/imports.dl"
 
 // Layer 2 input declarations.
-.decl supervisor(mod: symbol, strategy: symbol, site: symbol)
+.decl supervisor(mod: symbol, strategy: symbol)
 .input supervisor
 
 .decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
@@ -121,7 +121,7 @@ continue_to_later_sibling(sup, caller, callee, caller_pos, callee_pos) :-
 
 continue_to_parent_supervisor(worker, sup) :-
   continue_sync_calls(worker, sup),
-  supervisor(sup, _, _),
+  supervisor(sup, _),
   supervisor_child(sup, _, worker, _, _).
 
 // ── Defensive variant: try/catch wraps the call ──────────────────────

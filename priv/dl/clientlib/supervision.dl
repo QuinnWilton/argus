@@ -60,12 +60,12 @@ child_subtree(sup, branch, descendant) :-
 init_reaches(from_mod, to_mod, func) :-
   init_function(from_mod, func),
   call_reachable(func, callee),
-  function_def(callee, to_mod, _, _, _, _),
+  function_def(callee, to_mod, _, _, _),
   from_mod != to_mod.
 
 init_reaches(from_mod, to_mod, func) :-
   init_function(from_mod, func),
-  function_def(func, _, _, _, _, _),
+  function_def(func, _, _, _, _),
   call_edge(func, callee),
-  function_def(callee, to_mod, _, _, _, _),
+  function_def(callee, to_mod, _, _, _),
   from_mod != to_mod.

@@ -10,8 +10,13 @@
 
 .include "../clientlib/imports.dl"
 
-.decl supervisor(mod: symbol, strategy: symbol, site: symbol)
+.decl supervisor(mod: symbol, strategy: symbol)
 .input supervisor
+
+// Anchor site of the tree definition — positional, so it is joined only
+// by rules that need to place a finding, never by the logic itself.
+.decl supervisor_site(mod: symbol, site: symbol)
+.input supervisor_site
 
 .decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
 .input supervisor_child
@@ -54,7 +59,8 @@
 .output suspect_nonpermanent_dependency
 
 suspect_nonpermanent_dependency(sup, perm, sibling, restart, sup_site, witness) :-
-  supervisor(sup, _, sup_site),
+  supervisor(sup, _),
+  supervisor_site(sup, sup_site),
   supervisor_child(sup, _, perm, "permanent", _),
   supervisor_child(sup, _, sibling, restart, _),
   (restart = "transient" ; restart = "temporary"),
@@ -112,7 +118,8 @@ init_process_dep(child, dep, func) :-
 .output wrong_start_order
 
 wrong_start_order(sup, child, dep, cpos, dpos, sup_site, witness) :-
-  supervisor(sup, _, sup_site),
+  supervisor(sup, _),
+  supervisor_site(sup, sup_site),
   child_subtree(sup, child_branch, child),
   child_subtree(sup, dep_branch, dep),
   supervisor_child(sup, cpos, child_branch, _, _),

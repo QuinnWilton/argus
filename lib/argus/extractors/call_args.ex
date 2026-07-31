@@ -72,8 +72,10 @@ defmodule Argus.Extractors.CallArgs do
     else
       Enum.reduce(0..(limit - 1), facts, fn pos, acc ->
         value = resolve_arg_value(ctx.instrs, ctx.idx, {:x, pos})
-        id = "#{ctx.func_id}##{ctx.idx}"
-        add_fact(acc, :call_arg, [id, ctx.func_id, callee_id, to_string(pos), value])
+        # No call-site instruction ID: it renumbered on every edit and no
+        # rule ever bound it (see Argus.Schema). Callers reason about which
+        # FUNCTION passes which argument, not which instruction does.
+        add_fact(acc, :call_arg, [ctx.func_id, callee_id, to_string(pos), value])
       end)
     end
   end

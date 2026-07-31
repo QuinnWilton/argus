@@ -66,7 +66,16 @@ defmodule Argus.Schema do
   # Version 7: added the port_open relation — external port creation sites
   # (Port.open, System.cmd, ...), owned by the opening process, so consumers
   # can attribute ports to their process in the supervision tree.
-  @schema_version 7
+  # Version 8: split positional columns out of the fact schema so relations
+  # stop churning on edits that cannot affect them. `function_def` lost its
+  # `entry` label to the new `function_entry` relation, and `call_arg` lost
+  # its call-site instruction ID. Neither column was ever bound by a rule
+  # (entry wildcarded in all 55 uses, call_arg's id in all of them), yet
+  # both renumber whenever anything earlier in a function changes — which
+  # dirtied every analysis reading those relations on any body edit. Same
+  # principle that keeps line_info out of a semantic fact set: positional
+  # data is payload to resolve late, never a join key.
+  @schema_version 8
 
   # Layer 1: Module-level facts.
 
@@ -88,10 +97,28 @@ defmodule Argus.Schema do
       {:mod, :symbol, "module name"},
       {:name, :symbol, "function name"},
       {:arity, :number, "function arity"},
-      {:entry, :label, "entry label number"},
       {:exported, :number, "1 if exported, 0 if local"}
     ],
     doc: "Function definition within a module."
+  }
+
+  # The entry label lives apart from function_def on purpose. It is a label
+  # NUMBER, so it shifts whenever anything earlier in the module changes —
+  # which made every row of function_def churn on any edit, even though no
+  # Datalog rule has ever bound the column (all 55 uses wildcard it). Only
+  # `Argus.Cfg` needs it, to root the control-flow graph. Splitting it out
+  # keeps function_def stable under body edits, so a consumer memoizing per
+  # relation can tell that editing one function cannot have changed a
+  # conclusion drawn from another's signature. Same reasoning as keeping
+  # line_info out of the semantic fact set.
+  @function_entry %{
+    name: :function_entry,
+    layer: 1,
+    fields: [
+      {:func, :func_id, "function ID (mod:name/arity)"},
+      {:entry, :label, "entry label number"}
+    ],
+    doc: "Entry label of a function — positional, split from function_def."
   }
 
   @import_ref %{
@@ -478,13 +505,29 @@ defmodule Argus.Schema do
     layer: 2,
     fields: [
       {:mod, :symbol, "supervisor module"},
-      {:strategy, :symbol, "restart strategy"},
+      {:strategy, :symbol, "restart strategy"}
+    ],
+    doc: "Module that implements the Supervisor behaviour."
+  }
+
+  # The tree-definition site is where a FINDING should be anchored, not
+  # something the logic joins on — so it lives apart from `supervisor`. It
+  # is an instruction ID, which renumbers whenever anything earlier in the
+  # supervisor's init shifts; keeping it in `supervisor` made every rule
+  # that merely asks "is this module a supervisor, and with what strategy"
+  # churn on unrelated edits. Analyses that anchor a finding at the tree
+  # definition join this relation explicitly and accept that coupling.
+  @supervisor_site %{
+    name: :supervisor_site,
+    layer: 2,
+    fields: [
+      {:mod, :symbol, "supervisor module"},
       {:site, :symbol,
        "instruction ID of the Supervisor.init/start_link call (or Erlang-style " <>
          "flags literal) that defines the tree — the strategy line; 'dynamic' " <>
          "when not statically found"}
     ],
-    doc: "Module that implements the Supervisor behaviour."
+    doc: "Anchor site of a supervisor's tree definition — positional."
   }
 
   @supervisor_child %{
@@ -1048,8 +1091,12 @@ defmodule Argus.Schema do
   @call_arg %{
     name: :call_arg,
     layer: 2,
+    # Deliberately NOT keyed by call-site instruction ID. That column
+    # renumbered whenever anything earlier in the function changed, so
+    # call_arg churned on every body edit — while no rule ever bound it
+    # (every use wildcarded position 1). The rules ask which FUNCTION
+    # passes which argument, which is stable.
     fields: [
-      {:id, :symbol, "instruction ID of the call site"},
       {:caller, :symbol, "calling function ID"},
       {:callee, :symbol, "callee function ID (mod:func/arity)"},
       {:arg_pos, :number, "0-based argument position"},
@@ -1070,6 +1117,7 @@ defmodule Argus.Schema do
   @layer_1_relations [
     @module_info,
     @function_def,
+    @function_entry,
     @import_ref,
     @module_attribute,
     @instruction,
@@ -1105,6 +1153,7 @@ defmodule Argus.Schema do
 
   @layer_2_relations [
     @supervisor,
+    @supervisor_site,
     @supervisor_child,
     @supervisor_child_name,
     @dynamic_child,

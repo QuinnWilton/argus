@@ -19,7 +19,7 @@
 .decl select_branch(id: symbol, val: symbol, target: number)
 .input select_branch
 
-.decl function_def(func: symbol, mod: symbol, name: symbol, arity: number, entry: number, exported: number)
+.decl function_def(func: symbol, mod: symbol, name: symbol, arity: number, exported: number)
 .input function_def
 
 .decl local_call(id: symbol, target: symbol, arity: number)

@@ -146,7 +146,7 @@ defmodule Argus.AnalysisTest do
       .decl exported_function(func: symbol)
       .output exported_function
 
-      exported_function(func) :- function_def(func, _, _, _, _, 1).
+      exported_function(func) :- function_def(func, _, _, _, 1).
       """)
 
       assert {:ok, results} = Argus.analyze([:lists], {:custom, rules_path})

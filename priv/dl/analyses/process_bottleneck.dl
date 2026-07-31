@@ -34,7 +34,7 @@
 
 // Direct: a function in caller_mod has a sync_call with resolved target.
 sync_caller_witness(caller_mod, target_mod, f) :-
-  function_def(f, caller_mod, _, _, _, _),
+  function_def(f, caller_mod, _, _, _),
   sync_call(f, target_mod),
   target_mod != "dynamic",
   caller_mod != target_mod.
@@ -42,7 +42,7 @@ sync_caller_witness(caller_mod, target_mod, f) :-
 // Indirect via callgraph: a function in caller_mod reaches a function
 // that has a sync_call with resolved target.
 sync_caller_witness(caller_mod, target_mod, f) :-
-  function_def(f, caller_mod, _, _, _, _),
+  function_def(f, caller_mod, _, _, _),
   call_reachable(f, g),
   sync_call(g, target_mod),
   target_mod != "dynamic",
@@ -51,7 +51,7 @@ sync_caller_witness(caller_mod, target_mod, f) :-
 // Indirect via GenServer API: a function in caller_mod calls an exported
 // sync API function of target_mod.
 sync_caller_witness(caller_mod, target_mod, f) :-
-  function_def(f, caller_mod, _, _, _, _),
+  function_def(f, caller_mod, _, _, _),
   call_edge(f, g),
   genserver_sync_api(g, target_mod),
   caller_mod != target_mod.

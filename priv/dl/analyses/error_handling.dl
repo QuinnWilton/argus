@@ -38,7 +38,7 @@ swallowed_error(func) :-
 .decl has_handle_info(mod: symbol)
 
 has_handle_info(mod) :-
-  function_def(_, mod, "handle_info", _, _, _).
+  function_def(_, mod, "handle_info", _, _).
 
 // gen_statem / GenStateMachine modules deliver info events (including
 // {:EXIT, ...}) to their state functions or handle_event/4, not to a
@@ -66,15 +66,15 @@ trap_exit_without_handler(mod, func) :-
 .decl genserver_callback(func: symbol, mod: symbol)
 
 genserver_callback(func, mod) :-
-  function_def(func, mod, "handle_call", _, _, _),
+  function_def(func, mod, "handle_call", _, _),
   implements_behaviour(mod, "GenServer").
 
 genserver_callback(func, mod) :-
-  function_def(func, mod, "handle_cast", _, _, _),
+  function_def(func, mod, "handle_cast", _, _),
   implements_behaviour(mod, "GenServer").
 
 genserver_callback(func, mod) :-
-  function_def(func, mod, "handle_info", _, _, _),
+  function_def(func, mod, "handle_info", _, _),
   implements_behaviour(mod, "GenServer").
 
 // Only exit *signals* — Process.exit/2, :erlang.exit/2 — count here.

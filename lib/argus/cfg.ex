@@ -54,10 +54,19 @@ defmodule Argus.Cfg do
         {fa, Enum.group_by(rows, & &1.id.idx, fn row -> {row.val, row.target} end)}
       end)
 
+    # The entry label comes from function_entry, not function_def: it is a
+    # positional value and was split out so function_def stays stable under
+    # body edits (see Argus.Schema). Keyed by func_id there, so join back
+    # through function_def to recover {name, arity}.
+    entry_by_func =
+      facts
+      |> Map.get(:function_entry, [])
+      |> Map.new(fn row -> {row.func, row.entry} end)
+
     entries =
       facts
       |> Map.get(:function_def, [])
-      |> Map.new(fn row -> {{row.name, row.arity}, row.entry} end)
+      |> Map.new(fn row -> {{row.name, row.arity}, Map.get(entry_by_func, row.func)} end)
 
     for {fa, ops} <- instrs, into: %{} do
       fun = %{

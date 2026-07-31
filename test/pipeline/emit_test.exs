@@ -32,7 +32,7 @@ defmodule Argus.Pipeline.EmitTest do
       facts = emit_func([{:label, 1}, :return])
       defs = facts[:function_def]
       assert length(defs) == 1
-      [func_id, "TestMod", "test_func", "0", "1", "1"] = hd(defs)
+      [func_id, "TestMod", "test_func", "0", "1"] = hd(defs)
       assert func_id == "TestMod:test_func/0"
     end
 
@@ -50,8 +50,8 @@ defmodule Argus.Pipeline.EmitTest do
         )
 
       defs = facts[:function_def]
-      public = Enum.find(defs, fn [_, _, name, _, _, _] -> name == "public_fn" end)
-      private = Enum.find(defs, fn [_, _, name, _, _, _] -> name == "private_fn" end)
+      public = Enum.find(defs, fn [_, _, name, _, _] -> name == "public_fn" end)
+      private = Enum.find(defs, fn [_, _, name, _, _] -> name == "private_fn" end)
 
       assert List.last(public) == "1"
       assert List.last(private) == "0"

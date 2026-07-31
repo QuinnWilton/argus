@@ -12,6 +12,34 @@ baseline the results, edit an extractor, re-measure, diff, accept or
 revert, repeat. Inspired by pi-autoresearch's event-log + living-doc
 pattern, adapted for Argus's multi-dimensional categorical metrics.
 
+### Changed (schema version 8 — positional columns split out)
+
+Three relations carried positional data that no rule joined on but that
+renumbered whenever anything earlier in a function changed, so they
+dirtied every analysis reading them on any body edit.
+
+- `function_def` loses its `entry` label to a new `function_entry`
+  relation. The column was a wildcard in all 55 rule uses; only
+  `Argus.Cfg` needs it, to root each function's control-flow graph.
+- `call_arg` loses its call-site instruction ID — a wildcard in every
+  use. The rules ask which FUNCTION passes which argument, which is
+  stable.
+- `supervisor` loses its `site` to a new `supervisor_site`. Analyses that
+  only ask "is this a supervisor, with what strategy" no longer depend on
+  a positional value; the two that anchor a finding at the tree
+  definition join `supervisor_site` explicitly and accept the coupling.
+
+The principle is the one that already keeps `line_info` out of a semantic
+fact set: positional data is payload to resolve late, never a join key.
+Measured on eusapia, a body edit that adds instructions without adding a
+call now leaves `one_for_one_coupling`, `supervision`, and
+`sync_call_in_init` untouched, where previously all six analyses
+re-solved. An edit that genuinely changes the call graph still re-solves
+all six, as it must.
+
+Verified byte-identical over 555 beams — every analysis's full output
+plus per-relation row counts and content hashes.
+
 ### Changed (stratified call graph)
 
 The shared call graph is now derived once by `priv/dl/stage0.dl` and read

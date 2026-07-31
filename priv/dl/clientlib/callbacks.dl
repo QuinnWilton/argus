@@ -21,12 +21,12 @@
 .decl handle_call_function(mod: symbol, func: symbol)
 
 handle_call_function(mod, func) :-
-  function_def(func, mod, "handle_call", 3, _, _),
+  function_def(func, mod, "handle_call", 3, _),
   implements_behaviour(mod, "GenServer").
 
 // handle_cast/2 in a GenServer module.
 .decl handle_cast_function(mod: symbol, func: symbol)
 
 handle_cast_function(mod, func) :-
-  function_def(func, mod, "handle_cast", 2, _, _),
+  function_def(func, mod, "handle_cast", 2, _),
   implements_behaviour(mod, "GenServer").

@@ -70,7 +70,9 @@ defmodule Argus.Analyses.SupervisionTest do
     # sibling's restart policy decides the verdict.
     defp base_facts(sibling_restart) do
       %{
-        supervisor: [["Sup", "one_for_one", "Sup:init/1#3"]],
+        supervisor: [["Sup", "one_for_one"]],
+        # Anchor site split out of `supervisor` in schema v8.
+        supervisor_site: [["Sup", "Sup:init/1#3"]],
         supervisor_child: [
           ["Sup", "0", "P", "permanent", "worker"],
           ["Sup", "1", "S", sibling_restart, "worker"]

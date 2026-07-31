@@ -19,7 +19,7 @@ call_edge(caller_func, callee) :-
 call_edge(caller_func, target) :-
   local_call(id, target, _),
   instruction(id, caller_func, _, _),
-  function_def(target, _, _, _, _, _).
+  function_def(target, _, _, _, _).
 
 // Closure construction is treated as a static call edge so that call_reachable
 // follows execution into closures passed to higher-order callees like Enum.map,

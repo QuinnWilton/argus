@@ -15,7 +15,7 @@
 //   - sync_call and async_cast declared by the consumer analysis
 //     (with .decl and .input — Souffle unions input + derived rows)
 
-.decl call_arg(id: symbol, caller: symbol, callee: symbol, arg_pos: number, value: symbol)
+.decl call_arg( caller: symbol, callee: symbol, arg_pos: number, value: symbol)
 .input call_arg
 
 // ── Resolved argument propagation ─────────────────────────────────
@@ -29,7 +29,7 @@
 // Base case: a call site passes a literal value (not "dynamic", not
 // a forwarding marker "arg:N").
 resolved_arg(callee, pos, val) :-
-  call_arg(_, _, callee, pos, val),
+  call_arg( _, callee, pos, val),
   val != "dynamic",
   !match("arg:.*", val).
 
@@ -37,7 +37,7 @@ resolved_arg(callee, pos, val) :-
 // argument M to a callee. If the forwarder's parameter N has a
 // resolved value from one of ITS callers, propagate that value.
 resolved_arg(callee, callee_pos, val) :-
-  call_arg(_, forwarder, callee, callee_pos, fwd_marker),
+  call_arg( forwarder, callee, callee_pos, fwd_marker),
   match("arg:.*", fwd_marker),
   fwd_param = to_number(substr(fwd_marker, 4, strlen(fwd_marker) - 4)),
   resolved_arg(forwarder, fwd_param, val).
@@ -55,7 +55,7 @@ resolved_arg(callee, callee_pos, val) :-
 // reads the extractor-emitted rows, and these rules add more).
 
 sync_call(func, target) :-
-  call_arg(_, func, callee, 0, fwd),
+  call_arg( func, callee, 0, fwd),
   match("arg:.*", fwd),
   (callee = "GenServer:call/2" ; callee = "GenServer:call/3" ;
    callee = ":gen_server:call/2" ; callee = ":gen_server:call/3"),
@@ -63,7 +63,7 @@ sync_call(func, target) :-
   resolved_arg(func, fwd_pos, target).
 
 async_cast(func, target) :-
-  call_arg(_, func, callee, 0, fwd),
+  call_arg( func, callee, 0, fwd),
   match("arg:.*", fwd),
   (callee = "GenServer:cast/2" ; callee = ":gen_server:cast/2"),
   fwd_pos = to_number(substr(fwd, 4, strlen(fwd) - 4)),

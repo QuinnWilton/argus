@@ -46,7 +46,9 @@ defmodule Argus.Analyses.OneForOneCouplingTest do
       # process link between them removes the finding, because the exit
       # propagates and both restart together.
       base = %{
-        supervisor: [["Sup", "one_for_one", "Sup:init/1#3"]],
+        supervisor: [["Sup", "one_for_one"]],
+        # Anchor site split out of `supervisor` in schema v8.
+        supervisor_site: [["Sup", "Sup:init/1#3"]],
         supervisor_child: [
           ["Sup", "0", "A", "permanent", "worker"],
           ["Sup", "1", "B", "permanent", "worker"]

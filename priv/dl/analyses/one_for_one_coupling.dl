@@ -10,8 +10,13 @@
 
 // ── Supervision facts ────────────────────────────────────────────────
 
-.decl supervisor(mod: symbol, strategy: symbol, site: symbol)
+.decl supervisor(mod: symbol, strategy: symbol)
 .input supervisor
+
+// Anchor site of the tree definition — positional, so it is joined only
+// by rules that need to place a finding, never by the logic itself.
+.decl supervisor_site(mod: symbol, site: symbol)
+.input supervisor_site
 
 .decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
 .input supervisor_child
@@ -64,7 +69,8 @@ derived_process_link(sup, child) :- supervisor_child(sup, _, child, _, _).
 .output one_for_one_coupling
 
 one_for_one_coupling(sup, caller_mod, callee_mod, sup_site, witness) :-
-  supervisor(sup, "one_for_one", sup_site),
+  supervisor(sup, "one_for_one"),
+  supervisor_site(sup, sup_site),
   child_subtree(sup, caller_branch, caller_mod),
   child_subtree(sup, callee_branch, callee_mod),
   stateful_module_dep(caller_mod, callee_mod, witness),

@@ -22,11 +22,11 @@
 .decl reachable_from_export(func: symbol)
 
 reachable_from_export(func) :-
-  function_def(func, _, _, _, _, 1).
+  function_def(func, _, _, _, 1).
 
 reachable_from_export(func) :-
   call_reachable(entry, func),
-  function_def(entry, _, _, _, _, 1).
+  function_def(entry, _, _, _, 1).
 
 // ── Atom exhaustion risk ─────────────────────────────────────────
 

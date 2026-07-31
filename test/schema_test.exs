@@ -80,7 +80,7 @@ defmodule Argus.SchemaTest do
     test "returns field count" do
       assert Schema.arity(:instruction) == 4
       assert Schema.arity(:next) == 2
-      assert Schema.arity(:function_def) == 6
+      assert Schema.arity(:function_def) == 5
     end
   end
 

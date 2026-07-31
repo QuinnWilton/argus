@@ -42,7 +42,7 @@
 ets_owner_process(name, mod, behaviour) :-
   ets_new(id, func, name),
   name != "dynamic",
-  function_def(func, mod, _, _, _, _),
+  function_def(func, mod, _, _, _),
   implements_behaviour(mod, behaviour).
 
 // Owner under a permanent supervisor child — the table will be
@@ -91,7 +91,7 @@ ets_unprotected_owner(name, mod, id) :-
 ets_reader_module(name, mod) :-
   ets_op(_, func, name, _, "read"),
   name != "dynamic",
-  function_def(func, mod, _, _, _, _).
+  function_def(func, mod, _, _, _).
 
 // Module writing to a table.
 .decl ets_writer_module(name: symbol, mod: symbol)
@@ -99,7 +99,7 @@ ets_reader_module(name, mod) :-
 ets_writer_module(name, mod) :-
   ets_op(_, func, name, _, "write"),
   name != "dynamic",
-  function_def(func, mod, _, _, _, _).
+  function_def(func, mod, _, _, _).
 
 // Cross-module reads without read_concurrency.
 .decl ets_missing_read_concurrency(name: symbol)
@@ -150,6 +150,6 @@ ets_ordered_set_contention(name, mod1, mod2, id) :-
 ets_unnamed_in_process(name, mod, id) :-
   ets_new(id, func, name),
   name != "dynamic",
-  function_def(func, mod, _, _, _, _),
+  function_def(func, mod, _, _, _),
   implements_behaviour(mod, _),
   !ets_option(id, "named_table", "true").

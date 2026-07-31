@@ -79,27 +79,27 @@ has_await(func) :- call_reachable(func, g), task_await_call(g, _).
 // GenServer with handle_info/2.
 process_task_handler(mod) :-
   implements_behaviour(mod, "GenServer"),
-  function_def(_, mod, "handle_info", 2, _, _).
+  function_def(_, mod, "handle_info", 2, _).
 
 // Phoenix.LiveView with handle_info/2.
 process_task_handler(mod) :-
   implements_behaviour(mod, "Phoenix.LiveView"),
-  function_def(_, mod, "handle_info", 2, _, _).
+  function_def(_, mod, "handle_info", 2, _).
 
 // Phoenix.LiveComponent with handle_info/2.
 process_task_handler(mod) :-
   implements_behaviour(mod, "Phoenix.LiveComponent"),
-  function_def(_, mod, "handle_info", 2, _, _).
+  function_def(_, mod, "handle_info", 2, _).
 
 // :gen_statem with handle_event/4.
 process_task_handler(mod) :-
   implements_behaviour(mod, ":gen_statem"),
-  function_def(_, mod, "handle_event", 4, _, _).
+  function_def(_, mod, "handle_event", 4, _).
 
 // GenStateMachine (Elixir wrapper) with handle_event/4.
 process_task_handler(mod) :-
   implements_behaviour(mod, "GenStateMachine"),
-  function_def(_, mod, "handle_event", 4, _, _).
+  function_def(_, mod, "handle_event", 4, _).
 
 // ── Task factory suppression ─────────────────────────────────────────
 
@@ -128,7 +128,7 @@ task_factory(func, id) :-
 leaked_async_task(func, id) :-
   task_async_call(func, id),
   !has_await(func),
-  function_def(func, mod, _, _, _, _),
+  function_def(func, mod, _, _, _),
   !process_task_handler(mod),
   !task_factory(func, id).
 
