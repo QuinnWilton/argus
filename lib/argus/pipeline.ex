@@ -169,12 +169,25 @@ defmodule Argus.Pipeline do
         Enum.reduce_while(facts, :ok, fn {relation, rows}, :ok ->
           path = Path.join(output_dir, "#{relation}.facts")
 
+          # An explicitly-empty relation must produce a zero-byte file, not
+          # a lone newline: Souffle reads the blank line as a tuple with
+          # missing columns and aborts with "Values missing in line 1".
+          # Callers that build a fact map by merging never hit this (an
+          # empty relation is simply absent), but one that projects a
+          # fixed relation list does.
           content =
-            rows
-            |> Enum.reverse()
-            |> Enum.map_join("\n", fn row -> Enum.join(row, "\t") end)
+            case rows do
+              [] ->
+                ""
 
-          case File.write(path, content <> "\n") do
+              rows ->
+                rows
+                |> Enum.reverse()
+                |> Enum.map_join("\n", fn row -> Enum.join(row, "\t") end)
+                |> Kernel.<>("\n")
+            end
+
+          case File.write(path, content) do
             :ok -> {:cont, :ok}
             {:error, reason} -> {:halt, {:error, {:write_failed, path, reason}}}
           end

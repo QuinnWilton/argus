@@ -227,11 +227,17 @@ defmodule Argus.Analysis do
   # carries their own memoized copy. Hand-built fact directories — tests,
   # ad-hoc probes — get it derived on demand rather than having to know
   # about staging at all.
+  #
+  # `stage0: :provided` opts out entirely. A caller that projects a fact
+  # directory down to exactly the relations one analysis reads knows
+  # whether call_edge is among them; for an analysis that does not read it
+  # the file is legitimately absent, and auto-deriving would fail on the
+  # layer-1 facts such a directory deliberately omits.
   defp ensure_stage0(facts_dir, opts) do
-    if File.exists?(Path.join(facts_dir, "call_edge.facts")) do
-      :ok
-    else
-      derive_stage0(facts_dir, opts)
+    cond do
+      Keyword.get(opts, :stage0, :auto) == :provided -> :ok
+      File.exists?(Path.join(facts_dir, "call_edge.facts")) -> :ok
+      true -> derive_stage0(facts_dir, opts)
     end
   end
 
