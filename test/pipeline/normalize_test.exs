@@ -38,6 +38,46 @@ defmodule Argus.Pipeline.NormalizeTest do
       assert {:gc_bif, :+, {:f, 0}, 1, [{:x, 0}, {:integer, 1}], {:x, 0}} = instr
     end
 
+    test "survives improper lists in literal operands" do
+      # `is_list/1` is true for `[a | b]`, but `Enum.map/2` raises on it.
+      # Poison ships a literal of this shape, which took the whole
+      # extraction down with a FunctionClauseError far from the cause.
+      func =
+        {:function, :improper, 0, 1,
+         [
+           {:move, {:literal, [{:tr, {:x, 0}, {:t_atom, :any}} | 2]}, {:x, 0}}
+         ]}
+
+      [{_id, instr}] = Normalize.normalize_function(MyMod, func)
+
+      # Normalization still reaches inside the cons cell (the typed
+      # register is stripped) and the improper tail is preserved, so the
+      # literal is not silently properised.
+      assert {:move, {:literal, [{:x, 0} | 2]}, {:x, 0}} = instr
+    end
+
+    test "survives a deeply nested improper list" do
+      func =
+        {:function, :nested, 0, 1,
+         [
+           {:move, {:literal, [[1, 2 | 3], {:ok, [4 | 5]}]}, {:x, 0}}
+         ]}
+
+      [{_id, instr}] = Normalize.normalize_function(MyMod, func)
+      assert {:move, {:literal, [[1, 2 | 3], {:ok, [4 | 5]}]}, {:x, 0}} = instr
+    end
+
+    test "an improper alloc hint yields no word count rather than raising" do
+      func =
+        {:function, :badalloc, 0, 1,
+         [
+           {:allocate_heap, 3, {:alloc, [{:floats, 0} | :garbage]}, 2}
+         ]}
+
+      [{_id, instr}] = Normalize.normalize_function(MyMod, func)
+      assert {:allocate_heap, 3, 0, 2} = instr
+    end
+
     test "normalizes alloc hints in allocate_heap" do
       func =
         {:function, :baz, 0, 1,

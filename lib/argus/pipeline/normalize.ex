@@ -69,12 +69,22 @@ defmodule Argus.Pipeline.Normalize do
 
   # Allocation hints — normalize {:alloc, [...]} to extract word count.
   defp normalize_operand({:alloc, kw}) when is_list(kw) do
-    Keyword.get(kw, :words, 0)
+    alloc_words(kw)
   end
 
-  # Recurse into lists (e.g., test args, select case lists).
-  defp normalize_operand(list) when is_list(list) do
-    Enum.map(list, &normalize_operand/1)
+  # Recurse into lists (e.g., test args, select case lists) by walking the
+  # cons cells rather than with Enum.map.
+  #
+  # BEAM literals can be IMPROPER lists — `[head | 2]` — for which
+  # `is_list/1` is still true but `Enum.map/2` raises FunctionClauseError.
+  # Poison ships one, and it took the whole extraction down. Walking cells
+  # handles proper and improper alike: the improper tail falls through to
+  # the catch-all clause and is preserved as-is, so normalization stays
+  # structure-preserving instead of silently properising the literal.
+  defp normalize_operand([]), do: []
+
+  defp normalize_operand([head | tail]) do
+    [normalize_operand(head) | normalize_operand(tail)]
   end
 
   # Recurse into tuples (e.g., {:list, [...]}, {:extfunc, ...}).
@@ -87,4 +97,12 @@ defmodule Argus.Pipeline.Normalize do
 
   # Atoms, integers, etc. pass through.
   defp normalize_operand(other), do: other
+
+  # Total by construction, where `Keyword.get/3` was not: it raises on an
+  # improper list, the same hazard that took extraction down on a real
+  # literal. An alloc hint without a word count is 0, which is what the
+  # keyword default meant anyway.
+  defp alloc_words([{:words, n} | _rest]) when is_integer(n), do: n
+  defp alloc_words([_other | rest]), do: alloc_words(rest)
+  defp alloc_words(_not_a_cons), do: 0
 end

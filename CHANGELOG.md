@@ -12,6 +12,19 @@ baseline the results, edit an extractor, re-measure, diff, accept or
 revert, repeat. Inspired by pi-autoresearch's event-log + living-doc
 pattern, adapted for Argus's multi-dimensional categorical metrics.
 
+### Fixed (robustness)
+
+- `Argus.Pipeline.Normalize` no longer crashes on improper lists in BEAM
+  literals. `is_list/1` is true for `[head | tail]` with a non-list tail,
+  but `Enum.map/2` raises on it, so a single such literal took the entire
+  extraction down with a `FunctionClauseError` reported far from its
+  cause. Found by sweeping planchette over a corpus of real projects:
+  **poison** ships one, and every module in the project failed as a
+  result. Normalization now walks cons cells, so proper and improper lists
+  are both handled and the improper tail is preserved rather than silently
+  properised. `{:alloc, _}` hints got the same treatment — `Keyword.get/3`
+  raises on an improper list too.
+
 ### Changed (schema version 8 — positional columns split out)
 
 Three relations carried positional data that no rule joined on but that
