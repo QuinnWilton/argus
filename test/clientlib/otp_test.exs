@@ -26,6 +26,8 @@ defmodule Argus.Clientlib.OtpTest do
       ]
 
       {:ok, _} = Pipeline.run(modules, facts_dir, extractors: [Argus.Extractors.OTP])
+      # imports.dl reads the staged call graph rather than deriving it.
+      :ok = Argus.Analysis.derive_stage0(facts_dir)
 
       rules = """
       .include "#{Path.join(priv_dl(), "clientlib/imports.dl")}"

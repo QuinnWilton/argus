@@ -1,0 +1,33 @@
+// Stage 0 — the shared derived call graph.
+//
+// Every client analysis needs `call_edge` / `call_reachable`, and every
+// one of them used to re-derive both from raw bytecode inside its own
+// solve. That is wasteful (the same fixpoint, computed once per
+// analysis) and, worse, it makes each analysis's input set include the
+// layer-1 relations — `instruction`, `remote_call`, `function_def` and
+// friends — which churn on any edit to a function body.
+//
+// Stratifying fixes both. This program derives the call graph once; the
+// analyses take the result as facts (see clientlib/imports.dl). The
+// payoff for incremental consumers is that the *output* of this stage is
+// far more stable than its input: editing a function body without
+// changing which functions it calls leaves call_edge and call_reachable
+// byte-identical, so a memoizing driver can stop there instead of
+// re-solving every analysis.
+//
+// Outputs are written as `.facts` (Souffle's fact-file extension and the
+// same tab-separated format it reads) so the directory can be handed
+// straight back to an analysis run with no renaming step.
+
+.include "base.dl"
+
+// Only call_edge is staged. Its transitive closure (call_reachable) stays
+// a per-analysis derivation on purpose: the closure is quadratic in the
+// worst case — 1.6MB of call_edge expands to 24.7MB of call_reachable on
+// a 555-beam corpus — so materializing it would trade a cheap fixpoint
+// for an expensive write-then-read on every solve, and would scale badly
+// on large codebases. call_edge is the small, stable thing worth staging;
+// closing over it is cheap and stays where it is used.
+.decl call_edge(caller: symbol, callee: symbol)
+.include "clientlib/callgraph_rules.dl"
+.output call_edge(filename="call_edge.facts")

@@ -30,6 +30,9 @@ defmodule Argus.Clientlib.SupervisionTest do
           extractors: [Argus.Extractors.OTP, Argus.Extractors.Supervision]
         )
 
+      # imports.dl reads the staged call graph rather than deriving it.
+      :ok = Argus.Analysis.derive_stage0(facts_dir)
+
       rules = """
       .include "#{Path.join(priv_dl(), "clientlib/imports.dl")}"
 

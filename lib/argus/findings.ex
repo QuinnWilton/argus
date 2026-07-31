@@ -133,19 +133,40 @@ defmodule Argus.Findings do
   defp evaluate(modules, analysis_mods, opts) do
     names = Enum.map(analysis_mods, & &1.name())
 
-    with {:ok, facts_dir} <- Analysis.extract_facts(modules, names, opts) do
-      outcomes =
-        analysis_mods
-        |> Task.async_stream(&run_one(&1, facts_dir, opts),
-          max_concurrency: Keyword.get(opts, :concurrency, System.schedulers_online()),
-          ordered: true,
-          # Souffle.run bounds each evaluation with :souffle_timeout, so the
-          # task itself never needs a second, racing deadline.
-          timeout: :infinity
-        )
-        |> Enum.map(fn {:ok, outcome} -> outcome end)
+    case Analysis.extract_facts(modules, names, opts) do
+      {:ok, facts_dir} ->
+        outcomes =
+          analysis_mods
+          |> Task.async_stream(&run_one(&1, facts_dir, opts),
+            max_concurrency: Keyword.get(opts, :concurrency, System.schedulers_online()),
+            ordered: true,
+            # Souffle.run bounds each evaluation with :souffle_timeout, so the
+            # task itself never needs a second, racing deadline.
+            timeout: :infinity
+          )
+          |> Enum.map(fn {:ok, outcome} -> outcome end)
 
-      {:ok, collect(outcomes)}
+        {:ok, collect(outcomes)}
+
+      # Stage 0 (the shared call graph) is a Souffle evaluation like any
+      # other, and Souffle trouble is degradation, not a crash — the same
+      # contract a per-analysis solve gets. Because every analysis reads
+      # its output, a stage-0 failure grounds all of them, so each one
+      # degrades with the underlying reason rather than the whole call
+      # collapsing into an opaque error.
+      {:error, {:stage0, reason}} ->
+        {:ok,
+         collect(
+           Enum.map(analysis_mods, fn mod ->
+             name = mod.name()
+
+             {:degraded,
+              %{analysis: name, reason: reason, detail: degradation_detail(name, reason)}}
+           end)
+         )}
+
+      {:error, _reason} = error ->
+        error
     end
   end
 

@@ -10,10 +10,11 @@
 // because their identity is unknown — joining on "dynamic" conflates
 // independent tables and produces false positives.
 
-.include "../clientlib/cfg.dl"
-
-// base.dl relations (instruction, function_def) are included transitively
-// through cfg.dl.
+// base.dl directly: this analysis needs the `instruction` and
+// `function_def` declarations but never reads cfg_edge, and including
+// cfg.dl would drag its derivation rules (and so branch/jump/next/
+// label_at/select_branch facts) into the input set for nothing.
+.include "../base.dl"
 
 .decl ets_new(id: symbol, func: symbol, name: symbol)
 .input ets_new

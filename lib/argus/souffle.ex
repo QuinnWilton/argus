@@ -64,6 +64,48 @@ defmodule Argus.Souffle do
     find_souffle() != nil
   end
 
+  @doc """
+  The relations a rules program reads, as Souffle resolves them.
+
+  Compiles the program only as far as the transformed RAM — no facts are
+  read and no solve runs — and returns the relations it would load.
+
+  The RAM is the right oracle here. Reading `.input` out of the source
+  over-approximates (declared-but-unused relations survive in the AST and
+  are pruned later), and resolving `.include` by hand under-approximates
+  (Souffle resolves includes relative to the including file, so a naive
+  walker misses transitively included declarations). Only the RAM says
+  what will actually be opened.
+  """
+  @spec input_relations(Path.t(), keyword()) :: {:ok, [String.t()]} | {:error, term()}
+  def input_relations(rules_path, opts \\ []) do
+    case Keyword.get(opts, :souffle_bin, find_souffle()) do
+      nil ->
+        {:error, :souffle_not_found}
+
+      bin ->
+        args = ["--show=transformed-ram", rules_path]
+
+        case System.cmd(bin, args, stderr_to_stdout: false) do
+          {output, 0} -> {:ok, parse_ram_inputs(output)}
+          {output, code} -> {:error, {:souffle_error, code, output}}
+        end
+    end
+  end
+
+  # RAM IO directives look like:
+  #   IO <name> (IO="file",...,operation="input",...)
+  # Outputs carry operation="output"; only inputs are fact files we must
+  # supply.
+  defp parse_ram_inputs(output) do
+    ~r/IO\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+\((?<attrs>[^)]*)\)/
+    |> Regex.scan(output, capture: :all)
+    |> Enum.filter(fn [_full, _name, attrs] -> attrs =~ ~s(operation="input") end)
+    |> Enum.map(fn [_full, name, _attrs] -> name end)
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
   defp find_souffle do
     case System.find_executable("souffle") do
       nil -> nil

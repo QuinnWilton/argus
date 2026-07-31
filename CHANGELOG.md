@@ -12,6 +12,43 @@ baseline the results, edit an extractor, re-measure, diff, accept or
 revert, repeat. Inspired by pi-autoresearch's event-log + living-doc
 pattern, adapted for Argus's multi-dimensional categorical metrics.
 
+### Changed (stratified call graph)
+
+The shared call graph is now derived once by `priv/dl/stage0.dl` and read
+by analyses as facts, instead of being re-derived inside every solve.
+
+- `clientlib/imports.dl` declares `call_edge` as `.input` and includes
+  `base.dl` directly rather than `cfg.dl`. Souffle prunes unused *input*
+  relations but not unused *derived* ones, so pulling in the cfg_edge
+  rules kept every analysis demanding `branch`/`jump`/`next`/`label_at`/
+  `select_branch` facts it never read. `analyses/ets.dl` and
+  `analyses/unlinked_spawn.dl` likewise now include `base.dl`.
+- `call_reachable` stays a per-analysis derivation over the staged edges:
+  the closure is quadratic in the worst case (1.6MB of `call_edge`
+  expands to 24.7MB on a 555-beam corpus), so materializing it would
+  trade a cheap fixpoint for an expensive write-then-read.
+- Dead `cfg_reachable` removed — nothing referenced it, and as the
+  closure of a ~10M-row relation it was a standing hazard.
+
+Analysis input sets drop from 18–21 relations to 2–10, and the
+supervision family (`one_for_one_coupling`, `supervision`,
+`sync_call_in_init`) no longer reads `instruction` at all — so a consumer
+that memoizes per relation can tell an ordinary body edit cannot have
+changed their verdict.
+
+New API: `Argus.Analysis.derive_stage0/2`, `stage0_rules_path/0`, and
+`input_relations/1` (resolved from the transformed RAM, the form that
+actually executes — the parsed AST over-approximates, and walking
+`.include` by hand under-approximates). `Argus.Analysis.run_rules/3`
+derives stage 0 when a facts directory lacks it, so batch callers and
+hand-built fact directories need no change; `extract_facts/3` stages it
+up front. A stage-0 failure degrades every requested analysis rather than
+collapsing the call, preserving the "Souffle trouble is visible, not
+fatal" contract.
+
+Verified byte-identical: every built-in analysis's full output plus
+per-relation row counts and content hashes, over 555 beams.
+
 ### Fixed (performance)
 
 - `clientlib/cfg.dl` no longer forces `.output cfg_edge`. The directive

@@ -19,6 +19,8 @@ defmodule Argus.Clientlib.CallReachableRulesTest do
 
       facts_dir = Path.join(tmp_dir, "facts")
       {:ok, _} = Pipeline.run([Enum, :lists], facts_dir)
+      # imports.dl reads the staged call graph rather than deriving it.
+      :ok = Argus.Analysis.derive_stage0(facts_dir)
 
       # Use imports.dl which bundles cfg + callgraph + call_reachable.
       rules = """

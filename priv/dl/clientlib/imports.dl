@@ -1,8 +1,8 @@
 // Standard imports for Argus client analyses.
 //
 // Include this single file to get all base fact declarations, the control
-// flow graph, call graph, and reachability. This is the recommended starting
-// point for writing new analyses.
+// flow graph, and the call graph. This is the recommended starting point
+// for writing new analyses.
 //
 // Usage:
 //   .include "../clientlib/imports.dl"
@@ -10,20 +10,41 @@
 // Provides:
 //   Base facts:     instruction, next, jump, branch, label_at, select_branch,
 //                   function_def, local_call, remote_call, bif_call
-//   Derived:        cfg_edge, call_edge, call_reachable, cfg_reachable
+//   Derivable:      cfg_edge (from cfg.dl; Souffle prunes it unless read)
+//   Stage-0 facts:  call_edge
+//   Derived here:   call_reachable
+//
+// `call_edge` arrives as FACTS, not a derivation: it is produced once by
+// `stage0.dl` and read here. Deriving it per analysis meant recomputing
+// the same fixpoint once per analysis, and it dragged the layer-1
+// relations — instruction, remote_call, function_def and friends — into
+// every analysis's input set, so any edit to a function body dirtied
+// every analysis, including ones that only reason about supervision
+// structure. call_edge is far more stable than its inputs: changing what
+// a function *does* leaves it untouched; only changing what a function
+// *calls* moves it. `Argus.Analysis.run_rules/3` runs stage 0 for you;
+// incremental consumers memoize it separately and reuse it across solves.
+//
+// call_reachable stays derived here rather than staged — see stage0.dl
+// for why (the closure is quadratic and dwarfs the edge relation).
+//
+// `cfg_reachable` was removed with the same change: nothing referenced
+// it, and as the transitive closure of a ~10M-row relation it was a
+// standing hazard. Analyses needing instruction-level reachability should
+// declare it locally over cfg_edge.
 
-.include "cfg.dl"
+// Base declarations only. cfg.dl is deliberately NOT included: Souffle
+// prunes unused *input* relations but not unused *derived* ones, so
+// pulling in the cfg_edge rules would keep every analysis demanding
+// branch/jump/next/label_at/select_branch facts it never reads — exactly
+// the coupling the stage-0 split exists to break. Analyses that want the
+// control-flow graph include clientlib/cfg.dl themselves.
+.include "../base.dl"
 
-// Call graph.
+// Call graph, derived once by stage0.dl.
 .decl call_edge(caller: symbol, callee: symbol)
-.include "callgraph_rules.dl"
+.input call_edge
 
-// Transitive call reachability.
+// Transitive call reachability, closed over the staged edges.
 .decl call_reachable(from: symbol, to: symbol)
 .include "call_reachable_rules.dl"
-
-// Instruction-level reachability.
-.decl cfg_reachable(from: symbol, to: symbol)
-
-cfg_reachable(a, b) :- cfg_edge(a, b).
-cfg_reachable(a, c) :- cfg_reachable(a, b), cfg_edge(b, c).

@@ -24,6 +24,9 @@ defmodule Argus.Clientlib.GenserverApiRulesTest do
           extractors: [Argus.Extractors.OTP]
         )
 
+      # imports.dl reads the staged call graph rather than deriving it.
+      :ok = Argus.Analysis.derive_stage0(facts_dir)
+
       # Use imports.dl which already declares call_reachable. Then include
       # genserver_api_rules.dl which declares genserver_sync_api. We just
       # need to add the missing input declarations and .output.

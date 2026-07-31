@@ -140,8 +140,67 @@ defmodule Argus.Analysis do
 
     with {:ok, work_dir} <- create_work_dir(),
          facts_dir = Path.join(work_dir, "facts"),
-         {:ok, _} <- Pipeline.run(modules, facts_dir, opts) do
+         {:ok, _} <- Pipeline.run(modules, facts_dir, opts),
+         :ok <- derive_stage0(facts_dir, opts) do
       {:ok, facts_dir}
+    end
+  end
+
+  @doc """
+  Derives the stage-0 relations into an existing facts directory.
+
+  Stage 0 is the shared call graph (`call_edge`): every client analysis
+  needs it, and before stratification each one re-derived it inside its
+  own solve from the layer-1 bytecode relations. Deriving it once here
+  removes that redundancy, and — more importantly for incremental
+  consumers — keeps `instruction`, `remote_call` and friends out of the
+  input set of analyses that only reason about supervision structure.
+
+  `extract_facts/3` calls this for you, so batch callers need not think
+  about it. Incremental consumers call it directly, memoize the result,
+  and reuse it across solves: the output is markedly more stable than its
+  inputs, since it moves only when the *call* structure changes, not when
+  a function body does.
+
+  Writes `call_edge.facts` into `facts_dir`. Idempotent — re-running
+  overwrites with the same content for the same inputs.
+  """
+  @spec derive_stage0(Path.t(), keyword()) :: :ok | {:error, term()}
+  def derive_stage0(facts_dir, opts \\ []) do
+    # Souffle writes outputs into -D; stage0.dl names them `.facts` so the
+    # directory it lands in is directly reusable as a fact directory.
+    case Souffle.run(facts_dir, stage0_rules_path(), Keyword.put(opts, :output_dir, facts_dir)) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, {:stage0, reason}}
+    end
+  end
+
+  @doc """
+  The path to the stage-0 rules file.
+  """
+  @spec stage0_rules_path() :: Path.t()
+  def stage0_rules_path, do: priv_dl("stage0.dl")
+
+  @doc """
+  The relations an analysis actually reads, as Souffle resolves them.
+
+  Derived from the transformed RAM program — the form that actually
+  executes — rather than the source `.dl`. That distinction matters: the
+  parsed AST lists every declared input including ones later pruned as
+  unused, so reading the source over-approximates, and following
+  `.include` by hand under-approximates (Souffle resolves includes
+  relative to the including file). The RAM's `operation="input"` entries
+  are the set Souffle will genuinely open.
+
+  Incremental consumers use this to project a per-analysis fact directory,
+  so an analysis only re-solves when a relation it truly reads has moved.
+
+  Returns `{:ok, [relation_name]}` or `{:error, reason}`.
+  """
+  @spec input_relations(analysis()) :: {:ok, [String.t()]} | {:error, term()}
+  def input_relations(analysis) do
+    with {:ok, rules_path} <- resolve_rules(analysis) do
+      Souffle.input_relations(rules_path)
     end
   end
 
@@ -156,8 +215,23 @@ defmodule Argus.Analysis do
   """
   @spec run_rules(Path.t(), analysis(), keyword()) :: {:ok, result()} | {:error, term()}
   def run_rules(facts_dir, analysis, opts \\ []) do
-    with {:ok, rules_path} <- resolve_rules(analysis) do
+    with {:ok, rules_path} <- resolve_rules(analysis),
+         :ok <- ensure_stage0(facts_dir, opts) do
       Souffle.run(facts_dir, rules_path, opts)
+    end
+  end
+
+  # Analyses read the staged call graph, so it has to be there. Deriving
+  # it only when absent keeps this a no-op on the hot path: extract_facts/3
+  # already staged it, and incremental callers supply a directory that
+  # carries their own memoized copy. Hand-built fact directories — tests,
+  # ad-hoc probes — get it derived on demand rather than having to know
+  # about staging at all.
+  defp ensure_stage0(facts_dir, opts) do
+    if File.exists?(Path.join(facts_dir, "call_edge.facts")) do
+      :ok
+    else
+      derive_stage0(facts_dir, opts)
     end
   end
 
