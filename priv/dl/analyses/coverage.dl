@@ -20,45 +20,6 @@
 
 // ── Input facts ──────────────────────────────────────────────────────
 
-.decl imprecision(category: symbol, func: symbol, relation: symbol, reason: symbol)
-.input imprecision
-
-.decl supervisor(mod: symbol, strategy: symbol)
-.input supervisor
-
-.decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
-.input supervisor_child
-
-.decl dynamic_child(sup: symbol, child_mod: symbol, caller_func: symbol)
-.input dynamic_child
-
-.decl implements_behaviour(mod: symbol, behaviour: symbol)
-.input implements_behaviour
-
-.decl sync_call(caller_func: symbol, callee_mod: symbol)
-.input sync_call
-
-.decl async_cast(caller_func: symbol, callee_mod: symbol)
-.input async_cast
-
-.decl ets_new(id: symbol, func: symbol, name: symbol)
-.input ets_new
-
-.decl ets_op(id: symbol, func: symbol, table_ref: symbol, op: symbol, kind: symbol)
-.input ets_op
-
-.decl statem_module(mod: symbol, callback_mode: symbol)
-.input statem_module
-
-.decl statem_state(mod: symbol, state: symbol, site: symbol)
-.input statem_state
-
-.decl statem_transition(mod: symbol, from_state: symbol, event: symbol, to_state: symbol)
-.input statem_transition
-
-.decl named_process(mod: symbol, name: symbol)
-.input named_process
-
 // ── Active instrumentation passthrough ──────────────────────────────
 //
 // Expose the raw imprecision events so the consumer can aggregate them

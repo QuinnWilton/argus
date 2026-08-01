@@ -9,18 +9,7 @@
 
 // ── Layer 2 facts ──────────────────────────────────────────────────────
 
-.decl sync_call(caller_func: symbol, callee_mod: symbol)
-.input sync_call
-
-.decl implements_behaviour(mod: symbol, behaviour: symbol)
-.input implements_behaviour
-
 // ── GenServer API identification ───────────────────────────────────────
-
-// otp.dl requires async_cast — declare an empty relation since
-// process_bottleneck only uses sync paths.
-.decl async_cast(caller_func: symbol, callee_mod: symbol)
-.input async_cast
 
 .include "../clientlib/otp.dl"
 

@@ -15,9 +15,6 @@
 //   - sync_call and async_cast declared by the consumer analysis
 //     (with .decl and .input — Souffle unions input + derived rows)
 
-.decl call_arg( caller: symbol, callee: symbol, arg_pos: number, value: symbol)
-.input call_arg
-
 // ── Resolved argument propagation ─────────────────────────────────
 
 // resolved_arg(func, arg_pos, value): function `func`'s parameter at

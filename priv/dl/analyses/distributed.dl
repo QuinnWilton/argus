@@ -6,25 +6,6 @@
 
 .include "../clientlib/imports.dl"
 
-// Layer 2 input declarations.
-.decl rpc_call(id: symbol, func: symbol, variant: symbol, timeout: symbol)
-.input rpc_call
-
-.decl global_register(id: symbol, func: symbol, name: symbol, arity: symbol)
-.input global_register
-
-.decl global_op(id: symbol, func: symbol, op: symbol, retries: symbol)
-.input global_op
-
-.decl node_operation(id: symbol, func: symbol, op: symbol)
-.input node_operation
-
-.decl distributed_store_op(id: symbol, func: symbol, store: symbol, op: symbol)
-.input distributed_store_op
-
-.decl implements_behaviour(mod: symbol, behaviour: symbol)
-.input implements_behaviour
-
 // ── RPC without timeout ──────────────────────────────────────────
 
 // RPC call using default infinity timeout — hangs on netsplit.

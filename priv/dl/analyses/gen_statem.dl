@@ -5,19 +5,6 @@
 
 .include "../clientlib/imports.dl"
 
-// Layer 2 input declarations.
-.decl statem_module(mod: symbol, callback_mode: symbol)
-.input statem_module
-
-.decl statem_state(mod: symbol, state: symbol, site: symbol)
-.input statem_state
-
-.decl statem_transition(mod: symbol, from_state: symbol, event: symbol, to_state: symbol)
-.input statem_transition
-
-.decl statem_initial(mod: symbol, state: symbol)
-.input statem_initial
-
 // ── Mode scoping ─────────────────────────────────────────────────
 //
 // The structural rules below reason over a graph of state-function

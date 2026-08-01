@@ -10,31 +10,8 @@
 
 .include "../clientlib/imports.dl"
 
-.decl supervisor(mod: symbol, strategy: symbol)
-.input supervisor
-
-// Anchor site of the tree definition — positional, so it is joined only
-// by rules that need to place a finding, never by the logic itself.
-.decl supervisor_site(mod: symbol, site: symbol)
-.input supervisor_site
-
-.decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
-.input supervisor_child
-
-.decl dynamic_child(sup: symbol, child_mod: symbol, caller_func: symbol)
-.input dynamic_child
-
-.decl sync_call(caller_func: symbol, callee_mod: symbol)
-.input sync_call
-
-.decl async_cast(caller_func: symbol, callee_mod: symbol)
-.input async_cast
-
 // (The supervision extractor also emits named_process; no rule here
 // consumes it.)
-
-.decl implements_behaviour(mod: symbol, behaviour: symbol)
-.input implements_behaviour
 
 // ── OTP helpers ──────────────────────────────────────────────────────
 

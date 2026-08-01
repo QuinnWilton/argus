@@ -5,22 +5,6 @@
 
 .include "../clientlib/imports.dl"
 
-// Layer 2 input declarations.
-.decl bare_rescue(id: symbol, func: symbol)
-.input bare_rescue
-
-.decl trap_exit(func: symbol, mod: symbol)
-.input trap_exit
-
-.decl exit_call(id: symbol, func: symbol, target: symbol)
-.input exit_call
-
-.decl ignored_error_result(id: symbol, func: symbol, callee: symbol)
-.input ignored_error_result
-
-.decl implements_behaviour(mod: symbol, behaviour: symbol)
-.input implements_behaviour
-
 // ── Swallowed errors ─────────────────────────────────────────────
 
 // Catch-all rescue that silently discards exceptions.

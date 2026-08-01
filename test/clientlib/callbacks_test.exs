@@ -27,8 +27,6 @@ defmodule Argus.Clientlib.CallbacksTest do
       rules = """
       .include "#{Path.join(priv_dl(), "clientlib/imports.dl")}"
 
-      .decl implements_behaviour(mod: symbol, behaviour: symbol)
-      .input implements_behaviour
 
       .include "#{Path.join(priv_dl(), "clientlib/callbacks.dl")}"
 

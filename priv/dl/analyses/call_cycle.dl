@@ -9,17 +9,6 @@
 
 // ── Layer 2 facts ──────────────────────────────────────────────────────
 
-.decl sync_call(caller_func: symbol, callee_mod: symbol)
-.input sync_call
-
-.decl implements_behaviour(mod: symbol, behaviour: symbol)
-.input implements_behaviour
-
-// otp.dl requires async_cast — declare for stateful_module_dep_rules.dl
-// even though call_cycle only uses sync paths.
-.decl async_cast(caller_func: symbol, callee_mod: symbol)
-.input async_cast
-
 // ── GenServer API identification ───────────────────────────────────────
 
 .include "../clientlib/otp.dl"

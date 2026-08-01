@@ -9,9 +9,7 @@
 // rules (and so branch/jump/next/label_at/select_branch facts) into the
 // input set for nothing.
 .include "../base.dl"
-
-.decl spawn_call(id: symbol, mod: symbol, func: symbol, arity: number, variant: symbol)
-.input spawn_call
+.include "../layer2.dl"
 
 .decl unlinked_spawn(func: symbol, id: symbol)
 .output unlinked_spawn

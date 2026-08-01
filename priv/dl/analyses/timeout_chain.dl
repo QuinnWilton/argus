@@ -15,18 +15,6 @@
 
 // ── Input facts ──────────────────────────────────────────────────────
 
-.decl implements_behaviour(mod: symbol, behaviour: symbol)
-.input implements_behaviour
-
-.decl sync_call(caller_func: symbol, callee_mod: symbol)
-.input sync_call
-
-.decl sync_call_timeout(caller_func: symbol, callee_mod: symbol, timeout_ms: number)
-.input sync_call_timeout
-
-.decl async_cast(caller_func: symbol, callee_mod: symbol)
-.input async_cast
-
 // ── OTP helpers ──────────────────────────────────────────────────────
 
 .include "../clientlib/otp.dl"

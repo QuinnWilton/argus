@@ -33,6 +33,31 @@ pattern, adapted for Argus's multi-dimensional categorical metrics.
 
 ### Added
 
+- **Souffle fact declarations are generated from `Argus.Schema`.**
+  `priv/dl/base.dl` and the new `priv/dl/layer2.dl` are written by
+  `mix argus.gen.dl` and checked byte-for-byte by the suite. Declarations are
+  positional, and Souffle cannot check them against what the emitter writes —
+  two `symbol` columns swapped parse fine and silently join the wrong values,
+  producing findings that are wrong rather than absent. They were the one part
+  of the schema with no mechanical link back to it: **95 hand-written `.input`
+  declarations of 50 distinct relations across 19 files**, so most relations
+  were declared several times over, each an independent chance to drift.
+
+  83 of them are now deleted; rules files include the generated declarations
+  instead. Declaring the whole schema costs nothing in the solve, and the
+  suite now demonstrates rather than assumes it: every analysis's true input
+  set — read out of Souffle's transformed RAM — is **identical** to what it
+  was when each file declared only the handful it read. Findings over the
+  oban corpus (962 findings, 1259 beams) are byte-identical.
+
+  `Argus.DlDeclarationsTest` also pins those input sets, because they are the
+  unit of incremental work: a consumer re-solves an analysis when any relation
+  in its set changes, so an accidental widening is a silent latency
+  regression. One assertion is deliberately a marker rather than a guard —
+  exactly three analyses read `instruction`, the largest and most volatile
+  relation, and twelve of the fourteen `instruction(...)` uses in the rule
+  corpus exist only to recover a call's containing function from its ID.
+
 - `Argus.InstrId.mint/2`, `func_id/2,3` and `func_id_of/1` — the wire format
   for instruction and function IDs now has exactly one definition, with
   `parse/1` and `parse_func/1` as its inverses. Nineteen sites previously

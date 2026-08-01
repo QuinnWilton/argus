@@ -36,20 +36,6 @@ defmodule Argus.Clientlib.SupervisionTest do
       rules = """
       .include "#{Path.join(priv_dl(), "clientlib/imports.dl")}"
 
-      .decl implements_behaviour(mod: symbol, behaviour: symbol)
-      .input implements_behaviour
-
-      .decl sync_call(caller_func: symbol, callee_mod: symbol)
-      .input sync_call
-
-      .decl async_cast(caller_func: symbol, callee_mod: symbol)
-      .input async_cast
-
-      .decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
-      .input supervisor_child
-
-      .decl dynamic_child(sup: symbol, child_mod: symbol, caller_func: symbol)
-      .input dynamic_child
 
       .include "#{Path.join(priv_dl(), "clientlib/otp.dl")}"
       .include "#{Path.join(priv_dl(), "clientlib/supervision.dl")}"

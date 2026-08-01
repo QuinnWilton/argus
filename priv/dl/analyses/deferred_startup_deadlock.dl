@@ -22,34 +22,6 @@
 
 .include "../clientlib/imports.dl"
 
-// Layer 2 input declarations.
-.decl supervisor(mod: symbol, strategy: symbol)
-.input supervisor
-
-.decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
-.input supervisor_child
-
-.decl dynamic_child(sup: symbol, child_mod: symbol, caller_func: symbol)
-.input dynamic_child
-
-.decl implements_behaviour(mod: symbol, behaviour: symbol)
-.input implements_behaviour
-
-.decl sync_call(caller_func: symbol, callee_mod: symbol)
-.input sync_call
-
-.decl async_cast(caller_func: symbol, callee_mod: symbol)
-.input async_cast
-
-.decl init_continues_to(mod: symbol, tag: symbol)
-.input init_continues_to
-
-.decl handle_continue_clause(mod: symbol, tag: symbol, func_id: symbol)
-.input handle_continue_clause
-
-.decl try_start(id: symbol, handler: number)
-.input try_start
-
 .include "../clientlib/otp.dl"
 .include "../clientlib/supervision.dl"
 

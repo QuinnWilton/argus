@@ -13,12 +13,6 @@
 
 // ── Additional base facts ──────────────────────────────────────────────
 
-.decl tail_call(id: symbol)
-.input tail_call
-
-.decl implements_behaviour(mod: symbol, behaviour: symbol)
-.input implements_behaviour
-
 // ── Task.async detection ───────────────────────────────────────────────
 
 .decl task_async_call(func: symbol, id: symbol)

@@ -26,14 +26,12 @@ defmodule Argus.Clientlib.InitFunctionRulesTest do
           extractors: [Argus.Extractors.OTP]
         )
 
-      # init_function_rules.dl declares init_function internally.
-      # We just include base.dl for function_def, add implements_behaviour,
-      # then include the rules file and add .output.
+      # init_function_rules.dl declares init_function internally. It needs
+      # function_def from Layer 1 and implements_behaviour from Layer 2, so
+      # include both generated declaration files, then the rules.
       rules = """
       .include "#{Path.join(priv_dl(), "base.dl")}"
-
-      .decl implements_behaviour(mod: symbol, behaviour: symbol)
-      .input implements_behaviour
+      .include "#{Path.join(priv_dl(), "layer2.dl")}"
 
       .include "#{Path.join(priv_dl(), "clientlib/init_function_rules.dl")}"
       .output init_function
@@ -64,9 +62,7 @@ defmodule Argus.Clientlib.InitFunctionRulesTest do
 
       rules = """
       .include "#{Path.join(priv_dl(), "base.dl")}"
-
-      .decl implements_behaviour(mod: symbol, behaviour: symbol)
-      .input implements_behaviour
+      .include "#{Path.join(priv_dl(), "layer2.dl")}"
 
       .include "#{Path.join(priv_dl(), "clientlib/init_function_rules.dl")}"
       .output init_function

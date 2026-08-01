@@ -5,16 +5,6 @@
 
 .include "../clientlib/imports.dl"
 
-// Layer 2 input declarations.
-.decl unsafe_atom_creation(id: symbol, func: symbol, api: symbol)
-.input unsafe_atom_creation
-
-.decl unsafe_deserialization(id: symbol, func: symbol, api: symbol, safety: symbol)
-.input unsafe_deserialization
-
-.decl code_execution(id: symbol, func: symbol, api: symbol)
-.input code_execution
-
 // ── Export reachability ──────────────────────────────────────────
 
 // A function is attack-surface-adjacent when it is exported, or when

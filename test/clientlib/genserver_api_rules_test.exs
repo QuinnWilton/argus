@@ -33,11 +33,6 @@ defmodule Argus.Clientlib.GenserverApiRulesTest do
       rules = """
       .include "#{Path.join(priv_dl(), "clientlib/imports.dl")}"
 
-      .decl implements_behaviour(mod: symbol, behaviour: symbol)
-      .input implements_behaviour
-
-      .decl sync_call(caller_func: symbol, callee_mod: symbol)
-      .input sync_call
 
       .include "#{Path.join(priv_dl(), "clientlib/genserver_api_rules.dl")}"
       .output genserver_sync_api

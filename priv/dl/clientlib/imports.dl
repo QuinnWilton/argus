@@ -8,8 +8,8 @@
 //   .include "../clientlib/imports.dl"
 //
 // Provides:
-//   Base facts:     instruction, next, jump, branch, label_at, select_branch,
-//                   function_def, local_call, remote_call, bif_call
+//   Base facts:     every Layer-1 and Layer-2 relation in Argus.Schema
+//                   (base.dl + layer2.dl, both generated)
 //   Derivable:      cfg_edge (from cfg.dl; Souffle prunes it unless read)
 //   Stage-0 facts:  call_edge
 //   Derived here:   call_reachable
@@ -40,6 +40,13 @@
 // the coupling the stage-0 split exists to break. Analyses that want the
 // control-flow graph include clientlib/cfg.dl themselves.
 .include "../base.dl"
+
+// Layer-2 domain-extractor declarations, generated from the same schema.
+// Analyses used to hand-declare the handful they read — 95 declarations of
+// 50 distinct relations across 19 files, none of them checked against
+// Argus.Schema. Declaring the whole layer here is free for the same reason
+// base.dl is: Souffle prunes input relations no rule reads.
+.include "../layer2.dl"
 
 // Call graph, derived once by stage0.dl.
 .decl call_edge(caller: symbol, callee: symbol)
