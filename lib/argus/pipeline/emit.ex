@@ -14,6 +14,7 @@ defmodule Argus.Pipeline.Emit do
 
   require Logger
 
+  alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
   import Argus.Extractor.Helpers, only: [add_fact: 3]
@@ -747,10 +748,17 @@ defmodule Argus.Pipeline.Emit do
   defp instruction_op(atom) when is_atom(atom), do: atom
   defp instruction_op(tuple) when is_tuple(tuple), do: elem(tuple, 0)
 
-  # Strip the "#idx" suffix from an instruction ID to recover the function ID
-  # that contains it. Instruction IDs have the shape "mod:func/arity#idx".
+  # Recover the function ID containing an instruction ID. Right-anchored via
+  # InstrId, because splitting on the FIRST "#" truncates compiler-generated
+  # names that contain one (`-fun-#1-`-style) and yields a function ID that
+  # joins against the wrong function, or none. On a malformed ID — which
+  # cannot happen for IDs this module minted itself — the full ID is passed
+  # through, where it simply fails to match rather than matching wrongly.
   defp parent_func_id(instruction_id) do
-    instruction_id |> String.split("#", parts: 2) |> hd()
+    case InstrId.func_id_of(instruction_id) do
+      {:ok, func_id} -> func_id
+      :error -> instruction_id
+    end
   end
 
   # Type-test instructions narrow the type of a register on the success

@@ -27,6 +27,8 @@ defmodule Argus.Extractors.Supervision do
 
   @behaviour Argus.Extractor
 
+  alias Argus.InstrId
+
   import Argus.Extractor.Helpers,
     only: [
       add_fact: 3,
@@ -352,7 +354,7 @@ defmodule Argus.Extractors.Supervision do
   # naming the supervisor's init/1 (or start/2) so coverage events can
   # still be attributed to a function.
   defp synthetic_ctx(mod_str, func_label) do
-    %{func_id: "#{mod_str}:#{func_label}", instrs: [], idx: 0}
+    %{func_id: InstrId.func_id(mod_str, func_label), instrs: [], idx: 0}
   end
 
   # Extract children from the given instructions, then follow local calls
@@ -391,7 +393,7 @@ defmodule Argus.Extractors.Supervision do
   # helpers, and this scan all number the same raw instruction list.
   defp detect_strategy(mod_str, func_label, instrs) do
     case detect_strategy_call(instrs) || detect_strategy_literal(instrs) do
-      {strategy, idx} -> {strategy, "#{mod_str}:#{func_label}##{idx}"}
+      {strategy, idx} -> {strategy, InstrId.mint(InstrId.func_id(mod_str, func_label), idx)}
       nil -> {:unknown, "dynamic"}
     end
   end

@@ -9,7 +9,8 @@ defmodule Argus.Pipeline.Normalize do
   ## Instruction ID format
 
   Each instruction gets an ID of the form `"mod:func/arity#idx"` where `idx`
-  is the zero-based index within the function body.
+  is the zero-based index within the function body. The format itself is
+  owned by `Argus.InstrId` — see `Argus.InstrId.mint/2`.
 
   ## Normalization rules
 
@@ -20,6 +21,8 @@ defmodule Argus.Pipeline.Normalize do
   - **test_heap**: canonicalized to extract the raw word count from `{:alloc, ...}`.
   - Everything else passes through unchanged with its ID attached.
   """
+
+  alias Argus.InstrId
 
   @type instruction_id :: String.t()
   @type normalized :: {instruction_id(), term()}
@@ -41,8 +44,7 @@ defmodule Argus.Pipeline.Normalize do
     instructions
     |> Enum.with_index()
     |> Enum.map(fn {instr, idx} ->
-      id = "#{func_id}##{idx}"
-      {id, normalize_instruction(instr)}
+      {InstrId.mint(func_id, idx), normalize_instruction(instr)}
     end)
   end
 
@@ -50,9 +52,7 @@ defmodule Argus.Pipeline.Normalize do
   Returns the function ID string for a given MFA.
   """
   @spec func_id(atom(), atom(), non_neg_integer()) :: String.t()
-  def func_id(module, name, arity) do
-    "#{inspect(module)}:#{name}/#{arity}"
-  end
+  defdelegate func_id(module, name, arity), to: InstrId
 
   # Strip typed registers recursively in instruction operands.
   defp normalize_instruction(instr) when is_tuple(instr) do

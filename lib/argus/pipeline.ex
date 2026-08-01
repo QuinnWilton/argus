@@ -72,7 +72,17 @@ defmodule Argus.Pipeline do
         |> Task.async_stream(
           fn path -> extract_module(path, extractors, trace_imprecision) end,
           max_concurrency: concurrency,
-          ordered: false,
+          # Ordered so that extracting the same modules twice produces the
+          # same value. With `ordered: false` the reduce sees workers in
+          # completion order, and `merge_facts/2` concatenates, so row order
+          # varied run to run — measured at 8 distinct results from 8
+          # extractions of the same 40 modules. Souffle has set semantics
+          # and never noticed, but any consumer that memoizes, hashes or
+          # diffs facts did: planchette had to sort every relation itself to
+          # get value equality. Ordering costs a little buffering (a worker
+          # that finishes early is held until its predecessors do) and buys
+          # a property the whole workspace was otherwise re-deriving.
+          ordered: true,
           timeout: task_timeout
         )
         |> Enum.reduce(%{}, fn

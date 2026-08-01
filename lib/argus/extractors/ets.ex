@@ -15,6 +15,8 @@ defmodule Argus.Extractors.ETS do
 
   @behaviour Argus.Extractor
 
+  alias Argus.InstrId
+
   import Argus.Extractor.Helpers,
     only: [
       add_fact: 3,
@@ -40,7 +42,7 @@ defmodule Argus.Extractors.ETS do
   end
 
   defp handle_call(facts, ctx, {:ets, :new, 2}) do
-    id = "#{ctx.func_id}##{ctx.idx}"
+    id = InstrId.mint(ctx.func_id, ctx.idx)
     table_name = resolve_atom(ctx.instrs, ctx.idx, {:x, 0})
     {options, facts} = resolve_options(facts, ctx)
 
@@ -51,7 +53,7 @@ defmodule Argus.Extractors.ETS do
   end
 
   defp handle_call(facts, ctx, {:ets, func, arity}) do
-    id = "#{ctx.func_id}##{ctx.idx}"
+    id = InstrId.mint(ctx.func_id, ctx.idx)
     table_ref = resolve_table(ctx)
     kind = classify_op(func, arity)
 

@@ -27,6 +27,8 @@ defmodule Argus.Extractors.GenStatem do
 
   @behaviour Argus.Extractor
 
+  alias Argus.InstrId
+
   import Argus.Extractor.Helpers,
     only: [
       add_fact: 3,
@@ -374,7 +376,7 @@ defmodule Argus.Extractors.GenStatem do
           acc
           |> track_dynamic(to_state, ctx, :statem_transition_target, :statem_transition)
           |> add_fact(:statem_transition, [mod_str, from_state, "event", to_state])
-          |> maybe_add_target_state(mod_str, to_state, "#{func_id}##{idx}")
+          |> maybe_add_target_state(mod_str, to_state, InstrId.mint(func_id, idx))
 
         # {:keep_state, …} / {:keep_state_and_data, …} / {:repeat_state, …} /
         # {:repeat_state_and_data, …} — the machine stays in the current

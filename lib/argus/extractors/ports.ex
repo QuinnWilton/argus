@@ -28,6 +28,8 @@ defmodule Argus.Extractors.Ports do
 
   @behaviour Argus.Extractor
 
+  alias Argus.InstrId
+
   import Argus.Extractor.Helpers,
     only: [
       add_fact: 3,
@@ -62,7 +64,7 @@ defmodule Argus.Extractors.Ports do
   defp handle_call(facts, _ctx, _mfa), do: facts
 
   defp emit(facts, ctx, mechanism, target) do
-    id = "#{ctx.func_id}##{ctx.idx}"
+    id = InstrId.mint(ctx.func_id, ctx.idx)
 
     facts
     |> track_dynamic(target, ctx, :port_target, :port_open)

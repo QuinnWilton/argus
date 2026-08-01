@@ -88,4 +88,51 @@ defmodule Argus.FactsTest do
       end
     end
   end
+
+  describe "canonicalize/1" do
+    # Extraction fans out over Task.async_stream and merges by concatenation,
+    # so before `ordered: true` the same modules produced a different value on
+    # every run. These two tests pin the pair of properties that replaced it:
+    # a fixed input order is reproducible, and canonicalize/1 is what makes
+    # differing input orders comparable.
+    @modules [:lists, :maps, :orddict, :sets, :queue, :gb_trees]
+
+    test "extraction is reproducible for a fixed input order" do
+      results = for _ <- 1..8, do: elem(Pipeline.extract(@modules), 1)
+
+      assert results |> Enum.uniq() |> length() == 1,
+             "extract/2 returned differing values for identical input"
+    end
+
+    test "canonicalize/1 makes a shuffled input order compare equal" do
+      {:ok, a} = Pipeline.extract(@modules)
+      {:ok, b} = Pipeline.extract(Enum.reverse(@modules))
+
+      # The precondition: row order really does follow input order, so this
+      # test would pass vacuously if extraction happened to be order-blind.
+      refute a == b, "input order no longer affects row order; this test is vacuous"
+
+      assert Facts.canonicalize(a) == Facts.canonicalize(b)
+    end
+
+    test "canonicalizing typed rows works too" do
+      {:ok, raw} = Pipeline.extract(@modules)
+      typed = Facts.decode(raw)
+
+      assert Facts.canonicalize(typed) == Facts.canonicalize(Facts.decode(raw))
+      assert Map.keys(Facts.canonicalize(typed)) == Map.keys(typed)
+    end
+
+    test "is idempotent and preserves every row" do
+      {:ok, raw} = Pipeline.extract(@modules)
+      once = Facts.canonicalize(raw)
+
+      assert Facts.canonicalize(once) == once
+
+      for {relation, rows} <- raw do
+        assert Enum.sort(rows) == Enum.sort(once[relation]),
+               "#{relation} lost or gained rows under canonicalization"
+      end
+    end
+  end
 end

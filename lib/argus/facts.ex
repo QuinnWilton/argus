@@ -32,6 +32,36 @@ defmodule Argus.Facts do
     Map.new(raw, fn {relation, rows} -> {relation, decode_relation(relation, rows)} end)
   end
 
+  @doc """
+  Sort every relation's rows into a canonical order.
+
+  `Argus.Pipeline.extract/2` is deterministic for a given input list: rows
+  come out in emission order, modules in the order they were passed. That is
+  enough for a consumer that always asks the same question the same way.
+
+  It is *not* enough when the input order can vary — a module set assembled
+  from a directory listing, a set difference, or a parallel discovery pass.
+  Two such extractions describe the same program but are not `==`, so a
+  memoizing consumer sees a change where there is none, and a content hash
+  keys the same facts under two different digests.
+
+  Canonicalizing makes fact maps comparable as *sets*, which is how Souffle
+  reads them anyway. Works on both raw rows (lists of strings) and typed
+  rows (maps), since both sort under Erlang term order.
+
+      Argus.Pipeline.extract(shuffled) |> elem(1) |> Argus.Facts.canonicalize()
+
+  Note the cost is proportional to the whole fact map. A consumer that
+  already holds facts partitioned — per module, per relation — is better off
+  sorting the partitions it memoizes, which is both cheaper and reusable;
+  planchette does exactly that. Reach for this when you have one big map and
+  need it comparable.
+  """
+  @spec canonicalize(facts) :: facts when facts: t() | %{atom() => [[String.t()]]}
+  def canonicalize(facts) when is_map(facts) do
+    Map.new(facts, fn {relation, rows} -> {relation, Enum.sort(rows)} end)
+  end
+
   defp decode_relation(relation, rows) do
     case Schema.fetch(relation) do
       {:ok, %{fields: fields}} -> Enum.map(rows, &decode_row(relation, fields, &1))

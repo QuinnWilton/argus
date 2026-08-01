@@ -75,12 +75,12 @@ defmodule Argus.Lines do
   tables and resolves to `nil`.
   """
   @spec resolve(t(), String.t() | InstrId.t() | mfa()) :: pos_integer() | nil
-  def resolve(lines, %InstrId{module: m, func: f, arity: a, idx: idx}) do
-    resolve(lines, "#{m}:#{f}/#{a}##{idx}")
+  def resolve(lines, %InstrId{} = instr_id) do
+    resolve(lines, InstrId.format(instr_id))
   end
 
   def resolve(lines, {m, f, a}) when is_atom(m) and is_atom(f) and is_integer(a) do
-    resolve(lines, "#{inspect(m)}:#{f}/#{a}")
+    resolve(lines, InstrId.func_id(m, f, a))
   end
 
   def resolve(lines, id) when is_binary(id) do

@@ -18,6 +18,8 @@ defmodule Argus.Extractors.ProcessRegistry do
 
   @behaviour Argus.Extractor
 
+  alias Argus.InstrId
+
   import Argus.Extractor.Helpers,
     only: [
       add_fact: 3,
@@ -95,7 +97,7 @@ defmodule Argus.Extractors.ProcessRegistry do
   end
 
   defp emit_register(facts, mod_str, ctx, name_reg, method) do
-    id = "#{ctx.func_id}##{ctx.idx}"
+    id = InstrId.mint(ctx.func_id, ctx.idx)
     name = resolve_name(ctx.instrs, ctx.idx, name_reg)
 
     facts
@@ -117,7 +119,7 @@ defmodule Argus.Extractors.ProcessRegistry do
   end
 
   defp emit_whereis(facts, ctx) do
-    id = "#{ctx.func_id}##{ctx.idx}"
+    id = InstrId.mint(ctx.func_id, ctx.idx)
     name = resolve_name(ctx.instrs, ctx.idx, {:x, 0})
 
     facts
@@ -127,7 +129,7 @@ defmodule Argus.Extractors.ProcessRegistry do
 
   # Scan for {:via, Registry, {reg, key}} tuple construction patterns.
   defp maybe_via_tuple(facts, ctx, {:put_tuple2, _, {:list, [{:atom, :via}, reg_op, key_op]}}) do
-    id = "#{ctx.func_id}##{ctx.idx}"
+    id = InstrId.mint(ctx.func_id, ctx.idx)
 
     registry =
       case reg_op do
@@ -154,7 +156,7 @@ defmodule Argus.Extractors.ProcessRegistry do
 
   defp maybe_via_tuple(facts, ctx, {:move, {:literal, {:via, registry, {reg, key}}}, _})
        when is_atom(registry) and is_atom(reg) do
-    id = "#{ctx.func_id}##{ctx.idx}"
+    id = InstrId.mint(ctx.func_id, ctx.idx)
     add_fact(facts, :via_tuple, [id, ctx.func_id, inspect(reg), inspect(key)])
   end
 
@@ -182,14 +184,14 @@ defmodule Argus.Extractors.ProcessRegistry do
             track_imprecision(facts, ctx, :gen_server_start_name, :process_register, :dynamic)
 
           name when is_atom(name) ->
-            id = "#{ctx.func_id}##{ctx.idx}"
+            id = InstrId.mint(ctx.func_id, ctx.idx)
 
             facts
             |> add_fact(:process_register, [id, ctx.func_id, inspect(name), method])
             |> maybe_emit_named_process_for_start(ctx, inspect(name))
 
           {:via, _reg, {reg_mod, key}} when is_atom(reg_mod) and reg_mod != :dynamic ->
-            id = "#{ctx.func_id}##{ctx.idx}"
+            id = InstrId.mint(ctx.func_id, ctx.idx)
             add_fact(facts, :via_tuple, [id, ctx.func_id, inspect(reg_mod), inspect(key)])
 
           _ ->
@@ -213,7 +215,7 @@ defmodule Argus.Extractors.ProcessRegistry do
     case resolve_register(ctx.instrs, ctx.idx, {:x, 0}) do
       {:ok, {kind, name}}
       when kind in [:local, :global] and is_atom(name) and name != :dynamic ->
-        id = "#{ctx.func_id}##{ctx.idx}"
+        id = InstrId.mint(ctx.func_id, ctx.idx)
 
         facts
         |> add_fact(:process_register, [id, ctx.func_id, inspect(name), method])
@@ -255,7 +257,7 @@ defmodule Argus.Extractors.ProcessRegistry do
 
   defp maybe_registry_op(facts, ctx, func, arity) do
     if {func, arity} in @registry_ops do
-      id = "#{ctx.func_id}##{ctx.idx}"
+      id = InstrId.mint(ctx.func_id, ctx.idx)
       registry = resolve_name(ctx.instrs, ctx.idx, {:x, 0})
 
       key =

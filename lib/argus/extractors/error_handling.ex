@@ -24,6 +24,8 @@ defmodule Argus.Extractors.ErrorHandling do
 
   @behaviour Argus.Extractor
 
+  alias Argus.InstrId
+
   import Argus.Extractor.Helpers,
     only: [
       add_fact: 3,
@@ -87,7 +89,7 @@ defmodule Argus.Extractors.ErrorHandling do
   # After the handler label, {:try_case, register} begins the catch handler.
   defp maybe_bare_rescue(facts, ctx, {:try, _reg, {:f, handler_label}}) do
     if bare_handler?(ctx.instrs, handler_label) do
-      id = "#{ctx.func_id}##{ctx.idx}"
+      id = InstrId.mint(ctx.func_id, ctx.idx)
       add_fact(facts, :bare_rescue, [id, ctx.func_id])
     else
       facts
@@ -271,7 +273,7 @@ defmodule Argus.Extractors.ErrorHandling do
   end
 
   defp emit_exit_call(facts, ctx, target) do
-    id = "#{ctx.func_id}##{ctx.idx}"
+    id = InstrId.mint(ctx.func_id, ctx.idx)
 
     facts
     |> track_dynamic(target, ctx, :exit_call_target, :exit_call)
@@ -322,7 +324,7 @@ defmodule Argus.Extractors.ErrorHandling do
 
         # Non-tail call where x0 is immediately overwritten.
         result_ignored?(after_call) ->
-          id = "#{ctx.func_id}##{ctx.idx}"
+          id = InstrId.mint(ctx.func_id, ctx.idx)
           callee = "#{inspect(mod)}.#{func}/#{arity}"
           add_fact(facts, :ignored_error_result, [id, ctx.func_id, callee])
 

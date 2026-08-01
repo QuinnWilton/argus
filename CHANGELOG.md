@@ -12,7 +12,40 @@ baseline the results, edit an extractor, re-measure, diff, accept or
 revert, repeat. Inspired by pi-autoresearch's event-log + living-doc
 pattern, adapted for Argus's multi-dimensional categorical metrics.
 
+### Changed
+
+- **Extraction is now deterministic.** `Argus.Pipeline.extract/2` fanned out
+  with `ordered: false` and merged by concatenation, so the reduce saw
+  workers in completion order and row order varied run to run — measured at
+  **8 distinct results from 8 extractions of the same 40 modules**. Souffle
+  has set semantics and never noticed, but every consumer that memoizes,
+  hashes, or diffs facts did; planchette was sorting each relation itself to
+  recover value equality. Ordering the stream costs nothing measurable
+  (median 128ms vs 138ms over 90 modules — ordering is inside the noise, and
+  slightly reduces variance) and makes reproducibility a property of the
+  library rather than something each consumer re-derives.
+
+  For input sets whose *order* can vary — a directory listing, a set
+  difference, a parallel discovery pass — the new `Argus.Facts.canonicalize/1`
+  sorts every relation so two such extractions compare equal. Consumers that
+  already hold facts partitioned per module or per relation should keep
+  sorting those partitions instead; it is cheaper and the result is reusable.
+
 ### Added
+
+- `Argus.InstrId.mint/2`, `func_id/2,3` and `func_id_of/1` — the wire format
+  for instruction and function IDs now has exactly one definition, with
+  `parse/1` and `parse_func/1` as its inverses. Nineteen sites previously
+  built these strings by interpolation: `Normalize` for Layer 1, seventeen
+  scattered through eight Layer-2 extractors, and `Argus.Lines`, which had
+  its own copy of `format/1`. Instruction indices are raw per-function
+  offsets carried by 49 of the 78 relations, so any future change to how
+  instructions are named needs one definition to move, not nineteen.
+
+  This also fixes a latent bug in `Emit`: recovering a parent function ID
+  split on the *first* `#`, which truncates compiler-generated names that
+  contain one and yields a function ID that joins against the wrong
+  function. `func_id_of/1` is right-anchored like the rest of `InstrId`.
 
 - `Argus.Schema.Pin` — a `use`-able compile-time assertion that argus's
   fact schema is one the consumer was written against. The workspace had
