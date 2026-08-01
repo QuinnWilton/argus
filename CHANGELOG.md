@@ -12,6 +12,26 @@ baseline the results, edit an extractor, re-measure, diff, accept or
 revert, repeat. Inspired by pi-autoresearch's event-log + living-doc
 pattern, adapted for Argus's multi-dimensional categorical metrics.
 
+### Added
+
+- `Argus.Schema.Pin` — a `use`-able compile-time assertion that argus's
+  fact schema is one the consumer was written against. The workspace had
+  three hand-rolled copies of this check (planchette, gloss, lowdown) with
+  three different semantics, and the duplication had already cost a real
+  breakage: the v8 bump updated gloss's copy and missed lowdown's, so
+  lowdown silently stopped compiling against its own path dependency.
+
+  ```elixir
+  use Argus.Schema.Pin, versions: 3..8, review: "Gloss.Entries and Gloss.Adapters"
+  ```
+
+  Raises `CompileError` at the `use` site naming the consumer, the pinned
+  range, the version argus actually declares, and what to re-read. A
+  non-contiguous pin renders as a list rather than a range, because the
+  gap is the part a reader needs to notice. The per-version reasoning
+  stays as comments in the consumer — whether a bump matters depends on
+  which relations that consumer reads, and only the consumer knows that.
+
 ### Fixed (robustness)
 
 - `Argus.Pipeline.Normalize` no longer crashes on improper lists in BEAM
