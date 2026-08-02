@@ -164,6 +164,7 @@ defmodule Argus.DlDeclarationsTest do
       sync_call_in_init:
         ~w(call_arg call_arg_forward call_edge dynamic_child function_def implements_behaviour
                             supervisor supervisor_child sync_call),
+      tls_verification: ~w(function_def tls_connect tls_verification),
       transaction_safety: ~w(call_edge closure_def implements_behaviour impure_call remote_call),
       timeout_chain:
         ~w(call_arg call_arg_forward call_edge function_def implements_behaviour sync_call

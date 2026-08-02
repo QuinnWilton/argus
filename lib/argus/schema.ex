@@ -127,7 +127,13 @@ defmodule Argus.Schema do
   # before `return`, and keeping `from` is exactly whether {x,1} is ever
   # mentioned — but neither is derivable from any existing relation, because
   # both are questions about a function's shape rather than its calls.
-  @schema_version 15
+  # Version 16: `tls_verification` and `tls_connect`. Encryption without
+  # authentication is not security, and whether a TLS session verifies its
+  # peer is a literal in an option list — exactly detectable. The second
+  # relation exists for the shape a search cannot find: a connect whose
+  # literal options never mention `verify` at all, taking whatever the
+  # library defaults to.
+  @schema_version 16
 
   # Layer 1: Module-level facts.
 
@@ -830,6 +836,38 @@ defmodule Argus.Schema do
     """
   }
 
+  @tls_verification %{
+    name: :tls_verification,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the instruction"},
+      {:func, :symbol, "the function"},
+      {:setting, :symbol, "'none' | 'peer' | 'absent'"}
+    ],
+    doc: """
+    How a TLS session verifies its peer, read from literal option lists and \
+    bare atoms. `absent` means a connect supplied literal options that never \
+    mention `verify`, so the library's default applies — Erlang's `:ssl` \
+    client verified nothing at all before OTP 26.
+    """
+  }
+
+  @tls_connect %{
+    name: :tls_connect,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the instruction"},
+      {:func, :symbol, "the calling function"},
+      {:api, :symbol, "the connect API"},
+      {:opts, :symbol, "how options were supplied: 'literal' | 'dynamic'"}
+    ],
+    doc: """
+    A call establishing a TLS session. `dynamic` options are recorded as \
+    such rather than guessed at: a false "this is insecure" on a call that \
+    configures itself properly is worse than silence.
+    """
+  }
+
   @deferred_reply %{
     name: :deferred_reply,
     layer: 2,
@@ -1453,6 +1491,8 @@ defmodule Argus.Schema do
     @delayed_message,
     @callback_return,
     @callback_drops_from,
+    @tls_verification,
+    @tls_connect,
     @deferred_reply,
     @init_continues_to,
     @handle_continue_clause,

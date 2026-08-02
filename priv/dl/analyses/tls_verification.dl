@@ -1,0 +1,67 @@
+// TLS that encrypts without authenticating.
+//
+// A TLS connection that does not verify the peer's certificate is
+// confidential against a passive observer and wide open to anyone who can
+// answer for the host — which is the threat TLS exists to address. Nothing
+// distinguishes a verified session from an unverified one at runtime: the
+// connection succeeds, the bytes are encrypted, and the padlock is a lie.
+//
+// Two shapes. The first is greppable and reported anyway, because it is
+// high severity and rare enough that every site deserves a look. The second
+// is the reason this is an analysis: an option list that never mentions
+// `verify` takes whatever the library defaults to, and Erlang's `:ssl`
+// client verified nothing at all before OTP 26. Reading the call site tells
+// you nothing — the absence IS the finding, and absence is what a search
+// cannot look for.
+
+.include "../clientlib/imports.dl"
+
+// ── Verification disabled outright ───────────────────────────────
+
+// Reported only when the module offers no way to get a verified
+// connection. That distinction is the whole value here, and it is not one a
+// search can make.
+//
+// Sequin has both shapes. `ConfigParser` maps REDIS_TLS_VERIFY=verify-none
+// onto :verify_none — an explicit, documented user choice, and the same
+// module sets :verify_peer when certificates are configured. Reporting it
+// would be noise. `RedisStringSink.maybe_put_tls/2` does
+//
+//     defp maybe_put_tls(opts, %RedisStringSink{tls: true}),
+//       do: Keyword.put(opts, :tls, verify: :verify_none)
+//
+// and :verify_peer appears nowhere in the module, so enabling TLS gets you
+// an unauthenticated channel and there is no option that changes it.
+//
+// A module naming :verify_peer anywhere is credited with offering the
+// choice, which is deliberately generous: the alternative is arguing about
+// which branch is reachable, and a false "this is insecure" against code
+// that supports verification is the finding that gets an analysis switched
+// off.
+
+.decl module_can_verify(mod: symbol)
+
+module_can_verify(mod) :-
+  tls_verification(_, func, "peer"),
+  function_def(func, mod, _, _, _).
+
+.decl disables_verification(func: symbol, id: symbol)
+.output disables_verification
+
+disables_verification(func, id) :-
+  tls_verification(id, func, "none"),
+  function_def(func, mod, _, _, _),
+  !module_can_verify(mod).
+
+// ── Verification left to the library's default ───────────────────
+//
+// Only for connects whose options are a literal list. A list built at
+// runtime may well set `verify` somewhere this cannot see, and a false
+// "insecure" on correctly configured code is worse than silence.
+
+.decl relies_on_default_verification(func: symbol, id: symbol, api: symbol)
+.output relies_on_default_verification
+
+relies_on_default_verification(func, id, api) :-
+  tls_connect(id, func, api, "literal"),
+  tls_verification(id, func, "absent").
