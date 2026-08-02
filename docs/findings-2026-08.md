@@ -1401,3 +1401,69 @@ same value-flow layer that the two reverted analyses needed.** That is the
 strongest argument this document produces for building it, and it now has a
 number attached — a forty-five-fold difference in what four shipped
 analyses can see.
+
+---
+
+# The workspace's own projects, August 2026
+
+argus had been run on argus but never on its siblings. With `Argus.Origins`
+filtering fixtures, planchette (26 lib modules) and roux (32) took minutes.
+Two findings worth writing down, both needing a caveat rather than an
+assertion.
+
+## 21. `safe_decode/1` is not safe decoding — planchette and roux
+
+**Where** `planchette/lib/mix/tasks/compile.planchette.ex:138`,
+`roux/lib/roux/lang/manifest.ex:165`
+
+```elixir
+defp safe_decode(binary) do
+  :erlang.binary_to_term(binary)
+rescue
+  ArgumentError -> :error
+end
+```
+
+The `safe` refers to the rescue, which handles *malformed* input. It is not
+`binary_to_term/2` with `[:safe]`, so it handles nothing about *malicious*
+input: unknown atoms are created (the atom table never shrinks) and funs,
+pids and refs deserialize. A reader who greps for `binary_to_term` and sees
+a function called `safe_decode` will move on.
+
+**The caveat is why this is not a one-word fix.** Both read build artifacts
+from `_build`, which is your own output, so the practical exposure is low.
+And `[:safe]` raises on terms containing atoms not yet loaded — exactly the
+failure mode recorded elsewhere in this workspace, where `:safe`
+deserialization of an IR struct needed every atom pre-loaded and broke when
+one was not. Adding it may be correct and may break decoding; the rescue
+would turn that into a silent `:error` rather than a crash, which is the
+worse outcome.
+
+So: worth a deliberate decision, and worth a name that states which kind of
+safety is meant.
+
+## 22. `Planchette.Session.Owner` cleans up in `terminate/2` without trapping
+
+**Where** `planchette/lib/planchette/session/owner.ex:60`
+**Analysis** `shutdown_safety` / `cleanup_unclear` — built earlier today,
+found on the workspace's own code.
+
+`terminate(_reason, %{db: db})` calls `Roux.Database.shutdown/1`, and the
+module never calls `Process.flag(:trap_exit, true)`. On a supervisor
+shutdown the owner dies outright and that call never runs.
+
+**The caveat**: whether it matters depends on what `Roux.Database.shutdown/1`
+does. If it only deletes ETS tables the owner holds, they die with the
+process anyway and the cleanup is redundant on this path. If it flushes,
+hands off, or releases anything outside the process, it is lost. That
+distinction is not in the fact model — it is the same limit that made this
+finding `cleanup_unclear` rather than `cleanup_never_runs` — and it is a
+five-minute question for whoever owns the code.
+
+## What the sweep says about the tools
+
+Nothing new broke, and the fixture filter is what made it readable: without
+`Origins`, planchette's 54 beams report mostly test scaffolding. It is also
+the first time an analysis built in this document found something in the
+workspace it was built in, which is the least surprising and most overdue
+result here.
