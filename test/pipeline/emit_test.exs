@@ -221,7 +221,7 @@ defmodule Argus.Pipeline.EmitTest do
 
     test "emits recv_start for loop_rec" do
       facts = emit_func([{:loop_rec, {:f, 5}, {:x, 0}}])
-      assert [[_id, "5"]] = facts[:recv_start]
+      assert [[_id, _caller, _blocking, "5"]] = facts[:recv_start]
     end
 
     test "emits recv_end for remove_message" do

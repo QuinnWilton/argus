@@ -93,7 +93,51 @@ defmodule Argus.Pipeline.Emit do
   defp emit_instructions(facts, func_id, normalized, line_table) do
     facts
     |> emit_calls_followed_by_branch(normalized)
+    |> emit_receives(func_id, normalized)
     |> emit_instructions_loop(func_id, normalized, 0, line_table, nil)
+  end
+
+  # A receive compiles to a loop_rec whose fail label leads to the
+  # empty-mailbox block, and that block ends in either `wait` (sleep and
+  # re-enter the loop — no timeout, so the process can block forever) or
+  # `wait_timeout` (bounded). Which one it is decides whether a receive in
+  # the wrong place is a nuisance or a hang, and it is only visible by
+  # following a label, so it is resolved here.
+  defp emit_receives(facts, func_id, normalized) do
+    labels =
+      normalized
+      |> Enum.with_index()
+      |> Enum.reduce(%{}, fn
+        {{_id, {:label, n}}, idx}, acc -> Map.put(acc, n, idx)
+        _, acc -> acc
+      end)
+
+    instrs = Enum.map(normalized, fn {_id, instr} -> instr end)
+
+    Enum.reduce(normalized, facts, fn
+      {id, {:loop_rec, {:f, fail}, _dst}}, acc ->
+        blocking = if blocking_wait?(instrs, Map.get(labels, fail)), do: "1", else: "0"
+        add_fact(acc, :recv_start, [id, func_id, blocking, to_string(fail)])
+
+      _, acc ->
+        acc
+    end)
+  end
+
+  # Scan the empty-mailbox block for whichever of wait/wait_timeout comes
+  # first. An unresolvable label is reported as non-blocking: this feeds a
+  # "this receive can hang" finding, and guessing yes without evidence
+  # would put a fabricated hang in front of someone.
+  defp blocking_wait?(_instrs, nil), do: false
+
+  defp blocking_wait?(instrs, from) do
+    instrs
+    |> Enum.drop(from)
+    |> Enum.find_value(false, fn
+      {:wait, _} -> true
+      {:wait_timeout, _, _} -> false
+      _ -> nil
+    end)
   end
 
   # "Is there a branch after this call, in this function?" — answered here,
@@ -621,9 +665,11 @@ defmodule Argus.Pipeline.Emit do
   # empty mailbox; loop_rec_end and wait transfer back to the loop label; and
   # wait_timeout re-enters the loop on a message or falls through on timeout.
   # Without these edges, receive loops have no back edges in the CFG.
+  # recv_start is emitted by emit_receives/3 instead: deciding whether the
+  # receive can block forever means following the fail label to another
+  # instruction, which a per-instruction emitter cannot see.
   defp emit_specific(facts, id, {:loop_rec, {:f, fail}, dst}) do
     facts
-    |> add_fact(:recv_start, [id, to_string(fail)])
     |> add_fact(:branch, [id, to_string(fail), "0"])
     |> add_fact(:def, [id, format_operand(dst)])
   end

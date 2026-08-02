@@ -14,6 +14,37 @@ pattern, adapted for Argus's multi-dimensional categorical metrics.
 
 ### Added (analysis)
 
+- **`callback_receive`** — a bare `receive` inside an OTP callback.
+
+  An OTP process is already in a receive loop its behaviour owns. A
+  `receive` in a callback runs inside that loop and selectively consumes
+  from the same mailbox: `{:system, _, _}` (how `:sys.get_state` and the
+  whole debug surface reach the process), `{:EXIT, _, _}` when trapping,
+  and every in-flight monitor's `{:DOWN, ...}`. Messages it does not match
+  stay queued and are re-scanned by every later receive. Without an
+  `after` it can block forever, so shutdown waits out the child timeout and
+  brutal-kills. No compiler or dialyzer diagnostic covers this.
+
+  Two suppressions, both added because verification demanded them rather
+  than in anticipation:
+
+  - **Closure edges are subtracted.** `call_edge` treats closure
+    construction as a call so reachability follows into lambdas; a
+    `receive` inside `spawn(fn -> ... end)` runs in the *spawned* process
+    and is not this bug.
+  - **The `cancel_timer` flush idiom is excluded.** `cancel_timer/1`
+    returning false means the message was already sent, so the receive is
+    guaranteed to match. Both blocking receives in the first corpus sweep
+    were this idiom — without the suppression it would have been the
+    analysis's entire output on that project.
+
+  Requires schema v12: `recv_start` gains `caller`, and `blocking`, which
+  distinguishes a receive whose empty-mailbox block ends in `wait` (no
+  timeout) from one ending in `wait_timeout`. That is only visible by
+  following a label to another instruction, so the emitter resolves it —
+  verified against OTP itself, where `:gen_server:loop/5` comes out bounded
+  and `:timer:interval_loop/5` blocking.
+
 - **`request_surface`** — dangerous operations reachable from callbacks that
   receive external data, rather than from "any exported function".
 

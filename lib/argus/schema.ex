@@ -102,7 +102,12 @@ defmodule Argus.Schema do
   # emitter, where indexes already exist, is the same v8 principle again:
   # positional questions get answered where the positions live, and only
   # their answers cross into Datalog. NO analysis reads `instruction` now.
-  @schema_version 11
+  # Version 12: `recv_start` gains `caller` and `blocking`. Same reasoning as
+  # v10 and v11 — a rule wanting the function containing a receive had to
+  # join `instruction`, and whether the receive can block forever is only
+  # visible by following its fail label to a `wait` or `wait_timeout`, which
+  # is a positional question the emitter can answer and a rule cannot.
+  @schema_version 12
 
   # Layer 1: Module-level facts.
 
@@ -397,9 +402,21 @@ defmodule Argus.Schema do
     layer: 1,
     fields: [
       {:id, :instr_id, "instruction ID"},
+      {:caller, :func_id, "containing function ID"},
+      {:blocking, :number, "1 when the receive has no timeout and can block forever"},
       {:fail, :label, "failure label"}
     ],
-    doc: "Start of a receive loop (loop_rec)."
+    doc: """
+    Start of a receive loop (loop_rec).
+
+    `blocking` distinguishes the two shapes a receive compiles to. The \
+    loop_rec's fail label leads to the empty-mailbox block, which ends in \
+    either `wait` (re-enter the loop and sleep — no timeout, so the process \
+    can block forever) or `wait_timeout` (bounded). That distinction is only \
+    visible by following a label to another instruction, so it is resolved \
+    in the emitter and recorded here rather than left for a rule to \
+    reconstruct.
+    """
   }
 
   @recv_end %{

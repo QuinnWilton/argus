@@ -130,6 +130,8 @@ defmodule Argus.DlDeclarationsTest do
                       unsafe_deserialization),
       call_cycle:
         ~w(call_arg call_arg_forward call_edge function_def implements_behaviour sync_call),
+      callback_receive:
+        ~w(call_edge closure_def function_def implements_behaviour recv_start remote_call),
       coverage: ~w(async_cast dynamic_child ets_new ets_op function_def implements_behaviour
                    imprecision named_process supervisor supervisor_child sync_call),
       deferred_startup_deadlock:
