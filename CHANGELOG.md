@@ -12,6 +12,38 @@ baseline the results, edit an extractor, re-measure, diff, accept or
 revert, repeat. Inspired by pi-autoresearch's event-log + living-doc
 pattern, adapted for Argus's multi-dimensional categorical metrics.
 
+### Added (analysis)
+
+- **`request_surface`** — dangerous operations reachable from callbacks that
+  receive external data, rather than from "any exported function".
+
+  `atom_safety` already finds unsafe atom creation, unsafe deserialization
+  and dynamic evaluation, but gates them on reachability from some export,
+  which in a real application is nearly everything. It answers "is this code
+  live", not "can an attacker reach it". This analysis starts from OTP
+  callbacks that take request-shaped input — `Plug.call/2`, LiveView
+  `mount`/`handle_params`/`handle_event`, `Phoenix.Channel.handle_in/3`,
+  `Oban.Worker.perform/1`, Broadway's message callbacks — identified by
+  behaviour plus callback name and arity, which is information the beam
+  already carries.
+
+  Findings carry a **proximity**, and it is the difference between a report
+  worth reading and a list of everything the app can reach:
+
+  - `direct` (`:error`) — the sink is in the callback, operating on its own
+    arguments, which ARE the request.
+  - `adjacent` (`:warning`) — one call away.
+  - `transitive` (`:info`) — a path exists; that a data *flow* exists is
+    unproven.
+
+  The tiers are calibrated against hand-verified findings, not chosen a
+  priori. On a corpus sweep every `direct` finding was a true positive,
+  `adjacent` was mixed (one real unvalidated URL parameter, one database
+  primary key), and every `transitive` hit examined sourced its input from
+  Postgres or Redis rather than the request — reached only because some
+  LiveView loads those records. **Reachability is not taint**, and the
+  analysis says so rather than pretending otherwise.
+
 ### Changed (schema version 11 — no rule reads `instruction`)
 
 `unsafe_task` asked "was this call's result pattern-matched?" by joining

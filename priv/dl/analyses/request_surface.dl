@@ -1,0 +1,127 @@
+// Request-surface analysis.
+//
+// The existing atom_safety analysis gates its findings on "reachable from
+// some exported function", which in a library is very nearly everything —
+// it answers "is this code live", not "can an attacker reach it". This
+// analysis asks the sharper question: is a dangerous operation reachable
+// from a callback that receives REQUEST-SHAPED input?
+//
+// That distinction is what separates a warning from an incident. A
+// String.to_atom in a config loader is a code smell. The same call
+// reachable from Phoenix.LiveView.handle_event/3 is a remotely triggerable
+// node kill, because the BEAM's atom table is fixed-size and never
+// collected: an attacker sends a million distinct strings and the VM dies
+// permanently, taking every process with it. There is no recovery short of
+// a restart, and no per-request limit that helps.
+//
+// Entry points are identified by OTP behaviour plus callback name/arity,
+// which is exactly the information beam attributes carry — no source, no
+// framework-specific parsing.
+
+.include "../clientlib/imports.dl"
+
+// ── Request entry points ─────────────────────────────────────────
+//
+// Callbacks whose arguments are, or are derived from, data an external
+// party controls. `kind` is carried through to the finding so the report
+// can say which surface reaches the sink.
+
+.decl request_entry(func: symbol, kind: symbol)
+
+// Plug.call/2 receives the conn. Phoenix controllers are Plugs, so this
+// covers controller actions' entry as well.
+request_entry(func, "plug") :-
+  implements_behaviour(mod, "Plug"),
+  function_def(func, mod, "call", 2, _).
+
+// LiveView: mount/3 takes params, handle_params/3 takes the query string,
+// handle_event/3 takes whatever the client's JS pushed.
+request_entry(func, "live_view") :-
+  implements_behaviour(mod, "Phoenix.LiveView"),
+  function_def(func, mod, name, arity, _),
+  arity = 3,
+  (name = "mount" ; name = "handle_params" ; name = "handle_event").
+
+request_entry(func, "live_component") :-
+  implements_behaviour(mod, "Phoenix.LiveComponent"),
+  function_def(func, mod, "handle_event", 3, _).
+
+// Channels are the websocket surface: handle_in/3 is raw client payload.
+request_entry(func, "channel") :-
+  implements_behaviour(mod, "Phoenix.Channel"),
+  function_def(func, mod, "handle_in", 3, _).
+
+// Background jobs are an untrusted boundary too — job args are usually
+// enqueued from user-facing code and round-trip through storage, so they
+// are attacker-influenced even though no socket is involved.
+request_entry(func, "oban_job") :-
+  implements_behaviour(mod, "Oban.Worker"),
+  function_def(func, mod, "perform", 1, _).
+
+request_entry(func, "broadway") :-
+  implements_behaviour(mod, "Broadway"),
+  function_def(func, mod, name, arity, _),
+  ((name = "handle_message", arity = 3) ; (name = "handle_batch", arity = 4)).
+
+// ── Reachability from a request surface ──────────────────────────
+
+// `proximity` is the triage signal, and it is the whole difference between
+// a report worth reading and a list of everything the app can reach.
+//
+// Reachability is not taint. `call_reachable` proves a path exists, not
+// that attacker data travels it — verified the hard way on sequin, where
+// every transitive hit turned out to source its input from Postgres or
+// Redis rather than the request, reached only because a LiveView happens
+// to load those records. A sink INSIDE the callback, by contrast, is
+// operating on the callback's own arguments, which are by definition the
+// request.
+.decl request_reaches(entry: symbol, kind: symbol, func: symbol, proximity: symbol)
+
+// The sink is in the callback itself: it is handling request arguments.
+request_reaches(entry, kind, entry, "direct") :-
+  request_entry(entry, kind).
+
+// One call away: the callback passed something to this function.
+request_reaches(entry, kind, callee, "adjacent") :-
+  request_entry(entry, kind),
+  call_edge(entry, callee).
+
+// Anywhere else in the cone. Real as a path, unproven as a data flow.
+request_reaches(entry, kind, callee, "transitive") :-
+  request_entry(entry, kind),
+  call_reachable(entry, callee),
+  !call_edge(entry, callee),
+  callee != entry.
+
+// ── Findings ─────────────────────────────────────────────────────
+//
+// Each is anchored at the SINK's call site, because that is where the fix
+// goes, and carries one reaching entry point so the report can show the
+// path is real. A sink reachable from several entries is one finding, not
+// several — the analysis module dedupes on the site.
+
+// binary_to_term without :safe, reachable from request-shaped input. The
+// canonical BEAM remote-code-execution primitive: the payload can
+// materialize funs, and it interns atoms without bound.
+.decl remote_unsafe_deserialization(id: symbol, func: symbol, api: symbol, entry: symbol, kind: symbol, proximity: symbol)
+.output remote_unsafe_deserialization
+
+remote_unsafe_deserialization(id, func, api, entry, kind, proximity) :-
+  unsafe_deserialization(id, func, api, "unsafe"),
+  request_reaches(entry, kind, func, proximity).
+
+// Dynamic code evaluation reachable from request-shaped input.
+.decl remote_code_execution(id: symbol, func: symbol, api: symbol, entry: symbol, kind: symbol, proximity: symbol)
+.output remote_code_execution
+
+remote_code_execution(id, func, api, entry, kind, proximity) :-
+  code_execution(id, func, api),
+  request_reaches(entry, kind, func, proximity).
+
+// Unbounded atom creation reachable from request-shaped input.
+.decl remote_atom_exhaustion(id: symbol, func: symbol, api: symbol, entry: symbol, kind: symbol, proximity: symbol)
+.output remote_atom_exhaustion
+
+remote_atom_exhaustion(id, func, api, entry, kind, proximity) :-
+  unsafe_atom_creation(id, func, api),
+  request_reaches(entry, kind, func, proximity).

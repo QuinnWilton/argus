@@ -149,6 +149,8 @@ defmodule Argus.DlDeclarationsTest do
       process_bottleneck:
         ~w(call_arg call_arg_forward call_edge function_def implements_behaviour sync_call),
       process_registry: ~w(function_def process_register whereis_call),
+      request_surface: ~w(call_edge code_execution function_def implements_behaviour
+                          unsafe_atom_creation unsafe_deserialization),
       supervision: ~w(async_cast call_arg call_arg_forward call_edge dynamic_child function_def
                       implements_behaviour supervisor supervisor_child supervisor_site sync_call),
       sync_call_in_init:
