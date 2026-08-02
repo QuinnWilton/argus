@@ -141,3 +141,54 @@ purity_verified(func) :-
   declared_pure(func),
   !reaches_effect(func, _, _, _),
   !reaches_opaque(func, _, _, _).
+
+// ── Higher-order contracts, checked at the call site ─────────────
+//
+// A declared-pure function that takes a fun and calls it is unprovable in
+// general: its purity depends on what it was handed. But it is decidable
+// PER CALL SITE, and that is where the obligation actually lives — the
+// caller is the one choosing the closure.
+//
+// So when a caller hands an effectful closure to a function declared pure,
+// the caller has broken the contract, and it is the caller's line that has
+// to change.
+
+.decl higher_order_pure(func: symbol)
+
+// Transitive, not direct. `Enum.map(list, fn x -> f.(x) end)` puts the
+// call_fun inside the LIFTED closure, so the declared function never
+// contains one itself — checking only its own body would find nothing and
+// this whole rule would sit dead.
+higher_order_pure(func) :-
+  declared_pure(func),
+  reaches_opaque(func, "dynamic_call", "call_fun", _).
+
+// Which closures a caller builds, and whether they perform effects.
+.decl impure_closure(caller: symbol, closure: symbol, category: symbol, api: symbol)
+
+impure_closure(caller, closure, category, api) :-
+  closure_def(caller, closure),
+  reaches_effect(closure, category, api, _).
+
+// Pairing a closure with the call it was passed to needs dataflow argus
+// does not have, so the association is by containment: this caller built
+// this closure and called this pure higher-order function.
+//
+// Gated on the caller building exactly ONE closure. With two or more there
+// is no way to say which went where, and guessing would produce a finding
+// that names the wrong lambda — worse than none, because it sends someone
+// to the wrong line. One closure and one obligation is unambiguous.
+.decl closure_count(caller: symbol, n: number)
+
+closure_count(caller, n) :-
+  closure_def(caller, _),
+  n = count : { closure_def(caller, _) }.
+
+.decl impure_closure_to_pure(caller: symbol, callee: symbol, closure: symbol, category: symbol, api: symbol)
+.output impure_closure_to_pure
+
+impure_closure_to_pure(caller, callee, closure, category, api) :-
+  higher_order_pure(callee),
+  call_edge(caller, callee),
+  impure_closure(caller, closure, category, api),
+  closure_count(caller, 1).

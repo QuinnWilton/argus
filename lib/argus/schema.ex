@@ -107,7 +107,15 @@ defmodule Argus.Schema do
   # join `instruction`, and whether the receive can block forever is only
   # visible by following its fail label to a `wait` or `wait_timeout`, which
   # is a positional question the emitter can answer and a rule cannot.
-  @schema_version 12
+  # Version 13: `send_msg` and `make_fun` gain `caller`; the new
+  # `dynamic_call` records a call through a fun value or `apply`, which the
+  # call graph cannot follow. Layer 2 gains `pure_contract`, `impure_call`,
+  # `protocol_dispatch` and `unknown_call` for the purity analysis — the
+  # first analysis here that verifies a claim the author made rather than
+  # hunting a bug nobody declared absent, and so the first that has to be
+  # sound. `dynamic_call` exists precisely so it can say "unprovable"
+  # instead of quietly answering as though the call were not there.
+  @schema_version 13
 
   # Layer 1: Module-level facts.
 

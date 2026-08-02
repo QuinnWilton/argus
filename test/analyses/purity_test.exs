@@ -156,6 +156,50 @@ defmodule Argus.Analyses.PurityTest do
     end
   end
 
+  describe "higher-order contracts" do
+    # A declared-pure function that calls the fun it is given cannot be
+    # verified in isolation — its purity is whatever the caller handed it.
+    # That obligation is decidable at the CALL SITE, which is also where the
+    # fix belongs.
+
+    test "passing an effectful closure to a pure function blames the caller" do
+      skip_without_souffle()
+
+      assert {:ok, r} =
+               Argus.analyze([P.HigherOrder, P.GoodCaller, P.BadCaller], :purity)
+
+      assert [[caller, callee, closure, "io", "IO.puts/1"]] =
+               Map.get(r, "impure_closure_to_pure", [])
+
+      assert caller =~ "BadCaller:trace/1"
+      assert callee =~ "HigherOrder:transform/2"
+      assert closure =~ "-trace/1-fun-0-", "named the caller rather than its lambda"
+    end
+
+    test "passing a pure closure is not reported" do
+      skip_without_souffle()
+
+      assert {:ok, r} = Argus.analyze([P.HigherOrder, P.GoodCaller], :purity)
+      assert Map.get(r, "impure_closure_to_pure", []) == []
+    end
+
+    test "the higher-order function is recognised through its lifted closure" do
+      skip_without_souffle()
+
+      # `Enum.map(list, fn x -> f.(x) end)` puts the call_fun inside the
+      # LIFTED closure, so transform/2 never contains one itself. Matching
+      # only on the declared function's own body would leave this rule dead
+      # while still passing a naive test.
+      {:ok, facts} =
+        Argus.Pipeline.extract([P.HigherOrder], extractors: [Argus.Extractors.Purity])
+
+      callers = for [_id, caller, _kind] <- Map.get(facts, :dynamic_call, []), do: caller
+
+      assert Enum.all?(callers, &String.contains?(&1, "-fun-")),
+             "the call_fun was in the declared function after all; this test is vacuous"
+    end
+  end
+
   describe "scope" do
     test "functions that claim nothing are never reported" do
       skip_without_souffle()

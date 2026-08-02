@@ -64,6 +64,18 @@ defmodule Argus.Analyses.Purity do
         doc: "A declared-pure function reaches something that cannot be accounted for."
       },
       %{
+        name: :impure_closure_to_pure,
+        fields: [
+          {:caller, :symbol, "the function passing the closure"},
+          {:callee, :symbol, "the declared-pure function receiving it"},
+          {:closure, :symbol, "the lifted closure"},
+          {:category, :symbol, "the kind of effect it performs"},
+          {:api, :symbol, "the call that performs it"}
+        ],
+        key: [:caller, :callee, :closure],
+        doc: "A caller hands an effectful closure to a function declared pure."
+      },
+      %{
         name: :purity_verified,
         fields: [{:func, :symbol, "the function declared pure"}],
         key: [:func],
@@ -123,6 +135,18 @@ defmodule Argus.Analyses.Purity do
         "effect-free, adding it to Argus.Purity.Effects turns this into a " <>
         "verified contract.",
       at: Findings.at_func(func)
+    )
+  end
+
+  def finding(:impure_closure_to_pure, [caller, callee, closure, category, api]) do
+    Findings.new(
+      :error,
+      "#{short(caller)} passes an effectful closure to a function declared pure",
+      "#{callee} carries `@pure true` and calls the fun it is given, so its " <>
+        "purity is the caller's obligation. #{caller} builds #{closure}, " <>
+        "which calls #{api} — #{effect_phrase(category)} — and hands it over. " <>
+        "The contract is broken here, at the call site, not in #{callee}.",
+      at: Findings.at_func(caller)
     )
   end
 

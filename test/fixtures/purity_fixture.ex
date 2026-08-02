@@ -95,6 +95,27 @@ defmodule Argus.Test.Fixtures.Purity do
     def dispatches(m, f, a), do: apply(m, f, a)
   end
 
+  defmodule HigherOrder do
+    @moduledoc """
+    A declared-pure function that calls the fun it is given. Its purity is
+    the CALLER's obligation, so the contract is checked at the call site.
+    """
+    use Argus.Purity
+
+    @pure true
+    def transform(list, f), do: Enum.map(list, fn x -> f.(x) end)
+  end
+
+  defmodule GoodCaller do
+    @moduledoc "Hands over a pure closure — nothing to report."
+    def double(list), do: HigherOrder.transform(list, fn x -> x * 2 end)
+  end
+
+  defmodule BadCaller do
+    @moduledoc "Hands over a closure that logs. The contract breaks here."
+    def trace(list), do: HigherOrder.transform(list, fn x -> IO.puts(x) end)
+  end
+
   defmodule Undeclared do
     @moduledoc "Effects everywhere, but claims nothing — must stay silent."
     def shout(x), do: IO.puts(x)
