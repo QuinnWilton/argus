@@ -245,10 +245,10 @@ defmodule Argus.Analyses.PurityTest do
 
   describe "the effect model" do
     test "classifies the three buckets" do
-      assert Effects.classify("IO", "puts") == {:impure, :io}
-      assert Effects.classify(":ets", "insert") == {:impure, :ets}
-      assert Effects.classify(":erlang", "put") == {:impure, :process_dict}
-      assert Effects.classify(":erlang", "monotonic_time") == {:impure, :time}
+      assert Effects.classify("IO", "puts") == {:impure, :io, :write}
+      assert Effects.classify(":ets", "insert") == {:impure, :ets, :write}
+      assert Effects.classify(":erlang", "put") == {:impure, :process_dict, :write}
+      assert Effects.classify(":erlang", "monotonic_time") == {:impure, :time, :write}
 
       assert Effects.classify("Enum", "map") == :pure
       assert Effects.classify(":lists", "reverse") == :pure
@@ -262,13 +262,13 @@ defmodule Argus.Analyses.PurityTest do
       # :erlang is pure by default with a listed impure minority. If that
       # precedence inverted, every arithmetic BIF would become unprovable
       # and the analysis would report nothing useful.
-      assert Effects.classify(":erlang", "put") == {:impure, :process_dict}
+      assert Effects.classify(":erlang", "put") == {:impure, :process_dict, :write}
       assert Effects.classify(":erlang", "length") == :pure
     end
 
     test "every category used is declared in the type's domain" do
       known =
-        ~w(io process process_dict ets port node time random network code_loading)a
+        ~w(io logging process process_dict ets port node time random network code_loading)a
 
       assert Enum.sort(Effects.categories()) == Enum.sort(known)
     end

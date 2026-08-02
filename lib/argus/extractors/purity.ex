@@ -107,8 +107,14 @@ defmodule Argus.Extractors.Purity do
     id = InstrId.mint(ctx.func_id, ctx.idx)
 
     case Effects.classify(mod_str, func_str) do
-      {:impure, category} ->
-        add_fact(facts, :impure_call, [id, ctx.func_id, api, to_string(category)])
+      {:impure, category, mode} ->
+        add_fact(facts, :impure_call, [
+          id,
+          ctx.func_id,
+          api,
+          to_string(category),
+          to_string(mode)
+        ])
 
       {:opaque, :protocol} ->
         add_fact(facts, :protocol_dispatch, [id, ctx.func_id, api])

@@ -115,7 +115,12 @@ defmodule Argus.Schema do
   # hunting a bug nobody declared absent, and so the first that has to be
   # sound. `dynamic_call` exists precisely so it can say "unprovable"
   # instead of quietly answering as though the call were not there.
-  @schema_version 13
+  # Version 14: `impure_call` gains `mode` (read or write). One dimension
+  # could not distinguish a config read from an HTTP POST, so every contract
+  # had to forbid both or neither — and the transaction analysis reported
+  # `Application.get_env/2` as an unrollbackable effect. Purity still rejects
+  # both modes; contracts about reversibility look at writes only.
+  @schema_version 14
 
   # Layer 1: Module-level facts.
 
@@ -1240,12 +1245,20 @@ defmodule Argus.Schema do
       {:caller, :func_id, "containing function ID"},
       {:api, :symbol, "the API called, as Mod.fun/arity"},
       {:category, :symbol,
-       "io | process | process_dict | ets | port | node | time | random | network | code_loading | dynamic"}
+       "io | logging | process | process_dict | ets | port | node | time | random | network | code_loading"},
+      {:mode, :symbol, "read (observes state) or write (changes it)"}
     ],
     doc: """
     A call with a known observable effect, classified by \
-    `Argus.Purity.Effects`. The category is carried so a report can say \
-    WHAT the effect is rather than only that there is one.
+    `Argus.Purity.Effects`. The category says WHAT the effect is; the mode \
+    says whether it changes anything.
+
+    Both dimensions are needed because contracts differ in what they \
+    forbid. Purity rejects reads and writes alike — `Application.get_env/2` \
+    already breaks referential transparency. A transaction body only cares \
+    about writes: a config read has nothing to roll back, while an HTTP \
+    POST has already left the machine. One dimension would force every \
+    config read to be reported as a transaction hazard.
     """
   }
 

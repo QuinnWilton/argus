@@ -35,8 +35,10 @@ declared_pure(func) :- pure_contract(func, _, _, _).
 
 .decl performs_effect(func: symbol, category: symbol, api: symbol)
 
+// Purity rejects both modes: reading a clock or the process dictionary
+// already makes the result depend on something other than the arguments.
 performs_effect(func, category, api) :-
-  impure_call(_, func, api, category).
+  impure_call(_, func, api, category, _mode).
 
 performs_effect(func, "process", "send") :-
   send_msg(_, func).

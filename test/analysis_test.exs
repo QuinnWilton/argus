@@ -22,6 +22,7 @@ defmodule Argus.AnalysisTest do
     :supervision,
     :sync_call_in_init,
     :timeout_chain,
+    :transaction_safety,
     :unlinked_spawn,
     :unsafe_task
   ]
@@ -33,9 +34,9 @@ defmodule Argus.AnalysisTest do
   # -- Discovery ---------------------------------------------------------------
 
   describe "discovery" do
-    test "finds all 19 built-in analysis modules" do
+    test "finds all 20 built-in analysis modules" do
       modules = Analysis.builtin_analysis_modules()
-      assert length(modules) == 19
+      assert length(modules) == 20
     end
 
     test "builtin_analyses/0 returns all names sorted" do

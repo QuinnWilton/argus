@@ -23,6 +23,22 @@ defmodule Argus.Purity.Effects do
   assuming they are impure would flag every real program. Saying "I cannot
   see past this" is the only answer that keeps a "verified" worth having.
 
+  ## Two dimensions, not one
+
+  Every impure call also carries a **mode**: `:read` or `:write`.
+
+  Purity cares about neither — reading a clock or the process dictionary
+  already breaks referential transparency, so both modes are equally
+  disqualifying. Other contracts care a great deal. Inside a database
+  transaction, `Application.get_env/2` is harmless and `HTTPoison.post/2`
+  is an incident: one has nothing to undo, the other has already left the
+  machine. A model with only "is this an effect" cannot tell them apart and
+  would report every config read as a transaction hazard.
+
+  Mode defaults to `:write`, so a call nobody has classified is assumed to
+  change something. That is the safe direction: a false "this is
+  irreversible" costs a look, a false "this is harmless" costs the bug.
+
   ## Scope
 
   Effects here are *observable*: something outside the function can tell
@@ -45,8 +61,12 @@ defmodule Argus.Purity.Effects do
     "File" => :io,
     ":file" => :io,
     ":filelib" => :io,
-    "Logger" => :io,
-    ":logger" => :io,
+    # Logging is an effect, but a benign one for most contracts — it does
+    # not need undoing, does not hold a resource, and is expected inside
+    # transactions and callbacks alike. Separating it from :io means a
+    # contract can forbid file writes without forbidding Logger.debug.
+    "Logger" => :logging,
+    ":logger" => :logging,
     "Port" => :port,
     ":os" => :port,
     "System" => :port,
@@ -82,8 +102,8 @@ defmodule Argus.Purity.Effects do
     "Code" => :code_loading,
     ":application" => :process,
     "Application" => :process,
-    ":ct" => :io,
-    ":dbg" => :io
+    ":ct" => :logging,
+    ":dbg" => :logging
   }
 
   # Individually impure functions in modules that are otherwise fine.
@@ -209,6 +229,79 @@ defmodule Argus.Purity.Effects do
     Jason.Encoder Phoenix.HTML.Safe Ecto.Type
   )
 
+  # ── Reads: impure, but with nothing to undo ──────────────────────
+  #
+  # These observe state without changing it. They disqualify a function
+  # from being pure — the answer depends on when and where you ask — but
+  # they are not what a rollback would need to reverse, and treating them
+  # as such buries the calls that matter.
+
+  @read_functions MapSet.new([
+                    # Configuration and environment.
+                    {"Application", "get_env"},
+                    {"Application", "fetch_env"},
+                    {"Application", "fetch_env!"},
+                    {"Application", "get_all_env"},
+                    {"Application", "spec"},
+                    {"Application", "app_dir"},
+                    {"Application", "loaded_applications"},
+                    {"System", "get_env"},
+                    {"System", "fetch_env"},
+                    {"System", "fetch_env!"},
+                    {"System", "version"},
+                    {"System", "otp_release"},
+                    {"System", "schedulers"},
+                    {"System", "schedulers_online"},
+
+                    # Process and node introspection.
+                    {"Process", "get"},
+                    {"Process", "get_keys"},
+                    {"Process", "info"},
+                    {"Process", "alive?"},
+                    {"Process", "whereis"},
+                    {"Process", "list"},
+                    {"GenServer", "whereis"},
+                    {"Registry", "lookup"},
+                    {"Registry", "keys"},
+                    {"Registry", "count"},
+                    {":erlang", "nodes"},
+                    {":erlang", "node"},
+                    {":erlang", "whereis"},
+                    {":erlang", "process_info"},
+                    {":erlang", "is_process_alive"},
+                    {":global", "whereis_name"},
+                    {":global", "registered_names"},
+
+                    # Table and file reads.
+                    {":ets", "lookup"},
+                    {":ets", "lookup_element"},
+                    {":ets", "member"},
+                    {":ets", "info"},
+                    {":ets", "tab2list"},
+                    {":ets", "match"},
+                    {":ets", "match_object"},
+                    {":ets", "select"},
+                    {":ets", "first"},
+                    {":ets", "next"},
+                    {":ets", "last"},
+                    {":ets", "prev"},
+                    {":ets", "whereis"},
+                    {":persistent_term", "get"},
+                    {":persistent_term", "info"},
+                    {"File", "read"},
+                    {"File", "read!"},
+                    {"File", "exists?"},
+                    {"File", "stat"},
+                    {"File", "stat!"},
+                    {"File", "ls"},
+                    {"File", "ls!"},
+                    {"File", "dir?"},
+                    {"File", "regular?"},
+                    {":file", "read_file"},
+                    {":file", "read_file_info"},
+                    {":file", "list_dir"}
+                  ])
+
   # ── Pure: known to compute a value and nothing else ──────────────
   #
   # Deliberately conservative. A module is only listed when every exported
@@ -244,21 +337,36 @@ defmodule Argus.Purity.Effects do
           | :random
           | :network
           | :code_loading
+          | :logging
+
+  @typedoc """
+  Whether an effect changes anything a rollback or a retry would care about.
+
+  Defaults to `:write` for anything unlisted, because assuming an unknown
+  effect is harmless is the expensive mistake.
+  """
+  @type mode :: :read | :write
 
   @type verdict ::
-          {:impure, category()} | :pure | {:opaque, :protocol | :dot_dispatch} | :unknown
+          {:impure, category(), mode()}
+          | :pure
+          | {:opaque, :protocol | :dot_dispatch}
+          | :unknown
 
   @doc """
   Classify a remote call.
 
       iex> Argus.Purity.Effects.classify("IO", "puts")
-      {:impure, :io}
+      {:impure, :io, :write}
+
+      iex> Argus.Purity.Effects.classify("Application", "get_env")
+      {:impure, :process, :read}
 
       iex> Argus.Purity.Effects.classify(":erlang", "+")
       :pure
 
       iex> Argus.Purity.Effects.classify(":erlang", "put")
-      {:impure, :process_dict}
+      {:impure, :process_dict, :write}
 
       iex> Argus.Purity.Effects.classify("String.Chars", "to_string")
       {:opaque, :protocol}
@@ -270,15 +378,44 @@ defmodule Argus.Purity.Effects do
   @pure true
   def classify(module, function) when is_binary(module) and is_binary(function) do
     cond do
-      category = Map.get(@impure_functions, {module, function}) -> {:impure, category}
-      category = Map.get(@impure_modules, module) -> {:impure, category}
-      {module, function} in @dynamic_dispatch_functions -> {:opaque, :dot_dispatch}
-      {module, function} in @protocol_functions -> {:opaque, :protocol}
-      module in @protocol_modules -> {:opaque, :protocol}
-      module in @pure_modules -> :pure
-      module in @pure_by_default_modules -> :pure
-      true -> :unknown
+      category = Map.get(@impure_functions, {module, function}) ->
+        {:impure, category, mode(module, function)}
+
+      category = Map.get(@impure_modules, module) ->
+        {:impure, category, mode(module, function)}
+
+      {module, function} in @dynamic_dispatch_functions ->
+        {:opaque, :dot_dispatch}
+
+      {module, function} in @protocol_functions ->
+        {:opaque, :protocol}
+
+      module in @protocol_modules ->
+        {:opaque, :protocol}
+
+      module in @pure_modules ->
+        :pure
+
+      module in @pure_by_default_modules ->
+        :pure
+
+      true ->
+        :unknown
     end
+  end
+
+  @doc """
+  Whether a call changes anything, or merely observes it.
+
+      iex> Argus.Purity.Effects.mode("File", "read")
+      :read
+
+      iex> Argus.Purity.Effects.mode("File", "write")
+      :write
+  """
+  @spec mode(String.t(), String.t()) :: mode()
+  def mode(module, function) do
+    if MapSet.member?(@read_functions, {module, function}), do: :read, else: :write
   end
 
   @doc "Every impure category, for exhaustiveness checks and reporting."

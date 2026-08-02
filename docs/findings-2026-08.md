@@ -163,3 +163,114 @@ it were the same thing.
 - Both analyses key findings on the sink site, not the (site, entry) pair.
   A sink reachable from forty controllers is one bug in one place, and
   reporting it forty times buries it.
+
+---
+
+# Contracts imposed by context, August 2026
+
+`@pure` is a contract someone writes down. The more productive observation
+is that **some contracts are imposed by context and nobody writes them
+down** — the obligation comes from where the code sits, so there is nothing
+to annotate and nothing to forget.
+
+The clearest instance is a database transaction. Passing a closure to
+`Repo.transaction/1` silently accepts that whatever it does is something
+the database can take back, because the database is going to decide whether
+it happened. Three ways that fails, none visible in review:
+
+1. **Rollback leaves the effect behind.** Rows vanish, the webhook already
+   fired, and the system is in a state its own database says never existed.
+2. **Retry repeats it.** Serialization failures are retried by design, so
+   one logical operation sends two emails.
+3. **The connection is held throughout.** A pooled connection stays checked
+   out for the whole closure, so an external call inside a transaction
+   couples database capacity to a third party's latency.
+
+The third is what takes systems down, and it is the least obvious: the code
+is correct, it just holds a scarce resource while waiting on something it
+does not control. Every finding below is an instance of it.
+
+## 4. TeslaMate — a language change holds a connection through 20 geocoder calls
+
+**Where** `lib/teslamate/settings.ex:32` → `lib/teslamate/locations.ex:50`
+**Severity** Moderate-to-high. Connection-pool exhaustion on a user action.
+
+`update_global_settings/2` opens `Repo.transaction(..., timeout: 60_000)`.
+On a language change it calls `Locations.refresh_addresses/1`, which loads
+**every** address, chunks by 50, and per chunk sleeps 1500 ms then calls an
+external geocoding API.
+
+A thousand addresses is twenty chunks: roughly 28 seconds of deliberate
+sleeping plus twenty third-party HTTP round trips, all holding one pooled
+Postgres connection. The 60-second timeout is itself an admission of how
+long this runs.
+
+Note what the analysis could *not* see: `@geocoder` is a configured module
+attribute, so the HTTP call is behind a dynamic dispatch. It found the
+`Process.sleep`, which was enough to lead to the geocoder by reading.
+
+## 5. Sequin — a user-controlled wait inside a 90-second transaction
+
+**Where** `lib/sequin/yaml_loader.ex:59` → `:404`
+**Severity** Moderate-to-high, and partly attacker-influenced.
+
+`apply_from_yml/3` opens `Repo.transaction(..., timeout: to_timeout(second: 90))`.
+Inside, `await_database/3` retries connecting to an **external customer
+database**, sleeping between attempts — 3 s intervals up to 30 s by default.
+
+The wait is configurable *from the YAML being applied*
+(`await_database["timeout_ms"]`), so the duration a pooled connection is
+held is chosen by the submitted config.
+
+The same transaction also runs `DynamicSupervisor.start_child/2` and
+`terminate_child/2`, `GenServer.call/2`, `GenServer.stop/1`, and
+`Task.async`/`await`. Supervisor lifecycle changes are not rolled back when
+the transaction aborts.
+
+Worth saying: this codebase already separates `perform_actions/1` to run
+*after* the transaction, so the authors clearly knew some things belong
+outside. `await_database` simply did not get the same treatment.
+
+## 6. Keila — a CSV import runs entirely inside one transaction
+
+**Where** `lib/keila/contacts/import.ex:26`
+**Severity** Moderate.
+
+`import_csv/3` wraps the whole import in a transaction: `File.open!`,
+`File.stream!` and `IO.read` all execute with a connection checked out, so
+the hold time scales with the uploaded file. Progress is reported with
+`send/2` from inside, so a rollback leaves a UI that has already been told
+about contacts that no longer exist.
+
+Separately, `Mailings.ScheduleWorker.perform/1` makes a blocking
+`GenServer.call/2` to `Mailings.RateLimiter` inside a transaction — a
+connection held for the duration of another process's mailbox, and a
+deadlock risk if that process ever needs the pool itself.
+
+## 7. Supabase Realtime — a send inside a subscription transaction
+
+**Where** `lib/extensions/postgres_cdc_rls/subscriptions.ex`
+**Severity** Low-to-moderate. `Subscriptions.create/5` sends a message from
+inside its transaction; on rollback the recipient has still been told.
+
+## What the design needed to make this usable
+
+The first run reported 37 findings on one project, and most were noise:
+`Process.get/2`, `Application.get_env/2`, `GenServer.whereis/1`. All are
+impure — they break referential transparency, so purity is right to reject
+them — but a **read has nothing to roll back**.
+
+That forced a second dimension into the effect model. Every impure call now
+carries a `mode` of `:read` or `:write`, defaulting to `:write` for
+anything unclassified, because a false "irreversible" costs a look while a
+false "harmless" costs the bug. Purity ignores the dimension entirely;
+transaction safety looks only at writes. One model, two contracts, opposite
+questions.
+
+Logging needed the same treatment for the opposite reason: it was
+classified `:io` alongside file writes, which would have reported every
+`Logger.info` in a transaction. It is now its own category, so a contract
+can forbid file writes without forbidding logging.
+
+Neither refinement was foreseeable from the armchair. Both came from
+running the thing and reading what it said.
