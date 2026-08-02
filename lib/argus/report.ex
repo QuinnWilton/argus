@@ -32,6 +32,18 @@ defmodule Argus.Report do
   @spec build_project_report(map(), [{atom(), {:ok, map()} | {:error, term()}}], keyword()) ::
           map()
   def build_project_report(meta, analysis_results, opts \\ []) do
+    # Facts that name a target carry "dynamic" when the extractor could not
+    # resolve it. On one 531-module project `sync_call` resolved 1 of 48, so
+    # the analyses keyed on a resolved target were reasoning from a fiftieth
+    # of the calls in the program. Their findings were still real; their
+    # silences meant almost nothing, and nothing in the report said which
+    # was which. Pass `:facts` to have it say so.
+    resolution =
+      case Keyword.get(opts, :facts) do
+        nil -> nil
+        facts -> Argus.Resolution.summary(facts)
+      end
+
     analyses =
       Map.new(analysis_results, fn {name, outcome} ->
         {Atom.to_string(name), build_analysis_entry(name, outcome)}
@@ -51,11 +63,13 @@ defmodule Argus.Report do
     base = %{
       "meta" => meta,
       "analyses" => analyses,
-      "summary" => %{
-        "total_findings" => total_findings,
-        "analyses_run" => map_size(analyses),
-        "analyses_failed" => analyses_failed
-      }
+      "summary" =>
+        %{
+          "total_findings" => total_findings,
+          "analyses_run" => map_size(analyses),
+          "analyses_failed" => analyses_failed
+        }
+        |> maybe_put_resolution(resolution)
     }
 
     case Keyword.get(opts, :findings) do
@@ -191,4 +205,11 @@ defmodule Argus.Report do
       "error" => inspect(reason)
     }
   end
+
+  # Omitted entirely when no facts are supplied, rather than reported as
+  # empty: a report that silently claims full coverage is the failure this
+  # exists to fix.
+  defp maybe_put_resolution(summary, nil), do: summary
+  defp maybe_put_resolution(summary, []), do: summary
+  defp maybe_put_resolution(summary, lines), do: Map.put(summary, "unresolved_targets", lines)
 end
