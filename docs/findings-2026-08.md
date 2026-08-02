@@ -1113,3 +1113,64 @@ Building the value-flow layer is a real project, and `Argus.Dataflow`
 exists as a starting point. Until then, a candidate that needs to know
 *which* value is a candidate to decline — measured in advance, not after
 the build.
+
+---
+
+# A third generator, and a defect it found in our own facts
+
+The boundary from the previous section is itself a generator: *enumerate the
+structural questions not yet asked* — what exists, what is set, what reaches
+what.
+
+One is nearly free. `handle_continue_clause(mod, tag, func)` and
+`init_continues_to(mod, tag)` are both already emitted, and nothing checks
+they line up. A `{:continue, tag}` with no matching clause crashes at
+startup; a clause no `init` ever triggers is dead code.
+
+## Declined, and the reason is now a rule
+
+**`missing_clause` is zero on every project measured.** Exactly what the
+loud-versus-silent principle predicts: that bug kills the process at boot,
+in development, on the first run. Loud bugs have no population, and this is
+the second time that has decided a candidate — the first being the
+`brutal_kill` contradiction nobody writes.
+
+Worth stating as a filter, since it is cheap to apply before building
+anything: **a static analysis earns nothing by finding what the first `mix
+test` already finds.** Every analysis in this document that shipped targets
+something that survives to production — a skipped `terminate/2`, a reply
+that never comes, TLS that encrypts without authenticating, a supervisor
+with no ceiling.
+
+## What the other column found
+
+The `dead_clause` side was not zero — 14 on sequin, 12 on Livebook — but the
+tags are not tags:
+
+```
+DEAD  Sequin.Runtime.SlotMessageStore  :ok
+DEAD  Sequin.Runtime.SlotMessageStore  nil
+DEAD  Sequin.Runtime.SlotMessageStore  false
+DEAD  Livebook.Runtime.Fly             nil
+```
+
+`:ok`, `nil` and `false` are not `handle_continue` tags. **The
+`handle_continue_clause` extractor is recording atoms from clause bodies as
+though they were continue tags**, so roughly half the rows in that relation
+are wrong.
+
+That relation is not unused. `deferred_startup_deadlock` reads it, which
+means its findings are computed partly from noise — and nobody would notice,
+because a spurious tag simply fails to match anything downstream and
+produces silence rather than an error. The same shape as every other quiet
+defect in this document.
+
+**Not fixed here**, and flagged rather than half-repaired: the fix is in the
+extractor's tag resolution, and it needs `deferred_startup_deadlock`'s
+findings diffed before and after on the corpus and read against source. That
+is the standard the rest of this work was held to, and it is a session's
+work rather than a paragraph's.
+
+The measurement is above and reproduces from `init_continues_to` and
+`handle_continue_clause` alone, so the next session starts with the evidence
+already in hand.
