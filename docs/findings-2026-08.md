@@ -618,3 +618,102 @@ runtime, so it is checked statically.
 **A believable zero deserves the same scrutiny as a surprising finding.**
 The only reason this was caught is that two views of the same question
 existed and disagreed. That is worth building on purpose, not by accident.
+
+---
+
+# A negative result: unmatched messages, August 2026
+
+Built, tightened three times, and reverted. Recorded because the technique
+is worth keeping and the reason it failed is more instructive than the
+findings would have been.
+
+## The idea
+
+`handle_info/2` is the only callback whose input the module does not
+choose. `handle_call` and `handle_cast` receive what the module's own API
+sends; `handle_info` receives whatever anyone puts in the mailbox, plus
+what the runtime puts there on the module's behalf — `{:EXIT, pid, reason}`
+under `trap_exit`, a late `{:DOWN, ref, ...}`, a `Task` reply that outlived
+its `await`, a timer message that raced its cancel. None appear at a call
+site, so a `handle_info` matching two specific messages looks complete and
+is not. The result is `FunctionClauseError`, so the process dies, at the
+moment the system is already degraded.
+
+Finding #3 in this document — TeslaMate's leaked monitor — is exactly this
+bug, and was found by reading. The goal was to find it mechanically.
+
+## The technique, which works
+
+Totality is legible in bytecode and exactly decidable. A multi-clause
+function raises `FunctionClauseError` by jumping to its own `func_info`
+label, which BEAM emits at the top of every function. So **a callback
+accepts every input exactly when nothing branches to that label**.
+
+```
+{:label, 10}
+{:func_info, {:atom, M}, {:atom, :handle_info}, 2}
+{:label, 11}
+{:select_val, {:x, 0}, {:f, 10}, ...}   <- branches to 10: partial
+```
+
+This gets guards right for free, which is the part worth keeping.
+`handle_info(msg, s) when is_atom(msg)` reads as a catch-all in source and
+is not one; the guard compiles to a test whose failure branch is the
+`func_info` label, so it registers as partial exactly as it should.
+
+## Why it was reverted
+
+Three rounds of tightening, each removing a class of false positive, ending
+at zero true positives.
+
+**Round 1 — partiality is not rejection.** The first rule paired "traps
+exits" with "partial `handle_info`". 17 findings on one project, and
+`DBConnection.Watcher` was among them — which handles `{:EXIT, _, _}` on
+line 53 and merely has no catch-all. Partiality says *some* input crashes,
+never *which*. Same conflation that killed `reply_never_sent`.
+
+The fix was a second fact: which atoms the callback discriminates on,
+collected from every equality test. It has to over-approximate — an atom
+compared for an unrelated reason counts as accepted — because every
+consumer asks whether a message is *not* accepted, so over-approximating
+suppresses findings rather than inventing them. 17 → 8, and 37 timer
+findings → 1.
+
+**Round 2 — a `start_link` wrapper links the caller, not the server.** The
+remaining eight were all one shape: a module's own `start_link/1` calling
+`GenServer.start_link`, which runs in the *caller* and says nothing about
+what the server links to. Sequin's `PosthogReporter` is the clean example —
+traps exits, one `handle_info` clause, no links beyond its parent, whose
+exit `gen_server` handles itself. Requiring the link to be established from
+a callback took it to zero.
+
+**Round 3 — the last timer finding was a selective receive.**
+`Phoenix.LiveReloader.Channel` schedules `:debounced` to itself and consumes
+it in a `receive` inside a helper, so it never reaches `handle_info`.
+
+**And the known-real case is invisible by construction.** TeslaMate's
+`Vehicle` monitors a process and has two `{:DOWN, ...}` clauses, **both
+matching reason `:normal`**, with no catch-all across 59 clauses. The atom
+`:DOWN` *is* compared — so `callback_accepts` sees it and suppresses. The
+over-approximation chosen in round 1 to avoid false positives is precisely
+what hides this. Finding it needs the reason field modelled, not just the
+tag, which is a different and much deeper analysis.
+
+## What the negative result is worth
+
+An analysis has to earn its place by finding something true, and this one
+did not. Shipping it would have meant three schema relations and two
+version bumps — each forcing a pin review in gloss, lowdown and planchette
+— to support rules with no demonstrated finding.
+
+The generalisable part: **the safe direction for an over-approximation is
+chosen per-consumer, and here it is the same choice in both directions.**
+Over-approximating "accepts" avoids false positives and creates false
+negatives; the only bug I could point at in advance sits exactly in that
+gap. When the conservative choice and the target case collide, the analysis
+has no useful operating point, and that is worth discovering before
+shipping rather than after.
+
+The totality technique is retained here, and is cheap to rebuild if a
+consumer appears that can use it — most likely one that models a clause's
+full pattern rather than its head atom.
