@@ -884,3 +884,78 @@ Mint or hackney rather than a literal `:ssl.connect`. It is kept — exact,
 cheap, and correct — but it is not what earns the analysis its place, and
 saying so matters: the justification and the value came from different
 halves, and only the sweep could tell them apart.
+
+---
+
+# Three more defaults, one shipped, August 2026
+
+Continuing to run *bugs live in defaults* as a generator. Each candidate was
+measured before being built, or reverted after being verified.
+
+## Declined: `active: true` sockets
+
+`:gen_tcp.connect/3` defaults to `{active, true}`, which floods the owning
+process's mailbox with no flow control — unbounded memory against a fast
+peer. A genuinely dangerous default.
+
+Measured: 2 sites in sequin, 0 in Livebook, 2 in TeslaMate, 0 in Bandit,
+against 13–20 uses of `active: :once` or `{active, N}` per project. The
+ecosystem overwhelmingly does the right thing and the stragglers are small
+controlled peers. Thin population, same verdict as `brutal_kill`.
+
+## Built and reverted: network I/O in `init/1`
+
+The best-motivated candidate of the three, and the one that failed most
+informatively.
+
+`Supervisor.init/2` defaults to `max_restarts: 3` within `max_seconds: 5`,
+and almost nobody changes it — **16 supervisor modules in Livebook, zero set
+it**. So a child whose `init/1` connects to something outside the node fails
+three times in about five seconds when that service is down, exhausts the
+budget, and takes its supervisor's whole subtree with it. That is the shape
+behind "the database blipped and the node went down": the service was gone
+for seconds and the node stayed down until something restarted it.
+
+Not covered by `sync_call_in_init`, which matches `sync_call` — one process
+waiting on a *sibling*, not on a remote host.
+
+It was reverted because neither operating point produces a trustworthy
+finding:
+
+- **Restricted to statically-listed supervisor children: zero.** Mature
+  projects do not do this, and the ones that connect are started under
+  `DynamicSupervisor`s the rule could not see.
+- **Unrestricted: eight on sequin, none of them bugs.** `:eredis_client`,
+  `Gnat`, `Postgrex.ReplicationConnection` — connection modules where
+  connecting in `init/1` is the entire design, and which carry their own
+  reconnect logic. Two were outright misattributions:
+  `:inet.format_error/1` is classified as network I/O when it formats an
+  error string, and `Postgrex.Protocol:cancel_request/3` is a transitive
+  artifact of the unbounded reach.
+
+**One thing it caught on the way through is worth keeping.** The first run
+returned zero on every project, and the zero was a lie: the rule reads
+`impure_call`, and `sync_call_in_init` does not declare the Purity
+extractor, so the fact was never emitted. A rule matching nothing reports
+exactly what a clean corpus reports. That is the third time in this document
+the same failure mode appears — behaviour names, environment reads, and now
+a missing extractor — and it is the argument for the fixture discipline used
+throughout: **a positive fixture with a negative twin is what distinguishes
+"found nothing" from "asked nothing".** Without the fixture the zero would
+have been believed and shipped.
+
+## Shipped: `tls_verification`
+
+Covered above. The one of the three that found real bugs — five first-party
+Sequin modules where enabling TLS disables verification.
+
+## Scoreboard for the generator
+
+Six candidates from "enumerate the defaults": `trap_exit` (shipped earlier
+as `shutdown_safety`), TLS verification (shipped), `brutal_kill` (declined
+on measurement), LiveView `mount` (declined on measurement), `active: true`
+(declined on measurement), network-in-`init` (built, verified, reverted).
+
+One in three shipped, and the declines cost a grep each. That ratio is the
+argument for measuring populations before building, which is the cheapest
+step in the whole loop and the one that was skipped for `unmatched_message`.
