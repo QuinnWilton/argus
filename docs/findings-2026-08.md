@@ -418,3 +418,135 @@ never restates the precise one.
 
 That the cost was measured rather than assumed is the whole reason it
 shipped; the armchair estimate was "far too noisy to be useful."
+
+---
+
+# The reply contract, August 2026
+
+The contracts so far came from where code sits — inside a transaction,
+inside `terminate/2`. This one comes from what a function *returned*.
+
+`handle_call/3` may answer immediately with `{:reply, value, state}`, or
+defer: return `{:noreply, state}` and call `GenServer.reply/2` later.
+Deferring is a promise, and the only thing that can discharge it is the
+`from` term the callback was handed — an opaque `{pid, tag}` that exists
+nowhere else in the system. A clause that defers without keeping `from` has
+promised something it cannot deliver, and no later event fixes it.
+
+**Why it needs an analysis** is not that the mistake is subtle. It is where
+it surfaces. The process that got it wrong is fine — it returned a valid
+value and went back to its loop. The failure appears five seconds later, in
+a different process, in a different module:
+
+    ** (exit) exited in: GenServer.call(pid, :thing, 5000)
+         ** (EXIT) time out
+
+Nothing there names the clause that failed to reply. Under load it is
+indistinguishable from overload, which sends people to tune pool sizes and
+mailbox depths for a bug that has nothing to do with either.
+
+## 11. RabbitMQ Erlang client — a flush that answers nobody
+
+**Where** `amqp_client/src/amqp_channel.erl:388`
+**Severity** Latent. Unreachable today; a hang for anyone who writes the
+obvious thing.
+
+```erlang
+handle_call(flush, _From, State) ->
+    flush_writer(State),
+    {noreply, State};
+```
+
+`amqp_channel` exports no `flush/1`, and nothing in the tree sends `flush`
+to a channel, so the clause is dead. What makes it worth reporting is the
+company it keeps: `rabbit_common/src/rabbit_writer.erl` has a clause with
+**the same message name** that gets it right —
+
+```erlang
+handle_call(flush, _From, State) ->
+    try
+        State1 = internal_flush(State),
+        {reply, ok, State1, 0}
+```
+
+— and exports `flush(W) -> call(W, flush).` for it. So the working protocol
+exists one module away, `amqp_channel:flush_writer/1` calls it, and the
+channel's own version mirrors it with the wrong return tag. Anyone adding
+`gen_server:call(Channel, flush)` — the natural thing, given the neighbour
+— hangs for `amqp_util:call_timeout()`.
+
+## 12–13. Two catch-alls that hang instead of failing
+
+**Where** `dogstatsd/src/dogstatsd_vm_stats.erl:96`,
+`ranch/src/ranch_server_proxy.erl:40`
+**Severity** Low, and deliberate in at least one case.
+
+Both are `handle_call(_, _, State) -> {noreply, State}` in processes that
+accept no calls; `ranch_server_proxy` even has a `-spec` documenting the
+return. Neither is reachable in normal operation.
+
+Worth naming anyway, because refusing a call by hanging the caller for a
+full timeout is strictly worse than replying `{:error, :not_supported}` or
+crashing. `ranch_server_proxy` appears in three of the projects swept —
+ranch is under Cowboy, which is under Phoenix — so it is the single most
+widely deployed instance of the shape.
+
+## Precision
+
+Three distinct modules across roughly fourteen thousand compiled modules,
+every one read against source, no false positives. All three are Erlang.
+
+## What did not survive the build
+
+Two things, recorded because they are the more useful half.
+
+**The first version silently exempted every Erlang dependency.** It reused
+`clientlib/callbacks.dl`, which matches `implements_behaviour(mod,
+"GenServer")` — the Elixir spelling only. Erlang modules declare
+`-behaviour(gen_server)`. Since all three findings are Erlang, the analysis
+reported nothing at all, and reported it in a way indistinguishable from
+"this corpus is clean." The zero was believable, which is what made it
+dangerous; it took comparing the Datalog output against the raw extractor
+output to notice they disagreed.
+
+**A second finding was written, measured, and deleted.** "Module keeps
+`from`, calls `GenServer.reply/2` nowhere" is the same hang by another
+route, and `StoresAndForgets` in the fixtures is exactly that shape. But
+stating it precisely needs escape analysis this does not have: `from`
+leaves through a send, a spawned closure, an ETS write, or any call that
+happens to take it as an argument, and whoever receives it can reply.
+Suppressing on the routes one can enumerate leaves the rest as false
+positives. It found nothing across the corpus, so it was removed rather
+than shipped as a heuristic. The fixture stays, pinned as a non-finding.
+
+## Two things the bytecode taught
+
+Neither was foreseeable from the armchair; both were found by running it
+and reading what came out.
+
+**A register can be read without being mentioned.** Calls take arguments
+positionally, so
+
+```erlang
+handle_call({call, Payload}, From, State) ->
+    NewState = publish(Payload, From, State),
+```
+
+compiles to a bare `{:call, 3, ...}` with no moves at all — the arguments
+are already in `{x,0}`, `{x,1}`, `{x,2}`. A search for `{x,1}` finds
+nothing, and `amqp_rpc_client` looked like it had dropped `from` when it
+had passed it on. Any call of arity two or more now counts as a read.
+
+**The question is per clause, and clauses interleave with dispatch.**
+`handle_call/3` compiles every clause into one function, so asking
+function-wide lets a clause that defers correctly vouch for one that does
+not. That is not a rounding error — `amqp_channel` has ten clauses and was
+invisible until the question became per return site.
+
+Block granularity was not enough either. Elixir inlines the first clause
+into the entry block, so that block holds both the dispatch test for the
+*other* clauses and a body that stores `from`; at block granularity the
+store poisons the entry and nothing downstream is ever reported. The
+working version walks the control-flow graph instruction by instruction,
+refusing to pass any instruction that reads `from`, and asks which
+`{:noreply, _}` sites remain reachable.
