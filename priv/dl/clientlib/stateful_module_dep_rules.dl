@@ -26,7 +26,7 @@ module_reaches(from_mod, to_mod, caller) :-
 .decl genserver_async_api(func: symbol, mod: symbol)
 genserver_async_api(func, mod) :-
   function_def(func, mod, _, _, 1),
-  implements_behaviour(mod, "GenServer"),
+  behaves_as(mod, "GenServer"),
   async_cast(func, _).
 
 // ── Stateful module dependency ──────────────────────────────────────

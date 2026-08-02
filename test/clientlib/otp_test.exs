@@ -31,6 +31,7 @@ defmodule Argus.Clientlib.OtpTest do
 
       rules = """
       .include "#{Path.join(priv_dl(), "clientlib/imports.dl")}"
+      .include "#{Path.join(priv_dl(), "clientlib/behaviours.dl")}"
 
 
       .include "#{Path.join(priv_dl(), "clientlib/otp.dl")}"

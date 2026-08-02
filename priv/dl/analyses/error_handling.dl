@@ -4,6 +4,7 @@
 // handlers, exit in callbacks, and ignored start results.
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/behaviours.dl"
 
 // ── Swallowed errors ─────────────────────────────────────────────
 
@@ -31,8 +32,8 @@ has_handle_info(mod) :-
 // Tracker even matches {:EXIT, ...} explicitly). Exclude them.
 .decl statem_like(mod: symbol)
 
-statem_like(mod) :- implements_behaviour(mod, ":gen_statem").
-statem_like(mod) :- implements_behaviour(mod, "GenStateMachine").
+statem_like(mod) :- behaves_as(mod, "GenStateMachine").
+statem_like(mod) :- behaves_as(mod, "GenStateMachine").
 
 // `witness` is the function that sets trap_exit. One row per witness —
 // finding builders dedupe on (mod).
@@ -51,15 +52,15 @@ trap_exit_without_handler(mod, func) :-
 
 genserver_callback(func, mod) :-
   function_def(func, mod, "handle_call", _, _),
-  implements_behaviour(mod, "GenServer").
+  behaves_as(mod, "GenServer").
 
 genserver_callback(func, mod) :-
   function_def(func, mod, "handle_cast", _, _),
-  implements_behaviour(mod, "GenServer").
+  behaves_as(mod, "GenServer").
 
 genserver_callback(func, mod) :-
   function_def(func, mod, "handle_info", _, _),
-  implements_behaviour(mod, "GenServer").
+  behaves_as(mod, "GenServer").
 
 // Only exit *signals* — Process.exit/2, :erlang.exit/2 — count here.
 // `:erlang.exit/1` (target "self") *raises* an exit in the current

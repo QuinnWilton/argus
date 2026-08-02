@@ -6,6 +6,7 @@
 // the other, producing a deadlock.
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/behaviours.dl"
 
 // ── Layer 2 facts ──────────────────────────────────────────────────────
 

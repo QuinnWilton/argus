@@ -12,6 +12,7 @@
 //    blocking the GenServer.
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/behaviours.dl"
 
 // ── Input facts ──────────────────────────────────────────────────────
 
@@ -78,7 +79,7 @@ callback_sync_dep(from_mod, to_mod) :-
 // Base case: direct callback sync dependency (depth 1).
 timeout_chain(from, to, 1) :-
   callback_sync_dep(from, to),
-  implements_behaviour(to, "GenServer").
+  behaves_as(to, "GenServer").
 
 // Recursive case: chain through intermediate GenServer.
 timeout_chain(from, to, d + 1) :-
@@ -204,4 +205,4 @@ timeout_insufficient(a, b, t_ab, t_bc) :-
 
 infinity_timeout_in_chain(mod, target) :-
   callback_sync_dep_timeout(mod, target, -1),
-  implements_behaviour(target, "GenServer").
+  behaves_as(target, "GenServer").

@@ -19,6 +19,7 @@
 // framework-specific parsing.
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/behaviours.dl"
 
 // ── Request entry points ─────────────────────────────────────────
 //
@@ -31,35 +32,35 @@
 // Plug.call/2 receives the conn. Phoenix controllers are Plugs, so this
 // covers controller actions' entry as well.
 request_entry(func, "plug") :-
-  implements_behaviour(mod, "Plug"),
+  behaves_as(mod, "Plug"),
   function_def(func, mod, "call", 2, _).
 
 // LiveView: mount/3 takes params, handle_params/3 takes the query string,
 // handle_event/3 takes whatever the client's JS pushed.
 request_entry(func, "live_view") :-
-  implements_behaviour(mod, "Phoenix.LiveView"),
+  behaves_as(mod, "Phoenix.LiveView"),
   function_def(func, mod, name, arity, _),
   arity = 3,
   (name = "mount" ; name = "handle_params" ; name = "handle_event").
 
 request_entry(func, "live_component") :-
-  implements_behaviour(mod, "Phoenix.LiveComponent"),
+  behaves_as(mod, "Phoenix.LiveComponent"),
   function_def(func, mod, "handle_event", 3, _).
 
 // Channels are the websocket surface: handle_in/3 is raw client payload.
 request_entry(func, "channel") :-
-  implements_behaviour(mod, "Phoenix.Channel"),
+  behaves_as(mod, "Phoenix.Channel"),
   function_def(func, mod, "handle_in", 3, _).
 
 // Background jobs are an untrusted boundary too — job args are usually
 // enqueued from user-facing code and round-trip through storage, so they
 // are attacker-influenced even though no socket is involved.
 request_entry(func, "oban_job") :-
-  implements_behaviour(mod, "Oban.Worker"),
+  behaves_as(mod, "Oban.Worker"),
   function_def(func, mod, "perform", 1, _).
 
 request_entry(func, "broadway") :-
-  implements_behaviour(mod, "Broadway"),
+  behaves_as(mod, "Broadway"),
   function_def(func, mod, name, arity, _),
   ((name = "handle_message", arity = 3) ; (name = "handle_batch", arity = 4)).
 

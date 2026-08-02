@@ -9,6 +9,7 @@
 // (e.g. A calls helper H which calls GenServer.call(B)).
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/behaviours.dl"
 
 // (The supervision extractor also emits named_process; no rule here
 // consumes it.)

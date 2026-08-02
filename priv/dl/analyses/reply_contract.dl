@@ -23,6 +23,7 @@
 // diagnosis and sends people to tune pool sizes.
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/behaviours.dl"
 
 // ── Which modules answer calls ───────────────────────────────────
 //
@@ -37,15 +38,13 @@
 
 answers_calls(mod, func) :-
   function_def(func, mod, "handle_call", 3, _),
-  implements_behaviour(mod, behaviour),
+  behaves_as(mod, behaviour),
   gen_server_behaviour(behaviour).
 
 .decl gen_server_behaviour(behaviour: symbol)
 
 gen_server_behaviour("GenServer").
-gen_server_behaviour("gen_server").
 gen_server_behaviour("GenStage").
-gen_server_behaviour(":gen_server").
 
 // ── Deferring ────────────────────────────────────────────────────
 

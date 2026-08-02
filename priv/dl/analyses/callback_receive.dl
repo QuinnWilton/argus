@@ -24,18 +24,21 @@
 // looks locally reasonable.
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/behaviours.dl"
 
 // ── OTP behaviours whose callbacks run inside the process loop ───
 
 .decl loop_behaviour(behaviour: symbol)
 
+// Canonical names — clientlib/behaviours.dl folds in the Erlang
+// spellings. The bare "gen_server" and "supervisor" listed here before
+// matched nothing at all: an Erlang declaration inspects to ":gen_server",
+// colon included.
 loop_behaviour("GenServer").
-loop_behaviour("gen_server").
 loop_behaviour("GenStage").
 loop_behaviour("Supervisor").
-loop_behaviour("supervisor").
-loop_behaviour("gen_statem").
 loop_behaviour("GenStateMachine").
+loop_behaviour("GenEvent").
 loop_behaviour("Phoenix.LiveView").
 loop_behaviour("Phoenix.LiveComponent").
 loop_behaviour("Phoenix.Channel").

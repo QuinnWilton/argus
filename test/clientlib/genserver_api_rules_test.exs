@@ -32,6 +32,7 @@ defmodule Argus.Clientlib.GenserverApiRulesTest do
       # need to add the missing input declarations and .output.
       rules = """
       .include "#{Path.join(priv_dl(), "clientlib/imports.dl")}"
+      .include "#{Path.join(priv_dl(), "clientlib/behaviours.dl")}"
 
 
       .include "#{Path.join(priv_dl(), "clientlib/genserver_api_rules.dl")}"

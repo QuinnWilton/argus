@@ -17,14 +17,14 @@
 // Direct: exported function itself has sync_call.
 genserver_sync_api(func, mod) :-
   function_def(func, mod, _, _, 1),
-  implements_behaviour(mod, "GenServer"),
+  behaves_as(mod, "GenServer"),
   sync_call(func, _).
 
 // Delegation: exported function reaches a private helper in the same
 // module that has sync_call.
 genserver_sync_api(func, mod) :-
   function_def(func, mod, _, _, 1),
-  implements_behaviour(mod, "GenServer"),
+  behaves_as(mod, "GenServer"),
   call_reachable(func, g),
   sync_call(g, _),
   function_def(g, mod, _, _, _).

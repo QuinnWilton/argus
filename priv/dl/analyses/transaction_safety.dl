@@ -28,6 +28,7 @@
 // waiting on something it does not control.
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/behaviours.dl"
 
 // ── Transaction call sites ───────────────────────────────────────
 
@@ -38,7 +39,7 @@
 
 transaction_site(caller, repo) :-
   remote_call(_, caller, repo, "transaction", _),
-  implements_behaviour(repo, "Ecto.Repo").
+  behaves_as(repo, "Ecto.Repo").
 
 // Postgrex and Ecto.Multi reach the same place by another route.
 transaction_site(caller, "Postgrex") :-

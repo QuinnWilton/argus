@@ -6,6 +6,7 @@
 // under load.
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/behaviours.dl"
 
 // ── Layer 2 facts ──────────────────────────────────────────────────────
 
@@ -56,7 +57,7 @@ sync_caller(caller_mod, target_mod) :- sync_caller_witness(caller_mod, target_mo
 .output sync_call_fan_in
 
 sync_call_fan_in(target_mod, cnt) :-
-  implements_behaviour(target_mod, "GenServer"),
+  behaves_as(target_mod, "GenServer"),
   cnt = count : { sync_caller(_, target_mod) },
   cnt >= 5.
 

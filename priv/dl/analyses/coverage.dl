@@ -17,6 +17,7 @@
 // slice the data however they want.
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/behaviours.dl"
 
 // ── Input facts ──────────────────────────────────────────────────────
 
@@ -56,7 +57,7 @@ coverage_supervisor_no_children(sup) :-
 .output coverage_genserver_isolated
 
 coverage_genserver_isolated(mod) :-
-  implements_behaviour(mod, "GenServer"),
+  behaves_as(mod, "GenServer"),
   !sync_call(_, mod),
   !async_cast(_, mod),
   !supervisor_child(_, _, mod, _, _),

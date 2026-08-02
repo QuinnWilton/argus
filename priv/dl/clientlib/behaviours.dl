@@ -1,0 +1,79 @@
+// Behaviour names, canonicalised across the two languages.
+//
+// `implements_behaviour` stores whatever the module declared, rendered with
+// `inspect/1`. An Elixir module writing `@behaviour GenServer` produces
+// "GenServer"; an Erlang module writing `-behaviour(gen_server)` produces
+// ":gen_server", colon and all, because that is how the atom inspects.
+//
+// A rule matching `implements_behaviour(mod, "GenServer")` therefore sees
+// only the Elixir half. That is not a small half. On one project swept
+// here, 100 modules declared `GenServer` and 42 declared `:gen_server` —
+// roughly thirty percent of the gen_servers in the tree, all of them in
+// dependencies, which is exactly where nobody is reading the source and a
+// bug survives longest.
+//
+// The failure is silent in the worst way: the analysis returns fewer
+// findings, not an error, and fewer findings is indistinguishable from
+// cleaner code. It was found only by comparing a Datalog result against the
+// raw extractor output that fed it.
+//
+// So rules should ask `behaves_as(mod, "GenServer")` rather than matching
+// the declared string. The canonical name is the Elixir spelling, which is
+// what the rules already say.
+
+.decl behaviour_alias(declared: symbol, canonical: symbol)
+
+behaviour_alias("GenServer", "GenServer").
+behaviour_alias(":gen_server", "GenServer").
+behaviour_alias("gen_server", "GenServer").
+
+behaviour_alias("Supervisor", "Supervisor").
+behaviour_alias(":supervisor", "Supervisor").
+behaviour_alias("supervisor", "Supervisor").
+
+behaviour_alias("GenStateMachine", "GenStateMachine").
+behaviour_alias(":gen_statem", "GenStateMachine").
+behaviour_alias("gen_statem", "GenStateMachine").
+
+behaviour_alias("GenEvent", "GenEvent").
+behaviour_alias(":gen_event", "GenEvent").
+behaviour_alias("gen_event", "GenEvent").
+
+behaviour_alias("Application", "Application").
+behaviour_alias(":application", "Application").
+behaviour_alias("application", "Application").
+
+// Elixir-only behaviours. Listed so that `behaves_as` is total — a rule
+// asking about one of these should not have to know whether it has an
+// Erlang spelling.
+behaviour_alias("GenStage", "GenStage").
+behaviour_alias("Broadway", "Broadway").
+behaviour_alias("Phoenix.LiveView", "Phoenix.LiveView").
+behaviour_alias("Phoenix.Channel", "Phoenix.Channel").
+behaviour_alias("Task", "Task").
+behaviour_alias("Agent", "Agent").
+
+.decl behaves_as(mod: symbol, canonical: symbol)
+
+behaves_as(mod, canonical) :-
+  implements_behaviour(mod, declared),
+  behaviour_alias(declared, canonical).
+
+// Anything not in the alias table passes through unchanged, so a rule can
+// still ask about a behaviour nobody thought to list. Without this, adding
+// the indirection would LOSE matches for every behaviour the table omits —
+// turning a fix for under-reporting into a fresh source of it.
+behaves_as(mod, declared) :-
+  implements_behaviour(mod, declared),
+  !behaviour_alias(declared, _).
+
+// Modules that run a callback loop and can therefore block themselves.
+.decl callback_loop_behaviour(canonical: symbol)
+
+callback_loop_behaviour("GenServer").
+callback_loop_behaviour("GenStateMachine").
+callback_loop_behaviour("GenEvent").
+callback_loop_behaviour("GenStage").
+callback_loop_behaviour("Broadway").
+callback_loop_behaviour("Phoenix.LiveView").
+callback_loop_behaviour("Phoenix.Channel").

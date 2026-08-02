@@ -7,6 +7,7 @@
 // nested supervisors (not just direct siblings).
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/behaviours.dl"
 
 // ── Supervision facts ────────────────────────────────────────────────
 

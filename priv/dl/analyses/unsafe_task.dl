@@ -10,6 +10,7 @@
 //    branch/test instruction follows it in the function.
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/behaviours.dl"
 
 // ── Additional base facts ──────────────────────────────────────────────
 
@@ -65,27 +66,27 @@ has_await(func) :- call_reachable(func, g), task_await_call(g, _).
 
 // GenServer with handle_info/2.
 process_task_handler(mod) :-
-  implements_behaviour(mod, "GenServer"),
+  behaves_as(mod, "GenServer"),
   function_def(_, mod, "handle_info", 2, _).
 
 // Phoenix.LiveView with handle_info/2.
 process_task_handler(mod) :-
-  implements_behaviour(mod, "Phoenix.LiveView"),
+  behaves_as(mod, "Phoenix.LiveView"),
   function_def(_, mod, "handle_info", 2, _).
 
 // Phoenix.LiveComponent with handle_info/2.
 process_task_handler(mod) :-
-  implements_behaviour(mod, "Phoenix.LiveComponent"),
+  behaves_as(mod, "Phoenix.LiveComponent"),
   function_def(_, mod, "handle_info", 2, _).
 
 // :gen_statem with handle_event/4.
 process_task_handler(mod) :-
-  implements_behaviour(mod, ":gen_statem"),
+  behaves_as(mod, "GenStateMachine"),
   function_def(_, mod, "handle_event", 4, _).
 
 // GenStateMachine (Elixir wrapper) with handle_event/4.
 process_task_handler(mod) :-
-  implements_behaviour(mod, "GenStateMachine"),
+  behaves_as(mod, "GenStateMachine"),
   function_def(_, mod, "handle_event", 4, _).
 
 // ── Task factory suppression ─────────────────────────────────────────

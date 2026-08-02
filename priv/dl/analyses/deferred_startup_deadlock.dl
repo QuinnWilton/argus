@@ -21,6 +21,7 @@
 // separate finding type.
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/behaviours.dl"
 
 .include "../clientlib/otp.dl"
 .include "../clientlib/supervision.dl"
