@@ -12,6 +12,45 @@ baseline the results, edit an extractor, re-measure, diff, accept or
 revert, repeat. Inspired by pi-autoresearch's event-log + living-doc
 pattern, adapted for Argus's multi-dimensional categorical metrics.
 
+### Changed (schema version 11 — no rule reads `instruction`)
+
+`unsafe_task` asked "was this call's result pattern-matched?" by joining
+`instruction` to itself and comparing two indexes:
+
+    instruction(id, func, sc_idx, _),
+    instruction(bid, func, bidx, _),
+    branch(bid, _, _),
+    bidx > sc_idx.
+
+That is a yes/no question about ordering, answered by dragging in the
+largest and most volatile relation in the schema. It left `unsafe_task` as
+the last analysis reading `instruction`, and by a wide margin the most
+expensive one.
+
+The emitter already knows every instruction's index, so it now answers the
+question directly as `call_followed_by_branch(id)` — one row per call site
+that has a later branch. The predicate is deliberately just as coarse as it
+was (a branch anywhere later in the function counts, including one in an
+unrelated clause), because moving where something is computed must not
+change what it computes. Findings are byte-identical: 962 over 1259 beams.
+
+**No Datalog rule reads `instruction` any more.** It is still emitted and
+still used — `Argus.Cfg`, `Argus.Dataflow` and gloss all need it — but it no
+longer gates any analysis's incrementality.
+
+Measured (oban corpus for volume, sequin's 531 modules for time):
+
+| | before W1 | after v10 | after v11 |
+|---|---|---|---|
+| serialized fact volume, all analyses | 416 MB | 247 MB | **160 MB** |
+| `unsafe_task` input volume | 98 MB | 100 MB | **12 MB** |
+| `unsafe_task` solve | — | 690 ms | **179 ms** |
+| slowest single analysis | — | 690 ms | **284 ms** |
+
+Sharpening the heuristic — asking whether the call's result register is
+actually inspected, which `Argus.Extractor.Helpers` has the machinery for —
+would change findings and is deliberately left as its own change.
+
 ### Changed (schema version 10 — calls carry their caller)
 
 Twelve of the fourteen `instruction(...)` uses in the rule corpus existed

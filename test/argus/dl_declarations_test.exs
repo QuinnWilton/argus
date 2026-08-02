@@ -158,8 +158,9 @@ defmodule Argus.DlDeclarationsTest do
         ~w(call_arg call_arg_forward call_edge function_def implements_behaviour sync_call
                         sync_call_timeout),
       unlinked_spawn: ~w(spawn_call),
-      unsafe_task: ~w(branch call_edge function_def implements_behaviour instruction remote_call
-                      tail_call)
+      unsafe_task:
+        ~w(call_edge call_followed_by_branch function_def implements_behaviour remote_call
+           tail_call)
     }
 
     setup do
@@ -189,30 +190,30 @@ defmodule Argus.DlDeclarationsTest do
     end
 
     @tag :souffle
-    test "only unsafe_task still reads the instruction relation" do
+    test "no analysis reads the instruction relation" do
       # `instruction` is the largest relation by far — 343k rows on a
-      # 531-module project — and it moves on every body edit, because an
-      # instruction's ID is a raw per-function offset. Every analysis
-      # reading it re-solves whenever any function body changes anywhere.
+      # 531-module project — and every row of it moves whenever any function
+      # body changes, because an instruction's ID is a raw per-function
+      # offset. Any analysis reading it re-solves on every body edit
+      # anywhere in the project, and serializes tens of megabytes to do so.
       #
-      # Twelve of the fourteen `instruction(...)` uses in the rule corpus
-      # existed only to recover a call's containing function from its ID.
-      # Those are gone: the call relations carry `caller` themselves, and
-      # stage 0 no longer reads `instruction` at all.
+      # Fourteen `instruction(...)` uses in the rule corpus are now zero.
+      # Twelve were decoding a call's containing function out of its
+      # instruction ID; the call relations carry `caller` themselves now.
+      # The last two compared instruction INDEXES to ask whether a branch
+      # follows a call, which the emitter answers directly as
+      # `call_followed_by_branch`.
       #
-      # The one remaining reader is unsafe_task's start_child_result_checked,
-      # which compares instruction INDEXES (`bidx > sc_idx`) to ask whether a
-      # branch follows a call. That is a genuine use of position, and also a
-      # weak proxy for "the result was pattern-matched" — replacing it with
-      # an extractor-computed fact would change findings, so it is deliberately
-      # a separate change.
+      # `instruction` is still emitted and still used — Argus.Cfg,
+      # Argus.Dataflow and gloss all need it — but no Datalog rule does, so
+      # it no longer gates any analysis's incrementality.
       readers =
         for mod <- Analysis.builtin_analysis_modules(),
             {:ok, rels} = Analysis.input_relations(mod.name()),
             "instruction" in rels,
             do: mod.name()
 
-      assert Enum.sort(readers) == [:unsafe_task]
+      assert readers == []
     end
   end
 end

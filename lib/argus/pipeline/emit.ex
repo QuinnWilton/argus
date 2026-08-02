@@ -91,8 +91,62 @@ defmodule Argus.Pipeline.Emit do
 
   # Emit facts for a sequence of normalized instructions within a function.
   defp emit_instructions(facts, func_id, normalized, line_table) do
-    emit_instructions_loop(facts, func_id, normalized, 0, line_table, nil)
+    facts
+    |> emit_calls_followed_by_branch(normalized)
+    |> emit_instructions_loop(func_id, normalized, 0, line_table, nil)
   end
+
+  # "Is there a branch after this call, in this function?" — answered here,
+  # where every instruction's index is already in hand, instead of in Datalog
+  # by joining `instruction` to itself to compare two indexes. That join made
+  # the largest and most volatile relation in the schema an input to
+  # unsafe_task; this relation has one row per call site that has a later
+  # branch, which is orders of magnitude smaller and does not move when an
+  # unrelated body changes.
+  #
+  # Only the LAST branch index matters: a call is followed by some branch iff
+  # its index is below that one.
+  defp emit_calls_followed_by_branch(facts, normalized) do
+    indexed = Enum.with_index(normalized)
+
+    last_branch =
+      indexed
+      |> Enum.reduce(nil, fn {{_id, instr}, idx}, acc ->
+        if branch_instruction?(instr), do: idx, else: acc
+      end)
+
+    case last_branch do
+      nil ->
+        facts
+
+      last ->
+        Enum.reduce(indexed, facts, fn {{id, instr}, idx}, acc ->
+          if idx < last and call_instruction?(instr) do
+            add_fact(acc, :call_followed_by_branch, [id])
+          else
+            acc
+          end
+        end)
+    end
+  end
+
+  # Exactly the instruction shapes that emit a `branch` fact — kept adjacent
+  # to those clauses so the two cannot drift apart.
+  defp branch_instruction?({:test, _name, {:f, _fail}, args}) when is_list(args), do: true
+  defp branch_instruction?({:test, _name, {:f, _fail}, _live, args}) when is_list(args), do: true
+  defp branch_instruction?({:loop_rec, {:f, _fail}, _dst}), do: true
+  defp branch_instruction?(_), do: false
+
+  # Calls proper, local and remote. BIFs are deliberately excluded: they
+  # would multiply the relation by an order of magnitude to serve rules that
+  # only ever ask about calls.
+  defp call_instruction?({:call, _, _}), do: true
+  defp call_instruction?({:call_only, _, _}), do: true
+  defp call_instruction?({:call_last, _, _, _}), do: true
+  defp call_instruction?({:call_ext, _, _}), do: true
+  defp call_instruction?({:call_ext_only, _, _}), do: true
+  defp call_instruction?({:call_ext_last, _, _, _}), do: true
+  defp call_instruction?(_), do: false
 
   defp emit_instructions_loop(facts, _func_id, [], _idx, _line_table, _line), do: facts
 

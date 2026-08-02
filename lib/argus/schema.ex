@@ -95,7 +95,14 @@ defmodule Argus.Schema do
   # input to stage 0 and to every analysis downstream of the call graph.
   # Same principle as v8, one level up: an instruction ID is positional, so
   # anything derivable from it that a rule needs should be a column.
-  @schema_version 10
+  # Version 11: `call_followed_by_branch` — a call with some branch later in
+  # the same function. unsafe_task computed this by joining `instruction` to
+  # itself to compare two indexes, which made it the last analysis reading
+  # that relation and by far the most expensive one. Computing it in the
+  # emitter, where indexes already exist, is the same v8 principle again:
+  # positional questions get answered where the positions live, and only
+  # their answers cross into Datalog. NO analysis reads `instruction` now.
+  @schema_version 11
 
   # Layer 1: Module-level facts.
 
@@ -312,6 +319,31 @@ defmodule Argus.Schema do
       {:id, :instr_id, "instruction ID"}
     ],
     doc: "Marks an instruction as a tail call."
+  }
+
+  @call_followed_by_branch %{
+    name: :call_followed_by_branch,
+    layer: 1,
+    fields: [
+      {:id, :instr_id, "call instruction ID"}
+    ],
+    doc: """
+    A call instruction with at least one branch (a `test` or `loop_rec`) \
+    later in the same function.
+
+    This is positional information, computed where positional information \
+    belongs: in the emitter, which already knows every instruction's index. \
+    The alternative is what `unsafe_task` used to do — join `instruction` \
+    twice to compare two indexes — which dragged the largest and most \
+    volatile relation in the schema into that analysis's input set to \
+    answer a yes/no question about ordering.
+
+    Deliberately a coarse predicate, because the rule it serves is coarse: \
+    "some branch occurs after this call" is a weak proxy for "the call's \
+    result was pattern-matched", and it fires on a branch anywhere later in \
+    the function including one in an unrelated clause. Encoding it faithfully \
+    keeps findings identical; sharpening it is a separate, deliberate change.
+    """
   }
 
   @bif_call %{
@@ -1185,6 +1217,7 @@ defmodule Argus.Schema do
     @remote_call,
     @tail_call_rel,
     @bif_call,
+    @call_followed_by_branch,
     @allocate,
     @deallocate,
     @send_msg,

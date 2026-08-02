@@ -116,26 +116,32 @@ defmodule Argus.Stage0Test do
       end
     end
 
-    test "an analysis that genuinely needs instruction order still declares it" do
+    test "input sets are genuinely resolved, not uniformly narrow" do
       skip_without_souffle()
 
-      # The guard above must not be vacuous — `input_relations/1` returning
-      # a narrow set for everything would satisfy it without meaning
-      # anything. Some analysis must still read `instruction`.
-      #
-      # It used to be unlinked_spawn, which read the whole 343k-row relation
-      # purely to recover the spawning function from an instruction ID.
-      # `spawn_call` carries its caller now, and unlinked_spawn's input set
-      # is a single relation.
-      #
-      # unsafe_task is the honest remaining case: it compares instruction
-      # INDEXES to ask whether a branch follows a call, which is a real use
-      # of position rather than a decode of identity.
-      assert {:ok, relations} = Analysis.input_relations(:unsafe_task)
-      assert "instruction" in relations
+      # The guard above must not be vacuous. It used to be anchored on some
+      # analysis still reading `instruction` — first unlinked_spawn, then
+      # unsafe_task. Neither does now, so the anchor has to be something
+      # else: that `input_relations/1` really discriminates between
+      # analyses rather than returning something uniformly small.
+      sets =
+        for mod <- Analysis.builtin_analysis_modules() do
+          {:ok, relations} = Analysis.input_relations(mod.name())
+          {mod.name(), relations}
+        end
 
-      assert {:ok, spawn_relations} = Analysis.input_relations(:unlinked_spawn)
+      # Every analysis reads something, and they do not all read the same
+      # thing — so a narrow set below is a real result about that analysis.
+      assert Enum.all?(sets, fn {name, rels} -> rels != [] or flunk("#{name} reads nothing") end)
+      assert sets |> Enum.map(&elem(&1, 1)) |> Enum.uniq() |> length() > 10
+
+      # And the spread is real: the supervision family reads a lot, while
+      # unlinked_spawn is down to the single relation it actually needs.
+      assert {_, spawn_relations} = Enum.find(sets, &(elem(&1, 0) == :unlinked_spawn))
       assert spawn_relations == ["spawn_call"]
+
+      {_, supervision_relations} = Enum.find(sets, &(elem(&1, 0) == :supervision))
+      assert length(supervision_relations) > 8
     end
 
     test "unknown analyses error rather than returning an empty set" do

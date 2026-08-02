@@ -139,12 +139,25 @@ start_child_result_checked(func, id) :-
   tail_call(id).
 
 // Branch after start_child: result is pattern-matched.
+//
+// `call_followed_by_branch` is emitted by the extractor and holds exactly
+// what the two `instruction` joins used to compute: this call has some
+// branch later in its function. Asking Datalog to compare two instruction
+// INDEXES meant joining `instruction` — 343k rows on a 531-module project,
+// rewritten whenever any function body changes — to answer a yes/no
+// question, and it made unsafe_task the last analysis reading that
+// relation and by far the most expensive one.
+//
+// The predicate is as coarse as it ever was: a branch anywhere later in
+// the function counts, including one in an unrelated clause, so this is a
+// weak proxy for "the result was pattern-matched". That weakness is
+// preserved on purpose — moving where it is computed must not change what
+// it computes. Sharpening it (asking whether the call's result register is
+// actually inspected, which the extractor helpers can do) changes findings
+// and belongs in its own commit.
 start_child_result_checked(func, id) :-
   task_start_child_call(func, id),
-  instruction(id, func, sc_idx, _),
-  instruction(bid, func, bidx, _),
-  branch(bid, _, _),
-  bidx > sc_idx.
+  call_followed_by_branch(id).
 
 // start_child call whose result is not checked by any of the above.
 .decl unchecked_start_child(func: symbol, id: symbol)
