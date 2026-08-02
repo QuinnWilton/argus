@@ -987,10 +987,57 @@ reachability half.
 shape as the TLS option reading — cheap, but it means a schema bump and a
 pin review in gloss, lowdown and planchette.
 
-**Why it is not built here**: not enough room left to build it *and* verify
-its findings against source. Every analysis in this document that shipped
-was read against source first, and the two that were reverted were reverted
-because that reading did not hold up. Shipping one unverified to finish
-faster would invert the standard the rest of the work was held to — and an
-analysis whose findings nobody has checked is exactly the artifact this
-document argues against.
+**Built after all**, and the findings below were read against source like
+every other in this document.
+
+## 19. Phoenix — the long-poll transport starts a process per unauthenticated request
+
+**Where** `phoenix/lib/phoenix.ex:28`, `phoenix/lib/phoenix/transports/long_poll.ex:143`
+**Analysis** `unbounded_dynamic_children`
+**Severity** Moderate, and conditional.
+
+```elixir
+{DynamicSupervisor, name: Phoenix.Transports.LongPoll.Supervisor,
+ strategy: :one_for_one}                                    # phoenix.ex:28
+```
+
+No `max_children`, so the default `:infinity` applies. And `long_poll.ex`
+dispatches a `GET` through `resume_session`, which falls through to
+`new_session` when no valid token is present:
+
+```elixir
+:error -> new_session(conn, endpoint, handler, opts)        # :57
+...
+case DynamicSupervisor.start_child(Phoenix.Transports.LongPoll.Supervisor, spec) do   # :143
+```
+
+So an unauthenticated GET starts a `LongPoll.Server`, and nothing caps how
+many. It appeared in every project swept, because it is Phoenix itself.
+
+**Why the severity is not higher.** The long-poll transport must be enabled
+explicitly in the socket config, sessions carry a signed token with a
+max_age, and servers time out. This is a missing ceiling on a
+pre-authentication path, not an open door.
+
+## 20. Livebook — session creation from a LiveView, uncapped
+
+`Livebook.SessionSupervisor` starts `Livebook.Session` from
+`Livebook.Sessions.create_session/1`, reachable from a LiveView event, with
+no `max_children`. Each session is heavy — runtime, evaluator, temp dir.
+Low severity in the single-user default deployment, and it matters wherever
+an instance is shared.
+
+## Why this one needed an analysis
+
+Neither half is a finding. Uncapped dynamic supervisors are everywhere —
+**8 of 8** in the corpus set no cap — and `start_child` from a request
+handler is ordinary. Only the conjunction is a resource bound an outside
+party controls, and it spans two files that each read correctly on their
+own. This is the same module-scope shape as `tls_verification`, one level
+up: the question is about the call graph, so no line-oriented tool can be
+pointed at it.
+
+The suppressions carry the claim, and both are in the fixtures: a cap
+discharges it, and so does being unreachable from outside. Most dynamic
+supervisors are internally driven, and reporting those would bury the ones
+that are not.
