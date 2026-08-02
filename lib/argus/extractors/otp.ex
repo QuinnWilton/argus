@@ -26,6 +26,7 @@ defmodule Argus.Extractors.OTP do
     only: [
       add_fact: 3,
       get_behaviours: 1,
+      match_remote_call: 1,
       resolve_callee: 1,
       resolve_register: 3,
       scan_remote_calls: 4,
@@ -141,24 +142,60 @@ defmodule Argus.Extractors.OTP do
 
   # Find tag literals matched by `is_eq_exact` or `select_val` against x0
   # at the top of handle_continue/2.
+  # Only the dispatch prologue, not the whole function.
+  #
+  # The tag arrives in {x,0}, but {x,0} is also the BEAM's first scratch
+  # register, so once a clause body starts it holds whatever that body is
+  # working on. Scanning the entire function therefore collected every atom
+  # any clause happened to compare against — `:ok`, `nil` and `false` were
+  # recorded as handle_continue tags across the corpus, roughly half the
+  # rows in the relation.
+  #
+  # It was quiet because a spurious tag matches nothing downstream and
+  # produces silence rather than an error, and because `deferred_startup_
+  # deadlock`, the only consumer, reports zero on these projects either way.
+  #
+  # Stopping at the first write to {x,0} is exact: up to that point the
+  # register still holds the tag, and after it never does. Calls count as
+  # writes, since they return into {x,0}.
   defp clause_tags(instrs) do
-    Enum.flat_map(instrs, fn
-      {:test, :is_eq_exact, _, [{:x, 0}, {:atom, tag}]} when is_atom(tag) ->
-        [inspect(tag)]
-
-      {:select_val, {:x, 0}, _fail, {:list, pairs}} ->
-        pairs
-        |> Enum.chunk_every(2)
-        |> Enum.flat_map(fn
-          [{:atom, tag}, _label] when is_atom(tag) -> [inspect(tag)]
-          _ -> []
-        end)
-
-      _ ->
-        []
+    instrs
+    |> Enum.reduce_while([], fn instr, acc ->
+      cond do
+        writes_x0?(instr) -> {:halt, acc}
+        true -> {:cont, acc ++ dispatch_tags(instr)}
+      end
     end)
     |> Enum.uniq()
   end
+
+  defp dispatch_tags({:test, :is_eq_exact, _, [{:x, 0}, {:atom, tag}]}) when is_atom(tag),
+    do: [inspect(tag)]
+
+  defp dispatch_tags({:select_val, {:x, 0}, _fail, {:list, pairs}}) do
+    pairs
+    |> Enum.chunk_every(2)
+    |> Enum.flat_map(fn
+      [{:atom, tag}, _label] when is_atom(tag) -> [inspect(tag)]
+      _ -> []
+    end)
+  end
+
+  defp dispatch_tags(_instr), do: []
+
+  defp writes_x0?({:move, _src, {:x, 0}}), do: true
+  defp writes_x0?({:get_tuple_element, _src, _idx, {:x, 0}}), do: true
+  defp writes_x0?({:put_tuple2, {:x, 0}, _}), do: true
+  defp writes_x0?({:put_tuple, _size, {:x, 0}}), do: true
+  defp writes_x0?({:put_map_assoc, _f, _src, {:x, 0}, _live, _list}), do: true
+  defp writes_x0?({:bif, _name, _f, _args, {:x, 0}}), do: true
+  defp writes_x0?({:gc_bif, _name, _f, _live, _args, {:x, 0}}), do: true
+  defp writes_x0?(instr), do: match_remote_call(instr) != :none or local_call?(instr)
+
+  defp local_call?({:call, _a, _mfa}), do: true
+  defp local_call?({:call_only, _a, _mfa}), do: true
+  defp local_call?({:call_last, _a, _mfa, _d}), do: true
+  defp local_call?(_instr), do: false
 
   defp extract_deferred_replies(facts, mod, functions) do
     scan_remote_calls(mod, functions, facts, fn acc, ctx, mfa ->

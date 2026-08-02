@@ -350,3 +350,32 @@ defmodule Argus.Test.Fixtures.DefensiveContinueSupervisor do
     Supervisor.init(children, strategy: :one_for_one)
   end
 end
+
+defmodule Argus.Test.Fixtures.ContinueTagScope do
+  @moduledoc """
+  A handle_continue whose clause bodies compare atoms of their own.
+
+  The tag arrives in {x,0}, but {x,0} is also the BEAM's first scratch
+  register, so a body comparing `:ok` looks exactly like a clause head
+  matching `:ok` unless the scan stops where the dispatch does.
+  """
+  use GenServer
+
+  @impl GenServer
+  def init(_), do: {:ok, %{}, {:continue, :setup}}
+
+  @impl GenServer
+  def handle_continue(:setup, state) do
+    case check() do
+      :ok -> {:noreply, state}
+      :error -> {:stop, :failed, state}
+    end
+  end
+
+  def handle_continue(:refresh, state) do
+    if flag() == false, do: {:noreply, state}, else: {:noreply, state}
+  end
+
+  def check, do: :ok
+  def flag, do: false
+end

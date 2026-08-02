@@ -1165,12 +1165,27 @@ because a spurious tag simply fails to match anything downstream and
 produces silence rather than an error. The same shape as every other quiet
 defect in this document.
 
-**Not fixed here**, and flagged rather than half-repaired: the fix is in the
-extractor's tag resolution, and it needs `deferred_startup_deadlock`'s
-findings diffed before and after on the corpus and read against source. That
-is the standard the rest of this work was held to, and it is a session's
-work rather than a paragraph's.
+**Fixed.** The scan matched only `{:x, 0}`, which looks right — that is
+where the tag arrives. But `{x,0}` is also the BEAM's first scratch
+register, so once a clause body starts it holds whatever that body is
+working on, and an `is_eq_exact {x,0} :ok` checking a call result is
+indistinguishable from a clause head matching `:ok`.
 
-The measurement is above and reproduces from `init_continues_to` and
-`handle_continue_clause` alone, so the next session starts with the evidence
-already in hand.
+Stopping at the first write to `{x,0}` is exact: until then the register
+still holds the tag, and after it never does. Calls count as writes, since
+they return into `{x,0}`.
+
+| | before | after |
+|---|---|---|
+| clause rows, sequin | 27 | **20** |
+| tags matching no `init` continue | 14 | **6** |
+
+and the six that remain are real tags — `:send_next_tcp`,
+`:handle_connection`, `:resubscribe` — continued to from `handle_info`
+rather than from `init`, which `init_continues_to` does not record. That is
+a limit of the ad-hoc measurement, not of the relation.
+
+`deferred_startup_deadlock` reports zero on these projects before and after,
+so there is no finding delta to review — the defect was corrupting an input
+that happened not to reach an output here. It would not have stayed that
+way.
