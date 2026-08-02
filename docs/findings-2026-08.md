@@ -1359,3 +1359,45 @@ the obvious next step and is not done here.
 That is the fifth candidate declined on measurement, and the first where the
 measurement said more about the analyses that already exist than about the
 one proposed.
+
+## The 2% has an obvious fix, and it is measured
+
+The dominant unresolved shape is the client wrapper — the most common thing
+in Elixir:
+
+```elixir
+def get(pid, key), do: GenServer.call(pid, {:get, key})
+```
+
+`pid` is an argument, so no local analysis resolves it. But the function
+lives in the module that *handles* the call, which is the convention the
+whole idiom rests on. Measured:
+
+| | `sync_call` rows | dynamic | of those, inside a GenServer module |
+|---|---|---|---|
+| sequin | 48 | 47 | **45** |
+| oban | 29 | 28 | **22** |
+| livebook | 104 | 86 | **80** |
+
+So resolving "a `GenServer.call` in a module that defines `handle_call`
+targets that module" would take `sync_call` from roughly 2% resolved to
+roughly 95% on these projects, and `timeout_chain`,
+`process_bottleneck`, `sync_call_in_init` and `call_cycle` would go from
+seeing two edges to seeing most of them.
+
+**Not built here, and the risk is specific rather than vague.** A GenServer
+that is *also* a client of another server — which is ordinary — would have
+its outbound calls resolved to itself, inventing edges that do not exist.
+Wrong edges are worse than missing ones for these four analyses in
+particular: `call_cycle` would manufacture self-cycles, and
+`sync_call_in_init` would manufacture deadlocks. The guard has to be
+sharper than "the module is a GenServer", and the honest test is whether the
+tag the wrapper sends is one its own `handle_call` matches — which is
+exactly the value-flow question the `message_contract` attempt showed this
+fact model cannot yet answer.
+
+So the two threads meet: **the fix for the recall problem is gated on the
+same value-flow layer that the two reverted analyses needed.** That is the
+strongest argument this document produces for building it, and it now has a
+number attached — a forty-five-fold difference in what four shipped
+analyses can see.
