@@ -156,6 +156,13 @@
 .decl registry_op(id: symbol, func: symbol, registry: symbol, op: symbol, key: symbol)
 .input registry_op
 
+// An `apply/3` whose module and function arguments resolve to literals, so the call target is statically known after all.
+//
+// `apply` is only opaque when M and F are genuinely unknown. When they are constants — which is most uses, since apply is usually reached through a macro or a dispatch table with constant entries — it is a static call wearing a disguise, and analyses that would otherwise give up can carry on to the real target.
+//
+.decl resolved_apply(id: symbol, caller: symbol, target: symbol)
+.input resolved_apply
+
 // RPC call with timeout information.
 .decl rpc_call(id: symbol, func: symbol, variant: symbol, timeout: symbol)
 .input rpc_call
@@ -219,7 +226,7 @@
 //
 // Recorded rather than ignored because purity is a claim about every execution. Assuming unknown calls are harmless would make a verification report success far more often and mean nothing.
 //
-.decl unknown_call(id: symbol, caller: symbol, api: symbol)
+.decl unknown_call(id: symbol, caller: symbol, api: symbol, callee: symbol)
 .input unknown_call
 
 // Unsafe atom creation from dynamic input.

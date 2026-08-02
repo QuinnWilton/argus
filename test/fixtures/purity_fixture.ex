@@ -116,6 +116,21 @@ defmodule Argus.Test.Fixtures.Purity do
     def trace(list), do: HigherOrder.transform(list, fn x -> IO.puts(x) end)
   end
 
+  defmodule ResolvedApply do
+    @moduledoc """
+    `apply` with literal module and function. Statically this is just a
+    call to Enum.reverse/1, and its purity should follow from that rather
+    than from the syntax used to reach it.
+    """
+    use Argus.Purity
+
+    @pure true
+    def reverse(list), do: apply(Enum, :reverse, [list])
+
+    @pure true
+    def shout(x), do: apply(IO, :puts, [x])
+  end
+
   defmodule Undeclared do
     @moduledoc "Effects everywhere, but claims nothing — must stay silent."
     def shout(x), do: IO.puts(x)

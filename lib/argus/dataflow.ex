@@ -35,6 +35,8 @@ defmodule Argus.Dataflow do
   instructions.
   """
 
+  use Argus.Purity
+
   alias Argus.InstrId
 
   @typedoc "A def→use edge: the writing instruction feeds the reading one."
@@ -45,6 +47,7 @@ defmodule Argus.Dataflow do
   (`Argus.Pipeline.extract/2` with `format: :typed`).
   """
   @spec def_use_edges(Argus.Facts.t()) :: MapSet.t(edge())
+  @pure true
   def def_use_edges(facts) when is_map(facts) do
     defs = regs_by_instr(Map.get(facts, :def, []))
     uses = regs_by_instr(Map.get(facts, :use, []))

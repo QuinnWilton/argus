@@ -12,6 +12,53 @@ baseline the results, edit an extractor, re-measure, diff, accept or
 revert, repeat. Inspired by pi-autoresearch's event-log + living-doc
 pattern, adapted for Argus's multi-dimensional categorical metrics.
 
+### Fixed (purity, found by dogfooding)
+
+Annotating argus itself surfaced four problems in the analysis, three of
+them in the effect model.
+
+- **`Kernel` was listed as a pure module. It is not, and this was a
+  soundness hole.** Most of Kernel inlines to BIFs and never survives as a
+  remote call, so the entries that DO survive are exactly the dispatching
+  ones: `inspect/1` and `to_string/1` go through a protocol, which is
+  user-extensible code. Kernel also exports `send/2`, `spawn/1`, `exit/1`,
+  `apply/3` and `self/0`. Treating it as pure meant a function calling
+  `inspect/1` could be reported **verified** while transitively running
+  arbitrary user code — the exact failure the analysis exists to prevent.
+  `Argus.InstrId.func_id/2` was one such false verification, and correctly
+  demotes to unprovable now.
+
+- **`Path` was listed impure wholesale**, so `Path.join/2` — pure string
+  manipulation — was reported as a filesystem effect. Only the handful that
+  consult the filesystem or the current directory (`wildcard`, `expand`,
+  `absname`, `relative_to_cwd`, `safe_relative_to`) belong there.
+
+- **Purity did not compose.** A call to a function carrying its own
+  `@pure true` was treated as unknown, so nothing that used your own pure
+  helpers could ever be verified — which is most of what pure code does.
+  The declaration is now trusted at the call site and verified separately
+  at the definition, the bargain every contract system makes.
+
+- **`apply/3` with a literal MFA is now resolved rather than given up on.**
+  `apply` is only opaque when M and F are genuinely unknown; with constants
+  it is a static call wearing a disguise. `resolve_register/3` already
+  reconstructs register contents, so the analysis looks before it shrugs.
+  The payoff runs both ways: `apply(Enum, :reverse, [l])` verifies, and
+  `apply(IO, :puts, [x])` is a proven violation naming `IO.puts/1` instead
+  of an unprovable shrug.
+
+Also recorded: Elixir compiles `x.field` — dot access on a value it cannot
+prove is a map — to a helper that reads a map field OR calls `x.field()` as
+a remote function. That second branch is a dynamic dispatch behind ordinary
+syntax, so such code is not statically pure. `Argus.Lines.resolve/2` now
+uses `Map.fetch!/2`, which is both provable and clearer on a plain map.
+
+Dogfood state: **11 verified, 0 violated**, and six functions unprovable —
+every one of them because it reaches `Kernel.inspect/1` or
+`String.Chars.to_string/1` to format an atom. That is the honest answer,
+and the annotations are deliberately left in place to document where the
+limit is.
+
 ### Added (analysis)
 
 ### Added (analysis)

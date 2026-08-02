@@ -141,6 +141,34 @@ defmodule Argus.Analyses.PurityTest do
                Enum.filter(unprovable, fn [f, _, _, _] -> f =~ "dispatches/3" end)
     end
 
+    test "apply with a literal MFA is resolved, not given up on" do
+      skip_without_souffle()
+
+      # `apply` is only opaque when M and F are genuinely unknown. With
+      # literals it is a static call wearing a disguise, and giving up on it
+      # would be laziness rather than honesty.
+      %{verified: verified, violated: violated, unprovable: unprovable} =
+        run([P.ResolvedApply])
+
+      assert Enum.any?(verified, &(&1 =~ "reverse/1")),
+             "apply(Enum, :reverse, [list]) is a call to a pure function"
+
+      assert unprovable == []
+    end
+
+    test "apply to an impure literal target is a violation, naming the target" do
+      skip_without_souffle()
+
+      # The payoff of resolving: seeing THROUGH the apply turns what would
+      # have been a shrug into a proven violation that names IO.puts/1.
+      %{violated: violated} = run([P.ResolvedApply])
+
+      assert [[func, "io", "IO.puts/1", _via]] =
+               Enum.filter(violated, fn [f, _, _, _] -> f =~ "shout/1" end)
+
+      assert func =~ "ResolvedApply:shout/1"
+    end
+
     test "a violation outranks unprovability" do
       skip_without_souffle()
 

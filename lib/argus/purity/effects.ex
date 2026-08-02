@@ -31,6 +31,8 @@ defmodule Argus.Purity.Effects do
   leaves nothing behind.
   """
 
+  use Argus.Purity
+
   # ── Impure: observable effects, by category ──────────────────────
   #
   # Module-level entries cover the whole module; {module, function} entries
@@ -42,7 +44,6 @@ defmodule Argus.Purity.Effects do
     ":io_lib" => :io,
     "File" => :io,
     ":file" => :io,
-    "Path" => :io,
     ":filelib" => :io,
     "Logger" => :io,
     ":logger" => :io,
@@ -140,7 +141,29 @@ defmodule Argus.Purity.Effects do
     {":erlang", "nodes"} => :node,
     {":erlang", "node"} => :node,
     {":erlang", "disconnect_node"} => :node,
-    {":erlang", "spawn_request"} => :process
+    {":erlang", "spawn_request"} => :process,
+
+    # Path is overwhelmingly string manipulation — join, dirname, extname,
+    # basename, split, type — and listing the whole module as I/O flagged
+    # Path.join/2 as a filesystem effect, which it is not. Only the handful
+    # that consult the actual filesystem or the current directory belong
+    # here.
+    {"Path", "wildcard"} => :io,
+    {"Path", "expand"} => :io,
+    {"Path", "absname"} => :io,
+    {"Path", "safe_relative_to"} => :io,
+    {"Path", "relative_to_cwd"} => :io,
+
+    # Kernel's process and dispatch surface. These survive compilation as
+    # real remote calls when captured or called dynamically.
+    {"Kernel", "send"} => :process,
+    {"Kernel", "spawn"} => :process,
+    {"Kernel", "spawn_link"} => :process,
+    {"Kernel", "spawn_monitor"} => :process,
+    {"Kernel", "exit"} => :process,
+    {"Kernel", "self"} => :process,
+    {"Kernel", "make_ref"} => :time,
+    {"Kernel", "node"} => :node
   }
 
   # ── Open dispatch: the target is not knowable ────────────────────
@@ -154,6 +177,32 @@ defmodule Argus.Purity.Effects do
   # different verdict from "unknown": there IS no single answer to look up,
   # so the report should say the dispatch is open rather than implying
   # somebody forgot an entry.
+
+  # Elixir compiles `x.field` — dot access without parentheses — to this
+  # helper whenever it cannot prove `x` is a map. At runtime it either reads
+  # a map field or, if `x` turns out to be an atom, calls `x.field()` as a
+  # remote function. That second branch is a dynamic dispatch hiding behind
+  # ordinary-looking syntax, so a function using `x.field` on an untyped
+  # value is not statically pure. Using `Map.fetch!/2` instead is both
+  # provable and, on a plain map, clearer about intent.
+  @dynamic_dispatch_functions [{":elixir_erl_pass", "no_parens_remote"}]
+
+  # `Kernel` is NOT listed pure, and the reason is worth recording because
+  # listing it was a real soundness hole found by running this analysis over
+  # argus itself. Most of Kernel inlines to BIFs and never appears as a
+  # remote call, so the entries that DO survive compilation are exactly the
+  # ones that dispatch: inspect/1 and to_string/1 go through a protocol,
+  # which is user-extensible code. Kernel also exports send/2, spawn/1,
+  # exit/1, apply/3 and self/0.
+  #
+  # Treating the module as pure meant a function calling inspect/1 could be
+  # reported VERIFIED while transitively running arbitrary user code — the
+  # precise failure this analysis exists to prevent. Anything in Kernel not
+  # named below is now unknown, and therefore unprovable rather than assumed.
+  @protocol_functions [
+    {"Kernel", "inspect"},
+    {"Kernel", "to_string"}
+  ]
 
   @protocol_modules ~w(
     String.Chars List.Chars Inspect Enumerable Collectable
@@ -170,8 +219,7 @@ defmodule Argus.Purity.Effects do
   @pure_modules ~w(
     Enum Map MapSet List Keyword Tuple Range Stream
     String Integer Float Atom Bitwise Base
-    Regex URI Version
-    Access Kernel Kernel.Utils
+    Regex URI Version Path
     Exception ArgumentError RuntimeError
     Jason.Encoder
     :lists :maps :sets :ordsets :orddict :dict :gb_trees :gb_sets
@@ -197,7 +245,8 @@ defmodule Argus.Purity.Effects do
           | :network
           | :code_loading
 
-  @type verdict :: {:impure, category()} | :pure | {:opaque, :protocol} | :unknown
+  @type verdict ::
+          {:impure, category()} | :pure | {:opaque, :protocol | :dot_dispatch} | :unknown
 
   @doc """
   Classify a remote call.
@@ -218,10 +267,13 @@ defmodule Argus.Purity.Effects do
       :unknown
   """
   @spec classify(String.t(), String.t()) :: verdict()
+  @pure true
   def classify(module, function) when is_binary(module) and is_binary(function) do
     cond do
       category = Map.get(@impure_functions, {module, function}) -> {:impure, category}
       category = Map.get(@impure_modules, module) -> {:impure, category}
+      {module, function} in @dynamic_dispatch_functions -> {:opaque, :dot_dispatch}
+      {module, function} in @protocol_functions -> {:opaque, :protocol}
       module in @protocol_modules -> {:opaque, :protocol}
       module in @pure_modules -> :pure
       module in @pure_by_default_modules -> :pure
@@ -231,6 +283,7 @@ defmodule Argus.Purity.Effects do
 
   @doc "Every impure category, for exhaustiveness checks and reporting."
   @spec categories() :: [category()]
+  @pure true
   def categories do
     (Map.values(@impure_modules) ++ Map.values(@impure_functions))
     |> Enum.uniq()
@@ -239,9 +292,11 @@ defmodule Argus.Purity.Effects do
 
   @doc "Modules whose calls dispatch to an open set of implementations."
   @spec protocol_modules() :: [String.t()]
+  @pure true
   def protocol_modules, do: @protocol_modules
 
   @doc "Modules treated as free of observable effects."
   @spec pure_modules() :: [String.t()]
+  @pure true
   def pure_modules, do: @pure_modules ++ @pure_by_default_modules
 end

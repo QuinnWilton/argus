@@ -19,6 +19,8 @@ defmodule Argus.Facts do
   the `.facts` writer; this decoder is the compatible first step.
   """
 
+  use Argus.Purity
+
   alias Argus.{InstrId, Schema}
 
   @type row :: %{atom() => term()}
@@ -28,6 +30,7 @@ defmodule Argus.Facts do
   Decode a raw facts map (`relation => [[String.t()]]`) into typed rows.
   """
   @spec decode(%{atom() => [[String.t()]]}) :: t()
+  @pure true
   def decode(raw) when is_map(raw) do
     Map.new(raw, fn {relation, rows} -> {relation, decode_relation(relation, rows)} end)
   end
@@ -58,6 +61,7 @@ defmodule Argus.Facts do
   need it comparable.
   """
   @spec canonicalize(facts) :: facts when facts: t() | %{atom() => [[String.t()]]}
+  @pure true
   def canonicalize(facts) when is_map(facts) do
     Map.new(facts, fn {relation, rows} -> {relation, Enum.sort(rows)} end)
   end

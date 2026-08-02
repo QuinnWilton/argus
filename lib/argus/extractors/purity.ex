@@ -26,7 +26,7 @@ defmodule Argus.Extractors.Purity do
   alias Argus.Purity.Effects
 
   import Argus.Extractor.Helpers,
-    only: [add_fact: 3, match_remote_call: 1, scan_functions: 4]
+    only: [add_fact: 3, match_remote_call: 1, resolve_register: 3, scan_functions: 4]
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
@@ -63,6 +63,9 @@ defmodule Argus.Extractors.Purity do
   defp classify_calls(facts, mod, functions) do
     scan_functions(mod, functions, facts, fn acc, ctx, instr ->
       case match_remote_call(instr) do
+        {:ok, :erlang, :apply, 3} ->
+          resolve_apply(acc, ctx, InstrId.mint(ctx.func_id, ctx.idx))
+
         {:ok, callee_mod, callee_func, arity} ->
           record(acc, ctx, callee_mod, callee_func, arity)
 
@@ -70,6 +73,31 @@ defmodule Argus.Extractors.Purity do
           acc
       end
     end)
+  end
+
+  # `apply(M, F, A)` is only opaque when M and F are actually unknown. When
+  # they are literals — which is most uses, since `apply` is usually reached
+  # through a macro or a dispatch table with constant entries — it is a
+  # static call wearing a disguise, and its purity is simply its target's.
+  #
+  # Argus can already do this: resolve_register/3 walks backwards through
+  # the instruction stream to reconstruct what a register holds. So the
+  # honest answer is "look first, and only report unprovable if the look
+  # fails". Emit still records the dynamic_call unconditionally, because at
+  # Layer 1 an apply IS an apply; this relation is the evidence that lets
+  # the rules discharge it.
+  defp resolve_apply(facts, ctx, id) do
+    with {:ok, mod} when is_atom(mod) <- resolve_register(ctx.instrs, ctx.idx, {:x, 0}),
+         {:ok, func} when is_atom(func) <- resolve_register(ctx.instrs, ctx.idx, {:x, 1}),
+         {:ok, args} when is_list(args) <- resolve_register(ctx.instrs, ctx.idx, {:x, 2}) do
+      target = InstrId.func_id(mod, func, length(args))
+
+      facts
+      |> add_fact(:resolved_apply, [id, ctx.func_id, target])
+      |> record(ctx, mod, func, length(args))
+    else
+      _ -> facts
+    end
   end
 
   defp record(facts, ctx, callee_mod, callee_func, arity) do
@@ -88,8 +116,14 @@ defmodule Argus.Extractors.Purity do
       :pure ->
         facts
 
+      {:opaque, :dot_dispatch} ->
+        add_fact(facts, :dynamic_call, [id, ctx.func_id, "dot_dispatch"])
+
       :unknown ->
-        add_fact(facts, :unknown_call, [id, ctx.func_id, api])
+        # The callee's func_id travels alongside so the rules can ask
+        # whether IT declared itself pure, without parsing the api string.
+        callee = InstrId.func_id(callee_mod, callee_func, arity)
+        add_fact(facts, :unknown_call, [id, ctx.func_id, api, callee])
     end
   end
 end

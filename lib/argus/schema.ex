@@ -1249,13 +1249,34 @@ defmodule Argus.Schema do
     """
   }
 
+  @resolved_apply %{
+    name: :resolved_apply,
+    layer: 2,
+    fields: [
+      {:id, :instr_id, "instruction ID of the apply"},
+      {:caller, :func_id, "containing function ID"},
+      {:target, :func_id, "the MFA it actually calls"}
+    ],
+    doc: """
+    An `apply/3` whose module and function arguments resolve to literals, \
+    so the call target is statically known after all.
+
+    `apply` is only opaque when M and F are genuinely unknown. When they are \
+    constants — which is most uses, since apply is usually reached through a \
+    macro or a dispatch table with constant entries — it is a static call \
+    wearing a disguise, and analyses that would otherwise give up can carry \
+    on to the real target.
+    """
+  }
+
   @unknown_call %{
     name: :unknown_call,
     layer: 2,
     fields: [
       {:id, :instr_id, "instruction ID of the call"},
       {:caller, :func_id, "containing function ID"},
-      {:api, :symbol, "the API called, as Mod.fun/arity"}
+      {:api, :symbol, "the API called, as Mod.fun/arity"},
+      {:callee, :func_id, "the callee as a function ID, for contract lookup"}
     ],
     doc: """
     A call the effect model has no opinion about — neither known-impure nor \
@@ -1413,6 +1434,7 @@ defmodule Argus.Schema do
     @impure_call,
     @protocol_dispatch,
     @unknown_call,
+    @resolved_apply,
     # Coverage instrumentation (populated only by the coverage analysis).
     @imprecision
   ]

@@ -72,10 +72,18 @@ performs_effect(func, "process", "register") :-
 .decl opaque(func: symbol, reason: symbol, detail: symbol)
 
 opaque(func, "dynamic_call", kind) :-
-  dynamic_call(_, func, kind).
+  dynamic_call(id, func, kind),
+  !resolved_apply(id, _, _).
 
+// A call to a function that declares its OWN purity is not opaque. The
+// declaration is trusted at the call site and verified independently at the
+// definition — modular verification, the same bargain every contract system
+// makes. Without this, purity does not compose: no function could ever be
+// verified if it called another of your own pure functions, which is most
+// of what pure code does.
 opaque(func, "unclassified_call", api) :-
-  unknown_call(_, func, api).
+  unknown_call(_, func, api, callee),
+  !pure_contract(callee, _, _, _).
 
 // Protocol dispatch is opaque for a different reason: not a missing table
 // entry, but an open set of implementations that no table could enumerate.

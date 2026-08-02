@@ -15,6 +15,8 @@ defmodule Argus.Lines do
   guess.
   """
 
+  use Argus.Purity
+
   alias Argus.InstrId
 
   @typedoc "Line tables: exact per-instruction plus first-line per function."
@@ -28,6 +30,7 @@ defmodule Argus.Lines do
   returned by `Argus.Pipeline.extract/2` with the default format).
   """
   @spec from_facts(%{atom() => [[String.t()]]}) :: t()
+  @pure true
   def from_facts(facts) when is_map(facts) do
     facts |> Map.get(:line_info, []) |> build()
   end
@@ -75,6 +78,7 @@ defmodule Argus.Lines do
   tables and resolves to `nil`.
   """
   @spec resolve(t(), String.t() | InstrId.t() | mfa()) :: pos_integer() | nil
+  @pure true
   def resolve(lines, %InstrId{} = instr_id) do
     resolve(lines, InstrId.format(instr_id))
   end
@@ -83,9 +87,15 @@ defmodule Argus.Lines do
     resolve(lines, InstrId.func_id(m, f, a))
   end
 
+  # Map.fetch! rather than `lines.by_instr`. Dot access on a value the
+  # compiler cannot prove is a map compiles to a runtime helper that reads a
+  # map field OR, if the value turns out to be an atom, calls it as a remote
+  # function — a dynamic dispatch behind ordinary-looking syntax. `lines` is
+  # a plain map, not a struct, so explicit access is both provable and
+  # clearer. Found by running the purity analysis over argus itself.
   def resolve(lines, id) when is_binary(id) do
-    Map.get(lines.by_instr, id) ||
-      Map.get(lines.by_func, id) ||
+    Map.get(Map.fetch!(lines, :by_instr), id) ||
+      Map.get(Map.fetch!(lines, :by_func), id) ||
       instr_func_fallback(lines, id)
   end
 
@@ -94,7 +104,7 @@ defmodule Argus.Lines do
   # line rather than nothing.
   defp instr_func_fallback(lines, id) do
     case String.split(id, "#", parts: 2) do
-      [func, _idx] -> Map.get(lines.by_func, func)
+      [func, _idx] -> Map.get(Map.fetch!(lines, :by_func), func)
       _ -> nil
     end
   end
