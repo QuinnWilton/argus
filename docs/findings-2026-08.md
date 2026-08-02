@@ -1279,8 +1279,19 @@ its name. A `module_origin(mod, kind)` fact would let every analysis drop
 or label fixtures instead of each sweep re-inventing a filter, and it needs
 no new disassembly: the pipeline already reads `compile_info`.
 
-Not built here, for the same reason as the rest: an unconsumed relation is
-dead weight, and wiring it through 23 analyses is a change whose finding
-deltas want reading. But it is a small change with a clear shape, and it is
-the difference between argus being usable on analyzer-shaped projects and
-not.
+**Built**, as `Argus.Origins` — and deliberately *not* as a Datalog fact.
+An unconsumed relation is dead weight, and a schema bump costs a pin review
+in three projects; classification is Elixir-side, so it costs neither and
+any consumer can use it immediately.
+
+Argus compiled for test is **294 modules, 218 of them fixtures** — 74%.
+Dropping those takes `call_cycle` from three findings to none and
+`deferred_startup_deadlock` from five to none: on this project every one was
+scaffolding built to make those analyses fire.
+
+One limitation, documented rather than hidden: rows anchored on an
+instruction ID rather than a module — `atom_safety` begins
+`"Argus.Findings:at_parts/3#17"` — need a key that extracts the module, and
+without one the filter keeps everything. Filtering nothing is the safe
+failure: it leaves noise in rather than dropping findings on a key it could
+not read.
