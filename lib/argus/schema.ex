@@ -120,7 +120,14 @@ defmodule Argus.Schema do
   # had to forbid both or neither — and the transaction analysis reported
   # `Application.get_env/2` as an unrollbackable effect. Purity still rejects
   # both modes; contracts about reversibility look at writes only.
-  @schema_version 14
+  # Version 15: `callback_return` and `callback_retains_from`. A handle_call
+  # that returns `{:noreply, _}` promises to reply later, and the only thing
+  # that can discharge it is the `from` it was handed. Both halves are plain
+  # bytecode — the return tag is a literal atom in a tuple built immediately
+  # before `return`, and keeping `from` is exactly whether {x,1} is ever
+  # mentioned — but neither is derivable from any existing relation, because
+  # both are questions about a function's shape rather than its calls.
+  @schema_version 15
 
   # Layer 1: Module-level facts.
 
@@ -784,6 +791,45 @@ defmodule Argus.Schema do
     """
   }
 
+  @callback_return %{
+    name: :callback_return,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "instruction ID of the tuple construction"},
+      {:func, :symbol, "the callback function"},
+      {:callback, :symbol, "callback name: 'handle_call' | 'init' | ..."},
+      {:tag, :symbol, "the literal return tag, e.g. ':reply' | ':noreply' | ':stop'"}
+    ],
+    doc: """
+    A literal return tag of an OTP callback — the first element of a tuple \
+    built into {x,0} immediately before `return`. Absent when the callback \
+    tail-calls, since the shape then belongs to the callee; consumers must \
+    treat absence as unknown rather than as "returns nothing".
+    """
+  }
+
+  @callback_drops_from %{
+    name: :callback_drops_from,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the {:noreply, _} return site"},
+      {:func, :symbol, "the handle_call/3 function"}
+    ],
+    doc: """
+    A `{:noreply, _}` return site in handle_call/3 that some execution \
+    reaches having never read `from`. Per site rather than per function, \
+    because handle_call compiles every clause into one function and a \
+    sibling clause that defers correctly would otherwise vouch for one \
+    that does not.
+
+    Established by walking the intra-function block graph from the entry \
+    across blocks that do not read `from`. `from` arrives in {x,1}, and a \
+    read is either a mention of that register or a call of arity two or \
+    more, since calls take arguments positionally and a body passing \
+    `from` straight through compiles to no move at all.
+    """
+  }
+
   @deferred_reply %{
     name: :deferred_reply,
     layer: 2,
@@ -1405,6 +1451,8 @@ defmodule Argus.Schema do
     @sync_call_timeout,
     @sync_call_via,
     @delayed_message,
+    @callback_return,
+    @callback_drops_from,
     @deferred_reply,
     @init_continues_to,
     @handle_continue_clause,
