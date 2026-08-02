@@ -1295,3 +1295,49 @@ instruction ID rather than a module — `atom_safety` begins
 without one the filter keeps everything. Filtering nothing is the safe
 failure: it leaves noise in rather than dropping findings on a key it could
 not read.
+
+---
+
+# Declined: calls to a name nothing registers
+
+`GenServer.call(SomeName, ...)` where nothing ever registers `SomeName` is a
+guaranteed `:noproc`, silent until that path runs, and structural — exactly
+the shape that has worked here. `process_registry` reports duplicate names
+and whereis races but not this one.
+
+Measured before building, on sequin's own 531 modules:
+
+```
+registered=6  called_targets=2  own_modules=531
+called but neither registered nor a known module: 0
+```
+
+Nothing to find, and the reason is the interesting part: **`sync_call`
+resolves a target for essentially none of it.** First-party Elixir passes
+pids, not names — `GenServer.call(pid, ...)` where `pid` came from a
+supervisor, a Registry lookup or the caller's own state — so the callee
+column is `"dynamic"` almost everywhere.
+
+## What that implies for analyses already shipped
+
+Several of them key on a resolved `sync_call` target: `timeout_chain`,
+`process_bottleneck`, `sync_call_in_init`, `call_cycle`. On this project
+those are reasoning from two resolved edges out of a 531-module program.
+
+They are not wrong — every finding they produce still rests on a real
+resolved edge — but their **recall** is far lower than their output
+suggests, and nothing in a report says so. That is the under-reporting
+failure mode again, in its quietest form yet: not a rule matching nothing,
+not a missing extractor, but a fact whose resolution is thin enough that the
+analyses above it are answering a much smaller question than they appear to.
+
+Worth measuring properly before trusting any negative result from those four
+— "no bottlenecks found" on a codebase that passes pids means considerably
+less than it reads. The same `:dynamic` count is already recorded per
+relation by the imprecision tracking (`Argus.Extractor.Helpers.track_dynamic/5`),
+so the evidence for a coverage figure is being collected; nothing surfaces
+it next to the findings.
+
+That is the fifth candidate declined on measurement, and the first where the
+measurement said more about the analyses that already exist than about the
+one proposed.
