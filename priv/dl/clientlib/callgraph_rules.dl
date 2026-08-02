@@ -1,25 +1,34 @@
 // Shared call_edge derivation rules.
 //
 // Include this file after declaring `.decl call_edge(caller: symbol, callee: symbol)`.
-// Requires base.dl relations: remote_call, bif_call, local_call, instruction, function_def.
+// Requires base.dl relations: remote_call, bif_call, local_call, function_def,
+// closure_def. NOT instruction — see below.
 
 // Remote call: caller function -> "mod:func/arity" string.
 call_edge(caller_func, callee) :-
-  remote_call(id, mod, func, arity),
-  instruction(id, caller_func, _, _),
+  remote_call(_, caller_func, mod, func, arity),
   callee = cat(mod, cat(":", cat(func, cat("/", to_string(arity))))).
 
 // BIF call: caller function -> "mod:func/arity".
 call_edge(caller_func, callee) :-
-  bif_call(id, mod, func, arity, _),
-  instruction(id, caller_func, _, _),
+  bif_call(_, caller_func, mod, func, arity, _),
   callee = cat(mod, cat(":", cat(func, cat("/", to_string(arity))))).
 
 // Local call: target is an MFA string matching a function_def's func field.
 call_edge(caller_func, target) :-
-  local_call(id, target, _),
-  instruction(id, caller_func, _, _),
+  local_call(_, caller_func, target, _),
   function_def(target, _, _, _, _).
+
+// Each of the three rules above used to recover its caller by joining
+// `instruction(id, caller_func, _, _)`. That made `instruction` — 343k rows
+// on a 531-module project, and rewritten whenever any function body changes,
+// because an instruction ID is a raw per-function offset — an input to stage
+// 0, and therefore to every analysis downstream of the call graph.
+//
+// The call relations now carry `caller` directly. Stage 0's inputs are the
+// relations that describe what a function CALLS, so its input set is now as
+// stable as its output, which is what this file's docstring always claimed
+// for the output alone.
 
 // Closure construction is treated as a static call edge so that call_reachable
 // follows execution into closures passed to higher-order callees like Enum.map,

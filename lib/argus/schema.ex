@@ -85,7 +85,17 @@ defmodule Argus.Schema do
   # promises no conjunct order: the default schedule was safe, the
   # magic-set transform was not. Structure that matters to a rule belongs
   # in a column, not in a string a functor has to parse back out.
-  @schema_version 9
+  # Version 10: the call-shaped relations carry their containing function.
+  # `remote_call`, `local_call`, `bif_call`, `spawn_call` and `try_start`
+  # gained a `caller` field, and `try_start` also gained `kind` ("try" or
+  # the older "catch"). Rules used to recover a call's caller by joining
+  # `instruction(id, caller, _, _)` — twelve of the fourteen
+  # `instruction(...)` uses in the rule corpus were exactly that decode —
+  # which made the largest and most volatile relation in the schema an
+  # input to stage 0 and to every analysis downstream of the call graph.
+  # Same principle as v8, one level up: an instruction ID is positional, so
+  # anything derivable from it that a rule needs should be a column.
+  @schema_version 10
 
   # Layer 1: Module-level facts.
 
@@ -275,6 +285,7 @@ defmodule Argus.Schema do
     layer: 1,
     fields: [
       {:id, :instr_id, "instruction ID"},
+      {:caller, :func_id, "containing function ID"},
       {:target, :symbol, "target label or MFA string"},
       {:arity, :number, "call arity"}
     ],
@@ -286,6 +297,7 @@ defmodule Argus.Schema do
     layer: 1,
     fields: [
       {:id, :instr_id, "instruction ID"},
+      {:caller, :func_id, "containing function ID"},
       {:mod, :symbol, "target module"},
       {:func, :symbol, "target function"},
       {:arity, :number, "call arity"}
@@ -307,6 +319,7 @@ defmodule Argus.Schema do
     layer: 1,
     fields: [
       {:id, :instr_id, "instruction ID"},
+      {:caller, :func_id, "containing function ID"},
       {:mod, :symbol, "BIF module"},
       {:func, :symbol, "BIF function"},
       {:arity, :number, "BIF arity"},
@@ -371,6 +384,7 @@ defmodule Argus.Schema do
     layer: 1,
     fields: [
       {:id, :instr_id, "instruction ID"},
+      {:caller, :func_id, "containing function ID"},
       {:mod, :symbol, "spawned module"},
       {:func, :symbol, "spawned function"},
       {:arity, :number, "spawned function arity"},
@@ -384,6 +398,8 @@ defmodule Argus.Schema do
     layer: 1,
     fields: [
       {:id, :instr_id, "instruction ID"},
+      {:caller, :func_id, "containing function ID"},
+      {:kind, :symbol, "\"try\" or \"catch\" (the older syntax)"},
       {:handler, :label, "handler label"}
     ],
     doc: "Start of a try block."

@@ -105,16 +105,13 @@ continue_to_parent_supervisor(worker, sup) :-
 // the supervisor restart loop is still a bug.
 .decl try_in_handle_continue(mod: symbol)
 
+// try_start carries its containing function and its kind ("try" or the
+// older "catch"), so both syntaxes are one rule and neither needs to join
+// `instruction` — 343k rows on a real project, rewritten on every body
+// edit — purely to recover the function an instruction sits in.
 try_in_handle_continue(mod) :-
   handle_continue_clause(mod, _, func),
-  instruction(id, func, _, "try"),
-  try_start(id, _).
-
-// Also accept catch (older syntax).
-try_in_handle_continue(mod) :-
-  handle_continue_clause(mod, _, func),
-  instruction(id, func, _, "catch"),
-  try_start(id, _).
+  try_start(_, func, _, _).
 
 .decl continue_crash_loop_risk(sup: symbol, worker: symbol)
 .output continue_crash_loop_risk

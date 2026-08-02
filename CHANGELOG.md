@@ -12,6 +12,50 @@ baseline the results, edit an extractor, re-measure, diff, accept or
 revert, repeat. Inspired by pi-autoresearch's event-log + living-doc
 pattern, adapted for Argus's multi-dimensional categorical metrics.
 
+### Changed (schema version 10 — calls carry their caller)
+
+Twelve of the fourteen `instruction(...)` uses in the rule corpus existed
+only to recover a call's containing function from its instruction ID:
+`remote_call(id, ...), instruction(id, caller, _, _)`. That made
+`instruction` — the largest relation in the schema, and one rewritten
+whenever any function body changes, because an instruction ID is a raw
+per-function offset — an input to stage 0 and therefore to every analysis
+downstream of the call graph.
+
+`remote_call`, `local_call`, `bif_call`, `spawn_call` and `try_start` now
+carry a `caller` column; `try_start` also carries `kind` (`"try"` or the
+older `"catch"`), which collapses two rules into one. Nothing about the
+findings changes — 962 findings over 1259 beams, byte-identical.
+
+What changes is how much has to cross the file boundary. Serialized fact
+volume for a full analysis run over the oban corpus:
+
+| analysis | before | after |
+|---|---|---|
+| `unlinked_spawn` | 85 MB | **1 KB** |
+| `deferred_startup_deadlock` | 101 MB | 16 MB |
+| `unsafe_task` | 98 MB | 100 MB |
+| **all sixteen** | **416 MB** | **247 MB** |
+
+`unlinked_spawn` is the clearest case: its entire input set was
+`{instruction, spawn_call}`, and it read all 343k instruction rows purely
+to learn which function did the spawning — while `spawn_call` itself is
+often empty. Its input set is now a single relation.
+
+`unsafe_task` gets slightly worse, and that is the honest cost of stopping
+here. It still reads `instruction` for `start_child_result_checked`, which
+compares instruction *indexes* (`bidx > sc_idx`) to ask whether a branch
+follows a call — a genuine use of position, not a decode of identity — so
+it pays for the new column without shedding the old relation. Replacing
+that rule with an extractor-computed fact would change findings, so it is
+deliberately a separate change.
+
+Stage 0's input set is now `bif_call`, `closure_def`, `function_def`,
+`local_call`, `remote_call` — exactly the relations that describe what a
+function calls. Its inputs are finally as stable as its output, which is
+what `stage0.dl`'s own header has claimed for the output alone since the
+stratification landed.
+
 ### Fixed (soundness)
 
 - **`clientlib/interprocedural.dl` no longer depends on Souffle's conjunct

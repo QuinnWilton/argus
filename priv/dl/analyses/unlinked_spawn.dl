@@ -15,5 +15,11 @@
 .output unlinked_spawn
 
 unlinked_spawn(func, id) :-
-  spawn_call(id, _, _, _, "spawn"),
-  instruction(id, func, _, _).
+  spawn_call(id, func, _, _, _, "spawn").
+
+// This analysis used to join `instruction(id, func, _, _)` purely to
+// recover the spawning function. Its input set was therefore
+// {instruction, spawn_call} — and `instruction` is the largest relation in
+// the schema. On a 531-module project that is 343,352 rows serialized and
+// re-read to accompany a `spawn_call` relation with ZERO rows: 1.56s per
+// edit to look at nothing. `spawn_call` now carries its caller.

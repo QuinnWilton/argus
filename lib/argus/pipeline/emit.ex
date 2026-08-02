@@ -137,7 +137,7 @@ defmodule Argus.Pipeline.Emit do
         {emit_line_info(facts, id, line), line}
 
       _ ->
-        {facts |> emit_line_info(id, line) |> emit_specific(id, instr), line}
+        {facts |> emit_line_info(id, line) |> emit_specific(id, func_id, instr), line}
     end
   end
 
@@ -158,6 +158,154 @@ defmodule Argus.Pipeline.Emit do
   defp terminator?(_), do: false
 
   # ── Specific emitters ─────────────────────────────────────────────
+
+  # Call-shaped instructions take an extra `func_id` and record it as a
+  # `caller` column. Rules used to recover a call's containing function by
+  # joining `instruction`, which is the largest relation in the schema
+  # (343k rows on a 531-module project) and moves on every body edit — so
+  # every analysis reading a call also read, and re-solved on, all of it.
+  # Twelve of the fourteen `instruction(...)` uses in the rule corpus were
+  # exactly that decode.
+
+  # Local calls — modern beam_disasm uses {Module, :func, arity} tuples.
+  # Calls pass arguments in x0..x(arity-1) and return in x0 — the def/use
+  # facts say so, or data dependences would break at every call and a
+  # pipeline (a chain of calls threading x0) would carry no flow at all.
+  # Tail calls consume their arguments but never return here: uses, no def.
+  defp emit_specific(facts, id, func_id, {:call, arity, {:f, label}}) do
+    facts
+    |> add_fact(:local_call, [id, func_id, to_string(label), to_string(arity)])
+    |> add_fact(:def, [id, "x0"])
+    |> emit_call_arg_uses(id, arity)
+  end
+
+  defp emit_specific(facts, id, func_id, {:call, arity, {_mod, _name, _a} = mfa}) do
+    facts
+    |> add_fact(:local_call, [id, func_id, format_mfa(mfa), to_string(arity)])
+    |> add_fact(:def, [id, "x0"])
+    |> emit_call_arg_uses(id, arity)
+  end
+
+  defp emit_specific(facts, id, func_id, {:call_only, arity, {:f, label}}) do
+    facts
+    |> add_fact(:local_call, [id, func_id, to_string(label), to_string(arity)])
+    |> add_fact(:tail_call, [id])
+    |> emit_call_arg_uses(id, arity)
+  end
+
+  defp emit_specific(facts, id, func_id, {:call_only, arity, {_mod, _name, _a} = mfa}) do
+    facts
+    |> add_fact(:local_call, [id, func_id, format_mfa(mfa), to_string(arity)])
+    |> add_fact(:tail_call, [id])
+    |> emit_call_arg_uses(id, arity)
+  end
+
+  defp emit_specific(facts, id, func_id, {:call_last, arity, {:f, label}, _dealloc}) do
+    facts
+    |> add_fact(:local_call, [id, func_id, to_string(label), to_string(arity)])
+    |> add_fact(:tail_call, [id])
+    |> emit_call_arg_uses(id, arity)
+  end
+
+  defp emit_specific(facts, id, func_id, {:call_last, arity, {_mod, _name, _a} = mfa, _dealloc}) do
+    facts
+    |> add_fact(:local_call, [id, func_id, format_mfa(mfa), to_string(arity)])
+    |> add_fact(:tail_call, [id])
+    |> emit_call_arg_uses(id, arity)
+  end
+
+  # External calls.
+  defp emit_specific(facts, id, func_id, {:call_ext, _arity, {:extfunc, mod, func, arity}}) do
+    facts
+    |> add_fact(:remote_call, [id, func_id, inspect(mod), to_string(func), to_string(arity)])
+    |> add_fact(:def, [id, "x0"])
+    |> emit_call_arg_uses(id, arity)
+    |> maybe_spawn(id, func_id, mod, func, arity)
+  end
+
+  defp emit_specific(facts, id, func_id, {:call_ext_only, _arity, {:extfunc, mod, func, arity}}) do
+    facts
+    |> add_fact(:remote_call, [id, func_id, inspect(mod), to_string(func), to_string(arity)])
+    |> add_fact(:tail_call, [id])
+    |> emit_call_arg_uses(id, arity)
+    |> maybe_spawn(id, func_id, mod, func, arity)
+  end
+
+  defp emit_specific(
+         facts,
+         id,
+         func_id,
+         {:call_ext_last, _arity, {:extfunc, mod, func, arity}, _dealloc}
+       ) do
+    facts
+    |> add_fact(:remote_call, [id, func_id, inspect(mod), to_string(func), to_string(arity)])
+    |> add_fact(:tail_call, [id])
+    |> emit_call_arg_uses(id, arity)
+    |> maybe_spawn(id, func_id, mod, func, arity)
+  end
+
+  # BIF calls.
+  defp emit_specific(facts, id, func_id, {:bif, func, {:f, fail}, args, dst}) do
+    facts
+    |> add_fact(:bif_call, [
+      id,
+      func_id,
+      ":erlang",
+      to_string(func),
+      to_string(length(args)),
+      to_string(fail)
+    ])
+    |> add_fact(:def, [id, format_operand(dst)])
+    |> emit_operand_uses(id, args)
+  end
+
+  # BIFs that cannot fail use :nofail instead of {:f, 0} (e.g. self/0, node/0).
+  defp emit_specific(facts, id, func_id, {:bif, func, :nofail, args, dst}) do
+    facts
+    |> add_fact(:bif_call, [
+      id,
+      func_id,
+      ":erlang",
+      to_string(func),
+      to_string(length(args)),
+      "0"
+    ])
+    |> add_fact(:def, [id, format_operand(dst)])
+    |> emit_operand_uses(id, args)
+  end
+
+  defp emit_specific(facts, id, func_id, {:gc_bif, func, {:f, fail}, _live, args, dst}) do
+    facts
+    |> add_fact(:bif_call, [
+      id,
+      func_id,
+      ":erlang",
+      to_string(func),
+      to_string(length(args)),
+      to_string(fail)
+    ])
+    |> add_fact(:def, [id, format_operand(dst)])
+    |> emit_operand_uses(id, args)
+  end
+
+  # Exception handling.
+  defp emit_specific(facts, id, func_id, {:try, reg, {:f, handler}}) do
+    facts
+    |> add_fact(:try_start, [id, func_id, "try", to_string(handler)])
+    |> add_fact(:def, [id, format_operand(reg)])
+  end
+
+  defp emit_specific(facts, id, func_id, {:catch, reg, {:f, handler}}) do
+    facts
+    |> add_fact(:try_start, [id, func_id, "catch", to_string(handler)])
+    |> add_fact(:def, [id, format_operand(reg)])
+  end
+
+  # Everything else is unchanged: this hands the other ~70 instruction
+  # shapes to the arity-3 definitions below, which keeps the diff to the
+  # clauses that actually gained a field. It must come last among the
+  # arity-4 clauses, since it matches any instruction.
+  defp emit_specific(facts, id, _func_id, instr), do: emit_specific(facts, id, instr)
 
   # Label.
   defp emit_specific(facts, id, {:label, n}) do
@@ -342,119 +490,6 @@ defmodule Argus.Pipeline.Emit do
     emit_operand_uses(facts, id, args)
   end
 
-  # Local calls — modern beam_disasm uses {Module, :func, arity} tuples.
-  # Calls pass arguments in x0..x(arity-1) and return in x0 — the def/use
-  # facts say so, or data dependences would break at every call and a
-  # pipeline (a chain of calls threading x0) would carry no flow at all.
-  # Tail calls consume their arguments but never return here: uses, no def.
-  defp emit_specific(facts, id, {:call, arity, {:f, label}}) do
-    facts
-    |> add_fact(:local_call, [id, to_string(label), to_string(arity)])
-    |> add_fact(:def, [id, "x0"])
-    |> emit_call_arg_uses(id, arity)
-  end
-
-  defp emit_specific(facts, id, {:call, arity, {_mod, _name, _a} = mfa}) do
-    facts
-    |> add_fact(:local_call, [id, format_mfa(mfa), to_string(arity)])
-    |> add_fact(:def, [id, "x0"])
-    |> emit_call_arg_uses(id, arity)
-  end
-
-  defp emit_specific(facts, id, {:call_only, arity, {:f, label}}) do
-    facts
-    |> add_fact(:local_call, [id, to_string(label), to_string(arity)])
-    |> add_fact(:tail_call, [id])
-    |> emit_call_arg_uses(id, arity)
-  end
-
-  defp emit_specific(facts, id, {:call_only, arity, {_mod, _name, _a} = mfa}) do
-    facts
-    |> add_fact(:local_call, [id, format_mfa(mfa), to_string(arity)])
-    |> add_fact(:tail_call, [id])
-    |> emit_call_arg_uses(id, arity)
-  end
-
-  defp emit_specific(facts, id, {:call_last, arity, {:f, label}, _dealloc}) do
-    facts
-    |> add_fact(:local_call, [id, to_string(label), to_string(arity)])
-    |> add_fact(:tail_call, [id])
-    |> emit_call_arg_uses(id, arity)
-  end
-
-  defp emit_specific(facts, id, {:call_last, arity, {_mod, _name, _a} = mfa, _dealloc}) do
-    facts
-    |> add_fact(:local_call, [id, format_mfa(mfa), to_string(arity)])
-    |> add_fact(:tail_call, [id])
-    |> emit_call_arg_uses(id, arity)
-  end
-
-  # External calls.
-  defp emit_specific(facts, id, {:call_ext, _arity, {:extfunc, mod, func, arity}}) do
-    facts
-    |> add_fact(:remote_call, [id, inspect(mod), to_string(func), to_string(arity)])
-    |> add_fact(:def, [id, "x0"])
-    |> emit_call_arg_uses(id, arity)
-    |> maybe_spawn(id, mod, func, arity)
-  end
-
-  defp emit_specific(facts, id, {:call_ext_only, _arity, {:extfunc, mod, func, arity}}) do
-    facts
-    |> add_fact(:remote_call, [id, inspect(mod), to_string(func), to_string(arity)])
-    |> add_fact(:tail_call, [id])
-    |> emit_call_arg_uses(id, arity)
-    |> maybe_spawn(id, mod, func, arity)
-  end
-
-  defp emit_specific(facts, id, {:call_ext_last, _arity, {:extfunc, mod, func, arity}, _dealloc}) do
-    facts
-    |> add_fact(:remote_call, [id, inspect(mod), to_string(func), to_string(arity)])
-    |> add_fact(:tail_call, [id])
-    |> emit_call_arg_uses(id, arity)
-    |> maybe_spawn(id, mod, func, arity)
-  end
-
-  # BIF calls.
-  defp emit_specific(facts, id, {:bif, func, {:f, fail}, args, dst}) do
-    facts
-    |> add_fact(:bif_call, [
-      id,
-      ":erlang",
-      to_string(func),
-      to_string(length(args)),
-      to_string(fail)
-    ])
-    |> add_fact(:def, [id, format_operand(dst)])
-    |> emit_operand_uses(id, args)
-  end
-
-  # BIFs that cannot fail use :nofail instead of {:f, 0} (e.g. self/0, node/0).
-  defp emit_specific(facts, id, {:bif, func, :nofail, args, dst}) do
-    facts
-    |> add_fact(:bif_call, [
-      id,
-      ":erlang",
-      to_string(func),
-      to_string(length(args)),
-      "0"
-    ])
-    |> add_fact(:def, [id, format_operand(dst)])
-    |> emit_operand_uses(id, args)
-  end
-
-  defp emit_specific(facts, id, {:gc_bif, func, {:f, fail}, _live, args, dst}) do
-    facts
-    |> add_fact(:bif_call, [
-      id,
-      ":erlang",
-      to_string(func),
-      to_string(length(args)),
-      to_string(fail)
-    ])
-    |> add_fact(:def, [id, format_operand(dst)])
-    |> emit_operand_uses(id, args)
-  end
-
   # Dynamic calls.
   # call_fun reads the fun from x(arity), apply its module/function from
   # x(arity)/x(arity+1) — after the arguments in x0..x(arity-1).
@@ -561,13 +596,6 @@ defmodule Argus.Pipeline.Emit do
     facts
   end
 
-  # Exception handling.
-  defp emit_specific(facts, id, {:try, reg, {:f, handler}}) do
-    facts
-    |> add_fact(:try_start, [id, to_string(handler)])
-    |> add_fact(:def, [id, format_operand(reg)])
-  end
-
   defp emit_specific(facts, id, {:try_end, reg}) do
     facts
     |> add_fact(:try_end, [id])
@@ -580,12 +608,6 @@ defmodule Argus.Pipeline.Emit do
 
   defp emit_specific(facts, _id, {:try_case_end, _val}) do
     facts
-  end
-
-  defp emit_specific(facts, id, {:catch, reg, {:f, handler}}) do
-    facts
-    |> add_fact(:try_start, [id, to_string(handler)])
-    |> add_fact(:def, [id, format_operand(reg)])
   end
 
   defp emit_specific(facts, _id, {:catch_end, _reg}) do
@@ -824,12 +846,19 @@ defmodule Argus.Pipeline.Emit do
 
   defp maybe_literal(facts, _id, _dst, _other), do: facts
 
-  defp maybe_spawn(facts, id, :erlang, func, arity)
+  defp maybe_spawn(facts, id, func_id, :erlang, func, arity)
        when func in [:spawn, :spawn_link, :spawn_monitor] and arity in [1, 2, 3, 4] do
-    add_fact(facts, :spawn_call, [id, "dynamic", "dynamic", to_string(arity), to_string(func)])
+    add_fact(facts, :spawn_call, [
+      id,
+      func_id,
+      "dynamic",
+      "dynamic",
+      to_string(arity),
+      to_string(func)
+    ])
   end
 
-  defp maybe_spawn(facts, _id, _mod, _func, _arity), do: facts
+  defp maybe_spawn(facts, _id, _func_id, _mod, _func, _arity), do: facts
 
   # Argument registers of a call: x0..x(arity-1).
   defp emit_call_arg_uses(facts, _id, 0), do: facts

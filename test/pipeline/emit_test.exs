@@ -122,18 +122,18 @@ defmodule Argus.Pipeline.EmitTest do
   describe "call facts" do
     test "emits remote_call for call_ext" do
       facts = emit_func([{:call_ext, 2, {:extfunc, :erlang, :+, 2}}])
-      assert [[_id, ":erlang", "+", "2"]] = facts[:remote_call]
+      assert [[_id, _caller, ":erlang", "+", "2"]] = facts[:remote_call]
     end
 
     test "emits tail_call for call_ext_only" do
       facts = emit_func([{:call_ext_only, 1, {:extfunc, :lists, :reverse, 1}}])
       assert [[_id]] = facts[:tail_call]
-      assert [[_id, ":lists", "reverse", "1"]] = facts[:remote_call]
+      assert [[_id, _caller, ":lists", "reverse", "1"]] = facts[:remote_call]
     end
 
     test "emits local_call for modern MFA-style calls" do
       facts = emit_func([{:call, 2, {MyMod, :helper, 2}}])
-      assert [[_id, "MyMod:helper/2", "2"]] = facts[:local_call]
+      assert [[_id, _caller, "MyMod:helper/2", "2"]] = facts[:local_call]
     end
 
     test "emits tail_call for call_only" do
@@ -143,32 +143,32 @@ defmodule Argus.Pipeline.EmitTest do
 
     test "emits bif_call for bif" do
       facts = emit_func([{:bif, :element, {:f, 0}, [{:integer, 2}, {:x, 0}], {:x, 0}}])
-      assert [[_id, ":erlang", "element", "2", "0"]] = facts[:bif_call]
+      assert [[_id, _caller, ":erlang", "element", "2", "0"]] = facts[:bif_call]
     end
 
     test "emits bif_call for gc_bif" do
       facts = emit_func([{:gc_bif, :+, {:f, 0}, 1, [{:x, 0}, {:integer, 1}], {:x, 0}}])
-      assert [[_id, ":erlang", "+", "2", "0"]] = facts[:bif_call]
+      assert [[_id, _caller, ":erlang", "+", "2", "0"]] = facts[:bif_call]
     end
 
     test "emits spawn_call for erlang:spawn/3" do
       facts = emit_func([{:call_ext, 3, {:extfunc, :erlang, :spawn, 3}}])
-      assert [[_id, "dynamic", "dynamic", "3", "spawn"]] = facts[:spawn_call]
+      assert [[_id, _caller, "dynamic", "dynamic", "3", "spawn"]] = facts[:spawn_call]
     end
 
     test "emits spawn_call for erlang:spawn_link/3" do
       facts = emit_func([{:call_ext, 3, {:extfunc, :erlang, :spawn_link, 3}}])
-      assert [[_id, "dynamic", "dynamic", "3", "spawn_link"]] = facts[:spawn_call]
+      assert [[_id, _caller, "dynamic", "dynamic", "3", "spawn_link"]] = facts[:spawn_call]
     end
 
     test "emits spawn_call for erlang:spawn_monitor/1" do
       facts = emit_func([{:call_ext, 1, {:extfunc, :erlang, :spawn_monitor, 1}}])
-      assert [[_id, "dynamic", "dynamic", "1", "spawn_monitor"]] = facts[:spawn_call]
+      assert [[_id, _caller, "dynamic", "dynamic", "1", "spawn_monitor"]] = facts[:spawn_call]
     end
 
     test "emits spawn_call for erlang:spawn/1" do
       facts = emit_func([{:call_ext, 1, {:extfunc, :erlang, :spawn, 1}}])
-      assert [[_id, "dynamic", "dynamic", "1", "spawn"]] = facts[:spawn_call]
+      assert [[_id, _caller, "dynamic", "dynamic", "1", "spawn"]] = facts[:spawn_call]
     end
   end
 
@@ -233,7 +233,7 @@ defmodule Argus.Pipeline.EmitTest do
   describe "exception facts" do
     test "emits try_start" do
       facts = emit_func([{:try, {:y, 0}, {:f, 10}}])
-      assert [[_id, "10"]] = facts[:try_start]
+      assert [[_id, _caller, "try", "10"]] = facts[:try_start]
     end
 
     test "emits try_end" do
@@ -543,6 +543,41 @@ defmodule Argus.Pipeline.EmitTest do
         )
 
       assert map_size(facts) > 0
+    end
+  end
+
+  describe "caller columns" do
+    # The point of the caller column is that a rule can get a call's
+    # containing function without joining `instruction`. That is only true
+    # if the column actually holds it, and the pattern-shape assertions
+    # above would pass just as happily with a constant in that slot.
+    @caller_bearing [:remote_call, :local_call, :bif_call, :spawn_call, :try_start]
+
+    test "every call fact's caller is the function its instruction belongs to" do
+      {:ok, facts} = Argus.Pipeline.extract([:lists, :maps, :gen_server])
+
+      checked =
+        for relation <- @caller_bearing,
+            row <- Map.get(facts, relation, []) do
+          [id, caller | _] = row
+
+          assert {:ok, ^caller} = Argus.InstrId.func_id_of(id),
+                 "#{relation}: caller #{inspect(caller)} is not the function containing #{id}"
+
+          relation
+        end
+
+      # Guard against the fixture silently emitting nothing at all.
+      assert length(checked) > 100
+      assert Enum.uniq(checked) |> length() >= 3
+    end
+
+    test "try_start records which syntax produced it" do
+      {:ok, facts} = Argus.Pipeline.extract([:gen_server])
+      kinds = facts |> Map.get(:try_start, []) |> Enum.map(&Enum.at(&1, 2)) |> Enum.uniq()
+
+      refute kinds == []
+      assert Enum.all?(kinds, &(&1 in ["try", "catch"])), "unexpected try kind: #{inspect(kinds)}"
     end
   end
 end

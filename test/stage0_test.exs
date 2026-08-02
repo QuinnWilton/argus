@@ -116,14 +116,26 @@ defmodule Argus.Stage0Test do
       end
     end
 
-    test "an analysis that genuinely anchors on instructions still declares it" do
+    test "an analysis that genuinely needs instruction order still declares it" do
       skip_without_souffle()
 
-      # The guard above must not be vacuous: unlinked_spawn really does
-      # anchor findings at instruction sites, and should say so.
-      assert {:ok, relations} = Analysis.input_relations(:unlinked_spawn)
+      # The guard above must not be vacuous — `input_relations/1` returning
+      # a narrow set for everything would satisfy it without meaning
+      # anything. Some analysis must still read `instruction`.
+      #
+      # It used to be unlinked_spawn, which read the whole 343k-row relation
+      # purely to recover the spawning function from an instruction ID.
+      # `spawn_call` carries its caller now, and unlinked_spawn's input set
+      # is a single relation.
+      #
+      # unsafe_task is the honest remaining case: it compares instruction
+      # INDEXES to ask whether a branch follows a call, which is a real use
+      # of position rather than a decode of identity.
+      assert {:ok, relations} = Analysis.input_relations(:unsafe_task)
       assert "instruction" in relations
-      assert "spawn_call" in relations
+
+      assert {:ok, spawn_relations} = Analysis.input_relations(:unlinked_spawn)
+      assert spawn_relations == ["spawn_call"]
     end
 
     test "unknown analyses error rather than returning an empty set" do

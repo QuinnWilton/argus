@@ -18,14 +18,12 @@
 .decl task_async_call(func: symbol, id: symbol)
 
 task_async_call(func, id) :-
-  remote_call(id, "Task", "async", _),
-  instruction(id, func, _, _).
+  remote_call(id, func, "Task", "async", _).
 
 // Also detect Task.Supervisor.async (returns a Task that must be
 // awaited/yielded, just like Task.async).
 task_async_call(func, id) :-
-  remote_call(id, "Task.Supervisor", "async", _),
-  instruction(id, func, _, _).
+  remote_call(id, func, "Task.Supervisor", "async", _).
 
 // Task.Supervisor.async_nolink is intentionally excluded: it returns a
 // task that is NOT linked to the caller. The supervisor manages the
@@ -36,24 +34,19 @@ task_async_call(func, id) :-
 .decl task_await_call(func: symbol, id: symbol)
 
 task_await_call(func, id) :-
-  remote_call(id, "Task", "await", _),
-  instruction(id, func, _, _).
+  remote_call(id, func, "Task", "await", _).
 
 task_await_call(func, id) :-
-  remote_call(id, "Task", "await_many", _),
-  instruction(id, func, _, _).
+  remote_call(id, func, "Task", "await_many", _).
 
 task_await_call(func, id) :-
-  remote_call(id, "Task", "yield", _),
-  instruction(id, func, _, _).
+  remote_call(id, func, "Task", "yield", _).
 
 task_await_call(func, id) :-
-  remote_call(id, "Task", "yield_many", _),
-  instruction(id, func, _, _).
+  remote_call(id, func, "Task", "yield_many", _).
 
 task_await_call(func, id) :-
-  remote_call(id, "Task", "shutdown", _),
-  instruction(id, func, _, _).
+  remote_call(id, func, "Task", "shutdown", _).
 
 // ── Function-level await reachability ──────────────────────────────────
 
@@ -131,8 +124,7 @@ leaked_async_task(func, id) :-
 .decl task_start_child_call(func: symbol, id: symbol)
 
 task_start_child_call(func, id) :-
-  remote_call(id, "Task.Supervisor", "start_child", _),
-  instruction(id, func, _, _).
+  remote_call(id, func, "Task.Supervisor", "start_child", _).
 
 // ── Unchecked start_child ──────────────────────────────────────────────
 

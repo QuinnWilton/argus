@@ -134,7 +134,7 @@ defmodule Argus.DlDeclarationsTest do
                    imprecision named_process supervisor supervisor_child sync_call),
       deferred_startup_deadlock:
         ~w(call_arg call_arg_forward call_edge handle_continue_clause init_continues_to
-                                    instruction supervisor supervisor_child sync_call try_start),
+           supervisor supervisor_child sync_call try_start),
       distributed: ~w(call_edge distributed_store_op function_def global_op global_register
                       implements_behaviour node_operation rpc_call),
       error_handling: ~w(bare_rescue call_edge exit_call function_def ignored_error_result
@@ -157,7 +157,7 @@ defmodule Argus.DlDeclarationsTest do
       timeout_chain:
         ~w(call_arg call_arg_forward call_edge function_def implements_behaviour sync_call
                         sync_call_timeout),
-      unlinked_spawn: ~w(instruction spawn_call),
+      unlinked_spawn: ~w(spawn_call),
       unsafe_task: ~w(branch call_edge function_def implements_behaviour instruction remote_call
                       tail_call)
     }
@@ -189,22 +189,30 @@ defmodule Argus.DlDeclarationsTest do
     end
 
     @tag :souffle
-    test "only three analyses read the instruction relation" do
+    test "only unsafe_task still reads the instruction relation" do
       # `instruction` is the largest relation by far — 343k rows on a
       # 531-module project — and it moves on every body edit, because an
       # instruction's ID is a raw per-function offset. Every analysis
       # reading it re-solves whenever any function body changes anywhere.
       #
       # Twelve of the fourteen `instruction(...)` uses in the rule corpus
-      # exist only to recover an instruction's containing function from its
-      # ID. This assertion is the marker for removing those.
+      # existed only to recover a call's containing function from its ID.
+      # Those are gone: the call relations carry `caller` themselves, and
+      # stage 0 no longer reads `instruction` at all.
+      #
+      # The one remaining reader is unsafe_task's start_child_result_checked,
+      # which compares instruction INDEXES (`bidx > sc_idx`) to ask whether a
+      # branch follows a call. That is a genuine use of position, and also a
+      # weak proxy for "the result was pattern-matched" — replacing it with
+      # an extractor-computed fact would change findings, so it is deliberately
+      # a separate change.
       readers =
         for mod <- Analysis.builtin_analysis_modules(),
             {:ok, rels} = Analysis.input_relations(mod.name()),
             "instruction" in rels,
             do: mod.name()
 
-      assert Enum.sort(readers) == [:deferred_startup_deadlock, :unlinked_spawn, :unsafe_task]
+      assert Enum.sort(readers) == [:unsafe_task]
     end
   end
 end
