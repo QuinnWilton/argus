@@ -1331,12 +1331,30 @@ failure mode again, in its quietest form yet: not a rule matching nothing,
 not a missing extractor, but a fact whose resolution is thin enough that the
 analyses above it are answering a much smaller question than they appear to.
 
-Worth measuring properly before trusting any negative result from those four
-— "no bottlenecks found" on a codebase that passes pids means considerably
-less than it reads. The same `:dynamic` count is already recorded per
-relation by the imprecision tracking (`Argus.Extractor.Helpers.track_dynamic/5`),
-so the evidence for a coverage figure is being collected; nothing surfaces
-it next to the findings.
+Measured properly, as `Argus.Resolution`. The `:dynamic` count was already
+recorded by `track_dynamic/5`, but only when imprecision tracing is switched
+on, which no sweep in this document did. The placeholder is in the fact map
+either way, so counting it needs nothing enabled:
+
+| relation | sequin | oban |
+|---|---|---|
+| `sync_call` | **1/48 (2.1%)** | **1/29 (3.4%)** |
+| `sync_call_timeout` | 1/48 | 1/29 |
+| `async_cast` | 0/8 | — |
+| `via_tuple` | 5/18 | 0/4 |
+| `registry_op` | 0/3 | 0/8 |
+| `whereis_call` | 0/2 | — |
+| `ets_op` | 48/86 (56%) | — |
+| `ets_new` | 9/15 (60%) | — |
+
+So `timeout_chain`, `process_bottleneck`, `sync_call_in_init` and
+`call_cycle` see **two to three percent** of the synchronous calls in these
+programs, and the ETS analysis sees a little over half of its. Every finding
+they produce is still real. Every silence they produce is nearly
+meaningless, and until now nothing said which was which.
+
+This belongs beside findings in the report, not in a doc — that wiring is
+the obvious next step and is not done here.
 
 That is the fifth candidate declined on measurement, and the first where the
 measurement said more about the analyses that already exist than about the
