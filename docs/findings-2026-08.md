@@ -959,3 +959,38 @@ on measurement), LiveView `mount` (declined on measurement), `active: true`
 One in three shipped, and the declines cost a grep each. That ratio is the
 argument for measuring populations before building, which is the cheapest
 step in the whole loop and the one that was skipped for `unmatched_message`.
+
+## Measured and not built: unbounded `DynamicSupervisor` children
+
+Recorded with the measurement done so it can be picked up directly.
+
+`DynamicSupervisor` defaults to `max_children: :infinity`, and the default
+is universal: **8 DynamicSupervisors across sequin and Livebook, zero set
+`max_children`.** `Task.await/1`'s default 5000 ms timeout (4 sites) and
+`hibernate_after` (0 sites) were measured at the same time and are too thin
+to pursue.
+
+Relying on the default is not itself a bug — most dynamic supervisors are
+driven by trusted callers. The finding is the pairing, and it is the same
+shape that made `tls_verification` worth building: a module-scope question a
+search cannot ask.
+
+> Is `start_child` reachable from a request handler?
+
+If it is, an unauthenticated request creates a process, and nothing bounds
+how many. That is a memory-exhaustion vector reachable from outside, and
+`request_surface` already has the entry-point machinery to answer the
+reachability half.
+
+**What it needs**: `max_children` is not extracted today. It is a literal in
+`DynamicSupervisor.init/1`'s option list, so the extraction is the same
+shape as the TLS option reading — cheap, but it means a schema bump and a
+pin review in gloss, lowdown and planchette.
+
+**Why it is not built here**: not enough room left to build it *and* verify
+its findings against source. Every analysis in this document that shipped
+was read against source first, and the two that were reverted were reverted
+because that reading did not hold up. Shipping one unverified to finish
+faster would invert the standard the rest of the work was held to — and an
+analysis whose findings nobody has checked is exactly the artifact this
+document argues against.
