@@ -717,3 +717,87 @@ shipping rather than after.
 The totality technique is retained here, and is cheap to rebuild if a
 consumer appears that can use it — most likely one that models a clause's
 full pattern rather than its head atom.
+
+---
+
+# Two candidates declined, and one analysis re-verified, August 2026
+
+After the negative result above, three more things were measured. Two were
+declined before being built, which is the cheaper place to decline them.
+
+## Declined: cleanup under `shutdown: :brutal_kill`
+
+A child spec saying `shutdown: :brutal_kill` never runs `terminate/2`, even
+when the module traps exits — so `shutdown_safety`'s advice ("add
+`Process.flag(:trap_exit, true)`") would be wrong for those children. That
+looked like a real hole.
+
+Grepping the corpus first killed it. Every `brutal_kill` occurrence is a
+type spec (`shutdown() :: brutal_kill | timeout()`), a supervisor
+*implementation* handling the case (`ranch_conns_sup`,
+`consumer_supervisor`, `supervisor2`), or `Process.exit(pid, :brutal_kill)`,
+which is a different thing. The handful of genuine child specs are for
+children with nothing to clean up.
+
+**That is the point, and it generalises.** `shutdown: :brutal_kill` is a
+deliberate declaration that this child has no cleanup — a *commission*.
+`trap_exit` is absent by default — an *omission*. Bugs live in defaults, and
+the analyses in this document that found real bugs all key on something
+absent-by-default: no `trap_exit`, no thought given to what a transaction
+body can take back, no one keeping `from`. An analysis looking for a
+contradiction someone would have to write on purpose will find that nobody
+did.
+
+## Declined: LiveView `mount/3` without a `connected?/1` guard
+
+`mount/3` runs twice, so unguarded data loading doubles the work. Measured:
+14 LiveViews in Livebook with none unguarded, 8 in Keila with 3. A thin
+population, and a 2× load issue rather than a correctness one.
+
+## Re-verified: `shutdown_safety`'s own findings
+
+More useful than a twenty-third analysis. `shutdown_safety` shipped after
+verifying its first-party findings; the full dependency tree had sixteen,
+unread. Most had a **right verdict and wrong evidence** — the same failure
+the analysis had already been corrected for once.
+
+| | before | after |
+|---|---|---|
+| `cleanup_never_runs` on sequin | 16 | **5** |
+
+Three exact defects, none of them in the rule's logic:
+
+**Reads misclassified as writes.** `:application.get_env/2,3` and
+`:os.timestamp/0` reported as durable cleanup. The Elixir spellings were
+fixed when the `mode` dimension landed; the Erlang ones were not — the
+**third** two-spelling gap in this sweep. `:error_logger`, which most Erlang
+libraries still call, was a fourth, so a library logging "shutting down"
+read as unclassified cleanup.
+
+**Unbounded transitive reach.** `call_reachable` walked out of the module,
+through a client library, into that library's connection pool. MutexOwner
+was credited with `:ets.insert/2 via :wpool_pool:store_wpool/1` — five hops
+down `Mutex.release → Redis → wpool`. Bounded to three hops, which is
+`terminate → your cleanup function → the API it calls`.
+
+**Structural calls as unclassified work.** `Kernel` is deliberately not in
+the pure list, because purity found a soundness hole there — so its calls
+arrive as unknown, and `DBConnection.Connection` was reported for
+`Kernel.struct!/2` inside an exception constructor. **A soundness choice
+made for one contract became noise in another**, which is a hazard worth
+naming for any shared effect model.
+
+Every survivor is now a plausible cleanup call: `:amqp_channel:close/3`,
+`Gnat:unsub/3`, an `:erlang.send/2` directly in `terminate/2`. And
+MutexOwner finally reads `Sequin.Redis.command/1 via Sequin.Mutex:release/2`
+— the actual release path, and the evidence the writeup above claimed all
+along.
+
+## The pattern worth carrying forward
+
+Four separate two-spelling gaps in one sweep — behaviour names, terminate
+callback lists, environment reads, logging modules. Every one silent, every
+one found only by reading output against source. Any table of names in a
+BEAM analysis should be assumed to be half-written until proven otherwise,
+because Elixir and Erlang spell everything twice and `inspect/1` keeps the
+colon.
