@@ -274,3 +274,147 @@ can forbid file writes without forbidding logging.
 
 Neither refinement was foreseeable from the armchair. Both came from
 running the thing and reading what it said.
+
+---
+
+# Cleanup that never runs, August 2026
+
+The third context-imposed contract, and the one with the sharpest teaching
+case. `terminate/2` looks like "run this on the way out". OTP's rule is
+narrower: it runs when a callback returns `{:stop, ...}` or raises. On a
+**supervisor shutdown** — the normal way processes stop — the parent sends
+an exit signal and a process that is not trapping exits simply dies.
+
+The gap is invisible twice over. The code reads correctly, and a test that
+calls `GenServer.stop/1` exercises the path that *does* run `terminate`, so
+the one path that matters in production is the one never exercised.
+
+## 8. Sequin — a distributed mutex whose release is both skipped and unsafe
+
+**Where** `lib/sequin/mutex_owner.ex:109-113`, `lib/sequin/mutexed_supervisor.ex:49-53`
+**Analysis** `shutdown_safety` / `cleanup_unclear`
+**Severity** Low as written. The interesting part is what happens if you
+fix it the obvious way.
+
+`MutexOwner` is a `GenStateMachine` implementing singleton election: it
+acquires a Redis mutex, and `on_acquired` boots `Sequin.Runtime.Supervisor`
+— the entire CDC runtime — underneath a sibling `ChildrenSupervisor`.
+
+```elixir
+def terminate(_reason, :has_mutex, %State{} = data) do
+  Logger.info("MutexOwner terminating, releasing mutex")
+  Mutex.release(data.mutex_key, data.mutex_token)
+end
+```
+
+`init/1` never calls `Process.flag(:trap_exit, true)`. On any supervisor
+shutdown — a deploy, a restart — the process dies without releasing, and
+the mutex sits in Redis until `lock_expiry` (default 5 s) expires. The next
+node backs off `lock_expiry / 2` and retries, so a rolling deploy pays a
+few seconds of runtime downtime that this code was written to avoid.
+
+**The log line is the tell.** `"MutexOwner terminating, releasing mutex"`
+would appear on every clean stop. It does not appear during deploys, and
+has not, and nothing noticed.
+
+On its own that is minor: the mutex is TTL-based precisely so a hard crash
+cannot wedge it, so the missing `trap_exit` means always paying the TTL
+rather than sometimes paying zero. A latent optimization that never fires.
+
+**What makes it worth writing down is that the obvious fix is worse than
+the bug.** `MutexedSupervisor` starts its children in this order:
+
+```elixir
+[
+  {ChildrenSupervisor, name: child_supervisor},
+  {MutexOwner, on_acquired: fn -> start_children(child_specs, child_supervisor) end, ...}
+]
+```
+
+The order is forced — `on_acquired` starts children *into* `ChildrenSupervisor`,
+so it must already exist. And a supervisor terminates children in **reversed
+start order** (`otp/lib/stdlib/src/supervisor.erl:54`), so `MutexOwner` is
+always shut down **first**, while the runtime it guards is still fully
+running.
+
+So adding `trap_exit` makes `terminate/2` run, and it releases the mutex
+while `Sequin.Runtime.Supervisor` is still processing the change stream.
+Another node is then free to acquire it and start a second runtime against
+the same stream. **That trades a few seconds of downtime for a split-brain
+window** — in a component whose entire purpose is to guarantee one runtime
+at a time.
+
+The release is not merely skipped; it is positioned where running it would
+be unsafe. The TTL is doing the real work, and `terminate/2` is vestigial.
+
+**Fix** Either delete the `terminate/2` clause and document that the TTL is
+the mechanism, or move the release to after the children are down — which
+means it does not belong in this process at all. Note also that
+`Mutex.release/2` is a Redis round trip inside a 5000 ms default shutdown
+timeout, so a trapping version would trip the analysis's second outcome as
+well.
+
+## 9. Livebook — two temp-directory cleanups skipped on shutdown
+
+**Where** `lib/livebook/session.ex:2111`, `lib/livebook/app.ex:298`
+**Severity** Low. Disk hygiene, not correctness.
+
+Neither `Livebook.Session` nor `Livebook.App` traps exits, and both delete
+a temp directory in `terminate/2` (`cleanup_tmp_dir/1`, which reaches
+`File.rm_rf/1` through a `FileSystem` dispatch, and `cleanup_notebook_files_dir/1`).
+
+User-initiated close goes through `{:stop, :shutdown, state}` and does run
+`terminate`, so the common path is fine. Application shutdown and any
+supervisor restart leak the directory. Bounded by the OS clearing `/tmp`.
+
+## 10. Keila — an import's temp file is skipped on shutdown
+
+**Where** `lib/keila/contacts/import.ex` → `KeilaWeb.ContactImportLive`
+**Severity** Low, same shape: `File.rm/1` in a LiveView `terminate/2`,
+no `trap_exit`. LiveView processes are killed on channel shutdown.
+
+## Calibration
+
+Every finding above was read against source, and so was every silence.
+
+| project | `terminate/2` defs | do real cleanup | trap exits | reported |
+|---|---|---|---|---|
+| oban | 9 | 4 | **all 4** | 0 |
+| sequin | 7 | 2 | 1 | 1 |
+| livebook | 4 | 4 | 2 | 2 |
+| keila | 1 | 1 | 0 | 1 |
+
+**Oban is the reason the silences are worth anything.** It defines the most
+`terminate/2` callbacks of anything swept — including `Watchman`, which
+drains a producer and waits for executing jobs, and both `Peers` modules,
+which delete a leadership row and notify peers — and every one of them
+traps. Five of the nine are `Process.cancel_timer` on a process that is
+about to die anyway, which the analysis correctly ignores as a
+non-durable process operation.
+
+Sequin's other five `terminate/2` callbacks are all
+`_new_state = State.invalidate_all(state)` — a pure computation assigned to
+an underscore and discarded. Genuinely nothing to skip.
+
+## What the third outcome bought, and what it cost
+
+The first version of this analysis found `MutexOwner` **for the wrong
+reason**: through `:timer.tc/2`, which the effect model classified as a
+process write on `:timer`'s behalf. The real cleanup — `Mutex.release/2`, a
+Redis call behind a `Sequin.Redis` closure — was invisible. Right module,
+accidental witness, and indistinguishable from luck until read.
+
+Two changes followed. Dispatchers now outrank their module, so `:timer.tc`
+reports as opaque rather than as a clock read. And a third, deliberately
+weaker outcome reports work the effect model *cannot* classify, because
+that is where most real cleanup lives — a call into your own code looks the
+same whether it releases a lease or does nothing.
+
+The fear was noise. Measured, it is **about one module per project**, and
+in this sweep it caught `MutexOwner` and `Livebook.Session`, both real. The
+suppression that makes it work is one line: a module already reported with
+a classified write is not also reported as unclear, so the vague finding
+never restates the precise one.
+
+That the cost was measured rather than assumed is the whole reason it
+shipped; the armchair estimate was "far too noisy to be useful."
