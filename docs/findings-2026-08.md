@@ -1041,3 +1041,75 @@ The suppressions carry the claim, and both are in the fixtures: a cap
 discharges it, and so does being unreachable from outside. Most dynamic
 supervisors are internally driven, and reporting those would bury the ones
 that are not.
+
+---
+
+# A second generator, and a second negative result, August 2026
+
+When "enumerate the defaults" ran dry, a different generator: **two things
+that must agree, where nothing checks the agreement.**
+
+The sharpest BEAM instance is that a GenServer is one contract written in
+two places. The client half is an ordinary function —
+
+```elixir
+def get(pid, k), do: GenServer.call(pid, {:get, k})
+```
+
+— and the server half is a `handle_call/3` clause. Nothing checks they
+agree. Rename the tag on one side and it compiles clean. `call` then raises
+`FunctionClauseError` in the server and the caller exits with it; `cast` is
+worse, because the caller is told nothing at all — the server dies, the
+supervisor restarts it, the state is gone, and the only trace is a crash
+report nobody connected to the wrapper.
+
+Both halves are literal atoms in bytecode, and both extracted cleanly:
+
+```
+client_message: [["MsgProbe:put/3#6", "MsgProbe:put/3", "cast", ":put"]]
+server_message: [["MsgProbe:handle_cast/2", "handle_cast", ":store"]]
+```
+
+on a probe seeded with exactly that mismatch.
+
+**It was reverted.** Two findings across roughly eight thousand modules, and
+both were false:
+
+| reported | reality |
+|---|---|
+| `:amqp_channel` casts `:ok` | `do_rpc/1` contains `gen_server:reply(From, ok)` — the `ok` is a reply value |
+| `:syn_gen_scope` calls `:"3.0"` | a version atom, not a message tag |
+
+Same root cause. The client tag is read by walking backwards from the call
+to the first write of `{x,1}`, and that write is not always the message: a
+tail call whose arguments were set up across a call boundary, or an
+unrelated earlier write, gets attributed to the send. The scan stops at any
+other write to the register, which is not enough — it needs to know that the
+write it found is the one feeding *this* call, and that is dataflow, not a
+backwards scan.
+
+## What the two negative results have in common
+
+`unmatched_message` and `message_contract` failed the same way, one level
+apart. Both needed to know something about a **value** — which reason a
+`:DOWN` clause matches, which message a `cast` is actually sending — and
+both were built on a positional proxy for it. The proxy was right on
+fixtures and wrong on real code, in both cases quietly.
+
+The three analyses that shipped never asked about a value. `shutdown_safety`
+asks whether an attribute is set. `tls_verification` asks whether an atom
+appears in a module. `unbounded_dynamic_children` asks whether one function
+reaches another. Those are questions the fact model answers exactly, and
+none of them can be subtly wrong.
+
+**That is the boundary worth writing down**: this fact model supports
+questions about *structure* — what exists, what is set, what reaches what —
+and does not yet support questions about *which value flows where*.
+Analyses of the second kind can be built and will pass their fixtures. They
+fail on the corpus, and they fail quietly enough that only reading every
+finding against source catches it.
+
+Building the value-flow layer is a real project, and `Argus.Dataflow`
+exists as a starting point. Until then, a candidate that needs to know
+*which* value is a candidate to decline — measured in advance, not after
+the build.
