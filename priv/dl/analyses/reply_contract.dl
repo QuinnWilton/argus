@@ -1,0 +1,83 @@
+// A deferred reply that can never be sent.
+//
+// `handle_call/3` may answer immediately with {:reply, value, state}, or
+// defer: return {:noreply, state} and call GenServer.reply/2 later. The
+// second is a promise. The only thing that can discharge it is the `from`
+// term the callback was handed — an opaque {pid, tag} that exists nowhere
+// else in the system.
+//
+// So a handle_call that defers without keeping `from` has promised
+// something it cannot deliver, regardless of what the rest of the program
+// does. There is no later event that fixes it.
+//
+// What makes this worth an analysis rather than a code review is WHERE it
+// surfaces. The process that got it wrong is fine — it returned a valid
+// value and went back to its loop. The failure appears five seconds later,
+// in a different process, in a different module, as
+//
+//   ** (exit) exited in: GenServer.call(pid, :thing, 5000)
+//        ** (EXIT) time out
+//
+// and nothing in that message names the clause that failed to reply. Under
+// load the timeout also looks exactly like overload, which is the wrong
+// diagnosis and sends people to tune pool sizes.
+
+.include "../clientlib/imports.dl"
+
+// ── Which modules answer calls ───────────────────────────────────
+//
+// Both spellings, deliberately not clientlib/callbacks.dl, which matches
+// only "GenServer". Erlang modules declare `-behaviour(gen_server)` — and
+// -behavior(gen_server), which is the same thing — so restricting to the
+// Elixir spelling silently exempts every Erlang dependency in the tree.
+// That is most of the OTP surface a project actually depends on, and it is
+// where this bug survives longest, since nobody reads those modules.
+
+.decl answers_calls(mod: symbol, func: symbol)
+
+answers_calls(mod, func) :-
+  function_def(func, mod, "handle_call", 3, _),
+  implements_behaviour(mod, behaviour),
+  gen_server_behaviour(behaviour).
+
+.decl gen_server_behaviour(behaviour: symbol)
+
+gen_server_behaviour("GenServer").
+gen_server_behaviour("gen_server").
+gen_server_behaviour("GenStage").
+gen_server_behaviour(":gen_server").
+
+// ── Deferring ────────────────────────────────────────────────────
+
+.decl defers_reply(mod: symbol, func: symbol, id: symbol)
+
+defers_reply(mod, func, id) :-
+  answers_calls(mod, func),
+  callback_return(id, func, "handle_call", ":noreply").
+
+// ── The promise cannot be kept ───────────────────────────────────
+//
+// `callback_drops_from` is per return site: some execution reaches this
+// {:noreply, _} having never read `from`. That execution cannot reply, no
+// matter what the rest of the program does.
+
+.decl never_replies(mod: symbol, func: symbol, id: symbol)
+.output never_replies
+
+never_replies(mod, func, id) :-
+  defers_reply(mod, func, id),
+  callback_drops_from(id, func).
+
+// ── Not attempted: the reply that is stored and never sent ───────
+//
+// A module that keeps `from` and calls GenServer.reply/2 nowhere hangs its
+// callers just as surely. It is not reported here, because stating it
+// precisely needs escape analysis this does not have: `from` leaves the
+// callback through a send, a spawned closure, an ETS write, or any call
+// that happens to take it as an argument, and whoever receives it can
+// reply. Suppressing on the routes one can enumerate leaves the rest as
+// false positives.
+//
+// The heuristic version was written, measured against roughly six thousand
+// modules, found nothing, and was removed. `deferred_reply` remains
+// unconsumed and is the fact a real version would build on.
