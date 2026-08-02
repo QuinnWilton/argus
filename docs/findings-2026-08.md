@@ -1253,3 +1253,34 @@ places that record it are exactly the places a fact model does not look:
 moduledocs, comments, a `# TODO` like the one in Sequin's
 `PostgresDatabase` that turned out to be the strongest corroboration any
 finding in this document received.
+
+## Checking that this document's own findings are clean
+
+If purpose-built fixtures dominate self-analysis, the obvious question is
+whether they contaminated anything reported here. Checked mechanically
+rather than assumed, by reading each module's `:source` out of its
+`compile_info` chunk:
+
+| analysis | modules reported | from a test path |
+|---|---|---|
+| `tls_verification` | 6 | **0** |
+| `shutdown_safety` | 5 | **0** |
+| `reply_contract` | 3 | **0** |
+| `unbounded_dynamic_children` | 2 | **0** |
+
+Every finding in this document comes from `lib/` or `deps/`. That is partly
+luck of which sweeps filtered to first-party beams and which did not, so it
+was worth confirming rather than asserting.
+
+**The check is also the fix.** `:beam_lib.chunks(beam, [:compile_info])`
+yields `:source`, the absolute path the module was compiled from — so
+whether a module is test scaffolding is exactly knowable, not a guess from
+its name. A `module_origin(mod, kind)` fact would let every analysis drop
+or label fixtures instead of each sweep re-inventing a filter, and it needs
+no new disassembly: the pipeline already reads `compile_info`.
+
+Not built here, for the same reason as the rest: an unconsumed relation is
+dead weight, and wiring it through 23 analyses is a change whose finding
+deltas want reading. But it is a small change with a clear shape, and it is
+the difference between argus being usable on analyzer-shaped projects and
+not.
