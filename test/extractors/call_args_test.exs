@@ -24,6 +24,28 @@ defmodule Argus.Extractors.CallArgsTest do
     end)
   end
 
+  defp forwards_for(facts, callee_pattern) do
+    (facts[:call_arg_forward] || [])
+    |> Enum.filter(fn [_caller, callee, _pos, _fwd] ->
+      String.contains?(callee, callee_pattern)
+    end)
+  end
+
+  # Rows from both relations — together they are what call_arg alone used
+  # to be, so coverage questions ("was this position recorded at all?")
+  # have to ask both.
+  defp all_args_for(facts, callee_pattern) do
+    ((facts[:call_arg] || []) ++ (facts[:call_arg_forward] || []))
+    |> Enum.filter(fn [_caller, callee, _pos, _] ->
+      String.contains?(callee, callee_pattern)
+    end)
+  end
+
+  defp all_arg_positions(facts) do
+    ((facts[:call_arg] || []) ++ (facts[:call_arg_forward] || []))
+    |> Enum.map(fn [_, _, pos, _] -> String.to_integer(pos) end)
+  end
+
   describe "literal arguments" do
     test "emits literal atom value for GenServer.call with __MODULE__" do
       facts = extract(Argus.Test.Fixtures.CallArgsLiteral)
@@ -52,50 +74,69 @@ defmodule Argus.Extractors.CallArgsTest do
   end
 
   describe "parameter forwarding" do
-    test "emits arg:0 when parameter 0 is forwarded to GenServer.call" do
+    # Forwardings go to call_arg_forward with the forwarded position as a
+    # real number column, not into call_arg's value as the string "arg:N".
+    # The string form made Datalog decode it with the PARTIAL functor
+    # to_number, which Souffle was free to schedule ahead of its guard.
+
+    test "records parameter 0 forwarded to GenServer.call" do
       facts = extract(Argus.Test.Fixtures.CallArgsForwarder)
 
-      gs_args =
-        call_args_for(facts, "GenServer:call/2")
+      fwd =
+        forwards_for(facts, "GenServer:call/2")
         |> Enum.filter(fn [caller, _, _, _] -> caller =~ "call_server/1" end)
+        |> Enum.find(fn [_, _, pos, _] -> pos == "0" end)
 
-      arg0 =
-        Enum.find(gs_args, fn [_, _, pos, _] -> pos == "0" end)
-
-      assert arg0
-      [_, _, _, value] = arg0
-      assert value == "arg:0"
+      assert fwd
+      [_, _, _, fwd_pos] = fwd
+      assert fwd_pos == "0"
     end
 
-    test "emits arg:1 when parameter 1 is forwarded to :ets.lookup arg 0" do
+    test "records parameter 1 forwarded to :ets.lookup arg 0" do
       facts = extract(Argus.Test.Fixtures.CallArgsForwarder)
 
-      ets_args =
-        call_args_for(facts, ":ets:lookup/2")
+      fwd =
+        forwards_for(facts, ":ets:lookup/2")
         |> Enum.filter(fn [caller, _, _, _] -> caller =~ "read_table/2" end)
+        |> Enum.find(fn [_, _, pos, _] -> pos == "0" end)
 
-      arg0 =
-        Enum.find(ets_args, fn [_, _, pos, _] -> pos == "0" end)
-
-      assert arg0
-      [_, _, _, value] = arg0
-      assert value == "arg:1"
+      assert fwd
+      [_, _, _, fwd_pos] = fwd
+      assert fwd_pos == "1"
     end
 
-    test "emits arg:N for both forwarded arguments" do
+    test "records both forwarded arguments, each with its own source position" do
       facts = extract(Argus.Test.Fixtures.CallArgsForwarder)
 
-      gs_args =
-        call_args_for(facts, "GenServer:call/2")
+      pairs =
+        forwards_for(facts, "GenServer:call/2")
         |> Enum.filter(fn [caller, _, _, _] -> caller =~ "forward_both/2" end)
+        |> Enum.map(fn [_, _, pos, fwd] -> {pos, fwd} end)
 
-      values =
-        gs_args
-        |> Enum.sort_by(fn [_, _, pos, _] -> pos end)
-        |> Enum.map(fn [_, _, pos, val] -> {pos, val} end)
+      assert {"0", "0"} in pairs
+      assert {"1", "1"} in pairs
+    end
 
-      assert {"0", "arg:0"} in values
-      assert {"1", "arg:1"} in values
+    test "a forwarded argument produces no call_arg row" do
+      # The split has to be exclusive: if a forwarding also landed in
+      # call_arg, resolved_arg's base case would treat the marker as a
+      # literal value and propagate garbage.
+      facts = extract(Argus.Test.Fixtures.CallArgsForwarder)
+
+      literals =
+        call_args_for(facts, "GenServer:call/2")
+        |> Enum.filter(fn [caller, _, pos, _] -> caller =~ "call_server/1" and pos == "0" end)
+
+      assert literals == []
+    end
+
+    test "no fact anywhere still carries the old arg:N encoding" do
+      facts = extract(Argus.Test.Fixtures.CallArgsForwarder)
+
+      values = Enum.map(facts[:call_arg] || [], fn [_, _, _, val] -> val end)
+
+      refute Enum.any?(values, &String.starts_with?(&1, "arg:")),
+             "call_arg still encodes forwarding in a string"
     end
   end
 
@@ -103,10 +144,11 @@ defmodule Argus.Extractors.CallArgsTest do
     test "only emits first 4 arguments for high-arity calls" do
       facts = extract(Argus.Test.Fixtures.CallArgsMultiArity)
 
-      send_args = call_args_for(facts, ":erlang:send/2")
-
+      # Coverage question, so it spans both relations: one of these two
+      # arguments is a forwarded parameter and lives in call_arg_forward.
       positions =
-        send_args
+        facts
+        |> all_args_for(":erlang:send/2")
         |> Enum.map(fn [_, _, pos, _] -> pos end)
         |> Enum.sort()
 
@@ -119,11 +161,7 @@ defmodule Argus.Extractors.CallArgsTest do
 
       # many_args/6 body calls :erlang.send/2 — only 2 args.
       # But let's verify no arg_pos > 3 appears anywhere in the facts.
-      all_positions =
-        (facts[:call_arg] || [])
-        |> Enum.map(fn [_, _, pos, _] -> String.to_integer(pos) end)
-
-      assert Enum.all?(all_positions, &(&1 < 4))
+      assert Enum.all?(all_arg_positions(facts), &(&1 < 4))
     end
   end
 
@@ -147,19 +185,29 @@ defmodule Argus.Extractors.CallArgsTest do
   end
 
   describe "dynamic arguments" do
-    test "emits 'dynamic' for runtime-computed values" do
+    test "a parameter passed straight through is a forwarding, not a value" do
       facts = extract(Argus.Test.Fixtures.CallArgsLiteral)
 
-      # lookup/1 passes `key` (parameter 0) as arg 1 to :ets.lookup.
-      ets_args = call_args_for(facts, ":ets:lookup/2")
+      # lookup/1 passes `key` (parameter 0) as arg 1 to :ets.lookup. Before
+      # the split this test hedged — `value in ["arg:0", "dynamic"]` — because
+      # call_arg could not say which it was without string-matching. Now the
+      # relation the row lands in answers it.
+      fwd =
+        facts
+        |> forwards_for(":ets:lookup/2")
+        |> Enum.find(fn [_, _, pos, _] -> pos == "1" end)
 
-      arg1 =
-        Enum.find(ets_args, fn [_, _, pos, _] -> pos == "1" end)
+      assert fwd, "arg 1 of :ets.lookup/2 was not recorded as a forwarding"
+      assert [_, _, "1", "0"] = fwd
+    end
 
-      assert arg1
-      [_, _, _, value] = arg1
-      # key is parameter 0, so it should be "arg:0" not "dynamic"
-      assert value in ["arg:0", "dynamic"]
+    test "emits 'dynamic' when resolution genuinely fails" do
+      facts = extract(Argus.Test.Fixtures.CallArgsMultiArity)
+
+      values = Enum.map(facts[:call_arg] || [], fn [_, _, _, val] -> val end)
+
+      assert "dynamic" in values,
+             "no unresolvable argument in the fixture; this test proves nothing"
     end
   end
 

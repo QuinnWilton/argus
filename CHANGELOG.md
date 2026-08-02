@@ -12,6 +12,34 @@ baseline the results, edit an extractor, re-measure, diff, accept or
 revert, repeat. Inspired by pi-autoresearch's event-log + living-doc
 pattern, adapted for Argus's multi-dimensional categorical metrics.
 
+### Fixed (soundness)
+
+- **`clientlib/interprocedural.dl` no longer depends on Souffle's conjunct
+  order.** Parameter forwarding was encoded in `call_arg`'s value column as
+  the string `"arg:N"` and decoded in Datalog with
+  `to_number(substr(marker, 4, strlen(marker) - 4))`. `to_number` is a
+  **partial** functor — it aborts the entire program on non-numeric input —
+  and the `match("arg:.*", marker)` that kept literals away from it was a
+  sibling conjunct, not a precondition. Souffle promises no conjunct order.
+
+  The default schedule happened to be safe, which is why this never showed
+  up. Under `souffle -m` it is not: **7 of 16 analyses abort** with
+  `wrong string provided by to_number("mic")`, measured on the oban corpus.
+
+  Forwardings are now their own relation, `call_arg_forward`, with the
+  forwarded position as a real `number` column, and every partial functor is
+  gone from the rule corpus. After the change all 16 analyses run clean under
+  magic sets. The split is lossless — on oban, `call_arg` 202,707 rows became
+  `call_arg` 160,100 + `call_arg_forward` 42,607 — and findings are
+  byte-identical (962 findings, 1259 beams).
+
+  Beyond magic sets, this is a prerequisite for evaluating Souffle in-process:
+  its generated code calls `abort()` on functor errors, which inside the VM is
+  not a failed analysis but a dead node.
+
+  Schema version 9. `Argus.DlDeclarationsTest` now fails any rule that reaches
+  for a partial string functor at all.
+
 ### Changed
 
 - **Extraction is now deterministic.** `Argus.Pipeline.extract/2` fanned out

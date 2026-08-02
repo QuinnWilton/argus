@@ -75,7 +75,17 @@ defmodule Argus.Schema do
   # dirtied every analysis reading those relations on any body edit. Same
   # principle that keeps line_info out of a semantic fact set: positional
   # data is payload to resolve late, never a join key.
-  @schema_version 8
+  # Version 9: `call_arg` no longer encodes parameter forwarding as the
+  # string `"arg:N"` in its value column. Forwardings are their own
+  # relation, `call_arg_forward`, with the forwarded position as a real
+  # `number` field. The string encoding forced `clientlib/interprocedural.dl`
+  # to decode it with `to_number(substr(...))`, and `to_number` is a PARTIAL
+  # functor — it aborts on non-numeric input. The `match("arg:.*", ...)`
+  # guard was a sibling conjunct rather than a precondition, and Souffle
+  # promises no conjunct order: the default schedule was safe, the
+  # magic-set transform was not. Structure that matters to a rule belongs
+  # in a column, not in a string a functor has to parse back out.
+  @schema_version 9
 
   # Layer 1: Module-level facts.
 
@@ -1100,15 +1110,40 @@ defmodule Argus.Schema do
       {:caller, :symbol, "calling function ID"},
       {:callee, :symbol, "callee function ID (mod:func/arity)"},
       {:arg_pos, :number, "0-based argument position"},
-      {:value, :symbol,
-       "resolved value: literal atom string, 'arg:N' for forwarded param, or 'dynamic'"}
+      {:value, :symbol, "resolved value: literal atom string, or 'dynamic'"}
     ],
     doc: """
     Resolved argument value at a call site. Enables interprocedural \
     constant propagation: Datalog rules in `clientlib/interprocedural.dl` \
     trace literal values from call sites through forwarding chains to \
     derive additional `sync_call`/`async_cast` rows that the extractors \
-    couldn't resolve statically.
+    couldn't resolve statically. Forwarded parameters are NOT values here \
+    — they are their own relation, `call_arg_forward`.
+    """
+  }
+
+  @call_arg_forward %{
+    name: :call_arg_forward,
+    layer: 2,
+    fields: [
+      {:caller, :symbol, "calling function ID"},
+      {:callee, :symbol, "callee function ID (mod:func/arity)"},
+      {:arg_pos, :number, "0-based argument position at the call site"},
+      {:fwd_pos, :number, "0-based position of the caller's own parameter being forwarded"}
+    ],
+    doc: """
+    A call site passes one of the caller's own parameters straight through \
+    as an argument — the forwarding step interprocedural constant \
+    propagation walks backwards.
+
+    Split out of `call_arg`, where it used to be encoded in the value \
+    column as the string `"arg:N"` and decoded in Datalog with \
+    `to_number(substr(...))`. `to_number` is a PARTIAL functor: it aborts \
+    on input that is not numeric. The guard that kept non-forwarding values \
+    away from it was a sibling conjunct, and Souffle does not promise \
+    conjunct order — the default schedule happened to be safe, but the \
+    magic-set transform reordered and aborted with `to_number("mic")`. A \
+    structured column cannot be scheduled into a crash.
     """
   }
 
@@ -1201,6 +1236,7 @@ defmodule Argus.Schema do
     @statem_timeout,
     # Interprocedural constant propagation.
     @call_arg,
+    @call_arg_forward,
     # Coverage instrumentation (populated only by the coverage analysis).
     @imprecision
   ]

@@ -2,8 +2,23 @@
 //
 // Resolves function parameter values by tracing literal arguments
 // from call sites through forwarding chains. A "forwarding" is when
-// a function passes its own parameter N as argument M to a callee —
-// encoded as value = "arg:N" in the call_arg fact.
+// a function passes its own parameter N as argument M to a callee.
+//
+// Forwardings arrive as their own relation, `call_arg_forward`, with
+// the forwarded position as a real number column. They used to be
+// encoded in call_arg's value column as the string "arg:N" and decoded
+// here with `to_number(substr(marker, 4, strlen(marker) - 4))`.
+//
+// That was unsound by scheduling. `to_number` is a PARTIAL functor —
+// it aborts on non-numeric input — and the `match("arg:.*", marker)`
+// that kept literals away from it was a sibling conjunct, not a
+// precondition. Souffle promises nothing about conjunct order: the
+// default schedule happened to evaluate the guard first, but the
+// magic-set transform did not, and aborted with `to_number("mic")` on
+// five of eleven analyses (process_bottleneck silently returning zero
+// rows instead of 186). A structured column cannot be scheduled into a
+// crash. It matters beyond magic sets too: in-process evaluation runs
+// Souffle's generated code in the VM, where abort() is fatal.
 //
 // The key output: additional sync_call and async_cast rows derived
 // from the propagation. These are unioned with the extractor-emitted
@@ -11,7 +26,8 @@
 // async_cast gets the enriched call graph automatically.
 //
 // Prerequisites:
-//   - call_arg facts emitted by Argus.Extractors.CallArgs
+//   - call_arg and call_arg_forward facts emitted by
+//     Argus.Extractors.CallArgs
 //   - sync_call and async_cast declared by the consumer analysis
 //     (with .decl and .input — Souffle unions input + derived rows)
 
@@ -23,20 +39,17 @@
 
 .decl resolved_arg(func: symbol, arg_pos: number, value: symbol)
 
-// Base case: a call site passes a literal value (not "dynamic", not
-// a forwarding marker "arg:N").
+// Base case: a call site passes a literal value. Forwardings live in
+// call_arg_forward now, so there is no marker to filter out.
 resolved_arg(callee, pos, val) :-
-  call_arg( _, callee, pos, val),
-  val != "dynamic",
-  !match("arg:.*", val).
+  call_arg(_, callee, pos, val),
+  val != "dynamic".
 
 // Inductive case: a call site forwards its own parameter N as
 // argument M to a callee. If the forwarder's parameter N has a
 // resolved value from one of ITS callers, propagate that value.
 resolved_arg(callee, callee_pos, val) :-
-  call_arg( forwarder, callee, callee_pos, fwd_marker),
-  match("arg:.*", fwd_marker),
-  fwd_param = to_number(substr(fwd_marker, 4, strlen(fwd_marker) - 4)),
+  call_arg_forward(forwarder, callee, callee_pos, fwd_param),
   resolved_arg(forwarder, fwd_param, val).
 
 // ── Enriched sync_call / async_cast ───────────────────────────────
@@ -52,16 +65,12 @@ resolved_arg(callee, callee_pos, val) :-
 // reads the extractor-emitted rows, and these rules add more).
 
 sync_call(func, target) :-
-  call_arg( func, callee, 0, fwd),
-  match("arg:.*", fwd),
+  call_arg_forward(func, callee, 0, fwd_pos),
   (callee = "GenServer:call/2" ; callee = "GenServer:call/3" ;
    callee = ":gen_server:call/2" ; callee = ":gen_server:call/3"),
-  fwd_pos = to_number(substr(fwd, 4, strlen(fwd) - 4)),
   resolved_arg(func, fwd_pos, target).
 
 async_cast(func, target) :-
-  call_arg( func, callee, 0, fwd),
-  match("arg:.*", fwd),
+  call_arg_forward(func, callee, 0, fwd_pos),
   (callee = "GenServer:cast/2" ; callee = ":gen_server:cast/2"),
-  fwd_pos = to_number(substr(fwd, 4, strlen(fwd) - 4)),
   resolved_arg(func, fwd_pos, target).

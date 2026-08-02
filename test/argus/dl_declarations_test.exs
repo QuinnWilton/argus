@@ -73,6 +73,47 @@ defmodule Argus.DlDeclarationsTest do
     end
   end
 
+  describe "partial functors" do
+    # `to_number` and `substr` abort the whole program on input they cannot
+    # handle, rather than failing the one rule. A guard in a sibling
+    # conjunct does not protect them: Souffle promises no conjunct order,
+    # and the magic-set transform demonstrably reorders — seven of sixteen
+    # analyses aborted with `to_number("mic")` before the forwarding
+    # encoding moved out of a string and into its own number column.
+    #
+    # This is a static check on purpose. Reproducing the abort needs a real
+    # corpus, but the property worth keeping is simply that no rule reaches
+    # for a partial functor in the first place.
+    @partial_functors ~w(to_number substr)
+
+    test "no rule uses a partial string functor" do
+      offenders =
+        priv_dl()
+        |> Path.join("**/*.dl")
+        |> Path.wildcard()
+        |> Enum.flat_map(fn path ->
+          path
+          |> File.read!()
+          |> String.split("\n")
+          |> Enum.with_index(1)
+          |> Enum.reject(fn {line, _} -> String.starts_with?(String.trim(line), "//") end)
+          |> Enum.filter(fn {line, _} ->
+            Enum.any?(@partial_functors, &String.contains?(line, &1 <> "("))
+          end)
+          |> Enum.map(fn {line, n} ->
+            "#{Path.relative_to(path, priv_dl())}:#{n}  #{String.trim(line)}"
+          end)
+        end)
+
+      assert offenders == [],
+             "these rules call a functor that aborts the program on bad input:\n" <>
+               Enum.join(offenders, "\n") <>
+               "\n\nEncode the structure as a column instead of parsing it back " <>
+               "out of a string. A guard in a sibling conjunct is not a " <>
+               "precondition — Souffle may schedule the functor first."
+    end
+  end
+
   describe "analysis input sets" do
     # Resolved from Souffle's own transformed RAM, so this is what each
     # analysis genuinely reads, not what it declares — declaring the whole
@@ -87,10 +128,12 @@ defmodule Argus.DlDeclarationsTest do
     @expected %{
       atom_safety: ~w(call_edge code_execution function_def unsafe_atom_creation
                       unsafe_deserialization),
-      call_cycle: ~w(call_arg call_edge function_def implements_behaviour sync_call),
+      call_cycle:
+        ~w(call_arg call_arg_forward call_edge function_def implements_behaviour sync_call),
       coverage: ~w(async_cast dynamic_child ets_new ets_op function_def implements_behaviour
                    imprecision named_process supervisor supervisor_child sync_call),
-      deferred_startup_deadlock: ~w(call_arg call_edge handle_continue_clause init_continues_to
+      deferred_startup_deadlock:
+        ~w(call_arg call_arg_forward call_edge handle_continue_clause init_continues_to
                                     instruction supervisor supervisor_child sync_call try_start),
       distributed: ~w(call_edge distributed_store_op function_def global_op global_register
                       implements_behaviour node_operation rpc_call),
@@ -99,16 +142,20 @@ defmodule Argus.DlDeclarationsTest do
       ets: ~w(dynamic_child ets_new ets_op ets_option function_def implements_behaviour
               supervisor_child),
       gen_statem: ~w(statem_initial statem_module statem_state statem_transition),
-      one_for_one_coupling: ~w(async_cast call_arg call_edge dynamic_child function_def
+      one_for_one_coupling:
+        ~w(async_cast call_arg call_arg_forward call_edge dynamic_child function_def
                                implements_behaviour process_link supervisor supervisor_child
                                supervisor_site sync_call),
-      process_bottleneck: ~w(call_arg call_edge function_def implements_behaviour sync_call),
+      process_bottleneck:
+        ~w(call_arg call_arg_forward call_edge function_def implements_behaviour sync_call),
       process_registry: ~w(function_def process_register whereis_call),
-      supervision: ~w(async_cast call_arg call_edge dynamic_child function_def
+      supervision: ~w(async_cast call_arg call_arg_forward call_edge dynamic_child function_def
                       implements_behaviour supervisor supervisor_child supervisor_site sync_call),
-      sync_call_in_init: ~w(call_arg call_edge dynamic_child function_def implements_behaviour
+      sync_call_in_init:
+        ~w(call_arg call_arg_forward call_edge dynamic_child function_def implements_behaviour
                             supervisor supervisor_child sync_call),
-      timeout_chain: ~w(call_arg call_edge function_def implements_behaviour sync_call
+      timeout_chain:
+        ~w(call_arg call_arg_forward call_edge function_def implements_behaviour sync_call
                         sync_call_timeout),
       unlinked_spawn: ~w(instruction spawn_call),
       unsafe_task: ~w(branch call_edge function_def implements_behaviour instruction remote_call
