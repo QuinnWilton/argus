@@ -550,3 +550,71 @@ store poisons the entry and nothing downstream is ever reported. The
 working version walks the control-flow graph instruction by instruction,
 refusing to pass any instruction that reads `from`, and asks which
 `{:noreply, _}` sites remain reachable.
+
+---
+
+# The analysis that was wrong about itself, August 2026
+
+The most consequential finding of this round was not in anyone's code. It
+was in argus.
+
+`reply_contract` returned zero on every project swept. That was believable
+— mature codebases, a narrow bug class — and it is exactly what a working
+analysis finding nothing looks like. It was only caught because the raw
+extractor output had been dumped separately during development and said
+there were three.
+
+The cause: `implements_behaviour` stores what a module *declared*, rendered
+with `inspect/1`. `@behaviour GenServer` becomes `"GenServer"`;
+`-behaviour(gen_server)` becomes `":gen_server"`, colon and all. Nineteen of
+twenty-two analyses matched the Elixir spelling only.
+
+On sequin that is 100 modules seen and **42 unseen** — thirty percent of the
+gen_servers in the tree, every one of them in a dependency. Which is
+precisely the population that matters: nobody reads those modules, so a bug
+there survives longest, and all three `reply_contract` findings turned out
+to be Erlang.
+
+## What it cost, measured
+
+Same corpus, same rules, only the behaviour predicate changed:
+
+| | before | after |
+|---|---|---|
+| `shutdown_safety` cleanup_never_runs | 13 | **18** |
+| `shutdown_safety` cleanup_unclear | 0 | **6** |
+| `error_handling` exit_in_callback | 3 | **13** |
+| `timeout_chain` blocking_cast_handler | 1 | **10** |
+| `timeout_chain` timeout_chain_risk | 1 | **9** |
+| `process_bottleneck` bottleneck_caller | 341 | **1698** |
+| `process_bottleneck` sync_call_fan_in | 7 | **13** |
+
+Spot-checked against source: `amqp_rpc_client:terminate/2` calls
+`amqp_channel:close/1` — a `gen_server:call` — and the module never traps
+exits, so the AMQP channel is not closed on any supervisor shutdown.
+
+## The shape of the mistake
+
+Under-reporting is the failure mode static analysis is worst at noticing,
+because **the output of a broken analysis and a clean codebase are the same
+artifact**. Every gate in this repo checks that findings are *right*. None
+checked that they were *all there*, and no amount of reading the rules would
+have shown it: each rule is locally correct, and `"GenServer"` is what the
+rule means.
+
+Three things follow, and all three are now in the tests.
+
+**Ask the canonical question, not the declared one.** `behaves_as/2` in
+`clientlib/behaviours.dl` maps spellings to one name, and a static test
+fails any rule that matches a declared string.
+
+**An indirection that normalises can lose things too.** `behaves_as` passes
+unaliased names through unchanged — without that, adding it would silently
+drop every behaviour the table omits. And two rules asked for
+`":gen_statem"`, a spelling the table *rewrites*, so they matched nothing
+from the moment the indirection landed. That regression is invisible at
+runtime, so it is checked statically.
+
+**A believable zero deserves the same scrutiny as a surprising finding.**
+The only reason this was caught is that two views of the same question
+existed and disagreed. That is worth building on purpose, not by accident.
