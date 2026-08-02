@@ -153,6 +153,8 @@ defmodule Argus.DlDeclarationsTest do
       process_registry: ~w(function_def process_register whereis_call),
       request_surface: ~w(call_edge code_execution function_def implements_behaviour
                           unsafe_atom_creation unsafe_deserialization),
+      shutdown_safety: ~w(call_edge function_def implements_behaviour impure_call trap_exit
+                          unknown_call),
       purity: ~w(call_edge closure_def dynamic_call ets_new ets_op impure_call port_open
            process_register protocol_dispatch pure_contract recv_start resolved_apply
            send_msg spawn_call unknown_call),

@@ -1,0 +1,138 @@
+// Cleanup in `terminate/2` that will not run when it matters.
+//
+// Another contract nobody writes down. Putting cleanup in `terminate/2`
+// looks like saying "run this on the way out". OTP's actual rule is
+// narrower, and the gap is silent:
+//
+//   terminate/2 runs when the callback returns {:stop, ...}, or raises.
+//
+//   On a SUPERVISOR shutdown — which is how processes normally stop, and
+//   the case the cleanup was written for — the parent sends an exit
+//   signal. A process that is not trapping exits simply dies. terminate/2
+//   is never called. Nothing is logged. The buffer is not flushed.
+//
+// This is documented GenServer behaviour, and it is still one of the most
+// reliably-made mistakes on the BEAM, because the code reads correctly and
+// the tests pass: a test that calls GenServer.stop/1 exercises the path
+// that DOES run terminate, so the one path that matters in production is
+// the one never exercised.
+//
+// The second obligation applies once you are trapping: terminate/2 must
+// finish inside the child's shutdown timeout (5000ms by default), or the
+// supervisor brutal-kills and the cleanup is truncated anyway. Slow work
+// there buys nothing.
+
+.include "../clientlib/imports.dl"
+
+// ── Behaviours with a terminate callback ─────────────────────────
+
+.decl terminating_behaviour(behaviour: symbol)
+
+terminating_behaviour("GenServer").
+terminating_behaviour("gen_server").
+terminating_behaviour("GenStage").
+terminating_behaviour("gen_statem").
+terminating_behaviour("GenStateMachine").
+terminating_behaviour("Broadway").
+terminating_behaviour("Phoenix.LiveView").
+
+.decl terminate_callback(func: symbol, mod: symbol, behaviour: symbol)
+
+terminate_callback(func, mod, behaviour) :-
+  implements_behaviour(mod, behaviour),
+  terminating_behaviour(behaviour),
+  function_def(func, mod, "terminate", _, _).
+
+// ── Does the module trap exits? ──────────────────────────────────
+//
+// Module-granular on purpose. `Process.flag(:trap_exit, true)` is
+// overwhelmingly called in init/1, but some modules set it in a helper or
+// on a later transition, and requiring it to be in init would produce
+// false positives for code that is correct.
+
+.decl traps_exits(mod: symbol)
+
+traps_exits(mod) :- trap_exit(_, mod).
+
+// ── Cleanup worth running ────────────────────────────────────────
+//
+// WRITES only, and not logging. A terminate/2 that logs "shutting down"
+// loses nothing when it is skipped; one that flushes a buffer, releases a
+// lease, or tells another system it is going away loses something real.
+// Reads are excluded for the same reason they are excluded from
+// transaction safety: there is nothing there to lose.
+
+.decl durable_cleanup(category: symbol)
+
+durable_cleanup("io").        // flushing to disk
+durable_cleanup("network").   // deregistering, final report, closing a session
+durable_cleanup("ets").       // clearing or handing off shared state
+durable_cleanup("process").   // telling another process, releasing a name
+durable_cleanup("port").      // closing an external resource
+durable_cleanup("node").      // leaving a distributed group
+
+.decl cleanup_in_terminate(mod: symbol, behaviour: symbol, category: symbol, api: symbol, via: symbol)
+
+cleanup_in_terminate(mod, behaviour, category, api, func) :-
+  terminate_callback(func, mod, behaviour),
+  impure_call(_, func, api, category, "write"),
+  durable_cleanup(category).
+
+cleanup_in_terminate(mod, behaviour, category, api, via) :-
+  terminate_callback(func, mod, behaviour),
+  call_reachable(func, via),
+  impure_call(_, via, api, category, "write"),
+  durable_cleanup(category).
+
+// ── Findings ─────────────────────────────────────────────────────
+
+// The headline: cleanup that a supervisor shutdown will skip entirely.
+.decl cleanup_never_runs(mod: symbol, behaviour: symbol, category: symbol, api: symbol, via: symbol)
+.output cleanup_never_runs
+
+cleanup_never_runs(mod, behaviour, category, api, via) :-
+  cleanup_in_terminate(mod, behaviour, category, api, via),
+  !traps_exits(mod).
+
+// Cleanup the effect model cannot classify — terminate/2 calling into the
+// application's own code, which is where most real cleanup lives.
+//
+// Reported separately and less confidently. The analysis cannot say WHAT
+// the work is, only that terminate/2 does something beyond logging and that
+// a supervisor shutdown will skip it. That is still the useful half of the
+// question: releasing a lease, closing a session and flushing a buffer all
+// look like an ordinary call to your own module.
+.decl unclassified_cleanup(mod: symbol, behaviour: symbol, api: symbol, via: symbol)
+
+unclassified_cleanup(mod, behaviour, api, func) :-
+  terminate_callback(func, mod, behaviour),
+  unknown_call(_, func, api, _callee).
+
+unclassified_cleanup(mod, behaviour, api, via) :-
+  terminate_callback(func, mod, behaviour),
+  call_reachable(func, via),
+  unknown_call(_, via, api, _callee).
+
+.decl cleanup_unclear(mod: symbol, behaviour: symbol, api: symbol, via: symbol)
+.output cleanup_unclear
+
+cleanup_unclear(mod, behaviour, api, via) :-
+  unclassified_cleanup(mod, behaviour, api, via),
+  !traps_exits(mod),
+  !cleanup_in_terminate(mod, _, _, _, _).
+
+// Slow work inside terminate, for a module that DOES trap exits — so the
+// callback is reached, but may not finish. Network and port calls are the
+// ones with no bound of their own.
+.decl slow_category(category: symbol)
+
+slow_category("network").
+slow_category("port").
+
+.decl terminate_may_be_truncated(mod: symbol, behaviour: symbol, category: symbol, api: symbol, via: symbol)
+.output terminate_may_be_truncated
+
+terminate_may_be_truncated(mod, behaviour, category, api, via) :-
+  cleanup_in_terminate(mod, behaviour, category, api, via),
+  traps_exits(mod),
+  slow_category(category).
