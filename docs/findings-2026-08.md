@@ -1201,3 +1201,55 @@ zero, which is the failure this document keeps returning to. The evidence
 for the fix is the corpus measurement above, which is stronger than a
 fixture would have been anyway, and the gap is recorded rather than papered
 over.
+
+---
+
+# Turning the whole suite on ourselves
+
+Three separate times this sweep, pointing an analysis at argus found more
+than pointing it at a corpus. That is a generator too, so all 23 analyses
+were run over argus itself.
+
+**No new defects.** Two observations worth keeping.
+
+## Test fixtures drown self-analysis
+
+Most rows are `Argus.Test.Fixtures.*` — the deliberately-broken modules that
+exist to make these analyses fire. `call_cycle` reports three cycles, all
+fixtures. `deferred_startup_deadlock` reports five, all fixtures.
+
+The hygiene note near the top of this document — *sweeps pick up
+`test/support` when the project was compiled in test env* — was written as a
+minor annoyance. On a project whose test fixtures are **purpose-built
+positives**, it is not minor: it is most of the output, and it would make
+argus useless on itself without filtering. Analyzer projects are the extreme
+case, but any project with realistic fixtures has a weaker version of it.
+
+## The real findings are all decisions someone already made
+
+Strip the fixtures and what remains is three sites, and every one is
+deliberate and documented:
+
+- `Argus.Findings` converts names back to atoms with `String.to_atom/1`, and
+  the moduledoc already says why: *"Those names come from BEAM files the
+  caller asked Argus to disassemble, so the atoms already exist in this
+  node's atom table — parsing does not grow it. Do not feed findings from
+  untrusted `.beam` files into a long-lived node."*
+- `Argus.Souffle` and `Argus.Autoresearch` call `System.cmd/3`. Shelling out
+  to `souffle` is the architecture.
+
+So `atom_safety` is right, and the author was right, and both can be true.
+That is the same distinction `tls_verification` had to make — Sequin's
+`ConfigParser` offers `verify_none` as a documented option while
+`RedisStringSink` forces it — and there it was worth a module-scope filter
+that dropped four findings.
+
+**The generalisation is not built here, and it is the most interesting thing
+this sweep surfaced**: a finding is worth much less when the code already
+carries the reasoning for why it is acceptable. `tls_verification` gets at
+this structurally, by asking whether the module offers an alternative. A
+general version would ask whether the *decision* is recorded — and the
+places that record it are exactly the places a fact model does not look:
+moduledocs, comments, a `# TODO` like the one in Sequin's
+`PostgresDatabase` that turned out to be the strongest corroboration any
+finding in this document received.
