@@ -392,7 +392,8 @@ defmodule Argus.Schema do
     name: :send_msg,
     layer: 1,
     fields: [
-      {:id, :instr_id, "instruction ID"}
+      {:id, :instr_id, "instruction ID"},
+      {:caller, :func_id, "containing function ID"}
     ],
     doc: "Message send instruction."
   }
@@ -463,11 +464,34 @@ defmodule Argus.Schema do
     doc: "End of a try block."
   }
 
+  @dynamic_call %{
+    name: :dynamic_call,
+    layer: 1,
+    fields: [
+      {:id, :instr_id, "instruction ID"},
+      {:caller, :func_id, "containing function ID"},
+      {:kind, :symbol, "call_fun (a fun value) or apply (a computed MFA)"}
+    ],
+    doc: """
+    A call whose target is not statically known: through a fun value \
+    (`call_fun`), or through a computed module/function (`apply`).
+
+    The call graph cannot follow these, which makes them the boundary of \
+    anything that reasons over reachability. Most analyses can ignore that \
+    and be merely incomplete; one that makes a claim about ALL executions — \
+    that a function performs no side effects, say — cannot, because an \
+    unfollowable call could do anything. Recorded so such an analysis can \
+    say "unprovable here" instead of quietly answering as though the call \
+    were not there.
+    """
+  }
+
   @make_fun %{
     name: :make_fun,
     layer: 1,
     fields: [
       {:id, :instr_id, "instruction ID"},
+      {:caller, :func_id, "containing function ID"},
       {:target, :symbol,
        "lambda body label number, or the function ID for funs over named functions"},
       {:num_free, :number, "number of captured variables"}
@@ -1163,6 +1187,78 @@ defmodule Argus.Schema do
     """
   }
 
+  @pure_contract %{
+    name: :pure_contract,
+    layer: 2,
+    fields: [
+      {:func, :func_id, "the function declared pure"},
+      {:mod, :symbol, "declaring module"},
+      {:name, :symbol, "function name"},
+      {:arity, :number, "function arity"}
+    ],
+    doc: """
+    A function its module declared free of observable effects with \
+    `@pure true` (see `Argus.Purity`).
+
+    Read out of the beam's persisted attribute chunk, so the contract comes \
+    from the compiled artifact and cannot drift from the code it describes.
+    """
+  }
+
+  @protocol_dispatch %{
+    name: :protocol_dispatch,
+    layer: 2,
+    fields: [
+      {:id, :instr_id, "instruction ID of the call"},
+      {:caller, :func_id, "containing function ID"},
+      {:api, :symbol, "the protocol function called"}
+    ],
+    doc: """
+    A call that dispatches through a protocol, so its target is whichever \
+    implementation the argument's type provides.
+
+    Distinct from `unknown_call`: that one means the effect model has no \
+    entry, which somebody could add. This one means there is no single \
+    answer to have — any module may define an implementation, and it is \
+    ordinary code that can do anything.
+    """
+  }
+
+  @impure_call %{
+    name: :impure_call,
+    layer: 2,
+    fields: [
+      {:id, :instr_id, "instruction ID of the call"},
+      {:caller, :func_id, "containing function ID"},
+      {:api, :symbol, "the API called, as Mod.fun/arity"},
+      {:category, :symbol,
+       "io | process | process_dict | ets | port | node | time | random | network | code_loading | dynamic"}
+    ],
+    doc: """
+    A call with a known observable effect, classified by \
+    `Argus.Purity.Effects`. The category is carried so a report can say \
+    WHAT the effect is rather than only that there is one.
+    """
+  }
+
+  @unknown_call %{
+    name: :unknown_call,
+    layer: 2,
+    fields: [
+      {:id, :instr_id, "instruction ID of the call"},
+      {:caller, :func_id, "containing function ID"},
+      {:api, :symbol, "the API called, as Mod.fun/arity"}
+    ],
+    doc: """
+    A call the effect model has no opinion about — neither known-impure nor \
+    known-pure.
+
+    Recorded rather than ignored because purity is a claim about every \
+    execution. Assuming unknown calls are harmless would make a \
+    verification report success far more often and mean nothing.
+    """
+  }
+
   @call_arg %{
     name: :call_arg,
     layer: 2,
@@ -1244,6 +1340,7 @@ defmodule Argus.Schema do
     @try_start,
     @try_end,
     @make_fun,
+    @dynamic_call,
     @closure_def,
     @tuple_field_access,
     @type_test,
@@ -1303,6 +1400,11 @@ defmodule Argus.Schema do
     # Interprocedural constant propagation.
     @call_arg,
     @call_arg_forward,
+    # Purity contracts and call classification.
+    @pure_contract,
+    @impure_call,
+    @protocol_dispatch,
+    @unknown_call,
     # Coverage instrumentation (populated only by the coverage analysis).
     @imprecision
   ]

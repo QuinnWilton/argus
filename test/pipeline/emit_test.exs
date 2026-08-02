@@ -216,7 +216,7 @@ defmodule Argus.Pipeline.EmitTest do
   describe "message facts" do
     test "emits send_msg" do
       facts = emit_func([:send])
-      assert [[_id]] = facts[:send_msg]
+      assert [[_id, _caller]] = facts[:send_msg]
     end
 
     test "emits recv_start for loop_rec" do
@@ -245,7 +245,7 @@ defmodule Argus.Pipeline.EmitTest do
   describe "make_fun facts" do
     test "emits make_fun for make_fun3 with label" do
       facts = emit_func([{:make_fun3, {:f, 15}, 0, 123, {:x, 0}, {:list, [{:x, 1}]}}])
-      assert [[_id, "15", "1"]] = facts[:make_fun]
+      assert [[_id, _caller, "15", "1"]] = facts[:make_fun]
     end
 
     test "emits make_fun for make_fun3 with MFA" do
@@ -253,7 +253,7 @@ defmodule Argus.Pipeline.EmitTest do
         emit_func([{:make_fun3, {MyMod, :"-fun/1-", 2}, 0, 123, {:x, 0}, {:list, [{:x, 1}]}}])
 
       fun_facts = facts[:make_fun]
-      assert [[_id, target, "1"]] = fun_facts
+      assert [[_id, _caller, target, "1"]] = fun_facts
       assert target == "MyMod:-fun/1-/2"
     end
 

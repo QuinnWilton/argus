@@ -17,6 +17,7 @@ defmodule Argus.AnalysisTest do
     :one_for_one_coupling,
     :process_bottleneck,
     :process_registry,
+    :purity,
     :request_surface,
     :supervision,
     :sync_call_in_init,
@@ -32,9 +33,9 @@ defmodule Argus.AnalysisTest do
   # -- Discovery ---------------------------------------------------------------
 
   describe "discovery" do
-    test "finds all 18 built-in analysis modules" do
+    test "finds all 19 built-in analysis modules" do
       modules = Analysis.builtin_analysis_modules()
-      assert length(modules) == 18
+      assert length(modules) == 19
     end
 
     test "builtin_analyses/0 returns all names sorted" do

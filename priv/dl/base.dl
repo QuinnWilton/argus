@@ -47,6 +47,13 @@
 .decl def(id: symbol, reg: symbol)
 .input def
 
+// A call whose target is not statically known: through a fun value (`call_fun`), or through a computed module/function (`apply`).
+//
+// The call graph cannot follow these, which makes them the boundary of anything that reasons over reachability. Most analyses can ignore that and be merely incomplete; one that makes a claim about ALL executions — that a function performs no side effects, say — cannot, because an unfollowable call could do anything. Recorded so such an analysis can say "unprovable here" instead of quietly answering as though the call were not there.
+//
+.decl dynamic_call(id: symbol, caller: symbol, kind: symbol)
+.input dynamic_call
+
 // Function definition within a module.
 .decl function_def(func: symbol, mod: symbol, name: symbol, arity: number, exported: number)
 .input function_def
@@ -85,7 +92,7 @@
 .input local_call
 
 // Lambda/closure creation.
-.decl make_fun(id: symbol, target: symbol, num_free: number)
+.decl make_fun(id: symbol, caller: symbol, target: symbol, num_free: number)
 .input make_fun
 
 // Module attribute key-value pair.
@@ -124,7 +131,7 @@
 .input select_branch
 
 // Message send instruction.
-.decl send_msg(id: symbol)
+.decl send_msg(id: symbol, caller: symbol)
 .input send_msg
 
 // Process spawn detected via erlang:spawn* calls.

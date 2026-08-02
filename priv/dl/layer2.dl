@@ -105,6 +105,11 @@
 .decl imprecision(category: symbol, func: symbol, relation: symbol, reason: symbol)
 .input imprecision
 
+// A call with a known observable effect, classified by `Argus.Purity.Effects`. The category is carried so a report can say WHAT the effect is rather than only that there is one.
+//
+.decl impure_call(id: symbol, caller: symbol, api: symbol, category: symbol)
+.input impure_call
+
 // Records that a GenServer module returns `{:ok, _, {:continue, tag}}` from
 // `init/1` or `{:noreply, _, {:continue, tag}}` from any handler. The
 // deferred-startup-deadlock analysis uses this to identify modules whose
@@ -132,6 +137,20 @@
 // Process name registration.
 .decl process_register(id: symbol, func: symbol, name: symbol, method: symbol)
 .input process_register
+
+// A call that dispatches through a protocol, so its target is whichever implementation the argument's type provides.
+//
+// Distinct from `unknown_call`: that one means the effect model has no entry, which somebody could add. This one means there is no single answer to have — any module may define an implementation, and it is ordinary code that can do anything.
+//
+.decl protocol_dispatch(id: symbol, caller: symbol, api: symbol)
+.input protocol_dispatch
+
+// A function its module declared free of observable effects with `@pure true` (see `Argus.Purity`).
+//
+// Read out of the beam's persisted attribute chunk, so the contract comes from the compiled artifact and cannot drift from the code it describes.
+//
+.decl pure_contract(func: symbol, mod: symbol, name: symbol, arity: number)
+.input pure_contract
 
 // Registry module operation.
 .decl registry_op(id: symbol, func: symbol, registry: symbol, op: symbol, key: symbol)
@@ -195,6 +214,13 @@
 // Process.flag(:trap_exit, true) call site.
 .decl trap_exit(func: symbol, mod: symbol)
 .input trap_exit
+
+// A call the effect model has no opinion about — neither known-impure nor known-pure.
+//
+// Recorded rather than ignored because purity is a claim about every execution. Assuming unknown calls are harmless would make a verification report success far more often and mean nothing.
+//
+.decl unknown_call(id: symbol, caller: symbol, api: symbol)
+.input unknown_call
 
 // Unsafe atom creation from dynamic input.
 .decl unsafe_atom_creation(id: symbol, func: symbol, api: symbol)

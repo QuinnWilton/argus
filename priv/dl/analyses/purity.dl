@@ -1,0 +1,143 @@
+// Purity contract verification.
+//
+// Every other analysis here looks for a bug nobody claimed was absent. This
+// one checks a claim the author made with `@pure true`, which changes what
+// a finding means: not "this looks suspicious" but "you said this function
+// has no side effects, and here is the call that gives it one".
+//
+// It is also the only analysis that has to be SOUND rather than merely
+// useful. A missed supervision smell costs a warning; a purity check that
+// says "verified" when the function writes to ETS has actively misled
+// someone into depending on it. So every call is accounted for, and calls
+// the analysis cannot see through produce "unprovable" rather than silence.
+//
+// Three outcomes, and the third is the honest one:
+//
+//   violated    reaches a call with a known observable effect
+//   unprovable  reaches a call that cannot be followed or classified
+//   verified    everything reachable is known to be effect-free
+
+.include "../clientlib/imports.dl"
+
+// ── What the author claimed ──────────────────────────────────────
+
+.decl declared_pure(func: symbol)
+
+declared_pure(func) :- pure_contract(func, _, _, _).
+
+// ── Effects the function performs itself ─────────────────────────
+//
+// Two sources. `impure_call` comes from the effect model in
+// Argus.Purity.Effects — a curated table of standard-library and BIF
+// behaviour, kept in Elixir where it can be unit-tested. The rest come from
+// Layer 1, where the instruction itself IS the effect and no table is
+// needed: a send is a send.
+
+.decl performs_effect(func: symbol, category: symbol, api: symbol)
+
+performs_effect(func, category, api) :-
+  impure_call(_, func, api, category).
+
+performs_effect(func, "process", "send") :-
+  send_msg(_, func).
+
+performs_effect(func, "process", "receive") :-
+  recv_start(_, func, _, _).
+
+performs_effect(func, "process", "spawn") :-
+  spawn_call(_, func, _, _, _, _).
+
+performs_effect(func, "ets", "ets") :-
+  ets_op(_, func, _, _, _).
+
+performs_effect(func, "ets", "ets_new") :-
+  ets_new(_, func, _).
+
+performs_effect(func, "port", "port") :-
+  port_open(_, func, _, _).
+
+performs_effect(func, "process", "register") :-
+  process_register(_, func, _, _).
+
+// ── Calls that cannot be accounted for ───────────────────────────
+//
+// A fun value or an `apply` has no statically known target, so nothing
+// downstream of it can be inspected. An unclassified remote call is a
+// different gap with the same consequence: the effect model has no entry
+// for it, so its behaviour is unknown.
+//
+// Both are reported rather than assumed harmless. This is the difference
+// between a verification and an opinion.
+
+.decl opaque(func: symbol, reason: symbol, detail: symbol)
+
+opaque(func, "dynamic_call", kind) :-
+  dynamic_call(_, func, kind).
+
+opaque(func, "unclassified_call", api) :-
+  unknown_call(_, func, api).
+
+// Protocol dispatch is opaque for a different reason: not a missing table
+// entry, but an open set of implementations that no table could enumerate.
+opaque(func, "protocol_dispatch", api) :-
+  protocol_dispatch(_, func, api).
+
+// ── Propagation ──────────────────────────────────────────────────
+//
+// Purity is a property of everything a function can reach, so both effects
+// and opacity travel up the call graph. `call_edge` already treats closure
+// construction as a call, which is exactly right here: a lambda built
+// inside a function and handed to Enum.each still runs its body, so an
+// effect in that lambda is an effect of the function that built it.
+
+.decl reaches_effect(func: symbol, category: symbol, api: symbol, via: symbol)
+
+reaches_effect(func, category, api, func) :-
+  performs_effect(func, category, api).
+
+reaches_effect(func, category, api, via) :-
+  call_reachable(func, via),
+  performs_effect(via, category, api).
+
+.decl reaches_opaque(func: symbol, reason: symbol, detail: symbol, via: symbol)
+
+reaches_opaque(func, reason, detail, func) :-
+  opaque(func, reason, detail).
+
+reaches_opaque(func, reason, detail, via) :-
+  call_reachable(func, via),
+  opaque(via, reason, detail).
+
+// ── Findings ─────────────────────────────────────────────────────
+
+// The claim is false: a declared-pure function reaches a known effect.
+// `via` is the function that actually performs it, which is where the fix
+// goes when it is not the declared function itself.
+.decl purity_violated(func: symbol, category: symbol, api: symbol, via: symbol)
+.output purity_violated
+
+purity_violated(func, category, api, via) :-
+  declared_pure(func),
+  reaches_effect(func, category, api, via).
+
+// The claim cannot be checked. Not a violation — the function may well be
+// pure — but nobody should rely on it having been verified.
+.decl purity_unprovable(func: symbol, reason: symbol, detail: symbol, via: symbol)
+.output purity_unprovable
+
+purity_unprovable(func, reason, detail, via) :-
+  declared_pure(func),
+  reaches_opaque(func, reason, detail, via),
+  !reaches_effect(func, _, _, _).
+
+// The claim holds: nothing reachable performs an effect, and nothing
+// reachable is unaccounted for. Emitted deliberately — the value of a
+// contract is knowing it was actually checked, and an analysis that only
+// ever reports failures cannot distinguish "verified" from "not looked at".
+.decl purity_verified(func: symbol)
+.output purity_verified
+
+purity_verified(func) :-
+  declared_pure(func),
+  !reaches_effect(func, _, _, _),
+  !reaches_opaque(func, _, _, _).

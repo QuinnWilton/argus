@@ -14,6 +14,67 @@ pattern, adapted for Argus's multi-dimensional categorical metrics.
 
 ### Added (analysis)
 
+### Added (analysis)
+
+- **`purity`** and **`Argus.Purity`** — declare a function free of side
+  effects, and have the claim mechanically checked.
+
+  ```elixir
+  defmodule Money do
+    use Argus.Purity
+
+    @pure true
+    def add(%Money{cents: a}, %Money{cents: b}), do: %Money{cents: a + b}
+  end
+  ```
+
+  This is a different shape from every other analysis here. The others look
+  for bugs nobody claimed were absent; this one verifies a claim the author
+  made, so a finding says "you declared this pure and here is the call that
+  makes it not" rather than "this looks suspicious".
+
+  It is therefore the first analysis that has to be **sound** rather than
+  merely useful. A missed supervision smell costs a warning; a purity check
+  that reports "verified" for a function that writes to ETS has actively
+  misled someone into depending on it. So there are three outcomes:
+
+  - `purity_violated` — reaches a known observable effect, named by
+    category (io, process, process_dict, ets, port, node, time, random,
+    network, code_loading) and attributed to the function that performs it.
+  - `purity_unprovable` — reaches something that cannot be accounted for: a
+    call through a fun value or `apply`, a **protocol dispatch** (whose
+    implementations are an open set no table could enumerate), or a call the
+    effect model has no entry for.
+  - `purity_verified` — everything reachable is known effect-free. Emitted
+    deliberately: a contract is only worth having if you can tell it was
+    actually checked.
+
+  The declaration travels as a **persisted module attribute**, so the
+  contract is read out of the beam rather than the source and cannot drift
+  from the code it describes. No macro wraps the function, so the emitted
+  code is byte-for-byte what it would have been.
+
+  Effects in closures the function builds are caught for free: the compiler
+  lifts the lambda and argus already records a `closure_def` edge, so
+  `@pure true def each(l), do: Enum.each(l, &IO.puts/1)` is a violation
+  attributed to the lifted `-each/1-fun-0-`.
+
+  The effect model (`Argus.Purity.Effects`) lives in Elixir rather than in
+  rules — it is a large table that wants doctests, and expressing it as
+  Datalog would mean string surgery, which is what produced the
+  partial-functor unsoundness fixed in v9.
+
+  Dogfooded: `Argus.InstrId` carries `@pure true` on its public API. Six
+  functions verify; two are unprovable because they reach
+  `String.Chars.to_string/1`, and that is the correct answer — protocol
+  dispatch runs whichever implementation the argument's type provides, which
+  is ordinary user code.
+
+  Requires schema v13: `send_msg` and `make_fun` gain `caller`, the new
+  `dynamic_call` records calls through a fun value or `apply`, and Layer 2
+  gains `pure_contract`, `impure_call`, `protocol_dispatch` and
+  `unknown_call`.
+
 - **`callback_receive`** — a bare `receive` inside an OTP callback.
 
   An OTP process is already in a receive loop its behaviour owns. A

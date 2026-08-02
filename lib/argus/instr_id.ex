@@ -29,6 +29,8 @@ defmodule Argus.InstrId do
   scattered across the extractors.
   """
 
+  use Argus.Purity
+
   @enforce_keys [:module, :func, :arity, :idx]
   defstruct [:module, :func, :arity, :idx]
 
@@ -52,6 +54,7 @@ defmodule Argus.InstrId do
       :error
   """
   @spec parse(String.t()) :: {:ok, t()} | :error
+  @pure true
   def parse(id) when is_binary(id) do
     with {:ok, prefix, idx} <- split_trailing_int(id, "#"),
          {:ok, mod_func, arity} <- split_trailing_int(prefix, "/"),
@@ -72,6 +75,7 @@ defmodule Argus.InstrId do
       "Demo:run/1#3"
   """
   @spec mint(String.t(), non_neg_integer()) :: String.t()
+  @pure true
   def mint(func_id, idx) when is_binary(func_id) and is_integer(idx) and idx >= 0 do
     func_id <> "#" <> Integer.to_string(idx)
   end
@@ -83,6 +87,7 @@ defmodule Argus.InstrId do
       "Demo:run/1"
   """
   @spec func_id(module() | String.t(), String.t()) :: String.t()
+  @pure true
   def func_id(module, name_arity) when is_binary(name_arity) do
     module_string(module) <> ":" <> name_arity
   end
@@ -101,12 +106,14 @@ defmodule Argus.InstrId do
       ":lists:map/2"
   """
   @spec func_id(module() | String.t(), atom() | String.t(), arity()) :: String.t()
+  @pure true
   def func_id(module, name, arity) when is_integer(arity) and arity >= 0 do
     func_id(module, to_string(name) <> "/" <> Integer.to_string(arity))
   end
 
   @doc "Render back to the wire format (inverse of `parse/1`)."
   @spec format(t()) :: String.t()
+  @pure true
   def format(%__MODULE__{module: m, func: f, arity: a, idx: i}) do
     mint(func_id(m, f, a), i)
   end
@@ -129,6 +136,7 @@ defmodule Argus.InstrId do
   """
   @spec parse_func(String.t()) ::
           {:ok, %{module: String.t(), func: String.t(), arity: non_neg_integer()}} | :error
+  @pure true
   def parse_func(func_id) when is_binary(func_id) do
     with {:ok, mod_func, arity} <- split_trailing_int(func_id, "/"),
          {:ok, module, func} <- split_last(mod_func, ":") do
@@ -154,6 +162,7 @@ defmodule Argus.InstrId do
       :error
   """
   @spec func_id_of(String.t()) :: {:ok, String.t()} | :error
+  @pure true
   def func_id_of(instr_id) when is_binary(instr_id) do
     case split_trailing_int(instr_id, "#") do
       {:ok, func_id, _idx} -> {:ok, func_id}
@@ -163,6 +172,7 @@ defmodule Argus.InstrId do
 
   @doc "The `{func, arity}` pair, the usual per-function grouping key."
   @spec fa(t()) :: {String.t(), non_neg_integer()}
+  @pure true
   def fa(%__MODULE__{func: func, arity: arity}), do: {func, arity}
 
   # Split on the LAST occurrence of `sep`, requiring a non-negative integer

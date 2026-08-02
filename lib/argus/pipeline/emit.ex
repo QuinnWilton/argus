@@ -319,6 +319,7 @@ defmodule Argus.Pipeline.Emit do
     |> add_fact(:def, [id, "x0"])
     |> emit_call_arg_uses(id, arity)
     |> maybe_spawn(id, func_id, mod, func, arity)
+    |> maybe_dynamic(id, func_id, mod, func)
   end
 
   defp emit_specific(facts, id, func_id, {:call_ext_only, _arity, {:extfunc, mod, func, arity}}) do
@@ -327,6 +328,7 @@ defmodule Argus.Pipeline.Emit do
     |> add_fact(:tail_call, [id])
     |> emit_call_arg_uses(id, arity)
     |> maybe_spawn(id, func_id, mod, func, arity)
+    |> maybe_dynamic(id, func_id, mod, func)
   end
 
   defp emit_specific(
@@ -340,6 +342,7 @@ defmodule Argus.Pipeline.Emit do
     |> add_fact(:tail_call, [id])
     |> emit_call_arg_uses(id, arity)
     |> maybe_spawn(id, func_id, mod, func, arity)
+    |> maybe_dynamic(id, func_id, mod, func)
   end
 
   # BIF calls.
@@ -397,6 +400,80 @@ defmodule Argus.Pipeline.Emit do
     facts
     |> add_fact(:try_start, [id, func_id, "catch", to_string(handler)])
     |> add_fact(:def, [id, format_operand(reg)])
+  end
+
+  # Dynamic calls.
+  # call_fun reads the fun from x(arity), apply its module/function from
+  # x(arity)/x(arity+1) — after the arguments in x0..x(arity-1).
+  defp emit_specific(facts, id, func_id, {:call_fun, arity}) do
+    facts
+    |> add_fact(:dynamic_call, [id, func_id, "call_fun"])
+    |> add_fact(:def, [id, "x0"])
+    |> emit_call_arg_uses(id, arity)
+    |> add_fact(:use, [id, "x#{arity}"])
+  end
+
+  defp emit_specific(facts, id, func_id, {:call_fun2, _tag, arity, func}) do
+    facts
+    |> add_fact(:dynamic_call, [id, func_id, "call_fun"])
+    |> add_fact(:def, [id, "x0"])
+    |> emit_call_arg_uses(id, arity)
+    |> add_fact(:use, [id, format_operand(func)])
+  end
+
+  defp emit_specific(facts, id, func_id, {:apply, arity}) do
+    facts
+    |> add_fact(:dynamic_call, [id, func_id, "apply"])
+    |> add_fact(:def, [id, "x0"])
+    |> emit_call_arg_uses(id, arity)
+    |> add_fact(:use, [id, "x#{arity}"])
+    |> add_fact(:use, [id, "x#{arity + 1}"])
+  end
+
+  defp emit_specific(facts, id, func_id, {:apply_last, arity, _dealloc}) do
+    facts
+    |> add_fact(:dynamic_call, [id, func_id, "apply"])
+    |> add_fact(:tail_call, [id])
+    |> emit_call_arg_uses(id, arity)
+    |> add_fact(:use, [id, "x#{arity}"])
+    |> add_fact(:use, [id, "x#{arity + 1}"])
+  end
+
+  # Send.
+  defp emit_specific(facts, id, func_id, :send) do
+    facts
+    |> add_fact(:send_msg, [id, func_id])
+    |> add_fact(:use, [id, "x0"])
+    |> add_fact(:use, [id, "x1"])
+    |> add_fact(:def, [id, "x0"])
+  end
+
+  # Make fun.
+  defp emit_specific(
+         facts,
+         id,
+         func_id,
+         {:make_fun3, {:f, target}, _index, _uniq, dst, {:list, env}}
+       ) do
+    facts
+    |> add_fact(:make_fun, [id, func_id, to_string(target), to_string(length(env))])
+    |> add_fact(:def, [id, format_operand(dst)])
+    |> emit_operand_uses(id, env)
+  end
+
+  defp emit_specific(
+         facts,
+         id,
+         func_id,
+         {:make_fun3, {_mod, _name, _arity} = mfa, _index, _uniq, dst, {:list, env}}
+       ) do
+    closure_func = format_mfa(mfa)
+
+    facts
+    |> add_fact(:make_fun, [id, func_id, closure_func, to_string(length(env))])
+    |> add_fact(:def, [id, format_operand(dst)])
+    |> add_fact(:closure_def, [parent_func_id(id), closure_func])
+    |> emit_operand_uses(id, env)
   end
 
   # Everything else is unchanged: this hands the other ~70 instruction
@@ -588,39 +665,6 @@ defmodule Argus.Pipeline.Emit do
     emit_operand_uses(facts, id, args)
   end
 
-  # Dynamic calls.
-  # call_fun reads the fun from x(arity), apply its module/function from
-  # x(arity)/x(arity+1) — after the arguments in x0..x(arity-1).
-  defp emit_specific(facts, id, {:call_fun, arity}) do
-    facts
-    |> add_fact(:def, [id, "x0"])
-    |> emit_call_arg_uses(id, arity)
-    |> add_fact(:use, [id, "x#{arity}"])
-  end
-
-  defp emit_specific(facts, id, {:call_fun2, _tag, arity, func}) do
-    facts
-    |> add_fact(:def, [id, "x0"])
-    |> emit_call_arg_uses(id, arity)
-    |> add_fact(:use, [id, format_operand(func)])
-  end
-
-  defp emit_specific(facts, id, {:apply, arity}) do
-    facts
-    |> add_fact(:def, [id, "x0"])
-    |> emit_call_arg_uses(id, arity)
-    |> add_fact(:use, [id, "x#{arity}"])
-    |> add_fact(:use, [id, "x#{arity + 1}"])
-  end
-
-  defp emit_specific(facts, id, {:apply_last, arity, _dealloc}) do
-    facts
-    |> add_fact(:tail_call, [id])
-    |> emit_call_arg_uses(id, arity)
-    |> add_fact(:use, [id, "x#{arity}"])
-    |> add_fact(:use, [id, "x#{arity + 1}"])
-  end
-
   # Allocate / deallocate.
   defp emit_specific(facts, id, {:allocate, stack, live}) do
     add_fact(facts, :allocate, [id, to_string(stack), to_string(live)])
@@ -649,15 +693,6 @@ defmodule Argus.Pipeline.Emit do
   # Test heap — no facts beyond the instruction record.
   defp emit_specific(facts, _id, {:test_heap, _words, _live}) do
     facts
-  end
-
-  # Send.
-  defp emit_specific(facts, id, :send) do
-    facts
-    |> add_fact(:send_msg, [id])
-    |> add_fact(:use, [id, "x0"])
-    |> add_fact(:use, [id, "x1"])
-    |> add_fact(:def, [id, "x0"])
   end
 
   # Receive. The loop's control flow is real control flow: loop_rec falls
@@ -720,28 +755,6 @@ defmodule Argus.Pipeline.Emit do
 
   defp emit_specific(facts, _id, :raw_raise) do
     facts
-  end
-
-  # Make fun.
-  defp emit_specific(facts, id, {:make_fun3, {:f, target}, _index, _uniq, dst, {:list, env}}) do
-    facts
-    |> add_fact(:make_fun, [id, to_string(target), to_string(length(env))])
-    |> add_fact(:def, [id, format_operand(dst)])
-    |> emit_operand_uses(id, env)
-  end
-
-  defp emit_specific(
-         facts,
-         id,
-         {:make_fun3, {_mod, _name, _arity} = mfa, _index, _uniq, dst, {:list, env}}
-       ) do
-    closure_func = format_mfa(mfa)
-
-    facts
-    |> add_fact(:make_fun, [id, closure_func, to_string(length(env))])
-    |> add_fact(:def, [id, format_operand(dst)])
-    |> add_fact(:closure_def, [parent_func_id(id), closure_func])
-    |> emit_operand_uses(id, env)
   end
 
   # Binary operations.
@@ -959,6 +972,20 @@ defmodule Argus.Pipeline.Emit do
   end
 
   defp maybe_spawn(facts, _id, _func_id, _mod, _func, _arity), do: facts
+
+  # apply/2,3 is a call whose target is computed, so the call graph cannot
+  # follow it — the same gap as the `apply` and `call_fun` INSTRUCTIONS, but
+  # reached as an ordinary remote call to :erlang.apply. Recorded in the
+  # same relation so anything reasoning about unfollowable control sees one
+  # concept rather than two.
+  #
+  # Not an effect: apply itself observes nothing. What it reaches might, and
+  # that is precisely what cannot be determined.
+  defp maybe_dynamic(facts, id, func_id, :erlang, :apply) do
+    add_fact(facts, :dynamic_call, [id, func_id, "apply"])
+  end
+
+  defp maybe_dynamic(facts, _id, _func_id, _mod, _func), do: facts
 
   # Argument registers of a call: x0..x(arity-1).
   defp emit_call_arg_uses(facts, _id, 0), do: facts
