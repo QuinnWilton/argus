@@ -266,6 +266,29 @@ defmodule Argus.Analyses.PurityTest do
       assert Effects.classify(":erlang", "length") == :pure
     end
 
+    test "a call that runs what it is given beats its module's category" do
+      # :timer is a process module, but :timer.tc/2 runs the function handed
+      # to it, so its effects are its argument's. Classified by module, a
+      # `:timer.tc(fn -> release_lease() end)` in terminate/2 gets reported
+      # as a clock read while the lease release goes unmentioned — the right
+      # module for the wrong reason, which is indistinguishable from luck.
+      assert Effects.classify(":timer", "tc") == {:opaque, :dot_dispatch}
+      assert Effects.classify(":timer", "sleep") == {:impure, :process, :write}
+    end
+
+    test "reads are impure but distinguished from writes" do
+      # Purity ignores the mode dimension; the context-imposed contracts
+      # look only at writes, because a read has nothing to roll back and
+      # nothing to lose by being skipped. Path and System query the
+      # environment without changing it.
+      assert Effects.classify("Path", "expand") == {:impure, :io, :read}
+      assert Effects.classify("System", "tmp_dir!") == {:impure, :port, :read}
+      assert Effects.classify("File", "cwd") == {:impure, :io, :read}
+
+      assert Effects.classify("File", "write") == {:impure, :io, :write}
+      assert Effects.classify("File", "rm_rf") == {:impure, :io, :write}
+    end
+
     test "every category used is declared in the type's domain" do
       known =
         ~w(io logging process process_dict ets port node time random network code_loading)a

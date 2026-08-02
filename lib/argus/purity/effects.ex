@@ -205,7 +205,17 @@ defmodule Argus.Purity.Effects do
   # ordinary-looking syntax, so a function using `x.field` on an untyped
   # value is not statically pure. Using `Map.fetch!/2` instead is both
   # provable and, on a plain map, clearer about intent.
-  @dynamic_dispatch_functions [{":elixir_erl_pass", "no_parens_remote"}]
+  @dynamic_dispatch_functions [
+    {":elixir_erl_pass", "no_parens_remote"},
+
+    # These take a function (or an MFA) and run it, so whatever effect
+    # occurs is the argument's, not theirs. Classifying them by their own
+    # behaviour attributes a timing wrapper's clock read to code that is
+    # really making a network call.
+    {":timer", "tc"},
+    {":timer", "apply_after"},
+    {":timer", "apply_interval"}
+  ]
 
   # `Kernel` is NOT listed pure, and the reason is worth recording because
   # listing it was a real soundness hole found by running this analysis over
@@ -288,6 +298,19 @@ defmodule Argus.Purity.Effects do
                     {":ets", "whereis"},
                     {":persistent_term", "get"},
                     {":persistent_term", "info"},
+                    {"Path", "expand"},
+                    {"Path", "relative_to"},
+                    {"Path", "relative_to_cwd"},
+                    {"Path", "absname"},
+                    {"Path", "safe_relative_to"},
+                    {"System", "tmp_dir"},
+                    {"System", "tmp_dir!"},
+                    {"System", "cwd"},
+                    {"System", "cwd!"},
+                    {"System", "user_home"},
+                    {"System", "user_home!"},
+                    {"File", "cwd"},
+                    {"File", "cwd!"},
                     {"File", "read"},
                     {"File", "read!"},
                     {"File", "exists?"},
@@ -377,18 +400,24 @@ defmodule Argus.Purity.Effects do
   @spec classify(String.t(), String.t()) :: verdict()
   @pure true
   def classify(module, function) when is_binary(module) and is_binary(function) do
+    # Order matters, and the most specific statement about a call wins.
+    # "This runs whatever you hand it" dominates anything its module says:
+    # `:timer` is a process module, but `:timer.tc/2` is a wrapper whose
+    # effects are its argument's, and classifying it by its module
+    # attributes a timing helper's clock read to code that is really making
+    # a network call.
     cond do
-      category = Map.get(@impure_functions, {module, function}) ->
-        {:impure, category, mode(module, function)}
-
-      category = Map.get(@impure_modules, module) ->
-        {:impure, category, mode(module, function)}
-
       {module, function} in @dynamic_dispatch_functions ->
         {:opaque, :dot_dispatch}
 
       {module, function} in @protocol_functions ->
         {:opaque, :protocol}
+
+      category = Map.get(@impure_functions, {module, function}) ->
+        {:impure, category, mode(module, function)}
+
+      category = Map.get(@impure_modules, module) ->
+        {:impure, category, mode(module, function)}
 
       module in @protocol_modules ->
         {:opaque, :protocol}
