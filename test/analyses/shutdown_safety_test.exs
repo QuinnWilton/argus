@@ -96,6 +96,24 @@ defmodule Argus.Analyses.ShutdownSafetyTest do
     end
   end
 
+  describe "evidence quality" do
+    # The verdict being right is not enough if the evidence is wrong. An
+    # earlier version used the unbounded call_reachable closure and credited
+    # Sequin's MutexOwner with `:ets.insert/2 via :wpool_pool:store_wpool/1`
+    # — connection-pool internals five hops down Mutex.release -> Redis ->
+    # wpool. Right module, meaningless witness, and indistinguishable from
+    # luck until read against source.
+    test "cleanup is attributed within a few hops of terminate/2" do
+      skip_without_souffle()
+
+      assert [[_mod, _b, "io", api, via]] =
+               only(results(), "cleanup_never_runs", "LeaksIndirect")
+
+      assert via =~ "persist", "two hops is inside the bound"
+      assert api =~ "write"
+    end
+  end
+
   describe "what is deliberately not reported" do
     test "logging is not cleanup" do
       skip_without_souffle()

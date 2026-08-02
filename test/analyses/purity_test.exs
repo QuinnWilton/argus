@@ -248,7 +248,12 @@ defmodule Argus.Analyses.PurityTest do
       assert Effects.classify("IO", "puts") == {:impure, :io, :write}
       assert Effects.classify(":ets", "insert") == {:impure, :ets, :write}
       assert Effects.classify(":erlang", "put") == {:impure, :process_dict, :write}
-      assert Effects.classify(":erlang", "monotonic_time") == {:impure, :time, :write}
+      # A clock read is a read. Purity rejects it either way, since it
+      # ignores the mode dimension entirely — reading the clock still breaks
+      # referential transparency. Only the contracts about durability care,
+      # and none of them should treat `now()` as something to roll back or
+      # something lost when terminate/2 is skipped.
+      assert Effects.classify(":erlang", "monotonic_time") == {:impure, :time, :read}
 
       assert Effects.classify("Enum", "map") == :pure
       assert Effects.classify(":lists", "reverse") == :pure

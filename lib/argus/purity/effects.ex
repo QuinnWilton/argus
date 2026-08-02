@@ -66,6 +66,10 @@ defmodule Argus.Purity.Effects do
     # transactions and callbacks alike. Separating it from :io means a
     # contract can forbid file writes without forbidding Logger.debug.
     "Logger" => :logging,
+    # The pre-OTP-21 logging module, still what most Erlang libraries call.
+    # Fourth two-spelling gap found in this sweep; without it a library
+    # logging "shutting down" reads as unclassified cleanup.
+    ":error_logger" => :logging,
     ":logger" => :logging,
     "Port" => :port,
     ":os" => :port,
@@ -281,6 +285,54 @@ defmodule Argus.Purity.Effects do
                     {":erlang", "is_process_alive"},
                     {":global", "whereis_name"},
                     {":global", "registered_names"},
+
+                    # The Erlang spellings of the same reads. Third time in
+                    # one sweep that a two-spelling API was covered on the
+                    # Elixir side only — the behaviour names were the first
+                    # and the terminate-callback lists the second. The
+                    # symptom is always the same and always quiet: the
+                    # analysis reports fewer, or in this case MORE, findings
+                    # rather than erroring, so a config read shows up as
+                    # durable cleanup and nobody notices until the finding
+                    # is read against source.
+                    {":application", "get_env"},
+                    {":application", "get_all_env"},
+                    {":application", "get_application"},
+                    {":application", "get_key"},
+                    {":application", "loaded_applications"},
+                    {":application", "which_applications"},
+                    {":os", "timestamp"},
+                    {":os", "system_time"},
+                    {":os", "perf_counter"},
+                    {":os", "getenv"},
+                    {":os", "getpid"},
+                    {":os", "type"},
+                    {":os", "version"},
+                    {":erlang", "monotonic_time"},
+                    {":erlang", "system_time"},
+                    {":erlang", "timestamp"},
+                    {":erlang", "unique_integer"},
+                    {":erlang", "get"},
+                    {":erlang", "get_keys"},
+                    {":erlang", "processes"},
+                    {":erlang", "registered"},
+                    {":erlang", "system_info"},
+                    {":erlang", "memory"},
+                    {":erlang", "statistics"},
+                    {":code", "which"},
+                    {":code", "is_loaded"},
+                    {":code", "priv_dir"},
+                    {":code", "lib_dir"},
+                    {":code", "get_path"},
+                    {":filelib", "is_file"},
+                    {":filelib", "is_dir"},
+                    {":filelib", "is_regular"},
+                    {":filelib", "file_size"},
+                    {":filelib", "wildcard"},
+                    {":file", "read_file"},
+                    {":file", "read_file_info"},
+                    {":file", "list_dir"},
+                    {":file", "get_cwd"},
 
                     # Table and file reads.
                     {":ets", "lookup"},

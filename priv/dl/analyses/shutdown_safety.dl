@@ -82,9 +82,33 @@ cleanup_in_terminate(mod, behaviour, category, api, func) :-
   impure_call(_, func, api, category, "write"),
   durable_cleanup(category).
 
+// Bounded, not the full `call_reachable` closure.
+//
+// Cleanup a module is responsible for sits close to its terminate/2. The
+// unbounded closure walks out of the module, through a client library, into
+// that library's connection pool, and credits the module with whatever it
+// finds: Sequin's MutexOwner was reported for `:ets.insert/2 via
+// :wpool_pool:store_wpool/1`, five hops down Mutex.release -> Redis ->
+// wpool. The verdict was right and the evidence was noise, which is the
+// same "right for the wrong reason" failure that the effect model's
+// dispatch precedence was fixed for.
+//
+// Three hops covers terminate -> your cleanup function -> the API it calls,
+// which is the shape real cleanup has.
+.decl reaches_from_terminate(func: symbol, via: symbol, depth: number)
+
+reaches_from_terminate(func, callee, 1) :-
+  terminate_callback(func, _, _),
+  call_edge(func, callee).
+
+reaches_from_terminate(func, callee, depth + 1) :-
+  reaches_from_terminate(func, mid, depth),
+  depth < 3,
+  call_edge(mid, callee).
+
 cleanup_in_terminate(mod, behaviour, category, api, via) :-
   terminate_callback(func, mod, behaviour),
-  call_reachable(func, via),
+  reaches_from_terminate(func, via, _),
   impure_call(_, via, api, category, "write"),
   durable_cleanup(category).
 
@@ -114,8 +138,24 @@ unclassified_cleanup(mod, behaviour, api, func) :-
 
 unclassified_cleanup(mod, behaviour, api, via) :-
   terminate_callback(func, mod, behaviour),
-  call_reachable(func, via),
-  unknown_call(_, via, api, _callee).
+  reaches_from_terminate(func, via, _),
+  unknown_call(_, via, api, _callee),
+  !structural_call(api).
+
+// Building a struct or a message is not cleanup. `Kernel` is deliberately
+// NOT in the effect model's pure list — purity found a soundness hole there
+// — so its calls arrive as unknown, and DBConnection.Connection was reported
+// for `Kernel.struct!/2` inside an exception constructor. A soundness choice
+// made for one contract should not become noise in another.
+.decl structural_call(api: symbol)
+
+structural_call(api) :- unknown_call(_, _, api, _), match("Kernel\\..*", api).
+structural_call(api) :- unknown_call(_, _, api, _), match("Access\\..*", api).
+structural_call(api) :- unknown_call(_, _, api, _), match("Enum\\..*", api).
+structural_call(api) :- unknown_call(_, _, api, _), match("Map\\..*", api).
+structural_call(api) :- unknown_call(_, _, api, _), match("Keyword\\..*", api).
+structural_call(api) :- unknown_call(_, _, api, _), match(":lists\\..*", api).
+structural_call(api) :- unknown_call(_, _, api, _), match(":maps\\..*", api).
 
 .decl cleanup_unclear(mod: symbol, behaviour: symbol, api: symbol, via: symbol)
 .output cleanup_unclear
