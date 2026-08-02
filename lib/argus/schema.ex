@@ -688,6 +688,21 @@ defmodule Argus.Schema do
     """
   }
 
+  @supervisor_max_children %{
+    name: :supervisor_max_children,
+    layer: 2,
+    fields: [
+      {:sup, :symbol, "the DynamicSupervisor module"},
+      {:limit, :symbol, "the configured cap"}
+    ],
+    doc: """
+    A `max_children` cap read from `DynamicSupervisor.init/1`'s literal \
+    options. Present ONLY when a finite cap is set: the behaviour defaults \
+    to `:infinity`, so absence is the common case and the interesting one, \
+    and consumers ask about it by negation.
+    """
+  }
+
   @dynamic_child %{
     name: :dynamic_child,
     layer: 2,
@@ -1481,6 +1496,7 @@ defmodule Argus.Schema do
     @supervisor_child,
     @supervisor_child_name,
     @dynamic_child,
+    @supervisor_max_children,
     @named_process,
     @process_link,
     @implements_behaviour,

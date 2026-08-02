@@ -263,16 +263,27 @@ defmodule Argus.Extractors.Supervision do
   # only supports `:one_for_one`, so that is the honest default when
   # `init/1` can't be read.
   defp extract_dynamic_supervisor(mod_str, module_data) do
-    {strategy, site} =
+    {strategy, site, max_children} =
       case find_function(module_data.functions, :init, 1) do
-        nil -> {:one_for_one, "dynamic"}
+        nil -> {:one_for_one, "dynamic", nil}
         instrs -> detect_dynamic_strategy(mod_str, instrs)
       end
 
     %{}
     |> add_fact(:supervisor, [mod_str, to_string(strategy)])
     |> add_fact(:supervisor_site, [mod_str, site])
+    |> emit_max_children(mod_str, max_children)
   end
+
+  # Emitted only when a cap is actually set, so consumers ask about it by
+  # negation. `DynamicSupervisor` defaults to `:infinity`, and the default is
+  # what every project in the corpus uses — recording "unbounded" explicitly
+  # would be a row per supervisor saying nothing.
+  defp emit_max_children(facts, _mod_str, nil), do: facts
+  defp emit_max_children(facts, _mod_str, :infinity), do: facts
+
+  defp emit_max_children(facts, mod_str, value),
+    do: add_fact(facts, :supervisor_max_children, [mod_str, to_string(value)])
 
   # DynamicSupervisor.init/1 takes the flags as its sole argument:
   # `DynamicSupervisor.init(strategy: :one_for_one, ...)`. Resolve that
@@ -286,8 +297,12 @@ defmodule Argus.Extractors.Supervision do
         case match_remote_call(instr) do
           {:ok, DynamicSupervisor, :init, 1} ->
             case resolve_register(instrs, idx, {:x, 0}) do
-              {:ok, opts} when is_list(opts) -> {Keyword.get(opts, :strategy, :one_for_one), idx}
-              _ -> {:one_for_one, idx}
+              {:ok, opts} when is_list(opts) ->
+                {Keyword.get(opts, :strategy, :one_for_one), idx,
+                 Keyword.get(opts, :max_children)}
+
+              _ ->
+                {:one_for_one, idx, nil}
             end
 
           _ ->
@@ -296,8 +311,8 @@ defmodule Argus.Extractors.Supervision do
       end)
 
     case strategy_idx do
-      {strategy, idx} -> {strategy, "#{mod_str}:init/1##{idx}"}
-      nil -> {:one_for_one, "dynamic"}
+      {strategy, idx, max_children} -> {strategy, "#{mod_str}:init/1##{idx}", max_children}
+      nil -> {:one_for_one, "dynamic", nil}
     end
   end
 

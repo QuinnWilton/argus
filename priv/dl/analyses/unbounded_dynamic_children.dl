@@ -1,0 +1,54 @@
+// Processes an outside party can create without limit.
+//
+// `DynamicSupervisor` defaults to `max_children: :infinity`, and the default
+// is what everyone uses — 8 DynamicSupervisors across the projects swept
+// here, ZERO of which set a cap. On its own that is fine: most dynamic
+// supervisors are driven by trusted callers, and a cap would be a nuisance.
+//
+// The finding is the pairing, and it is a question about the call graph
+// rather than about any one line:
+//
+//   can `start_child` be reached from a request handler?
+//
+// If it can, then an unauthenticated request creates a process and nothing
+// bounds how many. Each one costs a PID, a mailbox and a heap, and the node
+// dies of memory exhaustion rather than of anything that looks like an
+// attack. No single line in the program is wrong, which is why reading the
+// supervisor or the handler in isolation shows nothing.
+
+.include "../clientlib/imports.dl"
+.include "../clientlib/behaviours.dl"
+.include "../clientlib/request_entry.dl"
+
+// ── Uncapped dynamic supervisors ─────────────────────────────────
+//
+// `supervisor_max_children` is emitted only when a finite cap is set, so
+// absence is the question. A supervisor whose init/1 could not be read
+// emits no cap either, which counts as uncapped — the conservative
+// direction for a resource bound, and the one that matches the default.
+
+.decl uncapped_supervisor(sup: symbol)
+
+uncapped_supervisor(sup) :-
+  dynamic_child(sup, _, _),
+  sup != "dynamic",
+  !supervisor_max_children(sup, _).
+
+// ── Reachable from outside ───────────────────────────────────────
+
+.decl externally_reachable(func: symbol, entry: symbol, kind: symbol)
+
+externally_reachable(func, entry, kind) :-
+  request_entry(entry, kind),
+  call_reachable(entry, func).
+
+externally_reachable(func, func, kind) :-
+  request_entry(func, kind).
+
+.decl unbounded_children_from_request(sup: symbol, child: symbol, via: symbol, kind: symbol)
+.output unbounded_children_from_request
+
+unbounded_children_from_request(sup, child, via, kind) :-
+  uncapped_supervisor(sup),
+  dynamic_child(sup, child, via),
+  externally_reachable(via, _, kind).

@@ -215,6 +215,11 @@
 .decl supervisor_child_name(sup: symbol, position: number, name: symbol)
 .input supervisor_child_name
 
+// A `max_children` cap read from `DynamicSupervisor.init/1`'s literal options. Present ONLY when a finite cap is set: the behaviour defaults to `:infinity`, so absence is the common case and the interesting one, and consumers ask about it by negation.
+//
+.decl supervisor_max_children(sup: symbol, limit: symbol)
+.input supervisor_max_children
+
 // Anchor site of a supervisor's tree definition — positional.
 .decl supervisor_site(mod: symbol, site: symbol)
 .input supervisor_site
