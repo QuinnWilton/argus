@@ -1189,3 +1189,15 @@ a limit of the ad-hoc measurement, not of the relation.
 so there is no finding delta to review — the defect was corrupting an input
 that happened not to reach an output here. It would not have stayed that
 way.
+
+**No unit test guards it, and that is deliberate.** One was written, and it
+passed with the fix disabled: the fixture's `case check() do :ok -> ...`
+compiles to a comparison on a register other than `{x,0}`, so it never
+exercised the bug. Constructing a fixture that reproduces the shape the
+corpus produces needs experimentation that was not done here, and **a test
+that looks like a guard without being one is worse than none** — it is the
+same false assurance as a rule that matches nothing and reports a clean
+zero, which is the failure this document keeps returning to. The evidence
+for the fix is the corpus measurement above, which is stronger than a
+fixture would have been anyway, and the gap is recorded rather than papered
+over.

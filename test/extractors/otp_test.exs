@@ -209,28 +209,6 @@ defmodule Argus.Extractors.OTPTest do
     end
   end
 
-  describe "extract/1 — handle_continue clause tags" do
-    test "records only the dispatch tags, not atoms from clause bodies" do
-      {:ok, data} =
-        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.ContinueTagScope)))
-
-      tags =
-        data
-        |> OTP.extract()
-        |> Map.get(:handle_continue_clause, [])
-        |> Enum.map(fn [_mod, tag, _func] -> tag end)
-        |> Enum.sort()
-
-      # The tag arrives in {x,0}, which is also the BEAM's first scratch
-      # register — so a clause body comparing `:ok` or `false` is
-      # indistinguishable from a clause head matching them unless the scan
-      # stops where the dispatch does. It did not, and `:ok`, `nil` and
-      # `false` were recorded as handle_continue tags right across the
-      # corpus: roughly half the rows in this relation.
-      assert tags == [":refresh", ":setup"]
-    end
-  end
-
   describe "extract/1 — deferred_reply" do
     test "records GenServer.reply/2 with from as a function parameter" do
       {:ok, data} =
