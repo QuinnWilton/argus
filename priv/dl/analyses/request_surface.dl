@@ -93,3 +93,32 @@ remote_code_execution(id, func, api, entry, kind, proximity) :-
 remote_atom_exhaustion(id, func, api, entry, kind, proximity) :-
   unsafe_atom_creation(id, func, api),
   request_reaches(entry, kind, func, proximity).
+
+
+// ── Which HTTP endpoint reaches the sink ─────────────────────────
+//
+// Additive: the findings above are unchanged, and this answers the question
+// a reader asks next. "Reachable from a plug entry point" is a claim they
+// have to go and check; "reachable from GET /public/sessions/:id/assets/..."
+// is one they can act on.
+//
+// Routes come from Phoenix's `__routes__/0` literal. `pipe_through` is not
+// in it — pipelines compile into the dispatch function as control flow — so
+// this does NOT say whether the route is authenticated. The path is often
+// the tell, since projects that segregate public routes do it by prefix,
+// and that judgement stays with the reader rather than being guessed here.
+
+.decl sink_endpoint(sink: symbol, verb: symbol, path: symbol, plug: symbol)
+.output sink_endpoint
+
+sink_endpoint(sink, verb, path, plug) :-
+  http_route(_, verb, path, plug, _),
+  function_def(entry, plug, _, _, _),
+  call_reachable(entry, sink_func),
+  unsafe_atom_creation(sink, sink_func, _).
+
+sink_endpoint(sink, verb, path, plug) :-
+  http_route(_, verb, path, plug, _),
+  function_def(entry, plug, _, _, _),
+  call_reachable(entry, sink_func),
+  unsafe_deserialization(sink, sink_func, _, _).

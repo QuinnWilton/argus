@@ -126,4 +126,22 @@ defmodule Argus.Analyses.RequestSurfaceTest do
       assert finding.detail =~ "W:handle_in/3"
     end
   end
+
+  describe "sink_endpoint" do
+    test "names the HTTP method and path rather than the callback" do
+      mod = Argus.Analyses.RequestSurface
+
+      f = mod.finding(:sink_endpoint, ["M:f/1#3", "get", "/public/x/:id", "W.Controller"])
+
+      assert f.severity == :info
+      assert f.title =~ "GET /public/x/:id"
+
+      # Two things it must not be read as claiming. Pipelines are not in the
+      # route literal, and reachability is not taint — every transitive path
+      # examined while calibrating these analyses carried data from storage
+      # or config rather than from the request.
+      assert f.detail =~ "does NOT say whether the route is authenticated"
+      assert f.detail =~ "Nor does it establish taint"
+    end
+  end
 end

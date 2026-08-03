@@ -41,7 +41,7 @@ defmodule Argus.Analyses.RequestSurface do
   def rules_file, do: "analyses/request_surface.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.AtomSafety, Argus.Extractors.OTP]
+  def extractors, do: [Argus.Extractors.AtomSafety, Argus.Extractors.OTP, Argus.Extractors.Router]
 
   @site_fields [
     {:id, :symbol, "instruction ID of the sink call"},
@@ -58,6 +58,17 @@ defmodule Argus.Analyses.RequestSurface do
   @impl true
   def output_relations do
     [
+      %{
+        name: :sink_endpoint,
+        fields: [
+          {:sink, :symbol, "the sink site"},
+          {:verb, :symbol, "the HTTP method"},
+          {:path, :symbol, "the route path"},
+          {:plug, :symbol, "the controller or LiveView"}
+        ],
+        key: [:sink, :verb, :path],
+        doc: "The HTTP endpoint from which an unsafe sink is reachable."
+      },
       %{
         name: :remote_unsafe_deserialization,
         fields: @site_fields,
@@ -77,6 +88,28 @@ defmodule Argus.Analyses.RequestSurface do
         doc: "Unbounded atom creation reachable from request-shaped input."
       }
     ]
+  end
+
+  @impl true
+  def finding(:sink_endpoint, [sink, verb, path, plug]) do
+    Findings.new(
+      :info,
+      "#{String.upcase(verb)} #{path} reaches #{sink}",
+      "#{plug} serves #{String.upcase(verb)} #{path}, and an unsafe sink is " <>
+        "reachable from it. This names the endpoint rather than the callback, " <>
+        "which is the question a reader asks next — a path is something they " <>
+        "can try, and a plug entry point is something they have to go and find. " <>
+        "It does NOT say whether the route is authenticated: Phoenix compiles " <>
+        "pipe_through into the router's dispatch as control flow rather than " <>
+        "into the route table, so that judgement is still yours. The path is " <>
+        "often the tell, since projects that separate public routes tend to do " <>
+        "it by prefix. " <>
+        "Nor does it establish taint. This is reachability — a path exists — " <>
+        "and every transitive path examined while calibrating these analyses " <>
+        "carried data from storage or configuration rather than from the " <>
+        "request. Treat it as a place to look, not as a claim.",
+      at: Findings.at_instr(sink)
+    )
   end
 
   @impl true

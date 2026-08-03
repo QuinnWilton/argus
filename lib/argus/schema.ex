@@ -688,6 +688,24 @@ defmodule Argus.Schema do
     """
   }
 
+  @http_route %{
+    name: :http_route,
+    layer: 2,
+    fields: [
+      {:router, :symbol, "the router module"},
+      {:verb, :symbol, "the HTTP method"},
+      {:path, :symbol, "the route path, with its placeholders"},
+      {:plug, :symbol, "the controller or LiveView"},
+      {:action, :symbol, "the action or live action"}
+    ],
+    doc: """
+    A route from `Phoenix.Router.__routes__/0`. `pipe_through` is absent \
+    because Phoenix compiles pipelines into the dispatch function rather \
+    than into this literal, so whether a route is authenticated is \
+    derivable but not from here.
+    """
+  }
+
   @schema_field %{
     name: :schema_field,
     layer: 2,
@@ -1536,6 +1554,7 @@ defmodule Argus.Schema do
     @dynamic_child,
     @supervisor_max_children,
     @socket_transport,
+    @http_route,
     @schema_field,
     @redacted_field,
     @named_process,

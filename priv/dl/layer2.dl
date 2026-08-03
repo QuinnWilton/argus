@@ -102,6 +102,11 @@
 .decl handle_continue_clause(mod: symbol, tag: symbol, func_id: symbol)
 .input handle_continue_clause
 
+// A route from `Phoenix.Router.__routes__/0`. `pipe_through` is absent because Phoenix compiles pipelines into the dispatch function rather than into this literal, so whether a route is authenticated is derivable but not from here.
+//
+.decl http_route(router: symbol, verb: symbol, path: symbol, plug: symbol, action: symbol)
+.input http_route
+
 // Call to function returning tagged tuple where result is not pattern matched.
 .decl ignored_error_result(id: symbol, func: symbol, callee: symbol)
 .input ignored_error_result

@@ -152,8 +152,8 @@ defmodule Argus.DlDeclarationsTest do
         ~w(call_arg call_arg_forward call_edge function_def implements_behaviour sync_call),
       process_registry: ~w(function_def process_register whereis_call),
       reply_contract: ~w(callback_drops_from callback_return function_def implements_behaviour),
-      request_surface: ~w(call_edge code_execution function_def implements_behaviour
-                          unsafe_atom_creation unsafe_deserialization),
+      request_surface: ~w(call_edge code_execution function_def http_route
+                          implements_behaviour unsafe_atom_creation unsafe_deserialization),
       secret_exposure: ~w(redacted_field schema_field),
       shutdown_safety: ~w(call_edge function_def implements_behaviour impure_call trap_exit
                           unknown_call),
