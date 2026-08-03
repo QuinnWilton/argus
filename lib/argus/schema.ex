@@ -688,6 +688,21 @@ defmodule Argus.Schema do
     """
   }
 
+  @socket_transport %{
+    name: :socket_transport,
+    layer: 2,
+    fields: [
+      {:endpoint, :symbol, "the Phoenix endpoint module"},
+      {:path, :symbol, "the socket's mount path"},
+      {:transport, :symbol, "'websocket' | 'longpoll'"}
+    ],
+    doc: """
+    A socket transport an endpoint enables, read from the literal that \
+    `socket/3` compiles into `__sockets__/0`. Emitted only for transports \
+    that are present and not `false`, which is how Phoenix reads them.
+    """
+  }
+
   @supervisor_max_children %{
     name: :supervisor_max_children,
     layer: 2,
@@ -1497,6 +1512,7 @@ defmodule Argus.Schema do
     @supervisor_child_name,
     @dynamic_child,
     @supervisor_max_children,
+    @socket_transport,
     @named_process,
     @process_link,
     @implements_behaviour,

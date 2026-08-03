@@ -170,7 +170,8 @@ defmodule Argus.DlDeclarationsTest do
         ~w(call_arg call_arg_forward call_edge function_def implements_behaviour sync_call
                         sync_call_timeout),
       unbounded_dynamic_children:
-        ~w(call_edge dynamic_child function_def implements_behaviour supervisor_max_children),
+        ~w(call_edge dynamic_child function_def implements_behaviour socket_transport
+           supervisor_max_children),
       unlinked_spawn: ~w(spawn_call),
       unsafe_task:
         ~w(call_edge call_followed_by_branch function_def implements_behaviour remote_call

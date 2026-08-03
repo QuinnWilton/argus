@@ -181,6 +181,11 @@
 .decl rpc_call(id: symbol, func: symbol, variant: symbol, timeout: symbol)
 .input rpc_call
 
+// A socket transport an endpoint enables, read from the literal that `socket/3` compiles into `__sockets__/0`. Emitted only for transports that are present and not `false`, which is how Phoenix reads them.
+//
+.decl socket_transport(endpoint: symbol, path: symbol, transport: symbol)
+.input socket_transport
+
 // Initial state declared by `init/1`'s `{:ok, State, Data}` return (one row per resolvable clause — a machine with multiple init clauses has several). Read directly from the return rather than inferred topologically, so the reachability analysis knows which no-incoming state is the legitimate entry point. Only literal-atom states are recorded; a computed initial state emits no row.
 //
 .decl statem_initial(mod: symbol, state: symbol)

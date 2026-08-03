@@ -32,7 +32,8 @@ defmodule Argus.Analyses.UnboundedDynamicChildren do
   def rules_file, do: "analyses/unbounded_dynamic_children.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.Supervision, Argus.Extractors.OTP]
+  def extractors,
+    do: [Argus.Extractors.Supervision, Argus.Extractors.OTP, Argus.Extractors.Endpoint]
 
   @impl true
   def output_relations do

@@ -51,4 +51,35 @@ externally_reachable(func, func, kind) :-
 unbounded_children_from_request(sup, child, via, kind) :-
   uncapped_supervisor(sup),
   dynamic_child(sup, child, via),
-  externally_reachable(via, _, kind).
+  externally_reachable(via, _, kind),
+  !disabled_transport(sup).
+
+// ── Transports the project does not switch on ────────────────────
+//
+// A dangerous path in a dependency is not a finding when nothing turns it
+// on. Phoenix's long-poll transport starts a process per unauthenticated
+// request with no ceiling, and it was reported in three projects while
+// being enabled in exactly one.
+//
+// Configuration is usually assumed invisible here, and for a runtime
+// `Application.get_env/2` it is. But `Phoenix.Endpoint`'s `socket/3` is a
+// MACRO, so its options compile into `__sockets__/0` as a literal — the
+// same shape as the TLS option lists, readable in the same way. That is the
+// difference between a finding a human checks against endpoint.ex and one
+// the analysis settles itself.
+//
+// Phoenix-specific, deliberately and consistently with request_entry, which
+// already names LiveView and Channel. The general rule underneath is worth
+// stating: config is visible when a macro bakes it into the module and
+// invisible when it is read at runtime, and which one applies takes a
+// single disassembly to settle.
+
+.decl transport_supervisor(sup: symbol, transport: symbol)
+
+transport_supervisor("Phoenix.Transports.LongPoll.Supervisor", "longpoll").
+
+.decl disabled_transport(sup: symbol)
+
+disabled_transport(sup) :-
+  transport_supervisor(sup, transport),
+  !socket_transport(_, _, transport).
