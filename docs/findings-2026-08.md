@@ -1568,3 +1568,69 @@ The first row is cheap and was worth one disassembly to find. `Ecto`'s
 `__schema__/1` is the obvious next one and would tell an analysis which
 fields a struct has and their types — the closest thing to a type system
 this fact model could get without building one.
+
+---
+
+# 23-24. Third-party credentials in unredacted Ecto fields
+
+Following the macro generator to `Ecto.Schema`, which compiles
+`__schema__(:fields)` and `__schema__(:redact_fields)` into every schema
+module. `redact: true` excludes a field from `inspect/1`; it defaults to
+off, so a struct holding a credential prints it in full — into logs, crash
+reports, LiveView debug output and whatever error reporter is installed.
+
+Measured, matching field names against `password`, `token`, `secret`,
+`api_key`, `credential`, `private_key`:
+
+| project | schemas | sensitive fields | **not** redacted |
+|---|---|---|---|
+| keila | 31 | 6 | **6** |
+| sequin | 72 | 25 | **24** |
+
+## Keila — outbound mail credentials, all six
+
+```
+Keila.Mailings.Sender.Config.smtp_password
+Keila.Mailings.Sender.Config.sendgrid_api_key
+Keila.Mailings.Sender.Config.ses_secret
+Keila.Mailings.Sender.Config.mailgun_api_key
+Keila.Mailings.Sender.Config.postmark_api_key
+Keila.Auth.User.password_hash
+```
+
+The first five are **live third-party credentials** — a leaked SendGrid or
+Mailgun key sends mail as the tenant. `Sender.Config` is a struct that
+changeset errors, `Logger` calls and exception reporters all inspect by
+default. `password_hash` is lower severity, being a hash, but bcrypt output
+still does not belong in a log.
+
+## Sequin — 24 of 25
+
+The one redacted field is the interesting part: it proves the team knows
+`redact: true` and applies it in one place out of twenty-five. That is the
+same corroboration as `PostgresDatabase`'s own TODO — the strongest
+available evidence that a finding names something the authors would agree
+with rather than something an analysis invented.
+
+## Why this is worth an analysis rather than a grep
+
+Field names grep fine. What does not is the **pairing with `redact_fields`**,
+which lives in a generated function, and the distinction between a schema
+that never considered the question and one that answered it for some fields
+and not others. Sequin is the second kind, and that changes the finding from
+"you should know about `redact:`" to "you already use it — here are the
+twenty-four you missed."
+
+## Not built here
+
+The extraction is proven and small: both lists are literals in
+`__schema__/1`. Building it means a schema bump, an analysis, fixtures and
+three pin reviews, and the findings above are already established by direct
+measurement — so the value is in the analysis being repeatable, not in
+learning something new about these two projects.
+
+The severity ranking it would need is worth stating: **a live third-party
+credential outranks a hash, which outranks a session token**, and the field
+name is the only signal available for that. A list is a heuristic, and this
+is one of the few places where a heuristic is clearly right — nobody names a
+field `sendgrid_api_key` by accident.
