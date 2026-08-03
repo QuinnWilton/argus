@@ -1804,3 +1804,93 @@ the most severe bugs in either survey, and both live entirely in values.
 That is the same boundary this document reached from the other direction —
 structure is decidable, values are not — now confirmed against bugs nobody
 chose to make it true.
+
+## A third survey, and the defect it exposed before I could use it
+
+A third survey covered OTP core, RabbitMQ and the ERLEF CVE feed, and it did
+something the other two did not: it read argus's source and named three
+concrete gaps. Its highest-precision rule is universal OTP, not
+project-specific —
+
+> a child whose module is itself a supervisor must be registered with
+> `shutdown: :infinity` and `type: :supervisor`, or the subtree is killed
+> mid-unlink and its grandchildren are orphaned
+
+— citing RabbitMQ `e40387e4`, where three modules carrying
+`-behaviour(supervisor)` were registered through a helper that builds
+`worker` specs with a finite shutdown.
+
+Half of it needed no new extraction, since `supervisor_child` already
+carries `type`. Run against the corpus it reported **26 modules**. Every one
+is a false positive, and the cause is in argus:
+
+```elixir
+defp extract_single_child_spec({mod, args}) when is_atom(mod) do
+  if module_name?(mod), do: [{mod, :permanent, :worker, child_name(args)}], else: []
+end
+```
+
+The shorthand forms `{Module, args}` and bare `Module` do not state a type —
+`Module.child_spec/1` does, and `use Supervisor` generates it with
+`type: :supervisor` (verified: `Supervisor.child_spec({Task.Supervisor, []},
+[])` returns `type: :supervisor`). The extractor **fabricates**
+`:permanent`/`:worker` and stores them in columns that read as observations.
+
+So `supervisor_child.restart` and `supervisor_child.type` are asserted
+defaults, not facts, for the dominant Elixir spelling. Anything that trusts
+them is reasoning about argus's guesses.
+
+**This is the same failure this document keeps finding, in its most
+dangerous form yet.** Elsewhere it produced clean zeros — a rule matching
+nothing, a behaviour name covering half the ecosystem, a missing extractor.
+Here it produces confident *positives*: twenty-six of them, all wrong, on
+the rule an independent survey ranked as the most precise available.
+
+**Not fixed here.** The honest emission is a third value — `"unknown"` —
+distinguishing "the spec said worker" from "the spec did not say and
+`child_spec/1` decides at runtime". That changes an existing relation's
+values, and `supervision` and `one_for_one_coupling` both read it, so it
+needs their finding deltas read against source. It is the first thing to do
+next, because it is a prerequisite for the best rule available and because
+the columns are wrong today.
+
+## The other two gaps, verified in source
+
+- **`shutdown` is never extracted at all.** `@supervisor_child` has
+  `sup, position, child_mod, restart, type` and no `shutdown`. This blocks
+  the other half of the rule above.
+- **`intensity` and `period` are parsed and discarded.** Three sites in
+  `extractors/supervision.ex` match `{strategy, intensity, period}` and every
+  one returns only `strategy`. RabbitMQ `ae501fde` is the bug this blocks: a
+  connection pool with `{one_for_one, 10, 10}` loses every worker on a
+  network blip, exhausts the budget instantly and cascades upward. A
+  one-line extractor change plus two columns.
+- **No timer-cancel fact exists.** `delayed_message` records `send_after`
+  creation with no counterpart, so "a timer armed and never cancelled in
+  `terminate`" is not expressible. `monitor_call`/`demonitor_call`, added
+  today, is the pairing template to copy.
+
+## Ranked, from all three surveys
+
+1. `binary_to_term/1` **and** `/2` — four proven CVEs, and `[:safe]` does
+   **not** clear it. Verified against OTP's own source docs: `safe` prevents
+   new atoms and new external funs, and explicitly "does not guarantee that
+   the data is safe for your application". Paginator CVE-2020-15150 is RCE
+   *through* `[:safe]`, because a fun referencing already-loaded modules
+   passes. Only a recursive validator —
+   `Plug.Crypto.non_executable_binary_to_term/1,2` — clears it. argus's
+   existing `unsafe_deserialization` carries a `safety` column; **it must not
+   treat `safe` as safe.**
+2. Supervisor child-spec literal validation — blocked on the defect above.
+3. Atom-minting with an interpolated argument — the canonical BEAM
+   exhaustion signature is a `bs_create_bin` with a non-literal segment
+   feeding `to_atom`. Guardian CVE-2026-54894 plus a ~15-CVE corpus.
+4. Insecure TLS option literals — already shipped as `tls_verification`;
+   the surveys add "client option list with neither `cacerts` nor
+   `cacertfile`" as a second finding.
+5. `callback_mode`/missing-callback, and `{:continue, _}` returned by a
+   module that does not export `handle_continue/2` — export table
+   intersected with one literal return, a guaranteed crash.
+6. Blocking supervisor and `sys:` calls reachable from `init/1` **or
+   `terminate/2,3`** — `sync_call_in_init` covers about half; the
+   `terminate` half and the `sys:` family are missing.
