@@ -1512,3 +1512,59 @@ Nothing new broke, and the fixture filter is what made it readable: without
 the first time an analysis built in this document found something in the
 workspace it was built in, which is the least surprising and most overdue
 result here.
+
+---
+
+# What else a macro leaves behind
+
+`socket_transport` came from noticing that `Phoenix.Endpoint`'s `socket/3`
+is a macro, so its options are in the module. That generalises into a
+question worth asking of any framework: **what did the macro bake in?**
+
+## Routes: readable, and better than what findings say today
+
+`Phoenix.Router` compiles `__routes__/0` to a single literal — 66 entries on
+Livebook — with keys `path`, `plug`, `plug_opts`, `verb`, `helper` and
+`metadata`:
+
+```elixir
+%{path: "/public/health", plug: LivebookWeb.HealthController,
+  plug_opts: :index, verb: :get, ...}
+```
+
+Every finding in this document that reaches a request entry point says
+something like *reachable from a `plug` entry point*. With this it could say
+**reachable from `GET /public/sessions/:id/assets/...`**, which is the
+difference between a reader trusting the severity and going to check it.
+
+## Pipelines: in the module, but not as a literal
+
+`pipe_through` is **not** in `__routes__`. Phoenix compiles pipelines into
+the router's dispatch function as control flow, so answering *is this route
+authenticated?* means reading that code rather than a literal.
+
+That matters because it is the discriminator used by hand throughout this
+document. Finding #1's severity turns entirely on *"`SessionLive`'s routes
+sit behind the `:auth` pipeline, and an authenticated Livebook user can
+already evaluate arbitrary code"* — a judgment made by reading `router.ex`,
+and the reason that finding is Low rather than High.
+
+So the auth boundary is **derivable but not free**: `path` gets most of the
+way there when a project segregates public routes by prefix, as Livebook
+does with `/public`, and the general case needs the dispatch function read.
+
+## The generator, stated
+
+Framework configuration is visible exactly when a macro writes it into the
+module, and three kinds turn up:
+
+| kind | example | readable |
+|---|---|---|
+| literal in a generated function | `__sockets__/0`, `__routes__/0`, `__schema__/1` | **yes, directly** |
+| control flow in a generated function | `pipe_through` in the router's dispatch | yes, with work |
+| read at runtime | `Application.get_env/2` | no |
+
+The first row is cheap and was worth one disassembly to find. `Ecto`'s
+`__schema__/1` is the obvious next one and would tell an analysis which
+fields a struct has and their types — the closest thing to a type system
+this fact model could get without building one.
