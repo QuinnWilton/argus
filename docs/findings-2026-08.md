@@ -1014,10 +1014,31 @@ case DynamicSupervisor.start_child(Phoenix.Transports.LongPoll.Supervisor, spec)
 So an unauthenticated GET starts a `LongPoll.Server`, and nothing caps how
 many. It appeared in every project swept, because it is Phoenix itself.
 
-**Why the severity is not higher.** The long-poll transport must be enabled
-explicitly in the socket config, sessions carry a signed token with a
-max_age, and servers time out. This is a missing ceiling on a
-pre-authentication path, not an open door.
+**Whether it applies is a config question, and it was worth asking.** The
+long-poll transport must be enabled explicitly. Checked in each project the
+analysis reported it in:
+
+| project | endpoint config | verdict |
+|---|---|---|
+| **sequin** | `longpoll: [connect_info: [session: @session_options]]` | **live** |
+| keila | `longpoll: false` | does not apply |
+| livebook | no `longpoll` key, so off by default | does not apply |
+
+So it was reported in three projects and is real in **one**. That is worth
+stating plainly: two thirds of that finding's reported instances are
+inapplicable, and nothing in the analysis could have known, because
+**enablement lives in config and the fact model only sees compiled code**.
+
+For sequin it is a live, uncapped, pre-authentication resource. Sessions
+still carry a signed token with a max_age and servers time out, so it is a
+missing ceiling rather than an open door — but the ceiling is missing on a
+path an unauthenticated request reaches today.
+
+**The general limit is worth naming**, because it applies well beyond this
+finding: reachability is answerable from bytecode and *enablement often is
+not*. A dependency's dangerous path may be dead because a config key turns
+it off, and no amount of call-graph precision reveals that. Findings that
+depend on a runtime switch should say so, and this one now does.
 
 ## 20. Livebook — session creation from a LiveView, uncapped
 
