@@ -45,6 +45,16 @@ defmodule Argus.Analyses.Supervision do
   def output_relations do
     [
       %{
+        name: :supervisor_registered_as_worker,
+        fields: [
+          {:sup, :symbol, "the parent supervisor"},
+          {:child, :symbol, "the child, which is itself a supervisor"},
+          {:position, :number, "the child's start position"}
+        ],
+        key: [:sup, :child],
+        doc: "A supervisor child spec that explicitly says type: :worker."
+      },
+      %{
         name: :suspect_nonpermanent_dependency,
         fields: [
           {:sup, :symbol, "supervisor module"},
@@ -77,6 +87,31 @@ defmodule Argus.Analyses.Supervision do
   # These defects live in the supervisor's composition — strategy and
   # child order — so findings anchor at the tree definition (where the
   # fix goes) and the dependency's call path becomes labelled evidence.
+  @impl true
+  def finding(:supervisor_registered_as_worker, [sup, child, _position]) do
+    Findings.new(
+      :error,
+      "#{sup} registers #{child} as a worker, but it is a supervisor",
+      "#{child} implements the Supervisor behaviour, and #{sup}'s child spec " <>
+        "explicitly says type: :worker. " <>
+        "OTP requires a supervisor child to be registered with " <>
+        "type: :supervisor and shutdown: :infinity. The type is what tells the " <>
+        "parent to give the child unlimited time to bring its own subtree " <>
+        "down; a worker gets a finite shutdown, so it is killed part-way " <>
+        "through unlinking its children and the grandchildren are orphaned " <>
+        "rather than terminated. They keep running, holding whatever they " <>
+        "held, with no supervisor above them. " <>
+        "RabbitMQ shipped exactly this (e40387e4): three modules carrying the " <>
+        "supervisor behaviour registered through a helper that builds worker " <>
+        "specs. " <>
+        "Note this is reported only for specs that SAY worker — the " <>
+        "{Module, args} shorthand states no type and child_spec/1 gets it " <>
+        "right, so those are not findings.",
+      at: Findings.at_module(child),
+      related: [Findings.related("parent supervisor", Findings.at_module(sup))]
+    )
+  end
+
   @impl true
   def finding(:suspect_nonpermanent_dependency, [
         sup,

@@ -668,6 +668,27 @@ defmodule Argus.Schema do
     doc: "Child specification within a supervisor."
   }
 
+  @supervisor_child_form %{
+    name: :supervisor_child_form,
+    layer: 2,
+    fields: [
+      {:sup, :symbol, "supervisor module"},
+      {:position, :number, "child start order — matches the paired supervisor_child.position"},
+      {:form, :symbol, "'explicit' | 'shorthand'"}
+    ],
+    doc: """
+    Whether a child spec stated its `type`, or whether \
+    `supervisor_child.type` is the extractor's default.
+
+    The `{Module, args}` and bare-`Module` forms state nothing: \
+    `Module.child_spec/1` decides, and `use Supervisor` generates \
+    `type: :supervisor` where the default written here is `worker`. Any \
+    rule reading `type` must join this, or it is reasoning about a guess — \
+    a first attempt at "supervisor registered as a worker" reported 26 \
+    modules on the corpus and every one was this artefact.
+    """
+  }
+
   @supervisor_child_name %{
     name: :supervisor_child_name,
     layer: 2,
@@ -1582,6 +1603,7 @@ defmodule Argus.Schema do
     @supervisor,
     @supervisor_site,
     @supervisor_child,
+    @supervisor_child_form,
     @supervisor_child_name,
     @dynamic_child,
     @supervisor_max_children,

@@ -344,15 +344,17 @@ defmodule Argus.Extractors.Supervision do
 
     children
     |> Enum.with_index()
-    |> Enum.reduce(facts, fn {{child_mod, restart, type, name}, idx}, acc ->
+    |> Enum.reduce(facts, fn {{child_mod, restart, type, name, form}, idx}, acc ->
       acc =
-        add_fact(acc, :supervisor_child, [
+        acc
+        |> add_fact(:supervisor_child, [
           mod_str,
           to_string(idx),
           inspect(child_mod),
           to_string(restart),
           to_string(type)
         ])
+        |> add_fact(:supervisor_child_form, [mod_str, to_string(idx), to_string(form)])
 
       # A registered `:name` rides alongside the child at the same position,
       # so a name-keyed `start_child` can later anchor to this exact child.
@@ -394,7 +396,7 @@ defmodule Argus.Extractors.Supervision do
       end)
 
     (direct ++ from_helpers)
-    |> Enum.uniq_by(fn {mod, _, _, name} -> {mod, name} end)
+    |> Enum.uniq_by(fn {mod, _, _, name, _form} -> {mod, name} end)
   end
 
   # Detect the supervision strategy by finding the Supervisor.init/2 or
@@ -551,11 +553,11 @@ defmodule Argus.Extractors.Supervision do
     # one). Same module and same name (or both nameless) still collapse —
     # without a distinguishing name there is nothing to tell them apart.
     (from_literals ++ from_cons ++ from_maps ++ from_tuples)
-    |> Enum.uniq_by(fn {mod, _, _, name} -> {mod, name} end)
+    |> Enum.uniq_by(fn {mod, _, _, name, _form} -> {mod, name} end)
   end
 
   defp extract_child_from_cons_operand({:atom, mod}) when is_atom(mod) do
-    if module_name?(mod), do: [{mod, :permanent, :worker, nil}], else: []
+    if module_name?(mod), do: [{mod, :permanent, :worker, nil, :shorthand}], else: []
   end
 
   defp extract_child_from_cons_operand({:literal, val}), do: extract_single_child_spec(val)
@@ -584,7 +586,8 @@ defmodule Argus.Extractors.Supervision do
             type = extract_map_atom(pairs, :type, :worker)
             # A map spec's registered name lives inside its :start MFA args,
             # too deep to read reliably here — leave it unrecorded.
-            [{mod, restart, type, nil}]
+            form = if find_map_pair(pairs, :type), do: :explicit, else: :shorthand
+            [{mod, restart, type, nil, form}]
         end
     end
   end
@@ -654,23 +657,31 @@ defmodule Argus.Extractors.Supervision do
     # PartitionSupervisor is a wrapper — extract the underlying child_spec
     # so analyses see the real worker module instead of PartitionSupervisor.
     case Keyword.get(opts, :child_spec) do
-      nil -> [{PartitionSupervisor, :permanent, :supervisor, child_name(opts)}]
+      nil -> [{PartitionSupervisor, :permanent, :supervisor, child_name(opts), :explicit}]
       child_spec -> extract_single_child_spec(child_spec)
     end
   end
 
+  # The shorthand states neither restart nor type — `Module.child_spec/1`
+  # does, and `use Supervisor` generates `type: :supervisor` while
+  # `use GenServer` generates `type: :worker`. The values below are
+  # DEFAULTS, and `supervisor_child_form` records that so consumers can
+  # resolve the type from the child's own behaviour instead of trusting a
+  # guess. `:permanent` happens to be right either way; `:worker` is wrong
+  # for every supervisor written this way.
   defp extract_single_child_spec({mod, args}) when is_atom(mod) do
-    if module_name?(mod), do: [{mod, :permanent, :worker, child_name(args)}], else: []
+    if module_name?(mod), do: [{mod, :permanent, :worker, child_name(args), :shorthand}], else: []
   end
 
   defp extract_single_child_spec(%{start: {mod, _, _}} = spec) when is_atom(mod) do
     restart = Map.get(spec, :restart, :permanent)
     type = Map.get(spec, :type, :worker)
-    [{mod, restart, type, nil}]
+    form = if Map.has_key?(spec, :type), do: :explicit, else: :shorthand
+    [{mod, restart, type, nil, form}]
   end
 
   defp extract_single_child_spec(mod) when is_atom(mod) do
-    if module_name?(mod), do: [{mod, :permanent, :worker, nil}], else: []
+    if module_name?(mod), do: [{mod, :permanent, :worker, nil, :shorthand}], else: []
   end
 
   defp extract_single_child_spec(_), do: []
@@ -714,7 +725,7 @@ defmodule Argus.Extractors.Supervision do
       # a `{:via, Registry, _}` registration is still recoverable by tracing
       # the opts through its construction to the via call.
       [{:atom, mod} | _] ->
-        [{mod, :permanent, :worker, via_child_name(elements, instrs, idx, functions)}]
+        [{mod, :permanent, :worker, via_child_name(elements, instrs, idx, functions), :shorthand}]
 
       _ ->
         []

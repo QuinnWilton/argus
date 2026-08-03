@@ -124,4 +124,32 @@ defmodule Argus.Analyses.SupervisionTest do
       end
     end
   end
+
+  describe "supervisor registered as a worker" do
+    @sup_mods [
+      Argus.Test.Fixtures.SupAsWorker,
+      Argus.Test.Fixtures.SupShorthand,
+      Argus.Test.Fixtures.SubSupervisor
+    ]
+
+    defp as_worker do
+      assert {:ok, r} = Argus.analyze(@sup_mods, :supervision)
+      r |> Map.get("supervisor_registered_as_worker", []) |> Enum.map(&hd/1)
+    end
+
+    test "an explicit type: :worker on a supervisor child is reported" do
+      skip_without_souffle()
+      assert Enum.any?(as_worker(), &String.contains?(&1, "SupAsWorker"))
+    end
+
+    test "the shorthand is not, because child_spec/1 gets it right" do
+      skip_without_souffle()
+
+      # supervisor_child.type is a DEFAULT for {Module, args} and bare
+      # Module — those state nothing and `use Supervisor` generates
+      # type: :supervisor. A version of this rule without the form join
+      # reported 26 modules on the corpus, all of them this artefact.
+      refute Enum.any?(as_worker(), &String.contains?(&1, "SupShorthand"))
+    end
+  end
 end

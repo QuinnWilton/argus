@@ -239,6 +239,13 @@
 .decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
 .input supervisor_child
 
+// Whether a child spec stated its `type`, or whether `supervisor_child.type` is the extractor's default.
+//
+// The `{Module, args}` and bare-`Module` forms state nothing: `Module.child_spec/1` decides, and `use Supervisor` generates `type: :supervisor` where the default written here is `worker`. Any rule reading `type` must join this, or it is reasoning about a guess — a first attempt at "supervisor registered as a worker" reported 26 modules on the corpus and every one was this artefact.
+//
+.decl supervisor_child_form(sup: symbol, position: number, form: symbol)
+.input supervisor_child_form
+
 // Registered name declared in a child spec's `:name` option — e.g. the `MyApp.Pool` in `{DynamicSupervisor, name: MyApp.Pool}`. Recorded alongside `supervisor_child` (same `sup`/`position`) so a `dynamic_child` whose parent is a registered name can be anchored to the child that registers it: a `DynamicSupervisor.start_child(MyApp.Pool, _)` call resolves to the named child instead of appearing unanchored. Only atom names are recorded — `{:via, _, _}` and `{:global, _}` names are not, since name-based `start_child` targets are always atoms.
 //
 .decl supervisor_child_name(sup: symbol, position: number, name: symbol)

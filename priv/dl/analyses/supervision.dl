@@ -105,3 +105,35 @@ wrong_start_order(sup, child, dep, cpos, dpos, sup_site, witness) :-
   init_process_dep(child, dep, witness),
   cpos < dpos,
   child_branch != dep_branch.
+
+
+// ── A supervisor registered as a worker ──────────────────────────
+//
+// OTP requires a child that is itself a supervisor to be registered with
+// `type: :supervisor` and `shutdown: :infinity`. A supervisor given a finite
+// shutdown is killed part-way through unlinking its own children, and its
+// grandchildren are orphaned rather than terminated.
+//
+// RabbitMQ e40387e4 is the fixed instance: three modules carrying
+// -behaviour(supervisor) were registered through a helper that builds
+// `worker` specs with a finite shutdown, and the fix switched them to the
+// supervisor-building helper.
+//
+// The form join is load-bearing, not a detail. `supervisor_child.type` is a
+// DEFAULT for the `{Module, args}` and bare-`Module` shorthands — those
+// state no type, `Module.child_spec/1` decides, and `use Supervisor`
+// generates `type: :supervisor` where the extractor writes `worker`. A first
+// version of this rule without the join reported 26 modules on the corpus
+// and every one was that artefact. Only a spec that SAID `worker` counts.
+
+.decl child_is_a_supervisor(child: symbol)
+
+child_is_a_supervisor(child) :- behaves_as(child, "Supervisor").
+
+.decl supervisor_registered_as_worker(sup: symbol, child: symbol, position: number)
+.output supervisor_registered_as_worker
+
+supervisor_registered_as_worker(sup, child, position) :-
+  supervisor_child(sup, position, child, _, "worker"),
+  supervisor_child_form(sup, position, "explicit"),
+  child_is_a_supervisor(child).

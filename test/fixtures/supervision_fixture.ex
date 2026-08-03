@@ -282,3 +282,44 @@ defmodule Argus.Test.Fixtures.PureDepSupervisor do
     Supervisor.init(children, strategy: :one_for_one)
   end
 end
+
+defmodule Argus.Test.Fixtures.SupAsWorker do
+  @moduledoc """
+  A supervisor child registered with an explicit `type: :worker`.
+
+  The pair that matters is this against `SupShorthand`: the shorthand states
+  no type and `child_spec/1` gets it right, so only the explicit spelling is
+  a finding. Reporting both is what a first version did, 26 times.
+  """
+  use Supervisor
+
+  def start_link(o), do: Supervisor.start_link(__MODULE__, o)
+
+  @impl Supervisor
+  def init(_) do
+    Supervisor.init(
+      [%{id: :sub, start: {Argus.Test.Fixtures.SubSupervisor, :start_link, [[]]}, type: :worker}],
+      strategy: :one_for_one
+    )
+  end
+end
+
+defmodule Argus.Test.Fixtures.SupShorthand do
+  @moduledoc "The same child, spelled the way child_spec/1 resolves correctly."
+  use Supervisor
+
+  def start_link(o), do: Supervisor.start_link(__MODULE__, o)
+
+  @impl Supervisor
+  def init(_), do: Supervisor.init([Argus.Test.Fixtures.SubSupervisor], strategy: :one_for_one)
+end
+
+defmodule Argus.Test.Fixtures.SubSupervisor do
+  @moduledoc false
+  use Supervisor
+
+  def start_link(o), do: Supervisor.start_link(__MODULE__, o)
+
+  @impl Supervisor
+  def init(_), do: Supervisor.init([], strategy: :one_for_one)
+end
