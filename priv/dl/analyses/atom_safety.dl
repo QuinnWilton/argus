@@ -40,7 +40,26 @@ atom_exhaustion_risk(id, func, api) :-
 .output unsafe_deserialization_finding
 
 unsafe_deserialization_finding(id, func, api) :-
-  unsafe_deserialization(id, func, api, "unsafe").
+  unsafe_deserialization(id, func, api, safety),
+  deserialization_is_unsafe(safety).
+
+// `[:safe]` downgrades; it does not clear.
+//
+// OTP's docs for binary_to_term/2 say `safe` prevents new atoms and new
+// EXTERNAL function references, then warn that it "does not guarantee that
+// the data is safe for your application" — a fun referencing an
+// already-loaded module passes. Paginator CVE-2020-15150 is RCE through
+// `[:safe]`: a client-supplied cursor decoded to a fun that Enumerable then
+// invoked. The fix routed through a validating decoder; the option was
+// already present.
+//
+// Only Plug.Crypto's term-walking decoders clear the finding, and those are
+// recorded as "validated".
+.decl deserialization_is_unsafe(safety: symbol)
+
+deserialization_is_unsafe("unsafe").
+deserialization_is_unsafe("atoms_only").
+deserialization_is_unsafe("dynamic").
 
 // ── Code injection ───────────────────────────────────────────────
 

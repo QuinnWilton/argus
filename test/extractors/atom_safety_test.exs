@@ -48,13 +48,26 @@ defmodule Argus.Extractors.AtomSafetyTest do
              end)
     end
 
-    test "detects binary_to_term/2 with [:safe] as safe" do
+    test "records [:safe] as atoms_only, because that is all it is" do
       facts = AtomSafety.extract(disassemble(Argus.Test.Fixtures.UnsafeDeserialization))
 
       rows = facts[:unsafe_deserialization]
 
+      # OTP's own docs: `safe` prevents new atoms and new EXTERNAL function
+      # references, and "does not guarantee that the data is safe for your
+      # application". Paginator CVE-2020-15150 is RCE through this option —
+      # a base64 cursor decoded to a fun that Enumerable then invoked. The
+      # fix was a validating decoder; `safe` was already present.
       assert Enum.any?(rows, fn [_, _, api, safety] ->
-               String.contains?(api, "binary_to_term/2") and safety == "safe"
+               String.contains?(api, "binary_to_term/2") and safety == "atoms_only"
+             end)
+    end
+
+    test "records a term-walking decoder as validated" do
+      facts = AtomSafety.extract(disassemble(Argus.Test.Fixtures.UnsafeDeserialization))
+
+      assert Enum.any?(facts[:unsafe_deserialization], fn [_, _, api, safety] ->
+               String.contains?(api, "non_executable_binary_to_term") and safety == "validated"
              end)
     end
   end

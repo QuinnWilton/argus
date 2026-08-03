@@ -33,7 +33,7 @@ defmodule Argus.Analyses.AtomSafetyTest do
   end
 
   describe "unsafe_deserialization_finding" do
-    test "flags binary_to_term without :safe, not the :safe variant" do
+    test "[:safe] downgrades the finding but does not clear it" do
       skip_without_souffle()
 
       results = analyze([Argus.Test.Fixtures.UnsafeDeserialization])
@@ -42,7 +42,16 @@ defmodule Argus.Analyses.AtomSafetyTest do
         Enum.map(results["unsafe_deserialization_finding"], fn [_id, func, _api] -> func end)
 
       assert Enum.any?(funcs, &String.contains?(&1, "decode_unsafe"))
-      refute Enum.any?(funcs, &String.contains?(&1, "decode_safe"))
+
+      # This assertion was inverted until a survey of fixed CVEs corrected
+      # it. Paginator CVE-2020-15150 is remote code execution THROUGH
+      # `[:safe]`, so excluding the option's call sites gave a false
+      # all-clear for the exact shape that produced the RCE.
+      assert Enum.any?(funcs, &String.contains?(&1, "decode_atoms_only")),
+             "[:safe] blocks new atoms, not funs referencing loaded modules"
+
+      refute Enum.any?(funcs, &String.contains?(&1, "decode_validated")),
+             "a term-walking decoder is the only thing that clears it"
     end
   end
 

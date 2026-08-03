@@ -11,7 +11,15 @@ defmodule Argus.Test.Fixtures.UnsafeDeserialization do
   @moduledoc false
 
   def decode_unsafe(bin), do: :erlang.binary_to_term(bin)
-  def decode_safe(bin), do: :erlang.binary_to_term(bin, [:safe])
+  # Named for what the option does, not for what it is often assumed to do.
+  # `[:safe]` blocks new atoms and new EXTERNAL funs; a fun referencing an
+  # already-loaded module passes, which is how Paginator CVE-2020-15150 was
+  # RCE *through* this option.
+  def decode_atoms_only(bin), do: :erlang.binary_to_term(bin, [:safe])
+
+  # The one that actually clears: it walks the term and rejects executable
+  # constructors rather than trusting an option.
+  def decode_validated(bin), do: Plug.Crypto.non_executable_binary_to_term(bin, [:safe])
 end
 
 defmodule Argus.Test.Fixtures.CodeExecution do
@@ -27,6 +35,6 @@ defmodule Argus.Test.Fixtures.SafeModule do
   @moduledoc false
 
   def to_existing_atom(input), do: String.to_existing_atom(input)
-  def safe_decode(bin), do: :erlang.binary_to_term(bin, [:safe])
+  def safe_decode(bin), do: Plug.Crypto.non_executable_binary_to_term(bin, [:safe])
   def hello, do: :world
 end

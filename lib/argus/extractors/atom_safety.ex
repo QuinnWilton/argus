@@ -80,11 +80,27 @@ defmodule Argus.Extractors.AtomSafety do
     ])
   end
 
+  # `[:safe]` is recorded, and it does NOT mean safe.
+  #
+  # OTP's own documentation for binary_to_term/2 says `safe` prevents
+  # "creation of new atoms" and "creation of new external function
+  # references", and then warns explicitly that it "does not guarantee that
+  # the data is safe for your application". A fun referencing a module
+  # already loaded on the node passes.
+  #
+  # Paginator CVE-2020-15150 is remote code execution THROUGH `[:safe]`: a
+  # client-supplied pagination cursor was base64-decoded, passed to
+  # binary_to_term/2 with `safe`, and the resulting fun was then invoked by
+  # the Enumerable protocol. The fix was not to add `safe` — it was already
+  # there — but to route through Plug.Crypto.non_executable_binary_to_term/2,
+  # which walks the term and rejects executable constructors.
+  #
+  # So the option downgrades a finding; only a validating decoder clears it.
   defp maybe_deserialization(facts, id, ctx, :erlang, :binary_to_term, 2) do
     safety =
       case resolve_register(ctx.instrs, ctx.idx, {:x, 1}) do
         {:ok, opts} when is_list(opts) ->
-          if :safe in opts, do: "safe", else: "unsafe"
+          if :safe in opts, do: "atoms_only", else: "unsafe"
 
         _ ->
           "dynamic"
@@ -97,6 +113,18 @@ defmodule Argus.Extractors.AtomSafety do
       ctx.func_id,
       ":erlang.binary_to_term/2",
       safety
+    ])
+  end
+
+  # The decoders that actually clear it: both type-walk the term and reject
+  # funs, pids, ports and refs rather than trusting an option.
+  defp maybe_deserialization(facts, id, ctx, Plug.Crypto, func, _arity)
+       when func in [:non_executable_binary_to_term, :safe_binary_to_term] do
+    add_fact(facts, :unsafe_deserialization, [
+      id,
+      ctx.func_id,
+      "Plug.Crypto.#{func}",
+      "validated"
     ])
   end
 
