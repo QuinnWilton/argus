@@ -688,6 +688,29 @@ defmodule Argus.Schema do
     """
   }
 
+  @schema_field %{
+    name: :schema_field,
+    layer: 2,
+    fields: [
+      {:mod, :symbol, "the schema module"},
+      {:field, :symbol, "a persisted field"}
+    ],
+    doc: "A field on an Ecto schema, read from the literal in __schema__/1."
+  }
+
+  @redacted_field %{
+    name: :redacted_field,
+    layer: 2,
+    fields: [
+      {:mod, :symbol, "the schema module"},
+      {:field, :symbol, "a field declared redact: true"}
+    ],
+    doc: """
+    A field Ecto excludes from `inspect/1`. Absence is the interesting \
+    case — `redact` defaults to off — so consumers ask by negation.
+    """
+  }
+
   @socket_transport %{
     name: :socket_transport,
     layer: 2,
@@ -1513,6 +1536,8 @@ defmodule Argus.Schema do
     @dynamic_child,
     @supervisor_max_children,
     @socket_transport,
+    @schema_field,
+    @redacted_field,
     @named_process,
     @process_link,
     @implements_behaviour,

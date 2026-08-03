@@ -166,6 +166,11 @@
 .decl pure_contract(func: symbol, mod: symbol, name: symbol, arity: number)
 .input pure_contract
 
+// A field Ecto excludes from `inspect/1`. Absence is the interesting case — `redact` defaults to off — so consumers ask by negation.
+//
+.decl redacted_field(mod: symbol, field: symbol)
+.input redacted_field
+
 // Registry module operation.
 .decl registry_op(id: symbol, func: symbol, registry: symbol, op: symbol, key: symbol)
 .input registry_op
@@ -180,6 +185,10 @@
 // RPC call with timeout information.
 .decl rpc_call(id: symbol, func: symbol, variant: symbol, timeout: symbol)
 .input rpc_call
+
+// A field on an Ecto schema, read from the literal in __schema__/1.
+.decl schema_field(mod: symbol, field: symbol)
+.input schema_field
 
 // A socket transport an endpoint enables, read from the literal that `socket/3` compiles into `__sockets__/0`. Emitted only for transports that are present and not `false`, which is how Phoenix reads them.
 //
