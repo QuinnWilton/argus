@@ -1634,3 +1634,59 @@ credential outranks a hash, which outranks a session token**, and the field
 name is the only signal available for that. A list is a heuristic, and this
 is one of the few places where a heuristic is clearly right — nobody names a
 field `sendgrid_api_key` by accident.
+
+## Surveying the generator instead of guessing at it
+
+Three capabilities came from noticing a particular macro. The fourth step
+was to stop guessing which framework to look at and **discover the surface
+directly**: every macro-baked literal has the same shape — a zero- or
+one-arity `__name__` export whose body moves a literal into `{x,0}` and
+returns. Scanning four projects' full dependency trees for that shape:
+
+| function | modules |
+|---|---|
+| `__info__/1` | 9349 |
+| `__struct__/0` | 2384 |
+| `__components__/0` | 351 |
+| `__live__/0` | 248 |
+| `__message_props__/0` | 170 |
+| `__changeset__/0` | 149 |
+| `__schema__/1` | 149 |
+| `__migration__/0` | 67 |
+| `__opts__/0` | 21 |
+| `__channel__/1`, `__socket__/1` | 9 |
+
+Framework-agnostic, and it took one pass. Anything on that list is readable
+without knowing the framework wrote it.
+
+## `__live__/0` answers the question three findings needed
+
+The severity of finding #1 turns on *"`SessionLive`'s routes sit behind the
+`:auth` pipeline"*, established by reading `router.ex`. `pipe_through` is
+not in the route literal, and that was recorded above as the limit.
+
+It is in `__live__/0`, for the other half of the ecosystem:
+
+```elixir
+%{kind: :view, container: {:div, []},
+  lifecycle: %{mount: [%{function: &LivebookWeb.SidebarHook.on_mount/4,
+                         id: {LivebookWeb.SidebarHook, :default},
+                         stage: :mount}], ...}}
+```
+
+Every `on_mount` hook, named, with its module. Livebook does not authenticate
+this way — its hook is a sidebar — but `phx.gen.auth` generates exactly
+this, `{MyAppWeb.UserAuth, :ensure_authenticated}`, and it is how most
+LiveView applications gate access.
+
+So a `live_on_mount(mod, hook_mod, hook_id)` fact would let
+`request_surface` distinguish **an unsafe sink behind an authentication hook
+from one in front of it** — the discriminator applied by hand to every
+severity in this document, and the difference between finding #1 being Low
+and being High.
+
+**Not built here.** It is a full cycle — extractor, schema bump, wiring into
+`request_surface`, fixtures, three pin reviews — and starting one at the end
+of a budget is how the vacuous test and the two reverted analyses happened.
+The mechanism is verified above and the shape of the fact is decided, which
+is the part that needed a session's context rather than an hour's.
