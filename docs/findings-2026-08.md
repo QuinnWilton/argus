@@ -1690,3 +1690,117 @@ and being High.
 of a budget is how the vacuous test and the two reverted analyses happened.
 The mechanism is verified above and the shape of the fact is decided, which
 is the part that needed a session's context rather than an hour's.
+
+---
+
+# Mining fixed bugs instead of imagining them
+
+Every analysis above this line came from a generator — enumerate defaults,
+enumerate structural questions, enumerate macro literals. Those produce
+*plausible* hazards, and roughly one in three survived measurement.
+
+A different source: **bugs that were already found and fixed in major BEAM
+projects.** A merged fix is proof the bug was real, that someone considered
+it worth fixing, and — from the diff — exactly what the correct shape is.
+
+Two surveys read the actual fix diffs for 25 bugs across the web stack
+(Phoenix, LiveView, Bandit, Cowboy, Ranch, phoenix_pubsub) and the data
+layer (Ecto, DBConnection, Postgrex, Oban, Broadway, NimblePool). The
+finding that matters most is the **hit rate**: roughly half sit within reach
+of bytecode-structural analysis, and the half that does is the half where
+OTP's own conventions — behaviour callbacks, monitor refs, exit-reason
+tuples, the bang-suffix naming rule — encode the invariant in the code's
+*shape* rather than in its values.
+
+## Shipped from this: `monitor_leak`
+
+Two surveys independently surfaced monitor mismanagement, and argus had **no
+monitor facts at all** — `Process.monitor/1`, `:erlang.monitor/2` and
+`demonitor` were entirely unmodelled.
+
+That gap also explains a reversal. `unmatched_message` was reverted above
+because it could not prove a specific message reaches a process. A monitor
+proves it: the runtime guarantees `{:DOWN, ...}` unless cancelled. The
+analysis need not guess what lands in a mailbox when the code asked for it.
+
+The shipped rule pairs a monitor with a **timed** wait and no
+`demonitor(ref, [:flush])`, and the timeout is the whole discriminator — a
+receive with no `after` consumes either the reply or the `:DOWN` and cannot
+leak. One finding across five projects: TeslaMate's
+`Vehicles.Vehicle:handle_event/4`, which is finding #3 in this document,
+previously found by reading source and now found mechanically. Livebook's
+seven monitor-plus-receive functions are all blocking and all correctly
+dropped.
+
+## Built, verified against source, and reverted: "monitors and never
+demonitors"
+
+Both surveys named this, citing phoenix_pubsub #23 and postgrex #781 — the
+latter a named singleton that monitored once per connection with zero
+demonitor calls, so every clean connect/disconnect cycle added a permanent
+monitor to a process living as long as the VM. Fixed in one line.
+
+Implemented as "named singleton + monitors + never demonitors", it reported
+Livebook's `Apps.ManagerWatcher`, and reading it showed the rule is wrong:
+that module monitors **one** target, keeps the ref in a scalar state field,
+and replaces it when the `:DOWN` arrives. At most one monitor is ever live,
+and no demonitor is needed because the message consumes it.
+
+The difference from postgrex is exactly one thing, and it is the thing the
+rule was missing: **postgrex put the ref in a collection** — an ETS table
+keyed by ref, one row per connection. That is what turns "never demonitors"
+from a non-event into an unbounded leak. The rule needs the collection as a
+conjunct, not the missing cancel.
+
+Reverted rather than shipped with a known false positive. The refinement is
+one conjunct over `ets_op`, and `ManagerWatcher` is the negative fixture it
+needs.
+
+## The rules worth building next, ranked
+
+From both surveys, restricted to what is structurally decidable, ordered by
+precision times severity:
+
+1. **Missing catch-all in `handle_info/2`** — Bandit #259 dropped live TCP
+   connections; DBConnection #355 killed the ownership proxy. Pure clause
+   shape. Note the trap recorded above: `unmatched_message` failed at this
+   because it tried to prove *which* message; the correct rule proves only
+   that the callback is partial, and escalates when the module monitors,
+   links, spawns or traps — because those *guarantee* arrivals.
+2. **Dead `Process.monitor` result** — phoenix_pubsub #23 discarded the ref,
+   making cleanup impossible by construction. A dead-register fact, and the
+   bytecode signal is unambiguous (`{:move, {:atom, :ok}, {:x,0}}`
+   immediately after the call).
+3. **Monitor ref crossing a spawn boundary** — Ranch `ae84436` created the
+   monitor in the parent and passed the ref to the child, so the `'DOWN'`
+   went to the wrong process and the child's detection was dead code. A
+   single-function data dependency, and essentially always a bug.
+4. **`terminate` exists but never reaches the cleanup callback**, or the
+   module never traps — DBConnection #300 / Postgrex #662 left a
+   `pg_sleep(300)` running server-side after shutdown. This is
+   `shutdown_safety` generalised: the shipped version asks whether cleanup
+   runs, this asks whether the *declared* cleanup callback is reachable from
+   `terminate` at all.
+5. **`process_flag(trap_exit, true)` reachable from `handle_cast/2`** —
+   Broadway #362 lost graceful shutdown about half the time, because a cast
+   gives the caller no ordering guarantee. Two atom literals and a call
+   edge; the crispest rule in either survey.
+6. **Strict match on a union-returning concurrency primitive** — Phoenix
+   #5129 killed Presence shards by asserting `{:exit, _} = Task.shutdown(task)`
+   when `nil` is the common outcome. Needs a small curated signature table
+   (`Task.shutdown/1,2`, `Task.yield/2`, `Process.whereis/1`,
+   `:ets.info/1`, `Registry.lookup/2`) and catches an entire race class.
+
+## What the surveys establish about the boundary
+
+Three bugs were high severity and **not** structurally detectable, and they
+are worth naming because they mark the edge precisely: Cowboy `03d306e` (a
+state-machine invariant over a value lattice), Oban #1488 (an `ON CONFLICT`
+predicate matching the wrong row, causing split-brain leadership and
+duplicate cron execution across nodes), and Oban #865 (a bounded retry that
+orphans a job whose side effect already happened). The last two are arguably
+the most severe bugs in either survey, and both live entirely in values.
+
+That is the same boundary this document reached from the other direction —
+structure is decidable, values are not — now confirmed against bugs nobody
+chose to make it true.
