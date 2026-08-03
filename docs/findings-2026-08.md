@@ -1034,11 +1034,35 @@ still carry a signed token with a max_age and servers time out, so it is a
 missing ceiling rather than an open door — but the ceiling is missing on a
 path an unauthenticated request reaches today.
 
-**The general limit is worth naming**, because it applies well beyond this
-finding: reachability is answerable from bytecode and *enablement often is
-not*. A dependency's dangerous path may be dead because a config key turns
-it off, and no amount of call-graph precision reveals that. Findings that
-depend on a runtime switch should say so, and this one now does.
+**A general limit was claimed here and then disproved, which is worth
+keeping in both directions.** The claim was that reachability is answerable
+from bytecode while *enablement is not* — a dependency's dangerous path
+being dead because a config key turns it off, invisible to any amount of
+call-graph precision.
+
+For this finding that is simply false, and checking took one command.
+`Phoenix.Endpoint`'s `socket/3` is a **macro**, so the options are compiled
+into the module. `SequinWeb.Endpoint.__sockets__/0` is a single literal:
+
+```erlang
+{:move, {:literal, [
+  {"/live", Phoenix.LiveView.Socket,
+    [websocket: [...], longpoll: [connect_info: [...]]]}]}, {:x, 0}}
+:return
+```
+
+So argus *can* see that longpoll is enabled, in exactly the same way it
+reads TLS options — a literal in a known position — and
+`unbounded_dynamic_children` could decide for itself which of the three
+projects the finding applies to instead of leaving it to a human with grep.
+
+The narrower true statement: **configuration is visible when a macro bakes
+it into the module and invisible when it is read at runtime.** Phoenix
+endpoints, supervisor child specs and `use` options are the first kind.
+`Application.get_env/2` at runtime is the second. Deciding which a given
+switch is takes one disassembly, and is worth doing before declaring a
+finding conditional — as this one was declared, wrongly, minutes before
+being checked.
 
 ## 20. Livebook — session creation from a LiveView, uncapped
 
