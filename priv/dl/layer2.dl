@@ -53,6 +53,11 @@
 .decl delayed_message(sender_func: symbol, target: symbol, message: symbol)
 .input delayed_message
 
+// A `Process.demonitor/1,2`. `flush` records whether `[:flush]` was passed, which is the difference between cancelling a future message and removing one already in the mailbox. Unreadable options are recorded as `no_flush`, the direction that keeps a finding rather than discharging one on a guess.
+//
+.decl demonitor_call(id: symbol, func: symbol, flush: symbol)
+.input demonitor_call
+
 // Mnesia or DETS distributed store operation.
 .decl distributed_store_op(id: symbol, func: symbol, store: symbol, op: symbol)
 .input distributed_store_op
@@ -136,6 +141,11 @@
 //
 .decl init_continues_to(mod: symbol, tag: symbol)
 .input init_continues_to
+
+// A `Process.monitor/1` or `:erlang.monitor/2`. Once it returns, a `{:DOWN, ref, :process, object, reason}` arrives unless cancelled — so a process that monitors is a process that receives `:DOWN`.
+//
+.decl monitor_call(id: symbol, func: symbol, target: symbol)
+.input monitor_call
 
 // Named process registration detected in code.
 .decl named_process(mod: symbol, name: symbol)

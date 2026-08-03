@@ -688,6 +688,38 @@ defmodule Argus.Schema do
     """
   }
 
+  @monitor_call %{
+    name: :monitor_call,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the call site"},
+      {:func, :symbol, "the monitoring function"},
+      {:target, :symbol, "the monitored target, or 'dynamic'"}
+    ],
+    doc: """
+    A `Process.monitor/1` or `:erlang.monitor/2`. Once it returns, a \
+    `{:DOWN, ref, :process, object, reason}` arrives unless cancelled — so \
+    a process that monitors is a process that receives `:DOWN`.
+    """
+  }
+
+  @demonitor_call %{
+    name: :demonitor_call,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the call site"},
+      {:func, :symbol, "the cancelling function"},
+      {:flush, :symbol, "'flush' | 'no_flush'"}
+    ],
+    doc: """
+    A `Process.demonitor/1,2`. `flush` records whether `[:flush]` was \
+    passed, which is the difference between cancelling a future message and \
+    removing one already in the mailbox. Unreadable options are recorded as \
+    `no_flush`, the direction that keeps a finding rather than discharging \
+    one on a guess.
+    """
+  }
+
   @http_route %{
     name: :http_route,
     layer: 2,
@@ -1554,6 +1586,8 @@ defmodule Argus.Schema do
     @dynamic_child,
     @supervisor_max_children,
     @socket_transport,
+    @monitor_call,
+    @demonitor_call,
     @http_route,
     @schema_field,
     @redacted_field,

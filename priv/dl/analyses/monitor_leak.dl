@@ -1,0 +1,36 @@
+// A monitor whose {:DOWN, ...} nobody is waiting for any more.
+//
+// `Process.monitor/1` is a promise the runtime keeps: a
+// {:DOWN, ref, :process, object, reason} WILL arrive unless cancelled.
+// Waiting for it in a `receive` with an `after` clause means the wait can
+// end without the message. The monitor is still live, so the message
+// arrives later — into a callback that has moved on, in a state where the
+// reason no longer means anything.
+//
+// `Process.demonitor(ref)` does not fix it: a {:DOWN, ...} already sent
+// stays in the mailbox. Only `Process.demonitor(ref, [:flush])` removes it.
+// That is why the flush option is a separate fact rather than a detail.
+//
+// The timeout is the whole discriminator. A `receive` with no `after`
+// consumes either the reply or the {:DOWN, ...} and cannot leak; every
+// monitor-plus-receive in Livebook is that shape and none is reported.
+
+.include "../clientlib/imports.dl"
+
+.decl waits_with_timeout(func: symbol)
+
+waits_with_timeout(func) :-
+  recv_start(_, func, 0, _).
+
+.decl flushes(func: symbol)
+
+flushes(func) :-
+  demonitor_call(_, func, "flush").
+
+.decl leaked_monitor(func: symbol, id: symbol)
+.output leaked_monitor
+
+leaked_monitor(func, id) :-
+  monitor_call(id, func, _),
+  waits_with_timeout(func),
+  !flushes(func).
