@@ -248,6 +248,27 @@ defmodule Argus.Schema do
     doc: "Register definition (write)."
   }
 
+  @tuple_literal %{
+    name: :tuple_literal,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the constructing instruction"},
+      {:reg, :symbol, "the destination x-register, e.g. 'x1'"},
+      {:tag, :symbol, "the tuple's leading atom"},
+      {:size, :number, "the tuple's arity"}
+    ],
+    doc: """
+    A tuple built with a literal atom head. Complements `literal_value`, \
+    which already records scalars written by `move` — including atoms — \
+    with their register; `put_tuple2` was the gap, so `{:get, key}` was \
+    invisible where a bare `:get` was not, and those are different messages.
+
+    The register is the point. `def_use` says which write feeds which read \
+    but not which OPERAND, so a call reading {x,0} and {x,1} gets two edges \
+    and neither says which is the message. The write knows.
+    """
+  }
+
   @def_use %{
     name: :def_use,
     layer: 1,
@@ -1647,6 +1668,7 @@ defmodule Argus.Schema do
     @tls_verification,
     @tls_connect,
     @deferred_reply,
+    @tuple_literal,
     @init_continues_to,
     @handle_continue_clause,
     @gen_event_handler,
