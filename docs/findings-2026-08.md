@@ -2065,3 +2065,61 @@ That is a bounded, deliberate trade rather than the architectural regression
 it would have been in W1 — and it is the sort of thing that should be
 decided with the measurement above in hand rather than by estimate, which is
 what happened here for far too long.
+
+## `def_use` shipped; its first two consumers both need one more thing
+
+The fact landed (v23, derived per module, 45,319 edges on oban against
+88,658 instructions). Two rules were then built on it, and both were
+reverted — for different reasons, and the difference is the useful part.
+
+**"The monitor ref is discarded"** (phoenix_pubsub #23) is expressible
+exactly: a `monitor_call` with no outgoing `def_use` edge. It reported 28
+sites on sequin and 19 on Livebook, and the refinement it needed was real —
+`def_use` is intraprocedural, so a ref returned in tail position looks dead,
+which is Livebook's `Apps.ManagerWatcher` and two others. `tail_call`
+already existed and excluded them.
+
+But the survivors are idiomatic. `Livebook.App:start_app_session/2` does
+`Process.monitor(session.pid)` bare and matches the `:DOWN` by pid; the
+monitor is consumed when the session dies, so the set is bounded by live
+sessions. Discarding the ref is normal when you never need to cancel early.
+phoenix_pubsub was worse in a way this rule cannot see: N monitors on the
+**same** pid, one per topic. **The rule is right about the code and wrong
+about the bug.**
+
+**"The monitor ref crosses a spawn boundary"** (Ranch ae84436) is the one
+the survey called essentially always a bug, and it is one edge:
+`def_use(monitor_id, spawn_id)`. It found nothing, and the fixture explains
+why — Ranch's actual shape is
+
+```erlang
+spawn_link(?MODULE, loop, [LSocket, Transport, Logger, ConnsSup, MonitorRef])
+```
+
+The ref goes into a **list**, so the edge runs monitor → list construction →
+spawn. One hop is not enough; this needs transitive reach over `def_use`
+within a function, and how far to close a 45,000-edge relation is a cost
+decision that deserves measurement rather than a guess at the end of a
+session.
+
+### What that says about the remaining work
+
+Both failures are one step past `def_use`, in opposite directions:
+
+| rule | needs |
+|---|---|
+| monitor ref crossing a spawn | **transitive** reach over edges |
+| `message_contract` client tags | the **literal value** an instruction writes |
+| atom-minting taint | both — reach, from a request boundary |
+
+So `def_use` is necessary and not sufficient, which is worth knowing
+precisely: the next two increments are a bounded transitive closure and a
+`literal_write(id, value)` relation, not more rules against what exists.
+
+The fact ships anyway, and the reasoning is worth stating because it cuts
+against a rule applied twice above. An unconsumed relation is normally dead
+weight. This one is the emission of a computation that already exists, is
+already tested, and is already consumed through the Elixir API by
+`Planchette.Flow` and `Gloss.Adapters` — it was never emitted through an
+oversight rather than a decision. Completing that is different from
+inventing a relation for a hypothetical rule.
