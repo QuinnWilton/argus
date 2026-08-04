@@ -10,7 +10,12 @@ defmodule Argus.ExtractorCoverageTest do
   file, every rule touching that relation derives nothing, and the analysis
   reports a clean zero indistinguishable from a codebase with no such bug.
 
-  This happened three times in one sweep.
+  This happened four times in one sweep, and the fourth is the reason the
+  guard exists rather than a fix in each analysis: `call_arg` and
+  `call_arg_forward` were emitted only by `Argus.Extractors.CallArgs`,
+  which NO analysis declared, so `clientlib/interprocedural.dl` — the whole
+  argument-forwarding layer — derived nothing across the seven analyses
+  that include it.
 
     * `network_in_init` read `impure_call` while `sync_call_in_init` did not
       declare the Purity extractor. Zero findings on every project.
@@ -64,37 +69,14 @@ defmodule Argus.ExtractorCoverageTest do
   # Derived by stage 0 or by clientlib rules, not by any extractor.
   @derived MapSet.new([:call_edge, :call_reachable])
 
-  # A real defect this test found on its first run, allowlisted so the guard
-  # can be committed while the fix is made separately.
-  #
-  # `call_arg` and `call_arg_forward` are emitted only by
-  # `Argus.Extractors.CallArgs`, which NO analysis declares. So they are
-  # never produced, and `clientlib/interprocedural.dl` — the whole
-  # argument-forwarding layer — derives nothing across the seven analyses
-  # that include it: call_cycle, deferred_startup_deadlock,
-  # one_for_one_coupling, process_bottleneck, supervision,
-  # sync_call_in_init and timeout_chain.
-  #
-  # Fixing it means adding one extractor to seven analyses, which will move
-  # their findings substantially. That is a verified change — each one's
-  # deltas want reading against source, as the behaviour-name fix and the
-  # sync_call resolution both did — so it is deliberately not bundled with
-  # the guard that found it.
-  # A second, independent defect the same run found. `purity` reads
-  # `ets_new`, `ets_op` and `port_open` to classify table and port
-  # operations as effects, and declares only `Argus.Extractors.Purity` — so
-  # those facts are never emitted and the purity contract has been blind to
-  # ETS writes and port opens. Same one-line-per-analysis fix, same need to
-  # read the deltas, since it will make previously-verified functions
-  # unprovable.
-  @known_gaps MapSet.new([
-                :call_arg,
-                :call_arg_forward,
-                :ets_new,
-                :ets_op,
-                :port_open,
-                :process_register
-              ])
+  # A defect the same run found, on the same shape as the CallArgs one that
+  # is now fixed. `purity` reads `ets_new`, `ets_op` and `port_open` to
+  # classify table and port operations as effects, and declares only
+  # `Argus.Extractors.Purity` — so those facts are never emitted and the
+  # purity contract has been blind to ETS writes and port opens. Same
+  # one-line fix, same need to read the deltas, since it will make
+  # previously-verified functions unprovable.
+  @known_gaps MapSet.new([:ets_new, :ets_op, :port_open, :process_register])
 
   # `track_imprecision(facts, ctx, category, relation, reason)` names the
   # relation in its FOURTH argument, after a category atom — so a

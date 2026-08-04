@@ -44,7 +44,11 @@ defmodule Argus.Analyses.ProcessBottleneck do
       Argus.Extractors.OTP,
       Argus.Extractors.GenEvent,
       Argus.Extractors.CallbackTag,
-      Argus.Extractors.Literal
+      Argus.Extractors.Literal,
+      # See sync_call_in_init. This analysis counts callers per target, so
+      # the forwarding layer moves it most: every wrapper resolved to a
+      # literal target is another caller in the fan-in count.
+      Argus.Extractors.CallArgs
     ]
 
   @impl true

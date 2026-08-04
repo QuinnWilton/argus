@@ -48,7 +48,12 @@ defmodule Argus.Analyses.TimeoutChain do
       Argus.Extractors.OTP,
       Argus.Extractors.GenEvent,
       Argus.Extractors.CallbackTag,
-      Argus.Extractors.Literal
+      Argus.Extractors.Literal,
+      # See sync_call_in_init: the `sync_call` rows this analysis chains
+      # together are partly derived by clientlib/interprocedural.dl, which
+      # needs call_arg and call_arg_forward to resolve a target forwarded
+      # through a wrapper.
+      Argus.Extractors.CallArgs
     ]
 
   alias Argus.Findings

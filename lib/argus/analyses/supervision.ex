@@ -39,7 +39,15 @@ defmodule Argus.Analyses.Supervision do
 
   @impl true
   def extractors,
-    do: [Argus.Extractors.Supervision, Argus.Extractors.OTP, Argus.Extractors.GenEvent]
+    do: [
+      Argus.Extractors.Supervision,
+      Argus.Extractors.OTP,
+      Argus.Extractors.GenEvent,
+      # See sync_call_in_init: `sync_call` is partly derived by
+      # clientlib/interprocedural.dl, which needs call_arg and
+      # call_arg_forward to resolve a target forwarded through a wrapper.
+      Argus.Extractors.CallArgs
+    ]
 
   @impl true
   def output_relations do

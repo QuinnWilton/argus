@@ -53,7 +53,14 @@ defmodule Argus.Analyses.SyncCallInInit do
       Argus.Extractors.Supervision,
       Argus.Extractors.GenEvent,
       Argus.Extractors.CallbackTag,
-      Argus.Extractors.Literal
+      Argus.Extractors.Literal,
+      # sync_call_in_init's rules reach `sync_call` through
+      # clientlib/interprocedural.dl, which resolves a target module
+      # forwarded through a wrapper — `defp fetch(server), do:
+      # GenServer.call(server, ...)` called from init with a literal.
+      # Nothing declared CallArgs, so call_arg and call_arg_forward were
+      # empty and that resolution never ran.
+      Argus.Extractors.CallArgs
     ]
 
   @impl true
