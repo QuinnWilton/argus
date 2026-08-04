@@ -1894,3 +1894,56 @@ the columns are wrong today.
 6. Blocking supervisor and `sys:` calls reachable from `init/1` **or
    `terminate/2,3`** — `sync_call_in_init` covers about half; the
    `terminate` half and the `sys:` family are missing.
+
+## Declined after building the fact: timers armed and never cancelled
+
+The third survey named this as a verified gap — `delayed_message` records
+`send_after` with no counterpart, so "a timer this module sets is never
+cancelled" was not expressible — and cited two RabbitMQ fixes, including a
+`terminate/2` that shipped as `%%TODO cancel timer? ok.`
+
+The fact was built (`timer_cancel`, mirroring `monitor_call`/`demonitor_call`)
+and then measured, and the measurement killed the rule.
+
+**Arming without cancelling anywhere** is not a finding: 21 modules on
+sequin, 7 on Livebook. A self-rescheduling tick never cancels and never
+needs to.
+
+**Narrowing to "wrote a `terminate/2` and does not cancel there"** looked
+much better, and oban is the control group that made it look real:
+
+| | arms a timer & has terminate | cancels in terminate |
+|---|---|---|
+| oban | 9 | **8** |
+| sequin | 6 | 0 |
+| livebook | 8 | 0 |
+| teslamate | 3 | 0 |
+
+Oban does it in five modules as `if is_reference(timer), do: Process.cancel_timer(timer)`.
+That reads as a disciplined norm everyone else is violating.
+
+**It is not.** `delayed_message` records the target, and the targets are:
+
+| project | `self` | everything else |
+|---|---|---|
+| sequin | 61 | 4 |
+| livebook | 34 | 6 |
+| oban | 20 | 2 |
+| teslamate | 10 | 0 |
+
+A `Process.send_after(self(), ...)` that is never cancelled costs nothing
+when the process terminates: the message is delivered to a dead pid and
+dropped. So oban's cancels are hygiene, not bug fixes, and the seventeen
+"risky" modules are almost entirely self-timers — non-findings.
+
+The fact was reverted with the rule. It is correct and it fills a real gap,
+but an unconsumed relation is dead weight, and that standard has been
+applied twice already here.
+
+**The generalisable part** is that the control group misled. Everywhere else
+in this document, one project doing something consistently while others do
+not was strong evidence the thing mattered — oban's `trap_exit` discipline
+made `shutdown_safety` credible on exactly that reasoning. Here the same
+signal was hygiene. What distinguished them was available and cheap: whether
+the message had anywhere to go. **A consistent practice is evidence that
+someone thought about it, not evidence that it was load-bearing.**
