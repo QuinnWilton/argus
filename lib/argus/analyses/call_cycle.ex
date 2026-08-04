@@ -42,7 +42,12 @@ defmodule Argus.Analyses.CallCycle do
       Argus.Extractors.OTP,
       Argus.Extractors.GenEvent,
       Argus.Extractors.CallbackTag,
-      Argus.Extractors.Literal
+      Argus.Extractors.Literal,
+      # call_cycle's rules join call_arg and call_arg_forward through
+      # clientlib/interprocedural.dl to follow a pid or name through a
+      # function argument. Nothing declared CallArgs, so those relations were
+      # empty and the forwarding layer derived nothing.
+      Argus.Extractors.CallArgs
     ]
 
   @impl true
