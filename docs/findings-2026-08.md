@@ -2123,3 +2123,43 @@ already tested, and is already consumed through the Elixir API by
 `Planchette.Flow` and `Gloss.Adapters` — it was never emitted through an
 oversight rather than a decision. Completing that is different from
 inventing a relation for a hypothetical rule.
+
+## The 45× gap, now measured rather than estimated
+
+`sync_call` resolves a callee for essentially none of first-party Elixir —
+1 of 48 rows on sequin — because the idiom passes a pid, not a name. Four
+shipped analyses key on a resolved target (`timeout_chain`,
+`process_bottleneck`, `sync_call_in_init`, `call_cycle`), so their findings
+rest on two edges across a 531-module program and their silences mean almost
+nothing.
+
+The value-flow layer makes the fix expressible, and the guard is the one
+the reverted `message_contract` needed: **a wrapper that sends a tag its own
+module's `handle_call` discriminates on is calling itself.** That rules out
+the dangerous case — a GenServer that is also a client of another server —
+without needing to know which pid is which.
+
+Measured with the facts now in place (`def_use`, `tuple_literal`,
+`literal_value`, `callback_tag`):
+
+| project | dynamic `sync_call` | `GenServer.call` sites | resolvable by tag |
+|---|---|---|---|
+| sequin | 47 | 45 | **44** |
+| livebook | 86 | 102 | **98** |
+| oban | 28 | 25 | **22** |
+
+Ninety to ninety-six percent. `sync_call` would go from roughly 2% resolved
+to roughly 95%, and the four analyses above from seeing two edges to seeing
+most of them.
+
+**Not built here, deliberately.** It changes four shipped analyses'
+findings by an order of magnitude, and that is a verified change: each
+analysis's deltas want reading against source before and after, exactly as
+the behaviour-name fix did when it took `process_bottleneck` from 341 to
+1698. Starting that at the end of a budget is the mistake this document has
+recorded twice — the vacuous test and the `with`-gotcha crash both came from
+finishing something in the last hour rather than the first.
+
+What is different from the last three times this was deferred is that it is
+no longer an estimate. The mechanism is built and validated end to end by
+`message_contract`, the guard is specified, and the payoff has a number.
