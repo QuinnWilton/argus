@@ -36,7 +36,16 @@ defmodule Argus.Analyses.Purity do
   def rules_file, do: "analyses/purity.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.Purity]
+  def extractors,
+    do: [
+      Argus.Extractors.Purity,
+      # purity's rules join these to classify table writes, port opens and
+      # name registration as effects. Declaring only the Purity extractor
+      # left them empty, so the contract was silently blind to all three.
+      Argus.Extractors.ETS,
+      Argus.Extractors.Ports,
+      Argus.Extractors.ProcessRegistry
+    ]
 
   @impl true
   def output_relations do
