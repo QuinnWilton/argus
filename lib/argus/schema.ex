@@ -248,6 +248,26 @@ defmodule Argus.Schema do
     doc: "Register definition (write)."
   }
 
+  @def_use %{
+    name: :def_use,
+    layer: 1,
+    fields: [
+      {:def_id, :symbol, "the instruction whose register write produces the value"},
+      {:use_id, :symbol, "the instruction that reads it"}
+    ],
+    doc: """
+    A reaching definition: this write can produce the value that read \
+    consumes. True def→use, respecting register reuse and control flow, \
+    rather than register-name matching — the difference between knowing \
+    where a value came from and guessing.
+
+    Volatile by construction. Both columns are positional instruction IDs, \
+    so editing a function body churns every edge in it. Only analyses that \
+    genuinely need value flow should declare it; the rest keep the \
+    incrementality that removing `instruction` from every rule bought.
+    """
+  }
+
   @use_rel %{
     name: :use,
     layer: 1,
@@ -1571,6 +1591,7 @@ defmodule Argus.Schema do
     @move,
     @def_rel,
     @use_rel,
+    @def_use,
     @literal_value,
     @jump,
     @branch,

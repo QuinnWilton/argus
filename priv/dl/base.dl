@@ -47,6 +47,13 @@
 .decl def(id: symbol, reg: symbol)
 .input def
 
+// A reaching definition: this write can produce the value that read consumes. True def→use, respecting register reuse and control flow, rather than register-name matching — the difference between knowing where a value came from and guessing.
+//
+// Volatile by construction. Both columns are positional instruction IDs, so editing a function body churns every edge in it. Only analyses that genuinely need value flow should declare it; the rest keep the incrementality that removing `instruction` from every rule bought.
+//
+.decl def_use(def_id: symbol, use_id: symbol)
+.input def_use
+
 // A call whose target is not statically known: through a fun value (`call_fun`), or through a computed module/function (`apply`).
 //
 // The call graph cannot follow these, which makes them the boundary of anything that reasons over reachability. Most analyses can ignore that and be merely incomplete; one that makes a claim about ALL executions — that a function performs no side effects, say — cannot, because an unfollowable call could do anything. Recorded so such an analysis can say "unprovable here" instead of quietly answering as though the call were not there.

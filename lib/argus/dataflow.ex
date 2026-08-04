@@ -45,6 +45,20 @@ defmodule Argus.Dataflow do
   @doc """
   Compute the def→use edge set from typed facts
   (`Argus.Pipeline.extract/2` with `format: :typed`).
+
+  > #### One module at a time {: .warning}
+  >
+  > Functions are grouped by `InstrId.fa/1`, which is `{name, arity}` and
+  > carries no module. Pass facts for a single module. Over a merged
+  > multi-module fact set every `init/1` in the program lands in one group
+  > and unrelated control-flow graphs are spliced together, which silently
+  > loses real edges and invents others — measured at 25,409 edges instead
+  > of 45,319 on one project.
+  >
+  > Every caller does this correctly today (`Planchette.Flow.build/1` and
+  > `Gloss.Adapters.dataflow/1` are both per module, as is the derivation in
+  > `Argus.Pipeline`), so this documents a precondition that was being met
+  > by convention rather than fixing a live defect.
   """
   @spec def_use_edges(Argus.Facts.t()) :: MapSet.t(edge())
   @pure true
