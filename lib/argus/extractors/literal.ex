@@ -52,14 +52,26 @@ defmodule Argus.Extractors.Literal do
     end)
   end
 
+  # `with` returns the non-matching value unchanged, so a y-register
+  # destination yielded `:error` rather than nil and blew up the caller's
+  # case. Matched explicitly instead.
   defp classify({:put_tuple2, reg, {:list, [{:atom, tag} | rest]}}) when is_atom(tag) do
-    with {:ok, r} <- register(reg), do: {r, tag, length(rest) + 1}
+    case register(reg) do
+      {:ok, r} -> {r, tag, length(rest) + 1}
+      :error -> nil
+    end
   end
 
   defp classify({:move, {:literal, t}, reg}) when is_tuple(t) and tuple_size(t) > 0 do
     case elem(t, 0) do
-      tag when is_atom(tag) -> with({:ok, r} <- register(reg), do: {r, tag, tuple_size(t)})
-      _ -> nil
+      tag when is_atom(tag) ->
+        case register(reg) do
+          {:ok, r} -> {r, tag, tuple_size(t)}
+          :error -> nil
+        end
+
+      _ ->
+        nil
     end
   end
 

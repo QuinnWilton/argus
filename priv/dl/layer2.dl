@@ -39,6 +39,16 @@
 .decl callback_return(id: symbol, func: symbol, callback: symbol, tag: symbol)
 .input callback_return
 
+// A message tag a callback matches. Over-approximated: every atom compared anywhere in the body counts, without tracking registers. Consumers ask whether a tag is NOT handled, so over-approximating suppresses findings rather than inventing them.
+//
+.decl callback_tag(func: symbol, callback: symbol, tag: symbol)
+.input callback_tag
+
+// The callback has a catch-all clause, so no tag can fail to match. Established from the bytecode: a multi-clause function raises by jumping to its own `func_info` label, so nothing branching there means every input matches. A guarded catch-all is correctly NOT total.
+//
+.decl callback_total(func: symbol, callback: symbol)
+.input callback_total
+
 // Dynamic code execution or OS command call.
 .decl code_execution(id: symbol, func: symbol, api: symbol)
 .input code_execution

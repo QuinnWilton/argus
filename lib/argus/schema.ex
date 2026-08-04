@@ -248,6 +248,37 @@ defmodule Argus.Schema do
     doc: "Register definition (write)."
   }
 
+  @callback_tag %{
+    name: :callback_tag,
+    layer: 2,
+    fields: [
+      {:func, :symbol, "the callback"},
+      {:callback, :symbol, "'handle_call' | 'handle_cast'"},
+      {:tag, :symbol, "an atom the callback discriminates on"}
+    ],
+    doc: """
+    A message tag a callback matches. Over-approximated: every atom \
+    compared anywhere in the body counts, without tracking registers. \
+    Consumers ask whether a tag is NOT handled, so over-approximating \
+    suppresses findings rather than inventing them.
+    """
+  }
+
+  @callback_total %{
+    name: :callback_total,
+    layer: 2,
+    fields: [
+      {:func, :symbol, "the callback"},
+      {:callback, :symbol, "'handle_call' | 'handle_cast'"}
+    ],
+    doc: """
+    The callback has a catch-all clause, so no tag can fail to match. \
+    Established from the bytecode: a multi-clause function raises by \
+    jumping to its own `func_info` label, so nothing branching there means \
+    every input matches. A guarded catch-all is correctly NOT total.
+    """
+  }
+
   @tuple_literal %{
     name: :tuple_literal,
     layer: 2,
@@ -1668,6 +1699,8 @@ defmodule Argus.Schema do
     @tls_verification,
     @tls_connect,
     @deferred_reply,
+    @callback_tag,
+    @callback_total,
     @tuple_literal,
     @init_continues_to,
     @handle_continue_clause,

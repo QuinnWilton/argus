@@ -144,6 +144,9 @@ defmodule Argus.DlDeclarationsTest do
       ets: ~w(dynamic_child ets_new ets_op ets_option function_def implements_behaviour
               supervisor_child),
       gen_statem: ~w(statem_initial statem_module statem_state statem_transition),
+      message_contract:
+        ~w(async_cast callback_tag callback_total def_use function_def implements_behaviour
+           literal_value remote_call sync_call tuple_literal),
       monitor_leak: ~w(demonitor_call monitor_call recv_start),
       one_for_one_coupling:
         ~w(async_cast call_arg call_arg_forward call_edge dynamic_child function_def
