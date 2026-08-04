@@ -1947,3 +1947,63 @@ made `shutdown_safety` credible on exactly that reasoning. Here the same
 signal was hygiene. What distinguished them was available and cheap: whether
 the message had anywhere to go. **A consistent practice is evidence that
 someone thought about it, not evidence that it was load-bearing.**
+
+## Declined on measurement: refining atom minting by argument shape
+
+The surveys ranked this third, with a ~15-CVE validation corpus, and named
+two refinements to `unsafe_atom_creation`, which today records only
+`(id, func, api)`.
+
+**Exclude literal arguments.** `String.to_atom("foo")` is safe and should
+never be reported. Measured across three dependency trees, classifying the
+argument register at every minting call site:
+
+| project | literal | call result | other |
+|---|---|---|---|
+| sequin | 2 | 75 | 45 |
+| livebook | 4 | 104 | 99 |
+| keila | 1 | 89 | 58 |
+
+Seven literal arguments out of roughly 470 sites. There is essentially no
+noise of this kind to remove.
+
+**Flag interpolation** — the survey's "canonical BEAM atom-exhaustion
+signature", from Guardian CVE-2026-54894's `String.to_atom("guardian_#{the_key}")`.
+No `bs_create_bin` with a non-literal segment reaches a minting call in this
+corpus. Interpolation folds into the `call_result` column, because Elixir
+routes the interpolated value through `String.Chars.to_string/1` first — so
+in bytecode the argument is the return of a call, indistinguishable from
+Guardian's other CVE, `String.to_atom(to_string(k))`.
+
+And `call_result` is 75 / 104 / 89. The whole population sits in the one
+bucket the refinement cannot split, because splitting it means knowing where
+the value came from.
+
+## Where the ranked build order actually ended
+
+Working through it over several passes:
+
+| item | outcome |
+|---|---|
+| `binary_to_term`, including `[:safe]` | **shipped** — corrected a false all-clear on a CVE shape |
+| supervisor child-spec validation | **shipped** — after fixing the fact defect it exposed, 26 false positives to 0 |
+| monitor leaks | **shipped** as `monitor_leak`, reproducing a bug previously found by hand |
+| timer armed with no cancel | built, measured, **declined** — targets are ~95% `self`, and those cost nothing |
+| atom minting by argument shape | **declined** — no headroom that does not need taint |
+| `{:continue, _}` without `handle_continue/2` | **declined** earlier — zero population, because it crashes at boot |
+
+Three shipped, three declined on measurement, and the three declines cost a
+grep, a fact, and a classification pass respectively.
+
+**Every remaining item needs the same thing.** The atom refinement needs to
+know whether the argument came from a request. The `sync_call` resolution
+gap — a forty-five-fold difference in what four shipped analyses can see —
+needs to know whether a wrapper's tag matches its own handler. The two
+reverted analyses needed to know which reason a `:DOWN` clause matches and
+which message a `cast` sends.
+
+That is one gap, stated four ways, and it now has evidence from two
+independent directions: generators that ran dry against it, and a survey of
+real fixed bugs that put roughly half of them out of reach for exactly this
+reason. `Argus.Dataflow` exists as a starting point, and the case for
+building on it is no longer speculative.
