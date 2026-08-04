@@ -43,7 +43,13 @@ defmodule Argus.Analyses.TimeoutChain do
   def rules_file, do: "analyses/timeout_chain.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.OTP, Argus.Extractors.GenEvent]
+  def extractors,
+    do: [
+      Argus.Extractors.OTP,
+      Argus.Extractors.GenEvent,
+      Argus.Extractors.CallbackTag,
+      Argus.Extractors.Literal
+    ]
 
   alias Argus.Findings
 

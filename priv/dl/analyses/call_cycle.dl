@@ -6,6 +6,7 @@
 // the other, producing a deadlock.
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/resolved_calls.dl"
 .include "../clientlib/behaviours.dl"
 
 // ── Layer 2 facts ──────────────────────────────────────────────────────
@@ -22,7 +23,7 @@
 
 sync_dep(from_mod, to_mod, f) :-
   function_def(f, from_mod, _, _, _),
-  sync_call(f, to_mod),
+  sync_call_target(f, to_mod),
   to_mod != "dynamic", from_mod != to_mod.
 
 // Indirect via GenServer API: a function in from_mod calls a sync API
@@ -43,7 +44,7 @@ sync_dep_transitive(from_mod, to_mod, w) :- sync_dep(from_mod, to_mod, w).
 sync_dep_transitive(from_mod, to_mod, f) :-
   function_def(f, from_mod, _, _, _),
   call_reachable(f, g),
-  sync_call(g, to_mod),
+  sync_call_target(g, to_mod),
   to_mod != "dynamic", from_mod != to_mod.
 
 // Transitive via GenServer API.

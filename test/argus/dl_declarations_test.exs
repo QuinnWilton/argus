@@ -129,7 +129,7 @@ defmodule Argus.DlDeclarationsTest do
       atom_safety: ~w(call_edge code_execution function_def unsafe_atom_creation
                       unsafe_deserialization),
       call_cycle:
-        ~w(call_arg call_arg_forward call_edge function_def implements_behaviour sync_call),
+        ~w(call_arg call_arg_forward call_edge callback_tag def_use function_def implements_behaviour literal_value remote_call sync_call tuple_literal),
       callback_receive:
         ~w(call_edge closure_def function_def implements_behaviour recv_start remote_call),
       coverage: ~w(async_cast dynamic_child ets_new ets_op function_def implements_behaviour
@@ -153,7 +153,7 @@ defmodule Argus.DlDeclarationsTest do
                                implements_behaviour process_link supervisor supervisor_child
                                supervisor_site sync_call),
       process_bottleneck:
-        ~w(call_arg call_arg_forward call_edge function_def implements_behaviour sync_call),
+        ~w(call_arg call_arg_forward call_edge callback_tag def_use function_def implements_behaviour literal_value remote_call sync_call tuple_literal),
       process_registry: ~w(function_def process_register whereis_call),
       reply_contract: ~w(callback_drops_from callback_return function_def implements_behaviour),
       request_surface: ~w(call_edge code_execution function_def http_route
@@ -168,13 +168,11 @@ defmodule Argus.DlDeclarationsTest do
                       implements_behaviour supervisor supervisor_child supervisor_child_form
                       supervisor_site sync_call),
       sync_call_in_init:
-        ~w(call_arg call_arg_forward call_edge dynamic_child function_def implements_behaviour
-                            supervisor supervisor_child sync_call),
+        ~w(call_arg call_arg_forward call_edge callback_tag def_use dynamic_child function_def implements_behaviour literal_value remote_call supervisor supervisor_child sync_call tuple_literal),
       tls_verification: ~w(function_def tls_connect tls_verification),
       transaction_safety: ~w(call_edge closure_def implements_behaviour impure_call remote_call),
       timeout_chain:
-        ~w(call_arg call_arg_forward call_edge function_def implements_behaviour sync_call
-                        sync_call_timeout),
+        ~w(call_arg call_arg_forward call_edge callback_tag def_use function_def implements_behaviour literal_value remote_call sync_call sync_call_timeout tuple_literal),
       unbounded_dynamic_children:
         ~w(call_edge dynamic_child function_def implements_behaviour socket_transport
            supervisor_max_children),

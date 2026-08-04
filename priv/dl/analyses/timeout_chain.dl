@@ -12,6 +12,7 @@
 //    blocking the GenServer.
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/resolved_calls.dl"
 .include "../clientlib/behaviours.dl"
 
 // ── Input facts ──────────────────────────────────────────────────────
@@ -33,7 +34,7 @@
 // Direct sync_call from handle_call.
 callback_sync_dep(from_mod, to_mod) :-
   handle_call_function(from_mod, func),
-  sync_call(func, to_mod),
+  sync_call_target(func, to_mod),
   to_mod != "dynamic",
   from_mod != to_mod.
 
@@ -41,7 +42,7 @@ callback_sync_dep(from_mod, to_mod) :-
 callback_sync_dep(from_mod, to_mod) :-
   handle_call_function(from_mod, func),
   call_reachable(func, g),
-  sync_call(g, to_mod),
+  sync_call_target(g, to_mod),
   to_mod != "dynamic",
   from_mod != to_mod.
 
@@ -109,14 +110,14 @@ timeout_chain_risk(from, to, depth) :-
 // Direct sync_call from handle_cast.
 blocking_cast_handler(mod, target) :-
   handle_cast_function(mod, func),
-  sync_call(func, target),
+  sync_call_target(func, target),
   target != "dynamic".
 
 // Transitive: handle_cast reaches a function with sync_call.
 blocking_cast_handler(mod, target) :-
   handle_cast_function(mod, func),
   call_reachable(func, g),
-  sync_call(g, target),
+  sync_call_target(g, target),
   target != "dynamic".
 
 // Via GenServer API.

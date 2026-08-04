@@ -48,7 +48,13 @@ defmodule Argus.Analyses.SyncCallInInit do
 
   @impl true
   def extractors,
-    do: [Argus.Extractors.OTP, Argus.Extractors.Supervision, Argus.Extractors.GenEvent]
+    do: [
+      Argus.Extractors.OTP,
+      Argus.Extractors.Supervision,
+      Argus.Extractors.GenEvent,
+      Argus.Extractors.CallbackTag,
+      Argus.Extractors.Literal
+    ]
 
   @impl true
   def output_relations do

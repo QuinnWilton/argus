@@ -6,6 +6,7 @@
 // under load.
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/resolved_calls.dl"
 .include "../clientlib/behaviours.dl"
 
 // ── Layer 2 facts ──────────────────────────────────────────────────────
@@ -25,7 +26,7 @@
 // Direct: a function in caller_mod has a sync_call with resolved target.
 sync_caller_witness(caller_mod, target_mod, f) :-
   function_def(f, caller_mod, _, _, _),
-  sync_call(f, target_mod),
+  sync_call_target(f, target_mod),
   target_mod != "dynamic",
   caller_mod != target_mod.
 
@@ -34,7 +35,7 @@ sync_caller_witness(caller_mod, target_mod, f) :-
 sync_caller_witness(caller_mod, target_mod, f) :-
   function_def(f, caller_mod, _, _, _),
   call_reachable(f, g),
-  sync_call(g, target_mod),
+  sync_call_target(g, target_mod),
   target_mod != "dynamic",
   caller_mod != target_mod.
 
