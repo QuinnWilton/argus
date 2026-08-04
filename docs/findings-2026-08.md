@@ -2007,3 +2007,61 @@ independent directions: generators that ran dry against it, and a survey of
 real fixed bugs that put roughly half of them out of reach for exactly this
 reason. `Argus.Dataflow` exists as a starting point, and the case for
 building on it is no longer speculative.
+
+## Correction: the value-flow layer is wiring, not an engine
+
+This document has repeatedly called value flow "a multi-session project",
+declined candidates on that basis, and cited `Argus.Dataflow` as "a starting
+point". That was written without reading it. Having now read it, the
+estimate was wrong by roughly an order of magnitude.
+
+**`Argus.Dataflow` already implements reaching definitions.**
+`def_use_edges/1` returns true def→use edges that respect register reuse and
+control flow — the moduledoc is explicit about the parts that are easy to
+get wrong, including why exception edges are deliberately not followed
+(at a handler the VM materialises class/reason/stacktrace in `x0`–`x2` with
+no `def` row, so following the edge would attribute pre-`try` writes to
+handler reads).
+
+**The register facts it needs already exist.** `def` and `use` are Layer-1
+relations, emitted today.
+
+**And the output is smaller than a relation argus already emits:**
+
+| project | `instruction` rows | `def_use` edges | ratio | compute |
+|---|---|---|---|---|
+| oban | 88,658 | 25,409 | 0.29× | 429 ms |
+| keila | 243,350 | 137,170 | 0.56× | 7.4 s |
+
+So the missing piece is not an engine. It is that `def_use` is not a fact:
+nothing emits it, no relation declares it, and no rule can join it.
+
+### What that unlocks, from items already declined here
+
+- **Sound client-tag extraction.** `message_contract` was reverted because a
+  backward textual scan attributed a stale `{x,1}` write to a later call —
+  `:amqp_channel` "casting `:ok`" that was really `gen_server:reply(From, ok)`.
+  A def→use edge answers exactly which write reaches that call.
+- **The 45× `sync_call` gap.** Resolving the client-wrapper convention needs
+  the wrapper's tag checked against its own handler's tags. Same fact.
+- **Two rules from the surveys that need one hop.** phoenix_pubsub #23 is
+  "the result of `Process.monitor/1` is dead" — a `def` with no reachable
+  `use`. Ranch `ae84436` is "a monitor ref flows into a spawn argument" — a
+  single def→use edge. Both were rated highly precise and neither is
+  expressible today.
+- **Atom-minting taint**, whose entire population sits in the `call_result`
+  bucket that argument-shape classification cannot split.
+
+### The cost that is real
+
+`def_use` is keyed on instruction IDs, which are positional, so any body
+edit churns that function's edges — the same hazard that made `instruction`
+worth removing from every rule. The difference is blast radius: the W1 work
+removed `instruction` because *every* analysis read it, so one body edit
+re-solved everything. Only analyses that need value flow would declare
+`def_use`, and they would pay per-edit churn as the price of precision.
+
+That is a bounded, deliberate trade rather than the architectural regression
+it would have been in W1 — and it is the sort of thing that should be
+decided with the measurement above in hand rather than by estimate, which is
+what happened here for far too long.
