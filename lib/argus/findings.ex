@@ -65,6 +65,8 @@ defmodule Argus.Findings do
           module: module() | nil,
           mfa: mfa() | nil,
           instr: InstrId.t() | nil,
+          at_label: String.t() | nil,
+          help: [String.t()],
           related: [related()]
         }
 
@@ -77,6 +79,8 @@ defmodule Argus.Findings do
           module: module() | nil,
           mfa: mfa() | nil,
           instr: InstrId.t() | nil,
+          at_label: String.t() | nil,
+          help: [String.t()],
           related: [related()]
         }
 
@@ -356,12 +360,28 @@ defmodule Argus.Findings do
 
   - `:at` — an anchor from `at_instr/1`, `at_func/1`, `at_module/1`, or
     `at_mfa/3` (default: no anchor).
+  - `:at_label` — what the anchor line IS, for renderers that excerpt the
+    source ("supervision tree defined here"), so the annotation does not
+    just repeat the title (default: `nil`).
+  - `:help` — resolution guidance, one string per suggestion, rendered by
+    consumers as help trailers. Say what to change and toward what, in
+    the row's own terms (default: `[]`).
   - `:related` — list of `related/2` entries (default: `[]`).
   """
   @spec new(severity(), String.t(), String.t(), keyword()) :: attrs()
   def new(severity, title, detail, opts \\ [])
       when severity in @severities and is_binary(title) and is_binary(detail) do
     anchor = Keyword.get(opts, :at, empty_anchor())
+    at_label = Keyword.get(opts, :at_label)
+    help = Keyword.get(opts, :help, [])
+
+    unless is_nil(at_label) or is_binary(at_label) do
+      raise ArgumentError, ":at_label must be a string, got: #{inspect(at_label)}"
+    end
+
+    unless is_list(help) and Enum.all?(help, &is_binary/1) do
+      raise ArgumentError, ":help must be a list of strings, got: #{inspect(help)}"
+    end
 
     %{
       severity: severity,
@@ -370,6 +390,8 @@ defmodule Argus.Findings do
       module: anchor.module,
       mfa: anchor.mfa,
       instr: anchor.instr,
+      at_label: at_label,
+      help: help,
       related: Keyword.get(opts, :related, [])
     }
   end

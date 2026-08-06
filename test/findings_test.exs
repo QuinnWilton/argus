@@ -10,7 +10,18 @@ defmodule Argus.FindingsTest do
 
   doctest Argus.Findings
 
-  @finding_keys [:analysis, :severity, :title, :detail, :module, :mfa, :instr, :related]
+  @finding_keys [
+    :analysis,
+    :severity,
+    :title,
+    :detail,
+    :module,
+    :mfa,
+    :instr,
+    :at_label,
+    :help,
+    :related
+  ]
   @severities [:error, :warning, :info]
 
   defp skip_without_souffle do
@@ -33,6 +44,9 @@ defmodule Argus.FindingsTest do
     end
 
     assert is_nil(finding.instr) or match?(%InstrId{}, finding.instr)
+    assert is_nil(finding.at_label) or is_binary(finding.at_label)
+    assert is_list(finding.help)
+    Enum.each(finding.help, &assert(is_binary(&1)))
     assert is_list(finding.related)
 
     Enum.each(finding.related, fn related ->
@@ -326,6 +340,43 @@ defmodule Argus.FindingsTest do
                Findings.at_instr(":lists:map/2#7")
 
       assert %{module: nil, mfa: nil, instr: nil} = Findings.at_instr("garbage")
+    end
+  end
+
+  describe "new/4 remediation fields" do
+    test "defaults to no at_label and no help" do
+      attrs = Findings.new(:warning, "Title", "Detail.")
+
+      assert attrs.at_label == nil
+      assert attrs.help == []
+    end
+
+    test "carries at_label and help through" do
+      attrs =
+        Findings.new(:warning, "Title", "Detail.",
+          at: Findings.at_module("MyApp.Sup"),
+          at_label: "supervision tree defined here",
+          help: ["use `rest_for_one`", "reorder the children"]
+        )
+
+      assert attrs.at_label == "supervision tree defined here"
+      assert attrs.help == ["use `rest_for_one`", "reorder the children"]
+    end
+
+    test "rejects a non-string at_label" do
+      assert_raise ArgumentError, ~r/:at_label must be a string/, fn ->
+        Findings.new(:warning, "Title", "Detail.", at_label: :here)
+      end
+    end
+
+    test "rejects help that is not a list of strings" do
+      assert_raise ArgumentError, ~r/:help must be a list of strings/, fn ->
+        Findings.new(:warning, "Title", "Detail.", help: "use rest_for_one")
+      end
+
+      assert_raise ArgumentError, ~r/:help must be a list of strings/, fn ->
+        Findings.new(:warning, "Title", "Detail.", help: [:not_a_string])
+      end
     end
   end
 end
