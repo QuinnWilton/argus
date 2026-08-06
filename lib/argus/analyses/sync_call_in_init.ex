@@ -96,8 +96,14 @@ defmodule Argus.Analyses.SyncCallInInit do
       "#{mod}.init/1 makes a synchronous call to #{callee} (directly or " <>
         "transitively). init runs inside the supervisor's start sequence, so " <>
         "the whole tree's startup stalls whenever #{callee} is slow, absent, " <>
-        "or not yet started. Defer the call with handle_continue.",
+        "or not yet started.",
       at: Findings.at_mfa(mod, :init, 1),
+      at_label: "this init blocks the start sequence",
+      help: [
+        "defer the call to `handle_continue/2`: return " <>
+          "`{:ok, state, {:continue, :finish_init}}` from init and make the " <>
+          "call in `handle_continue(:finish_init, state)`"
+      ],
       related: [Findings.related("call target", Findings.at_module(callee))]
     )
   end
@@ -112,6 +118,12 @@ defmodule Argus.Analyses.SyncCallInInit do
         "init cannot return until #{dep} answers — the tree never finishes " <>
         "booting.",
       at: Findings.at_mfa(child, :init, 1),
+      at_label: "this init blocks the start sequence",
+      help: [
+        "start `#{dep}` before `#{child}` in `#{sup}`'s child list " <>
+          "(supervisors start children in order), or defer the call to " <>
+          "`handle_continue/2`"
+      ],
       related: [
         Findings.related("supervisor", Findings.at_module(sup)),
         Findings.related("later dependency", Findings.at_module(dep))
