@@ -125,6 +125,12 @@ defmodule Argus.Analyses.DeferredStartupDeadlock do
         "blocks calling the other before ever reading its own mailbox. " <>
         "Neither can reply; both calls time out, forever, on every boot.",
       at: Findings.at_mfa(mod_a, :handle_continue, 2),
+      at_label: "one side of the cycle blocks here",
+      help: [
+        "break the cycle: keep one direction synchronous and make the other " <>
+          "asynchronous (a cast, or a message each side processes once both " <>
+          "are up)"
+      ],
       related: [Findings.related("cycle partner", Findings.at_mfa(mod_b, :handle_continue, 2))]
     )
   end
@@ -139,6 +145,12 @@ defmodule Argus.Analyses.DeferredStartupDeadlock do
         "#{callee} is alive when the call lands is a boot-time race — it " <>
         "works on the fast machine and fails in CI.",
       at: Findings.at_mfa(caller, :handle_continue, 2),
+      at_label: "the racing call originates here",
+      help: [
+        "start `#{callee}` before `#{caller}` in `#{sup}`'s child list, or " <>
+          "make `#{caller}` tolerate `#{callee}`'s absence (retry with " <>
+          "backoff, or monitor and wait for it to register)"
+      ],
       related: [
         Findings.related("supervisor", Findings.at_module(sup)),
         Findings.related("later sibling", Findings.at_module(callee))
@@ -155,6 +167,12 @@ defmodule Argus.Analyses.DeferredStartupDeadlock do
         "The worker blocks until the whole child list finishes starting — and " <>
         "if any later child waits on #{worker}, startup deadlocks.",
       at: Findings.at_mfa(worker, :handle_continue, 2),
+      at_label: "calls the parent supervisor here",
+      help: [
+        "move the supervisor query out of startup: pass the information as " <>
+          "an init argument, or query later from a message sent once the " <>
+          "tree is up"
+      ],
       related: [Findings.related("parent supervisor", Findings.at_module(sup))]
     )
   end
@@ -169,6 +187,12 @@ defmodule Argus.Analyses.DeferredStartupDeadlock do
         "state or crashes and restarts repeatedly under #{sup}, hiding the " <>
         "real ordering bug.",
       at: Findings.at_mfa(worker, :handle_continue, 2),
+      at_label: "the defensive catch hides the race here",
+      help: [
+        "remove the try/catch and fix the ordering it papers over: start the " <>
+          "callee earlier in the child list, or retry the call with backoff " <>
+          "until the callee is up"
+      ],
       related: [Findings.related("supervisor", Findings.at_module(sup))]
     )
   end
