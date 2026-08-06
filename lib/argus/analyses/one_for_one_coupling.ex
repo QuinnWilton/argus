@@ -78,6 +78,14 @@ defmodule Argus.Analyses.OneForOneCoupling do
         "restarts, #{caller_mod} is not restarted with it and keeps any " <>
         "stale pid, monitor, or cached state it held.",
       at: Findings.at_site(sup_site, sup),
+      at_label: "supervision tree defined here",
+      help: [
+        "restart-coupled siblings belong under `rest_for_one`, with " <>
+          "`#{callee_mod}` started before `#{caller_mod}` — a `#{callee_mod}` " <>
+          "restart then restarts `#{caller_mod}` too",
+        "alternatively, have `#{caller_mod}` monitor `#{callee_mod}` and " <>
+          "re-resolve it on every use instead of caching state across crashes"
+      ],
       related: [
         Findings.related("coupling call", Findings.at_func(witness)),
         Findings.related("called sibling", Findings.at_module(callee_mod))
