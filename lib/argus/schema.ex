@@ -133,7 +133,15 @@ defmodule Argus.Schema do
   # relation exists for the shape a search cannot find: a connect whose
   # literal options never mention `verify` at all, taking whatever the
   # library defaults to.
-  @schema_version 16
+  # Versions 17-25 were added without bumping this attribute: ten commits
+  # changed the relation set while it stayed at 16, and two of them
+  # (`[schema] v23: emit def_use` and `[schema] v24: tuple_literal`) named
+  # the right number in the subject and never edited the line. The pins in
+  # gloss, lowdown and planchette had already been widened to 25 in
+  # anticipation, so nothing broke — the mechanism just stopped reporting.
+  # `Argus.SchemaVersionTest` now digests the relation shape, so a schema
+  # edit fails the suite until this is bumped deliberately.
+  @schema_version 25
 
   # Layer 1: Module-level facts.
 
