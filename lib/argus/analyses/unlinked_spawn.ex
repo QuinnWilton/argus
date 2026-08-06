@@ -55,10 +55,13 @@ defmodule Argus.Analyses.UnlinkedSpawn do
       :warning,
       "Unlinked process spawned",
       "#{func} spawns a process with bare spawn — no link, no monitor. If the " <>
-        "process crashes, nothing observes it: no restart, no log, no cleanup. " <>
-        "Use spawn_link, spawn_monitor, or a Task/Supervisor so failures " <>
-        "propagate somewhere.",
-      at: Findings.at_instr(id)
+        "process crashes, nothing observes it: no restart, no log, no cleanup.",
+      at: Findings.at_instr(id),
+      at_label: "spawned here",
+      help: [
+        "use `spawn_link/1,3` or `spawn_monitor/1,3` so crashes propagate, " <>
+          "or start the process under a `Task.Supervisor`"
+      ]
     )
   end
 end
