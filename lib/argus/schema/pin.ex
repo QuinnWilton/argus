@@ -113,6 +113,7 @@ defmodule Argus.Schema.Pin do
     _ -> raise_at(caller, message)
   end
 
+  @spec bad_versions!(Macro.Env.t(), term()) :: no_return()
   defp bad_versions!(caller, got) do
     raise_at(
       caller,
@@ -120,6 +121,7 @@ defmodule Argus.Schema.Pin do
     )
   end
 
+  @spec raise_at(Macro.Env.t(), String.t()) :: no_return()
   defp raise_at(caller, description) do
     raise CompileError, file: caller.file, line: caller.line, description: description
   end
