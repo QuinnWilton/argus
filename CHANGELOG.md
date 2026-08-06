@@ -6,6 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.5.0 — Unreleased
 
+### Added (findings carry their remediation)
+
+Findings gained two additive fields for remediation-quality rendering:
+`:at_label` (what the anchor line IS — "supervision tree defined here" —
+so a renderer that excerpts source annotates the anchor with something
+other than a repeat of the title) and `:help` (resolution guidance, one
+string per suggestion). Both default (nil / `[]`), every existing
+`finding/2` builder is shape-compatible, and `Findings.new/4` validates
+the new options loudly.
+
+The six default-set analyses (deferred_startup_deadlock,
+one_for_one_coupling, supervision, sync_call_in_init, unlinked_spawn,
+unsafe_task) now populate both fields; remediation sentences that
+previously lived inside `detail` prose moved into `help`, so details
+state the problem and help states the fix. The remaining analyses are a
+follow-on tranche.
+
 Autoresearch loop — the tooling layer that turns the 0.4.0 measurement
 surface into an iterative improvement workflow. Measure a corpus,
 baseline the results, edit an extractor, re-measure, diff, accept or
