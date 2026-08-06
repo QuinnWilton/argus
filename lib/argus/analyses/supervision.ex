@@ -116,6 +116,12 @@ defmodule Argus.Analyses.Supervision do
         "{Module, args} shorthand states no type and child_spec/1 gets it " <>
         "right, so those are not findings.",
       at: Findings.at_module(child),
+      at_label: "this module is a supervisor",
+      help: [
+        "register `#{child}` with `type: :supervisor, shutdown: :infinity` — " <>
+          "or use the `{#{child}, args}` shorthand and let its `child_spec/1` " <>
+          "declare the type"
+      ],
       related: [Findings.related("parent supervisor", Findings.at_module(sup))]
     )
   end
@@ -145,6 +151,12 @@ defmodule Argus.Analyses.Supervision do
         "sibling #{sibling}. #{consequence} so #{permanent} keeps running " <>
         "against a process that no longer exists.",
       at: Findings.at_site(sup_site, sup),
+      at_label: "supervision tree defined here",
+      help: [
+        "make `#{sibling}` `:permanent` so it always comes back, or make " <>
+          "`#{permanent}` tolerate its absence (monitor and re-resolve " <>
+          "instead of assuming liveness)"
+      ],
       related: [
         Findings.related("dependency call", Findings.at_func(witness)),
         Findings.related("#{restart} sibling", Findings.at_module(sibling))
@@ -161,6 +173,11 @@ defmodule Argus.Analyses.Supervision do
         "#{dep} is not yet alive — calls into it fail until the tree finishes " <>
         "booting.",
       at: Findings.at_site(sup_site, sup),
+      at_label: "supervision tree defined here",
+      help: [
+        "move `#{dep}` before `#{child}` in the child list — supervisors " <>
+          "start children in order"
+      ],
       related: [
         Findings.related("init-time call", Findings.at_func(witness)),
         Findings.related("dependency", Findings.at_module(dep))
