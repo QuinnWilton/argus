@@ -78,9 +78,14 @@ defmodule Argus.Analyses.UnsafeTask do
       "#{func} starts a task with Task.async (or async_nolink) but nothing " <>
         "awaits or yields it. Task.async links to the caller and always sends " <>
         "a result message: a crashing task takes the caller down, and " <>
-        "completed results accumulate unread in the mailbox. Use await/yield, " <>
-        "or Task.Supervisor.start_child for fire-and-forget.",
-      at: Findings.at_instr(id)
+        "completed results accumulate unread in the mailbox.",
+      at: Findings.at_instr(id),
+      at_label: "task started here",
+      help: [
+        "consume the result with `Task.await/2` (or `Task.yield/2` plus " <>
+          "`Task.shutdown/1`), or use `Task.Supervisor.start_child/2` for " <>
+          "fire-and-forget work"
+      ]
     )
   end
 
@@ -92,7 +97,12 @@ defmodule Argus.Analyses.UnsafeTask do
         "{:error, reason} return — supervisor at max_children, not yet " <>
         "started, bad child spec — is silently ignored, so failed launches " <>
         "look exactly like successful ones.",
-      at: Findings.at_instr(id)
+      at: Findings.at_instr(id),
+      at_label: "start_child result discarded here",
+      help: [
+        "match on the result — `{:ok, pid} = Task.Supervisor.start_child(...)` " <>
+          "at minimum, or handle `{:error, reason}` explicitly"
+      ]
     )
   end
 end
