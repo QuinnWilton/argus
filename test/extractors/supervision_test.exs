@@ -395,4 +395,24 @@ defmodule Argus.Extractors.SupervisionTest do
       assert Map.has_key?(facts, :supervisor)
     end
   end
+
+  describe "a child module chosen by Keyword.get/3 with a literal default" do
+    test "the default is the child, and later siblings keep their positions" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(
+          to_string(:code.which(Argus.Test.Fixtures.ConfigurableQueueSupervisor))
+        )
+
+      children =
+        Supervision.extract(data)[:supervisor_child]
+        |> Enum.map(fn [_sup, pos, mod, _restart, _type] -> {pos, mod} end)
+        |> Enum.sort()
+
+      assert children == [
+               {"0", "Task.Supervisor"},
+               {"1", "Argus.Test.Fixtures.DefaultProducer"},
+               {"2", "Argus.Test.Fixtures.WorkerA"}
+             ]
+    end
+  end
 end

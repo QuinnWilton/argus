@@ -518,3 +518,33 @@ defmodule Argus.Test.Fixtures.ForemanLastSupervisor do
     Supervisor.init(children, strategy: :rest_for_one)
   end
 end
+
+defmodule Argus.Test.Fixtures.DefaultProducer do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts), do: {:ok, opts}
+end
+
+defmodule Argus.Test.Fixtures.ConfigurableQueueSupervisor do
+  @moduledoc "The Oban queue shape: the producer module is an option with a literal default."
+  use Supervisor
+
+  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(opts) do
+    producer = Keyword.get(opts, :producer, Argus.Test.Fixtures.DefaultProducer)
+
+    children = [
+      {Task.Supervisor, name: Argus.Test.Fixtures.Foreman},
+      {producer, foreman: Argus.Test.Fixtures.Foreman},
+      {Argus.Test.Fixtures.WorkerA, []}
+    ]
+
+    Supervisor.init(children, strategy: :rest_for_one)
+  end
+end

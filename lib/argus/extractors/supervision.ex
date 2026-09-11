@@ -664,12 +664,24 @@ defmodule Argus.Extractors.Supervision do
     from_tuples = if shallow?, do: tuple_specs, else: []
     from_cons = if shallow?, do: from_cons, else: []
 
+    # When the list is a cons chain, walk it from its outermost cell so
+    # the children come out in source order; the flat scans above are
+    # kept as the fallback for shapes with no chain (a whole-list
+    # literal, a helper returning one tuple).
+    ordered =
+      if shallow?, do: cons_chain_children(instrs, functions), else: []
+
+    in_order =
+      if ordered == [],
+        do: from_literals ++ from_cons ++ from_maps ++ from_tuples,
+        else: from_literals ++ ordered ++ from_maps
+
     # Dedup by {module, registered name}: two children of the same module
     # are distinct when they register under different names (three
     # `{DynamicSupervisor, name: ...}` children are three supervisors, not
     # one). Same module and same name (or both nameless) still collapse —
     # without a distinguishing name there is nothing to tell them apart.
-    (from_literals ++ from_cons ++ from_maps ++ from_tuples)
+    in_order
     # A spec whose module resolved only to the behaviour that starts it
     # (`{GenServer, :start_link, [runtime_mod, ...]}`) names no process
     # module at all; recording "GenServer" as a child says nothing.
@@ -678,6 +690,117 @@ defmodule Argus.Extractors.Supervision do
     end)
     |> Enum.uniq_by(fn {mod, _, _, name, _form} -> {mod, name} end)
   end
+
+  # A child list with a runtime element compiles to cons cells:
+  #
+  #     put_tuple2 x0, [x0, literal: [...]]          {producer, opts}
+  #     put_list   x0, literal: [{WorkerA, []}], x0  [{producer, opts} | [...]]
+  #     put_list   literal: {TaskSup, ...}, x0, x0   [{TaskSup, ...} | ...]
+  #
+  # Scanning put_lists in reverse instruction order recovers the literal
+  # elements but files the runtime one wherever its tuple happened to be
+  # built, so positions — which every ordering rule reads — were wrong
+  # whenever a literal and a runtime element were interleaved. Walking
+  # the chain from its outermost cell instead reads the list the way the
+  # VM builds it: each cell's head, then whatever its tail register held.
+  defp cons_chain_children(instrs, functions) do
+    indexed = Enum.with_index(instrs)
+
+    consumed =
+      MapSet.new(
+        for {{:put_list, _head, tail, _dst}, idx} <- indexed,
+            reg = operand_register(tail),
+            match?({:x, _}, reg) or match?({:y, _}, reg),
+            do: {reg, idx}
+      )
+
+    # The outermost cell is a put_list whose destination no later
+    # put_list consumes as a tail.
+    outermost =
+      indexed
+      |> Enum.filter(&match?({{:put_list, _, _, _}, _}, &1))
+      |> Enum.reject(fn {{:put_list, _, _, dst}, idx} ->
+        Enum.any?(consumed, fn {reg, at} -> reg == operand_register(dst) and at > idx end)
+      end)
+      |> List.last()
+
+    case outermost do
+      nil ->
+        []
+
+      {{:put_list, head, tail, _dst}, idx} ->
+        cons_head(head, instrs, idx, functions) ++ cons_tail(tail, instrs, idx, functions)
+    end
+  end
+
+  defp cons_head({:literal, _} = operand, _instrs, _idx, _functions),
+    do: extract_child_from_cons_operand(operand)
+
+  defp cons_head({:atom, _} = operand, _instrs, _idx, _functions),
+    do: extract_child_from_cons_operand(operand)
+
+  defp cons_head(operand, instrs, idx, functions) do
+    case last_writer(instrs, idx, operand_register(operand)) do
+      {{:put_tuple2, _dst, {:list, elements}}, at} ->
+        extract_child_from_tuple_elements(elements, instrs, at, functions)
+
+      {{:move, src, _dst}, at} ->
+        cons_head(src, instrs, at, functions)
+
+      _ ->
+        []
+    end
+  end
+
+  defp cons_tail({:literal, _} = operand, _instrs, _idx, _functions),
+    do: extract_child_from_cons_tail(operand)
+
+  defp cons_tail({:atom, nil}, _instrs, _idx, _functions), do: []
+  defp cons_tail(nil, _instrs, _idx, _functions), do: []
+
+  defp cons_tail(operand, instrs, idx, functions) do
+    case last_writer(instrs, idx, operand_register(operand)) do
+      {{:put_list, head, tail, _dst}, at} ->
+        cons_head(head, instrs, at, functions) ++ cons_tail(tail, instrs, at, functions)
+
+      {{:move, {:literal, _} = src, _dst}, _at} ->
+        extract_child_from_cons_tail(src)
+
+      {{:move, src, _dst}, at} ->
+        cons_tail(src, instrs, at, functions)
+
+      _ ->
+        []
+    end
+  end
+
+  # The instruction before `idx` that last touched `reg`, with its index.
+  # Any mention counts, not only the list-building forms the walk knows:
+  # a put_map_assoc or a call also writes a register, and skipping past
+  # one to an earlier put_tuple2 would read a map spec's `start` tuple as
+  # a child of its own. The callers match the known forms and stop at
+  # anything else.
+  defp last_writer(_instrs, _idx, nil), do: nil
+
+  defp last_writer(instrs, idx, reg) do
+    instrs
+    |> Enum.with_index()
+    |> Enum.take(idx)
+    |> Enum.reverse()
+    |> Enum.find(fn {instr, _at} -> mentions_register?(instr, reg) end)
+  end
+
+  defp mentions_register?({:tr, inner, _type}, reg), do: mentions_register?(inner, reg)
+  defp mentions_register?({:x, _} = r, reg), do: r == reg
+  defp mentions_register?({:y, _} = r, reg), do: r == reg
+
+  defp mentions_register?(term, reg) when is_tuple(term),
+    do: term |> Tuple.to_list() |> Enum.any?(&mentions_register?(&1, reg))
+
+  defp mentions_register?(term, reg) when is_list(term),
+    do: Enum.any?(term, &mentions_register?(&1, reg))
+
+  defp mentions_register?(_term, _reg), do: false
 
   # The tuple's register is consumed as a list head, or is x0 immediately
   # before the function returns.
@@ -920,10 +1043,44 @@ defmodule Argus.Extractors.Supervision do
       [{:atom, mod} | _] ->
         [{mod, :permanent, :worker, via_child_name(elements, instrs, idx, functions), :shorthand}]
 
-      _ ->
-        []
+      [] ->
+        case defaulted_module(elements, instrs, idx) do
+          nil ->
+            []
+
+          mod ->
+            [
+              {mod, :permanent, :worker, via_child_name(elements, instrs, idx, functions),
+               :shorthand}
+            ]
+        end
     end
   end
+
+  # `{Keyword.get(opts, :producer, Producer), opts}`: the module is chosen
+  # at runtime, with a literal default that is the child unless a caller
+  # says otherwise. Oban's queue supervisor builds its producer this way,
+  # and dropping the child also shifted every later sibling's position.
+  # Traced from the tuple's first element back to the Keyword.get/3 or
+  # Map.get/3 whose result it holds, then to that call's third argument.
+  defp defaulted_module([first | _rest], instrs, idx) do
+    with reg when reg != nil <- element_register(first),
+         {:ok, {getter, :get, 3}, origin} when getter in [Keyword, Map] <-
+           call_result_origin(instrs, idx, reg),
+         {:ok, mod} when is_atom(mod) <- resolve_register(instrs, origin, {:x, 2}),
+         true <- String.starts_with?(Atom.to_string(mod), "Elixir.") do
+      mod
+    else
+      _ -> nil
+    end
+  end
+
+  defp defaulted_module(_elements, _instrs, _idx), do: nil
+
+  defp element_register({:tr, reg, _type}), do: element_register(reg)
+  defp element_register({:x, _} = reg), do: reg
+  defp element_register({:y, _} = reg), do: reg
+  defp element_register(_other), do: nil
 
   # The child spec's opts is a register operand of the same tuple; trace its
   # `:name` value back to a via registration.

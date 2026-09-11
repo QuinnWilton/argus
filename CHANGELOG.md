@@ -38,6 +38,17 @@ found 5 at the bug site; the rest name the gap each entry closes.
   `Postgrex.ReplicationConnection` canonicalise to `GenServer`, so every
   rule about GenServer callbacks applies to modules declaring them.
 
+### Changed (supervision extraction)
+
+- A tuple-spec child whose module is `Keyword.get(opts, key, Default)` or
+  `Map.get(opts, key, Default)` resolves to `Default` (Oban's queue
+  supervisor builds its producer this way; the child was dropped).
+- A child list built from cons cells is walked from its outermost cell,
+  so positions follow source order when literal and runtime elements are
+  interleaved. Before, a runtime element was filed wherever its tuple
+  happened to be built, and every position-reading rule saw the wrong
+  order.
+
 ### Fixed
 
 - gen_statem state-function IDs were minted from `String.to_atom/1` of
