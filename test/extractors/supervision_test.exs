@@ -57,6 +57,28 @@ defmodule Argus.Extractors.SupervisionTest do
     end
   end
 
+  describe "trees defined outside Supervisor modules" do
+    test "a GenServer starting a supervisor from helpers and a comprehension" do
+      {:ok, facts} =
+        Argus.Pipeline.extract([Argus.Test.Fixtures.TopologyServer],
+          extractors: [Argus.Extractors.Supervision]
+        )
+
+      # The runtime-built option list still yields the strategy.
+      assert [["Argus.Test.Fixtures.TopologyServer", "rest_for_one"]] = facts[:supervisor]
+
+      children =
+        facts[:supervisor_child]
+        |> Enum.sort_by(fn [_sup, pos | _] -> String.to_integer(pos) end)
+        |> Enum.map(fn [_sup, _pos, mod | _] -> mod end)
+
+      # The spec from a called helper comes before the one from the
+      # comprehension closure that helper's sibling creates — the
+      # construction order the source expresses.
+      assert children == ["Argus.Test.Fixtures.WorkerA", "Argus.Test.Fixtures.SyncInitServer"]
+    end
+  end
+
   describe "Application modules" do
     test "detects application module as supervisor" do
       {:ok, data} =

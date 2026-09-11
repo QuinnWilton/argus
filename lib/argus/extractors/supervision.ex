@@ -68,8 +68,19 @@ defmodule Argus.Extractors.Supervision do
         DynamicSupervisor in behaviours ->
           extract_dynamic_supervisor(mod_str, module_data)
 
+        # A tree can be defined without the Supervisor behaviour: a
+        # GenServer that starts a supervisor from its init/1 (Broadway's
+        # Topology), a library's start_link/1 that assembles children and
+        # calls Supervisor.start_link (Cachex). The function that makes the
+        # Supervisor.start_link/init call is the tree definition.
         true ->
-          %{}
+          case tree_function(module_data.functions) do
+            nil ->
+              %{}
+
+            {label, instrs} ->
+              extract_from_instructions(%{}, mod_str, label, instrs, module_data.functions)
+          end
       end
 
     # DynamicSupervisor.start_child can fire from any module, regardless of
@@ -90,6 +101,25 @@ defmodule Argus.Extractors.Supervision do
     scan_remote_calls(mod, functions, facts, fn acc, ctx, mfa ->
       handle_dynamic_start(acc, ctx, mfa, self_sup, functions)
     end)
+  end
+
+  # The first function calling Supervisor.start_link/2 or Supervisor.init/2,
+  # as `{"name/arity", instrs}`.
+  defp tree_function(functions) do
+    Enum.find_value(functions, fn
+      {:function, name, arity, _label, instrs} ->
+        if Enum.any?(instrs, &supervisor_start_call?/1), do: {"#{name}/#{arity}", instrs}
+
+      _ ->
+        nil
+    end)
+  end
+
+  defp supervisor_start_call?(instr) do
+    case match_remote_call(instr) do
+      {:ok, Supervisor, func, 2} when func in [:init, :start_link] -> true
+      _ -> false
+    end
   end
 
   defp supervisor_behaviour?(behaviours) do
@@ -328,12 +358,12 @@ defmodule Argus.Extractors.Supervision do
 
     facts =
       if children == [] do
-        # init/1 was found but no static child specs were extracted —
-        # the children might be runtime-built (Enum.map, comprehensions)
-        # or use a shape we don't recognize. Mark as a skipped extraction.
+        # The tree function was found but no static child specs were
+        # extracted — the children use a shape we don't recognize. Mark
+        # as a skipped extraction.
         track_imprecision(
           facts,
-          synthetic_ctx(mod_str, "init/1"),
+          synthetic_ctx(mod_str, func_label),
           :supervisor_child_module,
           :supervisor_child,
           :missing
@@ -374,29 +404,84 @@ defmodule Argus.Extractors.Supervision do
     %{func_id: InstrId.func_id(mod_str, func_label), instrs: [], idx: 0}
   end
 
-  # Extract children from the given instructions, then follow local calls
-  # one level deep to find children in helper functions. This catches the
-  # common pattern where init/1 delegates to *_children helper functions
-  # that return child spec lists.
-  defp extract_children_with_helpers(instrs, all_functions) do
-    direct = extract_children(instrs, all_functions)
+  # Extract children from the tree function, then from the helpers it
+  # calls, breadth-first to a bounded depth. Helpers include closures the
+  # function creates — `for`/`Enum.map` comprehension bodies are lifted
+  # into their own functions, and that is where a spec built per element
+  # (`for i <- 0..n, do: %{start: {Producer, ...}}`) actually lives.
+  # Breadth-first order approximates construction order: a spec built by
+  # a helper called from the tree function comes before one built by a
+  # closure that helper creates.
+  @helper_depth 3
 
-    from_helpers =
-      Enum.flat_map(instrs, fn instr ->
+  defp extract_children_with_helpers(instrs, all_functions) do
+    by_label =
+      Map.new(all_functions, fn {:function, name, arity, label, body} ->
+        {label, {name, arity, body}}
+      end)
+
+    walk_helpers([instrs], all_functions, by_label, MapSet.new(), 0, [])
+    |> Enum.uniq_by(fn {mod, _, _, name, _form} -> {mod, name} end)
+  end
+
+  defp walk_helpers([], _functions, _by_label, _seen, _depth, acc), do: acc
+
+  defp walk_helpers(_frontier, _functions, _by_label, _seen, depth, acc)
+       when depth > @helper_depth,
+       do: acc
+
+  defp walk_helpers(frontier, functions, by_label, seen, depth, acc) do
+    # Tuple-shaped specs (`{Mod, args}`) are only trusted in the tree
+    # function and its direct helpers: deeper down, a 2-tuple holding a
+    # module atom is far more often a dispatcher option or a tagged value
+    # than a child spec. Literal lists and map specs carry their own shape
+    # and are trusted at any depth.
+    found = Enum.flat_map(frontier, &extract_children(&1, functions, shallow?: depth <= 1))
+
+    {next, seen} =
+      Enum.reduce(frontier, {[], seen}, fn body, {next, seen} ->
+        Enum.reduce(body, {next, seen}, fn instr, {next, seen} ->
+          case helper_target(instr, functions, by_label) do
+            {key, helper_body} ->
+              if MapSet.member?(seen, key),
+                do: {next, seen},
+                else: {next ++ [helper_body], MapSet.put(seen, key)}
+
+            nil ->
+              {next, seen}
+          end
+        end)
+      end)
+
+    walk_helpers(next, functions, by_label, seen, depth + 1, acc ++ found)
+  end
+
+  defp helper_target(instr, functions, by_label) do
+    case instr do
+      {:make_fun3, {:f, label}, _index, _uniq, _dst, _env} ->
+        case Map.get(by_label, label) do
+          {name, arity, body} -> {{name, arity}, body}
+          nil -> nil
+        end
+
+      {:make_fun3, {_mod, name, arity}, _index, _uniq, _dst, _env} ->
+        case find_function(functions, name, arity) do
+          nil -> nil
+          body -> {{name, arity}, body}
+        end
+
+      _ ->
         case match_local_call(instr) do
           {:ok, _mod, func, arity} ->
-            case find_function(all_functions, func, arity) do
-              nil -> []
-              helper_instrs -> extract_children(helper_instrs, all_functions)
+            case find_function(functions, func, arity) do
+              nil -> nil
+              body -> {{func, arity}, body}
             end
 
           :none ->
-            []
+            nil
         end
-      end)
-
-    (direct ++ from_helpers)
-    |> Enum.uniq_by(fn {mod, _, _, name, _form} -> {mod, name} end)
+    end
   end
 
   # Detect the supervision strategy by finding the Supervisor.init/2 or
@@ -421,7 +506,7 @@ defmodule Argus.Extractors.Supervision do
     |> Enum.find_value(fn {instr, idx} ->
       case match_remote_call(instr) do
         {:ok, Supervisor, func, 2} when func in [:init, :start_link] ->
-          case extract_strategy_from_opts(instrs, idx) do
+          case extract_strategy_from_opts(instrs, idx) || strategy_in_cons(instrs) do
             nil -> nil
             strategy -> {strategy, idx}
           end
@@ -429,6 +514,28 @@ defmodule Argus.Extractors.Supervision do
         _ ->
           nil
       end
+    end)
+  end
+
+  # Options assembled at runtime (`[name: name(config), strategy:
+  # :rest_for_one]`) are cons cells, and the literal `strategy:` pair
+  # survives as a put_list head. One tree per function, so the first
+  # such pair in the function is the tree's.
+  @strategies [:one_for_one, :one_for_all, :rest_for_one, :simple_one_for_one]
+
+  defp strategy_in_cons(instrs) do
+    Enum.find_value(instrs, fn
+      {:put_list, {:literal, {:strategy, strategy}}, _tail, _dst} when strategy in @strategies ->
+        strategy
+
+      {:put_list, _head, {:literal, tail}, _dst} when is_list(tail) ->
+        case Keyword.keyword?(tail) and Keyword.get(tail, :strategy) do
+          strategy when strategy in @strategies -> strategy
+          _ -> nil
+        end
+
+      _ ->
+        nil
     end)
   end
 
@@ -494,12 +601,30 @@ defmodule Argus.Extractors.Supervision do
   # Child specs appear as literals like {Module, args} or %{id: ..., start: {Mod, ...}}.
   # When children are constructed at runtime, the compiler emits put_tuple2
   # instructions in reverse order (lists are built tail-first via cons cells).
-  defp extract_children(instrs, functions) do
+  defp extract_children(instrs, functions, opts) do
     from_literals =
       Enum.flat_map(instrs, fn
         {:move, {:literal, val}, _} -> extract_child_from_literal(val)
         _ -> []
       end)
+
+    # A tuple is only a child spec if it goes somewhere a child spec goes:
+    # into a list (a put_list head) or straight out of a spec helper (the
+    # function returns it). `{GenStage.DemandDispatcher, opts}` built as
+    # a producer option never does either.
+    tuple_specs =
+      instrs
+      |> Enum.with_index()
+      |> Enum.flat_map(fn
+        {{:put_tuple2, dst, {:list, elements}}, idx} ->
+          if tuple_used_as_spec?(instrs, idx, dst),
+            do: extract_child_from_tuple_elements(elements, instrs, idx, functions),
+            else: []
+
+        _ ->
+          []
+      end)
+      |> Enum.reverse()
 
     # A single runtime element (a tuple whose options call out at
     # runtime — the stock Phoenix Application shape) splits the list
@@ -535,17 +660,9 @@ defmodule Argus.Extractors.Supervision do
           []
       end)
 
-    from_tuples =
-      instrs
-      |> Enum.with_index()
-      |> Enum.flat_map(fn
-        {{:put_tuple2, _, {:list, elements}}, idx} ->
-          extract_child_from_tuple_elements(elements, instrs, idx, functions)
-
-        _ ->
-          []
-      end)
-      |> Enum.reverse()
+    shallow? = Keyword.get(opts, :shallow?, true)
+    from_tuples = if shallow?, do: tuple_specs, else: []
+    from_cons = if shallow?, do: from_cons, else: []
 
     # Dedup by {module, registered name}: two children of the same module
     # are distinct when they register under different names (three
@@ -553,11 +670,70 @@ defmodule Argus.Extractors.Supervision do
     # one). Same module and same name (or both nameless) still collapse —
     # without a distinguishing name there is nothing to tell them apart.
     (from_literals ++ from_cons ++ from_maps ++ from_tuples)
+    # A spec whose module resolved only to the behaviour that starts it
+    # (`{GenServer, :start_link, [runtime_mod, ...]}`) names no process
+    # module at all; recording "GenServer" as a child says nothing.
+    |> Enum.reject(fn {mod, _, _, _, _} ->
+      mod in [GenServer, Agent, Task, :gen_server, :gen_statem]
+    end)
     |> Enum.uniq_by(fn {mod, _, _, name, _form} -> {mod, name} end)
   end
 
+  # The tuple's register is consumed as a list head, or is x0 immediately
+  # before the function returns.
+  defp tuple_used_as_spec?(instrs, idx, dst) do
+    rest = Enum.drop(instrs, idx + 1)
+
+    # Follow the tuple through register moves (`x0` parked in a `y`
+    # slot across a call) to the put_list that consumes it, or to a
+    # `Supervisor.child_spec/2` call that takes it as its first argument
+    # (a comprehension body normalising `{Mod, arg}` per element).
+    {feeds_list?, _aliases} =
+      Enum.reduce_while(rest, {false, MapSet.new([dst])}, fn
+        {:move, src, to}, {_, aliases} ->
+          if MapSet.member?(aliases, operand_register(src)),
+            do: {:cont, {false, MapSet.put(aliases, to)}},
+            else: {:cont, {false, aliases}}
+
+        {:put_list, head, _tail, _}, {_, aliases} ->
+          if MapSet.member?(aliases, operand_register(head)),
+            do: {:halt, {true, aliases}},
+            else: {:cont, {false, aliases}}
+
+        instr, {_, aliases} = acc ->
+          case match_remote_call(instr) do
+            {:ok, Supervisor, :child_spec, 2} ->
+              if MapSet.member?(aliases, {:x, 0}),
+                do: {:halt, {true, aliases}},
+                else: {:cont, acc}
+
+            _ ->
+              {:cont, acc}
+          end
+      end)
+
+    returned? =
+      dst == {:x, 0} and
+        match?(
+          [_ | _],
+          rest
+          |> Enum.reject(&match?({:line, _}, &1))
+          |> Enum.take(2)
+          |> Enum.filter(&(&1 == :return or match?({:deallocate, _}, &1)))
+        )
+
+    feeds_list? or returned?
+  end
+
+  defp operand_register({:tr, reg, _}), do: reg
+  defp operand_register(reg), do: reg
+
   defp extract_child_from_cons_operand({:atom, mod}) when is_atom(mod) do
-    if module_name?(mod), do: [{mod, :permanent, :worker, nil, :shorthand}], else: []
+    # Elixir modules only, as for tuples: a lowercase atom at the head of
+    # a runtime-built list is a tag, not an Erlang child.
+    if String.starts_with?(Atom.to_string(mod), "Elixir."),
+      do: [{mod, :permanent, :worker, nil, :shorthand}],
+      else: []
   end
 
   defp extract_child_from_cons_operand({:literal, val}), do: extract_single_child_spec(val)
@@ -604,6 +780,15 @@ defmodule Argus.Extractors.Supervision do
 
   # Resolve the start module from a child spec map's :start value.
   # The value may be a literal tuple, a bare atom, or a register.
+  # `{GenServer, :start_link, [Mod, args, opts]}` starts Mod, not GenServer;
+  # the same for Supervisor/Agent/Task when their first argument names a
+  # module. A Supervisor started on a children list stays "Supervisor" —
+  # an inline nested tree whose children are built elsewhere.
+  defp resolve_start_module({:literal, {behaviour, _, [mod | _]}}, _instrs, _idx)
+       when behaviour in [GenServer, Supervisor, Agent, Task, :gen_server, :gen_statem] and
+              is_atom(mod) and mod != nil,
+       do: mod
+
   defp resolve_start_module({:literal, {mod, _, _}}, _instrs, _idx) when is_atom(mod), do: mod
   defp resolve_start_module({:literal, {mod, _}}, _instrs, _idx) when is_atom(mod), do: mod
   defp resolve_start_module({:atom, mod}, _instrs, _idx) when is_atom(mod), do: mod
@@ -681,7 +866,12 @@ defmodule Argus.Extractors.Supervision do
   end
 
   defp extract_single_child_spec(mod) when is_atom(mod) do
-    if module_name?(mod), do: [{mod, :permanent, :worker, nil, :shorthand}], else: []
+    # A bare-atom child is Elixir shorthand for `{mod, []}`; Erlang code
+    # never spells a child spec that way, so a lowercase atom here is a
+    # tag in some other literal list, not a module.
+    if String.starts_with?(Atom.to_string(mod), "Elixir."),
+      do: [{mod, :permanent, :worker, nil, :shorthand}],
+      else: []
   end
 
   defp extract_single_child_spec(_), do: []
@@ -714,9 +904,12 @@ defmodule Argus.Extractors.Supervision do
     # specs. module_name?/1, not Code.ensure_loaded?/1: the analyzed
     # project's modules are rarely loadable in the analyzing VM, and an
     # Elixir-prefixed atom is a module name regardless.
+    # Elixir modules only: an Erlang-style lowercase atom in a tuple is a
+    # tag (`{:supervisor, ...}`, `{:queue, ...}`) far more often than an
+    # Erlang module started as a child, and Erlang children arrive as maps.
     modules =
       Enum.filter(elements, fn
-        {:atom, mod} when is_atom(mod) -> module_name?(mod)
+        {:atom, mod} when is_atom(mod) -> String.starts_with?(Atom.to_string(mod), "Elixir.")
         _ -> false
       end)
 

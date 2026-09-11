@@ -323,3 +323,44 @@ defmodule Argus.Test.Fixtures.SubSupervisor do
   @impl Supervisor
   def init(_), do: Supervisor.init([], strategy: :one_for_one)
 end
+
+defmodule Argus.Test.Fixtures.TopologyServer do
+  @moduledoc false
+  # A tree defined without the Supervisor behaviour, the Broadway shape: a
+  # GenServer whose init/1 assembles child specs through helpers and a
+  # comprehension, then starts a supervisor with runtime-built options.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts) do
+    {:ok, sup} = start_tree(opts)
+    {:ok, %{sup: sup}}
+  end
+
+  defp start_tree(opts) do
+    children = [limiter_spec() | producer_specs(Keyword.get(opts, :producers, 2))]
+
+    supervisor_opts = [
+      name: Keyword.get(opts, :name),
+      max_restarts: Keyword.get(opts, :max_restarts, 3),
+      strategy: :rest_for_one
+    ]
+
+    Supervisor.start_link(children, supervisor_opts)
+  end
+
+  defp limiter_spec do
+    %{id: :limiter, start: {Argus.Test.Fixtures.WorkerA, :start_link, [[]]}}
+  end
+
+  defp producer_specs(n) do
+    for index <- 0..(n - 1) do
+      %{
+        id: {:producer, index},
+        start: {Argus.Test.Fixtures.SyncInitServer, :start_link, [[index: index]]}
+      }
+    end
+  end
+end

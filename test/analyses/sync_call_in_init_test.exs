@@ -28,6 +28,29 @@ defmodule Argus.Analyses.SyncCallInInitTest do
              end)
     end
 
+    test "a sibling started earlier by a GenServer-defined tree is safe" do
+      skip_without_souffle()
+
+      # The Broadway shape: the tree lives in a GenServer's init/1, the
+      # producer's init calls the rate limiter, and the rate limiter is an
+      # earlier child of the same rest_for_one supervisor.
+      modules = [
+        Argus.Test.Fixtures.TopologyServer,
+        Argus.Test.Fixtures.SyncInitServer,
+        Argus.Test.Fixtures.WorkerA
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :sync_call_in_init)
+
+      assert ["Argus.Test.Fixtures.SyncInitServer", "Argus.Test.Fixtures.WorkerA"] in results[
+               "init_safe_sibling"
+             ]
+
+      refute Enum.any?(results["sync_call_in_init"], fn [mod, _, _] ->
+               mod == "Argus.Test.Fixtures.SyncInitServer"
+             end)
+    end
+
     test "a call behind a branch in init is reported as conditional" do
       skip_without_souffle()
 
