@@ -28,6 +28,48 @@ defmodule Argus.Analyses.SyncCallInInitTest do
              end)
     end
 
+    test "supervisor management calls from init are reported" do
+      skip_without_souffle()
+
+      assert {:ok, results} =
+               Argus.analyze([Argus.Test.Fixtures.StartsChildrenInInit], :sync_call_in_init)
+
+      assert [[mod, "DynamicSupervisor", "start_child", "Argus.Test.Fixtures.PoolSup", site]] =
+               results["sup_call_in_init"]
+
+      assert mod == "Argus.Test.Fixtures.StartsChildrenInInit"
+      assert site =~ "StartsChildrenInInit:"
+    end
+
+    test "a call the tree-order argument accepts is still reported when the callee's handler blocks" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.WatcherAppTree,
+        Argus.Test.Fixtures.BlockingWatcher,
+        Argus.Test.Fixtures.WatchedPool
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :sync_call_in_init)
+
+      # The Watcher is in the app tree and the pool is not: the plain
+      # finding is (correctly) suppressed as a cross-supervisor call...
+      assert ["Argus.Test.Fixtures.WatchedPool", "Argus.Test.Fixtures.BlockingWatcher"] in results[
+               "init_safe_cross_supervisor"
+             ]
+
+      refute Enum.any?(results["sync_call_in_init"], fn [mod, _, _] ->
+               mod == "Argus.Test.Fixtures.WatchedPool"
+             end)
+
+      # ...and the blocking handler is what makes it a finding anyway.
+      assert [[mod, dep, handler, op_site]] = results["init_waits_on_blocking_server"]
+      assert mod == "Argus.Test.Fixtures.WatchedPool"
+      assert dep == "Argus.Test.Fixtures.BlockingWatcher"
+      assert handler =~ "BlockingWatcher:handle_info/2"
+      assert op_site =~ "BlockingWatcher:handle_info/2#"
+    end
+
     test "a sibling started earlier by a GenServer-defined tree is safe" do
       skip_without_souffle()
 

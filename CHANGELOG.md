@@ -57,6 +57,11 @@ found 5 at the bug site; the rest name the gap each entry closes.
 - `supervision`: `rest_for_one_orphaned_children` — a later child starts
   processes inside an earlier sibling (Oban's producer running jobs under
   the queue's Task.Supervisor), which survives the owner's restart.
+- `sync_call_in_init`: `sup_call_in_init` (:info) — init/1 reaches a
+  supervisor management call (Broadway's server, Oban's Midwife);
+  `init_waits_on_blocking_server` — a call from init that the tree-order
+  argument accepts, into a server whose handler blocks on a supervisor op
+  or a GenServer.call of its own (db_connection's Watcher).
 
 ## 0.6.1 — 2026-09-11
 

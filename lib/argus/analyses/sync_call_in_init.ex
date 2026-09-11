@@ -22,6 +22,11 @@ defmodule Argus.Analyses.SyncCallInInit do
 
   - `sync_call_in_init(mod, callee_mod)` — module whose init/1 sync-calls callee_mod (after filtering proven-safe cases).
   - `init_deadlock_risk(sup, child, dep, child_pos, dep_pos)` — child's init calls a later-starting sibling.
+  - `sup_call_in_init(mod, api, op, target, site)` — init/1 reaches a
+    supervisor management call (`start_child`, `terminate_child`, ...).
+  - `init_waits_on_blocking_server(mod, dep, handler, op_site)` — a call
+    from init/1 that the tree-order argument accepts, into a server whose
+    handler itself blocks on a supervisor op or a GenServer.call.
 
   ## Finding severities
 
@@ -31,6 +36,11 @@ defmodule Argus.Analyses.SyncCallInInit do
   - `init_deadlock_risk` — `:error`. Supervisors start children in order
     and `init/1` blocks that sequence, so an init that waits on a
     later-starting sibling is a deadlock by construction.
+  - `sup_call_in_init` — `:info`. Starting children from init/1 puts
+    their inits on the startup path; whether one calls back is not known
+    here.
+  - `init_waits_on_blocking_server` — `:warning`. The callee is running,
+    but a handler of its blocks on something with no bound.
   """
 
   @behaviour Argus.Analysis
@@ -75,6 +85,31 @@ defmodule Argus.Analyses.SyncCallInInit do
            "unconditional, or conditional when every path is branch-guarded in init"}
         ],
         doc: "Module whose init/1 transitively makes a synchronous call."
+      },
+      %{
+        name: :sup_call_in_init,
+        fields: [
+          {:mod, :symbol, "module whose init/1 reaches the call"},
+          {:api, :symbol,
+           "Supervisor, DynamicSupervisor, Task.Supervisor or PartitionSupervisor"},
+          {:op, :symbol, "start_child, terminate_child, which_children, ..."},
+          {:target, :symbol, "the supervisor argument, or 'dynamic'"},
+          {:site, :symbol, "the call site"}
+        ],
+        key: [:mod, :api, :op],
+        doc: "init/1 makes a synchronous supervisor management call."
+      },
+      %{
+        name: :init_waits_on_blocking_server,
+        fields: [
+          {:mod, :symbol, "module whose init/1 calls dep"},
+          {:dep, :symbol, "the server called"},
+          {:handler, :symbol, "a handler of dep that blocks"},
+          {:op_site, :symbol, "the blocking call inside that handler"}
+        ],
+        key: [:mod, :dep],
+        doc:
+          "init/1 calls a running server whose handler blocks on a supervisor op or a GenServer.call."
       },
       %{
         name: :init_deadlock_risk,
@@ -130,6 +165,57 @@ defmodule Argus.Analyses.SyncCallInInit do
           "call in `handle_continue(:finish_init, state)`"
       ],
       related: [Findings.related("call target", Findings.at_module(callee))]
+    )
+  end
+
+  def finding(:sup_call_in_init, [mod, api, op, target, site]) do
+    target_text =
+      case target do
+        "dynamic" -> "a supervisor chosen at runtime"
+        "via:" <> registry -> "a supervisor named through #{registry}"
+        other -> other
+      end
+
+    Findings.new(
+      :info,
+      "init/1 makes a synchronous supervisor call",
+      "#{mod}.init/1 reaches #{api}.#{op} on #{target_text}. Every " <>
+        "supervisor management call is a GenServer.call into the " <>
+        "supervisor; start_child in particular does not return until the " <>
+        "new child's init/1 has, so those inits now run inside this one, on " <>
+        "the tree's startup path. A child that calls back into #{mod}, or " <>
+        "into anything not yet started, deadlocks the boot; terminate_child " <>
+        "waits for the whole shutdown of the child.",
+      at: Findings.at_site(site, mod),
+      at_label: "this call blocks init until the supervisor answers",
+      help: [
+        "defer the call to `handle_continue/2`, so #{mod} is running and " <>
+          "answering before it starts or stops anything"
+      ]
+    )
+  end
+
+  def finding(:init_waits_on_blocking_server, [mod, dep, handler, op_site]) do
+    Findings.new(
+      :warning,
+      "init/1 waits on a server whose handler can block",
+      "#{mod}.init/1 calls #{dep}, which is started earlier and is running " <>
+        "by then — but #{handler} blocks on a supervisor call or a " <>
+        "GenServer.call of its own, and while it does, #{dep} answers " <>
+        "nobody. Every #{mod} init started in that window hangs behind " <>
+        "it, and so does the supervisor starting them. A running callee is " <>
+        "not an answering one.",
+      at: Findings.at_mfa(mod, :init, 1),
+      at_label: "this init waits on #{dep}",
+      help: [
+        "make #{dep}'s handler non-blocking (monitor and act on :DOWN " <>
+          "instead of waiting), or move this call out of init/1 into " <>
+          "`handle_continue/2`"
+      ],
+      related: [
+        Findings.related("blocking handler", Findings.at_func(handler)),
+        Findings.related("blocking call", Findings.at_site(op_site, dep))
+      ]
     )
   end
 

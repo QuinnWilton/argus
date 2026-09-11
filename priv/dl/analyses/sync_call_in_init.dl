@@ -188,3 +188,73 @@ init_deadlock_risk(sup, child, dep, cpos, dpos) :-
   raw_sync_call_in_init(child, dep),
   cpos < dpos,
   child_branch != dep_branch.
+
+// ── Supervisor management calls from init/1 ──────────────────────────
+//
+// Supervisor.start_child/2 and its relatives are GenServer.calls into
+// the supervisor, and start_child does not return until the new child's
+// init/1 has: an init that starts children has put those children's
+// inits on the tree's startup path, and a child that calls back into
+// the starter (or into anything the starter's tree has not reached yet)
+// deadlocks the whole boot. Broadway's server fanned out four of these
+// from init; Oban's Midwife started every queue from init. Reported for
+// every management op, since terminate_child waits for a whole
+// shutdown and which_children on the parent is the classic deadlock.
+.decl sup_call_in_init(mod: symbol, api: symbol, op: symbol, target: symbol, site: symbol)
+.output sup_call_in_init
+
+sup_call_in_init(mod, api, op, target, site) :-
+  init_function(mod, func),
+  sup_call(site, func, api, op, target).
+
+sup_call_in_init(mod, api, op, target, site) :-
+  init_function(mod, func),
+  call_reachable(func, g),
+  sup_call(site, g, api, op, target).
+
+// ── An init waiting on a server whose handler itself blocks ──────────
+//
+// init_safe_sibling and init_safe_cross_supervisor argue that the
+// callee is already running when this init calls it. Running is not
+// answering. db_connection's ConnectionPool.init called the Watcher —
+// a singleton in the app tree, started long before any pool — with an
+// :infinity timeout, and the Watcher's handle_info blocked in
+// DynamicSupervisor.terminate_child for the whole shutdown of a
+// departing pool. Every pool's init hung behind it. So: a call from
+// init that the tree-order argument accepts, into a server one of
+// whose handlers reaches a supervisor management call or a
+// GenServer.call of its own.
+.decl handler_function(mod: symbol, func: symbol)
+
+handler_function(mod, func) :-
+  behaves_as(mod, "GenServer"),
+  function_def(func, mod, name, _, _),
+  (name = "handle_call" ; name = "handle_cast" ; name = "handle_info" ; name = "handle_continue").
+
+.decl handler_blocks(mod: symbol, handler: symbol, op_site: symbol)
+
+handler_blocks(mod, h, site) :-
+  handler_function(mod, h),
+  sup_call(site, h, _, _, _).
+
+handler_blocks(mod, h, site) :-
+  handler_function(mod, h),
+  call_reachable(h, g),
+  sup_call(site, g, _, _, _).
+
+handler_blocks(mod, h, site) :-
+  handler_function(mod, h),
+  remote_call(site, h, "GenServer", "call", _).
+
+handler_blocks(mod, h, site) :-
+  handler_function(mod, h),
+  call_reachable(h, g),
+  remote_call(site, g, "GenServer", "call", _).
+
+.decl init_waits_on_blocking_server(mod: symbol, dep: symbol, handler: symbol, op_site: symbol)
+.output init_waits_on_blocking_server
+
+init_waits_on_blocking_server(mod, dep, h, site) :-
+  raw_sync_call_in_init(mod, dep),
+  (init_safe_sibling(mod, dep) ; init_safe_cross_supervisor(mod, dep)),
+  handler_blocks(dep, h, site).
