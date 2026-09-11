@@ -4,7 +4,7 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 0.7.0 — Unreleased
+## 0.7.0 — 2026-09-11
 
 Schema version 27. Every change below comes out of replaying 42 historical
 OTP bug fixes from the Hex corpus (oban, phoenix_pubsub, db_connection,
