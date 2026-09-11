@@ -178,7 +178,7 @@ defmodule Argus.Test.Fixtures.HandleEventStatem do
     {:keep_state, data}
   end
 
-  def handle_event(:cast, :ping, :no_state, data) do
+  def handle_event(:cast, :ping, :no_state, _data) do
     :keep_state_and_data
   end
 

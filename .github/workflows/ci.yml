@@ -89,8 +89,14 @@ jobs:
       - name: Install dependencies
         run: mix deps.get
 
+      # Compiled in :dev so the check covers the library alone: the test
+      # fixtures deliberately declare behaviours from packages argus does
+      # not depend on (Plug, Ecto.Repo, Oban.Worker) — they are what the
+      # analyses detect — and would fail the check by design.
       - name: Compile
         run: mix compile --warnings-as-errors
+        env:
+          MIX_ENV: dev
 
       - name: Run tests
         run: mix test
