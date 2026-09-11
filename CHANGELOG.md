@@ -4,6 +4,27 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.6.0 — 2026-09-11
+
+### Changed (schema version 26 — conditional calls)
+
+- `conditional_call(id)`: a call instruction whose basic block is
+  control-dependent on a branch in its function, derived per module
+  from `Argus.Cfg`'s post-dominator tree next to `def_use`. Positional
+  like `def_use`, and for the same reason emitted rather than folded
+  into `remote_call`.
+- Stage 0 derives `unconditional_call_edge(caller, callee)` — the call
+  graph restricted to pairs with at least one site that runs on every
+  path — alongside `call_edge` and `call_site`. Consumers that project
+  fact directories supply it the same way.
+- `sync_call_in_init` gains a `kind` column: `conditional` when every
+  route from `init/1` to the sync call passes through a branch-guarded
+  site in init (postgrex's `sync_connect: true`, goth's
+  `prefetch: :sync`, broadway's `if rate_limiter`), `unconditional`
+  otherwise. Conditional rows are titled "init/1 can block", and the
+  analysis reads only stage-0 output for the distinction — no
+  instruction-keyed relation enters its input set.
+
 ## 0.5.1 — 2026-09-11
 
 Precision and cutoff work from installing scry on the 24 most-downloaded
