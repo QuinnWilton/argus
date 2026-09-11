@@ -68,6 +68,7 @@ defmodule Argus.Test.Fixtures.Reply do
     """
     use GenServer
 
+    @impl true
     def init(_), do: {:ok, %{}}
 
     @impl GenServer
@@ -81,6 +82,7 @@ defmodule Argus.Test.Fixtures.Reply do
     @moduledoc "{:stop, reason, reply, state} answers the caller."
     use GenServer
 
+    @impl true
     def init(_), do: {:ok, %{}}
 
     @impl GenServer
@@ -94,6 +96,7 @@ defmodule Argus.Test.Fixtures.Reply do
     """
     use GenServer
 
+    @impl true
     def init(_), do: {:ok, %{}}
 
     @impl GenServer
@@ -112,6 +115,7 @@ defmodule Argus.Test.Fixtures.Reply do
     """
     use GenServer
 
+    @impl true
     def init(_), do: {:ok, %{waiting: nil}}
 
     @impl GenServer

@@ -80,6 +80,7 @@ defmodule Argus.Test.Fixtures.Shutdown do
     """
     @behaviour GenServer
 
+    @impl true
     def init(_), do: {:ok, %{}}
 
     @impl GenServer
@@ -110,6 +111,7 @@ defmodule Argus.Test.Fixtures.Shutdown do
     @moduledoc "The same unclassified cleanup, but trapping."
     @behaviour GenServer
 
+    @impl true
     def init(_) do
       Process.flag(:trap_exit, true)
       {:ok, %{}}
@@ -134,6 +136,7 @@ defmodule Argus.Test.Fixtures.Shutdown do
     """
     @behaviour GenServer
 
+    @impl true
     def init(_) do
       Process.flag(:trap_exit, true)
       {:ok, %{}}
