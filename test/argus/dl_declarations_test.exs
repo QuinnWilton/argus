@@ -150,8 +150,7 @@ defmodule Argus.DlDeclarationsTest do
         ~w(async_cast callback_tag callback_total def_use function_def implements_behaviour
            literal_value remote_call sync_call tuple_literal),
       monitor_leak:
-        ~w(call_edge closure_def demonitor_call function_def implements_behaviour monitor_call
-           recv_start remote_call statem_state sup_call),
+        ~w(call_edge closure_def demonitor_call function_def implements_behaviour monitor_call monitor_ref_dropped recv_start remote_call statem_state sup_call),
       one_for_one_coupling:
         ~w(async_cast call_arg call_arg_forward call_edge call_site dynamic_child function_def
                                implements_behaviour process_link supervisor supervisor_child

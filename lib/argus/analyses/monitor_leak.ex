@@ -29,6 +29,9 @@ defmodule Argus.Analyses.MonitorLeak do
   - `monitor_never_released` — a callback-loop module monitors from its
     callbacks, removes entries from its bookkeeping somewhere, and calls
     `Process.demonitor` nowhere. Postgrex's `Parameters` server.
+  - `monitor_ref_discarded` — a callback calls `Process.monitor/1` and
+    drops the ref, so the monitor can only end with the monitored
+    process. Phoenix PubSub's Local, for every subscriber.
   - `deliberate_termination_while_monitored` — the module terminates a
     child or stops a server it monitors, without demonitoring first, so
     the `{:DOWN, ...}` for a death it caused arrives in the clause written
@@ -75,6 +78,15 @@ defmodule Argus.Analyses.MonitorLeak do
         doc:
           "A server monitors from its callbacks and removes bookkeeping entries, " <>
             "but never calls Process.demonitor."
+      },
+      %{
+        name: :monitor_ref_discarded,
+        fields: [
+          {:mod, :symbol, "the server module"},
+          {:site, :symbol, "the monitor call whose ref is dropped"}
+        ],
+        doc:
+          "A server callback discards the ref Process.monitor/1 returned; nothing can demonitor it."
       },
       %{
         name: :deliberate_termination_while_monitored,
@@ -128,6 +140,26 @@ defmodule Argus.Analyses.MonitorLeak do
       help: [
         "on every path that removes the entry, call " <>
           "`Process.demonitor(ref, [:flush])` with the ref stored alongside it"
+      ]
+    )
+  end
+
+  def finding(:monitor_ref_discarded, [mod, site]) do
+    Findings.new(
+      :info,
+      "#{mod} drops the ref of a monitor it establishes",
+      "#{mod} calls Process.monitor/1 in a callback and discards the " <>
+        "result. The ref is the only handle a demonitor needs, so this " <>
+        "monitor ends when the monitored process dies and not before. If " <>
+        "the relationship it stands for can end another way — an " <>
+        "unsubscribe, a checkin, a disconnect — the monitor outlives it, " <>
+        "one per cycle, and the {:DOWN, ...} arrives for a process the " <>
+        "server stopped caring about.",
+      at: Findings.at_site(site, mod),
+      at_label: "the monitor ref is dropped here",
+      help: [
+        "keep the ref with the entry it protects and " <>
+          "`Process.demonitor(ref, [:flush])` when the entry is removed"
       ]
     )
   end

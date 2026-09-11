@@ -204,4 +204,24 @@ defmodule Argus.Test.Fixtures.MonitorLeak do
       {:noreply, Map.delete(state, ref)}
     end
   end
+
+  defmodule DropsRef do
+    @moduledoc "The Phoenix PubSub Local shape: monitor every subscriber, keep nothing."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(_), do: {:ok, %{}}
+
+    @impl true
+    def handle_call({:subscribe, pid}, _from, state) do
+      Process.monitor(pid)
+      {:reply, :ok, state}
+    end
+
+    @impl true
+    def handle_info({:DOWN, _ref, :process, pid, _}, state),
+      do: {:noreply, Map.delete(state, pid)}
+  end
 end

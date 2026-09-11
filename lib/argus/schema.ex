@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 27
+  @schema_version 28
 
   # Layer 1: Module-level facts.
 
@@ -717,6 +717,21 @@ defmodule Argus.Schema do
     A `Process.monitor/1` or `:erlang.monitor/2`. Once it returns, a \
     `{:DOWN, ref, :process, object, reason}` arrives unless cancelled — so \
     a process that monitors is a process that receives `:DOWN`.
+    """
+  }
+
+  @monitor_ref_dropped %{
+    name: :monitor_ref_dropped,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the monitor call site"},
+      {:func, :symbol, "the monitoring function"}
+    ],
+    doc: """
+    The reference `Process.monitor/1` returned at this site is discarded: \
+    the next thing to happen to the result register is a write that does \
+    not read it. Nothing can ever demonitor this monitor; it ends only \
+    when the monitored process does.
     """
   }
 
@@ -1701,6 +1716,7 @@ defmodule Argus.Schema do
     @supervisor_max_children,
     @socket_transport,
     @monitor_call,
+    @monitor_ref_dropped,
     @demonitor_call,
     @http_route,
     @schema_field,

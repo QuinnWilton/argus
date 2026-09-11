@@ -6,7 +6,13 @@ defmodule Argus.Analyses.MonitorLeakTest do
 
   @all [M.Leaks, M.Flushes, M.Blocks, M.NoMonitor, M.LeaksThroughHelper, M.FlushesInHelper]
 
-  @servers [M.NeverReleases, M.ReleasesOnDelete, M.KillsMonitored, M.ClientSideMonitor]
+  @servers [
+    M.NeverReleases,
+    M.ReleasesOnDelete,
+    M.KillsMonitored,
+    M.ClientSideMonitor,
+    M.DropsRef
+  ]
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
@@ -84,6 +90,20 @@ defmodule Argus.Analyses.MonitorLeakTest do
       assert mod == "Argus.Test.Fixtures.MonitorLeak.KillsMonitored"
       assert site =~ "KillsMonitored:handle_call/3#"
       assert kill_site =~ "KillsMonitored:handle_cast/2#"
+    end
+
+    test "a monitor whose ref is thrown away is reported on its own" do
+      skip_without_souffle()
+
+      r = servers()
+
+      assert [[mod, site]] = r["monitor_ref_discarded"]
+      assert mod == "Argus.Test.Fixtures.MonitorLeak.DropsRef"
+      assert site =~ "DropsRef:handle_call/3#"
+
+      # The servers that keep their refs are not reported here, whatever
+      # else they do with them.
+      refute named?(mods(r, "monitor_ref_discarded"), "NeverReleases")
     end
 
     test "a monitor in a client API function is the caller's, not the server's" do

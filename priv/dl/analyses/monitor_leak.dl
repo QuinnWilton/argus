@@ -75,10 +75,13 @@ leaked_monitor(func, id) :-
 // callbacks, removes entries from its bookkeeping somewhere, and calls
 // Process.demonitor nowhere at all.
 //
-// Server side means reachable from a callback without crossing a
-// closure: a monitor taken in a client API function (Redix.Connection
-// pipeline/3) belongs to the caller's process and is not this server's
-// to release.
+// Server side means reachable from a callback within the module,
+// closures included — Redix's cluster manager monitors inside an
+// Enum.reduce fun and terminates inside a comprehension, both run by
+// the server. A monitor taken in a client API function
+// (Redix.Connection pipeline/3) belongs to the caller's process and is
+// not this server's to release. A spawned fun's monitor would count
+// too; that shape has not been seen in a GenServer callback yet.
 .decl loop_module(mod: symbol)
 
 loop_module(mod) :-
@@ -112,7 +115,8 @@ server_side(mod, func) :-
 
 server_side(mod, g) :-
   server_side(mod, f),
-  same_process_reaches(f, g).
+  call_edge(f, g),
+  function_def(g, mod, _, _, _).
 
 .decl module_demonitors(mod: symbol)
 
@@ -121,8 +125,11 @@ module_demonitors(mod) :-
   function_def(f, mod, _, _, _).
 
 // Removing an entry from a map, set, keyword or ETS table — the
-// bookkeeping paths a monitor's release belongs on. Both the Elixir
-// spelling and the :maps one the compiler rewrites it to.
+// bookkeeping paths a monitor's release belongs on. Anywhere in the
+// module: Phoenix PubSub's Local removed subscriptions from a public
+// table in its client API, and the monitor taken in handle_call stayed
+// live all the same. Both the Elixir spelling and the :maps one the
+// compiler rewrites it to.
 .decl removal_op(mod: symbol, func: symbol)
 
 removal_op("Map", "delete").
@@ -143,7 +150,7 @@ removal_op(":ets", "match_delete").
 .decl removes_entries(mod: symbol)
 
 removes_entries(mod) :-
-  server_side(mod, f),
+  function_def(f, mod, _, _, _),
   remote_call(_, f, m, op, _),
   removal_op(m, op).
 
@@ -153,6 +160,7 @@ removes_entries(mod) :-
 monitor_never_released(mod, site) :-
   server_side(mod, f),
   monitor_call(site, f, _),
+  !monitor_ref_dropped(site, f),
   removes_entries(mod),
   !module_demonitors(mod).
 
@@ -181,3 +189,19 @@ deliberate_termination_while_monitored(mod, site, kill_site) :-
   remote_call(kill_site, g, "GenServer", "stop", _),
   !module_demonitors(mod).
 
+// ── A monitor whose ref is thrown away ───────────────────────────────
+//
+// `Process.monitor(pid)` with the result discarded, in a server's
+// callbacks: the monitor can only ever end with the monitored process,
+// since nothing holds what a demonitor would need. Phoenix PubSub's
+// Local did this for every subscriber and removed subscriptions from a
+// table in another module; every unsubscribe left a monitor behind.
+// Reported separately from monitor_never_released because it needs no
+// removal path in evidence — the ref being gone is the whole story.
+.decl monitor_ref_discarded(mod: symbol, site: symbol)
+.output monitor_ref_discarded
+
+monitor_ref_discarded(mod, site) :-
+  server_side(mod, f),
+  monitor_call(site, f, _),
+  monitor_ref_dropped(site, f).
