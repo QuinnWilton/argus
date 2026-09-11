@@ -41,14 +41,11 @@ defmodule Argus.Autoresearch.MeasureTest do
     @tag :requires_corpus
     test "runs coverage against a real project and returns a decoded report",
          %{tmp_dir: tmp_dir} do
-      plug_path = "/Users/quinn/dev/beam_box/sample_projects/plug"
+      # A compiled Plug checkout, located through ARGUS_CORPUS (a directory
+      # of Mix projects) so the suite never depends on one machine's layout.
+      plug_path = Path.join(System.get_env("ARGUS_CORPUS", "corpus"), "plug")
 
-      if not File.dir?(plug_path) do
-        # Skip when the corpus isn't available — we don't want the
-        # test suite to depend on a specific user's machine layout.
-        IO.puts(:stderr, "Skipping Measure integration test: plug not at #{plug_path}")
-        :ok
-      else
+      if File.dir?(plug_path) do
         results =
           Measure.run_corpus(
             [{"plug", plug_path}],
@@ -60,6 +57,8 @@ defmodule Argus.Autoresearch.MeasureTest do
         assert [{"plug", {:ok, report}}] = results
         assert is_map(report)
         assert %{"analyses" => %{"coverage" => %{"status" => "ok"}}} = report
+      else
+        IO.puts(:stderr, "Skipping Measure integration test: plug not at #{plug_path}")
       end
     end
 
