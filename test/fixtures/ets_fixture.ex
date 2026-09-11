@@ -164,3 +164,50 @@ defmodule Argus.Test.Fixtures.EtsRefOps do
 
   defp entropy, do: :erlang.unique_integer()
 end
+
+defmodule Argus.Test.Fixtures.EtsGrowOnly do
+  @moduledoc "The Sentry shape: a named table with inserts on the API and no deletes anywhere."
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  def record(id, value), do: :ets.insert(:audit_log, {id, value})
+
+  @impl true
+  def init(_) do
+    :ets.new(:audit_log, [:named_table, :public, :set])
+    {:ok, %{}}
+  end
+end
+
+defmodule Argus.Test.Fixtures.EtsBounded do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  def record(id, value), do: :ets.insert(:bounded_log, {id, value})
+  def forget(id), do: :ets.delete(:bounded_log, id)
+
+  @impl true
+  def init(_) do
+    :ets.new(:bounded_log, [:named_table, :public, :set])
+    {:ok, %{}}
+  end
+end
+
+defmodule Argus.Test.Fixtures.EtsWarmCache do
+  @moduledoc "Filled once in init/1, read forever: a cache, not a leak."
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  def fetch(key), do: :ets.lookup(:warm_cache, key)
+
+  @impl true
+  def init(entries) do
+    :ets.new(:warm_cache, [:named_table, :protected, :set])
+    :ets.insert(:warm_cache, entries)
+    {:ok, %{}}
+  end
+end

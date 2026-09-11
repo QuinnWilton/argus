@@ -136,3 +136,57 @@ ets_unnamed_in_process(name, mod, id) :-
   function_def(func, mod, _, _, _),
   implements_behaviour(mod, _),
   !ets_option(id, "named_table", "true").
+
+// ── Write-only tables ──────────────────────────────────────────────
+//
+// A named table that the code inserts into from outside init/1 and
+// never deletes from is a table that only grows. Sentry's check-in ID
+// mapping was one: every check-in inserted a row, nothing ever removed
+// one, and the process held the table for the life of the VM. A table
+// filled once in init/1 and read thereafter is a cache, not a leak, and
+// is not reported.
+//
+// Any removal on a dynamic table reference in the owner's module is
+// taken as possibly this table — the direction that stays quiet.
+.decl ets_removal_op(op: symbol)
+
+ets_removal_op("delete").
+ets_removal_op("delete_object").
+ets_removal_op("delete_all_objects").
+ets_removal_op("select_delete").
+ets_removal_op("match_delete").
+ets_removal_op("take").
+
+.decl ets_table_shrinks(name: symbol, owner: symbol)
+
+ets_table_shrinks(name, owner) :-
+  ets_new(_, func, name),
+  function_def(func, owner, _, _, _),
+  ets_op(_, _, name, op, _),
+  ets_removal_op(op).
+
+ets_table_shrinks(name, owner) :-
+  ets_new(_, func, name),
+  function_def(func, owner, _, _, _),
+  ets_op(_, f, "dynamic", op, _),
+  ets_removal_op(op),
+  function_def(f, owner, _, _, _).
+
+.decl ets_grows_outside_init(name: symbol)
+
+ets_grows_outside_init(name) :-
+  ets_op(_, f, name, op, "write"),
+  (op = "insert" ; op = "insert_new"),
+  function_def(f, _, fname, _, _),
+  fname != "init".
+
+.decl ets_write_only_table(name: symbol, mod: symbol, site: symbol)
+.output ets_write_only_table
+
+ets_write_only_table(name, mod, id) :-
+  ets_new(id, func, name),
+  name != "dynamic",
+  ets_option(id, "named_table", "true"),
+  function_def(func, mod, _, _, _),
+  ets_grows_outside_init(name),
+  !ets_table_shrinks(name, mod).

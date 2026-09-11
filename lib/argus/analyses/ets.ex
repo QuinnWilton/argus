@@ -83,6 +83,15 @@ defmodule Argus.Analyses.Ets do
         doc: "Ordered_set table accessed by multiple modules."
       },
       %{
+        name: :ets_write_only_table,
+        fields: [
+          {:name, :symbol, "table name"},
+          {:mod, :symbol, "owner module"},
+          {:site, :symbol, "the :ets.new/2 instruction"}
+        ],
+        doc: "Named table inserted into outside init/1 and never deleted from: it only grows."
+      },
+      %{
         name: :ets_unnamed_in_process,
         fields: [
           {:name, :symbol, "table name"},
@@ -138,6 +147,26 @@ defmodule Argus.Analyses.Ets do
         "that the ordering is actually needed.",
       at: Findings.at_site(site, mod1),
       related: [Findings.related("other accessor", Findings.at_module(mod2))]
+    )
+  end
+
+  def finding(:ets_write_only_table, [name, mod, site]) do
+    Findings.new(
+      :info,
+      "ETS table #{name} only grows",
+      "#{mod} creates #{name} and the code inserts into it outside init/1, " <>
+        "but nothing ever deletes from it — no :ets.delete, delete_object, " <>
+        "select_delete or take on this table anywhere. Every insert is " <>
+        "permanent for the life of the owner, which for a supervised " <>
+        "process is the life of the VM. If entries have a natural end — a " <>
+        "request completing, a check-in resolving — this is a leak with a " <>
+        "slow fuse.",
+      at: Findings.at_site(site, mod),
+      at_label: "this table has inserts and no deletes",
+      help: [
+        "delete entries when they are done with, or sweep the table on a " <>
+          "timer; if the table is meant to be append-only, cap it or ignore this"
+      ]
     )
   end
 

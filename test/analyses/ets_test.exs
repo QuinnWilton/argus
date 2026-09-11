@@ -103,4 +103,23 @@ defmodule Argus.Analyses.EtsTest do
              end)
     end
   end
+
+  describe "ets_write_only_table" do
+    test "a named table with inserts and no deletes is reported; bounded and warm caches are not" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.EtsGrowOnly,
+        Argus.Test.Fixtures.EtsBounded,
+        Argus.Test.Fixtures.EtsWarmCache
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :ets)
+
+      assert [[":audit_log", "Argus.Test.Fixtures.EtsGrowOnly", site]] =
+               results["ets_write_only_table"]
+
+      assert site =~ "EtsGrowOnly:init/1#"
+    end
+  end
 end
