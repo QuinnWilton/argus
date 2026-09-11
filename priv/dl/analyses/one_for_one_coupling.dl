@@ -40,10 +40,44 @@ derived_process_link(sup, child) :- supervisor_child(sup, _, child, _, _).
 // (the strategy line); witness is a function in caller_mod through which
 // the coupling flows. One row per witness — finding builders dedupe on
 // (sup, caller_mod, callee_mod).
-.decl one_for_one_coupling(sup: symbol, caller_mod: symbol, callee_mod: symbol, sup_site: symbol, witness: symbol)
+// The coupling itself: a stateful dependency between two children on
+// different branches of a one_for_one supervisor, with no link between
+// them in either direction. `witness` is the function in caller_mod the
+// dependency flows through.
+.decl coupling(sup: symbol, caller_mod: symbol, callee_mod: symbol, sup_site: symbol, witness: symbol)
+
+// The instruction inside the witness that makes the coupling call —
+// the call into the sibling module itself when the witness calls it
+// directly, otherwise the GenServer.call/cast the witness performs (both
+// come from the stage-0 `call_site` relation). A
+// witness may have several; the finding builder keeps one per pair.
+.decl coupling_site(witness: symbol, callee_mod: symbol, site: symbol)
+
+coupling_site(w, callee_mod, id) :-
+  coupling(_, _, callee_mod, _, w),
+  call_site(id, w, callee_mod).
+
+coupling_site(w, callee_mod, id) :-
+  coupling(_, _, callee_mod, _, w),
+  !call_site(_, w, callee_mod),
+  call_site(id, w, "GenServer").
+
+// `site` is the instruction ID of the coupling call when one is known,
+// and falls back to the witness function ID otherwise, so consumers can
+// always anchor it with `Findings.at_site/2`.
+.decl one_for_one_coupling(sup: symbol, caller_mod: symbol, callee_mod: symbol, sup_site: symbol, witness: symbol, site: symbol)
 .output one_for_one_coupling
 
-one_for_one_coupling(sup, caller_mod, callee_mod, sup_site, witness) :-
+one_for_one_coupling(sup, caller_mod, callee_mod, sup_site, witness, site) :-
+  coupling(sup, caller_mod, callee_mod, sup_site, witness),
+  coupling_site(witness, callee_mod, site).
+
+one_for_one_coupling(sup, caller_mod, callee_mod, sup_site, witness, witness) :-
+  coupling(sup, caller_mod, callee_mod, sup_site, witness),
+  !coupling_site(witness, callee_mod, _).
+
+
+coupling(sup, caller_mod, callee_mod, sup_site, witness) :-
   supervisor(sup, "one_for_one"),
   supervisor_site(sup, sup_site),
   child_subtree(sup, caller_branch, caller_mod),

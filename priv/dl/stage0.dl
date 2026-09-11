@@ -31,3 +31,22 @@
 .decl call_edge(caller: symbol, callee: symbol)
 .include "clientlib/callgraph_rules.dl"
 .output call_edge(filename="call_edge.facts")
+
+// The instruction-level sites a supervision analysis can anchor a
+// coupling at: calls into modules defined in the project, plus the
+// GenServer.call/cast a function performs itself. Derived once here for
+// the same reason as call_edge — it keeps `remote_call` out of the input
+// set of analyses that only reason about supervision structure.
+.decl call_site(id: symbol, caller: symbol, callee_mod: symbol)
+
+call_site(id, caller, mod) :-
+  remote_call(id, caller, mod, _, _),
+  function_def(_, mod, _, _, _).
+
+call_site(id, caller, "GenServer") :-
+  remote_call(id, caller, "GenServer", "call", _).
+
+call_site(id, caller, "GenServer") :-
+  remote_call(id, caller, "GenServer", "cast", _).
+
+.output call_site(filename="call_site.facts")

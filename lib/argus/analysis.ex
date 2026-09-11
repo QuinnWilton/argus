@@ -235,9 +235,15 @@ defmodule Argus.Analysis do
   # layer-1 facts such a directory deliberately omits.
   defp ensure_stage0(facts_dir, opts) do
     cond do
-      Keyword.get(opts, :stage0, :auto) == :provided -> :ok
-      File.exists?(Path.join(facts_dir, "call_edge.facts")) -> :ok
-      true -> derive_stage0(facts_dir, opts)
+      Keyword.get(opts, :stage0, :auto) == :provided ->
+        :ok
+
+      File.exists?(Path.join(facts_dir, "call_edge.facts")) and
+          File.exists?(Path.join(facts_dir, "call_site.facts")) ->
+        :ok
+
+      true ->
+        derive_stage0(facts_dir, opts)
     end
   end
 

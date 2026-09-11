@@ -13,7 +13,7 @@ defmodule Argus.Analyses.OneForOneCoupling do
 
   ## Output relations
 
-  - `one_for_one_coupling(sup, caller_mod, callee_mod, sup_site, witness)` — cross-branch coupling under one_for_one.
+  - `one_for_one_coupling(sup, caller_mod, callee_mod, sup_site, witness, site)` — cross-branch coupling under one_for_one; `site` is the coupling call instruction when known, else the witness function.
 
   ## Finding severities
 
@@ -56,7 +56,8 @@ defmodule Argus.Analyses.OneForOneCoupling do
           {:caller_mod, :symbol, "calling child module"},
           {:callee_mod, :symbol, "called child module"},
           {:sup_site, :symbol, "instruction ID of the tree definition"},
-          {:witness, :symbol, "function in caller_mod carrying the coupling"}
+          {:witness, :symbol, "function in caller_mod carrying the coupling"},
+          {:site, :symbol, "instruction ID of the coupling call, or the witness function ID"}
         ],
         key: [:sup, :caller_mod, :callee_mod],
         doc: "Cross-branch coupling under a one_for_one supervisor."
@@ -69,7 +70,7 @@ defmodule Argus.Analyses.OneForOneCoupling do
   # the tree definition (where the fix goes) and the coupling call site
   # becomes labelled evidence.
   @impl true
-  def finding(:one_for_one_coupling, [sup, caller_mod, callee_mod, sup_site, witness]) do
+  def finding(:one_for_one_coupling, [sup, caller_mod, callee_mod, sup_site, _witness, site]) do
     Findings.new(
       :warning,
       "Coupled children under one_for_one",
@@ -87,7 +88,7 @@ defmodule Argus.Analyses.OneForOneCoupling do
           "re-resolve it on every use instead of caching state across crashes"
       ],
       related: [
-        Findings.related("coupling call", Findings.at_func(witness)),
+        Findings.related("coupling call", Findings.at_site(site, caller_mod)),
         Findings.related("called sibling", Findings.at_module(callee_mod))
       ]
     )

@@ -57,7 +57,7 @@ defmodule Argus.Analyses.OneForOneCouplingTest do
         sync_call: [["A:call_b/0", "B"]]
       }
 
-      assert [[_sup, "A", "B", _site, _witness]] = coupling_rows(base)
+      assert [[_sup, "A", "B", _site, _witness, _call_site]] = coupling_rows(base)
 
       linked = Map.put(base, :process_link, [["A", "B"]])
       assert coupling_rows(linked) == []

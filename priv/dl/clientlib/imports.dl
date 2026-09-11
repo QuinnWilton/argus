@@ -52,6 +52,12 @@
 .decl call_edge(caller: symbol, callee: symbol)
 .input call_edge
 
+// Stage-0 as well: the project-internal and GenServer call sites, so a
+// finding can point at the calling instruction without reading
+// remote_call.
+.decl call_site(id: symbol, caller: symbol, callee_mod: symbol)
+.input call_site
+
 // Transitive call reachability, closed over the staged edges.
 .decl call_reachable(from: symbol, to: symbol)
 .include "call_reachable_rules.dl"
