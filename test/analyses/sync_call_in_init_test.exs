@@ -22,10 +22,28 @@ defmodule Argus.Analyses.SyncCallInInitTest do
       init_calls = results["sync_call_in_init"]
       assert init_calls != []
 
-      # SyncInitServer's init calls WorkerA.
-      assert Enum.any?(init_calls, fn [mod, _callee] ->
-               mod == "Argus.Test.Fixtures.SyncInitServer"
+      # SyncInitServer's init calls WorkerA on every init.
+      assert Enum.any?(init_calls, fn [mod, _callee, kind] ->
+               mod == "Argus.Test.Fixtures.SyncInitServer" and kind == "unconditional"
              end)
+    end
+
+    test "a call behind a branch in init is reported as conditional" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.ConditionalInitServer,
+        Argus.Test.Fixtures.SyncInitServer,
+        Argus.Test.Fixtures.WorkerA
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :sync_call_in_init)
+
+      kinds =
+        Map.new(results["sync_call_in_init"], fn [mod, _callee, kind] -> {mod, kind} end)
+
+      assert kinds["Argus.Test.Fixtures.ConditionalInitServer"] == "conditional"
+      assert kinds["Argus.Test.Fixtures.SyncInitServer"] == "unconditional"
     end
 
     test "filters safe sibling ordering (dep starts before caller)" do
@@ -79,7 +97,7 @@ defmodule Argus.Analyses.SyncCallInInitTest do
       init_calls = results["sync_call_in_init"]
       assert init_calls != []
 
-      assert Enum.any?(init_calls, fn [mod, callee] ->
+      assert Enum.any?(init_calls, fn [mod, callee, _kind] ->
                mod == "Argus.Test.Fixtures.SyncInitServer" and
                  callee == "Argus.Test.Fixtures.WorkerA"
              end)

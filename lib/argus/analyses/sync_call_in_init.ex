@@ -70,7 +70,9 @@ defmodule Argus.Analyses.SyncCallInInit do
         name: :sync_call_in_init,
         fields: [
           {:mod, :symbol, "module whose init/1 makes a sync call"},
-          {:callee, :symbol, "target module of the sync call"}
+          {:callee, :symbol, "target module of the sync call"},
+          {:kind, :symbol,
+           "unconditional, or conditional when every path is branch-guarded in init"}
         ],
         doc: "Module whose init/1 transitively makes a synchronous call."
       },
@@ -89,17 +91,37 @@ defmodule Argus.Analyses.SyncCallInInit do
   end
 
   @impl true
-  def finding(:sync_call_in_init, [mod, callee]) do
+  def finding(:sync_call_in_init, [mod, callee, "conditional"]) do
+    Findings.new(
+      :info,
+      "init/1 can block on a synchronous call",
+      "#{mod}.init/1 makes a synchronous call to #{callee} on some paths " <>
+        "only: every route from init to the call passes through a branch in " <>
+        "init (an option such as `sync_connect: true`, a case on the " <>
+        "argument). When that path is taken the tree's startup stalls for " <>
+        "as long as #{callee} takes to answer; a proven startup deadlock is " <>
+        "reported separately as an error.",
+      at: Findings.at_mfa(mod, :init, 1),
+      at_label: "this init can block the start sequence",
+      help: [
+        "if the blocking path is an opt-in, document that it blocks " <>
+          "startup; otherwise defer the call to `handle_continue/2`"
+      ],
+      related: [Findings.related("call target", Findings.at_module(callee))]
+    )
+  end
+
+  def finding(:sync_call_in_init, [mod, callee, "unconditional"]) do
     Findings.new(
       :info,
       "init/1 blocks on a synchronous call",
       "#{mod}.init/1 makes a synchronous call to #{callee} (directly or " <>
-        "transitively). init runs inside the supervisor's start sequence, so " <>
-        "the tree's startup stalls for as long as #{callee} takes to answer. " <>
-        "Argus could not establish where #{callee} runs relative to this " <>
-        "init — its child spec is built at runtime, or the call sits behind " <>
-        "a runtime option — so this is a note, not a diagnosis; a proven " <>
-        "startup deadlock is reported separately as an error.",
+        "transitively) on every init. init runs inside the supervisor's " <>
+        "start sequence, so the tree's startup stalls for as long as " <>
+        "#{callee} takes to answer. Argus could not establish where " <>
+        "#{callee} runs relative to this init — its child spec is built at " <>
+        "runtime — so this is a note, not a diagnosis; a proven startup " <>
+        "deadlock is reported separately as an error.",
       at: Findings.at_mfa(mod, :init, 1),
       at_label: "this init blocks the start sequence",
       help: [

@@ -107,15 +107,69 @@ init_safe_cross_supervisor(child, dep) :-
   child_subtree(_, _, dep),
   !shares_supervisor(child, dep).
 
+// ── Conditional paths ──────────────────────────────────────────────────
+
+// The sync call is reachable from init through an edge that runs on every
+// path (stage 0's `unconditional_call_edge`). A direct GenServer.call in
+// init counts through its own edge to GenServer:call/N. If no such route
+// exists, every route from init passes through a branch-guarded site —
+// an option such as postgrex's `sync_connect: true`, a case on the
+// argument — and the call only happens on some inits.
+.decl unconditional_sync_call_in_init(mod: symbol, callee: symbol)
+
+unconditional_sync_call_in_init(mod, callee) :-
+  init_function(mod, func),
+  unconditional_call_edge(func, gc),
+  (gc = "GenServer:call/2"; gc = "GenServer:call/3"),
+  sync_call_target(func, callee),
+  callee != "dynamic".
+
+unconditional_sync_call_in_init(mod, callee) :-
+  init_function(mod, func),
+  unconditional_call_edge(func, g),
+  sync_call_target(g, callee),
+  callee != "dynamic".
+
+unconditional_sync_call_in_init(mod, callee) :-
+  init_function(mod, func),
+  unconditional_call_edge(func, g),
+  call_reachable(g, h),
+  sync_call_target(h, callee),
+  callee != "dynamic".
+
+unconditional_sync_call_in_init(mod, callee) :-
+  init_function(mod, func),
+  unconditional_call_edge(func, g),
+  genserver_sync_api(g, callee),
+  mod != callee.
+
+unconditional_sync_call_in_init(mod, callee) :-
+  init_function(mod, func),
+  unconditional_call_edge(func, g),
+  call_reachable(g, h),
+  genserver_sync_api(h, callee),
+  mod != callee.
+
 // ── Filtered output ────────────────────────────────────────────────────
 
-.decl sync_call_in_init(mod: symbol, callee: symbol)
+// `kind` is "unconditional" when some path from init to the call runs on
+// every init, "conditional" when every path goes through a call site in
+// init that a branch guards (postgrex's `sync_connect: true`, goth's
+// `prefetch: :sync`).
+.decl sync_call_in_init(mod: symbol, callee: symbol, kind: symbol)
 .output sync_call_in_init
 
-sync_call_in_init(mod, callee) :-
+sync_call_in_init(mod, callee, "unconditional") :-
   raw_sync_call_in_init(mod, callee),
   !init_safe_sibling(mod, callee),
-  !init_safe_cross_supervisor(mod, callee).
+  !init_safe_cross_supervisor(mod, callee),
+  unconditional_sync_call_in_init(mod, callee).
+
+sync_call_in_init(mod, callee, "conditional") :-
+  raw_sync_call_in_init(mod, callee),
+  !init_safe_sibling(mod, callee),
+  !init_safe_cross_supervisor(mod, callee),
+  !unconditional_sync_call_in_init(mod, callee).
 
 // ── Init deadlock risk ─────────────────────────────────────────────────
 

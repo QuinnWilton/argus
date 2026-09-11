@@ -168,7 +168,9 @@ defmodule Argus.DlDeclarationsTest do
                       implements_behaviour supervisor supervisor_child supervisor_child_form
                       supervisor_site sync_call),
       sync_call_in_init:
-        ~w(call_arg call_arg_forward call_edge callback_tag def_use dynamic_child function_def implements_behaviour literal_value remote_call supervisor supervisor_child sync_call tuple_literal),
+        ~w(call_arg call_arg_forward call_edge callback_tag def_use dynamic_child function_def
+           implements_behaviour literal_value remote_call supervisor supervisor_child sync_call
+           tuple_literal unconditional_call_edge),
       tls_verification: ~w(function_def tls_connect tls_verification),
       transaction_safety: ~w(call_edge closure_def implements_behaviour impure_call remote_call),
       timeout_chain:
