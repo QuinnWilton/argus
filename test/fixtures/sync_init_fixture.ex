@@ -165,3 +165,51 @@ defmodule Argus.Test.Fixtures.WatcherAppTree do
     Supervisor.init(children, strategy: :one_for_all)
   end
 end
+
+defmodule Argus.Test.Fixtures.StartingWatcher do
+  @moduledoc "The fixed db_connection Watcher: its handler starts children, bounded by their init."
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  def watch(spec), do: GenServer.call(__MODULE__, {:watch, spec}, :infinity)
+
+  @impl true
+  def init(_), do: {:ok, %{}}
+
+  @impl true
+  def handle_call({:watch, spec}, _from, state) do
+    {:ok, pid} = DynamicSupervisor.start_child(Argus.Test.Fixtures.PoolSup, spec)
+    {:reply, :ok, Map.put(state, Process.monitor(pid), pid)}
+  end
+end
+
+defmodule Argus.Test.Fixtures.WatchedByStarter do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts) do
+    :ok = Argus.Test.Fixtures.StartingWatcher.watch(opts)
+    {:ok, opts}
+  end
+end
+
+defmodule Argus.Test.Fixtures.StarterAppTree do
+  @moduledoc false
+  use Supervisor
+
+  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts) do
+    children = [
+      {DynamicSupervisor, name: Argus.Test.Fixtures.PoolSup},
+      {Argus.Test.Fixtures.StartingWatcher, []}
+    ]
+
+    Supervisor.init(children, strategy: :one_for_all)
+  end
+end

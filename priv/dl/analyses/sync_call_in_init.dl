@@ -231,25 +231,42 @@ handler_function(mod, func) :-
   function_def(func, mod, name, _, _),
   (name = "handle_call" ; name = "handle_cast" ; name = "handle_info" ; name = "handle_continue").
 
+// Only operations with no bound of their own count. terminate_child,
+// stop and their relatives wait for a whole shutdown, and a
+// GenServer.call with :infinity waits for as long as the callee takes;
+// start_child is bounded by the child's init, and a call with a timeout
+// gives up. db_connection's fixed Watcher still start_childs from its
+// handler — that is the design, not the bug.
+.decl unbounded_sup_op(op: symbol)
+
+unbounded_sup_op("terminate_child").
+unbounded_sup_op("restart_child").
+unbounded_sup_op("delete_child").
+unbounded_sup_op("stop").
+
 .decl handler_blocks(mod: symbol, handler: symbol, op_site: symbol)
 
 handler_blocks(mod, h, site) :-
   handler_function(mod, h),
-  sup_call(site, h, _, _, _).
+  sup_call(site, h, _, op, _),
+  unbounded_sup_op(op).
 
 handler_blocks(mod, h, site) :-
   handler_function(mod, h),
   call_reachable(h, g),
-  sup_call(site, g, _, _, _).
+  sup_call(site, g, _, op, _),
+  unbounded_sup_op(op).
 
 handler_blocks(mod, h, site) :-
   handler_function(mod, h),
-  remote_call(site, h, "GenServer", "call", _).
+  remote_call(site, h, "GenServer", "call", _),
+  sync_call_timeout(h, _, -1).
 
 handler_blocks(mod, h, site) :-
   handler_function(mod, h),
   call_reachable(h, g),
-  remote_call(site, g, "GenServer", "call", _).
+  remote_call(site, g, "GenServer", "call", _),
+  sync_call_timeout(g, _, -1).
 
 .decl init_waits_on_blocking_server(mod: symbol, dep: symbol, handler: symbol, op_site: symbol)
 .output init_waits_on_blocking_server

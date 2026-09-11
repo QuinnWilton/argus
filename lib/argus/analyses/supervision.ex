@@ -202,7 +202,7 @@ defmodule Argus.Analyses.Supervision do
 
   def finding(:permanent_child_stops_normally, [sup, child, reason, site, sup_site]) do
     Findings.new(
-      :warning,
+      :info,
       "Permanent child stops itself and is restarted",
       "#{child} returns {:stop, #{reason}, ...} from a callback, but " <>
         "#{sup} runs it as a :permanent child, and a supervisor restarts a " <>
@@ -234,7 +234,7 @@ defmodule Argus.Analyses.Supervision do
       end
 
     Findings.new(
-      :warning,
+      if(conf == "named", do: :warning, else: :info),
       "rest_for_one restarts the owner but not the processes it started",
       "#{owner} (position #{opos}) starts processes under #{holder} " <>
         "(position #{hpos}) of #{sup}, a rest_for_one supervisor#{hedge}. " <>

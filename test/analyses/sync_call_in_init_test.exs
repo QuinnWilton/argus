@@ -70,6 +70,20 @@ defmodule Argus.Analyses.SyncCallInInitTest do
       assert op_site =~ "BlockingWatcher:handle_info/2#"
     end
 
+    test "a handler that only starts children is bounded and not reported" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.StarterAppTree,
+        Argus.Test.Fixtures.StartingWatcher,
+        Argus.Test.Fixtures.WatchedByStarter
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :sync_call_in_init)
+
+      assert results["init_waits_on_blocking_server"] == []
+    end
+
     test "a sibling started earlier by a GenServer-defined tree is safe" do
       skip_without_souffle()
 

@@ -40,7 +40,8 @@ defmodule Argus.Analyses.SyncCallInInit do
     their inits on the startup path; whether one calls back is not known
     here.
   - `init_waits_on_blocking_server` — `:warning`. The callee is running,
-    but a handler of its blocks on something with no bound.
+    but a handler of its blocks on something with no bound: a
+    `terminate_child`/`stop`, or a GenServer.call with `:infinity`.
   """
 
   @behaviour Argus.Analysis
@@ -200,8 +201,8 @@ defmodule Argus.Analyses.SyncCallInInit do
       :warning,
       "init/1 waits on a server whose handler can block",
       "#{mod}.init/1 calls #{dep}, which is started earlier and is running " <>
-        "by then — but #{handler} blocks on a supervisor call or a " <>
-        "GenServer.call of its own, and while it does, #{dep} answers " <>
+        "by then — but #{handler} blocks on a supervisor shutdown or an " <>
+        ":infinity call of its own, and while it does, #{dep} answers " <>
         "nobody. Every #{mod} init started in that window hangs behind " <>
         "it, and so does the supervisor starting them. A running callee is " <>
         "not an answering one.",
