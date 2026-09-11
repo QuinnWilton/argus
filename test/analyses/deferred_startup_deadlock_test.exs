@@ -19,7 +19,7 @@ defmodule Argus.Analyses.DeferredStartupDeadlockTest do
 
       assert {:ok, results} = Argus.analyze(modules, :deferred_startup_deadlock)
       cycles = results["mutual_continue_deadlock"]
-      assert length(cycles) > 0
+      assert cycles != []
 
       # Cycle should pair the two cycle servers (lexicographic order from
       # the dedup constraint).
@@ -40,7 +40,7 @@ defmodule Argus.Analyses.DeferredStartupDeadlockTest do
 
       assert {:ok, results} = Argus.analyze(modules, :deferred_startup_deadlock)
       hits = results["continue_to_later_sibling"]
-      assert length(hits) > 0
+      assert hits != []
 
       assert Enum.any?(hits, fn [sup, caller, callee, _, _] ->
                sup == "Argus.Test.Fixtures.ContinueLateSiblingSupervisor" and
@@ -108,7 +108,7 @@ defmodule Argus.Analyses.DeferredStartupDeadlockTest do
       # (the call IS still there in the bytecode), and the crash-loop
       # finding fires on top.
       crash_loops = results["continue_crash_loop_risk"]
-      assert length(crash_loops) > 0
+      assert crash_loops != []
 
       assert Enum.any?(crash_loops, fn [_sup, worker] ->
                worker == "Argus.Test.Fixtures.DefensiveContinueCaller"

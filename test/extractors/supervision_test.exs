@@ -39,7 +39,7 @@ defmodule Argus.Extractors.SupervisionTest do
 
       if Map.has_key?(facts, :supervisor_child) do
         children = facts[:supervisor_child]
-        assert length(children) >= 1
+        assert children != []
 
         child_mods = Enum.map(children, fn [_, _, mod, _, _] -> mod end)
 
@@ -114,7 +114,7 @@ defmodule Argus.Extractors.SupervisionTest do
 
       if Map.has_key?(facts, :supervisor_child) do
         children = facts[:supervisor_child]
-        assert length(children) >= 1
+        assert children != []
 
         child_mods = Enum.map(children, fn [_, _, mod, _, _] -> mod end)
 

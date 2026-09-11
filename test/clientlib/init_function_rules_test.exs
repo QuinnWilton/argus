@@ -44,7 +44,7 @@ defmodule Argus.Clientlib.InitFunctionRulesTest do
 
       assert Map.has_key?(results, "init_function")
       init_fns = results["init_function"]
-      assert length(init_fns) > 0
+      assert init_fns != []
 
       # MyGenServer has init/1.
       assert Enum.any?(init_fns, fn [mod, _func] ->

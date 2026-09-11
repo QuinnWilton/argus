@@ -46,7 +46,7 @@ defmodule Argus.Clientlib.GenserverApiRulesTest do
 
       assert Map.has_key?(results, "genserver_sync_api")
       sync_api = results["genserver_sync_api"]
-      assert length(sync_api) > 0
+      assert sync_api != []
 
       # MyGenServer.get_value/1 calls GenServer.call — it's a sync API function.
       assert Enum.any?(sync_api, fn [func, mod] ->

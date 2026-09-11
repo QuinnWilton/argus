@@ -22,6 +22,8 @@ defmodule Argus.Extractors.OTP do
 
   @behaviour Argus.Extractor
 
+  alias Argus.Extractor.Helpers
+
   import Argus.Extractor.Helpers,
     only: [
       add_fact: 3,
@@ -60,7 +62,7 @@ defmodule Argus.Extractors.OTP do
   end
 
   defp extract_init_continues(facts, _mod, mod_str, functions) do
-    case Argus.Extractor.Helpers.find_function(functions, :init, 1) do
+    case Helpers.find_function(functions, :init, 1) do
       nil ->
         facts
 
@@ -93,7 +95,7 @@ defmodule Argus.Extractors.OTP do
 
   defp tags_from_put_tuples(instrs) do
     instrs
-    |> Argus.Extractor.Helpers.scan_return_tuples()
+    |> Helpers.scan_return_tuples()
     |> Enum.flat_map(fn {_idx, elements} ->
       case continue_tag(elements) do
         nil -> []
@@ -161,10 +163,7 @@ defmodule Argus.Extractors.OTP do
   defp clause_tags(instrs) do
     instrs
     |> Enum.reduce_while([], fn instr, acc ->
-      cond do
-        writes_x0?(instr) -> {:halt, acc}
-        true -> {:cont, acc ++ dispatch_tags(instr)}
-      end
+      if writes_x0?(instr), do: {:halt, acc}, else: {:cont, acc ++ dispatch_tags(instr)}
     end)
     |> Enum.uniq()
   end
@@ -226,7 +225,7 @@ defmodule Argus.Extractors.OTP do
   # and read back later. We record arg:N when it's a parameter, "dynamic"
   # otherwise.
   defp resolve_from_arg(instrs, idx) do
-    case Argus.Extractor.Helpers.arg_position(instrs, idx, {:x, 0}) do
+    case Helpers.arg_position(instrs, idx, {:x, 0}) do
       {:ok, n} -> "arg:#{n}"
       :no -> "dynamic"
     end
@@ -262,7 +261,7 @@ defmodule Argus.Extractors.OTP do
   # :timer.apply_after(time, mod, func, args) — fires apply, not send.
   # Modeled with target = "<mod>:<func>/<arity>" and message = "apply".
   defp handle_delayed(facts, ctx, {:timer, :apply_after, 4}) do
-    target = Argus.Extractor.Helpers.resolve_atom(ctx.instrs, ctx.idx, {:x, 1})
+    target = Helpers.resolve_atom(ctx.instrs, ctx.idx, {:x, 1})
 
     facts
     |> track_dynamic(target, ctx, :delayed_target, :delayed_message)
@@ -292,18 +291,18 @@ defmodule Argus.Extractors.OTP do
   # The target of a send_after can be self(), a registered name, a pid, or
   # a function parameter. We try to recover the most useful classification.
   defp resolve_target(instrs, idx, register) do
-    case Argus.Extractor.Helpers.resolve_register(instrs, idx, register) do
+    case Helpers.resolve_register(instrs, idx, register) do
       {:ok, atom} when is_atom(atom) ->
         # Whether it's a process name (:my_proc) or a module (MyMod).
         inspect(atom)
 
       _ ->
-        case Argus.Extractor.Helpers.last_call_writer(instrs, idx, register) do
+        case Helpers.last_call_writer(instrs, idx, register) do
           {:ok, {:erlang, :self, 0}} ->
             "self"
 
           _ ->
-            case Argus.Extractor.Helpers.arg_position(instrs, idx, register) do
+            case Helpers.arg_position(instrs, idx, register) do
               {:ok, n} -> "arg:#{n}"
               :no -> "dynamic"
             end
@@ -314,7 +313,7 @@ defmodule Argus.Extractors.OTP do
   # The message body is typically a literal atom (`:tick`) or a tagged
   # tuple. We capture the leading atom for handler matching.
   defp resolve_message(instrs, idx, register) do
-    case Argus.Extractor.Helpers.resolve_register(instrs, idx, register) do
+    case Helpers.resolve_register(instrs, idx, register) do
       {:ok, atom} when is_atom(atom) ->
         inspect(atom)
 
@@ -416,7 +415,7 @@ defmodule Argus.Extractors.OTP do
   # - `"via:RegistryInstance"` (when the target is a via tuple)
   # - `"dynamic"` (everything else, including function parameters)
   defp resolve_target_with_via(facts, ctx) do
-    case Argus.Extractor.Helpers.resolve_register(ctx.instrs, ctx.idx, {:x, 0}) do
+    case Helpers.resolve_register(ctx.instrs, ctx.idx, {:x, 0}) do
       {:ok, atom} when is_atom(atom) ->
         {inspect(atom), facts}
 

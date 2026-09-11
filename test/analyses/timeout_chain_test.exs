@@ -21,7 +21,7 @@ defmodule Argus.Analyses.TimeoutChainTest do
       assert Map.has_key?(results, "timeout_chain_risk")
 
       risks = results["timeout_chain_risk"]
-      assert length(risks) > 0
+      assert risks != []
 
       # ServerA → ServerB → ServerC is a chain of depth 2.
       assert Enum.any?(risks, fn [from, to, depth] ->
@@ -43,7 +43,7 @@ defmodule Argus.Analyses.TimeoutChainTest do
       assert Map.has_key?(results, "blocking_cast_handler")
 
       blocking = results["blocking_cast_handler"]
-      assert length(blocking) > 0
+      assert blocking != []
 
       assert Enum.any?(blocking, fn [mod, _target] ->
                mod == "Argus.Test.Fixtures.TimeoutChain.BlockingCastServer"
@@ -70,7 +70,7 @@ defmodule Argus.Analyses.TimeoutChainTest do
 
       # If the extractor detects the :infinity timeout, it should flag it.
       # This is conditional on the OTP extractor encoding :infinity as -1.
-      if length(infinity) > 0 do
+      if infinity != [] do
         assert Enum.any?(infinity, fn [mod, _target] ->
                  mod == "Argus.Test.Fixtures.TimeoutChain.ServerWithInfinityTimeout"
                end)

@@ -34,7 +34,7 @@ defmodule Argus.Clientlib.CfgTest do
 
       assert Map.has_key?(results, "cfg_edge")
       edges = results["cfg_edge"]
-      assert length(edges) > 0
+      assert edges != []
 
       # Verify edges are pairs of instruction IDs.
       for [from, to] <- edges do

@@ -45,7 +45,7 @@ defmodule Argus.Clientlib.StatefulModuleDepRulesTest do
 
       assert Map.has_key?(results, "stateful_module_dep")
       deps = results["stateful_module_dep"]
-      assert length(deps) > 0
+      assert deps != []
 
       # CycleServerA depends on CycleServerB and vice versa; the witness
       # is a function of the depending module.

@@ -173,7 +173,7 @@ defmodule Argus.Extractors.CallArgsTest do
         call_args_from(facts, "public_api/0")
         |> Enum.filter(fn [_, callee, _, _] -> callee =~ "do_work/1" end)
 
-      assert length(local_args) >= 1
+      assert local_args != []
 
       arg0 =
         Enum.find(local_args, fn [_, _, pos, _] -> pos == "0" end)

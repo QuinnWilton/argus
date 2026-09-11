@@ -43,7 +43,7 @@ defmodule Argus.Clientlib.CallbacksTest do
       # MyGenServer implements handle_call/3 and handle_cast/2.
       assert Map.has_key?(results, "handle_call_function")
       call_fns = results["handle_call_function"]
-      assert length(call_fns) > 0
+      assert call_fns != []
 
       assert Enum.any?(call_fns, fn [mod, _func] ->
                mod == "Argus.Test.Fixtures.MyGenServer"
@@ -51,7 +51,7 @@ defmodule Argus.Clientlib.CallbacksTest do
 
       assert Map.has_key?(results, "handle_cast_function")
       cast_fns = results["handle_cast_function"]
-      assert length(cast_fns) > 0
+      assert cast_fns != []
 
       assert Enum.any?(cast_fns, fn [mod, _func] ->
                mod == "Argus.Test.Fixtures.MyGenServer"

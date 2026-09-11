@@ -14,7 +14,7 @@ defmodule Argus.Extractors.ErrorHandlingTest do
 
       assert Map.has_key?(facts, :bare_rescue)
       rows = facts[:bare_rescue]
-      assert length(rows) >= 1
+      assert rows != []
     end
 
     test "does not flag rescue with exception class filtering" do
@@ -31,7 +31,7 @@ defmodule Argus.Extractors.ErrorHandlingTest do
 
       assert Map.has_key?(facts, :trap_exit)
       rows = facts[:trap_exit]
-      assert length(rows) >= 1
+      assert rows != []
 
       mods = Enum.map(rows, fn [_, mod] -> mod end)
       assert Enum.any?(mods, &String.contains?(&1, "TrapExitModule"))
@@ -44,7 +44,7 @@ defmodule Argus.Extractors.ErrorHandlingTest do
 
       assert Map.has_key?(facts, :exit_call)
       rows = facts[:exit_call]
-      assert length(rows) >= 1
+      assert rows != []
     end
 
     test "detects :erlang.exit/1" do

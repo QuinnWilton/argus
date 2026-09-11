@@ -16,7 +16,7 @@ defmodule Argus.Analyses.UnsafeTaskTest do
 
       assert Map.has_key?(results, "leaked_async_task")
       leaked = results["leaked_async_task"]
-      assert length(leaked) > 0
+      assert leaked != []
 
       # fire_and_forget creates a task but never awaits.
       funcs = Enum.map(leaked, fn [func, _id] -> func end)

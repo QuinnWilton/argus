@@ -53,7 +53,7 @@ defmodule Argus.Clientlib.SupervisionTest do
       # GoodSupervisor has WorkerA and WorkerB as children.
       assert Map.has_key?(results, "child_subtree")
       subtree = results["child_subtree"]
-      assert length(subtree) > 0
+      assert subtree != []
 
       # WorkerA and WorkerB should appear as children of GoodSupervisor.
       assert Enum.any?(subtree, fn [sup, _branch, child] ->

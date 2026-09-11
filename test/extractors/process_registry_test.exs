@@ -37,7 +37,7 @@ defmodule Argus.Extractors.ProcessRegistryTest do
 
       assert Map.has_key?(facts, :whereis_call)
       rows = facts[:whereis_call]
-      assert length(rows) >= 1
+      assert rows != []
     end
 
     test "detects :erlang.whereis" do

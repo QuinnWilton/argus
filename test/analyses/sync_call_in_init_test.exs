@@ -20,7 +20,7 @@ defmodule Argus.Analyses.SyncCallInInitTest do
       assert Map.has_key?(results, "sync_call_in_init")
 
       init_calls = results["sync_call_in_init"]
-      assert length(init_calls) > 0
+      assert init_calls != []
 
       # SyncInitServer's init calls WorkerA.
       assert Enum.any?(init_calls, fn [mod, _callee] ->
@@ -43,7 +43,7 @@ defmodule Argus.Analyses.SyncCallInInitTest do
       assert results["sync_call_in_init"] == []
 
       # The filtering relation should have the entry.
-      assert length(results["init_safe_sibling"]) > 0
+      assert results["init_safe_sibling"] != []
     end
 
     test "filters cross-supervisor calls (disjoint supervisor trees)" do
@@ -61,7 +61,7 @@ defmodule Argus.Analyses.SyncCallInInitTest do
       # Disjoint supervisors — callee already running, should be filtered.
       assert results["sync_call_in_init"] == []
 
-      assert length(results["init_safe_cross_supervisor"]) > 0
+      assert results["init_safe_cross_supervisor"] != []
     end
 
     test "preserves deadlock risk when dep starts after caller" do
@@ -77,7 +77,7 @@ defmodule Argus.Analyses.SyncCallInInitTest do
 
       # WorkerA starts AFTER SyncInitServer — NOT safe, deadlock risk.
       init_calls = results["sync_call_in_init"]
-      assert length(init_calls) > 0
+      assert init_calls != []
 
       assert Enum.any?(init_calls, fn [mod, callee] ->
                mod == "Argus.Test.Fixtures.SyncInitServer" and
@@ -86,7 +86,7 @@ defmodule Argus.Analyses.SyncCallInInitTest do
 
       # init_deadlock_risk should detect this.
       deadlock_risks = results["init_deadlock_risk"]
-      assert length(deadlock_risks) > 0
+      assert deadlock_risks != []
 
       assert Enum.any?(deadlock_risks, fn [sup, child, dep, _cpos, _dpos] ->
                sup == "Argus.Test.Fixtures.DeadlockOrderSupervisor" and

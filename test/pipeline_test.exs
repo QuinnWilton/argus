@@ -9,8 +9,8 @@ defmodule Argus.PipelineTest do
     test "extracts facts from a single module" do
       assert {:ok, facts} = Pipeline.extract([:lists])
       assert map_size(facts) > 0
-      assert length(facts[:instruction]) > 0
-      assert length(facts[:function_def]) > 0
+      assert facts[:instruction] != []
+      assert facts[:function_def] != []
     end
 
     test "extracts facts from multiple modules" do
@@ -23,7 +23,7 @@ defmodule Argus.PipelineTest do
 
     test "extracts facts from Elixir modules" do
       assert {:ok, facts} = Pipeline.extract([Enum])
-      assert length(facts[:instruction]) > 0
+      assert facts[:instruction] != []
     end
 
     test "returns error for non-existent module" do
@@ -34,7 +34,7 @@ defmodule Argus.PipelineTest do
     test "accepts beam file paths" do
       path = to_string(:code.which(:lists))
       assert {:ok, facts} = Pipeline.extract([path])
-      assert length(facts[:instruction]) > 0
+      assert facts[:instruction] != []
     end
 
     test "line_info carries real source lines, not Line-chunk references",
@@ -88,7 +88,7 @@ defmodule Argus.PipelineTest do
       {:ok, _} = Pipeline.run([:lists], tmp_dir)
 
       {:ok, rows} = Pipeline.read_facts(Path.join(tmp_dir, "function_def.facts"))
-      assert length(rows) > 0
+      assert rows != []
 
       # function_def has 5 fields per the schema — the entry label lives in
       # function_entry, split out because it is positional.
@@ -192,7 +192,7 @@ defmodule Argus.PipelineTest do
         )
 
       imprecision = facts[:imprecision] || []
-      assert length(imprecision) > 0
+      assert imprecision != []
 
       assert Enum.any?(imprecision, fn [category, _func, relation, reason] ->
                category == "genserver_callee" and relation == "sync_call" and

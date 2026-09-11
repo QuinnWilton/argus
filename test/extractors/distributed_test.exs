@@ -110,7 +110,7 @@ defmodule Argus.Extractors.DistributedTest do
 
       assert Map.has_key?(facts, :global_register)
       rows = facts[:global_register]
-      assert length(rows) >= 1
+      assert rows != []
     end
   end
 

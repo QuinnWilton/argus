@@ -49,7 +49,7 @@ defmodule Argus.Clientlib.OtpTest do
       # MyGenServer has init/1.
       assert Map.has_key?(results, "init_function")
       init_fns = results["init_function"]
-      assert length(init_fns) > 0
+      assert init_fns != []
 
       assert Enum.any?(init_fns, fn [mod, _func] ->
                mod == "Argus.Test.Fixtures.MyGenServer"
@@ -58,12 +58,12 @@ defmodule Argus.Clientlib.OtpTest do
       # MyGenServer.get_value/1 is a sync API (calls GenServer.call).
       assert Map.has_key?(results, "genserver_sync_api")
       sync_api = results["genserver_sync_api"]
-      assert length(sync_api) > 0
+      assert sync_api != []
 
       # CycleServerA and CycleServerB have mutual dependencies.
       assert Map.has_key?(results, "stateful_module_dep")
       deps = results["stateful_module_dep"]
-      assert length(deps) > 0
+      assert deps != []
     end
   end
 end

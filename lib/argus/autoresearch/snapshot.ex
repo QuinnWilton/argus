@@ -414,10 +414,8 @@ defmodule Argus.Autoresearch.Snapshot do
   end
 
   defp decode_json(content) do
-    try do
-      {:ok, :json.decode(content)}
-    rescue
-      e -> {:error, {:decode_failed, e}}
-    end
+    {:ok, :json.decode(content)}
+  rescue
+    e -> {:error, {:decode_failed, e}}
   end
 end

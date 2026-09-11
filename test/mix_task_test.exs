@@ -4,6 +4,7 @@ defmodule Mix.Tasks.ArgusTest do
   import ExUnit.CaptureIO
 
   alias Argus.Souffle
+  alias Mix.Tasks.Argus, as: ArgusTask
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
@@ -12,7 +13,7 @@ defmodule Mix.Tasks.ArgusTest do
   describe "run/1" do
     test "raises without arguments" do
       assert_raise Mix.Error, ~r/Usage/, fn ->
-        Mix.Tasks.Argus.run([])
+        ArgusTask.run([])
       end
     end
 
@@ -20,7 +21,7 @@ defmodule Mix.Tasks.ArgusTest do
       skip_without_souffle()
 
       assert_raise Mix.Error, ~r/Unknown analysis/, fn ->
-        Mix.Tasks.Argus.run(["nonexistent"])
+        ArgusTask.run(["nonexistent"])
       end
     end
 
@@ -29,7 +30,7 @@ defmodule Mix.Tasks.ArgusTest do
 
       output =
         capture_io(fn ->
-          Mix.Tasks.Argus.run(["supervision", "--modules", "Argus.Test.Fixtures.AppSupervisor"])
+          ArgusTask.run(["supervision", "--modules", "Argus.Test.Fixtures.AppSupervisor"])
         end)
 
       assert output =~ "supervision" or output =~ "==="
@@ -40,7 +41,7 @@ defmodule Mix.Tasks.ArgusTest do
 
       output =
         capture_io(fn ->
-          Mix.Tasks.Argus.run([
+          ArgusTask.run([
             "unlinked_spawn",
             "--modules",
             "Argus.Test.Fixtures.UnlinkedSpawner"
@@ -53,7 +54,7 @@ defmodule Mix.Tasks.ArgusTest do
     test "parses Erlang module names" do
       skip_without_souffle()
 
-      capture_io(fn -> Mix.Tasks.Argus.run(["unlinked_spawn", "--modules", ":maps"]) end)
+      capture_io(fn -> ArgusTask.run(["unlinked_spawn", "--modules", ":maps"]) end)
     end
 
     test "--format json produces inspected map" do
@@ -61,7 +62,7 @@ defmodule Mix.Tasks.ArgusTest do
 
       output =
         capture_io(fn ->
-          Mix.Tasks.Argus.run(["unlinked_spawn", "--modules", ":maps", "--format", "json"])
+          ArgusTask.run(["unlinked_spawn", "--modules", ":maps", "--format", "json"])
         end)
 
       assert output =~ "%{"
@@ -72,7 +73,7 @@ defmodule Mix.Tasks.ArgusTest do
 
       assert_raise Mix.Error, ~r/threshold/, fn ->
         capture_io(fn ->
-          Mix.Tasks.Argus.run([
+          ArgusTask.run([
             "unlinked_spawn",
             "--modules",
             "Argus.Test.Fixtures.UnlinkedSpawner",

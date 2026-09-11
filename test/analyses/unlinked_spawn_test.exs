@@ -16,7 +16,7 @@ defmodule Argus.Analyses.UnlinkedSpawnTest do
 
       assert Map.has_key?(results, "unlinked_spawn")
       unlinked = results["unlinked_spawn"]
-      assert length(unlinked) > 0
+      assert unlinked != []
 
       # Should only flag spawn, not spawn_link or spawn_monitor.
       funcs = Enum.map(unlinked, fn [func, _id] -> func end)

@@ -149,12 +149,10 @@ defmodule Argus.Autoresearch.Baseline do
   end
 
   defp write_snapshot(snapshot, dir) do
-    try do
-      Snapshot.write!(snapshot, snapshot_path(dir))
-      :ok
-    rescue
-      e -> {:error, {:write_failed, Exception.message(e)}}
-    end
+    Snapshot.write!(snapshot, snapshot_path(dir))
+    :ok
+  rescue
+    e -> {:error, {:write_failed, Exception.message(e)}}
   end
 
   defp normalize_metadata(json) when is_map(json) do
@@ -175,10 +173,8 @@ defmodule Argus.Autoresearch.Baseline do
   end
 
   defp decode_json(content) do
-    try do
-      {:ok, :json.decode(content)}
-    rescue
-      e -> {:error, {:decode_failed, Exception.message(e)}}
-    end
+    {:ok, :json.decode(content)}
+  rescue
+    e -> {:error, {:decode_failed, Exception.message(e)}}
   end
 end

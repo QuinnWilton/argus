@@ -35,7 +35,7 @@ defmodule Argus.Clientlib.CallReachableRulesTest do
       assert Map.has_key?(results, "call_reachable")
 
       reachable = results["call_reachable"]
-      assert length(reachable) > 0
+      assert reachable != []
 
       # Enum functions should transitively reach :erlang functions
       # (Enum -> :lists -> :erlang).

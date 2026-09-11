@@ -14,7 +14,7 @@ defmodule Argus.Extractors.ETSTest do
 
       assert Map.has_key?(facts, :ets_new)
       rows = facts[:ets_new]
-      assert length(rows) >= 1
+      assert rows != []
 
       names = Enum.map(rows, fn [_id, _func, name] -> name end)
       assert ":my_cache" in names
@@ -53,7 +53,7 @@ defmodule Argus.Extractors.ETSTest do
 
       assert Map.has_key?(facts, :ets_op)
       ops = facts[:ets_op]
-      assert length(ops) >= 1
+      assert ops != []
 
       assert Enum.any?(ops, fn [_, _, _, op, kind] -> op == "lookup" and kind == "read" end)
     end
@@ -63,7 +63,7 @@ defmodule Argus.Extractors.ETSTest do
 
       assert Map.has_key?(facts, :ets_op)
       ops = facts[:ets_op]
-      assert length(ops) >= 1
+      assert ops != []
 
       assert Enum.any?(ops, fn [_, _, _, op, kind] -> op == "insert" and kind == "write" end)
     end

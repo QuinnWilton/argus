@@ -445,7 +445,7 @@ defmodule Argus.Findings do
     end
   end
 
-  @doc "Anchor for a module string (`\"MyApp.Cache\"` or `\":lists\"`)."
+  @doc ~S|Anchor for a module string (`"MyApp.Cache"` or `":lists"`).|
   @spec at_module(String.t()) :: anchor()
   def at_module(module_string) when is_binary(module_string) do
     %{module: module_atom(module_string), mfa: nil, instr: nil}

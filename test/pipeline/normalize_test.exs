@@ -144,7 +144,7 @@ defmodule Argus.Pipeline.NormalizeTest do
       result = Normalize.normalize_function(data.module, func)
 
       assert is_list(result)
-      assert length(result) > 0
+      assert result != []
 
       for {id, _instr} <- result do
         assert is_binary(id)

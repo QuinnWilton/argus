@@ -153,12 +153,10 @@ defmodule Mix.Tasks.Argus do
   end
 
   defp parse_module(":" <> erlang_mod) do
-    try do
-      String.to_existing_atom(erlang_mod)
-    rescue
-      ArgumentError ->
-        Mix.raise("Unknown Erlang module: :#{erlang_mod}")
-    end
+    String.to_existing_atom(erlang_mod)
+  rescue
+    ArgumentError ->
+      Mix.raise("Unknown Erlang module: :#{erlang_mod}")
   end
 
   defp parse_module(elixir_mod) do

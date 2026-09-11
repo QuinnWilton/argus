@@ -36,7 +36,7 @@ defmodule Argus.Clientlib.CallgraphRulesTest do
       assert Map.has_key?(results, "call_edge")
 
       edges = results["call_edge"]
-      assert length(edges) > 0
+      assert edges != []
 
       # Enum calls :lists functions (remote calls).
       callee_strs = Enum.map(edges, fn [_caller, callee] -> callee end)

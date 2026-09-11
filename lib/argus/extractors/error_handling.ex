@@ -141,7 +141,7 @@ defmodule Argus.Extractors.ErrorHandling do
     # reraises, nor reifies the caught exception into a value it returns,
     # logs, or hands to another function.
     not has_filter? and not has_reraise? and not reifies_exception?(handler_body) and
-      length(handler_body) > 0
+      handler_body != []
   end
 
   # After `{:try_case, _}` the caught exception occupies x0 (class), x1

@@ -77,7 +77,7 @@ defmodule Argus.AnalysisTest do
       for name <- @expected_analyses do
         assert {:ok, relations} = Analysis.output_relations(name)
         assert is_list(relations)
-        assert length(relations) > 0
+        assert relations != []
       end
     end
 
@@ -162,7 +162,7 @@ defmodule Argus.AnalysisTest do
 
       assert {:ok, results} = Argus.analyze([:lists], {:custom, rules_path})
       assert Map.has_key?(results, "exported_function")
-      assert length(results["exported_function"]) > 0
+      assert results["exported_function"] != []
     end
 
     test "custom analysis with non-existent rules file returns error" do

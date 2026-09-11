@@ -46,7 +46,7 @@ defmodule Argus.Extractors.OTPTest do
 
       assert Map.has_key?(facts, :sync_call)
       calls = facts[:sync_call]
-      assert length(calls) > 0
+      assert calls != []
     end
 
     test "detects GenServer.cast in fixture" do
@@ -57,7 +57,7 @@ defmodule Argus.Extractors.OTPTest do
 
       assert Map.has_key?(facts, :async_cast)
       casts = facts[:async_cast]
-      assert length(casts) > 0
+      assert casts != []
     end
 
     test "no GenServer calls in plain module" do

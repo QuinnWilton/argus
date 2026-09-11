@@ -5,7 +5,7 @@ defmodule Argus.SchemaTest do
 
   describe "all/0" do
     test "returns a non-empty list of relations" do
-      assert length(Schema.all()) > 0
+      assert Schema.all() != []
     end
 
     test "every relation has required keys" do
@@ -13,7 +13,7 @@ defmodule Argus.SchemaTest do
         assert is_atom(rel.name), "relation name must be an atom: #{inspect(rel)}"
         assert rel.layer in [1, 2], "layer must be 1 or 2: #{inspect(rel.name)}"
         assert is_list(rel.fields), "fields must be a list: #{inspect(rel.name)}"
-        assert length(rel.fields) > 0, "fields must be non-empty: #{inspect(rel.name)}"
+        assert rel.fields != [], "fields must be non-empty: #{inspect(rel.name)}"
         assert is_binary(rel.doc), "doc must be a string: #{inspect(rel.name)}"
       end
     end

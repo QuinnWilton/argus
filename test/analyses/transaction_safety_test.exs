@@ -1,6 +1,7 @@
 defmodule Argus.Analyses.TransactionSafetyTest do
   use ExUnit.Case
 
+  alias Argus.Purity.Effects
   alias Argus.Souffle
   alias Argus.Test.Fixtures.Transaction, as: T
 
@@ -100,21 +101,21 @@ defmodule Argus.Analyses.TransactionSafetyTest do
       # The model dimension this analysis rests on. Without it every
       # Application.get_env/2 in a transaction is a finding, and the real
       # ones drown.
-      assert {:impure, :process, :read} = Argus.Purity.Effects.classify("Application", "get_env")
-      assert {:impure, :process, :write} = Argus.Purity.Effects.classify("Application", "put_env")
+      assert {:impure, :process, :read} = Effects.classify("Application", "get_env")
+      assert {:impure, :process, :write} = Effects.classify("Application", "put_env")
 
-      assert {:impure, :io, :read} = Argus.Purity.Effects.classify("File", "read")
-      assert {:impure, :io, :write} = Argus.Purity.Effects.classify("File", "write")
+      assert {:impure, :io, :read} = Effects.classify("File", "read")
+      assert {:impure, :io, :write} = Effects.classify("File", "write")
 
-      assert {:impure, :ets, :read} = Argus.Purity.Effects.classify(":ets", "lookup")
-      assert {:impure, :ets, :write} = Argus.Purity.Effects.classify(":ets", "insert")
+      assert {:impure, :ets, :read} = Effects.classify(":ets", "lookup")
+      assert {:impure, :ets, :write} = Effects.classify(":ets", "insert")
     end
 
     test "an unlisted effect defaults to write" do
       # The safe direction: a false "irreversible" costs a look, a false
       # "harmless" costs the bug.
-      assert {:impure, :network, :write} = Argus.Purity.Effects.classify(":httpc", "request")
-      assert Argus.Purity.Effects.mode("SomeUnknown", "thing") == :write
+      assert {:impure, :network, :write} = Effects.classify(":httpc", "request")
+      assert Effects.mode("SomeUnknown", "thing") == :write
     end
 
     test "purity still rejects reads, which reversibility does not" do
@@ -124,7 +125,7 @@ defmodule Argus.Analyses.TransactionSafetyTest do
       # the other — which is the whole reason for two dimensions.
       assert for_module(findings(), "ReadsConfig") == []
 
-      assert {:impure, :process, :read} = Argus.Purity.Effects.classify("Process", "get")
+      assert {:impure, :process, :read} = Effects.classify("Process", "get")
     end
   end
 end

@@ -1080,8 +1080,7 @@ defmodule Argus.Schema do
       {:id, :symbol, "instruction ID of the port-opening call"},
       {:func, :symbol, "containing function ID"},
       {:mechanism, :symbol,
-       "how the port is opened: \"Port.open\", \"erlang.open_port\", " <>
-         "\"System.cmd\", \"System.shell\", or \"os.cmd\""},
+       ~s(how the port is opened: "Port.open", "erlang.open_port", "System.cmd", "System.shell", or "os.cmd")},
       {:target, :symbol, "the spawned command / executable / driver, or \"dynamic\""}
     ],
     doc:
@@ -1738,8 +1737,7 @@ defmodule Argus.Schema do
 
     fields_str =
       rel.fields
-      |> Enum.map(fn {fname, ftype, _doc} -> "#{fname}: #{souffle_type(ftype)}" end)
-      |> Enum.join(", ")
+      |> Enum.map_join(", ", fn {fname, ftype, _doc} -> "#{fname}: #{souffle_type(ftype)}" end)
 
     ".decl #{name}(#{fields_str})"
   end

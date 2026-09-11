@@ -509,8 +509,8 @@ defmodule Argus.Pipeline.EmitTest do
         )
 
       assert map_size(facts) > 0
-      assert length(facts[:instruction]) > 0
-      assert length(facts[:function_def]) > 0
+      assert facts[:instruction] != []
+      assert facts[:function_def] != []
     end
 
     test "emits facts for Enum without crashing" do
@@ -526,8 +526,8 @@ defmodule Argus.Pipeline.EmitTest do
         )
 
       assert map_size(facts) > 0
-      assert length(facts[:instruction]) > 0
-      assert length(facts[:remote_call]) > 0
+      assert facts[:instruction] != []
+      assert facts[:remote_call] != []
     end
 
     test "emits facts for GenServer without crashing" do

@@ -21,7 +21,7 @@ defmodule Argus.Analyses.CallCycleTest do
       assert Map.has_key?(results, "call_cycle_path")
 
       cycles = results["call_cycle"]
-      assert length(cycles) > 0
+      assert cycles != []
 
       # The two fixture modules should form a cycle.
       cycle_mods = cycles |> List.flatten() |> Enum.sort()
@@ -52,7 +52,7 @@ defmodule Argus.Analyses.CallCycleTest do
 
       assert {:ok, results} = Argus.analyze(modules, :call_cycle)
       cycles = results["call_cycle"]
-      assert length(cycles) > 0
+      assert cycles != []
 
       cycle_mods = cycles |> List.flatten() |> Enum.sort()
       assert "Argus.Test.Fixtures.GenEventCycleA" in cycle_mods
