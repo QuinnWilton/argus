@@ -15,6 +15,7 @@ defmodule Argus.Pipeline do
     tab-separated). `extract/2` returns the merged facts in memory.
   """
 
+  alias Argus.Cfg
   alias Argus.Dataflow
   alias Argus.Extractor.Helpers
   alias Argus.InstrId
@@ -177,7 +178,7 @@ defmodule Argus.Pipeline do
   # rows in Datalog on every solve.
   defp derive_conditional_calls(base_facts) do
     typed = Argus.Facts.decode(base_facts)
-    cfgs = Argus.Cfg.build(typed)
+    cfgs = Cfg.build(typed)
 
     call_ids =
       for relation <- [:local_call, :remote_call, :bif_call],
@@ -186,7 +187,7 @@ defmodule Argus.Pipeline do
 
     conditional_blocks =
       Map.new(cfgs, fn {key, fun} ->
-        {key, fun |> Argus.Cfg.Function.control_deps() |> Map.keys() |> MapSet.new()}
+        {key, fun |> Cfg.Function.control_deps() |> Map.keys() |> MapSet.new()}
       end)
 
     rows =
@@ -194,7 +195,7 @@ defmodule Argus.Pipeline do
           {:ok, %InstrId{func: name, arity: arity, idx: idx}} <- [InstrId.parse(id)],
           fun = Map.get(cfgs, {name, arity}),
           fun != nil,
-          block = Argus.Cfg.Function.block_at(fun, idx),
+          block = Cfg.Function.block_at(fun, idx),
           block != nil,
           MapSet.member?(conditional_blocks[{name, arity}], block.id),
           do: [id]
