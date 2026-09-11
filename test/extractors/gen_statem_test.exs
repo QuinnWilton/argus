@@ -111,4 +111,42 @@ defmodule Argus.Extractors.GenStatemTest do
       assert Map.has_key?(facts, :statem_module)
     end
   end
+
+  describe "extract/1 — clause heads" do
+    test "event types a state function discriminates on, tagged tuples included" do
+      facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.HandleEventStatem))
+
+      types =
+        facts[:statem_event_clause]
+        |> Enum.map(fn [_mod, _func, type] -> type end)
+        |> Enum.sort()
+
+      assert types == ["cast", "info", "{call}"]
+    end
+
+    test "an :info catch-all is found where it exists and not where it does not" do
+      facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.AsymmetricInfoStatem))
+
+      catchalls = Enum.map(facts[:statem_info_catchall], fn [_mod, func] -> func end)
+
+      assert Enum.any?(catchalls, &String.ends_with?(&1, ":disconnected/3"))
+      assert Enum.any?(catchalls, &String.ends_with?(&1, ":cooling_down/3"))
+      refute Enum.any?(catchalls, &String.ends_with?(&1, ":ready/3"))
+
+      # Every state matches its event type, so none accepts any event.
+      refute Map.has_key?(facts, :statem_event_catchall)
+    end
+
+    test "a clause with a wildcard event type is a total catch-all" do
+      facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.SimpleStatem))
+
+      # SimpleStatem.idle/3 ends with `idle(:cast, _, data)`: not total —
+      # the event type is still matched.
+      refute Map.has_key?(facts, :statem_event_catchall)
+
+      facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.DelegatingStatem))
+      totals = Map.get(facts, :statem_event_catchall, [])
+      assert is_list(totals)
+    end
+  end
 end

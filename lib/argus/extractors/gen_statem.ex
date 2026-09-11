@@ -19,6 +19,13 @@ defmodule Argus.Extractors.GenStatem do
 
   ## Emitted facts
 
+  - `statem_event_clause(mod, func, event_type)` — a clause head matches this event type
+  - `statem_info_catchall(mod, func)` — some clause accepts `:info` with any content
+  - `statem_event_catchall(mod, func)` — some clause accepts any event
+
+  The clause-head walk behind the last three lives in
+  `Argus.Extractors.GenStatem.EventClauses`.
+
   - `statem_module(mod, callback_mode)` — gen_statem module identification
   - `statem_state(mod, state)` — state in the machine
   - `statem_transition(mod, from, event, to)` — state transition
@@ -28,6 +35,7 @@ defmodule Argus.Extractors.GenStatem do
   @behaviour Argus.Extractor
 
   alias Argus.InstrId
+  alias Argus.Extractors.GenStatem.EventClauses
 
   import Argus.Extractor.Helpers,
     only: [
@@ -84,7 +92,7 @@ defmodule Argus.Extractors.GenStatem do
 
     case callback_mode do
       :state_functions ->
-        extract_state_functions(facts, mod_str, functions, exports, locally_called)
+        extract_state_functions(facts, mod, functions, exports, locally_called)
 
       :handle_event_function ->
         extract_handle_event(facts, mod_str, functions)
@@ -263,7 +271,9 @@ defmodule Argus.Extractors.GenStatem do
   #
   # Together these cut the corpus's gen_statem findings from 108 (all
   # false) to the genuine dead-state cases.
-  defp extract_state_functions(facts, mod_str, functions, exports, locally_called) do
+  defp extract_state_functions(facts, mod, functions, exports, locally_called) do
+    mod_str = inspect(mod)
+
     state_funs =
       Enum.filter(functions, fn {:function, name, arity, _entry, instrs} ->
         arity == 3 and
@@ -283,12 +293,34 @@ defmodule Argus.Extractors.GenStatem do
     # Extract transitions and timeouts from each state function.
     Enum.reduce(state_funs, facts, fn {:function, name, arity, _entry, instrs}, acc ->
       state_name = to_string(name)
-      func_id = Normalize.func_id(String.to_atom(mod_str), name, arity)
+      # The module atom itself, not one re-read from its inspected name:
+      # String.to_atom("A.B") is :"A.B", not A.B, and every site ID minted
+      # from it was unresolvable.
+      func_id = Normalize.func_id(mod, name, arity)
 
       acc
       |> extract_transitions(mod_str, state_name, instrs, func_id)
       |> extract_timeouts(mod_str, state_name, instrs, func_id)
+      |> emit_event_clauses(mod_str, func_id, instrs)
     end)
+  end
+
+  defp emit_event_clauses(facts, mod_str, func_id, instrs) do
+    clauses = EventClauses.analyse(instrs)
+
+    facts =
+      Enum.reduce(clauses.event_types, facts, fn type, acc ->
+        add_fact(acc, :statem_event_clause, [mod_str, func_id, type])
+      end)
+
+    facts =
+      if clauses.info_catchall?,
+        do: add_fact(facts, :statem_info_catchall, [mod_str, func_id]),
+        else: facts
+
+    if clauses.event_catchall?,
+      do: add_fact(facts, :statem_event_catchall, [mod_str, func_id]),
+      else: facts
   end
 
   # gen_statem callback-result atoms. A real state function's body always
@@ -351,6 +383,7 @@ defmodule Argus.Extractors.GenStatem do
         facts
         |> extract_transitions(mod_str, "handle_event", instrs, "#{mod_str}:handle_event/4")
         |> extract_timeouts(mod_str, "handle_event", instrs, "#{mod_str}:handle_event/4")
+        |> emit_event_clauses(mod_str, "#{mod_str}:handle_event/4", instrs)
     end
   end
 

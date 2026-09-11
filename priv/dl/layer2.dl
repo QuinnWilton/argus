@@ -230,6 +230,20 @@
 .decl socket_transport(endpoint: symbol, path: symbol, transport: symbol)
 .input socket_transport
 
+// Some clause of the callback accepts any event: a body is reachable from the entry by failure branches alone.
+.decl statem_event_catchall(mod: symbol, func: symbol)
+.input statem_event_catchall
+
+// A gen_statem callback has a clause for this event type. Over-approximated the same way callback_tag is — every comparison of the first argument counts — so consumers ask which types are NOT handled.
+//
+.decl statem_event_clause(mod: symbol, func: symbol, event_type: symbol)
+.input statem_event_clause
+
+// Some clause of the callback accepts an :info event with any content: from a test establishing the event type is :info, a body is reachable without passing the success branch of a test on any other register.
+//
+.decl statem_info_catchall(mod: symbol, func: symbol)
+.input statem_info_catchall
+
 // Initial state declared by `init/1`'s `{:ok, State, Data}` return (one row per resolvable clause — a machine with multiple init clauses has several). Read directly from the return rather than inferred topologically, so the reachability analysis knows which no-incoming state is the legitimate entry point. Only literal-atom states are recorded; a computed initial state emits no row.
 //
 .decl statem_initial(mod: symbol, state: symbol)

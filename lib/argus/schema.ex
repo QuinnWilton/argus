@@ -1557,6 +1557,48 @@ defmodule Argus.Schema do
     """
   }
 
+  @statem_event_clause %{
+    name: :statem_event_clause,
+    layer: 2,
+    fields: [
+      {:mod, :symbol, "module name"},
+      {:func, :symbol, "the state function or handle_event/4"},
+      {:event_type, :symbol,
+       "a literal event type a clause head compares the first argument to: " <>
+         "'info', 'cast', 'timeout', 'state_timeout', ..., or '{call}' / '{timeout}' for tagged tuples"}
+    ],
+    doc: """
+    A gen_statem callback has a clause for this event type. Over-approximated \
+    the same way callback_tag is — every comparison of the first argument \
+    counts — so consumers ask which types are NOT handled.
+    """
+  }
+
+  @statem_info_catchall %{
+    name: :statem_info_catchall,
+    layer: 2,
+    fields: [
+      {:mod, :symbol, "module name"},
+      {:func, :symbol, "the state function or handle_event/4"}
+    ],
+    doc: """
+    Some clause of the callback accepts an :info event with any content: \
+    from a test establishing the event type is :info, a body is reachable \
+    without passing the success branch of a test on any other register.
+    """
+  }
+
+  @statem_event_catchall %{
+    name: :statem_event_catchall,
+    layer: 2,
+    fields: [
+      {:mod, :symbol, "module name"},
+      {:func, :symbol, "the state function or handle_event/4"}
+    ],
+    doc:
+      "Some clause of the callback accepts any event: a body is reachable from the entry by failure branches alone."
+  }
+
   @call_arg %{
     name: :call_arg,
     layer: 2,
@@ -1715,6 +1757,9 @@ defmodule Argus.Schema do
     @statem_initial,
     @statem_transition,
     @statem_timeout,
+    @statem_event_clause,
+    @statem_info_catchall,
+    @statem_event_catchall,
     # Interprocedural constant propagation.
     @call_arg,
     @call_arg_forward,

@@ -29,6 +29,21 @@ found 5 at the bug site; the rest name the gap each entry closes.
   timeout of an `{:ok, state, ms}` / `{:noreply, state, ms}` /
   `{:reply, reply, state, ms}` return. `callback_return` now also reads a
   return the compiler folded into a single literal.
+- `statem_event_clause(mod, func, event_type)`, `statem_info_catchall(mod,
+  func)`, `statem_event_catchall(mod, func)` — what a gen_statem state
+  function or handle_event/4 matches on its first argument, and whether
+  some clause accepts `:info` with any content / any event at all, read
+  from the clause dispatch.
+- `Connection`, `Postgrex.SimpleConnection` and
+  `Postgrex.ReplicationConnection` canonicalise to `GenServer`, so every
+  rule about GenServer callbacks applies to modules declaring them.
+
+### Fixed
+
+- gen_statem state-function IDs were minted from `String.to_atom/1` of
+  the module's inspected name — `:"A.B"`, not `A.B` — so every
+  transition and timeout site in `state_functions` mode was
+  unresolvable.
 
 ### Added (analyses)
 
@@ -62,6 +77,11 @@ found 5 at the bug site; the rest name the gap each entry closes.
   `init_waits_on_blocking_server` — a call from init that the tree-order
   argument accepts, into a server whose handler blocks on a supervisor op
   or a GenServer.call of its own (db_connection's Watcher).
+- `gen_statem`: `state_missing_info_catchall` — a state function has no
+  `:info` catch-all while sibling states do (Redix's Cluster.Manager);
+  `statem_timeout_unhandled` (:error) — a `:timeout` / `:state_timeout`
+  action is armed and no clause matches that event type (Postgrex's
+  SimpleConnection wrote the handler as `(:info, :timeout, ...)`).
 
 ## 0.6.1 — 2026-09-11
 

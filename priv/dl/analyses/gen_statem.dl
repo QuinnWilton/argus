@@ -115,3 +115,57 @@ terminal_without_stop(mod, state, site) :-
   !state_has_outgoing(mod, state),
   state != "stop",
   state != "dynamic".
+
+// ── A state without an :info catch-all, beside states that have one ──
+//
+// In state_functions mode every state is its own callback, and a stray
+// message is handled per state. Redix's Cluster.Manager gave
+// disconnected/3 and cooling_down/3 an `(:info, _msg, _data)` clause and
+// ready/3 none; an unexpected message in :ready was a FunctionClauseError
+// that took the whole :one_for_all cluster tree with it. The sibling
+// asymmetry is the precision gate: a module that handles stray messages
+// in some states and not others has forgotten, not decided.
+.decl state_missing_info_catchall(mod: symbol, state: symbol, site: symbol)
+.output state_missing_info_catchall
+
+// statem_state carries one row per site a state is seen at — its own
+// function and every transition targeting it — so the function_def join
+// picks the definition.
+state_missing_info_catchall(mod, state, func) :-
+  statem_module(mod, "state_functions"),
+  statem_state(mod, state, func),
+  function_def(func, mod, _, _, _),
+  !statem_info_catchall(mod, func),
+  !statem_event_catchall(mod, func),
+  statem_state(mod, other, g),
+  other != state,
+  statem_info_catchall(mod, g).
+
+// ── A timeout armed that no clause handles ──────────────────────────
+//
+// {:timeout, ms, content} arms an event of type :timeout; {:state_timeout,
+// ms, content} one of type :state_timeout. Postgrex's SimpleConnection
+// armed the former and matched `handle_event(:info, :timeout, ...)` —
+// the idle ping never ran and the event fell through to the generic
+// :info clause. The module-level question is enough: some callback has
+// a clause for the type, or accepts any type.
+.decl statem_handles_event(mod: symbol, event_type: symbol)
+
+statem_handles_event(mod, type) :- statem_event_clause(mod, _, type).
+statem_handles_event(mod, "timeout") :- statem_event_catchall(mod, _).
+statem_handles_event(mod, "state_timeout") :- statem_event_catchall(mod, _).
+
+.decl statem_timeout_unhandled(mod: symbol, kind: symbol, state: symbol)
+.output statem_timeout_unhandled
+
+statem_timeout_unhandled(mod, "event_timeout", state) :-
+  statem_timeout(mod, state, "event_timeout", _),
+  !statem_handles_event(mod, "timeout").
+
+statem_timeout_unhandled(mod, "event_timeout", state) :-
+  statem_timeout(mod, state, "generic", _),
+  !statem_handles_event(mod, "timeout").
+
+statem_timeout_unhandled(mod, "state_timeout", state) :-
+  statem_timeout(mod, state, "state_timeout", _),
+  !statem_handles_event(mod, "state_timeout").

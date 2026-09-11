@@ -65,4 +65,44 @@ defmodule Argus.Analyses.GenStatemTest do
       assert results["terminal_without_stop"] == []
     end
   end
+
+  describe "state_missing_info_catchall" do
+    test "the state without an :info catch-all is reported when its siblings have one" do
+      skip_without_souffle()
+
+      results = analyze([Argus.Test.Fixtures.AsymmetricInfoStatem])
+
+      assert [[mod, "ready", site]] = results["state_missing_info_catchall"]
+      assert mod =~ "AsymmetricInfoStatem"
+      assert site =~ "AsymmetricInfoStatem:ready/3"
+    end
+
+    test "a machine whose every state has the catch-all is clean" do
+      skip_without_souffle()
+
+      results = analyze([Argus.Test.Fixtures.SymmetricInfoStatem])
+
+      assert results["state_missing_info_catchall"] == []
+    end
+  end
+
+  describe "statem_timeout_unhandled" do
+    test "a {:timeout, ...} action matched as :info is reported" do
+      skip_without_souffle()
+
+      results = analyze([Argus.Test.Fixtures.TimeoutMismatchStatem])
+
+      assert [[mod, "event_timeout", "handle_event"]] = results["statem_timeout_unhandled"]
+      assert mod =~ "TimeoutMismatchStatem"
+    end
+
+    test "a handled timeout, and a state_timeout matched by its own state, are clean" do
+      skip_without_souffle()
+
+      results =
+        analyze([Argus.Test.Fixtures.TimeoutHandledStatem, Argus.Test.Fixtures.TimeoutStatem])
+
+      assert results["statem_timeout_unhandled"] == []
+    end
+  end
 end

@@ -15,6 +15,10 @@ defmodule Argus.Analyses.GenStatem do
 
   - `unreachable_state(mod, state, site)` — state defined but no transition leads to it.
   - `terminal_without_stop(mod, state, site)` — state with no outgoing transitions that doesn't stop.
+  - `state_missing_info_catchall(mod, state, site)` — a state function
+    without an `:info` catch-all clause beside sibling states that have one.
+  - `statem_timeout_unhandled(mod, kind, state)` — a `:timeout` or
+    `:state_timeout` action is armed and no clause handles that event type.
 
   ## Finding severities
 
@@ -23,6 +27,11 @@ defmodule Argus.Analyses.GenStatem do
   - `terminal_without_stop` — `:info`. A final resting state can be
     intentional; flagged because an unintentional one leaks an idle
     process.
+  - `state_missing_info_catchall` — `:warning`. The module handles stray
+    messages in its other states; in this one they are a crash.
+  - `statem_timeout_unhandled` — `:error`. The timer fires into a
+    FunctionClauseError or falls through to a clause written for
+    something else; either way the timeout's work never runs.
   """
 
   @behaviour Argus.Analysis
@@ -56,6 +65,25 @@ defmodule Argus.Analyses.GenStatem do
         doc: "State defined but no transition leads to it."
       },
       %{
+        name: :state_missing_info_catchall,
+        fields: [
+          {:mod, :symbol, "module"},
+          {:state, :symbol, "the state without an :info catch-all"},
+          {:site, :symbol, "the state function"}
+        ],
+        doc: "A state function has no :info catch-all while sibling states do."
+      },
+      %{
+        name: :statem_timeout_unhandled,
+        fields: [
+          {:mod, :symbol, "module"},
+          {:kind, :symbol, "event_timeout or state_timeout"},
+          {:state, :symbol, "the state (or handle_event) arming it"}
+        ],
+        key: [:mod, :kind],
+        doc: "A timeout is armed and no clause handles its event type."
+      },
+      %{
         name: :terminal_without_stop,
         fields: [
           {:mod, :symbol, "module"},
@@ -77,6 +105,51 @@ defmodule Argus.Analyses.GenStatem do
         "the state is dead code, or a transition that should produce it is " <>
         "missing — both point at a hole in the machine's design.",
       at: Findings.at_site(site, mod)
+    )
+  end
+
+  def finding(:state_missing_info_catchall, [mod, state, site]) do
+    Findings.new(
+      :warning,
+      "State #{state} has no :info catch-all",
+      "#{mod}'s other states end with an `(:info, _msg, _data)` clause; " <>
+        "#{state} does not. Any message that arrives while the machine is " <>
+        "in #{state} and matches none of its clauses — a late :DOWN, a " <>
+        "reply to a call that timed out, a library's notification — is a " <>
+        "FunctionClauseError, and takes the process (and under :one_for_all, " <>
+        "its whole tree) down with it.",
+      at: Findings.at_site(site, mod),
+      at_label: "no clause here accepts an unexpected message",
+      help: ["add a final `#{state}(:info, _msg, data)` clause, as the other states have"]
+    )
+  end
+
+  def finding(:statem_timeout_unhandled, [mod, kind, state]) do
+    {action, type} =
+      case kind do
+        "state_timeout" -> {"{:state_timeout, ms, content}", ":state_timeout"}
+        _ -> {"{:timeout, ms, content}", ":timeout"}
+      end
+
+    at =
+      case state do
+        "handle_event" -> Findings.at_mfa(mod, :handle_event, 4)
+        name -> Findings.at_mfa(mod, String.to_atom(name), 3)
+      end
+
+    Findings.new(
+      :error,
+      "Timeout armed but never handled",
+      "#{mod} arms a #{action} action in #{state}, which delivers an event " <>
+        "of type #{type} — and no clause matches that event type. When the " <>
+        "timer fires the event either raises FunctionClauseError or falls " <>
+        "through to a clause written for something else; the work the " <>
+        "timeout was meant to trigger never runs. A common shape is " <>
+        "handling it as `(:info, :timeout, ...)`: the event type is " <>
+        "#{type}, not :info.",
+      at: at,
+      at_label: "the timeout is armed here",
+      help: ["add a clause matching `(#{type}, content, ...)` for the armed timeout"]
     )
   end
 

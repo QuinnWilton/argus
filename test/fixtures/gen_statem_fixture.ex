@@ -185,3 +185,91 @@ defmodule Argus.Test.Fixtures.HandleEventStatem do
   @impl true
   def terminate(_reason, _state, _data), do: :ok
 end
+
+defmodule Argus.Test.Fixtures.AsymmetricInfoStatem do
+  @moduledoc """
+  The Redix Cluster.Manager shape: two states end with an :info catch-all,
+  the third does not, and a stray message in that state is a crash.
+  """
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :state_functions
+
+  @impl true
+  def init(_args), do: {:ok, :disconnected, %{}}
+
+  def disconnected(:cast, :connect, data), do: {:next_state, :ready, data}
+  def disconnected(:info, _msg, _data), do: :keep_state_and_data
+
+  def ready(:cast, :disconnect, data), do: {:next_state, :cooling_down, data}
+  def ready(:info, {:DOWN, _ref, :process, _pid, _reason}, data), do: {:keep_state, data}
+
+  def cooling_down(:cast, :connect, data), do: {:next_state, :ready, data}
+  def cooling_down(:info, _msg, _data), do: :keep_state_and_data
+end
+
+defmodule Argus.Test.Fixtures.SymmetricInfoStatem do
+  @moduledoc false
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :state_functions
+
+  @impl true
+  def init(_args), do: {:ok, :disconnected, %{}}
+
+  def disconnected(:cast, :connect, data), do: {:next_state, :ready, data}
+  def disconnected(:info, _msg, _data), do: :keep_state_and_data
+
+  def ready(:cast, :disconnect, data), do: {:next_state, :disconnected, data}
+  def ready(:info, {:DOWN, _ref, :process, _pid, _reason}, data), do: {:keep_state, data}
+  def ready(:info, _msg, _data), do: :keep_state_and_data
+end
+
+defmodule Argus.Test.Fixtures.TimeoutMismatchStatem do
+  @moduledoc """
+  The Postgrex SimpleConnection shape: a {:timeout, ms, content} action
+  is armed, and the handler is written for event type :info.
+  """
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :handle_event_function
+
+  @impl true
+  def init(_args), do: {:ok, :connected, %{}}
+
+  @impl true
+  def handle_event(:cast, :activity, :connected, data) do
+    {:keep_state, data, [{:timeout, 1000, nil}]}
+  end
+
+  def handle_event(:info, :timeout, :connected, data) do
+    {:keep_state, Map.put(data, :pinged, true)}
+  end
+
+  def handle_event(:info, _msg, :connected, _data), do: :keep_state_and_data
+end
+
+defmodule Argus.Test.Fixtures.TimeoutHandledStatem do
+  @moduledoc false
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :handle_event_function
+
+  @impl true
+  def init(_args), do: {:ok, :connected, %{}}
+
+  @impl true
+  def handle_event(:cast, :activity, :connected, data) do
+    {:keep_state, data, [{:timeout, 1000, nil}]}
+  end
+
+  def handle_event(:timeout, nil, :connected, data) do
+    {:keep_state, Map.put(data, :pinged, true)}
+  end
+
+  def handle_event(:info, _msg, :connected, _data), do: :keep_state_and_data
+end
