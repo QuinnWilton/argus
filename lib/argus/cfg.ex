@@ -6,7 +6,7 @@ defmodule Argus.Cfg do
   This is the in-process counterpart of `priv/dl/clientlib/cfg.dl`'s flat
   `cfg_edge` derivation, lifted to the block level: instructions are grouped
   into maximal straight-line blocks (the classic leader algorithm), edges
-  carry their kind (`Argus.Cfg.Block.edge_kind/0`), and each function gets a
+  carry their kind (`t:Argus.Cfg.Block.edge_kind/0`), and each function gets a
   dominator tree (iterative Cooper–Harvey–Kennedy over reverse postorder) and
   the set of natural-loop headers (back-edge targets).
 

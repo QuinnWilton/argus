@@ -2,18 +2,21 @@ defmodule Argus.MixProject do
   use Mix.Project
 
   @version "0.5.0"
+  @source_url "https://github.com/QuinnWilton/argus"
 
   def project do
     [
       app: :argus,
       version: @version,
-      elixir: "~> 1.17",
+      elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
       dialyzer: dialyzer(),
       description: "BEAM program analysis via Souffle Datalog",
       package: package(),
+      source_url: @source_url,
+      homepage_url: @source_url,
       name: "Argus",
       docs: docs(),
 
@@ -40,6 +43,7 @@ defmodule Argus.MixProject do
 
       # Dev/Test
       {:stream_data, "~> 1.0", only: [:test, :dev]},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: :dev, runtime: false},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false}
     ]
@@ -51,13 +55,16 @@ defmodule Argus.MixProject do
   defp package do
     [
       licenses: ["MIT"],
-      links: %{"GitHub" => "https://github.com/QuinnWilton/argus"}
+      links: %{"GitHub" => @source_url},
+      files: ~w(lib priv/dl mix.exs README.md LICENSE CHANGELOG.md .formatter.exs)
     ]
   end
 
   defp docs do
     [
       main: "readme",
+      source_ref: "v#{@version}",
+      source_url: @source_url,
       extras: ["README.md", "CHANGELOG.md"]
     ]
   end
