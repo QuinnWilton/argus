@@ -30,6 +30,29 @@ found 5 at the bug site; the rest name the gap each entry closes.
   `{:reply, reply, state, ms}` return. `callback_return` now also reads a
   return the compiler folded into a single literal.
 
+### Added (analyses)
+
+- `callback_receive` canonicalises behaviour names, so a module declaring
+  `@behaviour :gen_statem` is a callback loop (Redix's connection init
+  waited on a bare receive, unreported).
+- `error_handling`: `trap_exit_without_exit_clause` — traps exits, has a
+  handle_info/2, no clause matches `{:EXIT, ...}` (Bandit's HTTP/1
+  handler); `handle_info_without_catchall` (:info) — a GenServer that
+  monitors or traps exits defines handle_info/2 without a catch-all.
+- `supervision`: `permanent_child_stops_normally` — a permanent child
+  returns `{:stop, :normal | :shutdown, ...}` and is restarted (Phoenix
+  PubSub's tracker shards on graceful permdown).
+- `deferred_startup_deadlock`: `init_timeout_deferral` (:info) — init/1
+  returns `{:ok, state, timeout}`; any earlier message cancels the
+  deferred work (libcluster's Gossip strategy).
+- `monitor_leak`: the timed wait and the flush may sit a call below the
+  monitor in the same module (Finch's HTTP/2 response loop); two
+  lifetime heuristics at :info — `monitor_never_released` (monitors from
+  callbacks, removes bookkeeping entries, never demonitors: Postgrex's
+  Parameters server) and `deliberate_termination_while_monitored`
+  (terminate_child / GenServer.stop on a monitored pid without
+  demonitoring: Oban's producer on pkill, Redix's cluster manager).
+
 ## 0.6.1 — 2026-09-11
 
 ### Changed (supervision extraction)

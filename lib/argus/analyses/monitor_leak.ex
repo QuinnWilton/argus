@@ -17,6 +17,23 @@ defmodule Argus.Analyses.MonitorLeak do
   A `receive` with no `after` consumes either the reply or the `:DOWN` and
   cannot leak. Every monitor-plus-receive in Livebook is that shape, and none
   is reported — which is what makes the one that is reported worth reading.
+  The wait may sit a call below the monitor, in the same module and
+  process; closure edges do not count.
+
+  ## Monitors over a server's lifetime
+
+  Two further shapes are about the process rather than one function, and
+  are reported at `:info` because they are heuristics over a module's
+  callbacks rather than proofs about one path:
+
+  - `monitor_never_released` — a callback-loop module monitors from its
+    callbacks, removes entries from its bookkeeping somewhere, and calls
+    `Process.demonitor` nowhere. Postgrex's `Parameters` server.
+  - `deliberate_termination_while_monitored` — the module terminates a
+    child or stops a server it monitors, without demonitoring first, so
+    the `{:DOWN, ...}` for a death it caused arrives in the clause written
+    for crashes. Oban's producer on pkill; Redix's cluster manager on a
+    departed node.
   """
 
   @behaviour Argus.Analysis
@@ -33,7 +50,8 @@ defmodule Argus.Analyses.MonitorLeak do
   def rules_file, do: "analyses/monitor_leak.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.Monitor]
+  def extractors,
+    do: [Argus.Extractors.Monitor, Argus.Extractors.OTP, Argus.Extractors.GenStatem]
 
   @impl true
   def output_relations do
@@ -46,6 +64,27 @@ defmodule Argus.Analyses.MonitorLeak do
         ],
         key: [:func],
         doc: "A monitor established before a timed wait, never flushed."
+      },
+      %{
+        name: :monitor_never_released,
+        fields: [
+          {:mod, :symbol, "the server module"},
+          {:site, :symbol, "a monitor call site in its callbacks"}
+        ],
+        key: [:mod],
+        doc:
+          "A server monitors from its callbacks and removes bookkeeping entries, " <>
+            "but never calls Process.demonitor."
+      },
+      %{
+        name: :deliberate_termination_while_monitored,
+        fields: [
+          {:mod, :symbol, "the server module"},
+          {:site, :symbol, "a monitor call site in its callbacks"},
+          {:kill_site, :symbol, "the terminate_child or GenServer.stop call"}
+        ],
+        key: [:mod, :kill_site],
+        doc: "A server terminates a process it monitors without demonitoring first."
       }
     ]
   end
@@ -71,6 +110,44 @@ defmodule Argus.Analyses.MonitorLeak do
         "A receive with no after clause does not have this problem, since it " <>
         "consumes either the reply or the {:DOWN, ...}.",
       at: Findings.at_instr(id)
+    )
+  end
+
+  def finding(:monitor_never_released, [mod, site]) do
+    Findings.new(
+      :info,
+      "#{mod} monitors but never demonitors",
+      "#{mod} establishes monitors from its callbacks and removes entries " <>
+        "from its bookkeeping elsewhere, but calls Process.demonitor nowhere. " <>
+        "If an entry can leave by a path other than the monitored process " <>
+        "dying — an explicit delete, unsubscribe or disconnect — its monitor " <>
+        "stays live: one per cycle, for the life of the server, each one a " <>
+        "future {:DOWN, ...} that arrives after the entry is gone.",
+      at: Findings.at_site(site, mod),
+      at_label: "monitors established here are only ever released by :DOWN",
+      help: [
+        "on every path that removes the entry, call " <>
+          "`Process.demonitor(ref, [:flush])` with the ref stored alongside it"
+      ]
+    )
+  end
+
+  def finding(:deliberate_termination_while_monitored, [mod, site, kill_site]) do
+    Findings.new(
+      :info,
+      "#{mod} terminates a process it still monitors",
+      "#{mod} monitors processes from its callbacks and also terminates " <>
+        "them on purpose, without demonitoring first. The {:DOWN, ...} for a " <>
+        "death this server caused is delivered like any other — into the " <>
+        "clause written for crashes, which may restart, reconnect or log " <>
+        "what was a deliberate stop.",
+      at: Findings.at_site(kill_site, mod),
+      at_label: "the monitored process is terminated here",
+      help: [
+        "call `Process.demonitor(ref, [:flush])` before terminating, and drop " <>
+          "the entry from the bookkeeping in the same step"
+      ],
+      related: [Findings.related("monitor established", Findings.at_site(site, mod))]
     )
   end
 end

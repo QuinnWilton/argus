@@ -16,16 +16,45 @@
 // monitor-plus-receive in Livebook is that shape and none is reported.
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/behaviours.dl"
+
+// The wait and the flush may live a call below the monitor: Finch's
+// HTTP/2 pool monitors in request/… and loops in a private
+// response_waiting_loop/5 with an `after`. Same module, same process —
+// closure edges are excluded, since a receive inside a spawned fun
+// belongs to another mailbox.
+.decl same_process_reaches(func: symbol, callee: symbol)
+
+same_process_reaches(f, g) :-
+  call_edge(f, g),
+  !closure_def(f, g),
+  function_def(f, mod, _, _, _),
+  function_def(g, mod, _, _, _).
+
+same_process_reaches(f, h) :-
+  same_process_reaches(f, g),
+  call_edge(g, h),
+  !closure_def(g, h),
+  function_def(g, mod, _, _, _),
+  function_def(h, mod, _, _, _).
 
 .decl waits_with_timeout(func: symbol)
 
 waits_with_timeout(func) :-
   recv_start(_, func, 0, _).
 
+waits_with_timeout(func) :-
+  same_process_reaches(func, g),
+  recv_start(_, g, 0, _).
+
 .decl flushes(func: symbol)
 
 flushes(func) :-
   demonitor_call(_, func, "flush").
+
+flushes(func) :-
+  same_process_reaches(func, g),
+  demonitor_call(_, g, "flush").
 
 .decl leaked_monitor(func: symbol, id: symbol)
 .output leaked_monitor
@@ -34,3 +63,121 @@ leaked_monitor(func, id) :-
   monitor_call(id, func, _),
   waits_with_timeout(func),
   !flushes(func).
+
+// ── Monitors a server never releases ──────────────────────────────────
+//
+// The rule above is about one function. This one is about a process's
+// lifetime: a server that monitors on the way in and forgets on the way
+// out. Postgrex.Parameters monitored every connection in handle_call,
+// deleted the ETS row on the explicit disconnect path, and demonitored
+// only from the {:DOWN, ...} clause — one live monitor per connection
+// cycle, forever. The shape is: the module establishes monitors from its
+// callbacks, removes entries from its bookkeeping somewhere, and calls
+// Process.demonitor nowhere at all.
+//
+// Server side means reachable from a callback without crossing a
+// closure: a monitor taken in a client API function (Redix.Connection
+// pipeline/3) belongs to the caller's process and is not this server's
+// to release.
+.decl loop_module(mod: symbol)
+
+loop_module(mod) :-
+  behaves_as(mod, behaviour),
+  callback_loop_behaviour(behaviour).
+
+.decl callback_name(name: symbol)
+
+callback_name("init").
+callback_name("handle_call").
+callback_name("handle_cast").
+callback_name("handle_info").
+callback_name("handle_continue").
+callback_name("handle_event").
+callback_name("handle_events").
+callback_name("handle_demand").
+callback_name("handle_subscribe").
+callback_name("handle_cancel").
+
+.decl server_side(mod: symbol, func: symbol)
+
+server_side(mod, func) :-
+  loop_module(mod),
+  function_def(func, mod, name, _, _),
+  callback_name(name).
+
+server_side(mod, func) :-
+  loop_module(mod),
+  statem_state(mod, _, func),
+  function_def(func, mod, _, _, _).
+
+server_side(mod, g) :-
+  server_side(mod, f),
+  same_process_reaches(f, g).
+
+.decl module_demonitors(mod: symbol)
+
+module_demonitors(mod) :-
+  demonitor_call(_, f, _),
+  function_def(f, mod, _, _, _).
+
+// Removing an entry from a map, set, keyword or ETS table — the
+// bookkeeping paths a monitor's release belongs on. Both the Elixir
+// spelling and the :maps one the compiler rewrites it to.
+.decl removal_op(mod: symbol, func: symbol)
+
+removal_op("Map", "delete").
+removal_op("Map", "pop").
+removal_op("Map", "pop!").
+removal_op("Map", "drop").
+removal_op(":maps", "remove").
+removal_op(":maps", "take").
+removal_op("MapSet", "delete").
+removal_op("Keyword", "delete").
+removal_op("List", "delete").
+removal_op(":ets", "delete").
+removal_op(":ets", "delete_object").
+removal_op(":ets", "take").
+removal_op(":ets", "select_delete").
+removal_op(":ets", "match_delete").
+
+.decl removes_entries(mod: symbol)
+
+removes_entries(mod) :-
+  server_side(mod, f),
+  remote_call(_, f, m, op, _),
+  removal_op(m, op).
+
+.decl monitor_never_released(mod: symbol, site: symbol)
+.output monitor_never_released
+
+monitor_never_released(mod, site) :-
+  server_side(mod, f),
+  monitor_call(site, f, _),
+  removes_entries(mod),
+  !module_demonitors(mod).
+
+// ── Terminating a process the server still monitors ───────────────────
+//
+// terminate_child (and GenServer.stop) on a pid this server monitors,
+// with no demonitor anywhere: the {:DOWN, ...} for a death the server
+// caused is delivered like any other, into the clause written for
+// crashes. Oban's producer terminated a job's process on pkill and then
+// handled its own :DOWN as a crash; Redix's cluster manager terminated a
+// departed node's connection and its :DOWN clause reconnected it.
+.decl deliberate_termination_while_monitored(mod: symbol, site: symbol, kill_site: symbol)
+.output deliberate_termination_while_monitored
+
+deliberate_termination_while_monitored(mod, site, kill_site) :-
+  server_side(mod, f),
+  monitor_call(site, f, _),
+  server_side(mod, g),
+  sup_call(kill_site, g, _, "terminate_child", _),
+  !module_demonitors(mod).
+
+deliberate_termination_while_monitored(mod, site, kill_site) :-
+  server_side(mod, f),
+  monitor_call(site, f, _),
+  server_side(mod, g),
+  remote_call(kill_site, g, "GenServer", "stop", _),
+  !module_demonitors(mod).
+

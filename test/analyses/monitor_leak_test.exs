@@ -4,7 +4,9 @@ defmodule Argus.Analyses.MonitorLeakTest do
   alias Argus.Souffle
   alias Argus.Test.Fixtures.MonitorLeak, as: M
 
-  @all [M.Leaks, M.Flushes, M.Blocks, M.NoMonitor]
+  @all [M.Leaks, M.Flushes, M.Blocks, M.NoMonitor, M.LeaksThroughHelper, M.FlushesInHelper]
+
+  @servers [M.NeverReleases, M.ReleasesOnDelete, M.KillsMonitored, M.ClientSideMonitor]
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
@@ -42,5 +44,52 @@ defmodule Argus.Analyses.MonitorLeakTest do
   test "a timed wait with no monitor has nothing to leak" do
     skip_without_souffle()
     refute named?(funcs(), "MonitorLeak.NoMonitor")
+  end
+
+  test "a timed wait one call below the monitor leaks the same way" do
+    skip_without_souffle()
+
+    # Finch's HTTP/2 pool: monitor in request/…, the `after` in a private
+    # loop. The function reported is the one that established the monitor.
+    assert named?(funcs(), "MonitorLeak.LeaksThroughHelper:request/1")
+  end
+
+  test "a flush in the helper discharges it" do
+    skip_without_souffle()
+    refute named?(funcs(), "MonitorLeak.FlushesInHelper")
+  end
+
+  describe "over a server's lifetime" do
+    defp servers do
+      assert {:ok, r} = Argus.analyze(@servers, :monitor_leak)
+      r
+    end
+
+    defp mods(r, relation), do: r |> Map.get(relation, []) |> Enum.map(&hd/1) |> Enum.uniq()
+
+    test "monitoring on insert and deleting without demonitor is reported" do
+      skip_without_souffle()
+
+      assert mods(servers(), "monitor_never_released") == [
+               "Argus.Test.Fixtures.MonitorLeak.NeverReleases"
+             ]
+    end
+
+    test "terminating a monitored child without demonitor is reported" do
+      skip_without_souffle()
+
+      r = servers()
+
+      assert [[mod, site, kill_site]] = r["deliberate_termination_while_monitored"]
+      assert mod == "Argus.Test.Fixtures.MonitorLeak.KillsMonitored"
+      assert site =~ "KillsMonitored:handle_call/3#"
+      assert kill_site =~ "KillsMonitored:handle_cast/2#"
+    end
+
+    test "a monitor in a client API function is the caller's, not the server's" do
+      skip_without_souffle()
+
+      refute named?(mods(servers(), "monitor_never_released"), "ClientSideMonitor")
+    end
   end
 end
