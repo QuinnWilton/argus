@@ -4,7 +4,7 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 0.5.1 — Unreleased
+## 0.5.1 — 2026-09-11
 
 Precision and cutoff work from installing scry on the 24 most-downloaded
 Hex packages that ship supervision trees (16 findings, 1 of them
