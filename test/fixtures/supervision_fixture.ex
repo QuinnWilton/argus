@@ -364,3 +364,52 @@ defmodule Argus.Test.Fixtures.TopologyServer do
     end
   end
 end
+
+defmodule Argus.Test.Fixtures.PermanentQuitter do
+  @moduledoc """
+  Stops itself with :normal on request — the Phoenix PubSub shard shape.
+  Under a :permanent spec the supervisor starts it straight back.
+  """
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts), do: {:ok, opts}
+
+  @impl true
+  def handle_call(:graceful_permdown, _from, state), do: {:stop, :normal, :ok, state}
+end
+
+defmodule Argus.Test.Fixtures.QuitterSupervisor do
+  @moduledoc false
+  use Supervisor
+
+  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts) do
+    children = [{Argus.Test.Fixtures.PermanentQuitter, []}]
+    Supervisor.init(children, strategy: :one_for_one)
+  end
+end
+
+defmodule Argus.Test.Fixtures.TransientQuitterSupervisor do
+  @moduledoc false
+  use Supervisor
+
+  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts) do
+    children = [
+      %{
+        id: Argus.Test.Fixtures.PermanentQuitter,
+        start: {Argus.Test.Fixtures.PermanentQuitter, :start_link, [[]]},
+        restart: :transient
+      }
+    ]
+
+    Supervisor.init(children, strategy: :one_for_one)
+  end
+end

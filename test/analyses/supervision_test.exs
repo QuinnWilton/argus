@@ -25,6 +25,27 @@ defmodule Argus.Analyses.SupervisionTest do
     end
   end
 
+  describe "permanent_child_stops_normally" do
+    test "a permanent child that stops with :normal is reported; a transient one is not" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.QuitterSupervisor,
+        Argus.Test.Fixtures.TransientQuitterSupervisor,
+        Argus.Test.Fixtures.PermanentQuitter
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :supervision)
+
+      assert [[sup, child, ":normal", site, _sup_site]] =
+               results["permanent_child_stops_normally"]
+
+      assert sup == "Argus.Test.Fixtures.QuitterSupervisor"
+      assert child == "Argus.Test.Fixtures.PermanentQuitter"
+      assert site =~ "PermanentQuitter:handle_call/3#"
+    end
+  end
+
   describe "wrong_start_order" do
     test "flags a child whose init sync-calls a later-started sibling" do
       skip_without_souffle()

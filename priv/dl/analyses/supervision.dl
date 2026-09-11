@@ -137,3 +137,27 @@ supervisor_registered_as_worker(sup, child, position) :-
   supervisor_child(sup, position, child, _, "worker"),
   supervisor_child_form(sup, position, "explicit"),
   child_is_a_supervisor(child).
+
+// ── Permanent child that stops itself normally ────────────────────────
+//
+// A supervisor restarts a :permanent child whatever the exit reason —
+// :normal and :shutdown included. So a permanent child whose callback
+// returns {:stop, :normal, ...} has asked to go away and will be started
+// straight back; the code that follows the stop (graceful permdown,
+// drain-and-quit) is undone at once. Phoenix PubSub's tracker shards did
+// this on graceful permdown until their spec became :transient.
+//
+// Only a literal reason counts (callback_stop_reason), and terminate/2
+// is excluded: it does not return a stop tuple. One row per stop site —
+// finding builders dedupe on (sup, child).
+.decl permanent_child_stops_normally(sup: symbol, child: symbol, reason: symbol, site: symbol, sup_site: symbol)
+.output permanent_child_stops_normally
+
+permanent_child_stops_normally(sup, child, reason, site, sup_site) :-
+  supervisor(sup, _),
+  supervisor_site(sup, sup_site),
+  supervisor_child(sup, _, child, "permanent", _),
+  function_def(func, child, name, _, _),
+  name != "terminate",
+  callback_stop_reason(site, func, reason),
+  (reason = ":normal" ; reason = ":shutdown").
