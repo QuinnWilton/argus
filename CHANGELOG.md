@@ -4,6 +4,24 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.7.1 — 2026-09-11
+
+Schema version 28.
+
+### Added
+
+- `monitor_ref_dropped(id, func)` — the ref `Process.monitor/1` returned
+  is discarded at the call site, read from the instructions that follow.
+- `monitor_leak`: `monitor_ref_discarded` (:info) — a server callback
+  drops the ref of a monitor it establishes, so nothing can ever
+  demonitor it (Phoenix PubSub's Local, for every subscriber).
+
+### Changed
+
+- `monitor_leak`'s lifetime rules reach helpers through closures (Redix's
+  cluster manager monitors inside an `Enum.reduce` fun) and count a
+  removal path anywhere in the module, not only in callbacks.
+
 ## 0.7.0 — 2026-09-11
 
 Schema version 27. Every change below comes out of replaying 42 historical
