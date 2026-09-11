@@ -95,6 +95,27 @@ defmodule Argus.Test.Fixtures.CallbackReceive do
     end
   end
 
+  defmodule StatemBlockingInInit do
+    @moduledoc """
+    The Redix shape: an Erlang-spelled behaviour (`:gen_statem`, not
+    `GenStateMachine`) whose init waits on a bare receive. The analysis
+    has to canonicalise the declared name, or a third of the servers in a
+    dependency tree are invisible to it.
+    """
+    @behaviour :gen_statem
+
+    def callback_mode, do: :state_functions
+
+    def init(owner) do
+      receive do
+        {:connected, ^owner} -> {:ok, :connected, owner}
+        {:stopped, ^owner, reason} -> {:stop, reason}
+      end
+    end
+
+    def connected(_type, _content, data), do: {:keep_state, data}
+  end
+
   defmodule PlainProcess do
     @moduledoc "A blocking receive in a module that is not an OTP behaviour."
     def loop do

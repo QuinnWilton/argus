@@ -64,7 +64,7 @@ callback_name("mount").
 .decl otp_callback(func: symbol, mod: symbol, behaviour: symbol)
 
 otp_callback(func, mod, behaviour) :-
-  implements_behaviour(mod, behaviour),
+  behaves_as(mod, behaviour),
   loop_behaviour(behaviour),
   function_def(func, mod, name, _, _),
   callback_name(name).

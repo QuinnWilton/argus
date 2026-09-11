@@ -39,6 +39,18 @@ defmodule Argus.Analyses.CallbackReceiveTest do
       assert func =~ "handle_cast/2"
     end
 
+    test "an Erlang-spelled behaviour is a callback loop too" do
+      skip_without_souffle()
+
+      # `@behaviour :gen_statem` inspects as ":gen_statem"; matching the
+      # declared string against "GenStateMachine" found nothing.
+      {blocking, _} = run([CallbackReceive.StatemBlockingInInit])
+
+      assert [[_id, func, callback, "GenStateMachine", "direct"]] = blocking
+      assert func =~ "StatemBlockingInInit:init/1"
+      assert callback =~ "init/1"
+    end
+
     test "a receive one call from the callback is reported as a helper" do
       skip_without_souffle()
 
