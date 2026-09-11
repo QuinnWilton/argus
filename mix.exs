@@ -1,14 +1,14 @@
 defmodule Argus.MixProject do
   use Mix.Project
 
-  @version "0.7.2"
+  @version "0.7.3"
   @source_url "https://github.com/QuinnWilton/argus"
 
   def project do
     [
       app: :argus,
       version: @version,
-      elixir: "~> 1.19",
+      elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
