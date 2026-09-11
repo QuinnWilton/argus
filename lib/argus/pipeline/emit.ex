@@ -926,7 +926,7 @@ defmodule Argus.Pipeline.Emit do
   defp format_operand({:atom, a}), do: inspect(a)
   defp format_operand({:integer, n}), do: to_string(n)
   defp format_operand({:float, f}), do: to_string(f)
-  defp format_operand({:literal, val}), do: inspect(val)
+  defp format_operand({:literal, val}), do: inspect(strip_location(val))
   defp format_operand(nil), do: "nil"
   defp format_operand(a) when is_atom(a), do: inspect(a)
   defp format_operand(n) when is_integer(n), do: to_string(n)
@@ -946,7 +946,7 @@ defmodule Argus.Pipeline.Emit do
   end
 
   defp maybe_literal(facts, id, dst, {:literal, val}) do
-    add_fact(facts, :literal_value, [id, format_operand(dst), inspect(val)])
+    add_fact(facts, :literal_value, [id, format_operand(dst), inspect(strip_location(val))])
   end
 
   defp maybe_literal(facts, id, dst, {:float, f}) do
@@ -958,6 +958,44 @@ defmodule Argus.Pipeline.Emit do
   end
 
   defp maybe_literal(facts, _id, _dst, _other), do: facts
+
+  # Location metadata smuggled into a literal — Logger macros embed
+  # `file:`/`line:` (with `mfa:`/`module:`) in their metadata keyword —
+  # is positional data, and the semantic relations must not carry it:
+  # a comment above a `Logger.warning` would otherwise change a
+  # `literal_value` row and re-solve every analysis that reads literals.
+  # Only keywords/maps that carry BOTH `:file` and `:line` are treated as
+  # locations, so a `[line: 3]` a program builds itself is untouched.
+  @location_keys [:file, :line]
+
+  defp strip_location(list) when is_list(list) do
+    if location_keyword?(list) do
+      list |> Keyword.drop(@location_keys) |> Enum.map(&strip_location/1)
+    else
+      Enum.map(list, &strip_location/1)
+    end
+  end
+
+  defp strip_location(%{__struct__: _} = struct), do: struct
+
+  defp strip_location(map) when is_map(map) do
+    map =
+      if Map.has_key?(map, :file) and Map.has_key?(map, :line),
+        do: Map.drop(map, @location_keys),
+        else: map
+
+    Map.new(map, fn {k, v} -> {k, strip_location(v)} end)
+  end
+
+  defp strip_location(tuple) when is_tuple(tuple) do
+    tuple |> Tuple.to_list() |> Enum.map(&strip_location/1) |> List.to_tuple()
+  end
+
+  defp strip_location(other), do: other
+
+  defp location_keyword?(list) do
+    Keyword.keyword?(list) and Keyword.has_key?(list, :file) and Keyword.has_key?(list, :line)
+  end
 
   defp maybe_spawn(facts, id, func_id, :erlang, func, arity)
        when func in [:spawn, :spawn_link, :spawn_monitor] and arity in [1, 2, 3, 4] do

@@ -117,6 +117,22 @@ defmodule Argus.Pipeline.EmitTest do
       facts = emit_func([{:move, {:atom, :ok}, {:x, 0}}])
       assert [[_id, "x0", ":ok"]] = facts[:literal_value]
     end
+
+    test "drops location metadata from literals" do
+      # Logger's metadata keyword carries the call site; a line shift
+      # must not change a semantic fact.
+      meta = [file: "lib/a.ex", line: 3, mfa: {A, :b, 1}]
+      facts = emit_func([{:move, {:literal, meta}, {:x, 0}}])
+      assert [[_id, "x0", "[mfa: {A, :b, 1}]"]] = facts[:literal_value]
+
+      # Nested inside a larger literal too.
+      facts = emit_func([{:move, {:literal, {:log, %{file: "a", line: 9, module: A}}}, {:x, 0}}])
+      assert [[_id, "x0", "{:log, %{module: A}}"]] = facts[:literal_value]
+
+      # A bare line: keyword is a program's own data, not a location.
+      facts = emit_func([{:move, {:literal, [line: 3]}, {:x, 0}}])
+      assert [[_id, "x0", "[line: 3]"]] = facts[:literal_value]
+    end
   end
 
   describe "call facts" do
