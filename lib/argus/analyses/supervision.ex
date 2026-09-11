@@ -18,6 +18,9 @@ defmodule Argus.Analyses.Supervision do
   - `permanent_child_stops_normally(sup, child, reason, site, sup_site)` — a
     permanent child returns `{:stop, :normal | :shutdown, ...}` and is
     restarted by its supervisor.
+  - `rest_for_one_orphaned_children(sup, owner, holder, owner_pos, holder_pos, site, confidence)`
+    — under rest_for_one a later child starts processes inside an
+    earlier one, which survives the owner's restart.
   - `wrong_start_order(sup, child, dep, child_pos, dep_pos, sup_site, witness)` — child starts before its dependency.
 
   ## Finding severities
@@ -91,6 +94,22 @@ defmodule Argus.Analyses.Supervision do
         key: [:sup, :child],
         doc:
           "A permanent child returns {:stop, :normal | :shutdown, ...}; the supervisor restarts it."
+      },
+      %{
+        name: :rest_for_one_orphaned_children,
+        fields: [
+          {:sup, :symbol, "the rest_for_one supervisor"},
+          {:owner, :symbol, "the later child that starts processes"},
+          {:holder, :symbol, "the earlier child they are started under"},
+          {:owner_pos, :number, "owner's branch position"},
+          {:holder_pos, :number, "holder's position"},
+          {:site, :symbol, "the start_child / async_nolink call in the owner"},
+          {:confidence, :symbol, "named when the call names the holder, inferred otherwise"}
+        ],
+        key: [:sup, :owner, :holder],
+        doc:
+          "Under rest_for_one a later child starts processes inside an earlier one; " <>
+            "the owner's restart leaves them running."
       },
       %{
         name: :wrong_start_order,
@@ -201,6 +220,37 @@ defmodule Argus.Analyses.Supervision do
       related: [
         Findings.related("child spec", Findings.at_site(sup_site, sup))
       ]
+    )
+  end
+
+  def finding(:rest_for_one_orphaned_children, [sup, owner, holder, opos, hpos, site, conf]) do
+    hedge =
+      case conf do
+        "named" ->
+          ""
+
+        _ ->
+          " (inferred: the call's target is a runtime value and #{holder} is the only earlier #{holder} under #{sup})"
+      end
+
+    Findings.new(
+      :warning,
+      "rest_for_one restarts the owner but not the processes it started",
+      "#{owner} (position #{opos}) starts processes under #{holder} " <>
+        "(position #{hpos}) of #{sup}, a rest_for_one supervisor#{hedge}. " <>
+        "When #{owner} crashes, the supervisor restarts it and every " <>
+        "later child, but #{holder} started earlier and survives — with " <>
+        "the processes the old #{owner} started still running inside it. " <>
+        "The new #{owner} knows nothing of them and starts its own: " <>
+        "duplicated work, or a stale process holding a resource the " <>
+        "replacement expects to own.",
+      at: Findings.at_site(site, owner),
+      at_label: "processes started here outlive their owner's restart",
+      help: [
+        "use `:one_for_all` so #{holder} restarts with #{owner}, or start " <>
+          "#{holder} after #{owner} so rest_for_one takes it down too"
+      ],
+      related: [Findings.related("supervisor", Findings.at_module(sup))]
     )
   end
 

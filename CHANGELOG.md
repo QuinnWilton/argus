@@ -52,6 +52,11 @@ found 5 at the bug site; the rest name the gap each entry closes.
   Parameters server) and `deliberate_termination_while_monitored`
   (terminate_child / GenServer.stop on a monitored pid without
   demonitoring: Oban's producer on pkill, Redix's cluster manager).
+- `ets`: `ets_write_only_table` (:info) — a named table inserted into
+  outside init/1 and never deleted from (Sentry's check-in ID mapping).
+- `supervision`: `rest_for_one_orphaned_children` — a later child starts
+  processes inside an earlier sibling (Oban's producer running jobs under
+  the queue's Task.Supervisor), which survives the owner's restart.
 
 ## 0.6.1 — 2026-09-11
 

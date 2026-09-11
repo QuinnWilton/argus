@@ -46,6 +46,38 @@ defmodule Argus.Analyses.SupervisionTest do
     end
   end
 
+  describe "rest_for_one_orphaned_children" do
+    test "a later child starting tasks in an earlier Task.Supervisor is reported" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.QueueSupervisor,
+        Argus.Test.Fixtures.NamedQueueSupervisor,
+        Argus.Test.Fixtures.AllForOneQueueSupervisor,
+        Argus.Test.Fixtures.ForemanLastSupervisor,
+        Argus.Test.Fixtures.JobProducer,
+        Argus.Test.Fixtures.NamedJobProducer,
+        Argus.Test.Fixtures.WorkerA
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :supervision)
+
+      rows =
+        results["rest_for_one_orphaned_children"]
+        |> Enum.map(fn [sup, owner, holder, opos, hpos, _site, conf] ->
+          {sup, owner, holder, opos, hpos, conf}
+        end)
+        |> Enum.sort()
+
+      assert rows == [
+               {"Argus.Test.Fixtures.NamedQueueSupervisor",
+                "Argus.Test.Fixtures.NamedJobProducer", "Task.Supervisor", "1", "0", "named"},
+               {"Argus.Test.Fixtures.QueueSupervisor", "Argus.Test.Fixtures.JobProducer",
+                "Task.Supervisor", "1", "0", "inferred"}
+             ]
+    end
+  end
+
   describe "wrong_start_order" do
     test "flags a child whose init sync-calls a later-started sibling" do
       skip_without_souffle()

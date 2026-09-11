@@ -413,3 +413,108 @@ defmodule Argus.Test.Fixtures.TransientQuitterSupervisor do
     Supervisor.init(children, strategy: :one_for_one)
   end
 end
+
+defmodule Argus.Test.Fixtures.JobProducer do
+  @moduledoc """
+  The Oban queue shape: runs jobs under a Task.Supervisor sibling that a
+  rest_for_one supervisor started before it, so its own restart leaves
+  the old jobs running.
+  """
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts), do: {:ok, %{foreman: Keyword.fetch!(opts, :foreman)}}
+
+  @impl true
+  def handle_info(:dispatch, state) do
+    Task.Supervisor.async_nolink(state.foreman, fn -> :work end)
+    {:noreply, state}
+  end
+end
+
+defmodule Argus.Test.Fixtures.NamedJobProducer do
+  @moduledoc "Same, naming the foreman directly."
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(_opts), do: {:ok, %{}}
+
+  @impl true
+  def handle_info(:dispatch, state) do
+    Task.Supervisor.async_nolink(Argus.Test.Fixtures.Foreman, fn -> :work end)
+    {:noreply, state}
+  end
+end
+
+defmodule Argus.Test.Fixtures.QueueSupervisor do
+  @moduledoc false
+  use Supervisor
+
+  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts) do
+    children = [
+      {Task.Supervisor, name: Argus.Test.Fixtures.Foreman},
+      {Argus.Test.Fixtures.JobProducer, foreman: Argus.Test.Fixtures.Foreman},
+      {Argus.Test.Fixtures.WorkerA, []}
+    ]
+
+    Supervisor.init(children, strategy: :rest_for_one)
+  end
+end
+
+defmodule Argus.Test.Fixtures.NamedQueueSupervisor do
+  @moduledoc false
+  use Supervisor
+
+  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts) do
+    children = [
+      {Task.Supervisor, name: Argus.Test.Fixtures.Foreman},
+      {Argus.Test.Fixtures.NamedJobProducer, []}
+    ]
+
+    Supervisor.init(children, strategy: :rest_for_one)
+  end
+end
+
+defmodule Argus.Test.Fixtures.AllForOneQueueSupervisor do
+  @moduledoc "The fix: one_for_all takes the foreman down with the producer."
+  use Supervisor
+
+  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts) do
+    children = [
+      {Task.Supervisor, name: Argus.Test.Fixtures.Foreman},
+      {Argus.Test.Fixtures.JobProducer, foreman: Argus.Test.Fixtures.Foreman}
+    ]
+
+    Supervisor.init(children, strategy: :one_for_all)
+  end
+end
+
+defmodule Argus.Test.Fixtures.ForemanLastSupervisor do
+  @moduledoc "Also fine: the foreman starts after the producer, so it restarts with it."
+  use Supervisor
+
+  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts) do
+    children = [
+      {Argus.Test.Fixtures.JobProducer, foreman: Argus.Test.Fixtures.Foreman},
+      {Task.Supervisor, name: Argus.Test.Fixtures.Foreman}
+    ]
+
+    Supervisor.init(children, strategy: :rest_for_one)
+  end
+end

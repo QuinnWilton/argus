@@ -161,3 +161,73 @@ permanent_child_stops_normally(sup, child, reason, site, sup_site) :-
   name != "terminate",
   callback_stop_reason(site, func, reason),
   (reason = ":normal" ; reason = ":shutdown").
+
+// ── rest_for_one: a later child owns processes inside an earlier one ──
+//
+// rest_for_one restarts the crashed child and everything after it; the
+// children before it keep running. That is the right shape when earlier
+// children are dependencies of later ones. It is exactly wrong when a
+// later child starts processes inside an earlier one — Oban's producer
+// (position 1) running jobs under the Task.Supervisor at position 0.
+// When the producer crashes, the supervisor restarts it, the jobs the
+// old producer started keep running under the surviving supervisor, and
+// the new producer starts them again: duplicate long-running jobs and
+// `attempt > max_attempts`. Oban's fix was :one_for_all.
+//
+// The owner is the child that calls start_child / async / async_nolink
+// (any module in its branch); the holder is an earlier direct child.
+// Two ways to connect them. `named`: the call names the holder's
+// registered name. `inferred`: the target is a runtime value and the
+// holder is the only earlier sibling whose module is the API called —
+// a Task.Supervisor.async_nolink into an unresolvable pid, with exactly
+// one Task.Supervisor started earlier under the same rest_for_one, is
+// not much of an inference.
+.decl child_creating_op(op: symbol)
+
+child_creating_op("start_child").
+child_creating_op("async").
+child_creating_op("async_nolink").
+
+.decl earlier_sibling_of_kind(sup: symbol, pos: number, api: symbol, owner_pos: number)
+
+earlier_sibling_of_kind(sup, pos, api, owner_pos) :-
+  supervisor_child(sup, pos, api, _, _),
+  supervisor_child(sup, owner_pos, _, _, _),
+  pos < owner_pos.
+
+.decl sole_earlier_sibling_of_kind(sup: symbol, pos: number, api: symbol, owner_pos: number)
+
+sole_earlier_sibling_of_kind(sup, pos, api, owner_pos) :-
+  earlier_sibling_of_kind(sup, pos, api, owner_pos),
+  !other_earlier_sibling_of_kind(sup, pos, api, owner_pos).
+
+.decl other_earlier_sibling_of_kind(sup: symbol, pos: number, api: symbol, owner_pos: number)
+
+other_earlier_sibling_of_kind(sup, pos, api, owner_pos) :-
+  earlier_sibling_of_kind(sup, pos, api, owner_pos),
+  earlier_sibling_of_kind(sup, other, api, owner_pos),
+  other != pos.
+
+.decl rest_for_one_orphaned_children(sup: symbol, owner: symbol, holder: symbol, owner_pos: number, holder_pos: number, site: symbol, confidence: symbol)
+.output rest_for_one_orphaned_children
+
+rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "named") :-
+  supervisor(sup, "rest_for_one"),
+  supervisor_child(sup, opos, owner_branch, _, _),
+  child_subtree(sup, owner_branch, owner),
+  supervisor_child(sup, hpos, holder, _, _),
+  hpos < opos,
+  supervisor_child_name(sup, hpos, name),
+  function_def(f, owner, _, _, _),
+  sup_call(site, f, _, op, name),
+  child_creating_op(op).
+
+rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "inferred") :-
+  supervisor(sup, "rest_for_one"),
+  supervisor_child(sup, opos, owner_branch, _, _),
+  child_subtree(sup, owner_branch, owner),
+  function_def(f, owner, _, _, _),
+  sup_call(site, f, api, op, "dynamic"),
+  child_creating_op(op),
+  sole_earlier_sibling_of_kind(sup, hpos, api, opos),
+  supervisor_child(sup, hpos, holder, _, _).

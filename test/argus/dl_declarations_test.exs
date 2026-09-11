@@ -168,8 +168,9 @@ defmodule Argus.DlDeclarationsTest do
            process_register protocol_dispatch pure_contract recv_start resolved_apply
            send_msg spawn_call unknown_call),
       supervision: ~w(async_cast call_arg call_arg_forward call_edge callback_stop_reason
-                      dynamic_child function_def implements_behaviour supervisor
-                      supervisor_child supervisor_child_form supervisor_site sync_call),
+                      dynamic_child function_def implements_behaviour sup_call supervisor
+                      supervisor_child supervisor_child_form supervisor_child_name
+                      supervisor_site sync_call),
       sync_call_in_init:
         ~w(call_arg call_arg_forward call_edge callback_tag def_use dynamic_child function_def
            implements_behaviour literal_value remote_call supervisor supervisor_child sync_call
