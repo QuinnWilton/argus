@@ -136,7 +136,8 @@ defmodule Argus.Pipeline do
         {:ok,
          base_facts
          |> merge_facts(extractor_facts)
-         |> merge_facts(derive_def_use(base_facts))}
+         |> merge_facts(derive_def_use(base_facts))
+         |> merge_facts(derive_conditional_calls(base_facts))}
       end
     after
       if trace_imprecision, do: Helpers.disable_tracing()
@@ -165,6 +166,44 @@ defmodule Argus.Pipeline do
   rescue
     # A module whose facts cannot be decoded should not take the whole
     # extraction down; it loses value-flow edges and keeps everything else.
+    _ -> %{}
+  end
+
+  # Call instructions whose block is control-dependent on a branch in the
+  # same function — the calls that only happen on some paths. Positional
+  # like def_use (keyed on instruction IDs), and derived here for the same
+  # reason: the post-dominator tree exists in Argus.Cfg, and the
+  # alternative is reconstructing it from `instruction`/`branch`/`jump`
+  # rows in Datalog on every solve.
+  defp derive_conditional_calls(base_facts) do
+    typed = Argus.Facts.decode(base_facts)
+    cfgs = Argus.Cfg.build(typed)
+
+    call_ids =
+      for relation <- [:local_call, :remote_call, :bif_call],
+          [id | _] <- Map.get(base_facts, relation, []),
+          do: id
+
+    conditional_blocks =
+      Map.new(cfgs, fn {key, fun} ->
+        {key, fun |> Argus.Cfg.Function.control_deps() |> Map.keys() |> MapSet.new()}
+      end)
+
+    rows =
+      for id <- call_ids,
+          {:ok, %InstrId{func: name, arity: arity, idx: idx}} <- [InstrId.parse(id)],
+          fun = Map.get(cfgs, {name, arity}),
+          fun != nil,
+          block = Argus.Cfg.Function.block_at(fun, idx),
+          block != nil,
+          MapSet.member?(conditional_blocks[{name, arity}], block.id),
+          do: [id]
+
+    case rows do
+      [] -> %{}
+      rows -> %{conditional_call: Enum.sort(rows)}
+    end
+  rescue
     _ -> %{}
   end
 

@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 25
+  @schema_version 26
 
   # Layer 1: Module-level facts.
 
@@ -330,6 +330,22 @@ defmodule Argus.Schema do
       {:id, :instr_id, "instruction ID"}
     ],
     doc: "Marks an instruction as a tail call."
+  }
+
+  @conditional_call %{
+    name: :conditional_call,
+    layer: 1,
+    fields: [
+      {:id, :instr_id, "call instruction ID"}
+    ],
+    doc: """
+    A call instruction (local, remote, or BIF) that does not execute on \
+    every path through its function: its basic block is control-dependent \
+    on a branch. Derived per module from the control-flow graph's \
+    post-dominator tree, so an analysis can tell "init/1 calls X" from \
+    "init/1 calls X when an option is set" without reading `instruction` \
+    or reconstructing control flow in Datalog.
+    """
   }
 
   @call_followed_by_branch %{
@@ -1561,6 +1577,7 @@ defmodule Argus.Schema do
     @tail_call_rel,
     @bif_call,
     @call_followed_by_branch,
+    @conditional_call,
     @allocate,
     @deallocate,
     @send_msg,

@@ -26,6 +26,28 @@ defmodule Argus.PipelineTest do
       assert facts[:instruction] != []
     end
 
+    test "marks call instructions that sit behind a branch as conditional" do
+      {:ok, facts} = Argus.Pipeline.extract([Argus.Test.Fixtures.ConditionalInitServer])
+
+      conditional = facts[:conditional_call] |> List.flatten() |> MapSet.new()
+
+      # The GenServer.call inside `if opts[:sync]` is conditional...
+      [[call_id | _]] =
+        Enum.filter(facts[:remote_call], fn [_id, caller, mod, f, _a] ->
+          String.ends_with?(caller, ":init/1") and mod == "GenServer" and f == "call"
+        end)
+
+      assert MapSet.member?(conditional, call_id)
+
+      # ...and start_link's GenServer.start_link, on the only path, is not.
+      [[start_id | _]] =
+        Enum.filter(facts[:remote_call], fn [_id, caller, _m, f, _a] ->
+          String.ends_with?(caller, ":start_link/1") and f == "start_link"
+        end)
+
+      refute MapSet.member?(conditional, start_id)
+    end
+
     test "returns error for non-existent module" do
       assert {:error, {:not_found, :definitely_not_a_real_module}} =
                Pipeline.extract([:definitely_not_a_real_module])

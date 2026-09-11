@@ -73,3 +73,21 @@ defmodule Argus.Test.Fixtures.CallerSupervisor do
     Supervisor.init(children, strategy: :one_for_one)
   end
 end
+
+defmodule Argus.Test.Fixtures.ConditionalInitServer do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts) do
+    # The sync call only happens when the caller opts in — postgrex's
+    # sync_connect, goth's prefetch: :sync.
+    if opts[:sync] do
+      GenServer.call(Argus.Test.Fixtures.WorkerA, :ping)
+    end
+
+    {:ok, %{}}
+  end
+end
