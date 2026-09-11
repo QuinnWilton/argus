@@ -53,6 +53,17 @@ behaviour_alias("Phoenix.Channel", "Phoenix.Channel").
 behaviour_alias("Task", "Task").
 behaviour_alias("Agent", "Agent").
 
+// Wrappers that run a GenServer (or a gen_statem loop forwarding to
+// GenServer-shaped callbacks) and hand their users the same init/1,
+// handle_call/3, handle_cast/2, handle_info/2 contract. A module
+// declaring one of these answers calls, blocks on receives and defers
+// replies exactly as a GenServer does, and every rule about those
+// callbacks applies. Postgrex's Notifications is a SimpleConnection;
+// before this alias reply_contract and callback_receive could not see it.
+behaviour_alias("Connection", "GenServer").
+behaviour_alias("Postgrex.SimpleConnection", "GenServer").
+behaviour_alias("Postgrex.ReplicationConnection", "GenServer").
+
 .decl behaves_as(mod: symbol, canonical: symbol)
 
 behaves_as(mod, canonical) :-

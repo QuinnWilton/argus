@@ -113,6 +113,8 @@ defmodule Argus.Clientlib.BehavioursTest do
         :b\t:gen_server
         :c\tsupervisor
         Elixir.D\tSome.Unlisted.Behaviour
+        Elixir.E\tPostgrex.SimpleConnection
+        Elixir.F\tConnection
         """
       )
 
@@ -131,6 +133,11 @@ defmodule Argus.Clientlib.BehavioursTest do
       assert ["Elixir.A", "GenServer"] in rows
       assert [":b", "GenServer"] in rows, "the Erlang spelling must canonicalise"
       assert [":c", "Supervisor"] in rows, "the bare Erlang spelling too"
+
+      assert ["Elixir.E", "GenServer"] in rows,
+             "a GenServer-shaped wrapper canonicalises to GenServer"
+
+      assert ["Elixir.F", "GenServer"] in rows
 
       assert ["Elixir.D", "Some.Unlisted.Behaviour"] in rows,
              "a behaviour nobody listed must pass through, or the " <>
