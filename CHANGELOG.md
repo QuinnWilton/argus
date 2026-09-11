@@ -4,6 +4,42 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.1 — Unreleased
+
+Precision and cutoff work from installing scry on the 24 most-downloaded
+Hex packages that ship supervision trees (16 findings, 1 of them
+actionable).
+
+### Changed (findings)
+
+- `one_for_one_coupling` grades by mechanism. A new `kind` column
+  (`call` | `cast`) says whether the caller ever waits on the sibling.
+  Cast-only couplings — tzdata's `ReleaseUpdater → EtsHolder`, sentry's
+  `Scheduler → ClientReport.Sender` — cannot hold a stale reply, pid, or
+  monitor, so they are `:info` ("One-way coupling under one_for_one")
+  rather than a warning asserting a consequence that does not follow.
+  The anchor also follows the witness's local calls down to the
+  instruction that reaches the sibling instead of stopping at the
+  witness's head.
+- `sync_call_in_init` is `:info`. Its remaining rows are exactly the
+  cases where the callee's position could not be established (child
+  specs built at runtime, calls behind an opt-in option such as
+  postgrex's `sync_connect` or goth's `prefetch: :sync`); the proven
+  startup deadlock stays an `:error` as `init_deadlock_risk`.
+- `unsafe_task` suppresses leaked-task findings in any module that
+  defines `handle_info/2`, not only the behaviours it could name.
+  `Phoenix.Presence` consumes its `Task.Supervisor.async` replies in the
+  `handle_info/2` that `Phoenix.Tracker` invokes and was reported.
+
+### Changed (extraction)
+
+- Literal facts drop location metadata. Logger macros embed `file:` and
+  `line:` in their metadata keyword, so a comment added above a
+  `Logger.warning` changed a `literal_value` row and re-solved every
+  analysis reading literals in the incremental consumers. Keywords and
+  maps carrying both `:file` and `:line` lose those two keys before
+  they are formatted; nothing else about the literal changes.
+
 ## 0.5.0 — 2026-09-11
 
 ### Added (findings carry their remediation)
