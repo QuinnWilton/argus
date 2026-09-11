@@ -25,7 +25,7 @@ defmodule Argus.Analyses.SyncCallInInit do
 
   ## Finding severities
 
-  - `sync_call_in_init` — `:warning`. The target's liveness couldn't be
+  - `sync_call_in_init` — `:info`. The target's liveness couldn't be
     proven either way; the call stalls startup whenever the target is
     slow or absent.
   - `init_deadlock_risk` — `:error`. Supervisors start children in order
@@ -91,12 +91,15 @@ defmodule Argus.Analyses.SyncCallInInit do
   @impl true
   def finding(:sync_call_in_init, [mod, callee]) do
     Findings.new(
-      :warning,
+      :info,
       "init/1 blocks on a synchronous call",
       "#{mod}.init/1 makes a synchronous call to #{callee} (directly or " <>
         "transitively). init runs inside the supervisor's start sequence, so " <>
-        "the whole tree's startup stalls whenever #{callee} is slow, absent, " <>
-        "or not yet started.",
+        "the tree's startup stalls for as long as #{callee} takes to answer. " <>
+        "Argus could not establish where #{callee} runs relative to this " <>
+        "init — its child spec is built at runtime, or the call sits behind " <>
+        "a runtime option — so this is a note, not a diagnosis; a proven " <>
+        "startup deadlock is reported separately as an error.",
       at: Findings.at_mfa(mod, :init, 1),
       at_label: "this init blocks the start sequence",
       help: [
