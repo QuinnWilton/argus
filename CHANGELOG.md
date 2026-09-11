@@ -4,6 +4,21 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.7.2 — 2026-09-11
+
+### Changed
+
+- `init_waits_on_blocking_server` counts only unbounded operations in
+  the callee's handler — `terminate_child`, `stop`, `restart_child`,
+  `delete_child`, or a GenServer.call with `:infinity`. A handler that
+  `start_child`s is bounded by the child's init; db_connection's fixed
+  Watcher is that shape and was still reported.
+- `permanent_child_stops_normally` is `:info`: the restart is certain,
+  whether it is wanted is not (Phoenix.Config and Swoosh's storage
+  manager stop themselves on purpose).
+- `rest_for_one_orphaned_children` is `:warning` when the call names the
+  holder and `:info` when the holder is inferred.
+
 ## 0.7.1 — 2026-09-11
 
 Schema version 28.
