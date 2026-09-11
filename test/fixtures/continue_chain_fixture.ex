@@ -350,3 +350,29 @@ defmodule Argus.Test.Fixtures.DefensiveContinueSupervisor do
     Supervisor.init(children, strategy: :one_for_one)
   end
 end
+
+defmodule Argus.Test.Fixtures.TimeoutDeferredInit do
+  @moduledoc "The pre-handle_continue deferral: finish initialising on :timeout."
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts), do: {:ok, %{opts: opts, ready: false}, 0}
+
+  @impl true
+  def handle_info(:timeout, state), do: {:noreply, %{state | ready: true}}
+end
+
+defmodule Argus.Test.Fixtures.ContinueDeferredInit do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts), do: {:ok, %{opts: opts, ready: false}, {:continue, :finish}}
+
+  @impl true
+  def handle_continue(:finish, state), do: {:noreply, %{state | ready: true}}
+end

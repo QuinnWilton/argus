@@ -120,3 +120,21 @@ try_in_handle_continue(mod) :-
 continue_crash_loop_risk(sup, worker) :-
   continue_to_later_sibling(sup, worker, _, _, _),
   try_in_handle_continue(worker).
+
+// ── Init timeout used as a deferral ───────────────────────────────────
+//
+// {:ok, state, 0} from init/1 is the pre-handle_continue idiom for "do
+// the rest after the supervisor moves on": the :timeout message arrives
+// as soon as the mailbox is otherwise empty. The catch is in that
+// clause. A timeout is cancelled by any message arriving first, and an
+// init that opened an active socket, subscribed to a PubSub, or was
+// handed a message by its starter has already arranged for one.
+// libcluster's Gossip strategy lost its deferred connect this way to
+// the first UDP datagram. Any integer works the same; 0 is the one that
+// is unmistakably a deferral.
+.decl init_timeout_deferral(mod: symbol, site: symbol, timeout_ms: number)
+.output init_timeout_deferral
+
+init_timeout_deferral(mod, site, ms) :-
+  init_function(mod, func),
+  callback_timeout(site, func, "init", ms).

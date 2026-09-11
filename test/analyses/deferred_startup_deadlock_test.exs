@@ -115,4 +115,23 @@ defmodule Argus.Analyses.DeferredStartupDeadlockTest do
              end)
     end
   end
+
+  describe "init_timeout_deferral" do
+    test "an init returning {:ok, state, 0} is reported; a {:continue, _} is not" do
+      skip_without_souffle()
+
+      assert {:ok, results} =
+               Argus.analyze(
+                 [
+                   Argus.Test.Fixtures.TimeoutDeferredInit,
+                   Argus.Test.Fixtures.ContinueDeferredInit
+                 ],
+                 :deferred_startup_deadlock
+               )
+
+      assert [[mod, site, "0"]] = results["init_timeout_deferral"]
+      assert mod == "Argus.Test.Fixtures.TimeoutDeferredInit"
+      assert site =~ "TimeoutDeferredInit:init/1#"
+    end
+  end
 end

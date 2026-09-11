@@ -33,12 +33,17 @@ defmodule Argus.Analyses.DeferredStartupDeadlock do
     sync-calls back into its parent supervisor.
   - `continue_crash_loop_risk(sup, worker)` — defensive try/catch around
     the call converts the deadlock into a supervisor restart loop.
+  - `init_timeout_deferral(mod, site, timeout_ms)` — init/1 returns
+    `{:ok, state, timeout}`; the work behind `:timeout` is cancelled by
+    any message that arrives first.
 
   ## Finding severities
 
   - `mutual_continue_deadlock` — `:error`. Both processes block before
     ever reading their mailboxes; neither can answer the other, by
     construction.
+  - `init_timeout_deferral` — `:info`. Whether the deferred work is
+    load-bearing is the reader's call; the shape is fragile either way.
   - `continue_to_later_sibling`, `continue_to_parent_supervisor`,
     `continue_crash_loop_risk` — `:warning`. Startup races and restart
     loops whose outcome depends on timing rather than being guaranteed
@@ -62,6 +67,7 @@ defmodule Argus.Analyses.DeferredStartupDeadlock do
       Argus.Extractors.OTP,
       Argus.Extractors.Supervision,
       Argus.Extractors.GenEvent,
+      Argus.Extractors.Reply,
       # See sync_call_in_init: `sync_call` is partly derived by
       # clientlib/interprocedural.dl, which needs call_arg and
       # call_arg_forward to resolve a target forwarded through a wrapper.
@@ -102,6 +108,16 @@ defmodule Argus.Analyses.DeferredStartupDeadlock do
         ],
         doc:
           "handle_continue calls back into the parent supervisor while it's still mid-start_link."
+      },
+      %{
+        name: :init_timeout_deferral,
+        fields: [
+          {:mod, :symbol, "module whose init/1 returns a timeout"},
+          {:site, :symbol, "the return site"},
+          {:timeout_ms, :number, "the literal timeout"}
+        ],
+        doc:
+          "init/1 returns {:ok, state, timeout}: deferred work that any earlier message cancels."
       },
       %{
         name: :continue_crash_loop_risk,
@@ -174,6 +190,41 @@ defmodule Argus.Analyses.DeferredStartupDeadlock do
           "tree is up"
       ],
       related: [Findings.related("parent supervisor", Findings.at_module(sup))]
+    )
+  end
+
+  def finding(:init_timeout_deferral, [mod, site, "0"]) do
+    Findings.new(
+      :info,
+      "init/1 defers work with a zero timeout",
+      "#{mod}.init/1 returns {:ok, state, 0}, the pre-handle_continue " <>
+        "idiom for finishing initialisation once the supervisor has moved " <>
+        "on. The :timeout message only arrives if nothing else is in the " <>
+        "mailbox first: any message — a datagram on a socket init opened, " <>
+        "a PubSub broadcast init subscribed to, a call from the starter — " <>
+        "cancels it, and the deferred work silently never runs.",
+      at: Findings.at_site(site, mod),
+      at_label: "this timeout is cancelled by any earlier message",
+      help: [
+        "return `{:ok, state, {:continue, :finish_init}}` and move the work " <>
+          "to `handle_continue(:finish_init, state)`, which runs before any " <>
+          "message is processed"
+      ]
+    )
+  end
+
+  def finding(:init_timeout_deferral, [mod, site, ms]) do
+    Findings.new(
+      :info,
+      "init/1 relies on a #{ms}ms idle timeout",
+      "#{mod}.init/1 returns {:ok, state, #{ms}}. The :timeout message " <>
+        "fires only after #{ms}ms of an empty mailbox, and every message " <>
+        "that arrives restarts nothing — the callback must return the " <>
+        "timeout again or it is gone. If the work behind :timeout must " <>
+        "happen, a timer (Process.send_after/3) or handle_continue/2 is " <>
+        "the reliable shape; an idle timeout is for reacting to silence.",
+      at: Findings.at_site(site, mod),
+      at_label: "this timeout is cancelled by any earlier message"
     )
   end
 
