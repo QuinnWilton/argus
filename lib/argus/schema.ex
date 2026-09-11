@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 26
+  @schema_version 27
 
   # Layer 1: Module-level facts.
 
@@ -1005,6 +1005,27 @@ defmodule Argus.Schema do
     """
   }
 
+  @sup_call %{
+    name: :sup_call,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the call site"},
+      {:func, :symbol, "calling function ID"},
+      {:api, :symbol,
+       "the supervisor module: Supervisor, DynamicSupervisor, Task.Supervisor " <>
+         "or PartitionSupervisor"},
+      {:op, :symbol, "the function: start_child, terminate_child, which_children, ..."},
+      {:target, :symbol, "the supervisor argument: a module atom, 'via:Registry', or 'dynamic'"}
+    ],
+    doc: """
+    A synchronous management call into a supervisor process. Every one is \
+    a GenServer.call underneath — `start_child` waits for the child's \
+    init/1 to return, `terminate_child` for the child's whole shutdown — \
+    but none names a GenServer module, so `sync_call` never saw them. \
+    `target` is resolved from the first argument like `sync_call`'s callee.
+    """
+  }
+
   @delayed_message %{
     name: :delayed_message,
     layer: 2,
@@ -1617,6 +1638,7 @@ defmodule Argus.Schema do
     @async_cast,
     @sync_call_timeout,
     @sync_call_via,
+    @sup_call,
     @delayed_message,
     @callback_return,
     @callback_drops_from,

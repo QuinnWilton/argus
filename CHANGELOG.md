@@ -4,6 +4,25 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.7.0 — Unreleased
+
+Schema version 27. Every change below comes out of replaying 42 historical
+OTP bug fixes from the Hex corpus (oban, phoenix_pubsub, db_connection,
+redix, postgrex, finch, bandit, thousand_island, cachex, libcluster,
+broadway, gen_stage, sentry, swoosh) against their pre-fix commits: argus
+found 5 at the bug site; the rest name the gap each entry closes.
+
+### Added (facts)
+
+- `sup_call(id, func, api, op, target)` — synchronous management calls
+  into supervisor processes (`Supervisor.start_child/2`,
+  `DynamicSupervisor.terminate_child/2`, `Task.Supervisor.async_nolink/2`,
+  ...). Every one is a GenServer.call underneath but none named a
+  GenServer module, so `sync_call` never saw them.
+- `:gen_statem.call/2,3`, `GenStateMachine.call/2,3` and `GenStage.call/2,3`
+  are sync calls (the gen_statem default timeout is `:infinity`, recorded
+  as such); their `cast`s are async casts.
+
 ## 0.6.1 — 2026-09-11
 
 ### Changed (supervision extraction)

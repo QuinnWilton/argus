@@ -128,3 +128,16 @@ defmodule Argus.Test.Fixtures.ViaTupleCaller do
     GenServer.cast({:via, Registry, {MyApp.Registry, key}}, msg)
   end
 end
+
+defmodule Argus.Test.Fixtures.SupCaller do
+  @moduledoc false
+
+  def add(spec), do: Supervisor.start_child(Argus.Test.Fixtures.GoodSupervisor, spec)
+  def drop(sup, pid), do: DynamicSupervisor.terminate_child(sup, pid)
+
+  def run(fun),
+    do: Task.Supervisor.async_nolink({:via, Registry, {MyApp.Registry, :tasks}}, fun)
+
+  def ask(pid, msg), do: :gen_statem.call(pid, msg)
+  def ask(pid, msg, timeout), do: :gen_statem.call(pid, msg, timeout)
+end

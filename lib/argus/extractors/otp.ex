@@ -11,6 +11,9 @@ defmodule Argus.Extractors.OTP do
   - `sync_call(caller_func, callee_mod)` — GenServer.call target detected
   - `sync_call_timeout(caller_func, callee_mod, timeout_ms)` — timeout value at call site
   - `sync_call_via(caller_func, registry, key)` — sync call to a `{:via, _, _}` target
+  - `sup_call(id, func, api, op, target)` — a synchronous management call into a
+    supervisor process (`Supervisor.start_child/2`, `DynamicSupervisor.terminate_child/2`,
+    `Task.Supervisor.async_nolink/2`, ...); `target` is the supervisor argument
   - `async_cast(caller_func, callee_mod)` — GenServer.cast target detected
   - `process_link(from_mod, to_mod)` — Process.link / :erlang.link call
   - `delayed_message(sender_func, target, message)` — Process.send_after, :timer.send_after,
@@ -23,6 +26,7 @@ defmodule Argus.Extractors.OTP do
   @behaviour Argus.Extractor
 
   alias Argus.Extractor.Helpers
+  alias Argus.InstrId
 
   import Argus.Extractor.Helpers,
     only: [
@@ -346,15 +350,26 @@ defmodule Argus.Extractors.OTP do
   @default_timeout_sync [
     {GenServer, :call, 2},
     {:gen_server, :call, 2},
+    {GenStage, :call, 2},
     {Agent, :get, 2},
     {Agent, :update, 2},
     {Agent, :get_and_update, 2}
+  ]
+
+  # Sync calls whose default timeout is :infinity, not 5000ms. A
+  # gen_statem client that omits the timeout waits forever.
+  @infinity_default_sync [
+    {:gen_statem, :call, 2},
+    {GenStateMachine, :call, 2}
   ]
 
   # Explicit-timeout sync calls (timeout in x2).
   @explicit_timeout_sync [
     {GenServer, :call, 3},
     {:gen_server, :call, 3},
+    {:gen_statem, :call, 3},
+    {GenStateMachine, :call, 3},
+    {GenStage, :call, 3},
     {Agent, :get, 3},
     {Agent, :update, 3},
     {Agent, :get_and_update, 3}
@@ -363,7 +378,47 @@ defmodule Argus.Extractors.OTP do
   # Async cast calls.
   @async_cast_calls [
     {GenServer, :cast, 2},
-    {:gen_server, :cast, 2}
+    {:gen_server, :cast, 2},
+    {:gen_statem, :cast, 2},
+    {GenStateMachine, :cast, 2},
+    {GenStage, :cast, 2}
+  ]
+
+  # Synchronous management calls into a supervisor process. Every one of
+  # these is a GenServer.call under the hood — start_child waits for the
+  # child's init/1 to return, terminate_child waits for the child's whole
+  # shutdown — but none names a GenServer module, so they were invisible
+  # to every analysis reasoning about who blocks on whom. The supervisor
+  # argument is always {x,0}.
+  @sup_calls [
+    {Supervisor, :start_child, 2},
+    {Supervisor, :terminate_child, 2},
+    {Supervisor, :restart_child, 2},
+    {Supervisor, :delete_child, 2},
+    {Supervisor, :which_children, 1},
+    {Supervisor, :count_children, 1},
+    {Supervisor, :stop, 1},
+    {Supervisor, :stop, 2},
+    {Supervisor, :stop, 3},
+    {DynamicSupervisor, :start_child, 2},
+    {DynamicSupervisor, :terminate_child, 2},
+    {DynamicSupervisor, :which_children, 1},
+    {DynamicSupervisor, :count_children, 1},
+    {DynamicSupervisor, :stop, 1},
+    {DynamicSupervisor, :stop, 2},
+    {DynamicSupervisor, :stop, 3},
+    {Task.Supervisor, :start_child, 2},
+    {Task.Supervisor, :start_child, 3},
+    {Task.Supervisor, :async, 2},
+    {Task.Supervisor, :async, 3},
+    {Task.Supervisor, :async, 4},
+    {Task.Supervisor, :async_nolink, 2},
+    {Task.Supervisor, :async_nolink, 3},
+    {Task.Supervisor, :async_nolink, 4},
+    {Task.Supervisor, :terminate_child, 2},
+    {Task.Supervisor, :children, 1},
+    {PartitionSupervisor, :which_children, 1},
+    {PartitionSupervisor, :count_children, 1}
   ]
 
   defp handle_genserver_call(facts, ctx, mfa) when mfa in @default_timeout_sync do
@@ -372,6 +427,14 @@ defmodule Argus.Extractors.OTP do
     facts
     |> add_fact(:sync_call, [ctx.func_id, callee])
     |> add_fact(:sync_call_timeout, [ctx.func_id, callee, "5000"])
+  end
+
+  defp handle_genserver_call(facts, ctx, mfa) when mfa in @infinity_default_sync do
+    {callee, facts} = resolve_target_with_via(facts, ctx)
+
+    facts
+    |> add_fact(:sync_call, [ctx.func_id, callee])
+    |> add_fact(:sync_call_timeout, [ctx.func_id, callee, "-1"])
   end
 
   defp handle_genserver_call(facts, ctx, mfa) when mfa in @explicit_timeout_sync do
@@ -399,7 +462,39 @@ defmodule Argus.Extractors.OTP do
     |> add_fact(:sync_call_timeout, [ctx.func_id, callee, "-1"])
   end
 
+  defp handle_genserver_call(facts, ctx, {api, op, _arity} = mfa) when mfa in @sup_calls do
+    {target, facts} = resolve_supervisor_target(facts, ctx)
+
+    add_fact(facts, :sup_call, [
+      InstrId.mint(ctx.func_id, ctx.idx),
+      ctx.func_id,
+      inspect(api),
+      to_string(op),
+      target
+    ])
+  end
+
   defp handle_genserver_call(facts, _ctx, _mfa), do: facts
+
+  # The supervisor argument of a management call, in the same vocabulary
+  # as sync_call's callee: a module atom, "via:Registry" for a via tuple,
+  # or "dynamic". Kept apart from resolve_target_with_via/2 so that a
+  # supervisor named through a registry does not also mint a
+  # sync_call_via row, which resolved_calls.dl reads as evidence of a
+  # GenServer.call.
+  defp resolve_supervisor_target(facts, ctx) do
+    case Helpers.resolve_register(ctx.instrs, ctx.idx, {:x, 0}) do
+      {:ok, atom} when is_atom(atom) and atom != :dynamic ->
+        {inspect(atom), facts}
+
+      {:ok, {:via, _via_mod, {reg_instance, _key}}}
+      when is_atom(reg_instance) and reg_instance != :dynamic ->
+        {"via:#{inspect(reg_instance)}", facts}
+
+      _ ->
+        {"dynamic", track_imprecision(facts, ctx, :supervisor_target, :sup_call)}
+    end
+  end
 
   # Resolve the call target's first argument (x0 — the GenServer reference)
   # to a callee tag, and emit a sync_call_via fact when the value is a

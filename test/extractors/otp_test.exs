@@ -71,6 +71,35 @@ defmodule Argus.Extractors.OTPTest do
     end
   end
 
+  describe "extract/1 — supervisor management calls" do
+    setup do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.SupCaller)))
+
+      %{facts: OTP.extract(data)}
+    end
+
+    test "each call is recorded with its api, op and resolved target", %{facts: facts} do
+      rows = Enum.map(facts[:sup_call], fn [_id, _func, api, op, target] -> {api, op, target} end)
+
+      assert {"Supervisor", "start_child", "Argus.Test.Fixtures.GoodSupervisor"} in rows
+      assert {"DynamicSupervisor", "terminate_child", "dynamic"} in rows
+      assert {"Task.Supervisor", "async_nolink", "via:MyApp.Registry"} in rows
+    end
+
+    test "a via-named supervisor does not masquerade as a GenServer.call", %{facts: facts} do
+      refute Map.has_key?(facts, :sync_call_via)
+    end
+
+    test ":gen_statem.call is a sync call whose default timeout is infinity", %{facts: facts} do
+      timeouts =
+        Enum.map(facts[:sync_call_timeout], fn [func, _callee, timeout] -> {func, timeout} end)
+
+      assert {"Argus.Test.Fixtures.SupCaller:ask/2", "-1"} in timeouts
+      assert {"Argus.Test.Fixtures.SupCaller:ask/3", "0"} in timeouts
+    end
+  end
+
   describe "extract/1 — Agent sync call detection" do
     test "detects Agent.get as sync_call" do
       {:ok, data} =
