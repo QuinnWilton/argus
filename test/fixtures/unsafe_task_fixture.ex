@@ -154,3 +154,18 @@ defmodule Argus.Test.Fixtures.TaskShutdownUser do
     Task.shutdown(task, :brutal_kill)
   end
 end
+
+defmodule Argus.Test.Fixtures.PlainTaskConsumer do
+  @moduledoc false
+  # Declares no behaviour argus knows: its handle_info/2 is invoked by a
+  # hosting process (a Phoenix.Tracker shard, a hand-rolled loop) that
+  # delegates messages to it. The task reply has somewhere to land.
+
+  def start_work(sup, work) do
+    Task.Supervisor.async(sup, fn -> work.() end)
+    :ok
+  end
+
+  def handle_info({ref, _result}, state) when is_reference(ref), do: {:noreply, state}
+  def handle_info(_msg, state), do: {:noreply, state}
+end

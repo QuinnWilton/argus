@@ -49,6 +49,22 @@ defmodule Argus.Analyses.UnsafeTaskTest do
              end)
     end
 
+    test "suppresses leaked_async_task for any module defining handle_info/2" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.PlainTaskConsumer,
+        Argus.Test.Fixtures.LeakedTaskModule
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :unsafe_task)
+      leaked = results["leaked_async_task"]
+
+      # No named behaviour, but a handle_info/2 — the reply is consumed.
+      refute Enum.any?(leaked, fn [func, _id] -> String.contains?(func, "PlainTaskConsumer") end)
+      assert Enum.any?(leaked, fn [func, _id] -> String.contains?(func, "fire_and_forget") end)
+    end
+
     test "detects unchecked start_child" do
       skip_without_souffle()
 

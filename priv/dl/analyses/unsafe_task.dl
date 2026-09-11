@@ -69,6 +69,14 @@ process_task_handler(mod) :-
   behaves_as(mod, "GenServer"),
   function_def(_, mod, "handle_info", 2, _).
 
+// Any module defining handle_info/2 at all: the callback is only ever
+// invoked by a process-hosting behaviour, and the hosting behaviour may
+// be one this list does not name (Phoenix.Tracker, GenStage, a
+// hand-rolled receive loop delegating to it). A defined handle_info/2 is
+// the evidence that task replies have somewhere to land.
+process_task_handler(mod) :-
+  function_def(_, mod, "handle_info", 2, _).
+
 // Phoenix.LiveView with handle_info/2.
 process_task_handler(mod) :-
   behaves_as(mod, "Phoenix.LiveView"),
