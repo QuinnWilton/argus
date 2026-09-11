@@ -10,9 +10,10 @@ Argus is a BEAM program analysis framework that extracts Datalog facts from BEAM
   Layer 1 facts; `lib/argus/extractors/` — Layer 2 domain extractors;
   `lib/argus/analyses/` — one module per user-facing analysis (27), each
   declaring its extractors, input relations, and finding builders.
-- `lib/argus/schema.ex` — the fact schema (`@schema_version`, pinned by
-  `Argus.SchemaVersionTest` and consumers via `Argus.Schema.Pin`);
-  `mix argus.gen.dl` regenerates `priv/dl/base.dl` and `layer2.dl` from it.
+- `lib/argus/schema.ex` — the fact schema (`@schema_version`, whose shape
+  digest `Argus.SchemaVersionTest` pins; every bump gets a CHANGELOG
+  entry); `mix argus.gen.dl` regenerates `priv/dl/base.dl` and
+  `layer2.dl` from it.
 - `priv/dl/analyses/` — the Souffle rules, one file per analysis;
   `priv/dl/stage0.dl` — the shared call graph (`call_edge`, `call_site`)
   derived once per run; `priv/dl/clientlib/` — the shared rule library.

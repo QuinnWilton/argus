@@ -2,19 +2,12 @@ defmodule Argus.SchemaVersionTest do
   @moduledoc """
   Guards the link between the schema and the number that describes it.
 
-  `Argus.Schema.version/0` is the whole basis of `Argus.Schema.Pin`: gloss,
-  lowdown and planchette assert a version range at compile time so that a
-  relation changing shape underneath them is a build error rather than a
-  column silently misaligned by one. That only works if the version
-  actually moves when the schema does.
-
-  It stopped moving. Ten commits changed the relation set while the
-  attribute stayed at 16, and two of them named the right number in the
-  subject line and never edited the attribute. Nothing broke, because every
-  change in that run was an *addition* and the three pins had already been
-  widened to 25 — but the mechanism had been quietly answering "unchanged"
-  for nine consecutive schema changes, and the next reorder would have been
-  the one it was built to catch.
+  `Argus.Schema.version/0` is what downstream tools key on: scry and
+  planchette fold it into the environment fingerprint that invalidates
+  their extraction memos, and encore stamps it into every golden. That
+  only works if the version actually moves when the schema does — and it
+  once sat at 16 through ten schema-changing commits, two of which named
+  the right number in the subject line and never edited the attribute.
 
   So this pins the shape as well as the number. Any relation added or
   removed, any field renamed, retyped, or moved, changes the digest and
@@ -59,12 +52,9 @@ defmodule Argus.SchemaVersionTest do
     If you changed the relation set — added or removed a relation, renamed
     a field, changed a field's type, or moved one — then bump
     @schema_version in lib/argus/schema.ex and update @version and
-    @shape_digest here to match.
-
-    Consumers pin a version range through Argus.Schema.Pin (gloss, lowdown
-    and planchette). Check that the new version is inside each of their
-    ranges, and widen them deliberately if it is not: a widening is the
-    review step that says someone looked at whether the change breaks them.
+    @shape_digest here to match, and record the change in CHANGELOG.md —
+    consumers that read positional columns (gloss, lowdown, scry) find out
+    about a bump from that entry, not from a compile error.
     """
   end
 

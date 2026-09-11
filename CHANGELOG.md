@@ -39,6 +39,17 @@ baseline the results, edit an extractor, re-measure, diff, accept or
 revert, repeat. Inspired by pi-autoresearch's event-log + living-doc
 pattern, adapted for Argus's multi-dimensional categorical metrics.
 
+### Removed
+
+`Argus.Schema.Pin` is gone, along with the per-consumer version ranges
+it gated. Every consumer is a path or tagged-git dependency whose own
+suite exercises the columns it reads, so the pin only ever added a
+compile error ahead of a test failure — at the cost of one widening
+commit per consumer per schema bump (gloss's history was mostly those).
+`@schema_version` and `Argus.SchemaVersionTest` stay: the number is
+what scry's and planchette's environment fingerprints and encore's
+goldens key on, and the digest test is what keeps it honest.
+
 ### Fixed (purity, found by dogfooding)
 
 Annotating argus itself surfaced four problems in the analysis, three of

@@ -34,113 +34,13 @@ defmodule Argus.Schema do
           doc: String.t()
         }
 
-  # Bump whenever a relation is added/removed, any field changes name,
-  # position, or kind, or a field's *meaning* changes — in-process consumers
-  # (e.g. lowdown) assert against this at compile time. Independent of the
-  # package version; record bumps in CHANGELOG.md.
-  #
-  # Version 2: line_info.line became a real source line (the emitter now
-  # resolves the Line chunk's references); under version 1 it carried the
-  # raw chunk reference despite the field's documentation.
-  #
-  # Version 3: line_info covers every instruction (the line in effect,
-  # sticky from the last resolvable marker) rather than only the markers
-  # themselves, so call-site instruction IDs resolve to exact lines; and
-  # supervisor gained a trailing site column (the instruction that defines
-  # the tree) so supervision findings can anchor at the strategy line.
-  #
-  # Version 4: added the supervisor_child_name relation — a child spec's
-  # registered :name, paired with the child by {sup, position} — so a
-  # dynamic_child parented by a registered name can be anchored to the
-  # child that registers it.
-  #
-  # Version 5: global_register gained a trailing arity column so the
-  # distributed analysis can distinguish :global.register_name/2 (default
-  # conflict resolution, race-prone on partition) from /3 (explicit
-  # resolver — the fixed form, which must not be flagged).
-  #
-  # Version 6: added the statem_initial relation — the gen_statem initial
-  # state read from init/1's return — so the reachability analysis stops
-  # guessing the entry point topologically.
-  #
-  # Version 7: added the port_open relation — external port creation sites
-  # (Port.open, System.cmd, ...), owned by the opening process, so consumers
-  # can attribute ports to their process in the supervision tree.
-  # Version 8: split positional columns out of the fact schema so relations
-  # stop churning on edits that cannot affect them. `function_def` lost its
-  # `entry` label to the new `function_entry` relation, and `call_arg` lost
-  # its call-site instruction ID. Neither column was ever bound by a rule
-  # (entry wildcarded in all 55 uses, call_arg's id in all of them), yet
-  # both renumber whenever anything earlier in a function changes — which
-  # dirtied every analysis reading those relations on any body edit. Same
-  # principle that keeps line_info out of a semantic fact set: positional
-  # data is payload to resolve late, never a join key.
-  # Version 9: `call_arg` no longer encodes parameter forwarding as the
-  # string `"arg:N"` in its value column. Forwardings are their own
-  # relation, `call_arg_forward`, with the forwarded position as a real
-  # `number` field. The string encoding forced `clientlib/interprocedural.dl`
-  # to decode it with `to_number(substr(...))`, and `to_number` is a PARTIAL
-  # functor — it aborts on non-numeric input. The `match("arg:.*", ...)`
-  # guard was a sibling conjunct rather than a precondition, and Souffle
-  # promises no conjunct order: the default schedule was safe, the
-  # magic-set transform was not. Structure that matters to a rule belongs
-  # in a column, not in a string a functor has to parse back out.
-  # Version 10: the call-shaped relations carry their containing function.
-  # `remote_call`, `local_call`, `bif_call`, `spawn_call` and `try_start`
-  # gained a `caller` field, and `try_start` also gained `kind` ("try" or
-  # the older "catch"). Rules used to recover a call's caller by joining
-  # `instruction(id, caller, _, _)` — twelve of the fourteen
-  # `instruction(...)` uses in the rule corpus were exactly that decode —
-  # which made the largest and most volatile relation in the schema an
-  # input to stage 0 and to every analysis downstream of the call graph.
-  # Same principle as v8, one level up: an instruction ID is positional, so
-  # anything derivable from it that a rule needs should be a column.
-  # Version 11: `call_followed_by_branch` — a call with some branch later in
-  # the same function. unsafe_task computed this by joining `instruction` to
-  # itself to compare two indexes, which made it the last analysis reading
-  # that relation and by far the most expensive one. Computing it in the
-  # emitter, where indexes already exist, is the same v8 principle again:
-  # positional questions get answered where the positions live, and only
-  # their answers cross into Datalog. NO analysis reads `instruction` now.
-  # Version 12: `recv_start` gains `caller` and `blocking`. Same reasoning as
-  # v10 and v11 — a rule wanting the function containing a receive had to
-  # join `instruction`, and whether the receive can block forever is only
-  # visible by following its fail label to a `wait` or `wait_timeout`, which
-  # is a positional question the emitter can answer and a rule cannot.
-  # Version 13: `send_msg` and `make_fun` gain `caller`; the new
-  # `dynamic_call` records a call through a fun value or `apply`, which the
-  # call graph cannot follow. Layer 2 gains `pure_contract`, `impure_call`,
-  # `protocol_dispatch` and `unknown_call` for the purity analysis — the
-  # first analysis here that verifies a claim the author made rather than
-  # hunting a bug nobody declared absent, and so the first that has to be
-  # sound. `dynamic_call` exists precisely so it can say "unprovable"
-  # instead of quietly answering as though the call were not there.
-  # Version 14: `impure_call` gains `mode` (read or write). One dimension
-  # could not distinguish a config read from an HTTP POST, so every contract
-  # had to forbid both or neither — and the transaction analysis reported
-  # `Application.get_env/2` as an unrollbackable effect. Purity still rejects
-  # both modes; contracts about reversibility look at writes only.
-  # Version 15: `callback_return` and `callback_retains_from`. A handle_call
-  # that returns `{:noreply, _}` promises to reply later, and the only thing
-  # that can discharge it is the `from` it was handed. Both halves are plain
-  # bytecode — the return tag is a literal atom in a tuple built immediately
-  # before `return`, and keeping `from` is exactly whether {x,1} is ever
-  # mentioned — but neither is derivable from any existing relation, because
-  # both are questions about a function's shape rather than its calls.
-  # Version 16: `tls_verification` and `tls_connect`. Encryption without
-  # authentication is not security, and whether a TLS session verifies its
-  # peer is a literal in an option list — exactly detectable. The second
-  # relation exists for the shape a search cannot find: a connect whose
-  # literal options never mention `verify` at all, taking whatever the
-  # library defaults to.
-  # Versions 17-25 were added without bumping this attribute: ten commits
-  # changed the relation set while it stayed at 16, and two of them
-  # (`[schema] v23: emit def_use` and `[schema] v24: tuple_literal`) named
-  # the right number in the subject and never edited the line. The pins in
-  # gloss, lowdown and planchette had already been widened to 25 in
-  # anticipation, so nothing broke — the mechanism just stopped reporting.
-  # `Argus.SchemaVersionTest` now digests the relation shape, so a schema
-  # edit fails the suite until this is bumped deliberately.
+  # Bump whenever a relation is added or removed, a field changes name,
+  # position, or kind, or a field's *meaning* changes. Independent of the
+  # package version. `Argus.SchemaVersionTest` digests the relation shapes
+  # and fails until this moves with them; every bump gets a CHANGELOG entry
+  # saying what changed and who reads it. Downstream, the version rides
+  # scry's and planchette's `env_fingerprint` so extraction memos never
+  # outlive the encoder that wrote them.
   @schema_version 25
 
   # Layer 1: Module-level facts.
