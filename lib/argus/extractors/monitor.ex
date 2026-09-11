@@ -97,20 +97,18 @@ defmodule Argus.Extractors.Monitor do
   defp walk([], _by_idx, _labels, _len, _seen), do: true
 
   defp walk([idx | rest], by_idx, labels, len, seen) do
-    cond do
-      is_nil(idx) or idx >= len or Map.has_key?(seen, idx) ->
-        walk(rest, by_idx, labels, len, seen)
+    if is_nil(idx) or idx >= len or Map.has_key?(seen, idx) do
+      walk(rest, by_idx, labels, len, seen)
+    else
+      instr = Map.fetch!(by_idx, idx)
+      seen = Map.put(seen, idx, true)
 
-      true ->
-        instr = Map.fetch!(by_idx, idx)
-        seen = Map.put(seen, idx, true)
-
-        case classify(instr) do
-          :reads -> false
-          :unknown -> false
-          :writes -> walk(rest, by_idx, labels, len, seen)
-          :neutral -> walk(successors(instr, idx, labels) ++ rest, by_idx, labels, len, seen)
-        end
+      case classify(instr) do
+        :reads -> false
+        :unknown -> false
+        :writes -> walk(rest, by_idx, labels, len, seen)
+        :neutral -> walk(successors(instr, idx, labels) ++ rest, by_idx, labels, len, seen)
+      end
     end
   end
 
