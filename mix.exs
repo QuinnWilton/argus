@@ -13,6 +13,9 @@ defmodule Argus.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
       dialyzer: dialyzer(),
+      # The test fixtures deliberately call into applications argus does not
+      # depend on (they are what the analyses detect).
+      xref: [exclude: [:ssl, :mnesia, :telemetry, Plug.Crypto]],
       description: "BEAM program analysis via Souffle Datalog",
       package: package(),
       source_url: @source_url,
