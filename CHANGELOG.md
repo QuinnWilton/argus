@@ -23,6 +23,16 @@ previously lived inside `detail` prose moved into `help`, so details
 state the problem and help states the fix. The remaining analyses are a
 follow-on tranche.
 
+`one_for_one_coupling` findings anchor at the coupling call itself. Stage
+0 now derives `call_site(id, caller, callee_mod)` — calls into
+project-defined modules plus the `GenServer.call/cast` a function
+performs — alongside `call_edge`, and the output relation gained a
+sixth `site` column: the instruction that calls the sibling (or the
+GenServer call the witness performs), falling back to the witness
+function ID so `Findings.at_site/2` always has an anchor. The extra
+stage-0 relation keeps `remote_call` out of the analysis's own input
+set, so its projection stays cheap.
+
 Autoresearch loop — the tooling layer that turns the 0.4.0 measurement
 surface into an iterative improvement workflow. Measure a corpus,
 baseline the results, edit an extractor, re-measure, diff, accept or
