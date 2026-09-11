@@ -150,4 +150,26 @@ defmodule Argus.Test.Fixtures.Reply do
     def init(_), do: {:ok, %{}}
     def handle_call(:work, _from, state), do: {:noreply, state}
   end
+
+  defmodule StopsNormally do
+    @moduledoc "Literal stop reasons, an atom and a {:shutdown, term}."
+    use GenServer
+
+    def init(arg), do: {:ok, arg}
+    def handle_call(:stop, _from, state), do: {:stop, :normal, :ok, state}
+    def handle_cast(:halt, state), do: {:stop, {:shutdown, :drained}, state}
+    def handle_info(:crash, state), do: {:stop, state.reason, state}
+  end
+
+  defmodule TimesOut do
+    @moduledoc "Literal timeouts in every position they can occupy."
+    use GenServer
+
+    # A constant state folds the whole return into one literal.
+    def init(_arg), do: {:ok, %{}, 0}
+    def handle_info(:timeout, state), do: {:noreply, state, 5_000}
+    def handle_call(:ping, _from, state), do: {:reply, :pong, state, 10}
+    def handle_cast(:later, state), do: {:noreply, state, {:continue, :later}}
+    def handle_continue(:later, state), do: {:noreply, state, :hibernate}
+  end
 end

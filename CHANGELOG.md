@@ -22,6 +22,13 @@ found 5 at the bug site; the rest name the gap each entry closes.
 - `:gen_statem.call/2,3`, `GenStateMachine.call/2,3` and `GenStage.call/2,3`
   are sync calls (the gen_statem default timeout is `:infinity`, recorded
   as such); their `cast`s are async casts.
+- `callback_tag` and `callback_total` cover `handle_info/2`.
+- `callback_stop_reason(id, func, reason)` — the literal reason of a
+  `{:stop, reason, ...}` callback return.
+- `callback_timeout(id, func, callback, timeout_ms)` — the literal integer
+  timeout of an `{:ok, state, ms}` / `{:noreply, state, ms}` /
+  `{:reply, reply, state, ms}` return. `callback_return` now also reads a
+  return the compiler folded into a single literal.
 
 ## 0.6.1 — 2026-09-11
 

@@ -39,10 +39,20 @@
 .decl callback_return(id: symbol, func: symbol, callback: symbol, tag: symbol)
 .input callback_return
 
+// The reason of a `{:stop, reason, ...}` return from an OTP callback, when it is a literal atom or a `{:shutdown, term}` literal. Absent when the reason is computed, so consumers treat absence as unknown.
+//
+.decl callback_stop_reason(id: symbol, func: symbol, reason: symbol)
+.input callback_stop_reason
+
 // A message tag a callback matches. Over-approximated: every atom compared anywhere in the body counts, without tracking registers. Consumers ask whether a tag is NOT handled, so over-approximating suppresses findings rather than inventing them.
 //
 .decl callback_tag(func: symbol, callback: symbol, tag: symbol)
 .input callback_tag
+
+// A literal integer timeout in an OTP callback's return — the third element of `{:ok, state, ms}` or `{:noreply, state, ms}`, the fourth of `{:reply, reply, state, ms}`. The message it schedules, `:timeout`, is cancelled by any other message arriving first.
+//
+.decl callback_timeout(id: symbol, func: symbol, callback: symbol, timeout_ms: number)
+.input callback_timeout
 
 // The callback has a catch-all clause, so no tag can fail to match. Established from the bytecode: a multi-clause function raises by jumping to its own `func_info` label, so nothing branching there means every input matches. A guarded catch-all is correctly NOT total.
 //

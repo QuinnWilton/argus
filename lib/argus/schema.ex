@@ -934,6 +934,38 @@ defmodule Argus.Schema do
     """
   }
 
+  @callback_stop_reason %{
+    name: :callback_stop_reason,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the {:stop, ...} return site"},
+      {:func, :symbol, "the callback function"},
+      {:reason, :symbol, "the literal reason: ':normal', ':shutdown', or another atom"}
+    ],
+    doc: """
+    The reason of a `{:stop, reason, ...}` return from an OTP callback, \
+    when it is a literal atom or a `{:shutdown, term}` literal. Absent \
+    when the reason is computed, so consumers treat absence as unknown.
+    """
+  }
+
+  @callback_timeout %{
+    name: :callback_timeout,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the return site"},
+      {:func, :symbol, "the callback function"},
+      {:callback, :symbol, "callback name: 'init' | 'handle_call' | ..."},
+      {:timeout_ms, :number, "the literal timeout in milliseconds"}
+    ],
+    doc: """
+    A literal integer timeout in an OTP callback's return — the third \
+    element of `{:ok, state, ms}` or `{:noreply, state, ms}`, the fourth \
+    of `{:reply, reply, state, ms}`. The message it schedules, `:timeout`, \
+    is cancelled by any other message arriving first.
+    """
+  }
+
   @callback_drops_from %{
     name: :callback_drops_from,
     layer: 2,
@@ -1642,6 +1674,8 @@ defmodule Argus.Schema do
     @delayed_message,
     @callback_return,
     @callback_drops_from,
+    @callback_stop_reason,
+    @callback_timeout,
     @tls_verification,
     @tls_connect,
     @deferred_reply,

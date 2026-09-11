@@ -44,8 +44,18 @@ defmodule Argus.Extractors.Reply do
   ## Emitted facts
 
   - `callback_return(id, func, callback, tag)` — a literal return tag
+  - `callback_stop_reason(id, func, reason)` — the reason of a
+    `{:stop, reason, ...}` return when it is a literal atom or a
+    `{:shutdown, term}` literal
+  - `callback_timeout(id, func, callback, timeout_ms)` — the literal integer
+    timeout of a `{:ok, state, ms}`, `{:noreply, state, ms}` or
+    `{:reply, reply, state, ms}` return
   - `callback_drops_from(id, func)` — a `{:noreply, _}` site some execution
     reaches without ever having read `from`
+
+  A whole return folded into one literal — `{:ok, %{}, 0}` with a
+  constant state compiles to a single `move` of the tuple into `{x, 0}` —
+  is read the same way as a tuple built in place.
   """
 
   @behaviour Argus.Extractor
@@ -91,34 +101,96 @@ defmodule Argus.Extractors.Reply do
     instrs
     |> Enum.with_index()
     |> Enum.reduce(facts, fn {instr, idx}, acc ->
-      case return_tag(instr, instrs, idx) do
-        {:ok, tag} ->
-          add_fact(acc, :callback_return, [InstrId.mint(func_id, idx), func_id, callback, tag])
+      case return_shape(instr, instrs, idx) do
+        {:ok, [{:atom, tag} | rest]} ->
+          id = InstrId.mint(func_id, idx)
 
-        :none ->
+          acc
+          |> add_fact(:callback_return, [id, func_id, callback, inspect(tag)])
+          |> emit_stop_reason(id, func_id, tag, rest)
+          |> emit_timeout(id, func_id, callback, tag, rest)
+
+        _ ->
           acc
       end
     end)
   end
 
-  # A tuple built into {x, 0} and immediately returned. `put_tuple2` is what
-  # OTP 24+ emits; the older `put_tuple`/`put` sequence is handled too, since
-  # analysing dependencies built by an older compiler is routine.
-  defp return_tag({:put_tuple2, {:x, 0}, {:list, [{:atom, tag} | _]}}, instrs, idx) do
-    if returns_next?(instrs, idx + 1), do: {:ok, inspect(tag)}, else: :none
-  end
-
-  defp return_tag({:put_tuple, _size, {:x, 0}}, instrs, idx) do
-    case Enum.at(instrs, idx + 1) do
-      {:put, {:atom, tag}} ->
-        if returns_next?(instrs, skip_puts(instrs, idx + 1)), do: {:ok, inspect(tag)}, else: :none
-
-      _ ->
-        :none
+  # The literal return tag, when the site returns a tuple whose first
+  # element is a literal atom.
+  defp return_tag(instr, instrs, idx) do
+    case return_shape(instr, instrs, idx) do
+      {:ok, [{:atom, tag} | _]} -> {:ok, inspect(tag)}
+      _ -> :none
     end
   end
 
-  defp return_tag(_instr, _instrs, _idx), do: :none
+  # The elements of a tuple built into {x, 0} and immediately returned.
+  # `put_tuple2` is what OTP 24+ emits; the older `put_tuple`/`put`
+  # sequence is handled too, since analysing dependencies built by an
+  # older compiler is routine; and a return the compiler folded into one
+  # literal is spelled out element by element in the same vocabulary.
+  defp return_shape({:put_tuple2, {:x, 0}, {:list, elements}}, instrs, idx) do
+    if returns_next?(instrs, idx + 1), do: {:ok, elements}, else: :none
+  end
+
+  defp return_shape({:put_tuple, _size, {:x, 0}}, instrs, idx) do
+    if returns_next?(instrs, skip_puts(instrs, idx + 1)) do
+      elements =
+        instrs
+        |> Enum.drop(idx + 1)
+        |> Enum.take_while(&match?({:put, _}, &1))
+        |> Enum.map(fn {:put, element} -> element end)
+
+      {:ok, elements}
+    else
+      :none
+    end
+  end
+
+  defp return_shape({:move, {:literal, tuple}, {:x, 0}}, instrs, idx)
+       when is_tuple(tuple) and tuple_size(tuple) > 0 do
+    if returns_next?(instrs, idx + 1),
+      do: {:ok, tuple |> Tuple.to_list() |> Enum.map(&literal_element/1)},
+      else: :none
+  end
+
+  defp return_shape(_instr, _instrs, _idx), do: :none
+
+  defp literal_element(atom) when is_atom(atom), do: {:atom, atom}
+  defp literal_element(int) when is_integer(int), do: {:integer, int}
+  defp literal_element(term), do: {:literal, term}
+
+  # {:stop, reason, state} and {:stop, reason, reply, state}: the reason
+  # is the second element either way. Only a literal reason is recorded —
+  # a computed one says nothing about whether the stop is normal.
+  defp emit_stop_reason(facts, id, func_id, :stop, [reason | _rest]) do
+    case stop_reason(reason) do
+      nil -> facts
+      reason -> add_fact(facts, :callback_stop_reason, [id, func_id, reason])
+    end
+  end
+
+  defp emit_stop_reason(facts, _id, _func_id, _tag, _rest), do: facts
+
+  defp stop_reason({:atom, reason}), do: inspect(reason)
+  defp stop_reason({:literal, {:shutdown, _term}}), do: ":shutdown"
+  defp stop_reason(_element), do: nil
+
+  # A trailing integer is a timeout: `{:ok, state, ms}` and
+  # `{:noreply, state, ms}` carry it third, `{:reply, reply, state, ms}`
+  # fourth. `:hibernate` and `{:continue, _}` sit in the same slot and
+  # are not integers.
+  defp emit_timeout(facts, id, func_id, callback, tag, [_state, {:integer, ms}])
+       when tag in [:ok, :noreply] do
+    add_fact(facts, :callback_timeout, [id, func_id, callback, to_string(ms)])
+  end
+
+  defp emit_timeout(facts, id, func_id, callback, :reply, [_reply, _state, {:integer, ms}]) do
+    add_fact(facts, :callback_timeout, [id, func_id, callback, to_string(ms)])
+  end
+
+  defp emit_timeout(facts, _id, _func_id, _callback, _tag, _rest), do: facts
 
   # Line markers and frame teardown may sit between the tuple and the
   # return. Anything else means the tuple is not what comes back.
