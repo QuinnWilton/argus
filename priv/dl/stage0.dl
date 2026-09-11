@@ -50,3 +50,27 @@ call_site(id, caller, "GenServer") :-
   remote_call(id, caller, "GenServer", "cast", _).
 
 .output call_site(filename="call_site.facts")
+
+// The call-graph edges that run on every path through the caller: at
+// least one site for the pair is not control-dependent on a branch.
+// `conditional_call` and the per-site relations are positional and churn
+// on body edits; this pair set is as stable as call_edge, which is why
+// the "is the path from init conditional?" question is answered here.
+.decl unconditional_call_edge(caller: symbol, callee: symbol)
+
+unconditional_call_edge(caller, callee) :-
+  remote_call(id, caller, mod, func, arity),
+  !conditional_call(id),
+  callee = cat(mod, cat(":", cat(func, cat("/", to_string(arity))))).
+
+unconditional_call_edge(caller, callee) :-
+  bif_call(id, caller, mod, func, arity, _),
+  !conditional_call(id),
+  callee = cat(mod, cat(":", cat(func, cat("/", to_string(arity))))).
+
+unconditional_call_edge(caller, target) :-
+  local_call(id, caller, target, _),
+  !conditional_call(id),
+  function_def(target, _, _, _, _).
+
+.output unconditional_call_edge(filename="unconditional_call_edge.facts")

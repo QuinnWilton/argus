@@ -67,7 +67,7 @@ defmodule Argus.ExtractorCoverageTest do
   end
 
   # Derived by stage 0 or by clientlib rules, not by any extractor.
-  @derived MapSet.new([:call_edge, :call_site, :call_reachable])
+  @derived MapSet.new([:call_edge, :call_site, :unconditional_call_edge, :call_reachable])
 
   # A defect the same run found, on the same shape as the CallArgs one that
   # is now fixed. `purity` reads `ets_new`, `ets_op` and `port_open` to

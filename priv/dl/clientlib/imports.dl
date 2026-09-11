@@ -58,6 +58,11 @@
 .decl call_site(id: symbol, caller: symbol, callee_mod: symbol)
 .input call_site
 
+// Stage-0 as well: call-graph edges with at least one site that is not
+// control-dependent on a branch in the caller.
+.decl unconditional_call_edge(caller: symbol, callee: symbol)
+.input unconditional_call_edge
+
 // Transitive call reachability, closed over the staged edges.
 .decl call_reachable(from: symbol, to: symbol)
 .include "call_reachable_rules.dl"
