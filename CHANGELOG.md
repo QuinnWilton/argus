@@ -528,7 +528,7 @@ false-positive mechanisms:
 - **`timeout_chain` (32 → 3).** All 29 false positives came from one
   `callback_sync_dep` clause built on `stateful_module_dep`, which (via
   its module-level heuristic) counted reaching a *pure* function
-  (`Config.get/2`, an ETS read) as calling that module's server, never
+  (`Config.get`, an ETS read) as calling that module's server, never
   tied the dependency to the handle_call, and pulled `async_cast` edges
   into a "synchronous" chain. The clause is removed; the genuine chains
   derive from the `genserver_sync_api` rules. `timeout_chain_risk` gains a

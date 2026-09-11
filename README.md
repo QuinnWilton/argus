@@ -47,59 +47,38 @@ relations.
 
 ## Analyses
 
-Argus ships 27 BEAM/OTP-specific bug detectors — `mix argus --list` prints
-them all with one-line descriptions. A representative selection, grouped by
-what they target:
+Argus ships 27 BEAM/OTP-specific bug detectors (`mix argus --list` prints
+the same table):
 
-### Supervision and process structure
-
-- **`supervision`** — transient children depended on by permanent ones,
-  unlinked siblings that communicate, children started before their
-  dependencies.
-- **`one_for_one_coupling`** — siblings under `:one_for_one` that
-  communicate but aren't linked, so a callee crash silently degrades
-  the caller without restarting it.
-- **`sync_call_in_init`** — `init/1` callbacks that transitively make
-  synchronous calls, including the guaranteed-deadlock case where
-  startup blocks on a sibling that hasn't started yet.
-- **`unlinked_spawn`** — bare `spawn/1,2,3` calls without `_link` or
-  `_monitor`, which create orphan processes that fail silently.
-
-### GenServer and process behaviour
-
-- **`call_cycle`** — sync-call cycles between GenServer modules. A
-  guaranteed deadlock when both processes are mid-call.
-- **`process_bottleneck`** — GenServers with five or more distinct
-  caller modules: throughput choke points under load.
-- **`timeout_chain`** — `handle_call` callbacks that make downstream
-  sync calls (timeouts compound unpredictably) and `handle_cast`
-  callbacks that block on sync calls (silently serializing the mailbox).
-- **`unsafe_task`** — leaked `Task.async` results and unchecked
-  `Task.Supervisor.start_child` results, with suppressions for
-  GenServer mailbox handlers and LiveView.
-- **`process_registry`** — duplicate process-name registrations and
-  TOCTOU races on `Process.whereis/1`.
-
-### Storage and concurrency
-
-- **`ets`** — ETS tables created without heir protection (data lost on
-  owner crash), missing concurrency options, `ordered_set` contention,
-  unnamed tables created in worker processes.
-
-### Safety and correctness
-
-- **`atom_safety`** — atom-table exhaustion via `String.to_atom/1` on
-  untrusted input, `:erlang.binary_to_term/1` without `:safe`, and
-  reachable `Code.eval_string` / `:os.cmd` callsites.
-- **`error_handling`** — bare rescues that swallow exceptions,
-  `Process.flag(:trap_exit, true)` without a matching handler, explicit
-  `Process.exit/2` calls, and ignored `{:ok, _} | {:error, _}` results
-  from common stdlib APIs.
-- **`gen_statem`** — unreachable states and terminal states without
-  `:stop` actions in `gen_statem` state machines.
-- **`distributed`** — `:rpc.call` without timeout, `:global` name
-  registration without conflict resolution, and node operations in
-  unsafe contexts.
+| Analysis | Detects |
+|---|---|
+| `atom_safety` | atom table exhaustion, unsafe deserialization, and code injection |
+| `call_cycle` | module-level synchronous call cycles (deadlocks) |
+| `callback_receive` | `receive` inside an OTP callback, which consumes the behaviour's own mailbox |
+| `coverage` | extractor coverage and imprecision (meta-analysis) |
+| `deferred_startup_deadlock` | `handle_continue` deadlocks and crash loops |
+| `distributed` | RPC without timeouts, `:global` races, init blocking on nodes |
+| `error_handling` | swallowed errors, ignored results, exit misuse |
+| `ets` | ETS table ownership, concurrency options, and lifecycle |
+| `gen_statem` | unreachable states and terminal states that never stop |
+| `message_contract` | messages a module sends itself but cannot handle |
+| `monitor_leak` | monitors left live after a timed wait gave up |
+| `one_for_one_coupling` | cross-branch coupling under `one_for_one` supervisors |
+| `process_bottleneck` | synchronous call fan-in (serialization bottlenecks) |
+| `process_registry` | duplicate names, `whereis` races, registry collisions |
+| `purity` | `@pure` contracts checked against the call graph and an effect model |
+| `reply_contract` | `handle_call` clauses that defer a reply they cannot send |
+| `request_surface` | dangerous operations reachable from request-handling callbacks |
+| `secret_exposure` | schema fields holding secrets that `inspect/1` will print |
+| `shutdown_safety` | cleanup in `terminate/2` that a supervisor shutdown will skip |
+| `supervision` | supervision tree structure and anti-patterns |
+| `sync_call_in_init` | synchronous calls in `init/1` (startup deadlocks) |
+| `timeout_chain` | GenServer timeout chains and blocking cast handlers |
+| `tls_verification` | TLS connections that do not verify the peer |
+| `transaction_safety` | side effects inside a DB transaction that a rollback cannot undo |
+| `unbounded_dynamic_children` | unbounded process creation reachable from a request |
+| `unlinked_spawn` | unlinked (orphan) process spawns |
+| `unsafe_task` | leaked async tasks and unchecked `Task.Supervisor.start_child` |
 
 ## Quick start
 
