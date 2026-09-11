@@ -1,8 +1,6 @@
 # Argus
 
 [![CI](https://github.com/QuinnWilton/argus/actions/workflows/ci.yml/badge.svg)](https://github.com/QuinnWilton/argus/actions/workflows/ci.yml)
-[![Hex.pm](https://img.shields.io/hexpm/v/argus.svg)](https://hex.pm/packages/argus)
-[![Docs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/argus)
 
 Whole-program BEAM analysis for subtle OTP and supervision bugs.
 
@@ -13,10 +11,13 @@ deadlocks, leaked tasks, ETS misuse, atom-table exhaustion, and more.
 
 ## Installation
 
+Argus is not published to Hex (the package name is taken); depend on a
+tagged release from GitHub:
+
 ```elixir
 def deps do
   [
-    {:argus, "~> 0.2.0"}
+    {:argus, github: "QuinnWilton/argus", tag: "v0.5.0"}
   ]
 end
 ```
@@ -46,7 +47,9 @@ relations.
 
 ## Analyses
 
-Argus ships 14 BEAM/OTP-specific bug detectors, grouped by what they target:
+Argus ships 27 BEAM/OTP-specific bug detectors — `mix argus --list` prints
+them all with one-line descriptions. A representative selection, grouped by
+what they target:
 
 ### Supervision and process structure
 
