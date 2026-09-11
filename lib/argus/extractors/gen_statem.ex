@@ -34,8 +34,8 @@ defmodule Argus.Extractors.GenStatem do
 
   @behaviour Argus.Extractor
 
-  alias Argus.InstrId
   alias Argus.Extractors.GenStatem.EventClauses
+  alias Argus.InstrId
 
   import Argus.Extractor.Helpers,
     only: [

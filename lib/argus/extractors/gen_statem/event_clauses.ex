@@ -122,22 +122,20 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
   defp info_targets([_value, _target | rest], labels), do: info_targets(rest, labels)
   defp info_targets(_other, _labels), do: []
 
-  defp reaches_body?(starts, allowed, cfg), do: walk(starts, allowed, cfg, MapSet.new())
+  defp reaches_body?(starts, allowed, cfg), do: walk(starts, allowed, cfg, %{})
 
+  @spec walk([non_neg_integer() | nil], [tuple()], map(), %{non_neg_integer() => true}) ::
+          boolean()
   defp walk([], _allowed, _cfg, _seen), do: false
 
   defp walk([idx | rest], allowed, cfg, seen) do
-    cond do
-      is_nil(idx) or idx >= cfg.len or MapSet.member?(seen, idx) ->
-        walk(rest, allowed, cfg, seen)
-
-      true ->
-        seen = MapSet.put(seen, idx)
-
-        case step(Map.fetch!(cfg.by_idx, idx), idx, allowed, cfg) do
-          :body -> true
-          next -> walk(next ++ rest, allowed, cfg, seen)
-        end
+    if is_nil(idx) or idx >= cfg.len or Map.has_key?(seen, idx) do
+      walk(rest, allowed, cfg, seen)
+    else
+      case step(Map.fetch!(cfg.by_idx, idx), idx, allowed, cfg) do
+        :body -> true
+        next -> walk(next ++ rest, allowed, cfg, Map.put(seen, idx, true))
+      end
     end
   end
 
