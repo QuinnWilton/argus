@@ -4,6 +4,37 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.6.1 — 2026-09-11
+
+### Changed (supervision extraction)
+
+- Trees defined outside `Supervisor` modules are extracted: the function
+  that calls `Supervisor.start_link/2` or `Supervisor.init/2` is the tree
+  definition, whoever its module is (Broadway's `Topology` GenServer,
+  Cachex's `start_link/1`).
+- Child specs are followed through helpers to depth 3 and into the
+  closures a function creates, so a `for`/`Enum.map` comprehension that
+  builds one spec per element (`for i <- 0..n, do: %{start: {Producer,
+  ...}}`) contributes its module. Breadth-first, so the order approximates
+  construction order.
+- A strategy inside a runtime-built option list (`[name: name(config),
+  strategy: :rest_for_one]`) is read from the cons cells.
+- `{GenServer, :start_link, [Mod, ...]}` map specs resolve to `Mod`, and
+  a spec that resolves only to the behaviour module (`GenServer`, `Agent`,
+  `Task`) is dropped rather than recorded as a child.
+- Tuple-shaped specs are only trusted when the tuple flows into a list,
+  is returned, or is passed to `Supervisor.child_spec/2`, only at the
+  tree function and its direct helpers, and only for Elixir modules;
+  bare-atom and cons-cell children must be Elixir modules too. Before
+  this, the deeper walk also swept up `{GenStage.DemandDispatcher, opts}`
+  options and `:supervisor`/`:queue` tags as children.
+
+On the surveyed corpus this recovers Broadway's topology (RateLimiter
+before ProducerStage under `rest_for_one`, so the producer's init call
+is a proven safe sibling), ThousandIsland's acceptor pool, Phoenix.PubSub's
+PG2 and Tracker shards, and Oban's Nursery and queue supervisors, all of
+which extracted empty or not at all.
+
 ## 0.6.0 — 2026-09-11
 
 ### Changed (schema version 26 — conditional calls)
