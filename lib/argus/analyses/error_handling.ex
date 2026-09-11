@@ -11,17 +11,26 @@ defmodule Argus.Analyses.ErrorHandling do
   - `swallowed_error(func)` — catch-all rescue that silently discards
     exceptions (a handler that reifies the exception into a returned/
     logged value or re-raises it is not flagged).
-  - `trap_exit_without_handler(mod)` — traps exits but no handle_info({:EXIT,...},_) callback.
+  - `trap_exit_without_handler(mod)` — traps exits but no handle_info callback at all.
+  - `trap_exit_without_exit_clause(mod, witness)` — traps exits and has a
+    handle_info/2, but no clause matches `{:EXIT, ...}` and none is a
+    catch-all.
+  - `handle_info_without_catchall(mod, func)` — a GenServer that monitors
+    or traps exits defines handle_info/2 without a catch-all clause, so a
+    message the runtime sends at a time of its choosing crashes it.
   - `exit_in_callback(func, target)` — an exit *signal* (Process.exit/2)
     sent from a GenServer callback.
   - `ignored_start_result(func, callee)` — GenServer/Supervisor start result not checked.
 
   ## Finding severities
 
-  `swallowed_error`, `trap_exit_without_handler`, and
-  `ignored_start_result` are `:warning`: each silently discards failure
-  information — errors, exit signals, or failed starts — so the bug
-  surfaces later, far from its cause. `exit_in_callback` is `:info`:
+  `swallowed_error`, `trap_exit_without_handler`,
+  `trap_exit_without_exit_clause` and `ignored_start_result` are
+  `:warning`: each silently discards failure information — errors, exit
+  signals, or failed starts — so the bug surfaces later, far from its
+  cause. `handle_info_without_catchall` is `:info`: whether a stray
+  message is worth crashing over is a judgement call, but the process
+  has invited such messages. `exit_in_callback` is `:info`:
   imperatively killing a process is frequently a deliberate protocol
   (handoff, conflict resolution), so it is surfaced for confirmation
   rather than flagged as a defect.
@@ -42,7 +51,13 @@ defmodule Argus.Analyses.ErrorHandling do
   def rules_file, do: "analyses/error_handling.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.ErrorHandling, Argus.Extractors.OTP]
+  def extractors,
+    do: [
+      Argus.Extractors.ErrorHandling,
+      Argus.Extractors.OTP,
+      Argus.Extractors.CallbackTag,
+      Argus.Extractors.Monitor
+    ]
 
   @impl true
   def output_relations do
@@ -60,6 +75,25 @@ defmodule Argus.Analyses.ErrorHandling do
         ],
         key: [:mod],
         doc: "Module traps exits but has no handle_info({:EXIT,...},_) callback."
+      },
+      %{
+        name: :trap_exit_without_exit_clause,
+        fields: [
+          {:mod, :symbol, "module"},
+          {:witness, :symbol, "function that sets trap_exit"}
+        ],
+        key: [:mod],
+        doc: "Module traps exits and defines handle_info/2, but no clause matches {:EXIT, ...}."
+      },
+      %{
+        name: :handle_info_without_catchall,
+        fields: [
+          {:mod, :symbol, "module"},
+          {:func, :symbol, "the handle_info/2 function"}
+        ],
+        doc:
+          "A GenServer that monitors or traps exits defines handle_info/2 " <>
+            "without a catch-all clause."
       },
       %{
         name: :exit_in_callback,
@@ -102,6 +136,46 @@ defmodule Argus.Analyses.ErrorHandling do
         "messages and fall through to the default handle_info — a crash or a " <>
         "noisy log, exactly what trapping was meant to prevent.",
       at: Findings.at_func(witness)
+    )
+  end
+
+  def finding(:trap_exit_without_exit_clause, [mod, witness]) do
+    Findings.new(
+      :warning,
+      "trap_exit without an {:EXIT, ...} clause",
+      "#{mod} sets trap_exit and defines handle_info/2, but no clause " <>
+        "matches {:EXIT, pid, reason} and none is a catch-all. A trapped " <>
+        "exit arrives as an ordinary message, and once handle_info/2 is " <>
+        "defined an unmatched message is a FunctionClauseError — the " <>
+        "process dies on the very signal trapping was meant to absorb, " <>
+        "the first time anything it linked to exits.",
+      at: Findings.at_func(witness),
+      at_label: "exits are trapped here",
+      help: [
+        "add a `handle_info({:EXIT, pid, reason}, state)` clause that " <>
+          "decides what a linked exit means for this process, or a " <>
+          "catch-all `handle_info(_msg, state)` if none are expected"
+      ],
+      related: [Findings.related("handle_info/2", Findings.at_mfa(mod, :handle_info, 2))]
+    )
+  end
+
+  def finding(:handle_info_without_catchall, [mod, func]) do
+    Findings.new(
+      :info,
+      "handle_info/2 has no catch-all in a process the runtime writes to",
+      "#{mod} monitors processes or traps exits, so messages arrive at " <>
+        "times it does not control — a late {:DOWN, ...} after a " <>
+        "demonitor without :flush, an {:EXIT, ...} from a port a callback " <>
+        "opened. Its handle_info/2 matches specific messages only, and " <>
+        "once handle_info/2 is defined an unmatched message is a " <>
+        "FunctionClauseError rather than GenServer's log-and-continue.",
+      at: Findings.at_func(func),
+      at_label: "no clause here accepts an unexpected message",
+      help: [
+        "add a final `handle_info(msg, state)` clause that logs the " <>
+          "message and returns `{:noreply, state}`"
+      ]
     )
   end
 

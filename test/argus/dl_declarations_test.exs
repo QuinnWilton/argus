@@ -139,8 +139,8 @@ defmodule Argus.DlDeclarationsTest do
            supervisor supervisor_child sync_call try_start),
       distributed: ~w(call_edge distributed_store_op function_def global_op global_register
                       implements_behaviour node_operation rpc_call),
-      error_handling: ~w(bare_rescue call_edge exit_call function_def ignored_error_result
-                         implements_behaviour trap_exit),
+      error_handling: ~w(bare_rescue call_edge callback_tag callback_total exit_call function_def
+           ignored_error_result implements_behaviour monitor_call trap_exit),
       ets: ~w(dynamic_child ets_new ets_op ets_option function_def implements_behaviour
               supervisor_child),
       gen_statem: ~w(statem_initial statem_module statem_state statem_transition),

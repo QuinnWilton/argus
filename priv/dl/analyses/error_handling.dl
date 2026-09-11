@@ -45,6 +45,60 @@ trap_exit_without_handler(mod, func) :-
   !has_handle_info(mod),
   !statem_like(mod).
 
+// ── Trap exit with a handle_info that never matches {:EXIT, ...} ──
+//
+// The module defines handle_info/2 — so the check above is satisfied —
+// but no clause discriminates on :EXIT and none is a catch-all. The
+// trapped exit arrives as a message no clause accepts, and the process
+// dies with a FunctionClauseError on the very signal trapping was meant
+// to absorb. Bandit's HTTP/1 handler shipped this shape: trap_exit set
+// by `use ThousandIsland.Handler`, one handle_info clause for
+// {:plug_conn, :sent}, and a Plug that spawned a port took the
+// connection down.
+//
+// callback_tag over-approximates (every atom compared anywhere in the
+// body counts), so a module that mentions :EXIT at all is not reported —
+// the direction that keeps the rule quiet rather than noisy.
+.decl trap_exit_without_exit_clause(mod: symbol, witness: symbol)
+.output trap_exit_without_exit_clause
+
+trap_exit_without_exit_clause(mod, func) :-
+  trap_exit(func, mod),
+  function_def(h, mod, "handle_info", 2, _),
+  !callback_total(h, "handle_info"),
+  !callback_tag(h, "handle_info", ":EXIT"),
+  !statem_like(mod).
+
+// ── handle_info without a catch-all, in a process the runtime writes to ──
+//
+// Once a GenServer defines handle_info/2, any message no clause matches
+// is a FunctionClauseError, not the default log-and-continue. That only
+// matters for messages the process did not ask for by protocol — and a
+// process that monitors or traps exits has asked the runtime to send it
+// messages whose timing it does not control: a late {:DOWN, ...} after a
+// demonitor without :flush, an {:EXIT, ...} from a Plug's port. Bandit's
+// connection process crashed on exactly those until a catch-all landed.
+//
+// Subsumed by trap_exit_without_exit_clause when that fires: one
+// finding per module, the more specific one.
+.decl receives_runtime_messages(mod: symbol)
+
+receives_runtime_messages(mod) :- trap_exit(_, mod).
+
+receives_runtime_messages(mod) :-
+  monitor_call(_, f, _),
+  function_def(f, mod, _, _, _).
+
+.decl handle_info_without_catchall(mod: symbol, func: symbol)
+.output handle_info_without_catchall
+
+handle_info_without_catchall(mod, h) :-
+  behaves_as(mod, "GenServer"),
+  function_def(h, mod, "handle_info", 2, _),
+  !callback_total(h, "handle_info"),
+  receives_runtime_messages(mod),
+  !trap_exit_without_exit_clause(mod, _).
+
 // ── Exit in GenServer callback ───────────────────────────────────
 
 // Detect explicit Process.exit/2 in GenServer callbacks.

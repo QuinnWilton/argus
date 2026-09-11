@@ -1,7 +1,7 @@
 defmodule Argus.Extractors.CallbackTag do
   @moduledoc """
-  The message tags a `handle_call/3` or `handle_cast/2` discriminates on,
-  and whether it has a catch-all.
+  The message tags a `handle_call/3`, `handle_cast/2` or `handle_info/2`
+  discriminates on, and whether it has a catch-all.
 
   The server half of a GenServer's contract. The client half — which tag a
   wrapper actually sends — is not extracted here: it is a join over
@@ -28,7 +28,11 @@ defmodule Argus.Extractors.CallbackTag do
 
   import Argus.Extractor.Helpers, only: [add_fact: 3]
 
-  @callbacks %{{:handle_call, 3} => "handle_call", {:handle_cast, 2} => "handle_cast"}
+  @callbacks %{
+    {:handle_call, 3} => "handle_call",
+    {:handle_cast, 2} => "handle_cast",
+    {:handle_info, 2} => "handle_info"
+  }
 
   @impl true
   def extract(%{module: mod, functions: functions}) do

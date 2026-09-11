@@ -161,7 +161,7 @@ defmodule Argus.Schema do
     layer: 2,
     fields: [
       {:func, :symbol, "the callback"},
-      {:callback, :symbol, "'handle_call' | 'handle_cast'"},
+      {:callback, :symbol, "'handle_call' | 'handle_cast' | 'handle_info'"},
       {:tag, :symbol, "an atom the callback discriminates on"}
     ],
     doc: """
@@ -177,7 +177,7 @@ defmodule Argus.Schema do
     layer: 2,
     fields: [
       {:func, :symbol, "the callback"},
-      {:callback, :symbol, "'handle_call' | 'handle_cast'"}
+      {:callback, :symbol, "'handle_call' | 'handle_cast' | 'handle_info'"}
     ],
     doc: """
     The callback has a catch-all clause, so no tag can fail to match. \

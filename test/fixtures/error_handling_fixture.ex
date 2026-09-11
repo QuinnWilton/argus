@@ -171,3 +171,77 @@ defmodule Argus.Test.Fixtures.SelfCrashCallback do
     exit(:impossible_state)
   end
 end
+
+defmodule Argus.Test.Fixtures.TrapsWithoutExitClause do
+  @moduledoc """
+  Traps exits and has a handle_info/2 — so it passes the "no handler"
+  check — but no clause accepts {:EXIT, ...}. Bandit's HTTP/1 handler.
+  """
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(state) do
+    Process.flag(:trap_exit, true)
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_info({:plug_conn, :sent}, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Fixtures.TrapsWithExitClause do
+  @moduledoc false
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(state) do
+    Process.flag(:trap_exit, true)
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_info({:EXIT, _pid, _reason}, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Fixtures.MonitorsWithoutCatchall do
+  @moduledoc "Monitors callers, handles only {:DOWN, ...}: anything else crashes it."
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call(:watch, {pid, _tag}, state) do
+    ref = Process.monitor(pid)
+    {:reply, ref, state}
+  end
+
+  @impl true
+  def handle_info({:DOWN, _ref, :process, _pid, _reason}, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Fixtures.MonitorsWithCatchall do
+  @moduledoc false
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call(:watch, {pid, _tag}, state) do
+    ref = Process.monitor(pid)
+    {:reply, ref, state}
+  end
+
+  @impl true
+  def handle_info({:DOWN, _ref, :process, _pid, _reason}, state), do: {:noreply, state}
+  def handle_info(_msg, state), do: {:noreply, state}
+end

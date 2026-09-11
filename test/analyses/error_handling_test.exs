@@ -12,6 +12,51 @@ defmodule Argus.Analyses.ErrorHandlingTest do
     results
   end
 
+  describe "trap_exit_without_exit_clause" do
+    test "a handle_info that never matches {:EXIT, ...} is reported" do
+      skip_without_souffle()
+
+      results =
+        analyze([
+          Argus.Test.Fixtures.TrapsWithoutExitClause,
+          Argus.Test.Fixtures.TrapsWithExitClause
+        ])
+
+      mods = Enum.map(results["trap_exit_without_exit_clause"], fn [mod, _w] -> mod end)
+
+      assert mods == ["Argus.Test.Fixtures.TrapsWithoutExitClause"]
+
+      # Having a handle_info at all satisfies the coarser rule; this one is
+      # about which clauses it has.
+      assert results["trap_exit_without_handler"] == []
+    end
+  end
+
+  describe "handle_info_without_catchall" do
+    test "a monitoring GenServer with only a :DOWN clause is reported" do
+      skip_without_souffle()
+
+      results =
+        analyze([
+          Argus.Test.Fixtures.MonitorsWithoutCatchall,
+          Argus.Test.Fixtures.MonitorsWithCatchall
+        ])
+
+      mods = Enum.map(results["handle_info_without_catchall"], fn [mod, _f] -> mod end)
+
+      assert mods == ["Argus.Test.Fixtures.MonitorsWithoutCatchall"]
+    end
+
+    test "a missing :EXIT clause is reported once, as the specific finding" do
+      skip_without_souffle()
+
+      results = analyze([Argus.Test.Fixtures.TrapsWithoutExitClause])
+
+      assert results["handle_info_without_catchall"] == []
+      assert length(results["trap_exit_without_exit_clause"]) == 1
+    end
+  end
+
   describe "swallowed_error" do
     test "flags a bare rescue, not a filtered one" do
       skip_without_souffle()
