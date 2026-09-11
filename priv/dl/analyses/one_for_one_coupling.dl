@@ -53,28 +53,46 @@ derived_process_link(sup, child) :- supervisor_child(sup, _, child, _, _).
 // witness may have several; the finding builder keeps one per pair.
 .decl coupling_site(witness: symbol, callee_mod: symbol, site: symbol)
 
-coupling_site(w, callee_mod, id) :-
+.decl direct_coupling_site(witness: symbol, callee_mod: symbol, site: symbol)
+
+direct_coupling_site(w, callee_mod, id) :-
   coupling(_, _, callee_mod, _, w),
   call_site(id, w, callee_mod).
 
-coupling_site(w, callee_mod, id) :-
+direct_coupling_site(w, callee_mod, id) :-
   coupling(_, _, callee_mod, _, w),
   !call_site(_, w, callee_mod),
   call_site(id, w, "GenServer").
 
+coupling_site(w, callee_mod, id) :-
+  direct_coupling_site(w, callee_mod, id).
+
+// The witness is the function the dependency is proven through (often a
+// callback), and the call into the sibling may live several local calls
+// below it. Anchor at that call rather than at the witness's head.
+coupling_site(w, callee_mod, id) :-
+  coupling(_, _, callee_mod, _, w),
+  !direct_coupling_site(w, callee_mod, _),
+  call_reachable(w, g),
+  call_site(id, g, callee_mod).
+
 // `site` is the instruction ID of the coupling call when one is known,
 // and falls back to the witness function ID otherwise, so consumers can
-// always anchor it with `Findings.at_site/2`.
-.decl one_for_one_coupling(sup: symbol, caller_mod: symbol, callee_mod: symbol, sup_site: symbol, witness: symbol, site: symbol)
+// always anchor it with `Findings.at_site/2`. `kind` is "call" when the
+// caller waits on the sibling anywhere along the dependency, "cast" when
+// every path is one-way.
+.decl one_for_one_coupling(sup: symbol, caller_mod: symbol, callee_mod: symbol, sup_site: symbol, witness: symbol, site: symbol, kind: symbol)
 .output one_for_one_coupling
 
-one_for_one_coupling(sup, caller_mod, callee_mod, sup_site, witness, site) :-
+one_for_one_coupling(sup, caller_mod, callee_mod, sup_site, witness, site, kind) :-
   coupling(sup, caller_mod, callee_mod, sup_site, witness),
-  coupling_site(witness, callee_mod, site).
+  coupling_site(witness, callee_mod, site),
+  stateful_module_dep_kind(caller_mod, callee_mod, kind).
 
-one_for_one_coupling(sup, caller_mod, callee_mod, sup_site, witness, witness) :-
+one_for_one_coupling(sup, caller_mod, callee_mod, sup_site, witness, witness, kind) :-
   coupling(sup, caller_mod, callee_mod, sup_site, witness),
-  !coupling_site(witness, callee_mod, _).
+  !coupling_site(witness, callee_mod, _),
+  stateful_module_dep_kind(caller_mod, callee_mod, kind).
 
 
 coupling(sup, caller_mod, callee_mod, sup_site, witness) :-

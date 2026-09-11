@@ -13,7 +13,7 @@ defmodule Argus.Analyses.OneForOneCoupling do
 
   ## Output relations
 
-  - `one_for_one_coupling(sup, caller_mod, callee_mod, sup_site, witness, site)` — cross-branch coupling under one_for_one; `site` is the coupling call instruction when known, else the witness function.
+  - `one_for_one_coupling(sup, caller_mod, callee_mod, sup_site, witness, site, kind)` — cross-branch coupling under one_for_one; `site` is the coupling call instruction when known, else the witness function; `kind` is `call` or `cast`.
 
   ## Finding severities
 
@@ -57,7 +57,8 @@ defmodule Argus.Analyses.OneForOneCoupling do
           {:callee_mod, :symbol, "called child module"},
           {:sup_site, :symbol, "instruction ID of the tree definition"},
           {:witness, :symbol, "function in caller_mod carrying the coupling"},
-          {:site, :symbol, "instruction ID of the coupling call, or the witness function ID"}
+          {:site, :symbol, "instruction ID of the coupling call, or the witness function ID"},
+          {:kind, :symbol, "call when the caller waits on the sibling anywhere, else cast"}
         ],
         key: [:sup, :caller_mod, :callee_mod],
         doc: "Cross-branch coupling under a one_for_one supervisor."
@@ -70,14 +71,36 @@ defmodule Argus.Analyses.OneForOneCoupling do
   # the tree definition (where the fix goes) and the coupling call site
   # becomes labelled evidence.
   @impl true
-  def finding(:one_for_one_coupling, [sup, caller_mod, callee_mod, sup_site, _witness, site]) do
+  def finding(:one_for_one_coupling, [sup, caller_mod, callee_mod, sup_site, _w, site, "cast"]) do
+    Findings.new(
+      :info,
+      "One-way coupling under one_for_one",
+      "#{caller_mod} sends casts to #{callee_mod}, and both are children of " <>
+        "the one_for_one supervisor #{sup}. Nothing is awaited, so a " <>
+        "#{callee_mod} restart is harmless unless #{caller_mod} caches its " <>
+        "pid or state by some other route; the shape is worth knowing about, " <>
+        "not fixing.",
+      at: Findings.at_site(sup_site, sup),
+      at_label: "supervision tree defined here",
+      help: [
+        "if `#{caller_mod}` ever holds a pid or monitor of `#{callee_mod}`, " <>
+          "move the pair under `rest_for_one` with `#{callee_mod}` first"
+      ],
+      related: [
+        Findings.related("coupling cast", Findings.at_site(site, caller_mod)),
+        Findings.related("called sibling", Findings.at_module(callee_mod))
+      ]
+    )
+  end
+
+  def finding(:one_for_one_coupling, [sup, caller_mod, callee_mod, sup_site, _w, site, "call"]) do
     Findings.new(
       :warning,
       "Coupled children under one_for_one",
       "#{caller_mod} calls #{callee_mod}, but both are children of the " <>
         "one_for_one supervisor #{sup}. When #{callee_mod} crashes and " <>
-        "restarts, #{caller_mod} is not restarted with it and keeps any " <>
-        "stale pid, monitor, or cached state it held.",
+        "restarts, #{caller_mod} is not restarted with it and may keep a " <>
+        "stale pid, monitor, or cached reply it holds.",
       at: Findings.at_site(sup_site, sup),
       at_label: "supervision tree defined here",
       help: [

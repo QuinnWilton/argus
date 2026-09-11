@@ -103,6 +103,43 @@ stateful_module_dep(from_mod, to_mod, w) :-
   function_def(h, to_mod, _, _, _),
   async_cast(h, _).
 
+// ── Mechanism ────────────────────────────────────────────────────────
+// The strongest mechanism a dependency is provable through: "call" when
+// any path is a synchronous call (the caller waits on a reply it may
+// retain), "cast" when every path is one-way. A coupling that is cast
+// only cannot hold a stale reply, pid, or monitor — a restart of the
+// callee is harmless unless the caller caches state some other way.
+.decl stateful_module_dep_call(from_mod: symbol, to_mod: symbol)
+
+stateful_module_dep_call(from_mod, to_mod) :-
+  stateful_module_dep(from_mod, to_mod, f),
+  call_reachable(f, g),
+  sync_call(g, to_mod).
+
+stateful_module_dep_call(from_mod, to_mod) :-
+  stateful_module_dep(from_mod, to_mod, f),
+  sync_call(f, to_mod).
+
+stateful_module_dep_call(from_mod, to_mod) :-
+  stateful_module_dep(from_mod, to_mod, f),
+  call_reachable(f, g),
+  function_def(g, to_mod, _, _, _),
+  sync_call(g, _).
+
+stateful_module_dep_call(from_mod, to_mod) :-
+  stateful_module_dep(from_mod, to_mod, f),
+  call_edge(f, g),
+  genserver_sync_api(g, to_mod).
+
+.decl stateful_module_dep_kind(from_mod: symbol, to_mod: symbol, kind: symbol)
+
+stateful_module_dep_kind(from_mod, to_mod, "call") :-
+  stateful_module_dep_call(from_mod, to_mod).
+
+stateful_module_dep_kind(from_mod, to_mod, "cast") :-
+  stateful_module_dep(from_mod, to_mod, _),
+  !stateful_module_dep_call(from_mod, to_mod).
+
 // GenServer API: from_mod directly calls a sync/async API function of to_mod.
 stateful_module_dep(from_mod, to_mod, f) :-
   function_def(f, from_mod, _, _, _),

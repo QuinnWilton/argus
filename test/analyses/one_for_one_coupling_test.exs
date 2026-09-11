@@ -57,10 +57,31 @@ defmodule Argus.Analyses.OneForOneCouplingTest do
         sync_call: [["A:call_b/0", "B"]]
       }
 
-      assert [[_sup, "A", "B", _site, _witness, _call_site]] = coupling_rows(base)
+      assert [[_sup, "A", "B", _site, _witness, _call_site, "call"]] = coupling_rows(base)
 
       linked = Map.put(base, :process_link, [["A", "B"]])
       assert coupling_rows(linked) == []
+    end
+
+    test "a cast-only dependency is graded as a one-way coupling" do
+      skip_without_souffle()
+
+      base = %{
+        supervisor: [["Sup", "one_for_one"]],
+        supervisor_site: [["Sup", "Sup:init/1#3"]],
+        supervisor_child: [
+          ["Sup", "0", "A", "permanent", "worker"],
+          ["Sup", "1", "B", "permanent", "worker"]
+        ],
+        function_def: [["A:cast_b/0", "A", "cast_b", "0", "1", "1"]],
+        async_cast: [["A:cast_b/0", "B"]]
+      }
+
+      assert [[_sup, "A", "B", _site, "A:cast_b/0", _call_site, "cast"]] = coupling_rows(base)
+
+      # One sync call anywhere along the dependency makes it a call coupling.
+      both = Map.put(base, :sync_call, [["A:cast_b/0", "B"]])
+      assert [[_, "A", "B", _, _, _, "call"]] = coupling_rows(both)
     end
 
     defp coupling_rows(facts) do
