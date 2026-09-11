@@ -35,11 +35,9 @@ defmodule Argus.MixProject do
 
   defp deps do
     [
-      # BEAM file analysis. A workspace path dep (matching lowdown, which
-      # already overrides this to the sibling): argus tracks beam_spy's
-      # unreleased fixes, e.g. the corrected Line-chunk table that
-      # line_info resolution depends on.
-      {:beam_spy, path: "../beam_spy"},
+      # BEAM file analysis: disassembly and the corrected Line-chunk table
+      # that line_info resolution depends on (0.2.0+).
+      {:beam_spy, "~> 0.2"},
 
       # Dev/Test
       {:stream_data, "~> 1.0", only: [:test, :dev]},
