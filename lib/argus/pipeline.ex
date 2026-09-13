@@ -129,13 +129,9 @@ defmodule Argus.Pipeline do
             data.line_table
           )
 
-        extractor_facts =
-          Enum.reduce(extractors, %{}, fn extractor, acc ->
-            merge_facts(acc, extractor.extract(data))
-          end)
-
-        # Decoded once for both derivations; a module whose facts cannot be
-        # decoded keeps everything else and loses only the derived rows.
+        # Decoded once, for the derived relations and for the control-flow
+        # graphs the extractors walk; a module whose facts cannot be decoded
+        # keeps everything else and loses only what those provide.
         typed =
           try do
             Argus.Facts.decode(base_facts)
@@ -143,11 +139,26 @@ defmodule Argus.Pipeline do
             _ -> nil
           end
 
+        cfgs = if typed, do: Cfg.build(typed), else: %{}
+
+        # Every call site indexed once; the extractors filter the index
+        # rather than each walking the instruction stream.
+        data =
+          Map.merge(data, %{
+            call_sites: Argus.Extractor.CallSites.index(data.module, data.functions),
+            cfg: cfgs
+          })
+
+        extractor_facts =
+          Enum.reduce(extractors, %{}, fn extractor, acc ->
+            merge_facts(acc, extractor.extract(data))
+          end)
+
         {:ok,
          base_facts
          |> merge_facts(extractor_facts)
          |> merge_facts(derive_def_use(typed))
-         |> merge_facts(derive_conditional_calls(base_facts, typed))}
+         |> merge_facts(derive_conditional_calls(base_facts, cfgs))}
       end
     after
       if trace_imprecision, do: Helpers.disable_tracing()
@@ -187,11 +198,7 @@ defmodule Argus.Pipeline do
   # reason: the post-dominator tree exists in Argus.Cfg, and the
   # alternative is reconstructing it from `instruction`/`branch`/`jump`
   # rows in Datalog on every solve.
-  defp derive_conditional_calls(_base_facts, nil), do: %{}
-
-  defp derive_conditional_calls(base_facts, typed) do
-    cfgs = Cfg.build(typed)
-
+  defp derive_conditional_calls(base_facts, cfgs) do
     call_ids =
       for relation <- [:local_call, :remote_call, :bif_call],
           [id | _] <- Map.get(base_facts, relation, []),

@@ -84,6 +84,27 @@ defmodule Argus.Cfg do
     end
   end
 
+  @doc """
+  The graph of one function of a module given as disassembly (`%{module:
+  ..., functions: ...}`), built from the facts the emitter would produce.
+  What an extractor uses when it was handed bare disassembly rather than
+  a pipeline module whose graphs are already attached.
+  """
+  @spec build_for(map(), atom(), arity()) :: Function.t() | nil
+  def build_for(%{module: mod, functions: functions} = data, name, arity) do
+    facts =
+      Argus.Pipeline.Emit.emit_module(
+        mod,
+        Map.get(data, :exports, []),
+        Map.get(data, :imports, []),
+        Map.get(data, :attributes, []),
+        functions,
+        Map.get(data, :line_table, %{})
+      )
+
+    facts |> Argus.Facts.decode() |> build() |> Map.get({to_string(name), arity})
+  end
+
   # Collect one relation into %{fa => %{key => value}} via a row shaper that
   # returns {key, value} or nil to skip.
   defp group(facts, relation, shape) do

@@ -43,18 +43,10 @@ defmodule Argus.Extractors.Monitor do
 
   alias Argus.InstrId
 
-  import Argus.Extractor.Helpers,
-    only: [add_fact: 3, match_remote_call: 1, resolve_atom: 3, scan_functions: 4]
+  import Argus.Extractor.Helpers, only: [add_fact: 3, each_remote_call: 3, resolve_atom: 3]
 
   @impl true
-  def extract(%{module: mod, functions: functions}) do
-    scan_functions(mod, functions, %{}, fn facts, ctx, instr ->
-      case match_remote_call(instr) do
-        {:ok, m, f, a} -> handle(facts, ctx, {m, f, a})
-        :none -> facts
-      end
-    end)
-  end
+  def extract(module_data), do: each_remote_call(module_data, %{}, &handle/3)
 
   defp handle(facts, ctx, {Process, :monitor, 1}), do: monitor(facts, ctx)
   defp handle(facts, ctx, {:erlang, :monitor, 2}), do: monitor(facts, ctx)

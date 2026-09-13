@@ -1116,4 +1116,177 @@ defmodule Argus.Extractor.Helpers do
 
     {:ok, Map.merge(base, resolved_pairs)}
   end
+
+  # --- Shared readings ---
+
+  @doc """
+  Calls `handler.(facts, ctx, {mod, func, arity})` for every remote call
+  in the module, from the call-site index the pipeline attached (or one
+  built on the spot). `ctx` is the same `instr_ctx()` the per-instruction
+  scanners pass, so `resolve_register/3` and friends work unchanged.
+  """
+  @spec each_remote_call(
+          map(),
+          Argus.Pipeline.Emit.facts(),
+          (Argus.Pipeline.Emit.facts(), instr_ctx(), {module(), atom(), arity()} ->
+             Argus.Pipeline.Emit.facts())
+        ) :: Argus.Pipeline.Emit.facts()
+  def each_remote_call(module_data, facts, handler) do
+    module_data
+    |> Argus.Extractor.CallSites.for_module()
+    |> Enum.reduce(facts, fn
+      %{remote?: true, mfa: mfa} = site, acc ->
+        handler.(acc, %{func_id: site.func_id, instrs: site.instrs, idx: site.idx}, mfa)
+
+      _site, acc ->
+        acc
+    end)
+  end
+
+  @doc "Like `each_remote_call/3`, for remote and local calls alike."
+  @spec each_call(
+          map(),
+          Argus.Pipeline.Emit.facts(),
+          (Argus.Pipeline.Emit.facts(), instr_ctx(), {module(), atom(), arity()} ->
+             Argus.Pipeline.Emit.facts())
+        ) :: Argus.Pipeline.Emit.facts()
+  def each_call(module_data, facts, handler) do
+    module_data
+    |> Argus.Extractor.CallSites.for_module()
+    |> Enum.reduce(facts, fn %{mfa: mfa} = site, acc ->
+      handler.(acc, %{func_id: site.func_id, instrs: site.instrs, idx: site.idx}, mfa)
+    end)
+  end
+
+  @doc """
+  The control-flow graph of the function `ctx` is in, from the graphs
+  the pipeline attached to `module_data` or built on the spot.
+  """
+  @spec cfg(map(), atom(), arity()) :: Argus.Cfg.Function.t() | nil
+  def cfg(%{cfg: cfgs}, name, arity) when is_map(cfgs),
+    do: Map.get(cfgs, {to_string(name), arity})
+
+  def cfg(module_data, name, arity) do
+    module_data |> Argus.Cfg.build_for(name, arity)
+  end
+
+  @doc """
+  A register operand with its type annotation stripped: `{:tr, reg, type}`
+  becomes `reg`. Seven extractors carried a copy of this clause.
+  """
+  @spec register(term()) :: term()
+  def register({:tr, reg, _type}), do: reg
+  def register(other), do: other
+
+  @doc """
+  Every tuple a function returns, as `{index, elements}`: built by
+  `put_tuple2` (into `{x,0}`, or into a register moved to `{x,0}` before
+  the return), by the pre-OTP-24 `put_tuple`/`put` sequence, or folded by
+  the compiler into one literal moved into `{x,0}`. Elements are in the
+  instruction vocabulary — `{:atom, a}`, `{:integer, n}`, `{:literal, t}`,
+  a register — whatever their source, so a rule reading `[{:atom, :ok} |
+  rest]` reads all three shapes.
+  """
+  @spec return_shapes([tuple()]) :: [{non_neg_integer(), [term()]}]
+  def return_shapes(instrs) do
+    instrs
+    |> Enum.with_index()
+    |> Enum.flat_map(fn
+      {{:put_tuple2, dst, {:list, elements}}, idx} ->
+        if tuple_flows_to_return?(instrs, idx, dst), do: [{idx, elements}], else: []
+
+      {{:put_tuple, _size, {:x, 0}}, idx} ->
+        puts = instrs |> Enum.drop(idx + 1) |> Enum.take_while(&match?({:put, _}, &1))
+
+        if returns_next?(instrs, idx + 1 + length(puts)),
+          do: [{idx, Enum.map(puts, fn {:put, element} -> element end)}],
+          else: []
+
+      {{:move, {:literal, tuple}, {:x, 0}}, idx} when is_tuple(tuple) and tuple_size(tuple) > 0 ->
+        if returns_next?(instrs, idx + 1),
+          do: [{idx, tuple |> Tuple.to_list() |> Enum.map(&literal_element/1)}],
+          else: []
+
+      _ ->
+        []
+    end)
+  end
+
+  defp literal_element(atom) when is_atom(atom), do: {:atom, atom}
+  defp literal_element(int) when is_integer(int), do: {:integer, int}
+  defp literal_element(term), do: {:literal, term}
+
+  # Line markers and frame teardown may sit between the tuple and the
+  # return. Anything else means the tuple is not what comes back.
+  defp returns_next?(instrs, idx) do
+    case Enum.at(instrs, idx) do
+      :return -> true
+      {:line, _} -> returns_next?(instrs, idx + 1)
+      {:deallocate, _} -> returns_next?(instrs, idx + 1)
+      {:trim, _, _} -> returns_next?(instrs, idx + 1)
+      _ -> false
+    end
+  end
+
+  @doc """
+  What `register` holds at `idx`, in one verdict: a literal, a function
+  parameter, the result of a call, or nothing knowable. The resolution
+  cascade that four extractors each wrote out.
+  """
+  @spec value_at([tuple()], non_neg_integer(), register()) ::
+          {:literal, term()}
+          | {:arg, non_neg_integer()}
+          | {:call_result, {module(), atom(), arity()}, non_neg_integer()}
+          | :dynamic
+  def value_at(instrs, idx, register) do
+    case resolve_register(instrs, idx, register) do
+      {:ok, value} ->
+        {:literal, value}
+
+      :dynamic ->
+        case arg_position(instrs, idx, register) do
+          {:ok, n} ->
+            {:arg, n}
+
+          :no ->
+            case call_result_origin(instrs, idx, register) do
+              {:ok, mfa, origin} -> {:call_result, mfa, origin}
+              :no -> :dynamic
+            end
+        end
+    end
+  end
+
+  @doc """
+  The process a call is addressed to, as every target column spells it:
+  the inspected module atom, `"via:Registry"` for a via tuple naming a
+  registry, or `"dynamic"`.
+  """
+  @spec module_target([tuple()], non_neg_integer(), register()) :: String.t()
+  def module_target(instrs, idx, register) do
+    case resolve_register(instrs, idx, register) do
+      {:ok, atom} when is_atom(atom) and atom != :dynamic ->
+        inspect(atom)
+
+      {:ok, {:via, _via_mod, {reg_instance, _key}}}
+      when is_atom(reg_instance) and reg_instance != :dynamic ->
+        "via:#{inspect(reg_instance)}"
+
+      _ ->
+        "dynamic"
+    end
+  end
+
+  @doc """
+  A timeout argument as the schema spells it: the milliseconds, `"-1"`
+  for `:infinity`, `"0"` when it could not be read.
+  """
+  @spec timeout_ms([tuple()], non_neg_integer(), register()) :: String.t()
+  def timeout_ms(instrs, idx, register) do
+    case resolve_register(instrs, idx, register) do
+      {:ok, n} when is_integer(n) and n > 0 -> to_string(n)
+      {:ok, :infinity} -> "-1"
+      _ -> "0"
+    end
+  end
 end

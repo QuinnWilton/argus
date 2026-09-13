@@ -27,23 +27,17 @@ defmodule Argus.Extractors.GenEvent do
   @behaviour Argus.Extractor
 
   import Argus.Extractor.Helpers,
-    only: [
-      add_fact: 3,
-      get_behaviours: 1,
-      resolve_callee: 1,
-      scan_remote_calls: 4
-    ]
+    only: [add_fact: 3, each_remote_call: 3, get_behaviours: 1, resolve_callee: 1]
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     mod = module_data.module
     mod_str = inspect(mod)
-    functions = module_data.functions
 
     %{}
     |> extract_behaviour(mod_str, module_data.attributes)
-    |> extract_calls(mod, functions)
+    |> extract_calls(module_data)
   end
 
   defp extract_behaviour(facts, mod_str, attrs) do
@@ -54,11 +48,7 @@ defmodule Argus.Extractors.GenEvent do
     end
   end
 
-  defp extract_calls(facts, mod, functions) do
-    scan_remote_calls(mod, functions, facts, fn acc, ctx, mfa ->
-      handle_call(acc, ctx, mfa)
-    end)
-  end
+  defp extract_calls(facts, module_data), do: each_remote_call(module_data, facts, &handle_call/3)
 
   # :gen_event.sync_notify(Manager, Event) — synchronous fan-out to every
   # handler. Reuses sync_call so call_cycle / process_bottleneck pick it up.

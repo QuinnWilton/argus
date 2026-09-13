@@ -29,6 +29,7 @@ defmodule Argus.Extractors.ErrorHandling do
   import Argus.Extractor.Helpers,
     only: [
       add_fact: 3,
+      each_remote_call: 3,
       instructions_from_label: 2,
       match_remote_call: 1,
       resolve_atom: 3,
@@ -78,10 +79,13 @@ defmodule Argus.Extractors.ErrorHandling do
     mod = module_data.module
     mod_str = inspect(mod)
 
-    scan_functions(mod, module_data.functions, %{}, fn facts, ctx, instr ->
-      facts
-      |> maybe_bare_rescue(ctx, instr)
-      |> maybe_error_handling_call(mod_str, ctx, instr)
+    rescues =
+      scan_functions(mod, module_data.functions, %{}, fn facts, ctx, instr ->
+        maybe_bare_rescue(facts, ctx, instr)
+      end)
+
+    each_remote_call(module_data, rescues, fn facts, ctx, mfa ->
+      error_handling_call(facts, mod_str, ctx, mfa)
     end)
   end
 
@@ -247,28 +251,25 @@ defmodule Argus.Extractors.ErrorHandling do
 
   # Handle remote calls relevant to error-handling: trap_exit, exit calls,
   # and ignored error results from known {ok, _} | {error, _} APIs.
-  defp maybe_error_handling_call(facts, mod_str, ctx, instr) do
-    case match_remote_call(instr) do
-      {:ok, Process, :flag, 2} ->
+  defp error_handling_call(facts, mod_str, ctx, mfa) do
+    case mfa do
+      {Process, :flag, 2} ->
         maybe_trap_exit(facts, ctx, mod_str)
 
-      {:ok, :erlang, :process_flag, 2} ->
+      {:erlang, :process_flag, 2} ->
         maybe_trap_exit(facts, ctx, mod_str)
 
-      {:ok, Process, :exit, 2} ->
+      {Process, :exit, 2} ->
         emit_exit_call(facts, ctx, resolve_atom(ctx.instrs, ctx.idx, {:x, 0}))
 
-      {:ok, :erlang, :exit, 1} ->
+      {:erlang, :exit, 1} ->
         emit_exit_call(facts, ctx, "self")
 
-      {:ok, :erlang, :exit, 2} ->
+      {:erlang, :exit, 2} ->
         emit_exit_call(facts, ctx, resolve_atom(ctx.instrs, ctx.idx, {:x, 0}))
 
-      {:ok, mod, func, arity} ->
+      {mod, func, arity} ->
         maybe_ignored_result(facts, ctx, mod, func, arity)
-
-      :none ->
-        facts
     end
   end
 

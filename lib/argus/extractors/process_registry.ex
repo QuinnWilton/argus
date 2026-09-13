@@ -21,9 +21,8 @@ defmodule Argus.Extractors.ProcessRegistry do
   import Argus.Extractor.Helpers,
     only: [
       add_fact: 3,
-      match_remote_call: 1,
+      each_remote_call: 3,
       resolve_register: 3,
-      scan_functions: 4,
       track_dynamic: 5,
       track_imprecision: 5
     ]
@@ -34,38 +33,37 @@ defmodule Argus.Extractors.ProcessRegistry do
   def extract(module_data) do
     mod_str = inspect(module_data.module)
 
-    scan_functions(module_data.module, module_data.functions, %{}, fn facts, ctx, instr ->
-      facts
-      |> maybe_register_call(mod_str, ctx, instr)
+    each_remote_call(module_data, %{}, fn facts, ctx, mfa ->
+      register_call(facts, mod_str, ctx, mfa)
     end)
   end
 
-  defp maybe_register_call(facts, mod_str, ctx, instr) do
-    case match_remote_call(instr) do
+  defp register_call(facts, mod_str, ctx, mfa) do
+    case mfa do
       # Process.register/2 — Process.register(pid, name), name is x1.
-      {:ok, Process, :register, 2} ->
+      {Process, :register, 2} ->
         emit_register(facts, mod_str, ctx, {:x, 1}, "register")
 
       # :erlang.register/2 — :erlang.register(name, pid), name is x0.
-      {:ok, :erlang, :register, 2} ->
+      {:erlang, :register, 2} ->
         emit_register(facts, mod_str, ctx, {:x, 0}, "register")
 
-      {:ok, GenServer, :start_link, 3} ->
+      {GenServer, :start_link, 3} ->
         maybe_named_start(facts, ctx, "start_link")
 
-      {:ok, GenServer, :start, 3} ->
+      {GenServer, :start, 3} ->
         maybe_named_start(facts, ctx, "start")
 
-      {:ok, :gen_server, :start_link, 4} ->
+      {:gen_server, :start_link, 4} ->
         maybe_named_start_erlang(facts, ctx, "start_link")
 
-      {:ok, :gen_server, :start, 4} ->
+      {:gen_server, :start, 4} ->
         maybe_named_start_erlang(facts, ctx, "start")
 
-      {:ok, Process, :whereis, 1} ->
+      {Process, :whereis, 1} ->
         emit_whereis(facts, ctx)
 
-      {:ok, :erlang, :whereis, 1} ->
+      {:erlang, :whereis, 1} ->
         emit_whereis(facts, ctx)
 
       _ ->

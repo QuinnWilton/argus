@@ -31,17 +31,12 @@ defmodule Argus.Extractors.Ports do
   alias Argus.InstrId
 
   import Argus.Extractor.Helpers,
-    only: [
-      add_fact: 3,
-      resolve_register: 3,
-      scan_remote_calls: 3,
-      track_dynamic: 5
-    ]
+    only: [add_fact: 3, each_remote_call: 3, resolve_register: 3, track_dynamic: 5]
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
-    scan_remote_calls(module_data.module, module_data.functions, &handle_call/3)
+    each_remote_call(module_data, %{}, &handle_call/3)
   end
 
   # The `name` argument (x0) of Port.open/open_port carries the mechanism.

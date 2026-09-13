@@ -21,9 +21,9 @@ defmodule Argus.Extractors.ETS do
     only: [
       add_fact: 3,
       call_result_origin: 3,
+      each_remote_call: 3,
       resolve_atom: 3,
       resolve_register: 3,
-      scan_remote_calls: 3,
       track_dynamic: 5,
       track_imprecision: 5
     ]
@@ -38,7 +38,7 @@ defmodule Argus.Extractors.ETS do
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
-    scan_remote_calls(module_data.module, module_data.functions, &handle_call/3)
+    each_remote_call(module_data, %{}, &handle_call/3)
   end
 
   defp handle_call(facts, ctx, {:ets, :new, 2}) do

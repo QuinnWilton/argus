@@ -18,16 +18,27 @@ defmodule Argus.Extractor do
         end
       end
 
-  Pass extractors via the `:extractors` option to `Argus.Pipeline.run/3`
-  or `Argus.analyze/3`.
+  An analysis names its extractors in `extractors/0`; pass extra ones via
+  the `:extractors` option to `Argus.Analysis.extract_facts/3`.
   """
 
+  @typedoc """
+  What `extract/1` receives: the disassembly, plus — when the pipeline is
+  calling — the module's call-site index and per-function control-flow
+  graphs, so extractors neither walk the instruction stream for calls nor
+  build their own graphs. `Argus.Extractor.Helpers.each_remote_call/3`
+  and `Helpers.cfg/3` fall back to building both when absent, which is
+  what an extractor called on bare disassembly (its unit tests) gets.
+  """
   @type module_data :: %{
-          module: atom(),
-          exports: list(),
-          attributes: keyword(),
-          compile_info: keyword(),
-          functions: list()
+          required(:module) => atom(),
+          required(:exports) => list(),
+          required(:attributes) => keyword(),
+          required(:functions) => list(),
+          optional(:imports) => list(),
+          optional(:line_table) => map(),
+          optional(:call_sites) => [Argus.Extractor.CallSites.site()],
+          optional(:cfg) => %{{String.t(), arity()} => Argus.Cfg.Function.t()}
         }
 
   @callback extract(module_data()) :: Argus.Pipeline.Emit.facts()

@@ -27,11 +27,11 @@ defmodule Argus.Extractors.OTP do
   import Argus.Extractor.Helpers,
     only: [
       add_fact: 3,
+      each_remote_call: 3,
       get_behaviours: 1,
       match_remote_call: 1,
       resolve_callee: 1,
       resolve_register: 3,
-      scan_remote_calls: 4,
       track_dynamic: 5,
       track_imprecision: 4
     ]
@@ -45,8 +45,8 @@ defmodule Argus.Extractors.OTP do
 
     %{}
     |> extract_behaviours(mod_str, module_data.attributes)
-    |> extract_genserver_calls(mod, functions)
-    |> extract_link_calls(mod_str, mod, functions)
+    |> extract_genserver_calls(module_data)
+    |> extract_link_calls(mod_str, module_data)
     |> extract_continue_facts(mod, mod_str, functions)
   end
 
@@ -202,11 +202,8 @@ defmodule Argus.Extractors.OTP do
     end)
   end
 
-  defp extract_genserver_calls(facts, mod, functions) do
-    scan_remote_calls(mod, functions, facts, fn acc, ctx, mfa ->
-      handle_genserver_call(acc, ctx, mfa)
-    end)
-  end
+  defp extract_genserver_calls(facts, module_data),
+    do: each_remote_call(module_data, facts, &handle_genserver_call/3)
 
   # Default-timeout sync calls (5000ms): {Module, function, arity} → match.
   @default_timeout_sync [
@@ -397,8 +394,8 @@ defmodule Argus.Extractors.OTP do
 
   defp track_timeout_imprecision(facts, _other, _ctx), do: facts
 
-  defp extract_link_calls(facts, mod_str, mod, functions) do
-    scan_remote_calls(mod, functions, facts, fn acc, ctx, mfa ->
+  defp extract_link_calls(facts, mod_str, module_data) do
+    each_remote_call(module_data, facts, fn acc, ctx, mfa ->
       handle_link(acc, mod_str, ctx, mfa)
     end)
   end

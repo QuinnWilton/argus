@@ -33,13 +33,13 @@ defmodule Argus.Extractors.Supervision do
     only: [
       add_fact: 3,
       call_result_origin: 3,
+      each_remote_call: 3,
       find_function: 3,
       get_behaviours: 1,
       keyword_value_register: 4,
       match_local_call: 1,
       match_remote_call: 1,
       resolve_register: 3,
-      scan_remote_calls: 4,
       track_dynamic: 5,
       track_imprecision: 5
     ]
@@ -86,10 +86,11 @@ defmodule Argus.Extractors.Supervision do
     # DynamicSupervisor.start_child can fire from any module, regardless of
     # whether the enclosing module is itself a supervisor — connection pools
     # and per-tenant systems often spawn workers from non-supervisor code.
-    extract_dynamic_children(base_facts, mod, behaviours, module_data.functions)
+    extract_dynamic_children(base_facts, mod, behaviours, module_data)
   end
 
-  defp extract_dynamic_children(facts, mod, behaviours, functions) do
+  defp extract_dynamic_children(facts, mod, behaviours, module_data) do
+    functions = module_data.functions
     # When the `start_child` supervisor argument can't be resolved to an atom
     # but the enclosing module is itself a supervisor, the call almost always
     # targets that supervisor (the idiomatic `def start_x(sup, ...), do:
@@ -98,7 +99,7 @@ defmodule Argus.Extractors.Supervision do
     # dropping the child to "dynamic".
     self_sup = if supervisor_behaviour?(behaviours), do: inspect(mod), else: nil
 
-    scan_remote_calls(mod, functions, facts, fn acc, ctx, mfa ->
+    each_remote_call(module_data, facts, fn acc, ctx, mfa ->
       handle_dynamic_start(acc, ctx, mfa, self_sup, functions)
     end)
   end

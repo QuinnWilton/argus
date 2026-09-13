@@ -20,7 +20,7 @@ defmodule Argus.Extractors.Distributed do
   alias Argus.InstrId
 
   import Argus.Extractor.Helpers,
-    only: [add_fact: 3, resolve_register: 3, scan_remote_calls: 3, track_dynamic: 5]
+    only: [add_fact: 3, each_remote_call: 3, resolve_register: 3, track_dynamic: 5]
 
   # Node operations to detect.
   @node_ops [
@@ -94,9 +94,7 @@ defmodule Argus.Extractors.Distributed do
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
-    scan_remote_calls(module_data.module, module_data.functions, fn facts,
-                                                                    ctx,
-                                                                    {mod, func, arity} ->
+    each_remote_call(module_data, %{}, fn facts, ctx, {mod, func, arity} ->
       id = InstrId.mint(ctx.func_id, ctx.idx)
 
       facts

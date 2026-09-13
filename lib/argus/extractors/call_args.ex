@@ -26,14 +26,7 @@ defmodule Argus.Extractors.CallArgs do
 
   @behaviour Argus.Extractor
 
-  import Argus.Extractor.Helpers,
-    only: [
-      add_fact: 3,
-      match_remote_call: 1,
-      match_local_call: 1,
-      resolve_to_arg_or_atom: 3,
-      scan_functions: 4
-    ]
+  import Argus.Extractor.Helpers, only: [add_fact: 3, each_call: 3, resolve_to_arg_or_atom: 3]
 
   alias Argus.Pipeline.Normalize
 
@@ -42,25 +35,10 @@ defmodule Argus.Extractors.CallArgs do
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
-    scan_functions(module_data.module, module_data.functions, %{}, fn facts, ctx, instr ->
-      case match_call(instr) do
-        {:ok, callee_mod, callee_func, arity} ->
-          callee_id = Normalize.func_id(callee_mod, callee_func, arity)
-          emit_call_args(facts, ctx, callee_id, arity)
-
-        :none ->
-          facts
-      end
+    each_call(module_data, %{}, fn facts, ctx, {callee_mod, callee_func, arity} ->
+      callee_id = Normalize.func_id(callee_mod, callee_func, arity)
+      emit_call_args(facts, ctx, callee_id, arity)
     end)
-  end
-
-  # Match both remote and local calls, returning a unified
-  # {:ok, mod, func, arity} or :none.
-  defp match_call(instr) do
-    case match_remote_call(instr) do
-      {:ok, _, _, _} = match -> match
-      :none -> match_local_call(instr)
-    end
   end
 
   defp emit_call_args(facts, ctx, callee_id, arity) do

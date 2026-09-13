@@ -25,8 +25,7 @@ defmodule Argus.Extractors.Purity do
   alias Argus.InstrId
   alias Argus.Purity.Effects
 
-  import Argus.Extractor.Helpers,
-    only: [add_fact: 3, match_remote_call: 1, resolve_register: 3, scan_functions: 4]
+  import Argus.Extractor.Helpers, only: [add_fact: 3, each_remote_call: 3, resolve_register: 3]
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
@@ -35,7 +34,7 @@ defmodule Argus.Extractors.Purity do
 
     %{}
     |> extract_contracts(mod, module_data.attributes)
-    |> classify_calls(mod, module_data.functions)
+    |> classify_calls(module_data)
   end
 
   # `@pure true` accumulates {name, arity} into the persisted :argus_pure
@@ -60,18 +59,13 @@ defmodule Argus.Extractors.Purity do
     end)
   end
 
-  defp classify_calls(facts, mod, functions) do
-    scan_functions(mod, functions, facts, fn acc, ctx, instr ->
-      case match_remote_call(instr) do
-        {:ok, :erlang, :apply, 3} ->
-          resolve_apply(acc, ctx, InstrId.mint(ctx.func_id, ctx.idx))
+  defp classify_calls(facts, module_data) do
+    each_remote_call(module_data, facts, fn
+      acc, ctx, {:erlang, :apply, 3} ->
+        resolve_apply(acc, ctx, InstrId.mint(ctx.func_id, ctx.idx))
 
-        {:ok, callee_mod, callee_func, arity} ->
-          record(acc, ctx, callee_mod, callee_func, arity)
-
-        :none ->
-          acc
-      end
+      acc, ctx, {callee_mod, callee_func, arity} ->
+        record(acc, ctx, callee_mod, callee_func, arity)
     end)
   end
 
