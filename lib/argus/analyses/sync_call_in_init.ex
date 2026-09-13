@@ -61,10 +61,9 @@ defmodule Argus.Analyses.SyncCallInInit do
   def extractors,
     do: [
       Argus.Extractors.OTP,
+      Argus.Extractors.ApiCalls,
       Argus.Extractors.Supervision,
-      Argus.Extractors.GenEvent,
       Argus.Extractors.CallbackTag,
-      Argus.Extractors.Literal,
       # sync_call_in_init's rules reach `sync_call` through
       # clientlib/interprocedural.dl, which resolves a target module
       # forwarded through a wrapper — `defp fetch(server), do:

@@ -40,9 +40,8 @@ defmodule Argus.Analyses.CallCycle do
   def extractors,
     do: [
       Argus.Extractors.OTP,
-      Argus.Extractors.GenEvent,
+      Argus.Extractors.ApiCalls,
       Argus.Extractors.CallbackTag,
-      Argus.Extractors.Literal,
       # call_cycle's rules join call_arg and call_arg_forward through
       # clientlib/interprocedural.dl to follow a pid or name through a
       # function argument. Nothing declared CallArgs, so those relations were

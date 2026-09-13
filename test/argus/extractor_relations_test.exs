@@ -24,14 +24,25 @@ defmodule Argus.ExtractorRelationsTest do
   end
 
   # A table-driven extractor names its relation through a variable, so
-  # no literal appears at the call site.
-  @table_driven %{Argus.Extractors.EctoSchema => [:schema_field, :redacted_field]}
+  # no literal appears at the call site: the source scan is blind to it,
+  # and the declaration stands on its own (the other two tests still hold
+  # it to the schema and the rules).
+  @table_driven %{
+    Argus.Extractors.EctoSchema => [:schema_field, :redacted_field],
+    Argus.Extractors.ApiCalls => :declared
+  }
 
   defp emitted_in_source(extractor) do
-    ~r/add_fact\(\s*(?:[^,:()]+,\s*)*:([a-z_0-9]+)/
-    |> Regex.scan(source(extractor))
-    |> MapSet.new(fn [_, name] -> String.to_atom(name) end)
-    |> MapSet.union(MapSet.new(Map.get(@table_driven, extractor, [])))
+    case Map.get(@table_driven, extractor, []) do
+      :declared ->
+        MapSet.new(extractor.relations())
+
+      extra ->
+        ~r/add_fact\(\s*(?:[^,:()]+,\s*)*:([a-z_0-9]+)/
+        |> Regex.scan(source(extractor))
+        |> MapSet.new(fn [_, name] -> String.to_atom(name) end)
+        |> MapSet.union(MapSet.new(extra))
+    end
   end
 
   defp rules_source do

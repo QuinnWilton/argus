@@ -54,7 +54,12 @@ defmodule Argus.Analyses.MonitorLeak do
 
   @impl true
   def extractors,
-    do: [Argus.Extractors.Monitor, Argus.Extractors.OTP, Argus.Extractors.GenStatem]
+    do: [
+      Argus.Extractors.Monitor,
+      Argus.Extractors.OTP,
+      Argus.Extractors.ApiCalls,
+      Argus.Extractors.GenStatem
+    ]
 
   @impl true
   def output_relations do

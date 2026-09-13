@@ -46,7 +46,7 @@ defmodule Argus.Analyses.UnsafeTask do
   def rules_file, do: "analyses/unsafe_task.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.OTP]
+  def extractors, do: [Argus.Extractors.OTP, Argus.Extractors.ApiCalls]
 
   @impl true
   def output_relations do

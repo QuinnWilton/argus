@@ -50,7 +50,7 @@ defmodule Argus.Analyses.TransactionSafety do
   def rules_file, do: "analyses/transaction_safety.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.Purity, Argus.Extractors.OTP]
+  def extractors, do: [Argus.Extractors.Purity, Argus.Extractors.OTP, Argus.Extractors.ApiCalls]
 
   @impl true
   def output_relations do

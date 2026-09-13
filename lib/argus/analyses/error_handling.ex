@@ -55,6 +55,7 @@ defmodule Argus.Analyses.ErrorHandling do
     do: [
       Argus.Extractors.ErrorHandling,
       Argus.Extractors.OTP,
+      Argus.Extractors.ApiCalls,
       Argus.Extractors.CallbackTag,
       Argus.Extractors.Monitor
     ]

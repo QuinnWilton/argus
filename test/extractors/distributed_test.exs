@@ -1,7 +1,7 @@
-defmodule Argus.Extractors.DistributedTest do
+defmodule Argus.Extractors.ApiCalls.DistributedTest do
   use ExUnit.Case, async: true
 
-  alias Argus.Extractors.Distributed
+  alias Argus.Extractors.ApiCalls
 
   defp disassemble(mod) do
     {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
@@ -10,19 +10,19 @@ defmodule Argus.Extractors.DistributedTest do
 
   describe "extract/1 — RPC calls" do
     test "detects :rpc.call/4 with infinity timeout" do
-      facts = Distributed.extract(disassemble(Argus.Test.Fixtures.RpcCaller))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.RpcCaller))
 
       assert Map.has_key?(facts, :rpc_call)
       rows = facts[:rpc_call]
 
       assert Enum.any?(rows, fn [_, func, variant, timeout] ->
                String.contains?(func, "call_no_timeout") and
-                 variant == "rpc" and timeout == "infinity"
+                 variant == "rpc" and timeout == "-1"
              end)
     end
 
     test "detects :rpc.call/5 with explicit timeout" do
-      facts = Distributed.extract(disassemble(Argus.Test.Fixtures.RpcCaller))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.RpcCaller))
 
       rows = facts[:rpc_call]
 
@@ -33,7 +33,7 @@ defmodule Argus.Extractors.DistributedTest do
     end
 
     test "detects :rpc.multicall" do
-      facts = Distributed.extract(disassemble(Argus.Test.Fixtures.RpcCaller))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.RpcCaller))
 
       rows = facts[:rpc_call]
 
@@ -45,7 +45,7 @@ defmodule Argus.Extractors.DistributedTest do
 
   describe "extract/1 — :global synchronization" do
     test "records :global.set_lock/2 with infinity retries" do
-      facts = Distributed.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
 
       assert Map.has_key?(facts, :global_op)
       ops = facts[:global_op]
@@ -57,7 +57,7 @@ defmodule Argus.Extractors.DistributedTest do
     end
 
     test "records :global.set_lock/3 with retries=0 as non-blocking" do
-      facts = Distributed.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
       ops = facts[:global_op]
 
       assert Enum.any?(ops, fn [_id, func, op, retries] ->
@@ -67,7 +67,7 @@ defmodule Argus.Extractors.DistributedTest do
     end
 
     test "records :global.set_lock/3 with explicit infinity retries" do
-      facts = Distributed.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
       ops = facts[:global_op]
 
       assert Enum.any?(ops, fn [_id, func, _op, retries] ->
@@ -76,7 +76,7 @@ defmodule Argus.Extractors.DistributedTest do
     end
 
     test "records :global.set_lock/3 with positive integer retries" do
-      facts = Distributed.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
       ops = facts[:global_op]
 
       assert Enum.any?(ops, fn [_id, func, _op, retries] ->
@@ -85,7 +85,7 @@ defmodule Argus.Extractors.DistributedTest do
     end
 
     test "records :global.trans/2 as blocking with infinity retries" do
-      facts = Distributed.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
       ops = facts[:global_op]
 
       assert Enum.any?(ops, fn [_id, func, op, retries] ->
@@ -95,7 +95,7 @@ defmodule Argus.Extractors.DistributedTest do
     end
 
     test "records :global.del_lock as non-blocking" do
-      facts = Distributed.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
       ops = facts[:global_op]
 
       assert Enum.any?(ops, fn [_id, _func, op, retries] ->
@@ -106,7 +106,7 @@ defmodule Argus.Extractors.DistributedTest do
 
   describe "extract/1 — global registration" do
     test "detects :global.register_name" do
-      facts = Distributed.extract(disassemble(Argus.Test.Fixtures.GlobalRegisterModule))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalRegisterModule))
 
       assert Map.has_key?(facts, :global_register)
       rows = facts[:global_register]
@@ -116,7 +116,7 @@ defmodule Argus.Extractors.DistributedTest do
 
   describe "extract/1 — node operations" do
     test "detects Node.connect" do
-      facts = Distributed.extract(disassemble(Argus.Test.Fixtures.NodeOperationsModule))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.NodeOperationsModule))
 
       assert Map.has_key?(facts, :node_operation)
       rows = facts[:node_operation]
@@ -125,7 +125,7 @@ defmodule Argus.Extractors.DistributedTest do
     end
 
     test "detects Node.disconnect" do
-      facts = Distributed.extract(disassemble(Argus.Test.Fixtures.NodeOperationsModule))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.NodeOperationsModule))
 
       rows = facts[:node_operation]
       ops = Enum.map(rows, fn [_, _, op] -> op end)
@@ -133,7 +133,7 @@ defmodule Argus.Extractors.DistributedTest do
     end
 
     test "detects Node.ping" do
-      facts = Distributed.extract(disassemble(Argus.Test.Fixtures.NodeOperationsModule))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.NodeOperationsModule))
 
       rows = facts[:node_operation]
       ops = Enum.map(rows, fn [_, _, op] -> op end)
@@ -143,7 +143,7 @@ defmodule Argus.Extractors.DistributedTest do
 
   describe "extract/1 — distributed stores" do
     test "detects :mnesia operations" do
-      facts = Distributed.extract(disassemble(Argus.Test.Fixtures.MnesiaModule))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.MnesiaModule))
 
       assert Map.has_key?(facts, :distributed_store_op)
       rows = facts[:distributed_store_op]
@@ -159,7 +159,7 @@ defmodule Argus.Extractors.DistributedTest do
 
   describe "extract/1 — clean module" do
     test "returns empty for plain module" do
-      facts = Distributed.extract(disassemble(Argus.Test.Fixtures.PlainModule))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.PlainModule))
       assert facts == %{}
     end
   end
@@ -169,7 +169,7 @@ defmodule Argus.Extractors.DistributedTest do
       assert {:ok, facts} =
                Argus.Pipeline.extract(
                  [Argus.Test.Fixtures.RpcCaller],
-                 extractors: [Distributed]
+                 extractors: [ApiCalls]
                )
 
       assert Map.has_key?(facts, :rpc_call)

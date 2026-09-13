@@ -46,7 +46,12 @@ defmodule Argus.Analyses.ShutdownSafety do
 
   @impl true
   def extractors,
-    do: [Argus.Extractors.Purity, Argus.Extractors.OTP, Argus.Extractors.ErrorHandling]
+    do: [
+      Argus.Extractors.Purity,
+      Argus.Extractors.OTP,
+      Argus.Extractors.ApiCalls,
+      Argus.Extractors.ErrorHandling
+    ]
 
   @fields [
     {:mod, :symbol, "the module"},

@@ -32,7 +32,8 @@ defmodule Argus.Analyses.ProcessRegistry do
   def rules_file, do: "analyses/process_registry.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.ProcessRegistry, Argus.Extractors.OTP]
+  def extractors,
+    do: [Argus.Extractors.ProcessRegistry, Argus.Extractors.OTP, Argus.Extractors.ApiCalls]
 
   @impl true
   def output_relations do

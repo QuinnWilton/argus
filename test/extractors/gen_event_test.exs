@@ -1,7 +1,7 @@
 defmodule Argus.Extractors.GenEventTest do
   use ExUnit.Case, async: true
 
-  alias Argus.Extractors.GenEvent
+  alias Argus.Extractors.{ApiCalls, OTP}
 
   defp disassemble(mod) do
     {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
@@ -10,7 +10,7 @@ defmodule Argus.Extractors.GenEventTest do
 
   describe "extract/1 — behaviour detection" do
     test "records implements_behaviour for :gen_event handlers" do
-      facts = GenEvent.extract(disassemble(Argus.Test.Fixtures.MyEventHandler))
+      facts = OTP.extract(disassemble(Argus.Test.Fixtures.MyEventHandler))
 
       assert Map.has_key?(facts, :implements_behaviour)
 
@@ -20,14 +20,14 @@ defmodule Argus.Extractors.GenEventTest do
     end
 
     test "skips modules that don't implement :gen_event" do
-      facts = GenEvent.extract(disassemble(Argus.Test.Fixtures.PlainModule))
+      facts = OTP.extract(disassemble(Argus.Test.Fixtures.PlainModule))
       refute Map.has_key?(facts, :implements_behaviour)
     end
   end
 
   describe "extract/1 — sync_call coverage" do
     test "treats :gen_event.sync_notify as a sync_call" do
-      facts = GenEvent.extract(disassemble(Argus.Test.Fixtures.GenEventEmitter))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GenEventEmitter))
 
       assert Map.has_key?(facts, :sync_call)
 
@@ -37,7 +37,7 @@ defmodule Argus.Extractors.GenEventTest do
     end
 
     test "treats :gen_event.call/3 and /4 as sync_call" do
-      facts = GenEvent.extract(disassemble(Argus.Test.Fixtures.GenEventEmitter))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GenEventEmitter))
 
       callers =
         facts[:sync_call]
@@ -50,7 +50,7 @@ defmodule Argus.Extractors.GenEventTest do
 
   describe "extract/1 — async_cast coverage" do
     test "treats :gen_event.notify as an async_cast" do
-      facts = GenEvent.extract(disassemble(Argus.Test.Fixtures.GenEventEmitter))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GenEventEmitter))
 
       assert Map.has_key?(facts, :async_cast)
 

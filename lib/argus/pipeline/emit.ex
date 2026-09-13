@@ -479,6 +479,7 @@ defmodule Argus.Pipeline.Emit do
     |> add_fact(:def, [id, format_operand(dst)])
     |> add_fact(:use, [id, format_operand(src)])
     |> maybe_literal(id, dst, src)
+    |> maybe_literal_tuple(id, dst, src)
   end
 
   # Swap.
@@ -548,9 +549,9 @@ defmodule Argus.Pipeline.Emit do
   defp emit_specific(facts, id, {:put_tuple2, dst, {:list, elements}}) do
     facts = add_fact(facts, :def, [id, format_operand(dst)])
 
-    Enum.reduce(elements, facts, fn elem, acc ->
-      add_fact(acc, :use, [id, format_operand(elem)])
-    end)
+    elements
+    |> Enum.reduce(facts, fn elem, acc -> add_fact(acc, :use, [id, format_operand(elem)]) end)
+    |> maybe_tuple_literal(id, dst, elements)
   end
 
   # Put map assoc / exact.
@@ -850,6 +851,28 @@ defmodule Argus.Pipeline.Emit do
     Logger.debug("Emitter: unhandled instruction opcode: #{instruction_op(instr)}")
     facts
   end
+
+  # A tagged tuple built in place: the tag and size are what a rule
+  # matching a message or return shape needs. x registers only — a y
+  # register is a frame-relative stack slot that means nothing to a rule
+  # matching on an argument position.
+  defp maybe_tuple_literal(facts, id, {:x, n}, [{:atom, tag} | rest]) when is_atom(tag),
+    do: add_fact(facts, :tuple_literal, [id, "x#{n}", inspect(tag), to_string(length(rest) + 1)])
+
+  defp maybe_tuple_literal(facts, _id, _dst, _elements), do: facts
+
+  # The same tagged tuple, folded by the compiler into one literal.
+  defp maybe_literal_tuple(facts, id, {:x, n}, {:literal, tuple})
+       when is_tuple(tuple) and tuple_size(tuple) > 0 and is_atom(elem(tuple, 0)),
+       do:
+         add_fact(facts, :tuple_literal, [
+           id,
+           "x#{n}",
+           inspect(elem(tuple, 0)),
+           to_string(tuple_size(tuple))
+         ])
+
+  defp maybe_literal_tuple(facts, _id, _dst, _src), do: facts
 
   # ── Helpers ────────────────────────────────────────────────────────
 

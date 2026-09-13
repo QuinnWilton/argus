@@ -48,7 +48,7 @@ defmodule Argus.Analyses.ReplyContract do
   def rules_file, do: "analyses/reply_contract.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.Reply, Argus.Extractors.OTP]
+  def extractors, do: [Argus.Extractors.Reply, Argus.Extractors.OTP, Argus.Extractors.ApiCalls]
 
   @fields [
     {:mod, :symbol, "the module"},

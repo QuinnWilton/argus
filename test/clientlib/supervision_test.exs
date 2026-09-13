@@ -27,7 +27,11 @@ defmodule Argus.Clientlib.SupervisionTest do
 
       {:ok, _} =
         Pipeline.run(modules, facts_dir,
-          extractors: [Argus.Extractors.OTP, Argus.Extractors.Supervision]
+          extractors: [
+            Argus.Extractors.OTP,
+            Argus.Extractors.ApiCalls,
+            Argus.Extractors.Supervision
+          ]
         )
 
       # imports.dl reads the staged call graph rather than deriving it.

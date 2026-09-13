@@ -9,6 +9,55 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Schema version 29. A consolidation release: nothing an analysis reports
 changes unless a section below says so.
 
+### Changed
+
+- Schema version 30: `tuple_literal` is a layer-1 fact emitted by
+  `Argus.Pipeline.Emit` (it is generic bytecode; the extractor that
+  produced it is gone), and `rpc_call`'s timeout column spells
+  `:infinity` as `-1` and an unreadable value as `0`, as
+  `sync_call_timeout` always has.
+- One rule vocabulary. `priv/dl/clientlib/calls.dl` defines `sync_dep`,
+  `reaches_sync_dep` (with async and timeout twins), `stateful_module_dep`
+  and `same_process_reaches` once; `callbacks.dl` defines `otp_callback`,
+  `init_function`, `handler_function` and `terminate_callback`;
+  `behaviours.dl` carries `process_behaviour` with its `loop`,
+  `gen_server_like` and `terminating` kinds; `supervision.dl` gains
+  `starts_before`. `otp.dl` is the one prelude. Eleven analyses had each
+  derived "this function waits on that module" by hand and no two agreed;
+  the analyses shrink onto the shared definitions and every encore golden
+  is byte-identical. `resolved_calls.dl` adds the self-directed rows to
+  `sync_dep` for analyses that accept value flow; `sync_call_target` is gone.
+- One extraction pass. The pipeline indexes every call site once per
+  module (`Argus.Extractor.CallSites`) and attaches the per-function
+  control-flow graphs; extractors filter the index
+  (`Helpers.each_remote_call/3`) instead of each walking the instruction
+  stream, and walk control flow through `Argus.Cfg.Walk` instead of three
+  private copies of the loop. `Helpers.return_shapes/1` replaces six
+  return-tuple scanners; `Argus.Extractor.Dispatch` reads clause heads.
+- `Argus.Extractors.ApiCalls` is one table-driven extractor for every
+  "call to a known API, with an argument read back" fact — the process
+  calls (`sync_call`, `async_cast`, `sup_call`, `sync_call_timeout`),
+  atom safety, ports and distribution. It replaces the AtomSafety, Ports,
+  Distributed and GenEvent extractors and the call tables in OTP.
+- `Argus.Extractor` gains `relations/0`; `Argus.ExtractorRelationsTest`
+  holds every declaration to the schema and to the rules.
+- `Argus.Analysis.run/3` filters its results to the analysis's declared
+  outputs and removes its work directory; `Argus.Souffle.run/3` removes
+  the output directory it created; `Argus.Findings.run/2` takes a
+  `:facts_dir` to evaluate an existing extraction and cleans up its own.
+  `scripts/analyze_project.exs` extracts once for every analysis instead
+  of once per analysis plus twice more.
+
+### Fixed
+
+- `ets.dl` matched the declared behaviour string, so an Erlang
+  `-behaviour(application)` module owning a table was reported as
+  unprotected.
+- Via-named call targets (`"via:Registry"`), which no rule can resolve to
+  a module, no longer reach findings as if they were one.
+- gen_statem state-function IDs were minted from `String.to_atom/1` of
+  the module's inspected name and were unresolvable.
+
 ### Removed
 
 - The autoresearch loop (`Argus.Autoresearch`, `mix argus.autoresearch`,

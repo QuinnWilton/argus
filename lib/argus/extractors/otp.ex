@@ -2,18 +2,14 @@ defmodule Argus.Extractors.OTP do
   @moduledoc """
   OTP pattern extractor.
 
-  Detects OTP behaviour implementations and GenServer.call/cast targets
-  from module attributes and bytecode patterns.
+  Detects OTP behaviour implementations, process links, and the
+  init/handle_continue handshake from module attributes and bytecode.
+  The call facts (`sync_call`, `async_cast`, `sup_call`) come from
+  `Argus.Extractors.ApiCalls`.
 
   ## Emitted facts
 
   - `implements_behaviour(mod, behaviour)` — module implements a behaviour
-  - `sync_call(caller_func, callee_mod)` — GenServer.call target detected
-  - `sync_call_timeout(caller_func, callee_mod, timeout_ms)` — timeout value at call site
-  - `sup_call(id, func, api, op, target)` — a synchronous management call into a
-    supervisor process (`Supervisor.start_child/2`, `DynamicSupervisor.terminate_child/2`,
-    `Task.Supervisor.async_nolink/2`, ...); `target` is the supervisor argument
-  - `async_cast(caller_func, callee_mod)` — GenServer.cast target detected
   - `process_link(from_mod, to_mod)` — Process.link / :erlang.link call
   - `init_continues_to(mod, tag)` — module's init/1 returns `{:continue, tag}`
   - `handle_continue_clause(mod, tag, func_id)` — handle_continue/2 clause matching `tag`
@@ -22,7 +18,6 @@ defmodule Argus.Extractors.OTP do
   @behaviour Argus.Extractor
 
   alias Argus.Extractor.Helpers
-  alias Argus.InstrId
 
   import Argus.Extractor.Helpers,
     only: [
@@ -30,25 +25,18 @@ defmodule Argus.Extractors.OTP do
       each_remote_call: 3,
       get_behaviours: 1,
       match_remote_call: 1,
-      module_target: 3,
       resolve_callee: 1,
       return_shapes: 1,
-      timeout_ms: 3,
-      track_dynamic: 5,
-      track_imprecision: 4
+      track_dynamic: 5
     ]
 
   @impl true
   def relations,
     do: [
-      :async_cast,
       :handle_continue_clause,
       :implements_behaviour,
       :init_continues_to,
-      :process_link,
-      :sup_call,
-      :sync_call,
-      :sync_call_timeout
+      :process_link
     ]
 
   @impl true
@@ -60,7 +48,6 @@ defmodule Argus.Extractors.OTP do
 
     %{}
     |> extract_behaviours(mod_str, module_data.attributes)
-    |> extract_genserver_calls(module_data)
     |> extract_link_calls(mod_str, module_data)
     |> extract_continue_facts(mod, mod_str, functions)
   end
@@ -194,180 +181,6 @@ defmodule Argus.Extractors.OTP do
       add_fact(acc, :implements_behaviour, [mod_str, inspect(behaviour)])
     end)
   end
-
-  defp extract_genserver_calls(facts, module_data),
-    do: each_remote_call(module_data, facts, &handle_genserver_call/3)
-
-  # Default-timeout sync calls (5000ms): {Module, function, arity} → match.
-  @default_timeout_sync [
-    {GenServer, :call, 2},
-    {:gen_server, :call, 2},
-    {GenStage, :call, 2},
-    {Agent, :get, 2},
-    {Agent, :update, 2},
-    {Agent, :get_and_update, 2}
-  ]
-
-  # Sync calls whose default timeout is :infinity, not 5000ms. A
-  # gen_statem client that omits the timeout waits forever.
-  @infinity_default_sync [
-    {:gen_statem, :call, 2},
-    {GenStateMachine, :call, 2}
-  ]
-
-  # Explicit-timeout sync calls (timeout in x2).
-  @explicit_timeout_sync [
-    {GenServer, :call, 3},
-    {:gen_server, :call, 3},
-    {:gen_statem, :call, 3},
-    {GenStateMachine, :call, 3},
-    {GenStage, :call, 3},
-    {Agent, :get, 3},
-    {Agent, :update, 3},
-    {Agent, :get_and_update, 3}
-  ]
-
-  # Async cast calls.
-  @async_cast_calls [
-    {GenServer, :cast, 2},
-    {:gen_server, :cast, 2},
-    {:gen_statem, :cast, 2},
-    {GenStateMachine, :cast, 2},
-    {GenStage, :cast, 2}
-  ]
-
-  # Synchronous management calls into a supervisor process. Every one of
-  # these is a GenServer.call under the hood — start_child waits for the
-  # child's init/1 to return, terminate_child waits for the child's whole
-  # shutdown — but none names a GenServer module, so they were invisible
-  # to every analysis reasoning about who blocks on whom. The supervisor
-  # argument is always {x,0}.
-  @sup_calls [
-    {Supervisor, :start_child, 2},
-    {Supervisor, :terminate_child, 2},
-    {Supervisor, :restart_child, 2},
-    {Supervisor, :delete_child, 2},
-    {Supervisor, :which_children, 1},
-    {Supervisor, :count_children, 1},
-    {Supervisor, :stop, 1},
-    {Supervisor, :stop, 2},
-    {Supervisor, :stop, 3},
-    {DynamicSupervisor, :start_child, 2},
-    {DynamicSupervisor, :terminate_child, 2},
-    {DynamicSupervisor, :which_children, 1},
-    {DynamicSupervisor, :count_children, 1},
-    {DynamicSupervisor, :stop, 1},
-    {DynamicSupervisor, :stop, 2},
-    {DynamicSupervisor, :stop, 3},
-    {Task.Supervisor, :start_child, 2},
-    {Task.Supervisor, :start_child, 3},
-    {Task.Supervisor, :async, 2},
-    {Task.Supervisor, :async, 3},
-    {Task.Supervisor, :async, 4},
-    {Task.Supervisor, :async_nolink, 2},
-    {Task.Supervisor, :async_nolink, 3},
-    {Task.Supervisor, :async_nolink, 4},
-    {Task.Supervisor, :terminate_child, 2},
-    {Task.Supervisor, :children, 1},
-    {PartitionSupervisor, :which_children, 1},
-    {PartitionSupervisor, :count_children, 1}
-  ]
-
-  defp handle_genserver_call(facts, ctx, mfa) when mfa in @default_timeout_sync do
-    {callee, facts} = resolve_target_with_via(facts, ctx)
-
-    facts
-    |> add_fact(:sync_call, [ctx.func_id, callee])
-    |> add_fact(:sync_call_timeout, [ctx.func_id, callee, "5000"])
-  end
-
-  defp handle_genserver_call(facts, ctx, mfa) when mfa in @infinity_default_sync do
-    {callee, facts} = resolve_target_with_via(facts, ctx)
-
-    facts
-    |> add_fact(:sync_call, [ctx.func_id, callee])
-    |> add_fact(:sync_call_timeout, [ctx.func_id, callee, "-1"])
-  end
-
-  defp handle_genserver_call(facts, ctx, mfa) when mfa in @explicit_timeout_sync do
-    {callee, facts} = resolve_target_with_via(facts, ctx)
-    timeout = timeout_ms(ctx.instrs, ctx.idx, {:x, 2})
-
-    facts
-    |> track_timeout_imprecision(timeout, ctx)
-    |> add_fact(:sync_call, [ctx.func_id, callee])
-    |> add_fact(:sync_call_timeout, [ctx.func_id, callee, timeout])
-  end
-
-  defp handle_genserver_call(facts, ctx, mfa) when mfa in @async_cast_calls do
-    {callee, facts} = resolve_target_with_via(facts, ctx)
-    add_fact(facts, :async_cast, [ctx.func_id, callee])
-  end
-
-  # GenServer.multi_call/2,3,4 — synchronous multi-node call, infinity default.
-  defp handle_genserver_call(facts, ctx, {GenServer, :multi_call, arity})
-       when arity in [2, 3, 4] do
-    {callee, facts} = resolve_target_with_via(facts, ctx)
-
-    facts
-    |> add_fact(:sync_call, [ctx.func_id, callee])
-    |> add_fact(:sync_call_timeout, [ctx.func_id, callee, "-1"])
-  end
-
-  defp handle_genserver_call(facts, ctx, {api, op, _arity} = mfa) when mfa in @sup_calls do
-    {target, facts} = resolve_supervisor_target(facts, ctx)
-
-    add_fact(facts, :sup_call, [
-      InstrId.mint(ctx.func_id, ctx.idx),
-      ctx.func_id,
-      inspect(api),
-      to_string(op),
-      target
-    ])
-  end
-
-  defp handle_genserver_call(facts, _ctx, _mfa), do: facts
-
-  # The supervisor argument of a management call, in the same vocabulary
-  # as sync_call's callee: a module atom, "via:Registry" for a via tuple,
-  # or "dynamic". Kept apart from resolve_target_with_via/2 so that a
-  # supervisor named through a registry does not also mint a
-  # sync_call_via row, which resolved_calls.dl reads as evidence of a
-  # GenServer.call.
-  defp resolve_supervisor_target(facts, ctx) do
-    case module_target(ctx.instrs, ctx.idx, {:x, 0}) do
-      "dynamic" -> {"dynamic", track_imprecision(facts, ctx, :supervisor_target, :sup_call)}
-      target -> {target, facts}
-    end
-  end
-
-  # Resolve the call target's first argument (x0 — the GenServer reference)
-  # to a callee tag.
-  #
-  # The shape `{:via, Registry, {MyApp.Registry, :worker_a}}` decomposes as:
-  #   - the second element is the via-module (Registry behaviour) — ignored here
-  #   - the third element is `{registry_instance, key}` where registry_instance
-  #     is the named registry process (e.g. MyApp.Registry) that owns the key
-  #
-  # Returns `{callee_tag, updated_facts}` where `callee_tag` is one of:
-  # - `"Module"` (inspected literal atom)
-  # - `"via:RegistryInstance"` (when the target is a via tuple)
-  # - `"dynamic"` (everything else, including function parameters)
-  defp resolve_target_with_via(facts, ctx) do
-    case module_target(ctx.instrs, ctx.idx, {:x, 0}) do
-      "dynamic" -> {"dynamic", track_imprecision(facts, ctx, :genserver_callee, :sync_call)}
-      target -> {target, facts}
-    end
-  end
-
-  # The "0" in sync_call_timeout is a sentinel for "we couldn't resolve
-  # the timeout argument" — record it as imprecision so the coverage
-  # report knows about it.
-  defp track_timeout_imprecision(facts, "0", ctx) do
-    track_imprecision(facts, ctx, :sync_call_timeout, :sync_call_timeout)
-  end
-
-  defp track_timeout_imprecision(facts, _other, _ctx), do: facts
 
   defp extract_link_calls(facts, mod_str, module_data) do
     each_remote_call(module_data, facts, fn acc, ctx, mfa ->

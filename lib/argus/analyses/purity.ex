@@ -43,7 +43,7 @@ defmodule Argus.Analyses.Purity do
       # name registration as effects. Declaring only the Purity extractor
       # left them empty, so the contract was silently blind to all three.
       Argus.Extractors.ETS,
-      Argus.Extractors.Ports,
+      Argus.Extractors.ApiCalls,
       Argus.Extractors.ProcessRegistry
     ]
 

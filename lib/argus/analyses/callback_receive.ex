@@ -47,7 +47,7 @@ defmodule Argus.Analyses.CallbackReceive do
   def rules_file, do: "analyses/callback_receive.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.OTP]
+  def extractors, do: [Argus.Extractors.OTP, Argus.Extractors.ApiCalls]
 
   @fields [
     {:id, :symbol, "instruction ID of the receive"},

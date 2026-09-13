@@ -1,13 +1,13 @@
 defmodule Argus.Extractors.PortsTest do
   use ExUnit.Case, async: true
 
-  alias Argus.Extractors.Ports
+  alias Argus.Extractors.ApiCalls
 
   setup do
     {:ok, data} =
       BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.PortUser)))
 
-    %{rows: Ports.extract(data) |> Map.get(:port_open, [])}
+    %{rows: ApiCalls.extract(data) |> Map.get(:port_open, [])}
   end
 
   defp target(rows, mechanism) do
@@ -58,6 +58,6 @@ defmodule Argus.Extractors.PortsTest do
     {:ok, data} =
       BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.PlainModule)))
 
-    assert Ports.extract(data) == %{}
+    assert ApiCalls.extract(data) == %{}
   end
 end

@@ -43,7 +43,7 @@ defmodule Argus.Analyses.Distributed do
   def rules_file, do: "analyses/distributed.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.Distributed, Argus.Extractors.OTP]
+  def extractors, do: [Argus.Extractors.ApiCalls, Argus.Extractors.OTP]
 
   @impl true
   def output_relations do

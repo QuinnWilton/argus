@@ -44,7 +44,7 @@ defmodule Argus.Analyses.AtomSafety do
   def rules_file, do: "analyses/atom_safety.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.AtomSafety]
+  def extractors, do: [Argus.Extractors.ApiCalls]
 
   @impl true
   def output_relations do

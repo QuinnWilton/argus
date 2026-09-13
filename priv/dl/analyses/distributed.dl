@@ -15,7 +15,7 @@
 .output rpc_without_timeout
 
 rpc_without_timeout(func, variant, id) :-
-  rpc_call(id, func, variant, "infinity").
+  rpc_call(id, func, variant, "-1").
 
 // ── RPC in GenServer callback ────────────────────────────────────
 

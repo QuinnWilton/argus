@@ -57,11 +57,9 @@ defmodule Argus.Analyses.Coverage do
     # the analysis reproducible and makes the dependency explicit in
     # `mix argus info coverage`.
     [
-      Argus.Extractors.AtomSafety,
-      Argus.Extractors.Distributed,
+      Argus.Extractors.ApiCalls,
       Argus.Extractors.ErrorHandling,
       Argus.Extractors.ETS,
-      Argus.Extractors.GenEvent,
       Argus.Extractors.GenStatem,
       Argus.Extractors.OTP,
       Argus.Extractors.ProcessRegistry,

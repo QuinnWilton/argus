@@ -33,7 +33,12 @@ defmodule Argus.Analyses.UnboundedDynamicChildren do
 
   @impl true
   def extractors,
-    do: [Argus.Extractors.Supervision, Argus.Extractors.OTP, Argus.Extractors.Endpoint]
+    do: [
+      Argus.Extractors.Supervision,
+      Argus.Extractors.OTP,
+      Argus.Extractors.ApiCalls,
+      Argus.Extractors.Endpoint
+    ]
 
   @impl true
   def output_relations do

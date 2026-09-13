@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 29
+  @schema_version 30
 
   # Layer 1: Module-level facts.
 
@@ -166,27 +166,6 @@ defmodule Argus.Schema do
     """
   }
 
-  @tuple_literal %{
-    name: :tuple_literal,
-    layer: 2,
-    fields: [
-      {:id, :symbol, "the constructing instruction"},
-      {:reg, :symbol, "the destination x-register, e.g. 'x1'"},
-      {:tag, :symbol, "the tuple's leading atom"},
-      {:size, :number, "the tuple's arity"}
-    ],
-    doc: """
-    A tuple built with a literal atom head. Complements `literal_value`, \
-    which already records scalars written by `move` — including atoms — \
-    with their register; `put_tuple2` was the gap, so `{:get, key}` was \
-    invisible where a bare `:get` was not, and those are different messages.
-
-    The register is the point. `def_use` says which write feeds which read \
-    but not which OPERAND, so a call reading {x,0} and {x,1} gets two edges \
-    and neither says which is the message. The write knows.
-    """
-  }
-
   @def_use %{
     name: :def_use,
     layer: 1,
@@ -215,6 +194,27 @@ defmodule Argus.Schema do
       {:reg, :symbol, "used register"}
     ],
     doc: "Register use (read)."
+  }
+
+  @tuple_literal %{
+    name: :tuple_literal,
+    layer: 1,
+    fields: [
+      {:id, :symbol, "the constructing instruction"},
+      {:reg, :symbol, "the destination x-register, e.g. 'x1'"},
+      {:tag, :symbol, "the tuple's leading atom"},
+      {:size, :number, "the tuple's arity"}
+    ],
+    doc: """
+    A tuple built with a literal atom head. Complements `literal_value`, \
+    which already records scalars written by `move` — including atoms — \
+    with their register; `put_tuple2` was the gap, so `{:get, key}` was \
+    invisible where a bare `:get` was not, and those are different messages.
+
+    The register is the point. `def_use` says which write feeds which read \
+    but not which OPERAND, so a call reading {x,0} and {x,1} gets two edges \
+    and neither says which is the message. The write knows.
+    """
   }
 
   @literal_value %{
@@ -1149,7 +1149,8 @@ defmodule Argus.Schema do
       {:id, :symbol, "instruction ID"},
       {:func, :symbol, "containing function ID"},
       {:variant, :symbol, "RPC variant (rpc, erpc, multicall)"},
-      {:timeout, :symbol, "timeout value (ms, infinity, or dynamic)"}
+      {:timeout, :symbol,
+       "timeout in ms, -1 for :infinity, 0 when unknown — as sync_call_timeout"}
     ],
     doc: "RPC call with timeout information."
   }
@@ -1513,6 +1514,7 @@ defmodule Argus.Schema do
     @use_rel,
     @def_use,
     @literal_value,
+    @tuple_literal,
     @jump,
     @branch,
     @label_at,
@@ -1567,7 +1569,6 @@ defmodule Argus.Schema do
     @tls_connect,
     @callback_tag,
     @callback_total,
-    @tuple_literal,
     @init_continues_to,
     @handle_continue_clause,
     @ets_new,

@@ -39,7 +39,7 @@ defmodule Argus.Analyses.MessageContract do
 
   @impl true
   def extractors,
-    do: [Argus.Extractors.CallbackTag, Argus.Extractors.Literal, Argus.Extractors.OTP]
+    do: [Argus.Extractors.CallbackTag, Argus.Extractors.OTP, Argus.Extractors.ApiCalls]
 
   @impl true
   def output_relations do

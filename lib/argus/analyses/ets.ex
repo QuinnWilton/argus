@@ -46,7 +46,13 @@ defmodule Argus.Analyses.Ets do
   def rules_file, do: "analyses/ets.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.ETS, Argus.Extractors.OTP, Argus.Extractors.Supervision]
+  def extractors,
+    do: [
+      Argus.Extractors.ETS,
+      Argus.Extractors.OTP,
+      Argus.Extractors.ApiCalls,
+      Argus.Extractors.Supervision
+    ]
 
   @impl true
   def output_relations do

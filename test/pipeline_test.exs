@@ -190,7 +190,9 @@ defmodule Argus.PipelineTest do
 
     test "default run produces no imprecision facts" do
       {:ok, facts} =
-        Pipeline.extract([@imprecision_module], extractors: [Argus.Extractors.OTP])
+        Pipeline.extract([@imprecision_module],
+          extractors: [Argus.Extractors.OTP, Argus.Extractors.ApiCalls, Argus.Extractors.ApiCalls]
+        )
 
       assert facts[:imprecision] in [nil, []]
     end
@@ -198,7 +200,7 @@ defmodule Argus.PipelineTest do
     test "explicit trace_imprecision: false produces no imprecision facts" do
       {:ok, facts} =
         Pipeline.extract([@imprecision_module],
-          extractors: [Argus.Extractors.OTP],
+          extractors: [Argus.Extractors.OTP, Argus.Extractors.ApiCalls, Argus.Extractors.ApiCalls],
           trace_imprecision: false
         )
 
@@ -208,7 +210,7 @@ defmodule Argus.PipelineTest do
     test "trace_imprecision: true records dynamic fallbacks" do
       {:ok, facts} =
         Pipeline.extract([@imprecision_module],
-          extractors: [Argus.Extractors.OTP],
+          extractors: [Argus.Extractors.OTP, Argus.Extractors.ApiCalls, Argus.Extractors.ApiCalls],
           trace_imprecision: true
         )
 
@@ -226,12 +228,14 @@ defmodule Argus.PipelineTest do
       # worker process (the first run's try/after must have cleared the flag).
       {:ok, _} =
         Pipeline.extract([@imprecision_module],
-          extractors: [Argus.Extractors.OTP],
+          extractors: [Argus.Extractors.OTP, Argus.Extractors.ApiCalls, Argus.Extractors.ApiCalls],
           trace_imprecision: true
         )
 
       {:ok, facts} =
-        Pipeline.extract([@imprecision_module], extractors: [Argus.Extractors.OTP])
+        Pipeline.extract([@imprecision_module],
+          extractors: [Argus.Extractors.OTP, Argus.Extractors.ApiCalls, Argus.Extractors.ApiCalls]
+        )
 
       assert facts[:imprecision] in [nil, []]
     end

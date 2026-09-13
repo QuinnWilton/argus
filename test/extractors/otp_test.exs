@@ -1,7 +1,7 @@
 defmodule Argus.Extractors.OTPTest do
   use ExUnit.Case, async: true
 
-  alias Argus.Extractors.OTP
+  alias Argus.Extractors.{ApiCalls, OTP}
 
   describe "extract/1 — behaviour detection" do
     test "detects GenServer behaviour" do
@@ -42,7 +42,7 @@ defmodule Argus.Extractors.OTPTest do
       {:ok, data} =
         BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.MyGenServer)))
 
-      facts = OTP.extract(data)
+      facts = ApiCalls.extract(data)
 
       assert Map.has_key?(facts, :sync_call)
       calls = facts[:sync_call]
@@ -53,7 +53,7 @@ defmodule Argus.Extractors.OTPTest do
       {:ok, data} =
         BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.MyGenServer)))
 
-      facts = OTP.extract(data)
+      facts = ApiCalls.extract(data)
 
       assert Map.has_key?(facts, :async_cast)
       casts = facts[:async_cast]
@@ -64,7 +64,7 @@ defmodule Argus.Extractors.OTPTest do
       {:ok, data} =
         BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.PlainModule)))
 
-      facts = OTP.extract(data)
+      facts = ApiCalls.extract(data)
 
       refute Map.has_key?(facts, :sync_call)
       refute Map.has_key?(facts, :async_cast)
@@ -76,7 +76,7 @@ defmodule Argus.Extractors.OTPTest do
       {:ok, data} =
         BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.SupCaller)))
 
-      %{facts: OTP.extract(data)}
+      %{facts: ApiCalls.extract(data)}
     end
 
     test "each call is recorded with its api, op and resolved target", %{facts: facts} do
@@ -101,7 +101,7 @@ defmodule Argus.Extractors.OTPTest do
       {:ok, data} =
         BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.AgentCaller)))
 
-      facts = OTP.extract(data)
+      facts = ApiCalls.extract(data)
 
       assert Map.has_key?(facts, :sync_call)
       calls = facts[:sync_call]
@@ -116,7 +116,7 @@ defmodule Argus.Extractors.OTPTest do
           to_string(:code.which(Argus.Test.Fixtures.ErlangStyleCaller))
         )
 
-      facts = OTP.extract(data)
+      facts = ApiCalls.extract(data)
 
       assert Map.has_key?(facts, :sync_call)
     end
@@ -127,7 +127,7 @@ defmodule Argus.Extractors.OTPTest do
           to_string(:code.which(Argus.Test.Fixtures.ErlangStyleCaller))
         )
 
-      facts = OTP.extract(data)
+      facts = ApiCalls.extract(data)
 
       assert Map.has_key?(facts, :async_cast)
     end
@@ -138,7 +138,7 @@ defmodule Argus.Extractors.OTPTest do
       {:ok, data} =
         BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.MultiCallModule)))
 
-      facts = OTP.extract(data)
+      facts = ApiCalls.extract(data)
 
       assert Map.has_key?(facts, :sync_call)
     end
@@ -151,7 +151,7 @@ defmodule Argus.Extractors.OTPTest do
           to_string(:code.which(Argus.Test.Fixtures.ExplicitTimeoutCaller))
         )
 
-      facts = OTP.extract(data)
+      facts = ApiCalls.extract(data)
 
       assert Map.has_key?(facts, :sync_call_timeout)
       timeouts = facts[:sync_call_timeout]
@@ -168,7 +168,7 @@ defmodule Argus.Extractors.OTPTest do
           to_string(:code.which(Argus.Test.Fixtures.ExplicitTimeoutCaller))
         )
 
-      facts = OTP.extract(data)
+      facts = ApiCalls.extract(data)
       timeouts = facts[:sync_call_timeout]
 
       # call_with_explicit uses GenServer.call/3 with 10_000.
@@ -183,7 +183,7 @@ defmodule Argus.Extractors.OTPTest do
           to_string(:code.which(Argus.Test.Fixtures.ExplicitTimeoutCaller))
         )
 
-      facts = OTP.extract(data)
+      facts = ApiCalls.extract(data)
       timeouts = facts[:sync_call_timeout]
 
       # call_with_infinity uses GenServer.call/3 with :infinity.
@@ -198,7 +198,7 @@ defmodule Argus.Extractors.OTPTest do
           to_string(:code.which(Argus.Test.Fixtures.ExplicitTimeoutCaller))
         )
 
-      facts = OTP.extract(data)
+      facts = ApiCalls.extract(data)
       timeouts = facts[:sync_call_timeout]
 
       # erlang_call_with_timeout uses :gen_server.call/3 with 15_000.
@@ -211,7 +211,7 @@ defmodule Argus.Extractors.OTPTest do
       {:ok, data} =
         BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.MultiCallModule)))
 
-      facts = OTP.extract(data)
+      facts = ApiCalls.extract(data)
 
       assert Map.has_key?(facts, :sync_call_timeout)
       timeouts = facts[:sync_call_timeout]
@@ -239,7 +239,7 @@ defmodule Argus.Extractors.OTPTest do
       {:ok, data} =
         BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.ViaTupleCaller)))
 
-      facts = OTP.extract(data)
+      facts = ApiCalls.extract(data)
 
       sync_calls = facts[:sync_call]
 
@@ -254,7 +254,7 @@ defmodule Argus.Extractors.OTPTest do
       assert {:ok, facts} =
                Argus.Pipeline.extract(
                  [Argus.Test.Fixtures.MyGenServer],
-                 extractors: [OTP]
+                 extractors: [OTP, ApiCalls]
                )
 
       assert Map.has_key?(facts, :implements_behaviour)

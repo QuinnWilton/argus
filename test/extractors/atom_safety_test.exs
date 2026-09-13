@@ -1,7 +1,7 @@
-defmodule Argus.Extractors.AtomSafetyTest do
+defmodule Argus.Extractors.ApiCalls.AtomSafetyTest do
   use ExUnit.Case, async: true
 
-  alias Argus.Extractors.AtomSafety
+  alias Argus.Extractors.ApiCalls
 
   defp disassemble(mod) do
     {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
@@ -10,7 +10,7 @@ defmodule Argus.Extractors.AtomSafetyTest do
 
   describe "extract/1 — unsafe atom creation" do
     test "detects String.to_atom" do
-      facts = AtomSafety.extract(disassemble(Argus.Test.Fixtures.UnsafeAtomCreation))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.UnsafeAtomCreation))
 
       assert Map.has_key?(facts, :unsafe_atom_creation)
       rows = facts[:unsafe_atom_creation]
@@ -20,7 +20,7 @@ defmodule Argus.Extractors.AtomSafetyTest do
     end
 
     test "detects :erlang.binary_to_atom" do
-      facts = AtomSafety.extract(disassemble(Argus.Test.Fixtures.UnsafeAtomCreation))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.UnsafeAtomCreation))
 
       rows = facts[:unsafe_atom_creation]
       apis = Enum.map(rows, fn [_, _, api] -> api end)
@@ -28,7 +28,7 @@ defmodule Argus.Extractors.AtomSafetyTest do
     end
 
     test "detects :erlang.list_to_atom" do
-      facts = AtomSafety.extract(disassemble(Argus.Test.Fixtures.UnsafeAtomCreation))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.UnsafeAtomCreation))
 
       rows = facts[:unsafe_atom_creation]
       apis = Enum.map(rows, fn [_, _, api] -> api end)
@@ -38,7 +38,7 @@ defmodule Argus.Extractors.AtomSafetyTest do
 
   describe "extract/1 — unsafe deserialization" do
     test "detects binary_to_term/1 as unsafe" do
-      facts = AtomSafety.extract(disassemble(Argus.Test.Fixtures.UnsafeDeserialization))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.UnsafeDeserialization))
 
       assert Map.has_key?(facts, :unsafe_deserialization)
       rows = facts[:unsafe_deserialization]
@@ -49,7 +49,7 @@ defmodule Argus.Extractors.AtomSafetyTest do
     end
 
     test "records [:safe] as atoms_only, because that is all it is" do
-      facts = AtomSafety.extract(disassemble(Argus.Test.Fixtures.UnsafeDeserialization))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.UnsafeDeserialization))
 
       rows = facts[:unsafe_deserialization]
 
@@ -64,7 +64,7 @@ defmodule Argus.Extractors.AtomSafetyTest do
     end
 
     test "records a term-walking decoder as validated" do
-      facts = AtomSafety.extract(disassemble(Argus.Test.Fixtures.UnsafeDeserialization))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.UnsafeDeserialization))
 
       assert Enum.any?(facts[:unsafe_deserialization], fn [_, _, api, safety] ->
                String.contains?(api, "non_executable_binary_to_term") and safety == "validated"
@@ -74,7 +74,7 @@ defmodule Argus.Extractors.AtomSafetyTest do
 
   describe "extract/1 — code execution" do
     test "detects Code.eval_string" do
-      facts = AtomSafety.extract(disassemble(Argus.Test.Fixtures.CodeExecution))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.CodeExecution))
 
       assert Map.has_key?(facts, :code_execution)
       rows = facts[:code_execution]
@@ -83,7 +83,7 @@ defmodule Argus.Extractors.AtomSafetyTest do
     end
 
     test "detects :os.cmd" do
-      facts = AtomSafety.extract(disassemble(Argus.Test.Fixtures.CodeExecution))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.CodeExecution))
 
       rows = facts[:code_execution]
       apis = Enum.map(rows, fn [_, _, api] -> api end)
@@ -91,7 +91,7 @@ defmodule Argus.Extractors.AtomSafetyTest do
     end
 
     test "detects System.cmd with dynamic args" do
-      facts = AtomSafety.extract(disassemble(Argus.Test.Fixtures.CodeExecution))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.CodeExecution))
 
       rows = facts[:code_execution]
       apis = Enum.map(rows, fn [_, _, api] -> api end)
@@ -99,7 +99,7 @@ defmodule Argus.Extractors.AtomSafetyTest do
     end
 
     test "skips System.cmd with static command and args" do
-      facts = AtomSafety.extract(disassemble(Argus.Test.Fixtures.CodeExecution))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.CodeExecution))
 
       rows = facts[:code_execution] || []
 
@@ -115,7 +115,7 @@ defmodule Argus.Extractors.AtomSafetyTest do
 
   describe "extract/1 — clean module" do
     test "returns empty for plain module" do
-      facts = AtomSafety.extract(disassemble(Argus.Test.Fixtures.PlainModule))
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.PlainModule))
       assert facts == %{}
     end
   end
@@ -125,7 +125,7 @@ defmodule Argus.Extractors.AtomSafetyTest do
       assert {:ok, facts} =
                Argus.Pipeline.extract(
                  [Argus.Test.Fixtures.UnsafeAtomCreation],
-                 extractors: [AtomSafety]
+                 extractors: [ApiCalls]
                )
 
       assert Map.has_key?(facts, :unsafe_atom_creation)

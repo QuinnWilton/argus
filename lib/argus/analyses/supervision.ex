@@ -48,7 +48,7 @@ defmodule Argus.Analyses.Supervision do
     do: [
       Argus.Extractors.Supervision,
       Argus.Extractors.OTP,
-      Argus.Extractors.GenEvent,
+      Argus.Extractors.ApiCalls,
       Argus.Extractors.Reply,
       # See sync_call_in_init: `sync_call` is partly derived by
       # clientlib/interprocedural.dl, which needs call_arg and

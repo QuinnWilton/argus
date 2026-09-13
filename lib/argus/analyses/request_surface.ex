@@ -41,7 +41,7 @@ defmodule Argus.Analyses.RequestSurface do
   def rules_file, do: "analyses/request_surface.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.AtomSafety, Argus.Extractors.OTP, Argus.Extractors.Router]
+  def extractors, do: [Argus.Extractors.ApiCalls, Argus.Extractors.OTP, Argus.Extractors.Router]
 
   @site_fields [
     {:id, :symbol, "instruction ID of the sink call"},

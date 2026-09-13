@@ -65,8 +65,8 @@ defmodule Argus.Analyses.DeferredStartupDeadlock do
   def extractors,
     do: [
       Argus.Extractors.OTP,
+      Argus.Extractors.ApiCalls,
       Argus.Extractors.Supervision,
-      Argus.Extractors.GenEvent,
       Argus.Extractors.Reply,
       # See sync_call_in_init: `sync_call` is partly derived by
       # clientlib/interprocedural.dl, which needs call_arg and
