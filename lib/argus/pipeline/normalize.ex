@@ -105,4 +105,20 @@ defmodule Argus.Pipeline.Normalize do
   defp alloc_words([{:words, n} | _rest]) when is_integer(n), do: n
   defp alloc_words([_other | rest]), do: alloc_words(rest)
   defp alloc_words(_not_a_cons), do: 0
+
+  @doc """
+  The name and arity a function ID was minted from, parsed right-anchored
+  so compiler-generated names containing `/` or `:` survive.
+  """
+  @spec func_id_name_arity(String.t()) :: {String.t(), non_neg_integer()}
+  def func_id_name_arity(func_id) do
+    {head, arity} = split_last(func_id, "/")
+    {_mod, name} = split_last(head, ":")
+    {name, String.to_integer(arity)}
+  end
+
+  defp split_last(string, sep) do
+    parts = String.split(string, sep)
+    {Enum.join(Enum.drop(parts, -1), sep), List.last(parts)}
+  end
 end

@@ -44,6 +44,10 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
   `statem_event_clause`, `statem_info_catchall` and `statem_event_catchall`.
   """
 
+  alias Argus.Cfg.Function
+  alias Argus.Cfg.Walk
+  alias Argus.Extractor.Dispatch
+
   @x0 {:x, 0}
 
   @type t :: %{
@@ -54,20 +58,25 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
 
   @doc """
   Reads one callback's clause heads. The caller turns the answer into
-  facts; this module only walks bytecode.
+  facts; this module only walks bytecode, over the function's graph.
+  Without a graph nothing is a catch-all.
   """
-  @spec analyse([tuple()]) :: t()
-  def analyse(instrs) do
-    indexed = Enum.with_index(instrs)
-    by_idx = Map.new(indexed, fn {instr, idx} -> {idx, instr} end)
-    labels = Map.new(for {{:label, l}, idx} <- indexed, do: {l, idx})
-    func_info = func_info_label(instrs)
-    cfg = %{by_idx: by_idx, labels: labels, func_info: func_info, len: length(instrs)}
+  @spec analyse(Function.t() | nil, [tuple()]) :: t()
+  def analyse(fun, instrs) do
+    labels = Dispatch.labels(instrs)
+    func_info = Dispatch.func_info_label(instrs)
 
     %{
       event_types: instrs |> Enum.flat_map(&event_types_in/1) |> Enum.uniq(),
-      info_catchall?: reaches_body?(info_entries(instrs, labels), [@x0], cfg),
-      event_catchall?: reaches_body?([entry_index(instrs)], [], cfg)
+      info_catchall?:
+        reaches_body?(
+          fun,
+          instrs,
+          Dispatch.continuations_after(instrs, @x0, :info, labels),
+          [@x0],
+          func_info
+        ),
+      event_catchall?: reaches_body?(fun, instrs, [Dispatch.entry_index(instrs)], [], func_info)
     }
   end
 
@@ -96,95 +105,49 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
 
   # ── Catch-all walk ───────────────────────────────────────────────────
 
-  # Where execution continues once `{x, 0} == :info` has been
-  # established: after an is_eq_exact against :info, or at the label
-  # select_val pairs with :info.
-  defp info_entries(instrs, labels) do
-    instrs
-    |> Enum.with_index()
-    |> Enum.flat_map(fn
-      {{:test, :is_eq_exact, _f, [a, b]}, idx} ->
-        if {reg(a), b} == {@x0, {:atom, :info}} or {a, reg(b)} == {{:atom, :info}, @x0},
-          do: [idx + 1],
-          else: []
+  # A body is reachable from the starting points passing the success
+  # branch only of tests on allowed registers and taking failure
+  # branches freely, unless the failure is the FunctionClauseError label.
+  defp reaches_body?(nil, _instrs, _starts, _allowed, _func_info), do: false
 
-      {{:select_val, src, _fail, {:list, entries}}, _idx} ->
-        if reg(src) == @x0, do: info_targets(entries, labels), else: []
+  defp reaches_body?(fun, instrs, starts, allowed, func_info) do
+    result =
+      Walk.explore(fun, instrs, starts,
+        on_instr: fn
+          {:func_info, _, _, _}, _idx -> :prune
+          :return, _idx -> {:halt, :body}
+          {:call_only, _, _}, _idx -> {:halt, :body}
+          {:call_last, _, _, _}, _idx -> {:halt, :body}
+          {:call_ext_only, _, _}, _idx -> {:halt, :body}
+          {:call_ext_last, _, _, _}, _idx -> {:halt, :body}
+          {:apply_last, _, _}, _idx -> {:halt, :body}
+          {:wait, _}, _idx -> {:halt, :body}
+          _instr, _idx -> :continue
+        end,
+        follow?: &follow?(&1, &2, allowed, func_info)
+      )
 
-      _ ->
-        []
-    end)
+    match?({:halted, :body}, result)
   end
 
-  defp info_targets([{:atom, :info}, {:f, l} | rest], labels),
-    do: List.wrap(Map.get(labels, l)) ++ info_targets(rest, labels)
+  defp follow?({:test, _, _, args}, :branch_pass, allowed, _fi),
+    do: Enum.all?(regs_in(args), &(&1 in allowed))
 
-  defp info_targets([_value, _target | rest], labels), do: info_targets(rest, labels)
-  defp info_targets(_other, _labels), do: []
+  defp follow?({:test, _, _, src, _fields}, :branch_pass, allowed, _fi),
+    do: Enum.all?(regs_in(src), &(&1 in allowed))
 
-  defp reaches_body?(starts, allowed, cfg), do: walk(starts, allowed, cfg, %{})
+  defp follow?({:test, _, {:f, fail}, _}, :branch_fail, _allowed, fi), do: fail != fi
+  defp follow?({:test, _, {:f, fail}, _, _}, :branch_fail, _allowed, fi), do: fail != fi
 
-  @spec walk([non_neg_integer() | nil], [tuple()], map(), %{non_neg_integer() => true}) ::
-          boolean()
-  defp walk([], _allowed, _cfg, _seen), do: false
+  defp follow?({op, src, _, _}, {:select_arm, _}, allowed, _fi)
+       when op in [:select_val, :select_tuple_arity],
+       do: reg(src) in allowed
 
-  defp walk([idx | rest], allowed, cfg, seen) do
-    if is_nil(idx) or idx >= cfg.len or Map.has_key?(seen, idx) do
-      walk(rest, allowed, cfg, seen)
-    else
-      case step(Map.fetch!(cfg.by_idx, idx), idx, allowed, cfg) do
-        :body -> true
-        next -> walk(next ++ rest, allowed, cfg, Map.put(seen, idx, true))
-      end
-    end
-  end
+  defp follow?({op, _, {:f, fail}, _}, :select_fail, _allowed, fi)
+       when op in [:select_val, :select_tuple_arity],
+       do: fail != fi
 
-  # Where a walk may go from one instruction. Tests are the whole story:
-  # the success branch is passable only when every register the test
-  # reads is one the caller allows, and the failure branch is passable
-  # unless it raises FunctionClauseError.
-  defp step(:return, _idx, _allowed, _cfg), do: :body
-  defp step({:call_only, _, _}, _idx, _allowed, _cfg), do: :body
-  defp step({:call_last, _, _, _}, _idx, _allowed, _cfg), do: :body
-  defp step({:call_ext_only, _, _}, _idx, _allowed, _cfg), do: :body
-  defp step({:call_ext_last, _, _, _}, _idx, _allowed, _cfg), do: :body
-  defp step({:apply_last, _, _}, _idx, _allowed, _cfg), do: :body
-  defp step({:wait, _}, _idx, _allowed, _cfg), do: :body
-  defp step({:func_info, _, _, _}, _idx, _allowed, _cfg), do: []
-  defp step({:badmatch, _}, _idx, _allowed, _cfg), do: []
-  defp step({:case_end, _}, _idx, _allowed, _cfg), do: []
-  defp step(:if_end, _idx, _allowed, _cfg), do: []
-  defp step({:jump, {:f, l}}, _idx, _allowed, cfg), do: List.wrap(Map.get(cfg.labels, l))
-
-  defp step({:test, _name, {:f, fail}, args}, idx, allowed, cfg) do
-    success = if regs_in(args) |> Enum.all?(&(&1 in allowed)), do: [idx + 1], else: []
-    success ++ failure(fail, cfg)
-  end
-
-  defp step({:test, _name, {:f, fail}, src, _fields}, idx, allowed, cfg) do
-    success = if regs_in(src) |> Enum.all?(&(&1 in allowed)), do: [idx + 1], else: []
-    success ++ failure(fail, cfg)
-  end
-
-  defp step({:select_val, src, {:f, fail}, {:list, entries}}, _idx, allowed, cfg) do
-    targets = if reg(src) in allowed, do: select_targets(entries, cfg), else: []
-    targets ++ failure(fail, cfg)
-  end
-
-  defp step({:select_tuple_arity, src, {:f, fail}, {:list, entries}}, _idx, allowed, cfg) do
-    targets = if reg(src) in allowed, do: select_targets(entries, cfg), else: []
-    targets ++ failure(fail, cfg)
-  end
-
-  defp step(_instr, idx, _allowed, _cfg), do: [idx + 1]
-
-  defp failure(fail, cfg) do
-    if fail == cfg.func_info, do: [], else: List.wrap(Map.get(cfg.labels, fail))
-  end
-
-  defp select_targets(entries, cfg) do
-    for {:f, l} <- entries, target = Map.get(cfg.labels, l), do: target
-  end
+  defp follow?(_instr, _kind, _allowed, _fi), do: true
 
   # ── Registers ────────────────────────────────────────────────────────
 
@@ -203,21 +166,4 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
   end
 
   defp regs_in(_term), do: []
-
-  # ── Function layout ──────────────────────────────────────────────────
-
-  defp func_info_label(instrs) do
-    case Enum.find_index(instrs, &match?({:func_info, _, _, _}, &1)) do
-      nil -> nil
-      0 -> nil
-      idx -> with {:label, l} <- Enum.at(instrs, idx - 1), do: l, else: (_ -> nil)
-    end
-  end
-
-  defp entry_index(instrs) do
-    case Enum.find_index(instrs, &match?({:func_info, _, _, _}, &1)) do
-      nil -> 0
-      idx -> idx + 1
-    end
-  end
 end

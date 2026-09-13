@@ -41,89 +41,68 @@ defmodule Argus.Extractors.Monitor do
 
   @behaviour Argus.Extractor
 
+  alias Argus.Cfg.Walk
   alias Argus.InstrId
 
-  import Argus.Extractor.Helpers, only: [add_fact: 3, each_remote_call: 3, resolve_atom: 3]
+  import Argus.Extractor.Helpers,
+    only: [add_fact: 3, cfg: 2, each_remote_call: 3, resolve_atom: 3]
 
   @impl true
-  def extract(module_data), do: each_remote_call(module_data, %{}, &handle/3)
+  def extract(module_data),
+    do: each_remote_call(module_data, %{}, &handle(&1, &2, &3, module_data))
 
-  defp handle(facts, ctx, {Process, :monitor, 1}), do: monitor(facts, ctx)
-  defp handle(facts, ctx, {:erlang, :monitor, 2}), do: monitor(facts, ctx)
+  defp handle(facts, ctx, {Process, :monitor, 1}, data), do: monitor(facts, ctx, data)
+  defp handle(facts, ctx, {:erlang, :monitor, 2}, data), do: monitor(facts, ctx, data)
 
-  defp handle(facts, ctx, {Process, :demonitor, arity}) when arity in [1, 2],
+  defp handle(facts, ctx, {Process, :demonitor, arity}, _data) when arity in [1, 2],
     do: demonitor(facts, ctx, arity)
 
-  defp handle(facts, ctx, {:erlang, :demonitor, arity}) when arity in [1, 2],
+  defp handle(facts, ctx, {:erlang, :demonitor, arity}, _data) when arity in [1, 2],
     do: demonitor(facts, ctx, arity)
 
-  defp handle(facts, _ctx, _mfa), do: facts
+  defp handle(facts, _ctx, _mfa, _data), do: facts
 
-  defp monitor(facts, ctx) do
+  defp monitor(facts, ctx, module_data) do
     id = InstrId.mint(ctx.func_id, ctx.idx)
 
     facts =
       add_fact(facts, :monitor_call, [id, ctx.func_id, resolve_atom(ctx.instrs, ctx.idx, {:x, 0})])
 
-    if ref_dropped?(ctx.instrs, ctx.idx + 1),
+    if ref_dropped?(cfg(module_data, ctx), ctx.instrs, ctx.idx + 1),
       do: add_fact(facts, :monitor_ref_dropped, [id, ctx.func_id]),
       else: facts
   end
 
   @x0 {:x, 0}
 
-  # Walks forward from the call along every path. Each instruction
-  # either reads {x,0} (the ref is kept, and the answer is no), writes it
-  # without reading (this path is done, the ref is gone on it), touches
-  # it not at all (keep looking), branches (follow every way out), or is
-  # something with x0 in a position whose meaning is unknown — and that
-  # is "kept": a fact claiming a ref is gone must be sure. The ref is
-  # dropped when no path reaches a read.
-  defp ref_dropped?(instrs, start) do
-    indexed = Enum.with_index(instrs)
-    by_idx = Map.new(indexed, fn {instr, idx} -> {idx, instr} end)
-    labels = Map.new(for {{:label, l}, idx} <- indexed, do: {l, idx})
-    walk([start], by_idx, labels, length(instrs), %{})
+  # Walks forward from the call along every path. Each instruction either
+  # reads {x,0} (the ref is kept, and the answer is no), writes it without
+  # reading (this path is done, the ref is gone on it), touches it not at
+  # all (keep looking), or is something with x0 in a position whose
+  # meaning is unknown — and that is "kept": a fact claiming a ref is gone
+  # must be sure. Dropped when no path reaches a read. Without a graph
+  # (a module whose facts could not be decoded) the ref counts as kept.
+  defp ref_dropped?(nil, _instrs, _start), do: false
+
+  defp ref_dropped?(fun, instrs, start) do
+    result =
+      Walk.explore(fun, instrs, [start],
+        on_instr: fn
+          {:func_info, _, _, _}, _idx ->
+            :prune
+
+          instr, _idx ->
+            case classify(instr) do
+              :reads -> {:halt, :kept}
+              :unknown -> {:halt, :kept}
+              :writes -> :prune
+              :neutral -> :continue
+            end
+        end
+      )
+
+    match?({:done, _}, result)
   end
-
-  defp walk([], _by_idx, _labels, _len, _seen), do: true
-
-  defp walk([idx | rest], by_idx, labels, len, seen) do
-    if is_nil(idx) or idx >= len or Map.has_key?(seen, idx) do
-      walk(rest, by_idx, labels, len, seen)
-    else
-      instr = Map.fetch!(by_idx, idx)
-      seen = Map.put(seen, idx, true)
-
-      case classify(instr) do
-        :reads -> false
-        :unknown -> false
-        :writes -> walk(rest, by_idx, labels, len, seen)
-        :neutral -> walk(successors(instr, idx, labels) ++ rest, by_idx, labels, len, seen)
-      end
-    end
-  end
-
-  defp successors({:jump, {:f, l}}, _idx, labels), do: List.wrap(Map.get(labels, l))
-
-  defp successors({:test, _, {:f, l}, _}, idx, labels),
-    do: [idx + 1 | List.wrap(Map.get(labels, l))]
-
-  defp successors({:test, _, {:f, l}, _, _}, idx, labels),
-    do: [idx + 1 | List.wrap(Map.get(labels, l))]
-
-  defp successors({op, _, {:f, l}, {:list, entries}}, _idx, labels)
-       when op in [:select_val, :select_tuple_arity] do
-    targets = for {:f, t} <- entries, at = Map.get(labels, t), do: at
-    targets ++ List.wrap(Map.get(labels, l))
-  end
-
-  # An error exit: the ref was never read on this path.
-  defp successors({:func_info, _, _, _}, _idx, _labels), do: []
-  defp successors({:badmatch, _}, _idx, _labels), do: []
-  defp successors({:case_end, _}, _idx, _labels), do: []
-  defp successors(:if_end, _idx, _labels), do: []
-  defp successors(_instr, idx, _labels), do: [idx + 1]
 
   defp classify({:line, _}), do: :neutral
   defp classify({:allocate, _, _}), do: :neutral

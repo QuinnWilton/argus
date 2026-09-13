@@ -51,25 +51,23 @@ defmodule Argus.Cfg.Walk do
       follow?: follow?
     }
 
-    walk(Enum.reject(starts, &is_nil/1), state, MapSet.new())
+    walk(Enum.reject(starts, &is_nil/1), state, %{})
   end
 
-  defp walk([], _state, visited), do: {:done, visited}
+  defp walk([], _state, visited), do: {:done, visited |> Map.keys() |> MapSet.new()}
 
   defp walk([idx | rest], state, visited) do
-    cond do
-      idx >= tuple_size(state.instrs) or MapSet.member?(visited, idx) ->
-        walk(rest, state, visited)
+    if idx >= tuple_size(state.instrs) or Map.has_key?(visited, idx) do
+      walk(rest, state, visited)
+    else
+      instr = elem(state.instrs, idx)
+      visited = Map.put(visited, idx, true)
 
-      true ->
-        instr = elem(state.instrs, idx)
-        visited = MapSet.put(visited, idx)
-
-        case state.on_instr.(instr, idx) do
-          {:halt, answer} -> {:halted, answer}
-          :prune -> walk(rest, state, visited)
-          :continue -> walk(next(instr, idx, state) ++ rest, state, visited)
-        end
+      case state.on_instr.(instr, idx) do
+        {:halt, answer} -> {:halted, answer}
+        :prune -> walk(rest, state, visited)
+        :continue -> walk(next(instr, idx, state) ++ rest, state, visited)
+      end
     end
   end
 

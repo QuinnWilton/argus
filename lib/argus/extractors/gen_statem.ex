@@ -40,9 +40,10 @@ defmodule Argus.Extractors.GenStatem do
   import Argus.Extractor.Helpers,
     only: [
       add_fact: 3,
+      cfg: 3,
       find_function: 3,
       get_behaviours: 1,
-      scan_return_tuples: 1,
+      return_shapes: 1,
       track_dynamic: 5,
       track_imprecision: 5
     ]
@@ -92,10 +93,10 @@ defmodule Argus.Extractors.GenStatem do
 
     case callback_mode do
       :state_functions ->
-        extract_state_functions(facts, mod, functions, exports, locally_called)
+        extract_state_functions(facts, mod, module_data, exports, locally_called)
 
       :handle_event_function ->
-        extract_handle_event(facts, mod_str, functions)
+        extract_handle_event(facts, mod_str, module_data)
 
       :unknown ->
         facts
@@ -271,8 +272,9 @@ defmodule Argus.Extractors.GenStatem do
   #
   # Together these cut the corpus's gen_statem findings from 108 (all
   # false) to the genuine dead-state cases.
-  defp extract_state_functions(facts, mod, functions, exports, locally_called) do
+  defp extract_state_functions(facts, mod, module_data, exports, locally_called) do
     mod_str = inspect(mod)
+    functions = module_data.functions
 
     state_funs =
       Enum.filter(functions, fn {:function, name, arity, _entry, instrs} ->
@@ -301,12 +303,12 @@ defmodule Argus.Extractors.GenStatem do
       acc
       |> extract_transitions(mod_str, state_name, instrs, func_id)
       |> extract_timeouts(mod_str, state_name, instrs, func_id)
-      |> emit_event_clauses(mod_str, func_id, instrs)
+      |> emit_event_clauses(mod_str, func_id, cfg(module_data, name, arity), instrs)
     end)
   end
 
-  defp emit_event_clauses(facts, mod_str, func_id, instrs) do
-    clauses = EventClauses.analyse(instrs)
+  defp emit_event_clauses(facts, mod_str, func_id, fun, instrs) do
+    clauses = EventClauses.analyse(fun, instrs)
 
     facts =
       Enum.reduce(clauses.event_types, facts, fn type, acc ->
@@ -348,7 +350,7 @@ defmodule Argus.Extractors.GenStatem do
 
   defp tuple_action_return?(instrs) do
     instrs
-    |> scan_return_tuples()
+    |> return_shapes()
     |> Enum.any?(fn
       {_idx, [{:atom, head} | _]} -> MapSet.member?(@statem_action_heads, head)
       _ -> false
@@ -374,8 +376,8 @@ defmodule Argus.Extractors.GenStatem do
   # (unreachable_state, terminal_without_stop) are scoped to
   # state_functions mode, where states are real callback functions, so no
   # candidate-state harvesting is needed here.
-  defp extract_handle_event(facts, mod_str, functions) do
-    case find_function(functions, :handle_event, 4) do
+  defp extract_handle_event(facts, mod_str, module_data) do
+    case find_function(module_data.functions, :handle_event, 4) do
       nil ->
         facts
 
@@ -383,7 +385,12 @@ defmodule Argus.Extractors.GenStatem do
         facts
         |> extract_transitions(mod_str, "handle_event", instrs, "#{mod_str}:handle_event/4")
         |> extract_timeouts(mod_str, "handle_event", instrs, "#{mod_str}:handle_event/4")
-        |> emit_event_clauses(mod_str, "#{mod_str}:handle_event/4", instrs)
+        |> emit_event_clauses(
+          mod_str,
+          "#{mod_str}:handle_event/4",
+          cfg(module_data, :handle_event, 4),
+          instrs
+        )
     end
   end
 
@@ -399,7 +406,7 @@ defmodule Argus.Extractors.GenStatem do
 
   defp transitions_from_tuples(facts, mod_str, from_state, instrs, func_id, ctx) do
     instrs
-    |> scan_return_tuples()
+    |> return_shapes()
     |> Enum.reduce(facts, fn {idx, elements}, acc ->
       case elements do
         # {:next_state, target_state, data} or {:next_state, target_state, data, actions}.

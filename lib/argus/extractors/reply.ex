@@ -60,9 +60,12 @@ defmodule Argus.Extractors.Reply do
 
   @behaviour Argus.Extractor
 
+  alias Argus.Cfg
+  alias Argus.Cfg.Walk
+  alias Argus.Extractor.Dispatch
   alias Argus.InstrId
 
-  import Argus.Extractor.Helpers, only: [add_fact: 3]
+  import Argus.Extractor.Helpers, only: [add_fact: 3, cfg: 3, return_shapes: 1]
 
   # Callbacks whose return shape is a contract worth recording. Bounded on
   # purpose: return tags are only meaningful where a behaviour ascribes
@@ -81,7 +84,7 @@ defmodule Argus.Extractors.Reply do
   @from_register {:x, 1}
 
   @impl true
-  def extract(%{module: mod, functions: functions}) do
+  def extract(%{module: mod, functions: functions} = module_data) do
     Enum.reduce(functions, %{}, fn {:function, name, arity, _entry, instrs}, acc ->
       case Map.fetch(@callbacks, {name, arity}) do
         {:ok, callback} ->
@@ -89,7 +92,7 @@ defmodule Argus.Extractors.Reply do
 
           acc
           |> emit_returns(func_id, callback, instrs)
-          |> emit_retains_from(func_id, name, arity, instrs)
+          |> emit_retains_from(func_id, name, arity, instrs, cfg(module_data, name, arity))
 
         :error ->
           acc
@@ -99,67 +102,20 @@ defmodule Argus.Extractors.Reply do
 
   defp emit_returns(facts, func_id, callback, instrs) do
     instrs
-    |> Enum.with_index()
-    |> Enum.reduce(facts, fn {instr, idx}, acc ->
-      case return_shape(instr, instrs, idx) do
-        {:ok, [{:atom, tag} | rest]} ->
-          id = InstrId.mint(func_id, idx)
+    |> return_shapes()
+    |> Enum.reduce(facts, fn
+      {idx, [{:atom, tag} | rest]}, acc ->
+        id = InstrId.mint(func_id, idx)
 
-          acc
-          |> add_fact(:callback_return, [id, func_id, callback, inspect(tag)])
-          |> emit_stop_reason(id, func_id, tag, rest)
-          |> emit_timeout(id, func_id, callback, tag, rest)
+        acc
+        |> add_fact(:callback_return, [id, func_id, callback, inspect(tag)])
+        |> emit_stop_reason(id, func_id, tag, rest)
+        |> emit_timeout(id, func_id, callback, tag, rest)
 
-        _ ->
-          acc
-      end
+      _other, acc ->
+        acc
     end)
   end
-
-  # The literal return tag, when the site returns a tuple whose first
-  # element is a literal atom.
-  defp return_tag(instr, instrs, idx) do
-    case return_shape(instr, instrs, idx) do
-      {:ok, [{:atom, tag} | _]} -> {:ok, inspect(tag)}
-      _ -> :none
-    end
-  end
-
-  # The elements of a tuple built into {x, 0} and immediately returned.
-  # `put_tuple2` is what OTP 24+ emits; the older `put_tuple`/`put`
-  # sequence is handled too, since analysing dependencies built by an
-  # older compiler is routine; and a return the compiler folded into one
-  # literal is spelled out element by element in the same vocabulary.
-  defp return_shape({:put_tuple2, {:x, 0}, {:list, elements}}, instrs, idx) do
-    if returns_next?(instrs, idx + 1), do: {:ok, elements}, else: :none
-  end
-
-  defp return_shape({:put_tuple, _size, {:x, 0}}, instrs, idx) do
-    if returns_next?(instrs, skip_puts(instrs, idx + 1)) do
-      elements =
-        instrs
-        |> Enum.drop(idx + 1)
-        |> Enum.take_while(&match?({:put, _}, &1))
-        |> Enum.map(fn {:put, element} -> element end)
-
-      {:ok, elements}
-    else
-      :none
-    end
-  end
-
-  defp return_shape({:move, {:literal, tuple}, {:x, 0}}, instrs, idx)
-       when is_tuple(tuple) and tuple_size(tuple) > 0 do
-    if returns_next?(instrs, idx + 1),
-      do: {:ok, tuple |> Tuple.to_list() |> Enum.map(&literal_element/1)},
-      else: :none
-  end
-
-  defp return_shape(_instr, _instrs, _idx), do: :none
-
-  defp literal_element(atom) when is_atom(atom), do: {:atom, atom}
-  defp literal_element(int) when is_integer(int), do: {:integer, int}
-  defp literal_element(term), do: {:literal, term}
 
   # {:stop, reason, state} and {:stop, reason, reply, state}: the reason
   # is the second element either way. Only a literal reason is recorded —
@@ -192,25 +148,6 @@ defmodule Argus.Extractors.Reply do
 
   defp emit_timeout(facts, _id, _func_id, _callback, _tag, _rest), do: facts
 
-  # Line markers and frame teardown may sit between the tuple and the
-  # return. Anything else means the tuple is not what comes back.
-  defp returns_next?(instrs, idx) do
-    case Enum.at(instrs, idx) do
-      :return -> true
-      {:line, _} -> returns_next?(instrs, idx + 1)
-      {:deallocate, _} -> returns_next?(instrs, idx + 1)
-      {:trim, _, _} -> returns_next?(instrs, idx + 1)
-      _ -> false
-    end
-  end
-
-  defp skip_puts(instrs, idx) do
-    case Enum.at(instrs, idx) do
-      {:put, _} -> skip_puts(instrs, idx + 1)
-      _ -> idx
-    end
-  end
-
   # Per return site, not per function. Whether a callback keeps `from` is a
   # property of the clause that defers, and `handle_call/3` compiles every
   # clause into one function: asking the question function-wide lets a
@@ -229,101 +166,35 @@ defmodule Argus.Extractors.Reply do
   # holds both the dispatch test for the *other* clauses and a body that
   # stores `from`; at block granularity that store poisons the entry and
   # nothing downstream is ever reported.
-  defp emit_retains_from(facts, func_id, :handle_call, 3, instrs) do
-    reachable = reachable_without_from(instrs)
+  defp emit_retains_from(facts, func_id, :handle_call, 3, instrs, %Cfg.Function{} = fun) do
+    reachable = reachable_without_from(fun, instrs)
 
     instrs
-    |> Enum.with_index()
-    |> Enum.reduce(facts, fn {instr, idx}, acc ->
-      with {:ok, ":noreply"} <- return_tag(instr, instrs, idx),
-           true <- Map.has_key?(reachable, idx) do
-        add_fact(acc, :callback_drops_from, [InstrId.mint(func_id, idx), func_id])
-      else
-        _ -> acc
-      end
+    |> return_shapes()
+    |> Enum.reduce(facts, fn
+      {idx, [{:atom, :noreply} | _]}, acc ->
+        if MapSet.member?(reachable, idx),
+          do: add_fact(acc, :callback_drops_from, [InstrId.mint(func_id, idx), func_id]),
+          else: acc
+
+      _other, acc ->
+        acc
     end)
   end
 
-  defp emit_retains_from(facts, _func_id, _name, _arity, _instrs), do: facts
+  defp emit_retains_from(facts, _func_id, _name, _arity, _instrs, _fun), do: facts
 
-  # Forward walk from the entry instruction across instructions that do not
-  # read `from`. A reading instruction is reached but not passed: everything
+  # Forward walk from the entry across instructions that do not read
+  # `from`. A reading instruction is reached but not passed: everything
   # downstream of it has seen the term.
-  @spec reachable_without_from([tuple()]) :: %{non_neg_integer() => true}
-  defp reachable_without_from(instrs) do
-    indexed = Enum.with_index(instrs)
-    by_idx = Map.new(indexed, fn {instr, idx} -> {idx, instr} end)
-    labels = Map.new(for {{:label, l}, idx} <- indexed, do: {l, idx})
+  defp reachable_without_from(fun, instrs) do
+    {:done, visited} =
+      Walk.explore(fun, instrs, [Dispatch.entry_index(instrs)],
+        on_instr: fn instr, _idx -> if references_from?(instr), do: :prune, else: :continue end
+      )
 
-    walk([entry_index(instrs)], by_idx, labels, length(instrs), %{})
+    visited
   end
-
-  # Execution does NOT begin at the first instruction. BEAM emits the
-  # function's error label first — `{:label, L}, {:func_info, M, F, A}` —
-  # and entry is what follows it. Starting at index zero reaches a
-  # `func_info` that raises, walks nowhere, and reports nothing.
-  defp entry_index(instrs) do
-    case Enum.find_index(instrs, &match?({:func_info, _, _, _}, &1)) do
-      nil -> 0
-      idx -> idx + 1
-    end
-  end
-
-  @spec walk([non_neg_integer()], map(), map(), non_neg_integer(), %{non_neg_integer() => true}) ::
-          %{non_neg_integer() => true}
-  defp walk([], _by_idx, _labels, _len, seen), do: seen
-
-  defp walk([idx | rest], by_idx, labels, len, seen) do
-    cond do
-      idx >= len or Map.has_key?(seen, idx) ->
-        walk(rest, by_idx, labels, len, seen)
-
-      references_from?(Map.fetch!(by_idx, idx)) ->
-        walk(rest, by_idx, labels, len, Map.put(seen, idx, true))
-
-      true ->
-        instr = Map.fetch!(by_idx, idx)
-        next = successors(instr, idx, labels)
-        walk(next ++ rest, by_idx, labels, len, Map.put(seen, idx, true))
-    end
-  end
-
-  defp successors(instr, idx, labels) do
-    targets =
-      instr
-      |> branch_targets()
-      |> Enum.flat_map(fn l -> List.wrap(Map.get(labels, l)) end)
-
-    if terminator?(instr), do: Enum.uniq(targets), else: Enum.uniq([idx + 1 | targets])
-  end
-
-  defp branch_targets(instr), do: collect_f(instr, [])
-
-  defp collect_f({:f, l}, acc) when is_integer(l) and l > 0, do: [l | acc]
-
-  defp collect_f(term, acc) when is_tuple(term),
-    do: term |> Tuple.to_list() |> Enum.reduce(acc, &collect_f/2)
-
-  defp collect_f(term, acc) when is_list(term), do: Enum.reduce(term, acc, &collect_f/2)
-  defp collect_f(_term, acc), do: acc
-
-  # Control leaves without falling through. Tail calls count, since their
-  # return value is the function's.
-  defp terminator?(:return), do: true
-  defp terminator?({:jump, _}), do: true
-  defp terminator?({:select_val, _, _, _}), do: true
-  defp terminator?({:select_tuple_arity, _, _, _}), do: true
-  defp terminator?({:call_only, _, _}), do: true
-  defp terminator?({:call_last, _, _, _}), do: true
-  defp terminator?({:call_ext_only, _, _}), do: true
-  defp terminator?({:call_ext_last, _, _, _}), do: true
-  defp terminator?({:apply_last, _, _}), do: true
-  defp terminator?({:wait, _}), do: true
-  defp terminator?({:func_info, _, _, _}), do: true
-  defp terminator?(:if_end), do: true
-  defp terminator?({:case_end, _}), do: true
-  defp terminator?({:badmatch, _}), do: true
-  defp terminator?(_instr), do: false
 
   # A register can be read without ever appearing as an operand. Calls take
   # their arguments positionally in {x,0}..{x,arity-1}, so a handle_call/3

@@ -30,8 +30,10 @@ defmodule Argus.Extractors.OTP do
       each_remote_call: 3,
       get_behaviours: 1,
       match_remote_call: 1,
+      module_target: 3,
       resolve_callee: 1,
-      resolve_register: 3,
+      return_shapes: 1,
+      timeout_ms: 3,
       track_dynamic: 5,
       track_imprecision: 4
     ]
@@ -70,36 +72,14 @@ defmodule Argus.Extractors.OTP do
         #      The compiler folds the entire term when the state is also a literal.
         #   2. The return is built at runtime via `put_tuple2`. The third element
         #      is either a literal `{:continue, tag}` or another `put_tuple2`.
-        (tags_from_literals(instrs) ++ tags_from_put_tuples(instrs))
+        instrs
+        |> return_shapes()
+        |> Enum.flat_map(fn {_idx, elements} -> List.wrap(continue_tag(elements)) end)
         |> Enum.uniq()
         |> Enum.reduce(facts, fn tag, acc ->
           add_fact(acc, :init_continues_to, [mod_str, tag])
         end)
     end
-  end
-
-  defp tags_from_literals(instrs) do
-    Enum.flat_map(instrs, fn
-      {:move, {:literal, {:ok, _state, {:continue, tag}}}, _dst} when is_atom(tag) ->
-        [inspect(tag)]
-
-      {:move, {:literal, {:noreply, _state, {:continue, tag}}}, _dst} when is_atom(tag) ->
-        [inspect(tag)]
-
-      _ ->
-        []
-    end)
-  end
-
-  defp tags_from_put_tuples(instrs) do
-    instrs
-    |> Helpers.scan_return_tuples()
-    |> Enum.flat_map(fn {_idx, elements} ->
-      case continue_tag(elements) do
-        nil -> []
-        tag -> [tag]
-      end
-    end)
   end
 
   # Look for {:ok, _state, {:continue, tag}} or {:noreply, _state, {:continue, tag}}
@@ -298,7 +278,7 @@ defmodule Argus.Extractors.OTP do
 
   defp handle_genserver_call(facts, ctx, mfa) when mfa in @explicit_timeout_sync do
     {callee, facts} = resolve_target_with_via(facts, ctx)
-    timeout = resolve_timeout(ctx.instrs, ctx.idx, {:x, 2})
+    timeout = timeout_ms(ctx.instrs, ctx.idx, {:x, 2})
 
     facts
     |> track_timeout_imprecision(timeout, ctx)
@@ -342,16 +322,9 @@ defmodule Argus.Extractors.OTP do
   # sync_call_via row, which resolved_calls.dl reads as evidence of a
   # GenServer.call.
   defp resolve_supervisor_target(facts, ctx) do
-    case Helpers.resolve_register(ctx.instrs, ctx.idx, {:x, 0}) do
-      {:ok, atom} when is_atom(atom) and atom != :dynamic ->
-        {inspect(atom), facts}
-
-      {:ok, {:via, _via_mod, {reg_instance, _key}}}
-      when is_atom(reg_instance) and reg_instance != :dynamic ->
-        {"via:#{inspect(reg_instance)}", facts}
-
-      _ ->
-        {"dynamic", track_imprecision(facts, ctx, :supervisor_target, :sup_call)}
+    case module_target(ctx.instrs, ctx.idx, {:x, 0}) do
+      "dynamic" -> {"dynamic", track_imprecision(facts, ctx, :supervisor_target, :sup_call)}
+      target -> {target, facts}
     end
   end
 
@@ -368,20 +341,9 @@ defmodule Argus.Extractors.OTP do
   # - `"via:RegistryInstance"` (when the target is a via tuple)
   # - `"dynamic"` (everything else, including function parameters)
   defp resolve_target_with_via(facts, ctx) do
-    case Helpers.resolve_register(ctx.instrs, ctx.idx, {:x, 0}) do
-      {:ok, atom} when is_atom(atom) ->
-        {inspect(atom), facts}
-
-      # reg_instance != :dynamic: a partially resolved via tuple carries the
-      # placeholder atom in the registry slot — inspecting it would forge a
-      # "via::dynamic" callee that the dynamic filters don't recognize.
-      {:ok, {:via, _via_mod, {reg_instance, _key}}}
-      when is_atom(reg_instance) and reg_instance != :dynamic ->
-        {"via:#{inspect(reg_instance)}", facts}
-
-      _ ->
-        facts = track_imprecision(facts, ctx, :genserver_callee, :sync_call)
-        {"dynamic", facts}
+    case module_target(ctx.instrs, ctx.idx, {:x, 0}) do
+      "dynamic" -> {"dynamic", track_imprecision(facts, ctx, :genserver_callee, :sync_call)}
+      target -> {target, facts}
     end
   end
 
@@ -420,11 +382,4 @@ defmodule Argus.Extractors.OTP do
 
   # Resolve a timeout argument to its string representation for facts.
   # Positive integer → milliseconds, :infinity → "-1", anything else → "0" (dynamic).
-  defp resolve_timeout(instrs, idx, register) do
-    case resolve_register(instrs, idx, register) do
-      {:ok, n} when is_integer(n) and n > 0 -> to_string(n)
-      {:ok, :infinity} -> "-1"
-      _ -> "0"
-    end
-  end
 end

@@ -17,6 +17,7 @@ defmodule Argus.Extractor.Helpers do
   - **`find_function/3`** — look up a function's instructions by name and arity
   """
 
+  alias Argus.Extractor.CallSites
   alias Argus.Pipeline.Normalize
 
   @type register :: {:x, non_neg_integer()} | {:y, non_neg_integer()}
@@ -179,27 +180,6 @@ defmodule Argus.Extractor.Helpers do
   end
 
   @doc """
-  Like `scan_functions/4` but only invokes the handler when the instruction
-  matches `match_remote_call/1`. The handler receives the resolved
-  `{module, function, arity}` tuple in place of the raw instruction.
-  """
-  @spec scan_remote_calls(
-          module(),
-          [tuple()],
-          Argus.Pipeline.Emit.facts(),
-          (Argus.Pipeline.Emit.facts(), instr_ctx(), {module(), atom(), arity()} ->
-             Argus.Pipeline.Emit.facts())
-        ) :: Argus.Pipeline.Emit.facts()
-  def scan_remote_calls(mod, functions, facts \\ %{}, handler) do
-    scan_functions(mod, functions, facts, fn inner, ctx, instr ->
-      case match_remote_call(instr) do
-        {:ok, m, f, a} -> handler.(inner, ctx, {m, f, a})
-        :none -> inner
-      end
-    end)
-  end
-
-  @doc """
   Resolve `{:x, 0}` at the current instruction context, returning the
   inspected atom or `"dynamic"`.
 
@@ -307,30 +287,6 @@ defmodule Argus.Extractor.Helpers do
   end
 
   # --- Return tuple scanning ---
-
-  @doc """
-  Scan instructions for return value construction patterns.
-
-  Finds `put_tuple2` instructions whose destination flows to `{:x, 0}`
-  before a return, indicating constructed return tuples. Returns a list
-  of `{index, elements}` pairs where `elements` is the flat element list
-  from the `put_tuple2` instruction.
-
-  Used by extractors that need to detect return shapes like `{:next_state, ...}`
-  or `{:error, ...}`.
-  """
-  @spec scan_return_tuples([term()]) :: [{non_neg_integer(), [term()]}]
-  def scan_return_tuples(instrs) do
-    instrs
-    |> Enum.with_index()
-    |> Enum.flat_map(fn
-      {{:put_tuple2, dst, {:list, elements}}, idx} ->
-        if tuple_flows_to_return?(instrs, idx, dst), do: [{idx, elements}], else: []
-
-      _ ->
-        []
-    end)
-  end
 
   # Check whether a put_tuple2 destination register flows to x0 before
   # a return instruction. Handles direct writes to x0 and single-step
@@ -679,24 +635,6 @@ defmodule Argus.Extractor.Helpers do
   defp call_target_mfa(_), do: :none
 
   @doc """
-  Find the MFA of the most recent remote call (`call_ext` /
-  `call_ext_only` / `call_ext_last`) that wrote to `register` within
-  the current execution path. Returns `{:ok, {mod, func, arity}}` or
-  `:no`.
-
-  Walks back from `call_idx` honoring the same control-flow barriers
-  as `resolve_register/3`. Useful for recognizing patterns like
-  `Process.send_after(self(), :tick, _)` where the target register was
-  populated by `:erlang.self/0` immediately before the call site.
-  """
-  @spec last_call_writer([term()], non_neg_integer(), register()) ::
-          {:ok, {module(), atom(), arity()}} | :no
-  def last_call_writer(instrs, call_idx, register) do
-    preceding = instrs |> Enum.take(call_idx) |> Enum.reverse()
-    do_last_call_writer(preceding, normalize_reg(register))
-  end
-
-  @doc """
   Determine whether `register` is a function parameter at instruction
   index `call_idx`. Returns `{:ok, n}` if it's the n-th parameter (so
   `{:x, n}` for `n < arity`), or `:no` otherwise.
@@ -800,42 +738,6 @@ defmodule Argus.Extractor.Helpers do
   end
 
   defp move_source(_, _), do: nil
-
-  defp do_last_call_writer([], _reg), do: :no
-
-  defp do_last_call_writer([instr | rest], reg) do
-    cond do
-      barrier?(instr) ->
-        :no
-
-      writes_to?(instr, reg) ->
-        case instr do
-          {:call_ext, _, {:extfunc, m, f, a}} ->
-            {:ok, {m, f, a}}
-
-          {:call_ext_only, _, {:extfunc, m, f, a}} ->
-            {:ok, {m, f, a}}
-
-          {:call_ext_last, _, {:extfunc, m, f, a}, _} ->
-            {:ok, {m, f, a}}
-
-          # BIFs are implicit :erlang functions; the arity is the length
-          # of the args list. This catches `self()`, `node()`, and other
-          # Erlang built-ins that resolve_register doesn't reach.
-          {:bif, name, _, args, _dst} ->
-            {:ok, {:erlang, name, length(args)}}
-
-          {:gc_bif, name, _, _live, args, _dst} ->
-            {:ok, {:erlang, name, length(args)}}
-
-          _ ->
-            :no
-        end
-
-      true ->
-        do_last_call_writer(rest, reg)
-    end
-  end
 
   # Control-flow-terminating instructions mark the end of an execution
   # path. In the flat BEAM instruction list, code before a barrier
@@ -1133,7 +1035,7 @@ defmodule Argus.Extractor.Helpers do
         ) :: Argus.Pipeline.Emit.facts()
   def each_remote_call(module_data, facts, handler) do
     module_data
-    |> Argus.Extractor.CallSites.for_module()
+    |> CallSites.for_module()
     |> Enum.reduce(facts, fn
       %{remote?: true, mfa: mfa} = site, acc ->
         handler.(acc, %{func_id: site.func_id, instrs: site.instrs, idx: site.idx}, mfa)
@@ -1152,7 +1054,7 @@ defmodule Argus.Extractor.Helpers do
         ) :: Argus.Pipeline.Emit.facts()
   def each_call(module_data, facts, handler) do
     module_data
-    |> Argus.Extractor.CallSites.for_module()
+    |> CallSites.for_module()
     |> Enum.reduce(facts, fn %{mfa: mfa} = site, acc ->
       handler.(acc, %{func_id: site.func_id, instrs: site.instrs, idx: site.idx}, mfa)
     end)
@@ -1162,12 +1064,21 @@ defmodule Argus.Extractor.Helpers do
   The control-flow graph of the function `ctx` is in, from the graphs
   the pipeline attached to `module_data` or built on the spot.
   """
-  @spec cfg(map(), atom(), arity()) :: Argus.Cfg.Function.t() | nil
+  @spec cfg(map(), atom() | String.t(), arity()) :: Argus.Cfg.Function.t() | nil
   def cfg(%{cfg: cfgs}, name, arity) when is_map(cfgs),
     do: Map.get(cfgs, {to_string(name), arity})
 
-  def cfg(module_data, name, arity) do
-    module_data |> Argus.Cfg.build_for(name, arity)
+  def cfg(module_data, name, arity) when is_atom(name),
+    do: Argus.Cfg.build_for(module_data, name, arity)
+
+  def cfg(module_data, name, arity) when is_binary(name),
+    do: cfg(module_data, String.to_atom(name), arity)
+
+  @doc "The graph of the function an `instr_ctx()` is in."
+  @spec cfg(map(), instr_ctx()) :: Argus.Cfg.Function.t() | nil
+  def cfg(module_data, %{func_id: func_id}) do
+    {name, arity} = Normalize.func_id_name_arity(func_id)
+    cfg(module_data, name, arity)
   end
 
   @doc """
@@ -1192,6 +1103,15 @@ defmodule Argus.Extractor.Helpers do
     instrs
     |> Enum.with_index()
     |> Enum.flat_map(fn
+      # Built straight into {x,0}: it is the return only if the return is
+      # next. A tuple raised with erlang:error/1 sits in {x,0} too, and a
+      # later, unrelated return must not claim it.
+      {{:put_tuple2, {:x, 0}, {:list, elements}}, idx} ->
+        if returns_next?(instrs, idx + 1), do: [{idx, elements}], else: []
+
+      {{:put_tuple2, {:tr, {:x, 0}, _}, {:list, elements}}, idx} ->
+        if returns_next?(instrs, idx + 1), do: [{idx, elements}], else: []
+
       {{:put_tuple2, dst, {:list, elements}}, idx} ->
         if tuple_flows_to_return?(instrs, idx, dst), do: [{idx, elements}], else: []
 

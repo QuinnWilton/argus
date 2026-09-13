@@ -24,6 +24,7 @@ defmodule Argus.Extractors.CallbackTag do
 
   @behaviour Argus.Extractor
 
+  alias Argus.Extractor.Dispatch
   alias Argus.InstrId
 
   import Argus.Extractor.Helpers, only: [add_fact: 3]
@@ -53,49 +54,13 @@ defmodule Argus.Extractors.CallbackTag do
 
   defp emit_tags(facts, func_id, callback, instrs) do
     instrs
-    |> Enum.flat_map(&compared_atoms/1)
-    |> Enum.uniq()
+    |> Dispatch.compared_atoms(:any)
     |> Enum.reduce(facts, &add_fact(&2, :callback_tag, [func_id, callback, inspect(&1)]))
   end
 
-  defp compared_atoms({:test, :is_eq_exact, _f, args}), do: atoms_in(args)
-  defp compared_atoms({:test, :is_tagged_tuple, _f, args}), do: atoms_in(args)
-  defp compared_atoms({:select_val, _s, _f, {:list, entries}}), do: atoms_in(entries)
-  defp compared_atoms(_instr), do: []
-
-  defp atoms_in(list) when is_list(list), do: for({:atom, a} <- list, is_atom(a), do: a)
-  defp atoms_in(_other), do: []
-
-  # A multi-clause function raises FunctionClauseError by jumping to its own
-  # func_info label, so it accepts everything exactly when nothing branches
-  # there. Guards fall out correctly: a guarded catch-all compiles to a test
-  # whose failure branch is that label, and is therefore not a catch-all.
   defp emit_total(facts, func_id, callback, instrs) do
-    case func_info_label(instrs) do
-      nil ->
-        facts
-
-      label ->
-        if Enum.any?(instrs, &(label in branch_targets(&1))),
-          do: facts,
-          else: add_fact(facts, :callback_total, [func_id, callback])
-    end
+    if Dispatch.total?(instrs),
+      do: add_fact(facts, :callback_total, [func_id, callback]),
+      else: facts
   end
-
-  defp func_info_label(instrs) do
-    case Enum.find_index(instrs, &match?({:func_info, _, _, _}, &1)) do
-      nil -> nil
-      0 -> nil
-      idx -> with {:label, l} <- Enum.at(instrs, idx - 1), do: l, else: (_ -> nil)
-    end
-  end
-
-  defp branch_targets(instr), do: collect_f(instr, [])
-  defp collect_f({:f, l}, acc) when is_integer(l) and l > 0, do: [l | acc]
-
-  defp collect_f(t, acc) when is_tuple(t),
-    do: t |> Tuple.to_list() |> Enum.reduce(acc, &collect_f/2)
-
-  defp collect_f(t, acc) when is_list(t), do: Enum.reduce(t, acc, &collect_f/2)
-  defp collect_f(_t, acc), do: acc
 end
