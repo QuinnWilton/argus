@@ -1,3 +1,7 @@
+// Magic-set transformed: reachability is computed only from the roots
+// these rules ask about, not as the full transitive closure.
+.pragma "magic-transform" "*"
+
 // Distributed systems analysis.
 //
 // Detects distributed system anti-patterns: RPC calls without timeout,

@@ -1,3 +1,7 @@
+// Magic-set transformed: reachability is computed only from the roots
+// these rules ask about, not as the full transitive closure.
+.pragma "magic-transform" "*"
+
 // Unrollbackable side effects inside a database transaction.
 //
 // `@pure` is a contract someone writes down. This one nobody writes down —

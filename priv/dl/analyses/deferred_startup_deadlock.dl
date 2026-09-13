@@ -1,3 +1,7 @@
+// Magic-set transformed: reachability is computed only from the roots
+// these rules ask about, not as the full transitive closure.
+.pragma "magic-transform" "*"
+
 // Deferred startup deadlock analysis.
 //
 // handle_continue/2 runs after init/1 returns, so a sync call from inside
