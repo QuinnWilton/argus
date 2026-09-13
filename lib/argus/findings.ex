@@ -120,7 +120,10 @@ defmodule Argus.Findings do
     wrote for these modules, to evaluate without extracting again. The
     caller owns it; without this option the run extracts into a
     temporary directory and removes it afterwards.
-  - All `Argus.Analysis.run/3` options (`:concurrency`, `:extractors`,
+  - `:concurrency` — parallel Souffle solves (default: the scheduler
+    count, capped at 4; each solve holds its own copy of the call graph's
+    closure). Extraction always runs at scheduler width.
+  - All other `Argus.Analysis.run/3` options (`:extractors`,
     `:souffle_bin`, `:souffle_timeout`, ...) pass through.
 
   Returns `{:ok, %Argus.Findings{}}` or `{:error, reason}` — see the
@@ -147,7 +150,7 @@ defmodule Argus.Findings do
           outcomes =
             analysis_mods
             |> Task.async_stream(&run_one(&1, facts_dir, opts),
-              max_concurrency: Keyword.get(opts, :concurrency, System.schedulers_online()),
+              max_concurrency: Keyword.get(opts, :concurrency, default_solve_concurrency()),
               ordered: true,
               # Souffle.run bounds each evaluation with :souffle_timeout, so the
               # task itself never needs a second, racing deadline.
@@ -224,6 +227,13 @@ defmodule Argus.Findings do
         {:degraded, %{analysis: name, reason: reason, detail: degradation_detail(name, reason)}}
     end
   end
+
+  # Each solve is a Souffle process holding its own copy of the call
+  # graph's closure — hundreds of megabytes on a large project, and it
+  # scales with the project rather than the machine. Extraction is cheap
+  # per task and runs at scheduler width; solves are capped so the peak
+  # stays bounded.
+  defp default_solve_concurrency, do: min(System.schedulers_online(), 4)
 
   defp collect(outcomes) do
     findings =

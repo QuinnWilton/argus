@@ -4,6 +4,41 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- Fact extraction streams each module's rows to the `.facts` files as it
+  completes instead of merging the whole program in memory first. On a
+  2,400-module project the extracting VM peaked at 5.8 GB; the whole
+  fact set never exists in memory at once now.
+- `Argus.Analysis.extract_facts/3` stages only the relations a Souffle
+  program reads. The sixteen layer-1 relations that exist for the
+  in-process control-flow and dataflow passes (`instruction`, `next`,
+  `def`, `use`, `move`, ... — `Argus.Schema.in_process_only/0`) are
+  written as empty files; they were three quarters of the fact volume.
+  `Argus.Pipeline.run/3` still writes everything unless given
+  `relations:`.
+- Eight analyses whose reachability questions start from a few roots
+  (`sync_call_in_init`, `timeout_chain`, `transaction_safety`,
+  `supervision`, `request_surface`, `unbounded_dynamic_children`,
+  `deferred_startup_deadlock`, `distributed`) run under Souffle's
+  magic-set transform: each solve drops from ~600 MB and 12-17 s to
+  20-170 MB and under 2 s on the same project, with identical output.
+  The analyses that need the full closure (`call_cycle`,
+  `process_bottleneck`, `purity`, ...) are unchanged; the transform
+  made them slower.
+- `Argus.Findings.run/2` caps concurrent Souffle solves at four by
+  default (`:concurrency` overrides it). Every solve holds its own copy
+  of the call graph's closure, so running one per scheduler multiplied
+  a project-sized footprint by the core count.
+
+### Fixed
+
+- `mix argus` removes its work directory when it finishes. Each run left
+  the staged facts (hundreds of megabytes on a large project) in the
+  temp directory.
+
 ## 0.8.1 — 2026-09-12
 
 ### Changed
