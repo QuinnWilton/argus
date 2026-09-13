@@ -1,30 +1,12 @@
 // Supervision tree helpers for client analyses.
 //
-// Provides child subtree mapping and init-time reachability.
+// Provides the child subtree mapping and the start-order join.
 //
-// Prerequisites: include clientlib/imports.dl and clientlib/otp.dl before
-// this file, and declare/input the supervision facts needed below.
-//
-// Usage:
-//   .include "../clientlib/imports.dl"
-//
-//   .decl implements_behaviour(mod: symbol, behaviour: symbol)
-//   .input implements_behaviour
-//   .decl sync_call(caller_func: symbol, callee_mod: symbol)
-//   .input sync_call
-//   .decl async_cast(caller_func: symbol, callee_mod: symbol)
-//   .input async_cast
-//   .decl supervisor_child(sup: symbol, position: number, child_mod: symbol, restart: symbol, type: symbol)
-//   .input supervisor_child
-//   .decl dynamic_child(sup: symbol, child_mod: symbol, caller_func: symbol)
-//   .input dynamic_child
-//
-//   .include "../clientlib/otp.dl"
-//   .include "../clientlib/supervision.dl"
+// Included by otp.dl; requires imports.dl.
 //
 // Provides:
 //   child_subtree(sup, branch, mod)
-//   init_reaches(from_mod, to_mod, witness)
+//   starts_before(sup, earlier, later, earlier_pos, later_pos)
 
 // ── Child subtree ─────────────────────────────────────────────────────
 
@@ -49,23 +31,20 @@ child_subtree(sup, branch, descendant) :-
   child_subtree(sup, branch, intermediate),
   dynamic_child(intermediate, descendant, _).
 
-// ── Init-time reachability ────────────────────────────────────────────
+// ── Start order ───────────────────────────────────────────────────────
+//
+// Two modules under one supervisor, on different branches, with the
+// earlier branch's position and the later one's. Supervisors start
+// children in order, so this is "earlier is running when later's init
+// runs" and, under rest_for_one, "later restarts when earlier crashes".
+// Five analyses wrote this join out by hand.
+.decl starts_before(sup: symbol, earlier: symbol, later: symbol, earlier_pos: number, later_pos: number)
 
-// Module `from_mod` reaches `to_mod` during init — the call originates
-// from an init/1 function (directly or transitively). `witness` is that
-// init/1 function ID, the anchor-grade evidence for the edge.
-
-.decl init_reaches(from_mod: symbol, to_mod: symbol, witness: symbol)
-
-init_reaches(from_mod, to_mod, func) :-
-  init_function(from_mod, func),
-  call_reachable(func, callee),
-  function_def(callee, to_mod, _, _, _),
-  from_mod != to_mod.
-
-init_reaches(from_mod, to_mod, func) :-
-  init_function(from_mod, func),
-  function_def(func, _, _, _, _),
-  call_edge(func, callee),
-  function_def(callee, to_mod, _, _, _),
-  from_mod != to_mod.
+starts_before(sup, earlier, later, epos, lpos) :-
+  supervisor(sup, _),
+  supervisor_child(sup, epos, earlier_branch, _, _),
+  child_subtree(sup, earlier_branch, earlier),
+  supervisor_child(sup, lpos, later_branch, _, _),
+  child_subtree(sup, later_branch, later),
+  epos < lpos,
+  earlier_branch != later_branch.

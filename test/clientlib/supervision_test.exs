@@ -14,7 +14,7 @@ defmodule Argus.Clientlib.SupervisionTest do
 
   describe "supervision.dl" do
     @tag :tmp_dir
-    test "computes child_subtree and init_reaches", %{tmp_dir: tmp_dir} do
+    test "computes child_subtree and starts_before", %{tmp_dir: tmp_dir} do
       skip_without_souffle()
 
       facts_dir = Path.join(tmp_dir, "facts")
@@ -35,14 +35,12 @@ defmodule Argus.Clientlib.SupervisionTest do
 
       rules = """
       .include "#{Path.join(priv_dl(), "clientlib/imports.dl")}"
-      .include "#{Path.join(priv_dl(), "clientlib/behaviours.dl")}"
 
 
       .include "#{Path.join(priv_dl(), "clientlib/otp.dl")}"
-      .include "#{Path.join(priv_dl(), "clientlib/supervision.dl")}"
 
       .output child_subtree
-      .output init_reaches
+      .output starts_before
       """
 
       rules_path = Path.join(tmp_dir, "test_supervision.dl")

@@ -1,32 +1,15 @@
-// OTP pattern helpers for client analyses.
+// The OTP vocabulary, in one include.
 //
-// Provides GenServer API detection, init function identification, and
-// stateful module dependency analysis. Requires layer 2 facts from the
-// OTP and supervision extractors.
-//
-// Prerequisites: include clientlib/imports.dl before this file, and
-// declare/input the layer 2 facts needed below.
-//
-// Usage:
 //   .include "../clientlib/imports.dl"
-//
-//   .decl implements_behaviour(mod: symbol, behaviour: symbol)
-//   .input implements_behaviour
-//   .decl sync_call(caller_func: symbol, callee_mod: symbol)
-//   .input sync_call
-//   .decl async_cast(caller_func: symbol, callee_mod: symbol)
-//   .input async_cast
-//
 //   .include "../clientlib/otp.dl"
 //
-// Provides:
-//   init_function(mod, func)
-//   genserver_sync_api(func, mod)
-//   genserver_async_api(func, mod)
-//   stateful_module_dep(from_mod, to_mod, witness)
-//   module_reaches(from_mod, to_mod, witness)
-
-.include "init_function_rules.dl"
-.include "genserver_api_rules.dl"
-.include "stateful_module_dep_rules.dl"
-.include "interprocedural.dl"
+// Provides behaviours.dl (behaves_as, process_behaviour), callbacks.dl
+// (otp_callback, init_function, handler_function, ...), calls.dl
+// (sync_dep, reaches_sync_dep, stateful_module_dep, ...) and
+// supervision.dl (child_subtree, starts_before). An analysis that needs
+// only the behaviour table may include behaviours.dl alone; one that
+// includes this file must not include it again.
+.include "behaviours.dl"
+.include "callbacks.dl"
+.include "calls.dl"
+.include "supervision.dl"

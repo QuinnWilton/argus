@@ -24,50 +24,8 @@
 // looks locally reasonable.
 
 .include "../clientlib/imports.dl"
-.include "../clientlib/behaviours.dl"
-
+.include "../clientlib/otp.dl"
 // ── OTP behaviours whose callbacks run inside the process loop ───
-
-.decl loop_behaviour(behaviour: symbol)
-
-// Canonical names — clientlib/behaviours.dl folds in the Erlang
-// spellings. The bare "gen_server" and "supervisor" listed here before
-// matched nothing at all: an Erlang declaration inspects to ":gen_server",
-// colon included.
-loop_behaviour("GenServer").
-loop_behaviour("GenStage").
-loop_behaviour("Supervisor").
-loop_behaviour("GenStateMachine").
-loop_behaviour("GenEvent").
-loop_behaviour("Phoenix.LiveView").
-loop_behaviour("Phoenix.LiveComponent").
-loop_behaviour("Phoenix.Channel").
-loop_behaviour("Broadway").
-
-.decl callback_name(name: symbol)
-
-callback_name("init").
-callback_name("handle_call").
-callback_name("handle_cast").
-callback_name("handle_info").
-callback_name("handle_continue").
-callback_name("handle_event").
-callback_name("handle_events").
-callback_name("handle_demand").
-callback_name("handle_params").
-callback_name("handle_in").
-callback_name("handle_message").
-callback_name("handle_batch").
-callback_name("terminate").
-callback_name("mount").
-
-.decl otp_callback(func: symbol, mod: symbol, behaviour: symbol)
-
-otp_callback(func, mod, behaviour) :-
-  behaves_as(mod, behaviour),
-  loop_behaviour(behaviour),
-  function_def(func, mod, name, _, _),
-  callback_name(name).
 
 // ── Reachability that stays in the same process ──────────────────
 //
@@ -87,13 +45,13 @@ same_process_edge(caller, callee) :-
   call_edge(caller, callee),
   !closure_def(caller, callee).
 
-.decl same_process_reaches(entry: symbol, func: symbol, proximity: symbol)
+.decl callback_reaches(entry: symbol, func: symbol, proximity: symbol)
 
-same_process_reaches(entry, entry, "direct") :-
-  otp_callback(entry, _, _).
+callback_reaches(entry, entry, "direct") :-
+  otp_callback(entry, _, _, _).
 
-same_process_reaches(entry, callee, "helper") :-
-  otp_callback(entry, _, _),
+callback_reaches(entry, callee, "helper") :-
+  otp_callback(entry, _, _, _),
   same_process_edge(entry, callee).
 
 // ── Findings ─────────────────────────────────────────────────────
@@ -134,8 +92,8 @@ flushes_timer(func) :-
 
 blocking_receive_in_callback(id, func, callback, behaviour, proximity) :-
   recv_start(id, func, 1, _),
-  same_process_reaches(callback, func, proximity),
-  otp_callback(callback, _, behaviour),
+  callback_reaches(callback, func, proximity),
+  otp_callback(callback, _, _, behaviour),
   !flushes_timer(func).
 
 // A receive WITH a timeout. It cannot hang, but it still consumes from the
@@ -145,5 +103,5 @@ blocking_receive_in_callback(id, func, callback, behaviour, proximity) :-
 
 receive_in_callback(id, func, callback, behaviour, proximity) :-
   recv_start(id, func, 0, _),
-  same_process_reaches(callback, func, proximity),
-  otp_callback(callback, _, behaviour).
+  callback_reaches(callback, func, proximity),
+  otp_callback(callback, _, _, behaviour).

@@ -6,45 +6,21 @@
 // under load.
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/otp.dl"
 .include "../clientlib/resolved_calls.dl"
-.include "../clientlib/behaviours.dl"
-
 // ── Layer 2 facts ──────────────────────────────────────────────────────
 
 // ── GenServer API identification ───────────────────────────────────────
 
-.include "../clientlib/otp.dl"
 
 // ── Module-level sync callers ──────────────────────────────────────────
 
-// Module caller_mod has at least one function that sync-calls target_mod.
-// The witnessed variant carries the calling function; the bare pair
-// relation projects it away so the fan-in aggregate below counts caller
-// modules, not call sites.
+// A function of caller_mod that waits on target_mod's process.
 .decl sync_caller_witness(caller_mod: symbol, target_mod: symbol, witness: symbol)
 
-// Direct: a function in caller_mod has a sync_call with resolved target.
 sync_caller_witness(caller_mod, target_mod, f) :-
   function_def(f, caller_mod, _, _, _),
-  sync_call_target(f, target_mod),
-  target_mod != "dynamic",
-  caller_mod != target_mod.
-
-// Indirect via callgraph: a function in caller_mod reaches a function
-// that has a sync_call with resolved target.
-sync_caller_witness(caller_mod, target_mod, f) :-
-  function_def(f, caller_mod, _, _, _),
-  call_reachable(f, g),
-  sync_call_target(g, target_mod),
-  target_mod != "dynamic",
-  caller_mod != target_mod.
-
-// Indirect via GenServer API: a function in caller_mod calls an exported
-// sync API function of target_mod.
-sync_caller_witness(caller_mod, target_mod, f) :-
-  function_def(f, caller_mod, _, _, _),
-  call_edge(f, g),
-  genserver_sync_api(g, target_mod),
+  reaches_sync_dep(f, target_mod),
   caller_mod != target_mod.
 
 .decl sync_caller(caller_mod: symbol, target_mod: symbol)

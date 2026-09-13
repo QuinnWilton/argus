@@ -89,7 +89,10 @@ defmodule Argus.Clientlib.BehavioursTest do
         |> Path.wildcard()
         |> Enum.filter(fn path ->
           src = File.read!(path)
-          src =~ ~r/behaves_as\(/ and not String.contains?(src, @canonical_dl <> "\"")
+
+          src =~ ~r/behaves_as\(/ and
+            not String.contains?(src, @canonical_dl <> "\"") and
+            not String.contains?(src, "clientlib/otp.dl\"")
         end)
         |> Enum.map(&Path.basename/1)
 

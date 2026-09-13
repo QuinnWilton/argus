@@ -23,8 +23,7 @@
 // diagnosis and sends people to tune pool sizes.
 
 .include "../clientlib/imports.dl"
-.include "../clientlib/behaviours.dl"
-
+.include "../clientlib/otp.dl"
 // ── Which modules answer calls ───────────────────────────────────
 //
 // Both spellings, deliberately not clientlib/callbacks.dl, which matches
@@ -34,17 +33,14 @@
 // That is most of the OTP surface a project actually depends on, and it is
 // where this bug survives longest, since nobody reads those modules.
 
+// handle_call/3 in a module whose behaviour gives {:noreply, _} its
+// deferred-reply meaning.
 .decl answers_calls(mod: symbol, func: symbol)
 
 answers_calls(mod, func) :-
   function_def(func, mod, "handle_call", 3, _),
   behaves_as(mod, behaviour),
-  gen_server_behaviour(behaviour).
-
-.decl gen_server_behaviour(behaviour: symbol)
-
-gen_server_behaviour("GenServer").
-gen_server_behaviour("GenStage").
+  process_behaviour(behaviour, "gen_server_like").
 
 // ── Deferring ────────────────────────────────────────────────────
 

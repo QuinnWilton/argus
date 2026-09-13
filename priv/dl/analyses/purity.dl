@@ -180,20 +180,6 @@ impure_closure(caller, closure, category, api) :-
   closure_def(caller, closure),
   reaches_effect(closure, category, api, _).
 
-// Pairing a closure with the call it was passed to needs dataflow argus
-// does not have, so the association is by containment: this caller built
-// this closure and called this pure higher-order function.
-//
-// Gated on the caller building exactly ONE closure. With two or more there
-// is no way to say which went where, and guessing would produce a finding
-// that names the wrong lambda — worse than none, because it sends someone
-// to the wrong line. One closure and one obligation is unambiguous.
-.decl closure_count(caller: symbol, n: number)
-
-closure_count(caller, n) :-
-  closure_def(caller, _),
-  n = count : { closure_def(caller, _) }.
-
 .decl impure_closure_to_pure(caller: symbol, callee: symbol, closure: symbol, category: symbol, api: symbol)
 .output impure_closure_to_pure
 

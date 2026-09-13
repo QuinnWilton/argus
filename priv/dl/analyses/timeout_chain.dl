@@ -12,51 +12,24 @@
 //    blocking the GenServer.
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/otp.dl"
 .include "../clientlib/resolved_calls.dl"
-.include "../clientlib/behaviours.dl"
-
 // ── Input facts ──────────────────────────────────────────────────────
 
 // ── OTP helpers ──────────────────────────────────────────────────────
 
-.include "../clientlib/otp.dl"
 
 // ── Callback identification ──────────────────────────────────────────
 
-.include "../clientlib/callbacks.dl"
 
 // ── Callback sync dependency ─────────────────────────────────────────
 
-// A handle_call callback in `from_mod` makes a synchronous call to
-// `to_mod` (directly or transitively through helpers/API functions).
+// A handle_call/3 that waits on another module's process.
 .decl callback_sync_dep(from_mod: symbol, to_mod: symbol)
 
-// Direct sync_call from handle_call.
 callback_sync_dep(from_mod, to_mod) :-
   handle_call_function(from_mod, func),
-  sync_call_target(func, to_mod),
-  to_mod != "dynamic",
-  from_mod != to_mod.
-
-// Transitive: handle_call reaches a function with sync_call.
-callback_sync_dep(from_mod, to_mod) :-
-  handle_call_function(from_mod, func),
-  call_reachable(func, g),
-  sync_call_target(g, to_mod),
-  to_mod != "dynamic",
-  from_mod != to_mod.
-
-// Via GenServer API: handle_call calls/reaches a sync API function.
-callback_sync_dep(from_mod, to_mod) :-
-  handle_call_function(from_mod, func),
-  call_edge(func, g),
-  genserver_sync_api(g, to_mod),
-  from_mod != to_mod.
-
-callback_sync_dep(from_mod, to_mod) :-
-  handle_call_function(from_mod, func),
-  call_reachable(func, g),
-  genserver_sync_api(g, to_mod),
+  reaches_sync_dep(func, to_mod),
   from_mod != to_mod.
 
 // NOTE deliberately no `stateful_module_dep` clause here. It was
@@ -102,76 +75,21 @@ timeout_chain_risk(from, to, depth) :-
 
 // ── Output: blocking cast handler ────────────────────────────────────
 
-// handle_cast/2 that makes a synchronous call defeats the async
-// purpose of cast and silently blocks the GenServer.
 .decl blocking_cast_handler(mod: symbol, target: symbol)
 .output blocking_cast_handler
 
-// Direct sync_call from handle_cast.
 blocking_cast_handler(mod, target) :-
   handle_cast_function(mod, func),
-  sync_call_target(func, target),
-  target != "dynamic".
-
-// Transitive: handle_cast reaches a function with sync_call.
-blocking_cast_handler(mod, target) :-
-  handle_cast_function(mod, func),
-  call_reachable(func, g),
-  sync_call_target(g, target),
-  target != "dynamic".
-
-// Via GenServer API.
-blocking_cast_handler(mod, target_mod) :-
-  handle_cast_function(mod, func),
-  call_edge(func, g),
-  genserver_sync_api(g, target_mod).
-
-blocking_cast_handler(mod, target_mod) :-
-  handle_cast_function(mod, func),
-  call_reachable(func, g),
-  genserver_sync_api(g, target_mod).
+  reaches_sync_dep(func, target),
+  mod != target.
 
 // ── Timeout-aware sync dependency ──────────────────────────────────
 
-// Like callback_sync_dep, but carries the timeout value from the call site.
 .decl callback_sync_dep_timeout(from_mod: symbol, to_mod: symbol, timeout_ms: number)
 
-// Direct: handle_call itself has sync_call_timeout.
 callback_sync_dep_timeout(from_mod, to_mod, timeout_ms) :-
   handle_call_function(from_mod, func),
-  sync_call_timeout(func, to_mod, timeout_ms),
-  to_mod != "dynamic",
-  from_mod != to_mod.
-
-// Transitive: handle_call reaches a function with sync_call_timeout.
-callback_sync_dep_timeout(from_mod, to_mod, timeout_ms) :-
-  handle_call_function(from_mod, func),
-  call_reachable(func, g),
-  sync_call_timeout(g, to_mod, timeout_ms),
-  to_mod != "dynamic",
-  from_mod != to_mod.
-
-// Via GenServer sync API: use the API function's own sync_call_timeout.
-//
-// The timeout row's callee must be to_mod itself or "dynamic" — an API
-// wrapper's call target is usually a runtime pid/name that resolves to
-// "dynamic" even though genserver_sync_api already ties the wrapper to
-// to_mod. A wildcard here would instead attribute the timeout of any
-// OTHER resolved sync call in the wrapper to to_mod.
-callback_sync_dep_timeout(from_mod, to_mod, timeout_ms) :-
-  handle_call_function(from_mod, func),
-  call_edge(func, g),
-  genserver_sync_api(g, to_mod),
-  sync_call_timeout(g, callee, timeout_ms),
-  (callee = to_mod ; callee = "dynamic"),
-  from_mod != to_mod.
-
-callback_sync_dep_timeout(from_mod, to_mod, timeout_ms) :-
-  handle_call_function(from_mod, func),
-  call_reachable(func, g),
-  genserver_sync_api(g, to_mod),
-  sync_call_timeout(g, callee, timeout_ms),
-  (callee = to_mod ; callee = "dynamic"),
+  reaches_sync_dep_timeout(func, to_mod, timeout_ms),
   from_mod != to_mod.
 
 // ── Output: timeout insufficient ───────────────────────────────────

@@ -66,3 +66,18 @@
 // Transitive call reachability, closed over the staged edges.
 .decl call_reachable(from: symbol, to: symbol)
 .include "call_reachable_rules.dl"
+
+// Target columns that name no module say "dynamic" (the extractor could
+// not resolve the target), ":dynamic" (a partially resolved via tuple
+// carried the placeholder into the registry slot) or "via:Registry" (a
+// via tuple whose module is unknowable). A join against function_def or
+// behaves_as is safe by construction; a rule that carries a target into
+// a finding must exclude all three, as calls.dl does.
+
+// How many closures a function creates — the shape a transaction body or
+// a pure higher-order function is recognised by.
+.decl closure_count(func: symbol, n: number)
+
+closure_count(func, n) :-
+  closure_def(func, _),
+  n = count : { closure_def(func, _) }.

@@ -54,11 +54,7 @@ self_directed_call(caller, mod) :-
   function_def(handler, mod, "handle_call", 3, _),
   callback_tag(handler, "handle_call", tag).
 
-// What an analysis should ask instead of `sync_call`.
-.decl sync_call_target(caller: symbol, callee_mod: symbol)
-
-sync_call_target(caller, callee) :-
-  sync_call(caller, callee),
-  callee != "dynamic".
-
-sync_call_target(caller, callee) :- self_directed_call(caller, callee).
+// A self-directed call is a sync dependency on the caller's own module.
+// Analyses that include this file accept def_use, tuple_literal and
+// literal_value into their input set for it.
+sync_dep(caller, mod) :- self_directed_call(caller, mod).

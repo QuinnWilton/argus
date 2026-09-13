@@ -78,13 +78,31 @@ behaves_as(mod, declared) :-
   implements_behaviour(mod, declared),
   !behaviour_alias(declared, _).
 
-// Modules that run a callback loop and can therefore block themselves.
-.decl callback_loop_behaviour(canonical: symbol)
+// What a behaviour is, by the properties rules ask about. One table, three
+// kinds: `loop` — the module runs a callback loop over its own mailbox, so
+// a receive or a blocking call in a callback is on the server's stack;
+// `gen_server_like` — handle_call/3 answers with GenServer's return
+// contract, so `{:noreply, _}` is a deferred reply; `terminating` — the
+// behaviour calls terminate/2,3 on the way down. Five analyses each kept
+// their own list of the first kind and no two agreed.
+.decl process_behaviour(canonical: symbol, kind: symbol)
 
-callback_loop_behaviour("GenServer").
-callback_loop_behaviour("GenStateMachine").
-callback_loop_behaviour("GenEvent").
-callback_loop_behaviour("GenStage").
-callback_loop_behaviour("Broadway").
-callback_loop_behaviour("Phoenix.LiveView").
-callback_loop_behaviour("Phoenix.Channel").
+process_behaviour("GenServer", "loop").
+process_behaviour("GenStateMachine", "loop").
+process_behaviour("GenEvent", "loop").
+process_behaviour("GenStage", "loop").
+process_behaviour("Broadway", "loop").
+process_behaviour("Supervisor", "loop").
+process_behaviour("Phoenix.LiveView", "loop").
+process_behaviour("Phoenix.LiveComponent", "loop").
+process_behaviour("Phoenix.Channel", "loop").
+
+process_behaviour("GenServer", "gen_server_like").
+process_behaviour("GenStage", "gen_server_like").
+
+process_behaviour("GenServer", "terminating").
+process_behaviour("GenStage", "terminating").
+process_behaviour("GenStateMachine", "terminating").
+process_behaviour("GenEvent", "terminating").
+process_behaviour("Broadway", "terminating").
+process_behaviour("Phoenix.LiveView", "terminating").

@@ -10,49 +10,23 @@
 // - Safe cross-supervisor: caller and callee are under disjoint supervisors.
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/otp.dl"
 .include "../clientlib/resolved_calls.dl"
-.include "../clientlib/behaviours.dl"
-
 // ── Layer 2 facts ──────────────────────────────────────────────────────
 
 // ── OTP helpers ─────────────────────────────────────────────────────────
 
-.include "../clientlib/otp.dl"
-
 // ── Child subtree + init reaches ────────────────────────────────────────
-
-.include "../clientlib/supervision.dl"
 
 // ── Raw sync calls reachable from init ─────────────────────────────────
 
+// Every sync dependency an init/1 has, before any suppression: on its
+// own stack or anywhere it can reach.
 .decl raw_sync_call_in_init(mod: symbol, callee: symbol)
 
-// Direct: init/1 itself makes the sync_call.
 raw_sync_call_in_init(mod, callee) :-
   init_function(mod, func),
-  sync_call_target(func, callee),
-  callee != "dynamic".
-
-// Transitive: init/1 reaches a function that makes the sync_call.
-raw_sync_call_in_init(mod, callee) :-
-  init_function(mod, func),
-  call_reachable(func, g),
-  sync_call_target(g, callee),
-  callee != "dynamic".
-
-// Indirect via GenServer API: init/1 calls a sync API function.
-raw_sync_call_in_init(mod, target_mod) :-
-  init_function(mod, func),
-  call_edge(func, g),
-  genserver_sync_api(g, target_mod),
-  mod != target_mod.
-
-// Transitive via GenServer API: init/1 reaches a sync API function.
-raw_sync_call_in_init(mod, target_mod) :-
-  init_function(mod, func),
-  call_reachable(func, g),
-  genserver_sync_api(g, target_mod),
-  mod != target_mod.
+  reaches_sync_dep(func, callee).
 
 // ── Supervision-aware filtering ────────────────────────────────────────
 
@@ -74,18 +48,13 @@ likely_supervised(mod) :-
   implements_behaviour(mod, _),
   function_def(_, mod, "start_link", 1, _).
 
-// Callee starts earlier under the same supervisor — already running.
+// The callee starts earlier under the same supervisor, so it is running
+// when this init runs.
 .decl init_safe_sibling(child: symbol, dep: symbol)
 
 init_safe_sibling(child, dep) :-
   raw_sync_call_in_init(child, dep),
-  supervisor(sup, _),
-  child_subtree(sup, child_branch, child),
-  child_subtree(sup, dep_branch, dep),
-  supervisor_child(sup, cpos, child_branch, _, _),
-  supervisor_child(sup, dpos, dep_branch, _, _),
-  dpos < cpos,
-  child_branch != dep_branch.
+  starts_before(_, dep, child, _, _).
 
 // Both likely supervised but under disjoint supervisor trees — callee
 // is already running because it was started by a different supervisor.
@@ -107,45 +76,25 @@ init_safe_cross_supervisor(child, dep) :-
 
 // ── Conditional paths ──────────────────────────────────────────────────
 
-// The sync call is reachable from init through an edge that runs on every
-// path (stage 0's `unconditional_call_edge`). A direct GenServer.call in
-// init counts through its own edge to GenServer:call/N. If no such route
-// exists, every route from init passes through a branch-guarded site —
-// an option such as postgrex's `sync_connect: true`, a case on the
-// argument — and the call only happens on some inits.
+// The dependency holds on every path through init: the first hop out of
+// init is not control-dependent on a branch.
 .decl unconditional_sync_call_in_init(mod: symbol, callee: symbol)
 
 unconditional_sync_call_in_init(mod, callee) :-
   init_function(mod, func),
   unconditional_call_edge(func, gc),
-  (gc = "GenServer:call/2"; gc = "GenServer:call/3"),
-  sync_call_target(func, callee),
-  callee != "dynamic".
+  (gc = "GenServer:call/2" ; gc = "GenServer:call/3"),
+  sync_dep(func, callee).
 
 unconditional_sync_call_in_init(mod, callee) :-
   init_function(mod, func),
   unconditional_call_edge(func, g),
-  sync_call_target(g, callee),
-  callee != "dynamic".
-
-unconditional_sync_call_in_init(mod, callee) :-
-  init_function(mod, func),
-  unconditional_call_edge(func, g),
-  call_reachable(g, h),
-  sync_call_target(h, callee),
-  callee != "dynamic".
+  reaches_sync_dep(g, callee).
 
 unconditional_sync_call_in_init(mod, callee) :-
   init_function(mod, func),
   unconditional_call_edge(func, g),
   genserver_sync_api(g, callee),
-  mod != callee.
-
-unconditional_sync_call_in_init(mod, callee) :-
-  init_function(mod, func),
-  unconditional_call_edge(func, g),
-  call_reachable(g, h),
-  genserver_sync_api(h, callee),
   mod != callee.
 
 // ── Filtered output ────────────────────────────────────────────────────
@@ -171,21 +120,12 @@ sync_call_in_init(mod, callee, "conditional") :-
 
 // ── Init deadlock risk ─────────────────────────────────────────────────
 
-// A child's init sync-calls a dependency that starts later under the
-// same supervisor. The dependency's process doesn't exist yet, so the
-// call will block (or crash) during startup.
 .decl init_deadlock_risk(sup: symbol, child: symbol, dep: symbol, child_pos: number, dep_pos: number)
 .output init_deadlock_risk
 
 init_deadlock_risk(sup, child, dep, cpos, dpos) :-
-  supervisor(sup, _),
-  child_subtree(sup, child_branch, child),
-  child_subtree(sup, dep_branch, dep),
-  supervisor_child(sup, cpos, child_branch, _, _),
-  supervisor_child(sup, dpos, dep_branch, _, _),
   raw_sync_call_in_init(child, dep),
-  cpos < dpos,
-  child_branch != dep_branch.
+  starts_before(sup, child, dep, cpos, dpos).
 
 // ── Supervisor management calls from init/1 ──────────────────────────
 //
@@ -209,25 +149,6 @@ sup_call_in_init(mod, api, op, target, site) :-
   init_function(mod, func),
   call_reachable(func, g),
   sup_call(site, g, api, op, target).
-
-// ── An init waiting on a server whose handler itself blocks ──────────
-//
-// init_safe_sibling and init_safe_cross_supervisor argue that the
-// callee is already running when this init calls it. Running is not
-// answering. db_connection's ConnectionPool.init called the Watcher —
-// a singleton in the app tree, started long before any pool — with an
-// :infinity timeout, and the Watcher's handle_info blocked in
-// DynamicSupervisor.terminate_child for the whole shutdown of a
-// departing pool. Every pool's init hung behind it. So: a call from
-// init that the tree-order argument accepts, into a server one of
-// whose handlers reaches a supervisor management call or a
-// GenServer.call of its own.
-.decl handler_function(mod: symbol, func: symbol)
-
-handler_function(mod, func) :-
-  behaves_as(mod, "GenServer"),
-  function_def(func, mod, name, _, _),
-  (name = "handle_call" ; name = "handle_cast" ; name = "handle_info" ; name = "handle_continue").
 
 // Only operations with no bound of their own count. terminate_child,
 // stop and their relatives wait for a whole shutdown, and a

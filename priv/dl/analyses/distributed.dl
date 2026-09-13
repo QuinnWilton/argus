@@ -5,8 +5,7 @@
 // resolution, and distributed operations in init/1.
 
 .include "../clientlib/imports.dl"
-.include "../clientlib/behaviours.dl"
-
+.include "../clientlib/otp.dl"
 // ── RPC without timeout ──────────────────────────────────────────
 
 // RPC call using default infinity timeout — hangs on netsplit.
@@ -19,22 +18,6 @@ rpc_without_timeout(func, variant, id) :-
   rpc_call(id, func, variant, "infinity").
 
 // ── RPC in GenServer callback ────────────────────────────────────
-
-// RPC inside a GenServer callback compounds timeout risk — the
-// GenServer's own timeout plus the RPC timeout can cascade.
-.decl genserver_callback_func(func: symbol)
-
-genserver_callback_func(func) :-
-  function_def(func, mod, "handle_call", _, _),
-  behaves_as(mod, "GenServer").
-
-genserver_callback_func(func) :-
-  function_def(func, mod, "handle_cast", _, _),
-  behaves_as(mod, "GenServer").
-
-genserver_callback_func(func) :-
-  function_def(func, mod, "handle_info", _, _),
-  behaves_as(mod, "GenServer").
 
 // Only the RPC directly in the callback is reported. The transitive
 // form — `rpc_call(_, g, _, _), call_reachable(func, g)` — was removed:
@@ -50,7 +33,7 @@ genserver_callback_func(func) :-
 
 rpc_in_genserver_callback(func, variant) :-
   rpc_call(_, func, variant, _),
-  genserver_callback_func(func).
+  handler_function(_, func).
 
 // ── Global register without conflict resolution ──────────────────
 
@@ -102,7 +85,6 @@ global_blocking_in_init(func, op) :-
 // init_function comes from the clientlib: init/1 in a behaviour module.
 // Only those init/1 functions run under a supervisor at start time — a
 // plain module's init/1 is an ordinary function and must not be flagged.
-.include "../clientlib/init_function_rules.dl"
 
 // site is the distributed-op instruction inside init. One row per
 // site — finding builders dedupe on (func, op).

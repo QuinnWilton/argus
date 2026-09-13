@@ -21,11 +21,7 @@
 // separate finding type.
 
 .include "../clientlib/imports.dl"
-.include "../clientlib/behaviours.dl"
-
 .include "../clientlib/otp.dl"
-.include "../clientlib/supervision.dl"
-
 // ── Continue-handler reachability ────────────────────────────────────
 
 // A function is "continue-startup reachable from MOD" if it's the body
@@ -41,13 +37,11 @@ continue_reachable_from(mod, callee) :-
   continue_reachable_from(mod, caller),
   call_reachable(caller, callee).
 
-// A module sync-calls another module from a continue handler if the
-// continue body (or anything reachable from it) emits a sync_call.
 .decl continue_sync_calls(from_mod: symbol, to_mod: symbol)
 
 continue_sync_calls(from_mod, to_mod) :-
   continue_reachable_from(from_mod, func),
-  sync_call(func, to_mod),
+  sync_dep(func, to_mod),
   from_mod != to_mod.
 
 // ── Pattern 1: mutual continue cycle ────────────────────────────────
@@ -64,16 +58,11 @@ mutual_continue_deadlock(mod_a, mod_b) :-
 
 // ── Pattern 2: handle_continue calls later-started sibling ───────────
 
-// Caller and callee are both static children of the same supervisor,
-// caller is at an earlier position, and the caller's handle_continue
-// sync-calls the callee.
 .decl continue_to_later_sibling(sup: symbol, caller: symbol, callee: symbol, caller_pos: number, callee_pos: number)
 .output continue_to_later_sibling
 
 continue_to_later_sibling(sup, caller, callee, caller_pos, callee_pos) :-
-  supervisor_child(sup, caller_pos, caller, _, _),
-  supervisor_child(sup, callee_pos, callee, _, _),
-  caller_pos < callee_pos,
+  starts_before(sup, caller, callee, caller_pos, callee_pos),
   continue_sync_calls(caller, callee).
 
 // ── Pattern 3: handle_continue calls back into parent supervisor ─────

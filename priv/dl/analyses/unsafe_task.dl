@@ -91,12 +91,6 @@ process_task_handler(mod) :-
 process_task_handler(mod) :-
   behaves_as(mod, "GenStateMachine"),
   function_def(_, mod, "handle_event", 4, _).
-
-// GenStateMachine (Elixir wrapper) with handle_event/4.
-process_task_handler(mod) :-
-  behaves_as(mod, "GenStateMachine"),
-  function_def(_, mod, "handle_event", 4, _).
-
 // ── Task factory suppression ─────────────────────────────────────────
 
 // A function that creates an async task in tail position returns the

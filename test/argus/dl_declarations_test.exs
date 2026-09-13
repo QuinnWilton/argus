@@ -135,9 +135,7 @@ defmodule Argus.DlDeclarationsTest do
       coverage: ~w(async_cast dynamic_child ets_new ets_op function_def implements_behaviour
                    imprecision named_process supervisor supervisor_child sync_call),
       deferred_startup_deadlock:
-        ~w(call_arg call_arg_forward call_edge callback_timeout function_def
-           handle_continue_clause implements_behaviour init_continues_to supervisor
-           supervisor_child sync_call try_start),
+        ~w(call_arg call_arg_forward call_edge callback_timeout dynamic_child function_def handle_continue_clause implements_behaviour init_continues_to supervisor supervisor_child sync_call try_start),
       distributed: ~w(call_edge distributed_store_op function_def global_op global_register
                       implements_behaviour node_operation rpc_call),
       error_handling: ~w(bare_rescue call_edge callback_tag callback_total exit_call function_def

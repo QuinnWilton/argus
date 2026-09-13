@@ -4,8 +4,7 @@
 // handlers, exit in callbacks, and ignored start results.
 
 .include "../clientlib/imports.dl"
-.include "../clientlib/behaviours.dl"
-
+.include "../clientlib/otp.dl"
 // ── Swallowed errors ─────────────────────────────────────────────
 
 // Catch-all rescue that silently discards exceptions.
@@ -32,7 +31,6 @@ has_handle_info(mod) :-
 // Tracker even matches {:EXIT, ...} explicitly). Exclude them.
 .decl statem_like(mod: symbol)
 
-statem_like(mod) :- behaves_as(mod, "GenStateMachine").
 statem_like(mod) :- behaves_as(mod, "GenStateMachine").
 
 // `witness` is the function that sets trap_exit. One row per witness —
@@ -101,21 +99,6 @@ handle_info_without_catchall(mod, h) :-
 
 // ── Exit in GenServer callback ───────────────────────────────────
 
-// Detect explicit Process.exit/2 in GenServer callbacks.
-.decl genserver_callback(func: symbol, mod: symbol)
-
-genserver_callback(func, mod) :-
-  function_def(func, mod, "handle_call", _, _),
-  behaves_as(mod, "GenServer").
-
-genserver_callback(func, mod) :-
-  function_def(func, mod, "handle_cast", _, _),
-  behaves_as(mod, "GenServer").
-
-genserver_callback(func, mod) :-
-  function_def(func, mod, "handle_info", _, _),
-  behaves_as(mod, "GenServer").
-
 // Only exit *signals* — Process.exit/2, :erlang.exit/2 — count here.
 // `:erlang.exit/1` (target "self") *raises* an exit in the current
 // process: the "let it crash on an impossible state" idiom
@@ -128,13 +111,13 @@ genserver_callback(func, mod) :-
 
 exit_in_callback(func, target) :-
   exit_call(_, func, target),
-  genserver_callback(func, _),
+  handler_function(_, func),
   target != "self".
 
 exit_in_callback(func, target) :-
   exit_call(_, callee_func, target),
   call_reachable(func, callee_func),
-  genserver_callback(func, _),
+  handler_function(_, func),
   target != "self".
 
 // ── Ignored start results ────────────────────────────────────────

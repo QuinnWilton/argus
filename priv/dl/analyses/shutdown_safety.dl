@@ -23,29 +23,8 @@
 // there buys nothing.
 
 .include "../clientlib/imports.dl"
-.include "../clientlib/behaviours.dl"
-
+.include "../clientlib/otp.dl"
 // ── Behaviours with a terminate callback ─────────────────────────
-
-.decl terminating_behaviour(behaviour: symbol)
-
-// Canonical names — clientlib/behaviours.dl folds the Erlang spellings in.
-// Listing "gen_server" here by hand was wrong twice over: the Erlang
-// declaration inspects to ":gen_server", colon included, so the bare form
-// matched nothing at all.
-terminating_behaviour("GenServer").
-terminating_behaviour("GenStage").
-terminating_behaviour("GenStateMachine").
-terminating_behaviour("GenEvent").
-terminating_behaviour("Broadway").
-terminating_behaviour("Phoenix.LiveView").
-
-.decl terminate_callback(func: symbol, mod: symbol, behaviour: symbol)
-
-terminate_callback(func, mod, behaviour) :-
-  behaves_as(mod, behaviour),
-  terminating_behaviour(behaviour),
-  function_def(func, mod, "terminate", _, _).
 
 // ── Does the module trap exits? ──────────────────────────────────
 //

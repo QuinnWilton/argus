@@ -56,12 +56,6 @@ transaction_site(caller, "Postgrex") :-
 // was passed to the transaction, and naming the wrong lambda sends someone
 // to the wrong line, which is worse than saying nothing.
 
-.decl closure_count(caller: symbol, n: number)
-
-closure_count(caller, n) :-
-  closure_def(caller, _),
-  n = count : { closure_def(caller, _) }.
-
 .decl transaction_body(caller: symbol, repo: symbol, body: symbol)
 
 transaction_body(caller, repo, body) :-

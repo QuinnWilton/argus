@@ -1,32 +1,78 @@
-// GenServer callback identification for client analyses.
+// Which functions are OTP callbacks, and of what.
 //
-// Identifies handle_call/3 and handle_cast/2 functions in GenServer modules.
-//
-// Prerequisites: include clientlib/imports.dl before this file, and
-// declare/input implements_behaviour.
-//
-// Usage:
-//   .include "../clientlib/imports.dl"
-//
-//   .decl implements_behaviour(mod: symbol, behaviour: symbol)
-//   .input implements_behaviour
-//
-//   .include "../clientlib/callbacks.dl"
+// Requires imports.dl and behaviours.dl.
 //
 // Provides:
-//   handle_call_function(mod, func)
-//   handle_cast_function(mod, func)
+//   otp_callback(func, mod, callback, behaviour)
+//   init_function(mod, func)
+//   handle_call_function(mod, func) / handle_cast_function(mod, func)
+//   handler_function(mod, func)
+//   terminate_callback(func, mod, behaviour)
 
-// handle_call/3 in a GenServer module.
+// Names a callback loop dispatches to. A function of this name in a
+// module of a loop behaviour runs on the server's own stack.
+.decl callback_name(name: symbol)
+
+callback_name("init").
+callback_name("handle_call").
+callback_name("handle_cast").
+callback_name("handle_info").
+callback_name("handle_continue").
+callback_name("handle_event").
+callback_name("handle_events").
+callback_name("handle_demand").
+callback_name("handle_subscribe").
+callback_name("handle_cancel").
+callback_name("handle_params").
+callback_name("handle_in").
+callback_name("handle_message").
+callback_name("handle_batch").
+callback_name("terminate").
+callback_name("mount").
+
+// A callback of a loop behaviour, with the canonical behaviour it belongs
+// to. Nine analyses each kept a private version of this, and they did
+// not agree on arities: ask function_def for the arity when it matters.
+.decl otp_callback(func: symbol, mod: symbol, callback: symbol, behaviour: symbol)
+
+otp_callback(func, mod, name, behaviour) :-
+  behaves_as(mod, behaviour),
+  process_behaviour(behaviour, "loop"),
+  function_def(func, mod, name, _, _),
+  callback_name(name).
+
+// init/1 of any behaviour module — Supervisor and Application included,
+// since both run it inside a start sequence.
+.decl init_function(mod: symbol, func: symbol)
+
+init_function(mod, func) :-
+  function_def(func, mod, "init", 1, _),
+  implements_behaviour(mod, _).
+
+// The GenServer request handlers, at their contract arities.
 .decl handle_call_function(mod: symbol, func: symbol)
 
 handle_call_function(mod, func) :-
-  function_def(func, mod, "handle_call", 3, _),
-  behaves_as(mod, "GenServer").
+  otp_callback(func, mod, "handle_call", "GenServer"),
+  function_def(func, mod, _, 3, _).
 
-// handle_cast/2 in a GenServer module.
 .decl handle_cast_function(mod: symbol, func: symbol)
 
 handle_cast_function(mod, func) :-
-  function_def(func, mod, "handle_cast", 2, _),
-  behaves_as(mod, "GenServer").
+  otp_callback(func, mod, "handle_cast", "GenServer"),
+  function_def(func, mod, _, 2, _).
+
+// Any GenServer message handler: what runs once the server is up.
+.decl handler_function(mod: symbol, func: symbol)
+
+handler_function(mod, func) :-
+  otp_callback(func, mod, name, "GenServer"),
+  (name = "handle_call" ; name = "handle_cast" ; name = "handle_info" ; name = "handle_continue").
+
+// terminate/2,3 of a behaviour that calls it.
+.decl terminate_callback(func: symbol, mod: symbol, behaviour: symbol)
+
+terminate_callback(func, mod, behaviour) :-
+  behaves_as(mod, behaviour),
+  process_behaviour(behaviour, "terminating"),
+  function_def(func, mod, "terminate", _, _).

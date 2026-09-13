@@ -6,66 +6,32 @@
 // the other, producing a deadlock.
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/otp.dl"
 .include "../clientlib/resolved_calls.dl"
-.include "../clientlib/behaviours.dl"
-
 // ── Layer 2 facts ──────────────────────────────────────────────────────
 
 // ── GenServer API identification ───────────────────────────────────────
 
-.include "../clientlib/otp.dl"
 
 // ── Synchronous dependency ─────────────────────────────────────────────
 
 // Direct: a function in from_mod makes a sync_call to to_mod.
 // `witness` is the depending function in from_mod — anchor-grade evidence.
-.decl sync_dep(from_mod: symbol, to_mod: symbol, witness: symbol)
+// Module A waits on module B somewhere: a function of A reaches a sync
+// dependency on B.
+.decl module_sync_dep(from_mod: symbol, to_mod: symbol, witness: symbol)
 
-sync_dep(from_mod, to_mod, f) :-
+module_sync_dep(from_mod, to_mod, f) :-
   function_def(f, from_mod, _, _, _),
-  sync_call_target(f, to_mod),
-  to_mod != "dynamic", from_mod != to_mod.
-
-// Indirect via GenServer API: a function in from_mod calls a sync API
-// function exported by to_mod. The API function wraps GenServer.call
-// internally, so the caller has a synchronous dependency.
-sync_dep(from_mod, to_mod, f) :-
-  function_def(f, from_mod, _, _, _),
-  call_edge(f, g),
-  genserver_sync_api(g, to_mod),
+  reaches_sync_dep(f, to_mod),
   from_mod != to_mod.
 
-// Transitive: a function in from_mod reaches (through the call graph)
-// a function that sync-calls to_mod.
-.decl sync_dep_transitive(from_mod: symbol, to_mod: symbol, witness: symbol)
-
-sync_dep_transitive(from_mod, to_mod, w) :- sync_dep(from_mod, to_mod, w).
-
-sync_dep_transitive(from_mod, to_mod, f) :-
-  function_def(f, from_mod, _, _, _),
-  call_reachable(f, g),
-  sync_call_target(g, to_mod),
-  to_mod != "dynamic", from_mod != to_mod.
-
-// Transitive via GenServer API.
-sync_dep_transitive(from_mod, to_mod, f) :-
-  function_def(f, from_mod, _, _, _),
-  call_reachable(f, g),
-  genserver_sync_api(g, to_mod),
-  from_mod != to_mod.
-
-// ── Cycle detection ────────────────────────────────────────────────────
-
-// Two modules that mutually depend on each other synchronously.
-// The a < b constraint avoids duplicate (b, a) pairs. witness_a carries
-// the a-side dependency, witness_b the return path. One row per witness
-// pair — finding builders dedupe on (mod_a, mod_b).
 .decl call_cycle(mod_a: symbol, mod_b: symbol, witness_a: symbol, witness_b: symbol)
 .output call_cycle
 
 call_cycle(a, b, wa, wb) :-
-  sync_dep_transitive(a, b, wa),
-  sync_dep_transitive(b, a, wb),
+  module_sync_dep(a, b, wa),
+  module_sync_dep(b, a, wb),
   a < b.
 
 // Full path of transitive sync dependencies for cycle participants.
@@ -75,6 +41,6 @@ call_cycle(a, b, wa, wb) :-
 
 call_cycle_path(from_mod, to_mod, witness) :-
   call_cycle(a, b, _, _),
-  sync_dep_transitive(from_mod, to_mod, witness),
+  module_sync_dep(from_mod, to_mod, witness),
   (from_mod = a ; from_mod = b),
   (to_mod = a ; to_mod = b).

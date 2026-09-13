@@ -1,0 +1,236 @@
+// Who waits on whom.
+//
+// Requires imports.dl, behaviours.dl and callbacks.dl. Reads the extracted
+// sync_call / async_cast / sync_call_timeout / call_arg / call_arg_forward
+// facts and answers one question in a few shapes: does this function, or
+// this module, synchronously depend on that module's process.
+//
+// Provides:
+//   resolved_arg(func, arg_pos, value)          + sync_call/async_cast rows
+//   genserver_sync_api(func, mod) / genserver_async_api(func, mod)
+//   sync_dep(func, mod) / async_dep(func, mod)               — direct
+//   reaches_sync_dep(func, mod) / reaches_async_dep(func, mod) — transitive
+//   sync_dep_timeout(func, mod, timeout_ms) / reaches_sync_dep_timeout
+//   same_process_reaches(from, to)
+//   module_reaches(from_mod, to_mod, witness)
+//   stateful_module_dep(from_mod, to_mod, witness)
+//   stateful_module_dep_kind(from_mod, to_mod, kind)
+//
+// resolved_calls.dl adds the self-directed rows to sync_dep for analyses
+// that accept the value-flow relations in their input set.
+
+// ── Interprocedural constant propagation ──────────────────────────────
+//
+// A literal argument to a callee is known at the callee; a callee that
+// forwards a parameter onward has that parameter's value known too. The
+// forwarded position is a number column: `to_number`/`substr` are partial
+// functors that abort the whole program when Souffle's magic-set
+// transform reorders a guard past them, which
+// test/argus/dl_declarations_test.exs forbids statically.
+.decl resolved_arg(func: symbol, arg_pos: number, value: symbol)
+
+resolved_arg(callee, pos, val) :-
+  call_arg(_, callee, pos, val),
+  val != "dynamic".
+
+resolved_arg(callee, callee_pos, val) :-
+  call_arg_forward(forwarder, callee, callee_pos, fwd_param),
+  resolved_arg(forwarder, fwd_param, val).
+
+// `defp fetch(server), do: GenServer.call(server, ...)` called with a
+// literal: the wrapper synchronously calls that module.
+sync_call(func, target) :-
+  call_arg_forward(func, callee, 0, fwd_pos),
+  (callee = "GenServer:call/2" ; callee = "GenServer:call/3" ;
+   callee = ":gen_server:call/2" ; callee = ":gen_server:call/3"),
+  resolved_arg(func, fwd_pos, target).
+
+async_cast(func, target) :-
+  call_arg_forward(func, callee, 0, fwd_pos),
+  (callee = "GenServer:cast/2" ; callee = ":gen_server:cast/2"),
+  resolved_arg(func, fwd_pos, target).
+
+// ── Client API ─────────────────────────────────────────────────────────
+//
+// An exported function of a GenServer module that makes (or reaches, in
+// the same module) a sync call is that server's client API: calling it
+// is waiting on the server, whether or not the target resolved.
+.decl genserver_sync_api(func: symbol, mod: symbol)
+
+genserver_sync_api(func, mod) :-
+  function_def(func, mod, _, _, 1),
+  behaves_as(mod, "GenServer"),
+  sync_call(func, _).
+
+genserver_sync_api(func, mod) :-
+  function_def(func, mod, _, _, 1),
+  behaves_as(mod, "GenServer"),
+  call_reachable(func, g),
+  sync_call(g, _),
+  function_def(g, mod, _, _, _).
+
+.decl genserver_async_api(func: symbol, mod: symbol)
+
+genserver_async_api(func, mod) :-
+  function_def(func, mod, _, _, 1),
+  behaves_as(mod, "GenServer"),
+  async_cast(func, _).
+
+// ── Dependencies ───────────────────────────────────────────────────────
+//
+// sync_dep(f, m): f itself waits on m's process — a resolved sync call,
+// or a call into m's client API. reaches_sync_dep adds every function f
+// can reach. Eleven analyses used to derive one of these two by hand,
+// with four or five clauses each and no two alike.
+.decl sync_dep(func: symbol, mod: symbol)
+
+sync_dep(f, m) :-
+  sync_call(f, m),
+  m != "dynamic",
+  m != ":dynamic",
+  !match("via:.*", m).
+
+sync_dep(f, m) :-
+  call_edge(f, g),
+  genserver_sync_api(g, m),
+  function_def(f, fm, _, _, _),
+  fm != m.
+
+.decl async_dep(func: symbol, mod: symbol)
+
+async_dep(f, m) :-
+  async_cast(f, m),
+  m != "dynamic",
+  m != ":dynamic",
+  !match("via:.*", m).
+
+async_dep(f, m) :-
+  call_edge(f, g),
+  genserver_async_api(g, m),
+  function_def(f, fm, _, _, _),
+  fm != m.
+
+.decl reaches_sync_dep(func: symbol, mod: symbol)
+
+reaches_sync_dep(f, m) :- sync_dep(f, m).
+
+reaches_sync_dep(f, m) :-
+  call_reachable(f, g),
+  sync_dep(g, m).
+
+.decl reaches_async_dep(func: symbol, mod: symbol)
+
+reaches_async_dep(f, m) :- async_dep(f, m).
+
+reaches_async_dep(f, m) :-
+  call_reachable(f, g),
+  async_dep(g, m).
+
+// With the timeout the waiting call carries: -1 is :infinity, 0 unknown.
+// Through a client API function the timeout is the wrapper's, whose own
+// target is usually the pid it was handed.
+.decl sync_dep_timeout(func: symbol, mod: symbol, timeout_ms: number)
+
+sync_dep_timeout(f, m, ms) :-
+  sync_call_timeout(f, m, ms),
+  m != "dynamic",
+  m != ":dynamic",
+  !match("via:.*", m).
+
+sync_dep_timeout(f, m, ms) :-
+  call_edge(f, g),
+  genserver_sync_api(g, m),
+  sync_call_timeout(g, callee, ms),
+  (callee = m ; callee = "dynamic"),
+  function_def(f, fm, _, _, _),
+  fm != m.
+
+.decl reaches_sync_dep_timeout(func: symbol, mod: symbol, timeout_ms: number)
+
+reaches_sync_dep_timeout(f, m, ms) :- sync_dep_timeout(f, m, ms).
+
+reaches_sync_dep_timeout(f, m, ms) :-
+  call_reachable(f, g),
+  sync_dep_timeout(g, m, ms).
+
+// ── Same-process reachability ──────────────────────────────────────────
+//
+// Control that stays on the calling process's stack: every call edge
+// except into a closure, which may run anywhere (a spawned fun, a Task).
+// A callback reaching a receive or a monitor this way owns it.
+.decl same_process_reaches(from: symbol, to: symbol)
+
+same_process_reaches(f, g) :-
+  call_edge(f, g),
+  !closure_def(f, g).
+
+same_process_reaches(f, h) :-
+  same_process_reaches(f, g),
+  call_edge(g, h),
+  !closure_def(g, h).
+
+// ── Module-level dependency ────────────────────────────────────────────
+//
+// A function defined in `from_mod` transitively reaches a function
+// defined in `to_mod`; `witness` is the reaching function.
+.decl module_reaches(from_mod: symbol, to_mod: symbol, witness: symbol)
+
+module_reaches(from_mod, to_mod, caller) :-
+  function_def(caller, from_mod, _, _, _),
+  call_reachable(caller, callee),
+  function_def(callee, to_mod, _, _, _),
+  from_mod != to_mod.
+
+// from_mod holds process state that depends on to_mod's process — a
+// sync or async dependency, resolved or through the callee module's own
+// unresolved client calls (a facade like Oban.Notifier delegating by
+// dynamic dispatch has no resolved target, but the module as a whole
+// manages process state). `witness` is a function in from_mod the
+// dependency flows through; finding builders dedupe on the module pair.
+.decl stateful_module_dep(from_mod: symbol, to_mod: symbol, witness: symbol)
+
+stateful_module_dep(from_mod, to_mod, f) :-
+  function_def(f, from_mod, _, _, _),
+  reaches_sync_dep(f, to_mod),
+  from_mod != to_mod.
+
+stateful_module_dep(from_mod, to_mod, f) :-
+  function_def(f, from_mod, _, _, _),
+  reaches_async_dep(f, to_mod),
+  from_mod != to_mod.
+
+stateful_module_dep(from_mod, to_mod, f) :-
+  function_def(f, from_mod, _, _, _),
+  call_reachable(f, g),
+  function_def(g, to_mod, _, _, _),
+  (sync_call(g, _) ; async_cast(g, _)),
+  from_mod != to_mod.
+
+stateful_module_dep(from_mod, to_mod, w) :-
+  module_reaches(from_mod, to_mod, w),
+  function_def(h, to_mod, _, _, _),
+  (sync_call(h, _) ; async_cast(h, _)).
+
+// The strongest mechanism the dependency is provable through: "call"
+// when any path waits on a reply, "cast" when every path is one-way. A
+// cast-only coupling cannot hold a stale reply, pid or monitor.
+.decl stateful_module_dep_call(from_mod: symbol, to_mod: symbol)
+
+stateful_module_dep_call(from_mod, to_mod) :-
+  stateful_module_dep(from_mod, to_mod, f),
+  reaches_sync_dep(f, to_mod).
+
+stateful_module_dep_call(from_mod, to_mod) :-
+  stateful_module_dep(from_mod, to_mod, f),
+  call_reachable(f, g),
+  function_def(g, to_mod, _, _, _),
+  sync_call(g, _).
+
+.decl stateful_module_dep_kind(from_mod: symbol, to_mod: symbol, kind: symbol)
+
+stateful_module_dep_kind(from_mod, to_mod, "call") :-
+  stateful_module_dep_call(from_mod, to_mod).
+
+stateful_module_dep_kind(from_mod, to_mod, "cast") :-
+  stateful_module_dep(from_mod, to_mod, _),
+  !stateful_module_dep_call(from_mod, to_mod).
