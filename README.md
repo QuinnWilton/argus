@@ -17,7 +17,7 @@ tagged release from GitHub:
 ```elixir
 def deps do
   [
-    {:argus, github: "QuinnWilton/argus", tag: "v0.8.0"}
+    {:argus, github: "QuinnWilton/argus", tag: "v0.8.1"}
   ]
 end
 ```
