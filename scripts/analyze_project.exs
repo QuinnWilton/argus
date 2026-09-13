@@ -91,16 +91,15 @@ defmodule Argus.Scripts.AnalyzeProject do
   # JSON output mode — collects all results (including errors) and writes JSON.
   #
   # Two views of the same run land in the report: the raw relation rows
-  # ("analyses" — the count-stable interface autoresearch consumes) and
-  # severity-ranked findings with line-resolved anchors ("otp_findings" —
-  # the reviewable interface for triage across projects).
+  # ("analyses") and severity-ranked findings with line-resolved anchors
+  # ("otp_findings", the reviewable interface for triage across projects).
   defp run_json(project_path, modules, analyses, json_path) do
     start_time = System.monotonic_time(:millisecond)
 
+    facts_dir = extract!(modules, analyses)
+
     analysis_results =
-      Enum.map(analyses, fn analysis ->
-        {analysis, Argus.analyze(modules, analysis)}
-      end)
+      Enum.map(analyses, fn analysis -> {analysis, run_rules(facts_dir, analysis)} end)
 
     findings =
       case analyses -- [:coverage] do
@@ -108,11 +107,14 @@ defmodule Argus.Scripts.AnalyzeProject do
           nil
 
         findings_analyses ->
-          case Argus.run_analyses(modules, analyses: findings_analyses) do
+          case Argus.Findings.run(modules, analyses: findings_analyses, facts_dir: facts_dir) do
             {:ok, findings} -> findings
             {:error, _reason} -> nil
           end
       end
+
+    lines = Argus.Lines.from_facts_dir(facts_dir)
+    File.rm_rf(Path.dirname(facts_dir))
 
     duration_ms = System.monotonic_time(:millisecond) - start_time
 
@@ -128,7 +130,7 @@ defmodule Argus.Scripts.AnalyzeProject do
     report =
       Argus.Report.build_project_report(meta, analysis_results,
         findings: findings,
-        lines: findings && line_tables(modules)
+        lines: findings && lines
       )
 
     case Argus.Report.write_json(report, json_path) do
@@ -142,11 +144,14 @@ defmodule Argus.Scripts.AnalyzeProject do
     # Print supervision structure first.
     print_supervision_structure(modules)
 
-    # Run each analysis and collect results.
-    {results, failures} = run_analyses_pretty(modules, analyses)
+    # One extraction for every analysis, then a solve each.
+    facts_dir = extract!(modules, analyses)
+    {results, failures} = run_analyses_pretty(facts_dir, analyses)
+    lines = Argus.Lines.from_facts_dir(facts_dir)
+    File.rm_rf(Path.dirname(facts_dir))
 
     # Print results grouped by analysis, with anchors resolved to lines.
-    print_all_results(results, line_tables(modules))
+    print_all_results(results, lines)
 
     # Print summary.
     print_summary(results, failures)
@@ -202,12 +207,25 @@ defmodule Argus.Scripts.AnalyzeProject do
     end)
   end
 
-  defp run_analyses_pretty(modules, analyses) do
+  defp extract!(modules, analyses) do
+    case Argus.Analysis.extract_facts(modules, analyses) do
+      {:ok, facts_dir} -> facts_dir
+      {:error, reason} -> abort("Extraction failed: #{inspect(reason)}")
+    end
+  end
+
+  defp run_rules(facts_dir, analysis) do
+    with {:ok, results} <- Argus.Analysis.run_rules(facts_dir, analysis) do
+      {:ok, Argus.Analysis.filter_to_outputs(results, analysis)}
+    end
+  end
+
+  defp run_analyses_pretty(facts_dir, analyses) do
     analyses
     |> Enum.reduce({[], []}, fn analysis, {ok_acc, err_acc} ->
       IO.puts("--- Running #{analysis} ---")
 
-      case Argus.analyze(modules, analysis) do
+      case run_rules(facts_dir, analysis) do
         {:ok, results} ->
           {[{analysis, dedupe_results(analysis, results)} | ok_acc], err_acc}
 
@@ -244,17 +262,6 @@ defmodule Argus.Scripts.AnalyzeProject do
 
       :error ->
         results
-    end
-  end
-
-  # Line tables for anchor resolution in the printed rows. Extraction
-  # here is a second pass over the beams, but it is cheap next to the
-  # Souffle runs and keeps the printing path independent of analyze/2's
-  # internal facts directory.
-  defp line_tables(modules) do
-    case Argus.Pipeline.extract(modules) do
-      {:ok, facts} -> Argus.Lines.from_facts(facts)
-      {:error, _} -> Argus.Lines.from_facts(%{})
     end
   end
 

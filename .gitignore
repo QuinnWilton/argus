@@ -25,6 +25,3 @@ argus-*.tar
 # Dialyzer PLT cache.
 /priv/plts/
 
-# Autoresearch state (config, baseline, session logs, snapshots) is local
-# working state for extractor-coverage sessions, never library content.
-/.autoresearch/

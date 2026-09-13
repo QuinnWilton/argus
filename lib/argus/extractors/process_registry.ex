@@ -11,8 +11,6 @@ defmodule Argus.Extractors.ProcessRegistry do
 
   - `process_register(id, func, name, method)` — direct registration and GenServer `name:` option
   - `named_process(mod, name)` — module-level: a process implemented by `mod` is registered as `name`
-  - `registry_op(id, func, registry, op, key)` — `Registry.register/lookup/dispatch`
-  - `via_tuple(id, func, registry, key)` — `{:via, Registry, {reg, key}}` tuple construction
   - `whereis_call(id, func, name)` — `Process.whereis/1`, `:erlang.whereis/1`
   """
 
@@ -31,23 +29,6 @@ defmodule Argus.Extractors.ProcessRegistry do
     ]
 
   # Registry operations to detect, mapped to arity.
-  @registry_ops [
-    {:register, 3},
-    {:lookup, 2},
-    {:dispatch, 3},
-    {:dispatch, 4},
-    {:unregister, 2},
-    {:unregister_match, 3},
-    {:match, 3},
-    {:keys, 2},
-    {:values, 2},
-    {:count, 1},
-    {:count_match, 3},
-    {:select, 2},
-    {:meta, 2},
-    {:put_meta, 3}
-  ]
-
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
@@ -56,7 +37,6 @@ defmodule Argus.Extractors.ProcessRegistry do
     scan_functions(module_data.module, module_data.functions, %{}, fn facts, ctx, instr ->
       facts
       |> maybe_register_call(mod_str, ctx, instr)
-      |> maybe_via_tuple(ctx, instr)
     end)
   end
 
@@ -81,9 +61,6 @@ defmodule Argus.Extractors.ProcessRegistry do
 
       {:ok, :gen_server, :start, 4} ->
         maybe_named_start_erlang(facts, ctx, "start")
-
-      {:ok, Registry, func, arity} ->
-        maybe_registry_op(facts, ctx, func, arity)
 
       {:ok, Process, :whereis, 1} ->
         emit_whereis(facts, ctx)
@@ -127,41 +104,6 @@ defmodule Argus.Extractors.ProcessRegistry do
     |> add_fact(:whereis_call, [id, ctx.func_id, name])
   end
 
-  # Scan for {:via, Registry, {reg, key}} tuple construction patterns.
-  defp maybe_via_tuple(facts, ctx, {:put_tuple2, _, {:list, [{:atom, :via}, reg_op, key_op]}}) do
-    id = InstrId.mint(ctx.func_id, ctx.idx)
-
-    registry =
-      case reg_op do
-        {:atom, mod} -> inspect(mod)
-        {:x, _} = r -> resolve_name(ctx.instrs, ctx.idx, r)
-        {:y, _} = r -> resolve_name(ctx.instrs, ctx.idx, r)
-        _ -> "dynamic"
-      end
-
-    key =
-      case key_op do
-        {:atom, k} -> inspect(k)
-        {:literal, {_reg, k}} when is_atom(k) -> inspect(k)
-        {:x, _} = r -> resolve_name(ctx.instrs, ctx.idx, r)
-        {:y, _} = r -> resolve_name(ctx.instrs, ctx.idx, r)
-        _ -> "dynamic"
-      end
-
-    facts
-    |> track_dynamic(registry, ctx, :via_tuple_registry, :via_tuple)
-    |> track_dynamic(key, ctx, :via_tuple_key, :via_tuple)
-    |> add_fact(:via_tuple, [id, ctx.func_id, registry, key])
-  end
-
-  defp maybe_via_tuple(facts, ctx, {:move, {:literal, {:via, registry, {reg, key}}}, _})
-       when is_atom(registry) and is_atom(reg) do
-    id = InstrId.mint(ctx.func_id, ctx.idx)
-    add_fact(facts, :via_tuple, [id, ctx.func_id, inspect(reg), inspect(key)])
-  end
-
-  defp maybe_via_tuple(facts, _ctx, _instr), do: facts
-
   # GenServer.start_link(mod, args, name: Name) — name in options keyword list (x2).
   # The first argument (x0) is the module being started; if it resolves to a
   # literal atom we can also emit named_process(mod, name).
@@ -190,9 +132,9 @@ defmodule Argus.Extractors.ProcessRegistry do
             |> add_fact(:process_register, [id, ctx.func_id, inspect(name), method])
             |> maybe_emit_named_process_for_start(ctx, inspect(name))
 
-          {:via, _reg, {reg_mod, key}} when is_atom(reg_mod) and reg_mod != :dynamic ->
-            id = InstrId.mint(ctx.func_id, ctx.idx)
-            add_fact(facts, :via_tuple, [id, ctx.func_id, inspect(reg_mod), inspect(key)])
+          # A via-registered name is the registry's, not a process_register.
+          {:via, _reg, _key} ->
+            facts
 
           _ ->
             track_imprecision(facts, ctx, :gen_server_start_name, :process_register, :skipped)
@@ -252,28 +194,6 @@ defmodule Argus.Extractors.ProcessRegistry do
     case resolve_register(ctx.instrs, ctx.idx, {:x, 1}) do
       {:ok, mod} when is_atom(mod) -> add_fact(facts, :named_process, [inspect(mod), name])
       _ -> facts
-    end
-  end
-
-  defp maybe_registry_op(facts, ctx, func, arity) do
-    if {func, arity} in @registry_ops do
-      id = InstrId.mint(ctx.func_id, ctx.idx)
-      registry = resolve_name(ctx.instrs, ctx.idx, {:x, 0})
-
-      key =
-        case func do
-          op when op in [:register, :lookup, :dispatch, :unregister] ->
-            resolve_name(ctx.instrs, ctx.idx, {:x, 1})
-
-          _ ->
-            "dynamic"
-        end
-
-      facts
-      |> track_dynamic(key, ctx, :registry_op_key, :registry_op)
-      |> add_fact(:registry_op, [id, ctx.func_id, registry, to_string(func), key])
-    else
-      facts
     end
   end
 

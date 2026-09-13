@@ -76,7 +76,6 @@ likely_supervised(mod) :-
 
 // Callee starts earlier under the same supervisor — already running.
 .decl init_safe_sibling(child: symbol, dep: symbol)
-.output init_safe_sibling
 
 init_safe_sibling(child, dep) :-
   raw_sync_call_in_init(child, dep),
@@ -93,7 +92,6 @@ init_safe_sibling(child, dep) :-
 // At least one must be provably supervised (in a child_subtree) to
 // prevent false negatives when no supervision facts exist at all.
 .decl init_safe_cross_supervisor(child: symbol, dep: symbol)
-.output init_safe_cross_supervisor
 
 init_safe_cross_supervisor(child, dep) :-
   raw_sync_call_in_init(child, dep),

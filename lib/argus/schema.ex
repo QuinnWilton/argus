@@ -41,19 +41,9 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 28
+  @schema_version 29
 
   # Layer 1: Module-level facts.
-
-  @module_info %{
-    name: :module_info,
-    layer: 1,
-    fields: [
-      {:mod, :symbol, "module name"},
-      {:name, :symbol, "module name (repeated for queries)"}
-    ],
-    doc: "Module existence."
-  }
 
   @function_def %{
     name: :function_def,
@@ -85,17 +75,6 @@ defmodule Argus.Schema do
       {:entry, :label, "entry label number"}
     ],
     doc: "Entry label of a function — positional, split from function_def."
-  }
-
-  @import_ref %{
-    name: :import_ref,
-    layer: 1,
-    fields: [
-      {:mod, :symbol, "imported module"},
-      {:name, :symbol, "imported function name"},
-      {:arity, :number, "imported function arity"}
-    ],
-    doc: "External function referenced by the module."
   }
 
   @module_attribute %{
@@ -442,15 +421,6 @@ defmodule Argus.Schema do
     """
   }
 
-  @recv_end %{
-    name: :recv_end,
-    layer: 1,
-    fields: [
-      {:id, :instr_id, "instruction ID"}
-    ],
-    doc: "End of a receive clause (remove_message)."
-  }
-
   @spawn_call %{
     name: :spawn_call,
     layer: 1,
@@ -508,19 +478,6 @@ defmodule Argus.Schema do
     """
   }
 
-  @make_fun %{
-    name: :make_fun,
-    layer: 1,
-    fields: [
-      {:id, :instr_id, "instruction ID"},
-      {:caller, :func_id, "containing function ID"},
-      {:target, :symbol,
-       "lambda body label number, or the function ID for funs over named functions"},
-      {:num_free, :number, "number of captured variables"}
-    ],
-    doc: "Lambda/closure creation."
-  }
-
   @closure_def %{
     name: :closure_def,
     layer: 1,
@@ -537,22 +494,6 @@ defmodule Argus.Schema do
     Only emitted when the `make_fun3` target is a concrete `{Mod, Func, Arity}` \
     triple. Closures targeting raw labels (rare in modern BEAM) are skipped \
     because we don't have the closure's function ID at emit time.
-    """
-  }
-
-  @tuple_field_access %{
-    name: :tuple_field_access,
-    layer: 1,
-    fields: [
-      {:id, :instr_id, "instruction ID"},
-      {:src, :symbol, "source tuple register"},
-      {:idx, :number, "extracted field index (0-based)"},
-      {:dst, :symbol, "destination register holding the extracted field"}
-    ],
-    doc: """
-    Records the index of a `get_tuple_element` extraction. Lets analyses \
-    that follow pattern-matched destructuring (e.g. `{:ok, val} = call()`) \
-    know which field of the source tuple was placed in the destination.
     """
   }
 
@@ -573,21 +514,6 @@ defmodule Argus.Schema do
     name (which the generic `branch` fact discards) so type-narrowing \
     dataflow analyses can reason about which register has which inferred \
     type on the success edge.
-    """
-  }
-
-  @unhandled_op %{
-    name: :unhandled_op,
-    layer: 1,
-    fields: [
-      {:id, :instr_id, "instruction ID"},
-      {:op, :symbol, "BEAM opcode name that the emitter did not specialize"}
-    ],
-    doc: """
-    Records every instruction that fell through to the catch-all clause in \
-    `Argus.Pipeline.Emit`. Used for offline auditing — running this against \
-    a real corpus surfaces opcodes Argus is silently dropping (e.g. \
-    pre-OTP-24 instruction shapes still emitted by older compilers).
     """
   }
 
@@ -1035,23 +961,6 @@ defmodule Argus.Schema do
     """
   }
 
-  @deferred_reply %{
-    name: :deferred_reply,
-    layer: 2,
-    fields: [
-      {:handler_func, :symbol, "function calling GenServer.reply/2"},
-      {:from_arg, :symbol, "resolution of the from argument: 'arg:N' | 'state_field' | 'dynamic'"}
-    ],
-    doc: """
-    Records `GenServer.reply/2` call sites — the deferred-reply pattern \
-    where a handle_call clause stores the from reference and replies later \
-    from a different callback (handle_info, handle_continue, an awaited \
-    Task). No analysis consumes this fact yet; it's infrastructure for \
-    future timeout-window analysis where the original caller's GenServer.call \
-    timeout has to cover the entire delayed-reply path.
-    """
-  }
-
   @sup_call %{
     name: :sup_call,
     layer: 2,
@@ -1070,53 +979,6 @@ defmodule Argus.Schema do
     init/1 to return, `terminate_child` for the child's whole shutdown — \
     but none names a GenServer module, so `sync_call` never saw them. \
     `target` is resolved from the first argument like `sync_call`'s callee.
-    """
-  }
-
-  @delayed_message %{
-    name: :delayed_message,
-    layer: 2,
-    fields: [
-      {:sender_func, :symbol, "function calling send_after / apply_after"},
-      {:target, :symbol, "target resolution: 'self' | inspected name | 'dynamic'"},
-      {:message, :symbol, "stringified message pattern (atom literal or 'dynamic')"}
-    ],
-    doc: """
-    Records `Process.send_after/3,4`, `:timer.send_after/2,3`, and \
-    `:timer.apply_after/4` as implicit message sources. These functions \
-    cause a `handle_info/2` callback to fire later — invisible to the \
-    static call graph until we connect the message pattern to its \
-    matching handler clause.
-    """
-  }
-
-  @gen_event_handler %{
-    name: :gen_event_handler,
-    layer: 2,
-    fields: [
-      {:event_mgr, :symbol, "event manager (the gen_event process)"},
-      {:handler_mod, :symbol, "module added as a handler"}
-    ],
-    doc: """
-    Records `:gen_event.add_handler(Manager, Handler, Args)` registrations \
-    so analyses can reason about which handler modules belong to which \
-    event manager.
-    """
-  }
-
-  @sync_call_via %{
-    name: :sync_call_via,
-    layer: 2,
-    fields: [
-      {:caller_func, :symbol, "calling function ID"},
-      {:registry, :symbol, "registry module from the {:via, _, _} tuple"},
-      {:key, :symbol, "registry key (e.g. :worker_a or a module atom)"}
-    ],
-    doc: """
-    Sync call whose target was constructed as a `{:via, Registry, {reg, key}}` \
-    tuple — the OTP extractor can't reduce this to a single callee module \
-    without consulting the registry, so it emits the via shape and lets \
-    Datalog rules cross-reference with `process_register` / `via_tuple` facts.
     """
   }
 
@@ -1265,31 +1127,6 @@ defmodule Argus.Schema do
       {:method, :symbol, "registration method (register, start_link, start)"}
     ],
     doc: "Process name registration."
-  }
-
-  @registry_op %{
-    name: :registry_op,
-    layer: 2,
-    fields: [
-      {:id, :symbol, "instruction ID"},
-      {:func, :symbol, "containing function ID"},
-      {:registry, :symbol, "registry module"},
-      {:op, :symbol, "operation (register, lookup, dispatch, etc.)"},
-      {:key, :symbol, "registry key"}
-    ],
-    doc: "Registry module operation."
-  }
-
-  @via_tuple %{
-    name: :via_tuple,
-    layer: 2,
-    fields: [
-      {:id, :symbol, "instruction ID"},
-      {:func, :symbol, "containing function ID"},
-      {:registry, :symbol, "registry module"},
-      {:key, :symbol, "registry key"}
-    ],
-    doc: "{:via, Registry, {reg, key}} tuple construction."
   }
 
   @whereis_call %{
@@ -1666,10 +1503,8 @@ defmodule Argus.Schema do
   # All relations indexed by name.
 
   @layer_1_relations [
-    @module_info,
     @function_def,
     @function_entry,
-    @import_ref,
     @module_attribute,
     @instruction,
     @next,
@@ -1692,16 +1527,12 @@ defmodule Argus.Schema do
     @deallocate,
     @send_msg,
     @recv_start,
-    @recv_end,
     @spawn_call,
     @try_start,
     @try_end,
-    @make_fun,
     @dynamic_call,
     @closure_def,
-    @tuple_field_access,
     @type_test,
-    @unhandled_op,
     @bs_start,
     @line_info
   ]
@@ -1727,22 +1558,18 @@ defmodule Argus.Schema do
     @sync_call,
     @async_cast,
     @sync_call_timeout,
-    @sync_call_via,
     @sup_call,
-    @delayed_message,
     @callback_return,
     @callback_drops_from,
     @callback_stop_reason,
     @callback_timeout,
     @tls_verification,
     @tls_connect,
-    @deferred_reply,
     @callback_tag,
     @callback_total,
     @tuple_literal,
     @init_continues_to,
     @handle_continue_clause,
-    @gen_event_handler,
     @ets_new,
     @ets_option,
     @ets_op,
@@ -1758,8 +1585,6 @@ defmodule Argus.Schema do
     @ignored_error_result,
     # Process registry & naming.
     @process_register,
-    @registry_op,
-    @via_tuple,
     @whereis_call,
     # Distributed systems.
     @rpc_call,
@@ -1832,42 +1657,8 @@ defmodule Argus.Schema do
     end
   end
 
-  @doc """
-  Looks up a relation by name, raising if not found.
-  """
-  @spec fetch!(atom()) :: relation()
-  def fetch!(name) do
-    case fetch(name) do
-      {:ok, rel} -> rel
-      :error -> raise ArgumentError, "unknown relation: #{inspect(name)}"
-    end
-  end
-
-  @doc """
-  Returns the number of fields for a relation.
-  """
-  @spec arity(atom()) :: non_neg_integer()
-  def arity(name) do
-    fetch!(name) |> Map.fetch!(:fields) |> length()
-  end
-
-  @doc """
-  Returns field names for a relation.
-  """
-  @spec field_names(atom()) :: [atom()]
-  def field_names(name) do
-    fetch!(name) |> Map.fetch!(:fields) |> Enum.map(&elem(&1, 0))
-  end
-
-  @doc """
-  Returns the Souffle type declaration string for a relation.
-
-  The semantic field kinds collapse to their Souffle representation, so the
-  `.decl`/`.facts` surface is unchanged by kind enrichment.
-  """
-  @spec souffle_decl(atom()) :: String.t()
-  def souffle_decl(name) do
-    rel = fetch!(name)
+  defp souffle_decl(name) do
+    rel = Map.fetch!(@relations_by_name, name)
 
     fields_str =
       rel.fields

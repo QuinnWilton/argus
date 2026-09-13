@@ -31,13 +31,10 @@ defmodule Argus.Pipeline.Emit do
   Returns a map of relation name to list of fact rows.
   """
   @spec emit_module(atom(), list(), list(), keyword(), list(), map()) :: facts()
-  def emit_module(module, exports, imports, attributes, functions, line_table \\ %{}) do
+  def emit_module(module, exports, _imports, attributes, functions, line_table \\ %{}) do
     mod_str = inspect(module)
 
     facts = %{}
-
-    # Module-level facts.
-    facts = add_fact(facts, :module_info, [mod_str, mod_str])
 
     # Export set for checking if a function is exported.
     export_set =
@@ -45,16 +42,6 @@ defmodule Argus.Pipeline.Emit do
         {name, arity, _label} -> {name, arity}
         # beam_disasm exports format.
         {:atom, name, arity, _label} -> {name, arity}
-      end)
-
-    # Import references.
-    facts =
-      Enum.reduce(imports, facts, fn
-        {imod, iname, iarity}, acc ->
-          add_fact(acc, :import_ref, [inspect(imod), to_string(iname), to_string(iarity)])
-
-        {:atom, imod, {:atom, iname}, iarity}, acc ->
-          add_fact(acc, :import_ref, [inspect(imod), to_string(iname), to_string(iarity)])
       end)
 
     # Module attributes.
@@ -452,11 +439,10 @@ defmodule Argus.Pipeline.Emit do
   defp emit_specific(
          facts,
          id,
-         func_id,
-         {:make_fun3, {:f, target}, _index, _uniq, dst, {:list, env}}
+         _func_id,
+         {:make_fun3, {:f, _target}, _index, _uniq, dst, {:list, env}}
        ) do
     facts
-    |> add_fact(:make_fun, [id, func_id, to_string(target), to_string(length(env))])
     |> add_fact(:def, [id, format_operand(dst)])
     |> emit_operand_uses(id, env)
   end
@@ -464,13 +450,12 @@ defmodule Argus.Pipeline.Emit do
   defp emit_specific(
          facts,
          id,
-         func_id,
+         _func_id,
          {:make_fun3, {_mod, _name, _arity} = mfa, _index, _uniq, dst, {:list, env}}
        ) do
     closure_func = format_mfa(mfa)
 
     facts
-    |> add_fact(:make_fun, [id, func_id, closure_func, to_string(length(env))])
     |> add_fact(:def, [id, format_operand(dst)])
     |> add_fact(:closure_def, [parent_func_id(id), closure_func])
     |> emit_operand_uses(id, env)
@@ -526,16 +511,10 @@ defmodule Argus.Pipeline.Emit do
   end
 
   # Get tuple element.
-  defp emit_specific(facts, id, {:get_tuple_element, src, index, dst}) do
+  defp emit_specific(facts, id, {:get_tuple_element, src, _index, dst}) do
     facts
     |> add_fact(:use, [id, format_operand(src)])
     |> add_fact(:def, [id, format_operand(dst)])
-    |> add_fact(:tuple_field_access, [
-      id,
-      format_operand(src),
-      to_string(index),
-      format_operand(dst)
-    ])
   end
 
   # Get map elements.
@@ -710,14 +689,10 @@ defmodule Argus.Pipeline.Emit do
   end
 
   defp emit_specific(facts, id, {:loop_rec_end, {:f, label}}) do
-    facts
-    |> add_fact(:recv_end, [id])
-    |> add_fact(:jump, [id, to_string(label)])
+    add_fact(facts, :jump, [id, to_string(label)])
   end
 
-  defp emit_specific(facts, id, :remove_message) do
-    add_fact(facts, :recv_end, [id])
-  end
+  defp emit_specific(facts, _id, :remove_message), do: facts
 
   defp emit_specific(facts, id, {:wait, {:f, label}}) do
     add_fact(facts, :jump, [id, to_string(label)])
@@ -869,13 +844,11 @@ defmodule Argus.Pipeline.Emit do
   defp emit_specific(facts, _id, {:on_load, _}), do: facts
   defp emit_specific(facts, _id, :nif_start), do: facts
 
-  # Catch-all for unhandled instructions — log at debug level and record
-  # an `unhandled_op` fact so we can audit production runs to find
-  # opcodes the emitter is silently dropping (e.g. pre-OTP-24 shapes).
-  defp emit_specific(facts, id, instr) do
-    op = instruction_op(instr)
-    Logger.debug("Emitter: unhandled instruction opcode: #{op}")
-    add_fact(facts, :unhandled_op, [id, to_string(op)])
+  # Catch-all for unhandled instructions: logged at debug level so a run
+  # can be audited for opcodes the emitter is silently dropping.
+  defp emit_specific(facts, _id, instr) do
+    Logger.debug("Emitter: unhandled instruction opcode: #{instruction_op(instr)}")
+    facts
   end
 
   # ── Helpers ────────────────────────────────────────────────────────

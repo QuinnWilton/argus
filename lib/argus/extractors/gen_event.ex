@@ -19,7 +19,6 @@ defmodule Argus.Extractors.GenEvent do
 
   - `sync_call(caller_func, callee_mod)` — `:gen_event.sync_notify/2`
   - `async_cast(caller_func, callee_mod)` — `:gen_event.notify/2`
-  - `gen_event_handler(event_mgr, handler_mod)` —
     `:gen_event.add_handler/3` registrations
   - `implements_behaviour(mod, ":gen_event")` — modules that declare the
     behaviour (handlers and managers)
@@ -31,10 +30,8 @@ defmodule Argus.Extractors.GenEvent do
     only: [
       add_fact: 3,
       get_behaviours: 1,
-      resolve_atom: 3,
       resolve_callee: 1,
-      scan_remote_calls: 4,
-      track_imprecision: 5
+      scan_remote_calls: 4
     ]
 
   @impl true
@@ -82,30 +79,5 @@ defmodule Argus.Extractors.GenEvent do
     add_fact(facts, :sync_call, [ctx.func_id, callee])
   end
 
-  # :gen_event.add_handler(Manager, Handler, Args).
-  defp handle_call(facts, ctx, {:gen_event, :add_handler, 3}) do
-    maybe_add_handler(facts, ctx)
-  end
-
-  # :gen_event.add_sup_handler(Manager, Handler, Args) — same shape, links
-  # handler to caller for crash propagation.
-  defp handle_call(facts, ctx, {:gen_event, :add_sup_handler, 3}) do
-    maybe_add_handler(facts, ctx)
-  end
-
   defp handle_call(facts, _ctx, _mfa), do: facts
-
-  defp maybe_add_handler(facts, ctx) do
-    event_mgr = resolve_callee(ctx)
-    handler = resolve_atom(ctx.instrs, ctx.idx, {:x, 1})
-
-    if event_mgr == "dynamic" or handler == "dynamic" do
-      # We can't attribute this handler registration to concrete endpoints
-      # — track the skipped emission so coverage analysis can quantify the
-      # gap without changing visible facts.
-      track_imprecision(facts, ctx, :gen_event_handler_unresolved, :gen_event_handler, :skipped)
-    else
-      add_fact(facts, :gen_event_handler, [event_mgr, handler])
-    end
-  end
 end

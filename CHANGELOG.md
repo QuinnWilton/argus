@@ -4,6 +4,31 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.8.0 — Unreleased
+
+Schema version 29. A consolidation release: nothing an analysis reports
+changes unless a section below says so.
+
+### Removed
+
+- The autoresearch loop (`Argus.Autoresearch`, `mix argus.autoresearch`,
+  `.autoresearch/`) and the batch scripts `scripts/harness.exs` and
+  `scripts/analyze_all.sh`. `scripts/analyze_project.exs` remains.
+- `Argus.Origins`, `Argus.Resolution` and `Report`'s `:facts` option,
+  `Argus.Pipeline.read_facts/1`, `Argus.Facts.canonicalize/1`,
+  `Argus.Schema.{fetch!,arity,field_names,souffle_decl}/1`: no callers
+  anywhere in the workspace.
+- `Argus.Souffle`'s `:fallback_rules` option and the `_argus_mode` result
+  key: nothing passed the option, so every result was `"precise"`.
+- `priv/dl/clientlib/cfg.dl`: no analysis read `cfg_edge`; the
+  conditional-call question it existed for is answered by `Argus.Cfg` at
+  extraction time.
+- Twelve relations no rule read: `module_info`, `import_ref`,
+  `recv_end`, `make_fun` (superseded by `closure_def`),
+  `tuple_field_access`, `unhandled_op`, `deferred_reply`,
+  `delayed_message`, `sync_call_via`, `via_tuple`, `registry_op`,
+  `gen_event_handler`, with the extractor code that produced them.
+
 ## 0.7.3 — 2026-09-11
 
 ### Changed

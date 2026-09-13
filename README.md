@@ -17,7 +17,7 @@ tagged release from GitHub:
 ```elixir
 def deps do
   [
-    {:argus, github: "QuinnWilton/argus", tag: "v0.5.0"}
+    {:argus, github: "QuinnWilton/argus", tag: "v0.7.3"}
   ]
 end
 ```
@@ -107,14 +107,27 @@ mix argus custom path/to/rules.dl
 ## Programmatic API
 
 ```elixir
-# Detect supervision-tree anti-patterns.
-Argus.analyze([MyApp.Supervisor, MyApp.WorkerA, MyApp.WorkerB], :supervision)
+# Every analysis, one extraction: structured findings with severity,
+# source anchors and remediation hints.
+{:ok, %{findings: findings}} = Argus.run_analyses([MyApp.Supervisor, MyApp.WorkerA])
 
-# Find unsafe atom creation reachable from exported functions.
-Argus.analyze([MyApp.Router, MyApp.Auth], :atom_safety)
+# One analysis, raw output relations.
+{:ok, results} = Argus.analyze([MyApp.Supervisor, MyApp.WorkerA], :supervision)
 
-# Run custom Datalog rules.
-Argus.analyze([MyApp.Worker], {:custom, "path/to/rules.dl"})
+# Ad-hoc Datalog rules over the same facts.
+{:ok, results} = Argus.analyze([MyApp.Worker], {:custom, "path/to/rules.dl"})
+```
+
+## Analyzing an external project
+
+`scripts/analyze_project.exs` runs the analyses against a compiled Mix or
+Rebar3 project (umbrella apps are detected):
+
+```bash
+mix run scripts/analyze_project.exs /path/to/project              # default analyses
+mix run scripts/analyze_project.exs /path/to/project supervision  # one analysis
+mix run scripts/analyze_project.exs /path/to/project all          # every analysis
+mix run scripts/analyze_project.exs /path/to/project --json out.json
 ```
 
 ## Real-world example

@@ -2,74 +2,58 @@
 
 ## Project overview
 
-Argus is a BEAM program analysis framework that extracts Datalog facts from BEAM bytecode and evaluates them with Souffle. Inspired by Doop (JVM), cclyzer++ (LLVM IR), and Gigahorse (EVM), but taking advantage of the BEAM's register-based instruction set to skip the expensive IR-lifting step those frameworks require.
+Argus is a BEAM program analysis framework: it disassembles compiled `.beam`
+files, extracts Datalog facts from the bytecode, and evaluates them with
+Souffle. Inspired by Doop (JVM), cclyzer++ (LLVM IR) and Gigahorse (EVM), but
+the BEAM's register-based instruction set lets it skip the IR-lifting step
+those frameworks need.
 
 ### Layout
 
 - `lib/argus/pipeline/` — disassemble (via beam_spy), normalize, and emit
-  Layer 1 facts; `lib/argus/extractors/` — Layer 2 domain extractors;
-  `lib/argus/analyses/` — one module per user-facing analysis (27), each
-  declaring its extractors, input relations, and finding builders.
-- `lib/argus/schema.ex` — the fact schema (`@schema_version`, whose shape
-  digest `Argus.SchemaVersionTest` pins; every bump gets a CHANGELOG
-  entry); `mix argus.gen.dl` regenerates `priv/dl/base.dl` and
-  `layer2.dl` from it.
-- `priv/dl/analyses/` — the Souffle rules, one file per analysis;
-  `priv/dl/stage0.dl` — the shared call graph (`call_edge`, `call_site`)
-  derived once per run; `priv/dl/clientlib/` — the shared rule library.
-- `lib/argus/cfg.ex`, `dataflow.ex`, `purity/` — control-flow, def-use,
-  and effect models consumed by analyses and by downstream tools.
-- `lib/argus/autoresearch/` + `mix argus.autoresearch` — the measure /
-  baseline / diff / accept loop for extractor coverage work.
-- `scripts/analyze_project.exs` — analyze an external Mix or Rebar3
-  project; `scripts/harness.exs` batches it over a corpus.
-
-### Key dependencies
-
-- **beam_spy** (path dep) — `BeamFile.disassemble/1` for bytecode access
-- **stream_data** (test/dev) — property-based testing
+  the generic bytecode facts; `lib/argus/extractors/` — the domain
+  extractors; `lib/argus/analyses/` — one module per analysis, declaring
+  its extractors, output relations and finding builders.
+- `lib/argus/schema.ex` — the fact schema. `@schema_version` is what
+  downstream tools key their caches on; `Argus.SchemaVersionTest` pins its
+  shape digest, and every bump gets a CHANGELOG entry. `mix argus.gen.dl`
+  regenerates `priv/dl/base.dl` and `layer2.dl` from it.
+- `priv/dl/stage0.dl` — the call graph derived once per run;
+  `priv/dl/clientlib/` — the shared rule library; `priv/dl/analyses/` —
+  one Souffle program per analysis.
+- `lib/argus/cfg.ex`, `dataflow.ex`, `purity/` — control flow, def-use and
+  effect models, also consumed by downstream tools (gloss, planchette).
+- `scripts/analyze_project.exs` — analyze an external, compiled project.
 
 ### Design principles
 
-- **Exhaustive pattern matching** on BEAM instructions in `Argus.Pipeline.Emit`.
-- **Parallel extraction** — per-module disassembly/emission is embarrassingly parallel.
-- **Layered facts** — Layer 1 (generic bytecode) + Layer 2 (domain extractors) compose cleanly.
-- **Souffle as external tool** — shell out via `Argus.Souffle` to a `souffle` binary on PATH.
-- **BEAM/OTP focus** — every shipped analysis targets a BEAM-specific bug class. Generic
-  dataflow primitives belong in `priv/dl/clientlib/`, not in the user-facing analysis surface.
+- Exhaustive pattern matching on BEAM instructions in `Argus.Pipeline.Emit`.
+- Per-module extraction is embarrassingly parallel and deterministic
+  (`ordered: true`); the same modules yield `==` facts.
+- Stage 0 keeps the volatile instruction-level relations out of every
+  analysis's input set; `test/argus/dl_declarations_test.exs` pins each
+  analysis's inputs so an incrementality regression cannot land silently.
+- Souffle is an external tool on PATH, shelled out to via `Argus.Souffle`.
+- Every shipped analysis targets a BEAM-specific bug class. Generic
+  vocabulary belongs in `priv/dl/clientlib/`, not in an analysis file.
+- Over-approximate in the direction that stays quiet: a fact that cannot
+  be sure says `"dynamic"`, and rules ask what is NOT handled.
 
 ## Commit message style
 
 ```
 [component] brief description
 
-Optional longer explanation.
+Optional longer explanation: why, and what was rejected.
 ```
-
-Examples:
-- `[schema] define layer 1 fact relations`
-- `[emitter] exhaustive instruction-to-fact extraction`
-- `[extract] parallel multi-module pipeline with .facts I/O`
 
 ## Quick reference
 
 ```bash
 mix deps.get             # Fetch dependencies
-mix compile              # Compile
-mix test                 # Run tests
-mix format               # Format code
+mix test                 # Run tests (souffle must be on PATH)
+mix format && mix credo --strict && mix dialyzer
 mix argus --list         # List available analyses
-mix argus supervision    # Detect supervision-tree anti-patterns
-mix argus ets            # Detect ETS misuse
-mix argus unsafe_task    # Detect leaked Task.async results
-mix argus coverage       # Measure extractor precision
-
-# Autoresearch loop (iterative coverage improvement)
-mix argus.autoresearch init       # scaffold .autoresearch/
-mix argus.autoresearch measure    # run coverage on corpus tier
-mix argus.autoresearch diff       # diff current vs baseline
-mix argus.autoresearch rank       # ranked priority list
-mix argus.autoresearch checks     # pre-accept barrier
-mix argus.autoresearch accept     # promote current → baseline
-mix argus.autoresearch status     # session summary ("resume" command)
+mix argus supervision    # Run one analysis against this project
+mix argus.gen.dl         # Regenerate priv/dl/{base,layer2}.dl after a schema change
 ```

@@ -110,7 +110,13 @@ defmodule Argus.Analysis do
   def run(modules, analysis, opts \\ []) do
     with {:ok, rules_path} <- resolve_rules(analysis),
          {:ok, facts_dir} <- extract_facts(modules, [analysis], opts) do
-      Souffle.run(facts_dir, rules_path, opts)
+      try do
+        with {:ok, results} <- Souffle.run(facts_dir, rules_path, opts) do
+          {:ok, filter_to_outputs(results, analysis)}
+        end
+      after
+        File.rm_rf(Path.dirname(facts_dir))
+      end
     end
   end
 
@@ -253,7 +259,7 @@ defmodule Argus.Analysis do
   declares as its outputs.
 
   Intermediate clientlib relations (`call_reachable`, `cfg_edge`, ...) and
-  bookkeeping keys (`_argus_mode`) are dropped. Custom analyses and unknown
+  intermediates are dropped. Custom analyses and unknown
   names pass through unchanged — there is no declaration to filter against.
   """
   @spec filter_to_outputs(result(), analysis()) :: result()

@@ -48,24 +48,6 @@ defmodule Argus.Extractors.ProcessRegistryTest do
     end
   end
 
-  describe "extract/1 — Registry operations" do
-    test "detects Registry.register" do
-      facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.RegistryUser))
-
-      assert Map.has_key?(facts, :registry_op)
-      rows = facts[:registry_op]
-
-      assert Enum.any?(rows, fn [_, _, _, op, _] -> op == "register" end)
-    end
-
-    test "detects Registry.lookup" do
-      facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.RegistryUser))
-
-      rows = facts[:registry_op]
-      assert Enum.any?(rows, fn [_, _, _, op, _] -> op == "lookup" end)
-    end
-  end
-
   describe "extract/1 — clean module" do
     test "returns empty for plain module" do
       facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.PlainModule))

@@ -54,10 +54,6 @@ defmodule Argus.Analyses.SyncCallInInitTest do
 
       # The Watcher is in the app tree and the pool is not: the plain
       # finding is (correctly) suppressed as a cross-supervisor call...
-      assert ["Argus.Test.Fixtures.WatchedPool", "Argus.Test.Fixtures.BlockingWatcher"] in results[
-               "init_safe_cross_supervisor"
-             ]
-
       refute Enum.any?(results["sync_call_in_init"], fn [mod, _, _] ->
                mod == "Argus.Test.Fixtures.WatchedPool"
              end)
@@ -98,9 +94,9 @@ defmodule Argus.Analyses.SyncCallInInitTest do
 
       assert {:ok, results} = Argus.analyze(modules, :sync_call_in_init)
 
-      assert ["Argus.Test.Fixtures.SyncInitServer", "Argus.Test.Fixtures.WorkerA"] in results[
-               "init_safe_sibling"
-             ]
+      refute Enum.any?(results["sync_call_in_init"], fn [mod, _, _] ->
+               mod == "Argus.Test.Fixtures.SyncInitServer"
+             end)
 
       refute Enum.any?(results["sync_call_in_init"], fn [mod, _, _] ->
                mod == "Argus.Test.Fixtures.SyncInitServer"
@@ -140,7 +136,9 @@ defmodule Argus.Analyses.SyncCallInInitTest do
       assert results["sync_call_in_init"] == []
 
       # The filtering relation should have the entry.
-      assert results["init_safe_sibling"] != []
+      refute Enum.any?(results["sync_call_in_init"], fn [mod, _, _] ->
+               mod == "Argus.Test.Fixtures.SyncInitServer"
+             end)
     end
 
     test "filters cross-supervisor calls (disjoint supervisor trees)" do
@@ -158,7 +156,9 @@ defmodule Argus.Analyses.SyncCallInInitTest do
       # Disjoint supervisors — callee already running, should be filtered.
       assert results["sync_call_in_init"] == []
 
-      assert results["init_safe_cross_supervisor"] != []
+      refute Enum.any?(results["sync_call_in_init"], fn [mod, _, _] ->
+               mod == "Argus.Test.Fixtures.SyncInitServer"
+             end)
     end
 
     test "preserves deadlock risk when dep starts after caller" do

@@ -10,15 +10,11 @@ defmodule Argus.Extractors.OTP do
   - `implements_behaviour(mod, behaviour)` — module implements a behaviour
   - `sync_call(caller_func, callee_mod)` — GenServer.call target detected
   - `sync_call_timeout(caller_func, callee_mod, timeout_ms)` — timeout value at call site
-  - `sync_call_via(caller_func, registry, key)` — sync call to a `{:via, _, _}` target
   - `sup_call(id, func, api, op, target)` — a synchronous management call into a
     supervisor process (`Supervisor.start_child/2`, `DynamicSupervisor.terminate_child/2`,
     `Task.Supervisor.async_nolink/2`, ...); `target` is the supervisor argument
   - `async_cast(caller_func, callee_mod)` — GenServer.cast target detected
   - `process_link(from_mod, to_mod)` — Process.link / :erlang.link call
-  - `delayed_message(sender_func, target, message)` — Process.send_after, :timer.send_after,
-    :timer.apply_after — implicit handle_info sources
-  - `deferred_reply(handler_func, from_arg)` — `GenServer.reply/2` call site
   - `init_continues_to(mod, tag)` — module's init/1 returns `{:continue, tag}`
   - `handle_continue_clause(mod, tag, func_id)` — handle_continue/2 clause matching `tag`
   """
@@ -51,8 +47,6 @@ defmodule Argus.Extractors.OTP do
     |> extract_behaviours(mod_str, module_data.attributes)
     |> extract_genserver_calls(mod, functions)
     |> extract_link_calls(mod_str, mod, functions)
-    |> extract_delayed_messages(mod, functions)
-    |> extract_deferred_replies(mod, functions)
     |> extract_continue_facts(mod, mod_str, functions)
   end
 
@@ -199,138 +193,6 @@ defmodule Argus.Extractors.OTP do
   defp local_call?({:call_only, _a, _mfa}), do: true
   defp local_call?({:call_last, _a, _mfa, _d}), do: true
   defp local_call?(_instr), do: false
-
-  defp extract_deferred_replies(facts, mod, functions) do
-    scan_remote_calls(mod, functions, facts, fn acc, ctx, mfa ->
-      handle_deferred_reply(acc, ctx, mfa)
-    end)
-  end
-
-  defp handle_deferred_reply(facts, ctx, {GenServer, :reply, 2}) do
-    from_arg = resolve_from_arg(ctx.instrs, ctx.idx)
-
-    facts
-    |> track_dynamic(from_arg, ctx, :deferred_reply_from, :deferred_reply)
-    |> add_fact(:deferred_reply, [ctx.func_id, from_arg])
-  end
-
-  defp handle_deferred_reply(facts, ctx, {:gen_server, :reply, 2}) do
-    from_arg = resolve_from_arg(ctx.instrs, ctx.idx)
-
-    facts
-    |> track_dynamic(from_arg, ctx, :deferred_reply_from, :deferred_reply)
-    |> add_fact(:deferred_reply, [ctx.func_id, from_arg])
-  end
-
-  defp handle_deferred_reply(facts, _ctx, _mfa), do: facts
-
-  # GenServer.reply(from, response) — first arg is the from reference.
-  # Most commonly it's a parameter (handle_call's `from`) stored in state
-  # and read back later. We record arg:N when it's a parameter, "dynamic"
-  # otherwise.
-  defp resolve_from_arg(instrs, idx) do
-    case Helpers.arg_position(instrs, idx, {:x, 0}) do
-      {:ok, n} -> "arg:#{n}"
-      :no -> "dynamic"
-    end
-  end
-
-  defp extract_delayed_messages(facts, mod, functions) do
-    scan_remote_calls(mod, functions, facts, fn acc, ctx, mfa ->
-      handle_delayed(acc, ctx, mfa)
-    end)
-  end
-
-  # Process.send_after(dest, message, time) — dest in x0, message in x1.
-  defp handle_delayed(facts, ctx, {Process, :send_after, arity}) when arity in [3, 4] do
-    emit_delayed(facts, ctx, {:x, 0}, {:x, 1})
-  end
-
-  # :erlang.send_after(time, dest, message) — dest in x1, message in x2.
-  defp handle_delayed(facts, ctx, {:erlang, :send_after, arity}) when arity in [3, 4] do
-    emit_delayed(facts, ctx, {:x, 1}, {:x, 2})
-  end
-
-  # :timer.send_after(time, message) and (time, dest, message). Two arities.
-  defp handle_delayed(facts, ctx, {:timer, :send_after, 2}) do
-    # send_after(time, message) — message in x1, target is self()
-    emit_delayed_to_self(facts, ctx, {:x, 1})
-  end
-
-  defp handle_delayed(facts, ctx, {:timer, :send_after, 3}) do
-    # send_after(time, dest, message) — dest in x1, message in x2
-    emit_delayed(facts, ctx, {:x, 1}, {:x, 2})
-  end
-
-  # :timer.apply_after(time, mod, func, args) — fires apply, not send.
-  # Modeled with target = "<mod>:<func>/<arity>" and message = "apply".
-  defp handle_delayed(facts, ctx, {:timer, :apply_after, 4}) do
-    target = Helpers.resolve_atom(ctx.instrs, ctx.idx, {:x, 1})
-
-    facts
-    |> track_dynamic(target, ctx, :delayed_target, :delayed_message)
-    |> add_fact(:delayed_message, [ctx.func_id, target, "apply"])
-  end
-
-  defp handle_delayed(facts, _ctx, _mfa), do: facts
-
-  defp emit_delayed(facts, ctx, target_reg, msg_reg) do
-    target = resolve_target(ctx.instrs, ctx.idx, target_reg)
-    message = resolve_message(ctx.instrs, ctx.idx, msg_reg)
-
-    facts
-    |> track_dynamic(target, ctx, :delayed_target, :delayed_message)
-    |> track_dynamic(message, ctx, :delayed_message_pattern, :delayed_message)
-    |> add_fact(:delayed_message, [ctx.func_id, target, message])
-  end
-
-  defp emit_delayed_to_self(facts, ctx, msg_reg) do
-    message = resolve_message(ctx.instrs, ctx.idx, msg_reg)
-
-    facts
-    |> track_dynamic(message, ctx, :delayed_message_pattern, :delayed_message)
-    |> add_fact(:delayed_message, [ctx.func_id, "self", message])
-  end
-
-  # The target of a send_after can be self(), a registered name, a pid, or
-  # a function parameter. We try to recover the most useful classification.
-  defp resolve_target(instrs, idx, register) do
-    case Helpers.resolve_register(instrs, idx, register) do
-      {:ok, atom} when is_atom(atom) ->
-        # Whether it's a process name (:my_proc) or a module (MyMod).
-        inspect(atom)
-
-      _ ->
-        case Helpers.last_call_writer(instrs, idx, register) do
-          {:ok, {:erlang, :self, 0}} ->
-            "self"
-
-          _ ->
-            case Helpers.arg_position(instrs, idx, register) do
-              {:ok, n} -> "arg:#{n}"
-              :no -> "dynamic"
-            end
-        end
-    end
-  end
-
-  # The message body is typically a literal atom (`:tick`) or a tagged
-  # tuple. We capture the leading atom for handler matching.
-  defp resolve_message(instrs, idx, register) do
-    case Helpers.resolve_register(instrs, idx, register) do
-      {:ok, atom} when is_atom(atom) ->
-        inspect(atom)
-
-      {:ok, tuple} when is_tuple(tuple) and tuple_size(tuple) > 0 ->
-        case elem(tuple, 0) do
-          a when is_atom(a) -> inspect(a)
-          _ -> "dynamic"
-        end
-
-      _ ->
-        "dynamic"
-    end
-  end
 
   defp extract_behaviours(facts, mod_str, attrs) do
     attrs
@@ -497,8 +359,7 @@ defmodule Argus.Extractors.OTP do
   end
 
   # Resolve the call target's first argument (x0 — the GenServer reference)
-  # to a callee tag, and emit a sync_call_via fact when the value is a
-  # `{:via, _, {registry_instance, key}}` tuple.
+  # to a callee tag.
   #
   # The shape `{:via, Registry, {MyApp.Registry, :worker_a}}` decomposes as:
   #   - the second element is the via-module (Registry behaviour) — ignored here
@@ -517,12 +378,9 @@ defmodule Argus.Extractors.OTP do
       # reg_instance != :dynamic: a partially resolved via tuple carries the
       # placeholder atom in the registry slot — inspecting it would forge a
       # "via::dynamic" callee that the dynamic filters don't recognize.
-      {:ok, {:via, _via_mod, {reg_instance, key}}}
+      {:ok, {:via, _via_mod, {reg_instance, _key}}}
       when is_atom(reg_instance) and reg_instance != :dynamic ->
-        registry = inspect(reg_instance)
-        callee = "via:#{registry}"
-        facts = add_fact(facts, :sync_call_via, [ctx.func_id, registry, inspect(key)])
-        {callee, facts}
+        {"via:#{inspect(reg_instance)}", facts}
 
       _ ->
         facts = track_imprecision(facts, ctx, :genserver_callee, :sync_call)

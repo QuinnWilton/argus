@@ -134,11 +134,20 @@ defmodule Argus.Pipeline do
             merge_facts(acc, extractor.extract(data))
           end)
 
+        # Decoded once for both derivations; a module whose facts cannot be
+        # decoded keeps everything else and loses only the derived rows.
+        typed =
+          try do
+            Argus.Facts.decode(base_facts)
+          rescue
+            _ -> nil
+          end
+
         {:ok,
          base_facts
          |> merge_facts(extractor_facts)
-         |> merge_facts(derive_def_use(base_facts))
-         |> merge_facts(derive_conditional_calls(base_facts))}
+         |> merge_facts(derive_def_use(typed))
+         |> merge_facts(derive_conditional_calls(base_facts, typed))}
       end
     after
       if trace_imprecision, do: Helpers.disable_tracing()
@@ -157,8 +166,10 @@ defmodule Argus.Pipeline do
   # body edit churns that function's edges — which is why only the analyses
   # that need value flow should declare it, and why it is emitted rather
   # than folded into an existing relation.
-  defp derive_def_use(base_facts) do
-    edges = base_facts |> Argus.Facts.decode() |> Dataflow.def_use_edges()
+  defp derive_def_use(nil), do: %{}
+
+  defp derive_def_use(typed) do
+    edges = Dataflow.def_use_edges(typed)
 
     case Enum.map(edges, fn {d, u} -> [InstrId.format(d), InstrId.format(u)] end) do
       [] -> %{}
@@ -176,8 +187,9 @@ defmodule Argus.Pipeline do
   # reason: the post-dominator tree exists in Argus.Cfg, and the
   # alternative is reconstructing it from `instruction`/`branch`/`jump`
   # rows in Datalog on every solve.
-  defp derive_conditional_calls(base_facts) do
-    typed = Argus.Facts.decode(base_facts)
+  defp derive_conditional_calls(_base_facts, nil), do: %{}
+
+  defp derive_conditional_calls(base_facts, typed) do
     cfgs = Cfg.build(typed)
 
     call_ids =
@@ -272,26 +284,6 @@ defmodule Argus.Pipeline do
             {:error, reason} -> {:halt, {:error, {:write_failed, path, reason}}}
           end
         end)
-
-      {:error, _} = error ->
-        error
-    end
-  end
-
-  @doc """
-  Reads a `.facts` file and returns rows as lists of strings.
-  """
-  @spec read_facts(Path.t()) :: {:ok, [[String.t()]]} | {:error, term()}
-  def read_facts(path) do
-    case File.read(path) do
-      {:ok, content} ->
-        rows =
-          content
-          |> String.trim()
-          |> String.split("\n", trim: true)
-          |> Enum.map(&String.split(&1, "\t"))
-
-        {:ok, rows}
 
       {:error, _} = error ->
         error

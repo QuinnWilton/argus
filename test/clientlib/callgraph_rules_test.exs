@@ -22,7 +22,7 @@ defmodule Argus.Clientlib.CallgraphRulesTest do
 
       # Write a custom .dl that includes the clientlib and outputs call_edge.
       rules = """
-      .include "#{Path.join(priv_dl(), "clientlib/cfg.dl")}"
+      .include "#{Path.join(priv_dl(), "base.dl")}"
 
       .decl call_edge(caller: symbol, callee: symbol)
       .output call_edge
@@ -54,7 +54,7 @@ defmodule Argus.Clientlib.CallgraphRulesTest do
       {:ok, _} = Pipeline.run([Argus.Test.Fixtures.ClosureModule], facts_dir)
 
       rules = """
-      .include "#{Path.join(priv_dl(), "clientlib/cfg.dl")}"
+      .include "#{Path.join(priv_dl(), "base.dl")}"
 
       .decl call_edge(caller: symbol, callee: symbol)
       .output call_edge

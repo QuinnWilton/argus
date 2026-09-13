@@ -116,6 +116,10 @@ defmodule Argus.Findings do
   - `:analyses` — `:all` (default) or a list of built-in analysis names.
     `:all` means every built-in analysis except `:coverage`, which measures
     the extractor pipeline rather than the analyzed code.
+  - `:facts_dir` — a directory `Argus.Analysis.extract_facts/3` already
+    wrote for these modules, to evaluate without extracting again. The
+    caller owns it; without this option the run extracts into a
+    temporary directory and removes it afterwards.
   - All `Argus.Analysis.run/3` options (`:concurrency`, `:extractors`,
     `:souffle_bin`, `:souffle_timeout`, ...) pass through.
 
@@ -137,20 +141,24 @@ defmodule Argus.Findings do
   defp evaluate(modules, analysis_mods, opts) do
     names = Enum.map(analysis_mods, & &1.name())
 
-    case Analysis.extract_facts(modules, names, opts) do
-      {:ok, facts_dir} ->
-        outcomes =
-          analysis_mods
-          |> Task.async_stream(&run_one(&1, facts_dir, opts),
-            max_concurrency: Keyword.get(opts, :concurrency, System.schedulers_online()),
-            ordered: true,
-            # Souffle.run bounds each evaluation with :souffle_timeout, so the
-            # task itself never needs a second, racing deadline.
-            timeout: :infinity
-          )
-          |> Enum.map(fn {:ok, outcome} -> outcome end)
+    case facts_dir(modules, names, opts) do
+      {:ok, facts_dir, owned?} ->
+        try do
+          outcomes =
+            analysis_mods
+            |> Task.async_stream(&run_one(&1, facts_dir, opts),
+              max_concurrency: Keyword.get(opts, :concurrency, System.schedulers_online()),
+              ordered: true,
+              # Souffle.run bounds each evaluation with :souffle_timeout, so the
+              # task itself never needs a second, racing deadline.
+              timeout: :infinity
+            )
+            |> Enum.map(fn {:ok, outcome} -> outcome end)
 
-        {:ok, collect(outcomes)}
+          {:ok, collect(outcomes)}
+        after
+          if owned?, do: File.rm_rf(Path.dirname(facts_dir))
+        end
 
       # Stage 0 (the shared call graph) is a Souffle evaluation like any
       # other, and Souffle trouble is degradation, not a crash — the same
@@ -171,6 +179,16 @@ defmodule Argus.Findings do
 
       {:error, _reason} = error ->
         error
+    end
+  end
+
+  defp facts_dir(modules, names, opts) do
+    case Keyword.fetch(opts, :facts_dir) do
+      {:ok, dir} ->
+        {:ok, dir, false}
+
+      :error ->
+        with {:ok, dir} <- Analysis.extract_facts(modules, names, opts), do: {:ok, dir, true}
     end
   end
 

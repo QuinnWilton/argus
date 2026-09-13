@@ -5,17 +5,7 @@ defmodule Argus.Souffle do
   Invokes `souffle -F <facts_dir> -D <output_dir> <rules.dl>` and parses
   the tab-separated output files back into lists of string rows.
 
-  ## Scalability fallback
 
-  When `:fallback_rules` is set in options, a timeout on the primary rules
-  triggers an automatic re-run with the fallback rules file. The result
-  includes an `"_argus_mode"` key indicating which mode produced the results:
-
-  - `[["precise"]]` — primary rules completed within the timeout.
-  - `[["fallback"]]` — primary rules timed out; fallback rules were used.
-
-  This implements Gigahorse's two-phase scalability strategy: try precise
-  analysis first, then fall back to a simpler (but faster) analysis.
   """
 
   @type result :: %{String.t() => [[String.t()]]}
@@ -31,7 +21,6 @@ defmodule Argus.Souffle do
 
   - `:souffle_bin` — path to the souffle binary (default: auto-detect on PATH)
   - `:souffle_timeout` — milliseconds before the run is aborted (default: 5 min)
-  - `:fallback_rules` — alternative rules file to retry with on timeout
   - `:output_dir` — where Souffle should write `.csv` outputs (default: tmpdir)
   """
   @spec run(Path.t(), Path.t(), keyword()) :: {:ok, result()} | {:error, term()}
@@ -44,11 +33,17 @@ defmodule Argus.Souffle do
 
       bin ->
         timeout = Keyword.get(opts, :souffle_timeout, @default_souffle_timeout)
-        fallback_rules = Keyword.get(opts, :fallback_rules)
 
         case resolve_output_dir(opts) do
           {:ok, output_dir} ->
-            run_with_fallback(bin, facts_dir, rules_path, output_dir, timeout, fallback_rules)
+            try do
+              run_souffle(bin, facts_dir, rules_path, output_dir, timeout)
+            after
+              # A directory chosen by the caller is theirs to keep (stage 0
+              # writes its outputs into the facts directory this way); one
+              # this module made is gone once the CSVs are read.
+              unless Keyword.has_key?(opts, :output_dir), do: File.rm_rf(output_dir)
+            end
 
           {:error, _} = error ->
             error
@@ -141,35 +136,6 @@ defmodule Argus.Souffle do
               {:error, reason} -> {:error, {:mkdir_failed, reason}}
             end
         end
-    end
-  end
-
-  defp run_with_fallback(bin, facts_dir, rules_path, output_dir, timeout, fallback_rules) do
-    case run_souffle(bin, facts_dir, rules_path, output_dir, timeout) do
-      {:ok, results} ->
-        {:ok, Map.put(results, "_argus_mode", [["precise"]])}
-
-      {:error, :souffle_timeout} when fallback_rules != nil ->
-        # Clean output dir for the fallback run.
-        fallback_dir = output_dir <> "_fallback"
-        File.rm_rf(fallback_dir)
-
-        case File.mkdir_p(fallback_dir) do
-          :ok ->
-            case run_souffle(bin, facts_dir, fallback_rules, fallback_dir, timeout) do
-              {:ok, results} ->
-                {:ok, Map.put(results, "_argus_mode", [["fallback"]])}
-
-              error ->
-                error
-            end
-
-          {:error, reason} ->
-            {:error, {:mkdir_failed, reason}}
-        end
-
-      other ->
-        other
     end
   end
 

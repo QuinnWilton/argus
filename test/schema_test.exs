@@ -64,45 +64,6 @@ defmodule Argus.SchemaTest do
     end
   end
 
-  describe "fetch!/1" do
-    test "returns relation for known names" do
-      assert %{name: :instruction} = Schema.fetch!(:instruction)
-    end
-
-    test "raises for unknown names" do
-      assert_raise ArgumentError, ~r/unknown relation/, fn ->
-        Schema.fetch!(:nonexistent)
-      end
-    end
-  end
-
-  describe "arity/1" do
-    test "returns field count" do
-      assert Schema.arity(:instruction) == 4
-      assert Schema.arity(:next) == 2
-      assert Schema.arity(:function_def) == 5
-    end
-  end
-
-  describe "field_names/1" do
-    test "returns ordered field name atoms" do
-      assert Schema.field_names(:instruction) == [:id, :func, :idx, :op]
-      assert Schema.field_names(:next) == [:from, :to]
-    end
-  end
-
-  describe "souffle_decl/1" do
-    test "generates valid Souffle declaration" do
-      decl = Schema.souffle_decl(:instruction)
-      assert decl == ".decl instruction(id: symbol, func: symbol, idx: number, op: symbol)"
-    end
-
-    test "handles number types" do
-      decl = Schema.souffle_decl(:jump)
-      assert decl == ".decl jump(id: symbol, target: number)"
-    end
-  end
-
   describe "names/0" do
     test "returns all relation names" do
       names = Schema.names()

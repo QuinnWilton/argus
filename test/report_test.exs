@@ -137,32 +137,5 @@ defmodule Argus.ReportTest do
   end
 
   describe "unresolved targets" do
-    test "reports how much of each relation the extractors could resolve" do
-      facts = %{
-        sync_call: [["a", "dynamic"], ["b", "dynamic"], ["c", "M"]],
-        function_def: [["f", "M", "g", "1", "true"]]
-      }
-
-      report = Report.build_project_report(%{}, [], facts: facts)
-
-      assert report["summary"]["unresolved_targets"] == [
-               "sync_call: 1/3 resolved (33.3%)"
-             ]
-    end
-
-    test "says nothing rather than claiming full coverage" do
-      # Omitted when no facts are supplied, and when every relation resolved
-      # cleanly. A report that silently implies full coverage is the failure
-      # this exists to fix — the same clean zero that hid a behaviour-name
-      # gap, a missing extractor and a vacuous test elsewhere in this repo.
-      refute Map.has_key?(Report.build_project_report(%{}, [])["summary"], "unresolved_targets")
-
-      clean = %{sync_call: [["a", "M"]]}
-
-      refute Map.has_key?(
-               Report.build_project_report(%{}, [], facts: clean)["summary"],
-               "unresolved_targets"
-             )
-    end
   end
 end

@@ -23,11 +23,6 @@ defmodule Argus.Pipeline.EmitTest do
   end
 
   describe "module-level facts" do
-    test "emits module_info" do
-      facts = Emit.emit_module(MyMod, [], [], [], [])
-      assert [["MyMod", "MyMod"]] = facts[:module_info]
-    end
-
     test "emits function_def with exported flag" do
       facts = emit_func([{:label, 1}, :return])
       defs = facts[:function_def]
@@ -55,11 +50,6 @@ defmodule Argus.Pipeline.EmitTest do
 
       assert List.last(public) == "1"
       assert List.last(private) == "0"
-    end
-
-    test "emits import_ref" do
-      facts = Emit.emit_module(MyMod, [], [{:erlang, :+, 2}], [], [])
-      assert [[":erlang", "+", "2"]] = facts[:import_ref]
     end
 
     test "emits module_attribute" do
@@ -239,11 +229,6 @@ defmodule Argus.Pipeline.EmitTest do
       facts = emit_func([{:loop_rec, {:f, 5}, {:x, 0}}])
       assert [[_id, _caller, _blocking, "5"]] = facts[:recv_start]
     end
-
-    test "emits recv_end for remove_message" do
-      facts = emit_func([:remove_message])
-      assert [[_id]] = facts[:recv_end]
-    end
   end
 
   describe "exception facts" do
@@ -258,21 +243,7 @@ defmodule Argus.Pipeline.EmitTest do
     end
   end
 
-  describe "make_fun facts" do
-    test "emits make_fun for make_fun3 with label" do
-      facts = emit_func([{:make_fun3, {:f, 15}, 0, 123, {:x, 0}, {:list, [{:x, 1}]}}])
-      assert [[_id, _caller, "15", "1"]] = facts[:make_fun]
-    end
-
-    test "emits make_fun for make_fun3 with MFA" do
-      facts =
-        emit_func([{:make_fun3, {MyMod, :"-fun/1-", 2}, 0, 123, {:x, 0}, {:list, [{:x, 1}]}}])
-
-      fun_facts = facts[:make_fun]
-      assert [[_id, _caller, target, "1"]] = fun_facts
-      assert target == "MyMod:-fun/1-/2"
-    end
-
+  describe "closure_def facts" do
     test "emits closure_def edge from parent func to closure body for MFA target" do
       facts =
         emit_func(
@@ -289,19 +260,6 @@ defmodule Argus.Pipeline.EmitTest do
     test "does not emit closure_def for label-targeted make_fun3" do
       facts = emit_func([{:make_fun3, {:f, 15}, 0, 0, {:x, 0}, {:list, []}}])
       assert facts[:closure_def] == nil
-    end
-  end
-
-  describe "tuple_field_access facts" do
-    test "records the index of get_tuple_element" do
-      facts = emit_func([{:get_tuple_element, {:x, 0}, 1, {:x, 2}}])
-      assert [[_id, "x0", "1", "x2"]] = facts[:tuple_field_access]
-    end
-
-    test "still emits use and def for the source and destination" do
-      facts = emit_func([{:get_tuple_element, {:x, 0}, 1, {:x, 2}}])
-      assert Enum.any?(facts[:use], fn [_, reg] -> reg == "x0" end)
-      assert Enum.any?(facts[:def], fn [_, reg] -> reg == "x2" end)
     end
   end
 
@@ -335,19 +293,6 @@ defmodule Argus.Pipeline.EmitTest do
       facts = emit_func([{:test, :is_tuple, {:f, 6}, [{:x, 0}]}])
       assert [[_id, "6", "0"]] = facts[:branch]
       assert [[_id2, "is_tuple", "x0", "6"]] = facts[:type_test]
-    end
-  end
-
-  describe "unhandled_op facts" do
-    test "records opcodes that fall through to the catch-all" do
-      # Use an instruction shape that no clause matches.
-      facts = emit_func([{:totally_made_up_opcode, :foo, :bar}])
-      assert [[_id, "totally_made_up_opcode"]] = facts[:unhandled_op]
-    end
-
-    test "does not emit unhandled_op for known opcodes" do
-      facts = emit_func([{:move, {:atom, :ok}, {:x, 0}}])
-      assert facts[:unhandled_op] == nil
     end
   end
 

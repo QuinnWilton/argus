@@ -15,8 +15,7 @@ defmodule Argus.PipelineTest do
 
     test "extracts facts from multiple modules" do
       assert {:ok, facts} = Pipeline.extract([:lists, :maps])
-      mod_infos = facts[:module_info]
-      mods = Enum.map(mod_infos, fn [mod, _] -> mod end)
+      mods = Enum.map(facts[:function_def], fn [_func, mod, _name, _arity, _exported] -> mod end)
       assert ":lists" in mods
       assert ":maps" in mods
     end
@@ -103,13 +102,13 @@ defmodule Argus.PipelineTest do
       # Check that fact files were created.
       assert File.exists?(Path.join(tmp_dir, "instruction.facts"))
       assert File.exists?(Path.join(tmp_dir, "function_def.facts"))
-      assert File.exists?(Path.join(tmp_dir, "module_info.facts"))
+      assert File.exists?(Path.join(tmp_dir, "function_entry.facts"))
     end
 
     test "fact files are well-formed TSV", %{tmp_dir: tmp_dir} do
       {:ok, _} = Pipeline.run([:lists], tmp_dir)
 
-      {:ok, rows} = Pipeline.read_facts(Path.join(tmp_dir, "function_def.facts"))
+      {:ok, rows} = read_facts(Path.join(tmp_dir, "function_def.facts"))
       assert rows != []
 
       # function_def has 5 fields per the schema — the entry label lives in
@@ -122,15 +121,15 @@ defmodule Argus.PipelineTest do
     test "fact files contain expected content", %{tmp_dir: tmp_dir} do
       {:ok, _} = Pipeline.run([:lists], tmp_dir)
 
-      {:ok, rows} = Pipeline.read_facts(Path.join(tmp_dir, "module_info.facts"))
-      assert Enum.any?(rows, fn [mod, _] -> mod == ":lists" end)
+      {:ok, rows} = read_facts(Path.join(tmp_dir, "function_def.facts"))
+      assert Enum.any?(rows, fn [_func, mod | _] -> mod == ":lists" end)
     end
 
     test "handles multiple modules", %{tmp_dir: tmp_dir} do
       {:ok, _} = Pipeline.run([:lists, :maps], tmp_dir)
 
-      {:ok, rows} = Pipeline.read_facts(Path.join(tmp_dir, "module_info.facts"))
-      mods = Enum.map(rows, fn [mod, _] -> mod end)
+      {:ok, rows} = read_facts(Path.join(tmp_dir, "function_def.facts"))
+      mods = Enum.map(rows, fn [_func, mod | _] -> mod end)
       assert ":lists" in mods
       assert ":maps" in mods
     end
@@ -164,8 +163,8 @@ defmodule Argus.PipelineTest do
       assert :ok = Pipeline.write_facts(facts, tmp_dir)
 
       # Extracted relations round-trip through the TSV files.
-      {:ok, rows} = Pipeline.read_facts(Path.join(tmp_dir, "module_info.facts"))
-      assert Enum.any?(rows, fn [mod, _] -> mod == ":lists" end)
+      {:ok, rows} = read_facts(Path.join(tmp_dir, "function_def.facts"))
+      assert Enum.any?(rows, fn [_func, mod | _] -> mod == ":lists" end)
 
       # Every schema relation gets a file, even when no facts were
       # extracted for it — Souffle fails on missing .input files.
@@ -238,16 +237,10 @@ defmodule Argus.PipelineTest do
     end
   end
 
-  describe "read_facts/1" do
-    test "reads TSV correctly", %{tmp_dir: tmp_dir} do
-      path = Path.join(tmp_dir, "test.facts")
-      File.write!(path, "a\tb\tc\nd\te\tf\n")
-
-      assert {:ok, [["a", "b", "c"], ["d", "e", "f"]]} = Pipeline.read_facts(path)
-    end
-
-    test "returns error for missing file" do
-      assert {:error, :enoent} = Pipeline.read_facts("/nonexistent/path.facts")
+  defp read_facts(path) do
+    with {:ok, body} <- File.read(path) do
+      rows = for line <- String.split(body, "\n", trim: true), do: String.split(line, "\t")
+      {:ok, rows}
     end
   end
 end

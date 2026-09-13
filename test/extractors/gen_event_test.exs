@@ -59,22 +59,4 @@ defmodule Argus.Extractors.GenEventTest do
              end)
     end
   end
-
-  describe "extract/1 — handler installation" do
-    test "records gen_event_handler for :gen_event.add_handler/3" do
-      facts = GenEvent.extract(disassemble(Argus.Test.Fixtures.GenEventEmitter))
-
-      assert Map.has_key?(facts, :gen_event_handler)
-
-      assert Enum.any?(facts[:gen_event_handler], fn [mgr, handler] ->
-               mgr == "MyEventManager" and handler == "Argus.Test.Fixtures.MyEventHandler"
-             end)
-    end
-
-    test "records gen_event_handler for :gen_event.add_sup_handler/3" do
-      facts = GenEvent.extract(disassemble(Argus.Test.Fixtures.GenEventEmitter))
-      handlers = facts[:gen_event_handler]
-      assert length(handlers) >= 2
-    end
-  end
 end
