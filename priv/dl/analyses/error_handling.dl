@@ -106,6 +106,16 @@ handle_info_without_catchall(mod, h) :-
 // propagation, both fully supervision-visible and not a bypass. It is
 // excluded via `target != "self"`, the sentinel the extractor uses for
 // the /1 form.
+.decl reaches_exit(func: symbol, target: symbol)
+
+reaches_exit(f, target) :-
+  call_edge(f, g),
+  exit_call(_, g, target).
+
+reaches_exit(f, target) :-
+  call_edge(f, g),
+  reaches_exit(g, target).
+
 .decl exit_in_callback(func: symbol, target: symbol)
 .output exit_in_callback
 
@@ -115,8 +125,7 @@ exit_in_callback(func, target) :-
   target != "self".
 
 exit_in_callback(func, target) :-
-  exit_call(_, callee_func, target),
-  call_reachable(func, callee_func),
+  reaches_exit(func, target),
   handler_function(_, func),
   target != "self".
 

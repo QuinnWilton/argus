@@ -19,15 +19,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   written as empty files; they were three quarters of the fact volume.
   `Argus.Pipeline.run/3` still writes everything unless given
   `relations:`.
-- Eight analyses whose reachability questions start from a few roots
-  (`sync_call_in_init`, `timeout_chain`, `transaction_safety`,
-  `supervision`, `request_surface`, `unbounded_dynamic_children`,
-  `deferred_startup_deadlock`, `distributed`) run under Souffle's
-  magic-set transform: each solve drops from ~600 MB and 12-17 s to
-  20-170 MB and under 2 s on the same project, with identical output.
-  The analyses that need the full closure (`call_cycle`,
-  `process_bottleneck`, `purity`, ...) are unchanged; the transform
-  made them slower.
+- No built-in analysis reads `call_reachable` any more. The closure is
+  quadratic in the call graph (17M rows from 100k edges on the same
+  project, ~500 MB in every solve that touched it), and every question
+  the analyses asked of it — which functions reach a sync dependency, a
+  supervisor call, an exit, an effect, a sink — is answered by
+  propagating over `call_edge` from the few functions that matter. The
+  clientlib's `reaches_sync_dep`, `reaches_async_dep`,
+  `reaches_sync_dep_timeout`, `module_reaches`, `stateful_module_dep`
+  and `genserver_sync_api` are derived that way (new helpers
+  `reaches_module`, `reaches_sync_caller_in`), and each analysis that
+  joined the closure directly has its own root-driven relation. Same
+  rows out; the eighteen solves that took 450-690 MB and 12-17 s each
+  now take under 60 MB and under 2 s. `same_process_reaches` is gone
+  (`monitor_leak` propagates over non-closure edges instead);
+  `call_reachable` stays declared for custom programs.
 - `Argus.Findings.run/2` caps concurrent Souffle solves at four by
   default (`:concurrency` overrides it). Every solve holds its own copy
   of the call graph's closure, so running one per scheduler multiplied

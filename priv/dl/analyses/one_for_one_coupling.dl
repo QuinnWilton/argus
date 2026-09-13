@@ -67,10 +67,20 @@ coupling_site(w, callee_mod, id) :-
 // The witness is the function the dependency is proven through (often a
 // callback), and the call into the sibling may live several local calls
 // below it. Anchor at that call rather than at the witness's head.
+.decl witness_reaches(witness: symbol, func: symbol)
+
+witness_reaches(w, g) :-
+  coupling(_, _, _, _, w),
+  call_edge(w, g).
+
+witness_reaches(w, h) :-
+  witness_reaches(w, g),
+  call_edge(g, h).
+
 coupling_site(w, callee_mod, id) :-
   coupling(_, _, callee_mod, _, w),
   !direct_coupling_site(w, callee_mod, _),
-  call_reachable(w, g),
+  witness_reaches(w, g),
   call_site(id, g, callee_mod).
 
 // `site` is the instruction ID of the coupling call when one is known,

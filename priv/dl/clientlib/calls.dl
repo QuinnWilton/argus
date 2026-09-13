@@ -11,7 +11,6 @@
 //   sync_dep(func, mod) / async_dep(func, mod)               — direct
 //   reaches_sync_dep(func, mod) / reaches_async_dep(func, mod) — transitive
 //   sync_dep_timeout(func, mod, timeout_ms) / reaches_sync_dep_timeout
-//   same_process_reaches(from, to)
 //   module_reaches(from_mod, to_mod, witness)
 //   stateful_module_dep(from_mod, to_mod, witness)
 //   stateful_module_dep_kind(from_mod, to_mod, kind)
@@ -65,9 +64,7 @@ genserver_sync_api(func, mod) :-
 genserver_sync_api(func, mod) :-
   function_def(func, mod, _, _, 1),
   behaves_as(mod, "GenServer"),
-  call_reachable(func, g),
-  sync_call(g, _),
-  function_def(g, mod, _, _, _).
+  reaches_sync_caller_in(func, mod).
 
 .decl genserver_async_api(func: symbol, mod: symbol)
 
@@ -112,19 +109,24 @@ async_dep(f, m) :-
 
 .decl reaches_sync_dep(func: symbol, mod: symbol)
 
+// Propagated backwards over call_edge from the functions that hold the
+// dependency, never through the full call closure: the result is bounded
+// by functions × dependency modules, where call_reachable is quadratic
+// in the call graph (17M rows against 100k edges on one corpus project).
+// Every transitive relation in this file is derived the same way.
 reaches_sync_dep(f, m) :- sync_dep(f, m).
 
 reaches_sync_dep(f, m) :-
-  call_reachable(f, g),
-  sync_dep(g, m).
+  call_edge(f, g),
+  reaches_sync_dep(g, m).
 
 .decl reaches_async_dep(func: symbol, mod: symbol)
 
 reaches_async_dep(f, m) :- async_dep(f, m).
 
 reaches_async_dep(f, m) :-
-  call_reachable(f, g),
-  async_dep(g, m).
+  call_edge(f, g),
+  reaches_async_dep(g, m).
 
 // With the timeout the waiting call carries: -1 is :infinity, 0 unknown.
 // Through a client API function the timeout is the wrapper's, whose own
@@ -150,24 +152,8 @@ sync_dep_timeout(f, m, ms) :-
 reaches_sync_dep_timeout(f, m, ms) :- sync_dep_timeout(f, m, ms).
 
 reaches_sync_dep_timeout(f, m, ms) :-
-  call_reachable(f, g),
-  sync_dep_timeout(g, m, ms).
-
-// ── Same-process reachability ──────────────────────────────────────────
-//
-// Control that stays on the calling process's stack: every call edge
-// except into a closure, which may run anywhere (a spawned fun, a Task).
-// A callback reaching a receive or a monitor this way owns it.
-.decl same_process_reaches(from: symbol, to: symbol)
-
-same_process_reaches(f, g) :-
   call_edge(f, g),
-  !closure_def(f, g).
-
-same_process_reaches(f, h) :-
-  same_process_reaches(f, g),
-  call_edge(g, h),
-  !closure_def(g, h).
+  reaches_sync_dep_timeout(g, m, ms).
 
 // ── Module-level dependency ────────────────────────────────────────────
 //
@@ -175,11 +161,34 @@ same_process_reaches(f, h) :-
 // defined in `to_mod`; `witness` is the reaching function.
 .decl module_reaches(from_mod: symbol, to_mod: symbol, witness: symbol)
 
+// `func` reaches (through at least one call) some function of `mod`.
+.decl reaches_module(func: symbol, mod: symbol)
+
+reaches_module(f, m) :-
+  call_edge(f, g),
+  function_def(g, m, _, _, _).
+
+reaches_module(f, m) :-
+  call_edge(f, g),
+  reaches_module(g, m).
+
 module_reaches(from_mod, to_mod, caller) :-
   function_def(caller, from_mod, _, _, _),
-  call_reachable(caller, callee),
-  function_def(callee, to_mod, _, _, _),
+  reaches_module(caller, to_mod),
   from_mod != to_mod.
+
+// `func` reaches (through at least one call) a function of `mod` that
+// makes a sync call.
+.decl reaches_sync_caller_in(func: symbol, mod: symbol)
+
+reaches_sync_caller_in(f, m) :-
+  call_edge(f, g),
+  function_def(g, m, _, _, _),
+  sync_call(g, _).
+
+reaches_sync_caller_in(f, m) :-
+  call_edge(f, g),
+  reaches_sync_caller_in(g, m).
 
 // from_mod holds process state that depends on to_mod's process — a
 // sync or async dependency, resolved or through the callee module's own
@@ -199,13 +208,6 @@ stateful_module_dep(from_mod, to_mod, f) :-
   reaches_async_dep(f, to_mod),
   from_mod != to_mod.
 
-stateful_module_dep(from_mod, to_mod, f) :-
-  function_def(f, from_mod, _, _, _),
-  call_reachable(f, g),
-  function_def(g, to_mod, _, _, _),
-  (sync_call(g, _) ; async_cast(g, _)),
-  from_mod != to_mod.
-
 stateful_module_dep(from_mod, to_mod, w) :-
   module_reaches(from_mod, to_mod, w),
   function_def(h, to_mod, _, _, _),
@@ -222,9 +224,7 @@ stateful_module_dep_call(from_mod, to_mod) :-
 
 stateful_module_dep_call(from_mod, to_mod) :-
   stateful_module_dep(from_mod, to_mod, f),
-  call_reachable(f, g),
-  function_def(g, to_mod, _, _, _),
-  sync_call(g, _).
+  reaches_sync_caller_in(f, to_mod).
 
 .decl stateful_module_dep_kind(from_mod: symbol, to_mod: symbol, kind: symbol)
 

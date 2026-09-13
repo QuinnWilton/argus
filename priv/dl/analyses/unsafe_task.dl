@@ -55,7 +55,7 @@ task_await_call(func, id) :-
 .decl has_await(func: symbol)
 
 has_await(func) :- task_await_call(func, _).
-has_await(func) :- call_reachable(func, g), task_await_call(g, _).
+has_await(func) :- call_edge(func, g), has_await(g).
 
 // ── Process task handler suppression ─────────────────────────────────
 

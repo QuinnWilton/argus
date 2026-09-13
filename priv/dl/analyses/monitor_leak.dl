@@ -23,9 +23,12 @@
 waits_with_timeout(func) :-
   recv_start(_, func, 0, _).
 
+// Over calls that stay on this process's stack: a closure may run
+// anywhere, so an edge into one does not count.
 waits_with_timeout(func) :-
-  same_process_reaches(func, g),
-  recv_start(_, g, 0, _).
+  call_edge(func, g),
+  !closure_def(func, g),
+  waits_with_timeout(g).
 
 .decl flushes(func: symbol)
 
@@ -33,8 +36,9 @@ flushes(func) :-
   demonitor_call(_, func, "flush").
 
 flushes(func) :-
-  same_process_reaches(func, g),
-  demonitor_call(_, g, "flush").
+  call_edge(func, g),
+  !closure_def(func, g),
+  flushes(g).
 
 .decl leaked_monitor(func: symbol, id: symbol)
 .output leaked_monitor

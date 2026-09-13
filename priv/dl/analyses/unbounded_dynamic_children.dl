@@ -1,7 +1,3 @@
-// Magic-set transformed: reachability is computed only from the roots
-// these rules ask about, not as the full transitive closure.
-.pragma "magic-transform" "*"
-
 // Processes an outside party can create without limit.
 //
 // `DynamicSupervisor` defaults to `max_children: :infinity`, and the default
@@ -42,12 +38,19 @@ uncapped_supervisor(sup) :-
 
 .decl externally_reachable(func: symbol, entry: symbol, kind: symbol)
 
-externally_reachable(func, entry, kind) :-
-  request_entry(entry, kind),
-  call_reachable(entry, func).
+// Backwards from the functions that start dynamic children, so only
+// their callers are explored.
+.decl reaches_dynamic_child_via(func: symbol, via: symbol)
 
-externally_reachable(func, func, kind) :-
-  request_entry(func, kind).
+reaches_dynamic_child_via(via, via) :- dynamic_child(_, _, via).
+
+reaches_dynamic_child_via(f, via) :-
+  call_edge(f, g),
+  reaches_dynamic_child_via(g, via).
+
+externally_reachable(via, entry, kind) :-
+  request_entry(entry, kind),
+  reaches_dynamic_child_via(entry, via).
 
 .decl unbounded_children_from_request(sup: symbol, child: symbol, via: symbol, kind: symbol)
 .output unbounded_children_from_request

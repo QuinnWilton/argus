@@ -100,13 +100,36 @@ opaque(func, "protocol_dispatch", api) :-
 // inside a function and handed to Enum.each still runs its body, so an
 // effect in that lambda is an effect of the function that built it.
 
+// The functions whose transitive effects the findings ask about: every
+// declared-pure function, and every closure defined in a caller of one
+// (`impure_closure_to_pure`). Reachability is explored forward from
+// those roots only.
+.decl purity_root(func: symbol)
+
+purity_root(func) :- declared_pure(func).
+
+purity_root(closure) :-
+  declared_pure(callee),
+  call_edge(caller, callee),
+  closure_def(caller, closure).
+
+.decl root_reaches(root: symbol, func: symbol)
+
+root_reaches(root, g) :-
+  purity_root(root),
+  call_edge(root, g).
+
+root_reaches(root, h) :-
+  root_reaches(root, g),
+  call_edge(g, h).
+
 .decl reaches_effect(func: symbol, category: symbol, api: symbol, via: symbol)
 
 reaches_effect(func, category, api, func) :-
   performs_effect(func, category, api).
 
 reaches_effect(func, category, api, via) :-
-  call_reachable(func, via),
+  root_reaches(func, via),
   performs_effect(via, category, api).
 
 .decl reaches_opaque(func: symbol, reason: symbol, detail: symbol, via: symbol)
@@ -115,7 +138,7 @@ reaches_opaque(func, reason, detail, func) :-
   opaque(func, reason, detail).
 
 reaches_opaque(func, reason, detail, via) :-
-  call_reachable(func, via),
+  root_reaches(func, via),
   opaque(via, reason, detail).
 
 // ── Findings ─────────────────────────────────────────────────────

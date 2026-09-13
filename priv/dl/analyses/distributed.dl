@@ -1,7 +1,3 @@
-// Magic-set transformed: reachability is computed only from the roots
-// these rules ask about, not as the full transitive closure.
-.pragma "magic-transform" "*"
-
 // Distributed systems analysis.
 //
 // Detects distributed system anti-patterns: RPC calls without timeout,
@@ -77,9 +73,18 @@ global_blocking_in_init(func, op) :-
   global_blocking_op(func, op, _, _),
   init_function(_, func).
 
+.decl reaches_global_blocking(func: symbol, op: symbol)
+
+reaches_global_blocking(f, op) :-
+  call_edge(f, g),
+  global_blocking_op(g, op, _, _).
+
+reaches_global_blocking(f, op) :-
+  call_edge(f, g),
+  reaches_global_blocking(g, op).
+
 global_blocking_in_init(func, op) :-
-  global_blocking_op(callee_func, op, _, _),
-  call_reachable(func, callee_func),
+  reaches_global_blocking(func, op),
   init_function(_, func).
 
 // ── Distributed operations in init ───────────────────────────────

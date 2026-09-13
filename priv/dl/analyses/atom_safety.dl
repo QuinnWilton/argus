@@ -14,9 +14,9 @@
 reachable_from_export(func) :-
   function_def(func, _, _, _, 1).
 
-reachable_from_export(func) :-
-  call_reachable(entry, func),
-  function_def(entry, _, _, _, 1).
+reachable_from_export(callee) :-
+  reachable_from_export(func),
+  call_edge(func, callee).
 
 // ── Atom exhaustion risk ─────────────────────────────────────────
 

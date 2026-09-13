@@ -1,7 +1,3 @@
-// Magic-set transformed: reachability is computed only from the roots
-// these rules ask about, not as the full transitive closure.
-.pragma "magic-transform" "*"
-
 // Unrollbackable side effects inside a database transaction.
 //
 // `@pure` is a contract someone writes down. This one nobody writes down —
@@ -90,10 +86,21 @@ unrollbackable("node").      // distribution: another node already saw it
 
 .decl escapes_transaction(caller: symbol, repo: symbol, category: symbol, api: symbol, via: symbol)
 
+// Forward from the transaction bodies only.
+.decl body_reaches(body: symbol, func: symbol)
+
+body_reaches(body, g) :-
+  transaction_body(_, _, body),
+  call_edge(body, g).
+
+body_reaches(body, h) :-
+  body_reaches(body, g),
+  call_edge(g, h).
+
 escapes_transaction(caller, repo, category, api, via) :-
   transaction_body(caller, _repo_unused, body),
   transaction_site(caller, repo),
-  call_reachable(body, via),
+  body_reaches(body, via),
   impure_call(_, via, api, category, "write"),
   unrollbackable(category).
 

@@ -57,7 +57,12 @@
 .decl unconditional_call_edge(caller: symbol, callee: symbol)
 .input unconditional_call_edge
 
-// Transitive call reachability, closed over the staged edges.
+// Transitive call reachability, closed over the staged edges. No
+// built-in analysis reads it any more: the closure is quadratic in the
+// call graph (17M rows from 100k edges on one corpus project, ~500 MB per
+// solve) and every question the analyses ask is answered by propagating
+// over call_edge from the few functions that matter — see calls.dl.
+// It stays declared for custom programs; Souffle prunes it when unread.
 .decl call_reachable(from: symbol, to: symbol)
 .include "call_reachable_rules.dl"
 

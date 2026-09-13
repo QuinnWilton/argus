@@ -1,7 +1,3 @@
-// Magic-set transformed: reachability is computed only from the roots
-// these rules ask about, not as the full transitive closure.
-.pragma "magic-transform" "*"
-
 // Request-surface analysis.
 //
 // The existing atom_safety analysis gates its findings on "reachable from
@@ -59,9 +55,20 @@ request_reaches(entry, kind, callee, "adjacent") :-
   call_edge(entry, callee).
 
 // Anywhere else in the cone. Real as a path, unproven as a data flow.
+// Forward from the request entries only.
+.decl entry_reaches(entry: symbol, func: symbol)
+
+entry_reaches(entry, callee) :-
+  request_entry(entry, _),
+  call_edge(entry, callee).
+
+entry_reaches(entry, callee) :-
+  entry_reaches(entry, g),
+  call_edge(g, callee).
+
 request_reaches(entry, kind, callee, "transitive") :-
   request_entry(entry, kind),
-  call_reachable(entry, callee),
+  entry_reaches(entry, callee),
   !call_edge(entry, callee),
   callee != entry.
 
@@ -126,14 +133,18 @@ remote_atom_exhaustion(id, func, api, entry, kind, proximity) :-
 .decl sink_endpoint(sink: symbol, verb: symbol, path: symbol, plug: symbol)
 .output sink_endpoint
 
-sink_endpoint(sink, verb, path, plug) :-
-  http_route(_, verb, path, plug, _),
-  function_def(entry, plug, _, _, _),
-  call_reachable(entry, sink_func),
-  unsafe_atom_creation(sink, sink_func, _).
+// Backwards from the sinks, which are few.
+.decl reaches_sink(func: symbol, sink: symbol)
+
+reaches_sink(f, sink) :-
+  call_edge(f, g),
+  (unsafe_atom_creation(sink, g, _) ; unsafe_deserialization(sink, g, _, _)).
+
+reaches_sink(f, sink) :-
+  call_edge(f, g),
+  reaches_sink(g, sink).
 
 sink_endpoint(sink, verb, path, plug) :-
   http_route(_, verb, path, plug, _),
   function_def(entry, plug, _, _, _),
-  call_reachable(entry, sink_func),
-  unsafe_deserialization(sink, sink_func, _, _).
+  reaches_sink(entry, sink).
