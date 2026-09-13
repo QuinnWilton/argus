@@ -1,8 +1,8 @@
 // Standard imports for Argus client analyses.
 //
-// Include this single file to get all base fact declarations, the control
-// flow graph, and the call graph. This is the recommended starting point
-// for writing new analyses.
+// Include this single file to get all base fact declarations and the
+// call graph. This is the recommended starting point for writing new
+// analyses.
 //
 // Usage:
 //   .include "../clientlib/imports.dl"
@@ -10,7 +10,6 @@
 // Provides:
 //   Base facts:     every Layer-1 and Layer-2 relation in Argus.Schema
 //                   (base.dl + layer2.dl, both generated)
-//   Derivable:      cfg_edge (from cfg.dl; Souffle prunes it unless read)
 //   Stage-0 facts:  call_edge
 //   Derived here:   call_reachable
 //
@@ -28,17 +27,12 @@
 // call_reachable stays derived here rather than staged — see stage0.dl
 // for why (the closure is quadratic and dwarfs the edge relation).
 //
-// `cfg_reachable` was removed with the same change: nothing referenced
-// it, and as the transitive closure of a ~10M-row relation it was a
-// standing hazard. Analyses needing instruction-level reachability should
-// declare it locally over cfg_edge.
-
-// Base declarations only. cfg.dl is deliberately NOT included: Souffle
-// prunes unused *input* relations but not unused *derived* ones, so
-// pulling in the cfg_edge rules would keep every analysis demanding
-// branch/jump/next/label_at/select_branch facts it never reads — exactly
-// the coupling the stage-0 split exists to break. Analyses that want the
-// control-flow graph include clientlib/cfg.dl themselves.
+// There is no instruction-level control-flow graph in Datalog: Souffle
+// prunes unused *input* relations but not unused *derived* ones, so a
+// shared cfg_edge rule would keep every analysis demanding
+// branch/jump/next/label_at facts it never reads. Intra-function
+// reachability is computed per module in Elixir (`Argus.Cfg`) and
+// arrives as facts such as `conditional_call` and `def_use`.
 .include "../base.dl"
 
 // Layer-2 domain-extractor declarations, generated from the same schema.

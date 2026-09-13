@@ -258,9 +258,9 @@ defmodule Argus.Analysis do
   Restricts raw Souffle results to the relations a built-in analysis
   declares as its outputs.
 
-  Intermediate clientlib relations (`call_reachable`, `cfg_edge`, ...) and
-  intermediates are dropped. Custom analyses and unknown
-  names pass through unchanged — there is no declaration to filter against.
+  Intermediate clientlib relations (`call_reachable`, `sync_dep`, ...) are
+  dropped. Custom analyses and unknown names pass through unchanged — there
+  is no declaration to filter against.
   """
   @spec filter_to_outputs(result(), analysis()) :: result()
   def filter_to_outputs(results, {:custom, _path}), do: results

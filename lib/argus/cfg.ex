@@ -3,8 +3,9 @@ defmodule Argus.Cfg do
   Basic-block control-flow graphs derived from Layer-1 facts, with dominators
   and loop headers.
 
-  This is the in-process counterpart of `priv/dl/clientlib/cfg.dl`'s flat
-  `cfg_edge` derivation, lifted to the block level: instructions are grouped
+  Built per module from the `instruction`/`label_at`/`jump`/`branch`/
+  `select_branch` facts, so the graph is memoized with the module's
+  extraction rather than re-derived on every solve: instructions are grouped
   into maximal straight-line blocks (the classic leader algorithm), edges
   carry their kind (`t:Argus.Cfg.Block.edge_kind/0`), and each function gets a
   dominator tree (iterative Cooper–Harvey–Kennedy over reverse postorder) and
