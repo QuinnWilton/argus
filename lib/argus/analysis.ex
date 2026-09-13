@@ -142,6 +142,7 @@ defmodule Argus.Analysis do
     opts =
       opts
       |> Keyword.update(:extractors, default_extractors, &Enum.uniq(default_extractors ++ &1))
+      |> Keyword.put_new(:relations, staged_relations(analyses))
       |> maybe_enable_imprecision_tracing(analyses)
 
     with {:ok, work_dir} <- create_work_dir(),
@@ -149,6 +150,18 @@ defmodule Argus.Analysis do
          {:ok, _} <- Pipeline.run(modules, facts_dir, opts),
          :ok <- derive_stage0(facts_dir, opts) do
       {:ok, facts_dir}
+    end
+  end
+
+  # The built-in programs never read the in-process-only relations, so the
+  # staged directory leaves them empty. A custom program might, and there
+  # is no declaration to consult without running Souffle, so it gets
+  # everything.
+  defp staged_relations(analyses) do
+    if Enum.any?(analyses, &match?({:custom, _}, &1)) do
+      :all
+    else
+      Argus.Schema.names() -- Argus.Schema.in_process_only()
     end
   end
 

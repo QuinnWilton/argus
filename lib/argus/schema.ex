@@ -1617,6 +1617,19 @@ defmodule Argus.Schema do
 
   @all_relations @layer_1_relations ++ @layer_2_relations
 
+  # Layer-1 relations no Souffle program reads. They exist for the
+  # in-process passes over a module's typed facts — `Argus.Cfg`,
+  # `Argus.Dataflow`, the extractors' walks, gloss's alignment — and are
+  # the bulk of the fact volume (instruction, next, def and use alone are
+  # more than half of it on a large project). `Argus.Analysis.extract_facts/3`
+  # leaves them out of the directory it stages; `Argus.InProcessRelationsTest`
+  # fails if a rule starts reading one.
+  @in_process_only ~w(
+    instruction next move def use jump branch select_branch label_at
+    allocate deallocate bs_start function_entry try_end type_test
+    module_attribute
+  )a
+
   @relations_by_name Map.new(@all_relations, fn r -> {r.name, r} end)
 
   @doc """
@@ -1744,4 +1757,10 @@ defmodule Argus.Schema do
   """
   @spec names() :: [atom()]
   def names, do: Enum.map(@all_relations, & &1.name)
+
+  @doc """
+  Relations that only the in-process passes read; no Souffle program does.
+  """
+  @spec in_process_only() :: [atom()]
+  def in_process_only, do: @in_process_only
 end

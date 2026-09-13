@@ -11,15 +11,17 @@ defmodule Argus.Pipeline do
   - `Argus.Pipeline.Emit` produces base bytecode facts from each module.
   - User-supplied extractors implementing `Argus.Extractor` produce
     domain-specific Layer 2 facts.
-  - `run/3` writes the merged facts to `.facts` files (one per relation,
-    tab-separated). `extract/2` returns the merged facts in memory.
+  - `run/3` streams each module's facts to `.facts` files (one per
+    relation, tab-separated) as extraction completes, so the program's
+    fact set never exists in memory at once. `extract/2` returns the
+    merged facts in memory.
   """
 
   alias Argus.Cfg
   alias Argus.Dataflow
   alias Argus.Extractor.Helpers
   alias Argus.InstrId
-  alias Argus.Pipeline.{Disassemble, Emit}
+  alias Argus.Pipeline.{Disassemble, Emit, Writer}
 
   @type extract_opts :: [
           concurrency: pos_integer(),
@@ -27,6 +29,14 @@ defmodule Argus.Pipeline do
           timeout: timeout(),
           trace_imprecision: boolean(),
           format: :raw | :typed
+        ]
+
+  @type run_opts :: [
+          concurrency: pos_integer(),
+          extractors: [module()],
+          timeout: timeout(),
+          trace_imprecision: boolean(),
+          relations: :all | [atom()]
         ]
 
   @default_timeout 120_000
@@ -37,18 +47,52 @@ defmodule Argus.Pipeline do
   Modules can be atoms (resolved via `:code.which/1`), string paths to
   `.beam` files, or raw beam data binaries. Returns `{:ok, output_dir}`
   or `{:error, reason}`.
+
+  Every schema relation gets a file (Souffle fails on a missing `.input`
+  file), but `relations:` limits which ones receive rows: the rest stay
+  empty. `Argus.Analysis.extract_facts/3` uses it to leave out the
+  relations that exist only for the in-process control-flow and dataflow
+  passes (`Argus.Schema.in_process_only/0`), which no Souffle program
+  reads and which are most of the fact volume.
   """
   @spec run(
           modules :: [Disassemble.module_input()],
           output_dir :: Path.t(),
-          extract_opts()
+          run_opts()
         ) ::
           {:ok, Path.t()} | {:error, term()}
   def run(modules, output_dir, opts \\ []) do
+    written =
+      case Keyword.get(opts, :relations, :all) do
+        :all -> nil
+        names -> MapSet.new(names)
+      end
+
     with :ok <- File.mkdir_p(output_dir),
-         {:ok, merged} <- extract(modules, opts),
-         :ok <- write_facts(merged, output_dir) do
-      {:ok, output_dir}
+         :ok <- touch_relations(output_dir),
+         {:ok, paths} <- Disassemble.resolve_paths(modules) do
+      writer = Writer.new(output_dir, written)
+
+      try do
+        paths
+        |> extract_stream(opts)
+        |> Enum.reduce_while({:ok, writer}, fn
+          {:ok, module_facts}, {:ok, writer} ->
+            case Writer.append(writer, module_facts) do
+              {:ok, writer} -> {:cont, {:ok, writer}}
+              {:error, _} = error -> {:halt, error}
+            end
+
+          {:error, reason}, _ ->
+            {:halt, {:error, reason}}
+        end)
+        |> case do
+          {:ok, writer} -> with :ok <- Writer.close(writer), do: {:ok, output_dir}
+          {:error, _} = error -> error
+        end
+      after
+        Writer.close(writer)
+      end
     end
   end
 
@@ -63,40 +107,15 @@ defmodule Argus.Pipeline do
   @spec extract(modules :: [Disassemble.module_input()], extract_opts()) ::
           {:ok, Emit.facts() | Argus.Facts.t()} | {:error, term()}
   def extract(modules, opts \\ []) do
-    concurrency = Keyword.get(opts, :concurrency, System.schedulers_online())
-    extractors = Keyword.get(opts, :extractors, [])
-    task_timeout = Keyword.get(opts, :timeout, @default_timeout)
-    trace_imprecision = Keyword.get(opts, :trace_imprecision, false)
     format = Keyword.get(opts, :format, :raw)
 
     with {:ok, paths} <- Disassemble.resolve_paths(modules) do
       merged =
         paths
-        |> Task.async_stream(
-          fn path -> extract_module(path, extractors, trace_imprecision) end,
-          max_concurrency: concurrency,
-          # Ordered so that extracting the same modules twice produces the
-          # same value. With `ordered: false` the reduce sees workers in
-          # completion order, and `merge_facts/2` concatenates, so row order
-          # varied run to run — measured at 8 distinct results from 8
-          # extractions of the same 40 modules. Souffle has set semantics
-          # and never noticed, but any consumer that memoizes, hashes or
-          # diffs facts did: planchette had to sort every relation itself to
-          # get value equality. Ordering costs a little buffering (a worker
-          # that finishes early is held until its predecessors do) and buys
-          # a property the whole workspace was otherwise re-deriving.
-          ordered: true,
-          timeout: task_timeout
-        )
+        |> extract_stream(opts)
         |> Enum.reduce(%{}, fn
-          {:ok, {:ok, module_facts}}, acc ->
-            merge_facts(acc, module_facts)
-
-          {:ok, {:error, reason}}, _acc ->
-            throw({:extraction_error, reason})
-
-          {:exit, reason}, _acc ->
-            throw({:extraction_error, reason})
+          {:ok, module_facts}, acc -> merge_facts(acc, module_facts)
+          {:error, reason}, _acc -> throw({:extraction_error, reason})
         end)
 
       case format do
@@ -106,6 +125,37 @@ defmodule Argus.Pipeline do
     end
   catch
     {:extraction_error, reason} -> {:error, reason}
+  end
+
+  # One `{:ok, facts} | {:error, reason}` per module, in input order.
+  defp extract_stream(paths, opts) do
+    concurrency = Keyword.get(opts, :concurrency, System.schedulers_online())
+    extractors = Keyword.get(opts, :extractors, [])
+    task_timeout = Keyword.get(opts, :timeout, @default_timeout)
+    trace_imprecision = Keyword.get(opts, :trace_imprecision, false)
+
+    paths
+    |> Task.async_stream(
+      fn path -> extract_module(path, extractors, trace_imprecision) end,
+      max_concurrency: concurrency,
+      # Ordered so that extracting the same modules twice produces the
+      # same value. With `ordered: false` the reduce sees workers in
+      # completion order, and `merge_facts/2` concatenates, so row order
+      # varied run to run — measured at 8 distinct results from 8
+      # extractions of the same 40 modules. Souffle has set semantics
+      # and never noticed, but any consumer that memoizes, hashes or
+      # diffs facts did: planchette had to sort every relation itself to
+      # get value equality. Ordering costs a little buffering (a worker
+      # that finishes early is held until its predecessors do) and buys
+      # a property the whole workspace was otherwise re-deriving.
+      ordered: true,
+      timeout: task_timeout
+    )
+    |> Stream.map(fn
+      {:ok, {:ok, module_facts}} -> {:ok, module_facts}
+      {:ok, {:error, reason}} -> {:error, reason}
+      {:exit, reason} -> {:error, reason}
+    end)
   end
 
   # Per-module extraction: disassemble, emit Layer 1 facts, run Layer 2
@@ -247,53 +297,38 @@ defmodule Argus.Pipeline do
   """
   @spec write_facts(Emit.facts(), Path.t()) :: :ok | {:error, term()}
   def write_facts(facts, output_dir) do
-    # Create empty files for all known relations so Souffle never fails
-    # on missing .input files.
-    init_result =
-      Enum.reduce_while(Argus.Schema.names(), :ok, fn name, :ok ->
-        path = Path.join(output_dir, "#{name}.facts")
+    with :ok <- touch_relations(output_dir) do
+      Enum.reduce_while(facts, :ok, fn {relation, rows}, :ok ->
+        path = Path.join(output_dir, "#{relation}.facts")
 
-        if File.exists?(path) do
-          {:cont, :ok}
-        else
-          case File.write(path, "") do
-            :ok -> {:cont, :ok}
-            {:error, reason} -> {:halt, {:error, {:write_failed, path, reason}}}
-          end
+        # An explicitly-empty relation produces a zero-byte file, not a
+        # lone newline: Souffle reads the blank line as a tuple with
+        # missing columns and aborts with "Values missing in line 1".
+        case File.write(path, rows_iodata(Enum.reverse(rows))) do
+          :ok -> {:cont, :ok}
+          {:error, reason} -> {:halt, {:error, {:write_failed, path, reason}}}
         end
       end)
-
-    case init_result do
-      :ok ->
-        Enum.reduce_while(facts, :ok, fn {relation, rows}, :ok ->
-          path = Path.join(output_dir, "#{relation}.facts")
-
-          # An explicitly-empty relation must produce a zero-byte file, not
-          # a lone newline: Souffle reads the blank line as a tuple with
-          # missing columns and aborts with "Values missing in line 1".
-          # Callers that build a fact map by merging never hit this (an
-          # empty relation is simply absent), but one that projects a
-          # fixed relation list does.
-          content =
-            case rows do
-              [] ->
-                ""
-
-              rows ->
-                rows
-                |> Enum.reverse()
-                |> Enum.map_join("\n", fn row -> Enum.join(row, "\t") end)
-                |> Kernel.<>("\n")
-            end
-
-          case File.write(path, content) do
-            :ok -> {:cont, :ok}
-            {:error, reason} -> {:halt, {:error, {:write_failed, path, reason}}}
-          end
-        end)
-
-      {:error, _} = error ->
-        error
     end
   end
+
+  # Empty files for every schema relation, so Souffle never fails on a
+  # missing .input file. Existing files are left alone.
+  defp touch_relations(output_dir) do
+    Enum.reduce_while(Argus.Schema.names(), :ok, fn name, :ok ->
+      path = Path.join(output_dir, "#{name}.facts")
+
+      if File.exists?(path) do
+        {:cont, :ok}
+      else
+        case File.write(path, "") do
+          :ok -> {:cont, :ok}
+          {:error, reason} -> {:halt, {:error, {:write_failed, path, reason}}}
+        end
+      end
+    end)
+  end
+
+  @doc false
+  def rows_iodata(rows), do: Enum.map(rows, fn row -> [Enum.intersperse(row, "\t"), "\n"] end)
 end
