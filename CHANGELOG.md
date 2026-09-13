@@ -4,6 +4,14 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- `mix argus` and `scripts/analyze_project.exs` fail before extracting
+  anything when the `souffle` binary is missing, with a message that says
+  where to install it (`Argus.Souffle.not_found_message/0`).
+
 ## 0.8.0 — 2026-09-12
 
 Schema version 29. A consolidation release: nothing an analysis reports

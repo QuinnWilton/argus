@@ -56,7 +56,7 @@ defmodule Mix.Tasks.Argus do
       print_analyses()
     else
       unless Argus.Souffle.available?() do
-        Mix.raise("souffle binary not found on PATH. Install Souffle to use Argus.")
+        Mix.raise(Argus.Souffle.not_found_message())
       end
 
       case positional do

@@ -208,6 +208,8 @@ defmodule Argus.Scripts.AnalyzeProject do
   end
 
   defp extract!(modules, analyses) do
+    unless Argus.Souffle.available?(), do: abort(Argus.Souffle.not_found_message())
+
     case Argus.Analysis.extract_facts(modules, analyses) do
       {:ok, facts_dir} -> facts_dir
       {:error, reason} -> abort("Extraction failed: #{inspect(reason)}")

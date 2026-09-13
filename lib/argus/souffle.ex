@@ -60,6 +60,15 @@ defmodule Argus.Souffle do
   end
 
   @doc """
+  The message to show a user when `available?/0` is false.
+  """
+  @spec not_found_message() :: String.t()
+  def not_found_message do
+    "souffle binary not found on PATH. Install Souffle " <>
+      "(https://souffle-lang.github.io/install) to run the analyses."
+  end
+
+  @doc """
   The relations a rules program reads, as Souffle resolves them.
 
   Compiles the program only as far as the transformed RAM — no facts are
