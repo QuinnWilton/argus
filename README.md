@@ -131,23 +131,6 @@ mix run scripts/analyze_project.exs /path/to/project all          # every analys
 mix run scripts/analyze_project.exs /path/to/project --json out.json
 ```
 
-## Real-world example
-
-Running the `one_for_one_coupling` analysis against
-[Oban](https://github.com/oban-bg/oban) surfaces a coupling between
-`Oban.Sonar` and `Oban.Notifier`: Sonar transitively depends on Notifier
-(it calls `Notifier.listen/2` and `Notifier.notify/3` from
-`handle_continue(:start, ...)`), but both are siblings under a
-`:one_for_one` supervisor. If Notifier crashes, Sonar continues running
-but can't listen or broadcast — a silent degradation of the pubsub
-health monitor that's hard to spot in code review.
-
-```bash
-cd /tmp && git clone --depth 1 https://github.com/oban-bg/oban.git
-cd oban && mix deps.get && mix compile
-cd /path/to/argus && mix run scripts/analyze_project.exs /tmp/oban
-```
-
 ## License
 
 MIT
