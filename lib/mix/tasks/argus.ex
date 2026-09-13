@@ -20,7 +20,7 @@ defmodule Mix.Tasks.Argus do
   - `--include-deps` — include dependency modules in analysis
   - `--format` — output format: text (default) or json
   - `--fail-above N` — exit with non-zero status if more than N results
-  - `--concurrency N` — number of parallel workers (default: number of schedulers)
+  - `--concurrency N` — parallel extraction workers (default: number of schedulers)
   - `--list` — list all available analyses with descriptions
 
   ## Examples
@@ -120,21 +120,34 @@ defmodule Mix.Tasks.Argus do
         []
       end
 
-    with {:ok, facts_dir} <- Analysis.extract_facts(modules, [analysis], analysis_opts),
-         {:ok, results} <- Analysis.run_rules(facts_dir, analysis, analysis_opts) do
-      filtered = Analysis.filter_to_outputs(results, analysis)
-      lines = Argus.Lines.from_facts_dir(facts_dir)
-      output = format_results(filtered, format, lines)
-      Mix.shell().info(output)
-
-      if fail_above do
-        total = count_results(filtered)
-
-        if total > fail_above do
-          Mix.raise("Analysis found #{total} results (threshold: #{fail_above})")
+    case Analysis.extract_facts(modules, [analysis], analysis_opts) do
+      {:ok, facts_dir} ->
+        try do
+          report(facts_dir, analysis, analysis_opts, format, fail_above)
+        after
+          File.rm_rf(Path.dirname(facts_dir))
         end
-      end
-    else
+
+      {:error, reason} ->
+        Mix.raise("Analysis failed: #{inspect(reason)}")
+    end
+  end
+
+  defp report(facts_dir, analysis, analysis_opts, format, fail_above) do
+    case Analysis.run_rules(facts_dir, analysis, analysis_opts) do
+      {:ok, results} ->
+        filtered = Analysis.filter_to_outputs(results, analysis)
+        lines = Argus.Lines.from_facts_dir(facts_dir)
+        Mix.shell().info(format_results(filtered, format, lines))
+
+        if fail_above do
+          total = count_results(filtered)
+
+          if total > fail_above do
+            Mix.raise("Analysis found #{total} results (threshold: #{fail_above})")
+          end
+        end
+
       {:error, reason} ->
         Mix.raise("Analysis failed: #{inspect(reason)}")
     end

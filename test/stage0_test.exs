@@ -66,6 +66,8 @@ defmodule Argus.Stage0Test do
       assert {:ok, facts_dir} =
                Analysis.extract_facts([Argus.Test.Fixtures.MyGenServer], [:supervision], [])
 
+      on_exit(fn -> File.rm_rf(Path.dirname(facts_dir)) end)
+
       assert File.exists?(Path.join(facts_dir, "call_edge.facts"))
     end
 
