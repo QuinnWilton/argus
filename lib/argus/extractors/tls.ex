@@ -56,6 +56,13 @@ defmodule Argus.Extractors.Tls do
   }
 
   @impl true
+  def relations,
+    do: [
+      :tls_connect,
+      :tls_verification
+    ]
+
+  @impl true
   def extract(%{module: mod, functions: functions}) do
     Enum.reduce(functions, %{}, fn {:function, name, arity, _entry, instrs}, acc ->
       func_id = InstrId.func_id(mod, name, arity)

@@ -35,6 +35,13 @@ defmodule Argus.Extractors.EctoSchema do
   @keys %{fields: :schema_field, redact_fields: :redacted_field}
 
   @impl true
+  def relations,
+    do: [
+      :redacted_field,
+      :schema_field
+    ]
+
+  @impl true
   def extract(%{module: mod, functions: functions}) do
     case Enum.find(functions, &match?({:function, :__schema__, 1, _, _}, &1)) do
       nil ->

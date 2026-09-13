@@ -32,6 +32,12 @@ defmodule Argus.Extractors.Endpoint do
   @transports [:websocket, :longpoll]
 
   @impl true
+  def relations,
+    do: [
+      :socket_transport
+    ]
+
+  @impl true
   def extract(%{module: mod, functions: functions}) do
     case Enum.find(functions, &match?({:function, :__sockets__, 0, _, _}, &1)) do
       nil -> %{}

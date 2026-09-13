@@ -45,6 +45,18 @@ defmodule Argus.Extractors.Supervision do
     ]
 
   @impl true
+  def relations,
+    do: [
+      :dynamic_child,
+      :supervisor,
+      :supervisor_child,
+      :supervisor_child_form,
+      :supervisor_child_name,
+      :supervisor_max_children,
+      :supervisor_site
+    ]
+
+  @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     mod = module_data.module

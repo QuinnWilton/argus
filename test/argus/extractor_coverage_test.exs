@@ -34,49 +34,17 @@ defmodule Argus.ExtractorCoverageTest do
 
   alias Argus.{Analysis, Schema, Souffle}
 
-  # Which relations each extractor can emit, read from its source rather
-  # than by running it. Running under-approximates: `Argus.Extractors.Endpoint`
-  # only emits for a module defining `__sockets__/0`, and no fixture has one,
-  # so a discovery pass would call the relation unproduced and this test
-  # would fail on correct code.
+  # Which relations each extractor can emit, as it declares them; the
+  # declaration is held to the source by Argus.ExtractorRelationsTest.
   defp extractor_outputs do
     for extractor <-
           Analysis.builtin_analysis_modules() |> Enum.flat_map(& &1.extractors()) |> Enum.uniq(),
-        into: %{} do
-      path =
-        extractor
-        |> Module.split()
-        |> Enum.map_join("/", &Macro.underscore/1)
-        |> then(&"lib/#{&1}.ex")
-
-      relations =
-        case File.read(path) do
-          {:ok, src} ->
-            # Both spellings: `add_fact(acc, :rel, ...)` and the pipe form
-            # `|> add_fact(:rel, ...)`, where the accumulator is implicit.
-            ~r/(?:add_fact|track_imprecision|track_dynamic)\(\s*(?:[^,:()]+,\s*)*:([a-z_0-9]+)/
-            |> Regex.scan(src)
-            |> MapSet.new(fn [_, name] -> String.to_atom(name) end)
-
-          {:error, _} ->
-            MapSet.new()
-        end
-
-      {extractor, relations}
-    end
+        into: %{},
+        do: {extractor, MapSet.new(extractor.relations())}
   end
 
   # Derived by stage 0 or by clientlib rules, not by any extractor.
   @derived MapSet.new([:call_edge, :call_site, :unconditional_call_edge, :call_reachable])
-
-  # A defect the same run found, on the same shape as the CallArgs one that
-  # is now fixed. `purity` reads `ets_new`, `ets_op` and `port_open` to
-  # classify table and port operations as effects, and declares only
-  # `Argus.Extractors.Purity` — so those facts are never emitted and the
-  # purity contract has been blind to ETS writes and port opens. Same
-  # one-line fix, same need to read the deltas, since it will make
-  # previously-verified functions unprovable.
-  @known_gaps MapSet.new([:ets_new, :ets_op, :port_open, :process_register])
 
   # `track_imprecision(facts, ctx, category, relation, reason)` names the
   # relation in its FOURTH argument, after a category atom — so a
@@ -84,16 +52,6 @@ defmodule Argus.ExtractorCoverageTest do
   # helper's shape here, `imprecision` is exempt: it is coverage
   # instrumentation, not an analysis input anyone reasons from.
   @instrumentation MapSet.new([:imprecision])
-
-  # A blind spot in the scan, not a defect in the code. A table-driven
-  # extractor names its relation through a variable —
-  # `Argus.Extractors.EctoSchema` does `@keys %{fields: :schema_field,
-  # redact_fields: :redacted_field}` and then `add_fact(acc, relation, ...)`
-  # — so no literal appears at the call site. Scanning source cannot see it,
-  # and running the extractor would (it emits for any Ecto schema), which is
-  # the trade the other direction: running under-approximates for extractors
-  # no fixture exercises. Both approaches have holes; this one is named.
-  @scan_blind MapSet.new([:schema_field, :redacted_field])
 
   setup do
     unless Souffle.available?(), do: ExUnit.configure(exclude: [souffle: true])
@@ -116,9 +74,7 @@ defmodule Argus.ExtractorCoverageTest do
           atom = String.to_atom(relation),
           not MapSet.member?(layer_1, atom),
           not MapSet.member?(@derived, atom),
-          not MapSet.member?(@known_gaps, atom),
           not MapSet.member?(@instrumentation, atom),
-          not MapSet.member?(@scan_blind, atom),
           not MapSet.member?(produced, atom) do
         "#{mod.name()} reads #{relation}, but none of its extractors " <>
           "(#{Enum.map_join(mod.extractors(), ", ", &inspect/1)}) emits it"

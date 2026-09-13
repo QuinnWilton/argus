@@ -28,6 +28,17 @@ defmodule Argus.Extractors.Purity do
   import Argus.Extractor.Helpers, only: [add_fact: 3, each_remote_call: 3, resolve_register: 3]
 
   @impl true
+  def relations,
+    do: [
+      :dynamic_call,
+      :impure_call,
+      :protocol_dispatch,
+      :pure_contract,
+      :resolved_apply,
+      :unknown_call
+    ]
+
+  @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     mod = module_data.module

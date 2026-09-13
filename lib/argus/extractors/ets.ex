@@ -36,6 +36,14 @@ defmodule Argus.Extractors.ETS do
                 update_counter select_delete select_replace give_away rename setopts)a
 
   @impl true
+  def relations,
+    do: [
+      :ets_new,
+      :ets_op,
+      :ets_option
+    ]
+
+  @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     each_remote_call(module_data, %{}, &handle_call/3)

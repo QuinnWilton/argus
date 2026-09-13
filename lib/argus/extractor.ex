@@ -41,5 +41,14 @@ defmodule Argus.Extractor do
           optional(:cfg) => %{{String.t(), arity()} => Argus.Cfg.Function.t()}
         }
 
+  @doc """
+  The relations `extract/1` can emit. `Argus.ExtractorRelationsTest`
+  checks every one against the schema and against the rules: a relation
+  no rule reads is a fact nobody asked for, and the six that had
+  accumulated before this callback existed were the same story six
+  times.
+  """
+  @callback relations() :: [atom()]
+
   @callback extract(module_data()) :: Argus.Pipeline.Emit.facts()
 end

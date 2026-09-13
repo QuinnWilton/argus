@@ -63,6 +63,19 @@ defmodule Argus.Extractors.GenStatem do
                        ])
 
   @impl true
+  def relations,
+    do: [
+      :statem_event_catchall,
+      :statem_event_clause,
+      :statem_info_catchall,
+      :statem_initial,
+      :statem_module,
+      :statem_state,
+      :statem_timeout,
+      :statem_transition
+    ]
+
+  @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     mod = module_data.module

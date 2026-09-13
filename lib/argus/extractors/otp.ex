@@ -39,6 +39,19 @@ defmodule Argus.Extractors.OTP do
     ]
 
   @impl true
+  def relations,
+    do: [
+      :async_cast,
+      :handle_continue_clause,
+      :implements_behaviour,
+      :init_continues_to,
+      :process_link,
+      :sup_call,
+      :sync_call,
+      :sync_call_timeout
+    ]
+
+  @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     mod = module_data.module

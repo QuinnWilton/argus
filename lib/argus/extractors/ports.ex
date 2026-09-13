@@ -34,6 +34,12 @@ defmodule Argus.Extractors.Ports do
     only: [add_fact: 3, each_remote_call: 3, resolve_register: 3, track_dynamic: 5]
 
   @impl true
+  def relations,
+    do: [
+      :port_open
+    ]
+
+  @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     each_remote_call(module_data, %{}, &handle_call/3)

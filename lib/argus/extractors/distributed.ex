@@ -92,6 +92,16 @@ defmodule Argus.Extractors.Distributed do
             ])
 
   @impl true
+  def relations,
+    do: [
+      :distributed_store_op,
+      :global_op,
+      :global_register,
+      :node_operation,
+      :rpc_call
+    ]
+
+  @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     each_remote_call(module_data, %{}, fn facts, ctx, {mod, func, arity} ->

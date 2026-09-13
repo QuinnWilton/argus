@@ -33,6 +33,13 @@ defmodule Argus.Extractors.CallArgs do
   @max_args 4
 
   @impl true
+  def relations,
+    do: [
+      :call_arg,
+      :call_arg_forward
+    ]
+
+  @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     each_call(module_data, %{}, fn facts, ctx, {callee_mod, callee_func, arity} ->

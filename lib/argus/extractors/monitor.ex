@@ -48,6 +48,14 @@ defmodule Argus.Extractors.Monitor do
     only: [add_fact: 3, cfg: 2, each_remote_call: 3, resolve_atom: 3]
 
   @impl true
+  def relations,
+    do: [
+      :demonitor_call,
+      :monitor_call,
+      :monitor_ref_dropped
+    ]
+
+  @impl true
   def extract(module_data),
     do: each_remote_call(module_data, %{}, &handle(&1, &2, &3, module_data))
 

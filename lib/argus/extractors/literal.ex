@@ -35,6 +35,12 @@ defmodule Argus.Extractors.Literal do
   import Argus.Extractor.Helpers, only: [add_fact: 3, scan_functions: 4]
 
   @impl true
+  def relations,
+    do: [
+      :tuple_literal
+    ]
+
+  @impl true
   def extract(%{module: mod, functions: functions}) do
     scan_functions(mod, functions, %{}, fn facts, ctx, instr ->
       case classify(instr) do

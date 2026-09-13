@@ -30,6 +30,14 @@ defmodule Argus.Extractors.GenEvent do
     only: [add_fact: 3, each_remote_call: 3, get_behaviours: 1, resolve_callee: 1]
 
   @impl true
+  def relations,
+    do: [
+      :async_cast,
+      :implements_behaviour,
+      :sync_call
+    ]
+
+  @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     mod = module_data.module

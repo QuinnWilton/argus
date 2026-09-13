@@ -74,6 +74,15 @@ defmodule Argus.Extractors.ErrorHandling do
                  ])
 
   @impl true
+  def relations,
+    do: [
+      :bare_rescue,
+      :exit_call,
+      :ignored_error_result,
+      :trap_exit
+    ]
+
+  @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     mod = module_data.module

@@ -84,6 +84,15 @@ defmodule Argus.Extractors.Reply do
   @from_register {:x, 1}
 
   @impl true
+  def relations,
+    do: [
+      :callback_drops_from,
+      :callback_return,
+      :callback_stop_reason,
+      :callback_timeout
+    ]
+
+  @impl true
   def extract(%{module: mod, functions: functions} = module_data) do
     Enum.reduce(functions, %{}, fn {:function, name, arity, _entry, instrs}, acc ->
       case Map.fetch(@callbacks, {name, arity}) do

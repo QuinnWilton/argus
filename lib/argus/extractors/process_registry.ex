@@ -29,6 +29,14 @@ defmodule Argus.Extractors.ProcessRegistry do
 
   # Registry operations to detect, mapped to arity.
   @impl true
+  def relations,
+    do: [
+      :named_process,
+      :process_register,
+      :whereis_call
+    ]
+
+  @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     mod_str = inspect(module_data.module)

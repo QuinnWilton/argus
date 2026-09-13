@@ -36,6 +36,13 @@ defmodule Argus.Extractors.CallbackTag do
   }
 
   @impl true
+  def relations,
+    do: [
+      :callback_tag,
+      :callback_total
+    ]
+
+  @impl true
   def extract(%{module: mod, functions: functions}) do
     Enum.reduce(functions, %{}, fn {:function, name, arity, _entry, instrs}, acc ->
       case Map.fetch(@callbacks, {name, arity}) do

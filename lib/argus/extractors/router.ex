@@ -29,6 +29,12 @@ defmodule Argus.Extractors.Router do
   import Argus.Extractor.Helpers, only: [add_fact: 3]
 
   @impl true
+  def relations,
+    do: [
+      :http_route
+    ]
+
+  @impl true
   def extract(%{module: mod, functions: functions}) do
     case Enum.find(functions, &match?({:function, :__routes__, 0, _, _}, &1)) do
       nil -> %{}
