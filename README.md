@@ -17,7 +17,7 @@ tagged release from GitHub:
 ```elixir
 def deps do
   [
-    {:argus, github: "QuinnWilton/argus", tag: "v0.7.3"}
+    {:argus, github: "QuinnWilton/argus", tag: "v0.8.0"}
   ]
 end
 ```
@@ -35,15 +35,16 @@ the expensive IR-lifting step those frameworks need. BEAM instructions map
 to Datalog facts directly, with no intermediate representation.
 
 ```
-.beam files → disassemble → emit Layer 1 facts → run extractors (Layer 2) → Souffle rules → results
+.beam → disassemble → facts (emitter + extractors) → stage 0 call graph → Souffle rules → findings
 ```
 
-**Layer 1** walks every BEAM instruction and emits base facts about
-instructions, registers, control flow, and calls. **Layer 2** extractors
-interpret OTP patterns, supervision-tree shape, ETS usage, and other
-BEAM-specific constructs into higher-level semantic facts. Both layers
-feed into Souffle, which evaluates Datalog rules and returns derived
-relations.
+The emitter walks every instruction and records the generic facts —
+instructions, registers, control flow, calls, literals. The extractors
+read the same bytecode for what the analyses reason about: behaviours,
+supervision trees, process calls, monitors, ETS, return shapes. A shared
+call graph is derived once per run, and each analysis is one Souffle
+program over the facts and a common rule library, producing findings with
+a severity, a source anchor and a remediation hint.
 
 ## Analyses
 
