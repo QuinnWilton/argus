@@ -376,13 +376,28 @@ defmodule Argus.Extractors.ApiCalls do
     {value, track_dynamic(facts, value, ctx, :port_target, rel)}
   end
 
+  @interpreters ~w(sh bash zsh dash ksh csh tcsh fish cmd cmd.exe powershell pwsh
+                   python python3 perl ruby node erl elixir iex escript osascript)
+
+  # A literal command runs only itself: its arguments are argv, never
+  # parsed by a shell, so caller data in them is not code execution. The
+  # exception is a literal shell or interpreter, which executes whatever
+  # its arguments say — that stays a finding unless the arguments are
+  # literal too. The empty argument list arrives as the atom `nil`.
   defp read(:unless_static_command, ctx, _mfa, facts, _rel) do
     command = resolve_register(ctx.instrs, ctx.idx, {:x, 0})
     args = resolve_register(ctx.instrs, ctx.idx, {:x, 1})
+    static_args? = match?({:ok, a} when is_list(a) or is_nil(a), args)
 
-    if match?({:ok, c} when is_binary(c), command) and match?({:ok, a} when is_list(a), args),
-      do: {:skip, facts},
-      else: {:pass, facts}
+    case command do
+      {:ok, c} when is_binary(c) ->
+        if Path.basename(c) in @interpreters and not static_args?,
+          do: {:pass, facts},
+          else: {:skip, facts}
+
+      _ ->
+        {:pass, facts}
+    end
   end
 
   defp display(:dynamic), do: "dynamic"

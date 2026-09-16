@@ -29,6 +29,9 @@ defmodule Argus.Test.Fixtures.CodeExecution do
   def os_cmd(cmd), do: :os.cmd(cmd)
   def system_cmd(cmd, args), do: System.cmd(cmd, args)
   def static_system_cmd, do: System.cmd("echo", ["hello"])
+  def static_command_dynamic_args(args), do: System.cmd("fwup", args)
+  def static_command_no_args, do: System.cmd("free", [])
+  def shell_with_dynamic_script(script), do: System.cmd("sh", ["-c", script])
 end
 
 defmodule Argus.Test.Fixtures.SafeModule do
