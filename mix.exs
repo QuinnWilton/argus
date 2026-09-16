@@ -48,7 +48,8 @@ defmodule Argus.MixProject do
       {:stream_data, "~> 1.0", only: [:test, :dev]},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: :dev, runtime: false},
-      {:ex_doc, "~> 0.31", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.31", only: :dev, runtime: false},
+      {:presubmit, "~> 0.1.0", only: [:dev, :test], runtime: false}
     ]
   end
 
