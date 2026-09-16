@@ -2,7 +2,8 @@
 
 ## Project overview
 
-Argus is a BEAM program analysis framework: it disassembles compiled `.beam`
+Argus (hex package `panoptes`; the modules keep the `Argus` namespace) is a
+BEAM program analysis framework: it disassembles compiled `.beam`
 files, extracts Datalog facts from the bytecode, and evaluates them with
 Souffle. Inspired by Doop (JVM), cclyzer++ (LLVM IR) and Gigahorse (EVM), but
 the BEAM's register-based instruction set lets it skip the IR-lifting step
@@ -23,7 +24,9 @@ those frameworks need.
   one Souffle program per analysis.
 - `lib/argus/cfg.ex`, `dataflow.ex`, `purity/` — control flow, def-use and
   effect models, also consumed by downstream tools (gloss, planchette).
-- `scripts/analyze_project.exs` — analyze an external, compiled project.
+- There is no CLI here: scry's Mix compiler is how the analyses are run
+  over a project; this package is the engine and the in-VM API
+  (`Argus.run_analyses/2`, `Argus.Findings.run/2`, `Argus.Pipeline.extract/2`).
 
 ### Design principles
 
@@ -53,7 +56,5 @@ Optional longer explanation: why, and what was rejected.
 mix deps.get             # Fetch dependencies
 mix test                 # Run tests (souffle must be on PATH)
 mix format && mix credo --strict && mix dialyzer
-mix argus --list         # List available analyses
-mix argus supervision    # Run one analysis against this project
 mix argus.gen.dl         # Regenerate priv/dl/{base,layer2}.dl after a schema change
 ```

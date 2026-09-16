@@ -1,8 +1,12 @@
-# Argus
+# Panoptes
 
 [![CI](https://github.com/QuinnWilton/argus/actions/workflows/ci.yml/badge.svg)](https://github.com/QuinnWilton/argus/actions/workflows/ci.yml)
+[![Hex.pm](https://img.shields.io/hexpm/v/panoptes.svg)](https://hex.pm/packages/panoptes)
+[![Docs](https://img.shields.io/badge/docs-hexdocs-blue.svg)](https://hexdocs.pm/panoptes)
 
-Whole-program BEAM analysis for subtle OTP and supervision bugs.
+Whole-program BEAM analysis for subtle OTP and supervision bugs. The
+package is `panoptes` — Argus Panoptes, the hundred-eyed watchman — and
+its modules are `Argus.*`.
 
 Argus disassembles compiled `.beam` files, extracts facts from the bytecode,
 and evaluates [Souffle](https://souffle-lang.github.io/) Datalog rules to
@@ -11,19 +15,22 @@ deadlocks, leaked tasks, ETS misuse, atom-table exhaustion, and more.
 
 ## Installation
 
-Argus is not published to Hex (the package name is taken); depend on a
-tagged release from GitHub:
-
 ```elixir
 def deps do
   [
-    {:argus, github: "QuinnWilton/argus", tag: "v0.10.0"}
+    {:panoptes, "~> 0.11"}
   ]
 end
 ```
 
 [Souffle](https://souffle-lang.github.io/install) must be installed and
 available on your `PATH`.
+
+To run the analyses over a project, use [scry](https://github.com/QuinnWilton/scry),
+the Mix compiler built on this library: it runs them incrementally after
+every compile and reports findings as compiler diagnostics. This package
+is the engine — the extraction pipeline, the rules, and the in-VM API
+below.
 
 ## Approach
 
@@ -48,7 +55,7 @@ a severity, a source anchor and a remediation hint.
 
 ## Analyses
 
-Argus ships 27 BEAM/OTP-specific bug detectors (`mix argus --list` prints
+Argus ships 27 BEAM/OTP-specific bug detectors (`mix scry --list` prints
 the same table):
 
 | Analysis | Detects |
@@ -81,30 +88,6 @@ the same table):
 | `unlinked_spawn` | unlinked (orphan) process spawns |
 | `unsafe_task` | leaked async tasks and unchecked `Task.Supervisor.start_child` |
 
-## Quick start
-
-```bash
-mix deps.get
-mix compile
-
-# List available analyses.
-mix argus --list
-
-# Run an analysis against all project modules.
-mix argus supervision
-mix argus ets
-mix argus unsafe_task
-
-# Scope to specific modules.
-mix argus call_cycle --modules MyApp.WorkerA,MyApp.WorkerB
-
-# Fail CI if anti-patterns are found.
-mix argus supervision --fail-above 0
-
-# Run ad-hoc Datalog rules.
-mix argus custom path/to/rules.dl
-```
-
 ## Programmatic API
 
 ```elixir
@@ -117,18 +100,6 @@ mix argus custom path/to/rules.dl
 
 # Ad-hoc Datalog rules over the same facts.
 {:ok, results} = Argus.analyze([MyApp.Worker], {:custom, "path/to/rules.dl"})
-```
-
-## Analyzing an external project
-
-`scripts/analyze_project.exs` runs the analyses against a compiled Mix or
-Rebar3 project (umbrella apps are detected):
-
-```bash
-mix run scripts/analyze_project.exs /path/to/project              # default analyses
-mix run scripts/analyze_project.exs /path/to/project supervision  # one analysis
-mix run scripts/analyze_project.exs /path/to/project all          # every analysis
-mix run scripts/analyze_project.exs /path/to/project --json out.json
 ```
 
 ## License

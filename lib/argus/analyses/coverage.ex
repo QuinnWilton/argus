@@ -54,8 +54,7 @@ defmodule Argus.Analyses.Coverage do
   def extractors do
     # Every Layer 2 extractor, since coverage spans the whole pipeline.
     # Listing them explicitly (rather than discovering at runtime) keeps
-    # the analysis reproducible and makes the dependency explicit in
-    # `mix argus info coverage`.
+    # the analysis reproducible and the dependency visible here.
     [
       Argus.Extractors.ApiCalls,
       Argus.Extractors.ErrorHandling,

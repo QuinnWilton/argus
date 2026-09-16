@@ -14,7 +14,7 @@ defmodule Argus.Purity do
         def add(%Money{cents: a}, %Money{cents: b}), do: %Money{cents: a + b}
       end
 
-  Then `mix argus purity` reports any declared-pure function that reaches a
+  Then the `purity` analysis (`mix scry purity`) reports any declared-pure function that reaches a
   side effect, naming the effect and the path to it.
 
   ## How the declaration survives compilation
