@@ -74,3 +74,39 @@ unconditional_call_edge(caller, target) :-
   function_def(target, _, _, _, _).
 
 .output unconditional_call_edge(filename="unconditional_call_edge.facts")
+
+// The message tag a GenServer.call/cast site sends: the first element of
+// a tuple, or a bare atom. Derived here, once, over def_use — reaching
+// definitions, so it is the write that feeds the call rather than the
+// one textually nearest it — and staged as a small, stable relation, so
+// that the analyses attributing dynamic-target calls by tag never read
+// the positional value-flow relations themselves.
+.decl call_tag(id: symbol, caller: symbol, kind: symbol, tag: symbol)
+
+call_tag(id, caller, "call", tag) :-
+  remote_call(id, caller, gs, "call", _),
+  (gs = "GenServer" ; gs = ":gen_server"),
+  def_use(write_id, id),
+  tuple_literal(write_id, "x1", tag, _).
+
+call_tag(id, caller, "call", tag) :-
+  remote_call(id, caller, gs, "call", _),
+  (gs = "GenServer" ; gs = ":gen_server"),
+  def_use(write_id, id),
+  literal_value(write_id, "x1", tag),
+  match(":.*", tag).
+
+call_tag(id, caller, "cast", tag) :-
+  remote_call(id, caller, gs, "cast", 2),
+  (gs = "GenServer" ; gs = ":gen_server"),
+  def_use(write_id, id),
+  tuple_literal(write_id, "x1", tag, _).
+
+call_tag(id, caller, "cast", tag) :-
+  remote_call(id, caller, gs, "cast", 2),
+  (gs = "GenServer" ; gs = ":gen_server"),
+  def_use(write_id, id),
+  literal_value(write_id, "x1", tag),
+  match(":.*", tag).
+
+.output call_tag(filename="call_tag.facts")

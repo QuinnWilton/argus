@@ -46,6 +46,7 @@ defmodule Argus.Analyses.Supervision do
   @impl true
   def extractors,
     do: [
+      Argus.Extractors.CallbackTag,
       Argus.Extractors.Supervision,
       Argus.Extractors.OTP,
       Argus.Extractors.ApiCalls,

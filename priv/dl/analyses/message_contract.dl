@@ -23,7 +23,7 @@
 // which OPERAND, and a call reading {x,0} and {x,1} gets two edges.
 
 .include "../clientlib/imports.dl"
-.include "../clientlib/behaviours.dl"
+.include "../clientlib/otp.dl"
 
 // ── What the client sends ────────────────────────────────────────
 
@@ -32,32 +32,10 @@
 client_kind(func, "call") :- remote_call(_, func, "GenServer", "call", _).
 client_kind(func, "cast") :- remote_call(_, func, "GenServer", "cast", 2).
 
+// The tag a call or cast sends, staged by stage 0 (`call_tag`).
 .decl sends_tag(func: symbol, kind: symbol, tag: symbol)
 
-// The message is argument 1, so it arrives in x1.
-sends_tag(func, "call", tag) :-
-  remote_call(call_id, func, "GenServer", "call", _),
-  def_use(write_id, call_id),
-  tuple_literal(write_id, "x1", tag, _).
-
-sends_tag(func, "call", tag) :-
-  remote_call(call_id, func, "GenServer", "call", _),
-  def_use(write_id, call_id),
-  literal_value(write_id, "x1", tag),
-  match(":.*", tag).
-
-sends_tag(func, "cast", tag) :-
-  remote_call(call_id, func, "GenServer", "cast", 2),
-  def_use(write_id, call_id),
-  tuple_literal(write_id, "x1", tag, _).
-
-sends_tag(func, "cast", tag) :-
-  remote_call(call_id, func, "GenServer", "cast", 2),
-  def_use(write_id, call_id),
-  literal_value(write_id, "x1", tag),
-  match(":.*", tag).
-
-// ── What the server accepts ──────────────────────────────────────
+sends_tag(func, kind, tag) :- call_tag(_, func, kind, tag).
 
 .decl kind_callback(kind: symbol, callback: symbol)
 
@@ -91,6 +69,15 @@ proxies(func) :-
   function_def(func, mod, _, _, _),
   callee != mod,
   callee != "dynamic".
+
+// A dynamic-target call whose tag some OTHER module's handler
+// discriminates on is that module's business (horde's ProcessesSupervisor
+// calling its DynamicSupervisorImpl through a pid), not a self-send.
+proxies(func) :-
+  sends_tag(func, kind, tag),
+  tag_handler(other, kind, tag),
+  function_def(func, mod, _, _, _),
+  other != mod.
 
 .decl unhandled_self_message(mod: symbol, sender: symbol, kind: symbol, tag: symbol)
 .output unhandled_self_message

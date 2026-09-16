@@ -4,6 +4,34 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- **Dynamic call targets resolved by message tag.** Most `GenServer.call`s
+  target a pid or a name held in state, which the extractor reports as
+  `dynamic`; on horde that hid a deadlock cycle whose every edge was such
+  a call (elixir-horde/horde#217). Stage 0 now stages `call_tag` — the
+  tuple tag or atom each call/cast sends — and the clientlib attributes a
+  dynamic-target call to the one GenServer module whose handler
+  discriminates on that tag (`tag_resolved_call`; ambiguity attributes
+  nothing). `call_cycle`, `sync_call_in_init`, `timeout_chain`,
+  `process_bottleneck`, `one_for_one_coupling` and `supervision` see the
+  edges. Stage 0 writes a fourth file, `call_tag.facts`.
+
+### Changed
+
+- `call_cycle`, `process_bottleneck`, `timeout_chain`, `sync_call_in_init`
+  and `message_contract` no longer read `def_use`, `tuple_literal` or
+  `literal_value`: the tag comes staged. Those are positional relations,
+  so a body edit no longer re-solves them.
+
+### Fixed
+
+- `message_contract` no longer reports a dynamic-target call whose tag
+  another module's handler discriminates on as a message the caller
+  sends itself.
+
 ## 0.11.0 — 2026-09-16
 
 ### Changed

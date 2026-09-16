@@ -57,6 +57,10 @@
 .decl unconditional_call_edge(caller: symbol, callee: symbol)
 .input unconditional_call_edge
 
+// The message tag each GenServer.call/cast site sends (stage 0).
+.decl call_tag(id: symbol, caller: symbol, kind: symbol, tag: symbol)
+.input call_tag
+
 // Transitive call reachability, closed over the staged edges. No
 // built-in analysis reads it any more: the closure is quadratic in the
 // call graph (17M rows from 100k edges on one corpus project, ~500 MB per

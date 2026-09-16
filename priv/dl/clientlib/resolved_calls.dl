@@ -20,41 +20,17 @@
 // it is calling itself. A proxy sends the other server's tags, which its own
 // handler does not match, and resolves to nothing.
 //
-// Requires clientlib/imports.dl. Note this pulls the value-flow relations
-// (def_use, tuple_literal, literal_value) into the input set of any analysis
-// including it — def_use is keyed on positional instruction IDs, so those
-// analyses re-solve on any body edit. That is the deliberate price of
-// seeing ninety-five percent of the call graph instead of two percent.
-
-// The message tag reaching a GenServer.call — argument 1, so register x1.
-// `def_use` is reaching definitions, so this is the write that actually
-// feeds the call rather than the one textually nearest it; the register is
-// what says which operand, since a call reading {x,0} and {x,1} gets two
-// edges and the edge itself carries no register.
-.decl call_tag(call_id: symbol, caller: symbol, tag: symbol)
-
-call_tag(call_id, caller, tag) :-
-  remote_call(call_id, caller, "GenServer", "call", _),
-  def_use(write_id, call_id),
-  tuple_literal(write_id, "x1", tag, _).
-
-call_tag(call_id, caller, tag) :-
-  remote_call(call_id, caller, "GenServer", "call", _),
-  def_use(write_id, call_id),
-  literal_value(write_id, "x1", tag),
-  match(":.*", tag).
+// Requires clientlib/imports.dl, which declares the staged `call_tag`.
 
 // The wrapper's own module handles the tag it sends, so the target is that
 // module.
 .decl self_directed_call(caller: symbol, callee_mod: symbol)
 
 self_directed_call(caller, mod) :-
-  call_tag(_, caller, tag),
+  call_tag(_, caller, "call", tag),
   function_def(caller, mod, _, _, _),
   function_def(handler, mod, "handle_call", 3, _),
   callback_tag(handler, "handle_call", tag).
 
 // A self-directed call is a sync dependency on the caller's own module.
-// Analyses that include this file accept def_use, tuple_literal and
-// literal_value into their input set for it.
 sync_dep(caller, mod) :- self_directed_call(caller, mod).

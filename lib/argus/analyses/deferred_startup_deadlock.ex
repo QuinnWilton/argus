@@ -64,6 +64,7 @@ defmodule Argus.Analyses.DeferredStartupDeadlock do
   @impl true
   def extractors,
     do: [
+      Argus.Extractors.CallbackTag,
       Argus.Extractors.OTP,
       Argus.Extractors.ApiCalls,
       Argus.Extractors.Supervision,

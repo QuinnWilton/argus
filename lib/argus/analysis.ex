@@ -259,7 +259,8 @@ defmodule Argus.Analysis do
 
       File.exists?(Path.join(facts_dir, "call_edge.facts")) and
         File.exists?(Path.join(facts_dir, "call_site.facts")) and
-          File.exists?(Path.join(facts_dir, "unconditional_call_edge.facts")) ->
+        File.exists?(Path.join(facts_dir, "unconditional_call_edge.facts")) and
+          File.exists?(Path.join(facts_dir, "call_tag.facts")) ->
         :ok
 
       true ->

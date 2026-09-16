@@ -37,6 +37,7 @@ defmodule Argus.Analyses.OneForOneCoupling do
   @impl true
   def extractors,
     do: [
+      Argus.Extractors.CallbackTag,
       Argus.Extractors.Supervision,
       Argus.Extractors.OTP,
       Argus.Extractors.ApiCalls,

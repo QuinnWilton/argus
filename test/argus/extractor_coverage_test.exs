@@ -44,7 +44,13 @@ defmodule Argus.ExtractorCoverageTest do
   end
 
   # Derived by stage 0 or by clientlib rules, not by any extractor.
-  @derived MapSet.new([:call_edge, :call_site, :unconditional_call_edge, :call_reachable])
+  @derived MapSet.new([
+             :call_edge,
+             :call_site,
+             :unconditional_call_edge,
+             :call_tag,
+             :call_reachable
+           ])
 
   # `track_imprecision(facts, ctx, category, relation, reason)` names the
   # relation in its FOURTH argument, after a category atom — so a

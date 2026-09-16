@@ -107,6 +107,62 @@ async_dep(f, m) :-
   function_def(f, fm, _, _, _),
   fm != m.
 
+// ── Resolution by message tag ──────────────────────────────────────────
+//
+// Most calls target a pid or a name held in state, which the extractor
+// reports as "dynamic": on horde that hid a deadlock cycle whose every
+// edge was such a call. The message tag is the other half of the
+// contract — a `{:update_child_pid, ...}` can only be answered by a
+// handle_call that discriminates on `:update_child_pid`. When exactly
+// one GenServer module in the program does, the call is attributed to
+// it. callback_tag over-approximates (every atom compared in the body),
+// which only ever adds handlers, so ambiguity suppresses attribution
+// rather than inventing it. The own module's tags are the self-directed
+// case in resolved_calls.dl and are excluded here.
+.decl unresolved_target(target: symbol)
+
+unresolved_target("dynamic").
+unresolved_target(":dynamic").
+unresolved_target(t) :- sync_call(_, t), match("via:.*", t).
+unresolved_target(t) :- async_cast(_, t), match("via:.*", t).
+
+.decl tag_handler(mod: symbol, kind: symbol, tag: symbol)
+
+tag_handler(mod, "call", tag) :-
+  callback_tag(h, "handle_call", tag),
+  function_def(h, mod, "handle_call", 3, _),
+  behaves_as(mod, "GenServer").
+
+tag_handler(mod, "cast", tag) :-
+  callback_tag(h, "handle_cast", tag),
+  function_def(h, mod, "handle_cast", 2, _),
+  behaves_as(mod, "GenServer").
+
+.decl tag_handler_count(kind: symbol, tag: symbol, n: number)
+
+tag_handler_count(kind, tag, n) :-
+  tag_handler(_, kind, tag),
+  n = count : { tag_handler(_, kind, tag) }.
+
+.decl tag_resolved_call(func: symbol, kind: symbol, mod: symbol)
+
+tag_resolved_call(func, kind, mod) :-
+  call_tag(_, func, kind, tag),
+  tag_handler(mod, kind, tag),
+  tag_handler_count(kind, tag, 1),
+  function_def(func, fm, _, _, _),
+  fm != mod.
+
+sync_dep(f, m) :-
+  tag_resolved_call(f, "call", m),
+  sync_call(f, t),
+  unresolved_target(t).
+
+async_dep(f, m) :-
+  tag_resolved_call(f, "cast", m),
+  async_cast(f, t),
+  unresolved_target(t).
+
 .decl reaches_sync_dep(func: symbol, mod: symbol)
 
 // Propagated backwards over call_edge from the functions that hold the
@@ -138,6 +194,11 @@ sync_dep_timeout(f, m, ms) :-
   m != "dynamic",
   m != ":dynamic",
   !match("via:.*", m).
+
+sync_dep_timeout(f, m, ms) :-
+  tag_resolved_call(f, "call", m),
+  sync_call_timeout(f, t, ms),
+  unresolved_target(t).
 
 sync_dep_timeout(f, m, ms) :-
   call_edge(f, g),
