@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 30
+  @schema_version 31
 
   # Layer 1: Module-level facts.
 
@@ -1135,7 +1135,10 @@ defmodule Argus.Schema do
     fields: [
       {:id, :symbol, "instruction ID"},
       {:func, :symbol, "containing function ID"},
-      {:name, :symbol, "process name"}
+      {:name, :symbol, "process name"},
+      {:checked, :symbol,
+       "\"checked\" when the result is compared against nil/:undefined or " <>
+         "type-tested before anything else uses it, else \"unchecked\""}
     ],
     doc: "Process.whereis/1 or :erlang.whereis/1 call."
   }

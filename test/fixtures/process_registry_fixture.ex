@@ -38,6 +38,24 @@ defmodule Argus.Test.Fixtures.WhereisModule do
   def erlang_whereis(name) do
     :erlang.whereis(name)
   end
+
+  def checked_whereis(name) do
+    case Process.whereis(name) do
+      nil -> :none
+      pid -> send(pid, :hello)
+    end
+  end
+
+  def checked_erlang_whereis(name) do
+    case :erlang.whereis(name) do
+      :undefined -> :none
+      pid -> pid
+    end
+  end
+
+  def unchecked_whereis(name) do
+    send(Process.whereis(name), :hello)
+  end
 end
 
 defmodule Argus.Test.Fixtures.RegistryUser do

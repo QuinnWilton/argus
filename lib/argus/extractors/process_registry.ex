@@ -11,7 +11,9 @@ defmodule Argus.Extractors.ProcessRegistry do
 
   - `process_register(id, func, name, method)` — direct registration and GenServer `name:` option
   - `named_process(mod, name)` — module-level: a process implemented by `mod` is registered as `name`
-  - `whereis_call(id, func, name)` — `Process.whereis/1`, `:erlang.whereis/1`
+  - `whereis_call(id, func, name, checked)` — `Process.whereis/1`,
+    `:erlang.whereis/1`; `checked` says whether the result is tested
+    against nil before use
   """
 
   @behaviour Argus.Extractor
@@ -104,11 +106,75 @@ defmodule Argus.Extractors.ProcessRegistry do
   defp emit_whereis(facts, ctx) do
     id = InstrId.mint(ctx.func_id, ctx.idx)
     name = resolve_name(ctx.instrs, ctx.idx, {:x, 0})
+    checked = if nil_checked?(ctx.instrs, ctx.idx), do: "checked", else: "unchecked"
 
     facts
     |> track_dynamic(name, ctx, :whereis_target, :whereis_call)
-    |> add_fact(:whereis_call, [id, ctx.func_id, name])
+    |> add_fact(:whereis_call, [id, ctx.func_id, name, checked])
   end
+
+  # The result lands in x0. Along the straight-line code after the call,
+  # a comparison of it against nil/:undefined, a type test on it, or a
+  # select over it that lists nil means the caller handles the
+  # missing-process case; any other use of the value first, or reaching
+  # a label, call or return, means it does not.
+  @nil_atoms [{:atom, nil}, {:atom, :undefined}]
+  @equality_tests [:is_eq_exact, :is_ne_exact, :is_eq, :is_ne]
+  @type_tests [:is_atom, :is_pid, :is_port]
+
+  defp nil_checked?(instrs, idx) do
+    instrs |> Enum.drop(idx + 1) |> checked_walk([{:x, 0}])
+  end
+
+  defp checked_walk([], _regs), do: false
+  defp checked_walk([{:line, _} | rest], regs), do: checked_walk(rest, regs)
+  defp checked_walk([{:test_heap, _, _} | rest], regs), do: checked_walk(rest, regs)
+  defp checked_walk([{:allocate, _, _} | rest], regs), do: checked_walk(rest, regs)
+  defp checked_walk([{:init_yregs, _} | rest], regs), do: checked_walk(rest, regs)
+
+  defp checked_walk([{:move, src, dst} | rest], regs) do
+    src = strip_type(src)
+    dst = strip_type(dst)
+
+    cond do
+      src in regs -> checked_walk(rest, Enum.uniq([dst | regs]))
+      dst in regs -> checked_walk(rest, List.delete(regs, dst))
+      true -> checked_walk(rest, regs)
+    end
+  end
+
+  defp checked_walk([{:test, op, _fail, args} | _rest], regs) when op in @equality_tests do
+    args = Enum.map(args, &strip_type/1)
+    Enum.any?(args, &(&1 in regs)) and Enum.any?(args, &(&1 in @nil_atoms))
+  end
+
+  defp checked_walk([{:test, op, _fail, [reg | _]} | _rest], regs) when op in @type_tests do
+    strip_type(reg) in regs
+  end
+
+  defp checked_walk([{:select_val, reg, _fail, {:list, cases}} | _rest], regs) do
+    strip_type(reg) in regs and Enum.any?(cases, &(&1 in @nil_atoms))
+  end
+
+  defp checked_walk([instr | rest], regs) do
+    if uses_register?(instr, regs), do: false, else: checked_walk(rest, regs)
+  end
+
+  defp uses_register?(term, regs) when is_tuple(term) do
+    stripped = strip_type(term)
+
+    if stripped in regs,
+      do: true,
+      else: term |> Tuple.to_list() |> Enum.any?(&uses_register?(&1, regs))
+  end
+
+  defp uses_register?(term, regs) when is_list(term),
+    do: Enum.any?(term, &uses_register?(&1, regs))
+
+  defp uses_register?(_term, _regs), do: false
+
+  defp strip_type({:tr, reg, _type}), do: reg
+  defp strip_type(other), do: other
 
   # GenServer.start_link(mod, args, name: Name) — name in options keyword list (x2).
   # The first argument (x0) is the module being started; if it resolves to a

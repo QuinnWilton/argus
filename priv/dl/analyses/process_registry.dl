@@ -29,15 +29,14 @@ duplicate_process_name(name, mod1, mod2, site1, site2) :-
 
 // ── Whereis race (TOCTOU) ────────────────────────────────────────
 
-// Process.whereis followed by usage without nil check.
-// This is a heuristic: we flag all whereis calls as potential races
-// since checking whether the result is nil-checked requires deeper
-// dataflow analysis than we currently perform.
-// `id` anchors the finding at the whereis call instruction.
+// Process.whereis whose result is used without a nil check — the
+// extractor reads the straight-line code after the call for a
+// comparison against nil/:undefined or a type test, and marks the call
+// "checked" when it finds one. `id` anchors the finding at the call.
 .decl whereis_race(id: symbol, func: symbol, name: symbol)
 .output whereis_race
 
 whereis_race(id, func, name) :-
-  whereis_call(id, func, name),
+  whereis_call(id, func, name, "unchecked"),
   name != "dynamic",
   name != ":dynamic".

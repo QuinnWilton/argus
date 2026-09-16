@@ -46,6 +46,20 @@ defmodule Argus.Extractors.ProcessRegistryTest do
       rows = facts[:whereis_call]
       assert length(rows) >= 2
     end
+
+    test "marks a result compared against nil or :undefined as checked" do
+      facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.WhereisModule))
+
+      by_func =
+        Map.new(facts[:whereis_call], fn [_id, func, _name, checked] ->
+          {func |> String.split(":") |> List.last(), checked}
+        end)
+
+      assert by_func["checked_whereis/1"] == "checked"
+      assert by_func["checked_erlang_whereis/1"] == "checked"
+      assert by_func["unchecked_whereis/1"] == "unchecked"
+      assert by_func["find_process/1"] == "unchecked"
+    end
   end
 
   describe "extract/1 — clean module" do

@@ -4,6 +4,27 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+Schema 31: `whereis_call` gains a `checked` column.
+
+### Fixed
+
+- `process_registry`'s `whereis_race` no longer flags every
+  `Process.whereis/1`. The extractor reads the straight-line code after
+  the call for a comparison against nil/`:undefined`, a type test or a
+  `select` that lists nil, and records the result in the new `checked`
+  column; only unchecked results are findings. `case Process.whereis(n)
+  do nil -> ...` (nerves_hub_link's error-report collector) was a false
+  positive.
+- `atom_safety`'s `code_injection_risk` skips `System.cmd/2,3` with a
+  literal command whatever its arguments: argv is never shell-parsed, so
+  caller data in it is not code execution. A literal shell or
+  interpreter (`sh`, `bash`, `python`, ...) with non-literal arguments
+  still counts. `System.cmd("free", [])` was flagged because the empty
+  argument list is the atom `nil` in bytecode, which the old guard did
+  not accept as static.
+
 ## 0.9.0 — 2026-09-12
 
 ### Changed
