@@ -10,7 +10,7 @@ defmodule Argus.Clientlib.SupervisionTest do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
-  defp priv_dl, do: Path.join(:code.priv_dir(:argus), "dl")
+  defp priv_dl, do: Path.join(:code.priv_dir(:panoptes), "dl")
 
   describe "supervision.dl" do
     @tag :tmp_dir

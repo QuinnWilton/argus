@@ -10,7 +10,7 @@ defmodule Argus.Clientlib.CallgraphRulesTest do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
-  defp priv_dl, do: Path.join(:code.priv_dir(:argus), "dl")
+  defp priv_dl, do: Path.join(:code.priv_dir(:panoptes), "dl")
 
   describe "callgraph_rules.dl" do
     @tag :tmp_dir

@@ -39,7 +39,7 @@ defmodule Argus.InProcessRelationsTest do
     end
   end
 
-  defp rules_path(mod), do: Application.app_dir(:argus, Path.join("priv/dl", mod.rules_file()))
+  defp rules_path(mod), do: Application.app_dir(:panoptes, Path.join("priv/dl", mod.rules_file()))
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")

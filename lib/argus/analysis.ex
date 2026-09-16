@@ -5,7 +5,7 @@ defmodule Argus.Analysis do
   Each analysis is a module that implements this behaviour, declaring its
   name, description, Souffle rules file, required extractors, and output
   relations. The system discovers these modules at runtime from the
-  `:argus` application's module list.
+  `:panoptes` application's module list.
 
   ## Defining a custom analysis
 
@@ -361,17 +361,17 @@ defmodule Argus.Analysis do
   # :code.add_paths/1) never does. Loading is cheap, idempotent, and does
   # not start anything, so do it on demand rather than crash.
   defp argus_modules do
-    case :application.get_key(:argus, :modules) do
+    case :application.get_key(:panoptes, :modules) do
       {:ok, modules} ->
         modules
 
       :undefined ->
-        case :application.load(:argus) do
-          ok when ok in [:ok, {:error, {:already_loaded, :argus}}] -> :ok
-          {:error, reason} -> raise "could not load the :argus application: #{inspect(reason)}"
+        case :application.load(:panoptes) do
+          ok when ok in [:ok, {:error, {:already_loaded, :panoptes}}] -> :ok
+          {:error, reason} -> raise "could not load the :panoptes application: #{inspect(reason)}"
         end
 
-        {:ok, modules} = :application.get_key(:argus, :modules)
+        {:ok, modules} = :application.get_key(:panoptes, :modules)
         modules
     end
   end
@@ -418,7 +418,7 @@ defmodule Argus.Analysis do
   end
 
   defp priv_dl(filename) do
-    Path.join(:code.priv_dir(:argus), "dl/#{filename}")
+    Path.join(:code.priv_dir(:panoptes), "dl/#{filename}")
   end
 
   defp create_work_dir do

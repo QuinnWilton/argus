@@ -4,6 +4,24 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.11.0 — 2026-09-16
+
+### Changed
+
+- The package is `panoptes` (Argus Panoptes; `argus` is taken on Hex)
+  and so is the OTP application: depend on `{:panoptes, "~> 0.11"}`. The
+  modules keep the `Argus` namespace. Anything that named the application
+  (`Application.spec(:argus, :vsn)`, `:code.priv_dir(:argus)`) names
+  `:panoptes` now.
+
+### Removed
+
+- `mix argus` and `scripts/analyze_project.exs`, with `Argus.Report`.
+  Scry's Mix compiler is the way to run the analyses over a project —
+  incremental, and reporting through compiler diagnostics; this package
+  is the engine and its in-VM API. `mix argus.gen.dl` stays: it is a
+  maintainer task for this tree.
+
 ## 0.10.0 — 2026-09-16
 
 ### Added

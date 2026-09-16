@@ -1,12 +1,12 @@
 defmodule Argus.MixProject do
   use Mix.Project
 
-  @version "0.10.0"
+  @version "0.11.0"
   @source_url "https://github.com/QuinnWilton/argus"
 
   def project do
     [
-      app: :argus,
+      app: :panoptes,
       version: @version,
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
@@ -16,11 +16,13 @@ defmodule Argus.MixProject do
       # The test fixtures deliberately call into applications argus does not
       # depend on (they are what the analyses detect).
       xref: [exclude: [:ssl, :mnesia, :telemetry, Plug.Crypto]],
-      description: "BEAM program analysis via Souffle Datalog",
+      description:
+        "Whole-program BEAM analysis via Souffle Datalog: supervision, GenServer " <>
+          "and OTP bug detectors over compiled beams (the Argus modules).",
       package: package(),
       source_url: @source_url,
       homepage_url: @source_url,
-      name: "Argus",
+      name: "Panoptes",
       docs: docs(),
 
       # Test
@@ -53,8 +55,11 @@ defmodule Argus.MixProject do
   defp elixirc_paths(:test), do: ["lib", "test/fixtures"]
   defp elixirc_paths(_), do: ["lib"]
 
+  # Hex knows this package as `panoptes` (Argus Panoptes; `argus` was
+  # taken); the modules keep the `Argus` namespace.
   defp package do
     [
+      name: "panoptes",
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
       files: ~w(lib priv/dl mix.exs README.md LICENSE CHANGELOG.md .formatter.exs)

@@ -17,7 +17,7 @@ defmodule Argus.Clientlib.BehavioursTest do
 
   @canonical_dl "clientlib/behaviours.dl"
 
-  defp priv_dl, do: Path.join(:code.priv_dir(:argus), "dl")
+  defp priv_dl, do: Path.join(:code.priv_dir(:panoptes), "dl")
 
   describe "every rule asks the canonical question" do
     # Static, so it holds without Souffle and without a corpus.

@@ -71,7 +71,7 @@ defmodule Argus.Test.Fixtures.Transaction do
     """
     def create(user) do
       FakeRepo.transaction(fn ->
-        _ = Application.get_env(:argus, :whatever)
+        _ = Application.get_env(:panoptes, :whatever)
         FakeRepo.insert(user)
       end)
     end

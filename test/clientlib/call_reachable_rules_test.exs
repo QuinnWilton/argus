@@ -10,7 +10,7 @@ defmodule Argus.Clientlib.CallReachableRulesTest do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
-  defp priv_dl, do: Path.join(:code.priv_dir(:argus), "dl")
+  defp priv_dl, do: Path.join(:code.priv_dir(:panoptes), "dl")
 
   describe "call_reachable_rules.dl" do
     @tag :tmp_dir
