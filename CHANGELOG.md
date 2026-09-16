@@ -4,6 +4,22 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.10.0 — 2026-09-16
+
+### Added
+
+- `Argus.Symbols`: an interning table for fact symbols, and
+  `Argus.Pipeline.extract/2` with `format: :interned` — rows as tuples
+  of symbol ids and integers, interned in the extracting worker against
+  the `symbols:` table the caller owns. `Argus.Facts.intern/2`,
+  `materialize/2` and `decode/2` convert between the raw, interned and
+  typed forms. On a 226k-row module the rows take 9 MB of heap instead
+  of 39 MB (3 MB instead of 24 MB serialized), an ETS round trip is 9 ms
+  instead of 60 ms, and typed decoding — instruction IDs parsed once per
+  symbol and cached on the table — takes 0.36 s instead of 1.2 s. The
+  table is pluggable (`Argus.Symbols.Store`) so a consumer that persists
+  rows can persist the ids' meaning with them; the default is ETS.
+
 ## 0.9.1 — 2026-09-16
 
 Schema 31: `whereis_call` gains a `checked` column.
