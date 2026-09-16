@@ -19,7 +19,7 @@
 .decl ets_owner_process(name: symbol, mod: symbol, behaviour: symbol)
 
 ets_owner_process(name, mod, behaviour) :-
-  ets_new(id, func, name),
+  ets_new(_, func, name),
   name != "dynamic",
   function_def(func, mod, _, _, _),
   behaves_as(mod, behaviour).
