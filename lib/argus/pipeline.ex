@@ -28,7 +28,8 @@ defmodule Argus.Pipeline do
           extractors: [module()],
           timeout: timeout(),
           trace_imprecision: boolean(),
-          format: :raw | :typed
+          format: :raw | :typed | :interned,
+          symbols: Argus.Symbols.t()
         ]
 
   @type run_opts :: [
@@ -102,12 +103,22 @@ defmodule Argus.Pipeline do
 
   With `format: :typed`, rows are decoded against the schema via
   `Argus.Facts.decode/1` (field-name-keyed maps, integers, `Argus.InstrId`
-  structs) instead of the raw string lists that `.facts` files use.
+  structs) instead of the raw string lists that `.facts` files use. With
+  `format: :interned`, rows are tuples of `Argus.Symbols` ids interned in
+  the worker that extracted them against the `symbols:` table the caller
+  owns (`Argus.Facts.interned/0`); the caller keeps the table, and reads
+  the rows back through `Argus.Facts.materialize/2` or `decode/2`.
   """
   @spec extract(modules :: [Disassemble.module_input()], extract_opts()) ::
           {:ok, Emit.facts() | Argus.Facts.t()} | {:error, term()}
   def extract(modules, opts \\ []) do
     format = Keyword.get(opts, :format, :raw)
+
+    if format == :interned and not match?(%Argus.Symbols{}, opts[:symbols]) do
+      raise ArgumentError, "format: :interned needs the symbols: table the ids refer to"
+    end
+
+    opts = if format == :interned, do: opts, else: Keyword.delete(opts, :symbols)
 
     with {:ok, paths} <- Disassemble.resolve_paths(modules) do
       merged =
@@ -121,6 +132,7 @@ defmodule Argus.Pipeline do
       case format do
         :raw -> {:ok, merged}
         :typed -> {:ok, Argus.Facts.decode(merged)}
+        :interned -> {:ok, merged}
       end
     end
   catch
@@ -133,10 +145,11 @@ defmodule Argus.Pipeline do
     extractors = Keyword.get(opts, :extractors, [])
     task_timeout = Keyword.get(opts, :timeout, @default_timeout)
     trace_imprecision = Keyword.get(opts, :trace_imprecision, false)
+    symbols = Keyword.get(opts, :symbols)
 
     paths
     |> Task.async_stream(
-      fn path -> extract_module(path, extractors, trace_imprecision) end,
+      fn path -> extract_module(path, extractors, trace_imprecision, symbols) end,
       max_concurrency: concurrency,
       # Ordered so that extracting the same modules twice produces the
       # same value. With `ordered: false` the reduce sees workers in
@@ -164,7 +177,7 @@ defmodule Argus.Pipeline do
   # which is naturally scoped to this Task.async_stream worker, and the
   # try/after guarantees the flag is cleared before the worker returns
   # to the async pool.
-  defp extract_module(path, extractors, trace_imprecision) do
+  defp extract_module(path, extractors, trace_imprecision, symbols) do
     if trace_imprecision, do: Helpers.enable_tracing()
 
     try do
@@ -204,11 +217,15 @@ defmodule Argus.Pipeline do
             merge_facts(acc, extractor.extract(data))
           end)
 
-        {:ok,
-         base_facts
-         |> merge_facts(extractor_facts)
-         |> merge_facts(derive_def_use(typed))
-         |> merge_facts(derive_conditional_calls(base_facts, cfgs))}
+        facts =
+          base_facts
+          |> merge_facts(extractor_facts)
+          |> merge_facts(derive_def_use(typed))
+          |> merge_facts(derive_conditional_calls(base_facts, cfgs))
+
+        # Interned here, in the worker, so the rows cross to the caller as
+        # tuples of small integers rather than as every string they hold.
+        {:ok, if(symbols, do: Argus.Facts.intern(facts, symbols), else: facts)}
       end
     after
       if trace_imprecision, do: Helpers.disable_tracing()
