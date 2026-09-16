@@ -209,4 +209,32 @@ defmodule Argus.Analyses.UnsafeTaskTest do
       assert Map.has_key?(results, "unchecked_start_child")
     end
   end
+
+  describe "linked tasks" do
+    test "yield on a linked task is reported unless the process traps exits" do
+      skip_without_souffle()
+
+      assert {:ok, results} =
+               Argus.analyze(
+                 [Argus.Test.Fixtures.YieldsLinkedTask, Argus.Test.Fixtures.TrapsAndYields],
+                 :unsafe_task
+               )
+
+      funcs = Enum.map(Map.get(results, "yield_on_linked_task", []), &hd/1)
+      assert funcs == ["Argus.Test.Fixtures.YieldsLinkedTask:fan_out/1"]
+    end
+
+    test "Task.async in a plain library function is noted; a GenServer's is not" do
+      skip_without_souffle()
+
+      assert {:ok, results} =
+               Argus.analyze(
+                 [Argus.Test.Fixtures.LibraryPmap, Argus.Test.Fixtures.GenServerTaskConsumer],
+                 :unsafe_task
+               )
+
+      funcs = Enum.map(Map.get(results, "linked_task_in_library", []), &hd/1)
+      assert funcs == ["Argus.Test.Fixtures.LibraryPmap:pmap/2"]
+    end
+  end
 end

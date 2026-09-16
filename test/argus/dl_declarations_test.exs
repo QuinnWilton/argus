@@ -175,8 +175,7 @@ defmodule Argus.DlDeclarationsTest do
            supervisor_max_children),
       unlinked_spawn: ~w(spawn_call),
       unsafe_task:
-        ~w(call_edge call_followed_by_branch function_def implements_behaviour remote_call
-           tail_call)
+        ~w(call_edge call_followed_by_branch closure_def function_def implements_behaviour remote_call tail_call trap_exit)
     }
 
     setup do

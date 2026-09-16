@@ -43,6 +43,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `:infinity` by default (sneako/finch#213: a cancel while disconnected
   blocked for days). Schema 32 adds `statem_call_unreplied`.
 
+- `unsafe_task`'s `yield_on_linked_task` (`:warning`): a task started with
+  `Task.async`/`Task.Supervisor.async` and collected with `Task.yield` or
+  `yield_many` in a process that does not trap exits — the link delivers
+  a crash before the `{:exit, _}` branch can run (whatyouhide/redix#317).
+  And `linked_task_in_library` (`:info`): `Task.async` in a plain
+  library function, linked to whichever process called it
+  (elixir-ecto/ecto#2246).
+
 ### Changed
 
 - `call_cycle`, `process_bottleneck`, `timeout_chain`, `sync_call_in_init`

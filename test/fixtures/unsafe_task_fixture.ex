@@ -169,3 +169,54 @@ defmodule Argus.Test.Fixtures.PlainTaskConsumer do
   def handle_info({ref, _result}, state) when is_reference(ref), do: {:noreply, state}
   def handle_info(_msg, state), do: {:noreply, state}
 end
+
+defmodule Argus.Test.Fixtures.YieldsLinkedTask do
+  @moduledoc false
+  # redix#317: yield_many's {:exit, _} branch is dead — the link kills the
+  # caller before it runs.
+  def fan_out(work) do
+    tasks = Enum.map(work, fn item -> Task.async(fn -> item end) end)
+
+    tasks
+    |> Task.yield_many(1_000)
+    |> Enum.map(fn
+      {_task, {:ok, result}} -> {:ok, result}
+      {_task, {:exit, reason}} -> {:error, reason}
+      {task, nil} -> {:error, Task.shutdown(task, :brutal_kill)}
+    end)
+  end
+end
+
+defmodule Argus.Test.Fixtures.TrapsAndYields do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(state) do
+    Process.flag(:trap_exit, true)
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call(:work, _from, state) do
+    task = Task.async(fn -> :work end)
+    {:reply, Task.yield(task, 1_000), state}
+  end
+
+  @impl true
+  def handle_info({:EXIT, _pid, _reason}, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Fixtures.LibraryPmap do
+  @moduledoc false
+  # ecto#2246: a parallel map in library code, linked to whoever calls it.
+  def pmap(items, fun) do
+    items
+    |> Enum.map(fn item -> Task.async(fn -> fun.(item) end) end)
+    # A call, not `&Task.await/1`: a captured function is a fun literal the
+    # call graph does not follow, so it would read as never awaited.
+    |> Enum.map(fn task -> Task.await(task) end)
+  end
+end

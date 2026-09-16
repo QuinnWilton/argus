@@ -61,25 +61,27 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
     tags = for {:get_tuple_element, src, 0, dst} <- body, reg(src) == @x0, do: reg(dst)
     from = for {:get_tuple_element, src, 1, dst} <- body, reg(src) == @x0, do: reg(dst)
 
-    case elem(instrs, last) do
-      instr = {:test, :is_tagged_tuple, _f, [_src, 2, {:atom, :call}]} ->
-        if call_head?(instr), do: for({to, :branch_pass} <- succs, do: {to, from}), else: []
-
-      {:test, :is_eq_exact, _f, [a, b]} ->
-        if (reg(a) in tags and literal_atom(b) == :call) or
-             (reg(b) in tags and literal_atom(a) == :call),
-           do: for({to, :branch_pass} <- succs, do: {to, from}),
-           else: []
-
-      {:select_val, src, _f, _list} ->
-        if reg(src) in tags,
-          do: for({to, {:select_arm, ":call"}} <- succs, do: {to, from}),
-          else: []
-
-      _ ->
-        []
-    end
+    for to <- call_arm_targets(elem(instrs, last), tags, succs), do: {to, from}
   end
+
+  defp call_arm_targets({:test, :is_tagged_tuple, _f, _args} = instr, _tags, succs) do
+    if call_head?(instr), do: for({to, :branch_pass} <- succs, do: to), else: []
+  end
+
+  defp call_arm_targets({:test, :is_eq_exact, _f, [a, b]}, tags, succs) do
+    if compares_tag_to_call?(a, b, tags), do: for({to, :branch_pass} <- succs, do: to), else: []
+  end
+
+  defp call_arm_targets({:select_val, src, _f, _list}, tags, succs) do
+    if reg(src) in tags, do: for({to, {:select_arm, ":call"}} <- succs, do: to), else: []
+  end
+
+  defp call_arm_targets(_instr, _tags, _succs), do: []
+
+  defp compares_tag_to_call?(a, b, tags),
+    do:
+      (reg(a) in tags and literal_atom(b) == :call) or
+        (reg(b) in tags and literal_atom(a) == :call)
 
   # Depth-first over blocks with the path state; a block is revisited only
   # with a state it has not been entered with (the state is finite, so the

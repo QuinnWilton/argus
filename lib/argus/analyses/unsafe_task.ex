@@ -46,7 +46,10 @@ defmodule Argus.Analyses.UnsafeTask do
   def rules_file, do: "analyses/unsafe_task.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.OTP, Argus.Extractors.ApiCalls]
+  # ErrorHandling for `trap_exit`: a process trapping exits does see a
+  # linked task crash, so yield_on_linked_task stays quiet for it.
+  def extractors,
+    do: [Argus.Extractors.OTP, Argus.Extractors.ApiCalls, Argus.Extractors.ErrorHandling]
 
   @impl true
   def output_relations do
@@ -60,6 +63,23 @@ defmodule Argus.Analyses.UnsafeTask do
         doc: "Task.async or async_nolink call without corresponding await/yield."
       },
       %{
+        name: :yield_on_linked_task,
+        fields: [
+          {:func, :symbol, "function that starts and yields on the task"},
+          {:id, :symbol, "instruction ID of the Task.async call"}
+        ],
+        doc: "A linked task is collected with Task.yield in a caller that does not trap exits."
+      },
+      %{
+        name: :linked_task_in_library,
+        fields: [
+          {:func, :symbol, "library function that starts the task"},
+          {:id, :symbol, "instruction ID of the Task.async call"}
+        ],
+        doc:
+          "Task.async in a function that is not a process callback links the task to an unknown caller."
+      },
+      %{
         name: :unchecked_start_child,
         fields: [
           {:func, :symbol, "function containing the start_child call"},
@@ -71,6 +91,42 @@ defmodule Argus.Analyses.UnsafeTask do
   end
 
   @impl true
+  def finding(:yield_on_linked_task, [func, id]) do
+    Findings.new(
+      :warning,
+      "Task.yield on a linked task cannot see it crash",
+      "#{func} starts a task with Task.async (or Task.Supervisor.async), which " <>
+        "links it to the caller, and collects it with Task.yield. yield's " <>
+        "{:exit, reason} result is documented for a crashed task, but the link " <>
+        "delivers the crash to this process first: unless it traps exits, the " <>
+        "branch handling a failed task never runs — the caller is already down.",
+      at: Findings.at_instr(id),
+      at_label: "linked task started here",
+      help: [
+        "use `Task.Supervisor.async_nolink/2` so a crash reaches `Task.yield` as {:exit, reason}",
+        "or trap exits in this process and handle the {:EXIT, ...} messages"
+      ]
+    )
+  end
+
+  def finding(:linked_task_in_library, [func, id]) do
+    Findings.new(
+      :info,
+      "Task.async in library code links to an unknown caller",
+      "#{func} is a plain function, not a process callback, so the task it starts " <>
+        "with Task.async is linked to whichever process called it. A caller that " <>
+        "traps exits then receives the task's exit as an {:EXIT, pid, :normal} " <>
+        "message that Task.await never consumes, and a crashing task takes the " <>
+        "caller down with it.",
+      at: Findings.at_instr(id),
+      at_label: "linked task started in library code",
+      help: [
+        "use `Task.async_stream/3` or `Task.Supervisor.async_nolink/2`, " <>
+          "or document that callers must not trap exits"
+      ]
+    )
+  end
+
   def finding(:leaked_async_task, [func, id]) do
     Findings.new(
       :warning,

@@ -169,3 +169,54 @@ start_child_result_checked(func, id) :-
 unchecked_start_child(func, id) :-
   task_start_child_call(func, id),
   !start_child_result_checked(func, id).
+
+
+// ── Yielding on a linked task ────────────────────────────────────────
+//
+// Task.async and Task.Supervisor.async link the task to the caller.
+// Task.yield/yield_many document an `{:exit, reason}` result for a task
+// that crashed — but the link delivers the crash to the caller first, so
+// unless the caller traps exits that branch never runs: the caller is
+// dead (whatyouhide/redix#317's cluster fan-out, whose partial-failure
+// path was unreachable). async_nolink is the tool for that shape.
+.decl yield_on_linked_task(func: symbol, id: symbol)
+.output yield_on_linked_task
+
+// A closure's calls belong to the function that defines it: the task is
+// usually started inside an Enum.map fn and collected outside it.
+.decl in_function(func: symbol, owner: symbol)
+
+in_function(f, f) :- function_def(f, _, _, _, _).
+in_function(f, owner) :- closure_def(owner, f).
+in_function(f, owner) :- closure_def(mid, f), in_function(mid, owner), mid != owner.
+
+yield_on_linked_task(owner, id) :-
+  task_async_call(f, id),
+  in_function(f, owner),
+  !closure_def(_, owner),
+  (remote_call(_, g, "Task", "yield", _) ; remote_call(_, g, "Task", "yield_many", _)),
+  in_function(g, owner),
+  function_def(owner, mod, _, _, _),
+  !trap_exit(_, mod).
+
+// ── A linked task inside library code ────────────────────────────────
+//
+// Task.async in a function that is not itself a process's callback links
+// the task to whoever called the function. In a caller that traps exits
+// the task's normal exit then arrives as an `{:EXIT, pid, :normal}`
+// message Task.await never consumes (elixir-ecto/ecto#2246: a GenServer
+// preloading in parallel), and a crashing task takes an unrelated
+// caller down with it. A module that is a process itself owns its
+// callers' expectations; a plain library function does not.
+.decl linked_task_in_library(func: symbol, id: symbol)
+.output linked_task_in_library
+
+linked_task_in_library(owner, id) :-
+  task_async_call(f, id),
+  in_function(f, owner),
+  !closure_def(_, owner),
+  function_def(owner, mod, _, _, _),
+  !implements_behaviour(mod, _),
+  !behaves_as(mod, _),
+  !task_factory(owner, _),
+  has_await(owner).
