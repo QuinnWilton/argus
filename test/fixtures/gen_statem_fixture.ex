@@ -273,3 +273,45 @@ defmodule Argus.Test.Fixtures.TimeoutHandledStatem do
 
   def handle_event(:info, _msg, :connected, _data), do: :keep_state_and_data
 end
+
+defmodule Argus.Test.Fixtures.UnrepliedCallStatem do
+  @moduledoc false
+  # finch#213: a cancel while disconnected returns :keep_state_and_data and
+  # the caller waits forever.
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :state_functions
+
+  @impl true
+  def init(_args), do: {:ok, :disconnected, %{requests: %{}}}
+
+  def disconnected({:call, from}, {:request, _req}, data) do
+    {:keep_state, data, [{:reply, from, {:error, :disconnected}}]}
+  end
+
+  def disconnected({:call, _from}, {:cancel, _ref}, _data) do
+    :keep_state_and_data
+  end
+
+  def disconnected(:info, :connect, data) do
+    {:next_state, :connected, data}
+  end
+
+  def connected({:call, from}, {:request, req}, data) do
+    {:keep_state, %{data | requests: Map.put(data.requests, req, from)}}
+  end
+
+  def connected({:call, from}, {:cancel, ref}, data) do
+    :gen_statem.reply(from, :ok)
+    {:keep_state, %{data | requests: Map.delete(data.requests, ref)}}
+  end
+
+  def connected({:call, _from}, :later, _data) do
+    {:keep_state_and_data, [:postpone]}
+  end
+
+  def connected(:info, :disconnect, data) do
+    {:next_state, :disconnected, data}
+  end
+end

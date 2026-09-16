@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 31
+  @schema_version 32
 
   # Layer 1: Module-level facts.
 
@@ -1430,6 +1430,19 @@ defmodule Argus.Schema do
     """
   }
 
+  @statem_call_unreplied %{
+    name: :statem_call_unreplied,
+    layer: 2,
+    fields: [
+      {:mod, :symbol, "module name"},
+      {:func, :symbol, "the state function or handle_event/4"},
+      {:site, :instr_id, "the return that answers nothing"}
+    ],
+    doc:
+      "A {:call, from} clause returns without a reply action, without " <>
+        "postponing, and without keeping `from`: the caller stays blocked."
+  }
+
   @statem_info_catchall %{
     name: :statem_info_catchall,
     layer: 2,
@@ -1603,6 +1616,7 @@ defmodule Argus.Schema do
     @statem_transition,
     @statem_timeout,
     @statem_event_clause,
+    @statem_call_unreplied,
     @statem_info_catchall,
     @statem_event_catchall,
     # Interprocedural constant propagation.

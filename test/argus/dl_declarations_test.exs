@@ -143,7 +143,7 @@ defmodule Argus.DlDeclarationsTest do
       ets: ~w(dynamic_child ets_new ets_op ets_option function_def implements_behaviour
               supervisor_child),
       gen_statem:
-        ~w(function_def statem_event_catchall statem_event_clause statem_info_catchall statem_initial statem_module statem_state statem_timeout statem_transition),
+        ~w(function_def statem_call_unreplied statem_event_catchall statem_event_clause statem_info_catchall statem_initial statem_module statem_state statem_timeout statem_transition),
       message_contract:
         ~w(async_cast call_arg call_arg_forward call_tag callback_tag callback_total function_def implements_behaviour sync_call),
       monitor_leak:

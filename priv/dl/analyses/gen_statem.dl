@@ -169,3 +169,14 @@ statem_timeout_unhandled(mod, "event_timeout", state) :-
 statem_timeout_unhandled(mod, "state_timeout", state) :-
   statem_timeout(mod, state, "state_timeout", _),
   !statem_handles_event(mod, "state_timeout").
+
+// ── A call that is never answered ────────────────────────────────────
+//
+// The extractor walks every {:call, from} clause to its returns and
+// reports the ones that reply nothing, postpone nothing and keep `from`
+// nowhere. The caller of :gen_statem.call/2 waits :infinity by default
+// (sneako/finch#213: a cancel while disconnected blocked for days).
+.decl call_never_replied(mod: symbol, func: symbol, site: symbol)
+.output call_never_replied
+
+call_never_replied(mod, func, site) :- statem_call_unreplied(mod, func, site).

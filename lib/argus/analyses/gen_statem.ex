@@ -84,6 +84,15 @@ defmodule Argus.Analyses.GenStatem do
         doc: "A timeout is armed and no clause handles its event type."
       },
       %{
+        name: :call_never_replied,
+        fields: [
+          {:mod, :symbol, "module"},
+          {:func, :symbol, "the state function or handle_event/4"},
+          {:site, :symbol, "the return that answers nothing"}
+        ],
+        doc: "A {:call, from} clause returns without replying, postponing, or keeping from."
+      },
+      %{
         name: :terminal_without_stop,
         fields: [
           {:mod, :symbol, "module"},
@@ -150,6 +159,25 @@ defmodule Argus.Analyses.GenStatem do
       at: at,
       at_label: "the timeout is armed here",
       help: ["add a clause matching `(#{type}, content, ...)` for the armed timeout"]
+    )
+  end
+
+  def finding(:call_never_replied, [mod, func, site]) do
+    Findings.new(
+      :warning,
+      "A {:call, from} clause never replies",
+      "#{func} handles a {:call, from} event and, on the path ending here, returns " <>
+        "without a {:reply, from, _} action, without postponing the event, and " <>
+        "without keeping `from` for a later reply. The caller of " <>
+        ":gen_statem.call/2 waits :infinity by default, so it stays blocked for " <>
+        "as long as #{mod} lives.",
+      at: Findings.at_site(site, mod),
+      at_label: "returns here without answering the call",
+      help: [
+        "return `{:keep_state_and_data, [{:reply, from, value}]}` (or `:postpone` " <>
+          "the event until a state that can answer)",
+        "if the caller must not wait, give the call a timeout"
+      ]
     )
   end
 

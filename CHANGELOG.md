@@ -37,6 +37,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   postgrex#763; that instance passes the supervisor through a GenServer
   message and is not yet resolved).
 
+- `gen_statem`'s `call_never_replied` (`:warning`): a `{:call, from}`
+  clause that returns without a reply action, without postponing, and
+  without keeping `from` — the caller of `:gen_statem.call/2` waits
+  `:infinity` by default (sneako/finch#213: a cancel while disconnected
+  blocked for days). Schema 32 adds `statem_call_unreplied`.
+
 ### Changed
 
 - `call_cycle`, `process_bottleneck`, `timeout_chain`, `sync_call_in_init`

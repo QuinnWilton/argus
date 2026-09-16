@@ -105,4 +105,17 @@ defmodule Argus.Analyses.GenStatemTest do
       assert results["statem_timeout_unhandled"] == []
     end
   end
+
+  describe "call_never_replied" do
+    test "only the clause that returns bare :keep_state_and_data without replying is reported" do
+      skip_without_souffle()
+
+      assert {:ok, results} =
+               Argus.analyze([Argus.Test.Fixtures.UnrepliedCallStatem], :gen_statem)
+
+      rows = Map.get(results, "call_never_replied", [])
+
+      assert [[_mod, "Argus.Test.Fixtures.UnrepliedCallStatem:disconnected/3", _site]] = rows
+    end
+  end
 end
