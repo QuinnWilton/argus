@@ -12,6 +12,31 @@ defmodule Argus.Analyses.ErrorHandlingTest do
     results
   end
 
+  describe "handle_info_partial" do
+    test "a partial handle_info is a note even with no runtime writer, GenStage included" do
+      skip_without_souffle()
+
+      results =
+        analyze([
+          Argus.Test.Fixtures.PartialInfoServer,
+          Argus.Test.Fixtures.TotalInfoServer,
+          Argus.Test.Fixtures.PartialInfoStage,
+          Argus.Test.Fixtures.MonitorsWithoutCatchall
+        ])
+
+      partial = Enum.map(results["handle_info_partial"], fn [mod, _f] -> mod end) |> Enum.sort()
+
+      assert partial == [
+               "Argus.Test.Fixtures.PartialInfoServer",
+               "Argus.Test.Fixtures.PartialInfoStage"
+             ]
+
+      # The monitoring module keeps its warning-grade finding, not this one.
+      assert Enum.map(results["handle_info_without_catchall"], fn [mod, _f] -> mod end) ==
+               ["Argus.Test.Fixtures.MonitorsWithoutCatchall"]
+    end
+  end
+
   describe "trap_exit_without_exit_clause" do
     test "a handle_info that never matches {:EXIT, ...} is reported" do
       skip_without_souffle()

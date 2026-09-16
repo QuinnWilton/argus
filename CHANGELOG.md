@@ -19,6 +19,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `process_bottleneck`, `one_for_one_coupling` and `supervision` see the
   edges. Stage 0 writes a fourth file, `call_tag.facts`.
 
+- `error_handling`'s `handle_info_partial` (`:info`): a GenServer or
+  GenStage whose handle_info/2 matches specific messages and has no
+  catch-all, even when nothing in the module invites runtime messages —
+  a library's late reply crashed a Flow producer (gen_stage#238), a
+  restart loop re-sent a start-up message (cachex#314), a stray message
+  killed a process manager (commanded#332). The warning-grade
+  `handle_info_without_catchall` now also covers GenStage.
+
 ### Changed
 
 - `call_cycle`, `process_bottleneck`, `timeout_chain`, `sync_call_in_init`

@@ -91,11 +91,32 @@ receives_runtime_messages(mod) :-
 .output handle_info_without_catchall
 
 handle_info_without_catchall(mod, h) :-
-  behaves_as(mod, "GenServer"),
+  (behaves_as(mod, "GenServer") ; behaves_as(mod, "GenStage")),
   function_def(h, mod, "handle_info", 2, _),
   !callback_total(h, "handle_info"),
   receives_runtime_messages(mod),
   !trap_exit_without_exit_clause(mod, _).
+
+// ── handle_info without a catch-all, in any process ──
+//
+// The variant above needs the module itself to invite runtime messages.
+// A mailbox is written by more than its owner: a library the process
+// called can leave a late reply (gen_stage#238, an hackney message
+// crashing a Flow producer), a supervisor restart re-sends a start-up
+// message (cachex#314, a warmer in a restart loop). Once handle_info/2
+// exists, one such message is a FunctionClauseError and the process
+// dies — so a partial handle_info is worth a note even with no writer
+// in sight. Info: the two rules above stay the warning-grade shapes.
+.decl handle_info_partial(mod: symbol, func: symbol)
+.output handle_info_partial
+
+handle_info_partial(mod, h) :-
+  (behaves_as(mod, "GenServer") ; behaves_as(mod, "GenStage")),
+  function_def(h, mod, "handle_info", 2, _),
+  !callback_total(h, "handle_info"),
+  !receives_runtime_messages(mod),
+  !trap_exit_without_exit_clause(mod, _),
+  !statem_like(mod).
 
 // ── Exit in GenServer callback ───────────────────────────────────
 

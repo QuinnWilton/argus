@@ -245,3 +245,48 @@ defmodule Argus.Test.Fixtures.MonitorsWithCatchall do
   def handle_info({:DOWN, _ref, :process, _pid, _reason}, state), do: {:noreply, state}
   def handle_info(_msg, state), do: {:noreply, state}
 end
+
+defmodule Argus.Test.Fixtures.PartialInfoServer do
+  @moduledoc false
+  # Handles one message and nothing else; monitors nothing, traps nothing.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_info(:tick, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Fixtures.TotalInfoServer do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_info(:tick, state), do: {:noreply, state}
+  def handle_info(_other, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Fixtures.PartialInfoStage do
+  @moduledoc false
+  # A producer stage with a partial handle_info: the shape of gen_stage#238.
+  use GenStage
+
+  def start_link(opts), do: GenStage.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(state), do: {:producer, state}
+
+  @impl true
+  def handle_demand(_demand, state), do: {:noreply, [], state}
+
+  @impl true
+  def handle_info(:refill, state), do: {:noreply, [], state}
+end

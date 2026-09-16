@@ -18,6 +18,9 @@ defmodule Argus.Analyses.ErrorHandling do
   - `handle_info_without_catchall(mod, func)` — a GenServer that monitors
     or traps exits defines handle_info/2 without a catch-all clause, so a
     message the runtime sends at a time of its choosing crashes it.
+  - `handle_info_partial(mod, func)` — a GenServer or GenStage defines
+    handle_info/2 without a catch-all and nothing in the module invites
+    runtime messages; any stray message is still a FunctionClauseError.
   - `exit_in_callback(func, target)` — an exit *signal* (Process.exit/2)
     sent from a GenServer callback.
   - `ignored_start_result(func, callee)` — GenServer/Supervisor start result not checked.
@@ -28,9 +31,9 @@ defmodule Argus.Analyses.ErrorHandling do
   `trap_exit_without_exit_clause` and `ignored_start_result` are
   `:warning`: each silently discards failure information — errors, exit
   signals, or failed starts — so the bug surfaces later, far from its
-  cause. `handle_info_without_catchall` is `:info`: whether a stray
-  message is worth crashing over is a judgement call, but the process
-  has invited such messages. `exit_in_callback` is `:info`:
+  cause. `handle_info_without_catchall` and `handle_info_partial` are
+  `:info`: whether a stray message is worth crashing over is a judgement
+  call; the first names a process that has invited such messages. `exit_in_callback` is `:info`:
   imperatively killing a process is frequently a deliberate protocol
   (handoff, conflict resolution), so it is surfaced for confirmation
   rather than flagged as a defect.
@@ -97,6 +100,17 @@ defmodule Argus.Analyses.ErrorHandling do
             "without a catch-all clause."
       },
       %{
+        name: :handle_info_partial,
+        fields: [
+          {:mod, :symbol, "module"},
+          {:func, :symbol, "the handle_info/2 function"}
+        ],
+        doc:
+          "A GenServer or GenStage defines handle_info/2 without a catch-all " <>
+            "clause; nothing in the module invites runtime messages, but any " <>
+            "stray message is a FunctionClauseError."
+      },
+      %{
         name: :exit_in_callback,
         fields: [
           {:func, :symbol, "callback function"},
@@ -158,6 +172,25 @@ defmodule Argus.Analyses.ErrorHandling do
           "catch-all `handle_info(_msg, state)` if none are expected"
       ],
       related: [Findings.related("handle_info/2", Findings.at_mfa(mod, :handle_info, 2))]
+    )
+  end
+
+  def finding(:handle_info_partial, [mod, func]) do
+    Findings.new(
+      :info,
+      "handle_info/2 has no catch-all",
+      "#{mod} matches specific messages in handle_info/2 and nothing else. " <>
+        "A mailbox is written by more than its owner: a library it called " <>
+        "can leave a late reply, a supervisor restart can re-send a " <>
+        "start-up message. Once handle_info/2 is defined, one such message " <>
+        "is a FunctionClauseError and the process dies — in a restart loop " <>
+        "if the message repeats.",
+      at: Findings.at_func(func),
+      at_label: "no clause here accepts an unexpected message",
+      help: [
+        "add a final `handle_info(msg, state)` clause that logs the " <>
+          "message and returns `{:noreply, state}`"
+      ]
     )
   end
 

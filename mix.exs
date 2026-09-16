@@ -46,6 +46,8 @@ defmodule Argus.MixProject do
 
       # Dev/Test
       {:stream_data, "~> 1.0", only: [:test, :dev]},
+      # Fixtures for the GenStage-shaped rules `use GenStage`.
+      {:gen_stage, "~> 1.2", only: :test},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: :dev, runtime: false},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
