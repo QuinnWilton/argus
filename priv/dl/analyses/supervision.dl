@@ -188,3 +188,100 @@ rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "inferred")
   child_creating_op(op),
   sole_earlier_sibling_of_kind(sup, hpos, api, opos),
   supervisor_child(sup, hpos, holder, _, _).
+
+// ── ConsumerSupervisor children that never finish ────────────────────
+//
+// A ConsumerSupervisor's child spec is a template: one child per event,
+// which exits :normal when it is done. A :permanent template restarts
+// every finished child, which fails again, consumes demand and trips
+// the restart intensity (elixir-lang/gen_stage#195). The spec must say
+// :temporary or :transient.
+.decl consumer_supervisor_permanent_child(sup: symbol, child: symbol, sup_site: symbol)
+.output consumer_supervisor_permanent_child
+
+consumer_supervisor_permanent_child(sup, child, sup_site) :-
+  behaves_as(sup, "ConsumerSupervisor"),
+  supervisor_child(sup, _, child, "permanent", _),
+  supervisor_site(sup, sup_site).
+
+// ── Two restart authorities ──────────────────────────────────────────
+//
+// A process that starts a child under a DynamicSupervisor, monitors it,
+// and starts it again from its :DOWN handler has taken over restarting —
+// while the supervisor, for a :permanent child, does the same. A child
+// that fails on a semantic error crash-loops under both, blows the
+// supervisor's intensity and takes the tree with it (redix#334). A
+// :temporary child_spec leaves the supervisor out of it.
+//
+// The start, the monitor and the :DOWN handling are usually spread over
+// private helpers (redix: start_connection/7, start_and_monitor_connection/5,
+// handle_down/2), so each is asked of a function's reach within its own
+// module. The :DOWN handler is whichever function of the module matches
+// :DOWN (matches_down): handle_info/2 for a GenServer, a private helper
+// its state functions' catch-alls dispatch to for a gen_statem.
+.decl reaches_in_module(func: symbol, target: symbol)
+
+reaches_in_module(f, f) :- function_def(f, _, _, _, _).
+reaches_in_module(f, h) :-
+  reaches_in_module(f, g),
+  call_edge(g, h),
+  function_def(g, mod, _, _, _),
+  function_def(h, mod, _, _, _).
+
+.decl starts_and_monitors(mod: symbol, sup: symbol, child: symbol, via: symbol)
+
+starts_and_monitors(mod, sup, child, f) :-
+  function_def(f, mod, _, _, _),
+  reaches_in_module(f, s),
+  dynamic_child(sup, child, s),
+  child != "dynamic",
+  reaches_in_module(f, m),
+  monitor_call(_, m, _).
+
+.decl down_handler(mod: symbol, handler: symbol)
+
+down_handler(mod, h) :-
+  function_def(h, mod, _, _, _),
+  matches_down(h).
+
+.decl dual_restart_authority(mod: symbol, sup: symbol, child: symbol, via: symbol)
+.output dual_restart_authority
+
+dual_restart_authority(mod, sup, child, via) :-
+  starts_and_monitors(mod, sup, child, via),
+  down_handler(mod, h),
+  reaches_in_module(h, s),
+  dynamic_child(sup, child, s),
+  !child_spec_restart(child, "temporary").
+
+// ── Initialization after the tree is up ──────────────────────────────
+//
+// Children start serving the moment Supervisor.start_link returns. State
+// they read — a persistent_term, an ETS row, an application env — that
+// the caller writes only afterwards is a window in which they run against
+// nothing (phoenixframework/phoenix#5981: the endpoint's warmup after the
+// listener was accepting). Writes reached from a call after start_link.
+.decl config_writer(func: symbol)
+
+config_writer(f) :- remote_call(_, f, ":persistent_term", "put", 2).
+config_writer(f) :- remote_call(_, f, ":ets", "insert", 2).
+config_writer(f) :- remote_call(_, f, ":ets", "insert_new", 2).
+config_writer(f) :- remote_call(_, f, "Application", "put_env", _).
+config_writer(f) :- remote_call(_, f, "Application", "put_all_env", _).
+
+.decl reaches_config_writer(func: symbol)
+
+reaches_config_writer(f) :- config_writer(f).
+reaches_config_writer(f) :- call_edge(f, g), reaches_config_writer(g).
+
+.decl post_start_initialization(func: symbol, site: symbol, callee: symbol)
+.output post_start_initialization
+
+post_start_initialization(func, site, callee) :-
+  post_start_call(func, site, callee),
+  (callee = ":persistent_term:put/2" ; callee = ":ets:insert/2" ; callee = ":ets:insert_new/2" ;
+   match("Application:put_env/.*", callee) ; match("Application:put_all_env/.*", callee)).
+
+post_start_initialization(func, site, callee) :-
+  post_start_call(func, site, callee),
+  reaches_config_writer(callee).

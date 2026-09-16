@@ -28,6 +28,10 @@ defmodule Argus.Extractors.Monitor do
   - `monitor_ref_dropped(id, func)` — the reference that monitor returned
     is discarded at the call site, so nothing can ever demonitor it
   - `demonitor_call(id, func, flush)` — `flush` is `"flush"` or `"no_flush"`
+  - `matches_down(func)` — the function compares something to `:DOWN`, so it
+    is (part of) a :DOWN handler; unlike `callback_tag` this is emitted for
+    every function, because a gen_statem funnels its :info events into
+    private helpers that no callback name identifies
 
   Whether the ref is dropped is read from the instructions after the
   call, along every path: the ref arrives in `{x, 0}`, and it is dropped
@@ -42,6 +46,7 @@ defmodule Argus.Extractors.Monitor do
   @behaviour Argus.Extractor
 
   alias Argus.Cfg.Walk
+  alias Argus.Extractor.Dispatch
   alias Argus.InstrId
 
   import Argus.Extractor.Helpers,
@@ -51,13 +56,25 @@ defmodule Argus.Extractors.Monitor do
   def relations,
     do: [
       :demonitor_call,
+      :matches_down,
       :monitor_call,
       :monitor_ref_dropped
     ]
 
   @impl true
-  def extract(module_data),
-    do: each_remote_call(module_data, %{}, &handle(&1, &2, &3, module_data))
+  def extract(%{module: mod, functions: functions} = module_data) do
+    module_data
+    |> each_remote_call(%{}, &handle(&1, &2, &3, module_data))
+    |> emit_matches_down(mod, functions)
+  end
+
+  defp emit_matches_down(facts, mod, functions) do
+    Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
+      if :DOWN in Dispatch.compared_atoms(instrs, :any),
+        do: add_fact(acc, :matches_down, [InstrId.func_id(mod, name, arity)]),
+        else: acc
+    end)
+  end
 
   defp handle(facts, ctx, {Process, :monitor, 1}, data), do: monitor(facts, ctx, data)
   defp handle(facts, ctx, {:erlang, :monitor, 2}, data), do: monitor(facts, ctx, data)

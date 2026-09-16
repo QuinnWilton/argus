@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 32
+  @schema_version 33
 
   # Layer 1: Module-level facts.
 
@@ -661,6 +661,15 @@ defmodule Argus.Schema do
     """
   }
 
+  @matches_down %{
+    name: :matches_down,
+    layer: 2,
+    fields: [{:func, :symbol, "a function whose body compares something to :DOWN"}],
+    doc: """
+    The function handles (part of) a :DOWN message. Over-approximated like     `callback_tag` — any comparison to the atom counts — but emitted for     every function rather than only named callbacks, because a gen_statem     funnels :info events through private helpers.
+    """
+  }
+
   @demonitor_call %{
     name: :demonitor_call,
     layer: 2,
@@ -747,6 +756,27 @@ defmodule Argus.Schema do
     to `:infinity`, so absence is the common case and the interesting one, \
     and consumers ask about it by negation.
     """
+  }
+
+  @child_spec_restart %{
+    name: :child_spec_restart,
+    layer: 2,
+    fields: [
+      {:mod, :symbol, "module"},
+      {:restart, :symbol, "restart its child_spec/1 declares (permanent/transient/temporary)"}
+    ],
+    doc: "The restart type a module's own child_spec/1 gives a shorthand {Mod, args} spec."
+  }
+
+  @post_start_call %{
+    name: :post_start_call,
+    layer: 2,
+    fields: [
+      {:func, :symbol, "function that started a supervisor"},
+      {:site, :instr_id, "a call made after the Supervisor.start_link"},
+      {:callee, :func_id, "what it calls (Mod:fun/arity)"}
+    ],
+    doc: "A call made after Supervisor.start_link returned, in the same function."
   }
 
   @dynamic_child %{
@@ -1561,11 +1591,14 @@ defmodule Argus.Schema do
     @supervisor_child,
     @supervisor_child_form,
     @supervisor_child_name,
+    @child_spec_restart,
+    @post_start_call,
     @dynamic_child,
     @supervisor_max_children,
     @socket_transport,
     @monitor_call,
     @monitor_ref_dropped,
+    @matches_down,
     @demonitor_call,
     @http_route,
     @schema_field,

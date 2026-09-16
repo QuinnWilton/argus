@@ -205,4 +205,53 @@ defmodule Argus.Analyses.SupervisionTest do
       refute Enum.any?(as_worker(), &String.contains?(&1, "SupShorthand"))
     end
   end
+
+  describe "supervision shapes" do
+    alias Argus.Test.Fixtures.SupervisionShapes, as: Shapes
+
+    test "a ConsumerSupervisor with a permanent template is reported; a temporary one is not" do
+      skip_without_souffle()
+
+      {:ok, r} =
+        Argus.analyze(
+          [Shapes.PermanentConsumers, Shapes.TemporaryConsumers, Shapes.EventWorker],
+          :supervision
+        )
+
+      sups = Enum.map(Map.get(r, "consumer_supervisor_permanent_child", []), &hd/1)
+      assert sups == ["Argus.Test.Fixtures.SupervisionShapes.PermanentConsumers"]
+    end
+
+    test "a manager that monitors and restarts a permanent dynamic child is reported" do
+      skip_without_souffle()
+
+      {:ok, r} =
+        Argus.analyze(
+          [
+            Shapes.DualManager,
+            Shapes.StatemDualManager,
+            Shapes.TemporaryManager,
+            Shapes.Conn,
+            Shapes.TempConn
+          ],
+          :supervision
+        )
+
+      mods = Enum.map(Map.get(r, "dual_restart_authority", []), &hd/1) |> Enum.uniq()
+
+      assert mods == [
+               "Argus.Test.Fixtures.SupervisionShapes.DualManager",
+               "Argus.Test.Fixtures.SupervisionShapes.StatemDualManager"
+             ]
+    end
+
+    test "state written after Supervisor.start_link is noted; before it is not" do
+      skip_without_souffle()
+
+      {:ok, r} = Argus.analyze([Shapes.LateWarmup, Shapes.EarlyWarmup, Shapes.Conn], :supervision)
+
+      funcs = Enum.map(Map.get(r, "post_start_initialization", []), &hd/1) |> Enum.uniq()
+      assert funcs == ["Argus.Test.Fixtures.SupervisionShapes.LateWarmup:start_link/1"]
+    end
+  end
 end

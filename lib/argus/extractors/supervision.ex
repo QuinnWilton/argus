@@ -21,13 +21,19 @@ defmodule Argus.Extractors.Supervision do
     strategy; `site` is the instruction ID of the call (or literal) that
     defines the tree — the strategy line — or `"dynamic"` when no such
     instruction was found
+  - `child_spec_restart(mod, restart)` — the restart the module's own
+    child_spec/1 declares
+  - `post_start_call(func, site, callee)` — a call made after a
+    Supervisor.start_link in the same function
   - `supervisor_child(sup, position, child_mod, restart, type)` — child spec
   - `named_process(mod, name)` — named process registration detected
   """
 
   @behaviour Argus.Extractor
 
+  alias Argus.Extractor.CallSites
   alias Argus.InstrId
+  alias Argus.Pipeline.Normalize
 
   import Argus.Extractor.Helpers,
     only: [
@@ -47,6 +53,8 @@ defmodule Argus.Extractors.Supervision do
   @impl true
   def relations,
     do: [
+      :child_spec_restart,
+      :post_start_call,
       :dynamic_child,
       :supervisor,
       :supervisor_child,
@@ -67,7 +75,8 @@ defmodule Argus.Extractors.Supervision do
 
     base_facts =
       cond do
-        Supervisor in behaviours or :supervisor in behaviours ->
+        Supervisor in behaviours or :supervisor in behaviours or
+            ConsumerSupervisor in behaviours ->
           extract_supervisor(mod_str, module_data)
 
         Application in behaviours or :application in behaviours ->
@@ -98,7 +107,90 @@ defmodule Argus.Extractors.Supervision do
     # DynamicSupervisor.start_child can fire from any module, regardless of
     # whether the enclosing module is itself a supervisor — connection pools
     # and per-tenant systems often spawn workers from non-supervisor code.
-    extract_dynamic_children(base_facts, mod, behaviours, module_data)
+    base_facts
+    |> extract_dynamic_children(mod, behaviours, module_data)
+    |> extract_child_spec_restart(mod_str, module_data.functions)
+    |> extract_post_start_calls(mod_str, module_data)
+  end
+
+  # The restart a module's own child_spec/1 declares — what a shorthand
+  # `{Mod, args}` spec resolves to. `use GenServer, restart: :temporary`
+  # puts it in the generated function's literal map.
+  defp extract_child_spec_restart(facts, mod_str, functions) do
+    case find_function(functions, :child_spec, 1) do
+      nil ->
+        facts
+
+      instrs ->
+        instrs
+        |> Enum.flat_map(fn
+          # A literal spec map: `%{id: .., start: .., restart: :temporary}`.
+          {:move, {:literal, %{restart: restart}}, _} when is_atom(restart) ->
+            [restart]
+
+          # The overrides `use GenServer, restart: :temporary` passes to
+          # Supervisor.child_spec/2.
+          {:move, {:literal, overrides}, _} when is_list(overrides) ->
+            case Keyword.keyword?(overrides) and Keyword.get(overrides, :restart) do
+              restart when is_atom(restart) and not is_nil(restart) and restart != false ->
+                [restart]
+
+              _ ->
+                []
+            end
+
+          {op, _, _, _, _, {:list, pairs}} when op in [:put_map_assoc, :put_map_exact] ->
+            case extract_map_atom(pairs, :restart, nil) do
+              nil -> []
+              restart -> [restart]
+            end
+
+          _ ->
+            []
+        end)
+        |> Enum.uniq()
+        |> Enum.reduce(facts, fn restart, acc ->
+          add_fact(acc, :child_spec_restart, [mod_str, to_string(restart)])
+        end)
+    end
+  end
+
+  # Every call made after a Supervisor.start_link in the same function:
+  # the tree is running, so whatever these calls set up, a child may
+  # already be reading.
+  defp extract_post_start_calls(facts, _mod_str, module_data) do
+    started =
+      module_data
+      |> CallSites.for_module()
+      |> Enum.filter(fn site ->
+        match?({_sup, :start_link, _}, site.mfa) and
+          elem(site.mfa, 0) in [Supervisor, ConsumerSupervisor]
+      end)
+      |> Enum.group_by(& &1.func_id, & &1.idx)
+      |> Map.new(fn {func_id, idxs} -> {func_id, Enum.min(idxs)} end)
+
+    if started == %{} do
+      facts
+    else
+      module_data
+      |> CallSites.for_module()
+      |> Enum.reduce(facts, fn site, acc ->
+        case Map.get(started, site.func_id) do
+          start_idx when is_integer(start_idx) and site.idx > start_idx ->
+            {m, f, a} = site.mfa
+            callee = Normalize.func_id(m, f, a)
+
+            add_fact(acc, :post_start_call, [
+              site.func_id,
+              InstrId.mint(site.func_id, site.idx),
+              callee
+            ])
+
+          _ ->
+            acc
+        end
+      end)
+    end
   end
 
   defp extract_dynamic_children(facts, mod, behaviours, module_data) do
@@ -128,15 +220,25 @@ defmodule Argus.Extractors.Supervision do
     end)
   end
 
+  # ConsumerSupervisor.init/2 takes the same children-and-options shape
+  # as Supervisor.init/2; its children are a template, so their restart
+  # matters more, not less.
   defp supervisor_start_call?(instr) do
     case match_remote_call(instr) do
-      {:ok, Supervisor, func, 2} when func in [:init, :start_link] -> true
-      _ -> false
+      {:ok, sup, func, 2}
+      when sup in [Supervisor, ConsumerSupervisor] and func in [:init, :start_link] ->
+        true
+
+      _ ->
+        false
     end
   end
 
   defp supervisor_behaviour?(behaviours) do
-    Enum.any?(behaviours, &(&1 in [Supervisor, :supervisor, DynamicSupervisor]))
+    Enum.any?(
+      behaviours,
+      &(&1 in [Supervisor, :supervisor, DynamicSupervisor, ConsumerSupervisor])
+    )
   end
 
   defp handle_dynamic_start(facts, ctx, {DynamicSupervisor, :start_child, 2}, self_sup, functions) do
@@ -518,7 +620,8 @@ defmodule Argus.Extractors.Supervision do
     |> Enum.with_index()
     |> Enum.find_value(fn {instr, idx} ->
       case match_remote_call(instr) do
-        {:ok, Supervisor, func, 2} when func in [:init, :start_link] ->
+        {:ok, sup, func, 2}
+        when sup in [Supervisor, ConsumerSupervisor] and func in [:init, :start_link] ->
           case extract_strategy_from_opts(instrs, idx) || strategy_in_cons(instrs) do
             nil -> nil
             strategy -> {strategy, idx}

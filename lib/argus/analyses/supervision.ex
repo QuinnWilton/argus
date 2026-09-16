@@ -47,6 +47,7 @@ defmodule Argus.Analyses.Supervision do
   def extractors,
     do: [
       Argus.Extractors.CallbackTag,
+      Argus.Extractors.Monitor,
       Argus.Extractors.Supervision,
       Argus.Extractors.OTP,
       Argus.Extractors.ApiCalls,
@@ -111,6 +112,36 @@ defmodule Argus.Analyses.Supervision do
         doc:
           "Under rest_for_one a later child starts processes inside an earlier one; " <>
             "the owner's restart leaves them running."
+      },
+      %{
+        name: :consumer_supervisor_permanent_child,
+        fields: [
+          {:sup, :symbol, "the ConsumerSupervisor"},
+          {:child, :symbol, "the child template module"},
+          {:sup_site, :symbol, "where the template is declared"}
+        ],
+        doc: "A ConsumerSupervisor child template with restart :permanent."
+      },
+      %{
+        name: :dual_restart_authority,
+        fields: [
+          {:mod, :symbol, "the module that starts, monitors and restarts the child"},
+          {:sup, :symbol, "the DynamicSupervisor that also restarts it"},
+          {:child, :symbol, "the child module"},
+          {:via, :symbol, "function that starts and monitors it"}
+        ],
+        key: [:mod, :sup, :child],
+        doc: "A supervisor and a monitoring process both restart the same child."
+      },
+      %{
+        name: :post_start_initialization,
+        fields: [
+          {:func, :symbol, "function that started the tree"},
+          {:site, :symbol, "the call after Supervisor.start_link"},
+          {:callee, :symbol, "what the call reaches that writes shared state"}
+        ],
+        key: [:func, :site],
+        doc: "Shared state written after Supervisor.start_link returned."
       },
       %{
         name: :wrong_start_order,
@@ -197,6 +228,58 @@ defmodule Argus.Analyses.Supervision do
       related: [
         Findings.related("dependency call", Findings.at_func(witness)),
         Findings.related("#{restart} sibling", Findings.at_module(sibling))
+      ]
+    )
+  end
+
+  def finding(:consumer_supervisor_permanent_child, [sup, child, sup_site]) do
+    Findings.new(
+      :warning,
+      "ConsumerSupervisor template restarts finished children",
+      "#{sup} is a ConsumerSupervisor and its child template #{child} is " <>
+        ":permanent. Each child handles one event and exits :normal when done; a " <>
+        "permanent template starts it straight back, where it fails again, " <>
+        "consuming demand and counting toward the restart intensity until the " <>
+        "supervisor itself gives up.",
+      at: Findings.at_site(sup_site, sup),
+      at_label: "child template declared here",
+      help: ["give the template `restart: :temporary` (or `:transient`)"]
+    )
+  end
+
+  def finding(:dual_restart_authority, [mod, sup_or_dynamic, child, via]) do
+    sup = if sup_or_dynamic == "dynamic", do: "a DynamicSupervisor", else: sup_or_dynamic
+
+    Findings.new(
+      :warning,
+      "Two restart authorities for the same child",
+      "#{via} starts #{child} under #{sup} and monitors it, and #{mod}'s " <>
+        ":DOWN handler starts it again — while the supervisor restarts it as well, " <>
+        "as a permanent child. A child that stops on a semantic error is " <>
+        "restarted by both: it crash-loops, exhausts the supervisor's restart " <>
+        "intensity, and the escalation reaches the tree above.",
+      at: Findings.at_func(via),
+      at_label: "started and monitored here",
+      help: [
+        "start the child with `restart: :temporary` and let #{mod}'s :DOWN handler decide",
+        "or drop the monitor and let the supervisor own the restarts"
+      ]
+    )
+  end
+
+  def finding(:post_start_initialization, [func, site, callee]) do
+    Findings.new(
+      :info,
+      "Shared state written after the tree is up",
+      "#{func} calls Supervisor.start_link and only afterwards reaches #{callee}, " <>
+        "which writes state (a persistent_term, an ETS row, application env). " <>
+        "The children are already running when that write lands; one that reads " <>
+        "the state in the meantime finds nothing there.",
+      at: Findings.at_site(site, func),
+      at_label: "the tree is already running here",
+      help: [
+        "perform the initialization before Supervisor.start_link, or as the first " <>
+          "child (a child spec whose start function does the work and returns :ignore)"
       ]
     )
   end

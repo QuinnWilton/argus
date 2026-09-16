@@ -37,6 +37,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   postgrex#763; that instance passes the supervisor through a GenServer
   message and is not yet resolved).
 
+- `supervision`'s `consumer_supervisor_permanent_child` (`:warning`): a
+  ConsumerSupervisor child template with `restart: :permanent`, which
+  restarts every child that finishes its event (gen_stage#195). The
+  extractor now reads ConsumerSupervisor trees.
+- `supervision`'s `dual_restart_authority` (`:warning`): a process starts
+  a permanent child under a DynamicSupervisor, monitors it, and starts it
+  again from its :DOWN handler, so a child that stops on a semantic error
+  crash-loops under two restart authorities and takes the tree with it
+  (redix#334). New fact `child_spec_restart(mod, restart)` records what a
+  module's own child_spec/1 declares, so a `:temporary` child is exempt.
+- `supervision`'s `post_start_initialization` (`:info`): shared state (a
+  persistent_term, an ETS row, application env) written only after
+  `Supervisor.start_link` returned, while the children are already running
+  (phoenix#5981). New fact `post_start_call(func, site, callee)`.
+
 - `gen_statem`'s `call_never_replied` (`:warning`): a `{:call, from}`
   clause that returns without a reply action, without postponing, and
   without keeping `from` — the caller of `:gen_statem.call/2` waits
@@ -52,6 +67,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (elixir-ecto/ecto#2246).
 
 ### Changed
+
+- Schema version 33: three layer-2 relations added, `child_spec_restart`,
+  `post_start_call` and `matches_down` (a function that compares
+  something to `:DOWN`, emitted for every function so a gen_statem's
+  private :info helpers count); no existing relation changed.
 
 - `call_cycle`, `process_bottleneck`, `timeout_chain`, `sync_call_in_init`
   and `message_contract` no longer read `def_use`, `tuple_literal` or
