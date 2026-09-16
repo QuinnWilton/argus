@@ -40,6 +40,47 @@ defmodule Argus.Analyses.ShutdownSafetyTest do
     r |> rows(relation) |> Enum.filter(&String.ends_with?(hd(&1), suffix))
   end
 
+  describe "terminate_calls_sibling" do
+    test "a call to a sibling from terminate/2 is reported; a cast is not" do
+      skip_without_souffle()
+      alias Argus.Test.Fixtures.ShutdownSiblings, as: Sib
+
+      {:ok, r} =
+        Argus.analyze(
+          [Sib.Sup, Sib.Producer, Sib.Watchman, Sib.CarefulWatchman],
+          :shutdown_safety
+        )
+
+      pairs =
+        r
+        |> rows("terminate_calls_sibling")
+        |> Enum.map(fn [mod, sib, _via, _sup] -> {mod, sib} end)
+        |> Enum.uniq()
+
+      assert pairs == [
+               {"Argus.Test.Fixtures.ShutdownSiblings.Watchman",
+                "Argus.Test.Fixtures.ShutdownSiblings.Producer"}
+             ]
+    end
+  end
+
+  describe "foreign_dynamic_children" do
+    test "children started under another tree are reported unless terminate/2 stops them" do
+      skip_without_souffle()
+      alias Argus.Test.Fixtures.ForeignChildren, as: F
+
+      {:ok, r} =
+        Argus.analyze(
+          [F.LibraryTree, F.AppTree, F.Worker, F.Manager, F.TidyManager],
+          :shutdown_safety
+        )
+
+      assert modules(r, "foreign_dynamic_children") == [
+               "Argus.Test.Fixtures.ForeignChildren.Manager"
+             ]
+    end
+  end
+
   describe "detection" do
     test "durable cleanup without trap_exit is reported" do
       skip_without_souffle()

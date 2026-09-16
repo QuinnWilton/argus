@@ -159,3 +159,69 @@ terminate_may_be_truncated(mod, behaviour, category, api, via) :-
   cleanup_in_terminate(mod, behaviour, category, api, via),
   traps_exits(mod),
   slow_category(category).
+
+// ── A synchronous call to a sibling from terminate/2 ─────────────────
+//
+// A supervisor stops its children in reverse start order, one at a
+// time. terminate/2 runs while that is under way, so a sibling under the
+// same supervisor may already be gone: the call exits with :noproc and
+// terminate/2 itself crashes, taking whatever cleanup followed with it
+// (oban#21's Watchman pausing its Producer). Only direct siblings — the
+// modules whose lifetime the same supervisor sequences — count.
+.decl terminate_calls_sibling(mod: symbol, sibling: symbol, via: symbol, sup: symbol)
+.output terminate_calls_sibling
+
+terminate_calls_sibling(mod, sibling, func, sup) :-
+  terminate_callback(func, mod, _),
+  sync_dep(func, sibling),
+  supervisor_child(sup, _, mod, _, _),
+  supervisor_child(sup, _, sibling, _, _),
+  sibling != mod.
+
+terminate_calls_sibling(mod, sibling, via, sup) :-
+  terminate_callback(func, mod, _),
+  reaches_from_terminate(func, via, _),
+  sync_dep(via, sibling),
+  supervisor_child(sup, _, mod, _, _),
+  supervisor_child(sup, _, sibling, _, _),
+  sibling != mod.
+
+// ── Children started into another tree's supervisor ──────────────────
+//
+// A process that starts children onto a DynamicSupervisor it does not
+// sit under ties their lifetime to that supervisor's tree, not its own.
+// When its own tree shuts down, the children stay — reconnecting,
+// logging, calling into applications that have already stopped
+// (postgrex#763: pool connections under :db_connection's supervisor
+// outliving the user's Repo). Unless terminate/2 stops them.
+.decl foreign_dynamic_children(mod: symbol, sup: symbol, via: symbol)
+.output foreign_dynamic_children
+
+.decl terminate_stops_children(mod: symbol)
+
+terminate_stops_children(mod) :-
+  terminate_callback(func, mod, _),
+  (via = func ; reaches_from_terminate(func, via, _)),
+  sup_call(_, via, _, op, _),
+  (op = "terminate_child" ; op = "stop").
+
+// A tree's members by module, and by the registered name a child spec
+// gave them (`{DynamicSupervisor, name: Pool}` is a child named Pool).
+.decl tree_member(root: symbol, member: symbol)
+
+tree_member(root, mod) :- child_subtree(root, _, mod).
+tree_member(root, name) :- supervisor_child_name(root, _, name).
+
+tree_member(root, name) :-
+  child_subtree(root, _, mid),
+  supervisor_child_name(mid, _, name).
+
+foreign_dynamic_children(mod, sup, func) :-
+  dynamic_child(sup, _, func),
+  sup != "dynamic",
+  !match("via:.*", sup),
+  function_def(func, mod, _, _, _),
+  mod != sup,
+  tree_member(root, sup),
+  !tree_member(root, mod),
+  !terminate_stops_children(mod).

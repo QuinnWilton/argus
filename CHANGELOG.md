@@ -27,6 +27,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   killed a process manager (commanded#332). The warning-grade
   `handle_info_without_catchall` now also covers GenStage.
 
+- `shutdown_safety`'s `terminate_calls_sibling` (`:warning`): terminate/2
+  synchronously calls a sibling child of the same supervisor, which the
+  supervisor may already have stopped (oban#21: the Watchman pausing its
+  Producer, `:noproc` inside terminate/2).
+- `shutdown_safety`'s `foreign_dynamic_children` (`:warning`): a process
+  starts children under a DynamicSupervisor in another tree and its
+  terminate/2 does not stop them, so they outlive it (the shape behind
+  postgrex#763; that instance passes the supervisor through a GenServer
+  message and is not yet resolved).
+
 ### Changed
 
 - `call_cycle`, `process_bottleneck`, `timeout_chain`, `sync_call_in_init`

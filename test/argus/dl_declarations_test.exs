@@ -157,8 +157,8 @@ defmodule Argus.DlDeclarationsTest do
       request_surface: ~w(call_edge code_execution function_def http_route
                           implements_behaviour unsafe_atom_creation unsafe_deserialization),
       secret_exposure: ~w(redacted_field schema_field),
-      shutdown_safety: ~w(call_edge function_def implements_behaviour impure_call trap_exit
-                          unknown_call),
+      shutdown_safety:
+        ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag dynamic_child function_def implements_behaviour impure_call sup_call supervisor_child supervisor_child_name sync_call trap_exit unknown_call),
       purity: ~w(call_edge closure_def dynamic_call ets_new ets_op impure_call port_open
            process_register protocol_dispatch pure_contract recv_start resolved_apply
            send_msg spawn_call unknown_call),

@@ -161,3 +161,171 @@ defmodule Argus.Test.Fixtures.Shutdown do
     end
   end
 end
+
+defmodule Argus.Test.Fixtures.ShutdownSiblings do
+  @moduledoc false
+
+  defmodule Sup do
+    @moduledoc false
+    use Supervisor
+
+    def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(_opts) do
+      children = [
+        Argus.Test.Fixtures.ShutdownSiblings.Producer,
+        Argus.Test.Fixtures.ShutdownSiblings.Watchman,
+        Argus.Test.Fixtures.ShutdownSiblings.CarefulWatchman
+      ]
+
+      Supervisor.init(children, strategy: :one_for_one)
+    end
+  end
+
+  defmodule Producer do
+    @moduledoc false
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+    def pause, do: GenServer.call(__MODULE__, :pause)
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def handle_call(:pause, _from, state), do: {:reply, :ok, state}
+  end
+
+  defmodule Watchman do
+    @moduledoc false
+    # oban#21: pauses its sibling producer from terminate/2 while the
+    # supervisor may already have stopped it.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      Process.flag(:trap_exit, true)
+      {:ok, state}
+    end
+
+    @impl true
+    def terminate(_reason, _state) do
+      :ok = Argus.Test.Fixtures.ShutdownSiblings.Producer.pause()
+    end
+  end
+
+  defmodule CarefulWatchman do
+    @moduledoc false
+    # Same shape, cast instead of call: nothing to wait on.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      Process.flag(:trap_exit, true)
+      {:ok, state}
+    end
+
+    @impl true
+    def terminate(_reason, _state) do
+      GenServer.cast(Argus.Test.Fixtures.ShutdownSiblings.Producer, :pause)
+    end
+  end
+end
+
+defmodule Argus.Test.Fixtures.ForeignChildren do
+  @moduledoc false
+
+  defmodule LibraryTree do
+    @moduledoc false
+    # The library's own tree: owns the DynamicSupervisor.
+    use Supervisor
+
+    def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(_opts) do
+      children = [
+        {DynamicSupervisor,
+         name: Argus.Test.Fixtures.ForeignChildren.Pool, strategy: :one_for_one}
+      ]
+
+      Supervisor.init(children, strategy: :one_for_one)
+    end
+  end
+
+  defmodule AppTree do
+    @moduledoc false
+    # The user's tree: the manager lives here, its children over there.
+    use Supervisor
+
+    def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(_opts) do
+      children = [
+        Argus.Test.Fixtures.ForeignChildren.Manager,
+        Argus.Test.Fixtures.ForeignChildren.TidyManager
+      ]
+
+      Supervisor.init(children, strategy: :one_for_one)
+    end
+  end
+
+  defmodule Worker do
+    @moduledoc false
+    use GenServer
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+    @impl true
+    def init(state), do: {:ok, state}
+  end
+
+  defmodule Manager do
+    @moduledoc false
+    # postgrex#763: starts connections under the library's supervisor and
+    # never stops them when it goes down itself.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      {:ok, _} =
+        DynamicSupervisor.start_child(
+          Argus.Test.Fixtures.ForeignChildren.Pool,
+          {Argus.Test.Fixtures.ForeignChildren.Worker, []}
+        )
+
+      {:ok, state}
+    end
+  end
+
+  defmodule TidyManager do
+    @moduledoc false
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(_state) do
+      Process.flag(:trap_exit, true)
+
+      {:ok, pid} =
+        DynamicSupervisor.start_child(
+          Argus.Test.Fixtures.ForeignChildren.Pool,
+          {Argus.Test.Fixtures.ForeignChildren.Worker, []}
+        )
+
+      {:ok, %{child: pid}}
+    end
+
+    @impl true
+    def terminate(_reason, %{child: pid}) do
+      DynamicSupervisor.terminate_child(Argus.Test.Fixtures.ForeignChildren.Pool, pid)
+    end
+  end
+end

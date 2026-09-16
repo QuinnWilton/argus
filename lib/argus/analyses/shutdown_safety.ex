@@ -50,7 +50,10 @@ defmodule Argus.Analyses.ShutdownSafety do
       Argus.Extractors.Purity,
       Argus.Extractors.OTP,
       Argus.Extractors.ApiCalls,
-      Argus.Extractors.ErrorHandling
+      Argus.Extractors.ErrorHandling,
+      Argus.Extractors.Supervision,
+      Argus.Extractors.CallbackTag,
+      Argus.Extractors.CallArgs
     ]
 
   @fields [
@@ -82,6 +85,29 @@ defmodule Argus.Analyses.ShutdownSafety do
         doc: "terminate/2 does work the effect model cannot classify, and will be skipped."
       },
       %{
+        name: :terminate_calls_sibling,
+        fields: [
+          {:mod, :symbol, "module whose terminate/2 makes the call"},
+          {:sibling, :symbol, "the sibling module called"},
+          {:via, :symbol, "function the call is made from"},
+          {:sup, :symbol, "their common supervisor"}
+        ],
+        key: [:mod, :sibling],
+        doc: "terminate/2 synchronously calls a sibling child of the same supervisor."
+      },
+      %{
+        name: :foreign_dynamic_children,
+        fields: [
+          {:mod, :symbol, "module that starts the children"},
+          {:sup, :symbol, "the DynamicSupervisor they are started under"},
+          {:via, :symbol, "function that calls start_child"}
+        ],
+        key: [:mod, :sup],
+        doc:
+          "A process starts children under a DynamicSupervisor in another tree " <>
+            "and its terminate/2 does not stop them."
+      },
+      %{
         name: :terminate_may_be_truncated,
         fields: @fields,
         key: [:mod, :category, :api],
@@ -91,6 +117,42 @@ defmodule Argus.Analyses.ShutdownSafety do
   end
 
   @impl true
+  def finding(:terminate_calls_sibling, [mod, sibling, via, sup]) do
+    Findings.new(
+      :warning,
+      "terminate/2 calls a sibling that may already be down",
+      "#{mod}'s terminate/2 waits on #{sibling} (through #{via}), and both are " <>
+        "children of #{sup}. A supervisor stops its children one at a time, in " <>
+        "reverse start order, so while #{mod} is terminating #{sibling} may already " <>
+        "have exited: the call exits with :noproc and terminate/2 crashes, " <>
+        "skipping whatever cleanup followed.",
+      at: Findings.at_func(via),
+      at_label: "synchronous call to a sibling during shutdown",
+      help: [
+        "wrap the call in `try ... catch :exit, _ -> :ok`, or make it a cast",
+        "if #{sibling} must outlive #{mod}, start it earlier under a `rest_for_one` supervisor"
+      ]
+    )
+  end
+
+  def finding(:foreign_dynamic_children, [mod, sup, via]) do
+    Findings.new(
+      :warning,
+      "children started under another tree outlive their owner",
+      "#{via} starts children under #{sup}, a DynamicSupervisor #{mod} does not sit " <>
+        "under. Their lifetime follows #{sup}'s tree, not #{mod}'s: when #{mod}'s tree " <>
+        "shuts down they keep running — reconnecting, logging, calling into " <>
+        "applications that have already stopped — and #{mod}'s terminate/2 does " <>
+        "not stop them.",
+      at: Findings.at_func(via),
+      at_label: "start_child onto a supervisor in another tree",
+      help: [
+        "give #{mod} a terminate/2 (trapping exits) that terminates the children it started",
+        "or start them under a DynamicSupervisor in #{mod}'s own tree"
+      ]
+    )
+  end
+
   def finding(:cleanup_never_runs, [mod, behaviour, category, api, via]) do
     Findings.new(
       :error,
