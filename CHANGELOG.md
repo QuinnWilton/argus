@@ -19,6 +19,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   any comparison in the body.
 - `call_never_replied`'s walker keys revisits on the `from`/event alias
   sets too, so a block re-entered with `from` elsewhere is not pruned.
+- Tag resolution of dynamic call targets is stricter and shows its
+  work. A tag is no longer attributed by uniqueness when it is generic
+  (`:get`, `:stop`, `:state`, ...) or when some `handle_info/2` also
+  matches it; when several modules handle a tag, the one the caller's
+  module refers to statically (its start_link, its API) wins. Cycle
+  edges (`call_cycle_path`) and chains (`timeout_chain_risk`) carry a
+  new column, `"tag"` or `"static"`, and their findings say when an
+  edge is inferred from a tag. Both are positional output changes for
+  readers of those relations.
 
 ## 0.12.1 — 2026-09-16
 

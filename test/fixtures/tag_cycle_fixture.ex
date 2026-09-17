@@ -65,3 +65,77 @@ defmodule Argus.Test.Fixtures.TagProxy do
   @impl true
   def handle_cast(:tick, state), do: {:noreply, state}
 end
+
+defmodule Argus.Test.Fixtures.TagGetServer do
+  @moduledoc false
+  # The only handler of `:get` in the fixture set — and `:get` names nothing.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(v), do: {:ok, v}
+
+  @impl true
+  def handle_call(:get, _from, v), do: {:reply, v, v}
+end
+
+defmodule Argus.Test.Fixtures.TagGenericClient do
+  @moduledoc false
+  def get(pid), do: GenServer.call(pid, :get)
+end
+
+defmodule Argus.Test.Fixtures.TagBumpServer do
+  @moduledoc false
+  # Handles {:bump, n} in handle_call — but so does a handle_info elsewhere,
+  # so a pid sent {:bump, n} may be anything.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(v), do: {:ok, v}
+
+  @impl true
+  def handle_call({:bump, n}, _from, v), do: {:reply, v + n, v + n}
+end
+
+defmodule Argus.Test.Fixtures.TagBumpListener do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(v), do: {:ok, v}
+
+  @impl true
+  def handle_info({:bump, n}, v), do: {:noreply, v + n}
+end
+
+defmodule Argus.Test.Fixtures.TagBumpClient do
+  @moduledoc false
+  def bump(pid, n), do: GenServer.call(pid, {:bump, n})
+end
+
+defmodule Argus.Test.Fixtures.TagPool do
+  @moduledoc false
+  # Refers to TagServerA (starts it) and asks a pid for :shared_status,
+  # which both tag servers answer: the reference breaks the tie.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  def status(pool), do: GenServer.call(pool, :pool_status)
+
+  @impl true
+  def init(_) do
+    {:ok, pid} = Argus.Test.Fixtures.TagServerA.start_link(self())
+    {:ok, %{worker: pid}}
+  end
+
+  @impl true
+  def handle_call(:pool_status, _from, state) do
+    {:reply, GenServer.call(state.worker, :shared_status), state}
+  end
+end

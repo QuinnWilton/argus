@@ -65,7 +65,8 @@ defmodule Argus.Analyses.TimeoutChain do
         fields: [
           {:from, :symbol, "outermost GenServer module"},
           {:to, :symbol, "innermost GenServer module"},
-          {:depth, :number, "chain depth (>= 2)"}
+          {:depth, :number, "chain depth (>= 2)"},
+          {:inferred, :symbol, "'tag' when a hop is attributed by message tag, else 'static'"}
         ],
         # One finding per (from, to) module pair. The depth relation is
         # recursive with only a `from != to` guard, so a genuine cycle
@@ -104,7 +105,14 @@ defmodule Argus.Analyses.TimeoutChain do
   end
 
   @impl true
-  def finding(:timeout_chain_risk, [from, to, depth]) do
+  def finding(:timeout_chain_risk, [from, to, depth, inferred]) do
+    inferred_note =
+      if inferred == "tag",
+        do:
+          " At least one hop is inferred: a call targets a pid or name held in " <>
+            "state, attributed to the module whose handle_call/3 matches its tag.",
+        else: ""
+
     Findings.new(
       :warning,
       "GenServer call chain of depth #{depth}",
@@ -112,9 +120,14 @@ defmodule Argus.Analyses.TimeoutChain do
         "#{to}. GenServer.call's default 5000ms timeout applies per hop, so " <>
         "the deadlines compose unpredictably: a slow leaf times out every " <>
         "caller above it, and each level retries or crashes on its own " <>
-        "schedule.",
+        "schedule." <> inferred_note,
       at: Findings.at_mfa(from, :handle_call, 3),
-      related: [Findings.related("innermost callee", Findings.at_module(to))]
+      related: [Findings.related("innermost callee", Findings.at_module(to))],
+      help:
+        if(inferred == "tag",
+          do: ["check the inferred hop: if that pid is a different server, the chain is shorter"],
+          else: []
+        )
     )
   end
 

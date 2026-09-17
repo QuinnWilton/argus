@@ -36,11 +36,22 @@ call_cycle(a, b, wa, wb) :-
 
 // Full path of transitive sync dependencies for cycle participants.
 // One row per witness — finding builders dedupe on (from_mod, to_mod).
-.decl call_cycle_path(from_mod: symbol, to_mod: symbol, witness: symbol)
+// `how` is "tag" when the edge exists only because a dynamic-target call
+// was attributed by its message tag, "static" when the callee is named:
+// an inferred edge is the first thing to doubt in a surprising cycle.
+.decl call_cycle_path(from_mod: symbol, to_mod: symbol, witness: symbol, how: symbol)
 .output call_cycle_path
 
-call_cycle_path(from_mod, to_mod, witness) :-
+call_cycle_path(from_mod, to_mod, witness, "tag") :-
   call_cycle(a, b, _, _),
   module_sync_dep(from_mod, to_mod, witness),
   (from_mod = a ; from_mod = b),
-  (to_mod = a ; to_mod = b).
+  (to_mod = a ; to_mod = b),
+  reaches_tag_dep(witness, to_mod).
+
+call_cycle_path(from_mod, to_mod, witness, "static") :-
+  call_cycle(a, b, _, _),
+  module_sync_dep(from_mod, to_mod, witness),
+  (from_mod = a ; from_mod = b),
+  (to_mod = a ; to_mod = b),
+  !reaches_tag_dep(witness, to_mod).

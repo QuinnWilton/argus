@@ -66,12 +66,39 @@ timeout_chain(from, to, d + 1) :-
 
 // Chains of depth >= 2 are risky: the outermost caller's timeout must
 // accommodate the sum of all intermediate timeouts.
-.decl timeout_chain_risk(from: symbol, to: symbol, depth: number)
+// A hop that exists only by tag attribution, and the chains that cross
+// one: an inferred hop is the first thing to doubt in a long chain.
+.decl callback_tag_dep(from_mod: symbol, to_mod: symbol)
+
+callback_tag_dep(from_mod, to_mod) :-
+  handle_call_function(from_mod, func),
+  reaches_tag_dep(func, to_mod),
+  from_mod != to_mod.
+
+.decl timeout_chain_inferred(from: symbol, to: symbol)
+
+timeout_chain_inferred(from, to) :-
+  timeout_chain(from, to, _),
+  callback_tag_dep(from, to).
+
+timeout_chain_inferred(from, to) :-
+  callback_sync_dep(from, mid),
+  timeout_chain(mid, to, _),
+  from != to,
+  (callback_tag_dep(from, mid) ; timeout_chain_inferred(mid, to)).
+
+.decl timeout_chain_risk(from: symbol, to: symbol, depth: number, inferred: symbol)
 .output timeout_chain_risk
 
-timeout_chain_risk(from, to, depth) :-
+timeout_chain_risk(from, to, depth, "tag") :-
   timeout_chain(from, to, depth),
-  depth >= 2.
+  depth >= 2,
+  timeout_chain_inferred(from, to).
+
+timeout_chain_risk(from, to, depth, "static") :-
+  timeout_chain(from, to, depth),
+  depth >= 2,
+  !timeout_chain_inferred(from, to).
 
 // ── Output: blocking cast handler ────────────────────────────────────
 

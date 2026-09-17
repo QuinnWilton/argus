@@ -24,7 +24,7 @@ defmodule Argus.Analyses.TimeoutChainTest do
       assert risks != []
 
       # ServerA → ServerB → ServerC is a chain of depth 2.
-      assert Enum.any?(risks, fn [from, to, depth] ->
+      assert Enum.any?(risks, fn [from, to, depth, _inferred] ->
                from == "Argus.Test.Fixtures.TimeoutChain.ServerA" and
                  to == "Argus.Test.Fixtures.TimeoutChain.ServerC" and
                  depth == "2"

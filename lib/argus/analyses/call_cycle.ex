@@ -68,7 +68,8 @@ defmodule Argus.Analyses.CallCycle do
         fields: [
           {:from_mod, :symbol, "source module"},
           {:to_mod, :symbol, "target module"},
-          {:witness, :symbol, "function in from_mod carrying the dependency"}
+          {:witness, :symbol, "function in from_mod carrying the dependency"},
+          {:how, :symbol, "'tag' when the edge is attributed by message tag, else 'static'"}
         ],
         key: [:from_mod, :to_mod],
         doc: "Transitive sync dependency edge between cycle participants."
@@ -91,14 +92,29 @@ defmodule Argus.Analyses.CallCycle do
     )
   end
 
-  def finding(:call_cycle_path, [from_mod, to_mod, witness]) do
+  def finding(:call_cycle_path, [from_mod, to_mod, witness, how]) do
+    {detail, help} =
+      case how do
+        "tag" ->
+          {"Synchronous dependency edge between call-cycle participants — the " <>
+             "evidence behind a call_cycle finding. This edge is inferred: the call " <>
+             "targets a pid or a name held in state, and #{to_mod} is the module " <>
+             "whose handle_call/3 matches the message tag it sends.",
+           ["if #{to_mod} is not the process behind that pid, the cycle is not real"]}
+
+        _ ->
+          {"Synchronous dependency edge between call-cycle participants — the " <>
+             "evidence behind a call_cycle finding.", []}
+      end
+
     Findings.new(
       :info,
       "Cycle edge: #{from_mod} → #{to_mod}",
-      "Synchronous dependency edge between call-cycle participants — the " <>
-        "evidence behind a call_cycle finding.",
+      detail,
       at: Findings.at_func(witness),
-      related: [Findings.related("callee", Findings.at_module(to_mod))]
+      at_label: if(how == "tag", do: "inferred from the message tag", else: nil),
+      related: [Findings.related("callee", Findings.at_module(to_mod))],
+      help: help
     )
   end
 end

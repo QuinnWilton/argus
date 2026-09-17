@@ -77,4 +77,66 @@ defmodule Argus.Clientlib.TagResolutionTest do
              func == "Argus.Test.Fixtures.TagProxy:status/1"
            end)
   end
+
+  test "a generic tag names no server even with one handler", %{tmp_dir: tmp_dir} do
+    skip_without_souffle()
+
+    results =
+      solve(tmp_dir, [Argus.Test.Fixtures.TagGetServer, Argus.Test.Fixtures.TagGenericClient], [
+        "tag_handler_count",
+        "tag_resolved_call"
+      ])
+
+    assert ["call", ":get", "1"] in results["tag_handler_count"]
+    assert results["tag_resolved_call"] == []
+  end
+
+  test "a tag a handle_info also matches is not evidence", %{tmp_dir: tmp_dir} do
+    skip_without_souffle()
+
+    results =
+      solve(
+        tmp_dir,
+        [
+          Argus.Test.Fixtures.TagBumpServer,
+          Argus.Test.Fixtures.TagBumpListener,
+          Argus.Test.Fixtures.TagBumpClient
+        ],
+        ["tag_resolved_call"]
+      )
+
+    assert results["tag_resolved_call"] == []
+  end
+
+  test "among several handlers, the one the caller's module refers to wins",
+       %{tmp_dir: tmp_dir} do
+    skip_without_souffle()
+
+    results =
+      solve(
+        tmp_dir,
+        [
+          Argus.Test.Fixtures.TagServerA,
+          Argus.Test.Fixtures.TagServerB,
+          Argus.Test.Fixtures.TagPool
+        ],
+        ["tag_resolved_call"]
+      )
+
+    pool = "Argus.Test.Fixtures.TagPool:handle_call/3"
+
+    assert [pool, "call", "Argus.Test.Fixtures.TagServerA"] in results["tag_resolved_call"]
+    refute [pool, "call", "Argus.Test.Fixtures.TagServerB"] in results["tag_resolved_call"]
+  end
+
+  test "a cycle edge that exists only by tag attribution says so" do
+    skip_without_souffle()
+
+    {:ok, results} =
+      Argus.analyze([Argus.Test.Fixtures.TagServerA, Argus.Test.Fixtures.TagServerB], :call_cycle)
+
+    assert [[_, _, _, _]] = results["call_cycle"]
+    assert Enum.all?(results["call_cycle_path"], fn [_, _, _, how] -> how == "tag" end)
+    assert results["call_cycle_path"] != []
+  end
 end

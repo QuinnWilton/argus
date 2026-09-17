@@ -144,14 +144,98 @@ tag_handler_count(kind, tag, n) :-
   tag_handler(_, kind, tag),
   n = count : { tag_handler(_, kind, tag) }.
 
+// Tags too generic to name a server: every second GenServer answers
+// `:get` or `:stop`, and a program that happens to have one such
+// handler in the analyzed set says nothing about who a pid is.
+.decl generic_tag(tag: symbol)
+
+generic_tag(":get").
+generic_tag(":put").
+generic_tag(":set").
+generic_tag(":stop").
+generic_tag(":start").
+generic_tag(":ping").
+generic_tag(":state").
+generic_tag(":status").
+generic_tag(":info").
+generic_tag(":sync").
+generic_tag(":flush").
+generic_tag(":reset").
+generic_tag(":refresh").
+generic_tag(":reload").
+generic_tag(":ok").
+
+// A tag some handle_info/2 also matches is a message shape shared by
+// more than servers, so a handle_call matching it is weak evidence.
+.decl info_tag(tag: symbol)
+
+info_tag(tag) :- callback_tag(_, "handle_info", tag).
+
+// Evidence from the caller's own module: it calls into the handler's
+// module statically somewhere (its start_link, its API), which is what a
+// module that holds that server's pid in its state looks like. Among
+// several handlers of a tag, the one the caller's module refers to wins.
+// Read from the staged call graph, not remote_call: the latter is a
+// stage-0 ingredient no analysis reads directly.
+.decl module_refers(mod: symbol, other: symbol)
+
+module_refers(mod, other) :-
+  call_edge(f, g),
+  function_def(f, mod, _, _, _),
+  function_def(g, other, _, _, _),
+  mod != other.
+
+.decl referred_handler(from_mod: symbol, kind: symbol, tag: symbol, mod: symbol)
+
+referred_handler(fm, kind, tag, mod) :-
+  tag_handler(mod, kind, tag),
+  module_refers(fm, mod).
+
+.decl referred_handler_count(from_mod: symbol, kind: symbol, tag: symbol, n: number)
+
+referred_handler_count(fm, kind, tag, n) :-
+  referred_handler(fm, kind, tag, _),
+  n = count : { referred_handler(fm, kind, tag, _) }.
+
 .decl tag_resolved_call(func: symbol, kind: symbol, mod: symbol)
 
+// By evidence: the caller's module refers to exactly one handler of the tag.
+tag_resolved_call(func, kind, mod) :-
+  call_tag(_, func, kind, tag),
+  function_def(func, fm, _, _, _),
+  referred_handler(fm, kind, tag, mod),
+  referred_handler_count(fm, kind, tag, 1),
+  fm != mod.
+
+// By uniqueness: one handler in the whole program, for a tag specific
+// enough to name it, and no evidence pointing elsewhere.
 tag_resolved_call(func, kind, mod) :-
   call_tag(_, func, kind, tag),
   tag_handler(mod, kind, tag),
   tag_handler_count(kind, tag, 1),
+  !generic_tag(tag),
+  !info_tag(tag),
   function_def(func, fm, _, _, _),
-  fm != mod.
+  fm != mod,
+  !referred_handler(fm, kind, tag, _).
+
+// The sync dependencies that exist only by tag attribution, propagated
+// backwards like reaches_sync_dep, so a consumer can mark an inferred
+// edge for the reader.
+.decl tag_dep(func: symbol, mod: symbol)
+
+tag_dep(f, m) :-
+  tag_resolved_call(f, "call", m),
+  sync_call(f, t),
+  unresolved_target(t).
+
+.decl reaches_tag_dep(func: symbol, mod: symbol)
+
+reaches_tag_dep(f, m) :- tag_dep(f, m).
+
+reaches_tag_dep(f, m) :-
+  call_edge(f, g),
+  reaches_tag_dep(g, m).
 
 sync_dep(f, m) :-
   tag_resolved_call(f, "call", m),
