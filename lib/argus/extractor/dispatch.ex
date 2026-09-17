@@ -95,17 +95,17 @@ defmodule Argus.Extractor.Dispatch do
       else: state
   end
 
-  defp head_step({:test, _op, {:f, l}, args}, state, _register, _entry) when is_list(args) do
-    head_test(state, Enum.any?(args, &tracked?(&1, state.tracked)), l)
+  defp head_step({:test, _op, {:f, l}, args}, state, _register, entry) when is_list(args) do
+    head_test(state, Enum.any?(args, &tracked?(&1, state.tracked)), l, entry)
   end
 
-  defp head_step({:test, _op, {:f, l}, src, _fields}, state, _register, _entry) do
-    head_test(state, tracked?(src, state.tracked), l)
+  defp head_step({:test, _op, {:f, l}, src, _fields}, state, _register, entry) do
+    head_test(state, tracked?(src, state.tracked), l, entry)
   end
 
-  defp head_step({op, src, {:f, l}, _list}, state, _register, _entry)
+  defp head_step({op, src, {:f, l}, _list}, state, _register, entry)
        when op in [:select_val, :select_tuple_arity] do
-    head_test(state, tracked?(src, state.tracked), l)
+    head_test(state, tracked?(src, state.tracked), l, entry)
   end
 
   defp head_step({:move, src, dst}, state, _register, _entry),
@@ -139,10 +139,18 @@ defmodule Argus.Extractor.Dispatch do
     end
   end
 
-  defp head_test(%{body: true} = state, _tested?, _label), do: state
+  # Which fail labels start the next clause: those of tests on the
+  # message. A test on another argument before the body is either a head
+  # pattern on the state — its fail label is func_info, never jumped to
+  # — or the first instruction of the body (`state.acks` compiles to
+  # `is_map` with a fallback branch), whose fail label is a branch within
+  # this clause. Neither opens a clause.
+  defp head_test(%{body: true} = state, _tested?, _label, _entry), do: state
 
-  defp head_test(state, tested?, label),
-    do: %{state | tested: state.tested or tested?, heads: MapSet.put(state.heads, label)}
+  defp head_test(state, tested?, label, entry) do
+    heads = if tested? or label == entry, do: MapSet.put(state.heads, label), else: state.heads
+    %{state | tested: state.tested or tested?, heads: heads}
+  end
 
   defp track(tracked, src, dst) do
     case {reg(src), reg(dst)} do
