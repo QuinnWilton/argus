@@ -10,7 +10,7 @@
 //    branch/test instruction follows it in the function.
 
 .include "../clientlib/imports.dl"
-.include "../clientlib/behaviours.dl"
+.include "../clientlib/otp.dl"
 
 // ── Additional base facts ──────────────────────────────────────────────
 
@@ -220,3 +220,35 @@ linked_task_in_library(owner, id) :-
   !behaves_as(mod, _),
   !task_factory(owner, _),
   has_await(owner).
+
+// ── async_nolink whose messages nothing handles ───────────────────────
+//
+// Task.Supervisor.async_nolink sends the caller two messages it did not
+// ask for by name: `{ref, result}` and `{:DOWN, ref, :process, pid,
+// reason}`. A GenServer that starts one from a callback and does not
+// collect it there must handle both in handle_info/2; a partial
+// handle_info is a FunctionClauseError on the first task that finishes
+// (archethic-node#1306, sentry-elixir#172, Engram#1552). GenServer's
+// default handle_info logs and ignores, so only a module with its own
+// partial handle_info/2 is at risk.
+.decl reaches_nolink(func: symbol, start: symbol)
+
+reaches_nolink(f, f) :- mailbox_writer(_, f, "task_nolink").
+reaches_nolink(f, s) :- call_edge(f, g), reaches_nolink(g, s).
+
+.decl nolink_messages_unhandled(mod: symbol, start: symbol, handler: symbol, missing: symbol)
+.output nolink_messages_unhandled
+
+nolink_messages_unhandled(mod, s, h, "reply") :-
+  process_entry(mod, c),
+  reaches_nolink(c, s),
+  function_def(h, mod, "handle_info", 2, _),
+  !callback_total(h, "handle_info"),
+  !callback_ref_head(h, "handle_info").
+
+nolink_messages_unhandled(mod, s, h, "down") :-
+  process_entry(mod, c),
+  reaches_nolink(c, s),
+  function_def(h, mod, "handle_info", 2, _),
+  !callback_total(h, "handle_info"),
+  !callback_tag(h, "handle_info", ":DOWN").

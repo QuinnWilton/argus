@@ -48,6 +48,7 @@ defmodule Argus.Analyses.Supervision do
     do: [
       Argus.Extractors.CallbackTag,
       Argus.Extractors.Monitor,
+      Argus.Extractors.ProcessRegistry,
       Argus.Extractors.Supervision,
       Argus.Extractors.OTP,
       Argus.Extractors.ApiCalls,
@@ -112,6 +113,15 @@ defmodule Argus.Analyses.Supervision do
         doc:
           "Under rest_for_one a later child starts processes inside an earlier one; " <>
             "the owner's restart leaves them running."
+      },
+      %{
+        name: :cached_sibling_pid,
+        fields: [
+          {:mod, :symbol, "the module caching the pid"},
+          {:name, :symbol, "the sibling looked up"},
+          {:sup, :symbol, "their one_for_one supervisor"}
+        ],
+        doc: "init/1 caches a sibling's pid that a one_for_one restart makes stale."
       },
       %{
         name: :consumer_supervisor_permanent_child,
@@ -228,6 +238,23 @@ defmodule Argus.Analyses.Supervision do
       related: [
         Findings.related("dependency call", Findings.at_func(witness)),
         Findings.related("#{restart} sibling", Findings.at_module(sibling))
+      ]
+    )
+  end
+
+  def finding(:cached_sibling_pid, [mod, name, sup]) do
+    Findings.new(
+      :info,
+      "Sibling pid cached in init/1 under one_for_one",
+      "#{mod}'s init/1 looks up #{name} and its handlers call a pid held in " <>
+        "state. Both are children of #{sup}, a :one_for_one supervisor: when " <>
+        "#{name} restarts, #{mod} does not, and the cached pid is a dead " <>
+        "process — every call :noproc, every message lost.",
+      at: Findings.at_mfa(mod, :init, 1),
+      at_label: "looks the sibling up here",
+      help: [
+        "call the sibling by its registered name (or a :via tuple) instead of a cached pid",
+        "or make the dependency explicit with :rest_for_one, #{name} first"
       ]
     )
   end

@@ -37,6 +37,7 @@ defmodule Mix.Tasks.Argus.Pins do
 
       true ->
         File.write!(@target, render(inputs))
+        Mix.Task.run("format", [@target])
         Mix.shell().info("wrote #{@target}")
     end
   end

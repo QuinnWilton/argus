@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 34
+  @schema_version 35
 
   # Layer 1: Module-level facts.
 
@@ -1002,9 +1002,9 @@ defmodule Argus.Schema do
       {:id, :symbol, "the call site"},
       {:func, :symbol, "calling function ID"},
       {:api, :symbol,
-       "the supervisor module: Supervisor, DynamicSupervisor, Task.Supervisor " <>
-         "or PartitionSupervisor"},
-      {:op, :symbol, "the function: start_child, terminate_child, which_children, ..."},
+       "the module: Supervisor, DynamicSupervisor, Task.Supervisor, " <>
+         "PartitionSupervisor, or GenServer for stop"},
+      {:op, :symbol, "the function: start_child, terminate_child, which_children, stop, ..."},
       {:target, :symbol, "the supervisor argument: a module atom, 'via:Registry', or 'dynamic'"}
     ],
     doc: """
@@ -1171,7 +1171,8 @@ defmodule Argus.Schema do
     fields: [
       {:id, :symbol, "the call site"},
       {:func, :symbol, "the function"},
-      {:kind, :symbol, "'task' | 'timer' | 'pubsub' | 'self' | 'apply'"}
+      {:kind, :symbol,
+       "'task' | 'task_nolink' | 'timer' | 'timer_bare' | 'cancel' | 'pubsub' | 'self' | 'apply'"}
     ],
     doc: """
     A call after which something other than a peer's request can land in \
@@ -1179,6 +1180,59 @@ defmodule Argus.Schema do
     subscription's broadcasts, a message the function sends to itself, \
     or caller-supplied code run through a closure or apply. What makes a \
     partial handle_info/2 a risk rather than a style note.
+    """
+  }
+
+  @timer_arm %{
+    name: :timer_arm,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the send_after / send_interval site"},
+      {:func, :symbol, "the function"},
+      {:target, :symbol, "'self' | 'other'"},
+      {:message, :symbol, "'bare' | 'param' | 'dynamic'"},
+      {:param, :number, "the parameter position when message is 'param', else -1"}
+    ],
+    doc: """
+    A timer armed at `id`: whether it targets the arming process, and \
+    whether its message is a literal that cannot be told from an earlier \
+    instance of itself ('bare'), one of the function's own parameters \
+    ('param', with its position, for a rule to resolve at the callers \
+    through resolved_arg), or a computed value such as a ref \
+    ('dynamic'). Refines the `timer` / `timer_bare` kinds of \
+    mailbox_writer.
+    """
+  }
+
+  @rpc_result %{
+    name: :rpc_result,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the rpc call site"},
+      {:func, :symbol, "the function"},
+      {:handling, :symbol, "'badrpc' | 'boolean' | 'case' | 'matched' | 'returned' | 'other'"}
+    ],
+    doc: """
+    How the result of an :rpc.call / :rpc.multicall / :erpc.call is \
+    treated: compared to :badrpc somewhere in the function; tested as a \
+    boolean (where a {:badrpc, _} tuple is truthy); matched by shape in a \
+    function with a clause-less exit (a CaseClauseError or MatchError on \
+    {:badrpc, _}); matched with a wildcard; returned as the function's own \
+    result; or stored or passed on unexamined.
+    """
+  }
+
+  @callback_ref_head %{
+    name: :callback_ref_head,
+    layer: 2,
+    fields: [
+      {:func, :symbol, "the callback"},
+      {:callback, :symbol, "'handle_call' | 'handle_cast' | 'handle_info'"}
+    ],
+    doc: """
+    The callback has a clause whose message is a tuple headed by a \
+    reference — `{ref, result} when is_reference(ref)`, the reply of a \
+    task started with async_nolink.
     """
   }
 
@@ -1729,6 +1783,9 @@ defmodule Argus.Schema do
     @catch_tag,
     @catch_falls_through,
     @try_call,
+    @rpc_result,
+    @timer_arm,
+    @callback_ref_head,
     @mailbox_writer,
     @trap_exit,
     @exit_call,

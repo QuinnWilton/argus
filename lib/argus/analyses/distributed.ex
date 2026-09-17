@@ -59,6 +59,17 @@ defmodule Argus.Analyses.Distributed do
           "A rescue around :erpc.call unwraps remote exceptions but has no clause for transport failures."
       },
       %{
+        name: :rpc_result_unhandled,
+        fields: [
+          {:func, :symbol, "function making the rpc"},
+          {:site, :symbol, "the rpc call"},
+          {:variant, :symbol, "rpc | multicall | erpc"},
+          {:shape, :symbol, "'case' (matched by shape, no clause) or 'boolean' (truthy tuple)"}
+        ],
+        key: [:func, :site],
+        doc: "An rpc result whose failure value is not handled."
+      },
+      %{
         name: :rpc_without_timeout,
         fields: [
           {:func, :symbol, "function with infinity RPC"},
@@ -132,6 +143,46 @@ defmodule Argus.Analyses.Distributed do
       at: Findings.at_site(site, func),
       at_label: "rescue without an {:erpc, _} clause",
       help: ["add a clause for `{:erpc, reason}` and return or raise a meaningful error"]
+    )
+  end
+
+  def finding(:rpc_result_unhandled, [func, site, "erpc", "boolean"]) do
+    Findings.new(
+      :warning,
+      ":erpc.call in a boolean context with no rescue",
+      "#{func} uses the result of :erpc.call as a boolean. A node that went " <>
+        "away between the check that chose it and the call raises " <>
+        "`{:erpc, :noconnection}` here, and nothing rescues it.",
+      at: Findings.at_site(site, func),
+      at_label: "raises on a gone node",
+      help: ["rescue ErlangError with `{:erpc, :noconnection}` and treat it as false"]
+    )
+  end
+
+  def finding(:rpc_result_unhandled, [func, site, variant, "boolean"]) do
+    Findings.new(
+      :warning,
+      "RPC result used as a boolean",
+      "#{func} uses the result of :rpc.#{variant} as a boolean. A node that is " <>
+        "gone answers `{:badrpc, :nodedown}` (a timeout `{:badrpc, :timeout}`), " <>
+        "and a tuple is truthy: the failure reads as true.",
+      at: Findings.at_site(site, func),
+      at_label: "{:badrpc, _} is truthy here",
+      help: ["match `{:badrpc, _}` explicitly before treating the result as a boolean"]
+    )
+  end
+
+  def finding(:rpc_result_unhandled, [func, site, variant, _shape]) do
+    Findings.new(
+      :warning,
+      "RPC result matched without a {:badrpc, _} clause",
+      "#{func} matches the result of :rpc.#{variant} by shape and has no clause " <>
+        "for `{:badrpc, reason}` — a node that is down, a timeout, a remote " <>
+        "exit — so a cluster failure is a CaseClauseError (or MatchError) " <>
+        "instead of an error value.",
+      at: Findings.at_site(site, func),
+      at_label: "no {:badrpc, _} clause",
+      help: ["add a `{:badrpc, reason} -> {:error, reason}` clause, or move to :erpc and rescue"]
     )
   end
 

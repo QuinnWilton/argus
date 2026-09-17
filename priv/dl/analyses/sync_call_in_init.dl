@@ -143,14 +143,16 @@ init_deadlock_risk(sup, child, dep, cpos, dpos) :-
 
 sup_call_in_init(mod, api, op, target, site) :-
   init_function(mod, func),
-  sup_call(site, func, api, op, target).
+  sup_call(site, func, api, op, target),
+  api != "GenServer".
 
 // Backwards from the supervisor calls, which are few.
 .decl reaches_sup_call(func: symbol, site: symbol)
 
 reaches_sup_call(f, site) :-
   call_edge(f, g),
-  sup_call(site, g, _, _, _).
+  sup_call(site, g, api, _, _),
+  api != "GenServer".
 
 reaches_sup_call(f, site) :-
   call_edge(f, g),
@@ -159,7 +161,8 @@ reaches_sup_call(f, site) :-
 sup_call_in_init(mod, api, op, target, site) :-
   init_function(mod, func),
   reaches_sup_call(func, site),
-  sup_call(site, _, api, op, target).
+  sup_call(site, _, api, op, target),
+  api != "GenServer".
 
 // Only operations with no bound of their own count. terminate_child,
 // stop and their relatives wait for a whole shutdown, and a
@@ -178,13 +181,15 @@ unbounded_sup_op("stop").
 
 handler_blocks(mod, h, site) :-
   handler_function(mod, h),
-  sup_call(site, h, _, op, _),
+  sup_call(site, h, api, op, _),
+  api != "GenServer",
   unbounded_sup_op(op).
 
 handler_blocks(mod, h, site) :-
   handler_function(mod, h),
   reaches_sup_call(h, site),
-  sup_call(site, _, _, op, _),
+  sup_call(site, _, api, op, _),
+  api != "GenServer",
   unbounded_sup_op(op).
 
 handler_blocks(mod, h, site) :-
@@ -252,3 +257,42 @@ blocking_recv_in_init(mod, r) :-
   init_function(mod, f),
   reaches_infinite_recv(f, r).
 
+// ── A connection made in init/1 with no way to try again ─────────────
+//
+// A child that connects to an external dependency in init/1 and stops
+// or raises when it cannot is restarted by its supervisor, immediately,
+// until the intensity is spent — and then the tree, usually the whole
+// application, goes down at boot because a dependency was slow to come
+// up (tortoise#46, grpc-elixir#557, newrelic/elixir_agent#181,
+// brod#666). The fixes all defer the connect to a timer or a
+// handle_continue with backoff, which is what the rule looks for.
+.decl connect_api(api: symbol)
+
+connect_api(api) :- impure_call(_, _, api, "network", _), match(":gen_tcp.connect/.*", api).
+connect_api(api) :- impure_call(_, _, api, "network", _), match(":ssl.connect/.*", api).
+connect_api(api) :- impure_call(_, _, api, "network", _), match(":gen_udp.open/.*", api).
+connect_api(api) :- impure_call(_, _, api, "network", _), match(":httpc.request/.*", api).
+
+.decl reaches_connect(func: symbol, api: symbol)
+
+reaches_connect(f, api) :- impure_call(_, f, api, "network", _), connect_api(api).
+reaches_connect(f, api) :- call_edge(f, g), reaches_connect(g, api).
+
+.decl has_reconnect_path(mod: symbol)
+
+has_reconnect_path(mod) :- mailbox_writer(_, f, "timer"), function_def(f, mod, _, _, _).
+has_reconnect_path(mod) :- mailbox_writer(_, f, "timer_bare"), function_def(f, mod, _, _, _).
+has_reconnect_path(mod) :- mailbox_writer(_, f, "self"), function_def(f, mod, _, _, _).
+has_reconnect_path(mod) :- init_continues_to(mod, _).
+has_reconnect_path(mod) :- handle_continue_clause(mod, _, _).
+// A gen_statem retries through its own timeouts (postgrex's connections
+// arm {{:timeout, :backoff}, ms, nil}).
+has_reconnect_path(mod) :- statem_timeout(mod, _, _, _).
+
+.decl connect_in_init_without_backoff(mod: symbol, api: symbol)
+.output connect_in_init_without_backoff
+
+connect_in_init_without_backoff(mod, api) :-
+  init_function(mod, f),
+  reaches_connect(f, api),
+  !has_reconnect_path(mod).

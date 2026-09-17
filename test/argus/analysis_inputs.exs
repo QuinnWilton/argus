@@ -13,9 +13,9 @@
   deferred_startup_deadlock:
     ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag callback_timeout dynamic_child function_def handle_continue_clause implements_behaviour init_continues_to supervisor supervisor_child sync_call try_start),
   distributed:
-    ~w(call_edge catch_falls_through catch_tag distributed_store_op function_def global_op global_register implements_behaviour node_operation rpc_call try_call),
+    ~w(call_edge catch_falls_through catch_tag catch_total distributed_store_op function_def global_op global_register implements_behaviour node_operation rpc_call rpc_result try_call),
   error_handling:
-    ~w(bare_rescue call_edge callback_tag callback_total catch_tag catch_total exit_call function_def ignored_error_result implements_behaviour mailbox_writer monitor_call sync_call_timeout trap_exit try_call),
+    ~w(bare_rescue call_arg call_arg_forward call_edge callback_tag callback_total catch_tag catch_total exit_call function_def ignored_error_result implements_behaviour mailbox_writer monitor_call recv_start sync_call_timeout timer_arm trap_exit try_call),
   ets:
     ~w(call_arg call_arg_forward call_edge catch_tag catch_total closure_def dynamic_child ets_new ets_op ets_op_param ets_option function_def implements_behaviour statem_event_clause supervisor_child),
   gen_statem:
@@ -38,9 +38,9 @@
   shutdown_safety:
     ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag catch_tag catch_total closure_def dynamic_child function_def implements_behaviour impure_call statem_event_clause sup_call supervisor_child supervisor_child_name sync_call trap_exit unknown_call),
   supervision:
-    ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_stop_reason callback_tag child_spec_restart dynamic_child function_def implements_behaviour matches_down monitor_call post_start_call remote_call sup_call supervisor supervisor_child supervisor_child_form supervisor_child_name supervisor_site sync_call),
+    ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_stop_reason callback_tag child_spec_restart dynamic_child function_def implements_behaviour matches_down monitor_call post_start_call remote_call sup_call supervisor supervisor_child supervisor_child_form supervisor_child_name supervisor_site sync_call whereis_call),
   sync_call_in_init:
-    ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag dynamic_child function_def implements_behaviour recv_start remote_call sup_call supervisor supervisor_child sync_call sync_call_timeout unconditional_call_edge),
+    ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag dynamic_child function_def handle_continue_clause implements_behaviour impure_call init_continues_to mailbox_writer recv_start remote_call statem_timeout sup_call supervisor supervisor_child sync_call sync_call_timeout unconditional_call_edge),
   timeout_chain:
     ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag function_def implements_behaviour sync_call sync_call_timeout),
   tls_verification: ~w(function_def tls_connect tls_verification),
@@ -49,5 +49,5 @@
     ~w(call_edge dynamic_child function_def implements_behaviour socket_transport supervisor_max_children),
   unlinked_spawn: ~w(spawn_call),
   unsafe_task:
-    ~w(call_edge call_followed_by_branch closure_def function_def implements_behaviour remote_call tail_call trap_exit)
+    ~w(call_edge call_followed_by_branch callback_ref_head callback_tag callback_total closure_def function_def implements_behaviour mailbox_writer remote_call tail_call trap_exit)
 ]

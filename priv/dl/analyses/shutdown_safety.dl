@@ -216,7 +216,8 @@ terminate_calls_sibling(mod, sibling, via, sup) :-
 terminate_stops_children(mod) :-
   terminate_callback(func, mod, _),
   (via = func ; reaches_from_terminate(func, via, _)),
-  sup_call(_, via, _, op, _),
+  sup_call(_, via, api, op, _),
+  api != "GenServer",
   (op = "terminate_child" ; op = "stop").
 
 // A tree's members by module, and by the registered name a child spec
@@ -260,3 +261,40 @@ foreign_dynamic_children(mod, sup, func) :-
   tree_member(root, sup),
   !tree_member(root, mod),
   !terminate_stops_children(mod).
+
+// ── A callback stops a sibling the supervisor owns ───────────────────
+//
+// GenServer.stop on a sibling child of the same supervisor, from a
+// handler: the supervisor still owns that child and restarts it (a
+// permanent one), or has already stopped it during shutdown and the
+// stop exits with :noproc in the caller (horde#154, #193: the
+// DynamicSupervisorImpl stopping its ProcessesSupervisor sibling on
+// quorum loss, crashing at SIGTERM). terminate/2 is the other rule.
+.decl stops_process(func: symbol, target: symbol)
+
+stops_process(f, target) :- sup_call(_, f, "GenServer", "stop", target).
+
+.decl reaches_stop(func: symbol, via: symbol, target: symbol)
+
+reaches_stop(f, f, t) :- stops_process(f, t).
+reaches_stop(f, via, t) :- call_edge(f, g), reaches_stop(g, via, t).
+
+.decl callback_stops_sibling(mod: symbol, sibling: symbol, via: symbol, sup: symbol)
+.output callback_stops_sibling
+
+// The stop names the sibling module.
+callback_stops_sibling(mod, sib, via, sup) :-
+  handler_function(mod, h),
+  reaches_stop(h, via, sib),
+  supervisor_child(sup, _, mod, _, _),
+  supervisor_child(sup, _, sib, _, _),
+  sib != mod.
+
+// The stop is the sibling's own API (`Sibling.stop/1`), target unknown.
+callback_stops_sibling(mod, sib, via, sup) :-
+  handler_function(mod, h),
+  reaches_stop(h, via, _),
+  function_def(via, sib, _, _, _),
+  supervisor_child(sup, _, mod, _, _),
+  supervisor_child(sup, _, sib, _, _),
+  sib != mod.

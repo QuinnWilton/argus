@@ -219,3 +219,52 @@ partial_noproc_catch(func, id, callee) :-
   !catch_total(id, func, "exit"),
   !catch_total(id, func, "*").
 
+// ── A timer cancelled but not flushed ────────────────────────────────
+//
+// Process.cancel_timer/1 does not remove a message the timer already
+// delivered. A process that cancels and re-arms a timer whose message
+// is a bare atom (`:tick`) cannot tell the stale message from the next
+// one: the action fires twice, or early (MongooseIM#3502, beam-bots/bb
+// #214; nebulex's generation rotation and cachex's warmer have the
+// shape). A message that carries the timer's ref (`{:tick, ref}`, or
+// :erlang.start_timer's `{:timeout, ref, _}`) is matched against the
+// current ref; a `receive :tick -> :ok after 0 -> :ok end` flushes.
+// Cancelling only in terminate/2 arms nothing again.
+.decl flushes_mailbox(mod: symbol)
+
+flushes_mailbox(mod) :-
+  recv_start(_, f, 0, _),
+  function_def(f, mod, _, _, _).
+
+// A timer armed for the arming process whose message is a literal: at
+// the site, or a parameter the callers fill with a literal (nebulex's
+// `start_timer(time, ref, event)` with `event \\ :heartbeat`).
+.decl bare_self_timer(func: symbol, mod: symbol)
+
+bare_self_timer(a, mod) :-
+  timer_arm(_, a, "self", "bare", _),
+  function_def(a, mod, _, _, _).
+
+bare_self_timer(a, mod) :-
+  timer_arm(_, a, "self", "param", pos),
+  resolved_arg(a, pos, _),
+  function_def(a, mod, _, _, _).
+
+// The module whose mailbox the timer lands in: a process module, or a
+// helper that arms timers for whichever process calls it (bb's
+// BB.Loop, a struct that a component's callbacks drive).
+.decl timer_owner(mod: symbol)
+
+timer_owner(mod) :- process_entry(mod, _).
+timer_owner(mod) :- bare_self_timer(_, mod).
+
+.decl timer_cancel_without_flush(mod: symbol, cancel: symbol, arm: symbol)
+.output timer_cancel_without_flush
+
+timer_cancel_without_flush(mod, c, a) :-
+  mailbox_writer(_, c, "cancel"),
+  function_def(c, mod, _, _, _),
+  !terminate_callback(c, mod, _),
+  bare_self_timer(a, mod),
+  timer_owner(mod),
+  !flushes_mailbox(mod).

@@ -49,11 +49,27 @@ defmodule Argus.Analyses.UnsafeTask do
   # ErrorHandling for `trap_exit`: a process trapping exits does see a
   # linked task crash, so yield_on_linked_task stays quiet for it.
   def extractors,
-    do: [Argus.Extractors.OTP, Argus.Extractors.ApiCalls, Argus.Extractors.ErrorHandling]
+    do: [
+      Argus.Extractors.OTP,
+      Argus.Extractors.ApiCalls,
+      Argus.Extractors.ErrorHandling,
+      Argus.Extractors.CallbackTag
+    ]
 
   @impl true
   def output_relations do
     [
+      %{
+        name: :nolink_messages_unhandled,
+        fields: [
+          {:mod, :symbol, "the process module"},
+          {:start, :symbol, "function starting the async_nolink task"},
+          {:handler, :symbol, "its handle_info/2"},
+          {:missing, :symbol, "'reply' ({ref, result}) or 'down' ({:DOWN, ...})"}
+        ],
+        key: [:mod, :start],
+        doc: "An async_nolink task's reply or :DOWN message has no handle_info clause."
+      },
       %{
         name: :leaked_async_task,
         fields: [
@@ -123,6 +139,30 @@ defmodule Argus.Analyses.UnsafeTask do
       help: [
         "use `Task.async_stream/3` or `Task.Supervisor.async_nolink/2`, " <>
           "or document that callers must not trap exits"
+      ]
+    )
+  end
+
+  def finding(:nolink_messages_unhandled, [mod, start, handler, missing]) do
+    what =
+      case missing do
+        "reply" -> "the task's reply, `{ref, result}`"
+        _ -> "the task's exit, `{:DOWN, ref, :process, pid, reason}`"
+      end
+
+    Findings.new(
+      :warning,
+      "async_nolink task's messages have no handle_info clause",
+      "#{start} starts a task with Task.Supervisor.async_nolink from #{mod}'s " <>
+        "callbacks and does not collect it there, so #{what} lands in " <>
+        "#{handler} — which matches other messages and has no clause for it. " <>
+        "The first task to finish is a FunctionClauseError.",
+      at: Findings.at_func(start),
+      at_label: "async_nolink started here",
+      help: [
+        "add `handle_info({ref, result}, state) when is_reference(ref)` and " <>
+          "`handle_info({:DOWN, ref, :process, _pid, reason}, state)` clauses",
+        "or collect the task where it is started with Task.yield/2 and Task.shutdown/1"
       ]
     )
   end

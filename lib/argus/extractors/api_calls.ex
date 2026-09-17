@@ -93,6 +93,8 @@ defmodule Argus.Extractors.ApiCalls do
     {Supervisor, :which_children, 1},
     {Supervisor, :count_children, 1},
     {Supervisor, :stop, [1, 2, 3]},
+    {GenServer, :stop, [1, 2, 3]},
+    {:gen_server, :stop, [1, 2, 3]},
     {DynamicSupervisor, :start_child, 2},
     {DynamicSupervisor, :terminate_child, 2},
     {DynamicSupervisor, :which_children, 1},

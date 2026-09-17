@@ -155,5 +155,49 @@
     module: "Nebulex.Adapters.Replicated.Bootstrap",
     pre: "faff154",
     finding: {:distributed, "Cluster-wide lock during init"}
+  },
+  # ── The classes hypothesized after the pass, validated against issues ──
+  %{
+    repo: "derekkraan/horde",
+    issue: "horde:erpc-noconnection-race",
+    module: "Horde.Registry",
+    pre: "f9ef5c4c9d1ad6f24a619a2252b5f25ec6602493",
+    fix: "30bb1a17ebbec4a834bd7b7845ab021e5b696225",
+    finding: {:distributed, ":erpc.call in a boolean context with no rescue"}
+  },
+  %{
+    repo: "phoenixframework/phoenix_live_dashboard",
+    issue: "phoenix_live_dashboard#218",
+    # The rpc and its shape match live in the SystemInfo wrapper.
+    module: "Phoenix.LiveDashboard.SystemInfo",
+    pre: "e562c63922ea3518d7963bef3e84b433dae5cd80",
+    finding: {:distributed, "RPC result matched without a {:badrpc, _} clause"}
+  },
+  %{
+    repo: "beam-bots/bb",
+    issue: "bb#214",
+    module: "BB.Loop",
+    pre: "6c5dc2b5a22f8cf532a696f46d40e2ee79e3a53a",
+    fix: "4bd552ca6a816614f6059c9d2e98fc583a27de16",
+    finding: {:error_handling, "Timer cancelled without flushing its message"}
+  },
+  %{
+    repo: "cabol/nebulex",
+    issue: "nebulex:generation-heartbeat-no-flush",
+    module: "Nebulex.Adapters.Local.Generation",
+    pre: "faff154",
+    finding: {:error_handling, "Timer cancelled without flushing its message"}
+  },
+  # tortoise#46 (70044be -> b891da1) is the connect-in-init pair, but its
+  # 2018 tree no longer compiles on Elixir >= 1.15 (a recursive variable
+  # in a pattern); the rule is pinned by fixtures until a buildable pair
+  # turns up.
+  %{
+    repo: "elixir-horde/horde",
+    issue: "horde#193",
+    # Anchored at the sibling's stop API the impl calls.
+    module: "Horde.ProcessesSupervisor",
+    pre: "74820c2",
+    finding: {:shutdown_safety, "A callback stops a sibling the supervisor owns"}
   }
 ]

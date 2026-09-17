@@ -176,7 +176,8 @@ rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "named") :-
   hpos < opos,
   supervisor_child_name(sup, hpos, name),
   function_def(f, owner, _, _, _),
-  sup_call(site, f, _, op, name),
+  sup_call(site, f, api, op, name),
+  api != "GenServer",
   child_creating_op(op).
 
 rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "inferred") :-
@@ -185,6 +186,7 @@ rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "inferred")
   child_subtree(sup, owner_branch, owner),
   function_def(f, owner, _, _, _),
   sup_call(site, f, api, op, "dynamic"),
+  api != "GenServer",
   child_creating_op(op),
   sole_earlier_sibling_of_kind(sup, hpos, api, opos),
   supervisor_child(sup, hpos, holder, _, _).
@@ -289,3 +291,24 @@ post_start_initialization(func, site, callee) :-
 post_start_initialization(func, site, callee) :-
   post_start_call(func, site, callee),
   reaches_config_writer(callee).
+
+// ── A sibling's pid cached in init/1 under one_for_one ───────────────
+//
+// init/1 looks a sibling up by name and keeps the pid; under
+// :one_for_one the sibling restarts alone and the cached pid is a
+// dead process from then on — every call :noproc, every send lost
+// (k8s 99c05d6 replaced such pids with :via names; oban#1413 and
+// #1499 are the inverse, registrations made with a sibling that its
+// restart forgets). :rest_for_one and :one_for_all restart the holder
+// too; a :temporary target is never restarted.
+.decl cached_sibling_pid(mod: symbol, name: symbol, sup: symbol)
+.output cached_sibling_pid
+
+cached_sibling_pid(mod, name, sup) :-
+  init_function(mod, f),
+  whereis_call(_, f, name, _),
+  supervisor_child(sup, _, mod, _, _),
+  supervisor(sup, "one_for_one"),
+  (supervisor_child(sup, _, name, _, _) ; supervisor_child_name(sup, _, name)),
+  handler_function(mod, h),
+  (sync_call(h, "dynamic") ; async_cast(h, "dynamic")).

@@ -70,12 +70,24 @@ defmodule Argus.Analyses.SyncCallInInit do
       # GenServer.call(server, ...)` called from init with a literal.
       # Nothing declared CallArgs, so call_arg and call_arg_forward were
       # empty and that resolution never ran.
-      Argus.Extractors.CallArgs
+      Argus.Extractors.CallArgs,
+      Argus.Extractors.Purity,
+      Argus.Extractors.ErrorHandling,
+      Argus.Extractors.GenStatem
     ]
 
   @impl true
   def output_relations do
     [
+      %{
+        name: :connect_in_init_without_backoff,
+        fields: [
+          {:mod, :symbol, "module whose init/1 connects"},
+          {:api, :symbol, "the connect call reached"}
+        ],
+        key: [:mod],
+        doc: "init/1 connects to a dependency and the module has no timer or continue to retry."
+      },
       %{
         name: :blocking_recv_in_init,
         fields: [
@@ -134,6 +146,23 @@ defmodule Argus.Analyses.SyncCallInInit do
   end
 
   @impl true
+  def finding(:connect_in_init_without_backoff, [mod, api]) do
+    Findings.new(
+      :warning,
+      "init/1 connects with no reconnect path",
+      "#{mod}'s init/1 reaches #{api}, and nothing in the module arms a timer " <>
+        "or continues after init to try again. When the dependency is not " <>
+        "there yet, init fails, the supervisor restarts the child at once, and " <>
+        "after max_restarts the tree — usually the application — goes down at boot.",
+      at: Findings.at_mfa(mod, :init, 1),
+      at_label: "connects from here",
+      help: [
+        "return `{:ok, state, {:continue, :connect}}` and connect in handle_continue/2 with a backoff timer",
+        "or start `:transient` and retry from a timer message"
+      ]
+    )
+  end
+
   def finding(:blocking_recv_in_init, [mod, recv]) do
     Findings.new(
       :warning,

@@ -19,6 +19,8 @@ defmodule Argus.Extractors.CallbackTag do
   ## Emitted facts
 
   - `callback_tag(func, callback, tag)` — an atom the callback discriminates on
+  - `callback_ref_head(func, callback)` — a clause matches `{ref, _} when
+    is_reference(ref)`, an async_nolink task's reply
   - `callback_total(func, callback)` — some clause accepts every message,
     whatever it demands of the state (`handle_info(msg, {stack, cont})`
     is a catch-all for messages), so no tag can fail
@@ -40,6 +42,7 @@ defmodule Argus.Extractors.CallbackTag do
   @impl true
   def relations,
     do: [
+      :callback_ref_head,
       :callback_tag,
       :callback_total
     ]
@@ -57,6 +60,7 @@ defmodule Argus.Extractors.CallbackTag do
           acc
           |> emit_tags(func_id, callback, instrs)
           |> emit_total(func_id, callback, instrs)
+          |> emit_ref_head(func_id, callback, instrs)
       end
     end)
   end
@@ -66,6 +70,40 @@ defmodule Argus.Extractors.CallbackTag do
     |> Dispatch.compared_atoms(:any)
     |> Enum.reduce(facts, &add_fact(&2, :callback_tag, [func_id, callback, inspect(&1)]))
   end
+
+  # `{ref, result} when is_reference(ref)`: element 0 of the message is
+  # pulled into a register and tested with is_reference. The scan is
+  # linear; a projection from {x,0} is tracked until something else is
+  # written to its register.
+  defp emit_ref_head(facts, func_id, callback, instrs) do
+    {found?, _} =
+      Enum.reduce_while(instrs, {false, MapSet.new()}, fn instr, {_, refs} ->
+        case instr do
+          {:get_tuple_element, src, 0, dst} ->
+            if reg(src) == {:x, 0},
+              do: {:cont, {false, MapSet.put(refs, reg(dst))}},
+              else: {:cont, {false, MapSet.delete(refs, reg(dst))}}
+
+          {:test, :is_reference, _f, [r]} ->
+            if MapSet.member?(refs, reg(r)),
+              do: {:halt, {true, refs}},
+              else: {:cont, {false, refs}}
+
+          {:move, _src, dst} ->
+            {:cont, {false, MapSet.delete(refs, reg(dst))}}
+
+          _ ->
+            {:cont, {false, refs}}
+        end
+      end)
+
+    if found?, do: add_fact(facts, :callback_ref_head, [func_id, callback]), else: facts
+  end
+
+  defp reg({:tr, r, _}), do: reg(r)
+  defp reg({:x, _} = r), do: r
+  defp reg({:y, _} = r), do: r
+  defp reg(_), do: nil
 
   defp emit_total(facts, func_id, callback, instrs) do
     if Dispatch.total_on?(instrs, {:x, 0}),

@@ -32,15 +32,23 @@ defmodule Argus.Extractors.ErrorHandling do
     `:gen_statem.call`, `:erpc.call`, ...) the `try` at `id` guards
   - `mailbox_writer(id, func, kind)` — a call after which something other
     than a peer's request lands in this process's mailbox: `task` (a
-    Task.async reply), `timer` (send_after / send_interval), `pubsub` (a
-    subscription), `self` (the function sends to self()), `apply` (the
-    function runs a caller-supplied function, which may do anything with
-    this mailbox — the Flow producer of gen_stage#238 ran user code that
-    called hackney)
+    Task.async reply, or an async_nolink collected in the same function),
+    `task_nolink` (an async_nolink whose reply and :DOWN reach
+    handle_info/2), `timer` (send_after / send_interval carrying a ref or
+    a computed value), `timer_bare` (a timer whose message is a bare atom
+    or literal, indistinguishable from an earlier instance), `cancel`
+    (cancel_timer), `pubsub` (a subscription), `self` (the function sends
+    to self()), `apply` (the function runs a caller-supplied function,
+    which may do anything with this mailbox — the Flow producer of
+    gen_stage#238 ran user code that called hackney)
+  - `rpc_result(id, func, handling)` — how the result of an :rpc/:erpc
+    call is treated: `badrpc`, `boolean`, `case`, `matched`, `returned`
+    or `other`
   """
 
   @behaviour Argus.Extractor
 
+  alias Argus.Extractor.Dispatch
   alias Argus.Extractors.ErrorHandling.CatchClauses
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
@@ -48,6 +56,7 @@ defmodule Argus.Extractors.ErrorHandling do
   import Argus.Extractor.Helpers,
     only: [
       add_fact: 3,
+      arg_position: 3,
       each_remote_call: 3,
       instructions_from_label: 2,
       match_remote_call: 1,
@@ -102,6 +111,8 @@ defmodule Argus.Extractors.ErrorHandling do
       :exit_call,
       :ignored_error_result,
       :mailbox_writer,
+      :rpc_result,
+      :timer_arm,
       :trap_exit,
       :try_call
     ]
@@ -125,6 +136,7 @@ defmodule Argus.Extractors.ErrorHandling do
       facts
       |> error_handling_call(mod_str, ctx, mfa)
       |> maybe_mailbox_writer(ctx, mfa)
+      |> maybe_rpc_result(ctx, mfa)
     end)
   end
 
@@ -133,18 +145,27 @@ defmodule Argus.Extractors.ErrorHandling do
     {Task, :async, 3} => "task",
     {Task.Supervisor, :async, 2} => "task",
     {Task.Supervisor, :async, 4} => "task",
-    {Task.Supervisor, :async_nolink, 2} => "task",
-    {Task.Supervisor, :async_nolink, 4} => "task",
-    {Process, :send_after, 3} => "timer",
-    {Process, :send_after, 4} => "timer",
-    {:erlang, :send_after, 3} => "timer",
-    {:erlang, :send_after, 4} => "timer",
+    {Task.Supervisor, :async_nolink, 2} => "task_nolink",
+    {Task.Supervisor, :async_nolink, 4} => "task_nolink",
+    # {"timer", msg, dest}: the registers holding the message and the
+    # destination. Process.send_after(dest, msg, time) compiles to
+    # :erlang.send_after(time, dest, msg); :timer.send_after/2 and
+    # send_interval/2 target the caller.
+    {Process, :send_after, 3} => {"timer", 1, 0},
+    {Process, :send_after, 4} => {"timer", 1, 0},
+    {:erlang, :send_after, 3} => {"timer", 2, 1},
+    {:erlang, :send_after, 4} => {"timer", 2, 1},
     {:erlang, :start_timer, 3} => "timer",
     {:erlang, :start_timer, 4} => "timer",
-    {:timer, :send_after, 2} => "timer",
-    {:timer, :send_after, 3} => "timer",
-    {:timer, :send_interval, 2} => "timer",
-    {:timer, :send_interval, 3} => "timer",
+    {:timer, :send_after, 2} => {"timer", 1, :self},
+    {:timer, :send_after, 3} => {"timer", 2, 1},
+    {:timer, :send_interval, 2} => {"timer", 1, :self},
+    {:timer, :send_interval, 3} => {"timer", 2, 1},
+    {Process, :cancel_timer, 1} => "cancel",
+    {Process, :cancel_timer, 2} => "cancel",
+    {:erlang, :cancel_timer, 1} => "cancel",
+    {:erlang, :cancel_timer, 2} => "cancel",
+    {:erlang, :cancel_timer, 3} => "cancel",
     {Phoenix.PubSub, :subscribe, 2} => "pubsub",
     {Phoenix.PubSub, :subscribe, 3} => "pubsub",
     {Registry, :register, 3} => "pubsub",
@@ -156,6 +177,28 @@ defmodule Argus.Extractors.ErrorHandling do
 
   defp maybe_mailbox_writer(facts, ctx, mfa) do
     case Map.fetch(@mailbox_writers, mfa) do
+      {:ok, {"timer", msg_reg, dest}} ->
+        id = InstrId.mint(ctx.func_id, ctx.idx)
+        {message, param} = timer_message(ctx, msg_reg)
+        kind = if message == "bare", do: "timer_bare", else: "timer"
+
+        facts
+        |> add_fact(:mailbox_writer, [id, ctx.func_id, kind])
+        |> add_fact(:timer_arm, [
+          id,
+          ctx.func_id,
+          timer_target(ctx, dest),
+          message,
+          to_string(param)
+        ])
+
+      {:ok, "task_nolink"} ->
+        add_fact(facts, :mailbox_writer, [
+          InstrId.mint(ctx.func_id, ctx.idx),
+          ctx.func_id,
+          if(collects_task?(ctx.instrs), do: "task", else: "task_nolink")
+        ])
+
       {:ok, kind} ->
         add_fact(facts, :mailbox_writer, [InstrId.mint(ctx.func_id, ctx.idx), ctx.func_id, kind])
 
@@ -163,6 +206,226 @@ defmodule Argus.Extractors.ErrorHandling do
         facts
     end
   end
+
+  # A timer whose message carries nothing the arming site made — a bare
+  # atom, a literal tuple — cannot be told from an earlier instance of
+  # itself: "bare". One that is a parameter of the arming function is
+  # named by position, for a rule to look up at the callers (nebulex's
+  # `start_timer(time, ref, event)`). One carrying a ref or a computed
+  # value is "dynamic".
+  defp timer_message(ctx, msg_reg) do
+    case resolve_register(ctx.instrs, ctx.idx, {:x, msg_reg}) do
+      {:ok, msg} ->
+        if bare_message?(msg), do: {"bare", -1}, else: {"dynamic", -1}
+
+      _ ->
+        case arg_position(ctx.instrs, ctx.idx, {:x, msg_reg}) do
+          {:ok, n} -> {"param", n}
+          :no -> {"dynamic", -1}
+        end
+    end
+  end
+
+  defp timer_target(_ctx, :self), do: "self"
+
+  defp timer_target(ctx, dest_reg) do
+    preceding = ctx.instrs |> Enum.take(ctx.idx) |> Enum.reverse()
+    if self_origin?(preceding, {:x, dest_reg}), do: "self", else: "other"
+  end
+
+  # Whether `reg` holds the result of a `self()` call, following moves.
+  # A call clobbers every x register, and any other instruction that
+  # names the register is taken to write it.
+  defp self_origin?([], _reg), do: false
+  defp self_origin?([{:bif, :self, _, [], reg} | _], reg), do: true
+
+  defp self_origin?([{:move, {kind, _} = src, reg} | rest], reg) when kind in [:x, :y],
+    do: self_origin?(rest, src)
+
+  defp self_origin?([{:move, _, reg} | _], reg), do: false
+
+  defp self_origin?([instr | rest], reg) do
+    cond do
+      call_instr?(instr) and match?({:x, _}, reg) -> false
+      reg in Tuple.to_list(instr) -> false
+      true -> self_origin?(rest, reg)
+    end
+  end
+
+  defp call_instr?(instr) when is_tuple(instr) and tuple_size(instr) > 0 do
+    op = elem(instr, 0)
+
+    op in [
+      :call,
+      :call_ext,
+      :call_fun,
+      :call_fun2,
+      :apply,
+      :call_only,
+      :call_last,
+      :call_ext_only,
+      :call_ext_last,
+      :apply_last,
+      :return
+    ]
+  end
+
+  defp call_instr?(instr), do: instr == :return
+
+  # `:dynamic` is the resolver's placeholder for a value it could not
+  # follow — a ref, a counter — and that is what makes a message safe.
+  defp bare_message?(:dynamic), do: false
+  defp bare_message?(msg) when is_atom(msg) or is_binary(msg) or is_number(msg), do: true
+
+  defp bare_message?(msg) when is_tuple(msg),
+    do: msg |> Tuple.to_list() |> Enum.all?(&bare_message?/1)
+
+  defp bare_message?(msg) when is_list(msg), do: Enum.all?(msg, &bare_message?/1)
+  defp bare_message?(_msg), do: false
+
+  # An async_nolink task collected in the same function (await, yield,
+  # shutdown, ignore) leaves nothing for handle_info/2.
+  @task_collectors [
+    {Task, :await, 1},
+    {Task, :await, 2},
+    {Task, :yield, 1},
+    {Task, :yield, 2},
+    {Task, :yield_many, 1},
+    {Task, :yield_many, 2},
+    {Task, :shutdown, 1},
+    {Task, :shutdown, 2},
+    {Task, :ignore, 1},
+    {Task, :await_many, 1},
+    {Task, :await_many, 2}
+  ]
+
+  defp collects_task?(instrs) do
+    Enum.any?(instrs, fn instr ->
+      case match_remote_call(instr) do
+        {:ok, m, f, a} -> {m, f, a} in @task_collectors
+        _ -> false
+      end
+    end)
+  end
+
+  # ── RPC results ────────────────────────────────────────────────────
+
+  @rpc_calls [
+    {:rpc, :call, 4},
+    {:rpc, :call, 5},
+    {:rpc, :block_call, 4},
+    {:rpc, :block_call, 5},
+    {:rpc, :multicall, 2},
+    {:rpc, :multicall, 3},
+    {:rpc, :multicall, 4},
+    {:rpc, :multicall, 5},
+    {:erpc, :call, 4},
+    {:erpc, :call, 5}
+  ]
+
+  # How the function treats the result of an rpc: `badrpc` — it compares
+  # something to :badrpc somewhere; `boolean` — the result is tested
+  # against true/false/nil (an `&&`, an `if`), where a {:badrpc, _} tuple
+  # is truthy; `case` — it is matched by shape in a function that has a
+  # clause-less exit (case_end/badmatch), so {:badrpc, _} raises;
+  # `matched` — matched with a wildcard somewhere; `returned` — the
+  # function's own result (a predicate ending in `?` makes it a boolean
+  # for its callers: `member?(n) && :rpc.call(...)`); `other` — stored
+  # or passed on.
+  defp maybe_rpc_result(facts, ctx, mfa) do
+    if mfa in @rpc_calls do
+      handling = rpc_handling(ctx.instrs, ctx.idx)
+      add_fact(facts, :rpc_result, [InstrId.mint(ctx.func_id, ctx.idx), ctx.func_id, handling])
+    else
+      facts
+    end
+  end
+
+  defp rpc_handling(instrs, idx) do
+    cond do
+      :badrpc in Dispatch.compared_atoms(instrs, :any) -> "badrpc"
+      tail_call?(Enum.at(instrs, idx)) -> "returned"
+      true -> result_use(Enum.drop(instrs, idx + 1), [{:x, 0}], instrs)
+    end
+  end
+
+  @booleans [{:atom, true}, {:atom, false}, {:atom, nil}]
+
+  # Follow the registers holding the rpc result (`aliases`, a list: a
+  # MapSet is opaque to dialyzer) until something examines or consumes
+  # it. One clause per instruction shape.
+  defp result_use([], _aliases, _instrs), do: "other"
+
+  defp result_use([{:test, _op, _f, [a, b]} | rest], aliases, instrs) do
+    cond do
+      boolean_test?(a, b, aliases) -> "boolean"
+      alias?(a, aliases) or alias?(b, aliases) -> shape_use(instrs)
+      true -> result_use(rest, aliases, instrs)
+    end
+  end
+
+  defp result_use([{:test, _op, _f, args} | rest], aliases, instrs) when is_list(args),
+    do: use_if_aliased(Enum.any?(args, &alias?(&1, aliases)), rest, aliases, instrs)
+
+  defp result_use([{:test, _op, _f, src, _fields} | rest], aliases, instrs),
+    do: use_if_aliased(alias?(src, aliases), rest, aliases, instrs)
+
+  defp result_use([{op, src, _f, _list} | rest], aliases, instrs)
+       when op in [:select_val, :select_tuple_arity],
+       do: use_if_aliased(alias?(src, aliases), rest, aliases, instrs)
+
+  defp result_use([{:move, src, dst} | rest], aliases, instrs),
+    do: result_use(rest, retarget(aliases, src, dst), instrs)
+
+  defp result_use([{:get_tuple_element, src, _i, dst} | rest], aliases, instrs),
+    do: result_use(rest, retarget(aliases, src, dst), instrs)
+
+  defp result_use([:return | _], aliases, _instrs),
+    do: if({:x, 0} in aliases, do: "returned", else: "other")
+
+  defp result_use([{call, arity, _} | rest], aliases, instrs)
+       when call in [:call, :call_ext, :call_only, :call_ext_only] do
+    if Enum.any?(0..(arity - 1)//1, &({:x, &1} in aliases)),
+      do: "other",
+      else: result_use(rest, Enum.reject(aliases, &match?({:x, _}, &1)), instrs)
+  end
+
+  defp result_use([{call, _arity, _, _} | _], _aliases, _instrs)
+       when call in [:call_last, :call_ext_last],
+       do: "other"
+
+  defp result_use([{:label, _} | _], _aliases, _instrs), do: "other"
+  defp result_use([_ | rest], aliases, instrs), do: result_use(rest, aliases, instrs)
+
+  defp use_if_aliased(true, _rest, _aliases, instrs), do: shape_use(instrs)
+  defp use_if_aliased(false, rest, aliases, instrs), do: result_use(rest, aliases, instrs)
+
+  defp boolean_test?(a, b, aliases),
+    do: (alias?(a, aliases) and b in @booleans) or (alias?(b, aliases) and a in @booleans)
+
+  defp shape_use(instrs) do
+    if Enum.any?(instrs, &(match?({:case_end, _}, &1) or match?({:badmatch, _}, &1))),
+      do: "case",
+      else: "matched"
+  end
+
+  defp retarget(aliases, src, dst) do
+    if alias?(src, aliases),
+      do: Enum.uniq([reg_of(dst) | aliases]),
+      else: List.delete(aliases, reg_of(dst))
+  end
+
+  defp alias?(operand, aliases) do
+    case reg_of(operand) do
+      nil -> false
+      r -> r in aliases
+    end
+  end
+
+  defp reg_of({:tr, r, _}), do: reg_of(r)
+  defp reg_of({:x, _} = r), do: r
+  defp reg_of({:y, _} = r), do: r
+  defp reg_of(_), do: nil
 
   # A function that both takes its own pid (`self()`) and sends: a
   # message it posts to itself, the shape a start-up kick or a restart

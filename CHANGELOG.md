@@ -4,6 +4,67 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+Six rules for the bug classes hypothesized after the issue-mining pass
+and validated against closed issues, each with a corpus pair or a live
+instance:
+
+- `distributed`'s `rpc_result_unhandled` (`:warning`): an `:rpc.call` /
+  `:rpc.multicall` result matched by shape with no `{:badrpc, _}` clause
+  (rabbitmq-cli#193, phoenix_live_dashboard#218, livebook#972), or used
+  as a boolean, where the tuple is truthy — and an `:erpc.call` in a
+  boolean context with no rescue for `{:erpc, :noconnection}` (horde
+  30bb1a1). New fact `rpc_result(id, func, handling)`.
+- `error_handling`'s `timer_cancel_without_flush` (`:warning`): a
+  process cancels a timer and arms one whose message carries nothing
+  that identifies it, with no flush (MongooseIM#3502, beam-bots/bb#214;
+  nebulex's generation heartbeat, cachex's warmer). `mailbox_writer`
+  gains the kinds `timer_bare` and `cancel`; the new fact
+  `timer_arm(id, func, target, message)` says whether the timer targets
+  `self()` and whether its message is a literal, a parameter the callers
+  fill (resolved through `call_arg`), or computed. A helper module that
+  arms and cancels timers for its caller counts as the owner (BB.Loop).
+- `unsafe_task`'s `nolink_messages_unhandled` (`:warning`): an
+  `async_nolink` task started from a callback and not collected there,
+  whose `{ref, result}` or `{:DOWN, ...}` has no `handle_info/2` clause
+  (archethic-node#1306, sentry-elixir#172, Engram#1552). New facts
+  `callback_ref_head` and the `task_nolink` writer kind.
+- `sync_call_in_init`'s `connect_in_init_without_backoff` (`:warning`):
+  init/1 reaches a network connect and the module arms no timer and
+  continues nowhere after init (tortoise#46, grpc-elixir#557,
+  newrelic/elixir_agent#181).
+- `shutdown_safety`'s `callback_stops_sibling` (`:warning`): a handler
+  stops a sibling child the supervisor owns, through `GenServer.stop`
+  or the sibling's own stop API (horde#154, #193). `GenServer.stop` is
+  a `sup_call` now.
+- `supervision`'s `cached_sibling_pid` (`:info`): init/1 looks a sibling
+  up by name under a `:one_for_one` supervisor and the handlers call a
+  pid held in state (k8s 99c05d6 is the shape; oban#1413/#1499 its
+  inverse).
+
+Two hypothesized classes were dropped on the evidence: a late
+`GenServer.call` reply into a changed state cannot happen since OTP 24
+(process aliases, erlang/otp#2735), and no caller-side crash on a
+server's unexpected reply shape was found anywhere.
+
+### Changed
+
+- `gen_statem`'s `statem_timeout_unhandled` now reports a generic
+  timeout (`{{:timeout, name}, ms, content}`) whose `{:timeout, name}`
+  event has no clause, as kind `generic_timeout`; before, only literal
+  action lists produced a `generic` fact and any 3-tuple action counted
+  as one. Generic timeouts built at runtime, single literal actions, and
+  clause heads comparing the event type to a literal tuple are now
+  extracted, which also lets a gen_statem's backoff timer count as a
+  reconnect path for `connect_in_init_without_backoff`
+  (Postgrex.ReplicationConnection).
+
+- Schema version 35: `rpc_result`, `callback_ref_head` and `timer_arm` added; no
+  existing relation changed.
+
 ## 0.13.2 — 2026-09-16
 
 ### Fixed

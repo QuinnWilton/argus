@@ -86,6 +86,17 @@ defmodule Argus.Analyses.ShutdownSafety do
         doc: "terminate/2 does work the effect model cannot classify, and will be skipped."
       },
       %{
+        name: :callback_stops_sibling,
+        fields: [
+          {:mod, :symbol, "the process whose handler issues the stop"},
+          {:sibling, :symbol, "the sibling child stopped"},
+          {:via, :symbol, "function performing the stop"},
+          {:sup, :symbol, "the supervisor both sit under"}
+        ],
+        key: [:mod, :sibling],
+        doc: "A handler stops a sibling child that the supervisor owns."
+      },
+      %{
         name: :terminate_calls_sibling,
         fields: [
           {:mod, :symbol, "module whose terminate/2 makes the call"},
@@ -118,6 +129,23 @@ defmodule Argus.Analyses.ShutdownSafety do
   end
 
   @impl true
+  def finding(:callback_stops_sibling, [mod, sibling, via, sup]) do
+    Findings.new(
+      :warning,
+      "A callback stops a sibling the supervisor owns",
+      "#{mod} stops #{sibling} (through #{via}) from a handler, and both are " <>
+        "children of #{sup}. The supervisor owns that child: a permanent one " <>
+        "comes straight back, and during shutdown it may already be gone, so " <>
+        "the stop exits with :noproc in #{mod}.",
+      at: Findings.at_func(via),
+      at_label: "stops the sibling here",
+      help: [
+        "ask the supervisor: `Supervisor.terminate_child/2` (and `delete_child/2`)",
+        "or send the sibling a message and let it stop itself"
+      ]
+    )
+  end
+
   def finding(:terminate_calls_sibling, [mod, sibling, via, sup]) do
     Findings.new(
       :warning,
