@@ -200,13 +200,21 @@ ets_write_only_table(name, mod, id) :-
 //
 // The reader is "outside the owner" when the owner's callbacks do not
 // reach it: what only the API reaches runs in callers.
+// Backward from the table functions (creators and readers) to the
+// callbacks that reach them, so the closure is bounded by functions x
+// table functions rather than by every process's whole reach.
+.decl reaches_ets_func(func: symbol, target: symbol)
+
+reaches_ets_func(f, f) :- ets_new(_, f, _).
+reaches_ets_func(f, f) :- ets_op(_, f, _, _, "read").
+reaches_ets_func(f, t) :- call_edge(f, g), reaches_ets_func(g, t).
+reaches_ets_func(f, t) :- closure_def(f, g), reaches_ets_func(g, t).
+
+process_entry(mod, f) :- statem_event_clause(mod, f, _).
+
 .decl owner_reaches(mod: symbol, func: symbol)
 
-owner_reaches(mod, c) :- otp_callback(c, mod, _, _).
-owner_reaches(mod, c) :- init_function(mod, c).
-owner_reaches(mod, c) :- function_def(c, mod, "terminate", 2, _).
-owner_reaches(mod, g) :- owner_reaches(mod, f), call_edge(f, g).
-owner_reaches(mod, g) :- owner_reaches(mod, f), closure_def(f, g).
+owner_reaches(mod, t) :- process_entry(mod, c), reaches_ets_func(c, t).
 
 .decl rescues(func: symbol)
 

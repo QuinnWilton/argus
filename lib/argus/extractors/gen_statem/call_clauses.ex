@@ -42,7 +42,14 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
     |> Enum.flat_map(&call_heads(&1, tuple))
     |> Enum.uniq()
     |> Enum.flat_map(fn {block_id, from} ->
-      walk(block_id, %{replied: false, kept: false, from: from, x0: nil}, fun, tuple, %{}, [])
+      walk(
+        block_id,
+        %{replied: false, kept: false, from: from, event: [@x0], x0: nil},
+        fun,
+        tuple,
+        %{},
+        []
+      )
       |> elem(1)
     end)
     |> Enum.uniq()
@@ -118,16 +125,22 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
 
   # ── One instruction along a path ────────────────────────────────────
 
+  # `from` is element 1 of the event, read from {x,0} or from a register
+  # the event was saved to (a clause with a multi-line body keeps it in
+  # a y register and reads `from` from there).
   defp step({:get_tuple_element, src, 1, dst}, _idx, path) do
-    if reg(src) == @x0,
-      do: {:continue, %{path | from: [reg(dst) | path.from]}},
+    if reg(src) in path.event,
+      do: {:continue, %{forget(path, dst) | from: [reg(dst) | path.from]}},
       else: {:continue, forget(path, dst)}
   end
 
   defp step({:move, src, dst}, _idx, path) do
     cond do
       reg(src) in path.from ->
-        {:continue, %{path | from: [reg(dst) | path.from]}}
+        {:continue, %{forget(path, dst) | from: [reg(dst) | path.from]}}
+
+      reg(src) in path.event ->
+        {:continue, %{forget(path, dst) | event: [reg(dst) | path.event]}}
 
       literal_atom(src) == :postpone ->
         {:continue, %{path | replied: true}}
@@ -149,7 +162,8 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
       literal_atom(head) == :reply ->
         {:continue, forget(%{path | replied: true}, dst)}
 
-      uses_from?(rest, path) ->
+      # `from` anywhere in the tuple, its head included: `{from, expected}`.
+      uses_from?([head | rest], path) ->
         {:continue, forget(%{path | kept: true}, dst)}
 
       reg(dst) == @x0 and Map.get(@stateful_tags, literal_atom(head)) == length(rest) + 1 ->
@@ -200,7 +214,12 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
   # A write to a register drops it from the `from` set; a write to x0 also
   # forgets what x0 held, until a bare state value is put there.
   defp forget(path, dst) do
-    path = %{path | from: List.delete(path.from, reg(dst))}
+    path = %{
+      path
+      | from: List.delete(path.from, reg(dst)),
+        event: List.delete(path.event, reg(dst))
+    }
+
     if reg(dst) == @x0, do: %{path | x0: nil}, else: path
   end
 

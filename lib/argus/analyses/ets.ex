@@ -52,7 +52,8 @@ defmodule Argus.Analyses.Ets do
       Argus.Extractors.OTP,
       Argus.Extractors.ApiCalls,
       Argus.Extractors.Supervision,
-      Argus.Extractors.ErrorHandling
+      Argus.Extractors.ErrorHandling,
+      Argus.Extractors.GenStatem
     ]
 
   @impl true

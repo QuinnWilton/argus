@@ -53,7 +53,8 @@ defmodule Argus.Analyses.ShutdownSafety do
       Argus.Extractors.ErrorHandling,
       Argus.Extractors.Supervision,
       Argus.Extractors.CallbackTag,
-      Argus.Extractors.CallArgs
+      Argus.Extractors.CallArgs,
+      Argus.Extractors.GenStatem
     ]
 
   @fields [

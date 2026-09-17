@@ -49,6 +49,16 @@ init_function(mod, func) :-
   function_def(func, mod, "init", 1, _),
   implements_behaviour(mod, _).
 
+// Where a process module's own code starts running: its callbacks. What
+// these reach runs in the process; what only its API reaches runs in
+// callers. An analysis that also reads statem_event_clause adds the
+// state functions of a gen_statem with a rule of its own.
+.decl process_entry(mod: symbol, func: symbol)
+
+process_entry(mod, func) :- otp_callback(func, mod, _, _).
+process_entry(mod, func) :- init_function(mod, func).
+process_entry(mod, func) :- function_def(func, mod, "terminate", 2, _).
+
 // The GenServer request handlers, at their contract arities.
 .decl handle_call_function(mod: symbol, func: symbol)
 

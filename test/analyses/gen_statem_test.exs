@@ -111,7 +111,10 @@ defmodule Argus.Analyses.GenStatemTest do
       skip_without_souffle()
 
       assert {:ok, results} =
-               Argus.analyze([Argus.Test.Fixtures.UnrepliedCallStatem], :gen_statem)
+               Argus.analyze(
+                 [Argus.Test.Fixtures.UnrepliedCallStatem, Argus.Test.Fixtures.PendingCallStatem],
+                 :gen_statem
+               )
 
       rows = Map.get(results, "call_never_replied", [])
 

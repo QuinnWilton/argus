@@ -216,11 +216,26 @@ tree_member(root, name) :-
   child_subtree(root, _, mid),
   supervisor_child_name(mid, _, name).
 
+// The starter is the process whose callbacks reach the start — not the
+// module the start function happens to live in, which may be a plain
+// helper called from several processes (or from a request surface).
+.decl reaches_dynamic_start(func: symbol, start: symbol)
+
+reaches_dynamic_start(s, s) :- dynamic_child(_, _, s).
+reaches_dynamic_start(f, s) :- call_edge(f, g), reaches_dynamic_start(g, s).
+reaches_dynamic_start(f, s) :- closure_def(f, g), reaches_dynamic_start(g, s).
+
+process_entry(mod, f) :- statem_event_clause(mod, f, _).
+
+.decl starter_process(mod: symbol, start: symbol)
+
+starter_process(mod, s) :- process_entry(mod, c), reaches_dynamic_start(c, s).
+
 foreign_dynamic_children(mod, sup, func) :-
   dynamic_child(sup, _, func),
   sup != "dynamic",
   !match("via:.*", sup),
-  function_def(func, mod, _, _, _),
+  starter_process(mod, func),
   mod != sup,
   tree_member(root, sup),
   !tree_member(root, mod),

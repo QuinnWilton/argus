@@ -315,3 +315,42 @@ defmodule Argus.Test.Fixtures.UnrepliedCallStatem do
     {:next_state, :disconnected, data}
   end
 end
+
+defmodule Argus.Test.Fixtures.PendingCallStatem do
+  @moduledoc false
+  # A call clause that parks `from` in its data for a later reply. The
+  # multi-line body saves the event to a y register and reads `from` from
+  # there, not from {x,0}.
+  @behaviour :gen_statem
+
+  def start_link(_opts), do: :gen_statem.start_link({:local, __MODULE__}, __MODULE__, [], [])
+
+  def drain(expected), do: :gen_statem.call(__MODULE__, {:drain, expected}, 60_000)
+
+  @impl :gen_statem
+  def callback_mode, do: :handle_event_function
+
+  @impl :gen_statem
+  def init(_opts), do: {:ok, :rising, %{count: 0, pending: nil}}
+
+  @impl :gen_statem
+  def handle_event({:call, from}, {:drain, expected}, _phase, data) do
+    if data.count >= expected do
+      {:keep_state_and_data, [{:reply, from, data.count}]}
+    else
+      {:keep_state, %{data | pending: {from, expected}}}
+    end
+  end
+
+  def handle_event(:cast, :pulse, phase, data) do
+    data = %{data | count: data.count + 1}
+
+    case data.pending do
+      {from, expected} when data.count >= expected ->
+        {:next_state, phase, %{data | pending: nil}, [{:reply, from, data.count}]}
+
+      _ ->
+        {:next_state, phase, data}
+    end
+  end
+end
