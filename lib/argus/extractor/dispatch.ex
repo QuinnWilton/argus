@@ -58,6 +58,113 @@ defmodule Argus.Extractor.Dispatch do
   end
 
   @doc """
+  Whether some clause accepts every value of `register` — the message
+  argument of a callback — whatever it demands of the other arguments.
+
+  `handle_info(msg, {stack, continuation})` is a catch-all for messages
+  even though its head tests the state; `total?/1` would say no, since
+  the state pattern can branch to `func_info`. The scan walks the clause
+  heads in order: a clause begins at the entry or at the fail label of a
+  head test, and it is total on `register` if its head tests nothing
+  read from `register` (or a register copied or projected from it)
+  before the body starts. Guards on the message count as tests; guards
+  on the state do not.
+  """
+  @spec total_on?([tuple()], {:x, non_neg_integer()}) :: boolean()
+  def total_on?(instrs, register) do
+    entry = func_info_label(instrs)
+    initial = %{tracked: MapSet.new([register]), tested: false, body: false, heads: MapSet.new()}
+
+    {found?, _} =
+      Enum.reduce_while(instrs, {false, initial}, fn instr, {_, state} ->
+        case head_step(instr, state, register, entry) do
+          :total -> {:halt, {true, state}}
+          state -> {:cont, {false, state}}
+        end
+      end)
+
+    found?
+  end
+
+  # A clause boundary: the entry label, or the fail label of a head test.
+  # A test inside a body branches too, but its fail label is a branch
+  # within that body, not the next clause: only head tests add heads.
+  defp head_step({:label, l}, state, register, entry) do
+    if l == entry or MapSet.member?(state.heads, l),
+      do: %{state | tracked: MapSet.new([register]), tested: false, body: false},
+      else: state
+  end
+
+  defp head_step({:test, _op, {:f, l}, args}, state, _register, _entry) when is_list(args) do
+    head_test(state, Enum.any?(args, &tracked?(&1, state.tracked)), l)
+  end
+
+  defp head_step({:test, _op, {:f, l}, src, _fields}, state, _register, _entry) do
+    head_test(state, tracked?(src, state.tracked), l)
+  end
+
+  defp head_step({op, src, {:f, l}, _list}, state, _register, _entry)
+       when op in [:select_val, :select_tuple_arity] do
+    head_test(state, tracked?(src, state.tracked), l)
+  end
+
+  defp head_step({:move, src, dst}, state, _register, _entry),
+    do: %{state | tracked: track(state.tracked, src, dst)}
+
+  defp head_step({:get_tuple_element, src, _i, dst}, state, _register, _entry),
+    do: %{state | tracked: track(state.tracked, src, dst)}
+
+  defp head_step({:get_hd, src, dst}, state, _register, _entry),
+    do: %{state | tracked: track(state.tracked, src, dst)}
+
+  defp head_step({:get_tl, src, dst}, state, _register, _entry),
+    do: %{state | tracked: track(state.tracked, src, dst)}
+
+  # Bookkeeping the compiler emits between a head and its body.
+  defp head_step({:line, _}, state, _register, _entry), do: state
+  defp head_step({:func_info, _, _, _}, state, _register, _entry), do: state
+  defp head_step({:allocate, _, _}, state, _register, _entry), do: state
+  defp head_step({:allocate_heap, _, _, _}, state, _register, _entry), do: state
+  defp head_step({:allocate_zero, _, _}, state, _register, _entry), do: state
+  defp head_step({:init_yregs, _}, state, _register, _entry), do: state
+  defp head_step({:test_heap, _, _}, state, _register, _entry), do: state
+  defp head_step({:trim, _, _}, state, _register, _entry), do: state
+
+  # Anything else is the body: the clause is entered.
+  defp head_step(_instr, state, _register, _entry) do
+    cond do
+      state.body -> state
+      state.tested -> %{state | body: true}
+      true -> :total
+    end
+  end
+
+  defp head_test(%{body: true} = state, _tested?, _label), do: state
+
+  defp head_test(state, tested?, label),
+    do: %{state | tested: state.tested or tested?, heads: MapSet.put(state.heads, label)}
+
+  defp track(tracked, src, dst) do
+    case {reg(src), reg(dst)} do
+      {nil, _} ->
+        tracked
+
+      {_, nil} ->
+        tracked
+
+      {s, d} ->
+        if MapSet.member?(tracked, s), do: MapSet.put(tracked, d), else: MapSet.delete(tracked, d)
+    end
+  end
+
+  defp tracked?(operand, tracked) do
+    case reg(operand) do
+      nil -> false
+      r -> MapSet.member?(tracked, r)
+    end
+  end
+
+  @doc """
   The literal atoms the function compares `register` against — in
   `is_eq_exact` tests, `is_tagged_tuple` tests (the tag) and `select_val`
   tables — or against any register when `:any`. Over-approximated on

@@ -37,6 +37,17 @@ those frameworks need.
   analysis's input set; `test/argus/dl_declarations_test.exs` pins each
   analysis's inputs so an incrementality regression cannot land silently.
 - Souffle is an external tool on PATH, shelled out to via `Argus.Souffle`.
+- `test/corpus/pairs.exs` is the closed-issue corpus: for each pair a
+  rule's finding is present at the commit before the fix and absent at
+  the fix. `Argus.CorpusTest` runs it as part of `mix test`, cloning and
+  compiling each tree once into `ARGUS_CORPUS_DIR` (default
+  `~/.cache/argus/corpus`); `mix test --exclude corpus` skips it,
+  `ARGUS_CORPUS_ONLY=redix#334` narrows it, `mix argus.corpus fetch`
+  warms the cache and `mix argus.corpus tally` counts every title
+  across the trees — the noise check after a rule changes. A new rule
+  comes with a pair.
+- `test/argus/analysis_inputs.exs` pins what each analysis reads;
+  `mix argus.pins` regenerates it and its diff is the review.
 - Every shipped analysis targets a BEAM-specific bug class. Generic
   vocabulary belongs in `priv/dl/clientlib/`, not in an analysis file.
 - Over-approximate in the direction that stays quiet: a fact that cannot
@@ -57,4 +68,7 @@ mix deps.get             # Fetch dependencies
 mix test                 # Run tests (souffle must be on PATH)
 mix format && mix credo --strict && mix dialyzer
 mix argus.gen.dl         # Regenerate priv/dl/{base,layer2}.dl after a schema change
+mix argus.pins           # Regenerate test/argus/analysis_inputs.exs after a rule change
+mix argus.corpus fetch   # Warm the closed-issue corpus cache; `tally` counts titles across it
+mix test --exclude corpus  # The suite without the corpus
 ```

@@ -19,7 +19,9 @@ defmodule Argus.Extractors.CallbackTag do
   ## Emitted facts
 
   - `callback_tag(func, callback, tag)` — an atom the callback discriminates on
-  - `callback_total(func, callback)` — it has a catch-all, so no tag can fail
+  - `callback_total(func, callback)` — some clause accepts every message,
+    whatever it demands of the state (`handle_info(msg, {stack, cont})`
+    is a catch-all for messages), so no tag can fail
   """
 
   @behaviour Argus.Extractor
@@ -66,7 +68,7 @@ defmodule Argus.Extractors.CallbackTag do
   end
 
   defp emit_total(facts, func_id, callback, instrs) do
-    if Dispatch.total?(instrs),
+    if Dispatch.total_on?(instrs, {:x, 0}),
       do: add_fact(facts, :callback_total, [func_id, callback]),
       else: facts
   end

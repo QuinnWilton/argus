@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Added
+
+- The closed-issue corpus is part of the test suite. `test/corpus/pairs.exs`
+  lists sixteen issue pairs; `Argus.CorpusTest` clones and compiles each
+  tree once into `ARGUS_CORPUS_DIR` and asserts the rule's finding is
+  present before the fix and absent at it. `mix argus.corpus fetch|tally`
+  warms the cache and tallies titles across the trees; `mix argus.pins`
+  regenerates the per-analysis input pins, now a data file
+  (`test/argus/analysis_inputs.exs`) rather than a map in the test.
+
 ### Changed
 
 - Schema version 34. `catch_tag` gains a `class` column and is emitted
@@ -40,6 +50,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that takes the `:noproc` exit (oban's own fix), and a quiet-shapes
   fixture pins the nearest non-bug neighbour of every rule from the
   issue-mining pass.
+- `callback_total` means a clause accepts every *message*, whatever it
+  demands of the state: `handle_info(msg, {stack, continuation})` is a
+  catch-all (gen_stage's fix for #238), where the old check required a
+  clause that accepts every argument.
 - Tag resolution of dynamic call targets is stricter and shows its
   work. A tag is no longer attributed by uniqueness when it is generic
   (`:get`, `:stop`, `:state`, ...) or when some `handle_info/2` also
