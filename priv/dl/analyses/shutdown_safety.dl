@@ -168,12 +168,24 @@ terminate_may_be_truncated(mod, behaviour, category, api, via) :-
 // terminate/2 itself crashes, taking whatever cleanup followed with it
 // (oban#21's Watchman pausing its Producer). Only direct siblings — the
 // modules whose lifetime the same supervisor sequences — count.
+// A function with a catch that takes the :noproc exit (oban's fix) is
+// the shape that survives the sibling being gone. The call usually goes
+// through the sibling's API (`Producer.pause()`), so the try guards a
+// local call rather than GenServer.call itself: any exit-catching try in
+// the function counts, which errs quiet.
+.decl guarded_exit_call(func: symbol)
+
+guarded_exit_call(f) :- catch_total(_, f, "exit").
+guarded_exit_call(f) :- catch_total(_, f, "*").
+guarded_exit_call(f) :- catch_tag(_, f, "exit", ":noproc").
+
 .decl terminate_calls_sibling(mod: symbol, sibling: symbol, via: symbol, sup: symbol)
 .output terminate_calls_sibling
 
 terminate_calls_sibling(mod, sibling, func, sup) :-
   terminate_callback(func, mod, _),
   sync_dep(func, sibling),
+  !guarded_exit_call(func),
   supervisor_child(sup, _, mod, _, _),
   supervisor_child(sup, _, sibling, _, _),
   sibling != mod.
@@ -182,6 +194,8 @@ terminate_calls_sibling(mod, sibling, via, sup) :-
   terminate_callback(func, mod, _),
   reaches_from_terminate(func, via, _),
   sync_dep(via, sibling),
+  !guarded_exit_call(func),
+  !guarded_exit_call(via),
   supervisor_child(sup, _, mod, _, _),
   supervisor_child(sup, _, sibling, _, _),
   sibling != mod.

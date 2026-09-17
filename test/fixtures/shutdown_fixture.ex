@@ -176,7 +176,8 @@ defmodule Argus.Test.Fixtures.ShutdownSiblings do
       children = [
         Argus.Test.Fixtures.ShutdownSiblings.Producer,
         Argus.Test.Fixtures.ShutdownSiblings.Watchman,
-        Argus.Test.Fixtures.ShutdownSiblings.CarefulWatchman
+        Argus.Test.Fixtures.ShutdownSiblings.CarefulWatchman,
+        Argus.Test.Fixtures.ShutdownSiblings.GuardedWatchman
       ]
 
       Supervisor.init(children, strategy: :one_for_one)
@@ -360,5 +361,28 @@ defmodule Argus.Test.Fixtures.ForeignChildren.TaskStarter do
       end)
 
     {:ok, state}
+  end
+end
+
+defmodule Argus.Test.Fixtures.ShutdownSiblings.GuardedWatchman do
+  @moduledoc false
+  # oban's fix: the call survives the sibling being gone.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(state) do
+    Process.flag(:trap_exit, true)
+    {:ok, state}
+  end
+
+  @impl true
+  def terminate(_reason, _state) do
+    try do
+      Argus.Test.Fixtures.ShutdownSiblings.Producer.pause()
+    catch
+      :exit, _ -> :ok
+    end
   end
 end

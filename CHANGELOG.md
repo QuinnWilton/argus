@@ -36,6 +36,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   child as `"Task"`), and no longer reports a start function that lives
   in the supervisor's own module (`Postgrex.TypeSupervisor.start_server/2`):
   that tree is offering a shared service.
+- `terminate_calls_sibling` no longer reports a call under a `catch`
+  that takes the `:noproc` exit (oban's own fix), and a quiet-shapes
+  fixture pins the nearest non-bug neighbour of every rule from the
+  issue-mining pass.
 - Tag resolution of dynamic call targets is stricter and shows its
   work. A tag is no longer attributed by uniqueness when it is generic
   (`:get`, `:stop`, `:state`, ...) or when some `handle_info/2` also
