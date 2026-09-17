@@ -15,7 +15,7 @@
   distributed:
     ~w(call_edge catch_falls_through catch_tag catch_total distributed_store_op function_def global_op global_register implements_behaviour node_operation rpc_call rpc_result try_call),
   error_handling:
-    ~w(bare_rescue call_arg call_arg_forward call_edge callback_tag callback_total catch_tag catch_total exit_call function_def ignored_error_result implements_behaviour mailbox_writer monitor_call recv_start sync_call_timeout timer_arm trap_exit try_call),
+    ~w(bare_rescue call_arg call_arg_field call_arg_forward call_edge callback_tag callback_total catch_tag catch_total exit_call function_def ignored_error_result implements_behaviour mailbox_writer monitor_call recv_pattern returns_call sync_call_timeout timer_arm timer_cancel timer_ref timer_store trap_exit try_call),
   ets:
     ~w(call_arg call_arg_forward call_edge catch_tag catch_total closure_def dynamic_child ets_new ets_op ets_op_param ets_option function_def implements_behaviour statem_event_clause supervisor_child),
   gen_statem:

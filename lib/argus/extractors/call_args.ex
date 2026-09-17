@@ -12,6 +12,9 @@ defmodule Argus.Extractors.CallArgs do
     argument IS the caller's own parameter, forwarded through.
     `clientlib/interprocedural.dl` walks these backwards to propagate
     literal values through wrapper call chains.
+  - `call_arg_field(caller, callee, arg_pos, key)` when the argument was
+    read from a map under a literal key (`start_timer(ms, state.ref)`):
+    which piece of the caller's state a helper is handed.
 
   Only the first 4 arguments (positions 0–3) are resolved per call
   site. Module/table/server references sit in the first few positions
@@ -26,7 +29,8 @@ defmodule Argus.Extractors.CallArgs do
 
   @behaviour Argus.Extractor
 
-  import Argus.Extractor.Helpers, only: [add_fact: 3, each_call: 3, resolve_to_arg_or_atom: 3]
+  import Argus.Extractor.Helpers,
+    only: [add_fact: 3, each_call: 3, map_field_of: 3, resolve_to_arg_or_atom: 3]
 
   alias Argus.Pipeline.Normalize
 
@@ -36,6 +40,7 @@ defmodule Argus.Extractors.CallArgs do
   def relations,
     do: [
       :call_arg,
+      :call_arg_field,
       :call_arg_forward
     ]
 
@@ -82,7 +87,15 @@ defmodule Argus.Extractors.CallArgs do
         add_fact(facts, :call_arg, [ctx.func_id, callee_id, to_string(pos), str])
 
       :dynamic ->
-        add_fact(facts, :call_arg, [ctx.func_id, callee_id, to_string(pos), "dynamic"])
+        facts = add_fact(facts, :call_arg, [ctx.func_id, callee_id, to_string(pos), "dynamic"])
+
+        case map_field_of(ctx.instrs, ctx.idx, {:x, pos}) do
+          {:ok, key} ->
+            add_fact(facts, :call_arg_field, [ctx.func_id, callee_id, to_string(pos), key])
+
+          :dynamic ->
+            facts
+        end
     end
   end
 end

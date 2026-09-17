@@ -72,9 +72,11 @@ defmodule Argus.Analyses.ErrorHandling do
         fields: [
           {:mod, :symbol, "the process module"},
           {:cancel, :symbol, "function cancelling the timer"},
-          {:arm, :symbol, "function arming a timer whose message carries no ref"}
+          {:arm, :symbol, "function arming a timer whose message carries no ref"},
+          {:key, :symbol, "the state key holding the timer ref"},
+          {:message, :symbol, "the timer's message"}
         ],
-        key: [:mod],
+        key: [:mod, :key],
         doc: "A cancelled timer's message may already be in the mailbox and is not told apart."
       },
       %{
@@ -151,19 +153,21 @@ defmodule Argus.Analyses.ErrorHandling do
   end
 
   @impl true
-  def finding(:timer_cancel_without_flush, [mod, cancel, arm]) do
+  def finding(:timer_cancel_without_flush, [mod, cancel, arm, key, message]) do
     Findings.new(
       :warning,
       "Timer cancelled without flushing its message",
-      "#{mod} cancels a timer in #{cancel} and arms one in #{arm} whose message " <>
-        "carries nothing that identifies the timer. Process.cancel_timer/1 does " <>
-        "not remove a message already delivered, so the stale message is handled " <>
-        "as if it were the next one: the action runs twice, or early.",
+      "#{mod} cancels the timer kept under #{key} in #{cancel} and arms it in " <>
+        "#{arm} with the message #{message}, which carries nothing that " <>
+        "identifies the timer. Process.cancel_timer/1 does not remove a message " <>
+        "already delivered, and no receive in the module takes #{message}, so " <>
+        "a stale one is handled as if it were the next: the action runs twice, " <>
+        "or early.",
       at: Findings.at_func(cancel),
       at_label: "cancels here",
       help: [
-        "put the timer ref in the message (`{:tick, ref}`) and match it against the current one",
-        "or flush after cancelling: `receive do :tick -> :ok after 0 -> :ok end`"
+        "put the timer ref in the message (`{#{message}, ref}`) and match it against #{key}",
+        "or flush after cancelling: `receive do #{message} -> :ok after 0 -> :ok end`"
       ]
     )
   end

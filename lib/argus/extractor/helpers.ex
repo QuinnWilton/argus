@@ -427,6 +427,77 @@ defmodule Argus.Extractor.Helpers do
   end
 
   @doc """
+  The map key `register` was read from at instruction `idx`, following
+  register-to-register moves back to a `get_map_elements` (a `state.timer`
+  read, or a `%{timer: ref}` pattern in a clause head).
+
+  Returns `{:ok, inspected_key}` or `:dynamic`. A call in between
+  clobbers the x registers, and any other write to the register ends
+  the search.
+  """
+  @spec map_field_of([term()], non_neg_integer(), register()) :: {:ok, String.t()} | :dynamic
+  def map_field_of(instrs, idx, register) do
+    preceding = instrs |> Enum.take(idx) |> Enum.reverse()
+    walk_field(preceding, normalize_reg(register))
+  end
+
+  defp walk_field([], _reg), do: :dynamic
+
+  # A label reached going backwards: the path came from whichever jump
+  # or test targets it, not from the instruction before it (which is
+  # another clause's return, or the error branch of a `state.key`
+  # access). Resume from that predecessor when there is one.
+  defp walk_field([{:label, l} | rest], reg) do
+    case Enum.drop_while(rest, &(not branches_to?(&1, l))) do
+      [] -> walk_field(rest, reg)
+      [_branch | before] -> walk_field(before, reg)
+    end
+  end
+
+  defp walk_field([{:move, src, dst} | rest], reg) do
+    cond do
+      not reg_matches?(dst, reg) ->
+        walk_field(rest, reg)
+
+      match?({:x, _}, normalize_reg(src)) or match?({:y, _}, normalize_reg(src)) ->
+        walk_field(rest, normalize_reg(src))
+
+      true ->
+        :dynamic
+    end
+  end
+
+  defp walk_field([{:get_map_elements, _f, _src, {:list, pairs}} | rest], reg) do
+    case find_map_key(pairs, reg) do
+      {:ok, {:atom, key}} -> {:ok, inspect(key)}
+      {:ok, {:literal, key}} -> {:ok, inspect(key)}
+      {:ok, _other} -> :dynamic
+      :none -> walk_field(rest, reg)
+    end
+  end
+
+  defp walk_field([instr | rest], reg) do
+    cond do
+      barrier?(instr) -> :dynamic
+      call_instruction?(instr) and match?({:x, _}, reg) -> :dynamic
+      writes_to?(instr, reg) -> :dynamic
+      true -> walk_field(rest, reg)
+    end
+  end
+
+  defp branches_to?({:jump, {:f, l}}, l), do: true
+  defp branches_to?({:test, _, {:f, l}, _}, l), do: true
+  defp branches_to?({:test, _, {:f, l}, _, _}, l), do: true
+  defp branches_to?({:select_val, _, {:f, l}, _}, l), do: true
+  defp branches_to?({:select_tuple_arity, _, {:f, l}, _}, l), do: true
+  defp branches_to?(_instr, _l), do: false
+
+  defp call_instruction?(instr) when is_tuple(instr) and tuple_size(instr) > 0,
+    do: elem(instr, 0) in [:call, :call_ext, :call_fun, :call_fun2, :apply]
+
+  defp call_instruction?(_instr), do: false
+
+  @doc """
   Trace `register` at instruction `call_idx` back to the call whose
   RESULT it holds, following register-to-register move chains.
 

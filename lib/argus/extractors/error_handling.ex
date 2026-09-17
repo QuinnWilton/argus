@@ -57,6 +57,8 @@ defmodule Argus.Extractors.ErrorHandling do
     only: [
       add_fact: 3,
       arg_position: 3,
+      call_result_origin: 3,
+      map_field_of: 3,
       each_remote_call: 3,
       instructions_from_label: 2,
       match_remote_call: 1,
@@ -111,8 +113,13 @@ defmodule Argus.Extractors.ErrorHandling do
       :exit_call,
       :ignored_error_result,
       :mailbox_writer,
+      :recv_pattern,
+      :returns_call,
       :rpc_result,
       :timer_arm,
+      :timer_cancel,
+      :timer_ref,
+      :timer_store,
       :trap_exit,
       :try_call
     ]
@@ -130,7 +137,10 @@ defmodule Argus.Extractors.ErrorHandling do
         |> maybe_catch_clauses(ctx, instr)
       end)
 
-    rescues = emit_self_sends(rescues, mod, module_data.functions)
+    rescues =
+      rescues
+      |> emit_self_sends(mod, module_data.functions)
+      |> emit_timer_flows(mod, module_data.functions)
 
     each_remote_call(module_data, rescues, fn facts, ctx, mfa ->
       facts
@@ -179,8 +189,9 @@ defmodule Argus.Extractors.ErrorHandling do
     case Map.fetch(@mailbox_writers, mfa) do
       {:ok, {"timer", msg_reg, dest}} ->
         id = InstrId.mint(ctx.func_id, ctx.idx)
-        {message, param} = timer_message(ctx, msg_reg)
+        {message, param, literal} = timer_message(ctx, msg_reg)
         kind = if message == "bare", do: "timer_bare", else: "timer"
+        {flow, key} = ref_flow(ctx.instrs, ctx.idx)
 
         facts
         |> add_fact(:mailbox_writer, [id, ctx.func_id, kind])
@@ -189,8 +200,18 @@ defmodule Argus.Extractors.ErrorHandling do
           ctx.func_id,
           timer_target(ctx, dest),
           message,
-          to_string(param)
+          to_string(param),
+          literal
         ])
+        |> add_fact(:timer_ref, [id, ctx.func_id, flow, key])
+
+      {:ok, "cancel"} ->
+        id = InstrId.mint(ctx.func_id, ctx.idx)
+        {source, key, param} = cancel_source(ctx)
+
+        facts
+        |> add_fact(:mailbox_writer, [id, ctx.func_id, "cancel"])
+        |> add_fact(:timer_cancel, [id, ctx.func_id, source, key, to_string(param)])
 
       {:ok, "task_nolink"} ->
         add_fact(facts, :mailbox_writer, [
@@ -216,15 +237,272 @@ defmodule Argus.Extractors.ErrorHandling do
   defp timer_message(ctx, msg_reg) do
     case resolve_register(ctx.instrs, ctx.idx, {:x, msg_reg}) do
       {:ok, msg} ->
-        if bare_message?(msg), do: {"bare", -1}, else: {"dynamic", -1}
+        if bare_message?(msg), do: {"bare", -1, inspect(msg)}, else: {"dynamic", -1, ""}
 
       _ ->
         case arg_position(ctx.instrs, ctx.idx, {:x, msg_reg}) do
-          {:ok, n} -> {"param", n}
-          :no -> {"dynamic", -1}
+          {:ok, n} -> {"param", n, ""}
+          :no -> {"dynamic", -1, ""}
         end
     end
   end
+
+  # Where the timer ref goes after the arming call: returned by the
+  # function (a helper like `defp arm(ms), do: Process.send_after(...)`),
+  # stored under a literal key of a map (`%{state | timer: ...}`,
+  # `Map.put(state, :timer, ...)`), or somewhere the walk cannot follow.
+  defp ref_flow(instrs, idx) do
+    if tail_call?(Enum.at(instrs, idx)),
+      do: {"returned", ""},
+      else: ref_walk(Enum.drop(instrs, idx + 1), [{:x, 0}], instrs, idx + 1)
+  end
+
+  defp ref_walk([], _aliases, _instrs, _at), do: {"dynamic", ""}
+
+  defp ref_walk([:return | _], aliases, _instrs, _at),
+    do: if({:x, 0} in aliases, do: {"returned", ""}, else: {"dynamic", ""})
+
+  defp ref_walk([{:move, src, dst} | rest], aliases, instrs, at),
+    do: ref_walk(rest, retarget(aliases, src, dst), instrs, at + 1)
+
+  defp ref_walk([{put_map, _f, _src, dst, _live, {:list, pairs}} | rest], aliases, instrs, at)
+       when put_map in [:put_map_assoc, :put_map_exact] do
+    case stored_key(pairs, aliases) do
+      {:ok, key} -> {"stored", key}
+      :none -> ref_walk(rest, List.delete(aliases, reg_of(dst)), instrs, at + 1)
+    end
+  end
+
+  # Map.put(map, key, value) compiles to :maps.put(key, value, map).
+  defp ref_walk([{:call_ext, 3, {:extfunc, :maps, :put, 3}} | _rest], aliases, instrs, at) do
+    with true <- {:x, 1} in aliases,
+         {:ok, key} when is_atom(key) <- resolve_register(instrs, at, {:x, 0}) do
+      {"stored", inspect(key)}
+    else
+      _ -> {"dynamic", ""}
+    end
+  end
+
+  defp ref_walk([{call, arity, _} | _], aliases, _instrs, _at)
+       when call in [:call, :call_ext, :call_only, :call_ext_only] do
+    if Enum.any?(0..(arity - 1)//1, &({:x, &1} in aliases)),
+      do: {"dynamic", ""},
+      else: {"dynamic", ""}
+  end
+
+  defp ref_walk([{:label, _} | _], _aliases, _instrs, _at), do: {"dynamic", ""}
+
+  defp ref_walk([instr | rest], aliases, instrs, at) do
+    case aliased_write(instr, aliases) do
+      nil -> ref_walk(rest, aliases, instrs, at + 1)
+      dst -> ref_walk(rest, List.delete(aliases, dst), instrs, at + 1)
+    end
+  end
+
+  # The register an instruction writes, when that register is an alias:
+  # the dst operand is last for every register-writing shape but the
+  # maps and swaps handled above.
+  defp aliased_write(instr, aliases) when is_tuple(instr) and tuple_size(instr) > 1 do
+    case reg_of(elem(instr, tuple_size(instr) - 1)) do
+      nil -> nil
+      r -> if r in aliases, do: r, else: nil
+    end
+  end
+
+  defp aliased_write(_instr, _aliases), do: nil
+
+  defp stored_key(pairs, aliases) do
+    pairs
+    |> Enum.chunk_every(2)
+    |> Enum.find_value(:none, fn
+      [{:atom, key}, val] -> if alias?(val, aliases), do: {:ok, inspect(key)}, else: nil
+      [{:literal, key}, val] -> if alias?(val, aliases), do: {:ok, inspect(key)}, else: nil
+      _ -> nil
+    end)
+  end
+
+  # Where the cancelled ref came from: a map field read in this function
+  # (`state.timer`, or a `%{timer: ref}` head), a parameter (nebulex's
+  # `start_timer(time, ref, event)`), or unknown.
+  defp cancel_source(ctx) do
+    case map_field_of(ctx.instrs, ctx.idx, {:x, 0}) do
+      {:ok, key} ->
+        {"field", key, -1}
+
+      :dynamic ->
+        case arg_position(ctx.instrs, ctx.idx, {:x, 0}) do
+          {:ok, n} -> {"param", "", n}
+          :no -> {"dynamic", "", -1}
+        end
+    end
+  end
+
+  # Per function: which map keys receive a call's result (timer_store),
+  # which callee's result the function returns (returns_call), and what
+  # each receive matches (recv_pattern).
+  defp emit_timer_flows(facts, mod, functions) do
+    Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
+      if generated?(name) do
+        acc
+      else
+        func_id = InstrId.func_id(mod, name, arity)
+
+        acc
+        |> emit_stores(mod, func_id, instrs)
+        |> emit_returns(mod, func_id, instrs)
+        |> emit_recv_patterns(func_id, instrs)
+      end
+    end)
+  end
+
+  # The compiler's own functions (__info__/1, module_info, -inlined-...)
+  # never hold a timer.
+  defp generated?(name) when name in [:__info__, :module_info, :__struct__], do: true
+  defp generated?(name), do: String.starts_with?(Atom.to_string(name), "-")
+
+  defp emit_stores(facts, mod, func_id, instrs) do
+    instrs
+    |> Enum.with_index()
+    |> Enum.reduce(facts, fn
+      {{put_map, _f, _src, _dst, _live, {:list, pairs}}, idx}, acc
+      when put_map in [:put_map_assoc, :put_map_exact] ->
+        pairs
+        |> Enum.chunk_every(2)
+        |> Enum.reduce(acc, fn
+          [{:atom, key}, val], inner -> emit_store(inner, mod, func_id, instrs, idx, key, val)
+          _, inner -> inner
+        end)
+
+      {{:call_ext, 3, {:extfunc, :maps, :put, 3}}, idx}, acc ->
+        case resolve_register(instrs, idx, {:x, 0}) do
+          {:ok, key} when is_atom(key) -> emit_store(acc, mod, func_id, instrs, idx, key, {:x, 1})
+          _ -> acc
+        end
+
+      _, acc ->
+        acc
+    end)
+  end
+
+  defp emit_store(facts, mod, func_id, instrs, idx, key, val) do
+    with r when r != nil <- reg_of(val),
+         {:ok, {m, f, a}, _origin} <- call_result_origin(instrs, idx, r) do
+      callee = InstrId.func_id(if(m == :local, do: mod, else: m), f, a)
+      add_fact(facts, :timer_store, [func_id, inspect(key), callee])
+    else
+      _ -> facts
+    end
+  end
+
+  defp emit_returns(facts, mod, func_id, instrs) do
+    instrs
+    |> Enum.with_index()
+    |> Enum.reduce(facts, fn {instr, idx}, acc ->
+      case returned_callee(instr, Enum.at(instrs, idx + 1), mod) do
+        {:ok, callee} ->
+          if String.contains?(callee, ":-"),
+            do: acc,
+            else: add_fact(acc, :returns_call, [func_id, callee])
+
+        :none ->
+          acc
+      end
+    end)
+  end
+
+  # Only calls into this module: the chain a ref takes through arming
+  # helpers and default-argument wrappers. A remote callee's result is
+  # already described at its own site (timer_ref).
+  defp returned_callee({:call_only, _, {mod, f, a}}, _next, mod),
+    do: {:ok, InstrId.func_id(mod, f, a)}
+
+  defp returned_callee({:call_last, _, {mod, f, a}, _}, _next, mod),
+    do: {:ok, InstrId.func_id(mod, f, a)}
+
+  defp returned_callee({:call, _, {mod, f, a}}, :return, mod),
+    do: {:ok, InstrId.func_id(mod, f, a)}
+
+  defp returned_callee(_instr, _next, _mod), do: :none
+
+  # What each receive in the function matches: a literal atom per
+  # clause, or "any" for a clause whose pattern is not an atom (a tuple,
+  # a wildcard, a guard on the message). Clause heads are found by
+  # following each test's failure label from the loop_rec; a body
+  # reached without a test on the message is a catch-all.
+  defp emit_recv_patterns(facts, func_id, instrs) do
+    labels = for {{:label, l}, i} <- Enum.with_index(instrs), into: %{}, do: {l, i}
+
+    instrs
+    |> Enum.with_index()
+    |> Enum.reduce(facts, fn
+      {{:loop_rec, _f, _dst}, idx}, acc ->
+        instrs
+        |> recv_heads(idx + 1, labels, [])
+        |> Enum.uniq()
+        |> Enum.reduce(acc, fn m, inner ->
+          add_fact(inner, :recv_pattern, [InstrId.mint(func_id, idx), func_id, m])
+        end)
+
+      _, acc ->
+        acc
+    end)
+  end
+
+  defp recv_heads(instrs, idx, labels, seen) do
+    if idx in seen or idx >= length(instrs) do
+      []
+    else
+      recv_head(Enum.at(instrs, idx), instrs, idx, labels, [idx | seen])
+    end
+  end
+
+  defp recv_head({:label, _}, instrs, idx, labels, seen),
+    do: recv_heads(instrs, idx + 1, labels, seen)
+
+  defp recv_head({:loop_rec_end, _}, _instrs, _idx, _labels, _seen), do: []
+  defp recv_head({:wait, _}, _instrs, _idx, _labels, _seen), do: []
+  defp recv_head({:wait_timeout, _, _}, _instrs, _idx, _labels, _seen), do: []
+
+  defp recv_head({:test, :is_eq_exact, {:f, l}, [a, b]}, instrs, _idx, labels, seen) do
+    case {reg_of(a), reg_of(b)} do
+      {{:x, 0}, _} -> [pattern_of(b) | recv_fail(instrs, l, labels, seen)]
+      {_, {:x, 0}} -> [pattern_of(a) | recv_fail(instrs, l, labels, seen)]
+      _ -> recv_fail(instrs, l, labels, seen)
+    end
+  end
+
+  defp recv_head({:select_val, src, {:f, l}, {:list, entries}}, instrs, _idx, labels, seen) do
+    if reg_of(src) == {:x, 0},
+      do: for({:atom, a} <- entries, do: inspect(a)) ++ recv_fail(instrs, l, labels, seen),
+      else: recv_fail(instrs, l, labels, seen)
+  end
+
+  defp recv_head({:test, _op, {:f, l}, args}, instrs, _idx, labels, seen) when is_list(args) do
+    if Enum.any?(args, &(reg_of(&1) == {:x, 0})),
+      do: ["any" | recv_fail(instrs, l, labels, seen)],
+      else: recv_fail(instrs, l, labels, seen)
+  end
+
+  defp recv_head({:test, _op, {:f, l}, src, _fields}, instrs, _idx, labels, seen) do
+    if reg_of(src) == {:x, 0},
+      do: ["any" | recv_fail(instrs, l, labels, seen)],
+      else: recv_fail(instrs, l, labels, seen)
+  end
+
+  defp recv_head({:select_tuple_arity, _src, {:f, l}, _}, instrs, _idx, labels, seen),
+    do: ["any" | recv_fail(instrs, l, labels, seen)]
+
+  defp recv_head(_body, _instrs, _idx, _labels, _seen), do: ["any"]
+
+  defp recv_fail(instrs, label, labels, seen) do
+    case Map.fetch(labels, label) do
+      {:ok, idx} -> recv_heads(instrs, idx, labels, seen)
+      :error -> []
+    end
+  end
+
+  defp pattern_of({:atom, a}), do: inspect(a)
+  defp pattern_of(_other), do: "any"
 
   defp timer_target(_ctx, :self), do: "self"
 

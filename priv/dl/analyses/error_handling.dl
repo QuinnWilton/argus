@@ -230,44 +230,89 @@ partial_noproc_catch(func, id, callee) :-
 // :erlang.start_timer's `{:timeout, ref, _}`) is matched against the
 // current ref; a `receive :tick -> :ok after 0 -> :ok end` flushes.
 // Cancelling only in terminate/2 arms nothing again.
-// Any receive in the module: `after 0` (bb#214's fix) or the documented
-// idiom, a blocking receive taken only when cancel_timer/1 returned
-// false (Ostinato.Eager).
-.decl flushes_mailbox(mod: symbol)
+// ── Timer cancelled without a flush ──────────────────────────────────
+//
+// The timer's identity is followed through the state: the ref the arm
+// site produces is returned or stored under a map key (timer_ref,
+// returns_call, timer_store), and the ref a cancel site takes was read
+// from a map key or handed in as a parameter (timer_cancel,
+// call_arg_field). A cancel and an arm pair up only on the same key,
+// so a module with a heartbeat and a reconnect timer gets two verdicts.
+// The flush must name the armed message (recv_pattern), or match
+// anything.
 
-flushes_mailbox(mod) :-
-  recv_start(_, f, _, _),
+// The map key the ref armed in `a` ends up under.
+.decl timer_key(arm: symbol, key: symbol)
+
+timer_key(a, key) :- timer_ref(_, a, "stored", key).
+
+timer_key(a, key) :-
+  timer_ref(_, a, "returned", _),
+  returns_to_key(a, key).
+
+.decl returns_to_key(func: symbol, key: symbol)
+
+returns_to_key(f, key) :- timer_store(_, key, f).
+
+returns_to_key(f, key) :-
+  returns_call(g, f),
+  returns_to_key(g, key).
+
+// The map key the ref cancelled in `c` was read from, at the site or
+// at a caller that read it and passed it down.
+.decl cancel_key(cancel: symbol, key: symbol)
+
+cancel_key(c, key) :- timer_cancel(_, c, "field", key, _).
+
+cancel_key(c, key) :-
+  timer_cancel(_, c, "param", _, pos),
+  param_field(c, pos, key).
+
+.decl param_field(func: symbol, pos: number, key: symbol)
+
+param_field(f, pos, key) :- call_arg_field(_, f, pos, key).
+
+param_field(f, pos, key) :-
+  call_arg_forward(g, f, pos, gpos),
+  param_field(g, gpos, key).
+
+// The literal a timer armed for the arming process carries: at the
+// site, or a parameter the callers fill with a literal (nebulex's
+// `start_timer(time, ref, event)` with `event \\ :heartbeat`).
+.decl armed_message(arm: symbol, message: symbol)
+
+armed_message(a, lit) :- timer_arm(_, a, "self", "bare", _, lit).
+
+armed_message(a, lit) :-
+  timer_arm(_, a, "self", "param", pos, _),
+  resolved_arg(a, pos, lit).
+
+// A receive in the module takes the message: by name, or a clause that
+// matches anything (`after 0` with a wildcard, the cancel_timer docs'
+// blocking receive, Ostinato.Eager).
+.decl flushed(mod: symbol, message: symbol)
+
+flushed(mod, lit) :-
+  recv_pattern(_, f, lit),
   function_def(f, mod, _, _, _).
 
-// A timer armed for the arming process whose message is a literal: at
-// the site, or a parameter the callers fill with a literal (nebulex's
-// `start_timer(time, ref, event)` with `event \\ :heartbeat`).
-.decl bare_self_timer(func: symbol, mod: symbol)
+flushed(mod, lit) :-
+  recv_pattern(_, f, "any"),
+  function_def(f, mod, _, _, _),
+  armed_message(_, lit).
 
-bare_self_timer(a, mod) :-
-  timer_arm(_, a, "self", "bare", _),
-  function_def(a, mod, _, _, _).
-
-bare_self_timer(a, mod) :-
-  timer_arm(_, a, "self", "param", pos),
-  resolved_arg(a, pos, _),
-  function_def(a, mod, _, _, _).
-
-// The module whose mailbox the timer lands in: a process module, or a
-// helper that arms timers for whichever process calls it (bb's
-// BB.Loop, a struct that a component's callbacks drive).
-.decl timer_owner(mod: symbol)
-
-timer_owner(mod) :- process_entry(mod, _).
-timer_owner(mod) :- bare_self_timer(_, mod).
-
-.decl timer_cancel_without_flush(mod: symbol, cancel: symbol, arm: symbol)
+.decl timer_cancel_without_flush(mod: symbol, cancel: symbol, arm: symbol, key: symbol, message: symbol)
 .output timer_cancel_without_flush
 
-timer_cancel_without_flush(mod, c, a) :-
-  mailbox_writer(_, c, "cancel"),
+// The arm must be one that can follow the cancel: a timer armed only
+// in init/1 and cancelled later is stopped, not re-armed, and its
+// stale message is handled once as an ordinary one.
+timer_cancel_without_flush(mod, c, a, key, lit) :-
+  cancel_key(c, key),
   function_def(c, mod, _, _, _),
   !terminate_callback(c, mod, _),
-  bare_self_timer(a, mod),
-  timer_owner(mod),
-  !flushes_mailbox(mod).
+  timer_key(a, key),
+  function_def(a, mod, _, _, _),
+  !init_function(mod, a),
+  armed_message(a, lit),
+  !flushed(mod, lit).

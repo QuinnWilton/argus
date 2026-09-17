@@ -48,18 +48,27 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
           H.TimerCancelNoFlush,
           H.TimerCancelWithFlush,
           H.TimerCancelBlockingFlush,
+          H.TimerCancelWrongFlush,
           H.TimerWithRef,
           H.TimerForwarded,
           H.TimerHelper,
-          H.TimerForOther
+          H.TimerForOther,
+          H.TwoTimers
         ],
         :error_handling
       )
 
-    assert rows(r, "timer_cancel_without_flush") == [
-             "Argus.Test.Fixtures.Hypothesized.TimerCancelNoFlush",
-             "Argus.Test.Fixtures.Hypothesized.TimerForwarded",
-             "Argus.Test.Fixtures.Hypothesized.TimerHelper"
+    reported =
+      r
+      |> Map.get("timer_cancel_without_flush", [])
+      |> Enum.map(&{hd(&1), Enum.at(&1, 3), Enum.at(&1, 4)})
+      |> Enum.sort()
+
+    assert reported == [
+             {"Argus.Test.Fixtures.Hypothesized.TimerCancelNoFlush", ":timer", ":tick"},
+             {"Argus.Test.Fixtures.Hypothesized.TimerCancelWrongFlush", ":timer", ":tick"},
+             {"Argus.Test.Fixtures.Hypothesized.TimerForwarded", ":timer", ":heartbeat"},
+             {"Argus.Test.Fixtures.Hypothesized.TimerHelper", ":tick_ref", ":tick"}
            ]
   end
 

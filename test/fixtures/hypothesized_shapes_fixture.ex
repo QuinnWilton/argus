@@ -143,6 +143,60 @@ defmodule Argus.Test.Fixtures.Hypothesized do
     defp arm(interval), do: Process.send_after(self(), :tick, interval)
   end
 
+  defmodule TimerCancelWrongFlush do
+    @moduledoc false
+    # A receive that drains some other message is no flush for :tick.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(interval), do: {:ok, %{interval: interval, timer: arm(interval)}}
+
+    @impl true
+    def handle_call({:set_interval, interval}, _from, state) do
+      Process.cancel_timer(state.timer)
+
+      receive do
+        :drain -> :ok
+      after
+        0 -> :ok
+      end
+
+      {:reply, :ok, %{state | interval: interval, timer: arm(interval)}}
+    end
+
+    @impl true
+    def handle_info(:tick, state), do: {:noreply, %{state | timer: arm(state.interval)}}
+    def handle_info(:drain, state), do: {:noreply, state}
+
+    defp arm(interval), do: Process.send_after(self(), :tick, interval)
+  end
+
+  defmodule TwoTimers do
+    @moduledoc false
+    # Cancels the poll timer (armed once, in init) and arms the tick
+    # timer: different refs, different messages, and nothing re-arms
+    # :poll, so nothing is stale.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(interval),
+      do: {:ok, %{interval: interval, poll: Process.send_after(self(), :poll, 60_000), tick: nil}}
+
+    @impl true
+    def handle_call(:stop_polling, _from, state) do
+      Process.cancel_timer(state.poll)
+      {:reply, :ok, %{state | poll: nil, tick: Process.send_after(self(), :tick, state.interval)}}
+    end
+
+    @impl true
+    def handle_info(:tick, state), do: {:noreply, state}
+    def handle_info(:poll, state), do: {:noreply, state}
+  end
+
   defmodule TimerWithRef do
     @moduledoc false
     # The message carries the ref; a stale one does not match the state.

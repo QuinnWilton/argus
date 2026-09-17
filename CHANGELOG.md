@@ -4,6 +4,26 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- `timer_cancel_without_flush` follows the timer through the state
+  instead of pairing any cancel with any bare timer in the module. The
+  ref an arm site produces is traced to the map key it is stored under
+  (`timer_ref`, `returns_call`, `timer_store`, through arming helpers and
+  default-argument wrappers), the ref a cancel site takes is traced to
+  the key it was read from (`timer_cancel`, `call_arg_field`), and a
+  cancel pairs with an arm only on the same key. The flush must be a
+  receive that names the armed message or matches anything
+  (`recv_pattern`). The finding names the key and the message, one per
+  timer. A module with a heartbeat and a reconnect timer now gets two
+  verdicts, and a receive that drains some other message no longer
+  counts.
+- Schema version 36: `timer_arm` gains a `literal` column;
+  `timer_ref`, `timer_cancel`, `timer_store`, `returns_call`,
+  `recv_pattern` and `call_arg_field` added.
+
 ## 0.14.1 — 2026-09-16
 
 ### Fixed

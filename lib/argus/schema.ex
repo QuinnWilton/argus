@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 35
+  @schema_version 36
 
   # Layer 1: Module-level facts.
 
@@ -1191,7 +1191,8 @@ defmodule Argus.Schema do
       {:func, :symbol, "the function"},
       {:target, :symbol, "'self' | 'other'"},
       {:message, :symbol, "'bare' | 'param' | 'dynamic'"},
-      {:param, :number, "the parameter position when message is 'param', else -1"}
+      {:param, :number, "the parameter position when message is 'param', else -1"},
+      {:literal, :symbol, "the inspected message when it is 'bare', else ''"}
     ],
     doc: """
     A timer armed at `id`: whether it targets the arming process, and \
@@ -1201,6 +1202,87 @@ defmodule Argus.Schema do
     through resolved_arg), or a computed value such as a ref \
     ('dynamic'). Refines the `timer` / `timer_bare` kinds of \
     mailbox_writer.
+    """
+  }
+
+  @timer_ref %{
+    name: :timer_ref,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the send_after / send_interval site"},
+      {:func, :symbol, "the function"},
+      {:flow, :symbol, "'returned' | 'stored' | 'dynamic'"},
+      {:key, :symbol, "the inspected map key the ref is stored under, else ''"}
+    ],
+    doc: """
+    Where the ref of the timer armed at `id` goes: returned by the \
+    function (an arming helper), stored under a literal key of a map \
+    (`%{state | timer: ...}`, `Map.put(state, :timer, ...)`), or \
+    somewhere the walk cannot follow.
+    """
+  }
+
+  @timer_cancel %{
+    name: :timer_cancel,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the cancel_timer site"},
+      {:func, :symbol, "the function"},
+      {:source, :symbol, "'field' | 'param' | 'dynamic'"},
+      {:key, :symbol, "the inspected map key the ref was read from, else ''"},
+      {:param, :number, "the parameter position when source is 'param', else -1"}
+    ],
+    doc: """
+    Where the ref cancelled at `id` came from: a map field read in the \
+    function (`state.timer`, a `%{timer: ref}` head), one of the \
+    function's parameters (resolved at the callers through \
+    call_arg_field), or unknown.
+    """
+  }
+
+  @timer_store %{
+    name: :timer_store,
+    layer: 2,
+    fields: [
+      {:func, :symbol, "the function"},
+      {:key, :symbol, "the inspected map key"},
+      {:callee, :symbol, "the function whose result is stored"}
+    ],
+    doc: """
+    A map update in `func` stores the result of a call to `callee` under \
+    `key`: `%{state | timer: arm(ms)}`. With returns_call this ties a \
+    timer ref to the state field that keeps it.
+    """
+  }
+
+  @returns_call %{
+    name: :returns_call,
+    layer: 2,
+    fields: [
+      {:func, :symbol, "the function"},
+      {:callee, :symbol, "the function whose result it returns"}
+    ],
+    doc: """
+    `func` returns the result of a call to `callee`: a tail call, or a \
+    call followed by return. The chain `defp arm(ms), do: \
+    Process.send_after(...)` is one hop; default-argument wrappers add \
+    more.
+    """
+  }
+
+  @recv_pattern %{
+    name: :recv_pattern,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the receive's loop_rec"},
+      {:func, :symbol, "the function"},
+      {:message, :symbol, "an inspected atom a clause matches, or 'any'"}
+    ],
+    doc: """
+    What a receive matches, one row per clause: a literal atom, or 'any' \
+    for a clause whose pattern is not an atom (a tuple, a wildcard, a \
+    guard on the message). Says whether a flush after cancel_timer/1 \
+    takes the timer's own message.
     """
   }
 
@@ -1670,6 +1752,23 @@ defmodule Argus.Schema do
     """
   }
 
+  @call_arg_field %{
+    name: :call_arg_field,
+    layer: 2,
+    fields: [
+      {:caller, :symbol, "calling function ID"},
+      {:callee, :symbol, "called function ID"},
+      {:arg_pos, :number, "argument position (0-based)"},
+      {:key, :symbol, "the inspected map key the argument was read from"}
+    ],
+    doc: """
+    The argument at `arg_pos` was read from a map under a literal key in \
+    the caller (`start_timer(ms, state.ref)`): which piece of the \
+    caller's state a helper is handed. Only emitted where call_arg says \
+    'dynamic'.
+    """
+  }
+
   @call_arg_forward %{
     name: :call_arg_forward,
     layer: 2,
@@ -1785,6 +1884,11 @@ defmodule Argus.Schema do
     @try_call,
     @rpc_result,
     @timer_arm,
+    @timer_ref,
+    @timer_cancel,
+    @timer_store,
+    @returns_call,
+    @recv_pattern,
     @callback_ref_head,
     @mailbox_writer,
     @trap_exit,
@@ -1811,6 +1915,7 @@ defmodule Argus.Schema do
     @statem_event_catchall,
     # Interprocedural constant propagation.
     @call_arg,
+    @call_arg_field,
     @call_arg_forward,
     # Purity contracts and call classification.
     @pure_contract,
