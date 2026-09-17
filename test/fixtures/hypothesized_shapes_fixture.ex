@@ -115,6 +115,34 @@ defmodule Argus.Test.Fixtures.Hypothesized do
     defp arm(interval), do: Process.send_after(self(), :tick, interval)
   end
 
+  defmodule TimerCancelBlockingFlush do
+    @moduledoc false
+    # The idiom from the cancel_timer/1 docs: a blocking receive, taken
+    # only when the timer had already fired.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(interval), do: {:ok, %{interval: interval, timer: arm(interval)}}
+
+    @impl true
+    def handle_call({:set_interval, interval}, _from, state) do
+      if Process.cancel_timer(state.timer) == false do
+        receive do
+          :tick -> :ok
+        end
+      end
+
+      {:reply, :ok, %{state | interval: interval, timer: arm(interval)}}
+    end
+
+    @impl true
+    def handle_info(:tick, state), do: {:noreply, %{state | timer: arm(state.interval)}}
+
+    defp arm(interval), do: Process.send_after(self(), :tick, interval)
+  end
+
   defmodule TimerWithRef do
     @moduledoc false
     # The message carries the ref; a stale one does not match the state.

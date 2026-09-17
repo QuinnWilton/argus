@@ -230,10 +230,13 @@ partial_noproc_catch(func, id, callee) :-
 // :erlang.start_timer's `{:timeout, ref, _}`) is matched against the
 // current ref; a `receive :tick -> :ok after 0 -> :ok end` flushes.
 // Cancelling only in terminate/2 arms nothing again.
+// Any receive in the module: `after 0` (bb#214's fix) or the documented
+// idiom, a blocking receive taken only when cancel_timer/1 returned
+// false (Ostinato.Eager).
 .decl flushes_mailbox(mod: symbol)
 
 flushes_mailbox(mod) :-
-  recv_start(_, f, 0, _),
+  recv_start(_, f, _, _),
   function_def(f, mod, _, _, _).
 
 // A timer armed for the arming process whose message is a literal: at

@@ -4,6 +4,16 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- `timer_cancel_without_flush` now treats any receive in the module as
+  the flush, including the idiom from the `cancel_timer/1` docs: a
+  blocking receive taken only when the cancel returned `false`. Before,
+  only an `after 0` receive counted, and encore's ostinato tripwire was
+  reported.
+
 ## 0.14.0 — 2026-09-16
 
 ### Added

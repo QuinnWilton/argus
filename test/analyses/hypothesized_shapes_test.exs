@@ -47,6 +47,7 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
         [
           H.TimerCancelNoFlush,
           H.TimerCancelWithFlush,
+          H.TimerCancelBlockingFlush,
           H.TimerWithRef,
           H.TimerForwarded,
           H.TimerHelper,
