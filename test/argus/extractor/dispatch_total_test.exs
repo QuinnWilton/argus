@@ -19,4 +19,14 @@ defmodule Argus.Extractor.DispatchTotalTest do
     rows = callback_total(CatchAllShapes.MapAccessBody)
     refute Enum.any?(rows, &match?([_, "handle_cast"], &1))
   end
+
+  test "tagged clauses that also pattern the state are not a catch-all" do
+    rows = callback_total(CatchAllShapes.TaggedClausesWithStatePatterns)
+    refute Enum.any?(rows, &match?([_, "handle_info"], &1))
+  end
+
+  test "a clause that shares a tested prefix with the one before it is not a catch-all" do
+    rows = callback_total(CatchAllShapes.SharedPrefixClauses)
+    refute Enum.any?(rows, &match?([_, "handle_info"], &1))
+  end
 end

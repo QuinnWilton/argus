@@ -4,6 +4,24 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- `callback_total` is now a path walk over the clause heads
+  (`Dispatch.total_on?/2`): a fail edge on the message opens the next
+  clause, a fail edge on the state is the next clause only when its
+  target begins with tests (a body's `state.field` fallback begins with
+  a call), registers projected from the message carry across clauses,
+  and a clause inherits the message tests its predecessor passed (two
+  `{:DOWN, ref, _, _, _}` clauses share a prefix). A linear scan had
+  read Redix.SocketOwner's handle_info/2 — every clause a message shape
+  plus a state pattern — as a catch-all, and DBConnection.Watcher's and
+  Postgrex.TypeServer's the same way.
+- A message the process sends itself counts as a late-message source
+  when it is Elixir's `send/2` (a call to `:erlang.send/2`), not only
+  Erlang's `!` (the `send` opcode).
+
 ## 0.13.0 — 2026-09-16
 
 ### Added

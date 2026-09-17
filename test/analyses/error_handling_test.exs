@@ -23,6 +23,7 @@ defmodule Argus.Analyses.ErrorHandlingTest do
           Argus.Test.Fixtures.PartialInfoStage,
           Argus.Test.Fixtures.QuietPartialInfoServer,
           Argus.Test.Fixtures.AppliesPartialInfoServer,
+          Argus.Test.Fixtures.SelfSendPartialInfoServer,
           Argus.Test.Fixtures.MonitorsWithoutCatchall
         ])
 
@@ -31,7 +32,8 @@ defmodule Argus.Analyses.ErrorHandlingTest do
       assert partial == [
                "Argus.Test.Fixtures.AppliesPartialInfoServer",
                "Argus.Test.Fixtures.PartialInfoServer",
-               "Argus.Test.Fixtures.PartialInfoStage"
+               "Argus.Test.Fixtures.PartialInfoStage",
+               "Argus.Test.Fixtures.SelfSendPartialInfoServer"
              ]
 
       # The monitoring module keeps its warning-grade finding, not this one.

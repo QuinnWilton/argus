@@ -334,3 +334,21 @@ defmodule Argus.Test.Fixtures.AppliesPartialInfoServer do
   @impl true
   def handle_info(:tick, fun), do: {:noreply, fun}
 end
+
+defmodule Argus.Test.Fixtures.SelfSendPartialInfoServer do
+  @moduledoc false
+  # A start-up message the process sends itself, re-sent by every restart
+  # (cachex#314): `send/2` compiles to a call to :erlang.send/2.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(state) do
+    send(self(), :warm)
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_info(:warm, state), do: {:noreply, state}
+end

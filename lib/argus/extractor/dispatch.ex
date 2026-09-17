@@ -63,93 +63,234 @@ defmodule Argus.Extractor.Dispatch do
 
   `handle_info(msg, {stack, continuation})` is a catch-all for messages
   even though its head tests the state; `total?/1` would say no, since
-  the state pattern can branch to `func_info`. The scan walks the clause
-  heads in order: a clause begins at the entry or at the fail label of a
-  head test, and it is total on `register` if its head tests nothing
-  read from `register` (or a register copied or projected from it)
-  before the body starts. Guards on the message count as tests; guards
+  the state pattern can branch to `func_info`. The walk follows every
+  path from the entry through the clause heads — both edges of each
+  test, every `select` arm, jumps — carrying the registers that hold the
+  message (or a copy or projection of it) and whether the path has
+  tested one of them. A path that reaches a body instruction without
+  having tested the message is a clause that accepts every message.
+  Bodies are not entered: a test inside one branches within that body,
+  not to another clause. Guards on the message count as tests; guards
   on the state do not.
   """
   @spec total_on?([tuple()], {:x, non_neg_integer()}) :: boolean()
   def total_on?(instrs, register) do
-    entry = func_info_label(instrs)
-    initial = %{tracked: MapSet.new([register]), tested: false, body: false, heads: MapSet.new()}
-
-    {found?, _} =
-      Enum.reduce_while(instrs, {false, initial}, fn instr, {_, state} ->
-        case head_step(instr, state, register, entry) do
-          :total -> {:halt, {true, state}}
-          state -> {:cont, {false, state}}
-        end
-      end)
-
+    tuple = List.to_tuple(instrs)
+    labels = label_index(instrs)
+    # The code starts after func_info; what precedes it is the failure exit.
+    start = (Enum.find_index(instrs, &match?({:func_info, _, _, _}, &1)) || -1) + 1
+    path = %{tracked: MapSet.new([register]), tested: false, passed: false}
+    {found?, _seen} = walk_head(start, path, tuple, labels, MapSet.new())
     found?
   end
 
-  # A clause boundary: the entry label, or the fail label of a head test.
-  # A test inside a body branches too, but its fail label is a branch
-  # within that body, not the next clause: only head tests add heads.
-  defp head_step({:label, l}, state, register, entry) do
-    if l == entry or MapSet.member?(state.heads, l),
-      do: %{state | tracked: MapSet.new([register]), tested: false, body: false},
-      else: state
+  defp label_index(instrs) do
+    instrs
+    |> Enum.with_index()
+    |> Enum.reduce(%{}, fn
+      {{:label, l}, idx}, acc -> Map.put(acc, l, idx)
+      _, acc -> acc
+    end)
   end
 
-  defp head_step({:test, _op, {:f, l}, args}, state, _register, entry) when is_list(args) do
-    head_test(state, Enum.any?(args, &tracked?(&1, state.tracked)), l, entry)
-  end
+  # The path state: the registers holding the message or a projection of
+  # it; whether the clause being walked has tested the message; and
+  # whether some message test has PASSED on the way here. The last is
+  # what a fail edge inherits — two clauses can share a tested prefix
+  # (`{:DOWN, ref, _, _, _}` twice, the first with a `^ref` state match),
+  # and the second is only as open as that prefix leaves it.
+  defp walk_head(idx, path, tuple, labels, seen) do
+    key = {idx, path.tested, path.passed, Enum.sort(path.tracked)}
 
-  defp head_step({:test, _op, {:f, l}, src, _fields}, state, _register, entry) do
-    head_test(state, tracked?(src, state.tracked), l, entry)
-  end
-
-  defp head_step({op, src, {:f, l}, _list}, state, _register, entry)
-       when op in [:select_val, :select_tuple_arity] do
-    head_test(state, tracked?(src, state.tracked), l, entry)
-  end
-
-  defp head_step({:move, src, dst}, state, _register, _entry),
-    do: %{state | tracked: track(state.tracked, src, dst)}
-
-  defp head_step({:get_tuple_element, src, _i, dst}, state, _register, _entry),
-    do: %{state | tracked: track(state.tracked, src, dst)}
-
-  defp head_step({:get_hd, src, dst}, state, _register, _entry),
-    do: %{state | tracked: track(state.tracked, src, dst)}
-
-  defp head_step({:get_tl, src, dst}, state, _register, _entry),
-    do: %{state | tracked: track(state.tracked, src, dst)}
-
-  # Bookkeeping the compiler emits between a head and its body.
-  defp head_step({:line, _}, state, _register, _entry), do: state
-  defp head_step({:func_info, _, _, _}, state, _register, _entry), do: state
-  defp head_step({:allocate, _, _}, state, _register, _entry), do: state
-  defp head_step({:allocate_heap, _, _, _}, state, _register, _entry), do: state
-  defp head_step({:allocate_zero, _, _}, state, _register, _entry), do: state
-  defp head_step({:init_yregs, _}, state, _register, _entry), do: state
-  defp head_step({:test_heap, _, _}, state, _register, _entry), do: state
-  defp head_step({:trim, _, _}, state, _register, _entry), do: state
-
-  # Anything else is the body: the clause is entered.
-  defp head_step(_instr, state, _register, _entry) do
     cond do
-      state.body -> state
-      state.tested -> %{state | body: true}
-      true -> :total
+      idx >= tuple_size(tuple) -> {false, seen}
+      MapSet.member?(seen, key) -> {false, seen}
+      true -> head_step(elem(tuple, idx), idx, path, tuple, labels, MapSet.put(seen, key))
     end
   end
 
-  # Which fail labels start the next clause: those of tests on the
-  # message. A test on another argument before the body is either a head
-  # pattern on the state — its fail label is func_info, never jumped to
-  # — or the first instruction of the body (`state.acks` compiles to
-  # `is_map` with a fallback branch), whose fail label is a branch within
-  # this clause. Neither opens a clause.
-  defp head_test(%{body: true} = state, _tested?, _label, _entry), do: state
+  defp goto_head(label, path, tuple, labels, seen) do
+    case Map.fetch(labels, label) do
+      {:ok, idx} -> walk_head(idx, path, tuple, labels, seen)
+      :error -> {false, seen}
+    end
+  end
 
-  defp head_test(state, tested?, label, entry) do
-    heads = if tested? or label == entry, do: MapSet.put(state.heads, label), else: state.heads
-    %{state | tested: state.tested or tested?, heads: heads}
+  # Both edges of a test. The pass edge falls through with what the
+  # clause has established. The fail edge of a test on the message is
+  # the next clause, as constrained as the passed prefix. The fail edge
+  # of a test on the state is inside this clause once the message is
+  # matched (a hoisted `case`, a `badmatch`, a map-access fallback);
+  # before that it is the next clause when the target looks like one —
+  # a clause begins with tests, a body fallback with a call.
+  defp branch_head(idx, fail, on_message?, path, tuple, labels, seen) do
+    pass_path = if on_message?, do: %{path | tested: true, passed: true}, else: path
+
+    case walk_head(idx + 1, pass_path, tuple, labels, seen) do
+      {true, seen} ->
+        {true, seen}
+
+      {false, seen} ->
+        case fail_path(on_message?, path, fail, tuple, labels) do
+          nil -> {false, seen}
+          fail_path -> goto_head(fail, fail_path, tuple, labels, seen)
+        end
+    end
+  end
+
+  defp fail_path(true, path, _fail, _tuple, _labels), do: %{path | tested: path.passed}
+  defp fail_path(false, %{tested: true} = path, _fail, _tuple, _labels), do: path
+
+  defp fail_path(false, path, fail, tuple, labels) do
+    if clause_start?(fail, tuple, labels), do: %{path | tested: path.passed}, else: nil
+  end
+
+  defp head_step({:test, _op, {:f, l}, args}, idx, path, tuple, labels, seen)
+       when is_list(args) do
+    on_message? = Enum.any?(args, &tracked?(&1, path.tracked))
+    branch_head(idx, l, on_message?, path, tuple, labels, seen)
+  end
+
+  defp head_step({:test, _op, {:f, l}, src, _fields}, idx, path, tuple, labels, seen) do
+    branch_head(idx, l, tracked?(src, path.tracked), path, tuple, labels, seen)
+  end
+
+  # A fail-labelled map read is a test on its subject; its destinations
+  # hold map values, not the message.
+  defp head_step({:get_map_elements, {:f, l}, src, {:list, kvs}}, idx, path, tuple, labels, seen) do
+    on_message? = tracked?(src, path.tracked)
+    tracked = kvs |> Enum.drop_every(2) |> Enum.reduce(path.tracked, &forget(&2, &1))
+    branch_head(idx, l, on_message?, %{path | tracked: tracked}, tuple, labels, seen)
+  end
+
+  # Each arm is a clause group for that value; the default is the next
+  # clause, as constrained as the passed prefix.
+  defp head_step({op, src, {:f, fail}, {:list, pairs}}, _idx, path, tuple, labels, seen)
+       when op in [:select_val, :select_tuple_arity] do
+    on_message? = tracked?(src, path.tracked)
+    arm_path = if on_message?, do: %{path | tested: true, passed: true}, else: path
+    arms = pairs |> Enum.chunk_every(2) |> Enum.map(fn [_val, {:f, l}] -> {l, arm_path} end)
+
+    default =
+      case fail_path(on_message?, path, fail, tuple, labels) do
+        nil -> []
+        p -> [{fail, p}]
+      end
+
+    Enum.reduce_while(arms ++ default, {false, seen}, fn {l, p}, {_, seen} ->
+      case goto_head(l, p, tuple, labels, seen) do
+        {true, seen} -> {:halt, {true, seen}}
+        {false, seen} -> {:cont, {false, seen}}
+      end
+    end)
+  end
+
+  defp head_step({:jump, {:f, l}}, _idx, path, tuple, labels, seen),
+    do: goto_head(l, path, tuple, labels, seen)
+
+  defp head_step({:move, src, dst}, idx, path, tuple, labels, seen),
+    do: walk_head(idx + 1, %{path | tracked: track(path.tracked, src, dst)}, tuple, labels, seen)
+
+  defp head_step({:swap, a, b}, idx, path, tuple, labels, seen) do
+    tracked = path.tracked
+
+    tracked =
+      case {tracked?(a, tracked), tracked?(b, tracked)} do
+        {true, false} -> tracked |> forget(a) |> MapSet.put(reg(b))
+        {false, true} -> tracked |> forget(b) |> MapSet.put(reg(a))
+        _ -> tracked
+      end
+
+    walk_head(idx + 1, %{path | tracked: tracked}, tuple, labels, seen)
+  end
+
+  defp head_step({:get_tuple_element, src, _i, dst}, idx, path, tuple, labels, seen),
+    do: walk_head(idx + 1, %{path | tracked: track(path.tracked, src, dst)}, tuple, labels, seen)
+
+  defp head_step({:get_hd, src, dst}, idx, path, tuple, labels, seen),
+    do: walk_head(idx + 1, %{path | tracked: track(path.tracked, src, dst)}, tuple, labels, seen)
+
+  defp head_step({:get_tl, src, dst}, idx, path, tuple, labels, seen),
+    do: walk_head(idx + 1, %{path | tracked: track(path.tracked, src, dst)}, tuple, labels, seen)
+
+  # The failure exit: not a clause.
+  defp head_step({:func_info, _, _, _}, _idx, _path, _tuple, _labels, seen), do: {false, seen}
+
+  # Bookkeeping the compiler emits between a head and its body.
+  defp head_step({op, _}, idx, path, tuple, labels, seen)
+       when op in [:label, :line, :init_yregs],
+       do: walk_head(idx + 1, path, tuple, labels, seen)
+
+  defp head_step({op, _, _}, idx, path, tuple, labels, seen)
+       when op in [:allocate, :allocate_zero, :test_heap, :trim],
+       do: walk_head(idx + 1, path, tuple, labels, seen)
+
+  defp head_step({:allocate_heap, _, _, _}, idx, path, tuple, labels, seen),
+    do: walk_head(idx + 1, path, tuple, labels, seen)
+
+  # Anything else is the body: the clause is entered. Untested, it
+  # accepts every message; tested, it is a real clause and the walk does
+  # not continue into it.
+  defp head_step(_instr, _idx, path, _tuple, _labels, seen), do: {not path.tested, seen}
+
+  # Whether the block at `label` is a clause head: after bookkeeping and
+  # register shuffling it tests something or is the failure exit. A body
+  # fallback calls.
+  defp clause_start?(label, tuple, labels) do
+    case Map.fetch(labels, label) do
+      :error -> false
+      {:ok, idx} -> clause_start_at?(idx + 1, tuple)
+    end
+  end
+
+  defp clause_start_at?(idx, tuple) when idx >= tuple_size(tuple), do: false
+
+  defp clause_start_at?(idx, tuple) do
+    case elem(tuple, idx) do
+      {:test, _, _, _} ->
+        true
+
+      {:test, _, _, _, _} ->
+        true
+
+      {:select_val, _, _, _} ->
+        true
+
+      {:select_tuple_arity, _, _, _} ->
+        true
+
+      {:get_map_elements, {:f, _}, _, _} ->
+        true
+
+      {:func_info, _, _, _} ->
+        true
+
+      {:jump, _} ->
+        true
+
+      {op, _} when op in [:label, :line, :init_yregs] ->
+        clause_start_at?(idx + 1, tuple)
+
+      {op, _, _}
+      when op in [:allocate, :allocate_zero, :test_heap, :trim, :move, :get_hd, :get_tl, :swap] ->
+        clause_start_at?(idx + 1, tuple)
+
+      {:allocate_heap, _, _, _} ->
+        clause_start_at?(idx + 1, tuple)
+
+      {:get_tuple_element, _, _, _} ->
+        clause_start_at?(idx + 1, tuple)
+
+      _ ->
+        false
+    end
+  end
+
+  defp forget(tracked, dst) do
+    case reg(dst) do
+      nil -> tracked
+      r -> MapSet.delete(tracked, r)
+    end
   end
 
   defp track(tracked, src, dst) do

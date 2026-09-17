@@ -198,14 +198,20 @@ defmodule Argus.Extractors.ErrorHandling do
     match?({:ok, :erlang, :apply, _}, match_remote_call(instr))
   end
 
+  # Elixir's `send/2` is a call to :erlang.send/2, not the `send` opcode
+  # (which Erlang's `!` compiles to); both count.
   defp first_send(instrs) do
-    case Enum.find_index(instrs, &(&1 == :send or &1 == {:send})) do
-      nil ->
-        {false, 0}
-
-      idx ->
-        {true, idx}
+    case Enum.find_index(instrs, &send?/1) do
+      nil -> {false, 0}
+      idx -> {true, idx}
     end
+  end
+
+  defp send?(:send), do: true
+  defp send?({:send}), do: true
+
+  defp send?(instr) do
+    match?({:ok, :erlang, :send, a} when a in [2, 3], match_remote_call(instr))
   end
 
   # The BEAM try instruction is {:try, register, {:f, handler_label}}.
