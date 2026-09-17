@@ -154,6 +154,7 @@ state_missing_info_catchall(mod, state, func) :-
 statem_handles_event(mod, type) :- statem_event_clause(mod, _, type).
 statem_handles_event(mod, "timeout") :- statem_event_catchall(mod, _).
 statem_handles_event(mod, "state_timeout") :- statem_event_catchall(mod, _).
+statem_handles_event(mod, "{timeout}") :- statem_event_catchall(mod, _).
 
 .decl statem_timeout_unhandled(mod: symbol, kind: symbol, state: symbol)
 .output statem_timeout_unhandled
@@ -162,9 +163,11 @@ statem_timeout_unhandled(mod, "event_timeout", state) :-
   statem_timeout(mod, state, "event_timeout", _),
   !statem_handles_event(mod, "timeout").
 
-statem_timeout_unhandled(mod, "event_timeout", state) :-
+// A generic timeout {{:timeout, name}, ms, content} arrives as the
+// event type {:timeout, name}: a tagged tuple, not the :timeout atom.
+statem_timeout_unhandled(mod, "generic_timeout", state) :-
   statem_timeout(mod, state, "generic", _),
-  !statem_handles_event(mod, "timeout").
+  !statem_handles_event(mod, "{timeout}").
 
 statem_timeout_unhandled(mod, "state_timeout", state) :-
   statem_timeout(mod, state, "state_timeout", _),

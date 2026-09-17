@@ -499,16 +499,42 @@ defmodule Argus.Extractors.GenStatem do
       {{:move, {:literal, actions}, _}, _idx}, acc when is_list(actions) ->
         extract_timeouts_from_literal_actions(acc, mod_str, state_name, actions)
 
+      # A single fully-literal action, `{{:timeout, :backoff}, 500, nil}`.
+      {{:move, {:literal, action}, _}, _idx}, acc when is_tuple(action) ->
+        extract_timeouts_from_literal_actions(acc, mod_str, state_name, [action])
+
       _, acc ->
         acc
     end)
   end
 
   # Check if this put_tuple2 is itself a timeout ACTION: a 3-tuple headed
-  # :timeout or :state_timeout that flows into the callback's return. A
-  # `{:timeout, ref, payload}` built to send, or the `{:timeout, name}`
-  # inside a generic timeout `{{:timeout, name}, ms, content}`, is not
-  # an armed event timeout (DBConnection.Connection, Finch.HTTP2.Pool).
+  # :timeout, :state_timeout or {:timeout, name} that flows into the
+  # callback's return. A `{:timeout, ref, payload}` built to send, or the
+  # `{:timeout, name}` inside a generic timeout `{{:timeout, name}, ms,
+  # content}`, is not an armed event timeout (DBConnection.Connection,
+  # Finch.HTTP2.Pool); the generic timeout itself is
+  # (Postgrex.ReplicationConnection's reconnect backoff).
+  defp maybe_timeout_tuple(
+         facts,
+         mod_str,
+         state_name,
+         [{:literal, {:timeout, name}}, timeout_val, _content],
+         ctx,
+         {instrs, idx, dst}
+       )
+       when is_atom(name) do
+    if flows_to_return?(instrs, idx, dst) do
+      value = resolve_element_value(timeout_val)
+
+      facts
+      |> track_dynamic(value, ctx, :statem_timeout_value, :statem_timeout)
+      |> add_fact(:statem_timeout, [mod_str, state_name, "generic", value])
+    else
+      facts
+    end
+  end
+
   defp maybe_timeout_tuple(
          facts,
          mod_str,
@@ -618,6 +644,9 @@ defmodule Argus.Extractors.GenStatem do
       {:literal, actions}, acc when is_list(actions) ->
         extract_timeouts_from_literal_actions(acc, mod_str, state_name, actions)
 
+      {:literal, action}, acc when is_tuple(action) ->
+        extract_timeouts_from_literal_actions(acc, mod_str, state_name, [action])
+
       _, acc ->
         acc
     end)
@@ -631,7 +660,9 @@ defmodule Argus.Extractors.GenStatem do
       {:timeout, value, _}, acc ->
         add_fact(acc, :statem_timeout, [mod_str, state_name, "event_timeout", to_string(value)])
 
-      {name, value, _}, acc when is_atom(name) ->
+      # A generic timeout is headed by {:timeout, name}; a 3-tuple with an
+      # atom head is another action ({:next_event, :internal, :connect}).
+      {{:timeout, name}, value, _}, acc when is_atom(name) ->
         add_fact(acc, :statem_timeout, [mod_str, state_name, "generic", to_string(value)])
 
       _, acc ->

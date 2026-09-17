@@ -104,6 +104,19 @@ defmodule Argus.Analyses.GenStatemTest do
 
       assert results["statem_timeout_unhandled"] == []
     end
+
+    test "a generic timeout handled as :timeout is reported; a {:timeout, name} head is not" do
+      skip_without_souffle()
+
+      results =
+        analyze([
+          Argus.Test.Fixtures.GenericTimeoutMismatchStatem,
+          Argus.Test.Fixtures.GenericTimeoutHandledStatem
+        ])
+
+      assert [[mod, "generic_timeout", "handle_event"]] = results["statem_timeout_unhandled"]
+      assert mod =~ "GenericTimeoutMismatchStatem"
+    end
   end
 
   describe "call_never_replied" do

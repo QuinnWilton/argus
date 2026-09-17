@@ -274,6 +274,58 @@ defmodule Argus.Test.Fixtures.TimeoutHandledStatem do
   def handle_event(:info, _msg, :connected, _data), do: :keep_state_and_data
 end
 
+defmodule Argus.Test.Fixtures.GenericTimeoutMismatchStatem do
+  @moduledoc """
+  A generic timeout {{:timeout, :backoff}, ms, content} is armed, and
+  the handler is written for the :timeout atom: the event arrives as
+  {:timeout, :backoff}.
+  """
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :handle_event_function
+
+  @impl true
+  def init(_args), do: {:ok, :disconnected, %{backoff: 100}}
+
+  @impl true
+  def handle_event(:internal, :connect, :disconnected, data) do
+    {:keep_state, data, {{:timeout, :backoff}, data.backoff, nil}}
+  end
+
+  def handle_event(:timeout, nil, :disconnected, data) do
+    {:keep_state, data, {:next_event, :internal, :connect}}
+  end
+
+  def handle_event(:info, _msg, _state, _data), do: :keep_state_and_data
+end
+
+defmodule Argus.Test.Fixtures.GenericTimeoutHandledStatem do
+  @moduledoc """
+  Postgrex.ReplicationConnection, Finch.HTTP2.Pool: the generic timeout
+  is matched by a tuple head whose name varies, which compiles to a
+  get_tuple_element and an atom test rather than is_tagged_tuple.
+  """
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :handle_event_function
+
+  @impl true
+  def init(_args), do: {:ok, :disconnected, %{backoff: 100}}
+
+  @impl true
+  def handle_event(:internal, :connect, :disconnected, data) do
+    {:keep_state, data, {{:timeout, :backoff}, data.backoff, nil}}
+  end
+
+  def handle_event({:timeout, name}, nil, :disconnected, data) do
+    {:keep_state, Map.put(data, :last, name), {:next_event, :internal, :connect}}
+  end
+
+  def handle_event(:info, _msg, _state, _data), do: :keep_state_and_data
+end
+
 defmodule Argus.Test.Fixtures.UnrepliedCallStatem do
   @moduledoc false
   # finch#213: a cancel while disconnected returns :keep_state_and_data and

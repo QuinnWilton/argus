@@ -67,7 +67,7 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
     func_info = Dispatch.func_info_label(instrs)
 
     %{
-      event_types: instrs |> Enum.flat_map(&event_types_in/1) |> Enum.uniq(),
+      event_types: Enum.uniq(Enum.flat_map(instrs, &event_types_in/1) ++ tagged_types(instrs)),
       info_catchall?:
         reaches_body?(
           fun,
@@ -100,7 +100,55 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
 
   defp event_types_in(_instr), do: []
 
+  # A tuple head with a varying element, `{:timeout, name}` or
+  # `{:call, from}`, compiles to is_tuple + test_arity + a
+  # get_tuple_element of x0's first element into a scratch register and
+  # an atom test on that register; is_tagged_tuple is the fused form
+  # the compiler picks only sometimes.
+  @tag_window 4
+
+  defp tagged_types([{:get_tuple_element, src, 0, dst} | rest]) do
+    if reg(src) == @x0,
+      do: tag_tests(rest, reg(dst), @tag_window) ++ tagged_types(rest),
+      else: tagged_types(rest)
+  end
+
+  defp tagged_types([_instr | rest]), do: tagged_types(rest)
+  defp tagged_types([]), do: []
+
+  defp tag_tests(_instrs, _dst, 0), do: []
+  defp tag_tests([], _dst, _n), do: []
+  defp tag_tests([{:label, _} | _], _dst, _n), do: []
+
+  defp tag_tests([{:test, :is_eq_exact, _f, [a, b]} | _], dst, _n) do
+    case {reg(a), reg(b)} do
+      {^dst, _} -> tag_of(b)
+      {_, ^dst} -> tag_of(a)
+      _ -> []
+    end
+  end
+
+  defp tag_tests([{:select_val, src, _fail, {:list, entries}} | _], dst, _n) do
+    if reg(src) == dst, do: for({:atom, a} <- entries, do: "{#{a}}"), else: []
+  end
+
+  defp tag_tests([instr | rest], dst, n) do
+    if dst in regs_in(instr), do: [], else: tag_tests(rest, dst, n - 1)
+  end
+
+  defp tag_of({:atom, a}), do: ["{#{a}}"]
+  defp tag_of(_other), do: []
+
   defp atom_type({:atom, a}), do: [to_string(a)]
+  # A fully-literal tagged tuple, `{:timeout, :backoff}`: the same type
+  # is_tagged_tuple names when the tuple's other elements vary.
+  defp atom_type({:literal, tuple}) when is_tuple(tuple) and tuple_size(tuple) > 0 do
+    case elem(tuple, 0) do
+      tag when is_atom(tag) -> ["{#{tag}}"]
+      _ -> []
+    end
+  end
+
   defp atom_type(_other), do: []
 
   # ── Catch-all walk ───────────────────────────────────────────────────

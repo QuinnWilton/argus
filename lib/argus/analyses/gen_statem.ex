@@ -77,7 +77,7 @@ defmodule Argus.Analyses.GenStatem do
         name: :statem_timeout_unhandled,
         fields: [
           {:mod, :symbol, "module"},
-          {:kind, :symbol, "event_timeout or state_timeout"},
+          {:kind, :symbol, "event_timeout, state_timeout or generic_timeout"},
           {:state, :symbol, "the state (or handle_event) arming it"}
         ],
         key: [:mod, :kind],
@@ -137,6 +137,7 @@ defmodule Argus.Analyses.GenStatem do
     {action, type} =
       case kind do
         "state_timeout" -> {"{:state_timeout, ms, content}", ":state_timeout"}
+        "generic_timeout" -> {"{{:timeout, name}, ms, content}", "{:timeout, name}"}
         _ -> {"{:timeout, ms, content}", ":timeout"}
       end
 
