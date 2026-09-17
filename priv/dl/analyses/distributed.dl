@@ -137,8 +137,7 @@ distributed_in_init(func, op, id) :-
 erpc_transport_unhandled(func, id) :-
   try_call(id, func, callee),
   (callee = ":erpc:call/4" ; callee = ":erpc:call/5"),
-  catch_handler(id, func, "error"),
-  catch_tag(id, func, ":exception"),
-  !catch_tag(id, func, ":erpc"),
+  catch_tag(id, func, "error", ":exception"),
+  !catch_tag(id, func, "error", ":erpc"),
   catch_falls_through(id, func, ":exception").
 

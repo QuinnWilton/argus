@@ -196,10 +196,9 @@ peer_call("GenStateMachine:call/3").
 partial_noproc_catch(func, id, callee) :-
   try_call(id, func, callee),
   peer_call(callee),
-  catch_handler(id, func, "exit"),
-  catch_tag(id, func, ":noproc"),
-  !catch_tag(id, func, ":shutdown"),
-  !catch_tag(id, func, ":normal"),
+  catch_tag(id, func, "exit", ":noproc"),
+  !catch_tag(id, func, "exit", ":shutdown"),
+  !catch_tag(id, func, "exit", ":normal"),
   !catch_total(id, func, "exit"),
   !catch_total(id, func, "*").
 

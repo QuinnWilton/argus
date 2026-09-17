@@ -23,9 +23,17 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
   a normal return without having tested the reason catches its class
   outright (`total`); a class established on any such path is a class the
   handler catches. Paths that end in a raise are not catches. Reason tags
-  are collected from every atom compared anywhere in the handler region,
-  the same over-approximation `callback_tag` makes: a rule asks whether a
-  tag is NOT handled, so seeing too many suppresses rather than invents.
+  are the atoms compared along a catching path, recorded against that
+  path's class — so `catch :exit, {:noproc, _}` yields the pair
+  `{:exit, :noproc}` and nothing for `:error`. Within one clause the
+  atoms its body compares count too (a `case` in the body), the same
+  over-approximation `callback_tag` makes: a rule asks whether a tag is
+  NOT handled, so seeing too many suppresses rather than invents.
+
+  An Elixir `rescue X` tests the reason's `__struct__` (a `map_get`
+  before `Exception.normalize/3`); the register that read holds is
+  treated as a projection of the reason, so the clause counts as tested
+  and `X` is its tag.
   """
 
   @x0 {:x, 0}
@@ -34,8 +42,9 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
 
   @typedoc """
   What one handler catches. `classes` and `totals` are among `:error`,
-  `:exit`, `:throw` and `:*` (no class test on the path); `tags` are the
-  atoms compared in the region; `falls_through` are the tags compared on
+  `:exit`, `:throw` and `:*` (no class test on the path); `tags` are
+  `{class, atom}` pairs, the atoms compared along a path that catches
+  that class; `falls_through` are the tags compared on
   a path that reaches a `case` with no clause for its value — the
   compiler emits such a `case` of its own for `e.field` access, so the
   tags say which `case` it was.
@@ -43,7 +52,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
   @type summary :: %{
           classes: [atom()],
           totals: [atom()],
-          tags: [atom()],
+          tags: [{atom(), atom()}],
           falls_through: [atom()]
         }
 
@@ -124,7 +133,10 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
 
     cond do
       reg(a) == @x0 and path.class == nil and class_atom(b) != nil ->
-        {seen, acc} = next(idx, %{path | class: class_atom(b)}, instrs, labels, seen, acc)
+        # The clause begins here: the atoms compared before it belong to
+        # the dispatch, not to this clause.
+        clause = %{path | class: class_atom(b), tags: MapSet.new()}
+        {seen, acc} = next(idx, clause, instrs, labels, seen, acc)
         goto(fail, path, instrs, labels, seen, acc)
 
       alias?(a, path) or alias?(b, path) ->
@@ -162,7 +174,8 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
     if reg(src) == @x0 and path.class == nil do
       {seen, acc} =
         Enum.reduce(arms, {seen, acc}, fn [val, {:f, l}], {s, a} ->
-          goto(l, %{path | class: class_atom(val) || :*}, instrs, labels, s, a)
+          clause = %{path | class: class_atom(val) || :*, tags: MapSet.new()}
+          goto(l, clause, instrs, labels, s, a)
         end)
 
       goto(default, path, instrs, labels, seen, acc)
@@ -254,6 +267,19 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
   defp step({:call_fun2, _, arity, _}, idx, path, instrs, labels, seen, acc),
     do: next(idx, clobber(path, arity + 1), instrs, labels, seen, acc)
 
+  # `rescue X` reads the reason's __struct__ before normalizing; the
+  # register that holds it is a projection of the reason.
+  defp step(
+         {:bif, :map_get, _fail, [{:atom, :__struct__}, src], dst},
+         idx,
+         path,
+         instrs,
+         labels,
+         seen,
+         acc
+       ),
+       do: next(idx, copy(path, src, dst), instrs, labels, seen, acc)
+
   defp step({:bif, _name, _fail, _args, dst}, idx, path, instrs, labels, seen, acc),
     do: next(idx, forget(path, dst), instrs, labels, seen, acc)
 
@@ -298,7 +324,14 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
 
   defp caught(acc, path) do
     class = path.class || :*
-    acc = %{acc | classes: MapSet.put(acc.classes, class)}
+    pairs = Enum.map(path.tags, &{class, &1})
+
+    acc = %{
+      acc
+      | classes: MapSet.put(acc.classes, class),
+        tags: Enum.reduce(pairs, acc.tags, &MapSet.put(&2, &1))
+    }
+
     if path.tested, do: acc, else: %{acc | totals: MapSet.put(acc.totals, class)}
   end
 
@@ -336,12 +369,11 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
   # ── Tags ────────────────────────────────────────────────────────────
 
   # Every atom an instruction compares against, class atoms excluded —
-  # recorded for the handler and carried on the path.
+  # carried on the path and attributed to its clause when the path ends
+  # in a catch.
   defp note(path, acc, instr) do
     atoms = compared_atoms(instr)
-
-    {%{path | tags: Enum.reduce(atoms, path.tags, &MapSet.put(&2, &1))},
-     %{acc | tags: Enum.reduce(atoms, acc.tags, &MapSet.put(&2, &1))}}
+    {%{path | tags: Enum.reduce(atoms, path.tags, &MapSet.put(&2, &1))}, acc}
   end
 
   defp compared_atoms({:test, :is_eq_exact, _f, [a, b]}), do: atoms([a, b])

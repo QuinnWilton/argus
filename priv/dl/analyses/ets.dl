@@ -216,10 +216,14 @@ process_entry(mod, f) :- statem_event_clause(mod, f, _).
 
 owner_reaches(mod, t) :- process_entry(mod, c), reaches_ets_func(c, t).
 
+// A rescue that would catch the ArgumentError a missing table raises:
+// a bare rescue, a catch-all, or one naming ArgumentError. `rescue
+// SomeOtherError` is not a guard.
 .decl rescues(func: symbol)
 
-rescues(f) :- catch_handler(_, f, "error").
-rescues(f) :- catch_handler(_, f, "*").
+rescues(f) :- catch_total(_, f, "error").
+rescues(f) :- catch_total(_, f, "*").
+rescues(f) :- catch_tag(_, f, "error", "ArgumentError").
 
 .decl guarded(func: symbol)
 

@@ -20,13 +20,11 @@ defmodule Argus.Extractors.ErrorHandling do
   - `exit_call(id, func, target)` — explicit `Process.exit/2` or `:erlang.exit/1,2`
   - `ignored_error_result(id, func, callee)` — call to known ok/error API where
     result is not pattern matched
-  - `catch_handler(id, func, class)` — the `try` at `id` has a handler that
-    catches `class` (`error`, `exit`, `throw`, or `*` for a clause with no
-    class test)
   - `catch_total(id, func, class)` — some clause catches `class` without
     a pattern on the reason
-  - `catch_tag(id, func, tag)` — an atom the handler compares against,
-    over-approximated the way `callback_tag` is
+  - `catch_tag(id, func, class, tag)` — an atom a clause catching `class`
+    compares against (its reason pattern, or a `case` in its body);
+    `rescue X` yields the struct name `X`
   - `catch_falls_through(id, func, tag)` — a `case` inside the handler,
     reached after comparing `tag`, has no clause for some value, so an
     unexpected reason is a CaseClauseError
@@ -92,7 +90,6 @@ defmodule Argus.Extractors.ErrorHandling do
     do: [
       :bare_rescue,
       :catch_falls_through,
-      :catch_handler,
       :catch_tag,
       :catch_total,
       :exit_call,
@@ -154,18 +151,13 @@ defmodule Argus.Extractors.ErrorHandling do
     summary = CatchClauses.analyse(ctx.instrs, handler_label)
 
     facts =
-      Enum.reduce(summary.classes, facts, fn class, acc ->
-        add_fact(acc, :catch_handler, [id, ctx.func_id, to_string(class)])
-      end)
-
-    facts =
       Enum.reduce(summary.totals, facts, fn class, acc ->
         add_fact(acc, :catch_total, [id, ctx.func_id, to_string(class)])
       end)
 
     facts =
-      Enum.reduce(summary.tags, facts, fn tag, acc ->
-        add_fact(acc, :catch_tag, [id, ctx.func_id, inspect(tag)])
+      Enum.reduce(summary.tags, facts, fn {class, tag}, acc ->
+        add_fact(acc, :catch_tag, [id, ctx.func_id, to_string(class), inspect(tag)])
       end)
 
     facts =

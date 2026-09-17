@@ -342,8 +342,15 @@ defmodule Argus.Test.Fixtures.PendingCallStatem do
     end
   end
 
+  # `from` lives in a y register across the local call and reaches
+  # Map.put through an x register afterwards: kept.
+  def handle_event({:call, from}, :later, _phase, data) do
+    data = bump(data)
+    {:keep_state, Map.put(data, :waiting, from)}
+  end
+
   def handle_event(:cast, :pulse, phase, data) do
-    data = %{data | count: data.count + 1}
+    data = bump(data)
 
     case data.pending do
       {from, expected} when data.count >= expected ->
@@ -353,4 +360,6 @@ defmodule Argus.Test.Fixtures.PendingCallStatem do
         {:next_state, phase, data}
     end
   end
+
+  defp bump(data), do: %{data | count: data.count + 1}
 end

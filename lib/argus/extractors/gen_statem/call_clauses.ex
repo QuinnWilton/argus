@@ -94,7 +94,10 @@ defmodule Argus.Extractors.GenStatem.CallClauses do
   # with a state it has not been entered with (the state is finite, so the
   # walk is).
   defp walk(block_id, path, fun, instrs, seen, found) do
-    key = {block_id, path.replied, path.kept}
+    # The alias sets are part of the state: a block re-entered with
+    # `from` in a different register is a different path, and pruning it
+    # would lose a later "kept" observation.
+    key = {block_id, path.replied, path.kept, Enum.sort(path.from), Enum.sort(path.event)}
 
     if Map.has_key?(seen, key) do
       {seen, found}

@@ -4,6 +4,22 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- Schema version 34. `catch_tag` gains a `class` column and is emitted
+  per catching clause rather than per handler region, so a rule can ask
+  "is there an `:exit` clause for `:shutdown`" instead of "does
+  `:shutdown` appear anywhere". `rescue X` now counts as a tested clause
+  with tag `X` (the `__struct__` read before `Exception.normalize/3` is
+  a projection of the reason), so `ets_read_outside_owner` accepts only
+  a rescue that would catch ArgumentError as a guard. `catch_handler` is
+  dropped (no rule read it). `matches_down` now means a clause head, not
+  any comparison in the body.
+- `call_never_replied`'s walker keys revisits on the `from`/event alias
+  sets too, so a block re-entered with `from` elsewhere is not pruned.
+
 ## 0.12.1 — 2026-09-16
 
 ### Fixed

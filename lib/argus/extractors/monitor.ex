@@ -28,10 +28,11 @@ defmodule Argus.Extractors.Monitor do
   - `monitor_ref_dropped(id, func)` — the reference that monitor returned
     is discarded at the call site, so nothing can ever demonitor it
   - `demonitor_call(id, func, flush)` — `flush` is `"flush"` or `"no_flush"`
-  - `matches_down(func)` — the function compares something to `:DOWN`, so it
-    is (part of) a :DOWN handler; unlike `callback_tag` this is emitted for
-    every function, because a gen_statem funnels its :info events into
-    private helpers that no callback name identifies
+  - `matches_down(func)` — the function's clause heads (or a `case` on an
+    argument, before any call) compare to `:DOWN`, so it is (part of) a
+    :DOWN handler; unlike `callback_tag` this is emitted for every
+    function, because a gen_statem funnels its :info events into private
+    helpers that no callback name identifies
 
   Whether the ref is dropped is read from the instructions after the
   call, along every path: the ref arrives in `{x, 0}`, and it is dropped
@@ -46,7 +47,6 @@ defmodule Argus.Extractors.Monitor do
   @behaviour Argus.Extractor
 
   alias Argus.Cfg.Walk
-  alias Argus.Extractor.Dispatch
   alias Argus.InstrId
 
   import Argus.Extractor.Helpers,
@@ -70,11 +70,126 @@ defmodule Argus.Extractors.Monitor do
 
   defp emit_matches_down(facts, mod, functions) do
     Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
-      if :DOWN in Dispatch.compared_atoms(instrs, :any),
+      if head_matches_down?(instrs, arity),
         do: add_fact(acc, :matches_down, [InstrId.func_id(mod, name, arity)]),
         else: acc
     end)
   end
+
+  # A comparison to :DOWN on an argument register, or a register copied or
+  # projected from one, in a clause head: the function's clauses (or a
+  # `case` on its message argument) discriminate on :DOWN. A :DOWN
+  # compared deeper in a body — a helper's result, a logged reason — is
+  # not what makes a function the handler.
+  #
+  # Clauses are laid out one after another, each body's calls between
+  # one head and the next, so the scan is linear over the function: a
+  # call clobbers the x registers it tracks, and the fail label of a head
+  # test starts the next clause, where the arguments are live again.
+  defp head_matches_down?(instrs, arity) do
+    args = MapSet.new(for i <- 0..(arity - 1)//1, do: {:x, i})
+
+    {found?, _tracked, _heads} =
+      Enum.reduce_while(instrs, {false, args, MapSet.new()}, fn instr, {_, tracked, heads} ->
+        case head_step(instr, tracked, heads, args) do
+          :down -> {:halt, {true, tracked, heads}}
+          {tracked, heads} -> {:cont, {false, tracked, heads}}
+        end
+      end)
+
+    found?
+  end
+
+  defp head_step({:test, :is_eq_exact, {:f, l}, [a, b]}, tracked, heads, _args) do
+    cond do
+      (tracked?(a, tracked) and b == {:atom, :DOWN}) or
+          (tracked?(b, tracked) and a == {:atom, :DOWN}) ->
+        :down
+
+      tracked?(a, tracked) or tracked?(b, tracked) ->
+        {tracked, MapSet.put(heads, l)}
+
+      true ->
+        {tracked, heads}
+    end
+  end
+
+  defp head_step({:test, :is_tagged_tuple, {:f, l}, [src, _n, tag]}, tracked, heads, _args) do
+    cond do
+      tracked?(src, tracked) and tag == {:atom, :DOWN} -> :down
+      tracked?(src, tracked) -> {tracked, MapSet.put(heads, l)}
+      true -> {tracked, heads}
+    end
+  end
+
+  defp head_step({:test, _op, {:f, l}, args}, tracked, heads, _args) when is_list(args) do
+    if Enum.any?(args, &tracked?(&1, tracked)),
+      do: {tracked, MapSet.put(heads, l)},
+      else: {tracked, heads}
+  end
+
+  defp head_step({:test, _op, {:f, l}, src, _fields}, tracked, heads, _args) do
+    if tracked?(src, tracked), do: {tracked, MapSet.put(heads, l)}, else: {tracked, heads}
+  end
+
+  defp head_step({:select_val, src, {:f, l}, {:list, pairs}}, tracked, heads, _args) do
+    cond do
+      tracked?(src, tracked) and {:atom, :DOWN} in Enum.take_every(pairs, 2) -> :down
+      tracked?(src, tracked) -> {tracked, MapSet.put(heads, l)}
+      true -> {tracked, heads}
+    end
+  end
+
+  defp head_step({:label, l}, tracked, heads, args) do
+    if MapSet.member?(heads, l), do: {args, heads}, else: {tracked, heads}
+  end
+
+  defp head_step({:move, src, dst}, tracked, heads, _args), do: {track(tracked, src, dst), heads}
+
+  defp head_step({:get_tuple_element, src, _i, dst}, tracked, heads, _args),
+    do: {track(tracked, src, dst), heads}
+
+  defp head_step({:get_hd, src, dst}, tracked, heads, _args),
+    do: {track(tracked, src, dst), heads}
+
+  defp head_step({call, _, _}, tracked, heads, _args)
+       when call in [:call, :call_ext, :call_only, :call_ext_only],
+       do: {drop_x(tracked), heads}
+
+  defp head_step({:call_fun, _}, tracked, heads, _args), do: {drop_x(tracked), heads}
+
+  defp head_step({call, _, _, _}, tracked, heads, _args)
+       when call in [:call_last, :call_ext_last],
+       do: {drop_x(tracked), heads}
+
+  defp head_step(_instr, tracked, heads, _args), do: {tracked, heads}
+
+  defp drop_x(tracked), do: MapSet.reject(tracked, &match?({:x, _}, &1))
+
+  defp track(tracked, src, dst) do
+    case {reg(src), reg(dst)} do
+      {nil, _} ->
+        tracked
+
+      {_, nil} ->
+        tracked
+
+      {s, d} ->
+        if MapSet.member?(tracked, s), do: MapSet.put(tracked, d), else: MapSet.delete(tracked, d)
+    end
+  end
+
+  defp tracked?(operand, tracked) do
+    case reg(operand) do
+      nil -> false
+      r -> MapSet.member?(tracked, r)
+    end
+  end
+
+  defp reg({:tr, r, _type}), do: reg(r)
+  defp reg({:x, _} = r), do: r
+  defp reg({:y, _} = r), do: r
+  defp reg(_), do: nil
 
   defp handle(facts, ctx, {Process, :monitor, 1}, data), do: monitor(facts, ctx, data)
   defp handle(facts, ctx, {:erlang, :monitor, 2}, data), do: monitor(facts, ctx, data)

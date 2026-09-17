@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 33
+  @schema_version 34
 
   # Layer 1: Module-level facts.
 
@@ -664,9 +664,12 @@ defmodule Argus.Schema do
   @matches_down %{
     name: :matches_down,
     layer: 2,
-    fields: [{:func, :symbol, "a function whose body compares something to :DOWN"}],
+    fields: [{:func, :symbol, "a function whose clause heads compare an argument to :DOWN"}],
     doc: """
-    The function handles (part of) a :DOWN message. Over-approximated like     `callback_tag` — any comparison to the atom counts — but emitted for     every function rather than only named callbacks, because a gen_statem     funnels :info events through private helpers.
+    The function handles (part of) a :DOWN message: an argument register, \
+    or one projected from it, is compared to :DOWN in a clause head. \
+    Emitted for every function rather than only named callbacks, because \
+    a gen_statem funnels :info events through private helpers.
     """
   }
 
@@ -1103,17 +1106,6 @@ defmodule Argus.Schema do
 
   # Layer 2: Error handling extractor facts.
 
-  @catch_handler %{
-    name: :catch_handler,
-    layer: 2,
-    fields: [
-      {:id, :symbol, "the try instruction"},
-      {:func, :symbol, "the function"},
-      {:class, :symbol, "'error' | 'exit' | 'throw' | '*' (a clause with no class test)"}
-    ],
-    doc: "A try handler has a clause that catches this class."
-  }
-
   @catch_total %{
     name: :catch_total,
     layer: 2,
@@ -1134,12 +1126,14 @@ defmodule Argus.Schema do
     fields: [
       {:id, :symbol, "the try instruction"},
       {:func, :symbol, "the function"},
-      {:tag, :symbol, "an atom the handler compares against"}
+      {:class, :symbol, "the class the clause catches: 'error' | 'exit' | 'throw' | '*'"},
+      {:tag, :symbol, "an atom the clause compares against; the struct name for `rescue X`"}
     ],
     doc: """
-    A reason tag the handler discriminates on. Over-approximated the way \
-    `callback_tag` is: every atom compared anywhere in the handler counts. \
-    Rules ask whether a tag is NOT handled, so seeing too many suppresses \
+    A reason tag a clause discriminates on, attributed to the class that \
+    clause catches. Within a clause every compared atom counts (a `case` \
+    in the body too), the over-approximation `callback_tag` makes: rules \
+    ask whether a tag is NOT handled, so seeing too many suppresses \
     findings rather than inventing them.
     """
   }
@@ -1702,7 +1696,6 @@ defmodule Argus.Schema do
     @code_execution,
     # Error handling.
     @bare_rescue,
-    @catch_handler,
     @catch_total,
     @catch_tag,
     @catch_falls_through,
