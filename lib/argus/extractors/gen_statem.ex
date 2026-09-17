@@ -491,9 +491,9 @@ defmodule Argus.Extractors.GenStatem do
     instrs
     |> Enum.with_index()
     |> Enum.reduce(facts, fn
-      {{:put_tuple2, _, {:list, elements}}, _idx}, acc ->
+      {{:put_tuple2, dst, {:list, elements}}, idx}, acc ->
         acc
-        |> maybe_timeout_tuple(mod_str, state_name, elements, ctx)
+        |> maybe_timeout_tuple(mod_str, state_name, elements, ctx, {instrs, idx, dst})
         |> extract_timeouts_from_elements(mod_str, state_name, elements)
 
       {{:move, {:literal, actions}, _}, _idx}, acc when is_list(actions) ->
@@ -504,36 +504,113 @@ defmodule Argus.Extractors.GenStatem do
     end)
   end
 
-  # Check if this put_tuple2 is itself a timeout tuple.
+  # Check if this put_tuple2 is itself a timeout ACTION: a 3-tuple headed
+  # :timeout or :state_timeout that flows into the callback's return. A
+  # `{:timeout, ref, payload}` built to send, or the `{:timeout, name}`
+  # inside a generic timeout `{{:timeout, name}, ms, content}`, is not
+  # an armed event timeout (DBConnection.Connection, Finch.HTTP2.Pool).
   defp maybe_timeout_tuple(
          facts,
          mod_str,
          state_name,
-         [{:atom, :state_timeout}, timeout_val | _],
-         ctx
+         [{:atom, :state_timeout}, timeout_val, _content],
+         ctx,
+         {instrs, idx, dst}
        ) do
-    value = resolve_element_value(timeout_val)
+    if flows_to_return?(instrs, idx, dst) do
+      value = resolve_element_value(timeout_val)
 
-    facts
-    |> track_dynamic(value, ctx, :statem_timeout_value, :statem_timeout)
-    |> add_fact(:statem_timeout, [mod_str, state_name, "state_timeout", value])
+      facts
+      |> track_dynamic(value, ctx, :statem_timeout_value, :statem_timeout)
+      |> add_fact(:statem_timeout, [mod_str, state_name, "state_timeout", value])
+    else
+      facts
+    end
   end
 
   defp maybe_timeout_tuple(
          facts,
          mod_str,
          state_name,
-         [{:atom, :timeout}, timeout_val | _],
-         ctx
+         [{:atom, :timeout}, timeout_val, _content],
+         ctx,
+         {instrs, idx, dst}
        ) do
-    value = resolve_element_value(timeout_val)
+    if flows_to_return?(instrs, idx, dst) do
+      value = resolve_element_value(timeout_val)
 
-    facts
-    |> track_dynamic(value, ctx, :statem_timeout_value, :statem_timeout)
-    |> add_fact(:statem_timeout, [mod_str, state_name, "event_timeout", value])
+      facts
+      |> track_dynamic(value, ctx, :statem_timeout_value, :statem_timeout)
+      |> add_fact(:statem_timeout, [mod_str, state_name, "event_timeout", value])
+    else
+      facts
+    end
   end
 
-  defp maybe_timeout_tuple(facts, _mod_str, _state_name, _elements, _ctx), do: facts
+  defp maybe_timeout_tuple(facts, _mod_str, _state_name, _elements, _ctx, _site), do: facts
+
+  @return_heads [:keep_state, :keep_state_and_data, :next_state, :repeat_state, :ok, :stop]
+
+  # Whether the tuple built at `idx` becomes (part of) the callback's
+  # return: put into a state-return tuple, into an action list that is,
+  # or moved to x0 before a return. Handed to a call instead, it is a
+  # message or an argument, not an action.
+  defp flows_to_return?(instrs, idx, dst) do
+    instrs
+    |> Enum.drop(idx + 1)
+    |> Enum.reduce_while(MapSet.new([reg_of(dst)]), &flow_step/2) == :returns
+  end
+
+  # One instruction along the tuple's flow: `aliases` are the registers
+  # holding it or a structure containing it.
+  defp flow_step({:put_tuple2, d, {:list, [{:atom, head} | rest]}}, aliases) do
+    cond do
+      head in @return_heads and any_alias?(rest, aliases) -> {:halt, :returns}
+      any_alias?(rest, aliases) -> {:cont, MapSet.put(aliases, reg_of(d))}
+      true -> {:cont, MapSet.delete(aliases, reg_of(d))}
+    end
+  end
+
+  defp flow_step({:put_tuple2, d, {:list, elements}}, aliases),
+    do: {:cont, alias_if(aliases, any_alias?(elements, aliases), d)}
+
+  defp flow_step({:put_list, head, tail, d}, aliases),
+    do: {:cont, alias_if(aliases, any_alias?([head, tail], aliases), d)}
+
+  defp flow_step({:move, src, d}, aliases),
+    do: {:cont, alias_if(aliases, any_alias?([src], aliases), d)}
+
+  defp flow_step(:return, aliases),
+    do: {:halt, if(MapSet.member?(aliases, {:x, 0}), do: :returns, else: :no)}
+
+  # Passed to a call, the tuple is a message or an argument, not an
+  # action; a call also clobbers the x registers.
+  defp flow_step({call, arity, _}, aliases)
+       when call in [:call, :call_ext, :call_only, :call_ext_only] do
+    if arg_alias?(arity, aliases),
+      do: {:halt, :no},
+      else: {:cont, MapSet.reject(aliases, &match?({:x, _}, &1))}
+  end
+
+  defp flow_step({call, _arity, _, _}, _aliases) when call in [:call_last, :call_ext_last],
+    do: {:halt, :no}
+
+  defp flow_step({:label, _}, _aliases), do: {:halt, :no}
+  defp flow_step(_instr, aliases), do: {:cont, aliases}
+
+  defp any_alias?(operands, aliases),
+    do: Enum.any?(operands, &MapSet.member?(aliases, reg_of(&1)))
+
+  defp arg_alias?(arity, aliases),
+    do: Enum.any?(0..(arity - 1)//1, &MapSet.member?(aliases, {:x, &1}))
+
+  defp alias_if(aliases, true, d), do: MapSet.put(aliases, reg_of(d))
+  defp alias_if(aliases, false, d), do: MapSet.delete(aliases, reg_of(d))
+
+  defp reg_of({:tr, r, _}), do: reg_of(r)
+  defp reg_of({:x, _} = r), do: r
+  defp reg_of({:y, _} = r), do: r
+  defp reg_of(_), do: nil
 
   # Scan literal elements inside a put_tuple2 for action lists containing timeouts.
   defp extract_timeouts_from_elements(facts, mod_str, state_name, elements) do

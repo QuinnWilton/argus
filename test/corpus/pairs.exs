@@ -133,5 +133,27 @@
     pre: "313d6c90dea21f320035501e5d7d6a1e34a74cd4",
     fix: "85c7cf430d0c4519cc7cadf6599bcb173276de0f",
     finding: {:monitor_leak, "Postgrex.Parameters monitors but never demonitors"}
+  },
+  # Present-only shapes found on the trees themselves, not from an issue.
+  %{
+    repo: "whitfin/cachex",
+    issue: "cachex:router-rpc-without-timeout",
+    module: "Cachex.Router",
+    pre: "44ac7e445bba03a9953a46ff61da2f168dd8cc57",
+    finding: {:distributed, "RPC without a bounded timeout"}
+  },
+  %{
+    repo: "elixir-horde/horde",
+    issue: "horde:signal-shutdown-unguarded-call",
+    module: "Horde.SignalShutdown",
+    pre: "74820c2",
+    finding: {:shutdown_safety, "terminate/2 calls a sibling that may already be down"}
+  },
+  %{
+    repo: "cabol/nebulex",
+    issue: "nebulex:bootstrap-global-lock-in-init",
+    module: "Nebulex.Adapters.Replicated.Bootstrap",
+    pre: "faff154",
+    finding: {:distributed, "Cluster-wide lock during init"}
   }
 ]

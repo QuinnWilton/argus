@@ -164,16 +164,16 @@ defmodule Argus.Test.Fixtures.SupervisionShapes do
 
     defp handle_down(data, ref), do: connect(Map.delete(data, ref))
 
+    # The monitor is of the pid the (wrapped) start returned; a helper
+    # that takes an arbitrary pid would not be attributed, by design.
     defp connect(data) do
       {:ok, pid} = start_child(Map.get(data, :sup))
-      monitor(data, pid)
+      Map.put(data, Process.monitor(pid), pid)
     end
 
     defp start_child(sup) do
       DynamicSupervisor.start_child(sup, {Argus.Test.Fixtures.SupervisionShapes.Conn, []})
     end
-
-    defp monitor(data, pid), do: Map.put(data, Process.monitor(pid), pid)
   end
 
   defmodule LateWarmup do

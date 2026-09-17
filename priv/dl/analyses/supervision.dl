@@ -216,7 +216,10 @@ consumer_supervisor_permanent_child(sup, child, sup_site) :-
 // The start, the monitor and the :DOWN handling are usually spread over
 // private helpers (redix: start_connection/7, start_and_monitor_connection/5,
 // handle_down/2), so each is asked of a function's reach within its own
-// module. The :DOWN handler is whichever function of the module matches
+// module. The monitor must be OF the started child — the pid a
+// supervisor start returned — not of some other process the module
+// watches (Oban.Queues monitors its notifier and restarts queues from a
+// signal: two facts about two processes, not two restart authorities). The :DOWN handler is whichever function of the module matches
 // :DOWN (matches_down): handle_info/2 for a GenServer, a private helper
 // its state functions' catch-alls dispatch to for a gen_statem.
 .decl reaches_in_module(func: symbol, target: symbol)
@@ -237,7 +240,7 @@ starts_and_monitors(mod, sup, child, f) :-
   child != "dynamic",
   child != "Task",
   reaches_in_module(f, m),
-  monitor_call(_, m, _).
+  monitor_call(_, m, "started_child").
 
 .decl down_handler(mod: symbol, handler: symbol)
 

@@ -24,7 +24,10 @@ defmodule Argus.Extractors.Monitor do
 
   ## Emitted facts
 
-  - `monitor_call(id, func, target)` — a monitor is established
+  - `monitor_call(id, func, target)` — a monitor is established; `target`
+    is the monitored name when literal, `"started_child"` when the pid is
+    the result of a supervisor start (directly or through a local
+    wrapper), else `"dynamic"`
   - `monitor_ref_dropped(id, func)` — the reference that monitor returned
     is discarded at the call site, so nothing can ever demonitor it
   - `demonitor_call(id, func, flush)` — `flush` is `"flush"` or `"no_flush"`
@@ -191,8 +194,10 @@ defmodule Argus.Extractors.Monitor do
   defp reg({:y, _} = r), do: r
   defp reg(_), do: nil
 
-  defp handle(facts, ctx, {Process, :monitor, 1}, data), do: monitor(facts, ctx, data)
-  defp handle(facts, ctx, {:erlang, :monitor, 2}, data), do: monitor(facts, ctx, data)
+  # Process.monitor/1 takes the pid in x0; :erlang.monitor/2 takes the
+  # type in x0 and the pid in x1.
+  defp handle(facts, ctx, {Process, :monitor, 1}, data), do: monitor(facts, ctx, {:x, 0}, data)
+  defp handle(facts, ctx, {:erlang, :monitor, 2}, data), do: monitor(facts, ctx, {:x, 1}, data)
 
   defp handle(facts, ctx, {Process, :demonitor, arity}, _data) when arity in [1, 2],
     do: demonitor(facts, ctx, arity)
@@ -202,11 +207,18 @@ defmodule Argus.Extractors.Monitor do
 
   defp handle(facts, _ctx, _mfa, _data), do: facts
 
-  defp monitor(facts, ctx, module_data) do
+  # The target column: the monitored name when it is a literal, `"started_child"`
+  # when the pid came back from a supervisor start (directly, or through a
+  # local wrapper that performs one), else "dynamic".
+  defp monitor(facts, ctx, pid_reg, module_data) do
     id = InstrId.mint(ctx.func_id, ctx.idx)
 
-    facts =
-      add_fact(facts, :monitor_call, [id, ctx.func_id, resolve_atom(ctx.instrs, ctx.idx, {:x, 0})])
+    target =
+      if started_child?(ctx.instrs, ctx.idx, pid_reg, module_data),
+        do: "started_child",
+        else: resolve_atom(ctx.instrs, ctx.idx, pid_reg)
+
+    facts = add_fact(facts, :monitor_call, [id, ctx.func_id, target])
 
     if ref_dropped?(cfg(module_data, ctx), ctx.instrs, ctx.idx + 1),
       do: add_fact(facts, :monitor_ref_dropped, [id, ctx.func_id]),
@@ -214,6 +226,110 @@ defmodule Argus.Extractors.Monitor do
   end
 
   @x0 {:x, 0}
+
+  @start_apis [
+    {DynamicSupervisor, :start_child, 2},
+    {Supervisor, :start_child, 2},
+    {Task.Supervisor, :start_child, 2},
+    {Task.Supervisor, :start_child, 3}
+  ]
+
+  # Whether the monitored pid is the result of a supervisor start: walk
+  # back from the call to the write that produced the register (through
+  # moves, tuple projections — `{:ok, pid} = ...` — and swaps) and see
+  # whether it is a start API, or a local function that performs one.
+  defp started_child?(instrs, idx, reg, module_data) do
+    case pid_origin(instrs, idx - 1, reg(reg)) do
+      nil -> false
+      mfa -> start_api?(mfa, module_data, [])
+    end
+  end
+
+  defp pid_origin(_instrs, idx, _reg) when idx < 0, do: nil
+
+  defp pid_origin(instrs, idx, reg) do
+    case origin_step(Enum.at(instrs, idx), reg) do
+      {:trace, reg} -> pid_origin(instrs, idx - 1, reg)
+      {:call, mfa} -> call_origin(mfa, instrs, idx, reg)
+      :stop -> nil
+    end
+  end
+
+  # One instruction walking backwards: keep tracing (possibly a different
+  # register), stop at the producing call, or give up.
+  defp origin_step({:move, src, dst}, reg) do
+    cond do
+      reg(dst) != reg -> {:trace, reg}
+      reg(src) != nil -> {:trace, reg(src)}
+      true -> :stop
+    end
+  end
+
+  defp origin_step({:get_tuple_element, src, _i, dst}, reg),
+    do: {:trace, if(reg(dst) == reg, do: reg(src), else: reg)}
+
+  defp origin_step({:swap, a, b}, reg) do
+    cond do
+      reg(a) == reg -> {:trace, reg(b)}
+      reg(b) == reg -> {:trace, reg(a)}
+      true -> {:trace, reg}
+    end
+  end
+
+  defp origin_step({:call, _arity, {m, f, a}}, _reg), do: {:call, {m, f, a}}
+  defp origin_step({:call_ext, _arity, {:extfunc, m, f, a}}, _reg), do: {:call, {m, f, a}}
+  defp origin_step(:return, _reg), do: :stop
+  defp origin_step({:func_info, _, _, _}, _reg), do: :stop
+  defp origin_step({op, _, _, _}, _reg) when op in [:call_last, :call_ext_last], do: :stop
+  defp origin_step({op, _, _}, _reg) when op in [:call_only, :call_ext_only], do: :stop
+  defp origin_step(instr, reg), do: if(writes?(instr, reg), do: :stop, else: {:trace, reg})
+
+  # A call's result is x0; every other x register is clobbered by it.
+  defp call_origin(mfa, _instrs, _idx, {:x, 0}), do: mfa
+  defp call_origin(_mfa, _instrs, _idx, {:x, _}), do: nil
+  defp call_origin(_mfa, instrs, idx, reg), do: pid_origin(instrs, idx - 1, reg)
+
+  defp writes?({:bif, _, _, _, dst}, reg), do: reg(dst) == reg
+  defp writes?({:gc_bif, _, _, _, _, dst}, reg), do: reg(dst) == reg
+  defp writes?({:put_tuple2, dst, _}, reg), do: reg(dst) == reg
+  defp writes?({:put_list, _, _, dst}, reg), do: reg(dst) == reg
+  defp writes?({:get_hd, _, dst}, reg), do: reg(dst) == reg
+  defp writes?({:get_tl, _, dst}, reg), do: reg(dst) == reg
+
+  defp writes?({op, _, _, dst, _, _}, reg) when op in [:put_map_assoc, :put_map_exact],
+    do: reg(dst) == reg
+
+  defp writes?(_instr, _reg), do: false
+
+  defp start_api?(mfa, _module_data, _seen) when mfa in @start_apis, do: true
+
+  defp start_api?({mod, f, a}, %{module: mod, functions: functions} = module_data, seen) do
+    if {f, a} in seen or length(seen) > 3 do
+      false
+    else
+      seen = [{f, a} | seen]
+
+      case Enum.find(functions, &match?({:function, ^f, ^a, _, _}, &1)) do
+        nil ->
+          false
+
+        {:function, _, _, _, instrs} ->
+          Enum.any?(instrs, fn instr ->
+            case instr do
+              {:call_ext, _, {:extfunc, m, g, b}} -> {m, g, b} in @start_apis
+              {:call_ext_only, _, {:extfunc, m, g, b}} -> {m, g, b} in @start_apis
+              {:call_ext_last, _, {:extfunc, m, g, b}, _} -> {m, g, b} in @start_apis
+              {:call, _, {^mod, g, b}} -> start_api?({mod, g, b}, module_data, seen)
+              {:call_only, _, {^mod, g, b}} -> start_api?({mod, g, b}, module_data, seen)
+              {:call_last, _, {^mod, g, b}, _} -> start_api?({mod, g, b}, module_data, seen)
+              _ -> false
+            end
+          end)
+      end
+    end
+  end
+
+  defp start_api?(_mfa, _module_data, _seen), do: false
 
   # Walks forward from the call along every path. Each instruction either
   # reads {x,0} (the ref is kept, and the answer is no), writes it without

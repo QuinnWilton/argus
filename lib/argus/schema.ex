@@ -637,7 +637,8 @@ defmodule Argus.Schema do
     fields: [
       {:id, :symbol, "the call site"},
       {:func, :symbol, "the monitoring function"},
-      {:target, :symbol, "the monitored target, or 'dynamic'"}
+      {:target, :symbol,
+       "the monitored name, 'started_child' when the pid came from a supervisor start, or 'dynamic'"}
     ],
     doc: """
     A `Process.monitor/1` or `:erlang.monitor/2`. Once it returns, a \

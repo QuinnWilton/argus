@@ -27,12 +27,15 @@ defmodule Argus.Analyses.QuietShapesTest do
     Quiet.ErpcRescueAll,
     Quiet.RescueAllReader,
     Quiet.BoundedReceive,
-    Quiet.TimerWithCatchAll
+    Quiet.TimerWithCatchAll,
+    Quiet.UnrelatedMonitorRestarter,
+    Quiet.GenericTimeoutStatem,
+    Quiet.ClockInTerminate
   ]
 
   @expect_quiet %{
-    shutdown_safety: ~w(terminate_calls_sibling foreign_dynamic_children),
-    gen_statem: ~w(call_never_replied),
+    shutdown_safety: ~w(terminate_calls_sibling foreign_dynamic_children cleanup_never_runs),
+    gen_statem: ~w(call_never_replied statem_timeout_unhandled),
     unsafe_task: ~w(linked_task_in_library yield_on_linked_task),
     supervision:
       ~w(consumer_supervisor_permanent_child dual_restart_authority post_start_initialization),

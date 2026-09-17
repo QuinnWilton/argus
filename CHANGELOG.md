@@ -4,6 +4,33 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- `gen_statem`'s `statem_timeout_unhandled` counted any 3-tuple headed
+  `:timeout` as an armed event timeout — a `{:timeout, ref, payload}`
+  built to send, or the `{:timeout, name}` inside a generic timeout
+  action. An armed timeout is now one that flows into the callback's
+  return (DBConnection.Connection and Finch.HTTP2.Pool were reported at
+  error severity for timeouts they handle).
+- `supervision`'s `dual_restart_authority` requires the monitor to be of
+  the started child: `monitor_call`'s target is now `"started_child"`
+  when the pid came from a supervisor start, directly or through a
+  local wrapper (Oban.Queues monitors its notifier and restarts queues
+  from a signal — two processes, not two authorities). `:erlang.monitor/2`
+  resolves its second argument, not the `:process` type in its first.
+- `System.monotonic_time/1` and its siblings are time effects, not port
+  operations; `shutdown_safety`'s `cleanup_never_runs` no longer reports
+  a terminate/2 that only timestamps and logs (Phoenix.LiveView.Channel).
+
+### Added
+
+- Three present-only corpus pairs for shapes found on the trees rather
+  than in an issue: cachex's router `:rpc.call/4` without a timeout,
+  horde's shutdown signaller calling a sibling unguarded from
+  terminate/2, nebulex's bootstrap taking a `:global` lock in init.
+
 ## 0.13.1 — 2026-09-16
 
 ### Fixed

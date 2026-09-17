@@ -148,6 +148,15 @@ defmodule Argus.Purity.Effects do
     {":erlang", "universaltime"} => :time,
     {":erlang", "monotonic_time"} => :time,
     {":erlang", "system_time"} => :time,
+    # System is a port module by default (cmd, halt, ...); its clocks are
+    # not — a terminate/2 that timestamps its own shutdown is not closing
+    # an external resource.
+    {"System", "monotonic_time"} => :time,
+    {"System", "system_time"} => :time,
+    {"System", "os_time"} => :time,
+    {"System", "time_offset"} => :time,
+    {"System", "unique_integer"} => :time,
+    {"System", "convert_time_unit"} => :time,
     {":erlang", "timestamp"} => :time,
     {":erlang", "unique_integer"} => :time,
     {":erlang", "make_ref"} => :time,
@@ -310,6 +319,12 @@ defmodule Argus.Purity.Effects do
                     {":os", "version"},
                     {":erlang", "monotonic_time"},
                     {":erlang", "system_time"},
+                    {"System", "monotonic_time"},
+                    {"System", "system_time"},
+                    {"System", "os_time"},
+                    {"System", "time_offset"},
+                    {"System", "unique_integer"},
+                    {"System", "convert_time_unit"},
                     {":erlang", "timestamp"},
                     {":erlang", "unique_integer"},
                     {":erlang", "get"},

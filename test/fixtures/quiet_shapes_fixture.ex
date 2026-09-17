@@ -235,4 +235,97 @@ defmodule Argus.Test.Fixtures.Quiet do
     def handle_info(:tick, state), do: {:noreply, state}
     def handle_info(_other, state), do: {:noreply, state}
   end
+
+  defmodule UnrelatedMonitorRestarter do
+    @moduledoc false
+    # Monitors one process (a notifier it looks up) and restarts another
+    # kind of child from a signal (Oban.Queues): two facts about two
+    # processes, not two restart authorities over one.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(state), do: {:ok, connect_notifier(state)}
+
+    @impl true
+    def handle_info({:signal, :start_queue, opts}, state) do
+      {:ok, _pid} =
+        DynamicSupervisor.start_child(
+          Argus.Test.Fixtures.Quiet.SharedService,
+          {Argus.Test.Fixtures.Quiet.Server, opts}
+        )
+
+      {:noreply, state}
+    end
+
+    def handle_info({:DOWN, ref, :process, _pid, _reason}, %{notifier_ref: ref} = state) do
+      {:noreply, connect_notifier(state)}
+    end
+
+    def handle_info(_other, state), do: {:noreply, state}
+
+    defp connect_notifier(state) do
+      case Process.whereis(:quiet_notifier) do
+        nil -> state
+        pid -> Map.put(state, :notifier_ref, Process.monitor(pid))
+      end
+    end
+  end
+
+  defmodule GenericTimeoutStatem do
+    @moduledoc false
+    # Arms a generic timeout and handles it; also builds a {:timeout, ref,
+    # payload} tuple to send (DBConnection.Connection's timer message). No
+    # event timeout is armed.
+    @behaviour :gen_statem
+
+    def start_link(_opts), do: :gen_statem.start_link(__MODULE__, [], [])
+
+    @impl true
+    def callback_mode, do: :handle_event_function
+
+    @impl true
+    def init(_), do: {:ok, :disconnected, %{backoff: 100}}
+
+    @impl true
+    def handle_event(:internal, :connect, :disconnected, data) do
+      {:keep_state, data, {{:timeout, :backoff}, data.backoff, nil}}
+    end
+
+    def handle_event({:timeout, :backoff}, _content, :disconnected, data) do
+      {:next_state, :connecting, data, {:next_event, :internal, :attempt}}
+    end
+
+    def handle_event(:internal, :attempt, :connecting, data) do
+      ref = make_ref()
+      send(self(), {:timeout, ref, {__MODULE__, self(), data.backoff}})
+      {:next_state, :connected, Map.put(data, :timer, ref)}
+    end
+
+    def handle_event(:info, {:timeout, ref, {__MODULE__, _, _}}, :connected, %{timer: ref} = data) do
+      {:keep_state, Map.delete(data, :timer)}
+    end
+
+    def handle_event(:info, _msg, _state, _data), do: :keep_state_and_data
+  end
+
+  defmodule ClockInTerminate do
+    @moduledoc false
+    # terminate/2 timestamps and logs; nothing durable, so nothing is lost
+    # when a supervisor shutdown skips it.
+    use GenServer
+    require Logger
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(state), do: {:ok, Map.put(state, :started, System.monotonic_time(:millisecond))}
+
+    @impl true
+    def terminate(_reason, state) do
+      elapsed = System.monotonic_time(:millisecond) - state.started
+      Logger.debug("ran for #{elapsed}ms")
+    end
+  end
 end
