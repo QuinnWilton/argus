@@ -1,4 +1,4 @@
-defmodule Argus.Test.Fixtures.EtsReader do
+defmodule Argus.Test.Fixtures.EtsOwners do
   @moduledoc false
 
   defmodule Owner do
@@ -100,19 +100,19 @@ defmodule Argus.Test.Fixtures.EtsReader do
   end
 end
 
-defmodule Argus.Test.Fixtures.EtsReader.Helper do
+defmodule Argus.Test.Fixtures.EtsOwners.Helper do
   @moduledoc false
   # The table arrives as a parameter; the caller's literal names it.
   def fetch(table, key), do: :ets.lookup(table, key)
 end
 
-defmodule Argus.Test.Fixtures.EtsReader.HelperOwner do
+defmodule Argus.Test.Fixtures.EtsOwners.HelperOwner do
   @moduledoc false
   use GenServer
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
-  def lookup(key), do: Argus.Test.Fixtures.EtsReader.Helper.fetch(:ets_reader_helper, key)
+  def lookup(key), do: Argus.Test.Fixtures.EtsOwners.Helper.fetch(:ets_reader_helper, key)
 
   @impl true
   def init(_opts) do

@@ -1,7 +1,7 @@
 defmodule Argus.Analyses.SingletonShapesTest do
   use ExUnit.Case, async: false
 
-  alias Argus.Test.Fixtures.{CatchShapes, EtsReader, InitRecv}
+  alias Argus.Test.Fixtures.{CatchShapes, EtsOwners, InitRecv}
 
   defp skip_without_souffle do
     unless Argus.Souffle.available?(), do: ExUnit.skip("souffle not installed")
@@ -44,25 +44,25 @@ defmodule Argus.Analyses.SingletonShapesTest do
     {:ok, r} =
       Argus.analyze(
         [
-          EtsReader.Owner,
-          EtsReader.GuardedOwner,
-          EtsReader.ClosureGuardedOwner,
-          EtsReader.HeirOwner,
-          EtsReader.InsideOwner,
-          EtsReader.Helper,
-          EtsReader.HelperOwner
+          EtsOwners.Owner,
+          EtsOwners.GuardedOwner,
+          EtsOwners.ClosureGuardedOwner,
+          EtsOwners.HeirOwner,
+          EtsOwners.InsideOwner,
+          EtsOwners.Helper,
+          EtsOwners.HelperOwner
         ],
         :ets
       )
 
     assert rows(r, "ets_read_outside_owner", 1) == [
-             "Argus.Test.Fixtures.EtsReader.HelperOwner",
-             "Argus.Test.Fixtures.EtsReader.Owner"
+             "Argus.Test.Fixtures.EtsOwners.HelperOwner",
+             "Argus.Test.Fixtures.EtsOwners.Owner"
            ]
 
     assert rows(r, "ets_read_outside_owner", 2) == [
-             "Argus.Test.Fixtures.EtsReader.HelperOwner:lookup/1",
-             "Argus.Test.Fixtures.EtsReader.Owner:lookup/1"
+             "Argus.Test.Fixtures.EtsOwners.HelperOwner:lookup/1",
+             "Argus.Test.Fixtures.EtsOwners.Owner:lookup/1"
            ]
   end
 
