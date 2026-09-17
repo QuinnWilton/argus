@@ -18,7 +18,7 @@ deadlocks, leaked tasks, ETS misuse, atom-table exhaustion, and more.
 ```elixir
 def deps do
   [
-    {:panoptes, "~> 0.14"}
+    {:panoptes, "~> 0.15"}
   ]
 end
 ```
