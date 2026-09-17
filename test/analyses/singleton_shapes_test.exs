@@ -48,20 +48,36 @@ defmodule Argus.Analyses.SingletonShapesTest do
           EtsReader.GuardedOwner,
           EtsReader.ClosureGuardedOwner,
           EtsReader.HeirOwner,
-          EtsReader.InsideOwner
+          EtsReader.InsideOwner,
+          EtsReader.Helper,
+          EtsReader.HelperOwner
         ],
         :ets
       )
 
-    assert rows(r, "ets_read_outside_owner", 1) == ["Argus.Test.Fixtures.EtsReader.Owner"]
+    assert rows(r, "ets_read_outside_owner", 1) == [
+             "Argus.Test.Fixtures.EtsReader.HelperOwner",
+             "Argus.Test.Fixtures.EtsReader.Owner"
+           ]
+
+    assert rows(r, "ets_read_outside_owner", 2) == [
+             "Argus.Test.Fixtures.EtsReader.HelperOwner:lookup/1",
+             "Argus.Test.Fixtures.EtsReader.Owner:lookup/1"
+           ]
   end
 
   test "an :infinity socket receive on init's path is reported; bounded or later is not" do
     skip_without_souffle()
 
     {:ok, r} =
-      Argus.analyze([InitRecv.Blocking, InitRecv.Bounded, InitRecv.Later], :sync_call_in_init)
+      Argus.analyze(
+        [InitRecv.Blocking, InitRecv.Bounded, InitRecv.Later, InitRecv.Waits],
+        :sync_call_in_init
+      )
 
-    assert rows(r, "blocking_recv_in_init") == ["Argus.Test.Fixtures.InitRecv.Blocking"]
+    assert rows(r, "blocking_recv_in_init") == [
+             "Argus.Test.Fixtures.InitRecv.Blocking",
+             "Argus.Test.Fixtures.InitRecv.Waits"
+           ]
   end
 end

@@ -104,6 +104,10 @@
 .decl ets_op(id: symbol, func: symbol, table_ref: symbol, op: symbol, kind: symbol)
 .input ets_op
 
+// The table operand of an ETS operation is the function's own parameter.
+.decl ets_op_param(id: symbol, pos: number)
+.input ets_op_param
+
 // Parsed option from :ets.new/2.
 .decl ets_option(id: symbol, key: symbol, value: symbol)
 .input ets_option
@@ -165,6 +169,11 @@
 //
 .decl init_continues_to(mod: symbol, tag: symbol)
 .input init_continues_to
+
+// A call after which something other than a peer's request can land in the calling process's mailbox: a Task.async reply, a timer message, a subscription's broadcasts, a message the function sends to itself, or caller-supplied code run through a closure or apply. What makes a partial handle_info/2 a risk rather than a style note.
+//
+.decl mailbox_writer(id: symbol, func: symbol, kind: symbol)
+.input mailbox_writer
 
 // The function handles (part of) a :DOWN message: an argument register, or one projected from it, is compared to :DOWN in a clause head. Emitted for every function rather than only named callbacks, because a gen_statem funnels :info events through private helpers.
 //

@@ -71,3 +71,23 @@ defmodule Argus.Test.Fixtures.InitRecv do
     end
   end
 end
+
+defmodule Argus.Test.Fixtures.InitRecv.Waits do
+  @moduledoc false
+  # A receive with no `after` on init's path waits the same way.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(parent) do
+    send(parent, {:ready, self()})
+    {:ok, await_go()}
+  end
+
+  defp await_go do
+    receive do
+      {:go, config} -> config
+    end
+  end
+end

@@ -71,12 +71,21 @@ defmodule Argus.Analyses.ShutdownSafetyTest do
 
       {:ok, r} =
         Argus.analyze(
-          [F.LibraryTree, F.AppTree, F.Worker, F.Manager, F.TidyManager],
+          [
+            F.LibraryTree,
+            F.AppTree,
+            F.Worker,
+            F.Manager,
+            F.TidyManager,
+            F.TaskTree,
+            F.TaskStarter
+          ],
           :shutdown_safety
         )
 
       assert modules(r, "foreign_dynamic_children") == [
-               "Argus.Test.Fixtures.ForeignChildren.Manager"
+               "Argus.Test.Fixtures.ForeignChildren.Manager",
+               "Argus.Test.Fixtures.ForeignChildren.TaskStarter"
              ]
     end
   end

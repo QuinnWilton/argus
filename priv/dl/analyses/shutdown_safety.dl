@@ -231,10 +231,16 @@ process_entry(mod, f) :- statem_event_clause(mod, f, _).
 
 starter_process(mod, s) :- process_entry(mod, c), reaches_dynamic_start(c, s).
 
+// A start function that lives in the supervisor's own module
+// (`Postgrex.TypeSupervisor.start_server/2`, `DBConnection.Task.run_child/4`)
+// is that tree offering a shared service; the children are meant to
+// belong to it, whoever asks.
 foreign_dynamic_children(mod, sup, func) :-
   dynamic_child(sup, _, func),
   sup != "dynamic",
   !match("via:.*", sup),
+  function_def(func, fmod, _, _, _),
+  fmod != sup,
   starter_process(mod, func),
   mod != sup,
   tree_member(root, sup),

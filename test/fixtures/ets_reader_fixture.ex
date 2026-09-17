@@ -99,3 +99,24 @@ defmodule Argus.Test.Fixtures.EtsReader do
     end
   end
 end
+
+defmodule Argus.Test.Fixtures.EtsReader.Helper do
+  @moduledoc false
+  # The table arrives as a parameter; the caller's literal names it.
+  def fetch(table, key), do: :ets.lookup(table, key)
+end
+
+defmodule Argus.Test.Fixtures.EtsReader.HelperOwner do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  def lookup(key), do: Argus.Test.Fixtures.EtsReader.Helper.fetch(:ets_reader_helper, key)
+
+  @impl true
+  def init(_opts) do
+    :ets.new(:ets_reader_helper, [:named_table, :protected, :set])
+    {:ok, %{}}
+  end
+end

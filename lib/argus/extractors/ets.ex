@@ -11,6 +11,8 @@ defmodule Argus.Extractors.ETS do
   - `ets_new(id, func, name)` — table creation point
   - `ets_option(id, key, value)` — parsed option from `:ets.new/2`
   - `ets_op(id, func, table_ref, op, kind)` — ETS read/write/delete operation
+  - `ets_op_param(id, pos)` — the table operand of that operation is the
+    function's own parameter `pos`, so a caller's literal names the table
   """
 
   @behaviour Argus.Extractor
@@ -21,6 +23,7 @@ defmodule Argus.Extractors.ETS do
     only: [
       add_fact: 3,
       call_result_origin: 3,
+      resolve_to_arg_or_atom: 3,
       each_remote_call: 3,
       resolve_atom: 3,
       resolve_register: 3,
@@ -40,6 +43,7 @@ defmodule Argus.Extractors.ETS do
     do: [
       :ets_new,
       :ets_op,
+      :ets_op_param,
       :ets_option
     ]
 
@@ -68,9 +72,21 @@ defmodule Argus.Extractors.ETS do
     facts
     |> track_dynamic(table_ref, ctx, :ets_table_ref_op, :ets_op)
     |> add_fact(:ets_op, [id, ctx.func_id, table_ref, to_string(func), kind])
+    |> maybe_table_param(id, table_ref, ctx)
   end
 
   defp handle_call(facts, _ctx, _mfa), do: facts
+
+  # A dynamic table operand that is the function's own parameter: the
+  # name arrives from a caller, which `call_arg` can supply.
+  defp maybe_table_param(facts, id, "dynamic", ctx) do
+    case resolve_to_arg_or_atom(ctx.instrs, ctx.idx, {:x, 0}) do
+      {:arg, pos} -> add_fact(facts, :ets_op_param, [id, to_string(pos)])
+      _ -> facts
+    end
+  end
+
+  defp maybe_table_param(facts, _id, _table_ref, _ctx), do: facts
 
   # Resolve the table operand (x0) of an ETS operation.
   #

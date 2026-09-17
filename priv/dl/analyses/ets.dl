@@ -207,6 +207,7 @@ ets_write_only_table(name, mod, id) :-
 
 reaches_ets_func(f, f) :- ets_new(_, f, _).
 reaches_ets_func(f, f) :- ets_op(_, f, _, _, "read").
+reaches_ets_func(f, f) :- named_read(_, f, _).
 reaches_ets_func(f, t) :- call_edge(f, g), reaches_ets_func(g, t).
 reaches_ets_func(f, t) :- closure_def(f, g), reaches_ets_func(g, t).
 
@@ -234,14 +235,36 @@ guarded(g) :- closure_def(p, g), call_edge(p, t), rescues(t).
 .decl ets_read_outside_owner(name: symbol, owner: symbol, reader: symbol, site: symbol)
 .output ets_read_outside_owner
 
-// The table by name, read from any module.
+// A read through a helper that takes the table as a parameter
+// (`defp fetch(table, key), do: :ets.lookup(table, key)`): the name is
+// the literal a caller passes, possibly forwarded through more than one
+// parameter. The caller passing the literal is the reader that matters —
+// it is the API someone calls — and the site stays the lookup.
+.decl table_param(func: symbol, pos: number, site: symbol)
+
+table_param(reader, pos, site) :-
+  ets_op(site, reader, "dynamic", _, "read"),
+  ets_op_param(site, pos).
+
+table_param(f, p, site) :-
+  call_arg_forward(f, g, q, p),
+  table_param(g, q, site).
+
+.decl named_read(name: symbol, reader: symbol, site: symbol)
+
+named_read(name, reader, site) :- ets_op(site, reader, name, _, "read"), name != "dynamic".
+
+named_read(name, caller, site) :-
+  call_arg(caller, g, q, name),
+  table_param(g, q, site).
+
 ets_read_outside_owner(name, owner, reader, site) :-
   ets_new(id, creator, name),
   name != "dynamic",
   function_def(creator, owner, _, _, _),
   owner_reaches(owner, creator),
   !ets_option(id, "heir", "true"),
-  ets_op(site, reader, name, _, "read"),
+  named_read(name, reader, site),
   !owner_reaches(owner, reader),
   !guarded(reader).
 

@@ -30,6 +30,13 @@ defmodule Argus.Extractors.ErrorHandling do
     unexpected reason is a CaseClauseError
   - `try_call(id, func, callee)` — a peer call (`GenServer.call`,
     `:gen_statem.call`, `:erpc.call`, ...) the `try` at `id` guards
+  - `mailbox_writer(id, func, kind)` — a call after which something other
+    than a peer's request lands in this process's mailbox: `task` (a
+    Task.async reply), `timer` (send_after / send_interval), `pubsub` (a
+    subscription), `self` (the function sends to self()), `apply` (the
+    function runs a caller-supplied function, which may do anything with
+    this mailbox — the Flow producer of gen_stage#238 ran user code that
+    called hackney)
   """
 
   @behaviour Argus.Extractor
@@ -94,6 +101,7 @@ defmodule Argus.Extractors.ErrorHandling do
       :catch_total,
       :exit_call,
       :ignored_error_result,
+      :mailbox_writer,
       :trap_exit,
       :try_call
     ]
@@ -111,9 +119,93 @@ defmodule Argus.Extractors.ErrorHandling do
         |> maybe_catch_clauses(ctx, instr)
       end)
 
+    rescues = emit_self_sends(rescues, mod, module_data.functions)
+
     each_remote_call(module_data, rescues, fn facts, ctx, mfa ->
-      error_handling_call(facts, mod_str, ctx, mfa)
+      facts
+      |> error_handling_call(mod_str, ctx, mfa)
+      |> maybe_mailbox_writer(ctx, mfa)
     end)
+  end
+
+  @mailbox_writers %{
+    {Task, :async, 1} => "task",
+    {Task, :async, 3} => "task",
+    {Task.Supervisor, :async, 2} => "task",
+    {Task.Supervisor, :async, 4} => "task",
+    {Task.Supervisor, :async_nolink, 2} => "task",
+    {Task.Supervisor, :async_nolink, 4} => "task",
+    {Process, :send_after, 3} => "timer",
+    {Process, :send_after, 4} => "timer",
+    {:erlang, :send_after, 3} => "timer",
+    {:erlang, :send_after, 4} => "timer",
+    {:erlang, :start_timer, 3} => "timer",
+    {:erlang, :start_timer, 4} => "timer",
+    {:timer, :send_after, 2} => "timer",
+    {:timer, :send_after, 3} => "timer",
+    {:timer, :send_interval, 2} => "timer",
+    {:timer, :send_interval, 3} => "timer",
+    {Phoenix.PubSub, :subscribe, 2} => "pubsub",
+    {Phoenix.PubSub, :subscribe, 3} => "pubsub",
+    {Registry, :register, 3} => "pubsub",
+    {:pg, :join, 2} => "pubsub",
+    {:pg, :join, 3} => "pubsub",
+    {:pg2, :join, 2} => "pubsub",
+    {:gen_event, :add_handler, 3} => "pubsub"
+  }
+
+  defp maybe_mailbox_writer(facts, ctx, mfa) do
+    case Map.fetch(@mailbox_writers, mfa) do
+      {:ok, kind} ->
+        add_fact(facts, :mailbox_writer, [InstrId.mint(ctx.func_id, ctx.idx), ctx.func_id, kind])
+
+      :error ->
+        facts
+    end
+  end
+
+  # A function that both takes its own pid (`self()`) and sends: a
+  # message it posts to itself, the shape a start-up kick or a restart
+  # loop re-sends (cachex#314). The pairing is per function, not per
+  # send — a register walk would be needed to tie the two, and a
+  # function that does both is the shape either way.
+  defp emit_self_sends(facts, mod, functions) do
+    Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
+      func_id = InstrId.func_id(mod, name, arity)
+      self? = Enum.any?(instrs, &match?({:bif, :self, _, [], _}, &1))
+      {send?, idx} = first_send(instrs)
+
+      acc =
+        if self? and send?,
+          do: add_fact(acc, :mailbox_writer, [InstrId.mint(func_id, idx), func_id, "self"]),
+          else: acc
+
+      case Enum.find_index(instrs, &applies?/1) do
+        nil -> acc
+        i -> add_fact(acc, :mailbox_writer, [InstrId.mint(func_id, i), func_id, "apply"])
+      end
+    end)
+  end
+
+  # A call through a closure or `apply`: code this module does not own
+  # runs in this process.
+  defp applies?({:call_fun, _}), do: true
+  defp applies?({:call_fun2, _, _, _}), do: true
+  defp applies?({:apply, _}), do: true
+  defp applies?({:apply_last, _, _}), do: true
+
+  defp applies?(instr) do
+    match?({:ok, :erlang, :apply, _}, match_remote_call(instr))
+  end
+
+  defp first_send(instrs) do
+    case Enum.find_index(instrs, &(&1 == :send or &1 == {:send})) do
+      nil ->
+        {false, 0}
+
+      idx ->
+        {true, idx}
+    end
   end
 
   # The BEAM try instruction is {:try, register, {:f, handler_label}}.

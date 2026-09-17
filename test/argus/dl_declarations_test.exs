@@ -139,9 +139,9 @@ defmodule Argus.DlDeclarationsTest do
       distributed:
         ~w(call_edge catch_falls_through catch_tag distributed_store_op function_def global_op global_register implements_behaviour node_operation rpc_call try_call),
       error_handling:
-        ~w(bare_rescue call_edge callback_tag callback_total catch_tag catch_total exit_call function_def ignored_error_result implements_behaviour monitor_call trap_exit try_call),
+        ~w(bare_rescue call_edge callback_tag callback_total catch_tag catch_total exit_call function_def ignored_error_result implements_behaviour mailbox_writer monitor_call sync_call_timeout trap_exit try_call),
       ets:
-        ~w(call_edge catch_tag catch_total closure_def dynamic_child ets_new ets_op ets_option function_def implements_behaviour statem_event_clause supervisor_child),
+        ~w(call_arg call_arg_forward call_edge catch_tag catch_total closure_def dynamic_child ets_new ets_op ets_op_param ets_option function_def implements_behaviour statem_event_clause supervisor_child),
       gen_statem:
         ~w(function_def statem_call_unreplied statem_event_catchall statem_event_clause statem_info_catchall statem_initial statem_module statem_state statem_timeout statem_transition),
       message_contract:
@@ -165,7 +165,7 @@ defmodule Argus.DlDeclarationsTest do
       supervision:
         ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_stop_reason callback_tag child_spec_restart dynamic_child function_def implements_behaviour matches_down monitor_call post_start_call remote_call sup_call supervisor supervisor_child supervisor_child_form supervisor_child_name supervisor_site sync_call),
       sync_call_in_init:
-        ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag dynamic_child function_def implements_behaviour remote_call sup_call supervisor supervisor_child sync_call sync_call_timeout unconditional_call_edge),
+        ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag dynamic_child function_def implements_behaviour recv_start remote_call sup_call supervisor supervisor_child sync_call sync_call_timeout unconditional_call_edge),
       tls_verification: ~w(function_def tls_connect tls_verification),
       transaction_safety: ~w(call_edge closure_def implements_behaviour impure_call remote_call),
       timeout_chain:

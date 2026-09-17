@@ -257,6 +257,21 @@ defmodule Argus.Extractors.Supervision do
     end
   end
 
+  # A task started under a Task.Supervisor is a dynamic child of that
+  # supervisor as much as a worker under a DynamicSupervisor: it lives
+  # in the supervisor's tree, not the starter's. The child is the
+  # closure, recorded as "Task".
+  @task_starts [:start_child, :async, :async_nolink, :async_stream, :async_stream_nolink]
+
+  defp handle_dynamic_start(facts, ctx, {Task.Supervisor, fun, arity}, self_sup, functions)
+       when fun in @task_starts and arity >= 2 do
+    sup = resolve_start_child_sup(ctx.instrs, ctx.idx, self_sup, functions)
+
+    facts
+    |> track_dynamic(sup, ctx, :dynamic_supervisor_parent, :dynamic_child)
+    |> add_fact(:dynamic_child, [sup, "Task", ctx.func_id])
+  end
+
   defp handle_dynamic_start(facts, _ctx, _mfa, _self_sup, _functions), do: facts
 
   # The supervisor argument to `start_child` is a registered name, a pid, or

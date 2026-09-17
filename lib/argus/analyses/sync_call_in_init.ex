@@ -138,8 +138,8 @@ defmodule Argus.Analyses.SyncCallInInit do
     Findings.new(
       :warning,
       "init/1 waits on a socket with no timeout",
-      "#{mod}'s init/1 reaches #{recv}, which receives from the socket with " <>
-        ":infinity. Until the peer sends, the process is not started: its " <>
+      "#{mod}'s init/1 reaches #{recv}, which waits on a socket with :infinity " <>
+        "(or a `receive` with no `after`). Until the message arrives, the process is not started: its " <>
         "supervisor's start, and whoever called start_child, wait with it — " <>
         "for as long as the server stays silent.",
       at: Findings.at_func(recv),

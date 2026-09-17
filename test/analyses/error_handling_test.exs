@@ -13,7 +13,7 @@ defmodule Argus.Analyses.ErrorHandlingTest do
   end
 
   describe "handle_info_partial" do
-    test "a partial handle_info is a note even with no runtime writer, GenStage included" do
+    test "a partial handle_info with a late-message source is a note, GenStage included" do
       skip_without_souffle()
 
       results =
@@ -21,12 +21,15 @@ defmodule Argus.Analyses.ErrorHandlingTest do
           Argus.Test.Fixtures.PartialInfoServer,
           Argus.Test.Fixtures.TotalInfoServer,
           Argus.Test.Fixtures.PartialInfoStage,
+          Argus.Test.Fixtures.QuietPartialInfoServer,
+          Argus.Test.Fixtures.AppliesPartialInfoServer,
           Argus.Test.Fixtures.MonitorsWithoutCatchall
         ])
 
       partial = Enum.map(results["handle_info_partial"], fn [mod, _f] -> mod end) |> Enum.sort()
 
       assert partial == [
+               "Argus.Test.Fixtures.AppliesPartialInfoServer",
                "Argus.Test.Fixtures.PartialInfoServer",
                "Argus.Test.Fixtures.PartialInfoStage"
              ]

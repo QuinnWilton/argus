@@ -19,6 +19,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   any comparison in the body.
 - `call_never_replied`'s walker keys revisits on the `from`/event alias
   sets too, so a block re-entered with `from` elsewhere is not pruned.
+- `handle_info_partial` needs a late-message source in reach of the
+  process's callbacks: a timed `GenServer.call` (its late reply), a
+  `Task.async`, a timer (`send_after`, `send_interval`), a subscription,
+  a message the process sends itself, or caller-supplied code run through
+  a closure or `apply` (gen_stage#238's producer ran the user's stream).
+  New fact `mailbox_writer(id, func, kind)`. A partial handle_info with
+  nothing that writes the mailbox is a style note and stays quiet.
+- `ets_read_outside_owner` follows a table name through parameters:
+  `defp fetch(table, key), do: :ets.lookup(table, key)` called with a
+  literal is a read of that table by the caller. New fact
+  `ets_op_param(id, pos)`.
+- `blocking_recv_in_init` also reports a `receive` with no `after` on
+  init's path. `foreign_dynamic_children` also counts tasks started
+  under another tree's Task.Supervisor (`dynamic_child` records the
+  child as `"Task"`), and no longer reports a start function that lives
+  in the supervisor's own module (`Postgrex.TypeSupervisor.start_server/2`):
+  that tree is offering a shared service.
 - Tag resolution of dynamic call targets is stricter and shows its
   work. A tag is no longer attributed by uniqueness when it is generic
   (`:get`, `:stop`, `:state`, ...) or when some `handle_info/2` also

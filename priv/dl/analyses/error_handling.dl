@@ -97,16 +97,32 @@ handle_info_without_catchall(mod, h) :-
   receives_runtime_messages(mod),
   !trap_exit_without_exit_clause(mod, _).
 
-// ── handle_info without a catch-all, in any process ──
+// ── handle_info without a catch-all, with a late-message source ──
 //
 // The variant above needs the module itself to invite runtime messages.
-// A mailbox is written by more than its owner: a library the process
-// called can leave a late reply (gen_stage#238, an hackney message
-// crashing a Flow producer), a supervisor restart re-sends a start-up
-// message (cachex#314, a warmer in a restart loop). Once handle_info/2
-// exists, one such message is a FunctionClauseError and the process
-// dies — so a partial handle_info is worth a note even with no writer
-// in sight. Info: the two rules above stay the warning-grade shapes.
+// A mailbox is written by more than its owner: a timed call that gave
+// up leaves a late reply (gen_stage#238, an hackney message crashing a
+// Flow producer), a Task.async replies, a timer fires after the state
+// that expected it is gone, a subscription broadcasts, a start-up
+// message is re-sent by a restart loop (cachex#314), and code the
+// process runs through a closure or apply is not its own to vouch for
+// (gen_stage#238's producer ran the user's stream). A partial
+// handle_info/2 in a process whose callbacks reach such a source is a
+// FunctionClauseError waiting for that message. Without any source in
+// reach the shape is a style note, and stays quiet. Info: the two rules
+// above stay the warning-grade shapes.
+.decl reaches_mailbox_writer(func: symbol)
+
+reaches_mailbox_writer(f) :- mailbox_writer(_, f, _).
+reaches_mailbox_writer(f) :- sync_call_timeout(f, _, ms), ms != -1.
+reaches_mailbox_writer(f) :- call_edge(f, g), reaches_mailbox_writer(g).
+
+.decl late_message_source(mod: symbol)
+
+late_message_source(mod) :-
+  process_entry(mod, c),
+  reaches_mailbox_writer(c).
+
 .decl handle_info_partial(mod: symbol, func: symbol)
 .output handle_info_partial
 
@@ -114,6 +130,7 @@ handle_info_partial(mod, h) :-
   (behaves_as(mod, "GenServer") ; behaves_as(mod, "GenStage")),
   function_def(h, mod, "handle_info", 2, _),
   !callback_total(h, "handle_info"),
+  late_message_source(mod),
   !receives_runtime_messages(mod),
   !trap_exit_without_exit_clause(mod, _),
   !statem_like(mod).

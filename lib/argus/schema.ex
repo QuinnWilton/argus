@@ -1028,6 +1028,16 @@ defmodule Argus.Schema do
     doc: "ETS table creation point."
   }
 
+  @ets_op_param %{
+    name: :ets_op_param,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the ETS operation"},
+      {:pos, :number, "0-based parameter of the enclosing function that is the table"}
+    ],
+    doc: "The table operand of an ETS operation is the function's own parameter."
+  }
+
   @ets_option %{
     name: :ets_option,
     layer: 2,
@@ -1151,6 +1161,23 @@ defmodule Argus.Schema do
     clause for some value: a reason the handler did not anticipate is a \
     CaseClauseError rather than a result. The tag identifies the case — \
     the compiler emits a clause-less case of its own for `e.field`.
+    """
+  }
+
+  @mailbox_writer %{
+    name: :mailbox_writer,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the call site"},
+      {:func, :symbol, "the function"},
+      {:kind, :symbol, "'task' | 'timer' | 'pubsub' | 'self' | 'apply'"}
+    ],
+    doc: """
+    A call after which something other than a peer's request can land in \
+    the calling process's mailbox: a Task.async reply, a timer message, a \
+    subscription's broadcasts, a message the function sends to itself, \
+    or caller-supplied code run through a closure or apply. What makes a \
+    partial handle_info/2 a risk rather than a style note.
     """
   }
 
@@ -1688,6 +1715,7 @@ defmodule Argus.Schema do
     @handle_continue_clause,
     @ets_new,
     @ets_option,
+    @ets_op_param,
     @ets_op,
     @port_open,
     # Atom safety.
@@ -1700,6 +1728,7 @@ defmodule Argus.Schema do
     @catch_tag,
     @catch_falls_through,
     @try_call,
+    @mailbox_writer,
     @trap_exit,
     @exit_call,
     @ignored_error_result,

@@ -235,6 +235,7 @@ starts_and_monitors(mod, sup, child, f) :-
   reaches_in_module(f, s),
   dynamic_child(sup, child, s),
   child != "dynamic",
+  child != "Task",
   reaches_in_module(f, m),
   monitor_call(_, m, _).
 

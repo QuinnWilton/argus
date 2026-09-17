@@ -329,3 +329,36 @@ defmodule Argus.Test.Fixtures.ForeignChildren do
     end
   end
 end
+
+defmodule Argus.Test.Fixtures.ForeignChildren.TaskTree do
+  @moduledoc false
+  # A library's tree owning a Task.Supervisor.
+  use Supervisor
+
+  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts) do
+    children = [{Task.Supervisor, name: Argus.Test.Fixtures.ForeignChildren.TaskSup}]
+    Supervisor.init(children, strategy: :one_for_one)
+  end
+end
+
+defmodule Argus.Test.Fixtures.ForeignChildren.TaskStarter do
+  @moduledoc false
+  # Starts tasks under the library's Task.Supervisor; they follow that
+  # tree, not this process's.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(state) do
+    {:ok, _pid} =
+      Task.Supervisor.start_child(Argus.Test.Fixtures.ForeignChildren.TaskSup, fn ->
+        Process.sleep(:infinity)
+      end)
+
+    {:ok, state}
+  end
+end

@@ -248,13 +248,18 @@ end
 
 defmodule Argus.Test.Fixtures.PartialInfoServer do
   @moduledoc false
-  # Handles one message and nothing else; monitors nothing, traps nothing.
+  # Handles one message and nothing else; monitors nothing, traps nothing —
+  # but arms a timer, whose message can arrive after the state that
+  # expected it is gone.
   use GenServer
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
 
   @impl true
-  def init(state), do: {:ok, state}
+  def init(state) do
+    Process.send_after(self(), :tick, 1_000)
+    {:ok, state}
+  end
 
   @impl true
   def handle_info(:tick, state), do: {:noreply, state}
@@ -282,11 +287,50 @@ defmodule Argus.Test.Fixtures.PartialInfoStage do
   def start_link(opts), do: GenStage.start_link(__MODULE__, opts)
 
   @impl true
-  def init(state), do: {:producer, state}
+  def init(state) do
+    Process.send_after(self(), :tick, 1_000)
+    {:producer, state}
+  end
 
   @impl true
   def handle_demand(_demand, state), do: {:noreply, [], state}
 
   @impl true
   def handle_info(:refill, state), do: {:noreply, [], state}
+end
+
+defmodule Argus.Test.Fixtures.QuietPartialInfoServer do
+  @moduledoc false
+  # A partial handle_info with nothing in reach that writes the mailbox:
+  # a style note, not a finding.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_info(:tick, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Fixtures.AppliesPartialInfoServer do
+  @moduledoc false
+  # No timer, no task — but it runs a caller-supplied function, which may
+  # leave anything in this mailbox.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(fun), do: {:ok, fun}
+
+  @impl true
+  def handle_cast(:run, fun) do
+    fun.()
+    {:noreply, fun}
+  end
+
+  @impl true
+  def handle_info(:tick, fun), do: {:noreply, fun}
 end
