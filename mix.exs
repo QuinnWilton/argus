@@ -1,7 +1,7 @@
 defmodule Argus.MixProject do
   use Mix.Project
 
-  @version "0.12.0"
+  @version "0.12.1"
   @source_url "https://github.com/QuinnWilton/argus"
 
   def project do

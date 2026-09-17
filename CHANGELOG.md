@@ -4,6 +4,21 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.12.1 — 2026-09-16
+
+### Fixed
+
+- `shutdown_safety`'s `foreign_dynamic_children` and `ets`'s
+  `ets_read_outside_owner` attribute code to the process whose callbacks
+  reach it, not to the module it sits in: a plain helper module that
+  starts children for a GenServer in the same tree (encore's canon) is
+  no longer reported. The closures run backwards from the start/table
+  functions, so their size is bounded by those functions, not by every
+  process's reach. New clientlib relation `process_entry(mod, func)`.
+- `gen_statem`'s `call_never_replied` no longer reports a clause that
+  parks `from` at the head of a tuple (`pending: {from, expected}`) or
+  reads it from a register the event was saved to.
+
 ## 0.12.0 — 2026-09-16
 
 ### Added
