@@ -52,6 +52,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `Supervisor.start_link` returned, while the children are already running
   (phoenix#5981). New fact `post_start_call(func, site, callee)`.
 
+- `error_handling`'s `partial_noproc_catch` (`:warning`): a peer call
+  wrapped in `catch :exit, {:noproc, _}` with no clause for
+  `{:shutdown, _}` — the peer stopping mid-call is the same condition
+  and crashes the caller (phoenix_live_view#4359).
+- `distributed`'s `erpc_transport_unhandled` (`:warning`): a rescue
+  around `:erpc.call` that unwraps `{:exception, _, _}` in a `case` with
+  no clause for `{:erpc, reason}`, so a node going away is a
+  CaseClauseError (nebulex#140).
+- `ets`'s `ets_read_outside_owner` (`:info`): a table created by a
+  process's callbacks with no heir, read by a function its callbacks do
+  not reach — the module's API, run in callers — with no rescue; during
+  the owner's restart the read raises in the caller (redix#338).
+- `sync_call_in_init`'s `blocking_recv_in_init` (`:warning`): init/1
+  reaches a `:gen_tcp`/`:ssl` `recv` with `:infinity`, following the
+  timeout through wrapper parameters (postgrex#746).
+- New facts behind those: `catch_handler`, `catch_total`, `catch_tag`,
+  `catch_falls_through` and `try_call` — what a `try` handler catches,
+  from a path walk over its clauses (`Argus.Extractors.ErrorHandling.CatchClauses`).
+
 - `gen_statem`'s `call_never_replied` (`:warning`): a `{:call, from}`
   clause that returns without a reply action, without postponing, and
   without keeping `from` — the caller of `:gen_statem.call/2` waits
@@ -68,10 +87,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- Schema version 33: three layer-2 relations added, `child_spec_restart`,
-  `post_start_call` and `matches_down` (a function that compares
-  something to `:DOWN`, emitted for every function so a gen_statem's
-  private :info helpers count); no existing relation changed.
+- Schema version 33: eight layer-2 relations added — `child_spec_restart`,
+  `post_start_call`, `matches_down` (a function that compares something
+  to `:DOWN`, emitted for every function so a gen_statem's private :info
+  helpers count), `catch_handler`, `catch_total`, `catch_tag`,
+  `catch_falls_through` and `try_call`; no existing relation changed.
 
 - `call_cycle`, `process_bottleneck`, `timeout_chain`, `sync_call_in_init`
   and `message_contract` no longer read `def_use`, `tuple_literal` or

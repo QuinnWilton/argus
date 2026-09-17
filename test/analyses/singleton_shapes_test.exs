@@ -1,0 +1,67 @@
+defmodule Argus.Analyses.SingletonShapesTest do
+  use ExUnit.Case, async: false
+
+  alias Argus.Test.Fixtures.{CatchShapes, EtsReader, InitRecv}
+
+  defp skip_without_souffle do
+    unless Argus.Souffle.available?(), do: ExUnit.skip("souffle not installed")
+  end
+
+  defp rows(results, relation, column \\ 0),
+    do:
+      results
+      |> Map.get(relation, [])
+      |> Enum.map(&Enum.at(&1, column))
+      |> Enum.uniq()
+      |> Enum.sort()
+
+  test "a peer call catching only :noproc is reported; :shutdown or a bare reason is not" do
+    skip_without_souffle()
+
+    {:ok, r} =
+      Argus.analyze(
+        [CatchShapes.NoprocOnly, CatchShapes.NoprocAndShutdown, CatchShapes.AnyExit],
+        :error_handling
+      )
+
+    assert rows(r, "partial_noproc_catch") ==
+             ["Argus.Test.Fixtures.CatchShapes.NoprocOnly:sync_with_parent/1"]
+  end
+
+  test "an :erpc rescue with no clause for transport failures is reported" do
+    skip_without_souffle()
+
+    {:ok, r} = Argus.analyze([CatchShapes.Erpc], :distributed)
+
+    assert rows(r, "erpc_transport_unhandled") == [
+             "Argus.Test.Fixtures.CatchShapes.Erpc:partial/4"
+           ]
+  end
+
+  test "a table read from outside its owner without heir or rescue is reported" do
+    skip_without_souffle()
+
+    {:ok, r} =
+      Argus.analyze(
+        [
+          EtsReader.Owner,
+          EtsReader.GuardedOwner,
+          EtsReader.ClosureGuardedOwner,
+          EtsReader.HeirOwner,
+          EtsReader.InsideOwner
+        ],
+        :ets
+      )
+
+    assert rows(r, "ets_read_outside_owner", 1) == ["Argus.Test.Fixtures.EtsReader.Owner"]
+  end
+
+  test "an :infinity socket receive on init's path is reported; bounded or later is not" do
+    skip_without_souffle()
+
+    {:ok, r} =
+      Argus.analyze([InitRecv.Blocking, InitRecv.Bounded, InitRecv.Later], :sync_call_in_init)
+
+    assert rows(r, "blocking_recv_in_init") == ["Argus.Test.Fixtures.InitRecv.Blocking"]
+  end
+end

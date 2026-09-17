@@ -169,3 +169,37 @@ exit_in_callback(func, target) :-
 ignored_start_result(func, callee) :-
   ignored_error_result(_, func, callee),
   (contains(".start_link/", callee) ; contains(".start/", callee)).
+
+// ── A peer call that catches :noproc but not :shutdown ───────────────
+//
+// `catch :exit, {:noproc, _}` around a GenServer.call says the peer may
+// not exist. The peer stopping while the call is in flight is the same
+// condition, but it arrives as `{:shutdown, _}` (or `{:normal, _}`) —
+// and this catch lets it crash the caller. A child LiveView syncing with
+// its parent lost the parent's navigation that way
+// (phoenixframework/phoenix_live_view#4359). A clause for `{:shutdown,
+// _}`, or a bare `:exit, reason`, covers it.
+.decl peer_call(callee: symbol)
+
+peer_call("GenServer:call/2").
+peer_call("GenServer:call/3").
+peer_call(":gen_server:call/2").
+peer_call(":gen_server:call/3").
+peer_call(":gen_statem:call/2").
+peer_call(":gen_statem:call/3").
+peer_call("GenStateMachine:call/2").
+peer_call("GenStateMachine:call/3").
+
+.decl partial_noproc_catch(func: symbol, site: symbol, callee: symbol)
+.output partial_noproc_catch
+
+partial_noproc_catch(func, id, callee) :-
+  try_call(id, func, callee),
+  peer_call(callee),
+  catch_handler(id, func, "exit"),
+  catch_tag(id, func, ":noproc"),
+  !catch_tag(id, func, ":shutdown"),
+  !catch_tag(id, func, ":normal"),
+  !catch_total(id, func, "exit"),
+  !catch_total(id, func, "*").
+

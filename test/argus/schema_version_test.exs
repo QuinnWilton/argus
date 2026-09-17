@@ -26,7 +26,7 @@ defmodule Argus.SchemaVersionTest do
   # each field's name, type and position; the doc strings are deliberately
   # excluded so that improving a description is not a schema change.
   @version 33
-  @shape_digest "9766A94E7A5CB1D14D2DE351760D5E1BEDC9763767E2500D166C5A8F52597A49"
+  @shape_digest "95D80C14E4C58E40FD8CB476A8DD35CF3E9FC3D900B6B19749B079B8F9466423"
 
   defp shape_digest do
     Schema.all()

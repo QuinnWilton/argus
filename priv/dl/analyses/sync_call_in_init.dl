@@ -214,3 +214,39 @@ init_waits_on_blocking_server(mod, dep, h, site) :-
   raw_sync_call_in_init(mod, dep),
   (init_safe_sibling(mod, dep) ; init_safe_cross_supervisor(mod, dep)),
   handler_blocks(dep, h, site).
+
+// ── An unbounded socket receive on init's path ───────────────────────
+//
+// A connect-in-init (`sync_connect: true`) that reads its greeting with
+// `:gen_tcp.recv(sock, n, :infinity)` blocks the supervisor's start —
+// and whoever called start_child — for as long as the server is silent:
+// hours, for a replication slot waiting on a checkpoint
+// (elixir-ecto/postgrex#746). The timeout usually arrives through a
+// wrapper's parameter (`msg_recv(s, :infinity, buffer)`), which
+// call_arg_forward follows.
+.decl infinite_recv_param(func: symbol, pos: number)
+
+infinite_recv_param(g, p) :- call_arg_forward(g, ":gen_tcp:recv/3", 2, p).
+infinite_recv_param(g, p) :- call_arg_forward(g, ":ssl:recv/3", 2, p).
+infinite_recv_param(g, p) :- call_arg_forward(g, h, q, p), infinite_recv_param(h, q).
+
+.decl infinite_recv(func: symbol)
+
+infinite_recv(f) :- call_arg(f, ":gen_tcp:recv/3", 2, ":infinity").
+infinite_recv(f) :- call_arg(f, ":ssl:recv/3", 2, ":infinity").
+infinite_recv(f) :- remote_call(_, f, ":gen_tcp", "recv", 2).
+infinite_recv(f) :- remote_call(_, f, ":ssl", "recv", 2).
+infinite_recv(f) :- call_arg(f, g, pos, ":infinity"), infinite_recv_param(g, pos).
+
+.decl reaches_infinite_recv(func: symbol, recv: symbol)
+
+reaches_infinite_recv(f, f) :- infinite_recv(f).
+reaches_infinite_recv(f, r) :- call_edge(f, g), reaches_infinite_recv(g, r).
+
+.decl blocking_recv_in_init(mod: symbol, recv: symbol)
+.output blocking_recv_in_init
+
+blocking_recv_in_init(mod, r) :-
+  init_function(mod, f),
+  reaches_infinite_recv(f, r).
+

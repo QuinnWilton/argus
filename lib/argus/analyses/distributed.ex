@@ -43,11 +43,21 @@ defmodule Argus.Analyses.Distributed do
   def rules_file, do: "analyses/distributed.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.ApiCalls, Argus.Extractors.OTP]
+  def extractors,
+    do: [Argus.Extractors.ApiCalls, Argus.Extractors.OTP, Argus.Extractors.ErrorHandling]
 
   @impl true
   def output_relations do
     [
+      %{
+        name: :erpc_transport_unhandled,
+        fields: [
+          {:func, :symbol, "function calling :erpc.call"},
+          {:site, :symbol, "the try"}
+        ],
+        doc:
+          "A rescue around :erpc.call unwraps remote exceptions but has no clause for transport failures."
+      },
       %{
         name: :rpc_without_timeout,
         fields: [
@@ -110,6 +120,21 @@ defmodule Argus.Analyses.Distributed do
   end
 
   @impl true
+  def finding(:erpc_transport_unhandled, [func, site]) do
+    Findings.new(
+      :warning,
+      ":erpc.call transport failures fall through the rescue",
+      "#{func} rescues the ErlangError :erpc.call raises and unwraps the " <>
+        "`{:exception, _, _}` a remote raise produces, but a node going away " <>
+        "raises `{:erpc, :noconnection}` (or `{:erpc, :timeout}`, " <>
+        "`{:erpc, :system_limit}`), and the rescue's `case` has no clause for " <>
+        "it — a CaseClauseError in place of a result.",
+      at: Findings.at_site(site, func),
+      at_label: "rescue without an {:erpc, _} clause",
+      help: ["add a clause for `{:erpc, reason}` and return or raise a meaningful error"]
+    )
+  end
+
   def finding(:rpc_without_timeout, [func, variant, site]) do
     Findings.new(
       :warning,

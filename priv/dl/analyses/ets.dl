@@ -11,7 +11,7 @@
 // independent tables and produces false positives.
 
 .include "../clientlib/imports.dl"
-.include "../clientlib/behaviours.dl"
+.include "../clientlib/otp.dl"
 
 // ── Ownership & lifecycle ──────────────────────────────────────────
 
@@ -186,3 +186,62 @@ ets_write_only_table(name, mod, id) :-
   function_def(func, mod, _, _, _),
   ets_grows_outside_init(name),
   !ets_table_shrinks(name, mod).
+
+// ── Reads from outside the owner ─────────────────────────────────────
+//
+// A named table created by a process's own callbacks disappears with
+// the process and comes back only when its restart reaches :ets.new
+// again. Its module's API (`lookup/1`, run in the caller's process)
+// reads the table in that window and raises ArgumentError in the caller
+// instead of returning a value — Redix.Cluster callers saw exactly that
+// during a :one_for_all restart (whatyouhide/redix#338). A heir keeps
+// the table alive; a rescue in the reader (or in a wrapper the reader
+// hands its closure to) turns the window into a result.
+//
+// The reader is "outside the owner" when the owner's callbacks do not
+// reach it: what only the API reaches runs in callers.
+.decl owner_reaches(mod: symbol, func: symbol)
+
+owner_reaches(mod, c) :- otp_callback(c, mod, _, _).
+owner_reaches(mod, c) :- init_function(mod, c).
+owner_reaches(mod, c) :- function_def(c, mod, "terminate", 2, _).
+owner_reaches(mod, g) :- owner_reaches(mod, f), call_edge(f, g).
+owner_reaches(mod, g) :- owner_reaches(mod, f), closure_def(f, g).
+
+.decl rescues(func: symbol)
+
+rescues(f) :- catch_handler(_, f, "error").
+rescues(f) :- catch_handler(_, f, "*").
+
+.decl guarded(func: symbol)
+
+guarded(g) :- rescues(g).
+guarded(g) :- closure_def(p, g), guarded(p).
+guarded(g) :- closure_def(p, g), call_edge(p, t), rescues(t).
+
+.decl ets_read_outside_owner(name: symbol, owner: symbol, reader: symbol, site: symbol)
+.output ets_read_outside_owner
+
+// The table by name, read from any module.
+ets_read_outside_owner(name, owner, reader, site) :-
+  ets_new(id, creator, name),
+  name != "dynamic",
+  function_def(creator, owner, _, _, _),
+  owner_reaches(owner, creator),
+  !ets_option(id, "heir", "true"),
+  ets_op(site, reader, name, _, "read"),
+  !owner_reaches(owner, reader),
+  !guarded(reader).
+
+// A table under a name computed at runtime: only the owner's own API
+// can be tied to it.
+ets_read_outside_owner("dynamic", owner, reader, site) :-
+  ets_new(id, creator, "dynamic"),
+  function_def(creator, owner, _, _, _),
+  owner_reaches(owner, creator),
+  !ets_option(id, "heir", "true"),
+  ets_op(site, reader, _, _, "read"),
+  function_def(reader, owner, _, _, _),
+  !owner_reaches(owner, reader),
+  !guarded(reader).
+

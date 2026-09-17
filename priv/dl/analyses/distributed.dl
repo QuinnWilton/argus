@@ -123,3 +123,22 @@ distributed_in_init(func, op, id) :-
 distributed_in_init(func, op, id) :-
   distributed_store_op(id, func, _, op),
   init_function(_, func).
+
+// ── :erpc.call's transport failures ──────────────────────────────────
+//
+// `:erpc.call` raises an ErlangError for both a remote exception
+// (`{:exception, reason, stack}`) and a transport failure (`{:erpc,
+// :noconnection}`, `{:erpc, :timeout}`, ...). A rescue that unwraps the
+// former with a `case` and has no clause for the latter turns a node
+// going away into a CaseClauseError (elixir-nebulex/nebulex#140).
+.decl erpc_transport_unhandled(func: symbol, site: symbol)
+.output erpc_transport_unhandled
+
+erpc_transport_unhandled(func, id) :-
+  try_call(id, func, callee),
+  (callee = ":erpc:call/4" ; callee = ":erpc:call/5"),
+  catch_handler(id, func, "error"),
+  catch_tag(id, func, ":exception"),
+  !catch_tag(id, func, ":erpc"),
+  catch_falls_through(id, func, ":exception").
+

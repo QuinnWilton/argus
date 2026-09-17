@@ -77,6 +77,14 @@ defmodule Argus.Analyses.SyncCallInInit do
   def output_relations do
     [
       %{
+        name: :blocking_recv_in_init,
+        fields: [
+          {:mod, :symbol, "module whose init/1 reaches the receive"},
+          {:recv, :symbol, "the function receiving with no timeout"}
+        ],
+        doc: "init/1 reaches a socket receive with an :infinity timeout."
+      },
+      %{
         name: :sync_call_in_init,
         fields: [
           {:mod, :symbol, "module whose init/1 makes a sync call"},
@@ -126,6 +134,23 @@ defmodule Argus.Analyses.SyncCallInInit do
   end
 
   @impl true
+  def finding(:blocking_recv_in_init, [mod, recv]) do
+    Findings.new(
+      :warning,
+      "init/1 waits on a socket with no timeout",
+      "#{mod}'s init/1 reaches #{recv}, which receives from the socket with " <>
+        ":infinity. Until the peer sends, the process is not started: its " <>
+        "supervisor's start, and whoever called start_child, wait with it — " <>
+        "for as long as the server stays silent.",
+      at: Findings.at_func(recv),
+      at_label: "receives with :infinity",
+      help: [
+        "bound the receive (a connect timeout) and fail the start with an error",
+        "or connect after init returns (`{:continue, :connect}`) so the start completes"
+      ]
+    )
+  end
+
   def finding(:sync_call_in_init, [mod, callee, "conditional"]) do
     Findings.new(
       :info,

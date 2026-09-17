@@ -51,12 +51,25 @@ defmodule Argus.Analyses.Ets do
       Argus.Extractors.ETS,
       Argus.Extractors.OTP,
       Argus.Extractors.ApiCalls,
-      Argus.Extractors.Supervision
+      Argus.Extractors.Supervision,
+      Argus.Extractors.ErrorHandling
     ]
 
   @impl true
   def output_relations do
     [
+      %{
+        name: :ets_read_outside_owner,
+        fields: [
+          {:name, :symbol, "the table, or 'dynamic' when its name is computed"},
+          {:owner, :symbol, "the module whose callbacks create it"},
+          {:reader, :symbol, "a function reading it that the owner's callbacks do not reach"},
+          {:site, :symbol, "the read"}
+        ],
+        key: [:owner, :reader],
+        doc:
+          "A table read from callers' processes with no heir and no rescue for the owner's restart window."
+      },
       %{
         name: :ets_unprotected_owner,
         fields: [
@@ -111,6 +124,25 @@ defmodule Argus.Analyses.Ets do
   end
 
   @impl true
+  def finding(:ets_read_outside_owner, [name, owner, reader, site]) do
+    table = if name == "dynamic", do: "a table", else: name
+
+    Findings.new(
+      :info,
+      "ETS table read while its owner may be restarting",
+      "#{owner} creates #{table} in its own process with no heir, and #{reader} " <>
+        "reads it from whatever process calls it. While #{owner} is down — the " <>
+        "moment it crashes until its restart reaches :ets.new again — the read " <>
+        "raises ArgumentError in the caller instead of returning a value.",
+      at: Findings.at_site(site, owner),
+      at_label: "read outside the owner",
+      help: [
+        "give the table a heir (a supervisor or a long-lived holder) so it survives the restart",
+        "or rescue ArgumentError in the reader and return an error value"
+      ]
+    )
+  end
+
   def finding(:ets_unprotected_owner, [name, mod, site]) do
     Findings.new(
       :warning,

@@ -59,6 +59,25 @@
 .decl callback_total(func: symbol, callback: symbol)
 .input callback_total
 
+// A `case` inside the handler, reached after comparing `tag`, has no clause for some value: a reason the handler did not anticipate is a CaseClauseError rather than a result. The tag identifies the case — the compiler emits a clause-less case of its own for `e.field`.
+//
+.decl catch_falls_through(id: symbol, func: symbol, tag: symbol)
+.input catch_falls_through
+
+// A try handler has a clause that catches this class.
+.decl catch_handler(id: symbol, func: symbol, class: symbol)
+.input catch_handler
+
+// A reason tag the handler discriminates on. Over-approximated the way `callback_tag` is: every atom compared anywhere in the handler counts. Rules ask whether a tag is NOT handled, so seeing too many suppresses findings rather than inventing them.
+//
+.decl catch_tag(id: symbol, func: symbol, tag: symbol)
+.input catch_tag
+
+// Some clause of the handler catches the class outright — `catch :exit, reason ->`, `rescue e ->` — so no reason of that class escapes it.
+//
+.decl catch_total(id: symbol, func: symbol, class: symbol)
+.input catch_total
+
 // The restart type a module's own child_spec/1 gives a shorthand {Mod, args} spec.
 .decl child_spec_restart(mod: symbol, restart: symbol)
 .input child_spec_restart
@@ -323,6 +342,11 @@
 // Process.flag(:trap_exit, true) call site.
 .decl trap_exit(func: symbol, mod: symbol)
 .input trap_exit
+
+// A peer call the try guards — GenServer.call, :gen_statem.call, :erpc.call and their kin — whose failure the handler is expected to classify.
+//
+.decl try_call(id: symbol, func: symbol, callee: symbol)
+.input try_call
 
 // A call the effect model has no opinion about — neither known-impure nor known-pure.
 //

@@ -67,6 +67,16 @@ defmodule Argus.Analyses.ErrorHandling do
   def output_relations do
     [
       %{
+        name: :partial_noproc_catch,
+        fields: [
+          {:func, :symbol, "function making the call"},
+          {:site, :symbol, "the try"},
+          {:callee, :symbol, "the guarded call"}
+        ],
+        key: [:func, :site],
+        doc: "A peer call whose catch covers :noproc but not the peer stopping mid-call."
+      },
+      %{
         name: :swallowed_error,
         fields: [{:func, :symbol, "function with bare rescue"}],
         doc: "Catch-all rescue that silently discards exceptions."
@@ -130,6 +140,23 @@ defmodule Argus.Analyses.ErrorHandling do
   end
 
   @impl true
+  def finding(:partial_noproc_catch, [func, site, callee]) do
+    Findings.new(
+      :warning,
+      "Peer call catches :noproc but not :shutdown",
+      "#{func} wraps #{callee} in a catch for `{:noproc, _}` — the peer may not " <>
+        "exist — but the peer stopping while the call is in flight is the same " <>
+        "condition, and it arrives as `{:shutdown, _}` (or `{:normal, _}`), which " <>
+        "this catch lets crash the caller.",
+      at: Findings.at_site(site, func),
+      at_label: "catches only :noproc",
+      help: [
+        "add a clause for `:exit, {:shutdown, _}` (and `{:normal, _}`)",
+        "or catch `:exit, reason` and classify it"
+      ]
+    )
+  end
+
   def finding(:swallowed_error, [func]) do
     Findings.new(
       :warning,

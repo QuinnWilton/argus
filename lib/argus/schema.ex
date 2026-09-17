@@ -1103,6 +1103,78 @@ defmodule Argus.Schema do
 
   # Layer 2: Error handling extractor facts.
 
+  @catch_handler %{
+    name: :catch_handler,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the try instruction"},
+      {:func, :symbol, "the function"},
+      {:class, :symbol, "'error' | 'exit' | 'throw' | '*' (a clause with no class test)"}
+    ],
+    doc: "A try handler has a clause that catches this class."
+  }
+
+  @catch_total %{
+    name: :catch_total,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the try instruction"},
+      {:func, :symbol, "the function"},
+      {:class, :symbol, "the class caught without a pattern on the reason"}
+    ],
+    doc: """
+    Some clause of the handler catches the class outright — `catch :exit, \
+    reason ->`, `rescue e ->` — so no reason of that class escapes it.
+    """
+  }
+
+  @catch_tag %{
+    name: :catch_tag,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the try instruction"},
+      {:func, :symbol, "the function"},
+      {:tag, :symbol, "an atom the handler compares against"}
+    ],
+    doc: """
+    A reason tag the handler discriminates on. Over-approximated the way \
+    `callback_tag` is: every atom compared anywhere in the handler counts. \
+    Rules ask whether a tag is NOT handled, so seeing too many suppresses \
+    findings rather than inventing them.
+    """
+  }
+
+  @catch_falls_through %{
+    name: :catch_falls_through,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the try instruction"},
+      {:func, :symbol, "the function"},
+      {:tag, :symbol, "an atom compared on the path to the case"}
+    ],
+    doc: """
+    A `case` inside the handler, reached after comparing `tag`, has no \
+    clause for some value: a reason the handler did not anticipate is a \
+    CaseClauseError rather than a result. The tag identifies the case — \
+    the compiler emits a clause-less case of its own for `e.field`.
+    """
+  }
+
+  @try_call %{
+    name: :try_call,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the try instruction"},
+      {:func, :symbol, "the function"},
+      {:callee, :func_id, "the guarded call (Mod:fun/arity)"}
+    ],
+    doc: """
+    A peer call the try guards — GenServer.call, :gen_statem.call, \
+    :erpc.call and their kin — whose failure the handler is expected to \
+    classify.
+    """
+  }
+
   @bare_rescue %{
     name: :bare_rescue,
     layer: 2,
@@ -1630,6 +1702,11 @@ defmodule Argus.Schema do
     @code_execution,
     # Error handling.
     @bare_rescue,
+    @catch_handler,
+    @catch_total,
+    @catch_tag,
+    @catch_falls_through,
+    @try_call,
     @trap_exit,
     @exit_call,
     @ignored_error_result,

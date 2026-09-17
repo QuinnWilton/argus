@@ -20,11 +20,25 @@ defmodule Argus.Extractors.ErrorHandling do
   - `exit_call(id, func, target)` — explicit `Process.exit/2` or `:erlang.exit/1,2`
   - `ignored_error_result(id, func, callee)` — call to known ok/error API where
     result is not pattern matched
+  - `catch_handler(id, func, class)` — the `try` at `id` has a handler that
+    catches `class` (`error`, `exit`, `throw`, or `*` for a clause with no
+    class test)
+  - `catch_total(id, func, class)` — some clause catches `class` without
+    a pattern on the reason
+  - `catch_tag(id, func, tag)` — an atom the handler compares against,
+    over-approximated the way `callback_tag` is
+  - `catch_falls_through(id, func, tag)` — a `case` inside the handler,
+    reached after comparing `tag`, has no clause for some value, so an
+    unexpected reason is a CaseClauseError
+  - `try_call(id, func, callee)` — a peer call (`GenServer.call`,
+    `:gen_statem.call`, `:erpc.call`, ...) the `try` at `id` guards
   """
 
   @behaviour Argus.Extractor
 
+  alias Argus.Extractors.ErrorHandling.CatchClauses
   alias Argus.InstrId
+  alias Argus.Pipeline.Normalize
 
   import Argus.Extractor.Helpers,
     only: [
@@ -77,9 +91,14 @@ defmodule Argus.Extractors.ErrorHandling do
   def relations,
     do: [
       :bare_rescue,
+      :catch_falls_through,
+      :catch_handler,
+      :catch_tag,
+      :catch_total,
       :exit_call,
       :ignored_error_result,
-      :trap_exit
+      :trap_exit,
+      :try_call
     ]
 
   @impl true
@@ -90,7 +109,9 @@ defmodule Argus.Extractors.ErrorHandling do
 
     rescues =
       scan_functions(mod, module_data.functions, %{}, fn facts, ctx, instr ->
-        maybe_bare_rescue(facts, ctx, instr)
+        facts
+        |> maybe_bare_rescue(ctx, instr)
+        |> maybe_catch_clauses(ctx, instr)
       end)
 
     each_remote_call(module_data, rescues, fn facts, ctx, mfa ->
@@ -110,6 +131,68 @@ defmodule Argus.Extractors.ErrorHandling do
   end
 
   defp maybe_bare_rescue(facts, _ctx, _instr), do: facts
+
+  # The calls a try guards that a rule asks about: the ones whose failure
+  # arrives as an exit or an error the handler is expected to classify.
+  @guarded_calls [
+    {GenServer, :call, 2},
+    {GenServer, :call, 3},
+    {:gen_server, :call, 2},
+    {:gen_server, :call, 3},
+    {:gen_statem, :call, 2},
+    {:gen_statem, :call, 3},
+    {GenStateMachine, :call, 2},
+    {GenStateMachine, :call, 3},
+    {:erpc, :call, 4},
+    {:erpc, :call, 5},
+    {:rpc, :call, 4},
+    {:rpc, :call, 5}
+  ]
+
+  defp maybe_catch_clauses(facts, ctx, {:try, reg, {:f, handler_label}}) do
+    id = InstrId.mint(ctx.func_id, ctx.idx)
+    summary = CatchClauses.analyse(ctx.instrs, handler_label)
+
+    facts =
+      Enum.reduce(summary.classes, facts, fn class, acc ->
+        add_fact(acc, :catch_handler, [id, ctx.func_id, to_string(class)])
+      end)
+
+    facts =
+      Enum.reduce(summary.totals, facts, fn class, acc ->
+        add_fact(acc, :catch_total, [id, ctx.func_id, to_string(class)])
+      end)
+
+    facts =
+      Enum.reduce(summary.tags, facts, fn tag, acc ->
+        add_fact(acc, :catch_tag, [id, ctx.func_id, inspect(tag)])
+      end)
+
+    facts =
+      Enum.reduce(summary.falls_through, facts, fn tag, acc ->
+        add_fact(acc, :catch_falls_through, [id, ctx.func_id, inspect(tag)])
+      end)
+
+    ctx.instrs
+    |> Enum.drop(ctx.idx + 1)
+    |> Enum.take_while(fn
+      {:try_end, ^reg} -> false
+      {:try_case, ^reg} -> false
+      {:func_info, _, _, _} -> false
+      _ -> true
+    end)
+    |> Enum.reduce(facts, fn instr, acc ->
+      case match_remote_call(instr) do
+        {:ok, m, f, a} when {m, f, a} in @guarded_calls ->
+          add_fact(acc, :try_call, [id, ctx.func_id, Normalize.func_id(m, f, a)])
+
+        _ ->
+          acc
+      end
+    end)
+  end
+
+  defp maybe_catch_clauses(facts, _ctx, _instr), do: facts
 
   # Check whether a handler starting at the given label is a bare rescue.
   # A bare rescue catches all exceptions without filtering the exception
