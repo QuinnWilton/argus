@@ -167,7 +167,8 @@ defmodule Argus.Analysis do
     callback_receive: [
       %{analysis: :blocking, relation: :blocking_receive_in_callback, where: []},
       %{analysis: :blocking, relation: :receive_in_callback, where: []}
-    ]
+    ],
+    one_for_one_coupling: [%{analysis: :coupling, relation: :one_for_one_coupling, where: []}]
   }
 
   @doc "The concern vocabulary: every built-in analysis is named after one."
@@ -214,7 +215,7 @@ defmodule Argus.Analysis do
   defp default_set do
     [
       :deferred_startup_deadlock,
-      :one_for_one_coupling,
+      :coupling,
       :supervision,
       :sync_call_in_init,
       :unlinked_spawn,

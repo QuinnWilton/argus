@@ -56,7 +56,7 @@
     module: "Redix.Cluster.Manager",
     pre: "d3bab6e7be417c0a34f5781844f9d3068b13e489",
     fix: "e67e61a04120cd07507cbf2c372a3f9dc7189bc0",
-    finding: {:supervision, "Two restart authorities for the same child"}
+    finding: {:coupling, "Two restart authorities for the same child"}
   },
   %{
     repo: "phoenixframework/phoenix",

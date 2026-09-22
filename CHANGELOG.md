@@ -33,6 +33,10 @@ is the table). Named sets (`:all`, `:default`, `:security`, `:effects`,
 | `callback_receive` | `blocking`, `blocking_receive_in_callback`, `receive_in_callback` | unchanged |
 | `distributed` (part) | `blocking`, `rpc_without_timeout`, `rpc_in_genserver_callback`, `global_blocking_op` | unchanged |
 | `error_handling` (part) | `blocking`, `partial_noproc_catch` | unchanged |
+| `one_for_one_coupling` | `coupling`, `one_for_one_coupling` | unchanged |
+| `supervision` (part) | `coupling`: `suspect_nonpermanent_dependency`, `cached_sibling_pid`, `rest_for_one_orphaned_children`, `dual_restart_authority`; `structure`: `supervisor_registered_as_worker`, `consumer_supervisor_permanent_child` | unchanged |
+| `process_registry` (part) | `structure`, `duplicate_process_name` | unchanged |
+| `distributed` (part) | `structure`, `global_register_risk` | unchanged |
 
 ## 0.16.0 — 2026-09-21
 

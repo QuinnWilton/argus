@@ -88,7 +88,7 @@ defmodule Argus.Stage0Test do
     test "reports the staged call graph, not its layer-1 ingredients" do
       skip_without_souffle()
 
-      assert {:ok, relations} = Analysis.input_relations(:one_for_one_coupling)
+      assert {:ok, relations} = Analysis.input_relations(:coupling)
 
       assert "call_edge" in relations,
              "analyses must read the staged call graph"
@@ -104,7 +104,7 @@ defmodule Argus.Stage0Test do
       # body's control flow can change their verdict, and after
       # stratification their input sets say so — which is exactly what
       # lets an incremental driver skip them on an ordinary edit.
-      for analysis <- [:one_for_one_coupling, :supervision, :sync_call_in_init] do
+      for analysis <- [:coupling, :supervision, :sync_call_in_init] do
         assert {:ok, relations} = Analysis.input_relations(analysis)
 
         leaked = Enum.filter(@volatile_cfg_relations, &(&1 in relations))

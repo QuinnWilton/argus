@@ -1,4 +1,4 @@
-defmodule Argus.Analyses.OneForOneCouplingTest do
+defmodule Argus.Analyses.CouplingTest do
   use ExUnit.Case
 
   alias Argus.Souffle
@@ -17,7 +17,7 @@ defmodule Argus.Analyses.OneForOneCouplingTest do
         Argus.Test.Fixtures.WorkerB
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :one_for_one_coupling)
+      assert {:ok, results} = Argus.analyze(modules, :coupling)
 
       assert Map.has_key?(results, "one_for_one_coupling")
     end
@@ -95,7 +95,7 @@ defmodule Argus.Analyses.OneForOneCouplingTest do
 
       try do
         :ok = Argus.Pipeline.write_facts(facts, dir)
-        assert {:ok, results} = Argus.Analysis.run_rules(dir, :one_for_one_coupling)
+        assert {:ok, results} = Argus.Analysis.run_rules(dir, :coupling)
         results["one_for_one_coupling"] || []
       after
         File.rm_rf(dir)

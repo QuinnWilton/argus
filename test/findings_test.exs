@@ -89,7 +89,7 @@ defmodule Argus.FindingsTest do
         Fixtures.WorkerB
       ]
 
-      assert {:ok, result} = Argus.run_analyses(modules, analyses: [:one_for_one_coupling])
+      assert {:ok, result} = Argus.run_analyses(modules, analyses: [:coupling])
 
       assert result.findings != []
       Enum.each(result.findings, &assert_finding_shape/1)

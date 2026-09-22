@@ -8,17 +8,6 @@
 .include "../clientlib/otp.dl"
 
 
-// ── Global register without conflict resolution ──────────────────
-
-// :global.register_name/2 (without resolve function) is race-prone
-// during network partitions. register_name/3 supplies an explicit
-// conflict-resolution function — the fixed form — so only /2 is
-// flagged. site is the registration instruction.
-.decl global_register_risk(func: symbol, name: symbol, site: symbol)
-.output global_register_risk
-
-global_register_risk(func, name, id) :-
-  global_register(id, func, name, "2").
 
 // ── Blocking :global synchronization ─────────────────────────────
 

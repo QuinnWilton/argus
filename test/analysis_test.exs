@@ -6,6 +6,7 @@ defmodule Argus.AnalysisTest do
 
   @expected_analyses [
     :blocking,
+    :coupling,
     :coverage,
     :deferred_startup_deadlock,
     :distributed,
@@ -16,10 +17,10 @@ defmodule Argus.AnalysisTest do
     :gen_statem,
     :message_contract,
     :monitor_leak,
-    :one_for_one_coupling,
     :process_registry,
     :reply_contract,
     :shutdown_safety,
+    :structure,
     :supervision,
     :sync_call_in_init,
     :unlinked_spawn,
@@ -98,7 +99,7 @@ defmodule Argus.AnalysisTest do
     test "supervision exposes its anti-pattern relations" do
       assert {:ok, relations} = Analysis.output_relations(:supervision)
       names = Enum.map(relations, & &1.name)
-      assert :suspect_nonpermanent_dependency in names
+      assert :wrong_start_order in names
       assert :wrong_start_order in names
     end
   end

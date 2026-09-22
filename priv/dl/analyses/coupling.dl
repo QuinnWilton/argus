@@ -1,0 +1,258 @@
+// Two owners of one relationship across supervisor branches.
+//
+// A supervisor restarts what it owns; a sibling that holds a pid, a
+// monitor or a cached reply of the restarted child is not restarted
+// with it and keeps a stale reference. The strategy decides: under
+// one_for_one the caller survives the callee's restart, under
+// rest_for_one an earlier child survives a later one's, and a child a
+// process both starts under a supervisor and restarts from its own
+// :DOWN handler has two restart authorities.
+
+.include "../clientlib/imports.dl"
+.include "../clientlib/otp.dl"
+
+// ══ Coupling under one_for_one ══════════════════════════════════════
+.decl derived_process_link(from_mod: symbol, to_mod: symbol)
+
+derived_process_link(a, b) :- process_link(a, b).
+derived_process_link(sup, child) :- supervisor_child(sup, _, child, _, _).
+
+// Two modules under a one_for_one supervisor where one depends on the
+// other through GenServer message passing, and they belong to different
+// child branches. Under one_for_one, if the callee's branch crashes,
+// the caller's branch keeps running in a degraded state.
+//
+// Linked pairs are excluded: an exit propagates through the link, both
+// processes restart together, and no stale state survives — the hazard
+// this analysis reports is already mitigated.
+//
+// sup_site anchors the finding at the instruction that defines the tree
+// (the strategy line); witness is a function in caller_mod through which
+// the coupling flows. One row per witness — finding builders dedupe on
+// (sup, caller_mod, callee_mod).
+// The coupling itself: a stateful dependency between two children on
+// different branches of a one_for_one supervisor, with no link between
+// them in either direction. `witness` is the function in caller_mod the
+// dependency flows through.
+.decl coupling(sup: symbol, caller_mod: symbol, callee_mod: symbol, sup_site: symbol, witness: symbol)
+
+// The instruction inside the witness that makes the coupling call —
+// the call into the sibling module itself when the witness calls it
+// directly, otherwise the GenServer.call/cast the witness performs (both
+// come from the stage-0 `call_site` relation). A
+// witness may have several; the finding builder keeps one per pair.
+.decl coupling_site(witness: symbol, callee_mod: symbol, site: symbol)
+
+.decl direct_coupling_site(witness: symbol, callee_mod: symbol, site: symbol)
+
+direct_coupling_site(w, callee_mod, id) :-
+  coupling(_, _, callee_mod, _, w),
+  call_site(id, w, callee_mod).
+
+direct_coupling_site(w, callee_mod, id) :-
+  coupling(_, _, callee_mod, _, w),
+  !call_site(_, w, callee_mod),
+  call_site(id, w, "GenServer").
+
+coupling_site(w, callee_mod, id) :-
+  direct_coupling_site(w, callee_mod, id).
+
+// The witness is the function the dependency is proven through (often a
+// callback), and the call into the sibling may live several local calls
+// below it. Anchor at that call rather than at the witness's head.
+.init witness_reach = ForwardCallReach
+
+witness_reach.root(w, w) :- coupling(_, _, _, _, w).
+
+coupling_site(w, callee_mod, id) :-
+  coupling(_, _, callee_mod, _, w),
+  !direct_coupling_site(w, callee_mod, _),
+  witness_reach.reaches(w, g),
+  call_site(id, g, callee_mod).
+
+// `site` is the instruction ID of the coupling call when one is known,
+// and falls back to the witness function ID otherwise, so consumers can
+// always anchor it with `Findings.at_site/2`. `kind` is "call" when the
+// caller waits on the sibling anywhere along the dependency, "cast" when
+// every path is one-way.
+.decl one_for_one_coupling(sup: symbol, caller_mod: symbol, callee_mod: symbol, sup_site: symbol, witness: symbol, site: symbol, kind: symbol)
+.output one_for_one_coupling
+
+one_for_one_coupling(sup, caller_mod, callee_mod, sup_site, witness, site, kind) :-
+  coupling(sup, caller_mod, callee_mod, sup_site, witness),
+  coupling_site(witness, callee_mod, site),
+  stateful_module_dep_kind(caller_mod, callee_mod, kind).
+
+one_for_one_coupling(sup, caller_mod, callee_mod, sup_site, witness, witness, kind) :-
+  coupling(sup, caller_mod, callee_mod, sup_site, witness),
+  !coupling_site(witness, callee_mod, _),
+  stateful_module_dep_kind(caller_mod, callee_mod, kind).
+
+
+coupling(sup, caller_mod, callee_mod, sup_site, witness) :-
+  supervisor(sup, "one_for_one"),
+  supervisor_site(sup, sup_site),
+  child_subtree(sup, caller_branch, caller_mod),
+  child_subtree(sup, callee_branch, callee_mod),
+  stateful_module_dep(caller_mod, callee_mod, witness),
+  !derived_process_link(caller_mod, callee_mod),
+  !derived_process_link(callee_mod, caller_mod),
+  caller_branch != callee_branch.
+
+// ══ A permanent child depending on a sibling that may not come back ═
+
+// witness — finding builders dedupe on (sup, permanent, sibling).
+.decl suspect_nonpermanent_dependency(sup: symbol, permanent: symbol, sibling: symbol, restart: symbol, sup_site: symbol, witness: symbol)
+.output suspect_nonpermanent_dependency
+
+suspect_nonpermanent_dependency(sup, perm, sibling, restart, sup_site, witness) :-
+  supervisor(sup, _),
+  supervisor_site(sup, sup_site),
+  supervisor_child(sup, _, perm, "permanent", _),
+  supervisor_child(sup, _, sibling, restart, _),
+  (restart = "transient" ; restart = "temporary"),
+  stateful_module_dep(perm, sibling, witness).
+
+
+// Permanent child that depends (transitively) on a sibling whose
+// restart policy can leave it dead: a transient child that stops
+// normally is never restarted, and a temporary child is never restarted
+// at all — strictly worse. Either way the permanent child keeps running
+// against a process that no longer exists.
+//
+// sup_site anchors at the tree definition; witness is a function in the
+// permanent child through which the dependency flows. One row per
+
+// ── A sibling's pid cached in init/1 under one_for_one ───────────────
+//
+// init/1 looks a sibling up by name and keeps the pid; under
+// :one_for_one the sibling restarts alone and the cached pid is a
+// dead process from then on — every call :noproc, every send lost
+// (k8s 99c05d6 replaced such pids with :via names; oban#1413 and
+// #1499 are the inverse, registrations made with a sibling that its
+// restart forgets). :rest_for_one and :one_for_all restart the holder
+// too; a :temporary target is never restarted.
+.decl cached_sibling_pid(mod: symbol, name: symbol, sup: symbol)
+.output cached_sibling_pid
+
+cached_sibling_pid(mod, name, sup) :-
+  init_function(mod, f),
+  whereis_call(_, f, name, _),
+  supervisor_child(sup, _, mod, _, _),
+  supervisor(sup, "one_for_one"),
+  (supervisor_child(sup, _, name, _, _) ; supervisor_child_name(sup, _, name)),
+  handler_function(mod, h),
+  (sync_call(h, "dynamic") ; async_cast(h, "dynamic")).
+
+// ── rest_for_one: a later child owns processes inside an earlier one ──
+//
+// rest_for_one restarts the crashed child and everything after it; the
+// children before it keep running. That is the right shape when earlier
+// children are dependencies of later ones. It is exactly wrong when a
+// later child starts processes inside an earlier one — Oban's producer
+// (position 1) running jobs under the Task.Supervisor at position 0.
+// When the producer crashes, the supervisor restarts it, the jobs the
+// old producer started keep running under the surviving supervisor, and
+// the new producer starts them again: duplicate long-running jobs and
+// `attempt > max_attempts`. Oban's fix was :one_for_all.
+//
+// The owner is the child that calls start_child / async / async_nolink
+// (any module in its branch); the holder is an earlier direct child.
+// Two ways to connect them. `named`: the call names the holder's
+// registered name. `inferred`: the target is a runtime value and the
+// holder is the only earlier sibling whose module is the API called —
+// a Task.Supervisor.async_nolink into an unresolvable pid, with exactly
+// one Task.Supervisor started earlier under the same rest_for_one, is
+// not much of an inference.
+.decl earlier_sibling_of_kind(sup: symbol, pos: number, api: symbol, owner_pos: number)
+
+earlier_sibling_of_kind(sup, pos, api, owner_pos) :-
+  supervisor_child(sup, pos, api, _, _),
+  supervisor_child(sup, owner_pos, _, _, _),
+  pos < owner_pos.
+
+.decl sole_earlier_sibling_of_kind(sup: symbol, pos: number, api: symbol, owner_pos: number)
+
+sole_earlier_sibling_of_kind(sup, pos, api, owner_pos) :-
+  earlier_sibling_of_kind(sup, pos, api, owner_pos),
+  !other_earlier_sibling_of_kind(sup, pos, api, owner_pos).
+
+.decl other_earlier_sibling_of_kind(sup: symbol, pos: number, api: symbol, owner_pos: number)
+
+other_earlier_sibling_of_kind(sup, pos, api, owner_pos) :-
+  earlier_sibling_of_kind(sup, pos, api, owner_pos),
+  earlier_sibling_of_kind(sup, other, api, owner_pos),
+  other != pos.
+
+.decl rest_for_one_orphaned_children(sup: symbol, owner: symbol, holder: symbol, owner_pos: number, holder_pos: number, site: symbol, confidence: symbol)
+.output rest_for_one_orphaned_children
+
+rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "named") :-
+  supervisor(sup, "rest_for_one"),
+  supervisor_child(sup, opos, owner_branch, _, _),
+  child_subtree(sup, owner_branch, owner),
+  supervisor_child(sup, hpos, holder, _, _),
+  hpos < opos,
+  supervisor_child_name(sup, hpos, name),
+  function_def(f, owner, _, _, _),
+  sup_management_call(site, f, _, op, name),
+  child_creating_op(op).
+
+rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "inferred") :-
+  supervisor(sup, "rest_for_one"),
+  supervisor_child(sup, opos, owner_branch, _, _),
+  child_subtree(sup, owner_branch, owner),
+  function_def(f, owner, _, _, _),
+  sup_management_call(site, f, api, op, "dynamic"),
+  child_creating_op(op),
+  sole_earlier_sibling_of_kind(sup, hpos, api, opos),
+  supervisor_child(sup, hpos, holder, _, _).
+
+// ── Two restart authorities ──────────────────────────────────────────
+//
+// A process that starts a child under a DynamicSupervisor, monitors it,
+// and starts it again from its :DOWN handler has taken over restarting —
+// while the supervisor, for a :permanent child, does the same. A child
+// that fails on a semantic error crash-loops under both, blows the
+// supervisor's intensity and takes the tree with it (redix#334). A
+// :temporary child_spec leaves the supervisor out of it.
+//
+// The start, the monitor and the :DOWN handling are usually spread over
+// private helpers (redix: start_connection/7, start_and_monitor_connection/5,
+// handle_down/2), so each is asked of a function's reach within its own
+// module. The monitor must be OF the started child — the pid a
+// supervisor start returned — not of some other process the module
+// watches (Oban.Queues monitors its notifier and restarts queues from a
+// signal: two facts about two processes, not two restart authorities). The :DOWN handler is whichever function of the module matches
+// :DOWN (matches_down): handle_info/2 for a GenServer, a private helper
+// its state functions' catch-alls dispatch to for a gen_statem.
+.init module_reach = IntraModuleReach
+
+module_reach.seed(f, f) :- function_def(f, _, _, _, _).
+
+.decl starts_and_monitors(mod: symbol, sup: symbol, child: symbol, via: symbol)
+
+starts_and_monitors(mod, sup, child, f) :-
+  function_def(f, mod, _, _, _),
+  module_reach.reaches(f, s),
+  dynamic_child(sup, child, s),
+  child != "dynamic",
+  child != "Task",
+  module_reach.reaches(f, m),
+  monitor_call(_, m, "started_child").
+
+.decl down_handler(mod: symbol, handler: symbol)
+
+down_handler(mod, h) :-
+  function_def(h, mod, _, _, _),
+  matches_down(h).
+
+.decl dual_restart_authority(mod: symbol, sup: symbol, child: symbol, via: symbol)
+.output dual_restart_authority
+
+dual_restart_authority(mod, sup, child, via) :-
+  starts_and_monitors(mod, sup, child, via),
+  down_handler(mod, h),
+  module_reach.reaches(h, s),
+  dynamic_child(sup, child, s),
+  !child_spec_restart(child, "temporary").

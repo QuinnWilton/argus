@@ -127,7 +127,7 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
           H.CachedPid.Client,
           H.CachedPid.OrderedClient
         ],
-        :supervision
+        :coupling
       )
 
     assert rows(r, "cached_sibling_pid") == ["Argus.Test.Fixtures.Hypothesized.CachedPid.Client"]

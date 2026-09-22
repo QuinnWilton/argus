@@ -15,31 +15,9 @@
 
 // ── OTP helpers ──────────────────────────────────────────────────────
 
-
 // ── Supervision helpers ──────────────────────────────────────────────
 
-
 // ── Anti-patterns ────────────────────────────────────────────────
-
-// Permanent child that depends (transitively) on a sibling whose
-// restart policy can leave it dead: a transient child that stops
-// normally is never restarted, and a temporary child is never restarted
-// at all — strictly worse. Either way the permanent child keeps running
-// against a process that no longer exists.
-//
-// sup_site anchors at the tree definition; witness is a function in the
-// permanent child through which the dependency flows. One row per
-// witness — finding builders dedupe on (sup, permanent, sibling).
-.decl suspect_nonpermanent_dependency(sup: symbol, permanent: symbol, sibling: symbol, restart: symbol, sup_site: symbol, witness: symbol)
-.output suspect_nonpermanent_dependency
-
-suspect_nonpermanent_dependency(sup, perm, sibling, restart, sup_site, witness) :-
-  supervisor(sup, _),
-  supervisor_site(sup, sup_site),
-  supervisor_child(sup, _, perm, "permanent", _),
-  supervisor_child(sup, _, sibling, restart, _),
-  (restart = "transient" ; restart = "temporary"),
-  stateful_module_dep(perm, sibling, witness).
 
 // A child's init/1 depends on another process, synchronously or by cast:
 // during startup that process may not be alive yet.
@@ -57,37 +35,6 @@ wrong_start_order(sup, child, dep, cpos, dpos, sup_site, witness) :-
   starts_before(sup, child, dep, cpos, dpos),
   init_process_dep(child, dep, witness).
 
-
-// ── A supervisor registered as a worker ──────────────────────────
-//
-// OTP requires a child that is itself a supervisor to be registered with
-// `type: :supervisor` and `shutdown: :infinity`. A supervisor given a finite
-// shutdown is killed part-way through unlinking its own children, and its
-// grandchildren are orphaned rather than terminated.
-//
-// RabbitMQ e40387e4 is the fixed instance: three modules carrying
-// -behaviour(supervisor) were registered through a helper that builds
-// `worker` specs with a finite shutdown, and the fix switched them to the
-// supervisor-building helper.
-//
-// The form join is load-bearing, not a detail. `supervisor_child.type` is a
-// DEFAULT for the `{Module, args}` and bare-`Module` shorthands — those
-// state no type, `Module.child_spec/1` decides, and `use Supervisor`
-// generates `type: :supervisor` where the extractor writes `worker`. A first
-// version of this rule without the join reported 26 modules on the corpus
-// and every one was that artefact. Only a spec that SAID `worker` counts.
-
-.decl child_is_a_supervisor(child: symbol)
-
-child_is_a_supervisor(child) :- behaves_as(child, "Supervisor").
-
-.decl supervisor_registered_as_worker(sup: symbol, child: symbol, position: number)
-.output supervisor_registered_as_worker
-
-supervisor_registered_as_worker(sup, child, position) :-
-  supervisor_child(sup, position, child, _, "worker"),
-  supervisor_child_form(sup, position, "explicit"),
-  child_is_a_supervisor(child).
 
 // ── Permanent child that stops itself normally ────────────────────────
 //
@@ -113,133 +60,7 @@ permanent_child_stops_normally(sup, child, reason, site, sup_site) :-
   callback_stop_reason(site, func, reason),
   (reason = ":normal" ; reason = ":shutdown").
 
-// ── rest_for_one: a later child owns processes inside an earlier one ──
-//
-// rest_for_one restarts the crashed child and everything after it; the
-// children before it keep running. That is the right shape when earlier
-// children are dependencies of later ones. It is exactly wrong when a
-// later child starts processes inside an earlier one — Oban's producer
-// (position 1) running jobs under the Task.Supervisor at position 0.
-// When the producer crashes, the supervisor restarts it, the jobs the
-// old producer started keep running under the surviving supervisor, and
-// the new producer starts them again: duplicate long-running jobs and
-// `attempt > max_attempts`. Oban's fix was :one_for_all.
-//
-// The owner is the child that calls start_child / async / async_nolink
-// (any module in its branch); the holder is an earlier direct child.
-// Two ways to connect them. `named`: the call names the holder's
-// registered name. `inferred`: the target is a runtime value and the
-// holder is the only earlier sibling whose module is the API called —
-// a Task.Supervisor.async_nolink into an unresolvable pid, with exactly
-// one Task.Supervisor started earlier under the same rest_for_one, is
-// not much of an inference.
-.decl earlier_sibling_of_kind(sup: symbol, pos: number, api: symbol, owner_pos: number)
 
-earlier_sibling_of_kind(sup, pos, api, owner_pos) :-
-  supervisor_child(sup, pos, api, _, _),
-  supervisor_child(sup, owner_pos, _, _, _),
-  pos < owner_pos.
-
-.decl sole_earlier_sibling_of_kind(sup: symbol, pos: number, api: symbol, owner_pos: number)
-
-sole_earlier_sibling_of_kind(sup, pos, api, owner_pos) :-
-  earlier_sibling_of_kind(sup, pos, api, owner_pos),
-  !other_earlier_sibling_of_kind(sup, pos, api, owner_pos).
-
-.decl other_earlier_sibling_of_kind(sup: symbol, pos: number, api: symbol, owner_pos: number)
-
-other_earlier_sibling_of_kind(sup, pos, api, owner_pos) :-
-  earlier_sibling_of_kind(sup, pos, api, owner_pos),
-  earlier_sibling_of_kind(sup, other, api, owner_pos),
-  other != pos.
-
-.decl rest_for_one_orphaned_children(sup: symbol, owner: symbol, holder: symbol, owner_pos: number, holder_pos: number, site: symbol, confidence: symbol)
-.output rest_for_one_orphaned_children
-
-rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "named") :-
-  supervisor(sup, "rest_for_one"),
-  supervisor_child(sup, opos, owner_branch, _, _),
-  child_subtree(sup, owner_branch, owner),
-  supervisor_child(sup, hpos, holder, _, _),
-  hpos < opos,
-  supervisor_child_name(sup, hpos, name),
-  function_def(f, owner, _, _, _),
-  sup_management_call(site, f, _, op, name),
-  child_creating_op(op).
-
-rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "inferred") :-
-  supervisor(sup, "rest_for_one"),
-  supervisor_child(sup, opos, owner_branch, _, _),
-  child_subtree(sup, owner_branch, owner),
-  function_def(f, owner, _, _, _),
-  sup_management_call(site, f, api, op, "dynamic"),
-  child_creating_op(op),
-  sole_earlier_sibling_of_kind(sup, hpos, api, opos),
-  supervisor_child(sup, hpos, holder, _, _).
-
-// ── ConsumerSupervisor children that never finish ────────────────────
-//
-// A ConsumerSupervisor's child spec is a template: one child per event,
-// which exits :normal when it is done. A :permanent template restarts
-// every finished child, which fails again, consumes demand and trips
-// the restart intensity (elixir-lang/gen_stage#195). The spec must say
-// :temporary or :transient.
-.decl consumer_supervisor_permanent_child(sup: symbol, child: symbol, sup_site: symbol)
-.output consumer_supervisor_permanent_child
-
-consumer_supervisor_permanent_child(sup, child, sup_site) :-
-  behaves_as(sup, "ConsumerSupervisor"),
-  supervisor_child(sup, _, child, "permanent", _),
-  supervisor_site(sup, sup_site).
-
-// ── Two restart authorities ──────────────────────────────────────────
-//
-// A process that starts a child under a DynamicSupervisor, monitors it,
-// and starts it again from its :DOWN handler has taken over restarting —
-// while the supervisor, for a :permanent child, does the same. A child
-// that fails on a semantic error crash-loops under both, blows the
-// supervisor's intensity and takes the tree with it (redix#334). A
-// :temporary child_spec leaves the supervisor out of it.
-//
-// The start, the monitor and the :DOWN handling are usually spread over
-// private helpers (redix: start_connection/7, start_and_monitor_connection/5,
-// handle_down/2), so each is asked of a function's reach within its own
-// module. The monitor must be OF the started child — the pid a
-// supervisor start returned — not of some other process the module
-// watches (Oban.Queues monitors its notifier and restarts queues from a
-// signal: two facts about two processes, not two restart authorities). The :DOWN handler is whichever function of the module matches
-// :DOWN (matches_down): handle_info/2 for a GenServer, a private helper
-// its state functions' catch-alls dispatch to for a gen_statem.
-.init module_reach = IntraModuleReach
-
-module_reach.seed(f, f) :- function_def(f, _, _, _, _).
-
-.decl starts_and_monitors(mod: symbol, sup: symbol, child: symbol, via: symbol)
-
-starts_and_monitors(mod, sup, child, f) :-
-  function_def(f, mod, _, _, _),
-  module_reach.reaches(f, s),
-  dynamic_child(sup, child, s),
-  child != "dynamic",
-  child != "Task",
-  module_reach.reaches(f, m),
-  monitor_call(_, m, "started_child").
-
-.decl down_handler(mod: symbol, handler: symbol)
-
-down_handler(mod, h) :-
-  function_def(h, mod, _, _, _),
-  matches_down(h).
-
-.decl dual_restart_authority(mod: symbol, sup: symbol, child: symbol, via: symbol)
-.output dual_restart_authority
-
-dual_restart_authority(mod, sup, child, via) :-
-  starts_and_monitors(mod, sup, child, via),
-  down_handler(mod, h),
-  module_reach.reaches(h, s),
-  dynamic_child(sup, child, s),
-  !child_spec_restart(child, "temporary").
 
 // ── Initialization after the tree is up ──────────────────────────────
 //
@@ -263,23 +84,3 @@ post_start_initialization(func, site, callee) :-
   post_start_call(func, site, callee),
   config_reach.reaches(callee).
 
-// ── A sibling's pid cached in init/1 under one_for_one ───────────────
-//
-// init/1 looks a sibling up by name and keeps the pid; under
-// :one_for_one the sibling restarts alone and the cached pid is a
-// dead process from then on — every call :noproc, every send lost
-// (k8s 99c05d6 replaced such pids with :via names; oban#1413 and
-// #1499 are the inverse, registrations made with a sibling that its
-// restart forgets). :rest_for_one and :one_for_all restart the holder
-// too; a :temporary target is never restarted.
-.decl cached_sibling_pid(mod: symbol, name: symbol, sup: symbol)
-.output cached_sibling_pid
-
-cached_sibling_pid(mod, name, sup) :-
-  init_function(mod, f),
-  whereis_call(_, f, name, _),
-  supervisor_child(sup, _, mod, _, _),
-  supervisor(sup, "one_for_one"),
-  (supervisor_child(sup, _, name, _, _) ; supervisor_child_name(sup, _, name)),
-  handler_function(mod, h),
-  (sync_call(h, "dynamic") ; async_cast(h, "dynamic")).

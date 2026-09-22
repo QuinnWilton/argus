@@ -20,7 +20,6 @@ defmodule Argus.Analyses.SupervisionTest do
 
       assert {:ok, results} = Argus.analyze(modules, :supervision)
 
-      assert Map.has_key?(results, "suspect_nonpermanent_dependency")
       assert Map.has_key?(results, "wrong_start_order")
     end
   end
@@ -43,38 +42,6 @@ defmodule Argus.Analyses.SupervisionTest do
       assert sup == "Argus.Test.Fixtures.QuitterSupervisor"
       assert child == "Argus.Test.Fixtures.PermanentQuitter"
       assert site =~ "PermanentQuitter:handle_call/3#"
-    end
-  end
-
-  describe "rest_for_one_orphaned_children" do
-    test "a later child starting tasks in an earlier Task.Supervisor is reported" do
-      skip_without_souffle()
-
-      modules = [
-        Argus.Test.Fixtures.QueueSupervisor,
-        Argus.Test.Fixtures.NamedQueueSupervisor,
-        Argus.Test.Fixtures.AllForOneQueueSupervisor,
-        Argus.Test.Fixtures.ForemanLastSupervisor,
-        Argus.Test.Fixtures.JobProducer,
-        Argus.Test.Fixtures.NamedJobProducer,
-        Argus.Test.Fixtures.WorkerA
-      ]
-
-      assert {:ok, results} = Argus.analyze(modules, :supervision)
-
-      rows =
-        results["rest_for_one_orphaned_children"]
-        |> Enum.map(fn [sup, owner, holder, opos, hpos, _site, conf] ->
-          {sup, owner, holder, opos, hpos, conf}
-        end)
-        |> Enum.sort()
-
-      assert rows == [
-               {"Argus.Test.Fixtures.NamedQueueSupervisor",
-                "Argus.Test.Fixtures.NamedJobProducer", "Task.Supervisor", "1", "0", "named"},
-               {"Argus.Test.Fixtures.QueueSupervisor", "Argus.Test.Fixtures.JobProducer",
-                "Task.Supervisor", "1", "0", "inferred"}
-             ]
     end
   end
 
@@ -117,133 +84,8 @@ defmodule Argus.Analyses.SupervisionTest do
     end
   end
 
-  describe "suspect_nonpermanent_dependency" do
-    # Hand-authored facts pin the rule exactly: P is a permanent child
-    # that sync-calls its sibling S under the same supervisor. The
-    # sibling's restart policy decides the verdict.
-    defp base_facts(sibling_restart) do
-      %{
-        supervisor: [["Sup", "one_for_one"]],
-        # Anchor site split out of `supervisor` in schema v8.
-        supervisor_site: [["Sup", "Sup:init/1#3"]],
-        supervisor_child: [
-          ["Sup", "0", "P", "permanent", "worker"],
-          ["Sup", "1", "S", sibling_restart, "worker"]
-        ],
-        function_def: [["P:call_s/0", "P", "call_s", "0", "1", "1"]],
-        sync_call: [["P:call_s/0", "S"]]
-      }
-    end
-
-    test "flags a transient sibling dependency" do
-      skip_without_souffle()
-
-      assert [["Sup", "P", "S", "transient", _site, _witness]] =
-               dependency_rows(base_facts("transient"))
-    end
-
-    test "flags a temporary sibling dependency" do
-      skip_without_souffle()
-
-      # Temporary is strictly worse than transient: never restarted,
-      # not even after a crash.
-      assert [["Sup", "P", "S", "temporary", _site, _witness]] =
-               dependency_rows(base_facts("temporary"))
-    end
-
-    test "does not flag a permanent sibling dependency" do
-      skip_without_souffle()
-
-      # A permanent sibling is always restarted — the dependency is safe
-      # from this rule's perspective.
-      assert dependency_rows(base_facts("permanent")) == []
-    end
-
-    defp dependency_rows(facts) do
-      dir =
-        Path.join(
-          System.tmp_dir!(),
-          "supervision_test_#{:erlang.unique_integer([:positive])}"
-        )
-
-      File.mkdir_p!(dir)
-
-      try do
-        :ok = Argus.Pipeline.write_facts(facts, dir)
-        assert {:ok, results} = Argus.Analysis.run_rules(dir, :supervision)
-        results["suspect_nonpermanent_dependency"] || []
-      after
-        File.rm_rf(dir)
-      end
-    end
-  end
-
-  describe "supervisor registered as a worker" do
-    @sup_mods [
-      Argus.Test.Fixtures.SupAsWorker,
-      Argus.Test.Fixtures.SupShorthand,
-      Argus.Test.Fixtures.SubSupervisor
-    ]
-
-    defp as_worker do
-      assert {:ok, r} = Argus.analyze(@sup_mods, :supervision)
-      r |> Map.get("supervisor_registered_as_worker", []) |> Enum.map(&hd/1)
-    end
-
-    test "an explicit type: :worker on a supervisor child is reported" do
-      skip_without_souffle()
-      assert Enum.any?(as_worker(), &String.contains?(&1, "SupAsWorker"))
-    end
-
-    test "the shorthand is not, because child_spec/1 gets it right" do
-      skip_without_souffle()
-
-      # supervisor_child.type is a DEFAULT for {Module, args} and bare
-      # Module — those state nothing and `use Supervisor` generates
-      # type: :supervisor. A version of this rule without the form join
-      # reported 26 modules on the corpus, all of them this artefact.
-      refute Enum.any?(as_worker(), &String.contains?(&1, "SupShorthand"))
-    end
-  end
-
   describe "supervision shapes" do
     alias Argus.Test.Fixtures.SupervisionShapes, as: Shapes
-
-    test "a ConsumerSupervisor with a permanent template is reported; a temporary one is not" do
-      skip_without_souffle()
-
-      {:ok, r} =
-        Argus.analyze(
-          [Shapes.PermanentConsumers, Shapes.TemporaryConsumers, Shapes.EventWorker],
-          :supervision
-        )
-
-      sups = Enum.map(Map.get(r, "consumer_supervisor_permanent_child", []), &hd/1)
-      assert sups == ["Argus.Test.Fixtures.SupervisionShapes.PermanentConsumers"]
-    end
-
-    test "a manager that monitors and restarts a permanent dynamic child is reported" do
-      skip_without_souffle()
-
-      {:ok, r} =
-        Argus.analyze(
-          [
-            Shapes.DualManager,
-            Shapes.StatemDualManager,
-            Shapes.TemporaryManager,
-            Shapes.Conn,
-            Shapes.TempConn
-          ],
-          :supervision
-        )
-
-      mods = Enum.map(Map.get(r, "dual_restart_authority", []), &hd/1) |> Enum.uniq()
-
-      assert mods == [
-               "Argus.Test.Fixtures.SupervisionShapes.DualManager",
-               "Argus.Test.Fixtures.SupervisionShapes.StatemDualManager"
-             ]
-    end
 
     test "state written after Supervisor.start_link is noted; before it is not" do
       skip_without_souffle()

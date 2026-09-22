@@ -4,6 +4,8 @@
 [
   blocking:
     ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag catch_tag catch_total closure_def function_def global_op implements_behaviour recv_start remote_call rpc_call sync_call sync_call_timeout try_call),
+  coupling:
+    ~w(async_cast call_arg call_arg_forward call_edge call_site call_tag callback_tag child_spec_restart dynamic_child function_def implements_behaviour matches_down monitor_call process_link sup_call supervisor supervisor_child supervisor_child_name supervisor_site sync_call whereis_call),
   coverage:
     ~w(async_cast dynamic_child ets_new ets_op function_def implements_behaviour imprecision named_process supervisor supervisor_child sync_call),
   deferred_startup_deadlock:
@@ -23,14 +25,14 @@
     ~w(async_cast call_arg call_arg_forward call_tag callback_tag callback_total function_def implements_behaviour sync_call),
   monitor_leak:
     ~w(call_edge closure_def demonitor_call function_def implements_behaviour monitor_call monitor_ref_dropped recv_start remote_call statem_state sup_call),
-  one_for_one_coupling:
-    ~w(async_cast call_arg call_arg_forward call_edge call_site call_tag callback_tag dynamic_child function_def implements_behaviour process_link supervisor supervisor_child supervisor_site sync_call),
-  process_registry: ~w(function_def process_register whereis_call),
+  process_registry: ~w(whereis_call),
   reply_contract: ~w(callback_drops_from callback_return function_def implements_behaviour),
   shutdown_safety:
     ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag catch_tag catch_total closure_def dynamic_child function_def implements_behaviour impure_call statem_event_clause sup_call supervisor_child supervisor_child_name sync_call trap_exit unknown_call),
+  structure:
+    ~w(function_def global_register implements_behaviour process_register supervisor_child supervisor_child_form supervisor_site),
   supervision:
-    ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_stop_reason callback_tag child_spec_restart dynamic_child function_def implements_behaviour matches_down monitor_call post_start_call remote_call sup_call supervisor supervisor_child supervisor_child_form supervisor_child_name supervisor_site sync_call whereis_call),
+    ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_stop_reason callback_tag dynamic_child function_def implements_behaviour post_start_call remote_call supervisor supervisor_child supervisor_site sync_call),
   sync_call_in_init:
     ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag dynamic_child function_def handle_continue_clause implements_behaviour impure_call init_continues_to mailbox_writer recv_start remote_call statem_timeout sup_call supervisor supervisor_child sync_call sync_call_timeout unconditional_call_edge),
   unlinked_spawn: ~w(spawn_call),

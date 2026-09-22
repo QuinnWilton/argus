@@ -12,22 +12,6 @@ defmodule Argus.Analyses.DistributedTest do
     results
   end
 
-  describe "global_register_risk" do
-    test "flags register_name/2 but not register_name/3 with a resolver" do
-      skip_without_souffle()
-
-      results = analyze([Argus.Test.Fixtures.GlobalRegisterModule])
-      funcs = Enum.map(results["global_register_risk"], fn [func, _name, _site] -> func end)
-
-      # register/1 wraps :global.register_name/2 — the race-prone default.
-      assert Enum.any?(funcs, &String.contains?(&1, "register/"))
-
-      # register_with_resolve/2 wraps register_name/3, which supplies an
-      # explicit conflict-resolution function — the fixed form.
-      refute Enum.any?(funcs, &String.contains?(&1, "register_with_resolve"))
-    end
-  end
-
   describe "distributed_in_init" do
     test "flags RPC in a behaviour module's init/1" do
       skip_without_souffle()

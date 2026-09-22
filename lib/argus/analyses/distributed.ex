@@ -70,16 +70,6 @@ defmodule Argus.Analyses.Distributed do
         doc: "An rpc result whose failure value is not handled."
       },
       %{
-        name: :global_register_risk,
-        fields: [
-          {:func, :symbol, "function"},
-          {:name, :symbol, "global name"},
-          {:site, :symbol, "instruction ID of the registration"}
-        ],
-        key: [:func, :name],
-        doc: "global.register_name without conflict resolution callback."
-      },
-      %{
         name: :global_blocking_in_init,
         fields: [
           {:func, :symbol, "init function (or transitively reachable from one)"},
@@ -153,18 +143,6 @@ defmodule Argus.Analyses.Distributed do
       at: Findings.at_site(site, func),
       at_label: "no {:badrpc, _} clause",
       help: ["add a `{:badrpc, reason} -> {:error, reason}` clause, or move to :erpc and rescue"]
-    )
-  end
-
-  def finding(:global_register_risk, [func, name, site]) do
-    Findings.new(
-      :warning,
-      ":global registration without conflict resolution",
-      "#{func} registers #{name} via :global without a resolve function. " <>
-        "After a netsplit heals, both partitions hold the name and the " <>
-        "default resolution kills one of the processes at random — state " <>
-        "loss decided by a coin flip.",
-      at: Findings.at_instr(site)
     )
   end
 
