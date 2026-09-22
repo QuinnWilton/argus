@@ -40,8 +40,13 @@ defmodule Argus.Analyses.QuietShapesTest do
       "foreign_dynamic_children",
       {"cleanup_defect", kind: "never_runs"}
     ],
-    mailbox:
-      ~w(call_never_replied statem_timeout_unhandled linked_task_in_library yield_on_linked_task handle_info_partial),
+    mailbox: [
+      {"reply_defect", kind: "statem_unreplied"},
+      {"partial_handler", source: "statem_timeout"},
+      {"task_result_defect", kind: "linked_in_library"},
+      {"task_result_defect", kind: "yield_linked"},
+      {"partial_handler", source: "late_message"}
+    ],
     structure: ~w(consumer_supervisor_permanent_child),
     coupling: ~w(dual_restart_authority),
     blocking: ~w(partial_noproc_catch),
@@ -52,7 +57,9 @@ defmodule Argus.Analyses.QuietShapesTest do
 
   # An entry is a relation name, or `{relation, where}` for the rows of a
   # merged relation that one rule produces.
-  defp label({relation, where}), do: "#{relation}[#{inspect(where)}]"
+  defp label({relation, where}),
+    do: "#{relation}=#{Enum.map_join(where, ",", fn {_, v} -> v end)}"
+
   defp label(relation), do: relation
 
   defp quiet_rows(results, analysis, {relation, where}),
@@ -63,7 +70,7 @@ defmodule Argus.Analyses.QuietShapesTest do
   for {analysis, relations} <- @expect_quiet do
     names =
       Enum.map_join(relations, ", ", fn
-        {relation, where} -> "#{relation}[#{inspect(where)}]"
+        {relation, where} -> "#{relation}=#{Enum.map_join(where, ",", fn {_, v} -> v end)}"
         relation -> relation
       end)
 

@@ -25,6 +25,10 @@ through the alias table to the rows that were theirs.
 | `shutdown` | `trap_exit_without_handler`, `trap_exit_without_exit_clause` | `unhandled_exit_signal(mod, kind, witness)`, `kind` ∈ no_handler, no_exit_clause |
 | `shutdown` | `terminate_calls_sibling`, `callback_stops_sibling` | `teardown_touches_sibling(mod, sibling, phase, kind, via, sup)`, `phase` ∈ terminate, handler |
 | `shutdown` | `deliberate_termination_while_monitored` | `kills_monitored_child(mod, site, kill_site)` (renamed) |
+| `mailbox` | `handle_info_without_catchall`, `handle_info_partial`, `nolink_messages_unhandled`, `statem_timeout_unhandled`, `state_missing_info_catchall` | `partial_handler(mod, handler, source, missing, detail)`, `source` ∈ runtime, late_message, task_nolink, statem_timeout, statem_info |
+| `mailbox` | `leaked_monitor`, `monitor_never_released`, `monitor_ref_discarded` | `unconsumed_monitor(mod, func, site, kind)`, `kind` ∈ timed_wait, never_released, ref_discarded |
+| `mailbox` | `leaked_async_task`, `yield_on_linked_task`, `linked_task_in_library` | `task_result_defect(func, site, kind)`, `kind` ∈ never_awaited, yield_linked, linked_in_library |
+| `mailbox` | `unhandled_self_message`, `never_replies`, `call_never_replied` | `reply_defect(mod, func, site, kind, tag)`, `kind` ∈ self_call, self_cast, dropped_from, statem_unreplied |
 
 ## 0.17.2 — 2026-09-21
 

@@ -3,6 +3,7 @@ defmodule Argus.Analyses.MailboxReplyTest do
 
   alias Argus.Souffle
   alias Argus.Test.Fixtures.Reply, as: R
+  alias Argus.Test.Rows
 
   @all [
     R.Forgets,
@@ -25,8 +26,11 @@ defmodule Argus.Analyses.MailboxReplyTest do
     r
   end
 
-  defp mods(r, relation) do
-    r |> Map.get(relation, []) |> Enum.map(&hd/1) |> Enum.uniq() |> Enum.sort()
+  defp never_replies(r),
+    do: Rows.where(r, :mailbox, "reply_defect", kind: "dropped_from", drop: [:kind, :tag])
+
+  defp mods(r, "never_replies") do
+    r |> never_replies() |> Enum.map(&hd/1) |> Enum.uniq() |> Enum.sort()
   end
 
   defp named?(list, fragment), do: Enum.any?(list, &String.contains?(&1, fragment))
@@ -37,7 +41,7 @@ defmodule Argus.Analyses.MailboxReplyTest do
 
       assert [[mod, func, id]] =
                results()
-               |> Map.get("never_replies", [])
+               |> never_replies()
                |> Enum.filter(&(hd(&1) =~ "Reply.Forgets"))
 
       assert mod =~ "Reply.Forgets"
@@ -50,7 +54,7 @@ defmodule Argus.Analyses.MailboxReplyTest do
 
       assert [[_mod, func, id]] =
                results()
-               |> Map.get("never_replies", [])
+               |> never_replies()
                |> Enum.filter(&(hd(&1) =~ "Reply.Forgets"))
 
       assert String.starts_with?(id, func <> "#"),

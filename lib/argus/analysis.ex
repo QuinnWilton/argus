@@ -239,8 +239,11 @@ defmodule Argus.Analysis do
       %{analysis: :shutdown, relation: :unhandled_exit_signal, where: []},
       %{analysis: :failure, relation: :unhandled_failure, where: [kind: "rescue"]},
       %{analysis: :failure, relation: :orphan_process, where: [kind: "exit"]},
-      %{analysis: :mailbox, relation: :handle_info_without_catchall, where: []},
-      %{analysis: :mailbox, relation: :handle_info_partial, where: []},
+      %{
+        analysis: :mailbox,
+        relation: :partial_handler,
+        where: [source: ~w(runtime late_message)]
+      },
       %{analysis: :mailbox, relation: :timer_cancel_without_flush, where: []}
     ],
     unsafe_task: [
@@ -249,23 +252,26 @@ defmodule Argus.Analysis do
         relation: :unchecked_result,
         where: [api: "Task.Supervisor.start_child"]
       },
-      %{analysis: :mailbox, relation: :nolink_messages_unhandled, where: []},
-      %{analysis: :mailbox, relation: :leaked_async_task, where: []},
-      %{analysis: :mailbox, relation: :yield_on_linked_task, where: []},
-      %{analysis: :mailbox, relation: :linked_task_in_library, where: []}
+      %{analysis: :mailbox, relation: :partial_handler, where: [source: "task_nolink"]},
+      %{analysis: :mailbox, relation: :task_result_defect, where: []}
     ],
     monitor_leak: [
       %{analysis: :shutdown, relation: :kills_monitored_child, where: []},
-      %{analysis: :mailbox, relation: :leaked_monitor, where: []},
-      %{analysis: :mailbox, relation: :monitor_never_released, where: []},
-      %{analysis: :mailbox, relation: :monitor_ref_discarded, where: []}
+      %{analysis: :mailbox, relation: :unconsumed_monitor, where: []}
     ],
-    message_contract: [%{analysis: :mailbox, relation: :unhandled_self_message, where: []}],
-    reply_contract: [%{analysis: :mailbox, relation: :never_replies, where: []}],
+    message_contract: [
+      %{analysis: :mailbox, relation: :reply_defect, where: [kind: ~w(self_call self_cast)]}
+    ],
+    reply_contract: [
+      %{analysis: :mailbox, relation: :reply_defect, where: [kind: "dropped_from"]}
+    ],
     gen_statem: [
-      %{analysis: :mailbox, relation: :state_missing_info_catchall, where: []},
-      %{analysis: :mailbox, relation: :statem_timeout_unhandled, where: []},
-      %{analysis: :mailbox, relation: :call_never_replied, where: []},
+      %{
+        analysis: :mailbox,
+        relation: :partial_handler,
+        where: [source: ~w(statem_info statem_timeout)]
+      },
+      %{analysis: :mailbox, relation: :reply_defect, where: [kind: "statem_unreplied"]},
       %{analysis: :state_machine, relation: :unreachable_state, where: []},
       %{analysis: :state_machine, relation: :terminal_without_stop, where: []}
     ]

@@ -14,6 +14,42 @@
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
 
+// ══ The outputs ═════════════════════════════════════════════════════
+//
+// `partial_handler(mod, handler, source, missing, detail)` — a message
+//   with no clause for it. `source` says who writes it: "runtime" (the
+//   process monitors or traps exits), "late_message" (its callbacks reach
+//   a task, timer, subscription or timed call), "task_nolink" (an
+//   async_nolink task started in `detail`; `missing` is "reply" or
+//   "down"), "statem_timeout" (`handler` is the state arming a timeout of
+//   kind `missing`), "statem_info" (the state function `handler`, for
+//   state `detail`, lacks the :info catch-all its siblings have).
+// `unconsumed_monitor(mod, func, site, kind)` — a monitor left live:
+//   "timed_wait" (past a receive with an after clause, never flushed),
+//   "never_released" (a server that removes entries but never
+//   demonitors), "ref_discarded" (the ref thrown away).
+// `task_result_defect(func, site, kind)` — a Task.async whose result
+//   goes wrong: "never_awaited", "yield_linked" (collected with
+//   Task.yield in a process that does not trap exits),
+//   "linked_in_library" (started in library code, linked to whoever
+//   called it).
+// `reply_defect(mod, func, site, kind, tag)` — a reply that never comes:
+//   "self_call" | "self_cast" (the module sends its own server `tag` and
+//   has no clause for it; `func` is the sender), "dropped_from" (a
+//   handle_call defers a reply without keeping `from`; `site` is the
+//   return), "statem_unreplied" (a {:call, from} clause answers nothing).
+.decl partial_handler(mod: symbol, handler: symbol, source: symbol, missing: symbol, detail: symbol)
+.output partial_handler
+
+.decl unconsumed_monitor(mod: symbol, func: symbol, site: symbol, kind: symbol)
+.output unconsumed_monitor
+
+.decl task_result_defect(func: symbol, site: symbol, kind: symbol)
+.output task_result_defect
+
+.decl reply_defect(mod: symbol, func: symbol, site: symbol, kind: symbol, tag: symbol)
+.output reply_defect
+
 // ══ handle_info without a catch-all, and stale timers ═══════════════
 .decl trap_exit_without_exit_clause(mod: symbol, witness: symbol)
 
@@ -43,10 +79,7 @@ receives_runtime_messages(mod) :-
   monitor_call(_, f, _),
   function_def(f, mod, _, _, _).
 
-.decl handle_info_without_catchall(mod: symbol, func: symbol)
-.output handle_info_without_catchall
-
-handle_info_without_catchall(mod, h) :-
+partial_handler(mod, h, "runtime", "catchall", "") :-
   (behaves_as(mod, "GenServer") ; behaves_as(mod, "GenStage")),
   partial_handle_info(mod, h),
   receives_runtime_messages(mod),
@@ -77,10 +110,7 @@ late_message_source(mod) :-
   process_entry(mod, c),
   mailbox_reach.reaches(c).
 
-.decl handle_info_partial(mod: symbol, func: symbol)
-.output handle_info_partial
-
-handle_info_partial(mod, h) :-
+partial_handler(mod, h, "late_message", "catchall", "") :-
   (behaves_as(mod, "GenServer") ; behaves_as(mod, "GenStage")),
   partial_handle_info(mod, h),
   late_message_source(mod),
@@ -253,10 +283,7 @@ task_factory(func, id) :-
 // which consume task results through their mailbox rather than
 // explicit await/yield.
 // Suppressed for task factories that return the task to the caller.
-.decl leaked_async_task(func: symbol, id: symbol)
-.output leaked_async_task
-
-leaked_async_task(func, id) :-
+task_result_defect(func, id, "never_awaited") :-
   task_async_call(func, id),
   !await_reach.reaches(func),
   function_def(func, mod, _, _, _),
@@ -274,12 +301,9 @@ leaked_async_task(func, id) :-
 // unless the caller traps exits that branch never runs: the caller is
 // dead (whatyouhide/redix#317's cluster fan-out, whose partial-failure
 // path was unreachable). async_nolink is the tool for that shape.
-.decl yield_on_linked_task(func: symbol, id: symbol)
-.output yield_on_linked_task
-
 // A closure's calls belong to the function that defines it: the task is
 // usually started inside an Enum.map fn and collected outside it.
-yield_on_linked_task(owner, id) :-
+task_result_defect(owner, id, "yield_linked") :-
   task_async_call(f, id),
   enclosing_function(f, owner),
   !closure_def(_, owner),
@@ -297,10 +321,7 @@ yield_on_linked_task(owner, id) :-
 // preloading in parallel), and a crashing task takes an unrelated
 // caller down with it. A module that is a process itself owns its
 // callers' expectations; a plain library function does not.
-.decl linked_task_in_library(func: symbol, id: symbol)
-.output linked_task_in_library
-
-linked_task_in_library(owner, id) :-
+task_result_defect(owner, id, "linked_in_library") :-
   task_async_call(f, id),
   enclosing_function(f, owner),
   !closure_def(_, owner),
@@ -323,16 +344,13 @@ linked_task_in_library(owner, id) :-
 
 nolink_reach.seed(f, f) :- mailbox_writer(_, f, "task_nolink").
 
-.decl nolink_messages_unhandled(mod: symbol, start: symbol, handler: symbol, missing: symbol)
-.output nolink_messages_unhandled
-
-nolink_messages_unhandled(mod, s, h, "reply") :-
+partial_handler(mod, h, "task_nolink", "reply", s) :-
   process_entry(mod, c),
   nolink_reach.reaches(c, s),
   partial_handle_info(mod, h),
   !callback_ref_head(h, "handle_info").
 
-nolink_messages_unhandled(mod, s, h, "down") :-
+partial_handler(mod, h, "task_nolink", "down", s) :-
   process_entry(mod, c),
   nolink_reach.reaches(c, s),
   partial_handle_info(mod, h),
@@ -347,11 +365,9 @@ timed_wait.seed(func) :- timed_receive(func).
 
 flush.seed(func) :- demonitor_call(_, func, "flush").
 
-.decl leaked_monitor(func: symbol, id: symbol)
-.output leaked_monitor
-
-leaked_monitor(func, id) :-
+unconsumed_monitor(mod, func, id, "timed_wait") :-
   monitor_call(id, func, _),
+  function_def(func, mod, _, _, _),
   timed_wait.reaches(func),
   !flush.reaches(func).
 
@@ -390,10 +406,7 @@ removes_entries(mod) :-
   remote_call(_, f, m, op, _),
   removal_api(m, op).
 
-.decl monitor_never_released(mod: symbol, site: symbol)
-.output monitor_never_released
-
-monitor_never_released(mod, site) :-
+unconsumed_monitor(mod, f, site, "never_released") :-
   server_side(mod, f),
   monitor_call(site, f, _),
   !monitor_ref_dropped(site, f),
@@ -410,10 +423,7 @@ monitor_never_released(mod, site) :-
 // table in another module; every unsubscribe left a monitor behind.
 // Reported separately from monitor_never_released because it needs no
 // removal path in evidence — the ref being gone is the whole story.
-.decl monitor_ref_discarded(mod: symbol, site: symbol)
-.output monitor_ref_discarded
-
-monitor_ref_discarded(mod, site) :-
+unconsumed_monitor(mod, f, site, "ref_discarded") :-
   server_side(mod, f),
   monitor_call(site, f, _),
   monitor_ref_dropped(site, f).
@@ -463,10 +473,7 @@ proxies(func) :-
   function_def(func, mod, _, _, _),
   other != mod.
 
-.decl unhandled_self_message(mod: symbol, sender: symbol, kind: symbol, tag: symbol)
-.output unhandled_self_message
-
-unhandled_self_message(mod, sender, kind, tag) :-
+reply_defect(mod, sender, "", cat("self_", kind), tag) :-
   call_tag(_, sender, kind, tag),
   function_def(sender, mod, _, _, _),
   kind_callback(kind, callback),
@@ -497,10 +504,7 @@ defers_reply(mod, func, id) :-
 // {:noreply, _} having never read `from`. That execution cannot reply, no
 // matter what the rest of the program does.
 
-.decl never_replies(mod: symbol, func: symbol, id: symbol)
-.output never_replies
-
-never_replies(mod, func, id) :-
+reply_defect(mod, func, id, "dropped_from", "") :-
   defers_reply(mod, func, id),
   callback_drops_from(id, func).
 
@@ -529,13 +533,10 @@ never_replies(mod, func, id) :-
 // that took the whole :one_for_all cluster tree with it. The sibling
 // asymmetry is the precision gate: a module that handles stray messages
 // in some states and not others has forgotten, not decided.
-.decl state_missing_info_catchall(mod: symbol, state: symbol, site: symbol)
-.output state_missing_info_catchall
-
 // statem_state carries one row per site a state is seen at — its own
 // function and every transition targeting it — so the function_def join
 // picks the definition.
-state_missing_info_catchall(mod, state, func) :-
+partial_handler(mod, func, "statem_info", "catchall", state) :-
   statem_module(mod, "state_functions"),
   statem_state(mod, state, func),
   function_def(func, mod, _, _, _),
@@ -560,20 +561,17 @@ statem_handles_event(mod, "timeout") :- statem_event_catchall(mod, _).
 statem_handles_event(mod, "state_timeout") :- statem_event_catchall(mod, _).
 statem_handles_event(mod, "{timeout}") :- statem_event_catchall(mod, _).
 
-.decl statem_timeout_unhandled(mod: symbol, kind: symbol, state: symbol)
-.output statem_timeout_unhandled
-
-statem_timeout_unhandled(mod, "event_timeout", state) :-
+partial_handler(mod, state, "statem_timeout", "event_timeout", "") :-
   statem_timeout(mod, state, "event_timeout", _),
   !statem_handles_event(mod, "timeout").
 
 // A generic timeout {{:timeout, name}, ms, content} arrives as the
 // event type {:timeout, name}: a tagged tuple, not the :timeout atom.
-statem_timeout_unhandled(mod, "generic_timeout", state) :-
+partial_handler(mod, state, "statem_timeout", "generic_timeout", "") :-
   statem_timeout(mod, state, "generic", _),
   !statem_handles_event(mod, "{timeout}").
 
-statem_timeout_unhandled(mod, "state_timeout", state) :-
+partial_handler(mod, state, "statem_timeout", "state_timeout", "") :-
   statem_timeout(mod, state, "state_timeout", _),
   !statem_handles_event(mod, "state_timeout").
 
@@ -583,7 +581,4 @@ statem_timeout_unhandled(mod, "state_timeout", state) :-
 // reports the ones that reply nothing, postpone nothing and keep `from`
 // nowhere. The caller of :gen_statem.call/2 waits :infinity by default
 // (sneako/finch#213: a cancel while disconnected blocked for days).
-.decl call_never_replied(mod: symbol, func: symbol, site: symbol)
-.output call_never_replied
-
-call_never_replied(mod, func, site) :- statem_call_unreplied(mod, func, site).
+reply_defect(mod, func, site, "statem_unreplied", "") :- statem_call_unreplied(mod, func, site).

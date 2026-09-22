@@ -83,10 +83,12 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
     {:ok, r} =
       Argus.analyze([H.NolinkPartialInfo, H.NolinkBothClauses, H.NolinkCollected], :mailbox)
 
-    assert rows(r, "nolink_messages_unhandled") ==
+    nolink = Rows.where(r, :mailbox, "partial_handler", source: "task_nolink")
+
+    assert nolink |> Enum.map(&hd/1) |> Enum.uniq() ==
              ["Argus.Test.Fixtures.Hypothesized.NolinkPartialInfo"]
 
-    assert rows(r, "nolink_messages_unhandled", 3) == ["down", "reply"]
+    assert nolink |> Enum.map(&Enum.at(&1, 3)) |> Enum.sort() == ["down", "reply"]
   end
 
   test "a connect in init/1 with no reconnect path is reported" do

@@ -2,6 +2,7 @@ defmodule Argus.Analyses.MailboxInfoTest do
   use ExUnit.Case
 
   alias Argus.Souffle
+  alias Argus.Test.Rows
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
@@ -12,7 +13,14 @@ defmodule Argus.Analyses.MailboxInfoTest do
     results
   end
 
-  describe "handle_info_partial" do
+  defp partial(results, source),
+    do:
+      Rows.where(results, :mailbox, "partial_handler",
+        source: source,
+        drop: [:source, :missing, :detail]
+      )
+
+  describe "partial_handler: late_message" do
     test "a partial handle_info with a late-message source is a note, GenStage included" do
       skip_without_souffle()
 
@@ -27,7 +35,7 @@ defmodule Argus.Analyses.MailboxInfoTest do
           Argus.Test.Fixtures.MonitorsWithoutCatchall
         ])
 
-      partial = Enum.map(results["handle_info_partial"], fn [mod, _f] -> mod end) |> Enum.sort()
+      partial = Enum.map(partial(results, "late_message"), fn [mod, _f] -> mod end) |> Enum.sort()
 
       assert partial == [
                "Argus.Test.Fixtures.AppliesPartialInfoServer",
@@ -37,12 +45,12 @@ defmodule Argus.Analyses.MailboxInfoTest do
              ]
 
       # The monitoring module keeps its warning-grade finding, not this one.
-      assert Enum.map(results["handle_info_without_catchall"], fn [mod, _f] -> mod end) ==
+      assert Enum.map(partial(results, "runtime"), fn [mod, _f] -> mod end) ==
                ["Argus.Test.Fixtures.MonitorsWithoutCatchall"]
     end
   end
 
-  describe "handle_info_without_catchall" do
+  describe "partial_handler: runtime" do
     test "a monitoring GenServer with only a :DOWN clause is reported" do
       skip_without_souffle()
 
@@ -52,7 +60,7 @@ defmodule Argus.Analyses.MailboxInfoTest do
           Argus.Test.Fixtures.MonitorsWithCatchall
         ])
 
-      mods = Enum.map(results["handle_info_without_catchall"], fn [mod, _f] -> mod end)
+      mods = Enum.map(partial(results, "runtime"), fn [mod, _f] -> mod end)
 
       assert mods == ["Argus.Test.Fixtures.MonitorsWithoutCatchall"]
     end
@@ -62,7 +70,7 @@ defmodule Argus.Analyses.MailboxInfoTest do
 
       results = analyze([Argus.Test.Fixtures.TrapsWithoutExitClause])
 
-      assert results["handle_info_without_catchall"] == []
+      assert partial(results, "runtime") == []
     end
   end
 end

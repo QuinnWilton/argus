@@ -9,8 +9,8 @@ defmodule Argus.Test.Rows do
   """
 
   @doc """
-  The rows of `relation` in `results` whose columns match `where`, with
-  the `:drop` columns removed.
+  The rows of `relation` in `results` whose columns match `where` (a
+  value, or a list of allowed values), with the `:drop` columns removed.
 
       Rows.where(results, :effects, "effect_in_context", context: "transaction", drop: [:context])
   """
@@ -28,7 +28,10 @@ defmodule Argus.Test.Rows do
     results
     |> Map.get(relation, [])
     |> Enum.filter(fn row ->
-      Enum.all?(where, fn {column, value} -> Enum.at(row, index.(column)) == value end)
+      Enum.all?(where, fn
+        {column, allowed} when is_list(allowed) -> Enum.at(row, index.(column)) in allowed
+        {column, value} -> Enum.at(row, index.(column)) == value
+      end)
     end)
     |> Enum.map(fn row -> Enum.map(keep, &Enum.at(row, &1)) end)
   end

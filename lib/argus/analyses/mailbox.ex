@@ -6,31 +6,28 @@ defmodule Argus.Analyses.Mailbox do
   here is a message and the clause that is not there for it, or a reply
   a caller waits for that never comes.
 
-  - `handle_info_without_catchall(mod, func)` and
-    `handle_info_partial(mod, func)` — a `handle_info/2` with no
-    catch-all, in a process the runtime writes to (monitors, trapped
-    exits) or one whose callbacks reach a late-message source (a task, a
-    timer, a subscription, a timed call).
-  - `nolink_messages_unhandled(mod, start, handler, missing)` — an
-    `async_nolink` task's reply or `:DOWN` has no clause.
-  - `leaked_async_task`, `yield_on_linked_task`, `linked_task_in_library`
-    — a `Task.async` never awaited, collected with `Task.yield` in a
-    process that does not trap exits, or started in library code that
-    links it to an unknown caller.
-  - `leaked_monitor`, `monitor_never_released`, `monitor_ref_discarded` —
-    a monitor left live after a timed wait, released by nothing but the
-    monitored process dying, or whose ref was thrown away.
+  - `partial_handler(mod, handler, source, missing, detail)` — a message
+    with no clause for it. `source` says who writes it: `runtime`
+    (monitors, trapped exits), `late_message` (a task, a timer, a
+    subscription, a timed call the callbacks reach), `task_nolink` (an
+    `async_nolink` task's `reply` or `down`), `statem_timeout` (a timeout
+    of kind `missing` no clause handles), `statem_info` (a state without
+    the `:info` catch-all its siblings have).
+  - `task_result_defect(func, site, kind)` — a `Task.async`
+    `never_awaited`, `yield_linked` (collected with `Task.yield` in a
+    process that does not trap exits) or `linked_in_library` (started in
+    library code that links it to an unknown caller).
+  - `unconsumed_monitor(mod, func, site, kind)` — a monitor left live
+    after a `timed_wait`, `never_released` by anything but the monitored
+    process dying, or whose ref was `ref_discarded`.
   - `timer_cancel_without_flush(mod, cancel, arm, key, message)` — a
     cancelled timer's message may already be queued and is not told
     apart from the next.
-  - `unhandled_self_message(mod, sender, kind, tag)` — a tag the module
-    sends its own server with no matching clause.
-  - `never_replies(mod, func, id)` — a `handle_call` that defers a reply
-    without keeping `from`.
-  - `state_missing_info_catchall`, `statem_timeout_unhandled`,
-    `call_never_replied` — a gen_statem state without the `:info`
-    catch-all its siblings have, a timeout no clause handles, a
-    `{:call, from}` clause that never answers.
+  - `reply_defect(mod, func, site, kind, tag)` — a tag the module sends
+    its own server with no matching clause (`self_call`, `self_cast`), a
+    `handle_call` that defers a reply without keeping `from`
+    (`dropped_from`), or a `{:call, from}` clause that never answers
+    (`statem_unreplied`).
   """
 
   @behaviour Argus.Analysis
@@ -59,35 +56,31 @@ defmodule Argus.Analyses.Mailbox do
       Argus.Extractors.Reply
     ]
 
-  @reply_fields [
-    {:mod, :symbol, "the module"},
-    {:func, :symbol, "the handle_call/3 function"},
-    {:id, :symbol, "the return site"}
-  ]
-
   @impl true
   def output_relations do
     [
       %{
-        name: :handle_info_without_catchall,
+        name: :partial_handler,
         fields: [
-          {:mod, :symbol, "module"},
-          {:func, :symbol, "the handle_info/2 function"}
+          {:mod, :symbol, "the process module"},
+          {:handler, :symbol,
+           "the handle_info/2 function, or the statem state (name or handle_event)"},
+          {:source, :symbol,
+           "runtime | late_message | task_nolink | statem_timeout | statem_info"},
+          {:missing, :symbol,
+           "catchall, reply | down for task_nolink, the timeout kind for statem_timeout"},
+          {:detail, :symbol, "the function starting the task, or the state name for statem_info"}
         ],
-        doc:
-          "A GenServer that monitors or traps exits defines handle_info/2 " <>
-            "without a catch-all clause."
-      },
-      %{
-        name: :handle_info_partial,
-        fields: [
-          {:mod, :symbol, "module"},
-          {:func, :symbol, "the handle_info/2 function"}
-        ],
-        doc:
-          "A GenServer or GenStage defines handle_info/2 without a catch-all " <>
-            "clause; nothing in the module invites runtime messages, but any " <>
-            "stray message is a FunctionClauseError."
+        # A nolink task is one finding per start; a statem timeout one per
+        # kind; the rest one per handler.
+        key:
+          {:source,
+           %{
+             "task_nolink" => [:mod, :detail],
+             "statem_timeout" => [:mod, :missing],
+             default: [:mod, :handler, :missing, :detail]
+           }},
+        doc: "A message arrives and no clause takes it."
       },
       %{
         name: :timer_cancel_without_flush,
@@ -102,120 +95,54 @@ defmodule Argus.Analyses.Mailbox do
         doc: "A cancelled timer's message may already be in the mailbox and is not told apart."
       },
       %{
-        name: :nolink_messages_unhandled,
+        name: :task_result_defect,
         fields: [
-          {:mod, :symbol, "the process module"},
-          {:start, :symbol, "function starting the async_nolink task"},
-          {:handler, :symbol, "its handle_info/2"},
-          {:missing, :symbol, "'reply' ({ref, result}) or 'down' ({:DOWN, ...})"}
+          {:func, :symbol, "function starting the task"},
+          {:site, :symbol, "instruction ID of the Task.async call"},
+          {:kind, :symbol, "never_awaited | yield_linked | linked_in_library"}
         ],
-        key: [:mod, :start],
-        doc: "An async_nolink task's reply or :DOWN message has no handle_info clause."
+        key: [:func, :site, :kind],
+        doc: "A Task.async whose result nothing awaits, or whose link the caller cannot afford."
       },
       %{
-        name: :leaked_async_task,
-        fields: [
-          {:func, :symbol, "function containing the async call"},
-          {:id, :symbol, "instruction ID of the Task.async call"}
-        ],
-        doc: "Task.async or async_nolink call without corresponding await/yield."
-      },
-      %{
-        name: :yield_on_linked_task,
-        fields: [
-          {:func, :symbol, "function that starts and yields on the task"},
-          {:id, :symbol, "instruction ID of the Task.async call"}
-        ],
-        doc: "A linked task is collected with Task.yield in a caller that does not trap exits."
-      },
-      %{
-        name: :linked_task_in_library,
-        fields: [
-          {:func, :symbol, "library function that starts the task"},
-          {:id, :symbol, "instruction ID of the Task.async call"}
-        ],
-        doc:
-          "Task.async in a function that is not a process callback links the task to an unknown caller."
-      },
-      %{
-        name: :leaked_monitor,
-        fields: [
-          {:func, :symbol, "the function establishing the monitor"},
-          {:id, :symbol, "the monitor call site"}
-        ],
-        key: [:func],
-        doc: "A monitor established before a timed wait, never flushed."
-      },
-      %{
-        name: :monitor_never_released,
-        fields: [
-          {:mod, :symbol, "the server module"},
-          {:site, :symbol, "a monitor call site in its callbacks"}
-        ],
-        key: [:mod],
-        doc:
-          "A server monitors from its callbacks and removes bookkeeping entries, " <>
-            "but never calls Process.demonitor."
-      },
-      %{
-        name: :monitor_ref_discarded,
-        fields: [
-          {:mod, :symbol, "the server module"},
-          {:site, :symbol, "the monitor call whose ref is dropped"}
-        ],
-        doc:
-          "A server callback discards the ref Process.monitor/1 returned; nothing can demonitor it."
-      },
-      %{
-        name: :unhandled_self_message,
+        name: :unconsumed_monitor,
         fields: [
           {:mod, :symbol, "the module"},
-          {:sender, :symbol, "the function sending it"},
-          {:kind, :symbol, "'call' or 'cast'"},
-          {:tag, :symbol, "the message tag"}
+          {:func, :symbol, "the function establishing the monitor"},
+          {:site, :symbol, "the monitor call site"},
+          {:kind, :symbol, "timed_wait | never_released | ref_discarded"}
         ],
-        key: [:mod, :kind, :tag],
-        doc: "A tag sent to the module's own server with no matching clause."
+        # A timed wait leaks once per function, a server that never
+        # demonitors is one finding, a discarded ref one per site.
+        key:
+          {:kind,
+           %{"timed_wait" => [:func], "never_released" => [:mod], default: [:mod, :func, :site]}},
+        doc: "A monitor left live past the wait, the entry, or the ref that could release it."
       },
       %{
-        name: :never_replies,
-        fields: @reply_fields,
-        key: [:mod, :func, :id],
-        doc: "handle_call returns {:noreply, _} without keeping `from`."
-      },
-      %{
-        name: :state_missing_info_catchall,
+        name: :reply_defect,
         fields: [
-          {:mod, :symbol, "module"},
-          {:state, :symbol, "the state without an :info catch-all"},
-          {:site, :symbol, "the state function"}
+          {:mod, :symbol, "the module"},
+          {:func, :symbol, "the sender, the handle_call/3, or the state function"},
+          {:site, :symbol, "the return site, empty for a self message"},
+          {:kind, :symbol, "self_call | self_cast | dropped_from | statem_unreplied"},
+          {:tag, :symbol, "the message tag, for a self message"}
         ],
-        doc: "A state function has no :info catch-all while sibling states do."
-      },
-      %{
-        name: :statem_timeout_unhandled,
-        fields: [
-          {:mod, :symbol, "module"},
-          {:kind, :symbol, "event_timeout, state_timeout or generic_timeout"},
-          {:state, :symbol, "the state (or handle_event) arming it"}
-        ],
-        key: [:mod, :kind],
-        doc: "A timeout is armed and no clause handles its event type."
-      },
-      %{
-        name: :call_never_replied,
-        fields: [
-          {:mod, :symbol, "module"},
-          {:func, :symbol, "the state function or handle_event/4"},
-          {:site, :symbol, "the return that answers nothing"}
-        ],
-        doc: "A {:call, from} clause returns without replying, postponing, or keeping from."
+        # A self message is one finding per tag, whoever sends it.
+        key:
+          {:kind,
+           %{
+             "self_call" => [:mod, :tag],
+             "self_cast" => [:mod, :tag],
+             default: [:mod, :func, :site]
+           }},
+        doc: "A tag the module cannot handle, or a reply a caller waits for that never comes."
       }
     ]
   end
 
   @impl true
-  def finding(:handle_info_without_catchall, [mod, func]) do
+  def finding(:partial_handler, [mod, func, "runtime", _, _]) do
     Findings.new(
       :info,
       "handle_info/2 has no catch-all in a process the runtime writes to",
@@ -234,7 +161,7 @@ defmodule Argus.Analyses.Mailbox do
     )
   end
 
-  def finding(:handle_info_partial, [mod, func]) do
+  def finding(:partial_handler, [mod, func, "late_message", _, _]) do
     Findings.new(
       :info,
       "handle_info/2 has no catch-all",
@@ -272,7 +199,7 @@ defmodule Argus.Analyses.Mailbox do
     )
   end
 
-  def finding(:nolink_messages_unhandled, [mod, start, handler, missing]) do
+  def finding(:partial_handler, [mod, handler, "task_nolink", missing, start]) do
     what =
       case missing do
         "reply" -> "the task's reply, `{ref, result}`"
@@ -296,7 +223,7 @@ defmodule Argus.Analyses.Mailbox do
     )
   end
 
-  def finding(:leaked_async_task, [func, id]) do
+  def finding(:task_result_defect, [func, id, "never_awaited"]) do
     Findings.new(
       :warning,
       "Async task never awaited",
@@ -314,7 +241,7 @@ defmodule Argus.Analyses.Mailbox do
     )
   end
 
-  def finding(:yield_on_linked_task, [func, id]) do
+  def finding(:task_result_defect, [func, id, "yield_linked"]) do
     Findings.new(
       :warning,
       "Task.yield on a linked task cannot see it crash",
@@ -332,7 +259,7 @@ defmodule Argus.Analyses.Mailbox do
     )
   end
 
-  def finding(:linked_task_in_library, [func, id]) do
+  def finding(:task_result_defect, [func, id, "linked_in_library"]) do
     Findings.new(
       :info,
       "Task.async in library code links to an unknown caller",
@@ -350,7 +277,7 @@ defmodule Argus.Analyses.Mailbox do
     )
   end
 
-  def finding(:leaked_monitor, [func, id]) do
+  def finding(:unconsumed_monitor, [_mod, func, id, "timed_wait"]) do
     Findings.new(
       :error,
       "#{func} leaves a monitor live after its wait times out",
@@ -373,7 +300,7 @@ defmodule Argus.Analyses.Mailbox do
     )
   end
 
-  def finding(:monitor_never_released, [mod, site]) do
+  def finding(:unconsumed_monitor, [mod, _func, site, "never_released"]) do
     Findings.new(
       :info,
       "#{mod} monitors but never demonitors",
@@ -392,7 +319,7 @@ defmodule Argus.Analyses.Mailbox do
     )
   end
 
-  def finding(:monitor_ref_discarded, [mod, site]) do
+  def finding(:unconsumed_monitor, [mod, _func, site, "ref_discarded"]) do
     Findings.new(
       :info,
       "#{mod} drops the ref of a monitor it establishes",
@@ -412,7 +339,7 @@ defmodule Argus.Analyses.Mailbox do
     )
   end
 
-  def finding(:unhandled_self_message, [mod, sender, kind, tag]) do
+  def finding(:reply_defect, [mod, sender, _, "self_" <> kind, tag]) do
     Findings.new(
       :error,
       "#{mod} sends itself #{tag}, which it cannot handle",
@@ -427,7 +354,7 @@ defmodule Argus.Analyses.Mailbox do
     )
   end
 
-  def finding(:never_replies, [mod, func, id]) do
+  def finding(:reply_defect, [mod, func, id, "dropped_from", _]) do
     Findings.new(
       :error,
       "#{mod} defers a reply it cannot send",
@@ -445,7 +372,7 @@ defmodule Argus.Analyses.Mailbox do
     )
   end
 
-  def finding(:state_missing_info_catchall, [mod, state, site]) do
+  def finding(:partial_handler, [mod, site, "statem_info", _, state]) do
     Findings.new(
       :warning,
       "State #{state} has no :info catch-all",
@@ -461,7 +388,7 @@ defmodule Argus.Analyses.Mailbox do
     )
   end
 
-  def finding(:statem_timeout_unhandled, [mod, kind, state]) do
+  def finding(:partial_handler, [mod, state, "statem_timeout", kind, _]) do
     {action, type} =
       case kind do
         "state_timeout" -> {"{:state_timeout, ms, content}", ":state_timeout"}
@@ -491,7 +418,7 @@ defmodule Argus.Analyses.Mailbox do
     )
   end
 
-  def finding(:call_never_replied, [mod, func, site]) do
+  def finding(:reply_defect, [mod, func, site, "statem_unreplied", _]) do
     Findings.new(
       :warning,
       "A {:call, from} clause never replies",

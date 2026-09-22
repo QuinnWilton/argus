@@ -2,20 +2,26 @@ defmodule Argus.Analyses.MailboxTaskTest do
   use ExUnit.Case
 
   alias Argus.Souffle
+  alias Argus.Test.Rows
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
-  describe "unsafe_task.dl" do
+  defp tasks(results, kind),
+    do: Rows.where(results, :mailbox, "task_result_defect", kind: kind, drop: [:kind])
+
+  defp leaked(results), do: tasks(results, "never_awaited")
+
+  describe "task_result_defect: never_awaited" do
     test "detects leaked async task" do
       skip_without_souffle()
 
       assert {:ok, results} =
                Argus.analyze([Argus.Test.Fixtures.LeakedTaskModule], :mailbox)
 
-      assert Map.has_key?(results, "leaked_async_task")
-      leaked = results["leaked_async_task"]
+      assert Map.has_key?(results, "task_result_defect")
+      leaked = leaked(results)
       assert leaked != []
 
       # fire_and_forget creates a task but never awaits.
@@ -36,7 +42,7 @@ defmodule Argus.Analyses.MailboxTaskTest do
 
       assert {:ok, results} = Argus.analyze(modules, :mailbox)
 
-      leaked = results["leaked_async_task"]
+      leaked = leaked(results)
 
       # GenServerTaskConsumer handles task results via handle_info — not leaked.
       refute Enum.any?(leaked, fn [func, _id] ->
@@ -58,7 +64,7 @@ defmodule Argus.Analyses.MailboxTaskTest do
       ]
 
       assert {:ok, results} = Argus.analyze(modules, :mailbox)
-      leaked = results["leaked_async_task"]
+      leaked = leaked(results)
 
       # No named behaviour, but a handle_info/2 — the reply is consumed.
       refute Enum.any?(leaked, fn [func, _id] -> String.contains?(func, "PlainTaskConsumer") end)
@@ -75,7 +81,7 @@ defmodule Argus.Analyses.MailboxTaskTest do
 
       assert {:ok, results} = Argus.analyze(modules, :mailbox)
 
-      leaked = results["leaked_async_task"]
+      leaked = leaked(results)
 
       # async_nolink is managed by the supervisor — not a leak.
       refute Enum.any?(leaked, fn [func, _id] ->
@@ -98,7 +104,7 @@ defmodule Argus.Analyses.MailboxTaskTest do
 
       assert {:ok, results} = Argus.analyze(modules, :mailbox)
 
-      leaked = results["leaked_async_task"]
+      leaked = leaked(results)
 
       # TaskFactory returns the task in tail position — not a leak.
       refute Enum.any?(leaked, fn [func, _id] ->
@@ -121,7 +127,7 @@ defmodule Argus.Analyses.MailboxTaskTest do
 
       assert {:ok, results} = Argus.analyze(modules, :mailbox)
 
-      leaked = results["leaked_async_task"]
+      leaked = leaked(results)
 
       # LiveViewTaskConsumer handles task results via handle_info — not leaked.
       refute Enum.any?(leaked, fn [func, _id] ->
@@ -144,7 +150,7 @@ defmodule Argus.Analyses.MailboxTaskTest do
 
       assert {:ok, results} = Argus.analyze(modules, :mailbox)
 
-      leaked = results["leaked_async_task"]
+      leaked = leaked(results)
 
       # GenStatemTaskConsumer handles task results via handle_event — not leaked.
       refute Enum.any?(leaked, fn [func, _id] ->
@@ -167,7 +173,7 @@ defmodule Argus.Analyses.MailboxTaskTest do
 
       assert {:ok, results} = Argus.analyze(modules, :mailbox)
 
-      leaked = results["leaked_async_task"]
+      leaked = leaked(results)
 
       # TaskShutdownUser consumes the task via Task.shutdown — not leaked.
       refute Enum.any?(leaked, fn [func, _id] ->
@@ -184,7 +190,7 @@ defmodule Argus.Analyses.MailboxTaskTest do
       skip_without_souffle()
 
       assert {:ok, results} = Argus.analyze([:maps], :mailbox)
-      assert Map.has_key?(results, "leaked_async_task")
+      assert Map.has_key?(results, "task_result_defect")
     end
   end
 
@@ -198,7 +204,7 @@ defmodule Argus.Analyses.MailboxTaskTest do
                  :mailbox
                )
 
-      funcs = Enum.map(Map.get(results, "yield_on_linked_task", []), &hd/1)
+      funcs = Enum.map(tasks(results, "yield_linked"), &hd/1)
       assert funcs == ["Argus.Test.Fixtures.YieldsLinkedTask:fan_out/1"]
     end
 
@@ -211,7 +217,7 @@ defmodule Argus.Analyses.MailboxTaskTest do
                  :mailbox
                )
 
-      funcs = Enum.map(Map.get(results, "linked_task_in_library", []), &hd/1)
+      funcs = Enum.map(tasks(results, "linked_in_library"), &hd/1)
       assert funcs == ["Argus.Test.Fixtures.LibraryPmap:pmap/2"]
     end
   end

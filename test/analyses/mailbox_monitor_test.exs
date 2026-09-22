@@ -3,6 +3,7 @@ defmodule Argus.Analyses.MailboxMonitorTest do
 
   alias Argus.Souffle
   alias Argus.Test.Fixtures.MonitorLeak, as: M
+  alias Argus.Test.Rows
 
   @all [M.Leaks, M.Flushes, M.Blocks, M.NoMonitor, M.LeaksThroughHelper, M.FlushesInHelper]
 
@@ -20,7 +21,11 @@ defmodule Argus.Analyses.MailboxMonitorTest do
 
   defp funcs do
     assert {:ok, r} = Argus.analyze(@all, :mailbox)
-    r |> Map.get("leaked_monitor", []) |> Enum.map(&hd/1) |> Enum.sort()
+
+    r
+    |> Rows.where(:mailbox, "unconsumed_monitor", kind: "timed_wait")
+    |> Enum.map(&Enum.at(&1, 1))
+    |> Enum.sort()
   end
 
   defp named?(list, f), do: Enum.any?(list, &String.contains?(&1, f))
@@ -71,12 +76,17 @@ defmodule Argus.Analyses.MailboxMonitorTest do
       r
     end
 
-    defp mods(r, relation), do: r |> Map.get(relation, []) |> Enum.map(&hd/1) |> Enum.uniq()
+    defp mods(r, kind),
+      do:
+        r
+        |> Rows.where(:mailbox, "unconsumed_monitor", kind: kind)
+        |> Enum.map(&hd/1)
+        |> Enum.uniq()
 
     test "monitoring on insert and deleting without demonitor is reported" do
       skip_without_souffle()
 
-      assert mods(servers(), "monitor_never_released") == [
+      assert mods(servers(), "never_released") == [
                "Argus.Test.Fixtures.MonitorLeak.NeverReleases"
              ]
     end
@@ -86,19 +96,24 @@ defmodule Argus.Analyses.MailboxMonitorTest do
 
       r = servers()
 
-      assert [[mod, site]] = r["monitor_ref_discarded"]
+      assert [[mod, site]] =
+               Rows.where(r, :mailbox, "unconsumed_monitor",
+                 kind: "ref_discarded",
+                 drop: [:func, :kind]
+               )
+
       assert mod == "Argus.Test.Fixtures.MonitorLeak.DropsRef"
       assert site =~ "DropsRef:handle_call/3#"
 
       # The servers that keep their refs are not reported here, whatever
       # else they do with them.
-      refute named?(mods(r, "monitor_ref_discarded"), "NeverReleases")
+      refute named?(mods(r, "ref_discarded"), "NeverReleases")
     end
 
     test "a monitor in a client API function is the caller's, not the server's" do
       skip_without_souffle()
 
-      refute named?(mods(servers(), "monitor_never_released"), "ClientSideMonitor")
+      refute named?(mods(servers(), "never_released"), "ClientSideMonitor")
     end
   end
 end

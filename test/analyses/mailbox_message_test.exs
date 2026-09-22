@@ -3,6 +3,7 @@ defmodule Argus.Analyses.MailboxMessageTest do
 
   alias Argus.Souffle
   alias Argus.Test.Fixtures.MessageContract, as: M
+  alias Argus.Test.Rows
 
   @all [M.Mismatch, M.Agrees, M.CatchAll, M.StaleWrite]
 
@@ -12,7 +13,7 @@ defmodule Argus.Analyses.MailboxMessageTest do
 
   defp mods do
     assert {:ok, r} = Argus.analyze(@all, :mailbox)
-    r |> Map.get("unhandled_self_message", []) |> Enum.map(&hd/1)
+    r |> Rows.where(:mailbox, "reply_defect", kind: ~w(self_call self_cast)) |> Enum.map(&hd/1)
   end
 
   defp named?(list, f), do: Enum.any?(list, &String.contains?(&1, f))
