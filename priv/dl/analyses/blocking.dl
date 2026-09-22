@@ -12,6 +12,32 @@
 .include "../clientlib/otp.dl"
 .include "../clientlib/resolved_calls.dl"
 
+// ══ The outputs ═════════════════════════════════════════════════════
+//
+// `call_chain(from, to, kind, depth, inferred, caller_ms, downstream_ms)`
+//   — synchronous hops through callbacks: "chain" (a request into
+//   `from` traverses `depth` handle_call hops to `to`; `inferred` is
+//   "tag" when a hop was attributed by message tag), "cast" (a
+//   handle_cast that makes a synchronous call), "budget" (the caller's
+//   `caller_ms` timeout is shorter than the callee's own `downstream_ms`).
+// `unbounded_wait(func, site, kind, api, detail)` — a wait with no
+//   deadline: ":infinity" on a hop that itself serves callers
+//   ("infinity"; `func` is the handle_call, `api` the target), a remote
+//   call with the default infinity timeout ("rpc"), a remote call inside
+//   a callback ("rpc_in_callback"), a :global lock with retries
+//   ("global"; `detail` is the retries).
+// `receive_in_callback(id, func, callback, behaviour, proximity, bounded)`
+//   — a receive on an OTP process's own stack, `bounded` "false" when
+//   it has no after clause and can hang.
+.decl call_chain(from: symbol, to: symbol, kind: symbol, depth: number, inferred: symbol, caller_ms: number, downstream_ms: number)
+.output call_chain
+
+.decl unbounded_wait(func: symbol, site: symbol, kind: symbol, api: symbol, detail: symbol)
+.output unbounded_wait
+
+.decl receive_in_callback(id: symbol, func: symbol, callback: symbol, behaviour: symbol, proximity: symbol, bounded: symbol)
+.output receive_in_callback
+
 // ══ Call chains through handle_call ═════════════════════════════════
 .decl callback_sync_dep(from_mod: symbol, to_mod: symbol)
 
@@ -69,25 +95,19 @@ timeout_chain_inferred(from, to) :-
   from != to,
   (callback_tag_dep(from, mid) ; timeout_chain_inferred(mid, to)).
 
-.decl timeout_chain_risk(from: symbol, to: symbol, depth: number, inferred: symbol)
-.output timeout_chain_risk
-
-timeout_chain_risk(from, to, depth, "tag") :-
+call_chain(from, to, "chain", depth, "tag", 0, 0) :-
   timeout_chain(from, to, depth),
   depth >= 2,
   timeout_chain_inferred(from, to).
 
-timeout_chain_risk(from, to, depth, "static") :-
+call_chain(from, to, "chain", depth, "static", 0, 0) :-
   timeout_chain(from, to, depth),
   depth >= 2,
   !timeout_chain_inferred(from, to).
 
 // ── Output: blocking cast handler ────────────────────────────────────
 
-.decl blocking_cast_handler(mod: symbol, target: symbol)
-.output blocking_cast_handler
-
-blocking_cast_handler(mod, target) :- handler_dep(mod, "handle_cast", target, "call", _).
+call_chain(mod, target, "cast", 1, "", 0, 0) :- handler_dep(mod, "handle_cast", target, "call", _).
 
 // ── Timeout-aware sync dependency ──────────────────────────────────
 
@@ -110,11 +130,7 @@ callback_sync_dep_timeout(from_mod, to_mod, timeout_ms) :-
 // misconfiguration. The boundary case is real (equal budgets leave B
 // zero processing slack) but flagging it would mark nearly every
 // two-hop chain in real code as an error.
-.decl timeout_insufficient(caller: symbol, callee: symbol,
-                           caller_timeout: number, callee_downstream_timeout: number)
-.output timeout_insufficient
-
-timeout_insufficient(a, b, t_ab, t_bc) :-
+call_chain(a, b, "budget", 1, "", t_ab, t_bc) :-
   callback_sync_dep_timeout(a, b, t_ab),
   callback_sync_dep_timeout(b, _, t_bc),
   t_ab > 0,     // not dynamic
@@ -125,10 +141,7 @@ timeout_insufficient(a, b, t_ab, t_bc) :-
 // ── Output: infinity timeout in chain ──────────────────────────────
 
 // Sync call in a chain uses :infinity timeout — can block forever.
-.decl infinity_timeout_in_chain(mod: symbol, target: symbol)
-.output infinity_timeout_in_chain
-
-infinity_timeout_in_chain(mod, target) :-
+unbounded_wait(cat(mod, ":handle_call/3"), "", "infinity", target, "") :-
   callback_sync_dep_timeout(mod, target, -1),
   behaves_as(target, "GenServer").
 
@@ -245,10 +258,7 @@ cancels_timer(func) :-
 // A receive with no `after`, running on an OTP process's own stack. This
 // is the one that hangs: no timeout means no way out if the expected
 // message never arrives, and the supervisor can only brutal-kill.
-.decl blocking_receive_in_callback(id: symbol, func: symbol, callback: symbol, behaviour: symbol, proximity: symbol)
-.output blocking_receive_in_callback
-
-blocking_receive_in_callback(id, func, callback, behaviour, proximity) :-
+receive_in_callback(id, func, callback, behaviour, proximity, "false") :-
   recv_start(id, func, 1, _),
   callback_reaches(callback, func, proximity),
   otp_callback(callback, _, _, behaviour),
@@ -256,10 +266,7 @@ blocking_receive_in_callback(id, func, callback, behaviour, proximity) :-
 
 // A receive WITH a timeout. It cannot hang, but it still consumes from the
 // behaviour's mailbox and still re-scans the queue.
-.decl receive_in_callback(id: symbol, func: symbol, callback: symbol, behaviour: symbol, proximity: symbol)
-.output receive_in_callback
-
-receive_in_callback(id, func, callback, behaviour, proximity) :-
+receive_in_callback(id, func, callback, behaviour, proximity, "true") :-
   recv_start(id, func, 0, _),
   callback_reaches(callback, func, proximity),
   otp_callback(callback, _, _, behaviour).
@@ -271,10 +278,7 @@ receive_in_callback(id, func, callback, behaviour, proximity) :-
 // RPC call using default infinity timeout — hangs on netsplit.
 // site is the rpc call instruction. One row per site — finding
 // builders dedupe on (func, variant).
-.decl rpc_without_timeout(func: symbol, variant: symbol, site: symbol)
-.output rpc_without_timeout
-
-rpc_without_timeout(func, variant, id) :-
+unbounded_wait(func, id, "rpc", variant, "") :-
   rpc_call(id, func, variant, "-1").
 
 // ── RPC in GenServer callback ────────────────────────────────────
@@ -288,10 +292,7 @@ rpc_without_timeout(func, variant, id) :-
 // as making an RPC, even when the concrete action provably routes local.
 // All 13 of the analysis's transitive findings were false; the RPC sites
 // themselves are already surfaced by rpc_without_timeout.
-.decl rpc_in_genserver_callback(func: symbol, variant: symbol)
-.output rpc_in_genserver_callback
-
-rpc_in_genserver_callback(func, variant) :-
+unbounded_wait(func, "", "rpc_in_callback", variant, "") :-
   rpc_call(_, func, variant, _),
   handler_function(_, func).
 
@@ -302,10 +303,7 @@ rpc_in_genserver_callback(func, variant) :-
 // retries = "0" means try once and return immediately — non-blocking.
 // site is the :global call instruction. One row per site — finding
 // builders dedupe on (func, op, retries).
-.decl global_blocking_op(func: symbol, op: symbol, retries: symbol, site: symbol)
-.output global_blocking_op
-
-global_blocking_op(func, op, retries, id) :-
+unbounded_wait(func, id, "global", op, retries) :-
   global_op(id, func, op, retries),
   retries != "0",
   retries != "dynamic".

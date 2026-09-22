@@ -29,6 +29,9 @@ through the alias table to the rows that were theirs.
 | `mailbox` | `leaked_monitor`, `monitor_never_released`, `monitor_ref_discarded` | `unconsumed_monitor(mod, func, site, kind)`, `kind` ∈ timed_wait, never_released, ref_discarded |
 | `mailbox` | `leaked_async_task`, `yield_on_linked_task`, `linked_task_in_library` | `task_result_defect(func, site, kind)`, `kind` ∈ never_awaited, yield_linked, linked_in_library |
 | `mailbox` | `unhandled_self_message`, `never_replies`, `call_never_replied` | `reply_defect(mod, func, site, kind, tag)`, `kind` ∈ self_call, self_cast, dropped_from, statem_unreplied |
+| `blocking` | `timeout_chain_risk`, `blocking_cast_handler`, `timeout_insufficient` | `call_chain(from, to, kind, depth, inferred, caller_ms, downstream_ms)`, `kind` ∈ chain, cast, budget |
+| `blocking` | `infinity_timeout_in_chain`, `rpc_without_timeout`, `rpc_in_genserver_callback`, `global_blocking_op` | `unbounded_wait(func, site, kind, api, detail)`, `kind` ∈ infinity, rpc, rpc_in_callback, global |
+| `blocking` | `blocking_receive_in_callback`, `receive_in_callback` | `receive_in_callback(id, func, callback, behaviour, proximity, bounded)` |
 
 ## 0.17.2 — 2026-09-21
 

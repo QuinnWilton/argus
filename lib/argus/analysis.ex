@@ -164,10 +164,8 @@ defmodule Argus.Analysis do
       %{analysis: :effects, relation: :effect_in_context, where: [context: "transaction"]}
     ],
     timeout_chain: [
-      %{analysis: :blocking, relation: :timeout_chain_risk, where: []},
-      %{analysis: :blocking, relation: :blocking_cast_handler, where: []},
-      %{analysis: :blocking, relation: :timeout_insufficient, where: []},
-      %{analysis: :blocking, relation: :infinity_timeout_in_chain, where: []}
+      %{analysis: :blocking, relation: :call_chain, where: []},
+      %{analysis: :blocking, relation: :unbounded_wait, where: [kind: "infinity"]}
     ],
     call_cycle: [
       %{analysis: :blocking, relation: :call_cycle, where: []},
@@ -178,7 +176,6 @@ defmodule Argus.Analysis do
       %{analysis: :blocking, relation: :bottleneck_caller, where: []}
     ],
     callback_receive: [
-      %{analysis: :blocking, relation: :blocking_receive_in_callback, where: []},
       %{analysis: :blocking, relation: :receive_in_callback, where: []}
     ],
     one_for_one_coupling: [
@@ -216,9 +213,11 @@ defmodule Argus.Analysis do
       %{analysis: :shutdown, relation: :permanent_child_stops_normally, where: []}
     ],
     distributed: [
-      %{analysis: :blocking, relation: :rpc_without_timeout, where: []},
-      %{analysis: :blocking, relation: :rpc_in_genserver_callback, where: []},
-      %{analysis: :blocking, relation: :global_blocking_op, where: []},
+      %{
+        analysis: :blocking,
+        relation: :unbounded_wait,
+        where: [kind: ~w(rpc rpc_in_callback global)]
+      },
       %{analysis: :structure, relation: :global_register_risk, where: []},
       %{analysis: :startup, relation: :global_blocking_in_init, where: []},
       %{analysis: :startup, relation: :distributed_in_init, where: []},

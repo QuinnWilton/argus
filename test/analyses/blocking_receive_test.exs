@@ -3,6 +3,7 @@ defmodule Argus.Analyses.BlockingReceiveTest do
 
   alias Argus.Souffle
   alias Argus.Test.Fixtures.CallbackReceive
+  alias Argus.Test.Rows
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
@@ -11,8 +12,8 @@ defmodule Argus.Analyses.BlockingReceiveTest do
   defp run(modules) do
     assert {:ok, results} = Argus.analyze(modules, :blocking)
 
-    {Map.get(results, "blocking_receive_in_callback", []),
-     Map.get(results, "receive_in_callback", [])}
+    {Rows.where(results, :blocking, "receive_in_callback", bounded: "false", drop: [:bounded]),
+     Rows.where(results, :blocking, "receive_in_callback", bounded: "true", drop: [:bounded])}
   end
 
   defp funcs(rows), do: Enum.map(rows, fn [_id, func, _cb, _beh, _prox] -> func end)

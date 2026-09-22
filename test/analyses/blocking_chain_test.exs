@@ -2,12 +2,35 @@ defmodule Argus.Analyses.BlockingChainTest do
   use ExUnit.Case
 
   alias Argus.Souffle
+  alias Argus.Test.Rows
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
-  describe "timeout_chain.dl" do
+  # The rows of one kind, in the shape the rule has always produced.
+  defp chains(results, "chain"),
+    do:
+      Rows.where(results, :blocking, "call_chain",
+        kind: "chain",
+        drop: [:kind, :caller_ms, :downstream_ms]
+      )
+
+  defp chains(results, "cast"),
+    do:
+      Rows.where(results, :blocking, "call_chain",
+        kind: "cast",
+        drop: [:kind, :depth, :inferred, :caller_ms, :downstream_ms]
+      )
+
+  defp chains(results, "budget"),
+    do:
+      Rows.where(results, :blocking, "call_chain",
+        kind: "budget",
+        drop: [:kind, :depth, :inferred]
+      )
+
+  describe "call_chain" do
     test "detects chain risk at depth >= 2" do
       skip_without_souffle()
 
@@ -18,9 +41,9 @@ defmodule Argus.Analyses.BlockingChainTest do
       ]
 
       assert {:ok, results} = Argus.analyze(modules, :blocking)
-      assert Map.has_key?(results, "timeout_chain_risk")
+      assert Map.has_key?(results, "call_chain")
 
-      risks = results["timeout_chain_risk"]
+      risks = chains(results, "chain")
       assert risks != []
 
       # ServerA → ServerB → ServerC is a chain of depth 2.
@@ -40,9 +63,9 @@ defmodule Argus.Analyses.BlockingChainTest do
       ]
 
       assert {:ok, results} = Argus.analyze(modules, :blocking)
-      assert Map.has_key?(results, "blocking_cast_handler")
+      assert Map.has_key?(results, "call_chain")
 
-      blocking = results["blocking_cast_handler"]
+      blocking = chains(results, "cast")
       assert blocking != []
 
       assert Enum.any?(blocking, fn [mod, _target] ->
@@ -61,18 +84,23 @@ defmodule Argus.Analyses.BlockingChainTest do
       ]
 
       assert {:ok, results} = Argus.analyze(modules, :blocking)
-      assert Map.has_key?(results, "infinity_timeout_in_chain")
+      assert Map.has_key?(results, "unbounded_wait")
 
       # infinity_timeout_in_chain requires callback_sync_dep_timeout with -1
       # and implements_behaviour on the target. The fixture calls GenServer.call
       # with :infinity, which the extractor may encode as -1.
-      infinity = results["infinity_timeout_in_chain"]
+      infinity =
+        Rows.where(results, :blocking, "unbounded_wait",
+          kind: "infinity",
+          drop: [:site, :kind, :detail]
+        )
 
       # If the extractor detects the :infinity timeout, it should flag it.
       # This is conditional on the OTP extractor encoding :infinity as -1.
       if infinity != [] do
-        assert Enum.any?(infinity, fn [mod, _target] ->
-                 mod == "Argus.Test.Fixtures.TimeoutChain.ServerWithInfinityTimeout"
+        assert Enum.any?(infinity, fn [func, _target] ->
+                 func ==
+                   "Argus.Test.Fixtures.TimeoutChain.ServerWithInfinityTimeout:handle_call/3"
                end)
       end
     end
@@ -81,8 +109,8 @@ defmodule Argus.Analyses.BlockingChainTest do
       skip_without_souffle()
 
       assert {:ok, results} = Argus.analyze([:maps], :blocking)
-      assert Map.has_key?(results, "timeout_chain_risk")
-      assert Map.has_key?(results, "blocking_cast_handler")
+      assert Map.has_key?(results, "call_chain")
+      assert Map.has_key?(results, "call_chain")
     end
   end
 
@@ -103,13 +131,13 @@ defmodule Argus.Analyses.BlockingChainTest do
 
       assert {:ok, results} = Argus.analyze(modules, :blocking)
 
-      refute Enum.any?(results["timeout_chain_risk"], fn [from | _] ->
+      refute Enum.any?(chains(results, "chain"), fn [from | _] ->
                String.contains?(from, "ChainOuter")
              end)
     end
   end
 
-  describe "timeout_insufficient" do
+  describe "call_chain: budget" do
     test "flags a caller whose budget is strictly smaller than the downstream hop" do
       skip_without_souffle()
 
@@ -123,7 +151,7 @@ defmodule Argus.Analyses.BlockingChainTest do
 
       # TightBudgetServer gives DeepServer 1000ms, but DeepServer's own
       # downstream call waits up to the 5000ms default.
-      assert Enum.any?(results["timeout_insufficient"], fn [caller, callee, t_ab, t_bc] ->
+      assert Enum.any?(chains(results, "budget"), fn [caller, callee, t_ab, t_bc] ->
                String.contains?(caller, "TightBudgetServer") and
                  String.contains?(callee, "DeepServer") and
                  t_ab == "1000" and t_bc == "5000"
@@ -145,10 +173,10 @@ defmodule Argus.Analyses.BlockingChainTest do
       assert {:ok, results} = Argus.analyze(modules, :blocking)
 
       # The chain itself is still reported as a risk...
-      assert results["timeout_chain_risk"] != []
+      assert chains(results, "chain") != []
 
       # ...but no hop is "insufficient".
-      assert results["timeout_insufficient"] == []
+      assert chains(results, "budget") == []
     end
   end
 end

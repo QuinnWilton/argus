@@ -5,31 +5,27 @@ defmodule Argus.Analyses.Blocking do
   Every finding here is a process waiting on another. The mechanism is a
   column or a relation; the concern is the wait.
 
-  - `timeout_chain_risk(from, to, depth, inferred)` — a request into
-    `from` traverses `depth` synchronous `handle_call` hops. Per-hop
-    timeouts compose unpredictably; a slow leaf times out every caller.
-  - `blocking_cast_handler(mod, target)` — a `handle_cast/2` that makes a
-    synchronous call: the mailbox backs up invisibly.
-  - `timeout_insufficient(caller, callee, caller_timeout, downstream)` —
-    the caller's timeout is shorter than the callee's own downstream
-    budget.
-  - `infinity_timeout_in_chain(mod, target)` — `:infinity` on a hop that
-    itself serves synchronous callers.
+  - `call_chain(from, to, kind, depth, inferred, caller_ms,
+    downstream_ms)` — synchronous hops through callbacks: a `chain` of
+    `depth` `handle_call` hops whose per-hop timeouts compose
+    unpredictably (a slow leaf times out every caller), a `cast` handler
+    that makes a synchronous call (the mailbox backs up invisibly), or a
+    `budget` where the caller's timeout is shorter than the callee's own
+    downstream budget.
   - `call_cycle(mod_a, mod_b, witness_a, witness_b)` — two modules that
     synchronously call each other; `call_cycle_path` is the evidence,
     one edge per row, marked `tag` when the hop was attributed by message
     tag.
   - `sync_call_fan_in(target, count)` and `bottleneck_caller(caller,
     target, witness)` — a server five or more modules call synchronously.
-  - `blocking_receive_in_callback` and `receive_in_callback` — a
-    `receive` on an OTP process's own stack, with and without a timeout.
-  - `rpc_without_timeout(func, variant, site)` — a remote call with the
-    default infinity timeout.
-  - `rpc_in_genserver_callback(func, variant)` — remote latency inside a
-    callback becomes local unavailability.
-  - `global_blocking_op(func, op, retries, site)` — `:global.set_lock` or
-    `:global.trans` with retries: one distributed lock every caller
-    shares.
+  - `receive_in_callback(id, func, callback, behaviour, proximity,
+    bounded)` — a `receive` on an OTP process's own stack, `bounded`
+    false when it has no `after` and can hang.
+  - `unbounded_wait(func, site, kind, api, detail)` — a wait with no
+    deadline: `infinity` on a hop that itself serves synchronous callers,
+    an `rpc` with the default infinity timeout, an `rpc_in_callback`
+    (remote latency becomes local unavailability), or a `global` lock
+    with retries (one distributed lock every caller shares).
   - `partial_noproc_catch(func, site, callee)` — a peer call whose catch
     covers `:noproc` but not the peer stopping mid-call.
   """
@@ -60,57 +56,26 @@ defmodule Argus.Analyses.Blocking do
       Argus.Extractors.ErrorHandling
     ]
 
-  @fields [
-    {:id, :symbol, "instruction ID of the receive"},
-    {:func, :symbol, "function containing the receive"},
-    {:callback, :symbol, "the OTP callback it runs under"},
-    {:behaviour, :symbol, "the behaviour that owns the process loop"},
-    {:proximity, :symbol, "direct (in the callback) | helper (one call away)"}
-  ]
-
   @impl true
   def output_relations do
     [
       %{
-        name: :timeout_chain_risk,
+        name: :call_chain,
         fields: [
-          {:from, :symbol, "outermost GenServer module"},
-          {:to, :symbol, "innermost GenServer module"},
-          {:depth, :number, "chain depth (>= 2)"},
-          {:inferred, :symbol, "'tag' when a hop is attributed by message tag, else 'static'"}
+          {:from, :symbol, "the calling GenServer module"},
+          {:to, :symbol, "the module it waits on"},
+          {:kind, :symbol, "chain | cast | budget"},
+          {:depth, :number, "handle_call hops for a chain (>= 2), 1 otherwise"},
+          {:inferred, :symbol,
+           "for a chain, 'tag' when a hop is attributed by message tag, else 'static'"},
+          {:caller_ms, :number, "for a budget, the caller's timeout"},
+          {:downstream_ms, :number, "for a budget, the callee's downstream timeout"}
         ],
-        # One finding per (from, to) module pair. The depth relation is
+        # One chain finding per (from, to) pair: the depth relation is
         # recursive with only a `from != to` guard, so a genuine cycle
-        # emits a row at every depth up to the cap; keying on the pair
-        # collapses those to a single finding instead of one per depth.
-        key: [:from, :to],
-        doc: "Timeout chain through GenServer handle_call callbacks."
-      },
-      %{
-        name: :blocking_cast_handler,
-        fields: [
-          {:mod, :symbol, "GenServer module with blocking cast"},
-          {:target, :symbol, "sync call target module"}
-        ],
-        doc: "handle_cast/2 that makes a synchronous call."
-      },
-      %{
-        name: :timeout_insufficient,
-        fields: [
-          {:caller, :symbol, "calling GenServer module"},
-          {:callee, :symbol, "called GenServer module"},
-          {:caller_timeout, :number, "caller's timeout (ms)"},
-          {:callee_downstream_timeout, :number, "callee's downstream timeout (ms)"}
-        ],
-        doc: "Caller's timeout cannot accommodate callee's downstream sync call."
-      },
-      %{
-        name: :infinity_timeout_in_chain,
-        fields: [
-          {:mod, :symbol, "GenServer module using :infinity timeout"},
-          {:target, :symbol, "sync call target module"}
-        ],
-        doc: "Sync call in a chain uses :infinity timeout, can block forever."
+        # emits a row at every depth up to the cap.
+        key: [:from, :to, :kind, :caller_ms, :downstream_ms],
+        doc: "Synchronous hops through callbacks whose timeouts compose, block, or do not fit."
       },
       %{
         name: :call_cycle,
@@ -153,46 +118,29 @@ defmodule Argus.Analyses.Blocking do
         doc: "Caller of a high-fan-in (>= 5) GenServer."
       },
       %{
-        name: :blocking_receive_in_callback,
-        fields: @fields,
-        key: [:id],
-        doc: "A receive with no timeout, running on an OTP process's own stack."
-      },
-      %{
         name: :receive_in_callback,
-        fields: @fields,
+        fields: [
+          {:id, :symbol, "instruction ID of the receive"},
+          {:func, :symbol, "function containing the receive"},
+          {:callback, :symbol, "the OTP callback it runs under"},
+          {:behaviour, :symbol, "the behaviour that owns the process loop"},
+          {:proximity, :symbol, "direct (in the callback) | helper (one call away)"},
+          {:bounded, :symbol, "false when the receive has no after clause"}
+        ],
         key: [:id],
-        doc: "A receive with a timeout, still consuming the behaviour's mailbox."
+        doc: "A receive on an OTP process's own stack, with or without a timeout."
       },
       %{
-        name: :rpc_without_timeout,
+        name: :unbounded_wait,
         fields: [
-          {:func, :symbol, "function with infinity RPC"},
-          {:variant, :symbol, "RPC variant"},
-          {:site, :symbol, "instruction ID of the RPC call"}
+          {:func, :symbol, "the waiting function (the handle_call/3, for infinity)"},
+          {:site, :symbol, "instruction ID of the call, empty for infinity and rpc_in_callback"},
+          {:kind, :symbol, "infinity | rpc | rpc_in_callback | global"},
+          {:api, :symbol, "the call target, rpc variant, or :global operation"},
+          {:detail, :symbol, "for global, the resolved retries"}
         ],
-        key: [:func, :variant],
-        doc: "RPC call with default infinity timeout."
-      },
-      %{
-        name: :rpc_in_genserver_callback,
-        fields: [
-          {:func, :symbol, "GenServer callback"},
-          {:variant, :symbol, "RPC variant"}
-        ],
-        doc: "RPC inside GenServer callback (compounds timeout risk)."
-      },
-      %{
-        name: :global_blocking_op,
-        fields: [
-          {:func, :symbol, "function calling :global"},
-          {:op, :symbol, "operation: set_lock | trans | ..."},
-          {:retries, :symbol, "resolved retries argument: infinity | positive integer"},
-          {:site, :symbol, "instruction ID of the :global call"}
-        ],
-        key: [:func, :op, :retries],
-        doc:
-          "Blocking :global synchronization (set_lock or trans with infinity or positive retries)."
+        key: [:func, :kind, :api, :detail],
+        doc: "A wait with no deadline: an :infinity hop, an rpc, a cluster-wide lock."
       },
       %{
         name: :partial_noproc_catch,
@@ -208,7 +156,7 @@ defmodule Argus.Analyses.Blocking do
   end
 
   @impl true
-  def finding(:timeout_chain_risk, [from, to, depth, inferred]) do
+  def finding(:call_chain, [from, to, "chain", depth, inferred, _, _]) do
     inferred_note =
       if inferred == "tag",
         do:
@@ -234,7 +182,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:blocking_cast_handler, [mod, target]) do
+  def finding(:call_chain, [mod, target, "cast", _, _, _, _]) do
     Findings.new(
       :warning,
       "handle_cast blocks on a synchronous call",
@@ -247,7 +195,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:timeout_insufficient, [caller, callee, caller_timeout, downstream_timeout]) do
+  def finding(:call_chain, [caller, callee, "budget", _, _, caller_timeout, downstream_timeout]) do
     Findings.new(
       :error,
       "Call timeout shorter than the callee's downstream budget",
@@ -261,7 +209,9 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:infinity_timeout_in_chain, [mod, target]) do
+  def finding(:unbounded_wait, [func, _, "infinity", target, _]) do
+    mod = String.replace_suffix(func, ":handle_call/3", "")
+
     Findings.new(
       :warning,
       ":infinity timeout inside a call chain",
@@ -337,7 +287,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:blocking_receive_in_callback, [id, func, callback, behaviour, proximity]) do
+  def finding(:receive_in_callback, [id, func, callback, behaviour, proximity, "false"]) do
     Findings.new(
       :error,
       "Blocking receive inside a #{behaviour} callback",
@@ -354,7 +304,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:receive_in_callback, [id, func, callback, behaviour, proximity]) do
+  def finding(:receive_in_callback, [id, func, callback, behaviour, proximity, "true"]) do
     Findings.new(
       :warning,
       "receive inside a #{behaviour} callback",
@@ -368,7 +318,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:rpc_without_timeout, [func, variant, site]) do
+  def finding(:unbounded_wait, [func, site, "rpc", variant, _]) do
     Findings.new(
       :warning,
       "RPC without a bounded timeout",
@@ -380,7 +330,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:rpc_in_genserver_callback, [func, variant]) do
+  def finding(:unbounded_wait, [func, _, "rpc_in_callback", variant, _]) do
     Findings.new(
       :warning,
       "RPC inside a GenServer callback",
@@ -392,7 +342,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:global_blocking_op, [func, op, retries, site]) do
+  def finding(:unbounded_wait, [func, site, "global", op, retries]) do
     Findings.new(
       :info,
       "Cluster-wide :global synchronization",
