@@ -24,6 +24,18 @@ branch-target counts are cached per function. Every extractor that
 resolves an argument sees more: the ETS key written in a `case`'s last
 arm, the name a later clause looks up.
 
+### Fixed
+
+A literal operand was spelled with `inspect/1`, which runs a struct's
+own `Inspect` implementation when its module is loaded — so the same
+beam yielded different `literal_value` rows in a VM that had the
+analyzed code loaded (scry's compiler) than in one that had not, and an
+implementation that raises on the struct's defaults (sequin's
+`CircularBuffer`) rendered a multi-line `#Inspect.Error<...>` that broke
+the fact file. Literals are now inspected with `structs: false`, the
+plain `%Mod{...}` form whatever implementation is loaded — a row change
+for memoising consumers only where a struct had its own.
+
 Corpus: `Argus.Corpus.ensure/2` returned every beam twice when the
 project is the repository root, and listed both a dev and a test build;
 each beam once now, from one build.

@@ -48,7 +48,7 @@ defmodule Argus.Pipeline.Emit do
     facts =
       Enum.reduce(attributes, facts, fn {key, values}, acc ->
         Enum.reduce(List.wrap(values), acc, fn val, inner_acc ->
-          add_fact(inner_acc, :module_attribute, [mod_str, to_string(key), inspect(val)])
+          add_fact(inner_acc, :module_attribute, [mod_str, to_string(key), spell(val)])
         end)
       end)
 
@@ -941,12 +941,18 @@ defmodule Argus.Pipeline.Emit do
   defp format_operand({:atom, a}), do: inspect(a)
   defp format_operand({:integer, n}), do: to_string(n)
   defp format_operand({:float, f}), do: to_string(f)
-  defp format_operand({:literal, val}), do: inspect(strip_location(val))
+  defp format_operand({:literal, val}), do: spell(val)
   defp format_operand(nil), do: "nil"
   defp format_operand(a) when is_atom(a), do: inspect(a)
   defp format_operand(n) when is_integer(n), do: to_string(n)
   defp format_operand({:f, n}), do: "f#{n}"
-  defp format_operand(other), do: inspect(other)
+  defp format_operand(other), do: spell(other)
+
+  # Never a struct's own Inspect implementation: a literal's spelling must
+  # not depend on which modules are loaded, and an implementation that
+  # raises on the struct's defaults (sequin's CircularBuffer) renders as a
+  # multi-line #Inspect.Error<...> that no fact file can hold.
+  defp spell(val), do: inspect(strip_location(val), structs: false)
 
   defp format_mfa({mod, name, arity}) do
     "#{inspect(mod)}:#{name}/#{arity}"
@@ -961,7 +967,7 @@ defmodule Argus.Pipeline.Emit do
   end
 
   defp maybe_literal(facts, id, dst, {:literal, val}) do
-    add_fact(facts, :literal_value, [id, format_operand(dst), inspect(strip_location(val))])
+    add_fact(facts, :literal_value, [id, format_operand(dst), spell(val)])
   end
 
   defp maybe_literal(facts, id, dst, {:float, f}) do
