@@ -2,6 +2,7 @@ defmodule Argus.Analyses.StartupDistributedTest do
   use ExUnit.Case
 
   alias Argus.Souffle
+  alias Argus.Test.Rows
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
@@ -12,13 +13,20 @@ defmodule Argus.Analyses.StartupDistributedTest do
     results
   end
 
-  describe "distributed_in_init" do
+  defp remote(results),
+    do:
+      Rows.where(results, :startup, "blocks_on_peer",
+        kind: "remote",
+        drop: [:phase, :dep, :kind, :ordering, :sup]
+      )
+
+  describe "blocks_on_peer: remote" do
     test "flags RPC in a behaviour module's init/1" do
       skip_without_souffle()
 
       results = analyze([Argus.Test.Fixtures.RpcInInit])
 
-      assert Enum.any?(results["distributed_in_init"], fn [func, _op, _site] ->
+      assert Enum.any?(remote(results), fn [func, _site, _op] ->
                String.contains?(func, "RpcInInit:init/1")
              end)
     end
@@ -28,7 +36,7 @@ defmodule Argus.Analyses.StartupDistributedTest do
 
       results = analyze([Argus.Test.Fixtures.ConnectInInit])
 
-      assert Enum.any?(results["distributed_in_init"], fn [func, op, _site] ->
+      assert Enum.any?(remote(results), fn [func, _site, op] ->
                String.contains?(func, "ConnectInInit:init/1") and op == "connect"
              end)
     end
@@ -40,7 +48,7 @@ defmodule Argus.Analyses.StartupDistributedTest do
       # function that never runs at supervisor start time.
       results = analyze([Argus.Test.Fixtures.PlainInit])
 
-      assert results["distributed_in_init"] == []
+      assert remote(results) == []
     end
 
     test "does not flag :net_kernel.monitor_nodes in init/1" do
@@ -49,7 +57,7 @@ defmodule Argus.Analyses.StartupDistributedTest do
       # monitor_nodes is a subscription flag — non-blocking.
       results = analyze([Argus.Test.Fixtures.NodeMonitorServer])
 
-      assert results["distributed_in_init"] == []
+      assert remote(results) == []
     end
   end
 end

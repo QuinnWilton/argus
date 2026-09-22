@@ -12,10 +12,11 @@ defmodule Argus.Analyses.Blocking do
     that makes a synchronous call (the mailbox backs up invisibly), or a
     `budget` where the caller's timeout is shorter than the callee's own
     downstream budget.
-  - `call_cycle(mod_a, mod_b, witness_a, witness_b)` — two modules that
-    synchronously call each other; `call_cycle_path` is the evidence,
-    one edge per row, marked `tag` when the hop was attributed by message
-    tag.
+  - `call_cycle(mod_a, mod_b, witness_a, witness_b, phase)` — two modules
+    that synchronously call each other, anywhere (`call`) or both from
+    `handle_continue/2` (`continue`: a startup deadlock); `call_cycle_path`
+    is the evidence, one edge per row, marked `tag` when the hop was
+    attributed by message tag.
   - `sync_call_fan_in(target, count)` and `bottleneck_caller(caller,
     target, witness)` — a server five or more modules call synchronously.
   - `receive_in_callback(id, func, callback, behaviour, proximity,
@@ -83,9 +84,10 @@ defmodule Argus.Analyses.Blocking do
           {:mod_a, :symbol, "first module in cycle"},
           {:mod_b, :symbol, "second module in cycle"},
           {:witness_a, :symbol, "function in mod_a carrying the a→b dependency"},
-          {:witness_b, :symbol, "function in mod_b carrying the b→a return path"}
+          {:witness_b, :symbol, "function in mod_b carrying the b→a return path"},
+          {:phase, :symbol, "call (anywhere) | continue (both from handle_continue/2)"}
         ],
-        key: [:mod_a, :mod_b],
+        key: [:mod_a, :mod_b, :phase],
         doc: "Pair of modules with mutual synchronous dependency."
       },
       %{
@@ -223,7 +225,26 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:call_cycle, [mod_a, mod_b, witness_a, witness_b]) do
+  def finding(:call_cycle, [mod_a, mod_b, _wa, _wb, "continue"]) do
+    Findings.new(
+      :error,
+      "Mutual handle_continue deadlock",
+      "#{mod_a} and #{mod_b} sync-call each other from handle_continue/2. " <>
+        "Both return from init — the supervisor proceeds happily — then each " <>
+        "blocks calling the other before ever reading its own mailbox. " <>
+        "Neither can reply; both calls time out, forever, on every boot.",
+      at: Findings.at_mfa(mod_a, :handle_continue, 2),
+      at_label: "one side of the cycle blocks here",
+      help: [
+        "break the cycle: keep one direction synchronous and make the other " <>
+          "asynchronous (a cast, or a message each side processes once both " <>
+          "are up)"
+      ],
+      related: [Findings.related("cycle partner", Findings.at_mfa(mod_b, :handle_continue, 2))]
+    )
+  end
+
+  def finding(:call_cycle, [mod_a, mod_b, witness_a, witness_b, "call"]) do
     Findings.new(
       :error,
       "Synchronous call cycle",

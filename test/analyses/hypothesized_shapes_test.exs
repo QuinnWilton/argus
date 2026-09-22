@@ -100,8 +100,10 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
         :startup
       )
 
-    assert rows(r, "connect_in_init_without_backoff") ==
-             ["Argus.Test.Fixtures.Hypothesized.ConnectInInit"]
+    assert r
+           |> Rows.where(:startup, "unbounded_effect_in_init", kind: "connect")
+           |> Enum.map(&hd/1)
+           |> Enum.uniq() == ["Argus.Test.Fixtures.Hypothesized.ConnectInInit"]
   end
 
   test "a handler stopping a sibling through its API is reported; asking the supervisor is not" do

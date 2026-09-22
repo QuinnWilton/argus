@@ -146,12 +146,21 @@ unbounded_wait(cat(mod, ":handle_call/3"), "", "infinity", target, "") :-
   behaves_as(target, "GenServer").
 
 // ══ Mutual synchronous dependency ═══════════════════════════════════
-.decl call_cycle(mod_a: symbol, mod_b: symbol, witness_a: symbol, witness_b: symbol)
+// `phase` is "call" for two modules that synchronously call each other
+// anywhere, "continue" when both do so from handle_continue/2: both
+// return from init, the supervisor proceeds, and neither ever reads its
+// mailbox.
+.decl call_cycle(mod_a: symbol, mod_b: symbol, witness_a: symbol, witness_b: symbol, phase: symbol)
 .output call_cycle
 
-call_cycle(a, b, wa, wb) :-
+call_cycle(a, b, wa, wb, "call") :-
   module_sync_dep(a, b, wa),
   module_sync_dep(b, a, wb),
+  a < b.
+
+call_cycle(a, b, wa, wb, "continue") :-
+  continue_dep(a, b, wa),
+  continue_dep(b, a, wb),
   a < b.
 
 // Full path of transitive sync dependencies for cycle participants.
@@ -163,14 +172,14 @@ call_cycle(a, b, wa, wb) :-
 .output call_cycle_path
 
 call_cycle_path(from_mod, to_mod, witness, "tag") :-
-  call_cycle(a, b, _, _),
+  call_cycle(a, b, _, _, "call"),
   module_sync_dep(from_mod, to_mod, witness),
   (from_mod = a ; from_mod = b),
   (to_mod = a ; to_mod = b),
   reaches_tag_dep(witness, to_mod).
 
 call_cycle_path(from_mod, to_mod, witness, "static") :-
-  call_cycle(a, b, _, _),
+  call_cycle(a, b, _, _, "call"),
   module_sync_dep(from_mod, to_mod, witness),
   (from_mod = a ; from_mod = b),
   (to_mod = a ; to_mod = b),

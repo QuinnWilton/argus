@@ -6,29 +6,22 @@ defmodule Argus.Analyses.Startup do
   `handle_continue/2` runs before any message, so what either waits on
   decides whether the tree boots.
 
-  - `sync_call_in_init(mod, callee, kind)` — init/1 transitively makes a
-    synchronous call; `kind` says whether every init takes the path.
-  - `init_deadlock_risk(sup, child, dep, child_pos, dep_pos)` — the call
-    is to a sibling that starts later: a deadlock by construction.
-  - `wrong_start_order(sup, child, dep, ...)` — the structural statement
-    of the same fact, at the tree definition.
-  - `sup_call_in_init(mod, api, op, target, site)` — a synchronous
-    supervisor management call from init/1.
-  - `init_waits_on_blocking_server(mod, dep, handler, op_site)` — the
-    callee is running, but one of its handlers blocks without bound.
-  - `blocking_recv_in_init(mod, recv)` — init/1 reaches a socket receive
-    with `:infinity`.
-  - `connect_in_init_without_backoff(mod, api)` — init/1 connects and
-    nothing in the module can retry.
-  - `mutual_continue_deadlock`, `continue_to_later_sibling`,
-    `continue_to_parent_supervisor`, `continue_crash_loop_risk`,
-    `init_timeout_deferral` — the `handle_continue` shapes: a cycle, a
-    race with a later sibling, a call back into the parent mid-start, a
-    defensive catch that turns a deadlock into a restart loop, and the
-    `{:ok, state, 0}` idiom any earlier message cancels.
-  - `global_blocking_in_init(func, op)` and `distributed_in_init(func,
-    op, site)` — a cluster-wide lock or a remote operation on the boot
-    path.
+  - `blocks_on_peer(mod, phase, dep, kind, ordering, sup, site, detail)`
+    — `init/1` or `handle_continue/2` waits on a peer the tree has not
+    made ready: a synchronous `call` (to a sibling that starts `later`,
+    a deadlock by construction; or one whose place is `unknown`, with
+    `detail` saying whether every init takes the path), a `cast` to a
+    later sibling, a `sup` management call, a `blocking_server` whose
+    handler blocks without bound, the `parent` supervisor mid-start, a
+    `global` lock or a `remote` operation on the boot path.
+  - `unbounded_effect_in_init(mod, kind, api)` — init/1 reaches a socket
+    `recv` with `:infinity`, or a `connect` nothing in the module can
+    retry.
+  - `deferral_defect(mod, kind, site, detail)` — the `{:ok, state, 0}`
+    idiom any earlier message cancels (`init_timeout`), or a defensive
+    catch in handle_continue that turns a deadlock into a restart loop
+    (`continue_catch`). A mutual handle_continue cycle is blocking's
+    `call_cycle` in the `continue` phase.
   - `post_start_initialization(func, site, callee)` — shared state
     written after `Supervisor.start_link` returned.
   - `ignored_start_result(func, callee)` — a start result discarded.
@@ -68,148 +61,52 @@ defmodule Argus.Analyses.Startup do
   def output_relations do
     [
       %{
-        name: :connect_in_init_without_backoff,
+        name: :blocks_on_peer,
         fields: [
-          {:mod, :symbol, "module whose init/1 connects"},
-          {:api, :symbol, "the connect call reached"}
+          {:mod, :symbol, "the child module (the init function, for global and remote)"},
+          {:phase, :symbol, "init | continue"},
+          {:dep, :symbol, "the peer waited on (empty for global and remote)"},
+          {:kind, :symbol, "call | cast | sup | blocking_server | parent | global | remote"},
+          {:ordering, :symbol, "later | earlier | parent | unknown, or empty"},
+          {:sup, :symbol, "the supervisor placing both, when the ordering is known"},
+          {:site, :symbol, "the tree definition for a later sibling, else the call site"},
+          {:detail, :symbol,
+           "conditional | unconditional for a call, api.op for sup, the handler for blocking_server, the op for global and remote"}
         ],
-        key: [:mod],
-        doc: "init/1 connects to a dependency and the module has no timer or continue to retry."
+        # A supervisor call is one finding per operation, a blocking server
+        # one per peer, a remote or global op one per op; the rest one per
+        # (child, peer) under a supervisor, the synchronous row winning.
+        key:
+          {:kind,
+           %{
+             "sup" => [:mod, :detail],
+             "blocking_server" => [:mod, :dep],
+             "global" => [:mod, :detail],
+             "remote" => [:mod, :detail],
+             default: [:mod, :phase, :dep, :ordering, :sup]
+           }},
+        doc: "init/1 or handle_continue/2 waits on a peer the tree has not made ready."
       },
       %{
-        name: :blocking_recv_in_init,
+        name: :unbounded_effect_in_init,
         fields: [
-          {:mod, :symbol, "module whose init/1 reaches the receive"},
-          {:recv, :symbol, "the function receiving with no timeout"}
+          {:mod, :symbol, "module whose init/1 reaches it"},
+          {:kind, :symbol, "recv | connect"},
+          {:api, :symbol, "the receiving function, or the connect call"}
         ],
-        doc: "init/1 reaches a socket receive with an :infinity timeout."
+        key: {:kind, %{"connect" => [:mod], default: [:mod, :kind, :api]}},
+        doc: "init/1 waits on a socket without bound, or connects with no way to retry."
       },
       %{
-        name: :sync_call_in_init,
+        name: :deferral_defect,
         fields: [
-          {:mod, :symbol, "module whose init/1 makes a sync call"},
-          {:callee, :symbol, "target module of the sync call"},
-          {:kind, :symbol,
-           "unconditional, or conditional when every path is branch-guarded in init"}
+          {:mod, :symbol, "the module"},
+          {:kind, :symbol, "init_timeout | continue_catch"},
+          {:site, :symbol, "the init return, for init_timeout"},
+          {:detail, :symbol, "the timeout in ms, or the supervisor for continue_catch"}
         ],
-        doc: "Module whose init/1 transitively makes a synchronous call."
-      },
-      %{
-        name: :sup_call_in_init,
-        fields: [
-          {:mod, :symbol, "module whose init/1 reaches the call"},
-          {:api, :symbol,
-           "Supervisor, DynamicSupervisor, Task.Supervisor or PartitionSupervisor"},
-          {:op, :symbol, "start_child, terminate_child, which_children, ..."},
-          {:target, :symbol, "the supervisor argument, or 'dynamic'"},
-          {:site, :symbol, "the call site"}
-        ],
-        key: [:mod, :api, :op],
-        doc: "init/1 makes a synchronous supervisor management call."
-      },
-      %{
-        name: :init_waits_on_blocking_server,
-        fields: [
-          {:mod, :symbol, "module whose init/1 calls dep"},
-          {:dep, :symbol, "the server called"},
-          {:handler, :symbol, "a handler of dep that blocks"},
-          {:op_site, :symbol, "the blocking call inside that handler"}
-        ],
-        key: [:mod, :dep],
-        doc:
-          "init/1 calls a running server whose handler blocks on a supervisor op or a GenServer.call."
-      },
-      %{
-        name: :init_deadlock_risk,
-        fields: [
-          {:sup, :symbol, "supervisor module"},
-          {:child, :symbol, "child module whose init calls dep"},
-          {:dep, :symbol, "dependency module (starts later)"},
-          {:child_pos, :number, "child start position"},
-          {:dep_pos, :number, "dependency start position"}
-        ],
-        doc: "Child's init sync-calls a sibling that starts later."
-      },
-      %{
-        name: :wrong_start_order,
-        fields: [
-          {:sup, :symbol, "supervisor module"},
-          {:child, :symbol, "child module"},
-          {:dep, :symbol, "dependency module"},
-          {:child_pos, :number, "child start position"},
-          {:dep_pos, :number, "dependency start position"},
-          {:sup_site, :symbol, "instruction ID of the tree definition"},
-          {:witness, :symbol, "the child's init/1, where the call originates"}
-        ],
-        key: [:sup, :child, :dep],
-        doc: "Child starts before its dependency."
-      },
-      %{
-        name: :mutual_continue_deadlock,
-        fields: [
-          {:mod_a, :symbol, "first module in the mutual cycle"},
-          {:mod_b, :symbol, "second module in the mutual cycle"}
-        ],
-        doc:
-          "Two modules whose handle_continue clauses sync-call each other — both children stay alive but neither processes its mailbox."
-      },
-      %{
-        name: :continue_to_later_sibling,
-        fields: [
-          {:sup, :symbol, "supervisor module"},
-          {:caller, :symbol, "child whose handle_continue makes the call"},
-          {:callee, :symbol, "later-started sibling being called"},
-          {:caller_pos, :number, "caller's start position in the supervisor"},
-          {:callee_pos, :number, "callee's start position in the supervisor"}
-        ],
-        doc:
-          "handle_continue races against a sibling started at a later position in the same supervisor's child list."
-      },
-      %{
-        name: :continue_to_parent_supervisor,
-        fields: [
-          {:worker, :symbol, "worker whose handle_continue makes the call"},
-          {:sup, :symbol, "the parent supervisor being called"}
-        ],
-        doc:
-          "handle_continue calls back into the parent supervisor while it's still mid-start_link."
-      },
-      %{
-        name: :init_timeout_deferral,
-        fields: [
-          {:mod, :symbol, "module whose init/1 returns a timeout"},
-          {:site, :symbol, "the return site"},
-          {:timeout_ms, :number, "the literal timeout"}
-        ],
-        doc:
-          "init/1 returns {:ok, state, timeout}: deferred work that any earlier message cancels."
-      },
-      %{
-        name: :continue_crash_loop_risk,
-        fields: [
-          {:sup, :symbol, "supervisor module"},
-          {:worker, :symbol, "worker module with defensive try/catch around the continue call"}
-        ],
-        doc:
-          "Defensive try/catch :exit suppresses the literal deadlock but creates a supervisor restart loop."
-      },
-      %{
-        name: :global_blocking_in_init,
-        fields: [
-          {:func, :symbol, "init function (or transitively reachable from one)"},
-          {:op, :symbol, ":global operation"}
-        ],
-        doc: "Blocking :global op reachable from init/1 — hangs supervisor startup on netsplit."
-      },
-      %{
-        name: :distributed_in_init,
-        fields: [
-          {:func, :symbol, "init function"},
-          {:op, :symbol, "operation"},
-          {:site, :symbol, "instruction ID of the operation inside init"}
-        ],
-        key: [:func, :op],
-        doc: "Distributed operation in init/1 blocking supervisor startup."
+        key: [:mod, :kind, :site, :detail],
+        doc: "Deferred startup work that will not happen as written."
       },
       %{
         name: :post_start_initialization,
@@ -233,7 +130,7 @@ defmodule Argus.Analyses.Startup do
   end
 
   @impl true
-  def finding(:connect_in_init_without_backoff, [mod, api]) do
+  def finding(:unbounded_effect_in_init, [mod, "connect", api]) do
     Findings.new(
       :warning,
       "init/1 connects with no reconnect path",
@@ -250,7 +147,7 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:blocking_recv_in_init, [mod, recv]) do
+  def finding(:unbounded_effect_in_init, [mod, "recv", recv]) do
     Findings.new(
       :warning,
       "init/1 waits on a socket with no timeout",
@@ -267,7 +164,7 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:sync_call_in_init, [mod, callee, "conditional"]) do
+  def finding(:blocks_on_peer, [mod, "init", callee, "call", "unknown", _, _, "conditional"]) do
     Findings.new(
       :info,
       "init/1 can block on a synchronous call",
@@ -287,7 +184,7 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:sync_call_in_init, [mod, callee, "unconditional"]) do
+  def finding(:blocks_on_peer, [mod, "init", callee, "call", "unknown", _, _, "unconditional"]) do
     Findings.new(
       :info,
       "init/1 blocks on a synchronous call",
@@ -309,7 +206,7 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:sup_call_in_init, [mod, api, op, target, site]) do
+  def finding(:blocks_on_peer, [mod, "init", target, "sup", _, _, site, api_op]) do
     target_text =
       case target do
         "dynamic" -> "a supervisor chosen at runtime"
@@ -320,7 +217,7 @@ defmodule Argus.Analyses.Startup do
     Findings.new(
       :info,
       "init/1 makes a synchronous supervisor call",
-      "#{mod}.init/1 reaches #{api}.#{op} on #{target_text}. Every " <>
+      "#{mod}.init/1 reaches #{api_op} on #{target_text}. Every " <>
         "supervisor management call is a GenServer.call into the " <>
         "supervisor; start_child in particular does not return until the " <>
         "new child's init/1 has, so those inits now run inside this one, on " <>
@@ -336,7 +233,7 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:init_waits_on_blocking_server, [mod, dep, handler, op_site]) do
+  def finding(:blocks_on_peer, [mod, "init", dep, "blocking_server", _, _, op_site, handler]) do
     Findings.new(
       :warning,
       "init/1 waits on a server whose handler can block",
@@ -360,15 +257,14 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:init_deadlock_risk, [sup, child, dep, child_pos, dep_pos]) do
+  def finding(:blocks_on_peer, [child, "init", dep, "call", "later", sup, sup_site, witness]) do
     Findings.new(
       :error,
       "Startup deadlock: init waits on a later sibling",
-      "#{child} (position #{child_pos}) blocks in init/1 on #{dep}, which " <>
-        "#{sup} only starts later (position #{dep_pos}). The supervisor " <>
-        "cannot reach #{dep} until #{child}'s init returns, and #{child}'s " <>
-        "init cannot return until #{dep} answers — the tree never finishes " <>
-        "booting.",
+      "#{child} blocks in init/1 on #{dep}, which #{sup} only starts later. " <>
+        "The supervisor cannot reach #{dep} until #{child}'s init returns, " <>
+        "and #{child}'s init cannot return until #{dep} answers — the tree " <>
+        "never finishes booting.",
       at: Findings.at_mfa(child, :init, 1),
       at_label: "this init blocks the start sequence",
       help: [
@@ -377,20 +273,20 @@ defmodule Argus.Analyses.Startup do
           "`handle_continue/2`"
       ],
       related: [
-        Findings.related("supervisor", Findings.at_module(sup)),
+        Findings.related("supervision tree defined here", Findings.at_site(sup_site, sup)),
+        Findings.related("init-time call", Findings.at_func(witness)),
         Findings.related("later dependency", Findings.at_module(dep))
       ]
     )
   end
 
-  def finding(:wrong_start_order, [sup, child, dep, child_pos, dep_pos, sup_site, witness]) do
+  def finding(:blocks_on_peer, [child, "init", dep, _kind, "later", sup, sup_site, witness]) do
     Findings.new(
       :warning,
       "Child starts before its dependency",
-      "#{child} (position #{child_pos}) starts before #{dep} (position #{dep_pos}) " <>
-        "under #{sup}, yet depends on it. During startup, #{child} can run while " <>
-        "#{dep} is not yet alive — calls into it fail until the tree finishes " <>
-        "booting.",
+      "#{child} starts before #{dep} under #{sup}, yet depends on it. " <>
+        "During startup, #{child} can run while #{dep} is not yet alive — " <>
+        "calls into it fail until the tree finishes booting.",
       at: Findings.at_site(sup_site, sup),
       at_label: "supervision tree defined here",
       help: [
@@ -404,31 +300,12 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:mutual_continue_deadlock, [mod_a, mod_b]) do
-    Findings.new(
-      :error,
-      "Mutual handle_continue deadlock",
-      "#{mod_a} and #{mod_b} sync-call each other from handle_continue/2. " <>
-        "Both return from init — the supervisor proceeds happily — then each " <>
-        "blocks calling the other before ever reading its own mailbox. " <>
-        "Neither can reply; both calls time out, forever, on every boot.",
-      at: Findings.at_mfa(mod_a, :handle_continue, 2),
-      at_label: "one side of the cycle blocks here",
-      help: [
-        "break the cycle: keep one direction synchronous and make the other " <>
-          "asynchronous (a cast, or a message each side processes once both " <>
-          "are up)"
-      ],
-      related: [Findings.related("cycle partner", Findings.at_mfa(mod_b, :handle_continue, 2))]
-    )
-  end
-
-  def finding(:continue_to_later_sibling, [sup, caller, callee, caller_pos, callee_pos]) do
+  def finding(:blocks_on_peer, [caller, "continue", callee, "call", "later", sup, _, _]) do
     Findings.new(
       :warning,
       "handle_continue races a later sibling",
-      "#{caller} (position #{caller_pos}) sync-calls #{callee} (position " <>
-        "#{callee_pos}) from handle_continue under #{sup}. The continue runs " <>
+      "#{caller} sync-calls #{callee}, a later sibling, from handle_continue " <>
+        "under #{sup}. The continue runs " <>
         "concurrently with the supervisor's start sequence, so whether " <>
         "#{callee} is alive when the call lands is a boot-time race — it " <>
         "works on the fast machine and fails in CI.",
@@ -446,7 +323,7 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:continue_to_parent_supervisor, [worker, sup]) do
+  def finding(:blocks_on_peer, [worker, "continue", sup, "parent", _, _, _, _]) do
     Findings.new(
       :warning,
       "handle_continue calls its own supervisor",
@@ -465,7 +342,7 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:init_timeout_deferral, [mod, site, "0"]) do
+  def finding(:deferral_defect, [mod, "init_timeout", site, "0"]) do
     Findings.new(
       :info,
       "init/1 defers work with a zero timeout",
@@ -485,7 +362,7 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:init_timeout_deferral, [mod, site, ms]) do
+  def finding(:deferral_defect, [mod, "init_timeout", site, ms]) do
     Findings.new(
       :info,
       "init/1 relies on a #{ms}ms idle timeout",
@@ -500,7 +377,7 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:continue_crash_loop_risk, [sup, worker]) do
+  def finding(:deferral_defect, [worker, "continue_catch", _, sup]) do
     Findings.new(
       :warning,
       "Defensive continue turns deadlock into a restart loop",
@@ -520,7 +397,7 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:global_blocking_in_init, [func, op]) do
+  def finding(:blocks_on_peer, [func, "init", _, "global", _, _, _, op]) do
     Findings.new(
       :error,
       "Cluster-wide lock during init",
@@ -532,7 +409,7 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:distributed_in_init, [func, op, site]) do
+  def finding(:blocks_on_peer, [func, "init", _, "remote", _, _, site, op]) do
     Findings.new(
       :warning,
       "Distributed operation in init/1",

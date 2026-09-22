@@ -32,6 +32,10 @@ through the alias table to the rows that were theirs.
 | `blocking` | `timeout_chain_risk`, `blocking_cast_handler`, `timeout_insufficient` | `call_chain(from, to, kind, depth, inferred, caller_ms, downstream_ms)`, `kind` ∈ chain, cast, budget |
 | `blocking` | `infinity_timeout_in_chain`, `rpc_without_timeout`, `rpc_in_genserver_callback`, `global_blocking_op` | `unbounded_wait(func, site, kind, api, detail)`, `kind` ∈ infinity, rpc, rpc_in_callback, global |
 | `blocking` | `blocking_receive_in_callback`, `receive_in_callback` | `receive_in_callback(id, func, callback, behaviour, proximity, bounded)` |
+| `startup` | `sync_call_in_init`, `init_deadlock_risk`, `wrong_start_order`, `sup_call_in_init`, `init_waits_on_blocking_server`, `continue_to_later_sibling`, `continue_to_parent_supervisor`, `global_blocking_in_init`, `distributed_in_init` | `blocks_on_peer(mod, phase, dep, kind, ordering, sup, site, detail)`; `phase` ∈ init, continue; `kind` ∈ call, cast, sup, blocking_server, parent, global, remote. **One finding where there were two**: an init that calls a sibling starting later was both a deadlock (`init_deadlock_risk`) and a wrong start order (`wrong_start_order`); it is the deadlock now, with the tree definition as a related frame. |
+| `startup` | `blocking_recv_in_init`, `connect_in_init_without_backoff` | `unbounded_effect_in_init(mod, kind, api)`, `kind` ∈ recv, connect |
+| `startup` | `init_timeout_deferral`, `continue_crash_loop_risk` | `deferral_defect(mod, kind, site, detail)`, `kind` ∈ init_timeout, continue_catch |
+| `startup` → `blocking` | `mutual_continue_deadlock` | `call_cycle(mod_a, mod_b, witness_a, witness_b, phase)` with `phase` = continue; `deferred_startup_deadlock` resolves to it |
 
 ## 0.17.2 — 2026-09-21
 

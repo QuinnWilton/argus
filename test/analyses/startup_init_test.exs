@@ -2,12 +2,30 @@ defmodule Argus.Analyses.StartupInitTest do
   use ExUnit.Case
 
   alias Argus.Souffle
+  alias Argus.Test.Rows
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
-  describe "sync_call_in_init.dl" do
+  # Synchronous calls from init whose place in the tree is unknown, in
+  # the [mod, callee, kind] shape the rule has always produced.
+  defp sync_calls(results),
+    do:
+      Rows.where(results, :startup, "blocks_on_peer",
+        kind: "call",
+        ordering: "unknown",
+        drop: [:phase, :kind, :ordering, :sup, :site]
+      )
+
+  defp blocking_servers(results),
+    do:
+      Rows.where(results, :startup, "blocks_on_peer",
+        kind: "blocking_server",
+        drop: [:phase, :kind, :ordering, :sup]
+      )
+
+  describe "blocks_on_peer: init" do
     test "detects sync call in init/1 for fixture" do
       skip_without_souffle()
 
@@ -17,9 +35,9 @@ defmodule Argus.Analyses.StartupInitTest do
       ]
 
       assert {:ok, results} = Argus.analyze(modules, :startup)
-      assert Map.has_key?(results, "sync_call_in_init")
+      assert Map.has_key?(results, "blocks_on_peer")
 
-      init_calls = results["sync_call_in_init"]
+      init_calls = sync_calls(results)
       assert init_calls != []
 
       # SyncInitServer's init calls WorkerA on every init.
@@ -34,8 +52,11 @@ defmodule Argus.Analyses.StartupInitTest do
       assert {:ok, results} =
                Argus.analyze([Argus.Test.Fixtures.StartsChildrenInInit], :startup)
 
-      assert [[mod, "DynamicSupervisor", "start_child", "Argus.Test.Fixtures.PoolSup", site]] =
-               results["sup_call_in_init"]
+      assert [[mod, "Argus.Test.Fixtures.PoolSup", site, "DynamicSupervisor.start_child"]] =
+               Rows.where(results, :startup, "blocks_on_peer",
+                 kind: "sup",
+                 drop: [:phase, :kind, :ordering, :sup]
+               )
 
       assert mod == "Argus.Test.Fixtures.StartsChildrenInInit"
       assert site =~ "StartsChildrenInInit:"
@@ -54,12 +75,12 @@ defmodule Argus.Analyses.StartupInitTest do
 
       # The Watcher is in the app tree and the pool is not: the plain
       # finding is (correctly) suppressed as a cross-supervisor call...
-      refute Enum.any?(results["sync_call_in_init"], fn [mod, _, _] ->
+      refute Enum.any?(sync_calls(results), fn [mod, _, _] ->
                mod == "Argus.Test.Fixtures.WatchedPool"
              end)
 
       # ...and the blocking handler is what makes it a finding anyway.
-      assert [[mod, dep, handler, op_site]] = results["init_waits_on_blocking_server"]
+      assert [[mod, dep, op_site, handler]] = blocking_servers(results)
       assert mod == "Argus.Test.Fixtures.WatchedPool"
       assert dep == "Argus.Test.Fixtures.BlockingWatcher"
       assert handler =~ "BlockingWatcher:handle_info/2"
@@ -77,7 +98,7 @@ defmodule Argus.Analyses.StartupInitTest do
 
       assert {:ok, results} = Argus.analyze(modules, :startup)
 
-      assert results["init_waits_on_blocking_server"] == []
+      assert blocking_servers(results) == []
     end
 
     test "a sibling started earlier by a GenServer-defined tree is safe" do
@@ -94,11 +115,11 @@ defmodule Argus.Analyses.StartupInitTest do
 
       assert {:ok, results} = Argus.analyze(modules, :startup)
 
-      refute Enum.any?(results["sync_call_in_init"], fn [mod, _, _] ->
+      refute Enum.any?(sync_calls(results), fn [mod, _, _] ->
                mod == "Argus.Test.Fixtures.SyncInitServer"
              end)
 
-      refute Enum.any?(results["sync_call_in_init"], fn [mod, _, _] ->
+      refute Enum.any?(sync_calls(results), fn [mod, _, _] ->
                mod == "Argus.Test.Fixtures.SyncInitServer"
              end)
     end
@@ -115,7 +136,7 @@ defmodule Argus.Analyses.StartupInitTest do
       assert {:ok, results} = Argus.analyze(modules, :startup)
 
       kinds =
-        Map.new(results["sync_call_in_init"], fn [mod, _callee, kind] -> {mod, kind} end)
+        Map.new(sync_calls(results), fn [mod, _callee, kind] -> {mod, kind} end)
 
       assert kinds["Argus.Test.Fixtures.ConditionalInitServer"] == "conditional"
       assert kinds["Argus.Test.Fixtures.SyncInitServer"] == "unconditional"
@@ -133,10 +154,10 @@ defmodule Argus.Analyses.StartupInitTest do
       assert {:ok, results} = Argus.analyze(modules, :startup)
 
       # WorkerA starts before SyncInitServer — safe, should be filtered.
-      assert results["sync_call_in_init"] == []
+      assert sync_calls(results) == []
 
       # The filtering relation should have the entry.
-      refute Enum.any?(results["sync_call_in_init"], fn [mod, _, _] ->
+      refute Enum.any?(sync_calls(results), fn [mod, _, _] ->
                mod == "Argus.Test.Fixtures.SyncInitServer"
              end)
     end
@@ -154,9 +175,9 @@ defmodule Argus.Analyses.StartupInitTest do
       assert {:ok, results} = Argus.analyze(modules, :startup)
 
       # Disjoint supervisors — callee already running, should be filtered.
-      assert results["sync_call_in_init"] == []
+      assert sync_calls(results) == []
 
-      refute Enum.any?(results["sync_call_in_init"], fn [mod, _, _] ->
+      refute Enum.any?(sync_calls(results), fn [mod, _, _] ->
                mod == "Argus.Test.Fixtures.SyncInitServer"
              end)
     end
@@ -173,7 +194,7 @@ defmodule Argus.Analyses.StartupInitTest do
       assert {:ok, results} = Argus.analyze(modules, :startup)
 
       # WorkerA starts AFTER SyncInitServer — NOT safe, deadlock risk.
-      init_calls = results["sync_call_in_init"]
+      init_calls = sync_calls(results)
       assert init_calls != []
 
       assert Enum.any?(init_calls, fn [mod, callee, _kind] ->
@@ -181,11 +202,13 @@ defmodule Argus.Analyses.StartupInitTest do
                  callee == "Argus.Test.Fixtures.WorkerA"
              end)
 
-      # init_deadlock_risk should detect this.
-      deadlock_risks = results["init_deadlock_risk"]
+      # The later-sibling row is the deadlock.
+      deadlock_risks =
+        Rows.where(results, :startup, "blocks_on_peer", kind: "call", ordering: "later")
+
       assert deadlock_risks != []
 
-      assert Enum.any?(deadlock_risks, fn [sup, child, dep, _cpos, _dpos] ->
+      assert Enum.any?(deadlock_risks, fn [child, _phase, dep, _kind, _ordering, sup, _site, _w] ->
                sup == "Argus.Test.Fixtures.DeadlockOrderSupervisor" and
                  child == "Argus.Test.Fixtures.SyncInitServer" and
                  dep == "Argus.Test.Fixtures.WorkerA"

@@ -82,7 +82,11 @@ defmodule Argus.Analyses.SingletonShapesTest do
         :startup
       )
 
-    assert rows(r, "blocking_recv_in_init") == [
+    assert r
+           |> Rows.where(:startup, "unbounded_effect_in_init", kind: "recv")
+           |> Enum.map(&hd/1)
+           |> Enum.uniq()
+           |> Enum.sort() == [
              "Argus.Test.Fixtures.InitRecv.Blocking",
              "Argus.Test.Fixtures.InitRecv.Waits"
            ]

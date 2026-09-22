@@ -2,12 +2,21 @@ defmodule Argus.Analyses.StartupContinueTest do
   use ExUnit.Case
 
   alias Argus.Souffle
+  alias Argus.Test.Rows
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
-  describe "deferred_startup_deadlock.dl" do
+  defp continue_to_later(results),
+    do:
+      Rows.where(results, :startup, "blocks_on_peer",
+        phase: "continue",
+        ordering: "later",
+        drop: [:phase, :kind, :ordering, :site, :detail]
+      )
+
+  describe "blocks_on_peer: continue" do
     test "detects mutual handle_continue cycle (Pattern 1)" do
       skip_without_souffle()
 
@@ -17,13 +26,14 @@ defmodule Argus.Analyses.StartupContinueTest do
         Argus.Test.Fixtures.ContinueCycleSupervisor
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :startup)
-      cycles = results["mutual_continue_deadlock"]
+      # A continue cycle is blocking's call_cycle in the continue phase.
+      assert {:ok, results} = Argus.analyze(modules, :blocking)
+      cycles = Rows.where(results, :blocking, "call_cycle", phase: "continue")
       assert cycles != []
 
       # Cycle should pair the two cycle servers (lexicographic order from
       # the dedup constraint).
-      assert Enum.any?(cycles, fn [a, b] ->
+      assert Enum.any?(cycles, fn [a, b | _] ->
                a == "Argus.Test.Fixtures.ContinueCycleServerA" and
                  b == "Argus.Test.Fixtures.ContinueCycleServerB"
              end)
@@ -39,10 +49,10 @@ defmodule Argus.Analyses.StartupContinueTest do
       ]
 
       assert {:ok, results} = Argus.analyze(modules, :startup)
-      hits = results["continue_to_later_sibling"]
+      hits = continue_to_later(results)
       assert hits != []
 
-      assert Enum.any?(hits, fn [sup, caller, callee, _, _] ->
+      assert Enum.any?(hits, fn [caller, callee, sup] ->
                sup == "Argus.Test.Fixtures.ContinueLateSiblingSupervisor" and
                  caller == "Argus.Test.Fixtures.ContinueLateCallerServer" and
                  callee == "Argus.Test.Fixtures.ContinueLateTargetServer"
@@ -62,7 +72,7 @@ defmodule Argus.Analyses.StartupContinueTest do
 
       # The unsafe supervisor isn't in the modules list, so the only
       # supervisor visible to the analysis is the safe one. No findings.
-      assert results["continue_to_later_sibling"] == []
+      assert continue_to_later(results) == []
     end
 
     test "does NOT flag external targets in disjoint supervision trees" do
@@ -76,8 +86,10 @@ defmodule Argus.Analyses.StartupContinueTest do
       ]
 
       assert {:ok, results} = Argus.analyze(modules, :startup)
-      assert results["continue_to_later_sibling"] == []
-      assert results["mutual_continue_deadlock"] == []
+      assert continue_to_later(results) == []
+
+      assert {:ok, blocking} = Argus.analyze(modules, :blocking)
+      assert Rows.where(blocking, :blocking, "call_cycle", phase: "continue") == []
     end
 
     test "does NOT flag continue using cast (cast is async)" do
@@ -90,10 +102,10 @@ defmodule Argus.Analyses.StartupContinueTest do
       ]
 
       assert {:ok, results} = Argus.analyze(modules, :startup)
-      assert results["continue_to_later_sibling"] == []
+      assert continue_to_later(results) == []
     end
 
-    test "flags defensive try/catch as continue_crash_loop_risk" do
+    test "flags defensive try/catch as a deferral defect" do
       skip_without_souffle()
 
       modules = [
@@ -107,16 +119,16 @@ defmodule Argus.Analyses.StartupContinueTest do
       # The defensive variant still triggers the literal pattern 2
       # (the call IS still there in the bytecode), and the crash-loop
       # finding fires on top.
-      crash_loops = results["continue_crash_loop_risk"]
+      crash_loops = Rows.where(results, :startup, "deferral_defect", kind: "continue_catch")
       assert crash_loops != []
 
-      assert Enum.any?(crash_loops, fn [_sup, worker] ->
+      assert Enum.any?(crash_loops, fn [worker | _] ->
                worker == "Argus.Test.Fixtures.DefensiveContinueCaller"
              end)
     end
   end
 
-  describe "init_timeout_deferral" do
+  describe "deferral_defect: init_timeout" do
     test "an init returning {:ok, state, 0} is reported; a {:continue, _} is not" do
       skip_without_souffle()
 
@@ -129,7 +141,12 @@ defmodule Argus.Analyses.StartupContinueTest do
                  :startup
                )
 
-      assert [[mod, site, "0"]] = results["init_timeout_deferral"]
+      assert [[mod, site, "0"]] =
+               Rows.where(results, :startup, "deferral_defect",
+                 kind: "init_timeout",
+                 drop: [:kind]
+               )
+
       assert mod == "Argus.Test.Fixtures.TimeoutDeferredInit"
       assert site =~ "TimeoutDeferredInit:init/1#"
     end

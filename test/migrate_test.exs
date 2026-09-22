@@ -35,11 +35,8 @@ defmodule Argus.MigrateTest do
     end
 
     test "two retired names landing in one concern sum" do
-      assert {%{"startup" => 3}, []} =
-               Migrate.migrate_counts(%{
-                 "sync_call_in_init" => 1,
-                 "deferred_startup_deadlock" => 2
-               })
+      assert {%{"blocking" => 3}, []} =
+               Migrate.migrate_counts(%{"call_cycle" => 1, "timeout_chain" => 2})
     end
   end
 

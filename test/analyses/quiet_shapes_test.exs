@@ -52,7 +52,7 @@ defmodule Argus.Analyses.QuietShapesTest do
     blocking: ~w(partial_noproc_catch),
     failure: [{"unhandled_failure", kind: "erpc_transport"}],
     ets: ~w(ets_read_outside_owner),
-    startup: ~w(blocking_recv_in_init post_start_initialization)
+    startup: [{"unbounded_effect_in_init", kind: "recv"}, "post_start_initialization"]
   }
 
   # An entry is a relation name, or `{relation, where}` for the rows of a

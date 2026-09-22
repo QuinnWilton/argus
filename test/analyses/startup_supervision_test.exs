@@ -2,10 +2,19 @@ defmodule Argus.Analyses.StartupSupervisionTest do
   use ExUnit.Case
 
   alias Argus.Souffle
+  alias Argus.Test.Rows
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
+
+  defp later_siblings(results),
+    do:
+      Rows.where(results, :startup, "blocks_on_peer",
+        phase: "init",
+        ordering: "later",
+        drop: [:phase]
+      )
 
   describe "startup.dl" do
     test "analyzes supervisor fixtures" do
@@ -20,11 +29,11 @@ defmodule Argus.Analyses.StartupSupervisionTest do
 
       assert {:ok, results} = Argus.analyze(modules, :startup)
 
-      assert Map.has_key?(results, "wrong_start_order")
+      assert Map.has_key?(results, "blocks_on_peer")
     end
   end
 
-  describe "wrong_start_order" do
+  describe "blocks_on_peer: a later sibling" do
     test "flags a child whose init sync-calls a later-started sibling" do
       skip_without_souffle()
 
@@ -36,7 +45,7 @@ defmodule Argus.Analyses.StartupSupervisionTest do
 
       assert {:ok, results} = Argus.analyze(modules, :startup)
 
-      assert Enum.any?(results["wrong_start_order"], fn [_sup, child, dep | _] ->
+      assert Enum.any?(later_siblings(results), fn [child, dep | _] ->
                String.contains?(child, "InitProcessCaller") and
                  String.contains?(dep, "InitDepWorker")
              end)
@@ -57,7 +66,7 @@ defmodule Argus.Analyses.StartupSupervisionTest do
 
       assert {:ok, results} = Argus.analyze(modules, :startup)
 
-      refute Enum.any?(results["wrong_start_order"], fn [_sup, child, _dep | _] ->
+      refute Enum.any?(later_siblings(results), fn [child, _dep | _] ->
                String.contains?(child, "InitPureCaller")
              end)
     end

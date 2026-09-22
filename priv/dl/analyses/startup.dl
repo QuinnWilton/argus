@@ -14,6 +14,39 @@
 .include "../clientlib/otp.dl"
 .include "../clientlib/resolved_calls.dl"
 
+// ══ The outputs ═════════════════════════════════════════════════════
+//
+// `blocks_on_peer(mod, phase, dep, kind, ordering, sup, site, detail)` —
+//   a phase waits on a peer. `phase` is "init" or "continue"; `kind`
+//   says how: "call" (a synchronous call; `detail` is "conditional" or
+//   "unconditional" when the ordering is unknown), "cast" (a one-way
+//   dependency on a later sibling), "sup" (a supervisor management call;
+//   `detail` is api.op, `dep` the target), "blocking_server" (the callee
+//   runs but its handler `detail` blocks at `site`), "parent" (a
+//   handle_continue calls its own supervisor), "global" (a cluster-wide
+//   lock; `detail` is the op) or "remote" (an rpc, a node operation, a
+//   distributed store; `detail` is the op). `ordering` is where the peer
+//   starts relative to this child under `sup`: "later" (a deadlock by
+//   construction, or a race from handle_continue), "earlier",
+//   "parent", "unknown" (no tree places both), or empty. `site` anchors
+//   the tree definition for a later sibling, the call otherwise.
+// `unbounded_effect_in_init(mod, kind, api)` — init/1 reaches a socket
+//   receive with :infinity ("recv"; `api` is the function) or a connect
+//   with no way to retry ("connect").
+// `deferral_defect(mod, kind, site, detail)` — deferred work that will
+//   not happen as written: an init timeout of `detail` ms that any
+//   earlier message cancels ("init_timeout"), or a defensive catch in
+//   handle_continue that turns a deadlock into a restart loop under the
+//   supervisor `detail` ("continue_catch").
+.decl blocks_on_peer(mod: symbol, phase: symbol, dep: symbol, kind: symbol, ordering: symbol, sup: symbol, site: symbol, detail: symbol)
+.output blocks_on_peer
+
+.decl unbounded_effect_in_init(mod: symbol, kind: symbol, api: symbol)
+.output unbounded_effect_in_init
+
+.decl deferral_defect(mod: symbol, kind: symbol, site: symbol, detail: symbol)
+.output deferral_defect
+
 // ══ Synchronous calls from init/1 ═══════════════════════════════════
 .decl raw_sync_call_in_init(mod: symbol, callee: symbol)
 
@@ -94,29 +127,20 @@ unconditional_sync_call_in_init(mod, callee) :-
 // every init, "conditional" when every path goes through a call site in
 // init that a branch guards (postgrex's `sync_connect: true`, goth's
 // `prefetch: :sync`).
-.decl sync_call_in_init(mod: symbol, callee: symbol, kind: symbol)
-.output sync_call_in_init
-
-sync_call_in_init(mod, callee, "unconditional") :-
+blocks_on_peer(mod, "init", callee, "call", "unknown", "", "", "unconditional") :-
   raw_sync_call_in_init(mod, callee),
   !init_safe_sibling(mod, callee),
   !init_safe_cross_supervisor(mod, callee),
   unconditional_sync_call_in_init(mod, callee).
 
-sync_call_in_init(mod, callee, "conditional") :-
+blocks_on_peer(mod, "init", callee, "call", "unknown", "", "", "conditional") :-
   raw_sync_call_in_init(mod, callee),
   !init_safe_sibling(mod, callee),
   !init_safe_cross_supervisor(mod, callee),
   !unconditional_sync_call_in_init(mod, callee).
 
-// ── Init deadlock risk ─────────────────────────────────────────────────
-
-.decl init_deadlock_risk(sup: symbol, child: symbol, dep: symbol, child_pos: number, dep_pos: number)
-.output init_deadlock_risk
-
-init_deadlock_risk(sup, child, dep, cpos, dpos) :-
-  raw_sync_call_in_init(child, dep),
-  starts_before(sup, child, dep, cpos, dpos).
+// A call to a sibling that starts later is reported once, with the
+// tree ordering, under "Start order" below.
 
 // ── Supervisor management calls from init/1 ──────────────────────────
 //
@@ -129,10 +153,7 @@ init_deadlock_risk(sup, child, dep, cpos, dpos) :-
 // from init; Oban's Midwife started every queue from init. Reported for
 // every management op, since terminate_child waits for a whole
 // shutdown and which_children on the parent is the classic deadlock.
-.decl sup_call_in_init(mod: symbol, api: symbol, op: symbol, target: symbol, site: symbol)
-.output sup_call_in_init
-
-sup_call_in_init(mod, api, op, target, site) :-
+blocks_on_peer(mod, "init", target, "sup", "", "", site, cat(api, ".", op)) :-
   init_function(mod, func),
   sup_management_call(site, func, api, op, target).
 
@@ -141,7 +162,7 @@ sup_call_in_init(mod, api, op, target, site) :-
 
 sup_reach.seed(g, site) :- sup_management_call(site, g, _, _, _).
 
-sup_call_in_init(mod, api, op, target, site) :-
+blocks_on_peer(mod, "init", target, "sup", "", "", site, cat(api, ".", op)) :-
   init_function(mod, func),
   sup_reach.reaches(func, site),
   sup_management_call(site, _, api, op, target).
@@ -178,10 +199,7 @@ handler_blocks(mod, h, site) :-
   handler_function(mod, h),
   infinite_call_reach.reaches(h, site).
 
-.decl init_waits_on_blocking_server(mod: symbol, dep: symbol, handler: symbol, op_site: symbol)
-.output init_waits_on_blocking_server
-
-init_waits_on_blocking_server(mod, dep, h, site) :-
+blocks_on_peer(mod, "init", dep, "blocking_server", "earlier", "", site, h) :-
   raw_sync_call_in_init(mod, dep),
   (init_safe_sibling(mod, dep) ; init_safe_cross_supervisor(mod, dep)),
   handler_blocks(dep, h, site).
@@ -215,10 +233,7 @@ infinite_recv(f) :- blocking_receive(f).
 
 recv_reach.seed(f, f) :- infinite_recv(f).
 
-.decl blocking_recv_in_init(mod: symbol, recv: symbol)
-.output blocking_recv_in_init
-
-blocking_recv_in_init(mod, r) :-
+unbounded_effect_in_init(mod, "recv", r) :-
   init_function(mod, f),
   recv_reach.reaches(f, r).
 
@@ -245,10 +260,7 @@ connect_reach.seed(f, api) :- impure_call(_, f, api, "network", _), connect_api(
 // A retry needs a way back in: a timer, a self-message, a
 // handle_continue, or a gen_statem's own timeout (postgrex's connections
 // arm {{:timeout, :backoff}, ms, nil}) — deferral_path, in startup.dl.
-.decl connect_in_init_without_backoff(mod: symbol, api: symbol)
-.output connect_in_init_without_backoff
-
-connect_in_init_without_backoff(mod, api) :-
+unbounded_effect_in_init(mod, "connect", api) :-
   init_function(mod, f),
   connect_reach.reaches(f, api),
   !deferral_path(mod, _).
@@ -257,46 +269,30 @@ connect_in_init_without_backoff(mod, api) :-
 
 // ── Anti-patterns ────────────────────────────────────────────────
 
-// A child's init/1 depends on another process, synchronously or by cast:
-// during startup that process may not be alive yet.
-.decl init_process_dep(child: symbol, dep: symbol, witness: symbol)
-
-init_process_dep(child, dep, func) :-
-  init_dep(child, dep, _, func),
-  child != dep.
-
-.decl wrong_start_order(sup: symbol, child: symbol, dep: symbol, child_pos: number, dep_pos: number, sup_site: symbol, witness: symbol)
-.output wrong_start_order
-
-wrong_start_order(sup, child, dep, cpos, dpos, sup_site, witness) :-
+// A child's init/1 depends on another process, synchronously or by cast,
+// and that process starts later under the same supervisor: a synchronous
+// dependency is a deadlock by construction (the supervisor cannot reach
+// the dependency until this init returns), a one-way one runs against a
+// process that is not alive yet. One row per witness; the finding
+// builders keep one per (child, dep) and the synchronous one wins.
+blocks_on_peer(child, "init", dep, kind, "later", sup, sup_site, witness) :-
   supervisor_site(sup, sup_site),
-  starts_before(sup, child, dep, cpos, dpos),
-  init_process_dep(child, dep, witness).
+  starts_before(sup, child, dep, _, _),
+  init_dep(child, dep, kind, witness),
+  child != dep.
 
 // ══ Deferred startup: handle_continue ═══════════════════════════════
 .decl continue_sync_calls(from_mod: symbol, to_mod: symbol)
 
 continue_sync_calls(from_mod, to_mod) :- continue_dep(from_mod, to_mod, _).
 
-// ── Pattern 1: mutual continue cycle ────────────────────────────────
-
-// A.handle_continue sync-calls B AND B.handle_continue sync-calls A.
-// Both processes are alive but neither ever processes its mailbox.
-.decl mutual_continue_deadlock(mod_a: symbol, mod_b: symbol)
-.output mutual_continue_deadlock
-
-mutual_continue_deadlock(mod_a, mod_b) :-
-  continue_sync_calls(mod_a, mod_b),
-  continue_sync_calls(mod_b, mod_a),
-  mod_a < mod_b.  // Order to dedupe (a, b) and (b, a).
+// A.handle_continue sync-calls B AND B.handle_continue sync-calls A is
+// a call cycle in the continue phase, reported by blocking's call_cycle.
 
 // ── Pattern 2: handle_continue calls later-started sibling ───────────
 
-.decl continue_to_later_sibling(sup: symbol, caller: symbol, callee: symbol, caller_pos: number, callee_pos: number)
-.output continue_to_later_sibling
-
-continue_to_later_sibling(sup, caller, callee, caller_pos, callee_pos) :-
-  starts_before(sup, caller, callee, caller_pos, callee_pos),
+blocks_on_peer(caller, "continue", callee, "call", "later", sup, "", "") :-
+  starts_before(sup, caller, callee, _, _),
   continue_sync_calls(caller, callee).
 
 // ── Pattern 3: handle_continue calls back into parent supervisor ─────
@@ -312,10 +308,7 @@ continue_to_later_sibling(sup, caller, callee, caller_pos, callee_pos) :-
 // module that we know is a supervisor (worker's own parent). The
 // approximation: if MOD's continue calls a process registered as a
 // supervisor, AND that supervisor has MOD as a child, it's the parent.
-.decl continue_to_parent_supervisor(worker: symbol, sup: symbol)
-.output continue_to_parent_supervisor
-
-continue_to_parent_supervisor(worker, sup) :-
+blocks_on_peer(worker, "continue", sup, "parent", "parent", sup, "", "") :-
   continue_sync_calls(worker, sup),
   supervisor(sup, _),
   supervisor_child(sup, _, worker, _, _).
@@ -337,11 +330,8 @@ try_in_handle_continue(mod) :-
   handle_continue_clause(mod, _, func),
   try_start(_, func, _, _).
 
-.decl continue_crash_loop_risk(sup: symbol, worker: symbol)
-.output continue_crash_loop_risk
-
-continue_crash_loop_risk(sup, worker) :-
-  continue_to_later_sibling(sup, worker, _, _, _),
+deferral_defect(worker, "continue_catch", "", sup) :-
+  blocks_on_peer(worker, "continue", _, "call", "later", sup, _, _),
   try_in_handle_continue(worker).
 
 // ── Init timeout used as a deferral ───────────────────────────────────
@@ -355,10 +345,7 @@ continue_crash_loop_risk(sup, worker) :-
 // libcluster's Gossip strategy lost its deferred connect this way to
 // the first UDP datagram. Any integer works the same; 0 is the one that
 // is unmistakably a deferral.
-.decl init_timeout_deferral(mod: symbol, site: symbol, timeout_ms: number)
-.output init_timeout_deferral
-
-init_timeout_deferral(mod, site, ms) :-
+deferral_defect(mod, "init_timeout", site, to_string(ms)) :-
   init_function(mod, func),
   callback_timeout(site, func, "init", ms).
 
@@ -382,10 +369,7 @@ global_blocking_op(func, op, retries, id) :-
 
 // Catches the worst case: blocking on :global from supervisor startup
 // (init/1 or transitively from init/1). Hangs the supervisor.
-.decl global_blocking_in_init(func: symbol, op: symbol)
-.output global_blocking_in_init
-
-global_blocking_in_init(func, op) :-
+blocks_on_peer(func, "init", "", "global", "", "", "", op) :-
   global_blocking_op(func, op, _, _),
   init_function(_, func).
 
@@ -393,7 +377,7 @@ global_blocking_in_init(func, op) :-
 
 global_reach.seed(g, op) :- global_blocking_op(g, op, _, _).
 
-global_blocking_in_init(func, op) :-
+blocks_on_peer(func, "init", "", "global", "", "", "", op) :-
   global_reach.reaches(func, op),
   init_function(_, func).
 
@@ -407,14 +391,11 @@ global_blocking_in_init(func, op) :-
 
 // site is the distributed-op instruction inside init. One row per
 // site — finding builders dedupe on (func, op).
-.decl distributed_in_init(func: symbol, op: symbol, site: symbol)
-.output distributed_in_init
-
-distributed_in_init(func, op, id) :-
+blocks_on_peer(func, "init", "", "remote", "", "", id, op) :-
   rpc_call(id, func, op, _),
   init_function(_, func).
 
-distributed_in_init(func, op, id) :-
+blocks_on_peer(func, "init", "", "remote", "", "", id, op) :-
   global_register(id, func, _, _),
   init_function(_, func),
   op = "global_register".
@@ -423,14 +404,14 @@ distributed_in_init(func, op, id) :-
 // immediately: Node.list ("list"), Node.monitor ("monitor"), and
 // :net_kernel.monitor_nodes ("monitor_nodes" — a subscription flag, not
 // a connection attempt).
-distributed_in_init(func, op, id) :-
+blocks_on_peer(func, "init", "", "remote", "", "", id, op) :-
   node_operation(id, func, op),
   init_function(_, func),
   op != "list",
   op != "monitor",
   op != "monitor_nodes".
 
-distributed_in_init(func, op, id) :-
+blocks_on_peer(func, "init", "", "remote", "", "", id, op) :-
   distributed_store_op(id, func, _, op),
   init_function(_, func).
 

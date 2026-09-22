@@ -2,6 +2,7 @@ defmodule Argus.Analyses.CouplingTest do
   use ExUnit.Case
 
   alias Argus.Souffle
+  alias Argus.Test.Rows
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
@@ -33,9 +34,9 @@ defmodule Argus.Analyses.CouplingTest do
 
       assert {:ok, results} = Argus.analyze(modules, :startup)
 
-      # RuntimeCallerWorker calls WorkerA only from handle_call, not init.
-      # wrong_start_order should be empty.
-      assert results["wrong_start_order"] == []
+      # RuntimeCallerWorker calls WorkerA only from handle_call, not init:
+      # no later-sibling row.
+      assert Rows.where(results, :startup, "blocks_on_peer", ordering: "later") == []
     end
 
     test "linked coupled pairs are excluded (the hazard is mitigated)" do

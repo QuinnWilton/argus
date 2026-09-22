@@ -92,11 +92,11 @@ defmodule Argus.AnalysisTest do
       assert :error = Analysis.output_relations(:nonexistent)
     end
 
-    test "startup exposes the start-order relations" do
+    test "startup exposes the peer-blocking relation" do
       assert {:ok, relations} = Analysis.output_relations(:startup)
       names = Enum.map(relations, & &1.name)
-      assert :wrong_start_order in names
-      assert :init_deadlock_risk in names
+      assert :blocks_on_peer in names
+      assert :deferral_defect in names
     end
   end
 

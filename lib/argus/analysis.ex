@@ -182,19 +182,17 @@ defmodule Argus.Analysis do
       %{analysis: :coupling, relation: :sibling_dependency, where: [reason: "restart_isolation"]}
     ],
     sync_call_in_init: [
-      %{analysis: :startup, relation: :sync_call_in_init, where: []},
-      %{analysis: :startup, relation: :init_deadlock_risk, where: []},
-      %{analysis: :startup, relation: :sup_call_in_init, where: []},
-      %{analysis: :startup, relation: :init_waits_on_blocking_server, where: []},
-      %{analysis: :startup, relation: :blocking_recv_in_init, where: []},
-      %{analysis: :startup, relation: :connect_in_init_without_backoff, where: []}
+      %{
+        analysis: :startup,
+        relation: :blocks_on_peer,
+        where: [phase: "init", kind: ~w(call sup blocking_server)]
+      },
+      %{analysis: :startup, relation: :unbounded_effect_in_init, where: []}
     ],
     deferred_startup_deadlock: [
-      %{analysis: :startup, relation: :mutual_continue_deadlock, where: []},
-      %{analysis: :startup, relation: :continue_to_later_sibling, where: []},
-      %{analysis: :startup, relation: :continue_to_parent_supervisor, where: []},
-      %{analysis: :startup, relation: :init_timeout_deferral, where: []},
-      %{analysis: :startup, relation: :continue_crash_loop_risk, where: []}
+      %{analysis: :blocking, relation: :call_cycle, where: [phase: "continue"]},
+      %{analysis: :startup, relation: :blocks_on_peer, where: [phase: "continue"]},
+      %{analysis: :startup, relation: :deferral_defect, where: []}
     ],
     shutdown_safety: [
       %{analysis: :shutdown, relation: :cleanup_defect, where: []},
@@ -208,7 +206,7 @@ defmodule Argus.Analysis do
       %{analysis: :coupling, relation: :dual_restart_authority, where: []},
       %{analysis: :structure, relation: :supervisor_registered_as_worker, where: []},
       %{analysis: :structure, relation: :consumer_supervisor_permanent_child, where: []},
-      %{analysis: :startup, relation: :wrong_start_order, where: []},
+      %{analysis: :startup, relation: :blocks_on_peer, where: [phase: "init", ordering: "later"]},
       %{analysis: :startup, relation: :post_start_initialization, where: []},
       %{analysis: :shutdown, relation: :permanent_child_stops_normally, where: []}
     ],
@@ -219,8 +217,7 @@ defmodule Argus.Analysis do
         where: [kind: ~w(rpc rpc_in_callback global)]
       },
       %{analysis: :structure, relation: :global_register_risk, where: []},
-      %{analysis: :startup, relation: :global_blocking_in_init, where: []},
-      %{analysis: :startup, relation: :distributed_in_init, where: []},
+      %{analysis: :startup, relation: :blocks_on_peer, where: [kind: ~w(global remote)]},
       %{
         analysis: :failure,
         relation: :unhandled_failure,
