@@ -180,8 +180,14 @@ defmodule Argus.FindingsTest do
 
       deser = Enum.filter(result.findings, &(&1.title =~ "binary_to_term"))
       assert deser != []
-      assert Enum.all?(deser, &(&1.severity == :error))
       assert Enum.any?(deser, &(elem(&1.mfa, 0) == Fixtures.UnsafeDeserialization))
+
+      # No `:safe` is an error; `[:safe]` without a shape check only a
+      # warning, since atoms are the one thing it does rule out.
+      severity_by_function = Map.new(deser, &{elem(&1.mfa, 1), &1.severity})
+      assert severity_by_function[:decode_unsafe] == :error
+      assert severity_by_function[:decode_atoms_only] == :warning
+      assert Enum.all?(deser, &(&1.severity in [:error, :warning]))
 
       exhaustion = Enum.filter(result.findings, &(&1.title =~ "atom creation"))
       assert exhaustion != []

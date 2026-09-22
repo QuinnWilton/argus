@@ -16,7 +16,7 @@ defmodule Argus.Analyses.UnsafeInput do
     is in the callback itself, operating on the request; `adjacent` one
     call away; `transitive` anywhere else in the callback's cone, a path
     rather than a proven flow.
-  - `sink_without_request_path(id, func, api, sink)` — no request reaches
+  - `sink_without_request_path(id, func, api, sink, safety)` — no request reaches
     it: atom creation and code execution reachable from an exported
     function, and every deserialization without `:safe`.
   - `sink_endpoint(sink, verb, path, plug)` — the HTTP route a sink is
@@ -86,14 +86,21 @@ defmodule Argus.Analyses.UnsafeInput do
               {:proximity, :symbol, "flow | direct | adjacent | transitive"},
               {:source, :symbol,
                "what the sink's function reads, when a prior says (request | storage | config | internal | passthrough | constant), else empty"},
-              {:permille, :number, "the prior's probability in thousandths, else 0"}
+              {:permille, :number, "the prior's probability in thousandths, else 0"},
+              {:safety, :symbol,
+               "for a deserialization, its option class: unsafe | atoms_only | dynamic; else empty"}
             ],
         key: [:id],
         doc: "A sink reachable from request-shaped input."
       },
       %{
         name: :sink_without_request_path,
-        fields: @sink_fields,
+        fields:
+          @sink_fields ++
+            [
+              {:safety, :symbol,
+               "for a deserialization, its option class: unsafe | atoms_only | dynamic; else empty"}
+            ],
         doc: "A sink no request reaches: live code, but not attacker-reachable."
       },
       %{
@@ -132,22 +139,20 @@ defmodule Argus.Analyses.UnsafeInput do
         kind,
         proximity,
         source,
-        p
+        p,
+        safety
       ]) do
     Findings.new(
       severity(proximity),
-      "Unsafe deserialization #{reached(proximity)} #{surface(kind)}",
-      "#{func} calls #{api} without the :safe option, and #{entry} #{path(proximity)} " <>
-        "from #{surface(kind)}. On the BEAM this is the strongest of the " <>
-        "three: a crafted payload interns atoms without bound AND can " <>
-        "materialize funs, ports and references. Pass [:safe] and validate " <>
-        "the decoded shape — :safe alone still admits arbitrary nested terms.",
+      "#{deserialization_title(safety)} #{reached(proximity)} #{surface(kind)}",
+      "#{func} calls #{api} #{deserialization_how(safety)}, and #{entry} #{path(proximity)} " <>
+        "from #{surface(kind)}. " <> deserialization_risk(safety),
       [at: Findings.at_instr(id)] ++ flow_opts(proximity)
     )
     |> retier(func, proximity, source, p)
   end
 
-  def finding(:sink_reachable, [id, func, api, "code", entry, kind, proximity, source, p]) do
+  def finding(:sink_reachable, [id, func, api, "code", entry, kind, proximity, source, p, _s]) do
     Findings.new(
       severity(proximity),
       "Dynamic code execution #{reached(proximity)} #{surface(kind)}",
@@ -159,7 +164,7 @@ defmodule Argus.Analyses.UnsafeInput do
     |> retier(func, proximity, source, p)
   end
 
-  def finding(:sink_reachable, [id, func, api, "atom", entry, kind, proximity, source, p]) do
+  def finding(:sink_reachable, [id, func, api, "atom", entry, kind, proximity, source, p, _s]) do
     Findings.new(
       severity(proximity),
       "Unbounded atom creation #{reached(proximity)} #{surface(kind)}",
@@ -173,7 +178,7 @@ defmodule Argus.Analyses.UnsafeInput do
     |> retier(func, proximity, source, p)
   end
 
-  def finding(:sink_without_request_path, [id, func, api, "atom"]) do
+  def finding(:sink_without_request_path, [id, func, api, "atom", _safety]) do
     Findings.new(
       :warning,
       "Dynamic atom creation reachable from an exported function",
@@ -186,19 +191,17 @@ defmodule Argus.Analyses.UnsafeInput do
     )
   end
 
-  def finding(:sink_without_request_path, [id, func, api, "deserialization"]) do
+  def finding(:sink_without_request_path, [id, func, api, "deserialization", safety]) do
     Findings.new(
-      :error,
-      "binary_to_term without :safe",
-      "#{func} deserializes with #{api} and no :safe option. Untrusted bytes " <>
-        "can intern unbounded atoms and materialize funs, ports, and " <>
-        "references — a well-known denial-of-service vector. Pass [:safe] and " <>
-        "validate the decoded shape.",
+      deserialization_severity(safety),
+      deserialization_title(safety),
+      "#{func} deserializes with #{api} #{deserialization_how(safety)}. " <>
+        deserialization_risk(safety),
       at: Findings.at_instr(id)
     )
   end
 
-  def finding(:sink_without_request_path, [id, func, api, "code"]) do
+  def finding(:sink_without_request_path, [id, func, api, "code", _safety]) do
     Findings.new(
       :error,
       "Dynamic code execution reachable from exports",
@@ -268,6 +271,46 @@ defmodule Argus.Analyses.UnsafeInput do
   defp demote(_warning_or_info), do: :info
 
   defp format_permille(p), do: :erlang.float_to_binary(p / 1000, decimals: 2)
+
+  # What the options said, and what that leaves open. [:safe] stops new
+  # atoms and references to unloaded modules; a fun referencing a loaded
+  # module decodes fine and runs when the term is used (Paginator
+  # CVE-2020-15150 was RCE through [:safe]), so it downgrades and does
+  # not clear — only a term-walking decoder such as
+  # Plug.Crypto.non_executable_binary_to_term/2 does.
+  defp deserialization_title("atoms_only"), do: "binary_to_term with [:safe] and no shape check"
+  defp deserialization_title("dynamic"), do: "binary_to_term with options not known statically"
+  defp deserialization_title(_unsafe), do: "binary_to_term without :safe"
+
+  defp deserialization_severity("atoms_only"), do: :warning
+  defp deserialization_severity(_unsafe_or_dynamic), do: :error
+
+  defp deserialization_how("atoms_only"), do: "with [:safe] and nothing else"
+  defp deserialization_how("dynamic"), do: "with options computed at runtime"
+  defp deserialization_how(_unsafe), do: "without the :safe option"
+
+  defp deserialization_risk("atoms_only") do
+    "[:safe] refuses new atoms and references to unloaded modules, which " <>
+      "takes atom-table exhaustion off the table. It does not refuse a fun " <>
+      "that references a module already loaded, and the first thing that " <>
+      "enumerates or calls the decoded term runs it — the shape of Paginator's " <>
+      "CVE-2020-15150. Validate the decoded shape before using it, or decode " <>
+      "with Plug.Crypto.non_executable_binary_to_term/2."
+  end
+
+  defp deserialization_risk("dynamic") do
+    "Whether :safe is among them cannot be seen here. Without it, untrusted " <>
+      "bytes intern unbounded atoms and materialize funs, ports and " <>
+      "references; with it, a fun referencing a loaded module still runs. " <>
+      "Pass [:safe] as a literal and validate the decoded shape."
+  end
+
+  defp deserialization_risk(_unsafe) do
+    "Untrusted bytes can intern unbounded atoms and materialize funs, ports, " <>
+      "and references — a well-known denial-of-service vector, and on the " <>
+      "BEAM the strongest of the three sinks. Pass [:safe] and validate the " <>
+      "decoded shape — :safe alone still admits arbitrary nested terms."
+  end
 
   defp severity("flow"), do: :error
   defp severity("direct"), do: :error

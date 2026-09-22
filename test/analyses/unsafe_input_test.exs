@@ -17,7 +17,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
   end
 
   defp local(results, sink),
-    do: for([_id, func, api, ^sink] <- results["sink_without_request_path"], do: {func, api})
+    do: for([_id, func, api, ^sink | _] <- results["sink_without_request_path"], do: {func, api})
 
   describe "sinks no request reaches" do
     test "flags dynamic atom creation reachable from an export, not to_existing_atom" do
@@ -40,6 +40,65 @@ defmodule Argus.Analyses.UnsafeInputTest do
       # Paginator CVE-2020-15150 is remote code execution THROUGH `[:safe]`.
       assert Enum.any?(funcs, &String.contains?(&1, "decode_atoms_only"))
       refute Enum.any?(funcs, &String.contains?(&1, "decode_validated"))
+    end
+
+    test "the deserialization finding says what the options were, and grades [:safe] down" do
+      skip_without_souffle()
+
+      by_func =
+        analyze([Argus.Test.Fixtures.UnsafeDeserialization])["sink_without_request_path"]
+        |> Enum.filter(&(Enum.at(&1, 3) == "deserialization"))
+        |> Map.new(fn [_id, func, _api, _sink, safety] = row ->
+          {func |> String.split(":") |> List.last(),
+           {safety, UnsafeInput.finding(:sink_without_request_path, row)}}
+        end)
+
+      assert {"unsafe", unsafe} = by_func["decode_unsafe/1"]
+      assert unsafe.title == "binary_to_term without :safe"
+      assert unsafe.severity == :error
+
+      assert {"atoms_only", safe} = by_func["decode_atoms_only/1"]
+      assert safe.title == "binary_to_term with [:safe] and no shape check"
+      assert safe.severity == :warning
+      assert safe.detail =~ "CVE-2020-15150"
+      assert safe.detail =~ "non_executable_binary_to_term"
+    end
+
+    test "a request-reachable deserialization carries the same class" do
+      row = fn safety ->
+        [
+          "i",
+          "M:decode/1",
+          ":erlang.binary_to_term/2",
+          "deserialization",
+          "W:handle_in/3",
+          "channel",
+          "flow",
+          "",
+          "0",
+          safety
+        ]
+      end
+
+      safe = UnsafeInput.finding(:sink_reachable, row.("atoms_only"))
+      assert safe.title =~ "with [:safe] and no shape check"
+      assert safe.severity == :error
+      assert safe.detail =~ "with [:safe] and nothing else"
+
+      dynamic = UnsafeInput.finding(:sink_reachable, row.("dynamic"))
+      assert dynamic.title =~ "options not known statically"
+
+      unsafe =
+        UnsafeInput.finding(:sink_without_request_path, [
+          "i",
+          "M:decode/1",
+          ":erlang.binary_to_term/1",
+          "deserialization",
+          "dynamic"
+        ])
+
+      assert unsafe.title == "binary_to_term with options not known statically" and
+               unsafe.severity == :error
     end
 
     test "flags eval and shell-out APIs, not a fully-literal System.cmd" do
@@ -221,7 +280,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
   describe "severity" do
     test "tracks proximity rather than sink type" do
       row = fn prox ->
-        ["i", "M:f/1", "String.to_atom/1", "atom", "E:call/2", "plug", prox, "", "0"]
+        ["i", "M:f/1", "String.to_atom/1", "atom", "E:call/2", "plug", prox, "", "0", ""]
       end
 
       assert %{severity: :error} = UnsafeInput.finding(:sink_reachable, row.("flow"))
@@ -240,7 +299,8 @@ defmodule Argus.Analyses.UnsafeInputTest do
         "live_view",
         "flow",
         "",
-        "0"
+        "0",
+        ""
       ]
 
       finding = UnsafeInput.finding(:sink_reachable, row)
@@ -267,7 +327,8 @@ defmodule Argus.Analyses.UnsafeInputTest do
             "channel",
             "direct",
             "",
-            "0"
+            "0",
+            "unsafe"
           ]
         )
 
@@ -279,18 +340,19 @@ defmodule Argus.Analyses.UnsafeInputTest do
 
     test "a sink no request reaches keeps its own severity" do
       assert %{severity: :warning} =
-               UnsafeInput.finding(:sink_without_request_path, ["i", "M:f/1", "a", "atom"])
+               UnsafeInput.finding(:sink_without_request_path, ["i", "M:f/1", "a", "atom", ""])
 
       assert %{severity: :error} =
                UnsafeInput.finding(:sink_without_request_path, [
                  "i",
                  "M:f/1",
                  "a",
-                 "deserialization"
+                 "deserialization",
+                 "unsafe"
                ])
 
       assert %{severity: :error} =
-               UnsafeInput.finding(:sink_without_request_path, ["i", "M:f/1", "a", "code"])
+               UnsafeInput.finding(:sink_without_request_path, ["i", "M:f/1", "a", "code", ""])
     end
   end
 

@@ -52,12 +52,16 @@ request_param(func, 1) :- request_entry(func, "broadway").
 
 // ── The sinks ────────────────────────────────────────────────────
 
-.decl sink(id: symbol, func: symbol, api: symbol, kind: symbol)
+// `safety` is the deserialization's option class — unsafe, atoms_only
+// ([:safe] passed: no new atoms, but a fun referencing a loaded module
+// still runs when the term is used) or dynamic — and empty for the other
+// sinks. It reaches the finding so the text can say which.
+.decl sink(id: symbol, func: symbol, api: symbol, kind: symbol, safety: symbol)
 
-sink(id, func, api, "atom") :- unsafe_atom_creation(id, func, api).
-sink(id, func, api, "code") :- code_execution(id, func, api).
+sink(id, func, api, "atom", "") :- unsafe_atom_creation(id, func, api).
+sink(id, func, api, "code", "") :- code_execution(id, func, api).
 
-sink(id, func, api, "deserialization") :-
+sink(id, func, api, "deserialization", safety) :-
   unsafe_deserialization(id, func, api, safety),
   unsafe_safety_class(safety).
 
@@ -90,7 +94,7 @@ request_reaches(entry, kind, callee, "transitive") :-
 .init sink_flow = ParamReach
 
 sink_flow.seed(func, pos, id) :-
-  sink(id, func, _, _),
+  sink(id, func, _, _, _),
   sink_arg_derived(id, func, _, pos).
 
 .decl sink_flow_from(id: symbol, entry: symbol, kind: symbol)
@@ -118,25 +122,25 @@ sink_flow_from(id, entry, kind) :-
 .decl sink_func_reads(func: symbol, source: symbol, permille: number)
 
 sink_func_reads(func, source, p) :-
-  sink(_, func, _, _),
+  sink(_, func, _, _, _),
   prior_reads(func, source, p),
   p >= 700.
 
-.decl sink_reachable(id: symbol, func: symbol, api: symbol, sink: symbol, entry: symbol, kind: symbol, proximity: symbol, source: symbol, permille: number)
+.decl sink_reachable(id: symbol, func: symbol, api: symbol, sink: symbol, entry: symbol, kind: symbol, proximity: symbol, source: symbol, permille: number, safety: symbol)
 .output sink_reachable
 
-sink_reachable(id, func, api, s, entry, kind, "flow", "", 0) :-
-  sink(id, func, api, s),
+sink_reachable(id, func, api, s, entry, kind, "flow", "", 0, safety) :-
+  sink(id, func, api, s, safety),
   sink_flow_from(id, entry, kind).
 
-sink_reachable(id, func, api, s, entry, kind, proximity, source, p) :-
-  sink(id, func, api, s),
+sink_reachable(id, func, api, s, entry, kind, proximity, source, p, safety) :-
+  sink(id, func, api, s, safety),
   request_reaches(entry, kind, func, proximity),
   !sink_flow_from(id, _, _),
   sink_func_reads(func, source, p).
 
-sink_reachable(id, func, api, s, entry, kind, proximity, "", 0) :-
-  sink(id, func, api, s),
+sink_reachable(id, func, api, s, entry, kind, proximity, "", 0, safety) :-
+  sink(id, func, api, s, safety),
   request_reaches(entry, kind, func, proximity),
   !sink_flow_from(id, _, _),
   !sink_func_reads(func, _, _).
@@ -148,18 +152,18 @@ sink_reachable(id, func, api, s, entry, kind, proximity, "", 0) :-
 
 export_reach.root(func) :- function_def(func, _, _, _, 1).
 
-.decl sink_without_request_path(id: symbol, func: symbol, api: symbol, sink: symbol)
+.decl sink_without_request_path(id: symbol, func: symbol, api: symbol, sink: symbol, safety: symbol)
 .output sink_without_request_path
 
-sink_without_request_path(id, func, api, s) :-
-  sink(id, func, api, s),
+sink_without_request_path(id, func, api, s, "") :-
+  sink(id, func, api, s, ""),
   (s = "atom" ; s = "code"),
   export_reach.reaches(func),
-  !sink_reachable(id, _, _, _, _, _, _, _, _).
+  !sink_reachable(id, _, _, _, _, _, _, _, _, _).
 
-sink_without_request_path(id, func, api, "deserialization") :-
-  sink(id, func, api, "deserialization"),
-  !sink_reachable(id, _, _, _, _, _, _, _, _).
+sink_without_request_path(id, func, api, "deserialization", safety) :-
+  sink(id, func, api, "deserialization", safety),
+  !sink_reachable(id, _, _, _, _, _, _, _, _, _).
 
 // ── Which HTTP endpoint reaches the sink ─────────────────────────
 //

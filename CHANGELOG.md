@@ -4,6 +4,24 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+`unsafe_input`'s two sink relations gain a trailing `safety` column, the
+deserialization's option class (`unsafe | atoms_only | dynamic`, empty
+for the other sinks), and the deserialization finding says which. The
+title "binary_to_term without :safe" was literally false for a call that
+passes `[:safe]` — argus keeps that finding on purpose, as a downgrade
+rather than a clear (Paginator CVE-2020-15150 was RCE through `[:safe]`),
+but said the wrong thing about it. Now: `unsafe` keeps its title and
+`:error`; `atoms_only` is "binary_to_term with [:safe] and no shape
+check" at `:warning`, with the loaded-module fun risk and
+`Plug.Crypto.non_executable_binary_to_term/2` in the text; `dynamic` is
+"binary_to_term with options not known statically" at `:error`. A
+request-reachable deserialization keeps its proximity severity and gains
+the same wording.
+
 ## 0.19.0 — 2026-09-22
 
 ### Added
