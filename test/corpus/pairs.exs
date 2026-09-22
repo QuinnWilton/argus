@@ -32,7 +32,7 @@
     module: "Finch.HTTP2.Pool",
     pre: "28827940193f0436f55f1688874e7b65f6079b05",
     fix: "ca530c889f7fd1e036ea292d7d0c17adb01d0cd2",
-    finding: {:gen_statem, "A {:call, from} clause never replies"}
+    finding: {:mailbox, "A {:call, from} clause never replies"}
   },
   %{
     repo: "whatyouhide/redix",
@@ -40,7 +40,7 @@
     module: "Redix.Cluster",
     pre: "cef6129a0aa2093e24d8b1ab5b6853d0b58a3b41",
     fix: "3f88e8e9a9d0627ca91f77fa2c475b679b0f77b9",
-    finding: {:unsafe_task, "Task.yield on a linked task cannot see it crash"}
+    finding: {:mailbox, "Task.yield on a linked task cannot see it crash"}
   },
   %{
     repo: "elixir-ecto/ecto",
@@ -48,7 +48,7 @@
     module: "Ecto.Repo.Preloader",
     pre: "5422d3158194e872092ee00b46bed89db1e356d8",
     fix: "12a745234fa9bda86620708316b7682bd6454222",
-    finding: {:unsafe_task, "Task.async in library code links to an unknown caller"}
+    finding: {:mailbox, "Task.async in library code links to an unknown caller"}
   },
   %{
     repo: "whatyouhide/redix",
@@ -103,14 +103,14 @@
     module: "GenStage.Streamer",
     pre: "ee272d3df26ff9463a577e46cac43afdcc989aa5",
     fix: "ae0a6c61bf0a0fdd200a34ce0079296d1480914b",
-    finding: {:error_handling, "handle_info/2 has no catch-all"}
+    finding: {:mailbox, "handle_info/2 has no catch-all"}
   },
   %{
     repo: "commanded/commanded",
     issue: "commanded#332",
     module: "Commanded.ProcessManagers.ProcessManagerInstance",
     pre: "9f45a30",
-    finding: {:error_handling, "handle_info/2 has no catch-all"}
+    finding: {:mailbox, "handle_info/2 has no catch-all"}
   },
   %{
     repo: "elixir-horde/horde",
@@ -132,7 +132,7 @@
     module: "Postgrex.Parameters",
     pre: "313d6c90dea21f320035501e5d7d6a1e34a74cd4",
     fix: "85c7cf430d0c4519cc7cadf6599bcb173276de0f",
-    finding: {:monitor_leak, "Postgrex.Parameters monitors but never demonitors"}
+    finding: {:mailbox, "Postgrex.Parameters monitors but never demonitors"}
   },
   # Present-only shapes found on the trees themselves, not from an issue.
   %{
@@ -179,14 +179,14 @@
     module: "BB.Loop",
     pre: "6c5dc2b5a22f8cf532a696f46d40e2ee79e3a53a",
     fix: "4bd552ca6a816614f6059c9d2e98fc583a27de16",
-    finding: {:error_handling, "Timer cancelled without flushing its message"}
+    finding: {:mailbox, "Timer cancelled without flushing its message"}
   },
   %{
     repo: "cabol/nebulex",
     issue: "nebulex:generation-heartbeat-no-flush",
     module: "Nebulex.Adapters.Local.Generation",
     pre: "faff154",
-    finding: {:error_handling, "Timer cancelled without flushing its message"}
+    finding: {:mailbox, "Timer cancelled without flushing its message"}
   },
   # tortoise#46 (70044be -> b891da1) is the connect-in-init pair, but its
   # 2018 tree no longer compiles on Elixir >= 1.15 (a recursive variable

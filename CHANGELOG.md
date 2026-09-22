@@ -51,6 +51,12 @@ is the table). Named sets (`:all`, `:default`, `:security`, `:effects`,
 | `unsafe_task` (part) | `failure`, `unchecked_start_child` | unchanged |
 | `unlinked_spawn` | `failure`, `unlinked_spawn` | unchanged |
 | `process_registry` (rest) | `failure`, `whereis_race` | process_registry is retired |
+| `error_handling` (rest) | `mailbox`, `handle_info_without_catchall`, `handle_info_partial`, `timer_cancel_without_flush` | error_handling is retired; its alias spans blocking, startup, shutdown, failure and mailbox |
+| `unsafe_task` (rest) | `mailbox`, `nolink_messages_unhandled`, `leaked_async_task`, `yield_on_linked_task`, `linked_task_in_library` | unsafe_task is retired |
+| `monitor_leak` (rest) | `mailbox`, `leaked_monitor`, `monitor_never_released`, `monitor_ref_discarded` | monitor_leak is retired |
+| `message_contract` | `mailbox`, `unhandled_self_message` | unchanged |
+| `reply_contract` | `mailbox`, `never_replies` | unchanged |
+| `gen_statem` | `mailbox`: `state_missing_info_catchall`, `statem_timeout_unhandled`, `call_never_replied`; `state_machine`: `unreachable_state`, `terminal_without_stop` | the reply and timeout rows are mailbox defects that happen to be in a statem |
 
 ## 0.16.0 — 2026-09-21
 

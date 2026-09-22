@@ -1,4 +1,4 @@
-defmodule Argus.Analyses.UnsafeTaskTest do
+defmodule Argus.Analyses.MailboxTaskTest do
   use ExUnit.Case
 
   alias Argus.Souffle
@@ -12,7 +12,7 @@ defmodule Argus.Analyses.UnsafeTaskTest do
       skip_without_souffle()
 
       assert {:ok, results} =
-               Argus.analyze([Argus.Test.Fixtures.LeakedTaskModule], :unsafe_task)
+               Argus.analyze([Argus.Test.Fixtures.LeakedTaskModule], :mailbox)
 
       assert Map.has_key?(results, "leaked_async_task")
       leaked = results["leaked_async_task"]
@@ -34,7 +34,7 @@ defmodule Argus.Analyses.UnsafeTaskTest do
         Argus.Test.Fixtures.LeakedTaskModule
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :unsafe_task)
+      assert {:ok, results} = Argus.analyze(modules, :mailbox)
 
       leaked = results["leaked_async_task"]
 
@@ -57,7 +57,7 @@ defmodule Argus.Analyses.UnsafeTaskTest do
         Argus.Test.Fixtures.LeakedTaskModule
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :unsafe_task)
+      assert {:ok, results} = Argus.analyze(modules, :mailbox)
       leaked = results["leaked_async_task"]
 
       # No named behaviour, but a handle_info/2 — the reply is consumed.
@@ -73,7 +73,7 @@ defmodule Argus.Analyses.UnsafeTaskTest do
         Argus.Test.Fixtures.LeakedTaskModule
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :unsafe_task)
+      assert {:ok, results} = Argus.analyze(modules, :mailbox)
 
       leaked = results["leaked_async_task"]
 
@@ -96,7 +96,7 @@ defmodule Argus.Analyses.UnsafeTaskTest do
         Argus.Test.Fixtures.LeakedTaskModule
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :unsafe_task)
+      assert {:ok, results} = Argus.analyze(modules, :mailbox)
 
       leaked = results["leaked_async_task"]
 
@@ -119,7 +119,7 @@ defmodule Argus.Analyses.UnsafeTaskTest do
         Argus.Test.Fixtures.LeakedTaskModule
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :unsafe_task)
+      assert {:ok, results} = Argus.analyze(modules, :mailbox)
 
       leaked = results["leaked_async_task"]
 
@@ -142,7 +142,7 @@ defmodule Argus.Analyses.UnsafeTaskTest do
         Argus.Test.Fixtures.LeakedTaskModule
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :unsafe_task)
+      assert {:ok, results} = Argus.analyze(modules, :mailbox)
 
       leaked = results["leaked_async_task"]
 
@@ -165,7 +165,7 @@ defmodule Argus.Analyses.UnsafeTaskTest do
         Argus.Test.Fixtures.LeakedTaskModule
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :unsafe_task)
+      assert {:ok, results} = Argus.analyze(modules, :mailbox)
 
       leaked = results["leaked_async_task"]
 
@@ -183,7 +183,7 @@ defmodule Argus.Analyses.UnsafeTaskTest do
     test "runs without error on modules with no task calls" do
       skip_without_souffle()
 
-      assert {:ok, results} = Argus.analyze([:maps], :unsafe_task)
+      assert {:ok, results} = Argus.analyze([:maps], :mailbox)
       assert Map.has_key?(results, "leaked_async_task")
     end
   end
@@ -195,7 +195,7 @@ defmodule Argus.Analyses.UnsafeTaskTest do
       assert {:ok, results} =
                Argus.analyze(
                  [Argus.Test.Fixtures.YieldsLinkedTask, Argus.Test.Fixtures.TrapsAndYields],
-                 :unsafe_task
+                 :mailbox
                )
 
       funcs = Enum.map(Map.get(results, "yield_on_linked_task", []), &hd/1)
@@ -208,7 +208,7 @@ defmodule Argus.Analyses.UnsafeTaskTest do
       assert {:ok, results} =
                Argus.analyze(
                  [Argus.Test.Fixtures.LibraryPmap, Argus.Test.Fixtures.GenServerTaskConsumer],
-                 :unsafe_task
+                 :mailbox
                )
 
       funcs = Enum.map(Map.get(results, "linked_task_in_library", []), &hd/1)

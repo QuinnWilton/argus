@@ -1,0 +1,589 @@
+// A message arrives and nothing takes it, or takes it wrongly.
+//
+// A process's mailbox is written by more than its owner: a task's
+// reply, a monitor's :DOWN, a timer that fired before it was cancelled,
+// a late reply to a timed call, a subscription's broadcast, the module's
+// own client API. Every finding here is a message and the clause that
+// is not there for it, or the reply a caller waits for that never
+// comes: a handle_info without a catch-all, an async_nolink task whose
+// reply lands unhandled, a monitor left live past its wait, a cancelled
+// timer's stale message, a tag the module sends itself and cannot
+// handle, a handle_call that defers a reply it cannot send, a statem
+// timeout no clause matches.
+
+.include "../clientlib/imports.dl"
+.include "../clientlib/otp.dl"
+
+// ══ handle_info without a catch-all, and stale timers ═══════════════
+.decl trap_exit_without_exit_clause(mod: symbol, witness: symbol)
+
+trap_exit_without_exit_clause(mod, func) :-
+  trap_exit(func, mod),
+  partial_handle_info(mod, h),
+  !callback_tag(h, "handle_info", ":EXIT"),
+  !statem_process(mod).
+
+// ── handle_info without a catch-all, in a process the runtime writes to ──
+//
+// Once a GenServer defines handle_info/2, any message no clause matches
+// is a FunctionClauseError, not the default log-and-continue. That only
+// matters for messages the process did not ask for by protocol — and a
+// process that monitors or traps exits has asked the runtime to send it
+// messages whose timing it does not control: a late {:DOWN, ...} after a
+// demonitor without :flush, an {:EXIT, ...} from a Plug's port. Bandit's
+// connection process crashed on exactly those until a catch-all landed.
+//
+// Subsumed by trap_exit_without_exit_clause when that fires: one
+// finding per module, the more specific one.
+.decl receives_runtime_messages(mod: symbol)
+
+receives_runtime_messages(mod) :- trap_exit(_, mod).
+
+receives_runtime_messages(mod) :-
+  monitor_call(_, f, _),
+  function_def(f, mod, _, _, _).
+
+.decl handle_info_without_catchall(mod: symbol, func: symbol)
+.output handle_info_without_catchall
+
+handle_info_without_catchall(mod, h) :-
+  (behaves_as(mod, "GenServer") ; behaves_as(mod, "GenStage")),
+  partial_handle_info(mod, h),
+  receives_runtime_messages(mod),
+  !trap_exit_without_exit_clause(mod, _).
+
+// ── handle_info without a catch-all, with a late-message source ──
+//
+// The variant above needs the module itself to invite runtime messages.
+// A mailbox is written by more than its owner: a timed call that gave
+// up leaves a late reply (gen_stage#238, an hackney message crashing a
+// Flow producer), a Task.async replies, a timer fires after the state
+// that expected it is gone, a subscription broadcasts, a start-up
+// message is re-sent by a restart loop (cachex#314), and code the
+// process runs through a closure or apply is not its own to vouch for
+// (gen_stage#238's producer ran the user's stream). A partial
+// handle_info/2 in a process whose callbacks reach such a source is a
+// FunctionClauseError waiting for that message. Without any source in
+// reach the shape is a style note, and stays quiet. Info: the two rules
+// above stay the warning-grade shapes.
+.init mailbox_reach = CallReachSet
+
+mailbox_reach.seed(f) :- mailbox_writer(_, f, _).
+mailbox_reach.seed(f) :- sync_call_timeout(f, _, ms), ms != -1.
+
+.decl late_message_source(mod: symbol)
+
+late_message_source(mod) :-
+  process_entry(mod, c),
+  mailbox_reach.reaches(c).
+
+.decl handle_info_partial(mod: symbol, func: symbol)
+.output handle_info_partial
+
+handle_info_partial(mod, h) :-
+  (behaves_as(mod, "GenServer") ; behaves_as(mod, "GenStage")),
+  partial_handle_info(mod, h),
+  late_message_source(mod),
+  !receives_runtime_messages(mod),
+  !trap_exit_without_exit_clause(mod, _),
+  !statem_process(mod).
+
+
+
+
+// ── A timer cancelled but not flushed ────────────────────────────────
+//
+// Process.cancel_timer/1 does not remove a message the timer already
+// delivered. A process that cancels and re-arms a timer whose message
+// is a bare atom (`:tick`) cannot tell the stale message from the next
+// one: the action fires twice, or early (MongooseIM#3502, beam-bots/bb
+// #214; nebulex's generation rotation and cachex's warmer have the
+// shape). A message that carries the timer's ref (`{:tick, ref}`, or
+// :erlang.start_timer's `{:timeout, ref, _}`) is matched against the
+// current ref; a `receive :tick -> :ok after 0 -> :ok end` flushes.
+// Cancelling only in terminate/2 arms nothing again.
+// ── Timer cancelled without a flush ──────────────────────────────────
+//
+// The timer's identity is followed through the state: the ref the arm
+// site produces is returned or stored under a map key (timer_ref,
+// returns_call, timer_store), and the ref a cancel site takes was read
+// from a map key or handed in as a parameter (timer_cancel,
+// call_arg_field). A cancel and an arm pair up only on the same key,
+// so a module with a heartbeat and a reconnect timer gets two verdicts.
+// The flush must name the armed message (recv_pattern), or match
+// anything.
+
+// The map key the ref armed in `a` ends up under.
+.decl timer_key(arm: symbol, key: symbol)
+
+timer_key(a, key) :- timer_ref(_, a, "stored", key).
+
+timer_key(a, key) :-
+  timer_ref(_, a, "returned", _),
+  returns_to_key(a, key).
+
+.decl returns_to_key(func: symbol, key: symbol)
+
+returns_to_key(f, key) :- timer_store(_, key, f).
+
+returns_to_key(f, key) :-
+  returns_call(g, f),
+  returns_to_key(g, key).
+
+// The map key the ref cancelled in `c` was read from, at the site or
+// at a caller that read it and passed it down.
+.decl cancel_key(cancel: symbol, key: symbol)
+
+cancel_key(c, key) :- timer_cancel(_, c, "field", key, _).
+
+cancel_key(c, key) :-
+  timer_cancel(_, c, "param", _, pos),
+  param_field(c, pos, key).
+
+.decl param_field(func: symbol, pos: number, key: symbol)
+
+param_field(f, pos, key) :- call_arg_field(_, f, pos, key).
+
+param_field(f, pos, key) :-
+  call_arg_forward(g, f, pos, gpos),
+  param_field(g, gpos, key).
+
+// The literal a timer armed for the arming process carries: at the
+// site, or a parameter the callers fill with a literal (nebulex's
+// `start_timer(time, ref, event)` with `event \\ :heartbeat`).
+.decl armed_message(arm: symbol, message: symbol)
+
+armed_message(a, lit) :- timer_arm(_, a, "self", "bare", _, lit).
+
+armed_message(a, lit) :-
+  timer_arm(_, a, "self", "param", pos, _),
+  resolved_arg(a, pos, lit).
+
+// A receive in the module takes the message: by name, or a clause that
+// matches anything (`after 0` with a wildcard, the cancel_timer docs'
+// blocking receive, Ostinato.Eager).
+.decl takes_message(mod: symbol, message: symbol)
+
+takes_message(mod, lit) :- receives_message(mod, lit).
+
+takes_message(mod, lit) :-
+  receives_message(mod, "any"),
+  armed_message(_, lit).
+
+.decl timer_cancel_without_flush(mod: symbol, cancel: symbol, arm: symbol, key: symbol, message: symbol)
+.output timer_cancel_without_flush
+
+// The arm must be one that can follow the cancel: a timer armed only
+// in init/1 and cancelled later is stopped, not re-armed, and its
+// stale message is handled once as an ordinary one.
+timer_cancel_without_flush(mod, c, a, key, lit) :-
+  cancel_key(c, key),
+  function_def(c, mod, _, _, _),
+  !terminate_callback(c, mod, _),
+  timer_key(a, key),
+  function_def(a, mod, _, _, _),
+  !init_function(mod, a),
+  armed_message(a, lit),
+  !takes_message(mod, lit).
+
+// ══ Tasks whose messages land unhandled ═════════════════════════════
+.decl task_async_call(func: symbol, id: symbol)
+
+task_async_call(func, id) :-
+  remote_call(id, func, "Task", "async", _).
+
+// Also detect Task.Supervisor.async (returns a Task that must be
+// awaited/yielded, just like Task.async).
+task_async_call(func, id) :-
+  remote_call(id, func, "Task.Supervisor", "async", _).
+
+// Task.Supervisor.async_nolink is intentionally excluded: it returns a
+// task that is NOT linked to the caller. The supervisor manages the
+// lifecycle, making it safe for fire-and-forget patterns.
+
+// ── Task.await/yield detection ─────────────────────────────────────────
+
+.decl task_await_call(func: symbol, id: symbol)
+
+task_await_call(func, id) :-
+  remote_call(id, func, "Task", "await", _).
+
+task_await_call(func, id) :-
+  remote_call(id, func, "Task", "await_many", _).
+
+task_await_call(func, id) :-
+  remote_call(id, func, "Task", "yield", _).
+
+task_await_call(func, id) :-
+  remote_call(id, func, "Task", "yield_many", _).
+
+task_await_call(func, id) :-
+  remote_call(id, func, "Task", "shutdown", _).
+
+// ── Function-level await reachability ──────────────────────────────────
+
+// Function has an await/yield (directly or through callees).
+.init await_reach = CallReachSet
+
+await_reach.seed(func) :- task_await_call(func, _).
+
+// ── Process task handler suppression ─────────────────────────────────
+
+// A process with a callback that can consume task results from its
+// mailbox (mailbox_handler: any handle_info/2, or a gen_statem's
+// handle_event/4) collects them there rather than by an explicit await.
+// ── Task factory suppression ─────────────────────────────────────────
+
+// A function that creates an async task in tail position returns the
+// task struct to its caller. The caller is responsible for awaiting —
+// this function is a factory, not a leak.
+.decl task_factory(func: symbol, id: symbol)
+
+task_factory(func, id) :-
+  task_async_call(func, id),
+  tail_call(id).
+
+// ── Leaked async task ──────────────────────────────────────────────────
+
+// Function creates an async task but never awaits (directly or
+// transitively). The task reference is either discarded or returned
+// to a caller that may not await it.
+//
+// Suppressed for process modules with message-receiving callbacks,
+// which consume task results through their mailbox rather than
+// explicit await/yield.
+// Suppressed for task factories that return the task to the caller.
+.decl leaked_async_task(func: symbol, id: symbol)
+.output leaked_async_task
+
+leaked_async_task(func, id) :-
+  task_async_call(func, id),
+  !await_reach.reaches(func),
+  function_def(func, mod, _, _, _),
+  !mailbox_handler(mod),
+  !task_factory(func, id).
+
+
+
+
+// ── Yielding on a linked task ────────────────────────────────────────
+//
+// Task.async and Task.Supervisor.async link the task to the caller.
+// Task.yield/yield_many document an `{:exit, reason}` result for a task
+// that crashed — but the link delivers the crash to the caller first, so
+// unless the caller traps exits that branch never runs: the caller is
+// dead (whatyouhide/redix#317's cluster fan-out, whose partial-failure
+// path was unreachable). async_nolink is the tool for that shape.
+.decl yield_on_linked_task(func: symbol, id: symbol)
+.output yield_on_linked_task
+
+// A closure's calls belong to the function that defines it: the task is
+// usually started inside an Enum.map fn and collected outside it.
+yield_on_linked_task(owner, id) :-
+  task_async_call(f, id),
+  enclosing_function(f, owner),
+  !closure_def(_, owner),
+  (remote_call(_, g, "Task", "yield", _) ; remote_call(_, g, "Task", "yield_many", _)),
+  enclosing_function(g, owner),
+  function_def(owner, mod, _, _, _),
+  !trap_exit(_, mod).
+
+// ── A linked task inside library code ────────────────────────────────
+//
+// Task.async in a function that is not itself a process's callback links
+// the task to whoever called the function. In a caller that traps exits
+// the task's normal exit then arrives as an `{:EXIT, pid, :normal}`
+// message Task.await never consumes (elixir-ecto/ecto#2246: a GenServer
+// preloading in parallel), and a crashing task takes an unrelated
+// caller down with it. A module that is a process itself owns its
+// callers' expectations; a plain library function does not.
+.decl linked_task_in_library(func: symbol, id: symbol)
+.output linked_task_in_library
+
+linked_task_in_library(owner, id) :-
+  task_async_call(f, id),
+  enclosing_function(f, owner),
+  !closure_def(_, owner),
+  function_def(owner, mod, _, _, _),
+  !process_module(mod),
+  !task_factory(owner, _),
+  await_reach.reaches(owner).
+
+// ── async_nolink whose messages nothing handles ───────────────────────
+//
+// Task.Supervisor.async_nolink sends the caller two messages it did not
+// ask for by name: `{ref, result}` and `{:DOWN, ref, :process, pid,
+// reason}`. A GenServer that starts one from a callback and does not
+// collect it there must handle both in handle_info/2; a partial
+// handle_info is a FunctionClauseError on the first task that finishes
+// (archethic-node#1306, sentry-elixir#172, Engram#1552). GenServer's
+// default handle_info logs and ignores, so only a module with its own
+// partial handle_info/2 is at risk.
+.init nolink_reach = CallReach
+
+nolink_reach.seed(f, f) :- mailbox_writer(_, f, "task_nolink").
+
+.decl nolink_messages_unhandled(mod: symbol, start: symbol, handler: symbol, missing: symbol)
+.output nolink_messages_unhandled
+
+nolink_messages_unhandled(mod, s, h, "reply") :-
+  process_entry(mod, c),
+  nolink_reach.reaches(c, s),
+  partial_handle_info(mod, h),
+  !callback_ref_head(h, "handle_info").
+
+nolink_messages_unhandled(mod, s, h, "down") :-
+  process_entry(mod, c),
+  nolink_reach.reaches(c, s),
+  partial_handle_info(mod, h),
+  !callback_tag(h, "handle_info", ":DOWN").
+
+// ══ Monitors nobody waits for ═══════════════════════════════════════
+.init timed_wait = SameProcessReachSet
+
+timed_wait.seed(func) :- timed_receive(func).
+
+.init flush = SameProcessReachSet
+
+flush.seed(func) :- demonitor_call(_, func, "flush").
+
+.decl leaked_monitor(func: symbol, id: symbol)
+.output leaked_monitor
+
+leaked_monitor(func, id) :-
+  monitor_call(id, func, _),
+  timed_wait.reaches(func),
+  !flush.reaches(func).
+
+// Runs on the server's own stack: a callback, a statem state function,
+// or what those reach without leaving the module.
+.init server_reach = ForwardIntraModuleReach
+
+server_reach.root(mod, func) :-
+  otp_callback(func, mod, _, _).
+
+server_reach.root(mod, func) :-
+  statem_process(mod),
+  statem_state(mod, _, func),
+  function_def(func, mod, _, _, _).
+
+.decl server_side(mod: symbol, func: symbol)
+
+server_side(mod, func) :- server_reach.reaches(mod, func).
+
+.decl module_demonitors(mod: symbol)
+
+module_demonitors(mod) :-
+  demonitor_call(_, f, _),
+  function_def(f, mod, _, _, _).
+
+// Removing an entry from a map, set, keyword or ETS table (removal_api,
+// in effects.dl) — the bookkeeping paths a monitor's release belongs
+// on. Anywhere in the module: Phoenix PubSub's Local removed
+// subscriptions from a public table in its client API, and the monitor
+// taken in handle_call stayed live all the same.
+
+.decl removes_entries(mod: symbol)
+
+removes_entries(mod) :-
+  function_def(f, mod, _, _, _),
+  remote_call(_, f, m, op, _),
+  removal_api(m, op).
+
+.decl monitor_never_released(mod: symbol, site: symbol)
+.output monitor_never_released
+
+monitor_never_released(mod, site) :-
+  server_side(mod, f),
+  monitor_call(site, f, _),
+  !monitor_ref_dropped(site, f),
+  removes_entries(mod),
+  !module_demonitors(mod).
+
+
+// ── A monitor whose ref is thrown away ───────────────────────────────
+//
+// `Process.monitor(pid)` with the result discarded, in a server's
+// callbacks: the monitor can only ever end with the monitored process,
+// since nothing holds what a demonitor would need. Phoenix PubSub's
+// Local did this for every subscriber and removed subscriptions from a
+// table in another module; every unsubscribe left a monitor behind.
+// Reported separately from monitor_never_released because it needs no
+// removal path in evidence — the ref being gone is the whole story.
+.decl monitor_ref_discarded(mod: symbol, site: symbol)
+.output monitor_ref_discarded
+
+monitor_ref_discarded(mod, site) :-
+  server_side(mod, f),
+  monitor_call(site, f, _),
+  monitor_ref_dropped(site, f).
+
+// ══ A message the module sends itself and cannot handle ═════════════
+.decl client_kind(func: symbol, kind: symbol)
+
+client_kind(func, "call") :- remote_call(_, func, "GenServer", "call", _).
+client_kind(func, "cast") :- remote_call(_, func, "GenServer", "cast", 2).
+
+// The tag a call or cast sends, staged by stage 0 (`call_tag`).
+
+.decl kind_callback(kind: symbol, callback: symbol)
+
+kind_callback("call", "handle_call").
+kind_callback("cast", "handle_cast").
+
+.decl handler(mod: symbol, callback: symbol, func: symbol)
+
+handler(mod, "handle_call", func) :- handle_call_function(mod, func).
+handler(mod, "handle_cast", func) :- handle_cast_function(mod, func).
+
+// A function that calls or casts to a DIFFERENT module is a proxy, and its
+// tags are that module's business. Excluded wholesale: wrapping someone
+// else's server is a legitimate shape, and getting it wrong means reporting
+// correct code.
+.decl proxies(func: symbol)
+
+proxies(func) :-
+  sync_call(func, callee),
+  function_def(func, mod, _, _, _),
+  callee != mod,
+  callee != "dynamic".
+
+proxies(func) :-
+  async_cast(func, callee),
+  function_def(func, mod, _, _, _),
+  callee != mod,
+  callee != "dynamic".
+
+// A dynamic-target call whose tag some OTHER module's handler
+// discriminates on is that module's business (horde's ProcessesSupervisor
+// calling its DynamicSupervisorImpl through a pid), not a self-send.
+proxies(func) :-
+  call_tag(_, func, kind, tag),
+  tag_handler(other, kind, tag),
+  function_def(func, mod, _, _, _),
+  other != mod.
+
+.decl unhandled_self_message(mod: symbol, sender: symbol, kind: symbol, tag: symbol)
+.output unhandled_self_message
+
+unhandled_self_message(mod, sender, kind, tag) :-
+  call_tag(_, sender, kind, tag),
+  function_def(sender, mod, _, _, _),
+  kind_callback(kind, callback),
+  handler(mod, callback, h),
+  !proxies(sender),
+  !callback_tag(h, callback, tag),
+  !callback_total(h, callback).
+
+// ══ A reply that can never be sent ══════════════════════════════════
+.decl answers_calls(mod: symbol, func: symbol)
+
+answers_calls(mod, func) :-
+  function_def(func, mod, "handle_call", 3, _),
+  behaves_as(mod, behaviour),
+  process_behaviour(behaviour, "gen_server_like").
+
+// ── Deferring ────────────────────────────────────────────────────
+
+.decl defers_reply(mod: symbol, func: symbol, id: symbol)
+
+defers_reply(mod, func, id) :-
+  answers_calls(mod, func),
+  callback_return(id, func, "handle_call", ":noreply").
+
+// ── The promise cannot be kept ───────────────────────────────────
+//
+// `callback_drops_from` is per return site: some execution reaches this
+// {:noreply, _} having never read `from`. That execution cannot reply, no
+// matter what the rest of the program does.
+
+.decl never_replies(mod: symbol, func: symbol, id: symbol)
+.output never_replies
+
+never_replies(mod, func, id) :-
+  defers_reply(mod, func, id),
+  callback_drops_from(id, func).
+
+// ── Not attempted: the reply that is stored and never sent ───────
+//
+// A module that keeps `from` and calls GenServer.reply/2 nowhere hangs its
+// callers just as surely. It is not reported here, because stating it
+// precisely needs escape analysis this does not have: `from` leaves the
+// callback through a send, a spawned closure, an ETS write, or any call
+// that happens to take it as an argument, and whoever receives it can
+// reply. Suppressing on the routes one can enumerate leaves the rest as
+// false positives.
+//
+// The heuristic version was written, measured against roughly six thousand
+// modules, found nothing, and was removed. `deferred_reply` remains
+// unconsumed and is the fact a real version would build on.
+
+// ══ gen_statem events without a clause ══════════════════════════════
+
+// ── A state without an :info catch-all, beside states that have one ──
+//
+// In state_functions mode every state is its own callback, and a stray
+// message is handled per state. Redix's Cluster.Manager gave
+// disconnected/3 and cooling_down/3 an `(:info, _msg, _data)` clause and
+// ready/3 none; an unexpected message in :ready was a FunctionClauseError
+// that took the whole :one_for_all cluster tree with it. The sibling
+// asymmetry is the precision gate: a module that handles stray messages
+// in some states and not others has forgotten, not decided.
+.decl state_missing_info_catchall(mod: symbol, state: symbol, site: symbol)
+.output state_missing_info_catchall
+
+// statem_state carries one row per site a state is seen at — its own
+// function and every transition targeting it — so the function_def join
+// picks the definition.
+state_missing_info_catchall(mod, state, func) :-
+  statem_module(mod, "state_functions"),
+  statem_state(mod, state, func),
+  function_def(func, mod, _, _, _),
+  !statem_info_catchall(mod, func),
+  !statem_event_catchall(mod, func),
+  statem_state(mod, other, g),
+  other != state,
+  statem_info_catchall(mod, g).
+
+// ── A timeout armed that no clause handles ──────────────────────────
+//
+// {:timeout, ms, content} arms an event of type :timeout; {:state_timeout,
+// ms, content} one of type :state_timeout. Postgrex's SimpleConnection
+// armed the former and matched `handle_event(:info, :timeout, ...)` —
+// the idle ping never ran and the event fell through to the generic
+// :info clause. The module-level question is enough: some callback has
+// a clause for the type, or accepts any type.
+.decl statem_handles_event(mod: symbol, event_type: symbol)
+
+statem_handles_event(mod, type) :- statem_event_clause(mod, _, type).
+statem_handles_event(mod, "timeout") :- statem_event_catchall(mod, _).
+statem_handles_event(mod, "state_timeout") :- statem_event_catchall(mod, _).
+statem_handles_event(mod, "{timeout}") :- statem_event_catchall(mod, _).
+
+.decl statem_timeout_unhandled(mod: symbol, kind: symbol, state: symbol)
+.output statem_timeout_unhandled
+
+statem_timeout_unhandled(mod, "event_timeout", state) :-
+  statem_timeout(mod, state, "event_timeout", _),
+  !statem_handles_event(mod, "timeout").
+
+// A generic timeout {{:timeout, name}, ms, content} arrives as the
+// event type {:timeout, name}: a tagged tuple, not the :timeout atom.
+statem_timeout_unhandled(mod, "generic_timeout", state) :-
+  statem_timeout(mod, state, "generic", _),
+  !statem_handles_event(mod, "{timeout}").
+
+statem_timeout_unhandled(mod, "state_timeout", state) :-
+  statem_timeout(mod, state, "state_timeout", _),
+  !statem_handles_event(mod, "state_timeout").
+
+// ── A call that is never answered ────────────────────────────────────
+//
+// The extractor walks every {:call, from} clause to its returns and
+// reports the ones that reply nothing, postpone nothing and keep `from`
+// nowhere. The caller of :gen_statem.call/2 waits :infinity by default
+// (sneako/finch#213: a cancel while disconnected blocked for days).
+.decl call_never_replied(mod: symbol, func: symbol, site: symbol)
+.output call_never_replied
+
+call_never_replied(mod, func, site) :- statem_call_unreplied(mod, func, site).

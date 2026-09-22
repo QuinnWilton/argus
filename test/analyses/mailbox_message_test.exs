@@ -1,4 +1,4 @@
-defmodule Argus.Analyses.MessageContractTest do
+defmodule Argus.Analyses.MailboxMessageTest do
   use ExUnit.Case
 
   alias Argus.Souffle
@@ -11,7 +11,7 @@ defmodule Argus.Analyses.MessageContractTest do
   end
 
   defp mods do
-    assert {:ok, r} = Argus.analyze(@all, :message_contract)
+    assert {:ok, r} = Argus.analyze(@all, :mailbox)
     r |> Map.get("unhandled_self_message", []) |> Enum.map(&hd/1)
   end
 

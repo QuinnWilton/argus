@@ -55,7 +55,7 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
           H.TimerForOther,
           H.TwoTimers
         ],
-        :error_handling
+        :mailbox
       )
 
     reported =
@@ -76,7 +76,7 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
     skip_without_souffle()
 
     {:ok, r} =
-      Argus.analyze([H.NolinkPartialInfo, H.NolinkBothClauses, H.NolinkCollected], :unsafe_task)
+      Argus.analyze([H.NolinkPartialInfo, H.NolinkBothClauses, H.NolinkCollected], :mailbox)
 
     assert rows(r, "nolink_messages_unhandled") ==
              ["Argus.Test.Fixtures.Hypothesized.NolinkPartialInfo"]

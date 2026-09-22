@@ -1,4 +1,4 @@
-defmodule Argus.Analyses.MonitorLeakTest do
+defmodule Argus.Analyses.MailboxMonitorTest do
   use ExUnit.Case
 
   alias Argus.Souffle
@@ -19,7 +19,7 @@ defmodule Argus.Analyses.MonitorLeakTest do
   end
 
   defp funcs do
-    assert {:ok, r} = Argus.analyze(@all, :monitor_leak)
+    assert {:ok, r} = Argus.analyze(@all, :mailbox)
     r |> Map.get("leaked_monitor", []) |> Enum.map(&hd/1) |> Enum.sort()
   end
 
@@ -67,7 +67,7 @@ defmodule Argus.Analyses.MonitorLeakTest do
 
   describe "over a server's lifetime" do
     defp servers do
-      assert {:ok, r} = Argus.analyze(@servers, :monitor_leak)
+      assert {:ok, r} = Argus.analyze(@servers, :mailbox)
       r
     end
 

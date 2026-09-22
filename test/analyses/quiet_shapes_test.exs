@@ -35,12 +35,11 @@ defmodule Argus.Analyses.QuietShapesTest do
 
   @expect_quiet %{
     shutdown: ~w(terminate_calls_sibling foreign_dynamic_children cleanup_never_runs),
-    gen_statem: ~w(call_never_replied statem_timeout_unhandled),
-    unsafe_task: ~w(linked_task_in_library yield_on_linked_task),
+    mailbox:
+      ~w(call_never_replied statem_timeout_unhandled linked_task_in_library yield_on_linked_task handle_info_partial),
     structure: ~w(consumer_supervisor_permanent_child),
     coupling: ~w(dual_restart_authority),
     blocking: ~w(partial_noproc_catch),
-    error_handling: ~w(handle_info_partial),
     failure: ~w(erpc_transport_unhandled),
     ets: ~w(ets_read_outside_owner),
     startup: ~w(blocking_recv_in_init post_start_initialization)

@@ -1,4 +1,4 @@
-defmodule Argus.Analyses.ReplyContractTest do
+defmodule Argus.Analyses.MailboxReplyTest do
   use ExUnit.Case
 
   alias Argus.Souffle
@@ -21,7 +21,7 @@ defmodule Argus.Analyses.ReplyContractTest do
   end
 
   defp results do
-    assert {:ok, r} = Argus.analyze(@all, :reply_contract)
+    assert {:ok, r} = Argus.analyze(@all, :mailbox)
     r
   end
 

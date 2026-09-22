@@ -1,4 +1,4 @@
-defmodule Argus.Analyses.ErrorHandlingTest do
+defmodule Argus.Analyses.MailboxInfoTest do
   use ExUnit.Case
 
   alias Argus.Souffle
@@ -8,7 +8,7 @@ defmodule Argus.Analyses.ErrorHandlingTest do
   end
 
   defp analyze(modules) do
-    assert {:ok, results} = Argus.analyze(modules, :error_handling)
+    assert {:ok, results} = Argus.analyze(modules, :mailbox)
     results
   end
 

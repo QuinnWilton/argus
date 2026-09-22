@@ -9,19 +9,15 @@ defmodule Argus.AnalysisTest do
     :coupling,
     :coverage,
     :effects,
-    :error_handling,
     :ets,
     :exposure,
     :failure,
-    :gen_statem,
-    :message_contract,
-    :monitor_leak,
-    :reply_contract,
+    :mailbox,
     :shutdown,
     :startup,
+    :state_machine,
     :structure,
-    :unsafe_input,
-    :unsafe_task
+    :unsafe_input
   ]
 
   defp skip_without_souffle do

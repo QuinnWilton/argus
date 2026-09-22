@@ -217,6 +217,39 @@ defmodule Argus.Analysis do
     process_registry: [
       %{analysis: :structure, relation: :duplicate_process_name, where: []},
       %{analysis: :failure, relation: :whereis_race, where: []}
+    ],
+    error_handling: [
+      %{analysis: :blocking, relation: :partial_noproc_catch, where: []},
+      %{analysis: :startup, relation: :ignored_start_result, where: []},
+      %{analysis: :shutdown, relation: :trap_exit_without_handler, where: []},
+      %{analysis: :shutdown, relation: :trap_exit_without_exit_clause, where: []},
+      %{analysis: :failure, relation: :swallowed_error, where: []},
+      %{analysis: :failure, relation: :exit_in_callback, where: []},
+      %{analysis: :mailbox, relation: :handle_info_without_catchall, where: []},
+      %{analysis: :mailbox, relation: :handle_info_partial, where: []},
+      %{analysis: :mailbox, relation: :timer_cancel_without_flush, where: []}
+    ],
+    unsafe_task: [
+      %{analysis: :failure, relation: :unchecked_start_child, where: []},
+      %{analysis: :mailbox, relation: :nolink_messages_unhandled, where: []},
+      %{analysis: :mailbox, relation: :leaked_async_task, where: []},
+      %{analysis: :mailbox, relation: :yield_on_linked_task, where: []},
+      %{analysis: :mailbox, relation: :linked_task_in_library, where: []}
+    ],
+    monitor_leak: [
+      %{analysis: :shutdown, relation: :deliberate_termination_while_monitored, where: []},
+      %{analysis: :mailbox, relation: :leaked_monitor, where: []},
+      %{analysis: :mailbox, relation: :monitor_never_released, where: []},
+      %{analysis: :mailbox, relation: :monitor_ref_discarded, where: []}
+    ],
+    message_contract: [%{analysis: :mailbox, relation: :unhandled_self_message, where: []}],
+    reply_contract: [%{analysis: :mailbox, relation: :never_replies, where: []}],
+    gen_statem: [
+      %{analysis: :mailbox, relation: :state_missing_info_catchall, where: []},
+      %{analysis: :mailbox, relation: :statem_timeout_unhandled, where: []},
+      %{analysis: :mailbox, relation: :call_never_replied, where: []},
+      %{analysis: :state_machine, relation: :unreachable_state, where: []},
+      %{analysis: :state_machine, relation: :terminal_without_stop, where: []}
     ]
   }
 
@@ -268,7 +301,7 @@ defmodule Argus.Analysis do
       :shutdown,
       :structure,
       :failure,
-      :unsafe_task
+      :mailbox
     ]
   end
 
