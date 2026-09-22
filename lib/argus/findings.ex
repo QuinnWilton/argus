@@ -57,6 +57,14 @@ defmodule Argus.Findings do
           instr: InstrId.t() | nil
         }
 
+  @typedoc """
+  Where a finding's evidence came from: `:structural` when every premise
+  is a fact of the bytecode, `:heuristic` when a prior (`Argus.Priors`)
+  supplied one. A heuristic finding carries the prior's probability in
+  thousandths as `confidence`.
+  """
+  @type provenance :: :structural | :heuristic
+
   @typedoc "What an analysis module's `finding/2` callback returns."
   @type attrs :: %{
           severity: severity(),
@@ -67,7 +75,9 @@ defmodule Argus.Findings do
           instr: InstrId.t() | nil,
           at_label: String.t() | nil,
           help: [String.t()],
-          related: [related()]
+          related: [related()],
+          provenance: provenance(),
+          confidence: 0..1000 | nil
         }
 
   @typedoc """
@@ -87,7 +97,9 @@ defmodule Argus.Findings do
           instr: InstrId.t() | nil,
           at_label: String.t() | nil,
           help: [String.t()],
-          related: [related()]
+          related: [related()],
+          provenance: provenance(),
+          confidence: 0..1000 | nil
         }
 
   @typedoc "Per-analysis run record for analyses that completed."
@@ -596,6 +608,9 @@ defmodule Argus.Findings do
     consumers as help trailers. Say what to change and toward what, in
     the row's own terms (default: `[]`).
   - `:related` — list of `related/2` entries (default: `[]`).
+  - `:provenance` — `:structural` (default) or `:heuristic`, see `t:provenance/0`.
+  - `:confidence` — a prior's probability in thousandths, for a heuristic
+    finding (default: `nil`).
   """
   @spec new(severity(), String.t(), String.t(), keyword()) :: attrs()
   def new(severity, title, detail, opts \\ [])
@@ -603,6 +618,8 @@ defmodule Argus.Findings do
     anchor = Keyword.get(opts, :at, empty_anchor())
     at_label = Keyword.get(opts, :at_label)
     help = Keyword.get(opts, :help, [])
+    provenance = Keyword.get(opts, :provenance, :structural)
+    confidence = Keyword.get(opts, :confidence)
 
     unless is_nil(at_label) or is_binary(at_label) do
       raise ArgumentError, ":at_label must be a string, got: #{inspect(at_label)}"
@@ -610,6 +627,16 @@ defmodule Argus.Findings do
 
     unless is_list(help) and Enum.all?(help, &is_binary/1) do
       raise ArgumentError, ":help must be a list of strings, got: #{inspect(help)}"
+    end
+
+    unless provenance in [:structural, :heuristic] do
+      raise ArgumentError,
+            ":provenance must be :structural or :heuristic, got: #{inspect(provenance)}"
+    end
+
+    unless is_nil(confidence) or (is_integer(confidence) and confidence in 0..1000) do
+      raise ArgumentError,
+            ":confidence must be nil or an integer in 0..1000, got: #{inspect(confidence)}"
     end
 
     %{
@@ -621,7 +648,9 @@ defmodule Argus.Findings do
       instr: anchor.instr,
       at_label: at_label,
       help: help,
-      related: Keyword.get(opts, :related, [])
+      related: Keyword.get(opts, :related, []),
+      provenance: provenance,
+      confidence: confidence
     }
   end
 

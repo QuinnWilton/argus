@@ -21,7 +21,9 @@ defmodule Argus.FindingsTest do
     :instr,
     :at_label,
     :help,
-    :related
+    :related,
+    :provenance,
+    :confidence
   ]
   @severities [:error, :warning, :info]
 
