@@ -18,10 +18,7 @@
 // A function of caller_mod that waits on target_mod's process.
 .decl sync_caller_witness(caller_mod: symbol, target_mod: symbol, witness: symbol)
 
-sync_caller_witness(caller_mod, target_mod, f) :-
-  function_def(f, caller_mod, _, _, _),
-  reaches_sync_dep(f, target_mod),
-  caller_mod != target_mod.
+sync_caller_witness(caller_mod, target_mod, f) :- module_sync_dep(caller_mod, target_mod, f).
 
 .decl sync_caller(caller_mod: symbol, target_mod: symbol)
 

@@ -24,9 +24,7 @@
 // own stack or anywhere it can reach.
 .decl raw_sync_call_in_init(mod: symbol, callee: symbol)
 
-raw_sync_call_in_init(mod, callee) :-
-  init_function(mod, func),
-  reaches_sync_dep(func, callee).
+raw_sync_call_in_init(mod, callee) :- init_dep(mod, callee, "call", _).
 
 // ── Supervision-aware filtering ────────────────────────────────────────
 
@@ -143,48 +141,33 @@ init_deadlock_risk(sup, child, dep, cpos, dpos) :-
 
 sup_call_in_init(mod, api, op, target, site) :-
   init_function(mod, func),
-  sup_call(site, func, api, op, target),
-  api != "GenServer".
+  sup_management_call(site, func, api, op, target).
 
 // Backwards from the supervisor calls, which are few.
 .init sup_reach = CallReach
 
-sup_reach.seed(g, site) :-
-  sup_call(site, g, api, _, _),
-  api != "GenServer".
+sup_reach.seed(g, site) :- sup_management_call(site, g, _, _, _).
 
 sup_call_in_init(mod, api, op, target, site) :-
   init_function(mod, func),
   sup_reach.reaches(func, site),
-  sup_call(site, _, api, op, target),
-  api != "GenServer".
+  sup_management_call(site, _, api, op, target).
 
-// Only operations with no bound of their own count. terminate_child,
-// stop and their relatives wait for a whole shutdown, and a
-// GenServer.call with :infinity waits for as long as the callee takes;
-// start_child is bounded by the child's init, and a call with a timeout
-// gives up. db_connection's fixed Watcher still start_childs from its
+// Only operations with no bound of their own count (unbounded_sup_op):
+// a GenServer.call with :infinity waits for as long as the callee
+// takes. db_connection's fixed Watcher still start_childs from its
 // handler — that is the design, not the bug.
-.decl unbounded_sup_op(op: symbol)
-
-unbounded_sup_op("terminate_child").
-unbounded_sup_op("restart_child").
-unbounded_sup_op("delete_child").
-unbounded_sup_op("stop").
-
 .decl handler_blocks(mod: symbol, handler: symbol, op_site: symbol)
 
 handler_blocks(mod, h, site) :-
   handler_function(mod, h),
-  sup_call(site, h, api, op, _),
-  api != "GenServer",
+  sup_management_call(site, h, _, op, _),
   unbounded_sup_op(op).
 
 handler_blocks(mod, h, site) :-
   handler_function(mod, h),
   sup_reach.reaches(h, site),
-  sup_call(site, _, api, op, _),
-  api != "GenServer",
+  sup_management_call(site, _, _, op, _),
   unbounded_sup_op(op).
 
 handler_blocks(mod, h, site) :-
@@ -266,21 +249,13 @@ connect_api(api) :- impure_call(_, _, api, "network", _), match(":httpc.request/
 
 connect_reach.seed(f, api) :- impure_call(_, f, api, "network", _), connect_api(api).
 
-.decl has_reconnect_path(mod: symbol)
-
-has_reconnect_path(mod) :- mailbox_writer(_, f, "timer"), function_def(f, mod, _, _, _).
-has_reconnect_path(mod) :- mailbox_writer(_, f, "timer_bare"), function_def(f, mod, _, _, _).
-has_reconnect_path(mod) :- mailbox_writer(_, f, "self"), function_def(f, mod, _, _, _).
-has_reconnect_path(mod) :- init_continues_to(mod, _).
-has_reconnect_path(mod) :- handle_continue_clause(mod, _, _).
-// A gen_statem retries through its own timeouts (postgrex's connections
-// arm {{:timeout, :backoff}, ms, nil}).
-has_reconnect_path(mod) :- statem_timeout(mod, _, _, _).
-
+// A retry needs a way back in: a timer, a self-message, a
+// handle_continue, or a gen_statem's own timeout (postgrex's connections
+// arm {{:timeout, :backoff}, ms, nil}) — deferral_path, in startup.dl.
 .decl connect_in_init_without_backoff(mod: symbol, api: symbol)
 .output connect_in_init_without_backoff
 
 connect_in_init_without_backoff(mod, api) :-
   init_function(mod, f),
   connect_reach.reaches(f, api),
-  !has_reconnect_path(mod).
+  !deferral_path(mod, _).

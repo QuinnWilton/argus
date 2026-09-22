@@ -353,12 +353,17 @@ reaches_sync_caller_in(f, m) :-
 // dynamic dispatch has no resolved target, but the module as a whole
 // manages process state). `witness` is a function in from_mod the
 // dependency flows through; finding builders dedupe on the module pair.
-.decl stateful_module_dep(from_mod: symbol, to_mod: symbol, witness: symbol)
+// A function of from_mod waits on to_mod's process, somewhere below it.
+.decl module_sync_dep(from_mod: symbol, to_mod: symbol, witness: symbol)
 
-stateful_module_dep(from_mod, to_mod, f) :-
+module_sync_dep(from_mod, to_mod, f) :-
   function_def(f, from_mod, _, _, _),
   reaches_sync_dep(f, to_mod),
   from_mod != to_mod.
+
+.decl stateful_module_dep(from_mod: symbol, to_mod: symbol, witness: symbol)
+
+stateful_module_dep(from_mod, to_mod, f) :- module_sync_dep(from_mod, to_mod, f).
 
 stateful_module_dep(from_mod, to_mod, f) :-
   function_def(f, from_mod, _, _, _),

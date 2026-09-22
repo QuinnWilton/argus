@@ -75,23 +75,15 @@ request_reaches(entry, kind, callee, "transitive") :-
 
 // binary_to_term without :safe, reachable from request-shaped input. The
 // canonical BEAM remote-code-execution primitive: the payload can
-// materialize funs, and it interns atoms without bound.
-// `[:safe]` does not clear a deserialization reachable from a request.
-// Paginator CVE-2020-15150 was RCE through `[:safe]` on a client-supplied
-// pagination cursor; only Plug.Crypto's term-walking decoders, recorded as
-// "validated", are safe against a fun referencing a loaded module.
-.decl reaches_unsafely(safety: symbol)
-
-reaches_unsafely("unsafe").
-reaches_unsafely("atoms_only").
-reaches_unsafely("dynamic").
+// materialize funs, and it interns atoms without bound. `[:safe]` does
+// not clear it (unsafe_safety_class, in sinks.dl).
 
 .decl remote_unsafe_deserialization(id: symbol, func: symbol, api: symbol, entry: symbol, kind: symbol, proximity: symbol)
 .output remote_unsafe_deserialization
 
 remote_unsafe_deserialization(id, func, api, entry, kind, proximity) :-
   unsafe_deserialization(id, func, api, safety),
-  reaches_unsafely(safety),
+  unsafe_safety_class(safety),
   request_reaches(entry, kind, func, proximity).
 
 // Dynamic code evaluation reachable from request-shaped input.

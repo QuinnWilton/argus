@@ -19,13 +19,6 @@
 // `witness` is the depending function in from_mod — anchor-grade evidence.
 // Module A waits on module B somewhere: a function of A reaches a sync
 // dependency on B.
-.decl module_sync_dep(from_mod: symbol, to_mod: symbol, witness: symbol)
-
-module_sync_dep(from_mod, to_mod, f) :-
-  function_def(f, from_mod, _, _, _),
-  reaches_sync_dep(f, to_mod),
-  from_mod != to_mod.
-
 .decl call_cycle(mod_a: symbol, mod_b: symbol, witness_a: symbol, witness_b: symbol)
 .output call_cycle
 

@@ -87,6 +87,7 @@
 .include "receive.dl"
 .include "exceptions.dl"
 .include "effects.dl"
+.include "sinks.dl"
 
 .decl closure_count(func: symbol, n: number)
 

@@ -1,0 +1,17 @@
+// Deserialization safety classes that still count as unsafe.
+//
+// OTP's docs for binary_to_term/2 say `safe` prevents new atoms and new
+// external function references, then warn that it "does not guarantee
+// that the data is safe for your application": a fun referencing an
+// already-loaded module passes. Paginator CVE-2020-15150 was RCE through
+// `[:safe]`, a client-supplied cursor decoded to a fun that Enumerable
+// then invoked. `[:safe]` downgrades; it does not clear. Only
+// Plug.Crypto's term-walking decoders, recorded as "validated", clear it.
+//
+// Requires imports.dl.
+
+.decl unsafe_safety_class(safety: symbol)
+
+unsafe_safety_class("unsafe").
+unsafe_safety_class("atoms_only").
+unsafe_safety_class("dynamic").

@@ -46,13 +46,7 @@ suspect_nonpermanent_dependency(sup, perm, sibling, restart, sup_site, witness) 
 .decl init_process_dep(child: symbol, dep: symbol, witness: symbol)
 
 init_process_dep(child, dep, func) :-
-  init_function(child, func),
-  reaches_sync_dep(func, dep),
-  child != dep.
-
-init_process_dep(child, dep, func) :-
-  init_function(child, func),
-  reaches_async_dep(func, dep),
+  init_dep(child, dep, _, func),
   child != dep.
 
 .decl wrong_start_order(sup: symbol, child: symbol, dep: symbol, child_pos: number, dep_pos: number, sup_site: symbol, witness: symbol)
@@ -139,12 +133,6 @@ permanent_child_stops_normally(sup, child, reason, site, sup_site) :-
 // a Task.Supervisor.async_nolink into an unresolvable pid, with exactly
 // one Task.Supervisor started earlier under the same rest_for_one, is
 // not much of an inference.
-.decl child_creating_op(op: symbol)
-
-child_creating_op("start_child").
-child_creating_op("async").
-child_creating_op("async_nolink").
-
 .decl earlier_sibling_of_kind(sup: symbol, pos: number, api: symbol, owner_pos: number)
 
 earlier_sibling_of_kind(sup, pos, api, owner_pos) :-
@@ -176,8 +164,7 @@ rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "named") :-
   hpos < opos,
   supervisor_child_name(sup, hpos, name),
   function_def(f, owner, _, _, _),
-  sup_call(site, f, api, op, name),
-  api != "GenServer",
+  sup_management_call(site, f, api, op, name),
   child_creating_op(op).
 
 rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "inferred") :-
@@ -185,8 +172,7 @@ rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "inferred")
   supervisor_child(sup, opos, owner_branch, _, _),
   child_subtree(sup, owner_branch, owner),
   function_def(f, owner, _, _, _),
-  sup_call(site, f, api, op, "dynamic"),
-  api != "GenServer",
+  sup_management_call(site, f, api, op, "dynamic"),
   child_creating_op(op),
   sole_earlier_sibling_of_kind(sup, hpos, api, opos),
   supervisor_child(sup, hpos, holder, _, _).

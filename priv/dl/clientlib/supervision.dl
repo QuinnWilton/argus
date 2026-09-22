@@ -48,3 +48,48 @@ starts_before(sup, earlier, later, epos, lpos) :-
   child_subtree(sup, later_branch, later),
   epos < lpos,
   earlier_branch != later_branch.
+
+// ── Siblings ─────────────────────────────────────────────────────────
+//
+// Two direct children of one supervisor: the modules whose lifetimes it
+// sequences together.
+.decl sibling(sup: symbol, a: symbol, b: symbol)
+
+sibling(sup, a, b) :-
+  supervisor_child(sup, _, a, _, _),
+  supervisor_child(sup, _, b, _, _),
+  a != b.
+
+// ── Supervisor management calls ──────────────────────────────────────
+//
+// sup_call records GenServer.stop too, under api "GenServer"; the rules
+// about a supervisor's own API (start_child, terminate_child, ...)
+// read this projection.
+.decl sup_management_call(id: symbol, func: symbol, api: symbol, op: symbol, target: symbol)
+
+sup_management_call(id, func, api, op, target) :-
+  sup_call(id, func, api, op, target),
+  api != "GenServer".
+
+// Operations that create a child in the target supervisor.
+.decl child_creating_op(op: symbol)
+
+child_creating_op("start_child").
+child_creating_op("async").
+child_creating_op("async_nolink").
+
+// Operations with no bound of their own: terminate_child, stop and
+// their relatives wait for a whole shutdown. start_child is bounded by
+// the child's init, and a call with a timeout gives up.
+.decl unbounded_sup_op(op: symbol)
+
+unbounded_sup_op("terminate_child").
+unbounded_sup_op("restart_child").
+unbounded_sup_op("delete_child").
+unbounded_sup_op("stop").
+
+// Operations that stop children.
+.decl stopping_sup_op(op: symbol)
+
+stopping_sup_op("terminate_child").
+stopping_sup_op("stop").

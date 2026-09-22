@@ -30,6 +30,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   by the analyses that read `statem_event_clause`). `peer_call` moved to
   `calls.dl`. Findings unchanged. The recursion guard now covers
   `closure_def` too.
+- The supervision, startup and entry vocabulary: `supervision.dl` gains
+  `sibling`, `sup_management_call` (every `sup_call` but GenServer.stop,
+  replacing eight `api != "GenServer"` guards) and the op tables
+  `child_creating_op`, `unbounded_sup_op`, `stopping_sup_op`;
+  `startup.dl` names `deferral_path(mod, kind)` (timer, self, continue,
+  statem_timeout); `sinks.dl` the unsafe deserialization classes that
+  atom_safety and request_surface each listed; `calls.dl`
+  `module_sync_dep`; `entries.dl` `init_dep`, `handler_dep` and
+  `continue_dep`, one relation per entry so a consumer reads only its
+  own entry's facts. message_contract reads `call_tag`,
+  `handle_call_function` and `handle_cast_function` instead of its own
+  copies. Findings unchanged.
 
 ## 0.15.0 — 2026-09-16
 

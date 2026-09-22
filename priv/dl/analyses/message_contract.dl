@@ -33,9 +33,6 @@ client_kind(func, "call") :- remote_call(_, func, "GenServer", "call", _).
 client_kind(func, "cast") :- remote_call(_, func, "GenServer", "cast", 2).
 
 // The tag a call or cast sends, staged by stage 0 (`call_tag`).
-.decl sends_tag(func: symbol, kind: symbol, tag: symbol)
-
-sends_tag(func, kind, tag) :- call_tag(_, func, kind, tag).
 
 .decl kind_callback(kind: symbol, callback: symbol)
 
@@ -44,13 +41,8 @@ kind_callback("cast", "handle_cast").
 
 .decl handler(mod: symbol, callback: symbol, func: symbol)
 
-handler(mod, "handle_call", func) :-
-  function_def(func, mod, "handle_call", 3, _),
-  behaves_as(mod, "GenServer").
-
-handler(mod, "handle_cast", func) :-
-  function_def(func, mod, "handle_cast", 2, _),
-  behaves_as(mod, "GenServer").
+handler(mod, "handle_call", func) :- handle_call_function(mod, func).
+handler(mod, "handle_cast", func) :- handle_cast_function(mod, func).
 
 // A function that calls or casts to a DIFFERENT module is a proxy, and its
 // tags are that module's business. Excluded wholesale: wrapping someone
@@ -74,7 +66,7 @@ proxies(func) :-
 // discriminates on is that module's business (horde's ProcessesSupervisor
 // calling its DynamicSupervisorImpl through a pid), not a self-send.
 proxies(func) :-
-  sends_tag(func, kind, tag),
+  call_tag(_, func, kind, tag),
   tag_handler(other, kind, tag),
   function_def(func, mod, _, _, _),
   other != mod.
@@ -83,7 +75,7 @@ proxies(func) :-
 .output unhandled_self_message
 
 unhandled_self_message(mod, sender, kind, tag) :-
-  sends_tag(sender, kind, tag),
+  call_tag(_, sender, kind, tag),
   function_def(sender, mod, _, _, _),
   kind_callback(kind, callback),
   handler(mod, callback, h),

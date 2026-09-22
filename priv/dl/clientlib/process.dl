@@ -39,3 +39,4 @@ mailbox_handler(mod) :-
 partial_handle_info(mod, func) :-
   function_def(func, mod, "handle_info", 2, _),
   !callback_total(func, "handle_info").
+

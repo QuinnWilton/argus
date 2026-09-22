@@ -27,10 +27,7 @@
 // A handle_call/3 that waits on another module's process.
 .decl callback_sync_dep(from_mod: symbol, to_mod: symbol)
 
-callback_sync_dep(from_mod, to_mod) :-
-  handle_call_function(from_mod, func),
-  reaches_sync_dep(func, to_mod),
-  from_mod != to_mod.
+callback_sync_dep(from_mod, to_mod) :- handler_dep(from_mod, "handle_call", to_mod, "call", _).
 
 // NOTE deliberately no `stateful_module_dep` clause here. It was
 // `handle_call_function(from_mod, _), stateful_module_dep(from_mod,
@@ -70,10 +67,7 @@ timeout_chain(from, to, d + 1) :-
 // one: an inferred hop is the first thing to doubt in a long chain.
 .decl callback_tag_dep(from_mod: symbol, to_mod: symbol)
 
-callback_tag_dep(from_mod, to_mod) :-
-  handle_call_function(from_mod, func),
-  reaches_tag_dep(func, to_mod),
-  from_mod != to_mod.
+callback_tag_dep(from_mod, to_mod) :- handler_dep(from_mod, "handle_call", to_mod, "tag", _).
 
 .decl timeout_chain_inferred(from: symbol, to: symbol)
 
@@ -105,10 +99,7 @@ timeout_chain_risk(from, to, depth, "static") :-
 .decl blocking_cast_handler(mod: symbol, target: symbol)
 .output blocking_cast_handler
 
-blocking_cast_handler(mod, target) :-
-  handle_cast_function(mod, func),
-  reaches_sync_dep(func, target),
-  mod != target.
+blocking_cast_handler(mod, target) :- handler_dep(mod, "handle_cast", target, "call", _).
 
 // ── Timeout-aware sync dependency ──────────────────────────────────
 

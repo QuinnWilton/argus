@@ -158,9 +158,7 @@ terminate_calls_sibling(mod, sibling, func, sup) :-
   terminate_callback(func, mod, _),
   sync_dep(func, sibling),
   !guarded_exit_call(func),
-  supervisor_child(sup, _, mod, _, _),
-  supervisor_child(sup, _, sibling, _, _),
-  sibling != mod.
+  sibling(sup, mod, sibling).
 
 terminate_calls_sibling(mod, sibling, via, sup) :-
   terminate_callback(func, mod, _),
@@ -168,9 +166,7 @@ terminate_calls_sibling(mod, sibling, via, sup) :-
   sync_dep(via, sibling),
   !guarded_exit_call(func),
   !guarded_exit_call(via),
-  supervisor_child(sup, _, mod, _, _),
-  supervisor_child(sup, _, sibling, _, _),
-  sibling != mod.
+  sibling(sup, mod, sibling).
 
 // ── Children started into another tree's supervisor ──────────────────
 //
@@ -188,9 +184,8 @@ terminate_calls_sibling(mod, sibling, via, sup) :-
 terminate_stops_children(mod) :-
   terminate_callback(func, mod, _),
   (via = func ; terminate_reach.reaches(func, via, _)),
-  sup_call(_, via, api, op, _),
-  api != "GenServer",
-  (op = "terminate_child" ; op = "stop").
+  sup_management_call(_, via, _, op, _),
+  stopping_sup_op(op).
 
 // A tree's members by module, and by the registered name a child spec
 // gave them (`{DynamicSupervisor, name: Pool}` is a child named Pool).
@@ -254,15 +249,11 @@ callback_stops_sibling(mod, sib, via, sup) :-
   handler_function(mod, h),
   stop_reach.reaches(h, via),
   stops_process(via, sib),
-  supervisor_child(sup, _, mod, _, _),
-  supervisor_child(sup, _, sib, _, _),
-  sib != mod.
+  sibling(sup, mod, sib).
 
 // The stop is the sibling's own API (`Sibling.stop/1`), target unknown.
 callback_stops_sibling(mod, sib, via, sup) :-
   handler_function(mod, h),
   stop_reach.reaches(h, via),
   function_def(via, sib, _, _, _),
-  supervisor_child(sup, _, mod, _, _),
-  supervisor_child(sup, _, sib, _, _),
-  sib != mod.
+  sibling(sup, mod, sib).

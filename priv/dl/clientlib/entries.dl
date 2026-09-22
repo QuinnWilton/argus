@@ -1,0 +1,46 @@
+// What each process entry waits on.
+//
+// init/1, the request handlers and handle_continue each wait on other
+// processes; the rules about startup order, call chains and continue
+// deadlocks ask about one entry at a time. One relation per entry
+// rather than one with a phase column: Souffle prunes a relation no
+// output reads, but not a rule, so a shared relation would make every
+// analysis read every entry's facts.
+//
+// Requires otp.dl (callbacks.dl and calls.dl in particular).
+
+// init/1 reaches a synchronous ("call") or one-way ("cast") dependency
+// on another process. No `mod != to` filter: an init that calls its
+// own module is the caller's to judge.
+.decl init_dep(mod: symbol, to_mod: symbol, kind: symbol, witness: symbol)
+
+init_dep(mod, to, "call", f) :- init_function(mod, f), reaches_sync_dep(f, to).
+init_dep(mod, to, "cast", f) :- init_function(mod, f), reaches_async_dep(f, to).
+
+// A GenServer request handler waits on another process: through a
+// resolved call ("call"), or only through a tag-attributed one ("tag").
+.decl handler_dep(mod: symbol, callback: symbol, to_mod: symbol, kind: symbol, witness: symbol)
+
+handler_dep(mod, "handle_call", to, "call", f) :-
+  handle_call_function(mod, f),
+  reaches_sync_dep(f, to),
+  mod != to.
+
+handler_dep(mod, "handle_call", to, "tag", f) :-
+  handle_call_function(mod, f),
+  reaches_tag_dep(f, to),
+  mod != to.
+
+handler_dep(mod, "handle_cast", to, "call", f) :-
+  handle_cast_function(mod, f),
+  reaches_sync_dep(f, to),
+  mod != to.
+
+// A handle_continue reached from init/1 waits on another process.
+.decl continue_dep(mod: symbol, to_mod: symbol, witness: symbol)
+
+continue_dep(mod, to, f) :-
+  init_continues_to(mod, _),
+  handle_continue_clause(mod, _, f),
+  reaches_sync_dep(f, to),
+  mod != to.
