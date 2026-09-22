@@ -162,4 +162,75 @@ defmodule Argus.DataflowTest do
   test "empty facts produce no edges" do
     assert Dataflow.def_use_edges(%{}) == MapSet.new()
   end
+
+  describe "reaching_uses/2" do
+    defp reaching(facts, opts) do
+      facts
+      |> Dataflow.reaching_uses(opts)
+      |> MapSet.new(fn {source, reg, use} -> {source_of(source), reg, use.idx} end)
+    end
+
+    defp source_of({:param, k}), do: {:param, k}
+    defp source_of(%InstrId{idx: idx}), do: idx
+
+    test "a read no instruction wrote resolves to the parameter, when asked" do
+      facts =
+        facts_for([
+          # 0: reads x0 (parameter 0), writes x1
+          {:gc_bif, ["x1"], ["x0"], nil},
+          # 1: reads x1
+          {:return, [], ["x1"], :return}
+        ])
+
+      assert reaching(facts, params: true) == MapSet.new([{{:param, 0}, "x0", 0}, {0, "x1", 1}])
+      assert reaching(facts, []) == MapSet.new([{0, "x1", 1}])
+    end
+
+    test "a read fed by a write on one path and the parameter on the other keeps both" do
+      facts =
+        facts_for([
+          # 0: test x0; fail -> label 5
+          {:test, [], ["x0"], {:branch, 5}},
+          # 1: x0 := literal on the pass path
+          {:move, ["x0"], [], nil},
+          # 2: -> label 6
+          {:jump, [], [], {:jump, 6}},
+          # 3: label 5, falls through to 4
+          {:label, [], [], {:label, 5}},
+          # 4: label 6, the join
+          {:label, [], [], {:label, 6}},
+          # 5: reads x0: written at 1, or still the parameter
+          {:return, [], ["x0"], :return}
+        ])
+
+      assert reaching(facts, params: true) ==
+               MapSet.new([{{:param, 0}, "x0", 0}, {1, "x0", 5}, {{:param, 0}, "x0", 5}])
+    end
+
+    test "each edge carries the register it travels in" do
+      facts =
+        facts_for([
+          # 0: get_map_elements: reads x0, writes x2 and x3
+          {:get_map_elements, ["x2", "x3"], ["x0"], nil},
+          # 1: reads x3
+          {:move, ["x4"], ["x3"], nil},
+          # 2: reads x2
+          {:return, [], ["x2"], :return}
+        ])
+
+      assert reaching(facts, params: true) ==
+               MapSet.new([{{:param, 0}, "x0", 0}, {0, "x3", 1}, {0, "x2", 2}])
+    end
+
+    test "def_use_edges/1 is the same relation without registers or parameters" do
+      facts =
+        facts_for([
+          {:get_map_elements, ["x2", "x3"], ["x0"], nil},
+          {:move, ["x4"], ["x3"], nil},
+          {:return, [], ["x2"], :return}
+        ])
+
+      assert edges(facts) == MapSet.new([{"f", 0, 1}, {"f", 0, 2}])
+    end
+  end
 end

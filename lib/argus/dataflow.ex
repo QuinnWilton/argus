@@ -42,6 +42,12 @@ defmodule Argus.Dataflow do
   @typedoc "A def→use edge: the writing instruction feeds the reading one."
   @type edge :: {InstrId.t(), InstrId.t()}
 
+  @typedoc "What a read may be fed by: an instruction's write, or the parameter that arrived in the register."
+  @type source :: InstrId.t() | {:param, non_neg_integer()}
+
+  @typedoc "A reaching definition with the register it travels in."
+  @type reaching_use :: {source(), String.t(), InstrId.t()}
+
   @doc """
   Compute the def→use edge set from typed facts
   (`Argus.Pipeline.extract/2` with `format: :typed`).
@@ -63,6 +69,32 @@ defmodule Argus.Dataflow do
   @spec def_use_edges(Argus.Facts.t()) :: MapSet.t(edge())
   @pure true
   def def_use_edges(facts) when is_map(facts) do
+    facts
+    |> reaching_uses()
+    |> MapSet.new(fn {def_id, _reg, use_id} -> {def_id, use_id} end)
+  end
+
+  @doc """
+  Reaching definitions with the register they travel in: `{source, reg,
+  use}` for every read, where `source` is the writing instruction.
+
+  With `params: true`, a function's parameters are sources too: block
+  entries with no predecessor start with `{:param, k}` reaching `xk` for
+  every `k` below the arity, so a read of `x1` that no instruction wrote
+  resolves to `{:param, 1}` instead of to nothing. That is how head
+  destructuring shows up — `%{"name" => name}` is a `get_map_elements`
+  reading `x1` with no reaching `def` — and it is what lets a caller ask
+  "is this value derived from parameter k" rather than only "which
+  instruction wrote it". Seeding every root block, not just the entry,
+  over-approximates only into unreachable code, where a def-less `xk` is
+  the parameter anyway.
+
+  Same precondition as `def_use_edges/1`: one module at a time.
+  """
+  @spec reaching_uses(Argus.Facts.t(), params: boolean()) :: MapSet.t(reaching_use())
+  @pure true
+  def reaching_uses(facts, opts \\ []) when is_map(facts) do
+    params? = Keyword.get(opts, :params, false)
     defs = regs_by_instr(Map.get(facts, :def, []))
     uses = regs_by_instr(Map.get(facts, :use, []))
     succs = successors(facts)
@@ -70,10 +102,17 @@ defmodule Argus.Dataflow do
     facts
     |> Map.get(:instruction, [])
     |> Enum.group_by(&InstrId.fa(&1.id), & &1.id)
-    |> Enum.map(fn {fa, ids} ->
-      function_edges(Enum.sort_by(ids, & &1.idx), Map.get(succs, fa, %{}), defs, uses)
+    |> Enum.map(fn {{_name, arity} = fa, ids} ->
+      entry = if params?, do: param_sources(arity), else: MapSet.new()
+      function_edges(Enum.sort_by(ids, & &1.idx), Map.get(succs, fa, %{}), defs, uses, entry)
     end)
     |> Enum.reduce(MapSet.new(), &MapSet.union/2)
+  end
+
+  # Parameter k arrives in xk. The pseudo-definition carries no instruction,
+  # so a kill by a real write to xk removes it exactly like any other def.
+  defp param_sources(arity) do
+    MapSet.new(0..(arity - 1)//1, fn k -> {{:param, k}, "x#{k}"} end)
   end
 
   # --- fact wrangling --------------------------------------------------------
@@ -124,7 +163,7 @@ defmodule Argus.Dataflow do
 
   # --- per-function analysis -------------------------------------------------
 
-  defp function_edges(ids, succ, defs, uses) do
+  defp function_edges(ids, succ, defs, uses, entry) do
     preds = invert(succ)
     blocks = build_blocks(ids, succ, preds)
     block_of = for {block, n} <- Enum.with_index(blocks), id <- block, into: %{}, do: {id, n}
@@ -140,12 +179,12 @@ defmodule Argus.Dataflow do
     block_preds = invert(block_succs)
     summaries = Map.new(Enum.with_index(blocks), fn {block, n} -> {n, summarize(block, defs)} end)
 
-    out = solve(Map.keys(summaries), block_succs, block_preds, summaries)
+    out = solve(Map.keys(summaries), block_succs, block_preds, summaries, entry)
 
     blocks
     |> Enum.with_index()
     |> Enum.flat_map(fn {block, n} ->
-      in_set = block_in(n, block_preds, out)
+      in_set = block_in(n, block_preds, out, entry)
       resolve(block, in_set, defs, uses)
     end)
     |> MapSet.new()
@@ -195,13 +234,13 @@ defmodule Argus.Dataflow do
 
   # Worklist fixpoint over the block graph: a queue with a pending set, so
   # membership checks and re-enqueues stay constant-time on wide graphs.
-  defp solve(block_ids, block_succs, block_preds, summaries) do
+  defp solve(block_ids, block_succs, block_preds, summaries, entry) do
     out = Map.new(block_ids, &{&1, MapSet.new()})
     queue = :queue.from_list(block_ids)
-    iterate(queue, MapSet.new(block_ids), block_succs, block_preds, summaries, out)
+    iterate(queue, MapSet.new(block_ids), block_succs, block_preds, summaries, entry, out)
   end
 
-  defp iterate(queue, pending, succs, preds, summaries, out) do
+  defp iterate(queue, pending, succs, preds, summaries, entry, out) do
     case :queue.out(queue) do
       {:empty, _queue} ->
         out
@@ -209,15 +248,15 @@ defmodule Argus.Dataflow do
       {{:value, n}, queue} ->
         pending = MapSet.delete(pending, n)
         {gen, kill} = Map.fetch!(summaries, n)
-        in_set = block_in(n, preds, out)
+        in_set = block_in(n, preds, out, entry)
         surviving = Enum.reject(in_set, fn {_id, reg} -> MapSet.member?(kill, reg) end)
         new_out = MapSet.union(gen, MapSet.new(surviving))
 
         if MapSet.equal?(new_out, Map.fetch!(out, n)) do
-          iterate(queue, pending, succs, preds, summaries, out)
+          iterate(queue, pending, succs, preds, summaries, entry, out)
         else
           {queue, pending} = enqueue(Map.get(succs, n, []), queue, pending)
-          iterate(queue, pending, succs, preds, summaries, Map.put(out, n, new_out))
+          iterate(queue, pending, succs, preds, summaries, entry, Map.put(out, n, new_out))
         end
     end
   end
@@ -232,10 +271,17 @@ defmodule Argus.Dataflow do
     end)
   end
 
-  defp block_in(n, preds, out) do
-    preds
-    |> Map.get(n, [])
-    |> Enum.reduce(MapSet.new(), fn p, acc -> MapSet.union(acc, Map.fetch!(out, p)) end)
+  # A block nobody jumps to starts from the function's parameters (when the
+  # caller asked for them); every other block starts from what its
+  # predecessors leave behind.
+  defp block_in(n, preds, out, entry) do
+    case Map.get(preds, n, []) do
+      [] ->
+        entry
+
+      block_preds ->
+        Enum.reduce(block_preds, MapSet.new(), &MapSet.union(&2, Map.fetch!(out, &1)))
+    end
   end
 
   # One local walk: each use reads the state before its own instruction's
@@ -249,8 +295,8 @@ defmodule Argus.Dataflow do
       Enum.reduce(block, {[], initial}, fn id, {edges, state} ->
         new_edges =
           for reg <- Map.get(uses, id, []),
-              def_id <- Map.get(state, reg, []),
-              do: {def_id, id}
+              source <- Map.get(state, reg, []),
+              do: {source, reg, id}
 
         state =
           Enum.reduce(Map.get(defs, id, []), state, fn reg, acc -> Map.put(acc, reg, [id]) end)
