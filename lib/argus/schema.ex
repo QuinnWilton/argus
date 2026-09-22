@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 37
+  @schema_version 38
 
   # Layer 1: Module-level facts.
 
@@ -1794,6 +1794,24 @@ defmodule Argus.Schema do
     """
   }
 
+  @call_result %{
+    name: :call_result,
+    layer: 2,
+    fields: [
+      {:id, :instr_id, "instruction ID of the call"},
+      {:func, :func_id, "function containing the call"},
+      {:callee, :func_id, "callee function ID (mod:func/arity)"},
+      {:fate, :symbol, "used | ignored | returned | dynamic"},
+      {:guard, :symbol, "try | bare"}
+    ],
+    doc: """
+    A call to a process or OTP API, or to anything that starts a process, \
+    with what became of its result and whether the site sits inside a \
+    try. One row per site, so a rule can count how the other sites of the \
+    same callee behave and report the one that disagrees.
+    """
+  }
+
   @call_arg_derived %{
     name: :call_arg_derived,
     layer: 2,
@@ -1957,6 +1975,7 @@ defmodule Argus.Schema do
     @call_arg_derived,
     @call_arg_field,
     @call_arg_forward,
+    @call_result,
     @sink_arg_derived,
     # Purity contracts and call classification.
     @pure_contract,

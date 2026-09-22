@@ -36,6 +36,9 @@
 .decl orphan_process(func: symbol, site: symbol, kind: symbol, target: symbol)
 .output orphan_process
 
+.decl inconsistent_handling(func: symbol, site: symbol, callee: symbol, belief: symbol, agree: number, deviate: number)
+.output inconsistent_handling
+
 // ── Swallowed errors ─────────────────────────────────────────────
 
 // Catch-all rescue that silently discards exceptions.
@@ -174,3 +177,43 @@ unchecked_result(func, id, "Process.whereis", name) :-
   whereis_call(id, func, name, "unchecked"),
   name != "dynamic",
   name != ":dynamic".
+
+// ── The belief the other call sites hold ────────────────────────
+//
+// No list says which results must be checked or which calls must be
+// guarded; the program does. When every other site of a callee matches
+// its result and one discards it, the one is the finding — the rule
+// Engler et al. named "bugs as deviant behavior". The belief needs
+// three agreeing sites before it counts, and the deviants must be a
+// quarter or fewer of the population: three checked against three
+// ignored is a convention, not a slip. Only the used/ignored and
+// try/bare fates take part; a tail call hands its result on and says
+// nothing about either belief.
+
+.decl fate_count(callee: symbol, fate: symbol, n: number)
+
+fate_count(callee, fate, n) :-
+  call_result(_, _, callee, fate, _),
+  n = count : { call_result(_, _, callee, fate, _) }.
+
+.decl guard_count(callee: symbol, guard: symbol, n: number)
+
+guard_count(callee, guard, n) :-
+  call_result(_, _, callee, _, guard),
+  n = count : { call_result(_, _, callee, _, guard) }.
+
+// A site unchecked_result already owns is not reported twice.
+inconsistent_handling(func, site, callee, "result_checked", used, ignored) :-
+  call_result(site, func, callee, "ignored", _),
+  fate_count(callee, "used", used),
+  fate_count(callee, "ignored", ignored),
+  used >= 3,
+  ignored * 4 <= used + ignored,
+  !unchecked_result(func, site, _, _).
+
+inconsistent_handling(func, site, callee, "exception_guarded", guarded, bare) :-
+  call_result(site, func, callee, _, "bare"),
+  guard_count(callee, "try", guarded),
+  guard_count(callee, "bare", bare),
+  guarded >= 3,
+  bare * 4 <= guarded + bare.

@@ -18,6 +18,13 @@ defmodule Argus.Extractors.ErrorHandling do
   - `bare_rescue(id, func)` — catch-all rescue without filtering or reraising
   - `trap_exit(func, mod)` — `Process.flag(:trap_exit, true)` call site
   - `exit_call(id, func, target)` — explicit `Process.exit/2` or `:erlang.exit/1,2`
+  - `call_result(id, func, callee, fate, guard)` — every call to a process
+    or OTP API (and every `start_link`/`start`/`start_child`), with what
+    became of its result (`used`, `ignored`, `returned` for a tail call,
+    `dynamic`) and whether the site sits inside a `try` (`try` | `bare`).
+    The population a consistency rule counts: which fate the other call
+    sites of the same callee chose is the belief, and the odd one out is
+    the finding (Engler et al., "Bugs as deviant behavior").
   - `ignored_error_result(id, func, callee)` — call to known ok/error API where
     result is not pattern matched
   - `catch_total(id, func, class)` — some clause catches `class` without
@@ -107,6 +114,7 @@ defmodule Argus.Extractors.ErrorHandling do
   def relations,
     do: [
       :bare_rescue,
+      :call_result,
       :catch_falls_through,
       :catch_tag,
       :catch_total,
@@ -147,7 +155,87 @@ defmodule Argus.Extractors.ErrorHandling do
       |> error_handling_call(mod_str, ctx, mfa)
       |> maybe_mailbox_writer(ctx, mfa)
       |> maybe_rpc_result(ctx, mfa)
+      |> maybe_call_result(ctx, mfa)
     end)
+  end
+
+  # The callees whose results a consistency rule may compare across the
+  # program: process and OTP APIs, and anything that starts a process.
+  # Every shipped analysis targets a BEAM-specific bug class, so a
+  # File.write ignored once in twelve is not this analysis's business.
+  @process_modules [
+    GenServer,
+    Supervisor,
+    DynamicSupervisor,
+    PartitionSupervisor,
+    Registry,
+    Task,
+    Task.Supervisor,
+    Agent,
+    Process,
+    :gen_server,
+    :gen_statem,
+    :supervisor,
+    :ets
+  ]
+
+  # :erlang is every BIF there is; only its process half belongs here.
+  @erlang_process_functions ~w(spawn spawn_link spawn_monitor spawn_opt send send_after start_timer
+    cancel_timer read_timer monitor demonitor link unlink register unregister whereis
+    process_flag exit)a
+
+  @start_functions [:start_link, :start, :start_child]
+
+  defp maybe_call_result(facts, ctx, {mod, func, arity}) do
+    if process_api?(mod, func) and not generated_function?(ctx.func_id) do
+      id = InstrId.mint(ctx.func_id, ctx.idx)
+      callee = Normalize.func_id(mod, func, arity)
+      guard = if guarded?(ctx.instrs, ctx.idx), do: "try", else: "bare"
+      add_fact(facts, :call_result, [id, ctx.func_id, callee, result_fate(ctx), guard])
+    else
+      facts
+    end
+  end
+
+  defp process_api?(:erlang, func), do: func in @erlang_process_functions
+  defp process_api?(mod, func), do: mod in @process_modules or func in @start_functions
+
+  # __info__/1 and module_info/0,1 call :erlang.get_module_info; they are
+  # the compiler's sites, not the program's.
+  defp generated_function?(func_id) do
+    {name, _arity} = Normalize.func_id_name_arity(func_id)
+    name in ["__info__", "module_info"] or String.starts_with?(name, "-inlined-")
+  end
+
+  # The same reading maybe_ignored_result/5 makes, as a value: a tail call
+  # returns the result to the caller, the next instruction either
+  # overwrites x0 or reads it, and anything else is unknown.
+  defp result_fate(ctx) do
+    instr = Enum.at(ctx.instrs, ctx.idx)
+    after_call = Enum.drop(ctx.instrs, ctx.idx + 1)
+
+    cond do
+      tail_call?(instr) -> "returned"
+      result_ignored?(after_call) -> "ignored"
+      result_used?(after_call) -> "used"
+      true -> "dynamic"
+    end
+  end
+
+  # A try region is linear in the instruction stream: it opens with `try`
+  # and closes with `try_end` (no exception) or `try_case` (the handler),
+  # both naming the same register, so the tries still open at `idx` are a
+  # stack walked from the function's start.
+  defp guarded?(instrs, idx) do
+    instrs
+    |> Enum.take(idx)
+    |> Enum.reduce([], fn
+      {:try, reg, _handler}, open -> [reg | open]
+      {:try_end, reg}, open -> List.delete(open, reg)
+      {:try_case, reg}, open -> List.delete(open, reg)
+      _instr, open -> open
+    end)
+    |> Kernel.!=([])
   end
 
   @mailbox_writers %{
@@ -1095,8 +1183,13 @@ defmodule Argus.Extractors.ErrorHandling do
   # Tuple destructuring of x0 (e.g. {:ok, value} = call()).
   defp result_used?([{:get_tuple_element, {:x, 0}, _, _} | _]), do: true
   defp result_used?([{:get_tuple_element, {:tr, {:x, 0}, _}, _, _} | _]), do: true
-  # x0 used as argument to the next call (passed forward).
+  # x0 used as argument to the next call (passed forward), in any form:
+  # a tail call consumes it just as a plain call does.
   defp result_used?([{:call_ext, _, _} | _]), do: true
+  defp result_used?([{:call_ext_only, _, _} | _]), do: true
+  defp result_used?([{:call_ext_last, _, _, _} | _]), do: true
   defp result_used?([{:call, _, _} | _]), do: true
+  defp result_used?([{:call_only, _, _} | _]), do: true
+  defp result_used?([{:call_last, _, _, _} | _]), do: true
   defp result_used?(_), do: false
 end

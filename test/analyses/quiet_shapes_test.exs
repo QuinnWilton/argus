@@ -51,7 +51,7 @@ defmodule Argus.Analyses.QuietShapesTest do
     structure: ~w(consumer_supervisor_permanent_child),
     coupling: ~w(dual_restart_authority),
     blocking: ~w(partial_noproc_catch),
-    failure: [{"unhandled_failure", kind: "erpc_transport"}],
+    failure: [{"unhandled_failure", kind: "erpc_transport"}, "inconsistent_handling"],
     ets: ~w(ets_read_outside_owner),
     startup: [{"unbounded_effect_in_init", kind: "recv"}, "post_start_initialization"],
     unsafe_input: [{"sink_reachable", proximity: "flow"}]

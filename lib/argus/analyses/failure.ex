@@ -17,6 +17,13 @@ defmodule Argus.Analyses.Failure do
     supervises: a bare `spawn` (no link, no monitor, nothing observes a
     crash), or an `exit` signal sent to `target` from a callback, past
     the supervisor that owns it.
+  - `inconsistent_handling(func, site, callee, belief, agree, deviate)` —
+    a call site that breaks with the program's own convention for its
+    callee: `belief` is `result_checked` (every other site matches the
+    result; this one discards it) or `exception_guarded` (every other
+    site wraps the call in a `try`; this one does not). `agree` and
+    `deviate` are the counts, and the severity is how unlikely the
+    deviation is by chance.
   """
 
   @behaviour Argus.Analysis
@@ -70,6 +77,19 @@ defmodule Argus.Analyses.Failure do
         doc: "A result used without its failure case."
       },
       %{
+        name: :inconsistent_handling,
+        fields: [
+          {:func, :symbol, "the function holding the deviant site"},
+          {:site, :symbol, "instruction ID of the call"},
+          {:callee, :symbol, "the callee whose other sites disagree"},
+          {:belief, :symbol, "result_checked | exception_guarded"},
+          {:agree, :number, "sites that follow the convention"},
+          {:deviate, :number, "sites that break it, this one included"}
+        ],
+        key: [:func, :site, :belief],
+        doc: "A call site that breaks with how the program's other sites treat the same callee."
+      },
+      %{
         name: :orphan_process,
         fields: [
           {:func, :symbol, "the function spawning or sending the exit"},
@@ -84,6 +104,36 @@ defmodule Argus.Analyses.Failure do
   end
 
   @impl true
+  def finding(:inconsistent_handling, [func, site, callee, belief, agree, deviate]) do
+    {agree, deviate} = {String.to_integer(agree), String.to_integer(deviate)}
+    total = agree + deviate
+
+    {title, what, fix} =
+      case belief do
+        "result_checked" ->
+          {"#{short(callee)} result ignored where every other call site checks it",
+           "discards the result of #{callee}, which #{agree} of the #{total} call " <>
+             "sites in this program match on", "match on the result as the other sites do"}
+
+        "exception_guarded" ->
+          {"#{short(callee)} called bare where every other call site guards it",
+           "calls #{callee} outside a try, which #{agree} of the #{total} call sites " <>
+             "in this program wrap in one", "guard the call as the other sites do"}
+      end
+
+    Findings.new(
+      deviance_severity(agree, total),
+      title,
+      "#{func} #{what}. No rule says the callee's failure must be taken; the " <>
+        "program's own sites say so, and this one disagrees — the shape of a " <>
+        "site written without the convention in mind, or one the convention " <>
+        "grew around.",
+      at: Findings.at_site(site, module_of(func)),
+      at_label: "the one site that disagrees",
+      help: [fix, "or, if this site is right, the other #{agree} are worth a look"]
+    )
+  end
+
   def finding(:unhandled_failure, [func, _site, "rescue", _]) do
     Findings.new(
       :warning,
@@ -208,4 +258,16 @@ defmodule Argus.Analyses.Failure do
       at: Findings.at_instr(id)
     )
   end
+
+  # Engler's ranking: how many standard deviations the agreeing fraction
+  # sits above a coin flip. Seven sites against one is two deviations; the
+  # rule's floor of three against one is none, so it stays informational.
+  defp deviance_severity(agree, total) do
+    z = (agree / total - 0.5) / :math.sqrt(0.25 / total)
+    if z >= 2.0, do: :warning, else: :info
+  end
+
+  defp short(callee), do: callee |> String.split(":") |> List.last()
+
+  defp module_of(func), do: func |> String.split(":") |> hd()
 end

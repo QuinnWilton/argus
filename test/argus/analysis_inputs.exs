@@ -14,7 +14,7 @@
     ~w(call_arg call_arg_forward call_edge catch_tag catch_total closure_def dynamic_child ets_new ets_op ets_op_param ets_option function_def implements_behaviour statem_event_clause supervisor_child),
   exposure: ~w(function_def redacted_field schema_field tls_connect tls_verification),
   failure:
-    ~w(bare_rescue call_edge call_followed_by_branch catch_falls_through catch_tag catch_total exit_call function_def implements_behaviour remote_call rpc_call rpc_result spawn_call tail_call try_call whereis_call),
+    ~w(bare_rescue call_edge call_followed_by_branch call_result catch_falls_through catch_tag catch_total exit_call function_def implements_behaviour remote_call rpc_call rpc_result spawn_call tail_call try_call whereis_call),
   mailbox:
     ~w(async_cast call_arg call_arg_field call_arg_forward call_edge call_tag callback_drops_from callback_ref_head callback_return callback_tag callback_total closure_def demonitor_call function_def implements_behaviour mailbox_writer monitor_call monitor_ref_dropped recv_pattern recv_start remote_call returns_call statem_call_unreplied statem_event_catchall statem_event_clause statem_info_catchall statem_module statem_state statem_timeout sync_call sync_call_timeout tail_call timer_arm timer_cancel timer_ref timer_store trap_exit),
   shutdown:

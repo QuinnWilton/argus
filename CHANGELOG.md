@@ -32,6 +32,24 @@ confirm keeps its proximity: the summaries do not follow a local
 helper's return or an element handed to a closure, so their silence is
 not evidence that the data comes from elsewhere.
 
+**Schema version 38.** `call_result(id, func, callee, fate, guard)` from
+`Argus.Extractors.ErrorHandling`: one row per call to a process or OTP
+API (or to anything that starts a process), with what became of its
+result — `used`, `ignored`, `returned` for a tail call, `dynamic` — and
+whether the site sits inside a `try`. Read by `failure` only.
+
+`failure` gains `inconsistent_handling(func, site, callee, belief, agree,
+deviate)`: a call site that breaks with the program's own convention for
+its callee — every other site matches the result and this one discards
+it (`result_checked`), or every other site wraps the call in a `try` and
+this one does not (`exception_guarded`). No list says which results
+must be checked; the other sites do (Engler et al., "Bugs as deviant
+behavior", SOSP 2001). A belief needs three agreeing sites and the
+deviants must be a quarter or fewer of the population; severity is the
+z-score of the agreeing fraction against a coin flip, `:warning` from
+about seven to one. Scoped to process APIs on purpose: a `File.write`
+ignored once in twelve is not a BEAM bug class.
+
 ### Fixed
 
 `def_use` had no edges through binary construction or binary matching:
