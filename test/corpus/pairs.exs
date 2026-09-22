@@ -258,5 +258,89 @@
     module: "Supavisor.DbHandler",
     pre: "a8463de46ae77fb3a2f49a53eda1d6680caa0ad3",
     finding: {:failure, "call/3 called bare where every other call site guards it"}
+  },
+  # ── exposure: a secret inspect/1 prints ──────────────────────────────
+  # langchain#266 redacted :api_key in six embedded schemas at once and
+  # missed ChatPerplexity, which still reports at fix — the module anchor
+  # is what keeps that one from standing in for this one.
+  %{
+    repo: "brainlid/langchain",
+    issue: "langchain#266",
+    module: "LangChain.ChatModels.ChatAnthropic",
+    pre: "3e02d6b417b7041c0420b1f8cd937f479ea385ae",
+    fix: "38e957d2985b054ce51e087b51bb1af54aee9754",
+    finding: {:exposure, "LangChain.ChatModels.ChatAnthropic.:api_key is printed by inspect/1"}
+  },
+  %{
+    repo: "supabase/supavisor",
+    issue: "supavisor#746",
+    module: "Supavisor.Tenants.User",
+    pre: "0e85637a03483c60c4e10b6708cbe29933f23fcb",
+    fix: "1bf7b4b6785832608478909f19938d94b8b779e0",
+    finding: {:exposure, "Supavisor.Tenants.User.:db_password is printed by inspect/1"}
+  },
+  # The aware arm: two virtual password fields beside it were already
+  # redact: true, so the stored hash was an oversight, not an unfamiliar API.
+  %{
+    repo: "nerves-hub/nerves_hub_web",
+    issue: "nerves_hub_web#2828",
+    module: "NervesHub.Accounts.User",
+    pre: "59ccadd36f2861c667c488937dea66fc35488fe7",
+    fix: "3ab4e8cd77ac9dd7259085f47d70396697d988ed",
+    finding: {:exposure, "NervesHub.Accounts.User.:password_hash is printed by inspect/1"}
+  },
+  # ── unsafe_input: atom creation ───────────────────────────────────────
+  # Federation representation keys arrive through the open-ended _Any
+  # scalar, so they bypass schema coercion; the fix is to_existing_atom
+  # with a rescue.
+  %{
+    repo: "DivvyPayHQ/absinthe_federation",
+    issue: "absinthe_federation#133",
+    module: "Absinthe.Federation.Schema.EntitiesField",
+    pre: "c53bb3b3e87051f234cebad7aa9a96311f2f6c2b",
+    fix: "c3838cda2a7f65c4893291668c223b0d6acf4516",
+    finding: {:unsafe_input, "Dynamic atom creation reachable from an exported function"}
+  },
+  # CVE-2026-48597: String.to_atom(uri.scheme) in the Mint adapter, fixed
+  # with a two-clause allowlist — the remediation the finding recommends.
+  %{
+    repo: "elixir-tesla/tesla",
+    issue: "tesla:GHSA-h74c-q9j7-mpcm",
+    module: "Tesla.Adapter.Mint",
+    pre: "bb1a2c3da2775924d96e3db8e315dcc4d5d2246e",
+    fix: "4699c3cb3e2fd6078f99f45f11cf7466aeedbf0e",
+    finding: {:unsafe_input, "Dynamic atom creation reachable from an exported function"}
+  },
+  # CVE-2026-53423: every 4-byte MP4 box name interned as an atom — the
+  # same class sourced from file bytes rather than from params.
+  %{
+    repo: "membraneframework/membrane_mp4_plugin",
+    issue: "membrane_mp4_plugin#135",
+    module: "Membrane.MP4.Container.Header",
+    pre: "6a7458b7f13a2f48578affe4431d05c994c1b9df",
+    fix: "56373d1ddc86968e55fbde795c14eeba24357b57",
+    finding: {:unsafe_input, "Dynamic atom creation reachable from an exported function"}
+  },
+  # ── unsafe_input: deserialization ─────────────────────────────────────
+  # Paginator decodes an opaque cursor straight off the query string. The
+  # two commits are the two steps down: paginator#16 added [:safe], which
+  # clears "without :safe" but leaves the [:safe] warning (a fun that
+  # references a loaded module still deserializes); the later move to
+  # Plug.Crypto.non_executable_binary_to_term/2 clears the sink.
+  %{
+    repo: "duffelhq/paginator",
+    issue: "paginator#16",
+    module: "Paginator.Cursor",
+    pre: "3142b9f38b6f7949404dc0aef23bb02cc3b462e7",
+    fix: "01ed029876f221c2fc6694999aba98b7beeda585",
+    finding: {:unsafe_input, "binary_to_term without :safe"}
+  },
+  %{
+    repo: "duffelhq/paginator",
+    issue: "paginator:non-executable-binary-to-term",
+    module: "Paginator.Cursor",
+    pre: "24237ba10e17ae77adb4e3a3e5d34abf730221c4",
+    fix: "b4945c6e30b2b2599047ad3c10389671662c3bad",
+    finding: {:unsafe_input, "binary_to_term with [:safe] and no shape check"}
   }
 ]
