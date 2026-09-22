@@ -1,25 +1,27 @@
-defmodule Argus.Analyses.Purity do
+defmodule Argus.Analyses.Effects do
   @moduledoc """
-  Verifies `@pure true` contracts (see `Argus.Purity`).
+  An effect where its context forbids it.
 
-  Every other argus analysis looks for a bug nobody claimed was absent.
-  This one checks a claim the author made, which changes what a finding
-  means: not "this looks suspicious" but "you said this function has no side
-  effects, and here is the call that gives it one".
+  Two contracts. `@pure true` is a claim the author made: the analysis
+  checks it against the call graph and the effect model and says
+  verified, violated or unprovable — every call is accounted for, and a
+  call it cannot see through produces "unprovable" rather than silence,
+  because a purity check that says "verified" when the function writes
+  to ETS has actively misled someone. `Repo.transaction/1` is a contract
+  nobody writes down: whatever the closure does must be something the
+  database can undo, since a rollback leaves the effect behind, a retry
+  repeats it, and a pooled connection is held throughout.
 
-  It is also the only analysis here that has to be *sound* rather than
-  merely useful. A missed supervision smell costs a warning; a purity check
-  that reports "verified" for a function that writes to ETS has actively
-  misled someone into depending on it. So there are three outcomes, not two:
-
-  - `purity_violated` — reaches a call with a known observable effect.
-  - `purity_unprovable` — reaches a call that cannot be followed (a fun
-    value, `apply`) or that the effect model has no entry for.
-  - `purity_verified` — everything reachable is known to be effect-free.
-
-  The third is emitted on purpose. A contract is only worth having if you
-  can tell it was actually checked, and an analysis that reports only
-  failures cannot distinguish "verified" from "never looked at".
+  - `purity_violated(func, category, api, via)` — a declared-pure
+    function reaches a known observable effect.
+  - `purity_unprovable(func, reason, detail, via)` — it reaches a call
+    that cannot be followed or classified.
+  - `impure_closure_to_pure(caller, callee, closure, category, api)` — a
+    caller hands an effectful closure to a function declared pure.
+  - `purity_verified(func)` — the claim holds; emitted so "verified" can
+    be told from "not looked at".
+  - `effect_in_transaction(caller, repo, category, api, via)` — an effect
+    inside a transaction body that a rollback cannot undo.
   """
 
   @behaviour Argus.Analysis
@@ -27,24 +29,26 @@ defmodule Argus.Analyses.Purity do
   alias Argus.Findings
 
   @impl true
-  def name, do: :purity
+  def name, do: :effects
 
   @impl true
-  def description, do: "Verify @pure contracts against the call graph and an effect model"
+  def description,
+    do: "@pure contracts, and effects inside a transaction that a rollback cannot undo"
 
   @impl true
-  def rules_file, do: "analyses/purity.dl"
+  def rules_file, do: "analyses/effects.dl"
 
   @impl true
   def extractors,
     do: [
       Argus.Extractors.Purity,
-      # purity's rules join these to classify table writes, port opens and
-      # name registration as effects. Declaring only the Purity extractor
-      # left them empty, so the contract was silently blind to all three.
+      # The purity rules join these to classify table writes, port opens
+      # and name registration as effects; without them the contract was
+      # silently blind to all three.
       Argus.Extractors.ETS,
       Argus.Extractors.ApiCalls,
-      Argus.Extractors.ProcessRegistry
+      Argus.Extractors.ProcessRegistry,
+      Argus.Extractors.OTP
     ]
 
   @impl true
@@ -89,6 +93,18 @@ defmodule Argus.Analyses.Purity do
         fields: [{:func, :symbol, "the function declared pure"}],
         key: [:func],
         doc: "A declared-pure function whose reachable calls are all effect-free."
+      },
+      %{
+        name: :effect_in_transaction,
+        fields: [
+          {:caller, :symbol, "the function opening the transaction"},
+          {:repo, :symbol, "the repo"},
+          {:category, :symbol, "the kind of effect"},
+          {:api, :symbol, "the call performing it"},
+          {:via, :symbol, "the function inside the transaction that performs it"}
+        ],
+        key: [:caller, :category, :api],
+        doc: "An effect inside a transaction body that a rollback cannot undo."
       }
     ]
   end
@@ -169,6 +185,19 @@ defmodule Argus.Analyses.Purity do
     )
   end
 
+  def finding(:effect_in_transaction, [caller, repo, category, api, via]) do
+    Findings.new(
+      rollback_severity(category),
+      "#{short(caller)} performs #{rollback_phrase(category)} inside a #{repo} transaction",
+      "#{caller} opens a #{repo}.transaction and #{via} calls #{api} inside it. " <>
+        "#{rollback_consequence(category)} A rollback cannot take it back, and a retry on a " <>
+        "serialization failure will do it twice. #{connection_note(category)}" <>
+        "Move the effect outside the transaction, or record the intent in a row and " <>
+        "perform it after commit.",
+      at: Findings.at_func(caller)
+    )
+  end
+
   defp location(func, func), do: "it"
   defp location(_func, via), do: "#{via}, which it reaches,"
 
@@ -203,4 +232,36 @@ defmodule Argus.Analyses.Purity do
 
   defp consequence(_),
     do: "The effect is observable from outside the function."
+
+  # Network is worse than the rest: as well as being unrollbackable it holds
+  # a pooled connection for the duration of somebody else's latency, which
+  # is the failure mode that becomes an outage rather than a bad row.
+  defp rollback_severity(c) when c in ["network", "port"], do: :error
+  defp rollback_severity(_), do: :warning
+
+  defp rollback_phrase("network"), do: "network I/O"
+  defp rollback_phrase("port"), do: "an OS or port operation"
+  defp rollback_phrase("process"), do: "a process operation"
+  defp rollback_phrase("io"), do: "file I/O"
+  defp rollback_phrase("ets"), do: "a shared-table write"
+  defp rollback_phrase("node"), do: "a distribution operation"
+  defp rollback_phrase(other), do: other
+
+  defp rollback_consequence("network"), do: "The request has already left the machine."
+
+  defp rollback_consequence("process"),
+    do: "The message has already been delivered, or the process already spawned."
+
+  defp rollback_consequence("ets"),
+    do: "ETS is not transactional, so the write stands regardless of the outcome."
+
+  defp rollback_consequence(_), do: "The effect is already visible outside the database."
+
+  defp connection_note(c) when c in ["network", "port"] do
+    "It also holds a pooled database connection for the whole call, so this " <>
+      "dependency's latency becomes your connection pool's occupancy — the usual " <>
+      "route from a slow third party to an outage. "
+  end
+
+  defp connection_note(_), do: ""
 end

@@ -1,4 +1,4 @@
-defmodule Argus.Analyses.PurityTest do
+defmodule Argus.Analyses.EffectsPurityTest do
   use ExUnit.Case
 
   alias Argus.Purity.Effects
@@ -21,7 +21,7 @@ defmodule Argus.Analyses.PurityTest do
   end
 
   defp run(modules \\ @all) do
-    assert {:ok, r} = Argus.analyze(modules, :purity)
+    assert {:ok, r} = Argus.analyze(modules, :effects)
 
     %{
       verified: Map.get(r, "purity_verified", []) |> Enum.map(&hd/1),
@@ -194,7 +194,7 @@ defmodule Argus.Analyses.PurityTest do
       skip_without_souffle()
 
       assert {:ok, r} =
-               Argus.analyze([P.HigherOrder, P.GoodCaller, P.BadCaller], :purity)
+               Argus.analyze([P.HigherOrder, P.GoodCaller, P.BadCaller], :effects)
 
       assert [[caller, callee, closure, "io", "IO.puts/1"]] =
                Map.get(r, "impure_closure_to_pure", [])
@@ -207,7 +207,7 @@ defmodule Argus.Analyses.PurityTest do
     test "passing a pure closure is not reported" do
       skip_without_souffle()
 
-      assert {:ok, r} = Argus.analyze([P.HigherOrder, P.GoodCaller], :purity)
+      assert {:ok, r} = Argus.analyze([P.HigherOrder, P.GoodCaller], :effects)
       assert Map.get(r, "impure_closure_to_pure", []) == []
     end
 

@@ -1,4 +1,4 @@
-defmodule Argus.Analyses.TlsVerificationTest do
+defmodule Argus.Analyses.ExposureTlsTest do
   use ExUnit.Case
 
   alias Argus.Souffle
@@ -11,7 +11,7 @@ defmodule Argus.Analyses.TlsVerificationTest do
   end
 
   defp funcs(relation) do
-    assert {:ok, r} = Argus.analyze(@all, :tls_verification)
+    assert {:ok, r} = Argus.analyze(@all, :exposure)
     r |> Map.get(relation, []) |> Enum.map(&hd/1) |> Enum.uniq() |> Enum.sort()
   end
 

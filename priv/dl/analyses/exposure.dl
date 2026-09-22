@@ -1,0 +1,163 @@
+// Credentials printed, or sent unauthenticated.
+//
+// Two ways a secret leaves protection without anyone deciding it
+// should: an Ecto schema field holding one that inspect/1 prints in
+// full (Logger calls, changeset errors, crash reports), and a TLS
+// connection that encrypts without authenticating the peer, so anyone
+// able to answer for the host terminates the session with a certificate
+// they minted themselves.
+
+.include "../clientlib/imports.dl"
+
+// ══ Secrets a schema prints ═════════════════════════════════════════
+// Credentials an inspect/1 will print.
+//
+// Ecto's `redact: true` keeps a field out of `inspect/1`. It defaults to
+// off, so a struct holding a third-party API key prints it in full — into
+// Logger calls, changeset error output, LiveView debug, crash reports, and
+// whatever error reporter is installed. Nothing at the field's definition
+// site suggests that, and nothing fails when it happens.
+//
+// The field name is the only signal available for "is this a secret", which
+// makes this a heuristic. It is one of the few places a heuristic is
+// clearly right: nobody names a field `sendgrid_api_key` by accident.
+//
+// Severity follows what leaking the value costs. A live third-party
+// credential is someone else's system; a hash is an offline attack; a
+// session token expires.
+
+
+.decl secret_kind(fragment: symbol, kind: symbol)
+
+// Third-party credentials — leaking one hands over another system.
+secret_kind("api_key", "credential").
+secret_kind("apikey", "credential").
+secret_kind("secret", "credential").
+secret_kind("private_key", "credential").
+secret_kind("client_secret", "credential").
+secret_kind("smtp_password", "credential").
+secret_kind("access_key", "credential").
+
+// Authentication material for this system.
+secret_kind("password", "password").
+secret_kind("passwd", "password").
+
+// Bearer material, usually with a lifetime.
+secret_kind("access_token", "token").
+secret_kind("refresh_token", "token").
+secret_kind("auth_token", "token").
+secret_kind("session_token", "token").
+
+.decl matches_kind(mod: symbol, field: symbol, kind: symbol)
+
+matches_kind(mod, field, kind) :-
+  schema_field(mod, field),
+  secret_kind(fragment, kind),
+  contains(fragment, field).
+
+// A field can match more than one fragment — `smtp_password` is both a
+// third-party credential and a password — and reporting it twice under two
+// severities is worse than useless. The most severe kind wins, which is
+// also the most specific: `smtp_password` is somebody else's SMTP account,
+// not a local login.
+.decl secret_rank(kind: symbol, rank: number)
+
+secret_rank("credential", 1).
+secret_rank("password", 2).
+secret_rank("token", 3).
+
+.decl sensitive_field(mod: symbol, field: symbol, kind: symbol)
+
+sensitive_field(mod, field, kind) :-
+  matches_kind(mod, field, kind),
+  secret_rank(kind, rank),
+  rank = min r : { matches_kind(mod, field, other), secret_rank(other, r) }.
+
+// A schema that redacts something has answered the question, and answered
+// it differently here. That is a stronger finding than one that never
+// considered it, and the finding text says so — one sequin schema redacts a
+// field while twenty-four of its siblings do not.
+.decl schema_redacts_something(mod: symbol)
+
+schema_redacts_something(mod) :- redacted_field(mod, _).
+
+.decl unredacted_secret(mod: symbol, field: symbol, kind: symbol, aware: symbol)
+.output unredacted_secret
+
+unredacted_secret(mod, field, kind, "aware") :-
+  sensitive_field(mod, field, kind),
+  !redacted_field(mod, field),
+  schema_redacts_something(mod).
+
+unredacted_secret(mod, field, kind, "unaware") :-
+  sensitive_field(mod, field, kind),
+  !redacted_field(mod, field),
+  !schema_redacts_something(mod).
+
+// ══ TLS without verification ════════════════════════════════════════
+// TLS that encrypts without authenticating.
+//
+// A TLS connection that does not verify the peer's certificate is
+// confidential against a passive observer and wide open to anyone who can
+// answer for the host — which is the threat TLS exists to address. Nothing
+// distinguishes a verified session from an unverified one at runtime: the
+// connection succeeds, the bytes are encrypted, and the padlock is a lie.
+//
+// Two shapes. The first is greppable and reported anyway, because it is
+// high severity and rare enough that every site deserves a look. The second
+// is the reason this is an analysis: an option list that never mentions
+// `verify` takes whatever the library defaults to, and Erlang's `:ssl`
+// client verified nothing at all before OTP 26. Reading the call site tells
+// you nothing — the absence IS the finding, and absence is what a search
+// cannot look for.
+
+
+// ── Verification disabled outright ───────────────────────────────
+
+// Reported only when the module offers no way to get a verified
+// connection. That distinction is the whole value here, and it is not one a
+// search can make.
+//
+// Sequin has both shapes. `ConfigParser` maps REDIS_TLS_VERIFY=verify-none
+// onto :verify_none — an explicit, documented user choice, and the same
+// module sets :verify_peer when certificates are configured. Reporting it
+// would be noise. `RedisStringSink.maybe_put_tls/2` does
+//
+//     defp maybe_put_tls(opts, %RedisStringSink{tls: true}),
+//       do: Keyword.put(opts, :tls, verify: :verify_none)
+//
+// and :verify_peer appears nowhere in the module, so enabling TLS gets you
+// an unauthenticated channel and there is no option that changes it.
+//
+// A module naming :verify_peer anywhere is credited with offering the
+// choice, which is deliberately generous: the alternative is arguing about
+// which branch is reachable, and a false "this is insecure" against code
+// that supports verification is the finding that gets an analysis switched
+// off.
+
+.decl module_can_verify(mod: symbol)
+
+module_can_verify(mod) :-
+  tls_verification(_, func, "peer"),
+  function_def(func, mod, _, _, _).
+
+.decl disables_verification(func: symbol, id: symbol)
+.output disables_verification
+
+disables_verification(func, id) :-
+  tls_verification(id, func, "none"),
+  function_def(func, mod, _, _, _),
+  !module_can_verify(mod).
+
+// ── Verification left to the library's default ───────────────────
+//
+// Only for connects whose options are a literal list. A list built at
+// runtime may well set `verify` somewhere this cannot see, and a false
+// "insecure" on correctly configured code is worse than silence.
+
+.decl relies_on_default_verification(func: symbol, id: symbol, api: symbol)
+.output relies_on_default_verification
+
+relies_on_default_verification(func, id, api) :-
+  tls_connect(id, func, api, "literal"),
+  tls_verification(id, func, "absent").

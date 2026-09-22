@@ -137,7 +137,19 @@ defmodule Argus.Analysis do
     ],
     unbounded_dynamic_children: [
       %{analysis: :unsafe_input, relation: :unbounded_children_from_request, where: []}
-    ]
+    ],
+    secret_exposure: [%{analysis: :exposure, relation: :unredacted_secret, where: []}],
+    tls_verification: [
+      %{analysis: :exposure, relation: :disables_verification, where: []},
+      %{analysis: :exposure, relation: :relies_on_default_verification, where: []}
+    ],
+    purity: [
+      %{analysis: :effects, relation: :purity_violated, where: []},
+      %{analysis: :effects, relation: :purity_unprovable, where: []},
+      %{analysis: :effects, relation: :impure_closure_to_pure, where: []},
+      %{analysis: :effects, relation: :purity_verified, where: []}
+    ],
+    transaction_safety: [%{analysis: :effects, relation: :effect_in_transaction, where: []}]
   }
 
   @doc "The concern vocabulary: every built-in analysis is named after one."

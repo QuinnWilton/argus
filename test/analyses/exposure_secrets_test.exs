@@ -1,4 +1,4 @@
-defmodule Argus.Analyses.SecretExposureTest do
+defmodule Argus.Analyses.ExposureSecretsTest do
   use ExUnit.Case
 
   alias Argus.Souffle
@@ -11,7 +11,7 @@ defmodule Argus.Analyses.SecretExposureTest do
   end
 
   defp rows do
-    assert {:ok, r} = Argus.analyze(@all, :secret_exposure)
+    assert {:ok, r} = Argus.analyze(@all, :exposure)
     Map.get(r, "unredacted_secret", [])
   end
 
@@ -44,7 +44,7 @@ defmodule Argus.Analyses.SecretExposureTest do
   end
 
   test "severity separates a live third-party credential from a hash" do
-    mod = Argus.Analyses.SecretExposure
+    mod = Argus.Analyses.Exposure
     cred = mod.finding(:unredacted_secret, ["M", ":api_key", "credential", "unaware"])
     pass = mod.finding(:unredacted_secret, ["M", ":password", "password", "unaware"])
 

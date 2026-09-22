@@ -23,6 +23,10 @@ is the table). Named sets (`:all`, `:default`, `:security`, `:effects`,
 | `atom_safety` | `unsafe_input`, `sink_without_request_path` | a sink a request reaches is reported once, by proximity, not again as export-reachable |
 | `request_surface` | `unsafe_input`, `sink_reachable` (+ `sink_endpoint`) | the three `remote_*` relations are one, with the sink as a column |
 | `unbounded_dynamic_children` | `unsafe_input`, `unbounded_children_from_request` | unchanged |
+| `secret_exposure` | `exposure`, `unredacted_secret` | unchanged |
+| `tls_verification` | `exposure`, `disables_verification`, `relies_on_default_verification` | unchanged |
+| `purity` | `effects`, `purity_*`, `impure_closure_to_pure` | unchanged |
+| `transaction_safety` | `effects`, `effect_in_transaction` | unchanged |
 
 ## 0.16.0 — 2026-09-21
 

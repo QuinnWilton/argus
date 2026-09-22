@@ -1,4 +1,4 @@
-defmodule Argus.Analyses.TransactionSafetyTest do
+defmodule Argus.Analyses.EffectsTransactionTest do
   use ExUnit.Case
 
   alias Argus.Purity.Effects
@@ -20,7 +20,7 @@ defmodule Argus.Analyses.TransactionSafetyTest do
   end
 
   defp findings(modules \\ @all) do
-    assert {:ok, r} = Argus.analyze(modules, :transaction_safety)
+    assert {:ok, r} = Argus.analyze(modules, :effects)
     Map.get(r, "effect_in_transaction", [])
   end
 
