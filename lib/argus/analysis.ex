@@ -93,6 +93,109 @@ defmodule Argus.Analysis do
   @type analysis :: atom() | {:custom, Path.t()}
   @type result :: %{String.t() => [[String.t()]]}
 
+  @typedoc """
+  One piece of an alias: rows of `relation` in `analysis` whose columns
+  match `where` (a keyword of column name to a value or list of values)
+  are what the old analysis name used to report.
+  """
+  @type alias_entry :: %{analysis: atom(), relation: atom(), where: keyword()}
+
+  # ── Concerns, sets and aliases ──────────────────────────────────────
+  #
+  # An analysis answers "what goes wrong". Mechanism (rpc vs
+  # GenServer.call), phase (init vs terminate) and proximity (export vs
+  # request-direct) are columns on a relation, never separate analyses;
+  # a defect has one owner. The names below are that axis.
+
+  @concerns [
+    :startup,
+    :shutdown,
+    :blocking,
+    :coupling,
+    :mailbox,
+    :failure,
+    :structure,
+    :state_machine,
+    :ets,
+    :effects,
+    :unsafe_input,
+    :exposure,
+    :coverage
+  ]
+
+  # The analyses each retired name's findings live in now, with the rows
+  # that were its. `Argus.Findings.run/2` accepts the old name for two
+  # minor versions, runs the new analysis, keeps the rows listed here and
+  # reports them under the old name with `concern` set to the new one.
+  @aliases %{
+    atom_safety: [
+      %{analysis: :unsafe_input, relation: :sink_without_request_path, where: []}
+    ],
+    request_surface: [
+      %{analysis: :unsafe_input, relation: :sink_reachable, where: []},
+      %{analysis: :unsafe_input, relation: :sink_endpoint, where: []}
+    ],
+    unbounded_dynamic_children: [
+      %{analysis: :unsafe_input, relation: :unbounded_children_from_request, where: []}
+    ]
+  }
+
+  @doc "The concern vocabulary: every built-in analysis is named after one."
+  @spec concerns() :: [atom()]
+  def concerns, do: @concerns
+
+  @doc """
+  The retired analysis names and where their findings live now.
+  """
+  @spec aliases() :: %{atom() => [alias_entry()]}
+  def aliases, do: @aliases
+
+  @doc """
+  Where a retired analysis name's findings live now: `{:ok, entries}`,
+  or `:error` for a name that never was an analysis.
+  """
+  @spec alias(atom()) :: {:ok, [alias_entry()]} | :error
+  def alias(name) when is_atom(name), do: Map.fetch(@aliases, name)
+
+  @doc """
+  The named sets of analyses `Argus.run_analyses/2` accepts in place of a
+  list: `:all` (every built-in but `:coverage`, which measures the
+  extractor pipeline rather than the code), `:default` (what scry runs
+  without configuration), `:security`, `:effects` and `:otp` (everything
+  else).
+  """
+  @spec sets() :: %{atom() => [atom()]}
+  def sets do
+    all = builtin_analyses() -- [:coverage]
+    security = Enum.filter([:unsafe_input, :exposure], &(&1 in all))
+    effects = Enum.filter([:effects], &(&1 in all))
+
+    %{
+      all: all,
+      default: Enum.filter(default_set(), &(&1 in all)),
+      security: security,
+      effects: effects,
+      otp: all -- (security ++ effects)
+    }
+  end
+
+  # scry's default until the regroup completes; the concern analyses
+  # replace these names as they land.
+  defp default_set do
+    [
+      :deferred_startup_deadlock,
+      :one_for_one_coupling,
+      :supervision,
+      :sync_call_in_init,
+      :unlinked_spawn,
+      :unsafe_task
+    ]
+  end
+
+  @doc "The analyses in a named set: `{:ok, names}` or `:error`."
+  @spec set(atom()) :: {:ok, [atom()]} | :error
+  def set(name) when is_atom(name), do: Map.fetch(sets(), name)
+
   @doc """
   Runs an analysis against the given modules.
 

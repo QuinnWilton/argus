@@ -4,6 +4,26 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+One analysis per concern. An analysis answers "what goes wrong";
+mechanism, phase and proximity are columns on a relation, never
+separate analyses, and a defect has one owner. The retired names keep
+working for two minor versions: `Argus.run_analyses(analyses: [old])`
+runs the concern the old name's findings live in, reports the rows that
+were its under the old name, and sets the new `concern` field on every
+finding to the analysis it belongs to today (`Argus.Analysis.aliases/0`
+is the table). Named sets (`:all`, `:default`, `:security`, `:effects`,
+`:otp`) can stand in for a list (`Argus.Analysis.sets/0`).
+
+| Retired | Now | Notes |
+|---|---|---|
+| `atom_safety` | `unsafe_input`, `sink_without_request_path` | a sink a request reaches is reported once, by proximity, not again as export-reachable |
+| `request_surface` | `unsafe_input`, `sink_reachable` (+ `sink_endpoint`) | the three `remote_*` relations are one, with the sink as a column |
+| `unbounded_dynamic_children` | `unsafe_input`, `unbounded_children_from_request` | unchanged |
+
 ## 0.16.0 — 2026-09-21
 
 ### Changed

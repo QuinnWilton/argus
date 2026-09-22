@@ -2,8 +2,6 @@
 # reads, resolved from Souffle's transformed program. A change here is a
 # change in the unit of incremental work: review the diff.
 [
-  atom_safety:
-    ~w(call_edge code_execution function_def unsafe_atom_creation unsafe_deserialization),
   call_cycle:
     ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag function_def implements_behaviour sync_call),
   callback_receive:
@@ -32,8 +30,6 @@
   purity:
     ~w(call_edge closure_def dynamic_call ets_new ets_op impure_call port_open process_register protocol_dispatch pure_contract recv_start resolved_apply send_msg spawn_call unknown_call),
   reply_contract: ~w(callback_drops_from callback_return function_def implements_behaviour),
-  request_surface:
-    ~w(call_edge code_execution function_def http_route implements_behaviour unsafe_atom_creation unsafe_deserialization),
   secret_exposure: ~w(redacted_field schema_field),
   shutdown_safety:
     ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag catch_tag catch_total closure_def dynamic_child function_def implements_behaviour impure_call statem_event_clause sup_call supervisor_child supervisor_child_name sync_call trap_exit unknown_call),
@@ -45,9 +41,9 @@
     ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag function_def implements_behaviour sync_call sync_call_timeout),
   tls_verification: ~w(function_def tls_connect tls_verification),
   transaction_safety: ~w(call_edge closure_def implements_behaviour impure_call remote_call),
-  unbounded_dynamic_children:
-    ~w(call_edge dynamic_child function_def implements_behaviour socket_transport supervisor_max_children),
   unlinked_spawn: ~w(spawn_call),
+  unsafe_input:
+    ~w(call_edge code_execution dynamic_child function_def http_route implements_behaviour socket_transport supervisor_max_children unsafe_atom_creation unsafe_deserialization),
   unsafe_task:
     ~w(call_edge call_followed_by_branch callback_ref_head callback_tag callback_total closure_def function_def implements_behaviour mailbox_writer remote_call tail_call trap_exit)
 ]

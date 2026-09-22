@@ -5,7 +5,6 @@ defmodule Argus.AnalysisTest do
   alias Argus.Souffle
 
   @expected_analyses [
-    :atom_safety,
     :call_cycle,
     :callback_receive,
     :coverage,
@@ -21,7 +20,6 @@ defmodule Argus.AnalysisTest do
     :process_registry,
     :purity,
     :reply_contract,
-    :request_surface,
     :secret_exposure,
     :shutdown_safety,
     :supervision,
@@ -29,8 +27,8 @@ defmodule Argus.AnalysisTest do
     :timeout_chain,
     :tls_verification,
     :transaction_safety,
-    :unbounded_dynamic_children,
     :unlinked_spawn,
+    :unsafe_input,
     :unsafe_task
   ]
 
@@ -41,9 +39,26 @@ defmodule Argus.AnalysisTest do
   # -- Discovery ---------------------------------------------------------------
 
   describe "discovery" do
-    test "finds all 27 built-in analysis modules" do
+    test "finds all built-in analysis modules" do
       modules = Analysis.builtin_analysis_modules()
-      assert length(modules) == 27
+      assert length(modules) == length(@expected_analyses)
+    end
+
+    test "every alias names a current analysis and one of its relations" do
+      for {old, entries} <- Analysis.aliases(), entry <- entries do
+        refute old in Analysis.builtin_analyses(), "#{old} is both retired and current"
+        assert {:ok, relations} = Analysis.output_relations(entry.analysis)
+
+        assert Enum.any?(relations, &(&1.name == entry.relation)),
+               "#{entry.relation} is not in #{entry.analysis}"
+      end
+    end
+
+    test "sets partition the built-in analyses" do
+      sets = Analysis.sets()
+      assert Enum.sort(sets.security ++ sets.effects ++ sets.otp) == Enum.sort(sets.all)
+      refute :coverage in sets.all
+      assert Enum.all?(sets.default, &(&1 in sets.all))
     end
 
     test "builtin_analyses/0 returns all names sorted" do

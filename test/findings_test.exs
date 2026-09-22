@@ -12,6 +12,7 @@ defmodule Argus.FindingsTest do
 
   @finding_keys [
     :analysis,
+    :concern,
     :severity,
     :title,
     :detail,
@@ -33,6 +34,7 @@ defmodule Argus.FindingsTest do
   defp assert_finding_shape(finding) do
     assert Enum.sort(Map.keys(finding)) == Enum.sort(@finding_keys)
     assert is_atom(finding.analysis)
+    assert is_atom(finding.concern)
     assert finding.severity in @severities
     assert is_binary(finding.title) and finding.title != ""
     assert is_binary(finding.detail) and finding.detail != ""
@@ -149,7 +151,7 @@ defmodule Argus.FindingsTest do
       assert finding.detail =~ "read_concurrency"
     end
 
-    test "atom_safety findings carry instruction anchors and security severities" do
+    test "unsafe_input findings carry instruction anchors and security severities" do
       skip_without_souffle()
 
       modules = [
@@ -159,10 +161,15 @@ defmodule Argus.FindingsTest do
         Fixtures.SafeModule
       ]
 
-      assert {:ok, result} = Argus.run_analyses(modules, analyses: [:atom_safety])
+      assert {:ok, result} = Argus.run_analyses(modules, analyses: [:unsafe_input])
 
       Enum.each(result.findings, &assert_finding_shape/1)
       assert result.findings != []
+
+      assert Enum.all?(
+               result.findings,
+               &(&1.analysis == :unsafe_input and &1.concern == :unsafe_input)
+             )
 
       # Every row anchors at the offending call instruction, which also
       # yields the full mfa.
@@ -177,6 +184,47 @@ defmodule Argus.FindingsTest do
       exhaustion = Enum.filter(result.findings, &(&1.title =~ "atom creation"))
       assert exhaustion != []
       assert Enum.all?(exhaustion, &(&1.severity == :warning))
+    end
+
+    test "a retired name runs its concern and reports the rows that were its" do
+      skip_without_souffle()
+
+      modules = [Fixtures.UnsafeAtomCreation, Fixtures.UnsafeDeserialization]
+
+      assert {:ok, direct} = Argus.run_analyses(modules, analyses: [:unsafe_input])
+      assert {:ok, aliased} = Argus.run_analyses(modules, analyses: [:atom_safety])
+
+      Enum.each(aliased.findings, &assert_finding_shape/1)
+      assert aliased.findings != []
+
+      assert Enum.all?(
+               aliased.findings,
+               &(&1.analysis == :atom_safety and &1.concern == :unsafe_input)
+             )
+
+      assert [%{analysis: :atom_safety}] = aliased.ran
+
+      # The old name selects a subset of the concern's rows; here there is
+      # no request surface, so it is all of them.
+      assert Enum.map(aliased.findings, &{&1.title, &1.mfa}) ==
+               Enum.map(direct.findings, &{&1.title, &1.mfa})
+
+      # Asked for both ways, the concern reports once, under its own name.
+      assert {:ok, both} = Argus.run_analyses(modules, analyses: [:atom_safety, :unsafe_input])
+
+      assert Enum.map(both.findings, &{&1.title, &1.mfa}) ==
+               Enum.map(direct.findings, &{&1.title, &1.mfa})
+
+      assert [%{analysis: :unsafe_input}] = both.ran
+    end
+
+    test "a named set selects its analyses" do
+      skip_without_souffle()
+
+      assert {:ok, result} =
+               Argus.run_analyses([Fixtures.UnsafeAtomCreation], analyses: :security)
+
+      assert Enum.map(result.ran, & &1.analysis) == Argus.Analysis.set(:security) |> elem(1)
     end
 
     test "call_cycle findings rank the cycle as error with path evidence as info" do
