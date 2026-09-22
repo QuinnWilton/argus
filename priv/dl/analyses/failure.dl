@@ -27,7 +27,7 @@
 //   supervises: a bare spawn (`kind` = "spawn", site is the call) or an
 //   exit signal sent to `target` from a callback, past the supervisor
 //   that owns it (`kind` = "exit", site is the callback).
-.decl unhandled_failure(func: symbol, site: symbol, kind: symbol, shape: symbol)
+.decl unhandled_failure(func: symbol, site: symbol, kind: symbol, shape: symbol, span_end: symbol)
 .output unhandled_failure
 
 .decl unchecked_result(func: symbol, site: symbol, api: symbol, name: symbol)
@@ -42,7 +42,7 @@
 // ── Swallowed errors ─────────────────────────────────────────────
 
 // Catch-all rescue that silently discards exceptions.
-unhandled_failure(func, func, "rescue", "") :-
+unhandled_failure(func, func, "rescue", "", "") :-
   bare_rescue(_, func).
 
 // ── Exit in GenServer callback ───────────────────────────────────
@@ -69,8 +69,8 @@ orphan_process(func, func, "exit", target) :-
   target != "self".
 
 // ══ Remote calls whose failure is not a value ═══════════════════════
-unhandled_failure(func, call, "erpc_transport", "") :-
-  try_call(id, func, callee, call),
+unhandled_failure(func, call, "erpc_transport", "", guard_end) :-
+  try_call(id, func, callee, call, guard_end),
   (callee = ":erpc:call/4" ; callee = ":erpc:call/5"),
   catch_tag(id, func, "error", ":exception"),
   !catch_tag(id, func, "error", ":erpc"),
@@ -86,7 +86,7 @@ unhandled_failure(func, call, "erpc_transport", "") :-
 // process on a gone node is alive (horde, until 30bb1a1). :erpc.call
 // raises instead, so in a boolean context it needs a rescue (horde's
 // fix: catch {:erpc, :noconnection} -> false).
-unhandled_failure(f, id, v, "case") :-
+unhandled_failure(f, id, v, "case", "") :-
   rpc_call(id, f, v, _),
   (v = "rpc" ; v = "multicall"),
   rpc_result(id, f, "case").
@@ -103,12 +103,12 @@ rpc_boolean_use(id, f) :-
   function_def(f, _, name, _, _),
   match(".*\\?", name).
 
-unhandled_failure(f, id, v, "boolean") :-
+unhandled_failure(f, id, v, "boolean", "") :-
   rpc_call(id, f, v, _),
   (v = "rpc" ; v = "multicall"),
   rpc_boolean_use(id, f).
 
-unhandled_failure(f, id, "erpc", "boolean") :-
+unhandled_failure(f, id, "erpc", "boolean", "") :-
   rpc_call(id, f, "erpc", _),
   rpc_boolean_use(id, f),
   !catches_class(f, "error"),
@@ -191,18 +191,18 @@ unchecked_result(func, id, "Process.whereis", name) :-
 .decl fate_count(callee: symbol, fate: symbol, n: number)
 
 fate_count(callee, fate, n) :-
-  call_result(_, _, callee, fate, _),
-  n = count : { call_result(_, _, callee, fate, _) }.
+  call_result(_, _, callee, fate, _, _),
+  n = count : { call_result(_, _, callee, fate, _, _) }.
 
 .decl guard_count(callee: symbol, guard: symbol, n: number)
 
 guard_count(callee, guard, n) :-
-  call_result(_, _, callee, _, guard),
-  n = count : { call_result(_, _, callee, _, guard) }.
+  call_result(_, _, callee, _, guard, _),
+  n = count : { call_result(_, _, callee, _, guard, _) }.
 
 // A site unchecked_result already owns is not reported twice.
 inconsistent_handling(func, site, callee, "result_checked", used, ignored) :-
-  call_result(site, func, callee, "ignored", _),
+  call_result(site, func, callee, "ignored", _, _),
   fate_count(callee, "used", used),
   fate_count(callee, "ignored", ignored),
   used >= 3,
@@ -210,7 +210,7 @@ inconsistent_handling(func, site, callee, "result_checked", used, ignored) :-
   !unchecked_result(func, site, _, _).
 
 inconsistent_handling(func, site, callee, "exception_guarded", guarded, bare) :-
-  call_result(site, func, callee, _, "bare"),
+  call_result(site, func, callee, _, "bare", _),
   guard_count(callee, "try", guarded),
   guard_count(callee, "bare", bare),
   guarded >= 3,
@@ -218,13 +218,13 @@ inconsistent_handling(func, site, callee, "exception_guarded", guarded, bare) :-
 
 // The sites that follow the convention, attached to the finding as its
 // evidence: what "every other call site" looks like.
-.decl handling_site(callee: symbol, belief: symbol, site: symbol, func: symbol)
+.decl handling_site(callee: symbol, belief: symbol, site: symbol, func: symbol, guard_end: symbol)
 .output handling_site
 
-handling_site(callee, "exception_guarded", site, f) :-
+handling_site(callee, "exception_guarded", site, f, guard_end) :-
   inconsistent_handling(_, _, callee, "exception_guarded", _, _),
-  call_result(site, f, callee, _, "try").
+  call_result(site, f, callee, _, "try", guard_end).
 
-handling_site(callee, "result_checked", site, f) :-
+handling_site(callee, "result_checked", site, f, "") :-
   inconsistent_handling(_, _, callee, "result_checked", _, _),
-  call_result(site, f, callee, "used", _).
+  call_result(site, f, callee, "used", _, _).

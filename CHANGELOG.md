@@ -51,6 +51,17 @@ Corpus: `Argus.Corpus.ensure/2` returned every beam twice when the
 project is the repository root, and listed both a dev and a test build;
 each beam once now, from one build.
 
+A finding can close a span. `Findings.new/4` takes `to:`, an anchor whose
+instruction ends the primary span, and `Findings.related/3` takes `to:`
+for a frame; `to_instr` rides on both. A consumer with the source draws
+the lines from the anchor to it as one bracket. `try_call` and
+`call_result` gain `guard_end`, the handler's last instruction (the
+`CatchClauses` walk already visits every instruction of a handler), so
+"catches :noproc but not :shutdown", the erpc rescue finding and the
+"guarded by this catch" frames of a consistency finding cover the call
+through its catch — the guard Elixir's body-level `catch` has no `try`
+keyword for.
+
 Findings that knew only a function now point at the instruction, and
 carry the frames a reader wants next. Stage 0's `call_site` gains the
 callee's function and arity, covers local calls, and stages the few

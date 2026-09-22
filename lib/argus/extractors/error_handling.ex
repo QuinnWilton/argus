@@ -35,7 +35,7 @@ defmodule Argus.Extractors.ErrorHandling do
   - `catch_falls_through(id, func, tag)` — a `case` inside the handler,
     reached after comparing `tag`, has no clause for some value, so an
     unexpected reason is a CaseClauseError
-  - `try_call(id, func, callee, call)` — a peer call (`GenServer.call`,
+  - `try_call(id, func, callee, call, guard_end)` — a peer call (`GenServer.call`,
     `:gen_statem.call`, `:erpc.call`, ...) the `try` at `id` guards
   - `mailbox_writer(id, func, kind)` — a call after which something other
     than a peer's request lands in this process's mailbox: `task` (a
@@ -190,8 +190,14 @@ defmodule Argus.Extractors.ErrorHandling do
     if process_api?(mod, func) and not generated_function?(ctx.func_id) do
       id = InstrId.mint(ctx.func_id, ctx.idx)
       callee = Normalize.func_id(mod, func, arity)
-      guard = if guarded?(ctx.instrs, ctx.idx), do: "try", else: "bare"
-      add_fact(facts, :call_result, [id, ctx.func_id, callee, result_fate(ctx), guard])
+
+      {guard, guard_end} =
+        case guard_label(ctx.instrs, ctx.idx) do
+          nil -> {"bare", ""}
+          label -> {"try", handler_end(ctx, label)}
+        end
+
+      add_fact(facts, :call_result, [id, ctx.func_id, callee, result_fate(ctx), guard, guard_end])
     else
       facts
     end
@@ -226,16 +232,29 @@ defmodule Argus.Extractors.ErrorHandling do
   # and closes with `try_end` (no exception) or `try_case` (the handler),
   # both naming the same register, so the tries still open at `idx` are a
   # stack walked from the function's start.
-  defp guarded?(instrs, idx) do
+  # The handler label of the innermost try open at `idx`, or nil.
+  defp guard_label(instrs, idx) do
     instrs
     |> Enum.take(idx)
     |> Enum.reduce([], fn
-      {:try, reg, _handler}, open -> [reg | open]
-      {:try_end, reg}, open -> List.delete(open, reg)
-      {:try_case, reg}, open -> List.delete(open, reg)
+      {:try, reg, {:f, label}}, open -> [{reg, label} | open]
+      {:try_end, reg}, open -> List.keydelete(open, reg, 0)
+      {:try_case, reg}, open -> List.keydelete(open, reg, 0)
       _instr, open -> open
     end)
-    |> Kernel.!=([])
+    |> case do
+      [] -> nil
+      [{_reg, label} | _] -> label
+    end
+  end
+
+  # The handler's last instruction, minted as a site: the end of the span
+  # a finding draws from the guarded call through its catch.
+  defp handler_end(ctx, label) do
+    case CatchClauses.analyse(ctx.instrs, label).last do
+      nil -> ""
+      last -> InstrId.mint(ctx.func_id, last)
+    end
   end
 
   @mailbox_writers %{
@@ -908,7 +927,8 @@ defmodule Argus.Extractors.ErrorHandling do
             id,
             ctx.func_id,
             Normalize.func_id(m, f, a),
-            InstrId.mint(ctx.func_id, idx)
+            InstrId.mint(ctx.func_id, idx),
+            handler_end(ctx, handler_label)
           ])
 
         _ ->

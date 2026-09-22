@@ -53,7 +53,8 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
           classes: [atom()],
           totals: [atom()],
           tags: [{atom(), atom()}],
-          falls_through: [atom()]
+          falls_through: [atom()],
+          last: non_neg_integer() | nil
         }
 
   @doc "Summarise the handler at `label` of the function `instrs`."
@@ -64,7 +65,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
 
     case Map.fetch(labels, label) do
       :error ->
-        %{classes: [], totals: [], tags: [], falls_through: []}
+        %{classes: [], totals: [], tags: [], falls_through: [], last: nil}
 
       {:ok, start} ->
         path = %{class: nil, tested: false, aliases: MapSet.new([@x1]), tags: MapSet.new()}
@@ -73,16 +74,20 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
           classes: MapSet.new(),
           totals: MapSet.new(),
           tags: MapSet.new(),
-          falls_through: MapSet.new()
+          falls_through: MapSet.new(),
+          last: start
         }
 
         {_seen, acc} = walk(start, path, tuple, labels, MapSet.new(), acc)
 
+        # `last` is the handler's furthest instruction: where a span that
+        # covers the whole catch ends.
         %{
           classes: acc.classes |> MapSet.to_list() |> Enum.sort(),
           totals: acc.totals |> MapSet.to_list() |> Enum.sort(),
           tags: acc.tags |> MapSet.to_list() |> Enum.sort(),
-          falls_through: acc.falls_through |> MapSet.to_list() |> Enum.sort()
+          falls_through: acc.falls_through |> MapSet.to_list() |> Enum.sort(),
+          last: acc.last
         }
     end
   end
@@ -102,9 +107,15 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
     key = {idx, path.class, path.tested}
 
     cond do
-      idx >= tuple_size(instrs) -> {seen, acc}
-      MapSet.member?(seen, key) -> {seen, acc}
-      true -> step(elem(instrs, idx), idx, path, instrs, labels, MapSet.put(seen, key), acc)
+      idx >= tuple_size(instrs) ->
+        {seen, acc}
+
+      MapSet.member?(seen, key) ->
+        {seen, acc}
+
+      true ->
+        acc = %{acc | last: max(acc.last, idx)}
+        step(elem(instrs, idx), idx, path, instrs, labels, MapSet.put(seen, key), acc)
     end
   end
 

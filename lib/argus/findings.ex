@@ -49,12 +49,17 @@ defmodule Argus.Findings do
           instr: InstrId.t() | nil
         }
 
-  @typedoc "A labelled secondary location (sibling, supervisor, callee, ...)."
+  @typedoc """
+  A labelled secondary location (sibling, supervisor, callee, ...).
+  `to_instr` closes a span: the frame covers the lines from `instr` to
+  it (a call and the catch that guards it).
+  """
   @type related :: %{
           label: String.t(),
           module: module() | nil,
           mfa: mfa() | nil,
-          instr: InstrId.t() | nil
+          instr: InstrId.t() | nil,
+          to_instr: InstrId.t() | nil
         }
 
   @typedoc """
@@ -75,6 +80,7 @@ defmodule Argus.Findings do
           instr: InstrId.t() | nil,
           at_label: String.t() | nil,
           at_source: String.t() | nil,
+          to_instr: InstrId.t() | nil,
           help: [String.t()],
           related: [related()],
           provenance: provenance(),
@@ -98,6 +104,7 @@ defmodule Argus.Findings do
           instr: InstrId.t() | nil,
           at_label: String.t() | nil,
           at_source: String.t() | nil,
+          to_instr: InstrId.t() | nil,
           help: [String.t()],
           related: [related()],
           provenance: provenance(),
@@ -644,6 +651,9 @@ defmodule Argus.Findings do
   - `:at_label` — what the anchor line IS, for renderers that excerpt the
     source ("supervision tree defined here"), so the annotation does not
     just repeat the title (default: `nil`).
+  - `:to` — an anchor whose instruction closes the primary span: the
+    finding covers the lines from `:at` to it, as one bracket, for a
+    call and the catch that guards it (default: no span).
   - `:at_source` — a source fragment that carries the anchor the last
     step bytecode cannot: a consumer holding the source moves the anchor
     to the first line at or after the anchor's line that contains the
@@ -665,6 +675,7 @@ defmodule Argus.Findings do
     anchor = Keyword.get(opts, :at, empty_anchor())
     at_label = Keyword.get(opts, :at_label)
     at_source = Keyword.get(opts, :at_source)
+    to_instr = Keyword.get(opts, :to, empty_anchor()).instr
     help = Keyword.get(opts, :help, [])
     provenance = Keyword.get(opts, :provenance, :structural)
     confidence = Keyword.get(opts, :confidence)
@@ -701,6 +712,7 @@ defmodule Argus.Findings do
       instr: anchor.instr,
       at_label: at_label,
       at_source: at_source,
+      to_instr: to_instr,
       help: help,
       related: Keyword.get(opts, :related, []),
       provenance: provenance,
@@ -732,10 +744,15 @@ defmodule Argus.Findings do
   def rpc_api("erpc"), do: ":erpc.call"
   def rpc_api(other) when is_binary(other), do: other
 
-  @doc "Labels an anchor as a secondary location."
-  @spec related(String.t(), anchor()) :: related()
-  def related(label, anchor) when is_binary(label) do
-    Map.put(anchor, :label, label)
+  @doc """
+  Labels an anchor as a secondary location. `to:` closes a span from the
+  anchor's instruction to that anchor's.
+  """
+  @spec related(String.t(), anchor(), keyword()) :: related()
+  def related(label, anchor, opts \\ []) when is_binary(label) do
+    anchor
+    |> Map.put(:label, label)
+    |> Map.put(:to_instr, Keyword.get(opts, :to, empty_anchor()).instr)
   end
 
   @doc """

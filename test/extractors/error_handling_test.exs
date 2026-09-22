@@ -29,11 +29,14 @@ defmodule Argus.Extractors.ErrorHandlingTest do
     test "names the guarded call's own instruction beside the try" do
       facts = ErrorHandling.extract(disassemble(Argus.Test.Fixtures.CatchShapes.NoprocOnly))
 
-      assert [[try_id, func, "GenServer:call/2", call]] = facts[:try_call]
+      assert [[try_id, func, "GenServer:call/2", call, guard_end]] = facts[:try_call]
       assert func =~ "sync_with_parent/1"
       assert {:ok, %{idx: try_idx}} = Argus.InstrId.parse(try_id)
       assert {:ok, %{idx: call_idx}} = Argus.InstrId.parse(call)
+      assert {:ok, %{idx: end_idx}} = Argus.InstrId.parse(guard_end)
       assert call_idx > try_idx
+      # The handler follows the guarded body: its last instruction closes the span.
+      assert end_idx > call_idx
     end
   end
 

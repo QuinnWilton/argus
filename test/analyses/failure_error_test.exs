@@ -30,7 +30,7 @@ defmodule Argus.Analyses.FailureErrorTest do
       results =
         analyze([Argus.Test.Fixtures.BareRescue, Argus.Test.Fixtures.FilteredRescue])
 
-      funcs = Enum.map(swallowed(results), fn [func] -> func end)
+      funcs = Enum.map(swallowed(results), fn [func | _] -> func end)
 
       assert Enum.any?(funcs, &String.contains?(&1, "BareRescue"))
       refute Enum.any?(funcs, &String.contains?(&1, "FilteredRescue"))

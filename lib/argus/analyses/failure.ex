@@ -60,7 +60,8 @@ defmodule Argus.Analyses.Failure do
           {:site, :symbol, "the rescue's function, the guarded call, or the rpc call"},
           {:kind, :symbol, "rescue | erpc_transport | rpc | multicall | erpc"},
           {:shape, :symbol,
-           "for an rpc variant, case (matched, no clause) or boolean (truthy tuple)"}
+           "for an rpc variant, case (matched, no clause) or boolean (truthy tuple)"},
+          {:span_end, :symbol, "for erpc_transport, the rescue's last instruction; else empty"}
         ],
         key: [:func, :site],
         doc: "A failure value or exception that nothing takes."
@@ -95,7 +96,8 @@ defmodule Argus.Analyses.Failure do
           {:callee, :symbol, "the callee"},
           {:belief, :symbol, "result_checked | exception_guarded"},
           {:site, :symbol, "a call site that follows the convention"},
-          {:func, :symbol, "the function it is in"}
+          {:func, :symbol, "the function it is in"},
+          {:guard_end, :symbol, "for exception_guarded, the catch's last instruction; else empty"}
         ],
         key: [:callee, :belief, :site],
         evidence: %{of: :inconsistent_handling, on: [:callee, :belief], limit: 3},
@@ -146,7 +148,7 @@ defmodule Argus.Analyses.Failure do
     )
   end
 
-  def finding(:unhandled_failure, [func, _site, "rescue", _]) do
+  def finding(:unhandled_failure, [func, _site, "rescue", _, _]) do
     Findings.new(
       :warning,
       "Catch-all rescue swallows exceptions",
@@ -180,7 +182,7 @@ defmodule Argus.Analyses.Failure do
     )
   end
 
-  def finding(:unhandled_failure, [func, site, "erpc_transport", _]) do
+  def finding(:unhandled_failure, [func, site, "erpc_transport", _, span_end]) do
     Findings.new(
       :warning,
       ":erpc.call transport failures fall through the rescue",
@@ -190,12 +192,13 @@ defmodule Argus.Analyses.Failure do
         "`{:erpc, :system_limit}`), and the rescue's `case` has no clause for " <>
         "it — a CaseClauseError in place of a result.",
       at: Findings.at_site(site, func),
-      at_label: "the call; its rescue has no {:erpc, _} clause",
+      to: Findings.at_site(span_end, func),
+      at_label: "the call and its rescue, which has no {:erpc, _} clause",
       help: ["add a clause for `{:erpc, reason}` and return or raise a meaningful error"]
     )
   end
 
-  def finding(:unhandled_failure, [func, site, "erpc", "boolean"]) do
+  def finding(:unhandled_failure, [func, site, "erpc", "boolean", _]) do
     Findings.new(
       :warning,
       ":erpc.call in a boolean context with no rescue",
@@ -208,7 +211,7 @@ defmodule Argus.Analyses.Failure do
     )
   end
 
-  def finding(:unhandled_failure, [func, site, variant, "boolean"]) do
+  def finding(:unhandled_failure, [func, site, variant, "boolean", _]) do
     Findings.new(
       :warning,
       "RPC result used as a boolean",
@@ -221,7 +224,7 @@ defmodule Argus.Analyses.Failure do
     )
   end
 
-  def finding(:unhandled_failure, [func, site, variant, "case"]) do
+  def finding(:unhandled_failure, [func, site, variant, "case", _]) do
     Findings.new(
       :warning,
       "RPC result matched without a {:badrpc, _} clause",
@@ -293,13 +296,17 @@ defmodule Argus.Analyses.Failure do
   defp module_of(func), do: func |> String.split(":") |> hd()
 
   @impl true
-  def evidence(:handling_site, [_callee, belief, site, func]) do
-    label =
-      case belief do
-        "exception_guarded" -> "guarded in a try here"
-        "result_checked" -> "its result matched here"
-      end
+  def evidence(:handling_site, [_callee, belief, site, func, guard_end]) do
+    mod = module_of(func)
 
-    Findings.related(label, Findings.at_site(site, module_of(func)))
+    case belief do
+      "exception_guarded" ->
+        Findings.related("guarded by this catch", Findings.at_site(site, mod),
+          to: Findings.at_site(guard_end, mod)
+        )
+
+      "result_checked" ->
+        Findings.related("its result matched here", Findings.at_site(site, mod))
+    end
   end
 end

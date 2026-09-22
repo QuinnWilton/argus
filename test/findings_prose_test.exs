@@ -31,6 +31,26 @@ defmodule Argus.FindingsProseTest do
     end
   end
 
+  describe "spans" do
+    test "a finding and a related frame can close a span at a second instruction" do
+      attrs =
+        Findings.new(:warning, "T", "D.",
+          at: Findings.at_instr("M:f/1#3"),
+          to: Findings.at_instr("M:f/1#9"),
+          related: [
+            Findings.related("guarded by this catch", Findings.at_instr("M:g/0#1"),
+              to: Findings.at_instr("M:g/0#7")
+            ),
+            Findings.related("plain", Findings.at_instr("M:g/0#2"))
+          ]
+        )
+
+      assert attrs.to_instr.idx == 9
+      assert [%{to_instr: %{idx: 7}}, %{to_instr: nil}] = attrs.related
+      assert Findings.new(:warning, "T", "D.").to_instr == nil
+    end
+  end
+
   describe "compiler-generated function names" do
     defmodule Closures do
       @behaviour Argus.Analysis

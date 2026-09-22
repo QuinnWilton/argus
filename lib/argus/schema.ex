@@ -1325,7 +1325,8 @@ defmodule Argus.Schema do
       {:id, :symbol, "the try instruction"},
       {:func, :symbol, "the function"},
       {:callee, :func_id, "the guarded call (Mod:fun/arity)"},
-      {:call, :instr_id, "the guarded call's own instruction"}
+      {:call, :instr_id, "the guarded call's own instruction"},
+      {:guard_end, :symbol, "the handler's last instruction: where a span over the catch ends"}
     ],
     doc: """
     A peer call the try guards — GenServer.call, :gen_statem.call, \
@@ -1794,7 +1795,8 @@ defmodule Argus.Schema do
       {:func, :func_id, "function containing the call"},
       {:callee, :func_id, "callee function ID (mod:func/arity)"},
       {:fate, :symbol, "used | ignored | returned | dynamic"},
-      {:guard, :symbol, "try | bare"}
+      {:guard, :symbol, "try | bare"},
+      {:guard_end, :symbol, "for try, the handler's last instruction; else empty"}
     ],
     doc: """
     A call to a process or OTP API, or to anything that starts a process, \

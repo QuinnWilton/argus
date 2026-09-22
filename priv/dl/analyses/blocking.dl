@@ -344,11 +344,11 @@ unbounded_wait(func, id, "global", op, retries) :-
 // its parent lost the parent's navigation that way
 // (phoenixframework/phoenix_live_view#4359). A clause for `{:shutdown,
 // _}`, or a bare `:exit, reason`, covers it.
-.decl partial_noproc_catch(func: symbol, site: symbol, callee: symbol, call: symbol)
+.decl partial_noproc_catch(func: symbol, site: symbol, callee: symbol, call: symbol, guard_end: symbol)
 .output partial_noproc_catch
 
-partial_noproc_catch(func, id, callee, call) :-
-  try_call(id, func, callee, call),
+partial_noproc_catch(func, id, callee, call, guard_end) :-
+  try_call(id, func, callee, call, guard_end),
   peer_call(callee),
   catch_tag(id, func, "exit", ":noproc"),
   !catch_tag(id, func, "exit", ":shutdown"),

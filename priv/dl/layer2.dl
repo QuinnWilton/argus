@@ -39,7 +39,7 @@
 
 // A call to a process or OTP API, or to anything that starts a process, with what became of its result and whether the site sits inside a try. One row per site, so a rule can count how the other sites of the same callee behave and report the one that disagrees.
 //
-.decl call_result(id: symbol, func: symbol, callee: symbol, fate: symbol, guard: symbol)
+.decl call_result(id: symbol, func: symbol, callee: symbol, fate: symbol, guard: symbol, guard_end: symbol)
 .input call_result
 
 // A `{:noreply, _}` return site in handle_call/3 that some execution reaches having never read `from`. Per site rather than per function, because handle_call compiles every clause into one function and a sibling clause that defers correctly would otherwise vouch for one that does not.
@@ -440,7 +440,7 @@
 
 // A peer call the try guards — GenServer.call, :gen_statem.call, :erpc.call and their kin — whose failure the handler is expected to classify. `call` is where a finding points: the try instruction carries the line of whatever preceded it.
 //
-.decl try_call(id: symbol, func: symbol, callee: symbol, call: symbol)
+.decl try_call(id: symbol, func: symbol, callee: symbol, call: symbol, guard_end: symbol)
 .input try_call
 
 // A call the effect model has no opinion about — neither known-impure nor known-pure.

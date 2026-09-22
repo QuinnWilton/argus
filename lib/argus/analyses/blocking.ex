@@ -158,7 +158,8 @@ defmodule Argus.Analyses.Blocking do
           {:func, :symbol, "function making the call"},
           {:site, :symbol, "the try"},
           {:callee, :symbol, "the guarded call"},
-          {:call, :symbol, "the guarded call's instruction"}
+          {:call, :symbol, "the guarded call's instruction"},
+          {:guard_end, :symbol, "the catch's last instruction"}
         ],
         key: [:func, :site],
         doc: "A peer call whose catch covers :noproc but not the peer stopping mid-call."
@@ -382,7 +383,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:partial_noproc_catch, [func, _try, callee, call]) do
+  def finding(:partial_noproc_catch, [func, _try, callee, call, guard_end]) do
     Findings.new(
       :warning,
       "Peer call catches :noproc but not :shutdown",
@@ -391,7 +392,8 @@ defmodule Argus.Analyses.Blocking do
         "condition, and it arrives as `{:shutdown, _}` (or `{:normal, _}`), which " <>
         "this catch lets crash the caller.",
       at: Findings.at_site(call, func),
-      at_label: "the call; its catch takes only :noproc",
+      to: Findings.at_site(guard_end, func),
+      at_label: "the call and its catch, which takes only :noproc",
       help: [
         "add a clause for `:exit, {:shutdown, _}` (and `{:normal, _}`)",
         "or catch `:exit, reason` and classify it"
