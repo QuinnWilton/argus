@@ -18,6 +18,9 @@ through the alias table to the rows that were theirs.
 |---|---|---|
 | `coupling` | `one_for_one_coupling`, `suspect_nonpermanent_dependency`, `cached_sibling_pid` | `sibling_dependency(sup, caller, callee, reason, detail, sup_site, witness, site)`, `reason` ∈ restart_isolation, restart_policy, cached_pid |
 | `effects` | `purity_violated`, `effect_in_transaction` | `effect_in_context(func, context, scope, category, api, via)`, `context` ∈ pure_contract, transaction (`scope` is the repo) |
+| `failure` | `swallowed_error`, `erpc_transport_unhandled`, `rpc_result_unhandled` | `unhandled_failure(func, site, kind, shape)`, `kind` ∈ rescue, erpc_transport, rpc, multicall, erpc |
+| `failure` | `unchecked_start_child`, `whereis_race` | `unchecked_result(func, site, api, name)` |
+| `failure` | `unlinked_spawn`, `exit_in_callback` | `orphan_process(func, site, kind, target)`, `kind` ∈ spawn, exit |
 
 ## 0.17.2 — 2026-09-21
 

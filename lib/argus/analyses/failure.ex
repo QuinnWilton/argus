@@ -2,23 +2,21 @@ defmodule Argus.Analyses.Failure do
   @moduledoc """
   An error path swallowed, half-caught or ignored.
 
-  - `swallowed_error(func)` — a catch-all rescue that discards the
-    exception: the failure surfaces later, far from its cause.
-  - `rpc_result_unhandled(func, site, variant, shape)` — an `:rpc` result
-    matched by shape with no `{:badrpc, _}` clause, or used as a boolean
-    where the tuple is truthy; an `:erpc` result used as a boolean with
-    no rescue for `{:erpc, :noconnection}`.
-  - `erpc_transport_unhandled(func, site)` — a rescue around `:erpc.call`
-    that unwraps remote exceptions and has no clause for transport
-    failures.
-  - `unchecked_start_child(func, id)` — `Task.Supervisor.start_child`'s
-    result discarded.
-  - `whereis_race(id, func, name)` — a `Process.whereis` result used
-    without its nil case.
-  - `unlinked_spawn(func, id)` — a bare `spawn`: no link, no monitor,
-    nothing observes a crash.
-  - `exit_in_callback(func, target)` — an exit signal sent from a
-    callback, past the supervisor that owns the target.
+  - `unhandled_failure(func, site, kind, shape)` — a failure nothing
+    takes. `kind` is `rescue` (a catch-all rescue discards the exception:
+    the failure surfaces later, far from its cause), `erpc_transport` (a
+    rescue around `:erpc.call` unwraps remote exceptions and has no
+    clause for transport failures), or the rpc variant `rpc`,
+    `multicall` or `erpc` whose result is matched by `shape` `case` with
+    no `{:badrpc, _}` clause, or used as a `boolean` where the tuple is
+    truthy (for `:erpc`, with no rescue for `{:erpc, :noconnection}`).
+  - `unchecked_result(func, site, api, name)` — a result used without
+    its failure case: `Task.Supervisor.start_child` discarded, or a
+    `Process.whereis` of `name` used without its nil case.
+  - `orphan_process(func, site, kind, target)` — a process nothing
+    supervises: a bare `spawn` (no link, no monitor, nothing observes a
+    crash), or an `exit` signal sent to `target` from a callback, past
+    the supervisor that owns it.
   """
 
   @behaviour Argus.Analysis
@@ -49,68 +47,44 @@ defmodule Argus.Analyses.Failure do
   def output_relations do
     [
       %{
-        name: :swallowed_error,
-        fields: [{:func, :symbol, "function with bare rescue"}],
-        doc: "Catch-all rescue that silently discards exceptions."
-      },
-      %{
-        name: :exit_in_callback,
+        name: :unhandled_failure,
         fields: [
-          {:func, :symbol, "callback function"},
-          {:target, :symbol, "exit target"}
-        ],
-        doc: "Explicit Process.exit/2 inside GenServer callback."
-      },
-      %{
-        name: :erpc_transport_unhandled,
-        fields: [
-          {:func, :symbol, "function calling :erpc.call"},
-          {:site, :symbol, "the try"}
-        ],
-        doc:
-          "A rescue around :erpc.call unwraps remote exceptions but has no clause for transport failures."
-      },
-      %{
-        name: :rpc_result_unhandled,
-        fields: [
-          {:func, :symbol, "function making the rpc"},
-          {:site, :symbol, "the rpc call"},
-          {:variant, :symbol, "rpc | multicall | erpc"},
-          {:shape, :symbol, "'case' (matched by shape, no clause) or 'boolean' (truthy tuple)"}
+          {:func, :symbol, "the function the failure reaches"},
+          {:site, :symbol, "the rescue's function, the try, or the rpc call"},
+          {:kind, :symbol, "rescue | erpc_transport | rpc | multicall | erpc"},
+          {:shape, :symbol,
+           "for an rpc variant, case (matched, no clause) or boolean (truthy tuple)"}
         ],
         key: [:func, :site],
-        doc: "An rpc result whose failure value is not handled."
+        doc: "A failure value or exception that nothing takes."
       },
       %{
-        name: :unchecked_start_child,
+        name: :unchecked_result,
         fields: [
-          {:func, :symbol, "function containing the start_child call"},
-          {:id, :symbol, "instruction ID of the start_child call"}
+          {:func, :symbol, "the function using the result"},
+          {:site, :symbol, "instruction ID of the call"},
+          {:api, :symbol, "Task.Supervisor.start_child | Process.whereis"},
+          {:name, :symbol, "the process name looked up, for Process.whereis"}
         ],
-        doc: "Task.Supervisor.start_child result discarded without error handling."
+        key: [:func, :site],
+        doc: "A result used without its failure case."
       },
       %{
-        name: :unlinked_spawn,
+        name: :orphan_process,
         fields: [
-          {:func, :symbol, "function containing the spawn"},
-          {:id, :symbol, "instruction ID of the spawn call"}
+          {:func, :symbol, "the function spawning or sending the exit"},
+          {:site, :symbol, "instruction ID of the spawn, or the callback for an exit"},
+          {:kind, :symbol, "spawn | exit"},
+          {:target, :symbol, "the exit target, for an exit"}
         ],
-        doc: "Bare erlang:spawn call without link or monitor."
-      },
-      %{
-        name: :whereis_race,
-        fields: [
-          {:id, :symbol, "instruction ID of the whereis call"},
-          {:func, :symbol, "function calling whereis"},
-          {:name, :symbol, "process name"}
-        ],
-        doc: "Process.whereis without nil check (TOCTOU risk)."
+        key: [:func, :site, :kind, :target],
+        doc: "A process nothing supervises: a bare spawn, or an exit signal past the supervisor."
       }
     ]
   end
 
   @impl true
-  def finding(:swallowed_error, [func]) do
+  def finding(:unhandled_failure, [func, _site, "rescue", _]) do
     Findings.new(
       :warning,
       "Catch-all rescue swallows exceptions",
@@ -122,7 +96,7 @@ defmodule Argus.Analyses.Failure do
     )
   end
 
-  def finding(:exit_in_callback, [func, target]) do
+  def finding(:orphan_process, [func, _site, "exit", target]) do
     Findings.new(
       :info,
       "Process.exit inside a GenServer callback",
@@ -136,7 +110,7 @@ defmodule Argus.Analyses.Failure do
     )
   end
 
-  def finding(:erpc_transport_unhandled, [func, site]) do
+  def finding(:unhandled_failure, [func, site, "erpc_transport", _]) do
     Findings.new(
       :warning,
       ":erpc.call transport failures fall through the rescue",
@@ -151,7 +125,7 @@ defmodule Argus.Analyses.Failure do
     )
   end
 
-  def finding(:rpc_result_unhandled, [func, site, "erpc", "boolean"]) do
+  def finding(:unhandled_failure, [func, site, "erpc", "boolean"]) do
     Findings.new(
       :warning,
       ":erpc.call in a boolean context with no rescue",
@@ -164,7 +138,7 @@ defmodule Argus.Analyses.Failure do
     )
   end
 
-  def finding(:rpc_result_unhandled, [func, site, variant, "boolean"]) do
+  def finding(:unhandled_failure, [func, site, variant, "boolean"]) do
     Findings.new(
       :warning,
       "RPC result used as a boolean",
@@ -177,7 +151,7 @@ defmodule Argus.Analyses.Failure do
     )
   end
 
-  def finding(:rpc_result_unhandled, [func, site, variant, _shape]) do
+  def finding(:unhandled_failure, [func, site, variant, "case"]) do
     Findings.new(
       :warning,
       "RPC result matched without a {:badrpc, _} clause",
@@ -191,7 +165,7 @@ defmodule Argus.Analyses.Failure do
     )
   end
 
-  def finding(:unchecked_start_child, [func, id]) do
+  def finding(:unchecked_result, [func, id, "Task.Supervisor.start_child", _]) do
     Findings.new(
       :warning,
       "start_child result not checked",
@@ -208,7 +182,7 @@ defmodule Argus.Analyses.Failure do
     )
   end
 
-  def finding(:unlinked_spawn, [func, id]) do
+  def finding(:orphan_process, [func, id, "spawn", _]) do
     Findings.new(
       :warning,
       "Unlinked process spawned",
@@ -223,7 +197,7 @@ defmodule Argus.Analyses.Failure do
     )
   end
 
-  def finding(:whereis_race, [id, func, name]) do
+  def finding(:unchecked_result, [func, id, "Process.whereis", name]) do
     Findings.new(
       :warning,
       "whereis result used without a nil check",

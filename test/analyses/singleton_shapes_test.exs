@@ -2,9 +2,18 @@ defmodule Argus.Analyses.SingletonShapesTest do
   use ExUnit.Case, async: false
 
   alias Argus.Test.Fixtures.{CatchShapes, EtsOwners, InitRecv}
+  alias Argus.Test.Rows
 
   defp skip_without_souffle do
     unless Argus.Souffle.available?(), do: ExUnit.skip("souffle not installed")
+  end
+
+  defp erpc_rows(r) do
+    r
+    |> Rows.where(:failure, "unhandled_failure", kind: "erpc_transport")
+    |> Enum.map(&hd/1)
+    |> Enum.uniq()
+    |> Enum.sort()
   end
 
   defp rows(results, relation, column \\ 0),
@@ -33,9 +42,7 @@ defmodule Argus.Analyses.SingletonShapesTest do
 
     {:ok, r} = Argus.analyze([CatchShapes.Erpc], :failure)
 
-    assert rows(r, "erpc_transport_unhandled") == [
-             "Argus.Test.Fixtures.CatchShapes.Erpc:partial/4"
-           ]
+    assert erpc_rows(r) == ["Argus.Test.Fixtures.CatchShapes.Erpc:partial/4"]
   end
 
   test "a table read from outside its owner without heir or rescue is reported" do

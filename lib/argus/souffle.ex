@@ -181,9 +181,11 @@ defmodule Argus.Souffle do
 
         case File.read(path) do
           {:ok, content} ->
+            # Split on newlines only: a symbol column may be empty, and
+            # trimming the file would eat the tab that carries an empty
+            # last column of the last row (or first column of the first).
             rows =
               content
-              |> String.trim()
               |> String.split("\n", trim: true)
               |> Enum.map(&String.split(&1, "\t"))
 

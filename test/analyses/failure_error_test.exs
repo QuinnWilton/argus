@@ -2,6 +2,7 @@ defmodule Argus.Analyses.FailureErrorTest do
   use ExUnit.Case
 
   alias Argus.Souffle
+  alias Argus.Test.Rows
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
@@ -12,14 +13,24 @@ defmodule Argus.Analyses.FailureErrorTest do
     results
   end
 
-  describe "swallowed_error" do
+  defp swallowed(results),
+    do:
+      Rows.where(results, :failure, "unhandled_failure",
+        kind: "rescue",
+        drop: [:site, :kind, :shape]
+      )
+
+  defp exits(results),
+    do: Rows.where(results, :failure, "orphan_process", kind: "exit", drop: [:site, :kind])
+
+  describe "unhandled_failure: rescue" do
     test "flags a bare rescue, not a filtered one" do
       skip_without_souffle()
 
       results =
         analyze([Argus.Test.Fixtures.BareRescue, Argus.Test.Fixtures.FilteredRescue])
 
-      funcs = Enum.map(results["swallowed_error"], fn [func] -> func end)
+      funcs = Enum.map(swallowed(results), fn [func] -> func end)
 
       assert Enum.any?(funcs, &String.contains?(&1, "BareRescue"))
       refute Enum.any?(funcs, &String.contains?(&1, "FilteredRescue"))
@@ -32,7 +43,7 @@ defmodule Argus.Analyses.FailureErrorTest do
       # the error; nothing is swallowed.
       results = analyze([Argus.Test.Fixtures.ReifyingRescue])
 
-      assert results["swallowed_error"] == []
+      assert swallowed(results) == []
     end
 
     test "does not flag a handler that re-raises via raw_raise" do
@@ -42,17 +53,17 @@ defmodule Argus.Analyses.FailureErrorTest do
       # raw_raise opcode, not a call to :erlang.raise/3.
       results = analyze([Argus.Test.Fixtures.ReraisingRescue])
 
-      assert results["swallowed_error"] == []
+      assert swallowed(results) == []
     end
   end
 
-  describe "exit_in_callback" do
+  describe "orphan_process: exit" do
     test "flags an exit signal sent from a GenServer callback" do
       skip_without_souffle()
 
       results = analyze([Argus.Test.Fixtures.ExitingServer])
 
-      assert Enum.any?(results["exit_in_callback"], fn [func, _target] ->
+      assert Enum.any?(exits(results), fn [func, _target] ->
                String.contains?(func, "ExitingServer:handle_cast/2")
              end)
     end
@@ -65,7 +76,7 @@ defmodule Argus.Analyses.FailureErrorTest do
       # process.
       results = analyze([Argus.Test.Fixtures.SelfCrashCallback])
 
-      assert results["exit_in_callback"] == []
+      assert exits(results) == []
     end
 
     test "does not flag Process.exit outside process callbacks" do
@@ -75,7 +86,7 @@ defmodule Argus.Analyses.FailureErrorTest do
       # hazards.
       results = analyze([Argus.Test.Fixtures.ExitCaller])
 
-      assert results["exit_in_callback"] == []
+      assert exits(results) == []
     end
   end
 end

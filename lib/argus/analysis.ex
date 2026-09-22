@@ -214,27 +214,34 @@ defmodule Argus.Analysis do
       %{analysis: :structure, relation: :global_register_risk, where: []},
       %{analysis: :startup, relation: :global_blocking_in_init, where: []},
       %{analysis: :startup, relation: :distributed_in_init, where: []},
-      %{analysis: :failure, relation: :erpc_transport_unhandled, where: []},
-      %{analysis: :failure, relation: :rpc_result_unhandled, where: []}
+      %{
+        analysis: :failure,
+        relation: :unhandled_failure,
+        where: [kind: ~w(erpc_transport rpc multicall erpc)]
+      }
     ],
-    unlinked_spawn: [%{analysis: :failure, relation: :unlinked_spawn, where: []}],
+    unlinked_spawn: [%{analysis: :failure, relation: :orphan_process, where: [kind: "spawn"]}],
     process_registry: [
       %{analysis: :structure, relation: :duplicate_process_name, where: []},
-      %{analysis: :failure, relation: :whereis_race, where: []}
+      %{analysis: :failure, relation: :unchecked_result, where: [api: "Process.whereis"]}
     ],
     error_handling: [
       %{analysis: :blocking, relation: :partial_noproc_catch, where: []},
       %{analysis: :startup, relation: :ignored_start_result, where: []},
       %{analysis: :shutdown, relation: :trap_exit_without_handler, where: []},
       %{analysis: :shutdown, relation: :trap_exit_without_exit_clause, where: []},
-      %{analysis: :failure, relation: :swallowed_error, where: []},
-      %{analysis: :failure, relation: :exit_in_callback, where: []},
+      %{analysis: :failure, relation: :unhandled_failure, where: [kind: "rescue"]},
+      %{analysis: :failure, relation: :orphan_process, where: [kind: "exit"]},
       %{analysis: :mailbox, relation: :handle_info_without_catchall, where: []},
       %{analysis: :mailbox, relation: :handle_info_partial, where: []},
       %{analysis: :mailbox, relation: :timer_cancel_without_flush, where: []}
     ],
     unsafe_task: [
-      %{analysis: :failure, relation: :unchecked_start_child, where: []},
+      %{
+        analysis: :failure,
+        relation: :unchecked_result,
+        where: [api: "Task.Supervisor.start_child"]
+      },
       %{analysis: :mailbox, relation: :nolink_messages_unhandled, where: []},
       %{analysis: :mailbox, relation: :leaked_async_task, where: []},
       %{analysis: :mailbox, relation: :yield_on_linked_task, where: []},

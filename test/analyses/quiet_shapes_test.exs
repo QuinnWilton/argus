@@ -9,6 +9,7 @@ defmodule Argus.Analyses.QuietShapesTest do
 
   alias Argus.Test.Fixtures.Quiet
   alias Argus.Test.Fixtures.ShutdownSiblings, as: Sib
+  alias Argus.Test.Rows
 
   defp skip_without_souffle do
     unless Argus.Souffle.available?(), do: flunk("souffle not installed")
@@ -40,20 +41,36 @@ defmodule Argus.Analyses.QuietShapesTest do
     structure: ~w(consumer_supervisor_permanent_child),
     coupling: ~w(dual_restart_authority),
     blocking: ~w(partial_noproc_catch),
-    failure: ~w(erpc_transport_unhandled),
+    failure: [{"unhandled_failure", kind: "erpc_transport"}],
     ets: ~w(ets_read_outside_owner),
     startup: ~w(blocking_recv_in_init post_start_initialization)
   }
 
+  # An entry is a relation name, or `{relation, where}` for the rows of a
+  # merged relation that one rule produces.
+  defp label({relation, where}), do: "#{relation}[#{inspect(where)}]"
+  defp label(relation), do: relation
+
+  defp quiet_rows(results, analysis, {relation, where}),
+    do: Rows.where(results, analysis, relation, where)
+
+  defp quiet_rows(results, _analysis, relation), do: Map.get(results, relation, [])
+
   for {analysis, relations} <- @expect_quiet do
-    test "#{analysis}: #{Enum.join(relations, ", ")} stay quiet on the near-miss shapes" do
+    names =
+      Enum.map_join(relations, ", ", fn
+        {relation, where} -> "#{relation}[#{inspect(where)}]"
+        relation -> relation
+      end)
+
+    test "#{analysis}: #{names} stay quiet on the near-miss shapes" do
       skip_without_souffle()
 
       {:ok, results} = Argus.analyze(@modules, unquote(analysis))
 
-      for relation <- unquote(relations) do
-        assert Map.get(results, relation, []) == [],
-               "#{relation} fired on a shape that must stay quiet"
+      for relation <- unquote(Macro.escape(relations)) do
+        assert quiet_rows(results, unquote(analysis), relation) == [],
+               "#{label(relation)} fired on a shape that must stay quiet"
       end
     end
   end

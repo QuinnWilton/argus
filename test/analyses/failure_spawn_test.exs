@@ -2,6 +2,7 @@ defmodule Argus.Analyses.FailureSpawnTest do
   use ExUnit.Case
 
   alias Argus.Souffle
+  alias Argus.Test.Rows
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
@@ -14,8 +15,11 @@ defmodule Argus.Analyses.FailureSpawnTest do
       assert {:ok, results} =
                Argus.analyze([Argus.Test.Fixtures.UnlinkedSpawner], :failure)
 
-      assert Map.has_key?(results, "unlinked_spawn")
-      unlinked = results["unlinked_spawn"]
+      assert Map.has_key?(results, "orphan_process")
+
+      unlinked =
+        Rows.where(results, :failure, "orphan_process", kind: "spawn", drop: [:kind, :target])
+
       assert unlinked != []
 
       # Should only flag spawn, not spawn_link or spawn_monitor.

@@ -2,6 +2,7 @@ defmodule Argus.Analyses.FailureStartChildTest do
   use ExUnit.Case
 
   alias Argus.Souffle
+  alias Argus.Test.Rows
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
@@ -14,8 +15,13 @@ defmodule Argus.Analyses.FailureStartChildTest do
       assert {:ok, results} =
                Argus.analyze([Argus.Test.Fixtures.UncheckedStartChild], :failure)
 
-      assert Map.has_key?(results, "unchecked_start_child")
-      unchecked = results["unchecked_start_child"]
+      assert Map.has_key?(results, "unchecked_result")
+
+      unchecked =
+        Rows.where(results, :failure, "unchecked_result",
+          api: "Task.Supervisor.start_child",
+          drop: [:api, :name]
+        )
 
       funcs = Enum.map(unchecked, fn [func, _id] -> func end)
 

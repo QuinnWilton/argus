@@ -30,7 +30,11 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
         :failure
       )
 
-    reported = r |> Map.get("rpc_result_unhandled", []) |> Enum.map(&{hd(&1), Enum.at(&1, 3)})
+    reported =
+      r
+      |> Map.get("unhandled_failure", [])
+      |> Enum.reject(&(Enum.at(&1, 2) in ["rescue", "erpc_transport"]))
+      |> Enum.map(&{hd(&1), Enum.at(&1, 3)})
 
     assert Enum.sort(reported) == [
              {"Argus.Test.Fixtures.Hypothesized.ErpcBooleanNoRescue:alive?/1", "boolean"},

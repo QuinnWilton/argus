@@ -9,13 +9,37 @@
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
 
+// ══ The three outputs ═══════════════════════════════════════════════
+//
+// A failure the code could have seen and did not, in three shapes:
+//
+// `unhandled_failure(func, site, kind, shape)` — a failure value or
+//   exception that nothing takes. `kind` is "rescue" (a catch-all rescue
+//   discards the exception; site is the function), "erpc_transport" (a
+//   rescue around :erpc.call has no clause for transport failures; site
+//   is the try), or the rpc variant "rpc" | "multicall" | "erpc" whose
+//   result is matched by shape with no {:badrpc, _} clause (`shape` =
+//   "case") or used as a boolean (`shape` = "boolean"); site is the call.
+// `unchecked_result(func, site, api, name)` — a result used without its
+//   failure case: Task.Supervisor.start_child discarded, or a
+//   Process.whereis of `name` used without its nil case.
+// `orphan_process(func, site, kind, target)` — a process nothing
+//   supervises: a bare spawn (`kind` = "spawn", site is the call) or an
+//   exit signal sent to `target` from a callback, past the supervisor
+//   that owns it (`kind` = "exit", site is the callback).
+.decl unhandled_failure(func: symbol, site: symbol, kind: symbol, shape: symbol)
+.output unhandled_failure
+
+.decl unchecked_result(func: symbol, site: symbol, api: symbol, name: symbol)
+.output unchecked_result
+
+.decl orphan_process(func: symbol, site: symbol, kind: symbol, target: symbol)
+.output orphan_process
+
 // ── Swallowed errors ─────────────────────────────────────────────
 
 // Catch-all rescue that silently discards exceptions.
-.decl swallowed_error(func: symbol)
-.output swallowed_error
-
-swallowed_error(func) :-
+unhandled_failure(func, func, "rescue", "") :-
   bare_rescue(_, func).
 
 // ── Exit in GenServer callback ───────────────────────────────────
@@ -31,24 +55,18 @@ swallowed_error(func) :-
 
 exit_reach.seed(g, target) :- exit_call(_, g, target).
 
-.decl exit_in_callback(func: symbol, target: symbol)
-.output exit_in_callback
-
-exit_in_callback(func, target) :-
+orphan_process(func, func, "exit", target) :-
   exit_call(_, func, target),
   handler_function(_, func),
   target != "self".
 
-exit_in_callback(func, target) :-
+orphan_process(func, func, "exit", target) :-
   exit_reach.reaches(func, target),
   handler_function(_, func),
   target != "self".
 
 // ══ Remote calls whose failure is not a value ═══════════════════════
-.decl erpc_transport_unhandled(func: symbol, site: symbol)
-.output erpc_transport_unhandled
-
-erpc_transport_unhandled(func, id) :-
+unhandled_failure(func, id, "erpc_transport", "") :-
   try_call(id, func, callee),
   (callee = ":erpc:call/4" ; callee = ":erpc:call/5"),
   catch_tag(id, func, "error", ":exception"),
@@ -65,10 +83,7 @@ erpc_transport_unhandled(func, id) :-
 // process on a gone node is alive (horde, until 30bb1a1). :erpc.call
 // raises instead, so in a boolean context it needs a rescue (horde's
 // fix: catch {:erpc, :noconnection} -> false).
-.decl rpc_result_unhandled(func: symbol, site: symbol, variant: symbol, shape: symbol)
-.output rpc_result_unhandled
-
-rpc_result_unhandled(f, id, v, "case") :-
+unhandled_failure(f, id, v, "case") :-
   rpc_call(id, f, v, _),
   (v = "rpc" ; v = "multicall"),
   rpc_result(id, f, "case").
@@ -85,12 +100,12 @@ rpc_boolean_use(id, f) :-
   function_def(f, _, name, _, _),
   match(".*\\?", name).
 
-rpc_result_unhandled(f, id, v, "boolean") :-
+unhandled_failure(f, id, v, "boolean") :-
   rpc_call(id, f, v, _),
   (v = "rpc" ; v = "multicall"),
   rpc_boolean_use(id, f).
 
-rpc_result_unhandled(f, id, "erpc", "boolean") :-
+unhandled_failure(f, id, "erpc", "boolean") :-
   rpc_call(id, f, "erpc", _),
   rpc_boolean_use(id, f),
   !catches_class(f, "error"),
@@ -139,19 +154,13 @@ start_child_result_checked(func, id) :-
   call_followed_by_branch(id).
 
 // start_child call whose result is not checked by any of the above.
-.decl unchecked_start_child(func: symbol, id: symbol)
-.output unchecked_start_child
-
-unchecked_start_child(func, id) :-
+unchecked_result(func, id, "Task.Supervisor.start_child", "") :-
   task_start_child_call(func, id),
   !start_child_result_checked(func, id).
 
 // ══ Processes nobody watches ════════════════════════════════════════
 
-.decl unlinked_spawn(func: symbol, id: symbol)
-.output unlinked_spawn
-
-unlinked_spawn(func, id) :-
+orphan_process(func, id, "spawn", "") :-
   spawn_call(id, func, _, _, _, "spawn").
 
 // This analysis used to join `instruction(id, func, _, _)` purely to
@@ -161,10 +170,7 @@ unlinked_spawn(func, id) :-
 // re-read to accompany a `spawn_call` relation with ZERO rows: 1.56s per
 // edit to look at nothing. `spawn_call` now carries its caller.
 
-.decl whereis_race(id: symbol, func: symbol, name: symbol)
-.output whereis_race
-
-whereis_race(id, func, name) :-
+unchecked_result(func, id, "Process.whereis", name) :-
   whereis_call(id, func, name, "unchecked"),
   name != "dynamic",
   name != ":dynamic".
