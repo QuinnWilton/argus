@@ -34,7 +34,9 @@ defmodule Argus.MixProject do
 
   def application do
     [
-      extra_applications: [:logger]
+      # inets, ssl and public_key: Argus.Priors.Jev's HTTP client. They are
+      # OTP's own and start only when a prior is asked.
+      extra_applications: [:logger, :inets, :ssl, :public_key]
     ]
   end
 

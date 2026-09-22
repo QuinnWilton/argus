@@ -33,6 +33,17 @@ defmodule Argus.Test.Fixtures.Secret do
     def __schema__(_other), do: nil
   end
 
+  defmodule Heuristic do
+    @moduledoc """
+    A secret the substring table cannot name. `totp_seed` matches none of
+    the fifteen fragments, so only a prior reports it — and only when the
+    run asks for priors.
+    """
+    def __schema__(:fields), do: [:id, :totp_seed, :label]
+    def __schema__(:redact_fields), do: []
+    def __schema__(_other), do: nil
+  end
+
   defmodule Ordinary do
     @moduledoc "No field name suggests a secret."
     def __schema__(:fields), do: [:id, :title, :body, :inserted_at]
