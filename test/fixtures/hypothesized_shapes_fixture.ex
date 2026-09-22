@@ -197,6 +197,48 @@ defmodule Argus.Test.Fixtures.Hypothesized do
     def handle_info(:poll, state), do: {:noreply, state}
   end
 
+  defmodule TwoTimersViaHelper do
+    @moduledoc false
+    # nebulex's Local.Generation: a cleanup timer and a heartbeat timer,
+    # both armed through one helper whose message is a default argument.
+    # Each key carries its own message; neither is flushed.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(interval) do
+      {:ok,
+       %{
+         interval: interval,
+         cleanup_ref: start_timer(interval * 10, nil, :cleanup),
+         heartbeat_ref: start_timer(interval)
+       }}
+    end
+
+    @impl true
+    def handle_call({:set_interval, interval}, _from, state) do
+      {:reply, :ok,
+       %{
+         state
+         | interval: interval,
+           cleanup_ref: start_timer(interval * 10, state.cleanup_ref, :cleanup),
+           heartbeat_ref: start_timer(interval, state.heartbeat_ref)
+       }}
+    end
+
+    @impl true
+    def handle_info(:heartbeat, state),
+      do: {:noreply, %{state | heartbeat_ref: start_timer(state.interval, nil)}}
+
+    def handle_info(:cleanup, state), do: {:noreply, state}
+
+    defp start_timer(time, ref \\ nil, event \\ :heartbeat) do
+      _ = if ref, do: Process.cancel_timer(ref)
+      Process.send_after(self(), event, time)
+    end
+  end
+
   defmodule TimerWithRef do
     @moduledoc false
     # The message carries the ref; a stale one does not match the state.

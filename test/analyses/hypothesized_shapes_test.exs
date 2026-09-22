@@ -58,7 +58,8 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
           H.TimerForwarded,
           H.TimerHelper,
           H.TimerForOther,
-          H.TwoTimers
+          H.TwoTimers,
+          H.TwoTimersViaHelper
         ],
         :mailbox
       )
@@ -73,7 +74,10 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
              {"Argus.Test.Fixtures.Hypothesized.TimerCancelNoFlush", ":timer", ":tick"},
              {"Argus.Test.Fixtures.Hypothesized.TimerCancelWrongFlush", ":timer", ":tick"},
              {"Argus.Test.Fixtures.Hypothesized.TimerForwarded", ":timer", ":heartbeat"},
-             {"Argus.Test.Fixtures.Hypothesized.TimerHelper", ":tick_ref", ":tick"}
+             {"Argus.Test.Fixtures.Hypothesized.TimerHelper", ":tick_ref", ":tick"},
+             {"Argus.Test.Fixtures.Hypothesized.TwoTimersViaHelper", ":cleanup_ref", ":cleanup"},
+             {"Argus.Test.Fixtures.Hypothesized.TwoTimersViaHelper", ":heartbeat_ref",
+              ":heartbeat"}
            ]
   end
 

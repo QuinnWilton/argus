@@ -85,6 +85,12 @@ space. `unbounded_effect_in_init`'s recv rows dedupe per receiving
 function, with the `init/1` callbacks that reach it as evidence frames
 (`init_reaches_recv`) instead of one identical finding per init.
 
+`timer_cancel_without_flush` follows the message through the calls that
+store the ref rather than through every caller of the arming function:
+nebulex's `start_timer(time, ref, event \\ :heartbeat)` keeps `:cleanup`
+under one key and `:heartbeat` under another, and each finding now names
+its own message (both said `:cleanup`).
+
 ### Added
 
 `Argus.Corpus` pairs take `subdir:` for a repository whose Mix project is

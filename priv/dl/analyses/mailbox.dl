@@ -189,6 +189,56 @@ armed_message(a, lit) :-
   timer_arm(_, a, "self", "param", pos, _),
   resolved_arg(a, pos, lit).
 
+// The message the timer kept under `key` carries. A literal at the arm
+// site is it. A parameter is filled along the calls that store the ref
+// — the storing function's own call to the arming function, or a
+// wrapper it goes through that fills the parameter itself or forwards
+// one the storing function filled — so two keys armed through one
+// helper each get their own message: nebulex's
+// `start_timer(time, ref, event \\ :heartbeat)` keeps :cleanup under
+// one key and :heartbeat under another. When the arming function stores
+// the ref itself, its callers are the only source, and any literal they
+// pass is taken (armed_message).
+.decl stored_message(key: symbol, arm: symbol, message: symbol)
+
+stored_message(key, a, lit) :-
+  timer_key(a, key),
+  timer_arm(_, a, "self", "bare", _, lit).
+
+stored_message(key, a, lit) :-
+  timer_ref(_, a, "stored", key),
+  timer_arm(_, a, "self", "param", _, _),
+  armed_message(a, lit).
+
+stored_message(key, a, lit) :-
+  timer_ref(_, a, "returned", _),
+  timer_arm(_, a, "self", "param", pos, _),
+  timer_store(f, key, callee),
+  literal_toward(f, callee, a, pos, lit).
+
+// `lit` fills parameter `pos` of `to` on the way from `from`'s call to
+// `callee`: at that call when the callee is `to`, else through a
+// wrapper that returns `to`'s result and either fills the parameter or
+// forwards one of its own that `from` filled. One wrapper deep, which
+// is what default arguments compile to.
+.decl literal_toward(from: symbol, callee: symbol, to: symbol, pos: number, lit: symbol)
+
+literal_toward(f, a, a, pos, lit) :-
+  call_arg(f, a, pos, lit),
+  lit != "dynamic".
+
+literal_toward(f, w, a, pos, lit) :-
+  returns_call(w, a),
+  call_arg(w, a, pos, lit),
+  lit != "dynamic",
+  call_arg(f, w, _, _).
+
+literal_toward(f, w, a, pos, lit) :-
+  returns_call(w, a),
+  call_arg_forward(w, a, pos, wpos),
+  call_arg(f, w, wpos, lit),
+  lit != "dynamic".
+
 // A receive in the module takes the message: by name, or a clause that
 // matches anything (`after 0` with a wildcard, the cancel_timer docs'
 // blocking receive, Ostinato.Eager).
@@ -213,7 +263,7 @@ timer_cancel_without_flush(mod, c, a, key, lit) :-
   timer_key(a, key),
   function_def(a, mod, _, _, _),
   !init_function(mod, a),
-  armed_message(a, lit),
+  stored_message(key, a, lit),
   !takes_message(mod, lit).
 
 // ══ Tasks whose messages land unhandled ═════════════════════════════
