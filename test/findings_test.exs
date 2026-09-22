@@ -351,6 +351,31 @@ defmodule Argus.FindingsTest do
                Findings.dedupe_rows(@keyed_relation, rows)
     end
 
+    test "a key chosen by kind needs no default: an unnamed kind keeps every column" do
+      relation = %{
+        name: :effect,
+        fields: [{:mod, :symbol, "m"}, {:kind, :symbol, "k"}, {:api, :symbol, "a"}],
+        key: {:kind, %{"connect" => [:mod], "recv" => [:kind, :api]}},
+        doc: "test relation"
+      }
+
+      rows = [
+        ["M", "connect", "a"],
+        ["M", "connect", "b"],
+        ["M", "recv", "r"],
+        ["N", "recv", "r"],
+        ["M", "other", "x"],
+        ["M", "other", "y"]
+      ]
+
+      assert Findings.dedupe_rows(relation, rows) == [
+               ["M", "connect", "a"],
+               ["M", "other", "x"],
+               ["M", "other", "y"],
+               ["M", "recv", "r"]
+             ]
+    end
+
     test "relations without a key pass through unchanged" do
       relation = Map.delete(@keyed_relation, :key)
       rows = [["Sup", "Queue", "a"], ["Sup", "Queue", "b"]]
