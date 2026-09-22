@@ -39,6 +39,11 @@ defmodule Argus.Analyses.StructureRegistryRaceTest do
       assert [{"handle_event/3", "registry_lookup", "start_child", _}] = races([C.ManyInstances])
     end
 
+    test "a later clause keeps its parameters across the first clause's return" do
+      skip_without_souffle()
+      assert [{"ensure/2", "whereis", "start_link", "1"}] = races([C.LaterClauseName])
+    end
+
     test "taking the loser's outcome, in the function or its caller, is the fix" do
       skip_without_souffle()
 

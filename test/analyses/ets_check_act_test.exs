@@ -22,6 +22,11 @@ defmodule Argus.Analyses.EtsCheckActTest do
       assert [{"put_if_absent/2", ":public_cache", "0"}] = races([C.PublicCache])
     end
 
+    test "a write in the last branch, after two returns, still names its key" do
+      skip_without_souffle()
+      assert [{"bump/2", ":branch_cache", "0"}] = races([C.LaterBranchKey])
+    end
+
     test "insert_new is the atomic form" do
       skip_without_souffle()
       assert races([C.InsertNewCache]) == []

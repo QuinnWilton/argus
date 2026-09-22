@@ -59,6 +59,24 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  defmodule LaterClauseName do
+    @moduledoc "The racing clause is not the first: its parameters must survive the first clause's return."
+    def ensure(:skip, _name), do: :skipped
+
+    def ensure(_mode, name) do
+      case Process.whereis(name) do
+        nil ->
+          {:ok, pid} = GenServer.start_link(__MODULE__, [], name: name)
+          pid
+
+        pid ->
+          pid
+      end
+    end
+
+    def init(state), do: {:ok, state}
+  end
+
   # ── Quiet neighbours ─────────────────────────────────────────────
 
   defmodule HandlesAlreadyStarted do
@@ -180,6 +198,27 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
       case :ets.lookup(:public_cache, key) do
         [] -> :ets.insert(:public_cache, {key, value})
         _ -> false
+      end
+    end
+  end
+
+  defmodule LaterBranchKey do
+    @moduledoc "The write is in the last case branch, laid out after two returns."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      :ets.new(:branch_cache, [:named_table, :public, :set])
+      {:ok, state}
+    end
+
+    def bump(key, limit) do
+      case :ets.lookup(:branch_cache, key) do
+        [] -> :first
+        [{_key, count}] when count >= limit -> :limited
+        [{_key, count}] -> :ets.insert(:branch_cache, {key, count + 1})
       end
     end
   end

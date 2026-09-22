@@ -412,6 +412,7 @@ defmodule Argus.Extractor.Helpers do
   @spec resolve_register([term()], non_neg_integer(), register()) :: {:ok, term()} | :dynamic
   def resolve_register(instrs, call_idx, register) do
     preceding = instrs |> Enum.take(call_idx) |> Enum.reverse()
+    reset_join_budget(instrs)
 
     case do_resolve(preceding, normalize_reg(register)) do
       # Partial resolution can surface the `:dynamic` placeholder itself as
@@ -438,20 +439,53 @@ defmodule Argus.Extractor.Helpers do
   @spec map_field_of([term()], non_neg_integer(), register()) :: {:ok, String.t()} | :dynamic
   def map_field_of(instrs, idx, register) do
     preceding = instrs |> Enum.take(idx) |> Enum.reverse()
+    reset_join_budget(instrs)
     walk_field(preceding, normalize_reg(register))
   end
 
   defp walk_field([], _reg), do: :dynamic
 
-  # A label reached going backwards: the path came from whichever jump
-  # or test targets it, not from the instruction before it (which is
-  # another clause's return, or the error branch of a `state.key`
-  # access). Resume from that predecessor when there is one.
   defp walk_field([{:label, l} | rest], reg) do
-    case Enum.drop_while(rest, &(not branches_to?(&1, l))) do
-      [] -> walk_field(rest, reg)
-      [_branch | before] -> walk_field(before, reg)
+    at_label({:field, l, reg}, fn ->
+      case resume_at_label(rest, l) do
+        {:resume, before} ->
+          walk_field(before, reg)
+
+        :linear ->
+          walk_field(rest, reg)
+
+        {:join, paths} ->
+          meet(Enum.map(paths, fn path -> fn -> walk_field(path, reg) end end), :dynamic)
+      end
+    end)
+  end
+
+  # The compiler's slow path for `map.key`: the call returns {:ok, value}
+  # and the value is taken from element 1. Reading it as the field read
+  # it is lets the two arms of that diamond agree at their join.
+  defp walk_field([{:get_tuple_element, src, 1, dst} | rest], reg) do
+    if reg_matches?(dst, reg),
+      do: walk_field(rest, {:tuple_of, normalize_reg(src)}),
+      else: walk_field(rest, reg)
+  end
+
+  defp walk_field(
+         [{:call_ext, 2, {:extfunc, :elixir_erl_pass, :no_parens_remote, 2}} | rest],
+         {:tuple_of, {:x, 0}}
+       ) do
+    case do_resolve(rest, {:x, 1}) do
+      {:ok, key} when is_atom(key) and key != :dynamic -> {:ok, inspect(key)}
+      _ -> :dynamic
     end
+  end
+
+  # Between the call and the element read sit the result's shape tests
+  # and the read of element 0; only another writer of the tuple's
+  # register ends the search.
+  defp walk_field([instr | rest], {:tuple_of, reg} = tracked) do
+    if writes_to?(instr, reg) or call_instruction?(instr),
+      do: :dynamic,
+      else: walk_field(rest, tracked)
   end
 
   defp walk_field([{:move, src, dst} | rest], reg) do
@@ -485,12 +519,186 @@ defmodule Argus.Extractor.Helpers do
     end
   end
 
+  # A label reached going backwards is the start of a block, and the path
+  # into it came from whatever branches to it, not from the instruction
+  # laid out before it — which is another clause's return, or the end of
+  # the branch before this one. The walks are linear, so without this a
+  # value read in the second arm of a `case` resolves to nothing: the
+  # first arm's `return` is a barrier in the way.
+  #
+  # Resume from the latest predecessor when the label has exactly one way
+  # in: nothing falls through into it (the instruction before it ends a
+  # path), and every branch that targets it sits in one straight run with
+  # no label or barrier between — a clause head's tests all fail to the
+  # next clause, and every path through the later ones passed the first.
+  # A label with fall-through, or with predecessors in separate blocks, is
+  # a join: the walker takes every way in and keeps only an answer they
+  # all give, which is what makes the compiler's fast-and-slow-path
+  # diamond for `map.key` resolve to the key. No predecessor at all is the
+  # entry label or a back edge; the linear walk is right for the first
+  # and harmless for the second.
+  @spec resume_at_label([term()], term()) :: {:resume, [term()]} | :linear | {:join, [[term()]]}
+  defp resume_at_label(rest, l) do
+    fallthrough? =
+      case rest do
+        [] -> false
+        [before | _] -> not path_end?(before)
+      end
+
+    case Enum.drop_while(rest, &(not branches_to?(&1, l))) do
+      [] -> :linear
+      [_latest_branch | _latest] when fallthrough? -> {:join, [rest | predecessor_paths(rest, l)]}
+      [_latest_branch | latest] -> straight_run_or_join(rest, l, latest)
+    end
+  end
+
+  # The instructions before each branch that targets `l`, latest first.
+  defp predecessor_paths(rest, l) do
+    rest
+    |> Enum.with_index()
+    |> Enum.filter(fn {instr, _i} -> branches_to?(instr, l) end)
+    |> Enum.map(fn {_instr, i} -> Enum.drop(rest, i + 1) end)
+  end
+
+  # Predecessors in one straight run all pass the earliest one, so the
+  # latest is the only path; one beyond a block edge is a second path.
+  # Most labels are branched to once, and the count is taken once per
+  # query, so the scan for a second path is paid only where one may be.
+  defp straight_run_or_join(rest, l, latest) do
+    beyond_edge? =
+      label_target_count(rest, l) > 1 and
+        latest
+        |> Enum.drop_while(&(not block_edge?(&1)))
+        |> Enum.any?(&branches_to?(&1, l))
+
+    if beyond_edge?, do: {:join, predecessor_paths(rest, l)}, else: {:resume, latest}
+  end
+
+  defp label_target_count(_rest, l) do
+    case Process.get(:argus_label_targets) do
+      {_key, counts} -> Map.get(counts, l, 0)
+      nil -> 0
+    end
+  end
+
+  defp branch_targets({:jump, {:f, l}}), do: [l]
+  defp branch_targets({:test, _, {:f, l}, _}), do: [l]
+  defp branch_targets({:test, _, {:f, l}, _, _}), do: [l]
+  defp branch_targets({:test, _, {:f, l}, _, _, _}), do: [l]
+  defp branch_targets({:select_val, _, {:f, l}, {:list, arms}}), do: [l | arm_labels(arms)]
+
+  defp branch_targets({:select_tuple_arity, _, {:f, l}, {:list, arms}}),
+    do: [l | arm_labels(arms)]
+
+  defp branch_targets(_instr), do: []
+
+  defp arm_labels(arms), do: for({:f, l} <- arms, do: l)
+
+  # A join walks every way in, and a walk that runs through a chain of
+  # joins walks the common prefix once per path: `state.a`, `state.b`, ...
+  # before a site is 2^n paths. A query gets this many joins; past them
+  # the answer is unknown, which is the quiet direction.
+  @join_budget 32
+
+  # The branch-target counts are the function's, not the query's: the
+  # func_info tuple names the function, and a module's functions are
+  # queried many times each.
+  defp reset_join_budget(instrs) do
+    Process.put(:argus_join_budget, @join_budget)
+    Process.put(:argus_label_memo, %{})
+
+    case Enum.find(instrs, &match?({:func_info, _, _, _}, &1)) do
+      {:func_info, _, _, _} = key ->
+        case Process.get(:argus_label_targets) do
+          {^key, _counts} -> :ok
+          _ -> Process.put(:argus_label_targets, {key, count_branch_targets(instrs)})
+        end
+
+      nil ->
+        Process.put(:argus_label_targets, {nil, count_branch_targets(instrs)})
+    end
+  end
+
+  defp count_branch_targets(instrs) do
+    Enum.reduce(instrs, %{}, fn instr, acc ->
+      Enum.reduce(branch_targets(instr), acc, &Map.update(&2, &1, 1, fn n -> n + 1 end))
+    end)
+  end
+
+  # Every path out of a join re-walks the prefix the paths share, and the
+  # prefix holds the earlier joins: memoising each label's answer for a
+  # register within a query walks each label once, however the paths
+  # into it multiply. A label number is unique within a function, and
+  # the instructions before it are always the same.
+  defp at_label(key, compute) do
+    case Map.fetch(Process.get(:argus_label_memo, %{}), key) do
+      {:ok, answer} ->
+        answer
+
+      :error ->
+        answer = compute.()
+        Process.put(:argus_label_memo, Map.put(Process.get(:argus_label_memo, %{}), key, answer))
+        answer
+    end
+  end
+
+  defp take_join_budget do
+    left = Process.get(:argus_join_budget, @join_budget)
+    Process.put(:argus_join_budget, left - 1)
+    left > 0
+  end
+
+  # The one answer every path gives, or none. `walks` is a list of
+  # thunks so that an exhausted budget walks nothing.
+  defp meet(walks, none) do
+    if take_join_budget() do
+      case Enum.map(walks, & &1.()) do
+        [first | others] ->
+          if first != none and Enum.all?(others, &(&1 == first)), do: first, else: none
+
+        [] ->
+          none
+      end
+    else
+      none
+    end
+  end
+
+  defp block_edge?({:label, _}), do: true
+  defp block_edge?(instr), do: barrier?(instr)
+
+  # An instruction after which the next one is never reached: a barrier, a
+  # jump, a select (it jumps to an arm or to its fail label, never on),
+  # the receive-loop transfers, and the ones that raise — func_info before
+  # a function's entry label, the failed-match ends of case and if.
+  defp path_end?({:jump, _}), do: true
+  defp path_end?({:select_val, _, _, _}), do: true
+  defp path_end?({:select_tuple_arity, _, _, _}), do: true
+  defp path_end?({:wait, _}), do: true
+  defp path_end?({:loop_rec_end, _}), do: true
+  defp path_end?({:func_info, _, _, _}), do: true
+  defp path_end?({:badmatch, _}), do: true
+  defp path_end?({:case_end, _}), do: true
+  defp path_end?(:if_end), do: true
+  defp path_end?({:try_case_end, _}), do: true
+  defp path_end?(:raw_raise), do: true
+  defp path_end?({:raise, _, _}), do: true
+  defp path_end?(instr), do: barrier?(instr)
+
   defp branches_to?({:jump, {:f, l}}, l), do: true
   defp branches_to?({:test, _, {:f, l}, _}, l), do: true
   defp branches_to?({:test, _, {:f, l}, _, _}, l), do: true
-  defp branches_to?({:select_val, _, {:f, l}, _}, l), do: true
-  defp branches_to?({:select_tuple_arity, _, {:f, l}, _}, l), do: true
+  defp branches_to?({:test, _, {:f, l}, _, _, _}, l), do: true
+
+  defp branches_to?({:select_val, _, {:f, fail}, {:list, arms}}, l),
+    do: fail == l or arm_to?(arms, l)
+
+  defp branches_to?({:select_tuple_arity, _, {:f, fail}, {:list, arms}}, l),
+    do: fail == l or arm_to?(arms, l)
+
   defp branches_to?(_instr, _l), do: false
+
+  defp arm_to?(arms, l), do: Enum.any?(arms, &match?({:f, ^l}, &1))
 
   defp call_instruction?(instr) when is_tuple(instr) and tuple_size(instr) > 0,
     do: elem(instr, 0) in [:call, :call_ext, :call_fun, :call_fun2, :apply]
@@ -722,6 +930,7 @@ defmodule Argus.Extractor.Helpers do
           {:ok, non_neg_integer()} | :no
   def arg_position(instrs, call_idx, register) do
     preceding = instrs |> Enum.take(call_idx) |> Enum.reverse()
+    reset_join_budget(instrs)
     do_arg_position(preceding, normalize_reg(register))
   end
 
@@ -764,6 +973,21 @@ defmodule Argus.Extractor.Helpers do
   # branch, so any register values found there are stale.
   defp do_resolve([], _reg), do: :dynamic
 
+  defp do_resolve([{:label, l} | rest], reg) do
+    at_label({:resolve, l, reg}, fn ->
+      case resume_at_label(rest, l) do
+        {:resume, before} ->
+          do_resolve(before, reg)
+
+        :linear ->
+          do_resolve(rest, reg)
+
+        {:join, paths} ->
+          meet(Enum.map(paths, fn path -> fn -> do_resolve(path, reg) end end), :dynamic)
+      end
+    end)
+  end
+
   defp do_resolve([instr | rest], reg) do
     cond do
       barrier?(instr) -> :dynamic
@@ -780,6 +1004,21 @@ defmodule Argus.Extractor.Helpers do
     do: {:ok, n}
 
   defp do_arg_position([{:func_info, _, _, _} | _], _reg), do: :no
+
+  defp do_arg_position([{:label, l} | rest], reg) do
+    at_label({:arg, l, reg}, fn ->
+      case resume_at_label(rest, l) do
+        {:resume, before} ->
+          do_arg_position(before, reg)
+
+        :linear ->
+          do_arg_position(rest, reg)
+
+        {:join, paths} ->
+          meet(Enum.map(paths, fn path -> fn -> do_arg_position(path, reg) end end), :no)
+      end
+    end)
+  end
 
   defp do_arg_position([instr | rest], reg) do
     cond do

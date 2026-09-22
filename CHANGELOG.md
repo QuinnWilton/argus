@@ -8,6 +8,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+The register walks behind `resolve_register/3`, `arg_position/3` and
+`map_field_of/3` no longer stop at a branch boundary. They walk the
+instruction stream backwards and treated a `return` as the end of the
+path, so a value read in the second arm of a `case`, or in the second
+clause of a function, resolved to nothing: the first arm's `return` was
+in the way. A label reached going backwards now resumes from the branch
+that targets it when that is the only way in, and at a real join —
+fall-through into the label, or predecessors in separate blocks — walks
+every way in and keeps only an answer they all give. The compiler's
+fast-and-slow-path diamond for `map.key` agrees at its join once the
+slow path's `no_parens_remote` call is read as the field read it is.
+Per query the joins are budgeted and the labels memoised, and the
+branch-target counts are cached per function. Every extractor that
+resolves an argument sees more: the ETS key written in a `case`'s last
+arm, the name a later clause looks up.
+
+Corpus: `Argus.Corpus.ensure/2` returned every beam twice when the
+project is the repository root, and listed both a dev and a test build;
+each beam once now, from one build.
+
 `unsafe_input`'s two sink relations gain a trailing `safety` column, the
 deserialization's option class (`unsafe | atoms_only | dynamic`, empty
 for the other sinks), and the deserialization finding says which. The
