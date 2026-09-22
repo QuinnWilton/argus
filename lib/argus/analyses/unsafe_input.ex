@@ -186,15 +186,6 @@ defmodule Argus.Analyses.UnsafeInput do
     )
   end
 
-  # The endpoint rather than the callback is the question a reader asks
-  # next: a path is something they can try. It does NOT say whether the
-  # route is authenticated — Phoenix compiles pipe_through into the
-  # router's dispatch as control flow, not into the route table.
-  @impl true
-  def evidence(:sink_endpoint, [_sink, verb, path, plug]) do
-    Findings.related("reachable from #{String.upcase(verb)} #{path}", Findings.at_module(plug))
-  end
-
   def finding(:unbounded_children_from_request, [sup, child, via, kind]) do
     Findings.new(
       :error,
@@ -215,6 +206,15 @@ defmodule Argus.Analyses.UnsafeInput do
       at: Findings.at_func(via),
       related: [Findings.related("supervisor", Findings.at_module(sup))]
     )
+  end
+
+  # The endpoint rather than the callback is the question a reader asks
+  # next: a path is something they can try. It does NOT say whether the
+  # route is authenticated — Phoenix compiles pipe_through into the
+  # router's dispatch as control flow, not into the route table.
+  @impl true
+  def evidence(:sink_endpoint, [_sink, verb, path, plug]) do
+    Findings.related("reachable from #{String.upcase(verb)} #{path}", Findings.at_module(plug))
   end
 
   defp severity("direct"), do: :error

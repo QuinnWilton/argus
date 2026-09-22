@@ -4,6 +4,14 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.18.1 — 2026-09-21
+
+### Fixed
+
+Three compiler warnings in 0.18.0: the `evidence/2` clauses sat between
+`finding/2` clauses in two analyses, and `finding_relations/1` took the
+doc meant for `output_relations/1`.
+
 ## 0.18.0 — 2026-09-21
 
 ### Changed

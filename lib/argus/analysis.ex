@@ -590,6 +590,14 @@ defmodule Argus.Analysis do
 
   Returns `{:ok, relations}` or `:error` if the analysis is not found.
   """
+  @spec output_relations(atom()) :: {:ok, [output_relation()]} | :error
+  def output_relations(name) when is_atom(name) do
+    case fetch_module(name) do
+      {:ok, mod} -> {:ok, mod.output_relations()}
+      :error -> :error
+    end
+  end
+
   @doc """
   The output relations of an analysis whose rows are findings: every
   output relation but the evidence ones.
@@ -598,14 +606,6 @@ defmodule Argus.Analysis do
   def finding_relations(name) do
     with {:ok, relations} <- output_relations(name) do
       {:ok, Enum.reject(relations, &Map.has_key?(&1, :evidence))}
-    end
-  end
-
-  @spec output_relations(atom()) :: {:ok, [output_relation()]} | :error
-  def output_relations(name) when is_atom(name) do
-    case fetch_module(name) do
-      {:ok, mod} -> {:ok, mod.output_relations()}
-      :error -> :error
     end
   end
 

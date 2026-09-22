@@ -263,21 +263,6 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  @impl true
-  def evidence(:call_cycle_path, [_a, _b, from_mod, to_mod, witness, how]) do
-    label =
-      case how do
-        "tag" -> "cycle edge #{from_mod} → #{to_mod}, inferred from the message tag"
-        _ -> "cycle edge #{from_mod} → #{to_mod}"
-      end
-
-    Findings.related(label, Findings.at_func(witness))
-  end
-
-  def evidence(:bottleneck_caller, [caller_mod, _target_mod, witness]) do
-    Findings.related("caller #{caller_mod}", Findings.at_func(witness))
-  end
-
   def finding(:sync_call_fan_in, [target_mod, cnt]) do
     Findings.new(
       :warning,
@@ -372,6 +357,21 @@ defmodule Argus.Analyses.Blocking do
         "or catch `:exit, reason` and classify it"
       ]
     )
+  end
+
+  @impl true
+  def evidence(:call_cycle_path, [_a, _b, from_mod, to_mod, witness, how]) do
+    label =
+      case how do
+        "tag" -> "cycle edge #{from_mod} → #{to_mod}, inferred from the message tag"
+        _ -> "cycle edge #{from_mod} → #{to_mod}"
+      end
+
+    Findings.related(label, Findings.at_func(witness))
+  end
+
+  def evidence(:bottleneck_caller, [caller_mod, _target_mod, witness]) do
+    Findings.related("caller #{caller_mod}", Findings.at_func(witness))
   end
 
   defp where("direct", callback), do: "and #{callback} is that callback"
