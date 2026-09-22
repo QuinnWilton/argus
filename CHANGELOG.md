@@ -42,6 +42,10 @@ is the table). Named sets (`:all`, `:default`, `:security`, `:effects`,
 | `supervision` (part) | `startup`, `wrong_start_order`, `post_start_initialization` | unchanged |
 | `distributed` (part) | `startup`, `global_blocking_in_init`, `distributed_in_init` | unchanged |
 | `error_handling` (part) | `startup`, `ignored_start_result` | unchanged |
+| `shutdown_safety` | `shutdown`, all six relations | unchanged |
+| `supervision` (rest) | `shutdown`, `permanent_child_stops_normally` | supervision is retired; its alias spans coupling, structure, startup and shutdown |
+| `error_handling` (part) | `shutdown`, `trap_exit_without_handler`, `trap_exit_without_exit_clause` | unchanged |
+| `monitor_leak` (part) | `shutdown`, `deliberate_termination_while_monitored` | unchanged |
 
 ## 0.16.0 — 2026-09-21
 

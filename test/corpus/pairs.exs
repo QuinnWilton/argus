@@ -13,7 +13,7 @@
     module: "Oban.Queue.Watchman",
     pre: "7143d7a91a4a062075db99f3698afb19cf5dab58",
     fix: "882febddee194d87127f2693e37bfe08c2d6550a",
-    finding: {:shutdown_safety, "terminate/2 calls a sibling that may already be down"}
+    finding: {:shutdown, "terminate/2 calls a sibling that may already be down"}
   },
   # postgrex#763's own instance (the pool manager starting connections
   # under :db_connection's supervisor) reaches the supervisor through a
@@ -24,7 +24,7 @@
     issue: "postgrex#763",
     module: "DBConnection.Ownership.Manager",
     pre: "6c4e5c2a3eec47a80537704187e314dbeb6cfbe4",
-    finding: {:shutdown_safety, "children started under another tree outlive their owner"}
+    finding: {:shutdown, "children started under another tree outlive their owner"}
   },
   %{
     repo: "sneako/finch",
@@ -124,7 +124,7 @@
     module: "Phoenix.Tracker.Shard",
     pre: "8b92e8f8769de8d8ccf3e5a6f9706621717ce3e0",
     fix: "148ae108d5713aa420a4beade69b44939c283a12",
-    finding: {:supervision, "Permanent child stops itself and is restarted"}
+    finding: {:shutdown, "Permanent child stops itself and is restarted"}
   },
   %{
     repo: "elixir-ecto/postgrex",
@@ -147,7 +147,7 @@
     issue: "horde:signal-shutdown-unguarded-call",
     module: "Horde.SignalShutdown",
     pre: "74820c2",
-    finding: {:shutdown_safety, "terminate/2 calls a sibling that may already be down"}
+    finding: {:shutdown, "terminate/2 calls a sibling that may already be down"}
   },
   %{
     repo: "cabol/nebulex",
@@ -198,6 +198,6 @@
     # Anchored at the sibling's stop API the impl calls.
     module: "Horde.ProcessesSupervisor",
     pre: "74820c2",
-    finding: {:shutdown_safety, "A callback stops a sibling the supervisor owns"}
+    finding: {:shutdown, "A callback stops a sibling the supervisor owns"}
   }
 ]

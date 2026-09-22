@@ -1,4 +1,4 @@
-defmodule Argus.Analyses.SupervisionTest do
+defmodule Argus.Analyses.ShutdownSupervisionTest do
   use ExUnit.Case
 
   alias Argus.Souffle
@@ -17,7 +17,7 @@ defmodule Argus.Analyses.SupervisionTest do
         Argus.Test.Fixtures.PermanentQuitter
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :supervision)
+      assert {:ok, results} = Argus.analyze(modules, :shutdown)
 
       assert [[sup, child, ":normal", site, _sup_site]] =
                results["permanent_child_stops_normally"]

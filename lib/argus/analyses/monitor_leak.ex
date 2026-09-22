@@ -92,16 +92,6 @@ defmodule Argus.Analyses.MonitorLeak do
         ],
         doc:
           "A server callback discards the ref Process.monitor/1 returned; nothing can demonitor it."
-      },
-      %{
-        name: :deliberate_termination_while_monitored,
-        fields: [
-          {:mod, :symbol, "the server module"},
-          {:site, :symbol, "a monitor call site in its callbacks"},
-          {:kill_site, :symbol, "the terminate_child or GenServer.stop call"}
-        ],
-        key: [:mod, :kill_site],
-        doc: "A server terminates a process it monitors without demonitoring first."
       }
     ]
   end
@@ -166,25 +156,6 @@ defmodule Argus.Analyses.MonitorLeak do
         "keep the ref with the entry it protects and " <>
           "`Process.demonitor(ref, [:flush])` when the entry is removed"
       ]
-    )
-  end
-
-  def finding(:deliberate_termination_while_monitored, [mod, site, kill_site]) do
-    Findings.new(
-      :info,
-      "#{mod} terminates a process it still monitors",
-      "#{mod} monitors processes from its callbacks and also terminates " <>
-        "them on purpose, without demonitoring first. The {:DOWN, ...} for a " <>
-        "death this server caused is delivered like any other — into the " <>
-        "clause written for crashes, which may restart, reconnect or log " <>
-        "what was a deliberate stop.",
-      at: Findings.at_site(kill_site, mod),
-      at_label: "the monitored process is terminated here",
-      help: [
-        "call `Process.demonitor(ref, [:flush])` before terminating, and drop " <>
-          "the entry from the bookkeeping in the same step"
-      ],
-      related: [Findings.related("monitor established", Findings.at_site(site, mod))]
     )
   end
 end

@@ -1,39 +1,20 @@
-// Cleanup in `terminate/2` that will not run when it matters.
+// Cleanup that cannot run, or teardown that hurts a peer.
 //
-// Another contract nobody writes down. Putting cleanup in `terminate/2`
-// looks like saying "run this on the way out". OTP's actual rule is
-// narrower, and the gap is silent:
-//
-//   terminate/2 runs when the callback returns {:stop, ...}, or raises.
-//
-//   On a SUPERVISOR shutdown — which is how processes normally stop, and
-//   the case the cleanup was written for — the parent sends an exit
-//   signal. A process that is not trapping exits simply dies. terminate/2
-//   is never called. Nothing is logged. The buffer is not flushed.
-//
-// This is documented GenServer behaviour, and it is still one of the most
-// reliably-made mistakes on the BEAM, because the code reads correctly and
-// the tests pass: a test that calls GenServer.stop/1 exercises the path
-// that DOES run terminate, so the one path that matters in production is
-// the one never exercised.
-//
-// The second obligation applies once you are trapping: terminate/2 must
-// finish inside the child's shutdown timeout (5000ms by default), or the
-// supervisor brutal-kills and the cleanup is truncated anyway. Slow work
-// there buys nothing.
+// OTP's rule for terminate/2 is narrower than it reads: it runs when a
+// callback returns {:stop, ...} or raises, and on a supervisor shutdown
+// only if the process traps exits. Trapping brings its own obligations:
+// the {:EXIT, ...} that arrives as a message needs a clause, and the
+// work must finish inside the shutdown timeout. And a process being
+// torn down still has neighbours: a sibling that may already be gone,
+// children started in another tree that will outlive this one, a
+// monitored child whose :DOWN will read as a crash, a permanent child
+// that stops itself only to be restarted.
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
 .include "../clientlib/process_statem.dl"
-// ── Behaviours with a terminate callback ─────────────────────────
 
-// ── Does the module trap exits? ──────────────────────────────────
-//
-// Module-granular on purpose. `Process.flag(:trap_exit, true)` is
-// overwhelmingly called in init/1, but some modules set it in a helper or
-// on a later transition, and requiring it to be in init would produce
-// false positives for code that is correct.
-
+// ══ terminate/2 and the exits it needs to trap ══════════════════════
 .decl traps_exits(mod: symbol)
 
 traps_exits(mod) :- trap_exit(_, mod).
@@ -257,3 +238,129 @@ callback_stops_sibling(mod, sib, via, sup) :-
   stop_reach.reaches(h, via),
   function_def(via, sib, _, _, _),
   sibling(sup, mod, sib).
+
+// ── Trap exit without handler ────────────────────────────────────
+
+// Module traps exits but defines no handle_info callback that could
+// receive {:EXIT, ...} messages. This is a heuristic — we check if
+// the module has any handle_info function.
+//
+// gen_statem / GenStateMachine modules deliver info events (including
+// {:EXIT, ...}) to their state functions or handle_event/4, not to a
+// handle_info callback, so the has_handle_info check is meaningless for
+// them — every trapping gen_statem would be a false positive (Swarm's
+// Tracker even matches {:EXIT, ...} explicitly). Exclude them.
+
+// `witness` is the function that sets trap_exit. One row per witness —
+// finding builders dedupe on (mod).
+.decl trap_exit_without_handler(mod: symbol, witness: symbol)
+.output trap_exit_without_handler
+
+trap_exit_without_handler(mod, func) :-
+  trap_exit(func, mod),
+  !has_handle_info(mod),
+  !statem_process(mod).
+
+// ── Trap exit with a handle_info that never matches {:EXIT, ...} ──
+//
+// The module defines handle_info/2 — so the check above is satisfied —
+// but no clause discriminates on :EXIT and none is a catch-all. The
+// trapped exit arrives as a message no clause accepts, and the process
+// dies with a FunctionClauseError on the very signal trapping was meant
+// to absorb. Bandit's HTTP/1 handler shipped this shape: trap_exit set
+// by `use ThousandIsland.Handler`, one handle_info clause for
+// {:plug_conn, :sent}, and a Plug that spawned a port took the
+// connection down.
+//
+// callback_tag over-approximates (every atom compared anywhere in the
+// body counts), so a module that mentions :EXIT at all is not reported —
+// the direction that keeps the rule quiet rather than noisy.
+.decl trap_exit_without_exit_clause(mod: symbol, witness: symbol)
+.output trap_exit_without_exit_clause
+
+trap_exit_without_exit_clause(mod, func) :-
+  trap_exit(func, mod),
+  partial_handle_info(mod, h),
+  !callback_tag(h, "handle_info", ":EXIT"),
+  !statem_process(mod).
+
+// ══ Teardown that hurts a monitored child ═══════════════════════════
+
+// Runs on the server's own stack: a callback, a statem state function,
+// or what those reach without leaving the module.
+.init server_reach = ForwardIntraModuleReach
+
+server_reach.root(mod, func) :-
+  otp_callback(func, mod, _, _).
+
+server_reach.root(mod, func) :-
+  statem_process(mod),
+  statem_state(mod, _, func),
+  function_def(func, mod, _, _, _).
+
+.decl server_side(mod: symbol, func: symbol)
+
+server_side(mod, func) :- server_reach.reaches(mod, func).
+
+.decl module_demonitors(mod: symbol)
+
+module_demonitors(mod) :-
+  demonitor_call(_, f, _),
+  function_def(f, mod, _, _, _).
+
+// Removing an entry from a map, set, keyword or ETS table (removal_api,
+// in effects.dl) — the bookkeeping paths a monitor's release belongs
+// on. Anywhere in the module: Phoenix PubSub's Local removed
+// subscriptions from a public table in its client API, and the monitor
+// taken in handle_call stayed live all the same.
+
+// ── Terminating a process the server still monitors ───────────────────
+//
+// terminate_child (and GenServer.stop) on a pid this server monitors,
+// with no demonitor anywhere: the {:DOWN, ...} for a death the server
+// caused is delivered like any other, into the clause written for
+// crashes. Oban's producer terminated a job's process on pkill and then
+// handled its own :DOWN as a crash; Redix's cluster manager terminated a
+// departed node's connection and its :DOWN clause reconnected it.
+.decl deliberate_termination_while_monitored(mod: symbol, site: symbol, kill_site: symbol)
+.output deliberate_termination_while_monitored
+
+deliberate_termination_while_monitored(mod, site, kill_site) :-
+  server_side(mod, f),
+  monitor_call(site, f, _),
+  server_side(mod, g),
+  sup_call(kill_site, g, _, "terminate_child", _),
+  !module_demonitors(mod).
+
+deliberate_termination_while_monitored(mod, site, kill_site) :-
+  server_side(mod, f),
+  monitor_call(site, f, _),
+  server_side(mod, g),
+  remote_call(kill_site, g, "GenServer", "stop", _),
+  !module_demonitors(mod).
+
+// ══ A permanent child that stops itself ═════════════════════════════
+
+// ── Permanent child that stops itself normally ────────────────────────
+//
+// A supervisor restarts a :permanent child whatever the exit reason —
+// :normal and :shutdown included. So a permanent child whose callback
+// returns {:stop, :normal, ...} has asked to go away and will be started
+// straight back; the code that follows the stop (graceful permdown,
+// drain-and-quit) is undone at once. Phoenix PubSub's tracker shards did
+// this on graceful permdown until their spec became :transient.
+//
+// Only a literal reason counts (callback_stop_reason), and terminate/2
+// is excluded: it does not return a stop tuple. One row per stop site —
+// finding builders dedupe on (sup, child).
+.decl permanent_child_stops_normally(sup: symbol, child: symbol, reason: symbol, site: symbol, sup_site: symbol)
+.output permanent_child_stops_normally
+
+permanent_child_stops_normally(sup, child, reason, site, sup_site) :-
+  supervisor(sup, _),
+  supervisor_site(sup, sup_site),
+  supervisor_child(sup, _, child, "permanent", _),
+  function_def(func, child, name, _, _),
+  name != "terminate",
+  callback_stop_reason(site, func, reason),
+  (reason = ":normal" ; reason = ":shutdown").

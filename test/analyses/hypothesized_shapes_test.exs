@@ -108,7 +108,7 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
           H.SiblingStop.Coordinator,
           H.SiblingStop.PoliteCoordinator
         ],
-        :shutdown_safety
+        :shutdown
       )
 
     assert rows(r, "callback_stops_sibling") ==

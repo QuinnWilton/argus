@@ -1,4 +1,4 @@
-defmodule Argus.Analyses.ShutdownSafetyTest do
+defmodule Argus.Analyses.ShutdownTest do
   use ExUnit.Case
 
   alias Argus.Souffle
@@ -22,7 +22,7 @@ defmodule Argus.Analyses.ShutdownSafetyTest do
   end
 
   defp results do
-    assert {:ok, r} = Argus.analyze(@all, :shutdown_safety)
+    assert {:ok, r} = Argus.analyze(@all, :shutdown)
     r
   end
 
@@ -48,7 +48,7 @@ defmodule Argus.Analyses.ShutdownSafetyTest do
       {:ok, r} =
         Argus.analyze(
           [Sib.Sup, Sib.Producer, Sib.Watchman, Sib.CarefulWatchman],
-          :shutdown_safety
+          :shutdown
         )
 
       pairs =
@@ -80,7 +80,7 @@ defmodule Argus.Analyses.ShutdownSafetyTest do
             F.TaskTree,
             F.TaskStarter
           ],
-          :shutdown_safety
+          :shutdown
         )
 
       assert modules(r, "foreign_dynamic_children") == [
@@ -199,7 +199,7 @@ defmodule Argus.Analyses.ShutdownSafetyTest do
 
   describe "findings" do
     test "each relation renders a finding naming the module and the fix" do
-      mod = Argus.Analyses.ShutdownSafety
+      mod = Argus.Analyses.Shutdown
 
       never =
         mod.finding(:cleanup_never_runs, ["My.Server", "GenServer", "io", "File.write/2", "f"])

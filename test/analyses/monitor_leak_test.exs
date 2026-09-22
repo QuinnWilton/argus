@@ -81,17 +81,6 @@ defmodule Argus.Analyses.MonitorLeakTest do
              ]
     end
 
-    test "terminating a monitored child without demonitor is reported" do
-      skip_without_souffle()
-
-      r = servers()
-
-      assert [[mod, site, kill_site]] = r["deliberate_termination_while_monitored"]
-      assert mod == "Argus.Test.Fixtures.MonitorLeak.KillsMonitored"
-      assert site =~ "KillsMonitored:handle_call/3#"
-      assert kill_site =~ "KillsMonitored:handle_cast/2#"
-    end
-
     test "a monitor whose ref is thrown away is reported on its own" do
       skip_without_souffle()
 

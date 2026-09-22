@@ -18,10 +18,9 @@ defmodule Argus.AnalysisTest do
     :monitor_leak,
     :process_registry,
     :reply_contract,
-    :shutdown_safety,
+    :shutdown,
     :startup,
     :structure,
-    :supervision,
     :unlinked_spawn,
     :unsafe_input,
     :unsafe_task
@@ -191,7 +190,7 @@ defmodule Argus.AnalysisTest do
 
     test "returns error for non-existent module" do
       assert {:error, {:not_found, :fake_module_xyz}} =
-               Argus.analyze([:fake_module_xyz], :supervision)
+               Argus.analyze([:fake_module_xyz], :startup)
     end
   end
 end

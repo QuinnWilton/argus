@@ -81,30 +81,6 @@ monitor_never_released(mod, site) :-
   removes_entries(mod),
   !module_demonitors(mod).
 
-// ── Terminating a process the server still monitors ───────────────────
-//
-// terminate_child (and GenServer.stop) on a pid this server monitors,
-// with no demonitor anywhere: the {:DOWN, ...} for a death the server
-// caused is delivered like any other, into the clause written for
-// crashes. Oban's producer terminated a job's process on pkill and then
-// handled its own :DOWN as a crash; Redix's cluster manager terminated a
-// departed node's connection and its :DOWN clause reconnected it.
-.decl deliberate_termination_while_monitored(mod: symbol, site: symbol, kill_site: symbol)
-.output deliberate_termination_while_monitored
-
-deliberate_termination_while_monitored(mod, site, kill_site) :-
-  server_side(mod, f),
-  monitor_call(site, f, _),
-  server_side(mod, g),
-  sup_call(kill_site, g, _, "terminate_child", _),
-  !module_demonitors(mod).
-
-deliberate_termination_while_monitored(mod, site, kill_site) :-
-  server_side(mod, f),
-  monitor_call(site, f, _),
-  server_side(mod, g),
-  remote_call(kill_site, g, "GenServer", "stop", _),
-  !module_demonitors(mod).
 
 // ── A monitor whose ref is thrown away ───────────────────────────────
 //

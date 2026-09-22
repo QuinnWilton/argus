@@ -22,16 +22,15 @@
   message_contract:
     ~w(async_cast call_arg call_arg_forward call_tag callback_tag callback_total function_def implements_behaviour sync_call),
   monitor_leak:
-    ~w(call_edge closure_def demonitor_call function_def implements_behaviour monitor_call monitor_ref_dropped recv_start remote_call statem_state sup_call),
+    ~w(call_edge closure_def demonitor_call function_def implements_behaviour monitor_call monitor_ref_dropped recv_start remote_call statem_state),
   process_registry: ~w(whereis_call),
   reply_contract: ~w(callback_drops_from callback_return function_def implements_behaviour),
-  shutdown_safety:
-    ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag catch_tag catch_total closure_def dynamic_child function_def implements_behaviour impure_call statem_event_clause sup_call supervisor_child supervisor_child_name sync_call trap_exit unknown_call),
+  shutdown:
+    ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_stop_reason callback_tag callback_total catch_tag catch_total closure_def demonitor_call dynamic_child function_def implements_behaviour impure_call monitor_call remote_call statem_event_clause statem_state sup_call supervisor supervisor_child supervisor_child_name supervisor_site sync_call trap_exit unknown_call),
   startup:
     ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag callback_timeout distributed_store_op dynamic_child function_def global_op global_register handle_continue_clause ignored_error_result implements_behaviour impure_call init_continues_to mailbox_writer node_operation post_start_call recv_start remote_call rpc_call statem_timeout sup_call supervisor supervisor_child supervisor_site sync_call sync_call_timeout try_start unconditional_call_edge),
   structure:
     ~w(function_def global_register implements_behaviour process_register supervisor_child supervisor_child_form supervisor_site),
-  supervision: ~w(callback_stop_reason function_def supervisor supervisor_child supervisor_site),
   unlinked_spawn: ~w(spawn_call),
   unsafe_input:
     ~w(call_edge code_execution dynamic_child function_def http_route implements_behaviour socket_transport supervisor_max_children unsafe_atom_creation unsafe_deserialization),

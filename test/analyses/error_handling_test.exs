@@ -42,26 +42,6 @@ defmodule Argus.Analyses.ErrorHandlingTest do
     end
   end
 
-  describe "trap_exit_without_exit_clause" do
-    test "a handle_info that never matches {:EXIT, ...} is reported" do
-      skip_without_souffle()
-
-      results =
-        analyze([
-          Argus.Test.Fixtures.TrapsWithoutExitClause,
-          Argus.Test.Fixtures.TrapsWithExitClause
-        ])
-
-      mods = Enum.map(results["trap_exit_without_exit_clause"], fn [mod, _w] -> mod end)
-
-      assert mods == ["Argus.Test.Fixtures.TrapsWithoutExitClause"]
-
-      # Having a handle_info at all satisfies the coarser rule; this one is
-      # about which clauses it has.
-      assert results["trap_exit_without_handler"] == []
-    end
-  end
-
   describe "handle_info_without_catchall" do
     test "a monitoring GenServer with only a :DOWN clause is reported" do
       skip_without_souffle()
@@ -83,7 +63,6 @@ defmodule Argus.Analyses.ErrorHandlingTest do
       results = analyze([Argus.Test.Fixtures.TrapsWithoutExitClause])
 
       assert results["handle_info_without_catchall"] == []
-      assert length(results["trap_exit_without_exit_clause"]) == 1
     end
   end
 
@@ -118,44 +97,6 @@ defmodule Argus.Analyses.ErrorHandlingTest do
       results = analyze([Argus.Test.Fixtures.ReraisingRescue])
 
       assert results["swallowed_error"] == []
-    end
-  end
-
-  describe "trap_exit_without_handler" do
-    test "flags a raw :gen_server that traps exits with no handle_info" do
-      skip_without_souffle()
-
-      results = analyze([Argus.Test.Fixtures.RawTrapExit])
-
-      assert Enum.any?(results["trap_exit_without_handler"], fn [mod, _witness] ->
-               String.contains?(mod, "RawTrapExit")
-             end)
-    end
-
-    test "cannot fire for `use GenServer` modules (known false negative)" do
-      skip_without_souffle()
-
-      # TrapExitModule traps exits and defines no handle_info of its own,
-      # but `use GenServer` compiles a default handle_info/2 into every
-      # module — so the has_handle_info(mod) heuristic is always
-      # satisfied and the rule is vacuous for idiomatic Elixir GenServers
-      # even when no clause matches {:EXIT, ...}. Making this real needs
-      # clause-level pattern facts, not function existence. This test
-      # pins the limitation so a future fix flips it consciously.
-      results = analyze([Argus.Test.Fixtures.TrapExitModule])
-
-      assert results["trap_exit_without_handler"] == []
-    end
-
-    test "does not flag a gen_statem that traps exits" do
-      skip_without_souffle()
-
-      # gen_statem delivers {:EXIT, ...} to its state functions, not to a
-      # handle_info callback, so the has_handle_info heuristic would
-      # false-positive every trapping gen_statem.
-      results = analyze([Argus.Test.Fixtures.StatemTrapExit])
-
-      assert results["trap_exit_without_handler"] == []
     end
   end
 

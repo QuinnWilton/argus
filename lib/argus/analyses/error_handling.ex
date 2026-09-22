@@ -85,24 +85,6 @@ defmodule Argus.Analyses.ErrorHandling do
         doc: "Catch-all rescue that silently discards exceptions."
       },
       %{
-        name: :trap_exit_without_handler,
-        fields: [
-          {:mod, :symbol, "module"},
-          {:witness, :symbol, "function that sets trap_exit"}
-        ],
-        key: [:mod],
-        doc: "Module traps exits but has no handle_info({:EXIT,...},_) callback."
-      },
-      %{
-        name: :trap_exit_without_exit_clause,
-        fields: [
-          {:mod, :symbol, "module"},
-          {:witness, :symbol, "function that sets trap_exit"}
-        ],
-        key: [:mod],
-        doc: "Module traps exits and defines handle_info/2, but no clause matches {:EXIT, ...}."
-      },
-      %{
         name: :handle_info_without_catchall,
         fields: [
           {:mod, :symbol, "module"},
@@ -163,39 +145,6 @@ defmodule Argus.Analyses.ErrorHandling do
         "later, far from its cause, with the stacktrace gone. Rescue the " <>
         "specific exceptions you can actually handle.",
       at: Findings.at_func(func)
-    )
-  end
-
-  def finding(:trap_exit_without_handler, [mod, witness]) do
-    Findings.new(
-      :warning,
-      "trap_exit without an :EXIT handler",
-      "#{mod} sets trap_exit but defines no handle_info({:EXIT, ...}, _) " <>
-        "clause. Exit signals from linked processes arrive as plain mailbox " <>
-        "messages and fall through to the default handle_info — a crash or a " <>
-        "noisy log, exactly what trapping was meant to prevent.",
-      at: Findings.at_func(witness)
-    )
-  end
-
-  def finding(:trap_exit_without_exit_clause, [mod, witness]) do
-    Findings.new(
-      :warning,
-      "trap_exit without an {:EXIT, ...} clause",
-      "#{mod} sets trap_exit and defines handle_info/2, but no clause " <>
-        "matches {:EXIT, pid, reason} and none is a catch-all. A trapped " <>
-        "exit arrives as an ordinary message, and once handle_info/2 is " <>
-        "defined an unmatched message is a FunctionClauseError — the " <>
-        "process dies on the very signal trapping was meant to absorb, " <>
-        "the first time anything it linked to exits.",
-      at: Findings.at_func(witness),
-      at_label: "exits are trapped here",
-      help: [
-        "add a `handle_info({:EXIT, pid, reason}, state)` clause that " <>
-          "decides what a linked exit means for this process, or a " <>
-          "catch-all `handle_info(_msg, state)` if none are expected"
-      ],
-      related: [Findings.related("handle_info/2", Findings.at_mfa(mod, :handle_info, 2))]
     )
   end
 

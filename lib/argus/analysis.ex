@@ -183,6 +183,25 @@ defmodule Argus.Analysis do
       %{analysis: :startup, relation: :continue_to_parent_supervisor, where: []},
       %{analysis: :startup, relation: :init_timeout_deferral, where: []},
       %{analysis: :startup, relation: :continue_crash_loop_risk, where: []}
+    ],
+    shutdown_safety: [
+      %{analysis: :shutdown, relation: :cleanup_never_runs, where: []},
+      %{analysis: :shutdown, relation: :cleanup_unclear, where: []},
+      %{analysis: :shutdown, relation: :terminate_may_be_truncated, where: []},
+      %{analysis: :shutdown, relation: :terminate_calls_sibling, where: []},
+      %{analysis: :shutdown, relation: :callback_stops_sibling, where: []},
+      %{analysis: :shutdown, relation: :foreign_dynamic_children, where: []}
+    ],
+    supervision: [
+      %{analysis: :coupling, relation: :suspect_nonpermanent_dependency, where: []},
+      %{analysis: :coupling, relation: :cached_sibling_pid, where: []},
+      %{analysis: :coupling, relation: :rest_for_one_orphaned_children, where: []},
+      %{analysis: :coupling, relation: :dual_restart_authority, where: []},
+      %{analysis: :structure, relation: :supervisor_registered_as_worker, where: []},
+      %{analysis: :structure, relation: :consumer_supervisor_permanent_child, where: []},
+      %{analysis: :startup, relation: :wrong_start_order, where: []},
+      %{analysis: :startup, relation: :post_start_initialization, where: []},
+      %{analysis: :shutdown, relation: :permanent_child_stops_normally, where: []}
     ]
   }
 
@@ -231,7 +250,8 @@ defmodule Argus.Analysis do
     [
       :startup,
       :coupling,
-      :supervision,
+      :shutdown,
+      :structure,
       :unlinked_spawn,
       :unsafe_task
     ]

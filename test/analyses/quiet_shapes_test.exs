@@ -34,15 +34,16 @@ defmodule Argus.Analyses.QuietShapesTest do
   ]
 
   @expect_quiet %{
-    shutdown_safety: ~w(terminate_calls_sibling foreign_dynamic_children cleanup_never_runs),
+    shutdown: ~w(terminate_calls_sibling foreign_dynamic_children cleanup_never_runs),
     gen_statem: ~w(call_never_replied statem_timeout_unhandled),
     unsafe_task: ~w(linked_task_in_library yield_on_linked_task),
-    supervision:
-      ~w(consumer_supervisor_permanent_child dual_restart_authority post_start_initialization),
-    error_handling: ~w(partial_noproc_catch handle_info_partial),
+    structure: ~w(consumer_supervisor_permanent_child),
+    coupling: ~w(dual_restart_authority),
+    blocking: ~w(partial_noproc_catch),
+    error_handling: ~w(handle_info_partial),
     distributed: ~w(erpc_transport_unhandled),
     ets: ~w(ets_read_outside_owner),
-    startup: ~w(blocking_recv_in_init)
+    startup: ~w(blocking_recv_in_init post_start_initialization)
   }
 
   for {analysis, relations} <- @expect_quiet do
@@ -62,7 +63,7 @@ defmodule Argus.Analyses.QuietShapesTest do
     skip_without_souffle()
 
     {:ok, r} =
-      Argus.analyze([Sib.Sup, Sib.Producer, Sib.Watchman, Sib.GuardedWatchman], :shutdown_safety)
+      Argus.analyze([Sib.Sup, Sib.Producer, Sib.Watchman, Sib.GuardedWatchman], :shutdown)
 
     mods = r |> Map.get("terminate_calls_sibling", []) |> Enum.map(&hd/1) |> Enum.uniq()
     assert mods == ["Argus.Test.Fixtures.ShutdownSiblings.Watchman"]

@@ -14,27 +14,6 @@
 swallowed_error(func) :-
   bare_rescue(_, func).
 
-// ── Trap exit without handler ────────────────────────────────────
-
-// Module traps exits but defines no handle_info callback that could
-// receive {:EXIT, ...} messages. This is a heuristic — we check if
-// the module has any handle_info function.
-//
-// gen_statem / GenStateMachine modules deliver info events (including
-// {:EXIT, ...}) to their state functions or handle_event/4, not to a
-// handle_info callback, so the has_handle_info check is meaningless for
-// them — every trapping gen_statem would be a false positive (Swarm's
-// Tracker even matches {:EXIT, ...} explicitly). Exclude them.
-
-// `witness` is the function that sets trap_exit. One row per witness —
-// finding builders dedupe on (mod).
-.decl trap_exit_without_handler(mod: symbol, witness: symbol)
-.output trap_exit_without_handler
-
-trap_exit_without_handler(mod, func) :-
-  trap_exit(func, mod),
-  !has_handle_info(mod),
-  !statem_process(mod).
 
 // ── Trap exit with a handle_info that never matches {:EXIT, ...} ──
 //
@@ -51,7 +30,6 @@ trap_exit_without_handler(mod, func) :-
 // body counts), so a module that mentions :EXIT at all is not reported —
 // the direction that keeps the rule quiet rather than noisy.
 .decl trap_exit_without_exit_clause(mod: symbol, witness: symbol)
-.output trap_exit_without_exit_clause
 
 trap_exit_without_exit_clause(mod, func) :-
   trap_exit(func, mod),
