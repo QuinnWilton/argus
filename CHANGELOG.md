@@ -115,6 +115,23 @@ schema names; the other two families measured, and the tag-target family
 parked as behaviour-polymorphic dispatch a rule should settle) is in
 `spike/priors/FINDINGS.md`.
 
+**Schema version 41.** `prior_reads(func, source, permille)`, the second
+prior: which external source a function itself reads — `request`,
+`storage`, `config`, `internal`, `passthrough` or `constant` — judged
+from what it calls and its literals, its arguments not counting.
+`Argus.Priors.Questions.Reads` asks it only about the functions that
+hold a sink and are not request entries, the functions of one module in
+one request. `unsafe_input`'s `sink_reachable` gains `source` and
+`permille` columns (empty and 0 without a prior, and for a proven flow,
+which needs none): a path row — adjacent or transitive — whose sink
+function reads storage, configuration or the system's own state at 0.7
+and above drops one severity step, labelled heuristic with what was read
+and the probability. That is the sequin shape, a helper converting a
+record loaded from Postgres, told apart from a helper converting whatever
+it is handed; a `passthrough` answer changes nothing, and neither does
+`request`, which the calibration did not measure. Sites, titles and
+rows are the same with priors on or off.
+
 ### Fixed
 
 `def_use` had no edges through binary construction or binary matching:

@@ -63,7 +63,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
   end
 
   defp atom_rows(modules) do
-    for [id, func, api, "atom", entry, kind, prox] <- analyze(modules)["sink_reachable"],
+    for [id, func, api, "atom", entry, kind, prox | _] <- analyze(modules)["sink_reachable"],
         do: [id, func, api, entry, kind, prox]
   end
 
@@ -80,7 +80,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
       results = analyze([RequestSurface.DirectPlug, RequestSurface.NotAnEntryPoint])
 
       rows =
-        for [id, func, api, "atom", entry, kind, prox] <- results["sink_reachable"],
+        for [id, func, api, "atom", entry, kind, prox | _] <- results["sink_reachable"],
             do: [id, func, api, entry, kind, prox]
 
       assert proximity_for(rows, "DirectPlug") != []
@@ -220,7 +220,10 @@ defmodule Argus.Analyses.UnsafeInputTest do
 
   describe "severity" do
     test "tracks proximity rather than sink type" do
-      row = fn prox -> ["i", "M:f/1", "String.to_atom/1", "atom", "E:call/2", "plug", prox] end
+      row = fn prox ->
+        ["i", "M:f/1", "String.to_atom/1", "atom", "E:call/2", "plug", prox, "", "0"]
+      end
+
       assert %{severity: :error} = UnsafeInput.finding(:sink_reachable, row.("flow"))
       assert %{severity: :error} = UnsafeInput.finding(:sink_reachable, row.("direct"))
       assert %{severity: :warning} = UnsafeInput.finding(:sink_reachable, row.("adjacent"))
@@ -228,7 +231,18 @@ defmodule Argus.Analyses.UnsafeInputTest do
     end
 
     test "a flow says so, anchors the argument and tells the reader what to do" do
-      row = ["i", "M:f/1", "String.to_atom/1", "atom", "E:handle_event/3", "live_view", "flow"]
+      row = [
+        "i",
+        "M:f/1",
+        "String.to_atom/1",
+        "atom",
+        "E:handle_event/3",
+        "live_view",
+        "flow",
+        "",
+        "0"
+      ]
+
       finding = UnsafeInput.finding(:sink_reachable, row)
       assert finding.title =~ "fed by request data"
       assert finding.detail =~ "a flow rather than a path"
@@ -251,7 +265,9 @@ defmodule Argus.Analyses.UnsafeInputTest do
             "deserialization",
             "W:handle_in/3",
             "channel",
-            "direct"
+            "direct",
+            "",
+            "0"
           ]
         )
 

@@ -41,7 +41,7 @@ defmodule Argus.Priors do
 
   @type mode :: :off | :cached_only | :live
 
-  @questions [Argus.Priors.Questions.Sensitivity]
+  @questions [Argus.Priors.Questions.Reads, Argus.Priors.Questions.Sensitivity]
 
   @doc "The built-in questions."
   @spec questions() :: [module()]

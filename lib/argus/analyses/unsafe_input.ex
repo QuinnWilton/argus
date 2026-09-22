@@ -83,7 +83,10 @@ defmodule Argus.Analyses.UnsafeInput do
             [
               {:entry, :symbol, "a request-handling callback that reaches it"},
               {:kind, :symbol, "which surface the entry belongs to"},
-              {:proximity, :symbol, "flow | direct | adjacent | transitive"}
+              {:proximity, :symbol, "flow | direct | adjacent | transitive"},
+              {:source, :symbol,
+               "what the sink's function reads, when a prior says (request | storage | config | internal | passthrough | constant), else empty"},
+              {:permille, :number, "the prior's probability in thousandths, else 0"}
             ],
         key: [:id],
         doc: "A sink reachable from request-shaped input."
@@ -120,7 +123,17 @@ defmodule Argus.Analyses.UnsafeInput do
   end
 
   @impl true
-  def finding(:sink_reachable, [id, func, api, "deserialization", entry, kind, proximity]) do
+  def finding(:sink_reachable, [
+        id,
+        func,
+        api,
+        "deserialization",
+        entry,
+        kind,
+        proximity,
+        source,
+        p
+      ]) do
     Findings.new(
       severity(proximity),
       "Unsafe deserialization #{reached(proximity)} #{surface(kind)}",
@@ -131,9 +144,10 @@ defmodule Argus.Analyses.UnsafeInput do
         "the decoded shape — :safe alone still admits arbitrary nested terms.",
       [at: Findings.at_instr(id)] ++ flow_opts(proximity)
     )
+    |> retier(func, proximity, source, p)
   end
 
-  def finding(:sink_reachable, [id, func, api, "code", entry, kind, proximity]) do
+  def finding(:sink_reachable, [id, func, api, "code", entry, kind, proximity, source, p]) do
     Findings.new(
       severity(proximity),
       "Dynamic code execution #{reached(proximity)} #{surface(kind)}",
@@ -142,9 +156,10 @@ defmodule Argus.Analyses.UnsafeInput do
         "code execution inside the node, with the full privileges of the VM.",
       [at: Findings.at_instr(id)] ++ flow_opts(proximity)
     )
+    |> retier(func, proximity, source, p)
   end
 
-  def finding(:sink_reachable, [id, func, api, "atom", entry, kind, proximity]) do
+  def finding(:sink_reachable, [id, func, api, "atom", entry, kind, proximity, source, p]) do
     Findings.new(
       severity(proximity),
       "Unbounded atom creation #{reached(proximity)} #{surface(kind)}",
@@ -155,7 +170,37 @@ defmodule Argus.Analyses.UnsafeInput do
         "String.to_existing_atom, or match against an explicit whitelist.",
       [at: Findings.at_instr(id)] ++ flow_opts(proximity)
     )
+    |> retier(func, proximity, source, p)
   end
+
+  # A path row whose sink function, the model says, reads storage,
+  # configuration or the system's own state: the path is real, the data
+  # is probably not the request. One severity step down, the finding
+  # labelled with what was read and how sure the model was. A function
+  # the model calls passthrough or request-reading is left as it is —
+  # the first says nothing, the second was unmeasured in calibration.
+  @downgrading ~w(storage config internal constant)
+
+  defp retier(attrs, func, proximity, source, p)
+       when proximity in ["adjacent", "transitive"] and source in @downgrading do
+    permille = String.to_integer(p)
+
+    %{
+      attrs
+      | severity: demote(attrs.severity),
+        at_label:
+          "heuristic: #{func} reads #{source}, not the request (p=#{format_permille(permille)})",
+        provenance: :heuristic,
+        confidence: permille
+    }
+  end
+
+  defp retier(attrs, _func, _proximity, _source, _p), do: attrs
+
+  defp demote(:error), do: :warning
+  defp demote(_warning_or_info), do: :info
+
+  defp format_permille(p), do: :erlang.float_to_binary(p / 1000, decimals: 2)
 
   def finding(:sink_without_request_path, [id, func, api, "atom"]) do
     Findings.new(

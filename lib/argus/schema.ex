@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 40
+  @schema_version 41
 
   # Layer 1: Module-level facts.
 
@@ -2099,7 +2099,26 @@ defmodule Argus.Schema do
     """
   }
 
+  @prior_reads %{
+    name: :prior_reads,
+    layer: 3,
+    fields: [
+      {:func, :func_id, "the function"},
+      {:source, :symbol,
+       "request | storage | config | internal | passthrough | constant — what the function itself reads"},
+      {:permille, :number, "the model's probability for `source`, in thousandths"}
+    ],
+    doc: """
+    Which external source a function itself reads, judged from what it calls \
+    and its literals; its arguments do not count, whoever calls it \
+    (Argus.Priors.Questions.Reads). Asked about the functions that hold a \
+    sink, so unsafe_input can tell a helper that converts a stored record \
+    from one that converts whatever it is handed.
+    """
+  }
+
   @layer_3_relations [
+    @prior_reads,
     @prior_sensitive
   ]
 

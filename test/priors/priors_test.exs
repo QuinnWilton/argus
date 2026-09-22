@@ -148,4 +148,122 @@ defmodule Argus.PriorsTest do
     @impl true
     def ask(_request, _opts), do: raise("the oracle was asked in cached_only mode")
   end
+
+  describe "unsafe_input re-tiers a path row by what the sink's function reads" do
+    alias Argus.Test.Fixtures.Taint
+
+    # Every asked function reads storage at 0.9; anything else `none`.
+    defmodule StorageOracle do
+      @behaviour Argus.Priors.Oracle
+
+      @impl true
+      def ask(request, opts) do
+        source = Keyword.get(opts, :source, "storage")
+        p = Keyword.get(opts, :p, 0.9)
+
+        answers =
+          for {id, q} <- request.questions, into: %{} do
+            case q.type do
+              "choice" when is_map_key(q.criteria, :storage) ->
+                {id,
+                 %{
+                   "type" => "choice",
+                   "choice" => source,
+                   "confidence" => p,
+                   "probabilities" => %{source => p}
+                 }}
+
+              "choice" ->
+                {id,
+                 %{
+                   "type" => "choice",
+                   "choice" => "none",
+                   "confidence" => 0.99,
+                   "probabilities" => %{"none" => 0.99}
+                 }}
+
+              "noul" ->
+                {id, %{"type" => "noul", "noul" => 0.5}}
+            end
+          end
+
+        {:ok,
+         %{
+           answers: answers,
+           usage: %{"input_tokens" => 50},
+           model: request.model,
+           request_id: nil
+         }}
+      end
+    end
+
+    @taint [
+      Taint.Store,
+      Taint.StoreSourcedPlug,
+      Taint.StoreSourcedAdjacent,
+      Taint.StoreSourcedWorker
+    ]
+
+    defp sinks(opts) do
+      assert {:ok, %Argus.Findings{degraded: []} = r} =
+               Argus.Findings.run(@taint, Keyword.put(opts, :analyses, [:unsafe_input]))
+
+      r.findings |> Enum.filter(&(&1.title =~ "atom creation")) |> Enum.sort_by(& &1.mfa)
+    end
+
+    defp storage(dir, extra \\ []),
+      do: [
+        priors: :live,
+        priors_opts:
+          Keyword.merge([oracle: StorageOracle, cache_dir: dir, model: "jev-test"], extra)
+      ]
+
+    test "off: direct is an error, adjacent a warning, transitive info, all structural" do
+      skip_without_souffle()
+      by_prox = sinks([]) |> Map.new(&{&1.at_label, &1.severity})
+      assert map_size(by_prox) >= 1
+      assert Enum.all?(sinks([]), &(&1.provenance == :structural))
+      assert Enum.map(sinks([]), & &1.severity) |> Enum.sort() == [:error, :info, :warning]
+    end
+
+    test "on: the adjacent and transitive rows step down and say why; direct is untouched", %{
+      tmp_dir: dir
+    } do
+      skip_without_souffle()
+      findings = sinks(storage(dir))
+
+      direct = Enum.find(findings, &(elem(&1.mfa, 1) == :call))
+      adjacent = Enum.find(findings, &(elem(&1.mfa, 1) == :convert))
+      transitive = Enum.find(findings, &(elem(&1.mfa, 1) == :level_two))
+
+      assert direct.severity == :error and direct.provenance == :structural
+
+      assert adjacent.severity == :info and adjacent.provenance == :heuristic and
+               adjacent.confidence == 900
+
+      assert adjacent.at_label =~ "reads storage, not the request (p=0.90)"
+      assert transitive.severity == :info and transitive.provenance == :heuristic
+      assert transitive.at_label =~ "heuristic"
+    end
+
+    test "on: the same sites, the same titles — a re-tier never removes a row", %{tmp_dir: dir} do
+      skip_without_souffle()
+      key = &Enum.map(&1, fn f -> {f.title, f.mfa, f.instr} end)
+      assert key.(sinks([])) == key.(sinks(storage(dir)))
+    end
+
+    test "passthrough leaves the row alone, and so does a probability under 0.7", %{tmp_dir: dir} do
+      skip_without_souffle()
+
+      assert Enum.all?(
+               sinks(storage(dir, oracle_opts: [source: "passthrough"])),
+               &(&1.provenance == :structural)
+             )
+
+      assert Enum.all?(
+               sinks(storage(dir, oracle_opts: [p: 0.65])),
+               &(&1.provenance == :structural)
+             )
+    end
+  end
 end

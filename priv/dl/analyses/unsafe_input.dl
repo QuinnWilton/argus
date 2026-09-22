@@ -109,17 +109,37 @@ sink_flow_from(id, entry, kind) :-
 // least row, which is why a proven flow must replace the path rows for
 // its site rather than sit beside them: "adjacent" sorts before "flow".
 
-.decl sink_reachable(id: symbol, func: symbol, api: symbol, sink: symbol, entry: symbol, kind: symbol, proximity: symbol)
+// What the sink's own function reads, when priors are on (Argus.Priors;
+// off by default): a path row to a helper that converts a stored record
+// is the sequin shape — real as a path, storage as data — and the
+// finding says so at a step lower severity. A proven flow needs no
+// prior. 0.7 is where the calibration spike measured 95% precision.
+
+.decl sink_func_reads(func: symbol, source: symbol, permille: number)
+
+sink_func_reads(func, source, p) :-
+  sink(_, func, _, _),
+  prior_reads(func, source, p),
+  p >= 700.
+
+.decl sink_reachable(id: symbol, func: symbol, api: symbol, sink: symbol, entry: symbol, kind: symbol, proximity: symbol, source: symbol, permille: number)
 .output sink_reachable
 
-sink_reachable(id, func, api, s, entry, kind, "flow") :-
+sink_reachable(id, func, api, s, entry, kind, "flow", "", 0) :-
   sink(id, func, api, s),
   sink_flow_from(id, entry, kind).
 
-sink_reachable(id, func, api, s, entry, kind, proximity) :-
+sink_reachable(id, func, api, s, entry, kind, proximity, source, p) :-
   sink(id, func, api, s),
   request_reaches(entry, kind, func, proximity),
-  !sink_flow_from(id, _, _).
+  !sink_flow_from(id, _, _),
+  sink_func_reads(func, source, p).
+
+sink_reachable(id, func, api, s, entry, kind, proximity, "", 0) :-
+  sink(id, func, api, s),
+  request_reaches(entry, kind, func, proximity),
+  !sink_flow_from(id, _, _),
+  !sink_func_reads(func, _, _).
 
 // The same sinks where no request path exists: atom creation and code
 // execution reachable from an exported function, and every unsafe
@@ -135,11 +155,11 @@ sink_without_request_path(id, func, api, s) :-
   sink(id, func, api, s),
   (s = "atom" ; s = "code"),
   export_reach.reaches(func),
-  !sink_reachable(id, _, _, _, _, _, _).
+  !sink_reachable(id, _, _, _, _, _, _, _, _).
 
 sink_without_request_path(id, func, api, "deserialization") :-
   sink(id, func, api, "deserialization"),
-  !sink_reachable(id, _, _, _, _, _, _).
+  !sink_reachable(id, _, _, _, _, _, _, _, _).
 
 // ── Which HTTP endpoint reaches the sink ─────────────────────────
 //

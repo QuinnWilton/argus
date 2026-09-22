@@ -26,5 +26,5 @@
   structure:
     ~w(call_edge catch_tag catch_total creating_op dynamic_child function_def global_register guarded_create implements_behaviour name_lookup process_register returns_call start_error_compared supervisor_child supervisor_child_form supervisor_site),
   unsafe_input:
-    ~w(call_arg_derived call_edge code_execution dynamic_child function_def http_route implements_behaviour sink_arg_derived socket_transport supervisor_max_children unsafe_atom_creation unsafe_deserialization)
+    ~w(call_arg_derived call_edge code_execution dynamic_child function_def http_route implements_behaviour prior_reads sink_arg_derived socket_transport supervisor_max_children unsafe_atom_creation unsafe_deserialization)
 ]
