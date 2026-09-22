@@ -631,4 +631,4 @@ partial_handler(mod, state, "statem_timeout", "state_timeout", "") :-
 // reports the ones that reply nothing, postpone nothing and keep `from`
 // nowhere. The caller of :gen_statem.call/2 waits :infinity by default
 // (sneako/finch#213: a cancel while disconnected blocked for days).
-reply_defect(mod, func, site, "statem_unreplied", "") :- statem_call_unreplied(mod, func, site).
+reply_defect(mod, func, site, "statem_unreplied", tag) :- statem_call_unreplied(mod, func, site, tag).

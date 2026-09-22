@@ -17,7 +17,7 @@
 //   exception that nothing takes. `kind` is "rescue" (a catch-all rescue
 //   discards the exception; site is the function), "erpc_transport" (a
 //   rescue around :erpc.call has no clause for transport failures; site
-//   is the try), or the rpc variant "rpc" | "multicall" | "erpc" whose
+//   is the guarded call), or the rpc variant "rpc" | "multicall" | "erpc" whose
 //   result is matched by shape with no {:badrpc, _} clause (`shape` =
 //   "case") or used as a boolean (`shape` = "boolean"); site is the call.
 // `unchecked_result(func, site, api, name)` — a result used without its
@@ -69,8 +69,8 @@ orphan_process(func, func, "exit", target) :-
   target != "self".
 
 // ══ Remote calls whose failure is not a value ═══════════════════════
-unhandled_failure(func, id, "erpc_transport", "") :-
-  try_call(id, func, callee),
+unhandled_failure(func, call, "erpc_transport", "") :-
+  try_call(id, func, callee, call),
   (callee = ":erpc:call/4" ; callee = ":erpc:call/5"),
   catch_tag(id, func, "error", ":exception"),
   !catch_tag(id, func, "error", ":erpc"),

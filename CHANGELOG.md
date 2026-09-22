@@ -8,6 +8,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+Schema 43. `try_call` gains `call`, the guarded call's own instruction:
+the `try` instruction carries the line of whatever preceded it (the
+previous clause's body, or the function head), so "catches :noproc but
+not :shutdown" and the erpc rescue finding anchored one clause off. Both
+now anchor at the call. `statem_call_unreplied` anchors at the clause's
+last pattern test rather than the return — the compiler shares one
+`:keep_state_and_data` block between clauses — and gains `tag`, the
+literal that test compares against, which the finding passes as
+`at_source` so a consumer with the source lands on the clause head
+(pattern tests carry the previous clause's line in the Line chunk).
+
 The register walks behind `resolve_register/3`, `arg_position/3` and
 `map_field_of/3` no longer stop at a branch boundary. They walk the
 instruction stream backwards and treated a `return` as the end of the

@@ -423,17 +423,20 @@ defmodule Argus.Analyses.Mailbox do
     )
   end
 
-  def finding(:reply_defect, [mod, func, site, "statem_unreplied", _]) do
+  def finding(:reply_defect, [mod, func, site, "statem_unreplied", tag]) do
     Findings.new(
       :warning,
       "A {:call, from} clause never replies",
-      "#{func} handles a {:call, from} event and, on the path ending here, returns " <>
+      "#{func} handles a {:call, from} event in this clause and returns " <>
         "without a {:reply, from, _} action, without postponing the event, and " <>
         "without keeping `from` for a later reply. The caller of " <>
         ":gen_statem.call/2 waits :infinity by default, so it stays blocked for " <>
         "as long as #{mod} lives.",
+      # The bytecode lands on the clause's pattern test, which carries the
+      # previous clause's line; the tested literal finds the clause head.
       at: Findings.at_site(site, mod),
-      at_label: "returns here without answering the call",
+      at_source: if(tag == "", do: nil, else: tag),
+      at_label: "this clause never replies",
       help: [
         "return `{:keep_state_and_data, [{:reply, from, value}]}` (or `:postpone` " <>
           "the event until a state that can answer)",

@@ -20,8 +20,9 @@ defmodule Argus.Extractors.GenStatem do
   ## Emitted facts
 
   - `statem_event_clause(mod, func, event_type)` — a clause head matches this event type
-  - `statem_call_unreplied(mod, func, site)` — a `{:call, from}` clause returns
-    at `site` without replying, postponing, or keeping `from`
+  - `statem_call_unreplied(mod, func, site, tag)` — a `{:call, from}` clause
+    whose last pattern test is `site` (comparing against `tag`) returns
+    without replying, postponing, or keeping `from`
   - `statem_info_catchall(mod, func)` — some clause accepts `:info` with any content
   - `statem_event_catchall(mod, func)` — some clause accepts any event
 
@@ -341,8 +342,8 @@ defmodule Argus.Extractors.GenStatem do
         do: add_fact(facts, :statem_event_catchall, [mod_str, func_id]),
         else: facts
 
-    Enum.reduce(CallClauses.analyse(fun, instrs), facts, fn idx, acc ->
-      add_fact(acc, :statem_call_unreplied, [mod_str, func_id, InstrId.mint(func_id, idx)])
+    Enum.reduce(CallClauses.analyse(fun, instrs), facts, fn {idx, tag}, acc ->
+      add_fact(acc, :statem_call_unreplied, [mod_str, func_id, InstrId.mint(func_id, idx), tag])
     end)
   end
 

@@ -93,10 +93,13 @@ defmodule Argus.Analyses.MailboxStatemTest do
       rows =
         Rows.where(results, :mailbox, "reply_defect",
           kind: "statem_unreplied",
-          drop: [:kind, :tag]
+          drop: [:kind]
         )
 
-      assert [[_mod, "Argus.Test.Fixtures.UnrepliedCallStatem:disconnected/3", _site]] = rows
+      # The tag is what names the clause in the source: the pattern tests
+      # a bytecode anchor lands on carry the previous clause's line.
+      assert [[_mod, "Argus.Test.Fixtures.UnrepliedCallStatem:disconnected/3", _site, ":cancel"]] =
+               rows
     end
   end
 end

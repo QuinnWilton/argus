@@ -25,6 +25,18 @@ defmodule Argus.Extractors.ErrorHandlingTest do
     end
   end
 
+  describe "extract/1 — try_call" do
+    test "names the guarded call's own instruction beside the try" do
+      facts = ErrorHandling.extract(disassemble(Argus.Test.Fixtures.CatchShapes.NoprocOnly))
+
+      assert [[try_id, func, "GenServer:call/2", call]] = facts[:try_call]
+      assert func =~ "sync_with_parent/1"
+      assert {:ok, %{idx: try_idx}} = Argus.InstrId.parse(try_id)
+      assert {:ok, %{idx: call_idx}} = Argus.InstrId.parse(call)
+      assert call_idx > try_idx
+    end
+  end
+
   describe "extract/1 — trap_exit" do
     test "detects Process.flag(:trap_exit, true)" do
       facts = ErrorHandling.extract(disassemble(Argus.Test.Fixtures.TrapExitModule))

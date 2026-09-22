@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 42
+  @schema_version 43
 
   # Layer 1: Module-level facts.
 
@@ -1324,12 +1324,14 @@ defmodule Argus.Schema do
     fields: [
       {:id, :symbol, "the try instruction"},
       {:func, :symbol, "the function"},
-      {:callee, :func_id, "the guarded call (Mod:fun/arity)"}
+      {:callee, :func_id, "the guarded call (Mod:fun/arity)"},
+      {:call, :instr_id, "the guarded call's own instruction"}
     ],
     doc: """
     A peer call the try guards — GenServer.call, :gen_statem.call, \
     :erpc.call and their kin — whose failure the handler is expected to \
-    classify.
+    classify. `call` is where a finding points: the try instruction \
+    carries the line of whatever preceded it.
     """
   }
 
@@ -1682,11 +1684,15 @@ defmodule Argus.Schema do
     fields: [
       {:mod, :symbol, "module name"},
       {:func, :symbol, "the state function or handle_event/4"},
-      {:site, :instr_id, "the return that answers nothing"}
+      {:site, :instr_id, "the clause's last pattern test, or its return when it passed none"},
+      {:tag, :symbol,
+       "the literal that test compares against, as inspect/1 spells it (':cancel'), else empty"}
     ],
     doc:
       "A {:call, from} clause returns without a reply action, without " <>
-        "postponing, and without keeping `from`: the caller stays blocked."
+        "postponing, and without keeping `from`: the caller stays blocked. " <>
+        "Pattern tests carry the previous clause's line, so `tag` is what a " <>
+        "consumer with the source finds the clause head by."
   }
 
   @statem_info_catchall %{

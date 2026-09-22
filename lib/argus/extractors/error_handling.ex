@@ -35,7 +35,7 @@ defmodule Argus.Extractors.ErrorHandling do
   - `catch_falls_through(id, func, tag)` — a `case` inside the handler,
     reached after comparing `tag`, has no clause for some value, so an
     unexpected reason is a CaseClauseError
-  - `try_call(id, func, callee)` — a peer call (`GenServer.call`,
+  - `try_call(id, func, callee, call)` — a peer call (`GenServer.call`,
     `:gen_statem.call`, `:erpc.call`, ...) the `try` at `id` guards
   - `mailbox_writer(id, func, kind)` — a call after which something other
     than a peer's request lands in this process's mailbox: `task` (a
@@ -894,16 +894,22 @@ defmodule Argus.Extractors.ErrorHandling do
 
     ctx.instrs
     |> Enum.drop(ctx.idx + 1)
+    |> Enum.with_index(ctx.idx + 1)
     |> Enum.take_while(fn
-      {:try_end, ^reg} -> false
-      {:try_case, ^reg} -> false
-      {:func_info, _, _, _} -> false
+      {{:try_end, ^reg}, _} -> false
+      {{:try_case, ^reg}, _} -> false
+      {{:func_info, _, _, _}, _} -> false
       _ -> true
     end)
-    |> Enum.reduce(facts, fn instr, acc ->
+    |> Enum.reduce(facts, fn {instr, idx}, acc ->
       case match_remote_call(instr) do
         {:ok, m, f, a} when {m, f, a} in @guarded_calls ->
-          add_fact(acc, :try_call, [id, ctx.func_id, Normalize.func_id(m, f, a)])
+          add_fact(acc, :try_call, [
+            id,
+            ctx.func_id,
+            Normalize.func_id(m, f, a),
+            InstrId.mint(ctx.func_id, idx)
+          ])
 
         _ ->
           acc

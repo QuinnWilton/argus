@@ -57,7 +57,7 @@ defmodule Argus.Analyses.Failure do
         name: :unhandled_failure,
         fields: [
           {:func, :symbol, "the function the failure reaches"},
-          {:site, :symbol, "the rescue's function, the try, or the rpc call"},
+          {:site, :symbol, "the rescue's function, the guarded call, or the rpc call"},
           {:kind, :symbol, "rescue | erpc_transport | rpc | multicall | erpc"},
           {:shape, :symbol,
            "for an rpc variant, case (matched, no clause) or boolean (truthy tuple)"}
@@ -178,7 +178,7 @@ defmodule Argus.Analyses.Failure do
         "`{:erpc, :system_limit}`), and the rescue's `case` has no clause for " <>
         "it — a CaseClauseError in place of a result.",
       at: Findings.at_site(site, func),
-      at_label: "rescue without an {:erpc, _} clause",
+      at_label: "the call; its rescue has no {:erpc, _} clause",
       help: ["add a clause for `{:erpc, reason}` and return or raise a meaningful error"]
     )
   end
