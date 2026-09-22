@@ -168,7 +168,22 @@ defmodule Argus.Analysis do
       %{analysis: :blocking, relation: :blocking_receive_in_callback, where: []},
       %{analysis: :blocking, relation: :receive_in_callback, where: []}
     ],
-    one_for_one_coupling: [%{analysis: :coupling, relation: :one_for_one_coupling, where: []}]
+    one_for_one_coupling: [%{analysis: :coupling, relation: :one_for_one_coupling, where: []}],
+    sync_call_in_init: [
+      %{analysis: :startup, relation: :sync_call_in_init, where: []},
+      %{analysis: :startup, relation: :init_deadlock_risk, where: []},
+      %{analysis: :startup, relation: :sup_call_in_init, where: []},
+      %{analysis: :startup, relation: :init_waits_on_blocking_server, where: []},
+      %{analysis: :startup, relation: :blocking_recv_in_init, where: []},
+      %{analysis: :startup, relation: :connect_in_init_without_backoff, where: []}
+    ],
+    deferred_startup_deadlock: [
+      %{analysis: :startup, relation: :mutual_continue_deadlock, where: []},
+      %{analysis: :startup, relation: :continue_to_later_sibling, where: []},
+      %{analysis: :startup, relation: :continue_to_parent_supervisor, where: []},
+      %{analysis: :startup, relation: :init_timeout_deferral, where: []},
+      %{analysis: :startup, relation: :continue_crash_loop_risk, where: []}
+    ]
   }
 
   @doc "The concern vocabulary: every built-in analysis is named after one."
@@ -214,10 +229,9 @@ defmodule Argus.Analysis do
   # replace these names as they land.
   defp default_set do
     [
-      :deferred_startup_deadlock,
+      :startup,
       :coupling,
       :supervision,
-      :sync_call_in_init,
       :unlinked_spawn,
       :unsafe_task
     ]

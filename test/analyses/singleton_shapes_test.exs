@@ -72,7 +72,7 @@ defmodule Argus.Analyses.SingletonShapesTest do
     {:ok, r} =
       Argus.analyze(
         [InitRecv.Blocking, InitRecv.Bounded, InitRecv.Later, InitRecv.Waits],
-        :sync_call_in_init
+        :startup
       )
 
     assert rows(r, "blocking_recv_in_init") == [

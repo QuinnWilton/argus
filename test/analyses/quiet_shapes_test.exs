@@ -42,7 +42,7 @@ defmodule Argus.Analyses.QuietShapesTest do
     error_handling: ~w(partial_noproc_catch handle_info_partial),
     distributed: ~w(erpc_transport_unhandled),
     ets: ~w(ets_read_outside_owner),
-    sync_call_in_init: ~w(blocking_recv_in_init)
+    startup: ~w(blocking_recv_in_init)
   }
 
   for {analysis, relations} <- @expect_quiet do

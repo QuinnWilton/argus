@@ -8,7 +8,6 @@ defmodule Argus.AnalysisTest do
     :blocking,
     :coupling,
     :coverage,
-    :deferred_startup_deadlock,
     :distributed,
     :effects,
     :error_handling,
@@ -20,9 +19,9 @@ defmodule Argus.AnalysisTest do
     :process_registry,
     :reply_contract,
     :shutdown_safety,
+    :startup,
     :structure,
     :supervision,
-    :sync_call_in_init,
     :unlinked_spawn,
     :unsafe_input,
     :unsafe_task
@@ -96,11 +95,11 @@ defmodule Argus.AnalysisTest do
       assert :error = Analysis.output_relations(:nonexistent)
     end
 
-    test "supervision exposes its anti-pattern relations" do
-      assert {:ok, relations} = Analysis.output_relations(:supervision)
+    test "startup exposes the start-order relations" do
+      assert {:ok, relations} = Analysis.output_relations(:startup)
       names = Enum.map(relations, & &1.name)
       assert :wrong_start_order in names
-      assert :wrong_start_order in names
+      assert :init_deadlock_risk in names
     end
   end
 

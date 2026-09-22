@@ -1,0 +1,479 @@
+// Work in a phase whose invariants do not hold yet.
+//
+// init/1 runs inside the supervisor's start sequence: a synchronous
+// call from it to a sibling that starts later is a deadlock by
+// construction, a call to any peer stalls the tree, a connect with no
+// way to retry crash-loops the child until the tree gives up, a
+// cluster-wide lock hangs the boot on a partition. handle_continue runs
+// after init returns but before any message, so its own races and
+// cycles are startup's too. And state written after
+// Supervisor.start_link returned is written after the children are
+// already serving.
+
+.include "../clientlib/imports.dl"
+.include "../clientlib/otp.dl"
+.include "../clientlib/resolved_calls.dl"
+
+// ══ Synchronous calls from init/1 ═══════════════════════════════════
+.decl raw_sync_call_in_init(mod: symbol, callee: symbol)
+
+raw_sync_call_in_init(mod, callee) :- init_dep(mod, callee, "call", _).
+
+// ── Supervision-aware filtering ────────────────────────────────────────
+
+// True when both modules appear under a common supervisor's subtree.
+.decl shares_supervisor(child: symbol, dep: symbol)
+
+shares_supervisor(child, dep) :-
+  child_subtree(sup, _, child),
+  child_subtree(sup, _, dep),
+  child != dep.
+
+// A module with a behaviour and start_link/1 is very likely supervised,
+// even when we can't statically determine which supervisor owns it.
+.decl likely_supervised(mod: symbol)
+
+likely_supervised(mod) :- child_subtree(_, _, mod).
+
+likely_supervised(mod) :-
+  implements_behaviour(mod, _),
+  function_def(_, mod, "start_link", 1, _).
+
+// The callee starts earlier under the same supervisor, so it is running
+// when this init runs.
+.decl init_safe_sibling(child: symbol, dep: symbol)
+
+init_safe_sibling(child, dep) :-
+  raw_sync_call_in_init(child, dep),
+  starts_before(_, dep, child, _, _).
+
+// Both likely supervised but under disjoint supervisor trees — callee
+// is already running because it was started by a different supervisor.
+// At least one must be provably supervised (in a child_subtree) to
+// prevent false negatives when no supervision facts exist at all.
+.decl init_safe_cross_supervisor(child: symbol, dep: symbol)
+
+init_safe_cross_supervisor(child, dep) :-
+  raw_sync_call_in_init(child, dep),
+  child_subtree(_, _, child),
+  likely_supervised(dep),
+  !shares_supervisor(child, dep).
+
+init_safe_cross_supervisor(child, dep) :-
+  raw_sync_call_in_init(child, dep),
+  likely_supervised(child),
+  child_subtree(_, _, dep),
+  !shares_supervisor(child, dep).
+
+// ── Conditional paths ──────────────────────────────────────────────────
+
+// The dependency holds on every path through init: the first hop out of
+// init is not control-dependent on a branch.
+.decl unconditional_sync_call_in_init(mod: symbol, callee: symbol)
+
+unconditional_sync_call_in_init(mod, callee) :-
+  init_function(mod, func),
+  unconditional_call_edge(func, gc),
+  (gc = "GenServer:call/2" ; gc = "GenServer:call/3"),
+  sync_dep(func, callee).
+
+unconditional_sync_call_in_init(mod, callee) :-
+  init_function(mod, func),
+  unconditional_call_edge(func, g),
+  reaches_sync_dep(g, callee).
+
+unconditional_sync_call_in_init(mod, callee) :-
+  init_function(mod, func),
+  unconditional_call_edge(func, g),
+  genserver_sync_api(g, callee),
+  mod != callee.
+
+// ── Filtered output ────────────────────────────────────────────────────
+
+// `kind` is "unconditional" when some path from init to the call runs on
+// every init, "conditional" when every path goes through a call site in
+// init that a branch guards (postgrex's `sync_connect: true`, goth's
+// `prefetch: :sync`).
+.decl sync_call_in_init(mod: symbol, callee: symbol, kind: symbol)
+.output sync_call_in_init
+
+sync_call_in_init(mod, callee, "unconditional") :-
+  raw_sync_call_in_init(mod, callee),
+  !init_safe_sibling(mod, callee),
+  !init_safe_cross_supervisor(mod, callee),
+  unconditional_sync_call_in_init(mod, callee).
+
+sync_call_in_init(mod, callee, "conditional") :-
+  raw_sync_call_in_init(mod, callee),
+  !init_safe_sibling(mod, callee),
+  !init_safe_cross_supervisor(mod, callee),
+  !unconditional_sync_call_in_init(mod, callee).
+
+// ── Init deadlock risk ─────────────────────────────────────────────────
+
+.decl init_deadlock_risk(sup: symbol, child: symbol, dep: symbol, child_pos: number, dep_pos: number)
+.output init_deadlock_risk
+
+init_deadlock_risk(sup, child, dep, cpos, dpos) :-
+  raw_sync_call_in_init(child, dep),
+  starts_before(sup, child, dep, cpos, dpos).
+
+// ── Supervisor management calls from init/1 ──────────────────────────
+//
+// Supervisor.start_child/2 and its relatives are GenServer.calls into
+// the supervisor, and start_child does not return until the new child's
+// init/1 has: an init that starts children has put those children's
+// inits on the tree's startup path, and a child that calls back into
+// the starter (or into anything the starter's tree has not reached yet)
+// deadlocks the whole boot. Broadway's server fanned out four of these
+// from init; Oban's Midwife started every queue from init. Reported for
+// every management op, since terminate_child waits for a whole
+// shutdown and which_children on the parent is the classic deadlock.
+.decl sup_call_in_init(mod: symbol, api: symbol, op: symbol, target: symbol, site: symbol)
+.output sup_call_in_init
+
+sup_call_in_init(mod, api, op, target, site) :-
+  init_function(mod, func),
+  sup_management_call(site, func, api, op, target).
+
+// Backwards from the supervisor calls, which are few.
+.init sup_reach = CallReach
+
+sup_reach.seed(g, site) :- sup_management_call(site, g, _, _, _).
+
+sup_call_in_init(mod, api, op, target, site) :-
+  init_function(mod, func),
+  sup_reach.reaches(func, site),
+  sup_management_call(site, _, api, op, target).
+
+// Only operations with no bound of their own count (unbounded_sup_op):
+// a GenServer.call with :infinity waits for as long as the callee
+// takes. db_connection's fixed Watcher still start_childs from its
+// handler — that is the design, not the bug.
+.decl handler_blocks(mod: symbol, handler: symbol, op_site: symbol)
+
+handler_blocks(mod, h, site) :-
+  handler_function(mod, h),
+  sup_management_call(site, h, _, op, _),
+  unbounded_sup_op(op).
+
+handler_blocks(mod, h, site) :-
+  handler_function(mod, h),
+  sup_reach.reaches(h, site),
+  sup_management_call(site, _, _, op, _),
+  unbounded_sup_op(op).
+
+handler_blocks(mod, h, site) :-
+  handler_function(mod, h),
+  remote_call(site, h, "GenServer", "call", _),
+  sync_call_timeout(h, _, -1).
+
+.init infinite_call_reach = CallReach
+
+infinite_call_reach.seed(g, site) :-
+  remote_call(site, g, "GenServer", "call", _),
+  sync_call_timeout(g, _, -1).
+
+handler_blocks(mod, h, site) :-
+  handler_function(mod, h),
+  infinite_call_reach.reaches(h, site).
+
+.decl init_waits_on_blocking_server(mod: symbol, dep: symbol, handler: symbol, op_site: symbol)
+.output init_waits_on_blocking_server
+
+init_waits_on_blocking_server(mod, dep, h, site) :-
+  raw_sync_call_in_init(mod, dep),
+  (init_safe_sibling(mod, dep) ; init_safe_cross_supervisor(mod, dep)),
+  handler_blocks(dep, h, site).
+
+// ── An unbounded socket receive on init's path ───────────────────────
+//
+// A connect-in-init (`sync_connect: true`) that reads its greeting with
+// `:gen_tcp.recv(sock, n, :infinity)` blocks the supervisor's start —
+// and whoever called start_child — for as long as the server is silent:
+// hours, for a replication slot waiting on a checkpoint
+// (elixir-ecto/postgrex#746). The timeout usually arrives through a
+// wrapper's parameter (`msg_recv(s, :infinity, buffer)`), which
+// call_arg_forward follows.
+.decl infinite_recv_param(func: symbol, pos: number)
+
+infinite_recv_param(g, p) :- call_arg_forward(g, ":gen_tcp:recv/3", 2, p).
+infinite_recv_param(g, p) :- call_arg_forward(g, ":ssl:recv/3", 2, p).
+infinite_recv_param(g, p) :- call_arg_forward(g, h, q, p), infinite_recv_param(h, q).
+
+.decl infinite_recv(func: symbol)
+
+infinite_recv(f) :- call_arg(f, ":gen_tcp:recv/3", 2, ":infinity").
+infinite_recv(f) :- call_arg(f, ":ssl:recv/3", 2, ":infinity").
+infinite_recv(f) :- remote_call(_, f, ":gen_tcp", "recv", 2).
+infinite_recv(f) :- remote_call(_, f, ":ssl", "recv", 2).
+infinite_recv(f) :- call_arg(f, g, pos, ":infinity"), infinite_recv_param(g, pos).
+// A `receive` with no `after` waits the same way, on the mailbox.
+infinite_recv(f) :- blocking_receive(f).
+
+.init recv_reach = CallReach
+
+recv_reach.seed(f, f) :- infinite_recv(f).
+
+.decl blocking_recv_in_init(mod: symbol, recv: symbol)
+.output blocking_recv_in_init
+
+blocking_recv_in_init(mod, r) :-
+  init_function(mod, f),
+  recv_reach.reaches(f, r).
+
+// ── A connection made in init/1 with no way to try again ─────────────
+//
+// A child that connects to an external dependency in init/1 and stops
+// or raises when it cannot is restarted by its supervisor, immediately,
+// until the intensity is spent — and then the tree, usually the whole
+// application, goes down at boot because a dependency was slow to come
+// up (tortoise#46, grpc-elixir#557, newrelic/elixir_agent#181,
+// brod#666). The fixes all defer the connect to a timer or a
+// handle_continue with backoff, which is what the rule looks for.
+.decl connect_api(api: symbol)
+
+connect_api(api) :- impure_call(_, _, api, "network", _), match(":gen_tcp.connect/.*", api).
+connect_api(api) :- impure_call(_, _, api, "network", _), match(":ssl.connect/.*", api).
+connect_api(api) :- impure_call(_, _, api, "network", _), match(":gen_udp.open/.*", api).
+connect_api(api) :- impure_call(_, _, api, "network", _), match(":httpc.request/.*", api).
+
+.init connect_reach = CallReach
+
+connect_reach.seed(f, api) :- impure_call(_, f, api, "network", _), connect_api(api).
+
+// A retry needs a way back in: a timer, a self-message, a
+// handle_continue, or a gen_statem's own timeout (postgrex's connections
+// arm {{:timeout, :backoff}, ms, nil}) — deferral_path, in startup.dl.
+.decl connect_in_init_without_backoff(mod: symbol, api: symbol)
+.output connect_in_init_without_backoff
+
+connect_in_init_without_backoff(mod, api) :-
+  init_function(mod, f),
+  connect_reach.reaches(f, api),
+  !deferral_path(mod, _).
+
+// ══ Start order ═════════════════════════════════════════════════════
+
+// ── Anti-patterns ────────────────────────────────────────────────
+
+// A child's init/1 depends on another process, synchronously or by cast:
+// during startup that process may not be alive yet.
+.decl init_process_dep(child: symbol, dep: symbol, witness: symbol)
+
+init_process_dep(child, dep, func) :-
+  init_dep(child, dep, _, func),
+  child != dep.
+
+.decl wrong_start_order(sup: symbol, child: symbol, dep: symbol, child_pos: number, dep_pos: number, sup_site: symbol, witness: symbol)
+.output wrong_start_order
+
+wrong_start_order(sup, child, dep, cpos, dpos, sup_site, witness) :-
+  supervisor_site(sup, sup_site),
+  starts_before(sup, child, dep, cpos, dpos),
+  init_process_dep(child, dep, witness).
+
+// ══ Deferred startup: handle_continue ═══════════════════════════════
+.decl continue_sync_calls(from_mod: symbol, to_mod: symbol)
+
+continue_sync_calls(from_mod, to_mod) :- continue_dep(from_mod, to_mod, _).
+
+// ── Pattern 1: mutual continue cycle ────────────────────────────────
+
+// A.handle_continue sync-calls B AND B.handle_continue sync-calls A.
+// Both processes are alive but neither ever processes its mailbox.
+.decl mutual_continue_deadlock(mod_a: symbol, mod_b: symbol)
+.output mutual_continue_deadlock
+
+mutual_continue_deadlock(mod_a, mod_b) :-
+  continue_sync_calls(mod_a, mod_b),
+  continue_sync_calls(mod_b, mod_a),
+  mod_a < mod_b.  // Order to dedupe (a, b) and (b, a).
+
+// ── Pattern 2: handle_continue calls later-started sibling ───────────
+
+.decl continue_to_later_sibling(sup: symbol, caller: symbol, callee: symbol, caller_pos: number, callee_pos: number)
+.output continue_to_later_sibling
+
+continue_to_later_sibling(sup, caller, callee, caller_pos, callee_pos) :-
+  starts_before(sup, caller, callee, caller_pos, callee_pos),
+  continue_sync_calls(caller, callee).
+
+// ── Pattern 3: handle_continue calls back into parent supervisor ─────
+
+// The worker's handle_continue calls one of the supervisor query/management
+// functions on its parent supervisor while the parent is still mid-
+// start_link. We detect this via call_reachable from the continue handler
+// to a Supervisor or :supervisor function whose first arg is a literal
+// supervisor module.
+
+// To keep this conservative without a full inter-procedural data flow,
+// we look for any sync_call from continue_reachable_from(worker) to a
+// module that we know is a supervisor (worker's own parent). The
+// approximation: if MOD's continue calls a process registered as a
+// supervisor, AND that supervisor has MOD as a child, it's the parent.
+.decl continue_to_parent_supervisor(worker: symbol, sup: symbol)
+.output continue_to_parent_supervisor
+
+continue_to_parent_supervisor(worker, sup) :-
+  continue_sync_calls(worker, sup),
+  supervisor(sup, _),
+  supervisor_child(sup, _, worker, _, _).
+
+// ── Defensive variant: try/catch wraps the call ──────────────────────
+
+// We don't have a `try_start` consumer wired into Datalog yet, but the
+// emit layer captures it via the existing try_start fact. Detect
+// "any try in handle_continue" and report as a crash-loop risk on top
+// of pattern 2 — the literal deadlock is suppressed by the catch but
+// the supervisor restart loop is still a bug.
+.decl try_in_handle_continue(mod: symbol)
+
+// try_start carries its containing function and its kind ("try" or the
+// older "catch"), so both syntaxes are one rule and neither needs to join
+// `instruction` — 343k rows on a real project, rewritten on every body
+// edit — purely to recover the function an instruction sits in.
+try_in_handle_continue(mod) :-
+  handle_continue_clause(mod, _, func),
+  try_start(_, func, _, _).
+
+.decl continue_crash_loop_risk(sup: symbol, worker: symbol)
+.output continue_crash_loop_risk
+
+continue_crash_loop_risk(sup, worker) :-
+  continue_to_later_sibling(sup, worker, _, _, _),
+  try_in_handle_continue(worker).
+
+// ── Init timeout used as a deferral ───────────────────────────────────
+//
+// {:ok, state, 0} from init/1 is the pre-handle_continue idiom for "do
+// the rest after the supervisor moves on": the :timeout message arrives
+// as soon as the mailbox is otherwise empty. The catch is in that
+// clause. A timeout is cancelled by any message arriving first, and an
+// init that opened an active socket, subscribed to a PubSub, or was
+// handed a message by its starter has already arranged for one.
+// libcluster's Gossip strategy lost its deferred connect this way to
+// the first UDP datagram. Any integer works the same; 0 is the one that
+// is unmistakably a deferral.
+.decl init_timeout_deferral(mod: symbol, site: symbol, timeout_ms: number)
+.output init_timeout_deferral
+
+init_timeout_deferral(mod, site, ms) :-
+  init_function(mod, func),
+  callback_timeout(site, func, "init", ms).
+
+// ══ Distributed operations in init/1 ════════════════════════════════
+
+// ── Blocking :global synchronization ─────────────────────────────
+
+// :global.set_lock and :global.trans block on netsplit when retries
+// is :infinity or any positive integer (which retries with backoff).
+// retries = "0" means try once and return immediately — non-blocking.
+// site is the :global call instruction. One row per site — finding
+// builders dedupe on (func, op, retries).
+.decl global_blocking_op(func: symbol, op: symbol, retries: symbol, site: symbol)
+
+global_blocking_op(func, op, retries, id) :-
+  global_op(id, func, op, retries),
+  retries != "0",
+  retries != "dynamic".
+
+// ── Blocking :global op in init/1 ────────────────────────────────
+
+// Catches the worst case: blocking on :global from supervisor startup
+// (init/1 or transitively from init/1). Hangs the supervisor.
+.decl global_blocking_in_init(func: symbol, op: symbol)
+.output global_blocking_in_init
+
+global_blocking_in_init(func, op) :-
+  global_blocking_op(func, op, _, _),
+  init_function(_, func).
+
+.init global_reach = CallReach
+
+global_reach.seed(g, op) :- global_blocking_op(g, op, _, _).
+
+global_blocking_in_init(func, op) :-
+  global_reach.reaches(func, op),
+  init_function(_, func).
+
+// ── Distributed operations in init ───────────────────────────────
+
+// RPC or global ops in init/1 block supervisor startup.
+//
+// init_function comes from the clientlib: init/1 in a behaviour module.
+// Only those init/1 functions run under a supervisor at start time — a
+// plain module's init/1 is an ordinary function and must not be flagged.
+
+// site is the distributed-op instruction inside init. One row per
+// site — finding builders dedupe on (func, op).
+.decl distributed_in_init(func: symbol, op: symbol, site: symbol)
+.output distributed_in_init
+
+distributed_in_init(func, op, id) :-
+  rpc_call(id, func, op, _),
+  init_function(_, func).
+
+distributed_in_init(func, op, id) :-
+  global_register(id, func, _, _),
+  init_function(_, func),
+  op = "global_register".
+
+// Node operations in init — exclude the non-blocking ops that return
+// immediately: Node.list ("list"), Node.monitor ("monitor"), and
+// :net_kernel.monitor_nodes ("monitor_nodes" — a subscription flag, not
+// a connection attempt).
+distributed_in_init(func, op, id) :-
+  node_operation(id, func, op),
+  init_function(_, func),
+  op != "list",
+  op != "monitor",
+  op != "monitor_nodes".
+
+distributed_in_init(func, op, id) :-
+  distributed_store_op(id, func, _, op),
+  init_function(_, func).
+
+// ══ After the tree is up ════════════════════════════════════════════
+
+// ── Initialization after the tree is up ──────────────────────────────
+//
+// Children start serving the moment Supervisor.start_link returns. State
+// they read — a persistent_term, an ETS row, an application env — that
+// the caller writes only afterwards is a window in which they run against
+// nothing (phoenixframework/phoenix#5981: the endpoint's warmup after the
+// listener was accepting). Writes reached from a call after start_link.
+.init config_reach = CallReachSet
+
+config_reach.seed(f) :- config_writer(f).
+
+.decl post_start_initialization(func: symbol, site: symbol, callee: symbol)
+.output post_start_initialization
+
+post_start_initialization(func, site, callee) :-
+  post_start_call(func, site, callee),
+  config_write_api(callee).
+
+post_start_initialization(func, site, callee) :-
+  post_start_call(func, site, callee),
+  config_reach.reaches(callee).
+
+// ── Ignored start results ────────────────────────────────────────
+
+// GenServer/Supervisor start result not checked.
+//
+// callee is rendered as "Mod.func/arity", so the function name is
+// always preceded by "." and followed by "/" — matching the delimited
+// name keeps a callee like "Mod.restart_link/1" from substring-matching
+// "start_link".
+//
+// NOTE Souffle's contains(needle, haystack) takes the needle FIRST. The
+// rule originally wrote contains(callee, "start_link") — "is the callee
+// a substring of 'start_link'" — which is false for every real callee,
+// so this relation had never produced a single row.
+.decl ignored_start_result(func: symbol, callee: symbol)
+.output ignored_start_result
+
+ignored_start_result(func, callee) :-
+  ignored_error_result(_, func, callee),
+  (contains(".start_link/", callee) ; contains(".start/", callee)).

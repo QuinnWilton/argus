@@ -1,4 +1,4 @@
-defmodule Argus.Analyses.DeferredStartupDeadlockTest do
+defmodule Argus.Analyses.StartupContinueTest do
   use ExUnit.Case
 
   alias Argus.Souffle
@@ -17,7 +17,7 @@ defmodule Argus.Analyses.DeferredStartupDeadlockTest do
         Argus.Test.Fixtures.ContinueCycleSupervisor
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :deferred_startup_deadlock)
+      assert {:ok, results} = Argus.analyze(modules, :startup)
       cycles = results["mutual_continue_deadlock"]
       assert cycles != []
 
@@ -38,7 +38,7 @@ defmodule Argus.Analyses.DeferredStartupDeadlockTest do
         Argus.Test.Fixtures.ContinueLateSiblingSupervisor
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :deferred_startup_deadlock)
+      assert {:ok, results} = Argus.analyze(modules, :startup)
       hits = results["continue_to_later_sibling"]
       assert hits != []
 
@@ -58,7 +58,7 @@ defmodule Argus.Analyses.DeferredStartupDeadlockTest do
         Argus.Test.Fixtures.SafeContinueOrderSupervisor
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :deferred_startup_deadlock)
+      assert {:ok, results} = Argus.analyze(modules, :startup)
 
       # The unsafe supervisor isn't in the modules list, so the only
       # supervisor visible to the analysis is the safe one. No findings.
@@ -75,7 +75,7 @@ defmodule Argus.Analyses.DeferredStartupDeadlockTest do
         Argus.Test.Fixtures.SafeContinueExternalTargetSupervisor
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :deferred_startup_deadlock)
+      assert {:ok, results} = Argus.analyze(modules, :startup)
       assert results["continue_to_later_sibling"] == []
       assert results["mutual_continue_deadlock"] == []
     end
@@ -89,7 +89,7 @@ defmodule Argus.Analyses.DeferredStartupDeadlockTest do
         Argus.Test.Fixtures.SafeContinueCastSupervisor
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :deferred_startup_deadlock)
+      assert {:ok, results} = Argus.analyze(modules, :startup)
       assert results["continue_to_later_sibling"] == []
     end
 
@@ -102,7 +102,7 @@ defmodule Argus.Analyses.DeferredStartupDeadlockTest do
         Argus.Test.Fixtures.DefensiveContinueSupervisor
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :deferred_startup_deadlock)
+      assert {:ok, results} = Argus.analyze(modules, :startup)
 
       # The defensive variant still triggers the literal pattern 2
       # (the call IS still there in the bytecode), and the crash-loop
@@ -126,7 +126,7 @@ defmodule Argus.Analyses.DeferredStartupDeadlockTest do
                    Argus.Test.Fixtures.TimeoutDeferredInit,
                    Argus.Test.Fixtures.ContinueDeferredInit
                  ],
-                 :deferred_startup_deadlock
+                 :startup
                )
 
       assert [[mod, site, "0"]] = results["init_timeout_deferral"]

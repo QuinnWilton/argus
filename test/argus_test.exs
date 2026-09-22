@@ -7,6 +7,6 @@ defmodule ArgusTest do
 
   test "analyze/2 returns error for non-existent module" do
     assert {:error, {:not_found, :fake_module_xyz}} =
-             Argus.analyze([:fake_module_xyz], :supervision)
+             Argus.analyze([:fake_module_xyz], :startup)
   end
 end

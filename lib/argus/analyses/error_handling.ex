@@ -130,14 +130,6 @@ defmodule Argus.Analyses.ErrorHandling do
           {:target, :symbol, "exit target"}
         ],
         doc: "Explicit Process.exit/2 inside GenServer callback."
-      },
-      %{
-        name: :ignored_start_result,
-        fields: [
-          {:func, :symbol, "calling function"},
-          {:callee, :symbol, "start function"}
-        ],
-        doc: "GenServer/Supervisor start result not pattern matched."
       }
     ]
   end
@@ -255,17 +247,6 @@ defmodule Argus.Analyses.ErrorHandling do
         "but killing a process imperatively bypasses the supervisor that " <>
         "started it, so it is worth confirming the target is meant to be " <>
         "torn down this way rather than stopped through its own protocol.",
-      at: Findings.at_func(func)
-    )
-  end
-
-  def finding(:ignored_start_result, [func, callee]) do
-    Findings.new(
-      :warning,
-      "Start result ignored",
-      "#{func} calls #{callee} and discards the result. An {:error, reason} " <>
-        "return goes unnoticed — the process isn't running, and the first " <>
-        "symptom is a crash later at a call site that assumed it was.",
       at: Findings.at_func(func)
     )
   end

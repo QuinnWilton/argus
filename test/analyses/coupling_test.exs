@@ -31,7 +31,7 @@ defmodule Argus.Analyses.CouplingTest do
         Argus.Test.Fixtures.WorkerA
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :supervision)
+      assert {:ok, results} = Argus.analyze(modules, :startup)
 
       # RuntimeCallerWorker calls WorkerA only from handle_call, not init.
       # wrong_start_order should be empty.

@@ -74,30 +74,6 @@ defmodule Argus.Analyses.Supervision do
         key: [:sup, :child],
         doc:
           "A permanent child returns {:stop, :normal | :shutdown, ...}; the supervisor restarts it."
-      },
-      %{
-        name: :post_start_initialization,
-        fields: [
-          {:func, :symbol, "function that started the tree"},
-          {:site, :symbol, "the call after Supervisor.start_link"},
-          {:callee, :symbol, "what the call reaches that writes shared state"}
-        ],
-        key: [:func, :site],
-        doc: "Shared state written after Supervisor.start_link returned."
-      },
-      %{
-        name: :wrong_start_order,
-        fields: [
-          {:sup, :symbol, "supervisor module"},
-          {:child, :symbol, "child module"},
-          {:dep, :symbol, "dependency module"},
-          {:child_pos, :number, "child start position"},
-          {:dep_pos, :number, "dependency start position"},
-          {:sup_site, :symbol, "instruction ID of the tree definition"},
-          {:witness, :symbol, "the child's init/1, where the call originates"}
-        ],
-        key: [:sup, :child, :dep],
-        doc: "Child starts before its dependency."
       }
     ]
   end
@@ -106,25 +82,6 @@ defmodule Argus.Analyses.Supervision do
   # child order — so findings anchor at the tree definition (where the
   # fix goes) and the dependency's call path becomes labelled evidence.
   @impl true
-
-  @impl true
-  def finding(:post_start_initialization, [func, site, callee]) do
-    Findings.new(
-      :info,
-      "Shared state written after the tree is up",
-      "#{func} calls Supervisor.start_link and only afterwards reaches #{callee}, " <>
-        "which writes state (a persistent_term, an ETS row, application env). " <>
-        "The children are already running when that write lands; one that reads " <>
-        "the state in the meantime finds nothing there.",
-      at: Findings.at_site(site, func),
-      at_label: "the tree is already running here",
-      help: [
-        "perform the initialization before Supervisor.start_link, or as the first " <>
-          "child (a child spec whose start function does the work and returns :ignore)"
-      ]
-    )
-  end
-
   def finding(:permanent_child_stops_normally, [sup, child, reason, site, sup_site]) do
     Findings.new(
       :info,
@@ -144,27 +101,6 @@ defmodule Argus.Analyses.Supervision do
       ],
       related: [
         Findings.related("child spec", Findings.at_site(sup_site, sup))
-      ]
-    )
-  end
-
-  def finding(:wrong_start_order, [sup, child, dep, child_pos, dep_pos, sup_site, witness]) do
-    Findings.new(
-      :warning,
-      "Child starts before its dependency",
-      "#{child} (position #{child_pos}) starts before #{dep} (position #{dep_pos}) " <>
-        "under #{sup}, yet depends on it. During startup, #{child} can run while " <>
-        "#{dep} is not yet alive — calls into it fail until the tree finishes " <>
-        "booting.",
-      at: Findings.at_site(sup_site, sup),
-      at_label: "supervision tree defined here",
-      help: [
-        "move `#{dep}` before `#{child}` in the child list — supervisors " <>
-          "start children in order"
-      ],
-      related: [
-        Findings.related("init-time call", Findings.at_func(witness)),
-        Findings.related("dependency", Findings.at_module(dep))
       ]
     )
   end

@@ -64,7 +64,7 @@
     module: "Phoenix.Endpoint.Supervisor",
     pre: "d34efa88e4727994cc22576508cf5878c0567f20",
     fix: "092605f4c3696c4bfe3a531b024030090c1ea23b",
-    finding: {:supervision, "Shared state written after the tree is up"}
+    finding: {:startup, "Shared state written after the tree is up"}
   },
   %{
     repo: "phoenixframework/phoenix_live_view",
@@ -95,7 +95,7 @@
     issue: "postgrex#746",
     module: "Postgrex.Protocol",
     pre: "412b55567b6f0f3feb587e38466fcab047581c0f",
-    finding: {:sync_call_in_init, "init/1 waits on a socket with no timeout"}
+    finding: {:startup, "init/1 waits on a socket with no timeout"}
   },
   %{
     repo: "elixir-lang/gen_stage",
@@ -154,7 +154,7 @@
     issue: "nebulex:bootstrap-global-lock-in-init",
     module: "Nebulex.Adapters.Replicated.Bootstrap",
     pre: "faff154",
-    finding: {:distributed, "Cluster-wide lock during init"}
+    finding: {:startup, "Cluster-wide lock during init"}
   },
   # ── The classes hypothesized after the pass, validated against issues ──
   %{

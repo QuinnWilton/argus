@@ -9,75 +9,8 @@
 
 
 
-// ── Blocking :global synchronization ─────────────────────────────
 
-// :global.set_lock and :global.trans block on netsplit when retries
-// is :infinity or any positive integer (which retries with backoff).
-// retries = "0" means try once and return immediately — non-blocking.
-// site is the :global call instruction. One row per site — finding
-// builders dedupe on (func, op, retries).
-.decl global_blocking_op(func: symbol, op: symbol, retries: symbol, site: symbol)
 
-global_blocking_op(func, op, retries, id) :-
-  global_op(id, func, op, retries),
-  retries != "0",
-  retries != "dynamic".
-
-// ── Blocking :global op in init/1 ────────────────────────────────
-
-// Catches the worst case: blocking on :global from supervisor startup
-// (init/1 or transitively from init/1). Hangs the supervisor.
-.decl global_blocking_in_init(func: symbol, op: symbol)
-.output global_blocking_in_init
-
-global_blocking_in_init(func, op) :-
-  global_blocking_op(func, op, _, _),
-  init_function(_, func).
-
-.init global_reach = CallReach
-
-global_reach.seed(g, op) :- global_blocking_op(g, op, _, _).
-
-global_blocking_in_init(func, op) :-
-  global_reach.reaches(func, op),
-  init_function(_, func).
-
-// ── Distributed operations in init ───────────────────────────────
-
-// RPC or global ops in init/1 block supervisor startup.
-//
-// init_function comes from the clientlib: init/1 in a behaviour module.
-// Only those init/1 functions run under a supervisor at start time — a
-// plain module's init/1 is an ordinary function and must not be flagged.
-
-// site is the distributed-op instruction inside init. One row per
-// site — finding builders dedupe on (func, op).
-.decl distributed_in_init(func: symbol, op: symbol, site: symbol)
-.output distributed_in_init
-
-distributed_in_init(func, op, id) :-
-  rpc_call(id, func, op, _),
-  init_function(_, func).
-
-distributed_in_init(func, op, id) :-
-  global_register(id, func, _, _),
-  init_function(_, func),
-  op = "global_register".
-
-// Node operations in init — exclude the non-blocking ops that return
-// immediately: Node.list ("list"), Node.monitor ("monitor"), and
-// :net_kernel.monitor_nodes ("monitor_nodes" — a subscription flag, not
-// a connection attempt).
-distributed_in_init(func, op, id) :-
-  node_operation(id, func, op),
-  init_function(_, func),
-  op != "list",
-  op != "monitor",
-  op != "monitor_nodes".
-
-distributed_in_init(func, op, id) :-
-  distributed_store_op(id, func, _, op),
-  init_function(_, func).
 
 // ── :erpc.call's transport failures ──────────────────────────────────
 //

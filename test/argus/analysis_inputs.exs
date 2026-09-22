@@ -8,14 +8,12 @@
     ~w(async_cast call_arg call_arg_forward call_edge call_site call_tag callback_tag child_spec_restart dynamic_child function_def implements_behaviour matches_down monitor_call process_link sup_call supervisor supervisor_child supervisor_child_name supervisor_site sync_call whereis_call),
   coverage:
     ~w(async_cast dynamic_child ets_new ets_op function_def implements_behaviour imprecision named_process supervisor supervisor_child sync_call),
-  deferred_startup_deadlock:
-    ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag callback_timeout dynamic_child function_def handle_continue_clause implements_behaviour init_continues_to supervisor supervisor_child sync_call try_start),
   distributed:
-    ~w(call_edge catch_falls_through catch_tag catch_total distributed_store_op function_def global_op global_register implements_behaviour node_operation rpc_call rpc_result try_call),
+    ~w(catch_falls_through catch_tag catch_total function_def rpc_call rpc_result try_call),
   effects:
     ~w(call_edge closure_def dynamic_call ets_new ets_op implements_behaviour impure_call port_open process_register protocol_dispatch pure_contract recv_start remote_call resolved_apply send_msg spawn_call unknown_call),
   error_handling:
-    ~w(bare_rescue call_arg call_arg_field call_arg_forward call_edge callback_tag callback_total exit_call function_def ignored_error_result implements_behaviour mailbox_writer monitor_call recv_pattern returns_call sync_call_timeout timer_arm timer_cancel timer_ref timer_store trap_exit),
+    ~w(bare_rescue call_arg call_arg_field call_arg_forward call_edge callback_tag callback_total exit_call function_def implements_behaviour mailbox_writer monitor_call recv_pattern returns_call sync_call_timeout timer_arm timer_cancel timer_ref timer_store trap_exit),
   ets:
     ~w(call_arg call_arg_forward call_edge catch_tag catch_total closure_def dynamic_child ets_new ets_op ets_op_param ets_option function_def implements_behaviour statem_event_clause supervisor_child),
   exposure: ~w(function_def redacted_field schema_field tls_connect tls_verification),
@@ -29,12 +27,11 @@
   reply_contract: ~w(callback_drops_from callback_return function_def implements_behaviour),
   shutdown_safety:
     ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag catch_tag catch_total closure_def dynamic_child function_def implements_behaviour impure_call statem_event_clause sup_call supervisor_child supervisor_child_name sync_call trap_exit unknown_call),
+  startup:
+    ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag callback_timeout distributed_store_op dynamic_child function_def global_op global_register handle_continue_clause ignored_error_result implements_behaviour impure_call init_continues_to mailbox_writer node_operation post_start_call recv_start remote_call rpc_call statem_timeout sup_call supervisor supervisor_child supervisor_site sync_call sync_call_timeout try_start unconditional_call_edge),
   structure:
     ~w(function_def global_register implements_behaviour process_register supervisor_child supervisor_child_form supervisor_site),
-  supervision:
-    ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_stop_reason callback_tag dynamic_child function_def implements_behaviour post_start_call remote_call supervisor supervisor_child supervisor_site sync_call),
-  sync_call_in_init:
-    ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag dynamic_child function_def handle_continue_clause implements_behaviour impure_call init_continues_to mailbox_writer recv_start remote_call statem_timeout sup_call supervisor supervisor_child sync_call sync_call_timeout unconditional_call_edge),
+  supervision: ~w(callback_stop_reason function_def supervisor supervisor_child supervisor_site),
   unlinked_spawn: ~w(spawn_call),
   unsafe_input:
     ~w(call_edge code_execution dynamic_child function_def http_route implements_behaviour socket_transport supervisor_max_children unsafe_atom_creation unsafe_deserialization),

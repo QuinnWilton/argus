@@ -1,4 +1,4 @@
-defmodule Argus.Analyses.SyncCallInInitTest do
+defmodule Argus.Analyses.StartupInitTest do
   use ExUnit.Case
 
   alias Argus.Souffle
@@ -16,7 +16,7 @@ defmodule Argus.Analyses.SyncCallInInitTest do
         Argus.Test.Fixtures.WorkerA
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :sync_call_in_init)
+      assert {:ok, results} = Argus.analyze(modules, :startup)
       assert Map.has_key?(results, "sync_call_in_init")
 
       init_calls = results["sync_call_in_init"]
@@ -32,7 +32,7 @@ defmodule Argus.Analyses.SyncCallInInitTest do
       skip_without_souffle()
 
       assert {:ok, results} =
-               Argus.analyze([Argus.Test.Fixtures.StartsChildrenInInit], :sync_call_in_init)
+               Argus.analyze([Argus.Test.Fixtures.StartsChildrenInInit], :startup)
 
       assert [[mod, "DynamicSupervisor", "start_child", "Argus.Test.Fixtures.PoolSup", site]] =
                results["sup_call_in_init"]
@@ -50,7 +50,7 @@ defmodule Argus.Analyses.SyncCallInInitTest do
         Argus.Test.Fixtures.WatchedPool
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :sync_call_in_init)
+      assert {:ok, results} = Argus.analyze(modules, :startup)
 
       # The Watcher is in the app tree and the pool is not: the plain
       # finding is (correctly) suppressed as a cross-supervisor call...
@@ -75,7 +75,7 @@ defmodule Argus.Analyses.SyncCallInInitTest do
         Argus.Test.Fixtures.WatchedByStarter
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :sync_call_in_init)
+      assert {:ok, results} = Argus.analyze(modules, :startup)
 
       assert results["init_waits_on_blocking_server"] == []
     end
@@ -92,7 +92,7 @@ defmodule Argus.Analyses.SyncCallInInitTest do
         Argus.Test.Fixtures.WorkerA
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :sync_call_in_init)
+      assert {:ok, results} = Argus.analyze(modules, :startup)
 
       refute Enum.any?(results["sync_call_in_init"], fn [mod, _, _] ->
                mod == "Argus.Test.Fixtures.SyncInitServer"
@@ -112,7 +112,7 @@ defmodule Argus.Analyses.SyncCallInInitTest do
         Argus.Test.Fixtures.WorkerA
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :sync_call_in_init)
+      assert {:ok, results} = Argus.analyze(modules, :startup)
 
       kinds =
         Map.new(results["sync_call_in_init"], fn [mod, _callee, kind] -> {mod, kind} end)
@@ -130,7 +130,7 @@ defmodule Argus.Analyses.SyncCallInInitTest do
         Argus.Test.Fixtures.WorkerA
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :sync_call_in_init)
+      assert {:ok, results} = Argus.analyze(modules, :startup)
 
       # WorkerA starts before SyncInitServer — safe, should be filtered.
       assert results["sync_call_in_init"] == []
@@ -151,7 +151,7 @@ defmodule Argus.Analyses.SyncCallInInitTest do
         Argus.Test.Fixtures.WorkerA
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :sync_call_in_init)
+      assert {:ok, results} = Argus.analyze(modules, :startup)
 
       # Disjoint supervisors — callee already running, should be filtered.
       assert results["sync_call_in_init"] == []
@@ -170,7 +170,7 @@ defmodule Argus.Analyses.SyncCallInInitTest do
         Argus.Test.Fixtures.WorkerA
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :sync_call_in_init)
+      assert {:ok, results} = Argus.analyze(modules, :startup)
 
       # WorkerA starts AFTER SyncInitServer — NOT safe, deadlock risk.
       init_calls = results["sync_call_in_init"]

@@ -68,24 +68,6 @@ defmodule Argus.Analyses.Distributed do
         ],
         key: [:func, :site],
         doc: "An rpc result whose failure value is not handled."
-      },
-      %{
-        name: :global_blocking_in_init,
-        fields: [
-          {:func, :symbol, "init function (or transitively reachable from one)"},
-          {:op, :symbol, ":global operation"}
-        ],
-        doc: "Blocking :global op reachable from init/1 — hangs supervisor startup on netsplit."
-      },
-      %{
-        name: :distributed_in_init,
-        fields: [
-          {:func, :symbol, "init function"},
-          {:op, :symbol, "operation"},
-          {:site, :symbol, "instruction ID of the operation inside init"}
-        ],
-        key: [:func, :op],
-        doc: "Distributed operation in init/1 blocking supervisor startup."
       }
     ]
   end
@@ -143,30 +125,6 @@ defmodule Argus.Analyses.Distributed do
       at: Findings.at_site(site, func),
       at_label: "no {:badrpc, _} clause",
       help: ["add a `{:badrpc, reason} -> {:error, reason}` clause, or move to :erpc and rescue"]
-    )
-  end
-
-  def finding(:global_blocking_in_init, [func, op]) do
-    Findings.new(
-      :error,
-      "Cluster-wide lock during init",
-      "#{func} reaches :global.#{op} from init/1. init blocks the " <>
-        "supervisor's start sequence, and the :global op blocks on " <>
-        "cluster-wide agreement — local startup now hangs whenever the " <>
-        "cluster is partitioned or slow. Defer to handle_continue.",
-      at: Findings.at_func(func)
-    )
-  end
-
-  def finding(:distributed_in_init, [func, op, site]) do
-    Findings.new(
-      :warning,
-      "Distributed operation in init/1",
-      "#{func} performs #{op} during init, while the supervisor's start " <>
-        "sequence waits. A slow or partitioned peer stalls local startup; " <>
-        "defer remote work to handle_continue so the tree boots without the " <>
-        "network.",
-      at: Findings.at_instr(site)
     )
   end
 end

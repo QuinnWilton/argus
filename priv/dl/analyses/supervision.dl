@@ -17,23 +17,6 @@
 
 // ── Supervision helpers ──────────────────────────────────────────────
 
-// ── Anti-patterns ────────────────────────────────────────────────
-
-// A child's init/1 depends on another process, synchronously or by cast:
-// during startup that process may not be alive yet.
-.decl init_process_dep(child: symbol, dep: symbol, witness: symbol)
-
-init_process_dep(child, dep, func) :-
-  init_dep(child, dep, _, func),
-  child != dep.
-
-.decl wrong_start_order(sup: symbol, child: symbol, dep: symbol, child_pos: number, dep_pos: number, sup_site: symbol, witness: symbol)
-.output wrong_start_order
-
-wrong_start_order(sup, child, dep, cpos, dpos, sup_site, witness) :-
-  supervisor_site(sup, sup_site),
-  starts_before(sup, child, dep, cpos, dpos),
-  init_process_dep(child, dep, witness).
 
 
 // ── Permanent child that stops itself normally ────────────────────────
@@ -62,25 +45,4 @@ permanent_child_stops_normally(sup, child, reason, site, sup_site) :-
 
 
 
-// ── Initialization after the tree is up ──────────────────────────────
-//
-// Children start serving the moment Supervisor.start_link returns. State
-// they read — a persistent_term, an ETS row, an application env — that
-// the caller writes only afterwards is a window in which they run against
-// nothing (phoenixframework/phoenix#5981: the endpoint's warmup after the
-// listener was accepting). Writes reached from a call after start_link.
-.init config_reach = CallReachSet
-
-config_reach.seed(f) :- config_writer(f).
-
-.decl post_start_initialization(func: symbol, site: symbol, callee: symbol)
-.output post_start_initialization
-
-post_start_initialization(func, site, callee) :-
-  post_start_call(func, site, callee),
-  config_write_api(callee).
-
-post_start_initialization(func, site, callee) :-
-  post_start_call(func, site, callee),
-  config_reach.reaches(callee).
 

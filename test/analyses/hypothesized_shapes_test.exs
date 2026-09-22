@@ -90,7 +90,7 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
     {:ok, r} =
       Argus.analyze(
         [H.ConnectInInit, H.ConnectWithBackoff, H.ConnectWithGenericBackoff],
-        :sync_call_in_init
+        :startup
       )
 
     assert rows(r, "connect_in_init_without_backoff") ==

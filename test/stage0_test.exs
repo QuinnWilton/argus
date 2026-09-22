@@ -64,7 +64,7 @@ defmodule Argus.Stage0Test do
       skip_without_souffle()
 
       assert {:ok, facts_dir} =
-               Analysis.extract_facts([Argus.Test.Fixtures.MyGenServer], [:supervision], [])
+               Analysis.extract_facts([Argus.Test.Fixtures.MyGenServer], [:startup], [])
 
       on_exit(fn -> File.rm_rf(Path.dirname(facts_dir)) end)
 
@@ -79,7 +79,7 @@ defmodule Argus.Stage0Test do
       {:ok, _} = Pipeline.run([Argus.Test.Fixtures.MyGenServer], facts_dir)
       refute File.exists?(Path.join(facts_dir, "call_edge.facts"))
 
-      assert {:ok, _results} = Analysis.run_rules(facts_dir, :supervision)
+      assert {:ok, _results} = Analysis.run_rules(facts_dir, :startup)
       assert File.exists?(Path.join(facts_dir, "call_edge.facts"))
     end
   end
@@ -104,7 +104,7 @@ defmodule Argus.Stage0Test do
       # body's control flow can change their verdict, and after
       # stratification their input sets say so — which is exactly what
       # lets an incremental driver skip them on an ordinary edit.
-      for analysis <- [:coupling, :supervision, :sync_call_in_init] do
+      for analysis <- [:coupling, :startup] do
         assert {:ok, relations} = Analysis.input_relations(analysis)
 
         leaked = Enum.filter(@volatile_cfg_relations, &(&1 in relations))
@@ -142,7 +142,7 @@ defmodule Argus.Stage0Test do
       assert {_, spawn_relations} = Enum.find(sets, &(elem(&1, 0) == :unlinked_spawn))
       assert spawn_relations == ["spawn_call"]
 
-      {_, supervision_relations} = Enum.find(sets, &(elem(&1, 0) == :supervision))
+      {_, supervision_relations} = Enum.find(sets, &(elem(&1, 0) == :startup))
       assert length(supervision_relations) > 8
     end
 

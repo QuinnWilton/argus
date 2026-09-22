@@ -1,4 +1,4 @@
-defmodule Argus.Analyses.DistributedTest do
+defmodule Argus.Analyses.StartupDistributedTest do
   use ExUnit.Case
 
   alias Argus.Souffle
@@ -8,7 +8,7 @@ defmodule Argus.Analyses.DistributedTest do
   end
 
   defp analyze(modules) do
-    assert {:ok, results} = Argus.analyze(modules, :distributed)
+    assert {:ok, results} = Argus.analyze(modules, :startup)
     results
   end
 

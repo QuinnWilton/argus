@@ -37,6 +37,11 @@ is the table). Named sets (`:all`, `:default`, `:security`, `:effects`,
 | `supervision` (part) | `coupling`: `suspect_nonpermanent_dependency`, `cached_sibling_pid`, `rest_for_one_orphaned_children`, `dual_restart_authority`; `structure`: `supervisor_registered_as_worker`, `consumer_supervisor_permanent_child` | unchanged |
 | `process_registry` (part) | `structure`, `duplicate_process_name` | unchanged |
 | `distributed` (part) | `structure`, `global_register_risk` | unchanged |
+| `sync_call_in_init` | `startup`, all six relations | unchanged |
+| `deferred_startup_deadlock` | `startup`, all five relations | unchanged |
+| `supervision` (part) | `startup`, `wrong_start_order`, `post_start_initialization` | unchanged |
+| `distributed` (part) | `startup`, `global_blocking_in_init`, `distributed_in_init` | unchanged |
+| `error_handling` (part) | `startup`, `ignored_start_result` | unchanged |
 
 ## 0.16.0 — 2026-09-21
 
