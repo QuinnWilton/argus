@@ -105,6 +105,30 @@ live in, reports the rows that were its under the old name, and sets
 {:ok, results} = Argus.analyze([MyApp.Worker], {:custom, "path/to/rules.dl"})
 ```
 
+## Priors
+
+Some judgements an analysis needs are ones a reader makes from names —
+whether `totp_seed` is a secret, which the fifteen substrings `exposure`
+knows cannot say. `Argus.Priors` asks those of a System-One model
+(typesafe.ai's Jev) and writes the answers into the facts as a third
+layer of relations, `prior_*`, each row with the model's probability in
+thousandths. A rule reads a prior only as a positive premise: it can add
+a finding marked `provenance: :heuristic` with its `confidence`, or move
+a severity, never remove a structural row. Off by default, and a run
+without priors is the run it always was.
+
+```elixir
+# Ask the model for what the cache does not hold (needs TYPESAFE_API_KEY).
+Argus.run_analyses(mods, analyses: [:exposure], priors: :live)
+
+# Offline and deterministic: answers from the cache only.
+Argus.run_analyses(mods, analyses: [:exposure], priors: :cached_only)
+```
+
+`mix argus.priors` inspects, clears, exports and imports the cache
+(`ARGUS_PRIORS_DIR`, default `~/.cache/argus/priors`); a committed
+cassette plus `:cached_only` makes a CI run reproducible without a key.
+
 ## License
 
 MIT

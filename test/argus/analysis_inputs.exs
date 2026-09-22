@@ -12,7 +12,8 @@
     ~w(call_edge closure_def dynamic_call ets_new ets_op implements_behaviour impure_call port_open process_register protocol_dispatch pure_contract recv_start remote_call resolved_apply send_msg spawn_call unknown_call),
   ets:
     ~w(call_arg call_arg_forward call_edge catch_tag catch_total closure_def dynamic_child ets_guarded_write ets_key ets_new ets_op ets_op_param ets_option function_def implements_behaviour statem_event_clause supervisor_child),
-  exposure: ~w(function_def redacted_field schema_field tls_connect tls_verification),
+  exposure:
+    ~w(function_def prior_sensitive redacted_field schema_field tls_connect tls_verification),
   failure:
     ~w(bare_rescue call_edge call_followed_by_branch call_result catch_falls_through catch_tag catch_total exit_call function_def implements_behaviour name_lookup remote_call rpc_call rpc_result spawn_call tail_call try_call),
   mailbox:

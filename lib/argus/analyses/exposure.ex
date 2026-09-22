@@ -50,6 +50,20 @@ defmodule Argus.Analyses.Exposure do
         doc: "A secret-looking field that inspect/1 will print in full."
       },
       %{
+        name: :unredacted_secret_inferred,
+        fields: [
+          {:mod, :symbol, "the schema"},
+          {:field, :symbol, "the field"},
+          {:kind, :symbol, "credential | password | token"},
+          {:aware, :symbol, "whether the schema redacts anything else"},
+          {:permille, :number, "the classifier's probability, in thousandths"}
+        ],
+        key: [:mod, :field],
+        doc:
+          "A field the substring table does not name but a classifier does " <>
+            "(Argus.Priors, at 0.9 and above); heuristic, reported a step below the structural finding."
+      },
+      %{
         name: :disables_verification,
         fields: [
           {:func, :symbol, "the function"},
@@ -86,6 +100,22 @@ defmodule Argus.Analyses.Exposure do
         " Add redact: true to the field.",
       at: Findings.at_module(mod)
     )
+  end
+
+  # The same finding as the structural one, a step down in severity and
+  # labelled with the probability: the reader knows a model, not a
+  # substring, named the field.
+  def finding(:unredacted_secret_inferred, [mod, field, kind, aware, permille]) do
+    structural = finding(:unredacted_secret, [mod, field, kind, aware])
+    p = String.to_integer(permille)
+
+    %{
+      structural
+      | severity: demote(structural.severity),
+        at_label: "heuristic: a classifier names #{field} as a #{kind}, p=#{format_permille(p)}",
+        provenance: :heuristic,
+        confidence: p
+    }
   end
 
   def finding(:disables_verification, [func, id]) do
@@ -129,6 +159,11 @@ defmodule Argus.Analyses.Exposure do
 
   defp severity("credential"), do: :error
   defp severity(_other), do: :warning
+
+  defp demote(:error), do: :warning
+  defp demote(_warning_or_info), do: :info
+
+  defp format_permille(p), do: :erlang.float_to_binary(p / 1000, decimals: 2)
 
   defp consequence("credential") do
     "This looks like a third-party credential, so leaking it hands over " <>

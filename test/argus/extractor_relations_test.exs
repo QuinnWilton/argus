@@ -50,6 +50,22 @@ defmodule Argus.ExtractorRelationsTest do
     |> Enum.map_join("\n", &File.read!/1)
   end
 
+  # A prior relation has no extractor; the questions fill it. The same
+  # discipline applies: a question names a schema relation, and a rule
+  # reads every prior relation the schema declares.
+  test "every prior relation is filled by a question and read by a rule" do
+    filled = Argus.Priors.questions() |> Enum.map(& &1.relation()) |> MapSet.new()
+    declared = Schema.layer_3() |> Enum.map(& &1.name) |> MapSet.new()
+    rules = rules_source()
+
+    assert filled == declared,
+           "questions fill #{inspect(filled)}, the schema declares #{inspect(declared)}"
+
+    for relation <- declared do
+      assert Regex.match?(~r/(?<![\w.])#{relation}\(/, rules), "no rule reads #{relation}"
+    end
+  end
+
   test "every declared relation is in the schema" do
     names = MapSet.new(Schema.names())
 

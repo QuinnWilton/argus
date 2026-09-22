@@ -67,6 +67,10 @@ defmodule Argus.ExtractorCoverageTest do
   @tag :souffle
   test "every Layer-2 relation an analysis reads is produced by one of its extractors" do
     layer_1 = Schema.layer_1() |> Enum.map(& &1.name) |> MapSet.new()
+    # A prior is filled by a question, not an extractor; that pairing is
+    # Argus.ExtractorRelationsTest's to check, and an empty prior is the
+    # documented meaning of "priors off", not a clean zero in disguise.
+    priors = Schema.layer_3() |> Enum.map(& &1.name) |> MapSet.new()
     outputs = extractor_outputs()
 
     gaps =
@@ -79,6 +83,7 @@ defmodule Argus.ExtractorCoverageTest do
           relation <- reads,
           atom = String.to_atom(relation),
           not MapSet.member?(layer_1, atom),
+          not MapSet.member?(priors, atom),
           not MapSet.member?(@derived, atom),
           not MapSet.member?(@instrumentation, atom),
           not MapSet.member?(produced, atom) do

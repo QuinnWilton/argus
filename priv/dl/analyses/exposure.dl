@@ -94,6 +94,39 @@ unredacted_secret(mod, field, kind, "unaware") :-
   !redacted_field(mod, field),
   !schema_redacts_something(mod).
 
+// ── A secret the table cannot name ──────────────────────────────────
+//
+// `totp_seed`, `teams_key`, a `secret_first` beside a `secret_second`:
+// names a reader recognises and fifteen substrings do not. When priors
+// are on (Argus.Priors, off by default), `prior_sensitive` carries a
+// classifier's judgement of every field with its probability in
+// thousandths. A field the table already names is the table's; the
+// rest are reported from the prior at 0.9 and above — the point at which
+// the calibration spike measured 98% precision — as their own relation,
+// so the structural rows above are byte-identical with priors on or off,
+// and the finding says it is heuristic.
+
+.decl model_named_secret(mod: symbol, field: symbol, kind: symbol, permille: number)
+
+model_named_secret(mod, field, detail, p) :-
+  prior_sensitive("schema_field", mod, field, "secret", detail, p),
+  schema_field(mod, field),
+  p >= 900,
+  !matches_kind(mod, field, _).
+
+.decl unredacted_secret_inferred(mod: symbol, field: symbol, kind: symbol, aware: symbol, permille: number)
+.output unredacted_secret_inferred
+
+unredacted_secret_inferred(mod, field, kind, "aware", p) :-
+  model_named_secret(mod, field, kind, p),
+  !redacted_field(mod, field),
+  schema_redacts_something(mod).
+
+unredacted_secret_inferred(mod, field, kind, "unaware", p) :-
+  model_named_secret(mod, field, kind, p),
+  !redacted_field(mod, field),
+  !schema_redacts_something(mod).
+
 // ══ TLS without verification ════════════════════════════════════════
 // TLS that encrypts without authenticating.
 //

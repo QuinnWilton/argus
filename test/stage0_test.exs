@@ -138,9 +138,9 @@ defmodule Argus.Stage0Test do
       assert sets |> Enum.map(&elem(&1, 1)) |> Enum.uniq() |> length() > 10
 
       # And the spread is real: startup reads a lot, while exposure is down
-      # to the few relations it actually needs.
+      # to the few relations it actually needs (five facts and one prior).
       assert {_, exposure_relations} = Enum.find(sets, &(elem(&1, 0) == :exposure))
-      assert length(exposure_relations) <= 5
+      assert length(exposure_relations) <= 6
 
       {_, supervision_relations} = Enum.find(sets, &(elem(&1, 0) == :startup))
       assert length(supervision_relations) > 8

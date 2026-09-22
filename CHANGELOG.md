@@ -77,6 +77,44 @@ plain write of the same key on a public table another process can
 write. `insert_new`, `update_counter` and `select_replace`, and matching
 `{:error, {:already_started, pid}}`, are the fixes and stay quiet.
 
+**Schema version 40.** A third layer of relations, priors: facts no
+extractor emits. `Argus.Priors` asks a System-One model (typesafe.ai's
+Jev, `Argus.Priors.Jev`) the questions bytecode cannot settle and writes
+the answers into the facts directory after stage 0, each row ending in
+`permille`, the model's probability in thousandths. The first relation is
+`prior_sensitive(subject_kind, mod, name, kind, detail, permille)` — what
+a schema field holds, `kind ∈ secret | personal | none` — filled by
+`Argus.Priors.Questions.Sensitivity`, one request per schema with the
+whole field list as state. `priv/dl/priors.dl` is generated beside
+`base.dl` and `layer2.dl` and included by `clientlib/imports.dl`.
+
+Off by default. `Argus.run_analyses/2` takes `priors: :off | :cached_only
+| :live` and `priors_opts:` (`:oracle`, `:cache_dir`, `:model`,
+`:batch_size`, ...). Every answer is kept in a content-addressed cache
+under `ARGUS_PRIORS_DIR` (default `~/.cache/argus/priors`), keyed on the
+model, the question and its prompt version as well as the request, so a
+run in `:cached_only` mode is deterministic and offline; `mix argus.priors`
+inspects, clears, exports and imports it as a cassette. `:live` without
+`TYPESAFE_API_KEY` fails before extracting; an oracle error leaves the
+relation empty and the run reports what it would have without priors.
+
+The contract every rule that reads a prior keeps: a prior is a positive
+premise only — it may add a finding or move a severity, never remove a
+structural row — so findings with priors are a superset of findings
+without, and priors off is byte-identical to before. Findings gain
+`provenance` (`:structural | :heuristic`) and `confidence` (the prior's
+permille, else `nil`); `Argus.Findings.new/4` takes both.
+
+`exposure` reads it: `unredacted_secret_inferred(mod, field, kind, aware,
+permille)` reports a field the substring table does not name but the
+model does at 0.9 and above — `totp_seed`, `teams_key`, `secret_first` —
+under the structural finding's title, a severity step down, labelled
+heuristic with the probability. The calibration that set the threshold
+(98% precision at 0.9 on fields read from beams and on public projects'
+schema names; the other two families measured, and the tag-target family
+parked as behaviour-polymorphic dispatch a rule should settle) is in
+`spike/priors/FINDINGS.md`.
+
 ### Fixed
 
 `def_use` had no edges through binary construction or binary matching:
