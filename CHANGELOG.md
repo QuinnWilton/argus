@@ -4,6 +4,13 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.17.1 — 2026-09-21
+
+### Fixed
+
+The `v0.17.0` tag left `mix argus.migrate` (`Argus.Migrate`) out of the
+release; this tag carries it. Nothing else changes.
+
 ## 0.17.0 — 2026-09-21
 
 ### Changed
