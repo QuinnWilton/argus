@@ -18,7 +18,7 @@ deadlocks, leaked tasks, ETS misuse, atom-table exhaustion, and more.
 ```elixir
 def deps do
   [
-    {:panoptes, "~> 0.16"}
+    {:panoptes, "~> 0.17"}
   ]
 end
 ```
@@ -55,38 +55,34 @@ a severity, a source anchor and a remediation hint.
 
 ## Analyses
 
-Argus ships 27 BEAM/OTP-specific bug detectors (`mix scry --list` prints
-the same table):
+Argus ships 13 analyses, one per concern (`mix scry --list` prints the
+same table). An analysis answers "what goes wrong"; the mechanism, the
+phase and the proximity to a request are columns on its relations, never
+separate analyses, so a defect has one owner.
 
-| Analysis | Detects |
+| Analysis | Concern |
 |---|---|
-| `atom_safety` | atom table exhaustion, unsafe deserialization, and code injection |
-| `call_cycle` | module-level synchronous call cycles (deadlocks) |
-| `callback_receive` | `receive` inside an OTP callback, which consumes the behaviour's own mailbox |
-| `coverage` | extractor coverage and imprecision (meta-analysis) |
-| `deferred_startup_deadlock` | `handle_continue` deadlocks and crash loops |
-| `distributed` | RPC without timeouts, `:global` races, init blocking on nodes |
-| `error_handling` | swallowed errors, ignored results, exit misuse |
+| `startup` | work in `init/1` or `handle_continue/2` that blocks, deadlocks or races the tree's start |
+| `shutdown` | cleanup a supervisor shutdown will skip, and teardown that hurts a peer |
+| `blocking` | synchronous waits that can last forever or nest: call chains, cycles, fan-in, rpc, locks, receives in callbacks |
+| `coupling` | two owners of one relationship across supervisor branches |
+| `mailbox` | messages that arrive with no clause for them, and replies that never come |
+| `failure` | error paths swallowed, half-caught or ignored |
+| `structure` | child specs, registrations and tree shapes that are wrong on their own |
+| `state_machine` | gen_statem states no transition reaches, and terminal states that never stop |
 | `ets` | ETS table ownership, concurrency options, and lifecycle |
-| `gen_statem` | unreachable states and terminal states that never stop |
-| `message_contract` | messages a module sends itself but cannot handle |
-| `monitor_leak` | monitors left live after a timed wait gave up |
-| `one_for_one_coupling` | cross-branch coupling under `one_for_one` supervisors |
-| `process_bottleneck` | synchronous call fan-in (serialization bottlenecks) |
-| `process_registry` | duplicate names, `whereis` races, registry collisions |
-| `purity` | `@pure` contracts checked against the call graph and an effect model |
-| `reply_contract` | `handle_call` clauses that defer a reply they cannot send |
-| `request_surface` | dangerous operations reachable from request-handling callbacks |
-| `secret_exposure` | schema fields holding secrets that `inspect/1` will print |
-| `shutdown_safety` | cleanup in `terminate/2` that a supervisor shutdown will skip |
-| `supervision` | supervision tree structure and anti-patterns |
-| `sync_call_in_init` | synchronous calls in `init/1` (startup deadlocks) |
-| `timeout_chain` | GenServer timeout chains and blocking cast handlers |
-| `tls_verification` | TLS connections that do not verify the peer |
-| `transaction_safety` | side effects inside a DB transaction that a rollback cannot undo |
-| `unbounded_dynamic_children` | unbounded process creation reachable from a request |
-| `unlinked_spawn` | unlinked (orphan) process spawns |
-| `unsafe_task` | leaked async tasks and unchecked `Task.Supervisor.start_child` |
+| `effects` | `@pure` contracts, and effects inside a transaction that a rollback cannot undo |
+| `unsafe_input` | atom exhaustion, unsafe deserialization and code execution reachable from a request |
+| `exposure` | secrets that `inspect/1` prints, and TLS that does not verify the peer |
+| `coverage` | extractor coverage and imprecision (meta-analysis, opt-in) |
+
+Named sets stand in for a list: `:all` (everything but `coverage`),
+`:default` (what scry runs unconfigured), `:security`, `:effects` and
+`:otp`. The names these replaced (`supervision`, `error_handling`,
+`sync_call_in_init`, ...) keep working through `Argus.Analysis.aliases/0`
+for two minor versions: a retired name runs the concern its findings
+live in, reports the rows that were its under the old name, and sets
+`concern` on every finding to the analysis it belongs to today.
 
 ## Programmatic API
 
@@ -96,7 +92,7 @@ the same table):
 {:ok, %{findings: findings}} = Argus.run_analyses([MyApp.Supervisor, MyApp.WorkerA])
 
 # One analysis, raw output relations.
-{:ok, results} = Argus.analyze([MyApp.Supervisor, MyApp.WorkerA], :supervision)
+{:ok, results} = Argus.analyze([MyApp.Supervisor, MyApp.WorkerA], :startup)
 
 # Ad-hoc Datalog rules over the same facts.
 {:ok, results} = Argus.analyze([MyApp.Worker], {:custom, "path/to/rules.dl"})

@@ -4,7 +4,7 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.17.0 — 2026-09-21
 
 ### Changed
 
@@ -16,7 +16,10 @@ runs the concern the old name's findings live in, reports the rows that
 were its under the old name, and sets the new `concern` field on every
 finding to the analysis it belongs to today (`Argus.Analysis.aliases/0`
 is the table). Named sets (`:all`, `:default`, `:security`, `:effects`,
-`:otp`) can stand in for a list (`Argus.Analysis.sets/0`).
+`:otp`) can stand in for a list (`Argus.Analysis.sets/0`). `mix
+argus.migrate encore MANIFEST` carries an encore manifest's pinned
+counts over through the same table, and lists the ones that span
+several concerns for measuring by hand.
 
 | Retired | Now | Notes |
 |---|---|---|
