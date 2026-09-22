@@ -94,6 +94,31 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
     end
   end
 
+  @doc """
+  Every instruction index reachable from `start` along the function's
+  control flow: the same walk as `analyse/2` from an arbitrary point.
+  Subtracting it from a handler's `visited`, starting after the try's
+  `try_end`, leaves the handler's own instructions — the code after the
+  `try` expression is reached from both.
+  """
+  @spec reach([tuple()], non_neg_integer()) :: [non_neg_integer()]
+  def reach(instrs, start) do
+    tuple = List.to_tuple(instrs)
+    labels = label_index(instrs)
+    path = %{class: nil, tested: false, aliases: MapSet.new([@x1]), tags: MapSet.new()}
+
+    acc = %{
+      classes: MapSet.new(),
+      totals: MapSet.new(),
+      tags: MapSet.new(),
+      falls_through: MapSet.new(),
+      last: start
+    }
+
+    {seen, _acc} = walk(start, path, tuple, labels, MapSet.new(), acc)
+    seen |> Enum.map(&elem(&1, 0)) |> Enum.uniq() |> Enum.sort()
+  end
+
   defp label_index(instrs) do
     instrs
     |> Enum.with_index()

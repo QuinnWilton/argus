@@ -33,10 +33,9 @@ defmodule Argus.Extractors.ErrorHandlingTest do
       assert func =~ "sync_with_parent/1"
       assert {:ok, %{idx: try_idx}} = Argus.InstrId.parse(try_id)
       assert {:ok, %{idx: call_idx}} = Argus.InstrId.parse(call)
-      assert {:ok, %{idx: end_idx}} = Argus.InstrId.parse(guard_end)
       assert call_idx > try_idx
-      # The handler follows the guarded body: its last instruction closes the span.
-      assert end_idx > call_idx
+      # A bare disassembly carries no Line table, so no span can be drawn.
+      assert guard_end == ""
     end
 
     test "with the Line table, the span ends on the catch's highest line" do
@@ -60,6 +59,29 @@ defmodule Argus.Extractors.ErrorHandlingTest do
       # The catch's last body line is three below the call in the fixture.
       # (A catch whose body is a literal gets no line of its own from the
       # compiler; the span then stays on the call.)
+      assert line_of.(guard_end) == line_of.(call) + 3
+    end
+
+    test "the span stops at the catch when the try is not in tail position" do
+      beam = to_string(:code.which(Argus.Test.Fixtures.CatchShapes.NoprocThenMore))
+
+      {:ok, facts} =
+        Argus.Pipeline.extract([beam], format: :typed, extractors: [ErrorHandling])
+
+      lines = Map.new(facts.line_info, &{{&1.id.func, &1.id.arity, &1.id.idx}, &1.line})
+
+      line_of = fn
+        %Argus.InstrId{} = i ->
+          lines[{i.func, i.arity, i.idx}]
+
+        id ->
+          {:ok, i} = Argus.InstrId.parse(id)
+          lines[{i.func, i.arity, i.idx}]
+      end
+
+      assert [%{call: call, guard_end: guard_end}] = facts.try_call
+      # The catch's last marked line (its send/2; the literal after it has
+      # no marker), not the send/2 seven lines further on.
       assert line_of.(guard_end) == line_of.(call) + 3
     end
   end

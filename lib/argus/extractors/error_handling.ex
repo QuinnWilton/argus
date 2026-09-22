@@ -199,7 +199,7 @@ defmodule Argus.Extractors.ErrorHandling do
       {guard, guard_end} =
         case guard_label(ctx.instrs, ctx.idx) do
           nil -> {"bare", ""}
-          label -> {"try", handler_end(ctx, label)}
+          {label, try_idx} -> {"try", handler_end(ctx, label, try_idx)}
         end
 
       add_fact(facts, :call_result, [id, ctx.func_id, callee, result_fate(ctx), guard, guard_end])
@@ -237,58 +237,63 @@ defmodule Argus.Extractors.ErrorHandling do
   # and closes with `try_end` (no exception) or `try_case` (the handler),
   # both naming the same register, so the tries still open at `idx` are a
   # stack walked from the function's start.
-  # The handler label of the innermost try open at `idx`, or nil.
+  # The handler label and index of the innermost try open at `idx`, or nil.
   defp guard_label(instrs, idx) do
     instrs
     |> Enum.take(idx)
+    |> Enum.with_index()
     |> Enum.reduce([], fn
-      {:try, reg, {:f, label}}, open -> [{reg, label} | open]
-      {:try_end, reg}, open -> List.keydelete(open, reg, 0)
-      {:try_case, reg}, open -> List.keydelete(open, reg, 0)
+      {{:try, reg, {:f, label}}, try_idx}, open -> [{reg, label, try_idx} | open]
+      {{:try_end, reg}, _}, open -> List.keydelete(open, reg, 0)
+      {{:try_case, reg}, _}, open -> List.keydelete(open, reg, 0)
       _instr, open -> open
     end)
     |> case do
       [] -> nil
-      [{_reg, label} | _] -> label
+      [{_reg, label, try_idx} | _] -> {label, try_idx}
     end
   end
 
-  # The handler instruction on the highest source line, minted as a site:
-  # where a span from the guarded call through its catch ends. The
-  # compiler lays handler blocks out in no line order, so the furthest
-  # instruction is not the furthest line. Lines come from the module's
-  # Line table when the caller supplied one (the pipeline does; a bare
-  # disassembly has none), else the furthest instruction stands in.
-  defp handler_end(ctx, label) do
-    case CatchClauses.analyse(ctx.instrs, label) do
-      %{visited: []} ->
-        ""
+  # The handler's own line marker on the highest source line, minted as
+  # a site: where a span from the guarded call through its catch ends.
+  # Only markers count — an instruction with no marker of its own
+  # inherits whatever line preceded it, and the compiler's re-raise
+  # block inherits the line of the code after the try — and only the
+  # handler's own: a handler that is not in tail position runs on into
+  # the code after the `try`, which is also reached from the try's normal
+  # exit. Empty when the handler has no marker (a catch whose body is a
+  # literal), and when the caller supplied no Line table (a bare
+  # disassembly; the pipeline supplies one).
+  defp handler_end(ctx, label, try_idx) do
+    instrs = List.to_tuple(ctx.instrs)
+    line_table = Map.get(ctx, :line_table, %{})
+    visited = CatchClauses.analyse(ctx.instrs, label).visited
+    own = visited -- after_try(ctx.instrs, try_idx)
 
-      %{visited: visited, last: last} ->
-        lines = line_map(ctx.instrs, Map.get(ctx, :line_table, %{}))
-        idx = Enum.max_by(visited, &{Map.get(lines, &1) || 0, &1}, fn -> last end)
-        InstrId.mint(ctx.func_id, idx)
+    markers =
+      for idx <- own,
+          {:line, ref} <- [elem(instrs, idx)],
+          line = Map.get(line_table, ref),
+          is_integer(line),
+          do: {line, idx}
+
+    case markers do
+      [] -> ""
+      _ -> InstrId.mint(ctx.func_id, markers |> Enum.max() |> elem(1))
     end
   end
 
-  # The source line in effect at each instruction: a marker switches it,
-  # the emitter's rule (`Argus.Pipeline.Emit`).
-  defp line_map(instrs, line_table) do
+  # The instructions reached from the try's normal exit.
+  defp after_try(instrs, try_idx) do
+    {:try, reg, _handler} = Enum.at(instrs, try_idx)
+
     instrs
-    |> Enum.with_index()
-    |> Enum.reduce({%{}, nil}, fn
-      {{:line, ref}, idx}, {map, _line} ->
-        line = Map.get(line_table, ref)
-        {Map.put(map, idx, line), line}
-
-      {{:debug_line, _kind, ref, _index, _live}, idx}, {map, _line} ->
-        line = Map.get(line_table, ref)
-        {Map.put(map, idx, line), line}
-
-      {_instr, idx}, {map, line} ->
-        {Map.put(map, idx, line), line}
-    end)
-    |> elem(0)
+    |> Enum.drop(try_idx + 1)
+    |> Enum.find_index(&match?({:try_end, ^reg}, &1))
+    |> case do
+      nil -> []
+      offset -> CatchClauses.reach(instrs, try_idx + 1 + offset + 1)
+    end
   end
 
   @mailbox_writers %{
@@ -962,7 +967,7 @@ defmodule Argus.Extractors.ErrorHandling do
             ctx.func_id,
             Normalize.func_id(m, f, a),
             InstrId.mint(ctx.func_id, idx),
-            handler_end(ctx, handler_label)
+            handler_end(ctx, handler_label, ctx.idx)
           ])
 
         _ ->

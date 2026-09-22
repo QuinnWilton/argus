@@ -55,6 +55,38 @@ defmodule Argus.Test.Fixtures.CatchShapes do
     end
   end
 
+  defmodule NoprocThenMore do
+    @moduledoc false
+    # The same catch, not in tail position: the handler runs on into the
+    # code after the try, which is not the catch's and not the span's.
+    use GenServer
+
+    def start_link(parent), do: GenServer.start_link(__MODULE__, parent)
+
+    @impl true
+    def init(parent), do: {:ok, parent}
+
+    @impl true
+    def handle_info(:sync, parent) do
+      _ = sync_with_parent(parent)
+      {:noreply, parent}
+    end
+
+    defp sync_with_parent(parent) do
+      result =
+        try do
+          GenServer.call(parent, {:child_mount, self()})
+        catch
+          :exit, {:noproc, _} ->
+            send(self(), :parent_gone)
+            {:error, :noproc}
+        end
+
+      send(self(), {:synced, result})
+      result
+    end
+  end
+
   defmodule NoprocAndShutdown do
     @moduledoc false
     use GenServer
