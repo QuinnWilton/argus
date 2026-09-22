@@ -4,6 +4,16 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+`mix argus.migrate encore` rewrites only the pinned-count maps it
+migrates (`--analyzer a,b` narrows them to the analyzers that already
+report the concerns), so the comments in a manifest survive; a zero
+pinned under a name that spans several concerns lands as a zero under
+each of them instead of being listed for hand measurement.
+
 ## 0.17.1 — 2026-09-21
 
 ### Fixed

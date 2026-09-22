@@ -18,6 +18,17 @@ defmodule Argus.MigrateTest do
       assert Enum.sort(targets) == [:coupling, :shutdown, :startup, :structure]
     end
 
+    test "a zero under a name spanning several concerns is a zero under each" do
+      assert {counts, []} =
+               Migrate.migrate_counts(%{
+                 "supervision" => 0,
+                 "one_for_one_coupling" => 2,
+                 "shutdown" => 1
+               })
+
+      assert counts == %{"coupling" => 2, "shutdown" => 1, "startup" => 0, "structure" => 0}
+    end
+
     test "current and unknown names pass through" do
       assert {%{"mailbox" => 1, "obelos_thing" => 2}, []} =
                Migrate.migrate_counts(%{"mailbox" => 1, "obelos_thing" => 2})
@@ -33,40 +44,68 @@ defmodule Argus.MigrateTest do
   end
 
   describe "migrate_manifest/1" do
-    test "rewrites the expectations block and keeps the rest of the file", %{tmp_dir: dir} do
-      path = Path.join(dir, "manifest.exs")
-
-      File.write!(path, """
-      %{
-        name: "x",
-        # kept
-        expectations: %{
-          argus: %{
-            "one_for_one_coupling" => 1,
-            "supervision" => 0,
-            "unsafe_task" => 2
-          },
-          scry: %{"unlinked_spawn" => 0}
+    @manifest """
+    %{
+      name: "x",
+      # kept
+      expectations: %{
+        argus: %{
+          "one_for_one_coupling" => 1,
+          "supervision" => 0,
+          "unsafe_task" => 2
         },
-        edits: []
-      }
-      """)
+        obelos: %{"suggestions" => 3},
+        # scry pins the default set
+        scry: %{"unlinked_spawn" => 0},
+        gloss: %{}
+      },
+      edits: []
+    }
+    """
+
+    test "rewrites the retired analyzers' maps and keeps the rest of the file", %{tmp_dir: dir} do
+      path = Path.join(dir, "manifest.exs")
+      File.write!(path, @manifest)
 
       assert {:ok, notes} = Migrate.migrate_manifest(path)
-
-      assert [argus: [{:ambiguous, "supervision", 0, _}, {:ambiguous, "unsafe_task", 2, _}]] =
-               notes
+      assert [argus: [{:ambiguous, "unsafe_task", 2, _}]] = notes
 
       {manifest, _} = Code.eval_file(path)
       assert manifest.name == "x"
       assert manifest.edits == []
 
       assert manifest.expectations == %{
-               argus: %{"coupling" => 1},
-               scry: %{"failure" => 0}
+               argus: %{"coupling" => 1, "shutdown" => 0, "startup" => 0, "structure" => 0},
+               obelos: %{"suggestions" => 3},
+               scry: %{"failure" => 0},
+               gloss: %{}
              }
 
-      assert File.read!(path) =~ "# kept"
+      rewritten = File.read!(path)
+      assert rewritten =~ "# kept"
+      assert rewritten =~ "# scry pins the default set"
+      assert rewritten =~ ~s(obelos: %{"suggestions" => 3})
+    end
+
+    test "the analyzers option narrows the rewrite", %{tmp_dir: dir} do
+      path = Path.join(dir, "manifest.exs")
+      File.write!(path, @manifest)
+
+      assert {:ok, _} = Migrate.migrate_manifest(path, analyzers: [:argus])
+
+      {manifest, _} = Code.eval_file(path)
+      assert manifest.expectations.scry == %{"unlinked_spawn" => 0}
+      assert manifest.expectations.argus["coupling"] == 1
+    end
+
+    test "an analyzer the manifest does not pin is an error", %{tmp_dir: dir} do
+      path = Path.join(dir, "manifest.exs")
+      File.write!(path, @manifest)
+
+      assert {:error, {:unknown_analyzer, :planchette}} =
+               Migrate.migrate_manifest(path, analyzers: [:planchette])
+
+      assert File.read!(path) == @manifest
     end
   end
 end

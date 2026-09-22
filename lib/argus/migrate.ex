@@ -10,7 +10,10 @@ defmodule Argus.Migrate do
   coupling, structure, startup and shutdown), nothing here can say how
   the count splits, so the entry is dropped from the map and reported: it
   needs measuring and pinning by hand, which is what encore's manifests
-  demand anyway. A count under a current name passes through.
+  demand anyway. A zero is the exception: it says each of those concerns
+  has none of that name's findings, so it lands as a zero under every
+  target (never overriding a count already there). A count under a
+  current name passes through.
   """
 
   alias Argus.Analysis
@@ -23,6 +26,9 @@ defmodule Argus.Migrate do
 
   Returns the migrated map and the notes for entries dropped as ambiguous.
   Unknown names (neither current nor retired) are kept as they are.
+
+  Order does not matter: a zero from a name spanning several concerns
+  never replaces a count, and a count adds to such a zero.
   """
   @spec migrate_counts(%{String.t() => non_neg_integer()}) ::
           {%{String.t() => non_neg_integer()}, [note()]}
@@ -39,6 +45,9 @@ defmodule Argus.Migrate do
 
           [target] ->
             {Map.update(acc, Atom.to_string(target), count, &(&1 + count)), notes}
+
+          many when count == 0 ->
+            {Enum.reduce(many, acc, &Map.put_new(&2, Atom.to_string(&1), 0)), notes}
 
           many ->
             {acc, [{:ambiguous, name, count, many} | notes]}
@@ -57,35 +66,65 @@ defmodule Argus.Migrate do
   end
 
   @doc """
-  Rewrites the `expectations:` block of an encore manifest in place.
+  Rewrites the pinned counts of an encore manifest in place.
 
-  The block is re-rendered from the migrated maps (comments inside it do
-  not survive; those around it do). Returns the notes per analyzer.
+  Only the named analyzers' maps inside the `expectations:` block are
+  re-rendered (by default every analyzer whose map names something the
+  alias table knows); everything else in the file, comments between the
+  maps included, is kept byte for byte. Returns the notes per analyzer.
+
+  Options:
+
+    * `:analyzers` — the analyzer keys to migrate (atoms).
   """
-  @spec migrate_manifest(Path.t()) :: {:ok, [{atom(), [note()]}]} | {:error, term()}
-  def migrate_manifest(path) do
+  @spec migrate_manifest(Path.t(), keyword()) :: {:ok, [{atom(), [note()]}]} | {:error, term()}
+  def migrate_manifest(path, opts \\ []) do
     with {:ok, source} <- File.read(path),
          {manifest, _} <- Code.eval_string(source, [], file: path),
          %{expectations: expectations} when is_map(expectations) <- manifest,
          {:ok, {start, stop}} <- expectations_span(source) do
-      migrated =
-        for {analyzer, counts} <- expectations, into: %{} do
-          {analyzer, migrate_counts(counts)}
-        end
+      analyzers = Keyword.get_lazy(opts, :analyzers, fn -> retired_analyzers(expectations) end)
+      block = String.slice(source, start, stop - start)
 
-      block = render_expectations(Map.new(migrated, fn {a, {m, _}} -> {a, m} end))
+      result =
+        Enum.reduce_while(analyzers, {:ok, block, []}, fn analyzer, {:ok, block, notes} ->
+          with {:ok, counts} <- Map.fetch(expectations, analyzer),
+               {:ok, {from, to}} <- analyzer_span(block, analyzer) do
+            {migrated, analyzer_notes} = migrate_counts(counts)
+            rendered = render_counts(analyzer, migrated)
 
-      File.write!(
-        path,
-        String.slice(source, 0, start) <> block <> String.slice(source, stop..-1//1)
-      )
+            block = String.slice(block, 0, from) <> rendered <> String.slice(block, to..-1//1)
 
-      {:ok, for({a, {_, notes}} <- migrated, notes != [], do: {a, notes})}
+            notes =
+              if analyzer_notes == [], do: notes, else: notes ++ [{analyzer, analyzer_notes}]
+
+            {:cont, {:ok, block, notes}}
+          else
+            :error -> {:halt, {:error, {:unknown_analyzer, analyzer}}}
+            {:error, reason} -> {:halt, {:error, reason}}
+          end
+        end)
+
+      with {:ok, block, notes} <- result do
+        File.write!(
+          path,
+          String.slice(source, 0, start) <> block <> String.slice(source, stop..-1//1)
+        )
+
+        {:ok, notes}
+      end
     else
       %{} -> {:error, :no_expectations}
       {:error, _} = error -> error
       other -> {:error, {:unexpected, other}}
     end
+  end
+
+  # The analyzers whose pinned names include one the alias table retires.
+  defp retired_analyzers(expectations) do
+    for {analyzer, counts} <- Enum.sort(expectations),
+        Enum.any?(counts, fn {name, _} -> targets(name) != [] end),
+        do: analyzer
   end
 
   # The formatted manifest keeps `expectations: %{` at two spaces of
@@ -110,19 +149,43 @@ defmodule Argus.Migrate do
     end
   end
 
-  defp render_expectations(expectations) do
-    analyzers =
-      for {analyzer, counts} <- Enum.sort(expectations) do
-        entries =
-          counts
-          |> Enum.sort()
-          |> Enum.map_join(",\n", fn {name, count} -> ~s(      "#{name}" => #{count}) end)
+  # One analyzer's map inside the block: `    argus: %{` through the
+  # matching `    }` on its own line, or through the `}` that closes a
+  # map written on one line.
+  defp analyzer_span(block, analyzer) do
+    open = "\n    #{analyzer}: %{"
 
-        if entries == "",
-          do: "    #{analyzer}: %{}",
-          else: "    #{analyzer}: %{\n#{entries}\n    }"
-      end
+    case :binary.match(block, open) do
+      {at, len} ->
+        from = at + 1
+        after_open = at + len
+        rest = binary_part(block, after_open, byte_size(block) - after_open)
+        line = rest |> String.split("\n", parts: 2) |> hd()
 
-    "  expectations: %{\n" <> Enum.join(analyzers, ",\n") <> "\n  },"
+        one_line = String.trim_trailing(line, ",")
+
+        if String.ends_with?(one_line, "}") do
+          {:ok, {from, after_open + byte_size(one_line)}}
+        else
+          case :binary.match(rest, "\n    }") do
+            {close, _} -> {:ok, {from, after_open + close + byte_size("\n    }")}}
+            :nomatch -> {:error, {:unterminated_analyzer, analyzer}}
+          end
+        end
+
+      :nomatch ->
+        {:error, {:analyzer_not_found, analyzer}}
+    end
+  end
+
+  defp render_counts(analyzer, counts) do
+    entries =
+      counts
+      |> Enum.sort()
+      |> Enum.map_join(",\n", fn {name, count} -> ~s(      "#{name}" => #{count}) end)
+
+    if entries == "",
+      do: "    #{analyzer}: %{}",
+      else: "    #{analyzer}: %{\n#{entries}\n    }"
   end
 end
