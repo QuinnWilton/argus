@@ -54,6 +54,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
           totals: [atom()],
           tags: [{atom(), atom()}],
           falls_through: [atom()],
+          visited: [non_neg_integer()],
           last: non_neg_integer() | nil
         }
 
@@ -65,7 +66,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
 
     case Map.fetch(labels, label) do
       :error ->
-        %{classes: [], totals: [], tags: [], falls_through: [], last: nil}
+        %{classes: [], totals: [], tags: [], falls_through: [], visited: [], last: nil}
 
       {:ok, start} ->
         path = %{class: nil, tested: false, aliases: MapSet.new([@x1]), tags: MapSet.new()}
@@ -78,15 +79,16 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
           last: start
         }
 
-        {_seen, acc} = walk(start, path, tuple, labels, MapSet.new(), acc)
+        {seen, acc} = walk(start, path, tuple, labels, MapSet.new(), acc)
 
-        # `last` is the handler's furthest instruction: where a span that
-        # covers the whole catch ends.
+        # `visited` is every instruction the handler runs, `last` the
+        # furthest: what a span that covers the whole catch is drawn from.
         %{
           classes: acc.classes |> MapSet.to_list() |> Enum.sort(),
           totals: acc.totals |> MapSet.to_list() |> Enum.sort(),
           tags: acc.tags |> MapSet.to_list() |> Enum.sort(),
           falls_through: acc.falls_through |> MapSet.to_list() |> Enum.sort(),
+          visited: seen |> Enum.map(&elem(&1, 0)) |> Enum.uniq() |> Enum.sort(),
           last: acc.last
         }
     end

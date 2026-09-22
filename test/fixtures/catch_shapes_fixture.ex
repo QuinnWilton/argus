@@ -27,6 +27,34 @@ defmodule Argus.Test.Fixtures.CatchShapes do
     end
   end
 
+  defmodule NoprocLogged do
+    @moduledoc false
+    # The same catch with a body the compiler gives lines: what a span
+    # from the call through the catch is drawn to.
+    use GenServer
+
+    def start_link(parent), do: GenServer.start_link(__MODULE__, parent)
+
+    @impl true
+    def init(parent), do: {:ok, parent}
+
+    @impl true
+    def handle_info(:sync, parent) do
+      _ = sync_with_parent(parent)
+      {:noreply, parent}
+    end
+
+    defp sync_with_parent(parent) do
+      try do
+        GenServer.call(parent, {:child_mount, self()})
+      catch
+        :exit, {:noproc, _} ->
+          send(self(), :parent_gone)
+          {:error, :noproc}
+      end
+    end
+  end
+
   defmodule NoprocAndShutdown do
     @moduledoc false
     use GenServer

@@ -27,6 +27,7 @@ defmodule Argus.Extractor.Helpers do
   extractor needs to call `resolve_register/3` against the surrounding code.
   """
   @type instr_ctx :: %{
+          optional(:line_table) => %{pos_integer() => pos_integer()},
           func_id: String.t(),
           instrs: [tuple()],
           idx: non_neg_integer()

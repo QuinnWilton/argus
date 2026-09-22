@@ -38,6 +38,30 @@ defmodule Argus.Extractors.ErrorHandlingTest do
       # The handler follows the guarded body: its last instruction closes the span.
       assert end_idx > call_idx
     end
+
+    test "with the Line table, the span ends on the catch's highest line" do
+      beam = to_string(:code.which(Argus.Test.Fixtures.CatchShapes.NoprocLogged))
+
+      {:ok, facts} =
+        Argus.Pipeline.extract([beam], format: :typed, extractors: [ErrorHandling])
+
+      lines = Map.new(facts.line_info, &{{&1.id.func, &1.id.arity, &1.id.idx}, &1.line})
+
+      line_of = fn
+        %Argus.InstrId{} = i ->
+          lines[{i.func, i.arity, i.idx}]
+
+        id ->
+          {:ok, i} = Argus.InstrId.parse(id)
+          lines[{i.func, i.arity, i.idx}]
+      end
+
+      assert [%{call: call, guard_end: guard_end}] = facts.try_call
+      # The catch's last body line is three below the call in the fixture.
+      # (A catch whose body is a literal gets no line of its own from the
+      # compiler; the span then stays on the call.)
+      assert line_of.(guard_end) == line_of.(call) + 3
+    end
   end
 
   describe "extract/1 — trap_exit" do

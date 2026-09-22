@@ -137,9 +137,12 @@ defmodule Argus.Extractors.ErrorHandling do
   def extract(module_data) do
     mod = module_data.module
     mod_str = inspect(mod)
+    line_table = Map.get(module_data, :line_table, %{})
 
     rescues =
       scan_functions(mod, module_data.functions, %{}, fn facts, ctx, instr ->
+        ctx = Map.put(ctx, :line_table, line_table)
+
         facts
         |> maybe_bare_rescue(ctx, instr)
         |> maybe_catch_clauses(ctx, instr)
@@ -151,6 +154,8 @@ defmodule Argus.Extractors.ErrorHandling do
       |> emit_timer_flows(mod, module_data.functions)
 
     each_remote_call(module_data, rescues, fn facts, ctx, mfa ->
+      ctx = Map.put(ctx, :line_table, line_table)
+
       facts
       |> error_handling_call(mod_str, ctx, mfa)
       |> maybe_mailbox_writer(ctx, mfa)
@@ -248,13 +253,42 @@ defmodule Argus.Extractors.ErrorHandling do
     end
   end
 
-  # The handler's last instruction, minted as a site: the end of the span
-  # a finding draws from the guarded call through its catch.
+  # The handler instruction on the highest source line, minted as a site:
+  # where a span from the guarded call through its catch ends. The
+  # compiler lays handler blocks out in no line order, so the furthest
+  # instruction is not the furthest line. Lines come from the module's
+  # Line table when the caller supplied one (the pipeline does; a bare
+  # disassembly has none), else the furthest instruction stands in.
   defp handler_end(ctx, label) do
-    case CatchClauses.analyse(ctx.instrs, label).last do
-      nil -> ""
-      last -> InstrId.mint(ctx.func_id, last)
+    case CatchClauses.analyse(ctx.instrs, label) do
+      %{visited: []} ->
+        ""
+
+      %{visited: visited, last: last} ->
+        lines = line_map(ctx.instrs, Map.get(ctx, :line_table, %{}))
+        idx = Enum.max_by(visited, &{Map.get(lines, &1) || 0, &1}, fn -> last end)
+        InstrId.mint(ctx.func_id, idx)
     end
+  end
+
+  # The source line in effect at each instruction: a marker switches it,
+  # the emitter's rule (`Argus.Pipeline.Emit`).
+  defp line_map(instrs, line_table) do
+    instrs
+    |> Enum.with_index()
+    |> Enum.reduce({%{}, nil}, fn
+      {{:line, ref}, idx}, {map, _line} ->
+        line = Map.get(line_table, ref)
+        {Map.put(map, idx, line), line}
+
+      {{:debug_line, _kind, ref, _index, _live}, idx}, {map, _line} ->
+        line = Map.get(line_table, ref)
+        {Map.put(map, idx, line), line}
+
+      {_instr, idx}, {map, line} ->
+        {Map.put(map, idx, line), line}
+    end)
+    |> elem(0)
   end
 
   @mailbox_writers %{
