@@ -165,21 +165,23 @@ sink_without_request_path(id, func, api, "deserialization", safety) :-
   sink(id, func, api, "deserialization", safety),
   !sink_reachable(id, _, _, _, _, _, _, _, _, _).
 
-// The exported functions the sink is reachable from, a few calls deep:
-// evidence for "the module's public surface reaches it". The sink's own
-// function, when exported, is the finding's anchor already.
-.init export_paths = ForwardBoundedCallReach
+// The exported functions the sink is reachable from, walked back from
+// the sink a few calls: evidence for "the module's public surface
+// reaches it". The sink's own function, when exported, is the finding's
+// anchor already.
+.init sink_callers = BackwardBoundedCallReach
 
-export_paths.root(e, e) :- function_def(e, _, _, _, 1).
-export_paths.limit(3).
+sink_callers.root(func, func) :- sink_without_request_path(_, func, _, _, _).
+sink_callers.limit(6).
 
 .decl sink_export(sink: symbol, export: symbol)
 .output sink_export
 
 sink_export(id, e) :-
   sink_without_request_path(id, func, _, _, _),
-  export_paths.reaches(e, func, d),
-  d > 0.
+  sink_callers.reaches(func, e, d),
+  d > 0,
+  function_def(e, _, _, _, 1).
 
 // ── Which HTTP endpoint reaches the sink ─────────────────────────
 //

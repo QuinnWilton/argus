@@ -101,7 +101,8 @@ defmodule Argus.Analyses.Blocking do
           {:from_mod, :symbol, "source module of the edge"},
           {:to_mod, :symbol, "target module of the edge"},
           {:witness, :symbol, "function in from_mod carrying the dependency"},
-          {:how, :symbol, "'tag' when the edge is attributed by message tag, else 'static'"}
+          {:how, :symbol, "'tag' when the edge is attributed by message tag, else 'static'"},
+          {:site, :symbol, "the call in the witness, when direct; else empty"}
         ],
         key: [:mod_a, :mod_b, :from_mod, :to_mod],
         evidence: %{of: :call_cycle, on: [:mod_a, :mod_b]},
@@ -398,18 +399,18 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  @impl true
   defp site_or_func("", func, _mod), do: Findings.at_func(func)
   defp site_or_func(site, _func, mod), do: Findings.at_site(site, mod)
 
-  def evidence(:call_cycle_path, [_a, _b, from_mod, to_mod, witness, how]) do
+  @impl true
+  def evidence(:call_cycle_path, [_a, _b, from_mod, to_mod, witness, how, site]) do
     label =
       case how do
         "tag" -> "cycle edge #{from_mod} → #{to_mod}, inferred from the message tag"
         _ -> "cycle edge #{from_mod} → #{to_mod}"
       end
 
-    Findings.related(label, Findings.at_func(witness))
+    Findings.related(label, site_or_func(site, witness, from_mod))
   end
 
   def evidence(:bottleneck_caller, [caller_mod, _target_mod, witness]) do

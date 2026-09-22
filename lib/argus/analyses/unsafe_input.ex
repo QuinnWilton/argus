@@ -112,7 +112,8 @@ defmodule Argus.Analyses.UnsafeInput do
         key: [:sink, :export],
         evidence: %{of: :sink_without_request_path, on: [sink: :id], limit: 3},
         doc:
-          "Exported functions a sink no request reaches is reachable from, attached to its finding."
+          "Exported functions a sink no request reaches is reachable from, within six calls, " <>
+            "attached to its finding."
       },
       %{
         name: :sink_endpoint,

@@ -282,9 +282,12 @@ timer_cancel_without_flush(mod, c, a, key, lit, cs, arm_id) :-
 .decl monitored_entry_removal(mod: symbol, kind: symbol, site: symbol, func: symbol)
 .output monitored_entry_removal
 
+// The :DOWN handler's own removal is the one path where the monitor is
+// already gone; every other removal leaves it live.
 monitored_entry_removal(mod, "never_released", id, f) :-
   unconsumed_monitor(mod, _, _, "never_released"),
   function_def(f, mod, _, _, _),
+  !matches_down(f),
   remote_call(id, f, m, op, _),
   removal_api(m, op).
 
