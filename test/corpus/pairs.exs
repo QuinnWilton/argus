@@ -342,5 +342,17 @@
     pre: "24237ba10e17ae77adb4e3a3e5d34abf730221c4",
     fix: "b4945c6e30b2b2599047ad3c10389671662c3bad",
     finding: {:unsafe_input, "binary_to_term with [:safe] and no shape check"}
+  },
+  # sequin 46ce4e1, present-only and live at upstream HEAD: DebouncedLogger.log/4
+  # looks a bucket up and then calls :ets.update_counter/3 bare, while the
+  # flush the first call scheduled with :timer.apply_after takes the same row
+  # from another process; a caller that logs in that window crashes with
+  # ArgumentError. The three other update_counter sites in the tree rescue it.
+  %{
+    repo: "sequinstream/sequin",
+    issue: "sequin@46ce4e1",
+    module: "Sequin.DebouncedLogger",
+    pre: "46ce4e1048437575ce3c40ebb3eb589a4b9e4f27",
+    finding: {:failure, "update_counter/3 called bare where every other call site guards it"}
   }
 ]
