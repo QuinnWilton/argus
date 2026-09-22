@@ -90,20 +90,48 @@ defmodule Argus.Priors do
   """
   @spec derive(Path.t(), keyword()) :: {:ok, %{module() => Driver.stats()}} | {:error, term()}
   def derive(facts_dir, opts) do
-    mode = Keyword.fetch!(opts, :mode)
     questions = Keyword.get(opts, :questions, @questions)
-    needed = questions |> Enum.flat_map(& &1.relations_read()) |> Enum.uniq()
 
-    with {:ok, facts} <- read_facts(facts_dir, needed) do
-      stats =
-        Map.new(questions, fn question ->
-          {:ok, rows, stats} = Driver.derive(question, facts, Keyword.put(opts, :mode, mode))
-          write_rows!(facts_dir, question.relation(), rows)
-          {question, stats}
-        end)
+    with {:ok, facts} <- read_facts(facts_dir, relations_read(questions)) do
+      {rows, stats} = rows(facts, opts)
+
+      Enum.each(rows, fn {relation, relation_rows} ->
+        write_rows!(facts_dir, relation, relation_rows)
+      end)
 
       {:ok, stats}
     end
+  end
+
+  @doc """
+  The relations every question in `questions` (default: the built-in
+  ones) reads — what a caller deriving from its own facts must supply.
+  """
+  @spec relations_read([module()]) :: [atom()]
+  def relations_read(questions \\ @questions) do
+    questions |> Enum.flat_map(& &1.relations_read()) |> Enum.uniq()
+  end
+
+  @doc """
+  Every question's rows from typed facts already in hand — the shape
+  `Argus.Pipeline.extract/2` returns with `format: :typed`, holding at
+  least `relations_read/1` — as `{%{relation => rows}, %{question => stats}}`.
+  A question that yields nothing still maps to `[]`, so a consumer can
+  set every prior relation, empty or not. Options are `derive/2`'s.
+  """
+  @spec rows(Argus.Facts.t(), keyword()) ::
+          {%{atom() => [[String.t()]]}, %{module() => Driver.stats()}}
+  def rows(facts, opts) do
+    mode = Keyword.fetch!(opts, :mode)
+    questions = Keyword.get(opts, :questions, @questions)
+
+    Enum.reduce(questions, {%{}, %{}}, fn question, {rows, stats} ->
+      {:ok, relation_rows, question_stats} =
+        Driver.derive(question, facts, Keyword.put(opts, :mode, mode))
+
+      {Map.put(rows, question.relation(), relation_rows),
+       Map.put(stats, question, question_stats)}
+    end)
   end
 
   @doc """

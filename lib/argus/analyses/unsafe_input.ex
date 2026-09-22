@@ -173,35 +173,6 @@ defmodule Argus.Analyses.UnsafeInput do
     |> retier(func, proximity, source, p)
   end
 
-  # A path row whose sink function, the model says, reads storage,
-  # configuration or the system's own state: the path is real, the data
-  # is probably not the request. One severity step down, the finding
-  # labelled with what was read and how sure the model was. A function
-  # the model calls passthrough or request-reading is left as it is —
-  # the first says nothing, the second was unmeasured in calibration.
-  @downgrading ~w(storage config internal constant)
-
-  defp retier(attrs, func, proximity, source, p)
-       when proximity in ["adjacent", "transitive"] and source in @downgrading do
-    permille = String.to_integer(p)
-
-    %{
-      attrs
-      | severity: demote(attrs.severity),
-        at_label:
-          "heuristic: #{func} reads #{source}, not the request (p=#{format_permille(permille)})",
-        provenance: :heuristic,
-        confidence: permille
-    }
-  end
-
-  defp retier(attrs, _func, _proximity, _source, _p), do: attrs
-
-  defp demote(:error), do: :warning
-  defp demote(_warning_or_info), do: :info
-
-  defp format_permille(p), do: :erlang.float_to_binary(p / 1000, decimals: 2)
-
   def finding(:sink_without_request_path, [id, func, api, "atom"]) do
     Findings.new(
       :warning,
@@ -268,6 +239,35 @@ defmodule Argus.Analyses.UnsafeInput do
   def evidence(:sink_endpoint, [_sink, verb, path, plug]) do
     Findings.related("reachable from #{String.upcase(verb)} #{path}", Findings.at_module(plug))
   end
+
+  # A path row whose sink function, the model says, reads storage,
+  # configuration or the system's own state: the path is real, the data
+  # is probably not the request. One severity step down, the finding
+  # labelled with what was read and how sure the model was. A function
+  # the model calls passthrough or request-reading is left as it is —
+  # the first says nothing, the second was unmeasured in calibration.
+  @downgrading ~w(storage config internal constant)
+
+  defp retier(attrs, func, proximity, source, p)
+       when proximity in ["adjacent", "transitive"] and source in @downgrading do
+    permille = String.to_integer(p)
+
+    %{
+      attrs
+      | severity: demote(attrs.severity),
+        at_label:
+          "heuristic: #{func} reads #{source}, not the request (p=#{format_permille(permille)})",
+        provenance: :heuristic,
+        confidence: permille
+    }
+  end
+
+  defp retier(attrs, _func, _proximity, _source, _p), do: attrs
+
+  defp demote(:error), do: :warning
+  defp demote(_warning_or_info), do: :info
+
+  defp format_permille(p), do: :erlang.float_to_binary(p / 1000, decimals: 2)
 
   defp severity("flow"), do: :error
   defp severity("direct"), do: :error
