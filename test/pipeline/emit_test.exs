@@ -456,6 +456,67 @@ defmodule Argus.Pipeline.EmitTest do
     end
   end
 
+  describe "bs_create_bin facts" do
+    test "reads every register segment and writes the destination" do
+      # `"field_" <> p`: a literal string segment and a binary segment from x0.
+      segs =
+        {:list,
+         [
+           {:atom, :string},
+           0,
+           8,
+           nil,
+           {:string, "field_"},
+           {:integer, 6},
+           {:atom, :binary},
+           2,
+           8,
+           nil,
+           {:x, 0},
+           {:atom, :all}
+         ]}
+
+      facts = emit_func([{:bs_create_bin, {:f, 0}, 0, 1, 8, {:x, 0}, segs}])
+      assert [[_, "x0"]] = facts[:use]
+      assert [[_, "x0"]] = facts[:def]
+    end
+
+    test "a register-sized segment reads the size register too" do
+      segs = {:list, [{:atom, :binary}, 2, 8, nil, {:x, 1}, {:x, 2}]}
+      facts = emit_func([{:bs_create_bin, {:f, 0}, 0, 3, 8, {:x, 0}, segs}])
+
+      assert Enum.sort(facts[:use]) ==
+               Enum.sort([[hd(hd(facts[:def])), "x1"], [hd(hd(facts[:def])), "x2"]])
+    end
+  end
+
+  describe "bs_match facts" do
+    test "extracting commands define their destination; tests define nothing" do
+      commands =
+        {:commands,
+         [
+           {:ensure_at_least, 32, 8},
+           {:"=:=", nil, 31, 943_272_623},
+           {:integer, 2, {:literal, []}, 8, 1, {:x, 0}},
+           {:get_tail, 2, 8, {:x, 2}}
+         ]}
+
+      facts = emit_func([{:bs_match, {:f, 12}, {:x, 1}, commands}])
+      assert [[_, "12"]] = facts[:bs_start]
+      assert [[_, "x1"]] = facts[:use]
+
+      assert Enum.sort(facts[:def]) == [
+               [hd(hd(facts[:bs_start])), "x0"],
+               [hd(hd(facts[:bs_start])), "x2"]
+             ]
+    end
+
+    test "an unfamiliar command defines nothing" do
+      facts = emit_func([{:bs_match, {:f, 3}, {:x, 1}, {:commands, [{:mystery, 1, {:x, 0}}]}}])
+      assert facts[:def] == nil
+    end
+  end
+
   describe "real module integration" do
     test "emits facts for :lists without crashing" do
       {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(:lists)))

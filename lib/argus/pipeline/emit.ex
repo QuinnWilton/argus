@@ -749,10 +749,15 @@ defmodule Argus.Pipeline.Emit do
     |> add_fact(:def, [id, format_operand(dst)])
   end
 
-  defp emit_specific(facts, id, {:bs_match, {:f, fail}, ctx, {:commands, _commands}}) do
+  # The commands that extract a segment name their destination last; the
+  # rest (ensure_at_least, =:=, skip) only test. Only the tags whose shape
+  # is known define a register, so an unfamiliar command stays silent rather
+  # than inventing a write.
+  defp emit_specific(facts, id, {:bs_match, {:f, fail}, ctx, {:commands, commands}}) do
     facts
     |> add_fact(:bs_start, [id, to_string(fail)])
     |> add_fact(:use, [id, format_operand(ctx)])
+    |> emit_bs_match_defs(id, commands)
   end
 
   defp emit_specific(facts, id, {:bs_get_tail, src, dst, _live}) do
@@ -773,12 +778,26 @@ defmodule Argus.Pipeline.Emit do
     |> add_fact(:use, [id, format_operand(pos)])
   end
 
+  # The segment list is flat, six entries per segment: type, segment unit,
+  # unit, flags, source, size. A register source or size is read; the built
+  # binary is written to dst. Without these rows `"prefix" <> value` breaks
+  # every def-use chain that runs through it.
   defp emit_specific(
          facts,
-         _id,
-         {:bs_create_bin, {:f, _fail}, _alloc, _live, _unit, _dst, {:list, _segs}}
+         id,
+         {:bs_create_bin, {:f, _fail}, _alloc, _live, _unit, dst, {:list, segs}}
        ) do
+    operands =
+      segs
+      |> Enum.chunk_every(6)
+      |> Enum.flat_map(fn
+        [_type, _seg_unit, _unit, _flags, src, size] -> [src, size]
+        _partial -> []
+      end)
+
     facts
+    |> emit_operand_uses(id, operands)
+    |> add_fact(:def, [id, format_operand(dst)])
   end
 
   defp emit_specific(facts, _id, :bs_init_writable) do
@@ -1027,6 +1046,20 @@ defmodule Argus.Pipeline.Emit do
   defp emit_call_arg_uses(facts, id, arity) do
     Enum.reduce(0..(arity - 1), facts, fn i, acc ->
       add_fact(acc, :use, [id, "x#{i}"])
+    end)
+  end
+
+  @bs_match_extractors [:get_tail, :integer, :binary, :float, :utf8, :utf16, :utf32]
+
+  defp emit_bs_match_defs(facts, id, commands) do
+    Enum.reduce(commands, facts, fn command, acc ->
+      with true <- is_tuple(command) and tuple_size(command) > 1,
+           true <- elem(command, 0) in @bs_match_extractors,
+           {kind, _} = dst when kind in [:x, :y] <- elem(command, tuple_size(command) - 1) do
+        add_fact(acc, :def, [id, format_operand(dst)])
+      else
+        _ -> acc
+      end
     end)
   end
 
