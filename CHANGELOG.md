@@ -4,7 +4,13 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.17.2 — 2026-09-21
+
+### Fixed
+
+`mix argus.migrate encore` sliced the manifest with `String.slice` on
+byte offsets, which corrupted any file with a multi-byte character
+before the block.
 
 ### Changed
 
