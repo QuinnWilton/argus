@@ -47,7 +47,7 @@ defmodule Argus.MigrateTest do
     @manifest """
     %{
       name: "x",
-      # kept
+      # kept — with a multi-byte dash before the block
       expectations: %{
         argus: %{
           "one_for_one_coupling" => 1,
@@ -82,7 +82,7 @@ defmodule Argus.MigrateTest do
              }
 
       rewritten = File.read!(path)
-      assert rewritten =~ "# kept"
+      assert rewritten =~ "# kept — with a multi-byte dash before the block"
       assert rewritten =~ "# scry pins the default set"
       assert rewritten =~ ~s(obelos: %{"suggestions" => 3})
     end

@@ -84,7 +84,7 @@ defmodule Argus.Migrate do
          %{expectations: expectations} when is_map(expectations) <- manifest,
          {:ok, {start, stop}} <- expectations_span(source) do
       analyzers = Keyword.get_lazy(opts, :analyzers, fn -> retired_analyzers(expectations) end)
-      block = String.slice(source, start, stop - start)
+      block = binary_part(source, start, stop - start)
 
       result =
         Enum.reduce_while(analyzers, {:ok, block, []}, fn analyzer, {:ok, block, notes} ->
@@ -93,7 +93,9 @@ defmodule Argus.Migrate do
             {migrated, analyzer_notes} = migrate_counts(counts)
             rendered = render_counts(analyzer, migrated)
 
-            block = String.slice(block, 0, from) <> rendered <> String.slice(block, to..-1//1)
+            block =
+              binary_part(block, 0, from) <>
+                rendered <> binary_part(block, to, byte_size(block) - to)
 
             notes =
               if analyzer_notes == [], do: notes, else: notes ++ [{analyzer, analyzer_notes}]
@@ -108,7 +110,8 @@ defmodule Argus.Migrate do
       with {:ok, block, notes} <- result do
         File.write!(
           path,
-          String.slice(source, 0, start) <> block <> String.slice(source, stop..-1//1)
+          binary_part(source, 0, start) <>
+            block <> binary_part(source, stop, byte_size(source) - stop)
         )
 
         {:ok, notes}
@@ -137,7 +140,7 @@ defmodule Argus.Migrate do
         case :binary.match(source, "\n  }", scope: {start, byte_size(source) - start}) do
           {close, _} ->
             stop = close + byte_size("\n  }")
-            stop = if String.at(source, stop) == ",", do: stop + 1, else: stop
+            stop = if binary_part(source, stop, 1) == ",", do: stop + 1, else: stop
             {:ok, {start, stop}}
 
           :nomatch ->
