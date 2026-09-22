@@ -48,6 +48,8 @@ defmodule Argus.Analysis do
   at runtime.
   """
 
+  require Logger
+
   alias Argus.Pipeline
   alias Argus.Souffle
 
@@ -399,11 +401,37 @@ defmodule Argus.Analysis do
       |> Keyword.put_new(:relations, staged_relations(analyses))
       |> maybe_enable_imprecision_tracing(analyses)
 
+    Argus.Priors.check!(opts)
+
     with {:ok, work_dir} <- create_work_dir(),
          facts_dir = Path.join(work_dir, "facts"),
          {:ok, _} <- Pipeline.run(modules, facts_dir, opts),
-         :ok <- derive_stage0(facts_dir, opts) do
+         :ok <- derive_stage0(facts_dir, opts),
+         :ok <- derive_priors(facts_dir, opts) do
       {:ok, facts_dir}
+    end
+  end
+
+  # Priors after stage 0, into the same directory: the empty `prior_*`
+  # files the pipeline touched become the classifier's rows. A prior that
+  # cannot be derived is logged and left empty — the findings are then
+  # those of a run without priors, which is always a valid result.
+  defp derive_priors(facts_dir, opts) do
+    case Keyword.get(opts, :priors, :off) do
+      :off ->
+        :ok
+
+      mode ->
+        priors_opts = opts |> Keyword.get(:priors_opts, []) |> Keyword.put(:mode, mode)
+
+        case Argus.Priors.derive(facts_dir, priors_opts) do
+          {:ok, _stats} ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning("priors not derived, relations left empty: #{inspect(reason)}")
+            :ok
+        end
     end
   end
 
