@@ -12,16 +12,17 @@ defmodule Argus.Analyses.Effects do
   database can undo, since a rollback leaves the effect behind, a retry
   repeats it, and a pooled connection is held throughout.
 
-  - `purity_violated(func, category, api, via)` — a declared-pure
-    function reaches a known observable effect.
+  - `effect_in_context(func, context, scope, category, api, via)` — an
+    effect where its context forbids it: `pure_contract` (a declared-pure
+    function reaches a known observable effect) or `transaction` (an
+    effect inside a transaction body, opened on the repo in `scope`,
+    that a rollback cannot undo).
   - `purity_unprovable(func, reason, detail, via)` — it reaches a call
     that cannot be followed or classified.
   - `impure_closure_to_pure(caller, callee, closure, category, api)` — a
     caller hands an effectful closure to a function declared pure.
   - `purity_verified(func)` — the claim holds; emitted so "verified" can
     be told from "not looked at".
-  - `effect_in_transaction(caller, repo, category, api, via)` — an effect
-    inside a transaction body that a rollback cannot undo.
   """
 
   @behaviour Argus.Analysis
@@ -55,15 +56,17 @@ defmodule Argus.Analyses.Effects do
   def output_relations do
     [
       %{
-        name: :purity_violated,
+        name: :effect_in_context,
         fields: [
-          {:func, :symbol, "the function declared pure"},
+          {:func, :symbol, "the function the contract applies to"},
+          {:context, :symbol, "pure_contract | transaction"},
+          {:scope, :symbol, "the repo for a transaction, empty for a pure contract"},
           {:category, :symbol, "the kind of effect"},
           {:api, :symbol, "the call that performs it"},
           {:via, :symbol, "the function that performs it"}
         ],
-        key: [:func, :category, :api],
-        doc: "A declared-pure function reaches a known observable effect."
+        key: [:func, :context, :category, :api],
+        doc: "An effect where its context forbids it: a @pure claim, or a transaction body."
       },
       %{
         name: :purity_unprovable,
@@ -93,24 +96,12 @@ defmodule Argus.Analyses.Effects do
         fields: [{:func, :symbol, "the function declared pure"}],
         key: [:func],
         doc: "A declared-pure function whose reachable calls are all effect-free."
-      },
-      %{
-        name: :effect_in_transaction,
-        fields: [
-          {:caller, :symbol, "the function opening the transaction"},
-          {:repo, :symbol, "the repo"},
-          {:category, :symbol, "the kind of effect"},
-          {:api, :symbol, "the call performing it"},
-          {:via, :symbol, "the function inside the transaction that performs it"}
-        ],
-        key: [:caller, :category, :api],
-        doc: "An effect inside a transaction body that a rollback cannot undo."
       }
     ]
   end
 
   @impl true
-  def finding(:purity_violated, [func, category, api, via]) do
+  def finding(:effect_in_context, [func, "pure_contract", _, category, api, via]) do
     Findings.new(
       :error,
       "#{short(func)} is declared pure but performs #{effect_phrase(category)}",
@@ -185,7 +176,7 @@ defmodule Argus.Analyses.Effects do
     )
   end
 
-  def finding(:effect_in_transaction, [caller, repo, category, api, via]) do
+  def finding(:effect_in_context, [caller, "transaction", repo, category, api, via]) do
     Findings.new(
       rollback_severity(category),
       "#{short(caller)} performs #{rollback_phrase(category)} inside a #{repo} transaction",

@@ -4,6 +4,7 @@ defmodule Argus.Analyses.EffectsTransactionTest do
   alias Argus.Purity.Effects
   alias Argus.Souffle
   alias Argus.Test.Fixtures.Transaction, as: T
+  alias Argus.Test.Rows
 
   @all [
     T.FakeRepo,
@@ -21,7 +22,7 @@ defmodule Argus.Analyses.EffectsTransactionTest do
 
   defp findings(modules \\ @all) do
     assert {:ok, r} = Argus.analyze(modules, :effects)
-    Map.get(r, "effect_in_transaction", [])
+    Rows.where(r, :effects, "effect_in_context", context: "transaction", drop: [:context])
   end
 
   defp for_module(rows, fragment) do

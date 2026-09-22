@@ -17,6 +17,7 @@ through the alias table to the rows that were theirs.
 | Concern | Was | Now |
 |---|---|---|
 | `coupling` | `one_for_one_coupling`, `suspect_nonpermanent_dependency`, `cached_sibling_pid` | `sibling_dependency(sup, caller, callee, reason, detail, sup_site, witness, site)`, `reason` ∈ restart_isolation, restart_policy, cached_pid |
+| `effects` | `purity_violated`, `effect_in_transaction` | `effect_in_context(func, context, scope, category, api, via)`, `context` ∈ pure_contract, transaction (`scope` is the repo) |
 
 ## 0.17.2 — 2026-09-21
 

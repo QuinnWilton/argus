@@ -149,13 +149,16 @@ reaches_opaque(func, reason, detail, via) :-
 
 // ── Findings ─────────────────────────────────────────────────────
 
-// The claim is false: a declared-pure function reaches a known effect.
-// `via` is the function that actually performs it, which is where the fix
-// goes when it is not the declared function itself.
-.decl purity_violated(func: symbol, category: symbol, api: symbol, via: symbol)
-.output purity_violated
+// The one output of both contracts: an effect where its context forbids
+// it. `context` is "pure_contract" (func carries @pure true; scope is
+// empty) or "transaction" (func opens a Repo transaction; scope is the
+// repo). `via` is the function that actually performs the effect, which
+// is where the fix goes when it is not func itself.
+.decl effect_in_context(func: symbol, context: symbol, scope: symbol, category: symbol, api: symbol, via: symbol)
+.output effect_in_context
 
-purity_violated(func, category, api, via) :-
+// The claim is false: a declared-pure function reaches a known effect.
+effect_in_context(func, "pure_contract", "", category, api, via) :-
   declared_pure(func),
   reaches_effect(func, category, api, via).
 
@@ -318,8 +321,5 @@ escapes_transaction(caller, repo, category, api, body) :-
 
 // ── Findings ─────────────────────────────────────────────────────
 
-.decl effect_in_transaction(caller: symbol, repo: symbol, category: symbol, api: symbol, via: symbol)
-.output effect_in_transaction
-
-effect_in_transaction(caller, repo, category, api, via) :-
+effect_in_context(caller, "transaction", repo, category, api, via) :-
   escapes_transaction(caller, repo, category, api, via).

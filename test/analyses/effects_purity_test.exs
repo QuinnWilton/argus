@@ -4,6 +4,7 @@ defmodule Argus.Analyses.EffectsPurityTest do
   alias Argus.Purity.Effects
   alias Argus.Souffle
   alias Argus.Test.Fixtures.Purity, as: P
+  alias Argus.Test.Rows
 
   doctest Argus.Purity.Effects
 
@@ -25,7 +26,11 @@ defmodule Argus.Analyses.EffectsPurityTest do
 
     %{
       verified: Map.get(r, "purity_verified", []) |> Enum.map(&hd/1),
-      violated: Map.get(r, "purity_violated", []),
+      violated:
+        Rows.where(r, :effects, "effect_in_context",
+          context: "pure_contract",
+          drop: [:context, :scope]
+        ),
       unprovable: Map.get(r, "purity_unprovable", [])
     }
   end

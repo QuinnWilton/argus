@@ -144,12 +144,14 @@ defmodule Argus.Analysis do
       %{analysis: :exposure, relation: :relies_on_default_verification, where: []}
     ],
     purity: [
-      %{analysis: :effects, relation: :purity_violated, where: []},
+      %{analysis: :effects, relation: :effect_in_context, where: [context: "pure_contract"]},
       %{analysis: :effects, relation: :purity_unprovable, where: []},
       %{analysis: :effects, relation: :impure_closure_to_pure, where: []},
       %{analysis: :effects, relation: :purity_verified, where: []}
     ],
-    transaction_safety: [%{analysis: :effects, relation: :effect_in_transaction, where: []}],
+    transaction_safety: [
+      %{analysis: :effects, relation: :effect_in_context, where: [context: "transaction"]}
+    ],
     timeout_chain: [
       %{analysis: :blocking, relation: :timeout_chain_risk, where: []},
       %{analysis: :blocking, relation: :blocking_cast_handler, where: []},
