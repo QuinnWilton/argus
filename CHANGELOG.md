@@ -4,7 +4,7 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.18.0 — 2026-09-21
 
 ### Changed
 
@@ -12,7 +12,13 @@ The relations inside each concern merge the way the analyses did: a
 mechanism is a column, not a relation, and a defect has one relation.
 Titles, severities, anchors and finding counts are unchanged unless a
 row below says otherwise; the retired analysis names keep resolving
-through the alias table to the rows that were theirs.
+through the alias table to the rows that were theirs (the alias table
+itself is due to go in 0.19.0). Two mechanisms carry this: a relation's
+`key` may be chosen by the value of a column (`{:kind, %{"unclear" =>
+[:mod], default: [...]}}`), since the rows of a merged relation can
+identify a finding differently per kind; and the Souffle output reader
+keeps an empty first or last column, which a merged relation uses for a
+column that does not apply. The output relations went from 97 to 47.
 
 | Concern | Was | Now |
 |---|---|---|

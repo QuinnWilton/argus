@@ -76,6 +76,13 @@ separate analyses, so a defect has one owner.
 | `exposure` | secrets that `inspect/1` prints, and TLS that does not verify the peer |
 | `coverage` | extractor coverage and imprecision (meta-analysis, opt-in) |
 
+Inside a concern the same rule holds for relations: one relation per
+defect, with the mechanism as a column (`sibling_dependency` has a
+`reason`, `blocks_on_peer` a `phase` and a `kind`), and witness lists —
+the edges of a call cycle, the callers of a bottleneck, the routes that
+reach a sink — are related frames of the finding rather than findings of
+their own.
+
 Named sets stand in for a list: `:all` (everything but `coverage`),
 `:default` (what scry runs unconfigured), `:security`, `:effects` and
 `:otp`. The names these replaced (`supervision`, `error_handling`,
