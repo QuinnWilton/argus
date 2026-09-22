@@ -1,4 +1,4 @@
-defmodule Argus.Analyses.CallCycleTest do
+defmodule Argus.Analyses.BlockingCycleTest do
   use ExUnit.Case
 
   alias Argus.Souffle
@@ -16,7 +16,7 @@ defmodule Argus.Analyses.CallCycleTest do
         Argus.Test.Fixtures.CycleServerB
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :call_cycle)
+      assert {:ok, results} = Argus.analyze(modules, :blocking)
       assert Map.has_key?(results, "call_cycle")
       assert Map.has_key?(results, "call_cycle_path")
 
@@ -33,7 +33,7 @@ defmodule Argus.Analyses.CallCycleTest do
     test "runs without error on module with no cycles" do
       skip_without_souffle()
 
-      assert {:ok, results} = Argus.analyze([:maps], :call_cycle)
+      assert {:ok, results} = Argus.analyze([:maps], :blocking)
       assert Map.has_key?(results, "call_cycle")
     end
 
@@ -50,7 +50,7 @@ defmodule Argus.Analyses.CallCycleTest do
         Argus.Test.Fixtures.GenEventCycleB
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :call_cycle)
+      assert {:ok, results} = Argus.analyze(modules, :blocking)
       cycles = results["call_cycle"]
       assert cycles != []
 

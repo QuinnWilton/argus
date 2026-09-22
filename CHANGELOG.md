@@ -27,6 +27,12 @@ is the table). Named sets (`:all`, `:default`, `:security`, `:effects`,
 | `tls_verification` | `exposure`, `disables_verification`, `relies_on_default_verification` | unchanged |
 | `purity` | `effects`, `purity_*`, `impure_closure_to_pure` | unchanged |
 | `transaction_safety` | `effects`, `effect_in_transaction` | unchanged |
+| `timeout_chain` | `blocking`, all four relations | unchanged |
+| `call_cycle` | `blocking`, `call_cycle`, `call_cycle_path` | unchanged |
+| `process_bottleneck` | `blocking`, `sync_call_fan_in`, `bottleneck_caller` | unchanged |
+| `callback_receive` | `blocking`, `blocking_receive_in_callback`, `receive_in_callback` | unchanged |
+| `distributed` (part) | `blocking`, `rpc_without_timeout`, `rpc_in_genserver_callback`, `global_blocking_op` | unchanged |
+| `error_handling` (part) | `blocking`, `partial_noproc_catch` | unchanged |
 
 ## 0.16.0 — 2026-09-21
 

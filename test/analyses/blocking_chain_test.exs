@@ -1,4 +1,4 @@
-defmodule Argus.Analyses.TimeoutChainTest do
+defmodule Argus.Analyses.BlockingChainTest do
   use ExUnit.Case
 
   alias Argus.Souffle
@@ -17,7 +17,7 @@ defmodule Argus.Analyses.TimeoutChainTest do
         Argus.Test.Fixtures.TimeoutChain.ServerC
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :timeout_chain)
+      assert {:ok, results} = Argus.analyze(modules, :blocking)
       assert Map.has_key?(results, "timeout_chain_risk")
 
       risks = results["timeout_chain_risk"]
@@ -39,7 +39,7 @@ defmodule Argus.Analyses.TimeoutChainTest do
         Argus.Test.Fixtures.TimeoutChain.ServerC
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :timeout_chain)
+      assert {:ok, results} = Argus.analyze(modules, :blocking)
       assert Map.has_key?(results, "blocking_cast_handler")
 
       blocking = results["blocking_cast_handler"]
@@ -60,7 +60,7 @@ defmodule Argus.Analyses.TimeoutChainTest do
         Argus.Test.Fixtures.TimeoutChain.ServerWithInfinityTimeout
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :timeout_chain)
+      assert {:ok, results} = Argus.analyze(modules, :blocking)
       assert Map.has_key?(results, "infinity_timeout_in_chain")
 
       # infinity_timeout_in_chain requires callback_sync_dep_timeout with -1
@@ -80,7 +80,7 @@ defmodule Argus.Analyses.TimeoutChainTest do
     test "runs without error on modules with no GenServer callbacks" do
       skip_without_souffle()
 
-      assert {:ok, results} = Argus.analyze([:maps], :timeout_chain)
+      assert {:ok, results} = Argus.analyze([:maps], :blocking)
       assert Map.has_key?(results, "timeout_chain_risk")
       assert Map.has_key?(results, "blocking_cast_handler")
     end
@@ -101,7 +101,7 @@ defmodule Argus.Analyses.TimeoutChainTest do
         Argus.Test.Fixtures.TimeoutChain.ChainInner
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :timeout_chain)
+      assert {:ok, results} = Argus.analyze(modules, :blocking)
 
       refute Enum.any?(results["timeout_chain_risk"], fn [from | _] ->
                String.contains?(from, "ChainOuter")
@@ -119,7 +119,7 @@ defmodule Argus.Analyses.TimeoutChainTest do
         Argus.Test.Fixtures.TimeoutChain.ServerC
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :timeout_chain)
+      assert {:ok, results} = Argus.analyze(modules, :blocking)
 
       # TightBudgetServer gives DeepServer 1000ms, but DeepServer's own
       # downstream call waits up to the 5000ms default.
@@ -142,7 +142,7 @@ defmodule Argus.Analyses.TimeoutChainTest do
         Argus.Test.Fixtures.TimeoutChain.ServerC
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :timeout_chain)
+      assert {:ok, results} = Argus.analyze(modules, :blocking)
 
       # The chain itself is still reported as a risk...
       assert results["timeout_chain_risk"] != []

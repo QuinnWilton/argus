@@ -70,24 +70,6 @@ defmodule Argus.Analyses.Distributed do
         doc: "An rpc result whose failure value is not handled."
       },
       %{
-        name: :rpc_without_timeout,
-        fields: [
-          {:func, :symbol, "function with infinity RPC"},
-          {:variant, :symbol, "RPC variant"},
-          {:site, :symbol, "instruction ID of the RPC call"}
-        ],
-        key: [:func, :variant],
-        doc: "RPC call with default infinity timeout."
-      },
-      %{
-        name: :rpc_in_genserver_callback,
-        fields: [
-          {:func, :symbol, "GenServer callback"},
-          {:variant, :symbol, "RPC variant"}
-        ],
-        doc: "RPC inside GenServer callback (compounds timeout risk)."
-      },
-      %{
         name: :global_register_risk,
         fields: [
           {:func, :symbol, "function"},
@@ -96,18 +78,6 @@ defmodule Argus.Analyses.Distributed do
         ],
         key: [:func, :name],
         doc: "global.register_name without conflict resolution callback."
-      },
-      %{
-        name: :global_blocking_op,
-        fields: [
-          {:func, :symbol, "function calling :global"},
-          {:op, :symbol, "operation: set_lock | trans | ..."},
-          {:retries, :symbol, "resolved retries argument: infinity | positive integer"},
-          {:site, :symbol, "instruction ID of the :global call"}
-        ],
-        key: [:func, :op, :retries],
-        doc:
-          "Blocking :global synchronization (set_lock or trans with infinity or positive retries)."
       },
       %{
         name: :global_blocking_in_init,
@@ -186,30 +156,6 @@ defmodule Argus.Analyses.Distributed do
     )
   end
 
-  def finding(:rpc_without_timeout, [func, variant, site]) do
-    Findings.new(
-      :warning,
-      "RPC without a bounded timeout",
-      "#{func} makes a #{variant} call with an infinity timeout (the " <>
-        "default when none is passed, or `:infinity` given explicitly). A " <>
-        "partitioned, overloaded, or restarting peer blocks this process " <>
-        "indefinitely — distributed calls need explicit deadlines.",
-      at: Findings.at_instr(site)
-    )
-  end
-
-  def finding(:rpc_in_genserver_callback, [func, variant]) do
-    Findings.new(
-      :warning,
-      "RPC inside a GenServer callback",
-      "#{func} performs #{variant} while its GenServer is blocked in a " <>
-        "callback. Remote latency becomes local unavailability: every queued " <>
-        "caller waits on the network round-trip, and a peer outage stalls " <>
-        "the whole server.",
-      at: Findings.at_func(func)
-    )
-  end
-
   def finding(:global_register_risk, [func, name, site]) do
     Findings.new(
       :warning,
@@ -218,18 +164,6 @@ defmodule Argus.Analyses.Distributed do
         "After a netsplit heals, both partitions hold the name and the " <>
         "default resolution kills one of the processes at random — state " <>
         "loss decided by a coin flip.",
-      at: Findings.at_instr(site)
-    )
-  end
-
-  def finding(:global_blocking_op, [func, op, retries, site]) do
-    Findings.new(
-      :info,
-      "Cluster-wide :global synchronization",
-      "#{func} calls :global.#{op} with retries = #{retries}. :global " <>
-        "operations serialize across the whole cluster — fine when " <>
-        "deliberate, but every caller shares one distributed lock, and " <>
-        "partition recovery stalls them all.",
       at: Findings.at_instr(site)
     )
   end

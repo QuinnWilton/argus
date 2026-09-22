@@ -133,7 +133,7 @@ defmodule Argus.Clientlib.TagResolutionTest do
     skip_without_souffle()
 
     {:ok, results} =
-      Argus.analyze([Argus.Test.Fixtures.TagServerA, Argus.Test.Fixtures.TagServerB], :call_cycle)
+      Argus.analyze([Argus.Test.Fixtures.TagServerA, Argus.Test.Fixtures.TagServerB], :blocking)
 
     assert [[_, _, _, _]] = results["call_cycle"]
     assert Enum.all?(results["call_cycle_path"], fn [_, _, _, how] -> how == "tag" end)

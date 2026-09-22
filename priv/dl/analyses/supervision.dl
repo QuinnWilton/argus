@@ -164,7 +164,7 @@ rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "named") :-
   hpos < opos,
   supervisor_child_name(sup, hpos, name),
   function_def(f, owner, _, _, _),
-  sup_management_call(site, f, api, op, name),
+  sup_management_call(site, f, _, op, name),
   child_creating_op(op).
 
 rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "inferred") :-

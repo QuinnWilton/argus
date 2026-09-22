@@ -2,10 +2,8 @@
 # reads, resolved from Souffle's transformed program. A change here is a
 # change in the unit of incremental work: review the diff.
 [
-  call_cycle:
-    ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag function_def implements_behaviour sync_call),
-  callback_receive:
-    ~w(call_edge closure_def function_def implements_behaviour recv_start remote_call),
+  blocking:
+    ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag catch_tag catch_total closure_def function_def global_op implements_behaviour recv_start remote_call rpc_call sync_call sync_call_timeout try_call),
   coverage:
     ~w(async_cast dynamic_child ets_new ets_op function_def implements_behaviour imprecision named_process supervisor supervisor_child sync_call),
   deferred_startup_deadlock:
@@ -15,7 +13,7 @@
   effects:
     ~w(call_edge closure_def dynamic_call ets_new ets_op implements_behaviour impure_call port_open process_register protocol_dispatch pure_contract recv_start remote_call resolved_apply send_msg spawn_call unknown_call),
   error_handling:
-    ~w(bare_rescue call_arg call_arg_field call_arg_forward call_edge callback_tag callback_total catch_tag catch_total exit_call function_def ignored_error_result implements_behaviour mailbox_writer monitor_call recv_pattern returns_call sync_call_timeout timer_arm timer_cancel timer_ref timer_store trap_exit try_call),
+    ~w(bare_rescue call_arg call_arg_field call_arg_forward call_edge callback_tag callback_total exit_call function_def ignored_error_result implements_behaviour mailbox_writer monitor_call recv_pattern returns_call sync_call_timeout timer_arm timer_cancel timer_ref timer_store trap_exit),
   ets:
     ~w(call_arg call_arg_forward call_edge catch_tag catch_total closure_def dynamic_child ets_new ets_op ets_op_param ets_option function_def implements_behaviour statem_event_clause supervisor_child),
   exposure: ~w(function_def redacted_field schema_field tls_connect tls_verification),
@@ -27,8 +25,6 @@
     ~w(call_edge closure_def demonitor_call function_def implements_behaviour monitor_call monitor_ref_dropped recv_start remote_call statem_state sup_call),
   one_for_one_coupling:
     ~w(async_cast call_arg call_arg_forward call_edge call_site call_tag callback_tag dynamic_child function_def implements_behaviour process_link supervisor supervisor_child supervisor_site sync_call),
-  process_bottleneck:
-    ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag function_def implements_behaviour sync_call),
   process_registry: ~w(function_def process_register whereis_call),
   reply_contract: ~w(callback_drops_from callback_return function_def implements_behaviour),
   shutdown_safety:
@@ -37,8 +33,6 @@
     ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_stop_reason callback_tag child_spec_restart dynamic_child function_def implements_behaviour matches_down monitor_call post_start_call remote_call sup_call supervisor supervisor_child supervisor_child_form supervisor_child_name supervisor_site sync_call whereis_call),
   sync_call_in_init:
     ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag dynamic_child function_def handle_continue_clause implements_behaviour impure_call init_continues_to mailbox_writer recv_start remote_call statem_timeout sup_call supervisor supervisor_child sync_call sync_call_timeout unconditional_call_edge),
-  timeout_chain:
-    ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag function_def implements_behaviour sync_call sync_call_timeout),
   unlinked_spawn: ~w(spawn_call),
   unsafe_input:
     ~w(call_edge code_execution dynamic_child function_def http_route implements_behaviour socket_transport supervisor_max_children unsafe_atom_creation unsafe_deserialization),

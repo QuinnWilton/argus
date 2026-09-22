@@ -149,7 +149,25 @@ defmodule Argus.Analysis do
       %{analysis: :effects, relation: :impure_closure_to_pure, where: []},
       %{analysis: :effects, relation: :purity_verified, where: []}
     ],
-    transaction_safety: [%{analysis: :effects, relation: :effect_in_transaction, where: []}]
+    transaction_safety: [%{analysis: :effects, relation: :effect_in_transaction, where: []}],
+    timeout_chain: [
+      %{analysis: :blocking, relation: :timeout_chain_risk, where: []},
+      %{analysis: :blocking, relation: :blocking_cast_handler, where: []},
+      %{analysis: :blocking, relation: :timeout_insufficient, where: []},
+      %{analysis: :blocking, relation: :infinity_timeout_in_chain, where: []}
+    ],
+    call_cycle: [
+      %{analysis: :blocking, relation: :call_cycle, where: []},
+      %{analysis: :blocking, relation: :call_cycle_path, where: []}
+    ],
+    process_bottleneck: [
+      %{analysis: :blocking, relation: :sync_call_fan_in, where: []},
+      %{analysis: :blocking, relation: :bottleneck_caller, where: []}
+    ],
+    callback_receive: [
+      %{analysis: :blocking, relation: :blocking_receive_in_callback, where: []},
+      %{analysis: :blocking, relation: :receive_in_callback, where: []}
+    ]
   }
 
   @doc "The concern vocabulary: every built-in analysis is named after one."

@@ -72,7 +72,7 @@
     module: "Phoenix.LiveView.Channel",
     pre: "01b8517e3105e475c3499a965bd4ce702b72b0cd",
     fix: "b100e1070c6ff646261392359ce848adb5c29ec6",
-    finding: {:error_handling, "Peer call catches :noproc but not :shutdown"}
+    finding: {:blocking, "Peer call catches :noproc but not :shutdown"}
   },
   %{
     repo: "cabol/nebulex",
@@ -116,7 +116,7 @@
     repo: "elixir-horde/horde",
     issue: "horde#217",
     pre: "74820c2",
-    finding: {:call_cycle, "Synchronous call cycle"}
+    finding: {:blocking, "Synchronous call cycle"}
   },
   %{
     repo: "phoenixframework/phoenix_pubsub",
@@ -140,7 +140,7 @@
     issue: "cachex:router-rpc-without-timeout",
     module: "Cachex.Router",
     pre: "44ac7e445bba03a9953a46ff61da2f168dd8cc57",
-    finding: {:distributed, "RPC without a bounded timeout"}
+    finding: {:blocking, "RPC without a bounded timeout"}
   },
   %{
     repo: "elixir-horde/horde",

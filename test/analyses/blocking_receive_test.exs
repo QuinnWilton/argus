@@ -1,4 +1,4 @@
-defmodule Argus.Analyses.CallbackReceiveTest do
+defmodule Argus.Analyses.BlockingReceiveTest do
   use ExUnit.Case
 
   alias Argus.Souffle
@@ -9,7 +9,7 @@ defmodule Argus.Analyses.CallbackReceiveTest do
   end
 
   defp run(modules) do
-    assert {:ok, results} = Argus.analyze(modules, :callback_receive)
+    assert {:ok, results} = Argus.analyze(modules, :blocking)
 
     {Map.get(results, "blocking_receive_in_callback", []),
      Map.get(results, "receive_in_callback", [])}

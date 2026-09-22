@@ -1,4 +1,4 @@
-defmodule Argus.Analyses.ProcessBottleneckTest do
+defmodule Argus.Analyses.BlockingFanInTest do
   use ExUnit.Case
 
   alias Argus.Souffle
@@ -18,7 +18,7 @@ defmodule Argus.Analyses.ProcessBottleneckTest do
         Argus.Test.Fixtures.MyGenServer
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :process_bottleneck)
+      assert {:ok, results} = Argus.analyze(modules, :blocking)
       assert Map.has_key?(results, "bottleneck_caller")
       assert Map.has_key?(results, "sync_call_fan_in")
 
@@ -39,7 +39,7 @@ defmodule Argus.Analyses.ProcessBottleneckTest do
         Argus.Test.Fixtures.BottleneckCallerE
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :process_bottleneck)
+      assert {:ok, results} = Argus.analyze(modules, :blocking)
 
       fan_in = results["sync_call_fan_in"]
       assert length(fan_in) == 1
@@ -61,7 +61,7 @@ defmodule Argus.Analyses.ProcessBottleneckTest do
     test "runs without error on modules with no sync calls" do
       skip_without_souffle()
 
-      assert {:ok, results} = Argus.analyze([:maps], :process_bottleneck)
+      assert {:ok, results} = Argus.analyze([:maps], :blocking)
       assert Map.has_key?(results, "bottleneck_caller")
       assert Map.has_key?(results, "sync_call_fan_in")
     end

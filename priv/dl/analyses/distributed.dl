@@ -6,34 +6,7 @@
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
-// ── RPC without timeout ──────────────────────────────────────────
 
-// RPC call using default infinity timeout — hangs on netsplit.
-// site is the rpc call instruction. One row per site — finding
-// builders dedupe on (func, variant).
-.decl rpc_without_timeout(func: symbol, variant: symbol, site: symbol)
-.output rpc_without_timeout
-
-rpc_without_timeout(func, variant, id) :-
-  rpc_call(id, func, variant, "-1").
-
-// ── RPC in GenServer callback ────────────────────────────────────
-
-// Only the RPC directly in the callback is reported. The transitive
-// form — `rpc_call(_, g, _, _), call_reachable(func, g)` — was removed:
-// call_reachable runs over a function-granularity call graph that
-// collapses the clauses of a guarded dispatcher, so on the corpus every
-// GenServer callback that reached a library's routing function (Cachex's
-// Router.route, whose guards statically pick local vs. RPC) was reported
-// as making an RPC, even when the concrete action provably routes local.
-// All 13 of the analysis's transitive findings were false; the RPC sites
-// themselves are already surfaced by rpc_without_timeout.
-.decl rpc_in_genserver_callback(func: symbol, variant: symbol)
-.output rpc_in_genserver_callback
-
-rpc_in_genserver_callback(func, variant) :-
-  rpc_call(_, func, variant, _),
-  handler_function(_, func).
 
 // ── Global register without conflict resolution ──────────────────
 
@@ -55,7 +28,6 @@ global_register_risk(func, name, id) :-
 // site is the :global call instruction. One row per site — finding
 // builders dedupe on (func, op, retries).
 .decl global_blocking_op(func: symbol, op: symbol, retries: symbol, site: symbol)
-.output global_blocking_op
 
 global_blocking_op(func, op, retries, id) :-
   global_op(id, func, op, retries),

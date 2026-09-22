@@ -5,8 +5,7 @@ defmodule Argus.AnalysisTest do
   alias Argus.Souffle
 
   @expected_analyses [
-    :call_cycle,
-    :callback_receive,
+    :blocking,
     :coverage,
     :deferred_startup_deadlock,
     :distributed,
@@ -18,13 +17,11 @@ defmodule Argus.AnalysisTest do
     :message_contract,
     :monitor_leak,
     :one_for_one_coupling,
-    :process_bottleneck,
     :process_registry,
     :reply_contract,
     :shutdown_safety,
     :supervision,
     :sync_call_in_init,
-    :timeout_chain,
     :unlinked_spawn,
     :unsafe_input,
     :unsafe_task

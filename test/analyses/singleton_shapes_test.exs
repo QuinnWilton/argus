@@ -21,7 +21,7 @@ defmodule Argus.Analyses.SingletonShapesTest do
     {:ok, r} =
       Argus.analyze(
         [CatchShapes.NoprocOnly, CatchShapes.NoprocAndShutdown, CatchShapes.AnyExit],
-        :error_handling
+        :blocking
       )
 
     assert rows(r, "partial_noproc_catch") ==

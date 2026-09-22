@@ -1,0 +1,333 @@
+// A synchronous wait that can last forever or nest.
+//
+// Every one of these is a process waiting on another: a chain of
+// handle_call hops whose per-hop timeouts compose unpredictably, two
+// modules waiting on each other, a server that serializes too many
+// callers, a receive on an OTP process's own stack, a remote call with
+// no deadline, a cluster-wide lock, a peer call whose catch lets the
+// peer's shutdown crash the caller. The mechanism (GenServer.call, rpc,
+// :global, receive) is a column or a relation; the concern is the wait.
+
+.include "../clientlib/imports.dl"
+.include "../clientlib/otp.dl"
+.include "../clientlib/resolved_calls.dl"
+
+// ══ Call chains through handle_call ═════════════════════════════════
+.decl callback_sync_dep(from_mod: symbol, to_mod: symbol)
+
+callback_sync_dep(from_mod, to_mod) :- handler_dep(from_mod, "handle_call", to_mod, "call", _).
+
+// NOTE deliberately no `stateful_module_dep` clause here. It was
+// `handle_call_function(from_mod, _), stateful_module_dep(from_mod,
+// to_mod, _)` — an existence check that (a) never tied the dependency to
+// the handle_call (the dep could flow from init/1 or a cast handler),
+// (b) inherited stateful_module_dep's module-level heuristic (reaching a
+// PURE function like an ETS-read `Config.get/2` counts as calling the
+// Config server, because the module has a GenServer.call *somewhere*),
+// and (c) pulled async_cast edges into a "synchronous" chain. On a
+// 15-project corpus this clause produced every one of the analysis's 29
+// false positives (0 came from it that were real); the genuine chains
+// all derive from the genserver_sync_api rules above.
+
+// ── Timeout chain computation ────────────────────────────────────────
+
+// Transitive timeout chain: if A's handle_call syncs to B, and B's
+// handle_call syncs to C, then A has a chain through B to C.
+.decl timeout_chain(from: symbol, to: symbol, depth: number)
+
+// Base case: direct callback sync dependency (depth 1).
+timeout_chain(from, to, 1) :-
+  callback_sync_dep(from, to),
+  behaves_as(to, "GenServer").
+
+// Recursive case: chain through intermediate GenServer.
+timeout_chain(from, to, d + 1) :-
+  callback_sync_dep(from, mid),
+  timeout_chain(mid, to, d),
+  from != to,
+  d < 10.
+
+// ── Output: timeout chain risk ───────────────────────────────────────
+
+// Chains of depth >= 2 are risky: the outermost caller's timeout must
+// accommodate the sum of all intermediate timeouts.
+// A hop that exists only by tag attribution, and the chains that cross
+// one: an inferred hop is the first thing to doubt in a long chain.
+.decl callback_tag_dep(from_mod: symbol, to_mod: symbol)
+
+callback_tag_dep(from_mod, to_mod) :- handler_dep(from_mod, "handle_call", to_mod, "tag", _).
+
+.decl timeout_chain_inferred(from: symbol, to: symbol)
+
+timeout_chain_inferred(from, to) :-
+  timeout_chain(from, to, _),
+  callback_tag_dep(from, to).
+
+timeout_chain_inferred(from, to) :-
+  callback_sync_dep(from, mid),
+  timeout_chain(mid, to, _),
+  from != to,
+  (callback_tag_dep(from, mid) ; timeout_chain_inferred(mid, to)).
+
+.decl timeout_chain_risk(from: symbol, to: symbol, depth: number, inferred: symbol)
+.output timeout_chain_risk
+
+timeout_chain_risk(from, to, depth, "tag") :-
+  timeout_chain(from, to, depth),
+  depth >= 2,
+  timeout_chain_inferred(from, to).
+
+timeout_chain_risk(from, to, depth, "static") :-
+  timeout_chain(from, to, depth),
+  depth >= 2,
+  !timeout_chain_inferred(from, to).
+
+// ── Output: blocking cast handler ────────────────────────────────────
+
+.decl blocking_cast_handler(mod: symbol, target: symbol)
+.output blocking_cast_handler
+
+blocking_cast_handler(mod, target) :- handler_dep(mod, "handle_cast", target, "call", _).
+
+// ── Timeout-aware sync dependency ──────────────────────────────────
+
+.decl callback_sync_dep_timeout(from_mod: symbol, to_mod: symbol, timeout_ms: number)
+
+callback_sync_dep_timeout(from_mod, to_mod, timeout_ms) :-
+  handle_call_function(from_mod, func),
+  reaches_sync_dep_timeout(func, to_mod, timeout_ms),
+  from_mod != to_mod.
+
+// ── Output: timeout insufficient ───────────────────────────────────
+
+// A calls B with T_AB, B's handle_call calls someone with T_BC.
+// If T_AB < T_BC: A's budget strictly cannot accommodate B's downstream
+// work — B may legitimately wait longer than A is willing to.
+//
+// Equality is deliberately NOT flagged: the extractor encodes the
+// GenServer.call default as 5000, so T_AB = T_BC almost always means
+// "both sides use the default" — the universal configuration, not a
+// misconfiguration. The boundary case is real (equal budgets leave B
+// zero processing slack) but flagging it would mark nearly every
+// two-hop chain in real code as an error.
+.decl timeout_insufficient(caller: symbol, callee: symbol,
+                           caller_timeout: number, callee_downstream_timeout: number)
+.output timeout_insufficient
+
+timeout_insufficient(a, b, t_ab, t_bc) :-
+  callback_sync_dep_timeout(a, b, t_ab),
+  callback_sync_dep_timeout(b, _, t_bc),
+  t_ab > 0,     // not dynamic
+  t_ab != -1,   // not infinity
+  t_bc > 0,     // not dynamic
+  t_ab < t_bc.
+
+// ── Output: infinity timeout in chain ──────────────────────────────
+
+// Sync call in a chain uses :infinity timeout — can block forever.
+.decl infinity_timeout_in_chain(mod: symbol, target: symbol)
+.output infinity_timeout_in_chain
+
+infinity_timeout_in_chain(mod, target) :-
+  callback_sync_dep_timeout(mod, target, -1),
+  behaves_as(target, "GenServer").
+
+// ══ Mutual synchronous dependency ═══════════════════════════════════
+.decl call_cycle(mod_a: symbol, mod_b: symbol, witness_a: symbol, witness_b: symbol)
+.output call_cycle
+
+call_cycle(a, b, wa, wb) :-
+  module_sync_dep(a, b, wa),
+  module_sync_dep(b, a, wb),
+  a < b.
+
+// Full path of transitive sync dependencies for cycle participants.
+// One row per witness — finding builders dedupe on (from_mod, to_mod).
+// `how` is "tag" when the edge exists only because a dynamic-target call
+// was attributed by its message tag, "static" when the callee is named:
+// an inferred edge is the first thing to doubt in a surprising cycle.
+.decl call_cycle_path(from_mod: symbol, to_mod: symbol, witness: symbol, how: symbol)
+.output call_cycle_path
+
+call_cycle_path(from_mod, to_mod, witness, "tag") :-
+  call_cycle(a, b, _, _),
+  module_sync_dep(from_mod, to_mod, witness),
+  (from_mod = a ; from_mod = b),
+  (to_mod = a ; to_mod = b),
+  reaches_tag_dep(witness, to_mod).
+
+call_cycle_path(from_mod, to_mod, witness, "static") :-
+  call_cycle(a, b, _, _),
+  module_sync_dep(from_mod, to_mod, witness),
+  (from_mod = a ; from_mod = b),
+  (to_mod = a ; to_mod = b),
+  !reaches_tag_dep(witness, to_mod).
+
+// ══ Synchronous fan-in ══════════════════════════════════════════════
+.decl sync_caller_witness(caller_mod: symbol, target_mod: symbol, witness: symbol)
+
+sync_caller_witness(caller_mod, target_mod, f) :- module_sync_dep(caller_mod, target_mod, f).
+
+.decl sync_caller(caller_mod: symbol, target_mod: symbol)
+
+sync_caller(caller_mod, target_mod) :- sync_caller_witness(caller_mod, target_mod, _).
+
+// ── Fan-in aggregation ─────────────────────────────────────────────────
+
+// Count of distinct caller modules for each GenServer target.
+.decl sync_call_fan_in(target_mod: symbol, cnt: number)
+.output sync_call_fan_in
+
+sync_call_fan_in(target_mod, cnt) :-
+  behaves_as(target_mod, "GenServer"),
+  cnt = count : { sync_caller(_, target_mod) },
+  cnt >= 5.
+
+// ── Bottleneck callers ──────────────────────────────────────────────────
+
+// Sync callers filtered to only targets that exceed the fan-in threshold.
+// This separates normal centralized services (1–4 callers) from true
+// serialization bottlenecks. One row per witness — finding builders
+// dedupe on (caller_mod, target_mod).
+.decl bottleneck_caller(caller_mod: symbol, target_mod: symbol, witness: symbol)
+.output bottleneck_caller
+
+bottleneck_caller(caller_mod, target_mod, witness) :-
+  sync_caller_witness(caller_mod, target_mod, witness),
+  sync_call_fan_in(target_mod, _).
+
+// ══ A receive on an OTP process's own stack ═════════════════════════
+.decl same_process_edge(caller: symbol, callee: symbol)
+
+same_process_edge(caller, callee) :-
+  call_edge(caller, callee),
+  !closure_def(caller, callee).
+
+.decl callback_reaches(entry: symbol, func: symbol, proximity: symbol)
+
+callback_reaches(entry, entry, "direct") :-
+  otp_callback(entry, _, _, _).
+
+callback_reaches(entry, callee, "helper") :-
+  otp_callback(entry, _, _, _),
+  same_process_edge(entry, callee).
+
+// ── Findings ─────────────────────────────────────────────────────
+
+// ── The cancel_timer flush idiom ─────────────────────────────────
+//
+// A blocking receive is NOT a bug when it is flushing an already-delivered
+// timer message:
+//
+//     if Process.cancel_timer(ref) == false do
+//       receive do :tick -> :ok end
+//     end
+//
+// `cancel_timer/1` returning false means the timer had already expired, so
+// the message has already been sent and is sitting in the mailbox — the
+// receive is guaranteed to match, and OTP's own code is written this way.
+// This is the documented way to keep a stale timer message from being
+// mistaken for a fresh one later.
+//
+// Found by verification, not by anticipation: both blocking receives in the
+// first corpus sweep were this idiom, and reporting them as hangs would
+// have been the analysis's entire output on that project.
+//
+// The suppression is function-granular, so a function that both flushes a
+// timer AND has an unrelated blocking receive is missed. That is the right
+// direction to be wrong: a false negative costs a finding, a false positive
+// costs the reader's trust in every other finding.
+.decl cancels_timer(func: symbol)
+
+cancels_timer(func) :-
+  remote_call(_, func, ":erlang", "cancel_timer", _).
+
+// A receive with no `after`, running on an OTP process's own stack. This
+// is the one that hangs: no timeout means no way out if the expected
+// message never arrives, and the supervisor can only brutal-kill.
+.decl blocking_receive_in_callback(id: symbol, func: symbol, callback: symbol, behaviour: symbol, proximity: symbol)
+.output blocking_receive_in_callback
+
+blocking_receive_in_callback(id, func, callback, behaviour, proximity) :-
+  recv_start(id, func, 1, _),
+  callback_reaches(callback, func, proximity),
+  otp_callback(callback, _, _, behaviour),
+  !cancels_timer(func).
+
+// A receive WITH a timeout. It cannot hang, but it still consumes from the
+// behaviour's mailbox and still re-scans the queue.
+.decl receive_in_callback(id: symbol, func: symbol, callback: symbol, behaviour: symbol, proximity: symbol)
+.output receive_in_callback
+
+receive_in_callback(id, func, callback, behaviour, proximity) :-
+  recv_start(id, func, 0, _),
+  callback_reaches(callback, func, proximity),
+  otp_callback(callback, _, _, behaviour).
+
+// ══ Remote calls and cluster-wide locks ═════════════════════════════
+
+// ── RPC without timeout ──────────────────────────────────────────
+
+// RPC call using default infinity timeout — hangs on netsplit.
+// site is the rpc call instruction. One row per site — finding
+// builders dedupe on (func, variant).
+.decl rpc_without_timeout(func: symbol, variant: symbol, site: symbol)
+.output rpc_without_timeout
+
+rpc_without_timeout(func, variant, id) :-
+  rpc_call(id, func, variant, "-1").
+
+// ── RPC in GenServer callback ────────────────────────────────────
+
+// Only the RPC directly in the callback is reported. The transitive
+// form — `rpc_call(_, g, _, _), call_reachable(func, g)` — was removed:
+// call_reachable runs over a function-granularity call graph that
+// collapses the clauses of a guarded dispatcher, so on the corpus every
+// GenServer callback that reached a library's routing function (Cachex's
+// Router.route, whose guards statically pick local vs. RPC) was reported
+// as making an RPC, even when the concrete action provably routes local.
+// All 13 of the analysis's transitive findings were false; the RPC sites
+// themselves are already surfaced by rpc_without_timeout.
+.decl rpc_in_genserver_callback(func: symbol, variant: symbol)
+.output rpc_in_genserver_callback
+
+rpc_in_genserver_callback(func, variant) :-
+  rpc_call(_, func, variant, _),
+  handler_function(_, func).
+
+// ── Blocking :global synchronization ─────────────────────────────
+
+// :global.set_lock and :global.trans block on netsplit when retries
+// is :infinity or any positive integer (which retries with backoff).
+// retries = "0" means try once and return immediately — non-blocking.
+// site is the :global call instruction. One row per site — finding
+// builders dedupe on (func, op, retries).
+.decl global_blocking_op(func: symbol, op: symbol, retries: symbol, site: symbol)
+.output global_blocking_op
+
+global_blocking_op(func, op, retries, id) :-
+  global_op(id, func, op, retries),
+  retries != "0",
+  retries != "dynamic".
+
+// ══ A peer call that catches :noproc but not :shutdown ══════════════
+
+// ── A peer call that catches :noproc but not :shutdown ───────────────
+//
+// `catch :exit, {:noproc, _}` around a GenServer.call says the peer may
+// not exist. The peer stopping while the call is in flight is the same
+// condition, but it arrives as `{:shutdown, _}` (or `{:normal, _}`) —
+// and this catch lets it crash the caller. A child LiveView syncing with
+// its parent lost the parent's navigation that way
+// (phoenixframework/phoenix_live_view#4359). A clause for `{:shutdown,
+// _}`, or a bare `:exit, reason`, covers it.
+.decl partial_noproc_catch(func: symbol, site: symbol, callee: symbol)
+.output partial_noproc_catch
+
+partial_noproc_catch(func, id, callee) :-
+  try_call(id, func, callee),
+  peer_call(callee),
+  catch_tag(id, func, "exit", ":noproc"),
+  !catch_tag(id, func, "exit", ":shutdown"),
+  !catch_tag(id, func, "exit", ":normal"),
+  !site_catches_class(id, func, "exit").
