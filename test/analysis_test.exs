@@ -42,6 +42,10 @@ defmodule Argus.AnalysisTest do
       end
     end
 
+    test "the built-in analyses are exactly the concerns" do
+      assert Analysis.builtin_analyses() == Enum.sort(Analysis.concerns())
+    end
+
     test "sets partition the built-in analyses" do
       sets = Analysis.sets()
       assert Enum.sort(sets.security ++ sets.effects ++ sets.otp) == Enum.sort(sets.all)
