@@ -65,27 +65,6 @@ defmodule Argus.Analyses.UnsafeTaskTest do
       assert Enum.any?(leaked, fn [func, _id] -> String.contains?(func, "fire_and_forget") end)
     end
 
-    test "detects unchecked start_child" do
-      skip_without_souffle()
-
-      assert {:ok, results} =
-               Argus.analyze([Argus.Test.Fixtures.UncheckedStartChild], :unsafe_task)
-
-      assert Map.has_key?(results, "unchecked_start_child")
-      unchecked = results["unchecked_start_child"]
-
-      funcs = Enum.map(unchecked, fn [func, _id] -> func end)
-
-      # start_unchecked ignores the result.
-      assert Enum.any?(funcs, &String.contains?(&1, "start_unchecked"))
-
-      # start_checked uses case on the result — should NOT be flagged.
-      refute Enum.any?(funcs, &String.contains?(&1, "start_checked"))
-
-      # start_tail is a tail call — result propagated, should NOT be flagged.
-      refute Enum.any?(funcs, &String.contains?(&1, "start_tail"))
-    end
-
     test "does not flag Task.Supervisor.async_nolink as leaked" do
       skip_without_souffle()
 
@@ -206,7 +185,6 @@ defmodule Argus.Analyses.UnsafeTaskTest do
 
       assert {:ok, results} = Argus.analyze([:maps], :unsafe_task)
       assert Map.has_key?(results, "leaked_async_task")
-      assert Map.has_key?(results, "unchecked_start_child")
     end
   end
 

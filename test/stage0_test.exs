@@ -137,10 +137,10 @@ defmodule Argus.Stage0Test do
       assert Enum.all?(sets, fn {name, rels} -> rels != [] or flunk("#{name} reads nothing") end)
       assert sets |> Enum.map(&elem(&1, 1)) |> Enum.uniq() |> length() > 10
 
-      # And the spread is real: the supervision family reads a lot, while
-      # unlinked_spawn is down to the single relation it actually needs.
-      assert {_, spawn_relations} = Enum.find(sets, &(elem(&1, 0) == :unlinked_spawn))
-      assert spawn_relations == ["spawn_call"]
+      # And the spread is real: startup reads a lot, while exposure is down
+      # to the few relations it actually needs.
+      assert {_, exposure_relations} = Enum.find(sets, &(elem(&1, 0) == :exposure))
+      assert length(exposure_relations) <= 5
 
       {_, supervision_relations} = Enum.find(sets, &(elem(&1, 0) == :startup))
       assert length(supervision_relations) > 8

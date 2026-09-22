@@ -1,0 +1,170 @@
+// An error path swallowed, half-caught or ignored.
+//
+// A failure the code could have seen and did not: a rescue that keeps
+// every exception, a remote call whose failure value nothing matches,
+// a start result discarded, a lookup used without its nil case, a
+// process spawned with nothing watching it, an exit signal sent from a
+// callback past the supervisor that owns the target.
+
+.include "../clientlib/imports.dl"
+.include "../clientlib/otp.dl"
+
+// ── Swallowed errors ─────────────────────────────────────────────
+
+// Catch-all rescue that silently discards exceptions.
+.decl swallowed_error(func: symbol)
+.output swallowed_error
+
+swallowed_error(func) :-
+  bare_rescue(_, func).
+
+// ── Exit in GenServer callback ───────────────────────────────────
+
+// Only exit *signals* — Process.exit/2, :erlang.exit/2 — count here.
+// `:erlang.exit/1` (target "self") *raises* an exit in the current
+// process: the "let it crash on an impossible state" idiom
+// (`exit(:unexpected_checkout)`) and ordinary client-call failure
+// propagation, both fully supervision-visible and not a bypass. It is
+// excluded via `target != "self"`, the sentinel the extractor uses for
+// the /1 form.
+.init exit_reach = CallReach
+
+exit_reach.seed(g, target) :- exit_call(_, g, target).
+
+.decl exit_in_callback(func: symbol, target: symbol)
+.output exit_in_callback
+
+exit_in_callback(func, target) :-
+  exit_call(_, func, target),
+  handler_function(_, func),
+  target != "self".
+
+exit_in_callback(func, target) :-
+  exit_reach.reaches(func, target),
+  handler_function(_, func),
+  target != "self".
+
+// ══ Remote calls whose failure is not a value ═══════════════════════
+.decl erpc_transport_unhandled(func: symbol, site: symbol)
+.output erpc_transport_unhandled
+
+erpc_transport_unhandled(func, id) :-
+  try_call(id, func, callee),
+  (callee = ":erpc:call/4" ; callee = ":erpc:call/5"),
+  catch_tag(id, func, "error", ":exception"),
+  !catch_tag(id, func, "error", ":erpc"),
+  catch_falls_through(id, func, ":exception").
+
+// ── An rpc result that is not a value ─────────────────────────────────
+//
+// :rpc.call answers a node that is gone with {:badrpc, :nodedown} (a
+// timeout, a remote exit: {:badrpc, reason} too). Matched by shape with
+// no clause for it, that is a CaseClauseError (rabbitmq-cli#193,
+// phoenix_live_dashboard#218, livebook#972); tested as a boolean it is
+// TRUE — `member?(n) && :rpc.call(n, Process, :alive?, [pid])` says the
+// process on a gone node is alive (horde, until 30bb1a1). :erpc.call
+// raises instead, so in a boolean context it needs a rescue (horde's
+// fix: catch {:erpc, :noconnection} -> false).
+.decl rpc_result_unhandled(func: symbol, site: symbol, variant: symbol, shape: symbol)
+.output rpc_result_unhandled
+
+rpc_result_unhandled(f, id, v, "case") :-
+  rpc_call(id, f, v, _),
+  (v = "rpc" ; v = "multicall"),
+  rpc_result(id, f, "case").
+
+// Used as a boolean: tested against true/false/nil after the call, or
+// returned as the result of a predicate (a function named `...?`), whose
+// callers test it.
+.decl rpc_boolean_use(id: symbol, func: symbol)
+
+rpc_boolean_use(id, f) :- rpc_result(id, f, "boolean").
+
+rpc_boolean_use(id, f) :-
+  rpc_result(id, f, "returned"),
+  function_def(f, _, name, _, _),
+  match(".*\\?", name).
+
+rpc_result_unhandled(f, id, v, "boolean") :-
+  rpc_call(id, f, v, _),
+  (v = "rpc" ; v = "multicall"),
+  rpc_boolean_use(id, f).
+
+rpc_result_unhandled(f, id, "erpc", "boolean") :-
+  rpc_call(id, f, "erpc", _),
+  rpc_boolean_use(id, f),
+  !catches_class(f, "error"),
+  !catch_tag(_, f, "error", ":erpc").
+
+// ══ Results discarded ═══════════════════════════════════════════════
+
+// ── Task.Supervisor.start_child detection ──────────────────────────────
+
+.decl task_start_child_call(func: symbol, id: symbol)
+
+task_start_child_call(func, id) :-
+  remote_call(id, func, "Task.Supervisor", "start_child", _).
+
+// ── Unchecked start_child ──────────────────────────────────────────────
+
+// A start_child call whose result is checked: either in tail position
+// (result propagated to caller) or followed by a branch instruction in
+// the same function (result pattern-matched).
+.decl start_child_result_checked(func: symbol, id: symbol)
+
+// Tail position: result goes to the caller.
+start_child_result_checked(func, id) :-
+  task_start_child_call(func, id),
+  tail_call(id).
+
+// Branch after start_child: result is pattern-matched.
+//
+// `call_followed_by_branch` is emitted by the extractor and holds exactly
+// what the two `instruction` joins used to compute: this call has some
+// branch later in its function. Asking Datalog to compare two instruction
+// INDEXES meant joining `instruction` — 343k rows on a 531-module project,
+// rewritten whenever any function body changes — to answer a yes/no
+// question, and it made unsafe_task the last analysis reading that
+// relation and by far the most expensive one.
+//
+// The predicate is as coarse as it ever was: a branch anywhere later in
+// the function counts, including one in an unrelated clause, so this is a
+// weak proxy for "the result was pattern-matched". That weakness is
+// preserved on purpose — moving where it is computed must not change what
+// it computes. Sharpening it (asking whether the call's result register is
+// actually inspected, which the extractor helpers can do) changes findings
+// and belongs in its own commit.
+start_child_result_checked(func, id) :-
+  task_start_child_call(func, id),
+  call_followed_by_branch(id).
+
+// start_child call whose result is not checked by any of the above.
+.decl unchecked_start_child(func: symbol, id: symbol)
+.output unchecked_start_child
+
+unchecked_start_child(func, id) :-
+  task_start_child_call(func, id),
+  !start_child_result_checked(func, id).
+
+// ══ Processes nobody watches ════════════════════════════════════════
+
+.decl unlinked_spawn(func: symbol, id: symbol)
+.output unlinked_spawn
+
+unlinked_spawn(func, id) :-
+  spawn_call(id, func, _, _, _, "spawn").
+
+// This analysis used to join `instruction(id, func, _, _)` purely to
+// recover the spawning function. Its input set was therefore
+// {instruction, spawn_call} — and `instruction` is the largest relation in
+// the schema. On a 531-module project that is 343,352 rows serialized and
+// re-read to accompany a `spawn_call` relation with ZERO rows: 1.56s per
+// edit to look at nothing. `spawn_call` now carries its caller.
+
+.decl whereis_race(id: symbol, func: symbol, name: symbol)
+.output whereis_race
+
+whereis_race(id, func, name) :-
+  whereis_call(id, func, name, "unchecked"),
+  name != "dynamic",
+  name != ":dynamic".

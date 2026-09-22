@@ -46,6 +46,11 @@ is the table). Named sets (`:all`, `:default`, `:security`, `:effects`,
 | `supervision` (rest) | `shutdown`, `permanent_child_stops_normally` | supervision is retired; its alias spans coupling, structure, startup and shutdown |
 | `error_handling` (part) | `shutdown`, `trap_exit_without_handler`, `trap_exit_without_exit_clause` | unchanged |
 | `monitor_leak` (part) | `shutdown`, `deliberate_termination_while_monitored` | unchanged |
+| `distributed` (rest) | `failure`, `erpc_transport_unhandled`, `rpc_result_unhandled` | distributed is retired; its alias spans blocking, structure, startup and failure |
+| `error_handling` (part) | `failure`, `swallowed_error`, `exit_in_callback` | unchanged |
+| `unsafe_task` (part) | `failure`, `unchecked_start_child` | unchanged |
+| `unlinked_spawn` | `failure`, `unlinked_spawn` | unchanged |
+| `process_registry` (rest) | `failure`, `whereis_race` | process_registry is retired |
 
 ## 0.16.0 — 2026-09-21
 

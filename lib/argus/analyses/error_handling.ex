@@ -80,11 +80,6 @@ defmodule Argus.Analyses.ErrorHandling do
         doc: "A cancelled timer's message may already be in the mailbox and is not told apart."
       },
       %{
-        name: :swallowed_error,
-        fields: [{:func, :symbol, "function with bare rescue"}],
-        doc: "Catch-all rescue that silently discards exceptions."
-      },
-      %{
         name: :handle_info_without_catchall,
         fields: [
           {:mod, :symbol, "module"},
@@ -104,14 +99,6 @@ defmodule Argus.Analyses.ErrorHandling do
           "A GenServer or GenStage defines handle_info/2 without a catch-all " <>
             "clause; nothing in the module invites runtime messages, but any " <>
             "stray message is a FunctionClauseError."
-      },
-      %{
-        name: :exit_in_callback,
-        fields: [
-          {:func, :symbol, "callback function"},
-          {:target, :symbol, "exit target"}
-        ],
-        doc: "Explicit Process.exit/2 inside GenServer callback."
       }
     ]
   end
@@ -133,18 +120,6 @@ defmodule Argus.Analyses.ErrorHandling do
         "put the timer ref in the message (`{#{message}, ref}`) and match it against #{key}",
         "or flush after cancelling: `receive do #{message} -> :ok after 0 -> :ok end`"
       ]
-    )
-  end
-
-  def finding(:swallowed_error, [func]) do
-    Findings.new(
-      :warning,
-      "Catch-all rescue swallows exceptions",
-      "#{func} rescues every exception without re-raising, logging, or " <>
-        "matching specific types. Bugs become silence: the failure surfaces " <>
-        "later, far from its cause, with the stacktrace gone. Rescue the " <>
-        "specific exceptions you can actually handle.",
-      at: Findings.at_func(func)
     )
   end
 
@@ -183,20 +158,6 @@ defmodule Argus.Analyses.ErrorHandling do
         "add a final `handle_info(msg, state)` clause that logs the " <>
           "message and returns `{:noreply, state}`"
       ]
-    )
-  end
-
-  def finding(:exit_in_callback, [func, target]) do
-    Findings.new(
-      :info,
-      "Process.exit inside a GenServer callback",
-      "#{func} sends an exit signal to #{target} from inside a callback. " <>
-        "This is often deliberate — process-manager handoff, registry " <>
-        "name-conflict resolution, an ownership watcher killing dependents — " <>
-        "but killing a process imperatively bypasses the supervisor that " <>
-        "started it, so it is worth confirming the target is meant to be " <>
-        "torn down this way rather than stopped through its own protocol.",
-      at: Findings.at_func(func)
     )
   end
 end

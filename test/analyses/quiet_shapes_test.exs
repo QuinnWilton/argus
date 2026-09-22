@@ -41,7 +41,7 @@ defmodule Argus.Analyses.QuietShapesTest do
     coupling: ~w(dual_restart_authority),
     blocking: ~w(partial_noproc_catch),
     error_handling: ~w(handle_info_partial),
-    distributed: ~w(erpc_transport_unhandled),
+    failure: ~w(erpc_transport_unhandled),
     ets: ~w(ets_read_outside_owner),
     startup: ~w(blocking_recv_in_init post_start_initialization)
   }

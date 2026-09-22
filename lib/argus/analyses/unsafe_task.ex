@@ -94,14 +94,6 @@ defmodule Argus.Analyses.UnsafeTask do
         ],
         doc:
           "Task.async in a function that is not a process callback links the task to an unknown caller."
-      },
-      %{
-        name: :unchecked_start_child,
-        fields: [
-          {:func, :symbol, "function containing the start_child call"},
-          {:id, :symbol, "instruction ID of the start_child call"}
-        ],
-        doc: "Task.Supervisor.start_child result discarded without error handling."
       }
     ]
   end
@@ -181,23 +173,6 @@ defmodule Argus.Analyses.UnsafeTask do
         "consume the result with `Task.await/2` (or `Task.yield/2` plus " <>
           "`Task.shutdown/1`), or use `Task.Supervisor.start_child/2` for " <>
           "fire-and-forget work"
-      ]
-    )
-  end
-
-  def finding(:unchecked_start_child, [func, id]) do
-    Findings.new(
-      :warning,
-      "start_child result not checked",
-      "#{func} discards the result of Task.Supervisor.start_child. A " <>
-        "{:error, reason} return — supervisor at max_children, not yet " <>
-        "started, bad child spec — is silently ignored, so failed launches " <>
-        "look exactly like successful ones.",
-      at: Findings.at_instr(id),
-      at_label: "start_child result discarded here",
-      help: [
-        "match on the result — `{:ok, pid} = Task.Supervisor.start_child(...)` " <>
-          "at minimum, or handle `{:error, reason}` explicitly"
       ]
     )
   end

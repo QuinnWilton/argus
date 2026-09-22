@@ -202,6 +202,21 @@ defmodule Argus.Analysis do
       %{analysis: :startup, relation: :wrong_start_order, where: []},
       %{analysis: :startup, relation: :post_start_initialization, where: []},
       %{analysis: :shutdown, relation: :permanent_child_stops_normally, where: []}
+    ],
+    distributed: [
+      %{analysis: :blocking, relation: :rpc_without_timeout, where: []},
+      %{analysis: :blocking, relation: :rpc_in_genserver_callback, where: []},
+      %{analysis: :blocking, relation: :global_blocking_op, where: []},
+      %{analysis: :structure, relation: :global_register_risk, where: []},
+      %{analysis: :startup, relation: :global_blocking_in_init, where: []},
+      %{analysis: :startup, relation: :distributed_in_init, where: []},
+      %{analysis: :failure, relation: :erpc_transport_unhandled, where: []},
+      %{analysis: :failure, relation: :rpc_result_unhandled, where: []}
+    ],
+    unlinked_spawn: [%{analysis: :failure, relation: :unlinked_spawn, where: []}],
+    process_registry: [
+      %{analysis: :structure, relation: :duplicate_process_name, where: []},
+      %{analysis: :failure, relation: :whereis_race, where: []}
     ]
   }
 
@@ -252,7 +267,7 @@ defmodule Argus.Analysis do
       :coupling,
       :shutdown,
       :structure,
-      :unlinked_spawn,
+      :failure,
       :unsafe_task
     ]
   end

@@ -1,4 +1,4 @@
-defmodule Argus.Analyses.UnlinkedSpawnTest do
+defmodule Argus.Analyses.FailureSpawnTest do
   use ExUnit.Case
 
   alias Argus.Souffle
@@ -7,12 +7,12 @@ defmodule Argus.Analyses.UnlinkedSpawnTest do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
-  describe "unlinked_spawn.dl" do
+  describe "failure.dl" do
     test "detects bare spawn calls in fixture" do
       skip_without_souffle()
 
       assert {:ok, results} =
-               Argus.analyze([Argus.Test.Fixtures.UnlinkedSpawner], :unlinked_spawn)
+               Argus.analyze([Argus.Test.Fixtures.UnlinkedSpawner], :failure)
 
       assert Map.has_key?(results, "unlinked_spawn")
       unlinked = results["unlinked_spawn"]

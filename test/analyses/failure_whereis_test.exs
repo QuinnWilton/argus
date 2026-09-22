@@ -1,4 +1,4 @@
-defmodule Argus.Analyses.ProcessRegistryTest do
+defmodule Argus.Analyses.FailureWhereisTest do
   use ExUnit.Case
 
   alias Argus.Souffle
@@ -8,7 +8,7 @@ defmodule Argus.Analyses.ProcessRegistryTest do
   end
 
   defp analyze(modules) do
-    assert {:ok, results} = Argus.analyze(modules, :process_registry)
+    assert {:ok, results} = Argus.analyze(modules, :failure)
     results
   end
 

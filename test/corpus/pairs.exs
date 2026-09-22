@@ -80,7 +80,7 @@
     module: "Nebulex.RPC",
     pre: "faff154",
     fix: "bde4e3fe832e8a5b87a2aa2b41f3b356e9e62f18",
-    finding: {:distributed, ":erpc.call transport failures fall through the rescue"}
+    finding: {:failure, ":erpc.call transport failures fall through the rescue"}
   },
   %{
     repo: "whatyouhide/redix",
@@ -163,7 +163,7 @@
     module: "Horde.Registry",
     pre: "f9ef5c4c9d1ad6f24a619a2252b5f25ec6602493",
     fix: "30bb1a17ebbec4a834bd7b7845ab021e5b696225",
-    finding: {:distributed, ":erpc.call in a boolean context with no rescue"}
+    finding: {:failure, ":erpc.call in a boolean context with no rescue"}
   },
   %{
     repo: "phoenixframework/phoenix_live_dashboard",
@@ -171,7 +171,7 @@
     # The rpc and its shape match live in the SystemInfo wrapper.
     module: "Phoenix.LiveDashboard.SystemInfo",
     pre: "e562c63922ea3518d7963bef3e84b433dae5cd80",
-    finding: {:distributed, "RPC result matched without a {:badrpc, _} clause"}
+    finding: {:failure, "RPC result matched without a {:badrpc, _} clause"}
   },
   %{
     repo: "beam-bots/bb",

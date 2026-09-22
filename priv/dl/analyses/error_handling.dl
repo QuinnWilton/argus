@@ -5,14 +5,6 @@
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
-// ── Swallowed errors ─────────────────────────────────────────────
-
-// Catch-all rescue that silently discards exceptions.
-.decl swallowed_error(func: symbol)
-.output swallowed_error
-
-swallowed_error(func) :-
-  bare_rescue(_, func).
 
 
 // ── Trap exit with a handle_info that never matches {:EXIT, ...} ──
@@ -102,31 +94,6 @@ handle_info_partial(mod, h) :-
   !trap_exit_without_exit_clause(mod, _),
   !statem_process(mod).
 
-// ── Exit in GenServer callback ───────────────────────────────────
-
-// Only exit *signals* — Process.exit/2, :erlang.exit/2 — count here.
-// `:erlang.exit/1` (target "self") *raises* an exit in the current
-// process: the "let it crash on an impossible state" idiom
-// (`exit(:unexpected_checkout)`) and ordinary client-call failure
-// propagation, both fully supervision-visible and not a bypass. It is
-// excluded via `target != "self"`, the sentinel the extractor uses for
-// the /1 form.
-.init exit_reach = CallReach
-
-exit_reach.seed(g, target) :- exit_call(_, g, target).
-
-.decl exit_in_callback(func: symbol, target: symbol)
-.output exit_in_callback
-
-exit_in_callback(func, target) :-
-  exit_call(_, func, target),
-  handler_function(_, func),
-  target != "self".
-
-exit_in_callback(func, target) :-
-  exit_reach.reaches(func, target),
-  handler_function(_, func),
-  target != "self".
 
 
 

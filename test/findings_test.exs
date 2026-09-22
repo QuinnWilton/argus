@@ -62,19 +62,19 @@ defmodule Argus.FindingsTest do
       skip_without_souffle()
 
       assert {:ok, %Findings{} = result} =
-               Argus.run_analyses([Fixtures.UnlinkedSpawner], analyses: [:unlinked_spawn])
+               Argus.run_analyses([Fixtures.UnlinkedSpawner], analyses: [:failure])
 
       assert [finding] = result.findings
       assert_finding_shape(finding)
 
-      assert finding.analysis == :unlinked_spawn
+      assert finding.analysis == :failure
       assert finding.severity == :warning
       assert finding.module == Fixtures.UnlinkedSpawner
       assert finding.mfa == {Fixtures.UnlinkedSpawner, :spawn_unlinked, 0}
       assert %InstrId{func: "spawn_unlinked", arity: 0, idx: idx} = finding.instr
       assert is_integer(idx) and idx >= 0
 
-      assert [%{analysis: :unlinked_spawn, duration_ms: ms, finding_count: 1}] = result.ran
+      assert [%{analysis: :failure, duration_ms: ms, finding_count: 1}] = result.ran
       assert is_integer(ms) and ms >= 0
       assert result.degraded == []
     end
@@ -294,14 +294,14 @@ defmodule Argus.FindingsTest do
 
       assert {:ok, result} =
                Argus.run_analyses([Fixtures.UnlinkedSpawner],
-                 analyses: [:unlinked_spawn],
+                 analyses: [:failure],
                  souffle_timeout: 1
                )
 
       assert result.findings == []
       assert result.ran == []
 
-      assert [%{analysis: :unlinked_spawn, reason: :souffle_timeout, detail: detail}] =
+      assert [%{analysis: :failure, reason: :souffle_timeout, detail: detail}] =
                result.degraded
 
       assert detail =~ "timed out"
@@ -311,7 +311,7 @@ defmodule Argus.FindingsTest do
       skip_without_souffle()
 
       assert {:error, {:not_found, :fake_module_xyz}} =
-               Argus.run_analyses([:fake_module_xyz], analyses: [:unlinked_spawn])
+               Argus.run_analyses([:fake_module_xyz], analyses: [:failure])
     end
   end
 

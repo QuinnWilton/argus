@@ -31,7 +31,7 @@ defmodule Argus.Analyses.SingletonShapesTest do
   test "an :erpc rescue with no clause for transport failures is reported" do
     skip_without_souffle()
 
-    {:ok, r} = Argus.analyze([CatchShapes.Erpc], :distributed)
+    {:ok, r} = Argus.analyze([CatchShapes.Erpc], :failure)
 
     assert rows(r, "erpc_transport_unhandled") == [
              "Argus.Test.Fixtures.CatchShapes.Erpc:partial/4"

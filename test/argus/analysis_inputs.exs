@@ -8,22 +8,21 @@
     ~w(async_cast call_arg call_arg_forward call_edge call_site call_tag callback_tag child_spec_restart dynamic_child function_def implements_behaviour matches_down monitor_call process_link sup_call supervisor supervisor_child supervisor_child_name supervisor_site sync_call whereis_call),
   coverage:
     ~w(async_cast dynamic_child ets_new ets_op function_def implements_behaviour imprecision named_process supervisor supervisor_child sync_call),
-  distributed:
-    ~w(catch_falls_through catch_tag catch_total function_def rpc_call rpc_result try_call),
   effects:
     ~w(call_edge closure_def dynamic_call ets_new ets_op implements_behaviour impure_call port_open process_register protocol_dispatch pure_contract recv_start remote_call resolved_apply send_msg spawn_call unknown_call),
   error_handling:
-    ~w(bare_rescue call_arg call_arg_field call_arg_forward call_edge callback_tag callback_total exit_call function_def implements_behaviour mailbox_writer monitor_call recv_pattern returns_call sync_call_timeout timer_arm timer_cancel timer_ref timer_store trap_exit),
+    ~w(call_arg call_arg_field call_arg_forward call_edge callback_tag callback_total function_def implements_behaviour mailbox_writer monitor_call recv_pattern returns_call sync_call_timeout timer_arm timer_cancel timer_ref timer_store trap_exit),
   ets:
     ~w(call_arg call_arg_forward call_edge catch_tag catch_total closure_def dynamic_child ets_new ets_op ets_op_param ets_option function_def implements_behaviour statem_event_clause supervisor_child),
   exposure: ~w(function_def redacted_field schema_field tls_connect tls_verification),
+  failure:
+    ~w(bare_rescue call_edge call_followed_by_branch catch_falls_through catch_tag catch_total exit_call function_def implements_behaviour remote_call rpc_call rpc_result spawn_call tail_call try_call whereis_call),
   gen_statem:
     ~w(function_def statem_call_unreplied statem_event_catchall statem_event_clause statem_info_catchall statem_initial statem_module statem_state statem_timeout statem_transition),
   message_contract:
     ~w(async_cast call_arg call_arg_forward call_tag callback_tag callback_total function_def implements_behaviour sync_call),
   monitor_leak:
     ~w(call_edge closure_def demonitor_call function_def implements_behaviour monitor_call monitor_ref_dropped recv_start remote_call statem_state),
-  process_registry: ~w(whereis_call),
   reply_contract: ~w(callback_drops_from callback_return function_def implements_behaviour),
   shutdown:
     ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_stop_reason callback_tag callback_total catch_tag catch_total closure_def demonitor_call dynamic_child function_def implements_behaviour impure_call monitor_call remote_call statem_event_clause statem_state sup_call supervisor supervisor_child supervisor_child_name supervisor_site sync_call trap_exit unknown_call),
@@ -31,9 +30,8 @@
     ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag callback_timeout distributed_store_op dynamic_child function_def global_op global_register handle_continue_clause ignored_error_result implements_behaviour impure_call init_continues_to mailbox_writer node_operation post_start_call recv_start remote_call rpc_call statem_timeout sup_call supervisor supervisor_child supervisor_site sync_call sync_call_timeout try_start unconditional_call_edge),
   structure:
     ~w(function_def global_register implements_behaviour process_register supervisor_child supervisor_child_form supervisor_site),
-  unlinked_spawn: ~w(spawn_call),
   unsafe_input:
     ~w(call_edge code_execution dynamic_child function_def http_route implements_behaviour socket_transport supervisor_max_children unsafe_atom_creation unsafe_deserialization),
   unsafe_task:
-    ~w(call_edge call_followed_by_branch callback_ref_head callback_tag callback_total closure_def function_def implements_behaviour mailbox_writer remote_call tail_call trap_exit)
+    ~w(call_edge callback_ref_head callback_tag callback_total closure_def function_def implements_behaviour mailbox_writer remote_call tail_call trap_exit)
 ]

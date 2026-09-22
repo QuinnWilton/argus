@@ -27,7 +27,7 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
           H.ErpcBooleanNoRescue,
           H.ErpcBooleanRescued
         ],
-        :distributed
+        :failure
       )
 
     reported = r |> Map.get("rpc_result_unhandled", []) |> Enum.map(&{hd(&1), Enum.at(&1, 3)})
