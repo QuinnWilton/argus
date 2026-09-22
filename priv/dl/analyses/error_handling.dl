@@ -19,19 +19,12 @@ swallowed_error(func) :-
 // Module traps exits but defines no handle_info callback that could
 // receive {:EXIT, ...} messages. This is a heuristic — we check if
 // the module has any handle_info function.
-.decl has_handle_info(mod: symbol)
-
-has_handle_info(mod) :-
-  function_def(_, mod, "handle_info", _, _).
-
+//
 // gen_statem / GenStateMachine modules deliver info events (including
 // {:EXIT, ...}) to their state functions or handle_event/4, not to a
 // handle_info callback, so the has_handle_info check is meaningless for
 // them — every trapping gen_statem would be a false positive (Swarm's
 // Tracker even matches {:EXIT, ...} explicitly). Exclude them.
-.decl statem_like(mod: symbol)
-
-statem_like(mod) :- behaves_as(mod, "GenStateMachine").
 
 // `witness` is the function that sets trap_exit. One row per witness —
 // finding builders dedupe on (mod).
@@ -41,7 +34,7 @@ statem_like(mod) :- behaves_as(mod, "GenStateMachine").
 trap_exit_without_handler(mod, func) :-
   trap_exit(func, mod),
   !has_handle_info(mod),
-  !statem_like(mod).
+  !statem_process(mod).
 
 // ── Trap exit with a handle_info that never matches {:EXIT, ...} ──
 //
@@ -62,10 +55,9 @@ trap_exit_without_handler(mod, func) :-
 
 trap_exit_without_exit_clause(mod, func) :-
   trap_exit(func, mod),
-  function_def(h, mod, "handle_info", 2, _),
-  !callback_total(h, "handle_info"),
+  partial_handle_info(mod, h),
   !callback_tag(h, "handle_info", ":EXIT"),
-  !statem_like(mod).
+  !statem_process(mod).
 
 // ── handle_info without a catch-all, in a process the runtime writes to ──
 //
@@ -92,8 +84,7 @@ receives_runtime_messages(mod) :-
 
 handle_info_without_catchall(mod, h) :-
   (behaves_as(mod, "GenServer") ; behaves_as(mod, "GenStage")),
-  function_def(h, mod, "handle_info", 2, _),
-  !callback_total(h, "handle_info"),
+  partial_handle_info(mod, h),
   receives_runtime_messages(mod),
   !trap_exit_without_exit_clause(mod, _).
 
@@ -127,12 +118,11 @@ late_message_source(mod) :-
 
 handle_info_partial(mod, h) :-
   (behaves_as(mod, "GenServer") ; behaves_as(mod, "GenStage")),
-  function_def(h, mod, "handle_info", 2, _),
-  !callback_total(h, "handle_info"),
+  partial_handle_info(mod, h),
   late_message_source(mod),
   !receives_runtime_messages(mod),
   !trap_exit_without_exit_clause(mod, _),
-  !statem_like(mod).
+  !statem_process(mod).
 
 // ── Exit in GenServer callback ───────────────────────────────────
 
@@ -189,17 +179,6 @@ ignored_start_result(func, callee) :-
 // its parent lost the parent's navigation that way
 // (phoenixframework/phoenix_live_view#4359). A clause for `{:shutdown,
 // _}`, or a bare `:exit, reason`, covers it.
-.decl peer_call(callee: symbol)
-
-peer_call("GenServer:call/2").
-peer_call("GenServer:call/3").
-peer_call(":gen_server:call/2").
-peer_call(":gen_server:call/3").
-peer_call(":gen_statem:call/2").
-peer_call(":gen_statem:call/3").
-peer_call("GenStateMachine:call/2").
-peer_call("GenStateMachine:call/3").
-
 .decl partial_noproc_catch(func: symbol, site: symbol, callee: symbol)
 .output partial_noproc_catch
 
@@ -209,8 +188,7 @@ partial_noproc_catch(func, id, callee) :-
   catch_tag(id, func, "exit", ":noproc"),
   !catch_tag(id, func, "exit", ":shutdown"),
   !catch_tag(id, func, "exit", ":normal"),
-  !catch_total(id, func, "exit"),
-  !catch_total(id, func, "*").
+  !site_catches_class(id, func, "exit").
 
 // ── A timer cancelled but not flushed ────────────────────────────────
 //
@@ -283,15 +261,12 @@ armed_message(a, lit) :-
 // A receive in the module takes the message: by name, or a clause that
 // matches anything (`after 0` with a wildcard, the cancel_timer docs'
 // blocking receive, Ostinato.Eager).
-.decl flushed(mod: symbol, message: symbol)
+.decl takes_message(mod: symbol, message: symbol)
 
-flushed(mod, lit) :-
-  recv_pattern(_, f, lit),
-  function_def(f, mod, _, _, _).
+takes_message(mod, lit) :- receives_message(mod, lit).
 
-flushed(mod, lit) :-
-  recv_pattern(_, f, "any"),
-  function_def(f, mod, _, _, _),
+takes_message(mod, lit) :-
+  receives_message(mod, "any"),
   armed_message(_, lit).
 
 .decl timer_cancel_without_flush(mod: symbol, cancel: symbol, arm: symbol, key: symbol, message: symbol)
@@ -308,4 +283,4 @@ timer_cancel_without_flush(mod, c, a, key, lit) :-
   function_def(a, mod, _, _, _),
   !init_function(mod, a),
   armed_message(a, lit),
-  !flushed(mod, lit).
+  !takes_message(mod, lit).

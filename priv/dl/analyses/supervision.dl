@@ -262,14 +262,6 @@ dual_restart_authority(mod, sup, child, via) :-
 // the caller writes only afterwards is a window in which they run against
 // nothing (phoenixframework/phoenix#5981: the endpoint's warmup after the
 // listener was accepting). Writes reached from a call after start_link.
-.decl config_writer(func: symbol)
-
-config_writer(f) :- remote_call(_, f, ":persistent_term", "put", 2).
-config_writer(f) :- remote_call(_, f, ":ets", "insert", 2).
-config_writer(f) :- remote_call(_, f, ":ets", "insert_new", 2).
-config_writer(f) :- remote_call(_, f, "Application", "put_env", _).
-config_writer(f) :- remote_call(_, f, "Application", "put_all_env", _).
-
 .init config_reach = CallReachSet
 
 config_reach.seed(f) :- config_writer(f).
@@ -279,8 +271,7 @@ config_reach.seed(f) :- config_writer(f).
 
 post_start_initialization(func, site, callee) :-
   post_start_call(func, site, callee),
-  (callee = ":persistent_term:put/2" ; callee = ":ets:insert/2" ; callee = ":ets:insert_new/2" ;
-   match("Application:put_env/.*", callee) ; match("Application:put_all_env/.*", callee)).
+  config_write_api(callee).
 
 post_start_initialization(func, site, callee) :-
   post_start_call(func, site, callee),

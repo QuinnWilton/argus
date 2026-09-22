@@ -1,0 +1,30 @@
+// Receives, by shape.
+//
+// `recv_start`'s `blocking` column is the whole discriminator between a
+// receive that can hang and one that cannot: no `after` means no way
+// out if the message never comes. Rules ask one of three questions and
+// this file names them, so the column's encoding stays here.
+//
+// Requires imports.dl.
+
+.decl receives(func: symbol)
+
+receives(func) :- recv_start(_, func, _, _).
+
+// No `after`: waits until the message arrives.
+.decl blocking_receive(func: symbol)
+
+blocking_receive(func) :- recv_start(_, func, 1, _).
+
+// With an `after`: can end without the message.
+.decl timed_receive(func: symbol)
+
+timed_receive(func) :- recv_start(_, func, 0, _).
+
+// A receive in the module has a clause for this literal message, or
+// one that matches anything ("any").
+.decl receives_message(mod: symbol, message: symbol)
+
+receives_message(mod, message) :-
+  recv_pattern(_, f, message),
+  function_def(f, mod, _, _, _).

@@ -1,0 +1,41 @@
+// What kind of process a module is, and what it can take from its
+// mailbox.
+//
+// Requires imports.dl, behaviours.dl, callbacks.dl (otp.dl includes all
+// of them). A gen_statem's state functions are process entries too, but
+// saying so reads `statem_event_clause`, which most analyses do not:
+// process_statem.dl adds that rule for the ones that do.
+
+// Any behaviour module: something that runs as a process.
+.decl process_module(mod: symbol)
+
+process_module(mod) :- implements_behaviour(mod, _).
+
+.decl statem_process(mod: symbol)
+
+statem_process(mod) :- behaves_as(mod, "GenStateMachine").
+
+// Defines handle_info at any arity.
+.decl has_handle_info(mod: symbol)
+
+has_handle_info(mod) :- function_def(_, mod, "handle_info", _, _).
+
+// A callback that takes arbitrary messages from the mailbox: a
+// handle_info/2, whatever behaviour hosts it (GenServer, LiveView,
+// Phoenix.Tracker, a hand-rolled loop delegating to it), or a
+// gen_statem's handle_event/4.
+.decl mailbox_handler(mod: symbol)
+
+mailbox_handler(mod) :- function_def(_, mod, "handle_info", 2, _).
+
+mailbox_handler(mod) :-
+  statem_process(mod),
+  function_def(_, mod, "handle_event", 4, _).
+
+// A handle_info/2 with no catch-all: a message no clause matches is a
+// FunctionClauseError, not the default log-and-continue.
+.decl partial_handle_info(mod: symbol, func: symbol)
+
+partial_handle_info(mod, func) :-
+  function_def(func, mod, "handle_info", 2, _),
+  !callback_total(func, "handle_info").

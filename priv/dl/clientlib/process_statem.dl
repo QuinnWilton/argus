@@ -1,0 +1,8 @@
+// A gen_statem's state functions are where its own code starts running,
+// the same as a GenServer's callbacks. Included only by analyses that
+// already read statem_event_clause: it is an input, and the pins record
+// what each analysis reads.
+//
+// Requires otp.dl.
+
+process_entry(mod, f) :- statem_event_clause(mod, f, _).

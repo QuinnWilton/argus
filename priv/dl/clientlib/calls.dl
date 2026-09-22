@@ -54,6 +54,18 @@ async_cast(func, target) :-
 // An exported function of a GenServer module that makes (or reaches, in
 // the same module) a sync call is that server's client API: calling it
 // is waiting on the server, whether or not the target resolved.
+// The callee strings of a synchronous call to a peer process.
+.decl peer_call(callee: symbol)
+
+peer_call("GenServer:call/2").
+peer_call("GenServer:call/3").
+peer_call(":gen_server:call/2").
+peer_call(":gen_server:call/3").
+peer_call(":gen_statem:call/2").
+peer_call(":gen_statem:call/3").
+peer_call("GenStateMachine:call/2").
+peer_call("GenStateMachine:call/3").
+
 .decl genserver_sync_api(func: symbol, mod: symbol)
 
 genserver_sync_api(func, mod) :-

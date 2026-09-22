@@ -58,38 +58,9 @@ await_reach.seed(func) :- task_await_call(func, _).
 
 // ── Process task handler suppression ─────────────────────────────────
 
-// Process module with a message-receiving callback that can consume
-// task results from its mailbox. Covers GenServer, LiveView,
-// gen_statem, and similar process-hosting behaviours.
-.decl process_task_handler(mod: symbol)
-
-// GenServer with handle_info/2.
-process_task_handler(mod) :-
-  behaves_as(mod, "GenServer"),
-  function_def(_, mod, "handle_info", 2, _).
-
-// Any module defining handle_info/2 at all: the callback is only ever
-// invoked by a process-hosting behaviour, and the hosting behaviour may
-// be one this list does not name (Phoenix.Tracker, GenStage, a
-// hand-rolled receive loop delegating to it). A defined handle_info/2 is
-// the evidence that task replies have somewhere to land.
-process_task_handler(mod) :-
-  function_def(_, mod, "handle_info", 2, _).
-
-// Phoenix.LiveView with handle_info/2.
-process_task_handler(mod) :-
-  behaves_as(mod, "Phoenix.LiveView"),
-  function_def(_, mod, "handle_info", 2, _).
-
-// Phoenix.LiveComponent with handle_info/2.
-process_task_handler(mod) :-
-  behaves_as(mod, "Phoenix.LiveComponent"),
-  function_def(_, mod, "handle_info", 2, _).
-
-// :gen_statem with handle_event/4.
-process_task_handler(mod) :-
-  behaves_as(mod, "GenStateMachine"),
-  function_def(_, mod, "handle_event", 4, _).
+// A process with a callback that can consume task results from its
+// mailbox (mailbox_handler: any handle_info/2, or a gen_statem's
+// handle_event/4) collects them there rather than by an explicit await.
 // ── Task factory suppression ─────────────────────────────────────────
 
 // A function that creates an async task in tail position returns the
@@ -118,7 +89,7 @@ leaked_async_task(func, id) :-
   task_async_call(func, id),
   !await_reach.reaches(func),
   function_def(func, mod, _, _, _),
-  !process_task_handler(mod),
+  !mailbox_handler(mod),
   !task_factory(func, id).
 
 // ── Task.Supervisor.start_child detection ──────────────────────────────
@@ -183,18 +154,12 @@ unchecked_start_child(func, id) :-
 
 // A closure's calls belong to the function that defines it: the task is
 // usually started inside an Enum.map fn and collected outside it.
-.decl in_function(func: symbol, owner: symbol)
-
-in_function(f, f) :- function_def(f, _, _, _, _).
-in_function(f, owner) :- closure_def(owner, f).
-in_function(f, owner) :- closure_def(mid, f), in_function(mid, owner), mid != owner.
-
 yield_on_linked_task(owner, id) :-
   task_async_call(f, id),
-  in_function(f, owner),
+  enclosing_function(f, owner),
   !closure_def(_, owner),
   (remote_call(_, g, "Task", "yield", _) ; remote_call(_, g, "Task", "yield_many", _)),
-  in_function(g, owner),
+  enclosing_function(g, owner),
   function_def(owner, mod, _, _, _),
   !trap_exit(_, mod).
 
@@ -212,11 +177,10 @@ yield_on_linked_task(owner, id) :-
 
 linked_task_in_library(owner, id) :-
   task_async_call(f, id),
-  in_function(f, owner),
+  enclosing_function(f, owner),
   !closure_def(_, owner),
   function_def(owner, mod, _, _, _),
-  !implements_behaviour(mod, _),
-  !behaves_as(mod, _),
+  !process_module(mod),
   !task_factory(owner, _),
   await_reach.reaches(owner).
 
@@ -240,13 +204,11 @@ nolink_reach.seed(f, f) :- mailbox_writer(_, f, "task_nolink").
 nolink_messages_unhandled(mod, s, h, "reply") :-
   process_entry(mod, c),
   nolink_reach.reaches(c, s),
-  function_def(h, mod, "handle_info", 2, _),
-  !callback_total(h, "handle_info"),
+  partial_handle_info(mod, h),
   !callback_ref_head(h, "handle_info").
 
 nolink_messages_unhandled(mod, s, h, "down") :-
   process_entry(mod, c),
   nolink_reach.reaches(c, s),
-  function_def(h, mod, "handle_info", 2, _),
-  !callback_total(h, "handle_info"),
+  partial_handle_info(mod, h),
   !callback_tag(h, "handle_info", ":DOWN").

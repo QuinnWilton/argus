@@ -12,6 +12,7 @@
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
+.include "../clientlib/process_statem.dl"
 
 // ── Ownership & lifecycle ──────────────────────────────────────────
 
@@ -130,7 +131,7 @@ ets_unnamed_in_process(name, mod, id) :-
   ets_new(id, func, name),
   name != "dynamic",
   function_def(func, mod, _, _, _),
-  implements_behaviour(mod, _),
+  process_module(mod),
   !ets_option(id, "named_table", "true").
 
 // ── Write-only tables ──────────────────────────────────────────────
@@ -209,8 +210,6 @@ ets_reach.seed(f, f) :- ets_new(_, f, _).
 ets_reach.seed(f, f) :- ets_op(_, f, _, _, "read").
 ets_reach.seed(f, f) :- named_read(_, f, _).
 
-process_entry(mod, f) :- statem_event_clause(mod, f, _).
-
 .decl owner_reaches(mod: symbol, func: symbol)
 
 owner_reaches(mod, t) :- process_entry(mod, c), ets_reach.reaches(c, t).
@@ -220,15 +219,15 @@ owner_reaches(mod, t) :- process_entry(mod, c), ets_reach.reaches(c, t).
 // SomeOtherError` is not a guard.
 .decl rescues(func: symbol)
 
-rescues(f) :- catch_total(_, f, "error").
-rescues(f) :- catch_total(_, f, "*").
+rescues(f) :- catches_class(f, "error").
 rescues(f) :- catch_tag(_, f, "error", "ArgumentError").
 
+// The rescue may sit in the function that built the closure, at any
+// depth, or in a function that one of those parents calls.
 .decl guarded(func: symbol)
 
-guarded(g) :- rescues(g).
-guarded(g) :- closure_def(p, g), guarded(p).
-guarded(g) :- closure_def(p, g), call_edge(p, t), rescues(t).
+guarded(g) :- enclosing_function(g, a), rescues(a).
+guarded(g) :- enclosing_function(g, a), closure_def(p, a), call_edge(p, t), rescues(t).
 
 .decl ets_read_outside_owner(name: symbol, owner: symbol, reader: symbol, site: symbol)
 .output ets_read_outside_owner

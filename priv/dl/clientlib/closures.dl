@@ -1,0 +1,25 @@
+// Closure ownership.
+//
+// `closure_def(owner, closure)` is one level; a closure built inside a
+// closure has an enclosing function two levels up. Rules that ask
+// "which top-level function does this code belong to" (a task started
+// inside an Enum.map fn and collected outside it; a rescue in the
+// function that built the closure) want the whole chain, and the
+// function itself counts as its own owner.
+//
+// Requires imports.dl.
+
+.decl enclosing_function(func: symbol, owner: symbol)
+
+enclosing_function(f, f) :- function_def(f, _, _, _, _).
+enclosing_function(f, owner) :- closure_def(owner, f).
+enclosing_function(f, owner) :- closure_def(mid, f), enclosing_function(mid, owner), mid != owner.
+
+// The one closure a function builds. Associating a closure with the call
+// it is handed to needs dataflow argus does not have; with exactly one
+// closure there is nothing to confuse it with.
+.decl sole_closure(func: symbol, closure: symbol)
+
+sole_closure(func, closure) :-
+  closure_def(func, closure),
+  closure_count(func, 1).

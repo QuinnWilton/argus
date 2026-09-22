@@ -24,6 +24,7 @@
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
+.include "../clientlib/process_statem.dl"
 // ── Behaviours with a terminate callback ─────────────────────────
 
 // ── Does the module trap exits? ──────────────────────────────────
@@ -43,23 +44,15 @@ traps_exits(mod) :- trap_exit(_, mod).
 // loses nothing when it is skipped; one that flushes a buffer, releases a
 // lease, or tells another system it is going away loses something real.
 // Reads are excluded for the same reason they are excluded from
-// transaction safety: there is nothing there to lose.
-
-.decl durable_cleanup(category: symbol)
-
-durable_cleanup("io").        // flushing to disk
-durable_cleanup("network").   // deregistering, final report, closing a session
-durable_cleanup("ets").       // clearing or handing off shared state
-durable_cleanup("process").   // telling another process, releasing a name
-durable_cleanup("port").      // closing an external resource
-durable_cleanup("node").      // leaving a distributed group
+// transaction safety: there is nothing there to lose. The categories are
+// the effect model's durable ones (effects.dl).
 
 .decl cleanup_in_terminate(mod: symbol, behaviour: symbol, category: symbol, api: symbol, via: symbol)
 
 cleanup_in_terminate(mod, behaviour, category, api, func) :-
   terminate_callback(func, mod, behaviour),
   impure_call(_, func, api, category, "write"),
-  durable_cleanup(category).
+  durable_effect(category).
 
 // Bounded, not the full `call_reachable` closure.
 //
@@ -83,7 +76,7 @@ cleanup_in_terminate(mod, behaviour, category, api, via) :-
   terminate_callback(func, mod, behaviour),
   terminate_reach.reaches(func, via, _),
   impure_call(_, via, api, category, "write"),
-  durable_cleanup(category).
+  durable_effect(category).
 
 // ── Findings ─────────────────────────────────────────────────────
 
@@ -115,20 +108,10 @@ unclassified_cleanup(mod, behaviour, api, via) :-
   unknown_call(_, via, api, _callee),
   !structural_call(api).
 
-// Building a struct or a message is not cleanup. `Kernel` is deliberately
-// NOT in the effect model's pure list — purity found a soundness hole there
-// — so its calls arrive as unknown, and DBConnection.Connection was reported
-// for `Kernel.struct!/2` inside an exception constructor. A soundness choice
-// made for one contract should not become noise in another.
-.decl structural_call(api: symbol)
-
-structural_call(api) :- unknown_call(_, _, api, _), match("Kernel\\..*", api).
-structural_call(api) :- unknown_call(_, _, api, _), match("Access\\..*", api).
-structural_call(api) :- unknown_call(_, _, api, _), match("Enum\\..*", api).
-structural_call(api) :- unknown_call(_, _, api, _), match("Map\\..*", api).
-structural_call(api) :- unknown_call(_, _, api, _), match("Keyword\\..*", api).
-structural_call(api) :- unknown_call(_, _, api, _), match(":lists\\..*", api).
-structural_call(api) :- unknown_call(_, _, api, _), match(":maps\\..*", api).
+// Building a struct or a message is not cleanup (structural_call, in
+// effects.dl): DBConnection.Connection was reported for `Kernel.struct!/2`
+// inside an exception constructor. A soundness choice made for one
+// contract should not become noise in another.
 
 .decl cleanup_unclear(mod: symbol, behaviour: symbol, api: symbol, via: symbol)
 .output cleanup_unclear
@@ -140,11 +123,7 @@ cleanup_unclear(mod, behaviour, api, via) :-
 
 // Slow work inside terminate, for a module that DOES trap exits — so the
 // callback is reached, but may not finish. Network and port calls are the
-// ones with no bound of their own.
-.decl slow_category(category: symbol)
-
-slow_category("network").
-slow_category("port").
+// ones with no bound of their own (slow_effect, in effects.dl).
 
 .decl terminate_may_be_truncated(mod: symbol, behaviour: symbol, category: symbol, api: symbol, via: symbol)
 .output terminate_may_be_truncated
@@ -152,7 +131,7 @@ slow_category("port").
 terminate_may_be_truncated(mod, behaviour, category, api, via) :-
   cleanup_in_terminate(mod, behaviour, category, api, via),
   traps_exits(mod),
-  slow_category(category).
+  slow_effect(category).
 
 // ── A synchronous call to a sibling from terminate/2 ─────────────────
 //
@@ -169,8 +148,7 @@ terminate_may_be_truncated(mod, behaviour, category, api, via) :-
 // the function counts, which errs quiet.
 .decl guarded_exit_call(func: symbol)
 
-guarded_exit_call(f) :- catch_total(_, f, "exit").
-guarded_exit_call(f) :- catch_total(_, f, "*").
+guarded_exit_call(f) :- catches_class(f, "exit").
 guarded_exit_call(f) :- catch_tag(_, f, "exit", ":noproc").
 
 .decl terminate_calls_sibling(mod: symbol, sibling: symbol, via: symbol, sup: symbol)
@@ -231,8 +209,6 @@ tree_member(root, name) :-
 .init start_reach = ClosureReach
 
 start_reach.seed(s, s) :- dynamic_child(_, _, s).
-
-process_entry(mod, f) :- statem_event_clause(mod, f, _).
 
 .decl starter_process(mod: symbol, start: symbol)
 

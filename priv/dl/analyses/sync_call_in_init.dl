@@ -233,7 +233,7 @@ infinite_recv(f) :- remote_call(_, f, ":gen_tcp", "recv", 2).
 infinite_recv(f) :- remote_call(_, f, ":ssl", "recv", 2).
 infinite_recv(f) :- call_arg(f, g, pos, ":infinity"), infinite_recv_param(g, pos).
 // A `receive` with no `after` waits the same way, on the mailbox.
-infinite_recv(f) :- recv_start(_, f, 1, _).
+infinite_recv(f) :- blocking_receive(f).
 
 .init recv_reach = CallReach
 

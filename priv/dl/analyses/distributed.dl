@@ -173,6 +173,5 @@ rpc_result_unhandled(f, id, v, "boolean") :-
 rpc_result_unhandled(f, id, "erpc", "boolean") :-
   rpc_call(id, f, "erpc", _),
   rpc_boolean_use(id, f),
-  !catch_total(_, f, "error"),
-  !catch_total(_, f, "*"),
+  !catches_class(f, "error"),
   !catch_tag(_, f, "error", ":erpc").

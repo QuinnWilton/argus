@@ -16,6 +16,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   about; findings are unchanged on the corpus, the 14-tree sample and
   encore. A declarations test now refuses a rule in an analysis file
   that recurses over `call_edge` on its own head.
+- Five more vocabulary files under `priv/dl/clientlib/`, each replacing
+  spellings that several analyses kept of their own: `closures.dl`
+  (`enclosing_function`, `sole_closure`), `receive.dl` (`receives`,
+  `blocking_receive`, `timed_receive`, `receives_message`),
+  `exceptions.dl` (`catches_class`, `site_catches_class`), `effects.dl`
+  (`durable_effect`, the one list behind shutdown safety's cleanup and
+  transaction safety's unrollbackable effects; `slow_effect`,
+  `structural_call`, `config_writer`, `config_write_api`,
+  `removal_api`) and `process.dl` (`process_module`, `statem_process`,
+  `has_handle_info`, `mailbox_handler`, `partial_handle_info`; the
+  gen_statem `process_entry` extension is `process_statem.dl`, included
+  by the analyses that read `statem_event_clause`). `peer_call` moved to
+  `calls.dl`. Findings unchanged. The recursion guard now covers
+  `closure_def` too.
 
 ## 0.15.0 — 2026-09-16
 

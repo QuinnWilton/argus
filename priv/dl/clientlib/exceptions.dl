@@ -1,0 +1,23 @@
+// What a function's try handlers take.
+//
+// `catch_total(id, func, class)` says a clause of the try at `id` takes
+// every reason of `class` (`*` for every class); `catch_tag` names one
+// reason. The questions rules ask are "does anything here catch an
+// exit" and "does THIS try catch an exit", so both granularities are
+// named.
+//
+// Requires imports.dl.
+
+.decl catches_class(func: symbol, class: symbol)
+
+catches_class(func, class) :- catch_total(_, func, class), class != "*".
+catches_class(func, "error") :- catch_total(_, func, "*").
+catches_class(func, "exit") :- catch_total(_, func, "*").
+catches_class(func, "throw") :- catch_total(_, func, "*").
+
+.decl site_catches_class(id: symbol, func: symbol, class: symbol)
+
+site_catches_class(id, func, class) :- catch_total(id, func, class), class != "*".
+site_catches_class(id, func, "error") :- catch_total(id, func, "*").
+site_catches_class(id, func, "exit") :- catch_total(id, func, "*").
+site_catches_class(id, func, "throw") :- catch_total(id, func, "*").

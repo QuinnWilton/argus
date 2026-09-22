@@ -44,7 +44,7 @@ performs_effect(func, "process", "send") :-
   send_msg(_, func).
 
 performs_effect(func, "process", "receive") :-
-  recv_start(_, func, _, _).
+  receives(func).
 
 performs_effect(func, "process", "spawn") :-
   spawn_call(_, func, _, _, _, _).
@@ -203,5 +203,5 @@ impure_closure(caller, closure, category, api) :-
 impure_closure_to_pure(caller, callee, closure, category, api) :-
   higher_order_pure(callee),
   call_edge(caller, callee),
-  impure_closure(caller, closure, category, api),
-  closure_count(caller, 1).
+  sole_closure(caller, closure),
+  impure_closure(caller, closure, category, api).

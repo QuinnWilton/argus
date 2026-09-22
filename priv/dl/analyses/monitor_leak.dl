@@ -22,7 +22,7 @@
 // anywhere, so an edge into one does not count.
 .init timed_wait = SameProcessReachSet
 
-timed_wait.seed(func) :- recv_start(_, func, 0, _).
+timed_wait.seed(func) :- timed_receive(func).
 
 .init flush = SameProcessReachSet
 
@@ -44,7 +44,7 @@ server_reach.root(mod, func) :-
   otp_callback(func, mod, _, _).
 
 server_reach.root(mod, func) :-
-  behaves_as(mod, "GenStateMachine"),
+  statem_process(mod),
   statem_state(mod, _, func),
   function_def(func, mod, _, _, _).
 
@@ -58,35 +58,18 @@ module_demonitors(mod) :-
   demonitor_call(_, f, _),
   function_def(f, mod, _, _, _).
 
-// Removing an entry from a map, set, keyword or ETS table — the
-// bookkeeping paths a monitor's release belongs on. Anywhere in the
-// module: Phoenix PubSub's Local removed subscriptions from a public
-// table in its client API, and the monitor taken in handle_call stayed
-// live all the same. Both the Elixir spelling and the :maps one the
-// compiler rewrites it to.
-.decl removal_op(mod: symbol, func: symbol)
-
-removal_op("Map", "delete").
-removal_op("Map", "pop").
-removal_op("Map", "pop!").
-removal_op("Map", "drop").
-removal_op(":maps", "remove").
-removal_op(":maps", "take").
-removal_op("MapSet", "delete").
-removal_op("Keyword", "delete").
-removal_op("List", "delete").
-removal_op(":ets", "delete").
-removal_op(":ets", "delete_object").
-removal_op(":ets", "take").
-removal_op(":ets", "select_delete").
-removal_op(":ets", "match_delete").
+// Removing an entry from a map, set, keyword or ETS table (removal_api,
+// in effects.dl) — the bookkeeping paths a monitor's release belongs
+// on. Anywhere in the module: Phoenix PubSub's Local removed
+// subscriptions from a public table in its client API, and the monitor
+// taken in handle_call stayed live all the same.
 
 .decl removes_entries(mod: symbol)
 
 removes_entries(mod) :-
   function_def(f, mod, _, _, _),
   remote_call(_, f, m, op, _),
-  removal_op(m, op).
+  removal_api(m, op).
 
 .decl monitor_never_released(mod: symbol, site: symbol)
 .output monitor_never_released

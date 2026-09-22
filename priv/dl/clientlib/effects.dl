@@ -1,0 +1,78 @@
+// The effect model's categories, grouped by what a rule needs to know.
+//
+// `impure_call` classifies a call by category (io, network, ets,
+// process, port, node, logging, clock, ...) and mode (read or write).
+// Two analyses had each kept a list of "the categories that matter":
+// shutdown safety's durable cleanup and transaction safety's effects a
+// rollback cannot undo are the same six. One list, one rationale:
+// effects that leave the process and cannot be taken back.
+//
+// Requires imports.dl.
+
+.decl durable_effect(category: symbol)
+
+durable_effect("io").        // a file write survives; Logger is :logging, not :io
+durable_effect("network").   // another system already heard it
+durable_effect("process").   // a message sent, a process spawned, a name released
+durable_effect("ets").       // shared tables are not transactional
+durable_effect("port").      // the outside world
+durable_effect("node").      // another node already saw it
+
+// Effects with no bound of their own: what can overrun a shutdown
+// timeout or hold a pooled connection.
+.decl slow_effect(category: symbol)
+
+slow_effect("network").
+slow_effect("port").
+
+// Building a struct or a message is not an effect. `Kernel` is
+// deliberately not in the effect model's pure list (purity found a
+// soundness hole there), so its calls arrive as unknown.
+.decl structural_call(api: symbol)
+
+structural_call(api) :- unknown_call(_, _, api, _), match("Kernel\\..*", api).
+structural_call(api) :- unknown_call(_, _, api, _), match("Access\\..*", api).
+structural_call(api) :- unknown_call(_, _, api, _), match("Enum\\..*", api).
+structural_call(api) :- unknown_call(_, _, api, _), match("Map\\..*", api).
+structural_call(api) :- unknown_call(_, _, api, _), match("Keyword\\..*", api).
+structural_call(api) :- unknown_call(_, _, api, _), match(":lists\\..*", api).
+structural_call(api) :- unknown_call(_, _, api, _), match(":maps\\..*", api).
+
+// Writes to configuration other processes read: persistent_term, ETS,
+// application env. As the function that performs one, and as the
+// callee string a post_start_call carries.
+.decl config_writer(func: symbol)
+
+config_writer(f) :- remote_call(_, f, ":persistent_term", "put", 2).
+config_writer(f) :- remote_call(_, f, ":ets", "insert", 2).
+config_writer(f) :- remote_call(_, f, ":ets", "insert_new", 2).
+config_writer(f) :- remote_call(_, f, "Application", "put_env", _).
+config_writer(f) :- remote_call(_, f, "Application", "put_all_env", _).
+
+.decl config_write_api(callee: symbol)
+
+config_write_api(":persistent_term:put/2").
+config_write_api(":ets:insert/2").
+config_write_api(":ets:insert_new/2").
+config_write_api(c) :- post_start_call(_, _, c), match("Application:put_env/.*", c).
+config_write_api(c) :- post_start_call(_, _, c), match("Application:put_all_env/.*", c).
+
+// Removing an entry from a map, set, keyword list or ETS table: the
+// bookkeeping paths a monitor's release belongs on. Both the Elixir
+// spelling and the :maps one the compiler rewrites it to.
+.decl removal_api(mod: symbol, func: symbol)
+
+removal_api("Map", "delete").
+removal_api("Map", "pop").
+removal_api("Map", "pop!").
+removal_api("Map", "drop").
+removal_api(":maps", "remove").
+removal_api(":maps", "take").
+removal_api("MapSet", "delete").
+removal_api("Keyword", "delete").
+removal_api("List", "delete").
+removal_api(":ets", "delete").
+removal_api(":ets", "delete_object").
+removal_api(":ets", "take").
+removal_api(":ets", "select_delete").
+removal_api(":ets", "match_delete").

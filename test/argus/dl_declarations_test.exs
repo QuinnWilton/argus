@@ -75,8 +75,8 @@ defmodule Argus.DlDeclarationsTest do
     # Reachability over the call graph is written once, as the components
     # in clientlib/reach.dl. An analysis seeds an instance; it does not
     # write a closure of its own: no rule in an analysis file may recurse
-    # through call_edge on its own head. (Closure ownership, which recurses
-    # through closure_def, gets its own vocabulary next.)
+    # through call_edge or closure_def on its own head (closure ownership
+    # is clientlib/closures.dl).
     test "no analysis recurses over the call graph itself" do
       offenders =
         priv_dl()
@@ -99,7 +99,7 @@ defmodule Argus.DlDeclarationsTest do
   defp recursive_over_call_graph?(rule) do
     case Regex.run(~r/^\s*([a-z_0-9]+)\s*\([^)]*\)\s*:-(.*)$/s, rule) do
       [_, head, body] ->
-        Regex.match?(~r/\bcall_edge\s*\(/, body) and
+        Regex.match?(~r/\b(call_edge|closure_def)\s*\(/, body) and
           Regex.match?(~r/\b#{head}\s*\(/, body)
 
       nil ->

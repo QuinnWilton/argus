@@ -79,9 +79,9 @@ callback_reaches(entry, callee, "helper") :-
 // timer AND has an unrelated blocking receive is missed. That is the right
 // direction to be wrong: a false negative costs a finding, a false positive
 // costs the reader's trust in every other finding.
-.decl flushes_timer(func: symbol)
+.decl cancels_timer(func: symbol)
 
-flushes_timer(func) :-
+cancels_timer(func) :-
   remote_call(_, func, ":erlang", "cancel_timer", _).
 
 // A receive with no `after`, running on an OTP process's own stack. This
@@ -94,7 +94,7 @@ blocking_receive_in_callback(id, func, callback, behaviour, proximity) :-
   recv_start(id, func, 1, _),
   callback_reaches(callback, func, proximity),
   otp_callback(callback, _, _, behaviour),
-  !flushes_timer(func).
+  !cancels_timer(func).
 
 // A receive WITH a timeout. It cannot hang, but it still consumes from the
 // behaviour's mailbox and still re-scans the queue.

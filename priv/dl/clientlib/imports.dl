@@ -81,6 +81,12 @@
 // a pure higher-order function is recognised by.
 // Reachability components: see reach.dl.
 .include "reach.dl"
+// Closure ownership, receives by shape, what try handlers take, the
+// effect model's categories.
+.include "closures.dl"
+.include "receive.dl"
+.include "exceptions.dl"
+.include "effects.dl"
 
 .decl closure_count(func: symbol, n: number)
 

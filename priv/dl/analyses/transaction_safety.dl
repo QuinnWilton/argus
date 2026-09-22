@@ -60,8 +60,7 @@ transaction_site(caller, "Postgrex") :-
 
 transaction_body(caller, repo, body) :-
   transaction_site(caller, repo),
-  closure_def(caller, body),
-  closure_count(caller, 1).
+  sole_closure(caller, body).
 
 // ── Effects the database cannot undo ─────────────────────────────
 //
@@ -74,15 +73,8 @@ transaction_body(caller, repo, body) :-
 // Only WRITES. `Application.get_env/2` and `Process.get/1` are impure —
 // they break purity — but there is nothing for a rollback to undo, and
 // reporting them here would bury the calls that matter under every config
-// read in the codebase.
-.decl unrollbackable(category: symbol)
-
-unrollbackable("network").   // HTTP and friends: holds the connection, cannot be undone
-unrollbackable("port").      // System.cmd, ports — the outside world
-unrollbackable("process").   // a message sent, or a process spawned, is gone
-unrollbackable("io").        // file writes survive a rollback (Logger is :logging, not :io)
-unrollbackable("ets").       // shared tables are not transactional
-unrollbackable("node").      // distribution: another node already saw it
+// read in the codebase. The categories are the effect model's durable
+// ones (effects.dl): what has left the process cannot be rolled back.
 
 .decl escapes_transaction(caller: symbol, repo: symbol, category: symbol, api: symbol, via: symbol)
 
@@ -96,14 +88,14 @@ escapes_transaction(caller, repo, category, api, via) :-
   transaction_site(caller, repo),
   body_reach.reaches(body, via),
   impure_call(_, via, api, category, "write"),
-  unrollbackable(category).
+  durable_effect(category).
 
 // The effect is in the closure itself, not something it calls.
 escapes_transaction(caller, repo, category, api, body) :-
   transaction_body(caller, _repo_unused, body),
   transaction_site(caller, repo),
   impure_call(_, body, api, category, "write"),
-  unrollbackable(category).
+  durable_effect(category).
 
 // ── Findings ─────────────────────────────────────────────────────
 
