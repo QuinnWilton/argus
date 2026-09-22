@@ -51,6 +51,30 @@ Corpus: `Argus.Corpus.ensure/2` returned every beam twice when the
 project is the repository root, and listed both a dev and a test build;
 each beam once now, from one build.
 
+Findings that knew only a function now point at the instruction, and
+carry the frames a reader wants next. Stage 0's `call_site` gains the
+callee's function and arity, covers local calls, and stages the few
+library calls findings anchor at (`GenServer.call`,
+`DynamicSupervisor.start_child`, `Supervisor.start_link`, `:gen_tcp.recv`,
+`:ssl.recv`), so the supervision family still reads neither `remote_call`
+nor `local_call`; `sync_site` and `call_instr` in the clientlib are
+derived from it. `teardown_touches_sibling` anchors at the call into the
+sibling (or, for a handler, at the callback) with the supervisor's child
+spec as a frame; `foreign_dynamic_children` at the `start_child` call;
+`dual_restart_authority` at the `start_child`, with the monitor and the
+`:DOWN` handler as frames; `timer_cancel_without_flush` at the
+`cancel_timer`, with the `send_after` as a frame; the cluster-wide lock at
+the `:global` call, with the reaching `init/1` as a frame when it is
+elsewhere; the unbounded receive at the `recv`; the post-start write with
+the `Supervisor.start_link` as a frame; the table read outside its owner
+with the `:ets.new` as a frame; a call cycle at the calls in its
+witnesses. Evidence relations attach a sample (at most three, `limit:` on
+the evidence spec) of the sites that follow a convention
+(`handling_site`), the exported functions that reach a sink no request
+reaches (`sink_export`, three calls deep), the entry removals of a server
+that never demonitors (`monitored_entry_removal`) and the `Task.yield` of
+a linked task (`task_yield_site`).
+
 `unsafe_input`'s two sink relations gain a trailing `safety` column, the
 deserialization's option class (`unsafe | atoms_only | dynamic`, empty
 for the other sinks), and the deserialization finding says which. The

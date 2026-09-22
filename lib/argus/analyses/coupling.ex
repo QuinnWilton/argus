@@ -101,7 +101,10 @@ defmodule Argus.Analyses.Coupling do
           {:mod, :symbol, "the module that starts, monitors and restarts the child"},
           {:sup, :symbol, "the DynamicSupervisor that also restarts it"},
           {:child, :symbol, "the child module"},
-          {:via, :symbol, "function that starts and monitors it"}
+          {:via, :symbol, "function that starts and monitors it"},
+          {:start_site, :symbol, "the start_child call, else empty"},
+          {:monitor_site, :symbol, "the monitor call"},
+          {:handler, :symbol, "the :DOWN handler that starts it again"}
         ],
         key: [:mod, :sup, :child],
         doc: "A supervisor and a monitoring process both restart the same child."
@@ -281,7 +284,15 @@ defmodule Argus.Analyses.Coupling do
     )
   end
 
-  def finding(:dual_restart_authority, [mod, sup_or_dynamic, child, via]) do
+  def finding(:dual_restart_authority, [
+        mod,
+        sup_or_dynamic,
+        child,
+        via,
+        start_site,
+        monitor_site,
+        handler
+      ]) do
     sup = if sup_or_dynamic == "dynamic", do: "a DynamicSupervisor", else: sup_or_dynamic
 
     Findings.new(
@@ -292,8 +303,13 @@ defmodule Argus.Analyses.Coupling do
         "as a permanent child. A child that stops on a semantic error is " <>
         "restarted by both: it crash-loops, exhausts the supervisor's restart " <>
         "intensity, and the escalation reaches the tree above.",
-      at: Findings.at_func(via),
-      at_label: "started and monitored here",
+      at:
+        if(start_site == "", do: Findings.at_func(via), else: Findings.at_site(start_site, mod)),
+      at_label: "started under the supervisor here",
+      related: [
+        Findings.related("monitored here", Findings.at_site(monitor_site, mod)),
+        Findings.related("started again from this :DOWN handler", Findings.at_func(handler))
+      ],
       help: [
         "start the child with `restart: :temporary` and let #{mod}'s :DOWN handler decide",
         "or drop the monitor and let the supervisor own the restarts"

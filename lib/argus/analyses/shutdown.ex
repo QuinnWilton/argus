@@ -84,7 +84,10 @@ defmodule Argus.Analyses.Shutdown do
           {:phase, :symbol, "terminate | handler"},
           {:kind, :symbol, "call | stop"},
           {:via, :symbol, "function performing the call or stop"},
-          {:sup, :symbol, "the supervisor both sit under"}
+          {:sup, :symbol, "the supervisor both sit under"},
+          {:handler, :symbol, "the callback of mod the row belongs to"},
+          {:site, :symbol, "the call that makes the dependency, when direct; else empty"},
+          {:sup_site, :symbol, "where the supervisor places both, else empty"}
         ],
         key: [:mod, :sibling, :phase],
         doc:
@@ -95,7 +98,9 @@ defmodule Argus.Analyses.Shutdown do
         fields: [
           {:mod, :symbol, "module that starts the children"},
           {:sup, :symbol, "the DynamicSupervisor they are started under"},
-          {:via, :symbol, "function that calls start_child"}
+          {:via, :symbol, "function that calls start_child"},
+          {:site, :symbol, "the start_child call, else empty"},
+          {:sup_site, :symbol, "where the other tree defines the supervisor, else empty"}
         ],
         key: [:mod, :sup],
         doc:
@@ -179,16 +184,29 @@ defmodule Argus.Analyses.Shutdown do
     )
   end
 
-  def finding(:teardown_touches_sibling, [mod, sibling, "handler", "stop", via, sup]) do
+  def finding(:teardown_touches_sibling, [
+        mod,
+        sibling,
+        "handler",
+        "stop",
+        via,
+        sup,
+        handler,
+        site,
+        sup_site
+      ]) do
     Findings.new(
       :warning,
       "A callback stops a sibling the supervisor owns",
-      "#{mod} stops #{sibling}#{through(via, mod)} from a handler, and both are " <>
-        "children of #{sup}. The supervisor owns that child: a permanent one " <>
-        "comes straight back, and during shutdown it may already be gone, so " <>
-        "the stop exits with :noproc in #{mod}.",
-      at: Findings.at_func(via),
-      at_label: "stops the sibling here",
+      "#{handler} stops #{sibling}#{through(via, mod)}, and both #{mod} and " <>
+        "#{sibling} are children of #{sup}. The supervisor owns that child: a " <>
+        "permanent one comes straight back, and during shutdown it may already " <>
+        "be gone, so the stop exits with :noproc in #{mod}.",
+      at: site_or_func(site, handler, mod),
+      at_label: "stops the sibling from this callback",
+      related:
+        [Findings.related("the sibling's stop API", Findings.at_func(via))] ++
+          placed_by(sup, sup_site),
       help: [
         "ask the supervisor: `Supervisor.terminate_child/2` (and `delete_child/2`)",
         "or send the sibling a message and let it stop itself"
@@ -196,7 +214,17 @@ defmodule Argus.Analyses.Shutdown do
     )
   end
 
-  def finding(:teardown_touches_sibling, [mod, sibling, "terminate", "call", via, sup]) do
+  def finding(:teardown_touches_sibling, [
+        mod,
+        sibling,
+        "terminate",
+        "call",
+        via,
+        sup,
+        _handler,
+        site,
+        sup_site
+      ]) do
     Findings.new(
       :warning,
       "terminate/2 calls a sibling that may already be down",
@@ -205,8 +233,9 @@ defmodule Argus.Analyses.Shutdown do
         "reverse start order, so while #{mod} is terminating #{sibling} may already " <>
         "have exited: the call exits with :noproc and terminate/2 crashes, " <>
         "skipping whatever cleanup followed.",
-      at: Findings.at_func(via),
+      at: site_or_func(site, via, mod),
       at_label: "synchronous call to a sibling during shutdown",
+      related: placed_by(sup, sup_site),
       help: [
         "wrap the call in `try ... catch :exit, _ -> :ok`, or make it a cast",
         "if #{sibling} must outlive #{mod}, start it earlier under a `rest_for_one` supervisor"
@@ -214,7 +243,7 @@ defmodule Argus.Analyses.Shutdown do
     )
   end
 
-  def finding(:foreign_dynamic_children, [mod, sup, via]) do
+  def finding(:foreign_dynamic_children, [mod, sup, via, site, sup_site]) do
     Findings.new(
       :warning,
       "children started under another tree outlive their owner",
@@ -223,8 +252,9 @@ defmodule Argus.Analyses.Shutdown do
         "shuts down they keep running — reconnecting, logging, calling into " <>
         "applications that have already stopped — and #{mod}'s terminate/2 does " <>
         "not stop them.",
-      at: Findings.at_func(via),
+      at: site_or_func(site, via, mod),
       at_label: "start_child onto a supervisor in another tree",
+      related: placed_by(sup, sup_site),
       help: [
         "give #{mod} a terminate/2 (trapping exits) that terminates the children it started",
         "or start them under a DynamicSupervisor in #{mod}'s own tree"
@@ -337,4 +367,19 @@ defmodule Argus.Analyses.Shutdown do
   # helper terminate/2 reaches, or an anonymous function inside it.
   defp through(via, mod) when via == mod <> ":terminate/2", do: ""
   defp through(via, _mod), do: " (through #{via})"
+
+  # A rule that found the call instruction anchors there; one that knows
+  # only the function anchors at the function.
+  defp site_or_func("", func, _mod), do: Findings.at_func(func)
+  defp site_or_func(site, _func, mod), do: Findings.at_site(site, mod)
+
+  defp placed_by(_sup, ""), do: []
+
+  defp placed_by(sup, sup_site),
+    do: [
+      Findings.related(
+        "both are children of #{sup}, placed here",
+        Findings.at_site(sup_site, sup)
+      )
+    ]
 end

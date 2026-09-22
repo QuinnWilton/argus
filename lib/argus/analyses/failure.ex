@@ -90,6 +90,18 @@ defmodule Argus.Analyses.Failure do
         doc: "A call site that breaks with how the program's other sites treat the same callee."
       },
       %{
+        name: :handling_site,
+        fields: [
+          {:callee, :symbol, "the callee"},
+          {:belief, :symbol, "result_checked | exception_guarded"},
+          {:site, :symbol, "a call site that follows the convention"},
+          {:func, :symbol, "the function it is in"}
+        ],
+        key: [:callee, :belief, :site],
+        evidence: %{of: :inconsistent_handling, on: [:callee, :belief], limit: 3},
+        doc: "Sites that follow the convention the deviant one breaks, attached to its finding."
+      },
+      %{
         name: :orphan_process,
         fields: [
           {:func, :symbol, "the function spawning or sending the exit"},
@@ -279,4 +291,15 @@ defmodule Argus.Analyses.Failure do
   defp short(callee), do: callee |> String.split(":") |> List.last()
 
   defp module_of(func), do: func |> String.split(":") |> hd()
+
+  @impl true
+  def evidence(:handling_site, [_callee, belief, site, func]) do
+    label =
+      case belief do
+        "exception_guarded" -> "guarded in a try here"
+        "result_checked" -> "its result matched here"
+      end
+
+    Findings.related(label, Findings.at_site(site, module_of(func)))
+  end
 end

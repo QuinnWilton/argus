@@ -41,7 +41,7 @@
 .decl blocks_on_peer(mod: symbol, phase: symbol, dep: symbol, kind: symbol, ordering: symbol, sup: symbol, site: symbol, detail: symbol)
 .output blocks_on_peer
 
-.decl unbounded_effect_in_init(mod: symbol, kind: symbol, api: symbol)
+.decl unbounded_effect_in_init(mod: symbol, kind: symbol, api: symbol, site: symbol)
 .output unbounded_effect_in_init
 
 .decl deferral_defect(mod: symbol, kind: symbol, site: symbol, detail: symbol)
@@ -233,16 +233,31 @@ infinite_recv(f) :- blocking_receive(f).
 
 recv_reach.seed(f, f) :- infinite_recv(f).
 
-unbounded_effect_in_init(mod, "recv", r) :-
+unbounded_effect_in_init(mod, "recv", r, site) :-
   init_function(mod, f),
-  recv_reach.reaches(f, r).
+  recv_reach.reaches(f, r),
+  recv_site_or_empty(r, site).
+
+// The receive that waits: the recv call, the `receive`, or the call
+// that forwards :infinity into a helper's recv.
+.decl recv_site(func: symbol, id: symbol)
+
+recv_site(f, id) :- call_site(id, f, ":gen_tcp", "recv", _).
+recv_site(f, id) :- call_site(id, f, ":ssl", "recv", _).
+recv_site(f, id) :- recv_start(id, f, 1, _).
+recv_site(f, id) :- call_arg(f, g, pos, ":infinity"), infinite_recv_param(g, pos), call_instr(f, g, id).
+
+.decl recv_site_or_empty(func: symbol, site: symbol)
+
+recv_site_or_empty(f, id) :- recv_site(f, id).
+recv_site_or_empty(f, "") :- infinite_recv(f), !recv_site(f, _).
 
 // One finding per receiving function; the inits that reach it are its
 // evidence frames.
 .decl init_reaches_recv(mod: symbol, api: symbol)
 .output init_reaches_recv
 
-init_reaches_recv(mod, r) :- unbounded_effect_in_init(mod, "recv", r).
+init_reaches_recv(mod, r) :- unbounded_effect_in_init(mod, "recv", r, _).
 
 // ── A connection made in init/1 with no way to try again ─────────────
 //
@@ -267,7 +282,7 @@ connect_reach.seed(f, api) :- impure_call(_, f, api, "network", _), connect_api(
 // A retry needs a way back in: a timer, a self-message, a
 // handle_continue, or a gen_statem's own timeout (postgrex's connections
 // arm {{:timeout, :backoff}, ms, nil}) — deferral_path, in startup.dl.
-unbounded_effect_in_init(mod, "connect", api) :-
+unbounded_effect_in_init(mod, "connect", api, "") :-
   init_function(mod, f),
   connect_reach.reaches(f, api),
   !deferral_path(mod, _).
@@ -376,16 +391,23 @@ global_blocking_op(func, op, retries, id) :-
 
 // Catches the worst case: blocking on :global from supervisor startup
 // (init/1 or transitively from init/1). Hangs the supervisor.
-blocks_on_peer(func, "init", "", "global", "", "", "", op) :-
-  global_blocking_op(func, op, _, _),
+blocks_on_peer(func, "init", "", "global", "", "", site, op) :-
+  global_blocking_op(func, op, _, site),
   init_function(_, func).
 
 .init global_reach = CallReach
 
 global_reach.seed(g, op) :- global_blocking_op(g, op, _, _).
 
-blocks_on_peer(func, "init", "", "global", "", "", "", op) :-
-  global_reach.reaches(func, op),
+// The :global call itself, in whichever function init/1 reaches it in:
+// the same reach, seeded by site rather than by operation.
+.init global_site_reach = CallReach
+
+global_site_reach.seed(g, site) :- global_blocking_op(g, _, _, site).
+
+blocks_on_peer(func, "init", "", "global", "", "", site, op) :-
+  global_site_reach.reaches(func, site),
+  global_blocking_op(_, op, _, site),
   init_function(_, func).
 
 // ── Distributed operations in init ───────────────────────────────
@@ -435,16 +457,24 @@ blocks_on_peer(func, "init", "", "remote", "", "", id, op) :-
 
 config_reach.seed(f) :- config_writer(f).
 
-.decl post_start_initialization(func: symbol, site: symbol, callee: symbol)
+.decl post_start_initialization(func: symbol, site: symbol, callee: symbol, start: symbol)
 .output post_start_initialization
 
-post_start_initialization(func, site, callee) :-
+post_start_initialization(func, site, callee, start) :-
   post_start_call(func, site, callee),
-  config_write_api(callee).
+  config_write_api(callee),
+  start_link_site_or_empty(func, start).
 
-post_start_initialization(func, site, callee) :-
+post_start_initialization(func, site, callee, start) :-
   post_start_call(func, site, callee),
-  config_reach.reaches(callee).
+  config_reach.reaches(callee),
+  start_link_site_or_empty(func, start).
+
+// The Supervisor.start_link the write comes after.
+.decl start_link_site_or_empty(func: symbol, site: symbol)
+
+start_link_site_or_empty(f, id) :- call_site(id, f, "Supervisor", "start_link", _).
+start_link_site_or_empty(f, "") :- post_start_call(f, _, _), !call_site(_, f, "Supervisor", "start_link", _).
 
 // ── Ignored start results ────────────────────────────────────────
 

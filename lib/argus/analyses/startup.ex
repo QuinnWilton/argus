@@ -92,7 +92,8 @@ defmodule Argus.Analyses.Startup do
         fields: [
           {:mod, :symbol, "module whose init/1 reaches it"},
           {:kind, :symbol, "recv | connect"},
-          {:api, :symbol, "the receiving function, or the connect call"}
+          {:api, :symbol, "the receiving function, or the connect call"},
+          {:site, :symbol, "the receive, for recv, when the instruction is known; else empty"}
         ],
         # One recv finding per waiting function: the inits that reach it
         # are its evidence frames.
@@ -125,7 +126,8 @@ defmodule Argus.Analyses.Startup do
         fields: [
           {:func, :symbol, "function that started the tree"},
           {:site, :symbol, "the call after Supervisor.start_link"},
-          {:callee, :symbol, "what the call reaches that writes shared state"}
+          {:callee, :symbol, "what the call reaches that writes shared state"},
+          {:start, :symbol, "the Supervisor.start_link call, else empty"}
         ],
         key: [:func, :site],
         doc: "Shared state written after Supervisor.start_link returned."
@@ -142,7 +144,7 @@ defmodule Argus.Analyses.Startup do
   end
 
   @impl true
-  def finding(:unbounded_effect_in_init, [mod, "connect", api]) do
+  def finding(:unbounded_effect_in_init, [mod, "connect", api, _site]) do
     Findings.new(
       :warning,
       "init/1 connects with no reconnect path",
@@ -159,7 +161,7 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:unbounded_effect_in_init, [_mod, "recv", recv]) do
+  def finding(:unbounded_effect_in_init, [_mod, "recv", recv, site]) do
     Findings.new(
       :warning,
       "init/1 waits on a socket with no timeout",
@@ -167,7 +169,7 @@ defmodule Argus.Analyses.Startup do
         "`after`), and init/1 reaches it. Until the message arrives, the " <>
         "process is not started: its supervisor's start, and whoever called " <>
         "start_child, wait with it — for as long as the server stays silent.",
-      at: Findings.at_func(recv),
+      at: if(site == "", do: Findings.at_func(recv), else: Findings.at_site(site, recv)),
       at_label: "receives with :infinity",
       help: [
         "bound the receive (a connect timeout) and fail the start with an error",
@@ -412,7 +414,7 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:blocks_on_peer, [func, "init", _, "global", _, _, _, op]) do
+  def finding(:blocks_on_peer, [func, "init", _, "global", _, _, site, op]) do
     Findings.new(
       :error,
       "Cluster-wide lock during init",
@@ -420,8 +422,9 @@ defmodule Argus.Analyses.Startup do
         "supervisor's start sequence, and the :global op blocks on " <>
         "cluster-wide agreement — local startup now hangs whenever the " <>
         "cluster is partitioned or slow.",
-      at: Findings.at_func(func),
-      at_label: "cluster-wide lock from init/1",
+      at: Findings.at_site(site, func),
+      at_label: "cluster-wide lock reached from init/1",
+      related: reached_from_init(site, func),
       help: ["defer the lock to handle_continue/2 so the start completes without the cluster"]
     )
   end
@@ -438,7 +441,7 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:post_start_initialization, [func, site, callee]) do
+  def finding(:post_start_initialization, [func, site, callee, start]) do
     Findings.new(
       :info,
       "Shared state written after the tree is up",
@@ -448,6 +451,11 @@ defmodule Argus.Analyses.Startup do
         "the state in the meantime finds nothing there.",
       at: Findings.at_site(site, func),
       at_label: "the tree is already running here",
+      related:
+        if(start == "",
+          do: [],
+          else: [Findings.related("the tree starts here", Findings.at_site(start, func))]
+        ),
       help: [
         "perform the initialization before Supervisor.start_link, or as the first " <>
           "child (a child spec whose start function does the work and returns :ignore)"
@@ -466,6 +474,20 @@ defmodule Argus.Analyses.Startup do
       at_label: "start result discarded here",
       help: ["match `{:ok, pid}` and handle `{:error, reason}`"]
     )
+  end
+
+  # A :global call in a helper: the init/1 that reaches it is the second
+  # frame. In init/1 itself the anchor already says so.
+  defp reached_from_init(site, func) do
+    case Findings.at_site(site, func) do
+      %{mfa: {m, f, a}} when m != nil ->
+        if "#{inspect(m)}:#{f}/#{a}" == func,
+          do: [],
+          else: [Findings.related("init/1 reaches it from here", Findings.at_func(func))]
+
+      _ ->
+        []
+    end
   end
 
   @impl true

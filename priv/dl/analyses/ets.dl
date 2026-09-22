@@ -231,7 +231,7 @@ rescues(f) :- catch_tag(_, f, "error", "ArgumentError").
 guarded(g) :- enclosing_function(g, a), rescues(a).
 guarded(g) :- enclosing_function(g, a), closure_def(p, a), call_edge(p, t), rescues(t).
 
-.decl ets_read_outside_owner(name: symbol, owner: symbol, reader: symbol, site: symbol)
+.decl ets_read_outside_owner(name: symbol, owner: symbol, reader: symbol, site: symbol, created: symbol)
 .output ets_read_outside_owner
 
 // A read through a helper that takes the table as a parameter
@@ -257,7 +257,7 @@ named_read(name, caller, site) :-
   call_arg(caller, g, q, name),
   table_param(g, q, site).
 
-ets_read_outside_owner(name, owner, reader, site) :-
+ets_read_outside_owner(name, owner, reader, site, id) :-
   ets_new(id, creator, name),
   name != "dynamic",
   function_def(creator, owner, _, _, _),
@@ -269,7 +269,7 @@ ets_read_outside_owner(name, owner, reader, site) :-
 
 // A table under a name computed at runtime: only the owner's own API
 // can be tied to it.
-ets_read_outside_owner("dynamic", owner, reader, site) :-
+ets_read_outside_owner("dynamic", owner, reader, site, id) :-
   ets_new(id, creator, "dynamic"),
   function_def(creator, owner, _, _, _),
   owner_reaches(owner, creator),

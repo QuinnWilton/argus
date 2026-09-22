@@ -86,7 +86,9 @@ defmodule Argus.Analyses.Blocking do
           {:mod_b, :symbol, "second module in cycle"},
           {:witness_a, :symbol, "function in mod_a carrying the a→b dependency"},
           {:witness_b, :symbol, "function in mod_b carrying the b→a return path"},
-          {:phase, :symbol, "call (anywhere) | continue (both from handle_continue/2)"}
+          {:phase, :symbol, "call (anywhere) | continue (both from handle_continue/2)"},
+          {:site_a, :symbol, "the call in witness_a, when direct; else empty"},
+          {:site_b, :symbol, "the call in witness_b, when direct; else empty"}
         ],
         key: [:mod_a, :mod_b, :phase],
         doc: "Pair of modules with mutual synchronous dependency."
@@ -253,7 +255,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:call_cycle, [mod_a, mod_b, _wa, _wb, "continue"]) do
+  def finding(:call_cycle, [mod_a, mod_b, _wa, _wb, "continue", _sa, _sb]) do
     Findings.new(
       :error,
       "Mutual handle_continue deadlock",
@@ -272,7 +274,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:call_cycle, [mod_a, mod_b, witness_a, witness_b, "call"]) do
+  def finding(:call_cycle, [mod_a, mod_b, witness_a, witness_b, "call", site_a, site_b]) do
     Findings.new(
       :error,
       "Synchronous call cycle",
@@ -280,9 +282,9 @@ defmodule Argus.Analyses.Blocking do
         "intermediaries. If both directions are ever in flight at once, each " <>
         "process blocks waiting on the other's mailbox — a deadlock that " <>
         "GenServer.call timeouts only turn into cascading crashes.",
-      at: Findings.at_func(witness_a),
+      at: site_or_func(site_a, witness_a, mod_a),
       at_label: "one direction of the cycle",
-      related: [Findings.related("return path", Findings.at_func(witness_b))],
+      related: [Findings.related("return path", site_or_func(site_b, witness_b, mod_b))],
       help: ["break one direction with a cast or a message"]
     )
   end
@@ -397,6 +399,9 @@ defmodule Argus.Analyses.Blocking do
   end
 
   @impl true
+  defp site_or_func("", func, _mod), do: Findings.at_func(func)
+  defp site_or_func(site, _func, mod), do: Findings.at_site(site, mod)
+
   def evidence(:call_cycle_path, [_a, _b, from_mod, to_mod, witness, how]) do
     label =
       case how do

@@ -105,6 +105,35 @@ sync_dep(f, m) :-
   function_def(f, fm, _, _, _),
   fm != m.
 
+// The instruction in `func` that calls the project function `callee`:
+// the site a finding points at when a rule knows only the functions.
+// Over the staged call_site, so no analysis reads remote_call for it.
+.decl call_instr(func: symbol, callee: symbol, id: symbol)
+
+call_instr(f, g, id) :-
+  call_site(id, f, mod, name, arity),
+  g = cat(mod, cat(":", cat(name, cat("/", to_string(arity))))),
+  function_def(g, _, _, _, _).
+
+// The instruction in `func` that makes it depend synchronously on
+// `mod`: the GenServer.call itself, or the call into mod's own
+// synchronous API.
+.decl sync_site(func: symbol, mod: symbol, id: symbol)
+
+sync_site(f, m, id) :-
+  sync_call(f, m),
+  call_site(id, f, "GenServer", "call", _).
+
+sync_site(f, m, id) :-
+  sync_call(f, m),
+  call_site(id, f, ":gen_server", "call", _).
+
+sync_site(f, m, id) :-
+  genserver_sync_api(g, m),
+  call_instr(f, g, id),
+  function_def(f, fm, _, _, _),
+  fm != m.
+
 .decl async_dep(func: symbol, mod: symbol)
 
 async_dep(f, m) :-

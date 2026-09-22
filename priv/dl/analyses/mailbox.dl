@@ -250,13 +250,23 @@ takes_message(mod, lit) :-
   receives_message(mod, "any"),
   armed_message(_, lit).
 
-.decl timer_cancel_without_flush(mod: symbol, cancel: symbol, arm: symbol, key: symbol, message: symbol)
+.decl timer_cancel_without_flush(mod: symbol, cancel: symbol, arm: symbol, key: symbol, message: symbol, cancel_site: symbol, arm_site: symbol)
 .output timer_cancel_without_flush
+
+// The cancel_timer instruction that read the ref from `key`, and the
+// send_after that armed it.
+.decl cancel_site(cancel: symbol, key: symbol, id: symbol)
+
+cancel_site(c, key, id) :- timer_cancel(id, c, "field", key, _).
+
+cancel_site(c, key, id) :-
+  timer_cancel(id, c, "param", _, pos),
+  param_field(c, pos, key).
 
 // The arm must be one that can follow the cancel: a timer armed only
 // in init/1 and cancelled later is stopped, not re-armed, and its
 // stale message is handled once as an ordinary one.
-timer_cancel_without_flush(mod, c, a, key, lit) :-
+timer_cancel_without_flush(mod, c, a, key, lit, cs, arm_id) :-
   cancel_key(c, key),
   function_def(c, mod, _, _, _),
   !terminate_callback(c, mod, _),
@@ -264,7 +274,27 @@ timer_cancel_without_flush(mod, c, a, key, lit) :-
   function_def(a, mod, _, _, _),
   !init_function(mod, a),
   stored_message(key, a, lit),
-  !takes_message(mod, lit).
+  !takes_message(mod, lit),
+  cancel_site(c, key, cs),
+  timer_arm(arm_id, a, "self", _, _, _).
+
+// ── Evidence: where a monitored entry is removed, where a task is yielded ─
+.decl monitored_entry_removal(mod: symbol, kind: symbol, site: symbol, func: symbol)
+.output monitored_entry_removal
+
+monitored_entry_removal(mod, "never_released", id, f) :-
+  unconsumed_monitor(mod, _, _, "never_released"),
+  function_def(f, mod, _, _, _),
+  remote_call(id, f, m, op, _),
+  removal_api(m, op).
+
+.decl task_yield_site(func: symbol, kind: symbol, site: symbol)
+.output task_yield_site
+
+task_yield_site(owner, "yield_linked", id) :-
+  task_result_defect(owner, _, "yield_linked"),
+  (remote_call(id, g, "Task", "yield", _) ; remote_call(id, g, "Task", "yield_many", _)),
+  enclosing_function(g, owner).
 
 // ══ Tasks whose messages land unhandled ═════════════════════════════
 .decl task_async_call(func: symbol, id: symbol)

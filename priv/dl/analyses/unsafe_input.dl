@@ -165,6 +165,22 @@ sink_without_request_path(id, func, api, "deserialization", safety) :-
   sink(id, func, api, "deserialization", safety),
   !sink_reachable(id, _, _, _, _, _, _, _, _, _).
 
+// The exported functions the sink is reachable from, a few calls deep:
+// evidence for "the module's public surface reaches it". The sink's own
+// function, when exported, is the finding's anchor already.
+.init export_paths = ForwardBoundedCallReach
+
+export_paths.root(e, e) :- function_def(e, _, _, _, 1).
+export_paths.limit(3).
+
+.decl sink_export(sink: symbol, export: symbol)
+.output sink_export
+
+sink_export(id, e) :-
+  sink_without_request_path(id, func, _, _, _),
+  export_paths.reaches(e, func, d),
+  d > 0.
+
 // ── Which HTTP endpoint reaches the sink ─────────────────────────
 //
 // "Reachable from a plug entry point" is a claim a reader has to go and

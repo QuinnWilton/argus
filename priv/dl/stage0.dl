@@ -33,21 +33,38 @@
 .output call_edge(filename="call_edge.facts")
 
 // The instruction-level sites a supervision analysis can anchor a
-// coupling at: calls into modules defined in the project, plus the
-// GenServer.call/cast a function performs itself. Derived once here for
-// the same reason as call_edge — it keeps `remote_call` out of the input
-// set of analyses that only reason about supervision structure.
-.decl call_site(id: symbol, caller: symbol, callee_mod: symbol)
+// coupling at: calls into functions defined in the project (remote and
+// local), the GenServer.call/cast a function performs itself, and the
+// few library calls a finding anchors at (anchor_api). Derived once here
+// for the same reason as call_edge — it keeps `remote_call` and
+// `local_call` out of the input set of analyses that only reason about
+// supervision structure, while their findings still point at the
+// instruction.
+.decl call_site(id: symbol, caller: symbol, callee_mod: symbol, callee_func: symbol, arity: number)
 
-call_site(id, caller, mod) :-
-  remote_call(id, caller, mod, _, _),
+call_site(id, caller, mod, func, arity) :-
+  remote_call(id, caller, mod, func, arity),
   function_def(_, mod, _, _, _).
 
-call_site(id, caller, "GenServer") :-
-  remote_call(id, caller, "GenServer", "call", _).
+call_site(id, caller, mod, func, arity) :-
+  local_call(id, caller, target, arity),
+  function_def(target, mod, func, _, _).
 
-call_site(id, caller, "GenServer") :-
-  remote_call(id, caller, "GenServer", "cast", _).
+call_site(id, caller, mod, func, arity) :-
+  remote_call(id, caller, mod, func, arity),
+  anchor_api(mod, func).
+
+// The library calls findings point at: a synchronous call, a child
+// started under a supervisor, a tree started, a socket waited on.
+.decl anchor_api(mod: symbol, func: symbol)
+
+anchor_api("GenServer", "call").
+anchor_api("GenServer", "cast").
+anchor_api(":gen_server", "call").
+anchor_api("DynamicSupervisor", "start_child").
+anchor_api("Supervisor", "start_link").
+anchor_api(":gen_tcp", "recv").
+anchor_api(":ssl", "recv").
 
 .output call_site(filename="call_site.facts")
 

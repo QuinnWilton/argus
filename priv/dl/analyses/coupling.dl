@@ -47,12 +47,12 @@ derived_process_link(sup, child) :- supervisor_child(sup, _, child, _, _).
 
 direct_coupling_site(w, callee_mod, id) :-
   coupling(_, _, callee_mod, _, w),
-  call_site(id, w, callee_mod).
+  call_site(id, w, callee_mod, _, _).
 
 direct_coupling_site(w, callee_mod, id) :-
   coupling(_, _, callee_mod, _, w),
-  !call_site(_, w, callee_mod),
-  call_site(id, w, "GenServer").
+  !call_site(_, w, callee_mod, _, _),
+  call_site(id, w, "GenServer", _, _).
 
 coupling_site(w, callee_mod, id) :-
   direct_coupling_site(w, callee_mod, id).
@@ -68,7 +68,7 @@ coupling_site(w, callee_mod, id) :-
   coupling(_, _, callee_mod, _, w),
   !direct_coupling_site(w, callee_mod, _),
   witness_reach.reaches(w, g),
-  call_site(id, g, callee_mod).
+  call_site(id, g, callee_mod, _, _).
 
 // `site` is the instruction ID of the coupling call when one is known,
 // and falls back to the witness function ID otherwise, so consumers can
@@ -296,12 +296,43 @@ down_handler(mod, h) :-
   function_def(h, mod, _, _, _),
   matches_down(h).
 
-.decl dual_restart_authority(mod: symbol, sup: symbol, child: symbol, via: symbol)
+.decl dual_restart_authority(mod: symbol, sup: symbol, child: symbol, via: symbol, start_site: symbol, monitor_site: symbol, handler: symbol)
 .output dual_restart_authority
 
-dual_restart_authority(mod, sup, child, via) :-
+dual_restart_authority(mod, sup, child, via, start_site, monitor_site, h) :-
   starts_and_monitors(mod, sup, child, via),
   down_handler(mod, h),
   module_reach.reaches(h, s),
   dynamic_child(sup, child, s),
-  !child_spec_restart(child, "temporary").
+  !child_spec_restart(child, "temporary"),
+  start_site_of(via, sup, child, start_site),
+  monitor_site_of(via, monitor_site).
+
+// The start_child call `via` reaches for this child, and the monitor it
+// reaches; empty when the function is known but not the instruction.
+.decl start_site_of(via: symbol, sup: symbol, child: symbol, site: symbol)
+
+start_site_of(via, sup, child, id) :-
+  starts_and_monitors(_, sup, child, via),
+  module_reach.reaches(via, s),
+  dynamic_child(sup, child, s),
+  call_site(id, s, "DynamicSupervisor", "start_child", _).
+
+start_site_of(via, sup, child, "") :-
+  starts_and_monitors(_, sup, child, via),
+  !start_site_of_known(via, sup, child).
+
+.decl start_site_of_known(via: symbol, sup: symbol, child: symbol)
+
+start_site_of_known(via, sup, child) :-
+  starts_and_monitors(_, sup, child, via),
+  module_reach.reaches(via, s),
+  dynamic_child(sup, child, s),
+  call_site(_, s, "DynamicSupervisor", "start_child", _).
+
+.decl monitor_site_of(via: symbol, site: symbol)
+
+monitor_site_of(via, id) :-
+  starts_and_monitors(_, _, _, via),
+  module_reach.reaches(via, m),
+  monitor_call(id, m, "started_child").

@@ -104,6 +104,17 @@ defmodule Argus.Analyses.UnsafeInput do
         doc: "A sink no request reaches: live code, but not attacker-reachable."
       },
       %{
+        name: :sink_export,
+        fields: [
+          {:sink, :symbol, "the sink site"},
+          {:export, :symbol, "an exported function that reaches it"}
+        ],
+        key: [:sink, :export],
+        evidence: %{of: :sink_without_request_path, on: [sink: :id], limit: 3},
+        doc:
+          "Exported functions a sink no request reaches is reachable from, attached to its finding."
+      },
+      %{
         name: :sink_endpoint,
         fields: [
           {:sink, :symbol, "the sink site"},
@@ -258,6 +269,10 @@ defmodule Argus.Analyses.UnsafeInput do
   # route is authenticated — Phoenix compiles pipe_through into the
   # router's dispatch as control flow, not into the route table.
   @impl true
+  def evidence(:sink_export, [_sink, export]) do
+    Findings.related("reachable from #{export}, which is exported", Findings.at_func(export))
+  end
+
   def evidence(:sink_endpoint, [_sink, verb, path, plug]) do
     Findings.related("reachable from #{String.upcase(verb)} #{path}", Findings.at_module(plug))
   end

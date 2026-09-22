@@ -150,18 +150,30 @@ unbounded_wait(cat(mod, ":handle_call/3"), "", "infinity", target, "") :-
 // anywhere, "continue" when both do so from handle_continue/2: both
 // return from init, the supervisor proceeds, and neither ever reads its
 // mailbox.
-.decl call_cycle(mod_a: symbol, mod_b: symbol, witness_a: symbol, witness_b: symbol, phase: symbol)
+.decl call_cycle(mod_a: symbol, mod_b: symbol, witness_a: symbol, witness_b: symbol, phase: symbol, site_a: symbol, site_b: symbol)
 .output call_cycle
 
-call_cycle(a, b, wa, wb, "call") :-
+call_cycle(a, b, wa, wb, "call", sa, sb) :-
   module_sync_dep(a, b, wa),
   module_sync_dep(b, a, wb),
-  a < b.
+  a < b,
+  sync_site_or_empty(wa, b, sa),
+  sync_site_or_empty(wb, a, sb).
 
-call_cycle(a, b, wa, wb, "continue") :-
+call_cycle(a, b, wa, wb, "continue", sa, sb) :-
   continue_dep(a, b, wa),
   continue_dep(b, a, wb),
-  a < b.
+  a < b,
+  sync_site_or_empty(wa, b, sa),
+  sync_site_or_empty(wb, a, sb).
+
+// The call in a witness that makes its side of the dependency, when the
+// witness makes it directly; empty when a callee does.
+.decl sync_site_or_empty(func: symbol, mod: symbol, site: symbol)
+
+sync_site_or_empty(f, m, id) :- sync_site(f, m, id).
+sync_site_or_empty(f, m, "") :- module_sync_dep(_, m, f), !sync_site(f, m, _).
+sync_site_or_empty(f, m, "") :- continue_dep(_, m, f), !sync_site(f, m, _).
 
 // The edges of a cycle: evidence attached to the call_cycle finding for
 // (mod_a, mod_b), one related frame per edge. One row per witness —
@@ -173,14 +185,14 @@ call_cycle(a, b, wa, wb, "continue") :-
 .output call_cycle_path
 
 call_cycle_path(a, b, from_mod, to_mod, witness, "tag") :-
-  call_cycle(a, b, _, _, "call"),
+  call_cycle(a, b, _, _, "call", _, _),
   module_sync_dep(from_mod, to_mod, witness),
   (from_mod = a ; from_mod = b),
   (to_mod = a ; to_mod = b),
   reaches_tag_dep(witness, to_mod).
 
 call_cycle_path(a, b, from_mod, to_mod, witness, "static") :-
-  call_cycle(a, b, _, _, "call"),
+  call_cycle(a, b, _, _, "call", _, _),
   module_sync_dep(from_mod, to_mod, witness),
   (from_mod = a ; from_mod = b),
   (to_mod = a ; to_mod = b),

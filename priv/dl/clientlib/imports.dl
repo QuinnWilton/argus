@@ -52,10 +52,10 @@
 .decl call_edge(caller: symbol, callee: symbol)
 .input call_edge
 
-// Stage-0 as well: the project-internal and GenServer call sites, so a
-// finding can point at the calling instruction without reading
-// remote_call.
-.decl call_site(id: symbol, caller: symbol, callee_mod: symbol)
+// Stage-0 as well: the project-internal call sites, the GenServer ones
+// and the few library calls findings anchor at, so a finding can point
+// at the calling instruction without reading remote_call.
+.decl call_site(id: symbol, caller: symbol, callee_mod: symbol, callee_func: symbol, arity: number)
 .input call_site
 
 // Stage-0 as well: call-graph edges with at least one site that is not

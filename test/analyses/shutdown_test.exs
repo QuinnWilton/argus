@@ -71,13 +71,25 @@ defmodule Argus.Analyses.ShutdownTest do
       pairs =
         r
         |> rows("terminate_calls_sibling")
-        |> Enum.map(fn [mod, sib, _via, _sup] -> {mod, sib} end)
+        |> Enum.map(fn [mod, sib, _via, _sup | _sites] -> {mod, sib} end)
         |> Enum.uniq()
 
       assert pairs == [
                {"Argus.Test.Fixtures.ShutdownSiblings.Watchman",
                 "Argus.Test.Fixtures.ShutdownSiblings.Producer"}
              ]
+
+      # The finding points at the call into the sibling's API, and at the
+      # supervisor that places both.
+      sites =
+        r
+        |> rows("terminate_calls_sibling")
+        |> Enum.map(fn [_mod, _sib, _via, _sup, _handler, site, sup_site] -> {site, sup_site} end)
+
+      assert Enum.all?(sites, fn {site, sup_site} ->
+               match?({:ok, _}, Argus.InstrId.parse(site)) and
+                 match?({:ok, _}, Argus.InstrId.parse(sup_site))
+             end)
     end
   end
 

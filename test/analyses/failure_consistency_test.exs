@@ -90,5 +90,16 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       assert f.at_label =~ "disagrees"
       assert f.instr != nil
     end
+
+    test "shows a few of the sites that follow the convention" do
+      skip_without_souffle()
+      {:ok, result} = Argus.run_analyses([C.DeviantIgnore], analyses: [:failure])
+
+      assert [f] = Enum.filter(result.findings, &(&1.title =~ "result ignored"))
+      labels = Enum.map(f.related, & &1.label)
+      assert labels != [] and length(labels) <= 3
+      assert Enum.all?(labels, &(&1 == "its result matched here"))
+      assert Enum.all?(f.related, &(&1.instr != nil))
+    end
   end
 end

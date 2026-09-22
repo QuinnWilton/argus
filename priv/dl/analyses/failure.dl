@@ -215,3 +215,16 @@ inconsistent_handling(func, site, callee, "exception_guarded", guarded, bare) :-
   guard_count(callee, "bare", bare),
   guarded >= 3,
   bare * 4 <= guarded + bare.
+
+// The sites that follow the convention, attached to the finding as its
+// evidence: what "every other call site" looks like.
+.decl handling_site(callee: symbol, belief: symbol, site: symbol, func: symbol)
+.output handling_site
+
+handling_site(callee, "exception_guarded", site, f) :-
+  inconsistent_handling(_, _, callee, "exception_guarded", _, _),
+  call_result(site, f, callee, _, "try").
+
+handling_site(callee, "result_checked", site, f) :-
+  inconsistent_handling(_, _, callee, "result_checked", _, _),
+  call_result(site, f, callee, "used", _).

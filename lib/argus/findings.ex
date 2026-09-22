@@ -388,17 +388,23 @@ defmodule Argus.Findings do
 
   # Related frames from the evidence relations, keyed by the finding
   # relation they join and the values of the join columns: one frame per
-  # deduplicated evidence row, in row order.
+  # deduplicated evidence row, in row order, at most `limit` of them when
+  # the relation sets one (the first in row order — a sample, for "the
+  # other sites do this", not a census).
   defp evidence_frames(mod, relations, results) do
     for {relation_string, rows} <- results,
         relation = Map.fetch!(relations, relation_string),
-        %{of: of, on: on} <- [Map.get(relation, :evidence)],
+        %{of: of, on: on} = spec <- [Map.get(relation, :evidence)],
         row <- dedupe_rows(relation, Enum.sort(rows)),
         reduce: %{} do
       acc ->
         join = for pair <- on, do: Enum.at(row, column_position(relation, evidence_column(pair)))
         frame = mod.evidence(relation.name, row)
-        Map.update(acc, {of, join}, [frame], &(&1 ++ [frame]))
+        limit = Map.get(spec, :limit)
+
+        Map.update(acc, {of, join}, [frame], fn frames ->
+          if limit && length(frames) >= limit, do: frames, else: frames ++ [frame]
+        end)
     end
   end
 

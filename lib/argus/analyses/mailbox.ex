@@ -89,10 +89,35 @@ defmodule Argus.Analyses.Mailbox do
           {:cancel, :symbol, "function cancelling the timer"},
           {:arm, :symbol, "function arming a timer whose message carries no ref"},
           {:key, :symbol, "the state key holding the timer ref"},
-          {:message, :symbol, "the timer's message"}
+          {:message, :symbol, "the timer's message"},
+          {:cancel_site, :symbol, "the cancel_timer call"},
+          {:arm_site, :symbol, "the send_after that arms it"}
         ],
         key: [:mod, :key],
         doc: "A cancelled timer's message may already be in the mailbox and is not told apart."
+      },
+      %{
+        name: :monitored_entry_removal,
+        fields: [
+          {:mod, :symbol, "the module"},
+          {:kind, :symbol, "never_released"},
+          {:site, :symbol, "a call that removes an entry"},
+          {:func, :symbol, "the function it is in"}
+        ],
+        key: [:mod, :site],
+        evidence: %{of: :unconsumed_monitor, on: [:mod, :kind], limit: 3},
+        doc: "Where a server that never demonitors removes its entries, attached to its finding."
+      },
+      %{
+        name: :task_yield_site,
+        fields: [
+          {:func, :symbol, "the function owning the task"},
+          {:kind, :symbol, "yield_linked"},
+          {:site, :symbol, "the Task.yield call"}
+        ],
+        key: [:func, :site],
+        evidence: %{of: :task_result_defect, on: [:func, :kind], limit: 3},
+        doc: "Where a linked task is collected with Task.yield, attached to its finding."
       },
       %{
         name: :task_result_defect,
@@ -180,7 +205,7 @@ defmodule Argus.Analyses.Mailbox do
     )
   end
 
-  def finding(:timer_cancel_without_flush, [mod, cancel, arm, key, message]) do
+  def finding(:timer_cancel_without_flush, [mod, cancel, arm, key, message, cancel_site, arm_site]) do
     Findings.new(
       :warning,
       "Timer cancelled without flushing its message",
@@ -190,8 +215,9 @@ defmodule Argus.Analyses.Mailbox do
         "already delivered, and nothing flushes #{message} after the cancel, so " <>
         "a stale one is handled as if it were the next: the action runs twice, " <>
         "or early.",
-      at: Findings.at_func(cancel),
+      at: Findings.at_site(cancel_site, mod),
       at_label: "cancels here",
+      related: [Findings.related("armed with #{message} here", Findings.at_site(arm_site, mod))],
       help: [
         "put the timer ref in the message (`{#{message}, ref}`) and match it against #{key}",
         "or flush after cancelling: `receive do #{message} -> :ok after 0 -> :ok end`"
@@ -458,4 +484,16 @@ defmodule Argus.Analyses.Mailbox do
   end
 
   defp consequence(_other), do: ""
+
+  @impl true
+  def evidence(:monitored_entry_removal, [mod, _kind, site, _func]) do
+    Findings.related(
+      "an entry is removed here, its monitor left live",
+      Findings.at_site(site, mod)
+    )
+  end
+
+  def evidence(:task_yield_site, [func, _kind, site]) do
+    Findings.related("collected with Task.yield here", Findings.at_site(site, func))
+  end
 end

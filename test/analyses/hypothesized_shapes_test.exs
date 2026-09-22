@@ -64,9 +64,16 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
         :mailbox
       )
 
+    rows = Map.get(r, "timer_cancel_without_flush", [])
+
+    # Both the cancel and the arm are instructions a frame can point at.
+    for [_mod, _cancel, _arm, _key, _message, cancel_site, arm_site] <- rows do
+      assert {:ok, _} = Argus.InstrId.parse(cancel_site)
+      assert {:ok, _} = Argus.InstrId.parse(arm_site)
+    end
+
     reported =
-      r
-      |> Map.get("timer_cancel_without_flush", [])
+      rows
       |> Enum.map(&{hd(&1), Enum.at(&1, 3), Enum.at(&1, 4)})
       |> Enum.sort()
 

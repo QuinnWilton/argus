@@ -67,7 +67,8 @@ defmodule Argus.Analyses.Ets do
           {:name, :symbol, "the table, or 'dynamic' when its name is computed"},
           {:owner, :symbol, "the module whose callbacks create it"},
           {:reader, :symbol, "a function reading it that the owner's callbacks do not reach"},
-          {:site, :symbol, "the read"}
+          {:site, :symbol, "the read"},
+          {:created, :symbol, "the :ets.new call"}
         ],
         key: [:owner, :reader],
         doc:
@@ -140,7 +141,7 @@ defmodule Argus.Analyses.Ets do
   end
 
   @impl true
-  def finding(:ets_read_outside_owner, [name, owner, reader, site]) do
+  def finding(:ets_read_outside_owner, [name, owner, reader, site, created]) do
     table = if name == "dynamic", do: "a table", else: name
 
     Findings.new(
@@ -152,6 +153,7 @@ defmodule Argus.Analyses.Ets do
         "raises ArgumentError in the caller instead of returning a value.",
       at: Findings.at_site(site, owner),
       at_label: "read outside the owner",
+      related: [Findings.related("created here, with no heir", Findings.at_site(created, owner))],
       help: [
         "give the table a heir (a supervisor or a long-lived holder) so it survives the restart",
         "or rescue ArgumentError in the reader and return an error value"

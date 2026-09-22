@@ -120,12 +120,21 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
           :coupling
         )
 
-      mods = Enum.map(Map.get(r, "dual_restart_authority", []), &hd/1) |> Enum.uniq()
+      rows = Map.get(r, "dual_restart_authority", [])
+      mods = rows |> Enum.map(&hd/1) |> Enum.uniq()
 
       assert mods == [
                "Argus.Test.Fixtures.SupervisionShapes.DualManager",
                "Argus.Test.Fixtures.SupervisionShapes.StatemDualManager"
              ]
+
+      # The finding points at the start_child and the monitor, and names
+      # the handler that starts the child again.
+      for [mod, _sup, _child, _via, start_site, monitor_site, handler] <- rows do
+        assert {:ok, _} = Argus.InstrId.parse(start_site)
+        assert {:ok, _} = Argus.InstrId.parse(monitor_site)
+        assert String.starts_with?(handler, mod <> ":")
+      end
     end
   end
 end
