@@ -22,6 +22,15 @@ check" at `:warning`, with the loaded-module fun risk and
 request-reachable deserialization keeps its proximity severity and gains
 the same wording.
 
+### Added
+
+`Argus.Corpus` pairs take `subdir:` for a repository whose Mix project is
+not at the root — `mix.exs` under `elixir/`, one app of an umbrella under
+`apps/` — so a fix in such a tree can be a pair. The clone is still one
+directory per `<repo>-<sha7>`; relaxing the Elixir requirement, building
+and finding beams happen in the project, and an umbrella app's beams are
+found in the umbrella's `_build`.
+
 ## 0.19.0 — 2026-09-22
 
 ### Added

@@ -31,11 +31,18 @@ defmodule Argus.Corpus do
           required(:pre) => String.t(),
           optional(:fix) => String.t(),
           optional(:elixir) => String.t(),
+          optional(:subdir) => String.t(),
           optional(:module) => String.t(),
           required(:finding) => {atom(), String.t()}
         }
 
-  @type checkout :: %{name: String.t(), dir: String.t(), sha: String.t()}
+  @typedoc """
+  One side of a pair on disk: `dir` is the clone, `project` the Mix
+  project inside it — the same directory unless the pair names a
+  `subdir:` (a repository whose `mix.exs` lives under `elixir/`, one app
+  of an umbrella under `apps/`).
+  """
+  @type checkout :: %{name: String.t(), dir: String.t(), project: String.t(), sha: String.t()}
 
   @pairs_file Path.join([__DIR__, "..", "..", "test", "corpus", "pairs.exs"]) |> Path.expand()
 
@@ -64,7 +71,8 @@ defmodule Argus.Corpus do
 
       sha ->
         name = "#{Path.basename(pair.repo)}-#{String.slice(sha, 0, 7)}"
-        %{name: name, dir: Path.join(root(), name), sha: sha}
+        dir = Path.join(root(), name)
+        %{name: name, dir: dir, project: Path.join(dir, Map.get(pair, :subdir, ".")), sha: sha}
     end
   end
 
@@ -113,7 +121,7 @@ defmodule Argus.Corpus do
 
   # ── Steps ─────────────────────────────────────────────────────────────
 
-  defp clone(pair, %{dir: dir, sha: sha}) do
+  defp clone(pair, %{dir: dir, sha: sha} = co) do
     if File.dir?(dir) do
       :ok
     else
@@ -122,7 +130,7 @@ defmodule Argus.Corpus do
 
       with :ok <- run(["git", "clone", "-q", url, dir], root(), [], "clone #{pair.repo}"),
            :ok <- run(["git", "checkout", "-q", sha], dir, [], "checkout #{sha}") do
-        relax_elixir_requirement(dir)
+        relax_elixir_requirement(co.project)
       end
     end
   end
@@ -146,7 +154,7 @@ defmodule Argus.Corpus do
     else
       env = compile_env(pair)
 
-      with :ok <- build(dir, env, co.name) do
+      with :ok <- build(co.project, env, co.name) do
         File.write!(marker, "")
         :ok
       end
@@ -181,10 +189,13 @@ defmodule Argus.Corpus do
     end
   end
 
-  defp beams(%{dir: dir, name: name}) do
-    app = app_name(dir)
+  # An umbrella app builds into the umbrella's _build; the glob starts at
+  # the project and climbs to the clone.
+  defp beams(%{project: project, dir: dir, name: name}) do
+    app = app_name(project)
 
-    case Path.wildcard(Path.join([dir, "_build", "*", "lib", app, "ebin", "*.beam"])) do
+    case Path.wildcard(Path.join([project, "_build", "*", "lib", app, "ebin", "*.beam"])) ++
+           Path.wildcard(Path.join([dir, "_build", "*", "lib", app, "ebin", "*.beam"])) do
       [] -> {:error, "no beams for #{name} (app #{app})"}
       beams -> {:ok, beams}
     end
