@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 41
+  @schema_version 42
 
   # Layer 1: Module-level facts.
 
@@ -2117,9 +2117,28 @@ defmodule Argus.Schema do
     """
   }
 
+  @prior_talks_to_process %{
+    name: :prior_talks_to_process,
+    layer: 3,
+    fields: [
+      {:mod, :symbol, "the module"},
+      {:permille, :number,
+       "the model's probability that calling the module's public functions messages or waits on a long-lived process, in thousandths"}
+    ],
+    doc: """
+    Whether a module fronts a process — its API sends to or waits on a \
+    server — or is a helper that merely contains a call somewhere \
+    (Argus.Priors.Questions.ProcessRole). Asked about the modules with a \
+    call or cast but no callback loop, which is what the module-level \
+    dependency in calls.dl cannot tell apart; coupling doubts a dependency \
+    inferred that way when the answer is no.
+    """
+  }
+
   @layer_3_relations [
     @prior_reads,
-    @prior_sensitive
+    @prior_sensitive,
+    @prior_talks_to_process
   ]
 
   @all_relations @layer_1_relations ++ @layer_2_relations ++ @layer_3_relations

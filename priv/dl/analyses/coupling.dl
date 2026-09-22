@@ -90,18 +90,56 @@ coupling_site(w, callee_mod, id) :-
 // and `site` the instruction that makes the call when one is known, the
 // witness function ID otherwise. One row per witness; finding builders
 // dedupe on (sup, caller, callee, reason).
-.decl sibling_dependency(sup: symbol, caller: symbol, callee: symbol, reason: symbol, detail: symbol, sup_site: symbol, witness: symbol, site: symbol)
+// `basis` says how the dependency was established: `resolved` through a
+// call or cast whose target is known, `inferred` through the module-level
+// clause of stateful_module_dep alone — the caller reaches some function
+// of the sibling and the sibling has a call somewhere — and `doubted`
+// when that inference is all there is and a prior (Argus.Priors, off by
+// default) puts the sibling's API at 0.3 or below for messaging a
+// process: a helper with a call in its start_link, not a facade. The
+// finding steps down a severity for a doubted row; `permille` is the
+// prior's probability that the module does talk to a process.
+.decl dep_resolved(from: symbol, to: symbol)
+
+dep_resolved(f, t) :- module_sync_dep(f, t, _).
+
+dep_resolved(f, t) :-
+  function_def(w, f, _, _, _),
+  reaches_async_dep(w, t),
+  f != t.
+
+.decl dep_doubted(from: symbol, to: symbol, permille: number)
+
+dep_doubted(f, t, p) :-
+  stateful_module_dep(f, t, _),
+  !dep_resolved(f, t),
+  prior_talks_to_process(t, p),
+  p <= 300.
+
+.decl dep_basis(from: symbol, to: symbol, basis: symbol, permille: number)
+
+dep_basis(f, t, "resolved", 0) :- dep_resolved(f, t).
+dep_basis(f, t, "doubted", p) :- dep_doubted(f, t, p).
+
+dep_basis(f, t, "inferred", 0) :-
+  stateful_module_dep(f, t, _),
+  !dep_resolved(f, t),
+  !dep_doubted(f, t, _).
+
+.decl sibling_dependency(sup: symbol, caller: symbol, callee: symbol, reason: symbol, detail: symbol, sup_site: symbol, witness: symbol, site: symbol, basis: symbol, permille: number)
 .output sibling_dependency
 
-sibling_dependency(sup, caller_mod, callee_mod, "restart_isolation", kind, sup_site, witness, site) :-
+sibling_dependency(sup, caller_mod, callee_mod, "restart_isolation", kind, sup_site, witness, site, basis, p) :-
   coupling(sup, caller_mod, callee_mod, sup_site, witness),
   coupling_site(witness, callee_mod, site),
-  stateful_module_dep_kind(caller_mod, callee_mod, kind).
+  stateful_module_dep_kind(caller_mod, callee_mod, kind),
+  dep_basis(caller_mod, callee_mod, basis, p).
 
-sibling_dependency(sup, caller_mod, callee_mod, "restart_isolation", kind, sup_site, witness, witness) :-
+sibling_dependency(sup, caller_mod, callee_mod, "restart_isolation", kind, sup_site, witness, witness, basis, p) :-
   coupling(sup, caller_mod, callee_mod, sup_site, witness),
   !coupling_site(witness, callee_mod, _),
-  stateful_module_dep_kind(caller_mod, callee_mod, kind).
+  stateful_module_dep_kind(caller_mod, callee_mod, kind),
+  dep_basis(caller_mod, callee_mod, basis, p).
 
 
 coupling(sup, caller_mod, callee_mod, sup_site, witness) :-
@@ -117,13 +155,14 @@ coupling(sup, caller_mod, callee_mod, sup_site, witness) :-
 // ══ A permanent child depending on a sibling that may not come back ═
 
 // witness — finding builders dedupe on (sup, permanent, sibling).
-sibling_dependency(sup, perm, sibling, "restart_policy", restart, sup_site, witness, witness) :-
+sibling_dependency(sup, perm, sibling, "restart_policy", restart, sup_site, witness, witness, basis, p) :-
   supervisor(sup, _),
   supervisor_site(sup, sup_site),
   supervisor_child(sup, _, perm, "permanent", _),
   supervisor_child(sup, _, sibling, restart, _),
   (restart = "transient" ; restart = "temporary"),
-  stateful_module_dep(perm, sibling, witness).
+  stateful_module_dep(perm, sibling, witness),
+  dep_basis(perm, sibling, basis, p).
 
 
 // Permanent child that depends (transitively) on a sibling whose
@@ -144,7 +183,7 @@ sibling_dependency(sup, perm, sibling, "restart_policy", restart, sup_site, witn
 // #1499 are the inverse, registrations made with a sibling that its
 // restart forgets). :rest_for_one and :one_for_all restart the holder
 // too; a :temporary target is never restarted.
-sibling_dependency(sup, mod, name, "cached_pid", "", sup_site, f, f) :-
+sibling_dependency(sup, mod, name, "cached_pid", "", sup_site, f, f, "resolved", 0) :-
   init_function(mod, f),
   name_lookup(_, f, "whereis", _, "literal", name, _),
   supervisor_child(sup, _, mod, _, _),

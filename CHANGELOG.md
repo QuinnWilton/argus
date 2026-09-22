@@ -132,6 +132,22 @@ it is handed; a `passthrough` answer changes nothing, and neither does
 `request`, which the calibration did not measure. Sites, titles and
 rows are the same with priors on or off.
 
+**Schema version 42.** `prior_talks_to_process(mod, permille)`, the
+third prior: the model's probability that calling a module's public
+functions messages or waits on a long-lived process, asked by
+`Argus.Priors.Questions.ProcessRole` about the modules with a call or
+cast and no callback loop of their own. `coupling`'s `sibling_dependency`
+gains `basis` and `permille`: `resolved` when a call or cast with a known
+target connects the siblings, `inferred` when only the module-level
+clause of `stateful_module_dep` does — the caller reaches some function
+of the sibling and the sibling has a call somewhere — and `doubted` when
+that inference is all there is and the prior puts the sibling at 0.3 or
+below. A doubted row is the same finding one severity step down,
+labelled heuristic: a helper with a call in its `start_link` reached for
+a pure function, told apart from a facade reached through delegation,
+which is the false-positive class the July corpus audit traced to that
+clause. A resolved dependency is never doubted.
+
 ### Fixed
 
 `def_use` had no edges through binary construction or binary matching:

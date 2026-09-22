@@ -70,7 +70,11 @@ defmodule Argus.Analyses.Coupling do
            "call | cast for restart_isolation, the sibling's restart policy for restart_policy, empty for cached_pid"},
           {:sup_site, :symbol, "instruction ID of the tree definition"},
           {:witness, :symbol, "function in the caller carrying the dependency"},
-          {:site, :symbol, "instruction ID of the dependency call, or the witness function ID"}
+          {:site, :symbol, "instruction ID of the dependency call, or the witness function ID"},
+          {:basis, :symbol,
+           "resolved | inferred | doubted — how the dependency was established, see coupling.dl"},
+          {:permille, :number,
+           "for a doubted row, the prior's probability that the sibling talks to a process"}
         ],
         key: [:sup, :caller, :callee, :reason],
         doc: "A child depends on a sibling that a restart leaves stale."
@@ -114,7 +118,9 @@ defmodule Argus.Analyses.Coupling do
         "cast",
         sup_site,
         _w,
-        site
+        site,
+        basis,
+        p
       ]) do
     Findings.new(
       :info,
@@ -135,6 +141,7 @@ defmodule Argus.Analyses.Coupling do
         Findings.related("called sibling", Findings.at_module(callee_mod))
       ]
     )
+    |> doubt(callee_mod, basis, p)
   end
 
   def finding(:sibling_dependency, [
@@ -145,7 +152,9 @@ defmodule Argus.Analyses.Coupling do
         "call",
         sup_site,
         _w,
-        site
+        site,
+        basis,
+        p
       ]) do
     Findings.new(
       :warning,
@@ -168,6 +177,7 @@ defmodule Argus.Analyses.Coupling do
         Findings.related("called sibling", Findings.at_module(callee_mod))
       ]
     )
+    |> doubt(callee_mod, basis, p)
   end
 
   def finding(:sibling_dependency, [
@@ -178,7 +188,9 @@ defmodule Argus.Analyses.Coupling do
         restart,
         sup_site,
         witness,
-        _s
+        _s,
+        basis,
+        p
       ]) do
     consequence =
       case restart do
@@ -207,6 +219,7 @@ defmodule Argus.Analyses.Coupling do
         Findings.related("#{restart} sibling", Findings.at_module(sibling))
       ]
     )
+    |> doubt(sibling, basis, p)
   end
 
   def finding(:rest_for_one_orphaned_children, [sup, owner, holder, opos, hpos, site, conf]) do
@@ -240,7 +253,18 @@ defmodule Argus.Analyses.Coupling do
     )
   end
 
-  def finding(:sibling_dependency, [sup, mod, name, "cached_pid", _, _sup_site, _init, _site]) do
+  def finding(:sibling_dependency, [
+        sup,
+        mod,
+        name,
+        "cached_pid",
+        _,
+        _sup_site,
+        _init,
+        _site,
+        _b,
+        _p
+      ]) do
     Findings.new(
       :info,
       "Sibling pid cached in init/1 under one_for_one",
@@ -276,4 +300,31 @@ defmodule Argus.Analyses.Coupling do
       ]
     )
   end
+
+  # A dependency the module-level clause inferred and a prior doubts: the
+  # caller reaches the sibling, but the sibling's API, the model says,
+  # does not message a process — a helper with a call in its start_link,
+  # not a facade. One severity step down, the finding labelled with the
+  # doubt and how sure the model was that the sibling is *not* a process.
+  defp doubt(attrs, callee, "doubted", p) do
+    permille = String.to_integer(p)
+    not_process = 1000 - permille
+
+    %{
+      attrs
+      | severity: demote(attrs.severity),
+        at_label:
+          "heuristic: #{callee}'s API does not talk to a process (p=#{format_permille(not_process)}); " <>
+            "the dependency was inferred from reaching it, not from a call",
+        provenance: :heuristic,
+        confidence: not_process
+    }
+  end
+
+  defp doubt(attrs, _callee, _basis, _p), do: attrs
+
+  defp demote(:error), do: :warning
+  defp demote(_warning_or_info), do: :info
+
+  defp format_permille(p), do: :erlang.float_to_binary(p / 1000, decimals: 2)
 end

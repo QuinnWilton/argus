@@ -61,7 +61,7 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
     test "flags a transient sibling dependency" do
       skip_without_souffle()
 
-      assert [["Sup", "P", "S", "restart_policy", "transient", _site, _witness, _]] =
+      assert [["Sup", "P", "S", "restart_policy", "transient", _site, _witness, _ | _]] =
                dependency_rows(base_facts("transient"))
     end
 
@@ -70,7 +70,7 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
 
       # Temporary is strictly worse than transient: never restarted,
       # not even after a crash.
-      assert [["Sup", "P", "S", "restart_policy", "temporary", _site, _witness, _]] =
+      assert [["Sup", "P", "S", "restart_policy", "temporary", _site, _witness, _ | _]] =
                dependency_rows(base_facts("temporary"))
     end
 

@@ -252,7 +252,9 @@ defmodule Argus.PriorsTest do
       assert key.(sinks([])) == key.(sinks(storage(dir)))
     end
 
-    test "passthrough leaves the row alone, and so does a probability under 0.7", %{tmp_dir: dir} do
+    test "passthrough leaves the row alone, and so does a probability under 0.7 (reads)", %{
+      tmp_dir: dir
+    } do
       skip_without_souffle()
 
       assert Enum.all?(
@@ -264,6 +266,95 @@ defmodule Argus.PriorsTest do
                sinks(storage(dir, oracle_opts: [p: 0.65])),
                &(&1.provenance == :structural)
              )
+    end
+  end
+
+  describe "coupling doubts a dependency inferred from reaching a sibling" do
+    alias Argus.Test.Fixtures.{FacadeCaller, FacadeHelper, FacadeSupervisor}
+
+    # Answers the noul with `p` for every module asked.
+    defmodule NoulOracle do
+      @behaviour Argus.Priors.Oracle
+
+      @impl true
+      def ask(request, opts) do
+        p = Keyword.get(opts, :p, 0.1)
+
+        answers =
+          for {id, q} <- request.questions, into: %{} do
+            case q.type do
+              "noul" ->
+                {id, %{"type" => "noul", "noul" => p}}
+
+              "choice" ->
+                first = q.criteria |> Map.keys() |> List.first() |> to_string()
+
+                {id,
+                 %{
+                   "type" => "choice",
+                   "choice" => first,
+                   "confidence" => 0.5,
+                   "probabilities" => %{first => 0.5}
+                 }}
+            end
+          end
+
+        {:ok,
+         %{
+           answers: answers,
+           usage: %{"input_tokens" => 40},
+           model: request.model,
+           request_id: nil
+         }}
+      end
+    end
+
+    @facade [FacadeSupervisor, FacadeCaller, FacadeHelper]
+
+    defp couplings(opts) do
+      assert {:ok, %Argus.Findings{degraded: []} = r} =
+               Argus.Findings.run(@facade, Keyword.put(opts, :analyses, [:coupling]))
+
+      Enum.filter(r.findings, &(&1.title =~ "one_for_one"))
+    end
+
+    defp noul(dir, p),
+      do: [
+        priors: :live,
+        priors_opts: [oracle: NoulOracle, oracle_opts: [p: p], cache_dir: dir, model: "jev-test"]
+      ]
+
+    # The caller reaches only a pure function of the helper, so no path
+    # waits on a reply: the coupling is graded one-way, an info already.
+    # The doubt then shows as provenance and label, not as a step down.
+    test "off: the inferred coupling is a structural one-way finding" do
+      skip_without_souffle()
+      assert [finding] = couplings([])
+      assert finding.severity == :info
+      assert finding.provenance == :structural
+      assert finding.title == "One-way coupling under one_for_one"
+    end
+
+    test "on, and the helper's API does not talk to a process: the same finding, marked heuristic",
+         %{
+           tmp_dir: dir
+         } do
+      skip_without_souffle()
+      assert [finding] = couplings(noul(dir, 0.1))
+      assert finding.severity == :info
+      assert finding.provenance == :heuristic
+      assert finding.confidence == 900
+
+      assert finding.at_label =~
+               "#{inspect(FacadeHelper)}'s API does not talk to a process (p=0.90)"
+
+      assert finding.title == "One-way coupling under one_for_one"
+    end
+
+    test "on, and the model thinks it is a facade: nothing changes", %{tmp_dir: dir} do
+      skip_without_souffle()
+      assert [finding] = couplings(noul(dir, 0.85))
+      assert finding.severity == :info and finding.provenance == :structural
     end
   end
 end

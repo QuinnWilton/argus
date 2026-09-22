@@ -5,7 +5,7 @@
   blocking:
     ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag catch_tag catch_total closure_def function_def global_op handle_continue_clause implements_behaviour init_continues_to recv_start remote_call rpc_call sync_call sync_call_timeout try_call),
   coupling:
-    ~w(async_cast call_arg call_arg_forward call_edge call_site call_tag callback_tag child_spec_restart dynamic_child function_def implements_behaviour matches_down monitor_call name_lookup process_link sup_call supervisor supervisor_child supervisor_child_name supervisor_site sync_call),
+    ~w(async_cast call_arg call_arg_forward call_edge call_site call_tag callback_tag child_spec_restart dynamic_child function_def implements_behaviour matches_down monitor_call name_lookup prior_talks_to_process process_link sup_call supervisor supervisor_child supervisor_child_name supervisor_site sync_call),
   coverage:
     ~w(async_cast dynamic_child ets_new ets_op function_def implements_behaviour imprecision named_process supervisor supervisor_child sync_call),
   effects:

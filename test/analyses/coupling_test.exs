@@ -1,6 +1,7 @@
 defmodule Argus.Analyses.CouplingTest do
   use ExUnit.Case
 
+  alias Argus.Analyses.Coupling
   alias Argus.Souffle
   alias Argus.Test.Rows
 
@@ -58,7 +59,7 @@ defmodule Argus.Analyses.CouplingTest do
         sync_call: [["A:call_b/0", "B"]]
       }
 
-      assert [[_sup, "A", "B", "restart_isolation", "call", _site, _witness, _call_site]] =
+      assert [[_sup, "A", "B", "restart_isolation", "call", _site, _witness, _call_site | _]] =
                coupling_rows(base)
 
       linked = Map.put(base, :process_link, [["A", "B"]])
@@ -79,12 +80,85 @@ defmodule Argus.Analyses.CouplingTest do
         async_cast: [["A:cast_b/0", "B"]]
       }
 
-      assert [[_sup, "A", "B", "restart_isolation", "cast", _site, "A:cast_b/0", _call_site]] =
+      assert [[_sup, "A", "B", "restart_isolation", "cast", _site, "A:cast_b/0", _call_site | _]] =
                coupling_rows(base)
 
       # One sync call anywhere along the dependency makes it a call coupling.
       both = Map.put(base, :sync_call, [["A:cast_b/0", "B"]])
-      assert [[_, "A", "B", "restart_isolation", "call", _, _, _]] = coupling_rows(both)
+      assert [[_, "A", "B", "restart_isolation", "call", _, _, _ | _]] = coupling_rows(both)
+    end
+
+    test "a dependency inferred from reaching a sibling with a call somewhere is marked, and a prior can doubt it" do
+      skip_without_souffle()
+
+      # A's handler reaches B's pure/1; B's ask/0 calls a server. No
+      # resolved call from A to B: the module-level clause alone couples
+      # them, and the row says so.
+      base = %{
+        supervisor: [["Sup", "one_for_one"]],
+        supervisor_site: [["Sup", "Sup:init/1#3"]],
+        supervisor_child: [
+          ["Sup", "0", "A", "permanent", "worker"],
+          ["Sup", "1", "B", "permanent", "worker"]
+        ],
+        function_def: [
+          ["A:h/0", "A", "h", "0", "1"],
+          ["B:pure/1", "B", "pure", "1", "1"],
+          ["B:ask/0", "B", "ask", "0", "1"]
+        ],
+        remote_call: [["A:h/0#1", "A:h/0", "B", "pure", "1"]],
+        sync_call: [["B:ask/0", "C"]]
+      }
+
+      assert [[_, "A", "B", "restart_isolation", _, _, _, _, "inferred", "0"]] =
+               coupling_rows(base)
+
+      doubted = Map.put(base, :prior_talks_to_process, [["B", "120"]])
+
+      assert [[_, "A", "B", "restart_isolation", _, _, _, _, "doubted", "120"]] =
+               coupling_rows(doubted)
+
+      # At 0.7 the model thinks B is a process after all: the inference stands.
+      confirmed = Map.put(base, :prior_talks_to_process, [["B", "700"]])
+
+      assert [[_, "A", "B", "restart_isolation", _, _, _, _, "inferred", "0"]] =
+               coupling_rows(confirmed)
+
+      # A resolved call is never doubted, whatever the prior says.
+      resolved =
+        base
+        |> Map.put(:sync_call, [["A:h/0", "B"], ["B:ask/0", "C"]])
+        |> Map.put(:prior_talks_to_process, [["B", "50"]])
+
+      assert [[_, "A", "B", "restart_isolation", "call", _, _, _, "resolved", "0"]] =
+               coupling_rows(resolved)
+    end
+
+    test "a doubted row is the same finding a severity step down, labelled and heuristic" do
+      row = [
+        "Sup",
+        "A",
+        "B",
+        "restart_isolation",
+        "call",
+        "Sup:init/1#3",
+        "A:h/0",
+        "A:h/0",
+        "doubted",
+        "120"
+      ]
+
+      finding = Coupling.finding(:sibling_dependency, row)
+      assert finding.severity == :info
+      assert finding.provenance == :heuristic
+      assert finding.confidence == 880
+      assert finding.at_label =~ "does not talk to a process (p=0.88)"
+      assert finding.title == "Coupled children under one_for_one"
+
+      plain =
+        Coupling.finding(:sibling_dependency, List.replace_at(row, 8, "inferred"))
+
+      assert plain.severity == :warning and plain.provenance == :structural
     end
 
     defp coupling_rows(facts) do
