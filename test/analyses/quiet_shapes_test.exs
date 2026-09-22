@@ -31,7 +31,8 @@ defmodule Argus.Analyses.QuietShapesTest do
     Quiet.TimerWithCatchAll,
     Quiet.UnrelatedMonitorRestarter,
     Quiet.GenericTimeoutStatem,
-    Quiet.ClockInTerminate
+    Quiet.ClockInTerminate,
+    Quiet.StoreSourcedSink
   ]
 
   @expect_quiet %{
@@ -52,7 +53,8 @@ defmodule Argus.Analyses.QuietShapesTest do
     blocking: ~w(partial_noproc_catch),
     failure: [{"unhandled_failure", kind: "erpc_transport"}],
     ets: ~w(ets_read_outside_owner),
-    startup: [{"unbounded_effect_in_init", kind: "recv"}, "post_start_initialization"]
+    startup: [{"unbounded_effect_in_init", kind: "recv"}, "post_start_initialization"],
+    unsafe_input: [{"sink_reachable", proximity: "flow"}]
   }
 
   # An entry is a relation name, or `{relation, where}` for the rows of a

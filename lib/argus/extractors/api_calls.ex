@@ -235,6 +235,32 @@ defmodule Argus.Extractors.ApiCalls do
   # Indexed by {mod, fun} at compile time; arity is checked per entry.
   @by_mod_fun Enum.group_by(@table, fn {{m, f, _a}, _rel, _cols} -> {m, f} end)
 
+  @sink_relations [:unsafe_atom_creation, :unsafe_deserialization, :code_execution]
+  @sink_mfas @table
+             |> Enum.filter(fn {_mfa, rel, _cols} -> rel in @sink_relations end)
+             |> Enum.map(fn {mfa, _rel, _cols} -> mfa end)
+             |> Enum.uniq()
+
+  @doc """
+  The calls `unsafe_input` treats as sinks — atom creation, deserialization
+  and code execution — as the table spells them: `{mod, fun, arity}` where
+  `arity` may be a list or `:any`. One table, so a dataflow extractor and
+  the sink extractor cannot disagree about what a sink is.
+  """
+  @spec sink_mfas() :: [{module(), atom(), arity() | [arity()] | :any}]
+  def sink_mfas, do: @sink_mfas
+
+  @doc "Whether a concrete `{mod, fun, arity}` is one of `sink_mfas/0`."
+  @spec sink?({module(), atom(), arity()}) :: boolean()
+  def sink?({mod, fun, arity}) do
+    Enum.any?(@sink_mfas, fn
+      {^mod, ^fun, :any} -> true
+      {^mod, ^fun, arities} when is_list(arities) -> arity in arities
+      {^mod, ^fun, ^arity} -> true
+      _ -> false
+    end)
+  end
+
   @impl true
   def relations,
     do: [

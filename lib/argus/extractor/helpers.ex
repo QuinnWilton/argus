@@ -1145,6 +1145,30 @@ defmodule Argus.Extractor.Helpers do
   def cfg(module_data, name, arity) when is_binary(name),
     do: cfg(module_data, String.to_atom(name), arity)
 
+  @doc """
+  The module's decoded Layer-1 facts, from the ones the pipeline attached
+  to `module_data` or emitted and decoded on the spot. `nil` when the
+  facts cannot be decoded — the pipeline records the same `nil`, so an
+  extractor that needs them loses only what they provide.
+  """
+  @spec typed(map()) :: Argus.Facts.t() | nil
+  def typed(%{typed: typed}) when is_map(typed), do: typed
+  def typed(%{typed: nil}), do: nil
+
+  def typed(%{module: mod, exports: exports, attributes: attributes, functions: functions} = data) do
+    mod
+    |> Argus.Pipeline.Emit.emit_module(
+      exports,
+      Map.get(data, :imports, []),
+      attributes,
+      functions,
+      Map.get(data, :line_table, %{})
+    )
+    |> Argus.Facts.decode()
+  rescue
+    _ -> nil
+  end
+
   @doc "The graph of the function an `instr_ctx()` is in."
   @spec cfg(map(), instr_ctx()) :: Argus.Cfg.Function.t() | nil
   def cfg(module_data, %{func_id: func_id}) do

@@ -328,4 +328,18 @@ defmodule Argus.Test.Fixtures.Quiet do
       Logger.debug("ran for #{elapsed}ms")
     end
   end
+
+  defmodule StoreSourcedSink do
+    @moduledoc false
+    # The sequin shape: a LiveView loads a record and converts a field of
+    # it. The sink is inside the callback — a direct path — but the data
+    # is the store's, so it must never be reported as a flow.
+    @behaviour Phoenix.LiveView
+
+    def mount(_params, _session, socket) do
+      record = Process.get(:current_record)
+      String.to_atom(record.kind)
+      {:ok, socket}
+    end
+  end
 end

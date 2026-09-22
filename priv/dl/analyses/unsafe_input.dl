@@ -12,11 +12,22 @@
 //   adjacent    one call away: the callback passed something to it
 //   transitive  anywhere else in the callback's cone — a path, not a
 //               proven flow
+//   flow        request DATA reaches the sink's argument: one of the
+//               entry's request-carrying parameters, through
+//               destructuring, string building and forwarding — a
+//               proven flow, whatever the distance
 //
 // Reachability is not taint. Verified the hard way on sequin, where
 // every transitive hit sourced its input from Postgres or Redis rather
 // than the request, reached only because a LiveView happens to load
-// those records. A sink inside the callback is another matter.
+// those records. A sink inside the callback is another matter. The flow
+// proximity is the answer to that: the per-function summaries
+// (call_arg_derived, sink_arg_derived) are computed from reaching
+// definitions in Elixir, and Souffle only chains them backward from the
+// sink. A flow the summaries cannot see — a value laundered through a
+// local helper's return, an element handed to a closure — stays a path,
+// so the absence of a flow row is not evidence the data comes from
+// elsewhere.
 //
 // A sink no request reaches is reported once, on its own: unsafe atom
 // creation and code execution when some exported function reaches it
@@ -34,6 +45,10 @@ request_entry(func, "broadway") :-
   behaves_as(mod, "Broadway"),
   function_def(func, mod, name, arity, _),
   ((name = "handle_message", arity = 3) ; (name = "handle_batch", arity = 4)).
+
+// The message, or the batch of messages; the processor name and context
+// are the pipeline's own.
+request_param(func, 1) :- request_entry(func, "broadway").
 
 // ── The sinks ────────────────────────────────────────────────────
 
@@ -67,19 +82,44 @@ request_reaches(entry, kind, callee, "transitive") :-
   !call_edge(entry, callee),
   callee != entry.
 
+// ── Proven flow ──────────────────────────────────────────────────
+//
+// Backward from each sink's argument over call_arg_derived to a request
+// entry, then only the parameters that carry the request count.
+
+.init sink_flow = ParamReach
+
+sink_flow.seed(func, pos, id) :-
+  sink(id, func, _, _),
+  sink_arg_derived(id, func, _, pos).
+
+.decl sink_flow_from(id: symbol, entry: symbol, kind: symbol)
+
+sink_flow_from(id, entry, kind) :-
+  sink_flow.reaches(entry, pos, id),
+  request_param(entry, pos),
+  request_entry(entry, kind).
+
 // ── Findings ─────────────────────────────────────────────────────
 //
 // Anchored at the sink's call site, because that is where the fix
 // goes, with one reaching entry point so the report can show the path
 // is real. A sink reachable from several entries is one finding: the
-// analysis module dedupes on the site.
+// analysis module dedupes on the site — keeping the lexicographically
+// least row, which is why a proven flow must replace the path rows for
+// its site rather than sit beside them: "adjacent" sorts before "flow".
 
 .decl sink_reachable(id: symbol, func: symbol, api: symbol, sink: symbol, entry: symbol, kind: symbol, proximity: symbol)
 .output sink_reachable
 
+sink_reachable(id, func, api, s, entry, kind, "flow") :-
+  sink(id, func, api, s),
+  sink_flow_from(id, entry, kind).
+
 sink_reachable(id, func, api, s, entry, kind, proximity) :-
   sink(id, func, api, s),
-  request_reaches(entry, kind, func, proximity).
+  request_reaches(entry, kind, func, proximity),
+  !sink_flow_from(id, _, _).
 
 // The same sinks where no request path exists: atom creation and code
 // execution reachable from an exported function, and every unsafe

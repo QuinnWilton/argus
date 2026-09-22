@@ -209,7 +209,8 @@ defmodule Argus.Pipeline do
         data =
           Map.merge(data, %{
             call_sites: Argus.Extractor.CallSites.index(data.module, data.functions),
-            cfg: cfgs
+            cfg: cfgs,
+            typed: typed
           })
 
         extractor_facts =

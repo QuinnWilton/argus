@@ -1,0 +1,67 @@
+defmodule Argus.Extractor.ParamFlowTest do
+  use ExUnit.Case, async: true
+
+  alias Argus.Extractors.ParamFlow
+
+  alias Argus.Test.Fixtures.ParamFlow.Shapes
+
+  setup_all do
+    {:ok, facts} = Argus.Pipeline.extract([Shapes], extractors: [ParamFlow])
+    %{facts: facts}
+  end
+
+  defp derived(facts, func_fragment) do
+    for [caller, callee, pos, param] <- Map.get(facts, :call_arg_derived, []),
+        String.contains?(caller, func_fragment),
+        do: {short(callee), String.to_integer(pos), String.to_integer(param)}
+  end
+
+  defp sinks(facts, func_fragment) do
+    for [_id, func, pos, param] <- Map.get(facts, :sink_arg_derived, []),
+        String.contains?(func, func_fragment),
+        do: {String.to_integer(pos), String.to_integer(param)}
+  end
+
+  defp short(callee), do: callee |> String.split(":") |> List.last()
+
+  test "a binary built from the parameter reaches the sink", %{facts: facts} do
+    assert sinks(facts, "concat/1") == [{0, 0}]
+  end
+
+  test "a binary pattern in the head reaches the sink", %{facts: facts} do
+    assert sinks(facts, "bin/1") == [{0, 0}]
+  end
+
+  test "head destructuring of a map reaches the sink", %{facts: facts} do
+    assert sinks(facts, "head/2") == [{0, 0}]
+  end
+
+  test "a later clause is not blind to its own parameters", %{facts: facts} do
+    assert sinks(facts, "second/3") == [{0, 1}]
+  end
+
+  test "a decoder hands the request through; Map.get keeps it", %{facts: facts} do
+    assert sinks(facts, "decoded/1") == [{0, 0}]
+  end
+
+  test "a value loaded by an unknown callee is fresh", %{facts: facts} do
+    assert sinks(facts, "loaded/1") == []
+    assert {"load/1", 0, 0} in derived(facts, "loaded/1")
+  end
+
+  test "forwarding records which parameter feeds which position", %{facts: facts} do
+    assert Enum.sort(derived(facts, "forwarded/2")) == [{"helper/2", 0, 1}, {"helper/2", 1, 0}]
+  end
+
+  test "a captured variable is a parameter of the closure", %{facts: facts} do
+    rows = derived(facts, "captured/2")
+
+    assert Enum.any?(rows, fn {callee, pos, param} ->
+             callee =~ "captured" and pos == 1 and param == 0
+           end)
+  end
+
+  test "a literal argument derives from nothing", %{facts: facts} do
+    assert sinks(facts, "literal/1") == []
+  end
+end

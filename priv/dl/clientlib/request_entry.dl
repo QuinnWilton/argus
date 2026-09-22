@@ -44,3 +44,44 @@ request_entry(func, "channel") :-
 request_entry(func, "oban_job") :-
   behaves_as(mod, "Oban.Worker"),
   function_def(func, mod, "perform", 1, _).
+
+// Which parameter positions carry external data. Not every argument of
+// an entry is the request: a LiveView's socket and a Plug's opts are the
+// application's own, and mount/3's session is signed by the endpoint.
+
+.decl request_param(func: symbol, pos: number)
+
+// The conn: params, headers, body, cookies, path.
+request_param(func, 0) :- request_entry(func, "plug").
+
+// handle_event/3: the event name and the pushed params.
+request_param(func, 0) :-
+  request_entry(func, "live_view"),
+  function_def(func, _, "handle_event", 3, _).
+
+request_param(func, 1) :-
+  request_entry(func, "live_view"),
+  function_def(func, _, "handle_event", 3, _).
+
+// handle_params/3: the params and the uri.
+request_param(func, 0) :-
+  request_entry(func, "live_view"),
+  function_def(func, _, "handle_params", 3, _).
+
+request_param(func, 1) :-
+  request_entry(func, "live_view"),
+  function_def(func, _, "handle_params", 3, _).
+
+// mount/3: the params. The session (position 1) is server-written.
+request_param(func, 0) :-
+  request_entry(func, "live_view"),
+  function_def(func, _, "mount", 3, _).
+
+// A component's event name and params; a channel's event and payload.
+request_param(func, 0) :- request_entry(func, "live_component").
+request_param(func, 1) :- request_entry(func, "live_component").
+request_param(func, 0) :- request_entry(func, "channel").
+request_param(func, 1) :- request_entry(func, "channel").
+
+// The job: its args round-tripped through storage from user-facing code.
+request_param(func, 0) :- request_entry(func, "oban_job").

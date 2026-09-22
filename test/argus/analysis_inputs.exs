@@ -25,5 +25,5 @@
   structure:
     ~w(function_def global_register implements_behaviour process_register supervisor_child supervisor_child_form supervisor_site),
   unsafe_input:
-    ~w(call_edge code_execution dynamic_child function_def http_route implements_behaviour socket_transport supervisor_max_children unsafe_atom_creation unsafe_deserialization)
+    ~w(call_arg_derived call_edge code_execution dynamic_child function_def http_route implements_behaviour sink_arg_derived socket_transport supervisor_max_children unsafe_atom_creation unsafe_deserialization)
 ]

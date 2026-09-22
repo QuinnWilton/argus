@@ -58,6 +58,22 @@
     reaches(g, t).
 }
 
+// ── Backward over data flow: which (function, parameter) feeds a seed ─
+//
+// The step is call_arg_derived rather than call_edge: f's parameter p
+// reaches the target when some call in f hands a value derived from p to
+// g's parameter k, and g's k reaches it. A closure's captured environment
+// is recorded as its trailing parameters, so closure_def needs no clause
+// of its own. Seeded at the few sites that matter (a sink's argument),
+// never closed forward from every entry.
+
+.comp ParamReach {
+  .decl seed(func: symbol, pos: number, target: symbol)
+  .decl reaches(func: symbol, pos: number, target: symbol)
+  reaches(f, p, t) :- seed(f, p, t).
+  reaches(f, p, t) :- call_arg_derived(f, g, k, p), reaches(g, k, t).
+}
+
 // ── Backward, as a set: which functions reach any seed ───────────────
 
 .comp BackwardSet {

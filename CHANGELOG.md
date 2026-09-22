@@ -4,6 +4,44 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+**Schema version 37.** Two Layer-2 relations from a new extractor,
+`Argus.Extractors.ParamFlow`: `call_arg_derived(caller, callee, arg_pos,
+param_pos)` — the argument is data-dependent on the caller's parameter,
+a superset of `call_arg_forward` that follows destructuring, tuple and
+binary construction, and the calls known to hand their argument's data
+through (`ParamFlow.Propagators`); and `sink_arg_derived(id, func,
+arg_pos, param_pos)`, the same at a sink site. Both come from
+`Argus.Dataflow.reaching_uses/2`, reaching definitions with the
+function's parameters as sources (`def_use_edges/1` is unchanged). Read
+by `unsafe_input` only; scry and planchette memos keyed on the version
+invalidate. Also public: `Argus.Extractor.Helpers.typed/1` (the decoded
+facts the pipeline now attaches to `module_data`) and
+`Argus.Extractors.ApiCalls.sink_mfas/0` / `sink?/1`.
+
+`unsafe_input` gains a fourth proximity, `flow`: request data — one of
+the entry's request-carrying parameters, as `request_param` in
+`clientlib/request_entry.dl` spells them out — provably reaches the
+sink's argument, chained backward from the sink by the `ParamReach`
+component in `clientlib/reach.dl`. A flow is an error at any distance
+and replaces the path rows for its site. A path the summaries cannot
+confirm keeps its proximity: the summaries do not follow a local
+helper's return or an element handed to a closure, so their silence is
+not evidence that the data comes from elsewhere.
+
+### Fixed
+
+`def_use` had no edges through binary construction or binary matching:
+`bs_create_bin` recorded no reads or writes, and the segment-extracting
+commands of `bs_match` (`get_tail`, `integer`, `binary`, ...) recorded
+no writes, so `"prefix" <> value` and `<<"pre_", rest::binary>> = value`
+broke every chain that ran through them. Both now carry `def`/`use`
+rows; gloss and planchette, which consume `def_use`, see the added
+edges.
+
 ## 0.18.1 — 2026-09-21
 
 ### Fixed

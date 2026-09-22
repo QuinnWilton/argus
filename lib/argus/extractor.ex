@@ -24,11 +24,12 @@ defmodule Argus.Extractor do
 
   @typedoc """
   What `extract/1` receives: the disassembly, plus — when the pipeline is
-  calling — the module's call-site index and per-function control-flow
-  graphs, so extractors neither walk the instruction stream for calls nor
-  build their own graphs. `Argus.Extractor.Helpers.each_remote_call/3`
-  and `Helpers.cfg/3` fall back to building both when absent, which is
-  what an extractor called on bare disassembly (its unit tests) gets.
+  calling — the module's call-site index, per-function control-flow
+  graphs and decoded Layer-1 facts, so extractors neither walk the
+  instruction stream for calls nor build their own graphs or re-emit the
+  facts. `Argus.Extractor.Helpers.each_remote_call/3`, `Helpers.cfg/3` and
+  `Helpers.typed/1` fall back to building each when absent, which is what
+  an extractor called on bare disassembly (its unit tests) gets.
   """
   @type module_data :: %{
           required(:module) => atom(),
@@ -38,7 +39,8 @@ defmodule Argus.Extractor do
           optional(:imports) => list(),
           optional(:line_table) => map(),
           optional(:call_sites) => [Argus.Extractor.CallSites.site()],
-          optional(:cfg) => %{{String.t(), arity()} => Argus.Cfg.Function.t()}
+          optional(:cfg) => %{{String.t(), arity()} => Argus.Cfg.Function.t()},
+          optional(:typed) => Argus.Facts.t() | nil
         }
 
   @doc """

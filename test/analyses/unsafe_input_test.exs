@@ -4,6 +4,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
   alias Argus.Analyses.UnsafeInput
   alias Argus.Souffle
   alias Argus.Test.Fixtures.RequestSurface
+  alias Argus.Test.Fixtures.Taint
   alias Argus.Test.Fixtures.UnboundedChildren, as: U
 
   defp skip_without_souffle do
@@ -92,6 +93,26 @@ defmodule Argus.Analyses.UnsafeInputTest do
       assert func =~ "NotAnEntryPoint"
     end
 
+    # The RequestSurface shapes were calibrated by hand: the plug reads
+    # conn.params, the LiveView passes params["order_by"] to a helper, the
+    # worker hands job.args down two levels. All three are flows now, so
+    # the path proximities are exercised on shapes whose data comes from
+    # storage instead.
+    test "the calibration shapes are proven flows, at every distance" do
+      skip_without_souffle()
+
+      rows =
+        atom_rows([
+          RequestSurface.DirectPlug,
+          RequestSurface.AdjacentLiveView,
+          RequestSurface.TransitiveWorker
+        ])
+
+      assert proximity_for(rows, "DirectPlug") == ["flow"]
+      assert proximity_for(rows, "order_by") == ["flow"]
+      assert proximity_for(rows, "level_two") == ["flow"]
+    end
+
     test "a sink reachable from a request is not also reported as export-reachable" do
       skip_without_souffle()
       results = analyze([RequestSurface.DirectPlug])
@@ -106,8 +127,8 @@ defmodule Argus.Analyses.UnsafeInputTest do
 
     test "a sink inside the callback is direct" do
       skip_without_souffle()
-      rows = atom_rows([RequestSurface.DirectPlug])
-      assert proximity_for(rows, "DirectPlug") == ["direct"]
+      rows = atom_rows([Taint.StoreSourcedPlug])
+      assert proximity_for(rows, "StoreSourcedPlug") == ["direct"]
       assert [[_id, _func, api, entry, "plug", "direct"]] = rows
       assert String.contains?(api, "binary_to_atom")
       assert String.contains?(entry, "call/2")
@@ -115,32 +136,108 @@ defmodule Argus.Analyses.UnsafeInputTest do
 
     test "a sink one call away is adjacent" do
       skip_without_souffle()
-      rows = atom_rows([RequestSurface.AdjacentLiveView])
-      assert proximity_for(rows, "order_by") == ["adjacent"]
+      rows = atom_rows([Taint.StoreSourcedAdjacent])
+      assert proximity_for(rows, "convert") == ["adjacent"]
       assert Enum.all?(rows, fn [_, _, _, _, kind, _] -> kind == "live_view" end)
     end
 
     test "a sink further down the call graph is transitive" do
       skip_without_souffle()
-      rows = atom_rows([RequestSurface.TransitiveWorker])
+      rows = atom_rows([Taint.StoreSourcedWorker])
       assert proximity_for(rows, "level_two") == ["transitive"]
       assert Enum.all?(rows, fn [_, _, _, _, kind, _] -> kind == "oban_job" end)
     end
 
     test "direct and adjacent are distinguished within one run" do
       skip_without_souffle()
-      rows = atom_rows([RequestSurface.DirectPlug, RequestSurface.AdjacentLiveView])
-      assert proximity_for(rows, "DirectPlug") == ["direct"]
-      assert proximity_for(rows, "order_by") == ["adjacent"]
+      rows = atom_rows([Taint.StoreSourcedPlug, Taint.StoreSourcedAdjacent])
+      assert proximity_for(rows, "StoreSourcedPlug") == ["direct"]
+      assert proximity_for(rows, "convert") == ["adjacent"]
+    end
+  end
+
+  describe "proven flow" do
+    test "a head pattern and a helper called from a second clause both carry the params" do
+      skip_without_souffle()
+      rows = atom_rows([Taint.FlowLiveView])
+      assert proximity_for(rows, "handle_event") == ["flow"]
+      assert proximity_for(rows, "order_by") == ["flow"]
+      assert Enum.all?(rows, fn [_, _, _, entry, "live_view", _] -> entry =~ "handle_event" end)
+    end
+
+    test "the job's args reach a sink two calls down" do
+      skip_without_souffle()
+      assert proximity_for(atom_rows([Taint.FlowTransitive]), "level_two") == ["flow"]
+    end
+
+    test "a captured request value reaches the sink inside the closure" do
+      skip_without_souffle()
+      rows = atom_rows([Taint.FlowClosureEnv])
+      assert ["flow"] = proximity_for(rows, "FlowClosureEnv")
+    end
+
+    test "a flow replaces the path rows for its site: one row per sink" do
+      skip_without_souffle()
+      rows = atom_rows([Taint.FlowLiveView, Taint.FlowTransitive])
+      ids = Enum.map(rows, &hd/1)
+      assert ids == Enum.uniq(ids)
+      assert Enum.all?(rows, fn [_, _, _, _, _, prox] -> prox == "flow" end)
+    end
+
+    test "a flow sink is not also reported as export-reachable" do
+      skip_without_souffle()
+      assert analyze([Taint.FlowLiveView])["sink_without_request_path"] == []
+    end
+
+    test "data from storage is a path, never a flow" do
+      skip_without_souffle()
+
+      rows =
+        atom_rows([Taint.StoreSourcedPlug, Taint.StoreSourcedAdjacent, Taint.StoreSourcedWorker])
+
+      refute "flow" in Enum.map(rows, &List.last/1)
+    end
+
+    test "the socket, the session and a literal are not the request" do
+      skip_without_souffle()
+      rows = atom_rows([Taint.SocketOnly, Taint.SessionOnly, Taint.LiteralAtom])
+      assert Enum.map(rows, &List.last/1) |> Enum.uniq() == ["direct"]
+    end
+
+    test "the safe conversion is not a sink" do
+      skip_without_souffle()
+      assert atom_rows([Taint.ExistingAtom]) == []
+    end
+
+    # Element flow through a higher-order function's closure is not
+    # followed: the closure's parameter is the element, and no fact ties
+    # it to the collection it came from. The sink stays a path.
+    test "an element handed to a closure is a known gap: adjacent, not flow" do
+      skip_without_souffle()
+      assert proximity_for(atom_rows([Taint.HofElement]), "HofElement") == ["adjacent"]
     end
   end
 
   describe "severity" do
     test "tracks proximity rather than sink type" do
       row = fn prox -> ["i", "M:f/1", "String.to_atom/1", "atom", "E:call/2", "plug", prox] end
+      assert %{severity: :error} = UnsafeInput.finding(:sink_reachable, row.("flow"))
       assert %{severity: :error} = UnsafeInput.finding(:sink_reachable, row.("direct"))
       assert %{severity: :warning} = UnsafeInput.finding(:sink_reachable, row.("adjacent"))
       assert %{severity: :info} = UnsafeInput.finding(:sink_reachable, row.("transitive"))
+    end
+
+    test "a flow says so, anchors the argument and tells the reader what to do" do
+      row = ["i", "M:f/1", "String.to_atom/1", "atom", "E:handle_event/3", "live_view", "flow"]
+      finding = UnsafeInput.finding(:sink_reachable, row)
+      assert finding.title =~ "fed by request data"
+      assert finding.detail =~ "a flow rather than a path"
+      assert finding.at_label =~ "request data reaches"
+      assert Enum.any?(finding.help, &(&1 =~ "to_existing_atom"))
+
+      path = UnsafeInput.finding(:sink_reachable, List.replace_at(row, 6, "adjacent"))
+      assert path.at_label == nil
+      assert path.help == []
     end
 
     test "the message names the surface, so triage does not need the code" do

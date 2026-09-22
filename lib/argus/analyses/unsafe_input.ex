@@ -10,10 +10,12 @@ defmodule Argus.Analyses.UnsafeInput do
   - `sink_reachable(id, func, api, sink, entry, kind, proximity)` — the
     sink is reachable from a request-handling callback (a Plug, a
     LiveView, a Channel, an Oban job, a Broadway pipeline). Proximity is
-    the triage signal: `direct` means the sink is in the callback itself,
-    operating on the request; `adjacent` one call away; `transitive`
-    anywhere else in the callback's cone, a path rather than a proven
-    flow.
+    the triage signal: `flow` means request data provably reaches the
+    sink's argument — a parameter of the entry, through destructuring,
+    string building and forwarding, however far; `direct` means the sink
+    is in the callback itself, operating on the request; `adjacent` one
+    call away; `transitive` anywhere else in the callback's cone, a path
+    rather than a proven flow.
   - `sink_without_request_path(id, func, api, sink)` — no request reaches
     it: atom creation and code execution reachable from an exported
     function, and every deserialization without `:safe`.
@@ -27,6 +29,10 @@ defmodule Argus.Analyses.UnsafeInput do
   every direct finding in the corpus was real (livebook's `tag`, taken
   straight from the client payload), adjacent was mixed, and every
   transitive hit sourced its data from storage rather than the request.
+  A proven flow is an error at any distance; a path that the flow
+  summaries could not confirm keeps the proximity it had, since the
+  summaries do not follow every shape (a local helper's return, an
+  element handed to a closure) and their silence is not evidence.
   A sink no request reaches keeps the severities the sinks carried when
   they were reported by export reachability alone: deserialization is an
   error, code execution an error, atom creation a warning.
@@ -51,6 +57,7 @@ defmodule Argus.Analyses.UnsafeInput do
     do: [
       Argus.Extractors.ApiCalls,
       Argus.Extractors.OTP,
+      Argus.Extractors.ParamFlow,
       Argus.Extractors.Router,
       Argus.Extractors.Supervision,
       Argus.Extractors.Endpoint
@@ -76,7 +83,7 @@ defmodule Argus.Analyses.UnsafeInput do
             [
               {:entry, :symbol, "a request-handling callback that reaches it"},
               {:kind, :symbol, "which surface the entry belongs to"},
-              {:proximity, :symbol, "direct | adjacent | transitive"}
+              {:proximity, :symbol, "flow | direct | adjacent | transitive"}
             ],
         key: [:id],
         doc: "A sink reachable from request-shaped input."
@@ -117,12 +124,12 @@ defmodule Argus.Analyses.UnsafeInput do
     Findings.new(
       severity(proximity),
       "Unsafe deserialization #{reached(proximity)} #{surface(kind)}",
-      "#{func} calls #{api} without the :safe option, and #{entry} reaches " <>
-        "it from #{surface(kind)}. On the BEAM this is the strongest of the " <>
+      "#{func} calls #{api} without the :safe option, and #{entry} #{path(proximity)} " <>
+        "from #{surface(kind)}. On the BEAM this is the strongest of the " <>
         "three: a crafted payload interns atoms without bound AND can " <>
         "materialize funs, ports and references. Pass [:safe] and validate " <>
         "the decoded shape — :safe alone still admits arbitrary nested terms.",
-      at: Findings.at_instr(id)
+      [at: Findings.at_instr(id)] ++ flow_opts(proximity)
     )
   end
 
@@ -130,10 +137,10 @@ defmodule Argus.Analyses.UnsafeInput do
     Findings.new(
       severity(proximity),
       "Dynamic code execution #{reached(proximity)} #{surface(kind)}",
-      "#{func} calls #{api}, and #{entry} reaches it from #{surface(kind)}. " <>
+      "#{func} calls #{api}, and #{entry} #{path(proximity)} from #{surface(kind)}. " <>
         "If any part of that argument is caller-influenced this is arbitrary " <>
         "code execution inside the node, with the full privileges of the VM.",
-      at: Findings.at_instr(id)
+      [at: Findings.at_instr(id)] ++ flow_opts(proximity)
     )
   end
 
@@ -141,12 +148,12 @@ defmodule Argus.Analyses.UnsafeInput do
     Findings.new(
       severity(proximity),
       "Unbounded atom creation #{reached(proximity)} #{surface(kind)}",
-      "#{func} calls #{api}, and #{entry} reaches it from #{surface(kind)}. " <>
+      "#{func} calls #{api}, and #{entry} #{path(proximity)} from #{surface(kind)}. " <>
         "The atom table is fixed-size and never garbage collected, so every " <>
         "distinct value an attacker supplies permanently consumes a slot " <>
         "until the node aborts — killing every process on it. Use " <>
         "String.to_existing_atom, or match against an explicit whitelist.",
-      at: Findings.at_instr(id)
+      [at: Findings.at_instr(id)] ++ flow_opts(proximity)
     )
   end
 
@@ -217,13 +224,36 @@ defmodule Argus.Analyses.UnsafeInput do
     Findings.related("reachable from #{String.upcase(verb)} #{path}", Findings.at_module(plug))
   end
 
+  defp severity("flow"), do: :error
   defp severity("direct"), do: :error
   defp severity("adjacent"), do: :warning
   defp severity(_transitive), do: :info
 
+  defp reached("flow"), do: "fed by request data from"
   defp reached("direct"), do: "directly inside"
   defp reached("adjacent"), do: "one call from"
   defp reached(_), do: "transitively reachable from"
+
+  # A flow is a claim about the data; a path is a claim about the calls.
+  defp path("flow"),
+    do:
+      "hands its request data into that argument — through destructuring, " <>
+        "string construction and forwarding, a flow rather than a path —"
+
+  defp path(_), do: "reaches it"
+
+  defp flow_opts("flow") do
+    [
+      at_label: "request data reaches this call's argument",
+      help: [
+        "validate the value against an explicit allowlist before converting it",
+        "String.to_existing_atom/1, or a pattern match on the accepted values, " <>
+          "turns unbounded input into a bounded set"
+      ]
+    ]
+  end
+
+  defp flow_opts(_proximity), do: []
 
   defp surface("plug"), do: "a Plug (HTTP request)"
   defp surface("live_view"), do: "a LiveView callback"

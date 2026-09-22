@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 36
+  @schema_version 37
 
   # Layer 1: Module-level facts.
 
@@ -1794,6 +1794,45 @@ defmodule Argus.Schema do
     """
   }
 
+  @call_arg_derived %{
+    name: :call_arg_derived,
+    layer: 2,
+    fields: [
+      {:caller, :symbol, "calling function ID"},
+      {:callee, :symbol, "callee function ID (mod:func/arity)"},
+      {:arg_pos, :number, "0-based argument position at the call site"},
+      {:param_pos, :number,
+       "0-based position of the caller's parameter the argument is derived from"}
+    ],
+    doc: """
+    At some call site in the caller, the argument is data-dependent on \
+    one of the caller's parameters: destructured out of it, built into a \
+    tuple or a binary with it, or returned by a call known to hand its \
+    argument's data through. A superset of call_arg_forward (identity is a \
+    dependence). A closure built with make_fun3 counts as a call whose \
+    trailing parameters are the captured environment. Function-level, so \
+    a body edit that keeps the flow does not move it.
+    """
+  }
+
+  @sink_arg_derived %{
+    name: :sink_arg_derived,
+    layer: 2,
+    fields: [
+      {:id, :instr_id, "instruction ID of the sink call"},
+      {:func, :func_id, "function containing the sink"},
+      {:arg_pos, :number, "0-based argument position at the sink"},
+      {:param_pos, :number,
+       "0-based position of the function's parameter the argument is derived from"}
+    ],
+    doc: """
+    call_arg_derived at a sink site — atom creation, deserialization, code \
+    execution — keyed on the site because the finding anchors there. \
+    Together with call_arg_derived it lets a rule chain a request entry's \
+    parameter to the sink's argument: a proven flow rather than a call path.
+    """
+  }
+
   # All relations indexed by name.
 
   @layer_1_relations [
@@ -1915,8 +1954,10 @@ defmodule Argus.Schema do
     @statem_event_catchall,
     # Interprocedural constant propagation.
     @call_arg,
+    @call_arg_derived,
     @call_arg_field,
     @call_arg_forward,
+    @sink_arg_derived,
     # Purity contracts and call classification.
     @pure_contract,
     @impure_call,
