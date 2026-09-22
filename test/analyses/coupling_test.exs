@@ -7,7 +7,7 @@ defmodule Argus.Analyses.CouplingTest do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
-  describe "one_for_one_coupling.dl" do
+  describe "sibling_dependency: restart_isolation" do
     test "analyzes coupling under one_for_one supervisors" do
       skip_without_souffle()
 
@@ -19,7 +19,7 @@ defmodule Argus.Analyses.CouplingTest do
 
       assert {:ok, results} = Argus.analyze(modules, :coupling)
 
-      assert Map.has_key?(results, "one_for_one_coupling")
+      assert Map.has_key?(results, "sibling_dependency")
     end
 
     test "wrong_start_order ignores runtime-only call paths" do
@@ -57,7 +57,8 @@ defmodule Argus.Analyses.CouplingTest do
         sync_call: [["A:call_b/0", "B"]]
       }
 
-      assert [[_sup, "A", "B", _site, _witness, _call_site, "call"]] = coupling_rows(base)
+      assert [[_sup, "A", "B", "restart_isolation", "call", _site, _witness, _call_site]] =
+               coupling_rows(base)
 
       linked = Map.put(base, :process_link, [["A", "B"]])
       assert coupling_rows(linked) == []
@@ -77,11 +78,12 @@ defmodule Argus.Analyses.CouplingTest do
         async_cast: [["A:cast_b/0", "B"]]
       }
 
-      assert [[_sup, "A", "B", _site, "A:cast_b/0", _call_site, "cast"]] = coupling_rows(base)
+      assert [[_sup, "A", "B", "restart_isolation", "cast", _site, "A:cast_b/0", _call_site]] =
+               coupling_rows(base)
 
       # One sync call anywhere along the dependency makes it a call coupling.
       both = Map.put(base, :sync_call, [["A:cast_b/0", "B"]])
-      assert [[_, "A", "B", _, _, _, "call"]] = coupling_rows(both)
+      assert [[_, "A", "B", "restart_isolation", "call", _, _, _]] = coupling_rows(both)
     end
 
     defp coupling_rows(facts) do
@@ -96,7 +98,7 @@ defmodule Argus.Analyses.CouplingTest do
       try do
         :ok = Argus.Pipeline.write_facts(facts, dir)
         assert {:ok, results} = Argus.Analysis.run_rules(dir, :coupling)
-        results["one_for_one_coupling"] || []
+        results["sibling_dependency"] || []
       after
         File.rm_rf(dir)
       end

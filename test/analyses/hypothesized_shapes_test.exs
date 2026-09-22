@@ -130,6 +130,12 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
         :coupling
       )
 
-    assert rows(r, "cached_sibling_pid") == ["Argus.Test.Fixtures.Hypothesized.CachedPid.Client"]
+    cached =
+      r
+      |> Map.get("sibling_dependency", [])
+      |> Enum.filter(&(Enum.at(&1, 3) == "cached_pid"))
+      |> Enum.map(&Enum.at(&1, 1))
+
+    assert cached == ["Argus.Test.Fixtures.Hypothesized.CachedPid.Client"]
   end
 end

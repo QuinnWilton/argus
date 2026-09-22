@@ -6,16 +6,15 @@ defmodule Argus.Analyses.Coupling do
   or a cached reply of the restarted child is not restarted with it and
   keeps a stale reference. The strategy decides who survives whom.
 
-  - `one_for_one_coupling(sup, caller, callee, sup_site, witness, site,
-    kind)` — two children on different branches of a `one_for_one`
-    supervisor, one depending on the other; `kind` is `call` when the
-    caller waits on the sibling anywhere, `cast` when every path is
-    one-way.
-  - `suspect_nonpermanent_dependency(sup, permanent, sibling, restart,
-    sup_site, witness)` — a permanent child depends on a transient or
-    temporary sibling that may never come back.
-  - `cached_sibling_pid(mod, name, sup)` — `init/1` looks a sibling up by
-    name under `one_for_one` and the handlers call the cached pid.
+  - `sibling_dependency(sup, caller, callee, reason, detail, sup_site,
+    witness, site)` — a child depends on a sibling that a restart leaves
+    stale. `reason` is `restart_isolation` (two branches of a
+    `one_for_one` supervisor; `detail` is `call` when the caller waits on
+    the sibling anywhere, `cast` when every path is one-way),
+    `restart_policy` (a permanent child depends on a transient or
+    temporary sibling that may never come back; `detail` is that policy)
+    or `cached_pid` (`init/1` looks the sibling up by name under
+    `one_for_one` and the handlers call the cached pid).
   - `rest_for_one_orphaned_children(sup, owner, holder, ...)` — under
     `rest_for_one` a later child starts processes inside an earlier one;
     the owner's restart leaves them running.
@@ -60,31 +59,21 @@ defmodule Argus.Analyses.Coupling do
   def output_relations do
     [
       %{
-        name: :one_for_one_coupling,
+        name: :sibling_dependency,
         fields: [
           {:sup, :symbol, "supervisor module"},
-          {:caller_mod, :symbol, "calling child module"},
-          {:callee_mod, :symbol, "called child module"},
+          {:caller, :symbol, "the child that depends on its sibling"},
+          {:callee, :symbol, "the sibling depended on (module or registered name)"},
+          {:reason, :symbol,
+           "why the dependency goes stale: restart_isolation | restart_policy | cached_pid"},
+          {:detail, :symbol,
+           "call | cast for restart_isolation, the sibling's restart policy for restart_policy, empty for cached_pid"},
           {:sup_site, :symbol, "instruction ID of the tree definition"},
-          {:witness, :symbol, "function in caller_mod carrying the coupling"},
-          {:site, :symbol, "instruction ID of the coupling call, or the witness function ID"},
-          {:kind, :symbol, "call when the caller waits on the sibling anywhere, else cast"}
+          {:witness, :symbol, "function in the caller carrying the dependency"},
+          {:site, :symbol, "instruction ID of the dependency call, or the witness function ID"}
         ],
-        key: [:sup, :caller_mod, :callee_mod],
-        doc: "Cross-branch coupling under a one_for_one supervisor."
-      },
-      %{
-        name: :suspect_nonpermanent_dependency,
-        fields: [
-          {:sup, :symbol, "supervisor module"},
-          {:permanent, :symbol, "permanent child module"},
-          {:sibling, :symbol, "depended-on sibling module"},
-          {:restart, :symbol, "the sibling's restart policy: transient | temporary"},
-          {:sup_site, :symbol, "instruction ID of the tree definition"},
-          {:witness, :symbol, "function in the permanent child carrying the dependency"}
-        ],
-        key: [:sup, :permanent, :sibling],
-        doc: "Permanent child depends on a transient or temporary sibling."
+        key: [:sup, :caller, :callee, :reason],
+        doc: "A child depends on a sibling that a restart leaves stale."
       },
       %{
         name: :rest_for_one_orphaned_children,
@@ -103,15 +92,6 @@ defmodule Argus.Analyses.Coupling do
             "the owner's restart leaves them running."
       },
       %{
-        name: :cached_sibling_pid,
-        fields: [
-          {:mod, :symbol, "the module caching the pid"},
-          {:name, :symbol, "the sibling looked up"},
-          {:sup, :symbol, "their one_for_one supervisor"}
-        ],
-        doc: "init/1 caches a sibling's pid that a one_for_one restart makes stale."
-      },
-      %{
         name: :dual_restart_authority,
         fields: [
           {:mod, :symbol, "the module that starts, monitors and restarts the child"},
@@ -126,7 +106,16 @@ defmodule Argus.Analyses.Coupling do
   end
 
   @impl true
-  def finding(:one_for_one_coupling, [sup, caller_mod, callee_mod, sup_site, _w, site, "cast"]) do
+  def finding(:sibling_dependency, [
+        sup,
+        caller_mod,
+        callee_mod,
+        "restart_isolation",
+        "cast",
+        sup_site,
+        _w,
+        site
+      ]) do
     Findings.new(
       :info,
       "One-way coupling under one_for_one",
@@ -148,7 +137,16 @@ defmodule Argus.Analyses.Coupling do
     )
   end
 
-  def finding(:one_for_one_coupling, [sup, caller_mod, callee_mod, sup_site, _w, site, "call"]) do
+  def finding(:sibling_dependency, [
+        sup,
+        caller_mod,
+        callee_mod,
+        "restart_isolation",
+        "call",
+        sup_site,
+        _w,
+        site
+      ]) do
     Findings.new(
       :warning,
       "Coupled children under one_for_one",
@@ -172,13 +170,15 @@ defmodule Argus.Analyses.Coupling do
     )
   end
 
-  def finding(:suspect_nonpermanent_dependency, [
+  def finding(:sibling_dependency, [
         sup,
         permanent,
         sibling,
+        "restart_policy",
         restart,
         sup_site,
-        witness
+        witness,
+        _s
       ]) do
     consequence =
       case restart do
@@ -240,7 +240,7 @@ defmodule Argus.Analyses.Coupling do
     )
   end
 
-  def finding(:cached_sibling_pid, [mod, name, sup]) do
+  def finding(:sibling_dependency, [sup, mod, name, "cached_pid", _, _sup_site, _init, _site]) do
     Findings.new(
       :info,
       "Sibling pid cached in init/1 under one_for_one",

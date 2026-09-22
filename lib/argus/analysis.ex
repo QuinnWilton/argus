@@ -168,7 +168,9 @@ defmodule Argus.Analysis do
       %{analysis: :blocking, relation: :blocking_receive_in_callback, where: []},
       %{analysis: :blocking, relation: :receive_in_callback, where: []}
     ],
-    one_for_one_coupling: [%{analysis: :coupling, relation: :one_for_one_coupling, where: []}],
+    one_for_one_coupling: [
+      %{analysis: :coupling, relation: :sibling_dependency, where: [reason: "restart_isolation"]}
+    ],
     sync_call_in_init: [
       %{analysis: :startup, relation: :sync_call_in_init, where: []},
       %{analysis: :startup, relation: :init_deadlock_risk, where: []},
@@ -193,8 +195,8 @@ defmodule Argus.Analysis do
       %{analysis: :shutdown, relation: :foreign_dynamic_children, where: []}
     ],
     supervision: [
-      %{analysis: :coupling, relation: :suspect_nonpermanent_dependency, where: []},
-      %{analysis: :coupling, relation: :cached_sibling_pid, where: []},
+      %{analysis: :coupling, relation: :sibling_dependency, where: [reason: "restart_policy"]},
+      %{analysis: :coupling, relation: :sibling_dependency, where: [reason: "cached_pid"]},
       %{analysis: :coupling, relation: :rest_for_one_orphaned_children, where: []},
       %{analysis: :coupling, relation: :dual_restart_authority, where: []},
       %{analysis: :structure, relation: :supervisor_registered_as_worker, where: []},

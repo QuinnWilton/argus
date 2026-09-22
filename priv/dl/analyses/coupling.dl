@@ -75,15 +75,30 @@ coupling_site(w, callee_mod, id) :-
 // always anchor it with `Findings.at_site/2`. `kind` is "call" when the
 // caller waits on the sibling anywhere along the dependency, "cast" when
 // every path is one-way.
-.decl one_for_one_coupling(sup: symbol, caller_mod: symbol, callee_mod: symbol, sup_site: symbol, witness: symbol, site: symbol, kind: symbol)
-.output one_for_one_coupling
+// ══ The one output: a child depending on a sibling ═══════════════════
+//
+// One relationship, three reasons it goes stale. `reason` says which,
+// `detail` qualifies it:
+//   restart_isolation — two branches of a one_for_one supervisor, one
+//     depending on the other; detail is "call" when the caller waits on
+//     the sibling anywhere, "cast" when every path is one-way.
+//   restart_policy — a permanent child depends on a sibling that may
+//     never come back; detail is the sibling's restart policy.
+//   cached_pid — init/1 looks the sibling up by name under one_for_one
+//     and the handlers call the cached pid; detail is empty.
+// `witness` is the function in the caller the dependency flows through
+// and `site` the instruction that makes the call when one is known, the
+// witness function ID otherwise. One row per witness; finding builders
+// dedupe on (sup, caller, callee, reason).
+.decl sibling_dependency(sup: symbol, caller: symbol, callee: symbol, reason: symbol, detail: symbol, sup_site: symbol, witness: symbol, site: symbol)
+.output sibling_dependency
 
-one_for_one_coupling(sup, caller_mod, callee_mod, sup_site, witness, site, kind) :-
+sibling_dependency(sup, caller_mod, callee_mod, "restart_isolation", kind, sup_site, witness, site) :-
   coupling(sup, caller_mod, callee_mod, sup_site, witness),
   coupling_site(witness, callee_mod, site),
   stateful_module_dep_kind(caller_mod, callee_mod, kind).
 
-one_for_one_coupling(sup, caller_mod, callee_mod, sup_site, witness, witness, kind) :-
+sibling_dependency(sup, caller_mod, callee_mod, "restart_isolation", kind, sup_site, witness, witness) :-
   coupling(sup, caller_mod, callee_mod, sup_site, witness),
   !coupling_site(witness, callee_mod, _),
   stateful_module_dep_kind(caller_mod, callee_mod, kind).
@@ -102,10 +117,7 @@ coupling(sup, caller_mod, callee_mod, sup_site, witness) :-
 // ══ A permanent child depending on a sibling that may not come back ═
 
 // witness — finding builders dedupe on (sup, permanent, sibling).
-.decl suspect_nonpermanent_dependency(sup: symbol, permanent: symbol, sibling: symbol, restart: symbol, sup_site: symbol, witness: symbol)
-.output suspect_nonpermanent_dependency
-
-suspect_nonpermanent_dependency(sup, perm, sibling, restart, sup_site, witness) :-
+sibling_dependency(sup, perm, sibling, "restart_policy", restart, sup_site, witness, witness) :-
   supervisor(sup, _),
   supervisor_site(sup, sup_site),
   supervisor_child(sup, _, perm, "permanent", _),
@@ -132,14 +144,12 @@ suspect_nonpermanent_dependency(sup, perm, sibling, restart, sup_site, witness) 
 // #1499 are the inverse, registrations made with a sibling that its
 // restart forgets). :rest_for_one and :one_for_all restart the holder
 // too; a :temporary target is never restarted.
-.decl cached_sibling_pid(mod: symbol, name: symbol, sup: symbol)
-.output cached_sibling_pid
-
-cached_sibling_pid(mod, name, sup) :-
+sibling_dependency(sup, mod, name, "cached_pid", "", sup_site, f, f) :-
   init_function(mod, f),
   whereis_call(_, f, name, _),
   supervisor_child(sup, _, mod, _, _),
   supervisor(sup, "one_for_one"),
+  supervisor_site(sup, sup_site),
   (supervisor_child(sup, _, name, _, _) ; supervisor_child_name(sup, _, name)),
   handler_function(mod, h),
   (sync_call(h, "dynamic") ; async_cast(h, "dynamic")).

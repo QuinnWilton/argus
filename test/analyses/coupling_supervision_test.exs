@@ -40,7 +40,7 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
     end
   end
 
-  describe "suspect_nonpermanent_dependency" do
+  describe "sibling_dependency: restart_policy" do
     # Hand-authored facts pin the rule exactly: P is a permanent child
     # that sync-calls its sibling S under the same supervisor. The
     # sibling's restart policy decides the verdict.
@@ -61,7 +61,7 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
     test "flags a transient sibling dependency" do
       skip_without_souffle()
 
-      assert [["Sup", "P", "S", "transient", _site, _witness]] =
+      assert [["Sup", "P", "S", "restart_policy", "transient", _site, _witness, _]] =
                dependency_rows(base_facts("transient"))
     end
 
@@ -70,7 +70,7 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
 
       # Temporary is strictly worse than transient: never restarted,
       # not even after a crash.
-      assert [["Sup", "P", "S", "temporary", _site, _witness]] =
+      assert [["Sup", "P", "S", "restart_policy", "temporary", _site, _witness, _]] =
                dependency_rows(base_facts("temporary"))
     end
 
@@ -94,7 +94,10 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
       try do
         :ok = Argus.Pipeline.write_facts(facts, dir)
         assert {:ok, results} = Argus.Analysis.run_rules(dir, :coupling)
-        results["suspect_nonpermanent_dependency"] || []
+
+        results
+        |> Map.get("sibling_dependency", [])
+        |> Enum.filter(&(Enum.at(&1, 3) == "restart_policy"))
       after
         File.rm_rf(dir)
       end

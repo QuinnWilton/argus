@@ -4,6 +4,20 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+The relations inside each concern merge the way the analyses did: a
+mechanism is a column, not a relation, and a defect has one relation.
+Titles, severities, anchors and finding counts are unchanged unless a
+row below says otherwise; the retired analysis names keep resolving
+through the alias table to the rows that were theirs.
+
+| Concern | Was | Now |
+|---|---|---|
+| `coupling` | `one_for_one_coupling`, `suspect_nonpermanent_dependency`, `cached_sibling_pid` | `sibling_dependency(sup, caller, callee, reason, detail, sup_site, witness, site)`, `reason` ∈ restart_isolation, restart_policy, cached_pid |
+
 ## 0.17.2 — 2026-09-21
 
 ### Fixed
