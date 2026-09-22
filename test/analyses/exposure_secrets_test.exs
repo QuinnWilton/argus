@@ -52,4 +52,18 @@ defmodule Argus.Analyses.ExposureSecretsTest do
     assert cred.detail =~ "someone else's system"
     assert pass.severity == :warning
   end
+
+  test "the anchor is the schema's generated function, refined by the field's name" do
+    finding =
+      Argus.Analyses.Exposure.finding(:unredacted_secret, [
+        "Argus.Test.Fixtures.Secret.Exposed",
+        ":smtp_password",
+        "password",
+        "unaware"
+      ])
+
+    assert finding.mfa == {Argus.Test.Fixtures.Secret.Exposed, :__schema__, 1}
+    assert finding.at_source == ":smtp_password"
+    assert finding.at_label == "declared without redact: true"
+  end
 end

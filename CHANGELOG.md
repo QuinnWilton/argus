@@ -22,6 +22,14 @@ check" at `:warning`, with the loaded-module fun risk and
 request-reachable deserialization keeps its proximity severity and gains
 the same wording.
 
+`Argus.Findings.new/4` takes `at_source:`, a source fragment a consumer
+holding the source uses to move the anchor to the first line at or after
+the bytecode anchor that contains it as a whole token. `exposure`'s
+`unredacted_secret` anchors at the schema's `__schema__/1` — every
+function Ecto generates carries the `schema do` line — with the field's
+name as the fragment, so scry lands on `field :api_key` rather than
+`defmodule`; its `at_label` is "declared without redact: true".
+
 ### Added
 
 `Argus.Corpus` pairs take `subdir:` for a repository whose Mix project is

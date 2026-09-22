@@ -20,6 +20,7 @@ defmodule Argus.FindingsTest do
     :mfa,
     :instr,
     :at_label,
+    :at_source,
     :help,
     :related,
     :provenance,
@@ -469,6 +470,16 @@ defmodule Argus.FindingsTest do
     test "rejects a non-string at_label" do
       assert_raise ArgumentError, ~r/:at_label must be a string/, fn ->
         Findings.new(:warning, "Title", "Detail.", at_label: :here)
+      end
+    end
+
+    test "carries at_source through and rejects an empty one" do
+      attrs = Findings.new(:warning, "Title", "Detail.", at_source: ":api_key")
+      assert attrs.at_source == ":api_key"
+      assert Findings.new(:warning, "Title", "Detail.").at_source == nil
+
+      assert_raise ArgumentError, ~r/:at_source must be a non-empty string/, fn ->
+        Findings.new(:warning, "Title", "Detail.", at_source: "")
       end
     end
 

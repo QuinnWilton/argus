@@ -98,7 +98,11 @@ defmodule Argus.Analyses.Exposure do
         " " <>
         awareness(aware, mod) <>
         " Add redact: true to the field.",
-      at: Findings.at_module(mod)
+      # Bytecode places every generated schema function at the `schema do`
+      # line; the field's own line is in the source, under its name.
+      at: Findings.at_mfa(mod, :__schema__, 1),
+      at_source: field,
+      at_label: "declared without redact: true"
     )
   end
 

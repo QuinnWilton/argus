@@ -74,6 +74,7 @@ defmodule Argus.Findings do
           mfa: mfa() | nil,
           instr: InstrId.t() | nil,
           at_label: String.t() | nil,
+          at_source: String.t() | nil,
           help: [String.t()],
           related: [related()],
           provenance: provenance(),
@@ -96,6 +97,7 @@ defmodule Argus.Findings do
           mfa: mfa() | nil,
           instr: InstrId.t() | nil,
           at_label: String.t() | nil,
+          at_source: String.t() | nil,
           help: [String.t()],
           related: [related()],
           provenance: provenance(),
@@ -604,6 +606,13 @@ defmodule Argus.Findings do
   - `:at_label` — what the anchor line IS, for renderers that excerpt the
     source ("supervision tree defined here"), so the annotation does not
     just repeat the title (default: `nil`).
+  - `:at_source` — a source fragment that carries the anchor the last
+    step bytecode cannot: a consumer holding the source moves the anchor
+    to the first line at or after the anchor's line that contains the
+    fragment as a whole token. Every function an Ecto schema generates
+    carries the `schema do` line, so the field's own line is only in the
+    source; `":api_key"` names it. Consumers without the source ignore
+    it (default: `nil`).
   - `:help` — resolution guidance, one string per suggestion, rendered by
     consumers as help trailers. Say what to change and toward what, in
     the row's own terms (default: `[]`).
@@ -617,12 +626,18 @@ defmodule Argus.Findings do
       when severity in @severities and is_binary(title) and is_binary(detail) do
     anchor = Keyword.get(opts, :at, empty_anchor())
     at_label = Keyword.get(opts, :at_label)
+    at_source = Keyword.get(opts, :at_source)
     help = Keyword.get(opts, :help, [])
     provenance = Keyword.get(opts, :provenance, :structural)
     confidence = Keyword.get(opts, :confidence)
 
     unless is_nil(at_label) or is_binary(at_label) do
       raise ArgumentError, ":at_label must be a string, got: #{inspect(at_label)}"
+    end
+
+    unless is_nil(at_source) or (is_binary(at_source) and at_source != "") do
+      raise ArgumentError,
+            ":at_source must be a non-empty string, got: #{inspect(at_source)}"
     end
 
     unless is_list(help) and Enum.all?(help, &is_binary/1) do
@@ -647,6 +662,7 @@ defmodule Argus.Findings do
       mfa: anchor.mfa,
       instr: anchor.instr,
       at_label: at_label,
+      at_source: at_source,
       help: help,
       related: Keyword.get(opts, :related, []),
       provenance: provenance,
