@@ -312,12 +312,26 @@ defmodule Argus.Findings do
     %__MODULE__{findings: findings, ran: ran, degraded: degraded}
   end
 
+  @doc """
+  Builds an analysis's findings from its solved output relations.
+
+  `results` maps relation names (strings) to rows. Rows of a relation
+  with a `:key` are deduplicated to one per finding; rows of an evidence
+  relation become related frames of the finding they join instead of
+  findings. Embedders that solve the rules themselves (scry, planchette)
+  build through this so their findings equal `run/2`'s field for field.
+  """
+  @spec build(module(), %{String.t() => [[String.t()]]}) :: [t()]
+  def build(mod, results), do: build_findings(mod, mod.name(), results)
+
   defp build_findings(mod, asked_name, results) do
     relations = Map.new(mod.output_relations(), &{Atom.to_string(&1.name), &1})
     has_builder? = function_exported?(mod, :finding, 2)
+    evidence = evidence_frames(mod, relations, results)
 
     for {relation_string, rows} <- Enum.sort(results),
         relation = Map.fetch!(relations, relation_string),
+        not Map.has_key?(relation, :evidence),
         row <- dedupe_rows(relation, rows) do
       attrs =
         if has_builder? do
@@ -327,9 +341,69 @@ defmodule Argus.Findings do
         end
 
       attrs
+      |> Map.update(:related, [], &(&1 ++ frames_for(evidence, relation, row)))
       |> Map.put(:analysis, asked_name)
       |> Map.put(:concern, mod.name())
     end
+  end
+
+  # Related frames from the evidence relations, keyed by the finding
+  # relation they join and the values of the join columns: one frame per
+  # deduplicated evidence row, in row order.
+  defp evidence_frames(mod, relations, results) do
+    for {relation_string, rows} <- results,
+        relation = Map.fetch!(relations, relation_string),
+        %{of: of, on: on} <- [Map.get(relation, :evidence)],
+        row <- dedupe_rows(relation, Enum.sort(rows)),
+        reduce: %{} do
+      acc ->
+        join = for pair <- on, do: Enum.at(row, column_position(relation, evidence_column(pair)))
+        frame = mod.evidence(relation.name, row)
+        Map.update(acc, {of, join}, [frame], &(&1 ++ [frame]))
+    end
+  end
+
+  defp frames_for(evidence, relation, row) do
+    evidence
+    |> Enum.filter(fn {{of, _join}, _frames} -> of == relation.name end)
+    |> Enum.flat_map(fn {{_of, join}, frames} ->
+      on = join_columns(relation, evidence)
+      if join == Enum.map(on, &Enum.at(row, column_position(relation, &1))), do: frames, else: []
+    end)
+  end
+
+  # The finding-side join columns for `relation`, read off the evidence
+  # relation that names it (there is one per finding relation).
+  defp join_columns(relation, evidence) do
+    relation.name
+    |> evidence_spec_for(evidence)
+    |> Enum.map(&finding_column/1)
+  end
+
+  defp evidence_spec_for(name, evidence) do
+    evidence
+    |> Map.keys()
+    |> Enum.find_value([], fn {of, _join} -> of == name and evidence_on(of) end)
+  end
+
+  # The `on` list of the evidence relation joining finding relation `of`.
+  defp evidence_on(of) do
+    Analysis.builtin_analysis_modules()
+    |> Enum.flat_map(& &1.output_relations())
+    |> Enum.find_value(fn
+      %{evidence: %{of: ^of, on: on}} -> on
+      _ -> nil
+    end)
+  end
+
+  defp evidence_column({column, _finding_column}), do: column
+  defp evidence_column(column) when is_atom(column), do: column
+  defp finding_column({_evidence_column, column}), do: column
+  defp finding_column(column) when is_atom(column), do: column
+
+  defp column_position(relation, column) do
+    Enum.find_index(relation.fields, fn {name, _kind, _doc} -> name == column end) ||
+      raise ArgumentError, "column #{inspect(column)} is not in #{inspect(relation.name)}"
   end
 
   @doc """

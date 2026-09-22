@@ -95,7 +95,8 @@ defmodule Argus.Analyses.UnsafeInput do
           {:plug, :symbol, "the controller or LiveView"}
         ],
         key: [:sink, :verb, :path],
-        doc: "The HTTP endpoint from which an unsafe sink is reachable."
+        evidence: %{of: :sink_reachable, on: [sink: :id]},
+        doc: "The HTTP endpoints from which an unsafe sink is reachable, attached to its finding."
       },
       %{
         name: :unbounded_children_from_request,
@@ -185,25 +186,13 @@ defmodule Argus.Analyses.UnsafeInput do
     )
   end
 
-  def finding(:sink_endpoint, [sink, verb, path, plug]) do
-    Findings.new(
-      :info,
-      "#{String.upcase(verb)} #{path} reaches #{sink}",
-      "#{plug} serves #{String.upcase(verb)} #{path}, and an unsafe sink is " <>
-        "reachable from it. This names the endpoint rather than the callback, " <>
-        "which is the question a reader asks next — a path is something they " <>
-        "can try, and a plug entry point is something they have to go and find. " <>
-        "It does NOT say whether the route is authenticated: Phoenix compiles " <>
-        "pipe_through into the router's dispatch as control flow rather than " <>
-        "into the route table, so that judgement is still yours. The path is " <>
-        "often the tell, since projects that separate public routes tend to do " <>
-        "it by prefix. " <>
-        "Nor does it establish taint. This is reachability — a path exists — " <>
-        "and every transitive path examined while calibrating these analyses " <>
-        "carried data from storage or configuration rather than from the " <>
-        "request. Treat it as a place to look, not as a claim.",
-      at: Findings.at_instr(sink)
-    )
+  # The endpoint rather than the callback is the question a reader asks
+  # next: a path is something they can try. It does NOT say whether the
+  # route is authenticated — Phoenix compiles pipe_through into the
+  # router's dispatch as control flow, not into the route table.
+  @impl true
+  def evidence(:sink_endpoint, [_sink, verb, path, plug]) do
+    Findings.related("reachable from #{String.upcase(verb)} #{path}", Findings.at_module(plug))
   end
 
   def finding(:unbounded_children_from_request, [sup, child, via, kind]) do

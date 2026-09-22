@@ -136,7 +136,7 @@ defmodule Argus.Clientlib.TagResolutionTest do
       Argus.analyze([Argus.Test.Fixtures.TagServerA, Argus.Test.Fixtures.TagServerB], :blocking)
 
     assert [[_, _, _, _, "call"]] = results["call_cycle"]
-    assert Enum.all?(results["call_cycle_path"], fn [_, _, _, how] -> how == "tag" end)
+    assert Enum.all?(results["call_cycle_path"], fn [_, _, _, _, _, how] -> how == "tag" end)
     assert results["call_cycle_path"] != []
   end
 end

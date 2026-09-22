@@ -227,7 +227,7 @@ defmodule Argus.FindingsTest do
       assert Enum.map(result.ran, & &1.analysis) == Argus.Analysis.set(:security) |> elem(1)
     end
 
-    test "call_cycle findings rank the cycle as error with path evidence as info" do
+    test "a call cycle is one error finding carrying its edges as related frames" do
       skip_without_souffle()
 
       modules = [Fixtures.CycleServerA, Fixtures.CycleServerB]
@@ -236,17 +236,15 @@ defmodule Argus.FindingsTest do
 
       Enum.each(result.findings, &assert_finding_shape/1)
 
-      cycles = Enum.filter(result.findings, &(&1.severity == :error))
-      assert cycles != []
-      assert Enum.any?(cycles, &(&1.module in modules))
-      assert Enum.any?(cycles, fn f -> Enum.any?(f.related, &(&1.label == "return path")) end)
+      assert [cycle] = result.findings
+      assert cycle.severity == :error
+      assert cycle.module in modules
+      assert Enum.any?(cycle.related, &(&1.label == "return path"))
 
-      paths = Enum.filter(result.findings, &(&1.severity == :info))
-      assert paths != []
-
-      # Findings sort by severity: every error precedes every info.
-      severity_sequence = Enum.map(result.findings, & &1.severity)
-      assert severity_sequence == Enum.sort_by(severity_sequence, &(&1 != :error))
+      # The edges of the cycle are evidence, not findings of their own.
+      edges = Enum.filter(cycle.related, &String.starts_with?(&1.label, "cycle edge "))
+      assert length(edges) == 2
+      assert Enum.all?(edges, &(&1.mfa != nil))
     end
 
     test ":all runs every builtin analysis except coverage" do
@@ -348,6 +346,25 @@ defmodule Argus.FindingsTest do
       relation = Map.delete(@keyed_relation, :key)
       rows = [["Sup", "Queue", "a"], ["Sup", "Queue", "b"]]
       assert Findings.dedupe_rows(relation, rows) == rows
+    end
+
+    test "evidence relations become related frames of the finding they join" do
+      relation_rows = %{
+        "sync_call_fan_in" => [["Target", "5"]],
+        "bottleneck_caller" => [
+          ["B", "Target", "B:call/0"],
+          ["A", "Target", "A:call/0"],
+          ["A", "Target", "A:other/0"],
+          ["Z", "Other", "Z:call/0"]
+        ]
+      }
+
+      assert [finding] = Findings.build(Argus.Analyses.Blocking, relation_rows)
+      assert finding.title == "High synchronous fan-in (5 caller modules)"
+
+      # One frame per caller module, in row order, only for this target.
+      assert Enum.map(finding.related, & &1.label) == ["caller A", "caller B"]
+      assert Enum.map(finding.related, & &1.mfa) == [{A, :call, 0}, {B, :call, 0}]
     end
 
     test "a key chosen by kind identifies each kind of row its own way" do

@@ -163,22 +163,23 @@ call_cycle(a, b, wa, wb, "continue") :-
   continue_dep(b, a, wb),
   a < b.
 
-// Full path of transitive sync dependencies for cycle participants.
-// One row per witness — finding builders dedupe on (from_mod, to_mod).
+// The edges of a cycle: evidence attached to the call_cycle finding for
+// (mod_a, mod_b), one related frame per edge. One row per witness —
+// the frames are deduplicated on (mod_a, mod_b, from_mod, to_mod).
 // `how` is "tag" when the edge exists only because a dynamic-target call
 // was attributed by its message tag, "static" when the callee is named:
 // an inferred edge is the first thing to doubt in a surprising cycle.
-.decl call_cycle_path(from_mod: symbol, to_mod: symbol, witness: symbol, how: symbol)
+.decl call_cycle_path(mod_a: symbol, mod_b: symbol, from_mod: symbol, to_mod: symbol, witness: symbol, how: symbol)
 .output call_cycle_path
 
-call_cycle_path(from_mod, to_mod, witness, "tag") :-
+call_cycle_path(a, b, from_mod, to_mod, witness, "tag") :-
   call_cycle(a, b, _, _, "call"),
   module_sync_dep(from_mod, to_mod, witness),
   (from_mod = a ; from_mod = b),
   (to_mod = a ; to_mod = b),
   reaches_tag_dep(witness, to_mod).
 
-call_cycle_path(from_mod, to_mod, witness, "static") :-
+call_cycle_path(a, b, from_mod, to_mod, witness, "static") :-
   call_cycle(a, b, _, _, "call"),
   module_sync_dep(from_mod, to_mod, witness),
   (from_mod = a ; from_mod = b),
@@ -209,8 +210,9 @@ sync_call_fan_in(target_mod, cnt) :-
 
 // Sync callers filtered to only targets that exceed the fan-in threshold.
 // This separates normal centralized services (1–4 callers) from true
-// serialization bottlenecks. One row per witness — finding builders
-// dedupe on (caller_mod, target_mod).
+// serialization bottlenecks. Evidence attached to the fan-in finding,
+// one related frame per caller module: one row per witness, frames
+// deduplicated on (caller_mod, target_mod).
 .decl bottleneck_caller(caller_mod: symbol, target_mod: symbol, witness: symbol)
 .output bottleneck_caller
 

@@ -182,12 +182,12 @@ defmodule Argus.Analyses.UnsafeInputTest do
   end
 
   describe "sink_endpoint" do
-    test "names the HTTP method and path rather than the callback" do
-      f = UnsafeInput.finding(:sink_endpoint, ["M:f/1#3", "get", "/public/x/:id", "W.Controller"])
-      assert f.severity == :info
-      assert f.title =~ "GET /public/x/:id"
-      assert f.detail =~ "does NOT say whether the route is authenticated"
-      assert f.detail =~ "Nor does it establish taint"
+    test "is a related frame naming the HTTP method and path rather than the callback" do
+      frame =
+        UnsafeInput.evidence(:sink_endpoint, ["M:f/1#3", "get", "/public/x/:id", "W.Controller"])
+
+      assert frame.label == "reachable from GET /public/x/:id"
+      assert frame.module == W.Controller
     end
   end
 

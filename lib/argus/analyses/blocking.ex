@@ -14,11 +14,12 @@ defmodule Argus.Analyses.Blocking do
     downstream budget.
   - `call_cycle(mod_a, mod_b, witness_a, witness_b, phase)` — two modules
     that synchronously call each other, anywhere (`call`) or both from
-    `handle_continue/2` (`continue`: a startup deadlock); `call_cycle_path`
-    is the evidence, one edge per row, marked `tag` when the hop was
-    attributed by message tag.
-  - `sync_call_fan_in(target, count)` and `bottleneck_caller(caller,
-    target, witness)` — a server five or more modules call synchronously.
+    `handle_continue/2` (`continue`: a startup deadlock); the edges in
+    `call_cycle_path` are its related frames, marked `tag` when the hop
+    was attributed by message tag.
+  - `sync_call_fan_in(target, count)` — a server five or more modules
+    call synchronously; the callers in `bottleneck_caller` are its
+    related frames.
   - `receive_in_callback(id, func, callback, behaviour, proximity,
     bounded)` — a `receive` on an OTP process's own stack, `bounded`
     false when it has no `after` and can hang.
@@ -93,13 +94,16 @@ defmodule Argus.Analyses.Blocking do
       %{
         name: :call_cycle_path,
         fields: [
-          {:from_mod, :symbol, "source module"},
-          {:to_mod, :symbol, "target module"},
+          {:mod_a, :symbol, "first module of the cycle"},
+          {:mod_b, :symbol, "second module of the cycle"},
+          {:from_mod, :symbol, "source module of the edge"},
+          {:to_mod, :symbol, "target module of the edge"},
           {:witness, :symbol, "function in from_mod carrying the dependency"},
           {:how, :symbol, "'tag' when the edge is attributed by message tag, else 'static'"}
         ],
-        key: [:from_mod, :to_mod],
-        doc: "Transitive sync dependency edge between cycle participants."
+        key: [:mod_a, :mod_b, :from_mod, :to_mod],
+        evidence: %{of: :call_cycle, on: [:mod_a, :mod_b]},
+        doc: "The edges of a call cycle, attached to its finding."
       },
       %{
         name: :sync_call_fan_in,
@@ -117,7 +121,8 @@ defmodule Argus.Analyses.Blocking do
           {:witness, :symbol, "function in caller_mod making the call"}
         ],
         key: [:caller_mod, :target_mod],
-        doc: "Caller of a high-fan-in (>= 5) GenServer."
+        evidence: %{of: :sync_call_fan_in, on: [:target_mod]},
+        doc: "The callers of a high-fan-in (>= 5) GenServer, attached to its finding."
       },
       %{
         name: :receive_in_callback,
@@ -258,30 +263,19 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:call_cycle_path, [from_mod, to_mod, witness, how]) do
-    {detail, help} =
+  @impl true
+  def evidence(:call_cycle_path, [_a, _b, from_mod, to_mod, witness, how]) do
+    label =
       case how do
-        "tag" ->
-          {"Synchronous dependency edge between call-cycle participants — the " <>
-             "evidence behind a call_cycle finding. This edge is inferred: the call " <>
-             "targets a pid or a name held in state, and #{to_mod} is the module " <>
-             "whose handle_call/3 matches the message tag it sends.",
-           ["if #{to_mod} is not the process behind that pid, the cycle is not real"]}
-
-        _ ->
-          {"Synchronous dependency edge between call-cycle participants — the " <>
-             "evidence behind a call_cycle finding.", []}
+        "tag" -> "cycle edge #{from_mod} → #{to_mod}, inferred from the message tag"
+        _ -> "cycle edge #{from_mod} → #{to_mod}"
       end
 
-    Findings.new(
-      :info,
-      "Cycle edge: #{from_mod} → #{to_mod}",
-      detail,
-      at: Findings.at_func(witness),
-      at_label: if(how == "tag", do: "inferred from the message tag", else: nil),
-      related: [Findings.related("callee", Findings.at_module(to_mod))],
-      help: help
-    )
+    Findings.related(label, Findings.at_func(witness))
+  end
+
+  def evidence(:bottleneck_caller, [caller_mod, _target_mod, witness]) do
+    Findings.related("caller #{caller_mod}", Findings.at_func(witness))
   end
 
   def finding(:sync_call_fan_in, [target_mod, cnt]) do
@@ -293,18 +287,6 @@ defmodule Argus.Analyses.Blocking do
         "call latency grow together until callers start timing out. Consider " <>
         "sharding, ETS for reads, or casts where replies aren't needed.",
       at: Findings.at_mfa(target_mod, :handle_call, 3)
-    )
-  end
-
-  def finding(:bottleneck_caller, [caller_mod, target_mod, witness]) do
-    Findings.new(
-      :info,
-      "Caller of a high fan-in GenServer",
-      "#{caller_mod} synchronously calls #{target_mod}, one of #{target_mod}'s " <>
-        "five-plus caller modules. Each such call competes for the same " <>
-        "serialized mailbox.",
-      at: Findings.at_func(witness),
-      related: [Findings.related("bottleneck", Findings.at_module(target_mod))]
     )
   end
 

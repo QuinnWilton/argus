@@ -37,6 +37,21 @@ through the alias table to the rows that were theirs.
 | `startup` | `init_timeout_deferral`, `continue_crash_loop_risk` | `deferral_defect(mod, kind, site, detail)`, `kind` ∈ init_timeout, continue_catch |
 | `startup` → `blocking` | `mutual_continue_deadlock` | `call_cycle(mod_a, mod_b, witness_a, witness_b, phase)` with `phase` = continue; `deferred_startup_deadlock` resolves to it |
 
+### Removed as findings
+
+Three relations were witness lists dressed as findings: the edges of a
+call cycle (`call_cycle_path`, "Cycle edge: A → B"), the callers of a
+high-fan-in server (`bottleneck_caller`, "Caller of a high fan-in
+GenServer") and the endpoints that reach a sink (`sink_endpoint`, "GET
+/path reaches …"). They are **evidence** now: an output relation may
+declare `evidence: %{of: relation, on: join_columns}`, and its rows
+become related frames of the finding they join through the analysis's
+new `evidence/2` callback. The cycle, the fan-in and the sink are the
+findings; their frames name the edges, the callers and the routes.
+Consumers that build findings from solved rows themselves use
+`Argus.Findings.build/2`, which applies this; `Argus.Analysis.finding_relations/1`
+lists the output relations that are findings.
+
 ## 0.17.2 — 2026-09-21
 
 ### Fixed

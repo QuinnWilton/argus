@@ -64,11 +64,23 @@ defmodule Argus.Analysis do
   """
   @type row_key :: [atom()] | {atom(), %{optional(String.t()) => [atom()], default: [atom()]}}
 
+  @typedoc """
+  An output relation whose rows are evidence for another relation's
+  findings rather than findings of their own.
+
+  `of` names the finding relation and `on` how a row joins it: a list of
+  `{evidence_column, finding_column}` pairs (an atom stands for the same
+  name in both). Each matching row becomes a related frame of the
+  finding through the analysis's `evidence/2` callback.
+  """
+  @type evidence :: %{of: atom(), on: [atom() | {atom(), atom()}]}
+
   @type output_relation :: %{
           required(:name) => atom(),
           required(:fields) => [Argus.Schema.field()],
           required(:doc) => String.t(),
-          optional(:key) => row_key()
+          optional(:key) => row_key(),
+          optional(:evidence) => evidence()
         }
 
   @callback name() :: atom()
@@ -97,7 +109,13 @@ defmodule Argus.Analysis do
   """
   @callback finding(relation :: atom(), row :: [String.t()]) :: Argus.Findings.attrs()
 
-  @optional_callbacks finding: 2
+  @doc """
+  Converts one row of an evidence relation into a related frame of the
+  finding it joins (see the `:evidence` key of `t:output_relation/0`).
+  """
+  @callback evidence(relation :: atom(), row :: [String.t()]) :: Argus.Findings.related()
+
+  @optional_callbacks finding: 2, evidence: 2
 
   # Public API types.
 
@@ -572,6 +590,17 @@ defmodule Argus.Analysis do
 
   Returns `{:ok, relations}` or `:error` if the analysis is not found.
   """
+  @doc """
+  The output relations of an analysis whose rows are findings: every
+  output relation but the evidence ones.
+  """
+  @spec finding_relations(atom()) :: {:ok, [output_relation()]} | :error
+  def finding_relations(name) do
+    with {:ok, relations} <- output_relations(name) do
+      {:ok, Enum.reject(relations, &Map.has_key?(&1, :evidence))}
+    end
+  end
+
   @spec output_relations(atom()) :: {:ok, [output_relation()]} | :error
   def output_relations(name) when is_atom(name) do
     case fetch_module(name) do
