@@ -29,7 +29,7 @@ defmodule Argus.Schema do
 
   @type relation :: %{
           name: atom(),
-          layer: 1 | 2,
+          layer: 1 | 2 | 3,
           fields: [field()],
           doc: String.t()
         }
@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 39
+  @schema_version 40
 
   # Layer 1: Module-level facts.
 
@@ -2072,7 +2072,38 @@ defmodule Argus.Schema do
     @imprecision
   ]
 
-  @all_relations @layer_1_relations ++ @layer_2_relations
+  # Layer 3: priors. Facts no extractor emits — a classifier's answers to
+  # questions the bytecode cannot settle, written by `Argus.Priors` into
+  # the facts directory after extraction, or not at all. Every prior
+  # relation ends in `permille`, the model's probability for the row in
+  # thousandths, so a rule chooses its own threshold; rules use a prior only
+  # as a positive premise, to add a heuristic-labelled finding or move a
+  # severity, never to remove a structural row. Absent priors are empty
+  # relations, and the findings are exactly those of a run without them.
+
+  @prior_sensitive %{
+    name: :prior_sensitive,
+    layer: 3,
+    fields: [
+      {:subject_kind, :symbol, "'schema_field' | 'config_key'"},
+      {:mod, :symbol, "the schema module, or the module reading the key"},
+      {:name, :symbol, "the field or key, spelled as schema_field spells it (':email')"},
+      {:kind, :symbol, "'secret' | 'personal' | 'none'"},
+      {:detail, :symbol, "credential | password | token | pii | financial | health | none"},
+      {:permille, :number, "the model's probability for `detail`, in thousandths"}
+    ],
+    doc: """
+    What a field or configuration key holds, judged from its name and the \
+    names around it (Argus.Priors.Questions.Sensitivity). `kind` is the \
+    class a rule consumes; `detail` is the finer one the model chose.
+    """
+  }
+
+  @layer_3_relations [
+    @prior_sensitive
+  ]
+
+  @all_relations @layer_1_relations ++ @layer_2_relations ++ @layer_3_relations
 
   # Layer-1 relations no Souffle program reads. They exist for the
   # in-process passes over a module's typed facts — `Argus.Cfg`,
@@ -2118,6 +2149,13 @@ defmodule Argus.Schema do
   def layer_2, do: @layer_2_relations
 
   @doc """
+  Returns layer 3 (prior) relation definitions: facts a classifier
+  supplies, not an extractor. See `Argus.Priors`.
+  """
+  @spec layer_3() :: [relation()]
+  def layer_3, do: @layer_3_relations
+
+  @doc """
   Looks up a relation by name.
   """
   @spec fetch(atom()) :: {:ok, relation()} | :error
@@ -2155,15 +2193,23 @@ defmodule Argus.Schema do
   exists to remove: the declarations are positional, and Souffle will not
   notice a field reordered against what the emitter actually writes.
 
-  `layer` is `:layer_1`, `:layer_2`, or `:all`.
+  `layer` is `:layer_1`, `:layer_2`, `:layer_3`, or `:all`.
   """
-  @spec souffle_decls(:layer_1 | :layer_2 | :all) :: String.t()
+  @spec souffle_decls(:layer_1 | :layer_2 | :layer_3 | :all) :: String.t()
   def souffle_decls(layer) do
     {relations, title, source} =
       case layer do
-        :layer_1 -> {layer_1(), "Layer 1 — generic bytecode facts", "Argus.Schema.layer_1/0"}
-        :layer_2 -> {layer_2(), "Layer 2 — domain extractor facts", "Argus.Schema.layer_2/0"}
-        :all -> {all(), "All fact relations", "Argus.Schema.all/0"}
+        :layer_1 ->
+          {layer_1(), "Layer 1 — generic bytecode facts", "Argus.Schema.layer_1/0"}
+
+        :layer_2 ->
+          {layer_2(), "Layer 2 — domain extractor facts", "Argus.Schema.layer_2/0"}
+
+        :layer_3 ->
+          {layer_3(), "Layer 3 — priors, a classifier's answers", "Argus.Schema.layer_3/0"}
+
+        :all ->
+          {all(), "All fact relations", "Argus.Schema.all/0"}
       end
 
     body =

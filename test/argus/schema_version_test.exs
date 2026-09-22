@@ -25,8 +25,8 @@ defmodule Argus.SchemaVersionTest do
   # Bump BOTH when the schema changes. The digest covers name, layer, and
   # each field's name, type and position; the doc strings are deliberately
   # excluded so that improving a description is not a schema change.
-  @version 39
-  @shape_digest "B37ECB104E7D2E45BADBB28446EA68F469CC392607AD055C57901C9316ACA249"
+  @version 40
+  @shape_digest "C42AD7BF124291E42C1F2DBD855AAA4E28398D560A884F9DAEE81F22AA55BFC3"
 
   defp shape_digest do
     Schema.all()
@@ -61,7 +61,10 @@ defmodule Argus.SchemaVersionTest do
   test "every relation the digest covers is well-formed" do
     for rel <- Schema.all() do
       assert is_atom(rel.name), "relation name must be an atom: #{inspect(rel)}"
-      assert rel.layer in [1, 2], "#{rel.name} has layer #{inspect(rel.layer)}, expected 1 or 2"
+
+      assert rel.layer in [1, 2, 3],
+             "#{rel.name} has layer #{inspect(rel.layer)}, expected 1, 2 or 3"
+
       assert rel.fields != [], "#{rel.name} declares no fields"
 
       for {name, kind, doc} <- rel.fields do

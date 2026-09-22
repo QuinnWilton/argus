@@ -2,7 +2,8 @@ defmodule Mix.Tasks.Argus.Gen.Dl do
   @shortdoc "Regenerates the Souffle fact declarations from Argus.Schema"
 
   @moduledoc """
-  Writes `priv/dl/base.dl` and `priv/dl/layer2.dl` from `Argus.Schema`.
+  Writes `priv/dl/base.dl`, `priv/dl/layer2.dl` and `priv/dl/priors.dl`
+  from `Argus.Schema`.
 
   Fact declarations are positional: `.decl remote_call(id: symbol, mod:
   symbol, ...)` has to agree with the column order `Argus.Pipeline.Emit`
@@ -25,7 +26,8 @@ defmodule Mix.Tasks.Argus.Gen.Dl do
 
   @targets [
     {:layer_1, "base.dl"},
-    {:layer_2, "layer2.dl"}
+    {:layer_2, "layer2.dl"},
+    {:layer_3, "priors.dl"}
   ]
 
   @impl Mix.Task

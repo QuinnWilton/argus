@@ -42,6 +42,12 @@
 // base.dl is: Souffle prunes input relations no rule reads.
 .include "../layer2.dl"
 
+// Layer-3 priors: a classifier's answers, written by Argus.Priors after
+// extraction or left empty. Declared for every program for the same
+// reason as the layers above; a rule that reads one uses it only as a
+// positive premise (see Argus.Schema).
+.include "../priors.dl"
+
 // Call graph, derived once by stage0.dl.
 .decl call_edge(caller: symbol, callee: symbol)
 .input call_edge
