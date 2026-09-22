@@ -229,7 +229,7 @@ defmodule Argus.Analyses.ShutdownTest do
         ])
 
       assert never.severity == :error
-      assert never.detail =~ "trap_exit"
+      assert Enum.any?(never.help, &(&1 =~ "trap_exit"))
       assert never.detail =~ "file I/O"
 
       unclear =

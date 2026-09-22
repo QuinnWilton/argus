@@ -106,9 +106,10 @@ defmodule Argus.Analyses.Effects do
       :error,
       "#{short(func)} is declared pure but performs #{effect_phrase(category)}",
       "#{func} carries `@pure true`, but #{location(func, via)} calls #{api}, " <>
-        "which is #{effect_phrase(category)}. #{consequence(category)} Either " <>
-        "remove the declaration or move the effect to the caller.",
-      at: Findings.at_func(func)
+        "which is #{effect_phrase(category)}. #{consequence(category)}",
+      at: Findings.at_func(func),
+      at_label: "declared pure here",
+      help: ["remove `@pure true`, or move the effect to the caller"]
     )
   end
 
@@ -121,7 +122,9 @@ defmodule Argus.Analyses.Effects do
         "target is not known statically. Whatever it reaches could do " <>
         "anything, so the contract cannot be verified. It may well hold; " <>
         "nothing should rely on it having been checked.",
-      at: Findings.at_func(func)
+      at: Findings.at_func(func),
+      at_label: "declared pure here",
+      help: ["call a known module and function so the claim can be checked, or drop `@pure`"]
     )
   end
 
@@ -133,10 +136,13 @@ defmodule Argus.Analyses.Effects do
         "#{api}, which resolves to whichever implementation the argument's " <>
         "type provides. Any module can define one, and an implementation is " <>
         "ordinary code — so there is no set of targets to check. This is not " <>
-        "a missing entry in the effect model; no model can close it. If the " <>
-        "argument's type is known and fixed at this call site, calling that " <>
-        "implementation directly makes the contract checkable.",
-      at: Findings.at_func(func)
+        "a missing entry in the effect model; no model can close it.",
+      at: Findings.at_func(func),
+      at_label: "declared pure here",
+      help: [
+        "if the argument's type is fixed at that call site, call its implementation " <>
+          "directly so the contract can be checked"
+      ]
     )
   end
 
@@ -147,10 +153,13 @@ defmodule Argus.Analyses.Effects do
       "#{func} carries `@pure true`, and #{location(func, via)} calls " <>
         "#{api}, which the effect model has no entry for. Argus does not " <>
         "assume unknown calls are harmless — that would make a verification " <>
-        "report success far more often and mean nothing. If #{api} really is " <>
-        "effect-free, adding it to Argus.Purity.Effects turns this into a " <>
-        "verified contract.",
-      at: Findings.at_func(func)
+        "report success far more often and mean nothing.",
+      at: Findings.at_func(func),
+      at_label: "declared pure here",
+      help: [
+        "if #{api} is effect-free, add it to Argus.Purity.Effects and this becomes " <>
+          "a verified contract; otherwise drop `@pure`"
+      ]
     )
   end
 
@@ -162,7 +171,12 @@ defmodule Argus.Analyses.Effects do
         "purity is the caller's obligation. #{caller} builds #{closure}, " <>
         "which calls #{api} — #{effect_phrase(category)} — and hands it over. " <>
         "The contract is broken here, at the call site, not in #{callee}.",
-      at: Findings.at_func(caller)
+      at: Findings.at_func(caller),
+      at_label: "builds the effectful closure here",
+      help: [
+        "perform the effect before or after the call and pass a pure fun, " <>
+          "or drop `@pure` from #{callee}"
+      ]
     )
   end
 
@@ -182,10 +196,13 @@ defmodule Argus.Analyses.Effects do
       "#{short(caller)} performs #{rollback_phrase(category)} inside a #{repo} transaction",
       "#{caller} opens a #{repo}.transaction and #{via} calls #{api} inside it. " <>
         "#{rollback_consequence(category)} A rollback cannot take it back, and a retry on a " <>
-        "serialization failure will do it twice. #{connection_note(category)}" <>
-        "Move the effect outside the transaction, or record the intent in a row and " <>
-        "perform it after commit.",
-      at: Findings.at_func(caller)
+        "serialization failure will do it twice. #{connection_note(category)}",
+      at: Findings.at_func(caller),
+      at_label: "opens the transaction here",
+      help: [
+        "move the effect outside the transaction, or record the intent in a row " <>
+          "and perform it after commit"
+      ]
     )
   end
 

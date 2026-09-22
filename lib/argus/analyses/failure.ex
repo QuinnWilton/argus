@@ -112,12 +112,12 @@ defmodule Argus.Analyses.Failure do
       case belief do
         "result_checked" ->
           {"#{short(callee)} result ignored where every other call site checks it",
-           "discards the result of #{callee}, which #{agree} of the #{total} call " <>
+           "discards the result of #{Findings.call_name(callee)}, which #{agree} of the #{total} call " <>
              "sites in this program match on", "match on the result as the other sites do"}
 
         "exception_guarded" ->
           {"#{short(callee)} called bare where every other call site guards it",
-           "calls #{callee} outside a try, which #{agree} of the #{total} call sites " <>
+           "calls #{Findings.call_name(callee)} outside a try, which #{agree} of the #{total} call sites " <>
              "in this program wrap in one", "guard the call as the other sites do"}
       end
 
@@ -140,9 +140,12 @@ defmodule Argus.Analyses.Failure do
       "Catch-all rescue swallows exceptions",
       "#{func} rescues every exception without re-raising, logging, or " <>
         "matching specific types. Bugs become silence: the failure surfaces " <>
-        "later, far from its cause, with the stacktrace gone. Rescue the " <>
-        "specific exceptions you can actually handle.",
-      at: Findings.at_func(func)
+        "later, far from its cause, with the stacktrace gone.",
+      at: Findings.at_func(func),
+      at_label: "rescues everything",
+      help: [
+        "rescue the specific exceptions this code can handle, and re-raise or log the rest"
+      ]
     )
   end
 
@@ -156,7 +159,12 @@ defmodule Argus.Analyses.Failure do
         "but killing a process imperatively bypasses the supervisor that " <>
         "started it, so it is worth confirming the target is meant to be " <>
         "torn down this way rather than stopped through its own protocol.",
-      at: Findings.at_func(func)
+      at: Findings.at_func(func),
+      at_label: "sends an exit signal from a callback",
+      help: [
+        "stop the target through its own protocol (`GenServer.stop/1`, a message) " <>
+          "or through its supervisor, if this is not a deliberate teardown"
+      ]
     )
   end
 
@@ -192,7 +200,7 @@ defmodule Argus.Analyses.Failure do
     Findings.new(
       :warning,
       "RPC result used as a boolean",
-      "#{func} uses the result of :rpc.#{variant} as a boolean. A node that is " <>
+      "#{func} uses the result of #{Findings.rpc_api(variant)} as a boolean. A node that is " <>
         "gone answers `{:badrpc, :nodedown}` (a timeout `{:badrpc, :timeout}`), " <>
         "and a tuple is truthy: the failure reads as true.",
       at: Findings.at_site(site, func),
@@ -205,7 +213,7 @@ defmodule Argus.Analyses.Failure do
     Findings.new(
       :warning,
       "RPC result matched without a {:badrpc, _} clause",
-      "#{func} matches the result of :rpc.#{variant} by shape and has no clause " <>
+      "#{func} matches the result of #{Findings.rpc_api(variant)} by shape and has no clause " <>
         "for `{:badrpc, reason}` — a node that is down, a timeout, a remote " <>
         "exit — so a cluster failure is a CaseClauseError (or MatchError) " <>
         "instead of an error value.",
@@ -253,9 +261,10 @@ defmodule Argus.Analyses.Failure do
       "whereis result used without a nil check",
       "#{func} looks up #{name} with Process.whereis and uses the result " <>
         "without handling nil. The target can die (or not yet be registered) " <>
-        "between lookup and use — the classic time-of-check/time-of-use race. " <>
-        "Send to the registered name directly, or handle nil explicitly.",
-      at: Findings.at_instr(id)
+        "between lookup and use — the classic time-of-check/time-of-use race.",
+      at: Findings.at_instr(id),
+      at_label: "may be nil here",
+      help: ["send to the registered name directly, or match nil explicitly"]
     )
   end
 

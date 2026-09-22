@@ -62,7 +62,9 @@ defmodule Argus.Analyses.StateMachine do
       "#{mod} defines state #{state}, but no transition leads to it. Either " <>
         "the state is dead code, or a transition that should produce it is " <>
         "missing — both point at a hole in the machine's design.",
-      at: Findings.at_site(site, mod)
+      at: Findings.at_site(site, mod),
+      at_label: "declared here, never entered",
+      help: ["add the transition that should produce #{state}, or remove the state"]
     )
   end
 
@@ -74,7 +76,11 @@ defmodule Argus.Analyses.StateMachine do
         "the machine. The process idles in #{state} forever. If that's a " <>
         "deliberate final resting state, ignore this; otherwise it leaks a " <>
         "process per machine that reaches it.",
-      at: Findings.at_site(site, mod)
+      at: Findings.at_site(site, mod),
+      at_label: "no transition leaves #{state}",
+      help: [
+        "stop the machine from #{state} (`{:stop, :normal, data}`) if it is not a resting state"
+      ]
     )
   end
 end

@@ -150,10 +150,13 @@ defmodule Argus.Analyses.Shutdown do
         "never called and this cleanup is silently skipped. " <>
         "That is the normal way processes stop, so it is the case the cleanup was " <>
         "presumably written for. Tests miss it because GenServer.stop/1 exercises " <>
-        "the path that does run terminate. " <>
-        "Add Process.flag(:trap_exit, true) in init/1 — and then make sure the " <>
-        "work finishes inside the child's shutdown timeout.",
-      at: Findings.at_func("#{mod}:terminate/2")
+        "the path that does run terminate.",
+      at: Findings.at_func("#{mod}:terminate/2"),
+      at_label: "runs only on {:stop, _} or a crash",
+      help: [
+        "add `Process.flag(:trap_exit, true)` in init/1, and keep the work inside " <>
+          "the child's shutdown timeout"
+      ]
     )
   end
 
@@ -166,10 +169,13 @@ defmodule Argus.Analyses.Shutdown do
         "the effect model cannot classify — so this cannot say WHAT is skipped, only " <>
         "that terminate/2 does more than log and none of it will happen on the normal " <>
         "stop path. If that call releases a lease, closes a session or flushes a " <>
-        "buffer, it is silently not happening in production. " <>
-        "Add Process.flag(:trap_exit, true) in init/1, or move the cleanup somewhere " <>
-        "it will actually run.",
-      at: Findings.at_func("#{mod}:terminate/2")
+        "buffer, it is silently not happening in production.",
+      at: Findings.at_func("#{mod}:terminate/2"),
+      at_label: "a supervisor shutdown skips this",
+      help: [
+        "add `Process.flag(:trap_exit, true)` in init/1, or move the cleanup " <>
+          "somewhere it will run"
+      ]
     )
   end
 
@@ -177,7 +183,7 @@ defmodule Argus.Analyses.Shutdown do
     Findings.new(
       :warning,
       "A callback stops a sibling the supervisor owns",
-      "#{mod} stops #{sibling} (through #{via}) from a handler, and both are " <>
+      "#{mod} stops #{sibling}#{through(via, mod)} from a handler, and both are " <>
         "children of #{sup}. The supervisor owns that child: a permanent one " <>
         "comes straight back, and during shutdown it may already be gone, so " <>
         "the stop exits with :noproc in #{mod}.",
@@ -194,7 +200,7 @@ defmodule Argus.Analyses.Shutdown do
     Findings.new(
       :warning,
       "terminate/2 calls a sibling that may already be down",
-      "#{mod}'s terminate/2 waits on #{sibling} (through #{via}), and both are " <>
+      "#{mod}'s terminate/2 waits on #{sibling}#{through(via, mod)}, and both are " <>
         "children of #{sup}. A supervisor stops its children one at a time, in " <>
         "reverse start order, so while #{mod} is terminating #{sibling} may already " <>
         "have exited: the call exits with :noproc and terminate/2 crashes, " <>
@@ -235,9 +241,10 @@ defmodule Argus.Analyses.Shutdown do
         "child gets only its shutdown timeout (5000ms unless the child spec says " <>
         "otherwise) before the supervisor brutal-kills it. A call with no bound of " <>
         "its own can exceed that, and the cleanup is truncated at whatever point it " <>
-        "had reached — often worse than not starting. Bound the call explicitly, or " <>
-        "raise the child's shutdown timeout to cover it.",
-      at: Findings.at_func("#{mod}:terminate/2")
+        "had reached — often worse than not starting.",
+      at: Findings.at_func("#{mod}:terminate/2"),
+      at_label: "unbounded work inside the shutdown timeout",
+      help: ["bound the call, or raise the child's `shutdown` timeout to cover it"]
     )
   end
 
@@ -249,7 +256,9 @@ defmodule Argus.Analyses.Shutdown do
         "clause. Exit signals from linked processes arrive as plain mailbox " <>
         "messages and fall through to the default handle_info — a crash or a " <>
         "noisy log, exactly what trapping was meant to prevent.",
-      at: Findings.at_func(witness)
+      at: Findings.at_func(witness),
+      at_label: "traps exits here",
+      help: ["add a `handle_info({:EXIT, pid, reason}, state)` clause"]
     )
   end
 
@@ -323,4 +332,9 @@ defmodule Argus.Analyses.Shutdown do
   defp phrase("port"), do: "a port or OS operation"
   defp phrase("node"), do: "a distribution operation"
   defp phrase(other), do: other
+
+  # The witness is worth naming when it is not the callback itself: a
+  # helper terminate/2 reaches, or an anonymous function inside it.
+  defp through(via, mod) when via == mod <> ":terminate/2", do: ""
+  defp through(via, _mod), do: " (through #{via})"
 end

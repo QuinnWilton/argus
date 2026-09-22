@@ -61,7 +61,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
       assert safe.title == "binary_to_term with [:safe] and no shape check"
       assert safe.severity == :warning
       assert safe.detail =~ "CVE-2020-15150"
-      assert safe.detail =~ "non_executable_binary_to_term"
+      assert Enum.any?(safe.help, &(&1 =~ "non_executable_binary_to_term"))
     end
 
     test "a request-reachable deserialization carries the same class" do
@@ -310,8 +310,8 @@ defmodule Argus.Analyses.UnsafeInputTest do
       assert Enum.any?(finding.help, &(&1 =~ "to_existing_atom"))
 
       path = UnsafeInput.finding(:sink_reachable, List.replace_at(row, 6, "adjacent"))
-      assert path.at_label == nil
-      assert path.help == []
+      assert path.at_label == "atom interned from a string here"
+      assert path.help == finding.help
     end
 
     test "the message names the surface, so triage does not need the code" do

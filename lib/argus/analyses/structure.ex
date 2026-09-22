@@ -161,7 +161,9 @@ defmodule Argus.Analyses.Structure do
         "ArgumentError (or its start_link returns {:error, {:already_started, " <>
         "pid}}). At most one of these can ever run at a time.",
       at: Findings.at_site(site1, mod1),
-      related: [Findings.related("other registrant", Findings.at_site(site2, mod2))]
+      at_label: "registers #{name} here",
+      related: [Findings.related("other registrant", Findings.at_site(site2, mod2))],
+      help: ["give each module its own name, or start only one of them"]
     )
   end
 
@@ -196,7 +198,11 @@ defmodule Argus.Analyses.Structure do
         "After a netsplit heals, both partitions hold the name and the " <>
         "default resolution kills one of the processes at random — state " <>
         "loss decided by a coin flip.",
-      at: Findings.at_instr(site)
+      at: Findings.at_instr(site),
+      at_label: "registered via :global without a resolver",
+      help: [
+        "pass a resolve function (`:global.register_name/3`) that picks the survivor deliberately"
+      ]
     )
   end
 

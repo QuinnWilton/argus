@@ -129,6 +129,17 @@ defmodule Argus.Analyses.UnsafeInput do
     ]
   end
 
+  @atom_help [
+    "validate the value against an explicit allowlist before converting it",
+    "String.to_existing_atom/1, or a pattern match on the accepted values, " <>
+      "turns unbounded input into a bounded set"
+  ]
+
+  @code_help [
+    "dispatch on an allowlist of known modules and functions rather than " <>
+      "names built from data"
+  ]
+
   @impl true
   def finding(:sink_reachable, [
         id,
@@ -145,9 +156,10 @@ defmodule Argus.Analyses.UnsafeInput do
     Findings.new(
       severity(proximity),
       "#{deserialization_title(safety)} #{reached(proximity)} #{surface(kind)}",
-      "#{func} calls #{api} #{deserialization_how(safety)}, and #{entry} #{path(proximity)} " <>
-        "from #{surface(kind)}. " <> deserialization_risk(safety),
-      [at: Findings.at_instr(id)] ++ flow_opts(proximity)
+      route(func, "#{api} #{deserialization_how(safety)}", entry, proximity, kind) <>
+        " " <> deserialization_risk(safety),
+      [at: Findings.at_instr(id)] ++
+        route_opts(proximity, "decoded here", deserialization_help(safety))
     )
     |> retier(func, proximity, source, p)
   end
@@ -156,10 +168,10 @@ defmodule Argus.Analyses.UnsafeInput do
     Findings.new(
       severity(proximity),
       "Dynamic code execution #{reached(proximity)} #{surface(kind)}",
-      "#{func} calls #{api}, and #{entry} #{path(proximity)} from #{surface(kind)}. " <>
-        "If any part of that argument is caller-influenced this is arbitrary " <>
+      route(func, api, entry, proximity, kind) <>
+        " If any part of that argument is caller-influenced this is arbitrary " <>
         "code execution inside the node, with the full privileges of the VM.",
-      [at: Findings.at_instr(id)] ++ flow_opts(proximity)
+      [at: Findings.at_instr(id)] ++ route_opts(proximity, "evaluated here", @code_help)
     )
     |> retier(func, proximity, source, p)
   end
@@ -168,12 +180,12 @@ defmodule Argus.Analyses.UnsafeInput do
     Findings.new(
       severity(proximity),
       "Unbounded atom creation #{reached(proximity)} #{surface(kind)}",
-      "#{func} calls #{api}, and #{entry} #{path(proximity)} from #{surface(kind)}. " <>
-        "The atom table is fixed-size and never garbage collected, so every " <>
+      route(func, atom_api(api), entry, proximity, kind) <>
+        " The atom table is fixed-size and never garbage collected, so every " <>
         "distinct value an attacker supplies permanently consumes a slot " <>
-        "until the node aborts — killing every process on it. Use " <>
-        "String.to_existing_atom, or match against an explicit whitelist.",
-      [at: Findings.at_instr(id)] ++ flow_opts(proximity)
+        "until the node aborts — killing every process on it.",
+      [at: Findings.at_instr(id)] ++
+        route_opts(proximity, "atom interned from a string here", @atom_help)
     )
     |> retier(func, proximity, source, p)
   end
@@ -182,12 +194,13 @@ defmodule Argus.Analyses.UnsafeInput do
     Findings.new(
       :warning,
       "Dynamic atom creation reachable from an exported function",
-      "#{func} calls #{api}, and the module's public surface reaches it. The " <>
-        "BEAM atom table is never garbage collected (default cap 1,048,576 " <>
+      "#{func} calls #{atom_api(api)}, and the module's public surface reaches it. " <>
+        "The BEAM atom table is never garbage collected (default cap 1,048,576 " <>
         "entries); if caller-influenced input reaches this call, every new " <>
-        "value permanently consumes a slot until the node dies. Prefer " <>
-        "String.to_existing_atom or an explicit whitelist.",
-      at: Findings.at_instr(id)
+        "value permanently consumes a slot until the node dies.",
+      at: Findings.at_instr(id),
+      at_label: "atom interned from a string here",
+      help: @atom_help
     )
   end
 
@@ -197,7 +210,9 @@ defmodule Argus.Analyses.UnsafeInput do
       deserialization_title(safety),
       "#{func} deserializes with #{api} #{deserialization_how(safety)}. " <>
         deserialization_risk(safety),
-      at: Findings.at_instr(id)
+      at: Findings.at_instr(id),
+      at_label: "decoded here",
+      help: deserialization_help(safety)
     )
   end
 
@@ -208,7 +223,9 @@ defmodule Argus.Analyses.UnsafeInput do
       "#{func} calls #{api}, reachable from an exported function. If any " <>
         "caller-controlled data flows into that call, it is arbitrary code " <>
         "execution inside the node.",
-      at: Findings.at_instr(id)
+      at: Findings.at_instr(id),
+      at_label: "evaluated here",
+      help: @code_help
     )
   end
 
@@ -224,13 +241,15 @@ defmodule Argus.Analyses.UnsafeInput do
         "heap, so the node runs out of memory — and it does so looking like " <>
         "ordinary load rather than like an attack. " <>
         "Nothing here is wrong on its own line, which is why the supervisor and " <>
-        "the handler each read fine in isolation. " <>
-        "Set max_children on #{sup}, and decide what start_child returning " <>
-        "{:error, :max_children} should mean for the caller — that error is the " <>
-        "point, because refusing one request is what stops it becoming an " <>
-        "outage for every request.",
+        "the handler each read fine in isolation.",
       at: Findings.at_func(via),
-      related: [Findings.related("supervisor", Findings.at_module(sup))]
+      at_label: "starts a child per request",
+      related: [Findings.related("supervisor", Findings.at_module(sup))],
+      help: [
+        "set `max_children` on #{sup}",
+        "decide what start_child returning `{:error, :max_children}` means for the " <>
+          "caller — refusing one request is what stops it becoming an outage for all"
+      ]
     )
   end
 
@@ -294,23 +313,43 @@ defmodule Argus.Analyses.UnsafeInput do
       "takes atom-table exhaustion off the table. It does not refuse a fun " <>
       "that references a module already loaded, and the first thing that " <>
       "enumerates or calls the decoded term runs it — the shape of Paginator's " <>
-      "CVE-2020-15150. Validate the decoded shape before using it, or decode " <>
-      "with Plug.Crypto.non_executable_binary_to_term/2."
+      "CVE-2020-15150."
   end
 
   defp deserialization_risk("dynamic") do
     "Whether :safe is among them cannot be seen here. Without it, untrusted " <>
       "bytes intern unbounded atoms and materialize funs, ports and " <>
-      "references; with it, a fun referencing a loaded module still runs. " <>
-      "Pass [:safe] as a literal and validate the decoded shape."
+      "references; with it, a fun referencing a loaded module still runs."
   end
 
   defp deserialization_risk(_unsafe) do
     "Untrusted bytes can intern unbounded atoms and materialize funs, ports, " <>
       "and references — a well-known denial-of-service vector, and on the " <>
-      "BEAM the strongest of the three sinks. Pass [:safe] and validate the " <>
-      "decoded shape — :safe alone still admits arbitrary nested terms."
+      "BEAM the strongest of the three sinks."
   end
+
+  defp deserialization_help("atoms_only") do
+    [
+      "validate the decoded shape before using it",
+      "or decode with `Plug.Crypto.non_executable_binary_to_term/2`"
+    ]
+  end
+
+  defp deserialization_help("dynamic") do
+    ["pass `[:safe]` as a literal and validate the decoded shape"]
+  end
+
+  defp deserialization_help(_unsafe) do
+    [
+      "pass `[:safe]` and validate the decoded shape — :safe alone still admits arbitrary nested terms"
+    ]
+  end
+
+  # The compiled form of String.to_atom/1 and List.to_atom/1 is what the
+  # facts see; the reader sees the source.
+  defp atom_api(":erlang.binary_to_atom/" <> _ = api), do: "String.to_atom (compiled to #{api})"
+  defp atom_api(":erlang.list_to_atom/" <> _ = api), do: "List.to_atom (compiled to #{api})"
+  defp atom_api(api), do: api
 
   defp severity("flow"), do: :error
   defp severity("direct"), do: :error
@@ -322,26 +361,34 @@ defmodule Argus.Analyses.UnsafeInput do
   defp reached("adjacent"), do: "one call from"
   defp reached(_), do: "transitively reachable from"
 
-  # A flow is a claim about the data; a path is a claim about the calls.
-  defp path("flow"),
-    do:
-      "hands its request data into that argument — through destructuring, " <>
-        "string construction and forwarding, a flow rather than a path —"
-
-  defp path(_), do: "reaches it"
-
-  defp flow_opts("flow") do
-    [
-      at_label: "request data reaches this call's argument",
-      help: [
-        "validate the value against an explicit allowlist before converting it",
-        "String.to_existing_atom/1, or a pattern match on the accepted values, " <>
-          "turns unbounded input into a bounded set"
-      ]
-    ]
+  # How the sink and the entry relate, in one sentence. A flow is a claim
+  # about the data; a path is a claim about the calls. When the entry is
+  # the sink's own function there is no second party to name.
+  defp route(func, api, func, "flow", kind) do
+    "#{func} calls #{api} with its own request data — through destructuring, " <>
+      "string construction and forwarding, a flow rather than a path — from " <>
+      "#{surface(kind)}."
   end
 
-  defp flow_opts(_proximity), do: []
+  defp route(func, api, entry, "flow", kind) do
+    "#{func} calls #{api}, and #{entry} hands its request data into that " <>
+      "argument — through destructuring, string construction and forwarding, " <>
+      "a flow rather than a path — from #{surface(kind)}."
+  end
+
+  defp route(func, api, func, _proximity, kind) do
+    "#{func} calls #{api} from #{surface(kind)}."
+  end
+
+  defp route(func, api, entry, _proximity, kind) do
+    "#{func} calls #{api}, and #{entry} reaches it from #{surface(kind)}."
+  end
+
+  defp route_opts("flow", _label, help) do
+    [at_label: "request data reaches this call's argument", help: help]
+  end
+
+  defp route_opts(_proximity, label, help), do: [at_label: label, help: help]
 
   defp surface("plug"), do: "a Plug (HTTP request)"
   defp surface("live_view"), do: "a LiveView callback"

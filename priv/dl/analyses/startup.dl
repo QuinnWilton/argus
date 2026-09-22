@@ -237,6 +237,13 @@ unbounded_effect_in_init(mod, "recv", r) :-
   init_function(mod, f),
   recv_reach.reaches(f, r).
 
+// One finding per receiving function; the inits that reach it are its
+// evidence frames.
+.decl init_reaches_recv(mod: symbol, api: symbol)
+.output init_reaches_recv
+
+init_reaches_recv(mod, r) :- unbounded_effect_in_init(mod, "recv", r).
+
 // ── A connection made in init/1 with no way to try again ─────────────
 //
 // A child that connects to an external dependency in init/1 and stops

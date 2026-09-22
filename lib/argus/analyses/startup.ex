@@ -94,8 +94,20 @@ defmodule Argus.Analyses.Startup do
           {:kind, :symbol, "recv | connect"},
           {:api, :symbol, "the receiving function, or the connect call"}
         ],
-        key: {:kind, %{"connect" => [:mod], default: [:mod, :kind, :api]}},
+        # One recv finding per waiting function: the inits that reach it
+        # are its evidence frames.
+        key: {:kind, %{"connect" => [:mod], "recv" => [:kind, :api]}},
         doc: "init/1 waits on a socket without bound, or connects with no way to retry."
+      },
+      %{
+        name: :init_reaches_recv,
+        fields: [
+          {:mod, :symbol, "module whose init/1 reaches the receive"},
+          {:api, :symbol, "the receiving function"}
+        ],
+        key: [:mod, :api],
+        evidence: %{of: :unbounded_effect_in_init, on: [:api]},
+        doc: "The init/1 callbacks that reach an unbounded receive, attached to its finding."
       },
       %{
         name: :deferral_defect,
@@ -147,14 +159,14 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:unbounded_effect_in_init, [mod, "recv", recv]) do
+  def finding(:unbounded_effect_in_init, [_mod, "recv", recv]) do
     Findings.new(
       :warning,
       "init/1 waits on a socket with no timeout",
-      "#{mod}'s init/1 reaches #{recv}, which waits on a socket with :infinity " <>
-        "(or a `receive` with no `after`). Until the message arrives, the process is not started: its " <>
-        "supervisor's start, and whoever called start_child, wait with it — " <>
-        "for as long as the server stays silent.",
+      "#{recv} waits on a socket with :infinity (or a `receive` with no " <>
+        "`after`), and init/1 reaches it. Until the message arrives, the " <>
+        "process is not started: its supervisor's start, and whoever called " <>
+        "start_child, wait with it — for as long as the server stays silent.",
       at: Findings.at_func(recv),
       at_label: "receives with :infinity",
       help: [
@@ -369,11 +381,14 @@ defmodule Argus.Analyses.Startup do
       "#{mod}.init/1 returns {:ok, state, #{ms}}. The :timeout message " <>
         "fires only after #{ms}ms of an empty mailbox, and every message " <>
         "that arrives restarts nothing — the callback must return the " <>
-        "timeout again or it is gone. If the work behind :timeout must " <>
-        "happen, a timer (Process.send_after/3) or handle_continue/2 is " <>
-        "the reliable shape; an idle timeout is for reacting to silence.",
+        "timeout again or it is gone. An idle timeout is for reacting to " <>
+        "silence.",
       at: Findings.at_site(site, mod),
-      at_label: "this timeout is cancelled by any earlier message"
+      at_label: "this timeout is cancelled by any earlier message",
+      help: [
+        "for work that must happen, arm a timer (Process.send_after/3) or " <>
+          "return `{:continue, _}` from init/1"
+      ]
     )
   end
 
@@ -404,8 +419,10 @@ defmodule Argus.Analyses.Startup do
       "#{func} reaches :global.#{op} from init/1. init blocks the " <>
         "supervisor's start sequence, and the :global op blocks on " <>
         "cluster-wide agreement — local startup now hangs whenever the " <>
-        "cluster is partitioned or slow. Defer to handle_continue.",
-      at: Findings.at_func(func)
+        "cluster is partitioned or slow.",
+      at: Findings.at_func(func),
+      at_label: "cluster-wide lock from init/1",
+      help: ["defer the lock to handle_continue/2 so the start completes without the cluster"]
     )
   end
 
@@ -414,10 +431,10 @@ defmodule Argus.Analyses.Startup do
       :warning,
       "Distributed operation in init/1",
       "#{func} performs #{op} during init, while the supervisor's start " <>
-        "sequence waits. A slow or partitioned peer stalls local startup; " <>
-        "defer remote work to handle_continue so the tree boots without the " <>
-        "network.",
-      at: Findings.at_instr(site)
+        "sequence waits. A slow or partitioned peer stalls local startup.",
+      at: Findings.at_instr(site),
+      at_label: "remote operation during init/1",
+      help: ["defer remote work to handle_continue/2 so the tree boots without the network"]
     )
   end
 
@@ -445,7 +462,14 @@ defmodule Argus.Analyses.Startup do
       "#{func} calls #{callee} and discards the result. An {:error, reason} " <>
         "return goes unnoticed — the process isn't running, and the first " <>
         "symptom is a crash later at a call site that assumed it was.",
-      at: Findings.at_func(func)
+      at: Findings.at_func(func),
+      at_label: "start result discarded here",
+      help: ["match `{:ok, pid}` and handle `{:error, reason}`"]
     )
+  end
+
+  @impl true
+  def evidence(:init_reaches_recv, [mod, _api]) do
+    Findings.related("reached from #{mod}.init/1", Findings.at_mfa(mod, :init, 1))
   end
 end

@@ -159,11 +159,11 @@ defmodule Argus.Analyses.Ets do
     )
   end
 
-  def finding(:ets_check_act, [mod, func, name, key, read, write]) do
+  def finding(:ets_check_act, [mod, func, name, _key, read, write]) do
     Findings.new(
       :warning,
       "Read-then-write race on an ETS key",
-      "#{func} reads #{key} from #{name} and writes it when the read says to. " <>
+      "#{func} reads a key of #{name} and writes it when the read says to. " <>
         "The table is public and another process can write it between the two, " <>
         "so the write acts on a row that may have changed — the read-decide-write " <>
         "race that the ETS built-ins are documented not to protect against.",
@@ -184,9 +184,13 @@ defmodule Argus.Analyses.Ets do
       "ETS table dies with its owner",
       "#{mod} owns table #{name} with no heir, and the owner is not a " <>
         "permanent supervisor child. ETS tables are deleted when their owner " <>
-        "exits — one crash and the data is gone. Set an heir or move " <>
-        "ownership to a supervised process that rebuilds the table.",
-      at: Findings.at_site(site, mod)
+        "exits — one crash and the data is gone.",
+      at: Findings.at_site(site, mod),
+      at_label: "created here with no heir",
+      help: [
+        "set an heir (`heir: {pid, data}`), or own the table from a supervised " <>
+          "process that rebuilds it"
+      ]
     )
   end
 
@@ -196,7 +200,8 @@ defmodule Argus.Analyses.Ets do
       "Table without read_concurrency",
       "Table #{name} is created without read_concurrency: true. Concurrent " <>
         "readers of a read-heavy table serialize on its lock; if this table " <>
-        "is read from many processes, the option is close to free speedup."
+        "is read from many processes, the option is close to free speedup.",
+      help: ["add `read_concurrency: true` to the :ets.new/2 options"]
     )
   end
 
@@ -206,7 +211,8 @@ defmodule Argus.Analyses.Ets do
       "Table without write_concurrency",
       "Table #{name} is created without write_concurrency: true. Concurrent " <>
         "writers serialize on a single lock; for write-heavy tables the " <>
-        "option reduces contention at the cost of slightly costlier reads."
+        "option reduces contention at the cost of slightly costlier reads.",
+      help: ["add `write_concurrency: true` to the :ets.new/2 options"]
     )
   end
 
@@ -219,7 +225,9 @@ defmodule Argus.Analyses.Ets do
         "than hash-based tables under concurrent access — worth checking " <>
         "that the ordering is actually needed.",
       at: Findings.at_site(site, mod1),
-      related: [Findings.related("other accessor", Findings.at_module(mod2))]
+      at_label: "ordered_set created here",
+      related: [Findings.related("other accessor", Findings.at_module(mod2))],
+      help: ["use a `set` (or `bag`) unless the ordering is needed"]
     )
   end
 
@@ -251,7 +259,12 @@ defmodule Argus.Analyses.Ets do
         "The table is reachable only through its reference — if the owner " <>
         "loses or never shares it, nothing else can read or clean up the " <>
         "table.",
-      at: Findings.at_site(site, mod)
+      at: Findings.at_site(site, mod),
+      at_label: "created without :named_table",
+      help: [
+        "name the table (`:named_table`), or hand its reference to whatever " <>
+          "must read or delete it"
+      ]
     )
   end
 end

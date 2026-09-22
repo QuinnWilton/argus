@@ -180,12 +180,19 @@ defmodule Argus.Analyses.Blocking do
         "caller above it, and each level retries or crashes on its own " <>
         "schedule." <> inferred_note,
       at: Findings.at_mfa(from, :handle_call, 3),
+      at_label: "a request enters the chain here",
       related: [Findings.related("innermost callee", Findings.at_module(to))],
       help:
-        if(inferred == "tag",
-          do: ["check the inferred hop: if that pid is a different server, the chain is shorter"],
-          else: []
-        )
+        [
+          "give each hop a timeout that fits inside its caller's, or let the leaf " <>
+            "answer the original caller directly"
+        ] ++
+          if(inferred == "tag",
+            do: [
+              "check the inferred hop: if that pid is a different server, the chain is shorter"
+            ],
+            else: []
+          )
     )
   end
 
@@ -198,7 +205,12 @@ defmodule Argus.Analyses.Blocking do
         "mailbox backs up invisibly because no caller ever waits on (or " <>
         "notices) the slow handler.",
       at: Findings.at_mfa(mod, :handle_cast, 2),
-      related: [Findings.related("call target", Findings.at_module(target))]
+      at_label: "this handle_cast blocks on a call",
+      related: [Findings.related("call target", Findings.at_module(target))],
+      help: [
+        "have #{target} answer asynchronously (a cast back, or a message), " <>
+          "or run the call in a task and take its reply in handle_info/2"
+      ]
     )
   end
 
@@ -212,7 +224,12 @@ defmodule Argus.Analyses.Blocking do
         "work is still legitimately running, leaving duplicated effort and " <>
         "inconsistent state.",
       at: Findings.at_mfa(caller, :handle_call, 3),
-      related: [Findings.related("callee", Findings.at_module(callee))]
+      at_label: "this call's timeout is shorter than what it waits for",
+      related: [Findings.related("callee", Findings.at_module(callee))],
+      help: [
+        "raise the caller's timeout past #{downstream_timeout}ms, or shorten " <>
+          "#{callee}'s downstream calls to fit inside #{caller_timeout}ms"
+      ]
     )
   end
 
@@ -226,7 +243,12 @@ defmodule Argus.Analyses.Blocking do
         "synchronous callers. If anything downstream hangs, this process " <>
         "hangs forever with it — no timeout ever unblocks the chain.",
       at: Findings.at_mfa(mod, :handle_call, 3),
-      related: [Findings.related("call target", Findings.at_module(target))]
+      at_label: "waits with :infinity while serving callers",
+      related: [Findings.related("call target", Findings.at_module(target))],
+      help: [
+        "pass a finite timeout and handle the exit, or move the wait off " <>
+          "the process that serves callers"
+      ]
     )
   end
 
@@ -256,10 +278,11 @@ defmodule Argus.Analyses.Blocking do
       "#{mod_a} and #{mod_b} synchronously call each other, directly or through " <>
         "intermediaries. If both directions are ever in flight at once, each " <>
         "process blocks waiting on the other's mailbox — a deadlock that " <>
-        "GenServer.call timeouts only turn into cascading crashes. Break one " <>
-        "direction with a cast or a message.",
+        "GenServer.call timeouts only turn into cascading crashes.",
       at: Findings.at_func(witness_a),
-      related: [Findings.related("return path", Findings.at_func(witness_b))]
+      at_label: "one direction of the cycle",
+      related: [Findings.related("return path", Findings.at_func(witness_b))],
+      help: ["break one direction with a cast or a message"]
     )
   end
 
@@ -269,9 +292,10 @@ defmodule Argus.Analyses.Blocking do
       "High synchronous fan-in (#{cnt} caller modules)",
       "#{cnt} distinct modules make GenServer.call into #{target_mod}. A " <>
         "single process serializes all of them — under load, queue depth and " <>
-        "call latency grow together until callers start timing out. Consider " <>
-        "sharding, ETS for reads, or casts where replies aren't needed.",
-      at: Findings.at_mfa(target_mod, :handle_call, 3)
+        "call latency grow together until callers start timing out.",
+      at: Findings.at_mfa(target_mod, :handle_call, 3),
+      at_label: "#{cnt} modules call this server",
+      help: ["shard the server, serve reads from ETS, or use casts where no reply is needed"]
     )
   end
 
@@ -286,9 +310,13 @@ defmodule Argus.Analyses.Blocking do
         "when trapping, and every in-flight monitor's {:DOWN, ...}. With no " <>
         "timeout it can also block forever — the supervisor's shutdown then " <>
         "waits out the child timeout and brutal-kills, losing whatever the " <>
-        "process was holding. Move the wait into a task and reply to the " <>
-        "callback with a message, or handle the reply in handle_info.",
-      at: Findings.at_instr(id)
+        "process was holding.",
+      at: Findings.at_instr(id),
+      at_label: "blocking receive on the callback's own stack",
+      help: [
+        "move the wait into a task and reply to the callback with a message, " <>
+          "or handle the reply in handle_info/2"
+      ]
     )
   end
 
@@ -302,7 +330,9 @@ defmodule Argus.Analyses.Blocking do
         "behaviour manages — including the system messages :sys and the " <>
         "supervisor rely on. Messages it does not match are left in the queue " <>
         "and re-scanned by every later receive.",
-      at: Findings.at_instr(id)
+      at: Findings.at_instr(id),
+      at_label: "receive on the callback's own stack",
+      help: ["take the message in handle_info/2 instead of a receive inside the callback"]
     )
   end
 
@@ -310,11 +340,13 @@ defmodule Argus.Analyses.Blocking do
     Findings.new(
       :warning,
       "RPC without a bounded timeout",
-      "#{func} makes a #{variant} call with an infinity timeout (the " <>
+      "#{func} calls #{Findings.rpc_api(variant)} with an infinity timeout (the " <>
         "default when none is passed, or `:infinity` given explicitly). A " <>
         "partitioned, overloaded, or restarting peer blocks this process " <>
         "indefinitely — distributed calls need explicit deadlines.",
-      at: Findings.at_instr(site)
+      at: Findings.at_instr(site),
+      at_label: "no timeout bounds this call",
+      help: ["pass a timeout (the last argument) and take `{:badrpc, :timeout}` as a result"]
     )
   end
 
@@ -322,11 +354,13 @@ defmodule Argus.Analyses.Blocking do
     Findings.new(
       :warning,
       "RPC inside a GenServer callback",
-      "#{func} performs #{variant} while its GenServer is blocked in a " <>
+      "#{func} calls #{Findings.rpc_api(variant)} while its GenServer is blocked in a " <>
         "callback. Remote latency becomes local unavailability: every queued " <>
         "caller waits on the network round-trip, and a peer outage stalls " <>
         "the whole server.",
-      at: Findings.at_func(func)
+      at: Findings.at_func(func),
+      at_label: "remote call inside a callback",
+      help: ["make the remote call from a task and take its reply in handle_info/2"]
     )
   end
 
@@ -338,7 +372,9 @@ defmodule Argus.Analyses.Blocking do
         "operations serialize across the whole cluster — fine when " <>
         "deliberate, but every caller shares one distributed lock, and " <>
         "partition recovery stalls them all.",
-      at: Findings.at_instr(site)
+      at: Findings.at_instr(site),
+      at_label: "cluster-wide operation",
+      help: ["bound `retries` so a partition fails this caller instead of holding it"]
     )
   end
 
@@ -346,7 +382,7 @@ defmodule Argus.Analyses.Blocking do
     Findings.new(
       :warning,
       "Peer call catches :noproc but not :shutdown",
-      "#{func} wraps #{callee} in a catch for `{:noproc, _}` — the peer may not " <>
+      "#{func} wraps #{Findings.call_name(callee)} in a catch for `{:noproc, _}` — the peer may not " <>
         "exist — but the peer stopping while the call is in flight is the same " <>
         "condition, and it arrives as `{:shutdown, _}` (or `{:normal, _}`), which " <>
         "this catch lets crash the caller.",

@@ -358,7 +358,32 @@ defmodule Argus.Findings do
       |> Map.update(:related, [], &(&1 ++ frames_for(evidence, relation, row)))
       |> Map.put(:analysis, asked_name)
       |> Map.put(:concern, mod.name())
+      |> render_generated_names()
     end
+  end
+
+  # `-ensure_connections/2-fun-0-/2` is the compiler's name for a closure;
+  # a reader wants the function it was written in. Done here, once, so no
+  # builder has to remember: every piece of prose a finding carries.
+  @generated_name ~r/([A-Za-z0-9_.:]+):-([A-Za-z0-9_?!]+)\/(\d+)-\S*?-\/\d+/
+
+  defp render_generated_names(finding) do
+    finding
+    |> Map.update!(:title, &plain_names/1)
+    |> Map.update!(:detail, &plain_names/1)
+    |> Map.update!(:at_label, &plain_names/1)
+    |> Map.update!(:help, fn help -> Enum.map(help, &plain_names/1) end)
+    |> Map.update!(:related, fn related ->
+      Enum.map(related, &Map.update!(&1, :label, fn label -> plain_names(label) end))
+    end)
+  end
+
+  defp plain_names(nil), do: nil
+
+  defp plain_names(text) do
+    text
+    |> String.replace(@generated_name, "an anonymous function in \\1:\\2/\\3")
+    |> String.replace(~r/(^|\. )an anonymous function/, "\\1An anonymous function")
   end
 
   # Related frames from the evidence relations, keyed by the finding
@@ -446,9 +471,16 @@ defmodule Argus.Findings do
 
   # A key chosen by the value of a discriminating column: each kind of
   # row in a merged relation says what identifies it.
+  # A kind the map does not name keeps every column: one finding per row,
+  # never two rows folded into one on a guess.
   def dedupe_rows(%{key: {column, keys}, fields: fields}, rows) when is_map(keys) do
     [discriminator] = key_positions([column], fields)
-    default = key_positions(Map.fetch!(keys, :default), fields)
+
+    default =
+      case Map.fetch(keys, :default) do
+        {:ok, key_fields} -> key_positions(key_fields, fields)
+        :error -> Enum.to_list(0..(length(fields) - 1)//1)
+      end
 
     by_value =
       for {value, key_fields} <- keys, value != :default, into: %{} do
@@ -669,6 +701,30 @@ defmodule Argus.Findings do
       confidence: confidence
     }
   end
+
+  @doc """
+  A callee as a reader writes it: the facts spell a call target
+  `Mod:fun/arity` (`GenServer:call/2`, `:gen_statem:call/3`), prose wants
+  `GenServer.call/2` and `:gen_statem.call/3`. Anything else — an API
+  already spelled with a dot, a module — is returned as it is.
+  """
+  @spec call_name(String.t()) :: String.t()
+  def call_name(callee) when is_binary(callee) do
+    case Regex.run(~r/^(:?[A-Za-z][A-Za-z0-9_.]*):([a-z_][A-Za-z0-9_?!]*\/\d+)$/, callee) do
+      [_, mod, fun] -> "#{mod}.#{fun}"
+      nil -> callee
+    end
+  end
+
+  @doc """
+  The API an rpc variant column names: the rules classify a remote call
+  as `"rpc"`, `"multicall"` or `"erpc"`; the reader wants the function.
+  """
+  @spec rpc_api(String.t()) :: String.t()
+  def rpc_api("rpc"), do: ":rpc.call"
+  def rpc_api("multicall"), do: ":rpc.multicall"
+  def rpc_api("erpc"), do: ":erpc.call"
+  def rpc_api(other) when is_binary(other), do: other
 
   @doc "Labels an anchor as a secondary location."
   @spec related(String.t(), anchor()) :: related()

@@ -94,15 +94,13 @@ defmodule Argus.Analyses.Exposure do
         "the struct is inspected — Logger calls, changeset errors, LiveView " <>
         "debug output, crash reports, and any error reporter that serialises " <>
         "state. " <>
-        consequence(kind) <>
-        " " <>
-        awareness(aware, mod) <>
-        " Add redact: true to the field.",
+        Enum.join(Enum.reject([consequence(kind), awareness(aware, mod)], &(&1 == "")), " "),
       # Bytecode places every generated schema function at the `schema do`
       # line; the field's own line is in the source, under its name.
       at: Findings.at_mfa(mod, :__schema__, 1),
       at_source: field,
-      at_label: "declared without redact: true"
+      at_label: "declared without redact: true",
+      help: ["add `redact: true` to the field"]
     )
   end
 
@@ -136,10 +134,13 @@ defmodule Argus.Analyses.Exposure do
         "guarantee as an unencrypted connection to an unknown party. " <>
         "Worth checking who chose this: when the surrounding code enables TLS " <>
         "on the user's behalf, the user asked for a secure channel and did not " <>
-        "get one. " <>
-        "Use verify: :verify_peer with cacerts, from :public_key.cacerts_get/0 " <>
-        "or the castore package.",
-      at: Findings.at_instr(id)
+        "get one.",
+      at: Findings.at_instr(id),
+      at_label: "verify: :verify_none",
+      help: [
+        "use `verify: :verify_peer` with cacerts, from :public_key.cacerts_get/0 " <>
+          "or the castore package"
+      ]
     )
   end
 
@@ -153,11 +154,14 @@ defmodule Argus.Analyses.Exposure do
         "options straight through inherit that. " <>
         "Unlike an explicit :verify_none this was probably not a decision, " <>
         "which is precisely why it survives review: there is nothing at the " <>
-        "call site to notice. " <>
-        "Set :verify explicitly, so that the security of the connection is " <>
-        "stated in the code rather than inherited from the OTP version it " <>
-        "happens to run on.",
-      at: Findings.at_instr(id)
+        "call site to notice.",
+      at: Findings.at_instr(id),
+      at_label: "no :verify option here",
+      help: [
+        "set :verify explicitly (`verify: :verify_peer` with cacerts), so the " <>
+          "connection's security is stated in the code rather than inherited " <>
+          "from the OTP version it runs on"
+      ]
     )
   end
 

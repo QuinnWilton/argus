@@ -62,6 +62,29 @@ function Ecto generates carries the `schema do` line — with the field's
 name as the fragment, so scry lands on `field :api_key` rather than
 `defmodule`; its `at_label` is "declared without redact: true".
 
+Every finding says what its anchored line is and what to do about it:
+the builders that had no `at_label` or `help` (blocking, effects, ets,
+exposure's TLS pair, failure's rescue/exit/whereis, mailbox's reply
+defects, shutdown's cleanup defects, startup's init effects,
+state_machine, structure, unsafe_input's reachable sinks) now carry
+both, and remediation sentences moved out of `detail` into `help`,
+where scry renders them as trailers. Prose fixes on the way: the
+read-then-write race no longer prints the key's source index as the key
+(`reads 1 from …`); the badrpc findings name `:rpc.call`, `:rpc.multicall`
+or `:erpc.call` (`Findings.rpc_api/1`) instead of `:rpc.rpc`; callees
+read `GenServer.call/2` and `:gen_statem.call/3` (`Findings.call_name/1`)
+rather than the facts' `GenServer:call/2`; compiler-generated closure
+names (`-ensure_connections/2-fun-0-/2`) render as "an anonymous
+function in ensure_connections/2" in every piece of prose a finding
+carries, done once in `Argus.Findings.build/2`; a witness that is the
+callback itself is no longer named "(through …)"; a sink reached by its
+own function is described once; `String.to_atom` is named beside its
+compiled form; the timer-flush finding says nothing flushes the message
+rather than that no receive takes it; the exposure detail lost a double
+space. `unbounded_effect_in_init`'s recv rows dedupe per receiving
+function, with the `init/1` callbacks that reach it as evidence frames
+(`init_reaches_recv`) instead of one identical finding per init.
+
 ### Added
 
 `Argus.Corpus` pairs take `subdir:` for a repository whose Mix project is

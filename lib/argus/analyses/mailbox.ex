@@ -187,7 +187,7 @@ defmodule Argus.Analyses.Mailbox do
       "#{mod} cancels the timer kept under #{key} in #{cancel} and arms it in " <>
         "#{arm} with the message #{message}, which carries nothing that " <>
         "identifies the timer. Process.cancel_timer/1 does not remove a message " <>
-        "already delivered, and no receive in the module takes #{message}, so " <>
+        "already delivered, and nothing flushes #{message} after the cancel, so " <>
         "a stale one is handled as if it were the next: the action runs twice, " <>
         "or early.",
       at: Findings.at_func(cancel),
@@ -296,7 +296,8 @@ defmodule Argus.Analyses.Mailbox do
         "removes it. " <>
         "A receive with no after clause does not have this problem, since it " <>
         "consumes either the reply or the {:DOWN, ...}.",
-      at: Findings.at_instr(id)
+      at: Findings.at_instr(id),
+      at_label: "the monitor is still live on the timeout branch"
     )
   end
 
@@ -348,9 +349,10 @@ defmodule Argus.Analyses.Mailbox do
         consequence(kind) <>
         " The two halves of this contract live in different places and " <>
         "nothing checks they agree, so renaming a tag on one side compiles " <>
-        "clean and fails only when that path runs. " <>
-        "Either add the clause, or fix the tag at the call site.",
-      at: Findings.at_func(sender)
+        "clean and fails only when that path runs.",
+      at: Findings.at_func(sender),
+      at_label: "sends #{tag} to itself from here",
+      help: ["add a handle_#{kind} clause for #{tag}, or fix the tag at this call"]
     )
   end
 
@@ -365,10 +367,13 @@ defmodule Argus.Analyses.Mailbox do
         "Every caller reaching this clause blocks for its full GenServer.call/3 " <>
         "timeout and then exits. The exit is raised in the caller, in another " <>
         "module, with a message that names neither this function nor this clause, " <>
-        "and under load it is indistinguishable from overload. " <>
-        "Either reply directly with {:reply, value, state}, or store `from` in " <>
-        "state and reply when the work completes.",
-      at: Findings.at_instr(id)
+        "and under load it is indistinguishable from overload.",
+      at: Findings.at_instr(id),
+      at_label: "{:noreply, _} without keeping `from`",
+      help: [
+        "reply here with `{:reply, value, state}`, or keep `from` in state and " <>
+          "`GenServer.reply/2` when the work completes"
+      ]
     )
   end
 
