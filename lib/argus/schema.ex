@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 38
+  @schema_version 39
 
   # Layer 1: Module-level facts.
 
@@ -1389,20 +1389,6 @@ defmodule Argus.Schema do
     doc: "Process name registration."
   }
 
-  @whereis_call %{
-    name: :whereis_call,
-    layer: 2,
-    fields: [
-      {:id, :symbol, "instruction ID"},
-      {:func, :symbol, "containing function ID"},
-      {:name, :symbol, "process name"},
-      {:checked, :symbol,
-       "\"checked\" when the result is compared against nil/:undefined or " <>
-         "type-tested before anything else uses it, else \"unchecked\""}
-    ],
-    doc: "Process.whereis/1 or :erlang.whereis/1 call."
-  }
-
   # Layer 2: Distributed systems extractor facts.
 
   @rpc_call %{
@@ -1812,6 +1798,100 @@ defmodule Argus.Schema do
     """
   }
 
+  @name_lookup %{
+    name: :name_lookup,
+    layer: 2,
+    fields: [
+      {:id, :instr_id, "instruction ID of the lookup"},
+      {:func, :func_id, "function containing the lookup"},
+      {:api, :symbol, "whereis | registry_lookup"},
+      {:scope, :symbol, "the Registry, for registry_lookup; empty for whereis"},
+      {:source, :symbol, "literal | param | field | dynamic"},
+      {:key, :symbol, "the name: an inspected literal, a parameter index, or a map key"},
+      {:checked, :symbol, "checked | unchecked: is the result tested against nil before use"}
+    ],
+    doc: """
+    A process name looked up — Process.whereis/1, :erlang.whereis/1, \
+    Registry.lookup/2 — with what identifies the name, so a creating op \
+    on the same name can be joined to it, and whether the result is \
+    tested against nil (or []) before use.
+    """
+  }
+
+  @creating_op %{
+    name: :creating_op,
+    layer: 2,
+    fields: [
+      {:id, :instr_id, "instruction ID of the call"},
+      {:func, :func_id, "function containing the call"},
+      {:api, :symbol,
+       "register | start_link | start | start_via | registry_register | start_child"},
+      {:scope, :symbol, "the Registry, for start_via and registry_register; empty otherwise"},
+      {:source, :symbol, "literal | param | field | dynamic"},
+      {:key, :symbol, "the name claimed; empty when the source is dynamic"}
+    ],
+    doc: """
+    A call that claims a name or starts a process: a registration, a \
+    named start, a via-registered start, or start_child, whose name hides \
+    in the child spec.
+    """
+  }
+
+  @guarded_create %{
+    name: :guarded_create,
+    layer: 2,
+    fields: [
+      {:act, :instr_id, "the creating op"},
+      {:check, :instr_id, "the name lookup whose result decides it"}
+    ],
+    doc: """
+    The creating op runs only because of a test on the lookup's result, \
+    in the same function: the lookup-then-start shape.
+    """
+  }
+
+  @start_error_compared %{
+    name: :start_error_compared,
+    layer: 2,
+    fields: [
+      {:func, :func_id, "a function holding a creating op"},
+      {:atom, :symbol, ":already_started | :already_registered"}
+    ],
+    doc: """
+    The function compares against the atom somewhere — the loser of a \
+    start race is taken. Any comparison anywhere counts, so an unrelated \
+    one keeps the race rule quiet.
+    """
+  }
+
+  @ets_key %{
+    name: :ets_key,
+    layer: 2,
+    fields: [
+      {:id, :instr_id, "instruction ID of the ETS operation"},
+      {:source, :symbol, "literal | param | field | dynamic"},
+      {:key, :symbol, "the key: an inspected literal, a parameter index, or a map key"}
+    ],
+    doc: """
+    What identifies the key operand of an ETS operation; for insert and \
+    insert_new, the first element of the object. Two operations agreeing \
+    on source and key touch the same row.
+    """
+  }
+
+  @ets_guarded_write %{
+    name: :ets_guarded_write,
+    layer: 2,
+    fields: [
+      {:write, :instr_id, "the write"},
+      {:read, :instr_id, "the read whose result decides it"}
+    ],
+    doc: """
+    A plain write that runs only because of a test on a read's result, in \
+    the same function: a read-decide-write on the table.
+    """
+  }
+
   @call_arg_derived %{
     name: :call_arg_derived,
     layer: 2,
@@ -1953,7 +2033,6 @@ defmodule Argus.Schema do
     @ignored_error_result,
     # Process registry & naming.
     @process_register,
-    @whereis_call,
     # Distributed systems.
     @rpc_call,
     @global_register,
@@ -1976,7 +2055,13 @@ defmodule Argus.Schema do
     @call_arg_field,
     @call_arg_forward,
     @call_result,
+    @creating_op,
+    @ets_guarded_write,
+    @ets_key,
+    @guarded_create,
+    @name_lookup,
     @sink_arg_derived,
+    @start_error_compared,
     # Purity contracts and call classification.
     @pure_contract,
     @impure_call,

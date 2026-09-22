@@ -1,0 +1,249 @@
+defmodule Argus.Test.Fixtures.CheckThenAct do
+  @moduledoc """
+  Fixtures for the lookup-then-start race (`structure.registry_race`)
+  and the read-then-write race (`ets.ets_check_act`).
+
+  Behaviours are bare `@behaviour` attributes, as in `RequestSurface`.
+  The positives are plain modules or many-instance callbacks; the quiet
+  neighbours take the loser's outcome, or run in one process only.
+  """
+
+  # ── Lookup, then start ───────────────────────────────────────────
+
+  defmodule WhereisThenStart do
+    @moduledoc "A plain API: whereis, then a named start, in every caller's process."
+    def ensure(name) do
+      case Process.whereis(name) do
+        nil ->
+          {:ok, pid} = GenServer.start_link(__MODULE__, [], name: name)
+          pid
+
+        pid ->
+          pid
+      end
+    end
+
+    def init(state), do: {:ok, state}
+  end
+
+  defmodule LookupThenStartChild do
+    @moduledoc "Registry.lookup, then DynamicSupervisor.start_child, the result returned untaken."
+    def get_or_start(key) do
+      case Registry.lookup(MyRegistry, key) do
+        [{pid, _}] -> {:ok, pid}
+        [] -> DynamicSupervisor.start_child(MySup, {Worker, key})
+      end
+    end
+  end
+
+  defmodule WhereisThenRegister do
+    @moduledoc "whereis of a literal name, then register of the same literal."
+    def claim do
+      if Process.whereis(:leader) == nil do
+        Process.register(self(), :leader)
+      end
+    end
+  end
+
+  defmodule ManyInstances do
+    @moduledoc "A LiveView doing it: one process per socket."
+    @behaviour Phoenix.LiveView
+
+    def handle_event(_event, %{"room" => room}, socket) do
+      case Registry.lookup(RoomRegistry, room) do
+        [] -> DynamicSupervisor.start_child(RoomSup, {Room, room})
+        [{pid, _}] -> {:ok, pid}
+      end
+
+      {:noreply, socket}
+    end
+  end
+
+  # ── Quiet neighbours ─────────────────────────────────────────────
+
+  defmodule HandlesAlreadyStarted do
+    @moduledoc "The loser's outcome is taken: {:error, {:already_started, pid}} becomes {:ok, pid}."
+    def get_or_start(key) do
+      case Registry.lookup(MyRegistry, key) do
+        [{pid, _}] ->
+          {:ok, pid}
+
+        [] ->
+          case DynamicSupervisor.start_child(MySup, {Worker, key}) do
+            {:ok, pid} -> {:ok, pid}
+            {:error, {:already_started, pid}} -> {:ok, pid}
+          end
+      end
+    end
+  end
+
+  defmodule HandlesAlreadyRegistered do
+    @moduledoc "Registry.register's own answer is taken."
+    def claim(key) do
+      case Registry.lookup(MyRegistry, key) do
+        [] ->
+          case Registry.register(MyRegistry, key, nil) do
+            {:ok, _} -> :mine
+            {:error, {:already_registered, _}} -> :theirs
+          end
+
+        _ ->
+          :theirs
+      end
+    end
+  end
+
+  defmodule CallerHandlesAlreadyStarted do
+    @moduledoc "The helper returns the start; its caller takes the outcome."
+    def get_or_start(key) do
+      case start(key) do
+        {:ok, pid} -> pid
+        {:error, {:already_started, pid}} -> pid
+      end
+    end
+
+    def start(key) do
+      case Registry.lookup(MyRegistry, key) do
+        [{pid, _}] -> {:ok, pid}
+        [] -> DynamicSupervisor.start_child(MySup, {Worker, key})
+      end
+    end
+  end
+
+  defmodule OwnerRegisters do
+    @moduledoc "Only the owner's own callbacks reach the decision: one process."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def handle_call({:claim, name}, _from, state) do
+      case Process.whereis(name) do
+        nil -> Process.register(self(), name)
+        _pid -> :taken
+      end
+
+      {:reply, :ok, state}
+    end
+  end
+
+  defmodule RescuesArgumentError do
+    @moduledoc "register/2's ArgumentError is the loser's outcome, and it is rescued."
+    def claim(name) do
+      if Process.whereis(name) == nil do
+        Process.register(self(), name)
+      end
+    rescue
+      ArgumentError -> :theirs
+    end
+  end
+
+  defmodule UncheckedWhereisThenStart do
+    @moduledoc "No branch on the lookup: nothing decides the start."
+    def start(name) do
+      _ = Process.whereis(name)
+      GenServer.start_link(__MODULE__, [], name: name)
+    end
+
+    def init(state), do: {:ok, state}
+  end
+
+  defmodule DifferentNames do
+    @moduledoc "The lookup and the start name different processes."
+    def start do
+      if Process.whereis(:one) == nil do
+        GenServer.start_link(__MODULE__, [], name: :two)
+      end
+    end
+
+    def init(state), do: {:ok, state}
+  end
+
+  # ── Read, then write ─────────────────────────────────────────────
+
+  defmodule PublicCache do
+    @moduledoc "A public table, and an API that reads a key and inserts when it is absent."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      :ets.new(:public_cache, [:named_table, :public, :set])
+      {:ok, state}
+    end
+
+    def put_if_absent(key, value) do
+      case :ets.lookup(:public_cache, key) do
+        [] -> :ets.insert(:public_cache, {key, value})
+        _ -> false
+      end
+    end
+  end
+
+  defmodule InsertNewCache do
+    @moduledoc "The atomic form: insert_new decides and writes at once."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      :ets.new(:atomic_cache, [:named_table, :public, :set])
+      {:ok, state}
+    end
+
+    def put_if_absent(key, value) do
+      case :ets.lookup(:atomic_cache, key) do
+        [] -> :ets.insert_new(:atomic_cache, {key, value})
+        _ -> false
+      end
+    end
+  end
+
+  defmodule ProtectedOwnerOnly do
+    @moduledoc "A protected table written only by its owner's callbacks: one writer."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      :ets.new(:protected_cache, [:named_table, :protected, :set])
+      {:ok, state}
+    end
+
+    @impl true
+    def handle_call({:put_if_absent, key, value}, _from, state) do
+      case :ets.lookup(:protected_cache, key) do
+        [] -> :ets.insert(:protected_cache, {key, value})
+        _ -> false
+      end
+
+      {:reply, :ok, state}
+    end
+  end
+
+  defmodule DifferentKeys do
+    @moduledoc "The read and the write name different keys."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      :ets.new(:keys_cache, [:named_table, :public, :set])
+      {:ok, state}
+    end
+
+    def bump(key, other) do
+      case :ets.lookup(:keys_cache, key) do
+        [] -> :ets.insert(:keys_cache, {other, 1})
+        _ -> false
+      end
+    end
+  end
+end

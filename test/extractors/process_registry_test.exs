@@ -35,15 +35,19 @@ defmodule Argus.Extractors.ProcessRegistryTest do
     test "detects Process.whereis" do
       facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.WhereisModule))
 
-      assert Map.has_key?(facts, :whereis_call)
-      rows = facts[:whereis_call]
+      assert Map.has_key?(facts, :name_lookup)
+      rows = facts[:name_lookup]
       assert rows != []
+
+      assert Enum.all?(rows, fn [_id, _func, api, "", _source, _key, _checked] ->
+               api == "whereis"
+             end)
     end
 
     test "detects :erlang.whereis" do
       facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.WhereisModule))
 
-      rows = facts[:whereis_call]
+      rows = facts[:name_lookup]
       assert length(rows) >= 2
     end
 
@@ -51,7 +55,7 @@ defmodule Argus.Extractors.ProcessRegistryTest do
       facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.WhereisModule))
 
       by_func =
-        Map.new(facts[:whereis_call], fn [_id, func, _name, checked] ->
+        Map.new(facts[:name_lookup], fn [_id, func, _api, _scope, _source, _key, checked] ->
           {func |> String.split(":") |> List.last(), checked}
         end)
 

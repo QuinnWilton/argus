@@ -50,6 +50,33 @@ z-score of the agreeing fraction against a coin flip, `:warning` from
 about seven to one. Scoped to process APIs on purpose: a `File.write`
 ignored once in twelve is not a BEAM bug class.
 
+**Schema version 39.** Six Layer-2 relations for the check-then-act
+races, and one removed. `name_lookup(id, func, api, scope, source, key,
+checked)` replaces `whereis_call(id, func, name, checked)`: it also
+covers `Registry.lookup/2`, and identifies the name the way
+`Helpers.key_identity/3` does (a literal, a parameter, a map field), so
+a create on the same name can be joined to it — `failure`'s
+`unchecked_result` rows for `Process.whereis` are unchanged. New:
+`creating_op(id, func, api, scope, source, key)` (a registration, a
+named or via-registered start, `start_child`), `guarded_create(act,
+check)` and `ets_guarded_write(write, read)` (the act runs only because
+of a test on the check's result, from `Argus.Extractor.Guard` over the
+control-dependence tree), `start_error_compared(func, atom)`, and
+`ets_key(id, source, key)`. `clientlib/concurrency.dl` adds the
+`RunsConcurrently` component: which seeded functions more than one
+process can be running at once.
+
+`structure` gains `registry_race(mod, func, lookup_api, create_api,
+key, check, act)` and `ets` gains `ets_check_act(mod, func, name, key,
+read, write)`: the read–decide–write races on the process registry and
+on ETS that Christakis and Sagonas detected in 2010 and Dialyzer
+reported until OTP 25 removed `-Wrace_conditions`. A lookup that decides
+a start of the same name, where the loser's outcome is taken nowhere
+and more than one process can run the function; a read that decides a
+plain write of the same key on a public table another process can
+write. `insert_new`, `update_counter` and `select_replace`, and matching
+`{:error, {:already_started, pid}}`, are the fixes and stay quiet.
+
 ### Fixed
 
 `def_use` had no edges through binary construction or binary matching:

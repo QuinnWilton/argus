@@ -48,11 +48,11 @@ defmodule Argus.Analyses.QuietShapesTest do
       {"task_result_defect", kind: "yield_linked"},
       {"partial_handler", source: "late_message"}
     ],
-    structure: ~w(consumer_supervisor_permanent_child),
+    structure: ~w(consumer_supervisor_permanent_child registry_race),
     coupling: ~w(dual_restart_authority),
     blocking: ~w(partial_noproc_catch),
     failure: [{"unhandled_failure", kind: "erpc_transport"}, "inconsistent_handling"],
-    ets: ~w(ets_read_outside_owner),
+    ets: ~w(ets_read_outside_owner ets_check_act),
     startup: [{"unbounded_effect_in_init", kind: "recv"}, "post_start_initialization"],
     unsafe_input: [{"sink_reachable", proximity: "flow"}]
   }

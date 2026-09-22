@@ -13,6 +13,8 @@
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
 .include "../clientlib/process_statem.dl"
+.include "../clientlib/request_entry.dl"
+.include "../clientlib/concurrency.dl"
 
 // ── Ownership & lifecycle ──────────────────────────────────────────
 
@@ -277,3 +279,55 @@ ets_read_outside_owner("dynamic", owner, reader, site) :-
   !owner_reaches(owner, reader),
   !guarded(reader).
 
+// ── Read, then write ─────────────────────────────────────────────
+//
+// `case :ets.lookup(t, k) do [] -> :ets.insert(t, {k, v})` decides on a
+// row that another process can write between the read and the write
+// (Christakis and Sagonas, 2010, on ETS). The pair is a race when both
+// touch the same key, the table is public — a protected table has one
+// writer — and a second process can write it: the deciding function runs
+// in more than one process, or some function outside the decider's
+// process writes the table. insert_new, update_counter and
+// select_replace are the atomic forms and the fix.
+
+.decl ets_plain_write(op: symbol)
+
+ets_plain_write("insert").
+ets_plain_write("delete").
+ets_plain_write("delete_object").
+ets_plain_write("update_element").
+
+.init write_runs = RunsConcurrently
+
+write_runs.seed(f) :- ets_op(_, f, _, _, "write").
+
+.decl ets_concurrent_write(name: symbol, func: symbol)
+
+ets_concurrent_write(name, f) :-
+  ets_op(_, f, name, op, "write"),
+  ets_plain_write(op),
+  !write_runs.single_process(f).
+
+ets_concurrent_write(name, f) :-
+  ets_op(_, f, name, _, "write"),
+  write_runs.single_process(f),
+  write_runs.entry_reaches(m, f),
+  ets_op(_, g, name, _, "write"),
+  !write_runs.entry_reaches(m, g).
+
+.decl ets_check_act(mod: symbol, func: symbol, name: symbol, key: symbol, read: symbol, write: symbol)
+.output ets_check_act
+
+ets_check_act(mod, func, name, key, read, write) :-
+  ets_guarded_write(write, read),
+  ets_op(read, func, name, _, "read"),
+  ets_op(write, func, name, op, "write"),
+  ets_plain_write(op),
+  name != "dynamic",
+  ets_key(read, source, key),
+  ets_key(write, source, key),
+  source != "dynamic",
+  ets_new(id, _, name),
+  ets_option(id, "access", "public"),
+  function_def(func, mod, _, _, _),
+  ets_concurrent_write(name, func).

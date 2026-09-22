@@ -7,6 +7,8 @@
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
+.include "../clientlib/request_entry.dl"
+.include "../clientlib/concurrency.dl"
 
 // ── A supervisor registered as a worker ──────────────────────────
 //
@@ -89,3 +91,57 @@ duplicate_process_name(name, mod1, mod2, site1, site2) :-
 
 global_register_risk(func, name, id) :-
   global_register(id, func, name, "2").
+
+// ── Lookup, then start ───────────────────────────────────────────
+//
+// `case whereis(name) do nil -> start(name)` asks whether a name is
+// taken and claims it when the answer is no, and nothing holds the name
+// between the two: a second caller that asks in the same window gets
+// the same answer, and one of the two starts loses. Christakis and
+// Sagonas found this shape on the process registry in 2010 and Dialyzer
+// reported it until OTP 25; the Elixir spellings are Registry.lookup
+// before start_child, and whereis before register or a named start.
+//
+// The lookup and the act are the same name when they agree on registry,
+// source and key; a start_child hides its name in the child spec, so any
+// checked lookup that decides it counts. The race is not a bug when the
+// loser's outcome is taken — {:error, {:already_started, pid}} compared
+// in the function or in a caller of it, an ArgumentError from register/2
+// rescued, or a wrapper returning this function's result to a taker — or
+// when only one process ever runs the function.
+
+.decl same_name(check: symbol, act: symbol)
+
+same_name(check, act) :-
+  guarded_create(act, check),
+  name_lookup(check, func, _, scope, source, key, "checked"),
+  creating_op(act, func, _, scope, source, key),
+  source != "dynamic".
+
+same_name(check, act) :-
+  guarded_create(act, check),
+  name_lookup(check, func, _, _, _, _, "checked"),
+  creating_op(act, func, "start_child", _, _, _).
+
+.decl start_error_handled(func: symbol)
+
+start_error_handled(f) :- start_error_compared(f, _).
+start_error_handled(f) :- call_edge(g, f), start_error_compared(g, _).
+start_error_handled(f) :- catches_class(f, "error").
+start_error_handled(f) :- catch_tag(_, f, "error", "ArgumentError").
+start_error_handled(f) :- returns_call(g, f), start_error_handled(g).
+
+.init create_runs = RunsConcurrently
+
+create_runs.seed(f) :- creating_op(_, f, _, _, _, _).
+
+.decl registry_race(mod: symbol, func: symbol, lookup_api: symbol, create_api: symbol, key: symbol, check: symbol, act: symbol)
+.output registry_race
+
+registry_race(mod, func, lookup_api, create_api, key, check, act) :-
+  same_name(check, act),
+  name_lookup(check, func, lookup_api, _, _, key, _),
+  creating_op(act, func, create_api, _, _, _),
+  function_def(func, mod, _, _, _),
+  !start_error_handled(func),
+  !create_runs.single_process(func).

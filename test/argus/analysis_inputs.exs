@@ -5,16 +5,16 @@
   blocking:
     ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag catch_tag catch_total closure_def function_def global_op handle_continue_clause implements_behaviour init_continues_to recv_start remote_call rpc_call sync_call sync_call_timeout try_call),
   coupling:
-    ~w(async_cast call_arg call_arg_forward call_edge call_site call_tag callback_tag child_spec_restart dynamic_child function_def implements_behaviour matches_down monitor_call process_link sup_call supervisor supervisor_child supervisor_child_name supervisor_site sync_call whereis_call),
+    ~w(async_cast call_arg call_arg_forward call_edge call_site call_tag callback_tag child_spec_restart dynamic_child function_def implements_behaviour matches_down monitor_call name_lookup process_link sup_call supervisor supervisor_child supervisor_child_name supervisor_site sync_call),
   coverage:
     ~w(async_cast dynamic_child ets_new ets_op function_def implements_behaviour imprecision named_process supervisor supervisor_child sync_call),
   effects:
     ~w(call_edge closure_def dynamic_call ets_new ets_op implements_behaviour impure_call port_open process_register protocol_dispatch pure_contract recv_start remote_call resolved_apply send_msg spawn_call unknown_call),
   ets:
-    ~w(call_arg call_arg_forward call_edge catch_tag catch_total closure_def dynamic_child ets_new ets_op ets_op_param ets_option function_def implements_behaviour statem_event_clause supervisor_child),
+    ~w(call_arg call_arg_forward call_edge catch_tag catch_total closure_def dynamic_child ets_guarded_write ets_key ets_new ets_op ets_op_param ets_option function_def implements_behaviour statem_event_clause supervisor_child),
   exposure: ~w(function_def redacted_field schema_field tls_connect tls_verification),
   failure:
-    ~w(bare_rescue call_edge call_followed_by_branch call_result catch_falls_through catch_tag catch_total exit_call function_def implements_behaviour remote_call rpc_call rpc_result spawn_call tail_call try_call whereis_call),
+    ~w(bare_rescue call_edge call_followed_by_branch call_result catch_falls_through catch_tag catch_total exit_call function_def implements_behaviour name_lookup remote_call rpc_call rpc_result spawn_call tail_call try_call),
   mailbox:
     ~w(async_cast call_arg call_arg_field call_arg_forward call_edge call_tag callback_drops_from callback_ref_head callback_return callback_tag callback_total closure_def demonitor_call function_def implements_behaviour mailbox_writer monitor_call monitor_ref_dropped recv_pattern recv_start remote_call returns_call statem_call_unreplied statem_event_catchall statem_event_clause statem_info_catchall statem_module statem_state statem_timeout sync_call sync_call_timeout tail_call timer_arm timer_cancel timer_ref timer_store trap_exit),
   shutdown:
@@ -23,7 +23,7 @@
     ~w(async_cast call_arg call_arg_forward call_edge call_tag callback_tag callback_timeout distributed_store_op dynamic_child function_def global_op global_register handle_continue_clause ignored_error_result implements_behaviour impure_call init_continues_to mailbox_writer node_operation post_start_call recv_start remote_call rpc_call statem_timeout sup_call supervisor supervisor_child supervisor_site sync_call sync_call_timeout try_start unconditional_call_edge),
   state_machine: ~w(statem_initial statem_module statem_state statem_transition),
   structure:
-    ~w(function_def global_register implements_behaviour process_register supervisor_child supervisor_child_form supervisor_site),
+    ~w(call_edge catch_tag catch_total creating_op dynamic_child function_def global_register guarded_create implements_behaviour name_lookup process_register returns_call start_error_compared supervisor_child supervisor_child_form supervisor_site),
   unsafe_input:
     ~w(call_arg_derived call_edge code_execution dynamic_child function_def http_route implements_behaviour sink_arg_derived socket_transport supervisor_max_children unsafe_atom_creation unsafe_deserialization)
 ]

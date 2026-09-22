@@ -11,31 +11,56 @@ defmodule Argus.Extractors.ProcessRegistry do
 
   - `process_register(id, func, name, method)` — direct registration and GenServer `name:` option
   - `named_process(mod, name)` — module-level: a process implemented by `mod` is registered as `name`
-  - `whereis_call(id, func, name, checked)` — `Process.whereis/1`,
-    `:erlang.whereis/1`; `checked` says whether the result is tested
-    against nil before use
+  - `name_lookup(id, func, api, scope, source, key, checked)` —
+    `Process.whereis/1`, `:erlang.whereis/1` (`api` `whereis`, no scope)
+    and `Registry.lookup/2` (`api` `registry_lookup`, `scope` the
+    registry); `source`/`key` identify the name in the vocabulary of
+    `Helpers.key_identity/3`; `checked` says whether the result is tested
+    against nil (or `[]`) before use
+  - `creating_op(id, func, api, scope, source, key)` — a call that claims
+    a name or starts a process: `register`, `start_link`/`start` with a
+    `name:`, `start_via` (`{:via, Registry, {scope, key}}`),
+    `registry_register`, and `start_child`, whose name hides in the child
+    spec (`source` `dynamic`)
+  - `guarded_create(act, check)` — the creating op at `act` runs only
+    because of a test on the result of the lookup at `check`, in the same
+    function (`Argus.Extractor.Guard`)
+  - `start_error_compared(func, atom)` — `:already_started` or
+    `:already_registered` is compared anywhere in a function holding a
+    creating op: the loser's outcome is taken. Over-approximate on
+    purpose, so an unrelated comparison keeps the race rule quiet
   """
 
   @behaviour Argus.Extractor
 
+  alias Argus.Extractor.Dispatch
+  alias Argus.Extractor.Guard
+  alias Argus.Extractor.Helpers
   alias Argus.InstrId
+  alias Argus.Pipeline.Normalize
 
   import Argus.Extractor.Helpers,
     only: [
       add_fact: 3,
       each_remote_call: 3,
+      find_function: 3,
+      key_identity: 3,
+      keyword_value_register: 4,
+      resolve_atom: 3,
       resolve_register: 3,
       track_dynamic: 5,
       track_imprecision: 5
     ]
 
-  # Registry operations to detect, mapped to arity.
   @impl true
   def relations,
     do: [
+      :creating_op,
+      :guarded_create,
+      :name_lookup,
       :named_process,
       :process_register,
-      :whereis_call
+      :start_error_compared
     ]
 
   @impl true
@@ -43,8 +68,90 @@ defmodule Argus.Extractors.ProcessRegistry do
   def extract(module_data) do
     mod_str = inspect(module_data.module)
 
-    each_remote_call(module_data, %{}, fn facts, ctx, mfa ->
-      register_call(facts, mod_str, ctx, mfa)
+    module_data
+    |> each_remote_call(%{}, fn facts, ctx, mfa -> register_call(facts, mod_str, ctx, mfa) end)
+    |> emit_guards(module_data)
+  end
+
+  # ── Lookup, then create ──────────────────────────────────────────
+
+  @start_errors [:already_started, :already_registered]
+
+  # Per function: every (lookup, create) pair where the create is decided
+  # by a test on the lookup's result; and, for every function, the start
+  # errors it compares against anywhere — the taker may be the creating
+  # function's caller.
+  defp emit_guards(facts, module_data) do
+    lookups = sites_by_func(facts, :name_lookup)
+    creates = sites_by_func(facts, :creating_op)
+
+    facts =
+      Enum.reduce(creates, facts, fn {func_id, create_idxs}, acc ->
+        {name, arity} = Normalize.func_id_name_arity(func_id)
+
+        case find_function(module_data.functions, String.to_existing_atom(name), arity) do
+          nil ->
+            acc
+
+          instrs ->
+            emit_guarded_creates(
+              acc,
+              module_data,
+              func_id,
+              instrs,
+              Map.get(lookups, func_id, []),
+              create_idxs
+            )
+        end
+      end)
+
+    Enum.reduce(module_data.functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
+      emit_start_errors(acc, Normalize.func_id(module_data.module, name, arity), instrs)
+    end)
+  end
+
+  defp sites_by_func(facts, relation) do
+    facts
+    |> Map.get(relation, [])
+    |> Enum.group_by(fn [_id, func | _] -> func end, fn [id | _] -> index_of(id) end)
+  end
+
+  defp index_of(id) do
+    {:ok, %InstrId{idx: idx}} = InstrId.parse(id)
+    idx
+  end
+
+  defp emit_guarded_creates(facts, _module_data, _func_id, _instrs, [], _creates), do: facts
+
+  defp emit_guarded_creates(facts, module_data, func_id, instrs, lookups, creates) do
+    {name, arity} = Normalize.func_id_name_arity(func_id)
+
+    case Helpers.cfg(module_data, name, arity) do
+      nil ->
+        facts
+
+      fun ->
+        for check <- lookups,
+            {:ok, test} <- [Guard.result_test(instrs, check)],
+            act <- creates,
+            Guard.decides?(fun, test, act),
+            reduce: facts do
+          acc ->
+            add_fact(acc, :guarded_create, [
+              InstrId.mint(func_id, act),
+              InstrId.mint(func_id, check)
+            ])
+        end
+    end
+  end
+
+  defp emit_start_errors(facts, func_id, instrs) do
+    instrs
+    |> Dispatch.compared_atoms(:any)
+    |> Enum.filter(&(&1 in @start_errors))
+    |> Enum.uniq()
+    |> Enum.reduce(facts, fn atom, acc ->
+      add_fact(acc, :start_error_compared, [func_id, inspect(atom)])
     end)
   end
 
@@ -76,9 +183,44 @@ defmodule Argus.Extractors.ProcessRegistry do
       {:erlang, :whereis, 1} ->
         emit_whereis(facts, ctx)
 
+      {Registry, :lookup, 2} ->
+        emit_registry_lookup(facts, ctx)
+
+      {Registry, :register, 3} ->
+        emit_creating_op(facts, ctx, "registry_register", registry_scope(ctx), {:x, 1})
+
+      {DynamicSupervisor, :start_child, 2} ->
+        add_creating_op(facts, ctx, "start_child", "", "dynamic", "")
+
+      {Supervisor, :start_child, 2} ->
+        add_creating_op(facts, ctx, "start_child", "", "dynamic", "")
+
       _ ->
         facts
     end
+  end
+
+  defp emit_creating_op(facts, ctx, api, scope, key_reg) do
+    {source, key} = key_identity(ctx.instrs, ctx.idx, key_reg)
+    add_creating_op(facts, ctx, api, scope, source, key)
+  end
+
+  defp add_creating_op(facts, ctx, api, scope, source, key) do
+    id = InstrId.mint(ctx.func_id, ctx.idx)
+    add_fact(facts, :creating_op, [id, ctx.func_id, api, scope, source, key])
+  end
+
+  defp registry_scope(ctx), do: resolve_atom(ctx.instrs, ctx.idx, {:x, 0})
+
+  defp emit_registry_lookup(facts, ctx) do
+    id = InstrId.mint(ctx.func_id, ctx.idx)
+    scope = registry_scope(ctx)
+    {source, key} = key_identity(ctx.instrs, ctx.idx, {:x, 1})
+    checked = if nil_checked?(ctx.instrs, ctx.idx), do: "checked", else: "unchecked"
+
+    facts
+    |> track_dynamic(scope, ctx, :registry_lookup_scope, :name_lookup)
+    |> add_fact(:name_lookup, [id, ctx.func_id, "registry_lookup", scope, source, key, checked])
   end
 
   defp emit_register(facts, mod_str, ctx, name_reg, method) do
@@ -89,6 +231,7 @@ defmodule Argus.Extractors.ProcessRegistry do
     |> track_dynamic(name, ctx, :process_register_name, :process_register)
     |> add_fact(:process_register, [id, ctx.func_id, name, method])
     |> maybe_emit_named_process(mod_str, name)
+    |> emit_creating_op(ctx, method, "", name_reg)
   end
 
   # Direct register/2 calls inside a module's own code typically register
@@ -105,22 +248,28 @@ defmodule Argus.Extractors.ProcessRegistry do
 
   defp emit_whereis(facts, ctx) do
     id = InstrId.mint(ctx.func_id, ctx.idx)
-    name = resolve_name(ctx.instrs, ctx.idx, {:x, 0})
+    {source, key} = key_identity(ctx.instrs, ctx.idx, {:x, 0})
     checked = if nil_checked?(ctx.instrs, ctx.idx), do: "checked", else: "unchecked"
 
     facts
-    |> track_dynamic(name, ctx, :whereis_target, :whereis_call)
-    |> add_fact(:whereis_call, [id, ctx.func_id, name, checked])
+    |> track_dynamic(
+      if(source == "dynamic", do: "dynamic", else: key),
+      ctx,
+      :whereis_target,
+      :name_lookup
+    )
+    |> add_fact(:name_lookup, [id, ctx.func_id, "whereis", "", source, key, checked])
   end
 
   # The result lands in x0. Along the straight-line code after the call,
-  # a comparison of it against nil/:undefined, a type test on it, or a
-  # select over it that lists nil means the caller handles the
-  # missing-process case; any other use of the value first, or reaching
-  # a label, call or return, means it does not.
+  # a comparison of it against nil/:undefined (nil is also `[]`, so a
+  # Registry.lookup result compared against the empty list is checked the
+  # same way), a type test on it, or a select over it that lists nil means
+  # the caller handles the missing case; any other use of the value first,
+  # or reaching a label, call or return, means it does not.
   @nil_atoms [{:atom, nil}, {:atom, :undefined}]
   @equality_tests [:is_eq_exact, :is_ne_exact, :is_eq, :is_ne]
-  @type_tests [:is_atom, :is_pid, :is_port]
+  @type_tests [:is_atom, :is_pid, :is_port, :is_nil, :is_list, :is_nonempty_list]
 
   defp nil_checked?(instrs, idx) do
     instrs |> Enum.drop(idx + 1) |> checked_walk([{:x, 0}])
@@ -194,8 +343,12 @@ defmodule Argus.Extractors.ProcessRegistry do
           # The options list resolved, but the name VALUE inside it is the
           # placeholder — `name: opts[:name]` and friends. Inspecting it
           # would forge a ":dynamic" name that evades the dynamic filters.
+          # The register that holds it still says whose name it is — a
+          # parameter, a field — which is what a lookup can be joined on.
           :dynamic ->
-            track_imprecision(facts, ctx, :gen_server_start_name, :process_register, :dynamic)
+            facts
+            |> track_imprecision(ctx, :gen_server_start_name, :process_register, :dynamic)
+            |> emit_dynamic_named_start(ctx, method)
 
           name when is_atom(name) ->
             id = InstrId.mint(ctx.func_id, ctx.idx)
@@ -203,10 +356,19 @@ defmodule Argus.Extractors.ProcessRegistry do
             facts
             |> add_fact(:process_register, [id, ctx.func_id, inspect(name), method])
             |> maybe_emit_named_process_for_start(ctx, inspect(name))
+            |> add_creating_op(ctx, method, "", "literal", inspect(name))
 
-          # A via-registered name is the registry's, not a process_register.
-          {:via, _reg, _key} ->
-            facts
+          # A via-registered name is the registry's, not a process_register;
+          # for the race it is a create scoped to that registry.
+          {:via, registry, key} ->
+            add_creating_op(
+              facts,
+              ctx,
+              "start_via",
+              via_scope(registry),
+              via_source(key),
+              via_key(key)
+            )
 
           _ ->
             track_imprecision(facts, ctx, :gen_server_start_name, :process_register, :skipped)
@@ -223,6 +385,31 @@ defmodule Argus.Extractors.ProcessRegistry do
     end
   end
 
+  defp emit_dynamic_named_start(facts, ctx, method) do
+    case keyword_value_register(ctx.instrs, ctx.idx, {:x, 2}, :name) do
+      {:ok, reg, value_idx} ->
+        {source, key} = key_identity(ctx.instrs, value_idx, reg)
+        add_creating_op(facts, ctx, method, "", source, key)
+
+      :no ->
+        add_creating_op(facts, ctx, method, "", "dynamic", "")
+    end
+  end
+
+  defp via_scope(registry) when is_atom(registry) and registry != :dynamic, do: inspect(registry)
+  defp via_scope(_registry), do: "dynamic"
+
+  defp via_source(key)
+       when (is_atom(key) and key != :dynamic) or is_binary(key) or is_integer(key),
+       do: "literal"
+
+  defp via_source(_key), do: "dynamic"
+
+  defp via_key(key) when (is_atom(key) and key != :dynamic) or is_binary(key) or is_integer(key),
+    do: inspect(key)
+
+  defp via_key(_key), do: ""
+
   # Erlang-style :gen_server.start_link({:local, Name}, mod, args, opts).
   # The module is x1 in the Erlang shape; resolve it to enrich named_process.
   defp maybe_named_start_erlang(facts, ctx, method) do
@@ -234,6 +421,7 @@ defmodule Argus.Extractors.ProcessRegistry do
         facts
         |> add_fact(:process_register, [id, ctx.func_id, inspect(name), method])
         |> maybe_emit_named_process_for_erlang_start(ctx, inspect(name))
+        |> add_creating_op(ctx, method, "", "literal", inspect(name))
 
       _ ->
         if tail_call?(ctx.instrs, ctx.idx) do

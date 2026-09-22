@@ -1169,6 +1169,36 @@ defmodule Argus.Extractor.Helpers do
     _ -> nil
   end
 
+  @doc """
+  What identifies the value in `register` at `idx`, in the vocabulary two
+  sites can be joined on: `{"literal", inspected}` for an atom, binary or
+  integer; `{"param", "N"}` when it is still the function's parameter N;
+  `{"field", key}` when it was read from a map under a literal key; else
+  `{"dynamic", ""}`. A lookup and a create that agree on source and key
+  name the same thing — the identity-through-a-name idea the timer rules
+  use, spelled once.
+  """
+  @spec key_identity([term()], non_neg_integer(), register()) :: {String.t(), String.t()}
+  def key_identity(instrs, idx, register) do
+    case resolve_register(instrs, idx, register) do
+      {:ok, value}
+      when (is_atom(value) and value != :dynamic) or is_binary(value) or is_integer(value) ->
+        {"literal", inspect(value)}
+
+      _ ->
+        case arg_position(instrs, idx, register) do
+          {:ok, pos} ->
+            {"param", to_string(pos)}
+
+          :no ->
+            case map_field_of(instrs, idx, register) do
+              {:ok, key} -> {"field", key}
+              :dynamic -> {"dynamic", ""}
+            end
+        end
+    end
+  end
+
   @doc "The graph of the function an `instr_ctx()` is in."
   @spec cfg(map(), instr_ctx()) :: Argus.Cfg.Function.t() | nil
   def cfg(module_data, %{func_id: func_id}) do

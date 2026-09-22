@@ -146,7 +146,7 @@ sibling_dependency(sup, perm, sibling, "restart_policy", restart, sup_site, witn
 // too; a :temporary target is never restarted.
 sibling_dependency(sup, mod, name, "cached_pid", "", sup_site, f, f) :-
   init_function(mod, f),
-  whereis_call(_, f, name, _),
+  name_lookup(_, f, "whereis", _, "literal", name, _),
   supervisor_child(sup, _, mod, _, _),
   supervisor(sup, "one_for_one"),
   supervisor_site(sup, sup_site),

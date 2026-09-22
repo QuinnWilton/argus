@@ -19,6 +19,7 @@ defmodule Argus.Analyses.Ets do
   - `ets_missing_write_concurrency(name)` — table lacks write_concurrency option.
   - `ets_ordered_set_contention(name, mod1, mod2)` — ordered_set accessed by multiple modules.
   - `ets_unnamed_in_process(name, mod)` — unnamed table created in a process.
+  - `ets_check_act(mod, func, name, key, read, write)` — a read decides a plain write of the same key on a public table another process can write.
 
   ## Finding severities
 
@@ -71,6 +72,19 @@ defmodule Argus.Analyses.Ets do
         key: [:owner, :reader],
         doc:
           "A table read from callers' processes with no heir and no rescue for the owner's restart window."
+      },
+      %{
+        name: :ets_check_act,
+        fields: [
+          {:mod, :symbol, "the module"},
+          {:func, :symbol, "the function reading then writing"},
+          {:name, :symbol, "the table"},
+          {:key, :symbol, "the key, as the read identifies it"},
+          {:read, :symbol, "instruction ID of the read"},
+          {:write, :symbol, "instruction ID of the write it decides"}
+        ],
+        key: [:func, :name, :key],
+        doc: "A read decides a write of the same key on a public table another process can write."
       },
       %{
         name: :ets_unprotected_owner,
@@ -141,6 +155,25 @@ defmodule Argus.Analyses.Ets do
       help: [
         "give the table a heir (a supervisor or a long-lived holder) so it survives the restart",
         "or rescue ArgumentError in the reader and return an error value"
+      ]
+    )
+  end
+
+  def finding(:ets_check_act, [mod, func, name, key, read, write]) do
+    Findings.new(
+      :warning,
+      "Read-then-write race on an ETS key",
+      "#{func} reads #{key} from #{name} and writes it when the read says to. " <>
+        "The table is public and another process can write it between the two, " <>
+        "so the write acts on a row that may have changed — the read-decide-write " <>
+        "race that the ETS built-ins are documented not to protect against.",
+      at: Findings.at_site(write, mod),
+      at_label: "this write was decided by a read that may be stale",
+      related: [Findings.related("the read it depends on", Findings.at_site(read, mod))],
+      help: [
+        "make the check and the write one operation: `:ets.insert_new/2`, " <>
+          "`:ets.update_counter/4` with a default, or `:ets.select_replace/2`",
+        "or route writes to #{name} through its owner process and make the table `:protected`"
       ]
     )
   end

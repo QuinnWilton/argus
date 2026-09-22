@@ -174,9 +174,7 @@ orphan_process(func, id, "spawn", "") :-
 // edit to look at nothing. `spawn_call` now carries its caller.
 
 unchecked_result(func, id, "Process.whereis", name) :-
-  whereis_call(id, func, name, "unchecked"),
-  name != "dynamic",
-  name != ":dynamic".
+  name_lookup(id, func, "whereis", _, "literal", name, "unchecked").
 
 // ── The belief the other call sites hold ────────────────────────
 //
