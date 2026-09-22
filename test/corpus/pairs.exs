@@ -199,5 +199,64 @@
     module: "Horde.ProcessesSupervisor",
     pre: "74820c2",
     finding: {:shutdown, "A callback stops a sibling the supervisor owns"}
+  },
+  # phoenix_storybook 96d5246 "Fix atom exhaustion from playground LiveView
+  # params": handle_event("upper-tab-navigation", %{"tab" => tab}, _) called
+  # String.to_atom(tab); the fix looks the tab up in an allowlist. No PR; the
+  # fix went straight to main, and its parent is on main.
+  %{
+    repo: "phenixdigital/phoenix_storybook",
+    issue: "phoenix_storybook@96d5246",
+    module: "PhoenixStorybook.Story.Playground",
+    pre: "56ab8464d4375fa52db806148a06cce126ad481d",
+    fix: "96d524690af0fe197a49f60d18e564a620b9ef81",
+    finding:
+      {:unsafe_input, "Unbounded atom creation fed by request data from a LiveComponent event"}
+  },
+  # The same fix, seen from the LiveView: handle_params/3 reached the tab and
+  # theme conversions through current_tab/2 and current_theme/2.
+  %{
+    repo: "phenixdigital/phoenix_storybook",
+    issue: "phoenix_storybook@96d5246 (StoryLive)",
+    module: "PhoenixStorybook.StoryLive",
+    pre: "56ab8464d4375fa52db806148a06cce126ad481d",
+    fix: "96d524690af0fe197a49f60d18e564a620b9ef81",
+    finding:
+      {:unsafe_input, "Unbounded atom creation fed by request data from a LiveView callback"}
+  },
+  # hammer#94: count_hit/4 asked :ets.member/2 whether the bucket existed and
+  # inserted it when it did not, on the public buckets table; the fix is one
+  # update_counter/4 with a default. The PR calls itself a performance change,
+  # and the single operation is also what removes the race.
+  %{
+    repo: "ExHammer/hammer",
+    issue: "hammer#94",
+    module: "Hammer.Backend.ETS",
+    pre: "f86fe7ef56d0125f804fb67800f8160e2833b011",
+    fix: "8c7a5b2f2940c615b5ae23ee5b67e5c5a6fc0a72",
+    finding: {:ets, "Read-then-write race on an ETS key"}
+  },
+  # tesla#768: Tesla.Mock.agent_set/1 looked the mock agent up by name and
+  # started it under the test supervisor when absent; two tests doing so at
+  # once made one of them lose. The fix takes {:error, {:already_started, _}}.
+  %{
+    repo: "elixir-tesla/tesla",
+    issue: "tesla#768",
+    module: "Tesla.Mock",
+    pre: "727cb0f",
+    fix: "8cf7745",
+    finding: {:structure, "Lookup-then-start race on a process name"}
+  },
+  # supavisor a8463de: DbHandler.handle_prepared_statement_pkts/2 calls
+  # :gen_statem.call/3 bare while its three sibling sites catch :exit and
+  # return {:error, _}; its only caller halts on {:error, _}, so a dead or slow
+  # DbHandler crashes the ClientHandler instead. No issue and no fix, so the
+  # pair is present-only.
+  %{
+    repo: "supabase/supavisor",
+    issue: "supavisor@a8463de",
+    module: "Supavisor.DbHandler",
+    pre: "a8463de46ae77fb3a2f49a53eda1d6680caa0ad3",
+    finding: {:failure, "call/3 called bare where every other call site guards it"}
   }
 ]

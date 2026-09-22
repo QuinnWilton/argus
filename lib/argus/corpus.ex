@@ -190,15 +190,30 @@ defmodule Argus.Corpus do
   end
 
   # An umbrella app builds into the umbrella's _build; the glob starts at
-  # the project and climbs to the clone.
+  # the project and climbs to the clone. Without a subdir the two are the
+  # same directory, and a checkout may hold more than one build — each
+  # beam counts once, from one build, or every call-site count doubles.
   defp beams(%{project: project, dir: dir, name: name}) do
     app = app_name(project)
 
-    case Path.wildcard(Path.join([project, "_build", "*", "lib", app, "ebin", "*.beam"])) ++
-           Path.wildcard(Path.join([dir, "_build", "*", "lib", app, "ebin", "*.beam"])) do
+    found =
+      Enum.uniq(
+        Path.wildcard(Path.join([project, "_build", "*", "lib", app, "ebin", "*.beam"])) ++
+          Path.wildcard(Path.join([dir, "_build", "*", "lib", app, "ebin", "*.beam"]))
+      )
+
+    case found |> Enum.group_by(&build_of/1) |> Map.values() |> Enum.sort_by(&build_rank/1) do
       [] -> {:error, "no beams for #{name} (app #{app})"}
-      beams -> {:ok, beams}
+      [beams | _others] -> {:ok, beams}
     end
+  end
+
+  defp build_of(beam), do: beam |> Path.split() |> Enum.take_while(&(&1 != "lib")) |> Path.join()
+
+  # The build the corpus compiles is dev; another one present in the tree
+  # is a leftover, and a bigger one is not a better one.
+  defp build_rank([beam | _] = beams) do
+    {if(String.contains?(beam, "/_build/dev/"), do: 0, else: 1), -length(beams)}
   end
 
   defp app_name(dir) do

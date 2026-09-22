@@ -103,6 +103,9 @@ and more than one process can run the function; a read that decides a
 plain write of the same key on a public table another process can
 write. `insert_new`, `update_counter` and `select_replace`, and matching
 `{:error, {:already_started, pid}}`, are the fixes and stay quiet.
+`ExUnit.Callbacks.start_supervised/1,2` and `start_supervised!/1,2`
+count as a `start_child`: the shape is common in shared test helpers
+(tesla#768, the corpus pair).
 
 **Schema version 40.** A third layer of relations, priors: facts no
 extractor emits. `Argus.Priors` asks a System-One model (typesafe.ai's

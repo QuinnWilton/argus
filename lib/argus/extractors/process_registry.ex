@@ -177,6 +177,15 @@ defmodule Argus.Extractors.ProcessRegistry do
       {:gen_server, :start, 4} ->
         maybe_named_start_erlang(facts, ctx, "start")
 
+      _ ->
+        lookup_or_create_call(facts, ctx, mfa)
+    end
+  end
+
+  # The lookups, and the creates that are not registrations of a name the
+  # module owns.
+  defp lookup_or_create_call(facts, ctx, mfa) do
+    case mfa do
       {Process, :whereis, 1} ->
         emit_whereis(facts, ctx)
 
@@ -193,6 +202,12 @@ defmodule Argus.Extractors.ProcessRegistry do
         add_creating_op(facts, ctx, "start_child", "", "dynamic", "")
 
       {Supervisor, :start_child, 2} ->
+        add_creating_op(facts, ctx, "start_child", "", "dynamic", "")
+
+      # A test's start_supervised is a start_child on the test supervisor,
+      # and the lookup-then-start shape is common in shared test helpers.
+      {ExUnit.Callbacks, func, arity}
+      when func in [:start_supervised, :start_supervised!] and arity in [1, 2] ->
         add_creating_op(facts, ctx, "start_child", "", "dynamic", "")
 
       _ ->
