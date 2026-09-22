@@ -2,6 +2,7 @@ defmodule Argus.Analyses.ShutdownTrapExitTest do
   use ExUnit.Case
 
   alias Argus.Souffle
+  alias Argus.Test.Rows
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
@@ -12,7 +13,10 @@ defmodule Argus.Analyses.ShutdownTrapExitTest do
     results
   end
 
-  describe "trap_exit_without_exit_clause" do
+  defp exit_rows(results, kind),
+    do: Rows.where(results, :shutdown, "unhandled_exit_signal", kind: kind, drop: [:kind])
+
+  describe "unhandled_exit_signal: no_exit_clause" do
     test "a handle_info that never matches {:EXIT, ...} is reported" do
       skip_without_souffle()
 
@@ -22,23 +26,23 @@ defmodule Argus.Analyses.ShutdownTrapExitTest do
           Argus.Test.Fixtures.TrapsWithExitClause
         ])
 
-      mods = Enum.map(results["trap_exit_without_exit_clause"], fn [mod, _w] -> mod end)
+      mods = Enum.map(exit_rows(results, "no_exit_clause"), fn [mod, _w] -> mod end)
 
       assert mods == ["Argus.Test.Fixtures.TrapsWithoutExitClause"]
 
       # Having a handle_info at all satisfies the coarser rule; this one is
       # about which clauses it has.
-      assert results["trap_exit_without_handler"] == []
+      assert exit_rows(results, "no_handler") == []
     end
   end
 
-  describe "trap_exit_without_handler" do
+  describe "unhandled_exit_signal: no_handler" do
     test "flags a raw :gen_server that traps exits with no handle_info" do
       skip_without_souffle()
 
       results = analyze([Argus.Test.Fixtures.RawTrapExit])
 
-      assert Enum.any?(results["trap_exit_without_handler"], fn [mod, _witness] ->
+      assert Enum.any?(exit_rows(results, "no_handler"), fn [mod, _witness] ->
                String.contains?(mod, "RawTrapExit")
              end)
     end
@@ -55,7 +59,7 @@ defmodule Argus.Analyses.ShutdownTrapExitTest do
       # pins the limitation so a future fix flips it consciously.
       results = analyze([Argus.Test.Fixtures.TrapExitModule])
 
-      assert results["trap_exit_without_handler"] == []
+      assert exit_rows(results, "no_handler") == []
     end
 
     test "does not flag a gen_statem that traps exits" do
@@ -66,7 +70,7 @@ defmodule Argus.Analyses.ShutdownTrapExitTest do
       # false-positive every trapping gen_statem.
       results = analyze([Argus.Test.Fixtures.StatemTrapExit])
 
-      assert results["trap_exit_without_handler"] == []
+      assert exit_rows(results, "no_handler") == []
     end
   end
 end

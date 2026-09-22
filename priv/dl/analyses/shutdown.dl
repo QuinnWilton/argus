@@ -60,12 +60,18 @@ cleanup_in_terminate(mod, behaviour, category, api, via) :-
   durable_effect(category).
 
 // ── Findings ─────────────────────────────────────────────────────
+//
+// One relation for terminate/2's cleanup, `kind` saying what goes wrong
+// with it: "never_runs" (durable cleanup, and the process does not trap
+// exits, so a supervisor shutdown skips terminate/2 entirely), "unclear"
+// (work the effect model cannot classify, skipped the same way; category
+// is empty and one row per module), "truncated" (the module traps, but
+// the cleanup has no bound of its own inside the shutdown timeout).
+.decl cleanup_defect(mod: symbol, behaviour: symbol, kind: symbol, category: symbol, api: symbol, via: symbol)
+.output cleanup_defect
 
 // The headline: cleanup that a supervisor shutdown will skip entirely.
-.decl cleanup_never_runs(mod: symbol, behaviour: symbol, category: symbol, api: symbol, via: symbol)
-.output cleanup_never_runs
-
-cleanup_never_runs(mod, behaviour, category, api, via) :-
+cleanup_defect(mod, behaviour, "never_runs", category, api, via) :-
   cleanup_in_terminate(mod, behaviour, category, api, via),
   !traps_exits(mod).
 
@@ -94,10 +100,9 @@ unclassified_cleanup(mod, behaviour, api, via) :-
 // inside an exception constructor. A soundness choice made for one
 // contract should not become noise in another.
 
-.decl cleanup_unclear(mod: symbol, behaviour: symbol, api: symbol, via: symbol)
-.output cleanup_unclear
-
-cleanup_unclear(mod, behaviour, api, via) :-
+// One row per unclassified call; the finding builders keep one per
+// module (the relation's key says so for this kind).
+cleanup_defect(mod, behaviour, "unclear", "", api, via) :-
   unclassified_cleanup(mod, behaviour, api, via),
   !traps_exits(mod),
   !cleanup_in_terminate(mod, _, _, _, _).
@@ -106,10 +111,7 @@ cleanup_unclear(mod, behaviour, api, via) :-
 // callback is reached, but may not finish. Network and port calls are the
 // ones with no bound of their own (slow_effect, in effects.dl).
 
-.decl terminate_may_be_truncated(mod: symbol, behaviour: symbol, category: symbol, api: symbol, via: symbol)
-.output terminate_may_be_truncated
-
-terminate_may_be_truncated(mod, behaviour, category, api, via) :-
+cleanup_defect(mod, behaviour, "truncated", category, api, via) :-
   cleanup_in_terminate(mod, behaviour, category, api, via),
   traps_exits(mod),
   slow_effect(category).
@@ -132,16 +134,20 @@ terminate_may_be_truncated(mod, behaviour, category, api, via) :-
 guarded_exit_call(f) :- catches_class(f, "exit").
 guarded_exit_call(f) :- catch_tag(_, f, "exit", ":noproc").
 
-.decl terminate_calls_sibling(mod: symbol, sibling: symbol, via: symbol, sup: symbol)
-.output terminate_calls_sibling
+// Teardown that touches a sibling the supervisor owns, in one relation:
+// `phase` is "terminate" (terminate/2 waits on a sibling that may already
+// be gone; `kind` = "call") or "handler" (a handler stops a sibling the
+// supervisor still owns; `kind` = "stop").
+.decl teardown_touches_sibling(mod: symbol, sibling: symbol, phase: symbol, kind: symbol, via: symbol, sup: symbol)
+.output teardown_touches_sibling
 
-terminate_calls_sibling(mod, sibling, func, sup) :-
+teardown_touches_sibling(mod, sibling, "terminate", "call", func, sup) :-
   terminate_callback(func, mod, _),
   sync_dep(func, sibling),
   !guarded_exit_call(func),
   sibling(sup, mod, sibling).
 
-terminate_calls_sibling(mod, sibling, via, sup) :-
+teardown_touches_sibling(mod, sibling, "terminate", "call", via, sup) :-
   terminate_callback(func, mod, _),
   terminate_reach.reaches(func, via, _),
   sync_dep(via, sibling),
@@ -222,18 +228,15 @@ stops_process(f, target) :- sup_call(_, f, "GenServer", "stop", target).
 
 stop_reach.seed(f, f) :- stops_process(f, _).
 
-.decl callback_stops_sibling(mod: symbol, sibling: symbol, via: symbol, sup: symbol)
-.output callback_stops_sibling
-
 // The stop names the sibling module.
-callback_stops_sibling(mod, sib, via, sup) :-
+teardown_touches_sibling(mod, sib, "handler", "stop", via, sup) :-
   handler_function(mod, h),
   stop_reach.reaches(h, via),
   stops_process(via, sib),
   sibling(sup, mod, sib).
 
 // The stop is the sibling's own API (`Sibling.stop/1`), target unknown.
-callback_stops_sibling(mod, sib, via, sup) :-
+teardown_touches_sibling(mod, sib, "handler", "stop", via, sup) :-
   handler_function(mod, h),
   stop_reach.reaches(h, via),
   function_def(via, sib, _, _, _),
@@ -252,11 +255,13 @@ callback_stops_sibling(mod, sib, via, sup) :-
 // Tracker even matches {:EXIT, ...} explicitly). Exclude them.
 
 // `witness` is the function that sets trap_exit. One row per witness —
-// finding builders dedupe on (mod).
-.decl trap_exit_without_handler(mod: symbol, witness: symbol)
-.output trap_exit_without_handler
+// finding builders dedupe on (mod, kind). `kind` is "no_handler" (no
+// handle_info at all) or "no_exit_clause" (a handle_info that never
+// matches {:EXIT, ...}).
+.decl unhandled_exit_signal(mod: symbol, kind: symbol, witness: symbol)
+.output unhandled_exit_signal
 
-trap_exit_without_handler(mod, func) :-
+unhandled_exit_signal(mod, "no_handler", func) :-
   trap_exit(func, mod),
   !has_handle_info(mod),
   !statem_process(mod).
@@ -275,10 +280,7 @@ trap_exit_without_handler(mod, func) :-
 // callback_tag over-approximates (every atom compared anywhere in the
 // body counts), so a module that mentions :EXIT at all is not reported —
 // the direction that keeps the rule quiet rather than noisy.
-.decl trap_exit_without_exit_clause(mod: symbol, witness: symbol)
-.output trap_exit_without_exit_clause
-
-trap_exit_without_exit_clause(mod, func) :-
+unhandled_exit_signal(mod, "no_exit_clause", func) :-
   trap_exit(func, mod),
   partial_handle_info(mod, h),
   !callback_tag(h, "handle_info", ":EXIT"),
@@ -322,17 +324,17 @@ module_demonitors(mod) :-
 // crashes. Oban's producer terminated a job's process on pkill and then
 // handled its own :DOWN as a crash; Redix's cluster manager terminated a
 // departed node's connection and its :DOWN clause reconnected it.
-.decl deliberate_termination_while_monitored(mod: symbol, site: symbol, kill_site: symbol)
-.output deliberate_termination_while_monitored
+.decl kills_monitored_child(mod: symbol, site: symbol, kill_site: symbol)
+.output kills_monitored_child
 
-deliberate_termination_while_monitored(mod, site, kill_site) :-
+kills_monitored_child(mod, site, kill_site) :-
   server_side(mod, f),
   monitor_call(site, f, _),
   server_side(mod, g),
   sup_call(kill_site, g, _, "terminate_child", _),
   !module_demonitors(mod).
 
-deliberate_termination_while_monitored(mod, site, kill_site) :-
+kills_monitored_child(mod, site, kill_site) :-
   server_side(mod, f),
   monitor_call(site, f, _),
   server_side(mod, g),

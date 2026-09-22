@@ -35,7 +35,11 @@ defmodule Argus.Analyses.QuietShapesTest do
   ]
 
   @expect_quiet %{
-    shutdown: ~w(terminate_calls_sibling foreign_dynamic_children cleanup_never_runs),
+    shutdown: [
+      {"teardown_touches_sibling", phase: "terminate"},
+      "foreign_dynamic_children",
+      {"cleanup_defect", kind: "never_runs"}
+    ],
     mailbox:
       ~w(call_never_replied statem_timeout_unhandled linked_task_in_library yield_on_linked_task handle_info_partial),
     structure: ~w(consumer_supervisor_permanent_child),
@@ -81,7 +85,12 @@ defmodule Argus.Analyses.QuietShapesTest do
     {:ok, r} =
       Argus.analyze([Sib.Sup, Sib.Producer, Sib.Watchman, Sib.GuardedWatchman], :shutdown)
 
-    mods = r |> Map.get("terminate_calls_sibling", []) |> Enum.map(&hd/1) |> Enum.uniq()
+    mods =
+      r
+      |> Rows.where(:shutdown, "teardown_touches_sibling", phase: "terminate")
+      |> Enum.map(&hd/1)
+      |> Enum.uniq()
+
     assert mods == ["Argus.Test.Fixtures.ShutdownSiblings.Watchman"]
   end
 end

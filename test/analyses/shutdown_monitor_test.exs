@@ -27,7 +27,7 @@ defmodule Argus.Analyses.ShutdownMonitorTest do
 
       r = servers()
 
-      assert [[mod, site, kill_site]] = r["deliberate_termination_while_monitored"]
+      assert [[mod, site, kill_site]] = r["kills_monitored_child"]
       assert mod == "Argus.Test.Fixtures.MonitorLeak.KillsMonitored"
       assert site =~ "KillsMonitored:handle_call/3#"
       assert kill_site =~ "KillsMonitored:handle_cast/2#"

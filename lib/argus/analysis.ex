@@ -53,11 +53,22 @@ defmodule Argus.Analysis do
 
   # Behaviour callbacks.
 
+  @typedoc """
+  What one row of an output relation identifies.
+
+  `key` names the columns that make a row one finding: rows agreeing on
+  them are witnesses of the same defect and are deduplicated. A merged
+  relation whose rows differ in kind may key each kind differently:
+  `{column, %{value => key, default: key}}` picks the key by that
+  column's value (the column itself always takes part).
+  """
+  @type row_key :: [atom()] | {atom(), %{optional(String.t()) => [atom()], default: [atom()]}}
+
   @type output_relation :: %{
           required(:name) => atom(),
           required(:fields) => [Argus.Schema.field()],
           required(:doc) => String.t(),
-          optional(:key) => [atom()]
+          optional(:key) => row_key()
         }
 
   @callback name() :: atom()
@@ -189,11 +200,8 @@ defmodule Argus.Analysis do
       %{analysis: :startup, relation: :continue_crash_loop_risk, where: []}
     ],
     shutdown_safety: [
-      %{analysis: :shutdown, relation: :cleanup_never_runs, where: []},
-      %{analysis: :shutdown, relation: :cleanup_unclear, where: []},
-      %{analysis: :shutdown, relation: :terminate_may_be_truncated, where: []},
-      %{analysis: :shutdown, relation: :terminate_calls_sibling, where: []},
-      %{analysis: :shutdown, relation: :callback_stops_sibling, where: []},
+      %{analysis: :shutdown, relation: :cleanup_defect, where: []},
+      %{analysis: :shutdown, relation: :teardown_touches_sibling, where: []},
       %{analysis: :shutdown, relation: :foreign_dynamic_children, where: []}
     ],
     supervision: [
@@ -228,8 +236,7 @@ defmodule Argus.Analysis do
     error_handling: [
       %{analysis: :blocking, relation: :partial_noproc_catch, where: []},
       %{analysis: :startup, relation: :ignored_start_result, where: []},
-      %{analysis: :shutdown, relation: :trap_exit_without_handler, where: []},
-      %{analysis: :shutdown, relation: :trap_exit_without_exit_clause, where: []},
+      %{analysis: :shutdown, relation: :unhandled_exit_signal, where: []},
       %{analysis: :failure, relation: :unhandled_failure, where: [kind: "rescue"]},
       %{analysis: :failure, relation: :orphan_process, where: [kind: "exit"]},
       %{analysis: :mailbox, relation: :handle_info_without_catchall, where: []},
@@ -248,7 +255,7 @@ defmodule Argus.Analysis do
       %{analysis: :mailbox, relation: :linked_task_in_library, where: []}
     ],
     monitor_leak: [
-      %{analysis: :shutdown, relation: :deliberate_termination_while_monitored, where: []},
+      %{analysis: :shutdown, relation: :kills_monitored_child, where: []},
       %{analysis: :mailbox, relation: :leaked_monitor, where: []},
       %{analysis: :mailbox, relation: :monitor_never_released, where: []},
       %{analysis: :mailbox, relation: :monitor_ref_discarded, where: []}

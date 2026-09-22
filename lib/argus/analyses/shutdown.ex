@@ -7,25 +7,24 @@ defmodule Argus.Analyses.Shutdown do
   only if the process traps exits. Tests miss it because
   `GenServer.stop/1` exercises the path that does run terminate.
 
-  - `cleanup_never_runs(mod, behaviour, category, api, via)` — terminate/2
-    performs durable cleanup and the process does not trap exits.
-  - `cleanup_unclear(mod, behaviour, api, via)` — terminate/2 does work
-    the effect model cannot classify, and will be skipped.
-  - `terminate_may_be_truncated(...)` — the module traps, but the cleanup
-    has no bound of its own inside the shutdown timeout.
-  - `trap_exit_without_handler(mod, witness)` and
-    `trap_exit_without_exit_clause(mod, witness)` — the process traps
-    exits and nothing takes the `{:EXIT, ...}` message that trapping
-    turns them into.
-  - `terminate_calls_sibling(mod, sibling, via, sup)` — terminate/2 waits
-    on a sibling that may already be gone.
-  - `callback_stops_sibling(mod, sibling, via, sup)` — a handler stops a
-    sibling the supervisor owns.
+  - `cleanup_defect(mod, behaviour, kind, category, api, via)` — what
+    goes wrong with terminate/2's cleanup: `never_runs` (durable cleanup,
+    and the process does not trap exits), `unclear` (work the effect
+    model cannot classify, skipped the same way) or `truncated` (the
+    module traps, but the cleanup has no bound of its own inside the
+    shutdown timeout).
+  - `unhandled_exit_signal(mod, kind, witness)` — the process traps exits
+    and nothing takes the `{:EXIT, ...}` message that trapping turns
+    them into: `no_handler`, or `no_exit_clause` in the handle_info it
+    has.
+  - `teardown_touches_sibling(mod, sibling, phase, kind, via, sup)` —
+    terminate/2 waits on a sibling that may already be gone (`terminate`,
+    `call`), or a handler stops a sibling the supervisor owns (`handler`,
+    `stop`).
   - `foreign_dynamic_children(mod, sup, via)` — children started under a
     DynamicSupervisor in another tree outlive this one.
-  - `deliberate_termination_while_monitored(mod, site, kill_site)` — a
-    server terminates a process it still monitors, so the `:DOWN` reads
-    as a crash.
+  - `kills_monitored_child(mod, site, kill_site)` — a server terminates a
+    process it still monitors, so the `:DOWN` reads as a crash.
   - `permanent_child_stops_normally(sup, child, reason, site, sup_site)`
     — a permanent child returns `{:stop, :normal, ...}` and is started
     straight back.
@@ -59,55 +58,37 @@ defmodule Argus.Analyses.Shutdown do
       Argus.Extractors.Reply
     ]
 
-  @fields [
-    {:mod, :symbol, "the module"},
-    {:behaviour, :symbol, "the behaviour providing terminate/2"},
-    {:category, :symbol, "the kind of cleanup"},
-    {:api, :symbol, "the call performing it"},
-    {:via, :symbol, "the function performing it"}
-  ]
-
   @impl true
   def output_relations do
     [
       %{
-        name: :cleanup_never_runs,
-        fields: @fields,
-        key: [:mod, :category, :api],
-        doc: "terminate/2 performs cleanup, but the process does not trap exits."
-      },
-      %{
-        name: :cleanup_unclear,
+        name: :cleanup_defect,
         fields: [
           {:mod, :symbol, "the module"},
           {:behaviour, :symbol, "the behaviour providing terminate/2"},
-          {:api, :symbol, "an unclassified call it makes"},
-          {:via, :symbol, "the function making it"}
+          {:kind, :symbol, "never_runs | unclear | truncated"},
+          {:category, :symbol, "the kind of cleanup (empty for unclear)"},
+          {:api, :symbol, "the call performing it"},
+          {:via, :symbol, "the function performing it"}
         ],
-        key: [:mod],
-        doc: "terminate/2 does work the effect model cannot classify, and will be skipped."
+        # An unclear row is one call the effect model cannot classify; the
+        # finding is that the module's terminate/2 does such work at all.
+        key: {:kind, %{"unclear" => [:mod], default: [:mod, :category, :api]}},
+        doc: "terminate/2 cleanup a supervisor shutdown skips, cannot classify, or truncates."
       },
       %{
-        name: :callback_stops_sibling,
+        name: :teardown_touches_sibling,
         fields: [
-          {:mod, :symbol, "the process whose handler issues the stop"},
-          {:sibling, :symbol, "the sibling child stopped"},
-          {:via, :symbol, "function performing the stop"},
+          {:mod, :symbol, "the process whose teardown touches the sibling"},
+          {:sibling, :symbol, "the sibling child"},
+          {:phase, :symbol, "terminate | handler"},
+          {:kind, :symbol, "call | stop"},
+          {:via, :symbol, "function performing the call or stop"},
           {:sup, :symbol, "the supervisor both sit under"}
         ],
-        key: [:mod, :sibling],
-        doc: "A handler stops a sibling child that the supervisor owns."
-      },
-      %{
-        name: :terminate_calls_sibling,
-        fields: [
-          {:mod, :symbol, "module whose terminate/2 makes the call"},
-          {:sibling, :symbol, "the sibling module called"},
-          {:via, :symbol, "function the call is made from"},
-          {:sup, :symbol, "their common supervisor"}
-        ],
-        key: [:mod, :sibling],
-        doc: "terminate/2 synchronously calls a sibling child of the same supervisor."
+        key: [:mod, :sibling, :phase],
+        doc:
+          "terminate/2 waits on a sibling that may be gone, or a handler stops one the supervisor owns."
       },
       %{
         name: :foreign_dynamic_children,
@@ -122,31 +103,17 @@ defmodule Argus.Analyses.Shutdown do
             "and its terminate/2 does not stop them."
       },
       %{
-        name: :terminate_may_be_truncated,
-        fields: @fields,
-        key: [:mod, :category, :api],
-        doc: "terminate/2 performs unbounded work inside the shutdown timeout."
-      },
-      %{
-        name: :trap_exit_without_handler,
+        name: :unhandled_exit_signal,
         fields: [
           {:mod, :symbol, "module"},
+          {:kind, :symbol, "no_handler | no_exit_clause"},
           {:witness, :symbol, "function that sets trap_exit"}
         ],
-        key: [:mod],
-        doc: "Module traps exits but has no handle_info({:EXIT,...},_) callback."
+        key: [:mod, :kind],
+        doc: "Module traps exits and nothing takes the {:EXIT, ...} message that makes."
       },
       %{
-        name: :trap_exit_without_exit_clause,
-        fields: [
-          {:mod, :symbol, "module"},
-          {:witness, :symbol, "function that sets trap_exit"}
-        ],
-        key: [:mod],
-        doc: "Module traps exits and defines handle_info/2, but no clause matches {:EXIT, ...}."
-      },
-      %{
-        name: :deliberate_termination_while_monitored,
+        name: :kills_monitored_child,
         fields: [
           {:mod, :symbol, "the server module"},
           {:site, :symbol, "a monitor call site in its callbacks"},
@@ -172,7 +139,7 @@ defmodule Argus.Analyses.Shutdown do
   end
 
   @impl true
-  def finding(:cleanup_never_runs, [mod, behaviour, category, api, via]) do
+  def finding(:cleanup_defect, [mod, behaviour, "never_runs", category, api, via]) do
     Findings.new(
       :error,
       "#{mod} cleans up in terminate/2 but never traps exits",
@@ -190,7 +157,7 @@ defmodule Argus.Analyses.Shutdown do
     )
   end
 
-  def finding(:cleanup_unclear, [mod, behaviour, api, via]) do
+  def finding(:cleanup_defect, [mod, behaviour, "unclear", _, api, via]) do
     Findings.new(
       :warning,
       "#{mod}'s terminate/2 does work that a supervisor shutdown will skip",
@@ -206,7 +173,7 @@ defmodule Argus.Analyses.Shutdown do
     )
   end
 
-  def finding(:callback_stops_sibling, [mod, sibling, via, sup]) do
+  def finding(:teardown_touches_sibling, [mod, sibling, "handler", "stop", via, sup]) do
     Findings.new(
       :warning,
       "A callback stops a sibling the supervisor owns",
@@ -223,7 +190,7 @@ defmodule Argus.Analyses.Shutdown do
     )
   end
 
-  def finding(:terminate_calls_sibling, [mod, sibling, via, sup]) do
+  def finding(:teardown_touches_sibling, [mod, sibling, "terminate", "call", via, sup]) do
     Findings.new(
       :warning,
       "terminate/2 calls a sibling that may already be down",
@@ -259,7 +226,7 @@ defmodule Argus.Analyses.Shutdown do
     )
   end
 
-  def finding(:terminate_may_be_truncated, [mod, behaviour, category, api, via]) do
+  def finding(:cleanup_defect, [mod, behaviour, "truncated", category, api, via]) do
     Findings.new(
       :warning,
       "#{mod}'s terminate/2 does unbounded work inside the shutdown timeout",
@@ -274,7 +241,7 @@ defmodule Argus.Analyses.Shutdown do
     )
   end
 
-  def finding(:trap_exit_without_handler, [mod, witness]) do
+  def finding(:unhandled_exit_signal, [mod, "no_handler", witness]) do
     Findings.new(
       :warning,
       "trap_exit without an :EXIT handler",
@@ -286,7 +253,7 @@ defmodule Argus.Analyses.Shutdown do
     )
   end
 
-  def finding(:trap_exit_without_exit_clause, [mod, witness]) do
+  def finding(:unhandled_exit_signal, [mod, "no_exit_clause", witness]) do
     Findings.new(
       :warning,
       "trap_exit without an {:EXIT, ...} clause",
@@ -307,7 +274,7 @@ defmodule Argus.Analyses.Shutdown do
     )
   end
 
-  def finding(:deliberate_termination_while_monitored, [mod, site, kill_site]) do
+  def finding(:kills_monitored_child, [mod, site, kill_site]) do
     Findings.new(
       :info,
       "#{mod} terminates a process it still monitors",

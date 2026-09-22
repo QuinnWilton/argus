@@ -350,6 +350,36 @@ defmodule Argus.FindingsTest do
       assert Findings.dedupe_rows(relation, rows) == rows
     end
 
+    test "a key chosen by kind identifies each kind of row its own way" do
+      relation = %{
+        name: :merged,
+        fields: [
+          {:mod, :symbol, "module"},
+          {:kind, :symbol, "kind"},
+          {:api, :symbol, "call"},
+          {:via, :symbol, "site"}
+        ],
+        key: {:kind, %{"unclear" => [:mod], default: [:mod, :api]}},
+        doc: "test relation"
+      }
+
+      rows = [
+        ["M", "unclear", "Lease.release/1", "f"],
+        ["M", "unclear", "Session.close/1", "g"],
+        ["M", "never_runs", "File.write/2", "f"],
+        ["M", "never_runs", "File.write/2", "g"],
+        ["M", "never_runs", "File.rm/1", "f"]
+      ]
+
+      # One unclear row per module; one never_runs row per api; the
+      # kinds never collapse into each other.
+      assert Findings.dedupe_rows(relation, rows) == [
+               ["M", "never_runs", "File.rm/1", "f"],
+               ["M", "never_runs", "File.write/2", "f"],
+               ["M", "unclear", "Lease.release/1", "f"]
+             ]
+    end
+
     test "raises on a key field the relation does not declare" do
       relation = %{@keyed_relation | key: [:nonexistent]}
 

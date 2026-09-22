@@ -3,6 +3,7 @@ defmodule Argus.Analyses.ShutdownTest do
 
   alias Argus.Souffle
   alias Argus.Test.Fixtures.Shutdown, as: S
+  alias Argus.Test.Rows
 
   @all [
     S.Leaks,
@@ -25,6 +26,22 @@ defmodule Argus.Analyses.ShutdownTest do
     assert {:ok, r} = Argus.analyze(@all, :shutdown)
     r
   end
+
+  defp rows(r, "cleanup_never_runs"),
+    do: Rows.where(r, :shutdown, "cleanup_defect", kind: "never_runs", drop: [:kind])
+
+  defp rows(r, "cleanup_unclear"),
+    do: Rows.where(r, :shutdown, "cleanup_defect", kind: "unclear", drop: [:kind, :category])
+
+  defp rows(r, "terminate_may_be_truncated"),
+    do: Rows.where(r, :shutdown, "cleanup_defect", kind: "truncated", drop: [:kind])
+
+  defp rows(r, "terminate_calls_sibling"),
+    do:
+      Rows.where(r, :shutdown, "teardown_touches_sibling",
+        phase: "terminate",
+        drop: [:phase, :kind]
+      )
 
   defp rows(r, relation), do: Map.get(r, relation, [])
 
@@ -202,20 +219,37 @@ defmodule Argus.Analyses.ShutdownTest do
       mod = Argus.Analyses.Shutdown
 
       never =
-        mod.finding(:cleanup_never_runs, ["My.Server", "GenServer", "io", "File.write/2", "f"])
+        mod.finding(:cleanup_defect, [
+          "My.Server",
+          "GenServer",
+          "never_runs",
+          "io",
+          "File.write/2",
+          "f"
+        ])
 
       assert never.severity == :error
       assert never.detail =~ "trap_exit"
       assert never.detail =~ "file I/O"
 
-      unclear = mod.finding(:cleanup_unclear, ["My.Server", "GenServer", "Lease.release/1", "f"])
+      unclear =
+        mod.finding(:cleanup_defect, [
+          "My.Server",
+          "GenServer",
+          "unclear",
+          "",
+          "Lease.release/1",
+          "f"
+        ])
+
       assert unclear.severity == :warning
       assert unclear.detail =~ "cannot classify"
 
       trunc_ =
-        mod.finding(:terminate_may_be_truncated, [
+        mod.finding(:cleanup_defect, [
           "My.Server",
           "GenServer",
+          "truncated",
           "network",
           "httpc.request/1",
           "f"

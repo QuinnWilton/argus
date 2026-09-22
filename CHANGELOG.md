@@ -21,6 +21,10 @@ through the alias table to the rows that were theirs.
 | `failure` | `swallowed_error`, `erpc_transport_unhandled`, `rpc_result_unhandled` | `unhandled_failure(func, site, kind, shape)`, `kind` ∈ rescue, erpc_transport, rpc, multicall, erpc |
 | `failure` | `unchecked_start_child`, `whereis_race` | `unchecked_result(func, site, api, name)` |
 | `failure` | `unlinked_spawn`, `exit_in_callback` | `orphan_process(func, site, kind, target)`, `kind` ∈ spawn, exit |
+| `shutdown` | `cleanup_never_runs`, `cleanup_unclear`, `terminate_may_be_truncated` | `cleanup_defect(mod, behaviour, kind, category, api, via)`, `kind` ∈ never_runs, unclear, truncated |
+| `shutdown` | `trap_exit_without_handler`, `trap_exit_without_exit_clause` | `unhandled_exit_signal(mod, kind, witness)`, `kind` ∈ no_handler, no_exit_clause |
+| `shutdown` | `terminate_calls_sibling`, `callback_stops_sibling` | `teardown_touches_sibling(mod, sibling, phase, kind, via, sup)`, `phase` ∈ terminate, handler |
+| `shutdown` | `deliberate_termination_while_monitored` | `kills_monitored_child(mod, site, kill_site)` (renamed) |
 
 ## 0.17.2 — 2026-09-21
 

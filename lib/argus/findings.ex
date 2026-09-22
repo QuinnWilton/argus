@@ -348,13 +348,7 @@ defmodule Argus.Findings do
   """
   @spec dedupe_rows(Analysis.output_relation(), [[String.t()]]) :: [[String.t()]]
   def dedupe_rows(%{key: key_fields, fields: fields}, rows) when is_list(key_fields) do
-    positions =
-      for key_field <- key_fields do
-        case Enum.find_index(fields, fn {name, _kind, _doc} -> name == key_field end) do
-          nil -> raise ArgumentError, "key field #{inspect(key_field)} not in #{inspect(fields)}"
-          position -> position
-        end
-      end
+    positions = key_positions(key_fields, fields)
 
     rows
     |> Enum.group_by(fn row -> Enum.map(positions, &Enum.at(row, &1)) end)
@@ -362,7 +356,37 @@ defmodule Argus.Findings do
     |> Enum.sort()
   end
 
+  # A key chosen by the value of a discriminating column: each kind of
+  # row in a merged relation says what identifies it.
+  def dedupe_rows(%{key: {column, keys}, fields: fields}, rows) when is_map(keys) do
+    [discriminator] = key_positions([column], fields)
+    default = key_positions(Map.fetch!(keys, :default), fields)
+
+    by_value =
+      for {value, key_fields} <- keys, value != :default, into: %{} do
+        {value, key_positions(key_fields, fields)}
+      end
+
+    rows
+    |> Enum.group_by(fn row ->
+      value = Enum.at(row, discriminator)
+      positions = Map.get(by_value, value, default)
+      {value, Enum.map(positions, &Enum.at(row, &1))}
+    end)
+    |> Enum.map(fn {_key, group} -> Enum.min(group) end)
+    |> Enum.sort()
+  end
+
   def dedupe_rows(_relation, rows), do: rows
+
+  defp key_positions(key_fields, fields) do
+    for key_field <- key_fields do
+      case Enum.find_index(fields, fn {name, _kind, _doc} -> name == key_field end) do
+        nil -> raise ArgumentError, "key field #{inspect(key_field)} not in #{inspect(fields)}"
+        position -> position
+      end
+    end
+  end
 
   # Fallback for behaviour implementors that don't define finding/2:
   # severity :info, prose from the relation's declared doc, anchor from

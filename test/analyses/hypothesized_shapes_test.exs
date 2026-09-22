@@ -2,6 +2,7 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
   use ExUnit.Case, async: false
 
   alias Argus.Test.Fixtures.Hypothesized, as: H
+  alias Argus.Test.Rows
 
   defp skip_without_souffle do
     unless Argus.Souffle.available?(), do: flunk("souffle not installed")
@@ -115,8 +116,13 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
         :shutdown
       )
 
-    assert rows(r, "callback_stops_sibling") ==
-             ["Argus.Test.Fixtures.Hypothesized.SiblingStop.Coordinator"]
+    stops =
+      r
+      |> Rows.where(:shutdown, "teardown_touches_sibling", phase: "handler")
+      |> Enum.map(&hd/1)
+      |> Enum.uniq()
+
+    assert stops == ["Argus.Test.Fixtures.Hypothesized.SiblingStop.Coordinator"]
   end
 
   test "a sibling pid cached in init/1 is reported under one_for_one, not under rest_for_one" do
