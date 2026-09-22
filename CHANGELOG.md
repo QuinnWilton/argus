@@ -26,7 +26,7 @@ itself is due to go in 0.19.0). Two mechanisms carry this: a relation's
 [:mod], default: [...]}}`), since the rows of a merged relation can
 identify a finding differently per kind; and the Souffle output reader
 keeps an empty first or last column, which a merged relation uses for a
-column that does not apply. The output relations went from 97 to 47.
+column that does not apply. The output relations went from 97 to 59.
 
 | Concern | Was | Now |
 |---|---|---|
