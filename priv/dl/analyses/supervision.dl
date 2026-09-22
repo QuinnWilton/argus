@@ -224,24 +224,19 @@ consumer_supervisor_permanent_child(sup, child, sup_site) :-
 // signal: two facts about two processes, not two restart authorities). The :DOWN handler is whichever function of the module matches
 // :DOWN (matches_down): handle_info/2 for a GenServer, a private helper
 // its state functions' catch-alls dispatch to for a gen_statem.
-.decl reaches_in_module(func: symbol, target: symbol)
+.init module_reach = IntraModuleReach
 
-reaches_in_module(f, f) :- function_def(f, _, _, _, _).
-reaches_in_module(f, h) :-
-  reaches_in_module(f, g),
-  call_edge(g, h),
-  function_def(g, mod, _, _, _),
-  function_def(h, mod, _, _, _).
+module_reach.seed(f, f) :- function_def(f, _, _, _, _).
 
 .decl starts_and_monitors(mod: symbol, sup: symbol, child: symbol, via: symbol)
 
 starts_and_monitors(mod, sup, child, f) :-
   function_def(f, mod, _, _, _),
-  reaches_in_module(f, s),
+  module_reach.reaches(f, s),
   dynamic_child(sup, child, s),
   child != "dynamic",
   child != "Task",
-  reaches_in_module(f, m),
+  module_reach.reaches(f, m),
   monitor_call(_, m, "started_child").
 
 .decl down_handler(mod: symbol, handler: symbol)
@@ -256,7 +251,7 @@ down_handler(mod, h) :-
 dual_restart_authority(mod, sup, child, via) :-
   starts_and_monitors(mod, sup, child, via),
   down_handler(mod, h),
-  reaches_in_module(h, s),
+  module_reach.reaches(h, s),
   dynamic_child(sup, child, s),
   !child_spec_restart(child, "temporary").
 
@@ -275,10 +270,9 @@ config_writer(f) :- remote_call(_, f, ":ets", "insert_new", 2).
 config_writer(f) :- remote_call(_, f, "Application", "put_env", _).
 config_writer(f) :- remote_call(_, f, "Application", "put_all_env", _).
 
-.decl reaches_config_writer(func: symbol)
+.init config_reach = CallReachSet
 
-reaches_config_writer(f) :- config_writer(f).
-reaches_config_writer(f) :- call_edge(f, g), reaches_config_writer(g).
+config_reach.seed(f) :- config_writer(f).
 
 .decl post_start_initialization(func: symbol, site: symbol, callee: symbol)
 .output post_start_initialization
@@ -290,7 +284,7 @@ post_start_initialization(func, site, callee) :-
 
 post_start_initialization(func, site, callee) :-
   post_start_call(func, site, callee),
-  reaches_config_writer(callee).
+  config_reach.reaches(callee).
 
 // ── A sibling's pid cached in init/1 under one_for_one ───────────────
 //

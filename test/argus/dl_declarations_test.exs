@@ -71,6 +71,40 @@ defmodule Argus.DlDeclarationsTest do
                Enum.join(offenders, "\n") <>
                "\n\nInclude base.dl / layer2.dl instead."
     end
+
+    # Reachability over the call graph is written once, as the components
+    # in clientlib/reach.dl. An analysis seeds an instance; it does not
+    # write a closure of its own: no rule in an analysis file may recurse
+    # through call_edge on its own head. (Closure ownership, which recurses
+    # through closure_def, gets its own vocabulary next.)
+    test "no analysis recurses over the call graph itself" do
+      offenders =
+        priv_dl()
+        |> Path.join("analyses/*.dl")
+        |> Path.wildcard()
+        |> Enum.flat_map(fn path ->
+          path
+          |> File.read!()
+          |> String.split(~r/\.\s*\n/)
+          |> Enum.filter(&recursive_over_call_graph?/1)
+          |> Enum.map(fn rule -> "#{Path.relative_to(path, priv_dl())}  #{String.trim(rule)}" end)
+        end)
+
+      assert offenders == [],
+             "these closures belong to a clientlib/reach.dl component:\n" <>
+               Enum.join(offenders, "\n")
+    end
+  end
+
+  defp recursive_over_call_graph?(rule) do
+    case Regex.run(~r/^\s*([a-z_0-9]+)\s*\([^)]*\)\s*:-(.*)$/s, rule) do
+      [_, head, body] ->
+        Regex.match?(~r/\bcall_edge\s*\(/, body) and
+          Regex.match?(~r/\b#{head}\s*\(/, body)
+
+      nil ->
+        false
+    end
   end
 
   describe "partial functors" do

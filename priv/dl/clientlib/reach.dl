@@ -1,0 +1,117 @@
+// Reachability over the call graph, as components.
+//
+// Every analysis asks the same two questions of the call graph: which
+// functions can reach one of these sites (backward), and what can this
+// entry reach (forward). Each used to write its own two-clause closure;
+// this file writes each shape once. An analysis instantiates the variant
+// it needs, seeds it with the sites it cares about, and reads `reaches`:
+//
+//   .init connect_reach = CallReach
+//   connect_reach.seed(f, api) :- impure_call(_, f, api, "network", _), connect_api(api).
+//   ... connect_reach.reaches(init, api) ...
+//
+// A seed is in its own reach. A rule that wants callers only (the
+// function holding the site excluded) seeds the first hop instead:
+// `seed(f, sink) :- call_edge(f, g), sink_in(g, sink)`.
+//
+// The step is the difference between the variants. `call_edge` treats
+// closure construction as a call, so a plain step follows execution into
+// lambdas; SameProcess subtracts those edges (a receive inside `spawn(fn
+// -> ... end)` runs elsewhere); Closure adds `closure_def` edges on top,
+// for the shapes where the closure is the interesting party; IntraModule
+// stays inside one module. Each variant states its step in its own
+// recursive clause rather than copying `call_edge` into a per-instance
+// relation, so an analysis with four instances pays for four closures,
+// not four call graphs.
+//
+// The declarations inside a component are indented on purpose:
+// dl_declarations_test scans for `^.decl`, and these are not schema
+// relations. Instances add no `.input`, so the analysis input pins do not
+// move.
+
+// ── Backward: which functions reach a seeded (func, target) ──────────
+
+.comp Backward {
+  .decl seed(func: symbol, target: symbol)
+  .decl reaches(func: symbol, target: symbol)
+  reaches(f, t) :- seed(f, t).
+}
+
+.comp CallReach : Backward {
+  reaches(f, t) :- call_edge(f, g), reaches(g, t).
+}
+
+.comp SameProcessReach : Backward {
+  reaches(f, t) :- call_edge(f, g), !closure_def(f, g), reaches(g, t).
+}
+
+.comp ClosureReach : Backward {
+  reaches(f, t) :- call_edge(f, g), reaches(g, t).
+  reaches(f, t) :- closure_def(f, g), reaches(g, t).
+}
+
+.comp IntraModuleReach : Backward {
+  reaches(f, t) :-
+    call_edge(f, g),
+    function_def(f, m, _, _, _),
+    function_def(g, m, _, _, _),
+    reaches(g, t).
+}
+
+// ── Backward, as a set: which functions reach any seed ───────────────
+
+.comp BackwardSet {
+  .decl seed(func: symbol)
+  .decl reaches(func: symbol)
+  reaches(f) :- seed(f).
+}
+
+.comp CallReachSet : BackwardSet {
+  reaches(f) :- call_edge(f, g), reaches(g).
+}
+
+.comp SameProcessReachSet : BackwardSet {
+  reaches(f) :- call_edge(f, g), !closure_def(f, g), reaches(g).
+}
+
+// ── Forward: what each root reaches ──────────────────────────────────
+
+.comp Forward {
+  .decl root(root: symbol, func: symbol)
+  .decl reaches(root: symbol, func: symbol)
+  reaches(r, f) :- root(r, f).
+}
+
+.comp ForwardCallReach : Forward {
+  reaches(r, h) :- reaches(r, g), call_edge(g, h).
+}
+
+// Forward, staying inside the root's module: a server's own stack.
+.comp ForwardIntraModuleReach : Forward {
+  reaches(r, h) :-
+    reaches(r, g),
+    call_edge(g, h),
+    function_def(g, m, _, _, _),
+    function_def(h, m, _, _, _).
+}
+
+.comp ForwardSet {
+  .decl root(func: symbol)
+  .decl reaches(func: symbol)
+  reaches(f) :- root(f).
+}
+
+.comp ForwardCallReachSet : ForwardSet {
+  reaches(h) :- reaches(g), call_edge(g, h).
+}
+
+// Depth-bounded, for the rules that want "close to" rather than
+// "anywhere below": `limit(3)` covers terminate -> cleanup helper -> the
+// API it calls, and stops before a client library's connection pool.
+.comp ForwardBoundedCallReach {
+  .decl root(root: symbol, func: symbol)
+  .decl limit(n: number)
+  .decl reaches(root: symbol, func: symbol, depth: number)
+  reaches(r, f, 0) :- root(r, f).
+  reaches(r, h, d + 1) :- reaches(r, g, d), limit(n), d < n, call_edge(g, h).
+}

@@ -4,6 +4,19 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- Reachability over the call graph is one vocabulary: the components in
+  `priv/dl/clientlib/reach.dl` (`CallReach`, `SameProcessReach`,
+  `ClosureReach`, `IntraModuleReach`, their set forms, the forward forms
+  and a depth-bounded one). The thirty closures the analyses used to
+  write by hand are instances seeded with the sites each rule cares
+  about; findings are unchanged on the corpus, the 14-tree sample and
+  encore. A declarations test now refuses a rule in an analysis file
+  that recurses over `call_edge` on its own head.
+
 ## 0.15.0 — 2026-09-16
 
 ### Changed

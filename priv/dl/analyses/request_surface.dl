@@ -56,19 +56,13 @@ request_reaches(entry, kind, callee, "adjacent") :-
 
 // Anywhere else in the cone. Real as a path, unproven as a data flow.
 // Forward from the request entries only.
-.decl entry_reaches(entry: symbol, func: symbol)
+.init entry_reach = ForwardCallReach
 
-entry_reaches(entry, callee) :-
-  request_entry(entry, _),
-  call_edge(entry, callee).
-
-entry_reaches(entry, callee) :-
-  entry_reaches(entry, g),
-  call_edge(g, callee).
+entry_reach.root(entry, entry) :- request_entry(entry, _).
 
 request_reaches(entry, kind, callee, "transitive") :-
   request_entry(entry, kind),
-  entry_reaches(entry, callee),
+  entry_reach.reaches(entry, callee),
   !call_edge(entry, callee),
   callee != entry.
 
@@ -134,17 +128,14 @@ remote_atom_exhaustion(id, func, api, entry, kind, proximity) :-
 .output sink_endpoint
 
 // Backwards from the sinks, which are few.
-.decl reaches_sink(func: symbol, sink: symbol)
+// Callers only: the function holding the sink is not itself an endpoint.
+.init sink_reach = CallReach
 
-reaches_sink(f, sink) :-
+sink_reach.seed(f, sink) :-
   call_edge(f, g),
   (unsafe_atom_creation(sink, g, _) ; unsafe_deserialization(sink, g, _, _)).
-
-reaches_sink(f, sink) :-
-  call_edge(f, g),
-  reaches_sink(g, sink).
 
 sink_endpoint(sink, verb, path, plug) :-
   http_route(_, verb, path, plug, _),
   function_def(entry, plug, _, _, _),
-  reaches_sink(entry, sink).
+  sink_reach.reaches(entry, sink).

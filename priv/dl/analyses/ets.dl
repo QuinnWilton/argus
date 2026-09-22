@@ -203,19 +203,17 @@ ets_write_only_table(name, mod, id) :-
 // Backward from the table functions (creators and readers) to the
 // callbacks that reach them, so the closure is bounded by functions x
 // table functions rather than by every process's whole reach.
-.decl reaches_ets_func(func: symbol, target: symbol)
+.init ets_reach = ClosureReach
 
-reaches_ets_func(f, f) :- ets_new(_, f, _).
-reaches_ets_func(f, f) :- ets_op(_, f, _, _, "read").
-reaches_ets_func(f, f) :- named_read(_, f, _).
-reaches_ets_func(f, t) :- call_edge(f, g), reaches_ets_func(g, t).
-reaches_ets_func(f, t) :- closure_def(f, g), reaches_ets_func(g, t).
+ets_reach.seed(f, f) :- ets_new(_, f, _).
+ets_reach.seed(f, f) :- ets_op(_, f, _, _, "read").
+ets_reach.seed(f, f) :- named_read(_, f, _).
 
 process_entry(mod, f) :- statem_event_clause(mod, f, _).
 
 .decl owner_reaches(mod: symbol, func: symbol)
 
-owner_reaches(mod, t) :- process_entry(mod, c), reaches_ets_func(c, t).
+owner_reaches(mod, t) :- process_entry(mod, c), ets_reach.reaches(c, t).
 
 // A rescue that would catch the ArgumentError a missing table raises:
 // a bare rescue, a catch-all, or one naming ArgumentError. `rescue

@@ -79,6 +79,9 @@
 
 // How many closures a function creates — the shape a transaction body or
 // a pure higher-order function is recognised by.
+// Reachability components: see reach.dl.
+.include "reach.dl"
+
 .decl closure_count(func: symbol, n: number)
 
 closure_count(func, n) :-

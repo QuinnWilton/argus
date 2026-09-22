@@ -111,17 +111,16 @@ handle_info_without_catchall(mod, h) :-
 // FunctionClauseError waiting for that message. Without any source in
 // reach the shape is a style note, and stays quiet. Info: the two rules
 // above stay the warning-grade shapes.
-.decl reaches_mailbox_writer(func: symbol)
+.init mailbox_reach = CallReachSet
 
-reaches_mailbox_writer(f) :- mailbox_writer(_, f, _).
-reaches_mailbox_writer(f) :- sync_call_timeout(f, _, ms), ms != -1.
-reaches_mailbox_writer(f) :- call_edge(f, g), reaches_mailbox_writer(g).
+mailbox_reach.seed(f) :- mailbox_writer(_, f, _).
+mailbox_reach.seed(f) :- sync_call_timeout(f, _, ms), ms != -1.
 
 .decl late_message_source(mod: symbol)
 
 late_message_source(mod) :-
   process_entry(mod, c),
-  reaches_mailbox_writer(c).
+  mailbox_reach.reaches(c).
 
 .decl handle_info_partial(mod: symbol, func: symbol)
 .output handle_info_partial
@@ -144,15 +143,9 @@ handle_info_partial(mod, h) :-
 // propagation, both fully supervision-visible and not a bypass. It is
 // excluded via `target != "self"`, the sentinel the extractor uses for
 // the /1 form.
-.decl reaches_exit(func: symbol, target: symbol)
+.init exit_reach = CallReach
 
-reaches_exit(f, target) :-
-  call_edge(f, g),
-  exit_call(_, g, target).
-
-reaches_exit(f, target) :-
-  call_edge(f, g),
-  reaches_exit(g, target).
+exit_reach.seed(g, target) :- exit_call(_, g, target).
 
 .decl exit_in_callback(func: symbol, target: symbol)
 .output exit_in_callback
@@ -163,7 +156,7 @@ exit_in_callback(func, target) :-
   target != "self".
 
 exit_in_callback(func, target) :-
-  reaches_exit(func, target),
+  exit_reach.reaches(func, target),
   handler_function(_, func),
   target != "self".
 

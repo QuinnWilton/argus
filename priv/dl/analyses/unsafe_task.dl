@@ -52,10 +52,9 @@ task_await_call(func, id) :-
 // ── Function-level await reachability ──────────────────────────────────
 
 // Function has an await/yield (directly or through callees).
-.decl has_await(func: symbol)
+.init await_reach = CallReachSet
 
-has_await(func) :- task_await_call(func, _).
-has_await(func) :- call_edge(func, g), has_await(g).
+await_reach.seed(func) :- task_await_call(func, _).
 
 // ── Process task handler suppression ─────────────────────────────────
 
@@ -117,7 +116,7 @@ task_factory(func, id) :-
 
 leaked_async_task(func, id) :-
   task_async_call(func, id),
-  !has_await(func),
+  !await_reach.reaches(func),
   function_def(func, mod, _, _, _),
   !process_task_handler(mod),
   !task_factory(func, id).
@@ -219,7 +218,7 @@ linked_task_in_library(owner, id) :-
   !implements_behaviour(mod, _),
   !behaves_as(mod, _),
   !task_factory(owner, _),
-  has_await(owner).
+  await_reach.reaches(owner).
 
 // ── async_nolink whose messages nothing handles ───────────────────────
 //
@@ -231,24 +230,23 @@ linked_task_in_library(owner, id) :-
 // (archethic-node#1306, sentry-elixir#172, Engram#1552). GenServer's
 // default handle_info logs and ignores, so only a module with its own
 // partial handle_info/2 is at risk.
-.decl reaches_nolink(func: symbol, start: symbol)
+.init nolink_reach = CallReach
 
-reaches_nolink(f, f) :- mailbox_writer(_, f, "task_nolink").
-reaches_nolink(f, s) :- call_edge(f, g), reaches_nolink(g, s).
+nolink_reach.seed(f, f) :- mailbox_writer(_, f, "task_nolink").
 
 .decl nolink_messages_unhandled(mod: symbol, start: symbol, handler: symbol, missing: symbol)
 .output nolink_messages_unhandled
 
 nolink_messages_unhandled(mod, s, h, "reply") :-
   process_entry(mod, c),
-  reaches_nolink(c, s),
+  nolink_reach.reaches(c, s),
   function_def(h, mod, "handle_info", 2, _),
   !callback_total(h, "handle_info"),
   !callback_ref_head(h, "handle_info").
 
 nolink_messages_unhandled(mod, s, h, "down") :-
   process_entry(mod, c),
-  reaches_nolink(c, s),
+  nolink_reach.reaches(c, s),
   function_def(h, mod, "handle_info", 2, _),
   !callback_total(h, "handle_info"),
   !callback_tag(h, "handle_info", ":DOWN").

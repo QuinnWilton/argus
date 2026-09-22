@@ -87,20 +87,14 @@ unrollbackable("node").      // distribution: another node already saw it
 .decl escapes_transaction(caller: symbol, repo: symbol, category: symbol, api: symbol, via: symbol)
 
 // Forward from the transaction bodies only.
-.decl body_reaches(body: symbol, func: symbol)
+.init body_reach = ForwardCallReach
 
-body_reaches(body, g) :-
-  transaction_body(_, _, body),
-  call_edge(body, g).
-
-body_reaches(body, h) :-
-  body_reaches(body, g),
-  call_edge(g, h).
+body_reach.root(body, body) :- transaction_body(_, _, body).
 
 escapes_transaction(caller, repo, category, api, via) :-
   transaction_body(caller, _repo_unused, body),
   transaction_site(caller, repo),
-  body_reaches(body, via),
+  body_reach.reaches(body, via),
   impure_call(_, via, api, category, "write"),
   unrollbackable(category).
 

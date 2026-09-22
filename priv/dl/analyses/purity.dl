@@ -113,15 +113,9 @@ purity_root(closure) :-
   call_edge(caller, callee),
   closure_def(caller, closure).
 
-.decl root_reaches(root: symbol, func: symbol)
+.init root_reach = ForwardCallReach
 
-root_reaches(root, g) :-
-  purity_root(root),
-  call_edge(root, g).
-
-root_reaches(root, h) :-
-  root_reaches(root, g),
-  call_edge(g, h).
+root_reach.root(func, func) :- purity_root(func).
 
 .decl reaches_effect(func: symbol, category: symbol, api: symbol, via: symbol)
 
@@ -129,7 +123,7 @@ reaches_effect(func, category, api, func) :-
   performs_effect(func, category, api).
 
 reaches_effect(func, category, api, via) :-
-  root_reaches(func, via),
+  root_reach.reaches(func, via),
   performs_effect(via, category, api).
 
 .decl reaches_opaque(func: symbol, reason: symbol, detail: symbol, via: symbol)
@@ -138,7 +132,7 @@ reaches_opaque(func, reason, detail, func) :-
   opaque(func, reason, detail).
 
 reaches_opaque(func, reason, detail, via) :-
-  root_reaches(func, via),
+  root_reach.reaches(func, via),
   opaque(via, reason, detail).
 
 // ── Findings ─────────────────────────────────────────────────────

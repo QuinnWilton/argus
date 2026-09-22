@@ -147,20 +147,15 @@ sup_call_in_init(mod, api, op, target, site) :-
   api != "GenServer".
 
 // Backwards from the supervisor calls, which are few.
-.decl reaches_sup_call(func: symbol, site: symbol)
+.init sup_reach = CallReach
 
-reaches_sup_call(f, site) :-
-  call_edge(f, g),
+sup_reach.seed(g, site) :-
   sup_call(site, g, api, _, _),
   api != "GenServer".
 
-reaches_sup_call(f, site) :-
-  call_edge(f, g),
-  reaches_sup_call(g, site).
-
 sup_call_in_init(mod, api, op, target, site) :-
   init_function(mod, func),
-  reaches_sup_call(func, site),
+  sup_reach.reaches(func, site),
   sup_call(site, _, api, op, target),
   api != "GenServer".
 
@@ -187,7 +182,7 @@ handler_blocks(mod, h, site) :-
 
 handler_blocks(mod, h, site) :-
   handler_function(mod, h),
-  reaches_sup_call(h, site),
+  sup_reach.reaches(h, site),
   sup_call(site, _, api, op, _),
   api != "GenServer",
   unbounded_sup_op(op).
@@ -197,20 +192,15 @@ handler_blocks(mod, h, site) :-
   remote_call(site, h, "GenServer", "call", _),
   sync_call_timeout(h, _, -1).
 
-.decl reaches_infinite_call(func: symbol, site: symbol)
+.init infinite_call_reach = CallReach
 
-reaches_infinite_call(f, site) :-
-  call_edge(f, g),
+infinite_call_reach.seed(g, site) :-
   remote_call(site, g, "GenServer", "call", _),
   sync_call_timeout(g, _, -1).
 
-reaches_infinite_call(f, site) :-
-  call_edge(f, g),
-  reaches_infinite_call(g, site).
-
 handler_blocks(mod, h, site) :-
   handler_function(mod, h),
-  reaches_infinite_call(h, site).
+  infinite_call_reach.reaches(h, site).
 
 .decl init_waits_on_blocking_server(mod: symbol, dep: symbol, handler: symbol, op_site: symbol)
 .output init_waits_on_blocking_server
@@ -245,17 +235,16 @@ infinite_recv(f) :- call_arg(f, g, pos, ":infinity"), infinite_recv_param(g, pos
 // A `receive` with no `after` waits the same way, on the mailbox.
 infinite_recv(f) :- recv_start(_, f, 1, _).
 
-.decl reaches_infinite_recv(func: symbol, recv: symbol)
+.init recv_reach = CallReach
 
-reaches_infinite_recv(f, f) :- infinite_recv(f).
-reaches_infinite_recv(f, r) :- call_edge(f, g), reaches_infinite_recv(g, r).
+recv_reach.seed(f, f) :- infinite_recv(f).
 
 .decl blocking_recv_in_init(mod: symbol, recv: symbol)
 .output blocking_recv_in_init
 
 blocking_recv_in_init(mod, r) :-
   init_function(mod, f),
-  reaches_infinite_recv(f, r).
+  recv_reach.reaches(f, r).
 
 // ── A connection made in init/1 with no way to try again ─────────────
 //
@@ -273,10 +262,9 @@ connect_api(api) :- impure_call(_, _, api, "network", _), match(":ssl.connect/.*
 connect_api(api) :- impure_call(_, _, api, "network", _), match(":gen_udp.open/.*", api).
 connect_api(api) :- impure_call(_, _, api, "network", _), match(":httpc.request/.*", api).
 
-.decl reaches_connect(func: symbol, api: symbol)
+.init connect_reach = CallReach
 
-reaches_connect(f, api) :- impure_call(_, f, api, "network", _), connect_api(api).
-reaches_connect(f, api) :- call_edge(f, g), reaches_connect(g, api).
+connect_reach.seed(f, api) :- impure_call(_, f, api, "network", _), connect_api(api).
 
 .decl has_reconnect_path(mod: symbol)
 
@@ -294,5 +282,5 @@ has_reconnect_path(mod) :- statem_timeout(mod, _, _, _).
 
 connect_in_init_without_backoff(mod, api) :-
   init_function(mod, f),
-  reaches_connect(f, api),
+  connect_reach.reaches(f, api),
   !has_reconnect_path(mod).

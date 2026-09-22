@@ -9,14 +9,10 @@
 
 // A function is attack-surface-adjacent when it is exported, or when
 // some exported function reaches it through the call graph.
-.decl reachable_from_export(func: symbol)
+.init export_reach = ForwardCallReachSet
 
-reachable_from_export(func) :-
+export_reach.root(func) :-
   function_def(func, _, _, _, 1).
-
-reachable_from_export(callee) :-
-  reachable_from_export(func),
-  call_edge(func, callee).
 
 // ── Atom exhaustion risk ─────────────────────────────────────────
 
@@ -31,7 +27,7 @@ reachable_from_export(callee) :-
 
 atom_exhaustion_risk(id, func, api) :-
   unsafe_atom_creation(id, func, api),
-  reachable_from_export(func).
+  export_reach.reaches(func).
 
 // ── Unsafe deserialization ───────────────────────────────────────
 
@@ -70,4 +66,4 @@ deserialization_is_unsafe("dynamic").
 
 code_injection_risk(id, func, api) :-
   code_execution(id, func, api),
-  reachable_from_export(func).
+  export_reach.reaches(func).

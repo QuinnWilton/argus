@@ -18,50 +18,39 @@
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
 
-.decl waits_with_timeout(func: symbol)
-
-waits_with_timeout(func) :-
-  recv_start(_, func, 0, _).
-
 // Over calls that stay on this process's stack: a closure may run
 // anywhere, so an edge into one does not count.
-waits_with_timeout(func) :-
-  call_edge(func, g),
-  !closure_def(func, g),
-  waits_with_timeout(g).
+.init timed_wait = SameProcessReachSet
 
-.decl flushes(func: symbol)
+timed_wait.seed(func) :- recv_start(_, func, 0, _).
 
-flushes(func) :-
-  demonitor_call(_, func, "flush").
+.init flush = SameProcessReachSet
 
-flushes(func) :-
-  call_edge(func, g),
-  !closure_def(func, g),
-  flushes(g).
+flush.seed(func) :- demonitor_call(_, func, "flush").
 
 .decl leaked_monitor(func: symbol, id: symbol)
 .output leaked_monitor
 
 leaked_monitor(func, id) :-
   monitor_call(id, func, _),
-  waits_with_timeout(func),
-  !flushes(func).
+  timed_wait.reaches(func),
+  !flush.reaches(func).
 
-.decl server_side(mod: symbol, func: symbol)
+// Runs on the server's own stack: a callback, a statem state function,
+// or what those reach without leaving the module.
+.init server_reach = ForwardIntraModuleReach
 
-server_side(mod, func) :-
+server_reach.root(mod, func) :-
   otp_callback(func, mod, _, _).
 
-server_side(mod, func) :-
+server_reach.root(mod, func) :-
   behaves_as(mod, "GenStateMachine"),
   statem_state(mod, _, func),
   function_def(func, mod, _, _, _).
 
-server_side(mod, g) :-
-  server_side(mod, f),
-  call_edge(f, g),
-  function_def(g, mod, _, _, _).
+.decl server_side(mod: symbol, func: symbol)
+
+server_side(mod, func) :- server_reach.reaches(mod, func).
 
 .decl module_demonitors(mod: symbol)
 

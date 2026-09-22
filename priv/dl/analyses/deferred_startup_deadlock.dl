@@ -27,20 +27,16 @@
 // A function is "continue-startup reachable from MOD" if it's the body
 // of one of MOD's handle_continue clauses, or if it's transitively called
 // from such a body. This is the call graph rooted at handle_continue.
-.decl continue_reachable_from(mod: symbol, func: symbol)
+.init continue_reach = ForwardCallReach
 
-continue_reachable_from(mod, func) :-
+continue_reach.root(mod, func) :-
   init_continues_to(mod, _),
   handle_continue_clause(mod, _, func).
-
-continue_reachable_from(mod, callee) :-
-  continue_reachable_from(mod, caller),
-  call_edge(caller, callee).
 
 .decl continue_sync_calls(from_mod: symbol, to_mod: symbol)
 
 continue_sync_calls(from_mod, to_mod) :-
-  continue_reachable_from(from_mod, func),
+  continue_reach.reaches(from_mod, func),
   sync_dep(func, to_mod),
   from_mod != to_mod.
 

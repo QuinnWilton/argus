@@ -73,18 +73,12 @@ global_blocking_in_init(func, op) :-
   global_blocking_op(func, op, _, _),
   init_function(_, func).
 
-.decl reaches_global_blocking(func: symbol, op: symbol)
+.init global_reach = CallReach
 
-reaches_global_blocking(f, op) :-
-  call_edge(f, g),
-  global_blocking_op(g, op, _, _).
-
-reaches_global_blocking(f, op) :-
-  call_edge(f, g),
-  reaches_global_blocking(g, op).
+global_reach.seed(g, op) :- global_blocking_op(g, op, _, _).
 
 global_blocking_in_init(func, op) :-
-  reaches_global_blocking(func, op),
+  global_reach.reaches(func, op),
   init_function(_, func).
 
 // ── Distributed operations in init ───────────────────────────────

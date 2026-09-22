@@ -74,20 +74,14 @@ cleanup_in_terminate(mod, behaviour, category, api, func) :-
 //
 // Three hops covers terminate -> your cleanup function -> the API it calls,
 // which is the shape real cleanup has.
-.decl reaches_from_terminate(func: symbol, via: symbol, depth: number)
+.init terminate_reach = ForwardBoundedCallReach
 
-reaches_from_terminate(func, callee, 1) :-
-  terminate_callback(func, _, _),
-  call_edge(func, callee).
-
-reaches_from_terminate(func, callee, depth + 1) :-
-  reaches_from_terminate(func, mid, depth),
-  depth < 3,
-  call_edge(mid, callee).
+terminate_reach.root(func, func) :- terminate_callback(func, _, _).
+terminate_reach.limit(3).
 
 cleanup_in_terminate(mod, behaviour, category, api, via) :-
   terminate_callback(func, mod, behaviour),
-  reaches_from_terminate(func, via, _),
+  terminate_reach.reaches(func, via, _),
   impure_call(_, via, api, category, "write"),
   durable_cleanup(category).
 
@@ -117,7 +111,7 @@ unclassified_cleanup(mod, behaviour, api, func) :-
 
 unclassified_cleanup(mod, behaviour, api, via) :-
   terminate_callback(func, mod, behaviour),
-  reaches_from_terminate(func, via, _),
+  terminate_reach.reaches(func, via, _),
   unknown_call(_, via, api, _callee),
   !structural_call(api).
 
@@ -192,7 +186,7 @@ terminate_calls_sibling(mod, sibling, func, sup) :-
 
 terminate_calls_sibling(mod, sibling, via, sup) :-
   terminate_callback(func, mod, _),
-  reaches_from_terminate(func, via, _),
+  terminate_reach.reaches(func, via, _),
   sync_dep(via, sibling),
   !guarded_exit_call(func),
   !guarded_exit_call(via),
@@ -215,7 +209,7 @@ terminate_calls_sibling(mod, sibling, via, sup) :-
 
 terminate_stops_children(mod) :-
   terminate_callback(func, mod, _),
-  (via = func ; reaches_from_terminate(func, via, _)),
+  (via = func ; terminate_reach.reaches(func, via, _)),
   sup_call(_, via, api, op, _),
   api != "GenServer",
   (op = "terminate_child" ; op = "stop").
@@ -234,17 +228,15 @@ tree_member(root, name) :-
 // The starter is the process whose callbacks reach the start — not the
 // module the start function happens to live in, which may be a plain
 // helper called from several processes (or from a request surface).
-.decl reaches_dynamic_start(func: symbol, start: symbol)
+.init start_reach = ClosureReach
 
-reaches_dynamic_start(s, s) :- dynamic_child(_, _, s).
-reaches_dynamic_start(f, s) :- call_edge(f, g), reaches_dynamic_start(g, s).
-reaches_dynamic_start(f, s) :- closure_def(f, g), reaches_dynamic_start(g, s).
+start_reach.seed(s, s) :- dynamic_child(_, _, s).
 
 process_entry(mod, f) :- statem_event_clause(mod, f, _).
 
 .decl starter_process(mod: symbol, start: symbol)
 
-starter_process(mod, s) :- process_entry(mod, c), reaches_dynamic_start(c, s).
+starter_process(mod, s) :- process_entry(mod, c), start_reach.reaches(c, s).
 
 // A start function that lives in the supervisor's own module
 // (`Postgrex.TypeSupervisor.start_server/2`, `DBConnection.Task.run_child/4`)
@@ -274,10 +266,9 @@ foreign_dynamic_children(mod, sup, func) :-
 
 stops_process(f, target) :- sup_call(_, f, "GenServer", "stop", target).
 
-.decl reaches_stop(func: symbol, via: symbol, target: symbol)
+.init stop_reach = CallReach
 
-reaches_stop(f, f, t) :- stops_process(f, t).
-reaches_stop(f, via, t) :- call_edge(f, g), reaches_stop(g, via, t).
+stop_reach.seed(f, f) :- stops_process(f, _).
 
 .decl callback_stops_sibling(mod: symbol, sibling: symbol, via: symbol, sup: symbol)
 .output callback_stops_sibling
@@ -285,7 +276,8 @@ reaches_stop(f, via, t) :- call_edge(f, g), reaches_stop(g, via, t).
 // The stop names the sibling module.
 callback_stops_sibling(mod, sib, via, sup) :-
   handler_function(mod, h),
-  reaches_stop(h, via, sib),
+  stop_reach.reaches(h, via),
+  stops_process(via, sib),
   supervisor_child(sup, _, mod, _, _),
   supervisor_child(sup, _, sib, _, _),
   sib != mod.
@@ -293,7 +285,7 @@ callback_stops_sibling(mod, sib, via, sup) :-
 // The stop is the sibling's own API (`Sibling.stop/1`), target unknown.
 callback_stops_sibling(mod, sib, via, sup) :-
   handler_function(mod, h),
-  reaches_stop(h, via, _),
+  stop_reach.reaches(h, via),
   function_def(via, sib, _, _, _),
   supervisor_child(sup, _, mod, _, _),
   supervisor_child(sup, _, sib, _, _),
