@@ -256,8 +256,6 @@ defmodule Argus.Findings do
     case result do
       {:ok, results} ->
         try do
-          results = Analysis.filter_to_outputs(results, name)
-
           for {asked_name, filter} <- asked_views(asked, name) do
             findings = build_findings(mod, asked_name, filter_rows(results, filter, mod))
 
@@ -366,12 +364,18 @@ defmodule Argus.Findings do
   relation become related frames of the finding they join instead of
   findings. Embedders that solve the rules themselves (scry, planchette)
   build through this so their findings equal `run/2`'s field for field.
+
+  Relations the analysis does not declare as outputs (the intermediate
+  relations a solve also writes, such as stage 0's `call_reachable`) are
+  ignored, so the raw result of a solve can be passed as it is.
   """
-  @spec build(module(), %{String.t() => [[String.t()]]}) :: [t()]
-  def build(mod, results), do: build_findings(mod, mod.name(), results)
+  @spec build(module(), %{String.t() => [[String.t()]]}) :: [finding()]
+  def build(mod, results) when is_atom(mod) and is_map(results),
+    do: build_findings(mod, mod.name(), results)
 
   defp build_findings(mod, asked_name, results) do
     relations = Map.new(mod.output_relations(), &{Atom.to_string(&1.name), &1})
+    results = Map.take(results, Map.keys(relations))
     has_builder? = function_exported?(mod, :finding, 2)
     joins = evidence_joins(mod, relations)
     evidence = evidence_frames(mod, relations, results, joins)

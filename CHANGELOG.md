@@ -257,6 +257,12 @@ A retired name's row filter resolved each alias column per row, over
 every loaded module; it resolves once per alias entry, against the
 concern that runs it.
 
+`Findings.build/2` raised `KeyError` on a solve's raw result — any
+relation the analysis does not declare as an output (stage 0's
+`call_reachable`, a rule's intermediates) — and its spec said it
+returned `[Findings.t()]`. It ignores undeclared relations and is
+specced `[finding()]`.
+
 A literal operand was spelled with `inspect/1`, which runs a struct's
 own `Inspect` implementation when its module is loaded — so the same
 beam yielded different `literal_value` rows in a VM that had the

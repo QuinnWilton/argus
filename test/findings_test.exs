@@ -431,6 +431,17 @@ defmodule Argus.FindingsTest do
       assert Enum.map(by_module[Bar].related, & &1.mfa) == [{Bar, :g, 0}]
     end
 
+    test "build/2 ignores relations the analysis does not declare as outputs" do
+      assert [finding] =
+               Findings.build(__MODULE__.CustomEvidence, %{
+                 "finding" => [["Foo"]],
+                 "call_reachable" => [["Foo:f/0", "Foo:g/0"]]
+               })
+
+      assert finding.module == Foo
+      assert finding.concern == :custom_evidence
+    end
+
     test "two evidence relations joining one finding relation is an analysis bug" do
       assert_raise ArgumentError, ~r/:finding has two evidence relations/, fn ->
         Findings.build(__MODULE__.TwoEvidence, %{"finding" => [["Foo"]]})
