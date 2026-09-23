@@ -12,7 +12,7 @@ defmodule Argus.Analyses.StructureRegistryRaceTest do
   defp races(modules) do
     {:ok, results} = Argus.analyze(modules, :structure)
 
-    for [_mod, func, lookup, create, key, _check, _act] <- results["registry_race"],
+    for [_mod, func, lookup, create, _key_source, key, _check, _act] <- results["registry_race"],
         do: {func |> String.split(":") |> List.last(), lookup, create, key}
   end
 
@@ -20,7 +20,7 @@ defmodule Argus.Analyses.StructureRegistryRaceTest do
   defp sites(modules) do
     {:ok, results} = Argus.analyze(modules, :structure)
 
-    for [_mod, func, _lookup, _create, _key, check, act] <- results["registry_race"],
+    for [_mod, func, _lookup, _create, _key_source, _key, check, act] <- results["registry_race"],
         do: {short(func), short(check), short(act)}
   end
 
@@ -141,7 +141,17 @@ defmodule Argus.Analyses.StructureRegistryRaceTest do
 
   describe "finding" do
     test "anchors the start, relates the lookup, and says what to do" do
-      row = ["M", "M:ensure/1", "whereis", "start_link", "0", "M:ensure/1#4", "M:ensure/1#9"]
+      row = [
+        "M",
+        "M:ensure/1",
+        "whereis",
+        "start_link",
+        "param",
+        "0",
+        "M:ensure/1#4",
+        "M:ensure/1#9"
+      ]
+
       f = Structure.finding(:registry_race, row)
       assert f.severity == :warning
       assert f.title =~ "Lookup-then-start"
@@ -151,8 +161,49 @@ defmodule Argus.Analyses.StructureRegistryRaceTest do
       refute f.detail =~ " in M."
     end
 
+    test "says which argument holds the name, not a bare position" do
+      row = [
+        "M",
+        "M:ensure/2",
+        "whereis",
+        "start_link",
+        "param",
+        "1",
+        "M:ensure/2#4",
+        "M:ensure/2#9"
+      ]
+
+      f = Structure.finding(:registry_race, row)
+      assert f.detail =~ "asks whether the name in its second argument is registered"
+
+      for {source, key, said} <- [
+            {"literal", ":cache", "asks whether :cache is registered"},
+            {"field", ":name", "asks whether the name held under :name is registered"},
+            {"local", "M:ensure/2#3", "asks whether the name is registered"},
+            {"dynamic", "", "asks whether the name is registered"}
+          ] do
+        f =
+          Structure.finding(
+            :registry_race,
+            List.replace_at(List.replace_at(row, 4, source), 5, key)
+          )
+
+        assert f.detail =~ said
+      end
+    end
+
     test "names the helpers the lookup and the start sit in" do
-      row = ["M", "M:ensure/1", "whereis", "start_link", "0", "M:lookup/1#4", "M:start/1#9"]
+      row = [
+        "M",
+        "M:ensure/1",
+        "whereis",
+        "start_link",
+        "param",
+        "0",
+        "M:lookup/1#4",
+        "M:start/1#9"
+      ]
+
       f = Structure.finding(:registry_race, row)
 
       assert f.detail =~ "whereis in M.lookup/1"
@@ -161,7 +212,17 @@ defmodule Argus.Analyses.StructureRegistryRaceTest do
     end
 
     test "an unregister is its own race, with its own remedy" do
-      row = ["M", "M:release/1", "whereis", "unregister", "0", "M:release/1#7", "M:release/1#14"]
+      row = [
+        "M",
+        "M:release/1",
+        "whereis",
+        "unregister",
+        "param",
+        "0",
+        "M:release/1#7",
+        "M:release/1#14"
+      ]
+
       f = Structure.finding(:registry_race, row)
 
       assert f.title =~ "Lookup-then-unregister"

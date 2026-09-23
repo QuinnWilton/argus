@@ -22,7 +22,7 @@ defmodule Argus.Analyses.Padl2010RaceTest do
   defp fa(id), do: id |> String.split("#") |> hd() |> String.split(":") |> List.last()
 
   defp registry(modules) do
-    for [_mod, func, lookup, act_api, key, check, act] <-
+    for [_mod, func, lookup, act_api, _key_source, key, check, act] <-
           rows(modules, :structure, "registry_race"),
         do: {fa(func), lookup, act_api, key, fa(check), fa(act)}
   end

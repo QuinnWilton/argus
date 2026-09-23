@@ -90,7 +90,9 @@ defmodule Argus.Analyses.Structure do
           {:lookup_api, :symbol, "whereis | registry_lookup | registered"},
           {:create_api, :symbol,
            "register | start_link | start | start_via | registry_register | start_child | unregister"},
-          {:key, :symbol, "the name, as func identifies it"},
+          {:key_source, :symbol, "literal | param | field | local | dynamic | any"},
+          {:key, :symbol,
+           "the name, as func identifies it: the literal, a parameter's position, a field's key"},
           {:check, :symbol, "instruction ID of the lookup"},
           {:act, :symbol, "instruction ID of the start or registration"}
         ],
@@ -172,11 +174,11 @@ defmodule Argus.Analyses.Structure do
     )
   end
 
-  def finding(:registry_race, [mod, func, lookup_api, "unregister", key, check, act]) do
+  def finding(:registry_race, [mod, func, lookup_api, "unregister", key_source, key, check, act]) do
     Findings.new(
       :warning,
       "Lookup-then-unregister race on a process name",
-      "#{func} asks whether #{describe_key(key)} is registered " <>
+      "#{func} asks whether #{describe_key(key_source, key)} is registered " <>
         "(#{lookup(lookup_api)}#{Findings.elsewhere(check, func)}) and unregisters it" <>
         "#{Findings.elsewhere(act, func)} when the answer is yes. The name can go " <>
         "between the two — its process exits and is unregistered with it, or another " <>
@@ -192,11 +194,11 @@ defmodule Argus.Analyses.Structure do
     )
   end
 
-  def finding(:registry_race, [mod, func, lookup_api, create_api, key, check, act]) do
+  def finding(:registry_race, [mod, func, lookup_api, create_api, key_source, key, check, act]) do
     Findings.new(
       :warning,
       "Lookup-then-start race on a process name",
-      "#{func} asks whether #{describe_key(key)} is registered " <>
+      "#{func} asks whether #{describe_key(key_source, key)} is registered " <>
         "(#{lookup(lookup_api)}#{Findings.elsewhere(check, func)}) and " <>
         "#{create(create_api)}#{Findings.elsewhere(act, func)} when the answer is no. " <>
         "Nothing holds the name between the two: a second caller that asks in the same " <>
@@ -233,12 +235,23 @@ defmodule Argus.Analyses.Structure do
     )
   end
 
-  defp describe_key(""), do: "the name"
+  # The name as the function sees it. A parameter's key is its position,
+  # which reads as a number only to the facts.
+  defp describe_key("literal", key) when key != "", do: key
+  defp describe_key("field", key) when key != "", do: "the name held under #{key}"
 
-  # A name known only by the instruction that computed it.
-  defp describe_key(key) do
-    if String.contains?(key, "#"), do: "the name", else: key
+  defp describe_key("param", position) do
+    case Integer.parse(position) do
+      {n, ""} when n in 0..9 ->
+        ordinal = Enum.at(~w(first second third fourth fifth sixth seventh eighth ninth tenth), n)
+        "the name in its #{ordinal} argument"
+
+      _ ->
+        "the name"
+    end
   end
+
+  defp describe_key(_local_dynamic_or_any, _key), do: "the name"
 
   defp lookup("whereis"), do: "whereis"
   defp lookup("registry_lookup"), do: "Registry.lookup"

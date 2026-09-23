@@ -175,11 +175,11 @@ loser_taken(f, a) :-
 
 create_runs.seed(f) :- names.meets(f, _, _, _, _, _, _).
 
-.decl registry_race(mod: symbol, func: symbol, lookup_api: symbol, create_api: symbol, key: symbol, check: symbol, act: symbol)
+.decl registry_race(mod: symbol, func: symbol, lookup_api: symbol, create_api: symbol, key_source: symbol, key: symbol, check: symbol, act: symbol)
 .output registry_race
 
-registry_race(mod, f, lookup_api, create_api, key, check, act) :-
-  names.meets(f, check, act, _, _, _, key),
+registry_race(mod, f, lookup_api, create_api, key_source, key, check, act) :-
+  names.meets(f, check, act, _, _, key_source, key),
   name_lookup(check, _, lookup_api, _, _, _, checked),
   name_act(act, _, create_api),
   (create_api != "start_child" ; checked = "checked"),

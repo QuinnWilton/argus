@@ -268,6 +268,12 @@ and a closure as "an anonymous function in Mod.fun/2", in the one place
 finding's raw columns are left as they are. Titles that named a
 function change with it.
 
+`structure.registry_race` gains `key_source` (literal, param, field,
+local, dynamic or any) before `key`, and the finding says which name it
+means: "asks whether the name in its first argument is registered" where
+it said "asks whether 0 is registered" — a parameter's position, printed
+as a number, in 11 of the 14 name-race findings across the corpus.
+
 ### Fixed
 
 A transaction body was paired with every repo its function opened a
