@@ -2,7 +2,9 @@ defmodule Argus.PropertyTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
 
+  alias Argus.Extractor.Facts
   alias Argus.Extractor.Helpers
+  alias Argus.Extractor.Resolve
   alias Argus.Pipeline.Normalize
 
   # ── Generators ──────────────────────────────────────────────────────
@@ -150,7 +152,7 @@ defmodule Argus.PropertyTest do
               rows <-
                 list_of(list_of(string(:alphanumeric, min_length: 1), min_length: 1), length: n)
             ) do
-        result = Enum.reduce(rows, %{}, fn row, acc -> Helpers.add_fact(acc, relation, row) end)
+        result = Enum.reduce(rows, %{}, fn row, acc -> Facts.add_fact(acc, relation, row) end)
         assert length(result[relation]) == n
       end
     end
@@ -164,7 +166,7 @@ defmodule Argus.PropertyTest do
                   max_length: 10
                 )
             ) do
-        result = Enum.reduce(rows, %{}, fn row, acc -> Helpers.add_fact(acc, relation, row) end)
+        result = Enum.reduce(rows, %{}, fn row, acc -> Facts.add_fact(acc, relation, row) end)
         assert result[relation] == Enum.reverse(rows)
       end
     end
@@ -180,7 +182,7 @@ defmodule Argus.PropertyTest do
             ) do
         instrs = [{:move, {:atom, atom_val}, reg}, :return]
         # Resolve at index 1 (the return), looking for reg.
-        assert {:ok, ^atom_val} = Helpers.resolve_register(instrs, 1, reg)
+        assert {:ok, ^atom_val} = Resolve.resolve_register(instrs, 1, reg)
       end
     end
 
@@ -190,7 +192,7 @@ defmodule Argus.PropertyTest do
               reg <- register()
             ) do
         instrs = [{:move, {:integer, int_val}, reg}, :return]
-        assert {:ok, ^int_val} = Helpers.resolve_register(instrs, 1, reg)
+        assert {:ok, ^int_val} = Resolve.resolve_register(instrs, 1, reg)
       end
     end
 
@@ -198,7 +200,7 @@ defmodule Argus.PropertyTest do
       check all(target <- register()) do
         # Only a label and return — no moves.
         instrs = [{:label, 1}, :return]
-        assert :dynamic = Helpers.resolve_register(instrs, 1, target)
+        assert :dynamic = Resolve.resolve_register(instrs, 1, target)
       end
     end
   end

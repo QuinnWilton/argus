@@ -119,6 +119,18 @@ each module's rows in the worker that extracted them, where it decoded
 the merged facts in the caller afterwards: the Phoenix stack's typed
 facts take 3.8 s where they took 14 s. The rows are the same.
 
+**Changed.** `Argus.Extractor.Helpers` is split by concern, each
+concern its own module (**Added**): `Argus.Extractor.Facts` (the rows
+an extractor emits and the imprecision it records),
+`Argus.Extractor.Resolve` (what a register holds, read back through the
+writes that reach it, `trace/5` included), `Argus.Extractor.Identity`
+(what names that value), `Argus.Extractor.Terms` (spelling and walking a
+literal) and `Argus.Extractor.Shapes` (the tuples a function returns).
+Helpers keeps what every extractor reads a module through: the call
+sites and scans, the call matchers, the attributes, and the module
+data's accessors. The moved functions still answer in Helpers, and are
+deprecated there.
+
 **Removed.** Schema 60. `move`, `allocate`, `deallocate`, `try_end` and
 `module_attribute`: no Datalog rule and no in-process pass read them (the
 walks read the instructions; the extractors that need an attribute read

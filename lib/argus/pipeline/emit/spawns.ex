@@ -32,7 +32,8 @@ defmodule Argus.Pipeline.Emit.Spawns do
   """
 
   alias Argus.Extractor.Helpers
-
+  alias Argus.Extractor.Resolve
+  alias Argus.Extractor.Terms
   @typep form :: {:fun, non_neg_integer()} | {:mfa, non_neg_integer()}
   @typep tie :: :spawn | :spawn_link | :spawn_monitor | {:opts, non_neg_integer()}
 
@@ -119,7 +120,7 @@ defmodule Argus.Pipeline.Emit.Spawns do
 
   # {source, mod, func, arity, param}.
   defp runs(instrs, idx, {:fun, n}) do
-    case Helpers.fun_origin(instrs, idx, {:x, n}) do
+    case Resolve.fun_origin(instrs, idx, {:x, n}) do
       {:closure, {mod, fun, arity}} -> {"closure", inspect(mod), to_string(fun), arity, -1}
       {:external, {mod, fun, arity}} -> {"fun", inspect(mod), to_string(fun), arity, -1}
       {:param, k} -> {"param", "dynamic", "dynamic", -1, k}
@@ -133,7 +134,7 @@ defmodule Argus.Pipeline.Emit.Spawns do
 
     case {mod, fun} do
       {{:ok, mod}, {:ok, fun}} ->
-        arity = Helpers.list_length(instrs, idx, {:x, n + 2}) || -1
+        arity = Resolve.list_length(instrs, idx, {:x, n + 2}) || -1
         {"mfa", inspect(mod), to_string(fun), arity, -1}
 
       _ ->
@@ -142,7 +143,7 @@ defmodule Argus.Pipeline.Emit.Spawns do
   end
 
   defp literal_atom(instrs, idx, n) do
-    case Helpers.resolve_register(instrs, idx, {:x, n}) do
+    case Resolve.resolve_register(instrs, idx, {:x, n}) do
       {:ok, atom} when is_atom(atom) and atom != :dynamic -> {:ok, atom}
       _ -> :error
     end
@@ -154,9 +155,9 @@ defmodule Argus.Pipeline.Emit.Spawns do
   defp variant(_instrs, _idx, tie) when is_atom(tie), do: to_string(tie)
 
   defp variant(instrs, idx, {:opts, n}) do
-    case Helpers.resolve_register(instrs, idx, {:x, n}) do
+    case Resolve.resolve_register(instrs, idx, {:x, n}) do
       {:ok, opts} when is_list(opts) ->
-        if Helpers.proper_list?(opts), do: tie_of(opts), else: "spawn_opt"
+        if Terms.proper_list?(opts), do: tie_of(opts), else: "spawn_opt"
 
       _ ->
         "spawn_opt"

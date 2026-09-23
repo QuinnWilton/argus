@@ -63,11 +63,13 @@ defmodule Argus.Extractors.Reply do
   alias Argus.Cfg
   alias Argus.Cfg.Walk
   alias Argus.Extractor.Dispatch
-  alias Argus.Extractor.Helpers
+  alias Argus.Extractor.Terms
   alias Argus.Instr
   alias Argus.InstrId
 
-  import Argus.Extractor.Helpers, only: [add_fact: 3, cfg: 3, return_shapes: 1]
+  import Argus.Extractor.Helpers, only: [cfg: 3]
+  import Argus.Extractor.Facts, only: [add_fact: 3]
+  import Argus.Extractor.Shapes, only: [return_shapes: 1]
 
   # Callbacks whose return shape is a contract worth recording. Bounded on
   # purpose: return tags are only meaningful where a behaviour ascribes
@@ -225,6 +227,6 @@ defmodule Argus.Extractors.Reply do
   # counts as a read.
   defp references_from?(instr) do
     @from_register in Instr.uses(instr) or
-      Helpers.mentions?(instr, &(&1 == @from_register))
+      Terms.mentions?(instr, &(&1 == @from_register))
   end
 end

@@ -14,7 +14,7 @@ defmodule Argus.Extractors.ETS do
   - `ets_op_param(id, pos)` — the table operand of that operation is the
     function's own parameter `pos`, so a caller's literal names the table
   - `ets_key(id, source, key)` — what identifies the key operand of an
-    operation (`Helpers.key_identity/3`); for `insert`/`insert_new` the
+    operation (`Argus.Extractor.Identity.key_identity/4`); for `insert`/`insert_new` the
     key is the first element of the object tuple
   - `ets_tid_arg(caller, callee, arg_pos, name)` — at some call in
     `caller`, or in the environment of a closure it builds, the argument is
@@ -28,21 +28,17 @@ defmodule Argus.Extractors.ETS do
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
-  import Argus.Extractor.Helpers,
+  import Argus.Extractor.Helpers, only: [each_remote_call: 3, match_remote_call: 1, register: 1]
+  import Argus.Extractor.Facts, only: [add_fact: 3, track_dynamic: 5, track_imprecision: 5]
+  import Argus.Extractor.Identity, only: [key_identity: 4, tuple_element_identity: 5]
+
+  import Argus.Extractor.Resolve,
     only: [
-      add_fact: 3,
       call_result_origin: 3,
       resolve_to_arg_or_atom: 3,
-      each_remote_call: 3,
-      key_identity: 4,
       map_field_of: 3,
-      match_remote_call: 1,
-      register: 1,
       resolve_atom: 3,
-      resolve_register: 3,
-      track_dynamic: 5,
-      track_imprecision: 5,
-      tuple_element_identity: 5
+      resolve_register: 3
     ]
 
   @read_ops ~w(lookup lookup_element match match_object select member
@@ -76,7 +72,7 @@ defmodule Argus.Extractors.ETS do
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
-    index = Argus.Extractor.Helpers.origins_index(module_data)
+    index = Argus.Extractor.Identity.origins_index(module_data)
     fields = table_fields(module_data)
 
     module_data
@@ -215,7 +211,7 @@ defmodule Argus.Extractors.ETS do
 
   # %{field => table name}: the map fields this module stores a table
   # under — `%{state | table: :ets.new(:cache, ...)}`, `%State{table: t}`,
-  # `Map.put(state, :table, t)` — keyed as `Helpers.map_field_of/3` spells
+  # `Map.put(state, :table, t)` — keyed as `Argus.Extractor.Resolve.map_field_of/3` spells
   # them. A field that holds two tables in the module names neither.
   defp table_fields(module_data) do
     stores =

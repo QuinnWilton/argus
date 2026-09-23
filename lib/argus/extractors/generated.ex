@@ -24,7 +24,7 @@ defmodule Argus.Extractors.Generated do
 
   @behaviour Argus.Extractor
 
-  import Argus.Extractor.Helpers, only: [add_fact: 3]
+  import Argus.Extractor.Facts, only: [add_fact: 3]
 
   alias Argus.Extractor.Helpers
 

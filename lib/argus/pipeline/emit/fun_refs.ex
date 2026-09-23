@@ -11,7 +11,7 @@ defmodule Argus.Pipeline.Emit.FunRefs do
 
   A fun is an external fun (`&Mod.f/1`, a literal) or the result of
   `erlang:make_fun/3` of literals, followed through copies to an
-  argument register (`Helpers.fun_origin/3`). A call does not count when
+  argument register (`Resolve.fun_origin/3`). A call does not count when
   its result carries that argument (`Argus.Extractors.ParamFlow.
   Propagators`): `Keyword.get(opts, :on_fail, &Defaults.on_fail/2)` hands
   the fun back to be stored, and the function that stores a callback
@@ -24,6 +24,7 @@ defmodule Argus.Pipeline.Emit.FunRefs do
   """
 
   alias Argus.Extractor.Helpers
+  alias Argus.Extractor.Resolve
   alias Argus.Extractors.ParamFlow.Propagators
   alias Argus.InstrId
 
@@ -56,7 +57,7 @@ defmodule Argus.Pipeline.Emit.FunRefs do
       {:ok, {mod, fun, arity}, carried} ->
         for pos <- 0..(arity - 1)//1,
             pos not in carried,
-            {kind, {m, f, a}} <- [Helpers.fun_origin(instrs, idx, {:x, pos})],
+            {kind, {m, f, a}} <- [Resolve.fun_origin(instrs, idx, {:x, pos})],
             kind == :external,
             not (m == mod and f == fun and a == arity),
             do: InstrId.func_id(m, f, a)

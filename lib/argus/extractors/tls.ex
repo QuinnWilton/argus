@@ -43,8 +43,9 @@ defmodule Argus.Extractors.Tls do
 
   alias Argus.InstrId
 
-  import Argus.Extractor.Helpers,
-    only: [add_fact: 3, match_remote_call: 1, mentions?: 2, proper_list?: 1, value_contains?: 2]
+  import Argus.Extractor.Helpers, only: [match_remote_call: 1]
+  import Argus.Extractor.Facts, only: [add_fact: 3]
+  import Argus.Extractor.Terms, only: [mentions?: 2, proper_list?: 1, value_contains?: 2]
 
   # Calls that establish a TLS session and take an option list. The arity
   # here is the position of the options argument, zero-based.

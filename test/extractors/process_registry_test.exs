@@ -188,7 +188,7 @@ defmodule Argus.Extractors.ProcessRegistryTest do
       # Inspecting it would forge a ":dynamic" name that evades every
       # `!= "dynamic"` filter in the Datalog rules (seen as bogus
       # coverage_named_process_unreachable rows on phoenix_pubsub).
-      Argus.Extractor.Helpers.enable_tracing()
+      Argus.Extractor.Facts.enable_tracing()
       facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.DynamicNameServer))
 
       for [_mod, name] <- Map.get(facts, :named_process, []) do

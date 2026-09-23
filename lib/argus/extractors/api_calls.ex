@@ -34,17 +34,11 @@ defmodule Argus.Extractors.ApiCalls do
 
   alias Argus.InstrId
 
-  import Argus.Extractor.Helpers,
-    only: [
-      add_fact: 3,
-      each_remote_call: 3,
-      module_target: 3,
-      resolve_atom: 3,
-      resolve_register: 3,
-      timeout_ms: 3,
-      track_dynamic: 5,
-      track_imprecision: 4
-    ]
+  import Argus.Extractor.Helpers, only: [each_remote_call: 3]
+  import Argus.Extractor.Facts, only: [add_fact: 3, track_dynamic: 5, track_imprecision: 4]
+
+  import Argus.Extractor.Resolve,
+    only: [module_target: 3, resolve_atom: 3, resolve_register: 3, timeout_ms: 3]
 
   # ── The table ──────────────────────────────────────────────────────────
 

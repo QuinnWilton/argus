@@ -24,6 +24,7 @@ defmodule Argus.Pipeline do
   """
 
   alias Argus.Cfg
+  alias Argus.Extractor.Facts
   alias Argus.Extractor.Helpers
   alias Argus.Instr.Reaching
   alias Argus.InstrId
@@ -235,7 +236,7 @@ defmodule Argus.Pipeline do
   # try/after guarantees the flag is cleared before the worker returns
   # to the async pool.
   defp extract_module(path, extractors, trace_imprecision, shape, memo) do
-    if trace_imprecision, do: Helpers.enable_tracing()
+    if trace_imprecision, do: Facts.enable_tracing()
 
     try do
       with {:ok, facts} <- module_facts(path, extractors, memo) do
@@ -249,7 +250,7 @@ defmodule Argus.Pipeline do
     catch
       kind, reason -> {:ok, shape.(lost_module(path, describe(kind, reason, __STACKTRACE__)))}
     after
-      if trace_imprecision, do: Helpers.disable_tracing()
+      if trace_imprecision, do: Facts.disable_tracing()
     end
   end
 
@@ -290,7 +291,7 @@ defmodule Argus.Pipeline do
           cfg: cfgs,
           typed: typed,
           reaching: reaching,
-          origins_index: Argus.Extractor.Helpers.origins_index(%{reaching: reaching}),
+          origins_index: Argus.Extractor.Identity.origins_index(%{reaching: reaching}),
           installed_specs: memo
         })
         |> with_debug_info(extractors)

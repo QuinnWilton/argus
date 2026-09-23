@@ -27,7 +27,9 @@ defmodule Argus.Extractors.Purity do
   alias Argus.Purity.Effects
 
   import Argus.Extractor.Helpers,
-    only: [add_fact: 3, attribute_values: 2, each_remote_call: 3, scan_functions: 4]
+    only: [attribute_values: 2, each_remote_call: 3, scan_functions: 4]
+
+  import Argus.Extractor.Facts, only: [add_fact: 3]
 
   @impl true
   def relations,

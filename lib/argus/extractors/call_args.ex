@@ -7,7 +7,7 @@ defmodule Argus.Extractors.CallArgs do
 
   - `call_arg(caller, callee, arg_pos, value)` when the argument
     resolves to a literal atom, binary or integer, spelled as
-    `Helpers.key_identity/4` spells it (`":my_pool"`, `"\"users\""`,
+    `Argus.Extractor.Identity.key_identity/4` spells it (`":my_pool"`, `"\"users\""`,
     `"42"`), or to `"dynamic"` when resolution fails entirely.
   - `call_arg_forward(caller, callee, arg_pos, fwd_pos)` when the
     argument IS the caller's own parameter, forwarded through.
@@ -30,14 +30,10 @@ defmodule Argus.Extractors.CallArgs do
 
   @behaviour Argus.Extractor
 
-  import Argus.Extractor.Helpers,
-    only: [
-      add_fact: 3,
-      each_call: 3,
-      key_identity: 3,
-      map_field_of: 3,
-      resolve_to_arg_or_atom: 3
-    ]
+  import Argus.Extractor.Helpers, only: [each_call: 3]
+  import Argus.Extractor.Facts, only: [add_fact: 3]
+  import Argus.Extractor.Identity, only: [key_identity: 3]
+  import Argus.Extractor.Resolve, only: [map_field_of: 3, resolve_to_arg_or_atom: 3]
 
   alias Argus.Pipeline.Normalize
 

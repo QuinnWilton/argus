@@ -76,7 +76,7 @@ defmodule Argus.Extractors.CallArgsTest do
       assert Enum.sort(values) == [~s("users"), "42"]
 
       {"literal", spelled} =
-        Argus.Extractor.Helpers.key_identity([{:move, {:literal, "users"}, {:x, 1}}], 1, {:x, 1})
+        Argus.Extractor.Identity.key_identity([{:move, {:literal, "users"}, {:x, 1}}], 1, {:x, 1})
 
       assert spelled in values
     end

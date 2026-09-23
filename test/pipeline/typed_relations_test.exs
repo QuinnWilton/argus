@@ -9,7 +9,7 @@ defmodule Argus.Pipeline.TypedRelationsTest do
   use ExUnit.Case, async: true
 
   alias Argus.Extractor.CallSites
-  alias Argus.Extractor.Helpers
+  alias Argus.Extractor.Identity
   alias Argus.Pipeline
   alias Argus.Pipeline.{Disassemble, Emit}
 
@@ -63,7 +63,7 @@ defmodule Argus.Pipeline.TypedRelationsTest do
       cfg: Argus.Cfg.build(typed),
       typed: typed,
       reaching: reaching,
-      origins_index: Helpers.origins_index(%{reaching: reaching})
+      origins_index: Identity.origins_index(%{reaching: reaching})
     })
   end
 end

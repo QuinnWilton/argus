@@ -26,7 +26,8 @@ defmodule Argus.Extractors.Router do
 
   @behaviour Argus.Extractor
 
-  import Argus.Extractor.Helpers, only: [add_fact: 3, list_elements: 1, spell: 1]
+  import Argus.Extractor.Facts, only: [add_fact: 3]
+  import Argus.Extractor.Terms, only: [list_elements: 1, spell: 1]
 
   @impl true
   def relations,

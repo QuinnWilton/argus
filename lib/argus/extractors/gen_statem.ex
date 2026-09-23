@@ -42,17 +42,11 @@ defmodule Argus.Extractors.GenStatem do
   alias Argus.InstrId
 
   import Argus.Extractor.Helpers,
-    only: [
-      add_fact: 3,
-      cfg: 3,
-      find_function: 3,
-      get_behaviours: 1,
-      instructions_from_label: 2,
-      list_elements: 1,
-      return_shapes: 1,
-      track_dynamic: 5,
-      track_imprecision: 5
-    ]
+    only: [cfg: 3, find_function: 3, get_behaviours: 1, instructions_from_label: 2]
+
+  import Argus.Extractor.Facts, only: [add_fact: 3, track_dynamic: 5, track_imprecision: 5]
+  import Argus.Extractor.Shapes, only: [return_shapes: 1]
+  import Argus.Extractor.Terms, only: [list_elements: 1]
 
   alias Argus.Pipeline.Normalize
 

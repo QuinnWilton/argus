@@ -30,7 +30,8 @@ defmodule Argus.Extractors.EctoSchema do
 
   @behaviour Argus.Extractor
 
-  import Argus.Extractor.Helpers, only: [add_fact: 3, list_elements: 1]
+  import Argus.Extractor.Facts, only: [add_fact: 3]
+  import Argus.Extractor.Terms, only: [list_elements: 1]
 
   @keys %{fields: :schema_field, redact_fields: :redacted_field}
 

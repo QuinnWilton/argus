@@ -14,13 +14,14 @@ defmodule Argus.Pipeline.Emit.Applies do
     * `erlang:apply/3` (argument list of unknown shape): the module and
       function in `x0` and `x1`, the arity the list's cons cells show;
     * `erlang:apply/2`: the function a fun runs, when `x0` holds a
-      closure or a literal external fun (`Helpers.fun_origin/3`).
+      closure or a literal external fun (`Resolve.fun_origin/3`).
 
   A resolved apply is a call: the call graph follows it, and the effect
   model classifies its target instead of reporting the apply opaque.
   """
 
   alias Argus.Extractor.Helpers
+  alias Argus.Extractor.Resolve
   alias Argus.InstrId
 
   @doc """
@@ -35,13 +36,13 @@ defmodule Argus.Pipeline.Emit.Applies do
   def resolve(instrs, idx, instr) do
     case Helpers.match_remote_call(instr) do
       {:ok, :erlang, :apply, 3} ->
-        case Helpers.list_length(instrs, idx, {:x, 2}) do
+        case Resolve.list_length(instrs, idx, {:x, 2}) do
           n when is_integer(n) -> module_function(instrs, idx, 0, n)
           nil -> :error
         end
 
       {:ok, :erlang, :apply, 2} ->
-        case Helpers.fun_target(instrs, idx, {:x, 0}) do
+        case Resolve.fun_target(instrs, idx, {:x, 0}) do
           {_mod, _fun, _arity} = mfa -> {:ok, mfa}
           nil -> :error
         end
@@ -72,9 +73,9 @@ defmodule Argus.Pipeline.Emit.Applies do
   # The module in x(first) and the function in x(first + 1).
   defp module_function(instrs, idx, first, arity) do
     with {:ok, mod} when is_atom(mod) and mod != :dynamic <-
-           Helpers.resolve_register(instrs, idx, {:x, first}),
+           Resolve.resolve_register(instrs, idx, {:x, first}),
          {:ok, fun} when is_atom(fun) and fun != :dynamic <-
-           Helpers.resolve_register(instrs, idx, {:x, first + 1}) do
+           Resolve.resolve_register(instrs, idx, {:x, first + 1}) do
       {:ok, {mod, fun, arity}}
     else
       _ -> :error

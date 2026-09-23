@@ -13,7 +13,7 @@ defmodule Argus.Extractors.Mnesia do
   - `mnesia_op(id, func, op, kind, table_source, table, key_source, key)`
     — a dirty read (`dirty_read`) or write (`dirty_write`, `dirty_delete`,
     `dirty_delete_object`), with the table and the key it touches in the
-    vocabulary of `Helpers.key_identity/3`. The one-argument forms carry
+    vocabulary of `Identity.key_identity/3`. The one-argument forms carry
     both in a tuple: `dirty_read({table, key})`, `dirty_delete({table,
     key})`, and a record whose first element is its table and whose
     second is its key.
@@ -24,12 +24,11 @@ defmodule Argus.Extractors.Mnesia do
 
   @behaviour Argus.Extractor
 
+  alias Argus.Extractor.Identity
   alias Argus.InstrId
-
-  alias Argus.Extractor.Helpers
-
-  import Argus.Extractor.Helpers,
-    only: [add_fact: 3, each_remote_call: 3, key_identity: 4, tuple_element_identity: 5]
+  import Argus.Extractor.Helpers, only: [each_remote_call: 3]
+  import Argus.Extractor.Facts, only: [add_fact: 3]
+  import Argus.Extractor.Identity, only: [key_identity: 4, tuple_element_identity: 5]
 
   # {op, arity} => {kind, where the table is, where the key is}, each an
   # argument register or {register, element}.
@@ -55,7 +54,7 @@ defmodule Argus.Extractors.Mnesia do
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
-    index = Helpers.origins_index(module_data)
+    index = Identity.origins_index(module_data)
 
     each_remote_call(module_data, %{}, fn facts, ctx, mfa ->
       handle_call(facts, Map.put(ctx, :origins, {index, ctx.func_id}), mfa)

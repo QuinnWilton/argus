@@ -22,7 +22,7 @@ defmodule Argus.Extractors.ProcessRegistry do
     `Registry.lookup/2` (`api` `registry_lookup`, `scope` the registry)
     and `Process.registered/0`, `:erlang.registered/0` (`api`
     `registered`, `source` `any`: every name at once); `source`/`key`
-    identify the name in the vocabulary of `Helpers.key_identity/3`;
+    identify the name in the vocabulary of `Argus.Extractor.Identity.key_identity/4`;
     `checked` says whether the result is tested against nil (or `[]`)
     before use
   - `creating_op(id, func, api, scope, source, key)` — a call that claims
@@ -47,18 +47,14 @@ defmodule Argus.Extractors.ProcessRegistry do
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
-  import Argus.Extractor.Helpers,
-    only: [
-      add_fact: 3,
-      each_remote_call: 3,
-      key_identity: 4,
-      keyword_value_register: 4,
-      resolve_atom: 3,
-      resolve_register: 3,
-      spell: 1,
-      track_dynamic: 5,
-      track_imprecision: 5
-    ]
+  import Argus.Extractor.Helpers, only: [each_remote_call: 3]
+  import Argus.Extractor.Facts, only: [add_fact: 3, track_dynamic: 5, track_imprecision: 5]
+  import Argus.Extractor.Identity, only: [key_identity: 4]
+
+  import Argus.Extractor.Resolve,
+    only: [keyword_value_register: 4, resolve_atom: 3, resolve_register: 3]
+
+  import Argus.Extractor.Terms, only: [spell: 1]
 
   @impl true
   def relations,
@@ -120,7 +116,7 @@ defmodule Argus.Extractors.ProcessRegistry do
   def extract(module_data) do
     mod_str = inspect(module_data.module)
 
-    index = Argus.Extractor.Helpers.origins_index(module_data)
+    index = Argus.Extractor.Identity.origins_index(module_data)
 
     module_data
     |> each_remote_call(%{}, fn facts, ctx, mfa ->

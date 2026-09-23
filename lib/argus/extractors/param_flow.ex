@@ -58,7 +58,8 @@ defmodule Argus.Extractors.ParamFlow do
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
-  import Argus.Extractor.Helpers, only: [add_fact: 3, register: 1]
+  import Argus.Extractor.Helpers, only: [register: 1]
+  import Argus.Extractor.Facts, only: [add_fact: 3]
 
   @max_args 4
 

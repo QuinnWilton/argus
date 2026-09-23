@@ -1,24 +1,28 @@
 defmodule Argus.Extractor.HelpersTest do
   use ExUnit.Case, async: true
 
+  alias Argus.Extractor.Facts
   alias Argus.Extractor.Helpers
+  alias Argus.Extractor.Identity
+  alias Argus.Extractor.Resolve
+  alias Argus.Extractor.Terms
 
   describe "add_fact/3" do
     test "adds row to empty facts map" do
-      assert Helpers.add_fact(%{}, :my_rel, ["a", "b"]) == %{my_rel: [["a", "b"]]}
+      assert Facts.add_fact(%{}, :my_rel, ["a", "b"]) == %{my_rel: [["a", "b"]]}
     end
 
     test "prepends row to existing relation" do
       facts = %{my_rel: [["x", "y"]]}
-      result = Helpers.add_fact(facts, :my_rel, ["a", "b"])
+      result = Facts.add_fact(facts, :my_rel, ["a", "b"])
       assert result == %{my_rel: [["a", "b"], ["x", "y"]]}
     end
 
     test "adds to separate relations independently" do
       facts =
         %{}
-        |> Helpers.add_fact(:rel_a, ["1"])
-        |> Helpers.add_fact(:rel_b, ["2"])
+        |> Facts.add_fact(:rel_a, ["1"])
+        |> Facts.add_fact(:rel_b, ["2"])
 
       assert facts == %{rel_a: [["1"]], rel_b: [["2"]]}
     end
@@ -31,42 +35,42 @@ defmodule Argus.Extractor.HelpersTest do
     @ctx %{func_id: "MyMod:my_func/1", instrs: [], idx: 0}
 
     test "tracing is disabled by default" do
-      refute Helpers.tracing_enabled?()
+      refute Facts.tracing_enabled?()
     end
 
     test "enable_tracing flips the flag for the current process only" do
-      Helpers.enable_tracing()
-      assert Helpers.tracing_enabled?()
+      Facts.enable_tracing()
+      assert Facts.tracing_enabled?()
 
       # Spawn another process and confirm it doesn't see this process's flag.
       parent = self()
 
       spawn(fn ->
-        send(parent, {:other, Helpers.tracing_enabled?()})
+        send(parent, {:other, Facts.tracing_enabled?()})
       end)
 
       assert_receive {:other, false}, 1000
     end
 
     test "disable_tracing clears the flag" do
-      Helpers.enable_tracing()
-      assert Helpers.tracing_enabled?()
+      Facts.enable_tracing()
+      assert Facts.tracing_enabled?()
 
-      Helpers.disable_tracing()
-      refute Helpers.tracing_enabled?()
+      Facts.disable_tracing()
+      refute Facts.tracing_enabled?()
     end
 
     test "track_imprecision is a no-op when tracing is disabled" do
       facts = %{existing: [["row"]]}
-      result = Helpers.track_imprecision(facts, @ctx, :test_category, :test_relation)
+      result = Facts.track_imprecision(facts, @ctx, :test_category, :test_relation)
       assert result == facts
       refute Map.has_key?(result, :imprecision)
     end
 
     test "track_imprecision emits a fact when tracing is enabled" do
-      Helpers.enable_tracing()
+      Facts.enable_tracing()
 
-      result = Helpers.track_imprecision(%{}, @ctx, :test_category, :test_relation, :dynamic)
+      result = Facts.track_imprecision(%{}, @ctx, :test_category, :test_relation, :dynamic)
 
       assert result == %{
                imprecision: [
@@ -76,10 +80,10 @@ defmodule Argus.Extractor.HelpersTest do
     end
 
     test "track_imprecision uses the explicit reason argument" do
-      Helpers.enable_tracing()
+      Facts.enable_tracing()
 
       result =
-        Helpers.track_imprecision(%{}, @ctx, :supervisor_child, :supervisor_child, :skipped)
+        Facts.track_imprecision(%{}, @ctx, :supervisor_child, :supervisor_child, :skipped)
 
       assert result == %{
                imprecision: [
@@ -89,17 +93,17 @@ defmodule Argus.Extractor.HelpersTest do
     end
 
     test "track_dynamic is a no-op on concrete values even when tracing is enabled" do
-      Helpers.enable_tracing()
+      Facts.enable_tracing()
 
-      assert Helpers.track_dynamic(%{}, "MyServer", @ctx, :genserver_callee, :sync_call) == %{}
-      assert Helpers.track_dynamic(%{}, ":foo", @ctx, :ets_table_name, :ets_new) == %{}
-      assert Helpers.track_dynamic(%{}, {:arg, 0}, @ctx, :delayed_target, :delayed_message) == %{}
+      assert Facts.track_dynamic(%{}, "MyServer", @ctx, :genserver_callee, :sync_call) == %{}
+      assert Facts.track_dynamic(%{}, ":foo", @ctx, :ets_table_name, :ets_new) == %{}
+      assert Facts.track_dynamic(%{}, {:arg, 0}, @ctx, :delayed_target, :delayed_message) == %{}
     end
 
     test "track_dynamic emits a fact for the string \"dynamic\"" do
-      Helpers.enable_tracing()
+      Facts.enable_tracing()
 
-      result = Helpers.track_dynamic(%{}, "dynamic", @ctx, :genserver_callee, :sync_call)
+      result = Facts.track_dynamic(%{}, "dynamic", @ctx, :genserver_callee, :sync_call)
 
       assert result == %{
                imprecision: [
@@ -109,9 +113,9 @@ defmodule Argus.Extractor.HelpersTest do
     end
 
     test "track_dynamic emits a fact for the atom :dynamic" do
-      Helpers.enable_tracing()
+      Facts.enable_tracing()
 
-      result = Helpers.track_dynamic(%{}, :dynamic, @ctx, :genserver_callee, :sync_call)
+      result = Facts.track_dynamic(%{}, :dynamic, @ctx, :genserver_callee, :sync_call)
 
       assert result.imprecision == [
                ["genserver_callee", "MyMod:my_func/1", "sync_call", "dynamic"]
@@ -119,18 +123,18 @@ defmodule Argus.Extractor.HelpersTest do
     end
 
     test "track_dynamic is a no-op when tracing is disabled even for dynamic values" do
-      result = Helpers.track_dynamic(%{}, "dynamic", @ctx, :genserver_callee, :sync_call)
+      result = Facts.track_dynamic(%{}, "dynamic", @ctx, :genserver_callee, :sync_call)
       assert result == %{}
     end
 
     test "multiple track_dynamic calls accumulate" do
-      Helpers.enable_tracing()
+      Facts.enable_tracing()
 
       facts =
         %{}
-        |> Helpers.track_dynamic("dynamic", @ctx, :cat_a, :rel_a)
-        |> Helpers.track_dynamic("dynamic", @ctx, :cat_b, :rel_b)
-        |> Helpers.track_dynamic("MyServer", @ctx, :cat_c, :rel_c)
+        |> Facts.track_dynamic("dynamic", @ctx, :cat_a, :rel_a)
+        |> Facts.track_dynamic("dynamic", @ctx, :cat_b, :rel_b)
+        |> Facts.track_dynamic("MyServer", @ctx, :cat_c, :rel_c)
 
       # Two events for the dynamic categories, one no-op for the concrete one.
       assert length(facts.imprecision) == 2
@@ -227,7 +231,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :atom_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 1, {:x, 0}) == {:ok, :foo}
+      assert Resolve.resolve_register(instrs, 1, {:x, 0}) == {:ok, :foo}
     end
 
     test "resolves literal move" do
@@ -236,7 +240,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 2, {:extfunc, :ets, :new, 2}}
       ]
 
-      assert Helpers.resolve_register(instrs, 1, {:x, 1}) == {:ok, [1, 2, 3]}
+      assert Resolve.resolve_register(instrs, 1, {:x, 1}) == {:ok, [1, 2, 3]}
     end
 
     test "resolves integer move" do
@@ -245,7 +249,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :integer_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 1, {:x, 0}) == {:ok, 42}
+      assert Resolve.resolve_register(instrs, 1, {:x, 0}) == {:ok, 42}
     end
 
     test "resolves register-to-register move" do
@@ -255,7 +259,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :atom_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 2, {:x, 0}) == {:ok, :bar}
+      assert Resolve.resolve_register(instrs, 2, {:x, 0}) == {:ok, :bar}
     end
 
     test "resolves put_list chain building a list" do
@@ -268,7 +272,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :length, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 3, {:x, 0}) == {:ok, [:a, :b, :c]}
+      assert Resolve.resolve_register(instrs, 3, {:x, 0}) == {:ok, [:a, :b, :c]}
     end
 
     test "resolves put_list with literal tail" do
@@ -277,7 +281,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :length, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 1, {:x, 0}) == {:ok, [:first, :second, :third]}
+      assert Resolve.resolve_register(instrs, 1, {:x, 0}) == {:ok, [:first, :second, :third]}
     end
 
     test "resolves put_tuple2" do
@@ -286,7 +290,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :tuple_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 1, {:x, 0}) == {:ok, {:heir, :none}}
+      assert Resolve.resolve_register(instrs, 1, {:x, 0}) == {:ok, {:heir, :none}}
     end
 
     test "resolves nested put_tuple2 in put_list" do
@@ -297,7 +301,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 2, {:extfunc, :ets, :new, 2}}
       ]
 
-      assert Helpers.resolve_register(instrs, 2, {:x, 0}) == {:ok, [{:heir, :none}]}
+      assert Resolve.resolve_register(instrs, 2, {:x, 0}) == {:ok, [{:heir, :none}]}
     end
 
     test "resolves typed register destination" do
@@ -306,7 +310,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :atom_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 1, {:x, 0}) == {:ok, :hello}
+      assert Resolve.resolve_register(instrs, 1, {:x, 0}) == {:ok, :hello}
     end
 
     test "returns :dynamic for bif result" do
@@ -315,7 +319,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :pid_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 1, {:x, 0}) == :dynamic
+      assert Resolve.resolve_register(instrs, 1, {:x, 0}) == :dynamic
     end
 
     test "returns :dynamic for unresolvable register" do
@@ -324,7 +328,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :atom_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 1, {:x, 0}) == :dynamic
+      assert Resolve.resolve_register(instrs, 1, {:x, 0}) == :dynamic
     end
 
     test "resolves y-register" do
@@ -334,7 +338,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :atom_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 2, {:x, 0}) == {:ok, :saved}
+      assert Resolve.resolve_register(instrs, 2, {:x, 0}) == {:ok, :saved}
     end
 
     test "resolves put_map_assoc from literal base" do
@@ -345,7 +349,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 2, {:extfunc, Supervisor, :init, 2}}
       ]
 
-      assert Helpers.resolve_register(instrs, 1, {:x, 0}) ==
+      assert Resolve.resolve_register(instrs, 1, {:x, 0}) ==
                {:ok, %{strategy: :one_for_one}}
     end
 
@@ -357,7 +361,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :map_size, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 1, {:x, 0}) == {:ok, %{a: 2}}
+      assert Resolve.resolve_register(instrs, 1, {:x, 0}) == {:ok, %{a: 2}}
     end
 
     test "resolves put_map_assoc with multiple pairs" do
@@ -367,7 +371,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 2, {:extfunc, Supervisor, :init, 2}}
       ]
 
-      assert Helpers.resolve_register(instrs, 1, {:x, 1}) ==
+      assert Resolve.resolve_register(instrs, 1, {:x, 1}) ==
                {:ok, %{strategy: :one_for_one, intensity: 5}}
     end
 
@@ -377,7 +381,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :integer_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 1, {:x, 0}) == :dynamic
+      assert Resolve.resolve_register(instrs, 1, {:x, 0}) == :dynamic
     end
 
     test "returns :dynamic for get_tuple_element with unresolvable source" do
@@ -386,7 +390,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :atom_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 1, {:x, 0}) == :dynamic
+      assert Resolve.resolve_register(instrs, 1, {:x, 0}) == :dynamic
     end
 
     test "resolves get_tuple_element through literal" do
@@ -396,7 +400,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :atom_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 2, {:x, 0}) == {:ok, :value}
+      assert Resolve.resolve_register(instrs, 2, {:x, 0}) == {:ok, :value}
     end
 
     test "returns :dynamic for get_hd with unresolvable source" do
@@ -405,7 +409,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :atom_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 1, {:x, 0}) == :dynamic
+      assert Resolve.resolve_register(instrs, 1, {:x, 0}) == :dynamic
     end
 
     test "resolves get_hd through literal" do
@@ -415,7 +419,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :atom_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 2, {:x, 0}) == {:ok, :first}
+      assert Resolve.resolve_register(instrs, 2, {:x, 0}) == {:ok, :first}
     end
 
     test "returns :dynamic for get_tl with unresolvable source" do
@@ -424,7 +428,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :length, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 1, {:x, 1}) == :dynamic
+      assert Resolve.resolve_register(instrs, 1, {:x, 1}) == :dynamic
     end
 
     test "resolves get_tl through literal" do
@@ -434,7 +438,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :length, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 2, {:x, 1}) == {:ok, [:second, :third]}
+      assert Resolve.resolve_register(instrs, 2, {:x, 1}) == {:ok, [:second, :third]}
     end
 
     test "returns :dynamic for local call writing to x0" do
@@ -443,7 +447,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :atom_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 1, {:x, 0}) == :dynamic
+      assert Resolve.resolve_register(instrs, 1, {:x, 0}) == :dynamic
     end
 
     test "returns :dynamic for preceding remote call writing to x0" do
@@ -454,7 +458,7 @@ defmodule Argus.Extractor.HelpersTest do
       ]
 
       # Resolving x1 at idx 2 → follows move from x0 → hits call_ext at idx 0 → :dynamic.
-      assert Helpers.resolve_register(instrs, 2, {:x, 1}) == :dynamic
+      assert Resolve.resolve_register(instrs, 2, {:x, 1}) == :dynamic
     end
 
     test "does not return stale value past a gc_bif write" do
@@ -466,7 +470,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :integer_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 2, {:x, 0}) == :dynamic
+      assert Resolve.resolve_register(instrs, 2, {:x, 0}) == :dynamic
     end
 
     test "does not return stale value past a get_tuple_element write" do
@@ -476,7 +480,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :atom_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 2, {:x, 0}) == :dynamic
+      assert Resolve.resolve_register(instrs, 2, {:x, 0}) == :dynamic
     end
 
     test "resolves get_map_elements through literal map" do
@@ -488,8 +492,8 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 2, {:extfunc, Supervisor, :init, 2}}
       ]
 
-      assert Helpers.resolve_register(instrs, 2, {:x, 1}) == {:ok, :one_for_one}
-      assert Helpers.resolve_register(instrs, 2, {:x, 2}) == {:ok, 5}
+      assert Resolve.resolve_register(instrs, 2, {:x, 1}) == {:ok, :one_for_one}
+      assert Resolve.resolve_register(instrs, 2, {:x, 2}) == {:ok, 5}
     end
 
     test "returns :dynamic for get_map_elements with unresolvable source" do
@@ -498,7 +502,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :atom_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 1, {:x, 1}) == :dynamic
+      assert Resolve.resolve_register(instrs, 1, {:x, 1}) == :dynamic
     end
 
     test "does not return stale value past a get_map_elements write" do
@@ -508,7 +512,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :atom_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 2, {:x, 1}) == :dynamic
+      assert Resolve.resolve_register(instrs, 2, {:x, 1}) == :dynamic
     end
 
     test "does not return stale value past a local call to x0" do
@@ -518,7 +522,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :atom_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 2, {:x, 0}) == :dynamic
+      assert Resolve.resolve_register(instrs, 2, {:x, 0}) == :dynamic
     end
 
     test "resolves swap by following the other register" do
@@ -530,8 +534,8 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :atom_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 3, {:x, 0}) == {:ok, :beta}
-      assert Helpers.resolve_register(instrs, 3, {:x, 1}) == {:ok, :alpha}
+      assert Resolve.resolve_register(instrs, 3, {:x, 0}) == {:ok, :beta}
+      assert Resolve.resolve_register(instrs, 3, {:x, 1}) == {:ok, :alpha}
     end
 
     test "does not return stale value past a swap write" do
@@ -542,7 +546,7 @@ defmodule Argus.Extractor.HelpersTest do
       ]
 
       # x0 after swap came from x1, which has no preceding write → :dynamic.
-      assert Helpers.resolve_register(instrs, 2, {:x, 0}) == :dynamic
+      assert Resolve.resolve_register(instrs, 2, {:x, 0}) == :dynamic
     end
 
     test "partially resolves structure with dynamic components" do
@@ -554,7 +558,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :tuple_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 2, {:x, 0}) == {:ok, {:heir, :dynamic, []}}
+      assert Resolve.resolve_register(instrs, 2, {:x, 0}) == {:ok, {:heir, :dynamic, []}}
     end
 
     test "stops at return barrier instead of picking up stale value" do
@@ -568,7 +572,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :atom_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 3, {:x, 0}) == :dynamic
+      assert Resolve.resolve_register(instrs, 3, {:x, 0}) == :dynamic
     end
 
     test "stops at call_only barrier" do
@@ -579,7 +583,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :ets, :lookup, 2}}
       ]
 
-      assert Helpers.resolve_register(instrs, 3, {:x, 0}) == :dynamic
+      assert Resolve.resolve_register(instrs, 3, {:x, 0}) == :dynamic
     end
 
     test "stops at call_ext_only barrier" do
@@ -590,7 +594,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :ets, :lookup, 2}}
       ]
 
-      assert Helpers.resolve_register(instrs, 3, {:x, 0}) == :dynamic
+      assert Resolve.resolve_register(instrs, 3, {:x, 0}) == :dynamic
     end
 
     test "stops at call_last barrier" do
@@ -601,7 +605,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :ets, :lookup, 2}}
       ]
 
-      assert Helpers.resolve_register(instrs, 3, {:x, 0}) == :dynamic
+      assert Resolve.resolve_register(instrs, 3, {:x, 0}) == :dynamic
     end
 
     test "stops at call_ext_last barrier" do
@@ -612,7 +616,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :ets, :lookup, 2}}
       ]
 
-      assert Helpers.resolve_register(instrs, 3, {:x, 0}) == :dynamic
+      assert Resolve.resolve_register(instrs, 3, {:x, 0}) == :dynamic
     end
 
     test "barrier does not affect resolution within the same execution path" do
@@ -626,7 +630,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :atom_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 4, {:x, 0}) == {:ok, :fresh}
+      assert Resolve.resolve_register(instrs, 4, {:x, 0}) == {:ok, :fresh}
     end
 
     test "barrier stops indirect resolution through y-register" do
@@ -641,7 +645,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :ets, :lookup, 2}}
       ]
 
-      assert Helpers.resolve_register(instrs, 5, {:x, 0}) == :dynamic
+      assert Resolve.resolve_register(instrs, 5, {:x, 0}) == :dynamic
     end
 
     test "resolve_register stays :dynamic for unwritten function parameters" do
@@ -655,25 +659,25 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :node, 0}}
       ]
 
-      assert Helpers.resolve_register(instrs, 2, {:x, 0}) == :dynamic
+      assert Resolve.resolve_register(instrs, 2, {:x, 0}) == :dynamic
     end
   end
 
   describe "spell/1" do
     test "is inspect's spelling, maps sorted, when inspect spells the whole value" do
       for value <- [:ok, "bin", [1, 2], %{a: {1, 2}}, %URI{host: "h"}] do
-        assert Helpers.spell(value) ==
+        assert Terms.spell(value) ==
                  inspect(value, structs: false, custom_options: [sort_maps: true])
       end
 
-      assert Helpers.spell(%URI{host: "h"}) =~ ~r/^%\{__struct__: URI, authority: nil, /
+      assert Terms.spell(%URI{host: "h"}) =~ ~r/^%\{__struct__: URI, authority: nil, /
     end
 
     # An ETS key or a literal past inspect's bounds used to spell the same
     # as another, and the two joined as one identity.
     test "keys that differ past inspect's bounds have different identities" do
       long = String.duplicate("k", 5000)
-      identity = &Helpers.key_identity([{:move, {:literal, &1}, {:x, 1}}], 1, {:x, 1})
+      identity = &Identity.key_identity([{:move, {:literal, &1}, {:x, 1}}], 1, {:x, 1})
 
       assert {"literal", a} = identity.(long)
       assert {"literal", b} = identity.(String.duplicate("k", 4999) <> "z")
@@ -684,46 +688,46 @@ defmodule Argus.Extractor.HelpersTest do
 
   describe "improper-safe walks" do
     test "proper_list?/1 accepts only lists that end in []" do
-      assert Helpers.proper_list?([])
-      assert Helpers.proper_list?([1, [2 | 3]])
-      refute Helpers.proper_list?([1 | 2])
-      refute Helpers.proper_list?([1, 2 | :tail])
-      refute Helpers.proper_list?(:atom)
+      assert Terms.proper_list?([])
+      assert Terms.proper_list?([1, [2 | 3]])
+      refute Terms.proper_list?([1 | 2])
+      refute Terms.proper_list?([1, 2 | :tail])
+      refute Terms.proper_list?(:atom)
     end
 
     test "list_elements/1 reads nothing from an improper list" do
-      assert Helpers.list_elements([1, 2]) == [1, 2]
-      assert Helpers.list_elements([1 | 2]) == []
-      assert Helpers.list_elements({1, 2}) == []
+      assert Terms.list_elements([1, 2]) == [1, 2]
+      assert Terms.list_elements([1 | 2]) == []
+      assert Terms.list_elements({1, 2}) == []
     end
 
     test "mentions?/2 walks improper lists" do
       instr = {:put_list, {:x, 1}, {:list, [{:atom, :a} | {:x, 3}]}, {:x, 2}}
-      assert Helpers.mentions?(instr, &(&1 == {:x, 3}))
-      refute Helpers.mentions?(instr, &(&1 == {:x, 4}))
+      assert Terms.mentions?(instr, &(&1 == {:x, 3}))
+      refute Terms.mentions?(instr, &(&1 == {:x, 4}))
     end
 
     # A literal `{:x, 1}` is data; counting it as the register made a
     # handle_call look as though it read `from`.
     test "mentions?/2 does not enter a literal's value" do
       instr = {:move, {:literal, {:x, 1}}, {:x, 0}}
-      refute Helpers.mentions?(instr, &(&1 == {:x, 1}))
-      assert Helpers.mentions?(instr, &(&1 == {:x, 0}))
-      assert Helpers.mentions?(instr, &match?({:literal, _}, &1))
+      refute Terms.mentions?(instr, &(&1 == {:x, 1}))
+      assert Terms.mentions?(instr, &(&1 == {:x, 0}))
+      assert Terms.mentions?(instr, &match?({:literal, _}, &1))
     end
 
     test "value_contains?/2 searches tuples, improper lists and maps" do
-      assert Helpers.value_contains?([verify: :verify_none], &(&1 == :verify_none))
-      assert Helpers.value_contains?(["x" | :verify_none], &(&1 == :verify_none))
-      assert Helpers.value_contains?(%{opts: {:verify_none}}, &(&1 == :verify_none))
-      refute Helpers.value_contains?(["x" | "y"], &(&1 == :verify_none))
+      assert Terms.value_contains?([verify: :verify_none], &(&1 == :verify_none))
+      assert Terms.value_contains?(["x" | :verify_none], &(&1 == :verify_none))
+      assert Terms.value_contains?(%{opts: {:verify_none}}, &(&1 == :verify_none))
+      refute Terms.value_contains?(["x" | "y"], &(&1 == :verify_none))
     end
 
     # A struct is a map that need not implement Enumerable; sequin's
     # compile-time Ecto.Query literals raised here.
     test "value_contains?/2 searches a struct's fields" do
-      assert Helpers.value_contains?(%URI{host: :verify_none}, &(&1 == :verify_none))
-      refute Helpers.value_contains?(%URI{}, &(&1 == :verify_none))
+      assert Terms.value_contains?(%URI{host: :verify_none}, &(&1 == :verify_none))
+      refute Terms.value_contains?(%URI{}, &(&1 == :verify_none))
     end
 
     test "attribute_values/2 flattens entries and keeps an improper list whole" do
@@ -737,10 +741,10 @@ defmodule Argus.Extractor.HelpersTest do
     # Every consumer asking for a list raised on one; the call it was built
     # for raises at runtime too.
     test "an improper list resolves as unknown" do
-      assert Helpers.resolve_register([{:move, {:literal, [:a | :b]}, {:x, 1}}], 1, {:x, 1}) ==
+      assert Resolve.resolve_register([{:move, {:literal, [:a | :b]}, {:x, 1}}], 1, {:x, 1}) ==
                :dynamic
 
-      assert Helpers.resolve_register(
+      assert Resolve.resolve_register(
                [{:put_list, {:atom, :a}, {:atom, :b}, {:x, 1}}],
                1,
                {:x, 1}
@@ -754,14 +758,14 @@ defmodule Argus.Extractor.HelpersTest do
         {:gc_bif, :length, {:f, 0}, 1, [{:x, 0}], {:x, 1}}
       ]
 
-      assert Helpers.resolve_register(length_of, 2, {:x, 1}) == :dynamic
+      assert Resolve.resolve_register(length_of, 2, {:x, 1}) == :dynamic
 
       append = [
         {:move, {:literal, [1 | 2]}, {:x, 0}},
         {:gc_bif, :++, {:f, 0}, 1, [{:x, 0}, {:literal, [3]}], {:x, 1}}
       ]
 
-      assert Helpers.resolve_register(append, 2, {:x, 1}) == :dynamic
+      assert Resolve.resolve_register(append, 2, {:x, 1}) == :dynamic
     end
   end
 
@@ -773,19 +777,19 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 3, {:extfunc, :erlang, :apply, 3}}
       ]
 
-      assert Helpers.list_length(instrs, 2, {:x, 2}) == 2
+      assert Resolve.list_length(instrs, 2, {:x, 2}) == 2
     end
 
     test "an unknown tail leaves the length unknown" do
       instrs = [{:put_list, {:x, 0}, {:x, 1}, {:x, 2}}]
-      assert Helpers.list_length(instrs, 1, {:x, 2}) == nil
+      assert Resolve.list_length(instrs, 1, {:x, 2}) == nil
     end
 
     test "an improper tail, literal or built, has no length" do
-      assert Helpers.list_length([{:move, {:literal, [:a | :b]}, {:x, 2}}], 1, {:x, 2}) == nil
+      assert Resolve.list_length([{:move, {:literal, [:a | :b]}, {:x, 2}}], 1, {:x, 2}) == nil
 
       instrs = [{:put_list, {:atom, :a}, {:atom, :b}, {:x, 2}}]
-      assert Helpers.list_length(instrs, 1, {:x, 2}) == nil
+      assert Resolve.list_length(instrs, 1, {:x, 2}) == nil
     end
   end
 
@@ -799,7 +803,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 2, {:extfunc, GenServer, :call, 2}}
       ]
 
-      assert Helpers.arg_position(instrs, 3, {:x, 0}) == {:ok, 0}
+      assert Resolve.arg_position(instrs, 3, {:x, 0}) == {:ok, 0}
     end
 
     test "classifies x1 as parameter 1 for arity 2 functions" do
@@ -810,7 +814,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 2, {:extfunc, GenServer, :call, 2}}
       ]
 
-      assert Helpers.arg_position(instrs, 3, {:x, 1}) == {:ok, 1}
+      assert Resolve.arg_position(instrs, 3, {:x, 1}) == {:ok, 1}
     end
 
     test "returns :no for x register beyond arity" do
@@ -820,7 +824,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :node, 0}}
       ]
 
-      assert Helpers.arg_position(instrs, 2, {:x, 2}) == :no
+      assert Resolve.arg_position(instrs, 2, {:x, 2}) == :no
     end
 
     test "returns :no for y registers (never function parameters)" do
@@ -830,7 +834,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :node, 0}}
       ]
 
-      assert Helpers.arg_position(instrs, 2, {:y, 0}) == :no
+      assert Resolve.arg_position(instrs, 2, {:y, 0}) == :no
     end
 
     test "handles {:tr, _, _} typed register input" do
@@ -840,7 +844,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :erlang, :node, 0}}
       ]
 
-      assert Helpers.arg_position(instrs, 2, {:tr, {:x, 0}, :pid}) == {:ok, 0}
+      assert Resolve.arg_position(instrs, 2, {:tr, {:x, 0}, :pid}) == {:ok, 0}
     end
 
     test "returns :no when the register has been written by the function body" do
@@ -852,7 +856,7 @@ defmodule Argus.Extractor.HelpersTest do
       ]
 
       # x0 was rewritten by the move, so it's no longer the original parameter.
-      assert Helpers.arg_position(instrs, 3, {:x, 0}) == :no
+      assert Resolve.arg_position(instrs, 3, {:x, 0}) == :no
     end
   end
 
@@ -871,7 +875,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 6, {:x, 2}) ==
+      assert Resolve.resolve_register(instrs, 6, {:x, 2}) ==
                {:ok, {:call_field, "File:read/1", 1}}
     end
 
@@ -888,7 +892,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 2, {:extfunc, GenServer, :call, 2}}
       ]
 
-      assert Helpers.resolve_register(instrs, 6, {:x, 0}) == :dynamic
+      assert Resolve.resolve_register(instrs, 6, {:x, 0}) == :dynamic
     end
 
     test "resolves field 0 (the :ok tag) the same way" do
@@ -901,7 +905,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 5, {:x, 1}) ==
+      assert Resolve.resolve_register(instrs, 5, {:x, 1}) ==
                {:ok, {:call_field, "GenServer:start_link/2", 0}}
     end
 
@@ -915,7 +919,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 4, {:x, 1}) == {:ok, :first}
+      assert Resolve.resolve_register(instrs, 4, {:x, 1}) == {:ok, :first}
     end
 
     test "returns :dynamic when the source register has no remote-call writer" do
@@ -929,7 +933,7 @@ defmodule Argus.Extractor.HelpersTest do
 
       # x0 is the function arg; get_tuple_element of an arg is :dynamic
       # because we don't know the arg's structure.
-      assert Helpers.resolve_register(instrs, 3, {:x, 1}) == :dynamic
+      assert Resolve.resolve_register(instrs, 3, {:x, 1}) == :dynamic
     end
   end
 
@@ -942,7 +946,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 2, {:extfunc, :ets, :insert, 2}}
       ]
 
-      assert Helpers.call_result_origin(instrs, 3, {:x, 0}) == {:ok, {:ets, :new, 2}, 0}
+      assert Resolve.call_result_origin(instrs, 3, {:x, 0}) == {:ok, {:ets, :new, 2}, 0}
     end
 
     test "follows y registers across intervening calls" do
@@ -954,7 +958,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 2, {:extfunc, :ets, :insert, 2}}
       ]
 
-      assert Helpers.call_result_origin(instrs, 4, {:x, 0}) == {:ok, {:ets, :new, 2}, 0}
+      assert Resolve.call_result_origin(instrs, 4, {:x, 0}) == {:ok, {:ets, :new, 2}, 0}
     end
 
     test "x registers other than x0 do not survive a call" do
@@ -966,7 +970,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 2, {:extfunc, :ets, :insert, 2}}
       ]
 
-      assert Helpers.call_result_origin(instrs, 2, {:x, 1}) == :no
+      assert Resolve.call_result_origin(instrs, 2, {:x, 1}) == :no
     end
 
     test "a literal move means the register is not a call result" do
@@ -975,7 +979,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 2, {:extfunc, :ets, :insert, 2}}
       ]
 
-      assert Helpers.call_result_origin(instrs, 1, {:x, 0}) == :no
+      assert Resolve.call_result_origin(instrs, 1, {:x, 0}) == :no
     end
 
     test "stops at path barriers" do
@@ -985,7 +989,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 2, {:extfunc, :ets, :insert, 2}}
       ]
 
-      assert Helpers.call_result_origin(instrs, 2, {:x, 0}) == :no
+      assert Resolve.call_result_origin(instrs, 2, {:x, 0}) == :no
     end
 
     test "reports a local (intra-module) call origin" do
@@ -997,7 +1001,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 2, {:extfunc, DynamicSupervisor, :start_child, 2}}
       ]
 
-      assert Helpers.call_result_origin(instrs, 2, {:x, 0}) ==
+      assert Resolve.call_result_origin(instrs, 2, {:x, 0}) ==
                {:ok, {MyApp.Worker, :foreman, 1}, 0}
     end
   end
@@ -1009,7 +1013,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:move, {:atom, :b}, {:x, 0}}
       ]
 
-      assert Helpers.recent_writer(instrs, 2, {:x, 0}) == {:ok, {:move, {:atom, :b}, {:x, 0}}, 1}
+      assert Resolve.recent_writer(instrs, 2, {:x, 0}) == {:ok, {:move, {:atom, :b}, {:x, 0}}, 1}
     end
 
     test "returns a put_list writer without following the move chain" do
@@ -1018,13 +1022,13 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, Foo, :bar, 1}}
       ]
 
-      assert Helpers.recent_writer(instrs, 1, {:x, 0}) ==
+      assert Resolve.recent_writer(instrs, 1, {:x, 0}) ==
                {:ok, {:put_list, {:x, 1}, nil, {:x, 0}}, 0}
     end
 
     test "a call is the writer of its x0 result" do
       instrs = [{:call_ext, 1, {:extfunc, Foo, :bar, 1}}, {:move, {:x, 0}, {:x, 1}}]
-      assert {:ok, {:call_ext, 1, _}, 0} = Helpers.recent_writer(instrs, 1, {:x, 0})
+      assert {:ok, {:call_ext, 1, _}, 0} = Resolve.recent_writer(instrs, 1, {:x, 0})
     end
 
     test "a non-x0 x register does not survive a call" do
@@ -1033,12 +1037,12 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 0, {:extfunc, Foo, :bar, 0}}
       ]
 
-      assert Helpers.recent_writer(instrs, 2, {:x, 1}) == :no
+      assert Resolve.recent_writer(instrs, 2, {:x, 1}) == :no
     end
 
     test "stops at path barriers" do
       instrs = [{:move, {:atom, :v}, {:x, 0}}, :return]
-      assert Helpers.recent_writer(instrs, 2, {:x, 0}) == :no
+      assert Resolve.recent_writer(instrs, 2, {:x, 0}) == :no
     end
   end
 
@@ -1066,14 +1070,14 @@ defmodule Argus.Extractor.HelpersTest do
 
     test "every writer agreeing on an element names it" do
       instrs = record_arms({:y, 0})
-      assert Helpers.tuple_element_identity(instrs, 11, {:x, 0}, 0) == {"literal", ":t"}
-      assert Helpers.tuple_element_identity(instrs, 11, {:x, 0}, 1) == {"param", "0"}
-      assert Helpers.tuple_element_identity(instrs, 11, {:x, 0}, 2) == {"dynamic", ""}
+      assert Identity.tuple_element_identity(instrs, 11, {:x, 0}, 0) == {"literal", ":t"}
+      assert Identity.tuple_element_identity(instrs, 11, {:x, 0}, 1) == {"param", "0"}
+      assert Identity.tuple_element_identity(instrs, 11, {:x, 0}, 2) == {"dynamic", ""}
     end
 
     test "writers that disagree name nothing" do
       instrs = record_arms({:atom, :other})
-      assert Helpers.tuple_element_identity(instrs, 11, {:x, 0}, 1) == {"dynamic", ""}
+      assert Identity.tuple_element_identity(instrs, 11, {:x, 0}, 1) == {"dynamic", ""}
     end
   end
 
@@ -1096,8 +1100,8 @@ defmodule Argus.Extractor.HelpersTest do
         _writer, _follow -> nil
       end
 
-      assert Helpers.trace(instrs, 7, {:x, 0}, nil, origin) == {:m, :start, 0}
-      assert Helpers.trace(instrs, 3, {:x, 0}, nil, fn w, _ -> w end) == {:param, 0}
+      assert Resolve.trace(instrs, 7, {:x, 0}, nil, origin) == {:m, :start, 0}
+      assert Resolve.trace(instrs, 3, {:x, 0}, nil, fn w, _ -> w end) == {:param, 0}
     end
   end
 
@@ -1118,9 +1122,9 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 2, {:extfunc, :ets, :insert, 2}}
       ]
 
-      assert Helpers.tuple_element_identity(instrs, 1, {:x, 1}, 0) == {"literal", ":counters"}
-      assert Helpers.tuple_element_identity(instrs, 1, {:x, 1}, 1) == {"literal", ":hits"}
-      assert Helpers.tuple_element_identity(instrs, 1, {:x, 1}, 2) == {"literal", "1"}
+      assert Identity.tuple_element_identity(instrs, 1, {:x, 1}, 0) == {"literal", ":counters"}
+      assert Identity.tuple_element_identity(instrs, 1, {:x, 1}, 1) == {"literal", ":hits"}
+      assert Identity.tuple_element_identity(instrs, 1, {:x, 1}, 2) == {"literal", "1"}
     end
 
     test "the tuple is followed through a swap and a trim to the stack" do
@@ -1133,7 +1137,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 2, {:extfunc, :ets, :insert, 2}}
       ]
 
-      assert Helpers.tuple_element_identity(instrs, 5, {:x, 1}, 0) == {"literal", ":k"}
+      assert Identity.tuple_element_identity(instrs, 5, {:x, 1}, 0) == {"literal", ":k"}
     end
 
     test "the tuple is followed through a move" do
@@ -1143,19 +1147,19 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 2, {:extfunc, :ets, :insert, 2}}
       ]
 
-      assert Helpers.tuple_element_identity(instrs, 2, {:x, 1}, 0) == {"literal", ":k"}
+      assert Identity.tuple_element_identity(instrs, 2, {:x, 1}, 0) == {"literal", ":k"}
     end
 
     test "a literal tuple, and one too short" do
       instrs = [{:move, {:literal, {:t, :key}}, {:x, 0}}, {:call_ext, 1, {:extfunc, M, :f, 1}}]
 
-      assert Helpers.tuple_element_identity(instrs, 1, {:x, 0}, 1) == {"literal", ":key"}
-      assert Helpers.tuple_element_identity(instrs, 1, {:x, 0}, 2) == {"dynamic", ""}
+      assert Identity.tuple_element_identity(instrs, 1, {:x, 0}, 1) == {"literal", ":key"}
+      assert Identity.tuple_element_identity(instrs, 1, {:x, 0}, 2) == {"dynamic", ""}
     end
 
     test "a tuple the function was handed says nothing about its elements" do
       instrs = [{:call_ext, 1, {:extfunc, M, :f, 1}}]
-      assert Helpers.tuple_element_identity(instrs, 0, {:x, 0}, 0) == {"dynamic", ""}
+      assert Identity.tuple_element_identity(instrs, 0, {:x, 0}, 0) == {"dynamic", ""}
     end
   end
 
@@ -1172,7 +1176,7 @@ defmodule Argus.Extractor.HelpersTest do
       ]
 
       # The child tuple is at idx 4; its opts operand is x1.
-      assert Helpers.keyword_value_register(instrs, 4, {:x, 1}, :name) == {:ok, {:y, 0}, 2}
+      assert Resolve.keyword_value_register(instrs, 4, {:x, 1}, :name) == {:ok, {:y, 0}, 2}
     end
 
     test "walks past a non-matching leading pair to a later key" do
@@ -1185,7 +1189,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:move, {:atom, :sentinel}, {:x, 3}}
       ]
 
-      assert Helpers.keyword_value_register(instrs, 4, {:x, 0}, :name) == {:ok, {:y, 0}, 0}
+      assert Resolve.keyword_value_register(instrs, 4, {:x, 0}, :name) == {:ok, {:y, 0}, 0}
     end
 
     test "returns :no when the key's value is a literal (no register)" do
@@ -1195,7 +1199,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:move, {:atom, :sentinel}, {:x, 2}}
       ]
 
-      assert Helpers.keyword_value_register(instrs, 2, {:x, 0}, :name) == :no
+      assert Resolve.keyword_value_register(instrs, 2, {:x, 0}, :name) == :no
     end
 
     test "returns :no when the key is absent" do
@@ -1205,7 +1209,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:move, {:atom, :sentinel}, {:x, 2}}
       ]
 
-      assert Helpers.keyword_value_register(instrs, 2, {:x, 0}, :name) == :no
+      assert Resolve.keyword_value_register(instrs, 2, {:x, 0}, :name) == :no
     end
   end
 
@@ -1221,7 +1225,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 2, {:x, 0}) == :dynamic
+      assert Resolve.resolve_register(instrs, 2, {:x, 0}) == :dynamic
     end
 
     test "placeholders nested inside structures still pass through" do
@@ -1230,7 +1234,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 1, {:x, 1}) == {:ok, [:dynamic]}
+      assert Resolve.resolve_register(instrs, 1, {:x, 1}) == {:ok, [:dynamic]}
     end
 
     test "a literal :dynamic atom is indistinguishable from the placeholder" do
@@ -1242,7 +1246,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 1, {:x, 0}) == :dynamic
+      assert Resolve.resolve_register(instrs, 1, {:x, 0}) == :dynamic
     end
   end
 
@@ -1258,7 +1262,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 4, {:x, 0}) == {:ok, :b}
+      assert Resolve.resolve_register(instrs, 4, {:x, 0}) == {:ok, :b}
     end
 
     test "resolves :erlang.tuple_size/1 of a literal tuple" do
@@ -1270,7 +1274,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 4, {:x, 0}) == {:ok, 3}
+      assert Resolve.resolve_register(instrs, 4, {:x, 0}) == {:ok, 3}
     end
 
     test "resolves :erlang.length/1 (gc_bif) of a literal list" do
@@ -1282,7 +1286,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 4, {:x, 0}) == {:ok, 4}
+      assert Resolve.resolve_register(instrs, 4, {:x, 0}) == {:ok, 4}
     end
 
     test "resolves :erlang.atom_to_binary/1 of a literal atom" do
@@ -1294,7 +1298,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 4, {:x, 0}) == {:ok, "hello"}
+      assert Resolve.resolve_register(instrs, 4, {:x, 0}) == {:ok, "hello"}
     end
 
     test "returns :dynamic when the BIF arg is not statically resolvable" do
@@ -1307,7 +1311,7 @@ defmodule Argus.Extractor.HelpersTest do
 
       # x0 is the function parameter — we don't know its value,
       # so tuple_size(x0) is :dynamic.
-      assert Helpers.resolve_register(instrs, 3, {:x, 1}) == :dynamic
+      assert Resolve.resolve_register(instrs, 3, {:x, 1}) == :dynamic
     end
 
     test "returns :dynamic for non-whitelisted BIFs" do
@@ -1318,7 +1322,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 3, {:x, 0}) == :dynamic
+      assert Resolve.resolve_register(instrs, 3, {:x, 0}) == :dynamic
     end
 
     test "returns :dynamic when element index is out of range (no crash)" do
@@ -1330,7 +1334,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, IO, :inspect, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 4, {:x, 0}) == :dynamic
+      assert Resolve.resolve_register(instrs, 4, {:x, 0}) == :dynamic
     end
   end
 
@@ -1343,7 +1347,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, GenServer, :stop, 1}}
       ]
 
-      assert Helpers.resolve_to_arg_or_atom(instrs, 3, {:x, 0}) == {:atom, "MyServer"}
+      assert Resolve.resolve_to_arg_or_atom(instrs, 3, {:x, 0}) == {:atom, "MyServer"}
     end
 
     test "returns {:arg, n} for function parameters" do
@@ -1353,7 +1357,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, GenServer, :stop, 1}}
       ]
 
-      assert Helpers.resolve_to_arg_or_atom(instrs, 2, {:x, 0}) == {:arg, 0}
+      assert Resolve.resolve_to_arg_or_atom(instrs, 2, {:x, 0}) == {:arg, 0}
     end
 
     test "returns :dynamic when value cannot be statically determined" do
@@ -1365,7 +1369,7 @@ defmodule Argus.Extractor.HelpersTest do
       ]
 
       # x0 holds the result of :erlang.self() — call result is :dynamic.
-      assert Helpers.resolve_to_arg_or_atom(instrs, 3, {:x, 0}) == :dynamic
+      assert Resolve.resolve_to_arg_or_atom(instrs, 3, {:x, 0}) == :dynamic
     end
   end
 
@@ -1389,17 +1393,17 @@ defmodule Argus.Extractor.HelpersTest do
       instrs = function(:recv)
       idx = call_to(instrs, :call)
 
-      assert Helpers.arg_position(instrs, idx, {:x, 0}) == :no
-      assert Helpers.resolve_to_arg_or_atom(instrs, idx, {:x, 0}) == :dynamic
-      assert Helpers.key_identity(instrs, idx, {:x, 0}) == {"dynamic", ""}
+      assert Resolve.arg_position(instrs, idx, {:x, 0}) == :no
+      assert Resolve.resolve_to_arg_or_atom(instrs, idx, {:x, 0}) == :dynamic
+      assert Identity.key_identity(instrs, idx, {:x, 0}) == {"dynamic", ""}
     end
 
     test "a list's tail is get_list's write, not the parameter it came from" do
       instrs = function(:tailp)
       idx = call_to(instrs, :call)
 
-      assert Helpers.arg_position(instrs, idx, {:x, 0}) == :no
-      assert Helpers.key_identity(instrs, idx, {:x, 0}) == {"dynamic", ""}
+      assert Resolve.arg_position(instrs, idx, {:x, 0}) == :no
+      assert Identity.key_identity(instrs, idx, {:x, 0}) == {"dynamic", ""}
     end
 
     test "a label reached only through a map match's fail edge is not the arm laid out before it" do
@@ -1407,16 +1411,16 @@ defmodule Argus.Extractor.HelpersTest do
       idx = call_to(instrs, :call)
 
       # Walking the stream read the first arm's `:stale`; x0 is `x`.
-      assert Helpers.resolve_register(instrs, idx, {:x, 0}) == :dynamic
-      assert Helpers.arg_position(instrs, idx, {:x, 0}) == {:ok, 1}
+      assert Resolve.resolve_register(instrs, idx, {:x, 0}) == :dynamic
+      assert Resolve.arg_position(instrs, idx, {:x, 0}) == {:ok, 1}
     end
 
     test "a rescue's reason is not a parameter" do
       instrs = function(:handler)
       idx = Enum.find_index(instrs, &match?({:try_case, _}, &1))
 
-      assert Helpers.arg_position(instrs, idx + 1, {:x, 1}) == :no
-      assert Helpers.arg_position(instrs, idx + 1, {:x, 0}) == :no
+      assert Resolve.arg_position(instrs, idx + 1, {:x, 1}) == :no
+      assert Resolve.arg_position(instrs, idx + 1, {:x, 0}) == :no
     end
 
     test "a value bound before a try reaches its handler, and both arms' atoms do not agree" do
@@ -1424,7 +1428,7 @@ defmodule Argus.Extractor.HelpersTest do
       tuple = Enum.find_index(instrs, &match?({:put_tuple2, _, {:list, [{:y, _}, _]}}, &1))
       {:put_tuple2, _, {:list, [y, _]}} = Enum.at(instrs, tuple)
 
-      assert Helpers.resolve_register(instrs, tuple, y) == :dynamic
+      assert Resolve.resolve_register(instrs, tuple, y) == :dynamic
 
       assert [_, _] = Argus.Instr.Reaching.sources(instrs, tuple, y)
     end
@@ -1436,14 +1440,14 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 2, {:extfunc, :m, :g, 2}}
       ]
 
-      assert Helpers.resolve_register(instrs, 2, {:x, 1}) == :dynamic
-      assert Helpers.recent_writer(instrs, 2, {:x, 1}) == :no
+      assert Resolve.resolve_register(instrs, 2, {:x, 1}) == :dynamic
+      assert Resolve.recent_writer(instrs, 2, {:x, 1}) == :no
     end
 
     test "the empty list is spelled nil and read as []" do
       instrs = [{:move, nil, {:x, 0}}, {:call_ext, 1, {:extfunc, :m, :f, 1}}]
-      assert Helpers.resolve_register(instrs, 1, {:x, 0}) == {:ok, []}
-      assert Helpers.list_length(instrs, 1, {:x, 0}) == 0
+      assert Resolve.resolve_register(instrs, 1, {:x, 0}) == {:ok, []}
+      assert Resolve.list_length(instrs, 1, {:x, 0}) == 0
     end
 
     test "a trim renumbers the frame; a walk follows the slot that moved" do
@@ -1455,7 +1459,7 @@ defmodule Argus.Extractor.HelpersTest do
         {:call_ext, 1, {:extfunc, :m, :f, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 4, {:x, 0}) == {:ok, :kept}
+      assert Resolve.resolve_register(instrs, 4, {:x, 0}) == {:ok, :kept}
     end
   end
 end

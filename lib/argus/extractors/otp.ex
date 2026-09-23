@@ -20,16 +20,10 @@ defmodule Argus.Extractors.OTP do
   alias Argus.Extractor.Helpers
   alias Argus.Instr
 
-  import Argus.Extractor.Helpers,
-    only: [
-      add_fact: 3,
-      arg_position: 3,
-      each_remote_call: 3,
-      get_behaviours: 1,
-      resolve_callee: 1,
-      return_shapes: 1,
-      track_dynamic: 5
-    ]
+  import Argus.Extractor.Helpers, only: [each_remote_call: 3, get_behaviours: 1]
+  import Argus.Extractor.Facts, only: [add_fact: 3, track_dynamic: 5]
+  import Argus.Extractor.Resolve, only: [arg_position: 3, resolve_callee: 1]
+  import Argus.Extractor.Shapes, only: [return_shapes: 1]
 
   @impl true
   def relations,
@@ -130,7 +124,7 @@ defmodule Argus.Extractors.OTP do
   # any clause happened to compare against — `:ok`, `nil` and `false` were
   # recorded as handle_continue tags across the corpus, roughly half the
   # rows in the relation. A comparison counts only where the writes that
-  # reach {x,0} are the parameter itself (`Helpers.arg_position/3`), which
+  # reach {x,0} are the parameter itself (`Resolve.arg_position/3`), which
   # also finds the tag of a clause whose test follows another clause's
   # body.
   defp clause_tags(instrs) do

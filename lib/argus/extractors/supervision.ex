@@ -37,20 +37,19 @@ defmodule Argus.Extractors.Supervision do
 
   import Argus.Extractor.Helpers,
     only: [
-      add_fact: 3,
-      call_result_origin: 3,
       each_remote_call: 3,
       find_function: 3,
       get_behaviours: 1,
-      keyword_value_register: 4,
-      list_elements: 1,
       match_local_call: 1,
-      match_remote_call: 1,
-      mentions?: 2,
-      resolve_register: 3,
-      track_dynamic: 5,
-      track_imprecision: 5
+      match_remote_call: 1
     ]
+
+  import Argus.Extractor.Facts, only: [add_fact: 3, track_dynamic: 5, track_imprecision: 5]
+
+  import Argus.Extractor.Resolve,
+    only: [call_result_origin: 3, keyword_value_register: 4, resolve_register: 3]
+
+  import Argus.Extractor.Terms, only: [list_elements: 1, mentions?: 2]
 
   @impl true
   def relations,

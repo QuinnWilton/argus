@@ -50,19 +50,14 @@ defmodule Argus.Extractors.Monitor do
   @behaviour Argus.Extractor
 
   alias Argus.Cfg.Walk
-  alias Argus.Extractor.Helpers
+  alias Argus.Extractor.Resolve
   alias Argus.Instr
   alias Argus.InstrId
 
-  import Argus.Extractor.Helpers,
-    only: [
-      add_fact: 3,
-      cfg: 2,
-      each_remote_call: 3,
-      list_elements: 1,
-      register: 1,
-      resolve_atom: 3
-    ]
+  import Argus.Extractor.Helpers, only: [cfg: 2, each_remote_call: 3, register: 1]
+  import Argus.Extractor.Facts, only: [add_fact: 3]
+  import Argus.Extractor.Resolve, only: [resolve_atom: 3]
+  import Argus.Extractor.Terms, only: [list_elements: 1]
 
   @impl true
   def relations,
@@ -243,7 +238,7 @@ defmodule Argus.Extractors.Monitor do
   # The call the pid came back from, through copies and tuple
   # projections (`{:ok, pid} = ...`), agreed on by every path to `idx`.
   defp pid_origin(instrs, idx, reg) do
-    Helpers.trace(instrs, idx, reg, nil, fn
+    Resolve.trace(instrs, idx, reg, nil, fn
       {at, {:get_tuple_element, src, _index, _dst}}, follow -> follow.(at, src)
       {_at, {:call, _arity, {m, f, a}}}, _follow -> {m, f, a}
       {_at, {:call_ext, _arity, {:extfunc, m, f, a}}}, _follow -> {m, f, a}

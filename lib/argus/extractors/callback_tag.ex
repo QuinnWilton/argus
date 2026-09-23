@@ -31,7 +31,7 @@ defmodule Argus.Extractors.CallbackTag do
   alias Argus.Extractor.Dispatch
   alias Argus.InstrId
 
-  import Argus.Extractor.Helpers, only: [add_fact: 3]
+  import Argus.Extractor.Facts, only: [add_fact: 3]
 
   @callbacks %{
     {:handle_call, 3} => "handle_call",

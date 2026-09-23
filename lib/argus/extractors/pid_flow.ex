@@ -108,14 +108,17 @@ defmodule Argus.Extractors.PidFlow do
 
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
+  alias Argus.Extractor.Resolve
   alias Argus.Extractor.Runtime
+  alias Argus.Extractor.Terms
   alias Argus.Extractor.ValueFlow
   alias Argus.Extractors.ApiCalls
   alias Argus.Instr
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
-  import Argus.Extractor.Helpers, only: [add_fact: 3, register: 1]
+  import Argus.Extractor.Helpers, only: [register: 1]
+  import Argus.Extractor.Facts, only: [add_fact: 3]
 
   # A fixpoint over a finite lattice converges; the bound only guards a bug.
   @max_evaluations 64
@@ -373,7 +376,7 @@ defmodule Argus.Extractors.PidFlow do
         server_start(instrs, idx, Map.fetch!(@monitor_starts, mfa), :monitor_ok)
 
       mfa in @child_starts ->
-        with {:ok, spec} <- Helpers.resolve_register(instrs, idx, {:x, 1}),
+        with {:ok, spec} <- Resolve.resolve_register(instrs, idx, {:x, 1}),
              mod when mod != nil <- child_module(spec),
              false <- Runtime.module?(mod) do
           %{kind: "server", runs: inspect(mod), shape: :ok, child: true}
@@ -398,7 +401,7 @@ defmodule Argus.Extractors.PidFlow do
   end
 
   defp server_start(instrs, idx, {pos, name}, shape) do
-    case Helpers.resolve_register(instrs, idx, {:x, pos}) do
+    case Resolve.resolve_register(instrs, idx, {:x, pos}) do
       {:ok, mod} when is_atom(mod) and mod not in [nil, :dynamic] ->
         %{
           kind: "server",
@@ -421,10 +424,10 @@ defmodule Argus.Extractors.PidFlow do
   defp spawned(instrs, idx, {:mfa, n}) do
     runs =
       with {:ok, mod} when is_atom(mod) and mod != :dynamic <-
-             Helpers.resolve_register(instrs, idx, {:x, n}),
+             Resolve.resolve_register(instrs, idx, {:x, n}),
            {:ok, fun} when is_atom(fun) and fun != :dynamic <-
-             Helpers.resolve_register(instrs, idx, {:x, n + 1}),
-           {:ok, args} when is_list(args) <- Helpers.resolve_register(instrs, idx, {:x, n + 2}),
+             Resolve.resolve_register(instrs, idx, {:x, n + 1}),
+           {:ok, args} when is_list(args) <- Resolve.resolve_register(instrs, idx, {:x, n + 2}),
            true <- proper_list?(args) do
         Normalize.func_id(mod, fun, length(args))
       else
@@ -443,14 +446,14 @@ defmodule Argus.Extractors.PidFlow do
   defp name_option(_instrs, _idx, nil), do: nil
 
   defp name_option(instrs, idx, {:opts, n}) do
-    case Helpers.resolve_register(instrs, idx, {:x, n}) do
+    case Resolve.resolve_register(instrs, idx, {:x, n}) do
       {:ok, opts} when is_list(opts) -> opts |> keyword_name() |> name_of()
       _ -> nil
     end
   end
 
   defp name_option(instrs, idx, {:tuple, n}) do
-    case Helpers.resolve_register(instrs, idx, {:x, n}) do
+    case Resolve.resolve_register(instrs, idx, {:x, n}) do
       {:ok, {:local, name}} -> name_of(name)
       {:ok, {kind, _} = name} when kind in [:global, :via] -> name_of(name)
       {:ok, {:via, _, _} = name} -> name_of(name)
@@ -485,11 +488,11 @@ defmodule Argus.Extractors.PidFlow do
     do: inspect(atom)
 
   def name_of({:global, name} = global) do
-    if literal?(name), do: Helpers.spell(global), else: nil
+    if literal?(name), do: Terms.spell(global), else: nil
   end
 
   def name_of({:via, mod, key} = via) when is_atom(mod) and mod != :dynamic do
-    if literal?(key), do: Helpers.spell(via), else: nil
+    if literal?(key), do: Terms.spell(via), else: nil
   end
 
   def name_of(_other), do: nil
@@ -767,7 +770,7 @@ defmodule Argus.Extractors.PidFlow do
   # What a lookup of the name in x0 returns: the pid registered under it.
   # GenServer.whereis/1 takes any server reference, a pid included.
   defp lookup(ctx, instrs, idx, registry) do
-    case Helpers.resolve_register(instrs, idx, {:x, 0}) do
+    case Resolve.resolve_register(instrs, idx, {:x, 0}) do
       {:ok, name} ->
         case lookup_name(registry, name) do
           nil -> MapSet.new()
@@ -793,8 +796,8 @@ defmodule Argus.Extractors.PidFlow do
   defp registry_lookup(ctx, instrs, r) do
     idx = ctx.idx
 
-    with {:ok, registry} <- Helpers.resolve_register(instrs, idx, {:x, 0}),
-         {:ok, key} <- Helpers.resolve_register(instrs, idx, {:x, 1}),
+    with {:ok, registry} <- Resolve.resolve_register(instrs, idx, {:x, 0}),
+         {:ok, key} <- Resolve.resolve_register(instrs, idx, {:x, 1}),
          name when name != nil <- name_of({:via, Registry, {registry, key}}) do
       entry = %{
         shape: "tuple",
@@ -991,12 +994,12 @@ defmodule Argus.Extractors.PidFlow do
   defp selector({:atom, atom}), do: inspect(atom)
   defp selector({:integer, n}), do: inspect(n)
   defp selector({:float, f}), do: inspect(f)
-  defp selector({:literal, term}), do: Helpers.spell(term)
+  defp selector({:literal, term}), do: Terms.spell(term)
   defp selector(nil), do: inspect([])
   defp selector(_register), do: "*"
 
   defp literal_selector(instrs, idx, pos) do
-    case Helpers.resolve_register(instrs, idx, {:x, pos}) do
+    case Resolve.resolve_register(instrs, idx, {:x, pos}) do
       {:ok, key} when is_atom(key) and key != :dynamic -> inspect(key)
       {:ok, key} when is_binary(key) or is_integer(key) -> inspect(key)
       _ -> "*"
@@ -1263,7 +1266,7 @@ defmodule Argus.Extractors.PidFlow do
   defp destination(at, ictx, reg \\ {:x, 0}) do
     value = val(ictx, reg)
 
-    with {:ok, term} <- Helpers.resolve_register(at.fun.instrs, at.idx, reg),
+    with {:ok, term} <- Resolve.resolve_register(at.fun.instrs, at.idx, reg),
          name when name != nil <- name_of(term) do
       MapSet.put(value, {:name, name})
     else
@@ -1307,7 +1310,7 @@ defmodule Argus.Extractors.PidFlow do
       register_row(
         facts,
         at,
-        Helpers.resolve_atom(at.fun.instrs, at.idx, {:x, 1}),
+        Resolve.resolve_atom(at.fun.instrs, at.idx, {:x, 1}),
         val(ictx, {:x, 0})
       )
 
@@ -1316,13 +1319,13 @@ defmodule Argus.Extractors.PidFlow do
       register_row(
         facts,
         at,
-        Helpers.resolve_atom(at.fun.instrs, at.idx, {:x, 0}),
+        Resolve.resolve_atom(at.fun.instrs, at.idx, {:x, 0}),
         val(ictx, {:x, 1})
       )
 
   defp emit_register(facts, at, ictx, {:global, :register_name, arity}) when arity in [2, 3] do
     name =
-      case Helpers.resolve_register(at.fun.instrs, at.idx, {:x, 0}) do
+      case Resolve.resolve_register(at.fun.instrs, at.idx, {:x, 0}) do
         {:ok, name} -> name_of({:global, name}) || "dynamic"
         _ -> "dynamic"
       end
@@ -1335,8 +1338,8 @@ defmodule Argus.Extractors.PidFlow do
     instrs = at.fun.instrs
 
     name =
-      with {:ok, registry} <- Helpers.resolve_register(instrs, at.idx, {:x, 0}),
-           {:ok, key} <- Helpers.resolve_register(instrs, at.idx, {:x, 1}) do
+      with {:ok, registry} <- Resolve.resolve_register(instrs, at.idx, {:x, 0}),
+           {:ok, key} <- Resolve.resolve_register(instrs, at.idx, {:x, 1}) do
         name_of({:via, Registry, {registry, key}}) || "dynamic"
       else
         _ -> "dynamic"
@@ -1372,7 +1375,7 @@ defmodule Argus.Extractors.PidFlow do
   # The message as a receive pattern would read it: a literal atom, a
   # tuple's literal atom tag, or unknown.
   defp message(instrs, idx) do
-    case Helpers.resolve_register(instrs, idx, {:x, 1}) do
+    case Resolve.resolve_register(instrs, idx, {:x, 1}) do
       {:ok, atom} when is_atom(atom) and atom != :dynamic ->
         inspect(atom)
 

@@ -1,7 +1,6 @@
 defmodule Argus.Extractors.PidFlowTest do
   use ExUnit.Case, async: true
-
-  alias Argus.Extractor.Helpers
+  alias Argus.Extractor.Terms
   alias Argus.Extractors.PidFlow
   alias Argus.Test.Fixtures.PidFlow, as: F
 
@@ -24,16 +23,16 @@ defmodule Argus.Extractors.PidFlowTest do
   defp unsited(rows), do: Enum.map(rows, &tl/1)
 
   describe "names" do
-    # The registry side (ProcessRegistry) spells a name with Helpers.spell/1;
+    # The registry side (ProcessRegistry) spells a name with Terms.spell/1;
     # a lookup must spell it the same, or the two never join: a key past
     # inspect's bounds carries a digest.
     test "a via or global name is spelled as the registry side spells it" do
       long = {:via, Registry, {:reg, String.duplicate("k", 5000)}}
-      assert PidFlow.name_of(long) == Helpers.spell(long)
+      assert PidFlow.name_of(long) == Terms.spell(long)
       assert PidFlow.name_of(long) =~ " #"
 
       global = {:global, {:cache, String.duplicate("x", 5000)}}
-      assert PidFlow.name_of(global) == Helpers.spell(global)
+      assert PidFlow.name_of(global) == Terms.spell(global)
     end
   end
 

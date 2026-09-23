@@ -61,6 +61,8 @@ defmodule Argus.Extractors.ErrorHandling do
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Dispatch
   alias Argus.Extractor.Helpers
+  alias Argus.Extractor.Identity
+  alias Argus.Extractor.Resolve
   alias Argus.Extractors.ErrorHandling.CatchClauses
   alias Argus.Extractors.ErrorHandling.ClauseHead
   alias Argus.Instr
@@ -69,24 +71,28 @@ defmodule Argus.Extractors.ErrorHandling do
 
   import Argus.Extractor.Helpers,
     only: [
-      add_fact: 3,
-      arg_position: 3,
-      call_result_origin: 3,
       each_remote_call: 3,
       find_function: 3,
       instructions_from_label: 2,
-      key_identity: 4,
-      map_field_of: 3,
       match_local_call: 1,
       match_remote_call: 1,
       register: 1,
-      resolve_atom: 3,
-      resolve_register: 3,
-      scan_functions: 4,
-      spell: 1,
-      track_dynamic: 5,
-      track_imprecision: 5
+      scan_functions: 4
     ]
+
+  import Argus.Extractor.Facts, only: [add_fact: 3, track_dynamic: 5, track_imprecision: 5]
+  import Argus.Extractor.Identity, only: [key_identity: 4]
+
+  import Argus.Extractor.Resolve,
+    only: [
+      arg_position: 3,
+      call_result_origin: 3,
+      map_field_of: 3,
+      resolve_atom: 3,
+      resolve_register: 3
+    ]
+
+  import Argus.Extractor.Terms, only: [spell: 1]
 
   # Functions known to return {:ok, _} | {:error, _} whose result should
   # be checked. Only widely-used stdlib functions are included.
@@ -167,7 +173,7 @@ defmodule Argus.Extractors.ErrorHandling do
       |> emit_timer_flows(mod, module_data.functions)
       |> emit_cancel_clauses(module_data)
 
-    origins = Helpers.origins_index(module_data)
+    origins = Identity.origins_index(module_data)
 
     each_remote_call(module_data, rescues, fn facts, ctx, mfa ->
       ctx =
@@ -769,7 +775,7 @@ defmodule Argus.Extractors.ErrorHandling do
   # Whether `reg` holds the result of a `self()` call on every path to
   # `idx`, following copies.
   defp self_origin?(instrs, idx, reg) do
-    Helpers.trace(instrs, idx, reg, false, fn
+    Resolve.trace(instrs, idx, reg, false, fn
       {_at, {:bif, :self, _fail, [], _dst}}, _follow -> true
       _writer, _follow -> false
     end)

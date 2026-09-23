@@ -14,13 +14,13 @@ defmodule Argus.Pipeline.Emit do
 
   require Logger
 
-  alias Argus.Extractor.Helpers
+  alias Argus.Extractor.Terms
   alias Argus.Instr
   alias Argus.InstrId
   alias Argus.Pipeline.Emit.{Applies, FunRefs, Spawns}
   alias Argus.Pipeline.Normalize
 
-  import Argus.Extractor.Helpers, only: [add_fact: 3]
+  import Argus.Extractor.Facts, only: [add_fact: 3]
 
   @type facts :: %{atom() => [[String.t()]]}
 
@@ -570,9 +570,9 @@ defmodule Argus.Pipeline.Emit do
   defp format_operand({:f, n}), do: "f#{n}"
   defp format_operand(other), do: spell(other)
 
-  # A literal's spelling, `Helpers.spell/1`, with location metadata left
+  # A literal's spelling, `Terms.spell/1`, with location metadata left
   # out (`strip_location/1`).
-  defp spell(val), do: val |> strip_location() |> Helpers.spell()
+  defp spell(val), do: val |> strip_location() |> Terms.spell()
 
   defp format_mfa({mod, name, arity}) do
     "#{inspect(mod)}:#{name}/#{arity}"
