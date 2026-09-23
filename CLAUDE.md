@@ -44,7 +44,15 @@ those frameworks need.
   path at `raw_raise` because a handler re-raises a class that is
   always valid).
 - Per-module extraction is embarrassingly parallel and deterministic
-  (`ordered: true`); the same modules yield `==` facts.
+  (`ordered: true`); the same modules yield `==` facts in any VM. A VM
+  iterates a small map or set holding atoms in atom-table order, so a
+  column spelling a literal goes through `Helpers.spell/1` (map keys
+  sorted) and rows built from such a set are sorted;
+  `Argus.Pipeline.DeterminismTest` extracts in two VMs whose atom tables
+  were seeded in opposite orders.
+- `module_data.typed` holds the relations `Argus.Pipeline.typed_relations/0`
+  names, not every Layer-1 relation: an extractor that reads another adds
+  it there (`Argus.Pipeline.TypedRelationsTest` fails until it does).
 - Stage 0 keeps the volatile instruction-level relations out of every
   analysis's input set; `test/argus/dl_declarations_test.exs` pins each
   analysis's inputs so an incrementality regression cannot land silently.
