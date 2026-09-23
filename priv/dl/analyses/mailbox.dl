@@ -266,6 +266,28 @@ cancel_site(c, key, id) :-
 // The arm must be one that can follow the cancel: a timer armed only
 // in init/1 and cancelled later is stopped, not re-armed, and its
 // stale message is handled once as an ordinary one.
+// A ref that never leaves the function: armed, then cancelled from the
+// local the send_after returned (`ref = send_after(...); work();
+// cancel_timer(ref)`). No state key pairs them; the arming site does.
+// The function runs again on the next request, so a message the timer
+// delivered before the cancel is handled as the next run's.
+timer_cancel_without_flush(mod, c, c, "", lit, cs, arm_id) :-
+  timer_cancel(cs, c, "local", arm_id, _),
+  timer_arm(arm_id, c, "self", _, _, _),
+  function_def(c, mod, _, _, _),
+  !terminate_callback(c, mod, _),
+  !init_function(mod, c),
+  local_message(arm_id, lit),
+  !takes_message(mod, lit).
+
+.decl local_message(arm_site: symbol, message: symbol)
+
+local_message(id, lit) :- timer_arm(id, _, "self", "bare", _, lit).
+
+local_message(id, lit) :-
+  timer_arm(id, a, "self", "param", pos, _),
+  resolved_arg(a, pos, lit).
+
 timer_cancel_without_flush(mod, c, a, key, lit, cs, arm_id) :-
   cancel_key(c, key),
   function_def(c, mod, _, _, _),

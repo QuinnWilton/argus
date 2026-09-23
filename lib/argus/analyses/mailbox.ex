@@ -22,7 +22,8 @@ defmodule Argus.Analyses.Mailbox do
     process dying, or whose ref was `ref_discarded`.
   - `timer_cancel_without_flush(mod, cancel, arm, key, message)` — a
     cancelled timer's message may already be queued and is not told
-    apart from the next.
+    apart from the next. The ref is kept under a state key, or (`key`
+    empty) in a local of the one function that arms and cancels it.
   - `reply_defect(mod, func, site, kind, tag)` — a tag the module sends
     its own server with no matching clause (`self_call`, `self_cast`), a
     `handle_call` that defers a reply without keeping `from`
@@ -88,12 +89,14 @@ defmodule Argus.Analyses.Mailbox do
           {:mod, :symbol, "the process module"},
           {:cancel, :symbol, "function cancelling the timer"},
           {:arm, :symbol, "function arming a timer whose message carries no ref"},
-          {:key, :symbol, "the state key holding the timer ref"},
+          {:key, :symbol,
+           "the state key holding the timer ref, or '' for a ref the function keeps in a local"},
           {:message, :symbol, "the timer's message"},
           {:cancel_site, :symbol, "the cancel_timer call"},
           {:arm_site, :symbol, "the send_after that arms it"}
         ],
-        key: [:mod, :key],
+        # A local ref has no state key: its arming site is the timer.
+        key: {:key, %{"" => [:mod, :arm_site], :default => [:mod, :key]}},
         doc: "A cancelled timer's message may already be in the mailbox and is not told apart."
       },
       %{
@@ -203,6 +206,26 @@ defmodule Argus.Analyses.Mailbox do
       help: [
         "add a final `handle_info(msg, state)` clause that logs the " <>
           "message and returns `{:noreply, state}`"
+      ]
+    )
+  end
+
+  def finding(:timer_cancel_without_flush, [mod, func, _arm, "", message, cancel_site, arm_site]) do
+    Findings.new(
+      :warning,
+      "Timer cancelled without flushing its message",
+      "#{func} arms a timer with the message #{message} and cancels it before " <>
+        "returning. If it fired first, Process.cancel_timer/1 leaves #{message} " <>
+        "in the mailbox, and nothing flushes it, so the process handles a stale " <>
+        "one after this call has finished — on the next call, as if it were that " <>
+        "call's timeout.",
+      at: Findings.at_site(cancel_site, mod),
+      at_label: "cancels here",
+      related: [Findings.related("armed with #{message} here", Findings.at_site(arm_site, mod))],
+      help: [
+        "flush after cancelling: `receive do #{message} -> :ok after 0 -> :ok end`",
+        "or arm with :erlang.start_timer/3, whose `{:timeout, ref, msg}` names the timer, " <>
+          "and match the ref"
       ]
     )
   end

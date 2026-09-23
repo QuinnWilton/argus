@@ -88,6 +88,43 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
            ]
   end
 
+  test "a timer armed and cancelled within one call, from a local ref, is reported" do
+    skip_without_souffle()
+
+    {:ok, r} =
+      Argus.analyze(
+        [H.TimerLocalNoFlush, H.TimerLocalFlushed, H.TimerLocalStartTimer, H.TimerLocalEitherArm],
+        :mailbox
+      )
+
+    assert [[mod, cancel, arm, "", ":deadline", cancel_site, arm_site]] =
+             Map.get(r, "timer_cancel_without_flush", [])
+
+    assert mod == "Argus.Test.Fixtures.Hypothesized.TimerLocalNoFlush"
+    assert cancel == arm
+    assert cancel =~ "handle_call/3"
+    assert {:ok, _} = Argus.InstrId.parse(cancel_site)
+    assert {:ok, _} = Argus.InstrId.parse(arm_site)
+  end
+
+  test "a local timer's finding says the stale message outlives the call" do
+    row = [
+      "M",
+      "M:handle_call/3",
+      "M:handle_call/3",
+      "",
+      ":deadline",
+      "M:handle_call/3#20",
+      "M:handle_call/3#9"
+    ]
+
+    f = Argus.Analyses.Mailbox.finding(:timer_cancel_without_flush, row)
+
+    assert f.detail =~ "cancels it before returning"
+    assert f.instr.idx == 20
+    assert [%{label: "armed with :deadline here"}] = f.related
+  end
+
   test "an async_nolink task whose messages have no clause is reported, once per missing shape" do
     skip_without_souffle()
 

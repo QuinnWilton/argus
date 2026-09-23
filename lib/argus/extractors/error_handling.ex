@@ -68,6 +68,7 @@ defmodule Argus.Extractors.ErrorHandling do
       map_field_of: 3,
       each_remote_call: 3,
       instructions_from_label: 2,
+      key_identity: 4,
       match_remote_call: 1,
       resolve_atom: 3,
       resolve_register: 3,
@@ -153,8 +154,13 @@ defmodule Argus.Extractors.ErrorHandling do
       |> emit_self_sends(mod, module_data.functions)
       |> emit_timer_flows(mod, module_data.functions)
 
+    origins = Argus.Extractor.Helpers.origins_index(module_data)
+
     each_remote_call(module_data, rescues, fn facts, ctx, mfa ->
-      ctx = Map.put(ctx, :line_table, line_table)
+      ctx =
+        ctx
+        |> Map.put(:line_table, line_table)
+        |> Map.put(:origins, {origins, ctx.func_id})
 
       facts
       |> error_handling_call(mod_str, ctx, mfa)
@@ -469,7 +475,9 @@ defmodule Argus.Extractors.ErrorHandling do
 
   # Where the cancelled ref came from: a map field read in this function
   # (`state.timer`, or a `%{timer: ref}` head), a parameter (nebulex's
-  # `start_timer(time, ref, event)`), or unknown.
+  # `start_timer(time, ref, event)`), the value one instruction of this
+  # function made — the send_after it armed, keyed by that site — or
+  # unknown.
   defp cancel_source(ctx) do
     case map_field_of(ctx.instrs, ctx.idx, {:x, 0}) do
       {:ok, key} ->
@@ -478,8 +486,15 @@ defmodule Argus.Extractors.ErrorHandling do
       :dynamic ->
         case arg_position(ctx.instrs, ctx.idx, {:x, 0}) do
           {:ok, n} -> {"param", "", n}
-          :no -> {"dynamic", "", -1}
+          :no -> local_cancel_source(ctx)
         end
+    end
+  end
+
+  defp local_cancel_source(ctx) do
+    case key_identity(ctx.instrs, ctx.idx, {:x, 0}, Map.get(ctx, :origins)) do
+      {"local", site} -> {"local", site, -1}
+      _other -> {"dynamic", "", -1}
     end
   end
 

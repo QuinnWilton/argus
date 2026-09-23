@@ -239,6 +239,98 @@ defmodule Argus.Test.Fixtures.Hypothesized do
     end
   end
 
+  defmodule TimerLocalNoFlush do
+    @moduledoc false
+    # A deadline armed and cancelled within one call, its ref only ever a
+    # local: if it fired first, :deadline waits in the mailbox and stops
+    # the server on some later call.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def handle_call({:work, job}, _from, state) do
+      ref = Process.send_after(self(), :deadline, 5_000)
+      result = job.()
+      Process.cancel_timer(ref)
+      {:reply, result, state}
+    end
+
+    @impl true
+    def handle_info(:deadline, state), do: {:stop, :deadline, state}
+  end
+
+  defmodule TimerLocalFlushed do
+    @moduledoc false
+    # The same, flushed after the cancel.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def handle_call({:work, job}, _from, state) do
+      ref = Process.send_after(self(), :flushed_deadline, 5_000)
+      result = job.()
+      Process.cancel_timer(ref)
+
+      receive do
+        :flushed_deadline -> :ok
+      after
+        0 -> :ok
+      end
+
+      {:reply, result, state}
+    end
+  end
+
+  defmodule TimerLocalStartTimer do
+    @moduledoc false
+    # :erlang.start_timer's {:timeout, ref, msg} names the timer.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def handle_call({:work, job}, _from, state) do
+      ref = :erlang.start_timer(5_000, self(), :deadline)
+      result = job.()
+      :erlang.cancel_timer(ref)
+      {:reply, result, state}
+    end
+  end
+
+  defmodule TimerLocalEitherArm do
+    @moduledoc false
+    # The ref is one of two timers: which one is cancelled is not known.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def handle_call({:work, job, fast?}, _from, state) do
+      ref =
+        if fast?,
+          do: Process.send_after(self(), :fast_deadline, 100),
+          else: Process.send_after(self(), :slow_deadline, 5_000)
+
+      result = job.()
+      Process.cancel_timer(ref)
+      {:reply, result, state}
+    end
+  end
+
   defmodule TimerWithRef do
     @moduledoc false
     # The message carries the ref; a stale one does not match the state.

@@ -65,6 +65,15 @@ identity never crosses a call.
 A check-then-act pair that meets in a helper is reported there, and not
 again in each caller the helper returns the check to.
 
+`mailbox`'s `timer_cancel_without_flush` also catches a timer whose ref
+never leaves the function: `ref = Process.send_after(self(), :deadline,
+t)`, work, `Process.cancel_timer(ref)` and no flush. A message the timer
+delivered before the cancel is handled on a later call, as if it were
+that call's. `timer_cancel` gains the source `local`, keyed by the
+arming site, from the same local identity; such a row has an empty
+`key` and is deduplicated by its arming site. The local identity now
+follows `swap` as well as `move`.
+
 `Argus.Corpus` pairs take `subdir:` for a repository whose Mix project is
 not at the root — `mix.exs` under `elixir/`, one app of an umbrella under
 `apps/` — so a fix in such a tree can be a pair. The clone is still one

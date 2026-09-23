@@ -434,7 +434,7 @@
 .decl timer_arm(id: symbol, func: symbol, target: symbol, message: symbol, param: number, literal: symbol)
 .input timer_arm
 
-// Where the ref cancelled at `id` came from: a map field read in the function (`state.timer`, a `%{timer: ref}` head), one of the function's parameters (resolved at the callers through call_arg_field), or unknown.
+// Where the ref cancelled at `id` came from: a map field read in the function (`state.timer`, a `%{timer: ref}` head), one of the function's parameters (resolved at the callers through call_arg_field), the ref a send_after in the same function returned ('local', keyed by that site), or unknown.
 //
 .decl timer_cancel(id: symbol, func: symbol, source: symbol, key: symbol, param: number)
 .input timer_cancel

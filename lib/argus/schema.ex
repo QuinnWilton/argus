@@ -1228,15 +1228,17 @@ defmodule Argus.Schema do
     fields: [
       {:id, :symbol, "the cancel_timer site"},
       {:func, :symbol, "the function"},
-      {:source, :symbol, "'field' | 'param' | 'dynamic'"},
-      {:key, :symbol, "the inspected map key the ref was read from, else ''"},
+      {:source, :symbol, "'field' | 'param' | 'local' | 'dynamic'"},
+      {:key, :symbol,
+       "the inspected map key the ref was read from; for 'local', the arming site; else ''"},
       {:param, :number, "the parameter position when source is 'param', else -1"}
     ],
     doc: """
     Where the ref cancelled at `id` came from: a map field read in the \
     function (`state.timer`, a `%{timer: ref}` head), one of the \
     function's parameters (resolved at the callers through \
-    call_arg_field), or unknown.
+    call_arg_field), the ref a send_after in the same function returned \
+    ('local', keyed by that site), or unknown.
     """
   }
 

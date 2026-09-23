@@ -1439,7 +1439,7 @@ defmodule Argus.Extractor.Helpers do
   Given `origins` (`{origins_index(module_data), func_id}`), a value that
   is none of those can still be `{"local", instr_id}`: the one
   instruction that made it, found through reaching definitions and
-  followed back through moves. Two operands with the same origin hold
+  followed back through moves and swaps. Two operands with the same origin hold
   the same value — `key = {name, type}` handed to a read and then to a
   write — although nothing says what it is. Several definitions reaching
   the read (a join) stay dynamic. The instruction ID names a site in one
@@ -1501,8 +1501,8 @@ defmodule Argus.Extractor.Helpers do
     end
   end
 
-  # Moves are followed to what they copy; a chain longer than this is a
-  # loop in the definitions (a receive loop), and names nothing.
+  # Moves and swaps are followed to what they copy; a chain longer than
+  # this is a loop in the definitions (a receive loop), and names nothing.
   @max_move_chain 32
 
   defp local_identity(instrs, idx, register, origins, depth \\ 0)
@@ -1514,23 +1514,34 @@ defmodule Argus.Extractor.Helpers do
   defp local_identity(instrs, idx, register, {index, func_id} = origins, depth) do
     with {kind, n} when kind in [:x, :y] <- register(register),
          [%InstrId{idx: def_idx}] <- Map.get(index, {func_id, idx, "#{kind}#{n}"}) do
-      case Enum.at(instrs, def_idx) do
-        {:move, source, _dst} ->
-          case register(source) do
-            {skind, _} = reg when skind in [:x, :y] ->
-              local_identity(instrs, def_idx, reg, origins, depth + 1)
+      case copied_from(Enum.at(instrs, def_idx), {kind, n}) do
+        {:ok, {skind, _} = reg} when skind in [:x, :y] ->
+          local_identity(instrs, def_idx, reg, origins, depth + 1)
 
-            _literal ->
-              {"dynamic", ""}
-          end
+        {:ok, _literal} ->
+          {"dynamic", ""}
 
-        _maker ->
+        :maker ->
           {"local", InstrId.mint(func_id, def_idx)}
       end
     else
       _ -> {"dynamic", ""}
     end
   end
+
+  # What an instruction that wrote `reg` copied into it: the source of a
+  # move, the other register of a swap. Anything else made the value.
+  defp copied_from({:move, source, _dst}, _reg), do: {:ok, register(source)}
+
+  defp copied_from({:swap, a, b}, reg) do
+    cond do
+      register(a) == reg -> {:ok, register(b)}
+      register(b) == reg -> {:ok, register(a)}
+      true -> :maker
+    end
+  end
+
+  defp copied_from(_instr, _reg), do: :maker
 
   @doc """
   `key_identity/4` for element `n` of the tuple in `register` at `idx`: an
