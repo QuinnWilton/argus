@@ -32,6 +32,11 @@ lookup-then-start race (tesla#768's shape spelled with an Agent), and
 `named_process` owned by the module that starts it, since an Agent has
 no module of its own.
 
+The pipeline computes reaching definitions once per module
+(`module_data.reaching`, `Helpers.reaching/1`) and shares them: `ParamFlow`
+read them from its own `Dataflow.reaching_uses/2` call, and `def_use` from
+another. `def_use` is derived from the shared set and is unchanged.
+
 Schema 43. `try_call` gains `call`, the guarded call's own instruction:
 the `try` instruction carries the line of whatever preceded it (the
 previous clause's body, or the function head), so "catches :noproc but

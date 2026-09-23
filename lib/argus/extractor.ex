@@ -40,7 +40,8 @@ defmodule Argus.Extractor do
           optional(:line_table) => map(),
           optional(:call_sites) => [Argus.Extractor.CallSites.site()],
           optional(:cfg) => %{{String.t(), arity()} => Argus.Cfg.Function.t()},
-          optional(:typed) => Argus.Facts.t() | nil
+          optional(:typed) => Argus.Facts.t() | nil,
+          optional(:reaching) => MapSet.t(Argus.Dataflow.reaching_use()) | nil
         }
 
   @doc """

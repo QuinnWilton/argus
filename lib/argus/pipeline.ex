@@ -203,6 +203,7 @@ defmodule Argus.Pipeline do
           end
 
         cfgs = if typed, do: Cfg.build(typed), else: %{}
+        reaching = reaching(typed)
 
         # Every call site indexed once; the extractors filter the index
         # rather than each walking the instruction stream.
@@ -210,7 +211,8 @@ defmodule Argus.Pipeline do
           Map.merge(data, %{
             call_sites: Argus.Extractor.CallSites.index(data.module, data.functions),
             cfg: cfgs,
-            typed: typed
+            typed: typed,
+            reaching: reaching
           })
 
         extractor_facts =
@@ -221,7 +223,7 @@ defmodule Argus.Pipeline do
         facts =
           base_facts
           |> merge_facts(extractor_facts)
-          |> merge_facts(derive_def_use(typed))
+          |> merge_facts(derive_def_use(reaching))
           |> merge_facts(derive_conditional_calls(base_facts, cfgs))
 
         # Interned here, in the worker, so the rows cross to the caller as
@@ -245,19 +247,30 @@ defmodule Argus.Pipeline do
   # body edit churns that function's edges — which is why only the analyses
   # that need value flow should declare it, and why it is emitted rather
   # than folded into an existing relation.
-  defp derive_def_use(nil), do: %{}
+  # Reaching definitions with the parameters as sources, once per module:
+  # the extractors that follow values read them from `module_data`, and
+  # def_use is the instruction-to-instruction part — a parameter
+  # pseudo-definition is killed like any other write, so it never changes
+  # which instructions' writes reach a read.
+  defp reaching(nil), do: nil
 
-  defp derive_def_use(typed) do
-    edges = Dataflow.def_use_edges(typed)
-
-    case Enum.map(edges, fn {d, u} -> [InstrId.format(d), InstrId.format(u)] end) do
-      [] -> %{}
-      rows -> %{def_use: rows}
-    end
+  defp reaching(typed) do
+    Dataflow.reaching_uses(typed, params: true)
   rescue
     # A module whose facts cannot be decoded should not take the whole
     # extraction down; it loses value-flow edges and keeps everything else.
-    _ -> %{}
+    _ -> nil
+  end
+
+  defp derive_def_use(nil), do: %{}
+
+  defp derive_def_use(reaching) do
+    rows =
+      for {%InstrId{} = d, _reg, u} <- reaching,
+          uniq: true,
+          do: [InstrId.format(d), InstrId.format(u)]
+
+    if rows == [], do: %{}, else: %{def_use: rows}
   end
 
   # Call instructions whose block is control-dependent on a branch in the

@@ -46,7 +46,6 @@ defmodule Argus.Extractors.ParamFlow do
 
   @behaviour Argus.Extractor
 
-  alias Argus.Dataflow
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
   alias Argus.Extractors.ApiCalls
@@ -67,17 +66,16 @@ defmodule Argus.Extractors.ParamFlow do
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
-    case Helpers.typed(module_data) do
-      nil ->
-        %{}
+    with typed when typed != nil <- Helpers.typed(module_data),
+         reaching when reaching != nil <- Helpers.reaching(module_data) do
+      inputs = derive(typed, reaching)
 
-      typed ->
-        inputs = derive(typed)
-
-        %{}
-        |> emit_call_sites(module_data, inputs)
-        |> emit_closures(module_data, inputs)
-        |> Map.new(fn {relation, rows} -> {relation, rows |> Enum.uniq() |> Enum.sort()} end)
+      %{}
+      |> emit_call_sites(module_data, inputs)
+      |> emit_closures(module_data, inputs)
+      |> Map.new(fn {relation, rows} -> {relation, rows |> Enum.uniq() |> Enum.sort()} end)
+    else
+      nil -> %{}
     end
   end
 
@@ -85,9 +83,7 @@ defmodule Argus.Extractors.ParamFlow do
 
   # For every instruction, the parameters each register it reads is derived
   # from: %{id => %{reg => MapSet(param)}}.
-  defp derive(typed) do
-    triples = Dataflow.reaching_uses(typed, params: true)
-
+  defp derive(typed, triples) do
     reads =
       Enum.group_by(triples, fn {_source, _reg, use} -> use end, fn {source, reg, _use} ->
         {reg, source}
