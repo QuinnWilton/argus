@@ -21,8 +21,8 @@ defmodule Argus.Purity do
 
   `@pure` is a marker read by an `@on_definition` hook, which accumulates
   `{name, arity}` into a **persisted** module attribute. Persisted
-  attributes are written into the beam's attribute chunk, so
-  `Argus.Extractors` sees them as `module_attribute` facts and the analysis
+  attributes are written into the beam's attribute chunk, where
+  `Argus.Extractors.Purity` reads them as `pure_contract` facts: the analysis
   reads the contract out of the artifact. Nothing has to parse source, and
   the declaration cannot drift from the code it describes — they are
   compiled together.
@@ -61,8 +61,8 @@ defmodule Argus.Purity do
     quote do
       Module.register_attribute(__MODULE__, :pure, persist: false)
 
-      # Persisted, so it lands in the beam's attribute chunk and becomes a
-      # module_attribute fact.
+      # Persisted, so it lands in the beam's attribute chunk, where the
+      # Purity extractor reads it as a pure_contract fact.
       Module.register_attribute(__MODULE__, :argus_pure, accumulate: true, persist: true)
 
       @on_definition Argus.Purity

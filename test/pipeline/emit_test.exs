@@ -52,30 +52,9 @@ defmodule Argus.Pipeline.EmitTest do
       assert List.last(private) == "0"
     end
 
-    test "emits module_attribute" do
-      facts = Emit.emit_module(MyMod, [], [], [behaviour: [GenServer]], [])
-      assert [[_, "behaviour", "GenServer"]] = facts[:module_attribute]
-    end
-  end
-
-  describe "module attributes" do
-    # Erlang source stores `-odd([a|b]).` as the improper list itself, and
-    # walking it as a list of values raised.
-    test "an improper list value is one value" do
-      facts =
-        Emit.emit_module(
-          TestMod,
-          [],
-          [],
-          [odd: [:a | :b], vsn: [1, 2]],
-          [{:function, :f, 0, 1, [{:label, 1}, :return]}]
-        )
-
-      assert Enum.sort(facts[:module_attribute]) == [
-               ["TestMod", "odd", "[:a | :b]"],
-               ["TestMod", "vsn", "1"],
-               ["TestMod", "vsn", "2"]
-             ]
+    test "emits no row for the module's attributes" do
+      facts = Emit.emit_module(MyMod, [], [], [behaviour: [GenServer], odd: [:a | :b]], [])
+      refute Map.has_key?(facts, :module_attribute)
     end
   end
 
@@ -112,9 +91,9 @@ defmodule Argus.Pipeline.EmitTest do
   end
 
   describe "move facts" do
-    test "emits move, def, use for move instruction" do
+    test "emits def and use for a move, and no move row" do
       facts = emit_func([{:move, {:x, 0}, {:y, 1}}])
-      assert [[_id, "x0", "y1"]] = facts[:move]
+      refute Map.has_key?(facts, :move)
       assert Enum.any?(facts[:def], fn [_, reg] -> reg == "y1" end)
       assert Enum.any?(facts[:use], fn [_, reg] -> reg == "x0" end)
     end
@@ -502,20 +481,21 @@ defmodule Argus.Pipeline.EmitTest do
     end
   end
 
-  describe "stack facts" do
-    test "emits allocate" do
-      facts = emit_func([{:allocate, 3, 2}])
-      assert [[_id, "3", "2"]] = facts[:allocate]
-    end
+  describe "stack bookkeeping" do
+    # No rule read allocate, deallocate, try_end or move rows; the
+    # in-process passes read the instructions themselves.
+    test "has no relation of its own" do
+      facts =
+        emit_func([
+          {:allocate, 3, 2},
+          {:allocate_heap, 3, 5, 2},
+          {:deallocate, 3},
+          {:try_end, {:y, 0}}
+        ])
 
-    test "emits allocate for allocate_heap (canonicalized)" do
-      facts = emit_func([{:allocate_heap, 3, 5, 2}])
-      assert [[_id, "3", "2"]] = facts[:allocate]
-    end
-
-    test "emits deallocate" do
-      facts = emit_func([{:deallocate, 3}])
-      assert [[_id, "3"]] = facts[:deallocate]
+      for relation <- [:allocate, :deallocate, :try_end, :move] do
+        refute Map.has_key?(facts, relation)
+      end
     end
   end
 
@@ -535,11 +515,6 @@ defmodule Argus.Pipeline.EmitTest do
     test "emits try_start" do
       facts = emit_func([{:try, {:y, 0}, {:f, 10}}])
       assert [[_id, _caller, "try", "10"]] = facts[:try_start]
-    end
-
-    test "emits try_end" do
-      facts = emit_func([{:try_end, {:y, 0}}])
-      assert [[_id]] = facts[:try_end]
     end
   end
 
@@ -718,9 +693,8 @@ defmodule Argus.Pipeline.EmitTest do
       assert Enum.any?(facts[:def], fn [_, reg] -> reg == "fr0" end)
     end
 
-    test "emits move, def, use for fmove" do
+    test "emits def and use for fmove" do
       facts = emit_func([{:fmove, {:fr, 0}, {:x, 0}}])
-      assert [[_, "fr0", "x0"]] = facts[:move]
       assert Enum.any?(facts[:def], fn [_, reg] -> reg == "x0" end)
       assert Enum.any?(facts[:use], fn [_, reg] -> reg == "fr0" end)
     end

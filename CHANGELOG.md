@@ -28,6 +28,12 @@ or rename by the 0.17 entry below.
 
 ### Fact schema and extraction
 
+**Removed.** Schema 60. `move`, `allocate`, `deallocate`, `try_end` and
+`module_attribute`: no Datalog rule and no in-process pass read them (the
+walks read the instructions; the extractors that need an attribute read
+the chunk). `literal_value` still records what a move writes. A consumer
+reading one of them from the facts directory must read the disassembly.
+
 **Fixed.** `call_arg` records a literal binary or integer argument, spelled
 as `Helpers.key_identity/4` spells it (`"\"users\""`, `"42"`), where it
 said `"dynamic"`: a key handed to a helper now joins the key identities

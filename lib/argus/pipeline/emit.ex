@@ -28,13 +28,14 @@ defmodule Argus.Pipeline.Emit do
   Emits facts for a single module's disassembly data.
 
   Takes the module name, the list of exports (for marking exported functions),
-  the list of imports, the attributes, the function definitions, and the
-  module's Line-chunk table (`BeamSpy.Source.parse_line_table/1`, used to
+  the list of imports and the attributes (which no relation reads: the
+  extractors that need an attribute read the chunk), the function
+  definitions, and the module's Line-chunk table (`BeamSpy.Source.parse_line_table/1`, used to
   resolve `{:line, ref}` markers to real source lines for `line_info`).
   Returns a map of relation name to list of fact rows.
   """
   @spec emit_module(atom(), list(), list(), keyword(), list(), map()) :: facts()
-  def emit_module(module, exports, _imports, attributes, functions, line_table \\ %{}) do
+  def emit_module(module, exports, _imports, _attributes, functions, line_table \\ %{}) do
     mod_str = inspect(module)
 
     facts = %{}
@@ -45,19 +46,6 @@ defmodule Argus.Pipeline.Emit do
         {name, arity, _label} -> {name, arity}
         # beam_disasm exports format.
         {:atom, name, arity, _label} -> {name, arity}
-      end)
-
-    # Module attributes. The chunk holds each attribute's value as a list
-    # of values, except where Erlang source wrote a term that is not one:
-    # `-my_attr([a|b]).` stores the improper list itself, which is one
-    # value, not values to walk.
-    facts =
-      Enum.reduce(attributes, facts, fn {key, values}, acc ->
-        values = if Helpers.proper_list?(values), do: values, else: [values]
-
-        Enum.reduce(values, acc, fn val, inner_acc ->
-          add_fact(inner_acc, :module_attribute, [mod_str, to_string(key), spell(val)])
-        end)
       end)
 
     # Process each function.
@@ -383,16 +371,11 @@ defmodule Argus.Pipeline.Emit do
     add_fact(facts, :label_at, [to_string(n), id])
   end
 
-  # Move.
+  # Move: what it writes, when that is a literal.
   defp emit_specific(facts, id, {:move, src, dst}) do
     facts
-    |> add_fact(:move, [id, format_operand(src), format_operand(dst)])
     |> maybe_literal(id, dst, src)
     |> maybe_literal_tuple(id, dst, src)
-  end
-
-  defp emit_specific(facts, id, {:fmove, src, dst}) do
-    add_fact(facts, :move, [id, format_operand(src), format_operand(dst)])
   end
 
   # Put tuple2.
@@ -461,19 +444,6 @@ defmodule Argus.Pipeline.Emit do
     add_fact(facts, :branch, [id, to_string(fail), "0"])
   end
 
-  # Allocate / deallocate.
-  defp emit_specific(facts, id, {:allocate, stack, live}) do
-    add_fact(facts, :allocate, [id, to_string(stack), to_string(live)])
-  end
-
-  defp emit_specific(facts, id, {:allocate_heap, stack, _heap, live}) do
-    add_fact(facts, :allocate, [id, to_string(stack), to_string(live)])
-  end
-
-  defp emit_specific(facts, id, {:deallocate, stack}) do
-    add_fact(facts, :deallocate, [id, to_string(stack)])
-  end
-
   # Receive. The loop's control flow is real control flow: loop_rec falls
   # through on a message and branches to its fail label (the wait block) on an
   # empty mailbox; loop_rec_end and wait transfer back to the loop label; and
@@ -496,10 +466,6 @@ defmodule Argus.Pipeline.Emit do
 
   defp emit_specific(facts, id, {:wait_timeout, {:f, label}, _timeout}) do
     add_fact(facts, :branch, [id, to_string(label), "0"])
-  end
-
-  defp emit_specific(facts, id, {:try_end, _reg}) do
-    add_fact(facts, :try_end, [id])
   end
 
   # Binary matching.

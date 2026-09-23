@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 59
+  @schema_version 60
 
   # Layer 1: Module-level facts.
 
@@ -77,17 +77,6 @@ defmodule Argus.Schema do
     doc: "Entry label of a function — positional, split from function_def."
   }
 
-  @module_attribute %{
-    name: :module_attribute,
-    layer: 1,
-    fields: [
-      {:mod, :symbol, "module name"},
-      {:key, :symbol, "attribute key"},
-      {:val, :symbol, "attribute value (stringified)"}
-    ],
-    doc: "Module attribute key-value pair."
-  }
-
   # Layer 1: Instruction-level facts.
 
   @instruction %{
@@ -113,17 +102,6 @@ defmodule Argus.Schema do
   }
 
   # Layer 1: Register / data flow facts.
-
-  @move %{
-    name: :move,
-    layer: 1,
-    fields: [
-      {:id, :instr_id, "instruction ID"},
-      {:src, :symbol, "source operand"},
-      {:dst, :symbol, "destination operand"}
-    ],
-    doc: "Data move from source to destination."
-  }
 
   @def_rel %{
     name: :def,
@@ -368,27 +346,6 @@ defmodule Argus.Schema do
 
   # Layer 1: BEAM-specific facts.
 
-  @allocate %{
-    name: :allocate,
-    layer: 1,
-    fields: [
-      {:id, :instr_id, "instruction ID"},
-      {:stack, :number, "stack words allocated"},
-      {:live, :number, "live X registers"}
-    ],
-    doc: "Stack frame allocation."
-  }
-
-  @deallocate %{
-    name: :deallocate,
-    layer: 1,
-    fields: [
-      {:id, :instr_id, "instruction ID"},
-      {:stack, :number, "stack words deallocated"}
-    ],
-    doc: "Stack frame deallocation."
-  }
-
   @send_msg %{
     name: :send_msg,
     layer: 1,
@@ -467,15 +424,6 @@ defmodule Argus.Schema do
       {:handler, :label, "handler label"}
     ],
     doc: "Start of a try block."
-  }
-
-  @try_end %{
-    name: :try_end,
-    layer: 1,
-    fields: [
-      {:id, :instr_id, "instruction ID"}
-    ],
-    doc: "End of a try block."
   }
 
   @dynamic_call %{
@@ -2447,10 +2395,8 @@ defmodule Argus.Schema do
   @layer_1_relations [
     @function_def,
     @function_entry,
-    @module_attribute,
     @instruction,
     @next,
-    @move,
     @def_rel,
     @use_rel,
     @def_use,
@@ -2466,15 +2412,12 @@ defmodule Argus.Schema do
     @bif_call,
     @call_followed_by_branch,
     @conditional_call,
-    @allocate,
-    @deallocate,
     @send_msg,
     @recv_start,
     @spawn_call,
     @fun_ref,
     @resolved_apply,
     @try_start,
-    @try_end,
     @dynamic_call,
     @closure_def,
     @type_test,
@@ -2691,9 +2634,8 @@ defmodule Argus.Schema do
   # leaves them out of the directory it stages; `Argus.InProcessRelationsTest`
   # fails if a rule starts reading one.
   @in_process_only ~w(
-    instruction next move def use jump branch select_branch label_at
-    allocate deallocate bs_start function_entry try_end type_test
-    module_attribute
+    instruction next def use jump branch select_branch label_at
+    bs_start function_entry type_test
   )a
 
   @relations_by_name Map.new(@all_relations, fn r -> {r.name, r} end)
