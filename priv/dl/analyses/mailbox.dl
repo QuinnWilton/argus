@@ -567,13 +567,8 @@ unconsumed_monitor(mod, f, site, "ref_discarded") :-
   monitor_ref_dropped(site, f).
 
 // ══ A message the module sends itself and cannot handle ═════════════
-.decl client_kind(func: symbol, kind: symbol)
-
-client_kind(func, "call") :- remote_call(_, func, "GenServer", "call", _).
-client_kind(func, "cast") :- remote_call(_, func, "GenServer", "cast", 2).
-
-// The tag a call or cast sends, staged by stage 0 (`call_tag`).
-
+//
+// The tag a call or cast sends is staged by stage 0 (`call_tag`).
 .decl kind_callback(kind: symbol, callback: symbol)
 
 kind_callback("call", "handle_call").

@@ -27,12 +27,13 @@
 // call_reachable stays derived here rather than staged — see stage0.dl
 // for why (the closure is quadratic and dwarfs the edge relation).
 //
-// There is no instruction-level control-flow graph in Datalog: Souffle
-// prunes unused *input* relations but not unused *derived* ones, so a
-// shared cfg_edge rule would keep every analysis demanding
-// branch/jump/next/label_at facts it never reads. Intra-function
-// reachability is computed per module in Elixir (`Argus.Cfg`) and
-// arrives as facts such as `conditional_call` and `def_use`.
+// There is no instruction-level control-flow graph in Datalog. Souffle
+// drops a derived relation no output depends on, and the inputs only it
+// reads, so an unread cfg_edge rule here would cost nothing; but every
+// analysis that read it would take branch/jump/next/label_at as inputs,
+// rows that move on every body edit. Intra-function reachability is
+// computed per module in Elixir (`Argus.Cfg`) and arrives as facts such
+// as `conditional_call` and `def_use`.
 .include "../base.dl"
 
 // Layer-2 domain-extractor declarations, generated from the same schema.

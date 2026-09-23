@@ -399,17 +399,9 @@ global_blocking_op(func, op, retries, id) :-
 // ── Blocking :global op in init/1 ────────────────────────────────
 
 // Catches the worst case: blocking on :global from supervisor startup
-// (init/1 or transitively from init/1). Hangs the supervisor.
-blocks_on_peer(func, "init", "", "global", "", "", site, op) :-
-  global_blocking_op(func, op, _, site),
-  init_function(_, func).
-
-.init global_reach = CallReach
-
-global_reach.seed(g, op) :- global_blocking_op(g, op, _, _).
-
-// The :global call itself, in whichever function init/1 reaches it in:
-// the same reach, seeded by site rather than by operation.
+// (init/1 or transitively from init/1). Hangs the supervisor. `site` is
+// the :global call itself, in whichever function init/1 reaches it in
+// (init/1 included: a seed is in its own reach).
 .init global_site_reach = CallReach
 
 global_site_reach.seed(g, site) :- global_blocking_op(g, _, _, site).
