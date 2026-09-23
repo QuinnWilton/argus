@@ -319,6 +319,91 @@ defmodule Argus.CfgBuildTest do
       end
     end
 
+    test "idom and ipdom are the dominators the textbook fixpoint finds" do
+      for fun <- all_functions() ++ Map.values(cfg_for(many_clauses())) do
+        succs = Map.new(fun.blocks, fn {id, b} -> {id, Enum.map(b.succs, &elem(&1, 0))} end)
+        preds = Map.new(fun.blocks, fn {id, b} -> {id, Enum.map(b.preds, &elem(&1, 0))} end)
+        assert fun.idom == textbook_idom(fun.entry, succs, preds), "#{fun.func}/#{fun.arity}"
+
+        terminals = for {id, out} <- succs, out == [], do: id
+        exit_succs = Map.put(preds, :exit, terminals)
+
+        exit_preds =
+          Enum.reduce(terminals, succs, &Map.update!(&2, &1, fn out -> [:exit | out] end))
+
+        assert fun.ipdom == textbook_idom(:exit, exit_succs, exit_preds),
+               "#{fun.func}/#{fun.arity}: ipdom"
+      end
+    end
+
+    test "the loop headers are the targets of the edges whose target dominates their source" do
+      for fun <- all_functions() ++ Map.values(cfg_for(many_clauses())) do
+        expected =
+          for {from, block} <- fun.blocks,
+              {to, _kind} <- block.succs,
+              from in fun.rpo,
+              Function.dominates?(fun, to, from),
+              into: MapSet.new(),
+              do: to
+
+        assert fun.loop_headers == expected, "#{fun.func}/#{fun.arity}"
+      end
+    end
+
+    # Every clause fails to the next and the last to one landing pad: a
+    # dominator tree as deep as the function is long, which the solver
+    # must neither recurse through nor walk once per predecessor.
+    defp many_clauses do
+      clauses = Enum.map_join(1..400, "\n", &"  def f(#{&1}, x), do: {:ok, x + #{&1}}")
+      "defmodule CfgManyClauses do\n#{clauses}\n  def f(_n, x), do: x\nend\n"
+    end
+
+    # Dominator sets by the iterative intersection over predecessors,
+    # from the root; a block's immediate dominator is the strict
+    # dominator every other strict dominator dominates.
+    defp textbook_idom(root, succs, preds) do
+      reachable = reach([root], succs, MapSet.new())
+      all = MapSet.to_list(reachable)
+
+      doms =
+        Map.new(all, fn b -> {b, if(b == root, do: MapSet.new([root]), else: reachable)} end)
+
+      doms = dom_fixpoint(doms, all, root, preds, reachable)
+
+      for b <- all, b != root, into: %{} do
+        strict = MapSet.delete(doms[b], b)
+        {b, Enum.find(strict, fn d -> MapSet.subset?(strict, doms[d]) end)}
+      end
+    end
+
+    defp dom_fixpoint(doms, all, root, preds, reachable) do
+      next =
+        Map.new(all, fn
+          ^root ->
+            {root, doms[root]}
+
+          b ->
+            inter =
+              preds
+              |> Map.get(b, [])
+              |> Enum.filter(&MapSet.member?(reachable, &1))
+              |> Enum.map(&doms[&1])
+              |> Enum.reduce(&MapSet.intersection/2)
+
+            {b, MapSet.put(inter, b)}
+        end)
+
+      if next == doms, do: doms, else: dom_fixpoint(next, all, root, preds, reachable)
+    end
+
+    defp reach([], _succs, seen), do: seen
+
+    defp reach([b | rest], succs, seen) do
+      if MapSet.member?(seen, b),
+        do: reach(rest, succs, seen),
+        else: reach(Map.get(succs, b, []) ++ rest, succs, MapSet.put(seen, b))
+    end
+
     defp all_functions do
       fixtures = Enum.flat_map(@fixtures, fn source -> Map.values(cfg_for(source)) end)
 

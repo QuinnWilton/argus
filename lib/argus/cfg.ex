@@ -168,8 +168,9 @@ defmodule Argus.Cfg do
 
     entry = entry_block(fun, block_of)
     rpo = reverse_postorder(entry, succs)
-    idom = dominators(entry, rpo, preds)
+    idom = dominators(entry, preds, succs)
     ipdom = postdominators(succs, preds)
+    dom_children = invert_idom(idom)
     structs = block_structs(fun, blocks, succs, preds)
 
     %Function{
@@ -179,9 +180,9 @@ defmodule Argus.Cfg do
       blocks: structs,
       rpo: rpo,
       idom: idom,
-      dom_children: invert_idom(idom),
+      dom_children: dom_children,
       ipdom: ipdom,
-      loop_headers: loop_headers(succs, entry, idom),
+      loop_headers: loop_headers(succs, entry, dom_children),
       labels: Map.new(fun.labels, fn {label, idx} -> {label, Map.fetch!(block_of, idx)} end),
       selects: select_tables(fun, block_of)
     }
@@ -342,58 +343,122 @@ defmodule Argus.Cfg do
     end
   end
 
-  # Iterative Cooper–Harvey–Kennedy. Returns %{block => immediate dominator}
+  # Lengauer–Tarjan (the simple version, with path compression) over the
+  # blocks reachable from `entry`. Returns %{block => immediate dominator}
   # for every reachable block except the entry.
-  defp dominators(entry, rpo, preds) do
-    position = rpo |> Enum.with_index() |> Map.new()
-    idom = iterate_dominators(%{entry => entry}, rpo -- [entry], preds, position)
-    Map.delete(idom, entry)
-  end
+  #
+  # Cooper–Harvey–Kennedy, which this replaced, walks the tree from each
+  # predecessor up to where the paths meet, and a function whose clauses
+  # all fail to one landing pad has as many predecessors there as it has
+  # clauses, each as deep as its clause: quadratic, and 1.7 s of
+  # idna_mapping's graphs. The tree is the same whichever way it is found.
+  defp dominators(entry, preds, succs) do
+    {order, dfnum, parent} = preorder(entry, succs)
+    vertex = List.to_tuple(order)
+    [_entry | non_root] = order
 
-  defp iterate_dominators(idom, order, preds, position) do
-    {idom, changed?} =
-      Enum.reduce(order, {idom, false}, fn block, {acc, changed?} ->
-        processed =
+    # Reverse preorder: a block's semidominator is the least one met
+    # coming down from its reached predecessors; it waits in its
+    # semidominator's bucket, which is settled once the walk is back at
+    # the parent of the path that holds it.
+    {_ancestor, _label, semi, _bucket, idom} =
+      non_root
+      |> Enum.reverse()
+      |> Enum.reduce({%{}, %{}, dfnum, %{}, %{}}, fn w, {ancestor, label, semi, bucket, idom} ->
+        {ancestor, label, semi_w} =
           preds
-          |> Map.get(block, [])
-          |> Enum.map(fn {pred, _kind} -> pred end)
-          |> Enum.filter(&Map.has_key?(acc, &1))
+          |> Map.get(w, [])
+          |> Enum.reduce({ancestor, label, Map.fetch!(semi, w)}, fn {v, _kind}, acc ->
+            {ancestor, label, best} = acc
 
-        case processed do
-          [] ->
-            {acc, changed?}
-
-          [first | rest] ->
-            new = Enum.reduce(rest, first, &intersect(&1, &2, acc, position))
-
-            if Map.get(acc, block) == new do
-              {acc, changed?}
+            if Map.has_key?(dfnum, v) do
+              {u, ancestor, label} = eval(v, ancestor, label, semi)
+              {ancestor, label, min(best, Map.fetch!(semi, u))}
             else
-              {Map.put(acc, block, new), true}
+              acc
             end
-        end
+          end)
+
+        semi = Map.put(semi, w, semi_w)
+        p = Map.fetch!(parent, w)
+        bucket = Map.update(bucket, elem(vertex, semi_w), [w], &[w | &1])
+        ancestor = Map.put(ancestor, w, p)
+        {settle, bucket} = Map.pop(bucket, p, [])
+
+        {ancestor, label, idom} =
+          Enum.reduce(settle, {ancestor, label, idom}, fn v, {ancestor, label, idom} ->
+            {u, ancestor, label} = eval(v, ancestor, label, semi)
+            dom = if Map.fetch!(semi, u) < Map.fetch!(semi, v), do: u, else: p
+            {ancestor, label, Map.put(idom, v, dom)}
+          end)
+
+        {ancestor, label, semi, bucket, idom}
       end)
 
-    if changed?, do: iterate_dominators(idom, order, preds, position), else: idom
+    # A block whose semidominator is not its immediate dominator takes
+    # the immediate dominator of the block settled in its place, which
+    # preorder has already fixed.
+    Enum.reduce(non_root, idom, fn w, idom ->
+      dom = Map.fetch!(idom, w)
+
+      if dom == elem(vertex, Map.fetch!(semi, w)),
+        do: idom,
+        else: Map.put(idom, w, Map.fetch!(idom, dom))
+    end)
   end
 
-  defp intersect(b1, b2, idom, position) do
-    cond do
-      b1 == b2 ->
-        b1
+  # Depth-first preorder from `entry`, without recursion (a chain of
+  # clauses is as deep as it is long): the blocks in order, each one's
+  # number and each one's parent in the walk.
+  defp preorder(entry, succs), do: preorder([{entry, nil}], succs, [], %{}, %{})
 
-      Map.fetch!(position, b1) > Map.fetch!(position, b2) ->
-        intersect(idom[b1], b2, idom, position)
+  defp preorder([], _succs, order, dfnum, parent), do: {Enum.reverse(order), dfnum, parent}
 
-      true ->
-        intersect(b1, idom[b2], idom, position)
+  defp preorder([{node, from} | rest], succs, order, dfnum, parent) do
+    if Map.has_key?(dfnum, node) do
+      preorder(rest, succs, order, dfnum, parent)
+    else
+      dfnum = Map.put(dfnum, node, map_size(dfnum))
+      parent = if from == nil, do: parent, else: Map.put(parent, node, from)
+      next = for {to, _kind} <- Map.get(succs, node, []), do: {to, node}
+      preorder(next ++ rest, succs, [node | order], dfnum, parent)
+    end
+  end
+
+  # The block of least semidominator on the forest path above `v` (`v`
+  # itself when it is a root), compressing the path as it goes. A block
+  # with no label is its own.
+  defp eval(v, ancestor, label, semi) do
+    if Map.has_key?(ancestor, v) do
+      {ancestor, label} = compress(v, ancestor, label, semi)
+      {Map.get(label, v, v), ancestor, label}
+    else
+      {v, ancestor, label}
+    end
+  end
+
+  defp compress(v, ancestor, label, semi) do
+    a = Map.fetch!(ancestor, v)
+
+    if Map.has_key?(ancestor, a) do
+      {ancestor, label} = compress(a, ancestor, label, semi)
+      label_a = Map.get(label, a, a)
+
+      label =
+        if Map.fetch!(semi, label_a) < Map.fetch!(semi, Map.get(label, v, v)),
+          do: Map.put(label, v, label_a),
+          else: label
+
+      {Map.put(ancestor, v, Map.fetch!(ancestor, a)), label}
+    else
+      {ancestor, label}
     end
   end
 
   # Immediate post-dominators: dominators of the reversed CFG, rooted at
   # a virtual :exit that precedes every terminal block (no successors —
-  # return, tail call, raise). The same CHK fixpoint runs over the
-  # reversed edge maps. Blocks with no path to the exit (genuine
+  # return, tail call, raise). The same solver runs over the reversed
+  # edge maps. Blocks with no path to the exit (genuine
   # infinite loops) have no post-dominator and are absent from the map;
   # a block whose ipdom is the virtual exit maps to `:exit`.
   defp postdominators(succs, preds) do
@@ -409,8 +474,7 @@ defmodule Argus.Cfg do
         Map.update(acc, t, [{:exit, :virtual}], &[{:exit, :virtual} | &1])
       end)
 
-    rpo_rev = reverse_postorder(:exit, succs_rev)
-    dominators(:exit, rpo_rev, preds_rev)
+    dominators(:exit, preds_rev, succs_rev)
   end
 
   defp invert_idom(idom) do
@@ -420,20 +484,43 @@ defmodule Argus.Cfg do
   end
 
   # A back edge u -> v is one whose target dominates its source; v is a
-  # natural-loop header.
-  defp loop_headers(succs, entry, idom) do
+  # natural-loop header. `a` dominates `b` when `b`'s interval in a walk
+  # of the dominator tree lies inside `a`'s; a block the entry does not
+  # reach has none and dominates nothing, nor is it dominated.
+  defp loop_headers(succs, entry, dom_children) do
+    intervals = dom_intervals(entry, dom_children)
+
     for {from, edges} <- succs,
         {to, _kind} <- edges,
-        dominates_via_idom?(idom, entry, to, from),
+        dominates?(intervals, to, from),
         into: MapSet.new(),
         do: to
   end
 
-  defp dominates_via_idom?(idom, entry, a, b) do
-    cond do
-      a == b -> b == entry or Map.has_key?(idom, b)
-      not Map.has_key?(idom, b) -> false
-      true -> dominates_via_idom?(idom, entry, a, Map.fetch!(idom, b))
+  defp dominates?(intervals, a, b) do
+    with {:ok, {a_in, a_out}} <- Map.fetch(intervals, a),
+         {:ok, {b_in, b_out}} <- Map.fetch(intervals, b) do
+      a_in <= b_in and b_out <= a_out
+    else
+      :error -> false
     end
+  end
+
+  # %{block => {entered, left}}, numbered by one walk of the dominator
+  # tree from the entry — without recursion, since the tree of a chain of
+  # clauses is as deep as the chain is long.
+  defp dom_intervals(entry, dom_children) do
+    dom_intervals([{:enter, entry}], dom_children, 0, %{})
+  end
+
+  defp dom_intervals([], _children, _n, acc), do: acc
+
+  defp dom_intervals([{:enter, node} | rest], children, n, acc) do
+    visits = for child <- Map.get(children, node, []), do: {:enter, child}
+    dom_intervals(visits ++ [{:leave, node, n} | rest], children, n + 1, acc)
+  end
+
+  defp dom_intervals([{:leave, node, entered} | rest], children, n, acc) do
+    dom_intervals(rest, children, n + 1, Map.put(acc, node, {entered, n}))
   end
 end

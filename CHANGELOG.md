@@ -76,6 +76,14 @@ remote types a spec names. `installed/1` stamps its answer with the
 module's file on every call, which for a module that is not loaded walks
 the code path through the code server that every worker waits on.
 
+**Changed.** `Argus.Cfg` finds dominators and post-dominators with
+Lengauer–Tarjan and loop headers by numbering the dominator tree once.
+Cooper–Harvey–Kennedy walked the tree from every predecessor to where
+the paths meet, and a function whose clauses all fail to one landing
+pad is a tree as deep as the function with that pad under every clause:
+idna_mapping's graphs took 1.7 s, Cldr.Validity.Subdivision's 1.1 s;
+each is under 0.1 s now. The graphs are the same.
+
 **Removed.** Schema 60. `move`, `allocate`, `deallocate`, `try_end` and
 `module_attribute`: no Datalog rule and no in-process pass read them (the
 walks read the instructions; the extractors that need an attribute read
