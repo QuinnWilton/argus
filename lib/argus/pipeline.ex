@@ -152,12 +152,12 @@ defmodule Argus.Pipeline do
 
     with {:ok, paths} <- Disassemble.resolve_paths(modules) do
       memo = new_memo()
-      symbols = Keyword.get(opts, :symbols)
+      shape = extract_shape(format, Keyword.get(opts, :symbols))
 
       merged =
         try do
           paths
-          |> extract_stream(opts, memo, &maybe_intern(&1, symbols))
+          |> extract_stream(opts, memo, shape)
           |> Enum.reduce(%{}, fn
             {:ok, module_facts}, acc -> merge_facts(acc, module_facts)
             {:error, reason}, _acc -> throw({:extraction_error, reason})
@@ -166,11 +166,7 @@ defmodule Argus.Pipeline do
           :ets.delete(memo)
         end
 
-      case format do
-        :raw -> {:ok, merged}
-        :typed -> {:ok, Argus.Facts.decode(merged)}
-        :interned -> {:ok, merged}
-      end
+      {:ok, merged}
     end
   catch
     {:extraction_error, reason} -> {:error, reason}
@@ -375,8 +371,13 @@ defmodule Argus.Pipeline do
     error_facts(module_label(path), [{"pipeline", reason}])
   end
 
-  defp maybe_intern(facts, nil), do: facts
-  defp maybe_intern(facts, symbols), do: Argus.Facts.intern(facts, symbols)
+  # What `extract/2`'s workers make of a module's facts. Decoding each
+  # module's rows where they were extracted gives the rows decoding the
+  # merged facts would (a row decodes on its own), in parallel: decoding
+  # the Phoenix stack's in the caller took longer than extracting it.
+  defp extract_shape(:raw, _symbols), do: & &1
+  defp extract_shape(:typed, _symbols), do: &Argus.Facts.decode/1
+  defp extract_shape(:interned, symbols), do: &Argus.Facts.intern(&1, symbols)
 
   # The module's name as `function_def` spells it, read from the beam's
   # header alone; the path when even that fails (and a placeholder for

@@ -114,6 +114,11 @@ only writes them (**Added**: `Argus.Pipeline.Writer.encode/2`,
 the Phoenix stack took longer than extracting it at eight workers: the
 run takes 5.7 s where it took 9.3 s. The files are the same.
 
+**Changed.** `Argus.Pipeline.extract/2` with `format: :typed` decodes
+each module's rows in the worker that extracted them, where it decoded
+the merged facts in the caller afterwards: the Phoenix stack's typed
+facts take 3.8 s where they took 14 s. The rows are the same.
+
 **Removed.** Schema 60. `move`, `allocate`, `deallocate`, `try_end` and
 `module_attribute`: no Datalog rule and no in-process pass read them (the
 walks read the instructions; the extractors that need an attribute read

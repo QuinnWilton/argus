@@ -28,6 +28,12 @@ defmodule Argus.FactsTest do
       end
     end
 
+    test "format: :typed is the raw facts decoded, module by module or merged" do
+      modules = [:lists, :maps, Argus.InstrId]
+      {:ok, raw} = Pipeline.extract(modules)
+      assert Pipeline.extract(modules, format: :typed) == {:ok, Facts.decode(raw)}
+    end
+
     test "extract with format: :typed returns decoded rows" do
       {:ok, typed} = Pipeline.extract([:lists], format: :typed)
 
