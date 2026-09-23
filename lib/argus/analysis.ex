@@ -99,9 +99,14 @@ defmodule Argus.Analysis do
   `of` names the finding relation and `on` how a row joins it: a list of
   `{evidence_column, finding_column}` pairs (an atom stands for the same
   name in both). Each matching row becomes a related frame of the
-  finding through the analysis's `evidence/2` callback.
+  finding through the analysis's `evidence/2` callback; `limit` keeps
+  the first that many frames per finding, in row order.
   """
-  @type evidence :: %{of: atom(), on: [atom() | {atom(), atom()}]}
+  @type evidence :: %{
+          required(:of) => atom(),
+          required(:on) => [atom() | {atom(), atom()}],
+          optional(:limit) => pos_integer()
+        }
 
   @type output_relation :: %{
           required(:name) => atom(),

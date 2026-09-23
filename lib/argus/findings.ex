@@ -41,7 +41,9 @@ defmodule Argus.Findings do
   alias Argus.Analysis
   alias Argus.Analysis.Sets
   alias Argus.Findings.Anchor
+  alias Argus.Findings.Build
   alias Argus.Findings.Names
+  alias Argus.Findings.Rows
   alias Argus.InstrId
   alias Argus.Souffle
 
@@ -296,7 +298,7 @@ defmodule Argus.Findings do
     case result do
       {:ok, results} ->
         try do
-          {findings, failures} = build_findings(mod, results)
+          {findings, failures} = Build.build(mod, results)
 
           ran =
             {:ran, %{analysis: name, duration_ms: duration_ms, finding_count: length(findings)},
@@ -362,66 +364,8 @@ defmodule Argus.Findings do
   """
   @spec build(module(), %{String.t() => [[String.t()]]}) :: [finding()]
   def build(mod, results) when is_atom(mod) and is_map(results) do
-    {findings, _failures} = build_findings(mod, results)
+    {findings, _failures} = Build.build(mod, results)
     findings
-  end
-
-  # The findings, and the rows whose builder raised. A raising row does
-  # not take its concern down with it: it is reported as a generic
-  # finding that says so, and `run/2` adds a degradation note.
-  defp build_findings(mod, results) do
-    relations = Map.new(mod.output_relations(), &{Atom.to_string(&1.name), &1})
-    results = Map.take(results, Map.keys(relations))
-    has_builder? = function_exported?(mod, :finding, 2)
-    joins = evidence_joins(mod, relations)
-    {evidence, evidence_failures} = evidence_frames(mod, relations, results, joins)
-
-    {findings, failures} =
-      for {relation_string, rows} <- Enum.sort(results),
-          relation = Map.fetch!(relations, relation_string),
-          not Map.has_key?(relation, :evidence),
-          row <- dedupe_rows(relation, rows),
-          reduce: {[], []} do
-        {findings, failures} ->
-          {attrs, failures} =
-            if has_builder? do
-              guarded(relation, row, failures, fn -> mod.finding(relation.name, row) end)
-            else
-              {generic_finding(relation, row), failures}
-            end
-
-          finding =
-            attrs
-            |> Map.update(:related, [], &(&1 ++ frames_for(evidence, joins, relation, row)))
-            |> Map.put(:analysis, mod.name())
-            |> Map.put(:concern, mod.name())
-            |> Names.render()
-
-          {[finding | findings], failures}
-      end
-
-    {Enum.reverse(findings), Enum.reverse(failures) ++ evidence_failures}
-  end
-
-  # One row's builder, run so that its crash costs that row only: the
-  # row falls back to the generic rendering (a finding, or for an
-  # evidence row a frame), which names the crash.
-  defp guarded(relation, row, failures, build) do
-    {build.(), failures}
-  rescue
-    exception ->
-      note =
-        "Argus could not render this #{relation.name} row " <>
-          "(#{Exception.message(exception)}) and shows its raw columns; this is a bug in Argus"
-
-      fallback =
-        if Map.has_key?(relation, :evidence) do
-          related(note <> ": " <> raw_columns(relation, row), Anchor.from_row(row))
-        else
-          Map.update!(generic_finding(relation, row), :help, &(&1 ++ [note]))
-        end
-
-      {fallback, [%{relation: relation.name, row: row, exception: exception} | failures]}
   end
 
   defp row_degradation(_name, []), do: []
@@ -441,176 +385,14 @@ defmodule Argus.Findings do
     ]
   end
 
-  # How each finding relation joins its evidence, read once per build
-  # from the analysis's own relations (a custom analysis's included):
-  # finding relation name => {evidence relation, [{evidence position,
-  # finding position}]}. A finding relation has at most one evidence
-  # relation, and it must be one the analysis declares; either mistake is
-  # a bug in the analysis module, not in the rows.
-  defp evidence_joins(mod, relations) do
-    by_name = Map.new(relations, fn {_string, relation} -> {relation.name, relation} end)
-
-    for {_string, %{evidence: %{of: of, on: on}} = evidence} <- relations, reduce: %{} do
-      acc ->
-        finding =
-          Map.get(by_name, of) ||
-            raise ArgumentError,
-                  "#{inspect(mod)}: evidence relation #{inspect(evidence.name)} joins " <>
-                    "#{inspect(of)}, which is not one of its output relations"
-
-        if Map.has_key?(acc, of) do
-          raise ArgumentError,
-                "#{inspect(mod)}: #{inspect(of)} has two evidence relations, " <>
-                  "#{inspect(elem(acc[of], 0))} and #{inspect(evidence.name)}"
-        end
-
-        positions =
-          for pair <- on do
-            {column_position(evidence, evidence_column(pair)),
-             column_position(finding, finding_column(pair))}
-          end
-
-        Map.put(acc, of, {evidence.name, positions})
-    end
-  end
-
-  # Related frames from the evidence relations, keyed by the finding
-  # relation they join and the values of the join columns: one frame per
-  # deduplicated evidence row, in row order, at most `limit` of them when
-  # the relation sets one (the first in row order — a sample, for "the
-  # other sites do this", not a census).
-  defp evidence_frames(mod, relations, results, joins) do
-    {frames, failures} =
-      for {of, {evidence_name, positions}} <- joins,
-          evidence = Map.fetch!(relations, Atom.to_string(evidence_name)),
-          row <-
-            dedupe_rows(evidence, Enum.sort(Map.get(results, Atom.to_string(evidence_name), []))),
-          reduce: {%{}, []} do
-        {acc, failures} ->
-          key = {of, Enum.map(positions, fn {at, _} -> Enum.at(row, at) end)}
-          limit = Map.get(evidence.evidence, :limit)
-
-          case Map.get(acc, key, {0, []}) do
-            {count, _frames} when limit != nil and count >= limit ->
-              {acc, failures}
-
-            {count, frames} ->
-              {frame, failures} =
-                guarded(evidence, row, failures, fn -> mod.evidence(evidence_name, row) end)
-
-              {Map.put(acc, key, {count + 1, [frame | frames]}), failures}
-          end
-      end
-
-    {Map.new(frames, fn {key, {_count, frames}} -> {key, Enum.reverse(frames)} end),
-     Enum.reverse(failures)}
-  end
-
-  defp frames_for(evidence, joins, relation, row) do
-    case Map.fetch(joins, relation.name) do
-      {:ok, {_evidence_name, positions}} ->
-        join = Enum.map(positions, fn {_, at} -> Enum.at(row, at) end)
-        Map.get(evidence, {relation.name, join}, [])
-
-      :error ->
-        []
-    end
-  end
-
-  defp evidence_column({column, _finding_column}), do: column
-  defp evidence_column(column) when is_atom(column), do: column
-  defp finding_column({_evidence_column, column}), do: column
-  defp finding_column(column) when is_atom(column), do: column
-
-  defp column_position(relation, column) do
-    Enum.find_index(relation.fields, fn {name, _kind, _doc} -> name == column end) ||
-      raise ArgumentError, "column #{inspect(column)} is not in #{inspect(relation.name)}"
-  end
-
   @doc """
-  Deduplicates a relation's rows down to one per logical finding.
-
-  Relations with witness columns yield one row per witnessing site; rows
-  that agree on the relation's declared `:key` fields describe the same
-  finding. Keeps the lexicographically least row of each group — a
-  deterministic representative, so finding counts and anchors never
-  depend on Souffle's row order or on how many sites witness the same
-  defect. Relations without a `:key` pass through unchanged.
-
-  Public because in-process embedders that build findings themselves
-  (the planchette pattern) must apply the same identity rule or their
-  counts drift from `run/2`'s.
+  Deduplicates a relation's rows down to one per logical finding:
+  `Argus.Findings.Rows.dedupe/2`. Embedders that count rows themselves
+  (encore, planchette) go through it, or their counts drift from
+  `run/2`'s.
   """
   @spec dedupe_rows(Analysis.output_relation(), [[String.t()]]) :: [[String.t()]]
-  def dedupe_rows(%{key: key_fields, fields: fields}, rows) when is_list(key_fields) do
-    positions = key_positions(key_fields, fields)
-
-    rows
-    |> Enum.group_by(fn row -> Enum.map(positions, &Enum.at(row, &1)) end)
-    |> Enum.map(fn {_key, group} -> Enum.min(group) end)
-    |> Enum.sort()
-  end
-
-  # A key chosen by the value of a discriminating column: each kind of
-  # row in a merged relation says what identifies it.
-  # A kind the map does not name keeps every column: one finding per row,
-  # never two rows folded into one on a guess.
-  def dedupe_rows(%{key: {column, keys}, fields: fields}, rows) when is_map(keys) do
-    [discriminator] = key_positions([column], fields)
-
-    default =
-      case Map.fetch(keys, :default) do
-        {:ok, key_fields} -> key_positions(key_fields, fields)
-        :error -> Enum.to_list(0..(length(fields) - 1)//1)
-      end
-
-    by_value =
-      for {value, key_fields} <- keys, value != :default, into: %{} do
-        {value, key_positions(key_fields, fields)}
-      end
-
-    rows
-    |> Enum.group_by(fn row ->
-      value = Enum.at(row, discriminator)
-      positions = Map.get(by_value, value, default)
-      {value, Enum.map(positions, &Enum.at(row, &1))}
-    end)
-    |> Enum.map(fn {_key, group} -> Enum.min(group) end)
-    |> Enum.sort()
-  end
-
-  def dedupe_rows(_relation, rows), do: rows
-
-  defp key_positions(key_fields, fields) do
-    for key_field <- key_fields do
-      case Enum.find_index(fields, fn {name, _kind, _doc} -> name == key_field end) do
-        nil -> raise ArgumentError, "key field #{inspect(key_field)} not in #{inspect(fields)}"
-        position -> position
-      end
-    end
-  end
-
-  # Fallback for behaviour implementors that don't define finding/2:
-  # severity :info, prose from the relation's declared doc, anchor from
-  # the first row value that parses as an instruction or function ID.
-  defp generic_finding(relation, row) do
-    new(:info, humanize(relation.name), "#{relation.doc} (#{raw_columns(relation, row)})",
-      at: Anchor.from_row(row)
-    )
-  end
-
-  defp raw_columns(relation, row) do
-    relation.fields
-    |> Enum.zip(row)
-    |> Enum.map_join(", ", fn {{name, _kind, _doc}, value} -> "#{name}=#{value}" end)
-  end
-
-  defp humanize(relation_name) do
-    relation_name
-    |> Atom.to_string()
-    |> String.replace("_", " ")
-    |> String.capitalize()
-  end
+  defdelegate dedupe_rows(relation, rows), to: Rows, as: :dedupe
 
   defp degradation_detail(name, :souffle_timeout) do
     "The #{name} analysis timed out in Souffle and was skipped. " <>

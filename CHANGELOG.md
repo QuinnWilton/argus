@@ -40,7 +40,12 @@ stage 0, priors); its `ensure_stage0/2` is public.
 the other `at_*` helpers delegate to it) and adds `from_row/1` and
 `empty/0`. `Argus.Findings.Names` writes names as a reader does
 (`call_name/1`, `elsewhere/2`, `rpc_api/1`, and `render/1`, which
-`build/2` applies to every finding's prose).
+`build/2` applies to every finding's prose). `Argus.Findings.Build`
+turns a solve's rows into findings, `Argus.Findings.Rows` deduplicates
+them (`Argus.Findings.dedupe_rows/2` delegates to its `dedupe/2`) and
+`Argus.Findings.Evidence` joins evidence rows to their findings. The
+`Argus.Analysis.evidence` type names the `:limit` key the analyses
+already use.
 
 ### Fact schema and extraction
 
