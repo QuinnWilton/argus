@@ -69,6 +69,27 @@ defmodule Argus.Stage0Test do
       refute refs =~ "#{mod}:both/1"
     end
 
+    test "an apply whose target resolved is an edge", %{tmp_dir: tmp_dir} do
+      skip_without_souffle()
+
+      facts_dir = Path.join(tmp_dir, "facts")
+      {:ok, _} = Pipeline.run([Argus.Test.Fixtures.MyGenServer], facts_dir)
+
+      # The compiler folds every apply it can read into a direct call, so
+      # the row is written by hand: what remains resolves only through
+      # values the compiler did not track.
+      File.write!(
+        Path.join(facts_dir, "resolved_apply.facts"),
+        "Dispatch:run/1#7\tDispatch:run/1\tHandler:handle/1\n",
+        [:append]
+      )
+
+      assert :ok = Analysis.derive_stage0(facts_dir)
+
+      assert facts_dir |> Path.join("call_edge.facts") |> File.read!() =~
+               "Dispatch:run/1\tHandler:handle/1"
+    end
+
     test "writes call_edge.facts into the facts directory", %{tmp_dir: tmp_dir} do
       skip_without_souffle()
 

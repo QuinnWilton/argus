@@ -23,16 +23,11 @@ defmodule Argus.Extractors.Purity do
   @behaviour Argus.Extractor
 
   alias Argus.InstrId
+  alias Argus.Pipeline.Emit.Applies
   alias Argus.Purity.Effects
 
   import Argus.Extractor.Helpers,
-    only: [
-      add_fact: 3,
-      attribute_values: 2,
-      each_remote_call: 3,
-      list_length: 3,
-      resolve_register: 3
-    ]
+    only: [add_fact: 3, attribute_values: 2, each_remote_call: 3, scan_functions: 4]
 
   @impl true
   def relations,
@@ -41,7 +36,6 @@ defmodule Argus.Extractors.Purity do
       :impure_call,
       :protocol_dispatch,
       :pure_contract,
-      :resolved_apply,
       :unknown_call
     ]
 
@@ -77,41 +71,30 @@ defmodule Argus.Extractors.Purity do
   end
 
   defp classify_calls(facts, module_data) do
-    each_remote_call(module_data, facts, fn
-      acc, ctx, {:erlang, :apply, 3} ->
-        resolve_apply(acc, ctx, InstrId.mint(ctx.func_id, ctx.idx))
+    facts =
+      each_remote_call(module_data, facts, fn
+        acc, ctx, {:erlang, :apply, arity} when arity in [2, 3] ->
+          record_apply(acc, ctx)
 
-      acc, ctx, {callee_mod, callee_func, arity} ->
-        record(acc, ctx, callee_mod, callee_func, arity)
+        acc, ctx, {callee_mod, callee_func, arity} ->
+          record(acc, ctx, callee_mod, callee_func, arity)
+      end)
+
+    scan_functions(module_data.module, module_data.functions, facts, fn
+      acc, ctx, {:apply, _} -> record_apply(acc, ctx)
+      acc, ctx, {:apply_last, _, _} -> record_apply(acc, ctx)
+      acc, _ctx, _instr -> acc
     end)
   end
 
-  # `apply(M, F, A)` is only opaque when M and F are actually unknown. When
-  # they are literals — which is most uses, since `apply` is usually reached
-  # through a macro or a dispatch table with constant entries — it is a
+  # `apply(M, F, A)` is only opaque when M and F are actually unknown.
+  # When they resolve (`Argus.Pipeline.Emit.Applies`, whose
+  # `resolved_apply` row discharges the apply's `dynamic_call`) it is a
   # static call wearing a disguise, and its purity is simply its target's.
-  #
-  # Argus can already do this: resolve_register/3 walks backwards through
-  # the instruction stream to reconstruct what a register holds. So the
-  # honest answer is "look first, and only report unprovable if the look
-  # fails". Emit still records the dynamic_call unconditionally, because at
-  # Layer 1 an apply IS an apply; this relation is the evidence that lets
-  # the rules discharge it.
-  defp resolve_apply(facts, ctx, id) do
-    # The arity is the argument list's length, which only the cons cells
-    # that built it can tell: the list's value, as `resolve_register/3`
-    # reconstructs it, reads an unknown tail (`[x | rest]`) as one more
-    # element, and an improper literal has no length at all.
-    with {:ok, mod} when is_atom(mod) <- resolve_register(ctx.instrs, ctx.idx, {:x, 0}),
-         {:ok, func} when is_atom(func) <- resolve_register(ctx.instrs, ctx.idx, {:x, 1}),
-         arity when is_integer(arity) <- list_length(ctx.instrs, ctx.idx, {:x, 2}) do
-      target = InstrId.func_id(mod, func, arity)
-
-      facts
-      |> add_fact(:resolved_apply, [id, ctx.func_id, target])
-      |> record(ctx, mod, func, arity)
-    else
-      _ -> facts
+  defp record_apply(facts, ctx) do
+    case Applies.resolve(ctx.instrs, ctx.idx, Enum.at(ctx.instrs, ctx.idx)) do
+      {:ok, {mod, func, arity}} -> record(facts, ctx, mod, func, arity)
+      :error -> facts
     end
   end
 

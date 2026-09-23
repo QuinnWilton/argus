@@ -28,6 +28,17 @@ or rename by the 0.17 entry below.
 
 ### Fact schema and extraction
 
+**Changed.** Schema 59. `resolved_apply` is a layer-1 relation the emitter
+writes (`Argus.Pipeline.Emit.Applies`), and it has rows. It resolved only
+`erlang:apply/3` with a literal module and function, which the compiler
+already turns into a direct call whenever it can see the argument list —
+so it was never populated. It now also resolves the `apply` instruction
+(module and function from `x(N)` and `x(N+1)` through the writes that
+reach them) and `erlang:apply/2` of a closure or a literal external fun.
+The call graph follows a resolved apply (`call_edge`), and the effect
+model classifies its target: `apply(&File.read/1, args)` is a file read,
+not an opaque call. The `Purity` extractor no longer lists the relation.
+
 **Added.** Schema 58. `fun_ref(caller, callee)`: a function hands `callee`, as a
 fun value, to a call that may invoke it and does not call it itself — a
 literal external fun (`&URI.parse/1`) or `erlang:make_fun/3` of literals

@@ -17,7 +17,7 @@ defmodule Argus.Pipeline.Emit do
   alias Argus.Extractor.Helpers
   alias Argus.Instr
   alias Argus.InstrId
-  alias Argus.Pipeline.Emit.{FunRefs, Spawns}
+  alias Argus.Pipeline.Emit.{Applies, FunRefs, Spawns}
   alias Argus.Pipeline.Normalize
 
   import Argus.Extractor.Helpers, only: [add_fact: 3]
@@ -91,6 +91,7 @@ defmodule Argus.Pipeline.Emit do
     |> emit_receives(func_id, normalized)
     |> emit_spawns(func_id, normalized)
     |> emit_fun_refs(func_id, normalized)
+    |> emit_applies(func_id, normalized)
     |> emit_instructions_loop(func_id, normalized, 0, line_table, nil)
   end
 
@@ -678,6 +679,14 @@ defmodule Argus.Pipeline.Emit do
 
   defp location_keyword?(list) do
     Keyword.keyword?(list) and Keyword.has_key?(list, :file) and Keyword.has_key?(list, :line)
+  end
+
+  # What an apply calls is in the registers reaching it
+  # (`Argus.Pipeline.Emit.Applies`).
+  defp emit_applies(facts, func_id, normalized) do
+    func_id
+    |> Applies.rows(normalized)
+    |> Enum.reduce(facts, &add_fact(&2, :resolved_apply, &1))
   end
 
   # A fun value is an edge only if the function does not call its target

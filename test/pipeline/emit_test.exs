@@ -365,6 +365,50 @@ defmodule Argus.Pipeline.EmitTest do
     end
   end
 
+  describe "resolved_apply" do
+    test "the apply instruction's module and function registers name its target" do
+      facts =
+        emit_func([
+          {:move, {:atom, URI}, {:x, 1}},
+          {:move, {:atom, :parse}, {:x, 2}},
+          {:apply, 1},
+          :return
+        ])
+
+      assert [[_id, "TestMod:test_func/0", "URI:parse/1"]] = facts[:resolved_apply]
+      assert [[_id, "TestMod:test_func/0", "apply"]] = facts[:dynamic_call]
+    end
+
+    test "an apply_last whose module is unknown resolves nothing" do
+      facts = emit_func([{:move, {:atom, :parse}, {:x, 2}}, {:apply_last, 1, 0}])
+      assert facts[:resolved_apply] == nil
+    end
+
+    test "erlang:apply/3 needs the argument list's length" do
+      known =
+        emit_func([
+          {:move, {:atom, URI}, {:x, 0}},
+          {:move, {:atom, :merge}, {:x, 1}},
+          {:put_list, {:x, 3}, {:literal, [:b]}, {:x, 2}},
+          {:call_ext, 3, {:extfunc, :erlang, :apply, 3}},
+          :return
+        ])
+
+      assert [[_id, _caller, "URI:merge/2"]] = known[:resolved_apply]
+
+      open =
+        emit_func([
+          {:move, {:atom, URI}, {:x, 0}},
+          {:move, {:atom, :merge}, {:x, 1}},
+          {:put_list, {:x, 3}, {:x, 4}, {:x, 2}},
+          {:call_ext, 3, {:extfunc, :erlang, :apply, 3}},
+          :return
+        ])
+
+      assert open[:resolved_apply] == nil
+    end
+  end
+
   describe "fun_ref" do
     test "a literal fun handed to a call is a reference" do
       facts =

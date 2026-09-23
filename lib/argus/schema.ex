@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 58
+  @schema_version 59
 
   # Layer 1: Module-level facts.
 
@@ -1710,21 +1710,16 @@ defmodule Argus.Schema do
 
   @resolved_apply %{
     name: :resolved_apply,
-    layer: 2,
+    layer: 1,
     fields: [
       {:id, :instr_id, "instruction ID of the apply"},
       {:caller, :func_id, "containing function ID"},
       {:target, :func_id, "the MFA it actually calls"}
     ],
     doc: """
-    An `apply/3` whose module and function arguments resolve to literals, \
-    so the call target is statically known after all.
+    An apply whose target the values reaching it name     (`Argus.Pipeline.Emit.Applies`): the `apply` instruction's module and     function registers, `erlang:apply/3`'s module and function with the     argument list's length, `erlang:apply/2`'s closure or literal external     fun. The compiler turns an apply it can read whole into a direct call,     so these are the ones it could not fold: a module or function that     arrives through a variable it did not track.
 
-    `apply` is only opaque when M and F are genuinely unknown. When they are \
-    constants — which is most uses, since apply is usually reached through a \
-    macro or a dispatch table with constant entries — it is a static call \
-    wearing a disguise, and analyses that would otherwise give up can carry \
-    on to the real target.
+    A resolved apply is a call: the call graph follows it, and the effect     model classifies its target rather than reporting the `dynamic_call`     opaque.
     """
   }
 
@@ -2476,6 +2471,7 @@ defmodule Argus.Schema do
     @recv_start,
     @spawn_call,
     @fun_ref,
+    @resolved_apply,
     @try_start,
     @try_end,
     @dynamic_call,
@@ -2611,7 +2607,6 @@ defmodule Argus.Schema do
     @impure_call,
     @protocol_dispatch,
     @unknown_call,
-    @resolved_apply,
     # Coverage instrumentation (populated only by the coverage analysis).
     @imprecision
   ]

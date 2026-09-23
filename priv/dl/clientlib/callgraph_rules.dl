@@ -2,7 +2,7 @@
 //
 // Include this file after declaring `.decl call_edge(caller: symbol, callee: symbol)`.
 // Requires base.dl relations: remote_call, bif_call, local_call, function_def,
-// closure_def, fun_ref. NOT instruction — see below.
+// closure_def, fun_ref, resolved_apply. NOT instruction — see below.
 
 // Remote call: caller function -> "mod:func/arity" string.
 call_edge(caller_func, callee) :-
@@ -44,3 +44,8 @@ call_edge(parent, child) :- closure_def(parent, child).
 // aside (reach.dl's SameProcess variants); a function that also calls the
 // target has no fun_ref row, so that call's edge stays.
 call_edge(f, g) :- fun_ref(f, g).
+
+// An apply whose target resolves is a call to it: the compiler leaves an
+// apply only where it could not see the target, which the values reaching
+// the apply may still name (`@handlers.mod`, a closure handed to apply/2).
+call_edge(f, g) :- resolved_apply(_, f, g).

@@ -14,6 +14,8 @@ defmodule Argus.Extractors.PurityTest do
           defmodule Argus.Extractors.PurityTest.Applies do
             def open_tail(x, rest), do: apply(Enum, :zip, [x | rest])
             def improper, do: apply(Enum, :zip, [:a | :b])
+            def closure(args), do: apply(fn y -> send(y, :hi) end, args)
+            def external(args), do: apply(&File.read/1, args)
           end
           """)
         end)
@@ -25,7 +27,19 @@ defmodule Argus.Extractors.PurityTest do
           {caller, target}
         end)
 
-      %{targets: targets}
+      impure = for [_id, caller, api, _cat, _mode] <- facts[:impure_call], do: {caller, api}
+
+      %{targets: targets, impure: impure}
+    end
+
+    test "apply/2 of a closure or an external fun names what it runs", %{targets: targets} do
+      mod = "Argus.Extractors.PurityTest.Applies"
+      assert targets["#{mod}:closure/1"] == "#{mod}:-closure/1-fun-0-/1"
+      assert targets["#{mod}:external/1"] == "File:read/1"
+    end
+
+    test "a resolved apply's effect is its target's", %{impure: impure} do
+      assert {"Argus.Extractors.PurityTest.Applies:external/1", "File.read/1"} in impure
     end
 
     # `[x | rest]` used to resolve as the two-element list `[x, :dynamic]`,
