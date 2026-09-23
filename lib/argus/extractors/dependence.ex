@@ -71,6 +71,7 @@ defmodule Argus.Extractors.Dependence do
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
   alias Argus.Extractors.ETS
+  alias Argus.Extractors.Mnesia
   alias Argus.Extractors.ProcessRegistry
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
@@ -94,11 +95,11 @@ defmodule Argus.Extractors.Dependence do
 
   @doc """
   Whether a remote call is a shared-state operation: a read or a write of
-  the process registry or an ETS table, as each family's
+  the process registry, an ETS table or a Mnesia table, as each family's
   extractor defines it.
   """
   @spec site?(mfa()) :: boolean()
-  def site?(mfa), do: ProcessRegistry.site?(mfa) or ETS.site?(mfa)
+  def site?(mfa), do: ProcessRegistry.site?(mfa) or ETS.site?(mfa) or Mnesia.site?(mfa)
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()

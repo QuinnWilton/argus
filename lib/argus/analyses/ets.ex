@@ -1,11 +1,12 @@
 defmodule Argus.Analyses.Ets do
   @moduledoc """
-  ETS table analysis.
+  ETS table analysis, and the shared-table races Mnesia's dirty operations
+  share with it.
 
   Detects ETS usage patterns and potential issues: tables without proper
   concurrency options, unprotected owners, unnamed tables in processes,
   ordered_set contention across modules, and read-then-write races on a
-  public table.
+  public table or a Mnesia record.
 
   Requires the ETS, OTP, and Supervision domain extractors for layer 2 facts
   about table creation, options, access patterns, and supervisor children.
@@ -21,6 +22,7 @@ defmodule Argus.Analyses.Ets do
   - `ets_ordered_set_contention(name, mod1, mod2)` — ordered_set accessed by multiple modules.
   - `ets_unnamed_in_process(name, mod)` — unnamed table created in a process.
   - `ets_check_act(mod, func, name, key, read, write)` — a read decides or feeds a plain write of the same key on a public table another process can write; the two may sit in different functions and meet in `func`.
+  - `mnesia_check_act(mod, func, table, key, read, write)` — a dirty read decides or feeds a dirty write of the same record, and another process can write the table.
 
   ## Finding severities
 
@@ -59,6 +61,7 @@ defmodule Argus.Analyses.Ets do
       Argus.Extractors.ErrorHandling,
       Argus.Extractors.GenStatem,
       Argus.Extractors.CallArgs,
+      Argus.Extractors.Mnesia,
       Argus.Extractors.Dependence
     ]
 
@@ -90,6 +93,20 @@ defmodule Argus.Analyses.Ets do
         ],
         key: [:func, :name, :key],
         doc: "A read decides a write of the same key on a public table another process can write."
+      },
+      %{
+        name: :mnesia_check_act,
+        fields: [
+          {:mod, :symbol, "the module"},
+          {:func, :symbol, "the function where the read's result meets the write"},
+          {:table, :symbol, "the table"},
+          {:key, :symbol, "the key, as func identifies it"},
+          {:read, :symbol, "instruction ID of the dirty read"},
+          {:write, :symbol, "instruction ID of the dirty write it decides or feeds"}
+        ],
+        key: [:func, :table, :key],
+        doc:
+          "A dirty read decides or feeds a dirty write of the same record another process can write."
       },
       %{
         name: :ets_unprotected_owner,
@@ -181,6 +198,25 @@ defmodule Argus.Analyses.Ets do
         "make the check and the write one operation: `:ets.insert_new/2`, " <>
           "`:ets.update_counter/4` with a default, or `:ets.select_replace/2`",
         "or route writes to #{name} through its owner process and make the table `:protected`"
+      ]
+    )
+  end
+
+  def finding(:mnesia_check_act, [mod, func, table, _key, read, write]) do
+    Findings.new(
+      :warning,
+      "Read-then-write race on a Mnesia record",
+      "#{func} reads a record of #{table} with a dirty read#{Findings.elsewhere(read, func)} " <>
+        "and writes it back with a dirty write#{Findings.elsewhere(write, func)} decided by, " <>
+        "or computed from, what it read. Dirty operations bypass Mnesia's transactions: " <>
+        "another process can write the record between the two, and one of the writes is lost.",
+      at: Findings.at_site(write, mod),
+      at_label: "this dirty write acts on a read that may be stale",
+      related: [Findings.related("the dirty read it depends on", Findings.at_site(read, mod))],
+      help: [
+        "read and write in one `:mnesia.transaction/1`, with `:mnesia.read/1` and " <>
+          "`:mnesia.write/1`",
+        "for a counter, `:mnesia.dirty_update_counter/3` is atomic"
       ]
     )
   end

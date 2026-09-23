@@ -45,6 +45,13 @@ examples, and Dialyzer's unregister warning, are Erlang fixtures under
 `Argus.Findings.elsewhere/2` names the function a site sits in when it
 is not where the pair meets.
 
+`ets` gains `mnesia_check_act(mod, func, table, key, read, write)` over a
+new `Argus.Extractors.Mnesia` and its `mnesia_op(id, func, op, kind,
+table_source, table, key_source, key)`: a dirty read that decides or
+feeds a dirty write of the same record another process can write. With
+it every example in the paper is pinned, and the check-then-act rules
+cover all four of Dialyzer's `-Wrace_conditions` warnings.
+
 `Argus.Corpus` pairs take `subdir:` for a repository whose Mix project is
 not at the root — `mix.exs` under `elixir/`, one app of an umbrella under
 `apps/` — so a fix in such a tree can be a pair. The clone is still one

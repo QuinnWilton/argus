@@ -225,6 +225,11 @@
 .decl matches_down(func: symbol)
 .input matches_down
 
+// A Mnesia dirty operation, outside any transaction's serialization, with the table and key it touches. The one-argument forms carry both in a tuple: {table, key}, or a record whose first element is its table and whose second is its key.
+//
+.decl mnesia_op(id: symbol, func: symbol, op: symbol, kind: symbol, table_source: symbol, table: symbol, key_source: symbol, key: symbol)
+.input mnesia_op
+
 // A `Process.monitor/1` or `:erlang.monitor/2`. Once it returns, a `{:DOWN, ref, :process, object, reason}` arrives unless cancelled — so a process that monitors is a process that receives `:DOWN`.
 //
 .decl monitor_call(id: symbol, func: symbol, target: symbol)

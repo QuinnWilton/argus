@@ -70,7 +70,7 @@ separate analyses, so a defect has one owner.
 | `failure` | error paths swallowed, half-caught or ignored |
 | `structure` | child specs, registrations and tree shapes that are wrong on their own |
 | `state_machine` | gen_statem states no transition reaches, and terminal states that never stop |
-| `ets` | ETS table ownership, concurrency options and lifecycle, and read-then-write races on ETS |
+| `ets` | ETS table ownership, concurrency options and lifecycle, and read-then-write races on ETS and Mnesia |
 | `effects` | `@pure` contracts, and effects inside a transaction that a rollback cannot undo |
 | `unsafe_input` | atom exhaustion, unsafe deserialization and code execution reachable from a request |
 | `exposure` | secrets that `inspect/1` prints, and TLS that does not verify the peer |

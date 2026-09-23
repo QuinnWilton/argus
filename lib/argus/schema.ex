@@ -1912,12 +1912,33 @@ defmodule Argus.Schema do
     """
   }
 
+  @mnesia_op %{
+    name: :mnesia_op,
+    layer: 2,
+    fields: [
+      {:id, :instr_id, "instruction ID of the call"},
+      {:func, :func_id, "function containing the call"},
+      {:op, :symbol, "dirty_read | dirty_write | dirty_delete | dirty_delete_object"},
+      {:kind, :symbol, "read | write"},
+      {:table_source, :symbol, "literal | param | field | dynamic"},
+      {:table, :symbol, "the table: an inspected literal, a parameter index, or a map key"},
+      {:key_source, :symbol, "literal | param | field | dynamic"},
+      {:key, :symbol, "the key: an inspected literal, a parameter index, or a map key"}
+    ],
+    doc: """
+    A Mnesia dirty operation, outside any transaction's serialization, \
+    with the table and key it touches. The one-argument forms carry both \
+    in a tuple: {table, key}, or a record whose first element is its \
+    table and whose second is its key.
+    """
+  }
+
   @site_depends %{
     name: :site_depends,
     layer: 2,
     fields: [
       {:site, :instr_id,
-       "a shared-state operation: a name lookup, claim or release, or an ETS op"},
+       "a shared-state operation: a name lookup, claim or release, an ETS or dirty Mnesia op"},
       {:func, :func_id, "the function containing it"},
       {:kind, :symbol, "param | call | site"},
       {:source, :symbol,
@@ -2145,6 +2166,7 @@ defmodule Argus.Schema do
     @creating_op,
     @ets_key,
     @ets_tid_arg,
+    @mnesia_op,
     @name_lookup,
     @name_release,
     @sink_arg_derived,

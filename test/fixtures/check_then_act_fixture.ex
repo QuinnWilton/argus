@@ -1,8 +1,9 @@
 defmodule Argus.Test.Fixtures.CheckThenAct do
   @moduledoc """
-  Fixtures for the lookup-then-start race (`structure.registry_race`)
-  and the read-then-write race (`ets.ets_check_act`). The paper's own
-  examples are Erlang, in `test/fixtures/erl/`.
+  Fixtures for the lookup-then-start race (`structure.registry_race`),
+  the read-then-write race (`ets.ets_check_act`) and its Mnesia twin
+  (`ets.mnesia_check_act`). The paper's own examples are Erlang, in
+  `test/fixtures/erl/`.
 
   Behaviours are bare `@behaviour` attributes, as in `RequestSurface`.
   The positives are plain modules or many-instance callbacks; the quiet
@@ -468,6 +469,85 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
         [] -> :ets.insert(:keys_cache, {other, 1})
         _ -> false
       end
+    end
+  end
+
+  # ── Dirty read, then dirty write ─────────────────────────────────
+
+  defmodule MnesiaCounter do
+    @moduledoc "A dirty read, one added, a dirty write: the paper's snmp counter in Elixir."
+    def bump(key) do
+      n =
+        case :mnesia.dirty_read(:counters, key) do
+          [] -> 0
+          [{:counters, ^key, n}] -> n
+        end
+
+      :mnesia.dirty_write({:counters, key, n + 1})
+    end
+  end
+
+  defmodule MnesiaHelpers do
+    @moduledoc "The read and the write sit in helpers; the read's result is handed to the write."
+    def bump(key), do: put(key, get(key))
+
+    defp get(key), do: :mnesia.dirty_read({:counters, key})
+
+    defp put(key, []), do: :mnesia.dirty_write(:counters, {:counters, key, 1})
+
+    defp put(key, [{:counters, _key, n}]),
+      do: :mnesia.dirty_write(:counters, {:counters, key, n + 1})
+  end
+
+  defmodule MnesiaTransaction do
+    @moduledoc "The same counter in a transaction: nothing dirty."
+    def bump(key) do
+      :mnesia.transaction(fn ->
+        n =
+          case :mnesia.read(:counters, key) do
+            [] -> 0
+            [{:counters, ^key, n}] -> n
+          end
+
+        :mnesia.write({:counters, key, n + 1})
+      end)
+    end
+  end
+
+  defmodule MnesiaUpdateCounter do
+    @moduledoc "The atomic form."
+    def bump(key), do: :mnesia.dirty_update_counter(:counters, key, 1)
+  end
+
+  defmodule MnesiaOtherKey do
+    @moduledoc "The read and the write name different records."
+    def copy(from, to) do
+      case :mnesia.dirty_read(:counters, from) do
+        [{:counters, _, n}] -> :mnesia.dirty_write({:counters, to, n})
+        [] -> :ok
+      end
+    end
+  end
+
+  defmodule MnesiaOwner do
+    @moduledoc "Only the owner's callbacks touch the table: one writer."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def handle_call({:bump, key}, _from, state) do
+      n =
+        case :mnesia.dirty_read(:owned_counters, key) do
+          [] -> 0
+          [{:owned_counters, ^key, n}] -> n
+        end
+
+      :mnesia.dirty_write({:owned_counters, key, n + 1})
+      {:reply, :ok, state}
     end
   end
 end

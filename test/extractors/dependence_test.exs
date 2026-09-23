@@ -4,6 +4,7 @@ defmodule Argus.Extractors.DependenceTest do
   alias Argus.Extractor.CallSites
   alias Argus.Extractors.Dependence
   alias Argus.Extractors.ETS
+  alias Argus.Extractors.Mnesia
   alias Argus.Extractors.ProcessRegistry
   alias Argus.Findings
   alias Argus.InstrId
@@ -15,6 +16,7 @@ defmodule Argus.Extractors.DependenceTest do
     C.StartHelper,
     C.LookupHelper,
     C.DispatchHelper,
+    C.MnesiaCounter,
     C.PublicCache,
     :padl2010_ets_inc
   ]
@@ -60,6 +62,14 @@ defmodule Argus.Extractors.DependenceTest do
       [start] = sites_at("WhereisThenStart:ensure", {GenServer, :start_link, 3})
 
       assert {start, "site", whereis} in site_deps(facts, "WhereisThenStart:ensure")
+    end
+
+    test "a write after the case depends on the read through the value merged there",
+         %{facts: facts} do
+      [read] = sites_at("MnesiaCounter:bump", {:mnesia, :dirty_read, 2})
+      [write] = sites_at("MnesiaCounter:bump", {:mnesia, :dirty_write, 1})
+
+      assert {write, "site", read} in site_deps(facts, "MnesiaCounter:bump")
     end
 
     test "a clause's act depends on the parameter the clauses dispatch on", %{facts: facts} do
@@ -137,14 +147,17 @@ defmodule Argus.Extractors.DependenceTest do
           C.UnregisterIfPresent,
           C.RegisterIfUnlisted,
           C.HandlesAlreadyRegistered,
-          C.PublicCache
+          C.PublicCache,
+          C.MnesiaCounter,
+          C.MnesiaHelpers,
+          :padl2010_snmp_shadow_table
         ]
 
       {:ok, facts} =
-        Argus.Pipeline.extract(modules, extractors: [ProcessRegistry, ETS])
+        Argus.Pipeline.extract(modules, extractors: [ProcessRegistry, ETS, Mnesia])
 
       ids =
-        for relation <- [:name_lookup, :creating_op, :name_release, :ets_op],
+        for relation <- [:name_lookup, :creating_op, :name_release, :ets_op, :mnesia_op],
             [id | _] <- Map.get(facts, relation, []),
             do: id
 

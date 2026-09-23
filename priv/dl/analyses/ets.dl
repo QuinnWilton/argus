@@ -336,6 +336,7 @@ rows.act(w, f, ts, t, ks, k) :-
 .decl table_param_needed(func: symbol, pos: symbol)
 
 table_param_needed(f, p) :- rows.meets(f, _, _, "param", p, _, _).
+table_param_needed(f, p) :- records.meets(f, _, _, "param", p, _, _).
 
 table_param_needed(c, to_string(m)) :-
   table_param_needed(f, p),
@@ -393,3 +394,50 @@ ets_check_act(mod, func, name, key, read, write) :-
   ets_option(id, "access", "public"),
   function_def(func, mod, _, _, _),
   ets_concurrent_write(name, func).
+
+// ── Dirty read, then dirty write ─────────────────────────────────
+//
+// Mnesia serializes what runs inside a transaction; its dirty operations
+// bypass that, and a dirty_read whose result decides or feeds a
+// dirty_write of the same record is the read-modify-write another process
+// can interleave. The paper's instance is the snmp agent's time-stamp
+// counter: read, add one, write back. A Mnesia table is shared by every
+// process on every node, so no access mode excuses it; one process that
+// is the table's only writer does. :mnesia.transaction/1 and
+// dirty_update_counter are the fixes.
+
+.init records = CheckThenAct
+
+records.check(r, f, ts, t, ks, k) :- mnesia_op(r, f, _, "read", ts, t, ks, k).
+records.act(w, f, ts, t, ks, k) :- mnesia_op(w, f, _, "write", ts, t, ks, k).
+
+.decl mnesia_pair(func: symbol, read: symbol, write: symbol, table: symbol, key: symbol)
+
+mnesia_pair(f, r, w, t, k) :- records.meets(f, r, w, "literal", t, _, k).
+mnesia_pair(f, r, w, t, k) :- records.meets(f, r, w, "param", p, _, k), table_at_param(f, p, t).
+
+.init record_runs = RunsConcurrently
+
+record_runs.seed(f) :- mnesia_pair(f, _, _, _, _).
+record_runs.seed(f) :- mnesia_op(_, f, _, "write", _, _, _, _).
+
+.decl mnesia_concurrent_write(table: symbol, func: symbol)
+
+mnesia_concurrent_write(t, f) :-
+  mnesia_pair(f, _, _, t, _),
+  !record_runs.single_process(f).
+
+mnesia_concurrent_write(t, f) :-
+  mnesia_pair(f, _, _, t, _),
+  record_runs.single_process(f),
+  record_runs.entry_reaches(m, f),
+  mnesia_op(_, g, _, "write", "literal", t, _, _),
+  !record_runs.entry_reaches(m, g).
+
+.decl mnesia_check_act(mod: symbol, func: symbol, table: symbol, key: symbol, read: symbol, write: symbol)
+.output mnesia_check_act
+
+mnesia_check_act(mod, func, table, key, read, write) :-
+  mnesia_pair(func, read, write, table, key),
+  function_def(func, mod, _, _, _),
+  mnesia_concurrent_write(table, func).
