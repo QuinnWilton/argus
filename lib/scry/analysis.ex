@@ -252,9 +252,22 @@ defmodule Scry.Analysis do
   # directories are named from these, so naming one costs a few hashes
   # instead of re-serializing every projected row per analysis, and the
   # digest is recomputed only when the relation's rows change.
+  #
+  # The rows are stringified once: the text they digest is the text a
+  # fact directory needs, so it is written to the shared relation store
+  # here, and materializing a directory only links it.
   defquery :relation_digest, key: relation, returns: String.t() do
     rows = Runtime.query(db, :relation_rows, relation)
-    rows_digest(relation, rows, Symbols.for_db(db))
+    stored_digest(relation, rows, Symbols.for_db(db))
+  end
+
+  # The same for one of stage 0's outputs: digested and stored once per
+  # derivation, however many analyses read it.
+  defquery :stage0_digest, key: relation, returns: String.t() | nil do
+    case Runtime.query(db, :stage0_facts, :all) do
+      {:ok, facts} -> stored_digest(relation, Map.fetch!(facts, relation), Symbols.for_db(db))
+      {:error, _} -> nil
+    end
   end
 
   # The relations a given analysis reads, straight from argus (which
@@ -338,8 +351,7 @@ defmodule Scry.Analysis do
         for relation <- relations do
           if relation in @stage0_outputs do
             # Stage 0's outputs, not extracted relations.
-            rows = Map.fetch!(stage0, relation)
-            {relation, rows_digest(relation, rows, Symbols.for_db(db)), rows}
+            {relation, Runtime.query(db, :stage0_digest, relation), Map.fetch!(stage0, relation)}
           else
             {relation, Runtime.query(db, :relation_digest, relation),
              Runtime.query(db, :relation_rows, relation)}
@@ -745,11 +757,13 @@ defmodule Scry.Analysis do
     Enum.map(strings, fn row -> [Enum.intersperse(row, "\t"), "\n"] end)
   end
 
-  defp rows_digest(relation, rows, symbols) do
-    relation
-    |> rows_iodata(rows, symbols)
-    |> :erlang.md5()
-    |> Base.encode16(case: :lower)
+  # The digest of `rows` as Souffle will read them, with the text written
+  # to the relation store under it on the way.
+  defp stored_digest(relation, rows, symbols) do
+    text = rows_iodata(relation, rows, symbols)
+    digest = text |> :erlang.md5() |> Base.encode16(case: :lower)
+    _path = store_relation(relation, digest, fn -> text end)
+    digest
   end
 
   defp digest(term) do
@@ -806,14 +820,20 @@ defmodule Scry.Analysis do
     end)
   end
 
+  # The digest already stored the file; this regenerates it only when the
+  # store's pruning removed it since.
   defp relation_file!(relation, digest, rows, symbols) do
+    store_relation(relation, digest, fn -> rows_iodata(relation, rows, symbols) end)
+  end
+
+  defp store_relation(relation, digest, text) do
     root = Path.join(scratch_root(), "relations")
     path = Path.join(root, "#{relation}_#{digest}.facts")
 
     unless File.exists?(path) do
       File.mkdir_p!(root)
       staging = "#{path}.#{System.unique_integer([:positive])}"
-      File.write!(staging, rows_iodata(relation, rows, symbols))
+      File.write!(staging, text.())
 
       case File.rename(staging, path) do
         :ok -> :ok
