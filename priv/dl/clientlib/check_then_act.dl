@@ -163,10 +163,10 @@
 
   // ── Where they meet ───────────────────────────────────────────────
 
-  .decl meets(f: symbol, c: symbol, a: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol)
+  .decl met(f: symbol, c: symbol, a: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol)
 
   // The act is in f.
-  meets(f, c, a, rs, r, ks, k) :-
+  met(f, c, a, rs, r, ks, k) :-
     carries(f, kind, src, c, rs, r, ks, k),
     site_depends(a, f, kind, src),
     act(a, f, rs2, r2, ks2, k2),
@@ -174,7 +174,7 @@
     (ks = ks2, k = k2, ks != "dynamic" ; ks = "any" ; ks2 = "any").
 
   // The carrier decides a call that reaches the act.
-  meets(f, c, a, rs, r, ks, k) :-
+  met(f, c, a, rs, r, ks, k) :-
     carries(f, kind, src, c, rs, r, ks, k),
     call_decided(f, g, kind, src),
     acts_if(g, a, _, _, rs1, r1, ks1, k1),
@@ -184,7 +184,7 @@
     (ks = ks2, k = k2, ks != "dynamic" ; ks = "any" ; ks2 = "any").
 
   // The carrier is handed to a callee whose act depends on it.
-  meets(f, c, a, rs, r, ks, k) :-
+  met(f, c, a, rs, r, ks, k) :-
     carries(f, kind, src, c, rs, r, ks, k),
     call_arg_depends(f, g, n, kind, src),
     acts_if(g, a, "param", to_string(n), rs1, r1, ks1, k1),
@@ -192,4 +192,26 @@
     lift(f, g, ks1, k1, ks2, k2),
     (rs = rs2, r = r2, rs != "dynamic" ; rs = "any" ; rs2 = "any"),
     (ks = ks2, k = k2, ks != "dynamic" ; ks = "any" ; ks2 = "any").
+
+  // A pair that meets in a helper meets again in every caller the helper
+  // returns the check to and that reaches the act under a decision of its
+  // own. It is one race: reported where it meets closest to the check.
+  // A recursive function carries its own check back to itself; that is
+  // the loop meeting where it is, not a meeting below it.
+  .decl carried_through(f: symbol, c: symbol, g: symbol)
+
+  carried_through(f, c, g) :- carries(f, "call", g, c, _, _, _, _).
+  carried_through(f, c, h) :- carried_through(f, c, g), carried_through(g, c, h).
+
+  .decl met_below(f: symbol, c: symbol, a: symbol)
+
+  met_below(f, c, a) :-
+    met(f, c, a, _, _, _, _),
+    carried_through(f, c, g),
+    g != f,
+    met(g, c, a, _, _, _, _).
+
+  .decl meets(f: symbol, c: symbol, a: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol)
+
+  meets(f, c, a, rs, r, ks, k) :- met(f, c, a, rs, r, ks, k), !met_below(f, c, a).
 }

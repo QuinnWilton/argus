@@ -437,6 +437,35 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     defp store(key, [{_key, n}]), do: :ets.insert(:helper_cache, {key, n + 1})
   end
 
+  defmodule CachedTwice do
+    @moduledoc "A cache that meets its own read and fill, and a caller that decides the fill again on it."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      :ets.new(:cached_twice, [:named_table, :public, :set])
+      {:ok, state}
+    end
+
+    def warm(key) do
+      if cached(key) == :missing, do: fill(key)
+    end
+
+    defp cached(key) do
+      case :ets.lookup(:cached_twice, key) do
+        [] -> fill(key)
+        [{_key, value}] -> value
+      end
+    end
+
+    defp fill(key) do
+      :ets.insert(:cached_twice, {key, :filled})
+      :missing
+    end
+  end
+
   defmodule UnnamedTable do
     @moduledoc "An unnamed public table handed to a helper by its reference."
     def start(key) do

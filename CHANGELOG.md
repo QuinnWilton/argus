@@ -62,6 +62,9 @@ type}` handed to a dirty read and then a dirty write is one key
 (ztlp@39fa329); a value two definitions reach stays dynamic, and a local
 identity never crosses a call.
 
+A check-then-act pair that meets in a helper is reported there, and not
+again in each caller the helper returns the check to.
+
 `Argus.Corpus` pairs take `subdir:` for a repository whose Mix project is
 not at the root — `mix.exs` under `elixir/`, one app of an umbrella under
 `apps/` — so a fix in such a tree can be a pair. The clone is still one

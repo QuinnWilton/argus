@@ -59,6 +59,15 @@ defmodule Argus.Analyses.EtsCheckActTest do
       assert length(sites) == 2
     end
 
+    test "a pair that meets in a helper is not reported again in its caller" do
+      skip_without_souffle()
+
+      {:ok, results} = Argus.analyze([C.CachedTwice], :ets)
+      funcs = for [_mod, func | _] <- results["ets_check_act"], uniq: true, do: short(func)
+
+      assert funcs == ["cached/1"]
+    end
+
     test "an unnamed public table handed to a helper by its reference" do
       skip_without_souffle()
       assert [{"count/2", ":unnamed_counts", "1"} | _] = races([C.UnnamedTable])
