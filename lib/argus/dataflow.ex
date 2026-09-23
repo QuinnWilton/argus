@@ -9,20 +9,22 @@ defmodule Argus.Dataflow do
 
   ## Control flow
 
-  The successor relation comes from the explicit control-transfer facts:
-  `next` (fallthrough), `jump`, `branch` (the fail edge), and
-  `select_branch`, with labels resolved through `label_at`. This is
-  deliberately *not* `Argus.Cfg`'s block-edge relation:
+  The successor relation comes from the control-transfer facts, which
+  carry every target `Argus.Instr.targets/1` names: `next` (fallthrough),
+  `jump`, `branch` (a test's, a map instruction's or a receive's other
+  edge), `select_branch`, the fail label of a `bif_call` and of a
+  `bs_start`, and the handler of a `try_start` — the same graph as
+  `Argus.Cfg`, with labels resolved through `label_at`.
 
-    * Exception edges (`try_start` handlers) are not followed. At the
-      handler the VM materializes the exception class/reason/stacktrace in
-      `x0`–`x2` without any `def` fact, so following the edge would
-      attribute pre-`try` writes of those registers to handler reads — a
-      false flow. Handler code instead flows from its own writes (its
-      reads of the VM-materialized registers resolve to nothing, honestly).
-    * `bif_call`/`bs_start` fail edges are not followed; like the generic
-      `branch` fallthrough, the fail path is reached through the facts
-      that carry it explicitly.
+  The exception edge runs from the `try` (or `catch`) instruction to its
+  handler, and that is exact rather than an approximation of "any
+  instruction in the protected code may raise": the handler reads only
+  `y` registers holding values bound before the `try` (a variable bound
+  inside the protected code is unsafe in the handler, in Erlang and in
+  Elixir alike), the compiler never reuses a slot that is live into the
+  handler, and the VM hands over the exception in `x0`–`x2`, which
+  `try_case` (`x0` alone at `catch_end`) writes. So what reaches the
+  handler is what reaches the `try`.
 
   ## Algorithm
 
@@ -78,16 +80,18 @@ defmodule Argus.Dataflow do
   Reaching definitions with the register they travel in: `{source, reg,
   use}` for every read, where `source` is the writing instruction.
 
-  With `params: true`, a function's parameters are sources too: block
-  entries with no predecessor start with `{:param, k}` reaching `xk` for
-  every `k` below the arity, so a read of `x1` that no instruction wrote
-  resolves to `{:param, 1}` instead of to nothing. That is how head
-  destructuring shows up — `%{"name" => name}` is a `get_map_elements`
-  reading `x1` with no reaching `def` — and it is what lets a caller ask
-  "is this value derived from parameter k" rather than only "which
-  instruction wrote it". Seeding every root block, not just the entry,
-  over-approximates only into unreachable code, where a def-less `xk` is
-  the parameter anyway.
+  With `params: true`, a function's parameters are sources too: the
+  function's entry starts with `{:param, k}` reaching `xk` for every `k`
+  below the arity, so a read of `x1` that no instruction wrote resolves
+  to `{:param, 1}` instead of to nothing. That is how head destructuring
+  shows up — `%{"name" => name}` is a `get_map_elements` reading `x1`
+  with no reaching `def` — and it is what lets a caller ask "is this
+  value derived from parameter k" rather than only "which instruction
+  wrote it". Only the entry is seeded: the entry label from
+  `function_entry`, else the instruction after `func_info`, else the
+  first instruction. A block nothing else reaches — unreachable code —
+  starts from nothing, since whatever `xk` holds there is not the
+  parameter.
 
   Same precondition as `def_use_edges/1`: one module at a time.
   """
@@ -98,15 +102,45 @@ defmodule Argus.Dataflow do
     defs = regs_by_instr(Map.get(facts, :def, []))
     uses = regs_by_instr(Map.get(facts, :use, []))
     succs = successors(facts)
+    entries = entries(facts)
 
     facts
     |> Map.get(:instruction, [])
-    |> Enum.group_by(&InstrId.fa(&1.id), & &1.id)
-    |> Enum.map(fn {{_name, arity} = fa, ids} ->
-      entry = if params?, do: param_sources(arity), else: MapSet.new()
-      function_edges(Enum.sort_by(ids, & &1.idx), Map.get(succs, fa, %{}), defs, uses, entry)
+    |> Enum.group_by(&InstrId.fa(&1.id), &{&1.id, &1.op})
+    |> Enum.map(fn {{_name, arity} = fa, rows} ->
+      rows = Enum.sort_by(rows, fn {id, _op} -> id.idx end)
+      ids = Enum.map(rows, &elem(&1, 0))
+      seed = if params?, do: param_sources(arity), else: MapSet.new()
+      entry = {entry_id(rows, Map.get(entries, fa)), seed}
+      function_edges(ids, Map.get(succs, fa, %{}), defs, uses, entry)
     end)
     |> Enum.reduce(MapSet.new(), &MapSet.union/2)
+  end
+
+  # %{fa => entry instruction id}, from function_entry's label.
+  defp entries(facts) do
+    labels =
+      facts
+      |> Map.get(:label_at, [])
+      |> Map.new(fn %{label: label, id: id} -> {{InstrId.fa(id), label}, id} end)
+
+    for %{func: func, entry: label} <- Map.get(facts, :function_entry, []),
+        {:ok, %{func: name, arity: arity}} <- [InstrId.parse_func(func)],
+        id = Map.get(labels, {{name, arity}, label}),
+        id != nil,
+        into: %{},
+        do: {{name, arity}, id}
+  end
+
+  # Facts without function_entry (built by hand, or from an older
+  # emitter) still have func_info, which the entry label follows.
+  defp entry_id(_rows, id) when id != nil, do: id
+
+  defp entry_id(rows, nil) do
+    case Enum.drop_while(rows, fn {_id, op} -> op != "func_info" end) do
+      [_func_info, {id, _op} | _] -> id
+      _ -> rows |> List.first() |> elem(0)
+    end
   end
 
   # Parameter k arrives in xk. The pseudo-definition carries no instruction,
@@ -138,7 +172,10 @@ defmodule Argus.Dataflow do
       Enum.map(Map.get(facts, :next, []), fn %{from: from, to: to} -> {from, to} end) ++
         label_edges(facts, :jump, label_to_id, & &1.target) ++
         label_edges(facts, :branch, label_to_id, & &1.fail) ++
-        label_edges(facts, :select_branch, label_to_id, & &1.target)
+        label_edges(facts, :select_branch, label_to_id, & &1.target) ++
+        label_edges(facts, :bif_call, label_to_id, & &1.fail) ++
+        label_edges(facts, :bs_start, label_to_id, & &1.fail) ++
+        label_edges(facts, :try_start, label_to_id, & &1.handler)
 
     edges
     |> Enum.group_by(fn {from, _to} -> InstrId.fa(from) end)
@@ -163,10 +200,11 @@ defmodule Argus.Dataflow do
 
   # --- per-function analysis -------------------------------------------------
 
-  defp function_edges(ids, succ, defs, uses, entry) do
+  defp function_edges(ids, succ, defs, uses, {entry_id, seed}) do
     preds = invert(succ)
-    blocks = build_blocks(ids, succ, preds)
+    blocks = build_blocks(ids, succ, preds, entry_id)
     block_of = for {block, n} <- Enum.with_index(blocks), id <- block, into: %{}, do: {id, n}
+    entry = {Map.fetch!(block_of, entry_id), seed}
 
     block_succs =
       blocks
@@ -195,14 +233,15 @@ defmodule Argus.Dataflow do
   # already placed — a back edge to an earlier block start ends the chain).
   # Walking ids in stream order and starting a block at every unplaced
   # instruction covers unreachable code too, exactly like the
-  # per-instruction fixpoint did.
-  defp build_blocks(ids, succ, preds) do
+  # per-instruction fixpoint did. The entry always starts a block, so the
+  # parameters are seeded where the function begins and nowhere earlier.
+  defp build_blocks(ids, succ, preds, entry_id) do
     {blocks, _placed} =
       Enum.reduce(ids, {[], MapSet.new()}, fn id, {blocks, placed} ->
         if MapSet.member?(placed, id) do
           {blocks, placed}
         else
-          block = chain(id, succ, preds, MapSet.put(placed, id), [id])
+          block = chain(id, succ, preds, entry_id, MapSet.put(placed, id), [id])
           {[block | blocks], MapSet.union(placed, MapSet.new(block))}
         end
       end)
@@ -210,11 +249,12 @@ defmodule Argus.Dataflow do
     Enum.reverse(blocks)
   end
 
-  defp chain(last, succ, preds, placed, acc) do
+  defp chain(last, succ, preds, entry_id, placed, acc) do
     with [next] <- Map.get(succ, last, []),
          [^last] <- Map.get(preds, next, []),
+         true <- next != entry_id,
          false <- MapSet.member?(placed, next) do
-      chain(next, succ, preds, MapSet.put(placed, next), [next | acc])
+      chain(next, succ, preds, entry_id, MapSet.put(placed, next), [next | acc])
     else
       _ -> Enum.reverse(acc)
     end
@@ -271,17 +311,16 @@ defmodule Argus.Dataflow do
     end)
   end
 
-  # A block nobody jumps to starts from the function's parameters (when the
-  # caller asked for them); every other block starts from what its
-  # predecessors leave behind.
-  defp block_in(n, preds, out, entry) do
-    case Map.get(preds, n, []) do
-      [] ->
-        entry
+  # A block starts from what its predecessors leave behind; the entry
+  # block also from the function's parameters (when the caller asked for
+  # them), since a loop back to the entry is a predecessor too.
+  defp block_in(n, preds, out, {entry_block, seed}) do
+    from_preds =
+      preds
+      |> Map.get(n, [])
+      |> Enum.reduce(MapSet.new(), &MapSet.union(&2, Map.fetch!(out, &1)))
 
-      block_preds ->
-        Enum.reduce(block_preds, MapSet.new(), &MapSet.union(&2, Map.fetch!(out, &1)))
-    end
+    if n == entry_block, do: Enum.into(seed, from_preds), else: from_preds
   end
 
   # One local walk: each use reads the state before its own instruction's

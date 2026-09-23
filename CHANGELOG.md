@@ -136,6 +136,18 @@ like the map instructions. The test suite asserts that every instruction
 in OTP, Elixir and the dependencies is known, and that the emitter's
 rows are exactly `Argus.Instr`'s.
 
+**Fixed.** `Argus.Dataflow.reaching_uses/2` with `params: true` seeds the
+parameters at the function's entry only (the `function_entry` label,
+else the instruction after `func_info`). It had seeded every block with
+no predecessor, and an exception handler is one: in `handler(a, b)` a
+rescue's reads resolved to `{:param, 0}` and `{:param, 1}`, feeding
+false flows into `call_arg_derived`, `site_depends`/`call_arg_depends`
+and process points-to. The successor relation now also follows a guard
+BIF's and a binary match's fail label and the edge from a `try`/`catch`
+to its handler, the same graph as `Argus.Cfg`, so a value bound before
+the `try` reaches the handler's reads and a clause reached only through
+a failing guard sees the writes before it.
+
 ### Process points-to
 
 **Changed.** `self()` resolves in a function a process's own code

@@ -2,7 +2,10 @@ defmodule Argus.DataflowTest do
   use ExUnit.Case, async: true
 
   alias Argus.Dataflow
+  alias Argus.Extractor.Helpers
   alias Argus.InstrId
+  alias Argus.Pipeline.Disassemble
+  alias Argus.Test.Fixtures.Instr, as: Fixture
 
   # Build a typed fact base for one function from a compact spec:
   # {op, defs, uses, control} where control is nil | {:branch, label} |
@@ -231,6 +234,86 @@ defmodule Argus.DataflowTest do
         ])
 
       assert edges(facts) == MapSet.new([{"f", 0, 1}, {"f", 0, 2}])
+    end
+  end
+
+  describe "control the facts carry besides next, jump and branch" do
+    defp reaching_in(module, name) do
+      {:ok, data} = Disassemble.disassemble_path(to_string(:code.which(module)))
+      instrs = for {:function, ^name, _, _, instrs} <- data.functions, do: instrs
+
+      triples =
+        for {source, reg, %InstrId{func: func} = use} <-
+              Dataflow.reaching_uses(Helpers.typed(data), params: true),
+            func == to_string(name),
+            do: {source_of(source), reg, use.idx}
+
+      {List.flatten(instrs), MapSet.new(triples)}
+    end
+
+    defp index_of(instrs, pattern), do: Enum.find_index(instrs, pattern)
+
+    test "a rescue's class and reason are try_case's writes, not the parameters" do
+      {instrs, triples} = reaching_in(Fixture, :handler)
+      try_case = index_of(instrs, &match?({:try_case, _}, &1))
+
+      # The only reads of a parameter are the protected call's arguments.
+      assert for({{:param, _}, _reg, use} <- triples, do: use) |> Enum.uniq() ==
+               [index_of(instrs, &match?({:call_ext, 2, {:extfunc, :ets, :lookup, 2}}, &1))]
+
+      assert Enum.any?(triples, &match?({^try_case, "x1", _}, &1))
+    end
+
+    test "a value bound before the try reaches the handler along the exception edge" do
+      {instrs, triples} = reaching_in(Fixture, :fallback)
+      tuple = index_of(instrs, &match?({:put_tuple2, _, {:list, [{:y, _}, _]}}, &1))
+      {:put_tuple2, _, {:list, [{:y, n}, _]}} = Enum.at(instrs, tuple)
+
+      writers =
+        for {source, reg, ^tuple} <- triples, reg == "y#{n}", do: Enum.at(instrs, source)
+
+      assert Enum.sort(writers) ==
+               Enum.sort([{:move, {:atom, :one}, {:y, n}}, {:move, {:atom, :other}, {:y, n}}])
+    end
+
+    test "a block only a guard BIF's fail label reaches still gets the writes before it" do
+      facts =
+        facts_for([
+          {:move, ["x1"], [], nil},
+          {:bif, ["x2"], ["x0"], nil},
+          {:return, [], ["x2"], :return},
+          {:label, [], [], {:label, 9}},
+          {:return, [], ["x1"], :return}
+        ])
+
+      facts = Map.put(facts, :bif_call, [%{id: iid("f", 1), fail: 9}])
+      assert {"f", 0, 4} in edges(facts)
+    end
+
+    test "only the entry starts from the parameters, not code nothing reaches" do
+      facts =
+        facts_for([
+          {:return, [], ["x0"], :return},
+          {:label, [], [], {:label, 9}},
+          {:return, [], ["x0"], :return}
+        ])
+
+      assert reaching(facts, params: true) == MapSet.new([{{:param, 0}, "x0", 0}])
+    end
+
+    test "the entry label from function_entry is where the parameters start" do
+      facts =
+        facts_for([
+          {:label, [], [], {:label, 1}},
+          {:func_info, [], [], nil},
+          {:label, [], [], {:label, 2}},
+          {:return, [], ["x0"], :return}
+        ])
+
+      assert reaching(facts, params: true) == MapSet.new([{{:param, 0}, "x0", 3}])
+
+      with_entry = Map.put(facts, :function_entry, [%{func: "M:f/1", entry: 2}])
+      assert reaching(with_entry, params: true) == MapSet.new([{{:param, 0}, "x0", 3}])
     end
   end
 end
