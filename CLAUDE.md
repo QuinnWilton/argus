@@ -96,7 +96,11 @@ mix dialyzer                  # static analysis
 ```
 
 Souffle-dependent tests are tagged `:souffle` and need a `souffle`
-binary on PATH.
+binary on PATH. The incremental≡batch gate (`test/scry/analysis_parity_test.exs`,
+every analysis over `test/fixtures/parity` — argus's own fixtures —
+cold and across cross-module removals) is tagged `:parity` and excluded
+by default: run `mix test --include parity` before touching
+`Scry.Analysis`.
 
 ## Commit message style
 
