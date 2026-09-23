@@ -5,7 +5,7 @@ defmodule Argus.SchemaTest do
 
   describe "all/0" do
     test "returns a non-empty list of relations" do
-      assert Schema.all() != []
+      assert [_ | _] = Schema.all()
     end
 
     test "every relation has required keys" do

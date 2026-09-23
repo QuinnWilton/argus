@@ -571,19 +571,14 @@ defmodule Argus.Pipeline.EmitTest do
   end
 
   describe "literal operands" do
-    defmodule Loud do
-      @moduledoc false
-      defstruct [:items]
-    end
-
-    # The shape sequin's CircularBuffer has: an Inspect implementation that
-    # raises on the struct's own defaults, which inspect/1 renders as a
-    # multi-line #Inspect.Error<...>.
-    defimpl Inspect, for: Loud do
-      def inspect(%{items: items}, _opts), do: "#Loud<" <> Enum.join(items, ",") <> ">"
-    end
+    alias Argus.Test.Fixtures.LoudInspect, as: Loud
 
     test "a struct literal is spelled without its Inspect implementation" do
+      # The implementation is live: defined in a test module it would
+      # come after protocol consolidation and do nothing, and this test
+      # would pass without exercising it.
+      assert inspect(%Loud{}) =~ "Inspect.Error"
+
       facts = emit_func([{:move, {:literal, %Loud{}}, {:x, 0}}, :return])
       assert [[_, "x0", spelled]] = facts[:literal_value]
       refute String.contains?(spelled, ["\n", "\t", "#Loud<", "Inspect.Error"])
