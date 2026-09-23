@@ -44,7 +44,9 @@ defmodule Scry.MixProject do
   defp deps do
     [
       {:roux, "~> 0.1.4"},
-      # argus 0.17 (one analysis per concern) until it is on Hex.
+      # The argus checkout beside this one: main needs argus past its last
+      # Hex release (panoptes 0.13) — concerns, Argus.Findings.build/2,
+      # schema 47 — so it tracks argus main until panoptes 0.19 is on Hex.
       {:panoptes, path: "../argus", override: true},
       {:pentiment, "~> 0.2"},
       # Pentiment lexers: syntax highlighting for the stderr (ansi) frames.
