@@ -447,7 +447,7 @@ defmodule Scry.Analysis do
     end
   end
 
-  defp solve(db, analysis, dir) do
+  defp solve(db, analysis, dir, attempts \\ 2) do
     # The scratch window is shared across processes (an LSP session and a
     # compiler run prune the same root), so a concurrent prune can remove
     # a directory the memo above still names. Rebuild before solving:
@@ -475,11 +475,30 @@ defmodule Scry.Analysis do
         {:ok, outputs}
 
       {:error, reason} ->
-        # Degradation stays a visible value (Souffle missing/timeout),
-        # never a crash — the argus contract. The driver keeps it out of
-        # the manifest, so the next run solves again.
-        {:error, {:souffle, analysis, reason}}
+        # The same race, lost during the solve: another process pruned
+        # the directory while Souffle was reading it. Rebuild and solve
+        # once more rather than report a failure of the scratch space.
+        if attempts > 1 and not intact?(db, analysis, dir) do
+          # A half-pruned directory would pass the File.dir? check.
+          File.rm_rf(dir)
+          solve(db, analysis, dir, attempts - 1)
+        else
+          # Degradation stays a visible value (Souffle missing/timeout),
+          # never a crash — the argus contract. The driver keeps it out
+          # of the manifest, so the next run solves again.
+          {:error, {:souffle, analysis, reason}}
+        end
     end
+  end
+
+  # A fact directory still as materialized: every relation the analysis
+  # reads has its file there.
+  defp intact?(db, analysis, dir) do
+    {:ok, entries} = Runtime.untracked(fn -> analysis_facts_entries(db, analysis) end)
+
+    Enum.all?(entries, fn {relation, _digest, _rows} ->
+      File.regular?(Path.join(dir, "#{relation}.facts"))
+    end)
   end
 
   # Line-free by construction (anchors are module/mfa/instr IDs, not
@@ -884,14 +903,29 @@ defmodule Scry.Analysis do
   # analyses sharing `def_use` cost one write of it, not twenty-six.
   defp write_projected_facts!(entries, dir, symbols) do
     Enum.each(entries, fn {relation, digest, rows} ->
-      source = relation_file!(relation, digest, rows, symbols)
-      target = Path.join(dir, "#{relation}.facts")
-
-      case File.ln(source, target) do
-        :ok -> :ok
-        {:error, _} -> File.cp!(source, target)
-      end
+      link_relation!(relation, digest, rows, symbols, Path.join(dir, "#{relation}.facts"))
     end)
+  end
+
+  # Links a stored relation file into a fact directory (a copy where the
+  # filesystem cannot link). Another process pruning the store can remove
+  # the file between storing and linking, and an interrupted writer can
+  # leave something at its name that is not the file: either way the
+  # entry is cleared and stored again, once.
+  defp link_relation!(relation, digest, rows, symbols, target, attempts \\ 2) do
+    source = relation_file!(relation, digest, rows, symbols)
+
+    with {:error, _} <- File.ln(source, target),
+         {:error, reason} <- File.cp(source, target) do
+      if attempts > 1 do
+        File.rm_rf(source)
+        link_relation!(relation, digest, rows, symbols, target, attempts - 1)
+      else
+        raise File.CopyError, reason: reason, action: "copy", source: source, destination: target
+      end
+    end
+
+    :ok
   end
 
   # The digest already stored the file; this regenerates it only when the

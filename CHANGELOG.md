@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A fact directory another process prunes while Souffle is reading it
+  is rebuilt and solved again, instead of reporting the analysis
+  degraded; a relation file missing from the shared store, or replaced
+  by something that is not one, when a directory links it is stored
+  again instead of failing the run with `File.CopyError`.
 - Typespec facts (argus schema 54) stay current incrementally. A
   module's extraction records the specs of the remote functions it
   calls, read off the code path; the environment fingerprint now
