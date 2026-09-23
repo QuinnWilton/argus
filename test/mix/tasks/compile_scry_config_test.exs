@@ -33,10 +33,7 @@ defmodule Mix.Tasks.Compile.ScryConfigTest do
     {copy, app}
   end
 
-  defp compile! do
-    Mix.Task.clear()
-    Mix.Task.run("compile", ["--return-errors", "--no-prune-code-paths"])
-  end
+  defp compile!, do: Fixture.compile!()
 
   defp codes(diagnostics) do
     for %{message: message} <- diagnostics,

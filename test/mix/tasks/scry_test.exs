@@ -30,10 +30,7 @@ defmodule Mix.Tasks.ScryTest do
     %{log: log}
   end
 
-  defp compile! do
-    Mix.Task.clear()
-    Mix.Task.run("compile", ["--return-errors", "--no-prune-code-paths"])
-  end
+  defp compile!, do: Fixture.compile!()
 
   test "runs warm off the compiler's manifest and reports", %{copy: copy, log: log} do
     Mix.Project.in_project(:depot, copy, fn _module ->

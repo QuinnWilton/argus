@@ -12,6 +12,9 @@ defmodule Scry.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       elixirc_paths: elixirc_paths(Mix.env()),
+      # The fixture projects' sources live under test/ but are compiled
+      # by their own Mix projects, never loaded as tests.
+      test_ignore_filters: [&String.starts_with?(&1, "test/fixtures/")],
       dialyzer: [
         plt_add_apps: [:ex_unit, :mix],
         plt_local_path: "priv/plts/project.plt",

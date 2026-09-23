@@ -16,7 +16,14 @@ defmodule Scry.Test.Fixture do
   app), so the fixture needs no dependency on scry.
   """
 
+  import ExUnit.CaptureIO, only: [with_io: 1, with_io: 2]
+
   @fixture Path.expand("../fixtures/depot", __DIR__)
+
+  # The module namespaces the fixture projects define. A fixture compiled
+  # earlier in this VM leaves its modules loaded, and compiling another
+  # checkout of the same sources would warn that each is redefined.
+  @fixture_namespaces ["Elixir.Depot.", "Elixir.A.", "Elixir.B."]
 
   @doc """
   Copies the fixture into `dest` (wiped first) and returns `dest`.
@@ -28,11 +35,65 @@ defmodule Scry.Test.Fixture do
   """
   @spec checkout!(Path.t(), keyword(), atom()) :: Path.t()
   def checkout!(dest, scry_config \\ [], app \\ :depot) do
+    unload!()
     File.rm_rf!(dest)
     File.mkdir_p!(dest)
     File.cp_r!(Path.join(@fixture, "lib"), Path.join(dest, "lib"))
     write_mix_exs!(dest, scry_config, app)
     dest
+  end
+
+  @doc """
+  Runs the full compile chain in the current project, repeatably, with
+  its console output captured: `Mix.Task.clear/0` re-enables the nested
+  compile tasks between runs, `--return-errors` keeps an `:error` status
+  from exiting the VM, and `--no-prune-code-paths` keeps this test VM's
+  own apps (scry and its deps) loadable inside the fixture — a real
+  project gets that for free from its scry dependency.
+
+  The rendered frames go to stderr; the diagnostics come back in the
+  result, which is what tests assert on. `compile_io!/0` returns the
+  output too.
+  """
+  @spec compile!() :: {Mix.Task.Compiler.status(), [Mix.Task.Compiler.Diagnostic.t()]}
+  def compile! do
+    {result, _stderr} = compile_io!()
+    result
+  end
+
+  @doc "`compile!/0`, also returning what the chain printed to stderr."
+  @spec compile_io!() ::
+          {{Mix.Task.Compiler.status(), [Mix.Task.Compiler.Diagnostic.t()]}, String.t()}
+  def compile_io! do
+    Mix.Task.clear()
+
+    with_io(:stderr, fn ->
+      {result, _stdout} =
+        with_io(fn ->
+          Mix.Task.run("compile", ["--return-errors", "--no-prune-code-paths"])
+        end)
+
+      result
+    end)
+  end
+
+  @doc """
+  Purges every loaded fixture module, so the next checkout compiles its
+  own copies without redefinition warnings.
+  """
+  @spec unload!() :: :ok
+  def unload! do
+    for {module, _file} <- :code.all_loaded(),
+        name = Atom.to_string(module),
+        Enum.any?(@fixture_namespaces, &String.starts_with?(name, &1)),
+        # The project module stays: in_project caches it by app atom.
+        not String.ends_with?(name, ".MixProject") do
+      :code.purge(module)
+      :code.delete(module)
+      :code.purge(module)
+    end
+
+    :ok
   end
 
   @doc """

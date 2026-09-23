@@ -9,7 +9,7 @@ defmodule Mix.Tasks.Compile.ScryUmbrellaTest do
   # Mix project stack + cwd changes — never async.
   use ExUnit.Case, async: false
 
-  import ExUnit.CaptureIO
+  alias Scry.Test.Fixture
 
   @moduletag timeout: 300_000
   @moduletag :souffle
@@ -17,21 +17,16 @@ defmodule Mix.Tasks.Compile.ScryUmbrellaTest do
   @fixture Path.expand("../../fixtures/umbrella", __DIR__)
 
   setup do
+    Fixture.unload!()
     copy = Path.join(System.tmp_dir!(), "scry_umbrella")
     File.rm_rf!(copy)
     File.cp_r!(@fixture, copy)
     %{copy: copy}
   end
 
-  defp compile! do
-    Mix.Task.clear()
-    Mix.Task.run("compile", ["--return-errors", "--no-prune-code-paths"])
-  end
-
   test "compiles from the umbrella root and analyzes the child per app", %{copy: copy} do
     Mix.Project.in_project(:scry_umbrella_fixture, copy, fn _module ->
-      stderr = capture_io(:stderr, fn -> send(self(), {:result, compile!()}) end)
-      assert_received {:result, _result}
+      {_result, stderr} = Fixture.compile_io!()
 
       # The child's own flaw is found in its own file (paths are
       # relative to the child, where the compiler ran). Per-app: B.Loop's

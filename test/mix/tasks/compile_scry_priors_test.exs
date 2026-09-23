@@ -17,10 +17,7 @@ defmodule Mix.Tasks.Compile.ScryPriorsTest do
     {copy, app}
   end
 
-  defp compile! do
-    Mix.Task.clear()
-    Mix.Task.run("compile", ["--return-errors", "--no-prune-code-paths"])
-  end
+  defp compile!, do: Fixture.compile!()
 
   # The runner directly, on the beams the compile left: what it returns
   # carries every entry field, which a diagnostic does not.

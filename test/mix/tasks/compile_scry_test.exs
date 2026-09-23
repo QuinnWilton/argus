@@ -22,14 +22,7 @@ defmodule Mix.Tasks.Compile.ScryTest do
     %{copy: copy, log: log}
   end
 
-  # The full chain, repeatable: `Mix.Task.clear/0` re-enables the nested
-  # compile tasks between runs, and `--no-prune-code-paths` keeps this
-  # test VM's own apps (scry and its deps) loadable inside the fixture —
-  # a real project gets that for free from its scry dependency.
-  defp compile! do
-    Mix.Task.clear()
-    Mix.Task.run("compile", ["--return-errors", "--no-prune-code-paths"])
-  end
+  defp compile!, do: Fixture.compile!()
 
   # Writes a fixture source and bumps its mtime forward: back-to-back
   # edits inside one posix second are invisible to :elixir's
