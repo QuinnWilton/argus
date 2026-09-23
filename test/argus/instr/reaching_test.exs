@@ -53,11 +53,11 @@ defmodule Argus.Instr.ReachingTest do
         for mod <- @modules,
             {:ok, data} = Disassemble.disassemble_path(to_string(:code.which(mod))),
             reaching = Dataflow.reaching_uses(Helpers.typed(data), params: true),
-            by_use = Enum.group_by(reaching, &use_key/1, &source_of/1),
+            by_function =
+              Enum.group_by(reaching, fn {_source, _reg, use} -> {use.func, use.arity} end),
             {:function, name, arity, _, _} = function <- data.functions,
-            do:
-              {mod, function,
-               Map.filter(by_use, fn {{f, a, _, _}, _} -> {f, a} == {to_string(name), arity} end)}
+            reads = Map.get(by_function, {to_string(name), arity}, []),
+            do: {mod, function, Enum.group_by(reads, &use_key/1, &source_of/1)}
 
       check all(
               {mod, {:function, _, _, _, raw} = function, reads} <- member_of(functions),
