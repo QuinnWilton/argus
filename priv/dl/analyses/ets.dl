@@ -210,7 +210,7 @@ ets_write_only_table(name, mod, id) :-
 // Backward from the table functions (creators and readers) to the
 // callbacks that reach them, so the closure is bounded by functions x
 // table functions rather than by every process's whole reach.
-.init ets_reach = ClosureReach
+.init ets_reach = CallReach
 
 ets_reach.seed(f, f) :- ets_new(_, f, _).
 ets_reach.seed(f, f) :- ets_op(_, f, _, _, "read").

@@ -15,11 +15,10 @@
 // `seed(f, sink) :- call_edge(f, g), sink_in(g, sink)`.
 //
 // The step is the difference between the variants. `call_edge` treats
-// closure construction as a call, so a plain step follows execution into
-// lambdas; SameProcess subtracts those edges (a receive inside `spawn(fn
-// -> ... end)` runs elsewhere); Closure adds `closure_def` edges on top,
-// for the shapes where the closure is the interesting party; IntraModule
-// stays inside one module. Each variant states its step in its own
+// closure construction as a call (stage 0 derives an edge from every
+// `closure_def`), so a plain step follows execution into lambdas;
+// SameProcess subtracts those edges (a receive inside `spawn(fn -> ...
+// end)` runs elsewhere); IntraModule stays inside one module. Each variant states its step in its own
 // recursive clause rather than copying `call_edge` into a per-instance
 // relation, so an analysis with four instances pays for four closures,
 // not four call graphs.
@@ -43,11 +42,6 @@
 
 .comp SameProcessReach : Backward {
   reaches(f, t) :- call_edge(f, g), !closure_def(f, g), reaches(g, t).
-}
-
-.comp ClosureReach : Backward {
-  reaches(f, t) :- call_edge(f, g), reaches(g, t).
-  reaches(f, t) :- closure_def(f, g), reaches(g, t).
 }
 
 .comp IntraModuleReach : Backward {

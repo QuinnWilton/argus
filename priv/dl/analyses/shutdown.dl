@@ -209,7 +209,7 @@ tree_member(root, name) :-
 // The starter is the process whose callbacks reach the start — not the
 // module the start function happens to live in, which may be a plain
 // helper called from several processes (or from a request surface).
-.init start_reach = ClosureReach
+.init start_reach = CallReach
 
 start_reach.seed(s, s) :- dynamic_child(_, _, s).
 

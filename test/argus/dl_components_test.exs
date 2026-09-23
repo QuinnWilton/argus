@@ -3,7 +3,9 @@ defmodule Argus.DlComponentsTest do
   The reachability components in `priv/dl/clientlib/reach.dl`, run over a
   hand-written call graph: each variant's step is what its name says.
 
-      a -> b -> c -> sink        (b -> c is a closure edge)
+      a -> b -> c -> sink        (b -> c is a closure edge: call_edge
+                                  holds every closure_def, as stage 0
+                                  derives it)
       k -> sink
       other -> c                 (`other` lives in module N; the rest in M)
   """
@@ -24,7 +26,6 @@ defmodule Argus.DlComponentsTest do
 
   .init call = CallReach
   .init same = SameProcessReach
-  .init closure = ClosureReach
   .init intra = IntraModuleReach
   .init call_set = CallReachSet
   .init forward = ForwardCallReach
@@ -34,7 +35,6 @@ defmodule Argus.DlComponentsTest do
 
   call.seed(f, "x") :- call_edge(f, "sink").
   same.seed(f, "x") :- call_edge(f, "sink").
-  closure.seed(f, "x") :- closure_def(_, f).
   intra.seed("c", "c").
   call_set.seed(f) :- call_edge(f, "sink").
   forward.root("a", "a").
@@ -47,7 +47,6 @@ defmodule Argus.DlComponentsTest do
   .output out
   out("call", f) :- call.reaches(f, "x").
   out("same", f) :- same.reaches(f, "x").
-  out("closure", f) :- closure.reaches(f, "x").
   out("intra", f) :- intra.reaches(f, "c").
   out("call_set", f) :- call_set.reaches(f).
   out("forward", f) :- forward.reaches("a", f).
@@ -88,8 +87,6 @@ defmodule Argus.DlComponentsTest do
     assert out["call"] == ~w(a b c k other)
     # The closure edge b -> c is not followed, so a and b drop out.
     assert out["same"] == ~w(c k other)
-    # Seeded at the closure c; the closure edge is followed back to b.
-    assert out["closure"] == ~w(a b c other)
     # `other` reaches c but from another module.
     assert out["intra"] == ~w(a b c)
     assert out["call_set"] == ~w(a b c k other)
