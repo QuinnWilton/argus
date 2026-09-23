@@ -104,20 +104,15 @@ defmodule Argus.Analyses.Exposure do
     )
   end
 
-  # The same finding as the structural one, a step down in severity and
-  # labelled with the probability: the reader knows a model, not a
-  # substring, named the field.
+  # The same finding as the structural one, made heuristic: a step down
+  # in severity, and a help line with the probability — the reader knows
+  # a model, not a substring, named the field.
   def finding(:unredacted_secret_inferred, [mod, field, kind, aware, permille]) do
-    structural = finding(:unredacted_secret, [mod, field, kind, aware])
-    p = String.to_integer(permille)
-
-    %{
-      structural
-      | severity: demote(structural.severity),
-        at_label: "heuristic: a classifier names #{field} as a #{kind}, p=#{format_permille(p)}",
-        provenance: :heuristic,
-        confidence: p
-    }
+    Findings.heuristic(
+      finding(:unredacted_secret, [mod, field, kind, aware]),
+      String.to_integer(permille),
+      "a classifier names #{field} as a #{kind}"
+    )
   end
 
   def finding(:disables_verification, [func, id]) do
@@ -167,11 +162,6 @@ defmodule Argus.Analyses.Exposure do
 
   defp severity("credential"), do: :error
   defp severity(_other), do: :warning
-
-  defp demote(:error), do: :warning
-  defp demote(_warning_or_info), do: :info
-
-  defp format_permille(p), do: :erlang.float_to_binary(p / 1000, decimals: 2)
 
   defp consequence("credential") do
     "This looks like a third-party credential, so leaking it hands over " <>

@@ -231,6 +231,14 @@ branch-target counts are cached per function. Every extractor that
 resolves an argument sees more: the ETS key written in a `case`'s last
 arm, the name a later clause looks up.
 
+`Findings.heuristic/3` is the one way a finding rests on a prior: one
+severity step down, `provenance: :heuristic`, `confidence`, and a help
+line — `heuristic: <what the prior said> (p=0.87)`. The coupling,
+exposure and unsafe-input builders each carried a copy of the demotion
+and rewrote `at_label` with the note; `at_label` now keeps saying what
+the anchor line is ("supervision tree defined here"), and the note moved
+to the last help line.
+
 ### Fixed
 
 Anchors no longer invent modules. Several builders passed a function ID

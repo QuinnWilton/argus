@@ -322,27 +322,16 @@ defmodule Argus.Analyses.Coupling do
   # A dependency the module-level clause inferred and a prior doubts: the
   # caller reaches the sibling, but the sibling's API, the model says,
   # does not message a process — a helper with a call in its start_link,
-  # not a facade. One severity step down, the finding labelled with the
-  # doubt and how sure the model was that the sibling is *not* a process.
+  # not a facade. A heuristic finding, sure to the degree the model was
+  # that the sibling is *not* a process.
   defp doubt(attrs, callee, "doubted", p) do
-    permille = String.to_integer(p)
-    not_process = 1000 - permille
-
-    %{
-      attrs
-      | severity: demote(attrs.severity),
-        at_label:
-          "heuristic: #{callee}'s API does not talk to a process (p=#{format_permille(not_process)}); " <>
-            "the dependency was inferred from reaching it, not from a call",
-        provenance: :heuristic,
-        confidence: not_process
-    }
+    Findings.heuristic(
+      attrs,
+      1000 - String.to_integer(p),
+      "#{callee}'s API does not talk to a process; the dependency was inferred " <>
+        "from reaching it, not from a call"
+    )
   end
 
   defp doubt(attrs, _callee, _basis, _p), do: attrs
-
-  defp demote(:error), do: :warning
-  defp demote(_warning_or_info), do: :info
-
-  defp format_permille(p), do: :erlang.float_to_binary(p / 1000, decimals: 2)
 end

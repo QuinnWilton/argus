@@ -280,32 +280,18 @@ defmodule Argus.Analyses.UnsafeInput do
 
   # A path row whose sink function, the model says, reads storage,
   # configuration or the system's own state: the path is real, the data
-  # is probably not the request. One severity step down, the finding
-  # labelled with what was read and how sure the model was. A function
+  # is probably not the request. A heuristic finding (`Findings.heuristic/3`)
+  # that says what was read and how sure the model was. A function
   # the model calls passthrough or request-reading is left as it is —
   # the first says nothing, the second was unmeasured in calibration.
   @downgrading ~w(storage config internal constant)
 
   defp retier(attrs, func, proximity, source, p)
        when proximity in ["adjacent", "transitive"] and source in @downgrading do
-    permille = String.to_integer(p)
-
-    %{
-      attrs
-      | severity: demote(attrs.severity),
-        at_label:
-          "heuristic: #{func} reads #{source}, not the request (p=#{format_permille(permille)})",
-        provenance: :heuristic,
-        confidence: permille
-    }
+    Findings.heuristic(attrs, String.to_integer(p), "#{func} reads #{source}, not the request")
   end
 
   defp retier(attrs, _func, _proximity, _source, _p), do: attrs
-
-  defp demote(:error), do: :warning
-  defp demote(_warning_or_info), do: :info
-
-  defp format_permille(p), do: :erlang.float_to_binary(p / 1000, decimals: 2)
 
   # What the options said, and what that leaves open. [:safe] stops new
   # atoms and references to unloaded modules; a fun referencing a loaded

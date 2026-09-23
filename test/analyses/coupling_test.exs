@@ -152,7 +152,10 @@ defmodule Argus.Analyses.CouplingTest do
       assert finding.severity == :info
       assert finding.provenance == :heuristic
       assert finding.confidence == 880
-      assert finding.at_label =~ "does not talk to a process (p=0.88)"
+      assert List.last(finding.help) =~ "does not talk to a process"
+      assert List.last(finding.help) =~ "(p=0.88)"
+      # The anchor label still says what the anchor line is.
+      refute finding.at_label =~ "heuristic"
       assert finding.title == "Coupled children under one_for_one"
 
       plain =

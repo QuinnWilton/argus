@@ -848,6 +848,35 @@ defmodule Argus.Findings do
   end
 
   @doc """
+  Marks finding attributes as resting on a prior (`Argus.Priors`): one
+  severity step down (`:error` to `:warning`, anything else to `:info`),
+  `provenance: :heuristic`, `confidence: permille`, and a help line
+  saying what the prior said and how sure it was. `at_label` is left as
+  it was — it says what the anchor line is, and a prior does not change
+  that.
+
+      iex> attrs = Argus.Findings.new(:error, "T", "D.", at_label: "the call")
+      iex> h = Argus.Findings.heuristic(attrs, 870, "the sibling is not a process")
+      iex> {h.severity, h.provenance, h.confidence, h.at_label}
+      {:warning, :heuristic, 870, "the call"}
+      iex> h.help
+      ["heuristic: the sibling is not a process (p=0.87)"]
+  """
+  @spec heuristic(attrs(), 0..1000, String.t()) :: attrs()
+  def heuristic(%{severity: severity, help: help} = attrs, permille, note)
+      when is_integer(permille) and permille in 0..1000 and is_binary(note) do
+    p = :erlang.float_to_binary(permille / 1000, decimals: 2)
+
+    %{
+      attrs
+      | severity: if(severity == :error, do: :warning, else: :info),
+        provenance: :heuristic,
+        confidence: permille,
+        help: help ++ ["heuristic: #{note} (p=#{p})"]
+    }
+  end
+
+  @doc """
   A callee as a reader writes it: the facts spell a call target
   `Mod:fun/arity` (`GenServer:call/2`, `:gen_statem:call/3`), prose wants
   `GenServer.call/2` and `:gen_statem.call/3`. Anything else — an API

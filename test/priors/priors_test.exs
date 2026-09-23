@@ -77,8 +77,9 @@ defmodule Argus.PriorsTest do
     assert heuristic.title == "#{inspect(S.Heuristic)}.:totp_seed is printed by inspect/1"
     assert heuristic.severity == :warning
     assert heuristic.confidence == 950
-    assert heuristic.at_label =~ "heuristic"
-    assert heuristic.at_label =~ "p=0.95"
+    assert List.last(heuristic.help) =~ "heuristic"
+    assert List.last(heuristic.help) =~ "p=0.95"
+    assert heuristic.at_label == "declared without redact: true"
     assert heuristic.analysis == :exposure
   end
 
@@ -228,9 +229,10 @@ defmodule Argus.PriorsTest do
       assert adjacent.severity == :info and adjacent.provenance == :heuristic and
                adjacent.confidence == 900
 
-      assert adjacent.at_label =~ "reads storage, not the request (p=0.90)"
+      assert List.last(adjacent.help) =~ "reads storage, not the request (p=0.90)"
+      refute adjacent.at_label =~ "heuristic"
       assert transitive.severity == :info and transitive.provenance == :heuristic
-      assert transitive.at_label =~ "heuristic"
+      assert List.last(transitive.help) =~ "heuristic"
     end
 
     test "on: the same sites, the same titles — a re-tier never removes a row", %{tmp_dir: dir} do
@@ -332,8 +334,12 @@ defmodule Argus.PriorsTest do
       assert finding.provenance == :heuristic
       assert finding.confidence == 900
 
-      assert finding.at_label =~
-               "#{inspect(FacadeHelper)}'s API does not talk to a process (p=0.90)"
+      assert finding.at_label == "supervision tree defined here"
+
+      assert List.last(finding.help) =~
+               "#{inspect(FacadeHelper)}'s API does not talk to a process"
+
+      assert List.last(finding.help) =~ "(p=0.90)"
 
       assert finding.title == "One-way coupling under one_for_one"
     end
