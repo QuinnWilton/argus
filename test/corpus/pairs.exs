@@ -260,6 +260,31 @@
     pre: "a8463de46ae77fb3a2f49a53eda1d6680caa0ad3",
     finding: {:failure, "call/3 called bare where every other call site guards it"}
   },
+  # blockster_v2 e8b3d3c: EngagementTracker.deduct_user_token_balance/4 reads
+  # a user's balances with a dirty_read in one helper and writes the deducted
+  # balance with a dirty_write in another, from LiveView processes — the
+  # double spend its own shop GenServer exists to prevent. The read and the
+  # write meet across functions. No fix, so the pair is present-only.
+  %{
+    repo: "rubyad/blockster_v2",
+    issue: "blockster_v2@e8b3d3c",
+    module: "BlocksterV2.EngagementTracker",
+    pre: "e8b3d3c143825d88ef0993f788a6053b2b527acc",
+    finding: {:ets, "Read-then-write race on a Mnesia record"}
+  },
+  # ztlp 39fa329: ZtlpNs.Store.do_insert/1 dirty_reads a record, compares its
+  # serial, and dirty_writes the new one, from concurrent Task.Supervisor
+  # workers: two updates both pass the check and the older can win. The key
+  # is a tuple built at runtime, the same value handed to both calls.
+  # Present-only; the Mix project is under ns/.
+  %{
+    repo: "priceflex/ztlp",
+    issue: "ztlp@39fa329",
+    subdir: "ns",
+    module: "ZtlpNs.Store",
+    pre: "39fa3297a256bf69bad33d4152e18de745d6dc59",
+    finding: {:ets, "Read-then-write race on a Mnesia record"}
+  },
   # ── exposure: a secret inspect/1 prints ──────────────────────────────
   # langchain#266 redacted :api_key in six embedded schemas at once and
   # missed ChatPerplexity, which still reports at fix — the module anchor
