@@ -302,6 +302,10 @@ output relation from the `.dl` sources and checks each literal
 combination reaches a builder clause that renders it, so a new head no
 clause matches fails in the suite.
 
+mailbox's timed-wait monitor leak was the one error-severity finding
+with no `help`; it says to `Process.demonitor(ref, [:flush])` on the
+timeout branch, and `FindingHeadsTest` requires help of every error.
+
 A literal operand was spelled with `inspect/1`, which runs a struct's
 own `Inspect` implementation when its module is loaded — so the same
 beam yielded different `literal_value` rows in a VM that had the

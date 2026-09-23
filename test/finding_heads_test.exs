@@ -8,9 +8,10 @@ defmodule Argus.FindingHeadsTest do
   "conditional")`), and every combination of those literals — with the
   remaining columns either one of the alternatives the column's doc
   declares (`"rescue | erpc_transport | rpc"`) or a placeholder — must
-  reach a `finding/2` (or `evidence/2`) clause that renders it. A new head
-  whose literals no clause matches fails here rather than in a user's
-  project, where it would be reported with its raw columns.
+  reach a `finding/2` (or `evidence/2`) clause that renders it — and an
+  error-severity finding must say what to do (`help`). A new head whose
+  literals no clause matches fails here rather than in a user's project,
+  where it would be reported with its raw columns.
   """
 
   use ExUnit.Case, async: true
@@ -76,6 +77,12 @@ defmodule Argus.FindingHeadsTest do
             "  #{inspect(row)} → #{Exception.format_banner(:error, e)}"
           end)
       )
+    end
+
+    # An error says what to do about it.
+    for %{severity: :error} = attrs <- rendered do
+      assert attrs.help != [],
+             "#{inspect(mod)}.#{relation.name} is an error with no help: #{attrs.title}"
     end
 
     for attrs <- rendered, module <- modules(attrs), module != nil do

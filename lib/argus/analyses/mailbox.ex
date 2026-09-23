@@ -394,7 +394,11 @@ defmodule Argus.Analyses.Mailbox do
         "A receive with no after clause does not have this problem, since it " <>
         "consumes either the reply or the {:DOWN, ...}.",
       at: Findings.at_instr(id),
-      at_label: "the monitor is still live on the timeout branch"
+      at_label: "the monitor is still live on the timeout branch",
+      help: [
+        "call `Process.demonitor(ref, [:flush])` on the timeout branch, " <>
+          "before the function returns"
+      ]
     )
   end
 
