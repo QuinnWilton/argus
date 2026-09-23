@@ -142,7 +142,28 @@ defmodule Scry.Diagnostics do
   defp report_for(:info, message), do: Report.info(message)
 
   defp primary_label(entry) do
-    Label.new(code_span(entry.file, entry.line), message: Map.get(entry, :at_label))
+    Label.new(span(entry), message: Map.get(entry, :at_label), style: style(entry))
+  end
+
+  # A finding that closes a span brackets the lines from its anchor to
+  # the end; one that does not underlines its line.
+  defp span(%{file: file, line: line} = entry) do
+    case Map.get(entry, :end_line) do
+      end_line when is_integer(end_line) and end_line > line ->
+        %Span.Position{start_column: col} = code_span(file, line)
+        %Span.Position{end_column: end_col} = code_span(file, end_line)
+        Span.position(line, col, end_line, end_col)
+
+      _ ->
+        code_span(file, line)
+    end
+  end
+
+  defp style(entry) do
+    case Map.get(entry, :end_line) do
+      end_line when is_integer(end_line) and end_line > entry.line -> :bracket
+      _ -> :inline
+    end
   end
 
   defp related_labels(entry, rel_file, cwd) do
@@ -151,7 +172,8 @@ defmodule Scry.Diagnostics do
 
       opts = [
         message: related.label,
-        priority: :secondary
+        priority: :secondary,
+        style: style(related)
       ]
 
       opts =
@@ -161,7 +183,7 @@ defmodule Scry.Diagnostics do
           Keyword.put(opts, :source, rel_related)
         end
 
-      Label.new(code_span(related.file, related.line), opts)
+      Label.new(span(related), opts)
     end
   end
 

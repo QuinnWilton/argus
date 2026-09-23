@@ -380,18 +380,22 @@ defmodule Scry.Analysis do
 
     with true <- module != nil,
          path when path != :external <- Runtime.query(db, :file_of, module) do
+      line = source_line(db, module, path, finding)
+      guard = guard_word(path, line, finding)
+
       %{
         file: path,
-        line: anchor_line(db, module, finding),
+        line: line,
+        end_line: end_line(db, module, path, finding),
         severity: finding.severity,
         code: Atom.to_string(finding.analysis),
-        title: finding.title,
-        detail: finding.detail,
+        title: fill_guard(finding.title, guard),
+        detail: fill_guard(finding.detail, guard),
         # Map.get, not dot access: findings memoized before the shape
         # gained these fields (a warm manifest) must still resolve.
-        at_label: Map.get(finding, :at_label),
-        help: Map.get(finding, :help, []),
-        related: resolve_related(db, Map.get(finding, :related, []))
+        at_label: fill_guard(Map.get(finding, :at_label), guard),
+        help: Enum.map(Map.get(finding, :help, []), &fill_guard(&1, guard)),
+        related: resolve_related(db, Map.get(finding, :related, [])),
       }
     else
       _ -> nil
@@ -404,11 +408,62 @@ defmodule Scry.Analysis do
         module != nil,
         path = Runtime.query(db, :file_of, module),
         path != :external do
+      line = anchor_line(db, module, entry)
+
       %{
-        label: Map.get(entry, :label, ""),
+        label: fill_guard(Map.get(entry, :label, ""), guard_word(path, line, entry)),
         file: path,
-        line: anchor_line(db, module, entry)
+        line: line,
+        end_line: end_line(db, module, path, entry)
       }
+    end
+  end
+
+  # The word for `{guard}` in a finding's prose: the keyword the source
+  # shows at the anchor when the finding sits in a guard, else the
+  # neutral one. Read only when the prose asks.
+  defp guard_word(path, line, anchored) do
+    if Map.get(anchored, :to_block) == :guard,
+      do: Scry.SourceAnchor.guard_keyword(path, line) || "handler",
+      else: "handler"
+  end
+
+  defp fill_guard(nil, _word), do: nil
+  defp fill_guard(text, word), do: String.replace(text, "{guard}", word)
+
+  # The bytecode's end of the span when it placed one; else the end of
+  # the source block the finding says its anchor sits in, if it names
+  # one. Same untracked read, same tracked signal, as source_line/4.
+  defp end_line(db, module, path, anchored) do
+    span_end_line(db, module, anchored) ||
+      Scry.SourceAnchor.block_end(
+        path,
+        source_line(db, module, path, anchored),
+        Map.get(anchored, :to_block)
+      )
+  end
+
+  # A finding or frame that closes a span names a second instruction;
+  # its line is where the bracket ends. Nil when there is no span, or
+  # the end resolves no later than the start.
+  defp span_end_line(db, module, anchored) do
+    case Map.get(anchored, :to_instr) do
+      nil ->
+        nil
+
+      to ->
+        start = anchor_line(db, module, anchored)
+
+        case Runtime.query(db, :module_line_table, module) do
+          {:ok, table} ->
+            case instr_line(table, to) do
+              line when is_integer(line) and line > start -> line
+              _ -> nil
+            end
+
+          {:error, _} ->
+            nil
+        end
     end
   end
 
@@ -433,6 +488,17 @@ defmodule Scry.Analysis do
       {:error, _} ->
         1
     end
+  end
+
+  # The bytecode anchor, then the source's last step for a finding that
+  # names a fragment. The file read is untracked on purpose: the tracked
+  # signal is the module's line table, and an edit that moves a
+  # declaration moves the functions after it too. The one shape that
+  # slips by — an edit inside a schema block with no function below it
+  # in the file — leaves a stale line until the next real change.
+  defp source_line(db, module, path, finding) do
+    line = anchor_line(db, module, finding)
+    Scry.SourceAnchor.refine(path, line, Map.get(finding, :at_source))
   end
 
   defp instr_line(_table, nil), do: nil

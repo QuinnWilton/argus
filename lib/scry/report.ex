@@ -42,6 +42,7 @@ defmodule Scry.Report do
         severity: entry.severity,
         file: Scry.Diagnostics.relative(entry.file, cwd),
         line: entry.line,
+        end_line: Map.get(entry, :end_line),
         title: entry.title,
         detail: entry.detail,
         help: Map.get(entry, :help, []),
@@ -50,7 +51,8 @@ defmodule Scry.Report do
             %{
               label: related.label,
               file: Scry.Diagnostics.relative(related.file, cwd),
-              line: related.line
+              line: related.line,
+              end_line: Map.get(related, :end_line)
             }
           end
       }
