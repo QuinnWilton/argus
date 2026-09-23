@@ -145,13 +145,43 @@ named_pid(n, p) :-
 // ── Who runs a function ─────────────────────────────────────────────
 
 // self() in a server's callbacks (process_entry: its callbacks, init/1,
-// terminate/2) is that server; in a spawned function, that spawn. A
-// function reached from them, or a client API, runs in someone else's
-// process, and is left unresolved.
+// terminate/2) is that server; in a spawned function, that spawn; and in
+// a function either calls, the same process: a callback's helper, or a
+// client API a callback calls, runs on the caller's stack. A closure is
+// not followed (it may be a task's), and only functions on the way to a
+// self() are, so the relation stays the size of its use. Closures are
+// told by the compiler's name for them rather than by closure_def, which
+// the supervision family must not read (stage0_test).
 .decl self_pid(func: symbol, proc: symbol)
 
 self_pid(f, p) :- process_entry(m, f), server_process(p, m).
 self_pid(f, p) :- process_start(_, _, p, "spawn", f).
+
+self_pid(g, p) :-
+  self_pid(f, p),
+  same_process_call(f, g),
+  self_relevant(g).
+
+// A call that runs the callee on the caller's stack: not a closure's
+// creation, which call_edge also counts.
+.decl same_process_call(caller: symbol, callee: symbol)
+
+same_process_call(f, g) :- call_edge(f, g), !match(".*:-.*-fun-[0-9]+-/[0-9]+", g).
+
+.decl reads_self(func: symbol)
+
+reads_self(f) :- pid_arg(_, f, _, _, _, "self", _).
+reads_self(f) :- pid_return(f, "self", _).
+reads_self(f) :- pid_call(_, f, _, "self", _).
+reads_self(f) :- pid_message(_, f, _, "self", _).
+reads_self(f) :- pid_register(_, f, _, "self", _).
+reads_self(f) :- pid_field(f, _, _, "self", _).
+reads_self(f) :- pid_base(f, _, "self", _).
+
+.decl self_relevant(func: symbol)
+
+self_relevant(f) :- reads_self(f).
+self_relevant(f) :- same_process_call(f, g), self_relevant(g).
 
 // ── A GenServer's state ─────────────────────────────────────────────
 

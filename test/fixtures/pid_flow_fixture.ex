@@ -459,6 +459,58 @@ defmodule Argus.Test.Fixtures.PidFlow do
     end
   end
 
+  defmodule SelfHelper do
+    @moduledoc "A spawned loop whose helper sends to self() a message the loop never takes."
+    def start, do: spawn(__MODULE__, :loop, [])
+
+    def loop do
+      remind()
+
+      receive do
+        :tick -> loop()
+      end
+    end
+
+    defp remind, do: send(self(), :reminder)
+  end
+
+  defmodule Machine do
+    @moduledoc "A gen_statem keeping a private peer in its data and calling it from a state."
+    @behaviour :gen_statem
+
+    alias Argus.Test.Fixtures.PidFlow.Back
+
+    def start_link, do: :gen_statem.start_link(__MODULE__, :ok, [])
+
+    @impl true
+    def callback_mode, do: :state_functions
+
+    @impl true
+    def init(:ok) do
+      {:ok, peer} = Back.start_link()
+      {:ok, :idle, %{peer: peer}}
+    end
+
+    def idle({:call, from}, :go, data) do
+      :pong = GenServer.call(data.peer, :ping)
+      {:keep_state, data, [{:reply, from, :ok}]}
+    end
+  end
+
+  defmodule PlugLike do
+    @moduledoc "A plug whose init/1 calls a server: it runs in whoever calls it, not as a process."
+    @behaviour Plug
+
+    @impl true
+    def init(opts) do
+      :pong = GenServer.call(Argus.Test.Fixtures.PidFlow.Hub, :poll)
+      opts
+    end
+
+    @impl true
+    def call(conn, _opts), do: conn
+  end
+
   defmodule Quiet do
     @moduledoc "Starts with a computed module, apply, and a pid from a library call: no process to name."
     def applied(m), do: apply(m, :start_link, [])

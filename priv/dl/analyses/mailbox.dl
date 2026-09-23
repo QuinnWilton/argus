@@ -13,6 +13,7 @@
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
+.include "../clientlib/process_statem.dl"
 .include "../clientlib/sends.dl"
 
 // ══ The outputs ═════════════════════════════════════════════════════
@@ -425,14 +426,14 @@ task_result_defect(owner, id, "yield_linked") :-
 // the task's normal exit then arrives as an `{:EXIT, pid, :normal}`
 // message Task.await never consumes (elixir-ecto/ecto#2246: a GenServer
 // preloading in parallel), and a crashing task takes an unrelated
-// caller down with it. A module that is a process itself owns its
-// callers' expectations; a plain library function does not.
+// caller down with it. A behaviour module (a process's, a plug's) owns
+// its callers' expectations; a plain library function does not.
 task_result_defect(owner, id, "linked_in_library") :-
   task_async_call(f, id),
   enclosing_function(f, owner),
   !closure_def(_, owner),
   function_def(owner, mod, _, _, _),
-  !process_module(mod),
+  !behaviour_module(mod),
   !task_factory(owner, _),
   await_reach.reaches(owner).
 

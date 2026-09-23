@@ -192,6 +192,19 @@ defmodule Argus.Analyses.StartupInitTest do
       assert kinds["Argus.Test.Fixtures.WorkerB"] == "unconditional"
     end
 
+    test "a plug's init/1 is not a process's" do
+      skip_without_souffle()
+
+      # Plug.init/1 runs in whoever builds the pipeline; only a process
+      # behaviour's init/1 holds up a start.
+      modules = [Argus.Test.Fixtures.PidFlow.PlugLike, Argus.Test.Fixtures.PidFlow.Hub]
+      assert {:ok, results} = Argus.analyze(modules, :startup)
+
+      refute Enum.any?(sync_calls(results), fn [mod, _, _] ->
+               mod == "Argus.Test.Fixtures.PidFlow.PlugLike"
+             end)
+    end
+
     test "filters safe sibling ordering (dep starts before caller)" do
       skip_without_souffle()
 

@@ -91,6 +91,23 @@ for memoising consumers only where a struct had its own.
 
 ### Process points-to
 
+**Changed.** `self()` resolves in a function a process's own code
+calls — a callback's helper, a client API a callback calls — not only
+in the callbacks and spawned functions themselves (closures are not
+followed: one may be a task's). A gen_statem's data carries pids from
+init/1 and state to state the way a GenServer's state does
+(`process_statem.dl`: `{:ok, state, data}`, `{:next_state, state,
+data}`, `{:keep_state, data}`, ...), and a call, cast or send to one
+reaches its state functions' content. `process_statem.dl` is included by
+every analysis that extracts with GenStatem (mailbox and startup now
+too), so `self()` in a state function resolves the same in each. Only a
+process behaviour's module is a process (`process_module`,
+`init_function`, via `process_behaviour_module`): a Plug's,
+Ecto.Type's or a storage callback's `init/1` ran as a process's before
+(supavisor's and realtime's Peep storage modules held an "unnamed table
+held by a process": corpus tally 21 → 17). mailbox's "Task.async in
+library code" keeps exempting any behaviour module (`behaviour_module`).
+
 **Fixed.** ProcessRegistry recorded a `{:global, n}` start name as the
 local `n`, so a local `whereis(:n)` and a global start of `n` looked like
 one name to the registry race; it is spelled `{:global, :n}` now

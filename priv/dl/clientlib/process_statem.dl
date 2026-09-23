@@ -1,8 +1,63 @@
 // A gen_statem's state functions are where its own code starts running,
-// the same as a GenServer's callbacks. Included only by analyses that
-// already read statem_event_clause: it is an input, and the pins record
-// what each analysis reads.
+// the same as a GenServer's callbacks. Included by every analysis that
+// extracts with GenStatem (ets, mailbox, shutdown, startup), so self()
+// and a statem's data resolve the same in each; statem_event_clause is
+// an input, and the pins record what each analysis reads.
 //
 // Requires otp.dl.
 
 process_entry(mod, f) :- statem_event_clause(mod, f, _).
+
+// ── A gen_statem's data, for process points-to ──────────────────────
+//
+// What init/1 and the state functions return becomes the data the next
+// state function (or terminate/3) is called with: the field of the
+// returned tuple its tag puts the data in — {:ok, state, data},
+// {:next_state, state, data}, {:keep_state, data}, {:repeat_state,
+// data}, {:stop, reason, data}, {:stop_and_reply, reason, replies,
+// data}, each with its optional actions.
+.decl statem_data_slot(tag: symbol, arity: symbol, sel: symbol)
+
+statem_data_slot(":ok", "3", "{2}").
+statem_data_slot(":ok", "4", "{2}").
+statem_data_slot(":next_state", "3", "{2}").
+statem_data_slot(":next_state", "4", "{2}").
+statem_data_slot(":keep_state", "2", "{1}").
+statem_data_slot(":keep_state", "3", "{1}").
+statem_data_slot(":repeat_state", "2", "{1}").
+statem_data_slot(":repeat_state", "3", "{1}").
+statem_data_slot(":stop", "3", "{2}").
+statem_data_slot(":stop_and_reply", "4", "{3}").
+
+.decl statem_data_out(mod: symbol, func: symbol)
+
+statem_data_out(m, f) :- statem_process(m), function_def(f, m, "init", 1, _).
+statem_data_out(m, f) :- statem_event_clause(m, f, _).
+
+// State functions take (event_type, content, data); handle_event/4 takes
+// (event_type, content, state, data); terminate/3 (reason, state, data).
+.decl statem_data_in(mod: symbol, func: symbol, pos: symbol)
+
+statem_data_in(m, f, "2") :- statem_event_clause(m, f, _), function_def(f, m, _, 3, _).
+statem_data_in(m, f, "3") :- statem_event_clause(m, f, _), function_def(f, m, "handle_event", 4, _).
+statem_data_in(m, f, "2") :- statem_process(m), function_def(f, m, "terminate", 3, _).
+
+.decl statem_data_pts(mod: symbol, x: symbol)
+
+statem_data_pts(m, x) :-
+  statem_data_out(m, g),
+  returns_pts(g, t),
+  pid_object(_, t, "tuple", tag, n),
+  statem_data_slot(tag, n, sel),
+  field_pts(t, sel, x).
+
+entry_pts(f, k, x) :- statem_data_in(m, f, k), statem_data_pts(m, x).
+
+// A call, cast or send to a gen_statem is an event: its message is the
+// state function's content, the second parameter.
+entry_pts(h, "1", x) :-
+  pid_message(id, f, kind, sk, s),
+  source_pts(f, sk, s, x),
+  call_site_target(id, f, kind, p),
+  server_process(p, m),
+  statem_event_clause(m, h, _).

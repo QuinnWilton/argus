@@ -6,10 +6,16 @@
 // saying so reads `statem_event_clause`, which most analyses do not:
 // process_statem.dl adds that rule for the ones that do.
 
-// Any behaviour module: something that runs as a process.
+// A module that runs as a process (callbacks.dl).
 .decl process_module(mod: symbol)
 
-process_module(mod) :- implements_behaviour(mod, _).
+process_module(mod) :- process_behaviour_module(mod).
+
+// Any behaviour module: a process's, or a plug's, a type's, a worker's
+// — code with a contract its caller relies on, not a library function.
+.decl behaviour_module(mod: symbol)
+
+behaviour_module(mod) :- implements_behaviour(mod, _).
 
 .decl statem_process(mod: symbol)
 

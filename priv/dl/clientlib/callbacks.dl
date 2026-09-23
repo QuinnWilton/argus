@@ -41,13 +41,28 @@ otp_callback(func, mod, name, behaviour) :-
   function_def(func, mod, name, _, _),
   callback_name(name).
 
-// init/1 of any behaviour module — Supervisor and Application included,
-// since both run it inside a start sequence.
+// A module that runs as a process: a process behaviour's
+// (process_behaviour: GenServer, Supervisor, gen_statem, GenStage, ...),
+// or one of a behaviour the table does not list whose module handles
+// messages the way a server does (a library's GenServer wrapper). Plug,
+// Ecto.Type or Ecto.ParameterizedType define init/1 too, and run in
+// whoever calls them.
+.decl process_behaviour_module(mod: symbol)
+
+process_behaviour_module(mod) :- behaves_as(mod, b), process_behaviour(b, _).
+
+process_behaviour_module(mod) :-
+  implements_behaviour(mod, _),
+  function_def(_, mod, h, _, _),
+  (h = "handle_call" ; h = "handle_cast" ; h = "handle_info").
+
+// init/1 of a process module — a Supervisor's included, since it runs
+// inside a start sequence.
 .decl init_function(mod: symbol, func: symbol)
 
 init_function(mod, func) :-
   function_def(func, mod, "init", 1, _),
-  implements_behaviour(mod, _).
+  process_behaviour_module(mod).
 
 // Where a process module's own code starts running: its callbacks. What
 // these reach runs in the process; what only its API reaches runs in

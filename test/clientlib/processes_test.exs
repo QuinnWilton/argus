@@ -31,6 +31,8 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.Starts,
     PidFlow.Names,
     PidFlow.NamedTree,
+    PidFlow.SelfHelper,
+    PidFlow.Machine,
     PidFlow.Quiet
   ]
 
@@ -48,6 +50,7 @@ defmodule Argus.Clientlib.ProcessesTest do
           Argus.Extractors.CallbackTag,
           Argus.Extractors.ProcessRegistry,
           Argus.Extractors.Supervision,
+          Argus.Extractors.GenStatem,
           Argus.Extractors.PidFlow
         ]
       )
@@ -57,6 +60,7 @@ defmodule Argus.Clientlib.ProcessesTest do
     rules = """
     .include "#{Path.join(priv_dl(), "clientlib/imports.dl")}"
     .include "#{Path.join(priv_dl(), "clientlib/otp.dl")}"
+    .include "#{Path.join(priv_dl(), "clientlib/process_statem.dl")}"
     .include "#{Path.join(priv_dl(), "clientlib/sends.dl")}"
     #{Enum.map_join(outputs, "\n", &".output #{&1}")}
     """
@@ -262,6 +266,22 @@ defmodule Argus.Clientlib.ProcessesTest do
     # module-level guess says Names' own process holds the name.
     assert for([":names_helper", p] <- unsited(r["named_pid"]), do: p) ==
              ["spawn Names:park/0"]
+  end
+
+  test "self() in a helper is the process that calls it", %{tmp_dir: tmp_dir} do
+    r = solve(tmp_dir, ~w(self_pid send_target))
+
+    assert ["SelfHelper:remind/0", "spawn SelfHelper:start/0"] in unsited(r["self_pid"])
+
+    assert Enum.any?(
+             unsited(r["send_target"]),
+             &match?([_, "SelfHelper:remind/0", ":reminder", "spawn SelfHelper:start/0"], &1)
+           )
+  end
+
+  test "a gen_statem's data carries its pids from state to state", %{tmp_dir: tmp_dir} do
+    r = solve(tmp_dir, ~w(sync_dep statem_data_pts))
+    assert ["Machine:idle/3", "Back"] in r["sync_dep"]
   end
 
   test "a computed module, apply and a library pid name no process", %{tmp_dir: tmp_dir} do
