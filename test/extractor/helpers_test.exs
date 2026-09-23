@@ -659,6 +659,30 @@ defmodule Argus.Extractor.HelpersTest do
     end
   end
 
+  describe "list_length/3" do
+    test "counts the cons cells that built the list" do
+      instrs = [
+        {:put_list, {:x, 1}, nil, {:x, 2}},
+        {:put_list, {:x, 0}, {:x, 2}, {:x, 2}},
+        {:call_ext, 3, {:extfunc, :erlang, :apply, 3}}
+      ]
+
+      assert Helpers.list_length(instrs, 2, {:x, 2}) == 2
+    end
+
+    test "an unknown tail leaves the length unknown" do
+      instrs = [{:put_list, {:x, 0}, {:x, 1}, {:x, 2}}]
+      assert Helpers.list_length(instrs, 1, {:x, 2}) == nil
+    end
+
+    test "an improper tail, literal or built, has no length" do
+      assert Helpers.list_length([{:move, {:literal, [:a | :b]}, {:x, 2}}], 1, {:x, 2}) == nil
+
+      instrs = [{:put_list, {:atom, :a}, {:atom, :b}, {:x, 2}}]
+      assert Helpers.list_length(instrs, 1, {:x, 2}) == nil
+    end
+  end
+
   describe "arg_position/3" do
     test "classifies x0 as parameter 0 for arity 1 functions" do
       # Mimics a tiny client wrapper: def get(pid), do: GenServer.call(pid, :get).

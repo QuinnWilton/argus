@@ -11,6 +11,13 @@ Grouped by concern. Each entry opens with what it does: **Added**,
 
 ### Fact schema and extraction
 
+**Fixed.** `resolved_apply` named the wrong arity for `apply(M, f, [x | rest])`:
+the argument list, as `resolve_register/3` rebuilds it, reads an unknown
+tail as one more element, so the call resolved to `M.f/2` whatever
+`rest` held, and an improper literal list raised. The arity now comes
+from `Argus.Extractor.Helpers.list_length/3`, the cons-cell walk
+`spawn_call` already uses.
+
 **Fixed.** Literals that differ past `inspect/2`'s bounds (50 elements, 4096 bytes
 of a string) no longer spell the same: a spelling inspect cuts short
 ends in ` #` and a digest of the whole term, so `literal_value`,

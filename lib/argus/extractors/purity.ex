@@ -25,7 +25,8 @@ defmodule Argus.Extractors.Purity do
   alias Argus.InstrId
   alias Argus.Purity.Effects
 
-  import Argus.Extractor.Helpers, only: [add_fact: 3, each_remote_call: 3, resolve_register: 3]
+  import Argus.Extractor.Helpers,
+    only: [add_fact: 3, each_remote_call: 3, list_length: 3, resolve_register: 3]
 
   @impl true
   def relations,
@@ -92,14 +93,18 @@ defmodule Argus.Extractors.Purity do
   # Layer 1 an apply IS an apply; this relation is the evidence that lets
   # the rules discharge it.
   defp resolve_apply(facts, ctx, id) do
+    # The arity is the argument list's length, which only the cons cells
+    # that built it can tell: the list's value, as `resolve_register/3`
+    # reconstructs it, reads an unknown tail (`[x | rest]`) as one more
+    # element, and an improper literal has no length at all.
     with {:ok, mod} when is_atom(mod) <- resolve_register(ctx.instrs, ctx.idx, {:x, 0}),
          {:ok, func} when is_atom(func) <- resolve_register(ctx.instrs, ctx.idx, {:x, 1}),
-         {:ok, args} when is_list(args) <- resolve_register(ctx.instrs, ctx.idx, {:x, 2}) do
-      target = InstrId.func_id(mod, func, length(args))
+         arity when is_integer(arity) <- list_length(ctx.instrs, ctx.idx, {:x, 2}) do
+      target = InstrId.func_id(mod, func, arity)
 
       facts
       |> add_fact(:resolved_apply, [id, ctx.func_id, target])
-      |> record(ctx, mod, func, length(args))
+      |> record(ctx, mod, func, arity)
     else
       _ -> facts
     end
