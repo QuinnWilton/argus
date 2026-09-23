@@ -15,6 +15,12 @@ defmodule Argus.Pipeline do
     relation, tab-separated) as extraction completes, so the program's
     fact set never exists in memory at once. `extract/2` returns the
     merged facts in memory.
+
+  A module's failures stay with the module: an extractor that raises, or
+  a module that outlives the per-module `:timeout`, is recorded as an
+  `extraction_error` row (see `Argus.Schema`) and the run goes on over
+  everything else. Only an input that cannot be read ends it with
+  `{:error, reason}`.
   """
 
   alias Argus.Cfg
@@ -140,6 +146,16 @@ defmodule Argus.Pipeline do
   end
 
   # One `{:ok, facts} | {:error, reason}` per module, in input order.
+  #
+  # Nothing a module does takes the caller down. The workers are linked to
+  # the caller, so a raise that escaped one would exit the caller (scry's
+  # compiler, a test process) before the stream could report it; every
+  # step is therefore caught in the worker (`extract_module/4`), and a
+  # worker that outlives the per-module timeout is killed on its own
+  # (`on_timeout: :kill_task`) rather than failing the whole stream. Both
+  # come back as an `extraction_error` row: what was lost is recorded
+  # beside what was extracted, and the run goes on. Only an input that
+  # cannot be read at all (`{:error, reason}` from disassembly) ends it.
   defp extract_stream(paths, opts) do
     concurrency = Keyword.get(opts, :concurrency, System.schedulers_online())
     extractors = Keyword.get(opts, :extractors, [])
@@ -162,12 +178,20 @@ defmodule Argus.Pipeline do
       # that finishes early is held until its predecessors do) and buys
       # a property the whole workspace was otherwise re-deriving.
       ordered: true,
-      timeout: task_timeout
+      timeout: task_timeout,
+      on_timeout: :kill_task,
+      zip_input_on_exit: true
     )
     |> Stream.map(fn
-      {:ok, {:ok, module_facts}} -> {:ok, module_facts}
-      {:ok, {:error, reason}} -> {:error, reason}
-      {:exit, reason} -> {:error, reason}
+      {:ok, result} ->
+        result
+
+      {:exit, {path, :timeout}} ->
+        reason = "extraction did not finish within #{task_timeout} ms"
+        {:ok, lost_module(path, reason, symbols)}
+
+      {:exit, {path, reason}} ->
+        {:ok, lost_module(path, "extraction exited: #{one_line(inspect(reason))}", symbols)}
     end)
   end
 
@@ -181,60 +205,142 @@ defmodule Argus.Pipeline do
     if trace_imprecision, do: Helpers.enable_tracing()
 
     try do
-      with {:ok, data} <- Disassemble.disassemble_path(path) do
-        base_facts =
-          Emit.emit_module(
-            data.module,
-            data.exports,
-            data.imports,
-            data.attributes,
-            data.functions,
-            data.line_table
-          )
-
-        # Decoded once, for the derived relations and for the control-flow
-        # graphs the extractors walk; a module whose facts cannot be decoded
-        # keeps everything else and loses only what those provide.
-        typed =
-          try do
-            Argus.Facts.decode(base_facts)
-          rescue
-            _ -> nil
-          end
-
-        cfgs = if typed, do: Cfg.build(typed), else: %{}
-        reaching = reaching(typed)
-
-        # Every call site indexed once; the extractors filter the index
-        # rather than each walking the instruction stream.
-        data =
-          Map.merge(data, %{
-            call_sites: Argus.Extractor.CallSites.index(data.module, data.functions),
-            cfg: cfgs,
-            typed: typed,
-            reaching: reaching,
-            origins_index: Argus.Extractor.Helpers.origins_index(%{reaching: reaching})
-          })
-
-        extractor_facts =
-          Enum.reduce(extractors, %{}, fn extractor, acc ->
-            merge_facts(acc, extractor.extract(data))
-          end)
-
-        facts =
-          base_facts
-          |> merge_facts(extractor_facts)
-          |> merge_facts(derive_def_use(reaching))
-          |> merge_facts(derive_conditional_calls(base_facts, cfgs))
-
+      with {:ok, facts} <- module_facts(path, extractors) do
         # Interned here, in the worker, so the rows cross to the caller as
         # tuples of small integers rather than as every string they hold.
-        {:ok, if(symbols, do: Argus.Facts.intern(facts, symbols), else: facts)}
+        {:ok, maybe_intern(facts, symbols)}
       end
+    rescue
+      exception -> {:ok, lost_module(path, describe(:error, exception, __STACKTRACE__), symbols)}
+    catch
+      kind, reason -> {:ok, lost_module(path, describe(kind, reason, __STACKTRACE__), symbols)}
     after
       if trace_imprecision, do: Helpers.disable_tracing()
     end
   end
+
+  defp module_facts(path, extractors) do
+    with {:ok, data} <- Disassemble.disassemble_path(path) do
+      mod_str = inspect(data.module)
+
+      base_facts =
+        Emit.emit_module(
+          data.module,
+          data.exports,
+          data.imports,
+          data.attributes,
+          data.functions,
+          data.line_table
+        )
+
+      # Decoded once, for the derived relations and for the control-flow
+      # graphs the extractors walk; a module whose facts cannot be decoded
+      # keeps everything else and loses only what those provide.
+      {typed, errors} = attempt("decode", fn -> Argus.Facts.decode(base_facts) end, [])
+      {cfgs, errors} = attempt("cfg", fn -> if typed, do: Cfg.build(typed), else: %{} end, errors)
+      cfgs = cfgs || %{}
+      {reaching, errors} = attempt("reaching", fn -> reaching(typed) end, errors)
+
+      # Every call site indexed once; the extractors filter the index
+      # rather than each walking the instruction stream.
+      data =
+        Map.merge(data, %{
+          call_sites: Argus.Extractor.CallSites.index(data.module, data.functions),
+          cfg: cfgs,
+          typed: typed,
+          reaching: reaching,
+          origins_index: Argus.Extractor.Helpers.origins_index(%{reaching: reaching})
+        })
+
+      # One extractor's failure costs its own rows and nothing else.
+      {extractor_facts, errors} =
+        Enum.reduce(extractors, {%{}, errors}, fn extractor, {acc, errors} ->
+          case attempt(inspect(extractor), fn -> extractor.extract(data) end, errors) do
+            {nil, errors} -> {acc, errors}
+            {facts, errors} -> {merge_facts(acc, facts), errors}
+          end
+        end)
+
+      {conditional, errors} =
+        attempt("conditional_call", fn -> derive_conditional_calls(base_facts, cfgs) end, errors)
+
+      facts =
+        base_facts
+        |> merge_facts(extractor_facts)
+        |> merge_facts(derive_def_use(reaching))
+        |> merge_facts(conditional || %{})
+        |> merge_facts(error_facts(mod_str, errors))
+
+      {:ok, facts}
+    end
+  end
+
+  # `{value, errors}`: the step's result, or nil with the failure added to
+  # `errors` as `{step, reason}`.
+  defp attempt(step, fun, errors) do
+    {fun.(), errors}
+  rescue
+    exception -> {nil, [{step, describe(:error, exception, __STACKTRACE__)} | errors]}
+  catch
+    kind, reason -> {nil, [{step, describe(kind, reason, __STACKTRACE__)} | errors]}
+  end
+
+  defp error_facts(_mod_str, []), do: %{}
+
+  defp error_facts(mod_str, errors) do
+    %{extraction_error: for({step, reason} <- errors, do: [mod_str, step, reason])}
+  end
+
+  # The facts of a module none of whose facts survived: its one
+  # `extraction_error` row.
+  defp lost_module(path, reason, symbols) do
+    maybe_intern(error_facts(module_label(path), [{"pipeline", reason}]), symbols)
+  end
+
+  defp maybe_intern(facts, nil), do: facts
+  defp maybe_intern(facts, symbols), do: Argus.Facts.intern(facts, symbols)
+
+  # The module's name as `function_def` spells it, read from the beam's
+  # header alone; the path when even that fails (and a placeholder for
+  # in-memory beam data, which has no path to show).
+  defp module_label(path) do
+    target = if BeamSpy.BeamFile.beam_data?(path), do: path, else: String.to_charlist(path)
+
+    case :beam_lib.info(target) do
+      info when is_list(info) -> inspect(Keyword.fetch!(info, :module))
+      {:error, :beam_lib, _} -> unnamed(path)
+    end
+  rescue
+    _ -> unnamed(path)
+  end
+
+  defp unnamed(path) do
+    if BeamSpy.BeamFile.beam_data?(path), do: "(beam data)", else: path
+  end
+
+  # The failure on one line, with the innermost frame of the step that
+  # raised it: enough to find the bug, deterministic for the same code and
+  # input. The pipeline's own frames are where every step is called from,
+  # so they name nothing.
+  @reason_limit 500
+
+  defp describe(kind, reason, stacktrace) do
+    banner = kind |> Exception.format_banner(reason, stacktrace) |> one_line()
+
+    at =
+      Enum.find_value(stacktrace, fn
+        {mod, _fun, _arity, _location} = entry when is_atom(mod) and mod != __MODULE__ ->
+          if String.starts_with?(Atom.to_string(mod), "Elixir.Argus."),
+            do: " (at #{Exception.format_stacktrace_entry(entry)})"
+
+        _ ->
+          nil
+      end)
+
+    String.slice(banner, 0, @reason_limit) <> (at || "")
+  end
+
+  defp one_line(text), do: text |> String.trim() |> String.replace(~r/\s*\R\s*/, " ")
 
   # Reaching definitions, derived per module rather than over the merged
   # program. `Argus.Dataflow` never produces an edge crossing a function, so
@@ -254,14 +360,7 @@ defmodule Argus.Pipeline do
   # pseudo-definition is killed like any other write, so it never changes
   # which instructions' writes reach a read.
   defp reaching(nil), do: nil
-
-  defp reaching(typed) do
-    Dataflow.reaching_uses(typed, params: true)
-  rescue
-    # A module whose facts cannot be decoded should not take the whole
-    # extraction down; it loses value-flow edges and keeps everything else.
-    _ -> nil
-  end
+  defp reaching(typed), do: Dataflow.reaching_uses(typed, params: true)
 
   defp derive_def_use(nil), do: %{}
 
@@ -305,8 +404,6 @@ defmodule Argus.Pipeline do
       [] -> %{}
       rows -> %{conditional_call: Enum.sort(rows)}
     end
-  rescue
-    _ -> %{}
   end
 
   defp merge_facts(left, right) do

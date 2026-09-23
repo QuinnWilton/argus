@@ -11,6 +11,24 @@ Grouped by concern. Each entry opens with what it does: **Added**,
 
 ### Fact schema and extraction
 
+**Added.** Schema 55. A failure while extracting one module no longer takes the
+caller down, and is never dropped silently. The pipeline's workers are
+linked to the caller, so an extractor that raised exited scry's compiler
+(or the test process) before anything could be reported, and a module
+that outlived the 120 s per-module timeout aborted the whole run
+(ex_cldr_numbers' `rbnf_lexer.beam`). Now every step is caught in its
+worker: an extractor, or a derived-facts stage (`decode`, `cfg`,
+`reaching`, `conditional_call`), that fails costs only its own rows for
+that module, and a module whose disassembly or bytecode facts raise, or
+that times out (killed on its own, `on_timeout: :kill_task`), loses its
+facts alone. Each failure is an `extraction_error(mod, step, reason)`
+row — in `Argus.Pipeline.extract/2`'s facts, in the directory
+`Argus.Pipeline.run/3` writes, and as `extraction_errors` on
+`%Argus.Findings{}` (`Argus.Findings.extraction_errors/1` reads them from
+a facts directory). A consumer reports them beside the findings: the
+analyses still ran, over what was extracted. An input that cannot be
+read at all is still `{:error, reason}`.
+
 **Fixed.** `resolved_apply` named the wrong arity for `apply(M, f, [x | rest])`:
 the argument list, as `resolve_register/3` rebuilds it, reads an unknown
 tail as one more element, so the call resolved to `M.f/2` whatever

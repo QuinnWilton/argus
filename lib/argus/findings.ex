@@ -27,6 +27,13 @@ defmodule Argus.Findings do
     for an evidence row, whose help says so) and the analysis gets a
     `degraded` entry as well as its `ran` one; every other row of the
     concern reports as usual.
+  - An extraction step failing on one module (an extractor raising on a
+    shape it did not expect, a module outliving the per-module timeout)
+    → an `extraction_errors` entry naming the module, the step and the
+    error. The analyses still run over everything that was extracted,
+    so they report, but a finding that needed the lost rows is missing:
+    a consumer shows these beside the findings rather than as a failed
+    analysis.
 
   ## Atom creation
 
@@ -42,7 +49,7 @@ defmodule Argus.Findings do
   alias Argus.InstrId
   alias Argus.Souffle
 
-  defstruct findings: [], ran: [], degraded: []
+  defstruct findings: [], ran: [], degraded: [], extraction_errors: []
 
   @typedoc "Finding severity, in decreasing order of urgency."
   @type severity :: :error | :warning | :info
@@ -147,10 +154,25 @@ defmodule Argus.Findings do
   @typedoc "Per-analysis degradation note for analyses that did not complete."
   @type degradation :: %{analysis: atom(), reason: term(), detail: String.t()}
 
+  @typedoc """
+  An extraction step that failed on a module (the `extraction_error`
+  relation): `module` is nil when not even the beam's name could be read,
+  and `source` is then its path. `step` is the extractor's module name or
+  a pipeline stage (`"pipeline"` when the module lost all its facts);
+  `reason` is the error on one line.
+  """
+  @type extraction_error :: %{
+          module: module() | nil,
+          source: String.t(),
+          step: String.t(),
+          reason: String.t()
+        }
+
   @type t :: %__MODULE__{
           findings: [finding()],
           ran: [ran_entry()],
-          degraded: [degradation()]
+          degraded: [degradation()],
+          extraction_errors: [extraction_error()]
         }
 
   @severity_rank %{error: 0, warning: 1, info: 2}
@@ -221,7 +243,7 @@ defmodule Argus.Findings do
             )
             |> Enum.flat_map(fn {:ok, outcomes} -> outcomes end)
 
-          {:ok, collect(outcomes)}
+          {:ok, %{collect(outcomes) | extraction_errors: extraction_errors(facts_dir)}}
         after
           if owned?, do: File.rm_rf(Path.dirname(facts_dir))
         end
@@ -253,6 +275,25 @@ defmodule Argus.Findings do
 
       :error ->
         with {:ok, dir} <- Analysis.extract_facts(modules, names, opts), do: {:ok, dir, true}
+    end
+  end
+
+  @doc """
+  The extraction errors recorded in a facts directory
+  (`Argus.Analysis.extract_facts/3` writes them as `extraction_error`),
+  in the order extraction met them. A directory without the file has
+  none.
+  """
+  @spec extraction_errors(Path.t()) :: [extraction_error()]
+  def extraction_errors(facts_dir) do
+    case File.read(Path.join(facts_dir, "extraction_error.facts")) do
+      {:ok, content} ->
+        for [mod, step, reason] <- Argus.Tsv.decode(content) do
+          %{module: module_atom(mod), source: mod, step: step, reason: reason}
+        end
+
+      {:error, _} ->
+        []
     end
   end
 

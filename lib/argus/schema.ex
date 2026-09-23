@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 54
+  @schema_version 55
 
   # Layer 1: Module-level facts.
 
@@ -544,6 +544,33 @@ defmodule Argus.Schema do
     line in effect — before the first marker, under a no-location marker \
     (reference 0, on compiler-generated code), or in modules without a \
     parseable Line chunk — emit no rows.
+    """
+  }
+
+  # Written by the pipeline, not by an extractor: what extraction could not
+  # do. Read by no rule; `Argus.Findings` reports it, and a consumer that
+  # extracts per module (scry) finds the rows in the module's facts.
+  @extraction_error %{
+    name: :extraction_error,
+    layer: 1,
+    fields: [
+      {:mod, :symbol,
+       "module whose extraction failed, as function_def spells it (the beam's path " <>
+         "when not even its name could be read)"},
+      {:step, :symbol,
+       "the extractor that failed (its module name), or a pipeline stage: " <>
+         "pipeline when the module as a whole did, or decode, cfg, reaching " <>
+         "or conditional_call for what those stages provide"},
+      {:reason, :symbol, "what went wrong, on one line"}
+    ],
+    doc: """
+    An extraction step that failed on a module. An extractor or a \
+    derived-facts stage that raises costs only its own rows for that \
+    module: the bytecode facts and every other step's rows stand. A \
+    module whose disassembly or bytecode facts raise, or whose extraction \
+    outlives the pipeline's per-module timeout, contributes this row and \
+    nothing else. Either way the run goes on, and the analyses answer for \
+    what was extracted.
     """
   }
 
@@ -2415,7 +2442,8 @@ defmodule Argus.Schema do
     @closure_def,
     @type_test,
     @bs_start,
-    @line_info
+    @line_info,
+    @extraction_error
   ]
 
   @layer_2_relations [
