@@ -15,6 +15,16 @@ defmodule Argus.Test.Fixtures.ParamFlow do
     @moduledoc false
 
     def concat(p), do: String.to_atom("field_" <> p)
+
+    # A message the receive does not match goes back round the loop with
+    # the request still live: what reaches the sink after it comes both
+    # from the entry and around the back edge.
+    def looped(request) do
+      receive do
+        {:field, name} -> String.to_atom(request <> name)
+      end
+    end
+
     def bin(<<"pre_", rest::binary>>), do: String.to_atom(rest)
     def head(%{"name" => name}, _socket), do: String.to_atom(name)
     def second(:ignored, _params, _socket), do: :ok

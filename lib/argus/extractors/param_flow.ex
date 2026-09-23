@@ -26,10 +26,10 @@ defmodule Argus.Extractors.ParamFlow do
   Reaching definitions (`Argus.Dataflow.reaching_uses/2`) with the
   parameters as sources give, for every register an instruction reads,
   which writes — or which parameter — can have produced it. The extractor
-  then runs a union fixpoint over each function: a structural instruction
-  (`move`, `get_tuple_element`, `get_map_elements`, `put_tuple2`,
-  `bs_create_bin`, ...) derives every register it writes from every one it
-  reads; a call derives its result only when the callee is a propagator,
+  then runs a union fixpoint over each function
+  (`Argus.Extractor.ValueFlow`): a structural instruction (`move`,
+  `get_tuple_element`, `get_map_elements`, `put_tuple2`, `bs_create_bin`,
+  ...) derives every register it writes from every one it reads; a call derives its result only when the callee is a propagator,
   and then only from the positions the table names; a BIF only when it is
   one of the listed structural BIFs; a local call, `call_fun` or `apply`
   derives nothing — the callee's own summary carries that flow, and a
@@ -52,6 +52,7 @@ defmodule Argus.Extractors.ParamFlow do
 
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
+  alias Argus.Extractor.ValueFlow
   alias Argus.Extractors.ApiCalls
   alias Argus.Extractors.ParamFlow.Propagators
   alias Argus.InstrId
@@ -60,9 +61,6 @@ defmodule Argus.Extractors.ParamFlow do
   import Argus.Extractor.Helpers, only: [add_fact: 3, register: 1]
 
   @max_args 4
-
-  # A fixpoint over a finite lattice converges; the bound only guards a bug.
-  @max_passes 64
 
   @impl true
   def relations, do: [:call_arg_derived, :sink_arg_derived]
@@ -85,14 +83,9 @@ defmodule Argus.Extractors.ParamFlow do
 
   # ── The fixpoint ─────────────────────────────────────────────────────
 
-  # For every instruction, the parameters each register it reads is derived
-  # from: %{id => %{reg => MapSet(param)}}.
+  # Per function, what each write is derived from, with the reads the
+  # values are joined over: %{func_id => {reads, outs}}.
   defp derive(typed, triples, copies, bif_operands) do
-    reads =
-      Enum.group_by(triples, fn {_source, _reg, use} -> use end, fn {source, reg, _use} ->
-        {reg, source}
-      end)
-
     writes =
       typed
       |> Map.get(:def, [])
@@ -105,14 +98,7 @@ defmodule Argus.Extractors.ParamFlow do
     locals = MapSet.new(Map.get(typed, :local_call, []), & &1.id)
     dynamics = MapSet.new(Map.get(typed, :dynamic_call, []), & &1.id)
 
-    ids =
-      typed
-      |> Map.get(:instruction, [])
-      |> Enum.sort_by(&{&1.id.module, &1.id.func, &1.id.arity, &1.idx})
-      |> Enum.map(& &1.id)
-
     ctx = %{
-      reads: reads,
       writes: writes,
       ops: ops,
       remote: remote,
@@ -124,50 +110,40 @@ defmodule Argus.Extractors.ParamFlow do
       bif_operands: bif_operands
     }
 
-    outs = fixpoint(ids, ctx, %{}, 0)
-    Map.new(ids, fn id -> {id, inputs_of(id, ctx, outs)} end)
-  end
+    reads = ValueFlow.reads_by_function(triples)
 
-  defp fixpoint(ids, ctx, outs, pass) when pass < @max_passes do
-    {outs, changed?} =
-      Enum.reduce(ids, {outs, false}, fn id, {acc, changed?} ->
-        inputs = inputs_of(id, ctx, acc)
-        all_inputs = inputs |> Map.values() |> Enum.reduce(MapSet.new(), &MapSet.union/2)
+    typed
+    |> Map.get(:instruction, [])
+    |> Enum.group_by(&{&1.id.module, &1.id.func, &1.id.arity}, & &1.id)
+    |> Map.new(fn {{m, f, a}, ids} ->
+      func_id = InstrId.func_id(m, f, a)
+      func_reads = Map.get(reads, func_id, %{})
+      by_idx = Map.new(ids, &{&1.idx, &1})
 
-        Enum.reduce(Map.get(ctx.writes, id, []), {acc, changed?}, fn reg,
-                                                                     {inner, inner_changed?} ->
-          derived = transfer(id, reg, inputs, all_inputs, ctx)
-          previous = Map.get(inner, {id, reg}, MapSet.new())
+      {outs, nil} =
+        ValueFlow.solve(by_idx |> Map.keys() |> Enum.sort(), func_reads, nil, fn idx, outs, nil ->
+          id = Map.fetch!(by_idx, idx)
+          inputs = ValueFlow.inputs(func_reads, outs, idx, & &1)
+          all_inputs = inputs |> Map.values() |> Enum.reduce(MapSet.new(), &MapSet.union/2)
 
-          if MapSet.equal?(derived, previous),
-            do: {inner, inner_changed?},
-            else: {Map.put(inner, {id, reg}, derived), true}
-        end)
-      end)
+          derived =
+            for reg <- Map.get(ctx.writes, id, []),
+                do: {reg, transfer(id, reg, inputs, all_inputs, ctx)}
 
-    if changed?, do: fixpoint(ids, ctx, outs, pass + 1), else: outs
-  end
-
-  defp fixpoint(_ids, _ctx, outs, _pass), do: outs
-
-  # What each register the instruction reads is derived from, given what
-  # every instruction has written so far.
-  defp inputs_of(id, ctx, outs) do
-    ctx.reads
-    |> Map.get(id, [])
-    |> Enum.group_by(fn {reg, _source} -> reg end, fn {_reg, source} -> source end)
-    |> Map.new(fn {reg, sources} ->
-      derived =
-        Enum.reduce(sources, MapSet.new(), fn
-          {:param, k}, acc ->
-            MapSet.put(acc, k)
-
-          %InstrId{} = source, acc ->
-            MapSet.union(acc, Map.get(outs, {source, reg}, MapSet.new()))
+          {derived, nil, []}
         end)
 
-      {reg, derived}
+      {func_id, {func_reads, outs}}
     end)
+  end
+
+  # What each register instruction `idx` of `func_id` reads is derived
+  # from.
+  defp inputs_at(derived, func_id, idx) do
+    case Map.fetch(derived, func_id) do
+      {:ok, {reads, outs}} -> ValueFlow.inputs(reads, outs, idx, & &1)
+      :error -> %{}
+    end
   end
 
   # What the register written at `id` is derived from.
@@ -252,7 +228,7 @@ defmodule Argus.Extractors.ParamFlow do
     |> CallSites.for_module()
     |> Enum.reduce(facts, fn %{func_id: func_id, idx: idx, mfa: {mod, fun, arity} = mfa}, acc ->
       id = InstrId.mint(func_id, idx)
-      site_inputs = Map.get(inputs, parse(id), %{})
+      site_inputs = inputs_at(inputs, func_id, idx)
       callee = Normalize.func_id(mod, fun, arity)
       sink? = ApiCalls.sink?(mfa)
 
@@ -274,7 +250,7 @@ defmodule Argus.Extractors.ParamFlow do
       |> Enum.with_index()
       |> Enum.reduce(acc, fn
         {{:make_fun3, {cmod, cname, carity}, _index, _uniq, _dst, {:list, env}}, idx}, inner ->
-          site_inputs = Map.get(inputs, parse(InstrId.mint(func_id, idx)), %{})
+          site_inputs = inputs_at(inputs, func_id, idx)
           closure = Normalize.func_id(cmod, cname, carity)
           first = carity - length(env)
 
@@ -317,10 +293,5 @@ defmodule Argus.Extractors.ParamFlow do
     Enum.reduce(derived, facts, fn param, acc ->
       add_fact(acc, :sink_arg_derived, prefix ++ [to_string(param)])
     end)
-  end
-
-  defp parse(id) do
-    {:ok, instr_id} = InstrId.parse(id)
-    instr_id
   end
 end

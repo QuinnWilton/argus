@@ -35,6 +35,10 @@ defmodule Argus.Extractor.ParamFlowTest do
     assert sinks(facts, "concat/1") == [{0, 0}]
   end
 
+  test "a parameter carried around a receive loop reaches the sink after it", %{facts: facts} do
+    assert sinks(facts, "looped/1") == [{0, 0}]
+  end
+
   test "a binary pattern in the head reaches the sink", %{facts: facts} do
     assert sinks(facts, "bin/1") == [{0, 0}]
   end
