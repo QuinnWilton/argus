@@ -56,6 +56,7 @@ defmodule Argus.Extractors.ProcessRegistry do
       mentions?: 2,
       resolve_atom: 3,
       resolve_register: 3,
+      spell: 1,
       track_dynamic: 5,
       track_imprecision: 5
     ]
@@ -470,7 +471,7 @@ defmodule Argus.Extractors.ProcessRegistry do
   defp via_source(_key), do: "dynamic"
 
   defp via_key(key) when (is_atom(key) and key != :dynamic) or is_binary(key) or is_integer(key),
-    do: inspect(key)
+    do: spell(key)
 
   defp via_key(_key), do: ""
 

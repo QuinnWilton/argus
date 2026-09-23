@@ -72,15 +72,16 @@ defmodule Argus.Extractors.ErrorHandling do
       add_fact: 3,
       arg_position: 3,
       call_result_origin: 3,
-      map_field_of: 3,
       each_remote_call: 3,
       instructions_from_label: 2,
       key_identity: 4,
+      map_field_of: 3,
       match_remote_call: 1,
       register: 1,
       resolve_atom: 3,
       resolve_register: 3,
       scan_functions: 4,
+      spell: 1,
       track_dynamic: 5,
       track_imprecision: 5
     ]
@@ -419,7 +420,7 @@ defmodule Argus.Extractors.ErrorHandling do
   defp timer_message(ctx, msg_reg) do
     case resolve_register(ctx.instrs, ctx.idx, {:x, msg_reg}) do
       {:ok, msg} ->
-        if bare_message?(msg), do: {"bare", -1, inspect(msg)}, else: {"dynamic", -1, ""}
+        if bare_message?(msg), do: {"bare", -1, spell(msg)}, else: {"dynamic", -1, ""}
 
       _ ->
         case arg_position(ctx.instrs, ctx.idx, {:x, msg_reg}) do
@@ -481,7 +482,7 @@ defmodule Argus.Extractors.ErrorHandling do
     |> Enum.chunk_every(2)
     |> Enum.find_value(:none, fn
       [{:atom, key}, val] -> if alias?(val, aliases), do: {:ok, inspect(key)}, else: nil
-      [{:literal, key}, val] -> if alias?(val, aliases), do: {:ok, inspect(key)}, else: nil
+      [{:literal, key}, val] -> if alias?(val, aliases), do: {:ok, spell(key)}, else: nil
       _ -> nil
     end)
   end

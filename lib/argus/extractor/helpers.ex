@@ -243,6 +243,46 @@ defmodule Argus.Extractor.Helpers do
   end
 
   @doc """
+  A value as every fact column spells it: `inspect/2` without a struct's
+  own `Inspect` implementation, and with a digest of the whole term when
+  inspect cut the spelling short.
+
+  Never a struct's own implementation, because a spelling must not depend
+  on which modules are loaded (scry's compiler has the analyzed code
+  loaded, a batch run does not), and an implementation that raises on
+  the struct's defaults (sequin's `CircularBuffer`) renders as a
+  multi-line `#Inspect.Error<...>`.
+
+  inspect/2 stops at 50 elements and 4096 bytes of a string, so two
+  values that differ past those bounds spelled the same, and joined as
+  one value (one ETS key, one literal). A spelling inspect cut short
+  carries ` #` and a digest of the whole term instead. Spelling every
+  value in full was measured and rejected: over ecto, absinthe and
+  hexpm it doubles the bytes of literal spellings (6.4MB to 12.7MB,
+  nearly all of it embedded asset binaries that land in `literal_value`
+  and every `move` of them), where the digest adds 0.4% and touches 995
+  of 91,640 spellings. The test is for inspect's `...` marker; a small
+  value that merely holds three dots gets a digest it did not need,
+  which costs nothing.
+  """
+  @spec spell(term()) :: String.t()
+  def spell(value) do
+    spelled = inspect(value, structs: false)
+
+    if String.contains?(spelled, "...") do
+      digest =
+        :sha256
+        |> :crypto.hash(:erlang.term_to_binary(value, [:deterministic]))
+        |> binary_part(0, 12)
+        |> Base.encode16(case: :lower)
+
+      spelled <> " #" <> digest
+    else
+      spelled
+    end
+  end
+
+  @doc """
   Whether `term` is a proper list: `[]`, or cons cells ending in `[]`.
 
   A literal in a beam can be improper (`[a | :b]`, Erlang's
@@ -814,7 +854,7 @@ defmodule Argus.Extractor.Helpers do
       {nil, {:get_map_elements, _fail, _src, {:list, pairs}}} ->
         case find_map_key(pairs, reg) do
           {:ok, {:atom, key}} -> {:ok, inspect(key)}
-          {:ok, {:literal, key}} -> {:ok, inspect(key)}
+          {:ok, {:literal, key}} -> {:ok, spell(key)}
           _ -> :dynamic
         end
 
@@ -1261,7 +1301,7 @@ defmodule Argus.Extractor.Helpers do
     case resolve_register(instrs, idx, register) do
       {:ok, value}
       when (is_atom(value) and value != :dynamic) or is_binary(value) or is_integer(value) ->
-        {"literal", inspect(value)}
+        {"literal", spell(value)}
 
       _ ->
         case arg_position(instrs, idx, register) do
@@ -1375,7 +1415,7 @@ defmodule Argus.Extractor.Helpers do
             instr ->
               case Instr.copy_source(instr, reg) do
                 {:literal, tuple} when is_tuple(tuple) and tuple_size(tuple) > n ->
-                  {"literal", inspect(elem(tuple, n))}
+                  {"literal", spell(elem(tuple, n))}
 
                 {kind, _} = source when kind in [:x, :y] ->
                   element_of(instrs, at, source, n, origins)
@@ -1392,7 +1432,7 @@ defmodule Argus.Extractor.Helpers do
   defp element_identity(_instrs, _idx, {:integer, n}, _origins), do: {"literal", inspect(n)}
 
   defp element_identity(_instrs, _idx, {:literal, value}, _origins),
-    do: {"literal", inspect(value)}
+    do: {"literal", spell(value)}
 
   defp element_identity(instrs, idx, operand, origins) do
     case register(operand) do

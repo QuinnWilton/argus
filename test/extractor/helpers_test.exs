@@ -659,6 +659,26 @@ defmodule Argus.Extractor.HelpersTest do
     end
   end
 
+  describe "spell/1" do
+    test "is inspect's spelling when inspect spells the whole value" do
+      for value <- [:ok, "bin", [1, 2], %{a: {1, 2}}, %URI{host: "h"}] do
+        assert Helpers.spell(value) == inspect(value, structs: false)
+      end
+    end
+
+    # An ETS key or a literal past inspect's bounds used to spell the same
+    # as another, and the two joined as one identity.
+    test "keys that differ past inspect's bounds have different identities" do
+      long = String.duplicate("k", 5000)
+      identity = &Helpers.key_identity([{:move, {:literal, &1}, {:x, 1}}], 1, {:x, 1})
+
+      assert {"literal", a} = identity.(long)
+      assert {"literal", b} = identity.(String.duplicate("k", 4999) <> "z")
+      refute a == b
+      assert identity.(long) == {"literal", a}
+    end
+  end
+
   describe "improper-safe walks" do
     test "proper_list?/1 accepts only lists that end in []" do
       assert Helpers.proper_list?([])

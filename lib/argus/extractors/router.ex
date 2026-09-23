@@ -26,7 +26,7 @@ defmodule Argus.Extractors.Router do
 
   @behaviour Argus.Extractor
 
-  import Argus.Extractor.Helpers, only: [add_fact: 3, list_elements: 1]
+  import Argus.Extractor.Helpers, only: [add_fact: 3, list_elements: 1, spell: 1]
 
   @impl true
   def relations,
@@ -59,7 +59,7 @@ defmodule Argus.Extractors.Router do
           Atom.to_string(verb),
           path,
           inspect(plug),
-          inspect(Map.get(route, :plug_opts))
+          spell(Map.get(route, :plug_opts))
         ])
     end
   end

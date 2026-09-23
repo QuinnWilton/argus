@@ -11,6 +11,15 @@ Grouped by concern. Each entry opens with what it does: **Added**,
 
 ### Fact schema and extraction
 
+**Fixed.** The extractors spell a literal value the way `literal_value` does,
+through the new `Argus.Extractor.Helpers.spell/1`: key identities
+(`key_identity/4`, `tuple_element_identity/5`, map fields), timer
+messages and keys, via-registry keys and route `plug_opts` were
+`inspect/1`ed, which ran a struct's own `Inspect` implementation when its
+module was loaded (so scry, with the analyzed code loaded, could spell a
+key differently from a batch run) and cut long values short (so two ETS
+keys differing past 4096 bytes were one key). Atoms spell as before.
+
 **Fixed.** No literal crashes an extractor. A beam's literals can be improper lists
 (`[a | :b]`; Elixir's own `Logger.Translator` holds improper iolists;
 Erlang's `-my_attr([a|b]).` stores one as the attribute), and `Enum`,

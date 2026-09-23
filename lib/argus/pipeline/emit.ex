@@ -601,37 +601,9 @@ defmodule Argus.Pipeline.Emit do
   defp format_operand({:f, n}), do: "f#{n}"
   defp format_operand(other), do: spell(other)
 
-  # Never a struct's own Inspect implementation: a literal's spelling must
-  # not depend on which modules are loaded, and an implementation that
-  # raises on the struct's defaults (sequin's CircularBuffer) renders as a
-  # multi-line #Inspect.Error<...> that no fact file can hold.
-  #
-  # inspect/2 stops at 50 elements and 4096 bytes of a string, so two
-  # literals that differ past those bounds used to spell the same, and
-  # joined as one value. A spelling inspect cut short carries a digest of
-  # the whole term instead. Spelling every literal in full was measured
-  # and rejected: over ecto, absinthe and hexpm it doubles the bytes of
-  # literal spellings (6.4MB to 12.7MB, nearly all of it embedded asset
-  # binaries that land in `literal_value` and every `move` of them),
-  # where the digest adds 0.4% and touches 995 of 91,640 spellings. The
-  # test is for inspect's `...` marker; a small value that merely holds
-  # three dots gets a digest it did not need, which costs nothing.
-  defp spell(val) do
-    val = strip_location(val)
-    spelled = inspect(val, structs: false)
-
-    if String.contains?(spelled, "...") do
-      digest =
-        :sha256
-        |> :crypto.hash(:erlang.term_to_binary(val, [:deterministic]))
-        |> binary_part(0, 12)
-        |> Base.encode16(case: :lower)
-
-      spelled <> " #" <> digest
-    else
-      spelled
-    end
-  end
+  # A literal's spelling, `Helpers.spell/1`, with location metadata left
+  # out (`strip_location/1`).
+  defp spell(val), do: val |> strip_location() |> Helpers.spell()
 
   defp format_mfa({mod, name, arity}) do
     "#{inspect(mod)}:#{name}/#{arity}"
