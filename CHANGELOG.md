@@ -391,6 +391,10 @@ concern that runs it.
 
 ### mailbox
 
+**Changed.** `unreceived_message` gains a `spawn` column, the start site
+process points-to now records, and its "the process is spawned here" frame
+points at the spawn instead of the spawning function's head.
+
 **Added.** `mailbox.unreceived_message`: a message sent to a spawned process whose
 receive has no clause for it. The message is not dropped; it stays in
 the mailbox for the life of the process and every later receive scans

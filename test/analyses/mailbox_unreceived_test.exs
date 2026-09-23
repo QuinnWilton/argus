@@ -20,7 +20,8 @@ defmodule Argus.Analyses.MailboxUnreceivedTest do
     unless Argus.Souffle.available?(), do: flunk("souffle not installed")
     {:ok, results} = Argus.analyze(@all, :mailbox)
 
-    for [mod, func, _site, message, runs, starter, _recv] <- results["unreceived_message"] do
+    for [mod, func, _site, message, runs, starter, _spawn, _recv] <-
+          results["unreceived_message"] do
       short = &String.replace(&1, "Argus.Test.Fixtures.UnreceivedMessage.", "")
       {short.(mod), short.(func), message, short.(runs), short.(starter)}
     end
@@ -62,6 +63,7 @@ defmodule Argus.Analyses.MailboxUnreceivedTest do
         ":checked_out",
         "Audit:loop/0",
         "Shop:start/0",
+        "Shop:start/0#9",
         "Audit:loop/0#6"
       ])
 
@@ -78,6 +80,8 @@ defmodule Argus.Analyses.MailboxUnreceivedTest do
 
     # loop_rec has no line, so the bytecode puts the receive frame on
     # `def loop do`; the source fragment carries it to the receive.
-    assert [%{at_source: "receive", to_block: :receive}, _spawn] = f.related
+    assert [%{at_source: "receive", to_block: :receive}, spawn] = f.related
+    # The spawn frame points at the spawn itself, not at its function.
+    assert %Argus.InstrId{func: "start", idx: 9} = spawn.instr
   end
 end

@@ -29,7 +29,7 @@ defmodule Argus.Analyses.Mailbox do
     `handle_call` that defers a reply without keeping `from`
     (`dropped_from`), or a `{:call, from}` clause that never answers
     (`statem_unreplied`).
-  - `unreceived_message(mod, func, site, message, runs, starter, recv)` —
+  - `unreceived_message(mod, func, site, message, runs, starter, spawn, recv)` —
     a send that process points-to follows to a spawned process whose
     receive has no clause for `message`: it stays in that mailbox, and
     every later receive scans past it.
@@ -118,6 +118,7 @@ defmodule Argus.Analyses.Mailbox do
           {:message, :symbol, "the literal atom, or {:tag, …}"},
           {:runs, :symbol, "the function the receiving process runs"},
           {:starter, :symbol, "the function that spawned it"},
+          {:spawn, :symbol, "the spawn"},
           {:recv, :symbol, "its receive"}
         ],
         key: [:site, :runs],
@@ -274,7 +275,7 @@ defmodule Argus.Analyses.Mailbox do
     )
   end
 
-  def finding(:unreceived_message, [mod, func, site, message, runs, starter, recv]) do
+  def finding(:unreceived_message, [mod, func, site, message, runs, starter, spawn, recv]) do
     Findings.new(
       :warning,
       "#{message} is sent to a process whose receive never takes it",
@@ -292,7 +293,7 @@ defmodule Argus.Analyses.Mailbox do
           at_source: "receive",
           to_block: :receive
         ),
-        Findings.related("the process is spawned here", Findings.at_func(starter))
+        Findings.related("the process is spawned here", Findings.at_site_in_func(spawn, starter))
       ],
       help: [
         "add a clause for #{message} to the receive in #{runs}",
