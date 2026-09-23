@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A related frame's line is refined from its source fragment (argus
+  `Findings.related/3` `at_source:`) as a finding's is. An unreceived
+  message's "the receive it never matches" frame now sits on the
+  `receive`, bracketed to its last clause, instead of the function
+  head the bytecode alone gives it.
 - A failed solve no longer outlives the run it failed in. A solver
   crash, timeout or unloadable rules file was memoized as the
   analysis's result and persisted, so every later run replayed "the

@@ -489,7 +489,10 @@ defmodule Scry.Analysis do
         module != nil,
         path = Runtime.query(db, :file_of, module),
         path != :external do
-      line = anchor_line(db, module, entry)
+      # The frame's own source fragment takes its line the last step, as
+      # a finding's does: a receive's loop_rec has no line, so the
+      # bytecode alone puts the frame on the function head.
+      line = source_line(db, module, path, entry)
 
       %{
         label: fill_guard(Map.get(entry, :label, ""), guard_word(path, line, entry)),
