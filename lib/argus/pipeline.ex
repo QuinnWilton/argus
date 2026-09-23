@@ -101,10 +101,11 @@ defmodule Argus.Pipeline do
          :ok <- touch_relations(output_dir),
          {:ok, paths} <- Disassemble.resolve_paths(modules) do
       writer = Writer.new(output_dir, written)
+      memo = new_memo()
 
       try do
         paths
-        |> extract_stream(opts)
+        |> extract_stream(opts, memo)
         |> Enum.reduce_while({:ok, writer}, fn
           {:ok, module_facts}, {:ok, writer} ->
             case Writer.append(writer, module_facts) do
@@ -121,6 +122,7 @@ defmodule Argus.Pipeline do
         end
       after
         Writer.close(writer)
+        :ets.delete(memo)
       end
     end
   end
@@ -149,13 +151,19 @@ defmodule Argus.Pipeline do
     opts = if format == :interned, do: opts, else: Keyword.delete(opts, :symbols)
 
     with {:ok, paths} <- Disassemble.resolve_paths(modules) do
+      memo = new_memo()
+
       merged =
-        paths
-        |> extract_stream(opts)
-        |> Enum.reduce(%{}, fn
-          {:ok, module_facts}, acc -> merge_facts(acc, module_facts)
-          {:error, reason}, _acc -> throw({:extraction_error, reason})
-        end)
+        try do
+          paths
+          |> extract_stream(opts, memo)
+          |> Enum.reduce(%{}, fn
+            {:ok, module_facts}, acc -> merge_facts(acc, module_facts)
+            {:error, reason}, _acc -> throw({:extraction_error, reason})
+          end)
+        after
+          :ets.delete(memo)
+        end
 
       case format do
         :raw -> {:ok, merged}
@@ -178,7 +186,7 @@ defmodule Argus.Pipeline do
   # come back as an `extraction_error` row: what was lost is recorded
   # beside what was extracted, and the run goes on. Only an input that
   # cannot be read at all (`{:error, reason}` from disassembly) ends it.
-  defp extract_stream(paths, opts) do
+  defp extract_stream(paths, opts, memo) do
     concurrency = Keyword.get(opts, :concurrency, System.schedulers_online())
     extractors = Keyword.get(opts, :extractors, [])
     task_timeout = Keyword.get(opts, :timeout, @default_timeout)
@@ -187,7 +195,7 @@ defmodule Argus.Pipeline do
 
     paths
     |> Task.async_stream(
-      fn path -> extract_module(path, extractors, trace_imprecision, symbols) end,
+      fn path -> extract_module(path, extractors, trace_imprecision, symbols, memo) end,
       max_concurrency: concurrency,
       # Ordered so that extracting the same modules twice produces the
       # same value. With `ordered: false` the reduce sees workers in
@@ -223,11 +231,11 @@ defmodule Argus.Pipeline do
   # which is naturally scoped to this Task.async_stream worker, and the
   # try/after guarantees the flag is cleared before the worker returns
   # to the async pool.
-  defp extract_module(path, extractors, trace_imprecision, symbols) do
+  defp extract_module(path, extractors, trace_imprecision, symbols, memo) do
     if trace_imprecision, do: Helpers.enable_tracing()
 
     try do
-      with {:ok, facts} <- module_facts(path, extractors) do
+      with {:ok, facts} <- module_facts(path, extractors, memo) do
         # Interned here, in the worker, so the rows cross to the caller as
         # tuples of small integers rather than as every string they hold.
         {:ok, maybe_intern(facts, symbols)}
@@ -241,7 +249,7 @@ defmodule Argus.Pipeline do
     end
   end
 
-  defp module_facts(path, extractors) do
+  defp module_facts(path, extractors, memo) do
     with {:ok, data} <- Disassemble.disassemble_path(path) do
       mod_str = inspect(data.module)
 
@@ -278,7 +286,8 @@ defmodule Argus.Pipeline do
           cfg: cfgs,
           typed: typed,
           reaching: reaching,
-          origins_index: Argus.Extractor.Helpers.origins_index(%{reaching: reaching})
+          origins_index: Argus.Extractor.Helpers.origins_index(%{reaching: reaching}),
+          installed_specs: memo
         })
 
       # One extractor's failure costs its own rows and nothing else.
@@ -303,6 +312,15 @@ defmodule Argus.Pipeline do
       {:ok, facts}
     end
   end
+
+  # What a run looks up once and every module asks again: the specs of
+  # the remote modules the extractors read from the code path
+  # (`Argus.Specs.installed/2`). Finding a module that is not loaded
+  # walks the code path through the code server, which every worker
+  # waits on in turn, and the answer cannot change while the run reads
+  # the same path. The caller owns the table and deletes it when the run
+  # is done; the workers read and fill it.
+  defp new_memo, do: :ets.new(:argus_extraction_memo, [:set, :public, read_concurrency: true])
 
   # `{value, errors}`: the step's result, or nil with the failure added to
   # `errors` as `{step, reason}`.

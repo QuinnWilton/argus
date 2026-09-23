@@ -31,6 +31,7 @@ defmodule Argus.Extractor do
   facts. `Argus.Extractor.Helpers.each_remote_call/3`, `Helpers.cfg/3` and
   `Helpers.typed/1` fall back to building each when absent, which is what
   an extractor called on bare disassembly (its unit tests) gets.
+  `installed_specs` is the run's memo of `Argus.Specs.installed/2`.
   """
   @type module_data :: %{
           required(:module) => atom(),
@@ -44,7 +45,8 @@ defmodule Argus.Extractor do
           optional(:cfg) => %{{String.t(), arity()} => Argus.Cfg.Function.t()},
           optional(:typed) => Argus.Facts.t() | nil,
           optional(:reaching) => MapSet.t(Argus.Dataflow.reaching_use()) | nil,
-          optional(:origins_index) => map()
+          optional(:origins_index) => map(),
+          optional(:installed_specs) => :ets.tid()
         }
 
   @doc """

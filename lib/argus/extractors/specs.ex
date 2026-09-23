@@ -37,7 +37,11 @@ defmodule Argus.Extractors.Specs do
 
     %{}
     |> emit_own(mod, own_specs(module_data))
-    |> emit_callees(mod, CallSites.for_module(module_data))
+    |> emit_callees(
+      mod,
+      CallSites.for_module(module_data),
+      Map.get(module_data, :installed_specs)
+    )
   end
 
   # The pipeline hands over the beam it disassembled; an extractor run on
@@ -69,7 +73,7 @@ defmodule Argus.Extractors.Specs do
     end
   end
 
-  defp emit_callees(facts, mod, sites) do
+  defp emit_callees(facts, mod, sites, memo) do
     callees =
       for %{remote?: true, mfa: {m, _f, _a} = mfa} <- sites, m != mod, uniq: true, do: mfa
 
@@ -77,7 +81,7 @@ defmodule Argus.Extractors.Specs do
       callees
       |> Enum.map(&elem(&1, 0))
       |> Enum.uniq()
-      |> Map.new(&{&1, Specs.installed(&1)})
+      |> Map.new(&{&1, Specs.installed(&1, memo)})
 
     for {m, f, a} <- Enum.sort(callees),
         %{} = returns <- [Map.fetch!(installed, m)],

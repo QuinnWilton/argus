@@ -100,6 +100,29 @@ defmodule Argus.Specs do
   end
 
   @doc """
+  `installed/1`, answered once per `memo`: an ETS table (`:public`,
+  `:set`) the caller owns for one extraction over one code path, which
+  `Argus.Pipeline` hands every module's extractors as
+  `module_data.installed_specs`. `installed/1` asks the code server where
+  the module lives and stats the file on every call, so that an edit is
+  seen; within a run there is nothing to see. `nil` is `installed/1`.
+  """
+  @spec installed(module(), :ets.tid() | nil) :: returns() | :unknown
+  def installed(module, nil), do: installed(module)
+
+  def installed(module, memo) when is_atom(module) do
+    case :ets.lookup(memo, module) do
+      [{^module, value}] ->
+        value
+
+      [] ->
+        value = installed(module)
+        :ets.insert(memo, {module, value})
+        value
+    end
+  end
+
+  @doc """
   Classifies a list of spec clauses (Erlang abstract format, as
   `Code.Typespec.fetch_specs/1` returns them) against the types of the
   module they belong to, as `{params, body}` by `{name, arity}`.

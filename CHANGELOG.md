@@ -69,6 +69,12 @@ instruction lists. The solver itself visits blocks in reverse postorder
 and keeps what reaches a point per register, which took a function of
 many wide joins from quadratic to linear (Ecto.UUID 20.7 s to 0.4 s).
 
+**Changed.** A run reads each installed module's specs once: the pipeline
+hands its extractors an ETS memo for the run (`module_data.installed_specs`,
+**Added**: `Argus.Specs.installed/2`). `installed/1` stamps its answer with
+the module's file on every call, which for a module that is not loaded
+walks the code path through the code server that every worker waits on.
+
 **Removed.** Schema 60. `move`, `allocate`, `deallocate`, `try_end` and
 `module_attribute`: no Datalog rule and no in-process pass read them (the
 walks read the instructions; the extractors that need an attribute read
