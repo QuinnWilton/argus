@@ -57,7 +57,7 @@ defmodule Argus.Analyses.Failure do
         name: :unhandled_failure,
         fields: [
           {:func, :symbol, "the function the failure reaches"},
-          {:site, :symbol, "the rescue's function, the guarded call, or the rpc call"},
+          {:site, :symbol, "the rescue's try, the guarded call, or the rpc call"},
           {:kind, :symbol, "rescue | erpc_transport | rpc | multicall | erpc"},
           {:shape, :symbol,
            "for an rpc variant, case (matched, no clause) or boolean (truthy tuple)"},
@@ -148,14 +148,16 @@ defmodule Argus.Analyses.Failure do
     )
   end
 
-  def finding(:unhandled_failure, [func, _site, "rescue", _, _]) do
+  def finding(:unhandled_failure, [func, site, "rescue", _, span_end]) do
     Findings.new(
       :warning,
       "Catch-all rescue swallows exceptions",
       "#{func} rescues every exception without re-raising, logging, or " <>
         "matching specific types. Bugs become silence: the failure surfaces " <>
         "later, far from its cause, with the stacktrace gone.",
-      at: Findings.at_func(func),
+      at: Findings.at_site(site, func),
+      to: Findings.at_site(span_end, func),
+      to_block: :catch,
       at_label: "rescues everything",
       help: [
         "rescue the specific exceptions this code can handle, and re-raise or log the rest"
@@ -193,6 +195,7 @@ defmodule Argus.Analyses.Failure do
         "it — a CaseClauseError in place of a result.",
       at: Findings.at_site(site, func),
       to: Findings.at_site(span_end, func),
+      to_block: :catch,
       at_label: "the call and its rescue, which has no {:erpc, _} clause",
       help: ["add a clause for `{:erpc, reason}` and return or raise a meaningful error"]
     )
@@ -302,7 +305,8 @@ defmodule Argus.Analyses.Failure do
     case belief do
       "exception_guarded" ->
         Findings.related("guarded by this catch", Findings.at_site(site, mod),
-          to: Findings.at_site(guard_end, mod)
+          to: Findings.at_site(guard_end, mod),
+          to_block: :catch
         )
 
       "result_checked" ->

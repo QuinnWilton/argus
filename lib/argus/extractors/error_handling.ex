@@ -906,7 +906,7 @@ defmodule Argus.Extractors.ErrorHandling do
   defp maybe_bare_rescue(facts, ctx, {:try, _reg, {:f, handler_label}}) do
     if bare_handler?(ctx.instrs, handler_label) do
       id = InstrId.mint(ctx.func_id, ctx.idx)
-      add_fact(facts, :bare_rescue, [id, ctx.func_id])
+      add_fact(facts, :bare_rescue, [id, ctx.func_id, handler_end(ctx, handler_label, ctx.idx)])
     else
       facts
     end

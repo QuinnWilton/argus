@@ -15,7 +15,7 @@
 //
 // `unhandled_failure(func, site, kind, shape)` — a failure value or
 //   exception that nothing takes. `kind` is "rescue" (a catch-all rescue
-//   discards the exception; site is the function), "erpc_transport" (a
+//   discards the exception; site is the try), "erpc_transport" (a
 //   rescue around :erpc.call has no clause for transport failures; site
 //   is the guarded call), or the rpc variant "rpc" | "multicall" | "erpc" whose
 //   result is matched by shape with no {:badrpc, _} clause (`shape` =
@@ -42,8 +42,8 @@
 // ── Swallowed errors ─────────────────────────────────────────────
 
 // Catch-all rescue that silently discards exceptions.
-unhandled_failure(func, func, "rescue", "", "") :-
-  bare_rescue(_, func).
+unhandled_failure(func, id, "rescue", "", guard_end) :-
+  bare_rescue(id, func, guard_end).
 
 // ── Exit in GenServer callback ───────────────────────────────────
 

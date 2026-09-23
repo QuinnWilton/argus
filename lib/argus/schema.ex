@@ -1341,7 +1341,8 @@ defmodule Argus.Schema do
     layer: 2,
     fields: [
       {:id, :symbol, "instruction ID of try_start"},
-      {:func, :symbol, "containing function ID"}
+      {:func, :symbol, "containing function ID"},
+      {:guard_end, :symbol, "the handler's own last line marker, else empty"}
     ],
     doc: "Try/catch handler that catches all exceptions without filtering or reraising."
   }

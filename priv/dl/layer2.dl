@@ -12,7 +12,7 @@
 .input async_cast
 
 // Try/catch handler that catches all exceptions without filtering or reraising.
-.decl bare_rescue(id: symbol, func: symbol)
+.decl bare_rescue(id: symbol, func: symbol, guard_end: symbol)
 .input bare_rescue
 
 // Resolved argument value at a call site. Enables interprocedural constant propagation: Datalog rules in `clientlib/interprocedural.dl` trace literal values from call sites through forwarding chains to derive additional `sync_call`/`async_cast` rows that the extractors couldn't resolve statically. Forwarded parameters are NOT values here — they are their own relation, `call_arg_forward`.

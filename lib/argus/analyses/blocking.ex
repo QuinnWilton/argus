@@ -317,6 +317,7 @@ defmodule Argus.Analyses.Blocking do
         "waits out the child timeout and brutal-kills, losing whatever the " <>
         "process was holding.",
       at: Findings.at_instr(id),
+      to_block: :receive,
       at_label: "blocking receive on the callback's own stack",
       help: [
         "move the wait into a task and reply to the callback with a message, " <>
@@ -336,6 +337,7 @@ defmodule Argus.Analyses.Blocking do
         "supervisor rely on. Messages it does not match are left in the queue " <>
         "and re-scanned by every later receive.",
       at: Findings.at_instr(id),
+      to_block: :receive,
       at_label: "receive on the callback's own stack",
       help: ["take the message in handle_info/2 instead of a receive inside the callback"]
     )
@@ -393,6 +395,7 @@ defmodule Argus.Analyses.Blocking do
         "this catch lets crash the caller.",
       at: Findings.at_site(call, func),
       to: Findings.at_site(guard_end, func),
+      to_block: :catch,
       at_label: "the call and its catch, which takes only :noproc",
       help: [
         "add a clause for `:exit, {:shutdown, _}` (and `{:normal, _}`)",

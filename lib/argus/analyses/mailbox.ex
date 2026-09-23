@@ -178,6 +178,7 @@ defmodule Argus.Analyses.Mailbox do
         "once handle_info/2 is defined an unmatched message is a " <>
         "FunctionClauseError rather than GenServer's log-and-continue.",
       at: Findings.at_func(func),
+      to_block: :function,
       at_label: "no clause here accepts an unexpected message",
       help: [
         "add a final `handle_info(msg, state)` clause that logs the " <>
@@ -197,6 +198,7 @@ defmodule Argus.Analyses.Mailbox do
         "is a FunctionClauseError and the process dies — in a restart loop " <>
         "if the message repeats.",
       at: Findings.at_func(func),
+      to_block: :function,
       at_label: "no clause here accepts an unexpected message",
       help: [
         "add a final `handle_info(msg, state)` clause that logs the " <>
@@ -395,6 +397,7 @@ defmodule Argus.Analyses.Mailbox do
         "module, with a message that names neither this function nor this clause, " <>
         "and under load it is indistinguishable from overload.",
       at: Findings.at_instr(id),
+      to_block: :clause,
       at_label: "{:noreply, _} without keeping `from`",
       help: [
         "reply here with `{:reply, value, state}`, or keep `from` in state and " <>
@@ -462,6 +465,7 @@ defmodule Argus.Analyses.Mailbox do
       # previous clause's line; the tested literal finds the clause head.
       at: Findings.at_site(site, mod),
       at_source: if(tag == "", do: nil, else: tag),
+      to_block: :clause,
       at_label: "this clause never replies",
       help: [
         "return `{:keep_state_and_data, [{:reply, from, value}]}` (or `:postpone` " <>

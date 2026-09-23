@@ -49,6 +49,23 @@ defmodule Argus.FindingsProseTest do
       assert [%{to_instr: %{idx: 7}}, %{to_instr: nil}] = attrs.related
       assert Findings.new(:warning, "T", "D.").to_instr == nil
     end
+
+    test "a block names what a consumer with the source closes the span by" do
+      attrs = Findings.new(:warning, "T", "D.", to_block: :catch)
+      assert attrs.to_block == :catch
+      assert Findings.new(:warning, "T", "D.").to_block == nil
+
+      related = Findings.related("r", Findings.at_instr("M:f/1#3"), to_block: :receive)
+      assert related.to_block == :receive
+
+      assert_raise ArgumentError, ~r/:to_block must be one of/, fn ->
+        Findings.new(:warning, "T", "D.", to_block: :try)
+      end
+
+      assert_raise ArgumentError, ~r/:to_block must be one of/, fn ->
+        Findings.related("r", Findings.at_instr("M:f/1#3"), to_block: "catch")
+      end
+    end
   end
 
   describe "compiler-generated function names" do

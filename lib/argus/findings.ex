@@ -50,6 +50,16 @@ defmodule Argus.Findings do
         }
 
   @typedoc """
+  The source block an anchor sits in, for a consumer with the source to
+  draw the span to when the bytecode gives no end: `:catch` (the
+  `catch`/`rescue`/`after` clauses that guard the anchored call, to
+  their `end`), `:receive` (the `receive do ... end` the anchor opens),
+  `:clause` (the function clause the anchor heads, to its `end`),
+  `:function` (every clause of the anchored function).
+  """
+  @type block :: :catch | :receive | :clause | :function
+
+  @typedoc """
   A labelled secondary location (sibling, supervisor, callee, ...).
   `to_instr` closes a span: the frame covers the lines from `instr` to
   it (a call and the catch that guards it).
@@ -59,7 +69,8 @@ defmodule Argus.Findings do
           module: module() | nil,
           mfa: mfa() | nil,
           instr: InstrId.t() | nil,
-          to_instr: InstrId.t() | nil
+          to_instr: InstrId.t() | nil,
+          to_block: block() | nil
         }
 
   @typedoc """
@@ -81,6 +92,7 @@ defmodule Argus.Findings do
           at_label: String.t() | nil,
           at_source: String.t() | nil,
           to_instr: InstrId.t() | nil,
+          to_block: block() | nil,
           help: [String.t()],
           related: [related()],
           provenance: provenance(),
@@ -105,6 +117,7 @@ defmodule Argus.Findings do
           at_label: String.t() | nil,
           at_source: String.t() | nil,
           to_instr: InstrId.t() | nil,
+          to_block: block() | nil,
           help: [String.t()],
           related: [related()],
           provenance: provenance(),
@@ -128,6 +141,8 @@ defmodule Argus.Findings do
         }
 
   @severity_rank %{error: 0, warning: 1, info: 2}
+  @blocks [:catch, :receive, :clause, :function]
+
   @severities Map.keys(@severity_rank)
 
   # ── Running ────────────────────────────────────────────────────────
@@ -654,6 +669,10 @@ defmodule Argus.Findings do
   - `:to` — an anchor whose instruction closes the primary span: the
     finding covers the lines from `:at` to it, as one bracket, for a
     call and the catch that guards it (default: no span).
+  - `:to_block` — the source block the anchor sits in (`t:block/0`), for
+    a consumer with the source to close the span by when the bytecode
+    gives no end — a catch whose bodies are literals has no line of its
+    own (default: `nil`).
   - `:at_source` — a source fragment that carries the anchor the last
     step bytecode cannot: a consumer holding the source moves the anchor
     to the first line at or after the anchor's line that contains the
@@ -676,6 +695,7 @@ defmodule Argus.Findings do
     at_label = Keyword.get(opts, :at_label)
     at_source = Keyword.get(opts, :at_source)
     to_instr = Keyword.get(opts, :to, empty_anchor()).instr
+    to_block = Keyword.get(opts, :to_block)
     help = Keyword.get(opts, :help, [])
     provenance = Keyword.get(opts, :provenance, :structural)
     confidence = Keyword.get(opts, :confidence)
@@ -687,6 +707,11 @@ defmodule Argus.Findings do
     unless is_nil(at_source) or (is_binary(at_source) and at_source != "") do
       raise ArgumentError,
             ":at_source must be a non-empty string, got: #{inspect(at_source)}"
+    end
+
+    unless to_block in [nil | @blocks] do
+      raise ArgumentError,
+            ":to_block must be one of #{inspect(@blocks)}, got: #{inspect(to_block)}"
     end
 
     unless is_list(help) and Enum.all?(help, &is_binary/1) do
@@ -713,6 +738,7 @@ defmodule Argus.Findings do
       at_label: at_label,
       at_source: at_source,
       to_instr: to_instr,
+      to_block: to_block,
       help: help,
       related: Keyword.get(opts, :related, []),
       provenance: provenance,
@@ -746,13 +772,22 @@ defmodule Argus.Findings do
 
   @doc """
   Labels an anchor as a secondary location. `to:` closes a span from the
-  anchor's instruction to that anchor's.
+  anchor's instruction to that anchor's; `to_block:` names the source
+  block for a consumer to close it by when the bytecode gives no end.
   """
   @spec related(String.t(), anchor(), keyword()) :: related()
   def related(label, anchor, opts \\ []) when is_binary(label) do
+    to_block = Keyword.get(opts, :to_block)
+
+    unless to_block in [nil | @blocks] do
+      raise ArgumentError,
+            ":to_block must be one of #{inspect(@blocks)}, got: #{inspect(to_block)}"
+    end
+
     anchor
     |> Map.put(:label, label)
     |> Map.put(:to_instr, Keyword.get(opts, :to, empty_anchor()).instr)
+    |> Map.put(:to_block, to_block)
   end
 
   @doc """
