@@ -167,6 +167,44 @@ defmodule Mix.Tasks.Compile.ScryTest do
     end)
   end
 
+  # The environment digest is memoized per code path; a directory nobody
+  # reads, put on the path for the call, makes it compute afresh — as the
+  # next `mix compile`, a new VM, would.
+  defp fresh_env(apps) do
+    dir = Path.join(System.tmp_dir!(), "scry_env_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    Code.append_path(dir)
+
+    try do
+      Scry.Fingerprint.env(apps)
+    after
+      Code.delete_path(dir)
+      File.rm_rf!(dir)
+    end
+  end
+
+  test "an edit to the project leaves the environment fingerprint where it was", %{
+    copy: copy
+  } do
+    Mix.Project.in_project(:depot, copy, fn _module ->
+      compile!()
+      %{apps: apps} = Scry.Scanner.scan(Scry.Config.load())
+      assert apps == [:depot]
+      before = fresh_env(apps)
+      unwatched = fresh_env([])
+
+      queue = Path.join(copy, "lib/depot/queue.ex")
+      edit!(queue, File.read!(queue) <> "\ndefmodule Depot.Extra, do: def(one, do: 1)\n")
+      compile!()
+
+      # The project's beams moved (so a digest over them would), but the
+      # scan tracks each of them itself: re-extracting every module on
+      # every edit is what excluding them prevents.
+      assert fresh_env([]) != unwatched
+      assert fresh_env(apps) == before
+    end)
+  end
+
   test "touch without edit is a noop past the prefilter", %{copy: copy, log: log} do
     Mix.Project.in_project(:depot, copy, fn _module ->
       compile!()

@@ -38,11 +38,23 @@ defmodule Scry.Scanner do
   @typedoc "What a scan found."
   @type scan :: %{modules: %{optional(module()) => String.t()}, duplicates: [duplicate()]}
 
+  @typedoc """
+  A project's scan, with the applications whose ebins it read (`apps`):
+  the scan watches their beams, so the environment fingerprint leaves
+  them out.
+  """
+  @type project_scan :: %{
+          modules: %{optional(module()) => String.t()},
+          duplicates: [duplicate()],
+          apps: [atom()]
+        }
+
   @doc """
   Discovers the beams to analyze: `module => beam_path`, plus every
-  module more than one ebin defines (`include_deps` only).
+  module more than one ebin defines (`include_deps` only), and the
+  applications whose ebins were read.
   """
-  @spec scan(Scry.Config.t()) :: scan()
+  @spec scan(Scry.Config.t()) :: project_scan()
   def scan(%Scry.Config{} = config) do
     ebins =
       if config.include_deps do
@@ -51,8 +63,13 @@ defmodule Scry.Scanner do
         [Mix.Project.compile_path()]
       end
 
-    discover(ebins, config.ignore_modules)
+    ebins
+    |> discover(config.ignore_modules)
+    |> Map.put(:apps, Enum.map(ebins, &app_of/1))
   end
+
+  # Mix builds each application into `<build>/lib/<app>/ebin`.
+  defp app_of(ebin), do: ebin |> Path.dirname() |> Path.basename() |> String.to_atom()
 
   @doc """
   The beams in `ebins`, minus the modules `ignore` matches (regexes over

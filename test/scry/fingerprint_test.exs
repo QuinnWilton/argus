@@ -156,5 +156,14 @@ defmodule Scry.FingerprintTest do
     test "the environment carries the applications the specs are read from" do
       assert Scry.Fingerprint.env().specs_environment == Argus.Specs.environment_digest()
     end
+
+    test "the applications the scan watches are named by version alone" do
+      # Their beams move with every edit; the graph tracks each one.
+      assert Scry.Fingerprint.env([:scry]).specs_environment ==
+               Argus.Specs.environment_digest(exclude: [:scry])
+
+      refute Scry.Fingerprint.env([:scry]).specs_environment ==
+               Scry.Fingerprint.env().specs_environment
+    end
   end
 end

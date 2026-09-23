@@ -83,13 +83,13 @@ defmodule Scry.Runner do
 
       prior_sources = warm_start(db, manifest_path, force?)
 
-      %{modules: discovered, duplicates: duplicates} = Scry.Scanner.scan(config)
+      %{modules: discovered, duplicates: duplicates, apps: apps} = Scry.Scanner.scan(config)
 
       %{sources: sources, changed: changed, removed: removed} =
         Scry.Scanner.sync(db, discovered, prior_sources)
 
       souffle? = Argus.Souffle.available?()
-      env = sync_environment(db, config, souffle?)
+      env = sync_environment(db, config, souffle?, apps)
 
       # A module whose extraction failed last run is extracted again: a
       # timeout under load is not a fact about the beam.
@@ -132,8 +132,8 @@ defmodule Scry.Runner do
   # environment fingerprint, the project root, and — with a solver — the
   # rules digests. `moved?` when any of them, or an analysis without a
   # memo from the last run, means this run has something to write down.
-  defp sync_environment(db, config, souffle?) do
-    fingerprint = Scry.Fingerprint.env()
+  defp sync_environment(db, config, souffle?, apps) do
+    fingerprint = Scry.Fingerprint.env(apps)
     fingerprint_changed? = Input.fetch(db, :env_fingerprint, :all) != {:ok, fingerprint}
     :ok = Input.set(db, :env_fingerprint, :all, fingerprint)
     :ok = Input.set(db, :project_root, :all, File.cwd!())

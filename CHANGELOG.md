@@ -30,9 +30,14 @@
 - Typespec facts (argus schema 54) stay current incrementally. A
   module's extraction records the specs of the remote functions it
   calls, read off the code path; the environment fingerprint now
-  includes `Argus.Specs.environment_digest/0` (every application on the
-  code path, with its version), so a dependency or OTP upgrade
-  re-extracts. When the callee is one of the project's own modules, a
+  includes `Argus.Specs.environment_digest/1` (every application on the
+  code path, with its version, and a dependency outside OTP and Elixir
+  also by its beams), so a dependency or OTP upgrade re-extracts, and so
+  does a path dependency or umbrella sibling whose code changed without
+  a version bump. The applications whose ebins the scan reads — the
+  project, and its dependencies under `include_deps` — are left out:
+  the graph tracks each of their beams itself, and a digest over them
+  would re-extract every module on every edit. When the callee is one of the project's own modules, a
   caller's extraction now depends on the callee being there: removing
   it re-extracts its callers, whose memoized rows otherwise went on
   describing the removed module's specs.

@@ -6,8 +6,9 @@ defmodule Scry.Fingerprint do
   - `:env_fingerprint` (`env/0`) — everything an extraction depends on:
     the runtime, the fact schema, the argus and scry code itself,
     digested from their ebins, and the applications on the code path
-    (`Argus.Specs.environment_digest/0`), whose specs extraction reads
-    for every remote callee. Argus ships extractor and findings
+    (`Argus.Specs.environment_digest/1`), whose specs extraction reads
+    for every remote callee — by version, and by beams for a dependency
+    outside OTP and Elixir, less the applications the scan watches. Argus ships extractor and findings
     changes without moving its version or schema (and a path
     dependency never moves its version at all), so the version alone
     let a warm manifest serve rows the current code would not compute.
@@ -42,10 +43,14 @@ defmodule Scry.Fingerprint do
   @doc """
   The environment fingerprint: runtime versions, the argus schema,
   digests of the argus and scry code, and of the applications on the
-  code path.
+  code path — except `watched`, the applications whose beams the scan
+  reads itself (the project, and its dependencies with `include_deps`).
+  Their beams move with every edit, and the graph already tracks each
+  one: an analyzed module as a `:beam_meta` input, an ignored one as an
+  `:ignored_beam` input its callers depend on.
   """
-  @spec env() :: env()
-  def env do
+  @spec env([atom()]) :: env()
+  def env(watched \\ []) do
     %{
       elixir: System.version(),
       otp: System.otp_release(),
@@ -55,8 +60,10 @@ defmodule Scry.Fingerprint do
       scry_code: app_code_digest(:scry),
       argus_schema: Argus.Schema.version(),
       # Extraction reads remote callees' specs off the code path; this
-      # names every application there, and its version.
-      specs_environment: Argus.Specs.environment_digest()
+      # names every application there by version, and a dependency
+      # outside OTP and Elixir also by its beams (a path dependency moves
+      # its code without moving its version).
+      specs_environment: Argus.Specs.environment_digest(exclude: watched)
     }
   end
 
