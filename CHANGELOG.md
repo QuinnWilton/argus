@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- What extraction could not do is reported beside the findings, as a
+  warning that the analyses ran on partial facts (distinct from an
+  analysis that degraded and reported nothing): a module that could not
+  be extracted at all, and each step argus recorded as failing on a
+  module (`extraction_error`, argus schema 55 — an extractor that
+  raised, a module that outlived the per-module timeout). Neither is a
+  permanent memo: a module whose extraction failed is extracted again
+  on the next run (`:extraction_attempt`, a new frontend input), so a
+  timeout under load heals by itself. `Scry.Analysis.extraction_errors/2`
+  lists them; the runner's result carries `extraction_errors`. The
+  application environment's `:scry, :extraction_timeout` overrides
+  argus's per-module timeout.
 - Fact files are written and read with `Argus.Tsv` (argus schema 55):
   a field holding a backslash, tab, newline or carriage return is
   escaped as argus escapes it. A function named with a tab used to

@@ -106,6 +106,11 @@ defmodule Scry.Analysis do
     # misaligned every memoized projection silently.
     _fingerprint = Runtime.input!(db, :env_fingerprint, :all)
 
+    # A retry of a failed extraction moves this; read only when set, since
+    # an edge to an input with no value validates as stale.
+    if Roux.Input.exists?(db, :extraction_attempt, module),
+      do: Runtime.input(db, :extraction_attempt, module)
+
     case Runtime.query(db, :module_beam, module) do
       {:ok, beam} ->
         result =
@@ -260,6 +265,34 @@ defmodule Scry.Analysis do
     end)
     |> Map.new(fn {relation, chunks} -> {relation, chunks |> Enum.reverse() |> Enum.concat()} end)
   end
+
+  # What extraction could not do, program-wide: each module that could not
+  # be extracted at all, and each step argus recorded as failing on a
+  # module (`extraction_error` rows — an extractor that raised, a module
+  # that outlived the per-module timeout). The analyses ran over
+  # everything else, so these are findings that may be missing, not
+  # analyses that failed.
+  defquery :extraction_errors,
+    key: :all,
+    returns: [%{module: module() | nil, name: String.t(), step: String.t(), reason: String.t()}] do
+    modules = db |> Runtime.query(:module_map, :all) |> Map.keys()
+    by_name = Map.new(modules, &{inspect(&1), &1})
+
+    whole =
+      for module <- modules,
+          {:error, reason} <- [Runtime.query(db, :module_semantic_facts, module)] do
+        %{module: module, name: inspect(module), step: "module", reason: one_line(reason)}
+      end
+
+    steps =
+      for [name, step, reason] <- Runtime.query(db, :relation_facts, :extraction_error) do
+        %{module: Map.get(by_name, name), name: name, step: step, reason: reason}
+      end
+
+    Enum.sort(whole ++ steps)
+  end
+
+  defp one_line(reason), do: reason |> inspect(limit: 20) |> String.replace(~r/\s+/, " ")
 
   # One relation's interned rows: the grain the projections read, so a
   # relation the edit did not touch backdates here and stops propagation.
@@ -798,7 +831,17 @@ defmodule Scry.Analysis do
   # downstream that keeps it, such as the supervision tree's resource
   # lists) vary from run to run for the same beam.
   defp extract(module, beam, symbols) do
-    case Argus.Pipeline.extract([beam], extractors: all_extractors(), trace_imprecision: true) do
+    opts = [extractors: all_extractors(), trace_imprecision: true]
+
+    # Argus's per-module timeout unless the application sets one (tests
+    # use a tiny one to see a module time out).
+    opts =
+      case Application.get_env(:scry, :extraction_timeout) do
+        nil -> opts
+        ms -> Keyword.put(opts, :timeout, ms)
+      end
+
+    case Argus.Pipeline.extract([beam], opts) do
       {:ok, facts} -> {:ok, facts |> canonicalize() |> Facts.intern(symbols)}
       {:error, reason} -> {:error, {:extraction, module, reason}}
     end

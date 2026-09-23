@@ -60,6 +60,17 @@ defmodule Scry.Frontend do
   # a query cannot set an input.
   definput(:prior_rows, durability: :medium)
 
+  # One key per module: 0, or a fresh value on a run that retries the
+  # module's extraction because the last one failed (a timeout under load
+  # is not a fact about the beam). `module_extraction` reads it only when
+  # set.
+  definput(:extraction_attempt, durability: :medium)
+
+  # `:all =>` the modules whose last extraction failed, for the next run
+  # to retry. Driver bookkeeping no query reads; `:low` so that setting it
+  # after the analyses ran never makes the next run revalidate them.
+  definput(:failed_extractions, durability: :low)
+
   defquery :module_beam, key: module, returns: {:ok, binary()} | :external | {:error, term()} do
     case Runtime.input(db, :beam_meta, module) do
       nil ->

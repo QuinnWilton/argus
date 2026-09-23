@@ -24,12 +24,29 @@ defmodule Scry.Runner do
   defmodule Result do
     @moduledoc "The outcome of one driver run."
 
-    @enforce_keys [:findings_by_file, :degraded, :duplicates, :souffle_missing?, :changed?]
-    defstruct [:findings_by_file, :degraded, :duplicates, :souffle_missing?, :changed?]
+    @enforce_keys [
+      :findings_by_file,
+      :degraded,
+      :extraction_errors,
+      :duplicates,
+      :souffle_missing?,
+      :changed?
+    ]
+    defstruct [
+      :findings_by_file,
+      :degraded,
+      :extraction_errors,
+      :duplicates,
+      :souffle_missing?,
+      :changed?
+    ]
 
     @type t :: %__MODULE__{
             findings_by_file: %{optional(String.t()) => [map()]},
             degraded: [%{analysis: atom(), reason: term()}],
+            extraction_errors: [
+              %{module: module() | nil, name: String.t(), step: String.t(), reason: String.t()}
+            ],
             duplicates: [Scry.Scanner.duplicate()],
             souffle_missing?: boolean(),
             changed?: boolean()
@@ -72,31 +89,24 @@ defmodule Scry.Runner do
         Scry.Scanner.sync(db, discovered, prior_sources)
 
       souffle? = Argus.Souffle.available?()
+      env = sync_environment(db, config, souffle?)
 
-      fingerprint = Scry.Fingerprint.env()
-      fingerprint_changed? = Input.fetch(db, :env_fingerprint, :all) != {:ok, fingerprint}
-      :ok = Input.set(db, :env_fingerprint, :all, fingerprint)
-      :ok = Input.set(db, :project_root, :all, File.cwd!())
+      # A module whose extraction failed last run is extracted again: a
+      # timeout under load is not a fact about the beam.
+      retried = retry_failed_extractions(db, discovered)
 
-      # Only solves read the rules, and none is demanded without a solver.
-      rules_changed? = souffle? and set_rules(db, config.analyses)
-
-      # An analysis with no memo from the last run — first demanded, or
-      # degraded then and so never persisted — solves this run even when
-      # no input moved, and its result is worth writing down.
-      unsolved? = souffle? and Enum.any?(config.analyses, &unsolved?(db, &1))
-
-      {findings_by_file, degraded} =
+      {findings_by_file, degraded, extraction_errors} =
         if souffle? do
-          cold? = force? or prior_sources == %{} or fingerprint_changed?
-          analyze(db, config, discovered, if(cold?, do: Map.keys(discovered), else: changed))
+          cold? = force? or prior_sources == %{} or env.fingerprint_changed?
+          to_extract = if cold?, do: Map.keys(discovered), else: Enum.uniq(changed ++ retried)
+          analyze(db, config, discovered, to_extract)
         else
-          {%{}, []}
+          {%{}, [], []}
         end
 
       changed? =
-        force? or prior_sources == %{} or changed != [] or removed != [] or
-          fingerprint_changed? or rules_changed? or unsolved?
+        force? or prior_sources == %{} or env.moved? or
+          Enum.any?([changed, removed, retried, extraction_errors], &(&1 != []))
 
       # Written even when analyses degraded: the input syncs stay warm.
       # Skipped when nothing moved: no input changed, so no revision
@@ -107,6 +117,7 @@ defmodule Scry.Runner do
       %Result{
         findings_by_file: findings_by_file,
         degraded: degraded,
+        extraction_errors: extraction_errors,
         duplicates: duplicates,
         souffle_missing?: not souffle?,
         changed?: changed?
@@ -115,6 +126,30 @@ defmodule Scry.Runner do
       Database.shutdown(db)
       Roux.Runtime.drop_cached_values(db)
     end
+  end
+
+  # The inputs that describe the run rather than the beams: the
+  # environment fingerprint, the project root, and — with a solver — the
+  # rules digests. `moved?` when any of them, or an analysis without a
+  # memo from the last run, means this run has something to write down.
+  defp sync_environment(db, config, souffle?) do
+    fingerprint = Scry.Fingerprint.env()
+    fingerprint_changed? = Input.fetch(db, :env_fingerprint, :all) != {:ok, fingerprint}
+    :ok = Input.set(db, :env_fingerprint, :all, fingerprint)
+    :ok = Input.set(db, :project_root, :all, File.cwd!())
+
+    # Only solves read the rules, and none is demanded without a solver.
+    rules_changed? = souffle? and set_rules(db, config.analyses)
+
+    # An analysis with no memo from the last run — first demanded, or
+    # degraded then and so never persisted — solves this run even when
+    # no input moved, and its result is worth writing down.
+    unsolved? = souffle? and Enum.any?(config.analyses, &unsolved?(db, &1))
+
+    %{
+      fingerprint_changed?: fingerprint_changed?,
+      moved?: fingerprint_changed? or rules_changed? or unsolved?
+    }
   end
 
   # Extracts `to_extract` ahead of the graph, then demands every
@@ -127,7 +162,44 @@ defmodule Scry.Runner do
     :ok = Scry.Priors.sync(db, config)
     {findings_by_file, degraded} = demand(db, config.analyses)
     if degraded != [], do: :ok = drop_degraded(db, config.analyses)
-    {findings_by_file, degraded}
+
+    extraction_errors = Scry.Analysis.extraction_errors(db, :all)
+
+    failed =
+      for %{module: module} <- extraction_errors, module != nil, uniq: true, do: module
+
+    :ok = Input.set(db, :failed_extractions, :all, Enum.sort(failed))
+    {findings_by_file, degraded, extraction_errors}
+  end
+
+  # Every module's extraction attempt: 0 when first seen, a fresh value
+  # for a module the last run could not extract — which re-runs its
+  # extraction (and only its: the result backdates wherever it comes out
+  # the same) — and otherwise what it was. Returns the modules retried.
+  defp retry_failed_extractions(db, discovered) do
+    failed =
+      case Input.fetch(db, :failed_extractions, :all) do
+        {:ok, modules} -> modules
+        :error -> []
+      end
+
+    for module <- discovered |> Map.keys() |> Enum.sort(), reduce: [] do
+      retried ->
+        cond do
+          module in failed ->
+            :ok = Input.set(db, :extraction_attempt, module, System.unique_integer([:positive]))
+            [module | retried]
+
+          # A value set before stays: resetting it would re-extract the
+          # module once more after a retry succeeded.
+          Input.exists?(db, :extraction_attempt, module) ->
+            retried
+
+          true ->
+            :ok = Input.set(db, :extraction_attempt, module, 0)
+            retried
+        end
+    end
   end
 
   defp unsolved?(db, analysis) do

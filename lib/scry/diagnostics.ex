@@ -95,6 +95,28 @@ defmodule Scry.Diagnostics do
   end
 
   @doc """
+  The notice for what extraction could not do on a module: the analyses
+  ran on partial facts, so a finding that needed the rest may be missing.
+  Distinct from an analysis that degraded, which reported nothing.
+  """
+  @spec extraction_error_message(%{name: String.t(), step: String.t(), reason: String.t()}) ::
+          String.t()
+  def extraction_error_message(%{name: name, step: "module", reason: reason}) do
+    "#{name} could not be extracted (#{reason}); the analyses ran without its facts, " <>
+      "so findings that involve it may be missing"
+  end
+
+  def extraction_error_message(%{name: name, step: "pipeline", reason: reason}) do
+    "#{name} lost all its facts in extraction (#{reason}); the analyses ran without them, " <>
+      "so findings that involve it may be missing — the next run extracts it again"
+  end
+
+  def extraction_error_message(%{name: name, step: step, reason: reason}) do
+    "#{name}: the #{step} extraction step failed (#{reason}); the analyses ran on the rest " <>
+      "of its facts, so findings that needed that step's may be missing"
+  end
+
+  @doc """
   The notice for a module more than one scanned ebin defines
   (`include_deps: true`): which beam is analyzed, and which are not.
   """

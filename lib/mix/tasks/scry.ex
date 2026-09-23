@@ -103,6 +103,10 @@ defmodule Mix.Tasks.Scry do
 
     report_degraded(result.degraded)
 
+    Enum.each(result.extraction_errors, fn error ->
+      Mix.shell().error("scry: " <> Scry.Diagnostics.extraction_error_message(error))
+    end)
+
     Enum.each(result.duplicates, fn %{module: module, used: used, shadowed: shadowed} ->
       Mix.shell().error("scry: " <> Scry.Diagnostics.duplicate_message(module, used, shadowed))
     end)
