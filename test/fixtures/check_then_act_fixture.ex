@@ -503,6 +503,240 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
 
   # ── Dirty read, then dirty write ─────────────────────────────────
 
+  # ── Races both racers win ──────────────────────────────────────────
+
+  defmodule CacheRefill do
+    @moduledoc """
+    Cache-aside: a miss loads the value (from a function, or from Mnesia
+    through a helper) and inserts it, an invalidation looks the row up and
+    deletes it. Both racers load the same value, and
+    deleting twice is deleting once.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      :ets.new(:refill_cache, [:named_table, :public, :set])
+      {:ok, state}
+    end
+
+    def get(key) do
+      case :ets.lookup(:refill_cache, key) do
+        [{^key, value}] ->
+          value
+
+        [] ->
+          value = load(key)
+          :ets.insert(:refill_cache, {key, value})
+          value
+      end
+    end
+
+    def setting(key) do
+      case :ets.lookup(:refill_cache, key) do
+        [{^key, value}] ->
+          value
+
+        [] ->
+          case :mnesia.dirty_read({:settings, key}) do
+            [{:settings, ^key, value}] -> put(key, value)
+            [] -> nil
+          end
+      end
+    end
+
+    defp put(key, value) do
+      :ets.insert(:refill_cache, {key, value})
+      value
+    end
+
+    def invalidate(key) do
+      case :ets.lookup(:refill_cache, key) do
+        [{^key, _value}] -> :ets.delete(:refill_cache, key)
+        [] -> true
+      end
+    end
+
+    defp load(key), do: {:loaded, key, System.unique_integer()}
+  end
+
+  defmodule RefillWrittenBack do
+    @moduledoc """
+    The same refill on a table another function counts into, reading a
+    row and writing it back one higher through a helper: the refill's
+    insert can land on that count.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      :ets.new(:counted_cache, [:named_table, :public, :set])
+      {:ok, state}
+    end
+
+    def get(key) do
+      case :ets.lookup(:counted_cache, key) do
+        [{^key, value}] ->
+          value
+
+        [] ->
+          value = load(key)
+          :ets.insert(:counted_cache, {key, value})
+          value
+      end
+    end
+
+    def bump(key) do
+      case :ets.lookup(:counted_cache, key) do
+        [{^key, n}] -> :ets.insert(:counted_cache, {key, next(n)})
+        [] -> :ets.insert(:counted_cache, {key, 1})
+      end
+    end
+
+    defp next(n), do: n + 1
+
+    defp load(_key), do: 0
+  end
+
+  defmodule Trip do
+    @moduledoc """
+    A circuit breaker (supavisor's): not tripped, so trip it. Both racers
+    write the same block, and the decision stays inside: the one
+    exported function says it returns :ok.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      :ets.new(:blocks, [:named_table, :public, :set])
+      {:ok, state}
+    end
+
+    @spec record(term()) :: :ok
+    def record(key) do
+      trip(key)
+      :ok
+    end
+
+    defp trip(key) do
+      case :ets.lookup(:blocks, key) do
+        [] -> :ets.insert(:blocks, {key, :blocked})
+        _ -> true
+      end
+    end
+  end
+
+  defmodule Claim do
+    @moduledoc """
+    blockster's sync slot: not claimed, so claim it, and tell the caller
+    it may go on. Both racers are told they won.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      :ets.new(:claims, [:named_table, :public, :set])
+      {:ok, state}
+    end
+
+    def sync(key) do
+      case claim(key) do
+        :ok -> work(key)
+        :skip -> :skipped
+      end
+    end
+
+    defp claim(key) do
+      case :ets.lookup(:claims, key) do
+        [] ->
+          :ets.insert(:claims, {key, :in_flight})
+          :ok
+
+        _ ->
+          :skip
+      end
+    end
+
+    defp work(key), do: {:worked, key}
+  end
+
+  defmodule CounterClobber do
+    @moduledoc """
+    Hammer's count_hit: member, then update_counter or a first insert.
+    Two first hits both insert, and one's count is lost.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      :ets.new(:hits, [:named_table, :public, :set])
+      {:ok, state}
+    end
+
+    def hit(key) do
+      if :ets.member(:hits, key) do
+        :ets.update_counter(:hits, key, {2, 1})
+      else
+        :ets.insert(:hits, {key, 1})
+      end
+
+      :ok
+    end
+  end
+
+  defmodule MnesiaExpire do
+    @moduledoc """
+    blockster's OAuth state: read it, and delete it when expired. The
+    table is otherwise only written fresh; deleting twice is deleting once.
+    """
+    def fetch(state, now) do
+      case :mnesia.dirty_read({:oauth_states, state}) do
+        [{:oauth_states, ^state, expires}] when expires > now ->
+          :ok
+
+        [_expired] ->
+          :mnesia.dirty_delete({:oauth_states, state})
+          :expired
+
+        [] ->
+          :none
+      end
+    end
+
+    def store(state, expires), do: :mnesia.dirty_write({:oauth_states, state, expires})
+  end
+
+  defmodule MnesiaExpireCounted do
+    @moduledoc """
+    The same expiry on a table another function counts into, reading and
+    writing back: the delete can remove a count made in between.
+    """
+    def fetch(key, now) do
+      case :mnesia.dirty_read({:uses, key}) do
+        [{:uses, ^key, _n, expires}] when expires > now -> :ok
+        [_expired] -> :mnesia.dirty_delete({:uses, key})
+        [] -> :none
+      end
+    end
+
+    def use(key, expires) do
+      case :mnesia.dirty_read({:uses, key}) do
+        [{:uses, ^key, n, exp}] -> :mnesia.dirty_write({:uses, key, n + 1, exp})
+        [] -> :mnesia.dirty_write({:uses, key, 1, expires})
+      end
+    end
+  end
+
   defmodule MnesiaCounter do
     @moduledoc "A dirty read, one added, a dirty write: the paper's snmp counter in Elixir."
     def bump(key) do

@@ -539,6 +539,30 @@ has no body: nothing says whose the closure is.
 
 ### Check-then-act races (structure, ets)
 
+**Changed.** Schema 54. `ets.ets_check_act` and `ets.mnesia_check_act` tell a lost
+update from a race both racers win. `Argus.Extractors.Dependence` also
+emits `site_reads` and `call_arg_reads`, its dependence relations by data
+alone — what a value is made of, not what it runs under. A pair is a
+lost update when its write carries what a read said, or when the table
+is written back from a read or counted into (`update_counter`) anywhere
+in the program; on a table that is neither, three shapes are no longer
+reported: a delete (deleting twice is deleting once), a refill whose
+value a call or a read of another store makes (cache-aside: both racers
+load the same thing), and
+a trip whose decision stays inside the program (nothing a caller
+branches on, no exported function handing it out; a spec returning one
+literal atom, `:ok`, says the result carries no decision). A claim that
+tells its caller it won (blockster's sync slot), Hammer's first insert
+over an `update_counter` key and ztlp's token bucket are still reported;
+blockster's cache refills (from functions and from Mnesia) and
+invalidation, supavisor's circuit breaker,
+sequin's havoc stop and blockster's expired OAuth-state deletes are not;
+Postgrex's per-connection parameters row (the key a monitor ref only its
+connection holds) is a known false positive the rule cannot see. A
+Mnesia finding names a delete as a delete.
+`Argus.Specs` gains the `constant` shape: a return type that is one
+literal atom (also `total`).
+
 **Added.** The check-then-act races follow the paper they come from (Christakis and
 Sagonas, PADL 2010) across functions. `clientlib/check_then_act.dl`
 composes the dependence relations in the `CheckThenAct` component: a

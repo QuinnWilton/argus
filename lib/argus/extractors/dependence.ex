@@ -37,6 +37,12 @@ defmodule Argus.Extractors.Dependence do
     `arity - env_len + i`, as in `Argus.Extractors.ParamFlow`.
   - `returns_depends(func, kind, source)` — what the function returns
     depends on the source.
+  - `site_reads(site, func, kind, source)` and `call_arg_reads(caller,
+    callee, arg_pos, kind, source)` — the same questions by data alone:
+    what the operation's or the argument's value is made of, not what it
+    runs under. A check-then-act race that writes back what it read is a
+    lost update; one whose write only runs because of the read, with a
+    value from elsewhere, may be a refill both racers agree on.
 
   The call relations are per function, not per site: an edit that keeps
   the flow does not move them, and they stay out of the volatile
@@ -86,7 +92,15 @@ defmodule Argus.Extractors.Dependence do
   @typep deps :: MapSet.t(source())
 
   @impl true
-  def relations, do: [:call_arg_depends, :call_decided, :returns_depends, :site_depends]
+  def relations,
+    do: [
+      :call_arg_depends,
+      :call_arg_reads,
+      :call_decided,
+      :returns_depends,
+      :site_depends,
+      :site_reads
+    ]
 
   @doc """
   Whether a remote call is a shared-state operation: a read or a write of
@@ -194,7 +208,13 @@ defmodule Argus.Extractors.Dependence do
     }
 
     {outs, ctrl} = fixpoint(idxs, ctx, %{}, %{}, 0)
-    Enum.reduce(idxs, facts, &emit(&2, &1, ctx, outs, ctrl))
+    facts = Enum.reduce(idxs, facts, &emit(&2, &1, ctx, outs, ctrl))
+
+    # The same flow with no decision counted: what an argument is made
+    # of, as opposed to what it runs under.
+    data_ctx = %{ctx | deciders: %{}}
+    {data_outs, _} = fixpoint(idxs, data_ctx, %{}, %{}, 0)
+    Enum.reduce(idxs, facts, &emit_reads(&2, &1, data_ctx, data_outs))
   end
 
   defp fixpoint(idxs, ctx, outs, ctrl, pass) when pass < @max_passes do
@@ -310,6 +330,43 @@ defmodule Argus.Extractors.Dependence do
             Map.get(inputs, "x#{pos}", MapSet.new())
           )
         end)
+    end
+  end
+
+  # The data-only rows: a site's arguments and a call's, by what they are
+  # made of. Closures are not followed here: a captured value is made of
+  # what the closure body does with it, which is the closure's own
+  # function's question.
+  defp emit_reads(facts, idx, ctx, outs) do
+    key = {ctx.func_id, idx}
+
+    case Map.get(ctx.index.calls, key) do
+      nil ->
+        facts
+
+      {{mod, fun, arity} = mfa, remote?} ->
+        inputs = inputs_of(idx, ctx, outs)
+
+        cond do
+          remote? and site?(mfa) ->
+            site = InstrId.mint(ctx.func_id, idx)
+            rows(facts, :site_reads, [site, ctx.func_id], union(inputs))
+
+          remote? and runtime?(mod) ->
+            facts
+
+          true ->
+            callee = Normalize.func_id(mod, fun, arity)
+
+            Enum.reduce(0..(arity - 1)//1, facts, fn pos, acc ->
+              rows(
+                acc,
+                :call_arg_reads,
+                [ctx.func_id, callee, to_string(pos)],
+                Map.get(inputs, "x#{pos}", MapSet.new())
+              )
+            end)
+        end
     end
   end
 

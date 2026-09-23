@@ -8,12 +8,12 @@ defmodule Argus.SpecsTest do
     test "reads OTP's and Elixir's specs off the code path" do
       ets = Specs.installed(:ets)
       assert ets[{:new, 2}] == [:total]
-      assert ets[{:delete, 2}] == [:total]
+      assert ets[{:delete, 2}] == [:total, :constant]
       assert ets[{:insert_new, 2}] == [:can_fail]
       assert ets[{:whereis, 1}] == [:can_fail]
 
       assert Enum.sort(Specs.installed(GenServer)[{:start_link, 3}]) == [:can_fail, :returns_pid]
-      assert Specs.installed(Supervisor)[{:stop, 3}] == [:total]
+      assert Specs.installed(Supervisor)[{:stop, 3}] == [:total, :constant]
       assert :can_fail in Specs.installed(Process)[{:whereis, 1}]
     end
 
@@ -47,7 +47,7 @@ defmodule Argus.SpecsTest do
     end
 
     test "classifies literals, booleans, nil and no_return", %{returns: r} do
-      assert r[{:total, 0}] == [:total]
+      assert r[{:total, 0}] == [:total, :constant]
       assert r[{:bool, 0}] == [:can_fail]
       assert r[{:maybe_nil, 0}] == [:can_fail]
       assert r[{:halts, 0}] == [:no_return]
@@ -61,7 +61,7 @@ defmodule Argus.SpecsTest do
 
     test "reads beam contents as well as a path" do
       binary = Fixture |> :code.which() |> File.read!()
-      assert {:ok, %{{:total, 0} => [:total]}} = Specs.of_beam(binary)
+      assert {:ok, %{{:total, 0} => [:total, :constant]}} = Specs.of_beam(binary)
     end
 
     test "is :error for something that is not a beam" do

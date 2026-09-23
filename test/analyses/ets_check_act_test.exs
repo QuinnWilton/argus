@@ -43,6 +43,35 @@ defmodule Argus.Analyses.EtsCheckActTest do
     end
   end
 
+  describe "races both racers win" do
+    test "a cache refill made by a call, and an invalidating delete, are not reported" do
+      skip_without_souffle()
+      assert races([C.CacheRefill]) == []
+    end
+
+    test "the refill is reported on a table the program writes back from a read" do
+      skip_without_souffle()
+      found = races([C.RefillWrittenBack])
+      assert {"get/1", ":counted_cache", "0"} in found
+      assert {"bump/1", ":counted_cache", "0"} in found
+    end
+
+    test "a trip whose decision stays inside is not reported" do
+      skip_without_souffle()
+      assert races([C.Trip]) == []
+    end
+
+    test "a claim whose decision a caller acts on is reported" do
+      skip_without_souffle()
+      assert [{"claim/1", ":claims", "0"}] = races([C.Claim])
+    end
+
+    test "a first insert over a key update_counter counts into is reported" do
+      skip_without_souffle()
+      assert [{"hit/1", ":hits", "0"}] = races([C.CounterClobber])
+    end
+  end
+
   describe "ets_check_act across functions" do
     test "a read helper's result handed to a multi-clause write helper meets in the caller" do
       skip_without_souffle()

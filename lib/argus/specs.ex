@@ -20,6 +20,8 @@ defmodule Argus.Specs do
   - `:total` — the return type is known and names none of those values:
     `true`, `:ok`, `table()`, `reference()`. `term()` and `any()` are not
     known, and a union containing either is not total.
+  - `:constant` — the return type is one literal atom (`:ok`, `true`),
+    so the result tells a caller nothing: also `:total`.
   - `:no_return` — every clause returns `no_return()` or `none()`.
   - `:returns_pid` — a clause may return a pid, bare or as `{:ok, pid}`.
 
@@ -45,7 +47,7 @@ defmodule Argus.Specs do
   @max_depth 4
 
   @typedoc "A normalized return shape."
-  @type shape :: :can_fail | :total | :no_return | :returns_pid
+  @type shape :: :can_fail | :total | :constant | :no_return | :returns_pid
 
   @typedoc "Each specced function's shapes; a function absent here is unknown."
   @type returns :: %{{atom(), arity()} => [shape()]}
@@ -212,10 +214,20 @@ defmodule Argus.Specs do
     [
       Enum.any?(alts, &failure?/1) && :can_fail,
       total?(alts) && :total,
+      constant?(alts) && :constant,
       Enum.all?(alts, &(&1 == :none)) && :no_return,
       Enum.any?(alts, &pid?/1) && :returns_pid
     ]
     |> Enum.filter(& &1)
+  end
+
+  # One literal atom, whatever the clause: `:ok`, `true`. A clause that
+  # never returns adds nothing a caller could see.
+  defp constant?(alts) do
+    case alts |> Enum.reject(&(&1 == :none)) |> Enum.uniq() do
+      [{:atom, _}] -> true
+      _ -> false
+    end
   end
 
   defp total?(alts) do

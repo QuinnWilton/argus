@@ -71,7 +71,7 @@ defmodule Argus.Analyses.Padl2010RaceTest do
     test "Fig. 2 (right): the dirty write after the case depends on the dirty read through NRef" do
       skip_without_souffle()
 
-      assert [[":padl2010_time_stamp", func, ":time_stamp", ":ref_count", _read, _write]] =
+      assert [[":padl2010_time_stamp", func, ":time_stamp", ":ref_count", _read, _write, _op]] =
                rows([:padl2010_time_stamp], :ets, "mnesia_check_act")
 
       assert fa(func) == "create_time_stamp_table/0"
@@ -80,7 +80,7 @@ defmodule Argus.Analyses.Padl2010RaceTest do
     test "the snmp_shadow_table code the figure was taken from: dirty_read/1 on a {table, key}" do
       skip_without_souffle()
 
-      assert [[_, func, ":time_stamp", ":ref_count", _read, _write]] =
+      assert [[_, func, ":time_stamp", ":ref_count", _read, _write, _op]] =
                rows([:padl2010_snmp_shadow_table], :ets, "mnesia_check_act")
 
       assert fa(func) == "create_time_stamp_table/0"

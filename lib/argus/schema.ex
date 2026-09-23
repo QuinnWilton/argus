@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 53
+  @schema_version 54
 
   # Layer 1: Module-level facts.
 
@@ -1867,7 +1867,7 @@ defmodule Argus.Schema do
     layer: 2,
     fields: [
       {:func, :func_id, "function ID (mod:func/arity)"},
-      {:shape, :symbol, "can_fail | total | no_return | returns_pid"},
+      {:shape, :symbol, "can_fail | total | constant | no_return | returns_pid"},
       {:origin, :symbol,
        "analyzed | installed: read from the analyzed beam, or from the code path"}
     ],
@@ -1875,7 +1875,8 @@ defmodule Argus.Schema do
     What a function's `@spec` claims it returns, normalized (`Argus.Specs`): \
     `can_fail` when the return type names {:error, _}, :error, nil, false, \
     :undefined or {:EXIT, _}; `total` when it is known and names none of \
-    them; `no_return`; `returns_pid`. A function may have several shapes, \
+    them; `constant` when it is one literal atom (and so also total); \
+    `no_return`; `returns_pid`. A function may have several shapes, \
     and one with no row is unknown — no spec, a `term()` return, a module \
     shipped without specs (:mnesia) — never "cannot fail". Rows come from \
     the analyzed module's own beam for its functions, and from the code \
@@ -2080,6 +2081,39 @@ defmodule Argus.Schema do
     What the function returns depends on the source: a lookup helper \
     returns its site, a wrapper the call it makes, an identity function \
     its parameter.
+    """
+  }
+
+  @site_reads %{
+    name: :site_reads,
+    layer: 2,
+    fields: [
+      {:site, :instr_id, "a shared-state operation, as site_depends"},
+      {:func, :func_id, "the function containing it"},
+      {:kind, :symbol, "param | call | site"},
+      {:source, :symbol, "as site_depends"}
+    ],
+    doc: """
+    site_depends by data alone: the operation's arguments are made from \
+    the source, not merely computed under a test on it. An insert whose \
+    object carries what a lookup returned writes the read back; one that \
+    only runs because of the lookup writes something else.
+    """
+  }
+
+  @call_arg_reads %{
+    name: :call_arg_reads,
+    layer: 2,
+    fields: [
+      {:caller, :func_id, "the calling function"},
+      {:callee, :func_id, "the callee"},
+      {:arg_pos, :number, "0-based argument position"},
+      {:kind, :symbol, "param | call | site"},
+      {:source, :symbol, "as site_depends"}
+    ],
+    doc: """
+    call_arg_depends by data alone, for calls (not closures): the argument \
+    is made from the source. Function-level.
     """
   }
 
@@ -2501,6 +2535,8 @@ defmodule Argus.Schema do
     @call_decided,
     @call_arg_depends,
     @returns_depends,
+    @site_reads,
+    @call_arg_reads,
     # Purity contracts and call classification.
     @pure_contract,
     @impure_call,

@@ -63,7 +63,8 @@ defmodule Argus.Analyses.Ets do
       Argus.Extractors.GenStatem,
       Argus.Extractors.CallArgs,
       Argus.Extractors.Mnesia,
-      Argus.Extractors.Dependence
+      Argus.Extractors.Dependence,
+      Argus.Extractors.Specs
     ]
 
   @impl true
@@ -103,7 +104,8 @@ defmodule Argus.Analyses.Ets do
           {:table, :symbol, "the table"},
           {:key, :symbol, "the key, as func identifies it"},
           {:read, :symbol, "instruction ID of the dirty read"},
-          {:write, :symbol, "instruction ID of the dirty write it decides or feeds"}
+          {:write, :symbol, "instruction ID of the dirty write it decides or feeds"},
+          {:op, :symbol, "dirty_write | dirty_delete | dirty_delete_object"}
         ],
         key: [:func, :table, :key],
         doc:
@@ -203,16 +205,26 @@ defmodule Argus.Analyses.Ets do
     )
   end
 
-  def finding(:mnesia_check_act, [mod, func, table, _key, read, write]) do
+  def finding(:mnesia_check_act, [mod, func, table, _key, read, write, op]) do
+    {acts, what} =
+      case op do
+        "dirty_write" ->
+          {"writes it back with a dirty write", "one of the writes is lost"}
+
+        _delete ->
+          {"deletes it with #{op}",
+           "the delete can remove a record another process wrote back in between"}
+      end
+
     Findings.new(
       :warning,
       "Read-then-write race on a Mnesia record",
       "#{func} reads a record of #{table} with a dirty read#{Findings.elsewhere(read, func)} " <>
-        "and writes it back with a dirty write#{Findings.elsewhere(write, func)} decided by, " <>
+        "and #{acts}#{Findings.elsewhere(write, func)} decided by, " <>
         "or computed from, what it read. Dirty operations bypass Mnesia's transactions: " <>
-        "another process can write the record between the two, and one of the writes is lost.",
+        "another process can write the record between the two, and #{what}.",
       at: Findings.at_site(write, mod),
-      at_label: "this dirty write acts on a read that may be stale",
+      at_label: "this #{String.replace(op, "_", " ")} acts on a read that may be stale",
       related: [Findings.related("the dirty read it depends on", Findings.at_site(read, mod))],
       help: [
         "read and write in one `:mnesia.transaction/1`, with `:mnesia.read/1` and " <>

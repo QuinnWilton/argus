@@ -16,6 +16,7 @@
 .include "../clientlib/request_entry.dl"
 .include "../clientlib/concurrency.dl"
 .include "../clientlib/check_then_act.dl"
+.include "../clientlib/specs.dl"
 
 // ── Ownership & lifecycle ──────────────────────────────────────────
 
@@ -385,6 +386,174 @@ ets_concurrent_write(name, f) :-
   ets_op(_, g, name, _, "write"),
   !write_runs.entry_reaches(m, g).
 
+// ── Races both racers win ────────────────────────────────────────
+//
+// A check-then-act pair is a lost update when the write carries what the
+// read said — two racers each add one to the count they read, and one
+// increment vanishes — or when a blind write lands on a row another
+// writer accumulates into (Hammer's insert over a key update_counter
+// bumps). Three shapes are neither, and are not reported, as long as
+// nothing in the program writes the table back from a read or counts in
+// it (`writes_back`):
+//
+// - a delete: deleting twice is deleting once (an invalidation, the
+//   cleanup of a row the read found stale);
+// - a refill: a write whose value a call, or a read of another store
+//   (Mnesia behind an ETS cache), makes — the cache-aside `[] -> v =
+//   load(k); :ets.insert(t, {k, v})` — where both racers compute the
+//   same thing and either write is right;
+// - a trip: a write of a value made of neither the read nor a call
+//   (`{key, :blocked_until, t}`), where the decision stays in the
+//   program: no caller branches on what the function returns, and no
+//   exported function hands it out. A claim — `[] -> insert({k,
+//   :in_flight}); :ok` — hands its decision to a caller that acts on it
+//   alone, and is reported: both racers are told they won.
+//
+// "Made of" is data dependence alone (site_reads, call_arg_reads): a
+// value computed under a test on the read, but not from it, does not
+// carry it.
+
+// The ETS data a write carries: a read at its own site, what a helper
+// that returns a read hands it, or either through a parameter.
+// Only a write of a value counts; a delete writes nothing back, and the
+// key it names may well be the one the read's row held.
+.decl value_write(w: symbol)
+
+value_write(w) :- ets_op(w, _, _, op, "write"), (op = "insert" ; op = "update_element").
+
+.decl carries_read(w: symbol)
+
+carries_read(w) :-
+  value_write(w),
+  rows.act(w, h, _, _, _, _),
+  site_reads(w, h, "site", r),
+  ets_op(r, _, _, _, "read").
+
+carries_read(w) :-
+  value_write(w),
+  rows.act(w, h, _, _, _, _),
+  site_reads(w, h, "call", g),
+  returns_depends(g, "site", _).
+
+// A local helper's result is made of the arguments it returns from:
+// `insert({k, next(n)})` writes the read's `n` back through `next/1`.
+carries_read(w) :-
+  value_write(w),
+  rows.act(w, h, _, _, _, _),
+  site_reads(w, h, "call", g),
+  returns_depends(g, "param", q),
+  call_arg_reads(h, g, n, "site", r),
+  ets_op(r, _, _, _, "read"),
+  q = to_string(n).
+
+carries_read(w) :-
+  value_write(w),
+  rows.act(w, h, _, _, _, _),
+  site_reads(w, h, "param", p),
+  call_arg_reads(_, h, n, "site", r),
+  ets_op(r, _, _, _, "read"),
+  p = to_string(n).
+
+carries_read(w) :-
+  value_write(w),
+  rows.act(w, h, _, _, _, _),
+  site_reads(w, h, "param", p),
+  call_arg_reads(_, h, n, "call", g),
+  returns_depends(g, "site", _),
+  p = to_string(n).
+
+// The table a write or a counter bump touches, by name.
+.decl ets_op_table(id: symbol, name: symbol)
+
+ets_op_table(id, name) :- ets_op(id, _, name, _, _), name != "dynamic".
+
+ets_op_table(id, name) :-
+  ets_op(id, f, "dynamic", _, _),
+  ets_op_param(id, p),
+  table_at_param(f, to_string(p), name).
+
+table_param_needed(f, to_string(p)) :-
+  ets_op(id, f, "dynamic", op, "write"),
+  ets_op_param(id, p),
+  (op = "update_counter" ; ets_plain_write(op)).
+
+.decl writes_back(name: symbol)
+
+writes_back(name) :- ets_op(id, _, _, "update_counter", _), ets_op_table(id, name).
+writes_back(name) :- carries_read(w), ets_op_table(w, name).
+
+// A write made by a call, or by a read of some other store (Mnesia, the
+// registry): the refill.
+.decl refill_source(kind: symbol, src: symbol)
+
+refill_source("call", g) :- site_reads(_, _, "call", g).
+refill_source("call", g) :- call_arg_reads(_, _, _, "call", g).
+refill_source("site", r) :- site_reads(_, _, "site", r), !ets_op(r, _, _, _, _).
+refill_source("site", r) :- call_arg_reads(_, _, _, "site", r), !ets_op(r, _, _, _, _).
+
+.decl recomputed(w: symbol)
+
+recomputed(w) :-
+  rows.act(w, h, _, _, _, _),
+  site_reads(w, h, kind, src),
+  refill_source(kind, src).
+
+recomputed(w) :-
+  rows.act(w, h, _, _, _, _),
+  site_reads(w, h, "param", p),
+  call_arg_reads(_, h, n, kind, src),
+  refill_source(kind, src),
+  p = to_string(n).
+
+// The decision a pair makes leaves the function: returned — by the
+// function the pair meets in, or by a caller that returns that result on
+// — to a caller that branches on it, or to callers the program does not
+// show (an exported function). A spec that says the function returns a
+// single value (`@spec record_failure(term, atom) :: :ok`) says the
+// result carries no decision.
+.decl decision_returned(func: symbol, check: symbol)
+
+decision_returned(f, c) :-
+  ets_pair(f, c, _, _, _),
+  rows.carries(f, kind, src, c, _, _, _, _),
+  returns_depends(f, kind, src).
+
+decision_returned(g, c) :-
+  decision_returned(f, c),
+  rows.carries(g, "call", f, c, _, _, _, _),
+  returns_depends(g, "call", f).
+
+.decl decision_escapes(check: symbol)
+
+decision_escapes(c) :-
+  decision_returned(g, c),
+  call_decided(_, _, "call", g).
+
+decision_escapes(c) :-
+  decision_returned(g, c),
+  function_def(g, _, _, _, 1),
+  !callee_returns(g, "constant").
+
+.decl benign_pair(func: symbol, read: symbol, write: symbol)
+
+benign_pair(f, r, w) :-
+  ets_pair(f, r, w, name, _),
+  ets_op(w, _, _, op, _),
+  (op = "delete" ; op = "delete_object"),
+  !writes_back(name).
+
+benign_pair(f, r, w) :-
+  ets_pair(f, r, w, name, _),
+  !carries_read(w),
+  recomputed(w),
+  !writes_back(name).
+
+benign_pair(f, r, w) :-
+  ets_pair(f, r, w, name, _),
+  !carries_read(w),
+  !writes_back(name),
+  !decision_escapes(r).
+
 .decl ets_check_act(mod: symbol, func: symbol, name: symbol, key: symbol, read: symbol, write: symbol)
 .output ets_check_act
 
@@ -393,7 +562,8 @@ ets_check_act(mod, func, name, key, read, write) :-
   ets_new(id, _, name),
   ets_option(id, "access", "public"),
   function_def(func, mod, _, _, _),
-  ets_concurrent_write(name, func).
+  ets_concurrent_write(name, func),
+  !benign_pair(func, read, write).
 
 // ── Dirty read, then dirty write ─────────────────────────────────
 //
@@ -434,10 +604,74 @@ mnesia_concurrent_write(t, f) :-
   mnesia_op(_, g, _, "write", "literal", t, _, _),
   !record_runs.entry_reaches(m, g).
 
-.decl mnesia_check_act(mod: symbol, func: symbol, table: symbol, key: symbol, read: symbol, write: symbol)
+.decl mnesia_check_act(mod: symbol, func: symbol, table: symbol, key: symbol, read: symbol, write: symbol, op: symbol)
 .output mnesia_check_act
 
-mnesia_check_act(mod, func, table, key, read, write) :-
+// A dirty_delete of the record the read found (the cleanup of an
+// expired nonce) is not a lost update unless the program also writes the
+// table back from a read: deleting twice is deleting once. dirty_update_counter
+// is not extracted, so a table only it counts into is not known to
+// accumulate.
+.decl record_carries_read(w: symbol)
+
+record_carries_read(w) :-
+  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
+  records.act(w, h, _, _, _, _),
+  site_reads(w, h, "site", _).
+
+record_carries_read(w) :-
+  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
+  records.act(w, h, _, _, _, _),
+  site_reads(w, h, "call", g),
+  returns_depends(g, "site", _).
+
+record_carries_read(w) :-
+  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
+  records.act(w, h, _, _, _, _),
+  site_reads(w, h, "call", g),
+  returns_depends(g, "param", q),
+  call_arg_reads(h, g, n, "site", _),
+  q = to_string(n).
+
+record_carries_read(w) :-
+  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
+  records.act(w, h, _, _, _, _),
+  site_reads(w, h, "param", p),
+  call_arg_reads(_, h, n, "site", _),
+  p = to_string(n).
+
+record_carries_read(w) :-
+  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
+  records.act(w, h, _, _, _, _),
+  site_reads(w, h, "param", p),
+  call_arg_reads(_, h, n, "call", g),
+  returns_depends(g, "site", _),
+  p = to_string(n).
+
+.decl record_writes_back(table: symbol)
+
+record_writes_back(t) :-
+  record_carries_read(w),
+  mnesia_op(w, _, _, "write", "literal", t, _, _).
+
+record_writes_back(t) :-
+  record_carries_read(w),
+  mnesia_op(w, f, _, "write", "param", p, _, _),
+  table_at_param(f, p, t).
+
+table_param_needed(f, p) :- mnesia_op(_, f, _, "write", "param", p, _, _).
+
+mnesia_check_act(mod, func, table, key, read, write, op) :-
   mnesia_pair(func, read, write, table, key),
   function_def(func, mod, _, _, _),
-  mnesia_concurrent_write(table, func).
+  mnesia_concurrent_write(table, func),
+  mnesia_op(write, _, op, _, _, _, _, _),
+  !deletes_unaccumulated(write, table).
+
+.decl deletes_unaccumulated(write: symbol, table: symbol)
+
+deletes_unaccumulated(w, t) :-
+  mnesia_pair(_, _, w, t, _),
+  mnesia_op(w, _, op, _, _, _, _, _),
+  (op = "dirty_delete" ; op = "dirty_delete_object"),
+  !record_writes_back(t).

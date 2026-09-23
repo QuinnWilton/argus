@@ -12,7 +12,7 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
   defp races(modules) do
     {:ok, results} = Argus.analyze(modules, :ets)
 
-    for [_mod, func, table, key, read, write] <- results["mnesia_check_act"],
+    for [_mod, func, table, key, read, write, _op] <- results["mnesia_check_act"],
         do: {short(func), table, key, short(read), short(write)}
   end
 
@@ -25,6 +25,18 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
       assert races([C.MnesiaCounter]) == [
                {"bump/1", ":counters", "0", "bump/1", "bump/1"}
              ]
+    end
+
+    test "deleting the record the read found expired is not a lost update" do
+      skip_without_souffle()
+      assert races([C.MnesiaExpire]) == []
+    end
+
+    test "the delete is reported on a table the program writes back from a read" do
+      skip_without_souffle()
+      found = races([C.MnesiaExpireCounted])
+      assert Enum.any?(found, &match?({"fetch/2", ":uses", _, _, _}, &1))
+      assert Enum.any?(found, &match?({"use/2", ":uses", _, _, _}, &1))
     end
 
     test "the read and the write in helpers, the read's result handed to the write" do
@@ -62,7 +74,7 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
 
   describe "finding" do
     test "anchors the dirty write, relates the dirty read, and names the transaction" do
-      row = ["M", "M:bump/1", ":counters", "0", "M:get/1#6", "M:bump/1#27"]
+      row = ["M", "M:bump/1", ":counters", "0", "M:get/1#6", "M:bump/1#27", "dirty_write"]
       f = Ets.finding(:mnesia_check_act, row)
 
       assert f.severity == :warning
@@ -71,6 +83,15 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
       assert [%{label: "the dirty read it depends on"}] = f.related
       assert Enum.any?(f.help, &(&1 =~ "transaction"))
       assert Enum.any?(f.help, &(&1 =~ "dirty_update_counter"))
+    end
+
+    test "names a delete as a delete" do
+      row = ["M", "M:fetch/2", ":uses", "0", "M:fetch/2#6", "M:fetch/2#27", "dirty_delete"]
+      f = Ets.finding(:mnesia_check_act, row)
+
+      assert f.detail =~ "deletes it with dirty_delete"
+      refute f.detail =~ "dirty write"
+      assert f.at_label =~ "dirty delete"
     end
   end
 end
