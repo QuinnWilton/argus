@@ -56,7 +56,56 @@ defmodule Argus.Test.Fixtures.UnreceivedMessage do
     end
   end
 
+  defmodule Closure do
+    @moduledoc "A spawned closure's loop, one call down, takes only :tick."
+    def start do
+      pid = spawn(fn -> loop() end)
+      send(pid, :tock)
+    end
+
+    def loop do
+      receive do
+        :tick -> loop()
+      end
+    end
+  end
+
   # ── Quiet neighbours ─────────────────────────────────────────────
+
+  defmodule TwoPhase do
+    @moduledoc "The spawned function waits for :go, then its loop takes :work."
+    def start do
+      pid = spawn(__MODULE__, :run, [])
+      send(pid, :go)
+      send(pid, :work)
+    end
+
+    def run do
+      receive do
+        :go -> loop()
+      end
+    end
+
+    def loop do
+      receive do
+        :work -> loop()
+      end
+    end
+  end
+
+  defmodule EntersLoop do
+    @moduledoc "The spawned function becomes a gen_server: what it takes is its callbacks'."
+    def start do
+      pid = spawn(__MODULE__, :run, [])
+      send(pid, :anything)
+    end
+
+    def run do
+      receive do
+        :init -> :gen_server.enter_loop(__MODULE__, [], nil)
+      end
+    end
+  end
 
   defmodule Taken do
     @moduledoc "The message is one the receive takes."
@@ -87,7 +136,7 @@ defmodule Argus.Test.Fixtures.UnreceivedMessage do
   end
 
   defmodule Helper do
-    @moduledoc "The receive is in a helper the spawned function calls: not judged."
+    @moduledoc "The receive is in a helper the spawned function calls, and never takes the message."
     def start do
       pid = spawn(__MODULE__, :run, [])
       send(pid, :unknown)

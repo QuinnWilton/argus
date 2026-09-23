@@ -899,6 +899,22 @@ parameter: `timer_ref` says `stored` under the helper's key, or follows
 the helper's result when the helper returns it. It said `"dynamic"`, so
 the cancel-without-flush rule could not pair the arm with its cancel.
 
+**Changed.** `mailbox.unreceived_message` judges every receive the
+spawned process runs — the spawned function's and those of what it
+calls in its own process (`ForwardSameProcessReach`, reach.dl) — rather
+than the spawned function's alone. A process whose first receive takes
+`:go` and whose loop then takes `:work` was reported for `:work`; one
+whose spawned function only calls its loop was never judged, which on
+OTP's kernel was 50 of 56 sends to a spawned process. A process that
+runs a call through a fun or an apply, a gen_server/gen_statem
+`enter_loop` or a hibernate is not judged: its receives are not the
+program's to read. The rule stays quiet on the corpus, realtime,
+logflare, hexpm and OTP's kernel, mnesia, inets, ssh and ssl, now for
+reasons it can state: on kernel, of 71 literal sends to a spawned
+process 35 meet a receive clause that takes anything, 27 a process that
+runs code through a fun, 7 a clause for the message, and 2 a process
+with no receive.
+
 **Changed.** `mailbox.partial_handler`'s "late_message" source no longer
 counts a timer the process arms for itself with a literal message its
 own `handle_info/2` has a clause for (a janitor's `:purge`), nor a

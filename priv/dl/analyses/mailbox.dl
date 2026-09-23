@@ -548,7 +548,7 @@ called_otherwise(g) :-
 
 called_otherwise(g) :-
   process_tail(g),
-  call_instr(f, g, id),
+  call_instr(_, g, id),
   !tail_call(id).
 
 .init monitor_loop = SameProcessReach
@@ -753,22 +753,64 @@ reply_defect(mod, func, site, "statem_unreplied", tag) :- statem_call_unreplied(
 // ══ A message its process never takes ═══════════════════════════════
 //
 // A send that process points-to (sends.dl) follows to a spawned process
-// whose receive has no clause for the message. It is not dropped: it
-// stays in the mailbox for the life of the process, and every later
-// receive scans past it. Judged only when the spawned function holds the
-// receive itself (a loop reached through helpers is not known to reject
-// anything), only for a literal atom or a tuple with a literal tag, and
-// never when a clause recv_pattern reads as "any" (a variable, a tuple
-// pattern, a guard) could take it.
+// none of whose receives has a clause for the message. It is not
+// dropped: it stays in the mailbox for the life of the process, and
+// every later receive scans past it. The receives are every one the
+// process runs: the spawned function's and those of what it calls in
+// its own process (a loop entered after a handshake), not only the
+// spawned function's own, which on OTP's kernel was 6 of 56 sends to a
+// spawned process. Judged only for a literal atom or a tuple with a
+// literal tag, and only when the process runs some receive; never when a
+// clause recv_pattern reads as "any" (a variable, a tuple pattern, a
+// guard) could take it, and never when the process runs code whose
+// receives are not the program's to read: a call through a fun or an
+// apply, a gen_server or gen_statem enter_loop (its callbacks take the
+// mailbox), a hibernate that resumes in an MFA.
 .decl unreceived_message(mod: symbol, func: symbol, site: symbol, message: symbol, runs: symbol, starter: symbol, spawn: symbol, recv: symbol)
 .output unreceived_message
+
+.decl spawned_target(runs: symbol)
+
+spawned_target(runs) :-
+  send_target(_, _, m, p),
+  m != "dynamic",
+  instance(p, b),
+  process_start(_, _, b, "spawn", runs).
+
+.init spawned_reach = ForwardSameProcessReach
+
+spawned_reach.root(r, r) :- spawned_target(r).
+
+// A receive the process runs, and the messages its clauses take.
+.decl process_receive(runs: symbol, recv: symbol)
+
+process_receive(r, id) :- spawned_reach.reaches(r, g), recv_pattern(id, g, _).
+
+.decl process_takes(runs: symbol, message: symbol)
+
+process_takes(r, m) :- spawned_reach.reaches(r, g), recv_pattern(_, g, m).
+
+.decl process_opaque(runs: symbol)
+
+process_opaque(r) :- spawned_reach.reaches(r, g), dynamic_call(_, g, _).
+
+process_opaque(r) :-
+  spawned_reach.reaches(r, g),
+  remote_call(_, g, m, "enter_loop", _),
+  (m = ":gen_server" ; m = ":gen_statem" ; m = ":gen_event").
+
+process_opaque(r) :-
+  spawned_reach.reaches(r, g),
+  remote_call(_, g, m, "hibernate", _),
+  (m = ":erlang" ; m = ":proc_lib").
 
 unreceived_message(mod, func, site, m, runs, starter, spawn, recv) :-
   send_target(site, func, m, p),
   m != "dynamic",
   instance(p, b),
   process_start(spawn, starter, b, "spawn", runs),
-  recv_pattern(recv, runs, _),
-  !recv_pattern(_, runs, m),
-  !recv_pattern(_, runs, "any"),
+  process_receive(runs, recv),
+  !process_takes(runs, m),
+  !process_takes(runs, "any"),
+  !process_opaque(runs),
   function_def(func, mod, _, _, _).

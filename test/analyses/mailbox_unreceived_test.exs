@@ -12,6 +12,9 @@ defmodule Argus.Analyses.MailboxUnreceivedTest do
     U.Taken,
     U.CatchAll,
     U.Helper,
+    U.Closure,
+    U.TwoPhase,
+    U.EntersLoop,
     U.Variable,
     U.Server
   ]
@@ -35,10 +38,22 @@ defmodule Argus.Analyses.MailboxUnreceivedTest do
     assert {"Tagged", "Tagged:start/0", "{:job, …}", "Tagged:loop/0", "Tagged:start/0"} in rows()
   end
 
+  test "a receive in a helper the spawned function calls is judged too" do
+    assert {"Helper", "Helper:start/0", ":unknown", "Helper:run/0", "Helper:start/0"} in rows()
+
+    assert Enum.any?(
+             rows(),
+             &match?({"Closure", "Closure:start/0", ":tock", _, "Closure:start/0"}, &1)
+           )
+  end
+
   test "the send by name to a loop that takes it, and every quiet neighbour, are quiet" do
     found = rows()
-    assert length(found) == 2, inspect(found)
+    assert length(found) == 4, inspect(found)
     refute Enum.any?(found, fn {_, _, message, _, _} -> message == ":checkout" end)
+    # TwoPhase's loop takes :work after run takes :go; EntersLoop hands its
+    # mailbox to gen_server callbacks.
+    refute Enum.any?(found, fn {mod, _, _, _, _} -> mod in ["TwoPhase", "EntersLoop"] end)
   end
 
   test "a state's list of subscribers and its worker are different processes" do
@@ -72,11 +87,12 @@ defmodule Argus.Analyses.MailboxUnreceivedTest do
     assert f.at_label == "the message is sent here"
 
     assert Enum.map(f.related, & &1.label) == [
-             "the receive it never matches",
+             "a receive it never matches",
              "the process is spawned here"
            ]
 
     assert Enum.any?(f.help, &String.contains?(&1, "add a clause for :checked_out"))
+    assert f.detail =~ "Shop.checkout/1 sends :checked_out"
 
     # loop_rec has no line, so the bytecode puts the receive frame on
     # `def loop do`; the source fragment carries it to the receive.

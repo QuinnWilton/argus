@@ -104,6 +104,12 @@
   reaches(r, h) :- reaches(r, g), call_edge(g, h).
 }
 
+// Forward over what the root's own process runs (runs_elsewhere, as
+// SameProcessReach): a spawned function and the loop it calls.
+.comp ForwardSameProcessReach : Forward {
+  reaches(r, h) :- reaches(r, g), call_edge(g, h), !runs_elsewhere(g, h).
+}
+
 // Forward, staying inside the root's module: a server's own stack.
 .comp ForwardIntraModuleReach : Forward {
   reaches(r, h) :-

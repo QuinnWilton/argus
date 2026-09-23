@@ -30,9 +30,10 @@ defmodule Argus.Analyses.Mailbox do
     (`dropped_from`), or a `{:call, from}` clause that never answers
     (`statem_unreplied`).
   - `unreceived_message(mod, func, site, message, runs, starter, spawn, recv)` —
-    a send that process points-to follows to a spawned process whose
-    receive has no clause for `message`: it stays in that mailbox, and
-    every later receive scans past it.
+    a send that process points-to follows to a spawned process none of
+    whose receives (the spawned function's, and those of what it calls in
+    its own process) has a clause for `message`: it stays in that
+    mailbox, and every later receive scans past it.
   """
 
   @behaviour Argus.Analysis
@@ -279,8 +280,9 @@ defmodule Argus.Analyses.Mailbox do
     Findings.new(
       :warning,
       "#{message} is sent to a process whose receive never takes it",
-      "#{func} sends #{message} to the process spawned in #{starter} to run " <>
-        "#{runs}, and no clause of that function's receive matches it. A " <>
+      "#{Findings.call_name(func)} sends #{message} to the process spawned in " <>
+        "#{Findings.call_name(starter)} to run #{Findings.call_name(runs)}, and no " <>
+        "clause of a receive that process runs matches it. A " <>
         "message no receive takes is not dropped: it stays in the mailbox " <>
         "for the life of the process, every later receive scans past it, " <>
         "and the sender never learns it went nowhere.",
@@ -289,15 +291,15 @@ defmodule Argus.Analyses.Mailbox do
       related: [
         # The receive's loop_rec carries no line: the bytecode puts the
         # frame on the function head, and the source finds the receive.
-        Findings.related("the receive it never matches", Findings.at_instr(recv),
+        Findings.related("a receive it never matches", Findings.at_instr(recv),
           at_source: "receive",
           to_block: :receive
         ),
         Findings.related("the process is spawned here", Findings.at_site_in_func(spawn, starter))
       ],
       help: [
-        "add a clause for #{message} to the receive in #{runs}",
-        "or send the message that receive expects"
+        "add a clause for #{message} to the receive that should take it",
+        "or send a message the process's receives expect"
       ]
     )
   end
