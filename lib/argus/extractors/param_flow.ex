@@ -37,9 +37,13 @@ defmodule Argus.Extractors.ParamFlow do
   into a fresh-looking result. Every failure to follow a flow therefore
   loses a finding rather than inventing one.
 
-  Not followed, by design: values read inside `rescue`/`catch` bodies
-  (`Argus.Dataflow` does not walk exception edges), element flow through a
-  higher-order function's closure (`Enum.map(params, fn p -> ... end)`:
+  A copy — `move`, `swap`, `trim` — derives each register it writes from
+  the one register it copied (`Helpers.copy_read/2`): a `trim` renumbers
+  the stack frame slot by slot, and a union over its reads would hand
+  every kept slot every other slot's parameters.
+
+  Not followed, by design: element flow through a higher-order function's
+  closure (`Enum.map(params, fn p -> ... end)`:
   the closure's parameter is the element, which no fact ties to the
   collection), and a local helper's return value.
   """
@@ -68,7 +72,7 @@ defmodule Argus.Extractors.ParamFlow do
   def extract(module_data) do
     with typed when typed != nil <- Helpers.typed(module_data),
          reaching when reaching != nil <- Helpers.reaching(module_data) do
-      inputs = derive(typed, reaching)
+      inputs = derive(typed, reaching, Helpers.copies(module_data))
 
       %{}
       |> emit_call_sites(module_data, inputs)
@@ -83,7 +87,7 @@ defmodule Argus.Extractors.ParamFlow do
 
   # For every instruction, the parameters each register it reads is derived
   # from: %{id => %{reg => MapSet(param)}}.
-  defp derive(typed, triples) do
+  defp derive(typed, triples, copies) do
     reads =
       Enum.group_by(triples, fn {_source, _reg, use} -> use end, fn {source, reg, _use} ->
         {reg, source}
@@ -115,7 +119,8 @@ defmodule Argus.Extractors.ParamFlow do
       bifs: bifs,
       tails: tails,
       locals: locals,
-      dynamics: dynamics
+      dynamics: dynamics,
+      copies: copies
     }
 
     outs = fixpoint(ids, ctx, %{}, 0)
@@ -187,13 +192,12 @@ defmodule Argus.Extractors.ParamFlow do
       Map.get(ctx.ops, id) in ~w(make_fun3 call_fun call_fun2 apply apply_last) ->
         MapSet.new()
 
-      # The one structural instruction whose reads and writes cross: each
-      # register takes the other's value.
-      Map.get(ctx.ops, id) == "swap" ->
-        ctx.writes
-        |> Map.fetch!(id)
-        |> Enum.reject(&(&1 == reg))
-        |> then(&union_of(inputs, &1))
+      # A copy writes each register from the one it copied.
+      Map.has_key?(ctx.copies, id) ->
+        case Helpers.copy_read(Map.fetch!(ctx.copies, id), reg) do
+          nil -> MapSet.new()
+          read -> Map.get(inputs, read, MapSet.new())
+        end
 
       true ->
         # A structural instruction: every write is made from every read.

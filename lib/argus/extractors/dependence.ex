@@ -166,6 +166,8 @@ defmodule Argus.Extractors.Dependence do
       ops: ops,
       tails: tails,
       calls: calls,
+      copies:
+        Map.new(Helpers.copies(module_data), fn {id, instr} -> {{func_of(id), id.idx}, instr} end),
       closures: closures(module_data)
     }
   end
@@ -229,7 +231,7 @@ defmodule Argus.Extractors.Dependence do
         ctx.index.writes
         |> Map.get({ctx.func_id, idx}, [])
         |> Enum.reduce(acc, fn reg, inner ->
-          Map.put(inner, {idx, reg}, result(idx, inputs, here, ctx))
+          Map.put(inner, {idx, reg}, result(idx, reg, inputs, here, ctx))
         end)
       end)
 
@@ -269,13 +271,14 @@ defmodule Argus.Extractors.Dependence do
 
   # What the value written at `idx` depends on, given its inputs and the
   # decisions its block runs under.
-  defp result(idx, inputs, here, ctx) do
+  defp result(idx, reg, inputs, here, ctx) do
     key = {ctx.func_id, idx}
 
     base =
-      case Map.fetch(ctx.index.calls, key) do
-        {:ok, call} -> call_result(idx, call, inputs, ctx)
-        :error -> union(inputs)
+      case {Map.fetch(ctx.index.calls, key), Map.fetch(ctx.index.copies, key)} do
+        {{:ok, call}, _copy} -> call_result(idx, call, inputs, ctx)
+        {:error, {:ok, copy}} -> copied(copy, reg, inputs)
+        {:error, :error} -> union(inputs)
       end
 
     MapSet.union(base, here)
@@ -287,6 +290,15 @@ defmodule Argus.Extractors.Dependence do
       site?(mfa) -> MapSet.put(union(inputs), {:site, InstrId.mint(ctx.func_id, idx)})
       runtime?(mod) -> union(inputs)
       true -> MapSet.put(union(inputs), {:call, Normalize.func_id(mod, fun, arity)})
+    end
+  end
+
+  # A copy (move, swap, trim) writes each register from the one it
+  # copied; a union over its reads would mix a trim's renumbered slots.
+  defp copied(copy, reg, inputs) do
+    case Helpers.copy_read(copy, reg) do
+      nil -> MapSet.new()
+      read -> Map.get(inputs, read, MapSet.new())
     end
   end
 
@@ -399,7 +411,7 @@ defmodule Argus.Extractors.Dependence do
 
     cond do
       MapSet.member?(ctx.index.tails, key) ->
-        rows(facts, :returns_depends, [ctx.func_id], result(idx, inputs, here, ctx))
+        rows(facts, :returns_depends, [ctx.func_id], result(idx, "x0", inputs, here, ctx))
 
       Map.get(ctx.index.ops, key) == "return" ->
         rows(

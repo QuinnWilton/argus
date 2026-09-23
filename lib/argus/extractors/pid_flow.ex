@@ -104,6 +104,7 @@ defmodule Argus.Extractors.PidFlow do
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Runtime
   alias Argus.Extractors.ApiCalls
+  alias Argus.Instr
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
@@ -593,6 +594,14 @@ defmodule Argus.Extractors.PidFlow do
 
   defp instruction(ctx, {:swap, a, b}, r),
     do: r |> write(a, val(ctx, b)) |> write(b, val(ctx, a))
+
+  # A trim renumbers the stack frame: each kept slot takes the value of
+  # the slot it replaces.
+  defp instruction(ctx, {:trim, _n, _remaining} = trim, r) do
+    Enum.reduce(Instr.defs(trim), r, fn dst, acc ->
+      write(acc, dst, val(ctx, Instr.copy_source(trim, dst)))
+    end)
+  end
 
   defp instruction(ctx, {:get_list, src, head, tail}, r) do
     {value, r} = load(ctx, val(ctx, src), "[]", load_id(ctx, "[]"), r)

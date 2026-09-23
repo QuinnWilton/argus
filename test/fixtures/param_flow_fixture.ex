@@ -25,5 +25,17 @@ defmodule Argus.Test.Fixtures.ParamFlow do
     def helper(_x, _y), do: :ok
     def captured(prefix, xs), do: Enum.each(xs, fn x -> String.to_atom(prefix <> x) end)
     def literal(_p), do: String.to_atom("fixed")
+
+    # `a` dies first, so the frame is trimmed and `b` and `c` move down a
+    # slot each: the calls after the trim read b and c from renumbered
+    # slots, one each.
+    def trimmed(a, b, c) do
+      first = :erlang.phash2(a)
+      :ok = Process.put(:first, first)
+      :ok = Process.put(:c, c)
+      Process.put(:a, a)
+      _ = :erlang.atom_to_list(b)
+      :erlang.binary_to_list(c)
+    end
   end
 end

@@ -148,6 +148,13 @@ to its handler, the same graph as `Argus.Cfg`, so a value bound before
 the `try` reaches the handler's reads and a clause reached only through
 a failing guard sees the writes before it.
 
+**Fixed.** `call_arg_derived`, the Dependence relations and process points-to
+derive a copy's write from the one register it copied (`Helpers.copies/1`,
+`Helpers.copy_read/2`): a `trim` writes each kept stack slot from one
+renumbered slot and a `swap` each register from the other, and deriving
+every write from every read mixed them — a slot kept by a trim took the
+parameters of every other kept slot.
+
 ### Process points-to
 
 **Changed.** `self()` resolves in a function a process's own code

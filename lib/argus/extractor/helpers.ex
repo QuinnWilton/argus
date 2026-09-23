@@ -18,6 +18,7 @@ defmodule Argus.Extractor.Helpers do
   """
 
   alias Argus.Extractor.CallSites
+  alias Argus.Instr
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
@@ -1598,6 +1599,45 @@ defmodule Argus.Extractor.Helpers do
       _other -> {"dynamic", ""}
     end
   end
+
+  @doc """
+  The instructions of a module that copy registers — `move`, `fmove`,
+  `swap`, `trim`. An extractor that derives
+  what an instruction writes from what it reads needs them: a `trim`
+  writes each kept slot from one other slot, a `swap` each register from
+  the other, and deriving every write from every read mixes them
+  (`copy_read/2`). Keyed by instruction ID, as the facts are.
+  """
+  @spec copies(map()) :: %{InstrId.t() => tuple()}
+  def copies(%{module: mod, functions: functions}) do
+    for {:function, name, arity, _entry, instrs} <- functions,
+        func_id = Normalize.func_id(mod, name, arity),
+        {instr, idx} <- Enum.with_index(instrs),
+        copy?(instr),
+        {:ok, id} = InstrId.parse(InstrId.mint(func_id, idx)),
+        into: %{},
+        do: {id, instr}
+  end
+
+  defp copy?(instr) when is_tuple(instr), do: elem(instr, 0) in [:move, :fmove, :swap, :trim]
+  defp copy?(_instr), do: false
+
+  @doc """
+  The register, spelled as the facts spell it (`"y3"`), that the copy
+  instruction `instr` read the value it wrote into `reg` from — `nil`
+  when it wrote a literal, or did not write `reg`.
+  """
+  @spec copy_read(tuple(), String.t()) :: String.t() | nil
+  def copy_read(instr, reg) do
+    case Instr.copy_source(instr, parse_reg(reg)) do
+      {kind, n} when kind in [:x, :y, :fr] -> "#{kind}#{n}"
+      _literal -> nil
+    end
+  end
+
+  defp parse_reg("fr" <> n), do: {:fr, String.to_integer(n)}
+  defp parse_reg("x" <> n), do: {:x, String.to_integer(n)}
+  defp parse_reg("y" <> n), do: {:y, String.to_integer(n)}
 
   @doc "The graph of the function an `instr_ctx()` is in."
   @spec cfg(map(), instr_ctx()) :: Argus.Cfg.Function.t() | nil

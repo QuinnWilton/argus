@@ -50,6 +50,16 @@ defmodule Argus.Test.Fixtures.PidFlow do
 
     defp hand_off(p), do: relay(p)
     defp relay(q), do: Worker.notify(q)
+
+    # `first` dies before `second`, so the frame is trimmed and `second`
+    # moves down a slot before the call that targets it.
+    def across_a_trim do
+      {:ok, first} = GenServer.start_link(Worker, :first)
+      {:ok, second} = GenServer.start_link(Worker, :second)
+      :ok = GenServer.call(first, :ping)
+      :ok = Worker.notify(:elsewhere)
+      GenServer.call(second, :ping)
+    end
   end
 
   defmodule Loops do

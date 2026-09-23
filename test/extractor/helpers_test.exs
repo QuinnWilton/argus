@@ -911,6 +911,16 @@ defmodule Argus.Extractor.HelpersTest do
     end
   end
 
+  describe "copy_read/2" do
+    test "a copy's write comes from the one register it copied" do
+      assert Helpers.copy_read({:move, {:y, 2}, {:x, 0}}, "x0") == "y2"
+      assert Helpers.copy_read({:swap, {:x, 0}, {:y, 1}}, "y1") == "x0"
+      assert Helpers.copy_read({:trim, 2, 3}, "y1") == "y3"
+      assert Helpers.copy_read({:move, {:atom, :a}, {:x, 0}}, "x0") == nil
+      assert Helpers.copy_read({:move, {:y, 2}, {:x, 0}}, "x1") == nil
+    end
+  end
+
   describe "tuple_element_identity/4" do
     test "an element of a tuple built just before is identified on its own" do
       instrs = [

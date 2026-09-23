@@ -154,6 +154,15 @@ defmodule Argus.Extractors.PidFlowTest do
              ] in unsited(f.pid_call)
     end
 
+    test "a call's target survives the trim that renumbers its slot" do
+      calls = unsited(facts([F.Owner]).pid_call)
+
+      assert ["Owner:across_a_trim/0", "call", "proc", "server Owner:across_a_trim/0#15"] in calls
+      assert ["Owner:across_a_trim/0", "call", "proc", "server Owner:across_a_trim/0#9"] in calls
+
+      assert Enum.count(calls, &match?(["Owner:across_a_trim/0" | _], &1)) == 2
+    end
+
     test "an API function's call and cast target its parameter" do
       f = facts([F.Worker])
       assert ["Worker:ping/1", "call", "param", "0"] in unsited(f.pid_call)

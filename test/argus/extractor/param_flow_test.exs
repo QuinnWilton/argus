@@ -24,6 +24,13 @@ defmodule Argus.Extractor.ParamFlowTest do
 
   defp short(callee), do: callee |> String.split(":") |> List.last()
 
+  test "a trim renumbers the frame slot by slot, without mixing the slots", %{facts: facts} do
+    assert {"atom_to_list/1", 0, 1} in derived(facts, "trimmed/3")
+    assert {"binary_to_list/1", 0, 2} in derived(facts, "trimmed/3")
+    refute {"atom_to_list/1", 0, 2} in derived(facts, "trimmed/3")
+    refute {"binary_to_list/1", 0, 1} in derived(facts, "trimmed/3")
+  end
+
   test "a binary built from the parameter reaches the sink", %{facts: facts} do
     assert sinks(facts, "concat/1") == [{0, 0}]
   end
