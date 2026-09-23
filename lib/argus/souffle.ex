@@ -192,7 +192,7 @@ defmodule Argus.Souffle do
             {:error, :no_tmp_dir}
 
           tmp ->
-            # OS pid + VM-unique integer: see Argus.Analysis.create_work_dir/0
+            # OS pid + VM-unique integer: see Argus.Analysis.Extraction's create_work_dir/0
             # — unique_integer alone collides across concurrent VMs.
             dir =
               Path.join(

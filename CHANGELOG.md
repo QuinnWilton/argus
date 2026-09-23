@@ -34,6 +34,8 @@ where the code moved. `Argus.Analysis.Catalog` discovers the built-in
 analyses, looks one up and resolves its rules path.
 `Argus.Analysis.Sets` holds the concerns, the named sets and how a
 selection (`run/2`'s `:analyses`) resolves to modules.
+`Argus.Analysis.Extraction` builds the facts directory (pipeline,
+stage 0, priors); its `ensure_stage0/2` is public.
 
 ### Fact schema and extraction
 

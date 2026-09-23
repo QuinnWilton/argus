@@ -1,11 +1,43 @@
 defmodule Argus.Analysis do
   @moduledoc """
-  Behaviour and API for BEAM program analyses.
+  The analysis behaviour, and the entry points for running one.
 
-  Each analysis is a module that implements this behaviour, declaring its
-  name, description, Souffle rules file, required extractors, and output
-  relations. The system discovers these modules at runtime from the
-  `:panoptes` application's module list.
+  An analysis is a module implementing this behaviour: its name, a
+  Souffle program under `priv/dl/`, the extractors whose facts the
+  program reads, and its output relations. Each built-in analysis owns
+  one concern — what goes wrong (`:startup`, `:mailbox`, `:races`, ...);
+  mechanism, phase and proximity are columns of a relation, never
+  another analysis. `concerns/0` lists them and `sets/0` names the
+  groups callers run together (`:all`, `:default`, `:security`,
+  `:effects`, `:otp`).
+
+  An output relation's rows are findings, rendered by the optional
+  `c:finding/2` callback, unless the relation declares `:evidence`: its
+  rows are then related frames of the finding they join, rendered by
+  `c:evidence/2`. A relation keys its rows (`t:row_key/0`) so the
+  witnesses of one defect are one finding. `Argus.Findings` turns a
+  solve's rows into findings and holds the helpers `c:finding/2`
+  builds them with; a finding that rests on a prior (`Argus.Priors`) is
+  marked heuristic there.
+
+  ## Running
+
+  - `Argus.Findings.run/2` (`Argus.run_analyses/2`) runs a selection and
+    returns findings: what most callers want.
+  - `run/3` (`Argus.analyze/3`) runs one analysis and returns its raw
+    rows.
+  - `extract_facts/3`, then `run_rules/3` per analysis, is the same run
+    in two steps, for a caller that keeps the facts directory (scry,
+    encore); `derive_stage0/2`, `input_relations/1` and
+    `filter_to_outputs/2` serve incremental consumers that project a
+    directory per analysis.
+
+  The code behind these lives in three modules, each delegated to from
+  here: `Argus.Analysis.Sets` (concerns, sets and how a selection
+  resolves), `Argus.Analysis.Catalog` (discovering the built-in modules
+  from the `:panoptes` application's module list, and their rules
+  paths) and `Argus.Analysis.Extraction` (the facts directory: the
+  pipeline, stage 0, priors).
 
   ## Defining a custom analysis
 
@@ -40,19 +72,11 @@ defmodule Argus.Analysis do
 
   You can also pass `{:custom, "path/to/rules.dl"}` to `run/3` to run
   ad-hoc Datalog rules without defining a module.
-
-  ## Built-in analyses
-
-  See modules under `Argus.Analyses.*` for the full list. Use
-  `builtin_analyses/0` or `builtin_analysis_modules/0` to discover them
-  at runtime.
   """
 
-  require Logger
-
   alias Argus.Analysis.Catalog
+  alias Argus.Analysis.Extraction
   alias Argus.Analysis.Sets
-  alias Argus.Pipeline
   alias Argus.Souffle
 
   # Behaviour callbacks.
@@ -146,6 +170,64 @@ defmodule Argus.Analysis do
   @spec set(atom()) :: {:ok, [atom()]} | :error
   defdelegate set(name), to: Sets
 
+  # ── Built-in analyses (Argus.Analysis.Catalog) ──────────────────────
+
+  @doc "The built-in analysis names, sorted (`Argus.Analysis.Catalog.names/0`)."
+  @spec builtin_analyses() :: [atom()]
+  defdelegate builtin_analyses(), to: Catalog, as: :names
+
+  @doc "The built-in analysis modules, sorted by name (`Argus.Analysis.Catalog.modules/0`)."
+  @spec builtin_analysis_modules() :: [module()]
+  defdelegate builtin_analysis_modules(), to: Catalog, as: :modules
+
+  @doc """
+  Looks up a built-in analysis module by name.
+
+  Returns `{:ok, module}` or `:error` if not found.
+  """
+  @spec fetch_module(atom()) :: {:ok, module()} | :error
+  defdelegate fetch_module(name), to: Catalog, as: :fetch
+
+  @doc """
+  Returns output relations for a named built-in analysis.
+
+  Returns `{:ok, relations}` or `:error` if the analysis is not found.
+  """
+  @spec output_relations(atom()) :: {:ok, [output_relation()]} | :error
+  defdelegate output_relations(name), to: Catalog
+
+  @doc """
+  The output relations of an analysis whose rows are findings: every
+  output relation but the evidence ones.
+  """
+  @spec finding_relations(atom()) :: {:ok, [output_relation()]} | :error
+  defdelegate finding_relations(name), to: Catalog
+
+  # ── Extraction (Argus.Analysis.Extraction) ──────────────────────────
+
+  @doc """
+  Extracts facts from the given modules once, for one or more analyses:
+  see `Argus.Analysis.Extraction.extract_facts/3`. The directory feeds
+  `run_rules/3` for each of the analyses without re-extraction.
+  """
+  @spec extract_facts(modules :: [atom() | String.t()], [analysis()], keyword()) ::
+          {:ok, Path.t()} | {:error, term()}
+  defdelegate extract_facts(modules, analyses, opts \\ []), to: Extraction
+
+  @doc """
+  Derives the stage-0 relations (the shared call graph) into an existing
+  facts directory: see `Argus.Analysis.Extraction.derive_stage0/2`.
+  Incremental consumers call it directly and memoize the result.
+  """
+  @spec derive_stage0(Path.t(), keyword()) :: :ok | {:error, term()}
+  defdelegate derive_stage0(facts_dir, opts \\ []), to: Extraction
+
+  @doc "The path to the stage-0 rules file."
+  @spec stage0_rules_path() :: Path.t()
+  defdelegate stage0_rules_path(), to: Extraction
+
+  # ── Solving ─────────────────────────────────────────────────────────
+
   @doc """
   Runs an analysis against the given modules.
 
@@ -172,112 +254,6 @@ defmodule Argus.Analysis do
       end
     end
   end
-
-  @doc """
-  Extracts facts from the given modules once, for one or more analyses.
-
-  Runs the pipeline with the union of the analyses' default extractors
-  (plus any extra `:extractors` from `opts`), writing `.facts` files to a
-  fresh temporary directory. Because the pipeline always materializes
-  every schema relation (empty files included), the resulting directory
-  can feed `run_rules/3` for each of the analyses without re-extraction.
-
-  Returns `{:ok, facts_dir}` or `{:error, reason}`.
-  """
-  @spec extract_facts(modules :: [atom() | String.t()], [analysis()], keyword()) ::
-          {:ok, Path.t()} | {:error, term()}
-  def extract_facts(modules, analyses, opts \\ []) do
-    default_extractors =
-      analyses
-      |> Enum.flat_map(&default_extractors_for/1)
-      |> Enum.uniq()
-
-    opts =
-      opts
-      |> Keyword.update(:extractors, default_extractors, &Enum.uniq(default_extractors ++ &1))
-      |> Keyword.put_new(:relations, staged_relations(analyses))
-      |> maybe_enable_imprecision_tracing(analyses)
-
-    Argus.Priors.check!(opts)
-
-    with {:ok, work_dir} <- create_work_dir(),
-         facts_dir = Path.join(work_dir, "facts"),
-         {:ok, _} <- Pipeline.run(modules, facts_dir, opts),
-         :ok <- derive_stage0(facts_dir, opts),
-         :ok <- derive_priors(facts_dir, opts) do
-      {:ok, facts_dir}
-    end
-  end
-
-  # Priors after stage 0, into the same directory: the empty `prior_*`
-  # files the pipeline touched become the classifier's rows. A prior that
-  # cannot be derived is logged and left empty — the findings are then
-  # those of a run without priors, which is always a valid result.
-  defp derive_priors(facts_dir, opts) do
-    case Keyword.get(opts, :priors, :off) do
-      :off ->
-        :ok
-
-      mode ->
-        priors_opts = opts |> Keyword.get(:priors_opts, []) |> Keyword.put(:mode, mode)
-
-        case Argus.Priors.derive(facts_dir, priors_opts) do
-          {:ok, _stats} ->
-            :ok
-
-          {:error, reason} ->
-            Logger.warning("priors not derived, relations left empty: #{inspect(reason)}")
-            :ok
-        end
-    end
-  end
-
-  # The built-in programs never read the in-process-only relations, so the
-  # staged directory leaves them empty. A custom program might, and there
-  # is no declaration to consult without running Souffle, so it gets
-  # everything.
-  defp staged_relations(analyses) do
-    if Enum.any?(analyses, &match?({:custom, _}, &1)) do
-      :all
-    else
-      Argus.Schema.names() -- Argus.Schema.in_process_only()
-    end
-  end
-
-  @doc """
-  Derives the stage-0 relations into an existing facts directory.
-
-  Stage 0 is the shared call graph (`call_edge`): every client analysis
-  needs it, and before stratification each one re-derived it inside its
-  own solve from the layer-1 bytecode relations. Deriving it once here
-  removes that redundancy, and — more importantly for incremental
-  consumers — keeps `instruction`, `remote_call` and friends out of the
-  input set of analyses that only reason about supervision structure.
-
-  `extract_facts/3` calls this for you, so batch callers need not think
-  about it. Incremental consumers call it directly, memoize the result,
-  and reuse it across solves: the output is markedly more stable than its
-  inputs, since it moves only when the *call* structure changes, not when
-  a function body does.
-
-  Writes `call_edge.facts` into `facts_dir`. Idempotent — re-running
-  overwrites with the same content for the same inputs.
-  """
-  @spec derive_stage0(Path.t(), keyword()) :: :ok | {:error, term()}
-  def derive_stage0(facts_dir, opts \\ []) do
-    # Souffle writes outputs into -D; stage0.dl names them `.facts` so the
-    # directory it lands in is directly reusable as a fact directory.
-    case Souffle.run(facts_dir, stage0_rules_path(), Keyword.put(opts, :output_dir, facts_dir)) do
-      {:ok, _} -> :ok
-      {:error, reason} -> {:error, {:stage0, reason}}
-    end
-  end
-
-  @doc """
-  The path to the stage-0 rules file.
-  """
-  @spec stage0_rules_path() :: Path.t()
-  def stage0_rules_path, do: Catalog.priv_dl("stage0.dl")
 
   @doc """
   The relations an analysis actually reads, as Souffle resolves them.
@@ -314,36 +290,8 @@ defmodule Argus.Analysis do
   @spec run_rules(Path.t(), analysis(), keyword()) :: {:ok, result()} | {:error, term()}
   def run_rules(facts_dir, analysis, opts \\ []) do
     with {:ok, rules_path} <- Catalog.rules_path(analysis),
-         :ok <- ensure_stage0(facts_dir, opts) do
+         :ok <- Extraction.ensure_stage0(facts_dir, opts) do
       Souffle.run(facts_dir, rules_path, opts)
-    end
-  end
-
-  # Analyses read the staged call graph, so it has to be there. Deriving
-  # it only when absent keeps this a no-op on the hot path: extract_facts/3
-  # already staged it, and incremental callers supply a directory that
-  # carries their own memoized copy. Hand-built fact directories — tests,
-  # ad-hoc probes — get it derived on demand rather than having to know
-  # about staging at all.
-  #
-  # `stage0: :provided` opts out entirely. A caller that projects a fact
-  # directory down to exactly the relations one analysis reads knows
-  # whether call_edge is among them; for an analysis that does not read it
-  # the file is legitimately absent, and auto-deriving would fail on the
-  # layer-1 facts such a directory deliberately omits.
-  defp ensure_stage0(facts_dir, opts) do
-    cond do
-      Keyword.get(opts, :stage0, :auto) == :provided ->
-        :ok
-
-      File.exists?(Path.join(facts_dir, "call_edge.facts")) and
-        File.exists?(Path.join(facts_dir, "call_site.facts")) and
-        File.exists?(Path.join(facts_dir, "unconditional_call_edge.facts")) and
-          File.exists?(Path.join(facts_dir, "call_tag.facts")) ->
-        :ok
-
-      true ->
-        derive_stage0(facts_dir, opts)
     end
   end
 
@@ -366,88 +314,6 @@ defmodule Argus.Analysis do
 
       :error ->
         results
-    end
-  end
-
-  # Imprecision tracking is off by default so every non-coverage analysis
-  # pays only the cost of a single process-dict read per fallback site.
-  # The coverage analysis is the only one that needs the extra data, so
-  # we flip the flag here rather than asking callers to remember it.
-  defp maybe_enable_imprecision_tracing(opts, analyses) do
-    if :coverage in analyses do
-      Keyword.put_new(opts, :trace_imprecision, true)
-    else
-      opts
-    end
-  end
-
-  @doc "The built-in analysis names, sorted (`Argus.Analysis.Catalog.names/0`)."
-  @spec builtin_analyses() :: [atom()]
-  defdelegate builtin_analyses(), to: Catalog, as: :names
-
-  @doc "The built-in analysis modules, sorted by name (`Argus.Analysis.Catalog.modules/0`)."
-  @spec builtin_analysis_modules() :: [module()]
-  defdelegate builtin_analysis_modules(), to: Catalog, as: :modules
-
-  @doc """
-  Looks up a built-in analysis module by name.
-
-  Returns `{:ok, module}` or `:error` if not found.
-  """
-  @spec fetch_module(atom()) :: {:ok, module()} | :error
-  defdelegate fetch_module(name), to: Catalog, as: :fetch
-
-  @doc """
-  Returns output relations for a named built-in analysis.
-
-  Returns `{:ok, relations}` or `:error` if the analysis is not found.
-  """
-  @spec output_relations(atom()) :: {:ok, [output_relation()]} | :error
-  defdelegate output_relations(name), to: Catalog
-
-  @doc """
-  The output relations of an analysis whose rows are findings: every
-  output relation but the evidence ones.
-  """
-  @spec finding_relations(atom()) :: {:ok, [output_relation()]} | :error
-  defdelegate finding_relations(name), to: Catalog
-
-  # CallArgs is a universal extractor — it emits call_arg facts that
-  # clientlib/calls.dl's resolved_arg uses to resolve sync_call /
-  # async_cast targets. Including it for every analysis means the enriched
-  # call graph is always available when Datalog rules consume it.
-  @universal_extractors [Argus.Extractors.CallArgs]
-
-  defp default_extractors_for({:custom, _}), do: @universal_extractors
-
-  defp default_extractors_for(name) when is_atom(name) do
-    case Catalog.fetch(name) do
-      {:ok, mod} -> @universal_extractors ++ mod.extractors()
-      :error -> @universal_extractors
-    end
-  end
-
-  defp create_work_dir do
-    case System.tmp_dir() do
-      nil ->
-        {:error, :no_tmp_dir}
-
-      tmp ->
-        # The OS pid distinguishes concurrently running VMs —
-        # System.unique_integer/1 alone is VM-local, so two `elixir`
-        # subprocesses started together pick the SAME integer and
-        # silently clobber each other's facts mid-run (the cause of the
-        # autoresearch corpus measurement variance).
-        dir = Path.join(tmp, "argus_#{:os.getpid()}_#{System.unique_integer([:positive])}")
-
-        # Remove any stale data from a dead VM that had the same OS pid
-        # and picked the same integer, then create a fresh directory.
-        File.rm_rf(dir)
-
-        case File.mkdir_p(dir) do
-          :ok -> {:ok, dir}
-          {:error, reason} -> {:error, {:mkdir_failed, reason}}
-        end
     end
   end
 end
