@@ -11,6 +11,18 @@ Grouped by concern. Each entry opens with what it does: **Added**,
 
 ### Fact schema and extraction
 
+**Fixed.** Fact files are escaped. Souffle reads a field as the bytes between two
+tabs and a row as the bytes up to a newline, with no escapes of its own,
+so a name holding either (`def unquote(:"a\tb")()`) wrote a row with a
+column too many and Souffle refused the program's whole fact directory.
+`Argus.Tsv` is the format now: a backslash, tab, newline or carriage
+return in a field is written `\\`, `\t`, `\n`, `\r`, and every
+reader in argus (`Argus.Souffle`'s outputs, `Argus.Lines.from_facts_dir/1`,
+`Argus.Priors.read_facts/2`) undoes it, so values round-trip exactly
+through Souffle. A consumer that writes or reads `.facts` itself uses
+`Argus.Tsv.encode/1` and `decode/1`. The file bytes change only for a
+field that holds one of the four characters.
+
 **Fixed.** `Helpers.resolve_register/3` read a field of a call's field
 (`{:ok, {pid, _ref}} = GenServer.start_monitor(...)`) as an element of
 the `{:call_field, mfa, n}` marker naming the outer field, so `pid`

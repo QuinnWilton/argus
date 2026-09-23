@@ -5,8 +5,6 @@ defmodule Argus.Pipeline.Writer do
   yields them, which `Argus.Pipeline` keeps deterministic.
   """
 
-  alias Argus.Pipeline
-
   @enforce_keys [:dir, :written, :files]
   defstruct [:dir, :written, :files]
 
@@ -59,7 +57,7 @@ defmodule Argus.Pipeline.Writer do
   end
 
   defp write(device, dir, relation, rows) do
-    case :file.write(device, Pipeline.rows_iodata(rows)) do
+    case :file.write(device, Argus.Tsv.encode(rows)) do
       :ok -> :ok
       {:error, reason} -> {:error, {:write_failed, Path.join(dir, "#{relation}.facts"), reason}}
     end

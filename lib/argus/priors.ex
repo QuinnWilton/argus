@@ -145,8 +145,7 @@ defmodule Argus.Priors do
 
       case File.read(path) do
         {:ok, content} ->
-          rows = content |> String.split("\n", trim: true) |> Enum.map(&String.split(&1, "\t"))
-          {:cont, {:ok, Map.put(acc, relation, rows)}}
+          {:cont, {:ok, Map.put(acc, relation, Argus.Tsv.decode(content))}}
 
         {:error, reason} ->
           {:halt, {:error, {:read_failed, path, reason}}}
@@ -159,6 +158,6 @@ defmodule Argus.Priors do
   end
 
   defp write_rows!(facts_dir, relation, rows) do
-    File.write!(Path.join(facts_dir, "#{relation}.facts"), Argus.Pipeline.rows_iodata(rows))
+    File.write!(Path.join(facts_dir, "#{relation}.facts"), Argus.Tsv.encode(rows))
   end
 end

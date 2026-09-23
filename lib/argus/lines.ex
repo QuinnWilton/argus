@@ -44,10 +44,7 @@ defmodule Argus.Lines do
   def from_facts_dir(dir) do
     case File.read(Path.join(dir, "line_info.facts")) do
       {:ok, contents} ->
-        contents
-        |> String.split("\n", trim: true)
-        |> Enum.map(&String.split(&1, "\t"))
-        |> build()
+        contents |> Argus.Tsv.decode() |> build()
 
       {:error, _} ->
         build([])

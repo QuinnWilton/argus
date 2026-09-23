@@ -245,15 +245,10 @@ defmodule Argus.Souffle do
 
         case File.read(path) do
           {:ok, content} ->
-            # Split on newlines only: a symbol column may be empty, and
-            # trimming the file would eat the tab that carries an empty
-            # last column of the last row (or first column of the first).
-            rows =
-              content
-              |> String.split("\n", trim: true)
-              |> Enum.map(&String.split(&1, "\t"))
-
-            {:cont, {:ok, Map.put(acc, relation, rows)}}
+            # Never trimmed: a symbol column may be empty, and trimming
+            # the file would eat the tab that carries an empty last column
+            # of the last row (or first column of the first).
+            {:cont, {:ok, Map.put(acc, relation, Argus.Tsv.decode(content))}}
 
           {:error, reason} ->
             {:halt, {:error, {:read_failed, path, reason}}}

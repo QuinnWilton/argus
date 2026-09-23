@@ -336,7 +336,7 @@ defmodule Argus.Pipeline do
         # An explicitly-empty relation produces a zero-byte file, not a
         # lone newline: Souffle reads the blank line as a tuple with
         # missing columns and aborts with "Values missing in line 1".
-        case File.write(path, rows_iodata(Enum.reverse(rows))) do
+        case File.write(path, Argus.Tsv.encode(Enum.reverse(rows))) do
           :ok -> {:cont, :ok}
           {:error, reason} -> {:halt, {:error, {:write_failed, path, reason}}}
         end
@@ -362,5 +362,7 @@ defmodule Argus.Pipeline do
   end
 
   @doc false
-  def rows_iodata(rows), do: Enum.map(rows, fn row -> [Enum.intersperse(row, "\t"), "\n"] end)
+  # Kept for callers outside argus that wrote facts through it; `Argus.Tsv`
+  # is the format.
+  def rows_iodata(rows), do: Argus.Tsv.encode(rows)
 end
