@@ -50,7 +50,9 @@ Two layers over one `Roux.Database`:
 
 Driver side (never inside queries): `Scry.Scanner` (beam discovery +
 mtime/size/hash diff vs manifest sources), `Scry.Runner` (db lifecycle,
-warm start, input sync, souffle check, demand), `Scry.Diagnostics`
+warm start, input sync, souffle check, demand — the analyses solve
+concurrently, one task each, after the merged relations are demanded in
+the runner's own process, where the prewarmed extractions wait), `Scry.Diagnostics`
 (resolved finding → Pentiment.Report → Diagnostic; printing; sidecar for
 `diagnostics/0`), `Mix.Tasks.Compile.Scry`, `Mix.Tasks.Scry`.
 
@@ -134,7 +136,7 @@ Optional longer explanation.
 ## Non-goals (v1, keep the README honest)
 
 Umbrella-wide analysis (per-app only; `include_deps: true` is the
-escape hatch), parallel solves, incremental Datalog, focus/slicing and
+escape hatch), incremental Datalog, focus/slicing and
 the supervision tree (planchette's LSP defines those queries over this
 layer; scry never demands them).
 

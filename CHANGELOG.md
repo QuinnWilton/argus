@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The analyses solve concurrently, up to one per scheduler: each solve
+  is its own Souffle process, and everything upstream of the fact
+  directories is computed once for whichever demands it first. A
+  one-module removal on realtime (350 modules) went from 15.0s to 5.3s
+  under the same machine load.
 - The manifest no longer stores every module's facts twice.
   `module_semantic_facts` — the early-cutoff seam under a line-only
   edit — held a copy of `module_extraction`'s facts minus `line_info`;

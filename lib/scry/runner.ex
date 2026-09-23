@@ -207,20 +207,34 @@ defmodule Scry.Runner do
     end
   end
 
-  # Sequential demand: per-analysis solves are sub-second, and on warm
-  # runs these are memo hits. Parallel solves are a measured follow-up.
+  # The analyses solve concurrently: each is its own Souffle process, and
+  # they share everything upstream of their fact directories, which roux
+  # computes once for whichever demands it first. The program's merged
+  # relations are demanded here first, in this process, because the
+  # prewarmed extractions wait in its dictionary — a task demanding them
+  # would extract again.
   defp demand(db, analyses) do
-    {findings, degraded} =
-      Enum.reduce(analyses, {%{}, []}, fn analysis, {acc, degraded} ->
-        case Scry.Analysis.analysis_diagnostics(db, analysis) do
-          {:ok, by_file} ->
-            {Map.merge(acc, by_file, fn _file, a, b -> a ++ b end), degraded}
+    _relations = Scry.Analysis.program_relation_facts(db, :all)
 
-          {:error, reason} ->
-            {acc, [%{analysis: analysis, reason: reason} | degraded]}
-        end
-      end)
+    results =
+      analyses
+      |> Task.async_stream(
+        fn analysis -> {analysis, Scry.Analysis.analysis_diagnostics(db, analysis)} end,
+        max_concurrency: System.schedulers_online(),
+        ordered: true,
+        # Each solve is bounded by argus's own Souffle timeout.
+        timeout: :infinity
+      )
+      |> Enum.map(fn {:ok, result} -> result end)
 
-    {findings, Enum.reverse(degraded)}
+    findings =
+      for {_analysis, {:ok, by_file}} <- results, reduce: %{} do
+        acc -> Map.merge(acc, by_file, fn _file, a, b -> a ++ b end)
+      end
+
+    degraded =
+      for {analysis, {:error, reason}} <- results, do: %{analysis: analysis, reason: reason}
+
+    {findings, degraded}
   end
 end
