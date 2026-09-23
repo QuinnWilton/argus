@@ -1174,6 +1174,11 @@ defmodule Argus.Extractor.Helpers do
 
   defp interpret({:get_tuple_element, src, idx, _dst}, rest, _reg) do
     case resolve_source(rest, src) do
+      # A field of a call's field (`{:ok, {pid, ref}} = start_monitor(...)`)
+      # is not an element of the marker that names the outer field.
+      {:ok, {:call_field, _mfa, _field}} ->
+        :dynamic
+
       {:ok, tuple} when is_tuple(tuple) and idx < tuple_size(tuple) ->
         {:ok, elem(tuple, idx)}
 

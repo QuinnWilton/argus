@@ -744,6 +744,22 @@ defmodule Argus.Extractor.HelpersTest do
                {:ok, {:call_field, "File:read/1", 1}}
     end
 
+    test "a field of a call's field is unknown, not an element of the marker" do
+      # `{:ok, {pid, _ref}} = GenServer.start_monitor(...)`: x2 is field 1
+      # of the call's result and x3 is field 0 of that, which nothing names.
+      instrs = [
+        {:func_info, {:atom, MyMod}, {:atom, :start}, 0},
+        {:label, 1},
+        {:call_ext, 3, {:extfunc, GenServer, :start_monitor, 3}},
+        {:get_tuple_element, {:x, 0}, 1, {:x, 2}},
+        {:get_tuple_element, {:x, 2}, 0, {:x, 3}},
+        {:move, {:x, 3}, {:x, 0}},
+        {:call_ext, 2, {:extfunc, GenServer, :call, 2}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 6, {:x, 0}) == :dynamic
+    end
+
     test "resolves field 0 (the :ok tag) the same way" do
       instrs = [
         {:func_info, {:atom, MyMod}, {:atom, :start}, 0},

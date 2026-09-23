@@ -11,6 +11,11 @@ Grouped by concern. Each entry opens with what it does: **Added**,
 
 ### Fact schema and extraction
 
+**Fixed.** `Helpers.resolve_register/3` read a field of a call's field
+(`{:ok, {pid, _ref}} = GenServer.start_monitor(...)`) as an element of
+the `{:call_field, mfa, n}` marker naming the outer field, so `pid`
+resolved to the atom `:call_field`; it is unknown now.
+
 **Changed.** Schema 45. `spawn_call` names what the new process runs instead of
 recording "dynamic": `spawn(M, F, args)` and the node-qualified form run
 M.F/length(args) when the module, function and the argument list's length
