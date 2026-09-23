@@ -338,7 +338,7 @@ defmodule Argus.Test.Fixtures.Quiet do
 
     def mount(_params, _session, socket) do
       record = Process.get(:current_record)
-      String.to_atom(record.kind)
+      _ = String.to_atom(record.kind)
       {:ok, socket}
     end
   end

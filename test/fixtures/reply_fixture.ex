@@ -12,6 +12,7 @@ defmodule Argus.Test.Fixtures.Reply do
     @moduledoc "The bug: defers, and drops `from` on the floor."
     use GenServer
 
+    @impl GenServer
     def init(_), do: {:ok, %{}}
 
     @impl GenServer
@@ -22,6 +23,7 @@ defmodule Argus.Test.Fixtures.Reply do
     @moduledoc "The ordinary case. Nothing deferred, nothing to keep."
     use GenServer
 
+    @impl GenServer
     def init(_), do: {:ok, %{}}
 
     @impl GenServer
@@ -32,6 +34,7 @@ defmodule Argus.Test.Fixtures.Reply do
     @moduledoc "Stores `from`, replies from another callback."
     use GenServer
 
+    @impl GenServer
     def init(_), do: {:ok, %{waiting: nil}}
 
     @impl GenServer
@@ -52,6 +55,7 @@ defmodule Argus.Test.Fixtures.Reply do
     """
     use GenServer
 
+    @impl GenServer
     def init(_), do: {:ok, %{waiting: nil}}
 
     @impl GenServer
@@ -137,6 +141,7 @@ defmodule Argus.Test.Fixtures.Reply do
     """
     use GenServer
 
+    @impl GenServer
     def init(_), do: {:ok, %{}}
 
     @impl GenServer

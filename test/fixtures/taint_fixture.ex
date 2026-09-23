@@ -18,7 +18,7 @@ defmodule Argus.Test.Fixtures.Taint do
     @behaviour Phoenix.LiveView
 
     def handle_event("save", %{"name" => name}, socket) do
-      String.to_atom("field_" <> name)
+      _ = String.to_atom("field_" <> name)
       {:noreply, socket}
     end
 
@@ -61,7 +61,7 @@ defmodule Argus.Test.Fixtures.Taint do
 
     def call(conn, _opts) do
       record = Store.load(:current)
-      String.to_atom(record.kind)
+      _ = String.to_atom(record.kind)
       conn
     end
   end
@@ -92,7 +92,7 @@ defmodule Argus.Test.Fixtures.Taint do
     @behaviour Phoenix.LiveView
 
     def handle_event(_event, _params, socket) do
-      String.to_atom(socket.assigns.field)
+      _ = String.to_atom(socket.assigns.field)
       {:noreply, socket}
     end
   end
@@ -102,7 +102,7 @@ defmodule Argus.Test.Fixtures.Taint do
     @behaviour Phoenix.LiveView
 
     def mount(_params, %{"role" => role}, socket) do
-      String.to_atom(role)
+      _ = String.to_atom(role)
       {:ok, socket}
     end
   end
@@ -112,7 +112,7 @@ defmodule Argus.Test.Fixtures.Taint do
     @behaviour Phoenix.LiveView
 
     def handle_event(_event, _params, socket) do
-      String.to_atom("fixed")
+      _ = String.to_atom("fixed")
       {:noreply, socket}
     end
   end

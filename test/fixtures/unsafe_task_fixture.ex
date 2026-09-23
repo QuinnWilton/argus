@@ -89,15 +89,8 @@ defmodule Argus.Test.Fixtures.TaskFactory do
   end
 end
 
-# Stub behaviour for testing LiveView suppression.
-# Phoenix.LiveView is not a dependency of argus.
-defmodule Phoenix.LiveView do
-  @moduledoc false
-  @callback mount(term(), term(), term()) :: term()
-  @callback handle_info(term(), term()) :: term()
-  @callback render(term()) :: term()
-end
-
+# Phoenix.LiveView is a stub (test/fixtures/behaviour_stubs.ex): it is
+# not a dependency of argus.
 defmodule Argus.Test.Fixtures.LiveViewTaskConsumer do
   @moduledoc false
 

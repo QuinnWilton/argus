@@ -13,6 +13,7 @@ defmodule Argus.Test.Fixtures.Shutdown do
     @moduledoc "The bug: durable cleanup, no trap_exit."
     @behaviour GenServer
 
+    @impl GenServer
     def init(_), do: {:ok, %{path: "/tmp/leaks"}}
 
     @impl GenServer
@@ -26,6 +27,7 @@ defmodule Argus.Test.Fixtures.Shutdown do
     @moduledoc "The same cleanup, reached because the module traps exits."
     @behaviour GenServer
 
+    @impl GenServer
     def init(_) do
       Process.flag(:trap_exit, true)
       {:ok, %{path: "/tmp/traps"}}
@@ -42,6 +44,7 @@ defmodule Argus.Test.Fixtures.Shutdown do
     @moduledoc "Same as Leaks, but the write is a call or two down."
     @behaviour GenServer
 
+    @impl GenServer
     def init(_), do: {:ok, %{path: "/tmp/indirect"}}
 
     @impl GenServer
@@ -64,6 +67,7 @@ defmodule Argus.Test.Fixtures.Shutdown do
 
     require Logger
 
+    @impl GenServer
     def init(_), do: {:ok, %{}}
 
     @impl GenServer
@@ -98,6 +102,7 @@ defmodule Argus.Test.Fixtures.Shutdown do
     """
     @behaviour GenServer
 
+    @impl GenServer
     def init(_), do: {:ok, %{}}
 
     @impl GenServer
