@@ -2,7 +2,7 @@
 //
 // Include this file after declaring `.decl call_edge(caller: symbol, callee: symbol)`.
 // Requires base.dl relations: remote_call, bif_call, local_call, function_def,
-// closure_def. NOT instruction — see below.
+// closure_def, fun_ref. NOT instruction — see below.
 
 // Remote call: caller function -> "mod:func/arity" string.
 call_edge(caller_func, callee) :-
@@ -36,3 +36,11 @@ call_edge(caller_func, target) :-
 // lifts closure bodies into top-level functions and references them via make_fun3,
 // so they show up here as concrete function IDs.
 call_edge(parent, child) :- closure_def(parent, child).
+
+// A fun value the function hands to a call without calling it —
+// `&URI.parse/1` handed to Enum.map — is an edge for the same reason: what
+// the fun is handed to may call it. Without it the graph stopped at
+// Enum.map. Like a closure edge, the same-process walks set it
+// aside (reach.dl's SameProcess variants); a function that also calls the
+// target has no fun_ref row, so that call's edge stays.
+call_edge(f, g) :- fun_ref(f, g).

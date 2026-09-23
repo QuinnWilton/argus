@@ -365,6 +365,75 @@ defmodule Argus.Pipeline.EmitTest do
     end
   end
 
+  describe "fun_ref" do
+    test "a literal fun handed to a call is a reference" do
+      facts =
+        emit_func([
+          {:move, {:literal, &URI.parse/1}, {:x, 1}},
+          {:call_ext, 2, {:extfunc, Enum, :map, 2}},
+          :return
+        ])
+
+      assert facts[:fun_ref] == [["TestMod:test_func/0", "URI:parse/1"]]
+    end
+
+    test "a fun the call hands back, or one built into data, is not" do
+      facts =
+        emit_func([
+          # Keyword.get(opts, :on_fail, &URI.decode/1): the default comes back.
+          {:move, {:atom, :on_fail}, {:x, 1}},
+          {:move, {:literal, &URI.decode/1}, {:x, 2}},
+          {:call_ext, 3, {:extfunc, Keyword, :get, 3}},
+          # A table of funs held in a literal, and a fun put in a tuple.
+          {:move, {:literal, %{parse: &URI.parse/1}}, {:x, 0}},
+          {:put_tuple2, {:x, 0}, {:list, [{:literal, &String.upcase/1}, {:x, 1}]}},
+          :return
+        ])
+
+      assert facts[:fun_ref] == nil
+    end
+
+    test "make_fun/3 of literals handed to a call is a reference" do
+      literal =
+        emit_func([
+          {:move, {:atom, URI}, {:x, 0}},
+          {:move, {:atom, :parse}, {:x, 1}},
+          {:move, {:integer, 1}, {:x, 2}},
+          {:call_ext, 3, {:extfunc, :erlang, :make_fun, 3}},
+          {:move, {:x, 0}, {:x, 1}},
+          {:move, {:y, 0}, {:x, 0}},
+          {:call_ext, 2, {:extfunc, Enum, :each, 2}},
+          :return
+        ])
+
+      assert literal[:fun_ref] == [["TestMod:test_func/0", "URI:parse/1"]]
+
+      unknown =
+        emit_func([
+          {:move, {:atom, :parse}, {:x, 1}},
+          {:move, {:integer, 1}, {:x, 2}},
+          {:call_ext, 3, {:extfunc, :erlang, :make_fun, 3}},
+          {:move, {:x, 0}, {:x, 1}},
+          {:call_ext, 2, {:extfunc, Enum, :each, 2}},
+          :return
+        ])
+
+      assert unknown[:fun_ref] == nil
+    end
+
+    test "a function that calls its reference's target has no row" do
+      facts =
+        emit_func([
+          {:call_ext, 1, {:extfunc, URI, :parse, 1}},
+          {:move, {:literal, &URI.parse/1}, {:x, 1}},
+          {:call_ext, 2, {:extfunc, Enum, :map, 2}},
+          :return
+        ])
+
+      assert facts[:fun_ref] == nil
+    end
+  end
+
   describe "control flow facts" do
     test "emits jump" do
       facts = emit_func([{:jump, {:f, 5}}])

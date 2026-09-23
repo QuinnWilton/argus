@@ -252,7 +252,8 @@ bottleneck_caller(caller_mod, target_mod, witness) :-
 
 same_process_edge(caller, callee) :-
   call_edge(caller, callee),
-  !closure_def(caller, callee).
+  !closure_def(caller, callee),
+  !fun_ref(caller, callee).
 
 .decl callback_reaches(entry: symbol, func: symbol, proximity: symbol)
 

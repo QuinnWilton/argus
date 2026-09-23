@@ -28,6 +28,21 @@ or rename by the 0.17 entry below.
 
 ### Fact schema and extraction
 
+**Added.** Schema 58. `fun_ref(caller, callee)`: a function hands `callee`, as a
+fun value, to a call that may invoke it and does not call it itself — a
+literal external fun (`&URI.parse/1`) or `erlang:make_fun/3` of literals
+in an argument position whose data the call's result does not carry
+(`Keyword.get(opts, :on_fail, &M.f/2)` hands its default back to be
+stored; a callback stored in state is not run by the function storing
+it). The call graph follows it (`call_edge`), so `Enum.map(list,
+&URI.parse/1)` reaches `URI.parse/1`; it stopped at `Enum.map` before.
+The same-process walks (`reach.dl`'s SameProcess variants, `blocking`'s
+same-process edge, `processes.dl`'s `same_process_call`) set it aside as
+they do a closure: a fun may run in
+another process. Local captures were already `closure_def` rows.
+`blocking` and `mailbox` read `fun_ref` (pins). `Helpers.fun_origin/3`
+also reads `erlang:make_fun/3` of literals.
+
 **Changed.** Schema 57. `spawn_call` records every call that starts a process
 running a function its arguments name, and says how far they resolve.
 New: `erlang:spawn_opt/2..5`, `proc_lib:spawn/1..4`, `spawn_link/1..4`,

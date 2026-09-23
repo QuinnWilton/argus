@@ -309,10 +309,14 @@ self_pid(g, p) :-
   self_relevant(g).
 
 // A call that runs the callee on the caller's stack: not a closure's
-// creation, which call_edge also counts.
+// creation, nor a fun handed to a call (fun_ref), which call_edge also
+// counts.
 .decl same_process_call(caller: symbol, callee: symbol)
 
-same_process_call(f, g) :- call_edge(f, g), !match(".*:-.*-fun-[0-9]+-/[0-9]+", g).
+same_process_call(f, g) :-
+  call_edge(f, g),
+  !match(".*:-.*-fun-[0-9]+-/[0-9]+", g),
+  !fun_ref(f, g).
 
 .decl reads_self(func: symbol)
 

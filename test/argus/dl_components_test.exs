@@ -7,6 +7,7 @@ defmodule Argus.DlComponentsTest do
                                   holds every closure_def, as stage 0
                                   derives it)
       k -> sink
+      r -> c                     (a fun reference: r holds &c/0)
       other -> c                 (`other` lives in module N; the rest in M)
   """
   use ExUnit.Case, async: true
@@ -18,9 +19,11 @@ defmodule Argus.DlComponentsTest do
   @program ~S"""
   .decl call_edge(a: symbol, b: symbol)
   .decl closure_def(a: symbol, b: symbol)
+  .decl fun_ref(a: symbol, b: symbol)
   .decl function_def(func: symbol, mod: symbol, name: symbol, arity: number, exported: number)
   .input call_edge
   .input closure_def
+  .input fun_ref
   .input function_def
   .include "reach.dl"
 
@@ -60,12 +63,19 @@ defmodule Argus.DlComponentsTest do
 
     facts = Path.join(dir, "facts")
     File.mkdir_p!(facts)
-    File.write!(Path.join(facts, "call_edge.facts"), "a\tb\nb\tc\nc\tsink\nk\tsink\nother\tc\n")
+
+    File.write!(
+      Path.join(facts, "call_edge.facts"),
+      "a\tb\nb\tc\nc\tsink\nk\tsink\nother\tc\nr\tc\n"
+    )
+
     File.write!(Path.join(facts, "closure_def.facts"), "b\tc\n")
+    File.write!(Path.join(facts, "fun_ref.facts"), "r\tc\n")
 
     File.write!(
       Path.join(facts, "function_def.facts"),
-      Enum.map_join(~w(a b c sink k), "", &"#{&1}\tM\t#{&1}\t0\t1\n") <> "other\tN\tother\t0\t1\n"
+      Enum.map_join(~w(a b c sink k r), "", &"#{&1}\tM\t#{&1}\t0\t1\n") <>
+        "other\tN\tother\t0\t1\n"
     )
 
     reach = Path.join(:code.priv_dir(:panoptes), "dl/clientlib/reach.dl")
@@ -83,13 +93,15 @@ defmodule Argus.DlComponentsTest do
   end
 
   test "backward variants differ only in the step they take", %{out: out} do
-    # Callers of sink: c and k directly, b and other through c, a through b.
-    assert out["call"] == ~w(a b c k other)
-    # The closure edge b -> c is not followed, so a and b drop out.
+    # Callers of sink: c and k directly, b, other and r through c, a
+    # through b.
+    assert out["call"] == ~w(a b c k other r)
+    # The closure edge b -> c and the fun reference r -> c are not
+    # followed, so a, b and r drop out.
     assert out["same"] == ~w(c k other)
     # `other` reaches c but from another module.
-    assert out["intra"] == ~w(a b c)
-    assert out["call_set"] == ~w(a b c k other)
+    assert out["intra"] == ~w(a b c r)
+    assert out["call_set"] == ~w(a b c k other r)
   end
 
   test "forward variants walk from the root", %{out: out} do

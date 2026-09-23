@@ -33,6 +33,42 @@ defmodule Argus.Stage0Test do
   end
 
   describe "derive_stage0/2" do
+    test "a fun held by a function is an edge the call graph follows", %{tmp_dir: tmp_dir} do
+      skip_without_souffle()
+
+      [{_mod, beam}] =
+        Code.compile_string("""
+        defmodule Argus.Stage0Test.Refs do
+          def parse(list), do: Enum.map(list, &URI.parse/1)
+          def stored(opts), do: %{on_fail: Keyword.get(opts, :on_fail, &URI.decode/1)}
+          def both(list), do: {URI.encode("x"), Enum.map(list, &URI.encode/1)}
+        end
+        """)
+
+      path = Path.join(tmp_dir, "Elixir.Argus.Stage0Test.Refs.beam")
+      File.write!(path, beam)
+      facts_dir = Path.join(tmp_dir, "facts")
+      {:ok, _} = Pipeline.run([path], facts_dir)
+      assert :ok = Analysis.derive_stage0(facts_dir)
+
+      edges =
+        facts_dir
+        |> Path.join("call_edge.facts")
+        |> File.read!()
+        |> String.split("\n", trim: true)
+        |> MapSet.new(&(&1 |> String.split("\t") |> List.to_tuple()))
+
+      mod = "Argus.Stage0Test.Refs"
+      assert {"#{mod}:parse/1", "URI:parse/1"} in edges
+      assert {"#{mod}:both/1", "URI:encode/1"} in edges
+      # Stored as a callback, not run: Keyword.get hands the default back.
+      refute {"#{mod}:stored/1", "URI:decode/1"} in edges
+
+      refs = facts_dir |> Path.join("fun_ref.facts") |> File.read!()
+      # both/1 calls URI.encode/1 itself: the call gives the edge.
+      refute refs =~ "#{mod}:both/1"
+    end
+
     test "writes call_edge.facts into the facts directory", %{tmp_dir: tmp_dir} do
       skip_without_souffle()
 

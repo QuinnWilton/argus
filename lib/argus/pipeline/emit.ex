@@ -17,7 +17,7 @@ defmodule Argus.Pipeline.Emit do
   alias Argus.Extractor.Helpers
   alias Argus.Instr
   alias Argus.InstrId
-  alias Argus.Pipeline.Emit.Spawns
+  alias Argus.Pipeline.Emit.{FunRefs, Spawns}
   alias Argus.Pipeline.Normalize
 
   import Argus.Extractor.Helpers, only: [add_fact: 3]
@@ -90,6 +90,7 @@ defmodule Argus.Pipeline.Emit do
     |> emit_calls_followed_by_branch(normalized)
     |> emit_receives(func_id, normalized)
     |> emit_spawns(func_id, normalized)
+    |> emit_fun_refs(func_id, normalized)
     |> emit_instructions_loop(func_id, normalized, 0, line_table, nil)
   end
 
@@ -677,6 +678,15 @@ defmodule Argus.Pipeline.Emit do
 
   defp location_keyword?(list) do
     Keyword.keyword?(list) and Keyword.has_key?(list, :file) and Keyword.has_key?(list, :line)
+  end
+
+  # A fun value is an edge only if the function does not call its target
+  # anyway, which only the whole function can say
+  # (`Argus.Pipeline.Emit.FunRefs`).
+  defp emit_fun_refs(facts, func_id, normalized) do
+    func_id
+    |> FunRefs.rows(normalized)
+    |> Enum.reduce(facts, &add_fact(&2, :fun_ref, &1))
   end
 
   # What a spawn runs is in its arguments, so it is resolved here, where

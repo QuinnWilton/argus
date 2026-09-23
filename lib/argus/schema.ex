@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 57
+  @schema_version 58
 
   # Layer 1: Module-level facts.
 
@@ -442,6 +442,18 @@ defmodule Argus.Schema do
     ],
     doc: """
     A call that starts a process running a function its arguments name — `erlang:spawn/1..4`, `spawn_link`, `spawn_monitor` and `spawn_opt/2..5`, `proc_lib:spawn*`, `start`, `start_link` and `start_monitor`, `Process.spawn/2,4` — and what that function is (`Argus.Pipeline.Emit.Spawns`): the function a closure was lifted to (`-f/1-fun-0-`, its arity counting the captured variables), the one a literal external fun names, or M.F/length(args) when M and F are literal (the arity -1 when the list's length is not). A fun that is the caller's parameter is `param`, for the rules to look up at the callers. What does not resolve is "dynamic" and -1; a literal M or F is kept beside an unknown other. `variant` reads a literal options list. A spawn is a process allocation site: `Argus.Extractors.PidFlow` names the processes it creates by it.
+    """
+  }
+
+  @fun_ref %{
+    name: :fun_ref,
+    layer: 1,
+    fields: [
+      {:caller, :func_id, "function holding the reference"},
+      {:callee, :func_id, "function the fun value runs (mod:func/arity)"}
+    ],
+    doc: """
+    A function hands `callee`, as a fun value, to a call that may invoke it, and does not call it itself (`Argus.Pipeline.Emit.FunRefs`): a literal external fun `&Mod.f/1`, or `erlang:make_fun/3` of literals, in an argument position whose data the call's result does not carry. `Enum.map(list, &URI.parse/1)` names `URI.parse/1` only here; `Keyword.get(opts, :on_fail, &M.f/2)` hands the fun back to be stored, and a fun built into a tuple, list or map, or held in a literal table, is not handed to a call. The call graph follows it like `closure_def`, and the same-process walks set it aside, as they do a closure. A local capture (`&helper/1`) is a `make_fun3`, and so a `closure_def`. A function that also calls `callee` directly has no row: the call relations already give that edge.
     """
   }
 
@@ -2463,6 +2475,7 @@ defmodule Argus.Schema do
     @send_msg,
     @recv_start,
     @spawn_call,
+    @fun_ref,
     @try_start,
     @try_end,
     @dynamic_call,

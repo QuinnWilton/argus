@@ -1146,6 +1146,9 @@ defmodule Argus.Extractor.Helpers do
             {:make_fun3, {mod, fun, arity}, _index, _uniq, _dst, _env} ->
               {:closure, {mod, fun, arity}}
 
+            {:call_ext, 3, {:extfunc, :erlang, :make_fun, 3}} when reg == {:x, 0} ->
+              made_fun(instrs, at)
+
             instr ->
               case Instr.copy_source(instr, reg) do
                 {kind, _} = source when kind in [:x, :y] -> fun_made(instrs, at, source)
@@ -1155,6 +1158,20 @@ defmodule Argus.Extractor.Helpers do
           end
       end)
     end)
+  end
+
+  # erlang:make_fun(M, F, A) of literals: the external fun `&M.F/A`.
+  defp made_fun(instrs, at) do
+    with {:ok, mod} when is_atom(mod) and mod != :dynamic <-
+           resolve_register(instrs, at, {:x, 0}),
+         {:ok, fun} when is_atom(fun) and fun != :dynamic <-
+           resolve_register(instrs, at, {:x, 1}),
+         {:ok, arity} when is_integer(arity) and arity >= 0 <-
+           resolve_register(instrs, at, {:x, 2}) do
+      {:external, {mod, fun, arity}}
+    else
+      _ -> nil
+    end
   end
 
   # A fun in a literal is external: a local fun cannot be a constant.
