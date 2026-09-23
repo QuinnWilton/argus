@@ -142,4 +142,107 @@ defmodule Argus.Test.Fixtures.Consistency do
 
     defp keep(t) when is_reference(t) or is_atom(t), do: {:table, t}
   end
+
+  defmodule PerTarget do
+    @moduledoc """
+    Four sites read :gvar under a catch; one reads :stats bare, the only
+    site on that table. mnesia's own shape (mnesia_lib:read_counter/1):
+    each table keeps its own convention, and the bare read is not a
+    deviant from the other table's.
+    """
+    def a(k), do: gvar(k)
+    def b(k), do: gvar(k)
+    def c(k), do: gvar(k)
+    def d(k), do: gvar(k)
+
+    def e(k), do: :ets.lookup_element(:stats, k, 2)
+
+    defp gvar(k) do
+      :ets.lookup_element(:gvar, k, 2)
+    catch
+      :error, :badarg -> nil
+    end
+  end
+
+  defmodule SameTargetBare do
+    @moduledoc "Four sites read :gvar under a catch and a fifth reads it bare: the deviant."
+    def a(k), do: guarded(k)
+    def b(k), do: guarded2(k)
+    def c(k), do: guarded3(k)
+    def d(k), do: guarded4(k)
+    def e(k), do: :ets.lookup_element(:gvar, k, 2)
+
+    defp guarded(k) do
+      :ets.lookup_element(:gvar, k, 2)
+    catch
+      :error, :badarg -> nil
+    end
+
+    defp guarded2(k) do
+      :ets.lookup_element(:gvar, k, 2)
+    catch
+      :error, :badarg -> nil
+    end
+
+    defp guarded3(k) do
+      :ets.lookup_element(:gvar, k, 2)
+    catch
+      :error, :badarg -> nil
+    end
+
+    defp guarded4(k) do
+      :ets.lookup_element(:gvar, k, 2)
+    catch
+      :error, :badarg -> nil
+    end
+  end
+
+  defmodule UnknownTargetBare do
+    @moduledoc """
+    The bare site's table is a parameter: it is judged against every site
+    of the callee, the four guarded ones on :gvar included.
+    """
+    def a(k), do: guarded(k)
+    def b(k), do: guarded2(k)
+    def c(k), do: guarded3(k)
+    def d(k), do: guarded4(k)
+    def e(t, k), do: :ets.lookup_element(t, k, 2)
+
+    defp guarded(k) do
+      :ets.lookup_element(:gvar, k, 2)
+    catch
+      :error, :badarg -> nil
+    end
+
+    defp guarded2(k) do
+      :ets.lookup_element(:gvar, k, 2)
+    catch
+      :error, :badarg -> nil
+    end
+
+    defp guarded3(k) do
+      :ets.lookup_element(:gvar, k, 2)
+    catch
+      :error, :badarg -> nil
+    end
+
+    defp guarded4(k) do
+      :ets.lookup_element(:gvar, k, 2)
+    catch
+      :error, :badarg -> nil
+    end
+  end
+
+  defmodule OtherTable do
+    @moduledoc "Guarded reads of another table: not part of :gvar's population."
+    def a(k), do: other(k)
+    def b(k), do: other(k)
+    def c(k), do: other(k)
+
+    defp other(k) do
+      :ets.lookup_element(:other, k, 2)
+    catch
+      :error, :badarg -> nil
+    end
+  end
 end

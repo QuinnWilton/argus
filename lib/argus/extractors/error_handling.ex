@@ -18,10 +18,11 @@ defmodule Argus.Extractors.ErrorHandling do
   - `bare_rescue(id, func)` — catch-all rescue without filtering or reraising
   - `trap_exit(func, mod)` — `Process.flag(:trap_exit, true)` call site
   - `exit_call(id, func, target)` — explicit `Process.exit/2` or `:erlang.exit/1,2`
-  - `call_result(id, func, callee, fate, guard)` — every call to a process
+  - `call_result(id, func, callee, fate, guard, guard_end, target)` — every call to a process
     or OTP API (and every `start_link`/`start`/`start_child`), with what
     became of its result (`used`, `ignored`, `returned` for a tail call,
-    `dynamic`) and whether the site sits inside a `try` (`try` | `bare`).
+    `dynamic`), whether the site sits inside a `try` (`try` | `bare`), and
+    its first argument when that is a literal (the table, the name).
     The population a consistency rule counts: which fate the other call
     sites of the same callee chose is the belief, and the odd one out is
     the finding (Engler et al., "Bugs as deviant behavior").
@@ -208,9 +209,29 @@ defmodule Argus.Extractors.ErrorHandling do
           {label, try_idx} -> {"try", handler_end(ctx, label, try_idx)}
         end
 
-      add_fact(facts, :call_result, [id, ctx.func_id, callee, result_fate(ctx), guard, guard_end])
+      add_fact(facts, :call_result, [
+        id,
+        ctx.func_id,
+        callee,
+        result_fate(ctx),
+        guard,
+        guard_end,
+        call_target(ctx)
+      ])
     else
       facts
+    end
+  end
+
+  # What the call acts on, when its first argument is a literal: the
+  # table, the server name, the supervisor. Sites on different targets
+  # keep different conventions — mnesia reads its own gvar table under a
+  # catch 120 times and its stats table bare once, on purpose — so the
+  # belief a site is judged by is its target's. Empty when not literal.
+  defp call_target(%{instrs: instrs, idx: idx}) do
+    case key_identity(instrs, idx, {:x, 0}, nil) do
+      {"literal", value} -> value
+      _other -> ""
     end
   end
 

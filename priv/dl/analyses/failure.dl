@@ -37,7 +37,7 @@
 .decl orphan_process(func: symbol, site: symbol, kind: symbol, target: symbol)
 .output orphan_process
 
-.decl inconsistent_handling(func: symbol, site: symbol, callee: symbol, belief: symbol, agree: number, deviate: number)
+.decl inconsistent_handling(func: symbol, site: symbol, callee: symbol, belief: symbol, agree: number, deviate: number, target: symbol)
 .output inconsistent_handling
 
 // ── Swallowed errors ─────────────────────────────────────────────
@@ -188,18 +188,35 @@ unchecked_result(func, id, "Process.whereis", name) :-
 // ignored is a convention, not a slip. Only the used/ignored and
 // try/bare fates take part; a tail call hands its result on and says
 // nothing about either belief.
+//
+// The population is the callee's sites on the same target — the table,
+// the server — when the site's first argument is a literal: mnesia
+// reads its gvar table under a catch 120 times and its stats table bare
+// once, on purpose, and pooling the two made the one a deviant. A site
+// whose target is unknown (`scope` "") is judged against every site of
+// the callee.
 
-.decl fate_count(callee: symbol, fate: symbol, n: number)
+.decl fate_count(callee: symbol, scope: symbol, fate: symbol, n: number)
 
-fate_count(callee, fate, n) :-
-  call_result(_, _, callee, fate, _, _),
-  n = count : { call_result(_, _, callee, fate, _, _) }.
+fate_count(callee, "", fate, n) :-
+  call_result(_, _, callee, fate, _, _, _),
+  n = count : { call_result(_, _, callee, fate, _, _, _) }.
 
-.decl guard_count(callee: symbol, guard: symbol, n: number)
+fate_count(callee, t, fate, n) :-
+  call_result(_, _, callee, fate, _, _, t),
+  t != "",
+  n = count : { call_result(_, _, callee, fate, _, _, t) }.
 
-guard_count(callee, guard, n) :-
-  call_result(_, _, callee, _, guard, _),
-  n = count : { call_result(_, _, callee, _, guard, _) }.
+.decl guard_count(callee: symbol, scope: symbol, guard: symbol, n: number)
+
+guard_count(callee, "", guard, n) :-
+  call_result(_, _, callee, _, guard, _, _),
+  n = count : { call_result(_, _, callee, _, guard, _, _) }.
+
+guard_count(callee, t, guard, n) :-
+  call_result(_, _, callee, _, guard, _, t),
+  t != "",
+  n = count : { call_result(_, _, callee, _, guard, _, t) }.
 
 // A result is worth checking only if the callee can fail by returning:
 // a callee whose spec names no failure value (`:ets.new/2` returns a
@@ -216,31 +233,34 @@ result_uncheckable(c) :- callee_returns(c, "total").
 result_uncheckable(c) :- callee_returns(c, "no_return").
 
 // A site unchecked_result already owns is not reported twice.
-inconsistent_handling(func, site, callee, "result_checked", used, ignored) :-
-  call_result(site, func, callee, "ignored", _, _),
+inconsistent_handling(func, site, callee, "result_checked", used, ignored, t) :-
+  call_result(site, func, callee, "ignored", _, _, t),
   !result_uncheckable(callee),
-  fate_count(callee, "used", used),
-  fate_count(callee, "ignored", ignored),
+  fate_count(callee, t, "used", used),
+  fate_count(callee, t, "ignored", ignored),
   used >= 3,
   ignored * 4 <= used + ignored,
   !unchecked_result(func, site, _, _).
 
-inconsistent_handling(func, site, callee, "exception_guarded", guarded, bare) :-
-  call_result(site, func, callee, _, "bare", _),
-  guard_count(callee, "try", guarded),
-  guard_count(callee, "bare", bare),
+inconsistent_handling(func, site, callee, "exception_guarded", guarded, bare, t) :-
+  call_result(site, func, callee, _, "bare", _, t),
+  guard_count(callee, t, "try", guarded),
+  guard_count(callee, t, "bare", bare),
   guarded >= 3,
   bare * 4 <= guarded + bare.
 
 // The sites that follow the convention, attached to the finding as its
-// evidence: what "every other call site" looks like.
-.decl handling_site(callee: symbol, belief: symbol, site: symbol, func: symbol, guard_end: symbol)
+// evidence: what "every other call site" looks like, drawn from the
+// population the deviant was judged against.
+.decl handling_site(callee: symbol, belief: symbol, site: symbol, func: symbol, guard_end: symbol, target: symbol)
 .output handling_site
 
-handling_site(callee, "exception_guarded", site, f, guard_end) :-
-  inconsistent_handling(_, _, callee, "exception_guarded", _, _),
-  call_result(site, f, callee, _, "try", guard_end).
+handling_site(callee, "exception_guarded", site, f, guard_end, t) :-
+  inconsistent_handling(_, _, callee, "exception_guarded", _, _, t),
+  call_result(site, f, callee, _, "try", guard_end, t2),
+  (t = "" ; t = t2).
 
-handling_site(callee, "result_checked", site, f, "") :-
-  inconsistent_handling(_, _, callee, "result_checked", _, _),
-  call_result(site, f, callee, "used", _, _).
+handling_site(callee, "result_checked", site, f, "", t) :-
+  inconsistent_handling(_, _, callee, "result_checked", _, _, t),
+  call_result(site, f, callee, "used", _, _, t2),
+  (t = "" ; t = t2).

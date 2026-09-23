@@ -581,7 +581,8 @@ defmodule Argus.FindingsTest do
           ":gen_server:call/2",
           "result_checked",
           "5",
-          "1"
+          "1",
+          ""
         ])
 
       assert attrs.module == :my_mod
@@ -593,6 +594,7 @@ defmodule Argus.FindingsTest do
           "result_checked",
           "",
           ":my_mod:other/0",
+          "",
           ""
         ])
 

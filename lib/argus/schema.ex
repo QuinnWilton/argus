@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 50
+  @schema_version 51
 
   # Layer 1: Module-level facts.
 
@@ -1817,13 +1817,15 @@ defmodule Argus.Schema do
       {:callee, :func_id, "callee function ID (mod:func/arity)"},
       {:fate, :symbol, "used | ignored | returned | dynamic"},
       {:guard, :symbol, "try | bare"},
-      {:guard_end, :symbol, "for try, the handler's last instruction; else empty"}
+      {:guard_end, :symbol, "for try, the handler's last instruction; else empty"},
+      {:target, :symbol, "the first argument, inspected, when it is a literal; else empty"}
     ],
     doc: """
     A call to a process or OTP API, or to anything that starts a process, \
     with what became of its result and whether the site sits inside a \
-    try. One row per site, so a rule can count how the other sites of the \
-    same callee behave and report the one that disagrees.
+    try, and what it acts on when a literal says. One row per site, so a \
+    rule can count how the other sites of the same callee (on the same \
+    target) behave and report the one that disagrees.
     """
   }
 

@@ -17,13 +17,15 @@ defmodule Argus.Analyses.Failure do
     supervises: a bare `spawn` (no link, no monitor, nothing observes a
     crash), or an `exit` signal sent to `target` from a callback, past
     the supervisor that owns it.
-  - `inconsistent_handling(func, site, callee, belief, agree, deviate)` —
+  - `inconsistent_handling(func, site, callee, belief, agree, deviate, target)` —
     a call site that breaks with the program's own convention for its
     callee: `belief` is `result_checked` (every other site matches the
     result; this one discards it) or `exception_guarded` (every other
     site wraps the call in a `try`; this one does not). `agree` and
     `deviate` are the counts, and the severity is how unlikely the
-    deviation is by chance.
+    deviation is by chance. The population is the callee's sites on the
+    same literal `target` (a table, a name) when the site has one, and
+    every site of the callee when it does not (`target` empty).
   """
 
   @behaviour Argus.Analysis
@@ -86,7 +88,9 @@ defmodule Argus.Analyses.Failure do
           {:callee, :symbol, "the callee whose other sites disagree"},
           {:belief, :symbol, "result_checked | exception_guarded"},
           {:agree, :number, "sites that follow the convention"},
-          {:deviate, :number, "sites that break it, this one included"}
+          {:deviate, :number, "sites that break it, this one included"},
+          {:target, :symbol,
+           "the literal first argument the population shares; empty for all sites"}
         ],
         key: [:func, :site, :belief],
         doc: "A call site that breaks with how the program's other sites treat the same callee."
@@ -98,10 +102,12 @@ defmodule Argus.Analyses.Failure do
           {:belief, :symbol, "result_checked | exception_guarded"},
           {:site, :symbol, "a call site that follows the convention"},
           {:func, :symbol, "the function it is in"},
-          {:guard_end, :symbol, "for exception_guarded, the guard's last instruction; else empty"}
+          {:guard_end, :symbol,
+           "for exception_guarded, the guard's last instruction; else empty"},
+          {:target, :symbol, "the population's target, as inconsistent_handling"}
         ],
-        key: [:callee, :belief, :site],
-        evidence: %{of: :inconsistent_handling, on: [:callee, :belief], limit: 3},
+        key: [:callee, :belief, :target, :site],
+        evidence: %{of: :inconsistent_handling, on: [:callee, :belief, :target], limit: 3},
         doc: "Sites that follow the convention the deviant one breaks, attached to its finding."
       },
       %{
@@ -119,7 +125,7 @@ defmodule Argus.Analyses.Failure do
   end
 
   @impl true
-  def finding(:inconsistent_handling, [func, site, callee, belief, agree, deviate]) do
+  def finding(:inconsistent_handling, [func, site, callee, belief, agree, deviate, _target]) do
     {agree, deviate} = {String.to_integer(agree), String.to_integer(deviate)}
     total = agree + deviate
 
@@ -296,7 +302,7 @@ defmodule Argus.Analyses.Failure do
   end
 
   @impl true
-  def evidence(:handling_site, [_callee, belief, site, func, guard_end]) do
+  def evidence(:handling_site, [_callee, belief, site, func, guard_end, _target]) do
     case belief do
       "exception_guarded" ->
         Findings.related("guarded by this {guard}", Findings.at_site_in_func(site, func),

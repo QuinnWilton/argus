@@ -12,7 +12,7 @@ defmodule Argus.Analyses.FailureConsistencyTest do
   defp rows(modules) do
     {:ok, results} = Argus.analyze(modules, :failure)
 
-    for [func, _site, callee, belief, agree, deviate] <- results["inconsistent_handling"],
+    for [func, _site, callee, belief, agree, deviate, _target] <- results["inconsistent_handling"],
         do: {func, callee, belief, String.to_integer(agree), String.to_integer(deviate)}
   end
 
@@ -71,6 +71,36 @@ defmodule Argus.Analyses.FailureConsistencyTest do
     end
   end
 
+  describe "the population" do
+    defp targets(modules) do
+      {:ok, results} = Argus.analyze(modules, :failure)
+
+      for [func, _, _, _, agree, deviate, target] <- results["inconsistent_handling"],
+          do: {func, agree, deviate, target}
+    end
+
+    test "is the callee's sites on the same literal target" do
+      skip_without_souffle()
+      assert targets([C.PerTarget]) == []
+      assert [{func, "4", "1", ":gvar"}] = targets([C.SameTargetBare])
+      assert func =~ "SameTargetBare:e/1"
+    end
+
+    test "is every site of the callee when the site's target is unknown" do
+      skip_without_souffle()
+      assert [{func, "4", "1", ""}] = targets([C.UnknownTargetBare])
+      assert func =~ "UnknownTargetBare:e/2"
+    end
+
+    test "draws the evidence from the deviant's own population" do
+      skip_without_souffle()
+      {:ok, result} = Argus.run_analyses([C.SameTargetBare, C.OtherTable], analyses: [:failure])
+      assert [f] = Enum.filter(result.findings, &(&1.title =~ "called bare"))
+      assert f.related != []
+      assert Enum.all?(f.related, &(elem(&1.mfa, 0) == C.SameTargetBare))
+    end
+  end
+
   describe "severity" do
     defp finding(agree, deviate) do
       Failure.finding(:inconsistent_handling, [
@@ -79,7 +109,8 @@ defmodule Argus.Analyses.FailureConsistencyTest do
         "DynamicSupervisor:start_child/2",
         "result_checked",
         to_string(agree),
-        to_string(deviate)
+        to_string(deviate),
+        ""
       ])
     end
 

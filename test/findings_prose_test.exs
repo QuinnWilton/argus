@@ -31,7 +31,8 @@ defmodule Argus.FindingsProseTest do
           ":gen_statem:call/3",
           "exception_guarded",
           "3",
-          "1"
+          "1",
+          ""
         ])
 
       assert attrs.title == ":gen_statem.call/3 called bare where every other call site guards it"

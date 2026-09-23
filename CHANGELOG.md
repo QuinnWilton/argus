@@ -631,6 +631,19 @@ scry paid six times on every cold compile and the suite paid on every
 test that enumerates the analyses. A program outside `priv/dl` is still
 read on every call.
 
+### failure
+
+**Changed.** Schema 51. `call_result` gains a `target` column: the call's first
+argument when it is a literal (the table, the server name).
+`failure.inconsistent_handling` judges a site against its callee's sites
+on the same target, and against every site of the callee only when its
+own target is unknown; the finding and its `handling_site` evidence
+carry the target. mnesia reads its gvar table under a catch 120 times
+and its stats table bare once, on purpose (`mnesia_lib:read_counter/1`);
+pooled per callee, the one read was a deviant. Postgrex's SCRAM cache
+and its parameters table, blockster's dedup table and its caches, were
+the same story in the corpus.
+
 ## 0.19.0 — 2026-09-22
 
 ### Added
