@@ -38,7 +38,9 @@ selection (`run/2`'s `:analyses`) resolves to modules.
 stage 0, priors); its `ensure_stage0/2` is public.
 `Argus.Findings.Anchor` parses anchors (`Argus.Findings.at_site/2` and
 the other `at_*` helpers delegate to it) and adds `from_row/1` and
-`empty/0`.
+`empty/0`. `Argus.Findings.Names` writes names as a reader does
+(`call_name/1`, `elsewhere/2`, `rpc_api/1`, and `render/1`, which
+`build/2` applies to every finding's prose).
 
 ### Fact schema and extraction
 

@@ -41,6 +41,7 @@ defmodule Argus.Findings do
   alias Argus.Analysis
   alias Argus.Analysis.Sets
   alias Argus.Findings.Anchor
+  alias Argus.Findings.Names
   alias Argus.InstrId
   alias Argus.Souffle
 
@@ -394,7 +395,7 @@ defmodule Argus.Findings do
             |> Map.update(:related, [], &(&1 ++ frames_for(evidence, joins, relation, row)))
             |> Map.put(:analysis, mod.name())
             |> Map.put(:concern, mod.name())
-            |> render_names()
+            |> Names.render()
 
           {[finding | findings], failures}
       end
@@ -438,35 +439,6 @@ defmodule Argus.Findings do
              "their raw columns; every other finding is as usual. This is a bug in Argus."
        }}
     ]
-  end
-
-  # The facts spell a function `Mod:fun/2` and a closure
-  # `Mod:-fun/2-fun-0-/1`; a reader writes `Mod.fun/2`, and wants the
-  # function a closure was written in. Done here, once, so no builder has
-  # to remember: every piece of prose a finding carries. An instruction
-  # ID (`Mod:fun/2#7`) is left as it is — it is not a name — and so is a
-  # raw column (`site=Mod:fun/2`) in a generic finding.
-  @generated_name ~r/([A-Za-z0-9_.:]+):-([A-Za-z0-9_?!]+)\/(\d+)-\S*?-\/\d+/
-  @function_id ~r/(?<![\w.:@=])(:[a-z][A-Za-z0-9_@]*|[A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*):([a-z_][A-Za-z0-9_?!]*)\/(\d+)(?![\d#])/
-
-  defp render_names(finding) do
-    finding
-    |> Map.update!(:title, &plain_names/1)
-    |> Map.update!(:detail, &plain_names/1)
-    |> Map.update!(:at_label, &plain_names/1)
-    |> Map.update!(:help, fn help -> Enum.map(help, &plain_names/1) end)
-    |> Map.update!(:related, fn related ->
-      Enum.map(related, &Map.update!(&1, :label, fn label -> plain_names(label) end))
-    end)
-  end
-
-  defp plain_names(nil), do: nil
-
-  defp plain_names(text) do
-    text
-    |> String.replace(@generated_name, "an anonymous function in \\1:\\2/\\3")
-    |> String.replace(~r/(^|\. )an anonymous function/, "\\1An anonymous function")
-    |> String.replace(@function_id, "\\1.\\2/\\3")
   end
 
   # How each finding relation joins its evidence, read once per build
@@ -784,49 +756,25 @@ defmodule Argus.Findings do
     }
   end
 
+  # ── Names in prose (Argus.Findings.Names) ─────────────────────────
+
   @doc """
-  A callee as a reader writes it: the facts spell a call target
-  `Mod:fun/arity` (`GenServer:call/2`, `:gen_statem:call/3`), prose wants
-  `GenServer.call/2` and `:gen_statem.call/3`. Anything else — an API
-  already spelled with a dot, a module — is returned as it is.
+  A callee as a reader writes it (`GenServer.call/2` for the facts'
+  `GenServer:call/2`): `Argus.Findings.Names.call_name/1`.
   """
   @spec call_name(String.t()) :: String.t()
-  def call_name(callee) when is_binary(callee) do
-    case Regex.run(~r/^(:?[A-Za-z][A-Za-z0-9_.]*):([a-z_][A-Za-z0-9_?!]*\/\d+)$/, callee) do
-      [_, mod, fun] -> "#{mod}.#{fun}"
-      nil -> callee
-    end
-  end
+  defdelegate call_name(callee), to: Names
 
   @doc """
-  Where a site is, said only when it is not in `func`: `" in Mod.fun/1"`,
-  else `""`. An interprocedural finding names the function where a pair
-  meets; its halves may sit in helpers that function calls.
-
-      iex> Argus.Findings.elsewhere("M:lookup/1#4", "M:ensure/1")
-      " in M.lookup/1"
-
-      iex> Argus.Findings.elsewhere("M:ensure/1#4", "M:ensure/1")
-      ""
+  `" in Mod.fun/1"` when a site is not in `func`, else `""`:
+  `Argus.Findings.Names.elsewhere/2`.
   """
   @spec elsewhere(String.t(), String.t()) :: String.t()
-  def elsewhere(site, func) when is_binary(site) and is_binary(func) do
-    case InstrId.func_id_of(site) do
-      {:ok, ^func} -> ""
-      {:ok, other} -> " in " <> call_name(other)
-      :error -> ""
-    end
-  end
+  defdelegate elsewhere(site, func), to: Names
 
-  @doc """
-  The API an rpc variant column names: the rules classify a remote call
-  as `"rpc"`, `"multicall"` or `"erpc"`; the reader wants the function.
-  """
+  @doc "The API an rpc variant column names: `Argus.Findings.Names.rpc_api/1`."
   @spec rpc_api(String.t()) :: String.t()
-  def rpc_api("rpc"), do: ":rpc.call"
-  def rpc_api("multicall"), do: ":rpc.multicall"
-  def rpc_api("erpc"), do: ":erpc.call"
-  def rpc_api(other) when is_binary(other), do: other
+  defdelegate rpc_api(variant), to: Names
 
   @doc """
   Labels an anchor as a secondary location. `to:` closes a span from the
