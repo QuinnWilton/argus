@@ -45,7 +45,10 @@ turns a solve's rows into findings, `Argus.Findings.Rows` deduplicates
 them (`Argus.Findings.dedupe_rows/2` delegates to its `dedupe/2`) and
 `Argus.Findings.Evidence` joins evidence rows to their findings. The
 `Argus.Analysis.evidence` type names the `:limit` key the analyses
-already use.
+already use. `Argus.Findings.Runner` runs a selection (`run/2` and
+`extraction_errors/1` delegate to it); `Argus.Findings` keeps the
+struct, the types, the constructors analysis modules build with, and
+its moduledoc says which submodule holds what.
 
 ### Fact schema and extraction
 

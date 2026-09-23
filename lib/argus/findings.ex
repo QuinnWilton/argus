@@ -1,16 +1,43 @@
 defmodule Argus.Findings do
   @moduledoc """
-  Structured findings from running analyses in-process.
+  Findings: what an analysis reports, and how they are made.
 
-  `run/2` (exposed as `Argus.run_analyses/2`) extracts facts once, evaluates
-  each selected analysis's Datalog rules against the shared facts directory,
-  and converts every output-relation row into a finding map with a severity,
-  human-readable prose, and the most precise anchor the row allows:
+  `run/2` (exposed as `Argus.run_analyses/2`) extracts facts once,
+  evaluates each selected analysis's Datalog rules against the shared
+  facts directory, and turns every output-relation row into a finding: a
+  severity, a title and a detail, help lines saying what to change, and
+  the most precise anchor the row allows — an instruction, else a
+  function, else a module (`t:anchor/0`). A finding may carry related
+  frames (a sibling, a callee, the other sites that do the same), and
+  says where its evidence came from: `:structural` when every premise is
+  a fact of the bytecode, `:heuristic` when a prior (`Argus.Priors`)
+  supplied one. `analysis` names the concern that reported it.
 
-  - `instr` — an `Argus.InstrId` when the row carries an instruction ID.
-  - `mfa` — `{module, function, arity}` when the row carries a function ID
-    (or names a well-known callback such as `init/1`).
-  - `module` — always set when the row names a module at all.
+  ## Building findings
+
+  An analysis module's `finding/2` and `evidence/2` callbacks
+  (`Argus.Analysis`) build with the functions here, so one alias
+  serves them:
+
+  - `new/4` (finding attributes), `related/3` (a frame), `heuristic/3`
+    (marks attributes as resting on a prior).
+  - `at_instr/1`, `at_func/1`, `at_mfa/3`, `at_module/1`, `at_site/2`,
+    `at_site_in_func/3` and `module_atom/1` parse the IDs a row carries
+    into anchors (`Argus.Findings.Anchor`).
+  - `call_name/1`, `elsewhere/2` and `rpc_api/1` write the facts'
+    spellings as a reader does (`Argus.Findings.Names`); every finding's
+    prose is put in plain names after it is built, so a builder need
+    not.
+
+  `build/2` turns a solve's rows into findings for embedders that solve
+  the rules themselves (scry, planchette); `dedupe_rows/2` is the row
+  identity it applies.
+
+  The code lives in submodules, delegated to from here:
+  `Argus.Findings.Runner` (running a selection),
+  `Argus.Findings.Build` (rows to findings), `Argus.Findings.Rows`
+  (which rows are one finding), `Argus.Findings.Evidence` (evidence
+  rows as frames), `Argus.Findings.Anchor` and `Argus.Findings.Names`.
 
   ## Degradation
 
@@ -21,7 +48,8 @@ defmodule Argus.Findings do
     `{:error, reason}` — nothing could have run.
   - A single analysis erroring (rules bug, Souffle timeout) → a
     `degraded` entry naming the analysis and why, while every other
-    analysis still runs and reports.
+    analysis still runs and reports. Stage 0 failing grounds every
+    analysis, so each gets that entry.
   - A finding builder raising on a row it did not expect → that row is
     reported with its raw columns (a generic finding, or a generic frame
     for an evidence row, whose help says so) and the analysis gets a
@@ -34,18 +62,15 @@ defmodule Argus.Findings do
     so they report, but a finding that needed the lost rows is missing:
     a consumer shows these beside the findings rather than as a failed
     analysis.
-
-  Anchor parsing and the atoms it makes: `Argus.Findings.Anchor`.
   """
 
   alias Argus.Analysis
-  alias Argus.Analysis.Sets
   alias Argus.Findings.Anchor
   alias Argus.Findings.Build
   alias Argus.Findings.Names
   alias Argus.Findings.Rows
+  alias Argus.Findings.Runner
   alias Argus.InstrId
-  alias Argus.Souffle
 
   defstruct findings: [], ran: [], degraded: [], extraction_errors: []
 
@@ -169,12 +194,10 @@ defmodule Argus.Findings do
           extraction_errors: [extraction_error()]
         }
 
-  @severity_rank %{error: 0, warning: 1, info: 2}
+  @severities [:error, :warning, :info]
   @blocks [:guard, :receive, :clause, :function]
 
-  @severities Map.keys(@severity_rank)
-
-  # ── Running ────────────────────────────────────────────────────────
+  # ── Running (Argus.Findings.Runner) ────────────────────────────────
 
   @doc """
   Runs analyses against the given modules and returns structured findings.
@@ -206,68 +229,8 @@ defmodule Argus.Findings do
   moduledoc for the degradation contract.
   """
   @spec run(modules :: [atom() | String.t()], keyword()) :: {:ok, t()} | {:error, term()}
-  def run(modules, opts \\ []) when is_list(modules) and is_list(opts) do
-    {selection, opts} = Keyword.pop(opts, :analyses, :all)
-
-    with {:ok, requests} <- Sets.resolve(selection),
-         :ok <- ensure_souffle(opts) do
-      evaluate(modules, requests, opts)
-    end
-  end
-
-  defp evaluate(_modules, [], _opts), do: {:ok, %__MODULE__{}}
-
-  defp evaluate(modules, requests, opts) do
-    names = Enum.map(requests, & &1.name())
-
-    case facts_dir(modules, names, opts) do
-      {:ok, facts_dir, owned?} ->
-        try do
-          outcomes =
-            requests
-            |> Task.async_stream(&run_one(&1, facts_dir, opts),
-              max_concurrency: Keyword.get(opts, :concurrency, default_solve_concurrency()),
-              ordered: true,
-              # Souffle.run bounds each evaluation with :souffle_timeout, so the
-              # task itself never needs a second, racing deadline.
-              timeout: :infinity
-            )
-            |> Enum.flat_map(fn {:ok, outcomes} -> outcomes end)
-
-          {:ok, %{collect(outcomes) | extraction_errors: extraction_errors(facts_dir)}}
-        after
-          if owned?, do: File.rm_rf(Path.dirname(facts_dir))
-        end
-
-      # Stage 0 (the shared call graph) is a Souffle evaluation like any
-      # other, and Souffle trouble is degradation, not a crash — the same
-      # contract a per-analysis solve gets. Because every analysis reads
-      # its output, a stage-0 failure grounds all of them, so each one
-      # degrades with the underlying reason rather than the whole call
-      # collapsing into an opaque error.
-      {:error, {:stage0, reason}} ->
-        {:ok,
-         collect(
-           for mod <- requests, name = mod.name() do
-             {:degraded,
-              %{analysis: name, reason: reason, detail: degradation_detail(name, reason)}}
-           end
-         )}
-
-      {:error, _reason} = error ->
-        error
-    end
-  end
-
-  defp facts_dir(modules, names, opts) do
-    case Keyword.fetch(opts, :facts_dir) do
-      {:ok, dir} ->
-        {:ok, dir, false}
-
-      :error ->
-        with {:ok, dir} <- Analysis.extract_facts(modules, names, opts), do: {:ok, dir, true}
-    end
-  end
+  def run(modules, opts \\ []) when is_list(modules) and is_list(opts),
+    do: Runner.run(modules, opts)
 
   @doc """
   The extraction errors recorded in a facts directory
@@ -276,78 +239,9 @@ defmodule Argus.Findings do
   none.
   """
   @spec extraction_errors(Path.t()) :: [extraction_error()]
-  def extraction_errors(facts_dir) do
-    case File.read(Path.join(facts_dir, "extraction_error.facts")) do
-      {:ok, content} ->
-        for [mod, step, reason] <- Argus.Tsv.decode(content) do
-          %{module: Anchor.module_atom(mod), source: mod, step: step, reason: reason}
-        end
+  defdelegate extraction_errors(facts_dir), to: Runner
 
-      {:error, _} ->
-        []
-    end
-  end
-
-  # One solve per analysis module; every row is a finding under the
-  # analysis's own name.
-  defp run_one(mod, facts_dir, opts) do
-    name = mod.name()
-    {elapsed_us, result} = :timer.tc(fn -> Analysis.run_rules(facts_dir, name, opts) end)
-    duration_ms = div(elapsed_us, 1000)
-
-    case result do
-      {:ok, results} ->
-        try do
-          {findings, failures} = Build.build(mod, results)
-
-          ran =
-            {:ran, %{analysis: name, duration_ms: duration_ms, finding_count: length(findings)},
-             findings}
-
-          [ran | row_degradation(name, failures)]
-        rescue
-          exception ->
-            [
-              {:degraded,
-               %{
-                 analysis: name,
-                 reason: {:finding_builder_crashed, exception},
-                 detail:
-                   "The #{name} analysis ran, but converting its results to findings " <>
-                     "crashed: #{Exception.message(exception)}. This is a bug in Argus."
-               }}
-            ]
-        end
-
-      {:error, reason} ->
-        [{:degraded, %{analysis: name, reason: reason, detail: degradation_detail(name, reason)}}]
-    end
-  end
-
-  # Each solve is a Souffle process holding its own copy of the call
-  # graph's closure — hundreds of megabytes on a large project, and it
-  # scales with the project rather than the machine. Extraction is cheap
-  # per task and runs at scheduler width; solves are capped so the peak
-  # stays bounded.
-  defp default_solve_concurrency, do: min(System.schedulers_online(), 4)
-
-  defp collect(outcomes) do
-    findings =
-      outcomes
-      |> Enum.flat_map(fn
-        {:ran, _entry, findings} -> findings
-        {:degraded, _note} -> []
-      end)
-      |> Enum.sort_by(fn finding ->
-        {Map.fetch!(@severity_rank, finding.severity), finding.analysis, finding.title,
-         finding.detail}
-      end)
-
-    ran = for {:ran, entry, _findings} <- outcomes, do: entry
-    degraded = for {:degraded, note} <- outcomes, do: note
-
-    %__MODULE__{findings: findings, ran: ran, degraded: degraded}
-  end
+  # ── Building (Argus.Findings.Build, Rows, Evidence) ─────────────────
 
   @doc """
   Builds an analysis's findings from its solved output relations.
@@ -368,23 +262,6 @@ defmodule Argus.Findings do
     findings
   end
 
-  defp row_degradation(_name, []), do: []
-
-  defp row_degradation(name, [first | _] = failures) do
-    [
-      {:degraded,
-       %{
-         analysis: name,
-         reason: {:finding_builder_crashed, first.exception},
-         detail:
-           "The #{name} analysis ran, but its finding builder crashed on " <>
-             "#{length(failures)} row(s), first a #{first.relation} row: " <>
-             "#{Exception.message(first.exception)}. Those rows are reported with " <>
-             "their raw columns; every other finding is as usual. This is a bug in Argus."
-       }}
-    ]
-  end
-
   @doc """
   Deduplicates a relation's rows down to one per logical finding:
   `Argus.Findings.Rows.dedupe/2`. Embedders that count rows themselves
@@ -393,29 +270,6 @@ defmodule Argus.Findings do
   """
   @spec dedupe_rows(Analysis.output_relation(), [[String.t()]]) :: [[String.t()]]
   defdelegate dedupe_rows(relation, rows), to: Rows, as: :dedupe
-
-  defp degradation_detail(name, :souffle_timeout) do
-    "The #{name} analysis timed out in Souffle and was skipped. " <>
-      "Raise :souffle_timeout to include it."
-  end
-
-  defp degradation_detail(name, {:souffle_error, exit_code, _output}) do
-    "The #{name} analysis failed: Souffle exited with status #{exit_code}."
-  end
-
-  defp degradation_detail(name, reason) do
-    "The #{name} analysis did not run: #{inspect(reason)}."
-  end
-
-  defp ensure_souffle(opts) do
-    cond do
-      # An explicit binary is the caller's responsibility; Souffle.run
-      # reports per-analysis errors if it turns out to be unusable.
-      Keyword.has_key?(opts, :souffle_bin) -> :ok
-      Souffle.available?() -> :ok
-      true -> {:error, :souffle_not_found}
-    end
-  end
 
   # ── Finding construction (used by analysis modules' finding/2) ─────
 
