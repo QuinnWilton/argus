@@ -20,6 +20,46 @@ defmodule Argus.SouffleTest do
     end
   end
 
+  describe "input_relations/2" do
+    test "a shipped program resolves to the same inputs on every call" do
+      if not Souffle.available?(), do: flunk("souffle not installed")
+
+      path = Argus.Analysis.stage0_rules_path()
+
+      assert {:ok, [_ | _] = first} = Souffle.input_relations(path)
+      assert {:ok, ^first} = Souffle.input_relations(path)
+    end
+
+    @tag :tmp_dir
+    test "a program outside priv/dl is read afresh on every call", %{tmp_dir: tmp_dir} do
+      if not Souffle.available?(), do: flunk("souffle not installed")
+
+      rules_path = Path.join(tmp_dir, "grows.dl")
+
+      File.write!(rules_path, """
+      .decl edge(x: symbol, y: symbol)
+      .input edge
+      .decl path(x: symbol, y: symbol)
+      .output path
+      path(x, y) :- edge(x, y).
+      """)
+
+      assert {:ok, ["edge"]} = Souffle.input_relations(rules_path)
+
+      File.write!(rules_path, """
+      .decl edge(x: symbol, y: symbol)
+      .input edge
+      .decl blocked(x: symbol)
+      .input blocked
+      .decl path(x: symbol, y: symbol)
+      .output path
+      path(x, y) :- edge(x, y), !blocked(x).
+      """)
+
+      assert {:ok, ["blocked", "edge"]} = Souffle.input_relations(rules_path)
+    end
+  end
+
   describe "run/3" do
     @tag :tmp_dir
     test "runs a trivial Datalog program", %{tmp_dir: tmp_dir} do

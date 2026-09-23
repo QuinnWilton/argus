@@ -80,6 +80,13 @@ defmodule Argus.Souffle do
   (Souffle resolves includes relative to the including file, so a naive
   walker misses transitively included declarations). Only the RAM says
   what will actually be opened.
+
+  For a program shipped under argus's `priv/dl`, the answer is memoized
+  for the life of the VM: it depends on nothing but the Datalog sources
+  and the solver, so the memo is versioned by a digest of every file
+  under `priv/dl` and the solver binary's identity, and an edited rule
+  or a swapped solver misses. A program anywhere else is resolved on
+  every call.
   """
   @spec input_relations(Path.t(), keyword()) :: {:ok, [String.t()]} | {:error, term()}
   def input_relations(rules_path, opts \\ []) do
@@ -88,13 +95,70 @@ defmodule Argus.Souffle do
         {:error, :souffle_not_found}
 
       bin ->
-        args = ["--show=transformed-ram", rules_path]
-
-        case System.cmd(bin, args, stderr_to_stdout: false) do
-          {output, 0} -> {:ok, parse_ram_inputs(output)}
-          {output, code} -> {:error, {:souffle_error, code, output}}
+        case shipped_program_key(rules_path, bin) do
+          nil -> resolve_input_relations(bin, rules_path)
+          key -> memoized(key, fn -> resolve_input_relations(bin, rules_path) end)
         end
     end
+  end
+
+  defp resolve_input_relations(bin, rules_path) do
+    args = ["--show=transformed-ram", rules_path]
+
+    case System.cmd(bin, args, stderr_to_stdout: false) do
+      {output, 0} -> {:ok, parse_ram_inputs(output)}
+      {output, code} -> {:error, {:souffle_error, code, output}}
+    end
+  end
+
+  # `{key, version}` for a program under priv/dl, nil for any other. The
+  # persistent term is keyed by the program alone and carries the version
+  # it was resolved under: an edit overwrites one term instead of leaking
+  # a new one per digest.
+  defp shipped_program_key(rules_path, bin) do
+    with dir when is_list(dir) <- :code.priv_dir(:panoptes),
+         dl_dir = Path.join(List.to_string(dir), "dl"),
+         path = Path.expand(rules_path),
+         true <- String.starts_with?(path, dl_dir <> "/"),
+         {:ok, %File.Stat{mtime: mtime, size: size}} <- File.stat(bin) do
+      {{__MODULE__, :input_relations, path}, {directory_digest(dl_dir), bin, mtime, size}}
+    else
+      _ -> nil
+    end
+  end
+
+  # Only a resolved answer is kept: a failure is reported every time it
+  # happens, and never served from the memo.
+  defp memoized({key, version}, resolve) do
+    case :persistent_term.get(key, nil) do
+      {^version, result} ->
+        result
+
+      _ ->
+        case resolve.() do
+          {:ok, _} = ok ->
+            :persistent_term.put(key, {version, ok})
+            ok
+
+          {:error, _} = error ->
+            error
+        end
+    end
+  end
+
+  # Every regular file under `dir`, by relative path and content.
+  defp directory_digest(dir) do
+    dir
+    |> Path.join("**")
+    |> Path.wildcard()
+    |> Enum.filter(&File.regular?/1)
+    |> Enum.sort()
+    |> Enum.reduce(:crypto.hash_init(:sha256), fn file, hash ->
+      hash
+      |> :crypto.hash_update(Path.relative_to(file, dir))
+      |> :crypto.hash_update(File.read!(file))
+    end)
+    |> :crypto.hash_final()
   end
 
   # RAM IO directives look like:
