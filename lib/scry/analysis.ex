@@ -844,10 +844,12 @@ defmodule Scry.Analysis do
     dir
   end
 
-  # One relation's rows as the tab-separated lines Souffle reads.
+  # One relation's rows as the lines Souffle reads, fields escaped as
+  # argus writes them (a tab or newline in a name would otherwise move
+  # every column after it, and Souffle would refuse the file).
   defp rows_iodata(relation, rows, symbols) do
     %{^relation => strings} = Facts.materialize(%{relation => rows}, symbols)
-    Enum.map(strings, fn row -> [Enum.intersperse(row, "\t"), "\n"] end)
+    Argus.Tsv.encode(strings)
   end
 
   # The digest of `rows` as Souffle will read them, with the text written
@@ -1075,13 +1077,13 @@ defmodule Scry.Analysis do
     end
   end
 
-  # Souffle fact files are tab separated, one tuple per line.
+  # Souffle fact files are tab separated, one tuple per line, fields
+  # escaped (`Argus.Tsv`).
   defp read_facts_file(path) do
     case File.read(path) do
       {:ok, contents} ->
         contents
-        |> String.split("\n", trim: true)
-        |> Enum.map(&String.split(&1, "\t"))
+        |> Argus.Tsv.decode()
         |> Enum.sort()
 
       {:error, _} ->

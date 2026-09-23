@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fact files are written and read with `Argus.Tsv` (argus schema 55):
+  a field holding a backslash, tab, newline or carriage return is
+  escaped as argus escapes it. A function named with a tab used to
+  write a row with one column too many, and Souffle refused every
+  analysis that read the relation.
 - An analysis that raises (argus's rules and code out of step, a bug)
   degrades with a diagnostic naming the exception, and the other
   analyses still report; it used to take the whole compile down.
