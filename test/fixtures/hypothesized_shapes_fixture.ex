@@ -782,6 +782,42 @@ defmodule Argus.Test.Fixtures.Hypothesized do
       end
     end
 
+    defmodule RelaySup do
+      @moduledoc false
+      use Supervisor
+
+      def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+      @impl true
+      def init(_opts) do
+        children = [
+          Argus.Test.Fixtures.Hypothesized.CachedPid.Store,
+          Argus.Test.Fixtures.Hypothesized.CachedPid.Relay
+        ]
+
+        Supervisor.init(children, strategy: :one_for_one)
+      end
+    end
+
+    defmodule Relay do
+      @moduledoc false
+      # Looks the Store up at boot, but its handler calls the pid each
+      # caller hands it, never the one it keeps.
+      use GenServer
+
+      def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+      @impl true
+      def init(_) do
+        {:ok, %{store: Process.whereis(Argus.Test.Fixtures.Hypothesized.CachedPid.Store)}}
+      end
+
+      @impl true
+      def handle_call({:relay, pid}, _from, state) do
+        {:reply, GenServer.call(pid, :get), state}
+      end
+    end
+
     defmodule OrderedClient do
       @moduledoc false
       # Same shape under :rest_for_one: a Store restart restarts this too.

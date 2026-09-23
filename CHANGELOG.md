@@ -1286,6 +1286,17 @@ or for anything. One whose every clause waits for some other literal, in
 a module whose timers all carry known literals, is reported. When the
 module arms no timer the program can see, the receive stays suppressed.
 
+### coupling
+
+**Changed.** `coupling.sibling_dependency` "cached_pid" asks that a
+handler use the cached pid: process points-to follows a handler's call,
+cast or send to the process registered under the name init/1 looked up,
+through anything but the name itself. It accepted any handler making
+any call to a pid it could not follow, so a server that looked a sibling
+up at boot and called whatever pid each caller handed it was reported.
+Where the name resolves to no process points-to knows, the old test
+stands in. Corpus, realtime, logflare, hexpm and OTP unchanged.
+
 ### startup
 
 **Fixed.** `startup.unbounded_effect_in_init` and `blocks_on_peer`'s

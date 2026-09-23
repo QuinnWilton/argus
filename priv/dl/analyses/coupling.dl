@@ -195,7 +195,12 @@ sibling_dependency(sup, perm, sibling, "restart_policy", restart, sup_site, witn
 // (k8s 99c05d6 replaced such pids with :via names; oban#1413 and
 // #1499 are the inverse, registrations made with a sibling that its
 // restart forgets). :rest_for_one and :one_for_all restart the holder
-// too; a :temporary target is never restarted.
+// too; a :temporary target is never restarted. A handler must use the
+// pid: process points-to follows a handler's call, cast or send to the
+// process registered under the name, through anything but the name
+// itself (a call by name each time is the fix). Where the name resolves
+// to no process points-to knows, a handler's call to some pid it cannot
+// follow stands in, as it did before points-to.
 sibling_dependency(sup, mod, name, "cached_pid", "", sup_site, f, f, "resolved", 0) :-
   init_function(mod, f),
   name_lookup(_, f, "whereis", _, "literal", name, _),
@@ -204,6 +209,21 @@ sibling_dependency(sup, mod, name, "cached_pid", "", sup_site, f, f, "resolved",
   supervisor_site(sup, sup_site),
   (supervisor_child(sup, _, name, _, _) ; supervisor_child_name(sup, _, name)),
   handler_function(mod, h),
+  uses_cached_pid(h, name).
+
+.decl uses_cached_pid(handler: symbol, name: symbol)
+
+uses_cached_pid(h, name) :-
+  process_call(h, _, site, _, p),
+  named_pid(name, p),
+  pid_use(site, _, _, sk, _),
+  sk != "name".
+
+uses_cached_pid(h, name) :-
+  name_lookup(_, f, "whereis", _, "literal", name, _),
+  init_function(mod, f),
+  handler_function(mod, h),
+  !named_pid(name, _),
   (sync_call(h, "dynamic") ; async_cast(h, "dynamic")).
 
 // ── rest_for_one: a later child owns processes inside an earlier one ──

@@ -202,7 +202,7 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
     assert stops == ["Argus.Test.Fixtures.Hypothesized.SiblingStop.Coordinator"]
   end
 
-  test "a sibling pid cached in init/1 is reported under one_for_one, not under rest_for_one" do
+  test "a sibling pid cached in init/1 and called is reported under one_for_one only" do
     skip_without_souffle()
 
     {:ok, r} =
@@ -212,7 +212,9 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
           H.CachedPid.RestSup,
           H.CachedPid.Store,
           H.CachedPid.Client,
-          H.CachedPid.OrderedClient
+          H.CachedPid.OrderedClient,
+          H.CachedPid.RelaySup,
+          H.CachedPid.Relay
         ],
         :coupling
       )
