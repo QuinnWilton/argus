@@ -466,6 +466,13 @@ concern that runs it.
 
 ### mailbox
 
+**Changed.** `mailbox.partial_handler`'s "late_message" source no longer
+counts a timer the process arms for itself with a literal message its
+own `handle_info/2` has a clause for (a janitor's `:purge`), nor a
+`cancel_timer`: the late message is one the process takes, and a cancel
+writes nothing. A partial `handle_info/2` in such a process is no
+FunctionClauseError waiting to happen.
+
 **Changed.** `mailbox.partial_handler`'s "runtime" source counts only a monitor the
 server takes on its own stack (a callback, or what one reaches in the
 module), as `unconsumed_monitor` already did: a client function of the

@@ -249,20 +249,41 @@ end
 defmodule Argus.Test.Fixtures.PartialInfoServer do
   @moduledoc false
   # Handles one message and nothing else; monitors nothing, traps nothing —
-  # but arms a timer, whose message can arrive after the state that
-  # expected it is gone.
+  # but arms a timer whose message is computed, which the one clause
+  # cannot be shown to take.
   use GenServer
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
 
   @impl true
   def init(state) do
-    Process.send_after(self(), :tick, 1_000)
+    Process.send_after(self(), {:tick, System.monotonic_time()}, 1_000)
     {:ok, state}
   end
 
   @impl true
-  def handle_info(:tick, state), do: {:noreply, state}
+  def handle_info({:tick, _at}, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Fixtures.HandledTimerServer do
+  @moduledoc false
+  # A janitor: arms a bare :purge for itself and has the :purge clause.
+  # Its late message is one it takes; nothing else writes its mailbox.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(state) do
+    Process.send_after(self(), :purge, 1_000)
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_info(:purge, state) do
+    Process.send_after(self(), :purge, 1_000)
+    {:noreply, state}
+  end
 end
 
 defmodule Argus.Test.Fixtures.TotalInfoServer do

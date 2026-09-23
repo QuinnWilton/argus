@@ -107,7 +107,20 @@ partial_handler(mod, h, "runtime", "catchall", "") :-
 // above stay the warning-grade shapes.
 .init mailbox_reach = CallReachSet
 
-mailbox_reach.seed(f) :- mailbox_writer(_, f, _).
+mailbox_reach.seed(f) :- mailbox_writer(id, f, kind), kind != "cancel", !handled_self_timer(id).
+
+// A timer the process arms for itself with a literal message its own
+// handle_info/2 has a clause for leaves nothing unhandled behind: the
+// late message is one the process takes (a janitor's :purge, a
+// metrics loop's :check). A cancel writes nothing; the timer it stops
+// was armed somewhere, and that arm is the source if any.
+.decl handled_self_timer(id: symbol)
+
+handled_self_timer(id) :-
+  timer_arm(id, f, "self", "bare", _, lit),
+  function_def(f, mod, _, _, _),
+  callback_tag(h, "handle_info", lit),
+  function_def(h, mod, _, _, _).
 mailbox_reach.seed(f) :- sync_call_timeout(f, _, ms), ms != -1.
 
 .decl late_message_source(mod: symbol)
