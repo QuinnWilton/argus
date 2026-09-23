@@ -46,7 +46,8 @@ defmodule Argus.Analyses.Ets do
   @impl true
   def description,
     do:
-      "ETS table ownership, concurrency and lifecycle, and read-then-write races on shared tables"
+      "ETS table ownership, concurrency options and lifecycle, and read-then-write races " <>
+        "on ETS and Mnesia"
 
   @impl true
   def rules_file, do: "analyses/ets.dl"

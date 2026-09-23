@@ -36,7 +36,7 @@ defmodule Argus.Analyses.Startup do
 
   @impl true
   def description,
-    do: "init/1 and handle_continue work that blocks, deadlocks or races the tree's start"
+    do: "work in init/1 or handle_continue/2 that blocks, deadlocks or races the tree's start"
 
   @impl true
   def rules_file, do: "analyses/startup.dl"

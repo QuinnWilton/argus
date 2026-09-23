@@ -23,7 +23,9 @@ defmodule Argus.InstrId do
   That matters because the ID scheme is the single most invasive thing in
   the fact schema: an instruction's index is a raw offset into its
   function's instruction list, so it renumbers whenever the function's body
-  changes, and 49 of the 78 relations carry one. Any future change to how
+  changes, and most of the schema's relations carry one (every
+  `:instr_id` column, and the `id`/`site` symbol columns the extractors
+  fill with one). Any future change to how
   instructions are named — content-derived keys, block-relative addressing —
   has to be able to move one definition rather than nineteen interpolations
   scattered across the extractors.

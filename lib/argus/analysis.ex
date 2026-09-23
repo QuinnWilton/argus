@@ -332,8 +332,9 @@ defmodule Argus.Analysis do
     }
   end
 
-  # scry's default until the regroup completes; the concern analyses
-  # replace these names as they land.
+  # What scry runs unconfigured: the OTP concerns whose findings are
+  # structural and low-noise enough to report on every compile. effects,
+  # ets, blocking and the security concerns are asked for by name.
   defp default_set do
     [
       :startup,

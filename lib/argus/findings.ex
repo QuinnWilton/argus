@@ -168,9 +168,16 @@ defmodule Argus.Findings do
 
   ## Options
 
-  - `:analyses` — `:all` (default) or a list of built-in analysis names.
-    `:all` means every built-in analysis except `:coverage`, which measures
-    the extractor pipeline rather than the analyzed code.
+  - `:analyses` — a named set or a list of analysis names (default
+    `:all`). The sets are `Argus.Analysis.sets/0`'s: `:all` (every
+    built-in analysis except `:coverage`, which measures the extractor
+    pipeline rather than the analyzed code), `:default` (what scry runs
+    unconfigured), `:security`, `:effects` and `:otp`. A name is a
+    concern (`:startup`, `:mailbox`, ...) or a retired name
+    (`Argus.Analysis.aliases/0`): a retired name runs the concern its
+    rows live in and reports them under the old name, with `concern`
+    naming the analysis. An unknown name is `{:error, {:unknown_analysis,
+    name}}`, anything else `{:error, {:invalid_analyses, value}}`.
   - `:facts_dir` — a directory `Argus.Analysis.extract_facts/3` already
     wrote for these modules, to evaluate without extracting again. The
     caller owns it; without this option the run extracts into a

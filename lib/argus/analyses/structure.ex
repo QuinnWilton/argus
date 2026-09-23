@@ -31,7 +31,10 @@ defmodule Argus.Analyses.Structure do
   def name, do: :structure
 
   @impl true
-  def description, do: "child specs, registrations and tree shapes that are wrong on their own"
+  def description,
+    do:
+      "child specs, registrations and tree shapes that are wrong on their own, " <>
+        "and lookup-then-start races on a process name"
 
   @impl true
   def rules_file, do: "analyses/structure.dl"

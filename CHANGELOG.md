@@ -283,6 +283,13 @@ put the frame on `def loop do`. Consumers refine a frame's line with the
 fragment as they do a finding's (scry resolves frame lines from the
 bytecode only, today).
 
+Four analysis descriptions (what `mix scry --list` prints) had drifted
+from the README's table, and the table from the analyses: `structure`
+now names its lookup-then-start race, `ets` Mnesia, `blocking` receives
+in callbacks, `startup` handle_continue/2 by its arity, `coverage` that
+it is opt-in. `Argus.ReadmeTest` keeps the two equal. `Findings.run/2`'s
+docs name the sets and the retired names `:analyses` accepts.
+
 ### Fixed
 
 A transaction body was paired with every repo its function opened a

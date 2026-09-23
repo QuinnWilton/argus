@@ -43,7 +43,7 @@ defmodule Argus.Analyses.Coverage do
 
   @impl true
   def description,
-    do: "extractor coverage and imprecision meta-analysis"
+    do: "extractor coverage and imprecision (meta-analysis, opt-in)"
 
   @impl true
   def rules_file, do: "analyses/coverage.dl"

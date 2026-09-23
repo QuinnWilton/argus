@@ -18,7 +18,7 @@ deadlocks, leaked tasks, ETS misuse, atom-table exhaustion, and more.
 ```elixir
 def deps do
   [
-    {:panoptes, "~> 0.17"}
+    {:panoptes, "~> 0.19"}
   ]
 end
 ```
@@ -68,7 +68,7 @@ separate analyses, so a defect has one owner.
 | `coupling` | two owners of one relationship across supervisor branches |
 | `mailbox` | messages that arrive with no clause for them, and replies that never come |
 | `failure` | error paths swallowed, half-caught or ignored |
-| `structure` | child specs, registrations and tree shapes that are wrong on their own |
+| `structure` | child specs, registrations and tree shapes that are wrong on their own, and lookup-then-start races on a process name |
 | `state_machine` | gen_statem states no transition reaches, and terminal states that never stop |
 | `ets` | ETS table ownership, concurrency options and lifecycle, and read-then-write races on ETS and Mnesia |
 | `effects` | `@pure` contracts, and effects inside a transaction that a rollback cannot undo |

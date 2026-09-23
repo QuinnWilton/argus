@@ -41,7 +41,9 @@ defmodule Argus.Analyses.Blocking do
 
   @impl true
   def description,
-    do: "synchronous waits that can last forever or nest: chains, cycles, fan-in, rpc, locks"
+    do:
+      "synchronous waits that can last forever or nest: call chains, cycles, fan-in, rpc, " <>
+        "locks, receives in callbacks"
 
   @impl true
   def rules_file, do: "analyses/blocking.dl"
