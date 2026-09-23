@@ -41,3 +41,11 @@ defmodule Argus.Test.Fixtures.SafeModule do
   def safe_decode(bin), do: Plug.Crypto.non_executable_binary_to_term(bin, [:safe])
   def hello, do: :world
 end
+
+defmodule Argus.Test.Fixtures.ExportedSinkCaller do
+  @moduledoc "A private sink no request reaches, one call below an exported function."
+
+  def tag(input), do: to_tag(input)
+
+  defp to_tag(input), do: String.to_atom(input)
+end
