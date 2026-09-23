@@ -96,6 +96,11 @@ changes: PidFlow's solver, moved out. ParamFlow and Dependence solve on
 it, one function at a time, where they passed over every instruction
 (ParamFlow's of the whole module) until nothing changed.
 
+**Changed.** `Argus.Facts.decode/1` parses each instruction ID once per
+call: a module's IDs recur across its relations, and every row naming
+one shares the struct. Decoding a module takes 35 to 50% less time
+(Timex.Gettext 509 ms to 320 ms). The rows are the same.
+
 **Removed.** Schema 60. `move`, `allocate`, `deallocate`, `try_end` and
 `module_attribute`: no Datalog rule and no in-process pass read them (the
 walks read the instructions; the extractors that need an attribute read

@@ -38,6 +38,21 @@ defmodule Argus.FactsTest do
       assert Enum.all?(typed[:branch], fn row -> row.reserved == 0 end)
     end
 
+    test "an instruction ID decodes the same in every relation that names it" do
+      {:ok, raw} = Pipeline.extract([:lists])
+      decoded = Facts.decode(raw)
+
+      # Each relation decoded alone parses its own IDs; together they
+      # share the parse, and the rows are the same either way.
+      for {relation, rows} <- raw do
+        assert Facts.decode(%{relation => rows}) == %{relation => decoded[relation]}
+      end
+
+      assert_raise ArgumentError, ~r/malformed instruction ID "Mod:f\/1#x"/, fn ->
+        Facts.decode(%{jump: [["Mod:f/1#0", "3"], ["Mod:f/1#x", "3"]]})
+      end
+    end
+
     test "unknown relations pass through undecoded" do
       raw = %{custom_relation: [["a", "b"]]}
       assert Facts.decode(raw) == %{custom_relation: [["a", "b"]]}
