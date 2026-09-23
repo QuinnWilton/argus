@@ -28,6 +28,12 @@ or rename by the 0.17 entry below.
 
 ### Fact schema and extraction
 
+**Fixed.** `statem_timeout` finds an action built on one arm of a
+branch: the walk from the action tuple to the callback's return follows
+the jump to the shared return block and steps every other instruction
+with `Argus.Instr.carry/2`, where its own table stopped at the first
+label and kept a register an unknown instruction overwrote.
+
 **Fixed.** `handle_continue_clause` finds every tag a
 `handle_continue/2` dispatches on: a comparison counts where the
 parameter itself reaches `x0`, not until the first instruction a private

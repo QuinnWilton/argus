@@ -38,6 +38,7 @@ defmodule Argus.Extractors.GenStatem do
   @behaviour Argus.Extractor
 
   alias Argus.Extractors.GenStatem.{CallClauses, EventClauses}
+  alias Argus.Instr
   alias Argus.InstrId
 
   import Argus.Extractor.Helpers,
@@ -46,6 +47,7 @@ defmodule Argus.Extractors.GenStatem do
       cfg: 3,
       find_function: 3,
       get_behaviours: 1,
+      instructions_from_label: 2,
       list_elements: 1,
       return_shapes: 1,
       track_dynamic: 5,
@@ -584,21 +586,49 @@ defmodule Argus.Extractors.GenStatem do
   # Whether the tuple built at `idx` becomes (part of) the callback's
   # return: put into a state-return tuple, into an action list that is,
   # or moved to x0 before a return. Handed to a call instead, it is a
-  # message or an argument, not an action.
+  # message or an argument, not an action. The walk follows the path that
+  # falls through and the jumps it meets (the compiler shares a return
+  # block between clauses); every other register effect is
+  # `Argus.Instr.carry/2`'s.
   defp flows_to_return?(instrs, idx, dst) do
-    instrs
-    |> Enum.drop(idx + 1)
-    |> Enum.reduce_while(MapSet.new([reg_of(dst)]), &flow_step/2) == :returns
+    case Instr.register(dst) do
+      {kind, _} = reg when kind in [:x, :y] ->
+        flow(Enum.drop(instrs, idx + 1), MapSet.new([reg]), instrs, %{}) == :returns
+
+      _ ->
+        false
+    end
+  end
+
+  defp flow([], _aliases, _instrs, _seen), do: :no
+
+  defp flow([instr | rest], aliases, instrs, seen) do
+    case flow_step(instr, aliases) do
+      {:cont, aliases} ->
+        flow(rest, aliases, instrs, seen)
+
+      {:jump, label} ->
+        if Map.has_key?(seen, label),
+          do: :no,
+          else:
+            flow(
+              instructions_from_label(instrs, label),
+              aliases,
+              instrs,
+              Map.put(seen, label, true)
+            )
+
+      {:halt, result} ->
+        result
+    end
   end
 
   # One instruction along the tuple's flow: `aliases` are the registers
   # holding it or a structure containing it.
-  defp flow_step({:put_tuple2, d, {:list, [{:atom, head} | rest]}}, aliases) do
-    cond do
-      head in @return_heads and any_alias?(rest, aliases) -> {:halt, :returns}
-      any_alias?(rest, aliases) -> {:cont, MapSet.put(aliases, reg_of(d))}
-      true -> {:cont, MapSet.delete(aliases, reg_of(d))}
-    end
+  defp flow_step({:put_tuple2, d, {:list, [{:atom, head} | rest] = elements}}, aliases) do
+    if head in @return_heads and any_alias?(rest, aliases),
+      do: {:halt, :returns},
+      else: {:cont, alias_if(aliases, any_alias?(elements, aliases), d)}
   end
 
   defp flow_step({:put_tuple2, d, {:list, elements}}, aliases),
@@ -607,40 +637,32 @@ defmodule Argus.Extractors.GenStatem do
   defp flow_step({:put_list, head, tail, d}, aliases),
     do: {:cont, alias_if(aliases, any_alias?([head, tail], aliases), d)}
 
-  defp flow_step({:move, src, d}, aliases),
-    do: {:cont, alias_if(aliases, any_alias?([src], aliases), d)}
-
   defp flow_step(:return, aliases),
     do: {:halt, if(MapSet.member?(aliases, {:x, 0}), do: :returns, else: :no)}
 
+  defp flow_step({:jump, {:f, label}}, _aliases), do: {:jump, label}
+
   # Passed to a call, the tuple is a message or an argument, not an
-  # action; a call also clobbers the x registers.
-  defp flow_step({call, arity, _}, aliases)
-       when call in [:call, :call_ext, :call_only, :call_ext_only] do
-    if arg_alias?(arity, aliases),
-      do: {:halt, :no},
-      else: {:cont, MapSet.reject(aliases, &match?({:x, _}, &1))}
+  # action; any other instruction moves, keeps or overwrites it as
+  # Argus.Instr says, and one that does not fall through ends the path.
+  defp flow_step(instr, aliases) do
+    cond do
+      Instr.call?(instr) and any_alias?(Instr.uses(instr), aliases) ->
+        {:halt, :no}
+
+      not Instr.falls_through?(instr) ->
+        {:halt, :no}
+
+      true ->
+        {:cont, MapSet.new(Instr.carry(instr, aliases))}
+    end
   end
 
-  defp flow_step({call, _arity, _, _}, _aliases) when call in [:call_last, :call_ext_last],
-    do: {:halt, :no}
-
-  defp flow_step({:label, _}, _aliases), do: {:halt, :no}
-  defp flow_step(_instr, aliases), do: {:cont, aliases}
-
   defp any_alias?(operands, aliases),
-    do: Enum.any?(operands, &MapSet.member?(aliases, reg_of(&1)))
+    do: Enum.any?(operands, &MapSet.member?(aliases, Instr.register(&1)))
 
-  defp arg_alias?(arity, aliases),
-    do: Enum.any?(0..(arity - 1)//1, &MapSet.member?(aliases, {:x, &1}))
-
-  defp alias_if(aliases, true, d), do: MapSet.put(aliases, reg_of(d))
-  defp alias_if(aliases, false, d), do: MapSet.delete(aliases, reg_of(d))
-
-  defp reg_of({:tr, r, _}), do: reg_of(r)
-  defp reg_of({:x, _} = r), do: r
-  defp reg_of({:y, _} = r), do: r
-  defp reg_of(_), do: nil
+  defp alias_if(aliases, true, d), do: MapSet.put(aliases, Instr.register(d))
+  defp alias_if(aliases, false, d), do: MapSet.delete(aliases, Instr.register(d))
 
   # Scan literal elements inside a put_tuple2 for action lists containing timeouts.
   defp extract_timeouts_from_elements(facts, mod_str, state_name, elements) do

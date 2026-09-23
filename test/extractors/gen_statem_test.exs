@@ -93,6 +93,38 @@ defmodule Argus.Extractors.GenStatemTest do
     end
   end
 
+  describe "extract/1 — a timeout action's flow to the return" do
+    test "an action built on one arm reaches the return through the join; a sent tuple does not" do
+      [{_mod, bin}] =
+        Code.compile_string("""
+        defmodule Argus.GenStatemTest.JoinedActions do
+          @behaviour :gen_statem
+          def callback_mode, do: :state_functions
+          def init(d), do: {:ok, :idle, d}
+
+          def idle(:cast, ms, d) do
+            actions = if ms > 0, do: [{:state_timeout, ms, :tick}], else: [{:timeout, 5, :tock}]
+            send(self(), {:timeout, ms, :x})
+            {:keep_state, d, actions}
+          end
+
+          def idle(:info, {:timeout, ms, x}, d) do
+            send(self(), {:timeout, ms, x})
+            {:keep_state, d}
+          end
+        end
+        """)
+
+      {:ok, data} = Argus.Pipeline.Disassemble.disassemble_path(bin)
+      timeouts = data |> GenStatem.extract() |> Map.get(:statem_timeout, []) |> Enum.sort()
+
+      assert timeouts == [
+               ["Argus.GenStatemTest.JoinedActions", "idle", "event_timeout", "5"],
+               ["Argus.GenStatemTest.JoinedActions", "idle", "state_timeout", "dynamic"]
+             ]
+    end
+  end
+
   describe "extract/1 — clean module" do
     test "returns empty for non-statem module" do
       facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.PlainModule))
