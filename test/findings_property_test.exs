@@ -115,4 +115,75 @@ defmodule Argus.FindingsPropertyTest do
       end
     end
   end
+
+  # ── dedupe_rows/2 ───────────────────────────────────────────────────
+
+  @fields [{:mod, :symbol, "m"}, {:kind, :symbol, "k"}, {:site, :symbol, "s"}]
+
+  defp keyed_relation do
+    one_of([
+      map(member_of([[:mod], [:mod, :kind], [:kind, :site], [:mod, :kind, :site]]), fn key ->
+        %{name: :r, fields: @fields, key: key}
+      end),
+      # A key chosen by the kind column; "c" is unnamed, so it takes the
+      # default when there is one and every column when there is not.
+      map(boolean(), fn default? ->
+        keys = %{"a" => [:mod], "b" => [:mod, :site]}
+        keys = if default?, do: Map.put(keys, :default, [:kind]), else: keys
+        %{name: :r, fields: @fields, key: {:kind, keys}}
+      end)
+    ])
+  end
+
+  defp rows do
+    list_of(
+      fixed_list([member_of(["M", "N"]), member_of(["a", "b", "c"]), member_of(["1", "2", "3"])]),
+      max_length: 20
+    )
+  end
+
+  # The identity a row is deduplicated under, computed independently of
+  # the implementation from the relation's declared key.
+  defp identity(%{key: key}, row) when is_list(key), do: Enum.map(key, &column(row, &1))
+
+  defp identity(%{key: {:kind, keys}}, [_, kind, _] = row) do
+    columns = Map.get(keys, kind) || Map.get(keys, :default, [:mod, :kind, :site])
+    {kind, Enum.map(columns, &column(row, &1))}
+  end
+
+  defp column([m, _, _], :mod), do: m
+  defp column([_, k, _], :kind), do: k
+  defp column([_, _, s], :site), do: s
+
+  describe "dedupe_rows/2" do
+    property "keeps exactly the least row of each identity, sorted" do
+      check all(relation <- keyed_relation(), rows <- rows()) do
+        expected =
+          rows
+          |> Enum.group_by(&identity(relation, &1))
+          |> Enum.map(fn {_identity, group} -> Enum.min(group) end)
+          |> Enum.sort()
+
+        assert Findings.dedupe_rows(relation, rows) == expected
+      end
+    end
+
+    property "is idempotent, order-invariant and never grows" do
+      check all(relation <- keyed_relation(), rows <- rows(), seed <- integer()) do
+        once = Findings.dedupe_rows(relation, rows)
+        :rand.seed(:exsss, {seed, seed, seed})
+
+        assert Findings.dedupe_rows(relation, once) == once
+        assert Findings.dedupe_rows(relation, Enum.shuffle(rows)) == once
+        assert length(once) <= length(rows)
+        assert Enum.all?(once, &(&1 in rows))
+      end
+    end
+
+    property "a relation without a key passes its rows through" do
+      check all(rows <- rows()) do
+        assert Findings.dedupe_rows(%{name: :r, fields: @fields}, rows) == rows
+      end
+    end
+  end
 end
