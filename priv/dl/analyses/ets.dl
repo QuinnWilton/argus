@@ -86,27 +86,29 @@ ets_writer_module(name, mod) :-
   function_def(func, mod, _, _, _).
 
 // Cross-module reads without read_concurrency.
-.decl ets_missing_read_concurrency(name: symbol)
+.decl ets_missing_read_concurrency(name: symbol, mod: symbol, site: symbol)
 .output ets_missing_read_concurrency
 
-ets_missing_read_concurrency(name) :-
+ets_missing_read_concurrency(name, mod, id) :-
   ets_reader_module(name, m1),
   ets_reader_module(name, m2),
   name != "dynamic",
   m1 < m2,
-  ets_new(id, _, name),
+  ets_new(id, func, name),
+  function_def(func, mod, _, _, _),
   !ets_option(id, "read_concurrency", "true").
 
 // Cross-module writes without write_concurrency.
-.decl ets_missing_write_concurrency(name: symbol)
+.decl ets_missing_write_concurrency(name: symbol, mod: symbol, site: symbol)
 .output ets_missing_write_concurrency
 
-ets_missing_write_concurrency(name) :-
+ets_missing_write_concurrency(name, mod, id) :-
   ets_writer_module(name, m1),
   ets_writer_module(name, m2),
   name != "dynamic",
   m1 < m2,
-  ets_new(id, _, name),
+  ets_new(id, func, name),
+  function_def(func, mod, _, _, _),
   !ets_option(id, "write_concurrency", "true"),
   !ets_option(id, "write_concurrency", "auto").
 

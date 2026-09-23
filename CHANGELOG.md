@@ -732,6 +732,10 @@ timestamp, date, count, expiry, TTL, length, version or "set" suffix.
 
 ### ets
 
+**Changed.** `ets_missing_read_concurrency` and `ets_missing_write_concurrency` gain
+`mod` and `site` columns and anchor at the table's `:ets.new/2`, as
+`ets_ordered_set_contention` does; they were findings with no location.
+
 **Changed.** `ets.ets_read_outside_owner` no longer counts `:ets.info/1,2` (it answers
 `:undefined` for a table that is gone), takes `catch :error, :badarg` as
 the rescue it is, and joins a table created under a computed name only

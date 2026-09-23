@@ -211,3 +211,57 @@ defmodule Argus.Test.Fixtures.EtsWarmCache do
     {:ok, %{}}
   end
 end
+
+defmodule Argus.Test.Fixtures.EtsSharedCounters do
+  @moduledoc """
+  A named ordered_set, created with no concurrency options, that two
+  modules read and two modules write.
+  """
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  def read(key), do: :ets.lookup(:shared_counters, key)
+  def write(key, n), do: :ets.insert(:shared_counters, {key, n})
+
+  @impl true
+  def init(_) do
+    :ets.new(:shared_counters, [:ordered_set, :public, :named_table])
+    {:ok, nil}
+  end
+end
+
+defmodule Argus.Test.Fixtures.EtsSharedCountersClient do
+  @moduledoc false
+  def read(key), do: :ets.lookup(:shared_counters, key)
+  def write(key, n), do: :ets.insert(:shared_counters, {key, n})
+end
+
+defmodule Argus.Test.Fixtures.EtsSharedTuned do
+  @moduledoc "The same sharing, with both options set and a set table: nothing to hint."
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  def read(key), do: :ets.lookup(:shared_tuned, key)
+  def write(key, n), do: :ets.insert(:shared_tuned, {key, n})
+
+  @impl true
+  def init(_) do
+    :ets.new(:shared_tuned, [
+      :set,
+      :public,
+      :named_table,
+      read_concurrency: true,
+      write_concurrency: true
+    ])
+
+    {:ok, nil}
+  end
+end
+
+defmodule Argus.Test.Fixtures.EtsSharedTunedClient do
+  @moduledoc false
+  def read(key), do: :ets.lookup(:shared_tuned, key)
+  def write(key, n), do: :ets.insert(:shared_tuned, {key, n})
+end

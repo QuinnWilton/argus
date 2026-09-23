@@ -150,12 +150,30 @@ defmodule Argus.FindingsTest do
                Enum.map(unnamed, &Map.take(&1, [:severity, :module]))
     end
 
-    test "name-only ets relations have honestly-nil anchors" do
-      # No fixture currently triggers the concurrency hints, so pin the
-      # builder directly: a row with no module gets no invented anchor.
-      finding = Argus.Analyses.Ets.finding(:ets_missing_read_concurrency, [":t"])
-      assert %{severity: :info, module: nil, mfa: nil, instr: nil} = finding
-      assert finding.detail =~ "read_concurrency"
+    test "the concurrency hints anchor at the table's :ets.new" do
+      skip_without_souffle()
+
+      {:ok, result} =
+        Argus.run_analyses(
+          [
+            Fixtures.EtsSharedCounters,
+            Fixtures.EtsSharedCountersClient,
+            Fixtures.EtsSharedTuned,
+            Fixtures.EtsSharedTunedClient
+          ],
+          analyses: [:ets]
+        )
+
+      for title <- [
+            "Table without read_concurrency",
+            "Table without write_concurrency",
+            "ordered_set shared across modules"
+          ] do
+        assert [f] = Enum.filter(result.findings, &(&1.title == title)), title
+        assert f.severity == :info
+        assert f.module == Fixtures.EtsSharedCounters
+        assert %{func: "init", arity: 1} = f.instr
+      end
     end
 
     test "unsafe_input findings carry instruction anchors and security severities" do

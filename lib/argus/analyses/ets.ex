@@ -17,8 +17,8 @@ defmodule Argus.Analyses.Ets do
   ## Output relations
 
   - `ets_unprotected_owner(name, mod)` — table owner lacks heir protection (excludes permanent children).
-  - `ets_missing_read_concurrency(name)` — table lacks read_concurrency option.
-  - `ets_missing_write_concurrency(name)` — table lacks write_concurrency option.
+  - `ets_missing_read_concurrency(name, mod, site)` — table lacks read_concurrency option; anchored at its :ets.new.
+  - `ets_missing_write_concurrency(name, mod, site)` — table lacks write_concurrency option; anchored at its :ets.new.
   - `ets_ordered_set_contention(name, mod1, mod2)` — ordered_set accessed by multiple modules.
   - `ets_unnamed_in_process(name, mod)` — unnamed table created in a process.
   - `ets_check_act(mod, func, name, key, read, write)` — a read decides or feeds a plain write of the same key on a public table another process can write; the two may sit in different functions and meet in `func`.
@@ -123,12 +123,20 @@ defmodule Argus.Analyses.Ets do
       },
       %{
         name: :ets_missing_read_concurrency,
-        fields: [{:name, :symbol, "table name"}],
+        fields: [
+          {:name, :symbol, "table name"},
+          {:mod, :symbol, "the module creating it"},
+          {:site, :symbol, "instruction ID of the :ets.new/2 call"}
+        ],
         doc: "Table lacks read_concurrency option."
       },
       %{
         name: :ets_missing_write_concurrency,
-        fields: [{:name, :symbol, "table name"}],
+        fields: [
+          {:name, :symbol, "table name"},
+          {:mod, :symbol, "the module creating it"},
+          {:site, :symbol, "instruction ID of the :ets.new/2 call"}
+        ],
         doc: "Table lacks write_concurrency option."
       },
       %{
@@ -250,24 +258,28 @@ defmodule Argus.Analyses.Ets do
     )
   end
 
-  def finding(:ets_missing_read_concurrency, [name]) do
+  def finding(:ets_missing_read_concurrency, [name, mod, site]) do
     Findings.new(
       :info,
       "Table without read_concurrency",
       "Table #{name} is created without read_concurrency: true. Concurrent " <>
         "readers of a read-heavy table serialize on its lock; if this table " <>
         "is read from many processes, the option is close to free speedup.",
+      at: Findings.at_site(site, mod),
+      at_label: "created here without read_concurrency",
       help: ["add `read_concurrency: true` to the :ets.new/2 options"]
     )
   end
 
-  def finding(:ets_missing_write_concurrency, [name]) do
+  def finding(:ets_missing_write_concurrency, [name, mod, site]) do
     Findings.new(
       :info,
       "Table without write_concurrency",
       "Table #{name} is created without write_concurrency: true. Concurrent " <>
         "writers serialize on a single lock; for write-heavy tables the " <>
         "option reduces contention at the cost of slightly costlier reads.",
+      at: Findings.at_site(site, mod),
+      at_label: "created here without write_concurrency",
       help: ["add `write_concurrency: true` to the :ets.new/2 options"]
     )
   end
