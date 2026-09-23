@@ -218,12 +218,13 @@ defmodule Scry.Analysis do
     ArgumentError -> :error
   end
 
-  # The frontend's `:module_set`, read without an edge; empty for a
-  # frontend that has none (planchette), which then tracks no callee.
+  # The modules the frontend analyzes: the keys of its `:module_map`, as
+  # everywhere else in this layer, demanded without an edge. Scry's
+  # frontend builds the map from its module set, planchette's from the
+  # files it compiles; reading scry's `:module_set` input here left
+  # planchette, which has none, tracking no callee at all.
   defp program_modules(db) do
-    Runtime.untracked(fn -> Runtime.input(db, :module_set, :all) end)
-  rescue
-    Roux.Input.NotSetError -> []
+    Runtime.untracked(fn -> db |> Runtime.query(:module_map, :all) |> Map.keys() end)
   end
 
   # The digest of what a module contributes to the program's relations:

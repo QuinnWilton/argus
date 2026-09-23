@@ -44,6 +44,10 @@
   by `ignore: [modules: ...]` is still watched (`:ignored_beam`, a new
   frontend input): its callers' extraction depends on its beam, so a
   spec change there re-extracts them.
+  Which callees are the project's own is read from the frontend's
+  `:module_map`, the contract every frontend meets, rather than scry's
+  `:module_set` input: planchette's frontend has no module set, and its
+  callers went untracked.
 - The analyses solve concurrently, up to one per scheduler: each solve
   is its own Souffle process, and everything upstream of the fact
   directories is computed once for whichever demands it first. A
