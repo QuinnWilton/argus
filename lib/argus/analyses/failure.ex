@@ -61,7 +61,7 @@ defmodule Argus.Analyses.Failure do
           {:kind, :symbol, "rescue | erpc_transport | rpc | multicall | erpc"},
           {:shape, :symbol,
            "for an rpc variant, case (matched, no clause) or boolean (truthy tuple)"},
-          {:span_end, :symbol, "for erpc_transport, the rescue's last instruction; else empty"}
+          {:span_end, :symbol, "for erpc_transport, the guard's last instruction; else empty"}
         ],
         key: [:func, :site],
         doc: "A failure value or exception that nothing takes."
@@ -97,7 +97,7 @@ defmodule Argus.Analyses.Failure do
           {:belief, :symbol, "result_checked | exception_guarded"},
           {:site, :symbol, "a call site that follows the convention"},
           {:func, :symbol, "the function it is in"},
-          {:guard_end, :symbol, "for exception_guarded, the catch's last instruction; else empty"}
+          {:guard_end, :symbol, "for exception_guarded, the guard's last instruction; else empty"}
         ],
         key: [:callee, :belief, :site],
         evidence: %{of: :inconsistent_handling, on: [:callee, :belief], limit: 3},
@@ -152,13 +152,13 @@ defmodule Argus.Analyses.Failure do
     Findings.new(
       :warning,
       "Catch-all rescue swallows exceptions",
-      "#{func} rescues every exception without re-raising, logging, or " <>
-        "matching specific types. Bugs become silence: the failure surfaces " <>
+      "#{func} takes every exception in a {guard} clause without re-raising, " <>
+        "logging, or matching a type. Bugs become silence: the failure surfaces " <>
         "later, far from its cause, with the stacktrace gone.",
       at: Findings.at_site(site, func),
       to: Findings.at_site(span_end, func),
-      to_block: :catch,
-      at_label: "rescues everything",
+      to_block: :guard,
+      at_label: "this {guard} takes everything",
       help: [
         "rescue the specific exceptions this code can handle, and re-raise or log the rest"
       ]
@@ -188,15 +188,15 @@ defmodule Argus.Analyses.Failure do
     Findings.new(
       :warning,
       ":erpc.call transport failures fall through the rescue",
-      "#{func} rescues the ErlangError :erpc.call raises and unwraps the " <>
+      "#{func} takes the ErlangError :erpc.call raises in a {guard} and unwraps the " <>
         "`{:exception, _, _}` a remote raise produces, but a node going away " <>
         "raises `{:erpc, :noconnection}` (or `{:erpc, :timeout}`, " <>
-        "`{:erpc, :system_limit}`), and the rescue's `case` has no clause for " <>
+        "`{:erpc, :system_limit}`), and the {guard}'s `case` has no clause for " <>
         "it — a CaseClauseError in place of a result.",
       at: Findings.at_site(site, func),
       to: Findings.at_site(span_end, func),
-      to_block: :catch,
-      at_label: "the call and its rescue, which has no {:erpc, _} clause",
+      to_block: :guard,
+      at_label: "the call and its {guard}, which has no {:erpc, _} clause",
       help: ["add a clause for `{:erpc, reason}` and return or raise a meaningful error"]
     )
   end
@@ -304,9 +304,9 @@ defmodule Argus.Analyses.Failure do
 
     case belief do
       "exception_guarded" ->
-        Findings.related("guarded by this catch", Findings.at_site(site, mod),
+        Findings.related("guarded by this {guard}", Findings.at_site(site, mod),
           to: Findings.at_site(guard_end, mod),
-          to_block: :catch
+          to_block: :guard
         )
 
       "result_checked" ->

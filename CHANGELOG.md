@@ -52,11 +52,15 @@ project is the repository root, and listed both a dev and a test build;
 each beam once now, from one build.
 
 A finding can name the source block its anchor sits in: `to_block:` on
-`Findings.new/4` and `Findings.related/3` (`:catch`, `:receive`,
+`Findings.new/4` and `Findings.related/3` (`:guard`, `:receive`,
 `:clause`, `:function`), for a consumer with the source to close the
 span by when the bytecode gives no end — a catch whose bodies are
-literals has no line of its own. The noproc, erpc and bare-rescue
-findings and the "guarded by this catch" frames name `:catch`; the
+literals has no line of its own. Bytecode cannot tell a `rescue` from a
+`catch`, so prose about a guard says `{guard}` where the keyword goes
+and a consumer with the source fills it in (`handler` without one):
+the bare-rescue finding, the erpc finding and the "guarded by this
+{guard}" frames. The noproc, erpc and bare-rescue
+findings and the "guarded by this {guard}" frames name `:guard`; the
 receive-in-callback findings `:receive`; the unreplied gen_statem call
 and the dropped `from` `:clause`; the handle_info catch-all `:function`.
 `bare_rescue` gains `guard_end` and the finding anchors at the try,

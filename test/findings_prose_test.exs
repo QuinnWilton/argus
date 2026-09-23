@@ -51,8 +51,8 @@ defmodule Argus.FindingsProseTest do
     end
 
     test "a block names what a consumer with the source closes the span by" do
-      attrs = Findings.new(:warning, "T", "D.", to_block: :catch)
-      assert attrs.to_block == :catch
+      attrs = Findings.new(:warning, "T", "D.", to_block: :guard)
+      assert attrs.to_block == :guard
       assert Findings.new(:warning, "T", "D.").to_block == nil
 
       related = Findings.related("r", Findings.at_instr("M:f/1#3"), to_block: :receive)

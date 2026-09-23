@@ -51,13 +51,19 @@ defmodule Argus.Findings do
 
   @typedoc """
   The source block an anchor sits in, for a consumer with the source to
-  draw the span to when the bytecode gives no end: `:catch` (the
-  `catch`/`rescue`/`after` clauses that guard the anchored call, to
+  draw the span to when the bytecode gives no end: `:guard` (the
+  `rescue`/`catch`/`after` clauses that guard the anchored call, to
   their `end`), `:receive` (the `receive do ... end` the anchor opens),
   `:clause` (the function clause the anchor heads, to its `end`),
   `:function` (every clause of the anchored function).
+
+  Bytecode cannot tell a `rescue` from a `catch` — both are a `try`
+  handler of class `:error` — so prose about a guard says `{guard}`
+  where the keyword goes, and a consumer with the source puts the word
+  it finds there (`Scry.SourceAnchor.guard_keyword/2`); one without
+  reads it as `handler`.
   """
-  @type block :: :catch | :receive | :clause | :function
+  @type block :: :guard | :receive | :clause | :function
 
   @typedoc """
   A labelled secondary location (sibling, supervisor, callee, ...).
@@ -141,7 +147,7 @@ defmodule Argus.Findings do
         }
 
   @severity_rank %{error: 0, warning: 1, info: 2}
-  @blocks [:catch, :receive, :clause, :function]
+  @blocks [:guard, :receive, :clause, :function]
 
   @severities Map.keys(@severity_rank)
 

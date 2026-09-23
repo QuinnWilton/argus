@@ -395,7 +395,8 @@ defmodule Argus.Analyses.Blocking do
         "this catch lets crash the caller.",
       at: Findings.at_site(call, func),
       to: Findings.at_site(guard_end, func),
-      to_block: :catch,
+      # An exit is only ever caught, never rescued: the keyword is known.
+      to_block: :guard,
       at_label: "the call and its catch, which takes only :noproc",
       help: [
         "add a clause for `:exit, {:shutdown, _}` (and `{:normal, _}`)",
