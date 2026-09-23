@@ -70,6 +70,7 @@ defmodule Argus.Extractors.Dependence do
   alias Argus.Cfg.Function, as: CfgFunction
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
+  alias Argus.Extractor.Runtime
   alias Argus.Extractors.ETS
   alias Argus.Extractors.Mnesia
   alias Argus.Extractors.ProcessRegistry
@@ -80,12 +81,6 @@ defmodule Argus.Extractors.Dependence do
 
   # A fixpoint over a finite lattice converges; the bound only guards a bug.
   @max_passes 64
-
-  @runtime_modules for app <- [:erts, :kernel, :stdlib, :elixir, :logger],
-                       _ = Application.load(app),
-                       mod <- Application.spec(app, :modules) || [],
-                       into: MapSet.new(),
-                       do: mod
 
   @typep source :: {:param, non_neg_integer()} | {:call, String.t()} | {:site, String.t()}
   @typep deps :: MapSet.t(source())
@@ -275,7 +270,7 @@ defmodule Argus.Extractors.Dependence do
     end
   end
 
-  defp runtime?(mod), do: MapSet.member?(@runtime_modules, mod)
+  defp runtime?(mod), do: Runtime.module?(mod)
 
   defp union(inputs), do: inputs |> Map.values() |> Enum.reduce(MapSet.new(), &MapSet.union/2)
 

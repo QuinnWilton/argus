@@ -86,6 +86,16 @@ for memoising consumers only where a struct had its own.
 
 ### Process points-to
 
+**Changed.** `Argus.Extractors.PidFlow` is six times faster (23.8s to 3.8s over the
+385 Phoenix-stack beams): it reuses the module's reaching definitions
+instead of recomputing them, converges each function on its own instead
+of revisiting the whole module every pass, and asks one compile-time set
+(`Argus.Extractor.Runtime`, which `Dependence` now shares) whether a
+callee is the runtime instead of asking the code server at every call
+site. Calls into OTP applications outside ERTS, Kernel, STDLIB, Elixir
+and Logger are now followed like project calls; the corpus tally is
+unchanged.
+
 **Added.** Schema 46. Process points-to: which process a pid can be. A pid is a
 reference and the call that started the process is its allocation site —
 a spawn, named by what it runs (`spawn_call`), or a GenServer,

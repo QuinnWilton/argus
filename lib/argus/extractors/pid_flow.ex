@@ -68,9 +68,9 @@ defmodule Argus.Extractors.PidFlow do
 
   @behaviour Argus.Extractor
 
-  alias Argus.Dataflow
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
+  alias Argus.Extractor.Runtime
   alias Argus.Extractors.ApiCalls
   alias Argus.Extractors.ParamFlow.Propagators
   alias Argus.InstrId
@@ -113,22 +113,21 @@ defmodule Argus.Extractors.PidFlow do
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
-    case Helpers.typed(module_data) do
-      nil ->
-        %{}
+    with typed when typed != nil <- Helpers.typed(module_data),
+         reaching when reaching != nil <- Helpers.reaching(module_data) do
+      sites = CallSites.for_module(module_data)
+      starts = starts(typed, sites)
+      values = derive(typed, reaching, starts, sites)
 
-      typed ->
-        sites = CallSites.for_module(module_data)
-        starts = starts(typed, sites)
-        values = derive(typed, starts, sites)
-
-        %{}
-        |> emit_starts(starts)
-        |> emit_call_sites(sites, starts, values)
-        |> emit_returns(typed, sites, starts, values)
-        |> emit_send_opcodes(module_data, values)
-        |> emit_closures(module_data, values)
-        |> Map.new(fn {relation, rows} -> {relation, rows |> Enum.uniq() |> Enum.sort()} end)
+      %{}
+      |> emit_starts(starts)
+      |> emit_call_sites(sites, starts, values)
+      |> emit_returns(typed, sites, starts, values)
+      |> emit_send_opcodes(module_data, values)
+      |> emit_closures(module_data, values)
+      |> Map.new(fn {relation, rows} -> {relation, rows |> Enum.uniq() |> Enum.sort()} end)
+    else
+      nil -> %{}
     end
   end
 
@@ -182,11 +181,9 @@ defmodule Argus.Extractors.PidFlow do
 
   # For every instruction, the sources each register it reads may hold:
   # %{id => %{reg => MapSet({kind, src})}}.
-  defp derive(typed, starts, sites) do
-    triples = Dataflow.reaching_uses(typed, params: true)
-
+  defp derive(typed, reaching, starts, sites) do
     reads =
-      Enum.group_by(triples, fn {_source, _reg, use} -> use end, fn {source, reg, _use} ->
+      Enum.group_by(reaching, fn {_source, _reg, use} -> use end, fn {source, reg, _use} ->
         {reg, source}
       end)
 
@@ -195,11 +192,14 @@ defmodule Argus.Extractors.PidFlow do
     bifs = Map.new(Map.get(typed, :bif_call, []), &{&1.id, &1.func})
     tails = MapSet.new(Map.get(typed, :tail_call, []), & &1.id)
 
-    ids =
+    # Reaching definitions never cross a function, so each function
+    # converges on its own: a pass revisits only the function that changed.
+    functions =
       typed
       |> Map.get(:instruction, [])
-      |> Enum.sort_by(&{&1.id.module, &1.id.func, &1.id.arity, &1.idx})
-      |> Enum.map(& &1.id)
+      |> Enum.group_by(&InstrId.fa(&1.id), & &1.id)
+      |> Map.values()
+      |> Enum.map(fn ids -> Enum.sort_by(ids, & &1.idx) end)
 
     ctx = %{
       reads: reads,
@@ -211,8 +211,10 @@ defmodule Argus.Extractors.PidFlow do
       dynamics: MapSet.new(Map.get(typed, :dynamic_call, []), & &1.id)
     }
 
-    outs = fixpoint(ids, ctx, %{}, 0)
-    Map.new(ids, fn id -> {id, inputs_of(id, ctx, outs)} end)
+    Enum.reduce(functions, %{}, fn ids, values ->
+      outs = fixpoint(ids, ctx, %{}, 0)
+      Enum.reduce(ids, values, fn id, acc -> Map.put(acc, id, inputs_of(id, ctx, outs)) end)
+    end)
   end
 
   # What each call writes to x0: a start's process, a lookup's name, a
@@ -546,44 +548,14 @@ defmodule Argus.Extractors.PidFlow do
 
   # ── Which calls reach project code ───────────────────────────────────
 
-  # A local call, or a remote call into a module that is not part of OTP or
-  # Elixir itself: the only callees whose own summaries can say what they
-  # do with a pid. Library calls are neither followed nor recorded, which
-  # keeps the relations to the program's own code.
+  # A local call, or a remote call into a module outside the runtime
+  # (`Argus.Extractor.Runtime`): the only callees whose own summaries can
+  # say what they do with a pid. Runtime calls are neither followed nor
+  # recorded, which keeps the relations to the program's own code.
   defp project?(%{remote?: false}), do: true
   defp project?(%{mfa: {mod, _f, _a}}), do: not library?(mod)
 
-  defp library?(mod) do
-    case :code.which(mod) do
-      # erlang, erts_internal and the rest of the VM's own modules.
-      :preloaded ->
-        true
-
-      path when is_list(path) ->
-        path = List.to_string(path)
-        Enum.any?(library_roots(), &String.starts_with?(path, &1))
-
-      _ ->
-        false
-    end
-  end
-
-  defp library_roots do
-    case :persistent_term.get({__MODULE__, :roots}, nil) do
-      nil ->
-        roots = [List.to_string(:code.root_dir()), elixir_root()]
-        :persistent_term.put({__MODULE__, :roots}, roots)
-        roots
-
-      roots ->
-        roots
-    end
-  end
-
-  # Elixir's own applications (elixir, logger, mix, ...) sit side by side.
-  defp elixir_root do
-    :elixir |> :code.lib_dir() |> List.to_string() |> Path.dirname()
-  end
+  defp library?(mod), do: Runtime.module?(mod)
 
   defp generated?(func_id) do
     String.contains?(func_id, [":__info__/", ":module_info/", ":-inlined-"])
