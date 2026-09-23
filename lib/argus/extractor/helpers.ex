@@ -1297,17 +1297,14 @@ defmodule Argus.Extractor.Helpers do
   The module's reaching definitions with its parameters as sources
   (`Argus.Dataflow.reaching_uses/2` with `params: true`): the ones the
   pipeline attached to `module_data` (`nil` when it could not compute
-  them), or computed on the spot from `typed/1` for bare disassembly.
+  them), or computed on the spot for bare disassembly
+  (`Argus.Instr.Reaching.uses/2`).
   """
   @spec reaching(map()) :: MapSet.t(Argus.Dataflow.reaching_use()) | nil
   def reaching(%{reaching: reaching}), do: reaching
 
-  def reaching(module_data) do
-    case typed(module_data) do
-      nil -> nil
-      typed -> Argus.Dataflow.reaching_uses(typed, params: true)
-    end
-  end
+  def reaching(%{module: mod, functions: functions}),
+    do: Argus.Instr.Reaching.uses(mod, functions)
 
   @doc """
   The module's decoded Layer-1 facts — the relations

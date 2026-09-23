@@ -21,11 +21,15 @@ defmodule Argus.Instr.Reaching do
 
   Each function's solution is computed once and kept in the process
   dictionary for the module being read, so the walks that query one
-  function many times pay for it once. A different module replaces it.
+  function many times pay for it once, and the emitter's normalized list
+  and the extractors' raw one share it. A different module replaces it.
+  `uses/2` reads a whole module's reaching definitions off the same
+  solutions: the pipeline's `module_data.reaching`.
   """
 
   alias Argus.Dataflow
   alias Argus.Instr
+  alias Argus.InstrId
 
   @typedoc "What can have written a register: an instruction's index, or a parameter."
   @type source :: non_neg_integer() | {:param, non_neg_integer()}
@@ -75,6 +79,83 @@ defmodule Argus.Instr.Reaching do
   @spec at([Instr.instr()], non_neg_integer()) :: Instr.instr()
   def at(instrs, idx), do: elem(solution(instrs).code, idx)
 
+  @doc """
+  Every read in `module`'s functions with the writes that reach it:
+  `Argus.Dataflow.reaching_uses/2` with `params: true` over the module's
+  facts, computed from the instruction lists and the solutions
+  `sources/3` keeps — so a module's reaching definitions are solved once,
+  for the pipeline and for every walk that asks afterwards. Registers are
+  spelled as the `use` facts spell them (`"x0"`).
+  """
+  @spec uses(module(), [{:function, atom(), arity(), term(), [Instr.instr()]}]) ::
+          MapSet.t(Dataflow.reaching_use())
+  def uses(module, functions) do
+    functions
+    |> Enum.flat_map(fn {:function, name, arity, _entry, instrs} ->
+      {:ok, at} = InstrId.parse(InstrId.mint(InstrId.func_id(module, name, arity), 0))
+      function_uses(instrs, at)
+    end)
+    |> MapSet.new()
+  end
+
+  # One forward walk per block: each read takes what reaches it before
+  # its own instruction's writes; each write is then the one reaching
+  # its register for the rest of the block.
+  defp function_uses([], _at), do: []
+
+  defp function_uses(instrs, at) do
+    %{code: code, blocks: blocks} = solution(instrs)
+    ids = %{}
+
+    {edges, _ids} =
+      Enum.reduce(blocks, {[], ids}, fn {_n, {block, in_map}}, {edges, ids} ->
+        state = Map.new(in_map, fn {reg, sources} -> {reg, MapSet.to_list(sources)} end)
+
+        {edges, _state, ids} =
+          block
+          |> Tuple.to_list()
+          |> Enum.reduce({edges, state, ids}, fn idx, {edges, state, ids} ->
+            instr = elem(code, idx)
+            {use_id, ids} = instr_id(ids, at, idx)
+
+            {edges, ids} =
+              for reg <- Instr.uses(instr),
+                  source <- Map.get(state, reg, []),
+                  reduce: {edges, ids} do
+                {acc, ids} ->
+                  {source_id, ids} = source_id(ids, at, source)
+                  {[{source_id, spell(reg), use_id} | acc], ids}
+              end
+
+            state = Enum.reduce(Instr.defs(instr), state, &Map.put(&2, &1, [idx]))
+            {edges, state, ids}
+          end)
+
+        {edges, ids}
+      end)
+
+    edges
+  end
+
+  defp source_id(ids, _at, {:param, _k} = param), do: {param, ids}
+  defp source_id(ids, at, idx), do: instr_id(ids, at, idx)
+
+  # One struct per instruction, shared by every edge naming it.
+  defp instr_id(ids, at, idx) do
+    case Map.fetch(ids, idx) do
+      {:ok, id} ->
+        {id, ids}
+
+      :error ->
+        id = %{at | idx: idx}
+        {id, Map.put(ids, idx, id)}
+    end
+  end
+
+  defp spell({:x, n}), do: "x" <> Integer.to_string(n)
+  defp spell({:y, n}), do: "y" <> Integer.to_string(n)
+  defp spell({:fr, n}), do: "fr" <> Integer.to_string(n)
+
   # Within the block the last write before `idx` is the only one; past
   # its start, whatever reaches the block. A block is a chain of
   # instructions each the sole successor of the last, which a jump can
@@ -115,7 +196,7 @@ defmodule Argus.Instr.Reaching do
         solution
 
       nil ->
-        solution = solve(instrs)
+        solution = solve(instrs, cached)
         kept = Enum.take([{instrs, solution} | cached], 2)
         Process.put(@cache, {module, Map.put(functions, key, kept)})
         solution
@@ -135,47 +216,62 @@ defmodule Argus.Instr.Reaching do
     end
   end
 
-  defp solve(instrs) do
+  # The solution depends on the instructions only through what each
+  # writes, where control goes after it and which labels it defines: the
+  # skeleton. The emitter's normalized list and the extractors' raw one
+  # have the same skeleton (typed registers and allocation hints are not
+  # registers), so the second one met borrows the first one's blocks and
+  # keeps only its own instructions.
+  defp solve(instrs, cached) do
     code = List.to_tuple(instrs)
+    skeleton = skeleton(instrs)
+
+    case Enum.find(cached, fn {_instrs, solution} -> solution.skeleton == skeleton end) do
+      {_twin, solution} ->
+        %{solution | code: code}
+
+      nil ->
+        skeleton |> blocks(code, entry(instrs)) |> Map.merge(%{code: code, skeleton: skeleton})
+    end
+  end
+
+  defp skeleton(instrs) do
+    Enum.map(instrs, fn instr ->
+      label = with {:label, l} <- instr, do: l, else: (_ -> nil)
+      {Instr.defs(instr), Instr.targets(instr), Instr.falls_through?(instr), label}
+    end)
+  end
+
+  defp blocks([], _code, _entry), do: %{block_of: %{}, blocks: %{}}
+
+  defp blocks(skeleton, code, entry) do
     n = tuple_size(code)
     ids = Enum.to_list(0..(n - 1)//1)
+    indexed = Enum.with_index(skeleton)
 
     labels =
-      for {{:label, l}, idx} <- Enum.with_index(instrs), into: %{}, do: {l, idx}
+      for {{_defs, _targets, _next?, l}, idx} <- indexed, l != nil, into: %{}, do: {l, idx}
 
     succ =
-      Map.new(ids, fn idx ->
-        instr = elem(code, idx)
-        next = if Instr.falls_through?(instr) and idx + 1 < n, do: [idx + 1], else: []
-
-        jumps =
-          for l <- Instr.targets(instr), target = Map.get(labels, l), target != nil, do: target
-
+      Map.new(indexed, fn {{_defs, targets, next?, _l}, idx} ->
+        next = if next? and idx + 1 < n, do: [idx + 1], else: []
+        jumps = for l <- targets, target = Map.get(labels, l), target != nil, do: target
         {idx, Enum.uniq(next ++ jumps)}
       end)
 
-    defs = Map.new(ids, &{&1, Instr.defs(elem(code, &1))})
+    defs = Map.new(indexed, fn {{defs, _targets, _next?, _l}, idx} -> {idx, defs} end)
+    blocks = ids |> Dataflow.block_ins(succ, defs, entry) |> Enum.with_index()
 
-    case ids do
-      [] ->
-        %{code: code, block_of: %{}, blocks: %{}}
-
-      _ ->
-        blocks = ids |> Dataflow.block_ins(succ, defs, entry(instrs)) |> Enum.with_index()
-
-        %{
-          code: code,
-          block_of:
-            for(
-              {{block, _in}, n} <- blocks,
-              {idx, pos} <- Enum.with_index(block),
-              into: %{},
-              do: {idx, {n, pos}}
-            ),
-          blocks:
-            Map.new(blocks, fn {{block, in_map}, n} -> {n, {List.to_tuple(block), in_map}} end)
-        }
-    end
+    %{
+      block_of:
+        for(
+          {{block, _in}, n} <- blocks,
+          {idx, pos} <- Enum.with_index(block),
+          into: %{},
+          do: {idx, {n, pos}}
+        ),
+      blocks: Map.new(blocks, fn {{block, in_map}, n} -> {n, {List.to_tuple(block), in_map}} end)
+    }
   end
 
   # The entry is the instruction after func_info, where the parameters

@@ -73,6 +73,38 @@ defmodule Argus.Instr.ReachingTest do
     end
   end
 
+  describe "uses/2" do
+    test "is Dataflow.reaching_uses/2 with the parameters, from the instruction lists" do
+      for mod <- [:lists, :gen_server, GenServer, Argus.Test.Fixtures.Instr] do
+        {:ok, data} = Disassemble.disassemble_path(to_string(:code.which(mod)))
+
+        assert Reaching.uses(data.module, data.functions) ==
+                 Dataflow.reaching_uses(Helpers.typed(data), params: true),
+               inspect(mod)
+      end
+    end
+
+    test "a function's normalized list and its raw one are solved once" do
+      {:ok, data} = Disassemble.disassemble_path(to_string(:code.which(:lists)))
+
+      {raw, normalized} =
+        Enum.find_value(data.functions, fn {:function, _, _, _, raw} = function ->
+          normalized = :lists |> Normalize.normalize_function(function) |> Enum.map(&elem(&1, 1))
+          if normalized != raw and length(raw) > 20, do: {raw, normalized}
+        end)
+
+      Process.delete(:argus_instr_reaching)
+      Reaching.sources(normalized, 0, {:x, 0})
+      Reaching.sources(raw, 0, {:x, 0})
+      {{:atom, :lists}, cached} = Process.get(:argus_instr_reaching)
+      [[{^raw, second}, {^normalized, first}]] = Map.values(cached)
+
+      assert :erts_debug.same(second.blocks, first.blocks)
+      assert Reaching.at(raw, 3) == Enum.at(raw, 3)
+      assert Reaching.at(normalized, 3) == Enum.at(normalized, 3)
+    end
+  end
+
   defp use_key({_source, reg, %InstrId{func: f, arity: a, idx: idx}}), do: {f, a, idx, reg}
   defp source_of({{:param, k}, _reg, _use}), do: {:param, k}
   defp source_of({%InstrId{idx: idx}, _reg, _use}), do: idx

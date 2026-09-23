@@ -59,6 +59,16 @@ extraction on sequin (531 beams, 12.8 s of 56 s serial), the subset is
 8.5 s. An extractor that reads another relation from `typed` adds it to
 the list; `Argus.Pipeline.TypedRelationsTest` fails until it does.
 
+**Changed.** Extraction solves each function's reaching definitions once.
+The pipeline's `module_data.reaching` is read off the per-function
+solutions `Argus.Instr.Reaching` keeps (**Added**: `Reaching.uses/2`, the
+same set `Argus.Dataflow.reaching_uses/2` computes from the facts), which
+the emitter's and the extractors' register walks share; it was solved
+again from the decoded facts, and once more for each of the two
+instruction lists. The solver itself visits blocks in reverse postorder
+and keeps what reaches a point per register, which took a function of
+many wide joins from quadratic to linear (Ecto.UUID 20.7 s to 0.4 s).
+
 **Removed.** Schema 60. `move`, `allocate`, `deallocate`, `try_end` and
 `module_attribute`: no Datalog rule and no in-process pass read them (the
 walks read the instructions; the extractors that need an attribute read

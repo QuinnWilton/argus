@@ -24,8 +24,8 @@ defmodule Argus.Pipeline do
   """
 
   alias Argus.Cfg
-  alias Argus.Dataflow
   alias Argus.Extractor.Helpers
+  alias Argus.Instr.Reaching
   alias Argus.InstrId
   alias Argus.Pipeline.{Disassemble, Emit, Writer}
 
@@ -268,7 +268,7 @@ defmodule Argus.Pipeline do
 
       {cfgs, errors} = attempt("cfg", fn -> if typed, do: Cfg.build(typed), else: %{} end, errors)
       cfgs = cfgs || %{}
-      {reaching, errors} = attempt("reaching", fn -> reaching(typed) end, errors)
+      {reaching, errors} = attempt("reaching", fn -> reaching(typed, data) end, errors)
 
       # Every call site indexed once; the extractors filter the index
       # rather than each walking the instruction stream.
@@ -371,25 +371,23 @@ defmodule Argus.Pipeline do
 
   defp one_line(text), do: text |> String.trim() |> String.replace(~r/\s*\R\s*/, " ")
 
-  # Reaching definitions, derived per module rather than over the merged
-  # program. `Argus.Dataflow` never produces an edge crossing a function, so
-  # deriving here is equivalent to deriving once at the end — and it keeps
-  # the result per-module, which is what lets an incremental consumer reuse
-  # it for every module the edit did not touch.
+  # Reaching definitions with the parameters as sources, once per module
+  # and never over the merged program (no edge crosses a function, and a
+  # per-module result is what an incremental consumer reuses for every
+  # module an edit did not touch). They are read off the per-function
+  # solutions `Argus.Instr.Reaching` keeps, which the emitter's value walks
+  # may already have solved and the extractors' walks go on to query, so
+  # each function is solved once; `Argus.Dataflow.reaching_uses/2` over
+  # the facts is the same set, solved again. The extractors that follow
+  # values read them from `module_data`, and def_use is the
+  # instruction-to-instruction part — a parameter pseudo-definition is
+  # killed like any other write, so it never changes which instructions'
+  # writes reach a read.
   #
-  # The output is smaller than `instruction`, which it is derived from:
-  # 25,409 edges against 88,658 instructions on oban, 137,170 against
-  # 243,350 on keila. It is still keyed on positional instruction IDs, so a
-  # body edit churns that function's edges — which is why only the analyses
-  # that need value flow should declare it, and why it is emitted rather
-  # than folded into an existing relation.
-  # Reaching definitions with the parameters as sources, once per module:
-  # the extractors that follow values read them from `module_data`, and
-  # def_use is the instruction-to-instruction part — a parameter
-  # pseudo-definition is killed like any other write, so it never changes
-  # which instructions' writes reach a read.
-  defp reaching(nil), do: nil
-  defp reaching(typed), do: Dataflow.reaching_uses(typed, params: true)
+  # A module whose facts did not decode gets none, as it always has: the
+  # extractors that read them read the facts too.
+  defp reaching(nil, _data), do: nil
+  defp reaching(_typed, data), do: Reaching.uses(data.module, data.functions)
 
   defp derive_def_use(nil), do: %{}
 
