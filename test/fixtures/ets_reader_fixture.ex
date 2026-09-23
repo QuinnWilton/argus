@@ -42,6 +42,59 @@ defmodule Argus.Test.Fixtures.EtsOwners do
     end
   end
 
+  defmodule InfoOwner do
+    @moduledoc false
+    # :ets.info answers :undefined for a table that is gone: no raise.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    def count, do: :ets.info(:ets_reader_info, :size)
+
+    @impl true
+    def init(_opts) do
+      :ets.new(:ets_reader_info, [:named_table, :protected, :set])
+      {:ok, %{}}
+    end
+  end
+
+  defmodule BadargOwner do
+    @moduledoc false
+    # postgrex's soft_read: `catch :error, :badarg` takes the missing table.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    def lookup(key) do
+      :ets.lookup_element(:ets_reader_badarg, key, 2)
+    catch
+      :error, :badarg -> nil
+    end
+
+    @impl true
+    def init(_opts) do
+      :ets.new(:ets_reader_badarg, [:named_table, :protected, :set])
+      {:ok, %{}}
+    end
+  end
+
+  defmodule DynamicOwnerNamedRead do
+    @moduledoc false
+    # The owner's table has a computed name; its API reads another,
+    # named table. That read is not of the owner's table.
+    use GenServer
+
+    def start_link(name), do: GenServer.start_link(__MODULE__, name)
+
+    def settings(key), do: :ets.lookup(:some_settings, key)
+
+    @impl true
+    def init(name) do
+      :ets.new(name, [:protected, :set])
+      {:ok, %{}}
+    end
+  end
+
   defmodule ClosureGuardedOwner do
     @moduledoc false
     # The read sits in a closure handed to a rescuing wrapper (redix's fix).

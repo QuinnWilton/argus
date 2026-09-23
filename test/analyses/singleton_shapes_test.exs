@@ -57,7 +57,10 @@ defmodule Argus.Analyses.SingletonShapesTest do
           EtsOwners.HeirOwner,
           EtsOwners.InsideOwner,
           EtsOwners.Helper,
-          EtsOwners.HelperOwner
+          EtsOwners.HelperOwner,
+          EtsOwners.InfoOwner,
+          EtsOwners.BadargOwner,
+          EtsOwners.DynamicOwnerNamedRead
         ],
         :ets
       )

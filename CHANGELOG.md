@@ -730,6 +730,14 @@ secret but holds a fact about it — `password_reset_sent_at`,
 `access_token_expires_at`, `api_key_count`: a field ending in a
 timestamp, date, count, expiry, TTL, length, version or "set" suffix.
 
+### ets
+
+**Changed.** `ets.ets_read_outside_owner` no longer counts `:ets.info/1,2` (it answers
+`:undefined` for a table that is gone), takes `catch :error, :badarg` as
+the rescue it is, and joins a table created under a computed name only
+with reads whose table is also computed, not every read in the owner's
+module.
+
 ## 0.19.0 — 2026-09-22
 
 ### Added

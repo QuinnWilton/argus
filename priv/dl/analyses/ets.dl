@@ -225,6 +225,13 @@ owner_reaches(mod, t) :- process_entry(mod, c), ets_reach.reaches(c, t).
 
 rescues(f) :- catches_class(f, "error").
 rescues(f) :- catch_tag(_, f, "error", "ArgumentError").
+rescues(f) :- catch_tag(_, f, "error", ":badarg").
+
+// :ets.info/1,2 answers :undefined for a table that is gone; it is how a
+// reader asks, not a read that raises.
+.decl raising_read(site: symbol)
+
+raising_read(site) :- ets_op(site, _, _, op, "read"), op != "info".
 
 // The rescue may sit in the function that built the closure, at any
 // depth, or in a function that one of those parents calls.
@@ -245,6 +252,7 @@ guarded(g) :- enclosing_function(g, a), closure_def(p, a), call_edge(p, t), resc
 
 table_param(reader, pos, site) :-
   ets_op(site, reader, "dynamic", _, "read"),
+  raising_read(site),
   ets_op_param(site, pos).
 
 table_param(f, p, site) :-
@@ -253,7 +261,10 @@ table_param(f, p, site) :-
 
 .decl named_read(name: symbol, reader: symbol, site: symbol)
 
-named_read(name, reader, site) :- ets_op(site, reader, name, _, "read"), name != "dynamic".
+named_read(name, reader, site) :-
+  ets_op(site, reader, name, _, "read"),
+  name != "dynamic",
+  raising_read(site).
 
 named_read(name, caller, site) :-
   call_arg(caller, g, q, name),
@@ -276,7 +287,8 @@ ets_read_outside_owner("dynamic", owner, reader, site, id) :-
   function_def(creator, owner, _, _, _),
   owner_reaches(owner, creator),
   !ets_option(id, "heir", "true"),
-  ets_op(site, reader, _, _, "read"),
+  ets_op(site, reader, "dynamic", _, "read"),
+  raising_read(site),
   function_def(reader, owner, _, _, _),
   !owner_reaches(owner, reader),
   !guarded(reader).
