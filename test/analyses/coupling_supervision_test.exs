@@ -86,24 +86,23 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
       skip_without_souffle()
 
       # P's handler makes two GenServer calls: #5 to a process nobody can
-      # name, #9 to the S it started. The finding points at #9, not at
-      # whichever GenServer call of the witness came first.
+      # name, #9 to the S its supervisor starts, through the pid of the
+      # name the child spec gives it. The finding points at #9, not at
+      # whichever GenServer call of the witness came first. (An S that P
+      # started for itself would be P's own, not the sibling.)
       facts =
         "transient"
         |> base_facts()
         |> Map.merge(%{
           function_def: [["P:handle_call/3", "P", "handle_call", "3", "1", "1"]],
+          implements_behaviour: [["S", "GenServer"]],
+          supervisor_child_name: [["Sup", "1", "S"]],
           sync_call: [["P:handle_call/3", "dynamic"]],
           call_site: [
             ["P:handle_call/3#5", "P:handle_call/3", "GenServer", "call", "2"],
             ["P:handle_call/3#9", "P:handle_call/3", "GenServer", "call", "2"]
           ],
-          process_start: [
-            ["P:handle_call/3#2", "P:handle_call/3", "server P:handle_call/3#2", "server", "S"]
-          ],
-          pid_call: [
-            ["P:handle_call/3#9", "P:handle_call/3", "call", "proc", "server P:handle_call/3#2"]
-          ]
+          pid_call: [["P:handle_call/3#9", "P:handle_call/3", "call", "name", "S"]]
         })
 
       assert [["Sup", "P", "S", "restart_isolation", "call", _, "P:handle_call/3", site | _]] =

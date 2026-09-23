@@ -407,6 +407,48 @@ reaches_sync_dep_timeout(f, m, ms) :-
   call_edge(f, g),
   reaches_sync_dep_timeout(g, m, ms).
 
+// ── A process of one's own ─────────────────────────────────────────────
+//
+// `func` depends on `mod` only through processes it keeps for itself:
+// every call or cast of func's that process points-to follows to a
+// process of mod's goes to a private instance (private_process — a
+// `{:ok, conn} = Conn.start_link()` kept in the state), none to one a
+// supervisor starts or a name shares, and func names no process of mod
+// literally. The rules about siblings ask this: a supervisor restarting
+// its Conn child does not touch the Conn a sibling started for itself.
+.decl private_dep(func: symbol, mod: symbol)
+
+private_dep(f, m) :-
+  call_target(f, kind, p),
+  (kind = "call" ; kind = "cast"),
+  server_process(p, m),
+  private_process(p, _, _),
+  !shared_dep(f, m).
+
+.decl shared_dep(func: symbol, mod: symbol)
+
+shared_dep(f, m) :-
+  call_target(f, kind, p),
+  (kind = "call" ; kind = "cast"),
+  server_process(p, m),
+  !private_process(p, _, _).
+
+shared_dep(f, m) :- sync_call(f, m).
+shared_dep(f, m) :- async_cast(f, m).
+
+// A module that depends on `mod` through private instances alone: some
+// function of it does, and none does otherwise.
+.decl private_module_dep(from_mod: symbol, to_mod: symbol)
+
+private_module_dep(a, b) :-
+  private_dep(f, b),
+  function_def(f, a, _, _, _),
+  !shared_module_dep(a, b).
+
+.decl shared_module_dep(from_mod: symbol, to_mod: symbol)
+
+shared_module_dep(a, b) :- shared_dep(f, b), function_def(f, a, _, _, _).
+
 // ── Module-level dependency ────────────────────────────────────────────
 //
 // A function defined in `from_mod` transitively reaches a function

@@ -40,12 +40,16 @@ derived_process_link(a, b) :-
 // (sup, caller_mod, callee_mod).
 .decl coupling(sup: symbol, caller_mod: symbol, callee_mod: symbol, sup_site: symbol, witness: symbol)
 
+// A caller whose every resolved call to the callee's module goes to an
+// instance it started for itself (private_module_dep, calls.dl) is not
+// coupled to the sibling the supervisor starts.
 coupling(sup, caller_mod, callee_mod, sup_site, witness) :-
   supervisor(sup, "one_for_one"),
   supervisor_site(sup, sup_site),
   child_subtree(sup, caller_branch, caller_mod),
   child_subtree(sup, callee_branch, callee_mod),
   stateful_module_dep(caller_mod, callee_mod, witness),
+  !private_module_dep(caller_mod, callee_mod),
   !derived_process_link(caller_mod, callee_mod),
   !derived_process_link(callee_mod, caller_mod),
   caller_branch != callee_branch.
@@ -185,6 +189,7 @@ sibling_dependency(sup, perm, sibling, "restart_policy", restart, sup_site, witn
   supervisor_child(sup, _, sibling, restart, _),
   (restart = "transient" ; restart = "temporary"),
   stateful_module_dep(perm, sibling, witness),
+  !private_module_dep(perm, sibling),
   dep_basis(perm, sibling, basis, p).
 
 // ── A sibling's pid cached in init/1 under one_for_one ───────────────

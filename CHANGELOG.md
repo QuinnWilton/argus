@@ -1379,6 +1379,23 @@ up at boot and called whatever pid each caller handed it was reported.
 Where the name resolves to no process points-to knows, the old test
 stands in. Corpus, realtime, logflare, hexpm and OTP unchanged.
 
+**Changed.** `coupling.sibling_dependency` ("restart_isolation",
+"restart_policy") is not reported for a caller whose every call or cast
+to the callee's module that process points-to resolves goes to an
+instance the caller started for itself (`private_module_dep`, calls.dl):
+a Pool's own `{:ok, conn} = Conn.start_link(...)` is not the Conn its
+supervisor starts beside it. Corpus, realtime, logflare, hexpm and OTP
+unchanged.
+
+### shutdown
+
+**Changed.** `shutdown.teardown_touches_sibling` does the same: a
+`terminate/2` calling a connection the module started for itself
+(`private_dep`), and a handler stopping one through the sibling's own
+`stop/1` when every process it hands that function is such an instance,
+no longer touch the supervised sibling. Corpus, realtime, logflare,
+hexpm and OTP unchanged.
+
 ### Corpus and tooling
 
 **Added.** `Argus.Corpus` pairs take `subdir:` for a repository whose Mix project is
