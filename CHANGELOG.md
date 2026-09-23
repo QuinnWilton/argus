@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Labels on the same span of the same file render as one label whose
+  messages join in order. A call cycle's anchor and the frame for the
+  edge it starts sit on the same call, and drew two underlines of one
+  span, each with its own tail ("one direction of the cycle" / "cycle
+  edge A → B"); they now read `one direction of the cycle; cycle edge
+  A → B` under one underline. The JSON report keeps every frame.
 - A beam deleted between discovery and hashing (a concurrent compile
   pruning it) is left out of the run instead of crashing it in
   `File.stat!`.

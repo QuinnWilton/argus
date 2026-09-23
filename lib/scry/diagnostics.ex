@@ -136,12 +136,14 @@ defmodule Scry.Diagnostics do
   end
 
   defp build_report(entry, rel_file, cwd) do
+    [primary | related] = labels(entry, rel_file, cwd)
+
     entry.severity
     |> report_for("#{entry.title}")
     |> Report.with_code("scry.#{entry.code}")
     |> Report.with_source(rel_file)
-    |> Report.with_label(primary_label(entry))
-    |> Report.with_labels(related_labels(entry, rel_file, cwd))
+    |> Report.with_label(primary)
+    |> Report.with_labels(related)
     |> Report.with_note(entry.detail)
     |> then(fn report ->
       Enum.reduce(Map.get(entry, :help, []), report, &Report.with_help(&2, &1))
@@ -152,9 +154,44 @@ defmodule Scry.Diagnostics do
   defp report_for(:warning, message), do: Report.warning(message)
   defp report_for(:info, message), do: Report.info(message)
 
-  defp primary_label(entry) do
-    Label.new(span(entry), message: Map.get(entry, :at_label), style: style(entry))
+  # The primary label first, then the related ones. Labels on the same
+  # span of the same file are one label: a cycle's anchor and the frame
+  # for the edge it starts sit on the same call, and two underlines of
+  # one span, each with its own tail, read as two places. Their messages
+  # join in order, and the first label keeps its place and priority.
+  defp labels(entry, rel_file, cwd) do
+    primary = {{rel_file, span(entry)}, Map.get(entry, :at_label), primary_opts(entry)}
+
+    related =
+      for related <- Map.get(entry, :related, []) do
+        rel_related = relativize(related.file, cwd)
+        opts = [priority: :secondary, style: style(related)]
+        opts = if rel_related == rel_file, do: opts, else: Keyword.put(opts, :source, rel_related)
+        {{rel_related, span(related)}, related.label, opts}
+      end
+
+    [primary | related]
+    |> Enum.reduce([], fn {place, message, opts}, merged ->
+      case List.keyfind(merged, place, 0) do
+        {^place, first, first_opts} ->
+          List.keyreplace(merged, place, 0, {place, join(first, message), first_opts})
+
+        nil ->
+          [{place, message, opts} | merged]
+      end
+    end)
+    |> Enum.reverse()
+    |> Enum.map(fn {{_file, span}, message, opts} ->
+      Label.new(span, Keyword.put(opts, :message, message))
+    end)
   end
+
+  defp primary_opts(entry), do: [style: style(entry)]
+
+  defp join(nil, message), do: message
+  defp join(message, nil), do: message
+  defp join(message, message), do: message
+  defp join(first, second), do: first <> "; " <> second
 
   # A finding that closes a span brackets the lines from its anchor to
   # the end; one that does not underlines its line.
@@ -174,27 +211,6 @@ defmodule Scry.Diagnostics do
     case Map.get(entry, :end_line) do
       end_line when is_integer(end_line) and end_line > entry.line -> :bracket
       _ -> :inline
-    end
-  end
-
-  defp related_labels(entry, rel_file, cwd) do
-    for related <- Map.get(entry, :related, []) do
-      rel_related = relativize(related.file, cwd)
-
-      opts = [
-        message: related.label,
-        priority: :secondary,
-        style: style(related)
-      ]
-
-      opts =
-        if rel_related == rel_file do
-          opts
-        else
-          Keyword.put(opts, :source, rel_related)
-        end
-
-      Label.new(span(related), opts)
     end
   end
 
