@@ -981,6 +981,12 @@ instead of once per cell. Over the 650k rows of 300 logflare modules in
 one call that halves it (1.2 s to 0.6 s); a caller that materializes
 one relation at a time, as scry does, sees no difference either way.
 
+**Changed.** `Argus.Tsv.escape/1` finds a field's special characters by
+scanning its bytes instead of `:binary.match/2` over a four-pattern list,
+which compiled the pattern on every call — every field of every fact row
+argus or scry writes. Encoding the 652k fact rows of 300 logflare
+modules drops from about 2.5 s to 0.4 s; the text is byte-identical.
+
 ## 0.19.0 — 2026-09-22
 
 ### Added

@@ -29,8 +29,6 @@ defmodule Argus.Tsv do
   is written and read as it is.
   """
 
-  @special ["\\", "\t", "\n", "\r"]
-
   @doc """
   The lines of a `.facts` file holding `rows`, as iodata: each row's
   escaped fields joined by tabs and ended by a newline.
@@ -69,11 +67,17 @@ defmodule Argus.Tsv do
   @doc "A field as it is written, with its special characters escaped."
   @spec escape(String.t()) :: String.t()
   def escape(field) when is_binary(field) do
-    case :binary.match(field, @special) do
-      :nomatch -> field
-      _ -> escape_all(field, [])
-    end
+    if special?(field), do: escape_all(field, []), else: field
   end
+
+  # A byte scan rather than `:binary.match/2` over the four characters: a list
+  # pattern is compiled on every call, and every field of every fact row
+  # comes through here — on 650k rows the compiles were five sixths of
+  # encoding them. A compiled pattern cannot be a module literal, and the
+  # fields are short enough that scanning them is as fast as matching one.
+  defp special?(<<byte, _::binary>>) when byte in [?\\, ?\t, ?\n, ?\r], do: true
+  defp special?(<<_, rest::binary>>), do: special?(rest)
+  defp special?(<<>>), do: false
 
   defp escape_all(<<>>, acc), do: acc |> Enum.reverse() |> IO.iodata_to_binary()
   defp escape_all(<<"\\", rest::binary>>, acc), do: escape_all(rest, ["\\\\" | acc])

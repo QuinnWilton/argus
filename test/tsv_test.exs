@@ -33,6 +33,19 @@ defmodule Argus.TsvTest do
       end
     end
 
+    property "escape replaces exactly the four special characters" do
+      check all(value <- field()) do
+        reference =
+          value
+          |> String.replace("\\", "\\\\")
+          |> String.replace("\t", "\\t")
+          |> String.replace("\n", "\\n")
+          |> String.replace("\r", "\\r")
+
+        assert Tsv.escape(value) == reference
+      end
+    end
+
     test "a field with nothing to escape is returned as it is" do
       value = "Elixir.Foo:bar/2#17"
       assert :erts_debug.same(Tsv.escape(value), value)
