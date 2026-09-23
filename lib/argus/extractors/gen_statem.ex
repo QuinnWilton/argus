@@ -89,7 +89,9 @@ defmodule Argus.Extractors.GenStatem do
     attrs = module_data.attributes
     behaviours = get_behaviours(attrs)
 
-    if :gen_statem in behaviours do
+    # The GenStateMachine library's `use` declares its own behaviour,
+    # whose callbacks are gen_statem's.
+    if :gen_statem in behaviours or GenStateMachine in behaviours do
       extract_statem(mod, module_data)
     else
       %{}

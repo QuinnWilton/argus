@@ -28,6 +28,11 @@ or rename by the 0.17 entry below.
 
 ### Fact schema and extraction
 
+**Fixed.** A module that `use`s the GenStateMachine library is a gen_statem to
+the extractor: its `@behaviour GenStateMachine` was not `:gen_statem`, so
+it had no `statem_*` facts at all (swarm's tracker among them), though
+the Datalog side already read the two names as one.
+
 **Changed.** Schema 59. `resolved_apply` is a layer-1 relation the emitter
 writes (`Argus.Pipeline.Emit.Applies`), and it has rows. It resolved only
 `erlang:apply/3` with a literal module and function, which the compiler

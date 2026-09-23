@@ -2,6 +2,7 @@ defmodule Argus.Extractors.GenStatemTest do
   use ExUnit.Case, async: true
 
   alias Argus.Extractors.GenStatem
+  alias Argus.Pipeline.Disassemble
 
   defp disassemble(mod) do
     {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
@@ -115,13 +116,37 @@ defmodule Argus.Extractors.GenStatemTest do
         end
         """)
 
-      {:ok, data} = Argus.Pipeline.Disassemble.disassemble_path(bin)
+      {:ok, data} = Disassemble.disassemble_path(bin)
       timeouts = data |> GenStatem.extract() |> Map.get(:statem_timeout, []) |> Enum.sort()
 
       assert timeouts == [
                ["Argus.GenStatemTest.JoinedActions", "idle", "event_timeout", "5"],
                ["Argus.GenStatemTest.JoinedActions", "idle", "state_timeout", "dynamic"]
              ]
+    end
+  end
+
+  describe "extract/1 — the GenStateMachine library" do
+    test "a module that uses GenStateMachine is a gen_statem" do
+      # The library's `use` declares `@behaviour GenStateMachine`, which is
+      # not loaded here; the compiler warns and compiles.
+      {[{_mod, bin}], _diagnostics} =
+        Code.with_diagnostics(fn ->
+          Code.compile_string("""
+          defmodule Argus.GenStatemTest.Library do
+            @behaviour GenStateMachine
+            def callback_mode, do: :state_functions
+            def init(d), do: {:ok, :idle, d}
+            def idle({:call, from}, :ping, d), do: {:keep_state, d, [{:reply, from, :pong}]}
+          end
+          """)
+        end)
+
+      {:ok, data} = Disassemble.disassemble_path(bin)
+      facts = GenStatem.extract(data)
+
+      assert facts[:statem_module] == [["Argus.GenStatemTest.Library", "state_functions"]]
+      assert [["Argus.GenStatemTest.Library", "idle", _]] = facts[:statem_state]
     end
   end
 
