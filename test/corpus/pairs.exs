@@ -195,8 +195,9 @@
   %{
     repo: "elixir-horde/horde",
     issue: "horde#193",
-    # Anchored at the sibling's stop API the impl calls.
-    module: "Horde.ProcessesSupervisor",
+    # Anchored at the impl's handle_call that stops the sibling; the
+    # sibling's stop API it goes through is the related frame.
+    module: "Horde.DynamicSupervisorImpl",
     pre: "74820c2",
     finding: {:shutdown, "A callback stops a sibling the supervisor owns"}
   },
