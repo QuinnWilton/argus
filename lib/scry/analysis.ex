@@ -9,31 +9,32 @@ defmodule Scry.Analysis do
       module_extraction(module)     ← Argus.Pipeline.extract, per module
        │              │
       module_semantic_facts   module_line_table
-       (line_info dropped —    (anchor resolution,
-        THE cutoff seam)        consumed late by LSP)
+       (digest of the facts    (anchor resolution,
+        minus line_info —       consumed late)
+        THE cutoff seam)
            │
-      module_relation_facts({module, relation})   ← per-module projection
-           │
-      relation_facts(relation)      ← one relation across the project
-           │
-      stage0_facts(:all)
+      program_relation_facts(:all)  ← every module's facts merged once,
+           │                          read through the digests above
+      relation_rows(relation) ─ relation_digest(relation)
+           │                    (the rows' text, stored once)
+      stage0_facts(:all) ─ stage0_digest(relation)
        (shared call graph —
         THE second cutoff seam)
            │
       analysis_facts_dir(analysis)  ← content-addressed, projected to the
            │                          relations THIS analysis reads
-      souffle_solve(analysis)
+      souffle_solve(analysis)       ← and rules_digest(analysis)
            │
-      findings(analysis)
+      findings(analysis) → analysis_diagnostics(analysis)
 
   Planchette's LSP-only surface (`Planchette.SupTree`'s supervision tree,
   `Planchette.Focus`'s flowistry slices) hangs off `module_extraction`
-  and `relation_facts` by query name from its own modules; nothing here
-  depends on it.
+  and `relation_facts` (the rows as strings) by query name from its own
+  modules; nothing here depends on it.
 
-  There is no whole-program fact node. Everything downstream of extraction
-  is projected — per module, then per relation, then per analysis — so an
-  edit propagates only along the relations it actually moved.
+  The whole program meets in one node, `program_relation_facts`, and is
+  projected from there — per relation, then per analysis — so an edit
+  propagates past it only along the relations it actually moved.
 
   The line-shift immunity story: a whitespace/comment edit changes the
   beam (Line/Dbgi chunks) → `module_extraction` recomputes and differs
@@ -120,20 +121,20 @@ defmodule Scry.Analysis do
     end
   end
 
-  defquery :module_semantic_facts, key: module, returns: {:ok, map()} | {:error, term()} do
+  # The digest of what a module contributes to the program's relations:
+  # its facts without line_info (and the vsn attribute, a checksum no rule
+  # reads). A line-only edit re-extracts the module, this comes out equal,
+  # and roux backdates it — THE early-cutoff seam. It holds the digest
+  # rather than the facts because the facts are module_extraction's
+  # already: a second copy was a sixth of the manifest.
+  defquery :module_semantic_facts, key: module, returns: {:ok, binary()} | {:error, term()} do
     case Runtime.query(db, :module_extraction, module) do
       {:ok, facts} ->
-        semantic =
-          facts
-          |> Map.delete(:line_info)
-          |> Map.replace_lazy(:module_attribute, fn rows ->
-            Enum.reject(rows, fn
-              [_mod, @vsn_attribute | _] -> true
-              _ -> false
-            end)
-          end)
-
-        {:ok, semantic}
+        {:ok,
+         facts
+         |> semantic(Symbols.for_db(db))
+         |> :erlang.term_to_binary([:deterministic])
+         |> :erlang.md5()}
 
       {:error, _} = error ->
         error
@@ -182,13 +183,24 @@ defmodule Scry.Analysis do
       |> Map.keys()
       |> Enum.sort()
 
+    symbols = Symbols.for_db(db)
+
     # Chunks are collected newest-first and concatenated at the end, so a
     # relation's rows keep module order without quadratic appends.
     modules
     |> Enum.reduce(%{}, fn module, chunks ->
       case Runtime.query(db, :module_semantic_facts, module) do
-        {:ok, facts} ->
-          Enum.reduce(facts, chunks, fn
+        {:ok, _digest} ->
+          # The dependency is on the digest: an edit that moves only
+          # lines leaves it equal and never reaches here. The facts are
+          # read without an edge, and are current — the digest was just
+          # validated against them.
+          {:ok, facts} =
+            Runtime.untracked(fn -> Runtime.query(db, :module_extraction, module) end)
+
+          facts
+          |> semantic(symbols)
+          |> Enum.reduce(chunks, fn
             {_relation, []}, chunks -> chunks
             {relation, rows}, chunks -> Map.update(chunks, relation, [rows], &[rows | &1])
           end)
@@ -613,6 +625,19 @@ defmodule Scry.Analysis do
   end
 
   # -- helpers --
+
+  # A module's facts as the analyses read them: without line_info, and
+  # without the vsn attribute. Rows are interned, so the attribute's key
+  # is compared as the string it stands for.
+  defp semantic(facts, symbols) do
+    facts
+    |> Map.delete(:line_info)
+    |> Map.replace_lazy(:module_attribute, fn rows ->
+      Enum.reject(rows, fn row ->
+        tuple_size(row) > 1 and Argus.Symbols.resolve(symbols, elem(row, 1)) == @vsn_attribute
+      end)
+    end)
+  end
 
   @doc """
   The union of every built-in analysis's extractors (coverage excluded,

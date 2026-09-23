@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- The manifest no longer stores every module's facts twice.
+  `module_semantic_facts` — the early-cutoff seam under a line-only
+  edit — held a copy of `module_extraction`'s facts minus `line_info`;
+  it now holds their digest (`{:ok, md5}`), and `program_relation_facts`
+  reads the facts from the extraction through it. On logflare (859
+  modules) that was 15 MB of an 85 MB manifest. The vsn attribute,
+  meant to be left out of the seam, is: the filter matched the string
+  rows extraction produced before rows were interned, and had matched
+  nothing since.
 - The scratch root's pruning no longer deletes the shared relation store.
   It pruned every directory beyond the 24 newest, and the store is a
   directory: once its mtime fell outside the window, every relation file
