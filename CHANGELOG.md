@@ -939,6 +939,13 @@ timestamp, date, count, expiry, TTL, length, version or "set" suffix.
 
 ### ets
 
+**Fixed.** `ets.ets_read_outside_owner` takes an Erlang `catch Expr` around the
+read as the rescue it is (`catch` takes every class, a gone table's
+badarg among them), as `structure.registry_race` already did for a
+register's loser. The two analyses share one definition,
+`rescues_argument_error` in `clientlib/exceptions.dl`. No finding over
+the corpus and the four large programs moved.
+
 **Changed.** `ets_missing_read_concurrency` and `ets_missing_write_concurrency` gain
 `mod` and `site` columns and anchor at the table's `:ets.new/2`, as
 `ets_ordered_set_contention` does; they were findings with no location.

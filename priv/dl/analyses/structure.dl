@@ -145,17 +145,10 @@ names.act(a, f, "literal", "", ks, k) :- name_release(a, f, _, ks, k).
 name_act(a, f, api) :- creating_op(a, f, api, _, _, _).
 name_act(a, f, api) :- name_release(a, f, api, _, _).
 
-.decl rescues_argument_error(func: symbol)
-
-rescues_argument_error(f) :- catches_class(f, "error").
-rescues_argument_error(f) :- catch_tag(_, f, "error", "ArgumentError").
-rescues_argument_error(f) :- catch_tag(_, f, "error", ":badarg").
-
-// Erlang's `catch Expr` takes every class: `case catch register(N,
-// self()) of true -> ...; _ -> exit({already_started, ...})` is the
-// loser handled (inet_gethost_native).
-rescues_argument_error(f) :- try_start(_, f, "catch", _).
-
+// A loser is handled where its start's error is compared, or its :badarg
+// rescued (rescues_argument_error, in exceptions.dl: `case catch
+// register(N, self()) of true -> ...; _ -> exit({already_started, ...})`
+// in inet_gethost_native), here or in a function its result returns to.
 .decl start_error_handled(func: symbol)
 
 start_error_handled(f) :- start_error_compared(f, _).

@@ -11,7 +11,7 @@
   effects:
     ~w(call_edge call_site closure_def dynamic_call ets_new ets_op implements_behaviour impure_call port_open process_register protocol_dispatch pure_contract recv_start remote_call resolved_apply send_msg spawn_call unknown_call),
   ets:
-    ~w(call_arg call_arg_depends call_arg_field call_arg_forward call_arg_reads call_decided call_edge catch_tag catch_total closure_def dynamic_child ets_key ets_new ets_op ets_op_param ets_option ets_tid_arg function_def implements_behaviour mnesia_op returns_depends site_depends site_reads spec_return statem_event_clause supervisor_child),
+    ~w(call_arg call_arg_depends call_arg_field call_arg_forward call_arg_reads call_decided call_edge catch_tag catch_total closure_def dynamic_child ets_key ets_new ets_op ets_op_param ets_option ets_tid_arg function_def implements_behaviour mnesia_op returns_depends site_depends site_reads spec_return statem_event_clause supervisor_child try_start),
   exposure:
     ~w(function_def prior_sensitive redacted_field schema_field tls_connect tls_verification),
   failure:

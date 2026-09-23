@@ -21,3 +21,14 @@ site_catches_class(id, func, class) :- catch_total(id, func, class), class != "*
 site_catches_class(id, func, "error") :- catch_total(id, func, "*").
 site_catches_class(id, func, "exit") :- catch_total(id, func, "*").
 site_catches_class(id, func, "throw") :- catch_total(id, func, "*").
+
+// A handler in `func` that takes the ArgumentError (:badarg) a BIF raises
+// on a missing table or a taken name: a bare rescue or catch-all of
+// class error, one naming ArgumentError or :badarg, or Erlang's `catch
+// Expr`, which takes every class. `rescue SomeOtherError` is not one.
+.decl rescues_argument_error(func: symbol)
+
+rescues_argument_error(f) :- catches_class(f, "error").
+rescues_argument_error(f) :- catch_tag(_, f, "error", "ArgumentError").
+rescues_argument_error(f) :- catch_tag(_, f, "error", ":badarg").
+rescues_argument_error(f) :- try_start(_, f, "catch", _).

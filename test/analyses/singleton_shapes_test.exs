@@ -76,6 +76,14 @@ defmodule Argus.Analyses.SingletonShapesTest do
            ]
   end
 
+  test "a table read inside an Erlang catch is guarded; the same read outside one is not" do
+    skip_without_souffle()
+
+    {:ok, r} = Argus.analyze([:ets_catch_reader], :ets)
+
+    assert rows(r, "ets_read_outside_owner", 2) == [":ets_catch_reader:peek/1"]
+  end
+
   test "an :infinity socket receive on init's path is reported; bounded or later is not" do
     skip_without_souffle()
 
