@@ -3,11 +3,10 @@
 // Prerequisites: include clientlib/imports.dl and clientlib/otp.dl
 // (which brings processes.dl) before this file.
 
-// A send's destination read from a callee's result or a registered name.
-source_pid(f, "result", g, p) :- pid_send(_, f, _, "result", g), returns_pid(g, p).
-source_pid(f, "name", n, p) :- pid_send(_, f, _, "name", n), named_pid(n, p).
+// A send's destination read from a registered name.
+reads_name(f, n) :- pid_send(_, f, _, "name", n).
 
 // The send at `id` in `func`, carrying `message`, may reach `proc`.
 .decl send_target(id: symbol, func: symbol, message: symbol, proc: symbol)
 
-send_target(id, f, m, p) :- pid_send(id, f, m, sk, src), source_pid(f, sk, src, p).
+send_target(id, f, m, p) :- pid_send(id, f, m, sk, src), source_pts(f, sk, src, p), process(p).

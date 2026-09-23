@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 47
+  @schema_version 48
 
   # Layer 1: Module-level facts.
 
@@ -2048,23 +2048,25 @@ defmodule Argus.Schema do
     """
   }
 
-  # Process points-to: which process a pid can be. Written by
-  # Argus.Extractors.PidFlow; chained across functions by clientlib/processes.dl.
+  # Process points-to: which process a pid can be, and the terms that hold
+  # one. Written by Argus.Extractors.PidFlow; chained across functions by
+  # clientlib/processes.dl. A source is a pair (src_kind, src).
 
   @process_start %{
     name: :process_start,
     layer: 2,
     fields: [
+      {:id, :instr_id, "instruction ID of the start"},
       {:func, :func_id, "function containing the start"},
-      {:proc, :symbol, "the process: \"spawn Mod:fun/n\" or \"server Mod\""},
-      {:kind, :symbol, "spawn or server"},
-      {:runs, :symbol, "the spawned function, or the server's callback module"}
+      {:proc, :symbol, "the process: \"<kind> <id>\""},
+      {:kind, :symbol, "spawn, server or agent"},
+      {:runs, :symbol, "the spawned function, the server's callback module, or dynamic"}
     ],
     doc: """
-    A process allocation site: `func` starts `proc`. A spawn is named by the \
-    function it runs (resolved in spawn_call), a GenServer, :gen_server or \
-    :gen_statem start by its literal callback module. Ids are function-level \
-    so a body edit does not rename a process.
+    A process allocation site: the start at `id` starts `proc`. A spawn \
+    runs the function spawn_call resolved; a GenServer, :gen_server or \
+    :gen_statem start runs its literal callback module, as does a \
+    supervisor's start_child of a child spec naming one.
     """
   }
 
@@ -2072,19 +2074,23 @@ defmodule Argus.Schema do
     name: :pid_arg,
     layer: 2,
     fields: [
+      {:id, :instr_id, "instruction ID of the call, start or closure"},
       {:caller, :func_id, "function making the call"},
-      {:callee, :func_id, "function called"},
-      {:arg_pos, :symbol, "0-based argument position, as a symbol"},
-      {:src_kind, :symbol, "where the pid comes from: proc, param, result, name or self"},
+      {:callee, :func_id, "function whose parameter receives the value"},
+      {:arg_pos, :symbol, "0-based parameter position, as a symbol"},
+      {:via, :symbol, "call, init, spawn, child or closure"},
+      {:src_kind, :symbol,
+       "where the value comes from: proc, param, result, name, self, obj or load"},
       {:src, :symbol,
-       "the process id, the parameter position, the callee whose result it is, the name, or self"}
+       "the process, the parameter position, the call site, the name, self, the term or the load"}
     ],
     doc: """
-    At some call in `caller`, argument `arg_pos` may be a pid from the \
-    source. Also a server start's init argument (`Mod:init/1`), a \
-    one-argument spawn's argument, and a closure's captured variables (its \
-    trailing parameters). Only calls into project code: OTP and Elixir's \
-    own modules are not followed.
+    At `id`, `callee`'s parameter `arg_pos` may hold the source: a call \
+    into project code (`call`), a server start's init argument \
+    (`Mod:init/1`, `init`), a spawned function's arguments (`spawn`), a \
+    child spec's argument (`Mod:start_link/1`, `child`) or a closure's \
+    captured variables, its trailing parameters (`closure`). OTP's and \
+    Elixir's own modules are not followed.
     """
   }
 
@@ -2093,27 +2099,41 @@ defmodule Argus.Schema do
     layer: 2,
     fields: [
       {:func, :func_id, "function returning"},
-      {:src_kind, :symbol, "where the pid comes from: proc, param, result, name or self"},
+      {:src_kind, :symbol,
+       "where the value comes from: proc, param, result, name, self, obj or load"},
       {:src, :symbol,
-       "the process id, the parameter position, the callee whose result it is, the name, or self"}
+       "the process, the parameter position, the call site, the name, self, the term or the load"}
     ],
-    doc: "`func` may return a pid from the source, directly or by a tail call."
+    doc: "`func` may return the source, directly or by a tail call."
+  }
+
+  @pid_result %{
+    name: :pid_result,
+    layer: 2,
+    fields: [
+      {:id, :instr_id, "instruction ID of the call"},
+      {:func, :func_id, "function making the call"},
+      {:callee, :func_id, "the project function called"}
+    ],
+    doc: "The project call at `id`, whose result is a `result` source (src = `id`)."
   }
 
   @pid_call %{
     name: :pid_call,
     layer: 2,
     fields: [
+      {:id, :instr_id, "instruction ID of the call, cast or send"},
       {:func, :func_id, "function making the call"},
       {:api_kind, :symbol, "call or cast (the sync_call/async_cast table), or info for a send"},
-      {:src_kind, :symbol, "where the pid comes from: proc, param, result, name or self"},
+      {:src_kind, :symbol,
+       "where the value comes from: proc, param, result, name, self, obj or load"},
       {:src, :symbol,
-       "the process id, the parameter position, the callee whose result it is, the name, or self"}
+       "the process, the parameter position, the call site, the name, self, the term or the load"}
     ],
     doc: """
-    A GenServer-style call or cast in `func`, or a send (info), whose target \
-    may be a pid from the source or a literal name: what resolves a \
-    sync_call recorded as "dynamic".
+    The GenServer-style call or cast at `id`, or the send (info), may \
+    target the source or a literal name: what resolves a sync_call \
+    recorded as "dynamic".
     """
   }
 
@@ -2121,18 +2141,19 @@ defmodule Argus.Schema do
     name: :pid_message,
     layer: 2,
     fields: [
+      {:id, :instr_id, "instruction ID of the call, cast or send"},
       {:func, :func_id, "function making the call, cast or send"},
       {:api_kind, :symbol, "call, cast or info (a send)"},
-      {:src_kind, :symbol, "where the pid comes from: proc, param, result, name or self"},
+      {:src_kind, :symbol,
+       "where the value comes from: proc, param, result, name, self, obj or load"},
       {:src, :symbol,
-       "the process id, the parameter position, the callee whose result it is, the name, or self"}
+       "the process, the parameter position, the call site, the name, self, the term or the load"}
     ],
     doc: """
-    The message of a call, cast or send in `func` may carry a pid from the \
-    source. It reaches the handler of the server the pid_call rows of the \
-    same function and kind resolve to (handle_call/3, handle_cast/2, \
-    handle_info/2) as its message parameter: how a subscriber's pid gets \
-    into a server's state.
+    The message of the call, cast or send at `id` may be the source. It \
+    reaches the handler of the server the pid_call rows of the same site \
+    resolve to (handle_call/3, handle_cast/2, handle_info/2) as its \
+    message parameter: how a subscriber's pid gets into a server's state.
     """
   }
 
@@ -2140,14 +2161,16 @@ defmodule Argus.Schema do
     name: :pid_register,
     layer: 2,
     fields: [
+      {:id, :instr_id, "instruction ID of the registration"},
       {:func, :func_id, "function registering"},
       {:name, :symbol, "the literal name"},
-      {:src_kind, :symbol, "where the pid comes from: proc, param, result, name or self"},
+      {:src_kind, :symbol,
+       "where the value comes from: proc, param, result, name, self, obj or load"},
       {:src, :symbol,
-       "the process id, the parameter position, the callee whose result it is, the name, or self"}
+       "the process, the parameter position, the call site, the name, self, the term or the load"}
     ],
     doc:
-      "`func` registers a pid from the source under `name` (Process.register/2, :erlang.register/2)."
+      "The call at `id` registers the source under `name` (Process.register/2, :erlang.register/2)."
   }
 
   @pid_send %{
@@ -2158,14 +2181,94 @@ defmodule Argus.Schema do
       {:func, :func_id, "function sending"},
       {:message, :symbol,
        "literal atom, {:tag, …} for a tuple with a literal atom tag, or dynamic"},
-      {:src_kind, :symbol, "where the pid comes from: proc, param, result, name or self"},
+      {:src_kind, :symbol,
+       "where the value comes from: proc, param, result, name, self, obj or load"},
       {:src, :symbol,
-       "the process id, the parameter position, the callee whose result it is, the name, or self"}
+       "the process, the parameter position, the call site, the name, self, the term or the load"}
     ],
     doc: """
-    The send at `id` (`send/2`, `!`, Process.send/3) goes to a pid from the \
-    source or, with src_kind `name`, to a literal name. Keyed on the site \
-    because the finding about what it sends anchors there.
+    The send at `id` (`send/2`, `!`, Process.send/3) goes to the source or, \
+    with src_kind `name`, to a literal name. Keyed on the site because the \
+    finding about what it sends anchors there.
+    """
+  }
+
+  @pid_object %{
+    name: :pid_object,
+    layer: 2,
+    fields: [
+      {:func, :func_id, "function building the term"},
+      {:obj, :symbol, "the term: the instruction ID that built it"},
+      {:shape, :symbol, "map, tuple or list"},
+      {:tag, :symbol, "a tuple's literal atom first element, else empty"},
+      {:arity, :symbol, "a tuple's size, else 0"}
+    ],
+    doc: """
+    A term that holds a source, named by the instruction that built it \
+    (put_map_*, put_tuple2, put_list, update_record, or a call whose \
+    result has a known shape: a start's `{:ok, pid}`, `Map.put/3`).
+    """
+  }
+
+  @pid_field %{
+    name: :pid_field,
+    layer: 2,
+    fields: [
+      {:func, :func_id, "function building the term"},
+      {:obj, :symbol, "the term"},
+      {:sel, :symbol,
+       "a map key (inspected), {i} for tuple position i (0-based), [] for a list's elements, * for an unknown map key"},
+      {:src_kind, :symbol,
+       "where the value comes from: proc, param, result, name, self, obj or load"},
+      {:src, :symbol,
+       "the process, the parameter position, the call site, the name, self, the term or the load"}
+    ],
+    doc: "The field `sel` of `obj` may hold the source."
+  }
+
+  @pid_base %{
+    name: :pid_base,
+    layer: 2,
+    fields: [
+      {:func, :func_id, "function building the term"},
+      {:obj, :symbol, "the term"},
+      {:src_kind, :symbol,
+       "where the value comes from: proc, param, result, name, self, obj or load"},
+      {:src, :symbol,
+       "the process, the parameter position, the call site, the name, self, the term or the load"}
+    ],
+    doc: """
+    `obj` updates the source: the fields `obj` does not set (pid_sets) are \
+    the source's. A cons cell's base is its tail.
+    """
+  }
+
+  @pid_sets %{
+    name: :pid_sets,
+    layer: 2,
+    fields: [
+      {:obj, :symbol, "the updated term"},
+      {:sel, :symbol, "a field the update sets"}
+    ],
+    doc: "The update `obj` sets `sel`, shadowing its base's field."
+  }
+
+  @pid_load %{
+    name: :pid_load,
+    layer: 2,
+    fields: [
+      {:func, :func_id, "function reading"},
+      {:load, :symbol, "the load: the reading instruction's ID and the field"},
+      {:sel, :symbol, "the field read, as in pid_field"},
+      {:src_kind, :symbol,
+       "where the value comes from: proc, param, result, name, self, obj or load"},
+      {:src, :symbol,
+       "the process, the parameter position, the call site, the name, self, the term or the load"}
+    ],
+    doc: """
+    The load `load` (a `load` source in `func`) reads the field `sel` of \
+    the source: `state.conn`, `elem(msg, 1)`, a clause head's \
+    `{:subscribe, pid}`, `Map.get(state, :conn)`.
     """
   }
 
@@ -2307,6 +2410,12 @@ defmodule Argus.Schema do
     @pid_message,
     @pid_register,
     @pid_send,
+    @pid_result,
+    @pid_object,
+    @pid_field,
+    @pid_base,
+    @pid_sets,
+    @pid_load,
     @start_error_compared,
     # Dependence: what decides or feeds a call, a shared-state op, a return.
     @site_depends,

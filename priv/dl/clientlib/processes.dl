@@ -1,23 +1,33 @@
 // Which process a pid can be: the interprocedural half of process
 // points-to. Argus.Extractors.PidFlow summarises each function (where the
-// pids it passes on, returns, calls, registers and sends to come from);
-// this file chains the summaries.
+// values it passes on, returns, calls, registers and sends to come from,
+// and the terms it builds); this file chains the summaries.
 //
-// A process is named by where it was started (process_start): "spawn
-// Mod:fun/n" or "server Mod". A source is one of
-//   proc   — that process, started in the same function;
+// The objects are processes and the terms that hold them. A process is
+// named by the site that started it (process_start: "spawn <id>",
+// "server <id>"), or by the supervisor child spec that names it ("child
+// <sup>#<pos>"). A term is named by the instruction that built it
+// (pid_object), with a field per map key, tuple position or list element,
+// so two pids in one state map stay two pids. A source is one of
+//   proc   — the process started at a site in the same function;
 //   param  — the function's parameter at a position;
-//   result — the value a project function returned;
+//   result — what a project call at a site returned;
 //   name   — a pid registered under a literal name;
-//   self   — self(), which is whichever process runs the function.
-// Context-insensitive, like Andersen's analysis: a parameter points to
-// every process any caller passes it. That is "may point to", and a rule
-// that concludes something from it asks what a process does NOT do.
+//   self   — self(), which is whichever process runs the function;
+//   obj    — a term the function built;
+//   load   — a field read from a term the function did not build.
+// Parameters are context-insensitive, like Andersen's analysis: a
+// parameter points to everything any caller passes it. That is "may
+// point to", and a rule that concludes something from it asks what a
+// process does NOT do.
 //
 // Where sends go is in sends.dl, apart, so an analysis that asks only
 // about calls does not read every send in the program.
 //
-// Prerequisites: include clientlib/imports.dl before this file.
+// Prerequisites: include clientlib/imports.dl, behaviours.dl and
+// callbacks.dl before this file (otp.dl does).
+
+// ── Processes ───────────────────────────────────────────────────────
 
 // A process running a module's callbacks: started by a start call in the
 // program (a GenServer start, or a supervisor's start_child), or a
@@ -25,39 +35,84 @@
 // may not spell out (`start: {GenServer, :start_link, [Mod, arg]}`).
 .decl server_process(proc: symbol, mod: symbol)
 
-server_process(p, m) :- process_start(_, p, "server", m).
-server_process(cat("server ", m), m) :-
-  supervisor_child(_, _, m, _, _),
+server_process(p, m) :- process_start(_, _, p, "server", m).
+
+server_process(cat("child ", cat(s, cat("#", to_string(pos)))), m) :-
+  supervisor_child(s, pos, m, _, _),
   behaves_as(m, "GenServer").
 
-// A parameter may be a pid of `proc` when some call passes one.
-.decl param_pid(func: symbol, pos: symbol, proc: symbol)
+// Every process the program names.
+.decl process(proc: symbol)
 
-// A function may return a pid of `proc`.
-.decl returns_pid(func: symbol, proc: symbol)
+process(p) :- process_start(_, _, p, _, _).
+process(p) :- server_process(p, _).
+
+// ── What a source points to ─────────────────────────────────────────
+
+// A parameter, a callee's result, a term's field: each may point to a
+// process or to a term.
+.decl param_pts(func: symbol, pos: symbol, x: symbol)
+.decl returns_pts(func: symbol, x: symbol)
+.decl field_pts(obj: symbol, sel: symbol, x: symbol)
 
 // A registered name may hold a pid of `proc`.
 .decl named_pid(name: symbol, proc: symbol)
 
-// A source, as seen from inside `func`, may be a pid of `proc`.
-.decl source_pid(func: symbol, src_kind: symbol, src: symbol, proc: symbol)
+// A source, as seen from inside `func`, may point to `x`.
+.decl source_pts(func: symbol, src_kind: symbol, src: symbol, x: symbol)
 
-source_pid(f, "proc", p, p) :- process_start(f, p, _, _).
-source_pid(f, "param", k, p) :- param_pid(f, k, p).
+// The name and self sources each function reads, so the rules resolving
+// them are bound by the function that uses them.
+.decl reads_name(func: symbol, name: symbol)
 
-// A callee's result or a registered name means the same wherever it is
-// read; the join is bound by the summary row that names it.
-source_pid(f, "result", g, p) :- pid_arg(f, _, _, "result", g), returns_pid(g, p).
-source_pid(f, "result", g, p) :- pid_return(f, "result", g), returns_pid(g, p).
-source_pid(f, "result", g, p) :- pid_call(f, _, "result", g), returns_pid(g, p).
-source_pid(f, "result", g, p) :- pid_register(f, _, "result", g), returns_pid(g, p).
-source_pid(f, "name", n, p) :- pid_arg(f, _, _, "name", n), named_pid(n, p).
-source_pid(f, "name", n, p) :- pid_return(f, "name", n), named_pid(n, p).
-source_pid(f, "name", n, p) :- pid_call(f, _, "name", n), named_pid(n, p).
-source_pid(f, "result", g, p) :- pid_message(f, _, "result", g), returns_pid(g, p).
-source_pid(f, "name", n, p) :- pid_message(f, _, "name", n), named_pid(n, p).
+reads_name(f, n) :- pid_arg(_, f, _, _, _, "name", n).
+reads_name(f, n) :- pid_return(f, "name", n).
+reads_name(f, n) :- pid_call(_, f, _, "name", n).
+reads_name(f, n) :- pid_message(_, f, _, "name", n).
+reads_name(f, n) :- pid_register(_, f, _, "name", n).
+reads_name(f, n) :- pid_field(f, _, _, "name", n).
+reads_name(f, n) :- pid_base(f, _, "name", n).
 
-param_pid(g, k, p) :- pid_arg(f, g, k, kind, src), source_pid(f, kind, src, p).
+source_pts(f, "proc", p, p) :- process_start(_, f, p, _, _).
+source_pts(f, "obj", o, o) :- pid_object(f, o, _, _, _).
+source_pts(f, "param", k, x) :- param_pts(f, k, x).
+source_pts(f, "result", c, x) :- pid_result(c, f, g), returns_pts(g, x).
+source_pts(f, "name", n, p) :- reads_name(f, n), named_pid(n, p).
+source_pts(f, "self", "self", p) :- self_pid(f, p).
+
+// A load reads a field of whatever its base points to; a map's field
+// written under a key not known may be any key.
+source_pts(f, "load", l, x) :-
+  pid_load(f, l, sel, bk, bs),
+  source_pts(f, bk, bs, o),
+  field_pts(o, sel, x).
+
+source_pts(f, "load", l, x) :-
+  pid_load(f, l, _, bk, bs),
+  source_pts(f, bk, bs, o),
+  pid_object(_, o, "map", _, _),
+  field_pts(o, "*", x).
+
+field_pts(o, sel, x) :- pid_field(f, o, sel, sk, s), source_pts(f, sk, s, x).
+
+// An update keeps the fields it does not set; a cons cell's tail holds
+// the rest of the elements.
+field_pts(o, sel, x) :-
+  pid_base(f, o, bk, bs),
+  source_pts(f, bk, bs, b),
+  field_pts(b, sel, x),
+  !pid_sets(o, sel).
+
+returns_pts(f, x) :- pid_return(f, k, s), source_pts(f, k, s, x).
+
+param_pts(g, k, x) :- pid_arg(_, f, g, k, _, sk, s), source_pts(f, sk, s, x).
+
+named_pid(n, p) :- pid_register(_, f, n, k, s), source_pts(f, k, s, p), process(p).
+
+// A server started with a literal name: the start registers it.
+named_pid(n, p) :-
+  named_process(mod, n),
+  server_process(p, mod).
 
 // ── Who runs a function ─────────────────────────────────────────────
 
@@ -68,17 +123,27 @@ param_pid(g, k, p) :- pid_arg(f, g, k, kind, src), source_pid(f, kind, src, p).
 .decl self_pid(func: symbol, proc: symbol)
 
 self_pid(f, p) :- process_entry(m, f), server_process(p, m).
-self_pid(f, p) :- process_start(_, p, "spawn", f).
-
-source_pid(f, "self", "self", p) :- self_pid(f, p).
+self_pid(f, p) :- process_start(_, _, p, "spawn", f).
 
 // ── A GenServer's state ─────────────────────────────────────────────
 
 // What init/1 and the handlers return becomes the state the next handler
-// (or terminate/2) is called with. Returned tuples are not taken apart,
-// so a pid anywhere in {:reply, reply, state} counts as state: may.
+// (or terminate/2) is called with: the field of the returned tuple its
+// tag puts the state in — {:ok, state}, {:reply, reply, state},
+// {:noreply, state}, {:stop, reason, state}, {:stop, reason, reply,
+// state}, each with its optional trailing timeout or continue.
 .decl state_out(mod: symbol, func: symbol)
 .decl state_in(mod: symbol, func: symbol, pos: symbol)
+.decl state_slot(tag: symbol, arity: symbol, sel: symbol)
+
+state_slot(":ok", "2", "{1}").
+state_slot(":ok", "3", "{1}").
+state_slot(":reply", "3", "{2}").
+state_slot(":reply", "4", "{2}").
+state_slot(":noreply", "2", "{1}").
+state_slot(":noreply", "3", "{1}").
+state_slot(":stop", "3", "{2}").
+state_slot(":stop", "4", "{3}").
 
 state_out(m, f) :- behaves_as(m, "GenServer"), function_def(f, m, "init", 1, _).
 state_out(m, f) :- state_in(m, f, _), !function_def(f, m, "terminate", 2, _).
@@ -89,42 +154,50 @@ state_in(m, f, "1") :-
   function_def(f, m, name, 2, _),
   (name = "handle_cast" ; name = "handle_info" ; name = "handle_continue" ; name = "terminate").
 
-param_pid(f, k, p) :- state_in(m, f, k), state_out(m, g), returns_pid(g, p).
+// A term the server may hold as its state.
+.decl state_pts(mod: symbol, x: symbol)
 
-returns_pid(f, p) :- pid_return(f, kind, src), source_pid(f, kind, src, p).
+state_pts(m, x) :-
+  state_out(m, g),
+  returns_pts(g, t),
+  pid_object(_, t, "tuple", tag, n),
+  state_slot(tag, n, sel),
+  field_pts(t, sel, x).
 
-named_pid(n, p) :- pid_register(f, n, kind, src), source_pid(f, kind, src, p).
-
-// A server started with a literal name: the start registers it.
-named_pid(n, p) :-
-  named_process(mod, n),
-  server_process(p, mod).
+param_pts(f, k, x) :- state_in(m, f, k), state_pts(m, x).
 
 // ── What the pids reach ─────────────────────────────────────────────
 
-// A GenServer-style call or cast in `func` may target `proc`.
+// The GenServer-style call, cast or send at `id` in `func` may target
+// `proc`.
+.decl call_site_target(id: symbol, func: symbol, api_kind: symbol, proc: symbol)
+
+call_site_target(id, f, kind, p) :-
+  pid_call(id, f, kind, sk, s),
+  source_pts(f, sk, s, p),
+  process(p).
+
+// A call or cast in `func` may target `proc`.
 .decl call_target(func: symbol, api_kind: symbol, proc: symbol)
 
-call_target(f, kind, p) :- pid_call(f, kind, sk, src), source_pid(f, sk, src, p).
+call_target(f, kind, p) :- call_site_target(_, f, kind, p).
 
-// ── Pids carried in messages ────────────────────────────────────────
+// ── Messages ────────────────────────────────────────────────────────
 
 // A call, cast or send delivers its message to the handler of the server
 // its target resolves to, as that handler's first parameter: how
 // `Hub.subscribe(self())` puts a subscriber's pid into the hub's state.
-// The message is not taken apart ({:subscribe, pid} counts as the pid),
-// and a function's messages of one kind reach every server its calls of
-// that kind do: may, like the rest.
+// The message and the target are the same site's.
 .decl message_handler(api_kind: symbol, name: symbol, arity: number)
 
 message_handler("call", "handle_call", 3).
 message_handler("cast", "handle_cast", 2).
 message_handler("info", "handle_info", 2).
 
-param_pid(h, "0", q) :-
-  pid_message(f, kind, sk, src),
-  source_pid(f, sk, src, q),
-  call_target(f, kind, p),
+param_pts(h, "0", x) :-
+  pid_message(id, f, kind, sk, s),
+  source_pts(f, sk, s, x),
+  call_site_target(id, f, kind, p),
   server_process(p, m),
   message_handler(kind, name, arity),
   function_def(h, m, name, arity, _).

@@ -16,21 +16,45 @@ defmodule Argus.Extractors.PidFlowTest do
     end)
   end
 
+  # Rows with the site column dropped, for assertions that do not care
+  # which instruction it is.
+  defp unsited(rows), do: Enum.map(rows, &tl/1)
+
   describe "allocation sites" do
-    test "a spawn is named by what it runs, a server start by its module" do
+    test "a spawn is named by its site and says what it runs; a server start its module" do
       f = facts([F.Worker, F.Owner, F.Loops])
 
-      assert ["Loops:start/0", "spawn Loops:loop/0", "spawn", "Loops:loop/0"] in f.process_start
+      assert ["Loops:start/0", "spawn Loops:start/0#10", "spawn", "Loops:loop/0"] in unsited(
+               f.process_start
+             )
 
       assert [
                "Loops:start/0",
-               "spawn Loops:-start/0-fun-0-/1",
+               "spawn Loops:start/0#22",
                "spawn",
                "Loops:-start/0-fun-0-/1"
-             ] in f.process_start
+             ] in unsited(f.process_start)
 
-      assert ["Owner:direct/0", "server Worker", "server", "Worker"] in f.process_start
-      assert ["Worker:start_link/1", "server Worker", "server", "Worker"] in f.process_start
+      assert ["Owner:direct/0", "server Owner:direct/0#8", "server", "Worker"] in unsited(
+               f.process_start
+             )
+
+      assert [
+               "Worker:start_link/1",
+               "server Worker:start_link/1#6",
+               "server",
+               "Worker"
+             ] in unsited(f.process_start)
+    end
+
+    test "the site column is the start instruction" do
+      f = facts([F.Loops])
+
+      assert ["Loops:start/0#10", "Loops:start/0" | _] =
+               Enum.find(
+                 f.process_start,
+                 &(Enum.at(&1, 3) == "spawn" and Enum.at(&1, 4) == "Loops:loop/0")
+               )
     end
 
     test "a computed module, apply and a library pid start nothing" do
@@ -41,38 +65,105 @@ defmodule Argus.Extractors.PidFlowTest do
     end
   end
 
-  describe "summaries" do
-    test "a wrapper returns the process its tail call starts" do
-      assert ["Worker:start_link/1", "proc", "server Worker"] in facts([F.Worker]).pid_return
+  describe "terms that hold pids" do
+    test "a start returns its process in {:ok, pid}" do
+      f = facts([F.Worker])
+      assert ["Worker:start_link/1", "Worker:start_link/1#6", "tuple", ":ok", "2"] in f.pid_object
+
+      assert [
+               "Worker:start_link/1",
+               "Worker:start_link/1#6",
+               "{1}",
+               "proc",
+               "server Worker:start_link/1#6"
+             ] in f.pid_field
+
+      assert ["Worker:start_link/1", "obj", "Worker:start_link/1#6"] in f.pid_return
     end
 
-    test "a wrapper's result and a parameter flow on as arguments" do
+    test "a state map keeps each pid under its own key" do
+      f = facts([F.Front])
+      [obj] = for ["Front:init/1", o, "map", _, _] <- f.pid_object, do: o
+
+      fields = for ["Front:init/1", ^obj, sel, kind, _src] <- f.pid_field, do: {sel, kind}
+      assert Enum.sort(fields) == [{":back", "load"}, {":side", "load"}]
+    end
+
+    test "a read of one state field is a load of that field" do
+      f = facts([F.Front])
+
+      assert Enum.any?(
+               f.pid_load,
+               &match?(["Front:handle_call/3", _, ":back", "param", "2"], &1)
+             )
+
+      refute Enum.any?(f.pid_load, &match?(["Front:handle_call/3", _, ":side" | _], &1))
+    end
+
+    test "an update keeps the fields it does not set, and a cons cell its tail" do
+      f = facts([F.Relay])
+      [update] = for ["Relay:handle_cast/2", o, "map", _, _] <- f.pid_object, do: o
+      [cons] = for ["Relay:handle_cast/2", o, "list", _, _] <- f.pid_object, do: o
+
+      assert ["Relay:handle_cast/2", update, "param", "1"] in f.pid_base
+      assert [update, ":subs"] in f.pid_sets
+      assert ["Relay:handle_cast/2", update, ":subs", "obj", cons] in f.pid_field
+      assert Enum.any?(f.pid_field, &match?(["Relay:handle_cast/2", ^cons, "[]", "load", _], &1))
+      assert Enum.any?(f.pid_base, &match?(["Relay:handle_cast/2", ^cons, "load", _], &1))
+    end
+
+    test "a message tuple carries the pid in its field" do
+      f = facts([F.Hub])
+      [msg] = for ["Hub:subscribe/1", o, "tuple", ":subscribe", "2"] <- f.pid_object, do: o
+      assert ["Hub:subscribe/1", msg, "{1}", "param", "0"] in f.pid_field
+      assert Enum.any?(f.pid_message, &match?([_, "Hub:subscribe/1", "cast", "obj", ^msg], &1))
+    end
+  end
+
+  describe "summaries" do
+    test "a wrapper's result is a site; pid_result names the callee" do
       f = facts([F.Owner])
-      assert ["Owner:run/0", "Worker:ping/1", "0", "result", "Worker:start_link/1"] in f.pid_arg
-      assert ["Owner:hand_off/1", "Owner:relay/1", "0", "param", "0"] in f.pid_arg
+      [site] = for [s, "Owner:run/0", "Worker:start_link/1"] <- f.pid_result, do: s
+      assert Enum.any?(f.pid_load, &match?(["Owner:run/0", _, "{1}", "result", ^site], &1))
+
+      assert ["Owner:hand_off/1", "Owner:relay/1", "0", "call", "param", "0"] in unsited(
+               f.pid_arg
+             )
     end
 
     test "a server start's init argument reaches init/1" do
-      assert ["Worker:start_link/1", "Worker:init/1", "0", "param", "0"] in facts([F.Worker]).pid_arg
+      assert ["Worker:start_link/1", "Worker:init/1", "0", "init", "param", "0"] in unsited(
+               facts([F.Worker]).pid_arg
+             )
 
-      assert ["CycleA:init/1", "CycleB:start_link/1", "0", "self", "self"] in facts([F.CycleA]).pid_arg
+      assert ["CycleA:init/1", "CycleB:start_link/1", "0", "call", "self", "self"] in unsited(
+               facts([F.CycleA]).pid_arg
+             )
     end
 
     test "a call's target survives being parked across another call" do
       f = facts([F.Owner])
-      assert ["Owner:across_a_call/0", "call", "proc", "server Worker"] in f.pid_call
-      assert ["Owner:direct/0", "call", "proc", "server Worker"] in f.pid_call
+
+      assert [
+               "Owner:across_a_call/0",
+               "call",
+               "proc",
+               "server Owner:across_a_call/0#9"
+             ] in unsited(f.pid_call)
     end
 
     test "an API function's call and cast target its parameter" do
       f = facts([F.Worker])
-      assert ["Worker:ping/1", "call", "param", "0"] in f.pid_call
-      assert ["Worker:notify/1", "cast", "param", "0"] in f.pid_call
+      assert ["Worker:ping/1", "call", "param", "0"] in unsited(f.pid_call)
+      assert ["Worker:notify/1", "cast", "param", "0"] in unsited(f.pid_call)
     end
 
     test "register stores a pid under a name; a send reads a name or a captured pid" do
       f = facts([F.Loops])
-      assert ["Loops:start/0", ":loops", "proc", "spawn Loops:loop/0"] in f.pid_register
+
+      assert ["Loops:start/0", ":loops", "proc", "spawn Loops:start/0#10"] in unsited(
+               f.pid_register
+             )
 
       assert Enum.any?(f.pid_send, &match?([_, "Loops:start/0", ":tick", "name", ":loops"], &1))
 
@@ -81,26 +172,37 @@ defmodule Argus.Extractors.PidFlowTest do
                &match?([_, "Loops:-start/0-fun-0-/1", "{:done, …}", "param", "0"], &1)
              )
 
-      assert ["Loops:start/0", "Loops:-start/0-fun-0-/1", "0", "proc", "spawn Loops:loop/0"] in f.pid_arg
+      assert [
+               "Loops:start/0",
+               "Loops:-start/0-fun-0-/1",
+               "0",
+               "closure",
+               "proc",
+               "spawn Loops:start/0#10"
+             ] in unsited(f.pid_arg)
     end
 
     test "a supervisor's start_child starts the child spec's module" do
       f = facts([F.Owner])
-      assert ["Owner:dynamic/0", "server Worker", "server", "Worker"] in f.process_start
-      assert ["Owner:dynamic/0", "call", "proc", "server Worker"] in f.pid_call
+
+      assert ["Owner:dynamic/0", "server Owner:dynamic/0#8", "server", "Worker"] in unsited(
+               f.process_start
+             )
     end
 
-    test "a cast's message carries its pids; a literal target is a name" do
+    test "a literal target is a name" do
       f = facts([F.Hub, F.Listener])
-      assert ["Hub:subscribe/1", "cast", "param", "0"] in f.pid_message
-      assert ["Hub:subscribe/1", "cast", "name", "Hub"] in f.pid_call
-      assert ["Listener:init/1", "Hub:subscribe/1", "0", "self", "self"] in f.pid_arg
+      assert ["Hub:subscribe/1", "cast", "name", "Hub"] in unsited(f.pid_call)
+
+      assert ["Listener:init/1", "Hub:subscribe/1", "0", "call", "self", "self"] in unsited(
+               f.pid_arg
+             )
     end
 
-    test "a send is also an info call, with its message's pids" do
+    test "a send is also an info call" do
       f = facts([F.Loops])
-      assert ["Loops:start/0", "info", "name", ":loops"] in f.pid_call
-      assert ["Loops:-start/0-fun-0-/1", "info", "param", "0"] in f.pid_call
+      assert ["Loops:start/0", "info", "name", ":loops"] in unsited(f.pid_call)
+      assert ["Loops:-start/0-fun-0-/1", "info", "param", "0"] in unsited(f.pid_call)
     end
 
     test "the compiler's generated functions emit nothing" do

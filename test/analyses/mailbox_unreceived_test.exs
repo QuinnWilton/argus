@@ -40,6 +40,19 @@ defmodule Argus.Analyses.MailboxUnreceivedTest do
     refute Enum.any?(found, fn {_, _, message, _, _} -> message == ":checkout" end)
   end
 
+  test "a state's list of subscribers and its worker are different processes" do
+    unless Argus.Souffle.available?(), do: flunk("souffle not installed")
+
+    # Relay sends :event to its first subscriber and :flush to the worker
+    # it spawned; with the state one bag of pids, :event "reached" the
+    # worker, whose receive takes only :flush.
+    mods =
+      for m <- [Relay, Subscriber], do: Module.concat(Argus.Test.Fixtures.PidFlow, m)
+
+    {:ok, results} = Argus.analyze(mods, :mailbox)
+    assert results["unreceived_message"] == []
+  end
+
   test "the finding anchors at the send and relates the receive and the spawn" do
     f =
       Mailbox.finding(:unreceived_message, [

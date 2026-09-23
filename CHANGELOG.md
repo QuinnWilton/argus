@@ -86,6 +86,44 @@ for memoising consumers only where a struct had its own.
 
 ### Process points-to
 
+**Added.** Schema 48. Process points-to is field-sensitive: the terms that hold
+pids are objects too. `PidFlow` names each term by the instruction that
+built it (`put_map_*`, `put_tuple2`, `put_list`, `update_record`, a
+start's `{:ok, pid}`, `Map.put/3`) and gives it a field per map key,
+tuple position (`{i}`) or list element (`[]`, one field for all of
+them); a read of `state.conn`, `elem(msg, 1)`, a clause head's
+`{:subscribe, pid}` or `Map.get(state, :conn)` is a load of that one
+field. A map update keeps the fields it does not set. Before, every read
+of a structure took everything in it, so every pid in a GenServer's
+state reached every handler use of any state field, and every pid in a
+message of one kind reached that kind's handler: a server that kept two
+private workers and called one "called" both (a false synchronous call
+cycle and a call chain of depth 10 on the audit fixture), and a send to
+the first subscriber "reached" the worker kept beside the subscribers
+(a false unreceived message). The state is now the field of the
+returned tuple its tag puts it in (`{:ok, s}`, `{:reply, r, s}`,
+`{:noreply, s}`, `{:stop, reason, s}`, ...).
+
+New relations: `pid_object(func, obj, shape, tag, arity)`,
+`pid_field(func, obj, sel, src_kind, src)`, `pid_base(func, obj,
+src_kind, src)`, `pid_sets(obj, sel)`, `pid_load(func, load, sel,
+src_kind, src)` and `pid_result(id, func, callee)`; sources gain `obj`
+and `load` kinds, and a `result` source is now the call site (so two
+calls of one wrapper are two results). Every relation is keyed by site:
+`process_start(id, func, proc, kind, runs)`, `pid_arg(id, caller,
+callee, arg_pos, via, src_kind, src)` (`via`: `call`, `init`, `spawn`,
+`child` or `closure`), `pid_call(id, ...)`, `pid_message(id, ...)`,
+`pid_register(id, ...)`. Processes are named by their start site
+(`"server Mod:start_link/1#6"`) or by the child spec naming them
+(`"child Sup#0"`). A spawned function's parameters are the positional
+elements of its argument list. `clientlib/processes.dl` provides
+`source_pts`, `param_pts`, `returns_pts`, `field_pts`, `state_pts`,
+`call_site_target(id, func, api_kind, proc)` and keeps `call_target`,
+`named_pid`, `self_pid` and `server_process`; a call's message reaches
+the handler of the server the same call site targets, and `sync_site`
+anchors a points-to dependency at the call that makes it instead of at
+every GenServer call in the function.
+
 **Changed.** `Argus.Extractors.PidFlow` is six times faster (23.8s to 3.8s over the
 385 Phoenix-stack beams): it reuses the module's reaching definitions
 instead of recomputing them, converges each function on its own instead

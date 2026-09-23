@@ -72,6 +72,24 @@ defmodule Argus.Analyses.BlockingCycleTest do
              end)
     end
 
+    test "a state holding two pids is not one bag of them" do
+      skip_without_souffle()
+
+      # Front keeps Back and Side in one state map and calls only Back;
+      # Side calls Front by name. With the state a bag, Front "called" Side
+      # too and the pair looked like a deadlock, and C → A → B like a chain
+      # of ten hops.
+      mods = for m <- [Front, Back, Side], do: Module.concat(Argus.Test.Fixtures.PidFlow, m)
+      assert {:ok, results} = Argus.analyze(mods, :blocking)
+
+      assert results["call_cycle"] == []
+
+      # Side → Front → Back is the one real chain.
+      for [_from, _to, "chain", depth | _] <- results["call_chain"] do
+        assert depth == "2", "call chain depth #{depth}"
+      end
+    end
+
     test "runs without error on module with no cycles" do
       skip_without_souffle()
 

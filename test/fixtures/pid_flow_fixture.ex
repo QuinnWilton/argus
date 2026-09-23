@@ -175,6 +175,103 @@ defmodule Argus.Test.Fixtures.PidFlow do
     def handle_call(:poll, _from, s), do: {:reply, :ok, s}
   end
 
+  defmodule Front do
+    @moduledoc """
+    Starts Back and Side privately and keeps both pids in one state map,
+    but calls only Back. Side calls Front back: a cycle exists only if
+    the state is one bag of pids.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.PidFlow.{Back, Side}
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+
+    @impl true
+    def init(:ok) do
+      {:ok, back} = Back.start_link()
+      {:ok, side} = Side.start_link()
+      {:ok, %{back: back, side: side}}
+    end
+
+    @impl true
+    def handle_call(:go, _from, state), do: {:reply, GenServer.call(state.back, :ping), state}
+  end
+
+  defmodule Back do
+    @moduledoc false
+    use GenServer
+
+    def start_link, do: GenServer.start_link(__MODULE__, :ok)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:ping, _from, s), do: {:reply, :pong, s}
+  end
+
+  defmodule Side do
+    @moduledoc false
+    use GenServer
+
+    def start_link, do: GenServer.start_link(__MODULE__, :ok)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:poke, _from, s),
+      do: {:reply, GenServer.call(Argus.Test.Fixtures.PidFlow.Front, :go), s}
+  end
+
+  defmodule Relay do
+    @moduledoc """
+    Keeps a spawned worker and its subscribers in separate fields: an
+    event goes to the first subscriber, a flush to the worker.
+    """
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+    def subscribe(pid), do: GenServer.cast(__MODULE__, {:subscribe, pid})
+
+    @impl true
+    def init(:ok) do
+      worker = spawn(__MODULE__, :worker_loop, [])
+      {:ok, %{worker: worker, subs: []}}
+    end
+
+    def worker_loop do
+      receive do
+        :flush -> worker_loop()
+      end
+    end
+
+    @impl true
+    def handle_cast({:subscribe, pid}, s), do: {:noreply, %{s | subs: [pid | s.subs]}}
+
+    @impl true
+    def handle_info(:tick, s) do
+      send(hd(s.subs), :event)
+      send(s.worker, :flush)
+      {:noreply, s}
+    end
+  end
+
+  defmodule Subscriber do
+    @moduledoc "A spawned subscriber that waits for one event."
+    def go do
+      me = spawn(fn -> await() end)
+      Argus.Test.Fixtures.PidFlow.Relay.subscribe(me)
+    end
+
+    defp await do
+      receive do
+        :event -> :ok
+      end
+    end
+  end
+
   defmodule Quiet do
     @moduledoc "Starts with a computed module, apply, and a pid from a library call: no process to name."
     def applied(m), do: apply(m, :start_link, [])

@@ -1,66 +1,93 @@
 defmodule Argus.Extractors.PidFlow do
   @moduledoc """
   Which process each pid a function handles can be: the per-function half of
-  a points-to analysis whose objects are processes.
+  a points-to analysis whose objects are processes and the terms that hold
+  them.
 
   A pid is a reference and the call that started the process is its
-  allocation site: `spawn(M, F, args)` or `spawn(fun)` (named by what it
-  runs, from `spawn_call`) and `GenServer.start/start_link` or
-  `:gen_server`/`:gen_statem` starts with a literal module. The process
-  registry is a heap field everyone shares: `register/2` stores a pid under
-  a name, and a send to that name, or a `whereis` of it, loads it back.
+  allocation site: a spawn (named by what it runs, from `spawn_call`), a
+  `GenServer`, `:gen_server` or `:gen_statem` start with a literal
+  callback module, a supervisor's `start_child`. The process registry is a
+  heap field everyone shares: `register/2` stores a pid under a name, and
+  a send to that name, or a `whereis` of it, loads it back.
 
-  This extractor summarises, for every function, where the pids it passes
-  on came from — a start in this function, one of its parameters, the
-  result of a call into project code, or a registered name — and the
-  Datalog in `clientlib/processes.dl` chains the summaries across
-  functions, the way `clientlib/reach.dl` chains `call_arg_derived`.
+  A pid is rarely held bare. A server keeps it in its state map, a client
+  sends it in `{:subscribe, pid}`, a start returns it in `{:ok, pid}`. So
+  the terms that hold pids are objects too, named by the instruction that
+  built them (`put_map_*`, `put_tuple2`, `put_list`, `update_record`, or
+  a call whose result has a known shape), with a field per map key, tuple
+  position or list element. A read of `state.conn` is a load of the
+  `:conn` field rather than everything the state holds, so two pids in one
+  map stay two pids. A map update keeps the fields it does not set from
+  the map it updates; a list's elements share one field, the collection
+  abstraction.
+
+  This extractor summarises, for every function, where the values it
+  passes on came from, and `clientlib/processes.dl` chains the summaries
+  across functions.
+
+  ## Sources
+
+  A value is a set of sources `{src_kind, src}`:
+
+  - `proc` — the process started at a site in this function (its id);
+  - `param` — a parameter position;
+  - `result` — what the project call at a site returned (the site;
+    `pid_result` names the callee);
+  - `name` — a pid registered under a literal name: `:n` (or `Mod`),
+    `{:global, :n}`, `{:via, Registry, {Reg, key}}`;
+  - `self` — `self()`, which is whichever process runs the function;
+  - `obj` — a term this function built (its id, see `pid_object`);
+  - `load` — a field read from a term this function did not build (the
+    load's id, see `pid_load`).
 
   ## Emitted facts
 
-  Sources are `{src_kind, src}`: `proc` (a process id, below), `param` (a
-  parameter position), `result` (the callee whose return value it is),
-  `name` (a registered name) or `self` (`self()`: which process that is
-  depends on who runs the function, which the Datalog knows).
-
-  - `process_start(func, proc, kind, runs)` — `func` starts the process
-    `proc`: `kind` is `spawn` (`runs` is the function it runs) or `server`
-    (`runs` is the callback module), including a child a supervisor starts
-    on request (`DynamicSupervisor.start_child/2`, `Supervisor.start_child/2`),
-    named by its child spec's module. Process ids are `"spawn Mod:fun/n"`
-    and `"server Mod"`: function-level, so a body edit does not rename them.
-  - `pid_arg(caller, callee, arg_pos, src_kind, src)` — at some call in
-    `caller`, argument `arg_pos` may be a pid from the source. Also for a
-    server start's init argument (the callback module's `init/1`), a spawn's
-    single argument, and a closure's captured variables (its trailing
-    parameters, as in `ParamFlow`).
-  - `pid_return(func, src_kind, src)` — `func` may return a pid from the
-    source, including by a tail call.
-  - `pid_call(func, api_kind, src_kind, src)` — a GenServer-style `call` or
-    `cast` in `func` (the `sync_call`/`async_cast` table), or a send
-    (`info`: to a server it lands in `handle_info/2`), whose target may be
-    a pid from the source or a literal name.
-  - `pid_message(func, api_kind, src_kind, src)` — the message of such a
-    call, cast or send may carry a pid from the source: it reaches the
-    target server's handler as its message parameter.
-  - `pid_register(func, name, src_kind, src)` — `func` registers a pid from
-    the source under `name`.
+  - `process_start(id, func, proc, kind, runs)` — the start at `id` starts
+    `proc` (`"<kind> <id>"`): `spawn` (`runs` is the function it runs, or
+    `dynamic`), `server` (the callback module), `agent`.
+  - `pid_arg(id, caller, callee, arg_pos, via, src_kind, src)` — at the
+    call `id`, `callee`'s parameter `arg_pos` may hold the source. `via`
+    is `call` for a call into project code, `init` for a server start's
+    init argument (`Mod:init/1`), `spawn` for a spawned function's
+    arguments, `child` for a child spec's argument (`Mod:start_link/1`)
+    and `closure` for a closure's captured variables (its trailing
+    parameters).
+  - `pid_return(func, src_kind, src)` — `func` may return the source.
+  - `pid_result(id, func, callee)` — the project call at `id` is to
+    `callee`; its result is a `result` source somewhere.
+  - `pid_call(id, func, api_kind, src_kind, src)` — the GenServer-style
+    call or cast (`call`/`cast`, the `sync_call`/`async_cast` table) or
+    send (`info`: to a server it lands in `handle_info/2`) at `id` targets
+    the source.
+  - `pid_message(id, func, api_kind, src_kind, src)` — the message of that
+    call, cast or send is the source.
+  - `pid_register(id, func, name, src_kind, src)` — the call at `id`
+    registers the source under `name`.
   - `pid_send(id, func, message, src_kind, src)` — the send at `id` goes to
-    a pid from the source, or to a literal name. `message` is the literal
-    atom sent, `{:tag, …}` for a tuple with a literal atom first, or
-    `dynamic`. Keyed on the site, because a finding anchors there.
+    the source; `message` is the literal atom sent, `{:tag, …}` for a
+    tuple with a literal atom first, or `dynamic`.
+  - `pid_object(func, obj, shape, tag, arity)` — `func` builds the term
+    `obj`: a `map`, `tuple` or `list`, with a tuple's literal atom tag and
+    arity (else `""` and 0). Only a term that holds a source is an object.
+  - `pid_field(func, obj, sel, src_kind, src)` — `obj`'s field `sel` holds
+    the source: a map key (inspected), `{i}` for tuple position i
+    (0-based), `[]` for a list's elements, `*` for a map key not known.
+  - `pid_base(func, obj, src_kind, src)` — the term `obj` updates: the
+    fields `obj` does not set are the base's (a list's tail is its base).
+  - `pid_sets(obj, sel)` — a field an update sets, shadowing the base's.
+  - `pid_load(func, load, sel, src_kind, src)` — the load `load` reads the
+    field `sel` of the source.
 
   ## Reading the bytecode
 
-  The same union fixpoint as `ParamFlow` over `Argus.Dataflow`'s reaching
-  definitions, with process sources in place of parameter positions: a
-  structural instruction derives what it writes from everything it reads;
-  a start's result is its process; a call into project code yields
-  `result`; `whereis` of a literal name yields `name`; `self()` yields
-  `self`; any other call, a
-  BIF outside the structural few, `call_fun` and `apply` yield nothing.
-  What cannot be followed is lost rather than invented, so every rule on
-  top of these facts stays quiet where it cannot be sure.
+  Per function, a sparse fixpoint over `Argus.Dataflow`'s reaching
+  definitions: an instruction is evaluated again only when a definition
+  it reads, or a term it read a field of, changes. A call into the
+  runtime, `apply`, a BIF outside the structural few, and anything else
+  not modelled yield nothing: what cannot be followed is lost rather than
+  invented, so every rule on top of these facts stays quiet where it
+  cannot be sure.
 
   Positions are symbols, not numbers, so the Datalog joins them to each
   other without the partial `to_number` functor.
@@ -72,19 +99,16 @@ defmodule Argus.Extractors.PidFlow do
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Runtime
   alias Argus.Extractors.ApiCalls
-  alias Argus.Extractors.ParamFlow.Propagators
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
   import Argus.Extractor.Helpers, only: [add_fact: 3, register: 1]
 
-  @max_args 4
-
   # A fixpoint over a finite lattice converges; the bound only guards a bug.
-  @max_passes 64
+  @max_evaluations 64
 
-  # The callback module is x0 in the Elixir starts and in the anonymous
-  # Erlang ones; x1 after the name in `start_link({:local, n}, mod, ...)`.
+  # Starts that return `{:ok, pid}`, with the register holding the
+  # callback module.
   @server_starts %{
     {GenServer, :start, 2} => 0,
     {GenServer, :start, 3} => 0,
@@ -100,76 +124,187 @@ defmodule Argus.Extractors.PidFlow do
     {:gen_statem, :start_link, 4} => 1
   }
 
-  # A start through a supervisor returns the child's pid too; the child
-  # spec in x1 names the module (`Mod`, `{Mod, arg}`, `%{start: {Mod, ...}}`).
+  # A start through a supervisor returns the child's pid in `{:ok, pid}`;
+  # the child spec in x1 names the module (`Mod`, `{Mod, arg}`,
+  # `%{start: {Mod, ...}}`).
   @child_starts [{DynamicSupervisor, :start_child, 2}, {Supervisor, :start_child, 2}]
 
   @lookups [{Process, :whereis, 1}, {:erlang, :whereis, 1}]
 
+  # Library calls that read a field of a term: {term position, key
+  # position}. The wrapped ones return `{:ok, value}`; the compiler's
+  # slow path for `map.key` is one of them.
+  @field_reads %{
+    {Map, :get, 2} => {0, 1},
+    {Map, :get, 3} => {0, 1},
+    {Map, :fetch!, 2} => {0, 1},
+    {:maps, :get, 2} => {1, 0},
+    {:maps, :get, 3} => {1, 0},
+    {Access, :get, 2} => {0, 1},
+    {Access, :get, 3} => {0, 1}
+  }
+
+  @wrapped_field_reads %{
+    {Map, :fetch, 2} => {0, 1},
+    {:maps, :find, 2} => {1, 0},
+    {:elixir_erl_pass, :no_parens_remote, 2} => {0, 1}
+  }
+
+  # Library calls that set a field: {term, key, value} positions.
+  @field_writes %{
+    {Map, :put, 3} => {0, 1, 2},
+    {:maps, :put, 3} => {2, 0, 1}
+  }
+
+  @tail_ops [:call_only, :call_last, :call_ext_only, :call_ext_last]
+
   @impl true
   def relations,
-    do: [:process_start, :pid_arg, :pid_return, :pid_call, :pid_message, :pid_register, :pid_send]
+    do: [
+      :process_start,
+      :pid_arg,
+      :pid_return,
+      :pid_result,
+      :pid_call,
+      :pid_message,
+      :pid_register,
+      :pid_send,
+      :pid_object,
+      :pid_field,
+      :pid_base,
+      :pid_sets,
+      :pid_load
+    ]
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
-    with typed when typed != nil <- Helpers.typed(module_data),
-         reaching when reaching != nil <- Helpers.reaching(module_data) do
-      sites = CallSites.for_module(module_data)
-      starts = starts(typed, sites)
-      values = derive(typed, reaching, starts, sites)
+    case Helpers.reaching(module_data) do
+      nil ->
+        %{}
 
-      %{}
-      |> emit_starts(starts)
-      |> emit_call_sites(sites, starts, values)
-      |> emit_returns(typed, sites, starts, values)
-      |> emit_send_opcodes(module_data, values)
-      |> emit_closures(module_data, values)
-      |> Map.new(fn {relation, rows} -> {relation, rows |> Enum.uniq() |> Enum.sort()} end)
-    else
-      nil -> %{}
+      reaching ->
+        reads = reads_by_function(reaching)
+        sites = sites_by_function(module_data)
+        spawns = spawns_by_function(module_data)
+
+        module_data.functions
+        |> Enum.reduce(%{}, fn {:function, name, arity, _entry, instrs}, acc ->
+          func_id = Normalize.func_id(module_data.module, name, arity)
+
+          if generated?(func_id) do
+            acc
+          else
+            fun = %{
+              func_id: func_id,
+              code: List.to_tuple(instrs),
+              instrs: instrs,
+              reads: Map.get(reads, func_id, %{}),
+              sites: Map.get(sites, func_id, %{}),
+              spawns: Map.get(spawns, func_id, %{})
+            }
+
+            function_facts(acc, fun)
+          end
+        end)
+        |> Map.new(fn {relation, rows} -> {relation, rows |> Enum.uniq() |> Enum.sort()} end)
+    end
+  end
+
+  # ── The module, indexed per function ────────────────────────────────
+
+  # %{func_id => %{idx => %{reg => [{:param, k} | {:def, idx}]}}}
+  defp reads_by_function(reaching) do
+    Enum.reduce(reaching, %{}, fn {source, reg, use}, acc ->
+      func = InstrId.func_id(use.module, use.func, use.arity)
+
+      from =
+        case source do
+          {:param, k} -> {:param, k}
+          %InstrId{idx: d} -> {:def, d}
+        end
+
+      Map.update(acc, func, %{use.idx => %{reg => [from]}}, fn by_idx ->
+        Map.update(by_idx, use.idx, %{reg => [from]}, fn regs ->
+          Map.update(regs, reg, [from], &[from | &1])
+        end)
+      end)
+    end)
+  end
+
+  defp sites_by_function(module_data) do
+    module_data
+    |> CallSites.for_module()
+    |> Enum.reduce(%{}, fn %{func_id: func, idx: idx} = site, acc ->
+      Map.update(acc, func, %{idx => site}, &Map.put(&1, idx, site))
+    end)
+  end
+
+  # The spawns Emit resolved: %{func_id => %{idx => {runs, arity}}}.
+  defp spawns_by_function(module_data) do
+    case Helpers.typed(module_data) do
+      nil ->
+        %{}
+
+      typed ->
+        for %{mod: mod, func: fun, arity: arity, id: id} <- Map.get(typed, :spawn_call, []),
+            mod != "dynamic",
+            reduce: %{} do
+          acc ->
+            func = InstrId.func_id(id.module, id.func, id.arity)
+            spawn = {"#{mod}:#{fun}/#{arity}", arity}
+            Map.update(acc, func, %{id.idx => spawn}, &Map.put(&1, id.idx, spawn))
+        end
     end
   end
 
   # ── Allocation sites ─────────────────────────────────────────────────
 
-  # %{instr_id => %{proc, kind, runs, arg}}: every start in the module, with
-  # where the process's own first parameter comes from when it can be said.
-  defp starts(typed, sites) do
-    spawns =
-      for %{mod: mod, func: fun, arity: arity} = row <- Map.get(typed, :spawn_call, []),
-          mod != "dynamic",
-          into: %{} do
-        runs = "#{mod}:#{fun}/#{arity}"
-        {row.id, %{proc: "spawn " <> runs, kind: "spawn", runs: runs, arity: arity}}
+  # %{idx => start}: every start in the function. `shape` is what the
+  # call returns around the pid.
+  defp starts(fun) do
+    Enum.reduce(fun.sites, %{}, fn {idx, %{mfa: mfa, instrs: instrs}}, acc ->
+      case start(fun, idx, mfa, instrs) do
+        nil -> acc
+        start -> Map.put(acc, idx, Map.put(start, :proc, "#{start.kind} #{site(fun, idx)}"))
       end
+    end)
+  end
 
-    servers =
-      for %{mfa: mfa, instrs: instrs, idx: idx, func_id: func_id} <- sites,
-          {:ok, pos} <- [Map.fetch(@server_starts, mfa)],
-          {:ok, mod} <- [Helpers.resolve_register(instrs, idx, {:x, pos})],
-          is_atom(mod) and mod != :dynamic,
-          into: %{} do
-        runs = inspect(mod)
+  defp start(fun, idx, mfa, instrs) do
+    cond do
+      Map.has_key?(fun.spawns, idx) ->
+        {runs, arity} = Map.fetch!(fun.spawns, idx)
+        {_m, name, spawn_arity} = mfa
+        shape = if name == :spawn_monitor, do: :pid_ref, else: :pid
+        # The argument list follows the module and function, after the
+        # node in the four-argument form.
+        args = if spawn_arity == 4, do: {:x, 3}, else: {:x, 2}
+        %{kind: "spawn", runs: runs, shape: shape, arity: arity, args: args}
 
-        {parse(InstrId.mint(func_id, idx)),
-         %{proc: "server " <> runs, kind: "server", runs: runs, init_arg: pos + 1}}
-      end
+      Map.has_key?(@server_starts, mfa) ->
+        pos = Map.fetch!(@server_starts, mfa)
 
-    children =
-      for %{mfa: mfa, instrs: instrs, idx: idx, func_id: func_id} <- sites,
-          mfa in @child_starts,
-          {:ok, spec} <- [Helpers.resolve_register(instrs, idx, {:x, 1})],
-          mod = child_module(spec),
-          mod != nil and not library?(mod),
-          into: %{} do
-        runs = inspect(mod)
+        case Helpers.resolve_register(instrs, idx, {:x, pos}) do
+          {:ok, mod} when is_atom(mod) and mod not in [nil, :dynamic] ->
+            %{kind: "server", runs: inspect(mod), shape: :ok, init_arg: {:x, pos + 1}}
 
-        {parse(InstrId.mint(func_id, idx)),
-         %{proc: "server " <> runs, kind: "server", runs: runs, child: true}}
-      end
+          _ ->
+            nil
+        end
 
-    spawns |> Map.merge(servers) |> Map.merge(children)
+      mfa in @child_starts ->
+        with {:ok, spec} <- Helpers.resolve_register(instrs, idx, {:x, 1}),
+             mod when mod != nil <- child_module(spec),
+             false <- Runtime.module?(mod) do
+          %{kind: "server", runs: inspect(mod), shape: :ok, child: true}
+        else
+          _ -> nil
+        end
+
+      true ->
+        nil
+    end
   end
 
   defp child_module({mod, _arg}), do: child_module(mod)
@@ -177,264 +312,720 @@ defmodule Argus.Extractors.PidFlow do
   defp child_module(mod) when is_atom(mod) and mod not in [nil, :dynamic], do: mod
   defp child_module(_spec), do: nil
 
-  # ── The fixpoint ─────────────────────────────────────────────────────
+  # ── One function ────────────────────────────────────────────────────
 
-  # For every instruction, the sources each register it reads may hold:
-  # %{id => %{reg => MapSet({kind, src})}}.
-  defp derive(typed, reaching, starts, sites) do
-    reads =
-      Enum.group_by(reaching, fn {_source, _reg, use} -> use end, fn {source, reg, _use} ->
-        {reg, source}
+  defp function_facts(facts, fun) do
+    fun = Map.put(fun, :starts, starts(fun))
+    users = users(fun.reads)
+    idxs = Enum.to_list(0..(tuple_size(fun.code) - 1)//1)
+    state = %{outs: %{}, objs: %{}, readers: %{}, count: %{}}
+    state = run(:queue.from_list(idxs), MapSet.new(idxs), fun, users, state)
+    emit(facts, fun, state)
+  end
+
+  # Which instructions read each instruction's writes.
+  defp users(reads) do
+    Enum.reduce(reads, %{}, fn {use, regs}, acc ->
+      Enum.reduce(regs, acc, fn {_reg, froms}, inner ->
+        Enum.reduce(froms, inner, fn
+          {:def, d}, deep -> Map.update(deep, d, [use], &[use | &1])
+          {:param, _k}, deep -> deep
+        end)
+      end)
+    end)
+  end
+
+  defp run(queue, pending, fun, users, state) do
+    case :queue.out(queue) do
+      {:empty, _queue} ->
+        state
+
+      {{:value, idx}, queue} ->
+        pending = MapSet.delete(pending, idx)
+        count = Map.get(state.count, idx, 0)
+
+        if count >= @max_evaluations do
+          run(queue, pending, fun, users, state)
+        else
+          state = %{state | count: Map.put(state.count, idx, count + 1)}
+          result = evaluate(idx, fun, state)
+          {targets, state} = commit(idx, result, users, state)
+          {queue, pending} = enqueue(targets, queue, pending)
+          run(queue, pending, fun, users, state)
+        end
+    end
+  end
+
+  defp enqueue(targets, queue, pending) do
+    Enum.reduce(targets, {queue, pending}, fn target, {q, p} ->
+      if MapSet.member?(p, target),
+        do: {q, p},
+        else: {:queue.in(target, q), MapSet.put(p, target)}
+    end)
+  end
+
+  # Records what the evaluation wrote; returns the instructions to
+  # evaluate again: the readers of a changed register, and the loads
+  # through a term whose fields changed.
+  defp commit(idx, result, users, state) do
+    {changed_regs?, outs} =
+      Enum.reduce(result.writes, {false, state.outs}, fn {reg, value}, {changed?, outs} ->
+        if Map.get(outs, {idx, reg}) == value,
+          do: {changed?, outs},
+          else: {true, Map.put(outs, {idx, reg}, value)}
       end)
 
-    writes = typed |> Map.get(:def, []) |> Enum.group_by(& &1.id, & &1.reg)
-    ops = Map.new(Map.get(typed, :instruction, []), &{&1.id, &1.op})
-    bifs = Map.new(Map.get(typed, :bif_call, []), &{&1.id, &1.func})
-    tails = MapSet.new(Map.get(typed, :tail_call, []), & &1.id)
+    readers =
+      Enum.reduce(result.read_objs, state.readers, fn obj, acc ->
+        Map.update(acc, obj, MapSet.new([idx]), &MapSet.put(&1, idx))
+      end)
 
-    # Reaching definitions never cross a function, so each function
-    # converges on its own: a pass revisits only the function that changed.
-    functions =
-      typed
-      |> Map.get(:instruction, [])
-      |> Enum.group_by(&InstrId.fa(&1.id), & &1.id)
-      |> Map.values()
-      |> Enum.map(fn ids -> Enum.sort_by(ids, & &1.idx) end)
+    {changed_objs, objs} =
+      Enum.reduce(result.objs, {[], state.objs}, fn {key, obj}, {changed, objs} ->
+        if Map.get(objs, key) == obj,
+          do: {changed, objs},
+          else: {[key | changed], Map.put(objs, key, obj)}
+      end)
 
-    ctx = %{
-      reads: reads,
-      writes: writes,
-      ops: ops,
-      bifs: bifs,
-      tails: tails,
-      calls: call_values(sites, starts),
-      dynamics: MapSet.new(Map.get(typed, :dynamic_call, []), & &1.id)
+    targets =
+      if(changed_regs?, do: Map.get(users, idx, []), else: []) ++
+        Enum.flat_map(changed_objs, &MapSet.to_list(Map.get(readers, &1, MapSet.new())))
+
+    {targets, %{state | outs: outs, objs: objs, readers: readers}}
+  end
+
+  # ── What an instruction writes ───────────────────────────────────────
+
+  defp new_result, do: %{writes: [], objs: [], read_objs: [], loads: []}
+
+  defp evaluate(idx, fun, state) do
+    ctx = %{idx: idx, fun: fun, state: state}
+    instr = elem(fun.code, idx)
+
+    case Map.fetch(fun.sites, idx) do
+      {:ok, site} -> call(ctx, site, new_result())
+      :error -> instruction(ctx, instr, new_result())
+    end
+  end
+
+  defp instruction(ctx, {:move, src, dst}, r), do: write(r, dst, val(ctx, src))
+
+  defp instruction(ctx, {:swap, a, b}, r),
+    do: r |> write(a, val(ctx, b)) |> write(b, val(ctx, a))
+
+  defp instruction(ctx, {:get_list, src, head, tail}, r) do
+    {value, r} = load(ctx, val(ctx, src), "[]", load_id(ctx, "[]"), r)
+    r |> write(head, value) |> write(tail, val(ctx, src))
+  end
+
+  defp instruction(ctx, {:get_hd, src, head}, r) do
+    {value, r} = load(ctx, val(ctx, src), "[]", load_id(ctx, "[]"), r)
+    write(r, head, value)
+  end
+
+  defp instruction(ctx, {:get_tl, src, tail}, r), do: write(r, tail, val(ctx, src))
+
+  defp instruction(ctx, {:put_list, head, tail, dst}, r) do
+    obj = %{
+      shape: "list",
+      fields: %{"[]" => val(ctx, head)},
+      base: val(ctx, tail),
+      keys: MapSet.new(),
+      tag: "",
+      arity: 0,
+      nil_tail: tail == nil
     }
 
-    Enum.reduce(functions, %{}, fn ids, values ->
-      outs = fixpoint(ids, ctx, %{}, 0)
-      Enum.reduce(ids, values, fn id, acc -> Map.put(acc, id, inputs_of(id, ctx, outs)) end)
-    end)
+    r |> object(ctx.idx, obj) |> write(dst, obj_token(ctx.idx))
   end
 
-  # What each call writes to x0: a start's process, a lookup's name, a
-  # project call's result, or nothing.
-  defp call_values(sites, starts) do
-    Map.new(sites, fn %{func_id: func_id, idx: idx, mfa: mfa, instrs: instrs} = site ->
-      id = parse(InstrId.mint(func_id, idx))
+  defp instruction(ctx, {:put_tuple2, dst, {:list, elements}}, r) do
+    fields =
+      elements
+      |> Enum.with_index()
+      |> Map.new(fn {operand, i} -> {"{#{i}}", val(ctx, operand)} end)
 
-      value =
-        cond do
-          Map.has_key?(starts, id) -> MapSet.new([{"proc", starts[id].proc}])
-          mfa in @lookups -> lookup(instrs, idx)
-          project?(site) -> MapSet.new([{"result", callee(mfa)}])
-          true -> MapSet.new()
-        end
+    tag =
+      case elements do
+        [{:atom, atom} | _] -> inspect(atom)
+        _ -> ""
+      end
 
-      {id, value}
-    end)
+    obj = %{
+      shape: "tuple",
+      fields: fields,
+      base: MapSet.new(),
+      keys: MapSet.new(),
+      tag: tag,
+      arity: length(elements)
+    }
+
+    r |> object(ctx.idx, obj) |> write(dst, obj_token(ctx.idx))
   end
 
-  defp lookup(instrs, idx) do
-    case Helpers.resolve_atom(instrs, idx, {:x, 0}) do
-      "dynamic" -> MapSet.new()
-      name -> MapSet.new([{"name", name}])
-    end
+  defp instruction(ctx, {:get_tuple_element, src, i, dst}, r) do
+    sel = "{#{i}}"
+    {value, r} = load(ctx, val(ctx, src), sel, load_id(ctx, sel), r)
+    write(r, dst, value)
   end
 
-  defp fixpoint(ids, ctx, outs, pass) when pass < @max_passes do
-    {outs, changed?} =
-      Enum.reduce(ids, {outs, false}, fn id, {acc, changed?} ->
-        inputs = inputs_of(id, ctx, acc)
-        all_inputs = inputs |> Map.values() |> Enum.reduce(MapSet.new(), &MapSet.union/2)
-
-        Enum.reduce(Map.get(ctx.writes, id, []), {acc, changed?}, fn reg,
-                                                                     {inner, inner_changed?} ->
-          derived = transfer(id, reg, inputs, all_inputs, ctx)
-          previous = Map.get(inner, {id, reg}, MapSet.new())
-
-          if MapSet.equal?(derived, previous),
-            do: {inner, inner_changed?},
-            else: {Map.put(inner, {id, reg}, derived), true}
-        end)
+  defp instruction(ctx, {op, _fail, src, dst, _live, {:list, pairs}}, r)
+       when op in [:put_map_assoc, :put_map_exact] do
+    {fields, keys} =
+      pairs
+      |> Enum.chunk_every(2)
+      |> Enum.reduce({%{}, MapSet.new()}, fn [key, value], {fields, keys} ->
+        sel = selector(key)
+        fields = Map.update(fields, sel, val(ctx, value), &MapSet.union(&1, val(ctx, value)))
+        keys = if sel == "*", do: keys, else: MapSet.put(keys, sel)
+        {fields, keys}
       end)
 
-    if changed?, do: fixpoint(ids, ctx, outs, pass + 1), else: outs
+    obj = %{shape: "map", fields: fields, base: val(ctx, src), keys: keys, tag: "", arity: 0}
+    r |> object(ctx.idx, obj) |> write(dst, obj_token(ctx.idx))
   end
 
-  defp fixpoint(_ids, _ctx, outs, _pass), do: outs
+  defp instruction(ctx, {:get_map_elements, _fail, src, {:list, pairs}}, r) do
+    base = val(ctx, src)
 
-  defp inputs_of(id, ctx, outs) do
-    ctx.reads
-    |> Map.get(id, [])
-    |> Enum.group_by(fn {reg, _source} -> reg end, fn {_reg, source} -> source end)
-    |> Map.new(fn {reg, sources} ->
-      derived =
-        Enum.reduce(sources, MapSet.new(), fn
-          {:param, k}, acc ->
-            MapSet.put(acc, {"param", Integer.to_string(k)})
-
-          %InstrId{} = source, acc ->
-            MapSet.union(acc, Map.get(outs, {source, reg}, MapSet.new()))
-        end)
-
-      {reg, derived}
+    pairs
+    |> Enum.chunk_every(2)
+    |> Enum.reduce(r, fn [key, dst], acc ->
+      sel = selector(key)
+      {value, acc} = load(ctx, base, sel, load_id(ctx, sel), acc)
+      write(acc, dst, value)
     end)
   end
 
-  defp transfer(id, reg, inputs, all_inputs, ctx) do
+  # Positions are 1-based in the instruction.
+  defp instruction(ctx, {:update_record, _hint, size, src, dst, {:list, updates}}, r) do
+    {fields, keys} =
+      updates
+      |> Enum.chunk_every(2)
+      |> Enum.reduce({%{}, MapSet.new()}, fn
+        [{:integer, pos}, value], {fields, keys} ->
+          sel = "{#{pos - 1}}"
+          {Map.put(fields, sel, val(ctx, value)), MapSet.put(keys, sel)}
+
+        _other, acc ->
+          acc
+      end)
+
+    obj = %{shape: "tuple", fields: fields, base: val(ctx, src), keys: keys, tag: "", arity: size}
+    r |> object(ctx.idx, obj) |> write(dst, obj_token(ctx.idx))
+  end
+
+  defp instruction(ctx, {:bif, name, _fail, args, dst}, r), do: bif(ctx, name, args, dst, r)
+
+  defp instruction(ctx, {:gc_bif, name, _fail, _live, args, dst}, r),
+    do: bif(ctx, name, args, dst, r)
+
+  defp instruction(_ctx, _instr, r), do: r
+
+  defp bif(_ctx, :self, [], dst, r), do: write(r, dst, MapSet.new([:self]))
+
+  defp bif(ctx, :element, [{:integer, pos}, tuple], dst, r) do
+    sel = "{#{pos - 1}}"
+    {value, r} = load(ctx, val(ctx, tuple), sel, load_id(ctx, sel), r)
+    write(r, dst, value)
+  end
+
+  defp bif(ctx, :hd, [list], dst, r) do
+    {value, r} = load(ctx, val(ctx, list), "[]", load_id(ctx, "[]"), r)
+    write(r, dst, value)
+  end
+
+  defp bif(ctx, :tl, [list], dst, r), do: write(r, dst, val(ctx, list))
+
+  defp bif(ctx, :map_get, [key, map], dst, r) do
+    sel = selector(key)
+    {value, r} = load(ctx, val(ctx, map), sel, load_id(ctx, sel), r)
+    write(r, dst, value)
+  end
+
+  defp bif(_ctx, _name, _args, _dst, r), do: r
+
+  # ── Calls ────────────────────────────────────────────────────────────
+
+  defp call(ctx, %{mfa: mfa, instrs: instrs} = site, r) do
+    idx = ctx.idx
+
     cond do
-      MapSet.member?(ctx.tails, id) ->
-        MapSet.new()
+      Map.has_key?(ctx.fun.starts, idx) ->
+        start_result(ctx, Map.fetch!(ctx.fun.starts, idx), r)
 
-      Map.has_key?(ctx.calls, id) ->
-        if reg == "x0", do: Map.fetch!(ctx.calls, id), else: MapSet.new()
+      mfa in @lookups ->
+        case Helpers.resolve_atom(instrs, idx, {:x, 0}) do
+          "dynamic" -> r
+          name -> write(r, {:x, 0}, MapSet.new([{:name, name}]))
+        end
 
-      MapSet.member?(ctx.dynamics, id) ->
-        MapSet.new()
+      Map.has_key?(@field_reads, mfa) ->
+        {term, key} = Map.fetch!(@field_reads, mfa)
+        {value, r} = library_load(ctx, term, key, r)
+        write(r, {:x, 0}, value)
 
-      Map.get(ctx.bifs, id) == "self" ->
-        MapSet.new([{"self", "self"}])
+      Map.has_key?(@wrapped_field_reads, mfa) ->
+        {term, key} = Map.fetch!(@wrapped_field_reads, mfa)
+        {value, r} = library_load(ctx, term, key, r)
+        ok_tuple(ctx, value, r)
 
-      Map.has_key?(ctx.bifs, id) ->
-        if Propagators.bif?(Map.fetch!(ctx.bifs, id)), do: all_inputs, else: MapSet.new()
+      Map.has_key?(@field_writes, mfa) ->
+        {term, key, value} = Map.fetch!(@field_writes, mfa)
+        sel = literal_selector(instrs, idx, key)
 
-      Map.get(ctx.ops, id) in ~w(make_fun3 call_fun call_fun2 apply apply_last) ->
-        MapSet.new()
+        obj = %{
+          shape: "map",
+          fields: %{sel => val(ctx, {:x, value})},
+          base: val(ctx, {:x, term}),
+          keys: if(sel == "*", do: MapSet.new(), else: MapSet.new([sel])),
+          tag: "",
+          arity: 0
+        }
 
-      Map.get(ctx.ops, id) == "swap" ->
-        ctx.writes
-        |> Map.fetch!(id)
-        |> Enum.reject(&(&1 == reg))
-        |> then(&union_of(inputs, &1))
+        r |> object(idx, obj) |> write({:x, 0}, obj_token(idx))
+
+      project?(site) ->
+        write(r, {:x, 0}, MapSet.new([{:result, idx}]))
 
       true ->
-        all_inputs
+        r
     end
   end
 
-  defp union_of(inputs, regs) do
-    Enum.reduce(regs, MapSet.new(), fn reg, acc ->
-      MapSet.union(acc, Map.get(inputs, reg, MapSet.new()))
+  defp library_load(ctx, term, key, r) do
+    sel = literal_selector(ctx.fun.instrs, ctx.idx, key)
+    load(ctx, val(ctx, {:x, term}), sel, load_id(ctx, sel), r)
+  end
+
+  defp start_result(_ctx, %{proc: proc, shape: :pid}, r),
+    do: write(r, {:x, 0}, MapSet.new([{:proc, proc}]))
+
+  # `spawn_monitor/1,3` returns `{pid, ref}`.
+  defp start_result(ctx, %{proc: proc, shape: :pid_ref}, r) do
+    obj = %{
+      shape: "tuple",
+      fields: %{"{0}" => MapSet.new([{:proc, proc}])},
+      base: MapSet.new(),
+      keys: MapSet.new(),
+      tag: "",
+      arity: 2
+    }
+
+    r |> object(ctx.idx, obj) |> write({:x, 0}, obj_token(ctx.idx))
+  end
+
+  defp start_result(ctx, %{proc: proc, shape: :ok}, r),
+    do: ok_tuple(ctx, MapSet.new([{:proc, proc}]), r)
+
+  defp ok_tuple(ctx, value, r) do
+    obj = %{
+      shape: "tuple",
+      fields: %{"{1}" => value},
+      base: MapSet.new(),
+      keys: MapSet.new(),
+      tag: ":ok",
+      arity: 2
+    }
+
+    r |> object(ctx.idx, obj) |> write({:x, 0}, obj_token(ctx.idx))
+  end
+
+  # ── Values ───────────────────────────────────────────────────────────
+
+  # What `operand` may hold when `ctx.idx` reads it.
+  defp val(ctx, operand) do
+    case register(operand) do
+      {kind, n} when kind in [:x, :y] ->
+        reg = "#{kind}#{n}"
+
+        ctx.fun.reads
+        |> Map.get(ctx.idx, %{})
+        |> Map.get(reg, [])
+        |> Enum.reduce(MapSet.new(), fn
+          {:param, k}, acc -> MapSet.put(acc, {:param, k})
+          {:def, d}, acc -> MapSet.union(acc, Map.get(ctx.state.outs, {d, reg}, MapSet.new()))
+        end)
+
+      _literal ->
+        MapSet.new()
+    end
+  end
+
+  defp write(r, operand, value) do
+    case register(operand) do
+      {kind, n} when kind in [:x, :y] -> %{r | writes: [{"#{kind}#{n}", value} | r.writes]}
+      _other -> r
+    end
+  end
+
+  defp object(r, key, obj), do: %{r | objs: [{key, obj} | r.objs]}
+
+  defp obj_token(key), do: MapSet.new([{:obj, key}])
+
+  defp load_id(ctx, sel), do: site(ctx.fun, ctx.idx) <> " " <> sel
+
+  # Reads field `sel` of every term in `value`. A term built here is read
+  # directly (its field, a map's unknown-key field, and the base's field
+  # when the term does not set it); a term from elsewhere becomes a load
+  # the Datalog resolves; a pid has no fields.
+  defp load(ctx, value, sel, id, r), do: load(ctx, value, sel, id, r, %{})
+
+  defp load(ctx, value, sel, id, r, seen) do
+    Enum.reduce(value, {MapSet.new(), r}, fn token, {acc, r} ->
+      case token do
+        {:obj, key} ->
+          if Map.has_key?(seen, key) do
+            {acc, r}
+          else
+            r = %{r | read_objs: [key | r.read_objs]}
+
+            local_field(
+              ctx,
+              Map.get(ctx.state.objs, key),
+              sel,
+              id,
+              r,
+              Map.put(seen, key, true),
+              acc
+            )
+          end
+
+        {kind, _} when kind in [:param, :result, :load] ->
+          {MapSet.put(acc, {:load, id}), %{r | loads: [{id, sel, token} | r.loads]}}
+
+        _pid_or_fun ->
+          {acc, r}
+      end
     end)
+  end
+
+  defp local_field(_ctx, nil, _sel, _id, r, _seen, acc), do: {acc, r}
+
+  defp local_field(ctx, obj, sel, id, r, seen, acc) do
+    own =
+      obj.fields
+      |> Map.get(sel, MapSet.new())
+      |> MapSet.union(
+        if obj.shape == "map", do: Map.get(obj.fields, "*", MapSet.new()), else: MapSet.new()
+      )
+
+    acc = MapSet.union(acc, own)
+
+    if MapSet.member?(obj.keys, sel) do
+      {acc, r}
+    else
+      {inherited, r} = load(ctx, obj.base, sel, id, r, seen)
+      {MapSet.union(acc, inherited), r}
+    end
+  end
+
+  # A map key as a field name: the inspected literal, or `*`.
+  defp selector({:atom, atom}), do: inspect(atom)
+  defp selector({:integer, n}), do: inspect(n)
+  defp selector({:float, f}), do: inspect(f)
+  defp selector({:literal, term}), do: inspect(term)
+  defp selector(nil), do: inspect([])
+  defp selector(_register), do: "*"
+
+  defp literal_selector(instrs, idx, pos) do
+    case Helpers.resolve_register(instrs, idx, {:x, pos}) do
+      {:ok, key} when is_atom(key) and key != :dynamic -> inspect(key)
+      {:ok, key} when is_binary(key) or is_integer(key) -> inspect(key)
+      _ -> "*"
+    end
   end
 
   # ── Emission ─────────────────────────────────────────────────────────
 
-  defp emit_starts(facts, starts) do
-    Enum.reduce(starts, facts, fn {id, start}, acc ->
-      func_id = InstrId.func_id(id.module, id.func, id.arity)
-      add_fact(acc, :process_start, [func_id, start.proc, start.kind, start.runs])
+  defp emit(facts, fun, state) do
+    live = live_objects(state.objs)
+    ctx = %{fun: fun, state: state, live: live}
+
+    facts
+    |> emit_starts(fun)
+    |> emit_objects(ctx)
+    |> emit_instructions(ctx)
+  end
+
+  defp emit_starts(facts, fun) do
+    Enum.reduce(fun.starts, facts, fn {idx, start}, acc ->
+      add_fact(acc, :process_start, [
+        site(fun, idx),
+        fun.func_id,
+        start.proc,
+        start.kind,
+        start.runs
+      ])
     end)
   end
 
-  defp emit_call_sites(facts, sites, starts, values) do
-    Enum.reduce(sites, facts, fn %{func_id: func_id, idx: idx, mfa: mfa, instrs: instrs} = site,
-                                 acc ->
-      id = parse(InstrId.mint(func_id, idx))
-      at = Map.get(values, id, %{})
+  # The terms that hold a source: a field or base with anything but a
+  # term, or with a term that does. Fixpoint over the function's terms.
+  defp live_objects(objs, live \\ %{}) do
+    grown =
+      Enum.reduce(objs, live, fn {key, obj}, acc ->
+        if Map.has_key?(acc, key) or not holds_source?(obj, acc),
+          do: acc,
+          else: Map.put(acc, key, true)
+      end)
 
-      acc
-      |> emit_args(site, at)
-      |> emit_start_args(func_id, Map.get(starts, id), at)
-      |> emit_process_call(func_id, mfa, instrs, idx, at)
-      |> emit_register(func_id, mfa, instrs, idx, at)
-      |> emit_send(func_id, id, mfa, instrs, idx, at)
+    if map_size(grown) == map_size(live), do: live, else: live_objects(objs, grown)
+  end
+
+  defp holds_source?(obj, live) do
+    obj.fields
+    |> Map.values()
+    |> Enum.concat([obj.base])
+    |> Enum.any?(fn value -> Enum.any?(value, &source?(&1, live)) end)
+  end
+
+  defp source?({:obj, key}, live), do: Map.has_key?(live, key)
+  defp source?(_token, _live), do: true
+
+  defp emit_objects(facts, ctx) do
+    func = ctx.fun.func_id
+
+    Enum.reduce(Map.keys(ctx.live), facts, fn key, acc ->
+      obj = Map.fetch!(ctx.state.objs, key)
+      id = obj_id(ctx.fun, key)
+      acc = add_fact(acc, :pid_object, [func, id, obj.shape, obj.tag, to_string(obj.arity)])
+
+      acc =
+        Enum.reduce(obj.fields, acc, fn {sel, value}, inner ->
+          sources(inner, ctx, :pid_field, [func, id, sel], value)
+        end)
+
+      acc = sources(acc, ctx, :pid_base, [func, id], obj.base)
+
+      if convert(ctx, obj.base) == [],
+        do: acc,
+        else: Enum.reduce(obj.keys, acc, &add_fact(&2, :pid_sets, [id, &1]))
     end)
   end
 
-  defp emit_args(facts, %{func_id: func_id, mfa: {_m, _f, arity} = mfa} = site, at) do
+  defp emit_instructions(facts, ctx) do
+    fun = ctx.fun
+
+    Enum.reduce(0..(tuple_size(fun.code) - 1)//1, facts, fn idx, acc ->
+      ictx = %{idx: idx, fun: fun, state: ctx.state}
+      result = evaluate(idx, fun, ctx.state)
+      at = Map.put(ctx, :idx, idx)
+
+      acc =
+        Enum.reduce(result.loads, acc, fn {id, sel, token}, inner ->
+          sources(inner, ctx, :pid_load, [fun.func_id, id, sel], MapSet.new([token]))
+        end)
+
+      case Map.fetch(fun.sites, idx) do
+        {:ok, site} -> emit_site(acc, at, ictx, site)
+        :error -> emit_other(acc, at, ictx, elem(fun.code, idx))
+      end
+    end)
+  end
+
+  defp emit_other(facts, at, ictx, :return),
+    do: sources(facts, at, :pid_return, [at.fun.func_id], val(ictx, {:x, 0}))
+
+  defp emit_other(facts, at, ictx, :send), do: send_row(facts, at, ictx)
+
+  defp emit_other(
+         facts,
+         at,
+         ictx,
+         {:make_fun3, {cmod, cname, carity}, _index, _uniq, _dst, {:list, env}}
+       ) do
+    closure = Normalize.func_id(cmod, cname, carity)
+    first = carity - length(env)
+
+    env
+    |> Enum.with_index()
+    |> Enum.reduce(facts, fn {operand, slot}, acc ->
+      sources(
+        acc,
+        at,
+        :pid_arg,
+        [site(at.fun, at.idx), at.fun.func_id, closure, to_string(first + slot), "closure"],
+        val(ictx, operand)
+      )
+    end)
+  end
+
+  defp emit_other(facts, _at, _ictx, _instr), do: facts
+
+  defp emit_site(facts, at, ictx, %{mfa: mfa} = site) do
+    facts
+    |> emit_args(at, ictx, site)
+    |> emit_start_args(at, ictx, Map.get(at.fun.starts, at.idx))
+    |> emit_process_call(at, ictx, mfa)
+    |> emit_register(at, ictx, mfa)
+    |> emit_send(at, ictx, mfa)
+    |> emit_tail(at, ictx, site)
+  end
+
+  # Every argument of a call into project code.
+  defp emit_args(facts, at, ictx, %{mfa: {_m, _f, arity} = mfa} = site) do
     if project?(site) do
-      Enum.reduce(0..(min(arity, @max_args) - 1)//1, facts, fn pos, acc ->
-        emit_sources(acc, :pid_arg, [func_id, callee(mfa), to_string(pos)], at["x#{pos}"])
+      Enum.reduce(0..(arity - 1)//1, facts, fn pos, acc ->
+        sources(
+          acc,
+          at,
+          :pid_arg,
+          [site(at.fun, at.idx), at.fun.func_id, callee(mfa), to_string(pos), "call"],
+          val(ictx, {:x, pos})
+        )
       end)
     else
       facts
     end
   end
 
-  # A server's init/1 receives the start's init argument; a process spawned
-  # to run a one-argument function receives the single element of its list.
-  defp emit_start_args(facts, func_id, %{kind: "server", runs: mod, init_arg: pos}, at),
-    do: emit_sources(facts, :pid_arg, [func_id, "#{mod}:init/1", "0"], at["x#{pos}"])
+  # A server's init/1 receives the start's init argument.
+  defp emit_start_args(facts, at, ictx, %{kind: "server", runs: mod, init_arg: reg}) do
+    sources(
+      facts,
+      at,
+      :pid_arg,
+      [site(at.fun, at.idx), at.fun.func_id, "#{mod}:init/1", "0", "init"],
+      val(ictx, reg)
+    )
+  end
 
-  # A child spec `{Mod, arg}` starts `Mod.start_link(arg)`; the spec is
-  # not taken apart, so a pid anywhere in it counts as the argument.
-  defp emit_start_args(facts, func_id, %{kind: "server", runs: mod, child: true}, at),
-    do: emit_sources(facts, :pid_arg, [func_id, "#{mod}:start_link/1", "0"], at["x1"])
+  # A child spec `{Mod, arg}` starts `Mod.start_link(arg)`.
+  defp emit_start_args(facts, at, ictx, %{kind: "server", runs: mod, child: true}) do
+    r = new_result()
+    {arg, r} = load(ictx, val(ictx, {:x, 1}), "{1}", site(at.fun, at.idx) <> " {1}", r)
+    facts = emit_loads(facts, at, r)
 
-  defp emit_start_args(facts, func_id, %{kind: "spawn", runs: runs, arity: 1}, at),
-    do: emit_sources(facts, :pid_arg, [func_id, runs, "0"], at["x2"])
+    sources(
+      facts,
+      at,
+      :pid_arg,
+      [site(at.fun, at.idx), at.fun.func_id, "#{mod}:start_link/1", "0", "child"],
+      arg
+    )
+  end
 
-  defp emit_start_args(facts, _func_id, _start, _at), do: facts
+  # A spawned function's parameters are the elements of the argument list.
+  defp emit_start_args(facts, at, ictx, %{kind: "spawn", runs: runs, args: reg}) do
+    case list_elements(ictx, val(ictx, reg)) do
+      {:ok, elements} ->
+        elements
+        |> Enum.with_index()
+        |> Enum.reduce(facts, fn {value, pos}, acc ->
+          sources(
+            acc,
+            at,
+            :pid_arg,
+            [site(at.fun, at.idx), at.fun.func_id, runs, to_string(pos), "spawn"],
+            value
+          )
+        end)
 
-  # The target in x0 (a pid, or a literal name), and whatever pids the
-  # message in x1 carries to the handler.
-  defp emit_process_call(facts, func_id, mfa, instrs, idx, at) do
+      :unknown ->
+        facts
+    end
+  end
+
+  defp emit_start_args(facts, _at, _ictx, _start), do: facts
+
+  # The positional elements of a list built here, when every cons cell
+  # is: `[a, b]` is two cells ending in `[]`.
+  defp list_elements(ictx, value) do
+    case MapSet.to_list(value) do
+      [] ->
+        {:ok, []}
+
+      [{:obj, key}] ->
+        case Map.get(ictx.state.objs, key) do
+          %{shape: "list", fields: %{"[]" => head}, base: tail, nil_tail: nil_tail?} ->
+            cond do
+              nil_tail? -> {:ok, [head]}
+              MapSet.size(tail) == 0 -> :unknown
+              true -> list_tail(ictx, head, tail)
+            end
+
+          _ ->
+            :unknown
+        end
+
+      _ ->
+        :unknown
+    end
+  end
+
+  defp list_tail(ictx, head, tail) do
+    case list_elements(ictx, tail) do
+      {:ok, rest} -> {:ok, [head | rest]}
+      :unknown -> :unknown
+    end
+  end
+
+  # The target in x0 (a pid, or a literal name), and the message in x1.
+  defp emit_process_call(facts, at, ictx, mfa) do
     case ApiCalls.process_call_kind(mfa) do
       nil -> facts
-      kind -> call_rows(facts, func_id, to_string(kind), destination(instrs, idx, at), at["x1"])
+      kind -> call_rows(facts, at, ictx, to_string(kind))
     end
   end
 
-  defp call_rows(facts, func_id, kind, destination, message) do
+  defp call_rows(facts, at, ictx, kind) do
+    id = site(at.fun, at.idx)
+
     facts
-    |> emit_sources(:pid_call, [func_id, kind], destination)
-    |> emit_sources(:pid_message, [func_id, kind], message)
+    |> sources(at, :pid_call, [id, at.fun.func_id, kind], destination(at, ictx))
+    |> sources(at, :pid_message, [id, at.fun.func_id, kind], val(ictx, {:x, 1}))
   end
 
-  defp destination(instrs, idx, at) do
-    case Helpers.resolve_atom(instrs, idx, {:x, 0}) do
-      "dynamic" -> Map.get(at, "x0", MapSet.new())
-      name -> MapSet.put(Map.get(at, "x0", MapSet.new()), {"name", name})
+  defp destination(at, ictx) do
+    value = val(ictx, {:x, 0})
+
+    case Helpers.resolve_atom(at.fun.instrs, at.idx, {:x, 0}) do
+      "dynamic" -> value
+      name -> MapSet.put(value, {:name, name})
     end
   end
 
-  defp emit_register(facts, func_id, {Process, :register, 2}, instrs, idx, at),
-    do: register_row(facts, func_id, Helpers.resolve_atom(instrs, idx, {:x, 1}), at["x0"])
+  defp emit_register(facts, at, ictx, {Process, :register, 2}),
+    do:
+      register_row(
+        facts,
+        at,
+        Helpers.resolve_atom(at.fun.instrs, at.idx, {:x, 1}),
+        val(ictx, {:x, 0})
+      )
 
-  defp emit_register(facts, func_id, {:erlang, :register, 2}, instrs, idx, at),
-    do: register_row(facts, func_id, Helpers.resolve_atom(instrs, idx, {:x, 0}), at["x1"])
+  defp emit_register(facts, at, ictx, {:erlang, :register, 2}),
+    do:
+      register_row(
+        facts,
+        at,
+        Helpers.resolve_atom(at.fun.instrs, at.idx, {:x, 0}),
+        val(ictx, {:x, 1})
+      )
 
-  defp emit_register(facts, _func_id, _mfa, _instrs, _idx, _at), do: facts
+  defp emit_register(facts, _at, _ictx, _mfa), do: facts
 
-  defp register_row(facts, _func_id, "dynamic", _sources), do: facts
+  defp register_row(facts, _at, "dynamic", _value), do: facts
 
-  defp register_row(facts, func_id, name, sources),
-    do: emit_sources(facts, :pid_register, [func_id, name], sources)
+  defp register_row(facts, at, name, value),
+    do: sources(facts, at, :pid_register, [site(at.fun, at.idx), at.fun.func_id, name], value)
 
-  defp emit_send(facts, func_id, id, {mod, :send, arity}, instrs, idx, at)
+  defp emit_send(facts, at, ictx, {mod, :send, arity})
        when (mod == :erlang and arity in [2, 3]) or (mod == Process and arity == 3),
-       do: send_row(facts, func_id, id, instrs, idx, at)
+       do: send_row(facts, at, ictx)
 
-  defp emit_send(facts, _func_id, _id, _mfa, _instrs, _idx, _at), do: facts
-
-  # The send opcode (Erlang's `!`) is not a call site.
-  defp emit_send_opcodes(facts, %{module: mod, functions: functions}, values) do
-    Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
-      func_id = Normalize.func_id(mod, name, arity)
-
-      instrs
-      |> Enum.with_index()
-      |> Enum.reduce(acc, fn
-        {:send, idx}, inner ->
-          id = parse(InstrId.mint(func_id, idx))
-          send_row(inner, func_id, id, instrs, idx, Map.get(values, id, %{}))
-
-        _other, inner ->
-          inner
-      end)
-    end)
-  end
+  defp emit_send(facts, _at, _ictx, _mfa), do: facts
 
   # A send is keyed on its site for the finding about what it sends, and is
   # also an "info" call: to a server, the message lands in handle_info/2.
-  defp send_row(facts, func_id, id, instrs, idx, at) do
-    destination = destination(instrs, idx, at)
+  defp send_row(facts, at, ictx) do
+    id = site(at.fun, at.idx)
+    message = message(at.fun.instrs, at.idx)
 
     facts
-    |> emit_sources(:pid_send, [InstrId.format(id), func_id, message(instrs, idx)], destination)
-    |> call_rows(func_id, "info", destination, at["x1"])
+    |> sources(at, :pid_send, [id, at.fun.func_id, message], destination(at, ictx))
+    |> call_rows(at, ictx, "info")
   end
 
   # The message as a receive pattern would read it: a literal atom, a
@@ -455,86 +1046,72 @@ defmodule Argus.Extractors.PidFlow do
     end
   end
 
-  # What a function returns: x0 at each `return`, and the callee's result
-  # (or the started process) at each tail call.
-  defp emit_returns(facts, typed, sites, starts, values) do
-    returned =
-      for %{id: id, op: "return"} <- Map.get(typed, :instruction, []), reduce: facts do
-        acc ->
-          func_id = InstrId.func_id(id.module, id.func, id.arity)
-          emit_sources(acc, :pid_return, [func_id], get_in(values, [id, "x0"]))
-      end
+  # A tail call returns whatever the call returns.
+  defp emit_tail(facts, at, ictx, _site) do
+    if elem(elem(at.fun.code, at.idx), 0) in @tail_ops do
+      value = Map.get(ictx.state.outs, {at.idx, "x0"}, MapSet.new())
+      sources(facts, at, :pid_return, [at.fun.func_id], value)
+    else
+      facts
+    end
+  end
 
-    tails = MapSet.new(Map.get(typed, :tail_call, []), & &1.id)
-
-    Enum.reduce(sites, returned, fn %{func_id: func_id, idx: idx, mfa: mfa} = site, acc ->
-      id = parse(InstrId.mint(func_id, idx))
-
-      cond do
-        not MapSet.member?(tails, id) or generated?(func_id) ->
-          acc
-
-        Map.has_key?(starts, id) ->
-          add_fact(acc, :pid_return, [func_id, "proc", starts[id].proc])
-
-        project?(site) ->
-          add_fact(acc, :pid_return, [func_id, "result", callee(mfa)])
-
-        true ->
-          acc
-      end
+  defp emit_loads(facts, at, r) do
+    Enum.reduce(r.loads, facts, fn {id, sel, token}, inner ->
+      sources(inner, at, :pid_load, [at.fun.func_id, id, sel], MapSet.new([token]))
     end)
   end
 
-  # A closure's environment is its trailing parameters (as in ParamFlow):
-  # a pid captured by `spawn(fn -> send(parent, ...) end)` reaches the body.
-  defp emit_closures(facts, %{module: mod, functions: functions}, values) do
-    Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
-      func_id = Normalize.func_id(mod, name, arity)
+  # ── Sources as rows ──────────────────────────────────────────────────
 
-      instrs
-      |> Enum.with_index()
-      |> Enum.reduce(acc, fn
-        {{:make_fun3, {cmod, cname, carity}, _index, _uniq, _dst, {:list, env}}, idx}, inner ->
-          at = Map.get(values, parse(InstrId.mint(func_id, idx)), %{})
-          closure = Normalize.func_id(cmod, cname, carity)
-          first = carity - length(env)
-
-          env
-          |> Enum.with_index()
-          |> Enum.reduce(inner, fn {operand, slot}, deep ->
-            case register(operand) do
-              {kind, n} when kind in [:x, :y] ->
-                emit_sources(
-                  deep,
-                  :pid_arg,
-                  [func_id, closure, to_string(first + slot)],
-                  at["#{kind}#{n}"]
-                )
-
-              _literal ->
-                deep
-            end
-          end)
-
-        _other, inner ->
-          inner
-      end)
-    end)
+  defp sources(facts, ctx, relation, prefix, value) do
+    emit_rows(facts, relation, prefix, convert(ctx, value))
+    |> emit_results(ctx, value)
   end
 
-  defp emit_sources(facts, _relation, _prefix, nil), do: facts
-
-  # The compiler's own module_info/__info__ functions pass nothing a
-  # process analysis needs.
-  defp emit_sources(facts, relation, [func | _] = prefix, sources) do
-    if generated?(func), do: facts, else: emit_each(facts, relation, prefix, sources)
-  end
-
-  defp emit_each(facts, relation, prefix, sources) do
-    Enum.reduce(sources, facts, fn {kind, src}, acc ->
+  defp emit_rows(facts, relation, prefix, converted) do
+    Enum.reduce(converted, facts, fn {kind, src}, acc ->
       emit_row(acc, relation, prefix ++ [kind, src])
     end)
+  end
+
+  # A `result` source names its call site; `pid_result` says what it calls.
+  defp emit_results(facts, ctx, value) do
+    Enum.reduce(value, facts, fn
+      {:result, idx}, acc ->
+        %{mfa: mfa} = Map.fetch!(ctx.fun.sites, idx)
+        add_fact(acc, :pid_result, [site(ctx.fun, idx), ctx.fun.func_id, callee(mfa)])
+
+      _token, acc ->
+        acc
+    end)
+  end
+
+  defp convert(ctx, value) do
+    value
+    |> Enum.flat_map(fn
+      {:proc, proc} ->
+        [{"proc", proc}]
+
+      {:param, k} ->
+        [{"param", Integer.to_string(k)}]
+
+      {:result, idx} ->
+        [{"result", site(ctx.fun, idx)}]
+
+      {:name, name} ->
+        [{"name", name}]
+
+      :self ->
+        [{"self", "self"}]
+
+      {:load, id} ->
+        [{"load", id}]
+
+      {:obj, key} ->
+        if Map.has_key?(ctx.live, key), do: [{"obj", obj_id(ctx.fun, key)}], else: []
+    end)
+    |> Enum.sort()
   end
 
   # One literal add_fact per relation, so the relation list stays
@@ -545,26 +1122,26 @@ defmodule Argus.Extractors.PidFlow do
   defp emit_row(facts, :pid_message, row), do: add_fact(facts, :pid_message, row)
   defp emit_row(facts, :pid_register, row), do: add_fact(facts, :pid_register, row)
   defp emit_row(facts, :pid_send, row), do: add_fact(facts, :pid_send, row)
+  defp emit_row(facts, :pid_field, row), do: add_fact(facts, :pid_field, row)
+  defp emit_row(facts, :pid_base, row), do: add_fact(facts, :pid_base, row)
+  defp emit_row(facts, :pid_load, row), do: add_fact(facts, :pid_load, row)
 
-  # ── Which calls reach project code ───────────────────────────────────
+  # ── Names ────────────────────────────────────────────────────────────
+
+  defp site(fun, idx), do: InstrId.mint(fun.func_id, idx)
+
+  defp obj_id(fun, idx), do: site(fun, idx)
 
   # A local call, or a remote call into a module outside the runtime
   # (`Argus.Extractor.Runtime`): the only callees whose own summaries can
   # say what they do with a pid. Runtime calls are neither followed nor
   # recorded, which keeps the relations to the program's own code.
   defp project?(%{remote?: false}), do: true
-  defp project?(%{mfa: {mod, _f, _a}}), do: not library?(mod)
-
-  defp library?(mod), do: Runtime.module?(mod)
+  defp project?(%{mfa: {mod, _f, _a}}), do: not Runtime.module?(mod)
 
   defp generated?(func_id) do
     String.contains?(func_id, [":__info__/", ":module_info/", ":-inlined-"])
   end
 
   defp callee({mod, fun, arity}), do: Normalize.func_id(mod, fun, arity)
-
-  defp parse(id) do
-    {:ok, instr_id} = InstrId.parse(id)
-    instr_id
-  end
 end

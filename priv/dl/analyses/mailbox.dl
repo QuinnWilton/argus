@@ -705,7 +705,7 @@ reply_defect(mod, func, site, "statem_unreplied", tag) :- statem_call_unreplied(
 unreceived_message(mod, func, site, m, runs, starter, recv) :-
   send_target(site, func, m, p),
   m != "dynamic",
-  process_start(starter, p, "spawn", runs),
+  process_start(_, starter, p, "spawn", runs),
   recv_pattern(recv, runs, _),
   !recv_pattern(_, runs, m),
   !recv_pattern(_, runs, "any"),

@@ -142,10 +142,8 @@ sync_site(f, m, id) :-
   fm != m.
 
 sync_site(f, m, id) :-
-  call_target(f, "call", p),
-  server_process(p, m),
-  call_site(id, f, mod, "call", _),
-  (mod = "GenServer" ; mod = ":gen_server").
+  call_site_target(id, f, "call", p),
+  server_process(p, m).
 
 .decl async_dep(func: symbol, mod: symbol)
 

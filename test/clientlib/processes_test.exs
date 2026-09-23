@@ -17,6 +17,11 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.Starter,
     PidFlow.Hub,
     PidFlow.Listener,
+    PidFlow.Front,
+    PidFlow.Back,
+    PidFlow.Side,
+    PidFlow.Relay,
+    PidFlow.Subscriber,
     PidFlow.Quiet
   ]
 
@@ -58,14 +63,22 @@ defmodule Argus.Clientlib.ProcessesTest do
 
   defp short(s), do: String.replace(s, "Argus.Test.Fixtures.PidFlow.", "")
 
-  test "a pid follows a wrapper's result and two parameters to a cast", %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(returns_pid param_pid call_target))
+  # A process id with its site dropped: "server Worker:start_link/1#6" is
+  # "server Worker:start_link/1".
+  defp unsite(id), do: String.replace(id, ~r/#\d+$/, "")
 
-    assert ["Worker:start_link/1", "server Worker"] in r["returns_pid"]
-    assert ["Worker:ping/1", "0", "server Worker"] in r["param_pid"]
-    assert ["Owner:relay/1", "0", "server Worker"] in r["param_pid"]
-    assert ["Worker:notify/1", "cast", "server Worker"] in r["call_target"]
-    assert ["Owner:across_a_call/0", "call", "server Worker"] in r["call_target"]
+  defp unsited(rows), do: Enum.map(rows, fn row -> Enum.map(row, &unsite/1) end)
+
+  test "a pid follows a wrapper's result and two parameters to a cast", %{tmp_dir: tmp_dir} do
+    r = solve(tmp_dir, ~w(returns_pts param_pts call_target))
+
+    assert ["Worker:ping/1", "0", "server Worker:start_link/1"] in unsited(r["param_pts"])
+    assert ["Owner:relay/1", "0", "server Worker:start_link/1"] in unsited(r["param_pts"])
+    assert ["Worker:notify/1", "cast", "server Worker:start_link/1"] in unsited(r["call_target"])
+
+    assert ["Owner:across_a_call/0", "call", "server Owner:across_a_call/0"] in unsited(
+             r["call_target"]
+           )
   end
 
   test "resolved calls become dependencies on the server's module", %{tmp_dir: tmp_dir} do
@@ -77,37 +90,65 @@ defmodule Argus.Clientlib.ProcessesTest do
   end
 
   test "self() and a server's state carry a peer's pid", %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(param_pid sync_dep))
+    r = solve(tmp_dir, ~w(param_pts sync_dep))
+    params = unsited(r["param_pts"])
 
     # A starts B with self(): B's init/1, and so B's state, holds A.
-    assert ["CycleB:init/1", "0", "server CycleA"] in r["param_pid"]
-    assert ["CycleB:handle_call/3", "2", "server CycleA"] in r["param_pid"]
-    # A keeps B's pid, returned from init/1, as its state.
-    assert ["CycleA:handle_call/3", "2", "server CycleB"] in r["param_pid"]
+    assert ["CycleB:init/1", "0", "server CycleA:start_link/1"] in params
+    assert ["CycleB:handle_call/3", "2", "server CycleA:start_link/1"] in params
+    # A keeps B's pid, returned from init/1 in {:ok, pid}, as its state.
+    assert ["CycleA:handle_call/3", "2", "server CycleB:start_link/1"] in params
     assert ["CycleA:handle_call/3", "CycleB"] in r["sync_dep"]
     assert ["CycleB:handle_call/3", "CycleA"] in r["sync_dep"]
+  end
+
+  test "each pid in a state map stays under its key", %{tmp_dir: tmp_dir} do
+    r = solve(tmp_dir, ~w(call_target sync_dep))
+
+    # Front holds both Back and Side, and calls only Back.
+    assert ["Front:handle_call/3", "call", "server Back:start_link/0"] in unsited(
+             r["call_target"]
+           )
+
+    refute Enum.any?(
+             r["call_target"],
+             &match?(["Front:handle_call/3", _, "server Side" <> _], &1)
+           )
+
+    assert ["Front:handle_call/3", "Back"] in r["sync_dep"]
+    refute ["Front:handle_call/3", "Side"] in r["sync_dep"]
+  end
+
+  test "a list field and a scalar field of one state reach different processes",
+       %{tmp_dir: tmp_dir} do
+    r = solve(tmp_dir, ~w(send_target))
+    sends = for [_, "Relay:handle_info/2", m, p] <- r["send_target"], do: {m, unsite(p)}
+
+    assert {":event", "spawn Subscriber:go/0"} in sends
+    assert {":flush", "spawn Relay:init/1"} in sends
+    refute {":event", "spawn Relay:init/1"} in sends
   end
 
   test "a registered name and a captured pid route sends", %{tmp_dir: tmp_dir} do
     r = solve(tmp_dir, ~w(named_pid send_target))
 
-    assert [":loops", "spawn Loops:loop/0"] in r["named_pid"]
+    assert [":loops", "spawn Loops:start/0"] in unsited(r["named_pid"])
 
     assert Enum.any?(
-             r["send_target"],
-             &match?([_, "Loops:start/0", ":tick", "spawn Loops:loop/0"], &1)
+             unsited(r["send_target"]),
+             &match?([_, "Loops:start/0", ":tick", "spawn Loops:start/0"], &1)
            )
 
     assert Enum.any?(
-             r["send_target"],
-             &match?([_, "Loops:-start/0-fun-0-/1", "{:done, …}", "spawn Loops:loop/0"], &1)
+             unsited(r["send_target"]),
+             &match?([_, "Loops:-start/0-fun-0-/1", "{:done, …}", "spawn Loops:start/0"], &1)
            )
   end
 
   test "a child a supervisor starts on request is a process its caller holds",
        %{tmp_dir: tmp_dir} do
     r = solve(tmp_dir, ~w(call_target))
-    assert ["Owner:dynamic/0", "call", "server Worker"] in r["call_target"]
+    assert ["Owner:dynamic/0", "call", "server Owner:dynamic/0"] in unsited(r["call_target"])
   end
 
   test "a GenServer a child spec names is a server, so self() in it resolves",
@@ -115,18 +156,21 @@ defmodule Argus.Clientlib.ProcessesTest do
     # Kid starts through a helper with a computed module: no start call in
     # the program names it, only Tree's child spec.
     r = solve(tmp_dir, ~w(self_pid process_start))
-    refute Enum.any?(r["process_start"], &match?([_, "server Kid" | _], &1))
-    assert ["Kid:init/1", "server Kid"] in r["self_pid"]
+    refute Enum.any?(r["process_start"], &(Enum.at(&1, 4) == "Kid"))
+    assert ["Kid:init/1", "child Tree#0"] in r["self_pid"]
   end
 
   test "a pid in a cast's message reaches the handler and the server's state",
        %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(param_pid call_target))
+    r = solve(tmp_dir, ~w(param_pts call_target))
+    params = unsited(r["param_pts"])
 
-    assert ["Hub:subscribe/1", "0", "server Listener"] in r["param_pid"]
-    assert ["Hub:handle_cast/2", "0", "server Listener"] in r["param_pid"]
-    assert ["Hub:handle_call/3", "2", "server Listener"] in r["param_pid"]
-    assert ["Hub:handle_call/3", "call", "server Listener"] in r["call_target"]
+    assert ["Hub:subscribe/1", "0", "server Listener:start_link/1"] in params
+    assert Enum.any?(params, &match?(["Hub:handle_cast/2", "0", "Hub:subscribe/1"], &1))
+
+    assert ["Hub:handle_call/3", "call", "server Listener:start_link/1"] in unsited(
+             r["call_target"]
+           )
   end
 
   test "a computed module, apply and a library pid name no process", %{tmp_dir: tmp_dir} do
