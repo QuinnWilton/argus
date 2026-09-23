@@ -990,9 +990,9 @@ defmodule Argus.Pipeline.Emit do
 
   defp strip_location(list) when is_list(list) do
     if location_keyword?(list) do
-      list |> Keyword.drop(@location_keys) |> Enum.map(&strip_location/1)
+      list |> Keyword.drop(@location_keys) |> strip_elements()
     else
-      Enum.map(list, &strip_location/1)
+      strip_elements(list)
     end
   end
 
@@ -1012,6 +1012,15 @@ defmodule Argus.Pipeline.Emit do
   end
 
   defp strip_location(other), do: other
+
+  # A literal list can be improper (`[prefix | "  "]` in Logger.Translator):
+  # its tail is kept as it is, stripped, rather than mapped as elements.
+  defp strip_elements([]), do: []
+
+  defp strip_elements([head | tail]) when is_list(tail),
+    do: [strip_location(head) | strip_elements(tail)]
+
+  defp strip_elements([head | tail]), do: [strip_location(head) | strip_location(tail)]
 
   defp location_keyword?(list) do
     Keyword.keyword?(list) and Keyword.has_key?(list, :file) and Keyword.has_key?(list, :line)

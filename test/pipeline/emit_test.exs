@@ -108,6 +108,13 @@ defmodule Argus.Pipeline.EmitTest do
       assert [[_id, "x0", ":ok"]] = facts[:literal_value]
     end
 
+    test "spells an improper list literal instead of crashing on it" do
+      # Logger.Translator carries [prefix | "    "]; mapping it as a proper
+      # list raised and took the whole module's extraction with it.
+      facts = emit_func([{:move, {:literal, [:a | "  "]}, {:x, 0}}])
+      assert [[_id, "x0", ~s([:a | "  "])]] = facts[:literal_value]
+    end
+
     test "drops location metadata from literals" do
       # Logger's metadata keyword carries the call site; a line shift
       # must not change a semantic fact.
