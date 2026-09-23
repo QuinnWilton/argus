@@ -42,6 +42,10 @@ defmodule Scry.Frontend do
   definput(:module_set, durability: :medium)
   definput(:env_fingerprint, durability: :high)
 
+  # The project's root directory, for a beam whose recorded source path
+  # belongs to the machine that compiled it (a moved checkout, a Docker
+  # build): the same path relative to this root is looked for instead.
+  definput(:project_root, durability: :high)
   defquery :module_beam, key: module, returns: {:ok, binary()} | :external | {:error, term()} do
     case Runtime.input(db, :beam_meta, module) do
       nil ->
@@ -68,7 +72,7 @@ defmodule Scry.Frontend do
 
       %{path: beam_path} ->
         case Runtime.query(db, :module_beam, module) do
-          {:ok, beam} -> source_path(beam, beam_path)
+          {:ok, beam} -> source_path(beam, beam_path, Runtime.input!(db, :project_root, :all))
           _other -> :external
         end
     end
@@ -89,19 +93,39 @@ defmodule Scry.Frontend do
     Map.get(Runtime.query(db, :module_map, :all), module, :external)
   end
 
-  # The compiler recorded the source absolute-at-compile-time; when the
-  # file no longer exists there (moved checkout, stripped compile_info),
-  # fall back to the beam path itself — a visible, honest anchor beats
-  # silently dropping the module's findings (its facts still feed every
-  # cross-module analysis either way).
-  defp source_path(beam, beam_path) do
+  # The compiler recorded the source absolute-at-compile-time. When the
+  # file is not there — a checkout that moved, a release built elsewhere
+  # — the longest tail of that path that exists under the project root
+  # is it (`lib/app/x.ex` for an app, `apps/app/lib/app/x.ex` for an
+  # umbrella member). Failing that, stripped compile_info included, the
+  # beam path itself: a visible, honest anchor beats silently dropping
+  # the module's findings (its facts still feed every cross-module
+  # analysis either way).
+  defp source_path(beam, beam_path, root) do
     with {:ok, {_mod, [compile_info: info]}} <- :beam_lib.chunks(beam, [:compile_info]),
          source when is_list(source) <- Keyword.get(info, :source, :missing),
          path = Path.expand(to_string(source)),
-         true <- File.exists?(path) do
-      path
+         {:ok, found} <- recorded_or_relocated(path, root) do
+      found
     else
       _ -> beam_path
+    end
+  end
+  defp recorded_or_relocated(path, root) do
+    if File.exists?(path) do
+      {:ok, path}
+    else
+      path
+      |> Path.split()
+      |> Enum.drop(1)
+      |> Stream.iterate(&tl/1)
+      |> Enum.take_while(&(&1 != []))
+      |> Enum.map(&Path.join([root | &1]))
+      |> Enum.find(&File.regular?/1)
+      |> case do
+        nil -> :error
+        found -> {:ok, found}
+      end
     end
   end
 end

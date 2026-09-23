@@ -75,6 +75,7 @@ defmodule Scry.Runner do
       fingerprint = env_fingerprint(souffle?)
       fingerprint_changed? = Input.fetch(db, :env_fingerprint, :all) != {:ok, fingerprint}
       :ok = Input.set(db, :env_fingerprint, :all, fingerprint)
+      :ok = Input.set(db, :project_root, :all, File.cwd!())
 
       {findings_by_file, degraded} =
         if souffle? do
