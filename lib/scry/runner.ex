@@ -19,6 +19,7 @@ defmodule Scry.Runner do
   alias Roux.Database
   alias Roux.Input
   alias Roux.Lang.Manifest
+  alias Roux.Memo
 
   defmodule Result do
     @moduledoc "The outcome of one driver run."
@@ -79,19 +80,22 @@ defmodule Scry.Runner do
       # Only solves read the rules, and none is demanded without a solver.
       rules_changed? = souffle? and set_rules(db, config.analyses)
 
+      # An analysis with no memo from the last run — first demanded, or
+      # degraded then and so never persisted — solves this run even when
+      # no input moved, and its result is worth writing down.
+      unsolved? = souffle? and Enum.any?(config.analyses, &unsolved?(db, &1))
+
       {findings_by_file, degraded} =
         if souffle? do
           cold? = force? or prior_sources == %{} or fingerprint_changed?
-          :ok = prewarm(db, discovered, if(cold?, do: Map.keys(discovered), else: changed))
-          :ok = Scry.Priors.sync(db, config)
-          demand(db, config.analyses)
+          analyze(db, config, discovered, if(cold?, do: Map.keys(discovered), else: changed))
         else
           {%{}, []}
         end
 
       changed? =
         force? or prior_sources == %{} or changed != [] or removed != [] or
-          fingerprint_changed? or rules_changed?
+          fingerprint_changed? or rules_changed? or unsolved?
 
       # Written even when analyses degraded: the input syncs stay warm.
       # Skipped when nothing moved: no input changed, so no revision
@@ -110,6 +114,60 @@ defmodule Scry.Runner do
       Roux.Runtime.drop_cached_values(db)
     end
   end
+
+  # Extracts `to_extract` ahead of the graph, then demands every
+  # analysis. A failed solve is not a fact about the program — a solver
+  # that crashed or timed out, a rules file it could not load — and a
+  # memo of it would be replayed by every later run until an input above
+  # it moved: out of the database before the manifest sees it.
+  defp analyze(db, config, discovered, to_extract) do
+    :ok = prewarm(db, discovered, to_extract)
+    :ok = Scry.Priors.sync(db, config)
+    {findings_by_file, degraded} = demand(db, config.analyses)
+    if degraded != [], do: :ok = drop_degraded(db, config.analyses)
+    {findings_by_file, degraded}
+  end
+
+  defp unsolved?(db, analysis) do
+    Memo.changed_at(db, {:analysis_diagnostics, analysis}) == :miss
+  end
+
+  # The queries whose error values are failures of the run rather than
+  # facts about the program.
+  @degradable [:analysis_input_relations, :analysis_facts_dir, :souffle_solve]
+
+  # Deletes every error-valued memo of a degradable query, and every memo
+  # that depends on one, transitively — a dependent left behind would be
+  # served on the next run without its dependency ever being revisited
+  # (roux skips validating an entry no input of its durability moved
+  # under).
+  defp drop_degraded(db, analyses) do
+    roots =
+      for key <- [{:stage0_facts, :all} | for(q <- @degradable, a <- analyses, do: {q, a})],
+          match?({:ok, %Memo.Entry{value: {:error, _}}}, Memo.get(db, key)),
+          do: key
+
+    dependents =
+      Memo.reduce_entries(db, %{}, fn {key, entry}, acc ->
+        Enum.reduce(entry.dependencies, acc, fn dep, acc ->
+          Map.update(acc, dep, [key], &[key | &1])
+        end)
+      end)
+
+    roots
+    |> closure(dependents, %{})
+    |> Enum.each(fn {key, true} -> :ok = Memo.delete(db, key) end)
+  end
+
+  # `seen` is a map, not a MapSet: dialyzer cannot follow an opaque set
+  # through the recursion.
+  defp closure([], _dependents, seen), do: seen
+
+  defp closure([key | rest], dependents, seen) when is_map_key(seen, key),
+    do: closure(rest, dependents, seen)
+
+  defp closure([key | rest], dependents, seen),
+    do: closure(Map.get(dependents, key, []) ++ rest, dependents, Map.put(seen, key, true))
 
   # Sets each demanded analysis's rules digest (and stage 0's); true when
   # any moved.

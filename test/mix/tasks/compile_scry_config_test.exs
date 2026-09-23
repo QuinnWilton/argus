@@ -167,6 +167,112 @@ defmodule Mix.Tasks.Compile.ScryConfigTest do
       end)
     end
 
+    # A souffle that fails whenever it runs a program whose path ends in
+    # `failing` — but still answers `--version` and resolves a program's
+    # inputs (`--show`), so only the run itself breaks.
+    defp with_failing_souffle(failing, fun) do
+      real = System.find_executable("souffle")
+
+      dir =
+        Path.join(System.tmp_dir!(), "scry_failing_souffle_#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(dir)
+      wrapper = Path.join(dir, "souffle")
+
+      File.write!(wrapper, """
+      #!/bin/sh
+      case "$1" in --show*|--version) exec #{real} "$@";; esac
+      for arg in "$@"; do
+        case "$arg" in *#{failing}) echo "injected failure" >&2; exit 1;; esac
+      done
+      exec #{real} "$@"
+      """)
+
+      File.chmod!(wrapper, 0o755)
+      original = System.get_env("PATH")
+      System.put_env("PATH", dir <> ":" <> original)
+
+      try do
+        fun.()
+      after
+        System.put_env("PATH", original)
+        File.rm_rf!(dir)
+      end
+    end
+
+    defp manifest_errors do
+      {:ok, manifest} = Manifest.load(Path.join(Mix.Project.manifest_path(), "compile.scry"))
+
+      for {key, entry} <- Manifest.memo_entries(manifest),
+          match?({:error, _}, entry.value),
+          do: key
+    end
+
+    @tag :souffle
+    test "a failed solve degrades once and is never replayed", %{log: log} do
+      {copy, app} = checkout!([], :depot_badsolve)
+
+      Mix.Project.in_project(app, copy, fn _module ->
+        with_failing_souffle("analyses/mailbox.dl", fn ->
+          {:ok, diagnostics} = compile!()
+          diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
+
+          assert [degraded] = Enum.filter(diags, &(&1.message =~ "degraded"))
+          assert degraded.message =~ "the mailbox analysis degraded"
+          assert codes(diags) == ["coupling", "coupling"]
+        end)
+
+        # The failure never reached the manifest...
+        assert manifest_errors() == []
+
+        # ...so the next run, with nothing edited and a working solver,
+        # solves the analysis again instead of replaying the failure.
+        QueryLog.reset(log)
+        {_status, diagnostics} = compile!()
+        diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
+
+        assert Enum.sort(codes(diags)) == [
+                 "coupling",
+                 "coupling",
+                 "mailbox",
+                 "mailbox",
+                 "mailbox"
+               ]
+
+        assert QueryLog.executions(log, :souffle_solve) == [:mailbox]
+        assert QueryLog.executions(log, :module_extraction) == []
+
+        # And that success is persisted: a third run is a noop.
+        QueryLog.reset(log)
+        assert {:noop, _} = compile!()
+        assert QueryLog.executions(log, :souffle_solve) == []
+      end)
+    end
+
+    @tag :souffle
+    test "a failed stage 0 degrades the analyses that read it, and heals", %{log: log} do
+      {copy, app} = checkout!([], :depot_badstage0)
+
+      Mix.Project.in_project(app, copy, fn _module ->
+        with_failing_souffle("stage0.dl", fn ->
+          {:ok, diagnostics} = compile!()
+          diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
+
+          degraded = Enum.filter(diags, &(&1.message =~ "degraded"))
+          assert degraded != []
+          assert Enum.all?(degraded, &(&1.message =~ ":stage0"))
+        end)
+
+        assert manifest_errors() == []
+
+        QueryLog.reset(log)
+        {_status, diagnostics} = compile!()
+        diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
+        assert length(diags) == 5
+        assert QueryLog.executions(log, :stage0_facts) == [:all]
+      end)
+    end
+
     test "souffle: :require makes the missing solver an error" do
       {copy, app} = checkout!([souffle: :require], :depot_require)
 

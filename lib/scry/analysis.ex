@@ -92,6 +92,10 @@ defmodule Scry.Analysis do
   # which is how a malformed empty-relation file survived the fix for it.
   @facts_format_version 2
 
+  # The call graph stage 0 derives, which an analysis's projection takes
+  # from `stage0_facts` instead of from extraction.
+  @stage0_outputs [:call_edge, :call_site, :call_tag, :unconditional_call_edge]
+
   defquery :module_extraction, key: module, returns: {:ok, map()} | {:error, term()} do
     # The rows are a function of argus's fact schema as much as of the
     # beam, and the schema version rides the fingerprint — so a warm
@@ -255,15 +259,17 @@ defmodule Scry.Analysis do
 
   # The relations a given analysis reads, straight from argus (which
   # resolves them from Souffle's transformed RAM — the form that actually
-  # executes). Reads no inputs, so roux keeps it at `:high` durability and
-  # revalidates it for the cost of an atomics read.
-  defquery :analysis_input_relations, key: analysis, returns: [atom()] do
+  # executes). A failure to resolve them is a value, never an empty list:
+  # an analysis that silently read nothing would solve to no findings.
+  defquery :analysis_input_relations,
+    key: analysis,
+    returns: {:ok, [atom()]} | {:error, term()} do
     _fingerprint = Runtime.input!(db, :env_fingerprint, :all)
     _rules = rules_digest(db, analysis)
 
     case Argus.Analysis.input_relations(analysis) do
-      {:ok, relations} -> to_relation_atoms(relations)
-      {:error, _} -> []
+      {:ok, relations} -> {:ok, to_relation_atoms(relations)}
+      {:error, reason} -> {:error, {:input_relations, reason}}
     end
   end
 
@@ -273,66 +279,83 @@ defmodule Scry.Analysis do
   # renumbers `instruction` and churns the control-flow relations, but
   # leaves call_edge byte-identical, so roux backdates this and every
   # analysis downstream validates green.
+  #
+  # A failed derivation is a value: every analysis that reads the call
+  # graph degrades with it, and the driver keeps it out of the manifest.
   defquery :stage0_facts,
     key: :all,
-    returns: %{
-      call_edge: [tuple()],
-      call_site: [tuple()],
-      call_tag: [tuple()],
-      unconditional_call_edge: [tuple()]
-    } do
+    returns:
+      {:ok,
+       %{
+         call_edge: [tuple()],
+         call_site: [tuple()],
+         call_tag: [tuple()],
+         unconditional_call_edge: [tuple()]
+       }}
+      | {:error, term()} do
     _fingerprint = Runtime.input!(db, :env_fingerprint, :all)
     _rules = rules_digest(db, :stage0)
     symbols = Symbols.for_db(db)
 
-    entries =
-      for relation <- stage0_input_relations() do
-        {relation, Runtime.query(db, :relation_digest, relation),
-         Runtime.query(db, :relation_rows, relation)}
-      end
-
-    dir = materialize_facts(entries, "stage0", symbols)
-    :ok = Argus.Analysis.derive_stage0(dir)
-
-    # Souffle wrote strings; interned like everything else this layer holds.
-    Facts.intern(
-      %{
-        call_edge: read_facts_file(Path.join(dir, "call_edge.facts")),
-        call_site: read_facts_file(Path.join(dir, "call_site.facts")),
-        call_tag: read_facts_file(Path.join(dir, "call_tag.facts")),
-        unconditional_call_edge: read_facts_file(Path.join(dir, "unconditional_call_edge.facts"))
-      },
-      symbols
-    )
+    with {:ok, relations} <- stage0_input_relations(),
+         entries =
+           for(
+             relation <- relations,
+             do:
+               {relation, Runtime.query(db, :relation_digest, relation),
+                Runtime.query(db, :relation_rows, relation)}
+           ),
+         dir = materialize_facts(entries, "stage0", symbols),
+         :ok <- Argus.Analysis.derive_stage0(dir) do
+      # Souffle wrote strings; interned like everything else this layer
+      # holds.
+      {:ok,
+       Facts.intern(
+         Map.new(@stage0_outputs, &{&1, read_facts_file(Path.join(dir, "#{&1}.facts"))}),
+         symbols
+       )}
+    end
   end
 
   # A fact directory holding exactly what one analysis reads. Content
   # addressed, so an unchanged projection reuses the directory on disk and
   # — the point — an unchanged projection means roux never re-executes the
-  # solve below it.
-  defquery :analysis_facts_dir, key: analysis, returns: %{dir: String.t(), key: String.t()} do
-    dir =
-      materialize_facts(
-        analysis_facts_entries(db, analysis),
-        "analysis_#{analysis}",
-        Symbols.for_db(db)
-      )
-
-    %{dir: dir, key: Path.basename(dir)}
+  # solve below it. An error when what it reads could not be resolved.
+  defquery :analysis_facts_dir,
+    key: analysis,
+    returns: %{dir: String.t(), key: String.t()} | {:error, term()} do
+    with {:ok, entries} <- analysis_facts_entries(db, analysis) do
+      dir = materialize_facts(entries, "analysis_#{analysis}", Symbols.for_db(db))
+      %{dir: dir, key: Path.basename(dir)}
+    end
   end
 
-  # `{relation, digest, rows}` for everything the analysis reads.
+  # `{:ok, [{relation, digest, rows}]}` for everything the analysis reads.
   defp analysis_facts_entries(db, analysis) do
-    for relation <- Runtime.query(db, :analysis_input_relations, analysis) do
-      # Stage 0's outputs, not extracted relations.
-      if relation in [:call_edge, :call_site, :call_tag, :unconditional_call_edge] do
-        rows = Map.fetch!(Runtime.query(db, :stage0_facts, :all), relation)
-        {relation, rows_digest(relation, rows, Symbols.for_db(db)), rows}
-      else
-        {relation, Runtime.query(db, :relation_digest, relation),
-         Runtime.query(db, :relation_rows, relation)}
-      end
+    with {:ok, relations} <- Runtime.query(db, :analysis_input_relations, analysis),
+         {:ok, stage0} <- stage0_if_read(db, relations) do
+      entries =
+        for relation <- relations do
+          if relation in @stage0_outputs do
+            # Stage 0's outputs, not extracted relations.
+            rows = Map.fetch!(stage0, relation)
+            {relation, rows_digest(relation, rows, Symbols.for_db(db)), rows}
+          else
+            {relation, Runtime.query(db, :relation_digest, relation),
+             Runtime.query(db, :relation_rows, relation)}
+          end
+        end
+
+      {:ok, entries}
     end
+  end
+
+  # Stage 0 only for an analysis that reads the call graph: one that does
+  # not must neither wait for it nor degrade with it.
+  defp stage0_if_read(db, relations) do
+    if Enum.any?(relations, &(&1 in @stage0_outputs)),
+      do: Runtime.query(db, :stage0_facts, :all),
+      else: {:ok, %{}}
   end
 
   defquery :souffle_solve, key: analysis, returns: {:ok, map()} | {:error, term()} do
@@ -341,8 +364,17 @@ defmodule Scry.Analysis do
     # this reads the digest itself rather than through the projection.
     _fingerprint = Runtime.input!(db, :env_fingerprint, :all)
     _rules = rules_digest(db, analysis)
-    %{dir: dir} = Runtime.query(db, :analysis_facts_dir, analysis)
 
+    case Runtime.query(db, :analysis_facts_dir, analysis) do
+      %{dir: dir} ->
+        solve(db, analysis, dir)
+
+      {:error, reason} ->
+        {:error, {:souffle, analysis, reason}}
+    end
+  end
+
+  defp solve(db, analysis, dir) do
     # The scratch window is shared across processes (an LSP session and a
     # compiler run prune the same root), so a concurrent prune can remove
     # a directory the memo above still names. Rebuild before solving:
@@ -351,17 +383,14 @@ defmodule Scry.Analysis do
     # graph must look identical whether or not the race happened.
     unless File.dir?(dir) do
       Runtime.untracked(fn ->
-        materialize_facts(
-          analysis_facts_entries(db, analysis),
-          "analysis_#{analysis}",
-          Symbols.for_db(db)
-        )
+        {:ok, entries} = analysis_facts_entries(db, analysis)
+        materialize_facts(entries, "analysis_#{analysis}", Symbols.for_db(db))
       end)
     end
 
     # The directory holds exactly the relations this analysis reads, with
-    # call_edge and call_site already supplied from `stage0_facts` when
-    # they are among them. Argus must not try to derive stage 0 itself: the layer-1 facts
+    # the call graph already supplied from `stage0_facts` when it is among
+    # them. Argus must not try to derive stage 0 itself: the layer-1 facts
     # it would need are deliberately absent from a projected directory.
     case Argus.Analysis.run_rules(dir, analysis, stage0: :provided) do
       {:ok, results} ->
@@ -374,7 +403,8 @@ defmodule Scry.Analysis do
 
       {:error, reason} ->
         # Degradation stays a visible value (Souffle missing/timeout),
-        # never a crash — the argus contract.
+        # never a crash — the argus contract. The driver keeps it out of
+        # the manifest, so the next run solves again.
         {:error, {:souffle, analysis, reason}}
     end
   end
@@ -854,8 +884,7 @@ defmodule Scry.Analysis do
     for name <- names,
         atom = safe_existing_atom(name),
         atom != nil,
-        atom in [:call_edge, :call_site, :call_tag, :unconditional_call_edge] or
-          MapSet.member?(known, atom),
+        atom in @stage0_outputs or MapSet.member?(known, atom),
         do: atom
   end
 
@@ -870,8 +899,8 @@ defmodule Scry.Analysis do
   # the projection feeding stage 0 an incomplete fact set.
   defp stage0_input_relations do
     case Argus.Souffle.input_relations(Argus.Analysis.stage0_rules_path()) do
-      {:ok, relations} -> to_relation_atoms(relations)
-      {:error, _} -> []
+      {:ok, relations} -> {:ok, to_relation_atoms(relations)}
+      {:error, reason} -> {:error, {:stage0, {:input_relations, reason}}}
     end
   end
 

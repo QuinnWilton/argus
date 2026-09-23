@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- A failed solve no longer outlives the run it failed in. A solver
+  crash, timeout or unloadable rules file was memoized as the
+  analysis's result and persisted, so every later run replayed "the
+  mailbox analysis degraded" until `--force`; now the failure, and
+  everything computed from it, is dropped before the manifest is
+  written, and the next run solves again. A failure to resolve the
+  relations an analysis reads is reported as such instead of solving
+  over none of them.
+- A failed stage 0 (the shared call-graph derivation) no longer crashes
+  the compile with a `MatchError`: the analyses that read the call
+  graph degrade with a diagnostic naming it, the rest report as usual,
+  and the next run derives it again.
 - The environment fingerprint records Souffle's version and word size
   (`2.5 (64-bit words)`). It recorded the first line of `souffle
   --version`, which is a rule of dashes, so upgrading the solver never
