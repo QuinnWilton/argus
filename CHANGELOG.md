@@ -949,8 +949,10 @@ module.
 graph back from the functions that start a dynamic child and the ones
 that monitor it, instead of closing it over every function of the
 program: 6.1M rows to 11 on a 751-module deps tree (the coupling solve
-37s to 30s there). Output identical over the corpus and four large
-programs.
+37s to 30s there). The call a coupling's witness makes into the sibling
+is found walking back from the functions that call a coupled sibling
+rather than forward from every witness (8.8k rows to 250 on blockster).
+Output identical over the corpus and four large programs.
 
 ### Corpus and tooling
 

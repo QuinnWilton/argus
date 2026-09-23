@@ -69,14 +69,19 @@ coupling_site(w, callee_mod, id) :-
 // The witness is the function the dependency is proven through (often a
 // callback), and the call into the sibling may live several local calls
 // below it. Anchor at that call rather than at the witness's head.
-.init witness_reach = ForwardCallReach
+// Walked back from the functions that call a coupled sibling, which are
+// few, rather than forward from every witness over all it calls (8.8k
+// rows against 250 on blockster).
+.init sibling_caller_reach = CallReach
 
-witness_reach.root(w, w) :- coupling(_, _, _, _, w).
+sibling_caller_reach.seed(g, g) :-
+  coupling(_, _, callee_mod, _, _),
+  call_site(_, g, callee_mod, _, _).
 
 coupling_site(w, callee_mod, id) :-
   coupling(_, _, callee_mod, _, w),
   !direct_coupling_site(w, callee_mod, _),
-  witness_reach.reaches(w, g),
+  sibling_caller_reach.reaches(w, g),
   call_site(id, g, callee_mod, _, _).
 
 // `site` is the instruction ID of the coupling call when one is known,
