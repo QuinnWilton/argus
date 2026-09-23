@@ -124,6 +124,15 @@ process(p) :- instance(p, _).
 process(p) :- server_process(p, _).
 
 // ── What a source points to ─────────────────────────────────────────
+//
+// The recursive rules carry `.plan`s that start each semi-naive version
+// from its new tuples. In source order Souffle scanned all of pid_arg,
+// pid_load or pid_return on every iteration to probe a few new
+// source_pts rows: over a 751-module deps tree, most of each OTP
+// analysis's solve. A join of a static relation with source_pts that a
+// second recursive atom then extends (a load's base, an update's base)
+// is named once (load_base, update_base) so a new field of a term meets
+// the loads of that term, not every load.
 
 // A parameter, a callee's result, a term's field: each may point to a
 // process or to a term.
@@ -154,6 +163,7 @@ source_pts(f, "obj", o, o) :- pid_object(f, o, _, _, _).
 source_pts(f, "param", k, x) :- param_pts(f, k, x).
 // A callee's result; a factory's fresh value is renamed where it is kept.
 source_pts(f, "result", c, x) :- pid_result(c, f, g), returns_pts(g, x), !fresh_return(g, x).
+.plan 0:(2,1)
 
 source_pts(f, "result", c, x) :-
   pid_result(c, f, g),
@@ -177,10 +187,15 @@ source_pts(f, "reply", id, x) :-
   field_pts(t, "{1}", x).
 
 // A load reads a field of whatever its base points to.
-source_pts(f, "load", l, x) :-
-  pid_load(f, l, sel, bk, bs),
-  source_pts(f, bk, bs, o),
-  reads_field(o, sel, x).
+source_pts(f, "load", l, x) :- load_base(f, l, sel, o), reads_field(o, sel, x).
+.plan 1:(2,1)
+
+// The term a load reads its field from. Named once, so that a new field
+// of a term joins the loads of that term, not every load in the program.
+.decl load_base(func: symbol, load: symbol, sel: symbol, obj: symbol)
+
+load_base(f, l, sel, o) :- pid_load(f, l, sel, bk, bs), source_pts(f, bk, bs, o).
+.plan 0:(2,1)
 
 // What a read of field `sel` of `obj` may see: the field, and in a map a
 // field written under a key not known, which may be any key. A read by a
@@ -190,7 +205,7 @@ source_pts(f, "load", l, x) :-
 .decl reads_field(obj: symbol, sel: symbol, x: symbol)
 .decl field_read(obj: symbol, sel: symbol)
 
-field_read(o, sel) :- pid_load(f, _, sel, bk, bs), source_pts(f, bk, bs, o).
+field_read(o, sel) :- load_base(_, _, sel, o).
 
 field_read(o, sel) :-
   targets_field(g, _, sel, _, _),
@@ -203,21 +218,27 @@ reads_field(o, sel, x) :-
   field_read(o, sel),
   pid_object(_, o, "map", _, _),
   field_pts(o, "*", x).
+.plan 1:(3,2,1)
 
 field_pts(o, sel, x) :- pid_field(f, o, sel, sk, s), source_pts(f, sk, s, x).
+.plan 0:(2,1)
 
 // A kept `{:ok, pid}` holds its own instance.
 field_pts(cat("result ", c), "{1}", cat("start ", c)) :- kept_fresh(c, _, x), start_object(x, _).
 
 // An update keeps the fields it does not set; a cons cell's tail holds
 // the rest of the elements.
-field_pts(o, sel, x) :-
-  pid_base(f, o, bk, bs),
-  source_pts(f, bk, bs, b),
-  field_pts(b, sel, x),
-  !pid_sets(o, sel).
+field_pts(o, sel, x) :- update_base(o, b), field_pts(b, sel, x), !pid_sets(o, sel).
+.plan 1:(2,1)
+
+// The term an update copies the fields it does not set from.
+.decl update_base(obj: symbol, base: symbol)
+
+update_base(o, b) :- pid_base(f, o, bk, bs), source_pts(f, bk, bs, b).
+.plan 0:(2,1)
 
 returns_pts(f, x) :- pid_return(f, k, s), source_pts(f, k, s, x).
+.plan 0:(2,1)
 
 // A parameter is filled by the process that runs the function as an
 // entry — a server start's init argument, a spawned function's arguments,
@@ -227,10 +248,18 @@ returns_pts(f, x) :- pid_return(f, k, s), source_pts(f, k, s, x).
 // spawned function's own calls can be resolved against.
 .decl entry_pts(func: symbol, pos: symbol, x: symbol)
 
-entry_pts(g, k, x) :- pid_arg(_, f, g, k, via, sk, s), via != "call", source_pts(f, sk, s, x).
+entry_pts(g, k, x) :- entry_arg(f, g, k, sk, s), source_pts(f, sk, s, x).
+.plan 0:(2,1)
+
+// The arguments a process's start hands its entry: the few pid_arg rows
+// that are not calls, apart, so the rule above does not probe them all.
+.decl entry_arg(caller: symbol, func: symbol, pos: symbol, src_kind: symbol, src: symbol)
+
+entry_arg(f, g, k, sk, s) :- pid_arg(_, f, g, k, via, sk, s), via != "call".
 
 param_pts(g, k, x) :- entry_pts(g, k, x).
 param_pts(g, k, x) :- pid_arg(_, f, g, k, "call", sk, s), source_pts(f, sk, s, x).
+.plan 0:(2,1)
 
 // A registration (register/2, :global.register_name/2, Registry.register/3,
 // or a start with a literal name) stores the pid it resolves to.
@@ -446,12 +475,14 @@ process_call(f, a, id, kind, p) :-
   targets_param(g, k, kind, id),
   source_pts(f, sk, s, p),
   process(p).
+.plan 0:(2,1,3,4)
 
 process_call(f, a, id, kind, p) :-
   pid_arg(a, f, g, k, "call", "param", j),
   targets_param(g, k, kind, id),
   entry_pts(f, j, p),
   process(p).
+.plan 0:(2,1,3,4)
 
 // A helper reading a field of its parameter: the caller's term's field.
 process_call(f, a, id, kind, p) :-
@@ -460,6 +491,7 @@ process_call(f, a, id, kind, p) :-
   targets_field(g, k, sel, kind, id),
   source_field_pts(f, sk, s, sel, p),
   process(p).
+.plan 0:(2,1,3,4)
 
 process_call(f, a, id, kind, p) :-
   pid_arg(a, f, g, k, "call", "param", j),
@@ -467,6 +499,7 @@ process_call(f, a, id, kind, p) :-
   entry_pts(f, j, o),
   reads_field(o, sel, p),
   process(p).
+.plan 0:(2,1,3,4,5), 1:(2,1,3,4,5)
 
 // The call, cast or send at `id` in `func` may target `proc`, whoever
 // supplies it.

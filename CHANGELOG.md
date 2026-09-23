@@ -285,6 +285,17 @@ registers it does not keep.
 
 ### Process points-to
 
+**Changed.** Points-to (`clientlib/processes.dl`) solves the same rows in
+about half the time: its recursive rules carry `.plan`s that start each
+semi-naive version from its new tuples, where the source order scanned
+all of `pid_arg`, `pid_load` or `pid_return` on every iteration to probe
+a few new `source_pts` rows, and a load's or an update's base term is
+named once (`load_base`, `update_base`). Every analysis that includes
+`otp.dl` pays for it: over a 751-module deps tree blocking 21.9s to
+10.7s and mailbox 21.9s to 9.9s; over OTP's ssl, public_key and kernel
+6.2s to 4.5s and 6.7s to 4.2s. Output identical over the corpus and
+four large programs.
+
 **Changed.** A start inside a function that returns what it starts is a
 factory: each call that keeps its `{:ok, pid}` (or bare pid) is its own
 process, `"start <call site>"`, and a child spec's child is `"child
