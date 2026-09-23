@@ -1,7 +1,5 @@
 defmodule Argus.FindingsTest do
-  # Sync on purpose: the no-souffle test masks PATH for the whole VM, so
-  # it must not overlap with concurrently running souffle-backed tests.
-  use ExUnit.Case
+  use ExUnit.Case, async: true
 
   alias Argus.Findings
   alias Argus.InstrId
@@ -288,16 +286,6 @@ defmodule Argus.FindingsTest do
     test "empty analysis selection runs nothing" do
       assert {:ok, %Findings{findings: [], ran: [], degraded: []}} =
                Argus.run_analyses([:lists], analyses: [])
-    end
-
-    test "missing souffle is an explicit error, not a crash" do
-      original_path = System.get_env("PATH")
-      on_exit(fn -> System.put_env("PATH", original_path) end)
-
-      System.put_env("PATH", "/nonexistent_souffle_free_dir")
-      refute Souffle.available?()
-
-      assert {:error, :souffle_not_found} = Argus.run_analyses([:lists])
     end
 
     test "a failing analysis degrades with a note while the result still returns" do

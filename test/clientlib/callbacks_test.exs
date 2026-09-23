@@ -1,5 +1,5 @@
 defmodule Argus.Clientlib.CallbacksTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: true
 
   alias Argus.Pipeline
   alias Argus.Souffle

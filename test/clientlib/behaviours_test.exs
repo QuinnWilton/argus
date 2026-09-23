@@ -11,7 +11,7 @@ defmodule Argus.Clientlib.BehavioursTest do
   against the extractor output feeding it.
   """
 
-  use ExUnit.Case
+  use ExUnit.Case, async: true
 
   alias Argus.Souffle
 

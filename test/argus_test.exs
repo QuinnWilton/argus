@@ -1,5 +1,5 @@
 defmodule ArgusTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: true
 
   test "analyze/2 delegates to Analysis.run/3" do
     assert {:error, {:unknown_analysis, :nonexistent}} = Argus.analyze([:lists], :nonexistent)

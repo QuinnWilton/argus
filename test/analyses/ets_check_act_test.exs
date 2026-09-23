@@ -1,5 +1,5 @@
 defmodule Argus.Analyses.EtsCheckActTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: true
 
   alias Argus.Analyses.Ets
   alias Argus.Souffle

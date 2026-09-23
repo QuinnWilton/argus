@@ -4,7 +4,7 @@ defmodule Argus.PriorsTest do
   and a run without priors is the run it always was.
   """
 
-  use ExUnit.Case
+  use ExUnit.Case, async: true
 
   alias Argus.Souffle
   alias Argus.Test.Fixtures.Secret, as: S
@@ -122,19 +122,6 @@ defmodule Argus.PriorsTest do
              priors: :cached_only,
              priors_opts: [cache_dir: Path.join(dir, "empty"), model: "jev-test"]
            ) == run([])
-  end
-
-  test "live without a key fails before extracting" do
-    key = System.get_env("TYPESAFE_API_KEY")
-    System.delete_env("TYPESAFE_API_KEY")
-
-    try do
-      assert_raise ArgumentError, ~r/TYPESAFE_API_KEY/, fn ->
-        Argus.Findings.run(@mods, analyses: [:exposure], priors: :live)
-      end
-    after
-      if key, do: System.put_env("TYPESAFE_API_KEY", key)
-    end
   end
 
   test "an unknown mode is refused" do

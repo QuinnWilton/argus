@@ -1,5 +1,7 @@
 defmodule Mix.Tasks.Argus.PriorsTest do
-  use ExUnit.Case
+  # Sync on purpose: the task reads ARGUS_PRIORS_DIR from the VM-wide
+  # environment, which these tests set.
+  use ExUnit.Case, async: false
 
   alias Argus.Priors.Cache
   alias Mix.Tasks.Argus.Priors, as: PriorsTask

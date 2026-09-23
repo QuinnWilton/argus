@@ -5,7 +5,7 @@ defmodule Argus.Analyses.QuietShapesTest do
   it stops, which is what a precision regression breaks first.
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Argus.Test.Fixtures.Quiet
   alias Argus.Test.Fixtures.ShutdownSiblings, as: Sib

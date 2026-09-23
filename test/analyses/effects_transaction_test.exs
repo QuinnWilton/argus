@@ -1,5 +1,5 @@
 defmodule Argus.Analyses.EffectsTransactionTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: true
 
   alias Argus.Purity.Effects
   alias Argus.Souffle

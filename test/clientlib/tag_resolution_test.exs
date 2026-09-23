@@ -1,5 +1,5 @@
 defmodule Argus.Clientlib.TagResolutionTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: true
 
   alias Argus.{Analysis, Pipeline, Souffle}
 

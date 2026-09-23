@@ -15,7 +15,7 @@ defmodule Argus.Stage0Test do
   re-solving on every edit. The assertions below fail loudly instead.
   """
 
-  use ExUnit.Case
+  use ExUnit.Case, async: true
 
   alias Argus.Analysis
   alias Argus.Pipeline

@@ -1,5 +1,5 @@
 defmodule Argus.Analyses.UnsafeInputTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: true
 
   alias Argus.Analyses.UnsafeInput
   alias Argus.Souffle

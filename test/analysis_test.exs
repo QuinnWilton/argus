@@ -1,5 +1,5 @@
 defmodule Argus.AnalysisTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: true
 
   alias Argus.Analysis
   alias Argus.Souffle

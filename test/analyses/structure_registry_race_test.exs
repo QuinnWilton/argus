@@ -1,5 +1,5 @@
 defmodule Argus.Analyses.StructureRegistryRaceTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: true
 
   alias Argus.Analyses.Structure
   alias Argus.Souffle

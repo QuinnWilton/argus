@@ -1,5 +1,5 @@
 defmodule Argus.Analyses.StartupDistributedTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: true
 
   alias Argus.Souffle
   alias Argus.Test.Rows

@@ -1,5 +1,5 @@
 defmodule Argus.Analyses.FailureConsistencyTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: true
 
   alias Argus.Analyses.Failure
   alias Argus.Souffle

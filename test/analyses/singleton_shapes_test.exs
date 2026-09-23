@@ -1,5 +1,5 @@
 defmodule Argus.Analyses.SingletonShapesTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Argus.Test.Fixtures.{CatchShapes, EtsOwners, InitRecv}
   alias Argus.Test.Rows

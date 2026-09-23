@@ -4,7 +4,7 @@ defmodule Argus.Priors.ExtractTest do
   directory it stages, after stage 0, or leaves the relation empty.
   """
 
-  use ExUnit.Case
+  use ExUnit.Case, async: true
 
   alias Argus.{Analysis, Souffle}
   alias Argus.Test.Fixtures.Secret, as: S
