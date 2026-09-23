@@ -161,22 +161,14 @@ end
 
 defmodule Argus.Test.Fixtures.InitRecv.HandsOff do
   @moduledoc false
-  # Funs init/1 hands to Task.async_stream and to a child spec: each
-  # waits in the process that runs it, not in init's.
+  # The one fun init/1 builds goes into a child spec: it waits in the
+  # child, not in init's process.
   use GenServer
 
-  def start_link(peers), do: GenServer.start_link(__MODULE__, peers)
+  def start_link(sup), do: GenServer.start_link(__MODULE__, sup)
 
   @impl true
-  def init({sup, peers}) do
-    peers
-    |> Task.async_stream(fn peer ->
-      receive do
-        {:ready, ^peer} -> peer
-      end
-    end)
-    |> Stream.run()
-
+  def init(sup) do
     Supervisor.start_child(sup, %{
       id: :watcher,
       start:
@@ -189,6 +181,29 @@ defmodule Argus.Test.Fixtures.InitRecv.HandsOff do
            end
          ]}
     })
+
+    {:ok, sup}
+  end
+end
+
+defmodule Argus.Test.Fixtures.InitRecv.HandsOffAndWaits do
+  @moduledoc false
+  # init/1 starts a child around one fun and waits on each peer in an
+  # Enum.each closure: two closures, so neither is taken for the child's,
+  # and the wait is init's.
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init({sup, peers}) do
+    Supervisor.start_child(sup, %{id: :worker, start: {Task, :start_link, [fn -> :ok end]}})
+
+    Enum.each(peers, fn peer ->
+      receive do
+        {:ready, ^peer} -> :ok
+      end
+    end)
 
     {:ok, peers}
   end

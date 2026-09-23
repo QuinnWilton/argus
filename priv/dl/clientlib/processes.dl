@@ -331,13 +331,16 @@ self_relevant(f) :- same_process_call(f, g), self_relevant(g).
 
 // `func`'s edge to `callee` leads into another process: callee is what a
 // spawn, a task or an agent in func runs, and func does not call it
-// itself. A closure or fun of func's is
-// also set aside when func starts a process whose function points-to
-// does not know (the fun came from a variable), starts a child whose
-// spec may hold a fun, or hands its funs to Task.async_stream: one of
-// them runs elsewhere, and which is not known. What a closure handed to Enum.map runs stays the caller's.
-// Told without closure_def (by the compiler's name for a closure), which
-// the supervision family must not read (stage0_test).
+// itself. A closure or fun reference of func's is set aside too when it
+// is func's only one and func starts a process on a fun points-to does
+// not follow (the fun came from a variable, or a helper spawns its
+// parameter) or a child whose spec may hold a fun: with one there is
+// nothing to confuse the handed one with. A function with several keeps them all:
+// which one is handed off is not known, and one handed to Enum.each
+// runs in the caller's process. A closure handed to Task.async_stream is
+// not set aside either: the caller waits for what it does. Told without
+// closure_def (by the compiler's name for a closure), which the
+// supervision family must not read (stage0_test).
 .decl runs_elsewhere(func: symbol, callee: symbol)
 
 runs_elsewhere(f, g) :-
@@ -354,10 +357,23 @@ runs_elsewhere(f, g) :-
 calls_fun(f) :- dynamic_call(_, f, "call_fun").
 
 runs_elsewhere(f, g) :-
-  call_edge(f, g),
-  (match(".*:-.*-fun-[0-9]+-/[0-9]+", g) ; fun_ref(f, g)),
   hands_funs_off(f),
+  closure_edge(f, g),
+  closure_edges(f, 1),
   !call_instr(f, g, _).
+
+.decl closure_edge(func: symbol, closure: symbol)
+
+closure_edge(f, g) :-
+  hands_funs_off(f),
+  call_edge(f, g),
+  (match(".*:-.*-fun-[0-9]+-/[0-9]+", g) ; fun_ref(f, g)).
+
+.decl closure_edges(func: symbol, n: number)
+
+closure_edges(f, n) :-
+  closure_edge(f, _),
+  n = count : { closure_edge(f, _) }.
 
 .decl hands_funs_off(func: symbol)
 
@@ -369,13 +385,6 @@ hands_funs_off(f) :-
   call_edge(f, h),
   process_start(_, h, _, kind, "dynamic"),
   kind != "server".
-
-hands_funs_off(f) :-
-  call_site(_, f, m, "async_stream", _),
-  (m = "Task" ; m = "Task.Supervisor").
-
-hands_funs_off(f) :-
-  call_site(_, f, "Task.Supervisor", "async_stream_nolink", _).
 
 // A child spec built around a fun (`start: {Task, :start_link, [fn ->
 // ... end]}`) runs it in the child.

@@ -515,15 +515,16 @@ start runs it. The same-process walks (reach.dl's `SameProcessReach` and
 every closure edge, so a receive, a monitor's wait or a `self()` inside
 a closure handed to `Enum.each` or `:lists.foldl` was not the caller's;
 they now drop only the edge into what a spawn, a task or an agent runs
-(`runs_elsewhere`, processes.dl), and a function's closures when it
-starts a process on a fun it did not build, builds a child spec, or
-hands funs to `Task.async_stream`. A closure the function also calls
-itself (`work.()` beside `Task.Supervisor.start_child(sup, work)`) stays
-the caller's. mailbox's late-message and async_nolink reaches take the
+(`runs_elsewhere`, processes.dl), and a function's one closure when it
+starts a process on a fun it did not build or builds a child spec (with
+several, which is handed off is not known, and they stay the caller's;
+a closure handed to `Task.async_stream` is the caller's too, since the
+caller waits for it). A closure the function also calls itself
+(`work.()` beside `Task.Supervisor.start_child(sup, work)`) stays the
+caller's. mailbox's late-message and async_nolink reaches take the
 same walk, so a source inside a task a server starts writes to the
-task's mailbox, not the server's. `stage0.dl`'s `anchor_api` gains the
-calls that hand funs off (`Supervisor.start_child`,
-`Task.async_stream`, `Task.Supervisor.async_stream(_nolink)`).
+task's mailbox, not the server's. `stage0.dl`'s `anchor_api` gains
+`Supervisor.start_child`, the call that hands a child spec's fun off.
 `mailbox.unconsumed_monitor` ("timed_wait") no longer reports a monitor
 whose function ends the process that runs it (the last call of a task,
 not called otherwise, not recursing): the monitor ends with the task.
