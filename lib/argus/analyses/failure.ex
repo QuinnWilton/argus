@@ -47,7 +47,8 @@ defmodule Argus.Analyses.Failure do
       Argus.Extractors.ApiCalls,
       Argus.Extractors.CallbackTag,
       Argus.Extractors.CallArgs,
-      Argus.Extractors.ProcessRegistry
+      Argus.Extractors.ProcessRegistry,
+      Argus.Extractors.Specs
     ]
 
   @impl true

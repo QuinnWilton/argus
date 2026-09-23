@@ -16,6 +16,29 @@ Grouped by concern. Each entry opens with what it does: **Added**,
 the `{:call_field, mfa, n}` marker naming the outer field, so `pid`
 resolved to the atom `:call_field`; it is unknown now.
 
+**Added.** Schema 50. Typespecs inform the analyses. `Argus.Specs` reduces what a
+function's `@spec` claims it returns to a few shapes — `can_fail` (the
+return type names `{:error, _}`, `:error`, `nil`, `false`, `:undefined` or
+`{:EXIT, _}`), `total` (known, and names none of them), `no_return`,
+`returns_pid` — resolving local and remote types four levels deep.
+`Argus.Extractors.Specs` emits them as `spec_return(func, shape, origin)`:
+`analyzed` rows from each analyzed beam's own specs, `installed` rows for
+the remote functions it calls, read off the code path and memoized per
+module. `clientlib/specs.dl`'s `callee_returns` prefers the analyzed
+program's specs for a function it defines. A function with no row —
+no spec, a `term()` return, a module shipped without specs like
+`:mnesia` — is unknown, never "cannot fail", and a spec is an
+unverified claim: rules use it only to stay quiet or to confirm. The
+installed rows depend on the applications on the code path;
+`Argus.Specs.environment_digest/0` names them and the corpus facts
+cache folds it in (a downstream cache keyed on extraction output should
+too). The pipeline's module data carries the disassembled `:beam`.
+
+**Added.** `failure.inconsistent_handling`'s `result_checked` belief skips a callee
+whose spec names no failure value: `:ets.new/2` returns a table or
+raises and `:ets.delete/2` returns `true`, so a site discarding either
+misses nothing.
+
 **Changed.** Schema 45. `spawn_call` names what the new process runs instead of
 recording "dynamic": `spawn(M, F, args)` and the node-qualified form run
 M.F/length(args) when the module, function and the argument list's length

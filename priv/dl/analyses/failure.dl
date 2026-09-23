@@ -8,6 +8,7 @@
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
+.include "../clientlib/specs.dl"
 
 // ══ The three outputs ═══════════════════════════════════════════════
 //
@@ -200,9 +201,24 @@ guard_count(callee, guard, n) :-
   call_result(_, _, callee, _, guard, _),
   n = count : { call_result(_, _, callee, _, guard, _) }.
 
+// A result is worth checking only if the callee can fail by returning:
+// a callee whose spec names no failure value (`:ets.new/2` returns a
+// table or raises, `:ets.delete/2` returns `true`) or never returns has
+// nothing in its result for a site to miss, however many other sites
+// happen to bind it. A callee with no spec is unknown and stays in: the
+// spec may only quiet the rule. Every callee call_result counts ships
+// specs, except the program's own start functions, whose OTP convention
+// is {:ok, pid} | {:error, _}; so there is no table of hand-written
+// shapes to keep.
+.decl result_uncheckable(callee: symbol)
+
+result_uncheckable(c) :- callee_returns(c, "total").
+result_uncheckable(c) :- callee_returns(c, "no_return").
+
 // A site unchecked_result already owns is not reported twice.
 inconsistent_handling(func, site, callee, "result_checked", used, ignored) :-
   call_result(site, func, callee, "ignored", _, _),
+  !result_uncheckable(callee),
   fate_count(callee, "used", used),
   fate_count(callee, "ignored", ignored),
   used >= 3,

@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 49
+  @schema_version 50
 
   # Layer 1: Module-level facts.
 
@@ -1827,6 +1827,29 @@ defmodule Argus.Schema do
     """
   }
 
+  @spec_return %{
+    name: :spec_return,
+    layer: 2,
+    fields: [
+      {:func, :func_id, "function ID (mod:func/arity)"},
+      {:shape, :symbol, "can_fail | total | no_return | returns_pid"},
+      {:origin, :symbol,
+       "analyzed | installed: read from the analyzed beam, or from the code path"}
+    ],
+    doc: """
+    What a function's `@spec` claims it returns, normalized (`Argus.Specs`): \
+    `can_fail` when the return type names {:error, _}, :error, nil, false, \
+    :undefined or {:EXIT, _}; `total` when it is known and names none of \
+    them; `no_return`; `returns_pid`. A function may have several shapes, \
+    and one with no row is unknown — no spec, a `term()` return, a module \
+    shipped without specs (:mnesia) — never "cannot fail". Rows come from \
+    the analyzed module's own beam for its functions, and from the code \
+    path for the remote functions it calls; clientlib/specs.dl prefers the \
+    first. A spec is an unverified claim: rules use these rows only to \
+    suppress or confirm a finding, never to report one on their own.
+    """
+  }
+
   @name_lookup %{
     name: :name_lookup,
     layer: 2,
@@ -2418,6 +2441,8 @@ defmodule Argus.Schema do
     @ets_tid_arg,
     @mnesia_op,
     @name_lookup,
+    # What specs claim functions return.
+    @spec_return,
     @name_release,
     @sink_arg_derived,
     @process_start,

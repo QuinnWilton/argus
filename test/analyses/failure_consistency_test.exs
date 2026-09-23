@@ -39,6 +39,11 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       assert rows([C.OutsideScope]) == []
     end
 
+    test "a callee whose spec names no failure value has no result to check" do
+      skip_without_souffle()
+      assert rows([C.TotalCallee]) == []
+    end
+
     test "a site that returns the result is neither agreeing nor deviant" do
       skip_without_souffle()
       assert rows([C.TailReturns]) == []

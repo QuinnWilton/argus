@@ -59,7 +59,9 @@ defmodule Argus.Pipeline.Disassemble do
 
   @doc """
   Disassembles a `.beam` file (by path or raw beam data) into module data,
-  bundling its imports and its Line-chunk table.
+  bundling its imports, its Line-chunk table and the input itself
+  (`:beam`, for readers of chunks the disassembly does not carry: the
+  specs in its debug info).
 
   Returns `{:ok, data}` where `data` has the standard BeamSpy disassembly
   shape plus `:imports` and `:line_table` fields, or `{:error, reason}`
@@ -73,6 +75,7 @@ defmodule Argus.Pipeline.Disassemble do
     with {:ok, data} <- BeamSpy.BeamFile.disassemble(path) do
       {:ok,
        data
+       |> Map.put(:beam, path)
        |> Map.put(:imports, fetch_imports(path))
        |> Map.put(:line_table, fetch_line_table(path))}
     end

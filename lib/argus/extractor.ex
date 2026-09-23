@@ -37,6 +37,7 @@ defmodule Argus.Extractor do
           required(:attributes) => keyword(),
           required(:functions) => list(),
           optional(:imports) => list(),
+          optional(:beam) => String.t() | binary(),
           optional(:line_table) => map(),
           optional(:call_sites) => [Argus.Extractor.CallSites.site()],
           optional(:cfg) => %{{String.t(), arity()} => Argus.Cfg.Function.t()},

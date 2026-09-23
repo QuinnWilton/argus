@@ -125,8 +125,10 @@ defmodule Argus.Corpus do
   A digest of everything on argus's side that decides what facts a beam
   yields: the compiled code of `engine_modules/0`, what each analysis
   declares it extracts with, the Datalog stage 0 derives the call graph
-  with, the OTP and Elixir the extraction runs on, and the solver's
-  version. Computed once per VM.
+  with, the OTP and Elixir the extraction runs on, the applications on
+  the code path whose specs `Argus.Extractors.Specs` reads
+  (`Argus.Specs.environment_digest/0`), and the solver's version.
+  Computed once per VM.
 
   Narrower than the whole of argus on purpose: a finding's prose, a
   rule, the corpus harness itself change without moving a fact, and a
@@ -352,6 +354,7 @@ defmodule Argus.Corpus do
     |> :crypto.hash_update(System.otp_release())
     |> :crypto.hash_update(:erlang.system_info(:version) |> List.to_string())
     |> :crypto.hash_update(souffle_version())
+    |> :crypto.hash_update(Argus.Specs.environment_digest())
     |> :crypto.hash_final()
     |> Base.encode16(case: :lower)
   end

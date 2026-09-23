@@ -122,4 +122,24 @@ defmodule Argus.Test.Fixtures.Consistency do
     defp check({:ok, pid}), do: pid
     defp check({:error, _}), do: nil
   end
+
+  defmodule TotalCallee do
+    @moduledoc """
+    Five sites keep :ets.new's table, one discards it: :ets.new/2's spec
+    names no failure value (it returns the table or raises), so the
+    discarded one has nothing to miss.
+    """
+    def a(n), do: keep(:ets.new(n, []))
+    def b(n), do: keep(:ets.new(n, []))
+    def c(n), do: keep(:ets.new(n, []))
+    def d(n), do: keep(:ets.new(n, []))
+    def e(n), do: keep(:ets.new(n, []))
+
+    def f(n) do
+      :ets.new(n, [:named_table])
+      :ok
+    end
+
+    defp keep(t) when is_reference(t) or is_atom(t), do: {:table, t}
+  end
 end
