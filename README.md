@@ -114,11 +114,21 @@ def project do
       ignore: [modules: [~r/^MyApp\.Gen/], files: ["lib/legacy/**"]],
       include_deps: false,
       fail_on: :error,                         # :warning promotes findings to build failures
-      souffle: :warn                           # | :require
+      souffle: :warn,                          # | :require
+      priors: :off                             # | :cached_only | :live | [mode: ..., cassette: "priors.jsonl"]
     ]
   ]
 end
 ```
+
+`priors:` turns on argus's heuristic facts: a classifier's answers about
+names (is `totp_seed` a secret; does this helper read storage; does that
+module front a process) that add findings marked `heuristic` or move a
+severity, never remove one. `:live` asks the model for what the cache
+does not hold and needs `TYPESAFE_API_KEY`; `:cached_only` is offline and
+deterministic, and a committed cassette (`mix argus.priors export`,
+named under `cassette:`) makes a CI run match a developer's. The rows
+ride the manifest, so a warm run repeats no request.
 
 A standalone task drives the same incremental core for one-shot and CI use:
 

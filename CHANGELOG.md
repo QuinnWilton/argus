@@ -1,5 +1,50 @@
 # Changelog
 
+## Unreleased
+
+- A finding or related frame that closes a span (`to_instr`, argus
+  schema 43) renders as a bracket from its anchor line to the end line —
+  a guarded call through its `catch` — and the JSON report carries
+  `end_line` on entries and related frames. Where the bytecode gave no
+  end and the finding names the block its anchor sits in (`to_block`),
+  `Scry.SourceAnchor.block_end/3` reads the source for it: the guarding
+  `rescue`/`catch`/`after` clauses to their `end`, a `receive` to its
+  `end`, a function clause to its `end`, or every clause of a function.
+  Formatting is the evidence; any mismatch leaves the frame on its line.
+  Prose that says `{guard}` — bytecode cannot tell a `rescue` from a
+  `catch` — gets the keyword the source shows at the anchor
+  (`Scry.SourceAnchor.guard_keyword/2`), or `handler`.
+- A beam whose recorded source path is not on this machine — a moved
+  checkout, a release built in a container — anchors at the longest
+  tail of that path that exists under the project root (`:project_root`,
+  a new frontend input the runner sets from the working directory), and
+  at the beam itself only when nothing does.
+- A finding that names a source fragment (`Argus.Findings` `at_source`)
+  resolves to the first line at or after its bytecode anchor containing
+  the fragment as a whole token (`Scry.SourceAnchor`). An unredacted
+  secret now lands on its `field :api_key` line rather than `defmodule`:
+  every function Ecto generates carries the `schema do` line, and the
+  field's own line is only in the source. A bare underline marks an
+  anchor whose analysis has no `at_label` (pentiment no longer draws an
+  empty `╰──` tail).
+- Priors: argus's layer-3 relations — a classifier's answers about
+  names, with a probability (`Argus.Priors`) — as a roux input.
+  `priors:` in the `scry:` keyword is `:off` (the default), `:cached_only`
+  or `:live`, or a keyword with `mode:` and the `Argus.Priors` options
+  (`cassette:` a JSONL file imported into the cache first, `cache_dir:`,
+  `model:`, `oracle:`). `Scry.Priors.sync/2` sets `:prior_rows` for every
+  prior relation on every run — empty when off — from the program's
+  memoized relations, so the projections always find the file they
+  expect, the findings without priors are the findings there always
+  were, and with them a superset: a prior adds a finding marked
+  heuristic or moves a severity, never removes a row. The rows live in
+  the manifest at `:medium` durability, and `Input.set`'s cutoff means an
+  unchanged answer re-solves nothing; a `:live` run without
+  `TYPESAFE_API_KEY` fails at configuration. Resolved entries and the
+  JSON report carry `provenance` (`:structural | :heuristic`) and
+  `confidence` (the prior's probability in thousandths). Depends on argus
+  0.19.0 (the v0.19.0 tag until it is on Hex).
+
 ## 0.1.24 — 2026-09-21
 
 - argus 0.18 merged the relations inside each concern and turned witness
