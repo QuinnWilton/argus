@@ -333,6 +333,7 @@ reaches_tag_dep(f, m) :- tag_dep(f, m).
 
 reaches_tag_dep(f, m) :-
   call_edge(f, g),
+  !runs_elsewhere(f, g),
   reaches_tag_dep(g, m).
 
 sync_dep(f, m) :-
@@ -347,6 +348,12 @@ async_dep(f, m) :-
 
 .decl reaches_sync_dep(func: symbol, mod: symbol)
 
+// A wait is the waiting process's: the dependency is not propagated
+// over the edge into what a spawn, task or agent runs (runs_elsewhere,
+// processes.dl) — init/1 does not wait on what the task it starts
+// calls. The closure itself, a function of the same module, still
+// holds it, so module-level dependencies are unchanged.
+//
 // Propagated backwards over call_edge from the functions that hold the
 // dependency, never through the full call closure: the result is bounded
 // by functions × dependency modules, where call_reachable is quadratic
@@ -356,6 +363,7 @@ reaches_sync_dep(f, m) :- sync_dep(f, m).
 
 reaches_sync_dep(f, m) :-
   call_edge(f, g),
+  !runs_elsewhere(f, g),
   reaches_sync_dep(g, m).
 
 .decl reaches_async_dep(func: symbol, mod: symbol)
@@ -407,6 +415,7 @@ reaches_sync_dep_timeout(f, m, ms) :- sync_dep_timeout(f, m, ms).
 
 reaches_sync_dep_timeout(f, m, ms) :-
   call_edge(f, g),
+  !runs_elsewhere(f, g),
   reaches_sync_dep_timeout(g, m, ms).
 
 // ── A process of one's own ─────────────────────────────────────────────

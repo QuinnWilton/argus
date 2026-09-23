@@ -135,6 +135,16 @@ defmodule Argus.Analyses.SingletonShapesTest do
              findings.findings |> Enum.map(& &1.title) |> Enum.filter(&(&1 =~ "waits on"))
   end
 
+  test "a call a task init/1 starts makes to a later sibling is no deadlock" do
+    skip_without_souffle()
+
+    alias InitRecv.TaskCalls
+
+    {:ok, r} = Argus.analyze([TaskCalls.Sup, TaskCalls.Early, TaskCalls.Later], :startup)
+
+    assert Rows.where(r, :startup, "blocks_on_peer", phase: "init", kind: "call") == []
+  end
+
   test "a connect, a lock or a supervisor call in a task init/1 starts holds nothing" do
     skip_without_souffle()
 

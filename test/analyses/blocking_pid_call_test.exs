@@ -69,4 +69,11 @@ defmodule Argus.Analyses.BlockingPidCallTest do
              |> Enum.map(fn [_, _, from, _, _, how, _] -> [from, how] end)
              |> Enum.uniq()
   end
+
+  test "a closure beside a child spec's fun is the handler's own" do
+    {:ok, r} = Argus.analyze([PidCalls.HandOffCaster, PidCalls.Named], :blocking)
+
+    assert [[caster, named | _]] = Rows.where(r, :blocking, "call_chain", kind: "cast")
+    assert {caster, named} == {inspect(PidCalls.HandOffCaster), inspect(PidCalls.Named)}
+  end
 end

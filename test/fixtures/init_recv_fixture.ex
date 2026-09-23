@@ -208,3 +208,50 @@ defmodule Argus.Test.Fixtures.InitRecv.HandsOffAndWaits do
     {:ok, peers}
   end
 end
+
+defmodule Argus.Test.Fixtures.InitRecv.TaskCalls do
+  @moduledoc false
+  # init/1 starts a task that calls a sibling the supervisor starts
+  # later: the task waits, init does not, and the start is no deadlock.
+
+  defmodule Early do
+    @moduledoc false
+    use GenServer
+
+    alias Argus.Test.Fixtures.InitRecv.TaskCalls.Later
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok)
+
+    @impl true
+    def init(:ok) do
+      {:ok, _task} = Task.start_link(fn -> Later.warm() end)
+      {:ok, nil}
+    end
+  end
+
+  defmodule Later do
+    @moduledoc false
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+    def warm, do: GenServer.call(__MODULE__, :warm)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:warm, _from, s), do: {:reply, :ok, s}
+  end
+
+  defmodule Sup do
+    @moduledoc false
+    use Supervisor
+
+    alias Argus.Test.Fixtures.InitRecv.TaskCalls.{Early, Later}
+
+    def start_link(_), do: Supervisor.start_link(__MODULE__, nil)
+
+    @impl true
+    def init(nil), do: Supervisor.init([Early, Later], strategy: :one_for_one)
+  end
+end

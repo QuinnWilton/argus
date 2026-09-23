@@ -459,6 +459,18 @@ or of unknown arity, is left to the closure-following starts table
 rather than named `M:f/-1`; `proc_lib:start_monitor`'s `{result, ref}`
 is not modelled.
 
+**Changed.** A wait is the waiting process's: `calls.dl`'s
+`reaches_sync_dep`, `reaches_tag_dep` and `reaches_sync_dep_timeout` no
+longer carry a dependency over the edge into what a spawn, task or agent
+runs (`runs_elsewhere`). init/1 starting a task that calls a sibling the
+supervisor starts later is no deadlock (`startup.blocks_on_peer`), nor
+is a handler's task a hop of a call chain. The closure is a function of
+the same module and keeps the dependency, so module-level relations
+(cycles, fan-in, coupling) are unchanged. Corpus, realtime, logflare
+and hexpm unchanged; OTP kernel's `logger_server:init/1`, whose simple
+handler's loop runs in a process it spawns, no longer "can block on a
+synchronous call" (4 rows).
+
 **Changed.** Every analysis that reads process points-to includes
 `process_statem.dl` and extracts `GenStatem`: blocking, coupling,
 failure and coverage did not, so a gen_statem's state functions were no

@@ -154,4 +154,40 @@ defmodule Argus.Test.Fixtures.PidCalls do
     @impl true
     def handle_call(:ping, _from, s), do: {:reply, :gen_statem.call(StatemFront, :status), s}
   end
+
+  defmodule Named do
+    @moduledoc false
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:ping, _from, s), do: {:reply, :pong, s}
+  end
+
+  defmodule HandOffCaster do
+    @moduledoc """
+    A cast handler that starts a child around a fun and, in an
+    Enum.each closure of its own, calls Named: two closures, so neither is
+    taken for the child's, and the call is the handler's wait.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.PidCalls.Named
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_cast({:boot, sup, ids}, s) do
+      Supervisor.start_child(sup, %{id: :worker, start: {Task, :start_link, [fn -> :ok end]}})
+      Enum.each(ids, fn _id -> GenServer.call(Named, :ping) end)
+      {:noreply, s}
+    end
+  end
 end
