@@ -279,6 +279,52 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  defmodule OwnerSpawnsClaims do
+    @moduledoc """
+    The owner's handler hands each claim to a task: one task per call,
+    and two can claim at once.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def handle_cast({:claim, name}, state) do
+      Task.start(fn -> claim(name) end)
+      {:noreply, state}
+    end
+
+    defp claim(name) do
+      case Process.whereis(name) do
+        nil -> Process.register(self(), name)
+        _pid -> :taken
+      end
+    end
+  end
+
+  defmodule OwnerSpawnsClaimer do
+    @moduledoc "init/1 spawns one worker that makes the claim: one process."
+    use GenServer
+
+    def start_link(name), do: GenServer.start_link(__MODULE__, name, name: __MODULE__)
+
+    @impl true
+    def init(name) do
+      pid = spawn_link(fn -> claim(name) end)
+      {:ok, pid}
+    end
+
+    defp claim(name) do
+      case Process.whereis(name) do
+        nil -> Process.register(self(), name)
+        _pid -> :taken
+      end
+    end
+  end
+
   defmodule OwnerRegisters do
     @moduledoc "Only the owner's own callbacks reach the decision: one process."
     use GenServer

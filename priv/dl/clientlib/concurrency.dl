@@ -11,27 +11,48 @@
 // it. A function no process entry reaches at all is a plain API: it runs
 // in every caller, and is not single_process either.
 //
-// Instantiate with the sites of interest as seeds; the closure is a
-// CallReach backward from them, never forward from every entry. Prerequisites:
-// imports.dl, otp.dl (process_entry, behaves_as, dynamic_child) and
-// request_entry.dl.
+// A process a spawn, a task or an agent starts (process_start) is an
+// entry of its own, keyed by the process: what it runs is its work, not
+// its starter's, since the walk from an entry stays in the entry's
+// process (SameProcessReach). It has many instances when the start runs
+// more than once — reached from a request or a message handler, in a
+// closure (a comprehension's body), or in a function that calls itself —
+// and is one process otherwise (a worker init/1 spawns).
+//
+// Instantiate with the sites of interest as seeds; the closure is
+// backward from them, never forward from every entry. Prerequisites:
+// imports.dl, otp.dl (process_entry, behaves_as, dynamic_child,
+// runs_elsewhere) and request_entry.dl.
 
 .comp RunsConcurrently {
   .decl seed(func: symbol)
 
-  .init walk = CallReach
+  .init walk = SameProcessReach
   walk.seed(t, t) :- seed(t).
 
-  .decl entry_reaches(mod: symbol, func: symbol)
+  // A process a start in `starter` runs `runs` in.
+  .decl spawned(proc: symbol, starter: symbol, runs: symbol)
+  spawned(p, s, r) :- process_start(_, s, p, kind, r), kind != "server".
+
+  // The starts whose process reaches a seed, walked back from too: what
+  // runs them says how many there are.
+  walk.seed(s, s) :- spawned(_, s, r), walk.reaches(r, t), seed(t).
+
+  .decl entry_reaches(entry: symbol, func: symbol)
   entry_reaches(m, t) :- process_entry(m, c), walk.reaches(c, t).
   entry_reaches(m, t) :-
     behaves_as(m, "Application"),
     function_def(c, m, "start", 2, _),
     walk.reaches(c, t).
+  entry_reaches(p, t) :- spawned(p, _, r), walk.reaches(r, t), seed(t).
 
-  .decl many_instances(mod: symbol)
+  .decl many_instances(entry: symbol)
   many_instances(m) :- request_entry(e, _), function_def(e, m, _, _, _).
   many_instances(m) :- dynamic_child(_, m, _).
+  many_instances(p) :- spawned(p, s, _), request_entry(e, _), walk.reaches(e, s).
+  many_instances(p) :- spawned(p, s, _), handler_function(_, h), walk.reaches(h, s).
+  many_instances(p) :- spawned(p, s, _), match(".*:-.*-fun-[0-9]+-/[0-9]+", s).
+  many_instances(p) :- spawned(p, s, _), call_edge(s, g), walk.reaches(g, s).
 
   .decl second_process(func: symbol)
   second_process(t) :- entry_reaches(m1, t), entry_reaches(m2, t), m1 != m2.

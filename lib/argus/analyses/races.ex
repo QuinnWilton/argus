@@ -57,7 +57,10 @@ defmodule Argus.Analyses.Races do
       Argus.Extractors.GenStatem,
       Argus.Extractors.CallArgs,
       Argus.Extractors.Dependence,
-      Argus.Extractors.Specs
+      Argus.Extractors.Specs,
+      # The processes a spawn, a task or an agent starts: entries of their
+      # own for RunsConcurrently (clientlib/concurrency.dl).
+      Argus.Extractors.PidFlow
     ]
 
   @impl true

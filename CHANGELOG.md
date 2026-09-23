@@ -1043,6 +1043,22 @@ has no body: nothing says whose the closure is.
 
 ### races
 
+**Changed.** Whether two processes can run a function (`RunsConcurrently`,
+clientlib/concurrency.dl) counts the processes a spawn, a task or an
+agent starts as entries of their own, and walks from every entry in its
+own process (`SameProcessReach`): a task's work was its starter's, so a
+claim a GenServer hands a task per message ran in "one process", the
+server. A started process has many instances when its start runs more
+than once — reached from a request or a message handler, in a closure,
+or in a function that calls itself — and is one process otherwise (a
+worker `init/1` spawns). races extracts `PidFlow` for `process_start`.
+Corpus: ztlp's name-registration rate limit, a lookup-then-insert run
+in a task per UDP packet, is a read-then-write race. OTP's mnesia gains
+four read-then-write rows on `mnesia_gvar` and the schema table, now
+that its loader workers and transaction processes are processes of
+their own (the same class as its 29 existing rows: mnesia orders these
+writes with its own locks, which the rule does not see).
+
 **Changed.** A new concern, `races`, owns the three check-then-act
 relations, which move with their columns, titles and prose unchanged:
 `registry_race` from `structure`, `ets_check_act` and `mnesia_check_act`
@@ -1286,17 +1302,6 @@ or for anything. One whose every clause waits for some other literal, in
 a module whose timers all carry known literals, is reported. When the
 module arms no timer the program can see, the receive stays suppressed.
 
-### coupling
-
-**Changed.** `coupling.sibling_dependency` "cached_pid" asks that a
-handler use the cached pid: process points-to follows a handler's call,
-cast or send to the process registered under the name init/1 looked up,
-through anything but the name itself. It accepted any handler making
-any call to a pid it could not follow, so a server that looked a sibling
-up at boot and called whatever pid each caller handed it was reported.
-Where the name resolves to no process points-to knows, the old test
-stands in. Corpus, realtime, logflare, hexpm and OTP unchanged.
-
 ### startup
 
 **Fixed.** `startup.unbounded_effect_in_init` and `blocks_on_peer`'s
@@ -1364,6 +1369,15 @@ program: 6.1M rows to 11 on a 751-module deps tree (the coupling solve
 is found walking back from the functions that call a coupled sibling
 rather than forward from every witness (8.8k rows to 250 on blockster).
 Output identical over the corpus and four large programs.
+
+**Changed.** `coupling.sibling_dependency` "cached_pid" asks that a
+handler use the cached pid: process points-to follows a handler's call,
+cast or send to the process registered under the name init/1 looked up,
+through anything but the name itself. It accepted any handler making
+any call to a pid it could not follow, so a server that looked a sibling
+up at boot and called whatever pid each caller handed it was reported.
+Where the name resolves to no process points-to knows, the old test
+stands in. Corpus, realtime, logflare, hexpm and OTP unchanged.
 
 ### Corpus and tooling
 

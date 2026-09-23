@@ -26,6 +26,13 @@ defmodule Argus.Analyses.RegistryRaceTest do
 
   defp short(id), do: id |> String.split("#") |> hd() |> String.split(".") |> List.last()
 
+  describe "registry_race: processes a server starts" do
+    test "a task the owner's handler starts per message is many processes" do
+      skip_without_souffle()
+      assert [{"claim/1", _, _, _}] = races([C.OwnerSpawnsClaims])
+    end
+  end
+
   describe "registry_race: losers that are not a bug" do
     test "a register inside an Erlang catch takes its loser; a dropped start answer is moot" do
       skip_without_souffle()
@@ -89,6 +96,11 @@ defmodule Argus.Analyses.RegistryRaceTest do
     test "the owner deciding on its own registry from its own callbacks is one process" do
       skip_without_souffle()
       assert races([C.OwnerRegisters]) == []
+    end
+
+    test "a worker init/1 spawns once is one process" do
+      skip_without_souffle()
+      assert races([C.OwnerSpawnsClaimer]) == []
     end
 
     test "no branch on the lookup, or different names, is not the shape" do
