@@ -30,11 +30,12 @@ call_edge(caller_func, target) :-
 // stable as its output, which is what this file's docstring always claimed
 // for the output alone.
 
-// Closure construction is treated as a static call edge so that call_reachable
-// follows execution into closures passed to higher-order callees like Enum.map,
-// :telemetry.span, Task.async, and Phoenix.PubSub callbacks. The Elixir compiler
-// lifts closure bodies into top-level functions and references them via make_fun3,
-// so they show up here as concrete function IDs.
+// Closure construction is treated as a static call edge so that a walk over
+// call_edge (clientlib/reach.dl) follows execution into closures passed to
+// higher-order callees like Enum.map, :telemetry.span, Task.async, and
+// Phoenix.PubSub callbacks. The Elixir compiler lifts closure bodies into
+// top-level functions and references them via make_fun3, so they show up
+// here as concrete function IDs.
 call_edge(parent, child) :- closure_def(parent, child).
 
 // A fun value the function hands to a call without calling it —
