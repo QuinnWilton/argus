@@ -6,45 +6,87 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
-### Added
+Grouped by concern. Each entry opens with what it does: **Added**,
+**Changed** or **Fixed**.
 
-Schema 47. Process points-to follows pids carried in messages.
-`pid_message(func, api_kind, src_kind, src)` records the pids a call's,
-cast's or send's message may carry, and they reach the handler of the
-server the target resolves to (`handle_call/3`, `handle_cast/2`,
-`handle_info/2`) as its message parameter, and from there the server's
-state: how `Hub.subscribe(self())` puts a subscriber's pid where the hub
-later calls it. `pid_call` gains `info` rows for sends (a message to a
-server lands in `handle_info/2`) and `name` sources for literal targets,
-which resolve through the registry. Messages are not taken apart, and a
-function's messages of one kind reach every server its calls of that
-kind do.
+### Fact schema and extraction
 
-Process points-to counts a supervisor's children as processes: a child
-started on request (`DynamicSupervisor.start_child/2`,
-`Supervisor.start_child/2`) is a start site whose `{:ok, pid}` the
-caller holds, named by its child spec's module, with the spec's
-argument flowing into `Mod.start_link/1`; and a GenServer named in a
-static supervisor's child spec is a server process
-(`clientlib/processes.dl`'s `server_process`) even when no start call in
-the program names it, so `self()` in its callbacks resolves. blocking
-and mailbox list the Supervision extractor for it.
+**Changed.** Schema 45. `spawn_call` names what the new process runs instead of
+recording "dynamic": `spawn(M, F, args)` and the node-qualified form run
+M.F/length(args) when the module, function and the argument list's length
+are literal, and `spawn(fun)` runs the function the closure was lifted
+to. `arity` is now that function's arity (it held the spawn BIF's own,
+contrary to the schema doc), and -1 when unknown. The length is read from
+the cons cells that build the list, so `[x | rest]` stays unknown. Both
+readers (`failure`'s bare spawn, `effects`) ignore these columns;
+scry/planchette memos keyed on the schema version invalidate.
 
-`mailbox.unreceived_message`: a message sent to a spawned process whose
-receive has no clause for it. The message is not dropped; it stays in
-the mailbox for the life of the process and every later receive scans
-past it. The destination comes from process points-to (the send may
-reach the process through parameters, results, `self()` or a registered
-name, so the sending function need not name it), the message is a
-literal atom or a tuple's literal tag, and only a receive held by the
-spawned function itself is judged, never one with a clause that could
-take anything. Anchored at the send, with the receive and the spawn as
-related frames. No corpus pair: the corpus trees, OTP's and Elixir's own
-applications and a search of public issues turned up no instance, so the
-rule ships on its fixtures (`test/analyses/mailbox_unreceived_test.exs`)
-and its quiet neighbour.
+**Added.** Schema 44. A new extractor, `Argus.Extractors.Dependence`,
+emits what each call, shared-state operation and return value depends on
+— the function's parameters, the results of the calls it makes, the
+results of shared-state operations — through data and through control,
+so a value merged after a `case` depends on what the `case` tested:
+`site_depends(site, func, kind, source)`, and the per-function
+`call_decided(caller, callee, kind, source)`, `call_arg_depends(caller,
+callee, arg_pos, kind, source)` and `returns_depends(func, kind,
+source)`. Calls into erts, kernel, stdlib, elixir and logger are not
+named as callees or sources.
 
-Schema 46. Process points-to: which process a pid can be. A pid is a
+**Changed.** Schema 43. `try_call` gains `call`, the guarded call's own instruction:
+the `try` instruction carries the line of whatever preceded it (the
+previous clause's body, or the function head), so "catches :noproc but
+not :shutdown" and the erpc rescue finding anchored one clause off. Both
+now anchor at the call. `statem_call_unreplied` anchors at the clause's
+last pattern test rather than the return — the compiler shares one
+`:keep_state_and_data` block between clauses — and gains `tag`, the
+literal that test compares against, which the finding passes as
+`at_source` so a consumer with the source lands on the clause head
+(pattern tests carry the previous clause's line in the Line chunk).
+
+**Changed.** The pipeline computes reaching definitions once per module
+(`module_data.reaching`, `Helpers.reaching/1`) and shares them: `ParamFlow`
+read them from its own `Dataflow.reaching_uses/2` call, and `def_use` from
+another. `def_use` is derived from the shared set and is unchanged.
+
+**Changed.** `Helpers.tuple_element_identity/4` identifies element `n` of a tuple built
+on the way to a call (through moves) or folded into one literal: an ETS
+object's key, and the reader the ETS extractor used inline before.
+
+**Changed.** The register walks behind `resolve_register/3`, `arg_position/3` and
+`map_field_of/3` no longer stop at a branch boundary. They walk the
+instruction stream backwards and treated a `return` as the end of the
+path, so a value read in the second arm of a `case`, or in the second
+clause of a function, resolved to nothing: the first arm's `return` was
+in the way. A label reached going backwards now resumes from the branch
+that targets it when that is the only way in, and at a real join —
+fall-through into the label, or predecessors in separate blocks — walks
+every way in and keeps only an answer they all give. The compiler's
+fast-and-slow-path diamond for `map.key` agrees at its join once the
+slow path's `no_parens_remote` call is read as the field read it is.
+Per query the joins are budgeted and the labels memoised, and the
+branch-target counts are cached per function. Every extractor that
+resolves an argument sees more: the ETS key written in a `case`'s last
+arm, the name a later clause looks up.
+
+**Changed.** A named `Agent.start_link/2,4` or `Agent.start/2,4` is a registration
+like a named GenServer start: `process_register`, a `creating_op` for the
+lookup-then-start race (tesla#768's shape spelled with an Agent), and
+`named_process` owned by the module that starts it, since an Agent has
+no module of its own.
+
+**Fixed.** A literal operand was spelled with `inspect/1`, which runs a struct's
+own `Inspect` implementation when its module is loaded — so the same
+beam yielded different `literal_value` rows in a VM that had the
+analyzed code loaded (scry's compiler) than in one that had not, and an
+implementation that raises on the struct's defaults (sequin's
+`CircularBuffer`) rendered a multi-line `#Inspect.Error<...>` that broke
+the fact file. Literals are now inspected with `structs: false`, the
+plain `%Mod{...}` form whatever implementation is loaded — a row change
+for memoising consumers only where a struct had its own.
+
+### Process points-to
+
+**Added.** Schema 46. Process points-to: which process a pid can be. A pid is a
 reference and the call that started the process is its allocation site —
 a spawn, named by what it runs (`spawn_call`), or a GenServer,
 `:gen_server` or `:gen_statem` start with a literal callback module; the
@@ -81,227 +123,31 @@ function-level relations only. Only project code is followed: a call into
 OTP or Elixir's own modules yields nothing. scry/planchette memos keyed
 on the schema version invalidate.
 
-**Schema version 44.** A new extractor, `Argus.Extractors.Dependence`,
-emits what each call, shared-state operation and return value depends on
-— the function's parameters, the results of the calls it makes, the
-results of shared-state operations — through data and through control,
-so a value merged after a `case` depends on what the `case` tested:
-`site_depends(site, func, kind, source)`, and the per-function
-`call_decided(caller, callee, kind, source)`, `call_arg_depends(caller,
-callee, arg_pos, kind, source)` and `returns_depends(func, kind,
-source)`. Calls into erts, kernel, stdlib, elixir and logger are not
-named as callees or sources.
+**Added.** Schema 47. Process points-to follows pids carried in messages.
+`pid_message(func, api_kind, src_kind, src)` records the pids a call's,
+cast's or send's message may carry, and they reach the handler of the
+server the target resolves to (`handle_call/3`, `handle_cast/2`,
+`handle_info/2`) as its message parameter, and from there the server's
+state: how `Hub.subscribe(self())` puts a subscriber's pid where the hub
+later calls it. `pid_call` gains `info` rows for sends (a message to a
+server lands in `handle_info/2`) and `name` sources for literal targets,
+which resolve through the registry. Messages are not taken apart, and a
+function's messages of one kind reach every server its calls of that
+kind do.
 
-The check-then-act races follow the paper they come from (Christakis and
-Sagonas, PADL 2010) across functions. `clientlib/check_then_act.dl`
-composes the dependence relations in the `CheckThenAct` component: a
-check's result meets the acts that depend on it where it is born or
-returned to, through a lookup helper, a start helper, a multi-clause
-helper handed the result, another module, or the next iteration of a
-loop, with names and keys translated across each call by `call_arg`,
-`call_arg_forward` and `call_arg_field`. An unknown higher-order call is
-not followed, the paper's own evaluated setting. `guarded_create` and
-`ets_guarded_write` are removed — an act decided in the same function is
-the component's simplest case — and `Argus.Extractor.Guard` is
-deprecated.
+**Added.** Process points-to counts a supervisor's children as processes: a child
+started on request (`DynamicSupervisor.start_child/2`,
+`Supervisor.start_child/2`) is a start site whose `{:ok, pid}` the
+caller holds, named by its child spec's module, with the spec's
+argument flowing into `Mod.start_link/1`; and a GenServer named in a
+static supervisor's child spec is a server process
+(`clientlib/processes.dl`'s `server_process`) even when no start call in
+the program names it, so `self()` in its callbacks resolves. blocking
+and mailbox list the Supervision extractor for it.
 
-`registry_race` rows now name the function where the pair meets, and
-cover `Process.registered/0` deciding a register (`name_lookup` api
-`registered`, source `any`) and whereis-then-unregister (new
-`name_release(id, func, api, source, key)`; the loser's outcome is an
-`ArgumentError` or `badarg` rescued). `ets_check_act` follows a table
-handed on as a parameter, by name or as the reference `:ets.new/2`
-returned in a caller — new `ets_tid_arg(caller, callee, arg_pos, name)`,
-closures' captured variables included. The paper's registry and ETS
-examples, and Dialyzer's unregister warning, are Erlang fixtures under
-`test/fixtures/erl/` pinned by `Padl2010RaceTest`.
-`Argus.Findings.elsewhere/2` names the function a site sits in when it
-is not where the pair meets.
+### Findings: anchors, frames and prose
 
-`ets` gains `mnesia_check_act(mod, func, table, key, read, write)` over a
-new `Argus.Extractors.Mnesia` and its `mnesia_op(id, func, op, kind,
-table_source, table, key_source, key)`: a dirty read that decides or
-feeds a dirty write of the same record another process can write. With
-it every example in the paper is pinned, and the check-then-act rules
-cover all four of Dialyzer's `-Wrace_conditions` warnings.
-
-The race families' names, tables and keys gain a fifth source, `local`:
-a value that is no literal, parameter or map field but has one defining
-instruction (`Helpers.key_identity/4` with `Helpers.origins_index/1`,
-through reaching definitions and moves, indexed once per module as
-`module_data.origins_index`), keyed by that instruction's ID. Two
-operands with the same origin hold the same value, so `key = {name,
-type}` handed to a dirty read and then a dirty write is one key
-(ztlp@39fa329); a value two definitions reach stays dynamic, and a local
-identity never crosses a call.
-
-A check-then-act pair that meets in a helper is reported there, and not
-again in each caller the helper returns the check to.
-
-`mailbox`'s `timer_cancel_without_flush` also catches a timer whose ref
-never leaves the function: `ref = Process.send_after(self(), :deadline,
-t)`, work, `Process.cancel_timer(ref)` and no flush. A message the timer
-delivered before the cancel is handled on a later call, as if it were
-that call's. `timer_cancel` gains the source `local`, keyed by the
-arming site, from the same local identity; such a row has an empty
-`key` and is deduplicated by its arming site. The local identity now
-follows `swap` as well as `move`.
-
-`Argus.Corpus` pairs take `subdir:` for a repository whose Mix project is
-not at the root — `mix.exs` under `elixir/`, one app of an umbrella under
-`apps/` — so a fix in such a tree can be a pair. The clone is still one
-directory per `<repo>-<sha7>`; relaxing the Elixir requirement, building
-and finding beams happen in the project, and an umbrella app's beams are
-found in the umbrella's `_build`.
-
-### Changed
-
-Schema 45. `spawn_call` names what the new process runs instead of
-recording "dynamic": `spawn(M, F, args)` and the node-qualified form run
-M.F/length(args) when the module, function and the argument list's length
-are literal, and `spawn(fun)` runs the function the closure was lifted
-to. `arity` is now that function's arity (it held the spawn BIF's own,
-contrary to the schema doc), and -1 when unknown. The length is read from
-the cons cells that build the list, so `[x | rest]` stays unknown. Both
-readers (`failure`'s bare spawn, `effects`) ignore these columns;
-scry/planchette memos keyed on the schema version invalidate.
-
-`Argus.Souffle.input_relations/2` memoizes its answer for a program
-shipped under `priv/dl`, versioned by a digest of every file there and
-the solver binary's identity. The answer depends on nothing else, and
-resolving it is a Souffle invocation per analysis (about 190ms each) that
-scry paid six times on every cold compile and the suite paid on every
-test that enumerates the analyses. A program outside `priv/dl` is still
-read on every call.
-
-The closed-issue corpus caches the facts of each checkout beside it
-(`.argus-facts/<digest>/facts`), keyed by the beams, the code and
-Datalog that extraction reaches (`Argus.Corpus.engine_modules/0`: the
-pipeline, the extractors and what they call through beam_spy and ctf,
-the analyses' extractor declarations, stage 0's includes — not a
-finding's prose or a rule), the runtime and the solver; `Argus.Corpus.analyze/2`
-takes the pair and side and solves over the cache. Extraction was over
-90% of a large tree's analysis and its inputs never move between runs.
-`Argus.CorpusTest` analyzes each checkout once, `ARGUS_CORPUS_JOBS` (default
-4) at a time, before checking the pairs. An entry under another digest is
-pruned only once no run has touched it for an hour: a VM beside this one —
-another worktree's build has its own digest — may still be reading it. The suite's analysis tests run
-`async: true`; the tests that set VM-wide state (`PATH`, `TYPESAFE_API_KEY`,
-`ARGUS_PRIORS_DIR`) live in their own sync modules.
-
-A named `Agent.start_link/2,4` or `Agent.start/2,4` is a registration
-like a named GenServer start: `process_register`, a `creating_op` for the
-lookup-then-start race (tesla#768's shape spelled with an Agent), and
-`named_process` owned by the module that starts it, since an Agent has
-no module of its own.
-
-The pipeline computes reaching definitions once per module
-(`module_data.reaching`, `Helpers.reaching/1`) and shares them: `ParamFlow`
-read them from its own `Dataflow.reaching_uses/2` call, and `def_use` from
-another. `def_use` is derived from the shared set and is unchanged.
-
-`Helpers.tuple_element_identity/4` identifies element `n` of a tuple built
-on the way to a call (through moves) or folded into one literal: an ETS
-object's key, and the reader the ETS extractor used inline before.
-
-Schema 43. `try_call` gains `call`, the guarded call's own instruction:
-the `try` instruction carries the line of whatever preceded it (the
-previous clause's body, or the function head), so "catches :noproc but
-not :shutdown" and the erpc rescue finding anchored one clause off. Both
-now anchor at the call. `statem_call_unreplied` anchors at the clause's
-last pattern test rather than the return — the compiler shares one
-`:keep_state_and_data` block between clauses — and gains `tag`, the
-literal that test compares against, which the finding passes as
-`at_source` so a consumer with the source lands on the clause head
-(pattern tests carry the previous clause's line in the Line chunk).
-
-The register walks behind `resolve_register/3`, `arg_position/3` and
-`map_field_of/3` no longer stop at a branch boundary. They walk the
-instruction stream backwards and treated a `return` as the end of the
-path, so a value read in the second arm of a `case`, or in the second
-clause of a function, resolved to nothing: the first arm's `return` was
-in the way. A label reached going backwards now resumes from the branch
-that targets it when that is the only way in, and at a real join —
-fall-through into the label, or predecessors in separate blocks — walks
-every way in and keeps only an answer they all give. The compiler's
-fast-and-slow-path diamond for `map.key` agrees at its join once the
-slow path's `no_parens_remote` call is read as the field read it is.
-Per query the joins are budgeted and the labels memoised, and the
-branch-target counts are cached per function. Every extractor that
-resolves an argument sees more: the ETS key written in a `case`'s last
-arm, the name a later clause looks up.
-
-`Findings.heuristic/3` is the one way a finding rests on a prior: one
-severity step down, `provenance: :heuristic`, `confidence`, and a help
-line — `heuristic: <what the prior said> (p=0.87)`. The coupling,
-exposure and unsafe-input builders each carried a copy of the demotion
-and rewrote `at_label` with the note; `at_label` now keeps saying what
-the anchor line is ("supervision tree defined here"), and the note moved
-to the last help line.
-
-effects findings point at the calls they are about. `effect_in_context`
-gains `site` (the instruction performing the effect; empty for a
-receive) and `opened` (the transaction call); `purity_unprovable` gains
-`site`; `impure_closure_to_pure` gains `site` (the call handing the
-closure to the pure function) and `effect_site`. A transaction finding
-anchors at the `Repo.transaction` call its label names ("opens the
-transaction here" sat on the function head), a closure finding at the
-call that hands the closure over, and each carries the effect as a
-related frame. Output-relation shapes only; the fact schema is
-unchanged, and effects now reads stage 0's `call_site`.
-
-Two titles change. failure's inconsistent-handling title names the
-callee with its module (`:gen_statem.call/3 called bare where every
-other call site guards it`, was `call/3 called bare ...` — a title that
-could not tell `GenServer.call/3` from `:gen_statem.call/3`); exposure's
-unredacted-secret title reads `MyApp.User.password_hash is printed by
-inspect/1` (was `MyApp.User.:password_hash`). Consumers matching titles
-re-key: the corpus pairs are, encore's goldens are not yet.
-
-Prose spells functions one way. Builders interpolated the facts' raw
-function IDs (`Madrigal.Wait:await_downfall/2 leaves a monitor live...`)
-beside names already spelled with `call_name/1` (`GenServer.call/2`);
-every finding's title, detail, anchor label, help and frame labels now
-render a function ID as `Mod.fun/2` (`:gen_server.call/3` for Erlang),
-and a closure as "an anonymous function in Mod.fun/2", in the one place
-`build/2` already rewrote closure names. Instruction IDs and a generic
-finding's raw columns are left as they are. Titles that named a
-function change with it.
-
-`structure.registry_race` gains `key_source` (literal, param, field,
-local, dynamic or any) before `key`, and the finding says which name it
-means: "asks whether the name in its first argument is registered" where
-it said "asks whether 0 is registered" — a parameter's position, printed
-as a number, in 11 of the 14 name-race findings across the corpus.
-
-Related frames take `at_source:` as findings do (`Findings.related/3`;
-the `related` map gains an `at_source` key): a source fragment that
-carries the frame's line the last step. `unreceived_message`'s "the
-receive it never matches" frame says `"receive"` and `to_block:
-:receive` — a receive's `loop_rec` has no line, so the bytecode alone
-put the frame on `def loop do`. Consumers refine a frame's line with the
-fragment as they do a finding's (scry resolves frame lines from the
-bytecode only, today).
-
-Four analysis descriptions (what `mix scry --list` prints) had drifted
-from the README's table, and the table from the analyses: `structure`
-now names its lookup-then-start race, `ets` Mnesia, `blocking` receives
-in callbacks, `startup` handle_continue/2 by its arity, `coverage` that
-it is opt-in. `Argus.ReadmeTest` keeps the two equal. `Findings.run/2`'s
-docs name the sets and the retired names `:analyses` accepts.
-
-### Fixed
-
-A transaction body was paired with every repo its function opened a
-transaction on: `effects.dl` joined `transaction_body` and
-`transaction_site` on the caller alone, so a function passing its one
-closure to `FakeRepo.transaction/1` and an `Ecto.Multi` to
-`AuditRepo.transaction/1` reported the effect inside both — and, once
-deduplicated, named whichever repo sorted first. The body is keyed by
-its transaction site, and a function whose transactions name two repos
-has no body: nothing says whose the closure is.
-
-Anchors no longer invent modules. Several builders passed a function ID
+**Fixed.** Anchors no longer invent modules. Several builders passed a function ID
 where `Findings.at_site/2` takes a module string, so a row whose site
 was empty or `"dynamic"` anchored at a module named after the function
 (`:"Elixir.Foo.Bar:baz/1"`); `failure`'s inconsistent-handling finding
@@ -312,81 +158,7 @@ function and falls back to that function (then, given one, a module);
 for a module, function IDs included. The two private `site_or_func/3`
 copies in blocking and shutdown are that function now.
 
-A custom (non-builtin) analysis's evidence relations joined nothing:
-the join columns were looked up among the builtin analyses only, so every
-frame silently vanished. `Findings.build/2` reads the joins off the
-analysis's own relations, once per build (the lookup ran per row, over
-every loaded module), and raises when two evidence relations name the
-same finding relation or one names a relation the analysis does not
-declare. Collecting a finding's frames is linear in its rows (it
-appended one frame at a time).
-
-A retired name's row filter resolved each alias column per row, over
-every loaded module; it resolves once per alias entry, against the
-concern that runs it.
-
-`Findings.build/2` raised `KeyError` on a solve's raw result — any
-relation the analysis does not declare as an output (stage 0's
-`call_reachable`, a rule's intermediates) — and its spec said it
-returned `[Findings.t()]`. It ignores undeclared relations and is
-specced `[finding()]`.
-
-One row a finding builder did not expect degraded its whole concern:
-`run/2` rescued the concern's build as a unit, so a single raising row
-dropped every finding in it. The rescue is per row now — that row is
-reported with its raw columns (a generic finding, or a generic frame
-for an evidence row) and a help line saying so, the concern still
-reports everything else, and it gets a `degraded` note as well as its
-`ran` entry. `test/finding_heads_test.exs` reads every rule head of every
-output relation from the `.dl` sources and checks each literal
-combination reaches a builder clause that renders it, so a new head no
-clause matches fails in the suite.
-
-mailbox's timed-wait monitor leak was the one error-severity finding
-with no `help`; it says to `Process.demonitor(ref, [:flush])` on the
-timeout branch, and `FindingHeadsTest` requires help of every error.
-
-A literal operand was spelled with `inspect/1`, which runs a struct's
-own `Inspect` implementation when its module is loaded — so the same
-beam yielded different `literal_value` rows in a VM that had the
-analyzed code loaded (scry's compiler) than in one that had not, and an
-implementation that raises on the struct's defaults (sequin's
-`CircularBuffer`) rendered a multi-line `#Inspect.Error<...>` that broke
-the fact file. Literals are now inspected with `structs: false`, the
-plain `%Mod{...}` form whatever implementation is loaded — a row change
-for memoising consumers only where a struct had its own.
-
-Corpus: `Argus.Corpus.ensure/2` returned every beam twice when the
-project is the repository root, and listed both a dev and a test build;
-each beam once now, from one build.
-
-A finding can name the source block its anchor sits in: `to_block:` on
-`Findings.new/4` and `Findings.related/3` (`:guard`, `:receive`,
-`:clause`, `:function`), for a consumer with the source to close the
-span by when the bytecode gives no end — a catch whose bodies are
-literals has no line of its own. Bytecode cannot tell a `rescue` from a
-`catch`, so prose about a guard says `{guard}` where the keyword goes
-and a consumer with the source fills it in (`handler` without one):
-the bare-rescue finding, the erpc finding and the "guarded by this
-{guard}" frames. The noproc, erpc and bare-rescue
-findings and the "guarded by this {guard}" frames name `:guard`; the
-receive-in-callback findings `:receive`; the unreplied gen_statem call
-and the dropped `from` `:clause`; the handle_info catch-all `:function`.
-`bare_rescue` gains `guard_end` and the finding anchors at the try,
-spanning the rescue.
-
-A finding can close a span. `Findings.new/4` takes `to:`, an anchor whose
-instruction ends the primary span, and `Findings.related/3` takes `to:`
-for a frame; `to_instr` rides on both. A consumer with the source draws
-the lines from the anchor to it as one bracket. `try_call` and
-`call_result` gain `guard_end`, the handler's last instruction (the
-`CatchClauses` walk already visits every instruction of a handler), so
-"catches :noproc but not :shutdown", the erpc rescue finding and the
-"guarded by this catch" frames of a consistency finding cover the call
-through its catch — the guard Elixir's body-level `catch` has no `try`
-keyword for.
-
-Findings that knew only a function now point at the instruction, and
+**Fixed.** Findings that knew only a function now point at the instruction, and
 carry the frames a reader wants next. Stage 0's `call_site` gains the
 callee's function and arity, covers local calls, and stages the few
 library calls findings anchor at (`GenServer.call`,
@@ -410,21 +182,33 @@ reaches (`sink_export`, three calls deep), the entry removals of a server
 that never demonitors (`monitored_entry_removal`) and the `Task.yield` of
 a linked task (`task_yield_site`).
 
-`unsafe_input`'s two sink relations gain a trailing `safety` column, the
-deserialization's option class (`unsafe | atoms_only | dynamic`, empty
-for the other sinks), and the deserialization finding says which. The
-title "binary_to_term without :safe" was literally false for a call that
-passes `[:safe]` — argus keeps that finding on purpose, as a downgrade
-rather than a clear (Paginator CVE-2020-15150 was RCE through `[:safe]`),
-but said the wrong thing about it. Now: `unsafe` keeps its title and
-`:error`; `atoms_only` is "binary_to_term with [:safe] and no shape
-check" at `:warning`, with the loaded-module fun risk and
-`Plug.Crypto.non_executable_binary_to_term/2` in the text; `dynamic` is
-"binary_to_term with options not known statically" at `:error`. A
-request-reachable deserialization keeps its proximity severity and gains
-the same wording.
+**Fixed.** A finding can close a span. `Findings.new/4` takes `to:`, an anchor whose
+instruction ends the primary span, and `Findings.related/3` takes `to:`
+for a frame; `to_instr` rides on both. A consumer with the source draws
+the lines from the anchor to it as one bracket. `try_call` and
+`call_result` gain `guard_end`, the handler's last instruction (the
+`CatchClauses` walk already visits every instruction of a handler), so
+"catches :noproc but not :shutdown", the erpc rescue finding and the
+"guarded by this catch" frames of a consistency finding cover the call
+through its catch — the guard Elixir's body-level `catch` has no `try`
+keyword for.
 
-`Argus.Findings.new/4` takes `at_source:`, a source fragment a consumer
+**Fixed.** A finding can name the source block its anchor sits in: `to_block:` on
+`Findings.new/4` and `Findings.related/3` (`:guard`, `:receive`,
+`:clause`, `:function`), for a consumer with the source to close the
+span by when the bytecode gives no end — a catch whose bodies are
+literals has no line of its own. Bytecode cannot tell a `rescue` from a
+`catch`, so prose about a guard says `{guard}` where the keyword goes
+and a consumer with the source fills it in (`handler` without one):
+the bare-rescue finding, the erpc finding and the "guarded by this
+{guard}" frames. The noproc, erpc and bare-rescue
+findings and the "guarded by this {guard}" frames name `:guard`; the
+receive-in-callback findings `:receive`; the unreplied gen_statem call
+and the dropped `from` `:clause`; the handle_info catch-all `:function`.
+`bare_rescue` gains `guard_end` and the finding anchors at the try,
+spanning the rescue.
+
+**Fixed.** `Argus.Findings.new/4` takes `at_source:`, a source fragment a consumer
 holding the source uses to move the anchor to the first line at or after
 the bytecode anchor that contains it as a whole token. `exposure`'s
 `unredacted_secret` anchors at the schema's `__schema__/1` — every
@@ -432,7 +216,16 @@ function Ecto generates carries the `schema do` line — with the field's
 name as the fragment, so scry lands on `field :api_key` rather than
 `defmodule`; its `at_label` is "declared without redact: true".
 
-Every finding says what its anchored line is and what to do about it:
+**Changed.** Related frames take `at_source:` as findings do (`Findings.related/3`;
+the `related` map gains an `at_source` key): a source fragment that
+carries the frame's line the last step. `unreceived_message`'s "the
+receive it never matches" frame says `"receive"` and `to_block:
+:receive` — a receive's `loop_rec` has no line, so the bytecode alone
+put the frame on `def loop do`. Consumers refine a frame's line with the
+fragment as they do a finding's (scry resolves frame lines from the
+bytecode only, today).
+
+**Fixed.** Every finding says what its anchored line is and what to do about it:
 the builders that had no `at_label` or `help` (blocking, effects, ets,
 exposure's TLS pair, failure's rescue/exit/whereis, mailbox's reply
 defects, shutdown's cleanup defects, startup's init effects,
@@ -455,11 +248,233 @@ space. `unbounded_effect_in_init`'s recv rows dedupe per receiving
 function, with the `init/1` callbacks that reach it as evidence frames
 (`init_reaches_recv`) instead of one identical finding per init.
 
-`timer_cancel_without_flush` follows the message through the calls that
+**Changed.** Prose spells functions one way. Builders interpolated the facts' raw
+function IDs (`Madrigal.Wait:await_downfall/2 leaves a monitor live...`)
+beside names already spelled with `call_name/1` (`GenServer.call/2`);
+every finding's title, detail, anchor label, help and frame labels now
+render a function ID as `Mod.fun/2` (`:gen_server.call/3` for Erlang),
+and a closure as "an anonymous function in Mod.fun/2", in the one place
+`build/2` already rewrote closure names. Instruction IDs and a generic
+finding's raw columns are left as they are. Titles that named a
+function change with it.
+
+**Changed.** Two titles change. failure's inconsistent-handling title names the
+callee with its module (`:gen_statem.call/3 called bare where every
+other call site guards it`, was `call/3 called bare ...` — a title that
+could not tell `GenServer.call/3` from `:gen_statem.call/3`); exposure's
+unredacted-secret title reads `MyApp.User.password_hash is printed by
+inspect/1` (was `MyApp.User.:password_hash`). Consumers matching titles
+re-key: the corpus pairs are, encore's goldens are not yet.
+
+**Changed.** `Findings.heuristic/3` is the one way a finding rests on a prior: one
+severity step down, `provenance: :heuristic`, `confidence`, and a help
+line — `heuristic: <what the prior said> (p=0.87)`. The coupling,
+exposure and unsafe-input builders each carried a copy of the demotion
+and rewrote `at_label` with the note; `at_label` now keeps saying what
+the anchor line is ("supervision tree defined here"), and the note moved
+to the last help line.
+
+**Changed.** Four analysis descriptions (what `mix scry --list` prints) had drifted
+from the README's table, and the table from the analyses: `structure`
+now names its lookup-then-start race, `ets` Mnesia, `blocking` receives
+in callbacks, `startup` handle_continue/2 by its arity, `coverage` that
+it is opt-in. `Argus.ReadmeTest` keeps the two equal. `Findings.run/2`'s
+docs name the sets and the retired names `:analyses` accepts.
+
+### Findings: building and degradation
+
+**Fixed.** One row a finding builder did not expect degraded its whole concern:
+`run/2` rescued the concern's build as a unit, so a single raising row
+dropped every finding in it. The rescue is per row now — that row is
+reported with its raw columns (a generic finding, or a generic frame
+for an evidence row) and a help line saying so, the concern still
+reports everything else, and it gets a `degraded` note as well as its
+`ran` entry. `test/finding_heads_test.exs` reads every rule head of every
+output relation from the `.dl` sources and checks each literal
+combination reaches a builder clause that renders it, so a new head no
+clause matches fails in the suite.
+
+**Fixed.** A custom (non-builtin) analysis's evidence relations joined nothing:
+the join columns were looked up among the builtin analyses only, so every
+frame silently vanished. `Findings.build/2` reads the joins off the
+analysis's own relations, once per build (the lookup ran per row, over
+every loaded module), and raises when two evidence relations name the
+same finding relation or one names a relation the analysis does not
+declare. Collecting a finding's frames is linear in its rows (it
+appended one frame at a time).
+
+**Fixed.** `Findings.build/2` raised `KeyError` on a solve's raw result — any
+relation the analysis does not declare as an output (stage 0's
+`call_reachable`, a rule's intermediates) — and its spec said it
+returned `[Findings.t()]`. It ignores undeclared relations and is
+specced `[finding()]`.
+
+**Fixed.** A retired name's row filter resolved each alias column per row, over
+every loaded module; it resolves once per alias entry, against the
+concern that runs it.
+
+### mailbox
+
+**Added.** `mailbox.unreceived_message`: a message sent to a spawned process whose
+receive has no clause for it. The message is not dropped; it stays in
+the mailbox for the life of the process and every later receive scans
+past it. The destination comes from process points-to (the send may
+reach the process through parameters, results, `self()` or a registered
+name, so the sending function need not name it), the message is a
+literal atom or a tuple's literal tag, and only a receive held by the
+spawned function itself is judged, never one with a clause that could
+take anything. Anchored at the send, with the receive and the spawn as
+related frames. No corpus pair: the corpus trees, OTP's and Elixir's own
+applications and a search of public issues turned up no instance, so the
+rule ships on its fixtures (`test/analyses/mailbox_unreceived_test.exs`)
+and its quiet neighbour.
+
+**Added.** `mailbox`'s `timer_cancel_without_flush` also catches a timer whose ref
+never leaves the function: `ref = Process.send_after(self(), :deadline,
+t)`, work, `Process.cancel_timer(ref)` and no flush. A message the timer
+delivered before the cancel is handled on a later call, as if it were
+that call's. `timer_cancel` gains the source `local`, keyed by the
+arming site, from the same local identity; such a row has an empty
+`key` and is deduplicated by its arming site. The local identity now
+follows `swap` as well as `move`.
+
+**Fixed.** `timer_cancel_without_flush` follows the message through the calls that
 store the ref rather than through every caller of the arming function:
 nebulex's `start_timer(time, ref, event \\ :heartbeat)` keeps `:cleanup`
 under one key and `:heartbeat` under another, and each finding now names
 its own message (both said `:cleanup`).
+
+**Fixed.** mailbox's timed-wait monitor leak was the one error-severity finding
+with no `help`; it says to `Process.demonitor(ref, [:flush])` on the
+timeout branch, and `FindingHeadsTest` requires help of every error.
+
+### effects
+
+**Changed.** effects findings point at the calls they are about. `effect_in_context`
+gains `site` (the instruction performing the effect; empty for a
+receive) and `opened` (the transaction call); `purity_unprovable` gains
+`site`; `impure_closure_to_pure` gains `site` (the call handing the
+closure to the pure function) and `effect_site`. A transaction finding
+anchors at the `Repo.transaction` call its label names ("opens the
+transaction here" sat on the function head), a closure finding at the
+call that hands the closure over, and each carries the effect as a
+related frame. Output-relation shapes only; the fact schema is
+unchanged, and effects now reads stage 0's `call_site`.
+
+**Fixed.** A transaction body was paired with every repo its function opened a
+transaction on: `effects.dl` joined `transaction_body` and
+`transaction_site` on the caller alone, so a function passing its one
+closure to `FakeRepo.transaction/1` and an `Ecto.Multi` to
+`AuditRepo.transaction/1` reported the effect inside both — and, once
+deduplicated, named whichever repo sorted first. The body is keyed by
+its transaction site, and a function whose transactions name two repos
+has no body: nothing says whose the closure is.
+
+### Check-then-act races (structure, ets)
+
+**Added.** The check-then-act races follow the paper they come from (Christakis and
+Sagonas, PADL 2010) across functions. `clientlib/check_then_act.dl`
+composes the dependence relations in the `CheckThenAct` component: a
+check's result meets the acts that depend on it where it is born or
+returned to, through a lookup helper, a start helper, a multi-clause
+helper handed the result, another module, or the next iteration of a
+loop, with names and keys translated across each call by `call_arg`,
+`call_arg_forward` and `call_arg_field`. An unknown higher-order call is
+not followed, the paper's own evaluated setting. `guarded_create` and
+`ets_guarded_write` are removed — an act decided in the same function is
+the component's simplest case — and `Argus.Extractor.Guard` is
+deprecated.
+
+**Added.** `registry_race` rows now name the function where the pair meets, and
+cover `Process.registered/0` deciding a register (`name_lookup` api
+`registered`, source `any`) and whereis-then-unregister (new
+`name_release(id, func, api, source, key)`; the loser's outcome is an
+`ArgumentError` or `badarg` rescued). `ets_check_act` follows a table
+handed on as a parameter, by name or as the reference `:ets.new/2`
+returned in a caller — new `ets_tid_arg(caller, callee, arg_pos, name)`,
+closures' captured variables included. The paper's registry and ETS
+examples, and Dialyzer's unregister warning, are Erlang fixtures under
+`test/fixtures/erl/` pinned by `Padl2010RaceTest`.
+`Argus.Findings.elsewhere/2` names the function a site sits in when it
+is not where the pair meets.
+
+**Added.** `ets` gains `mnesia_check_act(mod, func, table, key, read, write)` over a
+new `Argus.Extractors.Mnesia` and its `mnesia_op(id, func, op, kind,
+table_source, table, key_source, key)`: a dirty read that decides or
+feeds a dirty write of the same record another process can write. With
+it every example in the paper is pinned, and the check-then-act rules
+cover all four of Dialyzer's `-Wrace_conditions` warnings.
+
+**Added.** The race families' names, tables and keys gain a fifth source, `local`:
+a value that is no literal, parameter or map field but has one defining
+instruction (`Helpers.key_identity/4` with `Helpers.origins_index/1`,
+through reaching definitions and moves, indexed once per module as
+`module_data.origins_index`), keyed by that instruction's ID. Two
+operands with the same origin hold the same value, so `key = {name,
+type}` handed to a dirty read and then a dirty write is one key
+(ztlp@39fa329); a value two definitions reach stays dynamic, and a local
+identity never crosses a call.
+
+**Added.** A check-then-act pair that meets in a helper is reported there, and not
+again in each caller the helper returns the check to.
+
+**Changed.** `structure.registry_race` gains `key_source` (literal, param, field,
+local, dynamic or any) before `key`, and the finding says which name it
+means: "asks whether the name in its first argument is registered" where
+it said "asks whether 0 is registered" — a parameter's position, printed
+as a number, in 11 of the 14 name-race findings across the corpus.
+
+### unsafe_input
+
+**Fixed.** `unsafe_input`'s two sink relations gain a trailing `safety` column, the
+deserialization's option class (`unsafe | atoms_only | dynamic`, empty
+for the other sinks), and the deserialization finding says which. The
+title "binary_to_term without :safe" was literally false for a call that
+passes `[:safe]` — argus keeps that finding on purpose, as a downgrade
+rather than a clear (Paginator CVE-2020-15150 was RCE through `[:safe]`),
+but said the wrong thing about it. Now: `unsafe` keeps its title and
+`:error`; `atoms_only` is "binary_to_term with [:safe] and no shape
+check" at `:warning`, with the loaded-module fun risk and
+`Plug.Crypto.non_executable_binary_to_term/2` in the text; `dynamic` is
+"binary_to_term with options not known statically" at `:error`. A
+request-reachable deserialization keeps its proximity severity and gains
+the same wording.
+
+### Corpus and tooling
+
+**Added.** `Argus.Corpus` pairs take `subdir:` for a repository whose Mix project is
+not at the root — `mix.exs` under `elixir/`, one app of an umbrella under
+`apps/` — so a fix in such a tree can be a pair. The clone is still one
+directory per `<repo>-<sha7>`; relaxing the Elixir requirement, building
+and finding beams happen in the project, and an umbrella app's beams are
+found in the umbrella's `_build`.
+
+**Changed.** The closed-issue corpus caches the facts of each checkout beside it
+(`.argus-facts/<digest>/facts`), keyed by the beams, the code and
+Datalog that extraction reaches (`Argus.Corpus.engine_modules/0`: the
+pipeline, the extractors and what they call through beam_spy and ctf,
+the analyses' extractor declarations, stage 0's includes — not a
+finding's prose or a rule), the runtime and the solver; `Argus.Corpus.analyze/2`
+takes the pair and side and solves over the cache. Extraction was over
+90% of a large tree's analysis and its inputs never move between runs.
+`Argus.CorpusTest` analyzes each checkout once, `ARGUS_CORPUS_JOBS` (default
+4) at a time, before checking the pairs. An entry under another digest is
+pruned only once no run has touched it for an hour: a VM beside this one —
+another worktree's build has its own digest — may still be reading it. The suite's analysis tests run
+`async: true`; the tests that set VM-wide state (`PATH`, `TYPESAFE_API_KEY`,
+`ARGUS_PRIORS_DIR`) live in their own sync modules.
+
+**Fixed.** `Argus.Corpus.ensure/2` returned every beam twice when the
+project is the repository root, and listed both a dev and a test build;
+each beam once now, from one build.
+
+**Changed.** `Argus.Souffle.input_relations/2` memoizes its answer for a program
+shipped under `priv/dl`, versioned by a digest of every file there and
+the solver binary's identity. The answer depends on nothing else, and
+resolving it is a Souffle invocation per analysis (about 190ms each) that
+scry paid six times on every cold compile and the suite paid on every
+test that enumerates the analyses. A program outside `priv/dl` is still
+read on every call.
 
 ## 0.19.0 — 2026-09-22
 
