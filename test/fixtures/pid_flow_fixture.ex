@@ -703,6 +703,40 @@ defmodule Argus.Test.Fixtures.PidFlow do
     def handle_call(:reindex, _from, s), do: {:reply, :ok, s}
   end
 
+  defmodule Answerer do
+    @moduledoc "A named server."
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:ask, _from, s), do: {:reply, :answer, s}
+  end
+
+  defmodule ProxyApi do
+    @moduledoc "A GenServer whose public ask/0 calls Answerer, not itself."
+    use GenServer
+
+    alias Argus.Test.Fixtures.PidFlow.Answerer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok)
+    def ask, do: GenServer.call(Answerer, :ask)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:noop, _from, s), do: {:reply, :ok, s}
+  end
+
+  defmodule ProxyUser do
+    @moduledoc "Asks through ProxyApi: it waits on Answerer."
+    def use, do: Argus.Test.Fixtures.PidFlow.ProxyApi.ask()
+  end
+
   defmodule Quiet do
     @moduledoc "Starts with a computed module, apply, and a pid from a library call: no process to name."
     def applied(m), do: apply(m, :start_link, [])

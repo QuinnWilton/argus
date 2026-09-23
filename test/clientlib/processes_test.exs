@@ -45,6 +45,9 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.Reindexer,
     PidFlow.AnyCall,
     PidFlow.Decoy,
+    PidFlow.Answerer,
+    PidFlow.ProxyApi,
+    PidFlow.ProxyUser,
     PidFlow.Quiet
   ]
 
@@ -312,6 +315,16 @@ defmodule Argus.Clientlib.ProcessesTest do
     assert ["Reindexer:handle_call/3", "AnyCall"] in r["sync_dep"]
     refute ["Reindexer:handle_call/3", "Decoy"] in r["sync_dep"]
     refute Enum.any?(r["tag_resolved_site"], &match?([_, "Reindexer:handle_call/3" | _], &1))
+  end
+
+  test "a server module's function that calls another server is a proxy", %{tmp_dir: tmp_dir} do
+    r = solve(tmp_dir, ~w(sync_dep reaches_sync_dep genserver_sync_api))
+
+    # ProxyApi.ask/0 calls Answerer by name: ProxyUser waits on Answerer,
+    # and ask/0 is not ProxyApi's own client API.
+    refute Enum.any?(r["genserver_sync_api"], &match?(["ProxyApi:ask/0", _], &1))
+    refute ["ProxyUser:use/0", "ProxyApi"] in r["sync_dep"]
+    assert ["ProxyUser:use/0", "Answerer"] in r["reaches_sync_dep"]
   end
 
   test "a gen_statem's data carries its pids from state to state", %{tmp_dir: tmp_dir} do

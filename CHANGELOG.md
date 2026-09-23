@@ -459,6 +459,14 @@ or of unknown arity, is left to the closure-following starts table
 rather than named `M:f/-1`; `proc_lib:start_monitor`'s `{result, ref}`
 is not modelled.
 
+**Fixed.** A GenServer module's public function that calls or casts to
+another module's server — resolved by process points-to — is no longer
+that module's client API (`genserver_sync_api`, `genserver_async_api`,
+`reaches_sync_caller_in` in `calls.dl`): its callers wait on the other
+server, and `ProxyApi.ask/0` calling `Answerer` made every caller of it
+depend on ProxyApi's process instead. Corpus, realtime, logflare, hexpm
+and OTP findings unchanged.
+
 **Fixed.** A call process points-to resolves is no longer also attributed
 by its message tag (`calls.dl`'s `tag_resolved_site`): the tag's guess
 could name a different server than the one the pid is (a `:reindex`

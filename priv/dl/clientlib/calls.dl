@@ -71,7 +71,8 @@ peer_call("GenStateMachine:call/3").
 genserver_sync_api(func, mod) :-
   function_def(func, mod, _, _, 1),
   behaves_as(mod, "GenServer"),
-  sync_call(func, _).
+  sync_call(func, _),
+  !calls_other_server(func, mod).
 
 genserver_sync_api(func, mod) :-
   function_def(func, mod, _, _, 1),
@@ -83,7 +84,27 @@ genserver_sync_api(func, mod) :-
 genserver_async_api(func, mod) :-
   function_def(func, mod, _, _, 1),
   behaves_as(mod, "GenServer"),
-  async_cast(func, _).
+  async_cast(func, _),
+  !casts_other_server(func, mod).
+
+// A function of `mod` whose call (cast) process points-to resolves to
+// another module's server is a proxy: its callers wait on that server,
+// not on `mod`'s, whatever module the function sits in.
+.decl calls_other_server(func: symbol, mod: symbol)
+
+calls_other_server(func, mod) :-
+  call_target(func, "call", p),
+  server_process(p, other),
+  function_def(func, mod, _, _, _),
+  other != mod.
+
+.decl casts_other_server(func: symbol, mod: symbol)
+
+casts_other_server(func, mod) :-
+  call_target(func, "cast", p),
+  server_process(p, other),
+  function_def(func, mod, _, _, _),
+  other != mod.
 
 // ── Dependencies ───────────────────────────────────────────────────────
 //
@@ -414,7 +435,8 @@ module_reaches(from_mod, to_mod, caller) :-
 reaches_sync_caller_in(f, m) :-
   call_edge(f, g),
   function_def(g, m, _, _, _),
-  sync_call(g, _).
+  sync_call(g, _),
+  !calls_other_server(g, m).
 
 reaches_sync_caller_in(f, m) :-
   call_edge(f, g),
