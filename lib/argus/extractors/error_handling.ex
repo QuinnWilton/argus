@@ -306,8 +306,10 @@ defmodule Argus.Extractors.ErrorHandling do
   defp handler_end(ctx, label, try_idx) do
     instrs = List.to_tuple(ctx.instrs)
     line_table = Map.get(ctx, :line_table, %{})
-    visited = CatchClauses.analyse(ctx.instrs, label).visited
-    own = visited -- after_try(ctx.instrs, try_idx)
+    after_try = MapSet.new(after_try(ctx.instrs, try_idx))
+
+    own =
+      Enum.reject(CatchClauses.analyse(ctx.instrs, label).visited, &MapSet.member?(after_try, &1))
 
     markers =
       for idx <- own,
