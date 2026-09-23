@@ -28,6 +28,10 @@ or rename by the 0.17 entry below.
 
 ### Fact schema and extraction
 
+**Fixed.** A `start_child` whose supervisor comes from another module's
+function (`Other.via_for(conf)`) is `"dynamic"`, not the via name of a
+local function that happens to share the name and arity.
+
 **Fixed.** A module that `use`s the GenStateMachine library is a gen_statem to
 the extractor: its `@behaviour GenStateMachine` was not `:gen_statem`, so
 it had no `statem_*` facts at all (swarm's tracker among them), though

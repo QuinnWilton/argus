@@ -364,6 +364,14 @@ defmodule Argus.Extractors.SupervisionTest do
       refute sup == "dynamic"
     end
 
+    test "another module's helper is not resolved through a local one of the same name" do
+      {:ok, data} =
+        BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.ViaImpostor)))
+
+      assert [["dynamic", "Argus.Test.Fixtures.ViaQueueSup", _caller]] =
+               Map.get(Supervision.extract(data), :dynamic_child, [])
+    end
+
     test "the registration and start_child sides produce identical via names" do
       {:ok, nursery} =
         BeamSpy.BeamFile.disassemble(to_string(:code.which(Argus.Test.Fixtures.ViaNursery)))

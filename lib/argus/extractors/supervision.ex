@@ -344,17 +344,24 @@ defmodule Argus.Extractors.Supervision do
       {:ok, {mod, :via, arity}, origin_idx} when arity in [2, 3] ->
         if via_registry_module?(mod), do: via_role_name(instrs, origin_idx, mod)
 
-      {:ok, {_mod, func, arity}, _origin_idx} ->
-        # A local helper produced the value — resolve the via it returns.
-        case find_function(functions, func, arity) do
-          nil -> nil
-          helper_instrs -> via_name_in_function(helper_instrs)
+      {:ok, {mod, func, arity}, _origin_idx} ->
+        # A helper of this module produced the value — resolve the via it
+        # returns. Another module's function's body is not in hand, and a
+        # function here of the same name and arity is not it.
+        with helper_instrs when helper_instrs != nil <- find_function(functions, func, arity),
+             true <- defined_in?(helper_instrs, mod) do
+          via_name_in_function(helper_instrs)
+        else
+          _ -> nil
         end
 
       :no ->
         nil
     end
   end
+
+  defp defined_in?(instrs, mod),
+    do: Enum.any?(instrs, &match?({:func_info, {:atom, ^mod}, _name, _arity}, &1))
 
   # A `via/2`|`via/3` on a `*.Registry` module builds a registry via-tuple.
   defp via_registry_module?(mod) when is_atom(mod) do

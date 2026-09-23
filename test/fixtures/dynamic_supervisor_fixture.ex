@@ -102,3 +102,21 @@ defmodule Argus.Test.Fixtures.DynSupOwner do
   @impl true
   def init(_), do: DynamicSupervisor.init(strategy: :one_for_one)
 end
+
+defmodule Argus.Test.Fixtures.ViaImpostor do
+  @moduledoc false
+  # start_child targets whatever another module's `foreman/1` returns; the
+  # local `foreman/1` of the same name and arity is not it.
+  def start_queue(conf) do
+    conf
+    |> Argus.Test.Fixtures.ViaElsewhere.foreman()
+    |> DynamicSupervisor.start_child({Argus.Test.Fixtures.ViaQueueSup, []})
+  end
+
+  def foreman(conf), do: Argus.Test.Fixtures.ViaApp.Registry.via(conf.name, Foreman)
+end
+
+defmodule Argus.Test.Fixtures.ViaElsewhere do
+  @moduledoc false
+  def foreman(conf), do: {:via, Registry, {conf.name, :elsewhere}}
+end
