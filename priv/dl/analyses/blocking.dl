@@ -162,7 +162,7 @@ unbounded_wait(cat(mod, ":handle_call/3"), "", "infinity", target, "") :-
 // `phase` is "call" for two modules that synchronously call each other
 // anywhere, "continue" when both do so from handle_continue/2: both
 // return from init, the supervisor proceeds, and neither ever reads its
-// mailbox.
+// mailbox. "self" is a process calling itself (mod_a = mod_b).
 .decl call_cycle(mod_a: symbol, mod_b: symbol, witness_a: symbol, witness_b: symbol, phase: symbol, site_a: symbol, site_b: symbol)
 .output call_cycle
 
@@ -179,6 +179,17 @@ call_cycle(a, b, wa, wb, "continue", sa, sb) :-
   a < b,
   sync_site_or_empty(wa, b, sa),
   sync_site_or_empty(wb, a, sb).
+
+// A cycle of one: a synchronous call to the calling process itself — to
+// self(), to self() handed to a helper, or from a server's callback to a
+// name only its own module's processes hold (self_call, processes.dl).
+// gen checks a call's target against self() and exits with
+// :calling_self rather than wait forever for a reply the caller would
+// have to send. A module_sync_dep cycle needs two modules; this is the
+// one it cannot see.
+call_cycle(m, m, f, f, "self", id, id) :-
+  self_call(f, id),
+  function_def(f, m, _, _, _).
 
 // The call in a witness that makes its side of the dependency, when the
 // witness makes it directly; empty when a callee does.

@@ -1216,6 +1216,15 @@ get_and_update` in their module-function forms (`/4` default, `/5`
 timeout) are synchronous calls. A `:gen_statem.call/3` timeout of
 `{:dirty_timeout, t}` or `{:clean_timeout, t}` is `t`.
 
+**Added.** `blocking.call_cycle` "self": a synchronous call to the calling
+process itself, "Synchronous call to the calling process itself" — to
+`self()`, to `self()` handed to a helper that calls its parameter (new in
+processes.dl's `self_call`), or from a callback to a name only the
+module's own process holds. gen exits such a call with `:calling_self`;
+the two-module cycle rule filters `mod != to` and never saw it. One
+finding per call site. Nothing on the corpus, realtime, logflare, hexpm
+or OTP.
+
 **Changed.** `blocking.call_chain` ("chain") keeps only the shortest chain between two
 servers (a Souffle subsumption), where it enumerated every path length up
 to ten and reported one at random, and no longer passes through a module

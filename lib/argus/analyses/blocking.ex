@@ -16,7 +16,9 @@ defmodule Argus.Analyses.Blocking do
     that synchronously call each other, anywhere (`call`) or both from
     `handle_continue/2` (`continue`: a startup deadlock); the edges in
     `call_cycle_path` are its related frames, marked `tag` when the hop
-    was attributed by message tag.
+    was attributed by message tag. `self` is the cycle of one: a
+    synchronous call to the calling process itself, which gen exits with
+    `:calling_self`.
   - `sync_call_fan_in(target, count)` — a server five or more modules
     call synchronously; the callers in `bottleneck_caller` are its
     related frames.
@@ -94,12 +96,15 @@ defmodule Argus.Analyses.Blocking do
           {:mod_b, :symbol, "second module in cycle"},
           {:witness_a, :symbol, "function in mod_a carrying the a→b dependency"},
           {:witness_b, :symbol, "function in mod_b carrying the b→a return path"},
-          {:phase, :symbol, "call (anywhere) | continue (both from handle_continue/2)"},
+          {:phase, :symbol,
+           "call (anywhere) | continue (both from handle_continue/2) | " <>
+             "self (a process calling itself; mod_a = mod_b)"},
           {:site_a, :symbol, "the call in witness_a, when direct; else empty"},
           {:site_b, :symbol, "the call in witness_b, when direct; else empty"}
         ],
-        key: [:mod_a, :mod_b, :phase],
-        doc: "Pair of modules with mutual synchronous dependency."
+        # A self-call is one finding per call site.
+        key: {:phase, %{"self" => [:witness_a, :site_a], default: [:mod_a, :mod_b, :phase]}},
+        doc: "Pair of modules with mutual synchronous dependency, or a process calling itself."
       },
       %{
         name: :call_cycle_path,
@@ -281,6 +286,24 @@ defmodule Argus.Analyses.Blocking do
           "are up)"
       ],
       related: [Findings.related("cycle partner", Findings.at_mfa(mod_b, :handle_continue, 2))]
+    )
+  end
+
+  def finding(:call_cycle, [mod, mod, func, func, "self", site, site]) do
+    Findings.new(
+      :error,
+      "Synchronous call to the calling process itself",
+      "#{Findings.call_name(func)} makes a synchronous call whose target is the " <>
+        "process running it: self(), or a name only #{mod}'s own process holds. " <>
+        "A process cannot answer a call while it waits for the reply, so gen " <>
+        "exits the caller with :calling_self instead of deadlocking, and the " <>
+        "process crashes on the first call.",
+      at: Findings.at_site_in_func(site, func, mod),
+      at_label: "calls its own process",
+      help: [
+        "call the function that does the work directly, or send the process " <>
+          "a message (`send(self(), msg)`, a cast) and handle it later"
+      ]
     )
   end
 

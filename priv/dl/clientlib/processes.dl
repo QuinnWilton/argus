@@ -576,6 +576,12 @@ started_by_module(p, m) :- private_process(p, f, _), function_def(f, m, _, _, _)
 
 self_call(f, id) :- pid_call(id, f, "call", "self", "self").
 
+// self() handed to a helper that calls its parameter: the call into the
+// helper, in the function that owns the self().
+self_call(f, a) :-
+  pid_arg(a, f, g, k, "call", "self", _),
+  targets_param(g, k, "call", _).
+
 .decl named_module(name: symbol, mod: symbol)
 
 named_module(n, m) :- named_pid(n, p), server_process(p, m).
