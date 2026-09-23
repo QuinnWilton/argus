@@ -53,7 +53,18 @@ secret_kind("session_token", "token").
 matches_kind(mod, field, kind) :-
   schema_field(mod, field),
   secret_kind(fragment, kind),
-  contains(fragment, field).
+  contains(fragment, field),
+  !secret_metadata(field).
+
+// A field that names a secret but holds a fact about it — when it was
+// sent, when it expires, whether one is set — is not the secret:
+// `password_reset_sent_at`, `api_key_expires_at`, `password_changed_at`.
+// Matched on the field's ending, as schemas spell these.
+.decl secret_metadata(field: symbol)
+
+secret_metadata(field) :-
+  schema_field(_, field),
+  match(".*_(at|on|date|time|count|expires|expiry|expiration|ttl|set|length|version)", field).
 
 // A field can match more than one fragment — `smtp_password` is both a
 // third-party credential and a password — and reporting it twice under two

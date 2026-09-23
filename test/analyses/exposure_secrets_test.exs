@@ -4,7 +4,7 @@ defmodule Argus.Analyses.ExposureSecretsTest do
   alias Argus.Souffle
   alias Argus.Test.Fixtures.Secret, as: S
 
-  @all [S.Exposed, S.PartlyRedacted, S.Redacted, S.Ordinary]
+  @all [S.Exposed, S.PartlyRedacted, S.Redacted, S.Ordinary, S.SecretMetadata]
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
@@ -32,6 +32,12 @@ defmodule Argus.Analyses.ExposureSecretsTest do
   test "a field name that suggests nothing is not reported" do
     skip_without_souffle()
     assert for_mod("Secret.Ordinary") == []
+  end
+
+  test "a field that holds a fact about a secret is not the secret" do
+    skip_without_souffle()
+    fields = Enum.map(for_mod("Secret.SecretMetadata"), &Enum.at(&1, 1))
+    assert fields == [":access_token"]
   end
 
   test "a schema that redacts something else is marked aware" do

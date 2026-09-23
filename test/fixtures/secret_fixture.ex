@@ -50,4 +50,16 @@ defmodule Argus.Test.Fixtures.Secret do
     def __schema__(:redact_fields), do: []
     def __schema__(_other), do: nil
   end
+
+  defmodule SecretMetadata do
+    @moduledoc """
+    Fields that name a secret but hold facts about it: when a reset was
+    sent, when a token expires. The token itself is still reported.
+    """
+    def __schema__(:fields),
+      do: [:id, :password_reset_sent_at, :access_token_expires_at, :api_key_count, :access_token]
+
+    def __schema__(:redact_fields), do: []
+    def __schema__(_other), do: nil
+  end
 end

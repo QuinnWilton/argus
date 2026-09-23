@@ -723,6 +723,13 @@ or for anything. One whose every clause waits for some other literal, in
 a module whose timers all carry known literals, is reported. When the
 module arms no timer the program can see, the receive stays suppressed.
 
+### exposure
+
+**Changed.** `exposure.unredacted_secret` no longer reports a field that names a
+secret but holds a fact about it — `password_reset_sent_at`,
+`access_token_expires_at`, `api_key_count`: a field ending in a
+timestamp, date, count, expiry, TTL, length, version or "set" suffix.
+
 ## 0.19.0 — 2026-09-22
 
 ### Added
