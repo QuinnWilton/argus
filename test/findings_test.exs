@@ -442,6 +442,24 @@ defmodule Argus.FindingsTest do
       assert finding.concern == :custom_evidence
     end
 
+    test "a builder raising on one row costs that row, not the concern" do
+      findings =
+        Findings.build(__MODULE__.Fragile, %{
+          "finding" => [["Foo"], ["boom"], ["Bar"]],
+          "witness" => [["Foo", "Foo:g/0#1"], ["Foo", "boom"]]
+        })
+
+      assert [foo, boom, bar] = findings
+      assert {foo.module, bar.module} == {Foo, Bar}
+      assert boom.title == "Finding"
+      assert boom.detail =~ "mod=boom"
+      assert List.last(boom.help) =~ "could not render this finding row (no boom)"
+
+      # The raising evidence row becomes a raw frame; its sibling renders.
+      assert [%{label: "witness"}, %{label: raw}] = foo.related
+      assert raw =~ "could not render this witness row"
+    end
+
     test "two evidence relations joining one finding relation is an analysis bug" do
       assert_raise ArgumentError, ~r/:finding has two evidence relations/, fn ->
         Findings.build(__MODULE__.TwoEvidence, %{"finding" => [["Foo"]]})
@@ -675,5 +693,19 @@ defmodule Argus.FindingsTest do
     end
 
     defdelegate finding(relation, row), to: CustomEvidence
+  end
+
+  defmodule Fragile do
+    @moduledoc false
+    alias Argus.Findings
+
+    def name, do: :fragile
+    defdelegate output_relations, to: CustomEvidence
+
+    def finding(:finding, ["boom"]), do: raise("no boom")
+    def finding(:finding, [mod]), do: Findings.new(:info, "t", "d", at: Findings.at_module(mod))
+
+    def evidence(:witness, [_mod, "boom"]), do: raise("no boom")
+    def evidence(:witness, [_mod, site]), do: Findings.related("witness", Findings.at_instr(site))
   end
 end

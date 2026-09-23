@@ -22,6 +22,11 @@ defmodule Argus.Findings do
   - A single analysis erroring (rules bug, Souffle timeout) → a
     `degraded` entry naming the analysis and why, while every other
     analysis still runs and reports.
+  - A finding builder raising on a row it did not expect → that row is
+    reported with its raw columns (a generic finding, or a generic frame
+    for an evidence row, whose help says so) and the analysis gets a
+    `degraded` entry as well as its `ran` one; every other row of the
+    concern reports as usual.
 
   ## Atom creation
 
@@ -256,13 +261,17 @@ defmodule Argus.Findings do
     case result do
       {:ok, results} ->
         try do
-          for {asked_name, filter} <- asked_views(asked, name) do
-            findings = build_findings(mod, asked_name, filter_rows(results, filter, mod))
+          Enum.flat_map(asked_views(asked, name), fn {asked_name, filter} ->
+            {findings, failures} =
+              build_findings(mod, asked_name, filter_rows(results, filter, mod))
 
-            {:ran,
-             %{analysis: asked_name, duration_ms: duration_ms, finding_count: length(findings)},
-             findings}
-          end
+            ran =
+              {:ran,
+               %{analysis: asked_name, duration_ms: duration_ms, finding_count: length(findings)},
+               findings}
+
+            [ran | row_degradation(asked_name, name, failures)]
+          end)
         rescue
           exception ->
             for asked_name <- asked_names(asked, name) do
@@ -370,33 +379,84 @@ defmodule Argus.Findings do
   ignored, so the raw result of a solve can be passed as it is.
   """
   @spec build(module(), %{String.t() => [[String.t()]]}) :: [finding()]
-  def build(mod, results) when is_atom(mod) and is_map(results),
-    do: build_findings(mod, mod.name(), results)
+  def build(mod, results) when is_atom(mod) and is_map(results) do
+    {findings, _failures} = build_findings(mod, mod.name(), results)
+    findings
+  end
 
+  # The findings, and the rows whose builder raised. A raising row does
+  # not take its concern down with it: it is reported as a generic
+  # finding that says so, and `run/2` adds a degradation note.
   defp build_findings(mod, asked_name, results) do
     relations = Map.new(mod.output_relations(), &{Atom.to_string(&1.name), &1})
     results = Map.take(results, Map.keys(relations))
     has_builder? = function_exported?(mod, :finding, 2)
     joins = evidence_joins(mod, relations)
-    evidence = evidence_frames(mod, relations, results, joins)
+    {evidence, evidence_failures} = evidence_frames(mod, relations, results, joins)
 
-    for {relation_string, rows} <- Enum.sort(results),
-        relation = Map.fetch!(relations, relation_string),
-        not Map.has_key?(relation, :evidence),
-        row <- dedupe_rows(relation, rows) do
-      attrs =
-        if has_builder? do
-          mod.finding(relation.name, row)
+    {findings, failures} =
+      for {relation_string, rows} <- Enum.sort(results),
+          relation = Map.fetch!(relations, relation_string),
+          not Map.has_key?(relation, :evidence),
+          row <- dedupe_rows(relation, rows),
+          reduce: {[], []} do
+        {findings, failures} ->
+          {attrs, failures} =
+            if has_builder? do
+              guarded(relation, row, failures, fn -> mod.finding(relation.name, row) end)
+            else
+              {generic_finding(relation, row), failures}
+            end
+
+          finding =
+            attrs
+            |> Map.update(:related, [], &(&1 ++ frames_for(evidence, joins, relation, row)))
+            |> Map.put(:analysis, asked_name)
+            |> Map.put(:concern, mod.name())
+            |> render_generated_names()
+
+          {[finding | findings], failures}
+      end
+
+    {Enum.reverse(findings), Enum.reverse(failures) ++ evidence_failures}
+  end
+
+  # One row's builder, run so that its crash costs that row only: the
+  # row falls back to the generic rendering (a finding, or for an
+  # evidence row a frame), which names the crash.
+  defp guarded(relation, row, failures, build) do
+    {build.(), failures}
+  rescue
+    exception ->
+      note =
+        "Argus could not render this #{relation.name} row " <>
+          "(#{Exception.message(exception)}) and shows its raw columns; this is a bug in Argus"
+
+      fallback =
+        if Map.has_key?(relation, :evidence) do
+          related(note <> ": " <> raw_columns(relation, row), row_anchor(row))
         else
-          generic_finding(relation, row)
+          Map.update!(generic_finding(relation, row), :help, &(&1 ++ [note]))
         end
 
-      attrs
-      |> Map.update(:related, [], &(&1 ++ frames_for(evidence, joins, relation, row)))
-      |> Map.put(:analysis, asked_name)
-      |> Map.put(:concern, mod.name())
-      |> render_generated_names()
-    end
+      {fallback, [%{relation: relation.name, row: row, exception: exception} | failures]}
+  end
+
+  defp row_degradation(_asked_name, _name, []), do: []
+
+  defp row_degradation(asked_name, name, [first | _] = failures) do
+    [
+      {:degraded,
+       %{
+         analysis: asked_name,
+         reason: {:finding_builder_crashed, first.exception},
+         detail:
+           "The #{name} analysis ran, but its finding builder crashed on " <>
+             "#{length(failures)} row(s), first a #{first.relation} row: " <>
+             "#{Exception.message(first.exception)}. Those rows are reported with " <>
+             "their raw columns; every other finding is as usual. This is a bug in Argus."
+       }}
+    ]
   end
 
   # `-ensure_connections/2-fun-0-/2` is the compiler's name for a closure;
@@ -462,24 +522,30 @@ defmodule Argus.Findings do
   # the relation sets one (the first in row order — a sample, for "the
   # other sites do this", not a census).
   defp evidence_frames(mod, relations, results, joins) do
-    for {of, {evidence_name, positions}} <- joins,
-        evidence = Map.fetch!(relations, Atom.to_string(evidence_name)),
-        row <-
-          dedupe_rows(evidence, Enum.sort(Map.get(results, Atom.to_string(evidence_name), []))),
-        reduce: %{} do
-      acc ->
-        key = {of, Enum.map(positions, fn {at, _} -> Enum.at(row, at) end)}
-        limit = Map.get(evidence.evidence, :limit)
+    {frames, failures} =
+      for {of, {evidence_name, positions}} <- joins,
+          evidence = Map.fetch!(relations, Atom.to_string(evidence_name)),
+          row <-
+            dedupe_rows(evidence, Enum.sort(Map.get(results, Atom.to_string(evidence_name), []))),
+          reduce: {%{}, []} do
+        {acc, failures} ->
+          key = {of, Enum.map(positions, fn {at, _} -> Enum.at(row, at) end)}
+          limit = Map.get(evidence.evidence, :limit)
 
-        case Map.get(acc, key, {0, []}) do
-          {count, _frames} when limit != nil and count >= limit ->
-            acc
+          case Map.get(acc, key, {0, []}) do
+            {count, _frames} when limit != nil and count >= limit ->
+              {acc, failures}
 
-          {count, frames} ->
-            Map.put(acc, key, {count + 1, [mod.evidence(evidence_name, row) | frames]})
-        end
-    end
-    |> Map.new(fn {key, {_count, frames}} -> {key, Enum.reverse(frames)} end)
+            {count, frames} ->
+              {frame, failures} =
+                guarded(evidence, row, failures, fn -> mod.evidence(evidence_name, row) end)
+
+              {Map.put(acc, key, {count + 1, [frame | frames]}), failures}
+          end
+      end
+
+    {Map.new(frames, fn {key, {_count, frames}} -> {key, Enum.reverse(frames)} end),
+     Enum.reverse(failures)}
   end
 
   defp frames_for(evidence, joins, relation, row) do
@@ -570,26 +636,31 @@ defmodule Argus.Findings do
   # severity :info, prose from the relation's declared doc, anchor from
   # the first row value that parses as an instruction or function ID.
   defp generic_finding(relation, row) do
-    fields =
-      relation.fields
-      |> Enum.zip(row)
-      |> Enum.map_join(", ", fn {{name, _kind, _doc}, value} -> "#{name}=#{value}" end)
+    new(:info, humanize(relation.name), "#{relation.doc} (#{raw_columns(relation, row)})",
+      at: row_anchor(row)
+    )
+  end
 
-    anchor =
-      Enum.find_value(row, empty_anchor(), fn value ->
-        case at_instr(value) do
-          %{instr: nil} ->
-            case at_func(value) do
-              %{mfa: nil} -> nil
-              anchor -> anchor
-            end
+  defp raw_columns(relation, row) do
+    relation.fields
+    |> Enum.zip(row)
+    |> Enum.map_join(", ", fn {{name, _kind, _doc}, value} -> "#{name}=#{value}" end)
+  end
 
-          anchor ->
-            anchor
-        end
-      end)
+  # The first row value that parses as an instruction or function ID.
+  defp row_anchor(row) do
+    Enum.find_value(row, empty_anchor(), fn value ->
+      case at_instr(value) do
+        %{instr: nil} ->
+          case at_func(value) do
+            %{mfa: nil} -> nil
+            anchor -> anchor
+          end
 
-    new(:info, humanize(relation.name), "#{relation.doc} (#{fields})", at: anchor)
+        anchor ->
+          anchor
+      end
+    end)
   end
 
   defp humanize(relation_name) do

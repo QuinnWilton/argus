@@ -263,6 +263,17 @@ relation the analysis does not declare as an output (stage 0's
 returned `[Findings.t()]`. It ignores undeclared relations and is
 specced `[finding()]`.
 
+One row a finding builder did not expect degraded its whole concern:
+`run/2` rescued the concern's build as a unit, so a single raising row
+dropped every finding in it. The rescue is per row now — that row is
+reported with its raw columns (a generic finding, or a generic frame
+for an evidence row) and a help line saying so, the concern still
+reports everything else, and it gets a `degraded` note as well as its
+`ran` entry. `test/finding_heads_test.exs` reads every rule head of every
+output relation from the `.dl` sources and checks each literal
+combination reaches a builder clause that renders it, so a new head no
+clause matches fails in the suite.
+
 A literal operand was spelled with `inspect/1`, which runs a struct's
 own `Inspect` implementation when its module is loaded — so the same
 beam yielded different `literal_value` rows in a VM that had the
