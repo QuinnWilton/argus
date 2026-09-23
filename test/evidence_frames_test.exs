@@ -48,6 +48,20 @@ defmodule Argus.EvidenceFramesTest do
     assert %InstrId{func: "fan_out", arity: 1} = frame.instr
   end
 
+  test "exit_target_owner: the supervisor that owns an exit signal's target" do
+    alias Fixtures.ExitSignals
+
+    assert [finding] =
+             [ExitSignals.Tree, ExitSignals.Worker, ExitSignals.Killer]
+             |> findings(:failure)
+             |> Enum.filter(&(&1.title =~ "Process.exit inside"))
+
+    assert [frame] = finding.related
+    assert frame.label == "#{inspect(ExitSignals.Worker)} is #{inspect(ExitSignals.Tree)}'s child"
+    assert frame.module == ExitSignals.Tree
+    assert %InstrId{func: "init", arity: 1} = frame.instr
+  end
+
   test "init_reaches_recv: the init/1 callbacks that reach an unbounded receive" do
     assert [finding] =
              [Fixtures.InitRecv.Blocking]

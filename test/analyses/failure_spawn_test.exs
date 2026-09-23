@@ -29,5 +29,20 @@ defmodule Argus.Analyses.FailureSpawnTest do
       refute Enum.any?(funcs, &String.contains?(&1, "spawn_linked"))
       refute Enum.any?(funcs, &String.contains?(&1, "spawn_monitored"))
     end
+
+    test "a spawn its caller monitors or links to afterwards is watched" do
+      skip_without_souffle()
+
+      assert {:ok, results} = Argus.analyze([Argus.Test.Fixtures.ExitSignals.Watched], :failure)
+
+      funcs =
+        results
+        |> Rows.where(:failure, "orphan_process", kind: "spawn", drop: [:kind, :target])
+        |> Enum.map(fn [func, _id] -> func end)
+
+      assert Enum.any?(funcs, &String.contains?(&1, "Watched:unwatched/0"))
+      refute Enum.any?(funcs, &String.contains?(&1, "Watched:monitored/0"))
+      refute Enum.any?(funcs, &String.contains?(&1, "Watched:linked/0"))
+    end
   end
 end

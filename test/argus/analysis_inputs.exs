@@ -15,7 +15,7 @@
   exposure:
     ~w(function_def prior_sensitive redacted_field schema_field tls_connect tls_verification),
   failure:
-    ~w(bare_rescue call_edge call_followed_by_branch call_result catch_falls_through catch_tag catch_total closure_def exit_call function_def ignored_error_result implements_behaviour macro_generated name_lookup remote_call rpc_call rpc_result spawn_call spec_return tail_call try_call),
+    ~w(bare_rescue call_edge call_followed_by_branch call_result call_site catch_falls_through catch_tag catch_total closure_def dynamic_call exit_call fun_ref function_def ignored_error_result implements_behaviour macro_generated name_lookup named_process pid_arg pid_base pid_call pid_field pid_load pid_message pid_object pid_register pid_result pid_return pid_sets pid_signal process_start remote_call rpc_call rpc_result spawn_call spec_return supervisor_child supervisor_child_name supervisor_site tail_call try_call),
   mailbox:
     ~w(async_cast call_arg call_arg_field call_arg_forward call_edge call_site call_tag callback_drops_from callback_ref_head callback_return callback_tag callback_total cancel_clause closure_def demonitor_call dynamic_call fun_ref function_def implements_behaviour mailbox_writer matches_down monitor_call monitor_ref_dropped named_process pid_arg pid_base pid_call pid_field pid_load pid_message pid_object pid_register pid_result pid_return pid_send pid_sets process_start recv_pattern recv_start remote_call returns_call statem_call_unreplied statem_event_catchall statem_event_clause statem_info_catchall statem_module statem_state statem_timeout supervisor_child supervisor_child_name sync_call sync_call_timeout tail_call timer_arm timer_cancel timer_ref timer_store trap_exit),
   races:

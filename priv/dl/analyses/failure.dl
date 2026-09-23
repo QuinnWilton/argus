@@ -8,6 +8,7 @@
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
+.include "../clientlib/signals.dl"
 .include "../clientlib/specs.dl"
 
 // ══ The three outputs ═══════════════════════════════════════════════
@@ -54,20 +55,47 @@ unhandled_failure(func, id, "rescue", "", guard_end) :-
 // (`exit(:unexpected_checkout)`) and ordinary client-call failure
 // propagation, both fully supervision-visible and not a bypass. It is
 // excluded via `target != "self"`, the sentinel the extractor uses for
-// the /1 form.
-.init exit_reach = CallReach
+// the /1 form. The exit is the callback's own or in what the callback
+// runs in its own process.
+.init exit_reach = SameProcessReach
 
-exit_reach.seed(g, target) :- exit_call(_, g, target).
+exit_reach.seed(g, id) :- exit_call(id, g, target), target != "self".
+
+.decl callback_exit(func: symbol, id: symbol, target: symbol)
+
+callback_exit(func, id, target) :-
+  handler_function(_, func),
+  exit_reach.reaches(func, id),
+  exit_call(id, _, target).
+
+// Where process points-to (signals.dl) resolves the signal: a process
+// the sending module started itself — a helper kept in the state, a
+// worker it spawned — is its own to stop, and a child a supervisor
+// owns is the bypass the finding is about, named with its supervisor.
+.decl exit_to_supervised(id: symbol, child: symbol, sup: symbol)
+
+exit_to_supervised(id, child, sup) :-
+  signal_target(id, _, "exit", p),
+  supervised_process(p, sup, pos),
+  supervisor_child(sup, pos, child, _, _).
 
 orphan_process(func, func, "exit", target) :-
-  exit_call(_, func, target),
-  handler_function(_, func),
-  target != "self".
+  callback_exit(func, id, target),
+  !exit_to_own_process(id, _),
+  !exit_to_supervised(id, _, _).
 
-orphan_process(func, func, "exit", target) :-
-  exit_reach.reaches(func, target),
-  handler_function(_, func),
-  target != "self".
+orphan_process(func, func, "exit", child) :-
+  callback_exit(func, id, _),
+  exit_to_supervised(id, child, _).
+
+// The supervisor that owns an exit's target: evidence on its finding.
+.decl exit_target_owner(func: symbol, target: symbol, sup: symbol, sup_site: symbol)
+.output exit_target_owner
+
+exit_target_owner(func, child, sup, sup_site) :-
+  callback_exit(func, id, _),
+  exit_to_supervised(id, child, sup),
+  supervisor_site(sup, sup_site).
 
 // ══ Remote calls whose failure is not a value ═══════════════════════
 unhandled_failure(func, call, "erpc_transport", "", guard_end) :-
@@ -165,7 +193,17 @@ unchecked_result(func, id, "Task.Supervisor.start_child", "") :-
 // ══ Processes nobody watches ════════════════════════════════════════
 
 orphan_process(func, id, "spawn", "") :-
-  spawn_call(id, func, _, _, _, "spawn", _, _, _, _).
+  spawn_call(id, func, _, _, _, "spawn", _, _, _, _),
+  !watched_spawn(id).
+
+// A spawn whose process something monitors or links to afterwards
+// (signals.dl): its crash is observed.
+.decl watched_spawn(id: symbol)
+
+watched_spawn(id) :-
+  process_start(id, _, b, _, _),
+  instance(p, b),
+  watched_process(p, _).
 
 // This analysis used to join `instruction(id, func, _, _)` purely to
 // recover the spawning function. Its input set was therefore

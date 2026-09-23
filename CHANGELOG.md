@@ -1161,6 +1161,23 @@ the same wording.
 
 ### failure
 
+**Changed.** `failure.orphan_process` reads process points-to
+(signals.dl). An exit signal from a callback to a process the sending
+module started itself — a helper kept in the state, a connection it
+opened, a proxy it started a line above — is its own to stop and no
+longer "Process.exit inside a GenServer callback"; one that resolves to
+a supervisor's child names the child as `target`, and the new evidence
+relation `exit_target_owner(func, target, sup, sup_site)` attaches the
+supervisor as a related frame: the bypass the finding describes. The
+callback reaches the exit only in its own process now: a kill inside a
+closure it spawns is the spawned process's. A bare `spawn` whose process
+the program then monitors or links to is watched, and no longer an
+orphan. Corpus: phoenix's CodeReloader killing the IO proxy it started
+and supavisor's SecretChecker, whose kill runs in a spawned closure on
+a connection it opened, drop out; OTP kernel's rpc (a spawn race's kill
+of its own process) and three spawns something monitors or links
+(file_server, inet_gethost_native, user_sup) drop out.
+
 **Changed.** `failure.inconsistent_handling` no longer reports a discarded start
 result that `startup.ignored_start_result` already reports: one site,
 one concern, one title.

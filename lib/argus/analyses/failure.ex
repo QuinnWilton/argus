@@ -14,9 +14,12 @@ defmodule Argus.Analyses.Failure do
     its failure case: `Task.Supervisor.start_child` discarded, or a
     `Process.whereis` of `name` used without its nil case.
   - `orphan_process(func, site, kind, target)` — a process nothing
-    supervises: a bare `spawn` (no link, no monitor, nothing observes a
-    crash), or an `exit` signal sent to `target` from a callback, past
-    the supervisor that owns it.
+    supervises: a bare `spawn` nothing links to or monitors afterwards,
+    or an `exit` signal sent to `target` from a callback, past the
+    supervisor that owns it. An exit to a process the sending module
+    started itself is not one; an exit process points-to resolves to a
+    supervisor's child names the child as `target`, and its supervisor
+    (`exit_target_owner`) is a related frame.
   - `inconsistent_handling(func, site, callee, belief, agree, deviate, target)` —
     a call site that breaks with the program's own convention for its
     callee: `belief` is `result_checked` (every other site matches the
@@ -51,7 +54,11 @@ defmodule Argus.Analyses.Failure do
       Argus.Extractors.CallArgs,
       Argus.Extractors.ProcessRegistry,
       Argus.Extractors.Specs,
-      Argus.Extractors.Generated
+      Argus.Extractors.Generated,
+      # Which process an exit signal or a monitor reaches, and whether a
+      # supervisor owns it (clientlib/processes.dl, signals.dl).
+      Argus.Extractors.PidFlow,
+      Argus.Extractors.Supervision
     ]
 
   @impl true
@@ -117,10 +124,24 @@ defmodule Argus.Analyses.Failure do
           {:func, :symbol, "the function spawning or sending the exit"},
           {:site, :symbol, "instruction ID of the spawn, or the callback for an exit"},
           {:kind, :symbol, "spawn | exit"},
-          {:target, :symbol, "the exit target, for an exit"}
+          {:target, :symbol,
+           "the exit target, for an exit: the supervised child's module when " <>
+             "points-to resolves it to one"}
         ],
         key: [:func, :site, :kind, :target],
         doc: "A process nothing supervises: a bare spawn, or an exit signal past the supervisor."
+      },
+      %{
+        name: :exit_target_owner,
+        fields: [
+          {:func, :symbol, "the callback sending the exit"},
+          {:target, :symbol, "the supervised child's module"},
+          {:sup, :symbol, "the supervisor that owns it"},
+          {:sup_site, :symbol, "where the supervisor defines its children"}
+        ],
+        key: [:func, :target, :sup],
+        evidence: %{of: :orphan_process, on: [:func, :target]},
+        doc: "The supervisor that owns an exit signal's target, attached to its finding."
       }
     ]
   end
@@ -174,10 +195,12 @@ defmodule Argus.Analyses.Failure do
   end
 
   def finding(:orphan_process, [func, _site, "exit", target]) do
+    whom = if target == "dynamic", do: "a process it holds as a value", else: target
+
     Findings.new(
       :info,
       "Process.exit inside a GenServer callback",
-      "#{func} sends an exit signal to #{target} from inside a callback. " <>
+      "#{Findings.call_name(func)} sends an exit signal to #{whom} from inside a callback. " <>
         "This is often deliberate — process-manager handoff, registry " <>
         "name-conflict resolution, an ownership watcher killing dependents — " <>
         "but killing a process imperatively bypasses the supervisor that " <>
@@ -303,6 +326,13 @@ defmodule Argus.Analyses.Failure do
   end
 
   @impl true
+  def evidence(:exit_target_owner, [_func, target, sup, sup_site]) do
+    Findings.related(
+      "#{target} is #{sup}'s child",
+      Findings.at_site(sup_site, sup)
+    )
+  end
+
   def evidence(:handling_site, [_callee, belief, site, func, guard_end, _target]) do
     case belief do
       "exception_guarded" ->

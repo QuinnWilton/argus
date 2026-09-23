@@ -79,6 +79,32 @@ defmodule Argus.Analyses.FailureErrorTest do
       assert exits(results) == []
     end
 
+    test "an exit to a process the server started itself is its own to stop" do
+      skip_without_souffle()
+
+      results = analyze([Argus.Test.Fixtures.ExitSignals.OwnHelper])
+
+      assert exits(results) == []
+    end
+
+    test "an exit to a supervisor's child names the child and its supervisor" do
+      skip_without_souffle()
+
+      alias Argus.Test.Fixtures.ExitSignals
+
+      mods = [ExitSignals.Tree, ExitSignals.Worker, ExitSignals.Killer]
+      results = analyze(mods)
+
+      assert [[func, target]] = exits(results)
+      assert func =~ "Killer:handle_cast/2"
+      assert target == inspect(ExitSignals.Worker)
+
+      {:ok, findings} = Argus.run_analyses(mods, analyses: [:failure])
+      [finding] = Enum.filter(findings.findings, &(&1.title =~ "Process.exit"))
+      assert [%{label: label}] = finding.related
+      assert label == "#{inspect(ExitSignals.Worker)} is #{inspect(ExitSignals.Tree)}'s child"
+    end
+
     test "does not flag Process.exit outside process callbacks" do
       skip_without_souffle()
 
