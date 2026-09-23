@@ -13,6 +13,14 @@ defmodule Scry.ConfigTest do
     assert Config.load(analyses: [:security, :exposure]).analyses == security
   end
 
+  test "the check-then-act races are one concern, run by default" do
+    assert :races in Config.load([]).analyses
+    assert Config.load(severity: [races: :error]).severity == %{races: :error}
+
+    e = assert_raise(Scry.ConfigError, fn -> Config.load(analyses: [:registry_race]) end)
+    assert e.message =~ ":registry_race is a finding of the :races analysis"
+  end
+
   test "a relation named where its analysis goes names the analysis" do
     e = assert_raise(Scry.ConfigError, fn -> Config.load(analyses: [:coupling, :call_cycle]) end)
     assert e.key == [:analyses]

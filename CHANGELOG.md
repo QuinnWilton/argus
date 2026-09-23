@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- argus 0.20 moves the three check-then-act races into a concern of
+  their own, `races`: `registry_race` from `structure`, `ets_check_act`
+  and `mnesia_check_act` from `ets`. Their findings report as
+  `[scry.races]`, a `severity:` override for them is keyed `races:`,
+  and `races` is in the default set (the registry race ran by default
+  before, through `structure`), so an unconfigured project now also
+  hears about ETS and Mnesia read-then-write races.
 - A name argus retired in 0.17 (`:supervision`, `:unsafe_task`, ...)
   is no longer accepted in `analyses:` or `severity:`: argus 0.20 drops
   the alias table that expanded them, and scry no longer asks it. Such a
