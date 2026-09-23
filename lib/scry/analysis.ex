@@ -776,7 +776,7 @@ defmodule Scry.Analysis do
       {:error, _} -> File.rm_rf!(staging)
     end
 
-    prune_scratch()
+    maybe_prune_scratch()
     :ok
   end
 
@@ -826,15 +826,53 @@ defmodule Scry.Analysis do
 
   @relations_keep 512
 
-  defp prune_scratch do
+  # Pruning lists and stats the whole store, so it runs at most once a
+  # minute per VM rather than on every directory written — a run writes a
+  # dozen, concurrently.
+  @prune_interval_ms 60_000
+
+  defp maybe_prune_scratch do
+    clock = prune_clock()
+    now = System.monotonic_time(:millisecond)
+    last = :atomics.get(clock, 1)
+
+    if last == 0 or now - last >= @prune_interval_ms do
+      # Whoever swaps the timestamp prunes; a concurrent writer skips.
+      if :atomics.compare_exchange(clock, 1, last, now) == :ok, do: prune_scratch()
+    end
+
+    :ok
+  end
+
+  defp prune_clock do
+    case :persistent_term.get({__MODULE__, :prune_clock}, nil) do
+      nil ->
+        clock = :atomics.new(1, signed: true)
+        :persistent_term.put({__MODULE__, :prune_clock}, clock)
+        clock
+
+      clock ->
+        clock
+    end
+  end
+
+  @doc false
+  # Bounds the scratch root: the newest fact directories, and the newest
+  # files of the shared relation store. Public for tests.
+  @spec prune_scratch() :: :ok
+  def prune_scratch do
     root = scratch_root()
-    prune_relation_files(Path.join(root, "relations"))
+    relations = Path.join(root, "relations")
+    prune_relation_files(relations)
 
     case File.ls(root) do
       {:ok, entries} ->
         entries
         |> Enum.map(&Path.join(root, &1))
-        |> Enum.filter(&File.dir?/1)
+        # The relation store is not a fact directory: pruning it as one
+        # (when it was not among the newest) threw away every relation
+        # file, so each run stringified them all again.
+        |> Enum.filter(&(&1 != relations and File.dir?(&1)))
         |> Enum.map(fn dir ->
           mtime =
             case File.stat(dir, time: :posix) do
@@ -851,6 +889,8 @@ defmodule Scry.Analysis do
       {:error, _} ->
         :ok
     end
+
+    :ok
   end
 
   # A directory's hard links survive the shared file's removal, so this

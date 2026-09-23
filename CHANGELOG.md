@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The scratch root's pruning no longer deletes the shared relation store.
+  It pruned every directory beyond the 24 newest, and the store is a
+  directory: once its mtime fell outside the window, every relation file
+  went, and the next run stringified every relation again. Pruning also
+  runs at most once a minute per VM instead of on every fact directory
+  written.
 - Labels on the same span of the same file render as one label whose
   messages join in order. A call cycle's anchor and the frame for the
   edge it starts sit on the same call, and drew two underlines of one
