@@ -286,6 +286,10 @@ rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "named") :-
   sup_management_call(site, f, _, op, name),
   child_creating_op(op).
 
+// The call's supervisor is a pid here ("dynamic"). Process points-to
+// does not follow it: a supervisor management call is not a pid use
+// (pid_call covers calls, casts and sends; sup_call's target is its own
+// extractor's), so the one earlier sibling of the API's kind stands in.
 rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "inferred") :-
   supervisor(sup, "rest_for_one"),
   supervisor_child(sup, opos, owner_branch, _, _),

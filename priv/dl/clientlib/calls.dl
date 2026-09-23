@@ -368,7 +368,9 @@ reaches_async_dep(f, m) :-
 
 // With the timeout the waiting call carries: -1 is :infinity, 0 unknown.
 // Through a client API function the timeout is the wrapper's, whose own
-// target is usually the pid it was handed.
+// target is usually the pid it was handed ("dynamic" below); where
+// points-to resolves that pid, the process_call clause gives the same
+// call's timeout against the server it reaches.
 .decl sync_dep_timeout(func: symbol, mod: symbol, timeout_ms: number)
 
 sync_dep_timeout(f, m, ms) :-

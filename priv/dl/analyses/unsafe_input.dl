@@ -213,7 +213,9 @@ sink_endpoint(sink, verb, path, plug) :-
 // each read fine in isolation.
 
 // `supervisor_max_children` is emitted only when a finite cap is set, so
-// absence is the question. A supervisor whose init/1 could not be read
+// absence is the question. A supervisor held as a pid ("dynamic") has no
+// init/1 to read the cap from; process points-to does not follow
+// start_child's supervisor argument, which is not a pid use. A supervisor whose init/1 could not be read
 // emits no cap either, which counts as uncapped — the conservative
 // direction for a resource bound, and the one that matches the default.
 .decl uncapped_supervisor(sup: symbol)

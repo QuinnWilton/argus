@@ -223,7 +223,9 @@ starter_process(mod, s) :- process_entry(mod, c), start_reach.reaches(c, s).
 // A start function that lives in the supervisor's own module
 // (`Postgrex.TypeSupervisor.start_server/2`, `DBConnection.Task.run_child/4`)
 // is that tree offering a shared service; the children are meant to
-// belong to it, whoever asks.
+// belong to it, whoever asks. A supervisor held as a pid ("dynamic") has
+// no tree to place: process points-to does not follow start_child's
+// supervisor argument, which is not a pid use.
 foreign_dynamic_children(mod, sup, func, site, sup_site) :-
   dynamic_child(sup, _, func),
   sup != "dynamic",
