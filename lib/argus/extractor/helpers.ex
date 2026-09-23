@@ -619,6 +619,48 @@ defmodule Argus.Extractor.Helpers do
   defp ok_or_dynamic(val), do: {:ok, val}
 
   @doc """
+  Follow the writes that reach `register` at `idx` for a question the
+  walks here do not ask. Copies are followed to what they copied; every
+  other writer is handed to `answer` as `{:param, k}` or `{writer_idx,
+  instruction}`, along with `follow`, a function of an index and a
+  register that goes on from there — through a tuple projection, say.
+  Returns the answer every writer gives, or `none`.
+  """
+  @spec trace(
+          [term()],
+          non_neg_integer(),
+          register(),
+          a,
+          ({:param, non_neg_integer()}
+           | {non_neg_integer(), term()},
+           (non_neg_integer(), register() -> a) ->
+             a)
+        ) :: a
+        when a: term()
+  def trace(instrs, idx, register, none, answer) do
+    walk(fn -> traced(instrs, idx, register(register), none, answer) end)
+  end
+
+  defp traced(instrs, idx, reg, none, answer) do
+    step({:trace, answer, idx, reg}, none, fn ->
+      follow = fn at, next -> traced(instrs, at, register(next), none, answer) end
+
+      across(instrs, idx, reg, none, fn
+        {:param, _k} = param ->
+          answer.(param, follow)
+
+        at ->
+          instr = Reaching.at(instrs, at)
+
+          case Instr.copy_source(instr, reg) do
+            {kind, _} = source when kind in [:x, :y] -> traced(instrs, at, source, none, answer)
+            _ -> answer.({at, instr}, follow)
+          end
+      end)
+    end)
+  end
+
+  @doc """
   The map key `register` was read from at instruction `idx`, following
   copies back to a `get_map_elements` (a `state.timer` read, or a
   `%{timer: ref}` pattern in a clause head) — or to the compiler's slow

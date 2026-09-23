@@ -30,7 +30,15 @@ those frameworks need.
 
 ### Design principles
 
-- Exhaustive pattern matching on BEAM instructions in `Argus.Pipeline.Emit`.
+- One reading of the instruction set: `Argus.Instr` says what every
+  instruction reads, writes and where control goes (its test asserts
+  every instruction in OTP, Elixir and the deps is known). The emitter's
+  `def`/`use`/`next` rows come from it; a backward register walk asks
+  `Argus.Instr.Reaching` for the writes that reach (through the `Helpers`
+  walks or `Helpers.trace/5`), and a forward one steps with
+  `Argus.Instr.carry/2`. A new walk keeps no instruction table of its
+  own (otp's `writes_x0?`, gen_statem's `flow_step`, catch_clauses'
+  `clobber` and `Argus.Cfg`'s op lists predate this and are to move).
 - Per-module extraction is embarrassingly parallel and deterministic
   (`ordered: true`); the same modules yield `==` facts.
 - Stage 0 keeps the volatile instruction-level relations out of every

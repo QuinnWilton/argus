@@ -58,4 +58,56 @@ defmodule Argus.Test.Fixtures.Instr do
     Process.put(:w, {y, y})
     :ok
   end
+
+  # The ref is in x0 until the receive's loop_rec writes the message over
+  # it: nothing read it, so it is dropped.
+  def monitor_then_receive(pid) do
+    Process.monitor(pid)
+
+    receive do
+      msg -> msg
+    end
+  end
+
+  # The pid this monitors came back from a supervisor start on one arm
+  # and is the parameter on the other: not a started child on every path.
+  def monitor_either(sup, spec, pid) do
+    target =
+      case spec do
+        nil ->
+          pid
+
+        spec ->
+          {:ok, started} = DynamicSupervisor.start_child(sup, spec)
+          started
+      end
+
+    ref = Process.monitor(target)
+    {:ok, ref}
+  end
+
+  # Both arms start the child: a started child on every path.
+  def monitor_started(sup, spec) do
+    {:ok, started} =
+      case spec do
+        nil -> DynamicSupervisor.start_child(sup, {Task, fn -> :ok end})
+        spec -> DynamicSupervisor.start_child(sup, spec)
+      end
+
+    ref = Process.monitor(started)
+    {:ok, ref}
+  end
+
+  # The destination is self() on one path and the parameter on the other.
+  def timer_either(pid, ms) do
+    dest = if pid == nil, do: self(), else: pid
+    Process.send_after(dest, :tick, ms)
+  end
+
+  # self() in a register, moved about, then the timer's destination.
+  def self_timer(ms) do
+    me = self()
+    Process.put(:me, me)
+    Process.send_after(me, :tick, ms)
+  end
 end

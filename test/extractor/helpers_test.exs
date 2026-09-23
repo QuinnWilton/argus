@@ -947,6 +947,30 @@ defmodule Argus.Extractor.HelpersTest do
     end
   end
 
+  describe "trace/5" do
+    test "follows copies, lets the answer follow a projection, and keeps what every path agrees on" do
+      instrs = [
+        {:label, 1},
+        {:func_info, {:atom, :m}, {:atom, :f}, 1},
+        {:label, 2},
+        {:call_ext, 0, {:extfunc, :m, :start, 0}},
+        {:get_tuple_element, {:x, 0}, 1, {:x, 1}},
+        {:move, {:x, 1}, {:y, 0}},
+        {:move, {:y, 0}, {:x, 0}},
+        {:call_ext, 1, {:extfunc, :m, :use, 1}}
+      ]
+
+      origin = fn
+        {at, {:get_tuple_element, src, _, _}}, follow -> follow.(at, src)
+        {_at, {:call_ext, _, {:extfunc, m, f, a}}}, _follow -> {m, f, a}
+        _writer, _follow -> nil
+      end
+
+      assert Helpers.trace(instrs, 7, {:x, 0}, nil, origin) == {:m, :start, 0}
+      assert Helpers.trace(instrs, 3, {:x, 0}, nil, fn w, _ -> w end) == {:param, 0}
+    end
+  end
+
   describe "copy_read/2" do
     test "a copy's write comes from the one register it copied" do
       assert Helpers.copy_read({:move, {:y, 2}, {:x, 0}}, "x0") == "y2"

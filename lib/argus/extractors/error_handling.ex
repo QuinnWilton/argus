@@ -63,6 +63,7 @@ defmodule Argus.Extractors.ErrorHandling do
   alias Argus.Extractor.Helpers
   alias Argus.Extractors.ErrorHandling.CatchClauses
   alias Argus.Extractors.ErrorHandling.ClauseHead
+  alias Argus.Instr
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
@@ -76,6 +77,7 @@ defmodule Argus.Extractors.ErrorHandling do
       instructions_from_label: 2,
       key_identity: 4,
       match_remote_call: 1,
+      register: 1,
       resolve_atom: 3,
       resolve_register: 3,
       scan_functions: 4,
@@ -260,7 +262,7 @@ defmodule Argus.Extractors.ErrorHandling do
     after_call = Enum.drop(ctx.instrs, ctx.idx + 1)
 
     cond do
-      tail_call?(instr) -> "returned"
+      Instr.tail_call?(instr) -> "returned"
       result_ignored?(after_call) -> "ignored"
       result_used?(after_call) -> "used"
       true -> "dynamic"
@@ -432,7 +434,7 @@ defmodule Argus.Extractors.ErrorHandling do
   # stored under a literal key of a map (`%{state | timer: ...}`,
   # `Map.put(state, :timer, ...)`), or somewhere the walk cannot follow.
   defp ref_flow(instrs, idx) do
-    if tail_call?(Enum.at(instrs, idx)),
+    if Instr.tail_call?(Enum.at(instrs, idx)),
       do: {"returned", ""},
       else: ref_walk(Enum.drop(instrs, idx + 1), [{:x, 0}], instrs, idx + 1)
   end
@@ -449,7 +451,7 @@ defmodule Argus.Extractors.ErrorHandling do
        when put_map in [:put_map_assoc, :put_map_exact] do
     case stored_key(pairs, aliases) do
       {:ok, key} -> {"stored", key}
-      :none -> ref_walk(rest, List.delete(aliases, reg_of(dst)), instrs, at + 1)
+      :none -> ref_walk(rest, List.delete(aliases, register(dst)), instrs, at + 1)
     end
   end
 
@@ -463,33 +465,16 @@ defmodule Argus.Extractors.ErrorHandling do
     end
   end
 
-  defp ref_walk([{call, arity, _} | _], aliases, _instrs, _at)
-       when call in [:call, :call_ext, :call_only, :call_ext_only] do
-    if Enum.any?(0..(arity - 1)//1, &({:x, &1} in aliases)),
-      do: {"dynamic", ""},
-      else: {"dynamic", ""}
-  end
-
   defp ref_walk([{:label, _} | _], _aliases, _instrs, _at), do: {"dynamic", ""}
 
+  # Any other call takes the ref somewhere the walk does not follow, or
+  # clobbers it; a tail call, a jump, a raise end the path here — the
+  # walk is linear, and what follows is another path.
   defp ref_walk([instr | rest], aliases, instrs, at) do
-    case aliased_write(instr, aliases) do
-      nil -> ref_walk(rest, aliases, instrs, at + 1)
-      dst -> ref_walk(rest, List.delete(aliases, dst), instrs, at + 1)
-    end
+    if Instr.call?(instr) or not Instr.falls_through?(instr),
+      do: {"dynamic", ""},
+      else: ref_walk(rest, Instr.carry(instr, aliases), instrs, at + 1)
   end
-
-  # The register an instruction writes, when that register is an alias:
-  # the dst operand is last for every register-writing shape but the
-  # maps and swaps handled above.
-  defp aliased_write(instr, aliases) when is_tuple(instr) and tuple_size(instr) > 1 do
-    case reg_of(elem(instr, tuple_size(instr) - 1)) do
-      nil -> nil
-      r -> if r in aliases, do: r, else: nil
-    end
-  end
-
-  defp aliased_write(_instr, _aliases), do: nil
 
   defp stored_key(pairs, aliases) do
     pairs
@@ -591,7 +576,7 @@ defmodule Argus.Extractors.ErrorHandling do
   end
 
   defp emit_store(facts, mod, func_id, instrs, idx, key, val) do
-    with r when r != nil <- reg_of(val),
+    with {kind, _} = r when kind in [:x, :y] <- register(val),
          {:ok, {m, f, a}, _origin} <- call_result_origin(instrs, idx, r) do
       callee = InstrId.func_id(if(m == :local, do: mod, else: m), f, a)
       add_fact(facts, :timer_store, [func_id, inspect(key), callee])
@@ -670,7 +655,7 @@ defmodule Argus.Extractors.ErrorHandling do
   defp recv_head({:wait_timeout, _, _}, _instrs, _idx, _labels, _seen), do: []
 
   defp recv_head({:test, :is_eq_exact, {:f, l}, [a, b]}, instrs, _idx, labels, seen) do
-    case {reg_of(a), reg_of(b)} do
+    case {register(a), register(b)} do
       {{:x, 0}, _} -> [pattern_of(b) | recv_fail(instrs, l, labels, seen)]
       {_, {:x, 0}} -> [pattern_of(a) | recv_fail(instrs, l, labels, seen)]
       _ -> recv_fail(instrs, l, labels, seen)
@@ -678,19 +663,19 @@ defmodule Argus.Extractors.ErrorHandling do
   end
 
   defp recv_head({:select_val, src, {:f, l}, {:list, entries}}, instrs, _idx, labels, seen) do
-    if reg_of(src) == {:x, 0},
+    if register(src) == {:x, 0},
       do: for({:atom, a} <- entries, do: inspect(a)) ++ recv_fail(instrs, l, labels, seen),
       else: recv_fail(instrs, l, labels, seen)
   end
 
   defp recv_head({:test, _op, {:f, l}, args}, instrs, _idx, labels, seen) when is_list(args) do
-    if Enum.any?(args, &(reg_of(&1) == {:x, 0})),
+    if Enum.any?(args, &(register(&1) == {:x, 0})),
       do: ["any" | recv_fail(instrs, l, labels, seen)],
       else: recv_fail(instrs, l, labels, seen)
   end
 
   defp recv_head({:test, _op, {:f, l}, src, _fields}, instrs, _idx, labels, seen) do
-    if reg_of(src) == {:x, 0},
+    if register(src) == {:x, 0},
       do: ["any" | recv_fail(instrs, l, labels, seen)],
       else: recv_fail(instrs, l, labels, seen)
   end
@@ -713,48 +698,17 @@ defmodule Argus.Extractors.ErrorHandling do
   defp timer_target(_ctx, :self), do: "self"
 
   defp timer_target(ctx, dest_reg) do
-    preceding = ctx.instrs |> Enum.take(ctx.idx) |> Enum.reverse()
-    if self_origin?(preceding, {:x, dest_reg}), do: "self", else: "other"
+    if self_origin?(ctx.instrs, ctx.idx, {:x, dest_reg}), do: "self", else: "other"
   end
 
-  # Whether `reg` holds the result of a `self()` call, following moves.
-  # A call clobbers every x register, and any other instruction that
-  # names the register is taken to write it.
-  defp self_origin?([], _reg), do: false
-  defp self_origin?([{:bif, :self, _, [], reg} | _], reg), do: true
-
-  defp self_origin?([{:move, {kind, _} = src, reg} | rest], reg) when kind in [:x, :y],
-    do: self_origin?(rest, src)
-
-  defp self_origin?([{:move, _, reg} | _], reg), do: false
-
-  defp self_origin?([instr | rest], reg) do
-    cond do
-      call_instr?(instr) and match?({:x, _}, reg) -> false
-      reg in Tuple.to_list(instr) -> false
-      true -> self_origin?(rest, reg)
-    end
+  # Whether `reg` holds the result of a `self()` call on every path to
+  # `idx`, following copies.
+  defp self_origin?(instrs, idx, reg) do
+    Helpers.trace(instrs, idx, reg, false, fn
+      {_at, {:bif, :self, _fail, [], _dst}}, _follow -> true
+      _writer, _follow -> false
+    end)
   end
-
-  defp call_instr?(instr) when is_tuple(instr) and tuple_size(instr) > 0 do
-    op = elem(instr, 0)
-
-    op in [
-      :call,
-      :call_ext,
-      :call_fun,
-      :call_fun2,
-      :apply,
-      :call_only,
-      :call_last,
-      :call_ext_only,
-      :call_ext_last,
-      :apply_last,
-      :return
-    ]
-  end
-
-  defp call_instr?(instr), do: instr == :return
 
   # `:dynamic` is the resolver's placeholder for a value it could not
   # follow — a ref, a counter — and that is what makes a message safe.
@@ -828,7 +782,7 @@ defmodule Argus.Extractors.ErrorHandling do
   defp rpc_handling(instrs, idx) do
     cond do
       :badrpc in Dispatch.compared_atoms(instrs, :any) -> "badrpc"
-      tail_call?(Enum.at(instrs, idx)) -> "returned"
+      Instr.tail_call?(Enum.at(instrs, idx)) -> "returned"
       true -> result_use(Enum.drop(instrs, idx + 1), [{:x, 0}], instrs)
     end
   end
@@ -867,19 +821,26 @@ defmodule Argus.Extractors.ErrorHandling do
   defp result_use([:return | _], aliases, _instrs),
     do: if({:x, 0} in aliases, do: "returned", else: "other")
 
-  defp result_use([{call, arity, _} | rest], aliases, instrs)
-       when call in [:call, :call_ext, :call_only, :call_ext_only] do
-    if Enum.any?(0..(arity - 1)//1, &({:x, &1} in aliases)),
-      do: "other",
-      else: result_use(rest, Enum.reject(aliases, &match?({:x, _}, &1)), instrs)
-  end
-
-  defp result_use([{call, _arity, _, _} | _], _aliases, _instrs)
-       when call in [:call_last, :call_ext_last],
-       do: "other"
-
   defp result_use([{:label, _} | _], _aliases, _instrs), do: "other"
-  defp result_use([_ | rest], aliases, instrs), do: result_use(rest, aliases, instrs)
+
+  # Passed to a call (a tail call included), the result is passed on; a
+  # call that does not take it clobbers the x registers. A path that ends
+  # without examining it — a jump, a raise, a tail call that does not
+  # take it — is "other": the walk is linear, and what follows is another
+  # path.
+  defp result_use([instr | rest], aliases, instrs) do
+    cond do
+      (Instr.call?(instr) or Instr.tail_call?(instr)) and
+          Enum.any?(Instr.uses(instr), &(&1 in aliases)) ->
+        "other"
+
+      not Instr.falls_through?(instr) ->
+        "other"
+
+      true ->
+        result_use(rest, Instr.carry(instr, aliases), instrs)
+    end
+  end
 
   defp use_if_aliased(true, _rest, _aliases, instrs), do: shape_use(instrs)
   defp use_if_aliased(false, rest, aliases, instrs), do: result_use(rest, aliases, instrs)
@@ -895,21 +856,11 @@ defmodule Argus.Extractors.ErrorHandling do
 
   defp retarget(aliases, src, dst) do
     if alias?(src, aliases),
-      do: Enum.uniq([reg_of(dst) | aliases]),
-      else: List.delete(aliases, reg_of(dst))
+      do: Enum.uniq([register(dst) | aliases]),
+      else: List.delete(aliases, register(dst))
   end
 
-  defp alias?(operand, aliases) do
-    case reg_of(operand) do
-      nil -> false
-      r -> r in aliases
-    end
-  end
-
-  defp reg_of({:tr, r, _}), do: reg_of(r)
-  defp reg_of({:x, _} = r), do: r
-  defp reg_of({:y, _} = r), do: r
-  defp reg_of(_), do: nil
+  defp alias?(operand, aliases), do: register(operand) in aliases
 
   # A function that both takes its own pid (`self()`) and sends: a
   # message it posts to itself, the shape a start-up kick or a restart
@@ -1256,7 +1207,7 @@ defmodule Argus.Extractors.ErrorHandling do
 
       cond do
         # Tail calls return their result to the caller — not ignored.
-        tail_call?(instr) ->
+        Instr.tail_call?(instr) ->
           facts
 
         # Non-tail call where x0 is immediately overwritten.
@@ -1284,11 +1235,6 @@ defmodule Argus.Extractors.ErrorHandling do
       facts
     end
   end
-
-  # Tail call variants — the function returns whatever the callee returns.
-  defp tail_call?({:call_ext_only, _, _}), do: true
-  defp tail_call?({:call_ext_last, _, _, _}), do: true
-  defp tail_call?(_), do: false
 
   # Result is overwritten before being read — ignored.
   defp result_ignored?([{:move, _, {:x, 0}} | _]), do: true

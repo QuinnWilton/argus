@@ -50,10 +50,12 @@ defmodule Argus.Extractors.Monitor do
   @behaviour Argus.Extractor
 
   alias Argus.Cfg.Walk
+  alias Argus.Extractor.Helpers
+  alias Argus.Instr
   alias Argus.InstrId
 
   import Argus.Extractor.Helpers,
-    only: [add_fact: 3, cfg: 2, each_remote_call: 3, resolve_atom: 3]
+    only: [add_fact: 3, cfg: 2, each_remote_call: 3, register: 1, resolve_atom: 3]
 
   @impl true
   def relations,
@@ -165,34 +167,20 @@ defmodule Argus.Extractors.Monitor do
        when call in [:call_last, :call_ext_last],
        do: {drop_x(tracked), heads}
 
-  defp head_step(_instr, tracked, heads, _args), do: {tracked, heads}
+  defp head_step(instr, tracked, heads, _args),
+    do: {MapSet.new(Instr.carry(instr, tracked)), heads}
 
   defp drop_x(tracked), do: MapSet.reject(tracked, &match?({:x, _}, &1))
 
+  # A copy or projection of a tracked register is tracked; anything else
+  # written into `dst`, a literal included, is not.
   defp track(tracked, src, dst) do
-    case {reg(src), reg(dst)} do
-      {nil, _} ->
-        tracked
-
-      {_, nil} ->
-        tracked
-
-      {s, d} ->
-        if MapSet.member?(tracked, s), do: MapSet.put(tracked, d), else: MapSet.delete(tracked, d)
-    end
+    if MapSet.member?(tracked, register(src)),
+      do: MapSet.put(tracked, register(dst)),
+      else: MapSet.delete(tracked, register(dst))
   end
 
-  defp tracked?(operand, tracked) do
-    case reg(operand) do
-      nil -> false
-      r -> MapSet.member?(tracked, r)
-    end
-  end
-
-  defp reg({:tr, r, _type}), do: reg(r)
-  defp reg({:x, _} = r), do: r
-  defp reg({:y, _} = r), do: r
-  defp reg(_), do: nil
+  defp tracked?(operand, tracked), do: MapSet.member?(tracked, register(operand))
 
   # Process.monitor/1 takes the pid in x0; :erlang.monitor/2 takes the
   # type in x0 and the pid in x1.
@@ -239,67 +227,22 @@ defmodule Argus.Extractors.Monitor do
   # moves, tuple projections — `{:ok, pid} = ...` — and swaps) and see
   # whether it is a start API, or a local function that performs one.
   defp started_child?(instrs, idx, reg, module_data) do
-    case pid_origin(instrs, idx - 1, reg(reg)) do
+    case pid_origin(instrs, idx, reg) do
       nil -> false
       mfa -> start_api?(mfa, module_data, [])
     end
   end
 
-  defp pid_origin(_instrs, idx, _reg) when idx < 0, do: nil
-
+  # The call the pid came back from, through copies and tuple
+  # projections (`{:ok, pid} = ...`), agreed on by every path to `idx`.
   defp pid_origin(instrs, idx, reg) do
-    case origin_step(Enum.at(instrs, idx), reg) do
-      {:trace, reg} -> pid_origin(instrs, idx - 1, reg)
-      {:call, mfa} -> call_origin(mfa, instrs, idx, reg)
-      :stop -> nil
-    end
+    Helpers.trace(instrs, idx, reg, nil, fn
+      {at, {:get_tuple_element, src, _index, _dst}}, follow -> follow.(at, src)
+      {_at, {:call, _arity, {m, f, a}}}, _follow -> {m, f, a}
+      {_at, {:call_ext, _arity, {:extfunc, m, f, a}}}, _follow -> {m, f, a}
+      _writer, _follow -> nil
+    end)
   end
-
-  # One instruction walking backwards: keep tracing (possibly a different
-  # register), stop at the producing call, or give up.
-  defp origin_step({:move, src, dst}, reg) do
-    cond do
-      reg(dst) != reg -> {:trace, reg}
-      reg(src) != nil -> {:trace, reg(src)}
-      true -> :stop
-    end
-  end
-
-  defp origin_step({:get_tuple_element, src, _i, dst}, reg),
-    do: {:trace, if(reg(dst) == reg, do: reg(src), else: reg)}
-
-  defp origin_step({:swap, a, b}, reg) do
-    cond do
-      reg(a) == reg -> {:trace, reg(b)}
-      reg(b) == reg -> {:trace, reg(a)}
-      true -> {:trace, reg}
-    end
-  end
-
-  defp origin_step({:call, _arity, {m, f, a}}, _reg), do: {:call, {m, f, a}}
-  defp origin_step({:call_ext, _arity, {:extfunc, m, f, a}}, _reg), do: {:call, {m, f, a}}
-  defp origin_step(:return, _reg), do: :stop
-  defp origin_step({:func_info, _, _, _}, _reg), do: :stop
-  defp origin_step({op, _, _, _}, _reg) when op in [:call_last, :call_ext_last], do: :stop
-  defp origin_step({op, _, _}, _reg) when op in [:call_only, :call_ext_only], do: :stop
-  defp origin_step(instr, reg), do: if(writes?(instr, reg), do: :stop, else: {:trace, reg})
-
-  # A call's result is x0; every other x register is clobbered by it.
-  defp call_origin(mfa, _instrs, _idx, {:x, 0}), do: mfa
-  defp call_origin(_mfa, _instrs, _idx, {:x, _}), do: nil
-  defp call_origin(_mfa, instrs, idx, reg), do: pid_origin(instrs, idx - 1, reg)
-
-  defp writes?({:bif, _, _, _, dst}, reg), do: reg(dst) == reg
-  defp writes?({:gc_bif, _, _, _, _, dst}, reg), do: reg(dst) == reg
-  defp writes?({:put_tuple2, dst, _}, reg), do: reg(dst) == reg
-  defp writes?({:put_list, _, _, dst}, reg), do: reg(dst) == reg
-  defp writes?({:get_hd, _, dst}, reg), do: reg(dst) == reg
-  defp writes?({:get_tl, _, dst}, reg), do: reg(dst) == reg
-
-  defp writes?({op, _, _, dst, _, _}, reg) when op in [:put_map_assoc, :put_map_exact],
-    do: reg(dst) == reg
-
-  defp writes?(_instr, _reg), do: false
 
   defp start_api?(mfa, _module_data, _seen) when mfa in @start_apis, do: true
 
@@ -360,62 +303,20 @@ defmodule Argus.Extractors.Monitor do
     match?({:done, _}, result)
   end
 
-  defp classify({:line, _}), do: :neutral
-  defp classify({:allocate, _, _}), do: :neutral
-  defp classify({:allocate_heap, _, _, _}), do: :neutral
-  defp classify({:init_yregs, _}), do: :neutral
-  defp classify({:trim, _, _}), do: :neutral
+  # What an instruction does with the ref in {x,0}. `test_heap` with no
+  # live registers and `deallocate` say what the compiler knows of x0's
+  # liveness: dead at the first, about to be returned at the second.
   defp classify({:test_heap, _words, 0}), do: :writes
-  defp classify({:test_heap, _words, _live}), do: :neutral
-  defp classify(:return), do: :reads
   defp classify({:deallocate, _}), do: :reads
-  defp classify({:move, src, dst}), do: rw([src], [dst])
-  defp classify({:put_tuple2, dst, {:list, elements}}), do: rw(elements, [dst])
-  defp classify({:put_list, head, tail, dst}), do: rw([head, tail], [dst])
-  defp classify({:get_tuple_element, src, _idx, dst}), do: rw([src], [dst])
 
-  defp classify({:get_map_elements, _fail, src, {:list, pairs}}),
-    do: rw([src], pairs |> Enum.drop(1) |> Enum.take_every(2))
-
-  defp classify({op, _fail, src, dst, _live, {:list, pairs}})
-       when op in [:put_map_assoc, :put_map_exact],
-       do: rw([src | pairs], [dst])
-
-  defp classify({:bif, _name, _fail, args, dst}), do: rw(args, [dst])
-  defp classify({:gc_bif, _name, _fail, _live, args, dst}), do: rw(args, [dst])
-  defp classify({:call, arity, _}), do: call(arity)
-  defp classify({:call_ext, arity, _}), do: call(arity)
-  defp classify({:call_only, arity, _}), do: call(arity)
-  defp classify({:call_ext_only, arity, _}), do: call(arity)
-  defp classify({:call_last, arity, _, _}), do: call(arity)
-  defp classify({:call_ext_last, arity, _, _}), do: call(arity)
-  defp classify({:call_fun, arity}), do: call(arity + 1)
-  defp classify({:apply, arity}), do: call(arity + 2)
-
-  defp classify(instr), do: if(mentions_x0?(instr), do: :unknown, else: :neutral)
-
-  # A call reads its arguments positionally from {x,0} up; with none,
-  # its result overwrites {x,0}.
-  defp call(0), do: :writes
-  defp call(_arity), do: :reads
-
-  defp rw(reads, writes) do
+  defp classify(instr) do
     cond do
-      Enum.any?(reads, &(register(&1) == @x0)) -> :reads
-      Enum.any?(writes, &(register(&1) == @x0)) -> :writes
+      not Instr.known?(instr) -> :unknown
+      @x0 in Instr.uses(instr) -> :reads
+      Instr.defines?(instr, @x0) -> :writes
       true -> :neutral
     end
   end
-
-  defp mentions_x0?(term) when is_tuple(term) do
-    register(term) == @x0 or term |> Tuple.to_list() |> Enum.any?(&mentions_x0?/1)
-  end
-
-  defp mentions_x0?(term) when is_list(term), do: Enum.any?(term, &mentions_x0?/1)
-  defp mentions_x0?(_term), do: false
-
-  defp register({:tr, reg, _type}), do: reg
-  defp register(reg), do: reg
 
   # demonitor/1 cannot flush — the option list is the only way — so arity is
   # a sound lower bound on the answer. For arity 2 the list is read when it

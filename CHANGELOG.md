@@ -183,6 +183,23 @@ call" is no longer reported, because the dynamic child its runtime
 starts it as is now recognised and the rule exempts a callee under a
 different supervisor.
 
+**Fixed.** The extractors' remaining private readings of the instruction set are
+`Argus.Instr`'s. `Helpers.trace/5` (a backward walk over the writes that
+reach, for questions the other walks do not ask) and `Argus.Instr.carry/2`
+(the registers holding a value after an instruction, for forward walks)
+are new. Monitor's pid origin follows the writes that reach instead of
+the stream (a pid started on one path and a parameter on the other was a
+`started_child`), its ref-liveness table is `Argus.Instr`'s reads and
+writes (a ref a receive wrote over was taken as kept), and its clause-head
+walk drops a register written over. ErrorHandling's timer destination
+follows copies (`me = self()` stored with `Process.put` first was
+"other"), its timer-ref and rpc-result walks stop at a tail call, a jump
+or a raise and drop registers every writer overwrites (the "last element
+is the destination" rule missed `put_tuple2`, `get_list`, `make_fun3`),
+and its, ProcessRegistry's and Reply's tail-call and positional-read
+tests are `Argus.Instr`'s. A `trim` or `deallocate` ends the `y`
+registers it does not keep.
+
 ### Process points-to
 
 **Changed.** `self()` resolves in a function a process's own code

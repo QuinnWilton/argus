@@ -106,8 +106,10 @@ defmodule Argus.Instr do
 
   @doc """
   Whether the value `reg` held before `instr` is gone after it: `instr`
-  writes it, or `instr` is a call and `reg` an `x` register (a call
-  destroys them all), or `instr` is not `known?/1` — an instruction this
+  writes it; `instr` is a call and `reg` an `x` register (a call destroys
+  them all); `instr` renumbers or drops the stack frame (`trim`,
+  `deallocate`) and `reg` is a `y` register, whose slot now means
+  another or none; or `instr` is not `known?/1` — an instruction this
   module cannot read might write anything.
   """
   @spec clobbers?(instr(), term()) :: boolean()
@@ -115,10 +117,18 @@ defmodule Argus.Instr do
     reg = register(reg)
 
     case semantics(instr) do
-      :unknown -> true
-      {defs, _uses, _targets, _flow} -> reg in defs or (call?(instr) and match?({:x, _}, reg))
+      :unknown ->
+        true
+
+      {defs, _uses, _targets, _flow} ->
+        reg in defs or (call?(instr) and match?({:x, _}, reg)) or
+          (frame_change?(instr) and match?({:y, _}, reg))
     end
   end
+
+  defp frame_change?({:trim, _, _}), do: true
+  defp frame_change?({:deallocate, _}), do: true
+  defp frame_change?(_instr), do: false
 
   @doc """
   The operand `instr` copied into `reg`, when `instr` is a copy: the
@@ -149,6 +159,22 @@ defmodule Argus.Instr do
 
   defp do_copy_source({:trim, n, remaining}, {:y, k}) when k < remaining, do: {:y, k + n}
   defp do_copy_source(_instr, _reg), do: nil
+
+  @doc """
+  The registers holding a value after `instr`, given the ones holding it
+  before: a register `instr` writes stops holding it unless `instr` copied
+  it there from one that did (a `move`, `swap` or `trim`), and a call
+  destroys every `x` register. What a forward walk that follows a value
+  through the registers applies at each instruction it does not handle
+  itself.
+  """
+  @spec carry(instr(), Enumerable.t()) :: [reg()]
+  def carry(instr, holding) do
+    holding = Enum.map(holding, &register/1)
+    copied = for dst <- defs(instr), copy_source(instr, dst) in holding, do: dst
+    kept = Enum.reject(holding, &clobbers?(instr, &1))
+    Enum.uniq(kept ++ copied)
+  end
 
   @doc "Whether this module can read `instr`."
   @spec known?(instr()) :: boolean()

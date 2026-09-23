@@ -160,4 +160,22 @@ defmodule Argus.Extractors.ErrorHandlingTest do
       assert Map.has_key?(facts, :trap_exit)
     end
   end
+
+  describe "timer targets, read through the writes that reach" do
+    alias Argus.Test.Fixtures.Instr, as: Fixture
+
+    defp target(fragment) do
+      for [_id, func, target | _] <- ErrorHandling.extract(disassemble(Fixture))[:timer_arm],
+          String.contains?(func, fragment),
+          do: target
+    end
+
+    test "self() moved about is still self" do
+      assert target("self_timer/1") == ["self"]
+    end
+
+    test "self() on one path only is not self" do
+      assert target("timer_either/2") == ["other"]
+    end
+  end
 end

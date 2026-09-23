@@ -63,6 +63,7 @@ defmodule Argus.Extractors.Reply do
   alias Argus.Cfg
   alias Argus.Cfg.Walk
   alias Argus.Extractor.Dispatch
+  alias Argus.Instr
   alias Argus.InstrId
 
   import Argus.Extractor.Helpers, only: [add_fact: 3, cfg: 3, return_shapes: 1]
@@ -218,24 +219,12 @@ defmodule Argus.Extractors.Reply do
   # order that happens to match as evidence of a bug is how a static
   # analysis earns its reputation.
   #
-  # So any call of arity two or more counts as a read, as does `send`, whose
-  # operands are implicit in {x,0} and {x,1}.
+  # So an instruction that reads {x,1} by `Argus.Instr` — a call of arity
+  # two or more, `send`, whose operands are implicit in {x,0} and {x,1} —
+  # counts as a read.
   defp references_from?(instr) do
-    reads_from_positionally?(instr) or mentions?(instr, @from_register)
+    @from_register in Instr.uses(instr) or mentions?(instr, @from_register)
   end
-
-  defp reads_from_positionally?({:call, arity, _}), do: arity >= 2
-  defp reads_from_positionally?({:call_only, arity, _}), do: arity >= 2
-  defp reads_from_positionally?({:call_last, arity, _, _}), do: arity >= 2
-  defp reads_from_positionally?({:call_ext, arity, _}), do: arity >= 2
-  defp reads_from_positionally?({:call_ext_only, arity, _}), do: arity >= 2
-  defp reads_from_positionally?({:call_ext_last, arity, _, _}), do: arity >= 2
-  defp reads_from_positionally?({:call_fun, arity}), do: arity >= 2
-  defp reads_from_positionally?({:call_fun2, _, arity, _}), do: arity >= 2
-  defp reads_from_positionally?({:apply, arity}), do: arity >= 2
-  defp reads_from_positionally?({:apply_last, arity, _}), do: arity >= 2
-  defp reads_from_positionally?(:send), do: true
-  defp reads_from_positionally?(_instr), do: false
 
   defp mentions?(@from_register, @from_register), do: true
   defp mentions?(term, reg) when is_tuple(term), do: term |> Tuple.to_list() |> mentions?(reg)

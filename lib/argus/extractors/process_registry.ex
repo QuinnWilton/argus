@@ -43,6 +43,7 @@ defmodule Argus.Extractors.ProcessRegistry do
 
   alias Argus.Extractor.Dispatch
   alias Argus.Extractors.PidFlow
+  alias Argus.Instr
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
@@ -441,7 +442,7 @@ defmodule Argus.Extractors.ProcessRegistry do
       _ ->
         # Options didn't resolve. If this is a tail call, the wrapper is
         # just forwarding — skip rather than emit imprecision.
-        if tail_call?(ctx.instrs, ctx.idx) do
+        if Instr.tail_call?(Enum.at(ctx.instrs, ctx.idx)) do
           facts
         else
           track_imprecision(facts, ctx, :gen_server_start_name, :process_register, :skipped)
@@ -500,20 +501,11 @@ defmodule Argus.Extractors.ProcessRegistry do
         |> add_creating_op(ctx, method, "", "literal", spelled)
 
       _ ->
-        if tail_call?(ctx.instrs, ctx.idx) do
+        if Instr.tail_call?(Enum.at(ctx.instrs, ctx.idx)) do
           facts
         else
           track_imprecision(facts, ctx, :gen_server_start_name, :process_register, :skipped)
         end
-    end
-  end
-
-  # Check whether the instruction at `idx` is a tail call variant.
-  defp tail_call?(instrs, idx) do
-    case Enum.at(instrs, idx) do
-      {:call_ext_only, _, _} -> true
-      {:call_ext_last, _, _, _} -> true
-      _ -> false
     end
   end
 

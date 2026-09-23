@@ -131,6 +131,23 @@ defmodule Argus.InstrTest do
     end
   end
 
+  describe "carry/2" do
+    test "a value follows its copies and leaves the registers written over it" do
+      assert Instr.carry({:move, {:x, 0}, {:y, 1}}, x: 0) == [x: 0, y: 1]
+      assert Instr.carry({:move, {:atom, :a}, {:x, 0}}, x: 0, y: 1) == [y: 1]
+      assert Instr.carry({:swap, {:x, 0}, {:y, 0}}, x: 0) == [y: 0]
+      assert Instr.carry({:trim, 1, 1}, y: 1) == [y: 0]
+      assert Instr.carry({:trim, 1, 1}, y: 0, x: 0) == [x: 0]
+      assert Instr.carry({:deallocate, 2}, y: 1, x: 0) == [x: 0]
+      assert Instr.carry({:put_tuple2, {:x, 0}, {:list, [x: 0]}}, x: 0) == []
+    end
+
+    test "a call destroys the x registers holding it, not the y registers" do
+      assert Instr.carry({:call_ext, 1, {:extfunc, :m, :f, 1}}, x: 1, y: 0) == [y: 0]
+      assert Instr.carry({:get_list, {:x, 2}, {:x, 0}, {:x, 1}}, x: 0, x: 3) == [x: 3]
+    end
+  end
+
   describe "control" do
     test "every label control can reach other than by falling through" do
       for {instr, labels} <- [
