@@ -15,6 +15,7 @@ defmodule Argus.Pipeline.Emit do
   require Logger
 
   alias Argus.Extractor.Helpers
+  alias Argus.Instr
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
@@ -188,13 +189,12 @@ defmodule Argus.Pipeline.Emit do
       emit_instruction_fact(facts, id, func_id, to_string(idx), instr, line_table, line)
 
     facts =
-      if terminator?(instr) do
-        facts
-      else
-        case rest do
-          [{next_id, _} | _] -> add_fact(facts, :next, [id, next_id])
-          [] -> facts
-        end
+      case rest do
+        [{next_id, _} | _] ->
+          if Instr.falls_through?(instr), do: add_fact(facts, :next, [id, next_id]), else: facts
+
+        [] ->
+          facts
       end
 
     emit_instructions_loop(facts, func_id, rest, idx + 1, line_table, line)
@@ -224,8 +224,26 @@ defmodule Argus.Pipeline.Emit do
         {emit_line_info(facts, id, line), line}
 
       _ ->
-        {facts |> emit_line_info(id, line) |> emit_specific(id, func_id, instr), line}
+        {facts
+         |> emit_line_info(id, line)
+         |> emit_def_use(id, instr)
+         |> emit_specific(id, func_id, instr), line}
     end
+  end
+
+  # What an instruction reads and writes is `Argus.Instr`'s to say, for
+  # every instruction alike; the clauses below add only the facts that are
+  # particular to one. An instruction Instr cannot read is logged, so a run
+  # can be audited for opcodes that would otherwise pass without a trace.
+  defp emit_def_use(facts, id, instr) do
+    unless Instr.known?(instr) do
+      Logger.debug("Emitter: unhandled instruction opcode: #{instruction_op(instr)}")
+    end
+
+    facts =
+      Enum.reduce(Instr.defs(instr), facts, &add_fact(&2, :def, [id, format_operand(&1)]))
+
+    Enum.reduce(Instr.uses(instr), facts, &add_fact(&2, :use, [id, format_operand(&1)]))
   end
 
   # Instructions with no line in effect (before the first marker, or under
@@ -233,16 +251,6 @@ defmodule Argus.Pipeline.Emit do
   # lines, never guesses.
   defp emit_line_info(facts, _id, nil), do: facts
   defp emit_line_info(facts, id, line), do: add_fact(facts, :line_info, [id, to_string(line)])
-
-  defp terminator?(:return), do: true
-  defp terminator?({:jump, _}), do: true
-  defp terminator?({:call_only, _, _}), do: true
-  defp terminator?({:call_ext_only, _, _}), do: true
-  defp terminator?({:call_last, _, _, _}), do: true
-  defp terminator?({:call_ext_last, _, _, _}), do: true
-  defp terminator?({:apply_last, _, _}), do: true
-  defp terminator?({:func_info, _, _, _}), do: false
-  defp terminator?(_), do: false
 
   # ── Specific emitters ─────────────────────────────────────────────
 
@@ -255,58 +263,26 @@ defmodule Argus.Pipeline.Emit do
   # exactly that decode.
 
   # Local calls — modern beam_disasm uses {Module, :func, arity} tuples.
-  # Calls pass arguments in x0..x(arity-1) and return in x0 — the def/use
-  # facts say so, or data dependences would break at every call and a
-  # pipeline (a chain of calls threading x0) would carry no flow at all.
-  # Tail calls consume their arguments but never return here: uses, no def.
-  defp emit_specific(facts, id, func_id, {:call, arity, {:f, label}}) do
-    facts
-    |> add_fact(:local_call, [id, func_id, to_string(label), to_string(arity)])
-    |> add_fact(:def, [id, "x0"])
-    |> emit_call_arg_uses(id, arity)
+  defp emit_specific(facts, id, func_id, {:call, arity, target}) do
+    add_fact(facts, :local_call, [id, func_id, local_target(target), to_string(arity)])
   end
 
-  defp emit_specific(facts, id, func_id, {:call, arity, {_mod, _name, _a} = mfa}) do
+  defp emit_specific(facts, id, func_id, {:call_only, arity, target}) do
     facts
-    |> add_fact(:local_call, [id, func_id, format_mfa(mfa), to_string(arity)])
-    |> add_fact(:def, [id, "x0"])
-    |> emit_call_arg_uses(id, arity)
-  end
-
-  defp emit_specific(facts, id, func_id, {:call_only, arity, {:f, label}}) do
-    facts
-    |> add_fact(:local_call, [id, func_id, to_string(label), to_string(arity)])
+    |> add_fact(:local_call, [id, func_id, local_target(target), to_string(arity)])
     |> add_fact(:tail_call, [id])
-    |> emit_call_arg_uses(id, arity)
   end
 
-  defp emit_specific(facts, id, func_id, {:call_only, arity, {_mod, _name, _a} = mfa}) do
+  defp emit_specific(facts, id, func_id, {:call_last, arity, target, _dealloc}) do
     facts
-    |> add_fact(:local_call, [id, func_id, format_mfa(mfa), to_string(arity)])
+    |> add_fact(:local_call, [id, func_id, local_target(target), to_string(arity)])
     |> add_fact(:tail_call, [id])
-    |> emit_call_arg_uses(id, arity)
-  end
-
-  defp emit_specific(facts, id, func_id, {:call_last, arity, {:f, label}, _dealloc}) do
-    facts
-    |> add_fact(:local_call, [id, func_id, to_string(label), to_string(arity)])
-    |> add_fact(:tail_call, [id])
-    |> emit_call_arg_uses(id, arity)
-  end
-
-  defp emit_specific(facts, id, func_id, {:call_last, arity, {_mod, _name, _a} = mfa, _dealloc}) do
-    facts
-    |> add_fact(:local_call, [id, func_id, format_mfa(mfa), to_string(arity)])
-    |> add_fact(:tail_call, [id])
-    |> emit_call_arg_uses(id, arity)
   end
 
   # External calls.
   defp emit_specific(facts, id, func_id, {:call_ext, _arity, {:extfunc, mod, func, arity}}) do
     facts
     |> add_fact(:remote_call, [id, func_id, inspect(mod), to_string(func), to_string(arity)])
-    |> add_fact(:def, [id, "x0"])
-    |> emit_call_arg_uses(id, arity)
     |> maybe_dynamic(id, func_id, mod, func)
   end
 
@@ -314,7 +290,6 @@ defmodule Argus.Pipeline.Emit do
     facts
     |> add_fact(:remote_call, [id, func_id, inspect(mod), to_string(func), to_string(arity)])
     |> add_fact(:tail_call, [id])
-    |> emit_call_arg_uses(id, arity)
     |> maybe_dynamic(id, func_id, mod, func)
   end
 
@@ -327,143 +302,72 @@ defmodule Argus.Pipeline.Emit do
     facts
     |> add_fact(:remote_call, [id, func_id, inspect(mod), to_string(func), to_string(arity)])
     |> add_fact(:tail_call, [id])
-    |> emit_call_arg_uses(id, arity)
     |> maybe_dynamic(id, func_id, mod, func)
   end
 
-  # BIF calls.
-  defp emit_specific(facts, id, func_id, {:bif, func, {:f, fail}, args, dst}) do
-    facts
-    |> add_fact(:bif_call, [
+  # BIF calls. BIFs that cannot fail use :nofail instead of {:f, 0}
+  # (e.g. self/0, node/0).
+  defp emit_specific(facts, id, func_id, {:bif, func, fail, args, _dst}) do
+    add_fact(facts, :bif_call, [
       id,
       func_id,
       ":erlang",
       to_string(func),
       to_string(length(args)),
-      to_string(fail)
+      fail_label(fail)
     ])
-    |> add_fact(:def, [id, format_operand(dst)])
-    |> emit_operand_uses(id, args)
   end
 
-  # BIFs that cannot fail use :nofail instead of {:f, 0} (e.g. self/0, node/0).
-  defp emit_specific(facts, id, func_id, {:bif, func, :nofail, args, dst}) do
-    facts
-    |> add_fact(:bif_call, [
+  defp emit_specific(facts, id, func_id, {:gc_bif, func, fail, _live, args, _dst}) do
+    add_fact(facts, :bif_call, [
       id,
       func_id,
       ":erlang",
       to_string(func),
       to_string(length(args)),
-      "0"
+      fail_label(fail)
     ])
-    |> add_fact(:def, [id, format_operand(dst)])
-    |> emit_operand_uses(id, args)
-  end
-
-  defp emit_specific(facts, id, func_id, {:gc_bif, func, {:f, fail}, _live, args, dst}) do
-    facts
-    |> add_fact(:bif_call, [
-      id,
-      func_id,
-      ":erlang",
-      to_string(func),
-      to_string(length(args)),
-      to_string(fail)
-    ])
-    |> add_fact(:def, [id, format_operand(dst)])
-    |> emit_operand_uses(id, args)
   end
 
   # Exception handling.
-  defp emit_specific(facts, id, func_id, {:try, reg, {:f, handler}}) do
-    facts
-    |> add_fact(:try_start, [id, func_id, "try", to_string(handler)])
-    |> add_fact(:def, [id, format_operand(reg)])
+  defp emit_specific(facts, id, func_id, {:try, _reg, {:f, handler}}) do
+    add_fact(facts, :try_start, [id, func_id, "try", to_string(handler)])
   end
 
-  defp emit_specific(facts, id, func_id, {:catch, reg, {:f, handler}}) do
-    facts
-    |> add_fact(:try_start, [id, func_id, "catch", to_string(handler)])
-    |> add_fact(:def, [id, format_operand(reg)])
+  defp emit_specific(facts, id, func_id, {:catch, _reg, {:f, handler}}) do
+    add_fact(facts, :try_start, [id, func_id, "catch", to_string(handler)])
   end
 
   # Dynamic calls.
-  # call_fun reads the fun from x(arity), apply its module/function from
-  # x(arity)/x(arity+1) — after the arguments in x0..x(arity-1).
-  defp emit_specific(facts, id, func_id, {:call_fun, arity}) do
-    facts
-    |> add_fact(:dynamic_call, [id, func_id, "call_fun"])
-    |> add_fact(:def, [id, "x0"])
-    |> emit_call_arg_uses(id, arity)
-    |> add_fact(:use, [id, "x#{arity}"])
+  defp emit_specific(facts, id, func_id, {:call_fun, _arity}) do
+    add_fact(facts, :dynamic_call, [id, func_id, "call_fun"])
   end
 
-  defp emit_specific(facts, id, func_id, {:call_fun2, _tag, arity, func}) do
-    facts
-    |> add_fact(:dynamic_call, [id, func_id, "call_fun"])
-    |> add_fact(:def, [id, "x0"])
-    |> emit_call_arg_uses(id, arity)
-    |> add_fact(:use, [id, format_operand(func)])
+  defp emit_specific(facts, id, func_id, {:call_fun2, _tag, _arity, _func}) do
+    add_fact(facts, :dynamic_call, [id, func_id, "call_fun"])
   end
 
-  defp emit_specific(facts, id, func_id, {:apply, arity}) do
-    facts
-    |> add_fact(:dynamic_call, [id, func_id, "apply"])
-    |> add_fact(:def, [id, "x0"])
-    |> emit_call_arg_uses(id, arity)
-    |> add_fact(:use, [id, "x#{arity}"])
-    |> add_fact(:use, [id, "x#{arity + 1}"])
+  defp emit_specific(facts, id, func_id, {:apply, _arity}) do
+    add_fact(facts, :dynamic_call, [id, func_id, "apply"])
   end
 
-  defp emit_specific(facts, id, func_id, {:apply_last, arity, _dealloc}) do
+  defp emit_specific(facts, id, func_id, {:apply_last, _arity, _dealloc}) do
     facts
     |> add_fact(:dynamic_call, [id, func_id, "apply"])
     |> add_fact(:tail_call, [id])
-    |> emit_call_arg_uses(id, arity)
-    |> add_fact(:use, [id, "x#{arity}"])
-    |> add_fact(:use, [id, "x#{arity + 1}"])
   end
 
   # Send.
   defp emit_specific(facts, id, func_id, :send) do
-    facts
-    |> add_fact(:send_msg, [id, func_id])
-    |> add_fact(:use, [id, "x0"])
-    |> add_fact(:use, [id, "x1"])
-    |> add_fact(:def, [id, "x0"])
+    add_fact(facts, :send_msg, [id, func_id])
   end
 
-  # Make fun.
-  defp emit_specific(
-         facts,
-         id,
-         _func_id,
-         {:make_fun3, {:f, _target}, _index, _uniq, dst, {:list, env}}
-       ) do
-    facts
-    |> add_fact(:def, [id, format_operand(dst)])
-    |> emit_operand_uses(id, env)
+  # Make fun: a closure lifted to a concrete MFA is a closure_def edge.
+  defp emit_specific(facts, id, _func_id, {:make_fun3, {_mod, _name, _arity} = mfa, _, _, _, _}) do
+    add_fact(facts, :closure_def, [parent_func_id(id), format_mfa(mfa)])
   end
 
-  defp emit_specific(
-         facts,
-         id,
-         _func_id,
-         {:make_fun3, {_mod, _name, _arity} = mfa, _index, _uniq, dst, {:list, env}}
-       ) do
-    closure_func = format_mfa(mfa)
-
-    facts
-    |> add_fact(:def, [id, format_operand(dst)])
-    |> add_fact(:closure_def, [parent_func_id(id), closure_func])
-    |> emit_operand_uses(id, env)
-  end
-
-  # Everything else is unchanged: this hands the other ~70 instruction
-  # shapes to the arity-3 definitions below, which keeps the diff to the
-  # clauses that actually gained a field. It must come last among the
-  # arity-4 clauses, since it matches any instruction.
+  # Everything else takes no `func_id`.
   defp emit_specific(facts, id, _func_id, instr), do: emit_specific(facts, id, instr)
 
   # Label.
@@ -475,116 +379,30 @@ defmodule Argus.Pipeline.Emit do
   defp emit_specific(facts, id, {:move, src, dst}) do
     facts
     |> add_fact(:move, [id, format_operand(src), format_operand(dst)])
-    |> add_fact(:def, [id, format_operand(dst)])
-    |> add_fact(:use, [id, format_operand(src)])
     |> maybe_literal(id, dst, src)
     |> maybe_literal_tuple(id, dst, src)
   end
 
-  # Swap.
-  defp emit_specific(facts, id, {:swap, a, b}) do
-    facts
-    |> add_fact(:def, [id, format_operand(a)])
-    |> add_fact(:def, [id, format_operand(b)])
-    |> add_fact(:use, [id, format_operand(a)])
-    |> add_fact(:use, [id, format_operand(b)])
-  end
-
-  # Get list / head / tail.
-  defp emit_specific(facts, id, {:get_list, src, hd_dst, tl_dst}) do
-    facts
-    |> add_fact(:use, [id, format_operand(src)])
-    |> add_fact(:def, [id, format_operand(hd_dst)])
-    |> add_fact(:def, [id, format_operand(tl_dst)])
-  end
-
-  defp emit_specific(facts, id, {:get_hd, src, dst}) do
-    facts
-    |> add_fact(:use, [id, format_operand(src)])
-    |> add_fact(:def, [id, format_operand(dst)])
-  end
-
-  defp emit_specific(facts, id, {:get_tl, src, dst}) do
-    facts
-    |> add_fact(:use, [id, format_operand(src)])
-    |> add_fact(:def, [id, format_operand(dst)])
-  end
-
-  # Get tuple element.
-  defp emit_specific(facts, id, {:get_tuple_element, src, _index, dst}) do
-    facts
-    |> add_fact(:use, [id, format_operand(src)])
-    |> add_fact(:def, [id, format_operand(dst)])
-  end
-
-  # Get map elements.
-  defp emit_specific(facts, id, {:get_map_elements, {:f, fail}, src, {:list, pairs}}) do
-    facts = add_fact(facts, :use, [id, format_operand(src)])
-
-    facts =
-      if fail != 0 do
-        add_fact(facts, :branch, [id, to_string(fail), "0"])
-      else
-        facts
-      end
-
-    # Pairs are [key, dst, key, dst, ...].
-    pairs
-    |> Enum.chunk_every(2)
-    |> Enum.reduce(facts, fn [_key, dst], acc ->
-      add_fact(acc, :def, [id, format_operand(dst)])
-    end)
-  end
-
-  # Put list.
-  defp emit_specific(facts, id, {:put_list, hd, tl, dst}) do
-    facts
-    |> add_fact(:use, [id, format_operand(hd)])
-    |> add_fact(:use, [id, format_operand(tl)])
-    |> add_fact(:def, [id, format_operand(dst)])
+  defp emit_specific(facts, id, {:fmove, src, dst}) do
+    add_fact(facts, :move, [id, format_operand(src), format_operand(dst)])
   end
 
   # Put tuple2.
   defp emit_specific(facts, id, {:put_tuple2, dst, {:list, elements}}) do
-    facts = add_fact(facts, :def, [id, format_operand(dst)])
-
-    elements
-    |> Enum.reduce(facts, fn elem, acc -> add_fact(acc, :use, [id, format_operand(elem)]) end)
-    |> maybe_tuple_literal(id, dst, elements)
+    maybe_tuple_literal(facts, id, dst, elements)
   end
 
-  # Put map assoc / exact.
-  defp emit_specific(facts, id, {put_map, {:f, fail}, src, dst, _live, {:list, pairs}})
-       when put_map in [:put_map_assoc, :put_map_exact] do
-    facts = add_fact(facts, :use, [id, format_operand(src)])
-    facts = add_fact(facts, :def, [id, format_operand(dst)])
+  # The instructions with a fail label that is not a test's: a missing
+  # key, a failed map update, a failed binary construction in a guard.
+  defp emit_specific(facts, id, {:get_map_elements, fail, _src, _pairs}),
+    do: maybe_branch(facts, id, fail)
 
-    facts =
-      if fail != 0 do
-        add_fact(facts, :branch, [id, to_string(fail), "0"])
-      else
-        facts
-      end
+  defp emit_specific(facts, id, {put_map, fail, _src, _dst, _live, _pairs})
+       when put_map in [:put_map_assoc, :put_map_exact],
+       do: maybe_branch(facts, id, fail)
 
-    # Pairs are [key, value, key, value, ...].
-    pairs
-    |> Enum.chunk_every(2)
-    |> Enum.reduce(facts, fn [_key, val], acc ->
-      add_fact(acc, :use, [id, format_operand(val)])
-    end)
-  end
-
-  # Update record (6-element: {op, hint, size, src, dst, {:list, updates}}).
-  defp emit_specific(facts, id, {:update_record, _hint, _size, src, dst, {:list, updates}}) do
-    facts = add_fact(facts, :use, [id, format_operand(src)])
-    facts = add_fact(facts, :def, [id, format_operand(dst)])
-
-    updates
-    |> Enum.chunk_every(2)
-    |> Enum.reduce(facts, fn [_idx, val], acc ->
-      add_fact(acc, :use, [id, format_operand(val)])
-    end)
-  end
+  defp emit_specific(facts, id, {:bs_create_bin, fail, _alloc, _live, _unit, _dst, _segs}),
+    do: maybe_branch(facts, id, fail)
 
   # Jump.
   defp emit_specific(facts, id, {:jump, {:f, target}}) do
@@ -592,11 +410,8 @@ defmodule Argus.Pipeline.Emit do
   end
 
   # Select val / select tuple arity.
-  defp emit_specific(facts, id, {select_op, src, {:f, fail}, {:list, cases}})
+  defp emit_specific(facts, id, {select_op, _src, {:f, fail}, {:list, cases}})
        when select_op in [:select_val, :select_tuple_arity] do
-    facts = add_fact(facts, :use, [id, format_operand(src)])
-
-    # Emit branch to fail label.
     facts =
       if fail != 0 do
         add_fact(facts, :select_branch, [id, "_fail", to_string(fail)])
@@ -617,14 +432,11 @@ defmodule Argus.Pipeline.Emit do
     facts
     |> add_fact(:branch, [id, to_string(fail), "0"])
     |> maybe_emit_type_test(id, test_name, args, fail)
-    |> emit_operand_uses(id, args)
   end
 
   # 5-element test form: {:test, name, fail, src_reg, {:list, fields}} (e.g. has_map_fields).
-  defp emit_specific(facts, id, {:test, _test_name, {:f, fail}, src, {:list, fields}}) do
-    facts = add_fact(facts, :branch, [id, to_string(fail), "0"])
-    facts = add_fact(facts, :use, [id, format_operand(src)])
-    emit_operand_uses(facts, id, fields)
+  defp emit_specific(facts, id, {:test, _test_name, {:f, fail}, _src, {:list, _fields}}) do
+    add_fact(facts, :branch, [id, to_string(fail), "0"])
   end
 
   # 5-element test form with live count: {:test, name, fail, live, args}.
@@ -633,15 +445,12 @@ defmodule Argus.Pipeline.Emit do
     facts
     |> add_fact(:branch, [id, to_string(fail), "0"])
     |> maybe_emit_type_test(id, test_name, args, fail)
-    |> emit_operand_uses(id, args)
   end
 
   # 6-element test form: {:test, name, fail, live, args, dst} (e.g. bs_start_match3, bs_get_binary2).
-  defp emit_specific(facts, id, {:test, _test_name, {:f, fail}, _live, args, dst})
+  defp emit_specific(facts, id, {:test, _test_name, {:f, fail}, _live, args, _dst})
        when is_list(args) do
-    facts = add_fact(facts, :branch, [id, to_string(fail), "0"])
-    facts = add_fact(facts, :def, [id, format_operand(dst)])
-    emit_operand_uses(facts, id, args)
+    add_fact(facts, :branch, [id, to_string(fail), "0"])
   end
 
   # Allocate / deallocate.
@@ -657,23 +466,6 @@ defmodule Argus.Pipeline.Emit do
     add_fact(facts, :deallocate, [id, to_string(stack)])
   end
 
-  # Trim.
-  defp emit_specific(facts, _id, {:trim, _n, _remaining}) do
-    facts
-  end
-
-  # Init Y regs.
-  defp emit_specific(facts, id, {:init_yregs, {:list, regs}}) do
-    Enum.reduce(regs, facts, fn reg, acc ->
-      add_fact(acc, :def, [id, format_operand(reg)])
-    end)
-  end
-
-  # Test heap — no facts beyond the instruction record.
-  defp emit_specific(facts, _id, {:test_heap, _words, _live}) do
-    facts
-  end
-
   # Receive. The loop's control flow is real control flow: loop_rec falls
   # through on a message and branches to its fail label (the wait block) on an
   # empty mailbox; loop_rec_end and wait transfer back to the loop label; and
@@ -682,17 +474,13 @@ defmodule Argus.Pipeline.Emit do
   # recv_start is emitted by emit_receives/3 instead: deciding whether the
   # receive can block forever means following the fail label to another
   # instruction, which a per-instruction emitter cannot see.
-  defp emit_specific(facts, id, {:loop_rec, {:f, fail}, dst}) do
-    facts
-    |> add_fact(:branch, [id, to_string(fail), "0"])
-    |> add_fact(:def, [id, format_operand(dst)])
+  defp emit_specific(facts, id, {:loop_rec, {:f, fail}, _dst}) do
+    add_fact(facts, :branch, [id, to_string(fail), "0"])
   end
 
   defp emit_specific(facts, id, {:loop_rec_end, {:f, label}}) do
     add_fact(facts, :jump, [id, to_string(label)])
   end
-
-  defp emit_specific(facts, _id, :remove_message), do: facts
 
   defp emit_specific(facts, id, {:wait, {:f, label}}) do
     add_fact(facts, :jump, [id, to_string(label)])
@@ -702,173 +490,34 @@ defmodule Argus.Pipeline.Emit do
     add_fact(facts, :branch, [id, to_string(label), "0"])
   end
 
-  defp emit_specific(facts, _id, :timeout) do
-    facts
+  defp emit_specific(facts, id, {:try_end, _reg}) do
+    add_fact(facts, :try_end, [id])
   end
 
-  defp emit_specific(facts, id, {:try_end, reg}) do
-    facts
-    |> add_fact(:try_end, [id])
-    |> add_fact(:use, [id, format_operand(reg)])
+  # Binary matching.
+  defp emit_specific(facts, id, {:bs_start_match4, fail, _live, _src, _dst}) do
+    add_fact(facts, :bs_start, [id, fail_label(fail)])
   end
 
-  defp emit_specific(facts, _id, {:try_case, _reg}) do
-    facts
+  defp emit_specific(facts, id, {:bs_match, fail, _ctx, _commands}) do
+    add_fact(facts, :bs_start, [id, fail_label(fail)])
   end
 
-  defp emit_specific(facts, _id, {:try_case_end, _val}) do
-    facts
-  end
+  # Every other instruction carries only what emit_def_use/3 records.
+  defp emit_specific(facts, _id, _instr), do: facts
 
-  defp emit_specific(facts, _id, {:catch_end, _reg}) do
-    facts
-  end
+  # A fail label as the schema's number column: 0 when there is none
+  # (`{:f, 0}`, `:nofail`, bs_start_match4's `{:atom, :no_fail}`).
+  defp fail_label({:f, label}) when is_integer(label), do: to_string(label)
+  defp fail_label(_no_label), do: "0"
 
-  defp emit_specific(facts, _id, :build_stacktrace) do
-    facts
-  end
+  defp maybe_branch(facts, id, {:f, fail}) when is_integer(fail) and fail != 0,
+    do: add_fact(facts, :branch, [id, to_string(fail), "0"])
 
-  defp emit_specific(facts, _id, :raw_raise) do
-    facts
-  end
+  defp maybe_branch(facts, _id, _fail), do: facts
 
-  # Binary operations.
-  defp emit_specific(facts, id, {:bs_start_match4, {:f, fail}, _live, src, dst}) do
-    facts
-    |> add_fact(:bs_start, [id, to_string(fail)])
-    |> add_fact(:use, [id, format_operand(src)])
-    |> add_fact(:def, [id, format_operand(dst)])
-  end
-
-  # bs_start_match4 with {:atom, :no_fail} or {:atom, :resume} (OTP 28+).
-  defp emit_specific(facts, id, {:bs_start_match4, {:atom, _mode}, _live, src, dst}) do
-    facts
-    |> add_fact(:bs_start, [id, "0"])
-    |> add_fact(:use, [id, format_operand(src)])
-    |> add_fact(:def, [id, format_operand(dst)])
-  end
-
-  # The commands that extract a segment name their destination last; the
-  # rest (ensure_at_least, =:=, skip) only test. Only the tags whose shape
-  # is known define a register, so an unfamiliar command stays silent rather
-  # than inventing a write.
-  defp emit_specific(facts, id, {:bs_match, {:f, fail}, ctx, {:commands, commands}}) do
-    facts
-    |> add_fact(:bs_start, [id, to_string(fail)])
-    |> add_fact(:use, [id, format_operand(ctx)])
-    |> emit_bs_match_defs(id, commands)
-  end
-
-  defp emit_specific(facts, id, {:bs_get_tail, src, dst, _live}) do
-    facts
-    |> add_fact(:use, [id, format_operand(src)])
-    |> add_fact(:def, [id, format_operand(dst)])
-  end
-
-  defp emit_specific(facts, id, {:bs_get_position, src, dst, _live}) do
-    facts
-    |> add_fact(:use, [id, format_operand(src)])
-    |> add_fact(:def, [id, format_operand(dst)])
-  end
-
-  defp emit_specific(facts, id, {:bs_set_position, src, pos}) do
-    facts
-    |> add_fact(:use, [id, format_operand(src)])
-    |> add_fact(:use, [id, format_operand(pos)])
-  end
-
-  # The segment list is flat, six entries per segment: type, segment unit,
-  # unit, flags, source, size. A register source or size is read; the built
-  # binary is written to dst. Without these rows `"prefix" <> value` breaks
-  # every def-use chain that runs through it.
-  defp emit_specific(
-         facts,
-         id,
-         {:bs_create_bin, {:f, _fail}, _alloc, _live, _unit, dst, {:list, segs}}
-       ) do
-    operands =
-      segs
-      |> Enum.chunk_every(6)
-      |> Enum.flat_map(fn
-        [_type, _seg_unit, _unit, _flags, src, size] -> [src, size]
-        _partial -> []
-      end)
-
-    facts
-    |> emit_operand_uses(id, operands)
-    |> add_fact(:def, [id, format_operand(dst)])
-  end
-
-  defp emit_specific(facts, _id, :bs_init_writable) do
-    facts
-  end
-
-  # Float operations.
-  defp emit_specific(facts, id, {:fconv, src, dst}) do
-    facts
-    |> add_fact(:use, [id, format_operand(src)])
-    |> add_fact(:def, [id, format_operand(dst)])
-  end
-
-  defp emit_specific(facts, id, {:fmove, src, dst}) do
-    facts
-    |> add_fact(:move, [id, format_operand(src), format_operand(dst)])
-    |> add_fact(:def, [id, format_operand(dst)])
-    |> add_fact(:use, [id, format_operand(src)])
-  end
-
-  # Error instructions.
-  defp emit_specific(facts, _id, {:func_info, _, _, _}) do
-    facts
-  end
-
-  defp emit_specific(facts, _id, {:badmatch, _val}) do
-    facts
-  end
-
-  defp emit_specific(facts, _id, {:case_end, _val}) do
-    facts
-  end
-
-  defp emit_specific(facts, _id, {:badrecord, _val}) do
-    facts
-  end
-
-  defp emit_specific(facts, _id, :if_end) do
-    facts
-  end
-
-  # Return.
-  defp emit_specific(facts, id, :return) do
-    add_fact(facts, :use, [id, "x0"])
-  end
-
-  # Set tuple element (destructive update — rare).
-  defp emit_specific(facts, id, {:set_tuple_element, val, tuple, _idx}) do
-    facts
-    |> add_fact(:use, [id, format_operand(val)])
-    |> add_fact(:use, [id, format_operand(tuple)])
-  end
-
-  # Recv marker instructions — no semantic facts.
-  defp emit_specific(facts, _id, {:recv_marker_bind, _, _}), do: facts
-  defp emit_specific(facts, _id, {:recv_marker_clear, _}), do: facts
-  defp emit_specific(facts, _id, {:recv_marker_reserve, _}), do: facts
-  defp emit_specific(facts, _id, {:recv_marker_use, _}), do: facts
-
-  # Meta instructions.
-  defp emit_specific(facts, _id, {:executable_line, _, _}), do: facts
-  defp emit_specific(facts, _id, :int_code_end), do: facts
-  defp emit_specific(facts, _id, :on_load), do: facts
-  defp emit_specific(facts, _id, {:on_load, _}), do: facts
-  defp emit_specific(facts, _id, :nif_start), do: facts
-
-  # Catch-all for unhandled instructions: logged at debug level so a run
-  # can be audited for opcodes the emitter is silently dropping.
-  defp emit_specific(facts, _id, instr) do
-    Logger.debug("Emitter: unhandled instruction opcode: #{instruction_op(instr)}")
-    facts
-  end
+  defp local_target({:f, label}), do: to_string(label)
+  defp local_target({_mod, _name, _arity} = mfa), do: format_mfa(mfa)
 
   # A tagged tuple built in place: the tag and size are what a rule
   # matching a message or return shape needs. x registers only — a y
@@ -1139,21 +788,10 @@ defmodule Argus.Pipeline.Emit do
     if writes?(instr, reg), do: nil, else: closure_at(rest, reg)
   end
 
-  defp register({:tr, reg, _type}), do: reg
-  defp register(reg), do: reg
+  defp register(operand), do: Instr.register(operand)
 
-  # A call clobbers every x register. `put_tuple2` names its destination
-  # first; the other value-producing instructions name it last.
-  defp writes?(instr, {:x, _})
-       when elem(instr, 0) in [:call, :call_ext, :call_fun, :call_fun2, :apply],
-       do: true
-
-  defp writes?({:put_tuple2, dst, _}, reg), do: register(dst) == reg
-
-  defp writes?(instr, reg) when is_tuple(instr) and tuple_size(instr) > 1,
-    do: register(elem(instr, tuple_size(instr) - 1)) == reg
-
-  defp writes?(_instr, _reg), do: false
+  # Whether `instr` leaves nothing of what `reg` held before it.
+  defp writes?(instr, reg), do: Instr.clobbers?(instr, reg)
 
   # apply/2,3 is a call whose target is computed, so the call graph cannot
   # follow it — the same gap as the `apply` and `call_fun` INSTRUCTIONS, but
@@ -1168,38 +806,4 @@ defmodule Argus.Pipeline.Emit do
   end
 
   defp maybe_dynamic(facts, _id, _func_id, _mod, _func), do: facts
-
-  # Argument registers of a call: x0..x(arity-1).
-  defp emit_call_arg_uses(facts, _id, 0), do: facts
-
-  defp emit_call_arg_uses(facts, id, arity) do
-    Enum.reduce(0..(arity - 1), facts, fn i, acc ->
-      add_fact(acc, :use, [id, "x#{i}"])
-    end)
-  end
-
-  @bs_match_extractors [:get_tail, :integer, :binary, :float, :utf8, :utf16, :utf32]
-
-  defp emit_bs_match_defs(facts, id, commands) do
-    Enum.reduce(commands, facts, fn command, acc ->
-      with true <- is_tuple(command) and tuple_size(command) > 1,
-           true <- elem(command, 0) in @bs_match_extractors,
-           {kind, _} = dst when kind in [:x, :y] <- elem(command, tuple_size(command) - 1) do
-        add_fact(acc, :def, [id, format_operand(dst)])
-      else
-        _ -> acc
-      end
-    end)
-  end
-
-  defp emit_operand_uses(facts, id, operands) when is_list(operands) do
-    Enum.reduce(operands, facts, fn operand, acc ->
-      case operand do
-        {:x, _} -> add_fact(acc, :use, [id, format_operand(operand)])
-        {:y, _} -> add_fact(acc, :use, [id, format_operand(operand)])
-        {:fr, _} -> add_fact(acc, :use, [id, format_operand(operand)])
-        _ -> acc
-      end
-    end)
-  end
 end

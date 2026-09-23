@@ -112,6 +112,30 @@ the fact file. Literals are now inspected with `structs: false`, the
 plain `%Mod{...}` form whatever implementation is loaded — a row change
 for memoising consumers only where a struct had its own.
 
+**Fixed.** `Argus.Instr` is the one reading of the instruction set: what each OTP 28
+instruction reads (`uses/1`), writes (`defs/1`), where control may go
+(`targets/1`) and whether it falls through (`falls_through?/1`), for
+raw and normalized instructions alike, with `known?/1` false for an
+opcode it cannot read. The emitter's `def`, `use` and `next` rows come
+from it, which fixes rows that were missing or wrong: `try_case` writes
+the exception class, reason and stacktrace into `x0`–`x2`, `catch_end`
+writes `x0` and `build_stacktrace` rewrites it (a handler's read of the
+reason had resolved to the function's parameter 1); `trim` renumbers the
+stack frame, writing `y0..y(R-1)` from the slots above the trimmed ones
+(a read after a trim had resolved to the old slot's value); the
+`bs_get_utf8`/`16`/`32` tests write their last operand instead of
+reading it; `recv_marker_reserve` writes its marker; map keys held in
+registers, the operand of `badmatch`/`case_end`/`try_case_end`/
+`badrecord`, `raw_raise`'s `x0`–`x2`, `bs_init_writable`'s `x0` and
+`wait_timeout`'s timeout register are read; and literal operands are no
+longer recorded as reads. No `next` row follows an instruction control
+cannot pass — a `select_val`, `func_info`, a raise, `wait`,
+`loop_rec_end` — which had joined a raising path's writes into the next
+clause. A `bs_create_bin` with a fail label records it as a `branch`,
+like the map instructions. The test suite asserts that every instruction
+in OTP, Elixir and the dependencies is known, and that the emitter's
+rows are exactly `Argus.Instr`'s.
+
 ### Process points-to
 
 **Changed.** `self()` resolves in a function a process's own code
