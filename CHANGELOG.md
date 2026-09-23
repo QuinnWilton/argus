@@ -8,6 +8,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+A named `Agent.start_link/2,4` or `Agent.start/2,4` is a registration
+like a named GenServer start: `process_register`, a `creating_op` for the
+lookup-then-start race (tesla#768's shape spelled with an Agent), and
+`named_process` owned by the module that starts it, since an Agent has
+no module of its own.
+
 Schema 43. `try_call` gains `call`, the guarded call's own instruction:
 the `try` instruction carries the line of whatever preceded it (the
 previous clause's body, or the function head), so "catches :noproc but

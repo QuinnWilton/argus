@@ -28,6 +28,16 @@ defmodule Argus.Test.Fixtures.NamedGenServer do
   def handle_cast(_, state), do: {:noreply, state}
 end
 
+defmodule Argus.Test.Fixtures.NamedAgents do
+  @moduledoc false
+
+  def start_named(fun), do: Agent.start_link(fn -> fun end, name: :named_agent)
+  def start_named_mfa, do: Agent.start_link(Map, :new, [], name: :named_mfa_agent)
+  def start_unlinked(fun), do: Agent.start(fn -> fun end, name: :unlinked_agent)
+  def start_anonymous(fun), do: Agent.start_link(fn -> fun end)
+  def start_with(fun, opts), do: Agent.start_link(fn -> fun end, opts)
+end
+
 defmodule Argus.Test.Fixtures.WhereisModule do
   @moduledoc false
 

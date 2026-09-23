@@ -22,6 +22,13 @@ defmodule Argus.Analyses.StructureRegistryRaceTest do
       assert [{"ensure/1", "whereis", "start_link", "0"}] = races([C.WhereisThenStart])
     end
 
+    test "whereis, then a named Agent start of the same name" do
+      skip_without_souffle()
+
+      assert [{"set/1", "whereis", "start_link", key}] = races([C.AgentWhereisThenStart])
+      assert key == inspect(C.AgentWhereisThenStart)
+    end
+
     test "Registry.lookup, then start_child, the result returned untaken" do
       skip_without_souffle()
 
@@ -51,6 +58,7 @@ defmodule Argus.Analyses.StructureRegistryRaceTest do
                C.HandlesAlreadyStarted,
                C.HandlesAlreadyRegistered,
                C.CallerHandlesAlreadyStarted,
+               C.AgentHandlesAlreadyStarted,
                C.RescuesArgumentError
              ]) == []
     end

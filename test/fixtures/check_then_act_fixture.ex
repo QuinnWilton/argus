@@ -77,6 +77,16 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     def init(state), do: {:ok, state}
   end
 
+  defmodule AgentWhereisThenStart do
+    @moduledoc "tesla#768's shape spelled with an Agent: whereis, then a named Agent start."
+    def set(fun) do
+      case Process.whereis(__MODULE__) do
+        nil -> Agent.start_link(fn -> fun end, name: __MODULE__)
+        pid -> Agent.update(pid, fn _ -> fun end)
+      end
+    end
+  end
+
   # ── Quiet neighbours ─────────────────────────────────────────────
 
   defmodule HandlesAlreadyStarted do
@@ -91,6 +101,22 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
             {:ok, pid} -> {:ok, pid}
             {:error, {:already_started, pid}} -> {:ok, pid}
           end
+      end
+    end
+  end
+
+  defmodule AgentHandlesAlreadyStarted do
+    @moduledoc "The named Agent start's loser takes the winner's pid."
+    def set(fun) do
+      case Process.whereis(__MODULE__) do
+        nil ->
+          case Agent.start_link(fn -> fun end, name: __MODULE__) do
+            {:ok, pid} -> pid
+            {:error, {:already_started, pid}} -> pid
+          end
+
+        pid ->
+          pid
       end
     end
   end

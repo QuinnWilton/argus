@@ -9,8 +9,10 @@ defmodule Argus.Extractors.ProcessRegistry do
 
   ## Emitted facts
 
-  - `process_register(id, func, name, method)` — direct registration and GenServer `name:` option
-  - `named_process(mod, name)` — module-level: a process implemented by `mod` is registered as `name`
+  - `process_register(id, func, name, method)` — direct registration and the `name:`
+    option of a GenServer or Agent start
+  - `named_process(mod, name)` — module-level: a process implemented by `mod` is registered
+    as `name`; for an Agent, which has no module of its own, the module that starts it
   - `name_lookup(id, func, api, scope, source, key, checked)` —
     `Process.whereis/1`, `:erlang.whereis/1` (`api` `whereis`, no scope)
     and `Registry.lookup/2` (`api` `registry_lookup`, `scope` the
@@ -166,10 +168,16 @@ defmodule Argus.Extractors.ProcessRegistry do
         emit_register(facts, mod_str, ctx, {:x, 0}, "register")
 
       {GenServer, :start_link, 3} ->
-        maybe_named_start(facts, ctx, "start_link")
+        maybe_named_start(facts, ctx, "start_link", {:x, 2}, {:started, {:x, 0}})
 
       {GenServer, :start, 3} ->
-        maybe_named_start(facts, ctx, "start")
+        maybe_named_start(facts, ctx, "start", {:x, 2}, {:started, {:x, 0}})
+
+      # Agent.start_link(fun, opts) and Agent.start_link(mod, fun, args, opts),
+      # and the unlinked starts: the options are the last argument.
+      {Agent, func, arity} when func in [:start_link, :start] and arity in [2, 4] ->
+        opts = {:x, arity - 1}
+        maybe_named_start(facts, ctx, Atom.to_string(func), opts, {:caller, mod_str})
 
       {:gen_server, :start_link, 4} ->
         maybe_named_start_erlang(facts, ctx, "start_link")
@@ -344,12 +352,16 @@ defmodule Argus.Extractors.ProcessRegistry do
   # The first argument (x0) is the module being started; if it resolves to a
   # literal atom we can also emit named_process(mod, name).
   #
+  # An Agent has no module of its own: the name belongs to the module whose
+  # code starts it, as with register/2, so two modules that start Agents
+  # under one name are two claimants rather than one "Agent".
+  #
   # For tail-called start_links where options don't resolve, suppress the
   # imprecision — the wrapper is just forwarding args from its caller, so
   # the name registration (if any) should be attributed to the call site
   # that builds the options, not this intermediary.
-  defp maybe_named_start(facts, ctx, method) do
-    case resolve_register(ctx.instrs, ctx.idx, {:x, 2}) do
+  defp maybe_named_start(facts, ctx, method, opts_reg, owner) do
+    case resolve_register(ctx.instrs, ctx.idx, opts_reg) do
       {:ok, opts} when is_list(opts) ->
         case Keyword.get(opts, :name) do
           nil ->
@@ -363,14 +375,14 @@ defmodule Argus.Extractors.ProcessRegistry do
           :dynamic ->
             facts
             |> track_imprecision(ctx, :gen_server_start_name, :process_register, :dynamic)
-            |> emit_dynamic_named_start(ctx, method)
+            |> emit_dynamic_named_start(ctx, method, opts_reg)
 
           name when is_atom(name) ->
             id = InstrId.mint(ctx.func_id, ctx.idx)
 
             facts
             |> add_fact(:process_register, [id, ctx.func_id, inspect(name), method])
-            |> maybe_emit_named_process_for_start(ctx, inspect(name))
+            |> maybe_emit_named_process_for_start(ctx, owner, inspect(name))
             |> add_creating_op(ctx, method, "", "literal", inspect(name))
 
           # A via-registered name is the registry's, not a process_register;
@@ -400,8 +412,8 @@ defmodule Argus.Extractors.ProcessRegistry do
     end
   end
 
-  defp emit_dynamic_named_start(facts, ctx, method) do
-    case keyword_value_register(ctx.instrs, ctx.idx, {:x, 2}, :name) do
+  defp emit_dynamic_named_start(facts, ctx, method, opts_reg) do
+    case keyword_value_register(ctx.instrs, ctx.idx, opts_reg, :name) do
       {:ok, reg, value_idx} ->
         {source, key} = key_identity(ctx.instrs, value_idx, reg)
         add_creating_op(facts, ctx, method, "", source, key)
@@ -456,13 +468,17 @@ defmodule Argus.Extractors.ProcessRegistry do
     end
   end
 
-  # For GenServer.start_link, the module being started is x0.
-  defp maybe_emit_named_process_for_start(facts, ctx, name) do
-    case resolve_register(ctx.instrs, ctx.idx, {:x, 0}) do
+  # For GenServer.start_link, the module being started is x0; for an
+  # Agent, the enclosing module.
+  defp maybe_emit_named_process_for_start(facts, ctx, {:started, mod_reg}, name) do
+    case resolve_register(ctx.instrs, ctx.idx, mod_reg) do
       {:ok, mod} when is_atom(mod) -> add_fact(facts, :named_process, [inspect(mod), name])
       _ -> facts
     end
   end
+
+  defp maybe_emit_named_process_for_start(facts, _ctx, {:caller, mod_str}, name),
+    do: add_fact(facts, :named_process, [mod_str, name])
 
   # For :gen_server.start_link({:local, name}, mod, ...), the module is x1.
   defp maybe_emit_named_process_for_erlang_start(facts, ctx, name) do

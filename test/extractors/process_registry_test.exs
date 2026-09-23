@@ -31,6 +31,40 @@ defmodule Argus.Extractors.ProcessRegistryTest do
     end
   end
 
+  describe "extract/1 — named Agent starts" do
+    test "the name in an Agent start's options is claimed, by the module that starts it" do
+      facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.NamedAgents))
+
+      registered =
+        for [_id, func, name, method] <- facts[:process_register],
+            do: {func |> String.split(":") |> List.last(), name, method}
+
+      assert Enum.sort(registered) == [
+               {"start_named/1", ":named_agent", "start_link"},
+               {"start_named_mfa/0", ":named_mfa_agent", "start_link"},
+               {"start_unlinked/1", ":unlinked_agent", "start"}
+             ]
+
+      mod = "Argus.Test.Fixtures.NamedAgents"
+
+      assert Enum.sort(facts[:named_process]) == [
+               [mod, ":named_agent"],
+               [mod, ":named_mfa_agent"],
+               [mod, ":unlinked_agent"]
+             ]
+
+      created =
+        for [_id, func, api, "", source, key] <- facts[:creating_op],
+            do: {func |> String.split(":") |> List.last(), api, source, key}
+
+      assert Enum.sort(created) == [
+               {"start_named/1", "start_link", "literal", ":named_agent"},
+               {"start_named_mfa/0", "start_link", "literal", ":named_mfa_agent"},
+               {"start_unlinked/1", "start", "literal", ":unlinked_agent"}
+             ]
+    end
+  end
+
   describe "extract/1 — whereis" do
     test "detects Process.whereis" do
       facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.WhereisModule))
