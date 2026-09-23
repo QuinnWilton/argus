@@ -65,6 +65,35 @@ defmodule Argus.Extractors.ProcessRegistry do
       :start_error_compared
     ]
 
+  # The calls this extractor reads a name lookup or claim from:
+  # the shared-state sites `Argus.Extractors.Dependence` follows.
+  @sites [
+    {Process, :whereis, 1},
+    {:erlang, :whereis, 1},
+    {Registry, :lookup, 2},
+    {Process, :register, 2},
+    {:erlang, :register, 2},
+    {Registry, :register, 3},
+    {GenServer, :start_link, 3},
+    {GenServer, :start, 3},
+    {:gen_server, :start_link, 4},
+    {:gen_server, :start, 4},
+    {Agent, :start_link, 2},
+    {Agent, :start_link, 4},
+    {Agent, :start, 2},
+    {Agent, :start, 4},
+    {DynamicSupervisor, :start_child, 2},
+    {Supervisor, :start_child, 2},
+    {ExUnit.Callbacks, :start_supervised, 1},
+    {ExUnit.Callbacks, :start_supervised, 2},
+    {ExUnit.Callbacks, :start_supervised!, 1},
+    {ExUnit.Callbacks, :start_supervised!, 2}
+  ]
+
+  @doc "Whether a remote call looks up or claims a name."
+  @spec site?(mfa()) :: boolean()
+  def site?(mfa), do: mfa in @sites
+
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do

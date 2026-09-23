@@ -11,6 +11,7 @@ defmodule Argus.MixProject do
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
+      erlc_paths: erlc_paths(Mix.env()),
       deps: deps(),
       dialyzer: dialyzer(),
       # The test fixtures deliberately call into applications argus does not
@@ -59,6 +60,10 @@ defmodule Argus.MixProject do
 
   defp elixirc_paths(:test), do: ["lib", "test/fixtures"]
   defp elixirc_paths(_), do: ["lib"]
+
+  # The race paper's examples are Erlang, and are kept in the paper's words.
+  defp erlc_paths(:test), do: ["test/fixtures/erl"]
+  defp erlc_paths(_), do: []
 
   # Hex knows this package as `panoptes` (Argus Panoptes; `argus` was
   # taken); the modules keep the `Argus` namespace.

@@ -6,6 +6,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Added
+
+**Schema version 44.** A new extractor, `Argus.Extractors.Dependence`,
+emits what each call, shared-state operation and return value depends on
+— the function's parameters, the results of the calls it makes, the
+results of shared-state operations — through data and through control,
+so a value merged after a `case` depends on what the `case` tested:
+`site_depends(site, func, kind, source)`, and the per-function
+`call_decided(caller, callee, kind, source)`, `call_arg_depends(caller,
+callee, arg_pos, kind, source)` and `returns_depends(func, kind,
+source)`. Calls into erts, kernel, stdlib, elixir and logger are not
+named as callees or sources.
+
+`Argus.Corpus` pairs take `subdir:` for a repository whose Mix project is
+not at the root — `mix.exs` under `elixir/`, one app of an umbrella under
+`apps/` — so a fix in such a tree can be a pair. The clone is still one
+directory per `<repo>-<sha7>`; relaxing the Elixir requirement, building
+and finding beams happen in the project, and an umbrella app's beams are
+found in the umbrella's `_build`.
+
 ### Changed
 
 `Argus.Souffle.input_relations/2` memoizes its answer for a program
@@ -184,15 +204,6 @@ store the ref rather than through every caller of the arming function:
 nebulex's `start_timer(time, ref, event \\ :heartbeat)` keeps `:cleanup`
 under one key and `:heartbeat` under another, and each finding now names
 its own message (both said `:cleanup`).
-
-### Added
-
-`Argus.Corpus` pairs take `subdir:` for a repository whose Mix project is
-not at the root — `mix.exs` under `elixir/`, one app of an umbrella under
-`apps/` — so a fix in such a tree can be a pair. The clone is still one
-directory per `<repo>-<sha7>`; relaxing the Elixir requirement, building
-and finding beams happen in the project, and an umbrella app's beams are
-found in the umbrella's `_build`.
 
 ## 0.19.0 — 2026-09-22
 

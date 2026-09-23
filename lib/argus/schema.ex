@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 43
+  @schema_version 44
 
   # Layer 1: Module-level facts.
 
@@ -1901,6 +1901,72 @@ defmodule Argus.Schema do
     """
   }
 
+  @site_depends %{
+    name: :site_depends,
+    layer: 2,
+    fields: [
+      {:site, :instr_id, "a shared-state operation: a name lookup or claim, or an ETS op"},
+      {:func, :func_id, "the function containing it"},
+      {:kind, :symbol, "param | call | site"},
+      {:source, :symbol,
+       "the parameter's position, the callee's function ID, or the shared-state operation's instruction ID"}
+    ],
+    doc: """
+    The operation runs only because of a test on the source, or is handed \
+    a value made from it (Argus.Extractors.Dependence). A site source is \
+    another shared-state operation's result: the check a check-then-act \
+    acts on.
+    """
+  }
+
+  @call_decided %{
+    name: :call_decided,
+    layer: 2,
+    fields: [
+      {:caller, :func_id, "the calling function"},
+      {:callee, :func_id, "the callee, or a closure the caller builds"},
+      {:kind, :symbol, "param | call | site"},
+      {:source, :symbol, "as site_depends"}
+    ],
+    doc: """
+    Some call to the callee runs only because of a test on the source: \
+    everything the callee does is decided by it. Building a closure \
+    counts as a call to it. Function-level.
+    """
+  }
+
+  @call_arg_depends %{
+    name: :call_arg_depends,
+    layer: 2,
+    fields: [
+      {:caller, :func_id, "the calling function"},
+      {:callee, :func_id, "the callee, or a closure the caller builds"},
+      {:arg_pos, :number, "0-based argument position, or the closure's environment parameter"},
+      {:kind, :symbol, "param | call | site"},
+      {:source, :symbol, "as site_depends"}
+    ],
+    doc: """
+    At some call to the callee, the argument depends on the source: made \
+    from it, or computed under a test on it. Unlike call_arg_derived, \
+    control counts, and the sources include call results. Function-level.
+    """
+  }
+
+  @returns_depends %{
+    name: :returns_depends,
+    layer: 2,
+    fields: [
+      {:func, :func_id, "the function"},
+      {:kind, :symbol, "param | call | site"},
+      {:source, :symbol, "as site_depends"}
+    ],
+    doc: """
+    What the function returns depends on the source: a lookup helper \
+    returns its site, a wrapper the call it makes, an identity function \
+    its parameter.
+    """
+  }
+
   @call_arg_derived %{
     name: :call_arg_derived,
     layer: 2,
@@ -2071,6 +2137,11 @@ defmodule Argus.Schema do
     @name_lookup,
     @sink_arg_derived,
     @start_error_compared,
+    # Dependence: what decides or feeds a call, a shared-state op, a return.
+    @site_depends,
+    @call_decided,
+    @call_arg_depends,
+    @returns_depends,
     # Purity contracts and call classification.
     @pure_contract,
     @impure_call,

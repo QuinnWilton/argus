@@ -72,6 +72,11 @@ defmodule Argus.Extractors.ETS do
       :ets_option
     ]
 
+  @doc "Whether a remote call is an ETS operation, for `Argus.Extractors.Dependence`."
+  @spec site?(mfa()) :: boolean()
+  def site?({:ets, _func, _arity}), do: true
+  def site?(_mfa), do: false
+
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do

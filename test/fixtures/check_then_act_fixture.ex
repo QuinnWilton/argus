@@ -87,6 +87,46 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  # ── Across functions ─────────────────────────────────────────────
+
+  defmodule LookupHelper do
+    @moduledoc "The lookup sits in a helper that returns it; the decision is in the caller."
+    def ensure(name) do
+      case lookup(name) do
+        nil -> GenServer.start_link(__MODULE__, [], name: name)
+        pid -> {:ok, pid}
+      end
+    end
+
+    defp lookup(name), do: Process.whereis(name)
+
+    def init(state), do: {:ok, state}
+  end
+
+  defmodule StartHelper do
+    @moduledoc "The decision calls a helper that starts the named process."
+    def ensure(name) do
+      case Process.whereis(name) do
+        nil -> start(name)
+        pid -> {:ok, pid}
+      end
+    end
+
+    defp start(name), do: GenServer.start_link(__MODULE__, [], name: name)
+
+    def init(state), do: {:ok, state}
+  end
+
+  defmodule DispatchHelper do
+    @moduledoc "The lookup's result is an argument, and a multi-clause helper dispatches on it."
+    def ensure(name), do: do_ensure(Process.whereis(name), name)
+
+    defp do_ensure(nil, name), do: GenServer.start_link(__MODULE__, [], name: name)
+    defp do_ensure(pid, _name), do: {:ok, pid}
+
+    def init(state), do: {:ok, state}
+  end
+
   # ── Quiet neighbours ─────────────────────────────────────────────
 
   defmodule HandlesAlreadyStarted do
