@@ -99,11 +99,6 @@ defmodule Argus.Corpus do
     end
   end
 
-  @doc "Runs every analysis over beams, extracting their facts afresh."
-  @deprecated "Use analyze/2, which solves over the checkout's cached facts"
-  @spec analyze([Path.t()]) :: {:ok, Argus.Findings.t()} | {:error, term()}
-  def analyze(beams), do: Argus.run_analyses(beams, analyses: :all)
-
   @doc """
   Runs every analysis over one side of a pair; the findings as
   `Argus.run_analyses/2` returns them.

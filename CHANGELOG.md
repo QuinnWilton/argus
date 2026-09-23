@@ -839,8 +839,8 @@ loop, with names and keys translated across each call by `call_arg`,
 `call_arg_forward` and `call_arg_field`. An unknown higher-order call is
 not followed, the paper's own evaluated setting. `guarded_create` and
 `ets_guarded_write` are removed — an act decided in the same function is
-the component's simplest case — and `Argus.Extractor.Guard` is
-deprecated.
+the component's simplest case — and so is `Argus.Extractor.Guard`, which
+nothing called once the rules read `Argus.Extractors.Dependence`.
 
 **Added.** `registry_race` rows now name the function where the pair meets, and
 cover `Process.registered/0` deciding a register (`name_lookup` api
@@ -1001,7 +1001,9 @@ Datalog that extraction reaches (`Argus.Corpus.engine_modules/0`: the
 pipeline, the extractors and what they call through beam_spy and ctf,
 the analyses' extractor declarations, stage 0's includes — not a
 finding's prose or a rule), the runtime and the solver; `Argus.Corpus.analyze/2`
-takes the pair and side and solves over the cache. Extraction was over
+takes the pair and side and solves over the cache, and `analyze/1`, which
+extracted a list of beams afresh, is removed (`Argus.run_analyses/2` does
+that). Extraction was over
 90% of a large tree's analysis and its inputs never move between runs.
 `Argus.CorpusTest` analyzes each checkout once, `ARGUS_CORPUS_JOBS` (default
 4) at a time, before checking the pairs. An entry under another digest is
