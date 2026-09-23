@@ -23,6 +23,56 @@ defmodule Argus.Extractors.PidFlowTest do
   defp unsited(rows), do: Enum.map(rows, &tl/1)
 
   describe "allocation sites" do
+    test "a proc_lib start or a monitoring spawn_opt returns the pid in its own shape" do
+      [{_mod, bin}] =
+        Code.compile_string("""
+        defmodule Argus.PidFlowTest.Starts do
+          def start(_owner) do
+            helper = spawn(fn -> :ok end)
+            {:ok, pid} = :proc_lib.start_link(__MODULE__, :init_it, [helper])
+            send(pid, :go)
+          end
+
+          def watch(owner) do
+            {pid, _ref} = :erlang.spawn_opt(__MODULE__, :init_it, [owner], [:monitor])
+            send(pid, :go)
+          end
+
+          def init_it(_owner), do: :ok
+        end
+        """)
+
+      {:ok, raw} = Argus.Pipeline.extract([bin], extractors: [PidFlow])
+      starts = for [_id, func, proc, _kind, runs] <- raw.process_start, do: {func, proc, runs}
+
+      starts = Enum.reject(starts, fn {_f, _p, runs} -> runs =~ "-fun-" end)
+
+      for {func, runs} <- [
+            {"Argus.PidFlowTest.Starts:start/1", "Argus.PidFlowTest.Starts:init_it/1"},
+            {"Argus.PidFlowTest.Starts:watch/1", "Argus.PidFlowTest.Starts:init_it/1"}
+          ] do
+        assert [{^func, proc, ^runs}] = Enum.filter(starts, &(elem(&1, 0) == func))
+
+        # The pid the send targets is the started process: the start's
+        # result shape put it where the match reads it.
+        assert Enum.any?(raw.pid_send, fn
+                 [_id, f, _msg, "proc", ^proc] -> f == func
+                 _ -> false
+               end),
+               "#{func} sends to #{proc}"
+      end
+
+      # The argument list reaches the spawned function's parameters: the
+      # helper process is init_it's parameter 0.
+      assert [
+               _id,
+               "Argus.PidFlowTest.Starts:start/1",
+               "Argus.PidFlowTest.Starts:init_it/1",
+               "0",
+               "spawn" | _
+             ] = Enum.find(raw[:pid_arg] || [], &match?([_, _, _, _, "spawn" | _], &1))
+    end
+
     test "a spawn is named by its site and says what it runs; a server start its module" do
       f = facts([F.Worker, F.Owner, F.Loops])
 

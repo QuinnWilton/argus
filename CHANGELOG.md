@@ -357,6 +357,16 @@ registers it does not keep.
 
 ### Process points-to
 
+**Fixed.** `PidFlow` reads what `spawn_call` now says of each spawn: the
+argument list's register (`args`; it guessed x2, or x3 after a node,
+which is wrong for `spawn_opt/4,5`, `proc_lib:start/4,5` and
+`Process.spawn/4`) and the result's shape — `{:ok, pid}` from a
+`proc_lib` start, `{pid, ref}` from a monitoring `spawn_opt` — where every
+resolved spawn returned a bare pid. A spawn whose target did not resolve,
+or of unknown arity, is left to the closure-following starts table
+rather than named `M:f/-1`; `proc_lib:start_monitor`'s `{result, ref}`
+is not modelled.
+
 **Changed.** Points-to (`clientlib/processes.dl`) solves the same rows in
 about half the time: its recursive rules carry `.plan`s that start each
 semi-naive version from its new tuples, where the source order scanned

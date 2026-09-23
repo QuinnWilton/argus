@@ -324,21 +324,42 @@ defmodule Argus.Extractors.PidFlow do
     end)
   end
 
-  # The spawns Emit resolved: %{func_id => %{idx => {runs, arity}}}.
+  # The spawns Emit resolved (`spawn_call`): %{func_id => %{idx =>
+  # %{runs, arity, args, shape}}}. A spawn whose target did not resolve
+  # (a parameter's fun, an argument list of unknown length) is left to
+  # @other_spawns, which follows a closure's register through the
+  # points-to values.
   defp spawns_by_function(module_data) do
     case Helpers.typed(module_data) do
       nil ->
         %{}
 
       typed ->
-        for %{mod: mod, func: fun, arity: arity, id: id} <- Map.get(typed, :spawn_call, []),
-            mod != "dynamic",
+        for %{mod: mod, func: fun, arity: arity, id: id} = row <- Map.get(typed, :spawn_call, []),
+            row.source in ["closure", "fun", "mfa"],
+            arity >= 0,
+            shape = spawn_shape(row.api, row.variant),
+            shape != nil,
             reduce: %{} do
           acc ->
             func = InstrId.func_id(id.module, id.func, id.arity)
-            spawn = {"#{mod}:#{fun}/#{arity}", arity}
+            args = if row.args >= 0, do: {:x, row.args}, else: nil
+            spawn = %{runs: "#{mod}:#{fun}/#{arity}", arity: arity, args: args, shape: shape}
             Map.update(acc, func, %{id.idx => spawn}, &Map.put(&1, id.idx, spawn))
         end
+    end
+  end
+
+  # What the spawning call returns around the pid: a pid, `{pid, ref}`
+  # when it monitors, `{:ok, pid}` from a proc_lib start (what init_ack
+  # conventionally sends). proc_lib:start_monitor returns `{result, ref}`
+  # around that, a shape not modelled.
+  defp spawn_shape(api, variant) do
+    cond do
+      String.starts_with?(api, ":proc_lib.start_monitor/") -> nil
+      String.starts_with?(api, ":proc_lib.start") -> :ok
+      variant == "spawn_monitor" -> :pid_ref
+      true -> :pid
     end
   end
 
@@ -358,13 +379,9 @@ defmodule Argus.Extractors.PidFlow do
   defp start(fun, idx, mfa, instrs) do
     cond do
       Map.has_key?(fun.spawns, idx) ->
-        {runs, arity} = Map.fetch!(fun.spawns, idx)
-        {_m, name, spawn_arity} = mfa
-        shape = if name == :spawn_monitor, do: :pid_ref, else: :pid
-        # The argument list follows the module and function, after the
-        # node in the four-argument form.
-        args = if spawn_arity == 4, do: {:x, 3}, else: {:x, 2}
-        %{kind: "spawn", runs: runs, shape: shape, arity: arity, args: args}
+        spawn = Map.fetch!(fun.spawns, idx)
+        start = %{kind: "spawn", runs: spawn.runs, shape: spawn.shape, arity: spawn.arity}
+        if spawn.args, do: Map.put(start, :args, spawn.args), else: start
 
       Map.has_key?(@server_starts, mfa) ->
         server_start(instrs, idx, Map.fetch!(@server_starts, mfa), :ok)
