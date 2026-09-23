@@ -89,6 +89,11 @@ blocks, which are numbered in instruction order, rather than a scan of
 them; `Argus.Cfg.Walk.explore/4` asks it at each block's end instead of
 indexing every instruction of the function on each call.
 
+**Added.** `Argus.Extractor.ValueFlow`: a value per register write,
+solved to a fixpoint over one function's reaching definitions by a
+worklist that evaluates an instruction again only when a write it reads
+changes: PidFlow's solver, moved out.
+
 **Removed.** Schema 60. `move`, `allocate`, `deallocate`, `try_end` and
 `module_attribute`: no Datalog rule and no in-process pass read them (the
 walks read the instructions; the extractors that need an attribute read

@@ -92,8 +92,9 @@ defmodule Argus.Extractors.PidFlow do
   ## Reading the bytecode
 
   Per function, a sparse fixpoint over `Argus.Dataflow`'s reaching
-  definitions: an instruction is evaluated again only when a definition
-  it reads, or a term it read a field of, changes. A call into the
+  definitions (`Argus.Extractor.ValueFlow`): an instruction is evaluated
+  again only when a definition it reads, or a term it read a field of,
+  changes. A call into the
   runtime, `apply`, a BIF outside the structural few, and anything else
   not modelled yield nothing: what cannot be followed is lost rather than
   invented, so every rule on top of these facts stays quiet where it
@@ -108,6 +109,7 @@ defmodule Argus.Extractors.PidFlow do
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Runtime
+  alias Argus.Extractor.ValueFlow
   alias Argus.Extractors.ApiCalls
   alias Argus.Instr
   alias Argus.InstrId
@@ -268,7 +270,7 @@ defmodule Argus.Extractors.PidFlow do
         %{}
 
       reaching ->
-        reads = reads_by_function(reaching)
+        reads = ValueFlow.reads_by_function(reaching)
         sites = sites_by_function(module_data)
         spawns = spawns_by_function(module_data)
 
@@ -296,25 +298,6 @@ defmodule Argus.Extractors.PidFlow do
   end
 
   # ── The module, indexed per function ────────────────────────────────
-
-  # %{func_id => %{idx => %{reg => [{:param, k} | {:def, idx}]}}}
-  defp reads_by_function(reaching) do
-    Enum.reduce(reaching, %{}, fn {source, reg, use}, acc ->
-      func = InstrId.func_id(use.module, use.func, use.arity)
-
-      from =
-        case source do
-          {:param, k} -> {:param, k}
-          %InstrId{idx: d} -> {:def, d}
-        end
-
-      Map.update(acc, func, %{use.idx => %{reg => [from]}}, fn by_idx ->
-        Map.update(by_idx, use.idx, %{reg => [from]}, fn regs ->
-          Map.update(regs, reg, [from], &[from | &1])
-        end)
-      end)
-    end)
-  end
 
   defp sites_by_function(module_data) do
     module_data
@@ -529,65 +512,28 @@ defmodule Argus.Extractors.PidFlow do
 
   defp function_facts(facts, fun) do
     fun = Map.put(fun, :starts, starts(fun))
-    users = users(fun.reads)
     idxs = Enum.to_list(0..(tuple_size(fun.code) - 1)//1)
-    state = %{outs: %{}, objs: %{}, readers: %{}, count: %{}}
-    state = run(:queue.from_list(idxs), MapSet.new(idxs), fun, users, state)
-    emit(facts, fun, state)
+
+    {outs, state} =
+      ValueFlow.solve(
+        idxs,
+        fun.reads,
+        %{objs: %{}, readers: %{}},
+        fn idx, outs, state ->
+          result = evaluate(idx, fun, Map.put(state, :outs, outs))
+          {again, state} = commit_objects(idx, result, state)
+          {result.writes, state, again}
+        end,
+        max_evaluations: @max_evaluations
+      )
+
+    emit(facts, fun, Map.put(state, :outs, outs))
   end
 
-  # Which instructions read each instruction's writes.
-  defp users(reads) do
-    Enum.reduce(reads, %{}, fn {use, regs}, acc ->
-      Enum.reduce(regs, acc, fn {_reg, froms}, inner ->
-        Enum.reduce(froms, inner, fn
-          {:def, d}, deep -> Map.update(deep, d, [use], &[use | &1])
-          {:param, _k}, deep -> deep
-        end)
-      end)
-    end)
-  end
-
-  defp run(queue, pending, fun, users, state) do
-    case :queue.out(queue) do
-      {:empty, _queue} ->
-        state
-
-      {{:value, idx}, queue} ->
-        pending = MapSet.delete(pending, idx)
-        count = Map.get(state.count, idx, 0)
-
-        if count >= @max_evaluations do
-          run(queue, pending, fun, users, state)
-        else
-          state = %{state | count: Map.put(state.count, idx, count + 1)}
-          result = evaluate(idx, fun, state)
-          {targets, state} = commit(idx, result, users, state)
-          {queue, pending} = enqueue(targets, queue, pending)
-          run(queue, pending, fun, users, state)
-        end
-    end
-  end
-
-  defp enqueue(targets, queue, pending) do
-    Enum.reduce(targets, {queue, pending}, fn target, {q, p} ->
-      if MapSet.member?(p, target),
-        do: {q, p},
-        else: {:queue.in(target, q), MapSet.put(p, target)}
-    end)
-  end
-
-  # Records what the evaluation wrote; returns the instructions to
-  # evaluate again: the readers of a changed register, and the loads
-  # through a term whose fields changed.
-  defp commit(idx, result, users, state) do
-    {changed_regs?, outs} =
-      Enum.reduce(result.writes, {false, state.outs}, fn {reg, value}, {changed?, outs} ->
-        if Map.get(outs, {idx, reg}) == value,
-          do: {changed?, outs},
-          else: {true, Map.put(outs, {idx, reg}, value)}
-      end)
-
+  # Records the terms the evaluation built and the ones it read a field
+  # of; returns the loads to evaluate again, through a term whose fields
+  # changed.
+  defp commit_objects(idx, result, state) do
     readers =
       Enum.reduce(result.read_objs, state.readers, fn obj, acc ->
         Map.update(acc, obj, MapSet.new([idx]), &MapSet.put(&1, idx))
@@ -600,11 +546,8 @@ defmodule Argus.Extractors.PidFlow do
           else: {[key | changed], Map.put(objs, key, obj)}
       end)
 
-    targets =
-      if(changed_regs?, do: Map.get(users, idx, []), else: []) ++
-        Enum.flat_map(changed_objs, &MapSet.to_list(Map.get(readers, &1, MapSet.new())))
-
-    {targets, %{state | outs: outs, objs: objs, readers: readers}}
+    again = Enum.flat_map(changed_objs, &MapSet.to_list(Map.get(readers, &1, MapSet.new())))
+    {again, %{state | objs: objs, readers: readers}}
   end
 
   # ── What an instruction writes ───────────────────────────────────────
