@@ -72,7 +72,7 @@ defmodule Scry.Runner do
 
       souffle? = Argus.Souffle.available?()
 
-      fingerprint = env_fingerprint(souffle?)
+      fingerprint = Scry.Fingerprint.env(souffle?)
       fingerprint_changed? = Input.fetch(db, :env_fingerprint, :all) != {:ok, fingerprint}
       :ok = Input.set(db, :env_fingerprint, :all, fingerprint)
       :ok = Input.set(db, :project_root, :all, File.cwd!())
@@ -148,41 +148,5 @@ defmodule Scry.Runner do
       end)
 
     {findings, Enum.reverse(degraded)}
-  end
-
-  # What must invalidate the whole graph when it moves: the runtime the
-  # extraction runs on, the argus code (extractors and .dl rules ship
-  # without schema bumps, so the app vsn — coarse but correct), this
-  # layer's own encoding, the schema, and the solver binary. Souffle's
-  # entry doubles as the healing signal for install-after-degrade.
-  defp env_fingerprint(souffle?) do
-    %{
-      elixir: System.version(),
-      otp: System.otp_release(),
-      argus: app_vsn(:panoptes),
-      scry: app_vsn(:scry),
-      argus_schema: Argus.Schema.version(),
-      souffle: if(souffle?, do: souffle_version(), else: nil)
-    }
-  end
-
-  defp app_vsn(app) do
-    _ = Application.load(app)
-
-    case Application.spec(app, :vsn) do
-      nil -> "unknown"
-      vsn -> to_string(vsn)
-    end
-  end
-
-  defp souffle_version do
-    case System.cmd("souffle", ["--version"], stderr_to_stdout: true) do
-      {out, 0} -> out |> String.split("\n", trim: true) |> List.first() || "unknown"
-      _ -> "unknown"
-    end
-  rescue
-    # available? raced against the binary disappearing — the fingerprint
-    # still moves relative to nil, which is all the healing needs.
-    ErlangError -> "unknown"
   end
 end
