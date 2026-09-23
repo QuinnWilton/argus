@@ -584,6 +584,34 @@ defmodule Argus.Pipeline.EmitTest do
       refute String.contains?(spelled, ["\n", "\t", "#Loud<", "Inspect.Error"])
       assert spelled == inspect(%Loud{}, structs: false)
     end
+
+    # inspect/2 stops at 50 elements and at 4096 bytes of a string, so these
+    # pairs used to spell the same and join as one value.
+    test "literals that differ past inspect's bounds spell differently" do
+      pairs = [
+        {Enum.to_list(1..60), Enum.to_list(1..59) ++ [:other]},
+        {String.duplicate("a", 5000), String.duplicate("a", 4999) <> "b"},
+        {Map.new(1..60, &{&1, &1}), Map.new(1..60, &{&1, -&1})},
+        {List.to_tuple(Enum.to_list(1..60)), List.to_tuple(Enum.to_list(1..59) ++ [0])}
+      ]
+
+      for {a, b} <- pairs do
+        refute spelling(a) == spelling(b)
+        assert spelling(a) == spelling(a)
+      end
+    end
+
+    test "a literal inspect spells in full keeps its plain spelling" do
+      for value <- [[1, 2, 3], %{a: [b: "c"]}, {:ok, "x"}, Enum.to_list(1..50)] do
+        assert spelling(value) == inspect(value, structs: false)
+      end
+    end
+
+    defp spelling(value) do
+      facts = emit_func([{:move, {:literal, value}, {:x, 0}}, :return])
+      [[_, "x0", spelled]] = facts[:literal_value]
+      spelled
+    end
   end
 
   describe "real module integration" do

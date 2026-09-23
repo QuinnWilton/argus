@@ -11,6 +11,15 @@ Grouped by concern. Each entry opens with what it does: **Added**,
 
 ### Fact schema and extraction
 
+**Fixed.** Literals that differ past `inspect/2`'s bounds (50 elements, 4096 bytes
+of a string) no longer spell the same: a spelling inspect cuts short
+ends in ` #` and a digest of the whole term, so `literal_value`,
+`module_attribute` and operand columns tell such literals apart. Spelling
+every literal in full was measured and rejected (it doubles the bytes of
+literal spellings over ecto, absinthe and hexpm, nearly all of it
+embedded asset binaries); the digest adds 0.4% and changes 995 of 91,640
+spellings there, every other spelling is as before.
+
 **Fixed.** Fact files are escaped. Souffle reads a field as the bytes between two
 tabs and a row as the bytes up to a newline, with no escapes of its own,
 so a name holding either (`def unquote(:"a\tb")()`) wrote a row with a
