@@ -4,10 +4,11 @@ All notable changes to Argus are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.20.0-dev — unreleased
 
-Grouped by concern. Each entry opens with what it does: **Added**,
-**Changed**, **Fixed** or **Removed**.
+What 0.20.0 will ship; the release dates this heading and drops the
+`-dev` from `mix.exs`. Grouped by concern. Each entry opens with what it
+does: **Added**, **Changed**, **Fixed** or **Removed**.
 
 ### Analysis names
 
