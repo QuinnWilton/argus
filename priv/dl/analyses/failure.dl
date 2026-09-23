@@ -196,27 +196,38 @@ unchecked_result(func, id, "Process.whereis", name) :-
 // whose target is unknown (`scope` "") is judged against every site of
 // the callee.
 
+// A call site in a function another module's macro wrote — `use
+// Ecto.Repo` defines `stop/1` in every repo, on the `use` line — or in a
+// closure inside one is the library's choice, not the program's: it
+// neither holds a belief nor breaks one.
+.decl program_site(site: symbol, func: symbol, callee: symbol, fate: symbol, guard: symbol, guard_end: symbol, target: symbol)
+
+program_site(site, f, callee, fate, guard, guard_end, t) :-
+  call_result(site, f, callee, fate, guard, guard_end, t),
+  enclosing_function(f, owner),
+  !macro_generated(owner, _).
+
 .decl fate_count(callee: symbol, scope: symbol, fate: symbol, n: number)
 
 fate_count(callee, "", fate, n) :-
-  call_result(_, _, callee, fate, _, _, _),
-  n = count : { call_result(_, _, callee, fate, _, _, _) }.
+  program_site(_, _, callee, fate, _, _, _),
+  n = count : { program_site(_, _, callee, fate, _, _, _) }.
 
 fate_count(callee, t, fate, n) :-
-  call_result(_, _, callee, fate, _, _, t),
+  program_site(_, _, callee, fate, _, _, t),
   t != "",
-  n = count : { call_result(_, _, callee, fate, _, _, t) }.
+  n = count : { program_site(_, _, callee, fate, _, _, t) }.
 
 .decl guard_count(callee: symbol, scope: symbol, guard: symbol, n: number)
 
 guard_count(callee, "", guard, n) :-
-  call_result(_, _, callee, _, guard, _, _),
-  n = count : { call_result(_, _, callee, _, guard, _, _) }.
+  program_site(_, _, callee, _, guard, _, _),
+  n = count : { program_site(_, _, callee, _, guard, _, _) }.
 
 guard_count(callee, t, guard, n) :-
-  call_result(_, _, callee, _, guard, _, t),
+  program_site(_, _, callee, _, guard, _, t),
   t != "",
-  n = count : { call_result(_, _, callee, _, guard, _, t) }.
+  n = count : { program_site(_, _, callee, _, guard, _, t) }.
 
 // A result is worth checking only if the callee can fail by returning:
 // a callee whose spec names no failure value (`:ets.new/2` returns a
@@ -234,7 +245,7 @@ result_uncheckable(c) :- callee_returns(c, "no_return").
 
 // A site unchecked_result already owns is not reported twice.
 inconsistent_handling(func, site, callee, "result_checked", used, ignored, t) :-
-  call_result(site, func, callee, "ignored", _, _, t),
+  program_site(site, func, callee, "ignored", _, _, t),
   !result_uncheckable(callee),
   fate_count(callee, t, "used", used),
   fate_count(callee, t, "ignored", ignored),
@@ -243,7 +254,7 @@ inconsistent_handling(func, site, callee, "result_checked", used, ignored, t) :-
   !unchecked_result(func, site, _, _).
 
 inconsistent_handling(func, site, callee, "exception_guarded", guarded, bare, t) :-
-  call_result(site, func, callee, _, "bare", _, t),
+  program_site(site, func, callee, _, "bare", _, t),
   guard_count(callee, t, "try", guarded),
   guard_count(callee, t, "bare", bare),
   guarded >= 3,
@@ -257,10 +268,10 @@ inconsistent_handling(func, site, callee, "exception_guarded", guarded, bare, t)
 
 handling_site(callee, "exception_guarded", site, f, guard_end, t) :-
   inconsistent_handling(_, _, callee, "exception_guarded", _, _, t),
-  call_result(site, f, callee, _, "try", guard_end, t2),
+  program_site(site, f, callee, _, "try", guard_end, t2),
   (t = "" ; t = t2).
 
 handling_site(callee, "result_checked", site, f, "", t) :-
   inconsistent_handling(_, _, callee, "result_checked", _, _, t),
-  call_result(site, f, callee, "used", _, _, t2),
+  program_site(site, f, callee, "used", _, _, t2),
   (t = "" ; t = t2).

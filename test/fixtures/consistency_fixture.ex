@@ -245,4 +245,85 @@ defmodule Argus.Test.Fixtures.Consistency do
       :error, :badarg -> nil
     end
   end
+
+  defmodule StopMacro do
+    @moduledoc "A library's `use` that writes a bare GenServer.stop into the module using it."
+    defmacro __using__(_opts) do
+      quote do
+        def stop(server), do: GenServer.stop(server)
+      end
+    end
+  end
+
+  defmodule GeneratedBare do
+    @moduledoc """
+    Four sites guard GenServer.stop; the fifth, bare, is the one `use
+    StopMacro` wrote. It is the library's site, not the program's: no
+    deviant (supavisor's `use Ecto.Repo` wrote Supavisor.Repo.stop/1).
+    """
+    use Argus.Test.Fixtures.Consistency.StopMacro
+
+    def a(s), do: guarded(s)
+    def b(s), do: guarded2(s)
+    def c(s), do: guarded3(s)
+    def d(s), do: guarded4(s)
+
+    defp guarded(s) do
+      GenServer.stop(s)
+    catch
+      :exit, _ -> :ok
+    end
+
+    defp guarded2(s) do
+      GenServer.stop(s)
+    catch
+      :exit, _ -> :ok
+    end
+
+    defp guarded3(s) do
+      GenServer.stop(s)
+    catch
+      :exit, _ -> :ok
+    end
+
+    defp guarded4(s) do
+      GenServer.stop(s)
+    catch
+      :exit, _ -> :ok
+    end
+  end
+
+  defmodule WrittenBare do
+    @moduledoc "The same five sites, the bare one written by hand: the deviant."
+    def stop(server), do: GenServer.stop(server)
+
+    def a(s), do: guarded(s)
+    def b(s), do: guarded2(s)
+    def c(s), do: guarded3(s)
+    def d(s), do: guarded4(s)
+
+    defp guarded(s) do
+      GenServer.stop(s)
+    catch
+      :exit, _ -> :ok
+    end
+
+    defp guarded2(s) do
+      GenServer.stop(s)
+    catch
+      :exit, _ -> :ok
+    end
+
+    defp guarded3(s) do
+      GenServer.stop(s)
+    catch
+      :exit, _ -> :ok
+    end
+
+    defp guarded4(s) do
+      GenServer.stop(s)
+    catch
+      :exit, _ -> :ok
+    end
+  end
 end

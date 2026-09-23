@@ -633,6 +633,14 @@ read on every call.
 
 ### failure
 
+**Changed.** Schema 52. `macro_generated(func, by)`: a function another module's
+macro wrote into the analyzed one, read from the `context:` Elixir keeps
+in each definition's debug-info metadata (or its `generated: true`
+marker) by `Argus.Extractors.Generated`. `failure.inconsistent_handling`
+leaves those sites, and the closures inside them, out of the population:
+`use Ecto.Repo` writes a bare `Supervisor.stop/3` into every repo, on the
+`use` line, and that was the library's choice reported as the program's.
+
 **Changed.** Schema 51. `call_result` gains a `target` column: the call's first
 argument when it is a literal (the table, the server name).
 `failure.inconsistent_handling` judges a site against its callee's sites

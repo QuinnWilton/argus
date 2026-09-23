@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 51
+  @schema_version 52
 
   # Layer 1: Module-level facts.
 
@@ -1829,6 +1829,22 @@ defmodule Argus.Schema do
     """
   }
 
+  @macro_generated %{
+    name: :macro_generated,
+    layer: 2,
+    fields: [
+      {:func, :func_id, "function ID (mod:func/arity)"},
+      {:by, :symbol, "the module whose macro defined it, inspected; or generated"}
+    ],
+    doc: """
+    A function another module's macro wrote into this one — `use Ecto.Repo` \
+    defines `stop/1` in the repo — read from the `context:` Elixir records \
+    in each definition's debug-info metadata, or its `generated: true` \
+    marker (`generated`). Its call sites are the library's, not the \
+    program's. Erlang modules yield no rows.
+    """
+  }
+
   @spec_return %{
     name: :spec_return,
     layer: 2,
@@ -2443,8 +2459,9 @@ defmodule Argus.Schema do
     @ets_tid_arg,
     @mnesia_op,
     @name_lookup,
-    # What specs claim functions return.
+    # What specs claim functions return, and which a macro wrote.
     @spec_return,
+    @macro_generated,
     @name_release,
     @sink_arg_derived,
     @process_start,

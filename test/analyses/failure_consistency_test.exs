@@ -101,6 +101,31 @@ defmodule Argus.Analyses.FailureConsistencyTest do
     end
   end
 
+  describe "macro-generated code" do
+    test "a site another module's macro wrote is not the program's" do
+      skip_without_souffle()
+      assert rows([C.GeneratedBare]) == []
+    end
+
+    test "the same site written by hand is the deviant" do
+      skip_without_souffle()
+      assert [{func, _, "exception_guarded", 4, 1}] = rows([C.WrittenBare])
+      assert func =~ "WrittenBare:stop/1"
+    end
+
+    test "the extractor names the macro's module" do
+      {:ok, facts} =
+        Argus.Pipeline.extract([C.GeneratedBare], extractors: [Argus.Extractors.Generated])
+
+      assert [
+               "Argus.Test.Fixtures.Consistency.GeneratedBare:stop/1",
+               "Argus.Test.Fixtures.Consistency.StopMacro"
+             ] in facts[:macro_generated]
+
+      refute Enum.any?(facts[:macro_generated], fn [f, _] -> f =~ ":guarded" end)
+    end
+  end
+
   describe "severity" do
     defp finding(agree, deviate) do
       Failure.finding(:inconsistent_handling, [
