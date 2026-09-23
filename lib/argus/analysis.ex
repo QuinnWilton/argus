@@ -50,6 +50,7 @@ defmodule Argus.Analysis do
 
   require Logger
 
+  alias Argus.Analysis.Catalog
   alias Argus.Pipeline
   alias Argus.Souffle
 
@@ -213,7 +214,7 @@ defmodule Argus.Analysis do
   @spec run(modules :: [atom() | String.t()], analysis(), keyword()) ::
           {:ok, result()} | {:error, term()}
   def run(modules, analysis, opts \\ []) do
-    with {:ok, rules_path} <- resolve_rules(analysis),
+    with {:ok, rules_path} <- Catalog.rules_path(analysis),
          {:ok, facts_dir} <- extract_facts(modules, [analysis], opts) do
       try do
         with {:ok, results} <- Souffle.run(facts_dir, rules_path, opts) do
@@ -329,7 +330,7 @@ defmodule Argus.Analysis do
   The path to the stage-0 rules file.
   """
   @spec stage0_rules_path() :: Path.t()
-  def stage0_rules_path, do: priv_dl("stage0.dl")
+  def stage0_rules_path, do: Catalog.priv_dl("stage0.dl")
 
   @doc """
   The relations an analysis actually reads, as Souffle resolves them.
@@ -349,7 +350,7 @@ defmodule Argus.Analysis do
   """
   @spec input_relations(analysis()) :: {:ok, [String.t()]} | {:error, term()}
   def input_relations(analysis) do
-    with {:ok, rules_path} <- resolve_rules(analysis) do
+    with {:ok, rules_path} <- Catalog.rules_path(analysis) do
       Souffle.input_relations(rules_path)
     end
   end
@@ -365,7 +366,7 @@ defmodule Argus.Analysis do
   """
   @spec run_rules(Path.t(), analysis(), keyword()) :: {:ok, result()} | {:error, term()}
   def run_rules(facts_dir, analysis, opts \\ []) do
-    with {:ok, rules_path} <- resolve_rules(analysis),
+    with {:ok, rules_path} <- Catalog.rules_path(analysis),
          :ok <- ensure_stage0(facts_dir, opts) do
       Souffle.run(facts_dir, rules_path, opts)
     end
@@ -433,21 +434,13 @@ defmodule Argus.Analysis do
     end
   end
 
-  @doc """
-  Returns the list of built-in analysis names.
-  """
+  @doc "The built-in analysis names, sorted (`Argus.Analysis.Catalog.names/0`)."
   @spec builtin_analyses() :: [atom()]
-  def builtin_analyses do
-    Enum.map(discover_analyses(), & &1.name())
-  end
+  defdelegate builtin_analyses(), to: Catalog, as: :names
 
-  @doc """
-  Returns all discovered built-in analysis modules.
-  """
+  @doc "The built-in analysis modules, sorted by name (`Argus.Analysis.Catalog.modules/0`)."
   @spec builtin_analysis_modules() :: [module()]
-  def builtin_analysis_modules do
-    discover_analyses()
-  end
+  defdelegate builtin_analysis_modules(), to: Catalog, as: :modules
 
   @doc """
   Looks up a built-in analysis module by name.
@@ -455,12 +448,7 @@ defmodule Argus.Analysis do
   Returns `{:ok, module}` or `:error` if not found.
   """
   @spec fetch_module(atom()) :: {:ok, module()} | :error
-  def fetch_module(name) when is_atom(name) do
-    case Enum.find(discover_analyses(), &(&1.name() == name)) do
-      nil -> :error
-      mod -> {:ok, mod}
-    end
-  end
+  defdelegate fetch_module(name), to: Catalog, as: :fetch
 
   @doc """
   Returns output relations for a named built-in analysis.
@@ -468,82 +456,14 @@ defmodule Argus.Analysis do
   Returns `{:ok, relations}` or `:error` if the analysis is not found.
   """
   @spec output_relations(atom()) :: {:ok, [output_relation()]} | :error
-  def output_relations(name) when is_atom(name) do
-    case fetch_module(name) do
-      {:ok, mod} -> {:ok, mod.output_relations()}
-      :error -> :error
-    end
-  end
+  defdelegate output_relations(name), to: Catalog
 
   @doc """
   The output relations of an analysis whose rows are findings: every
   output relation but the evidence ones.
   """
   @spec finding_relations(atom()) :: {:ok, [output_relation()]} | :error
-  def finding_relations(name) do
-    with {:ok, relations} <- output_relations(name) do
-      {:ok, Enum.reject(relations, &Map.has_key?(&1, :evidence))}
-    end
-  end
-
-  # Discovery.
-
-  defp discover_analyses do
-    argus_modules()
-    |> Enum.filter(fn mod ->
-      Code.ensure_loaded?(mod) and
-        function_exported?(mod, :name, 0) and
-        function_exported?(mod, :rules_file, 0) and
-        function_exported?(mod, :output_relations, 0)
-    end)
-    |> Enum.sort_by(& &1.name())
-  end
-
-  # The :modules key only exists once the application is *loaded* — which
-  # plain code-path embedding (escripts, sandbox VMs that only call
-  # :code.add_paths/1) never does. Loading is cheap, idempotent, and does
-  # not start anything, so do it on demand rather than crash.
-  defp argus_modules do
-    case :application.get_key(:panoptes, :modules) do
-      {:ok, modules} ->
-        modules
-
-      :undefined ->
-        case :application.load(:panoptes) do
-          ok when ok in [:ok, {:error, {:already_loaded, :panoptes}}] -> :ok
-          {:error, reason} -> raise "could not load the :panoptes application: #{inspect(reason)}"
-        end
-
-        {:ok, modules} = :application.get_key(:panoptes, :modules)
-        modules
-    end
-  end
-
-  # Rules resolution.
-
-  defp resolve_rules({:custom, path}) do
-    if File.exists?(path) do
-      {:ok, path}
-    else
-      {:error, {:rules_not_found, path}}
-    end
-  end
-
-  defp resolve_rules(name) when is_atom(name) do
-    case fetch_module(name) do
-      {:ok, mod} ->
-        path = priv_dl(mod.rules_file())
-
-        if File.exists?(path) do
-          {:ok, path}
-        else
-          {:error, {:rules_not_found, path}}
-        end
-
-      :error ->
-        {:error, {:unknown_analysis, name}}
-    end
-  end
+  defdelegate finding_relations(name), to: Catalog
 
   # CallArgs is a universal extractor — it emits call_arg facts that
   # clientlib/calls.dl's resolved_arg uses to resolve sync_call /
@@ -554,14 +474,10 @@ defmodule Argus.Analysis do
   defp default_extractors_for({:custom, _}), do: @universal_extractors
 
   defp default_extractors_for(name) when is_atom(name) do
-    case fetch_module(name) do
+    case Catalog.fetch(name) do
       {:ok, mod} -> @universal_extractors ++ mod.extractors()
       :error -> @universal_extractors
     end
-  end
-
-  defp priv_dl(filename) do
-    Path.join(:code.priv_dir(:panoptes), "dl/#{filename}")
   end
 
   defp create_work_dir do

@@ -26,6 +26,13 @@ no mechanical home without the table, and the manifests it existed for
 are re-keyed. To upgrade from 0.16 or earlier, go through 0.19 first,
 or rename by the 0.17 entry below.
 
+### Module layout
+
+**Changed.** `Argus.Analysis` and `Argus.Findings` are split into
+cohesive modules; every function they exported still works, delegating
+where the code moved. `Argus.Analysis.Catalog` discovers the built-in
+analyses, looks one up and resolves its rules path.
+
 ### Fact schema and extraction
 
 **Changed.** The pipeline decodes only the relations the in-process passes
