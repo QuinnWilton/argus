@@ -36,6 +36,9 @@ analyses, looks one up and resolves its rules path.
 selection (`run/2`'s `:analyses`) resolves to modules.
 `Argus.Analysis.Extraction` builds the facts directory (pipeline,
 stage 0, priors); its `ensure_stage0/2` is public.
+`Argus.Findings.Anchor` parses anchors (`Argus.Findings.at_site/2` and
+the other `at_*` helpers delegate to it) and adds `from_row/1` and
+`empty/0`.
 
 ### Fact schema and extraction
 

@@ -35,18 +35,12 @@ defmodule Argus.Findings do
     a consumer shows these beside the findings rather than as a failed
     analysis.
 
-  ## Atom creation
-
-  Anchor parsing converts module and function name strings back to atoms
-  with `String.to_atom/1`. Those names come from BEAM files the caller
-  asked Argus to disassemble, so the atoms already exist in this node's
-  atom table — parsing does not grow it. Do not feed findings from
-  untrusted `.beam` files into a long-lived node; run Argus in a sandbox
-  process instead (this is how lowdown consumes uploads).
+  Anchor parsing and the atoms it makes: `Argus.Findings.Anchor`.
   """
 
   alias Argus.Analysis
   alias Argus.Analysis.Sets
+  alias Argus.Findings.Anchor
   alias Argus.InstrId
   alias Argus.Souffle
 
@@ -55,12 +49,8 @@ defmodule Argus.Findings do
   @typedoc "Finding severity, in decreasing order of urgency."
   @type severity :: :error | :warning | :info
 
-  @typedoc "Code location attached to a finding, most precise field wins."
-  @type anchor :: %{
-          module: module() | nil,
-          mfa: mfa() | nil,
-          instr: InstrId.t() | nil
-        }
+  @typedoc "Code location attached to a finding, most precise field wins (`Argus.Findings.Anchor`)."
+  @type anchor :: Anchor.t()
 
   @typedoc """
   The source block an anchor sits in, for a consumer with the source to
@@ -287,7 +277,7 @@ defmodule Argus.Findings do
     case File.read(Path.join(facts_dir, "extraction_error.facts")) do
       {:ok, content} ->
         for [mod, step, reason] <- Argus.Tsv.decode(content) do
-          %{module: module_atom(mod), source: mod, step: step, reason: reason}
+          %{module: Anchor.module_atom(mod), source: mod, step: step, reason: reason}
         end
 
       {:error, _} ->
@@ -425,7 +415,7 @@ defmodule Argus.Findings do
 
       fallback =
         if Map.has_key?(relation, :evidence) do
-          related(note <> ": " <> raw_columns(relation, row), row_anchor(row))
+          related(note <> ": " <> raw_columns(relation, row), Anchor.from_row(row))
         else
           Map.update!(generic_finding(relation, row), :help, &(&1 ++ [note]))
         end
@@ -633,7 +623,7 @@ defmodule Argus.Findings do
   # the first row value that parses as an instruction or function ID.
   defp generic_finding(relation, row) do
     new(:info, humanize(relation.name), "#{relation.doc} (#{raw_columns(relation, row)})",
-      at: row_anchor(row)
+      at: Anchor.from_row(row)
     )
   end
 
@@ -641,22 +631,6 @@ defmodule Argus.Findings do
     relation.fields
     |> Enum.zip(row)
     |> Enum.map_join(", ", fn {{name, _kind, _doc}, value} -> "#{name}=#{value}" end)
-  end
-
-  # The first row value that parses as an instruction or function ID.
-  defp row_anchor(row) do
-    Enum.find_value(row, empty_anchor(), fn value ->
-      case at_instr(value) do
-        %{instr: nil} ->
-          case at_func(value) do
-            %{mfa: nil} -> nil
-            anchor -> anchor
-          end
-
-        anchor ->
-          anchor
-      end
-    end)
   end
 
   defp humanize(relation_name) do
@@ -726,10 +700,10 @@ defmodule Argus.Findings do
   @spec new(severity(), String.t(), String.t(), keyword()) :: attrs()
   def new(severity, title, detail, opts \\ [])
       when severity in @severities and is_binary(title) and is_binary(detail) do
-    anchor = Keyword.get(opts, :at, empty_anchor())
+    anchor = Keyword.get(opts, :at, Anchor.empty())
     at_label = Keyword.get(opts, :at_label)
     at_source = Keyword.get(opts, :at_source)
-    to_instr = Keyword.get(opts, :to, empty_anchor()).instr
+    to_instr = Keyword.get(opts, :to, Anchor.empty()).instr
     to_block = Keyword.get(opts, :to_block)
     help = Keyword.get(opts, :help, [])
     provenance = Keyword.get(opts, :provenance, :structural)
@@ -879,167 +853,47 @@ defmodule Argus.Findings do
 
     anchor
     |> Map.put(:label, label)
-    |> Map.put(:to_instr, Keyword.get(opts, :to, empty_anchor()).instr)
+    |> Map.put(:to_instr, Keyword.get(opts, :to, Anchor.empty()).instr)
     |> Map.put(:to_block, to_block)
     |> Map.put(:at_source, at_source)
   end
 
-  @doc """
-  Anchor for an instruction ID string (`"Mod:func/arity#idx"`).
+  # ── Anchors (Argus.Findings.Anchor) ────────────────────────────────
 
-  Unparseable input (a `"dynamic"` placeholder, free-form text) yields an
-  empty anchor rather than an error — anchors are best-effort by design.
-  """
+  @doc "Anchor for an instruction ID string: `Argus.Findings.Anchor.at_instr/1`."
   @spec at_instr(String.t()) :: anchor()
-  def at_instr(id) when is_binary(id) do
-    case InstrId.parse(id) do
-      {:ok, instr} ->
-        anchor = at_parts(instr.module, instr.func, instr.arity)
-        %{anchor | instr: instr}
+  defdelegate at_instr(id), to: Anchor
 
-      :error ->
-        empty_anchor()
-    end
-  end
-
-  @doc "Anchor for a function ID string (`\"Mod:func/arity\"`)."
+  @doc "Anchor for a function ID string: `Argus.Findings.Anchor.at_func/1`."
   @spec at_func(String.t()) :: anchor()
-  def at_func(func_id) when is_binary(func_id) do
-    case InstrId.parse_func(func_id) do
-      {:ok, %{module: module, func: func, arity: arity}} -> at_parts(module, func, arity)
-      :error -> empty_anchor()
-    end
-  end
+  defdelegate at_func(func_id), to: Anchor
 
-  @doc """
-  Anchor for a known callback on a module string.
-
-  Several relations report a module known to implement a specific callback
-  (`init/1`, `handle_cast/2`, ...) without carrying a function ID — this
-  reconstructs the precise anchor.
-  """
+  @doc "Anchor for a known callback on a module string: `Argus.Findings.Anchor.at_mfa/3`."
   @spec at_mfa(String.t(), atom(), arity()) :: anchor()
-  def at_mfa(module_string, func, arity)
-      when is_binary(module_string) and is_atom(func) and is_integer(arity) do
-    case module_atom(module_string) do
-      nil -> empty_anchor()
-      module -> %{module: module, mfa: {module, func, arity}, instr: nil}
-    end
-  end
+  defdelegate at_mfa(module_string, func, arity), to: Anchor
 
-  @doc ~S|Anchor for a module string (`"MyApp.Cache"` or `":lists"`).|
+  @doc "Anchor for a module string: `Argus.Findings.Anchor.at_module/1`."
   @spec at_module(String.t()) :: anchor()
-  def at_module(module_string) when is_binary(module_string) do
-    %{module: module_atom(module_string), mfa: nil, instr: nil}
-  end
+  defdelegate at_module(module_string), to: Anchor
 
   @doc """
-  Anchor for a site ID of either precision, falling back to a module.
-
-  Witness columns hold an instruction ID where the extractor had one and
-  a function ID otherwise; extractors mark sites they cannot resolve
-  with a `"dynamic"` placeholder. This tries the most precise parse
-  first — instruction, then function, then the module fallback — so a
-  finding never loses its module anchor to an unresolvable site.
-
-  The second argument is a module string (`"MyApp.Cache"`, `":lists"`).
-  When the row names the function the site is in, use
-  `at_site_in_func/2`, which falls back to that function instead.
+  Anchor for a site ID of either precision, falling back to a module:
+  `Argus.Findings.Anchor.at_site/2`.
   """
   @spec at_site(String.t(), String.t()) :: anchor()
-  def at_site(id, module_string)
-      when is_binary(id) and is_binary(module_string) do
-    with %{instr: nil} <- at_instr(id),
-         %{mfa: nil} <- at_func(id) do
-      at_module(module_string)
-    end
-  end
+  defdelegate at_site(id, module_string), to: Anchor
 
   @doc """
   Anchor for a site ID inside a known function, falling back to that
-  function.
-
-  Like `at_site/2`, but the fallback is a function ID
-  (`"Mod:fun/arity"`) rather than a module string: a row whose site is
-  empty or `"dynamic"` still anchors at the function it names. When the
-  function ID does not parse either, `module_string` (when given) is the
-  last resort.
-
-      iex> Argus.Findings.at_site_in_func("M:f/1#3", "M:f/1").instr.idx
-      3
-
-      iex> Argus.Findings.at_site_in_func("dynamic", ":lists:map/2").mfa
-      {:lists, :map, 2}
-
-      iex> Argus.Findings.at_site_in_func("", "dynamic", "M").module
-      M
+  function: `Argus.Findings.Anchor.at_site_in_func/3`.
   """
   @spec at_site_in_func(String.t(), String.t(), String.t() | nil) :: anchor()
-  def at_site_in_func(site, func_id, module_string \\ nil)
-      when is_binary(site) and is_binary(func_id) and
-             (is_nil(module_string) or is_binary(module_string)) do
-    with %{instr: nil} <- at_instr(site),
-         %{mfa: nil} <- at_func(site),
-         %{mfa: nil} <- at_func(func_id) do
-      if module_string, do: at_module(module_string), else: empty_anchor()
-    end
-  end
+  defdelegate at_site_in_func(site, func_id, module_string \\ nil), to: Anchor
 
   @doc """
-  Converts an `inspect/1`-rendered module string back to the module atom.
-
-  Returns `nil` for the `"dynamic"` placeholder and anything else that
-  isn't a module rendering — a function ID (`"Foo.Bar:baz/1"`,
-  `":lists:map/2"`) included, so a builder that passes one where a
-  module belongs gets no anchor rather than an invented module. An
-  Erlang module whose name contains `:` or `/` cannot be told from a
-  function ID and reads as `nil` too.
-
-      iex> Argus.Findings.module_atom("Foo.Bar")
-      Foo.Bar
-
-      iex> Argus.Findings.module_atom(":lists")
-      :lists
-
-      iex> Argus.Findings.module_atom("Foo.Bar:baz/1")
-      nil
+  An `inspect/1`-rendered module string as the module atom, or `nil`:
+  `Argus.Findings.Anchor.module_atom/1`.
   """
   @spec module_atom(String.t()) :: module() | nil
-  def module_atom("dynamic"), do: nil
-  def module_atom(""), do: nil
-  def module_atom(":"), do: nil
-
-  def module_atom(":" <> erlang_name) do
-    name = strip_quotes(erlang_name)
-
-    if name == "" or String.contains?(name, [":", "/"]),
-      do: nil,
-      else: String.to_atom(name)
-  end
-
-  # What `inspect/1` prints for an Elixir module: dot-separated segments,
-  # each an uppercase letter then word characters. Anything else it
-  # quotes (`:"Elixir.Foo.bar"`), and that goes through the Erlang branch.
-  def module_atom(alias_string) do
-    if String.match?(alias_string, ~r/^[A-Z][A-Za-z0-9_]*(\.[A-Z][A-Za-z0-9_]*)*$/),
-      do: Module.concat([alias_string]),
-      else: nil
-  end
-
-  defp at_parts(module_string, func, arity) do
-    case module_atom(module_string) do
-      nil -> empty_anchor()
-      module -> %{module: module, mfa: {module, String.to_atom(func), arity}, instr: nil}
-    end
-  end
-
-  defp empty_anchor, do: %{module: nil, mfa: nil, instr: nil}
-
-  # Quoted Erlang atoms render as :"foo bar" — strip the quotes.
-  defp strip_quotes(name) do
-    case name do
-      <<?", inner::binary>> -> String.trim_trailing(inner, "\"")
-      _ -> name
-    end
-  end
+  defdelegate module_atom(module_string), to: Anchor
 end
