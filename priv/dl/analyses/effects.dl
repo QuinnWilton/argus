@@ -62,7 +62,7 @@ performs_effect(func, "process", "receive", "") :-
   receives(func).
 
 performs_effect(func, "process", "spawn", id) :-
-  spawn_call(id, func, _, _, _, _).
+  spawn_call(id, func, _, _, _, _, _, _, _, _).
 
 performs_effect(func, "ets", "ets", id) :-
   ets_op(id, func, _, _, _).

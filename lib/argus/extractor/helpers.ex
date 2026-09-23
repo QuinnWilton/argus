@@ -1109,32 +1109,66 @@ defmodule Argus.Extractor.Helpers do
 
   @doc """
   The function a fun in `register` at `idx` runs: the `{mod, fun, arity}`
-  its `make_fun3` was lifted to, through copies, or `nil`.
+  its `make_fun3` was lifted to, or the one a literal external fun
+  (`&Mod.f/1`) names, through copies; `nil` otherwise.
   """
   @spec fun_target([term()], non_neg_integer(), register()) :: {module(), atom(), arity()} | nil
   def fun_target(instrs, idx, register) do
+    case fun_origin(instrs, idx, register) do
+      {kind, mfa} when kind in [:closure, :external] -> mfa
+      _ -> nil
+    end
+  end
+
+  @doc """
+  Where the fun in `register` at `idx` comes from, through copies, on
+  every path: `{:closure, mfa}`, a `make_fun3` lifted to `mfa` (its arity
+  counts the captured variables); `{:external, mfa}`, a literal external
+  fun `&Mod.f/1`; `{:param, k}`, the function's parameter `k`, whose value
+  its callers choose; or `nil`.
+  """
+  @spec fun_origin([term()], non_neg_integer(), register()) ::
+          {:closure | :external, {module(), atom(), arity()}}
+          | {:param, non_neg_integer()}
+          | nil
+  def fun_origin(instrs, idx, register) do
     walk(fn -> fun_made(instrs, idx, register(register)) end)
   end
 
   defp fun_made(instrs, idx, reg) do
     step({:fun, idx, reg}, nil, fn ->
       across(instrs, idx, reg, nil, fn
-        {:param, _k} ->
-          nil
+        {:param, k} ->
+          {:param, k}
 
         at ->
           case Reaching.at(instrs, at) do
             {:make_fun3, {mod, fun, arity}, _index, _uniq, _dst, _env} ->
-              {mod, fun, arity}
+              {:closure, {mod, fun, arity}}
 
             instr ->
               case Instr.copy_source(instr, reg) do
                 {kind, _} = source when kind in [:x, :y] -> fun_made(instrs, at, source)
+                {:literal, fun} when is_function(fun) -> external_fun(fun)
                 _ -> nil
               end
           end
       end)
     end)
+  end
+
+  # A fun in a literal is external: a local fun cannot be a constant.
+  defp external_fun(fun) do
+    case Function.info(fun, :type) do
+      {:type, :external} ->
+        {:module, mod} = Function.info(fun, :module)
+        {:name, name} = Function.info(fun, :name)
+        {:arity, arity} = Function.info(fun, :arity)
+        {:external, {mod, name, arity}}
+
+      _ ->
+        nil
+    end
   end
 
   @doc """

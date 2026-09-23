@@ -28,6 +28,24 @@ or rename by the 0.17 entry below.
 
 ### Fact schema and extraction
 
+**Changed.** Schema 57. `spawn_call` records every call that starts a process
+running a function its arguments name, and says how far they resolve.
+New: `erlang:spawn_opt/2..5`, `proc_lib:spawn/1..4`, `spawn_link/1..4`,
+`spawn_opt/2..5`, `start/3..5`, `start_link/3..5` and `start_monitor/3..5`,
+and `Process.spawn/2,4` (all were missing, so `failure`'s bare-spawn rule
+and `effects` did not see them). Four columns: `api`, the spawning
+function (`:proc_lib.start_link/3`); `source` — `closure`, `fun` (a
+literal external fun: `spawn(&Mod.f/0)` was "dynamic" though the fun was
+in the literal), `param` (the fun is the caller's parameter, in the new
+`param` column, for rules to follow to the callers' closures), `mfa` or
+`dynamic`; and `args`, the register of the argument list. `spawn(M, :f,
+args)` with an argument list of unknown length keeps `M` and `f` (arity
+-1), and a literal `f` beside an unknown `M` is kept. `variant` reads a
+literal options list (`:link`, `:monitor`, `{:monitor, _}`) and is
+`spawn_opt` when the options are not literal. `Helpers.fun_origin/3` says
+where a fun comes from; `Helpers.fun_target/3` also reads a literal
+external fun.
+
 **Fixed.** `catch_total`/`catch_tag` follow the reason through the
 handler as `Argus.Instr` reads it: a call destroys every `x` register
 (the walk forgot only the call's arguments, so a copy of the reason in a

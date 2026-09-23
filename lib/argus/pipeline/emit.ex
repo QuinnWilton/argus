@@ -17,6 +17,7 @@ defmodule Argus.Pipeline.Emit do
   alias Argus.Extractor.Helpers
   alias Argus.Instr
   alias Argus.InstrId
+  alias Argus.Pipeline.Emit.Spawns
   alias Argus.Pipeline.Normalize
 
   import Argus.Extractor.Helpers, only: [add_fact: 3]
@@ -678,63 +679,12 @@ defmodule Argus.Pipeline.Emit do
     Keyword.keyword?(list) and Keyword.has_key?(list, :file) and Keyword.has_key?(list, :line)
   end
 
-  # What a spawn runs is in its arguments, so it is resolved here, where the
-  # whole function is in hand: `spawn(M, F, args)` (after a node for the
-  # 4-argument form) runs M.F/length(args), and `spawn(fun)` (after a node
-  # for the 2-argument form) runs the function the closure was lifted to,
-  # traced from the fun register back to its make_fun3. Anything that does
-  # not resolve stays "dynamic".
-  @spawns [:spawn, :spawn_link, :spawn_monitor]
-
+  # What a spawn runs is in its arguments, so it is resolved here, where
+  # the whole function is in hand (`Argus.Pipeline.Emit.Spawns`).
   defp emit_spawns(facts, func_id, normalized) do
-    instrs = Enum.map(normalized, fn {_id, instr} -> instr end)
-
-    normalized
-    |> Enum.with_index()
-    |> Enum.reduce(facts, fn {{id, instr}, idx}, acc ->
-      case spawn_bif(instr) do
-        {variant, arity} ->
-          {mod, fun, spawned_arity} = spawned(instrs, idx, arity)
-          add_fact(acc, :spawn_call, [id, func_id, mod, fun, spawned_arity, to_string(variant)])
-
-        nil ->
-          acc
-      end
-    end)
-  end
-
-  defp spawn_bif({op, _, {:extfunc, :erlang, func, arity}})
-       when op in [:call_ext, :call_ext_only] and func in @spawns and arity in 1..4,
-       do: {func, arity}
-
-  defp spawn_bif({:call_ext_last, _, {:extfunc, :erlang, func, arity}, _})
-       when func in @spawns and arity in 1..4,
-       do: {func, arity}
-
-  defp spawn_bif(_), do: nil
-
-  # `arity` is a number column: an unknown arity is -1.
-  @unresolved {"dynamic", "dynamic", "-1"}
-
-  defp spawned(instrs, idx, arity) when arity in [3, 4] do
-    first = arity - 3
-
-    with {:ok, mod} when is_atom(mod) and mod != :dynamic <-
-           Helpers.resolve_register(instrs, idx, {:x, first}),
-         {:ok, fun} when is_atom(fun) and fun != :dynamic <-
-           Helpers.resolve_register(instrs, idx, {:x, first + 1}),
-         n when is_integer(n) <- Helpers.list_length(instrs, idx, {:x, first + 2}) do
-      {inspect(mod), to_string(fun), to_string(n)}
-    else
-      _ -> @unresolved
-    end
-  end
-
-  defp spawned(instrs, idx, arity) when arity in [1, 2] do
-    case Helpers.fun_target(instrs, idx, {:x, arity - 1}) do
-      {mod, fun, lifted_arity} -> {inspect(mod), to_string(fun), to_string(lifted_arity)}
-      nil -> @unresolved
-    end
+    func_id
+    |> Spawns.rows(normalized)
+    |> Enum.reduce(facts, &add_fact(&2, :spawn_call, &1))
   end
 
   # apply/2,3 is a call whose target is computed, so the call graph cannot

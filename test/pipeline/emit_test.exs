@@ -185,19 +185,38 @@ defmodule Argus.Pipeline.EmitTest do
       assert [[_id, _caller, ":erlang", "+", "2", "0"]] = facts[:bif_call]
     end
 
+    # [mod, func, arity, variant, api, source, param, args] of the one row.
+    defp spawned(facts) do
+      assert [[_id, _caller | row]] = facts[:spawn_call]
+      row
+    end
+
     test "emits spawn_call for erlang:spawn/3" do
       facts = emit_func([{:call_ext, 3, {:extfunc, :erlang, :spawn, 3}}])
-      assert [[_id, _caller, "dynamic", "dynamic", "-1", "spawn"]] = facts[:spawn_call]
+
+      assert spawned(facts) ==
+               ["dynamic", "dynamic", "-1", "spawn", ":erlang.spawn/3", "dynamic", "-1", "2"]
     end
 
     test "emits spawn_call for erlang:spawn_link/3" do
       facts = emit_func([{:call_ext, 3, {:extfunc, :erlang, :spawn_link, 3}}])
-      assert [[_id, _caller, "dynamic", "dynamic", "-1", "spawn_link"]] = facts[:spawn_call]
+      assert ["dynamic", "dynamic", "-1", "spawn_link" | _] = spawned(facts)
     end
 
     test "emits spawn_call for erlang:spawn_monitor/1" do
       facts = emit_func([{:call_ext, 1, {:extfunc, :erlang, :spawn_monitor, 1}}])
-      assert [[_id, _caller, "dynamic", "dynamic", "-1", "spawn_monitor"]] = facts[:spawn_call]
+
+      assert spawned(facts) ==
+               [
+                 "dynamic",
+                 "dynamic",
+                 "-1",
+                 "spawn_monitor",
+                 ":erlang.spawn_monitor/1",
+                 "dynamic",
+                 "-1",
+                 "-1"
+               ]
     end
 
     test "spawn_call names what spawn/3 runs from its literal arguments" do
@@ -209,7 +228,7 @@ defmodule Argus.Pipeline.EmitTest do
           {:call_ext, 3, {:extfunc, :erlang, :spawn, 3}}
         ])
 
-      assert [[_id, _caller, "Cart", "loop", "1", "spawn"]] = facts[:spawn_call]
+      assert ["Cart", "loop", "1", "spawn", ":erlang.spawn/3", "mfa", "-1", "2"] = spawned(facts)
     end
 
     test "spawn_call names what the node-qualified spawn/4 runs" do
@@ -221,7 +240,7 @@ defmodule Argus.Pipeline.EmitTest do
           {:call_ext, 4, {:extfunc, :erlang, :spawn, 4}}
         ])
 
-      assert [[_id, _caller, "Cart", "loop", "0", "spawn"]] = facts[:spawn_call]
+      assert ["Cart", "loop", "0", "spawn", ":erlang.spawn/4", "mfa", "-1", "3"] = spawned(facts)
     end
 
     test "spawn_call names the function a spawned closure was lifted to" do
@@ -231,10 +250,37 @@ defmodule Argus.Pipeline.EmitTest do
           {:call_ext, 1, {:extfunc, :erlang, :spawn_link, 1}}
         ])
 
-      assert [[_id, _caller, "Shop", "-start/1-fun-0-", "1", "spawn_link"]] = facts[:spawn_call]
+      assert ["Shop", "-start/1-fun-0-", "1", "spawn_link", _, "closure", "-1", "-1"] =
+               spawned(facts)
     end
 
-    test "an argument list with an unknown tail leaves spawn_call unresolved" do
+    test "spawn_call names the function a literal external fun names" do
+      facts =
+        emit_func([
+          {:move, {:literal, &URI.parse/1}, {:x, 0}},
+          {:call_ext_only, 1, {:extfunc, :erlang, :spawn, 1}}
+        ])
+
+      assert ["URI", "parse", "1", "spawn", _, "fun", "-1", "-1"] = spawned(facts)
+    end
+
+    test "a spawned fun the caller was handed is its parameter" do
+      facts =
+        emit_func(
+          [
+            {:label, 1},
+            {:func_info, {:atom, TestMod}, {:atom, :test_func}, 2},
+            {:label, 2},
+            {:move, {:x, 1}, {:x, 0}},
+            {:call_ext_only, 1, {:extfunc, :erlang, :spawn, 1}}
+          ],
+          arity: 2
+        )
+
+      assert ["dynamic", "dynamic", "-1", "spawn", _, "param", "1", "-1"] = spawned(facts)
+    end
+
+    test "an argument list with an unknown tail keeps the module and function" do
       facts =
         emit_func([
           {:move, {:atom, Cart}, {:x, 0}},
@@ -243,12 +289,79 @@ defmodule Argus.Pipeline.EmitTest do
           {:call_ext, 3, {:extfunc, :erlang, :spawn, 3}}
         ])
 
-      assert [[_id, _caller, "dynamic", "dynamic", "-1", "spawn"]] = facts[:spawn_call]
+      assert ["Cart", "loop", "-1", "spawn", _, "mfa", "-1", "2"] = spawned(facts)
+    end
+
+    test "an unknown module keeps the literal function beside it" do
+      facts =
+        emit_func(
+          [
+            {:move, {:atom, :loop}, {:x, 1}},
+            {:move, nil, {:x, 2}},
+            {:call_ext, 3, {:extfunc, :erlang, :spawn, 3}}
+          ],
+          arity: 1
+        )
+
+      assert ["dynamic", "loop", "-1", "spawn", _, "dynamic", "-1", "2"] = spawned(facts)
     end
 
     test "emits spawn_call for erlang:spawn/1" do
       facts = emit_func([{:call_ext, 1, {:extfunc, :erlang, :spawn, 1}}])
-      assert [[_id, _caller, "dynamic", "dynamic", "-1", "spawn"]] = facts[:spawn_call]
+      assert ["dynamic", "dynamic", "-1", "spawn" | _] = spawned(facts)
+    end
+
+    test "spawn_opt's literal options say how the process is tied" do
+      for {opts, variant} <- [
+            {[:link], "spawn_link"},
+            {[:monitor], "spawn_monitor"},
+            {[{:monitor, [tag: :t]}], "spawn_monitor"},
+            {[:link, :monitor], "spawn_link"},
+            {[{:priority, :high}], "spawn"}
+          ] do
+        facts =
+          emit_func([
+            {:make_fun3, {Shop, :"-go/0-fun-0-", 0}, 0, 0, {:x, 0}, {:list, []}},
+            {:move, {:literal, opts}, {:x, 1}},
+            {:call_ext_only, 2, {:extfunc, :erlang, :spawn_opt, 2}}
+          ])
+
+        assert ["Shop", "-go/0-fun-0-", "0", ^variant, ":erlang.spawn_opt/2", "closure" | _] =
+                 spawned(facts)
+      end
+
+      facts =
+        emit_func(
+          [
+            {:label, 1},
+            {:func_info, {:atom, TestMod}, {:atom, :test_func}, 2},
+            {:label, 2},
+            {:call_ext_only, 2, {:extfunc, :erlang, :spawn_opt, 2}}
+          ],
+          arity: 2
+        )
+
+      assert ["dynamic", "dynamic", "-1", "spawn_opt", _, "param", "0", "-1"] = spawned(facts)
+    end
+
+    test "proc_lib's spawns and starts are spawns" do
+      mfa = [
+        {:move, {:atom, Cart}, {:x, 0}},
+        {:move, {:atom, :init_it}, {:x, 1}},
+        {:move, nil, {:x, 2}}
+      ]
+
+      for {fun, arity, variant} <- [
+            {:start_link, 3, "spawn_link"},
+            {:start, 4, "spawn"},
+            {:start_monitor, 3, "spawn_monitor"},
+            {:spawn_link, 3, "spawn_link"}
+          ] do
+        facts = emit_func(mfa ++ [{:call_ext, arity, {:extfunc, :proc_lib, fun, arity}}])
+        api = ":proc_lib.#{fun}/#{arity}"
+
+        assert ["Cart", "init_it", "0", ^variant, ^api, "mfa", "-1", "2"] = spawned(facts)
+      end
     end
   end
 

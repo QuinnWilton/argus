@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 56
+  @schema_version 57
 
   # Layer 1: Module-level facts.
 
@@ -430,10 +430,18 @@ defmodule Argus.Schema do
       {:mod, :symbol, "module of the function the new process runs, or \"dynamic\""},
       {:func, :symbol, "that function's name, or \"dynamic\""},
       {:arity, :number, "that function's arity, or -1"},
-      {:variant, :symbol, "spawn variant (spawn, spawn_link, spawn_monitor)"}
+      {:variant, :symbol,
+       "how the process is tied to the caller: spawn, spawn_link, spawn_monitor, or spawn_opt (options not literal)"},
+      {:api, :symbol,
+       "the spawning function, Mod.fun/n (:erlang.spawn/1, :proc_lib.start_link/3)"},
+      {:source, :symbol,
+       "how far the arguments resolve: closure, fun (a literal &Mod.f/n), param, mfa or dynamic"},
+      {:param, :number, "the caller's parameter holding the fun when source is param, else -1"},
+      {:args, :number,
+       "the x register holding the argument list for the module-function forms, else -1"}
     ],
     doc: """
-    Process spawn detected via erlang:spawn* calls, with the function the new process runs: `spawn(M, F, args)` (and the node-qualified form) runs M.F/length(args) when M, F and the list's length are literal; `spawn(fun)` runs the function the closure was lifted to (`-f/1-fun-0-`, its arity counting the captured variables). What does not resolve is "dynamic" and -1. A spawn is a process allocation site: `Argus.Extractors.PidFlow` names the processes it creates by it.
+    A call that starts a process running a function its arguments name — `erlang:spawn/1..4`, `spawn_link`, `spawn_monitor` and `spawn_opt/2..5`, `proc_lib:spawn*`, `start`, `start_link` and `start_monitor`, `Process.spawn/2,4` — and what that function is (`Argus.Pipeline.Emit.Spawns`): the function a closure was lifted to (`-f/1-fun-0-`, its arity counting the captured variables), the one a literal external fun names, or M.F/length(args) when M and F are literal (the arity -1 when the list's length is not). A fun that is the caller's parameter is `param`, for the rules to look up at the callers. What does not resolve is "dynamic" and -1; a literal M or F is kept beside an unknown other. `variant` reads a literal options list. A spawn is a process allocation site: `Argus.Extractors.PidFlow` names the processes it creates by it.
     """
   }
 

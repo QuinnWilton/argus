@@ -165,7 +165,7 @@ unchecked_result(func, id, "Task.Supervisor.start_child", "") :-
 // ══ Processes nobody watches ════════════════════════════════════════
 
 orphan_process(func, id, "spawn", "") :-
-  spawn_call(id, func, _, _, _, "spawn").
+  spawn_call(id, func, _, _, _, "spawn", _, _, _, _).
 
 // This analysis used to join `instruction(id, func, _, _)` purely to
 // recover the spawning function. Its input set was therefore
