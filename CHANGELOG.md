@@ -8,6 +8,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+`Argus.Souffle.input_relations/2` memoizes its answer for a program
+shipped under `priv/dl`, versioned by a digest of every file there and
+the solver binary's identity. The answer depends on nothing else, and
+resolving it is a Souffle invocation per analysis (about 190ms each) that
+scry paid six times on every cold compile and the suite paid on every
+test that enumerates the analyses. A program outside `priv/dl` is still
+read on every call.
+
+The closed-issue corpus caches the facts of each checkout beside it
+(`.argus-facts/<digest>/facts`), keyed by the beams, the argus code and
+Datalog programs, the runtime and the solver; `Argus.Corpus.analyze/2`
+takes the pair and side and solves over the cache. Extraction was over
+90% of a large tree's analysis and its inputs never move between runs.
+`Argus.CorpusTest` analyzes each checkout once, `ARGUS_CORPUS_JOBS` (default
+4) at a time, before checking the pairs. The suite's analysis tests run
+`async: true`; the tests that set VM-wide state (`PATH`, `TYPESAFE_API_KEY`,
+`ARGUS_PRIORS_DIR`) live in their own sync modules.
+
 A named `Agent.start_link/2,4` or `Agent.start/2,4` is a registration
 like a named GenServer start: `process_register`, a `creating_op` for the
 lookup-then-start race (tesla#768's shape spelled with an Agent), and

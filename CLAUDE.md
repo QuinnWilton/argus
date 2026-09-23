@@ -41,11 +41,17 @@ those frameworks need.
   rule's finding is present at the commit before the fix and absent at
   the fix. `Argus.CorpusTest` runs it as part of `mix test`, cloning and
   compiling each tree once into `ARGUS_CORPUS_DIR` (default
-  `~/.cache/argus/corpus`); `mix test --exclude corpus` skips it,
-  `ARGUS_CORPUS_ONLY=redix#334` narrows it, `mix argus.corpus fetch`
-  warms the cache and `mix argus.corpus tally` counts every title
+  `~/.cache/argus/corpus`) and caching each tree's facts beside it,
+  keyed by the beams, the argus code and rules, the runtime and the
+  solver, so a warm run only solves; `mix test --exclude corpus` skips
+  it, `ARGUS_CORPUS_ONLY=redix#334` narrows it, `ARGUS_CORPUS_JOBS` sets
+  how many checkouts are analyzed at once (default 4), `mix argus.corpus
+  fetch` warms the cache and `mix argus.corpus tally` counts every title
   across the trees — the noise check after a rule changes. A new rule
   comes with a pair.
+- Test modules are `async: true` unless they touch VM-wide state (the
+  environment, `Mix.shell/1`, compiler options); a sync module says why
+  in a comment above its `use ExUnit.Case`.
 - `test/argus/analysis_inputs.exs` pins what each analysis reads;
   `mix argus.pins` regenerates it and its diff is the review.
 - Every shipped analysis targets a BEAM-specific bug class. Generic
