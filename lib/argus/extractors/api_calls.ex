@@ -48,32 +48,43 @@ defmodule Argus.Extractors.ApiCalls do
 
   # ── The table ──────────────────────────────────────────────────────────
 
-  @sync_default_5000 [
-    {GenServer, :call, 2},
-    {:gen_server, :call, 2},
-    {GenStage, :call, 2},
-    {Agent, :get, 2},
-    {Agent, :update, 2},
-    {Agent, :get_and_update, 2}
+  # Synchronous calls: {mfa, the argument naming the server, the
+  # timeout}. The timeout is the documented default when the call has
+  # none, or the argument that holds it — the signatures' positions:
+  # `multi_call(nodes, name, request, timeout)` names its server second.
+  @sync_calls [
+    {{GenServer, :call, 2}, 0, {:const, "5000"}},
+    {{:gen_server, :call, 2}, 0, {:const, "5000"}},
+    {{GenStage, :call, 2}, 0, {:const, "5000"}},
+    {{Agent, :get, 2}, 0, {:const, "5000"}},
+    {{Agent, :update, 2}, 0, {:const, "5000"}},
+    {{Agent, :get_and_update, 2}, 0, {:const, "5000"}},
+    {{Agent, :get, 4}, 0, {:const, "5000"}},
+    {{Agent, :update, 4}, 0, {:const, "5000"}},
+    {{Agent, :get_and_update, 4}, 0, {:const, "5000"}},
+    # A gen_statem client that omits the timeout waits forever.
+    {{:gen_statem, :call, 2}, 0, {:const, "-1"}},
+    {{GenStateMachine, :call, 2}, 0, {:const, "-1"}},
+    {{GenServer, :multi_call, 2}, 0, {:const, "-1"}},
+    {{GenServer, :multi_call, 3}, 1, {:const, "-1"}},
+    {{GenServer, :multi_call, 4}, 1, {:timeout, 3}},
+    {{:gen_server, :multi_call, 2}, 0, {:const, "-1"}},
+    {{:gen_server, :multi_call, 3}, 1, {:const, "-1"}},
+    {{:gen_server, :multi_call, 4}, 1, {:timeout, 3}},
+    {{GenServer, :call, 3}, 0, {:timeout, 2}},
+    {{:gen_server, :call, 3}, 0, {:timeout, 2}},
+    {{:gen_statem, :call, 3}, 0, {:timeout, 2}},
+    {{GenStateMachine, :call, 3}, 0, {:timeout, 2}},
+    {{GenStage, :call, 3}, 0, {:timeout, 2}},
+    {{Agent, :get, 3}, 0, {:timeout, 2}},
+    {{Agent, :update, 3}, 0, {:timeout, 2}},
+    {{Agent, :get_and_update, 3}, 0, {:timeout, 2}},
+    {{Agent, :get, 5}, 0, {:timeout, 4}},
+    {{Agent, :update, 5}, 0, {:timeout, 4}},
+    {{Agent, :get_and_update, 5}, 0, {:timeout, 4}}
   ]
 
-  # A gen_statem client that omits the timeout waits forever.
-  @sync_default_infinity [
-    {:gen_statem, :call, 2},
-    {GenStateMachine, :call, 2},
-    {GenServer, :multi_call, [2, 3, 4]}
-  ]
-
-  @sync_explicit_timeout [
-    {GenServer, :call, 3},
-    {:gen_server, :call, 3},
-    {:gen_statem, :call, 3},
-    {GenStateMachine, :call, 3},
-    {GenStage, :call, 3},
-    {Agent, :get, 3},
-    {Agent, :update, 3},
-    {Agent, :get_and_update, 3}
-  ]
+  @sync_mfas Enum.map(@sync_calls, &elem(&1, 0))
 
   @async [
     {GenServer, :cast, 2},
@@ -134,36 +145,23 @@ defmodule Argus.Extractors.ApiCalls do
   # sync_call_timeout say about the function, for the rules that must pair
   # a call's target with its own timeout; its readers record no
   # imprecision a second time.
-  @table ((for mfa <- @sync_default_5000 do
+  @table ((for {mfa, target, timeout} <- @sync_calls do
+             column =
+               case timeout do
+                 {:timeout, n} -> {:timeout, n, :sync_call_timeout}
+                 const -> const
+               end
+
+             site_column =
+               if match?({:timeout, _}, timeout), do: {:untracked, column}, else: column
+
              [
-               {mfa, :sync_call, [:func, {:module_target, 0}]},
-               {mfa, :sync_call_timeout, [:func, {:module_target, 0}, {:const, "5000"}]},
+               {mfa, :sync_call, [:func, {:module_target, target}]},
+               {mfa, :sync_call_timeout, [:func, {:module_target, target}, column]},
                {mfa, :sync_call_site,
-                [:id, :func, {:untracked, {:module_target, 0}}, {:const, "5000"}]}
+                [:id, :func, {:untracked, {:module_target, target}}, site_column]}
              ]
            end) ++
-            (for mfa <- @sync_default_infinity do
-               [
-                 {mfa, :sync_call, [:func, {:module_target, 0}]},
-                 {mfa, :sync_call_timeout, [:func, {:module_target, 0}, {:const, "-1"}]},
-                 {mfa, :sync_call_site,
-                  [:id, :func, {:untracked, {:module_target, 0}}, {:const, "-1"}]}
-               ]
-             end) ++
-            (for mfa <- @sync_explicit_timeout do
-               [
-                 {mfa, :sync_call, [:func, {:module_target, 0}]},
-                 {mfa, :sync_call_timeout,
-                  [:func, {:module_target, 0}, {:timeout, 2, :sync_call_timeout}]},
-                 {mfa, :sync_call_site,
-                  [
-                    :id,
-                    :func,
-                    {:untracked, {:module_target, 0}},
-                    {:untracked, {:timeout, 2, :sync_call_timeout}}
-                  ]}
-               ]
-             end) ++
             for(mfa <- @async, do: [{mfa, :async_cast, [:func, {:module_target, 0}]}]))
          |> List.flatten()
          |> Kernel.++([
@@ -208,16 +206,30 @@ defmodule Argus.Extractors.ApiCalls do
            {{:rpc, :call, 4}, :rpc_call, [:id, :func, {:const, "rpc"}, {:const, "-1"}]},
            {{:rpc, :call, 5}, :rpc_call,
             [:id, :func, {:const, "rpc"}, {:timeout, 4, :rpc_timeout}]},
-           {{:rpc, :multicall, [2, 3, 4]}, :rpc_call,
+           # multicall(M, F, A) and multicall(Nodes, M, F, A) wait
+           # forever; multicall(M, F, A, Timeout) is the other /4, told
+           # apart by what its last argument holds.
+           {{:rpc, :multicall, 3}, :rpc_call,
             [:id, :func, {:const, "multicall"}, {:const, "-1"}]},
+           {{:rpc, :multicall, 4}, :rpc_call,
+            [:id, :func, {:const, "multicall"}, {:multicall_timeout, 3, :rpc_timeout}]},
            {{:rpc, :multicall, 5}, :rpc_call,
             [:id, :func, {:const, "multicall"}, {:timeout, 4, :rpc_timeout}]},
-           {{:erpc, :call, 4}, :rpc_call,
-            [:id, :func, {:const, "erpc"}, {:timeout, 3, :rpc_timeout}]},
+           # erpc's default timeout is infinity: call(Node, Fun),
+           # call(Node, Fun, Timeout), call(Node, M, F, A),
+           # call(Node, M, F, A, Timeout); multicall likewise with Nodes.
+           {{:erpc, :call, 2}, :rpc_call, [:id, :func, {:const, "erpc"}, {:const, "-1"}]},
+           {{:erpc, :call, 3}, :rpc_call,
+            [:id, :func, {:const, "erpc"}, {:timeout, 2, :rpc_timeout}]},
+           {{:erpc, :call, 4}, :rpc_call, [:id, :func, {:const, "erpc"}, {:const, "-1"}]},
            {{:erpc, :call, 5}, :rpc_call,
             [:id, :func, {:const, "erpc"}, {:timeout, 4, :rpc_timeout}]},
+           {{:erpc, :multicall, 2}, :rpc_call,
+            [:id, :func, {:const, "erpc_multicall"}, {:const, "-1"}]},
+           {{:erpc, :multicall, 3}, :rpc_call,
+            [:id, :func, {:const, "erpc_multicall"}, {:timeout, 2, :rpc_timeout}]},
            {{:erpc, :multicall, 4}, :rpc_call,
-            [:id, :func, {:const, "erpc_multicall"}, {:timeout, 3, :rpc_timeout}]},
+            [:id, :func, {:const, "erpc_multicall"}, {:const, "-1"}]},
            {{:erpc, :multicall, 5}, :rpc_call,
             [:id, :func, {:const, "erpc_multicall"}, {:timeout, 4, :rpc_timeout}]},
            {{:global, :register_name, [2, 3]}, :global_register,
@@ -277,7 +289,7 @@ defmodule Argus.Extractors.ApiCalls do
 
   def process_call_kind(mfa) do
     cond do
-      listed?(mfa, @sync_default_5000 ++ @sync_default_infinity ++ @sync_explicit_timeout) ->
+      listed?(mfa, @sync_mfas) ->
         :call
 
       listed?(mfa, @async) ->
@@ -397,6 +409,16 @@ defmodule Argus.Extractors.ApiCalls do
     case timeout_ms(ctx.instrs, ctx.idx, {:x, n}) do
       "0" -> {"0", track_imprecision(facts, ctx, category, rel)}
       value -> {value, facts}
+    end
+  end
+
+  # rpc:multicall/4 is multicall(Nodes, M, F, A), which waits forever,
+  # or multicall(M, F, A, Timeout): the third argument is a function name
+  # in the first and an argument list in the second.
+  defp read({:multicall_timeout, n, category}, ctx, mfa, facts, rel) do
+    case resolve_register(ctx.instrs, ctx.idx, {:x, n - 1}) do
+      {:ok, fun} when is_atom(fun) and fun != :dynamic -> {"-1", facts}
+      _ -> read({:timeout, n, category}, ctx, mfa, facts, rel)
     end
   end
 

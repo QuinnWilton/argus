@@ -1661,14 +1661,19 @@ defmodule Argus.Extractor.Helpers do
 
   @doc """
   A timeout argument as the schema spells it: the milliseconds, `"-1"`
-  for `:infinity`, `"0"` when it could not be read.
+  for `:infinity`, `"0"` when it could not be read. `:gen_statem.call/3`'s
+  `{:dirty_timeout, t}` and `{:clean_timeout, t}` are the timeout `t`.
   """
   @spec timeout_ms([tuple()], non_neg_integer(), register()) :: String.t()
   def timeout_ms(instrs, idx, register) do
     case resolve_register(instrs, idx, register) do
-      {:ok, n} when is_integer(n) and n > 0 -> to_string(n)
-      {:ok, :infinity} -> "-1"
+      {:ok, {tag, t}} when tag in [:dirty_timeout, :clean_timeout] -> spell_timeout(t)
+      {:ok, t} -> spell_timeout(t)
       _ -> "0"
     end
   end
+
+  defp spell_timeout(n) when is_integer(n) and n > 0, do: to_string(n)
+  defp spell_timeout(:infinity), do: "-1"
+  defp spell_timeout(_unknown), do: "0"
 end

@@ -1075,6 +1075,19 @@ the same story in the corpus.
 
 ### blocking
 
+**Fixed.** Call timeouts are read at the signatures' positions.
+`:erpc.call/4` (`Node, M, F, A`) and `:erpc.multicall/4` read their
+timeout from the argument list — so no erpc call without a timeout was
+ever recorded as waiting forever; they wait forever, and `erpc`'s
+`call/2,3` and `multicall/2,3` are recorded. `:rpc.multicall/4` is
+`(Nodes, M, F, A)` or `(M, F, A, Timeout)`, told apart by its third
+argument. `GenServer.multi_call/3,4` and the new `:gen_server.multi_call`
+name their server second (the target read the node list) and `/4`'s
+timeout fourth (it was always infinity). `Agent.get/update/
+get_and_update` in their module-function forms (`/4` default, `/5`
+timeout) are synchronous calls. A `:gen_statem.call/3` timeout of
+`{:dirty_timeout, t}` or `{:clean_timeout, t}` is `t`.
+
 **Changed.** `blocking.call_chain` ("chain") keeps only the shortest chain between two
 servers (a Souffle subsumption), where it enumerated every path length up
 to ten and reported one at random, and no longer passes through a module

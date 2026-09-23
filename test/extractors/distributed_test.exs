@@ -8,6 +8,38 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
     data
   end
 
+  # One module of every timeout shape, compiled once.
+  setup_all do
+    [{_mod, bin}] =
+      Code.compile_string("""
+      defmodule Argus.DistributedTest.Timeouts do
+        def erpc4(n, a), do: :erpc.call(n, M, :f, a)
+        def erpc5(n, a), do: :erpc.call(n, M, :f, a, 7000)
+        def erpc2(n, f), do: :erpc.call(n, f)
+        def erpc3(n, f), do: :erpc.call(n, f, 3000)
+        def emulti4(ns, a), do: :erpc.multicall(ns, M, :f, a)
+        def emulti3(ns, f), do: :erpc.multicall(ns, f, 2000)
+        def rmulti_nodes(ns, a), do: :rpc.multicall(ns, M, :f, a)
+        def rmulti_timeout(a), do: :rpc.multicall(M, :f, a, 4000)
+        def multi3(ns), do: GenServer.multi_call(ns, Srv, :ping)
+        def multi4(ns), do: GenServer.multi_call(ns, Srv, :ping, 900)
+        def dirty(s), do: :gen_statem.call(s, :ping, {:dirty_timeout, 800})
+      end
+      """)
+
+    {:ok, data} = Argus.Pipeline.Disassemble.disassemble_path(bin)
+    facts = ApiCalls.extract(data)
+    short = fn func -> func |> String.split(":") |> List.last() end
+
+    %{
+      rpc: Map.new(facts[:rpc_call], fn [_id, func, v, t] -> {short.(func), {v, t}} end),
+      sync:
+        Map.new(facts[:sync_call_timeout], fn [func, callee, t] ->
+          {short.(func), {callee, t}}
+        end)
+    }
+  end
+
   describe "extract/1 — RPC calls" do
     test "detects :rpc.call/4 with infinity timeout" do
       facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.RpcCaller))
@@ -40,6 +72,31 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
       assert Enum.any?(rows, fn [_, _, variant, _] ->
                variant == "multicall"
              end)
+    end
+  end
+
+  describe "extract/1 — timeouts at the signatures' positions" do
+    test "erpc waits forever unless it names a timeout", %{rpc: rpc} do
+      assert rpc["erpc4/2"] == {"erpc", "-1"}
+      assert rpc["erpc5/2"] == {"erpc", "7000"}
+      assert rpc["erpc2/2"] == {"erpc", "-1"}
+      assert rpc["erpc3/2"] == {"erpc", "3000"}
+      assert rpc["emulti4/2"] == {"erpc_multicall", "-1"}
+      assert rpc["emulti3/2"] == {"erpc_multicall", "2000"}
+    end
+
+    test "rpc:multicall/4 is told apart by its last argument", %{rpc: rpc} do
+      assert rpc["rmulti_nodes/2"] == {"multicall", "-1"}
+      assert rpc["rmulti_timeout/1"] == {"multicall", "4000"}
+    end
+
+    test "multi_call names its server second and its timeout fourth", %{sync: sync} do
+      assert sync["multi3/1"] == {"Srv", "-1"}
+      assert sync["multi4/1"] == {"Srv", "900"}
+    end
+
+    test "a gen_statem dirty timeout is its timeout", %{sync: sync} do
+      assert {_, "800"} = sync["dirty/1"]
     end
   end
 
