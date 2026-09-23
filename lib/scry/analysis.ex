@@ -282,13 +282,13 @@ defmodule Scry.Analysis do
   @spec prior_relations() :: [atom()]
   def prior_relations, do: Enum.map(Argus.Schema.layer_3(), & &1.name)
 
-  # The frontend's digest of the Datalog `key` runs — nil for a frontend
-  # that does not set it (planchette), recorded as a dependency either
-  # way, so a later `Input.set` invalidates.
+  # The frontend's digest of the Datalog `key` runs, or nil for a frontend
+  # that does not set it (planchette). Only a set digest is read, so only
+  # a set digest is a dependency: roux validates an edge to an input with
+  # no value as stale, and every validation of a solve would re-run it.
+  # Scry's runner sets every digest before it demands anything.
   defp rules_digest(db, key) do
-    Runtime.input(db, :rules_digest, key)
-  rescue
-    Roux.Input.NotSetError -> nil
+    if Roux.Input.exists?(db, :rules_digest, key), do: Runtime.input(db, :rules_digest, key)
   end
 
   # `Runtime.input/3` records the dependency before it reads, so an

@@ -60,10 +60,13 @@ defmodule Scry.Test.Graph do
     :ok = Input.set(db, :env_fingerprint, :all, Keyword.get(opts, :fingerprint, %{test: 1}))
     :ok = Input.set(db, :project_root, :all, File.cwd!())
 
-    {:ok, all} = Argus.Analysis.set(:all)
+    # A frontend may leave the rules digests unset (planchette does).
+    if Keyword.get(opts, :rules, true) do
+      {:ok, all} = Argus.Analysis.set(:all)
 
-    for {key, digest} <- Scry.Fingerprint.rules(all),
-        do: :ok = Input.set(db, :rules_digest, key, digest)
+      for {key, digest} <- Scry.Fingerprint.rules(all),
+          do: :ok = Input.set(db, :rules_digest, key, digest)
+    end
 
     Enum.each(Scry.Analysis.prior_relations(), &(:ok = Input.set(db, :prior_rows, &1, [])))
     sync!(db, paths)

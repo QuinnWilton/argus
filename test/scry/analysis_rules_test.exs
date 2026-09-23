@@ -55,4 +55,20 @@ defmodule Scry.AnalysisRulesTest do
     assert length(QueryLog.executions(log, :module_extraction)) == map_size(paths)
     assert Enum.sort(QueryLog.executions(log, :souffle_solve)) == @analyses
   end
+
+  test "without rules digests, a revision that moves nothing solves nothing", %{paths: paths} do
+    # A frontend that never sets the digests (planchette's).
+    db = Graph.new_db(paths, rules: false)
+    Graph.incremental(db, @analyses)
+
+    log = QueryLog.start()
+    on_exit(fn -> QueryLog.detach(log) end)
+
+    # A :high input moves, so validation walks every solve's edges
+    # instead of skipping them on durability; none of them moved.
+    :ok = Input.set(db, :project_root, :all, "/elsewhere")
+    Graph.incremental(db, @analyses)
+
+    assert QueryLog.executions(log, :souffle_solve) == []
+  end
 end
