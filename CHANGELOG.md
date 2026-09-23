@@ -459,6 +459,13 @@ or of unknown arity, is left to the closure-following starts table
 rather than named `M:f/-1`; `proc_lib:start_monitor`'s `{result, ref}`
 is not modelled.
 
+**Fixed.** A call process points-to resolves is no longer also attributed
+by its message tag (`calls.dl`'s `tag_resolved_site`): the tag's guess
+could name a different server than the one the pid is (a `:reindex`
+only a decoy's `handle_call` names, sent to the catch-all server the
+caller started), and a hop points-to proves was marked "tag", inferred,
+in `blocking.call_chain` and `call_cycle_path`.
+
 **Changed.** `calls.dl`'s `reaches_module` closes only over modules a
 supervisor starts (`child_subtree`), the only targets
 `stateful_module_dep`'s one consumer, coupling, asks about, and that

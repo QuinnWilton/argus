@@ -659,6 +659,50 @@ defmodule Argus.Test.Fixtures.PidFlow do
     end
   end
 
+  defmodule Reindexer do
+    @moduledoc "Calls the AnyCall it started with :reindex, a tag only Decoy's handle_call names."
+    use GenServer
+
+    alias Argus.Test.Fixtures.PidFlow.AnyCall
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok)
+
+    @impl true
+    def init(:ok) do
+      {:ok, index} = AnyCall.start_link()
+      {:ok, %{index: index}}
+    end
+
+    @impl true
+    def handle_call(:rebuild, _from, s), do: {:reply, GenServer.call(s.index, :reindex), s}
+  end
+
+  defmodule AnyCall do
+    @moduledoc "Takes every call in one clause: no tag of its own."
+    use GenServer
+
+    def start_link, do: GenServer.start_link(__MODULE__, :ok)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_call(msg, _from, s), do: {:reply, msg, s}
+  end
+
+  defmodule Decoy do
+    @moduledoc "The only handler that names :reindex."
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:reindex, _from, s), do: {:reply, :ok, s}
+  end
+
   defmodule Quiet do
     @moduledoc "Starts with a computed module, apply, and a pid from a library call: no process to name."
     def applied(m), do: apply(m, :start_link, [])

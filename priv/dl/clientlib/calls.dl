@@ -252,8 +252,15 @@ referred_handler_count(fm, kind, tag, n) :-
   referred_handler(fm, kind, tag, _),
   n = count : { referred_handler(fm, kind, tag, _) }.
 
-// The call at `id` in `func` is attributed to `mod` by its tag.
+// The call at `id` in `func` is attributed to `mod` by its tag — unless
+// process points-to resolved that very call: its target is the answer,
+// not the tag's guess (the two can disagree), and a hop it proves is not
+// an inferred one.
 .decl tag_resolved_site(id: symbol, func: symbol, kind: symbol, mod: symbol)
+
+.decl pointsto_resolved(id: symbol, func: symbol, kind: symbol)
+
+pointsto_resolved(id, f, kind) :- call_site_target(id, f, kind, _).
 
 .decl tag_resolved_call(func: symbol, kind: symbol, mod: symbol)
 
@@ -265,7 +272,8 @@ tag_resolved_site(id, func, kind, mod) :-
   function_def(func, fm, _, _, _),
   referred_handler(fm, kind, tag, mod),
   referred_handler_count(fm, kind, tag, 1),
-  fm != mod.
+  fm != mod,
+  !pointsto_resolved(id, func, kind).
 
 // By uniqueness: one handler in the whole program, for a tag specific
 // enough to name it, and no evidence pointing elsewhere.
@@ -277,7 +285,8 @@ tag_resolved_site(id, func, kind, mod) :-
   !info_tag(tag),
   function_def(func, fm, _, _, _),
   fm != mod,
-  !referred_handler(fm, kind, tag, _).
+  !referred_handler(fm, kind, tag, _),
+  !pointsto_resolved(id, func, kind).
 
 // The sync dependencies that exist only by tag attribution, propagated
 // backwards like reaches_sync_dep, so a consumer can mark an inferred

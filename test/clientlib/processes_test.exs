@@ -42,6 +42,9 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.ConnUser,
     PidFlow.ConnSup,
     PidFlow.Joiner,
+    PidFlow.Reindexer,
+    PidFlow.AnyCall,
+    PidFlow.Decoy,
     PidFlow.Quiet
   ]
 
@@ -299,6 +302,16 @@ defmodule Argus.Clientlib.ProcessesTest do
     assert procs.(~r/^Joiner:-init\/1-fun-\d-\/1$/) == MapSet.new(["server Joiner:start_link/1"])
     # Task.start runs its closure in the task, and only there.
     assert procs.(~r/^Joiner:-init\/1-fun-\d-\/0$/) == MapSet.new(["spawn Joiner:init/1"])
+  end
+
+  test "a call points-to resolves is not attributed by its tag", %{tmp_dir: tmp_dir} do
+    r = solve(tmp_dir, ~w(sync_dep tag_resolved_site))
+
+    # :reindex is named by Decoy alone, but the call goes to the AnyCall
+    # Reindexer started.
+    assert ["Reindexer:handle_call/3", "AnyCall"] in r["sync_dep"]
+    refute ["Reindexer:handle_call/3", "Decoy"] in r["sync_dep"]
+    refute Enum.any?(r["tag_resolved_site"], &match?([_, "Reindexer:handle_call/3" | _], &1))
   end
 
   test "a gen_statem's data carries its pids from state to state", %{tmp_dir: tmp_dir} do

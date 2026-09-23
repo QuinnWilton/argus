@@ -29,6 +29,17 @@ defmodule Argus.Analyses.BlockingPidCallTest do
     assert slow == inspect(PidCalls.Slow)
   end
 
+  test "a chain whose hops points-to proves is not marked inferred" do
+    # Middle's call to Tail carries :ask, which Middle and Tail both
+    # name; points-to resolves it, so the tag is not what proves the hop.
+    assert [[_, _, 2, "static", 0, 0]] =
+             analyze()
+             |> Rows.where(:blocking, "call_chain", kind: "chain", drop: [:kind])
+             |> Enum.map(fn [a, b, d, i, c, w] ->
+               [a, b, String.to_integer(d), i, String.to_integer(c), String.to_integer(w)]
+             end)
+  end
+
   test "a budget through pids: one second for a callee that waits five" do
     assert [[impatient, middle, 1, _, 1_000, 5_000]] =
              analyze()
