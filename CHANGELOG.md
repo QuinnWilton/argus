@@ -28,6 +28,13 @@ or rename by the 0.17 entry below.
 
 ### Fact schema and extraction
 
+**Fixed.** `catch_total`/`catch_tag` follow the reason through the
+handler as `Argus.Instr` reads it: a call destroys every `x` register
+(the walk forgot only the call's arguments, so a copy of the reason in a
+higher register still counted as the reason), an instruction outside the
+walk's table that overwrites the reason's register ends the alias, and a
+`swap` or `trim` carries it.
+
 **Fixed.** `statem_timeout` finds an action built on one arm of a
 branch: the walk from the action tuple to the callback's return follows
 the jump to the shared return block and steps every other instruction

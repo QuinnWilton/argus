@@ -36,9 +36,13 @@ those frameworks need.
   `def`/`use`/`next` rows come from it; a backward register walk asks
   `Argus.Instr.Reaching` for the writes that reach (through the `Helpers`
   walks or `Helpers.trace/5`), and a forward one steps with
-  `Argus.Instr.carry/2`. A new walk keeps no instruction table of its
-  own (otp's `writes_x0?`, gen_statem's `flow_step`, catch_clauses'
-  `clobber` and `Argus.Cfg`'s op lists predate this and are to move).
+  `Argus.Instr.carry/2`. `Argus.Cfg` reads fall-through from the `next`
+  facts the emitter derives from it. A new walk keeps no instruction
+  table of its own (process_registry's `checked_walk` predates this and
+  is to move); a walk may refine what Instr says only where it knows
+  more than the instruction does, and says why (catch_clauses ends a
+  path at `raw_raise` because a handler re-raises a class that is
+  always valid).
 - Per-module extraction is embarrassingly parallel and deterministic
   (`ordered: true`); the same modules yield `==` facts.
 - Stage 0 keeps the volatile instruction-level relations out of every

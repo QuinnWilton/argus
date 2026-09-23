@@ -36,6 +36,8 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
   and `X` is its tag.
   """
 
+  alias Argus.Instr
+
   @x0 {:x, 0}
   @x1 {:x, 1}
   @classes [:error, :exit, :throw]
@@ -252,61 +254,13 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
 
   # ── Register flow ───────────────────────────────────────────────────
 
+  # A projection of the reason — an element of it, or the `__struct__` an
+  # Elixir `rescue X` reads before normalizing — is the reason as far as
+  # testing it goes, so these copy the alias where Argus.Instr would say
+  # the destination holds a new value.
   defp step({:get_tuple_element, src, _i, dst}, idx, path, instrs, labels, seen, acc),
     do: next(idx, copy(path, src, dst), instrs, labels, seen, acc)
 
-  defp step({:move, src, dst}, idx, path, instrs, labels, seen, acc),
-    do: next(idx, copy(path, src, dst), instrs, labels, seen, acc)
-
-  # ── Control ─────────────────────────────────────────────────────────
-
-  defp step({:jump, {:f, l}}, _idx, path, instrs, labels, seen, acc),
-    do: goto(l, path, instrs, labels, seen, acc)
-
-  defp step({:case_end, _}, _idx, path, _instrs, _labels, seen, acc),
-    do: {seen, %{acc | falls_through: MapSet.union(acc.falls_through, path.tags)}}
-
-  defp step({:badmatch, _}, _idx, _path, _instrs, _labels, seen, acc), do: {seen, acc}
-  defp step({:if_end}, _idx, _path, _instrs, _labels, seen, acc), do: {seen, acc}
-  defp step(:if_end, _idx, _path, _instrs, _labels, seen, acc), do: {seen, acc}
-  defp step({:try_case_end, _}, _idx, _path, _instrs, _labels, seen, acc), do: {seen, acc}
-  defp step(:raw_raise, _idx, _path, _instrs, _labels, seen, acc), do: {seen, acc}
-  defp step({:raw_raise}, _idx, _path, _instrs, _labels, seen, acc), do: {seen, acc}
-  defp step({:bif, :raise, _, _, _}, _idx, _path, _instrs, _labels, seen, acc), do: {seen, acc}
-  defp step({:func_info, _, _, _}, _idx, _path, _instrs, _labels, seen, acc), do: {seen, acc}
-
-  defp step(:return, _idx, path, _instrs, _labels, seen, acc), do: {seen, caught(acc, path)}
-
-  defp step({call, _arity, _}, _idx, path, _instrs, _labels, seen, acc)
-       when call in [:call_only, :call_ext_only],
-       do: {seen, caught(acc, path)}
-
-  defp step({call, _arity, _, _}, _idx, path, _instrs, _labels, seen, acc)
-       when call in [:call_last, :call_ext_last],
-       do: {seen, caught(acc, path)}
-
-  defp step({:apply_last, _, _}, _idx, path, _instrs, _labels, seen, acc),
-    do: {seen, caught(acc, path)}
-
-  # A re-raise through the library rather than the opcode ends the path
-  # without a catch; any other call clobbers its argument registers.
-  defp step({:call_ext, arity, {:extfunc, mod, fun, a}}, idx, path, instrs, labels, seen, acc) do
-    if reraise?(mod, fun, a),
-      do: {seen, acc},
-      else: next(idx, clobber(path, arity), instrs, labels, seen, acc)
-  end
-
-  defp step({:call, arity, _}, idx, path, instrs, labels, seen, acc),
-    do: next(idx, clobber(path, arity), instrs, labels, seen, acc)
-
-  defp step({:call_fun, arity}, idx, path, instrs, labels, seen, acc),
-    do: next(idx, clobber(path, arity + 1), instrs, labels, seen, acc)
-
-  defp step({:call_fun2, _, arity, _}, idx, path, instrs, labels, seen, acc),
-    do: next(idx, clobber(path, arity + 1), instrs, labels, seen, acc)
-
-  # `rescue X` reads the reason's __struct__ before normalizing; the
-  # register that holds it is a projection of the reason.
   defp step(
          {:bif, :map_get, _fail, [{:atom, :__struct__}, src], dst},
          idx,
@@ -317,24 +271,6 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
          acc
        ),
        do: next(idx, copy(path, src, dst), instrs, labels, seen, acc)
-
-  defp step({:bif, _name, _fail, _args, dst}, idx, path, instrs, labels, seen, acc),
-    do: next(idx, forget(path, dst), instrs, labels, seen, acc)
-
-  defp step({:gc_bif, _name, _fail, _live, _args, dst}, idx, path, instrs, labels, seen, acc),
-    do: next(idx, forget(path, dst), instrs, labels, seen, acc)
-
-  defp step({:put_tuple2, dst, _}, idx, path, instrs, labels, seen, acc),
-    do: next(idx, forget(path, dst), instrs, labels, seen, acc)
-
-  defp step({:put_list, _, _, dst}, idx, path, instrs, labels, seen, acc),
-    do: next(idx, forget(path, dst), instrs, labels, seen, acc)
-
-  defp step({:get_hd, _, dst}, idx, path, instrs, labels, seen, acc),
-    do: next(idx, forget(path, dst), instrs, labels, seen, acc)
-
-  defp step({:get_tl, _, dst}, idx, path, instrs, labels, seen, acc),
-    do: next(idx, forget(path, dst), instrs, labels, seen, acc)
 
   defp step(
          {:get_map_elements, {:f, fail}, src, {:list, kvs}},
@@ -350,8 +286,48 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
     branch(idx, fail, path, instrs, labels, seen, acc)
   end
 
-  defp step(_instr, idx, path, instrs, labels, seen, acc),
+  # The handler's first instruction writes the class, reason and
+  # stacktrace the walk starts out knowing are there.
+  defp step({:try_case, _reg}, idx, path, instrs, labels, seen, acc),
     do: next(idx, path, instrs, labels, seen, acc)
+
+  # ── Control ─────────────────────────────────────────────────────────
+
+  defp step({:case_end, _}, _idx, path, _instrs, _labels, seen, acc),
+    do: {seen, %{acc | falls_through: MapSet.union(acc.falls_through, path.tags)}}
+
+  # `raw_raise` returns `badarg` instead of raising only for an invalid
+  # class, and a handler re-raises the class `try_case` gave it, which is
+  # always valid: here it ends the path without a catch.
+  defp step(:raw_raise, _idx, _path, _instrs, _labels, seen, acc), do: {seen, acc}
+
+  # A re-raise through the library rather than the opcode ends the path
+  # without a catch. One in tail position is how a clause that unwraps
+  # the reason re-raises what it found (`reraise original, stacktrace`):
+  # that clause handles its class, and the path counts as a catch.
+  defp step(instr, idx, path, instrs, labels, seen, acc) do
+    cond do
+      reraise?(instr) ->
+        {seen, acc}
+
+      Instr.exits?(instr) ->
+        {seen, caught(acc, path)}
+
+      true ->
+        path = %{path | aliases: MapSet.new(Instr.carry(instr, path.aliases))}
+
+        {seen, acc} =
+          if Instr.falls_through?(instr),
+            do: next(idx, path, instrs, labels, seen, acc),
+            else: {seen, acc}
+
+        instr
+        |> Instr.targets()
+        |> Enum.reduce({seen, acc}, fn label, {s, a} ->
+          goto(label, path, instrs, labels, s, a)
+        end)
+    end
+  end
 
   defp branch(idx, fail, path, instrs, labels, seen, acc) do
     {seen, acc} = next(idx, path, instrs, labels, seen, acc)
@@ -386,17 +362,15 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
     end
   end
 
-  defp clobber(path, arity) when arity > 0,
-    do: Enum.reduce(0..(arity - 1), path, &forget(&2, {:x, &1}))
-
-  defp clobber(path, _arity), do: path
-
   defp alias?(operand, path) do
     case reg(operand) do
       nil -> false
       r -> MapSet.member?(path.aliases, r)
     end
   end
+
+  defp reraise?({:call_ext, _arity, {:extfunc, mod, fun, a}}), do: reraise?(mod, fun, a)
+  defp reraise?(_instr), do: false
 
   defp reraise?(:erlang, :raise, 3), do: true
   defp reraise?(:erlang, :error, a) when a in [1, 2], do: true
