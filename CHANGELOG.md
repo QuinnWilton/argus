@@ -943,6 +943,15 @@ the rescue it is, and joins a table created under a computed name only
 with reads whose table is also computed, not every read in the owner's
 module.
 
+### coupling
+
+**Changed.** `coupling.dual_restart_authority` walks the intra-module call
+graph back from the functions that start a dynamic child and the ones
+that monitor it, instead of closing it over every function of the
+program: 6.1M rows to 11 on a 751-module deps tree (the coupling solve
+37s to 30s there). Output identical over the corpus and four large
+programs.
+
 ### Corpus and tooling
 
 **Added.** `Argus.Corpus` pairs take `subdir:` for a repository whose Mix project is

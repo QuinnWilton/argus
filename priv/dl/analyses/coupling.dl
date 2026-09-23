@@ -284,9 +284,16 @@ rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "inferred")
 // signal: two facts about two processes, not two restart authorities). The :DOWN handler is whichever function of the module matches
 // :DOWN (matches_down): handle_info/2 for a GenServer, a private helper
 // its state functions' catch-alls dispatch to for a gen_statem.
+//
+// Walked back from the only targets these rules ask about — the functions
+// that start a dynamic child and the ones that monitor what they started
+// — rather than closed over every function of the program: seeded at every
+// function, the closure held every intra-module path (6.1M rows from 43k
+// edges on a deps tree) to answer questions about a handful.
 .init module_reach = IntraModuleReach
 
-module_reach.seed(f, f) :- function_def(f, _, _, _, _).
+module_reach.seed(s, s) :- dynamic_child(_, _, s).
+module_reach.seed(m, m) :- monitor_call(_, m, "started_child").
 
 .decl starts_and_monitors(mod: symbol, sup: symbol, child: symbol, via: symbol)
 
