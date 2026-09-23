@@ -333,6 +333,47 @@ reads_self(f) :- pid_base(f, _, "self", _).
 self_relevant(f) :- reads_self(f).
 self_relevant(f) :- same_process_call(f, g), self_relevant(g).
 
+// `func`'s edge to `callee` leads into another process: callee is what a
+// spawn, a task or an agent in func runs. A closure or fun of func's is
+// also set aside when func starts a process whose function points-to
+// does not know (the fun came from a variable), starts a child whose
+// spec may hold a fun, or hands its funs to Task.async_stream: one of
+// them runs elsewhere, and which is not known. What a closure handed to Enum.map runs stays the caller's.
+// Told without closure_def (by the compiler's name for a closure), which
+// the supervision family must not read.
+.decl runs_elsewhere(func: symbol, callee: symbol)
+
+runs_elsewhere(f, g) :- process_start(_, f, _, kind, g), kind != "server".
+
+runs_elsewhere(f, g) :-
+  call_edge(f, g),
+  match(".*:-.*-fun-[0-9]+-/[0-9]+", g),
+  hands_funs_off(f).
+
+.decl hands_funs_off(func: symbol)
+
+hands_funs_off(f) :- process_start(_, f, _, kind, "dynamic"), kind != "server".
+
+// `start_worker(fn -> ... end)`: the start is a helper's, on its
+// parameter.
+hands_funs_off(f) :-
+  call_edge(f, h),
+  process_start(_, h, _, kind, "dynamic"),
+  kind != "server".
+
+hands_funs_off(f) :-
+  remote_call(_, f, m, "async_stream", _),
+  (m = "Task" ; m = "Task.Supervisor").
+
+hands_funs_off(f) :-
+  remote_call(_, f, "Task.Supervisor", "async_stream_nolink", _).
+
+// A child spec built around a fun (`start: {Task, :start_link, [fn ->
+// ... end]}`) runs it in the child.
+hands_funs_off(f) :-
+  remote_call(_, f, m, "start_child", _),
+  (m = "Supervisor" ; m = "DynamicSupervisor").
+
 // ── A GenServer's state ─────────────────────────────────────────────
 
 // What init/1 and the handlers return becomes the state the next handler

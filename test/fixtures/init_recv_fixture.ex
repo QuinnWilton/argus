@@ -91,3 +91,70 @@ defmodule Argus.Test.Fixtures.InitRecv.Waits do
     end
   end
 end
+
+defmodule Argus.Test.Fixtures.InitRecv.SpawnsLoop do
+  @moduledoc false
+  # init/1 spawns a loop that waits forever: the wait is the loop's
+  # process's, and init returns at once.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts) do
+    pid = spawn_link(fn -> loop(opts) end)
+    {:ok, pid}
+  end
+
+  defp loop(opts) do
+    receive do
+      {:work, from} ->
+        send(from, {:done, opts})
+        loop(opts)
+    end
+  end
+end
+
+defmodule Argus.Test.Fixtures.InitRecv.SpawnsWork do
+  @moduledoc false
+  # A connect, a cluster-wide lock and a supervisor query in a task
+  # init/1 starts: none holds the start, and a failed connect does not
+  # fail init.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init({host, port}) do
+    {:ok, task} = Task.start_link(fn -> connect(host, port) end)
+    {:ok, task}
+  end
+
+  defp connect(host, port) do
+    :global.set_lock({:connect, self()}, [node()])
+    _ = Supervisor.which_children(:connections)
+    :gen_tcp.connect(host, port, [:binary, active: false])
+  end
+end
+
+defmodule Argus.Test.Fixtures.InitRecv.AwaitsEach do
+  @moduledoc false
+  # A closure handed to Enum.each runs in init/1's own process: its
+  # receive holds the start as surely as one written in init.
+  use GenServer
+
+  def start_link(peers), do: GenServer.start_link(__MODULE__, peers)
+
+  @impl true
+  def init(peers) do
+    Enum.each(peers, fn peer ->
+      send(peer, {:hello, self()})
+
+      receive do
+        {:ack, ^peer} -> :ok
+      end
+    end)
+
+    {:ok, peers}
+  end
+end

@@ -352,7 +352,7 @@ flush_receive(id) :-
 // is the one that hangs: no timeout means no way out if the expected
 // message never arrives, and the supervisor can only brutal-kill.
 // A blocking receive init/1 reaches is startup's finding
-// (unbounded_effect_in_init, "recv"): it holds the supervisor's start,
+// (unbounded_effect_in_init, "receive"): it holds the supervisor's start,
 // and is reported there once.
 receive_in_callback(id, func, callback, behaviour, proximity, "false") :-
   recv_start(id, func, 1, _),
@@ -378,7 +378,7 @@ receive_in_callback(id, func, callback, behaviour, proximity, "true") :-
 // An rpc in init/1, or a :global op init/1 reaches, is startup's
 // finding (blocks_on_peer, "remote" and "global"): the same site, with
 // the supervisor's start held on it, reported there once.
-.init init_global_reach = CallReach
+.init init_global_reach = ProcessReach
 
 init_global_reach.seed(g, site) :- global_op(site, g, _, _).
 

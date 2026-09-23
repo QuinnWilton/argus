@@ -1168,7 +1168,7 @@ in a synchronous call cycle: the cycle is its own finding.
 **Changed.** One site, one concern: an rpc in `init/1`, and a blocking `:global` op
 `init/1` reaches, are `startup.blocks_on_peer`'s findings ("remote",
 "global") and no longer also `blocking.unbounded_wait`'s; a blocking
-receive in `init/1` is `startup.unbounded_effect_in_init`'s ("recv") and
+receive in `init/1` is `startup.unbounded_effect_in_init`'s ("receive") and
 no longer also `blocking.receive_in_callback`'s.
 
 **Changed.** `blocking.receive_in_callback` judges the cancel_timer flush idiom per
@@ -1178,6 +1178,30 @@ clause for a literal one of the module's timers carries, for `:timeout`,
 or for anything. One whose every clause waits for some other literal, in
 a module whose timers all carry known literals, is reported. When the
 module arms no timer the program can see, the receive stays suppressed.
+
+### startup
+
+**Fixed.** `startup.unbounded_effect_in_init` and `blocks_on_peer`'s
+"sup", "global" and "blocking_server" rows follow only what `init/1`'s own
+process runs. A loop, a connect, a `:global` lock or a supervisor call
+inside a function `init/1` spawns, hands to a task or an agent (process
+points-to's `process_start`) or builds into a child spec does not hold the
+start, and was reported as though it did (`spawn_link(fn -> loop() end)`
+read as "init/1 waits on a socket with no timeout"). The walk is the new
+`ProcessReach` component over `runs_elsewhere` (processes.dl): every call
+edge but the one into what a start runs, so a closure handed to
+`Enum.each` still counts. On the corpus, supavisor's DbHandler no longer
+waits on a Manager whose `Supervisor.stop` runs in a task; in OTP's
+kernel, the loops `:global`, `:global_group`, `:rpc` and
+`:logger_simple_h` spawn from init are no longer init's waits.
+`blocking.unbounded_wait`'s "global" and "rpc" rows step aside for init's
+by the same walk, so a lock in a task init starts is blocking's finding.
+
+**Changed.** A `receive` with no `after` on init's path is its own kind,
+`unbounded_effect_in_init` "receive", titled "init/1 waits on a message
+with no timeout" and anchored at the receive; "recv" and "init/1 waits on
+a socket with no timeout" are for a `:gen_tcp`/`:ssl` recv with
+`:infinity`.
 
 ### exposure
 

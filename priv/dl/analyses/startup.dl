@@ -31,8 +31,9 @@
 //   construction, or a race from handle_continue), "earlier",
 //   "parent", "unknown" (no tree places both), or empty. `site` anchors
 //   the tree definition for a later sibling, the call otherwise.
-// `unbounded_effect_in_init(mod, kind, api)` — init/1 reaches a socket
-//   receive with :infinity ("recv"; `api` is the function) or a connect
+// `unbounded_effect_in_init(mod, kind, api)` — init/1, in its own
+//   process, reaches a socket receive with :infinity ("recv"; `api` is
+//   the function), a `receive` with no `after` ("receive") or a connect
 //   with no way to retry ("connect").
 // `deferral_defect(mod, kind, site, detail)` — deferred work that will
 //   not happen as written: an init timeout of `detail` ms that any
@@ -166,8 +167,9 @@ blocks_on_peer(mod, "init", target, "sup", "", "", site, cat(api, ".", op)) :-
   init_function(mod, func),
   sup_management_call(site, func, api, op, target).
 
-// Backwards from the supervisor calls, which are few.
-.init sup_reach = CallReach
+// Backwards from the supervisor calls, which are few, over what init's
+// own process runs: a task init starts may wait on the supervisor.
+.init sup_reach = ProcessReach
 
 sup_reach.seed(g, site) :- sup_management_call(site, g, _, _, _).
 
@@ -198,7 +200,7 @@ handler_blocks(mod, h, site) :-
   remote_call(site, h, "GenServer", "call", _),
   sync_call_site(site, h, _, -1).
 
-.init infinite_call_reach = CallReach
+.init infinite_call_reach = ProcessReach
 
 infinite_call_reach.seed(g, site) :-
   remote_call(site, g, "GenServer", "call", _),
@@ -235,10 +237,10 @@ infinite_recv(f) :- call_arg(f, ":ssl:recv/3", 2, ":infinity").
 infinite_recv(f) :- remote_call(_, f, ":gen_tcp", "recv", 2).
 infinite_recv(f) :- remote_call(_, f, ":ssl", "recv", 2).
 infinite_recv(f) :- call_arg(f, g, pos, ":infinity"), infinite_recv_param(g, pos).
-// A `receive` with no `after` waits the same way, on the mailbox.
-infinite_recv(f) :- blocking_receive(f).
 
-.init recv_reach = CallReach
+// Only what init's own process runs: a loop init spawns waits in its own
+// process, and init returns without it.
+.init recv_reach = ProcessReach
 
 recv_reach.seed(f, f) :- infinite_recv(f).
 
@@ -247,13 +249,22 @@ unbounded_effect_in_init(mod, "recv", r, site) :-
   recv_reach.reaches(f, r),
   recv_site_or_empty(r, site).
 
+// A `receive` with no `after` waits the same way, on the mailbox.
+.init receive_reach = ProcessReach
+
+receive_reach.seed(f, f) :- blocking_receive(f).
+
+unbounded_effect_in_init(mod, "receive", r, id) :-
+  init_function(mod, f),
+  receive_reach.reaches(f, r),
+  recv_start(id, r, 1, _).
+
 // The receive that waits: the recv call, the `receive`, or the call
 // that forwards :infinity into a helper's recv.
 .decl recv_site(func: symbol, id: symbol)
 
 recv_site(f, id) :- call_site(id, f, ":gen_tcp", "recv", _).
 recv_site(f, id) :- call_site(id, f, ":ssl", "recv", _).
-recv_site(f, id) :- recv_start(id, f, 1, _).
 recv_site(f, id) :- call_arg(f, g, pos, ":infinity"), infinite_recv_param(g, pos), call_instr(f, g, id).
 
 .decl recv_site_or_empty(func: symbol, site: symbol)
@@ -267,6 +278,7 @@ recv_site_or_empty(f, "") :- infinite_recv(f), !recv_site(f, _).
 .output init_reaches_recv
 
 init_reaches_recv(mod, r) :- unbounded_effect_in_init(mod, "recv", r, _).
+init_reaches_recv(mod, r) :- unbounded_effect_in_init(mod, "receive", r, _).
 
 // ── A connection made in init/1 with no way to try again ─────────────
 //
@@ -284,7 +296,7 @@ connect_api(api) :- impure_call(_, _, api, "network", _), match(":ssl.connect/.*
 connect_api(api) :- impure_call(_, _, api, "network", _), match(":gen_udp.open/.*", api).
 connect_api(api) :- impure_call(_, _, api, "network", _), match(":httpc.request/.*", api).
 
-.init connect_reach = CallReach
+.init connect_reach = ProcessReach
 
 connect_reach.seed(f, api) :- impure_call(_, f, api, "network", _), connect_api(api).
 
@@ -391,10 +403,11 @@ global_blocking_op(func, op, retries, id) :-
 // ── Blocking :global op in init/1 ────────────────────────────────
 
 // Catches the worst case: blocking on :global from supervisor startup
-// (init/1 or transitively from init/1). Hangs the supervisor. `site` is
-// the :global call itself, in whichever function init/1 reaches it in
-// (init/1 included: a seed is in its own reach).
-.init global_site_reach = CallReach
+// (init/1 or transitively from init/1, in init's own process). Hangs
+// the supervisor. `site` is the :global call itself, in whichever
+// function init/1 reaches it in (init/1 included: a seed is in its own
+// reach).
+.init global_site_reach = ProcessReach
 
 global_site_reach.seed(g, site) :- global_blocking_op(g, _, _, site).
 

@@ -46,6 +46,15 @@
   reaches(f, t) :- call_edge(f, g), !closure_def(f, g), !fun_ref(f, g), reaches(g, t).
 }
 
+// The calling process's own work: every edge but the one into a
+// function a start hands to a new process (runs_elsewhere, in
+// processes.dl). `spawn_link(fn -> loop() end)` in init/1 waits in the
+// loop's process; a closure handed to Enum.each runs in init's. Needs
+// processes.dl.
+.comp ProcessReach : Backward {
+  reaches(f, t) :- call_edge(f, g), !runs_elsewhere(f, g), reaches(g, t).
+}
+
 .comp IntraModuleReach : Backward {
   reaches(f, t) :-
     call_edge(f, g),

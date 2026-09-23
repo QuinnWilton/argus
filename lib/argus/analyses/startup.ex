@@ -14,9 +14,9 @@ defmodule Argus.Analyses.Startup do
     later sibling, a `sup` management call, a `blocking_server` whose
     handler blocks without bound, the `parent` supervisor mid-start, a
     `global` lock or a `remote` operation on the boot path.
-  - `unbounded_effect_in_init(mod, kind, api)` — init/1 reaches a socket
-    `recv` with `:infinity`, or a `connect` nothing in the module can
-    retry.
+  - `unbounded_effect_in_init(mod, kind, api)` — init/1, in its own
+    process, reaches a socket `recv` with `:infinity`, a `receive` with no
+    `after`, or a `connect` nothing in the module can retry.
   - `deferral_defect(mod, kind, site, detail)` — the `{:ok, state, 0}`
     idiom any earlier message cancels (`init_timeout`), or a defensive
     catch in handle_continue that turns a deadlock into a restart loop
@@ -94,14 +94,16 @@ defmodule Argus.Analyses.Startup do
         name: :unbounded_effect_in_init,
         fields: [
           {:mod, :symbol, "module whose init/1 reaches it"},
-          {:kind, :symbol, "recv | connect"},
+          {:kind, :symbol, "recv | receive | connect"},
           {:api, :symbol, "the receiving function, or the connect call"},
-          {:site, :symbol, "the receive, for recv, when the instruction is known; else empty"}
+          {:site, :symbol,
+           "the socket recv or the receive, when the instruction is known; else empty"}
         ],
-        # One recv finding per waiting function: the inits that reach it
+        # One wait finding per waiting function: the inits that reach it
         # are its evidence frames.
-        key: {:kind, %{"connect" => [:mod], "recv" => [:kind, :api]}},
-        doc: "init/1 waits on a socket without bound, or connects with no way to retry."
+        key: {:kind, %{"connect" => [:mod], "recv" => [:kind, :api], "receive" => [:kind, :api]}},
+        doc:
+          "init/1 waits on a socket or its mailbox without bound, or connects with no way to retry."
       },
       %{
         name: :init_reaches_recv,
@@ -168,8 +170,8 @@ defmodule Argus.Analyses.Startup do
     Findings.new(
       :warning,
       "init/1 waits on a socket with no timeout",
-      "#{recv} waits on a socket with :infinity (or a `receive` with no " <>
-        "`after`), and init/1 reaches it. Until the message arrives, the " <>
+      "#{recv} waits on a socket with :infinity, and init/1 reaches it " <>
+        "in its own process. Until the message arrives, the " <>
         "process is not started: its supervisor's start, and whoever called " <>
         "start_child, wait with it — for as long as the server stays silent.",
       at: Findings.at_site_in_func(site, recv),
@@ -177,6 +179,25 @@ defmodule Argus.Analyses.Startup do
       help: [
         "bound the receive (a connect timeout) and fail the start with an error",
         "or connect after init returns (`{:continue, :connect}`) so the start completes"
+      ]
+    )
+  end
+
+  def finding(:unbounded_effect_in_init, [_mod, "receive", recv, site]) do
+    Findings.new(
+      :warning,
+      "init/1 waits on a message with no timeout",
+      "#{Findings.call_name(recv)} has a `receive` with no `after`, and init/1 reaches " <>
+        "it in its own process. Until the message arrives, the process is not " <>
+        "started: its supervisor's start, and whoever called start_child, wait " <>
+        "with it — forever, if the sender is gone or never sends.",
+      at: Findings.at_site_in_func(site, recv),
+      at_label: "waits with no `after`",
+      at_source: "receive",
+      to_block: :receive,
+      help: [
+        "add an `after` and fail the start with an error when it fires",
+        "or wait after init returns (`{:continue, :await}`) so the start completes"
       ]
     )
   end

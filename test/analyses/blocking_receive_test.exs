@@ -59,7 +59,7 @@ defmodule Argus.Analyses.BlockingReceiveTest do
       refute Enum.any?(blocking, fn [_, func | _] -> func =~ "init/1" end)
 
       {:ok, startup} = Argus.analyze([CallbackReceive.StatemBlockingInInit], :startup)
-      assert [[_mod, "recv", func, _site]] = startup["unbounded_effect_in_init"]
+      assert [[_mod, "receive", func, _site]] = startup["unbounded_effect_in_init"]
       assert func =~ "StatemBlockingInInit:init/1"
     end
 

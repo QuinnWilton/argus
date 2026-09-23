@@ -97,9 +97,46 @@ defmodule Argus.Analyses.SingletonShapesTest do
            |> Rows.where(:startup, "unbounded_effect_in_init", kind: "recv")
            |> Enum.map(&hd/1)
            |> Enum.uniq()
-           |> Enum.sort() == [
-             "Argus.Test.Fixtures.InitRecv.Blocking",
+           |> Enum.sort() == ["Argus.Test.Fixtures.InitRecv.Blocking"]
+  end
+
+  test "a receive with no after in init's own process is reported as a wait on a message" do
+    skip_without_souffle()
+
+    {:ok, r} =
+      Argus.analyze(
+        [InitRecv.Waits, InitRecv.AwaitsEach, InitRecv.SpawnsLoop, InitRecv.Blocking],
+        :startup
+      )
+
+    rows = Rows.where(r, :startup, "unbounded_effect_in_init", kind: "receive")
+
+    # AwaitsEach's closure runs in init's process; SpawnsLoop's loop runs
+    # in the process init spawns, and init returns without it.
+    assert rows |> Enum.map(&hd/1) |> Enum.uniq() |> Enum.sort() == [
+             "Argus.Test.Fixtures.InitRecv.AwaitsEach",
              "Argus.Test.Fixtures.InitRecv.Waits"
            ]
+
+    {:ok, findings} =
+      Argus.run_analyses([InitRecv.Waits, InitRecv.SpawnsLoop], analyses: [:startup])
+
+    assert ["init/1 waits on a message with no timeout"] ==
+             findings.findings |> Enum.map(& &1.title) |> Enum.filter(&(&1 =~ "waits on"))
+  end
+
+  test "a connect, a lock or a supervisor call in a task init/1 starts holds nothing" do
+    skip_without_souffle()
+
+    {:ok, r} = Argus.analyze([InitRecv.SpawnsWork], :startup)
+
+    assert Rows.where(r, :startup, "unbounded_effect_in_init", kind: "connect") == []
+    assert Rows.where(r, :startup, "blocks_on_peer", kind: ["global", "sup"]) == []
+
+    # The lock still waits without bound in the task, which blocking says.
+    {:ok, b} = Argus.analyze([InitRecv.SpawnsWork], :blocking)
+
+    assert [["Argus.Test.Fixtures.InitRecv.SpawnsWork:connect/2" | _]] =
+             Rows.where(b, :blocking, "unbounded_wait", kind: "global")
   end
 end
