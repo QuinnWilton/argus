@@ -659,49 +659,13 @@ check" at `:warning`, with the loaded-module fun risk and
 request-reachable deserialization keeps its proximity severity and gains
 the same wording.
 
-### Corpus and tooling
-
-**Added.** `Argus.Corpus` pairs take `subdir:` for a repository whose Mix project is
-not at the root — `mix.exs` under `elixir/`, one app of an umbrella under
-`apps/` — so a fix in such a tree can be a pair. The clone is still one
-directory per `<repo>-<sha7>`; relaxing the Elixir requirement, building
-and finding beams happen in the project, and an umbrella app's beams are
-found in the umbrella's `_build`.
-
-**Changed.** The closed-issue corpus caches the facts of each checkout beside it
-(`.argus-facts/<digest>/facts`), keyed by the beams, the code and
-Datalog that extraction reaches (`Argus.Corpus.engine_modules/0`: the
-pipeline, the extractors and what they call through beam_spy and ctf,
-the analyses' extractor declarations, stage 0's includes — not a
-finding's prose or a rule), the runtime and the solver; `Argus.Corpus.analyze/2`
-takes the pair and side and solves over the cache. Extraction was over
-90% of a large tree's analysis and its inputs never move between runs.
-`Argus.CorpusTest` analyzes each checkout once, `ARGUS_CORPUS_JOBS` (default
-4) at a time, before checking the pairs. An entry under another digest is
-pruned only once no run has touched it for an hour: a VM beside this one —
-another worktree's build has its own digest — may still be reading it. The suite's analysis tests run
-`async: true`; the tests that set VM-wide state (`PATH`, `TYPESAFE_API_KEY`,
-`ARGUS_PRIORS_DIR`) live in their own sync modules.
-
-**Fixed.** `Argus.Corpus.ensure/2` returned every beam twice when the
-project is the repository root, and listed both a dev and a test build;
-each beam once now, from one build.
-
-**Changed.** `Argus.Souffle.input_relations/2` memoizes its answer for a program
-shipped under `priv/dl`, versioned by a digest of every file there and
-the solver binary's identity. The answer depends on nothing else, and
-resolving it is a Souffle invocation per analysis (about 190ms each) that
-scry paid six times on every cold compile and the suite paid on every
-test that enumerates the analyses. A program outside `priv/dl` is still
-read on every call.
-
 ### failure
 
 **Changed.** `failure.inconsistent_handling` no longer reports a discarded start
 result that `startup.ignored_start_result` already reports: one site,
 one concern, one title.
 
-**Changed.** Schema 52. `macro_generated(func, by)`: a function another module's
+**Added.** Schema 52. `macro_generated(func, by)`: a function another module's
 macro wrote into the analyzed one, read from the `context:` Elixir keeps
 in each definition's debug-info metadata (or its `generated: true`
 marker) by `Argus.Extractors.Generated`. `failure.inconsistent_handling`
@@ -759,6 +723,42 @@ timestamp, date, count, expiry, TTL, length, version or "set" suffix.
 the rescue it is, and joins a table created under a computed name only
 with reads whose table is also computed, not every read in the owner's
 module.
+
+### Corpus and tooling
+
+**Added.** `Argus.Corpus` pairs take `subdir:` for a repository whose Mix project is
+not at the root — `mix.exs` under `elixir/`, one app of an umbrella under
+`apps/` — so a fix in such a tree can be a pair. The clone is still one
+directory per `<repo>-<sha7>`; relaxing the Elixir requirement, building
+and finding beams happen in the project, and an umbrella app's beams are
+found in the umbrella's `_build`.
+
+**Changed.** The closed-issue corpus caches the facts of each checkout beside it
+(`.argus-facts/<digest>/facts`), keyed by the beams, the code and
+Datalog that extraction reaches (`Argus.Corpus.engine_modules/0`: the
+pipeline, the extractors and what they call through beam_spy and ctf,
+the analyses' extractor declarations, stage 0's includes — not a
+finding's prose or a rule), the runtime and the solver; `Argus.Corpus.analyze/2`
+takes the pair and side and solves over the cache. Extraction was over
+90% of a large tree's analysis and its inputs never move between runs.
+`Argus.CorpusTest` analyzes each checkout once, `ARGUS_CORPUS_JOBS` (default
+4) at a time, before checking the pairs. An entry under another digest is
+pruned only once no run has touched it for an hour: a VM beside this one —
+another worktree's build has its own digest — may still be reading it. The suite's analysis tests run
+`async: true`; the tests that set VM-wide state (`PATH`, `TYPESAFE_API_KEY`,
+`ARGUS_PRIORS_DIR`) live in their own sync modules.
+
+**Fixed.** `Argus.Corpus.ensure/2` returned every beam twice when the
+project is the repository root, and listed both a dev and a test build;
+each beam once now, from one build.
+
+**Changed.** `Argus.Souffle.input_relations/2` memoizes its answer for a program
+shipped under `priv/dl`, versioned by a digest of every file there and
+the solver binary's identity. The answer depends on nothing else, and
+resolving it is a Souffle invocation per analysis (about 190ms each) that
+scry paid six times on every cold compile and the suite paid on every
+test that enumerates the analyses. A program outside `priv/dl` is still
+read on every call.
 
 ## 0.19.0 — 2026-09-22
 
