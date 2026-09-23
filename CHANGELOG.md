@@ -19,6 +19,32 @@ callee, arg_pos, kind, source)` and `returns_depends(func, kind,
 source)`. Calls into erts, kernel, stdlib, elixir and logger are not
 named as callees or sources.
 
+The check-then-act races follow the paper they come from (Christakis and
+Sagonas, PADL 2010) across functions. `clientlib/check_then_act.dl`
+composes the dependence relations in the `CheckThenAct` component: a
+check's result meets the acts that depend on it where it is born or
+returned to, through a lookup helper, a start helper, a multi-clause
+helper handed the result, another module, or the next iteration of a
+loop, with names and keys translated across each call by `call_arg`,
+`call_arg_forward` and `call_arg_field`. An unknown higher-order call is
+not followed, the paper's own evaluated setting. `guarded_create` and
+`ets_guarded_write` are removed — an act decided in the same function is
+the component's simplest case — and `Argus.Extractor.Guard` is
+deprecated.
+
+`registry_race` rows now name the function where the pair meets, and
+cover `Process.registered/0` deciding a register (`name_lookup` api
+`registered`, source `any`) and whereis-then-unregister (new
+`name_release(id, func, api, source, key)`; the loser's outcome is an
+`ArgumentError` or `badarg` rescued). `ets_check_act` follows a table
+handed on as a parameter, by name or as the reference `:ets.new/2`
+returned in a caller — new `ets_tid_arg(caller, callee, arg_pos, name)`,
+closures' captured variables included. The paper's registry and ETS
+examples, and Dialyzer's unregister warning, are Erlang fixtures under
+`test/fixtures/erl/` pinned by `Padl2010RaceTest`.
+`Argus.Findings.elsewhere/2` names the function a site sits in when it
+is not where the pair meets.
+
 `Argus.Corpus` pairs take `subdir:` for a repository whose Mix project is
 not at the root — `mix.exs` under `elixir/`, one app of an umbrella under
 `apps/` — so a fix in such a tree can be a pair. The clone is still one

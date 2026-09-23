@@ -16,15 +16,15 @@ defmodule Argus.Extractors.ETS do
   - `ets_key(id, source, key)` — what identifies the key operand of an
     operation (`Helpers.key_identity/3`); for `insert`/`insert_new` the
     key is the first element of the object tuple
-  - `ets_guarded_write(write, read)` — the write runs only because of a
-    test on the read's result, in the same function
-    (`Argus.Extractor.Guard`): a read–decide–write on the table
+  - `ets_tid_arg(caller, callee, arg_pos, name)` — at some call in
+    `caller`, or in the environment of a closure it builds, the argument is
+    the table `:ets.new(name, ...)` returned in `caller`: an unnamed table
+    handed to the code that uses it
   """
 
   @behaviour Argus.Extractor
 
-  alias Argus.Extractor.Guard
-  alias Argus.Extractor.Helpers
+  alias Argus.Extractor.CallSites
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
@@ -34,8 +34,8 @@ defmodule Argus.Extractors.ETS do
       call_result_origin: 3,
       resolve_to_arg_or_atom: 3,
       each_remote_call: 3,
-      find_function: 3,
       key_identity: 3,
+      register: 1,
       resolve_atom: 3,
       resolve_register: 3,
       track_dynamic: 5,
@@ -55,21 +55,15 @@ defmodule Argus.Extractors.ETS do
   @keyed_ops ~w(lookup lookup_element member delete update_element update_counter take)a
   @object_ops ~w(insert insert_new)a
 
-  # The read–decide–write pair: a row read, and a plain write that a
-  # check on it decides. insert_new, update_counter and select_replace
-  # are atomic and are the fixes, not the bug.
-  @deciding_reads ~w(lookup lookup_element member)
-  @plain_writes ~w(insert delete delete_object update_element)
-
   @impl true
   def relations,
     do: [
-      :ets_guarded_write,
       :ets_key,
       :ets_new,
       :ets_op,
       :ets_op_param,
-      :ets_option
+      :ets_option,
+      :ets_tid_arg
     ]
 
   @doc "Whether a remote call is an ETS operation, for `Argus.Extractors.Dependence`."
@@ -82,46 +76,50 @@ defmodule Argus.Extractors.ETS do
   def extract(module_data) do
     module_data
     |> each_remote_call(%{}, &handle_call/3)
-    |> emit_guarded_writes(module_data)
+    |> emit_tid_args(module_data)
   end
 
-  # ── Read, then write ─────────────────────────────────────────────
+  # ── Tables handed on ─────────────────────────────────────────────
 
-  defp emit_guarded_writes(facts, module_data) do
-    ops =
-      facts
-      |> Map.get(:ets_op, [])
-      |> Enum.group_by(fn [_id, func, _table, _op, _kind] -> func end)
+  # A table ref leaves the function that created it as a call argument or
+  # a closure's captured variable. Only the first @max_args positions, as
+  # call_arg: the table sits early in every calling convention.
+  @max_args 4
 
-    Enum.reduce(ops, facts, fn {func_id, rows}, acc ->
-      reads = for [id, _, _, op, _] <- rows, op in @deciding_reads, do: index_of(id)
-      writes = for [id, _, _, op, _] <- rows, op in @plain_writes, do: index_of(id)
-      {name, arity} = Normalize.func_id_name_arity(func_id)
+  defp emit_tid_args(facts, module_data) do
+    facts =
+      module_data
+      |> CallSites.for_module()
+      |> Enum.reduce(facts, fn %{func_id: func_id, instrs: instrs, idx: idx, mfa: {m, f, a}},
+                               acc ->
+        callee = Normalize.func_id(m, f, a)
 
-      with true <- reads != [] and writes != [],
-           instrs when is_list(instrs) <-
-             find_function(module_data.functions, String.to_existing_atom(name), arity),
-           %{} = fun <- Helpers.cfg(module_data, name, arity) do
-        for read <- reads,
-            {:ok, test} <- [Guard.result_test(instrs, read)],
-            write <- writes,
-            Guard.decides?(fun, test, write),
-            reduce: acc do
-          inner ->
-            add_fact(inner, :ets_guarded_write, [
-              InstrId.mint(func_id, write),
-              InstrId.mint(func_id, read)
-            ])
-        end
-      else
-        _ -> acc
-      end
-    end)
+        Enum.reduce(0..(min(a, @max_args) - 1)//1, acc, fn pos, inner ->
+          tid_arg(inner, instrs, idx, {:x, pos}, [func_id, callee, to_string(pos)])
+        end)
+      end)
+
+    for {:function, name, arity, _entry, instrs} <- module_data.functions,
+        func_id = Normalize.func_id(module_data.module, name, arity),
+        {{:make_fun3, {cmod, cname, carity}, _i, _u, _dst, {:list, env}}, idx} <-
+          Enum.with_index(instrs),
+        {operand, pos} <- Enum.with_index(env, carity - length(env)),
+        {kind, _n} = reg <- [register(operand)],
+        kind in [:x, :y],
+        reduce: facts do
+      acc ->
+        closure = Normalize.func_id(cmod, cname, carity)
+        tid_arg(acc, instrs, idx, reg, [func_id, closure, to_string(pos)])
+    end
   end
 
-  defp index_of(id) do
-    {:ok, %InstrId{idx: idx}} = InstrId.parse(id)
-    idx
+  defp tid_arg(facts, instrs, idx, reg, prefix) do
+    with {:ok, {:ets, :new, 2}, new_idx} <- call_result_origin(instrs, idx, reg),
+         name when name != "dynamic" <- resolve_atom(instrs, new_idx, {:x, 0}) do
+      add_fact(facts, :ets_tid_arg, prefix ++ [name])
+    else
+      _ -> facts
+    end
   end
 
   defp handle_call(facts, ctx, {:ets, :new, 2}) do

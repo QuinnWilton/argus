@@ -151,6 +151,26 @@ defmodule Argus.Extractors.ETSTest do
     end
   end
 
+  describe "extract/1 — tables handed on" do
+    test "a table reference passed to a helper names the table" do
+      facts = ETS.extract(disassemble(Argus.Test.Fixtures.CheckThenAct.UnnamedTable))
+
+      assert [[caller, callee, "0", ":unnamed_counts"]] = facts[:ets_tid_arg]
+      assert caller =~ "start/1"
+      assert callee =~ "count/2"
+    end
+
+    test "a table reference a closure captures names the table at its environment parameter" do
+      facts = ETS.extract(disassemble(:padl2010_ets_inc))
+
+      # The compiler orders the environment; the closure forwards whichever
+      # slot holds the table as ets_inc/2's first argument.
+      assert [[":padl2010_ets_inc:run/0", closure, pos, ":some_tab_name"]] = facts[:ets_tid_arg]
+      assert closure =~ "-run/0-fun-0-"
+      assert pos in ["0", "1"]
+    end
+  end
+
   describe "integration with extract pipeline" do
     test "extractor is usable via Pipeline.extract/2" do
       assert {:ok, facts} =

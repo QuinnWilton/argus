@@ -15,6 +15,7 @@
 .include "../clientlib/process_statem.dl"
 .include "../clientlib/request_entry.dl"
 .include "../clientlib/concurrency.dl"
+.include "../clientlib/check_then_act.dl"
 
 // ── Ownership & lifecycle ──────────────────────────────────────────
 
@@ -285,10 +286,24 @@ ets_read_outside_owner("dynamic", owner, reader, site, id) :-
 // row that another process can write between the read and the write
 // (Christakis and Sagonas, 2010, on ETS). The pair is a race when both
 // touch the same key, the table is public — a protected table has one
-// writer — and a second process can write it: the deciding function runs
-// in more than one process, or some function outside the decider's
-// process writes the table. insert_new, update_counter and
+// writer — and a second process can write it: the function where the
+// pair meets runs in more than one process, or some function outside
+// that process writes the table. insert_new, update_counter and
 // select_replace are the atomic forms and the fix.
+//
+// The read and the write may sit in different functions
+// (clientlib/check_then_act.dl), and the table may arrive as a
+// parameter: by name, or as the reference :ets.new returned in some
+// caller — the paper's own example builds an unnamed public table and
+// hands it to a closure that spawned processes run.
+
+.init rows = CheckThenAct
+
+.decl ets_deciding_read(op: symbol)
+
+ets_deciding_read("lookup").
+ets_deciding_read("lookup_element").
+ets_deciding_read("member").
 
 .decl ets_plain_write(op: symbol)
 
@@ -297,19 +312,73 @@ ets_plain_write("delete").
 ets_plain_write("delete_object").
 ets_plain_write("update_element").
 
+// The table in the operation's own function's terms.
+.decl ets_table_ident(id: symbol, ts: symbol, t: symbol)
+
+ets_table_ident(id, "literal", name) :- ets_op(id, _, name, _, _), name != "dynamic".
+ets_table_ident(id, "param", to_string(p)) :- ets_op(id, _, "dynamic", _, _), ets_op_param(id, p).
+
+rows.check(r, f, ts, t, ks, k) :-
+  ets_op(r, f, _, op, "read"),
+  ets_deciding_read(op),
+  ets_table_ident(r, ts, t),
+  ets_key(r, ks, k).
+
+rows.act(w, f, ts, t, ks, k) :-
+  ets_op(w, f, _, op, "write"),
+  ets_plain_write(op),
+  ets_table_ident(w, ts, t),
+  ets_key(w, ks, k).
+
+// The table a parameter holds where a pair meets on it: a name a caller
+// passes there, or the reference :ets.new returned in a caller, through
+// any forwarding. Asked only for the parameters a pair meets on.
+.decl table_param_needed(func: symbol, pos: symbol)
+
+table_param_needed(f, p) :- rows.meets(f, _, _, "param", p, _, _).
+
+table_param_needed(c, to_string(m)) :-
+  table_param_needed(f, p),
+  call_arg_forward(c, f, n, m),
+  p = to_string(n).
+
+.decl table_at_param(func: symbol, pos: symbol, name: symbol)
+
+table_at_param(f, p, name) :-
+  table_param_needed(f, p),
+  call_arg(_, f, n, name),
+  name != "dynamic",
+  p = to_string(n).
+
+table_at_param(f, p, name) :-
+  table_param_needed(f, p),
+  ets_tid_arg(_, f, n, name),
+  p = to_string(n).
+
+table_at_param(f, p, name) :-
+  table_param_needed(f, p),
+  call_arg_forward(c, f, n, m),
+  p = to_string(n),
+  table_at_param(c, to_string(m), name).
+
+.decl ets_pair(func: symbol, read: symbol, write: symbol, name: symbol, key: symbol)
+
+ets_pair(f, r, w, name, k) :- rows.meets(f, r, w, "literal", name, _, k).
+ets_pair(f, r, w, name, k) :- rows.meets(f, r, w, "param", p, _, k), table_at_param(f, p, name).
+
 .init write_runs = RunsConcurrently
 
+write_runs.seed(f) :- ets_pair(f, _, _, _, _).
 write_runs.seed(f) :- ets_op(_, f, _, _, "write").
 
 .decl ets_concurrent_write(name: symbol, func: symbol)
 
 ets_concurrent_write(name, f) :-
-  ets_op(_, f, name, op, "write"),
-  ets_plain_write(op),
+  ets_pair(f, _, _, name, _),
   !write_runs.single_process(f).
 
 ets_concurrent_write(name, f) :-
-  ets_op(_, f, name, _, "write"),
+  ets_pair(f, _, _, name, _),
   write_runs.single_process(f),
   write_runs.entry_reaches(m, f),
   ets_op(_, g, name, _, "write"),
@@ -319,14 +388,7 @@ ets_concurrent_write(name, f) :-
 .output ets_check_act
 
 ets_check_act(mod, func, name, key, read, write) :-
-  ets_guarded_write(write, read),
-  ets_op(read, func, name, _, "read"),
-  ets_op(write, func, name, op, "write"),
-  ets_plain_write(op),
-  name != "dynamic",
-  ets_key(read, source, key),
-  ets_key(write, source, key),
-  source != "dynamic",
+  ets_pair(func, read, write, name, key),
   ets_new(id, _, name),
   ets_option(id, "access", "public"),
   function_def(func, mod, _, _, _),

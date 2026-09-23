@@ -15,9 +15,12 @@ defmodule Argus.Analyses.Structure do
     with no conflict resolver: after a netsplit heals, one of the two
     holders is killed at random.
   - `registry_race(mod, func, lookup_api, create_api, key, check, act)` —
-    a lookup of a name decides a start or registration of the same name,
-    the losing outcome is taken nowhere, and more than one process can
-    run the function: the lookup-then-start race.
+    a lookup of a name decides a start, registration or unregistration of
+    the same name, the losing outcome is taken nowhere, and more than one
+    process can run the function where the two meet: the lookup-then-start
+    race, and its release twin, lookup-then-unregister. The lookup and the
+    act may sit in helpers `func` calls, or reach each other through a
+    parameter or a loop (`clientlib/check_then_act.dl`).
   """
 
   @behaviour Argus.Analysis
@@ -40,7 +43,9 @@ defmodule Argus.Analyses.Structure do
       Argus.Extractors.OTP,
       Argus.Extractors.ApiCalls,
       Argus.Extractors.ProcessRegistry,
-      Argus.Extractors.ErrorHandling
+      Argus.Extractors.ErrorHandling,
+      Argus.Extractors.Dependence,
+      Argus.Extractors.CallArgs
     ]
 
   @impl true
@@ -81,17 +86,17 @@ defmodule Argus.Analyses.Structure do
         name: :registry_race,
         fields: [
           {:mod, :symbol, "the module"},
-          {:func, :symbol, "the function holding both"},
-          {:lookup_api, :symbol, "whereis | registry_lookup"},
+          {:func, :symbol, "the function where the lookup's result meets the act"},
+          {:lookup_api, :symbol, "whereis | registry_lookup | registered"},
           {:create_api, :symbol,
-           "register | start_link | start | start_via | registry_register | start_child"},
-          {:key, :symbol, "the name, as the lookup identifies it"},
+           "register | start_link | start | start_via | registry_register | start_child | unregister"},
+          {:key, :symbol, "the name, as func identifies it"},
           {:check, :symbol, "instruction ID of the lookup"},
           {:act, :symbol, "instruction ID of the start or registration"}
         ],
         key: [:func, :key],
         doc:
-          "A lookup decides a start of the same name, and a second caller can ask in the window."
+          "A lookup decides a start or release of the same name, and a second caller can act in the window."
       },
       %{
         name: :global_register_risk,
@@ -167,15 +172,37 @@ defmodule Argus.Analyses.Structure do
     )
   end
 
+  def finding(:registry_race, [mod, func, lookup_api, "unregister", key, check, act]) do
+    Findings.new(
+      :warning,
+      "Lookup-then-unregister race on a process name",
+      "#{func} asks whether #{describe_key(key)} is registered " <>
+        "(#{lookup(lookup_api)}#{Findings.elsewhere(check, func)}) and unregisters it" <>
+        "#{Findings.elsewhere(act, func)} when the answer is yes. The name can go " <>
+        "between the two — its process exits and is unregistered with it, or another " <>
+        "caller unregisters it first — and unregister/1 then raises ArgumentError, " <>
+        "which nothing here rescues.",
+      at: Findings.at_site(act, mod),
+      at_label: "this unregister runs after the lookup has gone stale",
+      related: [Findings.related("the lookup it depends on", Findings.at_site(check, mod))],
+      help: [
+        "unregister unconditionally and rescue `ArgumentError` (`catch error:badarg` in Erlang)",
+        "or leave the name to the process holding it: a registered name goes when its process exits"
+      ]
+    )
+  end
+
   def finding(:registry_race, [mod, func, lookup_api, create_api, key, check, act]) do
     Findings.new(
       :warning,
       "Lookup-then-start race on a process name",
-      "#{func} asks whether #{describe_key(key)} is registered (#{lookup(lookup_api)}) and " <>
-        "#{create(create_api)} when the answer is no. Nothing holds the name between " <>
-        "the two: a second caller that asks in the same window gets the same answer, " <>
-        "and one of the two starts loses — {:error, {:already_started, pid}} from a " <>
-        "start, an ArgumentError from register/2 — which this function does not take.",
+      "#{func} asks whether #{describe_key(key)} is registered " <>
+        "(#{lookup(lookup_api)}#{Findings.elsewhere(check, func)}) and " <>
+        "#{create(create_api)}#{Findings.elsewhere(act, func)} when the answer is no. " <>
+        "Nothing holds the name between the two: a second caller that asks in the same " <>
+        "window gets the same answer, and one of the two starts loses — " <>
+        "{:error, {:already_started, pid}} from a start, an ArgumentError from " <>
+        "register/2 — which is taken nowhere.",
       at: Findings.at_site(act, mod),
       at_label: "this start runs after the lookup has gone stale",
       related: [Findings.related("the lookup it depends on", Findings.at_site(check, mod))],
@@ -211,6 +238,7 @@ defmodule Argus.Analyses.Structure do
 
   defp lookup("whereis"), do: "whereis"
   defp lookup("registry_lookup"), do: "Registry.lookup"
+  defp lookup("registered"), do: "Process.registered"
   defp lookup(other), do: other
 
   defp create("register"), do: "registers it"

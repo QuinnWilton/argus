@@ -9,6 +9,7 @@
 .include "../clientlib/otp.dl"
 .include "../clientlib/request_entry.dl"
 .include "../clientlib/concurrency.dl"
+.include "../clientlib/check_then_act.dl"
 
 // ── A supervisor registered as a worker ──────────────────────────
 //
@@ -101,47 +102,87 @@ global_register_risk(func, name, id) :-
 // Sagonas found this shape on the process registry in 2010 and Dialyzer
 // reported it until OTP 25; the Elixir spellings are Registry.lookup
 // before start_child, and whereis before register or a named start.
+// Deciding on Process.registered/0 is the same race on every name at
+// once, and Dialyzer's second registry warning was the release: whereis,
+// then unregister, which raises when the process exited or another
+// caller unregistered first.
 //
-// The lookup and the act are the same name when they agree on registry,
-// source and key; a start_child hides its name in the child spec, so any
-// checked lookup that decides it counts. The race is not a bug when the
-// loser's outcome is taken — {:error, {:already_started, pid}} compared
-// in the function or in a caller of it, an ArgumentError from register/2
-// rescued, or a wrapper returning this function's result to a taker — or
-// when only one process ever runs the function.
+// The lookup and the act may sit in different functions and meet where
+// the lookup's result is born or returned to (clientlib/check_then_act.dl).
+// They name the same thing when they agree on registry, source and key; a
+// start_child hides its name in the child spec, so any lookup that is
+// tested against nil and decides it counts. The race is not a bug when
+// the loser's outcome is taken — {:error, {:already_started, pid}}
+// compared where the pair meets, where the act is, or in a caller; an
+// ArgumentError from register/2 or unregister/1 rescued — or when only
+// one process ever runs the function where they meet.
 
-.decl same_name(check: symbol, act: symbol)
+.init names = CheckThenAct
 
-same_name(check, act) :-
-  guarded_create(act, check),
-  name_lookup(check, func, _, scope, source, key, "checked"),
-  creating_op(act, func, _, scope, source, key),
-  source != "dynamic".
+// The resource is the registry: the local one (empty) or a Registry.
+names.check(c, f, "literal", scope, ks, k) :-
+  name_lookup(c, f, _, scope, ks, k, _),
+  scope != "dynamic".
 
-same_name(check, act) :-
-  guarded_create(act, check),
-  name_lookup(check, func, _, _, _, _, "checked"),
-  creating_op(act, func, "start_child", _, _, _).
+names.check(c, f, "dynamic", "", ks, k) :- name_lookup(c, f, _, "dynamic", ks, k, _).
+
+names.act(a, f, "any", "", "any", "") :- creating_op(a, f, "start_child", _, _, _).
+
+names.act(a, f, "literal", scope, ks, k) :-
+  creating_op(a, f, api, scope, ks, k),
+  api != "start_child",
+  scope != "dynamic".
+
+names.act(a, f, "dynamic", "", ks, k) :-
+  creating_op(a, f, api, "dynamic", ks, k),
+  api != "start_child".
+
+names.act(a, f, "literal", "", ks, k) :- name_release(a, f, _, ks, k).
+
+.decl name_act(act: symbol, func: symbol, api: symbol)
+
+name_act(a, f, api) :- creating_op(a, f, api, _, _, _).
+name_act(a, f, api) :- name_release(a, f, api, _, _).
+
+.decl rescues_argument_error(func: symbol)
+
+rescues_argument_error(f) :- catches_class(f, "error").
+rescues_argument_error(f) :- catch_tag(_, f, "error", "ArgumentError").
+rescues_argument_error(f) :- catch_tag(_, f, "error", ":badarg").
 
 .decl start_error_handled(func: symbol)
 
 start_error_handled(f) :- start_error_compared(f, _).
 start_error_handled(f) :- call_edge(g, f), start_error_compared(g, _).
-start_error_handled(f) :- catches_class(f, "error").
-start_error_handled(f) :- catch_tag(_, f, "error", "ArgumentError").
+start_error_handled(f) :- rescues_argument_error(f).
 start_error_handled(f) :- returns_call(g, f), start_error_handled(g).
+
+// The loser's outcome is taken where the pair meets or where the act is.
+.decl loser_taken(meet: symbol, act: symbol)
+
+loser_taken(f, a) :-
+  names.meets(f, _, a, _, _, _, _),
+  name_act(a, g, api),
+  api != "unregister",
+  (start_error_handled(f) ; start_error_handled(g)).
+
+loser_taken(f, a) :-
+  names.meets(f, _, a, _, _, _, _),
+  name_act(a, g, "unregister"),
+  (rescues_argument_error(f) ; rescues_argument_error(g)).
 
 .init create_runs = RunsConcurrently
 
-create_runs.seed(f) :- creating_op(_, f, _, _, _, _).
+create_runs.seed(f) :- names.meets(f, _, _, _, _, _, _).
 
 .decl registry_race(mod: symbol, func: symbol, lookup_api: symbol, create_api: symbol, key: symbol, check: symbol, act: symbol)
 .output registry_race
 
-registry_race(mod, func, lookup_api, create_api, key, check, act) :-
-  same_name(check, act),
-  name_lookup(check, func, lookup_api, _, _, key, _),
-  creating_op(act, func, create_api, _, _, _),
-  function_def(func, mod, _, _, _),
-  !start_error_handled(func),
-  !create_runs.single_process(func).
+registry_race(mod, f, lookup_api, create_api, key, check, act) :-
+  names.meets(f, check, act, _, _, _, key),
+  name_lookup(check, _, lookup_api, _, _, _, checked),
+  name_act(act, _, create_api),
+  (create_api != "start_child" ; checked = "checked"),
+  function_def(f, mod, _, _, _),
+  !loser_taken(f, act),
+  !create_runs.single_process(f).

@@ -16,6 +16,16 @@ defmodule Argus.Analyses.StructureRegistryRaceTest do
         do: {func |> String.split(":") |> List.last(), lookup, create, key}
   end
 
+  # {meeting function, lookup's function, act's function}
+  defp sites(modules) do
+    {:ok, results} = Argus.analyze(modules, :structure)
+
+    for [_mod, func, _lookup, _create, _key, check, act] <- results["registry_race"],
+        do: {short(func), short(check), short(act)}
+  end
+
+  defp short(id), do: id |> String.split("#") |> hd() |> String.split(".") |> List.last()
+
   describe "registry_race" do
     test "whereis, then a named start of the same parameter, in a plain API" do
       skip_without_souffle()
@@ -72,6 +82,61 @@ defmodule Argus.Analyses.StructureRegistryRaceTest do
       skip_without_souffle()
       assert races([C.UncheckedWhereisThenStart, C.DifferentNames]) == []
     end
+
+    test "whereis, then unregister" do
+      skip_without_souffle()
+      assert [{"release/1", "whereis", "unregister", "0"}] = races([C.UnregisterIfPresent])
+    end
+
+    test "Process.registered/0 decides a register of any name" do
+      skip_without_souffle()
+      assert [{"claim/1", "registered", "register", ""}] = races([C.RegisterIfUnlisted])
+    end
+
+    test "unregister's ArgumentError rescued is the loser's outcome taken" do
+      skip_without_souffle()
+      assert races([C.UnregisterRescued]) == []
+    end
+  end
+
+  describe "registry_race across functions" do
+    test "a lookup helper's result decides the start in its caller" do
+      skip_without_souffle()
+
+      assert sites([C.LookupHelper]) == [
+               {"LookupHelper:ensure/1", "LookupHelper:lookup/1", "LookupHelper:ensure/1"}
+             ]
+    end
+
+    test "the decision calls a helper that starts the name" do
+      skip_without_souffle()
+
+      assert sites([C.StartHelper]) == [
+               {"StartHelper:ensure/1", "StartHelper:ensure/1", "StartHelper:start/1"}
+             ]
+    end
+
+    test "the lookup's result is an argument a multi-clause helper dispatches on" do
+      skip_without_souffle()
+
+      assert sites([C.DispatchHelper]) == [
+               {"DispatchHelper:ensure/1", "DispatchHelper:ensure/1",
+                "DispatchHelper:do_ensure/2"}
+             ]
+    end
+
+    test "the lookup and the start live in two other modules" do
+      skip_without_souffle()
+
+      assert sites([C.AcrossModules, C.NameDirectory, C.NameStarter]) == [
+               {"AcrossModules:ensure/1", "NameDirectory:whereis/1", "NameStarter:start/1"}
+             ]
+    end
+
+    test "a helper that takes the loser's outcome, or starts another name, is quiet" do
+      skip_without_souffle()
+      assert sites([C.HelperTakesLoser, C.HelperOtherName]) == []
+    end
   end
 
   describe "finding" do
@@ -83,6 +148,26 @@ defmodule Argus.Analyses.StructureRegistryRaceTest do
       assert f.at_label =~ "stale"
       assert [%{label: "the lookup it depends on"}] = f.related
       assert Enum.any?(f.help, &(&1 =~ "already_started"))
+      refute f.detail =~ " in M."
+    end
+
+    test "names the helpers the lookup and the start sit in" do
+      row = ["M", "M:ensure/1", "whereis", "start_link", "0", "M:lookup/1#4", "M:start/1#9"]
+      f = Structure.finding(:registry_race, row)
+
+      assert f.detail =~ "whereis in M.lookup/1"
+      assert f.detail =~ "in M.start/1"
+      assert f.mfa == {M, :start, 1}
+    end
+
+    test "an unregister is its own race, with its own remedy" do
+      row = ["M", "M:release/1", "whereis", "unregister", "0", "M:release/1#7", "M:release/1#14"]
+      f = Structure.finding(:registry_race, row)
+
+      assert f.title =~ "Lookup-then-unregister"
+      assert f.at_label =~ "unregister"
+      assert Enum.any?(f.help, &(&1 =~ "ArgumentError"))
+      refute Enum.any?(f.help, &(&1 =~ "already_started"))
     end
   end
 end

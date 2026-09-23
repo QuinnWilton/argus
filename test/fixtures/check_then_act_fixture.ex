@@ -1,7 +1,8 @@
 defmodule Argus.Test.Fixtures.CheckThenAct do
   @moduledoc """
   Fixtures for the lookup-then-start race (`structure.registry_race`)
-  and the read-then-write race (`ets.ets_check_act`).
+  and the read-then-write race (`ets.ets_check_act`). The paper's own
+  examples are Erlang, in `test/fixtures/erl/`.
 
   Behaviours are bare `@behaviour` attributes, as in `RequestSurface`.
   The positives are plain modules or many-instance callbacks; the quiet
@@ -125,6 +126,89 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     defp do_ensure(pid, _name), do: {:ok, pid}
 
     def init(state), do: {:ok, state}
+  end
+
+  defmodule NameDirectory do
+    @moduledoc "A lookup helper in its own module."
+    def whereis(name), do: Process.whereis(name)
+  end
+
+  defmodule NameStarter do
+    @moduledoc "A start helper in its own module."
+    def start(name), do: GenServer.start_link(__MODULE__, [], name: name)
+
+    def init(state), do: {:ok, state}
+  end
+
+  defmodule AcrossModules do
+    @moduledoc "The lookup and the start live in two other modules; they meet here."
+    def ensure(name) do
+      if NameDirectory.whereis(name) == nil do
+        NameStarter.start(name)
+      end
+    end
+  end
+
+  defmodule UnregisterIfPresent do
+    @moduledoc "whereis, then unregister: the name can go between the two."
+    def release(name) do
+      if Process.whereis(name) != nil do
+        Process.unregister(name)
+      end
+    end
+  end
+
+  defmodule RegisterIfUnlisted do
+    @moduledoc "Process.registered/0 decides a register: every name at once."
+    def claim(name) do
+      unless name in Process.registered() do
+        Process.register(self(), name)
+      end
+    end
+  end
+
+  defmodule HelperTakesLoser do
+    @moduledoc "The start helper takes {:error, {:already_started, pid}}."
+    def ensure(name) do
+      case Process.whereis(name) do
+        nil -> start(name)
+        pid -> {:ok, pid}
+      end
+    end
+
+    defp start(name) do
+      case GenServer.start_link(__MODULE__, [], name: name) do
+        {:ok, pid} -> {:ok, pid}
+        {:error, {:already_started, pid}} -> {:ok, pid}
+      end
+    end
+
+    def init(state), do: {:ok, state}
+  end
+
+  defmodule HelperOtherName do
+    @moduledoc "The helper starts a different name than the one looked up."
+    def ensure(name) do
+      case Process.whereis(name) do
+        nil -> start(:somebody_else)
+        pid -> {:ok, pid}
+      end
+    end
+
+    defp start(name), do: GenServer.start_link(__MODULE__, [], name: name)
+
+    def init(state), do: {:ok, state}
+  end
+
+  defmodule UnregisterRescued do
+    @moduledoc "unregister's ArgumentError is the loser's outcome, and it is rescued."
+    def release(name) do
+      if Process.whereis(name) != nil do
+        Process.unregister(name)
+      end
+    rescue
+      ArgumentError -> :already_gone
+    end
   end
 
   # ── Quiet neighbours ─────────────────────────────────────────────
@@ -329,6 +413,41 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
       end
 
       {:reply, :ok, state}
+    end
+  end
+
+  defmodule HelperCache do
+    @moduledoc "A read helper and a write helper; the read's result is handed to the write."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      :ets.new(:helper_cache, [:named_table, :public, :set])
+      {:ok, state}
+    end
+
+    def bump(key), do: store(key, fetch(key))
+
+    defp fetch(key), do: :ets.lookup(:helper_cache, key)
+
+    defp store(key, []), do: :ets.insert(:helper_cache, {key, 1})
+    defp store(key, [{_key, n}]), do: :ets.insert(:helper_cache, {key, n + 1})
+  end
+
+  defmodule UnnamedTable do
+    @moduledoc "An unnamed public table handed to a helper by its reference."
+    def start(key) do
+      tab = :ets.new(:unnamed_counts, [:public])
+      count(tab, key)
+    end
+
+    defp count(tab, key) do
+      case :ets.lookup(tab, key) do
+        [] -> :ets.insert(tab, {key, 1})
+        [{^key, n}] -> :ets.insert(tab, {key, n + 1})
+      end
     end
   end
 

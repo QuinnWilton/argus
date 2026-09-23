@@ -131,11 +131,6 @@
 .decl dynamic_child(sup: symbol, child_mod: symbol, caller_func: symbol)
 .input dynamic_child
 
-// A plain write that runs only because of a test on a read's result, in the same function: a read-decide-write on the table.
-//
-.decl ets_guarded_write(write: symbol, read: symbol)
-.input ets_guarded_write
-
 // What identifies the key operand of an ETS operation; for insert and insert_new, the first element of the object. Two operations agreeing on source and key touch the same row.
 //
 .decl ets_key(id: symbol, source: symbol, key: symbol)
@@ -157,6 +152,11 @@
 .decl ets_option(id: symbol, key: symbol, value: symbol)
 .input ets_option
 
+// At some call in the caller, or in the environment of a closure it builds, the argument is the table reference :ets.new/2 returned in the caller. An unnamed table is known by the name it was created with, so an operation on the parameter joins ets_new like a named one. Function-level, like call_arg.
+//
+.decl ets_tid_arg(caller: symbol, callee: symbol, arg_pos: number, name: symbol)
+.input ets_tid_arg
+
 // Explicit Process.exit/2 or :erlang.exit/1,2 call.
 .decl exit_call(id: symbol, func: symbol, target: symbol)
 .input exit_call
@@ -172,11 +172,6 @@
 //
 .decl global_register(id: symbol, func: symbol, name: symbol, arity: symbol)
 .input global_register
-
-// The creating op runs only because of a test on the lookup's result, in the same function: the lookup-then-start shape.
-//
-.decl guarded_create(act: symbol, check: symbol)
-.input guarded_create
 
 // A `handle_continue(tag, _)` clause defined by a module. The
 // deferred-startup-deadlock analysis pairs this with `init_continues_to`
@@ -240,10 +235,15 @@
 .decl monitor_ref_dropped(id: symbol, func: symbol)
 .input monitor_ref_dropped
 
-// A process name looked up — Process.whereis/1, :erlang.whereis/1, Registry.lookup/2 — with what identifies the name, so a creating op on the same name can be joined to it, and whether the result is tested against nil (or []) before use.
+// A process name looked up — Process.whereis/1, :erlang.whereis/1, Registry.lookup/2 — with what identifies the name, so a creating op on the same name can be joined to it, and whether the result is tested against nil (or []) before use. Process.registered/0 and :erlang.registered/0 look up every name at once: source any.
 //
 .decl name_lookup(id: symbol, func: symbol, api: symbol, scope: symbol, source: symbol, key: symbol, checked: symbol)
 .input name_lookup
+
+// A registered name given up — Process.unregister/1, :erlang.unregister/1 — which raises when the name is no longer registered: a lookup that decides it is stale once the process exits or another process unregisters first.
+//
+.decl name_release(id: symbol, func: symbol, api: symbol, source: symbol, key: symbol)
+.input name_release
 
 // Named process registration detected in code.
 .decl named_process(mod: symbol, name: symbol)

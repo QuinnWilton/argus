@@ -128,12 +128,14 @@ defmodule Argus.Extractors.DependenceTest do
   describe "site?/1" do
     # Every site a family extractor emits must be one Dependence follows,
     # or its race rule never sees what decides it.
-    test "covers every lookup, claim and table operation the families emit" do
+    test "covers every lookup, claim, release and table operation the families emit" do
       modules =
         [
           C.WhereisThenStart,
           C.LookupThenStartChild,
           C.WhereisThenRegister,
+          C.UnregisterIfPresent,
+          C.RegisterIfUnlisted,
           C.HandlesAlreadyRegistered,
           C.PublicCache
         ]
@@ -142,7 +144,7 @@ defmodule Argus.Extractors.DependenceTest do
         Argus.Pipeline.extract(modules, extractors: [ProcessRegistry, ETS])
 
       ids =
-        for relation <- [:name_lookup, :creating_op, :ets_op],
+        for relation <- [:name_lookup, :creating_op, :name_release, :ets_op],
             [id | _] <- Map.get(facts, relation, []),
             do: id
 

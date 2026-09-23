@@ -4,7 +4,8 @@ defmodule Argus.Analyses.Ets do
 
   Detects ETS usage patterns and potential issues: tables without proper
   concurrency options, unprotected owners, unnamed tables in processes,
-  and ordered_set contention across modules.
+  ordered_set contention across modules, and read-then-write races on a
+  public table.
 
   Requires the ETS, OTP, and Supervision domain extractors for layer 2 facts
   about table creation, options, access patterns, and supervisor children.
@@ -19,7 +20,7 @@ defmodule Argus.Analyses.Ets do
   - `ets_missing_write_concurrency(name)` — table lacks write_concurrency option.
   - `ets_ordered_set_contention(name, mod1, mod2)` — ordered_set accessed by multiple modules.
   - `ets_unnamed_in_process(name, mod)` — unnamed table created in a process.
-  - `ets_check_act(mod, func, name, key, read, write)` — a read decides a plain write of the same key on a public table another process can write.
+  - `ets_check_act(mod, func, name, key, read, write)` — a read decides or feeds a plain write of the same key on a public table another process can write; the two may sit in different functions and meet in `func`.
 
   ## Finding severities
 
@@ -41,7 +42,9 @@ defmodule Argus.Analyses.Ets do
   def name, do: :ets
 
   @impl true
-  def description, do: "ETS table ownership, concurrency, and lifecycle analysis"
+  def description,
+    do:
+      "ETS table ownership, concurrency and lifecycle, and read-then-write races on shared tables"
 
   @impl true
   def rules_file, do: "analyses/ets.dl"
@@ -55,7 +58,8 @@ defmodule Argus.Analyses.Ets do
       Argus.Extractors.Supervision,
       Argus.Extractors.ErrorHandling,
       Argus.Extractors.GenStatem,
-      Argus.Extractors.CallArgs
+      Argus.Extractors.CallArgs,
+      Argus.Extractors.Dependence
     ]
 
   @impl true
@@ -78,11 +82,11 @@ defmodule Argus.Analyses.Ets do
         name: :ets_check_act,
         fields: [
           {:mod, :symbol, "the module"},
-          {:func, :symbol, "the function reading then writing"},
+          {:func, :symbol, "the function where the read's result meets the write"},
           {:name, :symbol, "the table"},
-          {:key, :symbol, "the key, as the read identifies it"},
+          {:key, :symbol, "the key, as func identifies it"},
           {:read, :symbol, "instruction ID of the read"},
-          {:write, :symbol, "instruction ID of the write it decides"}
+          {:write, :symbol, "instruction ID of the write it decides or feeds"}
         ],
         key: [:func, :name, :key],
         doc: "A read decides a write of the same key on a public table another process can write."
@@ -165,10 +169,11 @@ defmodule Argus.Analyses.Ets do
     Findings.new(
       :warning,
       "Read-then-write race on an ETS key",
-      "#{func} reads a key of #{name} and writes it when the read says to. " <>
-        "The table is public and another process can write it between the two, " <>
-        "so the write acts on a row that may have changed — the read-decide-write " <>
-        "race that the ETS built-ins are documented not to protect against.",
+      "#{func} reads a key of #{name}#{Findings.elsewhere(read, func)} and writes it" <>
+        "#{Findings.elsewhere(write, func)} as the read says to. The table is public and " <>
+        "another process can write it between the two, so the write acts on a row that " <>
+        "may have changed — the read-decide-write race that the ETS built-ins are " <>
+        "documented not to protect against.",
       at: Findings.at_site(write, mod),
       at_label: "this write was decided by a read that may be stale",
       related: [Findings.related("the read it depends on", Findings.at_site(read, mod))],

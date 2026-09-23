@@ -100,6 +100,29 @@ defmodule Argus.Extractors.ProcessRegistryTest do
     end
   end
 
+  describe "extract/1 — registered and unregister" do
+    test "Process.registered/0 is a lookup of every name at once" do
+      facts =
+        ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.CheckThenAct.RegisterIfUnlisted))
+
+      assert [[_id, _func, "registered", "", "any", "", "checked"]] = facts[:name_lookup]
+    end
+
+    test ":erlang.registered/0 too" do
+      facts = ProcessRegistry.extract(disassemble(:padl2010_registered))
+      assert [[_id, _func, "registered", "", "any", "", _]] = facts[:name_lookup]
+    end
+
+    test "unregister releases a name, identified like a lookup's" do
+      facts =
+        ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.CheckThenAct.UnregisterIfPresent))
+
+      assert [[_id, func, "unregister", "param", "0"]] = facts[:name_release]
+      assert func =~ "release/1"
+      refute Map.has_key?(facts, :creating_op)
+    end
+  end
+
   describe "extract/1 — clean module" do
     test "returns empty for plain module" do
       facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.PlainModule))

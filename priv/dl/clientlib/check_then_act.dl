@@ -1,0 +1,195 @@
+// Check, then act — across functions.
+//
+// A check-then-act race is a read of shared state (a registered name, an
+// ETS row, a Mnesia record) whose result decides, or is written back by, a
+// later write of the same thing, with nothing holding it between the two
+// (Christakis and Sagonas, PADL 2010). The read and the write need not
+// share a function. The read may sit in a helper that returns it
+// (`defp lookup(n), do: Process.whereis(n)`), the write in a helper the
+// decision calls (`nil -> start(name)`), and the result may travel as an
+// argument: into a multi-clause helper that dispatches on it, or into the
+// next iteration of a loop, where it decides the write. The paper finds
+// these by walking every path from the read; this composes per-function
+// summaries (Argus.Extractors.Dependence) instead. Where the check's result
+// is born, or is returned to, it MEETS the acts that depend on it.
+//
+// Unlike the paper, an act only counts if it depends on the check — runs
+// because of a test on its result, or is handed a value made from it. A
+// write that merely follows a read (a lookup for a log line, then an
+// unrelated insert) is not the shape.
+//
+// A family instantiates the component with its checks and acts, each
+// naming what it touches in its own function's terms: a resource (the
+// registry, the table) and a key, each a source-value pair in the
+// vocabulary of Helpers.key_identity/3 (literal, param, field, dynamic)
+// plus `any`, which agrees with everything: Process.registered/0 reads
+// every name, and start_child hides its name in the child spec. Across a
+// call, a parameter becomes whatever the caller passes there (call_arg,
+// call_arg_forward, call_arg_field). A field or a dynamic value does not
+// cross, and the pair goes quiet rather than guess.
+//
+// Calls through a closure's captured variables are not followed: CallArgs
+// says nothing about a make_fun3 environment. An unknown higher-order call
+// (`Fun(M)` on a parameter) is not followed either, which is the paper's
+// own evaluated setting — sound for defect detection, no false alarms from
+// guessing what Fun is.
+//
+// Output: meets(f, check, act, rs, r, ks, k) — in f, the check's result
+// decides or feeds the act, directly or through the calls f makes, and
+// both touch (rs, r, ks, k), the check's resource and key in f's terms.
+// Two identities agree when they are equal and known, or either is any.
+//
+// Requires imports.dl (call_edge) and the relations site_depends,
+// call_decided, call_arg_depends, returns_depends, call_arg,
+// call_arg_forward and call_arg_field.
+
+.comp CheckThenAct {
+  .decl check(site: symbol, func: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol)
+  .decl act(site: symbol, func: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol)
+
+  // ── An identity seen from a caller ────────────────────────────────
+  //
+  // lift(f, g, s, v, s2, v2): what g calls (s, v), f calls (s2, v2) at
+  // its calls to g. Only identities some summary of g holds are lifted.
+
+  .decl needs(g: symbol, s: symbol, v: symbol)
+
+  needs(g, rs, r), needs(g, ks, k) :- returns_check(g, _, rs, r, ks, k).
+  needs(g, rs, r), needs(g, ks, k) :- acts_if(g, _, _, _, rs, r, ks, k).
+
+  .decl lift(f: symbol, g: symbol, s: symbol, v: symbol, s2: symbol, v2: symbol)
+
+  lift(f, g, s, v, s, v) :- needs(g, s, v), (s = "literal" ; s = "any"), call_edge(f, g).
+
+  lift(f, g, "param", q, "param", to_string(p)) :-
+    needs(g, "param", q),
+    call_arg_forward(f, g, n, p),
+    q = to_string(n).
+
+  lift(f, g, "param", q, "literal", v) :-
+    needs(g, "param", q),
+    call_arg(f, g, n, v),
+    v != "dynamic",
+    q = to_string(n).
+
+  lift(f, g, "param", q, "field", key) :-
+    needs(g, "param", q),
+    call_arg_field(f, g, n, key),
+    q = to_string(n).
+
+  // ── Values that carry a check ─────────────────────────────────────
+  //
+  // carries(f, kind, src, c, ...): in f, the value named (kind, src) in
+  // the dependence relations carries check c, whose resource and key in
+  // f's terms follow. A parameter is never a carrier here: which check it
+  // holds depends on the caller, and the caller is where the pair meets.
+
+  .decl carries(f: symbol, kind: symbol, src: symbol, c: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol)
+
+  carries(f, "site", c, c, rs, r, ks, k) :- check(c, f, rs, r, ks, k).
+
+  // A helper returns the check, or something decided by or made from it.
+  carries(f, "call", g, c, rs2, r2, ks2, k2) :-
+    returns_check(g, c, rs, r, ks, k),
+    lift(f, g, rs, r, rs2, r2),
+    lift(f, g, ks, k, ks2, k2).
+
+  // A helper is handed the check and returns something made from it.
+  carries(f, "call", g, c, rs, r, ks, k) :-
+    carries(f, kind, src, c, rs, r, ks, k),
+    call_arg_depends(f, g, n, kind, src),
+    returns_depends(g, "param", to_string(n)).
+
+  .decl returns_check(g: symbol, c: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol)
+
+  returns_check(g, c, rs, r, ks, k) :-
+    returns_depends(g, kind, src),
+    carries(g, kind, src, c, rs, r, ks, k).
+
+  // ── Acts a function reaches ───────────────────────────────────────
+  //
+  // acts_if(h, a, cond, q, ...): calling h may perform act a, whose
+  // resource and key in h's terms follow. cond "param" says a also
+  // depends on h's parameter q; "any" (q empty) says only that h reaches
+  // it. Derived only below a call some carrier decides or feeds.
+
+  .decl reach_needed(h: symbol)
+
+  reach_needed(g) :- carries(f, kind, src, _, _, _, _, _), call_decided(f, g, kind, src).
+  reach_needed(g) :- carries(f, kind, src, _, _, _, _, _), call_arg_depends(f, g, _, kind, src).
+  reach_needed(g) :- reach_needed(h), call_edge(h, g).
+
+  .decl acts_if(h: symbol, a: symbol, cond: symbol, q: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol)
+
+  acts_if(h, a, "any", "", rs, r, ks, k) :- reach_needed(h), act(a, h, rs, r, ks, k).
+
+  acts_if(h, a, "param", q, rs, r, ks, k) :-
+    reach_needed(h),
+    act(a, h, rs, r, ks, k),
+    site_depends(a, h, "param", q).
+
+  // The act depends on what a helper returns from h's parameter.
+  acts_if(h, a, "param", p, rs, r, ks, k) :-
+    reach_needed(h),
+    act(a, h, rs, r, ks, k),
+    site_depends(a, h, "call", g),
+    returns_depends(g, "param", to_string(n)),
+    call_arg_depends(h, g, n, "param", p).
+
+  // Everything a callee reaches, h reaches.
+  acts_if(h, a, "any", "", rs2, r2, ks2, k2) :-
+    reach_needed(h),
+    call_edge(h, g),
+    acts_if(g, a, _, _, rs, r, ks, k),
+    lift(h, g, rs, r, rs2, r2),
+    lift(h, g, ks, k, ks2, k2).
+
+  // h's parameter decides the call.
+  acts_if(h, a, "param", p, rs2, r2, ks2, k2) :-
+    reach_needed(h),
+    call_decided(h, g, "param", p),
+    acts_if(g, a, _, _, rs, r, ks, k),
+    lift(h, g, rs, r, rs2, r2),
+    lift(h, g, ks, k, ks2, k2).
+
+  // h's parameter feeds the argument the act depends on — the loop, when
+  // g is h itself.
+  acts_if(h, a, "param", p, rs2, r2, ks2, k2) :-
+    reach_needed(h),
+    call_arg_depends(h, g, n, "param", p),
+    acts_if(g, a, "param", to_string(n), rs, r, ks, k),
+    lift(h, g, rs, r, rs2, r2),
+    lift(h, g, ks, k, ks2, k2).
+
+  // ── Where they meet ───────────────────────────────────────────────
+
+  .decl meets(f: symbol, c: symbol, a: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol)
+
+  // The act is in f.
+  meets(f, c, a, rs, r, ks, k) :-
+    carries(f, kind, src, c, rs, r, ks, k),
+    site_depends(a, f, kind, src),
+    act(a, f, rs2, r2, ks2, k2),
+    (rs = rs2, r = r2, rs != "dynamic" ; rs = "any" ; rs2 = "any"),
+    (ks = ks2, k = k2, ks != "dynamic" ; ks = "any" ; ks2 = "any").
+
+  // The carrier decides a call that reaches the act.
+  meets(f, c, a, rs, r, ks, k) :-
+    carries(f, kind, src, c, rs, r, ks, k),
+    call_decided(f, g, kind, src),
+    acts_if(g, a, _, _, rs1, r1, ks1, k1),
+    lift(f, g, rs1, r1, rs2, r2),
+    lift(f, g, ks1, k1, ks2, k2),
+    (rs = rs2, r = r2, rs != "dynamic" ; rs = "any" ; rs2 = "any"),
+    (ks = ks2, k = k2, ks != "dynamic" ; ks = "any" ; ks2 = "any").
+
+  // The carrier is handed to a callee whose act depends on it.
+  meets(f, c, a, rs, r, ks, k) :-
+    carries(f, kind, src, c, rs, r, ks, k),
+    call_arg_depends(f, g, n, kind, src),
+    acts_if(g, a, "param", to_string(n), rs1, r1, ks1, k1),
+    lift(f, g, rs1, r1, rs2, r2),
+    lift(f, g, ks1, k1, ks2, k2),
+    (rs = rs2, r = r2, rs != "dynamic" ; rs = "any" ; rs2 = "any"),
+    (ks = ks2, k = k2, ks != "dynamic" ; ks = "any" ; ks2 = "any").
+}

@@ -767,6 +767,26 @@ defmodule Argus.Findings do
   end
 
   @doc """
+  Where a site is, said only when it is not in `func`: `" in Mod.fun/1"`,
+  else `""`. An interprocedural finding names the function where a pair
+  meets; its halves may sit in helpers that function calls.
+
+      iex> Argus.Findings.elsewhere("M:lookup/1#4", "M:ensure/1")
+      " in M.lookup/1"
+
+      iex> Argus.Findings.elsewhere("M:ensure/1#4", "M:ensure/1")
+      ""
+  """
+  @spec elsewhere(String.t(), String.t()) :: String.t()
+  def elsewhere(site, func) when is_binary(site) and is_binary(func) do
+    case InstrId.func_id_of(site) do
+      {:ok, ^func} -> ""
+      {:ok, other} -> " in " <> call_name(other)
+      :error -> ""
+    end
+  end
+
+  @doc """
   The API an rpc variant column names: the rules classify a remote call
   as `"rpc"`, `"multicall"` or `"erpc"`; the reader wants the function.
   """

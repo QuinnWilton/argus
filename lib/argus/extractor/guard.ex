@@ -14,6 +14,10 @@ defmodule Argus.Extractor.Guard do
 
   Which side of the test the act sits on is deliberately not asked. An
   act on the "found" side is nonsense code, and reporting it is right.
+
+  Deprecated: the check-then-act rules read `Argus.Extractors.Dependence`,
+  whose summaries answer the same question across functions and through
+  data as well as control. Nothing in argus calls this module.
   """
 
   alias Argus.Cfg.Function
@@ -29,6 +33,7 @@ defmodule Argus.Extractor.Guard do
   the straight-line code after the call. `:no` when the result reaches a
   label, a call or a return untested.
   """
+  @deprecated "Use Argus.Extractors.Dependence (site_depends) instead"
   @spec result_test([tuple()], index()) :: {:ok, index()} | :no
   def result_test(instrs, idx) do
     instrs
@@ -121,6 +126,7 @@ defmodule Argus.Extractor.Guard do
   directly or through the blocks between (`case whereis(...) do nil ->
   case start(...) do ... end end`).
   """
+  @deprecated "Use Argus.Extractors.Dependence (site_depends) instead"
   @spec decides?(Function.t(), index(), index()) :: boolean()
   def decides?(%Function{} = fun, test_idx, act_idx) do
     with %{id: test_block} <- Function.block_at(fun, test_idx),

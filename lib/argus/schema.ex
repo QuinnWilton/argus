@@ -1813,9 +1813,9 @@ defmodule Argus.Schema do
     fields: [
       {:id, :instr_id, "instruction ID of the lookup"},
       {:func, :func_id, "function containing the lookup"},
-      {:api, :symbol, "whereis | registry_lookup"},
-      {:scope, :symbol, "the Registry, for registry_lookup; empty for whereis"},
-      {:source, :symbol, "literal | param | field | dynamic"},
+      {:api, :symbol, "whereis | registry_lookup | registered"},
+      {:scope, :symbol, "the Registry, for registry_lookup; empty otherwise"},
+      {:source, :symbol, "literal | param | field | dynamic, or any for registered"},
       {:key, :symbol, "the name: an inspected literal, a parameter index, or a map key"},
       {:checked, :symbol, "checked | unchecked: is the result tested against nil before use"}
     ],
@@ -1823,7 +1823,8 @@ defmodule Argus.Schema do
     A process name looked up — Process.whereis/1, :erlang.whereis/1, \
     Registry.lookup/2 — with what identifies the name, so a creating op \
     on the same name can be joined to it, and whether the result is \
-    tested against nil (or []) before use.
+    tested against nil (or []) before use. Process.registered/0 and \
+    :erlang.registered/0 look up every name at once: source any.
     """
   }
 
@@ -1846,16 +1847,21 @@ defmodule Argus.Schema do
     """
   }
 
-  @guarded_create %{
-    name: :guarded_create,
+  @name_release %{
+    name: :name_release,
     layer: 2,
     fields: [
-      {:act, :instr_id, "the creating op"},
-      {:check, :instr_id, "the name lookup whose result decides it"}
+      {:id, :instr_id, "instruction ID of the call"},
+      {:func, :func_id, "function containing the call"},
+      {:api, :symbol, "unregister"},
+      {:source, :symbol, "literal | param | field | dynamic"},
+      {:key, :symbol, "the name: an inspected literal, a parameter index, or a map key"}
     ],
     doc: """
-    The creating op runs only because of a test on the lookup's result, \
-    in the same function: the lookup-then-start shape.
+    A registered name given up — Process.unregister/1, \
+    :erlang.unregister/1 — which raises when the name is no longer \
+    registered: a lookup that decides it is stale once the process exits \
+    or another process unregisters first.
     """
   }
 
@@ -1888,16 +1894,21 @@ defmodule Argus.Schema do
     """
   }
 
-  @ets_guarded_write %{
-    name: :ets_guarded_write,
+  @ets_tid_arg %{
+    name: :ets_tid_arg,
     layer: 2,
     fields: [
-      {:write, :instr_id, "the write"},
-      {:read, :instr_id, "the read whose result decides it"}
+      {:caller, :func_id, "the function that created the table"},
+      {:callee, :func_id, "the function or closure it hands the table to"},
+      {:arg_pos, :number, "0-based argument position, or the closure's environment parameter"},
+      {:name, :symbol, "the name :ets.new/2 was given, inspected"}
     ],
     doc: """
-    A plain write that runs only because of a test on a read's result, in \
-    the same function: a read-decide-write on the table.
+    At some call in the caller, or in the environment of a closure it \
+    builds, the argument is the table reference :ets.new/2 returned in the \
+    caller. An unnamed table is known by the name it was created with, so \
+    an operation on the parameter joins ets_new like a named one. \
+    Function-level, like call_arg.
     """
   }
 
@@ -1905,7 +1916,8 @@ defmodule Argus.Schema do
     name: :site_depends,
     layer: 2,
     fields: [
-      {:site, :instr_id, "a shared-state operation: a name lookup or claim, or an ETS op"},
+      {:site, :instr_id,
+       "a shared-state operation: a name lookup, claim or release, or an ETS op"},
       {:func, :func_id, "the function containing it"},
       {:kind, :symbol, "param | call | site"},
       {:source, :symbol,
@@ -2131,10 +2143,10 @@ defmodule Argus.Schema do
     @call_arg_forward,
     @call_result,
     @creating_op,
-    @ets_guarded_write,
     @ets_key,
-    @guarded_create,
+    @ets_tid_arg,
     @name_lookup,
+    @name_release,
     @sink_arg_derived,
     @start_error_compared,
     # Dependence: what decides or feeds a call, a shared-state op, a return.

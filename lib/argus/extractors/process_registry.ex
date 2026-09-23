@@ -14,19 +14,21 @@ defmodule Argus.Extractors.ProcessRegistry do
   - `named_process(mod, name)` — module-level: a process implemented by `mod` is registered
     as `name`; for an Agent, which has no module of its own, the module that starts it
   - `name_lookup(id, func, api, scope, source, key, checked)` —
-    `Process.whereis/1`, `:erlang.whereis/1` (`api` `whereis`, no scope)
-    and `Registry.lookup/2` (`api` `registry_lookup`, `scope` the
-    registry); `source`/`key` identify the name in the vocabulary of
-    `Helpers.key_identity/3`; `checked` says whether the result is tested
-    against nil (or `[]`) before use
+    `Process.whereis/1`, `:erlang.whereis/1` (`api` `whereis`, no scope),
+    `Registry.lookup/2` (`api` `registry_lookup`, `scope` the registry)
+    and `Process.registered/0`, `:erlang.registered/0` (`api`
+    `registered`, `source` `any`: every name at once); `source`/`key`
+    identify the name in the vocabulary of `Helpers.key_identity/3`;
+    `checked` says whether the result is tested against nil (or `[]`)
+    before use
   - `creating_op(id, func, api, scope, source, key)` — a call that claims
     a name or starts a process: `register`, `start_link`/`start` with a
     `name:`, `start_via` (`{:via, Registry, {scope, key}}`),
     `registry_register`, and `start_child`, whose name hides in the child
     spec (`source` `dynamic`)
-  - `guarded_create(act, check)` — the creating op at `act` runs only
-    because of a test on the result of the lookup at `check`, in the same
-    function (`Argus.Extractor.Guard`)
+  - `name_release(id, func, api, source, key)` — `Process.unregister/1`
+    or `:erlang.unregister/1`, which raises when the name is no longer
+    registered
   - `start_error_compared(func, atom)` — `:already_started` or
     `:already_registered` is compared anywhere in a function holding a
     creating op: the loser's outcome is taken. Over-approximate on
@@ -36,8 +38,6 @@ defmodule Argus.Extractors.ProcessRegistry do
   @behaviour Argus.Extractor
 
   alias Argus.Extractor.Dispatch
-  alias Argus.Extractor.Guard
-  alias Argus.Extractor.Helpers
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
@@ -45,7 +45,6 @@ defmodule Argus.Extractors.ProcessRegistry do
     only: [
       add_fact: 3,
       each_remote_call: 3,
-      find_function: 3,
       key_identity: 3,
       keyword_value_register: 4,
       resolve_atom: 3,
@@ -58,21 +57,25 @@ defmodule Argus.Extractors.ProcessRegistry do
   def relations,
     do: [
       :creating_op,
-      :guarded_create,
       :name_lookup,
+      :name_release,
       :named_process,
       :process_register,
       :start_error_compared
     ]
 
-  # The calls this extractor reads a name lookup or claim from:
+  # The calls this extractor reads a name lookup, claim or release from:
   # the shared-state sites `Argus.Extractors.Dependence` follows.
   @sites [
     {Process, :whereis, 1},
     {:erlang, :whereis, 1},
+    {Process, :registered, 0},
+    {:erlang, :registered, 0},
     {Registry, :lookup, 2},
     {Process, :register, 2},
     {:erlang, :register, 2},
+    {Process, :unregister, 1},
+    {:erlang, :unregister, 1},
     {Registry, :register, 3},
     {GenServer, :start_link, 3},
     {GenServer, :start, 3},
@@ -90,7 +93,7 @@ defmodule Argus.Extractors.ProcessRegistry do
     {ExUnit.Callbacks, :start_supervised!, 2}
   ]
 
-  @doc "Whether a remote call looks up or claims a name."
+  @doc "Whether a remote call looks up, claims or releases a name."
   @spec site?(mfa()) :: boolean()
   def site?(mfa), do: mfa in @sites
 
@@ -101,79 +104,20 @@ defmodule Argus.Extractors.ProcessRegistry do
 
     module_data
     |> each_remote_call(%{}, fn facts, ctx, mfa -> register_call(facts, mod_str, ctx, mfa) end)
-    |> emit_guards(module_data)
+    |> emit_start_errors(module_data)
   end
 
-  # ── Lookup, then create ──────────────────────────────────────────
+  # ── The loser's outcome ──────────────────────────────────────────
 
   @start_errors [:already_started, :already_registered]
 
-  # Per function: every (lookup, create) pair where the create is decided
-  # by a test on the lookup's result; and, for every function, the start
-  # errors it compares against anywhere — the taker may be the creating
-  # function's caller.
-  defp emit_guards(facts, module_data) do
-    lookups = sites_by_func(facts, :name_lookup)
-    creates = sites_by_func(facts, :creating_op)
-
-    facts =
-      Enum.reduce(creates, facts, fn {func_id, create_idxs}, acc ->
-        {name, arity} = Normalize.func_id_name_arity(func_id)
-
-        case find_function(module_data.functions, String.to_existing_atom(name), arity) do
-          nil ->
-            acc
-
-          instrs ->
-            emit_guarded_creates(
-              acc,
-              module_data,
-              func_id,
-              instrs,
-              Map.get(lookups, func_id, []),
-              create_idxs
-            )
-        end
-      end)
-
+  # For every function: the start errors it compares against anywhere.
+  # The taker may be the creating function's caller, so every function
+  # says, not only the ones holding a creating op.
+  defp emit_start_errors(facts, module_data) do
     Enum.reduce(module_data.functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
       emit_start_errors(acc, Normalize.func_id(module_data.module, name, arity), instrs)
     end)
-  end
-
-  defp sites_by_func(facts, relation) do
-    facts
-    |> Map.get(relation, [])
-    |> Enum.group_by(fn [_id, func | _] -> func end, fn [id | _] -> index_of(id) end)
-  end
-
-  defp index_of(id) do
-    {:ok, %InstrId{idx: idx}} = InstrId.parse(id)
-    idx
-  end
-
-  defp emit_guarded_creates(facts, _module_data, _func_id, _instrs, [], _creates), do: facts
-
-  defp emit_guarded_creates(facts, module_data, func_id, instrs, lookups, creates) do
-    {name, arity} = Normalize.func_id_name_arity(func_id)
-
-    case Helpers.cfg(module_data, name, arity) do
-      nil ->
-        facts
-
-      fun ->
-        for check <- lookups,
-            {:ok, test} <- [Guard.result_test(instrs, check)],
-            act <- creates,
-            Guard.decides?(fun, test, act),
-            reduce: facts do
-          acc ->
-            add_fact(acc, :guarded_create, [
-              InstrId.mint(func_id, act),
-              InstrId.mint(func_id, check)
-            ])
-        end
-    end
   end
 
   defp emit_start_errors(facts, func_id, instrs) do
@@ -232,6 +176,18 @@ defmodule Argus.Extractors.ProcessRegistry do
       {Registry, :lookup, 2} ->
         emit_registry_lookup(facts, ctx)
 
+      {Process, :registered, 0} ->
+        emit_registered(facts, ctx)
+
+      {:erlang, :registered, 0} ->
+        emit_registered(facts, ctx)
+
+      {Process, :unregister, 1} ->
+        emit_release(facts, ctx)
+
+      {:erlang, :unregister, 1} ->
+        emit_release(facts, ctx)
+
       {Registry, :register, 3} ->
         emit_creating_op(facts, ctx, "registry_register", registry_scope(ctx), {:x, 1})
 
@@ -263,6 +219,19 @@ defmodule Argus.Extractors.ProcessRegistry do
   end
 
   defp registry_scope(ctx), do: resolve_atom(ctx.instrs, ctx.idx, {:x, 0})
+
+  # Every registered name at once: whatever decides on the list decides
+  # on the name it goes on to register.
+  defp emit_registered(facts, ctx) do
+    id = InstrId.mint(ctx.func_id, ctx.idx)
+    add_fact(facts, :name_lookup, [id, ctx.func_id, "registered", "", "any", "", "checked"])
+  end
+
+  defp emit_release(facts, ctx) do
+    id = InstrId.mint(ctx.func_id, ctx.idx)
+    {source, key} = key_identity(ctx.instrs, ctx.idx, {:x, 0})
+    add_fact(facts, :name_release, [id, ctx.func_id, "unregister", source, key])
+  end
 
   defp emit_registry_lookup(facts, ctx) do
     id = InstrId.mint(ctx.func_id, ctx.idx)

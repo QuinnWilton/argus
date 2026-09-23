@@ -11,7 +11,7 @@
   effects:
     ~w(call_edge closure_def dynamic_call ets_new ets_op implements_behaviour impure_call port_open process_register protocol_dispatch pure_contract recv_start remote_call resolved_apply send_msg spawn_call unknown_call),
   ets:
-    ~w(call_arg call_arg_forward call_edge catch_tag catch_total closure_def dynamic_child ets_guarded_write ets_key ets_new ets_op ets_op_param ets_option function_def implements_behaviour statem_event_clause supervisor_child),
+    ~w(call_arg call_arg_depends call_arg_field call_arg_forward call_decided call_edge catch_tag catch_total closure_def dynamic_child ets_key ets_new ets_op ets_op_param ets_option ets_tid_arg function_def implements_behaviour returns_depends site_depends statem_event_clause supervisor_child),
   exposure:
     ~w(function_def prior_sensitive redacted_field schema_field tls_connect tls_verification),
   failure:
@@ -24,7 +24,7 @@
     ~w(async_cast call_arg call_arg_forward call_edge call_site call_tag callback_tag callback_timeout distributed_store_op dynamic_child function_def global_op global_register handle_continue_clause ignored_error_result implements_behaviour impure_call init_continues_to mailbox_writer node_operation post_start_call recv_start remote_call rpc_call statem_timeout sup_call supervisor supervisor_child supervisor_site sync_call sync_call_timeout try_start unconditional_call_edge),
   state_machine: ~w(statem_initial statem_module statem_state statem_transition),
   structure:
-    ~w(call_edge catch_tag catch_total creating_op dynamic_child function_def global_register guarded_create implements_behaviour name_lookup process_register returns_call start_error_compared supervisor_child supervisor_child_form supervisor_site),
+    ~w(call_arg call_arg_depends call_arg_field call_arg_forward call_decided call_edge catch_tag catch_total creating_op dynamic_child function_def global_register implements_behaviour name_lookup name_release process_register returns_call returns_depends site_depends start_error_compared supervisor_child supervisor_child_form supervisor_site),
   unsafe_input:
     ~w(call_arg_derived call_edge code_execution dynamic_child function_def http_route implements_behaviour prior_reads sink_arg_derived socket_transport supervisor_max_children unsafe_atom_creation unsafe_deserialization)
 ]

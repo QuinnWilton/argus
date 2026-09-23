@@ -43,6 +43,28 @@ defmodule Argus.Analyses.EtsCheckActTest do
     end
   end
 
+  describe "ets_check_act across functions" do
+    test "a read helper's result handed to a multi-clause write helper meets in the caller" do
+      skip_without_souffle()
+
+      {:ok, results} = Argus.analyze([C.HelperCache], :ets)
+
+      sites =
+        for [_mod, func, ":helper_cache", "0", read, write] <- results["ets_check_act"],
+            do: {short(func), short(read), short(write)}
+
+      assert Enum.uniq(Enum.map(sites, &elem(&1, 0))) == ["bump/1"]
+      assert Enum.all?(sites, fn {_, read, write} -> read == "fetch/1" and write == "store/2" end)
+      # One row per store/2 clause's insert.
+      assert length(sites) == 2
+    end
+
+    test "an unnamed public table handed to a helper by its reference" do
+      skip_without_souffle()
+      assert [{"count/2", ":unnamed_counts", "1"} | _] = races([C.UnnamedTable])
+    end
+  end
+
   describe "finding" do
     test "anchors the write, relates the read, and names the atomic forms" do
       row = [
@@ -59,6 +81,18 @@ defmodule Argus.Analyses.EtsCheckActTest do
       assert f.title =~ "Read-then-write"
       assert [%{label: "the read it depends on"}] = f.related
       assert Enum.any?(f.help, &(&1 =~ "insert_new"))
+      refute f.detail =~ " in M."
+    end
+
+    test "names the helpers when the read and the write sit outside the meeting function" do
+      row = ["M", "M:bump/1", ":cache", "0", "M:fetch/1#6", "M:store/2#15"]
+      f = Ets.finding(:ets_check_act, row)
+
+      assert f.detail =~ "in M.fetch/1"
+      assert f.detail =~ "in M.store/2"
+      assert f.mfa == {M, :store, 2}
     end
   end
+
+  defp short(id), do: id |> String.split("#") |> hd() |> String.split(":") |> List.last()
 end

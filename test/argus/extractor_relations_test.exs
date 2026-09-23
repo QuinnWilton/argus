@@ -26,10 +26,12 @@ defmodule Argus.ExtractorRelationsTest do
   # A table-driven extractor names its relation through a variable, so
   # no literal appears at the call site: the source scan is blind to it,
   # and the declaration stands on its own (the other two tests still hold
-  # it to the schema and the rules).
+  # it to the schema and the rules). Dependence hands each relation to a
+  # helper that emits one row per source, which the scan cannot see into.
   @table_driven %{
     Argus.Extractors.EctoSchema => [:schema_field, :redacted_field],
-    Argus.Extractors.ApiCalls => :declared
+    Argus.Extractors.ApiCalls => :declared,
+    Argus.Extractors.Dependence => :declared
   }
 
   defp emitted_in_source(extractor) do
