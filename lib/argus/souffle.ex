@@ -221,17 +221,98 @@ defmodule Argus.Souffle do
       rules_path
     ]
 
-    task = Task.async(fn -> System.cmd(bin, args, stderr_to_stdout: true) end)
-
-    case Task.yield(task, timeout) || Task.shutdown(task) do
+    case execute(bin, args, timeout) do
       {:ok, {_output, 0}} ->
         parse_output(output_dir)
 
       {:ok, {output, exit_code}} ->
         {:error, {:souffle_error, exit_code, output}}
 
-      nil ->
+      :timeout ->
         {:error, :souffle_timeout}
+    end
+  end
+
+  # Souffle as a port this process owns, and an OS process that never
+  # outlives the port. Closing a port does not stop the program behind it:
+  # `System.cmd/3` under a `Task.shutdown/1` left a timed-out solve running
+  # to completion, a core and hundreds of megabytes apiece, and so did a
+  # caller that died or a VM that halted (an interrupted `mix compile`).
+  #
+  # So the solver runs under a small `/bin/sh` reaper holding the port's
+  # stdin: the solver is started in the background, and the reaper reads
+  # stdin until it closes, then kills the solver. The VM never writes to
+  # it, so stdin closes exactly when the port does — at the deadline
+  # (`Port.close/1` below), when the calling process dies (its ports close
+  # with it), and when the VM exits by any means, a SIGKILL included. When
+  # the solver finishes on its own, its exit status is the reaper's.
+  @reaper ~S"""
+  exec 3<&0
+  "$@" 0</dev/null &
+  solver=$!
+  { while read -r _ <&3; do :; done; kill -9 "$solver" 2>/dev/null; } &
+  reaper=$!
+  wait "$solver"
+  status=$?
+  kill "$reaper" 2>/dev/null
+  exit "$status"
+  """
+
+  defp execute(bin, args, timeout) do
+    port =
+      Port.open({:spawn_executable, "/bin/sh"}, [
+        :binary,
+        :exit_status,
+        :stderr_to_stdout,
+        args: ["-c", @reaper, "souffle" | [bin | args]]
+      ])
+
+    deadline = if timeout == :infinity, do: :infinity, else: now_ms() + timeout
+
+    case collect(port, [], deadline) do
+      {:ok, _} = done ->
+        done
+
+      :timeout ->
+        close(port)
+        :timeout
+    end
+  end
+
+  defp collect(port, acc, deadline) do
+    receive do
+      {^port, {:data, data}} ->
+        collect(port, [acc | data], deadline)
+
+      {^port, {:exit_status, status}} ->
+        {:ok, {IO.iodata_to_binary(acc), status}}
+    after
+      remaining(deadline) ->
+        :timeout
+    end
+  end
+
+  defp remaining(:infinity), do: :infinity
+  defp remaining(deadline), do: max(deadline - now_ms(), 0)
+
+  defp now_ms, do: System.monotonic_time(:millisecond)
+
+  # Closing stdin is what stops the solver. The port may already be closed
+  # by the solver's exit; its last messages are dropped so they do not
+  # reach the caller's mailbox.
+  defp close(port) do
+    Port.close(port)
+  rescue
+    ArgumentError -> :ok
+  after
+    flush(port)
+  end
+
+  defp flush(port) do
+    receive do
+      {^port, _} -> flush(port)
+    after
+      0 -> :ok
     end
   end
 

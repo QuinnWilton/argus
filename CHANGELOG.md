@@ -601,6 +601,16 @@ docs name the sets and the retired names `:analyses` accepts.
 
 ### Findings: building and degradation
 
+**Fixed.** A Souffle solve never outlives its caller. `Argus.Souffle.run/3`
+ran the solver under `System.cmd/3` in a task and `Task.shutdown/1`ed it
+at the deadline, which closed the port and left the solver running to
+completion — a core and hundreds of megabytes per timed-out analysis —
+and a caller that died, or a VM that halted (an interrupted `mix
+compile`), left it running the same way. The solver now runs under a
+`/bin/sh` reaper that holds the port's stdin and kills the solver when
+stdin closes, which is when the port does: at the deadline, when the
+calling process dies, and when the VM exits by any means.
+
 **Fixed.** One row a finding builder did not expect degraded its whole concern:
 `run/2` rescued the concern's build as a unit, so a single raising row
 dropped every finding in it. The rescue is per row now — that row is

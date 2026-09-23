@@ -177,4 +177,115 @@ defmodule Argus.SouffleTest do
                Souffle.run(facts_dir, rules_path, output_dir: output_dir, souffle_timeout: 1)
     end
   end
+
+  # The solver is a stand-in that sleeps, named by `:souffle_bin` rather
+  # than put on PATH, so these tests touch no VM-wide state.
+  describe "a solve that does not finish" do
+    test "is killed at the deadline, not left running", %{tmp_dir: tmp_dir} do
+      {bin, pid_file} = sleeping_solver(tmp_dir)
+
+      assert {:error, :souffle_timeout} =
+               Souffle.run(tmp_dir, Path.join(tmp_dir, "rules.dl"),
+                 souffle_bin: bin,
+                 souffle_timeout: 300,
+                 output_dir: tmp_dir
+               )
+
+      os_pid = await_pid(pid_file)
+      assert gone?(os_pid), "the timed-out solver (pid #{os_pid}) is still running"
+    end
+
+    test "is killed when its caller dies first", %{tmp_dir: tmp_dir} do
+      {bin, pid_file} = sleeping_solver(tmp_dir)
+
+      caller =
+        spawn(fn ->
+          Souffle.run(tmp_dir, Path.join(tmp_dir, "rules.dl"),
+            souffle_bin: bin,
+            souffle_timeout: 60_000,
+            output_dir: tmp_dir
+          )
+        end)
+
+      os_pid = await_pid(pid_file)
+      Process.exit(caller, :kill)
+
+      assert gone?(os_pid), "the orphaned solver (pid #{os_pid}) is still running"
+    end
+
+    # An interrupted `mix compile` halts the VM with the solver running;
+    # nothing in the VM gets to run cleanup, so the solver must stop on
+    # its own when the VM's end of the port goes.
+    test "stops when the VM halts under it", %{tmp_dir: tmp_dir} do
+      {bin, pid_file} = sleeping_solver(tmp_dir)
+      ebin = Argus.Souffle |> :code.which() |> Path.dirname()
+
+      script = """
+      spawn(fn ->
+        Argus.Souffle.run(#{inspect(tmp_dir)}, #{inspect(Path.join(tmp_dir, "rules.dl"))},
+          souffle_bin: #{inspect(bin)}, souffle_timeout: 60_000, output_dir: #{inspect(tmp_dir)})
+      end)
+
+      started? = fn started? ->
+        File.exists?(#{inspect(pid_file)}) or (Process.sleep(10) == :ok and started?.(started?))
+      end
+
+      started?.(started?)
+      :erlang.halt(0)
+      """
+
+      elixir = System.find_executable("elixir") || flunk("elixir is not on PATH")
+      {_, 0} = System.cmd(elixir, ["-pa", ebin, "-e", script])
+
+      os_pid = await_pid(pid_file)
+      assert gone?(os_pid), "the solver (pid #{os_pid}) outlived the VM that started it"
+    end
+  end
+
+  defp sleeping_solver(tmp_dir) do
+    pid_file = Path.join(tmp_dir, "solver.pid")
+    bin = Path.join(tmp_dir, "souffle")
+
+    File.write!(bin, """
+    #!/bin/sh
+    echo $$ > '#{pid_file}'
+    exec sleep 30
+    """)
+
+    File.chmod!(bin, 0o755)
+    {bin, pid_file}
+  end
+
+  defp await_pid(pid_file, tries \\ 200) do
+    case File.read(pid_file) do
+      {:ok, content} when content != "" ->
+        String.trim(content)
+
+      _ when tries > 0 ->
+        Process.sleep(10)
+        await_pid(pid_file, tries - 1)
+
+      _ ->
+        flunk("the solver never started")
+    end
+  end
+
+  # `kill -0` succeeds while the process exists; the kill is asynchronous,
+  # so give it a moment.
+  defp gone?(os_pid, tries \\ 200) do
+    {_, status} = System.cmd("/bin/sh", ["-c", ~s(kill -0 "$1" 2>/dev/null), "sh", os_pid])
+    alive? = status == 0
+
+    cond do
+      not alive? ->
+        true
+
+      tries == 0 ->
+        false
+
+      true ->
+        Process.sleep(10)
+        gone?(os_pid, tries - 1)
+    end
+  end
 end
