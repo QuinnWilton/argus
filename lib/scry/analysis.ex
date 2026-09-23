@@ -196,10 +196,32 @@ defmodule Scry.Analysis do
 
   # One relation's interned rows: the grain the projections read, so a
   # relation the edit did not touch backdates here and stops propagation.
+  # A prior relation is the runner's `:prior_rows` input for it, not a
+  # module's facts: no extraction produces one. A consumer that demands
+  # the graph without setting it (planchette, encore's adapter) gets the
+  # empty relation — the meaning of priors off — and the read is still a
+  # recorded dependency, so a later `Input.set` invalidates.
   defquery :relation_rows, key: relation, returns: [tuple()] do
-    db
-    |> Runtime.query(:program_relation_facts, :all)
-    |> Map.get(relation, [])
+    if relation in prior_relations() do
+      prior_rows(db, relation)
+    else
+      db
+      |> Runtime.query(:program_relation_facts, :all)
+      |> Map.get(relation, [])
+    end
+  end
+
+  @doc "The layer-3 relation names, as `Argus.Schema` declares them."
+  @spec prior_relations() :: [atom()]
+  def prior_relations, do: Enum.map(Argus.Schema.layer_3(), & &1.name)
+
+  # `Runtime.input/3` records the dependency before it reads, so an
+  # unset key is a recorded edge that a later `Input.set` invalidates;
+  # the read itself raises, and that is the empty relation.
+  defp prior_rows(db, relation) do
+    Runtime.input(db, :prior_rows, relation)
+  rescue
+    Roux.Input.NotSetError -> []
   end
 
   # The same rows as strings — what a consumer outside this layer reads
@@ -396,6 +418,8 @@ defmodule Scry.Analysis do
         at_label: fill_guard(Map.get(finding, :at_label), guard),
         help: Enum.map(Map.get(finding, :help, []), &fill_guard(&1, guard)),
         related: resolve_related(db, Map.get(finding, :related, [])),
+        provenance: Map.get(finding, :provenance, :structural),
+        confidence: Map.get(finding, :confidence)
       }
     else
       _ -> nil

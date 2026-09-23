@@ -46,6 +46,8 @@ defmodule Scry.Report do
         title: entry.title,
         detail: entry.detail,
         help: Map.get(entry, :help, []),
+        provenance: Map.get(entry, :provenance, :structural),
+        confidence: Map.get(entry, :confidence),
         related:
           for related <- Map.get(entry, :related, []) do
             %{

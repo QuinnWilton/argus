@@ -36,7 +36,8 @@ defmodule Scry.Config do
     :ignore_files,
     :include_deps,
     :fail_on,
-    :souffle
+    :souffle,
+    :priors
   ]
   defstruct [
     :analyses,
@@ -45,8 +46,17 @@ defmodule Scry.Config do
     :ignore_files,
     :include_deps,
     :fail_on,
-    :souffle
+    :souffle,
+    :priors
   ]
+
+  @typedoc """
+  `priors:` — `:off` (default), `:cached_only` or `:live`, or a keyword
+  with `mode:` and `Argus.Priors` options (`cassette:` a JSONL file
+  imported into the cache first, `cache_dir:`, `model:`, `oracle:`,
+  `batch_size:`). See `Scry.Priors`.
+  """
+  @type priors :: %{mode: :off | :cached_only | :live, opts: keyword()}
 
   @type t :: %__MODULE__{
           analyses: [atom()],
@@ -55,7 +65,8 @@ defmodule Scry.Config do
           ignore_files: [String.t()],
           include_deps: boolean(),
           fail_on: :error | :warning,
-          souffle: :warn | :require
+          souffle: :warn | :require,
+          priors: priors()
         }
 
   @severities [:error, :warning, :info]
@@ -73,7 +84,7 @@ defmodule Scry.Config do
   """
   @spec load(keyword()) :: t()
   def load(raw) when is_list(raw) do
-    known_keys = [:analyses, :severity, :ignore, :include_deps, :fail_on, :souffle]
+    known_keys = [:analyses, :severity, :ignore, :include_deps, :fail_on, :souffle, :priors]
 
     case Keyword.keys(raw) -- known_keys do
       [] -> :ok
@@ -89,12 +100,46 @@ defmodule Scry.Config do
       ignore_files: ignore_files!(Keyword.get(ignore, :files, [])),
       include_deps: boolean!(:include_deps, Keyword.get(raw, :include_deps, false)),
       fail_on: enum!(:fail_on, Keyword.get(raw, :fail_on, :error), [:error, :warning]),
-      souffle: enum!(:souffle, Keyword.get(raw, :souffle, :warn), [:warn, :require])
+      souffle: enum!(:souffle, Keyword.get(raw, :souffle, :warn), [:warn, :require]),
+      priors: priors!(Keyword.get(raw, :priors, :off))
     }
   end
 
   def load(other) do
     fail("scry config must be a keyword list, got: #{inspect(other)}")
+  end
+
+  @prior_modes [:off, :cached_only, :live]
+  @prior_opts [:cassette, :cache_dir, :model, :oracle, :oracle_opts, :batch_size, :concurrency]
+
+  defp priors!(mode) when mode in @prior_modes, do: priors!(mode: mode)
+
+  defp priors!(raw) when is_list(raw) do
+    mode = enum!(:priors, Keyword.get(raw, :mode, :off), @prior_modes)
+    opts = Keyword.delete(raw, :mode)
+
+    case Keyword.keys(opts) -- @prior_opts do
+      [] ->
+        :ok
+
+      unknown ->
+        fail("unknown priors options #{inspect(unknown)}; known: #{inspect(@prior_opts)}")
+    end
+
+    if mode != :off and not is_nil(Keyword.get(opts, :cassette)) and
+         not is_binary(Keyword.get(opts, :cassette)) do
+      fail("priors cassette must be a path, got: #{inspect(Keyword.get(opts, :cassette))}")
+    end
+
+    # A run that cannot ask fails at configuration, not after extraction.
+    Argus.Priors.check!(priors: mode, priors_opts: Keyword.drop(opts, [:cassette]))
+    %{mode: mode, opts: opts}
+  end
+
+  defp priors!(other) do
+    fail(
+      "priors must be :off, :cached_only, :live or a keyword with mode:, got: #{inspect(other)}"
+    )
   end
 
   defp analyses!(names) when is_list(names) do

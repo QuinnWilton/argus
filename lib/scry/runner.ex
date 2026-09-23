@@ -81,6 +81,7 @@ defmodule Scry.Runner do
         if souffle? do
           cold? = force? or prior_sources == %{} or fingerprint_changed?
           :ok = prewarm(db, discovered, if(cold?, do: Map.keys(discovered), else: changed))
+          :ok = Scry.Priors.sync(db, config)
           demand(db, config.analyses)
         else
           {%{}, []}

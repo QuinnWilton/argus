@@ -36,4 +36,42 @@ defmodule Scry.ConfigTest do
       Config.load(analyses: [:coupling, :nonsense])
     end
   end
+
+  describe "priors" do
+    test "off by default, a bare mode or a keyword with mode: and Argus.Priors options" do
+      assert Config.load([]).priors == %{mode: :off, opts: []}
+      assert Config.load(priors: :cached_only).priors == %{mode: :cached_only, opts: []}
+
+      assert Config.load(
+               priors: [mode: :cached_only, cassette: "priors.jsonl", model: "jev-1.13.0"]
+             ).priors ==
+               %{mode: :cached_only, opts: [cassette: "priors.jsonl", model: "jev-1.13.0"]}
+    end
+
+    test "an unknown mode or option fails naming the valid ones" do
+      assert_raise Mix.Error, ~r/priors must be :off, :cached_only, :live/, fn ->
+        Config.load(priors: :sometimes)
+      end
+
+      assert_raise Mix.Error, ~r/unknown priors options \[:threshold\]/, fn ->
+        Config.load(priors: [mode: :cached_only, threshold: 900])
+      end
+    end
+
+    test "live without a key fails at configuration" do
+      key = System.get_env("TYPESAFE_API_KEY")
+      System.delete_env("TYPESAFE_API_KEY")
+
+      try do
+        assert_raise ArgumentError, ~r/TYPESAFE_API_KEY/, fn -> Config.load(priors: :live) end
+      after
+        if key, do: System.put_env("TYPESAFE_API_KEY", key)
+      end
+    end
+
+    test "live with an oracle of one's own needs no key" do
+      assert %{mode: :live, opts: [oracle: Scry.Test.PriorOracle]} =
+               Config.load(priors: [mode: :live, oracle: Scry.Test.PriorOracle]).priors
+    end
+  end
 end

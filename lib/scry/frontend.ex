@@ -46,6 +46,15 @@ defmodule Scry.Frontend do
   # belongs to the machine that compiled it (a moved checkout, a Docker
   # build): the same path relative to this root is looked for instead.
   definput(:project_root, durability: :high)
+
+  # One key per layer-3 relation: the classifier's rows (`Scry.Priors`),
+  # interned, or `[]` when priors are off. An input rather than a query
+  # because a derived value at `:low` durability is dropped from the
+  # manifest and the network call it stands for is the one thing a warm
+  # run must not repeat; and set by the runner outside the graph, since
+  # a query cannot set an input.
+  definput(:prior_rows, durability: :medium)
+
   defquery :module_beam, key: module, returns: {:ok, binary()} | :external | {:error, term()} do
     case Runtime.input(db, :beam_meta, module) do
       nil ->
@@ -111,6 +120,7 @@ defmodule Scry.Frontend do
       _ -> beam_path
     end
   end
+
   defp recorded_or_relocated(path, root) do
     if File.exists?(path) do
       {:ok, path}
