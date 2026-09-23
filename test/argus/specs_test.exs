@@ -35,14 +35,20 @@ defmodule Argus.SpecsTest do
     test "answers from the run's table once a module is in it" do
       memo = :ets.new(:memo, [:set, :public])
       assert Specs.installed(:ets, memo) == Specs.installed(:ets)
-      assert :ets.lookup(memo, :ets) == [{:ets, Specs.installed(:ets)}]
+      assert :ets.lookup(memo, {:specs, :ets}) == [{{:specs, :ets}, Specs.installed(:ets)}]
 
-      :ets.insert(memo, {:ets, :unknown})
+      :ets.insert(memo, {{:specs, :ets}, :unknown})
       assert Specs.installed(:ets, memo) == :unknown
     end
 
     test "is installed/1 without a table" do
       assert Specs.installed(:ets, nil) == Specs.installed(:ets)
+    end
+
+    test "reads a beam's own specs through the table as without it" do
+      memo = :ets.new(:memo, [:set, :public])
+      path = Fixture |> :code.which() |> List.to_string()
+      assert Specs.of_beam(path, memo) == Specs.of_beam(path)
     end
   end
 

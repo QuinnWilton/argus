@@ -38,7 +38,9 @@ defmodule Argus.Specs do
   `of_beam/1` reads an analyzed module's own beam (its debug info);
   `installed/1` looks a module up on the code path, and memoizes the
   answer per module for the life of the VM, keyed by the file it was read
-  from, so a recompiled dependency is read again. Results that depend on
+  from, so a recompiled dependency is read again; `installed/2` and
+  `of_beam/2` answer from a table the caller keeps for one run instead,
+  which asks the code path about each module once. Results that depend on
   the code path depend on the installed OTP, Elixir and dependencies:
   `environment_digest/1` names them, for caches keyed on extraction
   output.
@@ -51,6 +53,10 @@ defmodule Argus.Specs do
 
   @typedoc "Each specced function's shapes; a function absent here is unknown."
   @type returns :: %{{atom(), arity()} => [shape()]}
+
+  # The types a spec's names resolve against — the module's own, or a
+  # remote module's while its type is expanded — and the run's memo.
+  @typep scope :: {%{{atom(), arity()} => {list(), tuple()}}, :ets.tid() | nil}
 
   # One alternative of a return type, after resolution.
   @typep alt ::
@@ -69,12 +75,12 @@ defmodule Argus.Specs do
   its contents. `:error` when the beam carries no debug info to read
   specs from.
   """
-  @spec of_beam(Path.t() | binary()) :: {:ok, returns()} | :error
-  def of_beam(beam) when is_binary(beam) do
+  @spec of_beam(Path.t() | binary(), :ets.tid() | nil) :: {:ok, returns()} | :error
+  def of_beam(beam, memo \\ nil) when is_binary(beam) do
     with {:ok, binary} <- read_beam(beam),
          {:ok, specs} <- fetch(fn -> Code.Typespec.fetch_specs(binary) end) do
       types = local_types(binary)
-      {:ok, reduce(specs, types)}
+      {:ok, reduce(specs, types, memo)}
     end
   end
 
@@ -84,7 +90,24 @@ defmodule Argus.Specs do
   Memoized per module and file.
   """
   @spec installed(module()) :: returns() | :unknown
-  def installed(module) when is_atom(module) do
+  def installed(module) when is_atom(module), do: stamped_installed(module, nil)
+
+  @doc """
+  `installed/1`, answered once per `memo`: an ETS table (`:public`,
+  `:set`) the caller owns for one extraction over one code path, which
+  `Argus.Pipeline` hands every module's extractors as
+  `module_data.installed_specs`. `installed/1` asks the code server where
+  a module lives and stats the file every time it reads one — the
+  module's own specs and every remote type they name — so that an edit
+  is seen; within a run there is nothing to see. `nil` is `installed/1`.
+  """
+  @spec installed(module(), :ets.tid() | nil) :: returns() | :unknown
+  def installed(module, nil), do: installed(module)
+
+  def installed(module, memo) when is_atom(module),
+    do: memoized(memo, {:specs, module}, fn -> stamped_installed(module, memo) end)
+
+  defp stamped_installed(module, memo) do
     stamp = stamp(module)
     key = {__MODULE__, :installed, module}
 
@@ -93,31 +116,20 @@ defmodule Argus.Specs do
         value
 
       _stale_or_missing ->
-        value = read_installed(module)
+        value = read_installed(module, memo)
         :persistent_term.put(key, {stamp, value})
         value
     end
   end
 
-  @doc """
-  `installed/1`, answered once per `memo`: an ETS table (`:public`,
-  `:set`) the caller owns for one extraction over one code path, which
-  `Argus.Pipeline` hands every module's extractors as
-  `module_data.installed_specs`. `installed/1` asks the code server where
-  the module lives and stats the file on every call, so that an edit is
-  seen; within a run there is nothing to see. `nil` is `installed/1`.
-  """
-  @spec installed(module(), :ets.tid() | nil) :: returns() | :unknown
-  def installed(module, nil), do: installed(module)
-
-  def installed(module, memo) when is_atom(module) do
-    case :ets.lookup(memo, module) do
-      [{^module, value}] ->
+  defp memoized(memo, key, compute) do
+    case :ets.lookup(memo, key) do
+      [{^key, value}] ->
         value
 
       [] ->
-        value = installed(module)
-        :ets.insert(memo, {module, value})
+        value = compute.()
+        :ets.insert(memo, {key, value})
         value
     end
   end
@@ -128,8 +140,10 @@ defmodule Argus.Specs do
   module they belong to, as `{params, body}` by `{name, arity}`.
   """
   @spec shapes([tuple()], %{{atom(), arity()} => {list(), tuple()}}) :: [shape()]
-  def shapes(clauses, types) do
-    alts = Enum.flat_map(clauses, &clause_return(&1, types))
+  def shapes(clauses, types), do: shapes(clauses, types, nil)
+
+  defp shapes(clauses, types, memo) do
+    alts = Enum.flat_map(clauses, &clause_return(&1, {types, memo}))
     classify(alts)
   end
 
@@ -201,14 +215,19 @@ defmodule Argus.Specs do
     end
   end
 
-  defp read_installed(module) do
+  defp read_installed(module, memo) do
     case fetch(fn -> Code.Typespec.fetch_specs(module) end) do
-      {:ok, specs} -> reduce(specs, installed_types(module))
+      {:ok, specs} -> reduce(specs, installed_types(module, memo), memo)
       :error -> :unknown
     end
   end
 
-  defp installed_types(module) do
+  defp installed_types(module, nil), do: stamped_types(module)
+
+  defp installed_types(module, memo),
+    do: memoized(memo, {:types, module}, fn -> stamped_types(module) end)
+
+  defp stamped_types(module) do
     stamp = stamp(module)
     key = {__MODULE__, :types, module}
 
@@ -238,9 +257,9 @@ defmodule Argus.Specs do
     end
   end
 
-  defp reduce(specs, types) do
+  defp reduce(specs, types, memo) do
     for {{name, arity}, clauses} <- specs,
-        shapes = shapes(clauses, types),
+        shapes = shapes(clauses, types, memo),
         shapes != [],
         into: %{},
         do: {{name, arity}, shapes}
@@ -290,12 +309,12 @@ defmodule Argus.Specs do
 
   # ── Resolution ──────────────────────────────────────────────────────
 
-  defp clause_return({:type, _, :fun, [_args, return]}, types),
-    do: resolve(return, %{}, types, @max_depth)
+  defp clause_return({:type, _, :fun, [_args, return]}, scope),
+    do: resolve(return, %{}, scope, @max_depth)
 
   defp clause_return(
          {:type, _, :bounded_fun, [{:type, _, :fun, [_args, return]}, constraints]},
-         types
+         scope
        ) do
     bounds =
       for {:type, _, :constraint, [{:atom, _, :is_subtype}, [{:var, _, var}, bound]]} <-
@@ -303,69 +322,74 @@ defmodule Argus.Specs do
           into: %{},
           do: {var, bound}
 
-    resolve(return, bounds, types, @max_depth)
+    resolve(return, bounds, scope, @max_depth)
   end
 
-  defp clause_return(_clause, _types), do: [:any]
+  defp clause_return(_clause, _scope), do: [:any]
 
-  @spec resolve(tuple(), map(), map(), non_neg_integer()) :: [alt()]
-  defp resolve(_type, _vars, _types, 0), do: [:any]
+  @spec resolve(tuple(), map(), scope(), non_neg_integer()) :: [alt()]
+  defp resolve(_type, _vars, _scope, 0), do: [:any]
 
-  defp resolve({:type, _, :union, members}, vars, types, depth),
-    do: Enum.flat_map(members, &resolve(&1, vars, types, depth))
+  defp resolve({:type, _, :union, members}, vars, scope, depth),
+    do: Enum.flat_map(members, &resolve(&1, vars, scope, depth))
 
-  defp resolve({:ann_type, _, [_var, type]}, vars, types, depth),
-    do: resolve(type, vars, types, depth)
+  defp resolve({:ann_type, _, [_var, type]}, vars, scope, depth),
+    do: resolve(type, vars, scope, depth)
 
-  defp resolve({:paren_type, _, [type]}, vars, types, depth),
-    do: resolve(type, vars, types, depth)
+  defp resolve({:paren_type, _, [type]}, vars, scope, depth),
+    do: resolve(type, vars, scope, depth)
 
-  defp resolve({:var, _, :_}, _vars, _types, _depth), do: [:any]
+  defp resolve({:var, _, :_}, _vars, _scope, _depth), do: [:any]
 
   # A variable is its bound, and a bound variable resolves once: a
   # constraint that mentions itself is unknown rather than a loop.
-  defp resolve({:var, _, var}, vars, types, depth) do
+  defp resolve({:var, _, var}, vars, scope, depth) do
     case Map.pop(vars, var) do
       {nil, _} -> [:any]
-      {bound, rest} -> resolve(bound, rest, types, depth - 1)
+      {bound, rest} -> resolve(bound, rest, scope, depth - 1)
     end
   end
 
-  defp resolve({:atom, _, atom}, _vars, _types, _depth), do: [{:atom, atom}]
+  defp resolve({:atom, _, atom}, _vars, _scope, _depth), do: [{:atom, atom}]
 
-  defp resolve({:type, _, :tuple, :any}, _vars, _types, _depth), do: [{:tuple, :any}]
+  defp resolve({:type, _, :tuple, :any}, _vars, _scope, _depth), do: [{:tuple, :any}]
 
-  defp resolve({:type, _, :tuple, elements}, vars, types, depth),
-    do: [{:tuple, Enum.map(elements, &resolve(&1, vars, types, depth - 1))}]
+  defp resolve({:type, _, :tuple, elements}, vars, scope, depth),
+    do: [{:tuple, Enum.map(elements, &resolve(&1, vars, scope, depth - 1))}]
 
-  defp resolve({:type, _, name, []}, _vars, _types, _depth)
+  defp resolve({:type, _, name, []}, _vars, _scope, _depth)
        when name in [:term, :any],
        do: [:any]
 
-  defp resolve({:type, _, name, []}, _vars, _types, _depth)
+  defp resolve({:type, _, name, []}, _vars, _scope, _depth)
        when name in [:no_return, :none],
        do: [:none]
 
-  defp resolve({:type, _, :boolean, []}, _vars, _types, _depth),
+  defp resolve({:type, _, :boolean, []}, _vars, _scope, _depth),
     do: [{:atom, true}, {:atom, false}]
 
-  defp resolve({:type, _, :pid, []}, _vars, _types, _depth), do: [:pid]
-  defp resolve({:type, _, :identifier, []}, _vars, _types, _depth), do: [:pid, :other]
+  defp resolve({:type, _, :pid, []}, _vars, _scope, _depth), do: [:pid]
+  defp resolve({:type, _, :identifier, []}, _vars, _scope, _depth), do: [:pid, :other]
 
-  defp resolve({:user_type, _, name, args}, vars, types, depth) do
+  defp resolve({:user_type, _, name, args}, vars, {types, _memo} = scope, depth) do
     case Map.fetch(types, {name, length(args)}) do
-      {:ok, {params, body}} -> expand(params, args, body, vars, types, depth)
+      {:ok, {params, body}} -> expand(params, args, body, vars, scope, depth)
       :error -> [:any]
     end
   end
 
-  defp resolve({:remote_type, _, [{:atom, _, mod}, {:atom, _, name}, args]}, vars, _types, depth) do
-    remote = installed_types(mod)
+  defp resolve(
+         {:remote_type, _, [{:atom, _, mod}, {:atom, _, name}, args]},
+         vars,
+         {_types, memo},
+         depth
+       ) do
+    remote = installed_types(mod, memo)
 
     case Map.fetch(remote, {name, length(args)}) do
       {:ok, {params, body}} ->
         args = Enum.map(args, &substitute(&1, vars))
-        expand(params, args, body, %{}, remote, depth)
+        expand(params, args, body, %{}, {remote, memo}, depth)
 
       :error ->
         [:any]
@@ -375,11 +399,11 @@ defmodule Argus.Specs do
   # Every other type — integers, lists, maps, binaries, references,
   # ports, funs, ranges, `atom()` — is a value, and none of them is a
   # failure a rule recognizes.
-  defp resolve(_type, _vars, _types, _depth), do: [:other]
+  defp resolve(_type, _vars, _scope, _depth), do: [:other]
 
   # A parameterized type's body with its parameters bound to the
   # arguments the use site gave.
-  defp expand(params, args, body, vars, types, depth) do
+  defp expand(params, args, body, vars, scope, depth) do
     bound =
       params
       |> Enum.zip(args)
@@ -388,7 +412,7 @@ defmodule Argus.Specs do
         _other, acc -> acc
       end)
 
-    resolve(body, bound, types, depth - 1)
+    resolve(body, bound, scope, depth - 1)
   end
 
   # An argument is resolved in the caller's scope; a variable it names is

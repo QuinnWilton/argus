@@ -34,27 +34,24 @@ defmodule Argus.Extractors.Specs do
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     mod = module_data.module
+    memo = Map.get(module_data, :installed_specs)
 
     %{}
-    |> emit_own(mod, own_specs(module_data))
-    |> emit_callees(
-      mod,
-      CallSites.for_module(module_data),
-      Map.get(module_data, :installed_specs)
-    )
+    |> emit_own(mod, own_specs(module_data, memo))
+    |> emit_callees(mod, CallSites.for_module(module_data), memo)
   end
 
   # The pipeline hands over the beam it disassembled; an extractor run on
   # bare disassembly (a unit test) reads the module from the code path.
-  defp own_specs(%{beam: beam}) when is_binary(beam) do
-    case Specs.of_beam(beam) do
+  defp own_specs(%{beam: beam}, memo) when is_binary(beam) do
+    case Specs.of_beam(beam, memo) do
       {:ok, returns} -> returns
       :error -> %{}
     end
   end
 
-  defp own_specs(%{module: mod}) do
-    case Specs.installed(mod) do
+  defp own_specs(%{module: mod}, memo) do
+    case Specs.installed(mod, memo) do
       :unknown -> %{}
       returns -> returns
     end
