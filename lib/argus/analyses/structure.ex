@@ -48,7 +48,8 @@ defmodule Argus.Analyses.Structure do
       Argus.Extractors.ProcessRegistry,
       Argus.Extractors.ErrorHandling,
       Argus.Extractors.Dependence,
-      Argus.Extractors.CallArgs
+      Argus.Extractors.CallArgs,
+      Argus.Extractors.Specs
     ]
 
   @impl true

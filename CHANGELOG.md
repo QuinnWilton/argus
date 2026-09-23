@@ -539,6 +539,13 @@ has no body: nothing says whose the closure is.
 
 ### Check-then-act races (structure, ets)
 
+**Changed.** `structure.registry_race` leaves out two losers that are not a bug: a
+`register/2` inside an Erlang `catch` (the loser handled, as in
+`inet_gethost_native`), and a named start whose `{:error,
+{:already_started, pid}}` — its spec says it can fail — nothing reads on
+the way back to where the lookup decided (`ssh_dbg:switch/2`, which goes
+on by the name the winner holds).
+
 **Changed.** `clientlib/check_then_act.dl` solves the same rows faster: the loop rule
 joins a callee's acts to its callers' parameter-fed arguments on
 (callee, position) instead of scanning every argument, its recursive

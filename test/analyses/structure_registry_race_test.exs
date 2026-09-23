@@ -26,6 +26,19 @@ defmodule Argus.Analyses.StructureRegistryRaceTest do
 
   defp short(id), do: id |> String.split("#") |> hd() |> String.split(".") |> List.last()
 
+  describe "registry_race: losers that are not a bug" do
+    test "a register inside an Erlang catch takes its loser; a dropped start answer is moot" do
+      skip_without_souffle()
+
+      found = sites([:registry_losers])
+      meetings = found |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
+
+      refute Enum.any?(meetings, &(&1 =~ "server_init"))
+      refute Enum.any?(meetings, &(&1 =~ "switch"))
+      assert Enum.any?(meetings, &(&1 =~ "ensure"))
+    end
+  end
+
   describe "registry_race" do
     test "whereis, then a named start of the same parameter, in a plain API" do
       skip_without_souffle()

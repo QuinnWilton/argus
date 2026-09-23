@@ -10,6 +10,7 @@
 .include "../clientlib/request_entry.dl"
 .include "../clientlib/concurrency.dl"
 .include "../clientlib/check_then_act.dl"
+.include "../clientlib/specs.dl"
 
 // ── A supervisor registered as a worker ──────────────────────────
 //
@@ -150,6 +151,11 @@ rescues_argument_error(f) :- catches_class(f, "error").
 rescues_argument_error(f) :- catch_tag(_, f, "error", "ArgumentError").
 rescues_argument_error(f) :- catch_tag(_, f, "error", ":badarg").
 
+// Erlang's `catch Expr` takes every class: `case catch register(N,
+// self()) of true -> ...; _ -> exit({already_started, ...})` is the
+// loser handled (inet_gethost_native).
+rescues_argument_error(f) :- try_start(_, f, "catch", _).
+
 .decl start_error_handled(func: symbol)
 
 start_error_handled(f) :- start_error_compared(f, _).
@@ -171,6 +177,57 @@ loser_taken(f, a) :-
   name_act(a, g, "unregister"),
   (rescues_argument_error(f) ; rescues_argument_error(g)).
 
+// The loser's answer is a value — the start's spec can fail:
+// {:error, {:already_started, pid}} — and nothing reads it on its way
+// back to where the lookup decided: the start's result is not used
+// where it is made, and every function that returns it on is one whose
+// result nothing in the program uses, the meeting function not among
+// them. Whichever start won, the name is registered, and what follows
+// goes by the name (ssh_dbg:switch/2 → start/1, which drops
+// start_server/0's gen_server:start). Only a named start: a start_child
+// hides its name in the child spec, and an unnamed child's "loser" is a
+// second process; a Registry.register loser is a process left
+// unregistered. A start that raises for the loser (register/2,
+// start_supervised!) is not this shape either.
+.decl act_callee(act: symbol, callee: symbol)
+
+act_callee(a, cat(m, ":", n, "/", to_string(ar))) :-
+  name_act(a, _, _),
+  remote_call(a, _, m, n, ar).
+
+.decl act_result_read(act: symbol)
+
+act_result_read(a) :- name_act(a, _, _), site_depends(_, _, "site", a).
+act_result_read(a) :- name_act(a, _, _), call_decided(_, _, "site", a).
+act_result_read(a) :- name_act(a, _, _), call_arg_depends(_, _, _, "site", a).
+
+.decl act_returned_by(act: symbol, func: symbol)
+
+act_returned_by(a, g) :- name_act(a, _, _), returns_depends(g, "site", a).
+act_returned_by(a, h) :- act_returned_by(a, g), returns_depends(h, "call", g).
+
+.decl result_used(func: symbol)
+
+result_used(g) :- act_returned_by(_, g), site_depends(_, _, "call", g).
+result_used(g) :- act_returned_by(_, g), call_decided(_, _, "call", g).
+result_used(g) :- act_returned_by(_, g), call_arg_depends(_, _, _, "call", g).
+
+.decl loser_dropped(meet: symbol, act: symbol)
+
+loser_dropped(f, a) :-
+  names.meets(f, _, a, _, _, _, _),
+  name_act(a, _, api),
+  (api = "start" ; api = "start_link" ; api = "start_via"),
+  act_callee(a, callee),
+  callee_returns(callee, "can_fail"),
+  !act_result_read(a),
+  !act_returned_by(a, f),
+  !returned_and_used(a).
+
+.decl returned_and_used(act: symbol)
+
+returned_and_used(a) :- act_returned_by(a, g), result_used(g).
+
 .init create_runs = RunsConcurrently
 
 create_runs.seed(f) :- names.meets(f, _, _, _, _, _, _).
@@ -185,4 +242,5 @@ registry_race(mod, f, lookup_api, create_api, key_source, key, check, act) :-
   (create_api != "start_child" ; checked = "checked"),
   function_def(f, mod, _, _, _),
   !loser_taken(f, act),
+  !loser_dropped(f, act),
   !create_runs.single_process(f).
