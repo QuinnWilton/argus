@@ -92,8 +92,11 @@ test that enumerates the analyses. A program outside `priv/dl` is still
 read on every call.
 
 The closed-issue corpus caches the facts of each checkout beside it
-(`.argus-facts/<digest>/facts`), keyed by the beams, the argus code and
-Datalog programs, the runtime and the solver; `Argus.Corpus.analyze/2`
+(`.argus-facts/<digest>/facts`), keyed by the beams, the code and
+Datalog that extraction reaches (`Argus.Corpus.engine_modules/0`: the
+pipeline, the extractors and what they call through beam_spy and ctf,
+the analyses' extractor declarations, stage 0's includes — not a
+finding's prose or a rule), the runtime and the solver; `Argus.Corpus.analyze/2`
 takes the pair and side and solves over the cache. Extraction was over
 90% of a large tree's analysis and its inputs never move between runs.
 `Argus.CorpusTest` analyzes each checkout once, `ARGUS_CORPUS_JOBS` (default

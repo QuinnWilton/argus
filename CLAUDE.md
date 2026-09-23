@@ -42,8 +42,9 @@ those frameworks need.
   the fix. `Argus.CorpusTest` runs it as part of `mix test`, cloning and
   compiling each tree once into `ARGUS_CORPUS_DIR` (default
   `~/.cache/argus/corpus`) and caching each tree's facts beside it,
-  keyed by the beams, the argus code and rules, the runtime and the
-  solver, so a warm run only solves; `mix test --exclude corpus` skips
+  keyed by the beams, the code and Datalog extraction reaches
+  (`Argus.Corpus.engine_modules/0` — not prose or rules), the runtime
+  and the solver, so a warm run only solves; `mix test --exclude corpus` skips
   it, `ARGUS_CORPUS_ONLY=redix#334` narrows it, `ARGUS_CORPUS_JOBS` sets
   how many checkouts are analyzed at once (default 4), `mix argus.corpus
   fetch` warms the cache and `mix argus.corpus tally` counts every title

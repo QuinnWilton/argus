@@ -23,10 +23,10 @@ defmodule Argus.Corpus do
   The facts extracted from a checkout are cached beside it, in
   `.argus-facts/<digest>/facts`, so a warm run costs only the solves.
   Extraction is most of the cost of a large tree and its inputs never
-  move between runs: the digest covers the beams, the argus code and
-  Datalog programs (`engine_digest/0`), the runtime and the solver, so
-  a change to any of them misses, and a stale entry is pruned when a
-  fresh one is installed.
+  move between runs: the digest covers the beams, the code and Datalog
+  that extraction reaches (`engine_digest/0`), the runtime and the
+  solver, so a change to any of them misses, and a stale entry is
+  pruned when a fresh one is installed.
 
   The project's `elixir:` requirement is relaxed so an old tree builds on
   the current toolchain; a pair may name an `elixir:` version instead,
@@ -123,9 +123,14 @@ defmodule Argus.Corpus do
 
   @doc """
   A digest of everything on argus's side that decides what facts a beam
-  yields: the compiled argus code, the Datalog programs under `priv/dl`
-  (stage 0 is derived into the facts), the Elixir and ERTS versions the
-  extraction runs on, and the solver's version. Computed once per VM.
+  yields: the compiled code of `engine_modules/0`, what each analysis
+  declares it extracts with, the Datalog stage 0 derives the call graph
+  with, the OTP and Elixir the extraction runs on, and the solver's
+  version. Computed once per VM.
+
+  Narrower than the whole of argus on purpose: a finding's prose, a
+  rule, the corpus harness itself change without moving a fact, and a
+  digest over all of them would re-extract every checkout on each edit.
   """
   @spec engine_digest() :: String.t()
   def engine_digest do
@@ -237,27 +242,118 @@ defmodule Argus.Corpus do
     |> Base.encode16(case: :lower)
   end
 
+  @doc """
+  The modules whose code the facts depend on: every module a remote
+  call reaches from the extraction's entry points — `Argus.Analysis`,
+  `Argus.Pipeline`, every `Argus.Extractors` module and every extractor
+  an analysis declares — through this project and its dependencies
+  (beam_spy's disassembly, ctf's literals), stopping at OTP and Elixir,
+  whose versions the digest carries instead. Dynamic dispatch is not a
+  remote call, which is why the extractors are roots and not merely
+  reached; the analyses that name them are not in the set, only their
+  declarations are, as data.
+  """
+  @spec engine_modules() :: [module()]
+  def engine_modules do
+    extractors_declared =
+      Enum.flat_map(Argus.Analysis.builtin_analysis_modules(), & &1.extractors())
+
+    extractors_shipped =
+      for mod <- Application.spec(:panoptes, :modules),
+          String.starts_with?(Atom.to_string(mod), "Elixir.Argus.Extractors."),
+          do: mod
+
+    roots = [Argus.Analysis, Argus.Pipeline] ++ extractors_declared ++ extractors_shipped
+
+    roots
+    |> reachable(%{})
+    |> Enum.sort()
+  end
+
+  defp reachable([], seen), do: Map.keys(seen)
+
+  defp reachable([mod | rest], seen) do
+    if Map.has_key?(seen, mod) or not digested?(mod) do
+      reachable(rest, seen)
+    else
+      {:ok, {^mod, [imports: imports]}} =
+        :beam_lib.chunks(String.to_charlist(beam_of(mod)), [:imports])
+
+      called = for {callee, _fun, _arity} <- imports, uniq: true, do: callee
+      reachable(called ++ rest, Map.put(seen, mod, true))
+    end
+  end
+
+  # A module of this project or a dependency; OTP's and Elixir's own are
+  # covered by their versions, and a consolidated protocol is the build's
+  # dispatch table, not code that shapes a fact.
+  defp digested?(mod) do
+    case :code.which(mod) do
+      path when is_list(path) ->
+        path = List.to_string(path)
+
+        not String.starts_with?(path, List.to_string(:code.root_dir())) and
+          not String.starts_with?(path, elixir_root()) and
+          "consolidated" not in Path.split(path)
+
+      _not_a_file ->
+        false
+    end
+  end
+
+  defp elixir_root, do: :elixir |> :code.lib_dir() |> List.to_string() |> Path.dirname()
+
+  defp beam_of(mod), do: mod |> :code.which() |> List.to_string()
+
   defp compute_engine_digest do
-    ebin = Application.app_dir(:panoptes, "ebin")
-    priv_dl = Application.app_dir(:panoptes, "priv/dl")
+    declarations =
+      Argus.Analysis.builtin_analysis_modules()
+      |> Enum.map(&{&1.name(), &1.extractors()})
+      |> Enum.sort()
 
-    files =
-      Enum.sort(
-        Path.wildcard(Path.join(ebin, "*")) ++
-          Enum.filter(Path.wildcard(Path.join(priv_dl, "**")), &File.regular?/1)
-      )
+    {:ok, all} = Argus.Analysis.set(:all)
 
-    files
-    |> Enum.reduce(:crypto.hash_init(:sha256), fn file, hash ->
+    engine_modules()
+    |> Enum.reduce(:crypto.hash_init(:sha256), fn mod, hash ->
       hash
-      |> :crypto.hash_update(Path.basename(file))
-      |> :crypto.hash_update(File.read!(file))
+      |> :crypto.hash_update(Atom.to_string(mod))
+      |> :crypto.hash_update(File.read!(beam_of(mod)))
+    end)
+    |> :crypto.hash_update(:erlang.term_to_binary({declarations, Enum.sort(all)}))
+    |> then(fn hash ->
+      Enum.reduce(stage0_programs(), hash, fn file, hash ->
+        hash
+        |> :crypto.hash_update(Path.basename(file))
+        |> :crypto.hash_update(File.read!(file))
+      end)
     end)
     |> :crypto.hash_update(System.version())
+    |> :crypto.hash_update(System.otp_release())
     |> :crypto.hash_update(:erlang.system_info(:version) |> List.to_string())
     |> :crypto.hash_update(souffle_version())
     |> :crypto.hash_final()
     |> Base.encode16(case: :lower)
+  end
+
+  # Stage 0 and everything it includes, transitively, resolved the way
+  # Souffle resolves an include: relative to the including file.
+  defp stage0_programs do
+    walk_includes([Argus.Analysis.stage0_rules_path()], [])
+  end
+
+  defp walk_includes([], seen), do: Enum.reverse(seen)
+
+  defp walk_includes([file | rest], seen) do
+    if file in seen do
+      walk_includes(rest, seen)
+    else
+      included =
+        ~r/^\.include\s+"([^"]+)"/m
+        |> Regex.scan(File.read!(file))
+        |> Enum.map(fn [_, rel] -> Path.expand(rel, Path.dirname(file)) end)
+
+      walk_includes(included ++ rest, [file | seen])
+    end
   end
 
   defp souffle_version do
