@@ -6,6 +6,17 @@
   (`2.5 (64-bit words)`). It recorded the first line of `souffle
   --version`, which is a rule of dashes, so upgrading the solver never
   invalidated a memoized solve.
+- Warm runs no longer serve findings from rules or extractors argus has
+  since changed. The fingerprint keyed on the argus app version, which
+  a rule or extractor commit does not move (and a path dependency never
+  does), so a warm `mix compile` kept reporting what the old rules
+  found until `--force`. `Scry.Fingerprint` now digests the argus and
+  scry ebins into `:env_fingerprint` (any code change re-extracts), and
+  each analysis's Datalog — its rules file, everything it includes, and
+  the solver version — into a new `:rules_digest` input: a rule edit
+  re-solves only the analyses whose programs contain the edited file,
+  and re-extracts nothing. A solver upgrade re-solves without
+  re-extracting.
 - `mix compile` from an umbrella root no longer crashes with "umbrellas
   have no app": `compile.scry` is recursive, so Mix runs it inside each
   child that lists it (per-app analysis, as documented) instead of once

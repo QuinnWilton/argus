@@ -13,9 +13,13 @@ defmodule Scry.Frontend do
     produces an equal value and advances nothing.
   - `:module_set` input — `:all => sorted [module]`, the project's
     analyzed modules.
-  - `:env_fingerprint` input — `:all =>` toolchain/rule-environment map
-    (`Scry.Runner` builds it); `:high` durability so an upgrade
+  - `:env_fingerprint` input — `:all =>` toolchain map
+    (`Scry.Fingerprint.env/0`); `:high` durability so an upgrade
     invalidates the whole graph.
+  - `:rules_digest` input — analysis (or `:stage0`) `=>` a digest of
+    the Datalog it runs (`Scry.Fingerprint.rules/1`); a rule edit
+    re-solves the analyses whose programs it touched and re-extracts
+    nothing.
   - `:module_beam` query — beam bytes, read from disk. The read itself is
     untracked; the tracked signal is the `:beam_meta` value, and roux's
     early cutoff backdates downstream work when re-read bytes compare
@@ -41,6 +45,7 @@ defmodule Scry.Frontend do
   definput(:beam_meta, durability: :medium)
   definput(:module_set, durability: :medium)
   definput(:env_fingerprint, durability: :high)
+  definput(:rules_digest, durability: :high)
 
   # The project's root directory, for a beam whose recorded source path
   # belongs to the machine that compiled it (a moved checkout, a Docker

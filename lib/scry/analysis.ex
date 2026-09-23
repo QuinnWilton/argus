@@ -70,7 +70,9 @@ defmodule Scry.Analysis do
   frontend contract this module demands, by name: the queries
   `:module_beam`, `:module_map`, and `:file_of`, and the input
   `:env_fingerprint` (inputs are the frontend's to declare — this module
-  defines queries only).
+  defines queries only). The `:rules_digest` input (per analysis, and
+  `:stage0`) is optional: a frontend that never sets it reads it as
+  `nil` and relies on its `:env_fingerprint` to move when rules do.
   """
 
   use Roux.Query
@@ -215,6 +217,15 @@ defmodule Scry.Analysis do
   @spec prior_relations() :: [atom()]
   def prior_relations, do: Enum.map(Argus.Schema.layer_3(), & &1.name)
 
+  # The frontend's digest of the Datalog `key` runs — nil for a frontend
+  # that does not set it (planchette), recorded as a dependency either
+  # way, so a later `Input.set` invalidates.
+  defp rules_digest(db, key) do
+    Runtime.input(db, :rules_digest, key)
+  rescue
+    Roux.Input.NotSetError -> nil
+  end
+
   # `Runtime.input/3` records the dependency before it reads, so an
   # unset key is a recorded edge that a later `Input.set` invalidates;
   # the read itself raises, and that is the empty relation.
@@ -248,6 +259,7 @@ defmodule Scry.Analysis do
   # revalidates it for the cost of an atomics read.
   defquery :analysis_input_relations, key: analysis, returns: [atom()] do
     _fingerprint = Runtime.input!(db, :env_fingerprint, :all)
+    _rules = rules_digest(db, analysis)
 
     case Argus.Analysis.input_relations(analysis) do
       {:ok, relations} -> to_relation_atoms(relations)
@@ -269,6 +281,8 @@ defmodule Scry.Analysis do
       call_tag: [tuple()],
       unconditional_call_edge: [tuple()]
     } do
+    _fingerprint = Runtime.input!(db, :env_fingerprint, :all)
+    _rules = rules_digest(db, :stage0)
     symbols = Symbols.for_db(db)
 
     entries =
@@ -322,6 +336,11 @@ defmodule Scry.Analysis do
   end
 
   defquery :souffle_solve, key: analysis, returns: {:ok, map()} | {:error, term()} do
+    # The solve is a function of the rules as much as of the facts, and a
+    # rule edit need not change which relations the analysis reads — so
+    # this reads the digest itself rather than through the projection.
+    _fingerprint = Runtime.input!(db, :env_fingerprint, :all)
+    _rules = rules_digest(db, analysis)
     %{dir: dir} = Runtime.query(db, :analysis_facts_dir, analysis)
 
     # The scratch window is shared across processes (an LSP session and a
@@ -365,6 +384,10 @@ defmodule Scry.Analysis do
   # per-analysis grain means an analysis whose output rows are unchanged
   # stops propagation even when others changed.
   defquery :findings, key: analysis, returns: {:ok, [map()]} | {:error, term()} do
+    # Argus builds the findings: its code moving must rebuild them even
+    # when the solved rows backdate.
+    _fingerprint = Runtime.input!(db, :env_fingerprint, :all)
+
     case Runtime.query(db, :souffle_solve, analysis) do
       {:ok, outputs} ->
         module = analysis_module!(analysis)
@@ -382,6 +405,10 @@ defmodule Scry.Analysis do
   defquery :analysis_diagnostics,
     key: analysis,
     returns: {:ok, %{optional(String.t()) => [map()]}} | {:error, term()} do
+    # Scry's own resolution: its code moving must re-resolve even when
+    # the findings backdate.
+    _fingerprint = Runtime.input!(db, :env_fingerprint, :all)
+
     case Runtime.query(db, :findings, analysis) do
       {:ok, findings} ->
         resolved =

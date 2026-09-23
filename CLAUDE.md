@@ -34,10 +34,16 @@ Two layers over one `Roux.Database`:
    **query names are the ABI** (roux dispatches by name; memo keys are
    {query_name, key}).
 2. **Analysis** (`Scry.Analysis`): never rename a query, never change a
-   key or value shape without planchette in the same review. The argus
-   schema version rides `env_fingerprint`, which `module_extraction`
-   reads, so an argus upgrade re-extracts instead of serving memoized
-   rows from the old encoder. The LSP-only surface —
+   key or value shape without planchette in the same review.
+   `Scry.Fingerprint` stamps what the graph depends on beyond the
+   beams: `env_fingerprint` (runtime, schema, and digests of the argus
+   and scry ebins — read by `module_extraction`, stage 0, the solves and
+   findings, so any argus code change re-extracts) and a per-analysis
+   `rules_digest` (the analysis's `.dl` and its transitive includes,
+   plus the souffle version — read by `analysis_input_relations`,
+   `stage0_facts` and `souffle_solve`, so a rule edit re-solves exactly
+   the analyses it touched and re-extracts nothing). A frontend that
+   never sets `rules_digest` (planchette) reads it as nil. The LSP-only surface —
    supervision tree, flowistry focus/slicing, the debug twin — lives in
    planchette (`Planchette.SupTree`, `Planchette.Focus`) and registers
    its own queries next to these.

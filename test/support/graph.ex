@@ -59,6 +59,12 @@ defmodule Scry.Test.Graph do
     :ok = Roux.Lang.register_module(db, Scry.Analysis)
     :ok = Input.set(db, :env_fingerprint, :all, Keyword.get(opts, :fingerprint, %{test: 1}))
     :ok = Input.set(db, :project_root, :all, File.cwd!())
+
+    {:ok, all} = Argus.Analysis.set(:all)
+
+    for {key, digest} <- Scry.Fingerprint.rules(all),
+        do: :ok = Input.set(db, :rules_digest, key, digest)
+
     Enum.each(Scry.Analysis.prior_relations(), &(:ok = Input.set(db, :prior_rows, &1, [])))
     sync!(db, paths)
     db

@@ -12,9 +12,8 @@ defmodule Scry.Runner do
   When souffle is missing, no solve is demanded at all: a memoized
   `{:error, :souffle_not_found}` would only heal when an input above it
   changed, so the degraded path never lets one into the manifest. The
-  souffle version rides `:env_fingerprint` as the second line of
-  defense — installing (or upgrading) souffle moves the fingerprint and
-  invalidates anything that slipped through.
+  souffle version rides every `:rules_digest` (`Scry.Fingerprint`), so
+  upgrading the solver re-solves without re-extracting.
   """
 
   alias Roux.Database
@@ -72,10 +71,13 @@ defmodule Scry.Runner do
 
       souffle? = Argus.Souffle.available?()
 
-      fingerprint = Scry.Fingerprint.env(souffle?)
+      fingerprint = Scry.Fingerprint.env()
       fingerprint_changed? = Input.fetch(db, :env_fingerprint, :all) != {:ok, fingerprint}
       :ok = Input.set(db, :env_fingerprint, :all, fingerprint)
       :ok = Input.set(db, :project_root, :all, File.cwd!())
+
+      # Only solves read the rules, and none is demanded without a solver.
+      rules_changed? = souffle? and set_rules(db, config.analyses)
 
       {findings_by_file, degraded} =
         if souffle? do
@@ -89,7 +91,7 @@ defmodule Scry.Runner do
 
       changed? =
         force? or prior_sources == %{} or changed != [] or removed != [] or
-          fingerprint_changed?
+          fingerprint_changed? or rules_changed?
 
       # Written even when analyses degraded: the input syncs stay warm.
       # Skipped when nothing moved: no input changed, so no revision
@@ -107,6 +109,18 @@ defmodule Scry.Runner do
       Database.shutdown(db)
       Roux.Runtime.drop_cached_values(db)
     end
+  end
+
+  # Sets each demanded analysis's rules digest (and stage 0's); true when
+  # any moved.
+  defp set_rules(db, analyses) do
+    analyses
+    |> Scry.Fingerprint.rules()
+    |> Enum.reduce(false, fn {key, digest}, changed? ->
+      moved? = Input.fetch(db, :rules_digest, key) != {:ok, digest}
+      :ok = Input.set(db, :rules_digest, key, digest)
+      changed? or moved?
+    end)
   end
 
   # The modules whose extraction memo cannot be a hit — every module on a
