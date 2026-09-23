@@ -4,8 +4,10 @@ defmodule Scry.Fingerprint do
   the driver into two inputs.
 
   - `:env_fingerprint` (`env/0`) — everything an extraction depends on:
-    the runtime, the fact schema, and the argus and scry code itself,
-    digested from their ebins. Argus ships extractor and findings
+    the runtime, the fact schema, the argus and scry code itself,
+    digested from their ebins, and the applications on the code path
+    (`Argus.Specs.environment_digest/0`), whose specs extraction reads
+    for every remote callee. Argus ships extractor and findings
     changes without moving its version or schema (and a path
     dependency never moves its version at all), so the version alone
     let a warm manifest serve rows the current code would not compute.
@@ -30,15 +32,17 @@ defmodule Scry.Fingerprint do
           argus_code: String.t(),
           scry: String.t(),
           scry_code: String.t(),
-          argus_schema: pos_integer()
+          argus_schema: pos_integer(),
+          specs_environment: String.t()
         }
 
   @typedoc "A `:rules_digest` key: an analysis, or the shared stage 0."
   @type rules_key :: atom()
 
   @doc """
-  The environment fingerprint: runtime versions, the argus schema, and
-  digests of the argus and scry code on the code path.
+  The environment fingerprint: runtime versions, the argus schema,
+  digests of the argus and scry code, and of the applications on the
+  code path.
   """
   @spec env() :: env()
   def env do
@@ -49,7 +53,10 @@ defmodule Scry.Fingerprint do
       argus_code: app_code_digest(:panoptes),
       scry: app_vsn(:scry),
       scry_code: app_code_digest(:scry),
-      argus_schema: Argus.Schema.version()
+      argus_schema: Argus.Schema.version(),
+      # Extraction reads remote callees' specs off the code path; this
+      # names every application there, and its version.
+      specs_environment: Argus.Specs.environment_digest()
     }
   end
 

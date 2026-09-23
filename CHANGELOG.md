@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Typespec facts (argus schema 54) stay current incrementally. A
+  module's extraction records the specs of the remote functions it
+  calls, read off the code path; the environment fingerprint now
+  includes `Argus.Specs.environment_digest/0` (every application on the
+  code path, with its version), so a dependency or OTP upgrade
+  re-extracts. When the callee is one of the project's own modules, a
+  caller's extraction now depends on the callee being there: removing
+  it re-extracts its callers, whose memoized rows otherwise went on
+  describing the removed module's specs.
 - The analyses solve concurrently, up to one per scheduler: each solve
   is its own Souffle process, and everything upstream of the fact
   directories is computed once for whichever demands it first. A

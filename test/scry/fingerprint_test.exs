@@ -152,5 +152,9 @@ defmodule Scry.FingerprintTest do
       assert env.argus_code =~ ~r/^[0-9a-f]{32}$/
       assert env.scry_code =~ ~r/^[0-9a-f]{32}$/
     end
+
+    test "the environment carries the applications the specs are read from" do
+      assert Scry.Fingerprint.env().specs_environment == Argus.Specs.environment_digest()
+    end
   end
 end

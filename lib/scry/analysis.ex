@@ -108,10 +108,14 @@ defmodule Scry.Analysis do
 
     case Runtime.query(db, :module_beam, module) do
       {:ok, beam} ->
-        case take_prewarmed(module, beam) do
-          {:ok, result} -> result
-          :none -> extract(module, beam, Symbols.for_db(db))
-        end
+        result =
+          case take_prewarmed(module, beam) do
+            {:ok, result} -> result
+            :none -> extract(module, beam, Symbols.for_db(db))
+          end
+
+        :ok = track_installed_callees(db, module, result)
+        result
 
       :external ->
         {:error, {:external, module}}
@@ -119,6 +123,51 @@ defmodule Scry.Analysis do
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  # The specs extractor reads a remote callee's specs off the code path
+  # (`spec_return(_, _, "installed")`). When the callee is a module of
+  # this program, those rows describe another module's beam: the rules
+  # ignore them while the callee is analyzed (its own rows win), and read
+  # them once it is gone — so the caller must be extracted again when the
+  # callee leaves. An edge to the callee's `file_of` says exactly that:
+  # it moves when the callee appears, leaves or moves, and backdates
+  # otherwise. The module set is read without an edge; a module added
+  # later is not one these rows can describe stale.
+  defp track_installed_callees(db, module, {:ok, facts}) do
+    rows = Map.get(facts, :spec_return, [])
+
+    if rows != [] do
+      symbols = Symbols.for_db(db)
+
+      program = db |> program_modules() |> Map.new(&{inspect(&1), &1})
+
+      rows
+      |> Enum.flat_map(fn row ->
+        with "installed" <- Argus.Symbols.resolve(symbols, elem(row, 2)),
+             {:ok, %{module: name}} <-
+               Argus.InstrId.parse_func(Argus.Symbols.resolve(symbols, elem(row, 0))),
+             {:ok, callee} when callee != module <- Map.fetch(program, name) do
+          [callee]
+        else
+          _ -> []
+        end
+      end)
+      |> Enum.uniq()
+      |> Enum.each(&Runtime.query(db, :file_of, &1))
+    end
+
+    :ok
+  end
+
+  defp track_installed_callees(_db, _module, {:error, _}), do: :ok
+
+  # The frontend's `:module_set`, read without an edge; empty for a
+  # frontend that has none (planchette), which then tracks no callee.
+  defp program_modules(db) do
+    Runtime.untracked(fn -> Runtime.input(db, :module_set, :all) end)
+  rescue
+    Roux.Input.NotSetError -> []
   end
 
   # The digest of what a module contributes to the program's relations:
