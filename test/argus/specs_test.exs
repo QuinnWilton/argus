@@ -85,6 +85,13 @@ defmodule Argus.SpecsTest do
       assert {:ok, %{{:total, 0} => [:total, :constant]}} = Specs.of_beam(binary)
     end
 
+    test "reads what installed/1 reads, from an Elixir or an Erlang beam" do
+      for mod <- [GenServer, Supervisor, :ets, :gen_server] do
+        assert mod |> :code.which() |> List.to_string() |> Specs.of_beam() ==
+                 {:ok, Specs.installed(mod)}
+      end
+    end
+
     test "is :error for something that is not a beam" do
       assert Specs.of_beam("/no/such/file.beam") == :error
     end

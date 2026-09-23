@@ -78,9 +78,9 @@ defmodule Argus.Specs do
   @spec of_beam(Path.t() | binary(), :ets.tid() | nil) :: {:ok, returns()} | :error
   def of_beam(beam, memo \\ nil) when is_binary(beam) do
     with {:ok, binary} <- read_beam(beam),
-         {:ok, specs} <- fetch(fn -> Code.Typespec.fetch_specs(binary) end) do
-      types = local_types(binary)
-      {:ok, reduce(specs, types, memo)}
+         {:ok, forms} <- fetch(fn -> typespec_forms(binary) end) do
+      specs = for {:attribute, _, :spec, value} <- forms, do: value
+      {:ok, reduce(specs, types_of(forms), memo)}
     end
   end
 
@@ -203,6 +203,30 @@ defmodule Argus.Specs do
     end
   rescue
     _ -> :error
+  end
+
+  # The typespec forms `Code.Typespec.fetch_specs/1` and `fetch_types/1`
+  # read, from one decoding of the debug-info chunk where each of them
+  # decodes it again (an Elixir module's chunk carries its whole
+  # definition): an Elixir module's specs as its chunk stores them, an
+  # Erlang module's abstract code.
+  defp typespec_forms(binary) do
+    with [_ | _] = info <- :beam_lib.info(binary),
+         {:ok, {_, [debug_info: {:debug_info_v1, backend, data}]}} <-
+           :beam_lib.chunks(binary, [:debug_info]) do
+      case data do
+        {:elixir_v1, %{}, specs} -> {:ok, specs}
+        _ -> backend.debug_info(:erlang_v1, info[:module], data, [])
+      end
+    end
+  end
+
+  # `local_types/1` over forms already read.
+  defp types_of(forms) do
+    for {:attribute, _, kind, {name, body, args}} <- forms,
+        kind in [:opaque, :type],
+        into: %{},
+        do: {{name, length(args)}, {args, body}}
   end
 
   defp local_types(module_or_binary) do
