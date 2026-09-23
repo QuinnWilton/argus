@@ -459,6 +459,13 @@ or of unknown arity, is left to the closure-following starts table
 rather than named `M:f/-1`; `proc_lib:start_monitor`'s `{result, ref}`
 is not modelled.
 
+**Changed.** `calls.dl`'s `reaches_module` closes only over modules a
+supervisor starts (`child_subtree`), the only targets
+`stateful_module_dep`'s one consumer, coupling, asks about, and that
+relation's module-level clause reads a precomputed `module_client_call`
+rather than joining every function of the target. Output identical;
+coupling's solve of this clause over a deps tree 0.49s to 0.05s.
+
 **Changed.** Points-to (`clientlib/processes.dl`) solves the same rows in
 about half the time: its recursive rules carry `.plan`s that start each
 semi-naive version from its new tuples, where the source order scanned

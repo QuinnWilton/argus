@@ -11,7 +11,7 @@
 //   sync_dep(func, mod) / async_dep(func, mod)               — direct
 //   reaches_sync_dep(func, mod) / reaches_async_dep(func, mod) — transitive
 //   sync_dep_timeout(func, mod, timeout_ms) / reaches_sync_dep_timeout
-//   module_reaches(from_mod, to_mod, witness)
+//   module_reaches(from_mod, to_mod, witness)  — to_mod a supervised module
 //   stateful_module_dep(from_mod, to_mod, witness)
 //   stateful_module_dep_kind(from_mod, to_mod, kind)
 //
@@ -378,9 +378,16 @@ reaches_sync_dep_timeout(f, m, ms) :-
 // `func` reaches (through at least one call) some function of `mod`.
 .decl reaches_module(func: symbol, mod: symbol)
 
+// Asked only of a module some supervisor starts (coupling's siblings,
+// the one consumer of stateful_module_dep), so only those are targets.
+.decl module_dep_target(mod: symbol)
+
+module_dep_target(m) :- child_subtree(_, _, m).
+
 reaches_module(f, m) :-
   call_edge(f, g),
-  function_def(g, m, _, _, _).
+  function_def(g, m, _, _, _),
+  module_dep_target(m).
 
 reaches_module(f, m) :-
   call_edge(f, g),
@@ -429,8 +436,13 @@ stateful_module_dep(from_mod, to_mod, f) :-
 
 stateful_module_dep(from_mod, to_mod, w) :-
   module_reaches(from_mod, to_mod, w),
-  function_def(h, to_mod, _, _, _),
-  (sync_call(h, _) ; async_cast(h, _)).
+  module_client_call(to_mod).
+
+// Some function of `mod` makes a call or cast.
+.decl module_client_call(mod: symbol)
+
+module_client_call(m) :- function_def(h, m, _, _, _), sync_call(h, _).
+module_client_call(m) :- function_def(h, m, _, _, _), async_cast(h, _).
 
 // The strongest mechanism the dependency is provable through: "call"
 // when any path waits on a reply, "cast" when every path is one-way. A
