@@ -33,6 +33,11 @@ defmodule Mix.Tasks.Compile.Scry do
 
   use Mix.Task.Compiler
 
+  # Mix runs a non-recursive compiler once at an umbrella's root, where
+  # there is no app and no ebin to read. Recursive, it runs inside each
+  # child that lists it, against that child's own beams.
+  @recursive true
+
   @sidecar "compile.scry.diagnostics"
 
   @impl Mix.Task.Compiler

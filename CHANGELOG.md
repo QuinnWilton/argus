@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `mix compile` from an umbrella root no longer crashes with "umbrellas
+  have no app": `compile.scry` is recursive, so Mix runs it inside each
+  child that lists it (per-app analysis, as documented) instead of once
+  at the root.
 - A finding or related frame that closes a span (`to_instr`, argus
   schema 43) renders as a bracket from its anchor line to the end line —
   a guarded call through its `catch` — and the JSON report carries
