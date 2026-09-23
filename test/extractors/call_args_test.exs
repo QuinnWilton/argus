@@ -60,6 +60,27 @@ defmodule Argus.Extractors.CallArgsTest do
       assert value == "Argus.Test.Fixtures.CallArgsLiteral"
     end
 
+    test "a literal binary or integer is spelled as its key identity is" do
+      [{_mod, bin}] =
+        Code.compile_string("""
+        defmodule Argus.CallArgsTest.Literals do
+          def read(t), do: :ets.lookup(t, "users")
+          def nth(t), do: :ets.lookup(t, 42)
+        end
+        """)
+
+      {:ok, data} = Argus.Pipeline.Disassemble.disassemble_path(bin)
+      facts = CallArgs.extract(data)
+
+      values = for [_caller, ":ets:lookup/2", "1", value] <- facts[:call_arg], do: value
+      assert Enum.sort(values) == [~s("users"), "42"]
+
+      {"literal", spelled} =
+        Argus.Extractor.Helpers.key_identity([{:move, {:literal, "users"}, {:x, 1}}], 1, {:x, 1})
+
+      assert spelled in values
+    end
+
     test "emits literal atom value for :ets.lookup table name" do
       facts = extract(Argus.Test.Fixtures.CallArgsLiteral)
       ets_args = call_args_for(facts, ":ets:lookup/2")

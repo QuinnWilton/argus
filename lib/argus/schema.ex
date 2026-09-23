@@ -1813,7 +1813,8 @@ defmodule Argus.Schema do
       {:caller, :symbol, "calling function ID"},
       {:callee, :symbol, "callee function ID (mod:func/arity)"},
       {:arg_pos, :number, "0-based argument position"},
-      {:value, :symbol, "resolved value: literal atom string, or 'dynamic'"}
+      {:value, :symbol,
+       "resolved value: a literal atom, binary or integer as key identities spell it, or 'dynamic'"}
     ],
     doc: """
     Resolved argument value at a call site. Enables interprocedural \

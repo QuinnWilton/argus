@@ -6,8 +6,9 @@ defmodule Argus.Extractors.CallArgs do
   the module, split by what the argument turned out to be:
 
   - `call_arg(caller, callee, arg_pos, value)` when the argument
-    resolves to a literal atom string (e.g. `":my_pool"`), or to
-    `"dynamic"` when resolution fails entirely.
+    resolves to a literal atom, binary or integer, spelled as
+    `Helpers.key_identity/4` spells it (`":my_pool"`, `"\"users\""`,
+    `"42"`), or to `"dynamic"` when resolution fails entirely.
   - `call_arg_forward(caller, callee, arg_pos, fwd_pos)` when the
     argument IS the caller's own parameter, forwarded through.
     `resolved_arg` in `clientlib/calls.dl` walks these backwards to propagate
@@ -30,7 +31,13 @@ defmodule Argus.Extractors.CallArgs do
   @behaviour Argus.Extractor
 
   import Argus.Extractor.Helpers,
-    only: [add_fact: 3, each_call: 3, map_field_of: 3, resolve_to_arg_or_atom: 3]
+    only: [
+      add_fact: 3,
+      each_call: 3,
+      key_identity: 3,
+      map_field_of: 3,
+      resolve_to_arg_or_atom: 3
+    ]
 
   alias Argus.Pipeline.Normalize
 
@@ -87,15 +94,27 @@ defmodule Argus.Extractors.CallArgs do
         add_fact(facts, :call_arg, [ctx.func_id, callee_id, to_string(pos), str])
 
       :dynamic ->
-        facts = add_fact(facts, :call_arg, [ctx.func_id, callee_id, to_string(pos), "dynamic"])
+        # A literal binary or integer, spelled as the key identities the
+        # rules join it with are: a key handed to a helper is the same key.
+        case key_identity(ctx.instrs, ctx.idx, {:x, pos}) do
+          {"literal", value} ->
+            add_fact(facts, :call_arg, [ctx.func_id, callee_id, to_string(pos), value])
 
-        case map_field_of(ctx.instrs, ctx.idx, {:x, pos}) do
-          {:ok, key} ->
-            add_fact(facts, :call_arg_field, [ctx.func_id, callee_id, to_string(pos), key])
-
-          :dynamic ->
-            facts
+          _ ->
+            dynamic_arg(facts, ctx, callee_id, pos)
         end
+    end
+  end
+
+  defp dynamic_arg(facts, ctx, callee_id, pos) do
+    facts = add_fact(facts, :call_arg, [ctx.func_id, callee_id, to_string(pos), "dynamic"])
+
+    case map_field_of(ctx.instrs, ctx.idx, {:x, pos}) do
+      {:ok, key} ->
+        add_fact(facts, :call_arg_field, [ctx.func_id, callee_id, to_string(pos), key])
+
+      :dynamic ->
+        facts
     end
   end
 end

@@ -28,6 +28,11 @@ or rename by the 0.17 entry below.
 
 ### Fact schema and extraction
 
+**Fixed.** `call_arg` records a literal binary or integer argument, spelled
+as `Helpers.key_identity/4` spells it (`"\"users\""`, `"42"`), where it
+said `"dynamic"`: a key handed to a helper now joins the key identities
+the check-then-act rules lift through `call_arg`.
+
 **Fixed.** A `start_child` whose supervisor comes from another module's
 function (`Other.via_for(conf)`) is `"dynamic"`, not the via name of a
 local function that happens to share the name and arity.
