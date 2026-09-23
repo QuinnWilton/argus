@@ -413,7 +413,7 @@ defmodule Argus.Findings do
             |> Map.update(:related, [], &(&1 ++ frames_for(evidence, joins, relation, row)))
             |> Map.put(:analysis, asked_name)
             |> Map.put(:concern, mod.name())
-            |> render_generated_names()
+            |> render_names()
 
           {[finding | findings], failures}
       end
@@ -459,12 +459,16 @@ defmodule Argus.Findings do
     ]
   end
 
-  # `-ensure_connections/2-fun-0-/2` is the compiler's name for a closure;
-  # a reader wants the function it was written in. Done here, once, so no
-  # builder has to remember: every piece of prose a finding carries.
+  # The facts spell a function `Mod:fun/2` and a closure
+  # `Mod:-fun/2-fun-0-/1`; a reader writes `Mod.fun/2`, and wants the
+  # function a closure was written in. Done here, once, so no builder has
+  # to remember: every piece of prose a finding carries. An instruction
+  # ID (`Mod:fun/2#7`) is left as it is — it is not a name — and so is a
+  # raw column (`site=Mod:fun/2`) in a generic finding.
   @generated_name ~r/([A-Za-z0-9_.:]+):-([A-Za-z0-9_?!]+)\/(\d+)-\S*?-\/\d+/
+  @function_id ~r/(?<![\w.:@=])(:[a-z][A-Za-z0-9_@]*|[A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*):([a-z_][A-Za-z0-9_?!]*)\/(\d+)(?![\d#])/
 
-  defp render_generated_names(finding) do
+  defp render_names(finding) do
     finding
     |> Map.update!(:title, &plain_names/1)
     |> Map.update!(:detail, &plain_names/1)
@@ -481,6 +485,7 @@ defmodule Argus.Findings do
     text
     |> String.replace(@generated_name, "an anonymous function in \\1:\\2/\\3")
     |> String.replace(~r/(^|\. )an anonymous function/, "\\1An anonymous function")
+    |> String.replace(@function_id, "\\1.\\2/\\3")
   end
 
   # How each finding relation joins its evidence, read once per build

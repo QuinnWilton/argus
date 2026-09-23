@@ -258,6 +258,16 @@ unredacted-secret title reads `MyApp.User.password_hash is printed by
 inspect/1` (was `MyApp.User.:password_hash`). Consumers matching titles
 re-key: the corpus pairs are, encore's goldens are not yet.
 
+Prose spells functions one way. Builders interpolated the facts' raw
+function IDs (`Madrigal.Wait:await_downfall/2 leaves a monitor live...`)
+beside names already spelled with `call_name/1` (`GenServer.call/2`);
+every finding's title, detail, anchor label, help and frame labels now
+render a function ID as `Mod.fun/2` (`:gen_server.call/3` for Erlang),
+and a closure as "an anonymous function in Mod.fun/2", in the one place
+`build/2` already rewrote closure names. Instruction IDs and a generic
+finding's raw columns are left as they are. Titles that named a
+function change with it.
+
 ### Fixed
 
 A transaction body was paired with every repo its function opened a

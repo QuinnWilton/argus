@@ -132,7 +132,7 @@ defmodule Argus.FindingsProseTest do
       fun = "Redix.Cluster.Manager:-ensure_connections/2-fun-0-/2"
       [finding] = Findings.build(Closures, %{"closure_row" => [[fun]]})
 
-      plain = "an anonymous function in Redix.Cluster.Manager:ensure_connections/2"
+      plain = "an anonymous function in Redix.Cluster.Manager.ensure_connections/2"
       assert finding.title == "An #{String.slice(plain, 3..-1//1)} starts a child"
 
       assert finding.detail ==
@@ -152,7 +152,21 @@ defmodule Argus.FindingsProseTest do
         |> Enum.sort_by(& &1.title)
         |> Enum.take(1)
 
-      assert finding.title == "An anonymous function in M:run/1 starts a child"
+      assert finding.title == "An anonymous function in M.run/1 starts a child"
+    end
+
+    test "function IDs read as calls; instruction IDs and other colons are left alone" do
+      for {facts, prose} <- [
+            {"Madrigal.Wait:await_downfall/2", "Madrigal.Wait.await_downfall/2"},
+            {":gen_server:call/3", ":gen_server.call/3"},
+            {"M:f/0#4", "M:f/0#4"},
+            {"{:erpc, :noconnection}", "{:erpc, :noconnection}"},
+            {":erpc.call/4", ":erpc.call/4"},
+            {"via:Registry", "via:Registry"}
+          ] do
+        [finding] = Findings.build(Closures, %{"closure_row" => [[facts]]})
+        assert finding.title == "#{prose} starts a child", facts
+      end
     end
   end
 end
