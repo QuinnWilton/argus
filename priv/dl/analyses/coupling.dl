@@ -49,9 +49,18 @@ direct_coupling_site(w, callee_mod, id) :-
   coupling(_, _, callee_mod, _, w),
   call_site(id, w, callee_mod, _, _).
 
+// A call the dependency is resolved at (sync_site: the call itself, or
+// the witness's call into a helper that makes it), before any GenServer
+// call of the witness.
 direct_coupling_site(w, callee_mod, id) :-
   coupling(_, _, callee_mod, _, w),
   !call_site(_, w, callee_mod, _, _),
+  sync_site(w, callee_mod, id).
+
+direct_coupling_site(w, callee_mod, id) :-
+  coupling(_, _, callee_mod, _, w),
+  !call_site(_, w, callee_mod, _, _),
+  !sync_site(w, callee_mod, _),
   call_site(id, w, "GenServer", _, _).
 
 coupling_site(w, callee_mod, id) :-

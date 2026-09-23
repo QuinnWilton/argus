@@ -104,11 +104,19 @@ init_safe_cross_supervisor(child, dep) :-
 // init is not control-dependent on a branch.
 .decl unconditional_sync_call_in_init(mod: symbol, callee: symbol)
 
+// The call making the dependency is itself unconditional — not some
+// other GenServer.call in init.
 unconditional_sync_call_in_init(mod, callee) :-
   init_function(mod, func),
-  unconditional_call_edge(func, gc),
-  (gc = "GenServer:call/2" ; gc = "GenServer:call/3"),
-  sync_dep(func, callee).
+  sync_site(func, callee, id),
+  !conditional_call(id).
+
+unconditional_sync_call_in_init(mod, callee) :-
+  init_function(mod, func),
+  tag_resolved_site(id, func, "call", callee),
+  sync_call_site(id, func, t, _),
+  unresolved_target(t),
+  !conditional_call(id).
 
 unconditional_sync_call_in_init(mod, callee) :-
   init_function(mod, func),
@@ -187,13 +195,13 @@ handler_blocks(mod, h, site) :-
 handler_blocks(mod, h, site) :-
   handler_function(mod, h),
   remote_call(site, h, "GenServer", "call", _),
-  sync_call_timeout(h, _, -1).
+  sync_call_site(site, h, _, -1).
 
 .init infinite_call_reach = CallReach
 
 infinite_call_reach.seed(g, site) :-
   remote_call(site, g, "GenServer", "call", _),
-  sync_call_timeout(g, _, -1).
+  sync_call_site(site, g, _, -1).
 
 handler_blocks(mod, h, site) :-
   handler_function(mod, h),

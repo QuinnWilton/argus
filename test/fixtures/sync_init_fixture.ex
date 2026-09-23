@@ -213,3 +213,67 @@ defmodule Argus.Test.Fixtures.StarterAppTree do
     Supervisor.init(children, strategy: :one_for_all)
   end
 end
+
+defmodule Argus.Test.Fixtures.MixedInitServer do
+  @moduledoc "Calls one peer on every init and another only when asked."
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts) do
+    if opts[:sync] do
+      GenServer.call(Argus.Test.Fixtures.WorkerA, :ping)
+    end
+
+    GenServer.call(Argus.Test.Fixtures.WorkerB, :ping)
+    {:ok, %{}}
+  end
+end
+
+defmodule Argus.Test.Fixtures.InfiniteWatcher do
+  @moduledoc """
+  A singleton whose handler waits on a peer twice: once with the default
+  timeout and once forever. Only the second is what blocks it.
+  """
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  def watch(pid), do: GenServer.call(__MODULE__, {:watch, pid})
+
+  @impl true
+  def init(_), do: {:ok, %{}}
+
+  @impl true
+  def handle_call({:watch, pid}, _from, state) do
+    :pong = GenServer.call(Argus.Test.Fixtures.WorkerA, :ping)
+    :ok = GenServer.call(Argus.Test.Fixtures.WorkerB, {:watch, pid}, :infinity)
+    {:reply, :ok, state}
+  end
+end
+
+defmodule Argus.Test.Fixtures.InfiniteWatchedPool do
+  @moduledoc "Started by users, not by the app tree; its init waits on the singleton."
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts) do
+    :ok = Argus.Test.Fixtures.InfiniteWatcher.watch(self())
+    {:ok, opts}
+  end
+end
+
+defmodule Argus.Test.Fixtures.InfiniteAppTree do
+  @moduledoc false
+  use Supervisor
+
+  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts) do
+    Supervisor.init([{Argus.Test.Fixtures.InfiniteWatcher, []}], strategy: :one_for_one)
+  end
+end

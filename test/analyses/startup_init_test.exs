@@ -25,6 +25,11 @@ defmodule Argus.Analyses.StartupInitTest do
         drop: [:phase, :kind, :ordering, :sup]
       )
 
+  defp sync_call_sites(modules) do
+    {:ok, facts} = Argus.Pipeline.extract(modules, extractors: [Argus.Extractors.ApiCalls])
+    Map.get(facts, :sync_call_site, [])
+  end
+
   describe "blocks_on_peer: init" do
     test "detects sync call in init/1 for fixture" do
       skip_without_souffle()
@@ -87,6 +92,29 @@ defmodule Argus.Analyses.StartupInitTest do
       assert op_site =~ "BlockingWatcher:handle_info/2#"
     end
 
+    test "the blocking handler's site is its :infinity call, not every call" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.InfiniteAppTree,
+        Argus.Test.Fixtures.InfiniteWatcher,
+        Argus.Test.Fixtures.InfiniteWatchedPool,
+        Argus.Test.Fixtures.WorkerA,
+        Argus.Test.Fixtures.WorkerB
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :startup)
+
+      # The handler calls WorkerA with the default timeout and WorkerB
+      # with :infinity; only the second call blocks it.
+      assert [[_mod, _dep, op_site, _handler]] = blocking_servers(results)
+
+      [call_b] =
+        for [id, _, "Argus.Test.Fixtures.WorkerB", "-1"] <- sync_call_sites(modules), do: id
+
+      assert op_site == call_b
+    end
+
     test "a handler that only starts children is bounded and not reported" do
       skip_without_souffle()
 
@@ -140,6 +168,28 @@ defmodule Argus.Analyses.StartupInitTest do
 
       assert kinds["Argus.Test.Fixtures.ConditionalInitServer"] == "conditional"
       assert kinds["Argus.Test.Fixtures.SyncInitServer"] == "unconditional"
+    end
+
+    test "each peer's call is judged by its own branch" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.MixedInitServer,
+        Argus.Test.Fixtures.WorkerA,
+        Argus.Test.Fixtures.WorkerB
+      ]
+
+      assert {:ok, results} = Argus.analyze(modules, :startup)
+
+      kinds =
+        for ["Argus.Test.Fixtures.MixedInitServer", callee, kind] <- sync_calls(results),
+            into: %{},
+            do: {callee, kind}
+
+      # WorkerA's call is behind the branch; the unconditional call to
+      # WorkerB used to make it look unconditional too.
+      assert kinds["Argus.Test.Fixtures.WorkerA"] == "conditional"
+      assert kinds["Argus.Test.Fixtures.WorkerB"] == "unconditional"
     end
 
     test "filters safe sibling ordering (dep starts before caller)" do

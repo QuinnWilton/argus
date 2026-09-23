@@ -272,6 +272,101 @@ defmodule Argus.Test.Fixtures.PidFlow do
     end
   end
 
+  defmodule SafeCall do
+    @moduledoc "A helper every server calls its peer through."
+    def safe_call(pid, msg), do: GenServer.call(pid, msg)
+    def call_peer(state), do: GenServer.call(state.peer, :ping)
+  end
+
+  defmodule UserA do
+    @moduledoc """
+    Calls its private peer through the shared helpers. UserB does the
+    same with another peer, which calls UserA back by name: only a helper
+    whose parameter is every caller's pid at once makes that a cycle.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.PidFlow.{SafeCall, TargetA}
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+
+    @impl true
+    def init(:ok) do
+      {:ok, peer} = TargetA.start_link()
+      {:ok, %{peer: peer}}
+    end
+
+    @impl true
+    def handle_call(:go, _from, s), do: {:reply, SafeCall.safe_call(s.peer, :ping), s}
+    def handle_call(:field, _from, s), do: {:reply, SafeCall.call_peer(s), s}
+  end
+
+  defmodule UserB do
+    @moduledoc false
+    use GenServer
+
+    alias Argus.Test.Fixtures.PidFlow.{SafeCall, TargetB}
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+
+    @impl true
+    def init(:ok) do
+      {:ok, peer} = TargetB.start_link()
+      {:ok, %{peer: peer}}
+    end
+
+    @impl true
+    def handle_call(:go, _from, s), do: {:reply, SafeCall.safe_call(s.peer, :ping), s}
+    def handle_call(:field, _from, s), do: {:reply, SafeCall.call_peer(s), s}
+  end
+
+  defmodule TargetA do
+    @moduledoc false
+    use GenServer
+
+    def start_link, do: GenServer.start_link(__MODULE__, :ok)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:ping, _from, s), do: {:reply, :pong, s}
+  end
+
+  defmodule TargetB do
+    @moduledoc false
+    use GenServer
+
+    def start_link, do: GenServer.start_link(__MODULE__, :ok)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:ping, _from, s),
+      do: {:reply, GenServer.call(Argus.Test.Fixtures.PidFlow.UserA, :go), s}
+  end
+
+  defmodule Timed do
+    @moduledoc """
+    Waits on its peer forever, and on itself with the default timeout:
+    the peer's dependency carries the peer call's timeout.
+    """
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+
+    @impl true
+    def init(:ok) do
+      {:ok, peer} = Argus.Test.Fixtures.PidFlow.TargetA.start_link()
+      {:ok, %{peer: peer}}
+    end
+
+    @impl true
+    def handle_call(:go, _from, s), do: {:reply, GenServer.call(s.peer, :ping, :infinity), s}
+    def handle_call(:me, _from, s), do: {:reply, GenServer.call(self(), :go), s}
+  end
+
   defmodule Quiet do
     @moduledoc "Starts with a computed module, apply, and a pid from a library call: no process to name."
     def applied(m), do: apply(m, :start_link, [])

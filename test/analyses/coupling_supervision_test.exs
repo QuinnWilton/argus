@@ -82,7 +82,37 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
       assert dependency_rows(base_facts("permanent")) == []
     end
 
-    defp dependency_rows(facts) do
+    test "a dependency through a pid is anchored at the call that makes it" do
+      skip_without_souffle()
+
+      # P's handler makes two GenServer calls: #5 to a process nobody can
+      # name, #9 to the S it started. The finding points at #9, not at
+      # whichever GenServer call of the witness came first.
+      facts =
+        "transient"
+        |> base_facts()
+        |> Map.merge(%{
+          function_def: [["P:handle_call/3", "P", "handle_call", "3", "1", "1"]],
+          sync_call: [["P:handle_call/3", "dynamic"]],
+          call_site: [
+            ["P:handle_call/3#5", "P:handle_call/3", "GenServer", "call", "2"],
+            ["P:handle_call/3#9", "P:handle_call/3", "GenServer", "call", "2"]
+          ],
+          process_start: [
+            ["P:handle_call/3#2", "P:handle_call/3", "server P:handle_call/3#2", "server", "S"]
+          ],
+          pid_call: [
+            ["P:handle_call/3#9", "P:handle_call/3", "call", "proc", "server P:handle_call/3#2"]
+          ]
+        })
+
+      assert [["Sup", "P", "S", "restart_isolation", "call", _, "P:handle_call/3", site | _]] =
+               dependency_rows(facts, "restart_isolation")
+
+      assert site == "P:handle_call/3#9"
+    end
+
+    defp dependency_rows(facts, reason \\ "restart_policy") do
       dir =
         Path.join(
           System.tmp_dir!(),
@@ -97,7 +127,7 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
 
         results
         |> Map.get("sibling_dependency", [])
-        |> Enum.filter(&(Enum.at(&1, 3) == "restart_policy"))
+        |> Enum.filter(&(Enum.at(&1, 3) == reason))
       after
         File.rm_rf(dir)
       end

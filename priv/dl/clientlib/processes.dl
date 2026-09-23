@@ -105,7 +105,18 @@ field_pts(o, sel, x) :-
 
 returns_pts(f, x) :- pid_return(f, k, s), source_pts(f, k, s, x).
 
-param_pts(g, k, x) :- pid_arg(_, f, g, k, _, sk, s), source_pts(f, sk, s, x).
+// A parameter is filled by the process that runs the function as an
+// entry — a server start's init argument, a spawned function's arguments,
+// a child spec's argument, a closure's environment, and (below) a
+// callback's state and message — or by a caller. Both are in param_pts;
+// entry_pts holds the first kind alone, which is all a callback's or a
+// spawned function's own calls can be resolved against.
+.decl entry_pts(func: symbol, pos: symbol, x: symbol)
+
+entry_pts(g, k, x) :- pid_arg(_, f, g, k, via, sk, s), via != "call", source_pts(f, sk, s, x).
+
+param_pts(g, k, x) :- entry_pts(g, k, x).
+param_pts(g, k, x) :- pid_arg(_, f, g, k, "call", sk, s), source_pts(f, sk, s, x).
 
 named_pid(n, p) :- pid_register(_, f, n, k, s), source_pts(f, k, s, p), process(p).
 
@@ -164,23 +175,147 @@ state_pts(m, x) :-
   state_slot(tag, n, sel),
   field_pts(t, sel, x).
 
-param_pts(f, k, x) :- state_in(m, f, k), state_pts(m, x).
+entry_pts(f, k, x) :- state_in(m, f, k), state_pts(m, x).
 
 // ── What the pids reach ─────────────────────────────────────────────
 
-// The GenServer-style call, cast or send at `id` in `func` may target
-// `proc`.
-.decl call_site_target(id: symbol, func: symbol, api_kind: symbol, proc: symbol)
+// Context-insensitive parameters make a shared helper the meeting point
+// of every caller's pid: `def safe_call(pid, msg), do: GenServer.call(pid,
+// msg)` would call every server any caller hands it, and every caller of
+// it would reach all of them. So a call whose target is a parameter is not
+// resolved in the helper; it is a summary — "this function's parameter k
+// (or its field sel) becomes the target of the call at `site`" — lifted
+// to each caller, where the pid is known, and the dependency is the
+// caller's, anchored at its call into the helper. The summaries are
+// finite (functions × parameters × sites), so the lifting follows any
+// depth of helpers without a bound; a field of a field of a parameter
+// falls back to the context-insensitive parameter.
+//
+// Only a caller's own parameter lifts further; a callback's state and
+// message, a spawned function's and init/1's arguments and a closure's
+// environment are resolved where they are (entry_pts), since their
+// "caller" is the process machinery, which waits on nothing.
+.decl targets_param(func: symbol, pos: symbol, api_kind: symbol, site: symbol)
+.decl targets_field(func: symbol, pos: symbol, sel: symbol, api_kind: symbol, site: symbol)
 
-call_site_target(id, f, kind, p) :-
+targets_param(g, k, kind, id) :- pid_call(id, g, kind, "param", k).
+targets_param(f, j, kind, id) :-
+  pid_arg(_, f, g, k, "call", "param", j),
+  targets_param(g, k, kind, id).
+
+targets_field(g, k, sel, kind, id) :-
+  pid_call(id, g, kind, "load", l),
+  pid_load(g, l, sel, "param", k).
+
+targets_field(f, j, sel, kind, id) :-
+  pid_arg(_, f, g, k, "call", "param", j),
+  targets_field(g, k, sel, kind, id).
+
+// A load whose base is a parameter: resolved through its summary, not in
+// place (unless the parameter is an entry's).
+.decl param_load(func: symbol, load: symbol)
+
+param_load(f, l) :- pid_load(f, l, _, "param", _).
+
+// A field of what a source points to, a map's unknown-key field included.
+.decl source_field_pts(func: symbol, src_kind: symbol, src: symbol, sel: symbol, x: symbol)
+
+source_field_pts(f, sk, s, sel, x) :-
+  targets_field(g, _, sel, _, _),
+  pid_arg(_, f, g, _, "call", sk, s),
+  source_pts(f, sk, s, o),
+  field_pts(o, sel, x).
+
+source_field_pts(f, sk, s, sel, x) :-
+  targets_field(g, _, sel, _, _),
+  pid_arg(_, f, g, _, "call", sk, s),
+  source_pts(f, sk, s, o),
+  pid_object(_, o, "map", _, _),
+  field_pts(o, "*", x).
+
+// `func` waits on (call), casts to (cast) or sends to (info) `proc`:
+// through the call, cast or send at `site`, which is in `func` itself or
+// in a helper `func` hands the pid to at `anchor` (the site a finding
+// about `func` points at). `anchor` = `site` when the call is `func`'s own.
+.decl process_call(func: symbol, anchor: symbol, site: symbol, api_kind: symbol, proc: symbol)
+
+// A target `func` resolves itself.
+process_call(f, id, id, kind, p) :-
   pid_call(id, f, kind, sk, s),
+  sk != "param",
+  sk != "load",
   source_pts(f, sk, s, p),
   process(p).
 
-// A call or cast in `func` may target `proc`.
+process_call(f, id, id, kind, p) :-
+  pid_call(id, f, kind, "load", l),
+  !param_load(f, l),
+  source_pts(f, "load", l, p),
+  process(p).
+
+// A field read from a source other than a parameter.
+process_call(f, id, id, kind, p) :-
+  pid_call(id, f, kind, "load", l),
+  pid_load(f, l, sel, bk, bs),
+  bk != "param",
+  source_pts(f, bk, bs, o),
+  field_pts(o, sel, p),
+  process(p).
+
+// An entry's own parameter, or a field of it.
+process_call(f, id, id, kind, p) :-
+  pid_call(id, f, kind, "param", k),
+  entry_pts(f, k, p),
+  process(p).
+
+process_call(f, id, id, kind, p) :-
+  pid_call(id, f, kind, "load", l),
+  pid_load(f, l, sel, "param", k),
+  entry_pts(f, k, o),
+  field_pts(o, sel, p),
+  process(p).
+
+// A helper's parameter, resolved at the caller that knows the pid.
+process_call(f, a, id, kind, p) :-
+  pid_arg(a, f, g, k, "call", sk, s),
+  sk != "param",
+  targets_param(g, k, kind, id),
+  source_pts(f, sk, s, p),
+  process(p).
+
+process_call(f, a, id, kind, p) :-
+  pid_arg(a, f, g, k, "call", "param", j),
+  targets_param(g, k, kind, id),
+  entry_pts(f, j, p),
+  process(p).
+
+// A helper reading a field of its parameter: the caller's term's field.
+process_call(f, a, id, kind, p) :-
+  pid_arg(a, f, g, k, "call", sk, s),
+  sk != "param",
+  targets_field(g, k, sel, kind, id),
+  source_field_pts(f, sk, s, sel, p),
+  process(p).
+
+process_call(f, a, id, kind, p) :-
+  pid_arg(a, f, g, k, "call", "param", j),
+  targets_field(g, k, sel, kind, id),
+  entry_pts(f, j, o),
+  field_pts(o, sel, p),
+  process(p).
+
+// The call, cast or send at `id` in `func` may target `proc`, whoever
+// supplies it.
+.decl call_site_target(id: symbol, func: symbol, api_kind: symbol, proc: symbol)
+
+call_site_target(id, g, kind, p) :-
+  process_call(_, _, id, kind, p),
+  pid_call(id, g, kind, _, _).
+
+// `func` calls or casts to `proc`, itself or through a helper.
 .decl call_target(func: symbol, api_kind: symbol, proc: symbol)
 
-call_target(f, kind, p) :- call_site_target(_, f, kind, p).
+call_target(f, kind, p) :- process_call(f, _, _, kind, p).
 
 // ── Messages ────────────────────────────────────────────────────────
 
@@ -194,7 +329,7 @@ message_handler("call", "handle_call", 3).
 message_handler("cast", "handle_cast", 2).
 message_handler("info", "handle_info", 2).
 
-param_pts(h, "0", x) :-
+entry_pts(h, "0", x) :-
   pid_message(id, f, kind, sk, s),
   source_pts(f, sk, s, x),
   call_site_target(id, f, kind, p),

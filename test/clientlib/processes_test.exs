@@ -22,6 +22,12 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.Side,
     PidFlow.Relay,
     PidFlow.Subscriber,
+    PidFlow.SafeCall,
+    PidFlow.UserA,
+    PidFlow.UserB,
+    PidFlow.TargetA,
+    PidFlow.TargetB,
+    PidFlow.Timed,
     PidFlow.Quiet
   ]
 
@@ -74,7 +80,10 @@ defmodule Argus.Clientlib.ProcessesTest do
 
     assert ["Worker:ping/1", "0", "server Worker:start_link/1"] in unsited(r["param_pts"])
     assert ["Owner:relay/1", "0", "server Worker:start_link/1"] in unsited(r["param_pts"])
-    assert ["Worker:notify/1", "cast", "server Worker:start_link/1"] in unsited(r["call_target"])
+    # Owner.run hands the pid down two helpers to Worker.notify's cast: the
+    # cast is Owner.run's, not the helpers'.
+    assert ["Owner:run/0", "cast", "server Worker:start_link/1"] in unsited(r["call_target"])
+    refute Enum.any?(r["call_target"], &match?(["Worker:notify/1" | _], &1))
 
     assert ["Owner:across_a_call/0", "call", "server Owner:across_a_call/0"] in unsited(
              r["call_target"]
@@ -85,8 +94,40 @@ defmodule Argus.Clientlib.ProcessesTest do
     r = solve(tmp_dir, ~w(sync_dep async_dep))
 
     assert ["Owner:direct/0", "Worker"] in r["sync_dep"]
-    assert ["Worker:ping/1", "Worker"] in r["sync_dep"]
-    assert ["Worker:notify/1", "Worker"] in r["async_dep"]
+    assert ["Owner:run/0", "Worker"] in r["sync_dep"]
+    assert ["Owner:run/0", "Worker"] in r["async_dep"]
+  end
+
+  test "a helper's parameter is each caller's pid, not all of them", %{tmp_dir: tmp_dir} do
+    r = solve(tmp_dir, ~w(sync_dep process_call sync_site))
+    deps = for ["User" <> _ = f, m] <- r["sync_dep"], do: {f, m}
+
+    assert {"UserA:handle_call/3", "TargetA"} in deps
+    assert {"UserB:handle_call/3", "TargetB"} in deps
+    refute {"UserA:handle_call/3", "TargetB"} in deps
+    refute {"UserB:handle_call/3", "TargetA"} in deps
+    # Neither helper holds a dependency of its own.
+    refute Enum.any?(r["sync_dep"], &match?(["SafeCall:" <> _, _], &1))
+
+    # The dependency is anchored at UserA's call into the helper, and
+    # also names the helper's GenServer.call it comes down to.
+    for [f, anchor, site, "call", _p] <- r["process_call"], f == "UserA:handle_call/3" do
+      assert String.starts_with?(anchor, "UserA:handle_call/3#")
+      assert String.starts_with?(site, "SafeCall:")
+    end
+
+    assert Enum.any?(
+             r["sync_site"],
+             &match?(["UserA:handle_call/3", "TargetA", "UserA:" <> _], &1)
+           )
+  end
+
+  test "a dependency carries the timeout of the call that makes it", %{tmp_dir: tmp_dir} do
+    r = solve(tmp_dir, ~w(sync_dep_timeout))
+    timeouts = for ["Timed:handle_call/3", m, ms] <- r["sync_dep_timeout"], do: {m, ms}
+
+    assert {"TargetA", "-1"} in timeouts
+    refute {"TargetA", "5000"} in timeouts
   end
 
   test "self() and a server's state carry a peer's pid", %{tmp_dir: tmp_dir} do

@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 48
+  @schema_version 49
 
   # Layer 1: Module-level facts.
 
@@ -862,6 +862,22 @@ defmodule Argus.Schema do
       {:timeout_ms, :number, "timeout in ms (-1=infinity, 0=dynamic)"}
     ],
     doc: "GenServer.call timeout value at call site."
+  }
+
+  @sync_call_site %{
+    name: :sync_call_site,
+    layer: 2,
+    fields: [
+      {:id, :instr_id, "instruction ID of the call"},
+      {:caller_func, :symbol, "calling function ID"},
+      {:callee_mod, :symbol, "target GenServer module, or dynamic"},
+      {:timeout_ms, :number, "timeout in ms (-1=infinity, 0=dynamic)"}
+    ],
+    doc: """
+    A synchronous call's target and timeout at its site: what pairs a \
+    dependency with the timeout of the call that makes it, where \
+    sync_call_timeout says only that the function makes such a call.
+    """
   }
 
   @init_continues_to %{
@@ -2334,6 +2350,7 @@ defmodule Argus.Schema do
     @sync_call,
     @async_cast,
     @sync_call_timeout,
+    @sync_call_site,
     @sup_call,
     @callback_return,
     @callback_drops_from,

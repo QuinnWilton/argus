@@ -86,6 +86,34 @@ for memoising consumers only where a struct had its own.
 
 ### Process points-to
 
+**Added.** Schema 49. A call through a helper is the caller's dependency. A
+parameter is context-insensitive, so `def safe_call(pid, msg), do:
+GenServer.call(pid, msg)` called by two servers with two different peers
+used to call both peers, and every caller of it reached both (a false
+cycle when one peer called the other server back). A call whose target
+is a parameter, or a field of one, is now a summary lifted to each
+caller, where the pid is known: `clientlib/processes.dl`'s
+`process_call(func, anchor, site, api_kind, proc)` says `func` waits on
+(`call`), casts to (`cast`) or sends to (`info`) `proc` through the call
+at `site`, in `func` itself or in a helper `func` hands the pid to at
+`anchor`. The lifting follows any depth of helpers (the summaries are
+finite); a callback's state and message, a spawned function's and
+init/1's argument and a closure's environment are resolved where they
+are (`entry_pts`). `sync_dep`, `async_dep`, `sync_site` and
+`call_target` read it, so the dependency and its anchor are the
+caller's.
+
+`sync_call_site(id, caller_func, callee_mod, timeout_ms)` (ApiCalls):
+each synchronous call's target and timeout at its site. Rules that paired
+a function's calls with its timeouts or tags pair them by site now:
+`sync_dep_timeout` took the 5000 of a `GenServer.call(self(), ...)` for
+the `:infinity` call beside it, a tag attributed at one call resolved
+every unresolved call of the function (`tag_resolved_site`), startup's
+"unconditional" verdict took any unconditional GenServer.call in init/1
+for the one behind a branch, a blocking handler was anchored at every
+GenServer.call of a handler with one `:infinity` call, and coupling
+anchored a points-to dependency at the witness's first GenServer call.
+
 **Added.** Schema 48. Process points-to is field-sensitive: the terms that hold
 pids are objects too. `PidFlow` names each term by the instruction that
 built it (`put_map_*`, `put_tuple2`, `put_list`, `update_record`, a

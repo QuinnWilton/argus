@@ -1,8 +1,8 @@
 // Who waits on whom.
 //
-// Requires imports.dl, behaviours.dl and callbacks.dl. Reads the extracted
-// sync_call / async_cast / sync_call_timeout / call_arg / call_arg_forward
-// facts and answers one question in a few shapes: does this function, or
+// Requires imports.dl, behaviours.dl, callbacks.dl and processes.dl.
+// Reads the extracted sync_call / sync_call_site / async_cast /
+// sync_call_timeout / call_arg / call_arg_forward facts and answers one question in a few shapes: does this function, or
 // this module, synchronously depend on that module's process.
 //
 // Provides:
@@ -107,9 +107,10 @@ sync_dep(f, m) :-
 
 // A call whose target is a pid (sync_call says "dynamic") that the
 // points-to analysis follows back to a server started with m's
-// callbacks (processes.dl).
+// callbacks (processes.dl): f's own call, or a helper's that f hands
+// the pid to, which is f's dependency rather than the helper's.
 sync_dep(f, m) :-
-  call_target(f, "call", p),
+  process_call(f, _, _, "call", p),
   server_process(p, m).
 
 // The instruction in `func` that calls the project function `callee`:
@@ -128,12 +129,10 @@ call_instr(f, g, id) :-
 .decl sync_site(func: symbol, mod: symbol, id: symbol)
 
 sync_site(f, m, id) :-
-  sync_call(f, m),
-  call_site(id, f, "GenServer", "call", _).
-
-sync_site(f, m, id) :-
-  sync_call(f, m),
-  call_site(id, f, ":gen_server", "call", _).
+  sync_call_site(id, f, m, _),
+  m != "dynamic",
+  m != ":dynamic",
+  !match("via:.*", m).
 
 sync_site(f, m, id) :-
   genserver_sync_api(g, m),
@@ -142,7 +141,7 @@ sync_site(f, m, id) :-
   fm != m.
 
 sync_site(f, m, id) :-
-  call_site_target(id, f, "call", p),
+  process_call(f, id, _, "call", p),
   server_process(p, m).
 
 .decl async_dep(func: symbol, mod: symbol)
@@ -160,7 +159,7 @@ async_dep(f, m) :-
   fm != m.
 
 async_dep(f, m) :-
-  call_target(f, "cast", p),
+  process_call(f, _, _, "cast", p),
   server_process(p, m).
 
 // ── Resolution by message tag ──────────────────────────────────────────
@@ -253,11 +252,16 @@ referred_handler_count(fm, kind, tag, n) :-
   referred_handler(fm, kind, tag, _),
   n = count : { referred_handler(fm, kind, tag, _) }.
 
+// The call at `id` in `func` is attributed to `mod` by its tag.
+.decl tag_resolved_site(id: symbol, func: symbol, kind: symbol, mod: symbol)
+
 .decl tag_resolved_call(func: symbol, kind: symbol, mod: symbol)
 
+tag_resolved_call(func, kind, mod) :- tag_resolved_site(_, func, kind, mod).
+
 // By evidence: the caller's module refers to exactly one handler of the tag.
-tag_resolved_call(func, kind, mod) :-
-  call_tag(_, func, kind, tag),
+tag_resolved_site(id, func, kind, mod) :-
+  call_tag(id, func, kind, tag),
   function_def(func, fm, _, _, _),
   referred_handler(fm, kind, tag, mod),
   referred_handler_count(fm, kind, tag, 1),
@@ -265,8 +269,8 @@ tag_resolved_call(func, kind, mod) :-
 
 // By uniqueness: one handler in the whole program, for a tag specific
 // enough to name it, and no evidence pointing elsewhere.
-tag_resolved_call(func, kind, mod) :-
-  call_tag(_, func, kind, tag),
+tag_resolved_site(id, func, kind, mod) :-
+  call_tag(id, func, kind, tag),
   tag_handler(mod, kind, tag),
   tag_handler_count(kind, tag, 1),
   !generic_tag(tag),
@@ -281,8 +285,8 @@ tag_resolved_call(func, kind, mod) :-
 .decl tag_dep(func: symbol, mod: symbol)
 
 tag_dep(f, m) :-
-  tag_resolved_call(f, "call", m),
-  sync_call(f, t),
+  tag_resolved_site(id, f, "call", m),
+  sync_call_site(id, f, t, _),
   unresolved_target(t).
 
 .decl reaches_tag_dep(func: symbol, mod: symbol)
@@ -294,8 +298,8 @@ reaches_tag_dep(f, m) :-
   reaches_tag_dep(g, m).
 
 sync_dep(f, m) :-
-  tag_resolved_call(f, "call", m),
-  sync_call(f, t),
+  tag_resolved_site(id, f, "call", m),
+  sync_call_site(id, f, t, _),
   unresolved_target(t).
 
 async_dep(f, m) :-
@@ -335,10 +339,19 @@ sync_dep_timeout(f, m, ms) :-
   m != ":dynamic",
   !match("via:.*", m).
 
+// The timeout of the very call the tag attributes, not of any unresolved
+// call in the same function.
 sync_dep_timeout(f, m, ms) :-
-  tag_resolved_call(f, "call", m),
-  sync_call_timeout(f, t, ms),
+  tag_resolved_site(id, f, "call", m),
+  sync_call_site(id, f, t, ms),
   unresolved_target(t).
+
+// A call process points-to resolves, with its own timeout: the helper's
+// call when f hands the pid to one.
+sync_dep_timeout(f, m, ms) :-
+  process_call(f, _, site, "call", p),
+  server_process(p, m),
+  sync_call_site(site, _, _, ms).
 
 sync_dep_timeout(f, m, ms) :-
   call_edge(f, g),

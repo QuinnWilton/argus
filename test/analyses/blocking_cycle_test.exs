@@ -90,6 +90,20 @@ defmodule Argus.Analyses.BlockingCycleTest do
       end
     end
 
+    test "a helper shared by two servers does not join their peers" do
+      skip_without_souffle()
+
+      # UserA and UserB each call a private peer through SafeCall; TargetB
+      # calls UserA back by name. With the helper's parameter every
+      # caller's pid, UserA "called" TargetB too: a false cycle.
+      mods =
+        for m <- [SafeCall, UserA, UserB, TargetA, TargetB],
+            do: Module.concat(Argus.Test.Fixtures.PidFlow, m)
+
+      assert {:ok, results} = Argus.analyze(mods, :blocking)
+      assert results["call_cycle"] == []
+    end
+
     test "runs without error on module with no cycles" do
       skip_without_souffle()
 

@@ -22,7 +22,8 @@ defmodule Argus.Extractors.ApiCalls do
   ## Emitted facts
 
   - `sync_call`, `sync_call_timeout`, `async_cast`, `sup_call` — process
-    calls (GenServer, gen_statem, GenStage, Agent, gen_event, supervisors)
+    calls (GenServer, gen_statem, GenStage, Agent, gen_event, supervisors);
+    `sync_call_site` — each synchronous call's target and timeout, by site
   - `unsafe_atom_creation`, `unsafe_deserialization`, `code_execution`
   - `port_open`
   - `rpc_call`, `global_register`, `global_op`, `node_operation`,
@@ -129,23 +130,38 @@ defmodule Argus.Extractors.ApiCalls do
 
   @dets_ops ~w(open_file close lookup insert delete match_object select first next sync info)a
 
+  # A synchronous call's site row repeats what sync_call and
+  # sync_call_timeout say about the function, for the rules that must pair
+  # a call's target with its own timeout; its readers record no
+  # imprecision a second time.
   @table ((for mfa <- @sync_default_5000 do
              [
                {mfa, :sync_call, [:func, {:module_target, 0}]},
-               {mfa, :sync_call_timeout, [:func, {:module_target, 0}, {:const, "5000"}]}
+               {mfa, :sync_call_timeout, [:func, {:module_target, 0}, {:const, "5000"}]},
+               {mfa, :sync_call_site,
+                [:id, :func, {:untracked, {:module_target, 0}}, {:const, "5000"}]}
              ]
            end) ++
             (for mfa <- @sync_default_infinity do
                [
                  {mfa, :sync_call, [:func, {:module_target, 0}]},
-                 {mfa, :sync_call_timeout, [:func, {:module_target, 0}, {:const, "-1"}]}
+                 {mfa, :sync_call_timeout, [:func, {:module_target, 0}, {:const, "-1"}]},
+                 {mfa, :sync_call_site,
+                  [:id, :func, {:untracked, {:module_target, 0}}, {:const, "-1"}]}
                ]
              end) ++
             (for mfa <- @sync_explicit_timeout do
                [
                  {mfa, :sync_call, [:func, {:module_target, 0}]},
                  {mfa, :sync_call_timeout,
-                  [:func, {:module_target, 0}, {:timeout, 2, :sync_call_timeout}]}
+                  [:func, {:module_target, 0}, {:timeout, 2, :sync_call_timeout}]},
+                 {mfa, :sync_call_site,
+                  [
+                    :id,
+                    :func,
+                    {:untracked, {:module_target, 0}},
+                    {:untracked, {:timeout, 2, :sync_call_timeout}}
+                  ]}
                ]
              end) ++
             for(mfa <- @async, do: [{mfa, :async_cast, [:func, {:module_target, 0}]}]))
@@ -300,6 +316,7 @@ defmodule Argus.Extractors.ApiCalls do
       :rpc_call,
       :sup_call,
       :sync_call,
+      :sync_call_site,
       :sync_call_timeout,
       :unsafe_atom_creation,
       :unsafe_deserialization
@@ -343,6 +360,12 @@ defmodule Argus.Extractors.ApiCalls do
   # ── Readers ────────────────────────────────────────────────────────────
 
   defp read(:id, ctx, _mfa, facts, _rel), do: {InstrId.mint(ctx.func_id, ctx.idx), facts}
+
+  defp read({:untracked, reader}, ctx, mfa, facts, rel) do
+    {value, _tracked} = read(reader, ctx, mfa, facts, rel)
+    {value, facts}
+  end
+
   defp read(:func, ctx, _mfa, facts, _rel), do: {ctx.func_id, facts}
   defp read(:mod, _ctx, {m, _f, _a}, facts, _rel), do: {inspect(m), facts}
   defp read(:fun, _ctx, {_m, f, _a}, facts, _rel), do: {to_string(f), facts}
