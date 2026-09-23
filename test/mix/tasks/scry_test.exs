@@ -113,7 +113,7 @@ defmodule Mix.Tasks.ScryTest do
       refute output =~ "scry.coupling"
       assert output =~ "3 findings (1 warning, 2 infos)"
 
-      assert_raise Mix.Error, ~r/unknown analyses \[:nonsense\]/, fn ->
+      assert_raise Scry.ConfigError, ~r/unknown analyses \[:nonsense\]/, fn ->
         capture_io(:stderr, fn -> Mix.Task.rerun("scry", ["nonsense"]) end)
       end
     end)

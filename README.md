@@ -110,7 +110,7 @@ def project do
     # ...
     scry: [
       analyses: [:coupling, :mailbox],         # default: argus's :default set; sets like :security work too
-      severity: [mailbox: :error],             # per-analysis override
+      severity: [mailbox: :error],             # per-analysis (or per-set) override
       ignore: [modules: [~r/^MyApp\.Gen/], files: ["lib/legacy/**"]],
       include_deps: false,
       fail_on: :error,                         # :warning promotes findings to build failures

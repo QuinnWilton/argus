@@ -110,7 +110,7 @@ defmodule Mix.Tasks.Compile.ScryConfigTest do
       {copy, app} = checkout!([analyses: [:nonsense]], :depot_badcfg)
 
       Mix.Project.in_project(app, copy, fn _module ->
-        assert_raise Mix.Error, ~r/unknown analyses \[:nonsense\]/, fn -> compile!() end
+        assert_raise Scry.ConfigError, ~r/unknown analyses \[:nonsense\]/, fn -> compile!() end
       end)
     end
   end

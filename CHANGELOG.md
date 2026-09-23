@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Configuration errors raise `Scry.ConfigError` (printed like
+  `Mix.Error`, without a stacktrace) naming the entry's path
+  (`:scry → :severity → :mailbx`), what was expected, and the valid
+  name it most resembles (`did you mean :mailbox?`). Entries that were
+  silently ignored now fail: a severity keyed by an unknown analysis, a
+  severity level outside `:error`/`:warning`/`:info`, an unknown key
+  under `ignore:`. `ignore: :nope` and a non-keyword config no longer
+  crash with a `FunctionClauseError`. A severity keyed by a set
+  (`severity: [default: :error]`) applies to each member, and later
+  entries win.
 - A related frame's line is refined from its source fragment (argus
   `Findings.related/3` `at_source:`) as a finding's is. An unreceived
   message's "the receive it never matches" frame now sits on the
