@@ -40,7 +40,7 @@ defmodule Argus.Specs do
   answer per module for the life of the VM, keyed by the file it was read
   from, so a recompiled dependency is read again. Results that depend on
   the code path depend on the installed OTP, Elixir and dependencies:
-  `environment_digest/0` names them, for caches keyed on extraction
+  `environment_digest/1` names them, for caches keyed on extraction
   output.
   """
 
@@ -111,17 +111,34 @@ defmodule Argus.Specs do
   end
 
   @doc """
-  A digest of what `installed/1` can read: the name and version of every
-  application on the code path. Two VMs with equal digests read the same
-  specs for any module an application ships.
+  A digest of what `installed/1` can read: every application on the code
+  path, by name and version, and — for an application outside the
+  OTP and Elixir installations — by the contents of its beams. Two VMs
+  with equal digests read the same specs for any module an application
+  ships.
+
+  A version alone names the code of an installed OTP or Elixir
+  application, but not of a dependency: a path or git dependency, or an
+  umbrella sibling, changes its beams (and its specs) without moving its
+  version. Hashing those beams costs one read of each, done in parallel
+  and memoized per VM, code path and `:exclude` list.
+
+  ## Options
+
+    * `:exclude` — applications whose beams the digest leaves out (they
+      are still named, with their version). A caller that tracks some
+      applications' beams itself — the program under analysis, or its
+      own code — excludes them, so an edit to one does not move the
+      digest of everything else.
   """
-  @spec environment_digest() :: String.t()
-  def environment_digest do
-    key = {__MODULE__, :environment_digest, :code.get_path()}
+  @spec environment_digest(keyword()) :: String.t()
+  def environment_digest(opts \\ []) do
+    exclude = opts |> Keyword.get(:exclude, []) |> Enum.sort() |> Enum.uniq()
+    key = {__MODULE__, :environment_digest, :code.get_path(), exclude}
 
     case :persistent_term.get(key, nil) do
       nil ->
-        digest = compute_environment_digest()
+        digest = compute_environment_digest(exclude)
         :persistent_term.put(key, digest)
         digest
 
@@ -358,18 +375,76 @@ defmodule Argus.Specs do
 
   # ── Environment ─────────────────────────────────────────────────────
 
-  defp compute_environment_digest do
+  defp compute_environment_digest(exclude) do
+    stable = stable_roots()
+
     apps =
       for dir <- :code.get_path(),
-          app_file <- Path.wildcard(Path.join(List.to_string(dir), "*.app")),
+          dir = List.to_string(dir),
+          app_file <- Path.wildcard(Path.join(dir, "*.app")),
           {:ok, [{:application, app, props}]} <- [:file.consult(app_file)],
           uniq: true,
-          do: {app, to_string(Keyword.get(props, :vsn, ""))}
+          do: {app, to_string(Keyword.get(props, :vsn, "")), dir}
+
+    apps = Enum.sort(apps)
+
+    hashed =
+      for {app, _vsn, dir} <- apps,
+          app not in exclude,
+          not Enum.any?(stable, &under?(dir, &1)),
+          into: MapSet.new(),
+          do: dir
+
+    digests = beam_digests(hashed)
 
     apps
-    |> Enum.sort()
+    |> Enum.map(fn {app, vsn, dir} ->
+      if MapSet.member?(hashed, dir),
+        do: {app, vsn, Map.get(digests, dir, [])},
+        else: {app, vsn}
+    end)
+    |> Enum.uniq()
     |> :erlang.term_to_binary()
     |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)
+  end
+
+  # Where a version names the code: the OTP installation and Elixir's.
+  defp stable_roots do
+    otp = :code.root_dir() |> List.to_string() |> Path.expand()
+
+    case :code.lib_dir(:elixir) do
+      {:error, _} -> [otp]
+      dir -> [otp, dir |> List.to_string() |> Path.expand() |> Path.dirname()]
+    end
+  end
+
+  defp under?(dir, root) do
+    dir = Path.expand(dir)
+    dir == root or String.starts_with?(dir, root <> "/")
+  end
+
+  # Every beam in each of `ebins`, by name and content hash, as
+  # `%{ebin => [{name, hash}]}` sorted by name. The reads are the cost,
+  # so they run in parallel across every ebin at once.
+  defp beam_digests(ebins) do
+    ebins
+    |> Enum.flat_map(fn ebin ->
+      Enum.map(Path.wildcard(Path.join(ebin, "*.beam")), &{ebin, &1})
+    end)
+    |> Task.async_stream(
+      fn {ebin, beam} ->
+        content =
+          case File.read(beam) do
+            {:ok, binary} -> :crypto.hash(:sha256, binary)
+            {:error, reason} -> reason
+          end
+
+        {ebin, {Path.basename(beam), content}}
+      end,
+      timeout: :infinity
+    )
+    |> Enum.group_by(fn {:ok, {ebin, _}} -> ebin end, fn {:ok, {_, entry}} -> entry end)
+    |> Map.new(fn {ebin, entries} -> {ebin, Enum.sort(entries)} end)
   end
 end

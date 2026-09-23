@@ -127,7 +127,9 @@ defmodule Argus.Corpus do
   declares it extracts with, the Datalog stage 0 derives the call graph
   with, the OTP and Elixir the extraction runs on, the applications on
   the code path whose specs `Argus.Extractors.Specs` reads
-  (`Argus.Specs.environment_digest/0`), and the solver's version.
+  (`Argus.Specs.environment_digest/1`: their versions, and the beams of
+  every dependency outside OTP and Elixir except argus's own), and the
+  solver's version.
   Computed once per VM.
 
   Narrower than the whole of argus on purpose: a finding's prose, a
@@ -354,7 +356,10 @@ defmodule Argus.Corpus do
     |> :crypto.hash_update(System.otp_release())
     |> :crypto.hash_update(:erlang.system_info(:version) |> List.to_string())
     |> :crypto.hash_update(souffle_version())
-    |> :crypto.hash_update(Argus.Specs.environment_digest())
+    # Argus's own beams are left out: `engine_modules/0` above already
+    # names the ones extraction reaches, and the rest (prose, rules, this
+    # harness, the test fixtures) must not move the key.
+    |> :crypto.hash_update(Argus.Specs.environment_digest(exclude: [:panoptes]))
     |> :crypto.hash_final()
     |> Base.encode16(case: :lower)
   end

@@ -16,7 +16,7 @@ defmodule Argus.Extractors.Specs do
   them to stay quiet (a callee whose spec is `true` has no failure to
   check) or to confirm, never to report on their own. The installed rows
   depend on the code path the extraction runs with; a cache keyed on
-  extraction output folds in `Argus.Specs.environment_digest/0`.
+  extraction output folds in `Argus.Specs.environment_digest/1`.
   """
 
   @behaviour Argus.Extractor

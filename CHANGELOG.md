@@ -109,9 +109,13 @@ no spec, a `term()` return, a module shipped without specs like
 `:mnesia` — is unknown, never "cannot fail", and a spec is an
 unverified claim: rules use it only to stay quiet or to confirm. The
 installed rows depend on the applications on the code path;
-`Argus.Specs.environment_digest/0` names them and the corpus facts
-cache folds it in (a downstream cache keyed on extraction output should
-too). The pipeline's module data carries the disassembled `:beam`.
+`Argus.Specs.environment_digest/1` names them — by version, and each
+application outside the OTP and Elixir installations also by the
+contents of its beams, since a path dependency or an umbrella sibling
+changes its specs without moving its version (`exclude:` leaves out the
+applications a caller tracks itself) — and the corpus facts cache folds
+it in, excluding argus's own beams (a downstream cache keyed on
+extraction output should too). The pipeline's module data carries the disassembled `:beam`.
 
 **Added.** `failure.inconsistent_handling`'s `result_checked` belief skips a callee
 whose spec names no failure value: `:ets.new/2` returns a table or
