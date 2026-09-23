@@ -3,6 +3,34 @@ defmodule Argus.SchemaTest do
 
   alias Argus.Schema
 
+  describe "the concern modules" do
+    defp concerns do
+      for mod <- Application.spec(:panoptes, :modules),
+          String.starts_with?(Atom.to_string(mod), "Elixir.Argus.Schema."),
+          Code.ensure_loaded?(mod),
+          function_exported?(mod, :relations, 0),
+          do: mod
+    end
+
+    test "declare every relation once, with the flags in_process_only/0 reads" do
+      declared = Enum.flat_map(concerns(), & &1.relations())
+      names = Enum.map(declared, & &1.name)
+
+      assert Enum.sort(names) == Enum.sort(Schema.names())
+      assert names -- Enum.uniq(names) == []
+
+      flagged = for %{in_process: true, name: name} <- declared, do: name
+      assert Enum.sort(flagged) == Enum.sort(Schema.in_process_only())
+      assert Enum.all?(flagged, &(Schema.fetch(&1) |> elem(1) |> Map.fetch!(:layer) == 1))
+    end
+
+    test "each declares one layer" do
+      for mod <- concerns() do
+        assert [_layer] = mod.relations() |> Enum.map(& &1.layer) |> Enum.uniq(), inspect(mod)
+      end
+    end
+  end
+
   describe "all/0" do
     test "returns a non-empty list of relations" do
       assert [_ | _] = Schema.all()

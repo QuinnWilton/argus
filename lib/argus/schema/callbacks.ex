@@ -1,0 +1,72 @@
+defmodule Argus.Schema.Callbacks do
+  @moduledoc """
+  What a callback handles: the message tags it matches, whether it has a
+  catch-all, and the continues an `init/1` hands to `handle_continue/2`.
+
+  Layer 2 of `Argus.Schema`, which reads the relations from here.
+  """
+
+  @doc "The relations, in the order `Argus.Schema.all/0` lists them."
+  @spec relations() :: [Argus.Schema.declaration()]
+  def relations do
+    [
+      %{
+        name: :callback_tag,
+        layer: 2,
+        fields: [
+          {:func, :symbol, "the callback"},
+          {:callback, :symbol, "'handle_call' | 'handle_cast' | 'handle_info'"},
+          {:tag, :symbol, "an atom the callback discriminates on"}
+        ],
+        doc: """
+        A message tag a callback matches. Over-approximated: every atom \
+        compared anywhere in the body counts, without tracking registers. \
+        Consumers ask whether a tag is NOT handled, so over-approximating \
+        suppresses findings rather than inventing them.
+        """
+      },
+      %{
+        name: :callback_total,
+        layer: 2,
+        fields: [
+          {:func, :symbol, "the callback"},
+          {:callback, :symbol, "'handle_call' | 'handle_cast' | 'handle_info'"}
+        ],
+        doc: """
+        The callback has a catch-all clause, so no tag can fail to match. \
+        Established from the bytecode: a multi-clause function raises by \
+        jumping to its own `func_info` label, so nothing branching there means \
+        every input matches. A guarded catch-all is correctly NOT total.
+        """
+      },
+      %{
+        name: :init_continues_to,
+        layer: 2,
+        fields: [
+          {:mod, :symbol, "module whose init/1 (or any handler) returns {:continue, _}"},
+          {:tag, :symbol, "the continue tag (inspected atom or 'dynamic')"}
+        ],
+        doc: """
+        Records that a GenServer module returns `{:ok, _, {:continue, tag}}` from
+        `init/1` or `{:noreply, _, {:continue, tag}}` from any handler. The
+        deferred-startup-deadlock analysis uses this to identify modules whose
+        `handle_continue/2` clauses run during the startup phase.
+        """
+      },
+      %{
+        name: :handle_continue_clause,
+        layer: 2,
+        fields: [
+          {:mod, :symbol, "module containing the handle_continue clause"},
+          {:tag, :symbol, "the matched continue tag (inspected atom or 'dynamic')"},
+          {:func_id, :symbol, "function ID of the clause"}
+        ],
+        doc: """
+        A `handle_continue(tag, _)` clause defined by a module. The
+        deferred-startup-deadlock analysis pairs this with `init_continues_to`
+        to find handle_continue bodies reachable from a module's init.
+        """
+      }
+    ]
+  end
+end

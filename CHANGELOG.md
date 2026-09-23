@@ -131,6 +131,15 @@ sites and scans, the call matchers, the attributes, and the module
 data's accessors. The moved functions still answer in Helpers, and are
 deprecated there.
 
+**Changed.** Each relation of the fact schema is declared once, in the
+module of its concern (`Argus.Schema.Bytecode`, `Supervision`, `Otp`,
+`ErrorHandling`, `Processes`, `Priors` and twelve more), with its
+`in_process` flag beside it; `Argus.Schema` reads them in order. It was
+declared three times in one 2,800-line file: as an attribute, in its
+layer's list and, for the in-process ones, in `@in_process_only`. The
+API, `all/0`'s order, the generated `.dl` files and the schema version
+are unchanged; `in_process_only/0` lists its relations in schema order.
+
 **Removed.** Schema 60. `move`, `allocate`, `deallocate`, `try_end` and
 `module_attribute`: no Datalog rule and no in-process pass read them (the
 walks read the instructions; the extractors that need an attribute read
