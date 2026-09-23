@@ -25,7 +25,8 @@ defmodule Argus.Extractor do
   @typedoc """
   What `extract/1` receives: the disassembly, plus — when the pipeline is
   calling — the module's call-site index, per-function control-flow
-  graphs and decoded Layer-1 facts, so extractors neither walk the
+  graphs and decoded Layer-1 facts (the relations
+  `Argus.Pipeline.typed_relations/0` names), so extractors neither walk the
   instruction stream for calls nor build their own graphs or re-emit the
   facts. `Argus.Extractor.Helpers.each_remote_call/3`, `Helpers.cfg/3` and
   `Helpers.typed/1` fall back to building each when absent, which is what

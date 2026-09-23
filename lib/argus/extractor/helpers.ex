@@ -1310,8 +1310,9 @@ defmodule Argus.Extractor.Helpers do
   end
 
   @doc """
-  The module's decoded Layer-1 facts, from the ones the pipeline attached
-  to `module_data` or emitted and decoded on the spot. `nil` when the
+  The module's decoded Layer-1 facts — the relations
+  `Argus.Pipeline.typed_relations/0` names — from the ones the pipeline
+  attached to `module_data` or emitted and decoded on the spot. `nil` when the
   facts cannot be decoded — the pipeline records the same `nil`, so an
   extractor that needs them loses only what they provide.
   """
@@ -1328,6 +1329,7 @@ defmodule Argus.Extractor.Helpers do
       functions,
       Map.get(data, :line_table, %{})
     )
+    |> Map.take(Argus.Pipeline.typed_relations())
     |> Argus.Facts.decode()
   rescue
     _ -> nil

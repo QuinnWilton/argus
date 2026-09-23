@@ -28,6 +28,13 @@ or rename by the 0.17 entry below.
 
 ### Fact schema and extraction
 
+**Changed.** The pipeline decodes only the relations the in-process passes
+read (`Argus.Pipeline.typed_relations/0`) into `module_data.typed`, and
+`Helpers.typed/1` builds the same: decoding every relation was 23% of
+extraction on sequin (531 beams, 12.8 s of 56 s serial), the subset is
+8.5 s. An extractor that reads another relation from `typed` adds it to
+the list; `Argus.Pipeline.TypedRelationsTest` fails until it does.
+
 **Removed.** Schema 60. `move`, `allocate`, `deallocate`, `try_end` and
 `module_attribute`: no Datalog rule and no in-process pass read them (the
 walks read the instructions; the extractors that need an attribute read

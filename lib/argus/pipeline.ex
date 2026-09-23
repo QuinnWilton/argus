@@ -48,6 +48,28 @@ defmodule Argus.Pipeline do
 
   @default_timeout 120_000
 
+  # The Layer-1 relations the in-process passes read from a module's
+  # decoded facts: `Argus.Cfg`, `Argus.Dataflow` and the extractors that
+  # take `module_data.typed` (Dependence, ParamFlow, PidFlow). Decoding
+  # every relation was a fifth of extraction time, most of it for
+  # relations only Souffle reads.
+  @typed_relations ~w(
+    instruction next def use jump branch select_branch label_at bs_start
+    try_start bif_call function_def function_entry tail_call remote_call
+    local_call dynamic_call spawn_call
+  )a
+
+  @doc """
+  The relations of a module's facts the pipeline decodes for the passes
+  that run in the VM — `Argus.Cfg.build/1`, `Argus.Dataflow`, and an
+  extractor reading `module_data.typed` — which is all `typed` holds. An
+  extractor that reads another relation there adds it here;
+  `Argus.Pipeline.TypedRelationsTest` fails when one's facts change with
+  every relation decoded.
+  """
+  @spec typed_relations() :: [atom()]
+  def typed_relations, do: @typed_relations
+
   @doc """
   Extracts facts from the given modules and writes `.facts` files to `output_dir`.
 
@@ -233,10 +255,17 @@ defmodule Argus.Pipeline do
           data.line_table
         )
 
-      # Decoded once, for the derived relations and for the control-flow
-      # graphs the extractors walk; a module whose facts cannot be decoded
-      # keeps everything else and loses only what those provide.
-      {typed, errors} = attempt("decode", fn -> Argus.Facts.decode(base_facts) end, [])
+      # Decoded once — the relations the in-process passes read — for the
+      # derived relations and for the control-flow graphs the extractors
+      # walk; a module whose facts cannot be decoded keeps everything else
+      # and loses only what those provide.
+      {typed, errors} =
+        attempt(
+          "decode",
+          fn -> base_facts |> Map.take(@typed_relations) |> Argus.Facts.decode() end,
+          []
+        )
+
       {cfgs, errors} = attempt("cfg", fn -> if typed, do: Cfg.build(typed), else: %{} end, errors)
       cfgs = cfgs || %{}
       {reaching, errors} = attempt("reaching", fn -> reaching(typed) end, errors)
