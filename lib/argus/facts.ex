@@ -113,19 +113,40 @@ defmodule Argus.Facts do
   """
   @spec materialize(interned(), Symbols.t()) :: %{atom() => [[String.t()]]}
   def materialize(interned, %Symbols{} = symbols) when is_map(interned) do
-    Map.new(interned, fn {relation, rows} ->
-      kinds = field_kinds(relation)
+    # As in `decode/2`: a pass-local map answers the ids a pass meets
+    # again (a relation's rows share their function and instruction IDs),
+    # so each is read from the table — an ETS copy — once per pass.
+    {materialized, _seen} =
+      Enum.map_reduce(interned, %{}, fn {relation, rows}, seen ->
+        kinds = field_kinds(relation)
 
-      {relation,
-       Enum.map(rows, fn row ->
-         row
-         |> Tuple.to_list()
-         |> Enum.zip_with(kinds, fn
-           value, kind when kind in [:number, :label] -> Integer.to_string(value)
-           id, _kind -> Symbols.resolve(symbols, id)
-         end)
-       end)}
-    end)
+        {rows, seen} =
+          Enum.map_reduce(rows, seen, fn row, seen ->
+            materialize_cells(Tuple.to_list(row), kinds, symbols, seen, [])
+          end)
+
+        {{relation, rows}, seen}
+      end)
+
+    Map.new(materialized)
+  end
+
+  # Stops at whichever of the row and its kinds runs out first, as a zip
+  # would; an unknown relation's kinds are an endless `:symbol` stream.
+  defp materialize_cells([], _kinds, _symbols, seen, acc), do: {Enum.reverse(acc), seen}
+
+  defp materialize_cells([value | rest], kinds, symbols, seen, acc) do
+    case next_kind(kinds) do
+      {:missing, _} ->
+        {Enum.reverse(acc), seen}
+
+      {kind, kinds} when kind in [:number, :label] ->
+        materialize_cells(rest, kinds, symbols, seen, [Integer.to_string(value) | acc])
+
+      {_kind, kinds} ->
+        {string, seen} = resolve_cached(symbols, value, seen)
+        materialize_cells(rest, kinds, symbols, seen, [string | acc])
+    end
   end
 
   @doc """

@@ -975,6 +975,12 @@ scry paid six times on every cold compile and the suite paid on every
 test that enumerates the analyses. A program outside `priv/dl` is still
 read on every call.
 
+**Changed.** `Argus.Facts.materialize/2` reads each id from the symbol
+table once per call, through a call-local map as `decode/2` does,
+instead of once per cell. Over the 650k rows of 300 logflare modules in
+one call that halves it (1.2 s to 0.6 s); a caller that materializes
+one relation at a time, as scry does, sees no difference either way.
+
 ## 0.19.0 — 2026-09-22
 
 ### Added
