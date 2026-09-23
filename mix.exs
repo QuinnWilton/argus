@@ -42,7 +42,7 @@ defmodule Scry.MixProject do
     [
       {:roux, "~> 0.1.4"},
       # argus 0.17 (one analysis per concern) until it is on Hex.
-      {:panoptes, github: "QuinnWilton/argus", tag: "v0.18.1"},
+      {:panoptes, path: "../argus", override: true},
       {:pentiment, "~> 0.2"},
       # Pentiment lexers: syntax highlighting for the stderr (ansi) frames.
       # Optional, because a hard dependency collides with the `only: :dev`
