@@ -178,4 +178,38 @@ defmodule Argus.Extractors.ErrorHandlingTest do
       assert target("timer_either/2") == ["other"]
     end
   end
+
+  describe "extract/1 — where an armed timer's ref goes" do
+    test "a ref handed to a helper goes where the helper puts it" do
+      [{_mod, bin}] =
+        Code.compile_string("""
+        defmodule Argus.ErrorHandlingTest.TimerHelpers do
+          use GenServer
+          def init(s), do: {:ok, s}
+
+          def handle_info(:arm, state) do
+            ref = Process.send_after(self(), :tick, 1000)
+            {:noreply, put_timer(state, ref)}
+          end
+
+          def handle_info(:rearm, state) do
+            ref = Process.send_after(self(), :tock, 1000)
+            {:noreply, %{state | poll: same(ref)}}
+          end
+
+          def handle_info(_msg, state), do: {:noreply, state}
+
+          defp put_timer(state, ref), do: %{state | timer: ref}
+          defp same(ref), do: ref
+        end
+        """)
+
+      {:ok, data} = Argus.Pipeline.Disassemble.disassemble_path(bin)
+
+      flows =
+        for [_id, _func, flow, key] <- ErrorHandling.extract(data)[:timer_ref], do: {flow, key}
+
+      assert Enum.sort(flows) == [{"stored", ":poll"}, {"stored", ":timer"}]
+    end
+  end
 end

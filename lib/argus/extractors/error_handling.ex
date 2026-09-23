@@ -73,9 +73,11 @@ defmodule Argus.Extractors.ErrorHandling do
       arg_position: 3,
       call_result_origin: 3,
       each_remote_call: 3,
+      find_function: 3,
       instructions_from_label: 2,
       key_identity: 4,
       map_field_of: 3,
+      match_local_call: 1,
       match_remote_call: 1,
       register: 1,
       resolve_atom: 3,
@@ -175,7 +177,7 @@ defmodule Argus.Extractors.ErrorHandling do
 
       facts
       |> error_handling_call(mod_str, ctx, mfa)
-      |> maybe_mailbox_writer(ctx, mfa)
+      |> maybe_mailbox_writer(ctx, mfa, module_data.functions)
       |> maybe_rpc_result(ctx, mfa)
       |> maybe_call_result(ctx, mfa)
     end)
@@ -368,13 +370,13 @@ defmodule Argus.Extractors.ErrorHandling do
     {:gen_event, :add_handler, 3} => "pubsub"
   }
 
-  defp maybe_mailbox_writer(facts, ctx, mfa) do
+  defp maybe_mailbox_writer(facts, ctx, mfa, functions) do
     case Map.fetch(@mailbox_writers, mfa) do
       {:ok, {"timer", msg_reg, dest}} ->
         id = InstrId.mint(ctx.func_id, ctx.idx)
         {message, param, literal} = timer_message(ctx, msg_reg)
         kind = if message == "bare", do: "timer_bare", else: "timer"
-        {flow, key} = ref_flow(ctx.instrs, ctx.idx)
+        {flow, key} = ref_flow(ctx.instrs, ctx.idx, functions)
 
         facts
         |> add_fact(:mailbox_writer, [id, ctx.func_id, kind])
@@ -434,30 +436,41 @@ defmodule Argus.Extractors.ErrorHandling do
   # function (a helper like `defp arm(ms), do: Process.send_after(...)`),
   # stored under a literal key of a map (`%{state | timer: ...}`,
   # `Map.put(state, :timer, ...)`), or somewhere the walk cannot follow.
-  defp ref_flow(instrs, idx) do
+  # Handed to a function of this module (`put_timer(state, ref)`), it goes
+  # where that function puts its parameter: stored there, or returned
+  # into the call's result, which the walk then follows.
+  defp ref_flow(instrs, idx, functions) do
+    env = %{functions: functions, seen: %{}}
+
     if Instr.tail_call?(Enum.at(instrs, idx)),
       do: {"returned", ""},
-      else: ref_walk(Enum.drop(instrs, idx + 1), [{:x, 0}], instrs, idx + 1)
+      else: ref_walk(Enum.drop(instrs, idx + 1), [{:x, 0}], instrs, idx + 1, env)
   end
 
-  defp ref_walk([], _aliases, _instrs, _at), do: {"dynamic", ""}
+  defp ref_walk([], _aliases, _instrs, _at, _env), do: {"dynamic", ""}
 
-  defp ref_walk([:return | _], aliases, _instrs, _at),
+  defp ref_walk([:return | _], aliases, _instrs, _at, _env),
     do: if({:x, 0} in aliases, do: {"returned", ""}, else: {"dynamic", ""})
 
-  defp ref_walk([{:move, src, dst} | rest], aliases, instrs, at),
-    do: ref_walk(rest, retarget(aliases, src, dst), instrs, at + 1)
+  defp ref_walk([{:move, src, dst} | rest], aliases, instrs, at, env),
+    do: ref_walk(rest, retarget(aliases, src, dst), instrs, at + 1, env)
 
-  defp ref_walk([{put_map, _f, _src, dst, _live, {:list, pairs}} | rest], aliases, instrs, at)
+  defp ref_walk(
+         [{put_map, _f, _src, dst, _live, {:list, pairs}} | rest],
+         aliases,
+         instrs,
+         at,
+         env
+       )
        when put_map in [:put_map_assoc, :put_map_exact] do
     case stored_key(pairs, aliases) do
       {:ok, key} -> {"stored", key}
-      :none -> ref_walk(rest, List.delete(aliases, register(dst)), instrs, at + 1)
+      :none -> ref_walk(rest, List.delete(aliases, register(dst)), instrs, at + 1, env)
     end
   end
 
   # Map.put(map, key, value) compiles to :maps.put(key, value, map).
-  defp ref_walk([{:call_ext, 3, {:extfunc, :maps, :put, 3}} | _rest], aliases, instrs, at) do
+  defp ref_walk([{:call_ext, 3, {:extfunc, :maps, :put, 3}} | _rest], aliases, instrs, at, _env) do
     with true <- {:x, 1} in aliases,
          {:ok, key} when is_atom(key) <- resolve_register(instrs, at, {:x, 0}) do
       {"stored", inspect(key)}
@@ -466,16 +479,62 @@ defmodule Argus.Extractors.ErrorHandling do
     end
   end
 
-  defp ref_walk([{:label, _} | _], _aliases, _instrs, _at), do: {"dynamic", ""}
+  defp ref_walk([{:label, _} | _], _aliases, _instrs, _at, _env), do: {"dynamic", ""}
 
   # Any other call takes the ref somewhere the walk does not follow, or
   # clobbers it; a tail call, a jump, a raise end the path here — the
   # walk is linear, and what follows is another path.
-  defp ref_walk([instr | rest], aliases, instrs, at) do
-    if Instr.call?(instr) or not Instr.falls_through?(instr),
-      do: {"dynamic", ""},
-      else: ref_walk(rest, Instr.carry(instr, aliases), instrs, at + 1)
+  defp ref_walk([instr | rest], aliases, instrs, at, env) do
+    case handed_to_helper(instr, aliases, env) do
+      {:stored, key} ->
+        {"stored", key}
+
+      :returned ->
+        if Instr.tail_call?(instr),
+          do: {"returned", ""},
+          else: ref_walk(rest, [{:x, 0} | y_aliases(aliases)], instrs, at + 1, env)
+
+      :none ->
+        if Instr.call?(instr) or not Instr.falls_through?(instr),
+          do: {"dynamic", ""},
+          else: ref_walk(rest, Instr.carry(instr, aliases), instrs, at + 1, env)
+    end
   end
+
+  # A call to a function of this module with the ref as argument k: where
+  # the function puts its parameter k, walked from its entry.
+  defp handed_to_helper(instr, aliases, env) do
+    with {:ok, _mod, fun, arity} <- match_local_call(instr),
+         k when is_integer(k) <-
+           Enum.find_value(aliases, fn
+             {:x, k} when k < arity -> k
+             _ -> nil
+           end),
+         false <- Map.has_key?(env.seen, {fun, arity, k}),
+         helper when helper != nil <- find_function(env.functions, fun, arity),
+         {:ok, body, at} <- body_of(helper) do
+      env = %{env | seen: Map.put(env.seen, {fun, arity, k}, true)}
+
+      case ref_walk(body, [{:x, k}], helper, at, env) do
+        {"stored", key} -> {:stored, key}
+        {"returned", _} -> :returned
+        _ -> :none
+      end
+    else
+      _ -> :none
+    end
+  end
+
+  # A function's code after its func_info and entry label, and the index
+  # it starts at.
+  defp body_of(instrs) do
+    case Enum.find_index(instrs, &match?({:func_info, _, _, _}, &1)) do
+      nil -> :error
+      i -> {:ok, Enum.drop(instrs, i + 2), i + 2}
+    end
+  end
+
+  defp y_aliases(aliases), do: Enum.filter(aliases, &match?({:y, _}, &1))
 
   defp stored_key(pairs, aliases) do
     pairs

@@ -813,6 +813,12 @@ concern that runs it.
 
 ### mailbox
 
+**Fixed.** An armed timer's ref handed to a function of the module
+(`{:noreply, put_timer(state, ref)}`) goes where that function puts its
+parameter: `timer_ref` says `stored` under the helper's key, or follows
+the helper's result when the helper returns it. It said `"dynamic"`, so
+the cancel-without-flush rule could not pair the arm with its cancel.
+
 **Changed.** `mailbox.partial_handler`'s "late_message" source no longer
 counts a timer the process arms for itself with a literal message its
 own `handle_info/2` has a clause for (a janitor's `:purge`), nor a
