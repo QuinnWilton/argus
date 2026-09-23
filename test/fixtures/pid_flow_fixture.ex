@@ -602,6 +602,49 @@ defmodule Argus.Test.Fixtures.PidFlow do
     def ping(id), do: GenServer.call(Argus.Test.Fixtures.PidFlow.Directory.lookup(id), :ping)
   end
 
+  defmodule Conn do
+    @moduledoc "A connection a supervisor starts, and a module may also start for itself."
+    use GenServer
+
+    def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+    @impl true
+    def init(arg), do: {:ok, arg}
+
+    @impl true
+    def handle_call(:query, _from, s), do: {:reply, :rows, s}
+  end
+
+  defmodule ConnUser do
+    @moduledoc "Starts a private connection and queries it: not the supervised sibling."
+    use GenServer
+
+    alias Argus.Test.Fixtures.PidFlow.Conn
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok)
+
+    @impl true
+    def init(:ok) do
+      {:ok, conn} = Conn.start_link(:private)
+      {:ok, %{conn: conn}}
+    end
+
+    @impl true
+    def handle_call(:query, _from, s), do: {:reply, GenServer.call(s.conn, :query), s}
+  end
+
+  defmodule ConnSup do
+    @moduledoc false
+    use Supervisor
+
+    alias Argus.Test.Fixtures.PidFlow.{Conn, ConnUser}
+
+    def start_link(_), do: Supervisor.start_link(__MODULE__, nil)
+
+    @impl true
+    def init(nil), do: Supervisor.init([{Conn, :shared}, ConnUser], strategy: :one_for_one)
+  end
+
   defmodule Quiet do
     @moduledoc "Starts with a computed module, apply, and a pid from a library call: no process to name."
     def applied(m), do: apply(m, :start_link, [])

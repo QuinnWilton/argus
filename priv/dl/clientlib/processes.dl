@@ -5,8 +5,12 @@
 //
 // The objects are processes and the terms that hold them. A process is
 // named by the site that started it (process_start: "spawn <id>",
-// "server <id>"), or by the supervisor child spec that names it ("child
-// <sup>#<pos>"). A term is named by the instruction that built it
+// "server <id>"); a start inside a function that returns it is a
+// factory, and each call that keeps what the factory returns is its own
+// process ("start <call site>"), as is the child a supervisor's child
+// spec starts through it ("child <sup>#<pos>"). instance(proc, base)
+// maps each to its start site; server_process is the module-level view.
+// A term is named by the instruction that built it
 // (pid_object), with a field per map key, tuple position or list element,
 // so two pids in one state map stay two pids. A source is one of
 //   proc   — the process started at a site in the same function;
@@ -42,10 +46,81 @@ server_process(cat("child ", cat(s, cat("#", to_string(pos)))), m) :-
   supervisor_child(s, pos, m, _, _),
   behaves_as(m, "GenServer").
 
+// ── Instances ───────────────────────────────────────────────────────
+//
+// `def start_link(arg), do: GenServer.start_link(__MODULE__, arg)` starts
+// a new process each time it is called: its supervisor's call is one, a
+// module's private `{:ok, conn} = Conn.start_link()` another. Named by
+// the start site alone, the two were one process, and a private
+// connection looked like the supervised sibling. So the value a factory
+// returns — its own start's `{:ok, pid}` or bare pid, or its callee's,
+// passed straight up — is renamed at each call that keeps it rather than
+// returning it again: the object "result <site>" whose field {1} is the
+// process "start <site>". A child spec's child is the process its
+// module's start_link/1 returns. Every process keeps its start site as
+// its base; the base itself stands for a start the program does not see
+// the caller of.
+.decl start_object(obj: symbol, proc: symbol)
+
+start_object(t, b) :-
+  process_start(t, _, b, _, _),
+  pid_object(_, t, "tuple", ":ok", "2"),
+  pid_field(_, t, "{1}", "proc", b).
+
+// `func` returns `x`, allocated while it ran: its own start's result, or
+// its callee's returned as it is.
+.decl fresh_return(func: symbol, x: symbol)
+
+fresh_return(g, t) :- pid_return(g, "obj", t), start_object(t, _).
+fresh_return(g, b) :- pid_return(g, "proc", b), process_start(_, g, b, _, _).
+fresh_return(g, x) :- pid_return(g, "result", c), pid_result(c, g, h), fresh_return(h, x).
+
+.decl fresh_base(x: symbol, base: symbol)
+
+fresh_base(t, b) :- start_object(t, b).
+fresh_base(b, b) :- process_start(_, _, b, _, _).
+
+// A call that keeps a factory's fresh value: the instance it names.
+.decl kept_fresh(site: symbol, func: symbol, x: symbol)
+
+kept_fresh(c, f, x) :-
+  pid_result(c, f, g),
+  fresh_return(g, x),
+  !pid_return(f, "result", c).
+
+// A process and the start site it comes from.
+.decl instance(proc: symbol, base: symbol)
+
+instance(b, b) :- process_start(_, _, b, _, _).
+instance(cat("start ", c), b) :- kept_fresh(c, _, x), fresh_base(x, b).
+
+instance(cat("child ", cat(s, cat("#", to_string(pos)))), b) :-
+  supervisor_child(s, pos, m, _, _),
+  fresh_return(cat(m, ":start_link/1"), x),
+  fresh_base(x, b).
+
+server_process(i, m) :- instance(i, b), process_start(_, _, b, "server", m).
+
+// A supervisor's child, and a process a function keeps for itself: the
+// two a rule about siblings must tell apart.
+.decl supervised_process(proc: symbol, sup: symbol, pos: number)
+
+supervised_process(cat("child ", cat(s, cat("#", to_string(pos)))), s, pos) :-
+  supervisor_child(s, pos, _, _, _).
+
+.decl private_process(proc: symbol, func: symbol, site: symbol)
+
+private_process(cat("start ", c), f, c) :- kept_fresh(c, f, _).
+
+private_process(b, f, id) :-
+  process_start(id, f, b, _, _),
+  !fresh_return(f, b),
+  !fresh_return(f, id).
+
 // Every process the program names.
 .decl process(proc: symbol)
 
-process(p) :- process_start(_, _, p, _, _).
+process(p) :- instance(p, _).
 process(p) :- server_process(p, _).
 
 // ── What a source points to ─────────────────────────────────────────
@@ -77,7 +152,16 @@ reads_name(f, n) :- pid_base(f, _, "name", n).
 source_pts(f, "proc", p, p) :- process_start(_, f, p, _, _).
 source_pts(f, "obj", o, o) :- pid_object(f, o, _, _, _).
 source_pts(f, "param", k, x) :- param_pts(f, k, x).
-source_pts(f, "result", c, x) :- pid_result(c, f, g), returns_pts(g, x).
+// A callee's result; a factory's fresh value is renamed where it is kept.
+source_pts(f, "result", c, x) :- pid_result(c, f, g), returns_pts(g, x), !fresh_return(g, x).
+
+source_pts(f, "result", c, x) :-
+  pid_result(c, f, g),
+  fresh_return(g, x),
+  pid_return(f, "result", c).
+
+source_pts(f, "result", c, cat("start ", c)) :- kept_fresh(c, f, x), process_start(_, _, x, _, _).
+source_pts(f, "result", c, cat("result ", c)) :- kept_fresh(c, f, x), start_object(x, _).
 source_pts(f, "name", n, p) :- reads_name(f, n), named_pid(n, p).
 source_pts(f, "self", "self", p) :- self_pid(f, p).
 
@@ -122,6 +206,9 @@ reads_field(o, sel, x) :-
 
 field_pts(o, sel, x) :- pid_field(f, o, sel, sk, s), source_pts(f, sk, s, x).
 
+// A kept `{:ok, pid}` holds its own instance.
+field_pts(cat("result ", c), "{1}", cat("start ", c)) :- kept_fresh(c, _, x), start_object(x, _).
+
 // An update keeps the fields it does not set; a cons cell's tail holds
 // the rest of the elements.
 field_pts(o, sel, x) :-
@@ -148,6 +235,9 @@ param_pts(g, k, x) :- pid_arg(_, f, g, k, "call", sk, s), source_pts(f, sk, s, x
 // A registration (register/2, :global.register_name/2, Registry.register/3,
 // or a start with a literal name) stores the pid it resolves to.
 named_pid(n, p) :- pid_register(_, f, n, k, s), source_pts(f, k, s, p), process(p).
+
+// A name registered by a start names every instance of it.
+named_pid(n, i) :- named_pid(n, b), instance(i, b), i != b.
 
 // A child spec's `name:` names the child it starts.
 named_pid(n, cat("child ", cat(s, cat("#", to_string(pos))))) :-
@@ -182,7 +272,7 @@ named_pid(n, p) :-
 .decl self_pid(func: symbol, proc: symbol)
 
 self_pid(f, p) :- process_entry(m, f), server_process(p, m).
-self_pid(f, p) :- process_start(_, _, p, "spawn", f).
+self_pid(f, p) :- instance(p, b), process_start(_, _, b, "spawn", f).
 
 self_pid(g, p) :-
   self_pid(f, p),
@@ -390,6 +480,7 @@ call_site_target(id, g, kind, p) :-
 .decl started_by_module(proc: symbol, mod: symbol)
 
 started_by_module(p, m) :- process_start(_, f, p, _, _), function_def(f, m, _, _, _).
+started_by_module(p, m) :- private_process(p, f, _), function_def(f, m, _, _, _).
 
 // A synchronous call that is provably to the calling process itself — to
 // self(), or to a name only the caller's module's processes hold, from

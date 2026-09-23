@@ -281,6 +281,19 @@ registers it does not keep.
 
 ### Process points-to
 
+**Changed.** A start inside a function that returns what it starts is a
+factory: each call that keeps its `{:ok, pid}` (or bare pid) is its own
+process, `"start <call site>"`, and a child spec's child is `"child
+<sup>#<pos>"`, the process its module's `start_link/1` returns. A
+module's private `{:ok, conn} = Conn.start_link()` and the `Conn` its
+supervisor starts were one process (the start site in
+`Conn.start_link/1`), so a call to the private one looked like a call to
+the supervised sibling. `clientlib/processes.dl` adds `instance(proc,
+base)` (every process and its start site), `supervised_process(proc,
+sup, pos)` and `private_process(proc, func, site)`; `server_process`
+stays the module-level view, a start's name names all its instances, and
+`self()` in a spawned function is every instance of its spawn.
+
 **Added.** A pid a server replies with reaches its caller: a
 `GenServer.call`'s result is a `reply` source, the second field of the
 `{:reply, reply, state}` tuples the target's `handle_call/3` returns

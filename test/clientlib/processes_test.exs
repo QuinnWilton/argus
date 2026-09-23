@@ -38,6 +38,9 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.Directory,
     PidFlow.DirectoryClient,
     PidFlow.Carrier,
+    PidFlow.Conn,
+    PidFlow.ConnUser,
+    PidFlow.ConnSup,
     PidFlow.Quiet
   ]
 
@@ -91,11 +94,12 @@ defmodule Argus.Clientlib.ProcessesTest do
   test "a pid follows a wrapper's result and two parameters to a cast", %{tmp_dir: tmp_dir} do
     r = solve(tmp_dir, ~w(returns_pts param_pts call_target))
 
-    assert ["Worker:ping/1", "0", "server Worker:start_link/1"] in unsited(r["param_pts"])
-    assert ["Owner:relay/1", "0", "server Worker:start_link/1"] in unsited(r["param_pts"])
+    # Worker.start_link is a factory: the process Owner.run keeps is its own.
+    assert ["Worker:ping/1", "0", "start Owner:run/0"] in unsited(r["param_pts"])
+    assert ["Owner:relay/1", "0", "start Owner:run/0"] in unsited(r["param_pts"])
     # Owner.run hands the pid down two helpers to Worker.notify's cast: the
     # cast is Owner.run's, not the helpers'.
-    assert ["Owner:run/0", "cast", "server Worker:start_link/1"] in unsited(r["call_target"])
+    assert ["Owner:run/0", "cast", "start Owner:run/0"] in unsited(r["call_target"])
     refute Enum.any?(r["call_target"], &match?(["Worker:notify/1" | _], &1))
 
     assert ["Owner:across_a_call/0", "call", "server Owner:across_a_call/0"] in unsited(
@@ -160,9 +164,7 @@ defmodule Argus.Clientlib.ProcessesTest do
     r = solve(tmp_dir, ~w(call_target sync_dep))
 
     # Front holds both Back and Side, and calls only Back.
-    assert ["Front:handle_call/3", "call", "server Back:start_link/0"] in unsited(
-             r["call_target"]
-           )
+    assert ["Front:handle_call/3", "call", "start Front:init/1"] in unsited(r["call_target"])
 
     refute Enum.any?(
              r["call_target"],
@@ -305,7 +307,7 @@ defmodule Argus.Clientlib.ProcessesTest do
 
     # A peer handed in a cast and killed through a helper: the signal is
     # the helper's, the target the caller's.
-    assert {"Keeper:stop/1", "exit", "server Back:start_link/0"} in signals
+    assert {"Keeper:stop/1", "exit", "start KeeperClient:drop/0"} in signals
   end
 
   test "a call to self() or to its own name from a callback is a self-call",
@@ -325,6 +327,27 @@ defmodule Argus.Clientlib.ProcessesTest do
     # A read by a key not known does not read a field written under a
     # literal key: the socket's transport is not every dynamic read of it.
     refute Enum.any?(r["process_call"], &match?(["Carrier:" <> _ | _], &1))
+  end
+
+  test "a private start of a supervised module is not the supervised child",
+       %{tmp_dir: tmp_dir} do
+    r =
+      solve(tmp_dir, ~w(process_call instance supervised_process private_process server_process))
+
+    targets = for ["ConnUser:handle_call/3", _, _, "call", p] <- r["process_call"], do: p
+    assert targets == ["start ConnUser:init/1#8"]
+
+    assert ["child ConnSup#0", "ConnSup", "0"] in r["supervised_process"]
+
+    assert ["start ConnUser:init/1#8", "ConnUser:init/1", "ConnUser:init/1#8"] in r[
+             "private_process"
+           ]
+
+    # Both are Conn's, and both come from the one start in Conn.start_link/1.
+    [base] = for ["child ConnSup#0", b] <- r["instance"], do: b
+    assert ["start ConnUser:init/1#8", base] in r["instance"]
+    assert ["child ConnSup#0", "Conn"] in r["server_process"]
+    assert ["start ConnUser:init/1#8", "Conn"] in r["server_process"]
   end
 
   test "a computed module, apply and a library pid name no process", %{tmp_dir: tmp_dir} do
