@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 44
+  @schema_version 45
 
   # Layer 1: Module-level facts.
 
@@ -427,12 +427,14 @@ defmodule Argus.Schema do
     fields: [
       {:id, :instr_id, "instruction ID"},
       {:caller, :func_id, "containing function ID"},
-      {:mod, :symbol, "spawned module"},
-      {:func, :symbol, "spawned function"},
-      {:arity, :number, "spawned function arity"},
+      {:mod, :symbol, "module of the function the new process runs, or \"dynamic\""},
+      {:func, :symbol, "that function's name, or \"dynamic\""},
+      {:arity, :number, "that function's arity, or -1"},
       {:variant, :symbol, "spawn variant (spawn, spawn_link, spawn_monitor)"}
     ],
-    doc: "Process spawn detected via erlang:spawn* calls."
+    doc: """
+    Process spawn detected via erlang:spawn* calls, with the function the new process runs: `spawn(M, F, args)` (and the node-qualified form) runs M.F/length(args) when M, F and the list's length are literal; `spawn(fun)` runs the function the closure was lifted to (`-f/1-fun-0-`, its arity counting the captured variables). What does not resolve is "dynamic" and -1. A spawn is a process allocation site: `Argus.Extractors.PidFlow` names the processes it creates by it.
+    """
   }
 
   @try_start %{

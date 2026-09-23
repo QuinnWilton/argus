@@ -83,6 +83,16 @@ found in the umbrella's `_build`.
 
 ### Changed
 
+Schema 45. `spawn_call` names what the new process runs instead of
+recording "dynamic": `spawn(M, F, args)` and the node-qualified form run
+M.F/length(args) when the module, function and the argument list's length
+are literal, and `spawn(fun)` runs the function the closure was lifted
+to. `arity` is now that function's arity (it held the spawn BIF's own,
+contrary to the schema doc), and -1 when unknown. The length is read from
+the cons cells that build the list, so `[x | rest]` stays unknown. Both
+readers (`failure`'s bare spawn, `effects`) ignore these columns;
+scry/planchette memos keyed on the schema version invalidate.
+
 `Argus.Souffle.input_relations/2` memoizes its answer for a program
 shipped under `priv/dl`, versioned by a digest of every file there and
 the solver binary's identity. The answer depends on nothing else, and

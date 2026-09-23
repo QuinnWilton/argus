@@ -14,6 +14,7 @@ defmodule Argus.Pipeline.Emit do
 
   require Logger
 
+  alias Argus.Extractor.Helpers
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
@@ -81,6 +82,7 @@ defmodule Argus.Pipeline.Emit do
     facts
     |> emit_calls_followed_by_branch(normalized)
     |> emit_receives(func_id, normalized)
+    |> emit_spawns(func_id, normalized)
     |> emit_instructions_loop(func_id, normalized, 0, line_table, nil)
   end
 
@@ -305,7 +307,6 @@ defmodule Argus.Pipeline.Emit do
     |> add_fact(:remote_call, [id, func_id, inspect(mod), to_string(func), to_string(arity)])
     |> add_fact(:def, [id, "x0"])
     |> emit_call_arg_uses(id, arity)
-    |> maybe_spawn(id, func_id, mod, func, arity)
     |> maybe_dynamic(id, func_id, mod, func)
   end
 
@@ -314,7 +315,6 @@ defmodule Argus.Pipeline.Emit do
     |> add_fact(:remote_call, [id, func_id, inspect(mod), to_string(func), to_string(arity)])
     |> add_fact(:tail_call, [id])
     |> emit_call_arg_uses(id, arity)
-    |> maybe_spawn(id, func_id, mod, func, arity)
     |> maybe_dynamic(id, func_id, mod, func)
   end
 
@@ -328,7 +328,6 @@ defmodule Argus.Pipeline.Emit do
     |> add_fact(:remote_call, [id, func_id, inspect(mod), to_string(func), to_string(arity)])
     |> add_fact(:tail_call, [id])
     |> emit_call_arg_uses(id, arity)
-    |> maybe_spawn(id, func_id, mod, func, arity)
     |> maybe_dynamic(id, func_id, mod, func)
   end
 
@@ -1018,19 +1017,134 @@ defmodule Argus.Pipeline.Emit do
     Keyword.keyword?(list) and Keyword.has_key?(list, :file) and Keyword.has_key?(list, :line)
   end
 
-  defp maybe_spawn(facts, id, func_id, :erlang, func, arity)
-       when func in [:spawn, :spawn_link, :spawn_monitor] and arity in [1, 2, 3, 4] do
-    add_fact(facts, :spawn_call, [
-      id,
-      func_id,
-      "dynamic",
-      "dynamic",
-      to_string(arity),
-      to_string(func)
-    ])
+  # What a spawn runs is in its arguments, so it is resolved here, where the
+  # whole function is in hand: `spawn(M, F, args)` (after a node for the
+  # 4-argument form) runs M.F/length(args), and `spawn(fun)` (after a node
+  # for the 2-argument form) runs the function the closure was lifted to,
+  # traced from the fun register back to its make_fun3. Anything that does
+  # not resolve stays "dynamic".
+  @spawns [:spawn, :spawn_link, :spawn_monitor]
+
+  defp emit_spawns(facts, func_id, normalized) do
+    instrs = Enum.map(normalized, fn {_id, instr} -> instr end)
+
+    normalized
+    |> Enum.with_index()
+    |> Enum.reduce(facts, fn {{id, instr}, idx}, acc ->
+      case spawn_bif(instr) do
+        {variant, arity} ->
+          {mod, fun, spawned_arity} = spawned(instrs, idx, arity)
+          add_fact(acc, :spawn_call, [id, func_id, mod, fun, spawned_arity, to_string(variant)])
+
+        nil ->
+          acc
+      end
+    end)
   end
 
-  defp maybe_spawn(facts, _id, _func_id, _mod, _func, _arity), do: facts
+  defp spawn_bif({op, _, {:extfunc, :erlang, func, arity}})
+       when op in [:call_ext, :call_ext_only] and func in @spawns and arity in 1..4,
+       do: {func, arity}
+
+  defp spawn_bif({:call_ext_last, _, {:extfunc, :erlang, func, arity}, _})
+       when func in @spawns and arity in 1..4,
+       do: {func, arity}
+
+  defp spawn_bif(_), do: nil
+
+  # `arity` is a number column: an unknown arity is -1.
+  @unresolved {"dynamic", "dynamic", "-1"}
+
+  defp spawned(instrs, idx, arity) when arity in [3, 4] do
+    first = arity - 3
+
+    with {:ok, mod} when is_atom(mod) and mod != :dynamic <-
+           Helpers.resolve_register(instrs, idx, {:x, first}),
+         {:ok, fun} when is_atom(fun) and fun != :dynamic <-
+           Helpers.resolve_register(instrs, idx, {:x, first + 1}),
+         n when is_integer(n) <-
+           list_length(Enum.take(instrs, idx) |> Enum.reverse(), {:x, first + 2}) do
+      {inspect(mod), to_string(fun), to_string(n)}
+    else
+      _ -> @unresolved
+    end
+  end
+
+  defp spawned(instrs, idx, arity) when arity in [1, 2] do
+    case closure_at(Enum.take(instrs, idx) |> Enum.reverse(), {:x, arity - 1}) do
+      {mod, fun, lifted_arity} -> {inspect(mod), to_string(fun), to_string(lifted_arity)}
+      nil -> @unresolved
+    end
+  end
+
+  # The length of the argument list in `reg`, walking back over the cons
+  # cells that built it. An element that did not resolve still counts; a
+  # tail that did not (`[x | rest]`) leaves the length, and so the spawned
+  # arity, unknown. (`resolve_register/3` cannot say this: it reads an
+  # unknown tail as one more element.)
+  defp list_length(_rev, nil), do: 0
+  defp list_length(_rev, {:literal, list}) when is_list(list), do: proper_length(list)
+  defp list_length([], _reg), do: nil
+  defp list_length([{:label, _} | _], _reg), do: nil
+
+  defp list_length([{:move, src, dst} | rest], reg) do
+    if register(dst) == reg, do: list_length(rest, register(src)), else: list_length(rest, reg)
+  end
+
+  defp list_length([{:put_list, _head, tail, dst} | rest], reg) do
+    if register(dst) == reg do
+      case list_length(rest, register(tail)) do
+        n when is_integer(n) -> n + 1
+        nil -> nil
+      end
+    else
+      list_length(rest, reg)
+    end
+  end
+
+  defp list_length([instr | rest], reg) do
+    if writes?(instr, reg), do: nil, else: list_length(rest, reg)
+  end
+
+  defp proper_length(list) do
+    length(list)
+  rescue
+    ArgumentError -> nil
+  end
+
+  # Straight-line backward walk from the spawn to the make_fun3 that built
+  # the fun in `reg`, following moves; a label, or anything else writing
+  # the register, ends it.
+  defp closure_at([], _reg), do: nil
+  defp closure_at([{:label, _} | _], _reg), do: nil
+
+  defp closure_at([{:make_fun3, {mod, fun, arity}, _, _, dst, _} | rest], reg) do
+    if register(dst) == reg, do: {mod, fun, arity}, else: closure_at(rest, reg)
+  end
+
+  defp closure_at([{:move, src, dst} | rest], reg) do
+    if register(dst) == reg, do: closure_at(rest, register(src)), else: closure_at(rest, reg)
+  end
+
+  defp closure_at([instr | rest], reg) do
+    if writes?(instr, reg), do: nil, else: closure_at(rest, reg)
+  end
+
+  defp register({:tr, reg, _type}), do: reg
+  defp register(reg), do: reg
+
+  # A call clobbers every x register. `put_tuple2` names its destination
+  # first; the other value-producing instructions name it last.
+  defp writes?(instr, {:x, _})
+       when elem(instr, 0) in [:call, :call_ext, :call_fun, :call_fun2, :apply],
+       do: true
+
+  defp writes?({:put_tuple2, dst, _}, reg), do: register(dst) == reg
+
+  defp writes?(instr, reg) when is_tuple(instr) and tuple_size(instr) > 1,
+    do: register(elem(instr, tuple_size(instr) - 1)) == reg
+
+  defp writes?(_instr, _reg), do: false
 
   # apply/2,3 is a call whose target is computed, so the call graph cannot
   # follow it — the same gap as the `apply` and `call_fun` INSTRUCTIONS, but

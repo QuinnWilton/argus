@@ -159,22 +159,68 @@ defmodule Argus.Pipeline.EmitTest do
 
     test "emits spawn_call for erlang:spawn/3" do
       facts = emit_func([{:call_ext, 3, {:extfunc, :erlang, :spawn, 3}}])
-      assert [[_id, _caller, "dynamic", "dynamic", "3", "spawn"]] = facts[:spawn_call]
+      assert [[_id, _caller, "dynamic", "dynamic", "-1", "spawn"]] = facts[:spawn_call]
     end
 
     test "emits spawn_call for erlang:spawn_link/3" do
       facts = emit_func([{:call_ext, 3, {:extfunc, :erlang, :spawn_link, 3}}])
-      assert [[_id, _caller, "dynamic", "dynamic", "3", "spawn_link"]] = facts[:spawn_call]
+      assert [[_id, _caller, "dynamic", "dynamic", "-1", "spawn_link"]] = facts[:spawn_call]
     end
 
     test "emits spawn_call for erlang:spawn_monitor/1" do
       facts = emit_func([{:call_ext, 1, {:extfunc, :erlang, :spawn_monitor, 1}}])
-      assert [[_id, _caller, "dynamic", "dynamic", "1", "spawn_monitor"]] = facts[:spawn_call]
+      assert [[_id, _caller, "dynamic", "dynamic", "-1", "spawn_monitor"]] = facts[:spawn_call]
+    end
+
+    test "spawn_call names what spawn/3 runs from its literal arguments" do
+      facts =
+        emit_func([
+          {:move, {:atom, Cart}, {:x, 0}},
+          {:move, {:atom, :loop}, {:x, 1}},
+          {:put_list, {:integer, 1}, nil, {:x, 2}},
+          {:call_ext, 3, {:extfunc, :erlang, :spawn, 3}}
+        ])
+
+      assert [[_id, _caller, "Cart", "loop", "1", "spawn"]] = facts[:spawn_call]
+    end
+
+    test "spawn_call names what the node-qualified spawn/4 runs" do
+      facts =
+        emit_func([
+          {:move, {:atom, Cart}, {:x, 1}},
+          {:move, {:atom, :loop}, {:x, 2}},
+          {:move, nil, {:x, 3}},
+          {:call_ext, 4, {:extfunc, :erlang, :spawn, 4}}
+        ])
+
+      assert [[_id, _caller, "Cart", "loop", "0", "spawn"]] = facts[:spawn_call]
+    end
+
+    test "spawn_call names the function a spawned closure was lifted to" do
+      facts =
+        emit_func([
+          {:make_fun3, {Shop, :"-start/1-fun-0-", 1}, 0, 0, {:x, 0}, {:list, [{:x, 0}]}},
+          {:call_ext, 1, {:extfunc, :erlang, :spawn_link, 1}}
+        ])
+
+      assert [[_id, _caller, "Shop", "-start/1-fun-0-", "1", "spawn_link"]] = facts[:spawn_call]
+    end
+
+    test "an argument list with an unknown tail leaves spawn_call unresolved" do
+      facts =
+        emit_func([
+          {:move, {:atom, Cart}, {:x, 0}},
+          {:move, {:atom, :loop}, {:x, 1}},
+          {:put_list, {:integer, 1}, {:y, 0}, {:x, 2}},
+          {:call_ext, 3, {:extfunc, :erlang, :spawn, 3}}
+        ])
+
+      assert [[_id, _caller, "dynamic", "dynamic", "-1", "spawn"]] = facts[:spawn_call]
     end
 
     test "emits spawn_call for erlang:spawn/1" do
       facts = emit_func([{:call_ext, 1, {:extfunc, :erlang, :spawn, 1}}])
-      assert [[_id, _caller, "dynamic", "dynamic", "1", "spawn"]] = facts[:spawn_call]
+      assert [[_id, _caller, "dynamic", "dynamic", "-1", "spawn"]] = facts[:spawn_call]
     end
   end
 
