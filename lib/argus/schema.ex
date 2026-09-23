@@ -490,7 +490,7 @@ defmodule Argus.Schema do
     doc: """
     Closure construction edge: `parent_func` builds a closure pointing at \
     `closure_func`. Treated as a static call edge in the call graph so that \
-    `call_reachable` follows execution into closure bodies passed to \
+    reachability over `call_edge` follows execution into closure bodies passed to \
     higher-order callees (`Enum.map`, `:telemetry.span`, `Task.async`, etc.).
 
     Only emitted when the `make_fun3` target is a concrete `{Mod, Func, Arity}` \
@@ -1802,10 +1802,10 @@ defmodule Argus.Schema do
     ],
     doc: """
     Resolved argument value at a call site. Enables interprocedural \
-    constant propagation: Datalog rules in `clientlib/interprocedural.dl` \
-    trace literal values from call sites through forwarding chains to \
-    derive additional `sync_call`/`async_cast` rows that the extractors \
-    couldn't resolve statically. Forwarded parameters are NOT values here \
+    constant propagation: `resolved_arg` in `clientlib/calls.dl` traces \
+    literal values from call sites through forwarding chains to resolve \
+    `sync_call`/`async_cast` targets the extractors couldn't resolve \
+    statically. Forwarded parameters are NOT values here \
     — they are their own relation, `call_arg_forward`.
     """
   }

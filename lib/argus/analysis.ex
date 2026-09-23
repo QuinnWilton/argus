@@ -698,8 +698,8 @@ defmodule Argus.Analysis do
   end
 
   # CallArgs is a universal extractor — it emits call_arg facts that
-  # the interprocedural.dl rules use to derive additional sync_call /
-  # async_cast rows. Including it for every analysis means the enriched
+  # clientlib/calls.dl's resolved_arg uses to resolve sync_call /
+  # async_cast targets. Including it for every analysis means the enriched
   # call graph is always available when Datalog rules consume it.
   @universal_extractors [Argus.Extractors.CallArgs]
 

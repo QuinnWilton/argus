@@ -32,7 +32,7 @@
 .decl call_followed_by_branch(id: symbol)
 .input call_followed_by_branch
 
-// Closure construction edge: `parent_func` builds a closure pointing at `closure_func`. Treated as a static call edge in the call graph so that `call_reachable` follows execution into closure bodies passed to higher-order callees (`Enum.map`, `:telemetry.span`, `Task.async`, etc.).
+// Closure construction edge: `parent_func` builds a closure pointing at `closure_func`. Treated as a static call edge in the call graph so that reachability over `call_edge` follows execution into closure bodies passed to higher-order callees (`Enum.map`, `:telemetry.span`, `Task.async`, etc.).
 //
 // Only emitted when the `make_fun3` target is a concrete `{Mod, Func, Arity}` triple. Closures targeting raw labels (rare in modern BEAM) are skipped because we don't have the closure's function ID at emit time.
 //

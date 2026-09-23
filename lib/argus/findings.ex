@@ -425,8 +425,8 @@ defmodule Argus.Findings do
   build through this so their findings equal `run/2`'s field for field.
 
   Relations the analysis does not declare as outputs (the intermediate
-  relations a solve also writes, such as stage 0's `call_reachable`) are
-  ignored, so the raw result of a solve can be passed as it is.
+  relations a custom program also writes, say) are ignored, so the raw
+  result of a solve can be passed as it is.
   """
   @spec build(module(), %{String.t() => [[String.t()]]}) :: [finding()]
   def build(mod, results) when is_atom(mod) and is_map(results) do
