@@ -105,10 +105,10 @@ defmodule Argus.Pipeline do
 
       try do
         paths
-        |> extract_stream(opts, memo)
+        |> extract_stream(opts, memo, &Writer.encode(&1, written))
         |> Enum.reduce_while({:ok, writer}, fn
-          {:ok, module_facts}, {:ok, writer} ->
-            case Writer.append(writer, module_facts) do
+          {:ok, encoded}, {:ok, writer} ->
+            case Writer.append_encoded(writer, encoded) do
               {:ok, writer} -> {:cont, {:ok, writer}}
               {:error, _} = error -> {:halt, error}
             end
@@ -152,11 +152,12 @@ defmodule Argus.Pipeline do
 
     with {:ok, paths} <- Disassemble.resolve_paths(modules) do
       memo = new_memo()
+      symbols = Keyword.get(opts, :symbols)
 
       merged =
         try do
           paths
-          |> extract_stream(opts, memo)
+          |> extract_stream(opts, memo, &maybe_intern(&1, symbols))
           |> Enum.reduce(%{}, fn
             {:ok, module_facts}, acc -> merge_facts(acc, module_facts)
             {:error, reason}, _acc -> throw({:extraction_error, reason})
@@ -186,16 +187,22 @@ defmodule Argus.Pipeline do
   # come back as an `extraction_error` row: what was lost is recorded
   # beside what was extracted, and the run goes on. Only an input that
   # cannot be read at all (`{:error, reason}` from disassembly) ends it.
-  defp extract_stream(paths, opts, memo) do
+  #
+  # `shape` is what the worker does to a module's facts before they cross
+  # to the caller, which takes them one module at a time in input order:
+  # interning them (`extract/2`), or encoding them as the lines of their
+  # files (`run/3`), so the caller only writes. Encoding in the caller
+  # left the workers waiting on it: on the Phoenix stack writing the facts
+  # took longer than extracting them at eight workers.
+  defp extract_stream(paths, opts, memo, shape) do
     concurrency = Keyword.get(opts, :concurrency, System.schedulers_online())
     extractors = Keyword.get(opts, :extractors, [])
     task_timeout = Keyword.get(opts, :timeout, @default_timeout)
     trace_imprecision = Keyword.get(opts, :trace_imprecision, false)
-    symbols = Keyword.get(opts, :symbols)
 
     paths
     |> Task.async_stream(
-      fn path -> extract_module(path, extractors, trace_imprecision, symbols, memo) end,
+      fn path -> extract_module(path, extractors, trace_imprecision, shape, memo) end,
       max_concurrency: concurrency,
       # Ordered so that extracting the same modules twice produces the
       # same value. With `ordered: false` the reduce sees workers in
@@ -218,10 +225,10 @@ defmodule Argus.Pipeline do
 
       {:exit, {path, :timeout}} ->
         reason = "extraction did not finish within #{task_timeout} ms"
-        {:ok, lost_module(path, reason, symbols)}
+        {:ok, shape.(lost_module(path, reason))}
 
       {:exit, {path, reason}} ->
-        {:ok, lost_module(path, "extraction exited: #{one_line(inspect(reason))}", symbols)}
+        {:ok, shape.(lost_module(path, "extraction exited: #{one_line(inspect(reason))}"))}
     end)
   end
 
@@ -231,19 +238,20 @@ defmodule Argus.Pipeline do
   # which is naturally scoped to this Task.async_stream worker, and the
   # try/after guarantees the flag is cleared before the worker returns
   # to the async pool.
-  defp extract_module(path, extractors, trace_imprecision, symbols, memo) do
+  defp extract_module(path, extractors, trace_imprecision, shape, memo) do
     if trace_imprecision, do: Helpers.enable_tracing()
 
     try do
       with {:ok, facts} <- module_facts(path, extractors, memo) do
-        # Interned here, in the worker, so the rows cross to the caller as
-        # tuples of small integers rather than as every string they hold.
-        {:ok, maybe_intern(facts, symbols)}
+        # Shaped here, in the worker, so the rows cross to the caller as
+        # tuples of small integers or as the bytes of their lines rather
+        # than as every string they hold.
+        {:ok, shape.(facts)}
       end
     rescue
-      exception -> {:ok, lost_module(path, describe(:error, exception, __STACKTRACE__), symbols)}
+      exception -> {:ok, shape.(lost_module(path, describe(:error, exception, __STACKTRACE__)))}
     catch
-      kind, reason -> {:ok, lost_module(path, describe(kind, reason, __STACKTRACE__), symbols)}
+      kind, reason -> {:ok, shape.(lost_module(path, describe(kind, reason, __STACKTRACE__)))}
     after
       if trace_imprecision, do: Helpers.disable_tracing()
     end
@@ -363,8 +371,8 @@ defmodule Argus.Pipeline do
 
   # The facts of a module none of whose facts survived: its one
   # `extraction_error` row.
-  defp lost_module(path, reason, symbols) do
-    maybe_intern(error_facts(module_label(path), [{"pipeline", reason}]), symbols)
+  defp lost_module(path, reason) do
+    error_facts(module_label(path), [{"pipeline", reason}])
   end
 
   defp maybe_intern(facts, nil), do: facts

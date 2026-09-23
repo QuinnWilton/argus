@@ -107,6 +107,13 @@ decoded it on its own: `module_data.debug_info` (**Added**:
 `Argus.Extractor.Helpers.debug_info/1`, `Argus.Specs.of_debug_info/3`).
 A run with neither reads it not at all.
 
+**Changed.** `Argus.Pipeline.run/3` encodes each module's rows as the
+lines of their files in the worker that extracted them, and the caller
+only writes them (**Added**: `Argus.Pipeline.Writer.encode/2`,
+`append_encoded/2`). Encoding every row in the caller was serial, and on
+the Phoenix stack took longer than extracting it at eight workers: the
+run takes 5.7 s where it took 9.3 s. The files are the same.
+
 **Removed.** Schema 60. `move`, `allocate`, `deallocate`, `try_end` and
 `module_attribute`: no Datalog rule and no in-process pass read them (the
 walks read the instructions; the extractors that need an attribute read

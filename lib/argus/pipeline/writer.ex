@@ -33,6 +33,34 @@ defmodule Argus.Pipeline.Writer do
     end)
   end
 
+  @doc """
+  A module's facts as `append_encoded/2` writes them: per relation, the
+  bytes of its lines, in the order `append/2` would write the rows, for
+  the relations `written` names (every one when `nil`) that have rows.
+  What a worker does so that the caller only writes.
+  """
+  @spec encode(Argus.Pipeline.Emit.facts(), MapSet.t(atom()) | nil) :: %{atom() => binary()}
+  def encode(module_facts, written) do
+    for {relation, rows} <- module_facts,
+        rows != [],
+        written == nil or MapSet.member?(written, relation),
+        into: %{},
+        do: {relation, IO.iodata_to_binary(Argus.Tsv.encode(Enum.reverse(rows)))}
+  end
+
+  @doc "Appends facts `encode/2` encoded."
+  @spec append_encoded(t(), %{atom() => binary()}) :: {:ok, t()} | {:error, term()}
+  def append_encoded(writer, encoded) do
+    Enum.reduce_while(encoded, {:ok, writer}, fn {relation, bytes}, {:ok, writer} ->
+      with {:ok, device, writer} <- device(writer, relation),
+           :ok <- write_bytes(device, writer.dir, relation, bytes) do
+        {:cont, {:ok, writer}}
+      else
+        error -> {:halt, error}
+      end
+    end)
+  end
+
   @spec close(t()) :: :ok
   def close(%__MODULE__{files: files}) do
     Enum.each(files, fn {_relation, device} -> File.close(device) end)
@@ -56,8 +84,11 @@ defmodule Argus.Pipeline.Writer do
     end
   end
 
-  defp write(device, dir, relation, rows) do
-    case :file.write(device, Argus.Tsv.encode(rows)) do
+  defp write(device, dir, relation, rows),
+    do: write_bytes(device, dir, relation, Argus.Tsv.encode(rows))
+
+  defp write_bytes(device, dir, relation, bytes) do
+    case :file.write(device, bytes) do
       :ok -> :ok
       {:error, reason} -> {:error, {:write_failed, Path.join(dir, "#{relation}.facts"), reason}}
     end
