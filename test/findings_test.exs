@@ -231,6 +231,29 @@ defmodule Argus.FindingsTest do
       assert [%{analysis: :unsafe_input}] = both.ran
     end
 
+    test "a retired name keeps only the rows its alias entries select by column" do
+      skip_without_souffle()
+
+      modules = [
+        Fixtures.AsymmetricInfoStatem,
+        Fixtures.TimeoutMismatchStatem,
+        Fixtures.MonitorLeak.Leaks
+      ]
+
+      assert {:ok, direct} = Argus.run_analyses(modules, analyses: [:mailbox])
+      assert {:ok, aliased} = Argus.run_analyses(modules, analyses: [:gen_statem])
+
+      titles = &Enum.map(&1.findings, fn f -> {f.title, f.mfa} end)
+
+      # The monitor leak is mailbox's but not gen_statem's: the alias's
+      # `where` on the merged relations filters it out, and keeps the
+      # statem rows.
+      assert Enum.any?(direct.findings, &(&1.module == Fixtures.MonitorLeak.Leaks))
+      refute Enum.any?(aliased.findings, &(&1.module == Fixtures.MonitorLeak.Leaks))
+      assert aliased.findings != []
+      assert titles.(aliased) -- titles.(direct) == []
+    end
+
     test "a named set selects its analyses" do
       skip_without_souffle()
 

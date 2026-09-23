@@ -259,7 +259,7 @@ defmodule Argus.Findings do
           results = Analysis.filter_to_outputs(results, name)
 
           for {asked_name, filter} <- asked_views(asked, name) do
-            findings = build_findings(mod, asked_name, filter_rows(results, filter))
+            findings = build_findings(mod, asked_name, filter_rows(results, filter, mod))
 
             {:ran,
              %{analysis: asked_name, duration_ms: duration_ms, finding_count: length(findings)},
@@ -296,34 +296,38 @@ defmodule Argus.Findings do
   defp asked_names(:direct, name), do: [name]
   defp asked_names(aliases, _name) when is_map(aliases), do: aliases |> Map.keys() |> Enum.sort()
 
-  defp filter_rows(results, :all), do: results
+  defp filter_rows(results, :all, _mod), do: results
 
-  defp filter_rows(results, entries) do
+  defp filter_rows(results, entries, mod) do
+    relations = mod.output_relations()
+
     for %{relation: relation, where: where} <- entries,
         rows = Map.get(results, Atom.to_string(relation)),
         rows != nil,
         into: %{} do
-      {Atom.to_string(relation), Enum.filter(rows, &row_matches?(&1, relation, where))}
+      where =
+        for {column, allowed} <- where, do: {column_index(relations, relation, column), allowed}
+
+      {Atom.to_string(relation), Enum.filter(rows, &row_matches?(&1, where))}
     end
   end
 
-  defp row_matches?(_row, _relation, []), do: true
-
-  defp row_matches?(row, relation, where) do
-    Enum.all?(where, fn {column, allowed} ->
-      value = Enum.at(row, column_index(relation, column))
+  defp row_matches?(row, where) do
+    Enum.all?(where, fn {index, allowed} ->
+      value = Enum.at(row, index)
       if is_list(allowed), do: value in allowed, else: value == allowed
     end)
   end
 
   # Alias entries name real columns of real relations; a typo here is a
-  # bug in the alias table, not a user error.
-  defp column_index(relation, column) do
+  # bug in the alias table, not a user error. Resolved once per entry,
+  # against the concern the entry runs.
+  defp column_index(relations, relation, column) do
     fields =
-      Analysis.builtin_analysis_modules()
-      |> Enum.flat_map(& &1.output_relations())
-      |> Enum.find(&(&1.name == relation))
-      |> Map.fetch!(:fields)
+      case Enum.find(relations, &(&1.name == relation)) do
+        %{fields: fields} -> fields
+        nil -> raise ArgumentError, "alias relation #{inspect(relation)} is not an output"
+      end
 
     Enum.find_index(fields, fn {name, _kind, _doc} -> name == column end) ||
       raise ArgumentError, "alias column #{inspect(column)} is not in #{inspect(relation)}"

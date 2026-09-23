@@ -253,6 +253,10 @@ same finding relation or one names a relation the analysis does not
 declare. Collecting a finding's frames is linear in its rows (it
 appended one frame at a time).
 
+A retired name's row filter resolved each alias column per row, over
+every loaded module; it resolves once per alias entry, against the
+concern that runs it.
+
 A literal operand was spelled with `inspect/1`, which runs a struct's
 own `Inspect` implementation when its module is loaded — so the same
 beam yielded different `literal_value` rows in a VM that had the
