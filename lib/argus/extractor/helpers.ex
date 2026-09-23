@@ -11,14 +11,17 @@ defmodule Argus.Extractor.Helpers do
   - **`resolve_atom/3`** — resolve any register as an atom string
   - **`match_remote_call/1`** — recognize `call_ext` variants as `{mod, func, arity}`
   - **`match_local_call/1`** — recognize intra-module `call` variants
-  - **`resolve_register/3`** — backward dataflow: determine a register's value
-    at a specific call site by walking preceding instructions
+  - **`resolve_register/3`** — a register's value at a call site, following
+    the writes that reach it (`Argus.Instr.Reaching`); `arg_position/3`,
+    `map_field_of/3`, `call_result_origin/3` and `key_identity/4` ask the
+    same writes other questions
   - **`get_behaviours/1`** — extract behaviour modules from attributes
   - **`find_function/3`** — look up a function's instructions by name and arity
   """
 
   alias Argus.Extractor.CallSites
   alias Argus.Instr
+  alias Argus.Instr.Reaching
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
@@ -298,71 +301,31 @@ defmodule Argus.Extractor.Helpers do
   defp tuple_flows_to_return?(instrs, idx, dst) do
     rest = Enum.drop(instrs, idx + 1)
 
-    case normalize_reg(dst) do
+    case register(dst) do
       {:x, 0} ->
         # Already in x0 — just check that a return follows without
         # another write to x0.
         Enum.any?(rest, fn
           :return -> true
-          instr -> barrier?(instr)
+          instr -> Instr.exits?(instr)
         end)
 
       other_reg ->
         # Look for a move from the dst register to x0 before return.
         Enum.reduce_while(rest, false, fn
-          {:move, src, {:x, 0}}, _acc ->
-            if normalize_reg(src) == other_reg, do: {:halt, true}, else: {:cont, false}
-
-          {:move, src, {:tr, {:x, 0}, _}}, _acc ->
-            if normalize_reg(src) == other_reg, do: {:halt, true}, else: {:cont, false}
+          {:move, src, dst}, _acc ->
+            if register(dst) == {:x, 0} and register(src) == other_reg,
+              do: {:halt, true},
+              else: {:cont, false}
 
           :return, _acc ->
             {:halt, false}
 
           instr, _acc ->
-            if barrier?(instr), do: {:halt, false}, else: {:cont, false}
+            if Instr.exits?(instr), do: {:halt, false}, else: {:cont, false}
         end)
     end
   end
-
-  defp normalize_reg({:tr, reg, _}), do: reg
-  defp normalize_reg(reg), do: reg
-
-  # Walk the (already-reversed) tail looking for the most recent writer of
-  # `src_reg`. If it's a remote call, return `{:ok, {:call_field, mfa, idx}}`
-  # so the caller can correlate this register with the call's return.
-  # Stops at barriers since code past them isn't on the current execution path.
-  defp find_call_writer([], _src_reg, _idx), do: :dynamic
-
-  defp find_call_writer([instr | rest], src_reg, idx) do
-    cond do
-      barrier?(instr) ->
-        :dynamic
-
-      writes_to?(instr, src_reg) ->
-        case call_target(instr) do
-          {:ok, mfa} -> {:ok, {:call_field, mfa, idx}}
-          :none -> :dynamic
-        end
-
-      true ->
-        find_call_writer(rest, src_reg, idx)
-    end
-  end
-
-  defp call_target({:call_ext, _, {:extfunc, mod, func, arity}}) do
-    {:ok, "#{inspect(mod)}:#{func}/#{arity}"}
-  end
-
-  defp call_target({:call_ext_only, _, {:extfunc, mod, func, arity}}) do
-    {:ok, "#{inspect(mod)}:#{func}/#{arity}"}
-  end
-
-  defp call_target({:call_ext_last, _, {:extfunc, mod, func, arity}, _}) do
-    {:ok, "#{inspect(mod)}:#{func}/#{arity}"}
-  end
-
-  defp call_target(_), do: :none
 
   # Apply a whitelisted pure BIF to its resolved arguments. Returns
   # `{:ok, result}` if every argument resolved to a concrete value AND
@@ -371,6 +334,11 @@ defmodule Argus.Extractor.Helpers do
   # Each clause is paranoid about argument shapes: we never call BIFs
   # like `:erlang.element/2` with the wrong types because that raises,
   # which would crash extraction. We bail to `:dynamic` on any mismatch.
+  # The whitelist only includes BIFs whose result is fully determined by
+  # their arguments — no clock, no process state, no atom-table mutation.
+  @pure_bifs [:element, :tuple_size, :map_size, :byte_size, :length, :hd, :tl] ++
+               [:atom_to_binary, :++]
+
   defp apply_pure_bif(:element, [idx, tuple])
        when is_integer(idx) and is_tuple(tuple) and idx > 0 and idx <= tuple_size(tuple) do
     {:ok, elem(tuple, idx - 1)}
@@ -392,16 +360,80 @@ defmodule Argus.Extractor.Helpers do
   defp apply_pure_bif(_op, _args), do: :dynamic
 
   # --- Backward register resolution ---
+  #
+  # Every walk below asks `Argus.Instr.Reaching` which instructions can
+  # have written a register at a point, and follows the writer: through
+  # a copy (move, swap, trim) to what was copied, into the instruction
+  # that made the value otherwise. Walking the instruction stream
+  # backwards instead read the instruction laid out before a label as its
+  # predecessor, and missed writes it had no clause for — a received
+  # message, a list's tail — and so answered with another path's value,
+  # or the parameter's.
+  #
+  # Several writers reaching one point is a join, and a walk keeps an
+  # answer only when every writer gives it: the fast and slow paths of
+  # `map.key` agree on the key, the two arms of a `case` rarely agree on
+  # a literal. Each walk memoizes its steps, which keeps a chain of
+  # diamonds from multiplying its paths and breaks the cycles loops make:
+  # a step met again while it is still being answered answers "unknown",
+  # the quiet direction.
+
+  @walk_memo :argus_walk_memo
+
+  defp walk(fun) do
+    outer = Process.get(@walk_memo)
+    Process.put(@walk_memo, %{})
+
+    try do
+      fun.()
+    after
+      if outer, do: Process.put(@walk_memo, outer), else: Process.delete(@walk_memo)
+    end
+  end
+
+  defp step(key, none, compute) do
+    memo = Process.get(@walk_memo, %{})
+
+    case Map.fetch(memo, key) do
+      {:ok, :in_progress} ->
+        none
+
+      {:ok, answer} ->
+        answer
+
+      :error ->
+        Process.put(@walk_memo, Map.put(memo, key, :in_progress))
+        answer = compute.()
+        Process.put(@walk_memo, Map.put(Process.get(@walk_memo, %{}), key, answer))
+        answer
+    end
+  end
+
+  # The one answer every writer of `reg` at `idx` gives, or `none`.
+  defp across(instrs, idx, reg, none, answer) do
+    case Reaching.sources(instrs, idx, reg) do
+      [] -> none
+      [source | sources] -> agree(answer.(source), sources, answer, none)
+    end
+  end
+
+  defp agree(none, _sources, _answer, none), do: none
+  defp agree(first, [], _answer, _none), do: first
+
+  defp agree(first, [source | sources], answer, none) do
+    if answer.(source) == first, do: agree(first, sources, answer, none), else: none
+  end
 
   @doc """
-  Resolve the value of `register` at instruction index `call_idx` by walking
-  backward through the instruction list.
+  Resolve the value of `register` at instruction index `call_idx` (before
+  it runs), following the writes that reach it.
 
-  Handles moves (atom, literal, integer, register-to-register), `put_list`
-  chains (cons cell construction), `put_tuple2` (tuple construction),
-  `put_map_assoc`/`put_map_exact` (map construction),
-  `get_map_elements` (map pattern matching), and typed register
-  wrappers (`{:tr, reg, type}`).
+  Handles copies (`move`, `swap`, `trim`), `put_list` chains (cons cell
+  construction), `put_tuple2` (tuple construction),
+  `put_map_assoc`/`put_map_exact` (map construction), `get_map_elements`
+  (map pattern matching), a few pure BIFs, and typed register wrappers
+  (`{:tr, reg, type}`). `nil` operands are the empty list, as in BEAM
+  assembly. A join resolves only when every path gives the same value.
 
   Returns `{:ok, term}` with the reconstructed Elixir value, or `:dynamic`
   when the value cannot be statically determined. Partially resolvable
@@ -415,10 +447,7 @@ defmodule Argus.Extractor.Helpers do
   """
   @spec resolve_register([term()], non_neg_integer(), register()) :: {:ok, term()} | :dynamic
   def resolve_register(instrs, call_idx, register) do
-    preceding = instrs |> Enum.take(call_idx) |> Enum.reverse()
-    reset_join_budget(instrs)
-
-    case do_resolve(preceding, normalize_reg(register)) do
+    case walk(fn -> value(instrs, call_idx, register(register)) end) do
       # Partial resolution can surface the `:dynamic` placeholder itself as
       # the top-level value (hd of a half-known list, element of a
       # half-known tuple). "Resolved to the unknown marker" is just
@@ -431,287 +460,234 @@ defmodule Argus.Extractor.Helpers do
     end
   end
 
-  @doc """
-  The map key `register` was read from at instruction `idx`, following
-  register-to-register moves back to a `get_map_elements` (a `state.timer`
-  read, or a `%{timer: ref}` pattern in a clause head).
-
-  Returns `{:ok, inspected_key}` or `:dynamic`. A call in between
-  clobbers the x registers, and any other write to the register ends
-  the search.
-  """
-  @spec map_field_of([term()], non_neg_integer(), register()) :: {:ok, String.t()} | :dynamic
-  def map_field_of(instrs, idx, register) do
-    preceding = instrs |> Enum.take(idx) |> Enum.reverse()
-    reset_join_budget(instrs)
-    walk_field(preceding, normalize_reg(register))
-  end
-
-  defp walk_field([], _reg), do: :dynamic
-
-  defp walk_field([{:label, l} | rest], reg) do
-    at_label({:field, l, reg}, fn ->
-      case resume_at_label(rest, l) do
-        {:resume, before} ->
-          walk_field(before, reg)
-
-        :linear ->
-          walk_field(rest, reg)
-
-        {:join, paths} ->
-          meet(Enum.map(paths, fn path -> fn -> walk_field(path, reg) end end), :dynamic)
-      end
+  defp value(instrs, idx, reg) do
+    step({:value, idx, reg}, :dynamic, fn ->
+      across(instrs, idx, reg, :dynamic, fn
+        {:param, _k} -> :dynamic
+        at -> made(instrs, at, Reaching.at(instrs, at), reg)
+      end)
     end)
   end
 
-  # The compiler's slow path for `map.key`: the call returns {:ok, value}
-  # and the value is taken from element 1. Reading it as the field read
-  # it is lets the two arms of that diamond agree at their join.
-  defp walk_field([{:get_tuple_element, src, 1, dst} | rest], reg) do
-    if reg_matches?(dst, reg),
-      do: walk_field(rest, {:tuple_of, normalize_reg(src)}),
-      else: walk_field(rest, reg)
+  # The value the instruction at `at` wrote into `reg`.
+  defp made(instrs, at, instr, reg) do
+    case Instr.copy_source(instr, reg) do
+      nil -> interpret(instrs, at, instr, reg)
+      source -> operand(instrs, at, source)
+    end
   end
 
-  defp walk_field(
-         [{:call_ext, 2, {:extfunc, :elixir_erl_pass, :no_parens_remote, 2}} | rest],
-         {:tuple_of, {:x, 0}}
-       ) do
-    case do_resolve(rest, {:x, 1}) do
-      {:ok, key} when is_atom(key) and key != :dynamic -> {:ok, inspect(key)}
+  defp interpret(instrs, at, {:put_list, head, tail, _dst}, _reg) do
+    head = element(instrs, at, head)
+
+    tail =
+      case register(tail) do
+        {:literal, list} when is_list(list) -> {:ok, list}
+        nil -> {:ok, []}
+        {kind, _} = reg when kind in [:x, :y] -> value(instrs, at, reg)
+        _ -> :dynamic
+      end
+
+    case tail do
+      {:ok, list} when is_list(list) -> {:ok, [head | list]}
+      :dynamic -> {:ok, [head | [:dynamic]]}
       _ -> :dynamic
     end
   end
 
-  # Between the call and the element read sit the result's shape tests
-  # and the read of element 0; only another writer of the tuple's
-  # register ends the search.
-  defp walk_field([instr | rest], {:tuple_of, reg} = tracked) do
-    if writes_to?(instr, reg) or call_instruction?(instr),
-      do: :dynamic,
-      else: walk_field(rest, tracked)
+  defp interpret(instrs, at, {:put_tuple2, _dst, {:list, elements}}, _reg),
+    do: {:ok, elements |> Enum.map(&element(instrs, at, &1)) |> List.to_tuple()}
+
+  defp interpret(instrs, at, {put_map, _fail, src, _dst, _live, {:list, pairs}}, _reg)
+       when put_map in [:put_map_assoc, :put_map_exact] do
+    base =
+      case register(src) do
+        {:literal, map} when is_map(map) -> map
+        {kind, _} = reg when kind in [:x, :y] -> element(instrs, at, reg)
+        _ -> %{}
+      end
+
+    base = if is_map(base), do: base, else: %{}
+
+    resolved =
+      pairs
+      |> Enum.chunk_every(2)
+      |> Enum.reduce(%{}, fn [k, v], acc ->
+        Map.put(acc, element(instrs, at, k), element(instrs, at, v))
+      end)
+
+    {:ok, Map.merge(base, resolved)}
   end
 
-  defp walk_field([{:move, src, dst} | rest], reg) do
-    cond do
-      not reg_matches?(dst, reg) ->
-        walk_field(rest, reg)
+  defp interpret(instrs, at, {:bif, name, _fail, args, _dst}, _reg) when name in @pure_bifs,
+    do: apply_pure_bif(name, Enum.map(args, &element(instrs, at, &1)))
 
-      match?({:x, _}, normalize_reg(src)) or match?({:y, _}, normalize_reg(src)) ->
-        walk_field(rest, normalize_reg(src))
+  defp interpret(instrs, at, {:gc_bif, name, _fail, _live, args, _dst}, _reg)
+       when name in @pure_bifs,
+       do: apply_pure_bif(name, Enum.map(args, &element(instrs, at, &1)))
 
-      true ->
+  defp interpret(instrs, at, {:get_tuple_element, src, idx, _dst}, _reg) do
+    case operand(instrs, at, src) do
+      # A field of a call's field (`{:ok, {pid, ref}} = start_monitor(...)`)
+      # is not an element of the marker that names the outer field.
+      {:ok, {:call_field, _mfa, _field}} ->
+        :dynamic
+
+      {:ok, tuple} when is_tuple(tuple) and idx < tuple_size(tuple) ->
+        {:ok, elem(tuple, idx)}
+
+      _ ->
+        # Source isn't a known literal tuple. If a remote call wrote it,
+        # surface that as `{:call_field, mfa, idx}` so callers can
+        # recognize "this register is field N of <call>'s return". This
+        # is the resolution shape that lets pattern-matched destructuring
+        # (`{:ok, val} = call()`) be traceable.
+        across(instrs, at, register(src), :dynamic, fn
+          {:param, _k} ->
+            :dynamic
+
+          writer ->
+            case Reaching.at(instrs, writer) do
+              {:call_ext, _, {:extfunc, mod, func, arity}} ->
+                {:ok, {:call_field, "#{inspect(mod)}:#{func}/#{arity}", idx}}
+
+              _ ->
+                :dynamic
+            end
+        end)
+    end
+  end
+
+  defp interpret(instrs, at, {:get_hd, src, _dst}, _reg) do
+    case operand(instrs, at, src) do
+      {:ok, [head | _]} -> {:ok, head}
+      _ -> :dynamic
+    end
+  end
+
+  defp interpret(instrs, at, {:get_tl, src, _dst}, _reg) do
+    case operand(instrs, at, src) do
+      {:ok, [_ | tail]} -> {:ok, tail}
+      _ -> :dynamic
+    end
+  end
+
+  # A map pattern: the key paired with the destination, looked up in the
+  # source map.
+  defp interpret(instrs, at, {:get_map_elements, _fail, src, {:list, pairs}}, reg) do
+    with {:ok, key} <- find_map_key(pairs, reg),
+         {:ok, map} when is_map(map) <- operand(instrs, at, src) do
+      map |> Map.get(element(instrs, at, key)) |> ok_or_dynamic()
+    else
+      _ -> :dynamic
+    end
+  end
+
+  # Anything else that wrote the register — a call's result, a received
+  # message, an arithmetic BIF — made a value this cannot compute.
+  defp interpret(_instrs, _at, _instr, _reg), do: :dynamic
+
+  # An operand's value at `at`: a literal is itself (`nil` is the empty
+  # list), a register is what reaches it there.
+  defp operand(_instrs, _at, {:atom, a}), do: {:ok, a}
+  defp operand(_instrs, _at, {:literal, v}), do: {:ok, v}
+  defp operand(_instrs, _at, {:integer, n}), do: {:ok, n}
+  defp operand(_instrs, _at, {:float, f}), do: {:ok, f}
+  defp operand(_instrs, _at, nil), do: {:ok, []}
+  defp operand(instrs, at, {:tr, reg, _type}), do: operand(instrs, at, reg)
+  defp operand(instrs, at, {kind, _} = reg) when kind in [:x, :y], do: value(instrs, at, reg)
+  defp operand(_instrs, _at, _other), do: :dynamic
+
+  # An operand as an element of a structure: its value, or the `:dynamic`
+  # placeholder.
+  defp element(instrs, at, operand) do
+    case operand(instrs, at, operand) do
+      {:ok, value} -> value
+      :dynamic -> :dynamic
+    end
+  end
+
+  # Find the key operand paired with a destination register in a
+  # get_map_elements pair list. Pairs alternate: [key1, dst1, key2, dst2, ...].
+  defp find_map_key([key, dst | rest], reg) do
+    if register(dst) == reg, do: {:ok, key}, else: find_map_key(rest, reg)
+  end
+
+  defp find_map_key(_pairs, _reg), do: :none
+
+  defp ok_or_dynamic(nil), do: :dynamic
+  defp ok_or_dynamic(val), do: {:ok, val}
+
+  @doc """
+  The map key `register` was read from at instruction `idx`, following
+  copies back to a `get_map_elements` (a `state.timer` read, or a
+  `%{timer: ref}` pattern in a clause head) — or to the compiler's slow
+  path for `map.key`, a call returning `{:ok, value}` whose element 1 is
+  taken, which agrees with the fast path at their join.
+
+  Returns `{:ok, inspected_key}` or `:dynamic`.
+  """
+  @spec map_field_of([term()], non_neg_integer(), register()) :: {:ok, String.t()} | :dynamic
+  def map_field_of(instrs, idx, register) do
+    walk(fn -> field(instrs, idx, register(register)) end)
+  end
+
+  defp field(instrs, idx, reg) do
+    step({:field, idx, reg}, :dynamic, fn ->
+      across(instrs, idx, reg, :dynamic, fn
+        {:param, _k} -> :dynamic
+        at -> field_from(instrs, at, Reaching.at(instrs, at), reg)
+      end)
+    end)
+  end
+
+  defp field_from(instrs, at, instr, reg) do
+    case {Instr.copy_source(instr, reg), instr} do
+      {{kind, _} = source, _instr} when kind in [:x, :y] ->
+        field(instrs, at, source)
+
+      {nil, {:get_map_elements, _fail, _src, {:list, pairs}}} ->
+        case find_map_key(pairs, reg) do
+          {:ok, {:atom, key}} -> {:ok, inspect(key)}
+          {:ok, {:literal, key}} -> {:ok, inspect(key)}
+          _ -> :dynamic
+        end
+
+      {nil, {:get_tuple_element, src, 1, _dst}} ->
+        slow_path_field(instrs, at, register(src))
+
+      _ ->
         :dynamic
     end
   end
 
-  defp walk_field([{:get_map_elements, _f, _src, {:list, pairs}} | rest], reg) do
-    case find_map_key(pairs, reg) do
-      {:ok, {:atom, key}} -> {:ok, inspect(key)}
-      {:ok, {:literal, key}} -> {:ok, inspect(key)}
-      {:ok, _other} -> :dynamic
-      :none -> walk_field(rest, reg)
-    end
-  end
+  defp slow_path_field(instrs, idx, reg) do
+    step({:slow_path, idx, reg}, :dynamic, fn ->
+      across(instrs, idx, reg, :dynamic, fn
+        {:param, _k} ->
+          :dynamic
 
-  defp walk_field([instr | rest], reg) do
-    cond do
-      barrier?(instr) -> :dynamic
-      call_instruction?(instr) and match?({:x, _}, reg) -> :dynamic
-      writes_to?(instr, reg) -> :dynamic
-      true -> walk_field(rest, reg)
-    end
-  end
+        at ->
+          case Reaching.at(instrs, at) do
+            {:call_ext, 2, {:extfunc, :elixir_erl_pass, :no_parens_remote, 2}} ->
+              case value(instrs, at, {:x, 1}) do
+                {:ok, key} when is_atom(key) and key != :dynamic -> {:ok, inspect(key)}
+                _ -> :dynamic
+              end
 
-  # A label reached going backwards is the start of a block, and the path
-  # into it came from whatever branches to it, not from the instruction
-  # laid out before it — which is another clause's return, or the end of
-  # the branch before this one. The walks are linear, so without this a
-  # value read in the second arm of a `case` resolves to nothing: the
-  # first arm's `return` is a barrier in the way.
-  #
-  # Resume from the latest predecessor when the label has exactly one way
-  # in: nothing falls through into it (the instruction before it ends a
-  # path), and every branch that targets it sits in one straight run with
-  # no label or barrier between — a clause head's tests all fail to the
-  # next clause, and every path through the later ones passed the first.
-  # A label with fall-through, or with predecessors in separate blocks, is
-  # a join: the walker takes every way in and keeps only an answer they
-  # all give, which is what makes the compiler's fast-and-slow-path
-  # diamond for `map.key` resolve to the key. No predecessor at all is the
-  # entry label or a back edge; the linear walk is right for the first
-  # and harmless for the second.
-  @spec resume_at_label([term()], term()) :: {:resume, [term()]} | :linear | {:join, [[term()]]}
-  defp resume_at_label(rest, l) do
-    fallthrough? =
-      case rest do
-        [] -> false
-        [before | _] -> not path_end?(before)
-      end
-
-    case Enum.drop_while(rest, &(not branches_to?(&1, l))) do
-      [] -> :linear
-      [_latest_branch | _latest] when fallthrough? -> {:join, [rest | predecessor_paths(rest, l)]}
-      [_latest_branch | latest] -> straight_run_or_join(rest, l, latest)
-    end
-  end
-
-  # The instructions before each branch that targets `l`, latest first.
-  defp predecessor_paths(rest, l) do
-    rest
-    |> Enum.with_index()
-    |> Enum.filter(fn {instr, _i} -> branches_to?(instr, l) end)
-    |> Enum.map(fn {_instr, i} -> Enum.drop(rest, i + 1) end)
-  end
-
-  # Predecessors in one straight run all pass the earliest one, so the
-  # latest is the only path; one beyond a block edge is a second path.
-  # Most labels are branched to once, and the count is taken once per
-  # query, so the scan for a second path is paid only where one may be.
-  defp straight_run_or_join(rest, l, latest) do
-    beyond_edge? =
-      label_target_count(rest, l) > 1 and
-        latest
-        |> Enum.drop_while(&(not block_edge?(&1)))
-        |> Enum.any?(&branches_to?(&1, l))
-
-    if beyond_edge?, do: {:join, predecessor_paths(rest, l)}, else: {:resume, latest}
-  end
-
-  defp label_target_count(_rest, l) do
-    case Process.get(:argus_label_targets) do
-      {_key, counts} -> Map.get(counts, l, 0)
-      nil -> 0
-    end
-  end
-
-  defp branch_targets({:jump, {:f, l}}), do: [l]
-  defp branch_targets({:test, _, {:f, l}, _}), do: [l]
-  defp branch_targets({:test, _, {:f, l}, _, _}), do: [l]
-  defp branch_targets({:test, _, {:f, l}, _, _, _}), do: [l]
-  defp branch_targets({:select_val, _, {:f, l}, {:list, arms}}), do: [l | arm_labels(arms)]
-
-  defp branch_targets({:select_tuple_arity, _, {:f, l}, {:list, arms}}),
-    do: [l | arm_labels(arms)]
-
-  defp branch_targets(_instr), do: []
-
-  defp arm_labels(arms), do: for({:f, l} <- arms, do: l)
-
-  # A join walks every way in, and a walk that runs through a chain of
-  # joins walks the common prefix once per path: `state.a`, `state.b`, ...
-  # before a site is 2^n paths. A query gets this many joins; past them
-  # the answer is unknown, which is the quiet direction.
-  @join_budget 32
-
-  # The branch-target counts are the function's, not the query's: the
-  # func_info tuple names the function, and a module's functions are
-  # queried many times each.
-  defp reset_join_budget(instrs) do
-    Process.put(:argus_join_budget, @join_budget)
-    Process.put(:argus_label_memo, %{})
-
-    case Enum.find(instrs, &match?({:func_info, _, _, _}, &1)) do
-      {:func_info, _, _, _} = key ->
-        case Process.get(:argus_label_targets) do
-          {^key, _counts} -> :ok
-          _ -> Process.put(:argus_label_targets, {key, count_branch_targets(instrs)})
-        end
-
-      nil ->
-        Process.put(:argus_label_targets, {nil, count_branch_targets(instrs)})
-    end
-  end
-
-  defp count_branch_targets(instrs) do
-    Enum.reduce(instrs, %{}, fn instr, acc ->
-      Enum.reduce(branch_targets(instr), acc, &Map.update(&2, &1, 1, fn n -> n + 1 end))
+            instr ->
+              case Instr.copy_source(instr, reg) do
+                {kind, _} = source when kind in [:x, :y] -> slow_path_field(instrs, at, source)
+                _ -> :dynamic
+              end
+          end
+      end)
     end)
   end
 
-  # Every path out of a join re-walks the prefix the paths share, and the
-  # prefix holds the earlier joins: memoising each label's answer for a
-  # register within a query walks each label once, however the paths
-  # into it multiply. A label number is unique within a function, and
-  # the instructions before it are always the same.
-  defp at_label(key, compute) do
-    case Map.fetch(Process.get(:argus_label_memo, %{}), key) do
-      {:ok, answer} ->
-        answer
-
-      :error ->
-        answer = compute.()
-        Process.put(:argus_label_memo, Map.put(Process.get(:argus_label_memo, %{}), key, answer))
-        answer
-    end
-  end
-
-  defp take_join_budget do
-    left = Process.get(:argus_join_budget, @join_budget)
-    Process.put(:argus_join_budget, left - 1)
-    left > 0
-  end
-
-  # The one answer every path gives, or none. `walks` is a list of
-  # thunks so that an exhausted budget walks nothing.
-  defp meet(walks, none) do
-    if take_join_budget() do
-      case Enum.map(walks, & &1.()) do
-        [first | others] ->
-          if first != none and Enum.all?(others, &(&1 == first)), do: first, else: none
-
-        [] ->
-          none
-      end
-    else
-      none
-    end
-  end
-
-  defp block_edge?({:label, _}), do: true
-  defp block_edge?(instr), do: barrier?(instr)
-
-  # An instruction after which the next one is never reached: a barrier, a
-  # jump, a select (it jumps to an arm or to its fail label, never on),
-  # the receive-loop transfers, and the ones that raise — func_info before
-  # a function's entry label, the failed-match ends of case and if.
-  defp path_end?({:jump, _}), do: true
-  defp path_end?({:select_val, _, _, _}), do: true
-  defp path_end?({:select_tuple_arity, _, _, _}), do: true
-  defp path_end?({:wait, _}), do: true
-  defp path_end?({:loop_rec_end, _}), do: true
-  defp path_end?({:func_info, _, _, _}), do: true
-  defp path_end?({:badmatch, _}), do: true
-  defp path_end?({:case_end, _}), do: true
-  defp path_end?(:if_end), do: true
-  defp path_end?({:try_case_end, _}), do: true
-  defp path_end?(:raw_raise), do: true
-  defp path_end?({:raise, _, _}), do: true
-  defp path_end?(instr), do: barrier?(instr)
-
-  defp branches_to?({:jump, {:f, l}}, l), do: true
-  defp branches_to?({:test, _, {:f, l}, _}, l), do: true
-  defp branches_to?({:test, _, {:f, l}, _, _}, l), do: true
-  defp branches_to?({:test, _, {:f, l}, _, _, _}, l), do: true
-
-  defp branches_to?({:select_val, _, {:f, fail}, {:list, arms}}, l),
-    do: fail == l or arm_to?(arms, l)
-
-  defp branches_to?({:select_tuple_arity, _, {:f, fail}, {:list, arms}}, l),
-    do: fail == l or arm_to?(arms, l)
-
-  defp branches_to?(_instr, _l), do: false
-
-  defp arm_to?(arms, l), do: Enum.any?(arms, &match?({:f, ^l}, &1))
-
-  defp call_instruction?(instr) when is_tuple(instr) and tuple_size(instr) > 0,
-    do: elem(instr, 0) in [:call, :call_ext, :call_fun, :call_fun2, :apply]
-
-  defp call_instruction?(_instr), do: false
-
   @doc """
   Trace `register` at instruction `call_idx` back to the call whose
-  RESULT it holds, following register-to-register move chains.
+  RESULT it holds, following copies.
 
   Returns `{:ok, {mod, func, arity}, origin_idx}` where `origin_idx` is
   the absolute instruction index of the originating call — useful for
@@ -719,110 +695,59 @@ defmodule Argus.Extractor.Helpers do
   reference back to the `:ets.new/2` site that created it, then reading
   the table name from x0 there), or for stepping into a local `defp`
   helper that produced the value. Both remote (`call_ext`) and local
-  (`call`) non-tail calls are reported; tail-call forms are path
-  barriers. Returns `:no` when the register holds anything else.
-
-  The walk is sound about register lifetimes: x registers do not
-  survive calls (only x0 carries the result), so tracing an `{:x, n}`
-  with `n != 0` hits a call boundary and stops. y registers survive
-  calls and are followed through. Tail calls and `return` are path
-  barriers, as in `resolve_register/3`.
+  (`call`) calls are reported. Returns `:no` when the register holds
+  anything else, or when the paths reaching it disagree on the call.
   """
   @spec call_result_origin([term()], non_neg_integer(), register()) ::
           {:ok, {module(), atom(), arity()}, non_neg_integer()} | :no
   def call_result_origin(instrs, call_idx, register) do
-    preceding =
-      instrs
-      |> Enum.with_index()
-      |> Enum.take(call_idx)
-      |> Enum.reverse()
-
-    walk_origin(preceding, normalize_reg(register))
+    walk(fn -> origin(instrs, call_idx, register(register)) end)
   end
 
-  defp walk_origin([], _reg), do: :no
+  defp origin(instrs, idx, reg) do
+    step({:origin, idx, reg}, :no, fn ->
+      across(instrs, idx, reg, :no, fn
+        {:param, _k} ->
+          :no
 
-  defp walk_origin([{instr, idx} | rest], reg) do
-    src = move_source(instr, reg)
+        at ->
+          instr = Reaching.at(instrs, at)
 
-    cond do
-      # A move into our register: keep tracing through its source —
-      # unless the source is a literal, which is by definition not a
-      # call result.
-      src != nil ->
-        case src do
-          {:x, _} -> walk_origin(rest, src)
-          {:y, _} -> walk_origin(rest, src)
-          _ -> :no
-        end
+          case Instr.copy_source(instr, reg) do
+            {kind, _} = source when kind in [:x, :y] ->
+              origin(instrs, at, source)
 
-      barrier?(instr) ->
-        :no
+            nil ->
+              case call_target_mfa(instr) do
+                {:ok, mfa} -> {:ok, mfa, at}
+                :none -> :no
+              end
 
-      # The most recent writer is a call: x0 holds its result.
-      call_instr?(instr) and reg == {:x, 0} ->
-        case call_target_mfa(instr) do
-          {:ok, mfa} -> {:ok, mfa, idx}
-          :none -> :no
-        end
-
-      # Calls clobber every x register except the x0 result — an x value
-      # from before the call cannot be what we observed after it.
-      call_instr?(instr) and match?({:x, _}, reg) ->
-        :no
-
-      writes_to?(instr, reg) ->
-        :no
-
-      true ->
-        walk_origin(rest, reg)
-    end
+            _literal ->
+              :no
+          end
+      end)
+    end)
   end
-
-  defp call_instr?({:call, _, _}), do: true
-  defp call_instr?({:call_ext, _, _}), do: true
-  defp call_instr?({:call_fun, _}), do: true
-  defp call_instr?({:call_fun2, _, _, _}), do: true
-  defp call_instr?({:apply, _}), do: true
-  defp call_instr?(_), do: false
 
   @doc """
-  The instruction that most recently wrote `register` strictly before
-  `idx`, as `{:ok, instruction, writer_idx}`, or `:no`.
+  The instruction that wrote `register` before `idx`, as
+  `{:ok, instruction, writer_idx}`, or `:no` — when no instruction did
+  (a parameter, or nothing), or when several can have, on different paths.
 
   Unlike `resolve_register/3` (which reconstructs a *value*), this returns
   the raw writer, so callers can inspect provenance — was it a `put_list`,
-  a `put_tuple2`, a `move`, a call? Honors the same control-flow barriers
-  (tail calls, `return`) and register lifetimes (a non-x0 `x` register does
-  not survive a call) as the resolution walkers, so a writer reported here
-  is reachable on the path to `idx`. Moves are returned as-is — the caller
+  a `put_tuple2`, a `move`, a call? Moves are returned as-is — the caller
   decides whether to keep following the chain.
   """
   @spec recent_writer([term()], non_neg_integer(), register()) ::
           {:ok, term(), non_neg_integer()} | :no
   def recent_writer(instrs, idx, register) do
-    instrs
-    |> Enum.take(idx)
-    |> Enum.with_index()
-    |> Enum.reverse()
-    |> do_recent_writer(normalize_reg(register))
-  end
-
-  defp do_recent_writer([], _reg), do: :no
-
-  defp do_recent_writer([{instr, i} | rest], reg) do
-    cond do
-      writes_to?(instr, reg) -> {:ok, instr, i}
-      barrier?(instr) -> :no
-      # A call clobbers every x register except its x0 result — a pre-call
-      # value of x1..xN cannot be what a later instruction observes.
-      call_instr?(instr) and clobbered_x_reg?(reg) -> :no
-      true -> do_recent_writer(rest, reg)
+    case Reaching.sources(instrs, idx, register) do
+      [at] when is_integer(at) -> {:ok, Reaching.at(instrs, at), at}
+      _ -> :no
     end
   end
-
-  defp clobbered_x_reg?({:x, n}), do: n != 0
-  defp clobbered_x_reg?(_), do: false
 
   @doc """
   Find the register holding `key`'s value in a keyword list built at
@@ -843,13 +768,13 @@ defmodule Argus.Extractor.Helpers do
   @spec keyword_value_register([term()], non_neg_integer(), register(), atom()) ::
           {:ok, register(), non_neg_integer()} | :no
   def keyword_value_register(instrs, idx, list_reg, key) do
-    do_keyword_value_register(instrs, idx, normalize_reg(list_reg), key)
+    do_keyword_value_register(instrs, idx, register(list_reg), key)
   end
 
   defp do_keyword_value_register(instrs, idx, list_reg, key) do
     case recent_writer(instrs, idx, list_reg) do
       {:ok, {:move, src, _}, widx} ->
-        do_keyword_value_register(instrs, widx, normalize_reg(src), key)
+        do_keyword_value_register(instrs, widx, register(src), key)
 
       {:ok, {:put_list, head, tail, _}, widx} ->
         case pair_value_register(instrs, widx, head, key) do
@@ -863,33 +788,31 @@ defmodule Argus.Extractor.Helpers do
   end
 
   # The list tail is another cons register, or `nil`/a literal (list end).
-  defp follow_kw_tail(instrs, idx, {kind, _} = tail, key) when kind in [:x, :y],
-    do: do_keyword_value_register(instrs, idx, normalize_reg(tail), key)
-
-  defp follow_kw_tail(instrs, idx, {:tr, reg, _}, key),
-    do: do_keyword_value_register(instrs, idx, normalize_reg(reg), key)
-
-  defp follow_kw_tail(_instrs, _idx, _tail, _key), do: :no
+  defp follow_kw_tail(instrs, idx, tail, key) do
+    case register(tail) do
+      {kind, _} = reg when kind in [:x, :y] -> do_keyword_value_register(instrs, idx, reg, key)
+      _ -> :no
+    end
+  end
 
   # A cons head is the `{key, value}` pair. Reachable as a register (a
   # runtime-built tuple) — resolve it to its put_tuple2 and read the value
   # operand when the key matches and the value is itself a register.
-  defp pair_value_register(instrs, idx, {kind, _} = head, key) when kind in [:x, :y],
-    do: pair_from_reg(instrs, idx, normalize_reg(head), key)
-
-  defp pair_value_register(instrs, idx, {:tr, reg, _}, key),
-    do: pair_from_reg(instrs, idx, normalize_reg(reg), key)
-
-  defp pair_value_register(_instrs, _idx, _head, _key), do: :no
+  defp pair_value_register(instrs, idx, head, key) do
+    case register(head) do
+      {kind, _} = reg when kind in [:x, :y] -> pair_from_reg(instrs, idx, reg, key)
+      _ -> :no
+    end
+  end
 
   defp pair_from_reg(instrs, idx, reg, key) do
     case recent_writer(instrs, idx, reg) do
       {:ok, {:move, src, _}, widx} ->
-        pair_from_reg(instrs, widx, normalize_reg(src), key)
+        pair_from_reg(instrs, widx, register(src), key)
 
       {:ok, {:put_tuple2, _, {:list, [k_elem, v_elem]}}, widx} ->
         if pair_key_matches?(k_elem, key) and value_register(v_elem) do
-          {:ok, normalize_reg(v_elem), widx}
+          {:ok, register(v_elem), widx}
         else
           :no
         end
@@ -903,28 +826,21 @@ defmodule Argus.Extractor.Helpers do
   defp pair_key_matches?({:literal, k}, key), do: k == key
   defp pair_key_matches?(_, _), do: false
 
-  defp value_register({:x, _}), do: true
-  defp value_register({:y, _}), do: true
-  defp value_register({:tr, {:x, _}, _}), do: true
-  defp value_register({:tr, {:y, _}, _}), do: true
-  defp value_register(_), do: false
+  defp value_register(operand), do: match?({kind, _} when kind in [:x, :y], register(operand))
 
-  defp call_target_mfa({:call_ext, _, {:extfunc, m, f, a}}), do: {:ok, {m, f, a}}
   # Local (intra-module) calls carry a bare `{mod, func, arity}` target. A
   # register holding a local call's result traces to that MFA, so callers
   # can step into the callee (e.g. a `defp helper` that returns the value
-  # being tracked). Tail-call forms are barriers, handled before this.
+  # being tracked).
+  defp call_target_mfa({:call_ext, _, {:extfunc, m, f, a}}), do: {:ok, {m, f, a}}
   defp call_target_mfa({:call, _, {m, f, a}}), do: {:ok, {m, f, a}}
   defp call_target_mfa(_), do: :none
 
   @doc """
   Determine whether `register` is a function parameter at instruction
-  index `call_idx`. Returns `{:ok, n}` if it's the n-th parameter (so
-  `{:x, n}` for `n < arity`), or `:no` otherwise.
-
-  A register is "still a parameter" at index `call_idx` if walking back
-  through the preceding instructions hits the function-entry `func_info`
-  without crossing a write to that register or a control-flow barrier.
+  index `call_idx`. Returns `{:ok, n}` if it holds the n-th parameter on
+  every path to `call_idx` (through copies: `def f(_unused, useful)`
+  moves x1 to x0 before the call, and x0 there IS parameter 1), or `:no`.
 
   This lets extractors distinguish "I don't know" from "this is
   parameter N", which matters for client-API functions like
@@ -933,9 +849,22 @@ defmodule Argus.Extractor.Helpers do
   @spec arg_position([term()], non_neg_integer(), register()) ::
           {:ok, non_neg_integer()} | :no
   def arg_position(instrs, call_idx, register) do
-    preceding = instrs |> Enum.take(call_idx) |> Enum.reverse()
-    reset_join_budget(instrs)
-    do_arg_position(preceding, normalize_reg(register))
+    walk(fn -> arg(instrs, call_idx, register(register)) end)
+  end
+
+  defp arg(instrs, idx, reg) do
+    step({:arg, idx, reg}, :no, fn ->
+      across(instrs, idx, reg, :no, fn
+        {:param, k} ->
+          {:ok, k}
+
+        at ->
+          case Instr.copy_source(Reaching.at(instrs, at), reg) do
+            {kind, _} = source when kind in [:x, :y] -> arg(instrs, at, source)
+            _ -> :no
+          end
+      end)
+    end)
   end
 
   @doc """
@@ -968,375 +897,85 @@ defmodule Argus.Extractor.Helpers do
     end
   end
 
-  # Walk the reversed instruction list looking for the most recent write
-  # to the target register. Each instruction is consumed once — the tail
-  # is passed forward to prevent revisiting.
-  #
-  # Barrier instructions (return, tail calls) mark execution path
-  # boundaries — code before them belongs to a different clause or
-  # branch, so any register values found there are stale.
-  defp do_resolve([], _reg), do: :dynamic
-
-  defp do_resolve([{:label, l} | rest], reg) do
-    at_label({:resolve, l, reg}, fn ->
-      case resume_at_label(rest, l) do
-        {:resume, before} ->
-          do_resolve(before, reg)
-
-        :linear ->
-          do_resolve(rest, reg)
-
-        {:join, paths} ->
-          meet(Enum.map(paths, fn path -> fn -> do_resolve(path, reg) end end), :dynamic)
-      end
-    end)
+  @doc """
+  The function a fun in `register` at `idx` runs: the `{mod, fun, arity}`
+  its `make_fun3` was lifted to, through copies, or `nil`.
+  """
+  @spec fun_target([term()], non_neg_integer(), register()) :: {module(), atom(), arity()} | nil
+  def fun_target(instrs, idx, register) do
+    walk(fn -> fun_made(instrs, idx, register(register)) end)
   end
 
-  defp do_resolve([instr | rest], reg) do
-    cond do
-      barrier?(instr) -> :dynamic
-      writes_to?(instr, reg) -> interpret(instr, rest, reg)
-      true -> do_resolve(rest, reg)
-    end
-  end
+  defp fun_made(instrs, idx, reg) do
+    step({:fun, idx, reg}, nil, fn ->
+      across(instrs, idx, reg, nil, fn
+        {:param, _k} ->
+          nil
 
-  # Walk back looking for the function entry. If we hit it without finding
-  # a write or a barrier, the register is still in its function-arg state.
-  defp do_arg_position([], _reg), do: :no
+        at ->
+          case Reaching.at(instrs, at) do
+            {:make_fun3, {mod, fun, arity}, _index, _uniq, _dst, _env} ->
+              {mod, fun, arity}
 
-  defp do_arg_position([{:func_info, _, _, arity} | _], {:x, n}) when n < arity,
-    do: {:ok, n}
-
-  defp do_arg_position([{:func_info, _, _, _} | _], _reg), do: :no
-
-  defp do_arg_position([{:label, l} | rest], reg) do
-    at_label({:arg, l, reg}, fn ->
-      case resume_at_label(rest, l) do
-        {:resume, before} ->
-          do_arg_position(before, reg)
-
-        :linear ->
-          do_arg_position(rest, reg)
-
-        {:join, paths} ->
-          meet(Enum.map(paths, fn path -> fn -> do_arg_position(path, reg) end end), :no)
-      end
-    end)
-  end
-
-  defp do_arg_position([instr | rest], reg) do
-    cond do
-      barrier?(instr) ->
-        :no
-
-      # A register-to-register move doesn't destroy the arg-position
-      # information — it just shifts it. Follow the chain by tracing
-      # the source register instead of giving up. This handles the
-      # common pattern where `def f(_unused, useful)` compiles to
-      # `move x1, x0` before the call site: x0 IS param 1.
-      move_source(instr, reg) != nil ->
-        do_arg_position(rest, move_source(instr, reg))
-
-      writes_to?(instr, reg) ->
-        :no
-
-      true ->
-        do_arg_position(rest, reg)
-    end
-  end
-
-  # If `instr` is a simple move that writes to `dst_reg`, return the
-  # normalized source register. Otherwise nil.
-  defp move_source({:move, src, dst}, dst_reg) do
-    if normalize_reg(dst) == dst_reg, do: normalize_reg(src), else: nil
-  end
-
-  defp move_source(_, _), do: nil
-
-  # Control-flow-terminating instructions mark the end of an execution
-  # path. In the flat BEAM instruction list, code before a barrier
-  # belongs to a different clause or branch — register values from
-  # that code are not reachable on the path leading to our call site.
-  defp barrier?(:return), do: true
-  defp barrier?({:call_only, _, _}), do: true
-  defp barrier?({:call_ext_only, _, _}), do: true
-  defp barrier?({:call_last, _, _, _}), do: true
-  defp barrier?({:call_ext_last, _, _, _}), do: true
-  defp barrier?({:apply_last, _}), do: true
-  defp barrier?(_), do: false
-
-  # Check whether an instruction writes to the target register,
-  # accounting for `{:tr, reg, _type}` wrappers.
-  #
-  # Instructions with explicit destination registers.
-  defp writes_to?({:move, _, dst}, reg), do: reg_matches?(dst, reg)
-  defp writes_to?({:put_list, _, _, dst}, reg), do: reg_matches?(dst, reg)
-  defp writes_to?({:put_tuple2, dst, _}, reg), do: reg_matches?(dst, reg)
-  defp writes_to?({:put_map_assoc, _, _, dst, _, _}, reg), do: reg_matches?(dst, reg)
-  defp writes_to?({:put_map_exact, _, _, dst, _, _}, reg), do: reg_matches?(dst, reg)
-  defp writes_to?({:bif, _, _, _, dst}, reg), do: reg_matches?(dst, reg)
-  defp writes_to?({:gc_bif, _, _, _, _, dst}, reg), do: reg_matches?(dst, reg)
-  defp writes_to?({:get_tuple_element, _, _, dst}, reg), do: reg_matches?(dst, reg)
-  defp writes_to?({:get_hd, _, dst}, reg), do: reg_matches?(dst, reg)
-  defp writes_to?({:get_tl, _, dst}, reg), do: reg_matches?(dst, reg)
-  defp writes_to?({:update_record, _, _, _, dst, _}, reg), do: reg_matches?(dst, reg)
-  defp writes_to?({:bs_create_bin, _, _, _, _, dst, _}, reg), do: reg_matches?(dst, reg)
-
-  # swap writes to both registers.
-  defp writes_to?({:swap, reg_a, reg_b}, reg),
-    do: reg_matches?(reg_a, reg) or reg_matches?(reg_b, reg)
-
-  # get_map_elements writes to multiple registers interleaved in the pair list.
-  defp writes_to?({:get_map_elements, _, _, {:list, pairs}}, reg) do
-    pairs
-    |> Enum.drop(1)
-    |> Enum.take_every(2)
-    |> Enum.any?(&reg_matches?(&1, reg))
-  end
-
-  # Call instructions implicitly write their return value to x0.
-  defp writes_to?({:call, _, _}, {:x, 0}), do: true
-  defp writes_to?({:call_ext, _, _}, {:x, 0}), do: true
-  defp writes_to?({:call_fun, _}, {:x, 0}), do: true
-  defp writes_to?({:call_fun2, _, _, _}, {:x, 0}), do: true
-  defp writes_to?({:apply, _}, {:x, 0}), do: true
-  defp writes_to?(_, _), do: false
-
-  defp reg_matches?(reg, reg), do: true
-  defp reg_matches?({:tr, reg, _}, reg), do: true
-  defp reg_matches?(_, _), do: false
-
-  # Interpret a matched instruction to extract its value.
-  # The `reg` parameter is the target register being resolved — most
-  # instructions ignore it since they write to a single register, but
-  # `get_map_elements` needs it to identify which key/dst pair matched.
-  defp interpret({:move, src, _dst}, rest, _reg), do: resolve_source(rest, src)
-  defp interpret({:put_list, head, tail, _dst}, rest, _reg), do: resolve_list(rest, head, tail)
-
-  defp interpret({:put_tuple2, _dst, {:list, elements}}, rest, _reg),
-    do: resolve_tuple(rest, elements)
-
-  defp interpret({:put_map_assoc, _, src, _dst, _, {:list, pairs}}, rest, _reg),
-    do: resolve_map(rest, src, pairs)
-
-  defp interpret({:put_map_exact, _, src, _dst, _, {:list, pairs}}, rest, _reg),
-    do: resolve_map(rest, src, pairs)
-
-  # swap exchanges two registers — resolve the other one.
-  defp interpret({:swap, reg_a, reg_b}, rest, reg) do
-    other = if reg_matches?(reg_a, reg), do: reg_b, else: reg_a
-    resolve_source(rest, other)
-  end
-
-  # Pure BIF whitelist: when both args resolve to literals we can compute
-  # the result statically. The whitelist only includes BIFs whose result
-  # is fully determined by their arguments — no clock, no process state,
-  # no atom-table mutation.
-  defp interpret({:bif, :element, _, [idx_op, tuple_op], _dst}, rest, _reg) do
-    apply_pure_bif(:element, [resolve_element(rest, idx_op), resolve_element(rest, tuple_op)])
-  end
-
-  defp interpret({:bif, :tuple_size, _, [tuple_op], _dst}, rest, _reg) do
-    apply_pure_bif(:tuple_size, [resolve_element(rest, tuple_op)])
-  end
-
-  defp interpret({:bif, :map_size, _, [map_op], _dst}, rest, _reg) do
-    apply_pure_bif(:map_size, [resolve_element(rest, map_op)])
-  end
-
-  defp interpret({:bif, :byte_size, _, [bin_op], _dst}, rest, _reg) do
-    apply_pure_bif(:byte_size, [resolve_element(rest, bin_op)])
-  end
-
-  defp interpret({:bif, :hd, _, [list_op], _dst}, rest, _reg) do
-    apply_pure_bif(:hd, [resolve_element(rest, list_op)])
-  end
-
-  defp interpret({:bif, :tl, _, [list_op], _dst}, rest, _reg) do
-    apply_pure_bif(:tl, [resolve_element(rest, list_op)])
-  end
-
-  defp interpret({:bif, :atom_to_binary, _, [atom_op], _dst}, rest, _reg) do
-    apply_pure_bif(:atom_to_binary, [resolve_element(rest, atom_op)])
-  end
-
-  defp interpret({:bif, _, _, _, _dst}, _rest, _reg), do: :dynamic
-
-  # gc_bif has the same shape as bif plus a `live` count between fail and args.
-  defp interpret({:gc_bif, :length, _, _live, [list_op], _dst}, rest, _reg) do
-    apply_pure_bif(:length, [resolve_element(rest, list_op)])
-  end
-
-  defp interpret({:gc_bif, :++, _, _live, [a_op, b_op], _dst}, rest, _reg) do
-    apply_pure_bif(:++, [resolve_element(rest, a_op), resolve_element(rest, b_op)])
-  end
-
-  defp interpret({:gc_bif, _, _, _, _, _dst}, _rest, _reg), do: :dynamic
-
-  defp interpret({:get_tuple_element, src, idx, _dst}, rest, _reg) do
-    case resolve_source(rest, src) do
-      # A field of a call's field (`{:ok, {pid, ref}} = start_monitor(...)`)
-      # is not an element of the marker that names the outer field.
-      {:ok, {:call_field, _mfa, _field}} ->
-        :dynamic
-
-      {:ok, tuple} when is_tuple(tuple) and idx < tuple_size(tuple) ->
-        {:ok, elem(tuple, idx)}
-
-      _ ->
-        # Source isn't a known literal tuple. If a remote call wrote it
-        # most recently, surface that as `{:call_field, mfa, idx}` so
-        # callers can recognize "this register is field N of <call>'s
-        # return". This is the resolution shape that lets pattern-matched
-        # destructuring (`{:ok, val} = call()`) be traceable through the
-        # backward dataflow.
-        find_call_writer(rest, normalize_reg(src), idx)
-    end
-  end
-
-  defp interpret({:get_hd, src, _dst}, rest, _reg) do
-    case resolve_source(rest, src) do
-      {:ok, [head | _]} -> {:ok, head}
-      _ -> :dynamic
-    end
-  end
-
-  defp interpret({:get_tl, src, _dst}, rest, _reg) do
-    case resolve_source(rest, src) do
-      {:ok, [_ | tail]} -> {:ok, tail}
-      _ -> :dynamic
-    end
-  end
-
-  # Extract a value from a map pattern match. Finds the key paired with
-  # the matched destination register, resolves the source map, and
-  # extracts the value.
-  defp interpret({:get_map_elements, _, src, {:list, pairs}}, rest, reg) do
-    case find_map_key(pairs, reg) do
-      {:ok, key_operand} ->
-        case resolve_source(rest, src) do
-          {:ok, map} when is_map(map) ->
-            key = resolve_element(rest, key_operand)
-            Map.get(map, key) |> ok_or_dynamic()
-
-          _ ->
-            :dynamic
-        end
-
-      :none ->
-        :dynamic
-    end
-  end
-
-  defp interpret({:update_record, _, _, _, _dst, _}, _rest, _reg), do: :dynamic
-  defp interpret({:bs_create_bin, _, _, _, _, _dst, _}, _rest, _reg), do: :dynamic
-  defp interpret({:call, _, _}, _rest, _reg), do: :dynamic
-  defp interpret({:call_ext, _, _}, _rest, _reg), do: :dynamic
-  defp interpret({:call_fun, _}, _rest, _reg), do: :dynamic
-  defp interpret({:call_fun2, _, _, _}, _rest, _reg), do: :dynamic
-  defp interpret({:apply, _}, _rest, _reg), do: :dynamic
-
-  # Resolve a move source to its value.
-  defp resolve_source(_rest, {:atom, a}), do: {:ok, a}
-  defp resolve_source(_rest, {:literal, v}), do: {:ok, v}
-  defp resolve_source(_rest, {:integer, n}), do: {:ok, n}
-  defp resolve_source(_rest, nil), do: {:ok, nil}
-  defp resolve_source(rest, {:x, _} = src_reg), do: do_resolve(rest, src_reg)
-  defp resolve_source(rest, {:y, _} = src_reg), do: do_resolve(rest, src_reg)
-  defp resolve_source(rest, {:tr, inner_reg, _}), do: do_resolve(rest, inner_reg)
-  defp resolve_source(_rest, _), do: :dynamic
-
-  # Resolve a put_list instruction into a proper list.
-  defp resolve_list(rest, head, tail) do
-    head_val = resolve_element(rest, head)
-
-    tail_val =
-      case tail do
-        {:literal, list} when is_list(list) -> {:ok, list}
-        nil -> {:ok, []}
-        {:x, _} = tail_reg -> do_resolve(rest, tail_reg)
-        {:y, _} = tail_reg -> do_resolve(rest, tail_reg)
-        {:tr, inner_reg, _} -> do_resolve(rest, inner_reg)
-        _ -> :dynamic
-      end
-
-    case tail_val do
-      {:ok, tail_list} when is_list(tail_list) -> {:ok, [head_val | tail_list]}
-      :dynamic -> {:ok, [head_val | [:dynamic]]}
-      _ -> :dynamic
-    end
-  end
-
-  # Resolve a single element — used for put_list heads and put_tuple2 elements.
-  defp resolve_element(_rest, {:atom, a}), do: a
-  defp resolve_element(_rest, {:literal, v}), do: v
-  defp resolve_element(_rest, {:integer, n}), do: n
-  defp resolve_element(_rest, nil), do: nil
-
-  defp resolve_element(rest, {:x, _} = reg) do
-    case do_resolve(rest, reg) do
-      {:ok, val} -> val
-      :dynamic -> :dynamic
-    end
-  end
-
-  defp resolve_element(rest, {:y, _} = reg) do
-    case do_resolve(rest, reg) do
-      {:ok, val} -> val
-      :dynamic -> :dynamic
-    end
-  end
-
-  defp resolve_element(rest, {:tr, inner_reg, _}) do
-    case do_resolve(rest, inner_reg) do
-      {:ok, val} -> val
-      :dynamic -> :dynamic
-    end
-  end
-
-  defp resolve_element(_rest, _), do: :dynamic
-
-  # Resolve a put_tuple2 instruction into an Elixir tuple.
-  defp resolve_tuple(rest, elements) do
-    values = Enum.map(elements, &resolve_element(rest, &1))
-    {:ok, List.to_tuple(values)}
-  end
-
-  # Find the key operand paired with a destination register in a
-  # get_map_elements pair list. Pairs alternate: [key1, dst1, key2, dst2, ...].
-  defp find_map_key([], _reg), do: :none
-
-  defp find_map_key([key, dst | rest], reg) do
-    if reg_matches?(dst, reg), do: {:ok, key}, else: find_map_key(rest, reg)
-  end
-
-  defp ok_or_dynamic(nil), do: :dynamic
-  defp ok_or_dynamic(val), do: {:ok, val}
-
-  # Resolve a put_map_assoc/put_map_exact into an Elixir map.
-  # The source map is the base being extended; pairs is a flat
-  # alternating key/value list.
-  defp resolve_map(rest, src, pairs) do
-    base =
-      case src do
-        {:literal, map} when is_map(map) -> map
-        {:x, _} = reg -> resolve_element(rest, reg)
-        {:y, _} = reg -> resolve_element(rest, reg)
-        {:tr, inner_reg, _} -> resolve_element(rest, inner_reg)
-        _ -> %{}
-      end
-
-    base = if is_map(base), do: base, else: %{}
-
-    resolved_pairs =
-      pairs
-      |> Enum.chunk_every(2)
-      |> Enum.reduce(%{}, fn [k, v], acc ->
-        Map.put(acc, resolve_element(rest, k), resolve_element(rest, v))
+            instr ->
+              case Instr.copy_source(instr, reg) do
+                {kind, _} = source when kind in [:x, :y] -> fun_made(instrs, at, source)
+                _ -> nil
+              end
+          end
       end)
-
-    {:ok, Map.merge(base, resolved_pairs)}
+    end)
   end
+
+  @doc """
+  The length of the list in `register` at `idx`, counting the cons cells
+  that built it: an element that did not resolve still counts, a tail
+  that did not (`[x | rest]`) leaves the length unknown, `nil`.
+  (`resolve_register/3` cannot say this: it reads an unknown tail as one
+  more element.)
+  """
+  @spec list_length([term()], non_neg_integer(), register()) :: non_neg_integer() | nil
+  def list_length(instrs, idx, register) do
+    walk(fn -> list_operand_length(instrs, idx, register) end)
+  end
+
+  defp list_operand_length(instrs, idx, operand) do
+    case register(operand) do
+      nil -> 0
+      {:literal, list} when is_list(list) -> proper_length(list)
+      {kind, _} = reg when kind in [:x, :y] -> cells(instrs, idx, reg)
+      _ -> nil
+    end
+  end
+
+  defp cells(instrs, idx, reg) do
+    step({:cells, idx, reg}, nil, fn ->
+      across(instrs, idx, reg, nil, fn
+        {:param, _k} ->
+          nil
+
+        at ->
+          case Reaching.at(instrs, at) do
+            {:put_list, _head, tail, _dst} ->
+              case list_operand_length(instrs, at, tail) do
+                n when is_integer(n) -> n + 1
+                nil -> nil
+              end
+
+            instr ->
+              case Instr.copy_source(instr, reg) do
+                nil -> nil
+                source -> list_operand_length(instrs, at, source)
+              end
+          end
+      end)
+    end)
+  end
+
+  defp proper_length(list), do: proper_length(list, 0)
+  defp proper_length([], n), do: n
+  defp proper_length([_ | tail], n), do: proper_length(tail, n + 1)
+  defp proper_length(_improper, _n), do: nil
 
   # --- Shared readings ---
 
@@ -1445,7 +1084,7 @@ defmodule Argus.Extractor.Helpers do
   Given `origins` (`{origins_index(module_data), func_id}`), a value that
   is none of those can still be `{"local", instr_id}`: the one
   instruction that made it, found through reaching definitions and
-  followed back through moves and swaps. Two operands with the same origin hold
+  followed back through copies (moves, swaps, trims). Two operands with the same origin hold
   the same value — `key = {name, type}` handed to a read and then to a
   write — although nothing says what it is. Several definitions reaching
   the read (a join) stay dynamic. The instruction ID names a site in one
@@ -1520,39 +1159,26 @@ defmodule Argus.Extractor.Helpers do
   defp local_identity(instrs, idx, register, {index, func_id} = origins, depth) do
     with {kind, n} when kind in [:x, :y] <- register(register),
          [%InstrId{idx: def_idx}] <- Map.get(index, {func_id, idx, "#{kind}#{n}"}) do
-      case copied_from(Enum.at(instrs, def_idx), {kind, n}) do
-        {:ok, {skind, _} = reg} when skind in [:x, :y] ->
+      case Instr.copy_source(Reaching.at(instrs, def_idx), {kind, n}) do
+        {skind, _} = reg when skind in [:x, :y] ->
           local_identity(instrs, def_idx, reg, origins, depth + 1)
 
-        {:ok, _literal} ->
-          {"dynamic", ""}
-
-        :maker ->
+        nil ->
           {"local", InstrId.mint(func_id, def_idx)}
+
+        _literal ->
+          {"dynamic", ""}
       end
     else
       _ -> {"dynamic", ""}
     end
   end
 
-  # What an instruction that wrote `reg` copied into it: the source of a
-  # move, the other register of a swap. Anything else made the value.
-  defp copied_from({:move, source, _dst}, _reg), do: {:ok, register(source)}
-
-  defp copied_from({:swap, a, b}, reg) do
-    cond do
-      register(a) == reg -> {:ok, register(b)}
-      register(b) == reg -> {:ok, register(a)}
-      true -> :maker
-    end
-  end
-
-  defp copied_from(_instr, _reg), do: :maker
-
   @doc """
   `key_identity/4` for element `n` of the tuple in `register` at `idx`: an
   ETS object's key, a Mnesia record's table and key. The tuple is built by
-  `put_tuple2` on the way to `idx` (through moves), or is one literal. A
+  `put_tuple2` on the way to `idx` (through copies), or is one literal;
+  when the arms of a `case` each build it, their identities must agree. A
   tuple from anywhere else — a parameter passed straight through, a call
   result — says nothing about its elements, and is `{"dynamic", ""}`:
   resolving the whole tuple would lose WHICH parameter an element was.
@@ -1565,26 +1191,36 @@ defmodule Argus.Extractor.Helpers do
           origins() | nil
         ) :: {String.t(), String.t()}
   def tuple_element_identity(instrs, idx, register, n, origins \\ nil) do
-    case recent_writer(instrs, idx, register) do
-      {:ok, {:put_tuple2, _dst, {:list, elements}}, widx} when length(elements) > n ->
-        element_identity(instrs, widx, Enum.at(elements, n), origins)
+    walk(fn -> element_of(instrs, idx, register(register), n, origins) end)
+  end
 
-      {:ok, {:move, {:literal, tuple}, _dst}, _widx}
-      when is_tuple(tuple) and tuple_size(tuple) > n ->
-        {"literal", inspect(elem(tuple, n))}
+  @dynamic_identity {"dynamic", ""}
 
-      {:ok, {:move, source, _dst}, widx} ->
-        case register(source) do
-          {kind, _} = reg when kind in [:x, :y] ->
-            tuple_element_identity(instrs, widx, reg, n, origins)
+  defp element_of(instrs, idx, reg, n, origins) do
+    step({:element, idx, reg, n}, @dynamic_identity, fn ->
+      across(instrs, idx, reg, @dynamic_identity, fn
+        {:param, _k} ->
+          @dynamic_identity
 
-          _other ->
-            {"dynamic", ""}
-        end
+        at ->
+          case Reaching.at(instrs, at) do
+            {:put_tuple2, _dst, {:list, elements}} when length(elements) > n ->
+              element_identity(instrs, at, Enum.at(elements, n), origins)
 
-      _ ->
-        {"dynamic", ""}
-    end
+            instr ->
+              case Instr.copy_source(instr, reg) do
+                {:literal, tuple} when is_tuple(tuple) and tuple_size(tuple) > n ->
+                  {"literal", inspect(elem(tuple, n))}
+
+                {kind, _} = source when kind in [:x, :y] ->
+                  element_of(instrs, at, source, n, origins)
+
+                _ ->
+                  @dynamic_identity
+              end
+          end
+      end)
+    end)
   end
 
   defp element_identity(_instrs, _idx, {:atom, atom}, _origins), do: {"literal", inspect(atom)}

@@ -123,13 +123,20 @@ defmodule Argus.Instr do
   The operand `instr` copied into `reg`, when `instr` is a copy: the
   source of a `move`/`fmove`, the other register of a `swap`, the
   register a `trim` renumbered into it. `nil` for anything else,
-  including a copy that did not write `reg`.
+  including a copy that did not write `reg`. The empty list, which BEAM
+  assembly spells `nil`, is `{:literal, []}` here, so `nil` means only
+  "not a copy".
   """
   @spec copy_source(instr(), term()) :: term() | nil
   def copy_source(instr, reg), do: do_copy_source(instr, register(reg))
 
-  defp do_copy_source({op, src, dst}, reg) when op in [:move, :fmove],
-    do: if(register(dst) == reg, do: operand(src))
+  defp do_copy_source({op, src, dst}, reg) when op in [:move, :fmove] do
+    cond do
+      register(dst) != reg -> nil
+      src == nil -> {:literal, []}
+      true -> operand(src)
+    end
+  end
 
   defp do_copy_source({:swap, a, b}, reg) do
     cond do

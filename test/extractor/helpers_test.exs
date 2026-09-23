@@ -546,14 +546,15 @@ defmodule Argus.Extractor.HelpersTest do
     end
 
     test "partially resolves structure with dynamic components" do
-      # Tuple where second element is a bif result (dynamic).
+      # Tuple where second element is a bif result (dynamic). A `nil`
+      # operand is BEAM assembly's empty list; the atom is `{:atom, nil}`.
       instrs = [
         {:bif, :self, :nofail, [], {:x, 1}},
         {:put_tuple2, {:x, 0}, {:list, [{:atom, :heir}, {:x, 1}, nil]}},
         {:call_ext, 1, {:extfunc, :erlang, :tuple_to_list, 1}}
       ]
 
-      assert Helpers.resolve_register(instrs, 2, {:x, 0}) == {:ok, {:heir, :dynamic, nil}}
+      assert Helpers.resolve_register(instrs, 2, {:x, 0}) == {:ok, {:heir, :dynamic, []}}
     end
 
     test "stops at return barrier instead of picking up stale value" do
@@ -911,6 +912,41 @@ defmodule Argus.Extractor.HelpersTest do
     end
   end
 
+  describe "tuple_element_identity/4 across a join" do
+    # The arms of a `case` each build the record a Mnesia write takes:
+    # its table and key agree across them, its other fields need not.
+    defp record_arms(key_b) do
+      [
+        {:label, 1},
+        {:func_info, {:atom, :m}, {:atom, :f}, 2},
+        {:label, 2},
+        {:allocate, 1, 2},
+        {:move, {:x, 0}, {:y, 0}},
+        {:test, :is_atom, {:f, 3}, [x: 1]},
+        {:put_tuple2, {:x, 0}, {:list, [{:atom, :t}, {:y, 0}, {:atom, :a}]}},
+        {:jump, {:f, 4}},
+        {:label, 3},
+        {:put_tuple2, {:x, 0}, {:list, [{:atom, :t}, key_b, {:atom, :b}]}},
+        {:label, 4},
+        {:call_ext, 1, {:extfunc, :mnesia, :dirty_write, 1}},
+        {:deallocate, 1},
+        :return
+      ]
+    end
+
+    test "every writer agreeing on an element names it" do
+      instrs = record_arms({:y, 0})
+      assert Helpers.tuple_element_identity(instrs, 11, {:x, 0}, 0) == {"literal", ":t"}
+      assert Helpers.tuple_element_identity(instrs, 11, {:x, 0}, 1) == {"param", "0"}
+      assert Helpers.tuple_element_identity(instrs, 11, {:x, 0}, 2) == {"dynamic", ""}
+    end
+
+    test "writers that disagree name nothing" do
+      instrs = record_arms({:atom, :other})
+      assert Helpers.tuple_element_identity(instrs, 11, {:x, 0}, 1) == {"dynamic", ""}
+    end
+  end
+
   describe "copy_read/2" do
     test "a copy's write comes from the one register it copied" do
       assert Helpers.copy_read({:move, {:y, 2}, {:x, 0}}, "x0") == "y2"
@@ -1163,6 +1199,96 @@ defmodule Argus.Extractor.HelpersTest do
 
       # x0 holds the result of :erlang.self() — call result is :dynamic.
       assert Helpers.resolve_to_arg_or_atom(instrs, 3, {:x, 0}) == :dynamic
+    end
+  end
+
+  describe "walks follow the writes that reach, on real bytecode" do
+    alias Argus.Test.Fixtures.Instr, as: Fixture
+
+    defp function(name) do
+      {:ok, data} =
+        Argus.Pipeline.Disassemble.disassemble_path(to_string(:code.which(Fixture)))
+
+      [instrs] = for {:function, ^name, _, _, instrs} <- data.functions, do: instrs
+      instrs
+    end
+
+    defp call_to(instrs, fun) do
+      Enum.find_index(instrs, &match?({_, 2, {:extfunc, GenServer, ^fun, 2}}, &1)) ||
+        Enum.find_index(instrs, &match?({_, 2, {:extfunc, GenServer, ^fun, 2}, _}, &1))
+    end
+
+    test "a received message is loop_rec's write, not the parameter" do
+      instrs = function(:recv)
+      idx = call_to(instrs, :call)
+
+      assert Helpers.arg_position(instrs, idx, {:x, 0}) == :no
+      assert Helpers.resolve_to_arg_or_atom(instrs, idx, {:x, 0}) == :dynamic
+      assert Helpers.key_identity(instrs, idx, {:x, 0}) == {"dynamic", ""}
+    end
+
+    test "a list's tail is get_list's write, not the parameter it came from" do
+      instrs = function(:tailp)
+      idx = call_to(instrs, :call)
+
+      assert Helpers.arg_position(instrs, idx, {:x, 0}) == :no
+      assert Helpers.key_identity(instrs, idx, {:x, 0}) == {"dynamic", ""}
+    end
+
+    test "a label reached only through a map match's fail edge is not the arm laid out before it" do
+      instrs = function(:stale_arm)
+      idx = call_to(instrs, :call)
+
+      # Walking the stream read the first arm's `:stale`; x0 is `x`.
+      assert Helpers.resolve_register(instrs, idx, {:x, 0}) == :dynamic
+      assert Helpers.arg_position(instrs, idx, {:x, 0}) == {:ok, 1}
+    end
+
+    test "a rescue's reason is not a parameter" do
+      instrs = function(:handler)
+      idx = Enum.find_index(instrs, &match?({:try_case, _}, &1))
+
+      assert Helpers.arg_position(instrs, idx + 1, {:x, 1}) == :no
+      assert Helpers.arg_position(instrs, idx + 1, {:x, 0}) == :no
+    end
+
+    test "a value bound before a try reaches its handler, and both arms' atoms do not agree" do
+      instrs = function(:fallback)
+      tuple = Enum.find_index(instrs, &match?({:put_tuple2, _, {:list, [{:y, _}, _]}}, &1))
+      {:put_tuple2, _, {:list, [y, _]}} = Enum.at(instrs, tuple)
+
+      assert Helpers.resolve_register(instrs, tuple, y) == :dynamic
+
+      assert [_, _] = Argus.Instr.Reaching.sources(instrs, tuple, y)
+    end
+
+    test "an x register does not survive a call" do
+      instrs = [
+        {:move, {:atom, :before}, {:x, 1}},
+        {:call_ext, 1, {:extfunc, :m, :f, 1}},
+        {:call_ext, 2, {:extfunc, :m, :g, 2}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 2, {:x, 1}) == :dynamic
+      assert Helpers.recent_writer(instrs, 2, {:x, 1}) == :no
+    end
+
+    test "the empty list is spelled nil and read as []" do
+      instrs = [{:move, nil, {:x, 0}}, {:call_ext, 1, {:extfunc, :m, :f, 1}}]
+      assert Helpers.resolve_register(instrs, 1, {:x, 0}) == {:ok, []}
+      assert Helpers.list_length(instrs, 1, {:x, 0}) == 0
+    end
+
+    test "a trim renumbers the frame; a walk follows the slot that moved" do
+      instrs = [
+        {:move, {:atom, :kept}, {:y, 1}},
+        {:move, {:atom, :dropped}, {:y, 0}},
+        {:trim, 1, 1},
+        {:move, {:y, 0}, {:x, 0}},
+        {:call_ext, 1, {:extfunc, :m, :f, 1}}
+      ]
+
+      assert Helpers.resolve_register(instrs, 4, {:x, 0}) == {:ok, :kept}
     end
   end
 end

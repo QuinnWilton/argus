@@ -110,7 +110,7 @@ defmodule Argus.Dataflow do
     |> Enum.map(fn {{_name, arity} = fa, rows} ->
       rows = Enum.sort_by(rows, fn {id, _op} -> id.idx end)
       ids = Enum.map(rows, &elem(&1, 0))
-      seed = if params?, do: param_sources(arity), else: MapSet.new()
+      seed = if params?, do: param_sources(arity), else: []
       entry = {entry_id(rows, Map.get(entries, fa)), seed}
       function_edges(ids, Map.get(succs, fa, %{}), defs, uses, entry)
     end)
@@ -146,7 +146,7 @@ defmodule Argus.Dataflow do
   # Parameter k arrives in xk. The pseudo-definition carries no instruction,
   # so a kill by a real write to xk removes it exactly like any other def.
   defp param_sources(arity) do
-    MapSet.new(0..(arity - 1)//1, fn k -> {{:param, k}, "x#{k}"} end)
+    Enum.map(0..(arity - 1)//1, fn k -> {{:param, k}, "x#{k}"} end)
   end
 
   # --- fact wrangling --------------------------------------------------------
@@ -200,7 +200,23 @@ defmodule Argus.Dataflow do
 
   # --- per-function analysis -------------------------------------------------
 
-  defp function_edges(ids, succ, defs, uses, {entry_id, seed}) do
+  defp function_edges(ids, succ, defs, uses, entry) do
+    ids
+    |> block_ins(succ, defs, entry)
+    |> Enum.flat_map(fn {block, in_set} -> resolve(block, in_set, defs, uses) end)
+    |> MapSet.new()
+  end
+
+  @doc false
+  # The solver itself, for `Argus.Instr.Reaching`, which runs it over a
+  # function's instruction list rather than its facts: one function's
+  # straight-line blocks, each with the {source, reg} pairs reaching its
+  # start. `ids` in stream order, `succ` the successor lists, `defs` the
+  # registers each id writes, `entry` the entry id and what reaches it.
+  @spec block_ins([id], %{id => [id]}, %{id => [reg]}, {id, [{term(), reg}]}) ::
+          [{[id], MapSet.t({term(), reg})}]
+        when id: term(), reg: term()
+  def block_ins(ids, succ, defs, {entry_id, seed}) do
     preds = invert(succ)
     blocks = build_blocks(ids, succ, preds, entry_id)
     block_of = for {block, n} <- Enum.with_index(blocks), id <- block, into: %{}, do: {id, n}
@@ -221,11 +237,7 @@ defmodule Argus.Dataflow do
 
     blocks
     |> Enum.with_index()
-    |> Enum.flat_map(fn {block, n} ->
-      in_set = block_in(n, block_preds, out, entry)
-      resolve(block, in_set, defs, uses)
-    end)
-    |> MapSet.new()
+    |> Enum.map(fn {block, n} -> {block, block_in(n, block_preds, out, entry)} end)
   end
 
   # Maximal straight-line chains: extend a block while the last instruction's

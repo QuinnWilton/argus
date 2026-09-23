@@ -720,8 +720,7 @@ defmodule Argus.Pipeline.Emit do
            Helpers.resolve_register(instrs, idx, {:x, first}),
          {:ok, fun} when is_atom(fun) and fun != :dynamic <-
            Helpers.resolve_register(instrs, idx, {:x, first + 1}),
-         n when is_integer(n) <-
-           list_length(Enum.take(instrs, idx) |> Enum.reverse(), {:x, first + 2}) do
+         n when is_integer(n) <- Helpers.list_length(instrs, idx, {:x, first + 2}) do
       {inspect(mod), to_string(fun), to_string(n)}
     else
       _ -> @unresolved
@@ -729,69 +728,11 @@ defmodule Argus.Pipeline.Emit do
   end
 
   defp spawned(instrs, idx, arity) when arity in [1, 2] do
-    case closure_at(Enum.take(instrs, idx) |> Enum.reverse(), {:x, arity - 1}) do
+    case Helpers.fun_target(instrs, idx, {:x, arity - 1}) do
       {mod, fun, lifted_arity} -> {inspect(mod), to_string(fun), to_string(lifted_arity)}
       nil -> @unresolved
     end
   end
-
-  # The length of the argument list in `reg`, walking back over the cons
-  # cells that built it. An element that did not resolve still counts; a
-  # tail that did not (`[x | rest]`) leaves the length, and so the spawned
-  # arity, unknown. (`resolve_register/3` cannot say this: it reads an
-  # unknown tail as one more element.)
-  defp list_length(_rev, nil), do: 0
-  defp list_length(_rev, {:literal, list}) when is_list(list), do: proper_length(list)
-  defp list_length([], _reg), do: nil
-  defp list_length([{:label, _} | _], _reg), do: nil
-
-  defp list_length([{:move, src, dst} | rest], reg) do
-    if register(dst) == reg, do: list_length(rest, register(src)), else: list_length(rest, reg)
-  end
-
-  defp list_length([{:put_list, _head, tail, dst} | rest], reg) do
-    if register(dst) == reg do
-      case list_length(rest, register(tail)) do
-        n when is_integer(n) -> n + 1
-        nil -> nil
-      end
-    else
-      list_length(rest, reg)
-    end
-  end
-
-  defp list_length([instr | rest], reg) do
-    if writes?(instr, reg), do: nil, else: list_length(rest, reg)
-  end
-
-  defp proper_length(list) do
-    length(list)
-  rescue
-    ArgumentError -> nil
-  end
-
-  # Straight-line backward walk from the spawn to the make_fun3 that built
-  # the fun in `reg`, following moves; a label, or anything else writing
-  # the register, ends it.
-  defp closure_at([], _reg), do: nil
-  defp closure_at([{:label, _} | _], _reg), do: nil
-
-  defp closure_at([{:make_fun3, {mod, fun, arity}, _, _, dst, _} | rest], reg) do
-    if register(dst) == reg, do: {mod, fun, arity}, else: closure_at(rest, reg)
-  end
-
-  defp closure_at([{:move, src, dst} | rest], reg) do
-    if register(dst) == reg, do: closure_at(rest, register(src)), else: closure_at(rest, reg)
-  end
-
-  defp closure_at([instr | rest], reg) do
-    if writes?(instr, reg), do: nil, else: closure_at(rest, reg)
-  end
-
-  defp register(operand), do: Instr.register(operand)
-
-  # Whether `instr` leaves nothing of what `reg` held before it.
-  defp writes?(instr, reg), do: Instr.clobbers?(instr, reg)
 
   # apply/2,3 is a call whose target is computed, so the call graph cannot
   # follow it — the same gap as the `apply` and `call_fun` INSTRUCTIONS, but

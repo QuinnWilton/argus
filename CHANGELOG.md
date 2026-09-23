@@ -155,6 +155,31 @@ renumbered slot and a `swap` each register from the other, and deriving
 every write from every read mixed them — a slot kept by a trim took the
 parameters of every other kept slot.
 
+**Fixed.** The extractors' register walks (`Helpers.resolve_register/3`,
+`arg_position/3`, `map_field_of/3`, `call_result_origin/3`,
+`recent_writer/3`, `tuple_element_identity/5`, and through them
+`key_identity/4`, `value_at/3`, `module_target/3`, `timeout_ms/3`) follow
+reaching definitions over the function's real control flow
+(`Argus.Instr.Reaching`) instead of stepping backwards through the
+instruction stream. The stream walk read the instruction laid out before
+a label as its predecessor and missed writes it had no clause for, so it
+answered with another path's value: in `receive do pid ->
+GenServer.call(pid, :x) end` the received message was parameter 0; in
+`def f([h | t])`, `t` was parameter 0; in a `case` arm reached through
+the previous arm's map-match fail edge, the previous arm's literal; after
+a call, an `x` register the call destroyed kept its old value. A join
+resolves only when every path agrees — a record whose arms all build it
+with the same table and key keeps its identity. `nil` operands read as
+the empty list, which is what BEAM assembly means by them, not the atom
+`nil`. New: `Helpers.fun_target/3` and `Helpers.list_length/3` (what the
+spawn resolution walked for itself). Corpus: eight new read-then-write
+races in blockster_v2 (a Mnesia record written by a helper after a
+missed `dirty_read` of the same key, a settings key checked and then
+reset), all real; BB.Command.Server's "init/1 can block on a synchronous
+call" is no longer reported, because the dynamic child its runtime
+starts it as is now recognised and the rule exempts a callee under a
+different supervisor.
+
 ### Process points-to
 
 **Changed.** `self()` resolves in a function a process's own code
