@@ -24,12 +24,13 @@ defmodule Scry.Runner do
   defmodule Result do
     @moduledoc "The outcome of one driver run."
 
-    @enforce_keys [:findings_by_file, :degraded, :souffle_missing?, :changed?]
-    defstruct [:findings_by_file, :degraded, :souffle_missing?, :changed?]
+    @enforce_keys [:findings_by_file, :degraded, :duplicates, :souffle_missing?, :changed?]
+    defstruct [:findings_by_file, :degraded, :duplicates, :souffle_missing?, :changed?]
 
     @type t :: %__MODULE__{
             findings_by_file: %{optional(String.t()) => [map()]},
             degraded: [%{analysis: atom(), reason: term()}],
+            duplicates: [Scry.Scanner.duplicate()],
             souffle_missing?: boolean(),
             changed?: boolean()
           }
@@ -65,7 +66,7 @@ defmodule Scry.Runner do
 
       prior_sources = warm_start(db, manifest_path, force?)
 
-      discovered = Scry.Scanner.scan(config)
+      %{modules: discovered, duplicates: duplicates} = Scry.Scanner.scan(config)
 
       %{sources: sources, changed: changed, removed: removed} =
         Scry.Scanner.sync(db, discovered, prior_sources)
@@ -106,6 +107,7 @@ defmodule Scry.Runner do
       %Result{
         findings_by_file: findings_by_file,
         degraded: degraded,
+        duplicates: duplicates,
         souffle_missing?: not souffle?,
         changed?: changed?
       }

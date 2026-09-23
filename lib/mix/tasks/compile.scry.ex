@@ -125,7 +125,14 @@ defmodule Mix.Tasks.Compile.Scry do
         )
       end
 
-    souffle ++ degraded
+    souffle ++ degraded ++ Enum.map(result.duplicates, &duplicate/1)
+  end
+
+  defp duplicate(%{module: module, used: used, shadowed: shadowed}) do
+    Scry.Diagnostics.infrastructure(
+      :warning,
+      Scry.Diagnostics.duplicate_message(module, used, shadowed)
+    )
   end
 
   # ── status ───────────────────────────────────────────────────────────

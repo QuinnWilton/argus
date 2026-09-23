@@ -29,10 +29,20 @@ defmodule Scry.Scanner do
           removed: [module()]
         }
 
-  @doc """
-  Discovers the beams to analyze: `module => beam_path`.
+  @typedoc """
+  A module found in more than one ebin: the beam analyzed, and the ones
+  passed over.
   """
-  @spec scan(Scry.Config.t()) :: %{optional(module()) => String.t()}
+  @type duplicate :: %{module: module(), used: String.t(), shadowed: [String.t()]}
+
+  @typedoc "What a scan found."
+  @type scan :: %{modules: %{optional(module()) => String.t()}, duplicates: [duplicate()]}
+
+  @doc """
+  Discovers the beams to analyze: `module => beam_path`, plus every
+  module more than one ebin defines (`include_deps` only).
+  """
+  @spec scan(Scry.Config.t()) :: scan()
   def scan(%Scry.Config{} = config) do
     ebins =
       if config.include_deps do
@@ -41,13 +51,38 @@ defmodule Scry.Scanner do
         [Mix.Project.compile_path()]
       end
 
-    for ebin <- ebins,
-        path <- Path.wildcard(Path.join(ebin, "*.beam")),
-        module = module_of(path),
-        not ignored_module?(module, config.ignore_modules),
-        into: %{} do
-      {module, path}
-    end
+    discover(ebins, config.ignore_modules)
+  end
+
+  @doc """
+  The beams in `ebins`, minus the modules `ignore` matches (regexes over
+  the inspected name, or module atoms).
+
+  A module defined in more than one ebin is taken from the first that
+  has it — callers list the project's own ebin first and the rest in a
+  fixed order — and reported as a duplicate, never resolved by whichever
+  directory happened to be read last.
+  """
+  @spec discover([String.t()], [Regex.t() | module()]) :: scan()
+  def discover(ebins, ignore) do
+    found =
+      for ebin <- ebins,
+          path <- ebin |> Path.join("*.beam") |> Path.wildcard() |> Enum.sort(),
+          module = module_of(path),
+          not ignored_module?(module, ignore),
+          do: {module, path}
+
+    by_module = Enum.group_by(found, &elem(&1, 0), &elem(&1, 1))
+
+    duplicates =
+      for {module, [used | shadowed]} <- Enum.sort(by_module), shadowed != [] do
+        %{module: module, used: used, shadowed: shadowed}
+      end
+
+    %{
+      modules: Map.new(by_module, fn {module, [path | _]} -> {module, path} end),
+      duplicates: duplicates
+    }
   end
 
   @doc """
@@ -61,25 +96,37 @@ defmodule Scry.Scanner do
   def sync(%Database{} = db, discovered, prior_sources) do
     now = System.os_time(:second)
 
-    {sources, changed} =
-      Enum.reduce(discovered, {%{}, []}, fn {module, path}, {sources, changed} ->
+    {sources, changed, gone} =
+      Enum.reduce(discovered, {%{}, [], []}, fn {module, path}, {sources, changed, gone} ->
         case sync_one(db, module, path, Map.get(prior_sources, path), now) do
-          {:unchanged, meta} -> {Map.put(sources, path, meta), changed}
-          {:changed, meta} -> {Map.put(sources, path, meta), [module | changed]}
+          {:unchanged, meta} -> {Map.put(sources, path, meta), changed, gone}
+          {:changed, meta} -> {Map.put(sources, path, meta), [module | changed], gone}
+          :gone -> {sources, changed, [module | gone]}
         end
       end)
 
-    removed = mark_removed(db, discovered)
+    # A beam deleted between the glob and here — a concurrent compile
+    # pruning it — is simply not part of the project this run.
+    present = Map.drop(discovered, gone)
+    removed = mark_removed(db, present)
 
-    module_set = discovered |> Map.keys() |> Enum.sort()
+    module_set = present |> Map.keys() |> Enum.sort()
     :ok = Input.set(db, :module_set, :all, module_set)
 
     %{sources: sources, changed: Enum.sort(changed), removed: removed}
   end
 
   defp sync_one(db, module, path, prior, now) do
-    %File.Stat{mtime: mtime, size: size} = File.stat!(path, time: :posix)
+    case File.stat(path, time: :posix) do
+      {:ok, %File.Stat{mtime: mtime, size: size}} ->
+        sync_present(db, module, path, prior, now, mtime, size)
 
+      {:error, _} ->
+        :gone
+    end
+  end
+
+  defp sync_present(db, module, path, prior, now, mtime, size) do
     case prior do
       %{mtime: ^mtime, size: ^size} when mtime < now - 1 ->
         # The prefilter: an untouched file is never read. Files written
@@ -92,20 +139,26 @@ defmodule Scry.Scanner do
         {:unchanged, prior}
 
       _ ->
-        # Hashed in canonical form: a dependent module Elixir rewrote only
-        # to refresh its ExCk chunk must not read as a changed input.
-        content = path |> File.read!() |> Scry.Beam.canonical()
-        hash = :erlang.md5(content)
-        meta = %{mtime: mtime, size: size, hash: hash}
-
-        # Equal hash means a touch or a byte-identical recompile: the
-        # input value is unchanged, so Input.set's cutoff advances
-        # nothing and the run stays a noop.
-        changed? = not match?(%{hash: ^hash}, prior)
-        :ok = Input.set(db, :beam_meta, module, %{path: path, hash: hash})
-
-        if changed?, do: {:changed, meta}, else: {:unchanged, meta}
+        case File.read(path) do
+          {:ok, raw} -> hash_and_set(db, module, path, prior, mtime, size, raw)
+          {:error, _} -> :gone
+        end
     end
+  end
+
+  defp hash_and_set(db, module, path, prior, mtime, size, raw) do
+    # Hashed in canonical form: a dependent module Elixir rewrote only to
+    # refresh its ExCk chunk must not read as a changed input.
+    hash = raw |> Scry.Beam.canonical() |> :erlang.md5()
+    meta = %{mtime: mtime, size: size, hash: hash}
+
+    # Equal hash means a touch or a byte-identical recompile: the input
+    # value is unchanged, so Input.set's cutoff advances nothing and the
+    # run stays a noop.
+    changed? = not match?(%{hash: ^hash}, prior)
+    :ok = Input.set(db, :beam_meta, module, %{path: path, hash: hash})
+
+    if changed?, do: {:changed, meta}, else: {:unchanged, meta}
   end
 
   defp mark_removed(db, discovered) do
@@ -136,8 +189,13 @@ defmodule Scry.Scanner do
     end)
   end
 
+  # Sorted, so which of two dependencies defining a module wins does not
+  # depend on the filesystem's listing order.
   defp dep_ebins do
-    Path.wildcard(Path.join(Mix.Project.build_path(), "lib/*/ebin"))
+    Mix.Project.build_path()
+    |> Path.join("lib/*/ebin")
+    |> Path.wildcard()
     |> Enum.reject(&(&1 == Mix.Project.compile_path()))
+    |> Enum.sort()
   end
 end

@@ -95,6 +95,17 @@ defmodule Scry.Diagnostics do
   end
 
   @doc """
+  The notice for a module more than one scanned ebin defines
+  (`include_deps: true`): which beam is analyzed, and which are not.
+  """
+  @spec duplicate_message(module(), String.t(), [String.t()]) :: String.t()
+  def duplicate_message(module, used, shadowed) do
+    "#{inspect(module)} is defined in more than one ebin; analyzing " <>
+      "#{relative(used, File.cwd!())} and not " <>
+      Enum.map_join(shadowed, ", ", &relative(&1, File.cwd!()))
+  end
+
+  @doc """
   Prints rendered diagnostics to stderr, frames separated by blank
   lines.
   """

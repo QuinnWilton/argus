@@ -103,6 +103,10 @@ defmodule Mix.Tasks.Scry do
 
     report_degraded(result.degraded)
 
+    Enum.each(result.duplicates, fn %{module: module, used: used, shadowed: shadowed} ->
+      Mix.shell().error("scry: " <> Scry.Diagnostics.duplicate_message(module, used, shadowed))
+    end)
+
     entries = Scry.Diagnostics.resolve(result.findings_by_file, config, cwd)
 
     case Keyword.get(opts, :format, "text") do

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- A beam deleted between discovery and hashing (a concurrent compile
+  pruning it) is left out of the run instead of crashing it in
+  `File.stat!`.
+- With `include_deps: true`, a module defined in more than one ebin is
+  taken from the first — the project's own, then dependencies in path
+  order — and reported with a warning naming the beam analyzed and the
+  ones passed over. It used to be whichever ebin the scan read last.
+  `Scry.Scanner.scan/1` returns `%{modules: ..., duplicates: ...}`
+  (`Scry.Scanner.discover/2` over explicit ebins), and the runner's
+  result carries `duplicates`.
 - Configuration errors raise `Scry.ConfigError` (printed like
   `Mix.Error`, without a stacktrace) naming the entry's path
   (`:scry → :severity → :mailbx`), what was expected, and the valid
