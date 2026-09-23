@@ -18,9 +18,11 @@
 // closure construction as a call (stage 0 derives an edge from every
 // `closure_def`), and a fun handed to a call as one (`fun_ref`), so a
 // plain step follows execution into lambdas and fun references;
-// SameProcess subtracts those edges (a receive inside `spawn(fn -> ...
-// end)` or `spawn(&M.loop/0)` runs elsewhere); IntraModule stays inside
-// one module. Each variant states its step in its own
+// SameProcess subtracts the edges into what a start runs (a receive
+// inside `spawn(fn -> ... end)` or `spawn(&M.loop/0)` runs elsewhere,
+// one inside a closure handed to Enum.map in the caller's process:
+// runs_elsewhere, in processes.dl, which a SameProcess instance needs);
+// IntraModule stays inside one module. Each variant states its step in its own
 // recursive clause rather than copying `call_edge` into a per-instance
 // relation, so an analysis with four instances pays for four closures,
 // not four call graphs.
@@ -42,16 +44,11 @@
   reaches(f, t) :- call_edge(f, g), reaches(g, t).
 }
 
-.comp SameProcessReach : Backward {
-  reaches(f, t) :- call_edge(f, g), !closure_def(f, g), !fun_ref(f, g), reaches(g, t).
-}
-
 // The calling process's own work: every edge but the one into a
-// function a start hands to a new process (runs_elsewhere, in
-// processes.dl). `spawn_link(fn -> loop() end)` in init/1 waits in the
-// loop's process; a closure handed to Enum.each runs in init's. Needs
-// processes.dl.
-.comp ProcessReach : Backward {
+// function a start hands to a new process. `spawn_link(fn -> loop() end)`
+// in init/1 waits in the loop's process; a closure handed to Enum.each
+// runs in init's.
+.comp SameProcessReach : Backward {
   reaches(f, t) :- call_edge(f, g), !runs_elsewhere(f, g), reaches(g, t).
 }
 
@@ -92,7 +89,7 @@
 }
 
 .comp SameProcessReachSet : BackwardSet {
-  reaches(f) :- call_edge(f, g), !closure_def(f, g), !fun_ref(f, g), reaches(g).
+  reaches(f) :- call_edge(f, g), !runs_elsewhere(f, g), reaches(g).
 }
 
 // ── Forward: what each root reaches ──────────────────────────────────

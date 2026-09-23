@@ -252,8 +252,7 @@ bottleneck_caller(caller_mod, target_mod, witness) :-
 
 same_process_edge(caller, callee) :-
   call_edge(caller, callee),
-  !closure_def(caller, callee),
-  !fun_ref(caller, callee).
+  !runs_elsewhere(caller, callee).
 
 .decl callback_reaches(entry: symbol, func: symbol, proximity: symbol)
 
@@ -378,7 +377,7 @@ receive_in_callback(id, func, callback, behaviour, proximity, "true") :-
 // An rpc in init/1, or a :global op init/1 reaches, is startup's
 // finding (blocks_on_peer, "remote" and "global"): the same site, with
 // the supervisor's start held on it, reported there once.
-.init init_global_reach = ProcessReach
+.init init_global_reach = SameProcessReach
 
 init_global_reach.seed(g, site) :- global_op(site, g, _, _).
 

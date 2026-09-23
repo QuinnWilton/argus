@@ -3,11 +3,11 @@ defmodule Argus.DlComponentsTest do
   The reachability components in `priv/dl/clientlib/reach.dl`, run over a
   hand-written call graph: each variant's step is what its name says.
 
-      a -> b -> c -> sink        (b -> c is a closure edge: call_edge
+      a -> b -> c -> sink        (b -> c is a closure a spawn runs: call_edge
                                   holds every closure_def, as stage 0
                                   derives it)
-      k -> sink
-      r -> c                     (a fun reference: r holds &c/0)
+      e -> k -> sink             (e -> k is a closure that runs in e's process)
+      r -> c                     (a fun reference r hands a call: it runs in r's process)
       other -> c                 (`other` lives in module N; the rest in M)
   """
   use ExUnit.Case, async: true
@@ -19,11 +19,11 @@ defmodule Argus.DlComponentsTest do
   @program ~S"""
   .decl call_edge(a: symbol, b: symbol)
   .decl closure_def(a: symbol, b: symbol)
-  .decl fun_ref(a: symbol, b: symbol)
+  .decl runs_elsewhere(a: symbol, b: symbol)
   .decl function_def(func: symbol, mod: symbol, name: symbol, arity: number, exported: number)
   .input call_edge
   .input closure_def
-  .input fun_ref
+  .input runs_elsewhere
   .input function_def
   .include "reach.dl"
 
@@ -66,15 +66,15 @@ defmodule Argus.DlComponentsTest do
 
     File.write!(
       Path.join(facts, "call_edge.facts"),
-      "a\tb\nb\tc\nc\tsink\nk\tsink\nother\tc\nr\tc\n"
+      "a\tb\nb\tc\nc\tsink\nk\tsink\ne\tk\nother\tc\nr\tc\n"
     )
 
-    File.write!(Path.join(facts, "closure_def.facts"), "b\tc\n")
-    File.write!(Path.join(facts, "fun_ref.facts"), "r\tc\n")
+    File.write!(Path.join(facts, "closure_def.facts"), "b\tc\ne\tk\n")
+    File.write!(Path.join(facts, "runs_elsewhere.facts"), "b\tc\n")
 
     File.write!(
       Path.join(facts, "function_def.facts"),
-      Enum.map_join(~w(a b c sink k r), "", &"#{&1}\tM\t#{&1}\t0\t1\n") <>
+      Enum.map_join(~w(a b c sink k e r), "", &"#{&1}\tM\t#{&1}\t0\t1\n") <>
         "other\tN\tother\t0\t1\n"
     )
 
@@ -94,14 +94,15 @@ defmodule Argus.DlComponentsTest do
 
   test "backward variants differ only in the step they take", %{out: out} do
     # Callers of sink: c and k directly, b, other and r through c, a
-    # through b.
-    assert out["call"] == ~w(a b c k other r)
-    # The closure edge b -> c and the fun reference r -> c are not
-    # followed, so a, b and r drop out.
-    assert out["same"] == ~w(c k other)
+    # through b, e through k.
+    assert out["call"] == ~w(a b c e k other r)
+    # The edge into what the spawn runs, b -> c, is not followed, so a and
+    # b drop out; e's closure k and r's fun reference run in their own
+    # process.
+    assert out["same"] == ~w(c e k other r)
     # `other` reaches c but from another module.
     assert out["intra"] == ~w(a b c r)
-    assert out["call_set"] == ~w(a b c k other r)
+    assert out["call_set"] == ~w(a b c e k other r)
   end
 
   test "forward variants walk from the root", %{out: out} do

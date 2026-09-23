@@ -470,6 +470,29 @@ named once (`load_base`, `update_base`). Every analysis that includes
 6.2s to 4.5s and 6.7s to 4.2s. Output identical over the corpus and
 four large programs.
 
+**Changed.** A closure runs in the process that runs its caller unless a
+start runs it. The same-process walks (reach.dl's `SameProcessReach` and
+`SameProcessReachSet`, `self_pid`, blocking's callback reach) dropped
+every closure edge, so a receive, a monitor's wait or a `self()` inside
+a closure handed to `Enum.each` or `:lists.foldl` was not the caller's;
+they now drop only the edge into what a spawn, a task or an agent runs
+(`runs_elsewhere`, processes.dl), and a function's closures when it
+starts a process on a fun it did not build, builds a child spec, or
+hands funs to `Task.async_stream`. A closure the function also calls
+itself (`work.()` beside `Task.Supervisor.start_child(sup, work)`) stays
+the caller's. mailbox's late-message and async_nolink reaches take the
+same walk, so a source inside a task a server starts writes to the
+task's mailbox, not the server's. `stage0.dl`'s `anchor_api` gains the
+calls that hand funs off (`Supervisor.start_child`,
+`Task.async_stream`, `Task.Supervisor.async_stream(_nolink)`).
+`mailbox.unconsumed_monitor` ("timed_wait") no longer reports a monitor
+whose function ends the process that runs it (the last call of a task,
+not called otherwise, not recursing): the monitor ends with the task.
+On OTP's kernel, `:global`'s `handle_call(disconnect)` waits for
+`nodedown` in a `lists:foldl` closure and is reported as a blocking
+receive in a callback; mnesia_loader's `finish_copy/6`, whose monitor
+the receive's `:DOWN` clause consumes, is no longer a monitor leak.
+
 **Changed.** A start inside a function that returns what it starts is a
 factory: each call that keeps its `{:ok, pid}` (or bare pid) is its own
 process, `"start <call site>"`, and a child spec's child is `"child

@@ -41,6 +41,7 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.Conn,
     PidFlow.ConnUser,
     PidFlow.ConnSup,
+    PidFlow.Joiner,
     PidFlow.Quiet
   ]
 
@@ -285,6 +286,19 @@ defmodule Argus.Clientlib.ProcessesTest do
              unsited(r["send_target"]),
              &match?([_, "SelfHelper:remind/0", ":reminder", "spawn SelfHelper:start/0"], &1)
            )
+  end
+
+  test "self() in a closure is the process that runs it", %{tmp_dir: tmp_dir} do
+    r = solve(tmp_dir, ~w(self_pid))
+
+    procs = fn pattern ->
+      for [f, p] <- unsited(r["self_pid"]), f =~ pattern, into: MapSet.new(), do: p
+    end
+
+    # Enum.each runs its closure in init's process: the server.
+    assert procs.(~r/^Joiner:-init\/1-fun-\d-\/1$/) == MapSet.new(["server Joiner:start_link/1"])
+    # Task.start runs its closure in the task, and only there.
+    assert procs.(~r/^Joiner:-init\/1-fun-\d-\/0$/) == MapSet.new(["spawn Joiner:init/1"])
   end
 
   test "a gen_statem's data carries its pids from state to state", %{tmp_dir: tmp_dir} do

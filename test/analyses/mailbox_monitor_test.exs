@@ -5,7 +5,17 @@ defmodule Argus.Analyses.MailboxMonitorTest do
   alias Argus.Test.Fixtures.MonitorLeak, as: M
   alias Argus.Test.Rows
 
-  @all [M.Leaks, M.Flushes, M.Blocks, M.NoMonitor, M.LeaksThroughHelper, M.FlushesInHelper]
+  @all [
+    M.Leaks,
+    M.Flushes,
+    M.Blocks,
+    M.NoMonitor,
+    M.LeaksThroughHelper,
+    M.FlushesInHelper,
+    M.InEach,
+    M.TaskGivesUp,
+    M.TaskPolls
+  ]
 
   @servers [
     M.NeverReleases,
@@ -63,6 +73,18 @@ defmodule Argus.Analyses.MailboxMonitorTest do
     # Finch's HTTP/2 pool: monitor in request/…, the `after` in a private
     # loop. The function reported is the one that established the monitor.
     assert named?(funcs(), "MonitorLeak.LeaksThroughHelper:request/1")
+  end
+
+  test "a wait in a closure the caller runs leaks in the caller" do
+    skip_without_souffle()
+    assert named?(funcs(), "MonitorLeak.InEach:-wait_all/1-fun-0-")
+  end
+
+  test "a monitor a task leaves on its way out ends with the task" do
+    skip_without_souffle()
+    refute named?(funcs(), "MonitorLeak.TaskGivesUp")
+    # One that waits again carries the stale :DOWN into its next wait.
+    assert named?(funcs(), "MonitorLeak.TaskPolls:poll/1")
   end
 
   test "a flush in the helper discharges it" do

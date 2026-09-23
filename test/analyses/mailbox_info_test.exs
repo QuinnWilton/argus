@@ -33,13 +33,16 @@ defmodule Argus.Analyses.MailboxInfoTest do
           Argus.Test.Fixtures.AppliesPartialInfoServer,
           Argus.Test.Fixtures.SelfSendPartialInfoServer,
           Argus.Test.Fixtures.MonitorsWithoutCatchall,
-          Argus.Test.Fixtures.HandledTimerServer
+          Argus.Test.Fixtures.HandledTimerServer,
+          Argus.Test.Fixtures.TaskTimerPartialInfoServer,
+          Argus.Test.Fixtures.InlineOrTaskPartialInfoServer
         ])
 
       partial = Enum.map(partial(results, "late_message"), fn [mod, _f] -> mod end) |> Enum.sort()
 
       assert partial == [
                "Argus.Test.Fixtures.AppliesPartialInfoServer",
+               "Argus.Test.Fixtures.InlineOrTaskPartialInfoServer",
                "Argus.Test.Fixtures.PartialInfoServer",
                "Argus.Test.Fixtures.PartialInfoStage",
                "Argus.Test.Fixtures.SelfSendPartialInfoServer"

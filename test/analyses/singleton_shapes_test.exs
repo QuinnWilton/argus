@@ -118,6 +118,10 @@ defmodule Argus.Analyses.SingletonShapesTest do
              "Argus.Test.Fixtures.InitRecv.Waits"
            ]
 
+    # Nor are the funs HandsOff gives Task.async_stream and a child spec.
+    {:ok, handed} = Argus.analyze([InitRecv.HandsOff], :startup)
+    assert Rows.where(handed, :startup, "unbounded_effect_in_init", kind: "receive") == []
+
     {:ok, findings} =
       Argus.run_analyses([InitRecv.Waits, InitRecv.SpawnsLoop], analyses: [:startup])
 

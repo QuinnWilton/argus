@@ -265,6 +265,30 @@ defmodule Argus.Test.Fixtures.PartialInfoServer do
   def handle_info({:tick, _at}, state), do: {:noreply, state}
 end
 
+defmodule Argus.Test.Fixtures.TaskTimerPartialInfoServer do
+  @moduledoc false
+  # The same computed timer, armed by a task the server starts: it fires
+  # into the task's mailbox, not the server's.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_cast(:poll, state) do
+    Task.start(fn ->
+      Process.send_after(self(), {:tick, System.monotonic_time()}, 1_000)
+    end)
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:tick, _at}, state), do: {:noreply, state}
+end
+
 defmodule Argus.Test.Fixtures.HandledTimerServer do
   @moduledoc false
   # A janitor: arms a bare :purge for itself and has the :purge clause.
@@ -391,4 +415,32 @@ defmodule Argus.Test.Fixtures.ClientMonitorsServer do
 
   @impl true
   def handle_info(:ping, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Fixtures.InlineOrTaskPartialInfoServer do
+  @moduledoc false
+  # The computed timer is armed by a fun the server runs in a task when
+  # the pool is up, and inline otherwise: inline, it fires into the
+  # server's mailbox.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_cast(:poll, state) do
+    work = fn -> Process.send_after(self(), {:tick, System.monotonic_time()}, 1_000) end
+
+    case Process.whereis(:pollers) do
+      nil -> work.()
+      sup -> Task.Supervisor.start_child(sup, work)
+    end
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:tick, _at}, state), do: {:noreply, state}
 end

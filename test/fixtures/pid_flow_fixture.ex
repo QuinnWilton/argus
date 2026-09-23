@@ -645,6 +645,20 @@ defmodule Argus.Test.Fixtures.PidFlow do
     def init(nil), do: Supervisor.init([{Conn, :shared}, ConnUser], strategy: :one_for_one)
   end
 
+  defmodule Joiner do
+    @moduledoc "self() in a closure Enum.each runs is the server; in one a task runs, the task."
+    use GenServer
+
+    def start_link(hubs), do: GenServer.start_link(__MODULE__, hubs)
+
+    @impl true
+    def init(hubs) do
+      Enum.each(hubs, fn hub -> send(hub, {:join, self()}) end)
+      Task.start(fn -> send(:joiners, {:hello, self()}) end)
+      {:ok, hubs}
+    end
+  end
+
   defmodule Quiet do
     @moduledoc "Starts with a computed module, apply, and a pid from a library call: no process to name."
     def applied(m), do: apply(m, :start_link, [])

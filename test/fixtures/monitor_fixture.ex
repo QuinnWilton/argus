@@ -20,6 +20,51 @@ defmodule Argus.Test.Fixtures.MonitorLeak do
     end
   end
 
+  defmodule InEach do
+    @moduledoc "The same leak in a closure Enum.each runs, in the caller's process."
+    def wait_all(pids) do
+      Enum.each(pids, fn pid ->
+        ref = Process.monitor(pid)
+
+        receive do
+          {:DOWN, ^ref, :process, _, _} -> :down
+        after
+          1000 -> :timeout
+        end
+      end)
+    end
+  end
+
+  defmodule TaskGivesUp do
+    @moduledoc "The leak's wait is the last thing a task does: the monitor ends with the task."
+    def start(pid), do: Task.start(fn -> watch(pid) end)
+
+    defp watch(pid) do
+      ref = Process.monitor(pid)
+
+      receive do
+        {:DOWN, ^ref, :process, _, _} -> :down
+      after
+        1000 -> :timeout
+      end
+    end
+  end
+
+  defmodule TaskPolls do
+    @moduledoc "A task that monitors and waits again and again: the stale :DOWN meets the next wait."
+    def start(pid), do: Task.start(fn -> poll(pid) end)
+
+    defp poll(pid) do
+      Process.monitor(pid)
+
+      receive do
+        :stop -> :ok
+      after
+        1000 -> poll(pid)
+      end
+    end
+  end
+
   defmodule Flushes do
     @moduledoc "Same wait, but the monitor is cancelled and the mailbox cleared."
     def wait(pid) do

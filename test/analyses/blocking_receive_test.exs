@@ -63,6 +63,16 @@ defmodule Argus.Analyses.BlockingReceiveTest do
       assert func =~ "StatemBlockingInInit:init/1"
     end
 
+    test "a receive in a closure handed to Enum.each is the callback's own" do
+      skip_without_souffle()
+
+      {blocking, _} = run([CallbackReceive.ReceiveInEach])
+
+      assert [[_id, func, callback, "GenServer", "helper"]] = blocking
+      assert func =~ "-handle_call/3-fun-0-"
+      assert callback =~ "handle_call/3"
+    end
+
     test "a receive one call from the callback is reported as a helper" do
       skip_without_souffle()
 

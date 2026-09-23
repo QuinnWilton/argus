@@ -75,6 +75,30 @@ defmodule Argus.Test.Fixtures.CallbackReceive do
     end
   end
 
+  defmodule ReceiveInEach do
+    @moduledoc """
+    A blocking receive inside a closure handed to Enum.each: the closure
+    runs in the callback's own process, and so does the wait.
+    """
+    use GenServer
+
+    @impl true
+    def init(peers), do: {:ok, peers}
+
+    @impl true
+    def handle_call(:sync, _from, peers) do
+      Enum.each(peers, fn peer ->
+        send(peer, {:sync, self()})
+
+        receive do
+          {:synced, ^peer} -> :ok
+        end
+      end)
+
+      {:reply, :ok, peers}
+    end
+  end
+
   defmodule TimerFlush do
     @moduledoc """
     The documented flush idiom. `cancel_timer/1` returning false means the

@@ -292,12 +292,11 @@ named_pid(n, p) :-
 
 // self() in a server's callbacks (process_entry: its callbacks, init/1,
 // terminate/2) is that server; in a spawned function, that spawn; and in
-// a function either calls, the same process: a callback's helper, or a
-// client API a callback calls, runs on the caller's stack. A closure is
-// not followed (it may be a task's), and only functions on the way to a
-// self() are, so the relation stays the size of its use. Closures are
-// told by the compiler's name for them rather than by closure_def, which
-// the supervision family must not read (stage0_test).
+// a function either calls, the same process: a callback's helper, a
+// client API a callback calls, or a closure handed to Enum.map runs on
+// the caller's stack. What a start runs is not followed (runs_elsewhere:
+// a task's closure is the task's), and only functions on the way to a
+// self() are, so the relation stays the size of its use.
 .decl self_pid(func: symbol, proc: symbol)
 
 self_pid(f, p) :- process_entry(m, f), server_process(p, m).
@@ -308,15 +307,12 @@ self_pid(g, p) :-
   same_process_call(f, g),
   self_relevant(g).
 
-// A call that runs the callee on the caller's stack: not a closure's
-// creation, nor a fun handed to a call (fun_ref), which call_edge also
-// counts.
+// A call that runs the callee on the caller's stack: not the creation of
+// a closure, nor a fun handed to a call (fun_ref), that a start runs
+// elsewhere, which call_edge also counts.
 .decl same_process_call(caller: symbol, callee: symbol)
 
-same_process_call(f, g) :-
-  call_edge(f, g),
-  !match(".*:-.*-fun-[0-9]+-/[0-9]+", g),
-  !fun_ref(f, g).
+same_process_call(f, g) :- call_edge(f, g), !runs_elsewhere(f, g).
 
 .decl reads_self(func: symbol)
 
@@ -334,21 +330,34 @@ self_relevant(f) :- reads_self(f).
 self_relevant(f) :- same_process_call(f, g), self_relevant(g).
 
 // `func`'s edge to `callee` leads into another process: callee is what a
-// spawn, a task or an agent in func runs. A closure or fun of func's is
+// spawn, a task or an agent in func runs, and func does not call it
+// itself. A closure or fun of func's is
 // also set aside when func starts a process whose function points-to
 // does not know (the fun came from a variable), starts a child whose
 // spec may hold a fun, or hands its funs to Task.async_stream: one of
 // them runs elsewhere, and which is not known. What a closure handed to Enum.map runs stays the caller's.
 // Told without closure_def (by the compiler's name for a closure), which
-// the supervision family must not read.
+// the supervision family must not read (stage0_test).
 .decl runs_elsewhere(func: symbol, callee: symbol)
 
-runs_elsewhere(f, g) :- process_start(_, f, _, kind, g), kind != "server".
+runs_elsewhere(f, g) :-
+  process_start(_, f, _, kind, g),
+  kind != "server",
+  !call_instr(f, g, _),
+  !calls_fun(f).
+
+// A function that calls a fun value may run the one it starts inline as
+// well (`worker = fn -> ... end`, then a task or `worker.()`, which the
+// compiler makes a call to the closure when it can: call_instr).
+.decl calls_fun(func: symbol)
+
+calls_fun(f) :- dynamic_call(_, f, "call_fun").
 
 runs_elsewhere(f, g) :-
   call_edge(f, g),
-  match(".*:-.*-fun-[0-9]+-/[0-9]+", g),
-  hands_funs_off(f).
+  (match(".*:-.*-fun-[0-9]+-/[0-9]+", g) ; fun_ref(f, g)),
+  hands_funs_off(f),
+  !call_instr(f, g, _).
 
 .decl hands_funs_off(func: symbol)
 
@@ -362,16 +371,16 @@ hands_funs_off(f) :-
   kind != "server".
 
 hands_funs_off(f) :-
-  remote_call(_, f, m, "async_stream", _),
+  call_site(_, f, m, "async_stream", _),
   (m = "Task" ; m = "Task.Supervisor").
 
 hands_funs_off(f) :-
-  remote_call(_, f, "Task.Supervisor", "async_stream_nolink", _).
+  call_site(_, f, "Task.Supervisor", "async_stream_nolink", _).
 
 // A child spec built around a fun (`start: {Task, :start_link, [fn ->
 // ... end]}`) runs it in the child.
 hands_funs_off(f) :-
-  remote_call(_, f, m, "start_child", _),
+  call_site(_, f, m, "start_child", _),
   (m = "Supervisor" ; m = "DynamicSupervisor").
 
 // ── A GenServer's state ─────────────────────────────────────────────

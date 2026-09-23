@@ -96,8 +96,9 @@ partial_handler(mod, h, "runtime", "catchall", "") :-
 // handle_info/2 in a process whose callbacks reach such a source is a
 // FunctionClauseError waiting for that message. Without any source in
 // reach the shape is a style note, and stays quiet. Info: the two rules
-// above stay the warning-grade shapes.
-.init mailbox_reach = CallReachSet
+// above stay the warning-grade shapes. A source in what a callback
+// spawns or hands a task writes to that process's mailbox, not this one.
+.init mailbox_reach = SameProcessReachSet
 
 mailbox_reach.seed(f) :- mailbox_writer(id, f, kind), kind != "cancel", !handled_self_timer(id).
 mailbox_reach.seed(f) :- sync_call_timeout(f, _, ms), ms != -1.
@@ -486,8 +487,9 @@ task_result_defect(owner, id, "linked_in_library") :-
 // handle_info is a FunctionClauseError on the first task that finishes
 // (archethic-node#1306, sentry-elixir#172, Engram#1552). GenServer's
 // default handle_info logs and ignores, so only a module with its own
-// partial handle_info/2 is at risk.
-.init nolink_reach = CallReach
+// partial handle_info/2 is at risk. An async_nolink inside a task the
+// server starts sends its messages to the task.
+.init nolink_reach = SameProcessReach
 
 nolink_reach.seed(f, f) :- mailbox_writer(_, f, "task_nolink").
 
@@ -516,7 +518,53 @@ unconsumed_monitor(mod, func, id, "timed_wait") :-
   monitor_call(id, func, _),
   function_def(func, mod, _, _, _),
   timed_wait.reaches(func),
-  !flush.reaches(func).
+  !flush.reaches(func),
+  !ends_its_process(func).
+
+// A function whose return ends the process that runs it: what a spawn
+// or a task runs, or what that runs as its last call, when nothing else
+// calls it and it does not call itself again. The monitor it leaves live
+// ends with the process (hexpm's streaming task gives up on a slow
+// consumer and returns).
+.decl process_tail(func: symbol)
+
+process_tail(r) :-
+  process_start(_, _, _, "spawn", r),
+  monitor_call(_, m, _),
+  (r = m ; call_edge(r, m)).
+
+process_tail(g) :-
+  process_tail(f),
+  call_instr(f, g, id),
+  tail_call(id),
+  monitor_call(_, g, _).
+
+.decl called_otherwise(func: symbol)
+
+called_otherwise(g) :-
+  process_tail(g),
+  call_edge(f, g),
+  !process_tail(f).
+
+called_otherwise(g) :-
+  process_tail(g),
+  call_instr(f, g, id),
+  !tail_call(id).
+
+.init monitor_loop = SameProcessReach
+
+monitor_loop.seed(g, g) :- process_tail(g).
+
+.decl ends_its_process(func: symbol)
+
+ends_its_process(g) :-
+  process_tail(g),
+  !called_otherwise(g),
+  !recurses(g).
+
+.decl recurses(func: symbol)
+
+recurses(g) :- process_tail(g), call_edge(g, h), monitor_loop.reaches(h, g).
 
 // Removing an entry from a map, set, keyword or ETS table (removal_api,
 // in effects.dl) — the bookkeeping paths a monitor's release belongs

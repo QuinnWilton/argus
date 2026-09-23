@@ -169,7 +169,7 @@ blocks_on_peer(mod, "init", target, "sup", "", "", site, cat(api, ".", op)) :-
 
 // Backwards from the supervisor calls, which are few, over what init's
 // own process runs: a task init starts may wait on the supervisor.
-.init sup_reach = ProcessReach
+.init sup_reach = SameProcessReach
 
 sup_reach.seed(g, site) :- sup_management_call(site, g, _, _, _).
 
@@ -200,7 +200,7 @@ handler_blocks(mod, h, site) :-
   remote_call(site, h, "GenServer", "call", _),
   sync_call_site(site, h, _, -1).
 
-.init infinite_call_reach = ProcessReach
+.init infinite_call_reach = SameProcessReach
 
 infinite_call_reach.seed(g, site) :-
   remote_call(site, g, "GenServer", "call", _),
@@ -240,7 +240,7 @@ infinite_recv(f) :- call_arg(f, g, pos, ":infinity"), infinite_recv_param(g, pos
 
 // Only what init's own process runs: a loop init spawns waits in its own
 // process, and init returns without it.
-.init recv_reach = ProcessReach
+.init recv_reach = SameProcessReach
 
 recv_reach.seed(f, f) :- infinite_recv(f).
 
@@ -250,7 +250,7 @@ unbounded_effect_in_init(mod, "recv", r, site) :-
   recv_site_or_empty(r, site).
 
 // A `receive` with no `after` waits the same way, on the mailbox.
-.init receive_reach = ProcessReach
+.init receive_reach = SameProcessReach
 
 receive_reach.seed(f, f) :- blocking_receive(f).
 
@@ -296,7 +296,7 @@ connect_api(api) :- impure_call(_, _, api, "network", _), match(":ssl.connect/.*
 connect_api(api) :- impure_call(_, _, api, "network", _), match(":gen_udp.open/.*", api).
 connect_api(api) :- impure_call(_, _, api, "network", _), match(":httpc.request/.*", api).
 
-.init connect_reach = ProcessReach
+.init connect_reach = SameProcessReach
 
 connect_reach.seed(f, api) :- impure_call(_, f, api, "network", _), connect_api(api).
 
@@ -407,7 +407,7 @@ global_blocking_op(func, op, retries, id) :-
 // the supervisor. `site` is the :global call itself, in whichever
 // function init/1 reaches it in (init/1 included: a seed is in its own
 // reach).
-.init global_site_reach = ProcessReach
+.init global_site_reach = SameProcessReach
 
 global_site_reach.seed(g, site) :- global_blocking_op(g, _, _, site).
 

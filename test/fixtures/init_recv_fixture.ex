@@ -158,3 +158,38 @@ defmodule Argus.Test.Fixtures.InitRecv.AwaitsEach do
     {:ok, peers}
   end
 end
+
+defmodule Argus.Test.Fixtures.InitRecv.HandsOff do
+  @moduledoc false
+  # Funs init/1 hands to Task.async_stream and to a child spec: each
+  # waits in the process that runs it, not in init's.
+  use GenServer
+
+  def start_link(peers), do: GenServer.start_link(__MODULE__, peers)
+
+  @impl true
+  def init({sup, peers}) do
+    peers
+    |> Task.async_stream(fn peer ->
+      receive do
+        {:ready, ^peer} -> peer
+      end
+    end)
+    |> Stream.run()
+
+    Supervisor.start_child(sup, %{
+      id: :watcher,
+      start:
+        {Task, :start_link,
+         [
+           fn ->
+             receive do
+               :stop -> :ok
+             end
+           end
+         ]}
+    })
+
+    {:ok, peers}
+  end
+end
