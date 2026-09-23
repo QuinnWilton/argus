@@ -5,7 +5,9 @@
 //
 // Provides behaviours.dl (behaves_as, process_behaviour), callbacks.dl
 // (otp_callback, init_function, handler_function, ...), processes.dl
-// (param_pid, call_target, send_target: which process a pid can be), calls.dl
+// (process_call, call_site_target, param_pts, instance, named_pid,
+// self_pid: which process a pid can be; sends.dl and signals.dl add
+// send_target and signal_target), calls.dl
 // (sync_dep, reaches_sync_dep, stateful_module_dep, ...) and
 // supervision.dl (child_subtree, starts_before). An analysis that needs
 // only the behaviour table may include behaviours.dl alone; one that
