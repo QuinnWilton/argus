@@ -4,6 +4,8 @@ defmodule Argus.Extractors.PidFlowTest do
   alias Argus.Extractors.PidFlow
   alias Argus.Test.Fixtures.PidFlow, as: F
 
+  doctest Argus.Extractors.PidFlow
+
   defp facts(modules) do
     {:ok, facts} = Argus.Pipeline.extract(modules, extractors: [PidFlow])
 
@@ -203,6 +205,32 @@ defmodule Argus.Extractors.PidFlowTest do
       f = facts([F.Loops])
       assert ["Loops:start/0", "info", "name", ":loops"] in unsited(f.pid_call)
       assert ["Loops:-start/0-fun-0-/1", "info", "param", "0"] in unsited(f.pid_call)
+    end
+
+    test "spawn/4 passes its argument list, after the node, to what it runs" do
+      f = facts([F.Starts])
+
+      assert ["Starts:remote/0", "Starts:relay/1", "0", "spawn", "self", "self"] in unsited(
+               f.pid_arg
+             )
+    end
+
+    test "a start with a literal name registers its process; so do register_name and Registry" do
+      f = facts([F.Names, F.Starts])
+      registers = unsited(f.pid_register)
+
+      assert ["Names:start_link/1", "{:global, :names}", "proc", "server Names:start_link/1#7"] in registers
+      assert ["Names:init/1", "{:via, Registry, {Reg, :names}}", "self", "self"] in registers
+      assert ["Starts:agent/0", ":counter", "proc", "agent Starts:agent/0#8"] in registers
+    end
+
+    test "lookups name the registry the name lives in" do
+      f = facts([F.Names])
+      calls = unsited(f.pid_call)
+
+      assert ["Names:ping_global/0", "call", "name", "{:global, :names}"] in calls
+      assert ["Names:ping_whereis/0", "call", "name", "{:global, :names}"] in calls
+      assert ["Names:ping_registry/0", "call", "name", "{:via, Registry, {Reg, :names}}"] in calls
     end
 
     test "the compiler's generated functions emit nothing" do

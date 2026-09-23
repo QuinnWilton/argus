@@ -28,6 +28,9 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.TargetA,
     PidFlow.TargetB,
     PidFlow.Timed,
+    PidFlow.Starts,
+    PidFlow.Names,
+    PidFlow.NamedTree,
     PidFlow.Quiet
   ]
 
@@ -212,6 +215,53 @@ defmodule Argus.Clientlib.ProcessesTest do
     assert ["Hub:handle_call/3", "call", "server Listener:start_link/1"] in unsited(
              r["call_target"]
            )
+  end
+
+  test "starts beyond start_link are processes", %{tmp_dir: tmp_dir} do
+    r = solve(tmp_dir, ~w(call_site_target send_target process_start))
+    targets = for [_, f, kind, p] <- unsited(r["call_site_target"]), do: {f, kind, p}
+
+    # {:ok, {pid, ref}} from start_monitor, a Task's pid, an Agent.
+    assert {"Starts:monitored/0", "call", "server Starts:monitored/0"} in targets
+    assert {"Starts:tasks/0", "info", "spawn Starts:tasks/0"} in targets
+    assert {"Starts:agent/0", "call", "agent Starts:agent/0"} in targets
+
+    # A task runs its closure; a send to it is judged against that receive.
+    assert Enum.any?(
+             r["process_start"],
+             &match?([_, "Starts:tasks/0", _, "spawn", "Starts:-tasks/0-fun-" <> _], &1)
+           )
+  end
+
+  test "a pid in a function's sixth parameter", %{tmp_dir: tmp_dir} do
+    r = solve(tmp_dir, ~w(param_pts))
+    assert ["Starts:seven/7", "5", "spawn Starts:wide/0"] in unsited(r["param_pts"])
+  end
+
+  test "names live in three registries and a child spec", %{tmp_dir: tmp_dir} do
+    r = solve(tmp_dir, ~w(named_pid call_site_target))
+    names = unsited(r["named_pid"])
+
+    assert ["{:global, :names}", "server Names:start_link/1"] in names
+    assert ["{:via, Registry, {Reg, :names}}", "server Names:start_link/1"] in names
+    assert [":counter", "agent Starts:agent/0"] in names
+    assert [":named_worker", "child NamedTree#0"] in r["named_pid"]
+
+    for f <- ~w(Names:ping_global/0 Names:ping_whereis/0 Names:ping_registry/0) do
+      assert [f, "call", "server Names:start_link/1"] in for(
+               [_, f, k, p] <- unsited(r["call_site_target"]),
+               do: [f, k, p]
+             )
+    end
+  end
+
+  test "a registration of another pid names that pid, not the caller's module",
+       %{tmp_dir: tmp_dir} do
+    r = solve(tmp_dir, ~w(named_pid))
+    # Names spawns a helper and registers it: ProcessRegistry's
+    # module-level guess says Names' own process holds the name.
+    assert for([":names_helper", p] <- unsited(r["named_pid"]), do: p) ==
+             ["spawn Names:park/0"]
   end
 
   test "a computed module, apply and a library pid name no process", %{tmp_dir: tmp_dir} do

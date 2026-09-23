@@ -5,11 +5,15 @@ defmodule Argus.Extractors.PidFlow do
   them.
 
   A pid is a reference and the call that started the process is its
-  allocation site: a spawn (named by what it runs, from `spawn_call`), a
-  `GenServer`, `:gen_server` or `:gen_statem` start with a literal
-  callback module, a supervisor's `start_child`. The process registry is a
-  heap field everyone shares: `register/2` stores a pid under a name, and
-  a send to that name, or a `whereis` of it, loads it back.
+  allocation site: a spawn (`spawn_call`'s, `:proc_lib`'s, a `Task`'s),
+  a `GenServer`, `:gen_server`, `:gen_statem` or `Supervisor` start with
+  a literal callback module (`start_monitor` too), an `Agent`, a
+  supervisor's `start_child`. The process registry is a heap field
+  everyone shares: `register/2`, `:global.register_name/2`,
+  `Registry.register/3` and a start with a literal `name:` store a pid
+  under a name, and a send to that name, or a `whereis`, `whereis_name`
+  or `Registry.lookup` of it, loads it back. The three registries are
+  three namespaces (`name_of/1`).
 
   A pid is rarely held bare. A server keeps it in its state map, a client
   sends it in `{:subscribe, pid}`, a start returns it in `{:ok, pid}`. So
@@ -63,7 +67,8 @@ defmodule Argus.Extractors.PidFlow do
   - `pid_message(id, func, api_kind, src_kind, src)` — the message of that
     call, cast or send is the source.
   - `pid_register(id, func, name, src_kind, src)` — the call at `id`
-    registers the source under `name`.
+    registers the source under `name`; a start with a literal name
+    registers the process it starts.
   - `pid_send(id, func, message, src_kind, src)` — the send at `id` goes to
     the source; `message` is the literal atom sent, `{:tag, …}` for a
     tuple with a literal atom first, or `dynamic`.
@@ -107,21 +112,37 @@ defmodule Argus.Extractors.PidFlow do
   # A fixpoint over a finite lattice converges; the bound only guards a bug.
   @max_evaluations 64
 
-  # Starts that return `{:ok, pid}`, with the register holding the
-  # callback module.
+  # Starts that return `{:ok, pid}`: the register holding the callback
+  # module, and where the name is (`{:opts, reg}`: a `name:` option;
+  # `{:tuple, reg}`: `{:local, n}`, `{:global, n}` or `{:via, m, k}`).
   @server_starts %{
-    {GenServer, :start, 2} => 0,
-    {GenServer, :start, 3} => 0,
-    {GenServer, :start_link, 2} => 0,
-    {GenServer, :start_link, 3} => 0,
-    {:gen_server, :start, 3} => 0,
-    {:gen_server, :start, 4} => 1,
-    {:gen_server, :start_link, 3} => 0,
-    {:gen_server, :start_link, 4} => 1,
-    {:gen_statem, :start, 3} => 0,
-    {:gen_statem, :start, 4} => 1,
-    {:gen_statem, :start_link, 3} => 0,
-    {:gen_statem, :start_link, 4} => 1
+    {GenServer, :start, 2} => {0, nil},
+    {GenServer, :start, 3} => {0, {:opts, 2}},
+    {GenServer, :start_link, 2} => {0, nil},
+    {GenServer, :start_link, 3} => {0, {:opts, 2}},
+    {:gen_server, :start, 3} => {0, nil},
+    {:gen_server, :start, 4} => {1, {:tuple, 0}},
+    {:gen_server, :start_link, 3} => {0, nil},
+    {:gen_server, :start_link, 4} => {1, {:tuple, 0}},
+    {:gen_statem, :start, 3} => {0, nil},
+    {:gen_statem, :start, 4} => {1, {:tuple, 0}},
+    {:gen_statem, :start_link, 3} => {0, nil},
+    {:gen_statem, :start_link, 4} => {1, {:tuple, 0}},
+    {GenStateMachine, :start, 2} => {0, nil},
+    {GenStateMachine, :start, 3} => {0, {:opts, 2}},
+    {GenStateMachine, :start_link, 2} => {0, nil},
+    {GenStateMachine, :start_link, 3} => {0, {:opts, 2}},
+    {Supervisor, :start_link, 3} => {0, {:opts, 2}},
+    {:supervisor, :start_link, 2} => {0, nil},
+    {:supervisor, :start_link, 3} => {1, {:tuple, 0}}
+  }
+
+  # Starts that return `{:ok, {pid, monitor_ref}}`.
+  @monitor_starts %{
+    {:gen_server, :start_monitor, 3} => {0, nil},
+    {:gen_server, :start_monitor, 4} => {1, {:tuple, 0}},
+    {:gen_statem, :start_monitor, 3} => {0, nil},
+    {:gen_statem, :start_monitor, 4} => {1, {:tuple, 0}}
   }
 
   # A start through a supervisor returns the child's pid in `{:ok, pid}`;
@@ -129,7 +150,55 @@ defmodule Argus.Extractors.PidFlow do
   # `%{start: {Mod, ...}}`).
   @child_starts [{DynamicSupervisor, :start_child, 2}, {Supervisor, :start_child, 2}]
 
-  @lookups [{Process, :whereis, 1}, {:erlang, :whereis, 1}]
+  # Spawns `spawn_call` does not cover (it resolves `:erlang.spawn*`): what
+  # they return around the pid, and what runs — the closure in a register,
+  # or a module, function and argument list from a register on.
+  @other_spawns %{
+    {:proc_lib, :spawn, 1} => {:pid, {:fun, 0}},
+    {:proc_lib, :spawn_link, 1} => {:pid, {:fun, 0}},
+    {:proc_lib, :spawn, 3} => {:pid, {:mfa, 0}},
+    {:proc_lib, :spawn_link, 3} => {:pid, {:mfa, 0}},
+    {:proc_lib, :spawn_opt, 4} => {:pid, {:mfa, 0}},
+    {:erlang, :spawn_opt, 2} => {:pid, {:fun, 0}},
+    {:erlang, :spawn_opt, 4} => {:pid, {:mfa, 0}},
+    {Task, :start, 1} => {:ok, {:fun, 0}},
+    {Task, :start_link, 1} => {:ok, {:fun, 0}},
+    {Task, :start, 3} => {:ok, {:mfa, 0}},
+    {Task, :start_link, 3} => {:ok, {:mfa, 0}},
+    {Task, :async, 1} => {:task, {:fun, 0}},
+    {Task, :async, 3} => {:task, {:mfa, 0}},
+    {Task.Supervisor, :async, 2} => {:task, {:fun, 1}},
+    {Task.Supervisor, :async, 3} => {:task, {:fun, 1}},
+    {Task.Supervisor, :async, 4} => {:task, {:mfa, 1}},
+    {Task.Supervisor, :async_nolink, 2} => {:task, {:fun, 1}},
+    {Task.Supervisor, :async_nolink, 3} => {:task, {:fun, 1}},
+    {Task.Supervisor, :async_nolink, 4} => {:task, {:mfa, 1}},
+    {Task.Supervisor, :start_child, 2} => {:ok, {:fun, 1}},
+    {Task.Supervisor, :start_child, 3} => {:ok, {:fun, 1}},
+    {Task.Supervisor, :start_child, 4} => {:ok, {:mfa, 1}}
+  }
+
+  # An Agent is a server of Agent.Server's callbacks, whose state the
+  # closures it is handed run on: what runs, and where the name is.
+  @agent_starts %{
+    {Agent, :start, 1} => {{:fun, 0}, nil},
+    {Agent, :start, 2} => {{:fun, 0}, {:opts, 1}},
+    {Agent, :start_link, 1} => {{:fun, 0}, nil},
+    {Agent, :start_link, 2} => {{:fun, 0}, {:opts, 1}},
+    {Agent, :start, 3} => {{:mfa, 0}, nil},
+    {Agent, :start, 4} => {{:mfa, 0}, {:opts, 3}},
+    {Agent, :start_link, 3} => {{:mfa, 0}, nil},
+    {Agent, :start_link, 4} => {{:mfa, 0}, {:opts, 3}}
+  }
+
+  # Lookups of a literal name, by the registry the name lives in.
+  @lookups %{
+    {Process, :whereis, 1} => :local,
+    {:erlang, :whereis, 1} => :local,
+    {GenServer, :whereis, 1} => :any,
+    {:global, :whereis_name, 1} => :global,
+    {Registry, :whereis_name, 1} => :registry
+  }
 
   # Library calls that read a field of a term: {term position, key
   # position}. The wrapped ones return `{:ok, value}`; the compiler's
@@ -283,15 +352,10 @@ defmodule Argus.Extractors.PidFlow do
         %{kind: "spawn", runs: runs, shape: shape, arity: arity, args: args}
 
       Map.has_key?(@server_starts, mfa) ->
-        pos = Map.fetch!(@server_starts, mfa)
+        server_start(instrs, idx, Map.fetch!(@server_starts, mfa), :ok)
 
-        case Helpers.resolve_register(instrs, idx, {:x, pos}) do
-          {:ok, mod} when is_atom(mod) and mod not in [nil, :dynamic] ->
-            %{kind: "server", runs: inspect(mod), shape: :ok, init_arg: {:x, pos + 1}}
-
-          _ ->
-            nil
-        end
+      Map.has_key?(@monitor_starts, mfa) ->
+        server_start(instrs, idx, Map.fetch!(@monitor_starts, mfa), :monitor_ok)
 
       mfa in @child_starts ->
         with {:ok, spec} <- Helpers.resolve_register(instrs, idx, {:x, 1}),
@@ -302,10 +366,127 @@ defmodule Argus.Extractors.PidFlow do
           _ -> nil
         end
 
+      Map.has_key?(@other_spawns, mfa) ->
+        {shape, what} = Map.fetch!(@other_spawns, mfa)
+        spawned(instrs, idx, what) |> Map.merge(%{kind: "spawn", shape: shape})
+
+      Map.has_key?(@agent_starts, mfa) ->
+        {what, name} = Map.fetch!(@agent_starts, mfa)
+
+        spawned(instrs, idx, what)
+        |> Map.merge(%{kind: "agent", shape: :ok, name: name_option(instrs, idx, name)})
+        |> Map.delete(:args)
+
       true ->
         nil
     end
   end
+
+  defp server_start(instrs, idx, {pos, name}, shape) do
+    case Helpers.resolve_register(instrs, idx, {:x, pos}) do
+      {:ok, mod} when is_atom(mod) and mod not in [nil, :dynamic] ->
+        %{
+          kind: "server",
+          runs: inspect(mod),
+          shape: shape,
+          init_arg: {:x, pos + 1},
+          name: name_option(instrs, idx, name)
+        }
+
+      _ ->
+        nil
+    end
+  end
+
+  # What a spawn runs: the closure in a register, resolved once the
+  # function's values are known; or `M.F/length(args)` when all three are
+  # literal, with the argument list's register for its elements.
+  defp spawned(_instrs, _idx, {:fun, n}), do: %{runs: {:closure, {:x, n}}}
+
+  defp spawned(instrs, idx, {:mfa, n}) do
+    runs =
+      with {:ok, mod} when is_atom(mod) and mod != :dynamic <-
+             Helpers.resolve_register(instrs, idx, {:x, n}),
+           {:ok, fun} when is_atom(fun) and fun != :dynamic <-
+             Helpers.resolve_register(instrs, idx, {:x, n + 1}),
+           {:ok, args} when is_list(args) <- Helpers.resolve_register(instrs, idx, {:x, n + 2}),
+           true <- proper_list?(args) do
+        Normalize.func_id(mod, fun, length(args))
+      else
+        _ -> "dynamic"
+      end
+
+    %{runs: runs, args: {:x, n + 2}}
+  end
+
+  defp proper_list?([]), do: true
+  defp proper_list?([_ | tail]), do: proper_list?(tail)
+  defp proper_list?(_improper), do: false
+
+  # A literal process name: `name:` in an options list, or the name tuple
+  # an Erlang start takes first.
+  defp name_option(_instrs, _idx, nil), do: nil
+
+  defp name_option(instrs, idx, {:opts, n}) do
+    case Helpers.resolve_register(instrs, idx, {:x, n}) do
+      {:ok, opts} when is_list(opts) -> opts |> keyword_name() |> name_of()
+      _ -> nil
+    end
+  end
+
+  defp name_option(instrs, idx, {:tuple, n}) do
+    case Helpers.resolve_register(instrs, idx, {:x, n}) do
+      {:ok, {:local, name}} -> name_of(name)
+      {:ok, {kind, _} = name} when kind in [:global, :via] -> name_of(name)
+      {:ok, {:via, _, _} = name} -> name_of(name)
+      _ -> nil
+    end
+  end
+
+  defp keyword_name(opts) do
+    Enum.find_value(opts, fn
+      {:name, name} -> name
+      _ -> nil
+    end)
+  end
+
+  @doc """
+  A process name as the registries spell it, the one spelling every
+  relation uses: an atom for the local registry, `{:global, name}` and
+  `{:via, module, key}` inspected whole, so the three namespaces never
+  meet. `nil` for anything with an unknown part.
+
+      iex> Argus.Extractors.PidFlow.name_of(:cache)
+      ":cache"
+
+      iex> Argus.Extractors.PidFlow.name_of({:global, :cache})
+      "{:global, :cache}"
+
+      iex> Argus.Extractors.PidFlow.name_of({:via, Registry, {MyReg, :dynamic}})
+      nil
+  """
+  @spec name_of(term()) :: String.t() | nil
+  def name_of(atom) when is_atom(atom) and atom not in [nil, true, false, :dynamic],
+    do: inspect(atom)
+
+  def name_of({:global, name} = global) do
+    if literal?(name), do: inspect(global), else: nil
+  end
+
+  def name_of({:via, mod, key} = via) when is_atom(mod) and mod != :dynamic do
+    if literal?(key), do: inspect(via), else: nil
+  end
+
+  def name_of(_other), do: nil
+
+  defp literal?(:dynamic), do: false
+  defp literal?(term) when is_atom(term) or is_number(term) or is_binary(term), do: true
+
+  defp literal?(term) when is_tuple(term),
+    do: term |> Tuple.to_list() |> Enum.all?(&literal?/1)
+
+  defp literal?(term) when is_list(term), do: proper_list?(term) and Enum.all?(term, &literal?/1)
+  defp literal?(_term), do: false
 
   defp child_module({mod, _arg}), do: child_module(mod)
   defp child_module(%{start: {mod, _fun, _args}}), do: child_module(mod)
@@ -520,6 +701,10 @@ defmodule Argus.Extractors.PidFlow do
   defp instruction(ctx, {:gc_bif, name, _fail, _live, args, dst}, r),
     do: bif(ctx, name, args, dst, r)
 
+  # A closure is not a pid, but what a spawn of it runs.
+  defp instruction(_ctx, {:make_fun3, {mod, name, arity}, _index, _uniq, dst, _env}, r),
+    do: write(r, dst, MapSet.new([{:fun, Normalize.func_id(mod, name, arity)}]))
+
   defp instruction(_ctx, _instr, r), do: r
 
   defp bif(_ctx, :self, [], dst, r), do: write(r, dst, MapSet.new([:self]))
@@ -554,11 +739,11 @@ defmodule Argus.Extractors.PidFlow do
       Map.has_key?(ctx.fun.starts, idx) ->
         start_result(ctx, Map.fetch!(ctx.fun.starts, idx), r)
 
-      mfa in @lookups ->
-        case Helpers.resolve_atom(instrs, idx, {:x, 0}) do
-          "dynamic" -> r
-          name -> write(r, {:x, 0}, MapSet.new([{:name, name}]))
-        end
+      Map.has_key?(@lookups, mfa) ->
+        write(r, {:x, 0}, lookup(ctx, instrs, idx, Map.fetch!(@lookups, mfa)))
+
+      mfa == {Registry, :lookup, 2} ->
+        registry_lookup(ctx, instrs, r)
 
       Map.has_key?(@field_reads, mfa) ->
         {term, key} = Map.fetch!(@field_reads, mfa)
@@ -593,6 +778,63 @@ defmodule Argus.Extractors.PidFlow do
     end
   end
 
+  # What a lookup of the name in x0 returns: the pid registered under it.
+  # GenServer.whereis/1 takes any server reference, a pid included.
+  defp lookup(ctx, instrs, idx, registry) do
+    case Helpers.resolve_register(instrs, idx, {:x, 0}) do
+      {:ok, name} ->
+        case lookup_name(registry, name) do
+          nil -> MapSet.new()
+          spelled -> MapSet.new([{:name, spelled}])
+        end
+
+      _ when registry == :any ->
+        val(ctx, {:x, 0})
+
+      _ ->
+        MapSet.new()
+    end
+  end
+
+  defp lookup_name(:local, name) when is_atom(name), do: name_of(name)
+  defp lookup_name(:global, name), do: name_of({:global, name})
+  defp lookup_name(:registry, {registry, key}), do: name_of({:via, Registry, {registry, key}})
+  defp lookup_name(:any, name), do: name_of(name)
+  defp lookup_name(_registry, _name), do: nil
+
+  # `Registry.lookup(reg, key)` returns `[{pid, value}]`: a list whose
+  # elements are tuples holding the pid registered under the key.
+  defp registry_lookup(ctx, instrs, r) do
+    idx = ctx.idx
+
+    with {:ok, registry} <- Helpers.resolve_register(instrs, idx, {:x, 0}),
+         {:ok, key} <- Helpers.resolve_register(instrs, idx, {:x, 1}),
+         name when name != nil <- name_of({:via, Registry, {registry, key}}) do
+      entry = %{
+        shape: "tuple",
+        fields: %{"{0}" => MapSet.new([{:name, name}])},
+        base: MapSet.new(),
+        keys: MapSet.new(),
+        tag: "",
+        arity: 2
+      }
+
+      list = %{
+        shape: "list",
+        fields: %{"[]" => obj_token({idx, 1})},
+        base: MapSet.new(),
+        keys: MapSet.new(),
+        tag: "",
+        arity: 0,
+        nil_tail: true
+      }
+
+      r |> object({idx, 1}, entry) |> object(idx, list) |> write({:x, 0}, obj_token(idx))
+    else
+      _ -> r
+    end
+  end
+
   defp library_load(ctx, term, key, r) do
     sel = literal_selector(ctx.fun.instrs, ctx.idx, key)
     load(ctx, val(ctx, {:x, term}), sel, load_id(ctx, sel), r)
@@ -617,6 +859,36 @@ defmodule Argus.Extractors.PidFlow do
 
   defp start_result(ctx, %{proc: proc, shape: :ok}, r),
     do: ok_tuple(ctx, MapSet.new([{:proc, proc}]), r)
+
+  # `start_monitor` returns `{:ok, {pid, ref}}`.
+  defp start_result(ctx, %{proc: proc, shape: :monitor_ok}, r) do
+    pair = %{
+      shape: "tuple",
+      fields: %{"{0}" => MapSet.new([{:proc, proc}])},
+      base: MapSet.new(),
+      keys: MapSet.new(),
+      tag: "",
+      arity: 2
+    }
+
+    r = object(r, {ctx.idx, 1}, pair)
+    ok_tuple(ctx, obj_token({ctx.idx, 1}), r)
+  end
+
+  # `Task.async` returns a `%Task{}`: its `:pid`, and its `:owner`, the
+  # caller.
+  defp start_result(ctx, %{proc: proc, shape: :task}, r) do
+    obj = %{
+      shape: "map",
+      fields: %{":pid" => MapSet.new([{:proc, proc}]), ":owner" => MapSet.new([:self])},
+      base: MapSet.new(),
+      keys: MapSet.new(),
+      tag: "",
+      arity: 0
+    }
+
+    r |> object(ctx.idx, obj) |> write({:x, 0}, obj_token(ctx.idx))
+  end
 
   defp ok_tuple(ctx, value, r) do
     obj = %{
@@ -743,22 +1015,35 @@ defmodule Argus.Extractors.PidFlow do
     ctx = %{fun: fun, state: state, live: live}
 
     facts
-    |> emit_starts(fun)
+    |> emit_starts(fun, state)
     |> emit_objects(ctx)
     |> emit_instructions(ctx)
   end
 
-  defp emit_starts(facts, fun) do
+  defp emit_starts(facts, fun, state) do
     Enum.reduce(fun.starts, facts, fn {idx, start}, acc ->
-      add_fact(acc, :process_start, [
-        site(fun, idx),
-        fun.func_id,
-        start.proc,
-        start.kind,
-        start.runs
-      ])
+      id = site(fun, idx)
+      runs = runs(start, %{idx: idx, fun: fun, state: state})
+      acc = add_fact(acc, :process_start, [id, fun.func_id, start.proc, start.kind, runs])
+
+      # A start with a literal name registers the process under it.
+      case Map.get(start, :name) do
+        nil -> acc
+        name -> add_fact(acc, :pid_register, [id, fun.func_id, name, "proc", start.proc])
+      end
     end)
   end
+
+  # A closure's function once the register holding it is known: exactly
+  # one, or unknown.
+  defp runs(%{runs: {:closure, reg}}, ictx) do
+    case for({:fun, closure} <- val(ictx, reg), do: closure) do
+      [closure] -> closure
+      _ -> "dynamic"
+    end
+  end
+
+  defp runs(%{runs: runs}, _ictx), do: runs
 
   # The terms that hold a source: a field or base with anything but a
   # term, or with a term that does. Fixpoint over the function's terms.
@@ -781,6 +1066,7 @@ defmodule Argus.Extractors.PidFlow do
   end
 
   defp source?({:obj, key}, live), do: Map.has_key?(live, key)
+  defp source?({:fun, _closure}, _live), do: false
   defp source?(_token, _live), do: true
 
   defp emit_objects(facts, ctx) do
@@ -907,7 +1193,8 @@ defmodule Argus.Extractors.PidFlow do
   end
 
   # A spawned function's parameters are the elements of the argument list.
-  defp emit_start_args(facts, at, ictx, %{kind: "spawn", runs: runs, args: reg}) do
+  defp emit_start_args(facts, at, ictx, %{kind: "spawn", runs: runs, args: reg})
+       when runs != "dynamic" do
     case list_elements(ictx, val(ictx, reg)) do
       {:ok, elements} ->
         elements
@@ -980,9 +1267,11 @@ defmodule Argus.Extractors.PidFlow do
   defp destination(at, ictx) do
     value = val(ictx, {:x, 0})
 
-    case Helpers.resolve_atom(at.fun.instrs, at.idx, {:x, 0}) do
-      "dynamic" -> value
-      name -> MapSet.put(value, {:name, name})
+    with {:ok, term} <- Helpers.resolve_register(at.fun.instrs, at.idx, {:x, 0}),
+         name when name != nil <- name_of(term) do
+      MapSet.put(value, {:name, name})
+    else
+      _ -> value
     end
   end
 
@@ -1003,6 +1292,31 @@ defmodule Argus.Extractors.PidFlow do
         Helpers.resolve_atom(at.fun.instrs, at.idx, {:x, 0}),
         val(ictx, {:x, 1})
       )
+
+  defp emit_register(facts, at, ictx, {:global, :register_name, arity}) when arity in [2, 3] do
+    name =
+      case Helpers.resolve_register(at.fun.instrs, at.idx, {:x, 0}) do
+        {:ok, name} -> name_of({:global, name}) || "dynamic"
+        _ -> "dynamic"
+      end
+
+    register_row(facts, at, name, val(ictx, {:x, 1}))
+  end
+
+  # A process registers itself under a key of a Registry.
+  defp emit_register(facts, at, _ictx, {Registry, :register, 3}) do
+    instrs = at.fun.instrs
+
+    name =
+      with {:ok, registry} <- Helpers.resolve_register(instrs, at.idx, {:x, 0}),
+           {:ok, key} <- Helpers.resolve_register(instrs, at.idx, {:x, 1}) do
+        name_of({:via, Registry, {registry, key}}) || "dynamic"
+      else
+        _ -> "dynamic"
+      end
+
+    register_row(facts, at, name, MapSet.new([:self]))
+  end
 
   defp emit_register(facts, _at, _ictx, _mfa), do: facts
 
@@ -1110,6 +1424,9 @@ defmodule Argus.Extractors.PidFlow do
 
       {:obj, key} ->
         if Map.has_key?(ctx.live, key), do: [{"obj", obj_id(ctx.fun, key)}], else: []
+
+      {:fun, _closure} ->
+        []
     end)
     |> Enum.sort()
   end
@@ -1130,6 +1447,8 @@ defmodule Argus.Extractors.PidFlow do
 
   defp site(fun, idx), do: InstrId.mint(fun.func_id, idx)
 
+  # A term a call builds inside its result has a second name at the site.
+  defp obj_id(fun, {idx, n}), do: site(fun, idx) <> "/" <> Integer.to_string(n)
   defp obj_id(fun, idx), do: site(fun, idx)
 
   # A local call, or a remote call into a module outside the runtime

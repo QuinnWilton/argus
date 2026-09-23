@@ -367,6 +367,98 @@ defmodule Argus.Test.Fixtures.PidFlow do
     def handle_call(:me, _from, s), do: {:reply, GenServer.call(self(), :go), s}
   end
 
+  defmodule Starts do
+    @moduledoc """
+    Starts beyond start_link: a monitored start, tasks, an agent, a spawn
+    on a node, and a pid handed to a seven-argument function.
+    """
+    alias Argus.Test.Fixtures.PidFlow.Back
+
+    def monitored do
+      {:ok, {pid, _ref}} = :gen_server.start_monitor(Back, :ok, [])
+      GenServer.call(pid, :ping)
+    end
+
+    def tasks do
+      task = Task.async(fn -> :done end)
+      send(task.pid, :hello)
+      {:ok, pid} = Task.start_link(fn -> await_go() end)
+      send(pid, :stop)
+    end
+
+    defp await_go do
+      receive do
+        :go -> :ok
+      end
+    end
+
+    def agent do
+      {:ok, agent} = Agent.start_link(fn -> 0 end, name: :counter)
+      Agent.get(agent, & &1)
+    end
+
+    def remote do
+      Node.spawn(Node.self(), __MODULE__, :relay, [self()])
+    end
+
+    def relay(parent), do: send(parent, :relayed)
+
+    def wide do
+      pid = spawn(fn -> :ok end)
+      seven(1, 2, 3, 4, 5, pid, 7)
+    end
+
+    def seven(_a, _b, _c, _d, _e, pid, _g), do: send(pid, :sixth)
+  end
+
+  defmodule Names do
+    @moduledoc """
+    A server named globally and looked up in all three registries; a
+    registration of another pid, which the module-level guess would have
+    taken for the caller's own.
+    """
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: {:global, :names})
+
+    def ping_global, do: GenServer.call(:global.whereis_name(:names), :ping)
+    def ping_whereis, do: GenServer.call(GenServer.whereis({:global, :names}), :ping)
+
+    def ping_registry do
+      [{pid, _}] = Registry.lookup(Argus.Test.Fixtures.PidFlow.Reg, :names)
+      GenServer.call(pid, :ping)
+    end
+
+    def park do
+      helper = spawn(fn -> :ok end)
+      Process.register(helper, :names_helper)
+      send(:names_helper, :hi)
+    end
+
+    @impl true
+    def init(:ok) do
+      Registry.register(Argus.Test.Fixtures.PidFlow.Reg, :names, nil)
+      {:ok, nil}
+    end
+
+    @impl true
+    def handle_call(:ping, _from, s), do: {:reply, :pong, s}
+  end
+
+  defmodule NamedTree do
+    @moduledoc "A child spec that names its child."
+    use Supervisor
+
+    def start_link(_), do: Supervisor.start_link(__MODULE__, nil)
+
+    @impl true
+    def init(nil) do
+      Supervisor.init([{Argus.Test.Fixtures.PidFlow.Worker, name: :named_worker}],
+        strategy: :one_for_one
+      )
+    end
+  end
+
   defmodule Quiet do
     @moduledoc "Starts with a computed module, apply, and a pid from a library call: no process to name."
     def applied(m), do: apply(m, :start_link, [])

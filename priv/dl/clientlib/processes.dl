@@ -118,11 +118,28 @@ entry_pts(g, k, x) :- pid_arg(_, f, g, k, via, sk, s), via != "call", source_pts
 param_pts(g, k, x) :- entry_pts(g, k, x).
 param_pts(g, k, x) :- pid_arg(_, f, g, k, "call", sk, s), source_pts(f, sk, s, x).
 
+// A registration (register/2, :global.register_name/2, Registry.register/3,
+// or a start with a literal name) stores the pid it resolves to.
 named_pid(n, p) :- pid_register(_, f, n, k, s), source_pts(f, k, s, p), process(p).
 
-// A server started with a literal name: the start registers it.
+// A child spec's `name:` names the child it starts.
+named_pid(n, cat("child ", cat(s, cat("#", to_string(pos))))) :-
+  supervisor_child_name(s, pos, n),
+  supervisor_child(s, pos, m, _, _),
+  behaves_as(m, "GenServer").
+
+// The module-level guess, for a name nothing above resolves:
+// named_process says a module's process is registered under the name
+// (ProcessRegistry assumes `Process.register(pid, n)` registers the
+// caller's own module, which a registration of another pid is not).
+.decl resolved_name(name: symbol)
+
+resolved_name(n) :- pid_register(_, _, n, _, _).
+resolved_name(n) :- supervisor_child_name(_, _, n).
+
 named_pid(n, p) :-
   named_process(mod, n),
+  !resolved_name(n),
   server_process(p, mod).
 
 // ── Who runs a function ─────────────────────────────────────────────

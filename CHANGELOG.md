@@ -91,6 +91,27 @@ for memoising consumers only where a struct had its own.
 
 ### Process points-to
 
+**Added.** Process points-to knows more starts and every registry.
+Allocation sites: `:gen_server`/`:gen_statem` `start_monitor`
+(`{:ok, {pid, ref}}`), `GenStateMachine`, `Supervisor.start_link/3` and
+`:supervisor.start_link/2,3`, `:proc_lib` spawns, `Task.start*`,
+`Task.async` (a `%Task{}` whose `:pid` is the process and `:owner` the
+caller) and `Task.Supervisor`'s, which run their closure (closures are
+tracked as values for this), and `Agent` starts (kind `agent`). A start
+with a literal `name:` (or `{:local, n}`, `{:global, n}`, `{:via, m,
+k}`) registers its process (`pid_register` at the start site), as do
+`:global.register_name/2,3` and `Registry.register/3` (the caller);
+`GenServer.whereis/1`, `:global.whereis_name/1`,
+`Registry.whereis_name/1` and `Registry.lookup/2` (`[{pid, value}]`) look
+them up. The local, global and via registries are three namespaces
+(`PidFlow.name_of/1` spells a name once for every relation). A child
+spec's `name:` names its child, and ProcessRegistry's module-level guess
+(`named_process`, which takes `Process.register(pid, n)` for the
+caller's own process) is used only for a name nothing resolves
+precisely. A call's arguments are followed at every position (the four
+it stopped at dropped what redix's `Cluster.Manager.restart_connection/6` is
+handed in its fifth and sixth).
+
 **Added.** Schema 49. A call through a helper is the caller's dependency. A
 parameter is context-insensitive, so `def safe_call(pid, msg), do:
 GenServer.call(pid, msg)` called by two servers with two different peers
