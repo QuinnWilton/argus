@@ -253,6 +253,11 @@ defmodule Argus.Extractor.Helpers do
   the struct's defaults (sequin's `CircularBuffer`) renders as a
   multi-line `#Inspect.Error<...>`.
 
+  A map prints its keys sorted: a VM iterates a small map with atom keys
+  in atom-table order, which depends on which atoms that VM created
+  first, so the same beam read by two VMs would otherwise spell the same
+  literal two ways.
+
   inspect/2 stops at 50 elements and 4096 bytes of a string, so two
   values that differ past those bounds spelled the same, and joined as
   one value (one ETS key, one literal). A spelling inspect cut short
@@ -267,7 +272,7 @@ defmodule Argus.Extractor.Helpers do
   """
   @spec spell(term()) :: String.t()
   def spell(value) do
-    spelled = inspect(value, structs: false)
+    spelled = inspect(value, structs: false, custom_options: [sort_maps: true])
 
     if String.contains?(spelled, "...") do
       digest =

@@ -580,7 +580,7 @@ defmodule Argus.Extractors.ErrorHandling do
     with {kind, _} = r when kind in [:x, :y] <- register(val),
          {:ok, {m, f, a}, _origin} <- call_result_origin(instrs, idx, r) do
       callee = InstrId.func_id(if(m == :local, do: mod, else: m), f, a)
-      add_fact(facts, :timer_store, [func_id, inspect(key), callee])
+      add_fact(facts, :timer_store, [func_id, spell(key), callee])
     else
       _ -> facts
     end

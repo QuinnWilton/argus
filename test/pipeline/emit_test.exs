@@ -603,7 +603,7 @@ defmodule Argus.Pipeline.EmitTest do
       facts = emit_func([{:move, {:literal, %Loud{}}, {:x, 0}}, :return])
       assert [[_, "x0", spelled]] = facts[:literal_value]
       refute String.contains?(spelled, ["\n", "\t", "#Loud<", "Inspect.Error"])
-      assert spelled == inspect(%Loud{}, structs: false)
+      assert spelled == "%{__struct__: #{inspect(Loud)}, items: nil}"
     end
 
     # inspect/2 stops at 50 elements and at 4096 bytes of a string, so these

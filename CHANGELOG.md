@@ -107,6 +107,15 @@ through Souffle. A consumer that writes or reads `.facts` itself uses
 `Argus.Tsv.encode/1` and `decode/1`. The file bytes change only for a
 field that holds one of the four characters.
 
+**Fixed.** The same beams extract to the same facts in any VM. A VM
+iterates a small map whose keys hold atoms in atom-table order, which
+depends on the atoms it happened to create first, so `literal_value` and
+`move` spelled a literal map (a struct's `__info__/1` field list,
+`Inspect.Opts`' defaults) with its keys in a different order in two runs,
+and `def_use` listed its rows in a different order: every cache keyed on
+the facts missed. `Helpers.spell/1` sorts a map's keys, and `def_use`
+rows are sorted.
+
 **Fixed.** `Helpers.resolve_register/3` read a field of a call's field
 (`{:ok, {pid, _ref}} = GenServer.start_monitor(...)`) as an element of
 the `{:call_field, mfa, n}` marker naming the outer field, so `pid`

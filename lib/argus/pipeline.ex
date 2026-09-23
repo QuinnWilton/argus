@@ -364,11 +364,16 @@ defmodule Argus.Pipeline do
 
   defp derive_def_use(nil), do: %{}
 
+  # Sorted: `reaching` is a set of terms holding atoms, and a VM iterates
+  # a small set in atom-table order, so the same module would otherwise
+  # yield its rows in an order that depends on the VM that read it.
   defp derive_def_use(reaching) do
     rows =
       for {%InstrId{} = d, _reg, u} <- reaching,
           uniq: true,
           do: [InstrId.format(d), InstrId.format(u)]
+
+    rows = Enum.sort(rows)
 
     if rows == [], do: %{}, else: %{def_use: rows}
   end

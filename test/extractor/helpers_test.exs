@@ -660,10 +660,13 @@ defmodule Argus.Extractor.HelpersTest do
   end
 
   describe "spell/1" do
-    test "is inspect's spelling when inspect spells the whole value" do
+    test "is inspect's spelling, maps sorted, when inspect spells the whole value" do
       for value <- [:ok, "bin", [1, 2], %{a: {1, 2}}, %URI{host: "h"}] do
-        assert Helpers.spell(value) == inspect(value, structs: false)
+        assert Helpers.spell(value) ==
+                 inspect(value, structs: false, custom_options: [sort_maps: true])
       end
+
+      assert Helpers.spell(%URI{host: "h"}) =~ ~r/^%\{__struct__: URI, authority: nil, /
     end
 
     # An ETS key or a literal past inspect's bounds used to spell the same
