@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 52
+  @schema_version 53
 
   # Layer 1: Module-level facts.
 
@@ -1290,6 +1290,23 @@ defmodule Argus.Schema do
     """
   }
 
+  @cancel_clause %{
+    name: :cancel_clause,
+    layer: 2,
+    fields: [
+      {:id, :symbol, "the cancel_timer site"},
+      {:func, :symbol, "the handle_info/2 holding it"},
+      {:message, :symbol, "the inspected atom the clause's head matches"}
+    ],
+    doc: """
+    A cancel_timer inside a `handle_info/2` clause whose head is a literal \
+    message: `def handle_info(:heartbeat, s)` — the head test on the \
+    first argument dominates the cancel, and nothing before it overwrote \
+    the argument. Cancelling the timer whose message this clause is \
+    handling cancels a timer that has already fired.
+    """
+  }
+
   @recv_pattern %{
     name: :recv_pattern,
     layer: 2,
@@ -2425,6 +2442,7 @@ defmodule Argus.Schema do
     @timer_store,
     @returns_call,
     @recv_pattern,
+    @cancel_clause,
     @callback_ref_head,
     @mailbox_writer,
     @trap_exit,

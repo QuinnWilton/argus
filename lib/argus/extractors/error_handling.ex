@@ -49,6 +49,8 @@ defmodule Argus.Extractors.ErrorHandling do
     to self()), `apply` (the function runs a caller-supplied function,
     which may do anything with this mailbox — the Flow producer of
     gen_stage#238 ran user code that called hackney)
+  - `cancel_clause(id, func, message)` — a cancel_timer inside a
+    `handle_info/2` clause whose head is the literal `message`
   - `rpc_result(id, func, handling)` — how the result of an :rpc/:erpc
     call is treated: `badrpc`, `boolean`, `case`, `matched`, `returned`
     or `other`
@@ -56,8 +58,11 @@ defmodule Argus.Extractors.ErrorHandling do
 
   @behaviour Argus.Extractor
 
+  alias Argus.Extractor.CallSites
   alias Argus.Extractor.Dispatch
+  alias Argus.Extractor.Helpers
   alias Argus.Extractors.ErrorHandling.CatchClauses
+  alias Argus.Extractors.ErrorHandling.ClauseHead
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
@@ -117,6 +122,7 @@ defmodule Argus.Extractors.ErrorHandling do
     do: [
       :bare_rescue,
       :call_result,
+      :cancel_clause,
       :catch_falls_through,
       :catch_tag,
       :catch_total,
@@ -154,8 +160,9 @@ defmodule Argus.Extractors.ErrorHandling do
       rescues
       |> emit_self_sends(mod, module_data.functions)
       |> emit_timer_flows(mod, module_data.functions)
+      |> emit_cancel_clauses(module_data)
 
-    origins = Argus.Extractor.Helpers.origins_index(module_data)
+    origins = Helpers.origins_index(module_data)
 
     each_remote_call(module_data, rescues, fn facts, ctx, mfa ->
       ctx =
@@ -535,6 +542,23 @@ defmodule Argus.Extractors.ErrorHandling do
         |> emit_recv_patterns(func_id, instrs)
       end
     end)
+  end
+
+  # A cancel inside a handle_info/2 clause whose head is a literal
+  # message: `def handle_info(:heartbeat, s)` cancelling the ref of the
+  # timer that sent :heartbeat cancels a timer that has already fired.
+  defp emit_cancel_clauses(facts, module_data) do
+    for %{mfa: mfa, func_id: func_id, instrs: instrs, idx: idx} <-
+          CallSites.for_module(module_data),
+        Map.get(@mailbox_writers, mfa) == "cancel",
+        Normalize.func_id_name_arity(func_id) == {"handle_info", 2},
+        fun = Helpers.cfg(module_data, "handle_info", 2),
+        fun != nil,
+        message = ClauseHead.atom_at(fun, instrs, idx),
+        message != nil,
+        reduce: facts do
+      acc -> add_fact(acc, :cancel_clause, [InstrId.mint(func_id, idx), func_id, message])
+    end
   end
 
   # The compiler's own functions (__info__/1, module_info, -inlined-...)

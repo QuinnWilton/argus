@@ -265,6 +265,48 @@ cancel_site(c, key, id) :-
   timer_cancel(id, c, "param", _, pos),
   param_field(c, pos, key).
 
+// A cancel that cannot leave a stale message behind for the process to
+// mistake for the next one:
+//
+// - one in terminate/2, or in a helper only terminate/2 calls (directly,
+//   or through one more helper only such helpers call): the process is
+//   going away, and no later message is handled. A helper nothing in the
+//   program calls is not one: BB.Loop.cancel/1's docs said "call from
+//   terminate/2", and its callers also called it before re-arming at a
+//   new rate (bb#214, fixed with the flush);
+// - one in the `handle_info/2` clause of the very message the timer
+//   sends (`def handle_info(:heartbeat, s)` cancelling heartbeat_ref):
+//   that timer has already fired, and its message is the one being
+//   handled (cancel_clause).
+.decl terminate_helper(func: symbol)
+.decl called_outside_terminate(func: symbol)
+
+called_outside_terminate(g) :- call_edge(f, g), !terminate_callback(f, _, _).
+
+terminate_helper(g) :-
+  call_edge(f, g),
+  terminate_callback(f, _, _),
+  !called_outside_terminate(g).
+
+.decl terminate_helper2(func: symbol)
+.decl called_outside_terminate2(func: symbol)
+
+called_outside_terminate2(h) :-
+  call_edge(g, h),
+  !terminate_callback(g, _, _),
+  !terminate_helper(g).
+
+terminate_helper2(h) :-
+  call_edge(g, h),
+  (terminate_callback(g, _, _) ; terminate_helper(g)),
+  !called_outside_terminate2(h).
+
+.decl cancel_cannot_go_stale(func: symbol)
+
+cancel_cannot_go_stale(c) :- terminate_callback(c, _, _).
+cancel_cannot_go_stale(c) :- terminate_helper(c).
+cancel_cannot_go_stale(c) :- terminate_helper2(c).
+
 // The arm must be one that can follow the cancel: a timer armed only
 // in init/1 and cancelled later is stopped, not re-armed, and its
 // stale message is handled once as an ordinary one.
@@ -277,10 +319,11 @@ timer_cancel_without_flush(mod, c, c, "", lit, cs, arm_id) :-
   timer_cancel(cs, c, "local", arm_id, _),
   timer_arm(arm_id, c, "self", _, _, _),
   function_def(c, mod, _, _, _),
-  !terminate_callback(c, mod, _),
+  !cancel_cannot_go_stale(c),
   !init_function(mod, c),
   local_message(arm_id, lit),
-  !takes_message(mod, lit).
+  !takes_message(mod, lit),
+  !cancel_clause(cs, c, lit).
 
 .decl local_message(arm_site: symbol, message: symbol)
 
@@ -293,13 +336,14 @@ local_message(id, lit) :-
 timer_cancel_without_flush(mod, c, a, key, lit, cs, arm_id) :-
   cancel_key(c, key),
   function_def(c, mod, _, _, _),
-  !terminate_callback(c, mod, _),
+  !cancel_cannot_go_stale(c),
   timer_key(a, key),
   function_def(a, mod, _, _, _),
   !init_function(mod, a),
   stored_message(key, a, lit),
   !takes_message(mod, lit),
   cancel_site(c, key, cs),
+  !cancel_clause(cs, c, lit),
   timer_arm(arm_id, a, "self", _, _, _).
 
 // ── Evidence: where a monitored entry is removed, where a task is yielded ─

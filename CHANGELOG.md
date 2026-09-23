@@ -466,6 +466,18 @@ concern that runs it.
 
 ### mailbox
 
+**Changed.** Schema 53. `mailbox.timer_cancel_without_flush` leaves out two cancels
+that cannot leave a stale message behind. One in the `handle_info/2`
+clause of the very message the timer sends (`def
+handle_info(:heartbeat, s)` cancelling the heartbeat ref): that timer has
+already fired. `cancel_clause(id, func, message)` records the clause
+head a cancel sits under, from the head test that dominates it in the
+control-flow graph. And one in a helper only `terminate/2` calls,
+directly or through one more such helper. A module whose own-clause
+cancel was the anchor now reports its other cancel, the one with the
+window (supavisor's `Manager`: the `:DOWN` clause, not the
+`:check_subscribers` one).
+
 **Changed.** `unreceived_message` gains a `spawn` column, the start site
 process points-to now records, and its "the process is spawned here" frame
 points at the spawn instead of the spawning function's head.

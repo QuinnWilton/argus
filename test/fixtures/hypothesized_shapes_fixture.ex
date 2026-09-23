@@ -87,6 +87,77 @@ defmodule Argus.Test.Fixtures.Hypothesized do
     defp arm(interval), do: Process.send_after(self(), :tick, interval)
   end
 
+  defmodule TimerCancelInOwnClause do
+    @moduledoc false
+    # supavisor's Cluster.Strategy.Postgres: the :heartbeat clause cancels
+    # the heartbeat timer — the one whose message it is handling, already
+    # fired — and re-arms it. Nothing stale can be left behind.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(interval), do: {:ok, %{interval: interval, heartbeat: arm(interval)}}
+
+    @impl true
+    def handle_info(:heartbeat, state) do
+      Process.cancel_timer(state.heartbeat)
+      {:noreply, %{state | heartbeat: arm(state.interval)}}
+    end
+
+    def handle_info(_other, state), do: {:noreply, state}
+
+    defp arm(interval), do: Process.send_after(self(), :heartbeat, interval)
+  end
+
+  defmodule TimerCancelOwnClauseAndDown do
+    @moduledoc false
+    # supavisor's Manager: the :check clause's own cancel is safe, the
+    # :DOWN clause's is not — a :check already delivered is handled after
+    # the re-arm. The finding is the :DOWN clause's cancel.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(interval), do: {:ok, %{interval: interval, check: arm(interval)}}
+
+    @impl true
+    def handle_info({:DOWN, _ref, _, _pid, _}, state) do
+      Process.cancel_timer(state.check)
+      {:noreply, %{state | check: arm(state.interval)}}
+    end
+
+    def handle_info(:check, state) do
+      Process.cancel_timer(state.check)
+      {:noreply, %{state | check: arm(state.interval)}}
+    end
+
+    defp arm(interval), do: Process.send_after(self(), :check, interval)
+  end
+
+  defmodule TimerCancelInTerminate do
+    @moduledoc false
+    # The cancel lives in a helper only terminate/2 calls: the process is
+    # stopping, and no later message will be handled.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(interval), do: {:ok, %{interval: interval, timer: arm(interval)}}
+
+    @impl true
+    def handle_info(:tick, state), do: {:noreply, %{state | timer: arm(state.interval)}}
+
+    @impl true
+    def terminate(_reason, state), do: stop_timer(state)
+
+    defp stop_timer(state), do: Process.cancel_timer(state.timer)
+
+    defp arm(interval), do: Process.send_after(self(), :tick, interval)
+  end
+
   defmodule TimerCancelWithFlush do
     @moduledoc false
     use GenServer

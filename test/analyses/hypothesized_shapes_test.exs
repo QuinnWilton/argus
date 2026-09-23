@@ -59,7 +59,9 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
           H.TimerHelper,
           H.TimerForOther,
           H.TwoTimers,
-          H.TwoTimersViaHelper
+          H.TwoTimersViaHelper,
+          H.TimerCancelInOwnClause,
+          H.TimerCancelInTerminate
         ],
         :mailbox
       )
@@ -86,6 +88,29 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
              {"Argus.Test.Fixtures.Hypothesized.TwoTimersViaHelper", ":heartbeat_ref",
               ":heartbeat"}
            ]
+  end
+
+  test "a cancel in the clause of the timer's own message is not the finding; another cancel is" do
+    skip_without_souffle()
+
+    {:ok, r} = Argus.analyze([H.TimerCancelOwnClauseAndDown], :mailbox)
+
+    sites =
+      r
+      |> Map.get("timer_cancel_without_flush", [])
+      |> Enum.map(fn [_, _, _, _, ":check", cancel_site, _] -> cancel_site end)
+      |> Enum.uniq()
+
+    assert [site] = sites
+    {:ok, %{func: "handle_info"} = id} = Argus.InstrId.parse(site)
+
+    {:ok, facts} =
+      Argus.Pipeline.extract([H.TimerCancelOwnClauseAndDown],
+        extractors: [Argus.Extractors.ErrorHandling]
+      )
+
+    assert [[own, _, ":check"]] = facts[:cancel_clause]
+    refute own == Argus.InstrId.format(id)
   end
 
   test "a timer armed and cancelled within one call, from a local ref, is reported" do
