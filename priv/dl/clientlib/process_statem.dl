@@ -1,6 +1,6 @@
 // A gen_statem's state functions are where its own code starts running,
 // the same as a GenServer's callbacks. Included by every analysis that
-// extracts with GenStatem (ets, mailbox, shutdown, startup), so self()
+// reads process points-to, each extracting with GenStatem, so self()
 // and a statem's data resolve the same in each; statem_event_clause is
 // an input, and the pins record what each analysis reads.
 //

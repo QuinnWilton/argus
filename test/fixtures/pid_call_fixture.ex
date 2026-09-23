@@ -113,4 +113,45 @@ defmodule Argus.Test.Fixtures.PidCalls do
 
     defp ping(pid), do: GenServer.call(pid, :ping)
   end
+
+  defmodule StatemFront do
+    @moduledoc "A named gen_statem keeping the StatemPeer it started in its data, and calling it from a state."
+    @behaviour :gen_statem
+
+    alias Argus.Test.Fixtures.PidCalls.StatemPeer
+
+    def start_link, do: :gen_statem.start_link({:local, __MODULE__}, __MODULE__, :ok, [])
+
+    @impl true
+    def callback_mode, do: :state_functions
+
+    @impl true
+    def init(:ok) do
+      {:ok, peer} = StatemPeer.start_link()
+      {:ok, :idle, %{peer: peer}}
+    end
+
+    def idle({:call, from}, :ask, data) do
+      # :ping names no server: only the data says where the call goes.
+      answer = GenServer.call(data.peer, :ping)
+      {:keep_state, data, [{:reply, from, answer}]}
+    end
+
+    def idle({:call, from}, :status, data), do: {:keep_state, data, [{:reply, from, :idle}]}
+  end
+
+  defmodule StatemPeer do
+    @moduledoc "Answers by asking StatemFront, by name: a cycle through the statem's data."
+    use GenServer
+
+    alias Argus.Test.Fixtures.PidCalls.StatemFront
+
+    def start_link, do: GenServer.start_link(__MODULE__, :ok)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:ping, _from, s), do: {:reply, :gen_statem.call(StatemFront, :status), s}
+  end
 end

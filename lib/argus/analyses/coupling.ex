@@ -55,7 +55,9 @@ defmodule Argus.Analyses.Coupling do
       Argus.Extractors.CallArgs,
       # A call whose target is a pid resolves through process points-to
       # (clientlib/processes.dl): where the pid was started, and names.
-      Argus.Extractors.PidFlow
+      Argus.Extractors.PidFlow,
+      # A gen_statem's state functions and data (clientlib/process_statem.dl).
+      Argus.Extractors.GenStatem
     ]
 
   @impl true

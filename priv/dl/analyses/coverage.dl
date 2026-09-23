@@ -18,6 +18,7 @@
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
+.include "../clientlib/process_statem.dl"
 
 // ── Input facts ──────────────────────────────────────────────────────
 

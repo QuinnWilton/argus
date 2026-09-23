@@ -65,7 +65,9 @@ defmodule Argus.Analyses.Blocking do
       Argus.Extractors.PidFlow,
       Argus.Extractors.ProcessRegistry,
       # A GenServer a child spec names is a server process too.
-      Argus.Extractors.Supervision
+      Argus.Extractors.Supervision,
+      # A gen_statem's state functions and data (clientlib/process_statem.dl).
+      Argus.Extractors.GenStatem
     ]
 
   @impl true

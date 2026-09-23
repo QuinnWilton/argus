@@ -11,6 +11,7 @@
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
 .include "../clientlib/signals.dl"
+.include "../clientlib/process_statem.dl"
 
 // ══ Coupling under one_for_one ══════════════════════════════════════
 .decl derived_process_link(from_mod: symbol, to_mod: symbol)

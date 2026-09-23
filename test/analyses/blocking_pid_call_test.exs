@@ -51,4 +51,22 @@ defmodule Argus.Analyses.BlockingPidCallTest do
     assert impatient == inspect(PidCalls.Impatient)
     assert middle == inspect(PidCalls.Middle)
   end
+
+  test "a gen_statem's data carries the pid its state function calls" do
+    {:ok, r} = Argus.analyze([PidCalls.StatemFront, PidCalls.StatemPeer], :blocking)
+
+    # StatemFront calls the StatemPeer it keeps in its data; StatemPeer
+    # calls StatemFront by name. The first edge is the data's, not a guess
+    # from the :ping tag and StatemFront's reference to StatemPeer.
+    assert [[a, b | _]] = Rows.where(r, :blocking, "call_cycle", phase: "call")
+    assert Enum.sort([a, b]) == [inspect(PidCalls.StatemFront), inspect(PidCalls.StatemPeer)]
+
+    front = inspect(PidCalls.StatemFront)
+
+    assert [[^front, "static"]] =
+             r
+             |> Rows.where(:blocking, "call_cycle_path", from_mod: front)
+             |> Enum.map(fn [_, _, from, _, _, how, _] -> [from, how] end)
+             |> Enum.uniq()
+  end
 end

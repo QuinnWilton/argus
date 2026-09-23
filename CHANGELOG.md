@@ -459,6 +459,13 @@ or of unknown arity, is left to the closure-following starts table
 rather than named `M:f/-1`; `proc_lib:start_monitor`'s `{result, ref}`
 is not modelled.
 
+**Changed.** Every analysis that reads process points-to includes
+`process_statem.dl` and extracts `GenStatem`: blocking, coupling,
+failure and coverage did not, so a gen_statem's state functions were no
+process entries there, and a pid kept in its data did not resolve (a
+cycle through a statem's data was found only when a message tag guessed
+the hop). Corpus, realtime, logflare, hexpm and OTP findings unchanged.
+
 **Fixed.** A wrapper that forwards its target to `:gen_statem.call/2,3`
 or `GenStateMachine.call/2,3` (or the casts) is a peer call as a
 `GenServer` one is: `calls.dl`'s forwarding rules read `peer_call` and
@@ -1403,7 +1410,7 @@ hexpm and OTP unchanged.
 follows to the module's process or the name's, through the pid a start
 returned or a whereis found: a server called only that way was "a
 GenServer with no observed traffic". coverage includes otp.dl (whose
-forwarding wrappers also name targets) and extracts PidFlow. On
+forwarding wrappers also name targets) and extracts PidFlow and CallArgs. On
 realtime, logflare, hexpm and OTP 20 such rows drop out (hexpm's
 `Hexpm.Cache`, called through its server's pid; logflare's `Vault`).
 
