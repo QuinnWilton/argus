@@ -31,6 +31,21 @@ defmodule Argus.Analyses.BlockingRpcTest do
     end
   end
 
+  describe "a wait init/1 holds is startup's finding" do
+    test "an rpc in init/1, and a :global lock init/1 reaches, are reported once, by startup" do
+      skip_without_souffle()
+
+      modules = [Argus.Test.Fixtures.RpcInInit, Argus.Test.Fixtures.GlobalLockInInit]
+      results = analyze(modules)
+      assert waits(results, "rpc") == []
+      assert waits(results, "global") == []
+
+      {:ok, startup} = Argus.analyze(modules, :startup)
+      kinds = startup["blocks_on_peer"] |> Enum.map(&Enum.at(&1, 3)) |> Enum.sort()
+      assert "global" in kinds and "remote" in kinds
+    end
+  end
+
   describe "unbounded_wait: rpc_in_callback" do
     test "flags RPC directly inside handle_call" do
       skip_without_souffle()

@@ -715,6 +715,12 @@ the same story in the corpus.
 
 ### blocking
 
+**Changed.** One site, one concern: an rpc in `init/1`, and a blocking `:global` op
+`init/1` reaches, are `startup.blocks_on_peer`'s findings ("remote",
+"global") and no longer also `blocking.unbounded_wait`'s; a blocking
+receive in `init/1` is `startup.unbounded_effect_in_init`'s ("recv") and
+no longer also `blocking.receive_in_callback`'s.
+
 **Changed.** `blocking.receive_in_callback` judges the cancel_timer flush idiom per
 receive rather than per function: a blocking receive in a function that
 cancels a timer is the flush only if it can take a timer's message — a

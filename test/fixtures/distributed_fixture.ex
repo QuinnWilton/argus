@@ -180,3 +180,20 @@ defmodule Argus.Test.Fixtures.RpcViaHelperCallback do
 
   defp do_fetch(node), do: :rpc.call(node, Node, :list, [])
 end
+
+defmodule Argus.Test.Fixtures.GlobalLockInInit do
+  @moduledoc false
+  use GenServer
+
+  def start_link(key), do: GenServer.start_link(__MODULE__, key)
+
+  # init/1 reaches a blocking :global lock through a helper: startup's
+  # finding, not also blocking's.
+  @impl true
+  def init(key) do
+    lock(key)
+    {:ok, key}
+  end
+
+  defp lock(key), do: :global.set_lock({key, self()}, [node()])
+end

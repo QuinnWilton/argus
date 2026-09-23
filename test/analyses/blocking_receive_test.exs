@@ -48,8 +48,19 @@ defmodule Argus.Analyses.BlockingReceiveTest do
       {blocking, _} = run([CallbackReceive.StatemBlockingInInit])
 
       assert [[_id, func, callback, "GenStateMachine", "direct"]] = blocking
+      assert func =~ "StatemBlockingInInit:terminate/3"
+      assert callback =~ "terminate/3"
+    end
+
+    test "a blocking receive in init/1 is startup's finding, reported there once" do
+      skip_without_souffle()
+
+      {blocking, _} = run([CallbackReceive.StatemBlockingInInit])
+      refute Enum.any?(blocking, fn [_, func | _] -> func =~ "init/1" end)
+
+      {:ok, startup} = Argus.analyze([CallbackReceive.StatemBlockingInInit], :startup)
+      assert [[_mod, "recv", func, _site]] = startup["unbounded_effect_in_init"]
       assert func =~ "StatemBlockingInInit:init/1"
-      assert callback =~ "init/1"
     end
 
     test "a receive one call from the callback is reported as a helper" do

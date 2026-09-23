@@ -337,10 +337,14 @@ flush_receive(id) :-
 // A receive with no `after`, running on an OTP process's own stack. This
 // is the one that hangs: no timeout means no way out if the expected
 // message never arrives, and the supervisor can only brutal-kill.
+// A blocking receive init/1 reaches is startup's finding
+// (unbounded_effect_in_init, "recv"): it holds the supervisor's start,
+// and is reported there once.
 receive_in_callback(id, func, callback, behaviour, proximity, "false") :-
   recv_start(id, func, 1, _),
   callback_reaches(callback, func, proximity),
   otp_callback(callback, _, _, behaviour),
+  !init_function(_, callback),
   !flush_receive(id).
 
 // A receive WITH a timeout. It cannot hang, but it still consumes from the
@@ -357,8 +361,21 @@ receive_in_callback(id, func, callback, behaviour, proximity, "true") :-
 // RPC call using default infinity timeout — hangs on netsplit.
 // site is the rpc call instruction. One row per site — finding
 // builders dedupe on (func, variant).
+// An rpc in init/1, or a :global op init/1 reaches, is startup's
+// finding (blocks_on_peer, "remote" and "global"): the same site, with
+// the supervisor's start held on it, reported there once.
+.init init_global_reach = CallReach
+
+init_global_reach.seed(g, site) :- global_op(site, g, _, _).
+
+.decl init_owned_site(site: symbol)
+
+init_owned_site(id) :- rpc_call(id, f, _, _), init_function(_, f).
+init_owned_site(id) :- init_global_reach.reaches(f, id), init_function(_, f).
+
 unbounded_wait(func, id, "rpc", variant, "") :-
-  rpc_call(id, func, variant, "-1").
+  rpc_call(id, func, variant, "-1"),
+  !init_owned_site(id).
 
 // ── RPC in GenServer callback ────────────────────────────────────
 
@@ -385,7 +402,8 @@ unbounded_wait(func, "", "rpc_in_callback", variant, "") :-
 unbounded_wait(func, id, "global", op, retries) :-
   global_op(id, func, op, retries),
   retries != "0",
-  retries != "dynamic".
+  retries != "dynamic",
+  !init_owned_site(id).
 
 // ══ A peer call that catches :noproc but not :shutdown ══════════════
 
