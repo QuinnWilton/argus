@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A name argus retired in 0.17 (`:supervision`, `:unsafe_task`, ...)
+  is no longer accepted in `analyses:` or `severity:`: argus 0.20 drops
+  the alias table that expanded them, and scry no longer asks it. Such a
+  name is unknown, and `Scry.ConfigError` says so like any typo. When
+  the name is, or resembles, a finding's relation (`:call_cycle`,
+  `:registry_race`), the error names the analysis that reports it.
 - What extraction could not do is reported beside the findings, as a
   warning that the analyses ran on partial facts (distinct from an
   analysis that degraded and reported nothing): a module that could not

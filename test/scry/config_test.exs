@@ -1,8 +1,6 @@
 defmodule Scry.ConfigTest do
   use ExUnit.Case, async: false
 
-  import ExUnit.CaptureIO
-
   alias Scry.Config
 
   test "the default analyses are argus's default set" do
@@ -15,20 +13,24 @@ defmodule Scry.ConfigTest do
     assert Config.load(analyses: [:security, :exposure]).analyses == security
   end
 
-  test "a retired name expands to its concerns with a notice" do
-    output =
-      capture_io(fn ->
-        send(self(), {:analyses, Config.load(analyses: [:unsafe_task, :coupling]).analyses})
-      end)
-
-    assert_received {:analyses, [:failure, :mailbox, :coupling]}
-    assert output =~ ":unsafe_task is retired in argus 0.17"
-    assert output =~ ":failure, :mailbox"
+  test "a relation named where its analysis goes names the analysis" do
+    e = assert_raise(Scry.ConfigError, fn -> Config.load(analyses: [:coupling, :call_cycle]) end)
+    assert e.key == [:analyses]
+    assert e.message =~ "unknown analyses [:call_cycle]"
+    assert e.message =~ ":call_cycle is a finding of the :blocking analysis"
+    assert e.message =~ "did you mean :blocking?"
   end
 
-  test "a severity override keyed by a retired name follows its findings" do
-    assert Config.load(severity: [gen_statem: :error, ets: :info]).severity ==
-             %{mailbox: :error, state_machine: :error, ets: :info}
+  test "a name resembling a relation names the relation and its analysis" do
+    e = assert_raise(Scry.ConfigError, fn -> Config.load(severity: [call_cycles: :error]) end)
+    assert e.key == [:severity, :call_cycles]
+    assert e.message =~ ":call_cycle is a finding of the :blocking analysis"
+  end
+
+  test "a name argus retired is unknown" do
+    e = assert_raise(Scry.ConfigError, fn -> Config.load(analyses: [:unsafe_task]) end)
+    assert e.message =~ "unknown analyses [:unsafe_task]"
+    refute e.message =~ "is a finding of"
   end
 
   test "an unknown analysis fails with the concerns and the sets" do

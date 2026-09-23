@@ -21,17 +21,16 @@ defmodule Scry.Config do
   `:default` set); analysis names are validated against the argus
   registry so a typo aborts the compile instead of silently analyzing
   nothing. A named set (`:all`, `:default`, `:otp`, `:security`,
-  `:effects`) stands for its members. A name argus retired when it
-  regrouped its analyses by concern (0.17: `:supervision`,
-  `:unsafe_task`, ...) still loads: it expands to the concerns its
-  findings live in now, with a notice, and those findings report under
-  the concern's code — `[scry.mailbox]`, not `[scry.unsafe_task]`.
+  `:effects`) stands for its members. Findings report under their
+  concern's code (`[scry.mailbox]`).
 
-  Severity overrides are keyed the same way: a concern, a set (each
-  member takes the severity) or a retired name (each concern its
-  findings moved to); later entries win. Every key, at every level, is
-  validated: an invalid entry raises `Scry.ConfigError` naming where it
-  is, what was expected, and the valid name it most resembles.
+  Severity overrides are keyed the same way: a concern or a set (each
+  member takes the severity); later entries win. Every key, at every
+  level, is validated: an invalid entry raises `Scry.ConfigError` naming
+  where it is, what was expected, and the valid name it most resembles.
+  A finding's relation written where its analysis goes (`:registry_race`,
+  or `:call_cycle`, one of the names argus retired in 0.17 and dropped in
+  0.20) names the analysis that reports it.
   """
 
   @enforce_keys [
@@ -175,17 +174,17 @@ defmodule Scry.Config do
 
     case Enum.find(names, &(not (is_atom(&1) and resolvable?(&1, known)))) do
       nil ->
-        names |> Enum.flat_map(&resolve(&1, known)) |> Enum.uniq()
+        names |> Enum.flat_map(&resolve/1) |> Enum.uniq()
 
       unknown ->
         unknowns = Enum.reject(names, &(is_atom(&1) and resolvable?(&1, known)))
 
-        fail(
+        unknown_name!(
           [:analyses],
           unknown,
           "unknown analyses #{inspect(unknowns)}; available: #{inspect(Enum.sort(known))}, " <>
             "or a set: #{inspect(Enum.sort(Map.keys(Argus.Analysis.sets())))}",
-          selectable(known)
+          known
         )
     end
   end
@@ -195,49 +194,64 @@ defmodule Scry.Config do
 
   defp known_analyses, do: Enum.map(Argus.Analysis.builtin_analysis_modules(), & &1.name())
 
-  # Every name a user may write where an analysis goes: a concern, a
-  # set, or a retired name.
-  defp selectable(known) do
-    known ++ Map.keys(Argus.Analysis.sets()) ++ Map.keys(Argus.Analysis.aliases())
-  end
+  # Every name a user may write where an analysis goes: a concern or a
+  # set.
+  defp selectable(known), do: known ++ Map.keys(Argus.Analysis.sets())
 
-  defp resolvable?(name, known) do
-    name in known or match?({:ok, _}, Argus.Analysis.set(name)) or
-      match?({:ok, _}, Argus.Analysis.alias(name))
-  end
+  defp resolvable?(name, known), do: name in known or match?({:ok, _}, Argus.Analysis.set(name))
 
-  # A concern is itself; a set is its members; a retired name is the
-  # concerns its findings live in now, said once so the changed codes in
-  # the output are not a surprise.
-  defp resolve(name, known) do
-    cond do
-      name in known ->
-        [name]
-
-      match?({:ok, _}, Argus.Analysis.set(name)) ->
-        {:ok, members} = Argus.Analysis.set(name)
-        members
-
-      true ->
-        concerns = retired_concerns(name)
-
-        Mix.shell().info(
-          "scry: #{inspect(name)} is retired in argus 0.17; its findings live in " <>
-            "#{Enum.map_join(concerns, ", ", &inspect/1)} and report under those codes"
-        )
-
-        concerns
+  # A set is its members; anything else resolvable is a concern.
+  defp resolve(name) do
+    case Argus.Analysis.set(name) do
+      {:ok, members} -> members
+      :error -> [name]
     end
   end
 
-  defp retired_concerns(name) do
-    {:ok, entries} = Argus.Analysis.alias(name)
-    entries |> Enum.map(& &1.analysis) |> Enum.uniq()
+  # An unknown name is most often a typo of a concern or a set, or the
+  # name of a finding written where its analysis goes: an output relation
+  # (`:registry_race`), which is also what many of the names argus
+  # retired in 0.17 became (`:call_cycle`). The relation's owner is the
+  # name that was meant.
+  @spec unknown_name!([atom()], term(), String.t(), [atom()]) :: no_return()
+  defp unknown_name!(key, name, expected, known) do
+    candidates = selectable(known)
+
+    case {Scry.ConfigError.closest(name, candidates), relation_owner(name)} do
+      {nil, {relation, owner}} ->
+        fail(
+          key,
+          name,
+          expected <>
+            "; #{inspect(relation)} is a finding of the #{inspect(owner)} analysis, " <>
+            "did you mean #{inspect(owner)}?"
+        )
+
+      _ ->
+        fail(key, name, expected, candidates)
+    end
   end
 
-  # Keys name what `analyses:` accepts: a concern, a set (every member
-  # takes the severity) or a retired name (every concern its findings
-  # moved to). Later entries win, so `[default: :warning, mailbox:
+  # The output relation `name` is, or most resembles, with its analysis.
+  defp relation_owner(name) when is_atom(name) do
+    owners =
+      for mod <- Argus.Analysis.builtin_analysis_modules(),
+          %{name: relation} <- mod.output_relations(),
+          into: %{},
+          do: {relation, mod.name()}
+
+    relation =
+      if Map.has_key?(owners, name),
+        do: name,
+        else: Scry.ConfigError.closest(name, Map.keys(owners))
+
+    if relation, do: {relation, Map.fetch!(owners, relation)}
+  end
+
+  defp relation_owner(_name), do: nil
+
+  # Keys name what `analyses:` accepts: a concern or a set (every member
+  # takes the severity). Later entries win, so `[default: :warning, mailbox:
   # :error]` raises one concern above the rest of its set.
   defp severity!(pairs) when is_list(pairs) do
     known = known_analyses()
@@ -255,31 +269,23 @@ defmodule Scry.Config do
       end
 
       unless resolvable?(analysis, known) do
-        fail(
+        unknown_name!(
           [:severity, analysis],
           analysis,
           "severity names unknown analysis #{inspect(analysis)}; available: " <>
             "#{inspect(Enum.sort(known))}, or a set: " <>
             "#{inspect(Enum.sort(Map.keys(Argus.Analysis.sets())))}",
-          selectable(known)
+          known
         )
       end
 
-      Enum.map(severity_targets(analysis, known), &{&1, severity})
+      Enum.map(resolve(analysis), &{&1, severity})
     end)
     |> Map.new()
   end
 
   defp severity!(other),
     do: fail([:severity], other, "severity must be a keyword list, got: #{inspect(other)}")
-
-  defp severity_targets(name, known) do
-    cond do
-      name in known -> [name]
-      match?({:ok, _}, Argus.Analysis.set(name)) -> elem(Argus.Analysis.set(name), 1)
-      true -> retired_concerns(name)
-    end
-  end
 
   defp ignore_modules!(patterns) when is_list(patterns) do
     Enum.each(patterns, fn
