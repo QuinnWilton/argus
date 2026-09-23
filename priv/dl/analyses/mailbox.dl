@@ -631,6 +631,14 @@ proxies(func) :-
   callee != mod,
   callee != "dynamic".
 
+// A call or cast process points-to follows to another module's server.
+proxies(func) :-
+  call_target(func, kind, p),
+  (kind = "call" ; kind = "cast"),
+  server_process(p, other),
+  function_def(func, mod, _, _, _),
+  other != mod.
+
 // A dynamic-target call whose tag some OTHER module's handler
 // discriminates on is that module's business (horde's ProcessesSupervisor
 // calling its DynamicSupervisorImpl through a pid), not a self-send.

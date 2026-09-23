@@ -931,6 +931,16 @@ parameter: `timer_ref` says `stored` under the helper's key, or follows
 the helper's result when the helper returns it. It said `"dynamic"`, so
 the cancel-without-flush rule could not pair the arm with its cancel.
 
+**Changed.** `mailbox.reply_defect`'s "self_call"/"self_cast" (a tag the
+module sends and its own handler cannot take) treats a function whose
+call or cast process points-to follows to another module's server as a
+proxy, as it did one with a literal other target: a server calling the
+catch-all server it started, with a tag its own `handle_call` lacks, is
+that server's business. The rule still fires on calls whose target it
+cannot resolve (a client function's pid parameter is the usual shape of
+a real mismatch), so requiring points-to to prove the target the
+module's own was not done: it would silence those.
+
 **Changed.** `mailbox.unreceived_message` judges every receive the
 spawned process runs — the spawned function's and those of what it
 calls in its own process (`ForwardSameProcessReach`, reach.dl) — rather

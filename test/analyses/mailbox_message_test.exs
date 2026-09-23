@@ -5,7 +5,7 @@ defmodule Argus.Analyses.MailboxMessageTest do
   alias Argus.Test.Fixtures.MessageContract, as: M
   alias Argus.Test.Rows
 
-  @all [M.Mismatch, M.Agrees, M.CatchAll, M.StaleWrite]
+  @all [M.Mismatch, M.Agrees, M.CatchAll, M.StaleWrite, M.Forwarder, M.Sink]
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
@@ -42,5 +42,13 @@ defmodule Argus.Analyses.MailboxMessageTest do
     # actually reaches the call, and here the message is a parameter, so
     # there is no literal to attribute at all.
     refute named?(mods(), "MessageContract.StaleWrite")
+  end
+
+  test "a call points-to follows to another module's server is that server's business" do
+    skip_without_souffle()
+
+    # Forwarder calls the Sink it started with :sweep; Sink names no tag,
+    # so only points-to says the call is not Forwarder's own.
+    refute named?(mods(), "MessageContract.Forwarder")
   end
 end

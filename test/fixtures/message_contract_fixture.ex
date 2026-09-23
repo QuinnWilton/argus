@@ -72,4 +72,44 @@ defmodule Argus.Test.Fixtures.MessageContract do
     @impl GenServer
     def handle_cast({:relayed, _}, s), do: {:noreply, s}
   end
+
+  defmodule Forwarder do
+    @moduledoc """
+    Calls the Sink it started with :sweep, a tag its own handle_call does
+    not take: the call is to Sink, whose business the tag is.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.MessageContract.Sink
+
+    def start_link(o), do: GenServer.start_link(__MODULE__, o)
+
+    @impl GenServer
+    def init(_o) do
+      {:ok, sink} = Sink.start_link()
+      {:ok, %{sink: sink}}
+    end
+
+    @impl GenServer
+    def handle_call(:status, _f, s), do: {:reply, :ok, s}
+
+    @impl GenServer
+    def handle_cast(:go, s) do
+      GenServer.call(s.sink, :sweep)
+      {:noreply, s}
+    end
+  end
+
+  defmodule Sink do
+    @moduledoc "Takes every call in one clause."
+    use GenServer
+
+    def start_link, do: GenServer.start_link(__MODULE__, nil)
+
+    @impl GenServer
+    def init(nil), do: {:ok, nil}
+
+    @impl GenServer
+    def handle_call(msg, _f, s), do: {:reply, msg, s}
+  end
 end
