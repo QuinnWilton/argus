@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- An analysis that raises (argus's rules and code out of step, a bug)
+  degrades with a diagnostic naming the exception, and the other
+  analyses still report; it used to take the whole compile down.
 - A fact directory another process prunes while Souffle is reading it
   is rebuilt and solved again, instead of reporting the analysis
   degraded; a relation file missing from the shared store, or replaced

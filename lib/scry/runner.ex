@@ -213,13 +213,16 @@ defmodule Scry.Runner do
   # relations are demanded here first, in this process, because the
   # prewarmed extractions wait in its dictionary — a task demanding them
   # would extract again.
-  defp demand(db, analyses) do
+  @doc false
+  @spec demand(Database.t(), [atom()]) ::
+          {%{optional(String.t()) => [map()]}, [%{analysis: atom(), reason: term()}]}
+  def demand(db, analyses) do
     _relations = Scry.Analysis.program_relation_facts(db, :all)
 
     results =
       analyses
       |> Task.async_stream(
-        fn analysis -> {analysis, Scry.Analysis.analysis_diagnostics(db, analysis)} end,
+        &{&1, diagnostics(db, &1)},
         max_concurrency: System.schedulers_online(),
         ordered: true,
         # Each solve is bounded by argus's own Souffle timeout.
@@ -236,5 +239,14 @@ defmodule Scry.Runner do
       for {analysis, {:error, reason}} <- results, do: %{analysis: analysis, reason: reason}
 
     {findings, degraded}
+  end
+
+  # An analysis that raises — argus rules and code out of step, a bug —
+  # degrades like one whose solver failed, and the others still report.
+  # Nothing is memoized for it, so the next run tries again.
+  defp diagnostics(db, analysis) do
+    Scry.Analysis.analysis_diagnostics(db, analysis)
+  rescue
+    exception -> {:error, {:crashed, Exception.format_banner(:error, exception, __STACKTRACE__)}}
   end
 end
