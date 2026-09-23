@@ -72,6 +72,9 @@ defmodule Argus.Extractors.PidFlow do
   - `pid_send(id, func, message, src_kind, src)` — the send at `id` goes to
     the source; `message` is the literal atom sent, `{:tag, …}` for a
     tuple with a literal atom first, or `dynamic`.
+  - `pid_signal(id, func, signal, src_kind, src)` — the exit signal
+    (`exit`: `Process.exit/2`, `:erlang.exit/2`), monitor (`monitor`),
+    link (`link`) or unlink (`unlink`) at `id` goes to the source.
   - `pid_object(func, obj, shape, tag, arity)` — `func` builds the term
     `obj`: a `map`, `tuple` or `list`, with a tuple's literal atom tag and
     arity (else `""` and 0). Only a term that holds a source is an object.
@@ -239,6 +242,7 @@ defmodule Argus.Extractors.PidFlow do
       :pid_message,
       :pid_register,
       :pid_send,
+      :pid_signal,
       :pid_object,
       :pid_field,
       :pid_base,
@@ -1155,6 +1159,7 @@ defmodule Argus.Extractors.PidFlow do
     |> emit_process_call(at, ictx, mfa)
     |> emit_register(at, ictx, mfa)
     |> emit_send(at, ictx, mfa)
+    |> emit_signal(at, ictx, mfa)
     |> emit_tail(at, ictx, site)
   end
 
@@ -1273,14 +1278,45 @@ defmodule Argus.Extractors.PidFlow do
     |> sources(at, :pid_message, [id, at.fun.func_id, kind], val(ictx, {:x, 1}))
   end
 
-  defp destination(at, ictx) do
-    value = val(ictx, {:x, 0})
+  defp destination(at, ictx, reg \\ {:x, 0}) do
+    value = val(ictx, reg)
 
-    with {:ok, term} <- Helpers.resolve_register(at.fun.instrs, at.idx, {:x, 0}),
+    with {:ok, term} <- Helpers.resolve_register(at.fun.instrs, at.idx, reg),
          name when name != nil <- name_of(term) do
       MapSet.put(value, {:name, name})
     else
       _ -> value
+    end
+  end
+
+  # An exit signal, a monitor or a link, with the register naming the
+  # process it goes to.
+  @signals %{
+    {Process, :exit, 2} => {"exit", {:x, 0}},
+    {:erlang, :exit, 2} => {"exit", {:x, 0}},
+    {Process, :monitor, 1} => {"monitor", {:x, 0}},
+    {Process, :monitor, 2} => {"monitor", {:x, 0}},
+    {:erlang, :monitor, 2} => {"monitor", {:x, 1}},
+    {:erlang, :monitor, 3} => {"monitor", {:x, 1}},
+    {Process, :link, 1} => {"link", {:x, 0}},
+    {:erlang, :link, 1} => {"link", {:x, 0}},
+    {Process, :unlink, 1} => {"unlink", {:x, 0}},
+    {:erlang, :unlink, 1} => {"unlink", {:x, 0}}
+  }
+
+  defp emit_signal(facts, at, ictx, mfa) do
+    case Map.fetch(@signals, mfa) do
+      {:ok, {signal, reg}} ->
+        sources(
+          facts,
+          at,
+          :pid_signal,
+          [site(at.fun, at.idx), at.fun.func_id, signal],
+          destination(at, ictx, reg)
+        )
+
+      :error ->
+        facts
     end
   end
 
@@ -1448,6 +1484,7 @@ defmodule Argus.Extractors.PidFlow do
   defp emit_row(facts, :pid_message, row), do: add_fact(facts, :pid_message, row)
   defp emit_row(facts, :pid_register, row), do: add_fact(facts, :pid_register, row)
   defp emit_row(facts, :pid_send, row), do: add_fact(facts, :pid_send, row)
+  defp emit_row(facts, :pid_signal, row), do: add_fact(facts, :pid_signal, row)
   defp emit_row(facts, :pid_field, row), do: add_fact(facts, :pid_field, row)
   defp emit_row(facts, :pid_base, row), do: add_fact(facts, :pid_base, row)
   defp emit_row(facts, :pid_load, row), do: add_fact(facts, :pid_load, row)

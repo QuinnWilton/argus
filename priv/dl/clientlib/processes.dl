@@ -245,13 +245,19 @@ entry_pts(f, k, x) :- state_in(m, f, k), state_pts(m, x).
 .decl targets_param(func: symbol, pos: symbol, api_kind: symbol, site: symbol)
 .decl targets_field(func: symbol, pos: symbol, sel: symbol, api_kind: symbol, site: symbol)
 
-targets_param(g, k, kind, id) :- pid_call(id, g, kind, "param", k).
+// Everything that goes to a process: a call, cast or send (pid_call),
+// and, where signals.dl is included, an exit signal, a monitor or a link.
+.decl pid_use(id: symbol, func: symbol, kind: symbol, src_kind: symbol, src: symbol)
+
+pid_use(id, f, kind, sk, s) :- pid_call(id, f, kind, sk, s).
+
+targets_param(g, k, kind, id) :- pid_use(id, g, kind, "param", k).
 targets_param(f, j, kind, id) :-
   pid_arg(_, f, g, k, "call", "param", j),
   targets_param(g, k, kind, id).
 
 targets_field(g, k, sel, kind, id) :-
-  pid_call(id, g, kind, "load", l),
+  pid_use(id, g, kind, "load", l),
   pid_load(g, l, sel, "param", k).
 
 targets_field(f, j, sel, kind, id) :-
@@ -280,29 +286,30 @@ source_field_pts(f, sk, s, sel, x) :-
   pid_object(_, o, "map", _, _),
   field_pts(o, "*", x).
 
-// `func` waits on (call), casts to (cast) or sends to (info) `proc`:
-// through the call, cast or send at `site`, which is in `func` itself or
-// in a helper `func` hands the pid to at `anchor` (the site a finding
-// about `func` points at). `anchor` = `site` when the call is `func`'s own.
+// `func` waits on (call), casts to (cast), sends to (info), signals an
+// exit to (exit), monitors (monitor), links to (link) or unlinks from
+// (unlink) `proc`: through the use at `site`, which is in `func` itself
+// or in a helper `func` hands the pid to at `anchor` (the site a finding
+// about `func` points at). `anchor` = `site` when the use is `func`'s own.
 .decl process_call(func: symbol, anchor: symbol, site: symbol, api_kind: symbol, proc: symbol)
 
 // A target `func` resolves itself.
 process_call(f, id, id, kind, p) :-
-  pid_call(id, f, kind, sk, s),
+  pid_use(id, f, kind, sk, s),
   sk != "param",
   sk != "load",
   source_pts(f, sk, s, p),
   process(p).
 
 process_call(f, id, id, kind, p) :-
-  pid_call(id, f, kind, "load", l),
+  pid_use(id, f, kind, "load", l),
   !param_load(f, l),
   source_pts(f, "load", l, p),
   process(p).
 
 // A field read from a source other than a parameter.
 process_call(f, id, id, kind, p) :-
-  pid_call(id, f, kind, "load", l),
+  pid_use(id, f, kind, "load", l),
   pid_load(f, l, sel, bk, bs),
   bk != "param",
   source_pts(f, bk, bs, o),
@@ -311,12 +318,12 @@ process_call(f, id, id, kind, p) :-
 
 // An entry's own parameter, or a field of it.
 process_call(f, id, id, kind, p) :-
-  pid_call(id, f, kind, "param", k),
+  pid_use(id, f, kind, "param", k),
   entry_pts(f, k, p),
   process(p).
 
 process_call(f, id, id, kind, p) :-
-  pid_call(id, f, kind, "load", l),
+  pid_use(id, f, kind, "load", l),
   pid_load(f, l, sel, "param", k),
   entry_pts(f, k, o),
   field_pts(o, sel, p),
@@ -358,6 +365,32 @@ process_call(f, a, id, kind, p) :-
 call_site_target(id, g, kind, p) :-
   process_call(_, _, id, kind, p),
   pid_call(id, g, kind, _, _).
+
+// The module whose code starts a process.
+.decl started_by_module(proc: symbol, mod: symbol)
+
+started_by_module(p, m) :- process_start(_, f, p, _, _), function_def(f, m, _, _, _).
+
+// A synchronous call that is provably to the calling process itself — to
+// self(), or to a name only the caller's module's processes hold, from
+// that module's own process — which gen exits with `calling_self`.
+.decl self_call(func: symbol, site: symbol)
+
+self_call(f, id) :- pid_call(id, f, "call", "self", "self").
+
+.decl named_module(name: symbol, mod: symbol)
+
+named_module(n, m) :- named_pid(n, p), server_process(p, m).
+
+.decl named_otherwise(name: symbol, mod: symbol)
+
+named_otherwise(n, m) :- named_module(n, m), named_pid(n, p), !server_process(p, m).
+
+self_call(f, id) :-
+  pid_call(id, f, "call", "name", n),
+  process_entry(m, f),
+  named_module(n, m),
+  !named_otherwise(n, m).
 
 // `func` calls or casts to `proc`, itself or through a helper.
 .decl call_target(func: symbol, api_kind: symbol, proc: symbol)

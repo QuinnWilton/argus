@@ -1,0 +1,47 @@
+// Which process an exit signal, a monitor or a link goes to, over the
+// points-to in processes.dl: pid_signal rows join pid_use, so a helper
+// that monitors or kills its parameter is resolved at each caller, like
+// a helper that calls it.
+//
+// Apart from processes.dl, as sends.dl is, so an analysis that asks only
+// about calls does not read every signal in the program.
+//
+// Prerequisites: include clientlib/imports.dl and clientlib/otp.dl
+// (which brings processes.dl) before this file.
+
+pid_use(id, f, kind, sk, s) :- pid_signal(id, f, kind, sk, s).
+
+reads_name(f, n) :- pid_signal(_, f, _, "name", n).
+reads_self(f) :- pid_signal(_, f, _, "self", _).
+
+// The exit signal, monitor, link or unlink at `id` in `func` may go to
+// `proc`.
+.decl signal_target(id: symbol, func: symbol, signal: symbol, proc: symbol)
+
+signal_target(id, g, signal, p) :-
+  process_call(_, _, id, signal, p),
+  pid_signal(id, g, signal, _, _).
+
+// A process something monitors or links to: its crash is observed.
+.decl watched_process(proc: symbol, how: symbol)
+
+watched_process(p, how) :-
+  signal_target(_, _, how, p),
+  (how = "monitor" ; how = "link").
+
+// An exit signal whose every resolved target the sending module started
+// itself (and at least one resolved): a server stopping its own worker.
+.decl exit_to_own_process(id: symbol, func: symbol)
+
+.decl exit_to_other(id: symbol)
+
+exit_to_other(id) :-
+  signal_target(id, f, "exit", p),
+  function_def(f, m, _, _, _),
+  !started_by_module(p, m).
+
+exit_to_own_process(id, f) :-
+  signal_target(id, f, "exit", p),
+  function_def(f, m, _, _, _),
+  started_by_module(p, m),
+  !exit_to_other(id).

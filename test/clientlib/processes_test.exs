@@ -33,6 +33,8 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.NamedTree,
     PidFlow.SelfHelper,
     PidFlow.Machine,
+    PidFlow.Keeper,
+    PidFlow.KeeperClient,
     PidFlow.Quiet
   ]
 
@@ -62,6 +64,7 @@ defmodule Argus.Clientlib.ProcessesTest do
     .include "#{Path.join(priv_dl(), "clientlib/otp.dl")}"
     .include "#{Path.join(priv_dl(), "clientlib/process_statem.dl")}"
     .include "#{Path.join(priv_dl(), "clientlib/sends.dl")}"
+    .include "#{Path.join(priv_dl(), "clientlib/signals.dl")}"
     #{Enum.map_join(outputs, "\n", &".output #{&1}")}
     """
 
@@ -282,6 +285,32 @@ defmodule Argus.Clientlib.ProcessesTest do
   test "a gen_statem's data carries its pids from state to state", %{tmp_dir: tmp_dir} do
     r = solve(tmp_dir, ~w(sync_dep statem_data_pts))
     assert ["Machine:idle/3", "Back"] in r["sync_dep"]
+  end
+
+  test "exit signals, monitors and links go to the processes they name", %{tmp_dir: tmp_dir} do
+    r = solve(tmp_dir, ~w(signal_target watched_process exit_to_own_process))
+    signals = for [_, f, signal, p] <- unsited(r["signal_target"]), do: {f, signal, p}
+
+    # The helper Keeper started and keeps in its state.
+    assert {"Keeper:handle_cast/2", "exit", "spawn Keeper:init/1"} in signals
+    assert Enum.any?(r["exit_to_own_process"], &match?([_, "Keeper:handle_cast/2"], &1))
+    # The watcher it monitors.
+    assert Enum.any?(
+             unsited(r["watched_process"]),
+             &match?(["spawn Keeper:init/1", "monitor"], &1)
+           )
+
+    # A peer handed in a cast and killed through a helper: the signal is
+    # the helper's, the target the caller's.
+    assert {"Keeper:stop/1", "exit", "server Back:start_link/0"} in signals
+  end
+
+  test "a call to self() or to its own name from a callback is a self-call",
+       %{tmp_dir: tmp_dir} do
+    r = solve(tmp_dir, ~w(self_call))
+    calls = for [f, _site] <- r["self_call"], do: f
+
+    assert Enum.count(calls, &(&1 == "Keeper:handle_call/3")) == 2
   end
 
   test "a computed module, apply and a library pid name no process", %{tmp_dir: tmp_dir} do

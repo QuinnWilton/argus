@@ -521,6 +521,51 @@ defmodule Argus.Test.Fixtures.PidFlow do
     def call(conn, _opts), do: conn
   end
 
+  defmodule Keeper do
+    @moduledoc """
+    Starts a helper it keeps in its state and kills it on reset; monitors
+    a spawned watcher; kills a peer it was handed through a helper; and
+    calls itself by name and by self() from its own callbacks.
+    """
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+
+    @impl true
+    def init(:ok) do
+      helper = spawn_link(fn -> Process.sleep(:infinity) end)
+      watcher = spawn(fn -> :ok end)
+      _ref = Process.monitor(watcher)
+      {:ok, %{helper: helper}}
+    end
+
+    @impl true
+    def handle_cast(:reset, s) do
+      Process.exit(s.helper, :kill)
+      {:noreply, s}
+    end
+
+    def handle_cast({:drop, peer}, s) do
+      stop(peer)
+      {:noreply, s}
+    end
+
+    @impl true
+    def handle_call(:me, _from, s), do: {:reply, GenServer.call(self(), :ping), s}
+    def handle_call(:named, _from, s), do: {:reply, GenServer.call(__MODULE__, :ping), s}
+    def handle_call(:ping, _from, s), do: {:reply, :pong, s}
+
+    defp stop(pid), do: Process.exit(pid, :shutdown)
+  end
+
+  defmodule KeeperClient do
+    @moduledoc "Hands the keeper a peer to drop."
+    def drop do
+      {:ok, peer} = Argus.Test.Fixtures.PidFlow.Back.start_link()
+      GenServer.cast(Argus.Test.Fixtures.PidFlow.Keeper, {:drop, peer})
+    end
+  end
+
   defmodule Quiet do
     @moduledoc "Starts with a computed module, apply, and a pid from a library call: no process to name."
     def applied(m), do: apply(m, :start_link, [])

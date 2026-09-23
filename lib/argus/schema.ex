@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 55
+  @schema_version 56
 
   # Layer 1: Module-level facts.
 
@@ -2328,6 +2328,25 @@ defmodule Argus.Schema do
     """
   }
 
+  @pid_signal %{
+    name: :pid_signal,
+    layer: 2,
+    fields: [
+      {:id, :instr_id, "instruction ID of the call"},
+      {:func, :func_id, "function making it"},
+      {:signal, :symbol, "exit, monitor, link or unlink"},
+      {:src_kind, :symbol,
+       "where the value comes from: proc, param, result, name, self, obj or load"},
+      {:src, :symbol,
+       "the process, the parameter position, the call site, the name, self, the term or the load"}
+    ],
+    doc: """
+    The exit signal (Process.exit/2, :erlang.exit/2), monitor \
+    (Process.monitor/1,2, :erlang.monitor/2,3), link or unlink at `id` goes \
+    to the source.
+    """
+  }
+
   @pid_object %{
     name: :pid_object,
     layer: 2,
@@ -2552,6 +2571,7 @@ defmodule Argus.Schema do
     @pid_register,
     @pid_send,
     @pid_result,
+    @pid_signal,
     @pid_object,
     @pid_field,
     @pid_base,

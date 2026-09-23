@@ -242,6 +242,15 @@ defmodule Argus.Extractors.PidFlowTest do
       assert ["Names:ping_registry/0", "call", "name", "{:via, Registry, {Reg, :names}}"] in calls
     end
 
+    test "an exit signal, a monitor and a link name their target" do
+      f = facts([F.Keeper])
+      signals = unsited(f.pid_signal)
+
+      assert Enum.any?(signals, &match?(["Keeper:handle_cast/2", "exit", "load", _], &1))
+      assert ["Keeper:stop/1", "exit", "param", "0"] in signals
+      assert Enum.any?(signals, &match?(["Keeper:init/1", "monitor", "proc", "spawn " <> _], &1))
+    end
+
     test "the compiler's generated functions emit nothing" do
       for {_relation, rows} <- facts([F.Worker, F.Loops]), row <- rows do
         refute Enum.any?(row, &String.contains?(&1, ["__info__", "module_info"])), inspect(row)

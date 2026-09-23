@@ -281,6 +281,19 @@ registers it does not keep.
 
 ### Process points-to
 
+**Added.** Schema 56. `pid_signal(id, func, signal, src_kind, src)`:
+an exit signal (`Process.exit/2`, `:erlang.exit/2`), a monitor
+(`Process.monitor/1,2`, `:erlang.monitor/2,3`), a link or an unlink, with
+its target resolved like a call's (`clientlib/signals.dl`, apart from
+processes.dl as sends.dl is: a helper that kills or monitors its
+parameter is resolved at each caller). It provides `signal_target(id,
+func, signal, proc)`, `watched_process(proc, how)` and
+`exit_to_own_process(id, func)` (every resolved target was started by
+the sending module), and processes.dl `started_by_module(proc, mod)` and
+`self_call(func, site)` — a call to `self()`, or to a name only the
+caller's module's processes hold from that module's own process, which
+gen exits with `calling_self`. No analysis reads them yet.
+
 **Changed.** `self()` resolves in a function a process's own code
 calls — a callback's helper, a client API a callback calls — not only
 in the callbacks and spawned functions themselves (closures are not
