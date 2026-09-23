@@ -324,40 +324,9 @@ unhandled_exit_signal(mod, "no_handler", func) :-
 // body counts), so a module that mentions :EXIT at all is not reported —
 // the direction that keeps the rule quiet rather than noisy.
 unhandled_exit_signal(mod, "no_exit_clause", func) :-
-  trap_exit(func, mod),
-  partial_handle_info(mod, h),
-  !callback_tag(h, "handle_info", ":EXIT"),
-  !statem_process(mod).
+  trap_exit_without_exit_clause(mod, func).
 
 // ══ Teardown that hurts a monitored child ═══════════════════════════
-
-// Runs on the server's own stack: a callback, a statem state function,
-// or what those reach without leaving the module.
-.init server_reach = ForwardIntraModuleReach
-
-server_reach.root(mod, func) :-
-  otp_callback(func, mod, _, _).
-
-server_reach.root(mod, func) :-
-  statem_process(mod),
-  statem_state(mod, _, func),
-  function_def(func, mod, _, _, _).
-
-.decl server_side(mod: symbol, func: symbol)
-
-server_side(mod, func) :- server_reach.reaches(mod, func).
-
-.decl module_demonitors(mod: symbol)
-
-module_demonitors(mod) :-
-  demonitor_call(_, f, _),
-  function_def(f, mod, _, _, _).
-
-// Removing an entry from a map, set, keyword or ETS table (removal_api,
-// in effects.dl) — the bookkeeping paths a monitor's release belongs
-// on. Anywhere in the module: Phoenix PubSub's Local removed
-// subscriptions from a public table in its client API, and the monitor
-// taken in handle_call stayed live all the same.
 
 // ── Terminating a process the server still monitors ───────────────────
 //

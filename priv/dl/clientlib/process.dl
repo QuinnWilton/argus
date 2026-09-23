@@ -46,3 +46,39 @@ partial_handle_info(mod, func) :-
   function_def(func, mod, "handle_info", 2, _),
   !callback_total(func, "handle_info").
 
+
+// A module that traps exits and has a handle_info/2 whose clauses never
+// take an {:EXIT, ...}: the trapped exit arrives as a message nothing
+// matches. `witness` is the function that sets trap_exit. A gen_statem
+// hands {:EXIT, ...} to its state functions, not to handle_info/2.
+.decl trap_exit_without_exit_clause(mod: symbol, witness: symbol)
+
+trap_exit_without_exit_clause(mod, func) :-
+  trap_exit(func, mod),
+  partial_handle_info(mod, h),
+  !callback_tag(h, "handle_info", ":EXIT"),
+  !statem_process(mod).
+
+// Runs on the server's own stack: a callback, a statem state function,
+// or what those reach without leaving the module. A client function of
+// the same module runs in its caller.
+.init server_reach = ForwardIntraModuleReach
+
+server_reach.root(mod, func) :-
+  otp_callback(func, mod, _, _).
+
+server_reach.root(mod, func) :-
+  statem_process(mod),
+  statem_state(mod, _, func),
+  function_def(func, mod, _, _, _).
+
+.decl server_side(mod: symbol, func: symbol)
+
+server_side(mod, func) :- server_reach.reaches(mod, func).
+
+// Some function of the module demonitors.
+.decl module_demonitors(mod: symbol)
+
+module_demonitors(mod) :-
+  demonitor_call(_, f, _),
+  function_def(f, mod, _, _, _).

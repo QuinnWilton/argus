@@ -53,14 +53,6 @@
 .output reply_defect
 
 // ══ handle_info without a catch-all, and stale timers ═══════════════
-.decl trap_exit_without_exit_clause(mod: symbol, witness: symbol)
-
-trap_exit_without_exit_clause(mod, func) :-
-  trap_exit(func, mod),
-  partial_handle_info(mod, h),
-  !callback_tag(h, "handle_info", ":EXIT"),
-  !statem_process(mod).
-
 // ── handle_info without a catch-all, in a process the runtime writes to ──
 //
 // Once a GenServer defines handle_info/2, any message no clause matches
@@ -538,28 +530,6 @@ unconsumed_monitor(mod, func, id, "timed_wait") :-
   function_def(func, mod, _, _, _),
   timed_wait.reaches(func),
   !flush.reaches(func).
-
-// Runs on the server's own stack: a callback, a statem state function,
-// or what those reach without leaving the module.
-.init server_reach = ForwardIntraModuleReach
-
-server_reach.root(mod, func) :-
-  otp_callback(func, mod, _, _).
-
-server_reach.root(mod, func) :-
-  statem_process(mod),
-  statem_state(mod, _, func),
-  function_def(func, mod, _, _, _).
-
-.decl server_side(mod: symbol, func: symbol)
-
-server_side(mod, func) :- server_reach.reaches(mod, func).
-
-.decl module_demonitors(mod: symbol)
-
-module_demonitors(mod) :-
-  demonitor_call(_, f, _),
-  function_def(f, mod, _, _, _).
 
 // Removing an entry from a map, set, keyword or ETS table (removal_api,
 // in effects.dl) — the bookkeeping paths a monitor's release belongs
