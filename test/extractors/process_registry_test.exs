@@ -65,6 +65,43 @@ defmodule Argus.Extractors.ProcessRegistryTest do
     end
   end
 
+  describe "extract/1 — named starts" do
+    test "gen_statem, supervisor and event manager starts claim their names; a global name is its own" do
+      facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.NamedStarts))
+
+      registered =
+        for [_id, func, name, _method] <- facts[:process_register],
+            do: {func |> String.split(":") |> List.last(), name}
+
+      assert Enum.sort(registered) == [
+               {"children/0", ":sup_children"},
+               {"events/0", ":events"},
+               {"global/0", "{:global, :g_elixir}"},
+               {"global_erlang/0", "{:global, :g_erlang}"},
+               {"statem/0", ":statem_local"},
+               {"sup/0", ":sup_named"},
+               {"sup_erlang/0", ":sup_erlang"}
+             ]
+
+      server = "Argus.Test.Fixtures.NamedGenServer"
+
+      # The module-less starts (a children list, an event manager) name no
+      # module's process.
+      assert Enum.sort(facts[:named_process]) ==
+               Enum.sort([
+                 [server, "{:global, :g_elixir}"],
+                 [server, "{:global, :g_erlang}"],
+                 [server, ":statem_local"],
+                 [server, ":sup_named"],
+                 [server, ":sup_erlang"]
+               ])
+
+      keys = for [_id, _func, _api, "", "literal", key] <- facts[:creating_op], do: key
+      assert "{:global, :g_erlang}" in keys
+      refute ":g_erlang" in keys
+    end
+  end
+
   describe "extract/1 — whereis" do
     test "detects Process.whereis" do
       facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.WhereisModule))

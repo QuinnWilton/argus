@@ -114,3 +114,17 @@ defmodule Argus.Test.Fixtures.StaticWhereis do
     Process.whereis(:my_process)
   end
 end
+
+defmodule Argus.Test.Fixtures.NamedStarts do
+  @moduledoc "Named starts beyond GenServer's local names."
+
+  alias Argus.Test.Fixtures.NamedGenServer
+
+  def global, do: GenServer.start_link(NamedGenServer, [], name: {:global, :g_elixir})
+  def global_erlang, do: :gen_server.start_link({:global, :g_erlang}, NamedGenServer, [], [])
+  def statem, do: :gen_statem.start_link({:local, :statem_local}, NamedGenServer, [], [])
+  def sup, do: Supervisor.start_link(NamedGenServer, [], name: :sup_named)
+  def children, do: Supervisor.start_link([], strategy: :one_for_one, name: :sup_children)
+  def sup_erlang, do: :supervisor.start_link({:local, :sup_erlang}, NamedGenServer, [])
+  def events, do: :gen_event.start_link({:local, :events})
+end

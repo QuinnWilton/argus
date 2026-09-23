@@ -91,6 +91,15 @@ for memoising consumers only where a struct had its own.
 
 ### Process points-to
 
+**Fixed.** ProcessRegistry recorded a `{:global, n}` start name as the
+local `n`, so a local `whereis(:n)` and a global start of `n` looked like
+one name to the registry race; it is spelled `{:global, :n}` now
+(`PidFlow.name_of/1`), and an Elixir start's `name: {:global, n}`, which
+it skipped, is recorded the same way. Named starts it missed:
+`:gen_statem.start*/4`, `GenStateMachine.start*/3`,
+`Supervisor.start_link/2,3`, `:supervisor.start_link/3` and
+`:gen_event.start*/1,2` (the last two kinds name no module's process).
+
 **Added.** Process points-to knows more starts and every registry.
 Allocation sites: `:gen_server`/`:gen_statem` `start_monitor`
 (`{:ok, {pid, ref}}`), `GenStateMachine`, `Supervisor.start_link/3` and

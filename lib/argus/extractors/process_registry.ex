@@ -9,8 +9,12 @@ defmodule Argus.Extractors.ProcessRegistry do
 
   ## Emitted facts
 
-  - `process_register(id, func, name, method)` — direct registration and the `name:`
-    option of a GenServer or Agent start
+  - `process_register(id, func, name, method)` — direct registration and the
+    name a start claims: the `name:` option of a GenServer, GenStateMachine,
+    Supervisor or Agent start, the `{:local, n}` / `{:global, n}` of an
+    Erlang `:gen_server`, `:gen_statem`, `:supervisor` or `:gen_event` start.
+    A global name is spelled `{:global, :n}` (`PidFlow.name_of/1`), never
+    as the local atom
   - `named_process(mod, name)` — module-level: a process implemented by `mod` is registered
     as `name`; for an Agent, which has no module of its own, the module that starts it
   - `name_lookup(id, func, api, scope, source, key, checked)` —
@@ -38,6 +42,7 @@ defmodule Argus.Extractors.ProcessRegistry do
   @behaviour Argus.Extractor
 
   alias Argus.Extractor.Dispatch
+  alias Argus.Extractors.PidFlow
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
@@ -81,6 +86,17 @@ defmodule Argus.Extractors.ProcessRegistry do
     {GenServer, :start, 3},
     {:gen_server, :start_link, 4},
     {:gen_server, :start, 4},
+    {GenStateMachine, :start_link, 3},
+    {GenStateMachine, :start, 3},
+    {:gen_statem, :start_link, 4},
+    {:gen_statem, :start, 4},
+    {Supervisor, :start_link, 2},
+    {Supervisor, :start_link, 3},
+    {:supervisor, :start_link, 3},
+    {:gen_event, :start_link, 1},
+    {:gen_event, :start_link, 2},
+    {:gen_event, :start, 1},
+    {:gen_event, :start, 2},
     {Agent, :start_link, 2},
     {Agent, :start_link, 4},
     {Agent, :start, 2},
@@ -144,11 +160,17 @@ defmodule Argus.Extractors.ProcessRegistry do
       {:erlang, :register, 2} ->
         emit_register(facts, mod_str, ctx, {:x, 0}, "register")
 
-      {GenServer, :start_link, 3} ->
+      {mod, func, 3} when mod in [GenServer, GenStateMachine] and func in [:start_link, :start] ->
+        maybe_named_start(facts, ctx, Atom.to_string(func), {:x, 2}, {:started, {:x, 0}})
+
+      # Supervisor.start_link(mod, arg, opts), and the module-less
+      # Supervisor.start_link(children, opts), whose name belongs to no
+      # module of the program.
+      {Supervisor, :start_link, 3} ->
         maybe_named_start(facts, ctx, "start_link", {:x, 2}, {:started, {:x, 0}})
 
-      {GenServer, :start, 3} ->
-        maybe_named_start(facts, ctx, "start", {:x, 2}, {:started, {:x, 0}})
+      {Supervisor, :start_link, 2} ->
+        maybe_named_start(facts, ctx, "start_link", {:x, 1}, :none)
 
       # Agent.start_link(fun, opts) and Agent.start_link(mod, fun, args, opts),
       # and the unlinked starts: the options are the last argument.
@@ -156,11 +178,24 @@ defmodule Argus.Extractors.ProcessRegistry do
         opts = {:x, arity - 1}
         maybe_named_start(facts, ctx, Atom.to_string(func), opts, {:caller, mod_str})
 
-      {:gen_server, :start_link, 4} ->
+      _ ->
+        erlang_start_call(facts, ctx, mfa)
+    end
+  end
+
+  # The Erlang starts, whose name comes first as `{:local, n}` or
+  # `{:global, n}`.
+  defp erlang_start_call(facts, ctx, mfa) do
+    case mfa do
+      {mod, func, 4} when mod in [:gen_server, :gen_statem] and func in [:start_link, :start] ->
+        maybe_named_start_erlang(facts, ctx, Atom.to_string(func))
+
+      {:supervisor, :start_link, 3} ->
         maybe_named_start_erlang(facts, ctx, "start_link")
 
-      {:gen_server, :start, 4} ->
-        maybe_named_start_erlang(facts, ctx, "start")
+      # An event manager has no callback module of its own.
+      {:gen_event, func, arity} when func in [:start_link, :start] and arity in [1, 2] ->
+        maybe_named_start_erlang(facts, ctx, Atom.to_string(func), nil)
 
       _ ->
         lookup_or_create_call(facts, ctx, mfa)
@@ -380,12 +415,12 @@ defmodule Argus.Extractors.ProcessRegistry do
             |> emit_dynamic_named_start(ctx, method, opts_reg)
 
           name when is_atom(name) ->
-            id = InstrId.mint(ctx.func_id, ctx.idx)
+            named_start(facts, ctx, method, owner, inspect(name))
 
-            facts
-            |> add_fact(:process_register, [id, ctx.func_id, inspect(name), method])
-            |> maybe_emit_named_process_for_start(ctx, owner, inspect(name))
-            |> add_creating_op(ctx, method, "", "literal", inspect(name))
+          # The global registry is its own namespace: `{:global, :n}` is
+          # not the local `:n` (PidFlow.name_of/1 spells both).
+          {:global, name} = global when is_atom(name) and name != :dynamic ->
+            named_start(facts, ctx, method, owner, PidFlow.name_of(global))
 
           # A via-registered name is the registry's, not a process_register;
           # for the race it is a create scoped to that registry.
@@ -412,6 +447,15 @@ defmodule Argus.Extractors.ProcessRegistry do
           track_imprecision(facts, ctx, :gen_server_start_name, :process_register, :skipped)
         end
     end
+  end
+
+  defp named_start(facts, ctx, method, owner, name) do
+    id = InstrId.mint(ctx.func_id, ctx.idx)
+
+    facts
+    |> add_fact(:process_register, [id, ctx.func_id, name, method])
+    |> maybe_emit_named_process_for_start(ctx, owner, name)
+    |> add_creating_op(ctx, method, "", "literal", name)
   end
 
   defp emit_dynamic_named_start(facts, ctx, method, opts_reg) do
@@ -441,16 +485,19 @@ defmodule Argus.Extractors.ProcessRegistry do
 
   # Erlang-style :gen_server.start_link({:local, Name}, mod, args, opts).
   # The module is x1 in the Erlang shape; resolve it to enrich named_process.
-  defp maybe_named_start_erlang(facts, ctx, method) do
+  # A `{:global, Name}` is spelled as the global registry's, never as the
+  # local atom.
+  defp maybe_named_start_erlang(facts, ctx, method, mod_reg \\ {:x, 1}) do
     case resolve_register(ctx.instrs, ctx.idx, {:x, 0}) do
-      {:ok, {kind, name}}
+      {:ok, {kind, name} = tuple}
       when kind in [:local, :global] and is_atom(name) and name != :dynamic ->
         id = InstrId.mint(ctx.func_id, ctx.idx)
+        spelled = if kind == :local, do: inspect(name), else: PidFlow.name_of(tuple)
 
         facts
-        |> add_fact(:process_register, [id, ctx.func_id, inspect(name), method])
-        |> maybe_emit_named_process_for_erlang_start(ctx, inspect(name))
-        |> add_creating_op(ctx, method, "", "literal", inspect(name))
+        |> add_fact(:process_register, [id, ctx.func_id, spelled, method])
+        |> maybe_emit_named_process_for_erlang_start(ctx, spelled, mod_reg)
+        |> add_creating_op(ctx, method, "", "literal", spelled)
 
       _ ->
         if tail_call?(ctx.instrs, ctx.idx) do
@@ -482,9 +529,14 @@ defmodule Argus.Extractors.ProcessRegistry do
   defp maybe_emit_named_process_for_start(facts, _ctx, {:caller, mod_str}, name),
     do: add_fact(facts, :named_process, [mod_str, name])
 
-  # For :gen_server.start_link({:local, name}, mod, ...), the module is x1.
-  defp maybe_emit_named_process_for_erlang_start(facts, ctx, name) do
-    case resolve_register(ctx.instrs, ctx.idx, {:x, 1}) do
+  defp maybe_emit_named_process_for_start(facts, _ctx, :none, _name), do: facts
+
+  # For :gen_server.start_link({:local, name}, mod, ...), the module is x1;
+  # an event manager has none.
+  defp maybe_emit_named_process_for_erlang_start(facts, _ctx, _name, nil), do: facts
+
+  defp maybe_emit_named_process_for_erlang_start(facts, ctx, name, mod_reg) do
+    case resolve_register(ctx.instrs, ctx.idx, mod_reg) do
       {:ok, mod} when is_atom(mod) -> add_fact(facts, :named_process, [inspect(mod), name])
       _ -> facts
     end
