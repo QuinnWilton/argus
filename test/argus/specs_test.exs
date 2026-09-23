@@ -97,6 +97,21 @@ defmodule Argus.SpecsTest do
     end
   end
 
+  describe "of_debug_info/3" do
+    test "reads a chunk read once as of_beam/1 reads the beam" do
+      for mod <- [Fixture, GenServer, :ets] do
+        {:ok, chunk} = Argus.Extractor.Helpers.debug_info(%{module: mod})
+
+        assert Specs.of_debug_info(mod, chunk) ==
+                 mod |> :code.which() |> List.to_string() |> Specs.of_beam()
+      end
+    end
+
+    test "is :error for a chunk that is not debug info" do
+      assert Specs.of_debug_info(Fixture, :no_debug_info) == :error
+    end
+  end
+
   test "the environment digest is stable within a VM" do
     assert Specs.environment_digest() == Specs.environment_digest()
     assert Specs.environment_digest() =~ ~r/^[0-9a-f]{64}$/
@@ -120,6 +135,16 @@ defmodule Argus.SpecsTest do
 
     test "emits nothing for a callee without specs", %{rows: rows} do
       refute Enum.any?(rows, fn [f | _] -> String.starts_with?(f, ":mnesia:") end)
+    end
+
+    test "emits the same rows beside another reader of the chunk", %{rows: rows} do
+      # With Generated in the run the pipeline reads the chunk once for both.
+      {:ok, facts} =
+        Argus.Pipeline.extract([Fixture],
+          extractors: [Argus.Extractors.Generated, Argus.Extractors.Specs]
+        )
+
+      assert MapSet.new(facts[:spec_return]) == rows
     end
   end
 end

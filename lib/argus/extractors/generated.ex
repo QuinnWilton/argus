@@ -26,6 +26,8 @@ defmodule Argus.Extractors.Generated do
 
   import Argus.Extractor.Helpers, only: [add_fact: 3]
 
+  alias Argus.Extractor.Helpers
+
   alias Argus.Pipeline.Normalize
 
   @impl true
@@ -52,12 +54,8 @@ defmodule Argus.Extractors.Generated do
     end
   end
 
-  # The pipeline hands over the beam it disassembled; an extractor run on
-  # bare disassembly (a unit test) reads the module from the code path.
   defp definitions(module_data) do
-    with {:ok, chunk_source} <- chunk_source(module_data),
-         {:ok, {_, [debug_info: {:debug_info_v1, backend, data}]}} <-
-           :beam_lib.chunks(chunk_source, [:debug_info]),
+    with {:ok, {:debug_info_v1, backend, data}} <- Helpers.debug_info(module_data),
          {:ok, %{definitions: definitions}} <-
            backend.debug_info(:elixir_v1, module_data.module, data, []) do
       definitions
@@ -68,20 +66,5 @@ defmodule Argus.Extractors.Generated do
     # A backend that cannot answer for :elixir_v1 may raise rather than
     # return an error; such a module has no Elixir definitions to read.
     _ -> []
-  end
-
-  defp chunk_source(%{beam: beam}) when is_binary(beam) do
-    cond do
-      BeamSpy.BeamFile.beam_data?(beam) -> {:ok, beam}
-      File.regular?(beam) -> {:ok, String.to_charlist(beam)}
-      true -> :error
-    end
-  end
-
-  defp chunk_source(%{module: mod}) do
-    case :code.which(mod) do
-      path when is_list(path) -> {:ok, path}
-      _ -> :error
-    end
   end
 end

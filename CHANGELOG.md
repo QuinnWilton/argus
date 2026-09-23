@@ -101,6 +101,12 @@ call: a module's IDs recur across its relations, and every row naming
 one shares the struct. Decoding a module takes 35 to 50% less time
 (Timex.Gettext 509 ms to 320 ms). The rows are the same.
 
+**Changed.** A module's debug-info chunk is read once for the
+extractors that read it (`Generated`, `Specs`), where each inflated and
+decoded it on its own: `module_data.debug_info` (**Added**:
+`Argus.Extractor.Helpers.debug_info/1`, `Argus.Specs.of_debug_info/3`).
+A run with neither reads it not at all.
+
 **Removed.** Schema 60. `move`, `allocate`, `deallocate`, `try_end` and
 `module_attribute`: no Datalog rule and no in-process pass read them (the
 walks read the instructions; the extractors that need an attribute read

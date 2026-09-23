@@ -78,7 +78,20 @@ defmodule Argus.Specs do
   @spec of_beam(Path.t() | binary(), :ets.tid() | nil) :: {:ok, returns()} | :error
   def of_beam(beam, memo \\ nil) when is_binary(beam) do
     with {:ok, binary} <- read_beam(beam),
-         {:ok, forms} <- fetch(fn -> typespec_forms(binary) end) do
+         {:ok, {module, chunk}} <- fetch(fn -> read_chunk(binary) end) do
+      of_debug_info(module, chunk, memo)
+    end
+  end
+
+  @doc """
+  `of_beam/2` for a debug-info chunk already read
+  (`{:debug_info_v1, backend, data}`, as `:beam_lib.chunks/2` returns
+  it) of `module`: what `Argus.Extractors.Specs` asks, with the chunk the
+  pipeline read once for every extractor that wants it.
+  """
+  @spec of_debug_info(module(), tuple(), :ets.tid() | nil) :: {:ok, returns()} | :error
+  def of_debug_info(module, chunk, memo \\ nil) when is_atom(module) do
+    with {:ok, forms} <- fetch(fn -> typespec_forms(module, chunk) end) do
       specs = for {:attribute, _, :spec, value} <- forms, do: value
       {:ok, reduce(specs, types_of(forms), memo)}
     end
@@ -210,15 +223,19 @@ defmodule Argus.Specs do
   # decodes it again (an Elixir module's chunk carries its whole
   # definition): an Elixir module's specs as its chunk stores them, an
   # Erlang module's abstract code.
-  defp typespec_forms(binary) do
-    with [_ | _] = info <- :beam_lib.info(binary),
-         {:ok, {_, [debug_info: {:debug_info_v1, backend, data}]}} <-
-           :beam_lib.chunks(binary, [:debug_info]) do
-      case data do
-        {:elixir_v1, %{}, specs} -> {:ok, specs}
-        _ -> backend.debug_info(:erlang_v1, info[:module], data, [])
-      end
+  defp typespec_forms(module, {:debug_info_v1, backend, data}) do
+    case data do
+      {:elixir_v1, %{}, specs} -> {:ok, specs}
+      _ -> backend.debug_info(:erlang_v1, module, data, [])
     end
+  end
+
+  defp typespec_forms(_module, _chunk), do: :error
+
+  defp read_chunk(binary) do
+    with [_ | _] = info <- :beam_lib.info(binary),
+         {:ok, {_, [debug_info: chunk]}} <- :beam_lib.chunks(binary, [:debug_info]),
+         do: {:ok, {info[:module], chunk}}
   end
 
   # `local_types/1` over forms already read.

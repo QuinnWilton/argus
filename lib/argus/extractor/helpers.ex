@@ -1333,6 +1333,42 @@ defmodule Argus.Extractor.Helpers do
   end
 
   @doc """
+  The module's debug-info chunk as `:beam_lib.chunks/2` decodes it
+  (`{:debug_info_v1, backend, data}`), or `:error` when there is none to
+  read: the one the pipeline read for the extractors that ask
+  (`module_data.debug_info`), or read on the spot from the beam the
+  pipeline handed over — or, for bare disassembly, from the code path.
+  An Elixir module's chunk holds its whole definition, which is why it is
+  read once rather than by each extractor that wants a part of it.
+  """
+  @spec debug_info(map()) :: {:ok, tuple()} | :error
+  def debug_info(%{debug_info: debug_info}), do: debug_info
+
+  def debug_info(module_data) do
+    with {:ok, source} <- chunk_source(module_data),
+         {:ok, {_module, [debug_info: chunk]}} <- :beam_lib.chunks(source, [:debug_info]) do
+      {:ok, chunk}
+    else
+      _ -> :error
+    end
+  end
+
+  defp chunk_source(%{beam: beam}) when is_binary(beam) do
+    cond do
+      BeamSpy.BeamFile.beam_data?(beam) -> {:ok, beam}
+      File.regular?(beam) -> {:ok, String.to_charlist(beam)}
+      true -> :error
+    end
+  end
+
+  defp chunk_source(%{module: mod}) do
+    case :code.which(mod) do
+      path when is_list(path) -> {:ok, path}
+      _ -> :error
+    end
+  end
+
+  @doc """
   What identifies the value in `register` at `idx`, in the vocabulary two
   sites can be joined on: `{"literal", inspected}` for an atom, binary or
   integer; `{"param", "N"}` when it is still the function's parameter N;

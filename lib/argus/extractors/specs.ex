@@ -24,6 +24,7 @@ defmodule Argus.Extractors.Specs do
   import Argus.Extractor.Helpers, only: [add_fact: 3]
 
   alias Argus.Extractor.CallSites
+  alias Argus.Extractor.Helpers
   alias Argus.Pipeline.Normalize
   alias Argus.Specs
 
@@ -43,9 +44,11 @@ defmodule Argus.Extractors.Specs do
 
   # The pipeline hands over the beam it disassembled; an extractor run on
   # bare disassembly (a unit test) reads the module from the code path.
-  defp own_specs(%{beam: beam}, memo) when is_binary(beam) do
-    case Specs.of_beam(beam, memo) do
-      {:ok, returns} -> returns
+  defp own_specs(%{beam: beam} = module_data, memo) when is_binary(beam) do
+    with {:ok, chunk} <- Helpers.debug_info(module_data),
+         {:ok, returns} <- Specs.of_debug_info(module_data.module, chunk, memo) do
+      returns
+    else
       :error -> %{}
     end
   end

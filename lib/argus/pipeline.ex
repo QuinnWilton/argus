@@ -289,6 +289,7 @@ defmodule Argus.Pipeline do
           origins_index: Argus.Extractor.Helpers.origins_index(%{reaching: reaching}),
           installed_specs: memo
         })
+        |> with_debug_info(extractors)
 
       # One extractor's failure costs its own rows and nothing else.
       {extractor_facts, errors} =
@@ -311,6 +312,28 @@ defmodule Argus.Pipeline do
 
       {:ok, facts}
     end
+  end
+
+  # The extractors that read the debug-info chunk (`Helpers.debug_info/1`).
+  # An Elixir module's chunk holds its whole definition, and inflating and
+  # decoding it cost each of them as much as the rest of its work; it is
+  # read once when any of them runs, and not at all when none does.
+  @debug_info_readers [Argus.Extractors.Generated, Argus.Extractors.Specs]
+
+  defp with_debug_info(data, extractors) do
+    if Enum.any?(extractors, &(&1 in @debug_info_readers)) do
+      Map.put(data, :debug_info, read_debug_info(data))
+    else
+      data
+    end
+  end
+
+  # A chunk that cannot be read is no chunk, as it is to the extractors
+  # reading it themselves: no extraction error is recorded for it.
+  defp read_debug_info(data) do
+    Helpers.debug_info(data)
+  rescue
+    _ -> :error
   end
 
   # What a run looks up once and every module asks again: the specs of
