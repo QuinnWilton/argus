@@ -206,7 +206,7 @@ defmodule Argus.Analyses.Shutdown do
         "#{sibling} are children of #{sup}. The supervisor owns that child: a " <>
         "permanent one comes straight back, and during shutdown it may already " <>
         "be gone, so the stop exits with :noproc in #{mod}.",
-      at: site_or_func(site, handler, mod),
+      at: Findings.at_site_in_func(site, handler, mod),
       at_label: "stops the sibling from this callback",
       related:
         [Findings.related("the sibling's stop API", Findings.at_func(via))] ++
@@ -237,7 +237,7 @@ defmodule Argus.Analyses.Shutdown do
         "reverse start order, so while #{mod} is terminating #{sibling} may already " <>
         "have exited: the call exits with :noproc and terminate/2 crashes, " <>
         "skipping whatever cleanup followed.",
-      at: site_or_func(site, via, mod),
+      at: Findings.at_site_in_func(site, via, mod),
       at_label: "synchronous call to a sibling during shutdown",
       related: placed_by(sup, sup_site),
       help: [
@@ -256,7 +256,7 @@ defmodule Argus.Analyses.Shutdown do
         "shuts down they keep running — reconnecting, logging, calling into " <>
         "applications that have already stopped — and #{mod}'s terminate/2 does " <>
         "not stop them.",
-      at: site_or_func(site, via, mod),
+      at: Findings.at_site_in_func(site, via, mod),
       at_label: "start_child onto a supervisor in another tree",
       related: placed_by(sup, sup_site),
       help: [
@@ -371,11 +371,6 @@ defmodule Argus.Analyses.Shutdown do
   # helper terminate/2 reaches, or an anonymous function inside it.
   defp through(via, mod) when via == mod <> ":terminate/2", do: ""
   defp through(via, _mod), do: " (through #{via})"
-
-  # A rule that found the call instruction anchors there; one that knows
-  # only the function anchors at the function.
-  defp site_or_func("", func, _mod), do: Findings.at_func(func)
-  defp site_or_func(site, _func, mod), do: Findings.at_site(site, mod)
 
   defp placed_by(_sup, ""), do: []
 

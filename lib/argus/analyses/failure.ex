@@ -142,7 +142,7 @@ defmodule Argus.Analyses.Failure do
         "program's own sites say so, and this one disagrees — the shape of a " <>
         "site written without the convention in mind, or one the convention " <>
         "grew around.",
-      at: Findings.at_site(site, module_of(func)),
+      at: Findings.at_site_in_func(site, func),
       at_label: "the one site that disagrees",
       help: [fix, "or, if this site is right, the other #{agree} are worth a look"]
     )
@@ -155,8 +155,8 @@ defmodule Argus.Analyses.Failure do
       "#{func} takes every exception in a {guard} clause without re-raising, " <>
         "logging, or matching a type. Bugs become silence: the failure surfaces " <>
         "later, far from its cause, with the stacktrace gone.",
-      at: Findings.at_site(site, func),
-      to: Findings.at_site(span_end, func),
+      at: Findings.at_site_in_func(site, func),
+      to: Findings.at_instr(span_end),
       to_block: :guard,
       at_label: "this {guard} takes everything",
       help: [
@@ -193,8 +193,8 @@ defmodule Argus.Analyses.Failure do
         "raises `{:erpc, :noconnection}` (or `{:erpc, :timeout}`, " <>
         "`{:erpc, :system_limit}`), and the {guard}'s `case` has no clause for " <>
         "it — a CaseClauseError in place of a result.",
-      at: Findings.at_site(site, func),
-      to: Findings.at_site(span_end, func),
+      at: Findings.at_site_in_func(site, func),
+      to: Findings.at_instr(span_end),
       to_block: :guard,
       at_label: "the call and its {guard}, which has no {:erpc, _} clause",
       help: ["add a clause for `{:erpc, reason}` and return or raise a meaningful error"]
@@ -208,7 +208,7 @@ defmodule Argus.Analyses.Failure do
       "#{func} uses the result of :erpc.call as a boolean. A node that went " <>
         "away between the check that chose it and the call raises " <>
         "`{:erpc, :noconnection}` here, and nothing rescues it.",
-      at: Findings.at_site(site, func),
+      at: Findings.at_site_in_func(site, func),
       at_label: "raises on a gone node",
       help: ["rescue ErlangError with `{:erpc, :noconnection}` and treat it as false"]
     )
@@ -221,7 +221,7 @@ defmodule Argus.Analyses.Failure do
       "#{func} uses the result of #{Findings.rpc_api(variant)} as a boolean. A node that is " <>
         "gone answers `{:badrpc, :nodedown}` (a timeout `{:badrpc, :timeout}`), " <>
         "and a tuple is truthy: the failure reads as true.",
-      at: Findings.at_site(site, func),
+      at: Findings.at_site_in_func(site, func),
       at_label: "{:badrpc, _} is truthy here",
       help: ["match `{:badrpc, _}` explicitly before treating the result as a boolean"]
     )
@@ -235,7 +235,7 @@ defmodule Argus.Analyses.Failure do
         "for `{:badrpc, reason}` — a node that is down, a timeout, a remote " <>
         "exit — so a cluster failure is a CaseClauseError (or MatchError) " <>
         "instead of an error value.",
-      at: Findings.at_site(site, func),
+      at: Findings.at_site_in_func(site, func),
       at_label: "no {:badrpc, _} clause",
       help: ["add a `{:badrpc, reason} -> {:error, reason}` clause, or move to :erpc and rescue"]
     )
@@ -296,21 +296,17 @@ defmodule Argus.Analyses.Failure do
 
   defp short(callee), do: callee |> String.split(":") |> List.last()
 
-  defp module_of(func), do: func |> String.split(":") |> hd()
-
   @impl true
   def evidence(:handling_site, [_callee, belief, site, func, guard_end]) do
-    mod = module_of(func)
-
     case belief do
       "exception_guarded" ->
-        Findings.related("guarded by this {guard}", Findings.at_site(site, mod),
-          to: Findings.at_site(guard_end, mod),
+        Findings.related("guarded by this {guard}", Findings.at_site_in_func(site, func),
+          to: Findings.at_instr(guard_end),
           to_block: :guard
         )
 
       "result_checked" ->
-        Findings.related("its result matched here", Findings.at_site(site, mod))
+        Findings.related("its result matched here", Findings.at_site_in_func(site, func))
     end
   end
 end

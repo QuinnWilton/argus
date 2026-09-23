@@ -290,9 +290,11 @@ defmodule Argus.Analyses.Blocking do
         "intermediaries. If both directions are ever in flight at once, each " <>
         "process blocks waiting on the other's mailbox — a deadlock that " <>
         "GenServer.call timeouts only turn into cascading crashes.",
-      at: site_or_func(site_a, witness_a, mod_a),
+      at: Findings.at_site_in_func(site_a, witness_a, mod_a),
       at_label: "one direction of the cycle",
-      related: [Findings.related("return path", site_or_func(site_b, witness_b, mod_b))],
+      related: [
+        Findings.related("return path", Findings.at_site_in_func(site_b, witness_b, mod_b))
+      ],
       help: ["break one direction with a cast or a message"]
     )
   end
@@ -399,8 +401,8 @@ defmodule Argus.Analyses.Blocking do
         "exist — but the peer stopping while the call is in flight is the same " <>
         "condition, and it arrives as `{:shutdown, _}` (or `{:normal, _}`), which " <>
         "this catch lets crash the caller.",
-      at: Findings.at_site(call, func),
-      to: Findings.at_site(guard_end, func),
+      at: Findings.at_site_in_func(call, func),
+      to: Findings.at_instr(guard_end),
       # An exit is only ever caught, never rescued: the keyword is known.
       to_block: :guard,
       at_label: "the call and its catch, which takes only :noproc",
@@ -411,9 +413,6 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  defp site_or_func("", func, _mod), do: Findings.at_func(func)
-  defp site_or_func(site, _func, mod), do: Findings.at_site(site, mod)
-
   @impl true
   def evidence(:call_cycle_path, [_a, _b, from_mod, to_mod, witness, how, site]) do
     label =
@@ -422,7 +421,7 @@ defmodule Argus.Analyses.Blocking do
         _ -> "cycle edge #{from_mod} → #{to_mod}"
       end
 
-    Findings.related(label, site_or_func(site, witness, from_mod))
+    Findings.related(label, Findings.at_site_in_func(site, witness, from_mod))
   end
 
   def evidence(:bottleneck_caller, [caller_mod, _target_mod, witness]) do

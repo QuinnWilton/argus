@@ -306,8 +306,7 @@ defmodule Argus.Analyses.Coupling do
         "as a permanent child. A child that stops on a semantic error is " <>
         "restarted by both: it crash-loops, exhausts the supervisor's restart " <>
         "intensity, and the escalation reaches the tree above.",
-      at:
-        if(start_site == "", do: Findings.at_func(via), else: Findings.at_site(start_site, mod)),
+      at: Findings.at_site_in_func(start_site, via, mod),
       at_label: "started under the supervisor here",
       related: [
         Findings.related("monitored here", Findings.at_site(monitor_site, mod)),

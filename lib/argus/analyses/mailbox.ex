@@ -567,6 +567,6 @@ defmodule Argus.Analyses.Mailbox do
   end
 
   def evidence(:task_yield_site, [func, _kind, site]) do
-    Findings.related("collected with Task.yield here", Findings.at_site(site, func))
+    Findings.related("collected with Task.yield here", Findings.at_site_in_func(site, func))
   end
 end

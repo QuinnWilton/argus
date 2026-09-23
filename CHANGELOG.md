@@ -233,6 +233,17 @@ arm, the name a later clause looks up.
 
 ### Fixed
 
+Anchors no longer invent modules. Several builders passed a function ID
+where `Findings.at_site/2` takes a module string, so a row whose site
+was empty or `"dynamic"` anchored at a module named after the function
+(`:"Elixir.Foo.Bar:baz/1"`); `failure`'s inconsistent-handling finding
+and its frames lost the module on Erlang code (`":lists:foo/1"` split to
+`""`). `Findings.at_site_in_func/2,3` anchors a site inside a known
+function and falls back to that function (then, given one, a module);
+`module_atom/1` returns `nil` for anything `inspect/1` would not print
+for a module, function IDs included. The two private `site_or_func/3`
+copies in blocking and shutdown are that function now.
+
 A literal operand was spelled with `inspect/1`, which runs a struct's
 own `Inspect` implementation when its module is loaded — so the same
 beam yielded different `literal_value` rows in a VM that had the

@@ -172,7 +172,7 @@ defmodule Argus.Analyses.Startup do
         "`after`), and init/1 reaches it. Until the message arrives, the " <>
         "process is not started: its supervisor's start, and whoever called " <>
         "start_child, wait with it — for as long as the server stays silent.",
-      at: if(site == "", do: Findings.at_func(recv), else: Findings.at_site(site, recv)),
+      at: Findings.at_site_in_func(site, recv),
       at_label: "receives with :infinity",
       help: [
         "bound the receive (a connect timeout) and fail the start with an error",
@@ -425,7 +425,7 @@ defmodule Argus.Analyses.Startup do
         "supervisor's start sequence, and the :global op blocks on " <>
         "cluster-wide agreement — local startup now hangs whenever the " <>
         "cluster is partitioned or slow.",
-      at: Findings.at_site(site, func),
+      at: Findings.at_site_in_func(site, func),
       at_label: "cluster-wide lock reached from init/1",
       related: reached_from_init(site, func),
       help: ["defer the lock to handle_continue/2 so the start completes without the cluster"]
@@ -452,12 +452,12 @@ defmodule Argus.Analyses.Startup do
         "which writes state (a persistent_term, an ETS row, application env). " <>
         "The children are already running when that write lands; one that reads " <>
         "the state in the meantime finds nothing there.",
-      at: Findings.at_site(site, func),
+      at: Findings.at_site_in_func(site, func),
       at_label: "the tree is already running here",
       related:
         if(start == "",
           do: [],
-          else: [Findings.related("the tree starts here", Findings.at_site(start, func))]
+          else: [Findings.related("the tree starts here", Findings.at_site_in_func(start, func))]
         ),
       help: [
         "perform the initialization before Supervisor.start_link, or as the first " <>
@@ -482,7 +482,7 @@ defmodule Argus.Analyses.Startup do
   # A :global call in a helper: the init/1 that reaches it is the second
   # frame. In init/1 itself the anchor already says so.
   defp reached_from_init(site, func) do
-    case Findings.at_site(site, func) do
+    case Findings.at_site_in_func(site, func) do
       %{mfa: {m, f, a}} when m != nil ->
         if "#{inspect(m)}:#{f}/#{a}" == func,
           do: [],

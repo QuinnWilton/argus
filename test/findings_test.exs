@@ -1,6 +1,8 @@
 defmodule Argus.FindingsTest do
   use ExUnit.Case, async: true
 
+  alias Argus.Analyses.Failure
+  alias Argus.Analyses.Mailbox
   alias Argus.Findings
   alias Argus.InstrId
   alias Argus.Souffle
@@ -454,6 +456,76 @@ defmodule Argus.FindingsTest do
                Findings.at_func("Argus.Findings:-run/2-fun-0-/3")
 
       assert %{module: nil, mfa: nil, instr: nil} = Findings.at_func("dynamic")
+    end
+
+    test "module_atom refuses function IDs rather than inventing a module" do
+      assert Findings.module_atom("Foo.Bar:baz/1") == nil
+      assert Findings.module_atom(":lists:map/2") == nil
+      assert Findings.module_atom("Foo.bar") == nil
+      assert Findings.module_atom(":\"Elixir.Foo.bar\"") == :"Elixir.Foo.bar"
+    end
+
+    test "at_site_in_func anchors an unresolvable site at the row's function" do
+      assert %{module: Foo.Bar, mfa: {Foo.Bar, :baz, 1}, instr: nil} =
+               Findings.at_site_in_func("dynamic", "Foo.Bar:baz/1")
+
+      assert %{module: :lists, mfa: {:lists, :map, 2}} =
+               Findings.at_site_in_func("", ":lists:map/2")
+
+      assert %{instr: %InstrId{idx: 4}} = Findings.at_site_in_func("Foo:g/0#4", "Foo.Bar:baz/1")
+      assert %{module: Foo, mfa: nil} = Findings.at_site_in_func("", "dynamic", "Foo")
+      assert %{module: nil, mfa: nil, instr: nil} = Findings.at_site_in_func("", "dynamic")
+    end
+
+    test "builders given a function ID and an unresolvable site keep the real module" do
+      # Each of these once passed the function ID where a module string
+      # belongs, so a site of "" or "dynamic" anchored at
+      # :"Elixir.Foo.Bar:baz/1".
+      for {mod, relation, row} <- [
+            {Failure, :unhandled_failure, ["Foo.Bar:baz/1", "", "rescue", "", ""]},
+            {Failure, :unhandled_failure, ["Foo.Bar:baz/1", "dynamic", "rpc", "case", ""]},
+            {Argus.Analyses.Startup, :blocks_on_peer,
+             ["Foo.Bar:baz/1", "init", "", "global", "", "", "dynamic", "trans"]},
+            {Argus.Analyses.Startup, :post_start_initialization,
+             ["Foo.Bar:baz/1", "", "X:y/0", ""]},
+            {Argus.Analyses.Blocking, :partial_noproc_catch,
+             ["Foo.Bar:baz/1", "", "GenServer:call/2", "dynamic", ""]}
+          ] do
+        attrs = mod.finding(relation, row)
+        assert attrs.module == Foo.Bar, "#{relation}: #{inspect(attrs.module)}"
+        assert attrs.mfa == {Foo.Bar, :baz, 1}
+      end
+
+      frame =
+        Mailbox.evidence(:task_yield_site, ["Foo.Bar:baz/1", "yield_linked", ""])
+
+      assert frame.module == Foo.Bar
+    end
+
+    test "inconsistent handling on Erlang code keeps its module anchor" do
+      attrs =
+        Failure.finding(:inconsistent_handling, [
+          ":my_mod:run/1",
+          "dynamic",
+          ":gen_server:call/2",
+          "result_checked",
+          "5",
+          "1"
+        ])
+
+      assert attrs.module == :my_mod
+      assert attrs.mfa == {:my_mod, :run, 1}
+
+      frame =
+        Failure.evidence(:handling_site, [
+          ":gen_server:call/2",
+          "result_checked",
+          "",
+          ":my_mod:other/0",
+          ""
+        ])
+
+      assert frame.module == :my_mod
     end
 
     test "at_instr parses instruction IDs into full anchors" do

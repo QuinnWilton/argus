@@ -873,6 +873,10 @@ defmodule Argus.Findings do
   with a `"dynamic"` placeholder. This tries the most precise parse
   first — instruction, then function, then the module fallback — so a
   finding never loses its module anchor to an unresolvable site.
+
+  The second argument is a module string (`"MyApp.Cache"`, `":lists"`).
+  When the row names the function the site is in, use
+  `at_site_in_func/2`, which falls back to that function instead.
   """
   @spec at_site(String.t(), String.t()) :: anchor()
   def at_site(id, module_string)
@@ -884,10 +888,53 @@ defmodule Argus.Findings do
   end
 
   @doc """
+  Anchor for a site ID inside a known function, falling back to that
+  function.
+
+  Like `at_site/2`, but the fallback is a function ID
+  (`"Mod:fun/arity"`) rather than a module string: a row whose site is
+  empty or `"dynamic"` still anchors at the function it names. When the
+  function ID does not parse either, `module_string` (when given) is the
+  last resort.
+
+      iex> Argus.Findings.at_site_in_func("M:f/1#3", "M:f/1").instr.idx
+      3
+
+      iex> Argus.Findings.at_site_in_func("dynamic", ":lists:map/2").mfa
+      {:lists, :map, 2}
+
+      iex> Argus.Findings.at_site_in_func("", "dynamic", "M").module
+      M
+  """
+  @spec at_site_in_func(String.t(), String.t(), String.t() | nil) :: anchor()
+  def at_site_in_func(site, func_id, module_string \\ nil)
+      when is_binary(site) and is_binary(func_id) and
+             (is_nil(module_string) or is_binary(module_string)) do
+    with %{instr: nil} <- at_instr(site),
+         %{mfa: nil} <- at_func(site),
+         %{mfa: nil} <- at_func(func_id) do
+      if module_string, do: at_module(module_string), else: empty_anchor()
+    end
+  end
+
+  @doc """
   Converts an `inspect/1`-rendered module string back to the module atom.
 
   Returns `nil` for the `"dynamic"` placeholder and anything else that
-  isn't a module rendering.
+  isn't a module rendering — a function ID (`"Foo.Bar:baz/1"`,
+  `":lists:map/2"`) included, so a builder that passes one where a
+  module belongs gets no anchor rather than an invented module. An
+  Erlang module whose name contains `:` or `/` cannot be told from a
+  function ID and reads as `nil` too.
+
+      iex> Argus.Findings.module_atom("Foo.Bar")
+      Foo.Bar
+
+      iex> Argus.Findings.module_atom(":lists")
+      :lists
+
+      iex> Argus.Findings.module_atom("Foo.Bar:baz/1")
+      nil
   """
   @spec module_atom(String.t()) :: module() | nil
   def module_atom("dynamic"), do: nil
@@ -895,15 +942,20 @@ defmodule Argus.Findings do
   def module_atom(":"), do: nil
 
   def module_atom(":" <> erlang_name) do
-    String.to_atom(strip_quotes(erlang_name))
+    name = strip_quotes(erlang_name)
+
+    if name == "" or String.contains?(name, [":", "/"]),
+      do: nil,
+      else: String.to_atom(name)
   end
 
+  # What `inspect/1` prints for an Elixir module: dot-separated segments,
+  # each an uppercase letter then word characters. Anything else it
+  # quotes (`:"Elixir.Foo.bar"`), and that goes through the Erlang branch.
   def module_atom(alias_string) do
-    if String.match?(alias_string, ~r/^[A-Z]/) do
-      Module.concat([alias_string])
-    else
-      nil
-    end
+    if String.match?(alias_string, ~r/^[A-Z][A-Za-z0-9_]*(\.[A-Z][A-Za-z0-9_]*)*$/),
+      do: Module.concat([alias_string]),
+      else: nil
   end
 
   defp at_parts(module_string, func, arity) do
