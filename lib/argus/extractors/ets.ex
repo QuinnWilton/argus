@@ -36,12 +36,11 @@ defmodule Argus.Extractors.ETS do
       each_remote_call: 3,
       find_function: 3,
       key_identity: 3,
-      recent_writer: 3,
-      register: 1,
       resolve_atom: 3,
       resolve_register: 3,
       track_dynamic: 5,
-      track_imprecision: 5
+      track_imprecision: 5,
+      tuple_element_identity: 4
     ]
 
   @read_ops ~w(lookup lookup_element match match_object select member
@@ -150,40 +149,14 @@ defmodule Argus.Extractors.ETS do
     add_fact(facts, :ets_key, [id, source, key])
   end
 
-  # The key of an inserted object is its first element. The tuple is built
-  # by put_tuple2 just before the call, or is a whole literal; a list of
-  # objects, a parameter passed straight through or a call result says
-  # nothing about the key. resolve_register on the tuple would lose WHICH
-  # parameter an element was, so the element is resolved on its own.
+  # The key of an inserted object is its first element; a list of objects
+  # says nothing about any one key.
   defp maybe_key(facts, id, ctx, func) when func in @object_ops do
-    {source, key} =
-      case recent_writer(ctx.instrs, ctx.idx, {:x, 1}) do
-        {:ok, {:put_tuple2, _dst, {:list, [first | _]}}, widx} ->
-          element_identity(ctx.instrs, widx, first)
-
-        {:ok, {:move, {:literal, tuple}, _dst}, _widx}
-        when is_tuple(tuple) and tuple_size(tuple) > 0 ->
-          {"literal", inspect(elem(tuple, 0))}
-
-        _ ->
-          {"dynamic", ""}
-      end
-
+    {source, key} = tuple_element_identity(ctx.instrs, ctx.idx, {:x, 1}, 0)
     add_fact(facts, :ets_key, [id, source, key])
   end
 
   defp maybe_key(facts, _id, _ctx, _func), do: facts
-
-  defp element_identity(_instrs, _idx, {:atom, atom}), do: {"literal", inspect(atom)}
-  defp element_identity(_instrs, _idx, {:integer, n}), do: {"literal", inspect(n)}
-  defp element_identity(_instrs, _idx, {:literal, value}), do: {"literal", inspect(value)}
-
-  defp element_identity(instrs, idx, operand) do
-    case register(operand) do
-      {kind, _n} = reg when kind in [:x, :y] -> key_identity(instrs, idx, reg)
-      _other -> {"dynamic", ""}
-    end
-  end
 
   # A dynamic table operand that is the function's own parameter: the
   # name arrives from a caller, which `call_arg` can supply.

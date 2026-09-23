@@ -895,6 +895,41 @@ defmodule Argus.Extractor.HelpersTest do
     end
   end
 
+  describe "tuple_element_identity/4" do
+    test "an element of a tuple built just before is identified on its own" do
+      instrs = [
+        {:put_tuple2, {:x, 1}, {:list, [{:atom, :counters}, {:atom, :hits}, {:integer, 1}]}},
+        {:call_ext, 2, {:extfunc, :ets, :insert, 2}}
+      ]
+
+      assert Helpers.tuple_element_identity(instrs, 1, {:x, 1}, 0) == {"literal", ":counters"}
+      assert Helpers.tuple_element_identity(instrs, 1, {:x, 1}, 1) == {"literal", ":hits"}
+      assert Helpers.tuple_element_identity(instrs, 1, {:x, 1}, 2) == {"literal", "1"}
+    end
+
+    test "the tuple is followed through a move" do
+      instrs = [
+        {:put_tuple2, {:x, 2}, {:list, [{:atom, :k}, {:x, 0}]}},
+        {:move, {:x, 2}, {:x, 1}},
+        {:call_ext, 2, {:extfunc, :ets, :insert, 2}}
+      ]
+
+      assert Helpers.tuple_element_identity(instrs, 2, {:x, 1}, 0) == {"literal", ":k"}
+    end
+
+    test "a literal tuple, and one too short" do
+      instrs = [{:move, {:literal, {:t, :key}}, {:x, 0}}, {:call_ext, 1, {:extfunc, M, :f, 1}}]
+
+      assert Helpers.tuple_element_identity(instrs, 1, {:x, 0}, 1) == {"literal", ":key"}
+      assert Helpers.tuple_element_identity(instrs, 1, {:x, 0}, 2) == {"dynamic", ""}
+    end
+
+    test "a tuple the function was handed says nothing about its elements" do
+      instrs = [{:call_ext, 1, {:extfunc, M, :f, 1}}]
+      assert Helpers.tuple_element_identity(instrs, 0, {:x, 0}, 0) == {"dynamic", ""}
+    end
+  end
+
   describe "keyword_value_register/4" do
     test "finds the value register of a runtime-built keyword pair" do
       # opts = [name: <y0>] built as a cons of a {:name, y0} tuple.

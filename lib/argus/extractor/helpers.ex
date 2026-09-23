@@ -1455,6 +1455,47 @@ defmodule Argus.Extractor.Helpers do
     end
   end
 
+  @doc """
+  `key_identity/3` for element `n` of the tuple in `register` at `idx`: an
+  ETS object's key, a Mnesia record's table and key. The tuple is built by
+  `put_tuple2` on the way to `idx` (through moves), or is one literal. A
+  tuple from anywhere else — a parameter passed straight through, a call
+  result — says nothing about its elements, and is `{"dynamic", ""}`:
+  resolving the whole tuple would lose WHICH parameter an element was.
+  """
+  @spec tuple_element_identity([term()], non_neg_integer(), register(), non_neg_integer()) ::
+          {String.t(), String.t()}
+  def tuple_element_identity(instrs, idx, register, n) do
+    case recent_writer(instrs, idx, register) do
+      {:ok, {:put_tuple2, _dst, {:list, elements}}, widx} when length(elements) > n ->
+        element_identity(instrs, widx, Enum.at(elements, n))
+
+      {:ok, {:move, {:literal, tuple}, _dst}, _widx}
+      when is_tuple(tuple) and tuple_size(tuple) > n ->
+        {"literal", inspect(elem(tuple, n))}
+
+      {:ok, {:move, source, _dst}, widx} ->
+        case register(source) do
+          {kind, _} = reg when kind in [:x, :y] -> tuple_element_identity(instrs, widx, reg, n)
+          _other -> {"dynamic", ""}
+        end
+
+      _ ->
+        {"dynamic", ""}
+    end
+  end
+
+  defp element_identity(_instrs, _idx, {:atom, atom}), do: {"literal", inspect(atom)}
+  defp element_identity(_instrs, _idx, {:integer, n}), do: {"literal", inspect(n)}
+  defp element_identity(_instrs, _idx, {:literal, value}), do: {"literal", inspect(value)}
+
+  defp element_identity(instrs, idx, operand) do
+    case register(operand) do
+      {kind, _n} = reg when kind in [:x, :y] -> key_identity(instrs, idx, reg)
+      _other -> {"dynamic", ""}
+    end
+  end
+
   @doc "The graph of the function an `instr_ctx()` is in."
   @spec cfg(map(), instr_ctx()) :: Argus.Cfg.Function.t() | nil
   def cfg(module_data, %{func_id: func_id}) do

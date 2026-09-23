@@ -37,6 +37,10 @@ The pipeline computes reaching definitions once per module
 read them from its own `Dataflow.reaching_uses/2` call, and `def_use` from
 another. `def_use` is derived from the shared set and is unchanged.
 
+`Helpers.tuple_element_identity/4` identifies element `n` of a tuple built
+on the way to a call (through moves) or folded into one literal: an ETS
+object's key, and the reader the ETS extractor used inline before.
+
 Schema 43. `try_call` gains `call`, the guarded call's own instruction:
 the `try` instruction carries the line of whatever preceded it (the
 previous clause's body, or the function head), so "catches :noproc but
