@@ -11,20 +11,22 @@
   effects:
     ~w(call_edge call_site closure_def dynamic_call ets_new ets_op implements_behaviour impure_call port_open process_register protocol_dispatch pure_contract recv_start remote_call resolved_apply send_msg spawn_call unknown_call),
   ets:
-    ~w(call_arg call_arg_depends call_arg_field call_arg_forward call_arg_reads call_decided call_edge catch_tag catch_total closure_def dynamic_child ets_key ets_new ets_op ets_op_param ets_option ets_tid_arg function_def implements_behaviour mnesia_op returns_depends site_depends site_reads spec_return statem_event_clause supervisor_child try_start),
+    ~w(call_arg call_arg_forward call_edge catch_tag catch_total closure_def dynamic_child ets_new ets_op ets_op_param ets_option function_def implements_behaviour statem_event_clause supervisor_child try_start),
   exposure:
     ~w(function_def prior_sensitive redacted_field schema_field tls_connect tls_verification),
   failure:
     ~w(bare_rescue call_edge call_followed_by_branch call_result catch_falls_through catch_tag catch_total closure_def exit_call function_def ignored_error_result implements_behaviour macro_generated name_lookup remote_call rpc_call rpc_result spawn_call spec_return tail_call try_call),
   mailbox:
     ~w(async_cast call_arg call_arg_field call_arg_forward call_edge call_tag callback_drops_from callback_ref_head callback_return callback_tag callback_total cancel_clause closure_def demonitor_call function_def implements_behaviour mailbox_writer matches_down monitor_call monitor_ref_dropped named_process pid_arg pid_base pid_call pid_field pid_load pid_message pid_object pid_register pid_result pid_return pid_send pid_sets process_start recv_pattern recv_start remote_call returns_call statem_call_unreplied statem_event_catchall statem_event_clause statem_info_catchall statem_module statem_state statem_timeout supervisor_child supervisor_child_name sync_call sync_call_timeout tail_call timer_arm timer_cancel timer_ref timer_store trap_exit),
+  races:
+    ~w(call_arg call_arg_depends call_arg_field call_arg_forward call_arg_reads call_decided call_edge catch_tag catch_total creating_op dynamic_child ets_key ets_new ets_op ets_op_param ets_option ets_tid_arg function_def implements_behaviour mnesia_op name_lookup name_release remote_call returns_call returns_depends site_depends site_reads spec_return start_error_compared statem_event_clause try_start),
   shutdown:
     ~w(async_cast call_arg call_arg_forward call_edge call_site call_tag callback_stop_reason callback_tag callback_total catch_tag catch_total demonitor_call dynamic_child function_def implements_behaviour impure_call monitor_call named_process pid_arg pid_base pid_call pid_field pid_load pid_message pid_object pid_register pid_result pid_return pid_sets process_start remote_call statem_event_clause statem_state sup_call supervisor supervisor_child supervisor_child_name supervisor_site sync_call sync_call_site trap_exit unknown_call),
   startup:
     ~w(async_cast call_arg call_arg_forward call_edge call_site call_tag callback_tag callback_timeout conditional_call distributed_store_op dynamic_child function_def global_op global_register handle_continue_clause ignored_error_result implements_behaviour impure_call init_continues_to mailbox_writer named_process node_operation pid_arg pid_base pid_call pid_field pid_load pid_message pid_object pid_register pid_result pid_return pid_sets post_start_call process_start recv_start remote_call rpc_call statem_event_clause statem_timeout sup_call supervisor supervisor_child supervisor_child_name supervisor_site sync_call sync_call_site try_start unconditional_call_edge),
   state_machine: ~w(statem_initial statem_module statem_state statem_transition),
   structure:
-    ~w(call_arg call_arg_depends call_arg_field call_arg_forward call_decided call_edge catch_tag catch_total creating_op dynamic_child function_def global_register implements_behaviour name_lookup name_release process_register remote_call returns_call returns_depends site_depends spec_return start_error_compared supervisor_child supervisor_child_form supervisor_site try_start),
+    ~w(function_def global_register implements_behaviour process_register supervisor_child supervisor_child_form supervisor_site),
   unsafe_input:
     ~w(call_arg_derived call_edge code_execution dynamic_child function_def http_route implements_behaviour prior_reads sink_arg_derived socket_transport supervisor_max_children unsafe_atom_creation unsafe_deserialization)
 ]

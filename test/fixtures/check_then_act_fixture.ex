@@ -1,8 +1,8 @@
 defmodule Argus.Test.Fixtures.CheckThenAct do
   @moduledoc """
-  Fixtures for the lookup-then-start race (`structure.registry_race`),
-  the read-then-write race (`ets.ets_check_act`) and its Mnesia twin
-  (`ets.mnesia_check_act`). The paper's own examples are Erlang, in
+  Fixtures for the lookup-then-start race (`races.registry_race`),
+  the read-then-write race (`races.ets_check_act`) and its Mnesia twin
+  (`races.mnesia_check_act`). The paper's own examples are Erlang, in
   `test/fixtures/erl/`.
 
   Behaviours are bare `@behaviour` attributes, as in `RequestSurface`.

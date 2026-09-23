@@ -139,6 +139,7 @@ defmodule Argus.Analysis do
     :mailbox,
     :failure,
     :structure,
+    :races,
     :state_machine,
     :ets,
     :effects,
@@ -175,13 +176,19 @@ defmodule Argus.Analysis do
 
   # What scry runs unconfigured: the OTP concerns whose findings are
   # structural and low-noise enough to report on every compile. effects,
-  # ets, blocking and the security concerns are asked for by name.
+  # ets, blocking and the security concerns are asked for by name. races
+  # is here because its rows are few and real: over the closed-issue
+  # corpus and four large programs, one registry race (tesla's), ETS
+  # races in postgrex, hammer, ztlp and blockster and OTP's own mnesia
+  # internals, Mnesia races in blockster and ztlp — each a read deciding
+  # a write another process can interleave.
   defp default_set do
     [
       :startup,
       :coupling,
       :shutdown,
       :structure,
+      :races,
       :failure,
       :mailbox
     ]

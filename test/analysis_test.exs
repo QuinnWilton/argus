@@ -13,6 +13,7 @@ defmodule Argus.AnalysisTest do
     :exposure,
     :failure,
     :mailbox,
+    :races,
     :shutdown,
     :startup,
     :state_machine,

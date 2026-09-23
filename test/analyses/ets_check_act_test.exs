@@ -1,7 +1,7 @@
 defmodule Argus.Analyses.EtsCheckActTest do
   use ExUnit.Case, async: true
 
-  alias Argus.Analyses.Ets
+  alias Argus.Analyses.Races
   alias Argus.Souffle
   alias Argus.Test.Fixtures.CheckThenAct, as: C
 
@@ -10,7 +10,7 @@ defmodule Argus.Analyses.EtsCheckActTest do
   end
 
   defp races(modules) do
-    {:ok, results} = Argus.analyze(modules, :ets)
+    {:ok, results} = Argus.analyze(modules, :races)
 
     for [_mod, func, name, key, _read, _write] <- results["ets_check_act"],
         do: {func |> String.split(":") |> List.last(), name, key}
@@ -84,7 +84,7 @@ defmodule Argus.Analyses.EtsCheckActTest do
     test "a read helper's result handed to a multi-clause write helper meets in the caller" do
       skip_without_souffle()
 
-      {:ok, results} = Argus.analyze([C.HelperCache], :ets)
+      {:ok, results} = Argus.analyze([C.HelperCache], :races)
 
       sites =
         for [_mod, func, ":helper_cache", "0", read, write] <- results["ets_check_act"],
@@ -99,7 +99,7 @@ defmodule Argus.Analyses.EtsCheckActTest do
     test "a pair that meets in a helper is not reported again in its caller" do
       skip_without_souffle()
 
-      {:ok, results} = Argus.analyze([C.CachedTwice], :ets)
+      {:ok, results} = Argus.analyze([C.CachedTwice], :races)
       funcs = for [_mod, func | _] <- results["ets_check_act"], uniq: true, do: short(func)
 
       assert funcs == ["cached/1"]
@@ -122,7 +122,7 @@ defmodule Argus.Analyses.EtsCheckActTest do
         "M:put_if_absent/2#9"
       ]
 
-      f = Ets.finding(:ets_check_act, row)
+      f = Races.finding(:ets_check_act, row)
       assert f.severity == :warning
       assert f.title =~ "Read-then-write"
       assert [%{label: "the read it depends on"}] = f.related
@@ -132,7 +132,7 @@ defmodule Argus.Analyses.EtsCheckActTest do
 
     test "names the helpers when the read and the write sit outside the meeting function" do
       row = ["M", "M:bump/1", ":cache", "0", "M:fetch/1#6", "M:store/2#15"]
-      f = Ets.finding(:ets_check_act, row)
+      f = Races.finding(:ets_check_act, row)
 
       assert f.detail =~ "in M.fetch/1"
       assert f.detail =~ "in M.store/2"

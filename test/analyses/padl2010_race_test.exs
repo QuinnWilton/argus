@@ -23,7 +23,7 @@ defmodule Argus.Analyses.Padl2010RaceTest do
 
   defp registry(modules) do
     for [_mod, func, lookup, act_api, _key_source, key, check, act] <-
-          rows(modules, :structure, "registry_race"),
+          rows(modules, :races, "registry_race"),
         do: {fa(func), lookup, act_api, key, fa(check), fa(act)}
   end
 
@@ -56,7 +56,7 @@ defmodule Argus.Analyses.Padl2010RaceTest do
     test "Fig. 2 (left): both inserts of ets_inc/2, on the unnamed public table its closure is handed" do
       skip_without_souffle()
 
-      rows = rows([:padl2010_ets_inc], :ets, "ets_check_act")
+      rows = rows([:padl2010_ets_inc], :races, "ets_check_act")
 
       assert [{"ets_inc/2", ":some_tab_name", ":some_key"}] =
                rows
@@ -72,7 +72,7 @@ defmodule Argus.Analyses.Padl2010RaceTest do
       skip_without_souffle()
 
       assert [[":padl2010_time_stamp", func, ":time_stamp", ":ref_count", _read, _write, _op]] =
-               rows([:padl2010_time_stamp], :ets, "mnesia_check_act")
+               rows([:padl2010_time_stamp], :races, "mnesia_check_act")
 
       assert fa(func) == "create_time_stamp_table/0"
     end
@@ -81,7 +81,7 @@ defmodule Argus.Analyses.Padl2010RaceTest do
       skip_without_souffle()
 
       assert [[_, func, ":time_stamp", ":ref_count", _read, _write, _op]] =
-               rows([:padl2010_snmp_shadow_table], :ets, "mnesia_check_act")
+               rows([:padl2010_snmp_shadow_table], :races, "mnesia_check_act")
 
       assert fa(func) == "create_time_stamp_table/0"
     end
@@ -115,7 +115,7 @@ defmodule Argus.Analyses.Padl2010RaceTest do
     test "a loop: the read decides the write of the next iteration" do
       skip_without_souffle()
 
-      rows = rows([:padl2010_loop], :ets, "ets_check_act")
+      rows = rows([:padl2010_loop], :races, "ets_check_act")
 
       assert [{"tick/2", ":loop_hits", ":hits"}] =
                rows

@@ -14,13 +14,9 @@ defmodule Argus.Analyses.Structure do
   - `global_register_risk(func, name, site)` — `:global.register_name/2`
     with no conflict resolver: after a netsplit heals, one of the two
     holders is killed at random.
-  - `registry_race(mod, func, lookup_api, create_api, key, check, act)` —
-    a lookup of a name decides a start, registration or unregistration of
-    the same name, the losing outcome is taken nowhere, and more than one
-    process can run the function where the two meet: the lookup-then-start
-    race, and its release twin, lookup-then-unregister. The lookup and the
-    act may sit in helpers `func` calls, or reach each other through a
-    parameter or a loop (`clientlib/check_then_act.dl`).
+
+  The lookup-then-start race on a process name is `races.registry_race`
+  (`Argus.Analyses.Races`).
   """
 
   @behaviour Argus.Analysis
@@ -32,9 +28,7 @@ defmodule Argus.Analyses.Structure do
 
   @impl true
   def description,
-    do:
-      "child specs, registrations and tree shapes that are wrong on their own, " <>
-        "and lookup-then-start races on a process name"
+    do: "child specs, registrations and tree shapes that are wrong on their own"
 
   @impl true
   def rules_file, do: "analyses/structure.dl"
@@ -45,11 +39,7 @@ defmodule Argus.Analyses.Structure do
       Argus.Extractors.Supervision,
       Argus.Extractors.OTP,
       Argus.Extractors.ApiCalls,
-      Argus.Extractors.ProcessRegistry,
-      Argus.Extractors.ErrorHandling,
-      Argus.Extractors.Dependence,
-      Argus.Extractors.CallArgs,
-      Argus.Extractors.Specs
+      Argus.Extractors.ProcessRegistry
     ]
 
   @impl true
@@ -85,24 +75,6 @@ defmodule Argus.Analyses.Structure do
         ],
         key: [:name, :mod1, :mod2],
         doc: "Same atom name registered by multiple modules."
-      },
-      %{
-        name: :registry_race,
-        fields: [
-          {:mod, :symbol, "the module"},
-          {:func, :symbol, "the function where the lookup's result meets the act"},
-          {:lookup_api, :symbol, "whereis | registry_lookup | registered"},
-          {:create_api, :symbol,
-           "register | start_link | start | start_via | registry_register | start_child | unregister"},
-          {:key_source, :symbol, "literal | param | field | local | dynamic | any"},
-          {:key, :symbol,
-           "the name, as func identifies it: the literal, a parameter's position, a field's key"},
-          {:check, :symbol, "instruction ID of the lookup"},
-          {:act, :symbol, "instruction ID of the start or registration"}
-        ],
-        key: [:func, :key],
-        doc:
-          "A lookup decides a start or release of the same name, and a second caller can act in the window."
       },
       %{
         name: :global_register_risk,
@@ -178,51 +150,6 @@ defmodule Argus.Analyses.Structure do
     )
   end
 
-  def finding(:registry_race, [mod, func, lookup_api, "unregister", key_source, key, check, act]) do
-    Findings.new(
-      :warning,
-      "Lookup-then-unregister race on a process name",
-      "#{func} asks whether #{describe_key(key_source, key)} is registered " <>
-        "(#{lookup(lookup_api)}#{Findings.elsewhere(check, func)}) and unregisters it" <>
-        "#{Findings.elsewhere(act, func)} when the answer is yes. The name can go " <>
-        "between the two — its process exits and is unregistered with it, or another " <>
-        "caller unregisters it first — and unregister/1 then raises ArgumentError, " <>
-        "which nothing here rescues.",
-      at: Findings.at_site(act, mod),
-      at_label: "this unregister runs after the lookup has gone stale",
-      related: [Findings.related("the lookup it depends on", Findings.at_site(check, mod))],
-      help: [
-        "unregister unconditionally and rescue `ArgumentError` (`catch error:badarg` in Erlang)",
-        "or leave the name to the process holding it: a registered name goes when its process exits"
-      ]
-    )
-  end
-
-  def finding(:registry_race, [mod, func, lookup_api, create_api, key_source, key, check, act]) do
-    Findings.new(
-      :warning,
-      "Lookup-then-start race on a process name",
-      "#{func} asks whether #{describe_key(key_source, key)} is registered " <>
-        "(#{lookup(lookup_api)}#{Findings.elsewhere(check, func)}) and " <>
-        "#{create(create_api)}#{Findings.elsewhere(act, func)} when the answer is no. " <>
-        "Nothing holds the name between the two: a second caller that asks in the same " <>
-        "window gets the same answer, and one of the two starts loses — " <>
-        "{:error, {:already_started, pid}} from a start, an ArgumentError from " <>
-        "register/2 — which is taken nowhere.",
-      at: Findings.at_site(act, mod),
-      at_label: "this start runs after the lookup has gone stale",
-      related: [Findings.related("the lookup it depends on", Findings.at_site(check, mod))],
-      help: [
-        "make the start the check: start unconditionally and treat " <>
-          "`{:error, {:already_started, pid}}` as `{:ok, pid}`",
-        "for a Registry, `Registry.register/3` and its `{:error, {:already_registered, pid}}` " <>
-          "replace the lookup",
-        "if the decision must span both, serialise it through one process — the owner, or " <>
-          "`:global.trans/2`"
-      ]
-    )
-  end
-
   def finding(:global_register_risk, [func, name, site]) do
     Findings.new(
       :warning,
@@ -238,33 +165,4 @@ defmodule Argus.Analyses.Structure do
       ]
     )
   end
-
-  # The name as the function sees it. A parameter's key is its position,
-  # which reads as a number only to the facts.
-  defp describe_key("literal", key) when key != "", do: key
-  defp describe_key("field", key) when key != "", do: "the name held under #{key}"
-
-  defp describe_key("param", position) do
-    case Integer.parse(position) do
-      {n, ""} when n in 0..9 ->
-        ordinal = Enum.at(~w(first second third fourth fifth sixth seventh eighth ninth tenth), n)
-        "the name in its #{ordinal} argument"
-
-      _ ->
-        "the name"
-    end
-  end
-
-  defp describe_key(_local_dynamic_or_any, _key), do: "the name"
-
-  defp lookup("whereis"), do: "whereis"
-  defp lookup("registry_lookup"), do: "Registry.lookup"
-  defp lookup("registered"), do: "Process.registered"
-  defp lookup(other), do: other
-
-  defp create("register"), do: "registers it"
-  defp create("registry_register"), do: "registers it in the Registry"
-  defp create("start_child"), do: "starts a child"
-  defp create("start_via"), do: "starts a process under it"
-  defp create(_start), do: "starts a process named by it"
 end

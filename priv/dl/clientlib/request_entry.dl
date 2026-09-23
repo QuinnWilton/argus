@@ -3,7 +3,7 @@
 // unsafe_input asks which unsafe operations attacker data reaches and
 // whether an outside party can make the node start processes without
 // limit; concurrency.dl counts a function a request entry reaches as one
-// many processes run at once (the ets and structure races).
+// many processes run at once (the races).
 //
 // Prerequisites: include clientlib/imports.dl and clientlib/behaviours.dl
 // before this file.

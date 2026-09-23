@@ -1,7 +1,7 @@
-defmodule Argus.Analyses.StructureRegistryRaceTest do
+defmodule Argus.Analyses.RegistryRaceTest do
   use ExUnit.Case, async: true
 
-  alias Argus.Analyses.Structure
+  alias Argus.Analyses.Races
   alias Argus.Souffle
   alias Argus.Test.Fixtures.CheckThenAct, as: C
 
@@ -10,7 +10,7 @@ defmodule Argus.Analyses.StructureRegistryRaceTest do
   end
 
   defp races(modules) do
-    {:ok, results} = Argus.analyze(modules, :structure)
+    {:ok, results} = Argus.analyze(modules, :races)
 
     for [_mod, func, lookup, create, _key_source, key, _check, _act] <- results["registry_race"],
         do: {func |> String.split(":") |> List.last(), lookup, create, key}
@@ -18,7 +18,7 @@ defmodule Argus.Analyses.StructureRegistryRaceTest do
 
   # {meeting function, lookup's function, act's function}
   defp sites(modules) do
-    {:ok, results} = Argus.analyze(modules, :structure)
+    {:ok, results} = Argus.analyze(modules, :races)
 
     for [_mod, func, _lookup, _create, _key_source, _key, check, act] <- results["registry_race"],
         do: {short(func), short(check), short(act)}
@@ -165,7 +165,7 @@ defmodule Argus.Analyses.StructureRegistryRaceTest do
         "M:ensure/1#9"
       ]
 
-      f = Structure.finding(:registry_race, row)
+      f = Races.finding(:registry_race, row)
       assert f.severity == :warning
       assert f.title =~ "Lookup-then-start"
       assert f.at_label =~ "stale"
@@ -186,7 +186,7 @@ defmodule Argus.Analyses.StructureRegistryRaceTest do
         "M:ensure/2#9"
       ]
 
-      f = Structure.finding(:registry_race, row)
+      f = Races.finding(:registry_race, row)
       assert f.detail =~ "asks whether the name in its second argument is registered"
 
       for {source, key, said} <- [
@@ -196,7 +196,7 @@ defmodule Argus.Analyses.StructureRegistryRaceTest do
             {"dynamic", "", "asks whether the name is registered"}
           ] do
         f =
-          Structure.finding(
+          Races.finding(
             :registry_race,
             List.replace_at(List.replace_at(row, 4, source), 5, key)
           )
@@ -217,7 +217,7 @@ defmodule Argus.Analyses.StructureRegistryRaceTest do
         "M:start/1#9"
       ]
 
-      f = Structure.finding(:registry_race, row)
+      f = Races.finding(:registry_race, row)
 
       assert f.detail =~ "whereis in M.lookup/1"
       assert f.detail =~ "in M.start/1"
@@ -236,7 +236,7 @@ defmodule Argus.Analyses.StructureRegistryRaceTest do
         "M:release/1#14"
       ]
 
-      f = Structure.finding(:registry_race, row)
+      f = Races.finding(:registry_race, row)
 
       assert f.title =~ "Lookup-then-unregister"
       assert f.at_label =~ "unregister"

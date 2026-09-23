@@ -796,7 +796,29 @@ deduplicated, named whichever repo sorted first. The body is keyed by
 its transaction site, and a function whose transactions name two repos
 has no body: nothing says whose the closure is.
 
-### Check-then-act races (structure, ets)
+### races
+
+**Changed.** A new concern, `races`, owns the three check-then-act
+relations, which move with their columns, titles and prose unchanged:
+`registry_race` from `structure`, `ets_check_act` and `mnesia_check_act`
+from `ets`. They were one shape on three stores, built on one component,
+split across two concerns by store. The move is breaking, and no alias
+covers it: code or configuration asking `structure` or `ets` for these
+rows asks `races` now, and findings report under `races` (scry's
+`[scry.races]`). `races` is in the `:default` set, as `registry_race`
+was through `structure`: over the closed-issue corpus and four large
+programs it reports one registry race, ETS races in five projects and
+OTP's mnesia internals, and Mnesia races in two projects, each a read
+deciding a write another process can interleave. `structure` and `ets`
+keep their other relations and declare only the extractors those read.
+One solve derives the three: `param_arg`, the same for every
+`CheckThenAct` instance, is derived once outside the component instead
+of once per instance (88k rows each on a deps tree), and one
+`RunsConcurrently` instance, seeded with every meeting and write the
+three ask about, replaces three. Rows are byte-identical over the corpus
+and the four large programs. On argus's deps tree `races` solves in
+1.1 s, and `structure` and `ets` drop from 0.7 s and 1.0 s to 0.2 s and
+0.4 s.
 
 **Fixed.** A Broadway pipeline's `handle_message/3` and `handle_batch/4` are
 request entries for the races too: `clientlib/concurrency.dl` counts what

@@ -1,7 +1,7 @@
 defmodule Argus.Analyses.MnesiaCheckActTest do
   use ExUnit.Case, async: true
 
-  alias Argus.Analyses.Ets
+  alias Argus.Analyses.Races
   alias Argus.Souffle
   alias Argus.Test.Fixtures.CheckThenAct, as: C
 
@@ -10,7 +10,7 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
   end
 
   defp races(modules) do
-    {:ok, results} = Argus.analyze(modules, :ets)
+    {:ok, results} = Argus.analyze(modules, :races)
 
     for [_mod, func, table, key, read, write, _op] <- results["mnesia_check_act"],
         do: {short(func), table, key, short(read), short(write)}
@@ -75,7 +75,7 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
   describe "finding" do
     test "anchors the dirty write, relates the dirty read, and names the transaction" do
       row = ["M", "M:bump/1", ":counters", "0", "M:get/1#6", "M:bump/1#27", "dirty_write"]
-      f = Ets.finding(:mnesia_check_act, row)
+      f = Races.finding(:mnesia_check_act, row)
 
       assert f.severity == :warning
       assert f.title =~ "Mnesia"
@@ -87,7 +87,7 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
 
     test "names a delete as a delete" do
       row = ["M", "M:fetch/2", ":uses", "0", "M:fetch/2#6", "M:fetch/2#27", "dirty_delete"]
-      f = Ets.finding(:mnesia_check_act, row)
+      f = Races.finding(:mnesia_check_act, row)
 
       assert f.detail =~ "deletes it with dirty_delete"
       refute f.detail =~ "dirty write"

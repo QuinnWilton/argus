@@ -235,7 +235,7 @@
     module: "Hammer.Backend.ETS",
     pre: "f86fe7ef56d0125f804fb67800f8160e2833b011",
     fix: "8c7a5b2f2940c615b5ae23ee5b67e5c5a6fc0a72",
-    finding: {:ets, "Read-then-write race on an ETS key"}
+    finding: {:races, "Read-then-write race on an ETS key"}
   },
   # tesla#768: Tesla.Mock.agent_set/1 looked the mock agent up by name and
   # started it under the test supervisor when absent; two tests doing so at
@@ -246,7 +246,7 @@
     module: "Tesla.Mock",
     pre: "727cb0f",
     fix: "8cf7745",
-    finding: {:structure, "Lookup-then-start race on a process name"}
+    finding: {:races, "Lookup-then-start race on a process name"}
   },
   # supavisor a8463de: DbHandler.handle_prepared_statement_pkts/2 calls
   # :gen_statem.call/3 bare while its three sibling sites catch :exit and
@@ -270,7 +270,7 @@
     issue: "blockster_v2@e8b3d3c",
     module: "BlocksterV2.EngagementTracker",
     pre: "e8b3d3c143825d88ef0993f788a6053b2b527acc",
-    finding: {:ets, "Read-then-write race on a Mnesia record"}
+    finding: {:races, "Read-then-write race on a Mnesia record"}
   },
   # ztlp 39fa329: ZtlpNs.Store.do_insert/1 dirty_reads a record, compares its
   # serial, and dirty_writes the new one, from concurrent Task.Supervisor
@@ -283,7 +283,7 @@
     subdir: "ns",
     module: "ZtlpNs.Store",
     pre: "39fa3297a256bf69bad33d4152e18de745d6dc59",
-    finding: {:ets, "Read-then-write race on a Mnesia record"}
+    finding: {:races, "Read-then-write race on a Mnesia record"}
   },
   # ── exposure: a secret inspect/1 prints ──────────────────────────────
   # langchain#266 redacted :api_key in six embedded schemas at once and

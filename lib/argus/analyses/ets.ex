@@ -1,39 +1,30 @@
 defmodule Argus.Analyses.Ets do
   @moduledoc """
-  ETS table analysis, and the shared-table races Mnesia's dirty operations
-  share with it.
+  ETS table ownership, concurrency options and lifecycle.
 
-  Detects ETS usage patterns and potential issues: tables without proper
-  concurrency options, unprotected owners, unnamed tables in processes,
-  ordered_set contention across modules, and read-then-write races on a
-  public table or a Mnesia record.
+  - `ets_unprotected_owner(name, mod, site)` — a process owns the table
+    with no heir and is not a permanent supervisor child or an
+    Application: one crash and the table is gone. `:warning`.
+  - `ets_read_outside_owner(name, owner, reader, site, created)` — a
+    table created in its owner's process is read from callers' processes,
+    with no heir and no rescue for the window while the owner restarts.
+    `:info`.
+  - `ets_missing_read_concurrency(name, mod, site)`,
+    `ets_missing_write_concurrency(name, mod, site)` — two modules read
+    (write) the table and it lacks the option. `:info`: performance
+    hints whose right setting depends on the access pattern.
+  - `ets_ordered_set_contention(name, mod1, mod2, site)` — an ordered_set
+    two modules write. `:info`.
+  - `ets_write_only_table(name, mod, site)` — a named table inserted into
+    outside init/1 and never deleted from. `:info`.
+  - `ets_unnamed_in_process(name, mod, site)` — an unnamed table created
+    in a process, reachable only through its reference. `:info`: often
+    deliberate.
 
-  Requires the ETS, OTP, and Supervision domain extractors for layer 2 facts
-  about table creation, options, access patterns, and supervisor children.
-
-  Tables owned by permanent supervisor children are suppressed from
-  `ets_unprotected_owner` since the table is recreated on restart.
-
-  ## Output relations
-
-  - `ets_unprotected_owner(name, mod)` — table owner lacks heir protection (excludes permanent children).
-  - `ets_missing_read_concurrency(name, mod, site)` — table lacks read_concurrency option; anchored at its :ets.new.
-  - `ets_missing_write_concurrency(name, mod, site)` — table lacks write_concurrency option; anchored at its :ets.new.
-  - `ets_ordered_set_contention(name, mod1, mod2)` — ordered_set accessed by multiple modules.
-  - `ets_unnamed_in_process(name, mod)` — unnamed table created in a process.
-  - `ets_check_act(mod, func, name, key, read, write)` — a read decides or feeds a plain write of the same key on a public table another process can write; the two may sit in different functions and meet in `func`.
-  - `mnesia_check_act(mod, func, table, key, read, write)` — a dirty read decides or feeds a dirty write of the same record, and another process can write the table.
-
-  ## Finding severities
-
-  - `ets_unprotected_owner` — `:warning`. Data loss on owner crash is a
-    correctness hazard.
-  - `ets_missing_read_concurrency`, `ets_missing_write_concurrency`,
-    `ets_ordered_set_contention` — `:info`. Performance tuning hints; the
-    right setting depends on the table's actual access pattern.
-  - `ets_unnamed_in_process` — `:info`. A common, often deliberate
-    pattern; flagged because the table is unreachable if the owner loses
-    the reference.
+  `site` is the `:ets.new` call, where every finding but the read outside
+  the owner anchors. Tables whose name is computed at runtime take part
+  only where a rule says so. The read-then-write race on an ETS key or a
+  Mnesia record is in `Argus.Analyses.Races`.
   """
 
   @behaviour Argus.Analysis
@@ -45,9 +36,7 @@ defmodule Argus.Analyses.Ets do
 
   @impl true
   def description,
-    do:
-      "ETS table ownership, concurrency options and lifecycle, and read-then-write races " <>
-        "on ETS and Mnesia"
+    do: "ETS table ownership, concurrency options and lifecycle"
 
   @impl true
   def rules_file, do: "analyses/ets.dl"
@@ -57,14 +46,10 @@ defmodule Argus.Analyses.Ets do
     do: [
       Argus.Extractors.ETS,
       Argus.Extractors.OTP,
-      Argus.Extractors.ApiCalls,
       Argus.Extractors.Supervision,
       Argus.Extractors.ErrorHandling,
       Argus.Extractors.GenStatem,
-      Argus.Extractors.CallArgs,
-      Argus.Extractors.Mnesia,
-      Argus.Extractors.Dependence,
-      Argus.Extractors.Specs
+      Argus.Extractors.CallArgs
     ]
 
   @impl true
@@ -82,34 +67,6 @@ defmodule Argus.Analyses.Ets do
         key: [:owner, :reader],
         doc:
           "A table read from callers' processes with no heir and no rescue for the owner's restart window."
-      },
-      %{
-        name: :ets_check_act,
-        fields: [
-          {:mod, :symbol, "the module"},
-          {:func, :symbol, "the function where the read's result meets the write"},
-          {:name, :symbol, "the table"},
-          {:key, :symbol, "the key, as func identifies it"},
-          {:read, :symbol, "instruction ID of the read"},
-          {:write, :symbol, "instruction ID of the write it decides or feeds"}
-        ],
-        key: [:func, :name, :key],
-        doc: "A read decides a write of the same key on a public table another process can write."
-      },
-      %{
-        name: :mnesia_check_act,
-        fields: [
-          {:mod, :symbol, "the module"},
-          {:func, :symbol, "the function where the read's result meets the write"},
-          {:table, :symbol, "the table"},
-          {:key, :symbol, "the key, as func identifies it"},
-          {:read, :symbol, "instruction ID of the dirty read"},
-          {:write, :symbol, "instruction ID of the dirty write it decides or feeds"},
-          {:op, :symbol, "dirty_write | dirty_delete | dirty_delete_object"}
-        ],
-        key: [:func, :table, :key],
-        doc:
-          "A dirty read decides or feeds a dirty write of the same record another process can write."
       },
       %{
         name: :ets_unprotected_owner,
@@ -189,55 +146,6 @@ defmodule Argus.Analyses.Ets do
       help: [
         "give the table a heir (a supervisor or a long-lived holder) so it survives the restart",
         "or rescue ArgumentError in the reader and return an error value"
-      ]
-    )
-  end
-
-  def finding(:ets_check_act, [mod, func, name, _key, read, write]) do
-    Findings.new(
-      :warning,
-      "Read-then-write race on an ETS key",
-      "#{func} reads a key of #{name}#{Findings.elsewhere(read, func)} and writes it" <>
-        "#{Findings.elsewhere(write, func)} as the read says to. The table is public and " <>
-        "another process can write it between the two, so the write acts on a row that " <>
-        "may have changed — the read-decide-write race that the ETS built-ins are " <>
-        "documented not to protect against.",
-      at: Findings.at_site(write, mod),
-      at_label: "this write was decided by a read that may be stale",
-      related: [Findings.related("the read it depends on", Findings.at_site(read, mod))],
-      help: [
-        "make the check and the write one operation: `:ets.insert_new/2`, " <>
-          "`:ets.update_counter/4` with a default, or `:ets.select_replace/2`",
-        "or route writes to #{name} through its owner process and make the table `:protected`"
-      ]
-    )
-  end
-
-  def finding(:mnesia_check_act, [mod, func, table, _key, read, write, op]) do
-    {acts, what} =
-      case op do
-        "dirty_write" ->
-          {"writes it back with a dirty write", "one of the writes is lost"}
-
-        _delete ->
-          {"deletes it with #{op}",
-           "the delete can remove a record another process wrote back in between"}
-      end
-
-    Findings.new(
-      :warning,
-      "Read-then-write race on a Mnesia record",
-      "#{func} reads a record of #{table} with a dirty read#{Findings.elsewhere(read, func)} " <>
-        "and #{acts}#{Findings.elsewhere(write, func)} decided by, " <>
-        "or computed from, what it read. Dirty operations bypass Mnesia's transactions: " <>
-        "another process can write the record between the two, and #{what}.",
-      at: Findings.at_site(write, mod),
-      at_label: "this #{String.replace(op, "_", " ")} acts on a read that may be stale",
-      related: [Findings.related("the dirty read it depends on", Findings.at_site(read, mod))],
-      help: [
-        "read and write in one `:mnesia.transaction/1`, with `:mnesia.read/1` and " <>
-          "`:mnesia.write/1`",
-        "for a counter, `:mnesia.dirty_update_counter/3` is atomic"
       ]
     )
   end

@@ -43,6 +43,14 @@
 // call_decided, call_arg_depends, returns_depends, call_arg,
 // call_arg_forward and call_arg_field.
 
+// Every parameter-fed argument, with the callee's parameter as the
+// symbol acts_if names it by. It is the same relation for every
+// instance, and tens of thousands of rows on a large program, so it is
+// derived once here rather than once per instance.
+.decl param_arg(h: symbol, g: symbol, q: symbol, p: symbol)
+
+param_arg(h, g, to_string(n), p) :- call_arg_depends(h, g, n, "param", p).
+
 .comp CheckThenAct {
   .decl check(site: symbol, func: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol)
   .decl act(site: symbol, func: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol)
@@ -160,10 +168,6 @@
   // g is h itself. Driven from the acts the callee has, joined to the
   // callers' arguments on (callee, position): every parameter-fed
   // argument of every function is far more rows than acts to meet.
-  .decl param_arg(h: symbol, g: symbol, q: symbol, p: symbol)
-
-  param_arg(h, g, to_string(n), p) :- call_arg_depends(h, g, n, "param", p).
-
   acts_if(h, a, "param", p, rs2, r2, ks2, k2) :-
     acts_if(g, a, "param", q, rs, r, ks, k),
     param_arg(h, g, q, p),

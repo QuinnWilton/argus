@@ -1,0 +1,560 @@
+// Check, then act: a read of shared state decides a write of the same
+// thing, and another process can write it between the two (Christakis
+// and Sagonas, PADL 2010). Three stores, one shape:
+//
+// - registry_race: a lookup of a process name decides a start,
+//   registration or unregistration of the name;
+// - ets_check_act: an ETS read decides or feeds a plain write of the
+//   same key on a public table;
+// - mnesia_check_act: a dirty read decides or feeds a dirty write of
+//   the same record.
+//
+// Each is a CheckThenAct instance (clientlib/check_then_act.dl), which
+// says where a check's result meets an act that depends on it, across
+// functions. Whether a second process can run the function where they
+// meet is one RunsConcurrently instance for all three, seeded with every
+// meeting and every write the rules ask about: what a function's
+// callers are does not depend on which store it touches.
+
+.include "../clientlib/imports.dl"
+.include "../clientlib/otp.dl"
+.include "../clientlib/process_statem.dl"
+.include "../clientlib/request_entry.dl"
+.include "../clientlib/concurrency.dl"
+.include "../clientlib/check_then_act.dl"
+.include "../clientlib/specs.dl"
+
+.init runs = RunsConcurrently
+
+// ── Lookup, then start ───────────────────────────────────────────
+//
+// `case whereis(name) do nil -> start(name)` asks whether a name is
+// taken and claims it when the answer is no, and nothing holds the name
+// between the two: a second caller that asks in the same window gets
+// the same answer, and one of the two starts loses. Christakis and
+// Sagonas found this shape on the process registry in 2010 and Dialyzer
+// reported it until OTP 25; the Elixir spellings are Registry.lookup
+// before start_child, and whereis before register or a named start.
+// Deciding on Process.registered/0 is the same race on every name at
+// once, and Dialyzer's second registry warning was the release: whereis,
+// then unregister, which raises when the process exited or another
+// caller unregistered first.
+//
+// The lookup and the act may sit in different functions and meet where
+// the lookup's result is born or returned to (clientlib/check_then_act.dl).
+// They name the same thing when they agree on registry, source and key; a
+// start_child hides its name in the child spec, so any lookup that is
+// tested against nil and decides it counts. The race is not a bug when
+// the loser's outcome is taken — {:error, {:already_started, pid}}
+// compared where the pair meets, where the act is, or in a caller; an
+// ArgumentError from register/2 or unregister/1 rescued — or when only
+// one process ever runs the function where they meet.
+
+.init names = CheckThenAct
+
+// The resource is the registry: the local one (empty) or a Registry.
+names.check(c, f, "literal", scope, ks, k) :-
+  name_lookup(c, f, _, scope, ks, k, _),
+  scope != "dynamic".
+
+names.check(c, f, "dynamic", "", ks, k) :- name_lookup(c, f, _, "dynamic", ks, k, _).
+
+names.act(a, f, "any", "", "any", "") :- creating_op(a, f, "start_child", _, _, _).
+
+names.act(a, f, "literal", scope, ks, k) :-
+  creating_op(a, f, api, scope, ks, k),
+  api != "start_child",
+  scope != "dynamic".
+
+names.act(a, f, "dynamic", "", ks, k) :-
+  creating_op(a, f, api, "dynamic", ks, k),
+  api != "start_child".
+
+names.act(a, f, "literal", "", ks, k) :- name_release(a, f, _, ks, k).
+
+.decl name_act(act: symbol, func: symbol, api: symbol)
+
+name_act(a, f, api) :- creating_op(a, f, api, _, _, _).
+name_act(a, f, api) :- name_release(a, f, api, _, _).
+
+// A loser is handled where its start's error is compared, or its :badarg
+// rescued (rescues_argument_error, in exceptions.dl: `case catch
+// register(N, self()) of true -> ...; _ -> exit({already_started, ...})`
+// in inet_gethost_native), here or in a function its result returns to.
+.decl start_error_handled(func: symbol)
+
+start_error_handled(f) :- start_error_compared(f, _).
+start_error_handled(f) :- call_edge(g, f), start_error_compared(g, _).
+start_error_handled(f) :- rescues_argument_error(f).
+start_error_handled(f) :- returns_call(g, f), start_error_handled(g).
+
+// The loser's outcome is taken where the pair meets or where the act is.
+.decl loser_taken(meet: symbol, act: symbol)
+
+loser_taken(f, a) :-
+  names.meets(f, _, a, _, _, _, _),
+  name_act(a, g, api),
+  api != "unregister",
+  (start_error_handled(f) ; start_error_handled(g)).
+
+loser_taken(f, a) :-
+  names.meets(f, _, a, _, _, _, _),
+  name_act(a, g, "unregister"),
+  (rescues_argument_error(f) ; rescues_argument_error(g)).
+
+// The loser's answer is a value — the start's spec can fail:
+// {:error, {:already_started, pid}} — and nothing reads it on its way
+// back to where the lookup decided: the start's result is not used
+// where it is made, and every function that returns it on is one whose
+// result nothing in the program uses, the meeting function not among
+// them. Whichever start won, the name is registered, and what follows
+// goes by the name (ssh_dbg:switch/2 → start/1, which drops
+// start_server/0's gen_server:start). Only a named start: a start_child
+// hides its name in the child spec, and an unnamed child's "loser" is a
+// second process; a Registry.register loser is a process left
+// unregistered. A start that raises for the loser (register/2,
+// start_supervised!) is not this shape either.
+.decl act_callee(act: symbol, callee: symbol)
+
+act_callee(a, cat(m, ":", n, "/", to_string(ar))) :-
+  name_act(a, _, _),
+  remote_call(a, _, m, n, ar).
+
+.decl act_result_read(act: symbol)
+
+act_result_read(a) :- name_act(a, _, _), site_depends(_, _, "site", a).
+act_result_read(a) :- name_act(a, _, _), call_decided(_, _, "site", a).
+act_result_read(a) :- name_act(a, _, _), call_arg_depends(_, _, _, "site", a).
+
+.decl act_returned_by(act: symbol, func: symbol)
+
+act_returned_by(a, g) :- name_act(a, _, _), returns_depends(g, "site", a).
+act_returned_by(a, h) :- act_returned_by(a, g), returns_depends(h, "call", g).
+
+.decl result_used(func: symbol)
+
+result_used(g) :- act_returned_by(_, g), site_depends(_, _, "call", g).
+result_used(g) :- act_returned_by(_, g), call_decided(_, _, "call", g).
+result_used(g) :- act_returned_by(_, g), call_arg_depends(_, _, _, "call", g).
+
+.decl loser_dropped(meet: symbol, act: symbol)
+
+loser_dropped(f, a) :-
+  names.meets(f, _, a, _, _, _, _),
+  name_act(a, _, api),
+  (api = "start" ; api = "start_link" ; api = "start_via"),
+  act_callee(a, callee),
+  callee_returns(callee, "can_fail"),
+  !act_result_read(a),
+  !act_returned_by(a, f),
+  !returned_and_used(a).
+
+.decl returned_and_used(act: symbol)
+
+returned_and_used(a) :- act_returned_by(a, g), result_used(g).
+
+runs.seed(f) :- names.meets(f, _, _, _, _, _, _).
+
+.decl registry_race(mod: symbol, func: symbol, lookup_api: symbol, create_api: symbol, key_source: symbol, key: symbol, check: symbol, act: symbol)
+.output registry_race
+
+registry_race(mod, f, lookup_api, create_api, key_source, key, check, act) :-
+  names.meets(f, check, act, _, _, key_source, key),
+  name_lookup(check, _, lookup_api, _, _, _, checked),
+  name_act(act, _, create_api),
+  (create_api != "start_child" ; checked = "checked"),
+  function_def(f, mod, _, _, _),
+  !loser_taken(f, act),
+  !loser_dropped(f, act),
+  !runs.single_process(f).
+
+// ── Read, then write ─────────────────────────────────────────────
+//
+// `case :ets.lookup(t, k) do [] -> :ets.insert(t, {k, v})` decides on a
+// row that another process can write between the read and the write
+// (Christakis and Sagonas, 2010, on ETS). The pair is a race when both
+// touch the same key, the table is public — a protected table has one
+// writer — and a second process can write it: the function where the
+// pair meets runs in more than one process, or some function outside
+// that process writes the table. insert_new, update_counter and
+// select_replace are the atomic forms and the fix.
+//
+// The read and the write may sit in different functions
+// (clientlib/check_then_act.dl), and the table may arrive as a
+// parameter: by name, or as the reference :ets.new returned in some
+// caller — the paper's own example builds an unnamed public table and
+// hands it to a closure that spawned processes run.
+
+.init rows = CheckThenAct
+
+.decl ets_deciding_read(op: symbol)
+
+ets_deciding_read("lookup").
+ets_deciding_read("lookup_element").
+ets_deciding_read("member").
+
+.decl ets_plain_write(op: symbol)
+
+ets_plain_write("insert").
+ets_plain_write("delete").
+ets_plain_write("delete_object").
+ets_plain_write("update_element").
+
+// The table in the operation's own function's terms.
+.decl ets_table_ident(id: symbol, ts: symbol, t: symbol)
+
+ets_table_ident(id, "literal", name) :- ets_op(id, _, name, _, _), name != "dynamic".
+ets_table_ident(id, "param", to_string(p)) :- ets_op(id, _, "dynamic", _, _), ets_op_param(id, p).
+
+rows.check(r, f, ts, t, ks, k) :-
+  ets_op(r, f, _, op, "read"),
+  ets_deciding_read(op),
+  ets_table_ident(r, ts, t),
+  ets_key(r, ks, k).
+
+rows.act(w, f, ts, t, ks, k) :-
+  ets_op(w, f, _, op, "write"),
+  ets_plain_write(op),
+  ets_table_ident(w, ts, t),
+  ets_key(w, ks, k).
+
+// The table a parameter holds where a pair meets on it: a name a caller
+// passes there, or the reference :ets.new returned in a caller, through
+// any forwarding. Asked only for the parameters a pair meets on.
+.decl table_param_needed(func: symbol, pos: symbol)
+
+table_param_needed(f, p) :- rows.meets(f, _, _, "param", p, _, _).
+table_param_needed(f, p) :- records.meets(f, _, _, "param", p, _, _).
+
+table_param_needed(c, to_string(m)) :-
+  table_param_needed(f, p),
+  call_arg_forward(c, f, n, m),
+  p = to_string(n).
+
+.decl table_at_param(func: symbol, pos: symbol, name: symbol)
+
+table_at_param(f, p, name) :-
+  table_param_needed(f, p),
+  call_arg(_, f, n, name),
+  name != "dynamic",
+  p = to_string(n).
+
+table_at_param(f, p, name) :-
+  table_param_needed(f, p),
+  ets_tid_arg(_, f, n, name),
+  p = to_string(n).
+
+table_at_param(f, p, name) :-
+  table_param_needed(f, p),
+  call_arg_forward(c, f, n, m),
+  p = to_string(n),
+  table_at_param(c, to_string(m), name).
+
+.decl ets_pair(func: symbol, read: symbol, write: symbol, name: symbol, key: symbol)
+
+ets_pair(f, r, w, name, k) :- rows.meets(f, r, w, "literal", name, _, k).
+ets_pair(f, r, w, name, k) :- rows.meets(f, r, w, "param", p, _, k), table_at_param(f, p, name).
+
+runs.seed(f) :- ets_pair(f, _, _, _, _).
+runs.seed(f) :- ets_op(_, f, _, _, "write").
+
+.decl ets_concurrent_write(name: symbol, func: symbol)
+
+ets_concurrent_write(name, f) :-
+  ets_pair(f, _, _, name, _),
+  !runs.single_process(f).
+
+ets_concurrent_write(name, f) :-
+  ets_pair(f, _, _, name, _),
+  runs.single_process(f),
+  runs.entry_reaches(m, f),
+  ets_op(_, g, name, _, "write"),
+  !runs.entry_reaches(m, g).
+
+// ── Races both racers win ────────────────────────────────────────
+//
+// A check-then-act pair is a lost update when the write carries what the
+// read said — two racers each add one to the count they read, and one
+// increment vanishes — or when a blind write lands on a row another
+// writer accumulates into (Hammer's insert over a key update_counter
+// bumps). Three shapes are neither, and are not reported, as long as
+// nothing in the program writes the table back from a read or counts in
+// it (`writes_back`):
+//
+// - a delete: deleting twice is deleting once (an invalidation, the
+//   cleanup of a row the read found stale);
+// - a refill: a write whose value a call, or a read of another store
+//   (Mnesia behind an ETS cache), makes — the cache-aside `[] -> v =
+//   load(k); :ets.insert(t, {k, v})` — where both racers compute the
+//   same thing and either write is right;
+// - a trip: a write of a value made of neither the read nor a call
+//   (`{key, :blocked_until, t}`), where the decision stays in the
+//   program: no caller branches on what the function returns, and no
+//   exported function hands it out. A claim — `[] -> insert({k,
+//   :in_flight}); :ok` — hands its decision to a caller that acts on it
+//   alone, and is reported: both racers are told they won.
+//
+// "Made of" is data dependence alone (site_reads, call_arg_reads): a
+// value computed under a test on the read, but not from it, does not
+// carry it.
+
+// The ETS data a write carries: a read at its own site, what a helper
+// that returns a read hands it, or either through a parameter.
+// Only a write of a value counts; a delete writes nothing back, and the
+// key it names may well be the one the read's row held.
+.decl value_write(w: symbol)
+
+value_write(w) :- ets_op(w, _, _, op, "write"), (op = "insert" ; op = "update_element").
+
+.decl carries_read(w: symbol)
+
+carries_read(w) :-
+  value_write(w),
+  rows.act(w, h, _, _, _, _),
+  site_reads(w, h, "site", r),
+  ets_op(r, _, _, _, "read").
+
+carries_read(w) :-
+  value_write(w),
+  rows.act(w, h, _, _, _, _),
+  site_reads(w, h, "call", g),
+  returns_depends(g, "site", _).
+
+// A local helper's result is made of the arguments it returns from:
+// `insert({k, next(n)})` writes the read's `n` back through `next/1`.
+carries_read(w) :-
+  value_write(w),
+  rows.act(w, h, _, _, _, _),
+  site_reads(w, h, "call", g),
+  returns_depends(g, "param", q),
+  call_arg_reads(h, g, n, "site", r),
+  ets_op(r, _, _, _, "read"),
+  q = to_string(n).
+
+carries_read(w) :-
+  value_write(w),
+  rows.act(w, h, _, _, _, _),
+  site_reads(w, h, "param", p),
+  call_arg_reads(_, h, n, "site", r),
+  ets_op(r, _, _, _, "read"),
+  p = to_string(n).
+
+carries_read(w) :-
+  value_write(w),
+  rows.act(w, h, _, _, _, _),
+  site_reads(w, h, "param", p),
+  call_arg_reads(_, h, n, "call", g),
+  returns_depends(g, "site", _),
+  p = to_string(n).
+
+// The table a write or a counter bump touches, by name.
+.decl ets_op_table(id: symbol, name: symbol)
+
+ets_op_table(id, name) :- ets_op(id, _, name, _, _), name != "dynamic".
+
+ets_op_table(id, name) :-
+  ets_op(id, f, "dynamic", _, _),
+  ets_op_param(id, p),
+  table_at_param(f, to_string(p), name).
+
+table_param_needed(f, to_string(p)) :-
+  ets_op(id, f, "dynamic", op, "write"),
+  ets_op_param(id, p),
+  (op = "update_counter" ; ets_plain_write(op)).
+
+.decl writes_back(name: symbol)
+
+writes_back(name) :- ets_op(id, _, _, "update_counter", _), ets_op_table(id, name).
+writes_back(name) :- carries_read(w), ets_op_table(w, name).
+
+// A write made by a call, or by a read of some other store (Mnesia, the
+// registry): the refill.
+.decl refill_source(kind: symbol, src: symbol)
+
+refill_source("call", g) :- site_reads(_, _, "call", g).
+refill_source("call", g) :- call_arg_reads(_, _, _, "call", g).
+refill_source("site", r) :- site_reads(_, _, "site", r), !ets_op(r, _, _, _, _).
+refill_source("site", r) :- call_arg_reads(_, _, _, "site", r), !ets_op(r, _, _, _, _).
+
+.decl recomputed(w: symbol)
+
+recomputed(w) :-
+  rows.act(w, h, _, _, _, _),
+  site_reads(w, h, kind, src),
+  refill_source(kind, src).
+
+recomputed(w) :-
+  rows.act(w, h, _, _, _, _),
+  site_reads(w, h, "param", p),
+  call_arg_reads(_, h, n, kind, src),
+  refill_source(kind, src),
+  p = to_string(n).
+
+// The decision a pair makes leaves the function: returned — by the
+// function the pair meets in, or by a caller that returns that result on
+// — to a caller that branches on it, or to callers the program does not
+// show (an exported function). A spec that says the function returns a
+// single value (`@spec record_failure(term, atom) :: :ok`) says the
+// result carries no decision.
+.decl decision_returned(func: symbol, check: symbol)
+
+decision_returned(f, c) :-
+  ets_pair(f, c, _, _, _),
+  rows.carries(f, kind, src, c, _, _, _, _),
+  returns_depends(f, kind, src).
+
+decision_returned(g, c) :-
+  decision_returned(f, c),
+  rows.carries(g, "call", f, c, _, _, _, _),
+  returns_depends(g, "call", f).
+
+.decl decision_escapes(check: symbol)
+
+decision_escapes(c) :-
+  decision_returned(g, c),
+  call_decided(_, _, "call", g).
+
+decision_escapes(c) :-
+  decision_returned(g, c),
+  function_def(g, _, _, _, 1),
+  !callee_returns(g, "constant").
+
+.decl benign_pair(func: symbol, read: symbol, write: symbol)
+
+benign_pair(f, r, w) :-
+  ets_pair(f, r, w, name, _),
+  ets_op(w, _, _, op, _),
+  (op = "delete" ; op = "delete_object"),
+  !writes_back(name).
+
+benign_pair(f, r, w) :-
+  ets_pair(f, r, w, name, _),
+  !carries_read(w),
+  recomputed(w),
+  !writes_back(name).
+
+benign_pair(f, r, w) :-
+  ets_pair(f, r, w, name, _),
+  !carries_read(w),
+  !writes_back(name),
+  !decision_escapes(r).
+
+.decl ets_check_act(mod: symbol, func: symbol, name: symbol, key: symbol, read: symbol, write: symbol)
+.output ets_check_act
+
+ets_check_act(mod, func, name, key, read, write) :-
+  ets_pair(func, read, write, name, key),
+  ets_new(id, _, name),
+  ets_option(id, "access", "public"),
+  function_def(func, mod, _, _, _),
+  ets_concurrent_write(name, func),
+  !benign_pair(func, read, write).
+
+// ── Dirty read, then dirty write ─────────────────────────────────
+//
+// Mnesia serializes what runs inside a transaction; its dirty operations
+// bypass that, and a dirty_read whose result decides or feeds a
+// dirty_write of the same record is the read-modify-write another process
+// can interleave. The paper's instance is the snmp agent's time-stamp
+// counter: read, add one, write back. A Mnesia table is shared by every
+// process on every node, so no access mode excuses it; one process that
+// is the table's only writer does. :mnesia.transaction/1 and
+// dirty_update_counter are the fixes.
+
+.init records = CheckThenAct
+
+records.check(r, f, ts, t, ks, k) :- mnesia_op(r, f, _, "read", ts, t, ks, k).
+records.act(w, f, ts, t, ks, k) :- mnesia_op(w, f, _, "write", ts, t, ks, k).
+
+.decl mnesia_pair(func: symbol, read: symbol, write: symbol, table: symbol, key: symbol)
+
+mnesia_pair(f, r, w, t, k) :- records.meets(f, r, w, "literal", t, _, k).
+mnesia_pair(f, r, w, t, k) :- records.meets(f, r, w, "param", p, _, k), table_at_param(f, p, t).
+
+runs.seed(f) :- mnesia_pair(f, _, _, _, _).
+runs.seed(f) :- mnesia_op(_, f, _, "write", _, _, _, _).
+
+.decl mnesia_concurrent_write(table: symbol, func: symbol)
+
+mnesia_concurrent_write(t, f) :-
+  mnesia_pair(f, _, _, t, _),
+  !runs.single_process(f).
+
+mnesia_concurrent_write(t, f) :-
+  mnesia_pair(f, _, _, t, _),
+  runs.single_process(f),
+  runs.entry_reaches(m, f),
+  mnesia_op(_, g, _, "write", "literal", t, _, _),
+  !runs.entry_reaches(m, g).
+
+.decl mnesia_check_act(mod: symbol, func: symbol, table: symbol, key: symbol, read: symbol, write: symbol, op: symbol)
+.output mnesia_check_act
+
+// A dirty_delete of the record the read found (the cleanup of an
+// expired nonce) is not a lost update unless the program also writes the
+// table back from a read: deleting twice is deleting once. dirty_update_counter
+// is not extracted, so a table only it counts into is not known to
+// accumulate.
+.decl record_carries_read(w: symbol)
+
+record_carries_read(w) :-
+  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
+  records.act(w, h, _, _, _, _),
+  site_reads(w, h, "site", _).
+
+record_carries_read(w) :-
+  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
+  records.act(w, h, _, _, _, _),
+  site_reads(w, h, "call", g),
+  returns_depends(g, "site", _).
+
+record_carries_read(w) :-
+  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
+  records.act(w, h, _, _, _, _),
+  site_reads(w, h, "call", g),
+  returns_depends(g, "param", q),
+  call_arg_reads(h, g, n, "site", _),
+  q = to_string(n).
+
+record_carries_read(w) :-
+  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
+  records.act(w, h, _, _, _, _),
+  site_reads(w, h, "param", p),
+  call_arg_reads(_, h, n, "site", _),
+  p = to_string(n).
+
+record_carries_read(w) :-
+  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
+  records.act(w, h, _, _, _, _),
+  site_reads(w, h, "param", p),
+  call_arg_reads(_, h, n, "call", g),
+  returns_depends(g, "site", _),
+  p = to_string(n).
+
+.decl record_writes_back(table: symbol)
+
+record_writes_back(t) :-
+  record_carries_read(w),
+  mnesia_op(w, _, _, "write", "literal", t, _, _).
+
+record_writes_back(t) :-
+  record_carries_read(w),
+  mnesia_op(w, f, _, "write", "param", p, _, _),
+  table_at_param(f, p, t).
+
+table_param_needed(f, p) :- mnesia_op(_, f, _, "write", "param", p, _, _).
+
+mnesia_check_act(mod, func, table, key, read, write, op) :-
+  mnesia_pair(func, read, write, table, key),
+  function_def(func, mod, _, _, _),
+  mnesia_concurrent_write(table, func),
+  mnesia_op(write, _, op, _, _, _, _, _),
+  !deletes_unaccumulated(write, table).
+
+.decl deletes_unaccumulated(write: symbol, table: symbol)
+
+deletes_unaccumulated(w, t) :-
+  mnesia_pair(_, _, w, t, _),
+  mnesia_op(w, _, op, _, _, _, _, _),
+  (op = "dirty_delete" ; op = "dirty_delete_object"),
+  !record_writes_back(t).
