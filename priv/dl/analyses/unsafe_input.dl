@@ -76,15 +76,18 @@ request_reaches(entry, kind, callee, "adjacent") :-
   request_entry(entry, kind),
   call_edge(entry, callee).
 
-.init entry_reach = ForwardCallReach
+// Only a function holding a sink is asked about, so the walk runs back
+// from those to the entries rather than forward from every entry over
+// everything it calls.
+.init sink_func_reach = CallReach
 
-entry_reach.root(entry, entry) :- request_entry(entry, _).
+sink_func_reach.seed(func, func) :- sink(_, func, _, _, _).
 
-request_reaches(entry, kind, callee, "transitive") :-
+request_reaches(entry, kind, func, "transitive") :-
   request_entry(entry, kind),
-  entry_reach.reaches(entry, callee),
-  !call_edge(entry, callee),
-  callee != entry.
+  sink_func_reach.reaches(entry, func),
+  !call_edge(entry, func),
+  func != entry.
 
 // ── Proven flow ──────────────────────────────────────────────────
 //

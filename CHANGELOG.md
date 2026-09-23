@@ -864,6 +864,12 @@ as a number, in 11 of the 14 name-race findings across the corpus.
 
 ### unsafe_input
 
+**Changed.** `unsafe_input` finds the request entries that transitively
+reach a sink walking back from the sinks' functions instead of forward
+from every entry over everything it calls: the walk is 48 rows instead
+of 12.1k on blockster. Output identical over the corpus and four large
+programs.
+
 **Fixed.** `unsafe_input`'s two sink relations gain a trailing `safety` column, the
 deserialization's option class (`unsafe | atoms_only | dynamic`, empty
 for the other sinks), and the deserialization finding says which. The
