@@ -12,7 +12,10 @@
         ],
         excluded: [
           ~r"/_build/",
-          ~r"/deps/"
+          ~r"/deps/",
+          # argus's fixtures, verbatim: flawed on purpose, as in argus,
+          # which excludes them too.
+          ~r"/test/fixtures/parity/"
         ]
       },
       checks: %{
