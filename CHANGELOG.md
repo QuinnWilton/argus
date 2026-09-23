@@ -771,6 +771,14 @@ has no body: nothing says whose the closure is.
 
 ### Check-then-act races (structure, ets)
 
+**Fixed.** A Broadway pipeline's `handle_message/3` and `handle_batch/4` are
+request entries for the races too: `clientlib/concurrency.dl` counts what
+they reach as run by many processes at once, as unsafe_input always
+did. The clauses were written in `unsafe_input.dl` alone, so a Broadway
+module's read-then-write on an ETS key or a name was taken for one
+process's and not reported. They live in `clientlib/request_entry.dl`
+now. No finding over the corpus and the four large programs moved.
+
 **Changed.** `structure.registry_race` leaves out two losers that are not a bug: a
 `register/2` inside an Erlang `catch` (the loser handled, as in
 `inet_gethost_native`), and a named start whose `{:error,

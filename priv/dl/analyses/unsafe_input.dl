@@ -41,15 +41,6 @@
 .include "../clientlib/behaviours.dl"
 .include "../clientlib/request_entry.dl"
 
-request_entry(func, "broadway") :-
-  behaves_as(mod, "Broadway"),
-  function_def(func, mod, name, arity, _),
-  ((name = "handle_message", arity = 3) ; (name = "handle_batch", arity = 4)).
-
-// The message, or the batch of messages; the processor name and context
-// are the pipeline's own.
-request_param(func, 1) :- request_entry(func, "broadway").
-
 // ── The sinks ────────────────────────────────────────────────────
 
 // `safety` is the deserialization's option class — unsafe, atoms_only

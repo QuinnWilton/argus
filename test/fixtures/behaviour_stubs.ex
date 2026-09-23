@@ -1,5 +1,5 @@
 # Stub behaviours for the request-surface, transaction and LiveView
-# fixtures. None of Phoenix, Plug, Oban or Ecto is a dependency of argus;
+# fixtures. None of Phoenix, Plug, Oban, Broadway or Ecto is a dependency of argus;
 # the fixtures declare `@behaviour` on them because the analyses read the
 # attribute out of the beam. A stub gives the attribute a behaviour to
 # name, and every callback is optional so a fixture implements only the
@@ -35,4 +35,11 @@ defmodule Ecto.Repo do
   @callback transaction(term(), term()) :: term()
   @callback insert(term()) :: term()
   @optional_callbacks transaction: 1, transaction: 2, insert: 1
+end
+
+defmodule Broadway do
+  @moduledoc false
+  @callback handle_message(term(), term(), term()) :: term()
+  @callback handle_batch(term(), term(), term(), term()) :: term()
+  @optional_callbacks handle_message: 3, handle_batch: 4
 end

@@ -417,6 +417,30 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  defmodule BroadwayCount do
+    @moduledoc """
+    A Broadway pipeline's processors run handle_message/3 many at a time:
+    its read-then-write count loses updates to itself, as a request
+    handler's would.
+    """
+    @behaviour Broadway
+
+    def start_link(_opts) do
+      :ets.new(:broadway_counts, [:named_table, :public, :set])
+      {:ok, self()}
+    end
+
+    @impl true
+    def handle_message(_processor, message, _context) do
+      case :ets.lookup(:broadway_counts, :seen) do
+        [{:seen, n}] -> :ets.insert(:broadway_counts, {:seen, n + 1})
+        [] -> :ets.insert(:broadway_counts, {:seen, 1})
+      end
+
+      message
+    end
+  end
+
   defmodule HelperCache do
     @moduledoc "A read helper and a write helper; the read's result is handed to the write."
     use GenServer

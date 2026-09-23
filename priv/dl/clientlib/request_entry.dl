@@ -1,10 +1,9 @@
 // Where externally-controlled data enters the system.
 //
-// Extracted from analyses/request_surface.dl when a second analysis needed
-// it. Both ask the same question of different sinks: request_surface asks
-// which unsafe operations attacker data reaches, and
-// unbounded_dynamic_children asks whether an outside party can make the
-// node start processes without limit.
+// unsafe_input asks which unsafe operations attacker data reaches and
+// whether an outside party can make the node start processes without
+// limit; concurrency.dl counts a function a request entry reaches as one
+// many processes run at once (the ets and structure races).
 //
 // Prerequisites: include clientlib/imports.dl and clientlib/behaviours.dl
 // before this file.
@@ -44,6 +43,14 @@ request_entry(func, "channel") :-
 request_entry(func, "oban_job") :-
   behaves_as(mod, "Oban.Worker"),
   function_def(func, mod, "perform", 1, _).
+
+// A Broadway pipeline's messages come from its producer — a queue, a
+// topic — that outside parties write to, and its processors handle them
+// many at a time.
+request_entry(func, "broadway") :-
+  behaves_as(mod, "Broadway"),
+  function_def(func, mod, name, arity, _),
+  ((name = "handle_message", arity = 3) ; (name = "handle_batch", arity = 4)).
 
 // Which parameter positions carry external data. Not every argument of
 // an entry is the request: a LiveView's socket and a Plug's opts are the
@@ -85,3 +92,7 @@ request_param(func, 1) :- request_entry(func, "channel").
 
 // The job: its args round-tripped through storage from user-facing code.
 request_param(func, 0) :- request_entry(func, "oban_job").
+
+// The message, or the batch of messages; the processor name and context
+// are the pipeline's own.
+request_param(func, 1) :- request_entry(func, "broadway").

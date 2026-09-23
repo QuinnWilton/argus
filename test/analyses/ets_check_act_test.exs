@@ -32,6 +32,14 @@ defmodule Argus.Analyses.EtsCheckActTest do
       assert races([C.InsertNewCache]) == []
     end
 
+    test "a Broadway processor's read-then-write races the other processors" do
+      skip_without_souffle()
+      # One row per write: the absent key's insert and the count's.
+      assert Enum.uniq(races([C.BroadwayCount])) == [
+               {"handle_message/3", ":broadway_counts", ":seen"}
+             ]
+    end
+
     test "a protected table written only by its owner has one writer" do
       skip_without_souffle()
       assert races([C.ProtectedOwnerOnly]) == []
