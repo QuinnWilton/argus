@@ -92,9 +92,9 @@ indexing every instruction of the function on each call.
 **Added.** `Argus.Extractor.ValueFlow`: a value per register write,
 solved to a fixpoint over one function's reaching definitions by a
 worklist that evaluates an instruction again only when a write it reads
-changes: PidFlow's solver, moved out. ParamFlow solves on it, one
-function at a time, where it passed over every instruction of the module
-until nothing changed.
+changes: PidFlow's solver, moved out. ParamFlow and Dependence solve on
+it, one function at a time, where they passed over every instruction
+(ParamFlow's of the whole module) until nothing changed.
 
 **Removed.** Schema 60. `move`, `allocate`, `deallocate`, `try_end` and
 `module_attribute`: no Datalog rule and no in-process pass read them (the

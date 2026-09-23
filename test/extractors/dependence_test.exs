@@ -13,6 +13,7 @@ defmodule Argus.Extractors.DependenceTest do
 
   @modules [
     C.WhereisThenStart,
+    C.NestedDecision,
     C.StartHelper,
     C.LookupHelper,
     C.DispatchHelper,
@@ -70,6 +71,14 @@ defmodule Argus.Extractors.DependenceTest do
       [write] = sites_at("MnesiaCounter:bump", {:mnesia, :dirty_write, 1})
 
       assert {write, "site", read} in site_deps(facts, "MnesiaCounter:bump")
+    end
+
+    test "a start under a decision the lookup's decision decides depends on the lookup",
+         %{facts: facts} do
+      [whereis] = sites_at("NestedDecision:ensure", {Process, :whereis, 1})
+      [start] = sites_at("NestedDecision:ensure", {GenServer, :start_link, 3})
+
+      assert {start, "site", whereis} in site_deps(facts, "NestedDecision:ensure")
     end
 
     test "a clause's act depends on the parameter the clauses dispatch on", %{facts: facts} do

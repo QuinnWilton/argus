@@ -15,6 +15,10 @@ defmodule Argus.Extractors.Dependence do
   `nref = case :mnesia.dirty_read(k) do [] -> 1; [r] -> r.n + 1 end`
   depend on the read although it is a literal.
 
+  Each function is solved on `Argus.Extractor.ValueFlow`; a decision is
+  one more value there, and the instructions of the blocks it decides
+  are evaluated again when it changes.
+
   ## Sources
 
   - `param` — the function's parameter; the source is its position.
@@ -77,6 +81,7 @@ defmodule Argus.Extractors.Dependence do
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Runtime
+  alias Argus.Extractor.ValueFlow
   alias Argus.Extractors.ETS
   alias Argus.Extractors.Mnesia
   alias Argus.Extractors.ProcessRegistry
@@ -86,7 +91,7 @@ defmodule Argus.Extractors.Dependence do
   import Argus.Extractor.Helpers, only: [add_fact: 3, register: 1]
 
   # A fixpoint over a finite lattice converges; the bound only guards a bug.
-  @max_passes 64
+  @max_evaluations 64
 
   @typep source :: {:param, non_neg_integer()} | {:call, String.t()} | {:site, String.t()}
   @typep deps :: MapSet.t(source())
@@ -123,7 +128,7 @@ defmodule Argus.Extractors.Dependence do
 
         case Helpers.cfg(module_data, name, arity) do
           nil -> acc
-          fun -> function_facts(acc, func_id, fun, index)
+          fun -> function_facts(acc, func_id, fun, function_index(index, func_id))
         end
       end)
       |> Map.new(fn {relation, rows} -> {relation, rows |> Enum.uniq() |> Enum.sort()} end)
@@ -134,55 +139,62 @@ defmodule Argus.Extractors.Dependence do
 
   # ── The module, indexed per function ────────────────────────────────
 
+  # Each part keyed by function ID, then by instruction index.
   defp index(module_data, typed, reaching) do
-    reads =
-      Enum.group_by(
-        reaching,
-        fn {_source, _reg, use} -> {func_of(use), use.idx} end,
-        fn
-          {{:param, k}, reg, _use} -> {reg, {:param, k}}
-          {%InstrId{idx: d}, reg, _use} -> {reg, {:def, d}}
-        end
-      )
-
-    writes =
-      typed
-      |> Map.get(:def, [])
-      |> Enum.group_by(&{func_of(&1.id), &1.id.idx}, & &1.reg)
-
-    ops = Map.new(Map.get(typed, :instruction, []), &{{func_of(&1.id), &1.id.idx}, &1.op})
-    tails = MapSet.new(Map.get(typed, :tail_call, []), &{func_of(&1.id), &1.id.idx})
-
     calls =
       module_data
       |> CallSites.for_module()
-      |> Map.new(fn %{func_id: f, idx: idx, mfa: mfa, remote?: remote?} ->
-        {{f, idx}, {mfa, remote?}}
+      |> Enum.reduce(%{}, fn %{func_id: f, idx: idx, mfa: mfa, remote?: remote?}, acc ->
+        Map.update(acc, f, %{idx => {mfa, remote?}}, &Map.put(&1, idx, {mfa, remote?}))
       end)
 
     %{
-      reads: reads,
-      writes: writes,
-      ops: ops,
-      tails: tails,
+      reads: ValueFlow.reads_by_function(reaching),
+      writes: by_function(Map.get(typed, :def, []), &{&1.id, &1.reg}, :list),
+      ops: by_function(Map.get(typed, :instruction, []), &{&1.id, &1.op}, :one),
+      tails: by_function(Map.get(typed, :tail_call, []), &{&1.id, true}, :one),
       calls: calls,
-      copies:
-        Map.new(Helpers.copies(module_data), fn {id, instr} -> {{func_of(id), id.idx}, instr} end),
+      copies: by_function(Helpers.copies(module_data), fn {id, instr} -> {id, instr} end, :one),
       closures: closures(module_data)
     }
   end
 
-  defp func_of(%InstrId{module: m, func: f, arity: a}), do: InstrId.func_id(m, f, a)
+  defp function_index(index, func_id),
+    do: Map.new(index, fn {part, by} -> {part, Map.get(by, func_id, %{})} end)
+
+  # %{func_id => %{idx => value}} (or a list of the values, in order),
+  # naming each function once rather than once per row.
+  defp by_function(rows, pair, shape) do
+    rows
+    |> Enum.reduce(%{}, fn row, acc ->
+      {%InstrId{module: m, func: f, arity: a, idx: idx}, value} = pair.(row)
+
+      Map.update(acc, {m, f, a}, %{idx => [value]}, fn by_idx ->
+        Map.update(by_idx, idx, [value], &[value | &1])
+      end)
+    end)
+    |> Map.new(fn {{m, f, a}, by_idx} ->
+      values =
+        case shape do
+          :list -> Map.new(by_idx, fn {idx, values} -> {idx, Enum.reverse(values)} end)
+          :one -> Map.new(by_idx, fn {idx, [value | _]} -> {idx, value} end)
+        end
+
+      {InstrId.func_id(m, f, a), values}
+    end)
+  end
 
   # make_fun3 sites: the closure, its first environment parameter, and the
   # environment operands.
   defp closures(%{module: mod, functions: functions}) do
-    for {:function, name, arity, _entry, instrs} <- functions,
-        func_id = Normalize.func_id(mod, name, arity),
-        {{:make_fun3, {cmod, cname, carity}, _index, _uniq, _dst, {:list, env}}, idx} <-
-          Enum.with_index(instrs),
-        into: %{} do
-      {{func_id, idx}, {Normalize.func_id(cmod, cname, carity), carity - length(env), env}}
+    for {:function, name, arity, _entry, instrs} <- functions, into: %{} do
+      sites =
+        for {{:make_fun3, {cmod, cname, carity}, _index, _uniq, _dst, {:list, env}}, idx} <-
+              Enum.with_index(instrs),
+            into: %{},
+            do: {idx, {Normalize.func_id(cmod, cname, carity), carity - length(env), env}}
+
+      {Normalize.func_id(mod, name, arity), sites}
     end
   end
 
@@ -201,81 +213,96 @@ defmodule Argus.Extractors.Dependence do
           into: %{},
           do: {idx, id}
 
+    deciders = CfgFunction.control_deps(fun)
+
     ctx = %{
       func_id: func_id,
       index: index,
       block_of: block_of,
-      deciders: CfgFunction.control_deps(fun),
-      terminator: Map.new(fun.blocks, fn {id, %{range: {_first, last}}} -> {id, last} end)
+      deciders: deciders,
+      decider_of: decider_of(fun, deciders),
+      decided: decided(fun, deciders)
     }
 
-    {outs, ctrl} = fixpoint(idxs, ctx, %{}, %{}, 0)
-    facts = Enum.reduce(idxs, facts, &emit(&2, &1, ctx, outs, ctrl))
+    {outs, tested} = solve(idxs, ctx)
+    facts = Enum.reduce(idxs, facts, &emit(&2, &1, ctx, outs, tested))
 
     # The same flow with no decision counted: what an argument is made
     # of, as opposed to what it runs under.
-    data_ctx = %{ctx | deciders: %{}}
-    {data_outs, _} = fixpoint(idxs, data_ctx, %{}, %{}, 0)
+    data_ctx = %{ctx | deciders: %{}, decider_of: %{}, decided: %{}}
+    {data_outs, _} = solve(idxs, data_ctx)
     Enum.reduce(idxs, facts, &emit_reads(&2, &1, data_ctx, data_outs))
   end
 
-  defp fixpoint(idxs, ctx, outs, ctrl, pass) when pass < @max_passes do
-    new_ctrl =
-      Map.new(ctx.terminator, fn {block, _last} -> {block, ctrl_of(block, ctx, outs, ctrl)} end)
+  # Every write's sources, and what each deciding block's decision
+  # depends on (`tested`: the values its terminator reads, and whatever
+  # decided that block in turn). A block runs because of every block
+  # deciding it, so when a decision's sources change the instructions of
+  # the blocks it decides are evaluated again.
+  defp solve(idxs, ctx) do
+    ValueFlow.solve(
+      idxs,
+      ctx.index.reads,
+      %{},
+      fn idx, outs, tested ->
+        inputs = inputs_of(idx, ctx, outs)
+        here = ctrl(Map.get(ctx.block_of, idx), ctx, tested)
 
-    new_outs =
-      Enum.reduce(idxs, outs, fn idx, acc ->
-        inputs = inputs_of(idx, ctx, acc)
-        here = Map.get(new_ctrl, Map.get(ctx.block_of, idx), MapSet.new())
+        writes =
+          for reg <- Map.get(ctx.index.writes, idx, []),
+              do: {reg, result(idx, reg, inputs, here, ctx)}
 
-        ctx.index.writes
-        |> Map.get({ctx.func_id, idx}, [])
-        |> Enum.reduce(acc, fn reg, inner ->
-          Map.put(inner, {idx, reg}, result(idx, reg, inputs, here, ctx))
-        end)
-      end)
+        case Map.fetch(ctx.decider_of, idx) do
+          {:ok, decider} ->
+            decision = inputs |> union() |> MapSet.union(ctrl(decider, ctx, tested))
 
-    if new_outs == outs and new_ctrl == ctrl,
-      do: {outs, ctrl},
-      else: fixpoint(idxs, ctx, new_outs, new_ctrl, pass + 1)
+            if Map.get(tested, decider) == decision,
+              do: {writes, tested, []},
+              else:
+                {writes, Map.put(tested, decider, decision), Map.get(ctx.decided, decider, [])}
+
+          :error ->
+            {writes, tested, []}
+        end
+      end,
+      max_evaluations: @max_evaluations
+    )
   end
 
-  defp fixpoint(_idxs, _ctx, outs, ctrl, _pass), do: {outs, ctrl}
-
-  # A block runs because of every block deciding it: the values the
-  # deciding branch tests, and whatever decided that branch in turn.
-  defp ctrl_of(block, ctx, outs, ctrl) do
+  # What a block runs under: the decisions of the blocks deciding it.
+  defp ctrl(block, ctx, tested) do
     ctx.deciders
     |> Map.get(block, [])
-    |> Enum.reduce(MapSet.new(), fn decider, acc ->
-      tested = ctx.terminator |> Map.fetch!(decider) |> inputs_of(ctx, outs) |> union()
-      acc |> MapSet.union(tested) |> MapSet.union(Map.get(ctrl, decider, MapSet.new()))
+    |> Enum.reduce(MapSet.new(), &MapSet.union(&2, Map.get(tested, &1, MapSet.new())))
+  end
+
+  # %{terminator idx => block}: the last instruction of each block that
+  # decides another.
+  defp decider_of(fun, deciders) do
+    for {_block, ds} <- deciders,
+        d <- ds,
+        into: %{},
+        do: {elem(Map.fetch!(fun.blocks, d).range, 1), d}
+  end
+
+  # %{decider => [idx]}: the instructions of the blocks each decides.
+  defp decided(fun, deciders) do
+    Enum.reduce(deciders, %{}, fn {block, ds}, acc ->
+      {first, last} = Map.fetch!(fun.blocks, block).range
+      idxs = Enum.to_list(first..last//1)
+      Enum.reduce(ds, acc, fn d, inner -> Map.update(inner, d, idxs, &(idxs ++ &1)) end)
     end)
   end
 
   # What each register the instruction reads depends on.
   @spec inputs_of(non_neg_integer(), map(), map()) :: %{String.t() => deps()}
-  defp inputs_of(idx, ctx, outs) do
-    ctx.index.reads
-    |> Map.get({ctx.func_id, idx}, [])
-    |> Enum.reduce(%{}, fn {reg, source}, acc ->
-      deps =
-        case source do
-          {:param, k} -> MapSet.new([{:param, k}])
-          {:def, d} -> Map.get(outs, {d, reg}, MapSet.new())
-        end
-
-      Map.update(acc, reg, deps, &MapSet.union(&1, deps))
-    end)
-  end
+  defp inputs_of(idx, ctx, outs), do: ValueFlow.inputs(ctx.index.reads, outs, idx, &{:param, &1})
 
   # What the value written at `idx` depends on, given its inputs and the
   # decisions its block runs under.
   defp result(idx, reg, inputs, here, ctx) do
-    key = {ctx.func_id, idx}
-
     base =
-      case {Map.fetch(ctx.index.calls, key), Map.fetch(ctx.index.copies, key)} do
+      case {Map.fetch(ctx.index.calls, idx), Map.fetch(ctx.index.copies, idx)} do
         {{:ok, call}, _copy} -> call_result(idx, call, inputs, ctx)
         {:error, {:ok, copy}} -> copied(copy, reg, inputs)
         {:error, :error} -> union(inputs)
@@ -308,14 +335,13 @@ defmodule Argus.Extractors.Dependence do
 
   # ── Emission ────────────────────────────────────────────────────────
 
-  defp emit(facts, idx, ctx, outs, ctrl) do
-    key = {ctx.func_id, idx}
-    here = Map.get(ctrl, Map.get(ctx.block_of, idx), MapSet.new())
+  defp emit(facts, idx, ctx, outs, tested) do
+    here = ctrl(Map.get(ctx.block_of, idx), ctx, tested)
     inputs = inputs_of(idx, ctx, outs)
 
     facts
-    |> emit_call(Map.get(ctx.index.calls, key), idx, inputs, here, ctx)
-    |> emit_closure(Map.get(ctx.index.closures, key), inputs, here, ctx)
+    |> emit_call(Map.get(ctx.index.calls, idx), idx, inputs, here, ctx)
+    |> emit_closure(Map.get(ctx.index.closures, idx), inputs, here, ctx)
     |> emit_return(idx, inputs, here, ctx)
   end
 
@@ -350,9 +376,7 @@ defmodule Argus.Extractors.Dependence do
   # what the closure body does with it, which is the closure's own
   # function's question.
   defp emit_reads(facts, idx, ctx, outs) do
-    key = {ctx.func_id, idx}
-
-    case Map.get(ctx.index.calls, key) do
+    case Map.get(ctx.index.calls, idx) do
       nil ->
         facts
 
@@ -407,13 +431,11 @@ defmodule Argus.Extractors.Dependence do
 
   # What a function returns: x0 at a return, or a tail call's result.
   defp emit_return(facts, idx, inputs, here, ctx) do
-    key = {ctx.func_id, idx}
-
     cond do
-      MapSet.member?(ctx.index.tails, key) ->
+      Map.has_key?(ctx.index.tails, idx) ->
         rows(facts, :returns_depends, [ctx.func_id], result(idx, "x0", inputs, here, ctx))
 
-      Map.get(ctx.index.ops, key) == "return" ->
+      Map.get(ctx.index.ops, idx) == "return" ->
         rows(
           facts,
           :returns_depends,

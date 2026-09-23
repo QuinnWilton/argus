@@ -28,6 +28,24 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     def init(state), do: {:ok, state}
   end
 
+  defmodule NestedDecision do
+    @moduledoc "A start decided by a test that the lookup's test decides in turn."
+    def ensure(name) do
+      case Process.whereis(name) do
+        nil ->
+          case :persistent_term.get(:enabled, false) do
+            true -> GenServer.start_link(__MODULE__, [], name: name)
+            false -> :disabled
+          end
+
+        pid ->
+          {:ok, pid}
+      end
+    end
+
+    def init(state), do: {:ok, state}
+  end
+
   defmodule LookupThenStartChild do
     @moduledoc "Registry.lookup, then DynamicSupervisor.start_child, the result returned untaken."
     def get_or_start(key) do
