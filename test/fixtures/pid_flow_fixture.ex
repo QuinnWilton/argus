@@ -43,6 +43,11 @@ defmodule Argus.Test.Fixtures.PidFlow do
       GenServer.call(pid, :ping)
     end
 
+    def dynamic do
+      {:ok, pid} = DynamicSupervisor.start_child(:workers, {Worker, :arg})
+      GenServer.call(pid, :ping)
+    end
+
     defp hand_off(p), do: relay(p)
     defp relay(q), do: Worker.notify(q)
   end
@@ -99,6 +104,31 @@ defmodule Argus.Test.Fixtures.PidFlow do
     @impl true
     def handle_call(:ping, _from, a), do: {:reply, GenServer.call(a, :pong), a}
     def handle_call(:pong, _from, a), do: {:reply, :ok, a}
+  end
+
+  defmodule Tree do
+    @moduledoc "A supervisor whose child starts through a helper: only the child spec names the server."
+    use Supervisor
+
+    def start_link(_), do: Supervisor.start_link(__MODULE__, nil)
+
+    @impl true
+    def init(nil), do: Supervisor.init([Argus.Test.Fixtures.PidFlow.Kid], strategy: :one_for_one)
+  end
+
+  defmodule Kid do
+    @moduledoc false
+    use GenServer
+
+    def start_link(_), do: Argus.Test.Fixtures.PidFlow.Starter.go(__MODULE__)
+
+    @impl true
+    def init(nil), do: {:ok, self()}
+  end
+
+  defmodule Starter do
+    @moduledoc false
+    def go(mod), do: GenServer.start_link(mod, nil)
   end
 
   defmodule Quiet do

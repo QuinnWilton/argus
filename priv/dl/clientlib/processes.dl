@@ -19,6 +19,17 @@
 //
 // Prerequisites: include clientlib/imports.dl before this file.
 
+// A process running a module's callbacks: started by a start call in the
+// program (a GenServer start, or a supervisor's start_child), or a
+// GenServer a supervisor's child spec names, whose own start the program
+// may not spell out (`start: {GenServer, :start_link, [Mod, arg]}`).
+.decl server_process(proc: symbol, mod: symbol)
+
+server_process(p, m) :- process_start(_, p, "server", m).
+server_process(cat("server ", m), m) :-
+  supervisor_child(_, _, m, _, _),
+  behaves_as(m, "GenServer").
+
 // A parameter may be a pid of `proc` when some call passes one.
 .decl param_pid(func: symbol, pos: symbol, proc: symbol)
 
@@ -54,7 +65,7 @@ param_pid(g, k, p) :- pid_arg(f, g, k, kind, src), source_pid(f, kind, src, p).
 // process, and is left unresolved.
 .decl self_pid(func: symbol, proc: symbol)
 
-self_pid(f, p) :- process_entry(m, f), process_start(_, p, "server", m).
+self_pid(f, p) :- process_entry(m, f), server_process(p, m).
 self_pid(f, p) :- process_start(_, p, "spawn", f).
 
 source_pid(f, "self", "self", p) :- self_pid(f, p).
@@ -85,7 +96,7 @@ named_pid(n, p) :- pid_register(f, n, kind, src), source_pid(f, kind, src, p).
 // A server started with a literal name: the start registers it.
 named_pid(n, p) :-
   named_process(mod, n),
-  process_start(_, p, "server", mod).
+  server_process(p, mod).
 
 // ── What the pids reach ─────────────────────────────────────────────
 

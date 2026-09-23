@@ -3,7 +3,7 @@
 # change in the unit of incremental work: review the diff.
 [
   blocking:
-    ~w(async_cast call_arg call_arg_forward call_edge call_site call_tag callback_tag catch_tag catch_total closure_def function_def global_op handle_continue_clause implements_behaviour init_continues_to named_process pid_arg pid_call pid_register pid_return process_start recv_start remote_call rpc_call sync_call sync_call_timeout try_call),
+    ~w(async_cast call_arg call_arg_forward call_edge call_site call_tag callback_tag catch_tag catch_total closure_def function_def global_op handle_continue_clause implements_behaviour init_continues_to named_process pid_arg pid_call pid_register pid_return process_start recv_start remote_call rpc_call supervisor_child sync_call sync_call_timeout try_call),
   coupling:
     ~w(async_cast call_arg call_arg_forward call_edge call_site call_tag callback_tag child_spec_restart dynamic_child function_def implements_behaviour matches_down monitor_call name_lookup named_process pid_arg pid_call pid_register pid_return prior_talks_to_process process_link process_start sup_call supervisor supervisor_child supervisor_child_name supervisor_site sync_call),
   coverage:
@@ -17,7 +17,7 @@
   failure:
     ~w(bare_rescue call_edge call_followed_by_branch call_result catch_falls_through catch_tag catch_total exit_call function_def implements_behaviour name_lookup remote_call rpc_call rpc_result spawn_call tail_call try_call),
   mailbox:
-    ~w(async_cast call_arg call_arg_field call_arg_forward call_edge call_tag callback_drops_from callback_ref_head callback_return callback_tag callback_total closure_def demonitor_call function_def implements_behaviour mailbox_writer matches_down monitor_call monitor_ref_dropped named_process pid_arg pid_call pid_register pid_return pid_send process_start recv_pattern recv_start remote_call returns_call statem_call_unreplied statem_event_catchall statem_event_clause statem_info_catchall statem_module statem_state statem_timeout sync_call sync_call_timeout tail_call timer_arm timer_cancel timer_ref timer_store trap_exit),
+    ~w(async_cast call_arg call_arg_field call_arg_forward call_edge call_tag callback_drops_from callback_ref_head callback_return callback_tag callback_total closure_def demonitor_call function_def implements_behaviour mailbox_writer matches_down monitor_call monitor_ref_dropped named_process pid_arg pid_call pid_register pid_return pid_send process_start recv_pattern recv_start remote_call returns_call statem_call_unreplied statem_event_catchall statem_event_clause statem_info_catchall statem_module statem_state statem_timeout supervisor_child sync_call sync_call_timeout tail_call timer_arm timer_cancel timer_ref timer_store trap_exit),
   shutdown:
     ~w(async_cast call_arg call_arg_forward call_edge call_site call_tag callback_stop_reason callback_tag callback_total catch_tag catch_total closure_def demonitor_call dynamic_child function_def implements_behaviour impure_call monitor_call named_process pid_arg pid_call pid_register pid_return process_start remote_call statem_event_clause statem_state sup_call supervisor supervisor_child supervisor_child_name supervisor_site sync_call trap_exit unknown_call),
   startup:

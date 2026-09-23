@@ -12,6 +12,9 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.Loops,
     PidFlow.CycleA,
     PidFlow.CycleB,
+    PidFlow.Tree,
+    PidFlow.Kid,
+    PidFlow.Starter,
     PidFlow.Quiet
   ]
 
@@ -28,6 +31,7 @@ defmodule Argus.Clientlib.ProcessesTest do
           Argus.Extractors.ApiCalls,
           Argus.Extractors.CallbackTag,
           Argus.Extractors.ProcessRegistry,
+          Argus.Extractors.Supervision,
           Argus.Extractors.PidFlow
         ]
       )
@@ -96,6 +100,21 @@ defmodule Argus.Clientlib.ProcessesTest do
              r["send_target"],
              &match?([_, "Loops:-start/0-fun-0-/1", "{:done, …}", "spawn Loops:loop/0"], &1)
            )
+  end
+
+  test "a child a supervisor starts on request is a process its caller holds",
+       %{tmp_dir: tmp_dir} do
+    r = solve(tmp_dir, ~w(call_target))
+    assert ["Owner:dynamic/0", "call", "server Worker"] in r["call_target"]
+  end
+
+  test "a GenServer a child spec names is a server, so self() in it resolves",
+       %{tmp_dir: tmp_dir} do
+    # Kid starts through a helper with a computed module: no start call in
+    # the program names it, only Tree's child spec.
+    r = solve(tmp_dir, ~w(self_pid process_start))
+    refute Enum.any?(r["process_start"], &match?([_, "server Kid" | _], &1))
+    assert ["Kid:init/1", "server Kid"] in r["self_pid"]
   end
 
   test "a computed module, apply and a library pid name no process", %{tmp_dir: tmp_dir} do

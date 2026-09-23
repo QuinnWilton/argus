@@ -110,7 +110,7 @@ sync_dep(f, m) :-
 // callbacks (processes.dl).
 sync_dep(f, m) :-
   call_target(f, "call", p),
-  process_start(_, p, "server", m).
+  server_process(p, m).
 
 // The instruction in `func` that calls the project function `callee`:
 // the site a finding points at when a rule knows only the functions.
@@ -143,7 +143,7 @@ sync_site(f, m, id) :-
 
 sync_site(f, m, id) :-
   call_target(f, "call", p),
-  process_start(_, p, "server", m),
+  server_process(p, m),
   call_site(id, f, mod, "call", _),
   (mod = "GenServer" ; mod = ":gen_server").
 
@@ -163,7 +163,7 @@ async_dep(f, m) :-
 
 async_dep(f, m) :-
   call_target(f, "cast", p),
-  process_start(_, p, "server", m).
+  server_process(p, m).
 
 // ── Resolution by message tag ──────────────────────────────────────────
 //

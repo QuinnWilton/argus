@@ -25,7 +25,9 @@ defmodule Argus.Extractors.PidFlow do
 
   - `process_start(func, proc, kind, runs)` — `func` starts the process
     `proc`: `kind` is `spawn` (`runs` is the function it runs) or `server`
-    (`runs` is the callback module). Process ids are `"spawn Mod:fun/n"`
+    (`runs` is the callback module), including a child a supervisor starts
+    on request (`DynamicSupervisor.start_child/2`, `Supervisor.start_child/2`),
+    named by its child spec's module. Process ids are `"spawn Mod:fun/n"`
     and `"server Mod"`: function-level, so a body edit does not rename them.
   - `pid_arg(caller, callee, arg_pos, src_kind, src)` — at some call in
     `caller`, argument `arg_pos` may be a pid from the source. Also for a
@@ -94,6 +96,10 @@ defmodule Argus.Extractors.PidFlow do
     {:gen_statem, :start_link, 4} => 1
   }
 
+  # A start through a supervisor returns the child's pid too; the child
+  # spec in x1 names the module (`Mod`, `{Mod, arg}`, `%{start: {Mod, ...}}`).
+  @child_starts [{DynamicSupervisor, :start_child, 2}, {Supervisor, :start_child, 2}]
+
   @lookups [{Process, :whereis, 1}, {:erlang, :whereis, 1}]
 
   @impl true
@@ -146,8 +152,26 @@ defmodule Argus.Extractors.PidFlow do
          %{proc: "server " <> runs, kind: "server", runs: runs, init_arg: pos + 1}}
       end
 
-    Map.merge(spawns, servers)
+    children =
+      for %{mfa: mfa, instrs: instrs, idx: idx, func_id: func_id} <- sites,
+          mfa in @child_starts,
+          {:ok, spec} <- [Helpers.resolve_register(instrs, idx, {:x, 1})],
+          mod = child_module(spec),
+          mod != nil and not library?(mod),
+          into: %{} do
+        runs = inspect(mod)
+
+        {parse(InstrId.mint(func_id, idx)),
+         %{proc: "server " <> runs, kind: "server", runs: runs, child: true}}
+      end
+
+    spawns |> Map.merge(servers) |> Map.merge(children)
   end
+
+  defp child_module({mod, _arg}), do: child_module(mod)
+  defp child_module(%{start: {mod, _fun, _args}}), do: child_module(mod)
+  defp child_module(mod) when is_atom(mod) and mod not in [nil, :dynamic], do: mod
+  defp child_module(_spec), do: nil
 
   # ── The fixpoint ─────────────────────────────────────────────────────
 
@@ -326,6 +350,11 @@ defmodule Argus.Extractors.PidFlow do
   # to run a one-argument function receives the single element of its list.
   defp emit_start_args(facts, func_id, %{kind: "server", runs: mod, init_arg: pos}, at),
     do: emit_sources(facts, :pid_arg, [func_id, "#{mod}:init/1", "0"], at["x#{pos}"])
+
+  # A child spec `{Mod, arg}` starts `Mod.start_link(arg)`; the spec is
+  # not taken apart, so a pid anywhere in it counts as the argument.
+  defp emit_start_args(facts, func_id, %{kind: "server", runs: mod, child: true}, at),
+    do: emit_sources(facts, :pid_arg, [func_id, "#{mod}:start_link/1", "0"], at["x1"])
 
   defp emit_start_args(facts, func_id, %{kind: "spawn", runs: runs, arity: 1}, at),
     do: emit_sources(facts, :pid_arg, [func_id, runs, "0"], at["x2"])

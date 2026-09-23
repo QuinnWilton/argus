@@ -8,6 +8,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+Process points-to counts a supervisor's children as processes: a child
+started on request (`DynamicSupervisor.start_child/2`,
+`Supervisor.start_child/2`) is a start site whose `{:ok, pid}` the
+caller holds, named by its child spec's module, with the spec's
+argument flowing into `Mod.start_link/1`; and a GenServer named in a
+static supervisor's child spec is a server process
+(`clientlib/processes.dl`'s `server_process`) even when no start call in
+the program names it, so `self()` in its callbacks resolves. blocking
+and mailbox list the Supervision extractor for it.
+
 `mailbox.unreceived_message`: a message sent to a spawned process whose
 receive has no clause for it. The message is not dropped; it stays in
 the mailbox for the life of the process and every later receive scans

@@ -84,6 +84,12 @@ defmodule Argus.Extractors.PidFlowTest do
       assert ["Loops:start/0", "Loops:-start/0-fun-0-/1", "0", "proc", "spawn Loops:loop/0"] in f.pid_arg
     end
 
+    test "a supervisor's start_child starts the child spec's module" do
+      f = facts([F.Owner])
+      assert ["Owner:dynamic/0", "server Worker", "server", "Worker"] in f.process_start
+      assert ["Owner:dynamic/0", "call", "proc", "server Worker"] in f.pid_call
+    end
+
     test "the compiler's generated functions emit nothing" do
       for {_relation, rows} <- facts([F.Worker, F.Loops]), row <- rows do
         refute Enum.any?(row, &String.contains?(&1, ["__info__", "module_info"])), inspect(row)

@@ -59,7 +59,9 @@ defmodule Argus.Analyses.Blocking do
       # A call whose target is a pid resolves through process points-to
       # (clientlib/processes.dl): where the pid was started, and names.
       Argus.Extractors.PidFlow,
-      Argus.Extractors.ProcessRegistry
+      Argus.Extractors.ProcessRegistry,
+      # A GenServer a child spec names is a server process too.
+      Argus.Extractors.Supervision
     ]
 
   @impl true
