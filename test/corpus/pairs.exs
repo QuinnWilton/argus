@@ -258,7 +258,7 @@
     issue: "supavisor@a8463de",
     module: "Supavisor.DbHandler",
     pre: "a8463de46ae77fb3a2f49a53eda1d6680caa0ad3",
-    finding: {:failure, "call/3 called bare where every other call site guards it"}
+    finding: {:failure, ":gen_statem.call/3 called bare where every other call site guards it"}
   },
   # blockster_v2 e8b3d3c: EngagementTracker.deduct_user_token_balance/4 reads
   # a user's balances with a dirty_read in one helper and writes the deducted
@@ -295,7 +295,7 @@
     module: "LangChain.ChatModels.ChatAnthropic",
     pre: "3e02d6b417b7041c0420b1f8cd937f479ea385ae",
     fix: "38e957d2985b054ce51e087b51bb1af54aee9754",
-    finding: {:exposure, "LangChain.ChatModels.ChatAnthropic.:api_key is printed by inspect/1"}
+    finding: {:exposure, "LangChain.ChatModels.ChatAnthropic.api_key is printed by inspect/1"}
   },
   %{
     repo: "supabase/supavisor",
@@ -303,7 +303,7 @@
     module: "Supavisor.Tenants.User",
     pre: "0e85637a03483c60c4e10b6708cbe29933f23fcb",
     fix: "1bf7b4b6785832608478909f19938d94b8b779e0",
-    finding: {:exposure, "Supavisor.Tenants.User.:db_password is printed by inspect/1"}
+    finding: {:exposure, "Supavisor.Tenants.User.db_password is printed by inspect/1"}
   },
   # The aware arm: two virtual password fields beside it were already
   # redact: true, so the stored hash was an oversight, not an unfamiliar API.
@@ -313,7 +313,7 @@
     module: "NervesHub.Accounts.User",
     pre: "59ccadd36f2861c667c488937dea66fc35488fe7",
     fix: "3ab4e8cd77ac9dd7259085f47d70396697d988ed",
-    finding: {:exposure, "NervesHub.Accounts.User.:password_hash is printed by inspect/1"}
+    finding: {:exposure, "NervesHub.Accounts.User.password_hash is printed by inspect/1"}
   },
   # ── unsafe_input: atom creation ───────────────────────────────────────
   # Federation representation keys arrive through the open-ended _Any
@@ -379,6 +379,6 @@
     issue: "sequin@46ce4e1",
     module: "Sequin.DebouncedLogger",
     pre: "46ce4e1048437575ce3c40ebb3eb589a4b9e4f27",
-    finding: {:failure, "update_counter/3 called bare where every other call site guards it"}
+    finding: {:failure, ":ets.update_counter/3 called bare where every other call site guards it"}
   }
 ]

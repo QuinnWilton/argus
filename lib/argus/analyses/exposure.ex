@@ -89,7 +89,9 @@ defmodule Argus.Analyses.Exposure do
   def finding(:unredacted_secret, [mod, field, kind, aware]) do
     Findings.new(
       severity(kind),
-      "#{mod}.#{field} is printed by inspect/1",
+      # The field as a reader writes its access, `User.password_hash`;
+      # the facts spell the key as an atom, `:password_hash`.
+      "#{mod}.#{String.trim_leading(field, ":")} is printed by inspect/1",
       "#{field} is not declared redact: true, so it appears in full wherever " <>
         "the struct is inspected — Logger calls, changeset errors, LiveView " <>
         "debug output, crash reports, and any error reporter that serialises " <>

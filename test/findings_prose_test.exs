@@ -22,6 +22,36 @@ defmodule Argus.FindingsProseTest do
     end
   end
 
+  describe "titles name what they are about as a reader writes it" do
+    test "a convention's callee keeps its module" do
+      attrs =
+        Argus.Analyses.Failure.finding(:inconsistent_handling, [
+          "Supavisor.DbHandler:run/2",
+          "Supavisor.DbHandler:run/2#4",
+          ":gen_statem:call/3",
+          "exception_guarded",
+          "3",
+          "1"
+        ])
+
+      assert attrs.title == ":gen_statem.call/3 called bare where every other call site guards it"
+    end
+
+    test "an unredacted field reads as a field access, not Mod.:field" do
+      attrs =
+        Argus.Analyses.Exposure.finding(:unredacted_secret, [
+          "MyApp.User",
+          ":password_hash",
+          "password",
+          "unaware"
+        ])
+
+      assert attrs.title == "MyApp.User.password_hash is printed by inspect/1"
+      # The source anchor still names the field as the schema spells it.
+      assert attrs.at_source == ":password_hash"
+    end
+  end
+
   describe "rpc_api/1" do
     test "names the function an rpc variant stands for" do
       assert Findings.rpc_api("rpc") == ":rpc.call"

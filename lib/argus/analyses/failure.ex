@@ -125,12 +125,12 @@ defmodule Argus.Analyses.Failure do
     {title, what, fix} =
       case belief do
         "result_checked" ->
-          {"#{short(callee)} result ignored where every other call site checks it",
+          {"#{Findings.call_name(callee)} result ignored where every other call site checks it",
            "discards the result of #{Findings.call_name(callee)}, which #{agree} of the #{total} call " <>
              "sites in this program match on", "match on the result as the other sites do"}
 
         "exception_guarded" ->
-          {"#{short(callee)} called bare where every other call site guards it",
+          {"#{Findings.call_name(callee)} called bare where every other call site guards it",
            "calls #{Findings.call_name(callee)} outside a try, which #{agree} of the #{total} call sites " <>
              "in this program wrap in one", "guard the call as the other sites do"}
       end
@@ -293,8 +293,6 @@ defmodule Argus.Analyses.Failure do
     z = (agree / total - 0.5) / :math.sqrt(0.25 / total)
     if z >= 2.0, do: :warning, else: :info
   end
-
-  defp short(callee), do: callee |> String.split(":") |> List.last()
 
   @impl true
   def evidence(:handling_site, [_callee, belief, site, func, guard_end]) do

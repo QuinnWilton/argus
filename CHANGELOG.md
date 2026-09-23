@@ -250,6 +250,14 @@ call that hands the closure over, and each carries the effect as a
 related frame. Output-relation shapes only; the fact schema is
 unchanged, and effects now reads stage 0's `call_site`.
 
+Two titles change. failure's inconsistent-handling title names the
+callee with its module (`:gen_statem.call/3 called bare where every
+other call site guards it`, was `call/3 called bare ...` — a title that
+could not tell `GenServer.call/3` from `:gen_statem.call/3`); exposure's
+unredacted-secret title reads `MyApp.User.password_hash is printed by
+inspect/1` (was `MyApp.User.:password_hash`). Consumers matching titles
+re-key: the corpus pairs are, encore's goldens are not yet.
+
 ### Fixed
 
 A transaction body was paired with every repo its function opened a
