@@ -67,6 +67,10 @@ defmodule Argus.Pipeline.Normalize do
   # Typed register → plain register.
   defp normalize_operand({:tr, reg, _type}), do: reg
 
+  # A literal's value is data, kept as the compiler wrote it: a literal
+  # `{:tr, a, b}` is a three-tuple, not a typed register to strip.
+  defp normalize_operand({:literal, _value} = literal), do: literal
+
   # Allocation hints — normalize {:alloc, [...]} to extract word count.
   defp normalize_operand({:alloc, kw}) when is_list(kw) do
     alloc_words(kw)

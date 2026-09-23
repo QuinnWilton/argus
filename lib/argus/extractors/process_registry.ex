@@ -53,6 +53,7 @@ defmodule Argus.Extractors.ProcessRegistry do
       each_remote_call: 3,
       key_identity: 4,
       keyword_value_register: 4,
+      mentions?: 2,
       resolve_atom: 3,
       resolve_register: 3,
       track_dynamic: 5,
@@ -370,18 +371,7 @@ defmodule Argus.Extractors.ProcessRegistry do
     if uses_register?(instr, regs), do: false, else: checked_walk(rest, regs)
   end
 
-  defp uses_register?(term, regs) when is_tuple(term) do
-    stripped = strip_type(term)
-
-    if stripped in regs,
-      do: true,
-      else: term |> Tuple.to_list() |> Enum.any?(&uses_register?(&1, regs))
-  end
-
-  defp uses_register?(term, regs) when is_list(term),
-    do: Enum.any?(term, &uses_register?(&1, regs))
-
-  defp uses_register?(_term, _regs), do: false
+  defp uses_register?(instr, regs), do: mentions?(instr, &(strip_type(&1) in regs))
 
   defp strip_type({:tr, reg, _type}), do: reg
   defp strip_type(other), do: other

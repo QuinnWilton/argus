@@ -63,6 +63,7 @@ defmodule Argus.Extractors.Reply do
   alias Argus.Cfg
   alias Argus.Cfg.Walk
   alias Argus.Extractor.Dispatch
+  alias Argus.Extractor.Helpers
   alias Argus.Instr
   alias Argus.InstrId
 
@@ -223,11 +224,7 @@ defmodule Argus.Extractors.Reply do
   # two or more, `send`, whose operands are implicit in {x,0} and {x,1} —
   # counts as a read.
   defp references_from?(instr) do
-    @from_register in Instr.uses(instr) or mentions?(instr, @from_register)
+    @from_register in Instr.uses(instr) or
+      Helpers.mentions?(instr, &(&1 == @from_register))
   end
-
-  defp mentions?(@from_register, @from_register), do: true
-  defp mentions?(term, reg) when is_tuple(term), do: term |> Tuple.to_list() |> mentions?(reg)
-  defp mentions?(term, reg) when is_list(term), do: Enum.any?(term, &mentions?(&1, reg))
-  defp mentions?(_term, _reg), do: false
 end

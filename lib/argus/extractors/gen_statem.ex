@@ -46,6 +46,7 @@ defmodule Argus.Extractors.GenStatem do
       cfg: 3,
       find_function: 3,
       get_behaviours: 1,
+      list_elements: 1,
       return_shapes: 1,
       track_dynamic: 5,
       track_imprecision: 5
@@ -263,6 +264,8 @@ defmodule Argus.Extractors.GenStatem do
   end
 
   defp detect_mode_from_list(modes) do
+    modes = list_elements(modes)
+
     cond do
       :state_functions in modes -> :state_functions
       :handle_event_function in modes -> :handle_event_function
@@ -654,22 +657,29 @@ defmodule Argus.Extractors.GenStatem do
   end
 
   defp extract_timeouts_from_literal_actions(facts, mod_str, state_name, actions) do
-    Enum.reduce(actions, facts, fn
+    actions
+    |> list_elements()
+    |> Enum.reduce(facts, fn
       {:state_timeout, value, _}, acc ->
-        add_fact(acc, :statem_timeout, [mod_str, state_name, "state_timeout", to_string(value)])
+        add_fact(acc, :statem_timeout, [mod_str, state_name, "state_timeout", timeout(value)])
 
       {:timeout, value, _}, acc ->
-        add_fact(acc, :statem_timeout, [mod_str, state_name, "event_timeout", to_string(value)])
+        add_fact(acc, :statem_timeout, [mod_str, state_name, "event_timeout", timeout(value)])
 
       # A generic timeout is headed by {:timeout, name}; a 3-tuple with an
       # atom head is another action ({:next_event, :internal, :connect}).
       {{:timeout, name}, value, _}, acc when is_atom(name) ->
-        add_fact(acc, :statem_timeout, [mod_str, state_name, "generic", to_string(value)])
+        add_fact(acc, :statem_timeout, [mod_str, state_name, "generic", timeout(value)])
 
       _, acc ->
         acc
     end)
   end
+
+  # A timeout is milliseconds or `:infinity`; anything else in that place
+  # is a literal the action would reject, and names no time.
+  defp timeout(value) when is_integer(value) or is_atom(value), do: to_string(value)
+  defp timeout(_value), do: "dynamic"
 
   defp resolve_element_value({:atom, a}), do: to_string(a)
   defp resolve_element_value({:integer, n}), do: to_string(n)

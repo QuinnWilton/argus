@@ -55,7 +55,14 @@ defmodule Argus.Extractors.Monitor do
   alias Argus.InstrId
 
   import Argus.Extractor.Helpers,
-    only: [add_fact: 3, cfg: 2, each_remote_call: 3, register: 1, resolve_atom: 3]
+    only: [
+      add_fact: 3,
+      cfg: 2,
+      each_remote_call: 3,
+      list_elements: 1,
+      register: 1,
+      resolve_atom: 3
+    ]
 
   @impl true
   def relations,
@@ -344,7 +351,7 @@ defmodule Argus.Extractors.Monitor do
     |> Enum.reverse()
     |> Enum.find_value("no_flush", fn
       {:move, {:literal, opts}, {:x, 1}} when is_list(opts) ->
-        if :flush in opts, do: "flush", else: "no_flush"
+        if :flush in list_elements(opts), do: "flush", else: "no_flush"
 
       {:move, _src, {:x, 1}} ->
         "no_flush"

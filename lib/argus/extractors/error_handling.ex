@@ -718,7 +718,9 @@ defmodule Argus.Extractors.ErrorHandling do
   defp bare_message?(msg) when is_tuple(msg),
     do: msg |> Tuple.to_list() |> Enum.all?(&bare_message?/1)
 
-  defp bare_message?(msg) when is_list(msg), do: Enum.all?(msg, &bare_message?/1)
+  # Cell by cell, so an improper list's tail is asked like any element.
+  defp bare_message?([]), do: true
+  defp bare_message?([head | tail]), do: bare_message?(head) and bare_message?(tail)
   defp bare_message?(_msg), do: false
 
   # An async_nolink task collected in the same function (await, yield,

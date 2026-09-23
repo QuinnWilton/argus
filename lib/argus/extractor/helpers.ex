@@ -220,9 +220,106 @@ defmodule Argus.Extractor.Helpers do
   """
   @spec get_behaviours(keyword()) :: [module()]
   def get_behaviours(attrs) do
-    (Keyword.get_values(attrs, :behaviour) ++ Keyword.get_values(attrs, :behavior))
-    |> List.flatten()
+    attribute_values(attrs, :behaviour) ++ attribute_values(attrs, :behavior)
   end
+
+  @doc """
+  Every value the attribute `key` holds, across all its entries in a
+  module's attribute chunk, nested lists flattened.
+
+  `List.flatten/1` did this and raised on an improper list, which Erlang
+  source can store as an attribute's value (`-my_attr([a|b]).`); here an
+  improper list is one value.
+  """
+  @spec attribute_values(keyword(), atom()) :: [term()]
+  def attribute_values(attrs, key) do
+    for {^key, values} <- attrs, value <- flatten_proper(values, []), do: value
+  end
+
+  defp flatten_proper(term, acc) do
+    if proper_list?(term),
+      do: term |> Enum.reverse() |> Enum.reduce(acc, &flatten_proper/2),
+      else: [term | acc]
+  end
+
+  @doc """
+  Whether `term` is a proper list: `[]`, or cons cells ending in `[]`.
+
+  A literal in a beam can be improper (`[a | :b]`, Erlang's
+  `-attr([a|b]).`, an iolist `["x" | "y"]`), and `Enum`, `length/1`,
+  `++`, `Keyword` and `in` all raise on one. Ask this before handing a
+  literal or a resolved value to any of them; `is_list/1` is not enough.
+  """
+  @spec proper_list?(term()) :: boolean()
+  def proper_list?([]), do: true
+  def proper_list?([_ | tail]), do: proper_list?(tail)
+  def proper_list?(_), do: false
+
+  @doc """
+  The elements of `term` when it is a proper list, and `[]` otherwise:
+  what a walk over a literal list can safely enumerate. An improper list
+  is a value the runtime would reject wherever a list is expected, so
+  reading nothing from it is the quiet answer.
+  """
+  @spec list_elements(term()) :: list()
+  def list_elements(term), do: if(proper_list?(term), do: term, else: [])
+
+  @doc """
+  Whether `pred` holds for any part of an instruction or operand: the
+  term itself, then every element of its tuples and lists, improper
+  tails included.
+
+  A `{:literal, value}` operand is asked about as a whole but not entered.
+  Its value is data, not operands: the literal `{:x, 1}` is not the
+  register x1, and a walk that went inside took one for a read of the
+  register. Use `value_contains?/2` to search a literal's value. (What an
+  instruction reads and writes is `Argus.Instr`'s to say; this is for
+  a question about operands it does not answer.)
+  """
+  @spec mentions?(term(), (term() -> boolean())) :: boolean()
+  def mentions?(term, pred) do
+    pred.(term) or mentions_within?(term, pred)
+  end
+
+  defp mentions_within?({:literal, _value}, _pred), do: false
+
+  defp mentions_within?(term, pred) when is_tuple(term),
+    do: term |> Tuple.to_list() |> any_element?(pred, &mentions?/2)
+
+  defp mentions_within?(term, pred) when is_list(term), do: any_element?(term, pred, &mentions?/2)
+  defp mentions_within?(_term, _pred), do: false
+
+  @doc """
+  Whether `pred` holds for any part of a value — a literal's, or one
+  `resolve_register/3` rebuilt: the value itself, then every element of
+  its tuples, lists (improper tails included) and maps (keys and values,
+  structs included).
+  """
+  @spec value_contains?(term(), (term() -> boolean())) :: boolean()
+  def value_contains?(value, pred) do
+    pred.(value) or value_contains_within?(value, pred)
+  end
+
+  defp value_contains_within?(value, pred) when is_tuple(value),
+    do: value |> Tuple.to_list() |> any_element?(pred, &value_contains?/2)
+
+  defp value_contains_within?(value, pred) when is_list(value),
+    do: any_element?(value, pred, &value_contains?/2)
+
+  # Map.to_list/1, not Enum: a struct literal (an `Ecto.Query` built at
+  # compile time) is a map that need not implement Enumerable.
+  defp value_contains_within?(value, pred) when is_map(value),
+    do: value |> Map.to_list() |> any_element?(pred, &value_contains?/2)
+
+  defp value_contains_within?(_value, _pred), do: false
+
+  # Enum.any?/2 raises at an improper tail; this asks the tail itself.
+  defp any_element?([], _pred, _ask), do: false
+
+  defp any_element?([head | tail], pred, ask),
+    do: ask.(head, pred) or any_element?(tail, pred, ask)
+
+  defp any_element?(tail, pred, ask), do: ask.(tail, pred)
 
   # --- Remote call matching ---
 
@@ -347,7 +444,14 @@ defmodule Argus.Extractor.Helpers do
   defp apply_pure_bif(:tuple_size, [tuple]) when is_tuple(tuple), do: {:ok, tuple_size(tuple)}
   defp apply_pure_bif(:map_size, [map]) when is_map(map), do: {:ok, map_size(map)}
   defp apply_pure_bif(:byte_size, [bin]) when is_binary(bin), do: {:ok, byte_size(bin)}
-  defp apply_pure_bif(:length, [list]) when is_list(list), do: {:ok, length(list)}
+
+  defp apply_pure_bif(:length, [list]) when is_list(list) do
+    case proper_length(list) do
+      nil -> :dynamic
+      n -> {:ok, n}
+    end
+  end
+
   defp apply_pure_bif(:hd, [[h | _]]), do: {:ok, h}
   defp apply_pure_bif(:tl, [[_ | t]]), do: {:ok, t}
 
@@ -355,7 +459,11 @@ defmodule Argus.Extractor.Helpers do
     {:ok, Atom.to_string(atom)}
   end
 
-  defp apply_pure_bif(:++, [a, b]) when is_list(a) and is_list(b), do: {:ok, a ++ b}
+  # `++` walks its left operand, which must be proper; the right one is
+  # only the new tail.
+  defp apply_pure_bif(:++, [a, b]) when is_list(a) and is_list(b) do
+    if proper_list?(a), do: {:ok, a ++ b}, else: :dynamic
+  end
 
   defp apply_pure_bif(_op, _args), do: :dynamic
 
@@ -455,8 +563,17 @@ defmodule Argus.Extractor.Helpers do
       # placeholder into ":dynamic", which evades every "dynamic" filter
       # downstream. Placeholders nested inside structures still pass
       # through; consumers of partial structures handle them per-field.
-      {:ok, :dynamic} -> :dynamic
-      other -> other
+      {:ok, :dynamic} ->
+        :dynamic
+
+      # An improper list is a value no list operation accepts: every
+      # consumer that asks for a list would raise on it, and the call it
+      # was built for raises at runtime too. Unresolved is the quiet answer.
+      {:ok, list} = resolved when is_list(list) ->
+        if proper_list?(list), do: resolved, else: :dynamic
+
+      other ->
+        other
     end
   end
 
@@ -485,6 +602,12 @@ defmodule Argus.Extractor.Helpers do
         {:literal, list} when is_list(list) -> {:ok, list}
         nil -> {:ok, []}
         {kind, _} = reg when kind in [:x, :y] -> value(instrs, at, reg)
+        # A known tail that is not a list makes the list improper, which
+        # is no list a consumer can use: the whole value is unknown.
+        {:literal, _not_a_list} -> :improper
+        {:atom, _} -> :improper
+        {:integer, _} -> :improper
+        {:float, _} -> :improper
         _ -> :dynamic
       end
 

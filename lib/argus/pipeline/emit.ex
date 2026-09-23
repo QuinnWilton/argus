@@ -46,10 +46,15 @@ defmodule Argus.Pipeline.Emit do
         {:atom, name, arity, _label} -> {name, arity}
       end)
 
-    # Module attributes.
+    # Module attributes. The chunk holds each attribute's value as a list
+    # of values, except where Erlang source wrote a term that is not one:
+    # `-my_attr([a|b]).` stores the improper list itself, which is one
+    # value, not values to walk.
     facts =
       Enum.reduce(attributes, facts, fn {key, values}, acc ->
-        Enum.reduce(List.wrap(values), acc, fn val, inner_acc ->
+        values = if Helpers.proper_list?(values), do: values, else: [values]
+
+        Enum.reduce(values, acc, fn val, inner_acc ->
           add_fact(inner_acc, :module_attribute, [mod_str, to_string(key), spell(val)])
         end)
       end)

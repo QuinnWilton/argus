@@ -11,6 +11,30 @@ Grouped by concern. Each entry opens with what it does: **Added**,
 
 ### Fact schema and extraction
 
+**Fixed.** No literal crashes an extractor. A beam's literals can be improper lists
+(`[a | :b]`; Elixir's own `Logger.Translator` holds improper iolists;
+Erlang's `-my_attr([a|b]).` stores one as the attribute), and `Enum`,
+`length/1`, `++`, `Keyword` and `in` all raise on them: the TLS extractor,
+which reads every instruction, raised on `Logger.Translator`, as did the
+reply, supervision, gen_statem, monitor, ETS, router, endpoint, Ecto
+schema and error-handling extractors, `Argus.Pipeline.Emit`'s attribute
+rows and `Argus.Purity.declared/1`, each on some odd literal; a
+supervisor flag, restart or type that is not an atom raised in
+`to_string/1`. The fixes share `Argus.Extractor.Helpers`:
+`proper_list?/1`, `list_elements/1`, `attribute_values/2`, and
+`mentions?/2`, the one improper-safe walk over an instruction's
+operands — which does not enter a `{:literal, _}` operand, so a literal
+`{:x, 1}` no longer counts as a read of the register (the reply
+extractor took one for a read of `from`), nor a literal `{:f, 3}` as a
+branch target (`Argus.Extractor.Dispatch.branch_targets/1`); and
+`value_contains?/2` for searching a literal's value. `resolve_register/3`
+answers `:dynamic` for an improper list, and for `length/1` or `++` of
+one. `Argus.Pipeline.Normalize` no longer rewrites inside a literal (a
+literal `{:tr, a, b}` was stripped to `a`, as though a typed register).
+`test/extractors/odd_literals_test.exs` feeds generated odd literals —
+improper and nested lists, maps, binaries, terms past inspect's bounds —
+through every extractor and the full pipeline.
+
 **Added.** Schema 55. A failure while extracting one module no longer takes the
 caller down, and is never dropped silently. The pipeline's workers are
 linked to the caller, so an extractor that raised exited scry's compiler

@@ -26,7 +26,13 @@ defmodule Argus.Extractors.Purity do
   alias Argus.Purity.Effects
 
   import Argus.Extractor.Helpers,
-    only: [add_fact: 3, each_remote_call: 3, list_length: 3, resolve_register: 3]
+    only: [
+      add_fact: 3,
+      attribute_values: 2,
+      each_remote_call: 3,
+      list_length: 3,
+      resolve_register: 3
+    ]
 
   @impl true
   def relations,
@@ -55,8 +61,7 @@ defmodule Argus.Extractors.Purity do
     mod_str = inspect(mod)
 
     attributes
-    |> Keyword.get_values(:argus_pure)
-    |> List.flatten()
+    |> attribute_values(:argus_pure)
     |> Enum.reduce(facts, fn
       {name, arity}, acc when is_atom(name) and is_integer(arity) ->
         add_fact(acc, :pure_contract, [

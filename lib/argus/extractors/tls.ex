@@ -43,7 +43,8 @@ defmodule Argus.Extractors.Tls do
 
   alias Argus.InstrId
 
-  import Argus.Extractor.Helpers, only: [add_fact: 3, match_remote_call: 1]
+  import Argus.Extractor.Helpers,
+    only: [add_fact: 3, match_remote_call: 1, mentions?: 2, proper_list?: 1, value_contains?: 2]
 
   # Calls that establish a TLS session and take an option list. The arity
   # here is the position of the options argument, zero-based.
@@ -120,7 +121,7 @@ defmodule Argus.Extractors.Tls do
     |> Enum.take(call_idx)
     |> Enum.reverse()
     |> Enum.find_value(:dynamic, fn
-      {:move, {:literal, opts}, ^register} when is_list(opts) -> {:ok, opts}
+      {:move, {:literal, opts}, ^register} when is_list(opts) -> proper_options(opts)
       {:move, _src, ^register} -> :dynamic
       _ -> false
     end)
@@ -135,12 +136,17 @@ defmodule Argus.Extractors.Tls do
     end
   end
 
-  defp mentions_atom?(term, atom) when is_tuple(term),
-    do: term |> Tuple.to_list() |> mentions_atom?(atom)
+  # An improper option list is one the call would reject; it names no
+  # verification mode.
+  defp proper_options(opts), do: if(proper_list?(opts), do: {:ok, opts}, else: :dynamic)
 
-  defp mentions_atom?(term, atom) when is_list(term),
-    do: Enum.any?(term, &mentions_atom?(&1, atom))
-
-  defp mentions_atom?(atom, atom) when is_atom(atom), do: true
-  defp mentions_atom?(_term, _atom), do: false
+  # The atom as an operand, or anywhere inside a literal operand's value.
+  # Every instruction of every function passes through here, so the walk
+  # is the improper-safe one: a literal iolist (`["x" | "y"]`) is common.
+  defp mentions_atom?(instr, atom) do
+    mentions?(instr, fn
+      {:literal, value} -> value_contains?(value, &(&1 == atom))
+      term -> term == atom
+    end)
+  end
 end

@@ -43,8 +43,10 @@ defmodule Argus.Extractors.Supervision do
       find_function: 3,
       get_behaviours: 1,
       keyword_value_register: 4,
+      list_elements: 1,
       match_local_call: 1,
       match_remote_call: 1,
+      mentions?: 2,
       resolve_register: 3,
       track_dynamic: 5,
       track_imprecision: 5
@@ -430,10 +432,16 @@ defmodule Argus.Extractors.Supervision do
       end
 
     %{}
-    |> add_fact(:supervisor, [mod_str, to_string(strategy)])
+    |> add_fact(:supervisor, [mod_str, word(strategy)])
     |> add_fact(:supervisor_site, [mod_str, site])
     |> emit_max_children(mod_str, max_children)
   end
+
+  # A flag, restart or type read from a literal is an atom (a cap, an
+  # integer); anything else there is a value the supervisor would reject,
+  # and names nothing.
+  defp word(value) when is_atom(value) or is_integer(value), do: to_string(value)
+  defp word(_value), do: "dynamic"
 
   # Emitted only when a cap is actually set, so consumers ask about it by
   # negation. `DynamicSupervisor` defaults to `:infinity`, and the default is
@@ -443,7 +451,7 @@ defmodule Argus.Extractors.Supervision do
   defp emit_max_children(facts, _mod_str, :infinity), do: facts
 
   defp emit_max_children(facts, mod_str, value),
-    do: add_fact(facts, :supervisor_max_children, [mod_str, to_string(value)])
+    do: add_fact(facts, :supervisor_max_children, [mod_str, word(value)])
 
   # DynamicSupervisor.init/1 takes the flags as its sole argument:
   # `DynamicSupervisor.init(strategy: :one_for_one, ...)`. Resolve that
@@ -481,7 +489,7 @@ defmodule Argus.Extractors.Supervision do
 
     facts =
       facts
-      |> add_fact(:supervisor, [mod_str, to_string(strategy)])
+      |> add_fact(:supervisor, [mod_str, word(strategy)])
       |> add_fact(:supervisor_site, [mod_str, site])
 
     children = extract_children_with_helpers(instrs, all_functions)
@@ -511,8 +519,8 @@ defmodule Argus.Extractors.Supervision do
           mod_str,
           to_string(idx),
           inspect(child_mod),
-          to_string(restart),
-          to_string(type)
+          word(restart),
+          word(type)
         ])
         |> add_fact(:supervisor_child_form, [mod_str, to_string(idx), to_string(form)])
 
@@ -918,20 +926,8 @@ defmodule Argus.Extractors.Supervision do
     |> Enum.with_index()
     |> Enum.take(idx)
     |> Enum.reverse()
-    |> Enum.find(fn {instr, _at} -> mentions_register?(instr, reg) end)
+    |> Enum.find(fn {instr, _at} -> mentions?(instr, &(&1 == reg)) end)
   end
-
-  defp mentions_register?({:tr, inner, _type}, reg), do: mentions_register?(inner, reg)
-  defp mentions_register?({:x, _} = r, reg), do: r == reg
-  defp mentions_register?({:y, _} = r, reg), do: r == reg
-
-  defp mentions_register?(term, reg) when is_tuple(term),
-    do: term |> Tuple.to_list() |> Enum.any?(&mentions_register?(&1, reg))
-
-  defp mentions_register?(term, reg) when is_list(term),
-    do: Enum.any?(term, &mentions_register?(&1, reg))
-
-  defp mentions_register?(_term, _reg), do: false
 
   # The tuple's register is consumed as a list head, or is x0 immediately
   # before the function returns.
@@ -1072,7 +1068,7 @@ defmodule Argus.Extractors.Supervision do
   end
 
   defp extract_child_from_literal(list) when is_list(list) do
-    Enum.flat_map(list, &extract_single_child_spec/1)
+    list |> list_elements() |> Enum.flat_map(&extract_single_child_spec/1)
   end
 
   # Erlang-style supervisor init returns {:ok, {flags, children}}.
@@ -1095,7 +1091,7 @@ defmodule Argus.Extractors.Supervision do
   defp extract_single_child_spec({PartitionSupervisor, opts}) when is_list(opts) do
     # PartitionSupervisor is a wrapper — extract the underlying child_spec
     # so analyses see the real worker module instead of PartitionSupervisor.
-    case Keyword.get(opts, :child_spec) do
+    case opts |> list_elements() |> Keyword.get(:child_spec) do
       nil -> [{PartitionSupervisor, :permanent, :supervisor, child_name(opts), :explicit}]
       child_spec -> extract_single_child_spec(child_spec)
     end
@@ -1136,7 +1132,9 @@ defmodule Argus.Extractors.Supervision do
   # skipped. The scan tolerates non-keyword option lists (mixed positional
   # args) by matching `{:name, atom}` pairs directly.
   defp child_name(opts) when is_list(opts) do
-    Enum.find_value(opts, fn
+    opts
+    |> list_elements()
+    |> Enum.find_value(fn
       {:name, name} when is_atom(name) and not is_nil(name) -> inspect(name)
       _ -> nil
     end)

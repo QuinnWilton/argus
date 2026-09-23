@@ -58,6 +58,27 @@ defmodule Argus.Pipeline.EmitTest do
     end
   end
 
+  describe "module attributes" do
+    # Erlang source stores `-odd([a|b]).` as the improper list itself, and
+    # walking it as a list of values raised.
+    test "an improper list value is one value" do
+      facts =
+        Emit.emit_module(
+          TestMod,
+          [],
+          [],
+          [odd: [:a | :b], vsn: [1, 2]],
+          [{:function, :f, 0, 1, [{:label, 1}, :return]}]
+        )
+
+      assert Enum.sort(facts[:module_attribute]) == [
+               ["TestMod", "odd", "[:a | :b]"],
+               ["TestMod", "vsn", "1"],
+               ["TestMod", "vsn", "2"]
+             ]
+    end
+  end
+
   describe "instruction facts" do
     test "emits instruction for each instruction" do
       facts = emit_func([{:label, 1}, {:move, {:atom, :ok}, {:x, 0}}, :return])

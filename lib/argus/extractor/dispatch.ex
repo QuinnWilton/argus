@@ -38,10 +38,15 @@ defmodule Argus.Extractor.Dispatch do
 
   defp collect_f({:f, l}, acc) when is_integer(l) and l > 0, do: [l | acc]
 
-  defp collect_f(term, acc) when is_tuple(term),
-    do: term |> Tuple.to_list() |> Enum.reduce(acc, &collect_f/2)
+  # A literal's value is data: the literal `{:f, 3}` branches nowhere.
+  defp collect_f({:literal, _value}, acc), do: acc
 
-  defp collect_f(term, acc) when is_list(term), do: Enum.reduce(term, acc, &collect_f/2)
+  defp collect_f(term, acc) when is_tuple(term),
+    do: term |> Tuple.to_list() |> collect_f(acc)
+
+  # Cell by cell, so an improper tail is asked like any element.
+  defp collect_f([], acc), do: acc
+  defp collect_f([head | tail], acc), do: collect_f(tail, collect_f(head, acc))
   defp collect_f(_term, acc), do: acc
 
   @doc """

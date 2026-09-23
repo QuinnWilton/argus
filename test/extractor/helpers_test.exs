@@ -659,6 +659,89 @@ defmodule Argus.Extractor.HelpersTest do
     end
   end
 
+  describe "improper-safe walks" do
+    test "proper_list?/1 accepts only lists that end in []" do
+      assert Helpers.proper_list?([])
+      assert Helpers.proper_list?([1, [2 | 3]])
+      refute Helpers.proper_list?([1 | 2])
+      refute Helpers.proper_list?([1, 2 | :tail])
+      refute Helpers.proper_list?(:atom)
+    end
+
+    test "list_elements/1 reads nothing from an improper list" do
+      assert Helpers.list_elements([1, 2]) == [1, 2]
+      assert Helpers.list_elements([1 | 2]) == []
+      assert Helpers.list_elements({1, 2}) == []
+    end
+
+    test "mentions?/2 walks improper lists" do
+      instr = {:put_list, {:x, 1}, {:list, [{:atom, :a} | {:x, 3}]}, {:x, 2}}
+      assert Helpers.mentions?(instr, &(&1 == {:x, 3}))
+      refute Helpers.mentions?(instr, &(&1 == {:x, 4}))
+    end
+
+    # A literal `{:x, 1}` is data; counting it as the register made a
+    # handle_call look as though it read `from`.
+    test "mentions?/2 does not enter a literal's value" do
+      instr = {:move, {:literal, {:x, 1}}, {:x, 0}}
+      refute Helpers.mentions?(instr, &(&1 == {:x, 1}))
+      assert Helpers.mentions?(instr, &(&1 == {:x, 0}))
+      assert Helpers.mentions?(instr, &match?({:literal, _}, &1))
+    end
+
+    test "value_contains?/2 searches tuples, improper lists and maps" do
+      assert Helpers.value_contains?([verify: :verify_none], &(&1 == :verify_none))
+      assert Helpers.value_contains?(["x" | :verify_none], &(&1 == :verify_none))
+      assert Helpers.value_contains?(%{opts: {:verify_none}}, &(&1 == :verify_none))
+      refute Helpers.value_contains?(["x" | "y"], &(&1 == :verify_none))
+    end
+
+    # A struct is a map that need not implement Enumerable; sequin's
+    # compile-time Ecto.Query literals raised here.
+    test "value_contains?/2 searches a struct's fields" do
+      assert Helpers.value_contains?(%URI{host: :verify_none}, &(&1 == :verify_none))
+      refute Helpers.value_contains?(%URI{}, &(&1 == :verify_none))
+    end
+
+    test "attribute_values/2 flattens entries and keeps an improper list whole" do
+      attrs = [behaviour: [GenServer], odd: [:a | :b], behaviour: [[Supervisor]], odd: [:c]]
+      assert Helpers.attribute_values(attrs, :behaviour) == [GenServer, Supervisor]
+      assert Helpers.attribute_values(attrs, :odd) == [[:a | :b], :c]
+    end
+  end
+
+  describe "resolve_register/3 — improper lists" do
+    # Every consumer asking for a list raised on one; the call it was built
+    # for raises at runtime too.
+    test "an improper list resolves as unknown" do
+      assert Helpers.resolve_register([{:move, {:literal, [:a | :b]}, {:x, 1}}], 1, {:x, 1}) ==
+               :dynamic
+
+      assert Helpers.resolve_register(
+               [{:put_list, {:atom, :a}, {:atom, :b}, {:x, 1}}],
+               1,
+               {:x, 1}
+             ) ==
+               :dynamic
+    end
+
+    test "length/1 and ++ of an improper list are unknown" do
+      length_of = [
+        {:move, {:literal, [1 | 2]}, {:x, 0}},
+        {:gc_bif, :length, {:f, 0}, 1, [{:x, 0}], {:x, 1}}
+      ]
+
+      assert Helpers.resolve_register(length_of, 2, {:x, 1}) == :dynamic
+
+      append = [
+        {:move, {:literal, [1 | 2]}, {:x, 0}},
+        {:gc_bif, :++, {:f, 0}, 1, [{:x, 0}, {:literal, [3]}], {:x, 1}}
+      ]
+
+      assert Helpers.resolve_register(append, 2, {:x, 1}) == :dynamic
+    end
+  end
+
   describe "list_length/3" do
     test "counts the cons cells that built the list" do
       instrs = [

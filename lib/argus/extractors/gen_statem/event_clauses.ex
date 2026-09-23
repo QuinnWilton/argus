@@ -204,7 +204,12 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
   defp reg({:y, _} = r), do: r
   defp reg(_other), do: nil
 
-  defp regs_in(term) when is_list(term), do: Enum.flat_map(term, &regs_in/1)
+  # Operands only: a literal's value is data (the literal `{:x, 1}` is not
+  # the register), and lists are walked cell by cell so an improper tail
+  # is asked like any element.
+  defp regs_in({:literal, _value}), do: []
+  defp regs_in([]), do: []
+  defp regs_in([head | tail]), do: regs_in(head) ++ regs_in(tail)
 
   defp regs_in(term) when is_tuple(term) do
     case reg(term) do

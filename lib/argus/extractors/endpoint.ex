@@ -27,7 +27,7 @@ defmodule Argus.Extractors.Endpoint do
 
   @behaviour Argus.Extractor
 
-  import Argus.Extractor.Helpers, only: [add_fact: 3]
+  import Argus.Extractor.Helpers, only: [add_fact: 3, list_elements: 1, proper_list?: 1]
 
   @transports [:websocket, :longpoll]
 
@@ -47,13 +47,14 @@ defmodule Argus.Extractors.Endpoint do
 
   defp sockets(instrs) do
     Enum.find_value(instrs, [], fn
-      {:move, {:literal, list}, {:x, 0}} when is_list(list) -> list
+      {:move, {:literal, list}, {:x, 0}} when is_list(list) -> list_elements(list)
       _ -> false
     end)
   end
 
   defp emit(endpoint, sockets) do
     for {path, _socket_mod, opts} when is_binary(path) and is_list(opts) <- sockets,
+        proper_list?(opts),
         transport <- @transports,
         enabled?(opts, transport),
         reduce: %{} do

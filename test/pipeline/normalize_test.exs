@@ -26,6 +26,15 @@ defmodule Argus.Pipeline.NormalizeTest do
              ] = result
     end
 
+    # A literal is data: normalizing inside one rewrote a literal
+    # `{:tr, a, b}` three-tuple into `a`, as though it were a typed register.
+    test "leaves a literal's value as the compiler wrote it" do
+      literal = {:literal, [{:tr, :a, :b}, {:alloc, [words: 3]} | :tail]}
+      func = {:function, :lit, 0, 1, [{:move, literal, {:x, 0}}]}
+
+      assert [{_id, {:move, ^literal, {:x, 0}}}] = Normalize.normalize_function(MyMod, func)
+    end
+
     test "strips typed registers" do
       func =
         {:function, :bar, 1, 1,
@@ -50,10 +59,10 @@ defmodule Argus.Pipeline.NormalizeTest do
 
       [{_id, instr}] = Normalize.normalize_function(MyMod, func)
 
-      # Normalization still reaches inside the cons cell (the typed
-      # register is stripped) and the improper tail is preserved, so the
-      # literal is not silently properised.
-      assert {:move, {:literal, [{:x, 0} | 2]}, {:x, 0}} = instr
+      # The literal is kept whole, improper tail included: it is not
+      # silently properised, and a three-tuple headed `:tr` inside it is
+      # the program's value, not a typed register.
+      assert {:move, {:literal, [{:tr, {:x, 0}, {:t_atom, :any}} | 2]}, {:x, 0}} = instr
     end
 
     test "survives a deeply nested improper list" do

@@ -92,10 +92,11 @@ defmodule Argus.Purity do
   """
   @spec declared(module()) :: [{atom(), arity()}]
   def declared(module) when is_atom(module) do
-    :attributes
-    |> module.module_info()
-    |> Keyword.get_values(:argus_pure)
-    |> List.flatten()
+    for {name, arity} = pair when is_atom(name) and is_integer(arity) <-
+          :attributes
+          |> module.module_info()
+          |> Argus.Extractor.Helpers.attribute_values(:argus_pure),
+        do: pair
   rescue
     UndefinedFunctionError -> []
   end

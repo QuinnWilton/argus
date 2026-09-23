@@ -30,7 +30,7 @@ defmodule Argus.Extractors.EctoSchema do
 
   @behaviour Argus.Extractor
 
-  import Argus.Extractor.Helpers, only: [add_fact: 3]
+  import Argus.Extractor.Helpers, only: [add_fact: 3, list_elements: 1]
 
   @keys %{fields: :schema_field, redact_fields: :redacted_field}
 
@@ -56,7 +56,7 @@ defmodule Argus.Extractors.EctoSchema do
           dispatch
           |> Map.get(key)
           |> literal_at(labels, instrs)
-          |> List.wrap()
+          |> schema_values()
           |> Enum.filter(&is_atom/1)
           |> Enum.reduce(facts, &add_fact(&2, relation, [mod_str, inspect(&1)]))
         end)
@@ -82,6 +82,10 @@ defmodule Argus.Extractors.EctoSchema do
   defp label_index(instrs) do
     for {{:label, l}, idx} <- Enum.with_index(instrs), into: %{}, do: {l, idx}
   end
+
+  # An improper list is no list of fields.
+  defp schema_values(value) when is_list(value), do: list_elements(value)
+  defp schema_values(value), do: List.wrap(value)
 
   # A key's clause is a literal moved into {x,0} and returned. Anything
   # else — a computed value, a call — yields nothing rather than a guess.
