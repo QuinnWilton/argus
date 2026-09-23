@@ -645,11 +645,14 @@ defmodule Argus.Extractors.ErrorHandling do
     end
   end
 
+  # Each instruction with the one after it (nil after the last): a pass
+  # over the list rather than an `Enum.at/2` per instruction, which was
+  # quadratic in the function (50 s on ex_cldr's 54k-instruction lexer).
   defp emit_returns(facts, mod, func_id, instrs) do
     instrs
-    |> Enum.with_index()
-    |> Enum.reduce(facts, fn {instr, idx}, acc ->
-      case returned_callee(instr, Enum.at(instrs, idx + 1), mod) do
+    |> Enum.zip(Enum.drop(instrs, 1) ++ [nil])
+    |> Enum.reduce(facts, fn {instr, next}, acc ->
+      case returned_callee(instr, next, mod) do
         {:ok, callee} ->
           if String.contains?(callee, ":-"),
             do: acc,

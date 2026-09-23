@@ -25,6 +25,17 @@ defmodule Argus.Extractors.ErrorHandlingTest do
     end
   end
 
+  describe "extract/1 — returns_call" do
+    test "a function returns a local callee's result only from a tail call" do
+      facts = ErrorHandling.extract(disassemble(Argus.Test.Fixtures.ReturnsCall))
+      mod = "Argus.Test.Fixtures.ReturnsCall"
+
+      assert ["#{mod}:arm/1", "#{mod}:schedule/1"] in facts[:returns_call]
+      log = "#{mod}:log/1"
+      refute Enum.any?(facts[:returns_call], &match?([^log, _], &1))
+    end
+  end
+
   describe "extract/1 — try_call" do
     test "names the guarded call's own instruction beside the try" do
       facts = ErrorHandling.extract(disassemble(Argus.Test.Fixtures.CatchShapes.NoprocOnly))

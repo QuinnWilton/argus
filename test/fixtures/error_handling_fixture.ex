@@ -444,3 +444,17 @@ defmodule Argus.Test.Fixtures.InlineOrTaskPartialInfoServer do
   @impl true
   def handle_info({:tick, _at}, state), do: {:noreply, state}
 end
+
+defmodule Argus.Test.Fixtures.ReturnsCall do
+  @moduledoc false
+  # `arm/1` returns what the local helper returns; `log/1` calls it and
+  # returns something else.
+  def arm(ms), do: schedule(ms)
+
+  def log(ms) do
+    schedule(ms)
+    :ok
+  end
+
+  defp schedule(ms), do: Process.send_after(self(), :tick, ms)
+end
