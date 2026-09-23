@@ -72,7 +72,7 @@ defmodule Argus.Extractors.ParamFlow do
   def extract(module_data) do
     with typed when typed != nil <- Helpers.typed(module_data),
          reaching when reaching != nil <- Helpers.reaching(module_data) do
-      inputs = derive(typed, reaching, Helpers.copies(module_data))
+      inputs = derive(typed, reaching, Helpers.copies(module_data), bif_operands(module_data))
 
       %{}
       |> emit_call_sites(module_data, inputs)
@@ -87,7 +87,7 @@ defmodule Argus.Extractors.ParamFlow do
 
   # For every instruction, the parameters each register it reads is derived
   # from: %{id => %{reg => MapSet(param)}}.
-  defp derive(typed, triples, copies) do
+  defp derive(typed, triples, copies, bif_operands) do
     reads =
       Enum.group_by(triples, fn {_source, _reg, use} -> use end, fn {source, reg, _use} ->
         {reg, source}
@@ -120,7 +120,8 @@ defmodule Argus.Extractors.ParamFlow do
       tails: tails,
       locals: locals,
       dynamics: dynamics,
-      copies: copies
+      copies: copies,
+      bif_operands: bif_operands
     }
 
     outs = fixpoint(ids, ctx, %{}, 0)
@@ -187,7 +188,7 @@ defmodule Argus.Extractors.ParamFlow do
         MapSet.new()
 
       Map.has_key?(ctx.bifs, id) ->
-        if Propagators.bif?(Map.fetch!(ctx.bifs, id)), do: all_inputs, else: MapSet.new()
+        bif_transfer(Map.fetch!(ctx.bifs, id), Map.get(ctx.bif_operands, id, []), inputs)
 
       Map.get(ctx.ops, id) in ~w(make_fun3 call_fun call_fun2 apply apply_last) ->
         MapSet.new()
@@ -202,6 +203,39 @@ defmodule Argus.Extractors.ParamFlow do
       true ->
         # A structural instruction: every write is made from every read.
         all_inputs
+    end
+  end
+
+  # A BIF's result carries the operands its signature says it does; an
+  # operand that is not a register (a literal key) carries nothing.
+  defp bif_transfer(fun, operands, inputs) do
+    case Propagators.bif_positions(fun, length(operands)) do
+      nil -> MapSet.new()
+      positions -> union_of(inputs, for(p <- positions, reg = Enum.at(operands, p), do: reg))
+    end
+  end
+
+  # %{id => operands}: each BIF instruction's operands in order, a
+  # register spelled as the facts spell it (`"x0"`), anything else nil.
+  defp bif_operands(%{module: mod, functions: functions}) do
+    for {:function, name, arity, _entry, instrs} <- functions,
+        func_id = Normalize.func_id(mod, name, arity),
+        {instr, idx} <- Enum.with_index(instrs),
+        operands = bif_args(instr),
+        operands != nil,
+        {:ok, id} = InstrId.parse(InstrId.mint(func_id, idx)),
+        into: %{},
+        do: {id, Enum.map(operands, &spelled_register/1)}
+  end
+
+  defp bif_args({:bif, _name, _fail, args, _dst}) when is_list(args), do: args
+  defp bif_args({:gc_bif, _name, _fail, _live, args, _dst}) when is_list(args), do: args
+  defp bif_args(_instr), do: nil
+
+  defp spelled_register(operand) do
+    case register(operand) do
+      {kind, n} when kind in [:x, :y] -> "#{kind}#{n}"
+      _ -> nil
     end
   end
 

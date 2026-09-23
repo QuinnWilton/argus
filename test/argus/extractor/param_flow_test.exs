@@ -51,6 +51,12 @@ defmodule Argus.Extractor.ParamFlowTest do
     assert sinks(facts, "decoded/1") == [{0, 0}]
   end
 
+  # :maps.get(Key, Map): the result is the map's data, not the key's.
+  test "a direct :maps.get hands its map through, not its key", %{facts: facts} do
+    assert sinks(facts, "direct_get/1") == [{0, 0}]
+    assert sinks(facts, "keyed/2") == []
+  end
+
   test "a value loaded by an unknown callee is fresh", %{facts: facts} do
     assert sinks(facts, "loaded/1") == []
     assert {"load/1", 0, 0} in derived(facts, "loaded/1")

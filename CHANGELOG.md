@@ -987,6 +987,21 @@ as a number, in 11 of the 14 name-race findings across the corpus.
 
 ### unsafe_input
 
+**Fixed.** Request taint follows a propagator's data argument, not its key.
+`Argus.Extractors.ParamFlow.Propagators` recorded `:maps.get(Key, Map)`
+at position 0, so taint through a direct `:maps.get` was lost (and a
+tainted key tainted the result); `:lists.nthtail(N, List)`,
+`:lists.sort/2` and `usort/2` (the list follows a fun),
+`Tuple.insert_at(tuple, index, value)`, `Enum.reduce/2` (the fun) and
+`List.update_at/3` (the fun) were wrong the same way, and `:maps.get/3`,
+`Map.get/3`, `Keyword.get/3` (the default), `:lists.reverse/2`,
+`append/2`, `flatten/2`, `join/2`, `Enum.join` and `map_join` (the
+separator) and `:binary`/`:string` `replace` (the replacement) missed
+arguments that reach the result. BIFs follow their operand order too:
+`map_get(Key, Map)` carried every register operand, key included
+(`Propagators.bif_positions/2`; `bif?/1` is deprecated). A test checks
+every entry against the documented signature's argument names.
+
 **Changed.** `unsafe_input` finds the request entries that transitively
 reach a sink walking back from the sinks' functions instead of forward
 from every entry over everything it calls: the walk is 48 rows instead

@@ -20,6 +20,8 @@ defmodule Argus.Test.Fixtures.ParamFlow do
     def second(:ignored, _params, _socket), do: :ok
     def second(_, params, _socket), do: String.to_atom(params["order_by"])
     def decoded(body), do: body |> JSON.decode!() |> Map.get("kind") |> String.to_atom()
+    def direct_get(params), do: String.to_atom(:maps.get("kind", params))
+    def keyed(key, _params), do: String.to_atom(:maps.get(key, %{"a" => "b"}))
     def loaded(id), do: id |> Store.load() |> String.to_atom()
     def forwarded(a, b), do: helper(b, a)
     def helper(_x, _y), do: :ok

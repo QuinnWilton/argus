@@ -20,50 +20,65 @@ defmodule Argus.Extractors.ParamFlow.Propagators do
   @type positions :: [non_neg_integer()]
 
   # {module, functions, arities, positions}: `:any` matches every function
-  # of the module or every arity of the function.
+  # of the module or every arity of the function. The positions are the
+  # OTP and Elixir signatures' — `:maps.get(Key, Map)` carries its map,
+  # position 1 — and `Argus.Extractors.ParamFlow.PropagatorsTest` checks
+  # every entry against the documented argument names.
   @spec_table [
     {:erlang,
      ~w(binary_to_list list_to_binary iolist_to_binary tuple_to_list list_to_tuple binary_part
         split_binary atom_to_binary term_to_binary hd tl)a, :any, [0]},
     {:erlang, ~w(element map_get)a, :any, [1]},
     {:erlang, [:++], 2, [0, 1]},
-    {:maps, ~w(get keys values to_list from_list)a, :any, [0]},
+    {:maps, [:get], 2, [1]},
+    {:maps, [:get], 3, [1, 2]},
+    {:maps, ~w(keys values to_list from_list)a, :any, [0]},
     {:maps, [:find], 2, [1]},
     {:maps, [:put], 3, [1, 2]},
     {:maps, [:merge], 2, [0, 1]},
     {:maps, [:update], 3, [1, 2]},
     {:maps, ~w(take remove with without filter map)a, :any, [1]},
-    {:lists, ~w(reverse append flatten sort usort concat last droplast sublist nthtail)a, :any,
-     [0]},
-    {:lists, [:nth], 2, [1]},
+    {:lists, ~w(reverse append flatten sort usort concat last droplast sublist)a, 1, [0]},
+    {:lists, ~w(sublist)a, :any, [0]},
+    {:lists, ~w(reverse append flatten)a, 2, [0, 1]},
+    {:lists, ~w(sort usort nthtail nth)a, 2, [1]},
     {:lists, [:keyfind], 3, [2]},
     {:lists, [:zip], 2, [0, 1]},
-    {:lists, ~w(join split)a, 2, [1]},
+    {:lists, [:join], 2, [0, 1]},
+    {:lists, [:split], 2, [1]},
     {:binary, :any, :any, [0]},
+    {:binary, [:replace], :any, [0, 2]},
     {:string, :any, :any, [0]},
+    {:string, [:replace], :any, [0, 2]},
     {:unicode, :any, :any, [0]},
     {Access, ~w(get fetch fetch!)a, :any, [0]},
     {:elixir_erl_pass, [:no_parens_remote], 2, [0]},
     {String, :any, :any, [0]},
     {String, ~w(replace pad_leading pad_trailing)a, :any, [0, 2]},
     {Enum, ~w(at fetch fetch! map filter reject take drop reverse sort sort_by uniq uniq_by concat
-        flat_map join map_join to_list slice split chunk_every with_index group_by frequencies
-        min max find)a, :any, [0]},
-    {Enum, ~w(into reduce zip)a, :any, [0, 1]},
+        flat_map to_list slice split chunk_every with_index group_by frequencies min max
+        find)a, :any, [0]},
+    {Enum, ~w(into zip join map_join)a, :any, [0, 1]},
+    {Enum, [:reduce], 2, [0]},
+    {Enum, [:reduce], 3, [0, 1]},
     {List, ~w(first last flatten to_string to_charlist wrap delete to_tuple zip keyfind)a, :any,
      [0]},
-    {List, ~w(insert_at replace_at update_at)a, 3, [0, 2]},
+    {List, ~w(insert_at replace_at)a, 3, [0, 2]},
+    {List, [:update_at], 3, [0]},
     {Map,
      ~w(get fetch fetch! keys values to_list new take drop split pop from_struct filter reject
         update!)a, :any, [0]},
+    {Map, [:get], 3, [0, 2]},
     {Map, ~w(put put_new)a, 3, [0, 2]},
     {Map, [:merge], :any, [0, 1]},
     {Map, [:update], 4, [0, 2]},
     {Keyword, ~w(get fetch fetch! keys values take drop delete pop)a, :any, [0]},
+    {Keyword, [:get], 3, [0, 2]},
     {Keyword, [:put], 3, [0, 2]},
     {Keyword, [:merge], 2, [0, 1]},
     {Tuple, ~w(to_list delete_at)a, :any, [0]},
-    {Tuple, ~w(insert_at append)a, :any, [0, 1]},
+    {Tuple, [:insert_at], 3, [0, 2]},
+    {Tuple, [:append], 2, [0, 1]},
     {String.Chars, [:to_string], 1, [0]},
     {List.Chars, [:to_charlist], 1, [0]},
     {Kernel, ~w(inspect get_in then)a, :any, [0]},
@@ -80,10 +95,24 @@ defmodule Argus.Extractors.ParamFlow.Propagators do
     {Plug.Conn.Utils, :any, :any, [0]}
   ]
 
+  @doc """
+  The table: `{module, functions, arities, positions}`, where `functions`
+  and `arities` are lists or `:any`.
+  """
+  @spec entries() :: [{module(), [atom()] | :any, [arity()] | arity() | :any, positions()}]
+  def entries, do: @spec_table
+
   # `element/2` and `hd/1` and friends compile to BIF instructions rather
-  # than calls; the BIF facts carry the name, not the operand order, so
-  # every register operand of a listed BIF counts.
-  @bifs ~w(element hd tl map_get binary_part ++)a
+  # than calls, with their operands in the signature's order.
+  @bifs %{
+    {"element", 2} => [1],
+    {"map_get", 2} => [1],
+    {"hd", 1} => [0],
+    {"tl", 1} => [0],
+    {"binary_part", 2} => [0],
+    {"binary_part", 3} => [0],
+    {"++", 2} => [0, 1]
+  }
 
   # Indexed as the facts spell the callee: an inspected module and a
   # function name, both strings.
@@ -117,9 +146,18 @@ defmodule Argus.Extractors.ParamFlow.Propagators do
     end
   end
 
-  @doc "Whether the `:erlang` BIF `fun` hands its operands' data to its result."
+  @doc "Whether the `:erlang` BIF `fun` hands some operand's data to its result."
+  @deprecated "Use bif_positions/2, which says which operand"
   @spec bif?(String.t()) :: boolean()
-  def bif?(fun), do: fun in Enum.map(@bifs, &to_string/1)
+  def bif?(fun), do: Enum.any?(Map.keys(@bifs), &match?({^fun, _}, &1))
+
+  @doc """
+  The operand positions of the `:erlang` BIF `fun`/`arity` whose data
+  reaches its result — `map_get(Key, Map)` carries its map — or `nil` when
+  the BIF is not a propagator.
+  """
+  @spec bif_positions(String.t(), non_neg_integer()) :: positions() | nil
+  def bif_positions(fun, arity), do: Map.get(@bifs, {fun, arity})
 
   defp arity_matches?(:any, _arity), do: true
   defp arity_matches?(arities, arity) when is_list(arities), do: arity in arities
