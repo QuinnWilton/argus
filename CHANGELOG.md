@@ -100,7 +100,9 @@ finding's prose or a rule), the runtime and the solver; `Argus.Corpus.analyze/2`
 takes the pair and side and solves over the cache. Extraction was over
 90% of a large tree's analysis and its inputs never move between runs.
 `Argus.CorpusTest` analyzes each checkout once, `ARGUS_CORPUS_JOBS` (default
-4) at a time, before checking the pairs. The suite's analysis tests run
+4) at a time, before checking the pairs. An entry under another digest is
+pruned only once no run has touched it for an hour: a VM beside this one —
+another worktree's build has its own digest — may still be reading it. The suite's analysis tests run
 `async: true`; the tests that set VM-wide state (`PATH`, `TYPESAFE_API_KEY`,
 `ARGUS_PRIORS_DIR`) live in their own sync modules.
 

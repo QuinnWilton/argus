@@ -175,11 +175,15 @@ defmodule Argus.Corpus do
 
   @facts_cache ".argus-facts"
 
+  # A hit touches its entry: what `prune_facts/2` reads to tell an entry
+  # a VM beside this one is using from one nobody will use again.
   defp facts(co, beams) do
     digest = facts_digest(beams)
-    facts_dir = Path.join([co.dir, @facts_cache, digest, "facts"])
+    entry = Path.join([co.dir, @facts_cache, digest])
+    facts_dir = Path.join(entry, "facts")
 
     if File.dir?(facts_dir) do
+      File.touch(entry)
       {:ok, facts_dir}
     else
       extract_into_cache(co, digest, beams)
@@ -205,7 +209,7 @@ defmodule Argus.Corpus do
         File.cp_r!(fresh, Path.join(staging, "facts"))
 
         case File.rename(staging, entry) do
-          :ok -> prune_entries(cache, digest)
+          :ok -> prune_facts(cache, digest)
           {:error, reason} when reason in [:eexist, :enotempty, :eisdir] -> File.rm_rf!(staging)
         end
 
@@ -217,14 +221,31 @@ defmodule Argus.Corpus do
     end
   end
 
-  # Entries under another digest were extracted by an argus, a solver
-  # or a build that is gone; only installed entries are pruned, never a
-  # staging directory another VM may still be filling.
-  defp prune_entries(cache, keep) do
+  @stale_after_seconds 60 * 60
+
+  @doc """
+  Removes the entries of a checkout's facts cache other than `keep` that
+  no run has touched for an hour.
+
+  An entry under another digest was extracted by an argus, a solver or
+  a build that is gone — or by a VM running beside this one, since
+  another worktree's build carries its own source paths and so its own
+  digest. A hit touches its entry, so one in use is never older than
+  the run using it, and removing it from under that run left its
+  solves with no facts to read. Only installed entries are candidates,
+  never a staging directory another VM may still be filling.
+  """
+  @spec prune_facts(Path.t(), String.t()) :: :ok
+  def prune_facts(cache, keep) do
+    now = System.os_time(:second)
+
     for entry <- File.ls!(cache),
         entry != keep,
         Regex.match?(~r/^[0-9a-f]{64}$/, entry),
-        do: File.rm_rf!(Path.join(cache, entry))
+        path = Path.join(cache, entry),
+        {:ok, %File.Stat{mtime: touched}} <- [File.stat(path, time: :posix)],
+        now - touched > @stale_after_seconds,
+        do: File.rm_rf!(path)
 
     :ok
   end

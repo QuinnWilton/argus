@@ -46,6 +46,25 @@ defmodule Argus.CorpusEngineTest do
     refute String.Chars in modules
   end
 
+  @tag :tmp_dir
+  test "pruning spares the kept entry, anything touched within the hour, and staging",
+       %{tmp_dir: cache} do
+    keep = String.duplicate("a", 64)
+    live = String.duplicate("b", 64)
+    stale = String.duplicate("c", 64)
+    staging = "#{stale}.123.4"
+
+    for entry <- [keep, live, stale, staging], do: File.mkdir_p!(Path.join(cache, entry))
+
+    two_hours_ago = System.os_time(:second) - 2 * 60 * 60
+    File.touch!(Path.join(cache, stale), two_hours_ago)
+    File.touch!(Path.join(cache, staging), two_hours_ago)
+    File.touch!(Path.join(cache, keep), two_hours_ago)
+
+    assert :ok = Corpus.prune_facts(cache, keep)
+    assert Enum.sort(File.ls!(cache)) == Enum.sort([keep, live, staging])
+  end
+
   test "the digest is stable within a VM" do
     digest = Corpus.engine_digest()
     assert digest =~ ~r/^[0-9a-f]{64}$/
