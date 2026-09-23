@@ -66,12 +66,25 @@ timeout_chain(from, to, 1) :-
   callback_sync_dep(from, to),
   behaves_as(to, "GenServer").
 
-// Recursive case: chain through intermediate GenServer.
+// Recursive case: chain through intermediate GenServer. A module in a
+// synchronous call cycle is not passed through: the cycle is its own,
+// graver finding (call_cycle), and every length around it was once a
+// chain of its own. Only the shortest chain between two servers is
+// kept — the one the finding reports — so no path is enumerated at
+// every length up to the bound.
 timeout_chain(from, to, d + 1) :-
   callback_sync_dep(from, mid),
+  !chain_cycle_member(mid),
   timeout_chain(mid, to, d),
   from != to,
   d < 10.
+
+timeout_chain(from, to, d1) <= timeout_chain(from, to, d2) :- d2 <= d1.
+
+.decl chain_cycle_member(mod: symbol)
+
+chain_cycle_member(m) :- call_cycle(m, _, _, _, "call", _, _).
+chain_cycle_member(m) :- call_cycle(_, m, _, _, "call", _, _).
 
 // ── Output: timeout chain risk ───────────────────────────────────────
 

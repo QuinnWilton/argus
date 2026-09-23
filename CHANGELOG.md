@@ -715,6 +715,11 @@ the same story in the corpus.
 
 ### blocking
 
+**Changed.** `blocking.call_chain` ("chain") keeps only the shortest chain between two
+servers (a Souffle subsumption), where it enumerated every path length up
+to ten and reported one at random, and no longer passes through a module
+in a synchronous call cycle: the cycle is its own finding.
+
 **Changed.** One site, one concern: an rpc in `init/1`, and a blocking `:global` op
 `init/1` reaches, are `startup.blocks_on_peer`'s findings ("remote",
 "global") and no longer also `blocking.unbounded_wait`'s; a blocking

@@ -30,6 +30,34 @@ defmodule Argus.Analyses.BlockingChainTest do
         drop: [:kind, :depth, :inferred]
       )
 
+  describe "call_chain: which chains" do
+    test "only the shortest chain between two servers is reported" do
+      skip_without_souffle()
+      alias Argus.Test.Fixtures.ChainShapes, as: S
+
+      {:ok, results} = Argus.analyze([S.ShortA, S.ShortB, S.ShortC, S.ShortD], :blocking)
+
+      depths =
+        for [from, to, depth, _] <- chains(results, "chain"),
+            from =~ "ShortA" and to =~ "ShortD",
+            do: depth
+
+      assert depths == ["2"]
+    end
+
+    test "a chain through a synchronous call cycle is left to the cycle's finding" do
+      skip_without_souffle()
+      alias Argus.Test.Fixtures.ChainShapes, as: S
+
+      {:ok, results} = Argus.analyze([S.CycW, S.CycX, S.CycY, S.CycZ], :blocking)
+      assert results["call_cycle"] != []
+
+      refute Enum.any?(chains(results, "chain"), fn [from, to, _, _] ->
+               from =~ "CycW" and to =~ "CycZ"
+             end)
+    end
+  end
+
   describe "call_chain" do
     test "detects chain risk at depth >= 2" do
       skip_without_souffle()
