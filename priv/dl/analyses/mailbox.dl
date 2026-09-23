@@ -100,6 +100,7 @@ partial_handler(mod, h, "runtime", "catchall", "") :-
 .init mailbox_reach = CallReachSet
 
 mailbox_reach.seed(f) :- mailbox_writer(id, f, kind), kind != "cancel", !handled_self_timer(id).
+mailbox_reach.seed(f) :- sync_call_timeout(f, _, ms), ms != -1.
 
 // A timer the process arms for itself with a literal message its own
 // handle_info/2 has a clause for leaves nothing unhandled behind: the
@@ -113,7 +114,6 @@ handled_self_timer(id) :-
   function_def(f, mod, _, _, _),
   callback_tag(h, "handle_info", lit),
   function_def(h, mod, _, _, _).
-mailbox_reach.seed(f) :- sync_call_timeout(f, _, ms), ms != -1.
 
 .decl late_message_source(mod: symbol)
 
@@ -129,9 +129,6 @@ partial_handler(mod, h, "late_message", "catchall", "") :-
   !trap_exit_without_exit_clause(mod, _),
   !statem_process(mod).
 
-
-
-
 // ── A timer cancelled but not flushed ────────────────────────────────
 //
 // Process.cancel_timer/1 does not remove a message the timer already
@@ -143,7 +140,6 @@ partial_handler(mod, h, "late_message", "catchall", "") :-
 // :erlang.start_timer's `{:timeout, ref, _}`) is matched against the
 // current ref; a `receive :tick -> :ok after 0 -> :ok end` flushes.
 // Cancelling only in terminate/2 arms nothing again.
-// ── Timer cancelled without a flush ──────────────────────────────────
 //
 // The timer's identity is followed through the state: the ref the arm
 // site produces is returned or stored under a map key (timer_ref,
@@ -264,8 +260,7 @@ takes_message(mod, lit) :-
 .decl timer_cancel_without_flush(mod: symbol, cancel: symbol, arm: symbol, key: symbol, message: symbol, cancel_site: symbol, arm_site: symbol)
 .output timer_cancel_without_flush
 
-// The cancel_timer instruction that read the ref from `key`, and the
-// send_after that armed it.
+// The cancel_timer instruction in `cancel` that read the ref from `key`.
 .decl cancel_site(cancel: symbol, key: symbol, id: symbol)
 
 cancel_site(c, key, id) :- timer_cancel(id, c, "field", key, _).
@@ -316,9 +311,6 @@ cancel_cannot_go_stale(c) :- terminate_callback(c, _, _).
 cancel_cannot_go_stale(c) :- terminate_helper(c).
 cancel_cannot_go_stale(c) :- terminate_helper2(c).
 
-// The arm must be one that can follow the cancel: a timer armed only
-// in init/1 and cancelled later is stopped, not re-armed, and its
-// stale message is handled once as an ordinary one.
 // A ref that never leaves the function: armed, then cancelled from the
 // local the send_after returned (`ref = send_after(...); work();
 // cancel_timer(ref)`). No state key pairs them; the arming site does.
@@ -342,6 +334,9 @@ local_message(id, lit) :-
   timer_arm(id, a, "self", "param", pos, _),
   resolved_arg(a, pos, lit).
 
+// A ref kept under a state key. The arm must be one that can follow the
+// cancel: a timer armed only in init/1 and cancelled later is stopped,
+// not re-armed, and its stale message is handled once as an ordinary one.
 timer_cancel_without_flush(mod, c, a, key, lit, cs, arm_id) :-
   cancel_key(c, key),
   function_def(c, mod, _, _, _),
@@ -417,11 +412,6 @@ task_await_call(func, id) :-
 
 await_reach.seed(func) :- task_await_call(func, _).
 
-// ── Process task handler suppression ─────────────────────────────────
-
-// A process with a callback that can consume task results from its
-// mailbox (mailbox_handler: any handle_info/2, or a gen_statem's
-// handle_event/4) collects them there rather than by an explicit await.
 // ── Task factory suppression ─────────────────────────────────────────
 
 // A function that creates an async task in tail position returns the
@@ -439,19 +429,16 @@ task_factory(func, id) :-
 // transitively). The task reference is either discarded or returned
 // to a caller that may not await it.
 //
-// Suppressed for process modules with message-receiving callbacks,
-// which consume task results through their mailbox rather than
-// explicit await/yield.
-// Suppressed for task factories that return the task to the caller.
+// Suppressed for a module with a callback that can consume task results
+// from its mailbox (mailbox_handler: any handle_info/2, or a gen_statem's
+// handle_event/4), which collects them there rather than by an explicit
+// await, and for task factories that return the task to the caller.
 task_result_defect(func, id, "never_awaited") :-
   task_async_call(func, id),
   !await_reach.reaches(func),
   function_def(func, mod, _, _, _),
   !mailbox_handler(mod),
   !task_factory(func, id).
-
-
-
 
 // ── Yielding on a linked task ────────────────────────────────────────
 //
@@ -550,7 +537,6 @@ unconsumed_monitor(mod, f, site, "never_released") :-
   !monitor_ref_dropped(site, f),
   removes_entries(mod),
   !module_demonitors(mod).
-
 
 // ── A monitor whose ref is thrown away ───────────────────────────────
 //
@@ -652,8 +638,8 @@ reply_defect(mod, func, id, "dropped_from", "") :-
 // false positives.
 //
 // The heuristic version was written, measured against roughly six thousand
-// modules, found nothing, and was removed. `deferred_reply` remains
-// unconsumed and is the fact a real version would build on.
+// modules, found nothing, and was removed. `defers_reply` above is where a
+// real version would start.
 
 // ══ gen_statem events without a clause ══════════════════════════════
 

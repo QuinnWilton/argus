@@ -328,17 +328,11 @@ blocks_on_peer(caller, "continue", callee, "call", "later", sup, "", "") :-
 
 // ── Pattern 3: handle_continue calls back into parent supervisor ─────
 
-// The worker's handle_continue calls one of the supervisor query/management
-// functions on its parent supervisor while the parent is still mid-
-// start_link. We detect this via call_reachable from the continue handler
-// to a Supervisor or :supervisor function whose first arg is a literal
-// supervisor module.
-
-// To keep this conservative without a full inter-procedural data flow,
-// we look for any sync_call from continue_reachable_from(worker) to a
-// module that we know is a supervisor (worker's own parent). The
-// approximation: if MOD's continue calls a process registered as a
-// supervisor, AND that supervisor has MOD as a child, it's the parent.
+// The worker's handle_continue calls its parent supervisor (a
+// Supervisor query or management function) while the parent is still
+// mid-start_link. The approximation: the worker's handle_continue, or
+// what it reaches, sync-calls a supervisor module (continue_dep) that
+// has the worker as a child.
 blocks_on_peer(worker, "continue", sup, "parent", "parent", sup, "", "") :-
   continue_sync_calls(worker, sup),
   supervisor(sup, _),
@@ -346,11 +340,9 @@ blocks_on_peer(worker, "continue", sup, "parent", "parent", sup, "", "") :-
 
 // ── Defensive variant: try/catch wraps the call ──────────────────────
 
-// We don't have a `try_start` consumer wired into Datalog yet, but the
-// emit layer captures it via the existing try_start fact. Detect
-// "any try in handle_continue" and report as a crash-loop risk on top
-// of pattern 2 — the literal deadlock is suppressed by the catch but
-// the supervisor restart loop is still a bug.
+// Any try in the handle_continue of a pattern 2 caller is reported as a
+// crash-loop risk on top of it: the catch suppresses the literal
+// deadlock, but the supervisor's restart loop is still a bug.
 .decl try_in_handle_continue(mod: symbol)
 
 // try_start carries its containing function and its kind ("try" or the

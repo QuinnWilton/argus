@@ -30,17 +30,23 @@ derived_process_link(sup, child) :- supervisor_child(sup, _, child, _, _).
 // (the strategy line); witness is a function in caller_mod through which
 // the coupling flows. One row per witness — finding builders dedupe on
 // (sup, caller_mod, callee_mod).
-// The coupling itself: a stateful dependency between two children on
-// different branches of a one_for_one supervisor, with no link between
-// them in either direction. `witness` is the function in caller_mod the
-// dependency flows through.
 .decl coupling(sup: symbol, caller_mod: symbol, callee_mod: symbol, sup_site: symbol, witness: symbol)
+
+coupling(sup, caller_mod, callee_mod, sup_site, witness) :-
+  supervisor(sup, "one_for_one"),
+  supervisor_site(sup, sup_site),
+  child_subtree(sup, caller_branch, caller_mod),
+  child_subtree(sup, callee_branch, callee_mod),
+  stateful_module_dep(caller_mod, callee_mod, witness),
+  !derived_process_link(caller_mod, callee_mod),
+  !derived_process_link(callee_mod, caller_mod),
+  caller_branch != callee_branch.
 
 // The instruction inside the witness that makes the coupling call —
 // the call into the sibling module itself when the witness calls it
 // directly, otherwise the GenServer.call/cast the witness performs (both
-// come from the stage-0 `call_site` relation). A
-// witness may have several; the finding builder keeps one per pair.
+// come from the stage-0 `call_site` relation). A witness may have
+// several; the finding builder keeps one per pair.
 .decl coupling_site(witness: symbol, callee_mod: symbol, site: symbol)
 
 .decl direct_coupling_site(witness: symbol, callee_mod: symbol, site: symbol)
@@ -84,11 +90,6 @@ coupling_site(w, callee_mod, id) :-
   sibling_caller_reach.reaches(w, g),
   call_site(id, g, callee_mod, _, _).
 
-// `site` is the instruction ID of the coupling call when one is known,
-// and falls back to the witness function ID otherwise, so consumers can
-// always anchor it with `Findings.at_site/2`. `kind` is "call" when the
-// caller waits on the sibling anywhere along the dependency, "cast" when
-// every path is one-way.
 // ══ The one output: a child depending on a sibling ═══════════════════
 //
 // One relationship, three reasons it goes stale. `reason` says which,
@@ -103,7 +104,9 @@ coupling_site(w, callee_mod, id) :-
 // `witness` is the function in the caller the dependency flows through
 // and `site` the instruction that makes the call when one is known, the
 // witness function ID otherwise. One row per witness; finding builders
-// dedupe on (sup, caller, callee, reason).
+// dedupe on (sup, caller, callee, reason). `site` anchors with
+// `Findings.at_site/2` either way.
+//
 // `basis` says how the dependency was established: `resolved` through a
 // call or cast whose target is known, `inferred` through the module-level
 // clause of stateful_module_dep alone — the caller reaches some function
@@ -155,19 +158,16 @@ sibling_dependency(sup, caller_mod, callee_mod, "restart_isolation", kind, sup_s
   stateful_module_dep_kind(caller_mod, callee_mod, kind),
   dep_basis(caller_mod, callee_mod, basis, p).
 
-
-coupling(sup, caller_mod, callee_mod, sup_site, witness) :-
-  supervisor(sup, "one_for_one"),
-  supervisor_site(sup, sup_site),
-  child_subtree(sup, caller_branch, caller_mod),
-  child_subtree(sup, callee_branch, callee_mod),
-  stateful_module_dep(caller_mod, callee_mod, witness),
-  !derived_process_link(caller_mod, callee_mod),
-  !derived_process_link(callee_mod, caller_mod),
-  caller_branch != callee_branch.
-
 // ══ A permanent child depending on a sibling that may not come back ═
-
+//
+// Permanent child that depends (transitively) on a sibling whose
+// restart policy can leave it dead: a transient child that stops
+// normally is never restarted, and a temporary child is never restarted
+// at all — strictly worse. Either way the permanent child keeps running
+// against a process that no longer exists.
+//
+// sup_site anchors at the tree definition; witness is a function in the
+// permanent child through which the dependency flows. One row per
 // witness — finding builders dedupe on (sup, permanent, sibling).
 sibling_dependency(sup, perm, sibling, "restart_policy", restart, sup_site, witness, witness, basis, p) :-
   supervisor(sup, _),
@@ -177,16 +177,6 @@ sibling_dependency(sup, perm, sibling, "restart_policy", restart, sup_site, witn
   (restart = "transient" ; restart = "temporary"),
   stateful_module_dep(perm, sibling, witness),
   dep_basis(perm, sibling, basis, p).
-
-
-// Permanent child that depends (transitively) on a sibling whose
-// restart policy can leave it dead: a transient child that stops
-// normally is never restarted, and a temporary child is never restarted
-// at all — strictly worse. Either way the permanent child keeps running
-// against a process that no longer exists.
-//
-// sup_site anchors at the tree definition; witness is a function in the
-// permanent child through which the dependency flows. One row per
 
 // ── A sibling's pid cached in init/1 under one_for_one ───────────────
 //

@@ -46,7 +46,6 @@ partial_handle_info(mod, func) :-
   function_def(func, mod, "handle_info", 2, _),
   !callback_total(func, "handle_info").
 
-
 // A module that traps exits and has a handle_info/2 whose clauses never
 // take an {:EXIT, ...}: the trapped exit arrives as a message nothing
 // matches. `witness` is the function that sets trap_exit. A gen_statem

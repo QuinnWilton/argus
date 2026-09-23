@@ -137,13 +137,12 @@ guarded_exit_call(f) :- catch_tag(_, f, "exit", ":noproc").
 // Teardown that touches a sibling the supervisor owns, in one relation:
 // `phase` is "terminate" (terminate/2 waits on a sibling that may already
 // be gone; `kind` = "call") or "handler" (a handler stops a sibling the
-// supervisor still owns; `kind` = "stop").
+// supervisor still owns; `kind` = "stop"). `handler` is the callback the
+// row belongs to, `site` the call in `via` that makes the dependency when
+// it is direct (else empty), `sup_site` where the supervisor places both.
 .decl teardown_touches_sibling(mod: symbol, sibling: symbol, phase: symbol, kind: symbol, via: symbol, sup: symbol, handler: symbol, site: symbol, sup_site: symbol)
 .output teardown_touches_sibling
 
-// `handler` is the callback the row belongs to, `site` the call in `via`
-// that makes the dependency when it is direct (else empty), `sup_site`
-// where the supervisor places both.
 .decl sibling_call(mod: symbol, sibling: symbol, func: symbol, via: symbol, sup: symbol)
 
 sibling_call(mod, sibling, func, func, sup) :-

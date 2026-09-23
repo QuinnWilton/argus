@@ -84,18 +84,18 @@
 // behaves_as is safe by construction; a rule that carries a target into
 // a finding must exclude all three, as calls.dl does.
 
-// How many closures a function creates — the shape a transaction body or
-// a pure higher-order function is recognised by.
 // Reachability components: see reach.dl.
 .include "reach.dl"
 // Closure ownership, receives by shape, what try handlers take, the
-// effect model's categories.
+// effect model's categories and its sinks.
 .include "closures.dl"
 .include "receive.dl"
 .include "exceptions.dl"
 .include "effects.dl"
 .include "sinks.dl"
 
+// How many closures a function creates — the shape a transaction body or
+// a pure higher-order function is recognised by.
 .decl closure_count(func: symbol, n: number)
 
 closure_count(func, n) :-
