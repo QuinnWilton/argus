@@ -4,7 +4,7 @@ defmodule Argus.Cfg do
   and loop headers.
 
   Built per module from the `instruction`/`label_at`/`jump`/`branch`/
-  `select_branch` facts, so the graph is memoized with the module's
+  `select_branch`/`next` facts, so the graph is memoized with the module's
   extraction rather than re-derived on every solve: instructions are grouped
   into maximal straight-line blocks (the classic leader algorithm), edges
   carry their kind (`t:Argus.Cfg.Block.edge_kind/0`), and each function gets a
@@ -15,16 +15,21 @@ defmodule Argus.Cfg do
   `function_def` — not instruction 0, which is the `func_info` failure
   landing pad that never falls through.
 
+  Whether an instruction falls through is the emitter's `next` fact, which
+  is `Argus.Instr.falls_through?/1`: the graph and every register walk read
+  the instruction set one way. So the `raise` BIF, `badrecord` and the
+  other raises end their block, and `raw_raise` does not — it is
+  `erlang:raise/3`, which returns `badarg` for an invalid class and runs
+  the code the compiler put after it.
+
   Known imprecision, by design: a call to `erlang:raise`/`erlang:error` is an
   ordinary call followed by a (never-taken) fallthrough edge — fail-edge and
-  terminator classification is fact-driven, not BIF-name-driven.
+  terminator classification is fact-driven, not callee-driven.
   """
 
   alias Argus.Cfg.{Block, Function}
+  alias Argus.Instr
   alias Argus.InstrId
-
-  @tail_calls ~w(call_only call_ext_only call_last call_ext_last)
-  @raises ~w(if_end case_end badmatch try_case_end raw_raise)
 
   @doc """
   Build per-function CFGs from typed facts (`Argus.Pipeline.extract/2` with
@@ -32,6 +37,11 @@ defmodule Argus.Cfg do
   """
   @spec build(Argus.Facts.t()) :: %{{String.t(), non_neg_integer()} => Function.t()}
   def build(facts) when is_map(facts) do
+    if Map.get(facts, :instruction, []) != [] and not Map.has_key?(facts, :next) do
+      raise ArgumentError,
+            "Argus.Cfg.build/1 needs the next relation: it is what says an instruction falls through"
+    end
+
     instrs = group(facts, :instruction, fn row -> {row.id.idx, row.op} end)
     labels = group(facts, :label_at, fn row -> {row.label, row.id.idx} end)
     jumps = group(facts, :jump, fn row -> {row.id.idx, row.target} end)
@@ -46,6 +56,13 @@ defmodule Argus.Cfg do
       )
 
     handlers = group(facts, :try_start, fn row -> {row.id.idx, row.handler} end)
+
+    falls =
+      facts
+      |> Map.get(:next, [])
+      |> Enum.reduce(%{}, fn %{from: from}, acc ->
+        Map.update(acc, InstrId.fa(from), %{from.idx => true}, &Map.put(&1, from.idx, true))
+      end)
 
     selects =
       facts
@@ -77,6 +94,7 @@ defmodule Argus.Cfg do
         branches: Map.get(branches, fa, %{}),
         fails: Map.get(fails, fa, %{}),
         handlers: Map.get(handlers, fa, %{}),
+        falls: Map.get(falls, fa, %{}),
         selects: Map.get(selects, fa, %{}),
         entry_label: Map.get(entries, fa)
       }
@@ -130,6 +148,7 @@ defmodule Argus.Cfg do
 
   defp build_function({func, arity}, fun) do
     n = fun.ops |> Map.keys() |> Enum.max() |> Kernel.+(1)
+    fun = Map.put(fun, :last, n - 1)
 
     leaders = leaders(fun, n)
     blocks = blocks_from_leaders(leaders, n)
@@ -187,6 +206,11 @@ defmodule Argus.Cfg do
   end
 
   # The control behavior of the instruction at `idx`, or nil for straight-line.
+  # An instruction with no `next` row that none of the transfers above
+  # names leaves the function: by returning, by a tail call, or by raising
+  # (func_info, the raise BIF and the other raises). The last instruction
+  # of a function has no `next` row either way, and nothing after it to
+  # fall to.
   defp control_kind(fun, idx) do
     op = Map.fetch!(fun.ops, idx)
 
@@ -197,10 +221,9 @@ defmodule Argus.Cfg do
       Map.has_key?(fun.fails, idx) -> :branch
       Map.has_key?(fun.handlers, idx) -> :exception
       op == "return" -> :return
-      op == "func_info" -> :raise
-      op in @tail_calls -> :tail_call
-      op in @raises -> :raise
-      true -> nil
+      Instr.tail_call_op?(op) -> :tail_call
+      Map.has_key?(fun.falls, idx) or idx == fun.last -> nil
+      true -> :raise
     end
   end
 

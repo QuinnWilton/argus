@@ -17,7 +17,10 @@ defmodule Argus.Cfg.Block do
   Why control leaves this block:
 
   - `:return` / `:tail_call` — leaves the function entirely.
-  - `:raise` — raises (badmatch/case_end/if_end/try_case_end/raw_raise).
+  - `:raise` — neither returns nor falls through: a raise (badmatch,
+    case_end, if_end, try_case_end, badrecord, the `raise` BIF) or the
+    func_info pad. Not `raw_raise`, which falls through when its class is
+    invalid (`Argus.Instr`).
   - `:jump` — unconditional transfer (includes loop_rec_end/wait loop-backs).
   - `:branch` — two-way conditional (a test, a fail-labelled op, or
     receive-loop control).

@@ -28,6 +28,14 @@ or rename by the 0.17 entry below.
 
 ### Fact schema and extraction
 
+**Fixed.** `Argus.Cfg` reads fall-through from the `next` facts, which
+are `Argus.Instr.falls_through?/1`, instead of its own op lists: the
+`raise` BIF (every Elixir re-raise) and `badrecord` end their block
+rather than falling into the code after them, `raw_raise` falls through
+as erts runs it (an invalid class returns `badarg`), and `apply_last` is
+a tail call. `Argus.Cfg.build/1` raises when handed instructions without
+`next`. `Argus.Instr.tail_call_op?/1` answers for an op name.
+
 **Fixed.** The extractors spell a literal value the way `literal_value` does,
 through the new `Argus.Extractor.Helpers.spell/1`: key identities
 (`key_identity/4`, `tuple_element_identity/5`, map fields), timer

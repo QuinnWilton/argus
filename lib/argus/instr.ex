@@ -93,12 +93,24 @@ defmodule Argus.Instr do
   def call?({:apply, _}), do: true
   def call?(_instr), do: false
 
+  @tail_call_ops [:call_only, :call_ext_only, :call_last, :call_ext_last, :apply_last]
+  @tail_call_names Enum.map(@tail_call_ops, &Atom.to_string/1)
+
   @doc "Whether `instr` is a tail call: a call whose callee returns for this function."
   @spec tail_call?(instr()) :: boolean()
-  def tail_call?({op, _, _}) when op in [:call_only, :call_ext_only], do: true
-  def tail_call?({op, _, _, _}) when op in [:call_last, :call_ext_last], do: true
-  def tail_call?({:apply_last, _, _}), do: true
+  def tail_call?(instr) when is_tuple(instr) and tuple_size(instr) > 0,
+    do: tail_call_op?(elem(instr, 0)) and known?(instr)
+
   def tail_call?(_instr), do: false
+
+  @doc """
+  Whether an instruction named `op` (an atom, or the string an
+  `instruction` fact's `op` column holds) is a tail call — what a reader
+  holding only the name, like `Argus.Cfg`, asks.
+  """
+  @spec tail_call_op?(atom() | String.t()) :: boolean()
+  def tail_call_op?(op) when is_atom(op), do: op in @tail_call_ops
+  def tail_call_op?(op) when is_binary(op), do: op in @tail_call_names
 
   @doc "Whether `instr` writes `reg` (a plain or typed register)."
   @spec defines?(instr(), term()) :: boolean()

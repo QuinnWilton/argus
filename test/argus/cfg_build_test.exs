@@ -207,6 +207,45 @@ defmodule Argus.CfgBuildTest do
            end)
   end
 
+  describe "raises read as Argus.Instr reads them" do
+    # One function of hand-written disassembly: `body` after the entry label.
+    defp graph(body) do
+      functions = [
+        {:function, :f, 3, 2,
+         [{:label, 1}, {:func_info, {:atom, :m}, {:atom, :f}, 3}, {:label, 2}] ++ body}
+      ]
+
+      Cfg.build_for(%{module: :m, functions: functions}, :f, 3)
+    end
+
+    defp terminator_of(fun, idx),
+      do: Enum.find_value(fun.blocks, fn {_id, b} -> if elem(b.range, 1) == idx, do: b end)
+
+    test "raw_raise falls through: an invalid class returns badarg to the code after it" do
+      fun = graph([:raw_raise, {:move, {:atom, :ok}, {:x, 0}}, :return])
+
+      entry = fun.blocks[fun.entry]
+      assert entry.terminator == :return
+
+      refute Enum.any?(fun.blocks, fn {_id, b} -> b.terminator == :raise and b.id == fun.entry end)
+    end
+
+    test "the raise BIF and badrecord end their block with no successor" do
+      for raise <- [{:bif, :raise, {:f, 0}, [{:x, 2}, {:x, 1}], {:x, 0}}, {:badrecord, {:x, 0}}] do
+        fun = graph([raise, {:move, {:atom, :ok}, {:x, 0}}, :return])
+        block = terminator_of(fun, 3)
+
+        assert block.terminator == :raise, "#{inspect(raise)} ends its block"
+        assert block.succs == []
+      end
+    end
+
+    test "apply_last leaves the function as a tail call" do
+      fun = graph([{:apply_last, 1, 0}])
+      assert fun.blocks[fun.entry].terminator == :tail_call
+    end
+  end
+
   describe "structural invariants" do
     @fixtures [
       "defmodule CfgP1 do\n  def add(a, b), do: a + b\nend\n",
