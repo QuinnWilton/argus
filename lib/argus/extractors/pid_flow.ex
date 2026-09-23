@@ -502,11 +502,11 @@ defmodule Argus.Extractors.PidFlow do
     do: inspect(atom)
 
   def name_of({:global, name} = global) do
-    if literal?(name), do: inspect(global), else: nil
+    if literal?(name), do: Helpers.spell(global), else: nil
   end
 
   def name_of({:via, mod, key} = via) when is_atom(mod) and mod != :dynamic do
-    if literal?(key), do: inspect(via), else: nil
+    if literal?(key), do: Helpers.spell(via), else: nil
   end
 
   def name_of(_other), do: nil
@@ -1048,7 +1048,7 @@ defmodule Argus.Extractors.PidFlow do
   defp selector({:atom, atom}), do: inspect(atom)
   defp selector({:integer, n}), do: inspect(n)
   defp selector({:float, f}), do: inspect(f)
-  defp selector({:literal, term}), do: inspect(term)
+  defp selector({:literal, term}), do: Helpers.spell(term)
   defp selector(nil), do: inspect([])
   defp selector(_register), do: "*"
 

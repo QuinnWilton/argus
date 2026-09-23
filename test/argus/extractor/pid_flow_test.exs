@@ -1,6 +1,7 @@
 defmodule Argus.Extractors.PidFlowTest do
   use ExUnit.Case, async: true
 
+  alias Argus.Extractor.Helpers
   alias Argus.Extractors.PidFlow
   alias Argus.Test.Fixtures.PidFlow, as: F
 
@@ -21,6 +22,20 @@ defmodule Argus.Extractors.PidFlowTest do
   # Rows with the site column dropped, for assertions that do not care
   # which instruction it is.
   defp unsited(rows), do: Enum.map(rows, &tl/1)
+
+  describe "names" do
+    # The registry side (ProcessRegistry) spells a name with Helpers.spell/1;
+    # a lookup must spell it the same, or the two never join: a key past
+    # inspect's bounds carries a digest.
+    test "a via or global name is spelled as the registry side spells it" do
+      long = {:via, Registry, {:reg, String.duplicate("k", 5000)}}
+      assert PidFlow.name_of(long) == Helpers.spell(long)
+      assert PidFlow.name_of(long) =~ " #"
+
+      global = {:global, {:cache, String.duplicate("x", 5000)}}
+      assert PidFlow.name_of(global) == Helpers.spell(global)
+    end
+  end
 
   describe "allocation sites" do
     test "a proc_lib start or a monitoring spawn_opt returns the pid in its own shape" do

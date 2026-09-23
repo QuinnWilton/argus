@@ -410,6 +410,12 @@ registers it does not keep.
 
 ### Process points-to
 
+**Fixed.** `PidFlow` spells a literal `{:global, name}` or `{:via, mod,
+key}` name, and a literal map key it selects on, with `Helpers.spell/1`,
+as `ProcessRegistry` spells the names it registers: a name past
+`inspect/2`'s bounds carried a digest on the registry side and not on the
+lookup side, so the two never joined.
+
 **Changed.** `coupling` reads the points-to analysis where the extractor's
 target column says `"dynamic"`: a `Process.link/1` whose pid resolves to
 a server (`signals.dl`'s `signal_target`) links the two modules, so a
