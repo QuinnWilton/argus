@@ -35,6 +35,9 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.Machine,
     PidFlow.Keeper,
     PidFlow.KeeperClient,
+    PidFlow.Directory,
+    PidFlow.DirectoryClient,
+    PidFlow.Carrier,
     PidFlow.Quiet
   ]
 
@@ -311,6 +314,17 @@ defmodule Argus.Clientlib.ProcessesTest do
     calls = for [f, _site] <- r["self_call"], do: f
 
     assert Enum.count(calls, &(&1 == "Keeper:handle_call/3")) == 2
+  end
+
+  test "a pid a server replies with reaches its caller", %{tmp_dir: tmp_dir} do
+    r = solve(tmp_dir, ~w(sync_dep process_call))
+    # The directory keeps workers under keys it does not know and replies
+    # with one; the client calls what it gets.
+    assert ["DirectoryClient:ping/1", "Back"] in r["sync_dep"]
+
+    # A read by a key not known does not read a field written under a
+    # literal key: the socket's transport is not every dynamic read of it.
+    refute Enum.any?(r["process_call"], &match?(["Carrier:" <> _ | _], &1))
   end
 
   test "a computed module, apply and a library pid name no process", %{tmp_dir: tmp_dir} do

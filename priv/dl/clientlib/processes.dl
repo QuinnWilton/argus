@@ -15,7 +15,8 @@
 //   name   — a pid registered under a literal name;
 //   self   — self(), which is whichever process runs the function;
 //   obj    — a term the function built;
-//   load   — a field read from a term the function did not build.
+//   load   — a field read from a term the function did not build;
+//   reply  — what a GenServer.call at a site returned.
 // Parameters are context-insensitive, like Andersen's analysis: a
 // parameter points to everything any caller passes it. That is "may
 // point to", and a rule that concludes something from it asks what a
@@ -80,16 +81,42 @@ source_pts(f, "result", c, x) :- pid_result(c, f, g), returns_pts(g, x).
 source_pts(f, "name", n, p) :- reads_name(f, n), named_pid(n, p).
 source_pts(f, "self", "self", p) :- self_pid(f, p).
 
-// A load reads a field of whatever its base points to; a map's field
-// written under a key not known may be any key.
+// A GenServer.call returns the server's reply: the second field of a
+// `{:reply, reply, state}` its handle_call/3 returns. Every reply of the
+// server, whichever clause the message reaches.
+source_pts(f, "reply", id, x) :-
+  call_site_target(id, f, "call", p),
+  server_process(p, m),
+  function_def(h, m, "handle_call", 3, _),
+  returns_pts(h, t),
+  pid_object(_, t, "tuple", ":reply", _),
+  field_pts(t, "{1}", x).
+
+// A load reads a field of whatever its base points to.
 source_pts(f, "load", l, x) :-
   pid_load(f, l, sel, bk, bs),
   source_pts(f, bk, bs, o),
-  field_pts(o, sel, x).
+  reads_field(o, sel, x).
 
-source_pts(f, "load", l, x) :-
-  pid_load(f, l, _, bk, bs),
-  source_pts(f, bk, bs, o),
+// What a read of field `sel` of `obj` may see: the field, and in a map a
+// field written under a key not known, which may be any key. A read by a
+// key not known sees only the latter: taking every field would make
+// `Map.get(struct, key)` every pid the struct holds. Derived only for the
+// reads the program makes (field_read), never for every term and selector.
+.decl reads_field(obj: symbol, sel: symbol, x: symbol)
+.decl field_read(obj: symbol, sel: symbol)
+
+field_read(o, sel) :- pid_load(f, _, sel, bk, bs), source_pts(f, bk, bs, o).
+
+field_read(o, sel) :-
+  targets_field(g, _, sel, _, _),
+  pid_arg(_, f, g, _, "call", sk, s),
+  source_pts(f, sk, s, o).
+
+reads_field(o, sel, x) :- field_read(o, sel), field_pts(o, sel, x).
+
+reads_field(o, sel, x) :-
+  field_read(o, sel),
   pid_object(_, o, "map", _, _),
   field_pts(o, "*", x).
 
@@ -277,14 +304,7 @@ source_field_pts(f, sk, s, sel, x) :-
   targets_field(g, _, sel, _, _),
   pid_arg(_, f, g, _, "call", sk, s),
   source_pts(f, sk, s, o),
-  field_pts(o, sel, x).
-
-source_field_pts(f, sk, s, sel, x) :-
-  targets_field(g, _, sel, _, _),
-  pid_arg(_, f, g, _, "call", sk, s),
-  source_pts(f, sk, s, o),
-  pid_object(_, o, "map", _, _),
-  field_pts(o, "*", x).
+  reads_field(o, sel, x).
 
 // `func` waits on (call), casts to (cast), sends to (info), signals an
 // exit to (exit), monitors (monitor), links to (link) or unlinks from
@@ -313,7 +333,7 @@ process_call(f, id, id, kind, p) :-
   pid_load(f, l, sel, bk, bs),
   bk != "param",
   source_pts(f, bk, bs, o),
-  field_pts(o, sel, p),
+  reads_field(o, sel, p),
   process(p).
 
 // An entry's own parameter, or a field of it.
@@ -326,7 +346,7 @@ process_call(f, id, id, kind, p) :-
   pid_use(id, f, kind, "load", l),
   pid_load(f, l, sel, "param", k),
   entry_pts(f, k, o),
-  field_pts(o, sel, p),
+  reads_field(o, sel, p),
   process(p).
 
 // A helper's parameter, resolved at the caller that knows the pid.
@@ -355,7 +375,7 @@ process_call(f, a, id, kind, p) :-
   pid_arg(a, f, g, k, "call", "param", j),
   targets_field(g, k, sel, kind, id),
   entry_pts(f, j, o),
-  field_pts(o, sel, p),
+  reads_field(o, sel, p),
   process(p).
 
 // The call, cast or send at `id` in `func` may target `proc`, whoever

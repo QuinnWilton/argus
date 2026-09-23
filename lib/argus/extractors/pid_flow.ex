@@ -43,7 +43,9 @@ defmodule Argus.Extractors.PidFlow do
   - `self` — `self()`, which is whichever process runs the function;
   - `obj` — a term this function built (its id, see `pid_object`);
   - `load` — a field read from a term this function did not build (the
-    load's id, see `pid_load`).
+    load's id, see `pid_load`);
+  - `reply` — what the `GenServer.call` at a site returned: the reply of
+    the server the call reaches.
 
   ## Emitted facts
 
@@ -230,6 +232,14 @@ defmodule Argus.Extractors.PidFlow do
   }
 
   @tail_ops [:call_only, :call_last, :call_ext_only, :call_ext_last]
+
+  # A synchronous call returns what the server's handle_call/3 replies.
+  @replying_calls [
+    {GenServer, :call, 2},
+    {GenServer, :call, 3},
+    {:gen_server, :call, 2},
+    {:gen_server, :call, 3}
+  ]
 
   @impl true
   def relations,
@@ -783,6 +793,9 @@ defmodule Argus.Extractors.PidFlow do
 
         r |> object(idx, obj) |> write({:x, 0}, obj_token(idx))
 
+      mfa in @replying_calls ->
+        write(r, {:x, 0}, MapSet.new([{:reply, idx}]))
+
       project?(site) ->
         write(r, {:x, 0}, MapSet.new([{:result, idx}]))
 
@@ -976,7 +989,7 @@ defmodule Argus.Extractors.PidFlow do
             )
           end
 
-        {kind, _} when kind in [:param, :result, :load] ->
+        {kind, _} when kind in [:param, :result, :load, :reply] ->
           {MapSet.put(acc, {:load, id}), %{r | loads: [{id, sel, token} | r.loads]}}
 
         _pid_or_fun ->
@@ -989,11 +1002,20 @@ defmodule Argus.Extractors.PidFlow do
 
   defp local_field(ctx, obj, sel, id, r, seen, acc) do
     own =
-      obj.fields
-      |> Map.get(sel, MapSet.new())
-      |> MapSet.union(
-        if obj.shape == "map", do: Map.get(obj.fields, "*", MapSet.new()), else: MapSet.new()
-      )
+      case {obj.shape, sel} do
+        # A read by a literal key may read what was written under a key
+        # not known. A read by a key not known reads only that: taking
+        # every field would make `Map.get(struct, key)` every pid in the
+        # struct (a socket's transport pid, say).
+        {"map", sel} when sel != "*" ->
+          MapSet.union(
+            Map.get(obj.fields, sel, MapSet.new()),
+            Map.get(obj.fields, "*", MapSet.new())
+          )
+
+        _ ->
+          Map.get(obj.fields, sel, MapSet.new())
+      end
 
     acc = MapSet.union(acc, own)
 
@@ -1457,6 +1479,9 @@ defmodule Argus.Extractors.PidFlow do
 
       {:result, idx} ->
         [{"result", site(ctx.fun, idx)}]
+
+      {:reply, idx} ->
+        [{"reply", site(ctx.fun, idx)}]
 
       {:name, name} ->
         [{"name", name}]

@@ -2215,9 +2215,9 @@ defmodule Argus.Schema do
       {:arg_pos, :symbol, "0-based parameter position, as a symbol"},
       {:via, :symbol, "call, init, spawn, child or closure"},
       {:src_kind, :symbol,
-       "where the value comes from: proc, param, result, name, self, obj or load"},
+       "where the value comes from: proc, param, result, name, self, obj, load or reply"},
       {:src, :symbol,
-       "the process, the parameter position, the call site, the name, self, the term or the load"}
+       "the process, the parameter position, the call site, the name, self, the term, the load or the call site replied to"}
     ],
     doc: """
     At `id`, `callee`'s parameter `arg_pos` may hold the source: a call \
@@ -2235,9 +2235,9 @@ defmodule Argus.Schema do
     fields: [
       {:func, :func_id, "function returning"},
       {:src_kind, :symbol,
-       "where the value comes from: proc, param, result, name, self, obj or load"},
+       "where the value comes from: proc, param, result, name, self, obj, load or reply"},
       {:src, :symbol,
-       "the process, the parameter position, the call site, the name, self, the term or the load"}
+       "the process, the parameter position, the call site, the name, self, the term, the load or the call site replied to"}
     ],
     doc: "`func` may return the source, directly or by a tail call."
   }
@@ -2261,9 +2261,9 @@ defmodule Argus.Schema do
       {:func, :func_id, "function making the call"},
       {:api_kind, :symbol, "call or cast (the sync_call/async_cast table), or info for a send"},
       {:src_kind, :symbol,
-       "where the value comes from: proc, param, result, name, self, obj or load"},
+       "where the value comes from: proc, param, result, name, self, obj, load or reply"},
       {:src, :symbol,
-       "the process, the parameter position, the call site, the name, self, the term or the load"}
+       "the process, the parameter position, the call site, the name, self, the term, the load or the call site replied to"}
     ],
     doc: """
     The GenServer-style call or cast at `id`, or the send (info), may \
@@ -2280,9 +2280,9 @@ defmodule Argus.Schema do
       {:func, :func_id, "function making the call, cast or send"},
       {:api_kind, :symbol, "call, cast or info (a send)"},
       {:src_kind, :symbol,
-       "where the value comes from: proc, param, result, name, self, obj or load"},
+       "where the value comes from: proc, param, result, name, self, obj, load or reply"},
       {:src, :symbol,
-       "the process, the parameter position, the call site, the name, self, the term or the load"}
+       "the process, the parameter position, the call site, the name, self, the term, the load or the call site replied to"}
     ],
     doc: """
     The message of the call, cast or send at `id` may be the source. It \
@@ -2300,9 +2300,9 @@ defmodule Argus.Schema do
       {:func, :func_id, "function registering"},
       {:name, :symbol, "the literal name"},
       {:src_kind, :symbol,
-       "where the value comes from: proc, param, result, name, self, obj or load"},
+       "where the value comes from: proc, param, result, name, self, obj, load or reply"},
       {:src, :symbol,
-       "the process, the parameter position, the call site, the name, self, the term or the load"}
+       "the process, the parameter position, the call site, the name, self, the term, the load or the call site replied to"}
     ],
     doc:
       "The call at `id` registers the source under `name` (Process.register/2, :erlang.register/2)."
@@ -2317,9 +2317,9 @@ defmodule Argus.Schema do
       {:message, :symbol,
        "literal atom, {:tag, …} for a tuple with a literal atom tag, or dynamic"},
       {:src_kind, :symbol,
-       "where the value comes from: proc, param, result, name, self, obj or load"},
+       "where the value comes from: proc, param, result, name, self, obj, load or reply"},
       {:src, :symbol,
-       "the process, the parameter position, the call site, the name, self, the term or the load"}
+       "the process, the parameter position, the call site, the name, self, the term, the load or the call site replied to"}
     ],
     doc: """
     The send at `id` (`send/2`, `!`, Process.send/3) goes to the source or, \
@@ -2336,9 +2336,9 @@ defmodule Argus.Schema do
       {:func, :func_id, "function making it"},
       {:signal, :symbol, "exit, monitor, link or unlink"},
       {:src_kind, :symbol,
-       "where the value comes from: proc, param, result, name, self, obj or load"},
+       "where the value comes from: proc, param, result, name, self, obj, load or reply"},
       {:src, :symbol,
-       "the process, the parameter position, the call site, the name, self, the term or the load"}
+       "the process, the parameter position, the call site, the name, self, the term, the load or the call site replied to"}
     ],
     doc: """
     The exit signal (Process.exit/2, :erlang.exit/2), monitor \
@@ -2373,9 +2373,9 @@ defmodule Argus.Schema do
       {:sel, :symbol,
        "a map key (inspected), {i} for tuple position i (0-based), [] for a list's elements, * for an unknown map key"},
       {:src_kind, :symbol,
-       "where the value comes from: proc, param, result, name, self, obj or load"},
+       "where the value comes from: proc, param, result, name, self, obj, load or reply"},
       {:src, :symbol,
-       "the process, the parameter position, the call site, the name, self, the term or the load"}
+       "the process, the parameter position, the call site, the name, self, the term, the load or the call site replied to"}
     ],
     doc: "The field `sel` of `obj` may hold the source."
   }
@@ -2387,9 +2387,9 @@ defmodule Argus.Schema do
       {:func, :func_id, "function building the term"},
       {:obj, :symbol, "the term"},
       {:src_kind, :symbol,
-       "where the value comes from: proc, param, result, name, self, obj or load"},
+       "where the value comes from: proc, param, result, name, self, obj, load or reply"},
       {:src, :symbol,
-       "the process, the parameter position, the call site, the name, self, the term or the load"}
+       "the process, the parameter position, the call site, the name, self, the term, the load or the call site replied to"}
     ],
     doc: """
     `obj` updates the source: the fields `obj` does not set (pid_sets) are \
@@ -2415,9 +2415,9 @@ defmodule Argus.Schema do
       {:load, :symbol, "the load: the reading instruction's ID and the field"},
       {:sel, :symbol, "the field read, as in pid_field"},
       {:src_kind, :symbol,
-       "where the value comes from: proc, param, result, name, self, obj or load"},
+       "where the value comes from: proc, param, result, name, self, obj, load or reply"},
       {:src, :symbol,
-       "the process, the parameter position, the call site, the name, self, the term or the load"}
+       "the process, the parameter position, the call site, the name, self, the term, the load or the call site replied to"}
     ],
     doc: """
     The load `load` (a `load` source in `func`) reads the field `sel` of \

@@ -566,6 +566,42 @@ defmodule Argus.Test.Fixtures.PidFlow do
     end
   end
 
+  defmodule Directory do
+    @moduledoc "Starts workers under keys it does not know and hands them out on request."
+    use GenServer
+
+    alias Argus.Test.Fixtures.PidFlow.Back
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+    def lookup(id), do: GenServer.call(__MODULE__, {:lookup, id})
+
+    @impl true
+    def init(:ok), do: {:ok, %{workers: %{}}}
+
+    @impl true
+    def handle_cast({:add, id}, s) do
+      {:ok, pid} = Back.start_link()
+      {:noreply, %{s | workers: Map.put(s.workers, id, pid)}}
+    end
+
+    @impl true
+    def handle_call({:lookup, id}, _from, s), do: {:reply, Map.get(s.workers, id), s}
+  end
+
+  defmodule Carrier do
+    @moduledoc "Reads a map holding a pid under a literal key by a key it does not know."
+    def call_any(key) do
+      {:ok, back} = Argus.Test.Fixtures.PidFlow.Back.start_link()
+      socket = %{transport: back}
+      GenServer.call(Map.get(socket, key), :ping)
+    end
+  end
+
+  defmodule DirectoryClient do
+    @moduledoc "Calls the worker the directory hands it."
+    def ping(id), do: GenServer.call(Argus.Test.Fixtures.PidFlow.Directory.lookup(id), :ping)
+  end
+
   defmodule Quiet do
     @moduledoc "Starts with a computed module, apply, and a pid from a library call: no process to name."
     def applied(m), do: apply(m, :start_link, [])

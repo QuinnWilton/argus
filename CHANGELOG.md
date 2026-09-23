@@ -281,6 +281,18 @@ registers it does not keep.
 
 ### Process points-to
 
+**Added.** A pid a server replies with reaches its caller: a
+`GenServer.call`'s result is a `reply` source, the second field of the
+`{:reply, reply, state}` tuples the target's `handle_call/3` returns
+(every clause's: the message is not matched to one). `pid =
+Directory.lookup(id)` then `GenServer.call(pid, ...)` depends on the
+worker the directory hands out. A map read by a key not known reads what
+was written under keys not known (`Map.put(workers, id, pid)`), so a
+registry map keyed at run time hands out what it holds; it does not read
+every field, or `Map.get(socket, key)` would be the socket's transport
+pid (phoenix_live_view's test client looked like a peer its channel
+calls back).
+
 **Added.** Schema 56. `pid_signal(id, func, signal, src_kind, src)`:
 an exit signal (`Process.exit/2`, `:erlang.exit/2`), a monitor
 (`Process.monitor/1,2`, `:erlang.monitor/2,3`), a link or an unlink, with
