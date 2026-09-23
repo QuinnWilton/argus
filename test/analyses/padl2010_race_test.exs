@@ -5,7 +5,7 @@ defmodule Argus.Analyses.Padl2010RaceTest do
   warning Dialyzer's implementation of it added. The fixtures in
   `test/fixtures/erl/` keep the paper's code.
   """
-  use ExUnit.Case
+  use ExUnit.Case, async: true
 
   alias Argus.Souffle
 
