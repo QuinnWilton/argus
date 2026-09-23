@@ -83,10 +83,11 @@ defmodule Scry.Runner do
 
       prior_sources = warm_start(db, manifest_path, force?)
 
-      %{modules: discovered, duplicates: duplicates, apps: apps} = Scry.Scanner.scan(config)
+      %{modules: discovered, ignored: ignored, duplicates: duplicates, apps: apps} =
+        Scry.Scanner.scan(config)
 
-      %{sources: sources, changed: changed, removed: removed} =
-        Scry.Scanner.sync(db, discovered, prior_sources)
+      %{sources: sources, changed: changed, removed: removed, ignored_moved?: ignored_moved?} =
+        Scry.Scanner.sync(db, discovered, prior_sources, ignored)
 
       souffle? = Argus.Souffle.available?()
       env = sync_environment(db, config, souffle?, apps)
@@ -105,7 +106,7 @@ defmodule Scry.Runner do
         end
 
       changed? =
-        force? or prior_sources == %{} or env.moved? or
+        force? or prior_sources == %{} or env.moved? or ignored_moved? or
           Enum.any?([changed, removed, retried, extraction_errors], &(&1 != []))
 
       # Written even when analyses degraded: the input syncs stay warm.

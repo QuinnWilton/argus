@@ -5,7 +5,10 @@ defmodule Scry.Scanner do
   `scan/1` globs the project's ebin (and dependency ebins when
   `include_deps` is set) into a `module => beam_path` map, applying
   module-level ignores at discovery so ignored modules are never even
-  extracted.
+  extracted. Ignored modules are still watched: their beams are on the
+  code path, where a caller's extraction reads their specs
+  (`Scry.Analysis` tracks those callers through the `:ignored_beam`
+  input).
 
   `sync/3` diffs the scan against the previous run's source metadata and
   updates the roux inputs: an mtime+size match skips the file without
@@ -22,11 +25,16 @@ defmodule Scry.Scanner do
   @typedoc "Per-beam manifest metadata: the mtime+size prefilter plus a content hash."
   @type meta :: %{mtime: integer(), size: non_neg_integer(), hash: binary()}
 
-  @typedoc "The result of syncing a scan into the database."
+  @typedoc """
+  The result of syncing a scan into the database. `ignored_moved?` when
+  an ignored module's beam changed, appeared or left — nothing to
+  extract for it, but callers that read its specs are out of date.
+  """
   @type sync_result :: %{
           sources: %{optional(String.t()) => meta()},
           changed: [module()],
-          removed: [module()]
+          removed: [module()],
+          ignored_moved?: boolean()
         }
 
   @typedoc """
@@ -35,8 +43,16 @@ defmodule Scry.Scanner do
   """
   @type duplicate :: %{module: module(), used: String.t(), shadowed: [String.t()]}
 
-  @typedoc "What a scan found."
-  @type scan :: %{modules: %{optional(module()) => String.t()}, duplicates: [duplicate()]}
+  @typedoc """
+  What a scan found: the modules to analyze, the modules the `ignore`
+  patterns matched (`module => beam_path`, the first ebin's again), and
+  the duplicates among the analyzed.
+  """
+  @type scan :: %{
+          modules: %{optional(module()) => String.t()},
+          ignored: %{optional(module()) => String.t()},
+          duplicates: [duplicate()]
+        }
 
   @typedoc """
   A project's scan, with the applications whose ebins it read (`apps`):
@@ -45,14 +61,15 @@ defmodule Scry.Scanner do
   """
   @type project_scan :: %{
           modules: %{optional(module()) => String.t()},
+          ignored: %{optional(module()) => String.t()},
           duplicates: [duplicate()],
           apps: [atom()]
         }
 
   @doc """
-  Discovers the beams to analyze: `module => beam_path`, plus every
-  module more than one ebin defines (`include_deps` only), and the
-  applications whose ebins were read.
+  Discovers the beams to analyze: `module => beam_path`, plus the
+  ignored modules, every module more than one ebin defines
+  (`include_deps` only), and the applications whose ebins were read.
   """
   @spec scan(Scry.Config.t()) :: project_scan()
   def scan(%Scry.Config{} = config) do
@@ -73,7 +90,7 @@ defmodule Scry.Scanner do
 
   @doc """
   The beams in `ebins`, minus the modules `ignore` matches (regexes over
-  the inspected name, or module atoms).
+  the inspected name, or module atoms), which are returned apart.
 
   A module defined in more than one ebin is taken from the first that
   has it — callers list the project's own ebin first and the rest in a
@@ -82,12 +99,13 @@ defmodule Scry.Scanner do
   """
   @spec discover([String.t()], [Regex.t() | module()]) :: scan()
   def discover(ebins, ignore) do
-    found =
+    {skipped, found} =
       for ebin <- ebins,
           path <- ebin |> Path.join("*.beam") |> Path.wildcard() |> Enum.sort(),
-          module = module_of(path),
-          not ignored_module?(module, ignore),
-          do: {module, path}
+          module = module_of(path) do
+        {module, path}
+      end
+      |> Enum.split_with(fn {module, _path} -> ignored_module?(module, ignore) end)
 
     by_module = Enum.group_by(found, &elem(&1, 0), &elem(&1, 1))
 
@@ -98,6 +116,9 @@ defmodule Scry.Scanner do
 
     %{
       modules: Map.new(by_module, fn {module, [path | _]} -> {module, path} end),
+      # The first ebin's, as for the analyzed: that is the one on the code
+      # path ahead of the others.
+      ignored: skipped |> Enum.reverse() |> Map.new(),
       duplicates: duplicates
     }
   end
@@ -106,44 +127,65 @@ defmodule Scry.Scanner do
   Syncs a scan into the database inputs, diffing against the prior run's
   source metadata (the manifest's `sources` map). Returns the fresh
   metadata to persist, plus which modules changed or disappeared.
+
+  `ignored` (`module => beam_path`) are the modules the scan left out of
+  analysis; their beams are hashed the same way into the `:ignored_beam`
+  input and their metadata persisted with the rest, but they are never
+  in the module set nor among the changed.
   """
-  @spec sync(Database.t(), %{optional(module()) => String.t()}, %{
-          optional(String.t()) => meta()
-        }) :: sync_result()
-  def sync(%Database{} = db, discovered, prior_sources) do
+  @spec sync(
+          Database.t(),
+          %{optional(module()) => String.t()},
+          %{optional(String.t()) => meta()},
+          %{optional(module()) => String.t()}
+        ) :: sync_result()
+  def sync(%Database{} = db, discovered, prior_sources, ignored \\ %{}) do
     now = System.os_time(:second)
 
-    {sources, changed, gone} =
-      Enum.reduce(discovered, {%{}, [], []}, fn {module, path}, {sources, changed, gone} ->
-        case sync_one(db, module, path, Map.get(prior_sources, path), now) do
-          {:unchanged, meta} -> {Map.put(sources, path, meta), changed, gone}
-          {:changed, meta} -> {Map.put(sources, path, meta), [module | changed], gone}
-          :gone -> {sources, changed, [module | gone]}
-        end
-      end)
+    {sources, changed, gone} = sync_all(db, :beam_meta, discovered, prior_sources, now, %{})
 
     # A beam deleted between the glob and here — a concurrent compile
     # pruning it — is simply not part of the project this run.
     present = Map.drop(discovered, gone)
-    removed = mark_removed(db, present)
+    removed = mark_removed(db, :beam_meta, present)
 
     module_set = present |> Map.keys() |> Enum.sort()
     :ok = Input.set(db, :module_set, :all, module_set)
 
-    %{sources: sources, changed: Enum.sort(changed), removed: removed}
+    {sources, ignored_changed, ignored_gone} =
+      sync_all(db, :ignored_beam, ignored, prior_sources, now, sources)
+
+    ignored_removed = mark_removed(db, :ignored_beam, Map.drop(ignored, ignored_gone))
+
+    %{
+      sources: sources,
+      changed: Enum.sort(changed),
+      removed: removed,
+      ignored_moved?: ignored_changed != [] or ignored_removed != []
+    }
   end
 
-  defp sync_one(db, module, path, prior, now) do
+  defp sync_all(db, input, modules, prior_sources, now, sources) do
+    Enum.reduce(modules, {sources, [], []}, fn {module, path}, {sources, changed, gone} ->
+      case sync_one(db, input, module, path, Map.get(prior_sources, path), now) do
+        {:unchanged, meta} -> {Map.put(sources, path, meta), changed, gone}
+        {:changed, meta} -> {Map.put(sources, path, meta), [module | changed], gone}
+        :gone -> {sources, changed, [module | gone]}
+      end
+    end)
+  end
+
+  defp sync_one(db, input, module, path, prior, now) do
     case File.stat(path, time: :posix) do
       {:ok, %File.Stat{mtime: mtime, size: size}} ->
-        sync_present(db, module, path, prior, now, mtime, size)
+        sync_present(db, input, module, path, prior, now, mtime, size)
 
       {:error, _} ->
         :gone
     end
   end
 
-  defp sync_present(db, module, path, prior, now, mtime, size) do
+  defp sync_present(db, input, module, path, prior, now, mtime, size) do
     case prior do
       %{mtime: ^mtime, size: ^size} when mtime < now - 1 ->
         # The prefilter: an untouched file is never read. Files written
@@ -153,17 +195,27 @@ defmodule Scry.Scanner do
         # the same second with the same size. Recent files get
         # content-hashed; on a warm noop nothing is recent and nothing
         # is read.
-        {:unchanged, prior}
+        #
+        # The metadata is keyed by path, not by input: a module that just
+        # moved in or out of the ignore list has metadata but no value
+        # under the input it now belongs to, and is read.
+        if Input.exists?(db, input, module),
+          do: {:unchanged, prior},
+          else: read_and_set(db, input, module, path, mtime, size)
 
       _ ->
-        case File.read(path) do
-          {:ok, raw} -> hash_and_set(db, module, path, prior, mtime, size, raw)
-          {:error, _} -> :gone
-        end
+        read_and_set(db, input, module, path, mtime, size)
     end
   end
 
-  defp hash_and_set(db, module, path, prior, mtime, size, raw) do
+  defp read_and_set(db, input, module, path, mtime, size) do
+    case File.read(path) do
+      {:ok, raw} -> hash_and_set(db, input, module, path, mtime, size, raw)
+      {:error, _} -> :gone
+    end
+  end
+
+  defp hash_and_set(db, input, module, path, mtime, size, raw) do
     # Hashed in canonical form: a dependent module Elixir rewrote only to
     # refresh its ExCk chunk must not read as a changed input.
     hash = raw |> Scry.Beam.canonical() |> :erlang.md5()
@@ -171,18 +223,20 @@ defmodule Scry.Scanner do
 
     # Equal hash means a touch or a byte-identical recompile: the input
     # value is unchanged, so Input.set's cutoff advances nothing and the
-    # run stays a noop.
-    changed? = not match?(%{hash: ^hash}, prior)
-    :ok = Input.set(db, :beam_meta, module, %{path: path, hash: hash})
+    # run stays a noop. Compared against the input, not the metadata, so
+    # a module new to this input counts as changed.
+    value = %{path: path, hash: hash}
+    changed? = Input.fetch(db, input, module) != {:ok, value}
+    :ok = Input.set(db, input, module, value)
 
     if changed?, do: {:changed, meta}, else: {:unchanged, meta}
   end
 
-  defp mark_removed(db, discovered) do
+  defp mark_removed(db, input, discovered) do
     removed =
-      for module <- Input.keys(db, :beam_meta),
+      for module <- Input.keys(db, input),
           not Map.has_key?(discovered, module) do
-        :ok = GC.mark_input_removed(db, :beam_meta, module)
+        :ok = GC.mark_input_removed(db, input, module)
         module
       end
 

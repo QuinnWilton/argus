@@ -40,7 +40,10 @@
   would re-extract every module on every edit. When the callee is one of the project's own modules, a
   caller's extraction now depends on the callee being there: removing
   it re-extracts its callers, whose memoized rows otherwise went on
-  describing the removed module's specs.
+  describing the removed module's specs. A module kept out of analysis
+  by `ignore: [modules: ...]` is still watched (`:ignored_beam`, a new
+  frontend input): its callers' extraction depends on its beam, so a
+  spec change there re-extracts them.
 - The analyses solve concurrently, up to one per scheduler: each solve
   is its own Souffle process, and everything upstream of the fact
   directories is computed once for whichever demands it first. A

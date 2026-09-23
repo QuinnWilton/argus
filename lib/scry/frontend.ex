@@ -13,6 +13,11 @@ defmodule Scry.Frontend do
     produces an equal value and advances nothing.
   - `:module_set` input — `:all => sorted [module]`, the project's
     analyzed modules.
+  - `:ignored_beam` input — `module => %{path, hash}` for each module the
+    `ignore` config keeps out of analysis. Never analyzed, but on the
+    code path, where a caller's extraction reads its specs; the edge
+    from that caller to this key is what re-extracts it when the
+    ignored beam changes.
   - `:env_fingerprint` input — `:all =>` toolchain map
     (`Scry.Fingerprint.env/0`); `:high` durability so an upgrade
     invalidates the whole graph.
@@ -44,6 +49,7 @@ defmodule Scry.Frontend do
 
   definput(:beam_meta, durability: :medium)
   definput(:module_set, durability: :medium)
+  definput(:ignored_beam, durability: :medium)
   definput(:env_fingerprint, durability: :high)
   definput(:rules_digest, durability: :high)
 

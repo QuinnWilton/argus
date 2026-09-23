@@ -73,7 +73,10 @@ defmodule Scry.Analysis do
   `:env_fingerprint` (inputs are the frontend's to declare — this module
   defines queries only). The `:rules_digest` input (per analysis, and
   `:stage0`) is optional: a frontend that never sets it reads it as
-  `nil` and relies on its `:env_fingerprint` to move when rules do.
+  `nil` and relies on its `:env_fingerprint` to move when rules do. So
+  is the `:ignored_beam` input (per module): it names the modules the
+  frontend watches without analyzing, whose specs a caller's extraction
+  reads off the code path.
   """
 
   use Roux.Query
@@ -132,12 +135,19 @@ defmodule Scry.Analysis do
 
   # The specs extractor reads a remote callee's specs off the code path
   # (`spec_return(_, _, "installed")`). When the callee is a module of
-  # this program, those rows describe another module's beam: the rules
-  # ignore them while the callee is analyzed (its own rows win), and read
-  # them once it is gone — so the caller must be extracted again when the
-  # callee leaves. An edge to the callee's `file_of` says exactly that:
-  # it moves when the callee appears, leaves or moves, and backdates
-  # otherwise. The module set is read without an edge; a module added
+  # this project, those rows describe a beam the environment digest does
+  # not cover, so the caller records an edge that moves with it:
+  #
+  # - an analyzed callee: an edge to its `file_of`. The rules ignore the
+  #   installed rows while the callee is analyzed (its own rows win) and
+  #   read them once it is gone, so what matters is that it appears,
+  #   leaves or moves; `file_of` moves exactly then and backdates
+  #   otherwise.
+  # - a callee the frontend watches without analyzing (`:ignored_beam`,
+  #   scry's `ignore: [modules: ...]`): an edge to that input, which
+  #   moves whenever its beam — and so its specs — does.
+  #
+  # Which callees are which is read without an edge; a module added
   # later is not one these rows can describe stale.
   defp track_installed_callees(db, module, {:ok, facts}) do
     rows = Map.get(facts, :spec_return, [])
@@ -151,21 +161,62 @@ defmodule Scry.Analysis do
       |> Enum.flat_map(fn row ->
         with "installed" <- Argus.Symbols.resolve(symbols, elem(row, 2)),
              {:ok, %{module: name}} <-
-               Argus.InstrId.parse_func(Argus.Symbols.resolve(symbols, elem(row, 0))),
-             {:ok, callee} when callee != module <- Map.fetch(program, name) do
-          [callee]
+               Argus.InstrId.parse_func(Argus.Symbols.resolve(symbols, elem(row, 0))) do
+          [name]
         else
           _ -> []
         end
       end)
       |> Enum.uniq()
-      |> Enum.each(&Runtime.query(db, :file_of, &1))
+      |> Enum.each(&track_callee(db, module, program, &1))
     end
 
     :ok
   end
 
   defp track_installed_callees(_db, _module, {:error, _}), do: :ok
+
+  defp track_callee(db, module, program, name) do
+    case Map.fetch(program, name) do
+      {:ok, ^module} ->
+        :ok
+
+      {:ok, callee} ->
+        _ = Runtime.query(db, :file_of, callee)
+        :ok
+
+      :error ->
+        track_watched_callee(db, name)
+    end
+  end
+
+  # An edge to a key with no value validates as stale, so only a set key
+  # is read. Most callees here are dependencies' and OTP's modules, which
+  # the frontend does not watch.
+  defp track_watched_callee(db, name) do
+    with {:ok, callee} <- module_named(name),
+         true <- Roux.Input.exists?(db, :ignored_beam, callee) do
+      _ = Runtime.input(db, :ignored_beam, callee)
+    end
+
+    :ok
+  end
+
+  # The module a function ID names, as `inspect/1` spelled it (`Foo.Bar`,
+  # `:lists`, `:"Elixir.odd name"`), never minting an atom: a module the
+  # frontend watches is one it has already named.
+  defp module_named(":" <> _ = name) do
+    case Code.string_to_quoted(name, existing_atoms_only: true) do
+      {:ok, module} when is_atom(module) -> {:ok, module}
+      _ -> :error
+    end
+  end
+
+  defp module_named(name) do
+    {:ok, String.to_existing_atom("Elixir." <> name)}
+  rescue
+    ArgumentError -> :error
+  end
 
   # The frontend's `:module_set`, read without an edge; empty for a
   # frontend that has none (planchette), which then tracks no callee.
