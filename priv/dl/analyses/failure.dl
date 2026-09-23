@@ -243,7 +243,16 @@ guard_count(callee, t, guard, n) :-
 result_uncheckable(c) :- callee_returns(c, "total").
 result_uncheckable(c) :- callee_returns(c, "no_return").
 
-// A site unchecked_result already owns is not reported twice.
+// A discarded start result is startup.ignored_start_result's finding,
+// whatever the other sites do; the same site is not reported twice, by
+// two concerns, under two titles.
+.decl start_result_owned(site: symbol)
+
+start_result_owned(site) :-
+  ignored_error_result(site, _, callee),
+  (contains(".start_link/", callee) ; contains(".start/", callee)).
+
+// A site unchecked_result or startup already owns is not reported twice.
 inconsistent_handling(func, site, callee, "result_checked", used, ignored, t) :-
   program_site(site, func, callee, "ignored", _, _, t),
   !result_uncheckable(callee),
@@ -251,7 +260,8 @@ inconsistent_handling(func, site, callee, "result_checked", used, ignored, t) :-
   fate_count(callee, t, "ignored", ignored),
   used >= 3,
   ignored * 4 <= used + ignored,
-  !unchecked_result(func, site, _, _).
+  !unchecked_result(func, site, _, _),
+  !start_result_owned(site).
 
 inconsistent_handling(func, site, callee, "exception_guarded", guarded, bare, t) :-
   program_site(site, func, callee, _, "bare", _, t),

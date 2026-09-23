@@ -44,6 +44,15 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       assert rows([C.TotalCallee]) == []
     end
 
+    test "a discarded start result is startup's finding, not reported here again" do
+      skip_without_souffle()
+      assert rows([C.StartIgnored]) == []
+
+      {:ok, startup} = Argus.analyze([C.StartIgnored], :startup)
+      assert [[func, "GenServer.start_link/3"]] = startup["ignored_start_result"]
+      assert func =~ "StartIgnored:f/1"
+    end
+
     test "a site that returns the result is neither agreeing nor deviant" do
       skip_without_souffle()
       assert rows([C.TailReturns]) == []

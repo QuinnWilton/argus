@@ -633,6 +633,10 @@ read on every call.
 
 ### failure
 
+**Changed.** `failure.inconsistent_handling` no longer reports a discarded start
+result that `startup.ignored_start_result` already reports: one site,
+one concern, one title.
+
 **Changed.** Schema 52. `macro_generated(func, by)`: a function another module's
 macro wrote into the analyzed one, read from the `context:` Elixir keeps
 in each definition's debug-info metadata (or its `generated: true`

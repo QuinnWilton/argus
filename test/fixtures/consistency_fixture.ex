@@ -326,4 +326,25 @@ defmodule Argus.Test.Fixtures.Consistency do
       :exit, _ -> :ok
     end
   end
+
+  defmodule StartIgnored do
+    @moduledoc """
+    Five sites match GenServer.start_link's result; one discards it.
+    startup.ignored_start_result reports that site, so the consistency
+    rule does not report it again.
+    """
+    def a(m), do: check(GenServer.start_link(m, :ok, []))
+    def b(m), do: check(GenServer.start_link(m, :ok, []))
+    def c(m), do: check(GenServer.start_link(m, :ok, []))
+    def d(m), do: check(GenServer.start_link(m, :ok, []))
+    def e(m), do: check(GenServer.start_link(m, :ok, []))
+
+    def f(m) do
+      GenServer.start_link(m, :ok, [])
+      :ok
+    end
+
+    defp check({:ok, pid}), do: pid
+    defp check({:error, _}), do: nil
+  end
 end
