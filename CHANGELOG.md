@@ -32,6 +32,8 @@ or rename by the 0.17 entry below.
 cohesive modules; every function they exported still works, delegating
 where the code moved. `Argus.Analysis.Catalog` discovers the built-in
 analyses, looks one up and resolves its rules path.
+`Argus.Analysis.Sets` holds the concerns, the named sets and how a
+selection (`run/2`'s `:analyses`) resolves to modules.
 
 ### Fact schema and extraction
 

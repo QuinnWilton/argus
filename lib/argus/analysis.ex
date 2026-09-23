@@ -51,6 +51,7 @@ defmodule Argus.Analysis do
   require Logger
 
   alias Argus.Analysis.Catalog
+  alias Argus.Analysis.Sets
   alias Argus.Pipeline
   alias Argus.Souffle
 
@@ -125,33 +126,11 @@ defmodule Argus.Analysis do
   @type analysis :: atom() | {:custom, Path.t()}
   @type result :: %{String.t() => [[String.t()]]}
 
-  # ── Concerns and sets ───────────────────────────────────────────────
-  #
-  # An analysis answers "what goes wrong". Mechanism (rpc vs
-  # GenServer.call), phase (init vs terminate) and proximity (export vs
-  # request-direct) are columns on a relation, never separate analyses;
-  # a defect has one owner. The names below are that axis.
-
-  @concerns [
-    :startup,
-    :shutdown,
-    :blocking,
-    :coupling,
-    :mailbox,
-    :failure,
-    :structure,
-    :races,
-    :state_machine,
-    :ets,
-    :effects,
-    :unsafe_input,
-    :exposure,
-    :coverage
-  ]
+  # ── Concerns and sets (Argus.Analysis.Sets) ─────────────────────────
 
   @doc "The concern vocabulary: every built-in analysis is named after one."
   @spec concerns() :: [atom()]
-  def concerns, do: @concerns
+  defdelegate concerns(), to: Sets
 
   @doc """
   The named sets of analyses `Argus.run_analyses/2` accepts in place of a
@@ -161,43 +140,11 @@ defmodule Argus.Analysis do
   else).
   """
   @spec sets() :: %{atom() => [atom()]}
-  def sets do
-    all = builtin_analyses() -- [:coverage]
-    security = Enum.filter([:unsafe_input, :exposure], &(&1 in all))
-    effects = Enum.filter([:effects], &(&1 in all))
-
-    %{
-      all: all,
-      default: Enum.filter(default_set(), &(&1 in all)),
-      security: security,
-      effects: effects,
-      otp: all -- (security ++ effects)
-    }
-  end
-
-  # What scry runs unconfigured: the OTP concerns whose findings are
-  # structural and low-noise enough to report on every compile. effects,
-  # ets, blocking and the security concerns are asked for by name. races
-  # is here because its rows are few and real: over the closed-issue
-  # corpus and four large programs, one registry race (tesla's), ETS
-  # races in postgrex, hammer, ztlp and blockster and OTP's own mnesia
-  # internals, Mnesia races in blockster and ztlp — each a read deciding
-  # a write another process can interleave.
-  defp default_set do
-    [
-      :startup,
-      :coupling,
-      :shutdown,
-      :structure,
-      :races,
-      :failure,
-      :mailbox
-    ]
-  end
+  defdelegate sets(), to: Sets
 
   @doc "The analyses in a named set: `{:ok, names}` or `:error`."
   @spec set(atom()) :: {:ok, [atom()]} | :error
-  def set(name) when is_atom(name), do: Map.fetch(sets(), name)
+  defdelegate set(name), to: Sets
 
   @doc """
   Runs an analysis against the given modules.

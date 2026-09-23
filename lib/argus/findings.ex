@@ -46,6 +46,7 @@ defmodule Argus.Findings do
   """
 
   alias Argus.Analysis
+  alias Argus.Analysis.Sets
   alias Argus.InstrId
   alias Argus.Souffle
 
@@ -215,7 +216,7 @@ defmodule Argus.Findings do
   def run(modules, opts \\ []) when is_list(modules) and is_list(opts) do
     {selection, opts} = Keyword.pop(opts, :analyses, :all)
 
-    with {:ok, requests} <- resolve_selection(selection),
+    with {:ok, requests} <- Sets.resolve(selection),
          :ok <- ensure_souffle(opts) do
       evaluate(modules, requests, opts)
     end
@@ -677,31 +678,6 @@ defmodule Argus.Findings do
   defp degradation_detail(name, reason) do
     "The #{name} analysis did not run: #{inspect(reason)}."
   end
-
-  # A selection is a named set or a list of analysis names; the result
-  # is the modules to run, each once, in the order first asked for.
-  defp resolve_selection(set) when is_atom(set) do
-    case Analysis.set(set) do
-      {:ok, names} -> resolve_selection(names)
-      :error -> {:error, {:invalid_analyses, set}}
-    end
-  end
-
-  defp resolve_selection(names) when is_list(names) do
-    names
-    |> Enum.reduce_while({:ok, []}, fn name, {:ok, acc} ->
-      case Analysis.fetch_module(name) do
-        {:ok, mod} -> {:cont, {:ok, [mod | acc]}}
-        :error -> {:halt, {:error, {:unknown_analysis, name}}}
-      end
-    end)
-    |> case do
-      {:ok, mods} -> {:ok, mods |> Enum.reverse() |> Enum.uniq()}
-      error -> error
-    end
-  end
-
-  defp resolve_selection(other), do: {:error, {:invalid_analyses, other}}
 
   defp ensure_souffle(opts) do
     cond do
