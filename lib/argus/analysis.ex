@@ -124,14 +124,7 @@ defmodule Argus.Analysis do
   @type analysis :: atom() | {:custom, Path.t()}
   @type result :: %{String.t() => [[String.t()]]}
 
-  @typedoc """
-  One piece of an alias: rows of `relation` in `analysis` whose columns
-  match `where` (a keyword of column name to a value or list of values)
-  are what the old analysis name used to report.
-  """
-  @type alias_entry :: %{analysis: atom(), relation: atom(), where: keyword()}
-
-  # ── Concerns, sets and aliases ──────────────────────────────────────
+  # ── Concerns and sets ───────────────────────────────────────────────
   #
   # An analysis answers "what goes wrong". Mechanism (rpc vs
   # GenServer.call), phase (init vs terminate) and proximity (export vs
@@ -154,161 +147,9 @@ defmodule Argus.Analysis do
     :coverage
   ]
 
-  # The analyses each retired name's findings live in now, with the rows
-  # that were its. `Argus.Findings.run/2` accepts the old name for two
-  # minor versions, runs the new analysis, keeps the rows listed here and
-  # reports them under the old name with `concern` set to the new one.
-  @aliases %{
-    atom_safety: [
-      %{analysis: :unsafe_input, relation: :sink_without_request_path, where: []}
-    ],
-    request_surface: [
-      %{analysis: :unsafe_input, relation: :sink_reachable, where: []},
-      %{analysis: :unsafe_input, relation: :sink_endpoint, where: []}
-    ],
-    unbounded_dynamic_children: [
-      %{analysis: :unsafe_input, relation: :unbounded_children_from_request, where: []}
-    ],
-    secret_exposure: [%{analysis: :exposure, relation: :unredacted_secret, where: []}],
-    tls_verification: [
-      %{analysis: :exposure, relation: :disables_verification, where: []},
-      %{analysis: :exposure, relation: :relies_on_default_verification, where: []}
-    ],
-    purity: [
-      %{analysis: :effects, relation: :effect_in_context, where: [context: "pure_contract"]},
-      %{analysis: :effects, relation: :purity_unprovable, where: []},
-      %{analysis: :effects, relation: :impure_closure_to_pure, where: []},
-      %{analysis: :effects, relation: :purity_verified, where: []}
-    ],
-    transaction_safety: [
-      %{analysis: :effects, relation: :effect_in_context, where: [context: "transaction"]}
-    ],
-    timeout_chain: [
-      %{analysis: :blocking, relation: :call_chain, where: []},
-      %{analysis: :blocking, relation: :unbounded_wait, where: [kind: "infinity"]}
-    ],
-    call_cycle: [
-      %{analysis: :blocking, relation: :call_cycle, where: []},
-      %{analysis: :blocking, relation: :call_cycle_path, where: []}
-    ],
-    process_bottleneck: [
-      %{analysis: :blocking, relation: :sync_call_fan_in, where: []},
-      %{analysis: :blocking, relation: :bottleneck_caller, where: []}
-    ],
-    callback_receive: [
-      %{analysis: :blocking, relation: :receive_in_callback, where: []}
-    ],
-    one_for_one_coupling: [
-      %{analysis: :coupling, relation: :sibling_dependency, where: [reason: "restart_isolation"]}
-    ],
-    sync_call_in_init: [
-      %{
-        analysis: :startup,
-        relation: :blocks_on_peer,
-        where: [phase: "init", kind: ~w(call sup blocking_server)]
-      },
-      %{analysis: :startup, relation: :unbounded_effect_in_init, where: []}
-    ],
-    deferred_startup_deadlock: [
-      %{analysis: :blocking, relation: :call_cycle, where: [phase: "continue"]},
-      %{analysis: :startup, relation: :blocks_on_peer, where: [phase: "continue"]},
-      %{analysis: :startup, relation: :deferral_defect, where: []}
-    ],
-    shutdown_safety: [
-      %{analysis: :shutdown, relation: :cleanup_defect, where: []},
-      %{analysis: :shutdown, relation: :teardown_touches_sibling, where: []},
-      %{analysis: :shutdown, relation: :foreign_dynamic_children, where: []}
-    ],
-    supervision: [
-      %{analysis: :coupling, relation: :sibling_dependency, where: [reason: "restart_policy"]},
-      %{analysis: :coupling, relation: :sibling_dependency, where: [reason: "cached_pid"]},
-      %{analysis: :coupling, relation: :rest_for_one_orphaned_children, where: []},
-      %{analysis: :coupling, relation: :dual_restart_authority, where: []},
-      %{analysis: :structure, relation: :supervisor_registered_as_worker, where: []},
-      %{analysis: :structure, relation: :consumer_supervisor_permanent_child, where: []},
-      %{analysis: :startup, relation: :blocks_on_peer, where: [phase: "init", ordering: "later"]},
-      %{analysis: :startup, relation: :post_start_initialization, where: []},
-      %{analysis: :shutdown, relation: :permanent_child_stops_normally, where: []}
-    ],
-    distributed: [
-      %{
-        analysis: :blocking,
-        relation: :unbounded_wait,
-        where: [kind: ~w(rpc rpc_in_callback global)]
-      },
-      %{analysis: :structure, relation: :global_register_risk, where: []},
-      %{analysis: :startup, relation: :blocks_on_peer, where: [kind: ~w(global remote)]},
-      %{
-        analysis: :failure,
-        relation: :unhandled_failure,
-        where: [kind: ~w(erpc_transport rpc multicall erpc)]
-      }
-    ],
-    unlinked_spawn: [%{analysis: :failure, relation: :orphan_process, where: [kind: "spawn"]}],
-    process_registry: [
-      %{analysis: :structure, relation: :duplicate_process_name, where: []},
-      %{analysis: :failure, relation: :unchecked_result, where: [api: "Process.whereis"]}
-    ],
-    error_handling: [
-      %{analysis: :blocking, relation: :partial_noproc_catch, where: []},
-      %{analysis: :startup, relation: :ignored_start_result, where: []},
-      %{analysis: :shutdown, relation: :unhandled_exit_signal, where: []},
-      %{analysis: :failure, relation: :unhandled_failure, where: [kind: "rescue"]},
-      %{analysis: :failure, relation: :orphan_process, where: [kind: "exit"]},
-      %{
-        analysis: :mailbox,
-        relation: :partial_handler,
-        where: [source: ~w(runtime late_message)]
-      },
-      %{analysis: :mailbox, relation: :timer_cancel_without_flush, where: []}
-    ],
-    unsafe_task: [
-      %{
-        analysis: :failure,
-        relation: :unchecked_result,
-        where: [api: "Task.Supervisor.start_child"]
-      },
-      %{analysis: :mailbox, relation: :partial_handler, where: [source: "task_nolink"]},
-      %{analysis: :mailbox, relation: :task_result_defect, where: []}
-    ],
-    monitor_leak: [
-      %{analysis: :shutdown, relation: :kills_monitored_child, where: []},
-      %{analysis: :mailbox, relation: :unconsumed_monitor, where: []}
-    ],
-    message_contract: [
-      %{analysis: :mailbox, relation: :reply_defect, where: [kind: ~w(self_call self_cast)]}
-    ],
-    reply_contract: [
-      %{analysis: :mailbox, relation: :reply_defect, where: [kind: "dropped_from"]}
-    ],
-    gen_statem: [
-      %{
-        analysis: :mailbox,
-        relation: :partial_handler,
-        where: [source: ~w(statem_info statem_timeout)]
-      },
-      %{analysis: :mailbox, relation: :reply_defect, where: [kind: "statem_unreplied"]},
-      %{analysis: :state_machine, relation: :unreachable_state, where: []},
-      %{analysis: :state_machine, relation: :terminal_without_stop, where: []}
-    ]
-  }
-
   @doc "The concern vocabulary: every built-in analysis is named after one."
   @spec concerns() :: [atom()]
   def concerns, do: @concerns
-
-  @doc """
-  The retired analysis names and where their findings live now.
-  """
-  @spec aliases() :: %{atom() => [alias_entry()]}
-  def aliases, do: @aliases
-
-  @doc """
-  Where a retired analysis name's findings live now: `{:ok, entries}`,
-  or `:error` for a name that never was an analysis.
-  """
-  @spec alias(atom()) :: {:ok, [alias_entry()]} | :error
-  def alias(name) when is_atom(name), do: Map.fetch(@aliases, name)
 
   @doc """
   The named sets of analyses `Argus.run_analyses/2` accepts in place of a

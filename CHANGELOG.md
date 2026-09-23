@@ -7,7 +7,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## Unreleased
 
 Grouped by concern. Each entry opens with what it does: **Added**,
-**Changed** or **Fixed**.
+**Changed**, **Fixed** or **Removed**.
+
+### Analysis names
+
+**Removed.** The alias table for the analysis names retired in 0.17
+(`supervision`, `error_handling`, `sync_call_in_init`, `unsafe_task`,
+...), promised for two minor versions: `Argus.Analysis.aliases/0`,
+`Argus.Analysis.alias/1` and the `alias_entry` type are gone, and
+`Argus.Findings.run/2` answers a retired name with
+`{:error, {:unknown_analysis, name}}` like any other unknown one. A
+finding's `analysis` is always its concern now; `concern`, which said so
+while the two could differ, stays and equals it. `Argus.Migrate` and
+`mix argus.migrate encore`, which re-keyed encore manifests through the
+table, are removed with it: a count pinned under a retired name has
+no mechanical home without the table, and the manifests it existed for
+are re-keyed. To upgrade from 0.16 or earlier, go through 0.19 first,
+or rename by the 0.17 entry below.
 
 ### Fact schema and extraction
 

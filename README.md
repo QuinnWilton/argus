@@ -85,11 +85,10 @@ their own.
 
 Named sets stand in for a list: `:all` (everything but `coverage`),
 `:default` (what scry runs unconfigured), `:security`, `:effects` and
-`:otp`. The names these replaced (`supervision`, `error_handling`,
-`sync_call_in_init`, ...) keep working through `Argus.Analysis.aliases/0`
-for two minor versions: a retired name runs the concern its findings
-live in, reports the rows that were its under the old name, and sets
-`concern` on every finding to the analysis it belongs to today.
+`:otp`. The names these replaced in 0.17 (`supervision`,
+`error_handling`, `sync_call_in_init`, ...) ran through an alias table
+until 0.20, which removed it: a retired name is an unknown analysis now.
+The 0.17 entry of the CHANGELOG says where each one's findings went.
 
 ## Programmatic API
 

@@ -121,9 +121,9 @@ defmodule Argus.Findings do
 
   @typedoc """
   A finding: `attrs` plus the analysis that produced it. `concern` is the
-  analysis it belongs to today; `analysis` is the name it was asked for
-  under, which differs only when a retired name was selected through an
-  alias (see `Argus.Analysis.aliases/0`).
+  same analysis: the two differed only while retired names could be
+  selected (0.17 to 0.19), and `concern` stays for the readers written
+  then.
   """
   @type finding :: %{
           analysis: atom(),
@@ -195,11 +195,9 @@ defmodule Argus.Findings do
     built-in analysis except `:coverage`, which measures the extractor
     pipeline rather than the analyzed code), `:default` (what scry runs
     unconfigured), `:security`, `:effects` and `:otp`. A name is a
-    concern (`:startup`, `:mailbox`, ...) or a retired name
-    (`Argus.Analysis.aliases/0`): a retired name runs the concern its
-    rows live in and reports them under the old name, with `concern`
-    naming the analysis. An unknown name is `{:error, {:unknown_analysis,
-    name}}`, anything else `{:error, {:invalid_analyses, value}}`.
+    concern (`:startup`, `:mailbox`, ...); an unknown name is
+    `{:error, {:unknown_analysis, name}}`, anything else
+    `{:error, {:invalid_analyses, value}}`.
   - `:facts_dir` — a directory `Argus.Analysis.extract_facts/3` already
     wrote for these modules, to evaluate without extracting again. The
     caller owns it; without this option the run extracts into a
@@ -226,15 +224,14 @@ defmodule Argus.Findings do
   defp evaluate(_modules, [], _opts), do: {:ok, %__MODULE__{}}
 
   defp evaluate(modules, requests, opts) do
-    analysis_mods = Enum.map(requests, fn {mod, _asked} -> mod end)
-    names = Enum.map(analysis_mods, & &1.name())
+    names = Enum.map(requests, & &1.name())
 
     case facts_dir(modules, names, opts) do
       {:ok, facts_dir, owned?} ->
         try do
           outcomes =
             requests
-            |> Task.async_stream(fn {mod, asked} -> run_one(mod, asked, facts_dir, opts) end,
+            |> Task.async_stream(&run_one(&1, facts_dir, opts),
               max_concurrency: Keyword.get(opts, :concurrency, default_solve_concurrency()),
               ordered: true,
               # Souffle.run bounds each evaluation with :souffle_timeout, so the
@@ -257,7 +254,7 @@ defmodule Argus.Findings do
       {:error, {:stage0, reason}} ->
         {:ok,
          collect(
-           for {mod, asked} <- requests, name <- asked_names(asked, mod.name()) do
+           for mod <- requests, name = mod.name() do
              {:degraded,
               %{analysis: name, reason: reason, detail: degradation_detail(name, reason)}}
            end
@@ -297,13 +294,9 @@ defmodule Argus.Findings do
     end
   end
 
-  # One solve per analysis module; what was asked for decides how its
-  # rows are reported. Asked directly, every row is a finding under the
-  # analysis's own name. Asked only through retired names, each old name
-  # gets the rows its alias entries select, reported under that name with
-  # `concern` naming the analysis; one solve then yields one run entry
-  # per old name.
-  defp run_one(mod, asked, facts_dir, opts) do
+  # One solve per analysis module; every row is a finding under the
+  # analysis's own name.
+  defp run_one(mod, facts_dir, opts) do
     name = mod.name()
     {elapsed_us, result} = :timer.tc(fn -> Analysis.run_rules(facts_dir, name, opts) end)
     duration_ms = div(elapsed_us, 1000)
@@ -311,83 +304,30 @@ defmodule Argus.Findings do
     case result do
       {:ok, results} ->
         try do
-          Enum.flat_map(asked_views(asked, name), fn {asked_name, filter} ->
-            {findings, failures} =
-              build_findings(mod, asked_name, filter_rows(results, filter, mod))
+          {findings, failures} = build_findings(mod, results)
 
-            ran =
-              {:ran,
-               %{analysis: asked_name, duration_ms: duration_ms, finding_count: length(findings)},
-               findings}
+          ran =
+            {:ran, %{analysis: name, duration_ms: duration_ms, finding_count: length(findings)},
+             findings}
 
-            [ran | row_degradation(asked_name, name, failures)]
-          end)
+          [ran | row_degradation(name, failures)]
         rescue
           exception ->
-            for asked_name <- asked_names(asked, name) do
+            [
               {:degraded,
                %{
-                 analysis: asked_name,
+                 analysis: name,
                  reason: {:finding_builder_crashed, exception},
                  detail:
                    "The #{name} analysis ran, but converting its results to findings " <>
                      "crashed: #{Exception.message(exception)}. This is a bug in Argus."
                }}
-            end
+            ]
         end
 
       {:error, reason} ->
-        for asked_name <- asked_names(asked, name) do
-          {:degraded,
-           %{analysis: asked_name, reason: reason, detail: degradation_detail(name, reason)}}
-        end
+        [{:degraded, %{analysis: name, reason: reason, detail: degradation_detail(name, reason)}}]
     end
-  end
-
-  # `asked` is either `:direct` or a map of retired name to its alias
-  # entries. Each view is a name to report under and the row filter that
-  # selects its rows (`:all` for a direct request).
-  defp asked_views(:direct, name), do: [{name, :all}]
-  defp asked_views(aliases, _name) when is_map(aliases), do: Enum.sort(aliases)
-
-  defp asked_names(:direct, name), do: [name]
-  defp asked_names(aliases, _name) when is_map(aliases), do: aliases |> Map.keys() |> Enum.sort()
-
-  defp filter_rows(results, :all, _mod), do: results
-
-  defp filter_rows(results, entries, mod) do
-    relations = mod.output_relations()
-
-    for %{relation: relation, where: where} <- entries,
-        rows = Map.get(results, Atom.to_string(relation)),
-        rows != nil,
-        into: %{} do
-      where =
-        for {column, allowed} <- where, do: {column_index(relations, relation, column), allowed}
-
-      {Atom.to_string(relation), Enum.filter(rows, &row_matches?(&1, where))}
-    end
-  end
-
-  defp row_matches?(row, where) do
-    Enum.all?(where, fn {index, allowed} ->
-      value = Enum.at(row, index)
-      if is_list(allowed), do: value in allowed, else: value == allowed
-    end)
-  end
-
-  # Alias entries name real columns of real relations; a typo here is a
-  # bug in the alias table, not a user error. Resolved once per entry,
-  # against the concern the entry runs.
-  defp column_index(relations, relation, column) do
-    fields =
-      case Enum.find(relations, &(&1.name == relation)) do
-        %{fields: fields} -> fields
-        nil -> raise ArgumentError, "alias relation #{inspect(relation)} is not an output"
-      end
-
-    Enum.find_index(fields, fn {name, _kind, _doc} -> name == column end) ||
-      raise ArgumentError, "alias column #{inspect(column)} is not in #{inspect(relation)}"
   end
 
   # Each solve is a Souffle process holding its own copy of the call
@@ -430,14 +370,14 @@ defmodule Argus.Findings do
   """
   @spec build(module(), %{String.t() => [[String.t()]]}) :: [finding()]
   def build(mod, results) when is_atom(mod) and is_map(results) do
-    {findings, _failures} = build_findings(mod, mod.name(), results)
+    {findings, _failures} = build_findings(mod, results)
     findings
   end
 
   # The findings, and the rows whose builder raised. A raising row does
   # not take its concern down with it: it is reported as a generic
   # finding that says so, and `run/2` adds a degradation note.
-  defp build_findings(mod, asked_name, results) do
+  defp build_findings(mod, results) do
     relations = Map.new(mod.output_relations(), &{Atom.to_string(&1.name), &1})
     results = Map.take(results, Map.keys(relations))
     has_builder? = function_exported?(mod, :finding, 2)
@@ -461,7 +401,7 @@ defmodule Argus.Findings do
           finding =
             attrs
             |> Map.update(:related, [], &(&1 ++ frames_for(evidence, joins, relation, row)))
-            |> Map.put(:analysis, asked_name)
+            |> Map.put(:analysis, mod.name())
             |> Map.put(:concern, mod.name())
             |> render_names()
 
@@ -492,13 +432,13 @@ defmodule Argus.Findings do
       {fallback, [%{relation: relation.name, row: row, exception: exception} | failures]}
   end
 
-  defp row_degradation(_asked_name, _name, []), do: []
+  defp row_degradation(_name, []), do: []
 
-  defp row_degradation(asked_name, name, [first | _] = failures) do
+  defp row_degradation(name, [first | _] = failures) do
     [
       {:degraded,
        %{
-         analysis: asked_name,
+         analysis: name,
          reason: {:finding_builder_crashed, first.exception},
          detail:
            "The #{name} analysis ran, but its finding builder crashed on " <>
@@ -738,12 +678,8 @@ defmodule Argus.Findings do
     "The #{name} analysis did not run: #{inspect(reason)}."
   end
 
-  # A selection is a named set, or a list of analysis names, each either
-  # a current name (run and report as is) or a retired one (run the
-  # analyses its alias names, report its rows under the old name). The
-  # result pairs each module to run with what asked for it: `:direct`, or
-  # the retired names and their alias entries. A module asked for both
-  # ways reports directly: nothing is reported twice.
+  # A selection is a named set or a list of analysis names; the result
+  # is the modules to run, each once, in the order first asked for.
   defp resolve_selection(set) when is_atom(set) do
     case Analysis.set(set) do
       {:ok, names} -> resolve_selection(names)
@@ -755,50 +691,17 @@ defmodule Argus.Findings do
     names
     |> Enum.reduce_while({:ok, []}, fn name, {:ok, acc} ->
       case Analysis.fetch_module(name) do
-        {:ok, mod} ->
-          {:cont, {:ok, [{mod, :direct} | acc]}}
-
-        :error ->
-          case Analysis.alias(name) do
-            {:ok, entries} ->
-              {:cont, {:ok, alias_requests(name, entries) ++ acc}}
-
-            :error ->
-              {:halt, {:error, {:unknown_analysis, name}}}
-          end
+        {:ok, mod} -> {:cont, {:ok, [mod | acc]}}
+        :error -> {:halt, {:error, {:unknown_analysis, name}}}
       end
     end)
     |> case do
-      {:ok, requests} -> {:ok, merge_requests(Enum.reverse(requests))}
+      {:ok, mods} -> {:ok, mods |> Enum.reverse() |> Enum.uniq()}
       error -> error
     end
   end
 
   defp resolve_selection(other), do: {:error, {:invalid_analyses, other}}
-
-  defp alias_requests(old_name, entries) do
-    entries
-    |> Enum.group_by(& &1.analysis)
-    |> Enum.map(fn {new_name, entries} ->
-      {:ok, mod} = Analysis.fetch_module(new_name)
-      {mod, %{old_name => entries}}
-    end)
-  end
-
-  defp merge_requests(requests) do
-    requests
-    |> Enum.reduce([], fn {mod, asked}, acc ->
-      case List.keyfind(acc, mod, 0) do
-        nil -> [{mod, asked} | acc]
-        {^mod, existing} -> List.keyreplace(acc, mod, 0, {mod, merge_asked(existing, asked)})
-      end
-    end)
-    |> Enum.reverse()
-  end
-
-  defp merge_asked(:direct, _), do: :direct
-  defp merge_asked(_, :direct), do: :direct
-  defp merge_asked(a, b) when is_map(a) and is_map(b), do: Map.merge(a, b)
 
   defp ensure_souffle(opts) do
     cond do

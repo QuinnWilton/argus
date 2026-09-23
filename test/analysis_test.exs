@@ -32,16 +32,6 @@ defmodule Argus.AnalysisTest do
       assert length(modules) == length(@expected_analyses)
     end
 
-    test "every alias names a current analysis and one of its relations" do
-      for {old, entries} <- Analysis.aliases(), entry <- entries do
-        refute old in Analysis.builtin_analyses(), "#{old} is both retired and current"
-        assert {:ok, relations} = Analysis.output_relations(entry.analysis)
-
-        assert Enum.any?(relations, &(&1.name == entry.relation)),
-               "#{entry.relation} is not in #{entry.analysis}"
-      end
-    end
-
     test "the built-in analyses are exactly the concerns" do
       assert Analysis.builtin_analyses() == Enum.sort(Analysis.concerns())
     end

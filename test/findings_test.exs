@@ -217,59 +217,20 @@ defmodule Argus.FindingsTest do
       assert Enum.all?(exhaustion, &(&1.severity == :warning))
     end
 
-    test "a retired name runs its concern and reports the rows that were its" do
-      skip_without_souffle()
-
-      modules = [Fixtures.UnsafeAtomCreation, Fixtures.UnsafeDeserialization]
-
-      assert {:ok, direct} = Argus.run_analyses(modules, analyses: [:unsafe_input])
-      assert {:ok, aliased} = Argus.run_analyses(modules, analyses: [:atom_safety])
-
-      Enum.each(aliased.findings, &assert_finding_shape/1)
-      assert aliased.findings != []
-
-      assert Enum.all?(
-               aliased.findings,
-               &(&1.analysis == :atom_safety and &1.concern == :unsafe_input)
-             )
-
-      assert [%{analysis: :atom_safety}] = aliased.ran
-
-      # The old name selects a subset of the concern's rows; here there is
-      # no request surface, so it is all of them.
-      assert Enum.map(aliased.findings, &{&1.title, &1.mfa}) ==
-               Enum.map(direct.findings, &{&1.title, &1.mfa})
-
-      # Asked for both ways, the concern reports once, under its own name.
-      assert {:ok, both} = Argus.run_analyses(modules, analyses: [:atom_safety, :unsafe_input])
-
-      assert Enum.map(both.findings, &{&1.title, &1.mfa}) ==
-               Enum.map(direct.findings, &{&1.title, &1.mfa})
-
-      assert [%{analysis: :unsafe_input}] = both.ran
+    test "a name argus retired is unknown" do
+      assert {:error, {:unknown_analysis, :atom_safety}} =
+               Argus.run_analyses([Fixtures.UnsafeAtomCreation], analyses: [:atom_safety])
     end
 
-    test "a retired name keeps only the rows its alias entries select by column" do
+    test "a name asked for twice runs once" do
       skip_without_souffle()
 
-      modules = [
-        Fixtures.AsymmetricInfoStatem,
-        Fixtures.TimeoutMismatchStatem,
-        Fixtures.MonitorLeak.Leaks
-      ]
+      assert {:ok, result} =
+               Argus.run_analyses([Fixtures.UnsafeAtomCreation],
+                 analyses: [:unsafe_input, :exposure, :unsafe_input]
+               )
 
-      assert {:ok, direct} = Argus.run_analyses(modules, analyses: [:mailbox])
-      assert {:ok, aliased} = Argus.run_analyses(modules, analyses: [:gen_statem])
-
-      titles = &Enum.map(&1.findings, fn f -> {f.title, f.mfa} end)
-
-      # The monitor leak is mailbox's but not gen_statem's: the alias's
-      # `where` on the merged relations filters it out, and keeps the
-      # statem rows.
-      assert Enum.any?(direct.findings, &(&1.module == Fixtures.MonitorLeak.Leaks))
-      refute Enum.any?(aliased.findings, &(&1.module == Fixtures.MonitorLeak.Leaks))
-      assert aliased.findings != []
-      assert titles.(aliased) -- titles.(direct) == []
+      assert Enum.map(result.ran, & &1.analysis) == [:unsafe_input, :exposure]
     end
 
     test "a named set selects its analyses" do
@@ -286,7 +247,7 @@ defmodule Argus.FindingsTest do
 
       modules = [Fixtures.CycleServerA, Fixtures.CycleServerB]
 
-      assert {:ok, result} = Argus.run_analyses(modules, analyses: [:call_cycle])
+      assert {:ok, result} = Argus.run_analyses(modules, analyses: [:blocking])
 
       Enum.each(result.findings, &assert_finding_shape/1)
 

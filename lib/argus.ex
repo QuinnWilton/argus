@@ -9,8 +9,8 @@ defmodule Argus do
 
   ## Quick start
 
-      # Detect supervision-tree anti-patterns in a project.
-      Argus.analyze([MyApp.Supervisor, MyApp.Worker], :supervision)
+      # Find two owners of one relationship across supervisor branches.
+      Argus.analyze([MyApp.Supervisor, MyApp.Worker], :coupling)
 
       # Find ETS tables created without heir protection.
       Argus.analyze([MyApp.Cache], :ets)
