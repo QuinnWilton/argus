@@ -17,8 +17,16 @@ defmodule Argus.Corpus do
   `ARGUS_CORPUS_DIR` (default `~/.cache/argus/corpus`), one directory per
   `<repo>-<sha7>`, compiled in `MIX_ENV=dev` with the project's own
   dependencies; a marker file records a successful compile so a warm run
-  costs only the analysis. Nothing is added to the project's dependency
+  never compiles again. Nothing is added to the project's dependency
   set: argus runs over its `ebin` from this VM.
+
+  The facts extracted from a checkout are cached beside it, in
+  `.argus-facts/<digest>/facts`, so a warm run costs only the solves.
+  Extraction is most of the cost of a large tree and its inputs never
+  move between runs: the digest covers the beams, the argus code and
+  Datalog programs (`engine_digest/0`), the runtime and the solver, so
+  a change to any of them misses, and a stale entry is pruned when a
+  fresh one is installed.
 
   The project's `elixir:` requirement is relaxed so an old tree builds on
   the current toolchain; a pair may name an `elixir:` version instead,
@@ -91,9 +99,48 @@ defmodule Argus.Corpus do
     end
   end
 
-  @doc "Runs every analysis over a checkout's beams; the findings as `Argus.run_analyses/2` returns them."
-  @spec analyze([Path.t()]) :: {:ok, map()} | {:error, term()}
+  @doc "Runs every analysis over beams, extracting their facts afresh."
+  @deprecated "Use analyze/2, which solves over the checkout's cached facts"
+  @spec analyze([Path.t()]) :: {:ok, Argus.Findings.t()} | {:error, term()}
   def analyze(beams), do: Argus.run_analyses(beams, analyses: :all)
+
+  @doc """
+  Runs every analysis over one side of a pair; the findings as
+  `Argus.run_analyses/2` returns them.
+
+  Clones and compiles the checkout if needed (`ensure/2`), then solves
+  over its cached facts, extracting them first only when no entry for
+  the current `engine_digest/0` and beams exists.
+  """
+  @spec analyze(pair(), :pre | :fix) :: {:ok, Argus.Findings.t()} | {:error, term()}
+  def analyze(pair, side) do
+    with %{} = co <- checkout(pair, side) || {:error, "no #{side} side for #{pair.issue}"},
+         {:ok, beams} <- ensure(pair, side),
+         {:ok, facts_dir} <- facts(co, beams) do
+      Argus.run_analyses(beams, analyses: :all, facts_dir: facts_dir)
+    end
+  end
+
+  @doc """
+  A digest of everything on argus's side that decides what facts a beam
+  yields: the compiled argus code, the Datalog programs under `priv/dl`
+  (stage 0 is derived into the facts), the Elixir and ERTS versions the
+  extraction runs on, and the solver's version. Computed once per VM.
+  """
+  @spec engine_digest() :: String.t()
+  def engine_digest do
+    key = {__MODULE__, :engine_digest}
+
+    case :persistent_term.get(key, nil) do
+      nil ->
+        digest = compute_engine_digest()
+        :persistent_term.put(key, digest)
+        digest
+
+      digest ->
+        digest
+    end
+  end
 
   @doc "The `{analysis, title}` pairs among findings."
   @spec titles(map()) :: MapSet.t({atom(), String.t()})
@@ -117,6 +164,111 @@ defmodule Argus.Corpus do
       f.analysis == analysis and f.title == title and
         (module == nil or inspect(f.module) == module)
     end)
+  end
+
+  # ── Facts cache ───────────────────────────────────────────────────────
+
+  @facts_cache ".argus-facts"
+
+  defp facts(co, beams) do
+    digest = facts_digest(beams)
+    facts_dir = Path.join([co.dir, @facts_cache, digest, "facts"])
+
+    if File.dir?(facts_dir) do
+      {:ok, facts_dir}
+    else
+      extract_into_cache(co, digest, beams)
+    end
+  end
+
+  # Extracted where `extract_facts/3` puts it, copied into a staging
+  # directory beside the entry and renamed into place: the entry is
+  # complete or absent, never half-written. Another VM installing the
+  # same digest first wins the rename, and its entry is the one used.
+  defp extract_into_cache(co, digest, beams) do
+    {:ok, analyses} = Argus.Analysis.set(:all)
+
+    with {:ok, fresh} <- Argus.Analysis.extract_facts(beams, analyses) do
+      cache = Path.join(co.dir, @facts_cache)
+      entry = Path.join(cache, digest)
+
+      staging =
+        Path.join(cache, "#{digest}.#{:os.getpid()}.#{System.unique_integer([:positive])}")
+
+      try do
+        File.mkdir_p!(staging)
+        File.cp_r!(fresh, Path.join(staging, "facts"))
+
+        case File.rename(staging, entry) do
+          :ok -> prune_entries(cache, digest)
+          {:error, reason} when reason in [:eexist, :enotempty, :eisdir] -> File.rm_rf!(staging)
+        end
+
+        {:ok, Path.join(entry, "facts")}
+      after
+        File.rm_rf(Path.dirname(fresh))
+        File.rm_rf(staging)
+      end
+    end
+  end
+
+  # Entries under another digest were extracted by an argus, a solver
+  # or a build that is gone; only installed entries are pruned, never a
+  # staging directory another VM may still be filling.
+  defp prune_entries(cache, keep) do
+    for entry <- File.ls!(cache),
+        entry != keep,
+        Regex.match?(~r/^[0-9a-f]{64}$/, entry),
+        do: File.rm_rf!(Path.join(cache, entry))
+
+    :ok
+  end
+
+  defp facts_digest(beams) do
+    beams
+    |> Enum.sort_by(&Path.basename/1)
+    |> Enum.reduce(:crypto.hash_init(:sha256), fn beam, hash ->
+      hash
+      |> :crypto.hash_update(Path.basename(beam))
+      |> :crypto.hash_update(File.read!(beam))
+    end)
+    |> :crypto.hash_update(engine_digest())
+    |> :crypto.hash_final()
+    |> Base.encode16(case: :lower)
+  end
+
+  defp compute_engine_digest do
+    ebin = Application.app_dir(:panoptes, "ebin")
+    priv_dl = Application.app_dir(:panoptes, "priv/dl")
+
+    files =
+      Enum.sort(
+        Path.wildcard(Path.join(ebin, "*")) ++
+          Enum.filter(Path.wildcard(Path.join(priv_dl, "**")), &File.regular?/1)
+      )
+
+    files
+    |> Enum.reduce(:crypto.hash_init(:sha256), fn file, hash ->
+      hash
+      |> :crypto.hash_update(Path.basename(file))
+      |> :crypto.hash_update(File.read!(file))
+    end)
+    |> :crypto.hash_update(System.version())
+    |> :crypto.hash_update(:erlang.system_info(:version) |> List.to_string())
+    |> :crypto.hash_update(souffle_version())
+    |> :crypto.hash_final()
+    |> Base.encode16(case: :lower)
+  end
+
+  defp souffle_version do
+    case System.find_executable("souffle") do
+      nil ->
+        "no souffle"
+
+      bin ->
+        {out, _status} = System.cmd(bin, ["--version"], stderr_to_stdout: true)
+        out
+    end
   end
 
   # ── Steps ─────────────────────────────────────────────────────────────

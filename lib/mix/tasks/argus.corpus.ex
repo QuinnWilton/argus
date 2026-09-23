@@ -51,8 +51,7 @@ defmodule Mix.Tasks.Argus.Corpus do
           side <- [:pre, :fix],
           co = Corpus.checkout(pair, side),
           co != nil,
-          {:ok, beams} <- [Corpus.ensure(pair, side)],
-          {:ok, results} <- [Corpus.analyze(beams)],
+          {:ok, results} <- [Corpus.analyze(pair, side)],
           finding <- results.findings,
           filter == nil or String.contains?(finding.title, filter),
           do: {finding.analysis, finding.title, co.name, finding.mfa}
