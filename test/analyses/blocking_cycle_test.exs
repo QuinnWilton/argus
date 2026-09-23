@@ -30,6 +30,29 @@ defmodule Argus.Analyses.BlockingCycleTest do
       assert "Argus.Test.Fixtures.CycleServerB" in cycle_mods
     end
 
+    test "a cycle between servers that hold each other only by pid" do
+      skip_without_souffle()
+
+      # A starts B with self(); each keeps the other's pid in its state and
+      # calls it, so both GenServer.call targets are "dynamic" to sync_call.
+      # Process points-to (clientlib/processes.dl) follows the pids back.
+      a = Argus.Test.Fixtures.PidFlow.CycleA
+      b = Argus.Test.Fixtures.PidFlow.CycleB
+
+      assert {:ok, results} = Argus.analyze([a, b], :blocking)
+
+      assert Enum.any?(results["call_cycle"], fn [x, y | _] ->
+               Enum.sort([x, y]) == Enum.sort([inspect(a), inspect(b)])
+             end)
+
+      # B never names A, and both handle both tags: the edge back to A is
+      # the points-to analysis's alone, not the tag attribution's.
+      assert Enum.any?(results["call_cycle_path"], fn
+               [_, _, from, to, _, "static", _] -> from == inspect(b) and to == inspect(a)
+               _ -> false
+             end)
+    end
+
     test "runs without error on module with no cycles" do
       skip_without_souffle()
 

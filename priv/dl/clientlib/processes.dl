@@ -1,0 +1,95 @@
+// Which process a pid can be: the interprocedural half of process
+// points-to. Argus.Extractors.PidFlow summarises each function (where the
+// pids it passes on, returns, calls, registers and sends to come from);
+// this file chains the summaries.
+//
+// A process is named by where it was started (process_start): "spawn
+// Mod:fun/n" or "server Mod". A source is one of
+//   proc   — that process, started in the same function;
+//   param  — the function's parameter at a position;
+//   result — the value a project function returned;
+//   name   — a pid registered under a literal name;
+//   self   — self(), which is whichever process runs the function.
+// Context-insensitive, like Andersen's analysis: a parameter points to
+// every process any caller passes it. That is "may point to", and a rule
+// that concludes something from it asks what a process does NOT do.
+//
+// Where sends go is in sends.dl, apart, so an analysis that asks only
+// about calls does not read every send in the program.
+//
+// Prerequisites: include clientlib/imports.dl before this file.
+
+// A parameter may be a pid of `proc` when some call passes one.
+.decl param_pid(func: symbol, pos: symbol, proc: symbol)
+
+// A function may return a pid of `proc`.
+.decl returns_pid(func: symbol, proc: symbol)
+
+// A registered name may hold a pid of `proc`.
+.decl named_pid(name: symbol, proc: symbol)
+
+// A source, as seen from inside `func`, may be a pid of `proc`.
+.decl source_pid(func: symbol, src_kind: symbol, src: symbol, proc: symbol)
+
+source_pid(f, "proc", p, p) :- process_start(f, p, _, _).
+source_pid(f, "param", k, p) :- param_pid(f, k, p).
+
+// A callee's result or a registered name means the same wherever it is
+// read; the join is bound by the summary row that names it.
+source_pid(f, "result", g, p) :- pid_arg(f, _, _, "result", g), returns_pid(g, p).
+source_pid(f, "result", g, p) :- pid_return(f, "result", g), returns_pid(g, p).
+source_pid(f, "result", g, p) :- pid_call(f, _, "result", g), returns_pid(g, p).
+source_pid(f, "result", g, p) :- pid_register(f, _, "result", g), returns_pid(g, p).
+source_pid(f, "name", n, p) :- pid_arg(f, _, _, "name", n), named_pid(n, p).
+source_pid(f, "name", n, p) :- pid_return(f, "name", n), named_pid(n, p).
+source_pid(f, "name", n, p) :- pid_call(f, _, "name", n), named_pid(n, p).
+
+param_pid(g, k, p) :- pid_arg(f, g, k, kind, src), source_pid(f, kind, src, p).
+
+// ── Who runs a function ─────────────────────────────────────────────
+
+// self() in a server's callbacks (process_entry: its callbacks, init/1,
+// terminate/2) is that server; in a spawned function, that spawn. A
+// function reached from them, or a client API, runs in someone else's
+// process, and is left unresolved.
+.decl self_pid(func: symbol, proc: symbol)
+
+self_pid(f, p) :- process_entry(m, f), process_start(_, p, "server", m).
+self_pid(f, p) :- process_start(_, p, "spawn", f).
+
+source_pid(f, "self", "self", p) :- self_pid(f, p).
+
+// ── A GenServer's state ─────────────────────────────────────────────
+
+// What init/1 and the handlers return becomes the state the next handler
+// (or terminate/2) is called with. Returned tuples are not taken apart,
+// so a pid anywhere in {:reply, reply, state} counts as state: may.
+.decl state_out(mod: symbol, func: symbol)
+.decl state_in(mod: symbol, func: symbol, pos: symbol)
+
+state_out(m, f) :- behaves_as(m, "GenServer"), function_def(f, m, "init", 1, _).
+state_out(m, f) :- state_in(m, f, _), !function_def(f, m, "terminate", 2, _).
+
+state_in(m, f, "2") :- behaves_as(m, "GenServer"), function_def(f, m, "handle_call", 3, _).
+state_in(m, f, "1") :-
+  behaves_as(m, "GenServer"),
+  function_def(f, m, name, 2, _),
+  (name = "handle_cast" ; name = "handle_info" ; name = "handle_continue" ; name = "terminate").
+
+param_pid(f, k, p) :- state_in(m, f, k), state_out(m, g), returns_pid(g, p).
+
+returns_pid(f, p) :- pid_return(f, kind, src), source_pid(f, kind, src, p).
+
+named_pid(n, p) :- pid_register(f, n, kind, src), source_pid(f, kind, src, p).
+
+// A server started with a literal name: the start registers it.
+named_pid(n, p) :-
+  named_process(mod, n),
+  process_start(_, p, "server", mod).
+
+// ── What the pids reach ─────────────────────────────────────────────
+
+// A GenServer-style call or cast in `func` may target `proc`.
+.decl call_target(func: symbol, api_kind: symbol, proc: symbol)
+
+call_target(f, kind, p) :- pid_call(f, kind, sk, src), source_pid(f, sk, src, p).

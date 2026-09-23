@@ -55,7 +55,11 @@ defmodule Argus.Analyses.Shutdown do
       Argus.Extractors.CallArgs,
       Argus.Extractors.GenStatem,
       Argus.Extractors.Monitor,
-      Argus.Extractors.Reply
+      Argus.Extractors.Reply,
+      # A call whose target is a pid resolves through process points-to
+      # (clientlib/processes.dl): where the pid was started, and names.
+      Argus.Extractors.PidFlow,
+      Argus.Extractors.ProcessRegistry
     ]
 
   @impl true

@@ -8,6 +8,43 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+Schema 46. Process points-to: which process a pid can be. A pid is a
+reference and the call that started the process is its allocation site —
+a spawn, named by what it runs (`spawn_call`), or a GenServer,
+`:gen_server` or `:gen_statem` start with a literal callback module; the
+process registry is a field that `register/2` stores into and a send to a
+name reads. `Argus.Extractors.PidFlow` summarises each function with the
+same union fixpoint over reaching definitions as `ParamFlow`, with
+processes, parameters, project calls' results, registered names and
+`self()` as sources:
+
+- `process_start(func, proc, kind, runs)` — `func` starts `proc`
+  (`"spawn Mod:fun/n"` or `"server Mod"`, function-level ids).
+- `pid_arg(caller, callee, arg_pos, src_kind, src)` — an argument may be
+  a pid from the source; also a server start's init argument, a
+  one-argument spawn's argument and a closure's captured variables.
+- `pid_return(func, src_kind, src)`, `pid_call(func, api_kind, src_kind,
+  src)` (the `sync_call`/`async_cast` table's calls and casts),
+  `pid_register(func, name, src_kind, src)`.
+- `pid_send(id, func, message, src_kind, src)` — keyed on the site; the
+  message is a literal atom, `{:tag, …}`, or `dynamic`.
+
+`clientlib/processes.dl` chains them (context-insensitive, like
+Andersen's analysis): `param_pid`, `returns_pid`, `named_pid`,
+`self_pid` (a server's callbacks run in that server, a spawned function
+in its spawn), a GenServer's state (what `init/1` and the handlers return
+is the next handler's state parameter) and `call_target`;
+`clientlib/sends.dl` adds `send_target`, apart, so the analyses that ask
+only about calls do not read every send. `sync_dep` and `async_dep` gain
+a clause for a call whose `"dynamic"` target resolves to a server —
+rows added, none removed, since `cached_pid` and the tag rules key on
+`"dynamic"` — and `sync_site` one for its site. blocking, coupling,
+shutdown and startup list the extractor (and `ProcessRegistry`, for
+`named_process`, where they did not); their pinned inputs gain the
+function-level relations only. Only project code is followed: a call into
+OTP or Elixir's own modules yields nothing. scry/planchette memos keyed
+on the schema version invalidate.
+
 **Schema version 44.** A new extractor, `Argus.Extractors.Dependence`,
 emits what each call, shared-state operation and return value depends on
 — the function's parameters, the results of the calls it makes, the

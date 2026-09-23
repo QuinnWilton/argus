@@ -105,6 +105,13 @@ sync_dep(f, m) :-
   function_def(f, fm, _, _, _),
   fm != m.
 
+// A call whose target is a pid (sync_call says "dynamic") that the
+// points-to analysis follows back to a server started with m's
+// callbacks (processes.dl).
+sync_dep(f, m) :-
+  call_target(f, "call", p),
+  process_start(_, p, "server", m).
+
 // The instruction in `func` that calls the project function `callee`:
 // the site a finding points at when a rule knows only the functions.
 // Over the staged call_site, so no analysis reads remote_call for it.
@@ -134,6 +141,12 @@ sync_site(f, m, id) :-
   function_def(f, fm, _, _, _),
   fm != m.
 
+sync_site(f, m, id) :-
+  call_target(f, "call", p),
+  process_start(_, p, "server", m),
+  call_site(id, f, mod, "call", _),
+  (mod = "GenServer" ; mod = ":gen_server").
+
 .decl async_dep(func: symbol, mod: symbol)
 
 async_dep(f, m) :-
@@ -147,6 +160,10 @@ async_dep(f, m) :-
   genserver_async_api(g, m),
   function_def(f, fm, _, _, _),
   fm != m.
+
+async_dep(f, m) :-
+  call_target(f, "cast", p),
+  process_start(_, p, "server", m).
 
 // ── Resolution by message tag ──────────────────────────────────────────
 //

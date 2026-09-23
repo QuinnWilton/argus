@@ -250,6 +250,32 @@ defmodule Argus.Extractors.ApiCalls do
   @spec sink_mfas() :: [{module(), atom(), arity() | [arity()] | :any}]
   def sink_mfas, do: @sink_mfas
 
+  @doc """
+  Whether a concrete `{mod, fun, arity}` is a synchronous call (`:call`) or
+  an asynchronous cast (`:cast`) to the process its first argument names,
+  from the same table `sync_call` and `async_cast` come from; `nil`
+  otherwise. `multi_call` is left out: its first argument is nodes.
+  """
+  @spec process_call_kind({module(), atom(), arity()}) :: :call | :cast | nil
+  def process_call_kind({_mod, :multi_call, _arity}), do: nil
+
+  def process_call_kind(mfa) do
+    cond do
+      listed?(mfa, @sync_default_5000 ++ @sync_default_infinity ++ @sync_explicit_timeout) ->
+        :call
+
+      listed?(mfa, @async) ->
+        :cast
+
+      true ->
+        nil
+    end
+  end
+
+  defp listed?({mod, fun, arity}, table) do
+    Enum.any?(table, fn {m, f, a} -> m == mod and f == fun and arity_matches?(a, arity) end)
+  end
+
   @doc "Whether a concrete `{mod, fun, arity}` is one of `sink_mfas/0`."
   @spec sink?({module(), atom(), arity()}) :: boolean()
   def sink?({mod, fun, arity}) do

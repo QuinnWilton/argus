@@ -54,7 +54,10 @@ defmodule Argus.Analyses.Startup do
       Argus.Extractors.GenStatem,
       Argus.Extractors.Reply,
       Argus.Extractors.Monitor,
-      Argus.Extractors.ProcessRegistry
+      Argus.Extractors.ProcessRegistry,
+      # A call whose target is a pid resolves through process points-to
+      # (clientlib/processes.dl): where the pid was started, and names.
+      Argus.Extractors.PidFlow
     ]
 
   @impl true

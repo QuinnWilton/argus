@@ -55,7 +55,11 @@ defmodule Argus.Analyses.Blocking do
       # The sync_call rows the chains follow are partly derived through
       # call_arg and call_arg_forward: a target forwarded through a wrapper.
       Argus.Extractors.CallArgs,
-      Argus.Extractors.ErrorHandling
+      Argus.Extractors.ErrorHandling,
+      # A call whose target is a pid resolves through process points-to
+      # (clientlib/processes.dl): where the pid was started, and names.
+      Argus.Extractors.PidFlow,
+      Argus.Extractors.ProcessRegistry
     ]
 
   @impl true

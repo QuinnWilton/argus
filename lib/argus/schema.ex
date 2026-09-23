@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 45
+  @schema_version 46
 
   # Layer 1: Module-level facts.
 
@@ -2048,6 +2048,107 @@ defmodule Argus.Schema do
     """
   }
 
+  # Process points-to: which process a pid can be. Written by
+  # Argus.Extractors.PidFlow; chained across functions by clientlib/processes.dl.
+
+  @process_start %{
+    name: :process_start,
+    layer: 2,
+    fields: [
+      {:func, :func_id, "function containing the start"},
+      {:proc, :symbol, "the process: \"spawn Mod:fun/n\" or \"server Mod\""},
+      {:kind, :symbol, "spawn or server"},
+      {:runs, :symbol, "the spawned function, or the server's callback module"}
+    ],
+    doc: """
+    A process allocation site: `func` starts `proc`. A spawn is named by the \
+    function it runs (resolved in spawn_call), a GenServer, :gen_server or \
+    :gen_statem start by its literal callback module. Ids are function-level \
+    so a body edit does not rename a process.
+    """
+  }
+
+  @pid_arg %{
+    name: :pid_arg,
+    layer: 2,
+    fields: [
+      {:caller, :func_id, "function making the call"},
+      {:callee, :func_id, "function called"},
+      {:arg_pos, :symbol, "0-based argument position, as a symbol"},
+      {:src_kind, :symbol, "where the pid comes from: proc, param, result, name or self"},
+      {:src, :symbol,
+       "the process id, the parameter position, the callee whose result it is, the name, or self"}
+    ],
+    doc: """
+    At some call in `caller`, argument `arg_pos` may be a pid from the \
+    source. Also a server start's init argument (`Mod:init/1`), a \
+    one-argument spawn's argument, and a closure's captured variables (its \
+    trailing parameters). Only calls into project code: OTP and Elixir's \
+    own modules are not followed.
+    """
+  }
+
+  @pid_return %{
+    name: :pid_return,
+    layer: 2,
+    fields: [
+      {:func, :func_id, "function returning"},
+      {:src_kind, :symbol, "where the pid comes from: proc, param, result, name or self"},
+      {:src, :symbol,
+       "the process id, the parameter position, the callee whose result it is, the name, or self"}
+    ],
+    doc: "`func` may return a pid from the source, directly or by a tail call."
+  }
+
+  @pid_call %{
+    name: :pid_call,
+    layer: 2,
+    fields: [
+      {:func, :func_id, "function making the call"},
+      {:api_kind, :symbol, "call or cast, from the sync_call/async_cast table"},
+      {:src_kind, :symbol, "where the pid comes from: proc, param, result, name or self"},
+      {:src, :symbol,
+       "the process id, the parameter position, the callee whose result it is, the name, or self"}
+    ],
+    doc: """
+    A GenServer-style call or cast in `func` whose target may be a pid from \
+    the source: what resolves a sync_call recorded as "dynamic".
+    """
+  }
+
+  @pid_register %{
+    name: :pid_register,
+    layer: 2,
+    fields: [
+      {:func, :func_id, "function registering"},
+      {:name, :symbol, "the literal name"},
+      {:src_kind, :symbol, "where the pid comes from: proc, param, result, name or self"},
+      {:src, :symbol,
+       "the process id, the parameter position, the callee whose result it is, the name, or self"}
+    ],
+    doc:
+      "`func` registers a pid from the source under `name` (Process.register/2, :erlang.register/2)."
+  }
+
+  @pid_send %{
+    name: :pid_send,
+    layer: 2,
+    fields: [
+      {:id, :instr_id, "instruction ID of the send"},
+      {:func, :func_id, "function sending"},
+      {:message, :symbol,
+       "literal atom, {:tag, …} for a tuple with a literal atom tag, or dynamic"},
+      {:src_kind, :symbol, "where the pid comes from: proc, param, result, name or self"},
+      {:src, :symbol,
+       "the process id, the parameter position, the callee whose result it is, the name, or self"}
+    ],
+    doc: """
+    The send at `id` (`send/2`, `!`, Process.send/3) goes to a pid from the \
+    source or, with src_kind `name`, to a literal name. Keyed on the site \
+    because the finding about what it sends anchors there.
+    """
+  }
+
   # All relations indexed by name.
 
   @layer_1_relations [
@@ -2179,6 +2280,12 @@ defmodule Argus.Schema do
     @name_lookup,
     @name_release,
     @sink_arg_derived,
+    @process_start,
+    @pid_arg,
+    @pid_return,
+    @pid_call,
+    @pid_register,
+    @pid_send,
     @start_error_compared,
     # Dependence: what decides or feeds a call, a shared-state op, a return.
     @site_depends,

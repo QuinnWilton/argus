@@ -4,13 +4,15 @@
 //   .include "../clientlib/otp.dl"
 //
 // Provides behaviours.dl (behaves_as, process_behaviour), callbacks.dl
-// (otp_callback, init_function, handler_function, ...), calls.dl
+// (otp_callback, init_function, handler_function, ...), processes.dl
+// (param_pid, call_target, send_target: which process a pid can be), calls.dl
 // (sync_dep, reaches_sync_dep, stateful_module_dep, ...) and
 // supervision.dl (child_subtree, starts_before). An analysis that needs
 // only the behaviour table may include behaviours.dl alone; one that
 // includes this file must not include it again.
 .include "behaviours.dl"
 .include "callbacks.dl"
+.include "processes.dl"
 .include "calls.dl"
 .include "supervision.dl"
 .include "process.dl"
