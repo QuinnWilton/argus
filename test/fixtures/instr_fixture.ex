@@ -110,4 +110,29 @@ defmodule Argus.Test.Fixtures.Instr do
     Process.put(:me, me)
     Process.send_after(me, :tick, ms)
   end
+
+  # Eight sixteen-armed cases in a row, each result kept in its own
+  # register until the binary is built: every join sees what the arms
+  # before it wrote arrive along all sixteen of its edges.
+  def hex(<<a::4, b::4, c::4, d::4, e::4, f::4, g::4, h::4>>) do
+    <<digit(a), digit(b), digit(c), digit(d), digit(e), digit(f), digit(g), digit(h)>>
+  end
+
+  @compile {:inline, digit: 1}
+  defp digit(0), do: ?0
+  defp digit(1), do: ?1
+  defp digit(2), do: ?2
+  defp digit(3), do: ?3
+  defp digit(4), do: ?4
+  defp digit(5), do: ?5
+  defp digit(6), do: ?6
+  defp digit(7), do: ?7
+  defp digit(8), do: ?8
+  defp digit(9), do: ?9
+  defp digit(10), do: ?a
+  defp digit(11), do: ?b
+  defp digit(12), do: ?c
+  defp digit(13), do: ?d
+  defp digit(14), do: ?e
+  defp digit(15), do: ?f
 end

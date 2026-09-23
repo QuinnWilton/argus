@@ -79,8 +79,12 @@ defmodule Argus.Instr.Reaching do
   # its start, whatever reaches the block. A block is a chain of
   # instructions each the sole successor of the last, which a jump can
   # join, so it is walked by position rather than by index.
-  defp walk_back(_code, _block, pos, reg, in_regs) when pos < 0,
-    do: in_regs |> Map.get(reg, []) |> Enum.sort()
+  defp walk_back(_code, _block, pos, reg, in_regs) when pos < 0 do
+    case Map.fetch(in_regs, reg) do
+      {:ok, sources} -> sources |> MapSet.to_list() |> Enum.sort()
+      :error -> []
+    end
+  end
 
   defp walk_back(code, block, pos, reg, in_regs) do
     at = elem(block, pos)
@@ -169,9 +173,7 @@ defmodule Argus.Instr.Reaching do
               do: {idx, {n, pos}}
             ),
           blocks:
-            Map.new(blocks, fn {{block, in_set}, n} ->
-              {n, {List.to_tuple(block), Enum.group_by(in_set, &elem(&1, 1), &elem(&1, 0))}}
-            end)
+            Map.new(blocks, fn {{block, in_map}, n} -> {n, {List.to_tuple(block), in_map}} end)
         }
     end
   end

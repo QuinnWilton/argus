@@ -3,6 +3,7 @@ defmodule Argus.DataflowTest do
 
   alias Argus.Dataflow
   alias Argus.Extractor.Helpers
+  alias Argus.Instr
   alias Argus.InstrId
   alias Argus.Pipeline.Disassemble
   alias Argus.Test.Fixtures.Instr, as: Fixture
@@ -315,5 +316,83 @@ defmodule Argus.DataflowTest do
       with_entry = Map.put(facts, :function_entry, [%{func: "M:f/1", entry: 2}])
       assert reaching(with_entry, params: true) == MapSet.new([{{:param, 0}, "x0", 3}])
     end
+  end
+
+  describe "the block solver" do
+    # The fixture's shapes: handlers, receives, and a function of many
+    # wide joins (`hex/1`), where most registers reach a join along every
+    # one of its edges.
+    test "agrees with a per-instruction fixpoint over the instruction lists" do
+      {:ok, data} = Disassemble.disassemble_path(to_string(:code.which(Fixture)))
+      solved = Dataflow.reaching_uses(Helpers.typed(data), params: true)
+      by_function = Enum.group_by(solved, fn {_source, _reg, use} -> {use.func, use.arity} end)
+
+      {:function, _, _, _, hex} =
+        Enum.find(data.functions, &match?({:function, :hex, 1, _, _}, &1))
+
+      assert Enum.count(hex, &match?({:select_val, _, _, _}, &1)) >= 8
+
+      for {:function, name, arity, _entry, instrs} <- data.functions do
+        expected =
+          by_function
+          |> Map.get({to_string(name), arity}, [])
+          |> MapSet.new(fn {source, reg, use} -> {source_of(source), reg, use.idx} end)
+
+        assert naive(instrs, arity) == expected, "#{name}/#{arity}"
+      end
+    end
+
+    # Reaching definitions the textbook way: every instruction's input is
+    # the union of its predecessors' outputs, iterated until nothing moves.
+    defp naive(instrs, arity) do
+      code = List.to_tuple(instrs)
+      n = tuple_size(code)
+      labels = for {{:label, l}, i} <- Enum.with_index(instrs), into: %{}, do: {l, i}
+
+      preds =
+        for i <- 0..(n - 1)//1,
+            instr = elem(code, i),
+            next = if(Instr.falls_through?(instr) and i + 1 < n, do: [i + 1], else: []),
+            target <- next ++ for(l <- Instr.targets(instr), t = labels[l], t != nil, do: t),
+            reduce: %{} do
+          acc -> Map.update(acc, target, [i], &[i | &1])
+        end
+
+      entry = Enum.find_index(instrs, &match?({:func_info, _, _, _}, &1)) + 1
+      seed = MapSet.new(0..(arity - 1)//1, &{{:param, &1}, "x#{&1}"})
+      {ins, _outs} = fixpoint(code, preds, entry, seed, %{})
+
+      for i <- 0..(n - 1)//1,
+          reg <- elem(code, i) |> Instr.uses() |> Enum.map(&spell/1),
+          {source, ^reg} <- Map.get(ins, i, MapSet.new()),
+          into: MapSet.new(),
+          do: {source, reg, i}
+    end
+
+    # In stream order, each instruction reading its predecessors' latest
+    # outputs, until a pass changes none.
+    defp fixpoint(code, preds, entry, seed, outs) do
+      {ins, new_outs} =
+        Enum.reduce(0..(tuple_size(code) - 1)//1, {%{}, outs}, fn i, {ins, outs} ->
+          start = if i == entry, do: seed, else: MapSet.new()
+
+          in_set =
+            preds
+            |> Map.get(i, [])
+            |> Enum.reduce(start, &MapSet.union(&2, Map.get(outs, &1, MapSet.new())))
+
+          {Map.put(ins, i, in_set), Map.put(outs, i, transfer(elem(code, i), i, in_set))}
+        end)
+
+      if new_outs == outs, do: {ins, outs}, else: fixpoint(code, preds, entry, seed, new_outs)
+    end
+
+    defp transfer(instr, i, in_set) do
+      written = instr |> Instr.defs() |> Enum.map(&spell/1)
+      kept = MapSet.reject(in_set, fn {_source, reg} -> reg in written end)
+      Enum.reduce(written, kept, &MapSet.put(&2, {i, &1}))
+    end
+
+    defp spell({kind, n}), do: "#{kind}#{n}"
   end
 end

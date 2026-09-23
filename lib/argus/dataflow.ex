@@ -203,23 +203,30 @@ defmodule Argus.Dataflow do
   defp function_edges(ids, succ, defs, uses, entry) do
     ids
     |> block_ins(succ, defs, entry)
-    |> Enum.flat_map(fn {block, in_set} -> resolve(block, in_set, defs, uses) end)
+    |> Enum.flat_map(fn {block, in_map} -> resolve(block, in_map, defs, uses) end)
     |> MapSet.new()
   end
 
   @doc false
   # The solver itself, for `Argus.Instr.Reaching`, which runs it over a
   # function's instruction list rather than its facts: one function's
-  # straight-line blocks, each with the {source, reg} pairs reaching its
-  # start. `ids` in stream order, `succ` the successor lists, `defs` the
-  # registers each id writes, `entry` the entry id and what reaches it.
+  # straight-line blocks, each with what reaches its start as `%{reg =>
+  # MapSet(source)}`. `ids` in stream order, `succ` the successor lists,
+  # `defs` the registers each id writes, `entry` the entry id and the
+  # `{source, reg}` pairs that reach it.
   @spec block_ins([id], %{id => [id]}, %{id => [reg]}, {id, [{term(), reg}]}) ::
-          [{[id], MapSet.t({term(), reg})}]
+          [{[id], %{reg => MapSet.t(term())}}]
         when id: term(), reg: term()
   def block_ins(ids, succ, defs, {entry_id, seed}) do
     preds = invert(succ)
     blocks = build_blocks(ids, succ, preds, entry_id)
     block_of = for {block, n} <- Enum.with_index(blocks), id <- block, into: %{}, do: {id, n}
+
+    seed =
+      Enum.reduce(seed, %{}, fn {source, reg}, acc ->
+        Map.update(acc, reg, MapSet.new([source]), &MapSet.put(&1, source))
+      end)
+
     entry = {Map.fetch!(block_of, entry_id), seed}
 
     block_succs =
@@ -231,13 +238,13 @@ defmodule Argus.Dataflow do
       end)
 
     block_preds = invert(block_succs)
-    summaries = Map.new(Enum.with_index(blocks), fn {block, n} -> {n, summarize(block, defs)} end)
+    gens = Map.new(Enum.with_index(blocks), fn {block, n} -> {n, summarize(block, defs)} end)
 
-    out = solve(Map.keys(summaries), block_succs, block_preds, summaries, entry)
+    ins = solve(Map.keys(gens), block_succs, block_preds, gens, entry)
 
     blocks
     |> Enum.with_index()
-    |> Enum.map(fn {block, n} -> {block, block_in(n, block_preds, out, entry)} end)
+    |> Enum.map(fn {block, n} -> {block, Map.fetch!(ins, n)} end)
   end
 
   # Maximal straight-line chains: extend a block while the last instruction's
@@ -272,75 +279,122 @@ defmodule Argus.Dataflow do
     end
   end
 
-  # A block's transfer summary: gen = the {id, reg} pairs whose definition
-  # survives to the block's end; kill = every register the block writes.
+  # A block's transfer: the last write of each register it writes, as
+  # `%{reg => MapSet([id])}`. Every register the block kills is one it
+  # generates, so what leaves the block is what reached it with these
+  # entries replaced.
   defp summarize(block, defs) do
-    last_def =
-      Enum.reduce(block, %{}, fn id, acc ->
-        Enum.reduce(Map.get(defs, id, []), acc, fn reg, inner -> Map.put(inner, reg, id) end)
-      end)
-
-    gen = MapSet.new(last_def, fn {reg, id} -> {id, reg} end)
-    {gen, MapSet.new(Map.keys(last_def))}
+    block
+    |> Enum.reduce(%{}, fn id, acc ->
+      Enum.reduce(Map.get(defs, id, []), acc, fn reg, inner -> Map.put(inner, reg, id) end)
+    end)
+    |> Map.new(fn {reg, id} -> {reg, MapSet.new([id])} end)
   end
 
-  # Worklist fixpoint over the block graph: a queue with a pending set, so
-  # membership checks and re-enqueues stay constant-time on wide graphs.
-  defp solve(block_ids, block_succs, block_preds, summaries, entry) do
-    out = Map.new(block_ids, &{&1, MapSet.new()})
-    queue = :queue.from_list(block_ids)
-    iterate(queue, MapSet.new(block_ids), block_succs, block_preds, summaries, entry, out)
+  # Worklist fixpoint over the block graph, taking the pending block that
+  # comes first in reverse postorder from the entry (unreachable blocks
+  # after, in stream order). A block is then visited after every
+  # predecessor that is not a back edge, so an acyclic stretch settles in
+  # one visit per block; a queue in the map's order visited a join once
+  # per predecessor that changed before it.
+  #
+  # What reaches a point is kept per register, and a register a block
+  # does not write leaves it as the very term that entered: at a join of
+  # many arms (a table of clauses, a hex encoder) most registers arrive
+  # as one shared set from every arm, and the union is a pointer
+  # comparison instead of a merge of every `{source, reg}` pair.
+  #
+  # Returns what reaches each block's start: every block is visited at
+  # least once and again whenever a predecessor's output changes, so the
+  # last input computed for it is the fixpoint's.
+  defp solve(block_ids, block_succs, block_preds, gens, {entry_block, _seed} = entry) do
+    rank = rank(entry_block, block_ids, block_succs)
+    pending = :gb_sets.from_list(Enum.map(block_ids, &{Map.fetch!(rank, &1), &1}))
+    iterate(pending, rank, block_succs, block_preds, gens, entry, %{}, %{})
   end
 
-  defp iterate(queue, pending, succs, preds, summaries, entry, out) do
-    case :queue.out(queue) do
-      {:empty, _queue} ->
-        out
+  defp iterate(pending, rank, succs, preds, gens, entry, ins, outs) do
+    if :gb_sets.is_empty(pending) do
+      ins
+    else
+      {{_rank, n}, pending} = :gb_sets.take_smallest(pending)
+      in_map = block_in(n, preds, outs, entry)
+      ins = Map.put(ins, n, in_map)
+      new_out = Map.merge(in_map, Map.fetch!(gens, n))
 
-      {{:value, n}, queue} ->
-        pending = MapSet.delete(pending, n)
-        {gen, kill} = Map.fetch!(summaries, n)
-        in_set = block_in(n, preds, out, entry)
-        surviving = Enum.reject(in_set, fn {_id, reg} -> MapSet.member?(kill, reg) end)
-        new_out = MapSet.union(gen, MapSet.new(surviving))
+      if Map.fetch(outs, n) == {:ok, new_out} do
+        iterate(pending, rank, succs, preds, gens, entry, ins, outs)
+      else
+        pending =
+          succs
+          |> Map.get(n, [])
+          |> Enum.reduce(pending, &:gb_sets.add_element({Map.fetch!(rank, &1), &1}, &2))
 
-        if MapSet.equal?(new_out, Map.fetch!(out, n)) do
-          iterate(queue, pending, succs, preds, summaries, entry, out)
-        else
-          {queue, pending} = enqueue(Map.get(succs, n, []), queue, pending)
-          iterate(queue, pending, succs, preds, summaries, entry, Map.put(out, n, new_out))
-        end
+        iterate(pending, rank, succs, preds, gens, entry, ins, Map.put(outs, n, new_out))
+      end
     end
   end
 
-  defp enqueue(blocks, queue, pending) do
-    Enum.reduce(blocks, {queue, pending}, fn n, {q, p} ->
-      if MapSet.member?(p, n) do
-        {q, p}
-      else
-        {:queue.in(n, q), MapSet.put(p, n)}
-      end
-    end)
+  # %{block => its position}: reverse postorder from the entry, then the
+  # blocks no path from the entry reaches, in stream order.
+  defp rank(entry_block, block_ids, succs) do
+    reachable =
+      postorder(
+        [{entry_block, Map.get(succs, entry_block, [])}],
+        MapSet.new([entry_block]),
+        succs,
+        []
+      )
+
+    seen = MapSet.new(reachable)
+    rest = block_ids |> Enum.reject(&MapSet.member?(seen, &1)) |> Enum.sort()
+    (reachable ++ rest) |> Enum.with_index() |> Map.new()
+  end
+
+  # Iterative depth-first search; the accumulated list is reverse
+  # postorder, since a node is prepended once its successors are done.
+  defp postorder([], _visited, _succs, order), do: order
+
+  defp postorder([{node, []} | stack], visited, succs, order),
+    do: postorder(stack, visited, succs, [node | order])
+
+  defp postorder([{node, [next | rest]} | stack], visited, succs, order) do
+    if MapSet.member?(visited, next) do
+      postorder([{node, rest} | stack], visited, succs, order)
+    else
+      stack = [{next, Map.get(succs, next, [])}, {node, rest} | stack]
+      postorder(stack, MapSet.put(visited, next), succs, order)
+    end
   end
 
   # A block starts from what its predecessors leave behind; the entry
   # block also from the function's parameters (when the caller asked for
-  # them), since a loop back to the entry is a predecessor too.
+  # them), since a loop back to the entry is a predecessor too. A
+  # predecessor not visited yet leaves nothing behind.
   defp block_in(n, preds, out, {entry_block, seed}) do
-    from_preds =
-      preds
-      |> Map.get(n, [])
-      |> Enum.reduce(MapSet.new(), &MapSet.union(&2, Map.fetch!(out, &1)))
+    start = if n == entry_block, do: seed, else: %{}
 
-    if n == entry_block, do: Enum.into(seed, from_preds), else: from_preds
+    preds
+    |> Map.get(n, [])
+    |> Enum.reduce(start, fn pred, acc ->
+      case Map.fetch(out, pred) do
+        {:ok, pred_out} -> join(acc, pred_out)
+        :error -> acc
+      end
+    end)
+  end
+
+  defp join(left, right) when map_size(left) == 0, do: right
+
+  defp join(left, right) do
+    Map.merge(left, right, fn _reg, a, b -> if a == b, do: a, else: MapSet.union(a, b) end)
   end
 
   # One local walk: each use reads the state before its own instruction's
   # writes; each write then becomes the sole reaching definition of its
   # register for the rest of the block.
-  defp resolve(block, in_set, defs, uses) do
-    initial =
-      Enum.group_by(in_set, fn {_id, reg} -> reg end, fn {id, _reg} -> id end)
+  defp resolve(block, in_map, defs, uses) do
+    initial = Map.new(in_map, fn {reg, sources} -> {reg, MapSet.to_list(sources)} end)
 
     {edges, _state} =
       Enum.reduce(block, {[], initial}, fn id, {edges, state} ->
