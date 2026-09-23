@@ -466,6 +466,12 @@ concern that runs it.
 
 ### mailbox
 
+**Changed.** `mailbox.partial_handler`'s "runtime" source counts only a monitor the
+server takes on its own stack (a callback, or what one reaches in the
+module), as `unconsumed_monitor` already did: a client function of the
+same module (`def await_up, do: Process.monitor(whereis(__MODULE__))`)
+runs in the caller, and its `:DOWN` never reaches the server.
+
 **Changed.** Schema 53. `mailbox.timer_cancel_without_flush` leaves out two cancels
 that cannot leave a stale message behind. One in the `handle_info/2`
 clause of the very message the timer sends (`def

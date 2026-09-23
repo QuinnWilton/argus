@@ -352,3 +352,22 @@ defmodule Argus.Test.Fixtures.SelfSendPartialInfoServer do
   @impl true
   def handle_info(:warm, state), do: {:noreply, state}
 end
+
+defmodule Argus.Test.Fixtures.ClientMonitorsServer do
+  @moduledoc """
+  The only monitor is in a client function, which runs in the caller:
+  the server itself receives no :DOWN, and its partial handle_info is no
+  runtime-written mailbox.
+  """
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg, name: __MODULE__)
+
+  def await_up, do: Process.monitor(Process.whereis(__MODULE__))
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_info(:ping, state), do: {:noreply, state}
+end

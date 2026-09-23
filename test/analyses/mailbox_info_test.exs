@@ -65,6 +65,12 @@ defmodule Argus.Analyses.MailboxInfoTest do
       assert mods == ["Argus.Test.Fixtures.MonitorsWithoutCatchall"]
     end
 
+    test "a monitor taken in a client function, in the caller's process, is not the server's" do
+      skip_without_souffle()
+      results = analyze([Argus.Test.Fixtures.ClientMonitorsServer])
+      assert partial(results, "runtime") == []
+    end
+
     test "a missing :EXIT clause is reported once, as the specific finding" do
       skip_without_souffle()
 

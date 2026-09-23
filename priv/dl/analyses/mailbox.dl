@@ -77,9 +77,13 @@ trap_exit_without_exit_clause(mod, func) :-
 
 receives_runtime_messages(mod) :- trap_exit(_, mod).
 
+// A monitor the server itself holds: taken on its own stack (a callback,
+// or what one reaches in the module). A client function of the same
+// module — `def await_up, do: Process.monitor(whereis(__MODULE__))` —
+// runs in the caller, and its :DOWN lands in the caller's mailbox.
 receives_runtime_messages(mod) :-
   monitor_call(_, f, _),
-  function_def(f, mod, _, _, _).
+  server_side(mod, f).
 
 partial_handler(mod, h, "runtime", "catchall", "") :-
   (behaves_as(mod, "GenServer") ; behaves_as(mod, "GenStage")),
