@@ -274,6 +274,15 @@ means: "asks whether the name in its first argument is registered" where
 it said "asks whether 0 is registered" — a parameter's position, printed
 as a number, in 11 of the 14 name-race findings across the corpus.
 
+Related frames take `at_source:` as findings do (`Findings.related/3`;
+the `related` map gains an `at_source` key): a source fragment that
+carries the frame's line the last step. `unreceived_message`'s "the
+receive it never matches" frame says `"receive"` and `to_block:
+:receive` — a receive's `loop_rec` has no line, so the bytecode alone
+put the frame on `def loop do`. Consumers refine a frame's line with the
+fragment as they do a finding's (scry resolves frame lines from the
+bytecode only, today).
+
 ### Fixed
 
 A transaction body was paired with every repo its function opened a

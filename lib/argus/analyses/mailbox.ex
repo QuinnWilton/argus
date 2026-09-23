@@ -286,7 +286,12 @@ defmodule Argus.Analyses.Mailbox do
       at: Findings.at_site(site, mod),
       at_label: "the message is sent here",
       related: [
-        Findings.related("the receive it never matches", Findings.at_instr(recv)),
+        # The receive's loop_rec carries no line: the bytecode puts the
+        # frame on the function head, and the source finds the receive.
+        Findings.related("the receive it never matches", Findings.at_instr(recv),
+          at_source: "receive",
+          to_block: :receive
+        ),
         Findings.related("the process is spawned here", Findings.at_func(starter))
       ],
       help: [

@@ -58,7 +58,7 @@ defmodule Argus.FindingsTest do
 
     Enum.each(finding.related, fn related ->
       assert Enum.sort(Map.keys(related)) ==
-               Enum.sort([:label, :module, :mfa, :instr, :to_instr, :to_block])
+               Enum.sort([:label, :module, :mfa, :instr, :to_instr, :to_block, :at_source])
 
       assert is_binary(related.label)
     end)

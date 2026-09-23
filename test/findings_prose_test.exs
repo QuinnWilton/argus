@@ -96,6 +96,16 @@ defmodule Argus.FindingsProseTest do
         Findings.related("r", Findings.at_instr("M:f/1#3"), to_block: "catch")
       end
     end
+
+    test "a frame can name the source fragment that carries its line" do
+      frame = Findings.related("r", Findings.at_instr("M:f/1#3"), at_source: "receive")
+      assert frame.at_source == "receive"
+      assert Findings.related("r", Findings.at_instr("M:f/1#3")).at_source == nil
+
+      assert_raise ArgumentError, ~r/:at_source must be a non-empty string/, fn ->
+        Findings.related("r", Findings.at_instr("M:f/1#3"), at_source: "")
+      end
+    end
   end
 
   describe "compiler-generated function names" do

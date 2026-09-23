@@ -62,5 +62,9 @@ defmodule Argus.Analyses.MailboxUnreceivedTest do
            ]
 
     assert Enum.any?(f.help, &String.contains?(&1, "add a clause for :checked_out"))
+
+    # loop_rec has no line, so the bytecode puts the receive frame on
+    # `def loop do`; the source fragment carries it to the receive.
+    assert [%{at_source: "receive", to_block: :receive}, _spawn] = f.related
   end
 end

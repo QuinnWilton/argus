@@ -73,7 +73,8 @@ defmodule Argus.Findings do
   @typedoc """
   A labelled secondary location (sibling, supervisor, callee, ...).
   `to_instr` closes a span: the frame covers the lines from `instr` to
-  it (a call and the catch that guards it).
+  it (a call and the catch that guards it). `at_source` refines the
+  frame's line from the source as a finding's does (see `new/4`).
   """
   @type related :: %{
           label: String.t(),
@@ -81,7 +82,8 @@ defmodule Argus.Findings do
           mfa: mfa() | nil,
           instr: InstrId.t() | nil,
           to_instr: InstrId.t() | nil,
-          to_block: block() | nil
+          to_block: block() | nil,
+          at_source: String.t() | nil
         }
 
   @typedoc """
@@ -928,21 +930,31 @@ defmodule Argus.Findings do
   @doc """
   Labels an anchor as a secondary location. `to:` closes a span from the
   anchor's instruction to that anchor's; `to_block:` names the source
-  block for a consumer to close it by when the bytecode gives no end.
+  block for a consumer to close it by when the bytecode gives no end;
+  `at_source:` is a source fragment that carries the frame's line the
+  last step, as for a finding (`new/4`) — a receive's `loop_rec` has no
+  line of its own, so a frame at it says `"receive"`.
   """
   @spec related(String.t(), anchor(), keyword()) :: related()
   def related(label, anchor, opts \\ []) when is_binary(label) do
     to_block = Keyword.get(opts, :to_block)
+    at_source = Keyword.get(opts, :at_source)
 
     unless to_block in [nil | @blocks] do
       raise ArgumentError,
             ":to_block must be one of #{inspect(@blocks)}, got: #{inspect(to_block)}"
     end
 
+    unless is_nil(at_source) or (is_binary(at_source) and at_source != "") do
+      raise ArgumentError,
+            ":at_source must be a non-empty string, got: #{inspect(at_source)}"
+    end
+
     anchor
     |> Map.put(:label, label)
     |> Map.put(:to_instr, Keyword.get(opts, :to, empty_anchor()).instr)
     |> Map.put(:to_block, to_block)
+    |> Map.put(:at_source, at_source)
   end
 
   @doc """
