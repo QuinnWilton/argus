@@ -143,6 +143,9 @@
     acts_if(g, a, _, _, rs, r, ks, k),
     lift(h, g, rs, r, rs2, r2),
     lift(h, g, ks, k, ks2, k2).
+  // Each semi-naive version starts from its new tuples: a new act of g
+  // looks up g's callers, a new lift its (h, g) edge.
+  .plan 1:(3,2,1,4,5), 2:(4,2,3,1,5), 3:(5,2,3,1,4)
 
   // h's parameter decides the call.
   acts_if(h, a, "param", p, rs2, r2, ks2, k2) :-
@@ -151,15 +154,23 @@
     acts_if(g, a, _, _, rs, r, ks, k),
     lift(h, g, rs, r, rs2, r2),
     lift(h, g, ks, k, ks2, k2).
+  .plan 1:(3,2,1,4,5), 2:(4,2,3,1,5), 3:(5,2,3,1,4)
 
   // h's parameter feeds the argument the act depends on — the loop, when
-  // g is h itself.
+  // g is h itself. Driven from the acts the callee has, joined to the
+  // callers' arguments on (callee, position): every parameter-fed
+  // argument of every function is far more rows than acts to meet.
+  .decl param_arg(h: symbol, g: symbol, q: symbol, p: symbol)
+
+  param_arg(h, g, to_string(n), p) :- call_arg_depends(h, g, n, "param", p).
+
   acts_if(h, a, "param", p, rs2, r2, ks2, k2) :-
+    acts_if(g, a, "param", q, rs, r, ks, k),
+    param_arg(h, g, q, p),
     reach_needed(h),
-    call_arg_depends(h, g, n, "param", p),
-    acts_if(g, a, "param", to_string(n), rs, r, ks, k),
     lift(h, g, rs, r, rs2, r2),
     lift(h, g, ks, k, ks2, k2).
+  .plan 1:(3,2,1,4,5), 2:(4,2,1,3,5), 3:(5,2,1,3,4)
 
   // ── Where they meet ───────────────────────────────────────────────
 
@@ -198,10 +209,13 @@
   // own. It is one race: reported where it meets closest to the check.
   // A recursive function carries its own check back to itself; that is
   // the loop meeting where it is, not a meeting below it.
+  // Asked only from where a pair meets, and walked one returning call at
+  // a time: the same closure as joining it with itself, from the sources
+  // met_below reads.
   .decl carried_through(f: symbol, c: symbol, g: symbol)
 
-  carried_through(f, c, g) :- carries(f, "call", g, c, _, _, _, _).
-  carried_through(f, c, h) :- carried_through(f, c, g), carried_through(g, c, h).
+  carried_through(f, c, g) :- met(f, c, _, _, _, _, _), carries(f, "call", g, c, _, _, _, _).
+  carried_through(f, c, h) :- carried_through(f, c, g), carries(g, "call", h, c, _, _, _, _).
 
   .decl met_below(f: symbol, c: symbol, a: symbol)
 

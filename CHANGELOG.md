@@ -539,6 +539,14 @@ has no body: nothing says whose the closure is.
 
 ### Check-then-act races (structure, ets)
 
+**Changed.** `clientlib/check_then_act.dl` solves the same rows faster: the loop rule
+joins a callee's acts to its callers' parameter-fed arguments on
+(callee, position) instead of scanning every argument, its recursive
+rules carry `.plan`s that start each semi-naive version from its new
+tuples, and `carried_through` is walked one call at a time from where a
+pair meets rather than closed over itself. The ets analysis over OTP's
+mnesia, inets and ssh: 3.9s to 1.6s, output byte-identical.
+
 **Changed.** Schema 54. `ets.ets_check_act` and `ets.mnesia_check_act` tell a lost
 update from a race both racers win. `Argus.Extractors.Dependence` also
 emits `site_reads` and `call_arg_reads`, its dependence relations by data
