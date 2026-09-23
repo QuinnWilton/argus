@@ -342,4 +342,22 @@ defmodule Argus.Test.Fixtures.Quiet do
       {:ok, socket}
     end
   end
+
+  defmodule LoopWithCatchAll do
+    @moduledoc false
+    # The unreceived_message neighbour: the pid is followed to the spawned
+    # loop and the atom matches none of its atom clauses, but the last
+    # clause is a variable, which takes anything.
+    def start do
+      pid = spawn(__MODULE__, :loop, [])
+      send(pid, :unlisted)
+    end
+
+    def loop do
+      receive do
+        :tick -> loop()
+        _other -> loop()
+      end
+    end
+  end
 end

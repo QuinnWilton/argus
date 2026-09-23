@@ -13,6 +13,7 @@
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
+.include "../clientlib/sends.dl"
 
 // ══ The outputs ═════════════════════════════════════════════════════
 //
@@ -687,3 +688,25 @@ partial_handler(mod, state, "statem_timeout", "state_timeout", "") :-
 // nowhere. The caller of :gen_statem.call/2 waits :infinity by default
 // (sneako/finch#213: a cancel while disconnected blocked for days).
 reply_defect(mod, func, site, "statem_unreplied", tag) :- statem_call_unreplied(mod, func, site, tag).
+
+// ══ A message its process never takes ═══════════════════════════════
+//
+// A send that process points-to (sends.dl) follows to a spawned process
+// whose receive has no clause for the message. It is not dropped: it
+// stays in the mailbox for the life of the process, and every later
+// receive scans past it. Judged only when the spawned function holds the
+// receive itself (a loop reached through helpers is not known to reject
+// anything), only for a literal atom or a tuple with a literal tag, and
+// never when a clause recv_pattern reads as "any" (a variable, a tuple
+// pattern, a guard) could take it.
+.decl unreceived_message(mod: symbol, func: symbol, site: symbol, message: symbol, runs: symbol, starter: symbol, recv: symbol)
+.output unreceived_message
+
+unreceived_message(mod, func, site, m, runs, starter, recv) :-
+  send_target(site, func, m, p),
+  m != "dynamic",
+  process_start(starter, p, "spawn", runs),
+  recv_pattern(recv, runs, _),
+  !recv_pattern(_, runs, m),
+  !recv_pattern(_, runs, "any"),
+  function_def(func, mod, _, _, _).

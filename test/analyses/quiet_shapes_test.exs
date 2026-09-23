@@ -32,7 +32,8 @@ defmodule Argus.Analyses.QuietShapesTest do
     Quiet.UnrelatedMonitorRestarter,
     Quiet.GenericTimeoutStatem,
     Quiet.ClockInTerminate,
-    Quiet.StoreSourcedSink
+    Quiet.StoreSourcedSink,
+    Quiet.LoopWithCatchAll
   ]
 
   @expect_quiet %{
@@ -46,7 +47,8 @@ defmodule Argus.Analyses.QuietShapesTest do
       {"partial_handler", source: "statem_timeout"},
       {"task_result_defect", kind: "linked_in_library"},
       {"task_result_defect", kind: "yield_linked"},
-      {"partial_handler", source: "late_message"}
+      {"partial_handler", source: "late_message"},
+      "unreceived_message"
     ],
     structure: ~w(consumer_supervisor_permanent_child registry_race),
     coupling: ~w(dual_restart_authority),

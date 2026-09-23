@@ -29,6 +29,10 @@ defmodule Argus.Analyses.Mailbox do
     `handle_call` that defers a reply without keeping `from`
     (`dropped_from`), or a `{:call, from}` clause that never answers
     (`statem_unreplied`).
+  - `unreceived_message(mod, func, site, message, runs, starter, recv)` —
+    a send that process points-to follows to a spawned process whose
+    receive has no clause for `message`: it stays in that mailbox, and
+    every later receive scans past it.
   """
 
   @behaviour Argus.Analysis
@@ -54,7 +58,11 @@ defmodule Argus.Analyses.Mailbox do
       Argus.Extractors.CallbackTag,
       Argus.Extractors.Monitor,
       Argus.Extractors.GenStatem,
-      Argus.Extractors.Reply
+      Argus.Extractors.Reply,
+      # Where a send goes: process points-to (clientlib/processes.dl,
+      # sends.dl), and the names servers are started under.
+      Argus.Extractors.PidFlow,
+      Argus.Extractors.ProcessRegistry
     ]
 
   @impl true
@@ -98,6 +106,20 @@ defmodule Argus.Analyses.Mailbox do
         # A local ref has no state key: its arming site is the timer.
         key: {:key, %{"" => [:mod, :arm_site], :default => [:mod, :key]}},
         doc: "A cancelled timer's message may already be in the mailbox and is not told apart."
+      },
+      %{
+        name: :unreceived_message,
+        fields: [
+          {:mod, :symbol, "the sending module"},
+          {:func, :symbol, "the sending function"},
+          {:site, :symbol, "the send"},
+          {:message, :symbol, "the literal atom, or {:tag, …}"},
+          {:runs, :symbol, "the function the receiving process runs"},
+          {:starter, :symbol, "the function that spawned it"},
+          {:recv, :symbol, "its receive"}
+        ],
+        key: [:site, :runs],
+        doc: "A message sent to a spawned process whose receive has no clause for it."
       },
       %{
         name: :monitored_entry_removal,
@@ -246,6 +268,28 @@ defmodule Argus.Analyses.Mailbox do
       help: [
         "put the timer ref in the message (`{#{message}, ref}`) and match it against #{key}",
         "or flush after cancelling: `receive do #{message} -> :ok after 0 -> :ok end`"
+      ]
+    )
+  end
+
+  def finding(:unreceived_message, [mod, func, site, message, runs, starter, recv]) do
+    Findings.new(
+      :warning,
+      "#{message} is sent to a process whose receive never takes it",
+      "#{func} sends #{message} to the process spawned in #{starter} to run " <>
+        "#{runs}, and no clause of that function's receive matches it. A " <>
+        "message no receive takes is not dropped: it stays in the mailbox " <>
+        "for the life of the process, every later receive scans past it, " <>
+        "and the sender never learns it went nowhere.",
+      at: Findings.at_site(site, mod),
+      at_label: "the message is sent here",
+      related: [
+        Findings.related("the receive it never matches", Findings.at_instr(recv)),
+        Findings.related("the process is spawned here", Findings.at_func(starter))
+      ],
+      help: [
+        "add a clause for #{message} to the receive in #{runs}",
+        "or send the message that receive expects"
       ]
     )
   end

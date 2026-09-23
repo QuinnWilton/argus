@@ -8,6 +8,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+`mailbox.unreceived_message`: a message sent to a spawned process whose
+receive has no clause for it. The message is not dropped; it stays in
+the mailbox for the life of the process and every later receive scans
+past it. The destination comes from process points-to (the send may
+reach the process through parameters, results, `self()` or a registered
+name, so the sending function need not name it), the message is a
+literal atom or a tuple's literal tag, and only a receive held by the
+spawned function itself is judged, never one with a clause that could
+take anything. Anchored at the send, with the receive and the spawn as
+related frames. No corpus pair: the corpus trees, OTP's and Elixir's own
+applications and a search of public issues turned up no instance, so the
+rule ships on its fixtures (`test/analyses/mailbox_unreceived_test.exs`)
+and its quiet neighbour.
+
 Schema 46. Process points-to: which process a pid can be. A pid is a
 reference and the call that started the process is its allocation site —
 a spawn, named by what it runs (`spawn_call`), or a GenServer,
