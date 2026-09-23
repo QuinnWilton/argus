@@ -34,13 +34,13 @@ defmodule Argus.Extractors.ETS do
       call_result_origin: 3,
       resolve_to_arg_or_atom: 3,
       each_remote_call: 3,
-      key_identity: 3,
+      key_identity: 4,
       register: 1,
       resolve_atom: 3,
       resolve_register: 3,
       track_dynamic: 5,
       track_imprecision: 5,
-      tuple_element_identity: 4
+      tuple_element_identity: 5
     ]
 
   @read_ops ~w(lookup lookup_element match match_object select member
@@ -74,8 +74,12 @@ defmodule Argus.Extractors.ETS do
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
+    index = Argus.Extractor.Helpers.origins_index(module_data)
+
     module_data
-    |> each_remote_call(%{}, &handle_call/3)
+    |> each_remote_call(%{}, fn facts, ctx, mfa ->
+      handle_call(facts, Map.put(ctx, :origins, {index, ctx.func_id}), mfa)
+    end)
     |> emit_tid_args(module_data)
   end
 
@@ -148,14 +152,14 @@ defmodule Argus.Extractors.ETS do
   defp handle_call(facts, _ctx, _mfa), do: facts
 
   defp maybe_key(facts, id, ctx, func) when func in @keyed_ops do
-    {source, key} = key_identity(ctx.instrs, ctx.idx, {:x, 1})
+    {source, key} = key_identity(ctx.instrs, ctx.idx, {:x, 1}, ctx.origins)
     add_fact(facts, :ets_key, [id, source, key])
   end
 
   # The key of an inserted object is its first element; a list of objects
   # says nothing about any one key.
   defp maybe_key(facts, id, ctx, func) when func in @object_ops do
-    {source, key} = tuple_element_identity(ctx.instrs, ctx.idx, {:x, 1}, 0)
+    {source, key} = tuple_element_identity(ctx.instrs, ctx.idx, {:x, 1}, 0, ctx.origins)
     add_fact(facts, :ets_key, [id, source, key])
   end
 

@@ -18,6 +18,7 @@ defmodule Argus.Extractor.Helpers do
   """
 
   alias Argus.Extractor.CallSites
+  alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
   @type register :: {:x, non_neg_integer()} | {:y, non_neg_integer()}
@@ -28,9 +29,10 @@ defmodule Argus.Extractor.Helpers do
   """
   @type instr_ctx :: %{
           optional(:line_table) => %{pos_integer() => pos_integer()},
-          func_id: String.t(),
-          instrs: [tuple()],
-          idx: non_neg_integer()
+          optional(:origins) => origins(),
+          required(:func_id) => String.t(),
+          required(:instrs) => [tuple()],
+          required(:idx) => non_neg_integer()
         }
 
   # --- Fact accumulation ---
@@ -1433,9 +1435,19 @@ defmodule Argus.Extractor.Helpers do
   `{"dynamic", ""}`. A lookup and a create that agree on source and key
   name the same thing — the identity-through-a-name idea the timer rules
   use, spelled once.
+
+  Given `origins` (`{origins_index(module_data), func_id}`), a value that
+  is none of those can still be `{"local", instr_id}`: the one
+  instruction that made it, found through reaching definitions and
+  followed back through moves. Two operands with the same origin hold
+  the same value — `key = {name, type}` handed to a read and then to a
+  write — although nothing says what it is. Several definitions reaching
+  the read (a join) stay dynamic. The instruction ID names a site in one
+  function, so a local identity never agrees with anything outside it.
   """
-  @spec key_identity([term()], non_neg_integer(), register()) :: {String.t(), String.t()}
-  def key_identity(instrs, idx, register) do
+  @spec key_identity([term()], non_neg_integer(), register(), origins() | nil) ::
+          {String.t(), String.t()}
+  def key_identity(instrs, idx, register, origins \\ nil) do
     case resolve_register(instrs, idx, register) do
       {:ok, value}
       when (is_atom(value) and value != :dynamic) or is_binary(value) or is_integer(value) ->
@@ -1449,26 +1461,96 @@ defmodule Argus.Extractor.Helpers do
           :no ->
             case map_field_of(instrs, idx, register) do
               {:ok, key} -> {"field", key}
-              :dynamic -> {"dynamic", ""}
+              :dynamic -> local_identity(instrs, idx, register, origins)
             end
         end
     end
   end
 
+  @typedoc """
+  The reaching definitions of one module keyed by the read, and the
+  function being asked about: what `key_identity/4` needs to name a value
+  by the instruction that made it.
+  """
+  @type origins :: {%{{String.t(), non_neg_integer(), String.t()} => [term()]}, String.t()}
+
   @doc """
-  `key_identity/3` for element `n` of the tuple in `register` at `idx`: an
+  The module's reaching definitions (`reaching/1`) indexed by the read,
+  `{func_id, idx, reg}`: paired with a function ID, the `origins` that
+  `key_identity/4` takes. The pipeline builds it once per module as
+  `module_data.origins_index`; this builds it for bare disassembly, and
+  is empty when the facts cannot be decoded, which leaves every identity
+  as it was without one.
+  """
+  @spec origins_index(map()) :: %{{String.t(), non_neg_integer(), String.t()} => [term()]}
+  def origins_index(%{origins_index: index}), do: index
+
+  def origins_index(module_data) do
+    case reaching(module_data) do
+      nil ->
+        %{}
+
+      reaching ->
+        Enum.group_by(
+          reaching,
+          fn {_source, reg, %InstrId{module: m, func: f, arity: a, idx: idx}} ->
+            {InstrId.func_id(m, f, a), idx, reg}
+          end,
+          fn {source, _reg, _use} -> source end
+        )
+    end
+  end
+
+  # Moves are followed to what they copy; a chain longer than this is a
+  # loop in the definitions (a receive loop), and names nothing.
+  @max_move_chain 32
+
+  defp local_identity(instrs, idx, register, origins, depth \\ 0)
+  defp local_identity(_instrs, _idx, _register, nil, _depth), do: {"dynamic", ""}
+
+  defp local_identity(_instrs, _idx, _register, _origins, depth) when depth > @max_move_chain,
+    do: {"dynamic", ""}
+
+  defp local_identity(instrs, idx, register, {index, func_id} = origins, depth) do
+    with {kind, n} when kind in [:x, :y] <- register(register),
+         [%InstrId{idx: def_idx}] <- Map.get(index, {func_id, idx, "#{kind}#{n}"}) do
+      case Enum.at(instrs, def_idx) do
+        {:move, source, _dst} ->
+          case register(source) do
+            {skind, _} = reg when skind in [:x, :y] ->
+              local_identity(instrs, def_idx, reg, origins, depth + 1)
+
+            _literal ->
+              {"dynamic", ""}
+          end
+
+        _maker ->
+          {"local", InstrId.mint(func_id, def_idx)}
+      end
+    else
+      _ -> {"dynamic", ""}
+    end
+  end
+
+  @doc """
+  `key_identity/4` for element `n` of the tuple in `register` at `idx`: an
   ETS object's key, a Mnesia record's table and key. The tuple is built by
   `put_tuple2` on the way to `idx` (through moves), or is one literal. A
   tuple from anywhere else — a parameter passed straight through, a call
   result — says nothing about its elements, and is `{"dynamic", ""}`:
   resolving the whole tuple would lose WHICH parameter an element was.
   """
-  @spec tuple_element_identity([term()], non_neg_integer(), register(), non_neg_integer()) ::
-          {String.t(), String.t()}
-  def tuple_element_identity(instrs, idx, register, n) do
+  @spec tuple_element_identity(
+          [term()],
+          non_neg_integer(),
+          register(),
+          non_neg_integer(),
+          origins() | nil
+        ) :: {String.t(), String.t()}
+  def tuple_element_identity(instrs, idx, register, n, origins \\ nil) do
     case recent_writer(instrs, idx, register) do
       {:ok, {:put_tuple2, _dst, {:list, elements}}, widx} when length(elements) > n ->
-        element_identity(instrs, widx, Enum.at(elements, n))
+        element_identity(instrs, widx, Enum.at(elements, n), origins)
 
       {:ok, {:move, {:literal, tuple}, _dst}, _widx}
       when is_tuple(tuple) and tuple_size(tuple) > n ->
@@ -1476,8 +1558,11 @@ defmodule Argus.Extractor.Helpers do
 
       {:ok, {:move, source, _dst}, widx} ->
         case register(source) do
-          {kind, _} = reg when kind in [:x, :y] -> tuple_element_identity(instrs, widx, reg, n)
-          _other -> {"dynamic", ""}
+          {kind, _} = reg when kind in [:x, :y] ->
+            tuple_element_identity(instrs, widx, reg, n, origins)
+
+          _other ->
+            {"dynamic", ""}
         end
 
       _ ->
@@ -1485,13 +1570,15 @@ defmodule Argus.Extractor.Helpers do
     end
   end
 
-  defp element_identity(_instrs, _idx, {:atom, atom}), do: {"literal", inspect(atom)}
-  defp element_identity(_instrs, _idx, {:integer, n}), do: {"literal", inspect(n)}
-  defp element_identity(_instrs, _idx, {:literal, value}), do: {"literal", inspect(value)}
+  defp element_identity(_instrs, _idx, {:atom, atom}, _origins), do: {"literal", inspect(atom)}
+  defp element_identity(_instrs, _idx, {:integer, n}, _origins), do: {"literal", inspect(n)}
 
-  defp element_identity(instrs, idx, operand) do
+  defp element_identity(_instrs, _idx, {:literal, value}, _origins),
+    do: {"literal", inspect(value)}
+
+  defp element_identity(instrs, idx, operand, origins) do
     case register(operand) do
-      {kind, _n} = reg when kind in [:x, :y] -> key_identity(instrs, idx, reg)
+      {kind, _n} = reg when kind in [:x, :y] -> key_identity(instrs, idx, reg, origins)
       _other -> {"dynamic", ""}
     end
   end

@@ -1815,8 +1815,9 @@ defmodule Argus.Schema do
       {:func, :func_id, "function containing the lookup"},
       {:api, :symbol, "whereis | registry_lookup | registered"},
       {:scope, :symbol, "the Registry, for registry_lookup; empty otherwise"},
-      {:source, :symbol, "literal | param | field | dynamic, or any for registered"},
-      {:key, :symbol, "the name: an inspected literal, a parameter index, or a map key"},
+      {:source, :symbol, "literal | param | field | local | dynamic, or any for registered"},
+      {:key, :symbol,
+       "the name: an inspected literal, a parameter index, a map key, or the instruction that made it"},
       {:checked, :symbol, "checked | unchecked: is the result tested against nil before use"}
     ],
     doc: """
@@ -1837,7 +1838,7 @@ defmodule Argus.Schema do
       {:api, :symbol,
        "register | start_link | start | start_via | registry_register | start_child"},
       {:scope, :symbol, "the Registry, for start_via and registry_register; empty otherwise"},
-      {:source, :symbol, "literal | param | field | dynamic"},
+      {:source, :symbol, "literal | param | field | local | dynamic"},
       {:key, :symbol, "the name claimed; empty when the source is dynamic"}
     ],
     doc: """
@@ -1854,8 +1855,9 @@ defmodule Argus.Schema do
       {:id, :instr_id, "instruction ID of the call"},
       {:func, :func_id, "function containing the call"},
       {:api, :symbol, "unregister"},
-      {:source, :symbol, "literal | param | field | dynamic"},
-      {:key, :symbol, "the name: an inspected literal, a parameter index, or a map key"}
+      {:source, :symbol, "literal | param | field | local | dynamic"},
+      {:key, :symbol,
+       "the name: an inspected literal, a parameter index, a map key, or the instruction that made it"}
     ],
     doc: """
     A registered name given up — Process.unregister/1, \
@@ -1884,8 +1886,9 @@ defmodule Argus.Schema do
     layer: 2,
     fields: [
       {:id, :instr_id, "instruction ID of the ETS operation"},
-      {:source, :symbol, "literal | param | field | dynamic"},
-      {:key, :symbol, "the key: an inspected literal, a parameter index, or a map key"}
+      {:source, :symbol, "literal | param | field | local | dynamic"},
+      {:key, :symbol,
+       "the key: an inspected literal, a parameter index, a map key, or the instruction that made it"}
     ],
     doc: """
     What identifies the key operand of an ETS operation; for insert and \
@@ -1920,10 +1923,12 @@ defmodule Argus.Schema do
       {:func, :func_id, "function containing the call"},
       {:op, :symbol, "dirty_read | dirty_write | dirty_delete | dirty_delete_object"},
       {:kind, :symbol, "read | write"},
-      {:table_source, :symbol, "literal | param | field | dynamic"},
-      {:table, :symbol, "the table: an inspected literal, a parameter index, or a map key"},
-      {:key_source, :symbol, "literal | param | field | dynamic"},
-      {:key, :symbol, "the key: an inspected literal, a parameter index, or a map key"}
+      {:table_source, :symbol, "literal | param | field | local | dynamic"},
+      {:table, :symbol,
+       "the table: an inspected literal, a parameter index, a map key, or the instruction that made it"},
+      {:key_source, :symbol, "literal | param | field | local | dynamic"},
+      {:key, :symbol,
+       "the key: an inspected literal, a parameter index, a map key, or the instruction that made it"}
     ],
     doc: """
     A Mnesia dirty operation, outside any transaction's serialization, \

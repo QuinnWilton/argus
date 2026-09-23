@@ -52,6 +52,16 @@ feeds a dirty write of the same record another process can write. With
 it every example in the paper is pinned, and the check-then-act rules
 cover all four of Dialyzer's `-Wrace_conditions` warnings.
 
+The race families' names, tables and keys gain a fifth source, `local`:
+a value that is no literal, parameter or map field but has one defining
+instruction (`Helpers.key_identity/4` with `Helpers.origins_index/1`,
+through reaching definitions and moves, indexed once per module as
+`module_data.origins_index`), keyed by that instruction's ID. Two
+operands with the same origin hold the same value, so `key = {name,
+type}` handed to a dirty read and then a dirty write is one key
+(ztlp@39fa329); a value two definitions reach stays dynamic, and a local
+identity never crosses a call.
+
 `Argus.Corpus` pairs take `subdir:` for a repository whose Mix project is
 not at the root — `mix.exs` under `elixir/`, one app of an umbrella under
 `apps/` — so a fix in such a tree can be a pair. The clone is still one

@@ -45,7 +45,7 @@ defmodule Argus.Extractors.ProcessRegistry do
     only: [
       add_fact: 3,
       each_remote_call: 3,
-      key_identity: 3,
+      key_identity: 4,
       keyword_value_register: 4,
       resolve_atom: 3,
       resolve_register: 3,
@@ -102,8 +102,12 @@ defmodule Argus.Extractors.ProcessRegistry do
   def extract(module_data) do
     mod_str = inspect(module_data.module)
 
+    index = Argus.Extractor.Helpers.origins_index(module_data)
+
     module_data
-    |> each_remote_call(%{}, fn facts, ctx, mfa -> register_call(facts, mod_str, ctx, mfa) end)
+    |> each_remote_call(%{}, fn facts, ctx, mfa ->
+      register_call(facts, mod_str, Map.put(ctx, :origins, {index, ctx.func_id}), mfa)
+    end)
     |> emit_start_errors(module_data)
   end
 
@@ -209,7 +213,7 @@ defmodule Argus.Extractors.ProcessRegistry do
   end
 
   defp emit_creating_op(facts, ctx, api, scope, key_reg) do
-    {source, key} = key_identity(ctx.instrs, ctx.idx, key_reg)
+    {source, key} = key_identity(ctx.instrs, ctx.idx, key_reg, ctx.origins)
     add_creating_op(facts, ctx, api, scope, source, key)
   end
 
@@ -229,14 +233,14 @@ defmodule Argus.Extractors.ProcessRegistry do
 
   defp emit_release(facts, ctx) do
     id = InstrId.mint(ctx.func_id, ctx.idx)
-    {source, key} = key_identity(ctx.instrs, ctx.idx, {:x, 0})
+    {source, key} = key_identity(ctx.instrs, ctx.idx, {:x, 0}, ctx.origins)
     add_fact(facts, :name_release, [id, ctx.func_id, "unregister", source, key])
   end
 
   defp emit_registry_lookup(facts, ctx) do
     id = InstrId.mint(ctx.func_id, ctx.idx)
     scope = registry_scope(ctx)
-    {source, key} = key_identity(ctx.instrs, ctx.idx, {:x, 1})
+    {source, key} = key_identity(ctx.instrs, ctx.idx, {:x, 1}, ctx.origins)
     checked = if nil_checked?(ctx.instrs, ctx.idx), do: "checked", else: "unchecked"
 
     facts
@@ -269,7 +273,7 @@ defmodule Argus.Extractors.ProcessRegistry do
 
   defp emit_whereis(facts, ctx) do
     id = InstrId.mint(ctx.func_id, ctx.idx)
-    {source, key} = key_identity(ctx.instrs, ctx.idx, {:x, 0})
+    {source, key} = key_identity(ctx.instrs, ctx.idx, {:x, 0}, ctx.origins)
     checked = if nil_checked?(ctx.instrs, ctx.idx), do: "checked", else: "unchecked"
 
     facts
@@ -413,7 +417,7 @@ defmodule Argus.Extractors.ProcessRegistry do
   defp emit_dynamic_named_start(facts, ctx, method, opts_reg) do
     case keyword_value_register(ctx.instrs, ctx.idx, opts_reg, :name) do
       {:ok, reg, value_idx} ->
-        {source, key} = key_identity(ctx.instrs, value_idx, reg)
+        {source, key} = key_identity(ctx.instrs, value_idx, reg, ctx.origins)
         add_creating_op(facts, ctx, method, "", source, key)
 
       :no ->

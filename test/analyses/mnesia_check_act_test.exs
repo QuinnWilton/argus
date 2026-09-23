@@ -37,6 +37,18 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
       assert length(rows) == 2
     end
 
+    test "a key built at runtime is the same key when one definition feeds both" do
+      skip_without_souffle()
+
+      assert [{"put/3", ":records", key, "put/3", "put/3"}] = races([C.MnesiaComputedKey])
+      assert key =~ "MnesiaComputedKey:put/3#"
+    end
+
+    test "a key another definition makes is not the read's key" do
+      skip_without_souffle()
+      assert races([C.MnesiaJoinedKey]) == []
+    end
+
     test "a transaction, the atomic counter, and a different record are quiet" do
       skip_without_souffle()
       assert races([C.MnesiaTransaction, C.MnesiaUpdateCounter, C.MnesiaOtherKey]) == []

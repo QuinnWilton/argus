@@ -234,7 +234,11 @@ defmodule Argus.Analyses.Structure do
   end
 
   defp describe_key(""), do: "the name"
-  defp describe_key(key), do: key
+
+  # A name known only by the instruction that computed it.
+  defp describe_key(key) do
+    if String.contains?(key, "#"), do: "the name", else: key
+  end
 
   defp lookup("whereis"), do: "whereis"
   defp lookup("registry_lookup"), do: "Registry.lookup"

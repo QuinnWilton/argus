@@ -212,7 +212,8 @@ defmodule Argus.Pipeline do
             call_sites: Argus.Extractor.CallSites.index(data.module, data.functions),
             cfg: cfgs,
             typed: typed,
-            reaching: reaching
+            reaching: reaching,
+            origins_index: Argus.Extractor.Helpers.origins_index(%{reaching: reaching})
           })
 
         extractor_facts =

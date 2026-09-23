@@ -33,6 +33,21 @@ defmodule Argus.Extractors.MnesiaTest do
     assert {"put/2", "dirty_write", "write", {"literal", ":counters"}, {"param", "0"}} in rows
   end
 
+  test "a key built at runtime is named by the instruction that built it" do
+    [{_, "dirty_read", _, _, {"local", read_key}}, {_, "dirty_write", _, _, {"local", write_key}}] =
+      ops(C.MnesiaComputedKey) |> Enum.sort_by(&elem(&1, 1))
+
+    assert read_key == write_key
+    assert read_key =~ "MnesiaComputedKey:put/3#"
+  end
+
+  test "a key two definitions reach is not named" do
+    keys = for {_, op, _, _, key} <- ops(C.MnesiaJoinedKey), do: {op, key}
+
+    assert {"dirty_write", {"dynamic", ""}} in keys
+    assert {"dirty_read", {"local", _}} = List.keyfind(keys, "dirty_read", 0)
+  end
+
   test "the transactional and the atomic operations are not dirty reads or writes" do
     assert ops(C.MnesiaTransaction) == []
     assert ops(C.MnesiaUpdateCounter) == []

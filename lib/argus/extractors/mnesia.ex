@@ -26,8 +26,10 @@ defmodule Argus.Extractors.Mnesia do
 
   alias Argus.InstrId
 
+  alias Argus.Extractor.Helpers
+
   import Argus.Extractor.Helpers,
-    only: [add_fact: 3, each_remote_call: 3, key_identity: 3, tuple_element_identity: 4]
+    only: [add_fact: 3, each_remote_call: 3, key_identity: 4, tuple_element_identity: 5]
 
   # {op, arity} => {kind, where the table is, where the key is}, each an
   # argument register or {register, element}.
@@ -52,7 +54,13 @@ defmodule Argus.Extractors.Mnesia do
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
-  def extract(module_data), do: each_remote_call(module_data, %{}, &handle_call/3)
+  def extract(module_data) do
+    index = Helpers.origins_index(module_data)
+
+    each_remote_call(module_data, %{}, fn facts, ctx, mfa ->
+      handle_call(facts, Map.put(ctx, :origins, {index, ctx.func_id}), mfa)
+    end)
+  end
 
   defp handle_call(facts, ctx, {:mnesia, op, arity}) do
     case Map.fetch(@ops, {op, arity}) do
@@ -79,7 +87,7 @@ defmodule Argus.Extractors.Mnesia do
   defp handle_call(facts, _ctx, _mfa), do: facts
 
   defp identity(ctx, {{_kind, _n} = reg, element}),
-    do: tuple_element_identity(ctx.instrs, ctx.idx, reg, element)
+    do: tuple_element_identity(ctx.instrs, ctx.idx, reg, element, ctx.origins)
 
-  defp identity(ctx, reg), do: key_identity(ctx.instrs, ctx.idx, reg)
+  defp identity(ctx, reg), do: key_identity(ctx.instrs, ctx.idx, reg, ctx.origins)
 end

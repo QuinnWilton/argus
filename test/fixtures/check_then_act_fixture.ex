@@ -499,6 +499,34 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
       do: :mnesia.dirty_write(:counters, {:counters, key, n + 1})
   end
 
+  defmodule MnesiaComputedKey do
+    @moduledoc "The key is built at runtime and handed to the read and the write alike."
+    def put(name, type, record) do
+      key = {String.downcase(name), type}
+
+      case :mnesia.dirty_read(:records, key) do
+        [{:records, _key, existing}] when existing.serial >= record.serial -> {:error, :stale}
+        _ -> :mnesia.dirty_write({:records, key, record})
+      end
+    end
+  end
+
+  defmodule MnesiaJoinedKey do
+    @moduledoc "The write's key is one of two values chosen after the read: not the read's key."
+    def put(name, record, fresh?) do
+      key = {name, :a}
+
+      case :mnesia.dirty_read(:records, key) do
+        [] ->
+          other = if fresh?, do: {name, :b}, else: {name, :c}
+          :mnesia.dirty_write({:records, other, record})
+
+        _ ->
+          :ok
+      end
+    end
+  end
+
   defmodule MnesiaTransaction do
     @moduledoc "The same counter in a transaction: nothing dirty."
     def bump(key) do
