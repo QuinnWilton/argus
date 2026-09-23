@@ -45,8 +45,7 @@ defmodule Argus.Cfg.Walk do
 
     state = %{
       instrs: List.to_tuple(instrs),
-      blocks: fun.blocks,
-      block_of: block_index(fun),
+      fun: fun,
       on_instr: on_instr,
       follow?: follow?
     }
@@ -75,22 +74,15 @@ defmodule Argus.Cfg.Walk do
   # instruction the allowed out-edges lead to their blocks' first
   # instructions.
   defp next(instr, idx, state) do
-    case Map.get(state.block_of, idx) do
+    case Function.block_at(state.fun, idx) do
       %Block{range: {_first, last}} = block when last == idx ->
         for {to, kind} <- block.succs,
             state.follow?.(instr, kind),
-            %Block{range: {first, _}} = Map.fetch!(state.blocks, to),
+            %Block{range: {first, _}} = Map.fetch!(state.fun.blocks, to),
             do: first
 
       _ ->
         [idx + 1]
     end
-  end
-
-  defp block_index(%Function{blocks: blocks}) do
-    for {_id, %Block{range: {first, last}} = block} <- blocks,
-        idx <- first..last,
-        into: %{},
-        do: {idx, block}
   end
 end

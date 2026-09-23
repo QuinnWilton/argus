@@ -350,6 +350,18 @@ defmodule Argus.CfgBuildTest do
       end
     end
 
+    test "block_at finds every instruction's block and nothing outside the function" do
+      for fun <- all_functions() do
+        for {id, %{range: {first, last}}} <- fun.blocks, idx <- first..last do
+          assert Function.block_at(fun, idx).id == id
+        end
+
+        last = fun.blocks |> Map.values() |> Enum.map(&elem(&1.range, 1)) |> Enum.max()
+        assert Function.block_at(fun, last + 1) == nil
+        assert Function.block_at(fun, -1) == nil
+      end
+    end
+
     # Every clause fails to the next and the last to one landing pad: a
     # dominator tree as deep as the function is long, which the solver
     # must neither recurse through nor walk once per predecessor.

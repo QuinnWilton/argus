@@ -3,6 +3,9 @@ defmodule Argus.Cfg.Function do
   One function's control-flow graph: basic blocks, typed edges, dominators,
   post-dominators, and loop headers, plus lookup helpers.
 
+  Block ids number the blocks in instruction order from 0, and the
+  blocks' ranges partition the instruction stream.
+
   `rpo`, `idom`, `dom_children` and `loop_headers` cover only blocks reachable
   from the entry block (id 0); unreachable blocks still exist in `blocks` so
   the ranges always partition the instruction stream. `ipdom` covers only
@@ -48,12 +51,24 @@ defmodule Argus.Cfg.Function do
           selects: [select()]
         }
 
-  @doc "The block containing the instruction at `idx`, or `nil`."
+  @doc """
+  The block containing the instruction at `idx`, or `nil`: a binary
+  search, since block ids number the blocks in instruction order.
+  """
   @spec block_at(t(), non_neg_integer()) :: Block.t() | nil
-  def block_at(%__MODULE__{blocks: blocks}, idx) do
-    Enum.find_value(blocks, fn {_id, %Block{range: {first, last}} = block} ->
-      if idx >= first and idx <= last, do: block
-    end)
+  def block_at(%__MODULE__{blocks: blocks}, idx), do: search(blocks, idx, 0, map_size(blocks) - 1)
+
+  defp search(_blocks, _idx, lo, hi) when lo > hi, do: nil
+
+  defp search(blocks, idx, lo, hi) do
+    mid = div(lo + hi, 2)
+    %Block{range: {first, last}} = block = Map.fetch!(blocks, mid)
+
+    cond do
+      idx < first -> search(blocks, idx, lo, mid - 1)
+      idx > last -> search(blocks, idx, mid + 1, hi)
+      true -> block
+    end
   end
 
   @doc """
