@@ -28,7 +28,8 @@ defmodule Argus.Instr do
     * `falls_through?/1` — whether the next instruction can run after it.
       Not after a jump, a select, a return, a tail call, a raise
       (`badmatch`, `case_end`, `if_end`, the `raise` BIF, ...), `wait`,
-      `loop_rec_end` or `func_info`.
+      `loop_rec_end` or `func_info`. `raw_raise` does fall through: it is
+      `erlang:raise/3`, which returns `badarg` for an invalid class.
 
   Three instructions write registers the operands do not name: at a
   `try`/`catch` handler the VM materializes the exception, so
@@ -288,16 +289,21 @@ defmodule Argus.Instr do
   defp semantics({:badrecord, value}), do: {[], regs([value]), [], :stop}
   defp semantics({:try_case_end, value}), do: {[], regs([value]), [], :stop}
   defp semantics(:if_end), do: {[], [], [], :stop}
-  defp semantics(:raw_raise), do: {[], args(3), [], :stop}
+
+  # erlang:raise/3 inline: with an invalid class it does not raise but
+  # returns badarg in x0, and the compiler emits the code that follows.
+  defp semantics(:raw_raise), do: {[{:x, 0}], args(3), [], :next}
 
   # Exceptions. The handler label is where control lands when the
-  # protected code raises, with the exception in x0-x2 for try_case to
-  # take (x0 alone for catch_end).
+  # protected code raises: try_case leaves the class, reason and
+  # stacktrace in x0-x2; catch_end leaves in x0 the protected
+  # expression's value, which the normal path brought in x0, or the
+  # caught one.
   defp semantics({:try, reg, handler}), do: {regs([reg]), [], fail(handler), :next}
   defp semantics({:catch, reg, handler}), do: {regs([reg]), [], fail(handler), :next}
   defp semantics({:try_end, reg}), do: {[], regs([reg]), [], :next}
   defp semantics({:try_case, reg}), do: {args(3), regs([reg]), [], :next}
-  defp semantics({:catch_end, reg}), do: {[{:x, 0}], regs([reg]), [], :next}
+  defp semantics({:catch_end, reg}), do: {[{:x, 0}], regs([reg]) ++ [{:x, 0}], [], :next}
   defp semantics(:build_stacktrace), do: {[{:x, 0}], [{:x, 0}], [], :next}
 
   # Messages. loop_rec takes the next message into its destination, or

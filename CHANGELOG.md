@@ -127,7 +127,10 @@ stack frame, writing `y0..y(R-1)` from the slots above the trimmed ones
 reading it; `recv_marker_reserve` writes its marker; map keys held in
 registers, the operand of `badmatch`/`case_end`/`try_case_end`/
 `badrecord`, `raw_raise`'s `x0`–`x2`, `bs_init_writable`'s `x0` and
-`wait_timeout`'s timeout register are read; and literal operands are no
+`wait_timeout`'s timeout register are read; `catch_end` reads the
+protected expression's value from `x0` as well as writing it; `raw_raise`
+(inline `erlang:raise/3`) writes `badarg` into `x0` and falls through, as
+the emulator does for an invalid class; and literal operands are no
 longer recorded as reads. No `next` row follows an instruction control
 cannot pass — a `select_val`, `func_info`, a raise, `wait`,
 `loop_rec_end` — which had joined a raising path's writes into the next

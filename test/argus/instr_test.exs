@@ -54,6 +54,8 @@ defmodule Argus.InstrTest do
 
     test "catch_end leaves the caught value in x0; build_stacktrace rewrites x0" do
       assert Instr.defs({:catch_end, {:y, 1}}) == [x: 0]
+      # On the normal path x0 is the protected expression's own value.
+      assert Instr.uses({:catch_end, {:y, 1}}) == [y: 1, x: 0]
       assert Instr.defs(:build_stacktrace) == [x: 0]
       assert Instr.uses(:build_stacktrace) == [x: 0]
     end
@@ -158,6 +160,10 @@ defmodule Argus.InstrTest do
         assert Instr.falls_through?(instr), inspect(instr)
       end
 
+      # erlang:raise/3 inline: an invalid class returns badarg in x0.
+      assert Instr.falls_through?(:raw_raise)
+      assert Instr.defs(:raw_raise) == [x: 0]
+
       for instr <- [
             {:jump, {:f, 1}},
             {:select_val, {:x, 0}, {:f, 5}, {:list, []}},
@@ -168,7 +174,6 @@ defmodule Argus.InstrTest do
             {:case_end, {:x, 0}},
             :if_end,
             {:try_case_end, {:x, 0}},
-            :raw_raise,
             {:bif, :raise, {:f, 0}, [x: 2, x: 1], {:x, 0}},
             :return,
             {:call_only, 1, {:m, :f, 1}},
