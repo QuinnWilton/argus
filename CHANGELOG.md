@@ -397,6 +397,15 @@ registers it does not keep.
 
 ### Process points-to
 
+**Changed.** `coupling` reads the points-to analysis where the extractor's
+target column says `"dynamic"`: a `Process.link/1` whose pid resolves to
+a server (`signals.dl`'s `signal_target`) links the two modules, so a
+coupled pair linked that way is not reported; and a `Process.monitor/1`
+of a pid followed back to a `DynamicSupervisor.start_child` is a monitor
+of a started child, for `dual_restart_authority`. Synchronous calls and
+casts already resolved through `process_call` (`calls.dl`). `coupling`
+reads `pid_signal` (pins).
+
 **Fixed.** `PidFlow` reads what `spawn_call` now says of each spawn: the
 argument list's register (`args`; it guessed x2, or x3 after a node,
 which is wrong for `spawn_opt/4,5`, `proc_lib:start/4,5` and

@@ -10,12 +10,20 @@
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
+.include "../clientlib/signals.dl"
 
 // ══ Coupling under one_for_one ══════════════════════════════════════
 .decl derived_process_link(from_mod: symbol, to_mod: symbol)
 
 derived_process_link(a, b) :- process_link(a, b).
 derived_process_link(sup, child) :- supervisor_child(sup, _, child, _, _).
+
+// A link to a pid the extractor could not name ("dynamic"), which the
+// points-to analysis follows to a server started with b's callbacks.
+derived_process_link(a, b) :-
+  signal_target(_, f, "link", p),
+  function_def(f, a, _, _, _),
+  server_process(p, b).
 
 // Two modules under a one_for_one supervisor where one depends on the
 // other through GenServer message passing, and they belong to different
@@ -288,7 +296,7 @@ rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "inferred")
 .init module_reach = IntraModuleReach
 
 module_reach.seed(s, s) :- dynamic_child(_, _, s).
-module_reach.seed(m, m) :- monitor_call(_, m, "started_child").
+module_reach.seed(m, m) :- monitors_started_child(_, m).
 
 .decl starts_and_monitors(mod: symbol, sup: symbol, child: symbol, via: symbol)
 
@@ -299,7 +307,20 @@ starts_and_monitors(mod, sup, child, f) :-
   child != "dynamic",
   child != "Task",
   module_reach.reaches(f, m),
-  monitor_call(_, m, "started_child").
+  monitors_started_child(_, m).
+
+// A monitor of a pid a supervisor's start_child returned: named so by
+// the extractor, or a pid it could not name that the points-to analysis
+// follows to a process a DynamicSupervisor.start_child started.
+.decl monitors_started_child(id: symbol, func: symbol)
+
+monitors_started_child(id, f) :- monitor_call(id, f, "started_child").
+
+monitors_started_child(id, f) :-
+  monitor_call(id, f, "dynamic"),
+  signal_target(id, f, "monitor", p),
+  process_start(s, _, p, _, _),
+  call_site(s, _, "DynamicSupervisor", "start_child", _).
 
 .decl down_handler(mod: symbol, handler: symbol)
 
@@ -346,4 +367,4 @@ start_site_of_known(via, sup, child) :-
 monitor_site_of(via, id) :-
   starts_and_monitors(_, _, _, via),
   module_reach.reaches(via, m),
-  monitor_call(id, m, "started_child").
+  monitors_started_child(id, m).

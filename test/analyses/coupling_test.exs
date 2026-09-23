@@ -9,6 +9,18 @@ defmodule Argus.Analyses.CouplingTest do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
+  # Beams of `source`, written where Argus.analyze/2 can read them.
+  defp compile_beams(source) do
+    dir = Path.join(System.tmp_dir!(), "argus_coupling_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+
+    for {mod, beam} <- Code.compile_string(source) do
+      path = Path.join(dir, "#{mod}.beam")
+      File.write!(path, beam)
+      path
+    end
+  end
+
   describe "sibling_dependency: restart_isolation" do
     test "analyzes coupling under one_for_one supervisors" do
       skip_without_souffle()
@@ -64,6 +76,88 @@ defmodule Argus.Analyses.CouplingTest do
 
       linked = Map.put(base, :process_link, [["A", "B"]])
       assert coupling_rows(linked) == []
+    end
+
+    test "a link to a pid the points-to analysis resolves excludes the pair" do
+      skip_without_souffle()
+
+      # LinkA links to LinkB's registered pid: process_link's target is
+      # "dynamic", pid_signal names it, and the points-to analysis
+      # resolves the name to LinkB's server.
+      paths =
+        compile_beams("""
+        defmodule Argus.CouplingTest.LinkSup do
+          use Supervisor
+          def init(_) do
+            Supervisor.init([Argus.CouplingTest.LinkA, Argus.CouplingTest.LinkB],
+              strategy: :one_for_one
+            )
+          end
+        end
+
+        defmodule Argus.CouplingTest.LinkA do
+          use GenServer
+          def start_link(_), do: GenServer.start_link(__MODULE__, [], name: __MODULE__)
+
+          def init(_) do
+            Process.link(Process.whereis(Argus.CouplingTest.LinkB))
+            {:ok, nil}
+          end
+
+          def handle_call(:x, _from, s), do: {:reply, GenServer.call(Argus.CouplingTest.LinkB, :y), s}
+        end
+
+        defmodule Argus.CouplingTest.LinkB do
+          use GenServer
+          def start_link(_), do: GenServer.start_link(__MODULE__, [], name: __MODULE__)
+          def init(_), do: {:ok, nil}
+          def handle_call(:y, _from, s), do: {:reply, :ok, s}
+        end
+        """)
+
+      assert {:ok, results} = Argus.analyze(paths, :coupling)
+      assert results["sibling_dependency"] == []
+    end
+
+    test "a monitor of a started child the points-to analysis follows is a restart authority" do
+      skip_without_souffle()
+
+      # The monitor reads the pid from state in a helper: monitor_call's
+      # target is "dynamic", and the points-to analysis follows the field
+      # back to the DynamicSupervisor.start_child that returned it.
+      paths =
+        compile_beams("""
+        defmodule Argus.CouplingTest.MonChild do
+          use GenServer
+          def start_link(a), do: GenServer.start_link(__MODULE__, a)
+          def init(a), do: {:ok, a}
+        end
+
+        defmodule Argus.CouplingTest.MonOwner do
+          use GenServer
+          def init(_), do: {:ok, %{pid: nil}}
+
+          def handle_info(:start, state), do: {:noreply, start(state)}
+          def handle_info({:DOWN, _, :process, _, _}, state), do: {:noreply, start(state)}
+
+          defp start(state) do
+            {:ok, pid} =
+              DynamicSupervisor.start_child(Argus.CouplingTest.DynSup, {Argus.CouplingTest.MonChild, []})
+
+            watch(%{state | pid: pid})
+          end
+
+          defp watch(state) do
+            Process.monitor(state.pid)
+            state
+          end
+        end
+        """)
+
+      assert {:ok, results} = Argus.analyze(paths, :coupling)
+
+      assert [["Argus.CouplingTest.MonOwner", _sup, "Argus.CouplingTest.MonChild" | _] | _] =
+               results["dual_restart_authority"]
     end
 
     test "a cast-only dependency is graded as a one-way coupling" do
