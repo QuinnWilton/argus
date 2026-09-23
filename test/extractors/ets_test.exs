@@ -182,4 +182,36 @@ defmodule Argus.Extractors.ETSTest do
       assert Map.has_key?(facts, :ets_new)
     end
   end
+
+  describe "a table held in the server's state" do
+    test "an op on state.table names the table init/1 stored there" do
+      [{_mod, bin}] =
+        Code.compile_string("""
+        defmodule Argus.ETSTest.StateTable do
+          use GenServer
+          def init(_), do: {:ok, %{table: :ets.new(:sessions, [:set]), other: :ets.new(:a, [])}}
+          def handle_call({:get, k}, _from, state), do: {:reply, :ets.lookup(state.table, k), state}
+
+          def handle_cast({:put, k, v}, %{table: t} = state) do
+            :ets.insert(t, {k, v})
+            {:noreply, state}
+          end
+
+          def handle_info(:swap, state), do: {:noreply, Map.put(state, :other, :ets.new(:b, []))}
+          def handle_info({:scan, k}, state), do: {:noreply, :ets.lookup(state.other, k)}
+        end
+        """)
+
+      {:ok, data} = Argus.Pipeline.Disassemble.disassemble_path(bin)
+
+      ops =
+        for [_id, func, table, op, _kind] <- ETS.extract(data)[:ets_op],
+            do: {func |> String.split(":") |> List.last(), op, table}
+
+      assert {"handle_call/3", "lookup", ":sessions"} in ops
+      assert {"handle_cast/2", "insert", ":sessions"} in ops
+      # :other holds two tables in this module: it names neither.
+      assert {"handle_info/2", "lookup", "dynamic"} in ops
+    end
+  end
 end

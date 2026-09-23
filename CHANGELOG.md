@@ -1125,6 +1125,13 @@ timestamp, date, count, expiry, TTL, length, version or "set" suffix.
 
 ### ets
 
+**Fixed.** An ETS operation on a table held in the server's state
+(`:ets.lookup(state.table, k)`, a `%{table: t}` head) names the table
+the module stores under that field (`%{state | table: :ets.new(...)}`,
+`%State{table: t}`, `Map.put(state, :table, t)`), where its `ets_op`
+row said `"dynamic"` and joined no `ets_new`. A field that holds two
+tables in the module names neither.
+
 **Fixed.** `ets.ets_read_outside_owner` takes an Erlang `catch Expr` around the
 read as the rescue it is (`catch` takes every class, a gone table's
 badarg among them), as `structure.registry_race` already did for a

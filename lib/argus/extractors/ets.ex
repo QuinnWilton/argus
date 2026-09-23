@@ -35,6 +35,8 @@ defmodule Argus.Extractors.ETS do
       resolve_to_arg_or_atom: 3,
       each_remote_call: 3,
       key_identity: 4,
+      map_field_of: 3,
+      match_remote_call: 1,
       register: 1,
       resolve_atom: 3,
       resolve_register: 3,
@@ -75,10 +77,11 @@ defmodule Argus.Extractors.ETS do
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     index = Argus.Extractor.Helpers.origins_index(module_data)
+    fields = table_fields(module_data)
 
     module_data
     |> each_remote_call(%{}, fn facts, ctx, mfa ->
-      handle_call(facts, Map.put(ctx, :origins, {index, ctx.func_id}), mfa)
+      handle_call(facts, Map.put(ctx, :origins, {index, ctx.func_id}), mfa, fields)
     end)
     |> emit_tid_args(module_data)
   end
@@ -126,7 +129,7 @@ defmodule Argus.Extractors.ETS do
     end
   end
 
-  defp handle_call(facts, ctx, {:ets, :new, 2}) do
+  defp handle_call(facts, ctx, {:ets, :new, 2}, _fields) do
     id = InstrId.mint(ctx.func_id, ctx.idx)
     table_name = resolve_atom(ctx.instrs, ctx.idx, {:x, 0})
     {options, facts} = resolve_options(facts, ctx)
@@ -137,9 +140,9 @@ defmodule Argus.Extractors.ETS do
     |> emit_options(id, options)
   end
 
-  defp handle_call(facts, ctx, {:ets, func, arity}) do
+  defp handle_call(facts, ctx, {:ets, func, arity}, fields) do
     id = InstrId.mint(ctx.func_id, ctx.idx)
-    table_ref = resolve_table(ctx)
+    table_ref = resolve_table(ctx, fields)
     kind = classify_op(func, arity)
 
     facts
@@ -149,7 +152,7 @@ defmodule Argus.Extractors.ETS do
     |> maybe_key(id, ctx, func)
   end
 
-  defp handle_call(facts, _ctx, _mfa), do: facts
+  defp handle_call(facts, _ctx, _mfa, _fields), do: facts
 
   defp maybe_key(facts, id, ctx, func) when func in @keyed_ops do
     {source, key} = key_identity(ctx.instrs, ctx.idx, {:x, 1}, ctx.origins)
@@ -183,19 +186,75 @@ defmodule Argus.Extractors.ETS do
   # name atom. When the ref traces back (through move chains) to an
   # `:ets.new/2` call in the same function, the op inherits that
   # creation site's table name, so ops join `ets_new` rows in the
-  # Datalog rules exactly like named-table ops do. Refs that cross
-  # function boundaries (tables held in state) stay "dynamic" — honest,
-  # since the walk cannot see the creating function.
-  defp resolve_table(ctx) do
+  # Datalog rules exactly like named-table ops do. A ref read from a map
+  # field (`state.table`) takes the name of the table this module stores
+  # under that field (`table_fields/1`) — the server that creates its
+  # table in init/1 and uses it in its callbacks. Anything else stays
+  # "dynamic".
+  defp resolve_table(ctx, fields) do
     case resolve_atom(ctx.instrs, ctx.idx, {:x, 0}) do
       "dynamic" ->
         case call_result_origin(ctx.instrs, ctx.idx, {:x, 0}) do
           {:ok, {:ets, :new, 2}, new_idx} -> resolve_atom(ctx.instrs, new_idx, {:x, 0})
-          _ -> "dynamic"
+          _ -> field_table(ctx, fields)
         end
 
       name ->
         name
+    end
+  end
+
+  defp field_table(ctx, fields) do
+    with {:ok, key} <- map_field_of(ctx.instrs, ctx.idx, {:x, 0}),
+         {:ok, name} <- Map.fetch(fields, key) do
+      name
+    else
+      _ -> "dynamic"
+    end
+  end
+
+  # %{field => table name}: the map fields this module stores a table
+  # under — `%{state | table: :ets.new(:cache, ...)}`, `%State{table: t}`,
+  # `Map.put(state, :table, t)` — keyed as `Helpers.map_field_of/3` spells
+  # them. A field that holds two tables in the module names neither.
+  defp table_fields(module_data) do
+    stores =
+      for {:function, _name, _arity, _entry, instrs} <- module_data.functions,
+          {instr, idx} <- Enum.with_index(instrs),
+          {key, value} <- stored_pairs(instrs, idx, instr),
+          {:ok, {:ets, :new, 2}, new_idx} <- [call_result_origin(instrs, idx, value)],
+          name = resolve_atom(instrs, new_idx, {:x, 0}),
+          name != "dynamic",
+          do: {key, name}
+
+    stores
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+    |> Enum.flat_map(fn {key, names} ->
+      case Enum.uniq(names) do
+        [name] -> [{key, name}]
+        _ambiguous -> []
+      end
+    end)
+    |> Map.new()
+  end
+
+  # {inspected key, value register} for each literal key a map update or
+  # `:maps.put/3` (what `Map.put/3` compiles to) writes a register under.
+  defp stored_pairs(_instrs, _idx, {op, _fail, _src, _dst, _live, {:list, pairs}})
+       when op in [:put_map_assoc, :put_map_exact] and is_list(pairs) do
+    for [{:atom, key}, value] <- Enum.chunk_every(pairs, 2),
+        {kind, _} = reg <- [register(value)],
+        kind in [:x, :y],
+        do: {inspect(key), reg}
+  end
+
+  defp stored_pairs(instrs, idx, instr) do
+    with {:ok, :maps, :put, 3} <- match_remote_call(instr),
+         {:ok, key} when is_atom(key) and key != :dynamic <-
+           resolve_register(instrs, idx, {:x, 0}) do
+      [{inspect(key), {:x, 1}}]
+    else
+      _ -> []
     end
   end
 
