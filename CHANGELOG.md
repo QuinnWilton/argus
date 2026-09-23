@@ -668,6 +668,16 @@ pooled per callee, the one read was a deviant. Postgrex's SCRAM cache
 and its parameters table, blockster's dedup table and its caches, were
 the same story in the corpus.
 
+### blocking
+
+**Changed.** `blocking.receive_in_callback` judges the cancel_timer flush idiom per
+receive rather than per function: a blocking receive in a function that
+cancels a timer is the flush only if it can take a timer's message — a
+clause for a literal one of the module's timers carries, for `:timeout`,
+or for anything. One whose every clause waits for some other literal, in
+a module whose timers all carry known literals, is reported. When the
+module arms no timer the program can see, the receive stays suppressed.
+
 ## 0.19.0 — 2026-09-22
 
 ### Added

@@ -87,6 +87,19 @@ defmodule Argus.Analyses.BlockingReceiveTest do
                "false guarantees the message is already in the mailbox"
     end
 
+    test "the flush idiom in the module that arms the timer is not reported" do
+      skip_without_souffle()
+      {blocking, _} = run([CallbackReceive.TimerFlushArmed])
+      assert blocking == []
+    end
+
+    test "a cancel does not excuse a receive that waits for something no timer sends" do
+      skip_without_souffle()
+      {blocking, _} = run([CallbackReceive.CancelThenWait])
+      assert [[_id, func, _cb, "GenServer", "direct"]] = blocking
+      assert func =~ "CancelThenWait:handle_call/3"
+    end
+
     test "a blocking receive outside any OTP behaviour is not reported" do
       skip_without_souffle()
 

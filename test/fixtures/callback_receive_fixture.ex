@@ -95,6 +95,41 @@ defmodule Argus.Test.Fixtures.CallbackReceive do
     end
   end
 
+  defmodule TimerFlushArmed do
+    @moduledoc "The flush idiom in the module that arms the timer: the receive takes its message."
+    @behaviour GenServer
+
+    def init(arg), do: {:ok, %{ref: Process.send_after(self(), :tick, 10), arg: arg}}
+
+    def handle_cast(:cancel, %{ref: ref} = state) do
+      if Process.cancel_timer(ref) == false do
+        receive do
+          :tick -> :ok
+        end
+      end
+
+      {:noreply, %{state | ref: nil}}
+    end
+  end
+
+  defmodule CancelThenWait do
+    @moduledoc """
+    Cancels its :tick timer, then blocks on a :reply no timer sends: the
+    cancel does not make this receive a flush.
+    """
+    @behaviour GenServer
+
+    def init(arg), do: {:ok, %{ref: Process.send_after(self(), :tick, 10), arg: arg}}
+
+    def handle_call(:stop_and_wait, _from, %{ref: ref} = state) do
+      Process.cancel_timer(ref)
+
+      receive do
+        :reply -> {:reply, :ok, %{state | ref: nil}}
+      end
+    end
+  end
+
   defmodule StatemBlockingInInit do
     @moduledoc """
     The Redix shape: an Erlang-spelled behaviour (`:gen_statem`, not

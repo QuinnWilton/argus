@@ -271,14 +271,68 @@ callback_reaches(entry, callee, "helper") :-
 // first corpus sweep were this idiom, and reporting them as hangs would
 // have been the analysis's entire output on that project.
 //
-// The suppression is function-granular, so a function that both flushes a
-// timer AND has an unrelated blocking receive is missed. That is the right
-// direction to be wrong: a false negative costs a finding, a false positive
-// costs the reader's trust in every other finding.
+// The flush is the receive, not the function: a function that cancels a
+// timer suppresses a blocking receive of its own only when that receive
+// can take a timer's message — a clause for a literal one of the
+// module's timers is armed with, for :timeout (erlang:start_timer/3's
+// `{timeout, Ref, Msg}`), or for anything. A receive whose every clause
+// names some other literal, in a module whose timers all carry known
+// literals, is waiting for something else, and is reported. When the
+// module arms no timer the program can see (the ref came from a caller)
+// or arms one whose message is not a known literal, the receive may be
+// the flush, and stays suppressed: the quiet direction.
 .decl cancels_timer(func: symbol)
 
 cancels_timer(func) :-
   remote_call(_, func, ":erlang", "cancel_timer", _).
+
+.decl timer_message(mod: symbol, message: symbol)
+
+timer_message(mod, lit) :-
+  timer_arm(_, a, _, "bare", _, lit),
+  function_def(a, mod, _, _, _).
+
+timer_message(mod, lit) :-
+  timer_arm(_, a, _, "param", pos, _),
+  resolved_arg(a, pos, lit),
+  function_def(a, mod, _, _, _).
+
+.decl timer_message_unknown(mod: symbol)
+
+timer_message_unknown(mod) :-
+  timer_arm(_, a, _, "dynamic", _, _),
+  function_def(a, mod, _, _, _).
+
+timer_message_unknown(mod) :-
+  timer_arm(_, a, _, "param", pos, _),
+  !resolved_arg(a, pos, _),
+  function_def(a, mod, _, _, _).
+
+.decl takes_timer_message(recv: symbol)
+
+takes_timer_message(id) :- recv_pattern(id, _, "any").
+takes_timer_message(id) :- recv_pattern(id, _, ":timeout").
+
+takes_timer_message(id) :-
+  recv_pattern(id, f, lit),
+  function_def(f, mod, _, _, _),
+  timer_message(mod, lit).
+
+.decl waits_for_other(recv: symbol)
+
+waits_for_other(id) :-
+  recv_pattern(id, f, _),
+  function_def(f, mod, _, _, _),
+  timer_message(mod, _),
+  !timer_message_unknown(mod),
+  !takes_timer_message(id).
+
+.decl flush_receive(recv: symbol)
+
+flush_receive(id) :-
+  recv_start(id, func, 1, _),
+  cancels_timer(func),
+  !waits_for_other(id).
 
 // A receive with no `after`, running on an OTP process's own stack. This
 // is the one that hangs: no timeout means no way out if the expected
@@ -287,7 +341,7 @@ receive_in_callback(id, func, callback, behaviour, proximity, "false") :-
   recv_start(id, func, 1, _),
   callback_reaches(callback, func, proximity),
   otp_callback(callback, _, _, behaviour),
-  !cancels_timer(func).
+  !flush_receive(id).
 
 // A receive WITH a timeout. It cannot hang, but it still consumes from the
 // behaviour's mailbox and still re-scans the queue.
