@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The environment fingerprint records Souffle's version and word size
+  (`2.5 (64-bit words)`). It recorded the first line of `souffle
+  --version`, which is a rule of dashes, so upgrading the solver never
+  invalidated a memoized solve.
 - `mix compile` from an umbrella root no longer crashes with "umbrellas
   have no app": `compile.scry` is recursive, so Mix runs it inside each
   child that lists it (per-app analysis, as documented) instead of once

@@ -50,12 +50,29 @@ defmodule Scry.Fingerprint do
 
   defp souffle_version do
     case System.cmd("souffle", ["--version"], stderr_to_stdout: true) do
-      {out, 0} -> out |> String.split("\n", trim: true) |> List.first() || "unknown"
+      {out, 0} -> parse_souffle_version(out)
       _ -> "unknown"
     end
   rescue
     # available? raced against the binary disappearing — the fingerprint
     # still moves relative to nil, which is all the healing needs.
     ErlangError -> "unknown"
+  end
+
+  # The banner opens with a rule of dashes; the version and the word size
+  # (32- and 64-bit builds disagree about numbers) are the lines that
+  # matter. A banner without a version line is fingerprinted whole, so an
+  # unfamiliar solver still moves the value when it changes.
+  defp parse_souffle_version(banner) do
+    case Regex.run(~r/^Version:\s*(\S+)/m, banner) do
+      [_, version] ->
+        case Regex.run(~r/^Word size:\s*(\d+)/m, banner) do
+          [_, bits] -> "#{version} (#{bits}-bit words)"
+          nil -> version
+        end
+
+      nil ->
+        "unrecognized:" <> Base.encode16(:erlang.md5(banner), case: :lower)
+    end
   end
 end
