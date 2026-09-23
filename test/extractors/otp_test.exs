@@ -37,6 +37,35 @@ defmodule Argus.Extractors.OTPTest do
     end
   end
 
+  describe "extract/1 — handle_continue tags" do
+    test "a tag tested after another clause's body is still a tag; the body's atoms are not" do
+      [{_mod, bin}] =
+        Code.compile_string("""
+        defmodule Argus.OTPTest.ContinueTags do
+          use GenServer
+          def init(s), do: {:ok, s, {:continue, :load}}
+
+          def handle_continue(:load, s) when is_map(s) do
+            case Map.get(s, :k) do
+              :ok -> {:noreply, s}
+              _ -> {:noreply, s, {:continue, :retry}}
+            end
+          end
+
+          def handle_continue({:tick, n}, s), do: {:noreply, Map.put(s, :n, n)}
+          def handle_continue(:retry, s), do: {:noreply, s}
+        end
+        """)
+
+      {:ok, data} = Argus.Pipeline.Disassemble.disassemble_path(bin)
+
+      tags =
+        for [_mod, tag, _func] <- OTP.extract(data)[:handle_continue_clause], do: tag
+
+      assert Enum.sort(tags) == [":load", ":retry"]
+    end
+  end
+
   describe "extract/1 — GenServer.call/cast detection" do
     test "detects GenServer.call in fixture" do
       {:ok, data} =

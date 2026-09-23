@@ -28,6 +28,13 @@ or rename by the 0.17 entry below.
 
 ### Fact schema and extraction
 
+**Fixed.** `handle_continue_clause` finds every tag a
+`handle_continue/2` dispatches on: a comparison counts where the
+parameter itself reaches `x0`, not until the first instruction a private
+seven-shape list said writes `x0`. A clause whose tag test followed
+another clause's body — `handle_continue(:load, s) when is_map(s)` after
+a tuple clause — was recorded as `"dynamic"`.
+
 **Fixed.** `Argus.Cfg` reads fall-through from the `next` facts, which
 are `Argus.Instr.falls_through?/1`, instead of its own op lists: the
 `raise` BIF (every Elixir re-raise) and `badrecord` end their block
