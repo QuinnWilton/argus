@@ -53,7 +53,6 @@ defmodule Argus.Extractors.ProcessRegistry do
       each_remote_call: 3,
       key_identity: 4,
       keyword_value_register: 4,
-      mentions?: 2,
       resolve_atom: 3,
       resolve_register: 3,
       spell: 1,
@@ -325,11 +324,12 @@ defmodule Argus.Extractors.ProcessRegistry do
   end
 
   # The result lands in x0. Along the straight-line code after the call,
-  # a comparison of it against nil/:undefined (nil is also `[]`, so a
-  # Registry.lookup result compared against the empty list is checked the
-  # same way), a type test on it, or a select over it that lists nil means
-  # the caller handles the missing case; any other use of the value first,
-  # or reaching a label, call or return, means it does not.
+  # the first comparison against nil/:undefined, type test or select
+  # decides: one of the value (nil is also `[]`, so a Registry.lookup
+  # result compared against the empty list is checked the same way), a
+  # type test on it, or a select over it that lists nil means the caller
+  # handles the missing case. Any other use of the value first, or
+  # reaching the end of the straight line, means it does not.
   @nil_atoms [{:atom, nil}, {:atom, :undefined}]
   @equality_tests [:is_eq_exact, :is_ne_exact, :is_eq, :is_ne]
   @type_tests [:is_atom, :is_pid, :is_port, :is_nil, :is_list, :is_nonempty_list]
@@ -338,44 +338,41 @@ defmodule Argus.Extractors.ProcessRegistry do
     instrs |> Enum.drop(idx + 1) |> checked_walk([{:x, 0}])
   end
 
+  # Before the deciding test the value is followed through the registers
+  # as `Argus.Instr` reads them: a copy carries it, a write or a call's
+  # clobber ends a register's hold on it. The walk gives up where the
+  # value is read, where no register holds it any more, and where control
+  # does not fall through (a return, a jump, a tail call, a raise).
   defp checked_walk([], _regs), do: false
-  defp checked_walk([{:line, _} | rest], regs), do: checked_walk(rest, regs)
-  defp checked_walk([{:test_heap, _, _} | rest], regs), do: checked_walk(rest, regs)
-  defp checked_walk([{:allocate, _, _} | rest], regs), do: checked_walk(rest, regs)
-  defp checked_walk([{:init_yregs, _} | rest], regs), do: checked_walk(rest, regs)
-
-  defp checked_walk([{:move, src, dst} | rest], regs) do
-    src = strip_type(src)
-    dst = strip_type(dst)
-
-    cond do
-      src in regs -> checked_walk(rest, Enum.uniq([dst | regs]))
-      dst in regs -> checked_walk(rest, List.delete(regs, dst))
-      true -> checked_walk(rest, regs)
-    end
-  end
+  defp checked_walk(_instrs, []), do: false
 
   defp checked_walk([{:test, op, _fail, args} | _rest], regs) when op in @equality_tests do
-    args = Enum.map(args, &strip_type/1)
+    args = Enum.map(args, &Instr.register/1)
     Enum.any?(args, &(&1 in regs)) and Enum.any?(args, &(&1 in @nil_atoms))
   end
 
   defp checked_walk([{:test, op, _fail, [reg | _]} | _rest], regs) when op in @type_tests do
-    strip_type(reg) in regs
+    Instr.register(reg) in regs
   end
 
   defp checked_walk([{:select_val, reg, _fail, {:list, cases}} | _rest], regs) do
-    strip_type(reg) in regs and Enum.any?(cases, &(&1 in @nil_atoms))
+    Instr.register(reg) in regs and Enum.any?(cases, &(&1 in @nil_atoms))
   end
 
   defp checked_walk([instr | rest], regs) do
-    if uses_register?(instr, regs), do: false, else: checked_walk(rest, regs)
+    cond do
+      not Instr.falls_through?(instr) -> false
+      reads?(instr, regs) -> false
+      true -> checked_walk(rest, Instr.carry(instr, regs))
+    end
   end
 
-  defp uses_register?(instr, regs), do: mentions?(instr, &(strip_type(&1) in regs))
-
-  defp strip_type({:tr, reg, _type}), do: reg
-  defp strip_type(other), do: other
+  # Whether `instr` reads the value other than to copy it.
+  defp reads?(instr, regs) do
+    defs = Instr.defs(instr)
+    copy? = defs != [] and Enum.all?(defs, &(Instr.copy_source(instr, &1) != nil))
+    not copy? and Enum.any?(Instr.uses(instr), &(&1 in regs))
+  end
 
   # GenServer.start_link(mod, args, name: Name) — name in options keyword list (x2).
   # The first argument (x0) is the module being started; if it resolves to a

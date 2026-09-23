@@ -56,6 +56,14 @@ defmodule Argus.Test.Fixtures.WhereisModule do
     end
   end
 
+  # The pid is kept on the stack across a call, which clobbers x0, and
+  # compared against nil after it.
+  def checked_after_call(name) do
+    pid = Process.whereis(name)
+    _ = :erlang.garbage_collect()
+    if pid == nil, do: :none, else: send(pid, :hello)
+  end
+
   def checked_erlang_whereis(name) do
     case :erlang.whereis(name) do
       :undefined -> :none

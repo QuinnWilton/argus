@@ -132,6 +132,7 @@ defmodule Argus.Extractors.ProcessRegistryTest do
 
       assert by_func["checked_whereis/1"] == "checked"
       assert by_func["checked_erlang_whereis/1"] == "checked"
+      assert by_func["checked_after_call/1"] == "checked"
       assert by_func["unchecked_whereis/1"] == "unchecked"
       assert by_func["find_process/1"] == "unchecked"
     end
