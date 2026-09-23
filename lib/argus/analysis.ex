@@ -41,10 +41,14 @@ defmodule Argus.Analysis do
 
   ## Defining a custom analysis
 
-  Create a module that implements `@behaviour Argus.Analysis`:
+  Create a module that implements `@behaviour Argus.Analysis`, and build
+  its findings with `Argus.Findings`' constructors (`new/4`, the `at_*`
+  anchors, `related/3`, `heuristic/3`):
 
       defmodule MyApp.Analyses.Unused do
         @behaviour Argus.Analysis
+
+        alias Argus.Findings
 
         @impl true
         def name, do: :unused
@@ -68,10 +72,25 @@ defmodule Argus.Analysis do
             }
           ]
         end
+
+        @impl true
+        def finding(:unused_function, [func]) do
+          Findings.new(:info, "Unused function", "Nothing calls \#{func}.",
+            at: Findings.at_func(func),
+            help: ["delete \#{func}, or call it"]
+          )
+        end
       end
 
-  You can also pass `{:custom, "path/to/rules.dl"}` to `run/3` to run
-  ad-hoc Datalog rules without defining a module.
+  Without `finding/2`, each row is a generic `:info` finding carrying the
+  relation's `doc` and the row's columns.
+
+  The built-ins are the modules of the `:panoptes` application, so a
+  module defined elsewhere is not selectable by name. Solve its program
+  with `run/3` and `{:custom, "path/to/unused.dl"}`, then turn the rows
+  into findings with `Argus.Findings.build(MyApp.Analyses.Unused,
+  results)`. The same `{:custom, path}` runs ad-hoc Datalog rules
+  without defining a module at all.
   """
 
   alias Argus.Analysis.Catalog
