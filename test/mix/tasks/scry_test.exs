@@ -15,11 +15,19 @@ defmodule Mix.Tasks.ScryTest do
   @moduletag timeout: 300_000
   @moduletag :souffle
 
-  setup do
+  # One checkout, compiled once: every test here reads the warm manifest
+  # and none edits the fixture, so the cold compile is paid per module,
+  # not per test. The `compile!()` each test opens with is then a no-op.
+  setup_all do
     copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "scry_task_depot"))
+    Mix.Project.in_project(:depot, copy, fn _module -> compile!() end)
+    %{copy: copy}
+  end
+
+  setup do
     log = QueryLog.start()
     on_exit(fn -> QueryLog.detach(log) end)
-    %{copy: copy, log: log}
+    %{log: log}
   end
 
   defp compile! do
