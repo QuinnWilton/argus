@@ -67,21 +67,28 @@ zero analyses.
 
 ## Installation
 
+The latest Hex release is 0.1.22 (argus 0.13's analyses). `main` runs
+argus's newer, concern-grouped analyses and so depends on an argus
+release that is not on Hex yet; until it is, use the Hex release, or a
+tagged GitHub release for the newer analyses (0.1.24 pins argus v0.18.1
+the same way):
+
+```elixir
+{:scry, "~> 0.1.22", runtime: false}
+# or
+{:scry, github: "QuinnWilton/scry", tag: "v0.1.24", runtime: false}
+```
+
 Add scry in **all** environments with `runtime: false` (an `only:` dep breaks
 `MIX_ENV=prod mix compile`, because `compilers:` would reference a missing
-task; `runtime: false` keeps scry out of releases):
+task; `runtime: false` keeps scry out of releases), and append it to the
+compilers:
 
 ```elixir
 def project do
   [
     # ...
     compilers: Mix.compilers() ++ [:scry]
-  ]
-end
-
-def deps do
-  [
-    {:scry, "~> 0.1.0", runtime: false}
   ]
 end
 ```
@@ -143,19 +150,16 @@ mix scry --fail-above 0      # exit 1 on any finding
 
 ## Limitations
 
-- **Umbrellas are per-app**: each child app analyzes its own beams with its
-  own manifest, so cross-app analyses (call cycles, supervision across apps)
-  under-report. `include_deps: true` on the app owning the supervision root
-  pulls sibling ebins into the call graph as an escape hatch.
+- **Umbrellas are per-app**: `mix compile` at the umbrella root runs scry
+  inside each child that lists it, against that child's own beams and
+  manifest. Analyses that join across modules (call cycles, supervision,
+  a message sent to a process another app defines) do not see across the
+  app boundary: an app sending a message a sibling app's process never
+  receives is not a finding. `include_deps: true` on the app that owns
+  the other end pulls every dependency ebin — sibling apps included —
+  into its analysis, at the cost of analyzing all of them.
 - **Line-granular anchors**: BEAM Line chunks carry no columns, so a label
   spans the anchored line's code, never a sub-expression.
-- **Not yet on Hex**: roux and argus are pinned to tagged GitHub releases
-  (argus's name is taken on hex; roux pins a GitHub fork of gen_lsp), so
-  scry itself is consumed as a GitHub dependency:
-
-  ```elixir
-  {:scry, github: "QuinnWilton/scry", tag: "v0.1.4", runtime: false}
-  ```
 
 ## License
 
