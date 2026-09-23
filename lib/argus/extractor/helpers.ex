@@ -1470,6 +1470,8 @@ defmodule Argus.Extractor.Helpers do
     end
   end
 
+  @dynamic_identity {"dynamic", ""}
+
   @doc """
   `key_identity/4` for element `n` of the tuple in `register` at `idx`: an
   ETS object's key, a Mnesia record's table and key. The tuple is built by
@@ -1487,35 +1489,20 @@ defmodule Argus.Extractor.Helpers do
           origins() | nil
         ) :: {String.t(), String.t()}
   def tuple_element_identity(instrs, idx, register, n, origins \\ nil) do
-    walk(fn -> element_of(instrs, idx, register(register), n, origins) end)
-  end
+    trace(instrs, idx, register, @dynamic_identity, fn
+      {:param, _k}, _follow ->
+        @dynamic_identity
 
-  @dynamic_identity {"dynamic", ""}
+      {at, {:put_tuple2, _dst, {:list, elements}}}, _follow when length(elements) > n ->
+        element_identity(instrs, at, Enum.at(elements, n), origins)
 
-  defp element_of(instrs, idx, reg, n, origins) do
-    step({:element, idx, reg, n}, @dynamic_identity, fn ->
-      across(instrs, idx, reg, @dynamic_identity, fn
-        {:param, _k} ->
-          @dynamic_identity
+      # A literal tuple moved into the register: the compiler folded it.
+      {_at, {:move, {:literal, tuple}, _dst}}, _follow
+      when is_tuple(tuple) and tuple_size(tuple) > n ->
+        {"literal", spell(elem(tuple, n))}
 
-        at ->
-          case Reaching.at(instrs, at) do
-            {:put_tuple2, _dst, {:list, elements}} when length(elements) > n ->
-              element_identity(instrs, at, Enum.at(elements, n), origins)
-
-            instr ->
-              case Instr.copy_source(instr, reg) do
-                {:literal, tuple} when is_tuple(tuple) and tuple_size(tuple) > n ->
-                  {"literal", spell(elem(tuple, n))}
-
-                {kind, _} = source when kind in [:x, :y] ->
-                  element_of(instrs, at, source, n, origins)
-
-                _ ->
-                  @dynamic_identity
-              end
-          end
-      end)
+      _writer, _follow ->
+        @dynamic_identity
     end)
   end
 

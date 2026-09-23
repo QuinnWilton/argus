@@ -1123,6 +1123,19 @@ defmodule Argus.Extractor.HelpersTest do
       assert Helpers.tuple_element_identity(instrs, 1, {:x, 1}, 2) == {"literal", "1"}
     end
 
+    test "the tuple is followed through a swap and a trim to the stack" do
+      instrs = [
+        {:allocate, 2, 1},
+        {:put_tuple2, {:x, 1}, {:list, [{:atom, :k}, {:x, 0}]}},
+        {:swap, {:x, 1}, {:y, 1}},
+        {:trim, 1, 1},
+        {:move, {:y, 0}, {:x, 1}},
+        {:call_ext, 2, {:extfunc, :ets, :insert, 2}}
+      ]
+
+      assert Helpers.tuple_element_identity(instrs, 5, {:x, 1}, 0) == {"literal", ":k"}
+    end
+
     test "the tuple is followed through a move" do
       instrs = [
         {:put_tuple2, {:x, 2}, {:list, [{:atom, :k}, {:x, 0}]}},
