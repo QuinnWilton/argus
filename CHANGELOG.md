@@ -459,6 +459,16 @@ or of unknown arity, is left to the closure-following starts table
 rather than named `M:f/-1`; `proc_lib:start_monitor`'s `{result, ref}`
 is not modelled.
 
+**Fixed.** A wrapper that forwards its target to `:gen_statem.call/2,3`
+or `GenStateMachine.call/2,3` (or the casts) is a peer call as a
+`GenServer` one is: `calls.dl`'s forwarding rules read `peer_call` and
+the new `peer_cast` rather than their own GenServer-only lists, so
+`defp do_call(s, m), do: :gen_statem.call(s, m)` called with a literal
+module is a dependency on it. `stage0.dl`'s `anchor_api` gains
+`:gen_server.cast` and the gen_statem calls and casts, and coupling's
+anchor for a witness's own peer call takes any of them, not only an
+Elixir-spelled `GenServer` one.
+
 **Fixed.** A GenServer module's public function that calls or casts to
 another module's server — resolved by process points-to — is no longer
 that module's client API (`genserver_sync_api`, `genserver_async_api`,

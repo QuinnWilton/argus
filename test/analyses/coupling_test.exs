@@ -160,6 +160,41 @@ defmodule Argus.Analyses.CouplingTest do
                results["dual_restart_authority"]
     end
 
+    test "a witness's own :gen_statem call anchors the coupling" do
+      skip_without_souffle()
+
+      # A:h/0 reaches B only through A:helper/0; its own call is an
+      # Erlang-spelled :gen_statem.call, the anchor a GenServer.call
+      # would have been.
+      facts = %{
+        supervisor: [["Sup", "one_for_one"]],
+        supervisor_site: [["Sup", "Sup:init/1#3"]],
+        supervisor_child: [
+          ["Sup", "0", "A", "permanent", "worker"],
+          ["Sup", "1", "B", "permanent", "worker"]
+        ],
+        function_def: [
+          ["A:h/0", "A", "h", "0", "1"],
+          ["A:helper/0", "A", "helper", "0", "0"],
+          ["B:pure/1", "B", "pure", "1", "1"],
+          ["B:ask/0", "B", "ask", "0", "1"]
+        ],
+        remote_call: [
+          ["A:helper/0#1", "A:helper/0", "B", "pure", "1"],
+          ["A:h/0#4", "A:h/0", ":gen_statem", "call", "2"]
+        ],
+        local_call: [["A:h/0#2", "A:h/0", "A:helper/0", "0"]],
+        sync_call: [["B:ask/0", "C"]]
+      }
+
+      assert ["A:h/0#4"] =
+               for(
+                 [_, "A", "B", "restart_isolation", _, _, "A:h/0", site | _] <-
+                   coupling_rows(facts),
+                 do: site
+               )
+    end
+
     test "a cast-only dependency is graded as a one-way coupling" do
       skip_without_souffle()
 

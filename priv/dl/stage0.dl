@@ -63,6 +63,11 @@ call_site(id, caller, mod, func, arity) :-
 anchor_api("GenServer", "call").
 anchor_api("GenServer", "cast").
 anchor_api(":gen_server", "call").
+anchor_api(":gen_server", "cast").
+anchor_api(":gen_statem", "call").
+anchor_api(":gen_statem", "cast").
+anchor_api("GenStateMachine", "call").
+anchor_api("GenStateMachine", "cast").
 anchor_api("DynamicSupervisor", "start_child").
 anchor_api("Supervisor", "start_link").
 anchor_api(":gen_tcp", "recv").

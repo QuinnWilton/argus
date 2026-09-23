@@ -48,6 +48,7 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.Answerer,
     PidFlow.ProxyApi,
     PidFlow.ProxyUser,
+    PidFlow.StatemClient,
     PidFlow.Quiet
   ]
 
@@ -66,7 +67,8 @@ defmodule Argus.Clientlib.ProcessesTest do
           Argus.Extractors.ProcessRegistry,
           Argus.Extractors.Supervision,
           Argus.Extractors.GenStatem,
-          Argus.Extractors.PidFlow
+          Argus.Extractors.PidFlow,
+          Argus.Extractors.CallArgs
         ]
       )
 
@@ -325,6 +327,11 @@ defmodule Argus.Clientlib.ProcessesTest do
     refute Enum.any?(r["genserver_sync_api"], &match?(["ProxyApi:ask/0", _], &1))
     refute ["ProxyUser:use/0", "ProxyApi"] in r["sync_dep"]
     assert ["ProxyUser:use/0", "Answerer"] in r["reaches_sync_dep"]
+  end
+
+  test "a wrapper forwarding its target to :gen_statem.call is a peer call", %{tmp_dir: tmp_dir} do
+    r = solve(tmp_dir, ~w(sync_dep))
+    assert ["StatemClient:do_call/2", "Machine"] in r["sync_dep"]
   end
 
   test "a gen_statem's data carries its pids from state to state", %{tmp_dir: tmp_dir} do

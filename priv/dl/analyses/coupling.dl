@@ -75,7 +75,8 @@ direct_coupling_site(w, callee_mod, id) :-
   coupling(_, _, callee_mod, _, w),
   !call_site(_, w, callee_mod, _, _),
   !sync_site(w, callee_mod, _),
-  call_site(id, w, "GenServer", _, _).
+  call_site(id, w, m, _, _),
+  (m = "GenServer" ; m = ":gen_server" ; m = ":gen_statem" ; m = "GenStateMachine").
 
 coupling_site(w, callee_mod, id) :-
   direct_coupling_site(w, callee_mod, id).

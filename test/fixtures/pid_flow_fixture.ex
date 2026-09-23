@@ -737,6 +737,13 @@ defmodule Argus.Test.Fixtures.PidFlow do
     def use, do: Argus.Test.Fixtures.PidFlow.ProxyApi.ask()
   end
 
+  defmodule StatemClient do
+    @moduledoc "Reaches a gen_statem through a wrapper that forwards its target."
+    def status, do: do_call(Argus.Test.Fixtures.PidFlow.Machine, :status)
+
+    defp do_call(server, msg), do: :gen_statem.call(server, msg)
+  end
+
   defmodule Quiet do
     @moduledoc "Starts with a computed module, apply, and a pid from a library call: no process to name."
     def applied(m), do: apply(m, :start_link, [])

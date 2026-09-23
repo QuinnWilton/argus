@@ -37,16 +37,16 @@ resolved_arg(callee, callee_pos, val) :-
   resolved_arg(forwarder, fwd_param, val).
 
 // `defp fetch(server), do: GenServer.call(server, ...)` called with a
-// literal: the wrapper synchronously calls that module.
+// literal: the wrapper synchronously calls that module. A gen_statem's
+// call or cast is as much a peer call (peer_call, peer_cast below).
 sync_call(func, target) :-
   call_arg_forward(func, callee, 0, fwd_pos),
-  (callee = "GenServer:call/2" ; callee = "GenServer:call/3" ;
-   callee = ":gen_server:call/2" ; callee = ":gen_server:call/3"),
+  peer_call(callee),
   resolved_arg(func, fwd_pos, target).
 
 async_cast(func, target) :-
   call_arg_forward(func, callee, 0, fwd_pos),
-  (callee = "GenServer:cast/2" ; callee = ":gen_server:cast/2"),
+  peer_cast(callee),
   resolved_arg(func, fwd_pos, target).
 
 // ── Client API ─────────────────────────────────────────────────────────
@@ -65,6 +65,14 @@ peer_call(":gen_statem:call/2").
 peer_call(":gen_statem:call/3").
 peer_call("GenStateMachine:call/2").
 peer_call("GenStateMachine:call/3").
+
+// The one-way counterpart.
+.decl peer_cast(callee: symbol)
+
+peer_cast("GenServer:cast/2").
+peer_cast(":gen_server:cast/2").
+peer_cast(":gen_statem:cast/2").
+peer_cast("GenStateMachine:cast/2").
 
 .decl genserver_sync_api(func: symbol, mod: symbol)
 
