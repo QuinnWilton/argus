@@ -244,6 +244,15 @@ function and falls back to that function (then, given one, a module);
 for a module, function IDs included. The two private `site_or_func/3`
 copies in blocking and shutdown are that function now.
 
+A custom (non-builtin) analysis's evidence relations joined nothing:
+the join columns were looked up among the builtin analyses only, so every
+frame silently vanished. `Findings.build/2` reads the joins off the
+analysis's own relations, once per build (the lookup ran per row, over
+every loaded module), and raises when two evidence relations name the
+same finding relation or one names a relation the analysis does not
+declare. Collecting a finding's frames is linear in its rows (it
+appended one frame at a time).
+
 A literal operand was spelled with `inspect/1`, which runs a struct's
 own `Inspect` implementation when its module is loaded — so the same
 beam yielded different `literal_value` rows in a VM that had the

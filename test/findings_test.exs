@@ -395,6 +395,25 @@ defmodule Argus.FindingsTest do
       assert Enum.map(finding.related, & &1.mfa) == [{A, :call, 0}, {B, :call, 0}]
     end
 
+    test "a custom analysis's evidence relations become its findings' frames" do
+      relation_rows = %{
+        "finding" => [["Foo"], ["Bar"]],
+        "witness" => [["Foo", "Foo:g/0#1"], ["Foo", "Foo:h/0#2"], ["Bar", "Bar:g/0#3"]]
+      }
+
+      findings = Findings.build(__MODULE__.CustomEvidence, relation_rows)
+      by_module = Map.new(findings, &{&1.module, &1})
+
+      assert Enum.map(by_module[Foo].related, & &1.mfa) == [{Foo, :g, 0}, {Foo, :h, 0}]
+      assert Enum.map(by_module[Bar].related, & &1.mfa) == [{Bar, :g, 0}]
+    end
+
+    test "two evidence relations joining one finding relation is an analysis bug" do
+      assert_raise ArgumentError, ~r/:finding has two evidence relations/, fn ->
+        Findings.build(__MODULE__.TwoEvidence, %{"finding" => [["Foo"]]})
+      end
+    end
+
     test "a key chosen by kind identifies each kind of row its own way" do
       relation = %{
         name: :merged,
@@ -581,5 +600,46 @@ defmodule Argus.FindingsTest do
         Findings.new(:warning, "Title", "Detail.", help: [:not_a_string])
       end
     end
+  end
+
+  defmodule CustomEvidence do
+    @moduledoc false
+    alias Argus.Findings
+
+    def name, do: :custom_evidence
+
+    def output_relations do
+      [
+        %{name: :finding, fields: [{:mod, :symbol, "module"}], doc: "a finding"},
+        %{
+          name: :witness,
+          fields: [{:mod, :symbol, "module"}, {:site, :symbol, "site"}],
+          evidence: %{of: :finding, on: [:mod]},
+          doc: "its witnesses"
+        }
+      ]
+    end
+
+    def finding(:finding, [mod]), do: Findings.new(:info, "t", "d", at: Findings.at_module(mod))
+    def evidence(:witness, [_mod, site]), do: Findings.related("witness", Findings.at_instr(site))
+  end
+
+  defmodule TwoEvidence do
+    @moduledoc false
+    def name, do: :two_evidence
+
+    def output_relations do
+      CustomEvidence.output_relations() ++
+        [
+          %{
+            name: :other_witness,
+            fields: [{:mod, :symbol, "module"}],
+            evidence: %{of: :finding, on: [:mod]},
+            doc: "more witnesses"
+          }
+        ]
+    end
+
+    defdelegate finding(relation, row), to: CustomEvidence
   end
 end
