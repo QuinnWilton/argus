@@ -11,23 +11,23 @@
 // it. A function no process entry reaches at all is a plain API: it runs
 // in every caller, and is not single_process either.
 //
-// Instantiate with the sites of interest as seeds; the closure is
-// backward from them, never forward from every entry. Prerequisites:
+// Instantiate with the sites of interest as seeds; the closure is a
+// CallReach backward from them, never forward from every entry. Prerequisites:
 // imports.dl, otp.dl (process_entry, behaves_as, dynamic_child) and
 // request_entry.dl.
 
 .comp RunsConcurrently {
   .decl seed(func: symbol)
-  .decl reaches(func: symbol, target: symbol)
-  reaches(t, t) :- seed(t).
-  reaches(f, t) :- call_edge(f, g), reaches(g, t).
+
+  .init walk = CallReach
+  walk.seed(t, t) :- seed(t).
 
   .decl entry_reaches(mod: symbol, func: symbol)
-  entry_reaches(m, t) :- process_entry(m, c), reaches(c, t).
+  entry_reaches(m, t) :- process_entry(m, c), walk.reaches(c, t).
   entry_reaches(m, t) :-
     behaves_as(m, "Application"),
     function_def(c, m, "start", 2, _),
-    reaches(c, t).
+    walk.reaches(c, t).
 
   .decl many_instances(mod: symbol)
   many_instances(m) :- request_entry(e, _), function_def(e, m, _, _, _).
@@ -36,7 +36,7 @@
   .decl second_process(func: symbol)
   second_process(t) :- entry_reaches(m1, t), entry_reaches(m2, t), m1 != m2.
   second_process(t) :- entry_reaches(m, t), many_instances(m).
-  second_process(t) :- request_entry(e, _), reaches(e, t).
+  second_process(t) :- request_entry(e, _), walk.reaches(e, t).
 
   .decl single_process(func: symbol)
   single_process(t) :- entry_reaches(_, t), !second_process(t).
