@@ -45,33 +45,36 @@ declared_pure(func) :- pure_contract(func, _, _, _).
 // Layer 1, where the instruction itself IS the effect and no table is
 // needed: a send is a send.
 
-.decl performs_effect(func: symbol, category: symbol, api: symbol)
+// `site` is the instruction performing it, which is where a finding's
+// frame points; a receive is a loop of instructions rather than one
+// call, so its site is empty.
+.decl performs_effect(func: symbol, category: symbol, api: symbol, site: symbol)
 
 // Purity rejects both modes: reading a clock or the process dictionary
 // already makes the result depend on something other than the arguments.
-performs_effect(func, category, api) :-
-  impure_call(_, func, api, category, _mode).
+performs_effect(func, category, api, id) :-
+  impure_call(id, func, api, category, _mode).
 
-performs_effect(func, "process", "send") :-
-  send_msg(_, func).
+performs_effect(func, "process", "send", id) :-
+  send_msg(id, func).
 
-performs_effect(func, "process", "receive") :-
+performs_effect(func, "process", "receive", "") :-
   receives(func).
 
-performs_effect(func, "process", "spawn") :-
-  spawn_call(_, func, _, _, _, _).
+performs_effect(func, "process", "spawn", id) :-
+  spawn_call(id, func, _, _, _, _).
 
-performs_effect(func, "ets", "ets") :-
-  ets_op(_, func, _, _, _).
+performs_effect(func, "ets", "ets", id) :-
+  ets_op(id, func, _, _, _).
 
-performs_effect(func, "ets", "ets_new") :-
-  ets_new(_, func, _).
+performs_effect(func, "ets", "ets_new", id) :-
+  ets_new(id, func, _).
 
-performs_effect(func, "port", "port") :-
-  port_open(_, func, _, _).
+performs_effect(func, "port", "port", id) :-
+  port_open(id, func, _, _).
 
-performs_effect(func, "process", "register") :-
-  process_register(_, func, _, _).
+performs_effect(func, "process", "register", id) :-
+  process_register(id, func, _, _).
 
 // ── Calls that cannot be accounted for ───────────────────────────
 //
@@ -83,9 +86,9 @@ performs_effect(func, "process", "register") :-
 // Both are reported rather than assumed harmless. This is the difference
 // between a verification and an opinion.
 
-.decl opaque(func: symbol, reason: symbol, detail: symbol)
+.decl opaque(func: symbol, reason: symbol, detail: symbol, site: symbol)
 
-opaque(func, "dynamic_call", kind) :-
+opaque(func, "dynamic_call", kind, id) :-
   dynamic_call(id, func, kind),
   !resolved_apply(id, _, _).
 
@@ -95,14 +98,14 @@ opaque(func, "dynamic_call", kind) :-
 // makes. Without this, purity does not compose: no function could ever be
 // verified if it called another of your own pure functions, which is most
 // of what pure code does.
-opaque(func, "unclassified_call", api) :-
-  unknown_call(_, func, api, callee),
+opaque(func, "unclassified_call", api, id) :-
+  unknown_call(id, func, api, callee),
   !pure_contract(callee, _, _, _).
 
 // Protocol dispatch is opaque for a different reason: not a missing table
 // entry, but an open set of implementations that no table could enumerate.
-opaque(func, "protocol_dispatch", api) :-
-  protocol_dispatch(_, func, api).
+opaque(func, "protocol_dispatch", api, id) :-
+  protocol_dispatch(id, func, api).
 
 // ── Propagation ──────────────────────────────────────────────────
 //
@@ -129,23 +132,23 @@ purity_root(closure) :-
 
 root_reach.root(func, func) :- purity_root(func).
 
-.decl reaches_effect(func: symbol, category: symbol, api: symbol, via: symbol)
+.decl reaches_effect(func: symbol, category: symbol, api: symbol, via: symbol, site: symbol)
 
-reaches_effect(func, category, api, func) :-
-  performs_effect(func, category, api).
+reaches_effect(func, category, api, func, site) :-
+  performs_effect(func, category, api, site).
 
-reaches_effect(func, category, api, via) :-
+reaches_effect(func, category, api, via, site) :-
   root_reach.reaches(func, via),
-  performs_effect(via, category, api).
+  performs_effect(via, category, api, site).
 
-.decl reaches_opaque(func: symbol, reason: symbol, detail: symbol, via: symbol)
+.decl reaches_opaque(func: symbol, reason: symbol, detail: symbol, via: symbol, site: symbol)
 
-reaches_opaque(func, reason, detail, func) :-
-  opaque(func, reason, detail).
+reaches_opaque(func, reason, detail, func, site) :-
+  opaque(func, reason, detail, site).
 
-reaches_opaque(func, reason, detail, via) :-
+reaches_opaque(func, reason, detail, via, site) :-
   root_reach.reaches(func, via),
-  opaque(via, reason, detail).
+  opaque(via, reason, detail, site).
 
 // ── Findings ─────────────────────────────────────────────────────
 
@@ -153,24 +156,26 @@ reaches_opaque(func, reason, detail, via) :-
 // it. `context` is "pure_contract" (func carries @pure true; scope is
 // empty) or "transaction" (func opens a Repo transaction; scope is the
 // repo). `via` is the function that actually performs the effect, which
-// is where the fix goes when it is not func itself.
-.decl effect_in_context(func: symbol, context: symbol, scope: symbol, category: symbol, api: symbol, via: symbol)
+// is where the fix goes when it is not func itself, and `site` the
+// instruction that does (empty for a receive). `opened` is the
+// transaction call, empty for a pure contract.
+.decl effect_in_context(func: symbol, context: symbol, scope: symbol, category: symbol, api: symbol, via: symbol, site: symbol, opened: symbol)
 .output effect_in_context
 
 // The claim is false: a declared-pure function reaches a known effect.
-effect_in_context(func, "pure_contract", "", category, api, via) :-
+effect_in_context(func, "pure_contract", "", category, api, via, site, "") :-
   declared_pure(func),
-  reaches_effect(func, category, api, via).
+  reaches_effect(func, category, api, via, site).
 
 // The claim cannot be checked. Not a violation — the function may well be
 // pure — but nobody should rely on it having been verified.
-.decl purity_unprovable(func: symbol, reason: symbol, detail: symbol, via: symbol)
+.decl purity_unprovable(func: symbol, reason: symbol, detail: symbol, via: symbol, site: symbol)
 .output purity_unprovable
 
-purity_unprovable(func, reason, detail, via) :-
+purity_unprovable(func, reason, detail, via, site) :-
   declared_pure(func),
-  reaches_opaque(func, reason, detail, via),
-  !reaches_effect(func, _, _, _).
+  reaches_opaque(func, reason, detail, via, site),
+  !reaches_effect(func, _, _, _, _).
 
 // The claim holds: nothing reachable performs an effect, and nothing
 // reachable is unaccounted for. Emitted deliberately — the value of a
@@ -181,8 +186,8 @@ purity_unprovable(func, reason, detail, via) :-
 
 purity_verified(func) :-
   declared_pure(func),
-  !reaches_effect(func, _, _, _),
-  !reaches_opaque(func, _, _, _).
+  !reaches_effect(func, _, _, _, _),
+  !reaches_opaque(func, _, _, _, _).
 
 // ── Higher-order contracts, checked at the call site ─────────────
 //
@@ -203,23 +208,27 @@ purity_verified(func) :-
 // this whole rule would sit dead.
 higher_order_pure(func) :-
   declared_pure(func),
-  reaches_opaque(func, "dynamic_call", "call_fun", _).
+  reaches_opaque(func, "dynamic_call", "call_fun", _, _).
 
 // Which closures a caller builds, and whether they perform effects.
-.decl impure_closure(caller: symbol, closure: symbol, category: symbol, api: symbol)
+.decl impure_closure(caller: symbol, closure: symbol, category: symbol, api: symbol, site: symbol)
 
-impure_closure(caller, closure, category, api) :-
+impure_closure(caller, closure, category, api, site) :-
   closure_def(caller, closure),
-  reaches_effect(closure, category, api, _).
+  reaches_effect(closure, category, api, _, site).
 
-.decl impure_closure_to_pure(caller: symbol, callee: symbol, closure: symbol, category: symbol, api: symbol)
+// `site` is the call handing the closure over, where the contract
+// breaks; `effect_site` the effect inside the closure.
+.decl impure_closure_to_pure(caller: symbol, callee: symbol, closure: symbol, category: symbol, api: symbol, site: symbol, effect_site: symbol)
 .output impure_closure_to_pure
 
-impure_closure_to_pure(caller, callee, closure, category, api) :-
+impure_closure_to_pure(caller, callee, closure, category, api, site, effect_site) :-
   higher_order_pure(callee),
   call_edge(caller, callee),
+  pure_contract(callee, mod, name, arity),
+  call_site(site, caller, mod, name, arity),
   sole_closure(caller, closure),
-  impure_closure(caller, closure, category, api).
+  impure_closure(caller, closure, category, api, effect_site).
 
 // ══ Effects inside a transaction ════════════════════════════════════
 // Unrollbackable side effects inside a database transaction.
@@ -257,15 +266,15 @@ impure_closure_to_pure(caller, callee, closure, category, api) :-
 // Any module implementing Ecto.Repo, called as `.transaction/1,2`. Reading
 // the behaviour rather than matching on a name means an app's own
 // `MyApp.Repo` is found without knowing what it is called.
-.decl transaction_site(caller: symbol, repo: symbol)
+.decl transaction_site(id: symbol, caller: symbol, repo: symbol)
 
-transaction_site(caller, repo) :-
-  remote_call(_, caller, repo, "transaction", _),
+transaction_site(id, caller, repo) :-
+  remote_call(id, caller, repo, "transaction", _),
   behaves_as(repo, "Ecto.Repo").
 
 // Postgrex and Ecto.Multi reach the same place by another route.
-transaction_site(caller, "Postgrex") :-
-  remote_call(_, caller, "Postgrex", "transaction", _).
+transaction_site(id, caller, "Postgrex") :-
+  remote_call(id, caller, "Postgrex", "transaction", _).
 
 // ── The closure the transaction runs ─────────────────────────────
 //
@@ -276,13 +285,24 @@ transaction_site(caller, "Postgrex") :-
 // Gated on the function building exactly ONE closure, for the same reason
 // as the higher-order purity check — with two there is no way to say which
 // was passed to the transaction, and naming the wrong lambda sends someone
-// to the wrong line, which is worse than saying nothing.
+// to the wrong line, which is worse than saying nothing. The same holds
+// for the repo: a function that opens transactions on two repos (one with
+// the closure, one with an Ecto.Multi) cannot say whose the closure is,
+// so its body belongs to neither rather than to both.
 
-.decl transaction_body(caller: symbol, repo: symbol, body: symbol)
+.decl transaction_body(site: symbol, caller: symbol, repo: symbol, body: symbol)
 
-transaction_body(caller, repo, body) :-
-  transaction_site(caller, repo),
-  sole_closure(caller, body).
+transaction_body(site, caller, repo, body) :-
+  transaction_site(site, caller, repo),
+  sole_closure(caller, body),
+  !transaction_on_another_repo(caller, repo).
+
+.decl transaction_on_another_repo(caller: symbol, repo: symbol)
+
+transaction_on_another_repo(caller, repo) :-
+  transaction_site(_, caller, repo),
+  transaction_site(_, caller, other),
+  other != repo.
 
 // ── Effects the database cannot undo ─────────────────────────────
 //
@@ -298,28 +318,29 @@ transaction_body(caller, repo, body) :-
 // read in the codebase. The categories are the effect model's durable
 // ones (effects.dl): what has left the process cannot be rolled back.
 
-.decl escapes_transaction(caller: symbol, repo: symbol, category: symbol, api: symbol, via: symbol)
+.decl escapes_transaction(opened: symbol, caller: symbol, repo: symbol, category: symbol, api: symbol, via: symbol, site: symbol)
 
 // Forward from the transaction bodies only.
 .init body_reach = ForwardCallReach
 
-body_reach.root(body, body) :- transaction_body(_, _, body).
+body_reach.root(body, body) :- transaction_body(_, _, _, body).
 
-escapes_transaction(caller, repo, category, api, via) :-
-  transaction_body(caller, _repo_unused, body),
-  transaction_site(caller, repo),
+// The repo is the one of the transaction the body belongs to: joining
+// the caller's transaction sites apart from its body paired a closure
+// with every repo the function touched.
+escapes_transaction(opened, caller, repo, category, api, via, site) :-
+  transaction_body(opened, caller, repo, body),
   body_reach.reaches(body, via),
-  impure_call(_, via, api, category, "write"),
+  impure_call(site, via, api, category, "write"),
   durable_effect(category).
 
 // The effect is in the closure itself, not something it calls.
-escapes_transaction(caller, repo, category, api, body) :-
-  transaction_body(caller, _repo_unused, body),
-  transaction_site(caller, repo),
-  impure_call(_, body, api, category, "write"),
+escapes_transaction(opened, caller, repo, category, api, body, site) :-
+  transaction_body(opened, caller, repo, body),
+  impure_call(site, body, api, category, "write"),
   durable_effect(category).
 
 // ── Findings ─────────────────────────────────────────────────────
 
-effect_in_context(caller, "transaction", repo, category, api, via) :-
-  escapes_transaction(caller, repo, category, api, via).
+effect_in_context(caller, "transaction", repo, category, api, via, site, opened) :-
+  escapes_transaction(opened, caller, repo, category, api, via, site).

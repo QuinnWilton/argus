@@ -239,7 +239,27 @@ and rewrote `at_label` with the note; `at_label` now keeps saying what
 the anchor line is ("supervision tree defined here"), and the note moved
 to the last help line.
 
+effects findings point at the calls they are about. `effect_in_context`
+gains `site` (the instruction performing the effect; empty for a
+receive) and `opened` (the transaction call); `purity_unprovable` gains
+`site`; `impure_closure_to_pure` gains `site` (the call handing the
+closure to the pure function) and `effect_site`. A transaction finding
+anchors at the `Repo.transaction` call its label names ("opens the
+transaction here" sat on the function head), a closure finding at the
+call that hands the closure over, and each carries the effect as a
+related frame. Output-relation shapes only; the fact schema is
+unchanged, and effects now reads stage 0's `call_site`.
+
 ### Fixed
+
+A transaction body was paired with every repo its function opened a
+transaction on: `effects.dl` joined `transaction_body` and
+`transaction_site` on the caller alone, so a function passing its one
+closure to `FakeRepo.transaction/1` and an `Ecto.Multi` to
+`AuditRepo.transaction/1` reported the effect inside both — and, once
+deduplicated, named whichever repo sorted first. The body is keyed by
+its transaction site, and a function whose transactions name two repos
+has no body: nothing says whose the closure is.
 
 Anchors no longer invent modules. Several builders passed a function ID
 where `Findings.at_site/2` takes a module string, so a row whose site

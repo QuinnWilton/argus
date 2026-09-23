@@ -22,7 +22,13 @@ defmodule Argus.Analyses.EffectsTransactionTest do
 
   defp findings(modules \\ @all) do
     assert {:ok, r} = Argus.analyze(modules, :effects)
-    Rows.where(r, :effects, "effect_in_context", context: "transaction", drop: [:context])
+
+    r
+    |> Rows.where(:effects, "effect_in_context",
+      context: "transaction",
+      drop: [:context, :site, :opened]
+    )
+    |> Enum.uniq()
   end
 
   defp for_module(rows, fragment) do
@@ -68,6 +74,33 @@ defmodule Argus.Analyses.EffectsTransactionTest do
       # be called anything, so matching on the name would miss most of them.
       assert [[_c, repo, _cat, _api, _v] | _] = for_module(findings(), "Unsafe:create/1")
       assert repo =~ "FakeRepo"
+    end
+  end
+
+  describe "the transaction a body belongs to" do
+    test "a closure in a function that opens transactions on two repos is not paired with both" do
+      skip_without_souffle()
+
+      # Joining the caller's transaction sites apart from its body paired
+      # the closure with every repo the function touched; the finding,
+      # deduplicated on (func, context, category, api), then named
+      # whichever repo sorted first — AuditRepo, which never saw it.
+      assert for_module(findings([T.FakeRepo, T.AuditRepo, T.TwoRepos]), "TwoRepos") == []
+    end
+
+    test "the finding anchors at the transaction call, with the effect as a frame" do
+      skip_without_souffle()
+
+      assert {:ok, %{findings: findings}} =
+               Argus.run_analyses([T.FakeRepo, T.Unsafe], analyses: [:effects])
+
+      assert [finding] = Enum.filter(findings, &(&1.module == T.Unsafe))
+      assert finding.at_label == "opens the transaction here"
+      assert %Argus.InstrId{func: "create", arity: 1} = finding.instr
+
+      assert [%{label: label, instr: %Argus.InstrId{func: effect_func}}] = finding.related
+      assert label =~ "network I/O inside it"
+      assert effect_func =~ "-create/1-fun-0-"
     end
   end
 

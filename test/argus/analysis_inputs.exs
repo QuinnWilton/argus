@@ -9,7 +9,7 @@
   coverage:
     ~w(async_cast dynamic_child ets_new ets_op function_def implements_behaviour imprecision named_process supervisor supervisor_child sync_call),
   effects:
-    ~w(call_edge closure_def dynamic_call ets_new ets_op implements_behaviour impure_call port_open process_register protocol_dispatch pure_contract recv_start remote_call resolved_apply send_msg spawn_call unknown_call),
+    ~w(call_edge call_site closure_def dynamic_call ets_new ets_op implements_behaviour impure_call port_open process_register protocol_dispatch pure_contract recv_start remote_call resolved_apply send_msg spawn_call unknown_call),
   ets:
     ~w(call_arg call_arg_depends call_arg_field call_arg_forward call_decided call_edge catch_tag catch_total closure_def dynamic_child ets_key ets_new ets_op ets_op_param ets_option ets_tid_arg function_def implements_behaviour mnesia_op returns_depends site_depends statem_event_clause supervisor_child),
   exposure:

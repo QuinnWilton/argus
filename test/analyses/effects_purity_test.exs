@@ -29,9 +29,10 @@ defmodule Argus.Analyses.EffectsPurityTest do
       violated:
         Rows.where(r, :effects, "effect_in_context",
           context: "pure_contract",
-          drop: [:context, :scope]
-        ),
-      unprovable: Map.get(r, "purity_unprovable", [])
+          drop: [:context, :scope, :site, :opened]
+        )
+        |> Enum.uniq(),
+      unprovable: Rows.where(r, :effects, "purity_unprovable", drop: [:site]) |> Enum.uniq()
     }
   end
 
@@ -202,11 +203,38 @@ defmodule Argus.Analyses.EffectsPurityTest do
                Argus.analyze([P.HigherOrder, P.GoodCaller, P.BadCaller], :effects)
 
       assert [[caller, callee, closure, "io", "IO.puts/1"]] =
-               Map.get(r, "impure_closure_to_pure", [])
+               Rows.where(r, :effects, "impure_closure_to_pure", drop: [:site, :effect_site])
 
       assert caller =~ "BadCaller:trace/1"
       assert callee =~ "HigherOrder:transform/2"
       assert closure =~ "-trace/1-fun-0-", "named the caller rather than its lambda"
+    end
+
+    test "the finding anchors at the call handing the closure over, the effect as a frame" do
+      skip_without_souffle()
+
+      assert {:ok, %{findings: findings}} =
+               Argus.run_analyses([P.HigherOrder, P.BadCaller], analyses: [:effects])
+
+      assert [finding] = Enum.filter(findings, &(&1.module == P.BadCaller))
+      assert %Argus.InstrId{func: "trace", arity: 1} = finding.instr
+      assert finding.at_label =~ "hands the effectful closure to transform/2"
+
+      assert [%{label: "the closure calls IO.puts/1 here", instr: %Argus.InstrId{func: f}}] =
+               finding.related
+
+      assert f =~ "-trace/1-fun-0-"
+    end
+
+    test "a violated contract points at the effect it performs" do
+      skip_without_souffle()
+
+      assert {:ok, %{findings: findings}} =
+               Argus.run_analyses([P.DirectEffects], analyses: [:effects])
+
+      logs = Enum.find(findings, &(&1.mfa == {P.DirectEffects, :logs, 1}))
+      assert logs.at_label == "declared pure here"
+      assert [%{label: "I/O here", instr: %Argus.InstrId{func: "logs", arity: 1}}] = logs.related
     end
 
     test "passing a pure closure is not reported" do

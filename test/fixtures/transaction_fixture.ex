@@ -15,6 +15,30 @@ defmodule Argus.Test.Fixtures.Transaction do
     def insert(x), do: {:ok, x}
   end
 
+  defmodule AuditRepo do
+    @moduledoc "A second repo, whose name sorts before FakeRepo's."
+    @behaviour Ecto.Repo
+
+    def transaction(multi), do: {:ok, multi}
+  end
+
+  defmodule TwoRepos do
+    @moduledoc """
+    One closure, two repos: the closure goes to FakeRepo, an Ecto.Multi
+    to AuditRepo. Nothing in the bytecode says which transaction runs the
+    closure, so it must not be reported as inside both — or, deduplicated,
+    as inside AuditRepo's.
+    """
+    def create(user, multi) do
+      FakeRepo.transaction(fn ->
+        FakeRepo.insert(user)
+        :httpc.request(~c"http://hooks/notify")
+      end)
+
+      AuditRepo.transaction(multi)
+    end
+  end
+
   defmodule Unsafe do
     @moduledoc "The bug: an unrollbackable effect inside the transaction."
     def create(user) do

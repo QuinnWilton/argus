@@ -12,15 +12,17 @@ defmodule Argus.Analyses.Effects do
   database can undo, since a rollback leaves the effect behind, a retry
   repeats it, and a pooled connection is held throughout.
 
-  - `effect_in_context(func, context, scope, category, api, via)` — an
-    effect where its context forbids it: `pure_contract` (a declared-pure
-    function reaches a known observable effect) or `transaction` (an
-    effect inside a transaction body, opened on the repo in `scope`,
-    that a rollback cannot undo).
-  - `purity_unprovable(func, reason, detail, via)` — it reaches a call
-    that cannot be followed or classified.
-  - `impure_closure_to_pure(caller, callee, closure, category, api)` — a
-    caller hands an effectful closure to a function declared pure.
+  - `effect_in_context(func, context, scope, category, api, via, site,
+    opened)` — an effect where its context forbids it: `pure_contract` (a
+    declared-pure function reaches a known observable effect) or
+    `transaction` (an effect inside a transaction body, opened at
+    `opened` on the repo in `scope`, that a rollback cannot undo). `site`
+    is the call performing the effect.
+  - `purity_unprovable(func, reason, detail, via, site)` — it reaches a
+    call that cannot be followed or classified.
+  - `impure_closure_to_pure(caller, callee, closure, category, api, site,
+    effect_site)` — a caller hands an effectful closure to a function
+    declared pure, at `site`.
   - `purity_verified(func)` — the claim holds; emitted so "verified" can
     be told from "not looked at".
   """
@@ -63,7 +65,9 @@ defmodule Argus.Analyses.Effects do
           {:scope, :symbol, "the repo for a transaction, empty for a pure contract"},
           {:category, :symbol, "the kind of effect"},
           {:api, :symbol, "the call that performs it"},
-          {:via, :symbol, "the function that performs it"}
+          {:via, :symbol, "the function that performs it"},
+          {:site, :symbol, "the instruction performing it; empty for a receive"},
+          {:opened, :symbol, "the transaction call, for a transaction; else empty"}
         ],
         key: [:func, :context, :category, :api],
         doc: "An effect where its context forbids it: a @pure claim, or a transaction body."
@@ -74,7 +78,8 @@ defmodule Argus.Analyses.Effects do
           {:func, :symbol, "the function declared pure"},
           {:reason, :symbol, "dynamic_call | unclassified_call"},
           {:detail, :symbol, "the call kind or API"},
-          {:via, :symbol, "the function containing it"}
+          {:via, :symbol, "the function containing it"},
+          {:site, :symbol, "the call that cannot be followed"}
         ],
         key: [:func, :reason, :detail],
         doc: "A declared-pure function reaches something that cannot be accounted for."
@@ -86,7 +91,9 @@ defmodule Argus.Analyses.Effects do
           {:callee, :symbol, "the declared-pure function receiving it"},
           {:closure, :symbol, "the lifted closure"},
           {:category, :symbol, "the kind of effect it performs"},
-          {:api, :symbol, "the call that performs it"}
+          {:api, :symbol, "the call that performs it"},
+          {:site, :symbol, "the call handing the closure to the pure function"},
+          {:effect_site, :symbol, "the effect inside the closure"}
         ],
         key: [:caller, :callee, :closure],
         doc: "A caller hands an effectful closure to a function declared pure."
@@ -101,7 +108,7 @@ defmodule Argus.Analyses.Effects do
   end
 
   @impl true
-  def finding(:effect_in_context, [func, "pure_contract", _, category, api, via]) do
+  def finding(:effect_in_context, [func, "pure_contract", _, category, api, via, site, _]) do
     Findings.new(
       :error,
       "#{short(func)} is declared pure but performs #{effect_phrase(category)}",
@@ -109,11 +116,12 @@ defmodule Argus.Analyses.Effects do
         "which is #{effect_phrase(category)}. #{consequence(category)}",
       at: Findings.at_func(func),
       at_label: "declared pure here",
+      related: effect_frame("#{effect_phrase(category)} here", site),
       help: ["remove `@pure true`, or move the effect to the caller"]
     )
   end
 
-  def finding(:purity_unprovable, [func, "dynamic_call", kind, via]) do
+  def finding(:purity_unprovable, [func, "dynamic_call", kind, via, site]) do
     Findings.new(
       :warning,
       "#{short(func)} is declared pure but the claim cannot be checked",
@@ -124,11 +132,12 @@ defmodule Argus.Analyses.Effects do
         "nothing should rely on it having been checked.",
       at: Findings.at_func(func),
       at_label: "declared pure here",
+      related: effect_frame("the call whose target is not known", site),
       help: ["call a known module and function so the claim can be checked, or drop `@pure`"]
     )
   end
 
-  def finding(:purity_unprovable, [func, "protocol_dispatch", api, via]) do
+  def finding(:purity_unprovable, [func, "protocol_dispatch", api, via, site]) do
     Findings.new(
       :warning,
       "#{short(func)} is declared pure but dispatches through a protocol",
@@ -139,6 +148,7 @@ defmodule Argus.Analyses.Effects do
         "a missing entry in the effect model; no model can close it.",
       at: Findings.at_func(func),
       at_label: "declared pure here",
+      related: effect_frame("dispatches through the protocol here", site),
       help: [
         "if the argument's type is fixed at that call site, call its implementation " <>
           "directly so the contract can be checked"
@@ -146,7 +156,7 @@ defmodule Argus.Analyses.Effects do
     )
   end
 
-  def finding(:purity_unprovable, [func, "unclassified_call", api, via]) do
+  def finding(:purity_unprovable, [func, "unclassified_call", api, via, site]) do
     Findings.new(
       :warning,
       "#{short(func)} is declared pure but reaches an unclassified call",
@@ -156,6 +166,7 @@ defmodule Argus.Analyses.Effects do
         "report success far more often and mean nothing.",
       at: Findings.at_func(func),
       at_label: "declared pure here",
+      related: effect_frame("the call the effect model has no entry for", site),
       help: [
         "if #{api} is effect-free, add it to Argus.Purity.Effects and this becomes " <>
           "a verified contract; otherwise drop `@pure`"
@@ -163,7 +174,15 @@ defmodule Argus.Analyses.Effects do
     )
   end
 
-  def finding(:impure_closure_to_pure, [caller, callee, closure, category, api]) do
+  def finding(:impure_closure_to_pure, [
+        caller,
+        callee,
+        closure,
+        category,
+        api,
+        site,
+        effect_site
+      ]) do
     Findings.new(
       :error,
       "#{short(caller)} passes an effectful closure to a function declared pure",
@@ -171,8 +190,9 @@ defmodule Argus.Analyses.Effects do
         "purity is the caller's obligation. #{caller} builds #{closure}, " <>
         "which calls #{api} — #{effect_phrase(category)} — and hands it over. " <>
         "The contract is broken here, at the call site, not in #{callee}.",
-      at: Findings.at_func(caller),
-      at_label: "builds the effectful closure here",
+      at: Findings.at_site_in_func(site, caller),
+      at_label: "hands the effectful closure to #{short(callee)} here",
+      related: effect_frame("the closure calls #{api} here", effect_site),
       help: [
         "perform the effect before or after the call and pass a pure fun, " <>
           "or drop `@pure` from #{callee}"
@@ -190,20 +210,39 @@ defmodule Argus.Analyses.Effects do
     )
   end
 
-  def finding(:effect_in_context, [caller, "transaction", repo, category, api, via]) do
+  def finding(:effect_in_context, [
+        caller,
+        "transaction",
+        repo,
+        category,
+        api,
+        via,
+        site,
+        opened
+      ]) do
     Findings.new(
       rollback_severity(category),
       "#{short(caller)} performs #{rollback_phrase(category)} inside a #{repo} transaction",
       "#{caller} opens a #{repo}.transaction and #{via} calls #{api} inside it. " <>
         "#{rollback_consequence(category)} A rollback cannot take it back, and a retry on a " <>
         "serialization failure will do it twice. #{connection_note(category)}",
-      at: Findings.at_func(caller),
+      at: Findings.at_site_in_func(opened, caller),
       at_label: "opens the transaction here",
+      related: effect_frame("#{rollback_phrase(category)} inside it, here", site),
       help: [
         "move the effect outside the transaction, or record the intent in a row " <>
           "and perform it after commit"
       ]
     )
+  end
+
+  # A frame at the call a finding is about, when the rule had one: a
+  # receive, which is no single instruction, has none.
+  defp effect_frame(label, site) do
+    case Findings.at_instr(site) do
+      %{instr: nil} -> []
+      anchor -> [Findings.related(label, anchor)]
+    end
   end
 
   defp location(func, func), do: "it"
