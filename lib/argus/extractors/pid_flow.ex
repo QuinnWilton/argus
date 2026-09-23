@@ -37,8 +37,12 @@ defmodule Argus.Extractors.PidFlow do
   - `pid_return(func, src_kind, src)` — `func` may return a pid from the
     source, including by a tail call.
   - `pid_call(func, api_kind, src_kind, src)` — a GenServer-style `call` or
-    `cast` in `func` (the `sync_call`/`async_cast` table) whose target may
-    be a pid from the source.
+    `cast` in `func` (the `sync_call`/`async_cast` table), or a send
+    (`info`: to a server it lands in `handle_info/2`), whose target may be
+    a pid from the source or a literal name.
+  - `pid_message(func, api_kind, src_kind, src)` — the message of such a
+    call, cast or send may carry a pid from the source: it reaches the
+    target server's handler as its message parameter.
   - `pid_register(func, name, src_kind, src)` — `func` registers a pid from
     the source under `name`.
   - `pid_send(id, func, message, src_kind, src)` — the send at `id` goes to
@@ -103,7 +107,8 @@ defmodule Argus.Extractors.PidFlow do
   @lookups [{Process, :whereis, 1}, {:erlang, :whereis, 1}]
 
   @impl true
-  def relations, do: [:process_start, :pid_arg, :pid_return, :pid_call, :pid_register, :pid_send]
+  def relations,
+    do: [:process_start, :pid_arg, :pid_return, :pid_call, :pid_message, :pid_register, :pid_send]
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
@@ -330,7 +335,7 @@ defmodule Argus.Extractors.PidFlow do
       acc
       |> emit_args(site, at)
       |> emit_start_args(func_id, Map.get(starts, id), at)
-      |> emit_process_call(func_id, mfa, at)
+      |> emit_process_call(func_id, mfa, instrs, idx, at)
       |> emit_register(func_id, mfa, instrs, idx, at)
       |> emit_send(func_id, id, mfa, instrs, idx, at)
     end)
@@ -361,10 +366,25 @@ defmodule Argus.Extractors.PidFlow do
 
   defp emit_start_args(facts, _func_id, _start, _at), do: facts
 
-  defp emit_process_call(facts, func_id, mfa, at) do
+  # The target in x0 (a pid, or a literal name), and whatever pids the
+  # message in x1 carries to the handler.
+  defp emit_process_call(facts, func_id, mfa, instrs, idx, at) do
     case ApiCalls.process_call_kind(mfa) do
       nil -> facts
-      kind -> emit_sources(facts, :pid_call, [func_id, to_string(kind)], at["x0"])
+      kind -> call_rows(facts, func_id, to_string(kind), destination(instrs, idx, at), at["x1"])
+    end
+  end
+
+  defp call_rows(facts, func_id, kind, destination, message) do
+    facts
+    |> emit_sources(:pid_call, [func_id, kind], destination)
+    |> emit_sources(:pid_message, [func_id, kind], message)
+  end
+
+  defp destination(instrs, idx, at) do
+    case Helpers.resolve_atom(instrs, idx, {:x, 0}) do
+      "dynamic" -> Map.get(at, "x0", MapSet.new())
+      name -> MapSet.put(Map.get(at, "x0", MapSet.new()), {"name", name})
     end
   end
 
@@ -405,19 +425,14 @@ defmodule Argus.Extractors.PidFlow do
     end)
   end
 
+  # A send is keyed on its site for the finding about what it sends, and is
+  # also an "info" call: to a server, the message lands in handle_info/2.
   defp send_row(facts, func_id, id, instrs, idx, at) do
-    destination =
-      case Helpers.resolve_atom(instrs, idx, {:x, 0}) do
-        "dynamic" -> Map.get(at, "x0", MapSet.new())
-        name -> MapSet.put(Map.get(at, "x0", MapSet.new()), {"name", name})
-      end
+    destination = destination(instrs, idx, at)
 
-    emit_sources(
-      facts,
-      :pid_send,
-      [InstrId.format(id), func_id, message(instrs, idx)],
-      destination
-    )
+    facts
+    |> emit_sources(:pid_send, [InstrId.format(id), func_id, message(instrs, idx)], destination)
+    |> call_rows(func_id, "info", destination, at["x1"])
   end
 
   # The message as a receive pattern would read it: a literal atom, a
@@ -525,6 +540,7 @@ defmodule Argus.Extractors.PidFlow do
   defp emit_row(facts, :pid_arg, row), do: add_fact(facts, :pid_arg, row)
   defp emit_row(facts, :pid_return, row), do: add_fact(facts, :pid_return, row)
   defp emit_row(facts, :pid_call, row), do: add_fact(facts, :pid_call, row)
+  defp emit_row(facts, :pid_message, row), do: add_fact(facts, :pid_message, row)
   defp emit_row(facts, :pid_register, row), do: add_fact(facts, :pid_register, row)
   defp emit_row(facts, :pid_send, row), do: add_fact(facts, :pid_send, row)
 

@@ -41,7 +41,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 46
+  @schema_version 47
 
   # Layer 1: Module-level facts.
 
@@ -2105,14 +2105,34 @@ defmodule Argus.Schema do
     layer: 2,
     fields: [
       {:func, :func_id, "function making the call"},
-      {:api_kind, :symbol, "call or cast, from the sync_call/async_cast table"},
+      {:api_kind, :symbol, "call or cast (the sync_call/async_cast table), or info for a send"},
       {:src_kind, :symbol, "where the pid comes from: proc, param, result, name or self"},
       {:src, :symbol,
        "the process id, the parameter position, the callee whose result it is, the name, or self"}
     ],
     doc: """
-    A GenServer-style call or cast in `func` whose target may be a pid from \
-    the source: what resolves a sync_call recorded as "dynamic".
+    A GenServer-style call or cast in `func`, or a send (info), whose target \
+    may be a pid from the source or a literal name: what resolves a \
+    sync_call recorded as "dynamic".
+    """
+  }
+
+  @pid_message %{
+    name: :pid_message,
+    layer: 2,
+    fields: [
+      {:func, :func_id, "function making the call, cast or send"},
+      {:api_kind, :symbol, "call, cast or info (a send)"},
+      {:src_kind, :symbol, "where the pid comes from: proc, param, result, name or self"},
+      {:src, :symbol,
+       "the process id, the parameter position, the callee whose result it is, the name, or self"}
+    ],
+    doc: """
+    The message of a call, cast or send in `func` may carry a pid from the \
+    source. It reaches the handler of the server the pid_call rows of the \
+    same function and kind resolve to (handle_call/3, handle_cast/2, \
+    handle_info/2) as its message parameter: how a subscriber's pid gets \
+    into a server's state.
     """
   }
 
@@ -2284,6 +2304,7 @@ defmodule Argus.Schema do
     @pid_arg,
     @pid_return,
     @pid_call,
+    @pid_message,
     @pid_register,
     @pid_send,
     @start_error_compared,

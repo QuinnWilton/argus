@@ -131,6 +131,50 @@ defmodule Argus.Test.Fixtures.PidFlow do
     def go(mod), do: GenServer.start_link(mod, nil)
   end
 
+  defmodule Hub do
+    @moduledoc """
+    Keeps the pids that subscribe with a cast and calls the first. Both
+    servers handle both tags, so only following the pid through the
+    message and into the hub's state says who the hub calls.
+    """
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, [], name: __MODULE__)
+    def subscribe(pid), do: GenServer.cast(__MODULE__, {:subscribe, pid})
+    def poll, do: GenServer.call(__MODULE__, :poll)
+
+    @impl true
+    def init(subs), do: {:ok, subs}
+
+    @impl true
+    def handle_cast({:subscribe, pid}, subs), do: {:noreply, [pid | subs]}
+
+    @impl true
+    def handle_call(:poll, _from, [first | _] = subs),
+      do: {:reply, GenServer.call(first, :ping), subs}
+
+    def handle_call(:ping, _from, subs), do: {:reply, :pong, subs}
+  end
+
+  defmodule Listener do
+    @moduledoc "Subscribes itself to the hub, and polls it when pinged."
+    use GenServer
+
+    alias Argus.Test.Fixtures.PidFlow.Hub
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, nil)
+
+    @impl true
+    def init(nil) do
+      Hub.subscribe(self())
+      {:ok, nil}
+    end
+
+    @impl true
+    def handle_call(:ping, _from, s), do: {:reply, Hub.poll(), s}
+    def handle_call(:poll, _from, s), do: {:reply, :ok, s}
+  end
+
   defmodule Quiet do
     @moduledoc "Starts with a computed module, apply, and a pid from a library call: no process to name."
     def applied(m), do: apply(m, :start_link, [])

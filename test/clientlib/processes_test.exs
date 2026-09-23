@@ -15,6 +15,8 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.Tree,
     PidFlow.Kid,
     PidFlow.Starter,
+    PidFlow.Hub,
+    PidFlow.Listener,
     PidFlow.Quiet
   ]
 
@@ -115,6 +117,16 @@ defmodule Argus.Clientlib.ProcessesTest do
     r = solve(tmp_dir, ~w(self_pid process_start))
     refute Enum.any?(r["process_start"], &match?([_, "server Kid" | _], &1))
     assert ["Kid:init/1", "server Kid"] in r["self_pid"]
+  end
+
+  test "a pid in a cast's message reaches the handler and the server's state",
+       %{tmp_dir: tmp_dir} do
+    r = solve(tmp_dir, ~w(param_pid call_target))
+
+    assert ["Hub:subscribe/1", "0", "server Listener"] in r["param_pid"]
+    assert ["Hub:handle_cast/2", "0", "server Listener"] in r["param_pid"]
+    assert ["Hub:handle_call/3", "2", "server Listener"] in r["param_pid"]
+    assert ["Hub:handle_call/3", "call", "server Listener"] in r["call_target"]
   end
 
   test "a computed module, apply and a library pid name no process", %{tmp_dir: tmp_dir} do

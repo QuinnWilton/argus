@@ -90,6 +90,19 @@ defmodule Argus.Extractors.PidFlowTest do
       assert ["Owner:dynamic/0", "call", "proc", "server Worker"] in f.pid_call
     end
 
+    test "a cast's message carries its pids; a literal target is a name" do
+      f = facts([F.Hub, F.Listener])
+      assert ["Hub:subscribe/1", "cast", "param", "0"] in f.pid_message
+      assert ["Hub:subscribe/1", "cast", "name", "Hub"] in f.pid_call
+      assert ["Listener:init/1", "Hub:subscribe/1", "0", "self", "self"] in f.pid_arg
+    end
+
+    test "a send is also an info call, with its message's pids" do
+      f = facts([F.Loops])
+      assert ["Loops:start/0", "info", "name", ":loops"] in f.pid_call
+      assert ["Loops:-start/0-fun-0-/1", "info", "param", "0"] in f.pid_call
+    end
+
     test "the compiler's generated functions emit nothing" do
       for {_relation, rows} <- facts([F.Worker, F.Loops]), row <- rows do
         refute Enum.any?(row, &String.contains?(&1, ["__info__", "module_info"])), inspect(row)

@@ -8,6 +8,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+Schema 47. Process points-to follows pids carried in messages.
+`pid_message(func, api_kind, src_kind, src)` records the pids a call's,
+cast's or send's message may carry, and they reach the handler of the
+server the target resolves to (`handle_call/3`, `handle_cast/2`,
+`handle_info/2`) as its message parameter, and from there the server's
+state: how `Hub.subscribe(self())` puts a subscriber's pid where the hub
+later calls it. `pid_call` gains `info` rows for sends (a message to a
+server lands in `handle_info/2`) and `name` sources for literal targets,
+which resolve through the registry. Messages are not taken apart, and a
+function's messages of one kind reach every server its calls of that
+kind do.
+
 Process points-to counts a supervisor's children as processes: a child
 started on request (`DynamicSupervisor.start_child/2`,
 `Supervisor.start_child/2`) is a start site whose `{:ok, pid}` the

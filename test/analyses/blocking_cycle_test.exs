@@ -53,6 +53,25 @@ defmodule Argus.Analyses.BlockingCycleTest do
              end)
     end
 
+    test "a cycle through a pid a subscriber sent in a message" do
+      skip_without_souffle()
+
+      # The listener casts its own pid to the hub, which keeps it in its
+      # state and calls it; the listener calls the hub back by name.
+      hub = Argus.Test.Fixtures.PidFlow.Hub
+      listener = Argus.Test.Fixtures.PidFlow.Listener
+
+      assert {:ok, results} = Argus.analyze([hub, listener], :blocking)
+
+      assert Enum.any?(results["call_cycle_path"], fn
+               [_, _, from, to, _, "static", _] ->
+                 from == inspect(hub) and to == inspect(listener)
+
+               _ ->
+                 false
+             end)
+    end
+
     test "runs without error on module with no cycles" do
       skip_without_souffle()
 

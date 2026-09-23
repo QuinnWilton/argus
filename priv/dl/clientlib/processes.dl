@@ -54,6 +54,8 @@ source_pid(f, "result", g, p) :- pid_register(f, _, "result", g), returns_pid(g,
 source_pid(f, "name", n, p) :- pid_arg(f, _, _, "name", n), named_pid(n, p).
 source_pid(f, "name", n, p) :- pid_return(f, "name", n), named_pid(n, p).
 source_pid(f, "name", n, p) :- pid_call(f, _, "name", n), named_pid(n, p).
+source_pid(f, "result", g, p) :- pid_message(f, _, "result", g), returns_pid(g, p).
+source_pid(f, "name", n, p) :- pid_message(f, _, "name", n), named_pid(n, p).
 
 param_pid(g, k, p) :- pid_arg(f, g, k, kind, src), source_pid(f, kind, src, p).
 
@@ -104,3 +106,25 @@ named_pid(n, p) :-
 .decl call_target(func: symbol, api_kind: symbol, proc: symbol)
 
 call_target(f, kind, p) :- pid_call(f, kind, sk, src), source_pid(f, sk, src, p).
+
+// ── Pids carried in messages ────────────────────────────────────────
+
+// A call, cast or send delivers its message to the handler of the server
+// its target resolves to, as that handler's first parameter: how
+// `Hub.subscribe(self())` puts a subscriber's pid into the hub's state.
+// The message is not taken apart ({:subscribe, pid} counts as the pid),
+// and a function's messages of one kind reach every server its calls of
+// that kind do: may, like the rest.
+.decl message_handler(api_kind: symbol, name: symbol, arity: number)
+
+message_handler("call", "handle_call", 3).
+message_handler("cast", "handle_cast", 2).
+message_handler("info", "handle_info", 2).
+
+param_pid(h, "0", q) :-
+  pid_message(f, kind, sk, src),
+  source_pid(f, sk, src, q),
+  call_target(f, kind, p),
+  server_process(p, m),
+  message_handler(kind, name, arity),
+  function_def(h, m, name, arity, _).
