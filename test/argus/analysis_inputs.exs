@@ -7,7 +7,7 @@
   coupling:
     ~w(async_cast call_arg call_arg_forward call_edge call_site call_tag callback_tag child_spec_restart dynamic_call dynamic_child fun_ref function_def implements_behaviour matches_down monitor_call name_lookup named_process pid_arg pid_base pid_call pid_field pid_load pid_message pid_object pid_register pid_result pid_return pid_sets pid_signal prior_talks_to_process process_link process_start sup_call supervisor supervisor_child supervisor_child_name supervisor_site sync_call sync_call_site),
   coverage:
-    ~w(async_cast dynamic_child ets_new ets_op function_def implements_behaviour imprecision named_process supervisor supervisor_child sync_call),
+    ~w(async_cast call_arg call_arg_forward call_edge call_site dynamic_call dynamic_child ets_new ets_op fun_ref function_def implements_behaviour imprecision named_process pid_arg pid_base pid_call pid_field pid_load pid_message pid_object pid_register pid_result pid_return pid_sets process_start supervisor supervisor_child supervisor_child_name sync_call),
   effects:
     ~w(call_edge call_site closure_def dynamic_call ets_new ets_op implements_behaviour impure_call port_open process_register protocol_dispatch pure_contract recv_start remote_call resolved_apply send_msg spawn_call unknown_call),
   ets:

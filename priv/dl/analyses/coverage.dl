@@ -17,7 +17,7 @@
 // slice the data however they want.
 
 .include "../clientlib/imports.dl"
-.include "../clientlib/behaviours.dl"
+.include "../clientlib/otp.dl"
 
 // ── Input facts ──────────────────────────────────────────────────────
 
@@ -49,7 +49,8 @@ coverage_supervisor_no_children(sup) :-
   !dynamic_child(sup, _, _).
 
 // A GenServer behaviour module that is never the target of a sync_call
-// or async_cast AND is not a supervisor child (static or dynamic).
+// or async_cast, nor of a call process points-to follows to it, AND is
+// not a supervisor child (static or dynamic).
 // Supervised modules are definitively reachable — the supervisor starts
 // them — so they shouldn't be flagged as "isolated" even when we can't
 // see their callers.
@@ -60,8 +61,16 @@ coverage_genserver_isolated(mod) :-
   behaves_as(mod, "GenServer"),
   !sync_call(_, mod),
   !async_cast(_, mod),
+  !reached_by_pid(mod),
   !supervisor_child(_, _, mod, _, _),
   !dynamic_child(_, mod, _).
+
+// Traffic process points-to follows to a module's process, through the
+// pid a start returned or a lookup found: the extractor's target is
+// "dynamic" for it, and the server is not isolated.
+.decl reached_by_pid(mod: symbol)
+
+reached_by_pid(m) :- call_target(_, _, p), server_process(p, m).
 
 // An ETS table was created with a statically known name but we see no
 // read or write operations against that name anywhere in the corpus.
@@ -93,7 +102,8 @@ coverage_ets_unused(name) :-
   !ets_op(_, _, name, _, _),
   !ets_module_has_ops(name, _).
 
-// A named process was registered but no sync or async traffic targets it.
+// A named process was registered but no sync or async traffic targets it,
+// by name or through a pid points-to follows to it.
 // Excludes "dynamic" names — they can't be meaningfully joined with
 // callers, so flagging them as unreachable is vacuous.
 .decl coverage_named_process_unreachable(name: symbol, mod: symbol)
@@ -103,4 +113,11 @@ coverage_named_process_unreachable(name, mod) :-
   named_process(mod, name),
   name != "dynamic",
   !sync_call(_, name),
-  !async_cast(_, name).
+  !async_cast(_, name),
+  !name_reached_by_pid(name).
+
+// Traffic to the process registered under the name, through a pid (a
+// whereis, the start's result) rather than the name itself.
+.decl name_reached_by_pid(name: symbol)
+
+name_reached_by_pid(n) :- call_target(_, _, p), named_pid(n, p).

@@ -74,3 +74,46 @@ defmodule Argus.Test.Fixtures.CoverageIsolatedGenServer do
   @impl true
   def handle_call(_msg, _from, state), do: {:reply, :ok, state}
 end
+
+defmodule Argus.Test.Fixtures.CoveragePidServer do
+  @moduledoc false
+  # Called only through the pid its start returns: traffic points-to sees.
+  use GenServer
+
+  def start_link, do: GenServer.start_link(__MODULE__, :ok)
+
+  @impl true
+  def init(:ok), do: {:ok, nil}
+
+  @impl true
+  def handle_call(:ping, _from, s), do: {:reply, :pong, s}
+end
+
+defmodule Argus.Test.Fixtures.CoverageNamedByPid do
+  @moduledoc false
+  # Registered under its name, called through the pid a whereis returns.
+  use GenServer
+
+  def start_link, do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+
+  @impl true
+  def init(:ok), do: {:ok, nil}
+
+  @impl true
+  def handle_call(:ping, _from, s), do: {:reply, :pong, s}
+end
+
+defmodule Argus.Test.Fixtures.CoveragePidClient do
+  @moduledoc false
+  alias Argus.Test.Fixtures.{CoverageNamedByPid, CoveragePidServer}
+
+  def ping do
+    {:ok, pid} = CoveragePidServer.start_link()
+    GenServer.call(pid, :ping)
+  end
+
+  def ping_named do
+    pid = Process.whereis(CoverageNamedByPid)
+    GenServer.call(pid, :ping)
+  end
+end

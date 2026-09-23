@@ -54,6 +54,23 @@ defmodule Argus.Analyses.CoverageTest do
     end
   end
 
+  describe "coverage.dl — traffic through pids" do
+    test "a server called through the pid its start returns or a whereis finds is reached" do
+      skip_without_souffle()
+
+      mods = [
+        Argus.Test.Fixtures.CoveragePidServer,
+        Argus.Test.Fixtures.CoverageNamedByPid,
+        Argus.Test.Fixtures.CoveragePidClient
+      ]
+
+      assert {:ok, results} = Argus.analyze(mods, :coverage)
+
+      assert (results["coverage_genserver_isolated"] || []) == []
+      assert (results["coverage_named_process_unreachable"] || []) == []
+    end
+  end
+
   describe "coverage.dl — imprecision passthrough" do
     test "imprecision_event fires for genserver_callee on dynamic targets" do
       skip_without_souffle()

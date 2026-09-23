@@ -1396,6 +1396,17 @@ unchanged.
 no longer touch the supervised sibling. Corpus, realtime, logflare,
 hexpm and OTP unchanged.
 
+### coverage
+
+**Changed.** `coverage_genserver_isolated` and
+`coverage_named_process_unreachable` count traffic process points-to
+follows to the module's process or the name's, through the pid a start
+returned or a whereis found: a server called only that way was "a
+GenServer with no observed traffic". coverage includes otp.dl (whose
+forwarding wrappers also name targets) and extracts PidFlow. On
+realtime, logflare, hexpm and OTP 20 such rows drop out (hexpm's
+`Hexpm.Cache`, called through its server's pid; logflare's `Vault`).
+
 ### Corpus and tooling
 
 **Added.** `Argus.Corpus` pairs take `subdir:` for a repository whose Mix project is
