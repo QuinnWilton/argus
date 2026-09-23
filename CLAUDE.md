@@ -15,6 +15,13 @@ those frameworks need.
   the generic bytecode facts; `lib/argus/extractors/` — the domain
   extractors; `lib/argus/analyses/` — one module per analysis, declaring
   its extractors, output relations and finding builders.
+- `lib/argus/analysis.ex` — the analysis behaviour and the entry points
+  for running one; `analysis/` holds what they delegate to (`Sets`:
+  concerns and named sets, `Catalog`: discovery, `Extraction`: the facts
+  directory, stage 0, priors). `lib/argus/findings.ex` — the finding
+  struct, types and the constructors a builder calls (one alias:
+  `Findings.new/4`, `Findings.at_site/2`, ...); `findings/` holds
+  `Runner`, `Build`, `Rows`, `Evidence`, `Anchor` and `Names`.
 - `lib/argus/schema.ex` — the fact schema. `@schema_version` is what
   downstream tools key their caches on; `Argus.SchemaVersionTest` pins its
   shape digest, and every bump gets a CHANGELOG entry. `mix argus.gen.dl`
