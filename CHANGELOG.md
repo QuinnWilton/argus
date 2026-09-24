@@ -250,6 +250,14 @@ not reported: `terminate(:shutdown, s)` followed by
 schema 75; the analysis now runs `Argus.Extractors.ClauseCall`). A
 clause for `:normal` ahead of the call's does not spare it.
 
+**Changed.** The finding says the call itself fails ("what it was for
+never happens") and that terminate/2 then skips anything after it: a
+call in tail position (Horde's shutdown signal) loses its own effect,
+not later cleanup. The rule's comment lists its known limits: a
+`shutdown: :brutal_kill` child is still reported (the spec's shutdown
+value is not extracted), a restart escalating from a nested branch is
+not followed, and a helper dispatching on the reason is taken to run.
+
 **Fixed.** A path from terminate/2 through a closure or a function
 reference is guarded by the call that runs the fun, not by any
 exit-catching try in the function: a try around an unrelated

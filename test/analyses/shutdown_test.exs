@@ -437,5 +437,26 @@ defmodule Argus.Analyses.ShutdownTest do
       assert trunc_.severity == :warning
       assert trunc_.detail =~ "shutdown timeout"
     end
+
+    test "a sibling call's finding says the call fails, and what follows is skipped" do
+      f =
+        Argus.Analyses.Shutdown.finding(:teardown_touches_sibling, [
+          "My.Writer",
+          "My.Directory",
+          "terminate",
+          "call",
+          "My.Writer:terminate/2",
+          "My.Sup",
+          "My.Writer:terminate/2",
+          "",
+          ""
+        ])
+
+      # The call may be the last thing terminate/2 does: what is lost is
+      # first the call's own effect, then anything after it.
+      assert f.detail =~ "what it was for never happens"
+      assert f.detail =~ "skipping anything after it"
+      assert f.detail =~ "both run under My.Sup"
+    end
   end
 end

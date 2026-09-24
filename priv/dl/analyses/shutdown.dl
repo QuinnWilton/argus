@@ -299,6 +299,19 @@ terminate_waits_unguarded(mod, terminate, helper, sibling) :-
 // while the sibling is up; that cleanup never running is
 // cleanup_defect's "never_runs", not this.
 //
+// Known limits, each erring toward a report or toward quiet as noted:
+// - A child spec with `shutdown: :brutal_kill` kills the caller even when
+//   it traps exits, so its terminate/2 never runs on the shutdown. The
+//   row stays: supervisor_child does not carry the shutdown value, and a
+//   spec usually takes it from the child's own child_spec/1 or `use`
+//   options, which the supervision extractor does not read. (Reports.)
+// - A restart that escalates — a sibling nested in an earlier branch
+//   crashing past its own supervisor's intensity — is not followed; the
+//   restart kind needs the sibling to be sup's own child. (Quiet.)
+// - skipped_on_shutdown reads the tests terminate/2 itself makes on the
+//   reason; a helper that dispatches on the reason it is handed, and a
+//   call through an apply, are taken to run. (Reports.)
+//
 // When the listing or the strategy does not settle which applies — the
 // same module started on both sides of mod, or a strategy argus did not
 // read — the row stays, as "call_unordered", for the builder to report

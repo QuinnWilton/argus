@@ -260,8 +260,8 @@ defmodule Argus.Analyses.Shutdown do
       severity,
       "terminate/2 calls a sibling that may already be down",
       "#{mod}'s terminate/2 waits on #{sibling}#{through(via, mod)}, and both run " <>
-        "under #{sup}. #{why}: the call exits with :noproc and terminate/2 " <>
-        "crashes, skipping whatever cleanup followed.",
+        "under #{sup}. #{why}: the call exits with :noproc, so what it was for " <>
+        "never happens, and terminate/2 crashes, skipping anything after it.",
       at: Findings.at_site_in_func(site, via, mod),
       at_label: label,
       related: placed_by(sup, sup_site, "both run under #{sup}, placed here"),
