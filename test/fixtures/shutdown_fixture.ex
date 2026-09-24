@@ -531,6 +531,7 @@ defmodule Argus.Test.Fixtures.SiblingGuard do
           G.ClosureTryElsewhere,
           G.ClosureInside,
           G.RefTryElsewhere,
+          G.ClosureInTask,
           G.Directory
         ],
         strategy: :one_for_one
@@ -818,6 +819,29 @@ defmodule Argus.Test.Fixtures.SiblingGuard do
       end
 
       Enum.each(state.peers, &Directory.unregister/1)
+      File.close(state.log)
+    end
+  end
+
+  defmodule ClosureInTask do
+    @moduledoc """
+    The sibling call runs in a task terminate/2 starts and does not wait
+    for: its :noproc ends the task, not terminate/2, and the file is
+    closed either way.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.SiblingGuard.Directory
+
+    @impl true
+    def init(state) do
+      Process.flag(:trap_exit, true)
+      {:ok, state}
+    end
+
+    @impl true
+    def terminate(_reason, state) do
+      Task.start(fn -> Directory.unregister(__MODULE__) end)
       File.close(state.log)
     end
   end

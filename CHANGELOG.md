@@ -226,6 +226,12 @@ GenServer.call ... end)` after its `end`, and a sibling API handed as
 `ForwardGuardedCallReach` gains a `handed(func, callee, call)` input;
 only a fun no call is handed keeps the function-wide `sealed` reading.
 
+**Fixed.** The path from terminate/2 stops at a fun handed to a spawn
+or a task's start (`Task.start(fn -> Directory.unregister(...) end)`):
+its `:noproc` ends that process, not terminate/2. `ForwardGuardedCallReach`
+does not follow an edge `runs_elsewhere` sets aside, and gains an
+`elsewhere(call)` input for a handing call that starts a process.
+
 ### A sibling the supervisor has already stopped
 
 **Changed.** `shutdown.teardown_touches_sibling` ("terminate/2 calls a

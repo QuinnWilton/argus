@@ -161,7 +161,8 @@ defmodule Argus.Analyses.ShutdownTest do
       G.NoprocInside,
       G.ClosureTryElsewhere,
       G.ClosureInside,
-      G.RefTryElsewhere
+      G.RefTryElsewhere,
+      G.ClosureInTask
     ]
 
     test "only a try covering the call, or the call toward it, guards it" do
@@ -180,7 +181,8 @@ defmodule Argus.Analyses.ShutdownTest do
       # (the helper's own try around its call), NestedOuterExit (an outer
       # try takes the exit the inner one lets through), NoprocInside (the
       # handler names :noproc), ClosureInside (the Enum.each that runs the
-      # closure is inside the try).
+      # closure is inside the try), ClosureInTask (the call runs in a task
+      # terminate/2 does not wait for).
       assert callers == [
                # the closure's Enum.each follows an unrelated try's end
                "ClosureTryElsewhere",

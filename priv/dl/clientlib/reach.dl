@@ -148,32 +148,39 @@
 // says it is `handed` to — `Enum.each(peers, fn p -> ... end)` runs the
 // closure inside Enum.each, so a guard on that call guards the edge —
 // and, when it names no such call, is open unless the instance marks
-// its caller `sealed`. `first` is the path's call in the root, empty
-// when the path leaves the root through an edge with no call
-// instruction. The root is not seeded into its own reach (depth starts
-// at 1).
+// its caller `sealed`. Such an edge into what another process runs
+// (runs_elsewhere, or a fun handed to a call the instance marks
+// `elsewhere`: a spawn, a task's start) is not followed; what the fun
+// raises there ends that process, not the path's. `first` is the path's
+// call in the root, empty when the path leaves the root through an edge
+// with no call instruction. The root is not seeded into its own reach
+// (depth starts at 1).
 .comp ForwardGuardedCallReach {
   .decl root(root: symbol)
   .decl limit(n: number)
   .decl guarded(call: symbol)
   .decl handed(func: symbol, callee: symbol, call: symbol)
   .decl sealed(func: symbol)
+  .decl elsewhere(call: symbol)
   .decl reaches(root: symbol, func: symbol, depth: number, first: symbol)
 
-  // f's edge to g with no call instruction, open: some call it is handed
-  // to is unguarded, or it names none and f is not sealed.
+  // f's edge to g with no call instruction, open: some call that runs it
+  // in f's process is unguarded, or it names none and f is not sealed.
   .decl open_fun_edge(func: symbol, callee: symbol)
 
   open_fun_edge(f, g) :-
     handed(f, g, call),
     !call_instr(f, g, _),
-    !guarded(call).
+    !guarded(call),
+    !elsewhere(call),
+    !runs_elsewhere(f, g).
 
   open_fun_edge(f, g) :-
     call_edge(f, g),
     !call_instr(f, g, _),
     !handed(f, g, _),
-    !sealed(f).
+    !sealed(f),
+    !runs_elsewhere(f, g).
 
   reaches(r, g, 1, call) :- root(r), call_instr(r, g, call), !guarded(call).
   reaches(r, g, 1, "") :- root(r), open_fun_edge(r, g).

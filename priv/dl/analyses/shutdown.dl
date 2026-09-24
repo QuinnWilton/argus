@@ -212,7 +212,10 @@ waits_unguarded(f, m) :-
 // `Enum.each(signal_to, fn ... end)` is open because no try covers the
 // Enum.each, whatever another try in terminate/2 catches. Only a fun no
 // call is handed falls back to the function-wide reading (catches_exit).
-// `first` is empty for such an edge.
+// A fun handed to a spawn or a task's start runs in another process: its
+// :noproc ends that process, not terminate/2, so the path stops there
+// (`elsewhere`, and runs_elsewhere inside the component). `first` is
+// empty for such an edge.
 .init open_path = ForwardGuardedCallReach
 
 open_path.root(t) :- is_terminate(t, _).
@@ -220,6 +223,7 @@ open_path.limit(3).
 open_path.guarded(call) :- exit_guarded(call).
 open_path.handed(f, g, call) :- fun_site(f, g, call).
 open_path.sealed(f) :- catches_exit(f).
+open_path.elsewhere(call) :- process_start(call, _, _, kind, _), kind != "server".
 
 .decl reaches_unguarded(handler: symbol, via: symbol)
 
