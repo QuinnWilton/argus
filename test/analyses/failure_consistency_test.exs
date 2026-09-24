@@ -162,6 +162,25 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       assert finding(3, 1).severity == :info
     end
 
+    test "says every other call site only when this one is the sole deviant" do
+      assert finding(5, 1).title =~ "where every other call site checks it"
+      assert finding(9, 3).title =~ "where most call sites check it"
+
+      guarded =
+        Failure.finding(:inconsistent_handling, [
+          "M:f/1",
+          "M:f/1#3",
+          "GenServer:call/2",
+          "exception_guarded",
+          "9",
+          "3",
+          ""
+        ])
+
+      assert guarded.title =~ "called bare where most call sites guard it"
+      assert guarded.detail =~ "9 of the 12 call sites"
+    end
+
     test "names the counts and the callee, and anchors the deviant site" do
       f = finding(5, 1)
       assert f.title =~ "start_child/2"

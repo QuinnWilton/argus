@@ -346,7 +346,7 @@ bare_where_most_are_guarded(func, site, callee, guarded, bare, scope) :-
   clear_majority(guarded, bare).
 
 // The sites that follow the convention, attached to the finding as its
-// evidence: what "every other call site" looks like, drawn from the
+// evidence: what the convention looks like, drawn from the
 // population the deviant was judged against.
 .decl handling_site(callee: symbol, belief: symbol, site: symbol, func: symbol, guard_end: symbol, target: symbol)
 .output handling_site

@@ -10,6 +10,13 @@ What 0.20.0 will ship; the release dates this heading and drops the
 `-dev` from `mix.exs`. Grouped by concern. Each entry opens with what it
 does: **Added**, **Changed**, **Fixed** or **Removed**.
 
+### What the program's other sites believe
+
+**Changed.** `failure.inconsistent_handling`'s title says "every other
+call site" only when the reported site is the population's one deviant,
+and "most call sites" when there are more: `clear_majority` lets up to a
+quarter of the sites deviate, and nine guarded against three bare
+reported three sites, each titled as though it were the only one.
 ### A remote call that never answers
 
 **Changed.** Schema 72. `rpc_call` records `:rpc.block_call/4,5`,
@@ -75,6 +82,7 @@ read as unknown and was never reported. `unbounded_wait`'s `detail` is
 caller)` gives each caller as a related frame ("passes :infinity as
 the timeout"). Only a literal `:infinity` at the call is followed, not
 one forwarded through a further wrapper's parameter.
+||||||| parent of 4a81fb7 ([findings] inconsistent_handling says "most" past one deviant)
 
 ### Priors asked side by side
 

@@ -22,9 +22,11 @@ defmodule Argus.Analyses.Failure do
     (`exit_target_owner`) is a related frame.
   - `inconsistent_handling(func, site, callee, belief, agree, deviate, target)` —
     a call site that breaks with the program's own convention for its
-    callee: `belief` is `result_checked` (every other site matches the
-    result; this one discards it) or `exception_guarded` (every other
-    site wraps the call in a `try`; this one does not). `agree` and
+    callee: `belief` is `result_checked` (a clear majority of the sites
+    match the result; this one discards it) or `exception_guarded` (a
+    clear majority wrap the call in a `try` that takes what it raises;
+    this one does not). The title says "every other call site" only when
+    this one is the sole deviant, and "most call sites" otherwise. `agree` and
     `deviate` are the counts, and the severity is how unlikely the
     deviation is by chance. The population is the callee's sites on the
     same literal `target` (a table, a name) when the site has one, and
@@ -154,15 +156,20 @@ defmodule Argus.Analyses.Failure do
     {agree, deviate} = {String.to_integer(agree), String.to_integer(deviate)}
     total = agree + deviate
 
+    # clear_majority lets a quarter of the population deviate: with more
+    # than one deviant, "every other" is not true of this one's peers.
+    {others, ending} =
+      if deviate == 1, do: {"every other call site", "s"}, else: {"most call sites", ""}
+
     {title, what, fix} =
       case belief do
         "result_checked" ->
-          {"#{Findings.call_name(callee)} result ignored where every other call site checks it",
+          {"#{Findings.call_name(callee)} result ignored where #{others} check#{ending} it",
            "discards the result of #{Findings.call_name(callee)}, which #{agree} of the #{total} call " <>
              "sites in this program match on", "match on the result as the other sites do"}
 
         "exception_guarded" ->
-          {"#{Findings.call_name(callee)} called bare where every other call site guards it",
+          {"#{Findings.call_name(callee)} called bare where #{others} guard#{ending} it",
            "calls #{Findings.call_name(callee)} outside a try, which #{agree} of the #{total} call sites " <>
              "in this program wrap in one", "guard the call as the other sites do"}
       end
