@@ -886,10 +886,20 @@ act_depends_on_check(func, check, act, [tk, t]) :-
   missing.meets(func, check, act, lifted_kind, t, _, _),
   table_kind_as(tk, lifted_kind).
 
-// The act's table is one another process can read.
+// The act's table is one another process can read. A named table the
+// program does not show being made — by a dependency, or under a name
+// that arrives at runtime (`:ets.new(name, ...)` in a function nothing
+// calls with a literal) — is taken to be shared: nothing says it is
+// private, and an update from a process that is not its owner needs it
+// public.
 .decl shared_table(act: symbol, table: EtsTable) inline
 
 shared_table(act, [tk, t]) :- readable_elsewhere(act, tk, t).
+shared_table(act, ["named", t]) :- ets_table(act, "named", t), !made_in_view("named", t).
+
+.decl made_in_view(kind: symbol, ident: symbol)
+
+made_in_view(k, t) :- site_table(_, k, t).
 
 // An operation that deletes rows of the table: take, delete,
 // delete_object, select_delete, match_delete, or deleting them all.

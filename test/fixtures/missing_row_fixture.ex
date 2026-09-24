@@ -381,4 +381,20 @@ defmodule Argus.Test.Fixtures.MissingRow do
 
     def flush(key), do: :ets.take(@table, key)
   end
+
+  defmodule NameFromConfig do
+    @moduledoc "The table's name arrives at runtime: no :ets.new in view names it."
+    def setup(table), do: :ets.new(table, [:set, :named_table, :public])
+
+    def start, do: log(:config_buckets, :boot)
+
+    def log(table, key) do
+      case :ets.lookup(table, key) do
+        [] -> :ets.insert(table, {key, 0})
+        [_existing] -> :ets.update_counter(table, key, {2, 1})
+      end
+    end
+
+    def flush(key), do: :ets.take(:config_buckets, key)
+  end
 end

@@ -189,6 +189,12 @@ kept beside it under parameters (a `:__total__` next to the keyed
 counts). A remover whose key the facts cannot equate to the pair's — a
 flush keyed by what a timer was handed — still counts.
 
+**Fixed.** `ets_missing_row` takes a named table the program does not
+show being made — made by a dependency, or under a name that arrives at
+runtime — to be shared. `shared_table` held only when an `:ets.new/2`
+in view named the table and was not private, so a table named from
+config was never reported.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile

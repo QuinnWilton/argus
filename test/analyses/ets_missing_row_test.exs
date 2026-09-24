@@ -32,6 +32,13 @@ defmodule Argus.Analyses.EtsMissingRowTest do
                missing([Fixture.InlineTupleKey])
     end
 
+    test "a named table made under a name that arrives at runtime is shared" do
+      skip_without_souffle()
+
+      assert [{"log/2", "named", ":config_buckets", "log/2", "log/2", "flush/1"}] =
+               missing([Fixture.NameFromConfig])
+    end
+
     test "counting with a default object stays quiet" do
       skip_without_souffle()
       assert missing([Fixture.WithDefault]) == []
