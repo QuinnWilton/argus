@@ -109,11 +109,26 @@ defmodule Argus.Analyses.Startup do
         name: :init_reaches_recv,
         fields: [
           {:mod, :symbol, "module whose init/1 reaches the receive"},
-          {:api, :symbol, "the receiving function"}
+          {:api, :symbol, "the receiving function"},
+          {:call, :symbol,
+           "the call in init/1 that starts its path there, else empty (init/1 receives itself)"}
         ],
         key: [:mod, :api],
+        earliest: :call,
         evidence: %{of: :unbounded_effect_in_init, on: [:api]},
         doc: "The init/1 callbacks that reach an unbounded receive, attached to its finding."
+      },
+      %{
+        name: :init_lock_path,
+        fields: [
+          {:init, :symbol, "the init/1 that reaches the lock"},
+          {:lock, :symbol, "the :global call, in a helper"},
+          {:call, :symbol, "the call in init/1 that starts its path there, else empty"}
+        ],
+        key: [:init, :lock],
+        earliest: :call,
+        evidence: %{of: :blocks_on_peer, on: [init: :mod, lock: :site]},
+        doc: "Where init/1's path to a cluster-wide lock in a helper begins."
       },
       %{
         name: :deferral_defect,
@@ -448,7 +463,6 @@ defmodule Argus.Analyses.Startup do
         "cluster is partitioned or slow.",
       at: Findings.at_site_in_func(site, func),
       at_label: "cluster-wide lock reached from init/1",
-      related: reached_from_init(site, func),
       help: ["defer the lock to handle_continue/2 so the start completes without the cluster"]
     )
   end
@@ -500,22 +514,24 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  # A :global call in a helper: the init/1 that reaches it is the second
-  # frame. In init/1 itself the anchor already says so.
-  defp reached_from_init(site, func) do
-    case Findings.at_site_in_func(site, func) do
-      %{mfa: {m, f, a}} when m != nil ->
-        if "#{inspect(m)}:#{f}/#{a}" == func,
-          do: [],
-          else: [Findings.related("init/1 reaches it from here", Findings.at_func(func))]
-
-      _ ->
-        []
-    end
+  # The frame points at the call that starts init/1's path, the line a
+  # reader follows; init/1's head only when the path leaves through no
+  # call instruction. A lock in init/1 itself has no row: the anchor
+  # already says so.
+  @impl true
+  def evidence(:init_lock_path, [init, _lock, ""]) do
+    Findings.related("init/1 reaches it from here", Findings.at_func(init))
   end
 
-  @impl true
-  def evidence(:init_reaches_recv, [mod, _api]) do
+  def evidence(:init_lock_path, [init, _lock, call]) do
+    Findings.related("init/1 reaches it from here", Findings.at_site_in_func(call, init))
+  end
+
+  def evidence(:init_reaches_recv, [mod, _api, ""]) do
     Findings.related("reached from #{mod}.init/1", Findings.at_mfa(mod, :init, 1))
+  end
+
+  def evidence(:init_reaches_recv, [mod, _api, call]) do
+    Findings.related("reached from #{mod}.init/1", Findings.at_site(call, mod))
   end
 end

@@ -172,6 +172,33 @@ teardown_touches_sibling(mod, sibling, "terminate", "call", via, sup, func, site
   site_or_empty_sync(via, sibling, site),
   supervisor_site_or_empty(sup, sup_site).
 
+// Where terminate/2's path to a helper that calls the sibling begins:
+// the call in terminate/2 whose callee is the helper, or reaches it
+// within terminate_reach's bound (three calls). A path through something
+// with no call instruction (a closure terminate/2 runs) points at
+// terminate/2 itself, `call` empty. The earliest such call is kept.
+.decl terminate_path(handler: symbol, via: symbol, call: symbol)
+.output terminate_path
+
+.decl terminate_step(handler: symbol, via: symbol, call: symbol)
+
+terminate_step(t, via, call) :-
+  teardown_touches_sibling(_, _, "terminate", "call", via, _, t, _, _),
+  via != t,
+  call_instr(t, g, call),
+  (g = via ; call_edge(g, via) ; call_edge(g, h), call_edge(h, via)).
+
+.decl terminate_stepped(handler: symbol, via: symbol)
+
+terminate_stepped(t, via) :- terminate_step(t, via, _).
+
+terminate_path(t, via, call) :- terminate_step(t, via, call).
+
+terminate_path(t, via, "") :-
+  teardown_touches_sibling(_, _, "terminate", "call", via, _, t, _, _),
+  via != t,
+  !terminate_stepped(t, via).
+
 .decl site_or_empty_sync(func: symbol, mod: symbol, site: symbol)
 
 site_or_empty_sync(f, m, id) :- sync_site(f, m, id).

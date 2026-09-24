@@ -275,11 +275,38 @@ recv_site_or_empty(f, "") :- infinite_recv(f), !recv_site(f, _).
 
 // One finding per receiving function; the inits that reach it are its
 // evidence frames.
-.decl init_reaches_recv(mod: symbol, api: symbol)
+// `call` is the call in init/1 that starts its path to the receiving
+// function (the earliest, when several do), or empty when init/1 is the
+// receiving function or leaves through no call instruction.
+.decl init_reaches_recv(mod: symbol, api: symbol, call: symbol)
 .output init_reaches_recv
 
-init_reaches_recv(mod, r) :- unbounded_effect_in_init(mod, "recv", r, _).
-init_reaches_recv(mod, r) :- unbounded_effect_in_init(mod, "receive", r, _).
+.decl init_recv_step(mod: symbol, api: symbol, call: symbol)
+
+init_recv_step(mod, r, call) :-
+  unbounded_effect_in_init(mod, "recv", r, _),
+  init_function(mod, f),
+  call_instr(f, g, call),
+  !runs_elsewhere(f, g),
+  recv_reach.reaches(g, r).
+
+init_recv_step(mod, r, call) :-
+  unbounded_effect_in_init(mod, "receive", r, _),
+  init_function(mod, f),
+  call_instr(f, g, call),
+  !runs_elsewhere(f, g),
+  receive_reach.reaches(g, r).
+
+.decl init_recv_stepped(mod: symbol, api: symbol)
+
+init_recv_stepped(mod, r) :- init_recv_step(mod, r, _).
+
+init_reaches_recv(mod, r, call) :- init_recv_step(mod, r, call).
+
+init_reaches_recv(mod, r, "") :-
+  unbounded_effect_in_init(mod, kind, r, _),
+  (kind = "recv" ; kind = "receive"),
+  !init_recv_stepped(mod, r).
 
 // ── A connection made in init/1 with no way to try again ─────────────
 //
@@ -404,6 +431,35 @@ blocks_on_peer(init, "init", "", "global", "", "", lock, op) :-
   is_init(init),
   lock_reach.reaches(init, lock),
   cluster_lock(lock, _, op, _).
+
+// Where init/1's path to a lock in a helper starts: the call in init/1
+// whose callee, on init's own stack, reaches the lock. The finding's
+// "init/1 reaches it from here" frame points at that call; a path that
+// leaves init/1 through something with no call instruction (a closure
+// it runs, a fun it applies) points at init/1 itself, `call` empty.
+// The earliest such call is kept (the relation's `earliest`).
+.decl init_lock_path(init: symbol, lock: symbol, call: symbol)
+.output init_lock_path
+
+.decl init_lock_step(init: symbol, lock: symbol, call: symbol)
+
+init_lock_step(init, lock, call) :-
+  blocks_on_peer(init, "init", "", "global", "", "", lock, _),
+  !global_op(lock, init, _, _),
+  call_instr(init, g, call),
+  !runs_elsewhere(init, g),
+  lock_reach.reaches(g, lock).
+
+.decl init_lock_stepped(init: symbol, lock: symbol)
+
+init_lock_stepped(init, lock) :- init_lock_step(init, lock, _).
+
+init_lock_path(init, lock, call) :- init_lock_step(init, lock, call).
+
+init_lock_path(init, lock, "") :-
+  blocks_on_peer(init, "init", "", "global", "", "", lock, _),
+  !global_op(lock, init, _, _),
+  !init_lock_stepped(init, lock).
 
 // ── Distributed operations in init ───────────────────────────────
 

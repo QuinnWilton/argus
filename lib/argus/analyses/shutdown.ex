@@ -98,6 +98,18 @@ defmodule Argus.Analyses.Shutdown do
           "terminate/2 waits on a sibling that may be gone, or a handler stops one the supervisor owns."
       },
       %{
+        name: :terminate_path,
+        fields: [
+          {:handler, :symbol, "the terminate/2 that reaches the helper"},
+          {:via, :symbol, "the helper that calls the sibling"},
+          {:call, :symbol, "the call in terminate/2 that starts its path there, else empty"}
+        ],
+        key: [:handler, :via],
+        earliest: :call,
+        evidence: %{of: :teardown_touches_sibling, on: [:handler, :via]},
+        doc: "Where terminate/2's path to a helper that calls a sibling begins."
+      },
+      %{
         name: :foreign_dynamic_children,
         fields: [
           {:mod, :symbol, "module that starts the children"},
@@ -357,6 +369,17 @@ defmodule Argus.Analyses.Shutdown do
         Findings.related("child spec", Findings.at_site(sup_site, sup))
       ]
     )
+  end
+
+  # When the call to the sibling is in a helper, the path starts at a call
+  # in terminate/2: the line a reader follows from the callback.
+  @impl true
+  def evidence(:terminate_path, [handler, _via, ""]) do
+    Findings.related("terminate/2 reaches it from here", Findings.at_func(handler))
+  end
+
+  def evidence(:terminate_path, [handler, _via, call]) do
+    Findings.related("terminate/2 reaches it from here", Findings.at_site_in_func(call, handler))
   end
 
   defp phrase("io"), do: "file I/O"

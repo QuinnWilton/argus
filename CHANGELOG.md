@@ -40,6 +40,30 @@ carry whether a receive can block but not its timeout. Found by a talk's
 worked example; the corpus change is one row, sequin's
 `ReorderBuffer.maybe_cancel_flush_batch_timer/1`, which is that idiom.
 
+### Frames that point where the path starts
+
+**Changed.** A related frame that names the entry a site is reached
+from now points at the call in that entry that starts the path, not at
+the entry's head: `startup.blocks_on_peer`'s "init/1 reaches it from
+here" (a cluster-wide lock in a helper) and
+`startup.unbounded_effect_in_init`'s "reached from Mod.init/1" (a
+receive or recv in a helper) anchor at the call in init/1 whose callee
+continues the path, and `shutdown.teardown_touches_sibling` gains a
+"terminate/2 reaches it from here" frame at the call in terminate/2
+when a helper makes the sibling call. When several calls start a path,
+the earliest in the function is kept: an output relation may now
+declare `earliest: column`, and `Argus.Findings.Rows.dedupe/2` keeps
+that group's earliest instruction instead of its least row (instruction
+IDs do not sort by position as strings). A path that leaves the entry
+through no call instruction — a closure it runs — keeps pointing at the
+entry. New evidence relations `init_lock_path` and `terminate_path`;
+`init_reaches_recv` gains a `call` column. The findings are unchanged;
+only these frames move or appear. `unsafe_input.sink_export` ("reachable
+from X, which is exported") still points at the export: it names
+entries rather than a path, and the call would add the instruction-level
+`call_site` to that analysis's input set, re-solving it on every body
+edit.
+
 ### Analysis names
 
 **Removed.** The alias table for the analysis names retired in 0.17

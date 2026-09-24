@@ -111,6 +111,9 @@ defmodule Argus.Analysis do
   """
   @type row_key :: [atom()] | {atom(), %{optional(String.t()) => [atom()], default: [atom()]}}
 
+  # `earliest` names an instruction column: of the rows a `key` folds into
+  # one, the one kept is the earliest instruction there (Argus.Findings.Rows).
+
   @typedoc """
   An output relation whose rows are evidence for another relation's
   findings rather than findings of their own.
@@ -132,6 +135,7 @@ defmodule Argus.Analysis do
           required(:fields) => [Argus.Schema.field()],
           required(:doc) => String.t(),
           optional(:key) => row_key(),
+          optional(:earliest) => atom(),
           optional(:evidence) => evidence()
         }
 

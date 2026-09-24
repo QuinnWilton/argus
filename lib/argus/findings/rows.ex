@@ -14,6 +14,7 @@ defmodule Argus.Findings.Rows do
   """
 
   alias Argus.Analysis
+  alias Argus.InstrId
 
   @doc """
   Deduplicates a relation's rows down to one per logical finding.
@@ -31,6 +32,13 @@ defmodule Argus.Findings.Rows do
   with no `:default`, keeps every column: one finding per row, never two
   rows folded into one on a guess.
 
+  A relation that declares `earliest: column` keeps, of each group, the
+  row whose `column` is the earliest instruction in its function instead
+  (a row whose column is empty or not an instruction ID comes last, the
+  least row breaking ties). "The call that starts the path" is the first
+  such call, and instruction IDs do not sort by position as strings —
+  `"M:f/1#12"` is less than `"M:f/1#6"`.
+
       iex> relation = %{
       ...>   name: :r,
       ...>   doc: "",
@@ -41,16 +49,16 @@ defmodule Argus.Findings.Rows do
       [["A", "1"], ["B", "2"]]
   """
   @spec dedupe(Analysis.output_relation(), [[String.t()]]) :: [[String.t()]]
-  def dedupe(%{key: key_fields, fields: fields}, rows) when is_list(key_fields) do
+  def dedupe(%{key: key_fields, fields: fields} = relation, rows) when is_list(key_fields) do
     positions = key_positions(key_fields, fields)
 
     rows
     |> Enum.group_by(fn row -> Enum.map(positions, &Enum.at(row, &1)) end)
-    |> Enum.map(fn {_key, group} -> Enum.min(group) end)
+    |> Enum.map(fn {_key, group} -> representative(relation, group) end)
     |> Enum.sort()
   end
 
-  def dedupe(%{key: {column, keys}, fields: fields}, rows) when is_map(keys) do
+  def dedupe(%{key: {column, keys}, fields: fields} = relation, rows) when is_map(keys) do
     [discriminator] = key_positions([column], fields)
 
     default =
@@ -70,11 +78,25 @@ defmodule Argus.Findings.Rows do
       positions = Map.get(by_value, value, default)
       {value, Enum.map(positions, &Enum.at(row, &1))}
     end)
-    |> Enum.map(fn {_key, group} -> Enum.min(group) end)
+    |> Enum.map(fn {_key, group} -> representative(relation, group) end)
     |> Enum.sort()
   end
 
   def dedupe(_relation, rows), do: rows
+
+  defp representative(%{earliest: column} = relation, group) do
+    at = position(relation, column)
+    Enum.min_by(group, fn row -> {instr_rank(Enum.at(row, at)), row} end)
+  end
+
+  defp representative(_relation, group), do: Enum.min(group)
+
+  defp instr_rank(id) do
+    case InstrId.parse(id) do
+      {:ok, %InstrId{idx: idx}} -> {0, idx}
+      :error -> {1, 0}
+    end
+  end
 
   @doc """
   The position of `column` among a relation's fields. A column the
