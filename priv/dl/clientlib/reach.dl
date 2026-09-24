@@ -140,6 +140,40 @@
   reaches(r, h, d + 1) :- reaches(r, g, d), limit(n), d < n, call_edge(g, h).
 }
 
+// Depth-bounded forward, along the calls no guard covers: a path stops
+// at a call the instance marks `guarded` (a site inside a handler that
+// takes what the rule is about), and at an edge with no call instruction
+// (a closure handed to a call, a function reference: call_instr, in
+// calls.dl, has no site for it) out of a function the instance marks
+// `sealed`. `first` is the path's call in the root, empty when the path
+// leaves the root through such an edge. The root is not seeded into its
+// own reach (depth starts at 1).
+.comp ForwardGuardedCallReach {
+  .decl root(root: symbol)
+  .decl limit(n: number)
+  .decl guarded(call: symbol)
+  .decl sealed(func: symbol)
+  .decl reaches(root: symbol, func: symbol, depth: number, first: symbol)
+
+  reaches(r, g, 1, call) :- root(r), call_instr(r, g, call), !guarded(call).
+  reaches(r, g, 1, "") :- root(r), call_edge(r, g), !call_instr(r, g, _), !sealed(r).
+
+  reaches(r, h, d + 1, first) :-
+    reaches(r, g, d, first),
+    limit(n),
+    d < n,
+    call_instr(g, h, call),
+    !guarded(call).
+
+  reaches(r, h, d + 1, first) :-
+    reaches(r, g, d, first),
+    limit(n),
+    d < n,
+    call_edge(g, h),
+    !call_instr(g, h, _),
+    !sealed(g).
+}
+
 // The same, walked against the edges: from a few interesting functions
 // to the callers that reach them within `limit` calls.
 .comp BackwardBoundedCallReach {

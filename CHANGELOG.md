@@ -1885,6 +1885,26 @@ unchanged.
 
 ### shutdown
 
+**Fixed.** `shutdown.teardown_touches_sibling` ("terminate/2 calls a
+sibling that may already be down") asks whether the try that catches
+the exit covers the sibling call, where it asked whether the function
+had such a try anywhere. A terminate/2 that catches exits around one
+call and makes the sibling call after the `end` was quiet, and is now
+reported. The guard is the call's own: an exit-catching try (or one
+naming `:noproc`) covering the sibling call, or any call on the path
+from terminate/2 to the helper that makes it — terminate/2's call into
+the helper, a call between helpers — within the rule's three calls. A
+dependency with no call site to hold against a try, or a path through
+a closure, keeps the function-wide reading, which errs quiet. The
+finding's site is the unguarded call, and "terminate/2 reaches it from
+here" the first call of an unguarded path. Erlang's `catch Expr` around
+the call now guards it too. The path is a new `clientlib/reach.dl`
+component, `ForwardGuardedCallReach`: bounded forward reach that stops
+at a call its instance marks `guarded`, and reports each path's first
+call.
+The corpus tally is unchanged: oban#21's Watchman and Horde's
+SignalShutdown (three checkouts) still fire, and no row arrives.
+
 **Changed.** `shutdown.teardown_touches_sibling` does the same: a
 `terminate/2` calling a connection the module started for itself
 (`private_dep`), and a handler stopping one through the sibling's own

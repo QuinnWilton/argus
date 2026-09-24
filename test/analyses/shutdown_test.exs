@@ -1,6 +1,7 @@
 defmodule Argus.Analyses.ShutdownTest do
   use ExUnit.Case, async: true
 
+  alias Argus.Extractor.Helpers
   alias Argus.Souffle
   alias Argus.Test.Fixtures.Shutdown, as: S
   alias Argus.Test.Rows
@@ -135,6 +136,73 @@ defmodule Argus.Analyses.ShutdownTest do
       [f] = Enum.filter(findings.findings, &(&1.title =~ "terminate/2 calls a sibling"))
       assert f.severity == :info
       assert f.at_label =~ "unknown"
+    end
+  end
+
+  describe "terminate_calls_sibling: the try that covers the call" do
+    alias Argus.Test.Fixtures.SiblingGuard, as: G
+
+    @guard_fixtures [
+      G.Sup,
+      G.Directory,
+      G.CallInside,
+      G.TryElsewhere,
+      G.HelperInside,
+      G.HelperGuards,
+      G.HelperTryElsewhere,
+      G.ErrorOnly,
+      G.NestedOuterExit,
+      G.NestedAfterInner,
+      G.NoprocInside
+    ]
+
+    test "only a try covering the call, or the call toward it, guards it" do
+      skip_without_souffle()
+      {:ok, r} = Argus.analyze(@guard_fixtures, :shutdown)
+
+      callers =
+        r
+        |> rows("terminate_calls_sibling")
+        |> Enum.map(fn [mod | _] -> mod |> String.split(".") |> List.last() end)
+        |> Enum.uniq()
+        |> Enum.sort()
+
+      # Guarded: CallInside (the call inside the exit-catching try),
+      # HelperInside (the call into the helper inside it), HelperGuards
+      # (the helper's own try around its call), NestedOuterExit (an outer
+      # try takes the exit the inner one lets through), NoprocInside (the
+      # handler names :noproc).
+      assert callers == [
+               # the try around the call takes only errors
+               "ErrorOnly",
+               # the helper's try covers another call, not the sibling's
+               "HelperTryElsewhere",
+               # past the inner try's end, the outer one takes only errors
+               "NestedAfterInner",
+               # the try covers another call; the sibling call follows it
+               "TryElsewhere"
+             ]
+    end
+
+    test "the path starts at the call after the try, not the one inside it" do
+      skip_without_souffle()
+      {:ok, r} = Argus.analyze(@guard_fixtures, :shutdown)
+      mod = "Argus.Test.Fixtures.SiblingGuard.TryElsewhere"
+      terminate = mod <> ":terminate/2"
+
+      [[^terminate, via, call]] =
+        r |> Map.get("terminate_path", []) |> Enum.filter(&(hd(&1) == terminate))
+
+      # The helper is the sibling's API; the path starts at terminate/2's
+      # call into it, after the try, not at the GenServer.stop inside.
+      assert via == "Argus.Test.Fixtures.SiblingGuard.Directory:unregister/1"
+      {:ok, %{idx: call_idx}} = Argus.InstrId.parse(call)
+
+      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(G.TryElsewhere)))
+      instrs = Helpers.find_function(data.functions, :terminate, 2)
+
+      assert {:ok, G.Directory, :unregister, 1} =
+               instrs |> Enum.at(call_idx) |> Helpers.match_remote_call()
     end
   end
 

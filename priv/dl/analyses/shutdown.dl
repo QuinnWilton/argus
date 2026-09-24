@@ -125,11 +125,28 @@ cleanup_defect(mod, behaviour, "truncated", category, api, via) :-
 // terminate/2 itself crashes, taking whatever cleanup followed with it
 // (oban#21's Watchman pausing its Producer). Only direct siblings — the
 // modules whose lifetime the same supervisor sequences — count.
-// A function with a catch that takes the :noproc exit (oban's fix) is
-// the shape that survives the sibling being gone. The call usually goes
-// through the sibling's API (`Producer.pause()`), so the try guards a
-// local call rather than GenServer.call itself: any exit-catching try in
-// the function counts, which errs quiet.
+// A catch that takes the :noproc exit (oban's fix) is the shape that
+// survives the sibling being gone, but only for the call it covers: a
+// try around some other call, with the sibling call after its `end`,
+// guards nothing. The call usually goes through the sibling's API
+// (`Producer.pause()`), so the try may cover the call in terminate/2
+// that leads to the helper making the sibling call rather than that
+// call itself; either counts.
+//
+// The call at `call` is covered by a try whose handler takes the exit
+// (covered_by_catch, exceptions.dl), or names the :noproc reason.
+.decl exit_guarded(call: symbol)
+
+exit_guarded(call) :- covered_by_catch(call, _, _, "exit").
+
+exit_guarded(call) :-
+  try_covers(t, f, call, "try"),
+  catch_tag(t, f, "exit", ":noproc").
+
+// Some try in the function takes the exit. What is left to ask of a
+// dependency with no call site to hold against a try (a function
+// reference handed to a call, a closure): any exit-catching try in the
+// function counts, which errs quiet.
 .decl catches_exit(func: symbol)
 
 catches_exit(f) :- catches_class(f, "exit").
@@ -142,12 +159,57 @@ catches_exit(f) :- catch_tag(_, f, "exit", ":noproc").
 
 waits_on(f, m) :- sync_dep(f, m), !private_dep(f, m).
 
+// The call in `func` that waits on `mod`: sync_site, and a call that a
+// message tag attributed to mod (sync_dep's tag clause, calls.dl).
+.decl wait_site(func: symbol, mod: symbol, id: symbol)
+
+wait_site(f, m, id) :- sync_site(f, m, id).
+
+wait_site(f, m, id) :-
+  tag_resolved_site(id, f, "call", m),
+  sync_call_site(id, f, t, _),
+  unresolved_target(t).
+
+// `func` waits on `mod` at a call no exit-catching try covers, or
+// through a dependency with no site in it and no exit-catching try.
+.decl waits_unguarded(func: symbol, mod: symbol)
+
+waits_unguarded(f, m) :-
+  waits_on(f, m),
+  wait_site(f, m, id),
+  !exit_guarded(id).
+
+waits_unguarded(f, m) :-
+  waits_on(f, m),
+  !wait_site(f, m, _),
+  !catches_exit(f).
+
+// terminate/2 reaches `via` along a path of calls no exit-catching try
+// covers, within terminate_reach's bound (three calls); `first` is the
+// path's call in terminate/2. A try around any call on the path guards
+// what lies beyond it: the call in terminate/2 into the helper, a call
+// between helpers, the helper's own call to the sibling's API. An edge
+// with no call instruction (a closure handed to a call, a function
+// reference) has no call to hold against a try, and is open when its
+// caller has no exit-catching try at all; `first` is then empty.
+.init open_path = ForwardGuardedCallReach
+
+open_path.root(t) :- is_terminate(t, _).
+open_path.limit(3).
+open_path.guarded(call) :- exit_guarded(call).
+open_path.sealed(f) :- catches_exit(f).
+
+.decl reaches_unguarded(handler: symbol, via: symbol)
+
+reaches_unguarded(t, via) :- open_path.reaches(t, via, _, _), via != t.
+
 // Teardown that touches a sibling the supervisor owns, in one relation:
 // `phase` is "terminate" (terminate/2 waits on a sibling that may already
 // be gone; `kind` = "call") or "handler" (a handler stops a sibling the
 // supervisor still owns; `kind` = "stop"). `handler` is the callback the
-// row belongs to, `site` the call in `via` that makes the dependency when
-// it is direct (else empty), `sup_site` where the supervisor places both.
+// row belongs to, `site` the unguarded call in `via` that makes the
+// dependency when it is direct (else empty), `sup_site` where the
+// supervisor places both.
 .decl teardown_touches_sibling(mod: symbol, sibling: symbol, phase: symbol, kind: symbol, via: symbol, sup: symbol, handler: symbol, site: symbol, sup_site: symbol)
 .output teardown_touches_sibling
 
@@ -155,16 +217,13 @@ waits_on(f, m) :- sync_dep(f, m), !private_dep(f, m).
 
 sibling_call(mod, sibling, terminate, terminate, sup) :-
   is_terminate(terminate, mod),
-  waits_on(terminate, sibling),
-  !catches_exit(terminate),
+  waits_unguarded(terminate, sibling),
   sibling(sup, mod, sibling).
 
 sibling_call(mod, sibling, terminate, helper, sup) :-
   is_terminate(terminate, mod),
-  terminate_reach.reaches(terminate, helper, _),
-  waits_on(helper, sibling),
-  !catches_exit(terminate),
-  !catches_exit(helper),
+  reaches_unguarded(terminate, helper),
+  waits_unguarded(helper, sibling),
   sibling(sup, mod, sibling).
 
 // The call is the bug when the supervisor itself has stopped the sibling
@@ -188,20 +247,20 @@ sibling_call(mod, sibling, terminate, helper, sup) :-
 teardown_touches_sibling(mod, sibling, "terminate", "call", via, sup, func, site, sup_site) :-
   sibling_call(mod, sibling, func, via, sup),
   stops_before(sup, sibling, mod),
-  site_or_empty_sync(via, sibling, site),
+  unguarded_site_or_empty(via, sibling, site),
   supervisor_site_or_empty(sup, sup_site).
 
 teardown_touches_sibling(mod, sibling, "terminate", "call_restart", via, sup, func, site, sup_site) :-
   sibling_call(mod, sibling, func, via, sup),
   stops_before(sup, mod, sibling),
   restarts_later_siblings(sup),
-  site_or_empty_sync(via, sibling, site),
+  unguarded_site_or_empty(via, sibling, site),
   supervisor_site_or_empty(sup, sup_site).
 
 teardown_touches_sibling(mod, sibling, "terminate", "call_unordered", via, sup, func, site, sup_site) :-
   sibling_call(mod, sibling, func, via, sup),
   order_unsettled(sup, sibling, mod),
-  site_or_empty_sync(via, sibling, site),
+  unguarded_site_or_empty(via, sibling, site),
   supervisor_site_or_empty(sup, sup_site).
 
 // `later` is listed after `earlier` somewhere in sup's children.
@@ -244,13 +303,12 @@ order_unsettled(sup, sibling, mod) :-
   !strategy_known(sup).
 
 // Where terminate/2's path to a helper that calls the sibling begins:
-// the call in terminate/2 whose callee is the helper, or reaches it
-// within terminate_reach's bound (three calls). A path through something
-// with no call instruction (a closure it hands to a call) points at
-// terminate/2 itself, `call` empty — unless the helper is an anonymous
-// function written inside terminate/2 (Horde's `Enum.each(signal_to,
-// fn ... end)`), whose line the finding's anchor already is. The
-// earliest such call is kept.
+// the first call of a path no exit-catching try covers (open_path). A path
+// through something with no call instruction (a closure it hands to a
+// call) points at terminate/2 itself, `call` empty — unless the helper
+// is an anonymous function written inside terminate/2 (Horde's
+// `Enum.each(signal_to, fn ... end)`), whose line the finding's anchor
+// already is. The earliest such call is kept.
 .decl terminate_path(handler: symbol, via: symbol, call: symbol)
 .output terminate_path
 
@@ -258,9 +316,8 @@ order_unsettled(sup, sibling, mod) :-
 
 terminate_step(t, via, call) :-
   teardown_touches_sibling(_, _, "terminate", _, via, _, t, _, _),
-  via != t,
-  call_instr(t, g, call),
-  (g = via ; call_edge(g, via) ; call_edge(g, h), call_edge(h, via)).
+  open_path.reaches(t, via, _, call),
+  call != "".
 
 .decl terminate_stepped(handler: symbol, via: symbol)
 
@@ -283,10 +340,12 @@ closure_in_terminate(t, via) :-
   function_def(t, m, n, a, _),
   contains(cat(m, ":-", n, "/", to_string(a), "-fun-"), via).
 
-.decl site_or_empty_sync(func: symbol, mod: symbol, site: symbol)
+// The call in `func` that waits on `mod` with no exit-catching try
+// around it, else empty.
+.decl unguarded_site_or_empty(func: symbol, mod: symbol, site: symbol)
 
-site_or_empty_sync(f, m, id) :- sync_site(f, m, id).
-site_or_empty_sync(f, m, "") :- sync_dep(f, m), !sync_site(f, m, _).
+unguarded_site_or_empty(f, m, id) :- wait_site(f, m, id), !exit_guarded(id).
+unguarded_site_or_empty(f, m, "") :- waits_unguarded(f, m), !wait_site(f, m, _).
 
 .decl supervisor_site_or_empty(sup: symbol, site: symbol)
 
