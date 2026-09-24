@@ -207,17 +207,19 @@ teardown_touches_sibling(mod, sibling, "terminate", "call_unordered", via, sup, 
 // `later` is listed after `earlier` somewhere in sup's children.
 .decl started_after(sup: symbol, later: symbol, earlier: symbol)
 
-started_after(sup, b, a) :-
-  sibling(sup, a, b),
-  supervisor_child(sup, pa, a, _, _),
-  supervisor_child(sup, pb, b, _, _),
-  pb > pa.
+started_after(sup, later, earlier) :-
+  sibling(sup, earlier, later),
+  supervisor_child(sup, earlier_at, earlier, _, _),
+  supervisor_child(sup, later_at, later, _, _),
+  later_at > earlier_at.
 
 // sup's shutdown stops `first` before `other`: started after it, and
 // never before it.
 .decl stops_before(sup: symbol, first: symbol, other: symbol)
 
-stops_before(sup, b, a) :- started_after(sup, b, a), !started_after(sup, a, b).
+stops_before(sup, first, other) :-
+  started_after(sup, first, other),
+  !started_after(sup, other, first).
 
 // A strategy under which a child's crash makes the supervisor terminate
 // the children started after it.
@@ -233,8 +235,13 @@ strategy_known(sup) :- restarts_later_siblings(sup).
 
 .decl order_unsettled(sup: symbol, sibling: symbol, mod: symbol)
 
-order_unsettled(sup, b, a) :- started_after(sup, b, a), started_after(sup, a, b).
-order_unsettled(sup, b, a) :- stops_before(sup, a, b), !strategy_known(sup).
+order_unsettled(sup, sibling, mod) :-
+  started_after(sup, sibling, mod),
+  started_after(sup, mod, sibling).
+
+order_unsettled(sup, sibling, mod) :-
+  stops_before(sup, mod, sibling),
+  !strategy_known(sup).
 
 // Where terminate/2's path to a helper that calls the sibling begins:
 // the call in terminate/2 whose callee is the helper, or reaches it
