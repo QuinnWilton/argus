@@ -1,7 +1,8 @@
 defmodule Argus.Schema.Monitors do
   @moduledoc """
   Monitors: where one is taken, whether its reference is kept, the
-  `:DOWN` messages a callback matches, and how one is removed.
+  `:DOWN` messages a callback or a receive matches, and how one is
+  removed.
 
   Layer 2 of `Argus.Schema`, which reads the relations from here.
   """
@@ -48,6 +49,25 @@ defmodule Argus.Schema.Monitors do
         or one projected from it, is compared to :DOWN in a clause head. \
         Emitted for every function rather than only named callbacks, because \
         a gen_statem funnels :info events through private helpers.
+        """
+      },
+      %{
+        name: :recv_down,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the receive's loop_rec"},
+          {:func, :symbol, "the function"},
+          {:monitor, :symbol, "the monitor call whose :DOWN a clause takes"}
+        ],
+        doc: """
+        A receive with a clause that takes the `:DOWN` of a monitor its own \
+        function took: the pattern is `{:DOWN, ^ref, ...}` with `ref`, on every \
+        path, the reference that monitor call returned, and nothing else in \
+        the clause can refuse that message (a pin on the object, a reason, \
+        a guard). No path from the monitor to the receive demonitors. The \
+        runtime delivers that `:DOWN` once the process exits, or at once if \
+        it was already gone, so the receive cannot outlast the monitored \
+        process; its other clauses can only end it sooner.
         """
       },
       %{

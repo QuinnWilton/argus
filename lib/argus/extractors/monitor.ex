@@ -31,6 +31,9 @@ defmodule Argus.Extractors.Monitor do
   - `monitor_ref_dropped(id, func)` — the reference that monitor returned
     is discarded at the call site, so nothing can ever demonitor it
   - `demonitor_call(id, func, flush)` — `flush` is `"flush"` or `"no_flush"`
+  - `recv_down(id, func, monitor)` — a receive with a clause that takes
+    the `:DOWN` of the monitor its function took at `monitor`, so it ends
+    no later than the monitored process does
   - `matches_down(func)` — the function's clause heads (or a `case` on an
     argument, before any call) compare to `:DOWN`, so it is (part of) a
     :DOWN handler; unlike `callback_tag` this is emitted for every
@@ -65,6 +68,18 @@ defmodule Argus.Extractors.Monitor do
   path that raises is not asked: the wait was for a caller that is
   unwinding. A receive in a closure, and a wait in another module, are
   not seen, and leave the call without a row.
+
+  ## A receive that takes its own monitor's :DOWN
+
+  Whether a receive takes its own monitor's `:DOWN` is read by running
+  the receive's clause heads on that message, `{:DOWN, ref, type, object,
+  reason}` with only the tag, the ref and the type known: each test is
+  decided by what is known or the answer is no. A pin on the object (a
+  monitor by name reports `{name, node}`, not a pid), a reason, a guard
+  — anything that could refuse the message — is no. The pinned ref must
+  be, on every path to the comparison, what a monitor call in the same
+  function returned (`Argus.Extractor.Resolve.trace/5`), and no path from
+  that call to the receive may demonitor.
   """
 
   @behaviour Argus.Extractor
@@ -95,7 +110,8 @@ defmodule Argus.Extractors.Monitor do
       :demonitor_call,
       :matches_down,
       :monitor_call,
-      :monitor_ref_dropped
+      :monitor_ref_dropped,
+      :recv_down
     ]
 
   @impl true
@@ -104,6 +120,7 @@ defmodule Argus.Extractors.Monitor do
     |> each_remote_call(%{}, &handle(&1, &2, &3, module_data))
     |> emit_matches_down(mod, functions)
     |> emit_awaits_down_after(module_data)
+    |> emit_recv_down(module_data)
   end
 
   defp emit_matches_down(facts, mod, functions) do
@@ -369,6 +386,274 @@ defmodule Argus.Extractors.Monitor do
       ctx.func_id,
       flush_option(ctx.instrs, ctx.idx)
     ])
+  end
+
+  # ── A receive that takes its own monitor's :DOWN ─────────────────────
+
+  defp emit_recv_down(facts, %{module: mod, functions: functions} = module_data) do
+    Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
+      func_id = InstrId.func_id(mod, name, arity)
+
+      for {loop, monitor} <- awaited_monitors(instrs, fn -> cfg(module_data, name, arity) end),
+          reduce: acc do
+        acc ->
+          add_fact(acc, :recv_down, [
+            InstrId.mint(func_id, loop),
+            func_id,
+            InstrId.mint(func_id, monitor)
+          ])
+      end
+    end)
+  end
+
+  # Each receive in the function that takes its own monitor's :DOWN, as
+  # `{loop_rec, monitor}` indices.
+  defp awaited_monitors(instrs, graph) do
+    case for({{:loop_rec, _fail, _dst}, idx} <- Enum.with_index(instrs), do: idx) do
+      [] ->
+        []
+
+      loops ->
+        ctx = %{instrs: instrs, code: List.to_tuple(instrs), labels: labels(instrs)}
+
+        for loop <- loops,
+            {:ok, monitor} <- [awaited_monitor(ctx, loop, graph)],
+            do: {loop, monitor}
+    end
+  end
+
+  defp labels(instrs) do
+    for {{:label, l}, i} <- Enum.with_index(instrs), into: %{}, do: {l, i}
+  end
+
+  # The monitor call whose :DOWN the receive at `loop` takes: the path
+  # that message takes through the clause heads ends in `remove_message`
+  # with the ref pinned to what that call returned, of a type whose
+  # :DOWN says so, and nothing between the call and the receive
+  # demonitors. The graph is built only for a receive that gets that far.
+  defp awaited_monitor(ctx, loop, graph) do
+    {:loop_rec, _fail, dst} = elem(ctx.code, loop)
+
+    with {:taken, %{ref: {ref, compared_at}, type: type}} <-
+           down_path(ctx, loop + 1, %{register(dst) => :msg}, %{ref: nil, type: nil}, 0),
+         {at, monitor_type} <- ref_origin(ctx.instrs, compared_at, ref),
+         true <- type in [nil, monitor_type],
+         false <- demonitors_before?(graph.(), ctx.instrs, at, loop) do
+      {:ok, at}
+    else
+      _ -> :none
+    end
+  end
+
+  # Clause heads are a decision tree ending at `remove_message` (a clause
+  # took the message) or `loop_rec_end` (none did); a :DOWN takes exactly
+  # one path through it. The bound on steps is the tree's size; a head
+  # never loops.
+  @max_head_steps 200
+
+  defp down_path(_ctx, _idx, _regs, _known, steps) when steps > @max_head_steps, do: :none
+
+  defp down_path(ctx, idx, regs, known, steps) when idx < tuple_size(ctx.code) do
+    case down_step(elem(ctx.code, idx), regs, known, idx) do
+      {:next, regs, known} ->
+        down_path(ctx, idx + 1, regs, known, steps + 1)
+
+      {:jump, label, regs, known} ->
+        case Map.fetch(ctx.labels, label) do
+          {:ok, at} -> down_path(ctx, at, regs, known, steps + 1)
+          :error -> :none
+        end
+
+      {:taken, known} ->
+        {:taken, known}
+
+      :none ->
+        :none
+    end
+  end
+
+  defp down_path(_ctx, _idx, _regs, _known, _steps), do: :none
+
+  defp down_step({:label, _}, regs, known, _idx), do: {:next, regs, known}
+  defp down_step({:line, _}, regs, known, _idx), do: {:next, regs, known}
+  defp down_step({:recv_marker_clear, _}, regs, known, _idx), do: {:next, regs, known}
+  defp down_step(:remove_message, _regs, known, _idx), do: {:taken, known}
+  defp down_step({:jump, {:f, l}}, regs, known, _idx), do: {:jump, l, regs, known}
+
+  defp down_step({:move, src, dst}, regs, known, _idx),
+    do: {:next, carry(regs, value(src, regs), dst), known}
+
+  defp down_step({:get_tuple_element, src, n, dst}, regs, known, _idx) do
+    case value(src, regs) do
+      :msg -> {:next, Map.put(regs, register(dst), {:elem, n}), known}
+      _ -> {:next, Map.delete(regs, register(dst)), known}
+    end
+  end
+
+  defp down_step({:test, :is_tuple, {:f, _}, [r]}, regs, known, _idx),
+    do: if(value(r, regs) == :msg, do: {:next, regs, known}, else: :none)
+
+  defp down_step({:test, :test_arity, {:f, l}, [r, n]}, regs, known, _idx) do
+    cond do
+      value(r, regs) != :msg -> :none
+      n == 5 -> {:next, regs, known}
+      true -> {:jump, l, regs, known}
+    end
+  end
+
+  defp down_step({:test, :is_tagged_tuple, {:f, l}, [r, n, tag]}, regs, known, _idx) do
+    cond do
+      value(r, regs) != :msg -> :none
+      n == 5 and tag == {:atom, :DOWN} -> {:next, regs, known}
+      true -> {:jump, l, regs, known}
+    end
+  end
+
+  defp down_step({:test, :is_atom, {:f, _}, [r]}, regs, known, _idx),
+    do: if(value(r, regs) in [{:elem, 0}, {:elem, 2}], do: {:next, regs, known}, else: :none)
+
+  defp down_step({:test, :is_reference, {:f, _}, [r]}, regs, known, _idx),
+    do: if(value(r, regs) == {:elem, 1}, do: {:next, regs, known}, else: :none)
+
+  defp down_step({:test, op, {:f, l}, [a, b]}, regs, known, idx)
+       when op in [:is_eq_exact, :is_ne_exact] do
+    # The compiler tests a pinned ref either way round: `is_ne_exact`
+    # falls through to the next clause and jumps to the body on a match.
+    case {op, equal(value(a, regs), value(b, regs), known, idx)} do
+      {:is_eq_exact, {true, known}} -> {:next, regs, known}
+      {:is_eq_exact, false} -> {:jump, l, regs, known}
+      {:is_ne_exact, {true, known}} -> {:jump, l, regs, known}
+      {:is_ne_exact, false} -> {:next, regs, known}
+      {_op, :unknown} -> :none
+    end
+  end
+
+  defp down_step({:select_tuple_arity, r, {:f, fail}, {:list, pairs}}, regs, known, _idx) do
+    if value(r, regs) == :msg,
+      do: {:jump, branch(pairs, 5, fail), regs, known},
+      else: :none
+  end
+
+  defp down_step({:select_val, r, {:f, fail}, {:list, pairs}}, regs, known, _idx) do
+    case value(r, regs) do
+      {:elem, 0} -> {:jump, branch(pairs, {:atom, :DOWN}, fail), regs, known}
+      # A select_val compares with atoms and numbers; the message is a tuple.
+      :msg -> {:jump, fail, regs, known}
+      _ -> :none
+    end
+  end
+
+  # Between the last test and remove_message the compiler binds the
+  # clause's variables and reserves heap: an instruction that neither
+  # branches nor calls cannot refuse the message.
+  defp down_step(instr, regs, known, _idx) do
+    if Instr.known?(instr) and Instr.falls_through?(instr) and Instr.targets(instr) == [] and
+         not Instr.call?(instr),
+       do: {:next, Map.drop(regs, Instr.defs(instr)), known},
+       else: :none
+  end
+
+  # The label a select branches to for `value`, or its fail label.
+  defp branch([value, {:f, l} | _rest], value, _fail), do: l
+  defp branch([_value, _label | rest], value, fail), do: branch(rest, value, fail)
+  defp branch([], _value, fail), do: fail
+
+  # Whether two operands are equal on the :DOWN, as `{true, known}` (with
+  # what the answer had to assume), `false`, or `:unknown`. The ref
+  # element equals the register it is compared with when that register
+  # holds the monitor's ref, which `ref_origin/3` then has to show; a
+  # message holding a ref equals no literal.
+  defp equal(a, b, known, idx) do
+    case down_equal(a, b, known, idx) do
+      :unknown -> down_equal(b, a, known, idx)
+      answer -> answer
+    end
+  end
+
+  defp down_equal({:elem, 0}, {:lit, tag}, known, _idx), do: tag == :DOWN and {true, known}
+  defp down_equal({:elem, 1}, {:lit, _}, _known, _idx), do: false
+
+  defp down_equal({:elem, 1}, {:reg, reg}, %{ref: nil} = known, idx),
+    do: {true, %{known | ref: {reg, idx}}}
+
+  defp down_equal({:elem, 2}, {:lit, type}, %{type: seen} = known, _idx)
+       when type in [:process, :port] and seen in [nil, type],
+       do: {true, %{known | type: type}}
+
+  defp down_equal({:elem, 2}, {:lit, type}, _known, _idx) when type in [:process, :port],
+    do: :unknown
+
+  defp down_equal({:elem, 2}, {:lit, _}, _known, _idx), do: false
+  defp down_equal(:msg, {:lit, _}, _known, _idx), do: false
+  defp down_equal(_a, _b, _known, _idx), do: :unknown
+
+  # What an operand holds on the :DOWN's path: the message, one of its
+  # elements, a literal, or a register the heads did not fill.
+  defp value({:atom, a}, _regs), do: {:lit, a}
+  defp value({:integer, i}, _regs), do: {:lit, i}
+  defp value({:float, f}, _regs), do: {:lit, f}
+  defp value({:literal, term}, _regs), do: {:lit, term}
+  defp value(nil, _regs), do: {:lit, []}
+
+  defp value(operand, regs) do
+    reg = register(operand)
+    Map.get(regs, reg, {:reg, reg})
+  end
+
+  defp carry(regs, {:reg, _}, dst), do: Map.delete(regs, register(dst))
+  defp carry(regs, {:lit, _}, dst), do: Map.delete(regs, register(dst))
+  defp carry(regs, held, dst), do: Map.put(regs, register(dst), held)
+
+  # The monitor call every path's value of `ref` at `idx` came from, and
+  # the type of what it monitors: only :process and :port monitors send a
+  # :DOWN. A register a call writes is its result, x0: the compiler reads
+  # no other x register after a call.
+  defp ref_origin(instrs, idx, ref) do
+    Resolve.trace(instrs, idx, ref, nil, fn
+      {at, instr}, _follow when is_integer(at) -> monitor_type(instrs, at, instr)
+      {:param, _}, _follow -> nil
+    end)
+  end
+
+  defp monitor_type(instrs, at, {:call_ext, _, {:extfunc, :erlang, :monitor, arity}})
+       when arity in [2, 3] do
+    case Resolve.resolve_register(instrs, at, {:x, 0}) do
+      {:ok, type} when type in [:process, :port] -> {at, type}
+      _ -> nil
+    end
+  end
+
+  defp monitor_type(_instrs, at, {:call_ext, _, {:extfunc, Process, :monitor, arity}})
+       when arity in [1, 2],
+       do: {at, :process}
+
+  defp monitor_type(_instrs, _at, _instr), do: nil
+
+  # Whether some path from the monitor call reaches a demonitor before it
+  # reaches the receive. Without a graph the answer is yes: the fact must
+  # be sure.
+  defp demonitors_before?(nil, _instrs, _from, _loop), do: true
+
+  defp demonitors_before?(fun, instrs, from, loop) do
+    result =
+      Walk.explore(fun, instrs, [from + 1],
+        on_instr: fn
+          _instr, ^loop -> :prune
+          {:func_info, _, _, _}, _idx -> :prune
+          instr, _idx -> if cancels_monitor?(instr), do: {:halt, :demonitor}, else: :continue
+        end
+      )
+
+    match?({:halted, _}, result)
+  end
+
+  # Any demonitor, flushed or not: either cancels the :DOWN a later wait
+  # would take.
+  defp cancels_monitor?(instr) do
+    case match_remote_call(instr) do
+      {:ok, mod, :demonitor, arity} -> mod in [:erlang, Process] and arity in [1, 2]
+      _ -> false
+    end
   end
 
   defp flush_option(instrs, idx) do

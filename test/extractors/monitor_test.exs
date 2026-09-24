@@ -70,6 +70,46 @@ defmodule Argus.Extractors.MonitorTest do
     end
   end
 
+  describe "recv_down" do
+    alias Argus.Test.Fixtures.CallbackReceive, as: R
+
+    defp down(mod) do
+      facts = extract(mod)
+      monitors = for [id, _func, _target] <- Map.get(facts, :monitor_call, []), do: id
+      {Map.get(facts, :recv_down, []), monitors}
+    end
+
+    test "a receive for the :DOWN of the monitor its function took names that monitor" do
+      for mod <- [R.AwaitsOwnDown, R.AwaitsDoneOrDown, R.AwaitsReplyOrDown] do
+        assert {[[recv, func, monitor]], [monitor]} = down(mod), inspect(mod)
+        assert String.starts_with?(recv, func <> "#")
+        assert String.starts_with?(monitor, func <> "#")
+      end
+    end
+
+    test "a pinned ref tested with is_ne_exact is read as the same pin" do
+      assert {rows, [monitor]} = down(R.KillsAfterGrace)
+      assert [[_, _, ^monitor], [_, _, ^monitor]] = rows
+    end
+
+    test "the closure a comprehension lifts the wait into is the function that took the monitor" do
+      assert {[[_recv, func, _monitor]], _} = down(R.AwaitsDoneOrDown)
+      assert func =~ "-terminate/2-fun-"
+    end
+
+    test "a ref from elsewhere, a pinned reason, or a demonitor first is not a bound" do
+      for mod <- [R.AwaitsAnotherDown, R.AwaitsNormalDown, R.DemonitorsThenAwaits] do
+        assert {[], _} = down(mod), inspect(mod)
+      end
+    end
+
+    test "a receive that takes other messages only is not one" do
+      for mod <- [R.BlockingInCallback, R.BoundedInCallback, R.CancelThenWait] do
+        assert {[], _} = down(mod), inspect(mod)
+      end
+    end
+  end
+
   describe "read through Argus.Instr" do
     alias Argus.Test.Fixtures.Instr, as: Fixture
 

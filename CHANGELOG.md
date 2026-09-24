@@ -10,6 +10,19 @@ What 0.20.0 will ship; the release dates this heading and drops the
 `-dev` from `mix.exs`. Grouped by concern. Each entry opens with what it
 does: **Added**, **Changed**, **Fixed** or **Removed**.
 
+### Waits that end on their own
+
+**Added.** Schema 88. `recv_down(id, func, monitor)`
+(`Argus.Extractors.Monitor`): a receive with a clause that takes the
+`:DOWN` of a monitor its own function took. The clause heads are run on
+that message, `{:DOWN, ref, type, object, reason}` with only the tag,
+the ref and the type known; a pin on the object (a monitor by name
+reports `{name, node}`), a reason or a guard is a test the message can
+fail, and no row. The pinned ref must be, on every path, what an
+`erlang:monitor/2,3` of a process or port (or `Process.monitor/1,2`)
+returned, and no path from that call to the receive may demonitor. Its
+other clauses do not matter: they can only end the receive sooner.
+
 ### A timer finding where the program cancels it
 
 **Changed.** `mailbox.timer_cancel_without_flush` is still one finding

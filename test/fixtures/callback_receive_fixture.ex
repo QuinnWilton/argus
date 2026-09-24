@@ -235,4 +235,148 @@ defmodule Argus.Test.Fixtures.CallbackReceive do
       end
     end
   end
+
+  # ── A receive for the :DOWN of a monitor its function took ──────────
+  #
+  # The runtime delivers that :DOWN once the process exits, or at once if
+  # it is already gone: the wait ends no later than the monitored process.
+
+  defmodule AwaitsOwnDown do
+    @moduledoc """
+    Broadway's Topology shape: terminate/2 stops a process and waits for
+    it to go. The receive has no `after`, and cannot outlast the process.
+    """
+    @behaviour GenServer
+
+    def init(pid) do
+      Process.flag(:trap_exit, true)
+      {:ok, pid}
+    end
+
+    def terminate(_reason, pid) do
+      ref = Process.monitor(pid)
+      Process.exit(pid, :shutdown)
+
+      receive do
+        {:DOWN, ^ref, _, _, _} -> :ok
+      end
+    end
+  end
+
+  defmodule AwaitsDoneOrDown do
+    @moduledoc """
+    Broadway's Terminator shape: each process either says it is done or
+    dies, and either ends the wait. The type is pinned to :process, which
+    a process monitor's :DOWN carries.
+    """
+    @behaviour GenServer
+
+    def init(names), do: {:ok, names}
+
+    def terminate(_reason, names) do
+      for name <- names, pid = GenServer.whereis(name) do
+        ref = Process.monitor(pid)
+
+        receive do
+          {:done, ^pid} -> :ok
+          {:DOWN, ^ref, :process, _, _} -> :ok
+        end
+      end
+
+      :ok
+    end
+  end
+
+  defmodule KillsAfterGrace do
+    @moduledoc """
+    Phoenix's Channel.Server.close/2 shape: a grace period for the :DOWN,
+    then a kill and a wait with no `after`. The compiler tests the pinned
+    ref of the first receive with `is_ne_exact`, falling through to the
+    next clause and jumping to the body on a match.
+    """
+    @behaviour GenServer
+
+    def init(pid), do: {:ok, pid}
+
+    def terminate(_reason, pid) do
+      GenServer.cast(pid, :close)
+      ref = Process.monitor(pid)
+
+      receive do
+        {:DOWN, ^ref, _, _, _} -> :ok
+      after
+        100 ->
+          Process.exit(pid, :kill)
+          receive do: ({:DOWN, ^ref, _, _, _} -> :ok)
+      end
+    end
+  end
+
+  defmodule AwaitsReplyOrDown do
+    @moduledoc """
+    A hand-rolled call: the reply or the peer's :DOWN. The demonitor
+    after the reply comes after the wait, and leaves it bounded.
+    """
+    @behaviour GenServer
+
+    def init(pid), do: {:ok, pid}
+
+    def handle_call(:ask, _from, pid) do
+      ref = Process.monitor(pid)
+      send(pid, {:ask, self(), ref})
+
+      receive do
+        {:reply, ^ref, answer} ->
+          Process.demonitor(ref, [:flush])
+          {:reply, answer, pid}
+
+        {:DOWN, ^ref, _, _, reason} ->
+          {:reply, {:error, reason}, pid}
+      end
+    end
+  end
+
+  defmodule AwaitsAnotherDown do
+    @moduledoc "A :DOWN for a ref the callback did not take: nothing here says it comes."
+    @behaviour GenServer
+
+    def init(ref), do: {:ok, ref}
+
+    def handle_call(:wait, _from, ref) do
+      receive do
+        {:DOWN, ^ref, _, _, _} -> {:reply, :ok, ref}
+      end
+    end
+  end
+
+  defmodule AwaitsNormalDown do
+    @moduledoc "Only a :normal exit's :DOWN ends the wait; any other exit leaves it hanging."
+    @behaviour GenServer
+
+    def init(pid), do: {:ok, pid}
+
+    def handle_call(:wait, _from, pid) do
+      ref = Process.monitor(pid)
+
+      receive do
+        {:DOWN, ^ref, _, _, :normal} -> {:reply, :ok, pid}
+      end
+    end
+  end
+
+  defmodule DemonitorsThenAwaits do
+    @moduledoc "The monitor is cancelled before the wait: its :DOWN never comes."
+    @behaviour GenServer
+
+    def init(pid), do: {:ok, pid}
+
+    def handle_call(:wait, _from, pid) do
+      ref = Process.monitor(pid)
+      Process.demonitor(ref)
+
+      receive do
+        {:DOWN, ^ref, _, _, _} -> {:reply, :ok, pid}
+      end
+    end
+  end
 end
