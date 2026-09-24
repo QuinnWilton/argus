@@ -16,15 +16,18 @@ defmodule Argus.Pipeline.ShardsTest do
   # A spread of the fixtures, the ones a few extractors need (named, so
   # that a fixture added elsewhere cannot move them out of the spread), and
   # some runtime modules for shapes the fixtures do not have: every
-  # extractor emits rows for some of them (the test checks).
+  # extractor emits rows for some of them (the test checks). The spread is
+  # one in twenty by a portable hash of the name, so adding a fixture does
+  # not move the others in or out (every twentieth by sorted name did).
   @modules for(
              mod <- Application.spec(:panoptes, :modules),
              String.starts_with?(Atom.to_string(mod), "Elixir.Argus.Test.Fixtures."),
+             :erlang.phash2(mod, 20) == 0,
              do: mod
            )
            |> Enum.sort()
-           |> Enum.take_every(20)
            |> Kernel.++([
+             Argus.Test.Fixtures.SimpleStatem,
              Argus.Test.Fixtures.Specs,
              Argus.Test.Fixtures.Router,
              Argus.Test.Fixtures.Secret.Typed,
