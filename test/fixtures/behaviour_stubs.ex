@@ -1,5 +1,5 @@
-# Stub behaviours for the request-surface, transaction and LiveView
-# fixtures. None of Phoenix, Plug, Oban, Broadway or Ecto is a dependency of argus;
+# Stub behaviours for the request-surface, transaction, LiveView and
+# call-cycle fixtures. None of Phoenix, Plug, Oban, Broadway or Ecto is a dependency of argus;
 # the fixtures declare `@behaviour` on them because the analyses read the
 # attribute out of the beam. A stub gives the attribute a behaviour to
 # name, and every callback is optional so a fixture implements only the
@@ -14,6 +14,14 @@ defmodule Phoenix.LiveView do
   @callback handle_info(term(), term()) :: term()
   @callback render(term()) :: term()
   @optional_callbacks mount: 3, handle_params: 3, handle_event: 3, handle_info: 2, render: 1
+end
+
+defmodule Phoenix.Channel do
+  @moduledoc false
+  @callback join(term(), term(), term()) :: term()
+  @callback handle_in(term(), term(), term()) :: term()
+  @callback handle_info(term(), term()) :: term()
+  @optional_callbacks join: 3, handle_in: 3, handle_info: 2
 end
 
 defmodule Plug do

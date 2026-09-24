@@ -181,4 +181,179 @@ defmodule Argus.Test.Fixtures.CallCycle do
     @impl true
     def handle_call(:get, _from, s), do: {:reply, Awaiter.ping(), s}
   end
+
+  # ── A wait made only on the way up (LiveView's upload channel) ───────
+
+  defmodule View do
+    @moduledoc """
+    Learns an upload channel's pid from the channel's own registration,
+    answers it at once, and calls the channel only later.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.CallCycle.UploadChannel
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok)
+
+    def register_upload(pid, ref),
+      do: GenServer.call(pid, {:register_upload, %{channel_pid: self(), ref: ref}})
+
+    @impl true
+    def init(:ok), do: {:ok, %{uploads: %{}}}
+
+    @impl true
+    def handle_call({:register_upload, %{channel_pid: channel, ref: ref}}, from, state) do
+      GenServer.reply(from, :ok)
+      {:noreply, %{state | uploads: Map.put(state.uploads, ref, channel)}}
+    end
+
+    @impl true
+    def handle_info({:cancel, ref}, state) do
+      case Map.fetch(state.uploads, ref) do
+        {:ok, channel} -> UploadChannel.cancel(channel)
+        :error -> :ok
+      end
+
+      {:noreply, state}
+    end
+  end
+
+  defmodule UploadChannel do
+    @moduledoc "Calls the view from join/3 alone; nothing names it."
+    @behaviour Phoenix.Channel
+
+    alias Argus.Test.Fixtures.CallCycle.View
+
+    def cancel(pid), do: GenServer.call(pid, :cancel)
+
+    def join(_topic, %{"view" => view, "ref" => ref}, socket) do
+      :ok = View.register_upload(view, ref)
+      {:ok, socket}
+    end
+
+    def handle_call(:cancel, _from, socket), do: {:reply, :ok, socket}
+  end
+
+  # The same from init/1: an unnamed worker registers with its manager,
+  # which answers and calls the worker only later.
+  defmodule Manager do
+    @moduledoc false
+    use GenServer
+
+    alias Argus.Test.Fixtures.CallCycle.Worker
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+    def register(worker), do: GenServer.call(__MODULE__, {:register, worker})
+
+    @impl true
+    def init(:ok), do: {:ok, []}
+
+    @impl true
+    def handle_call({:register, worker}, _from, workers), do: {:reply, :ok, [worker | workers]}
+
+    @impl true
+    def handle_info(:poll, workers) do
+      Enum.each(workers, &Worker.status/1)
+      {:noreply, workers}
+    end
+  end
+
+  defmodule Worker do
+    @moduledoc false
+    use GenServer
+
+    alias Argus.Test.Fixtures.CallCycle.Manager
+
+    def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+    def status(pid), do: GenServer.call(pid, :status)
+
+    @impl true
+    def init(arg) do
+      :ok = Manager.register(self())
+      {:ok, arg}
+    end
+
+    @impl true
+    def handle_call(:status, _from, s), do: {:reply, :ok, s}
+  end
+
+  # A worker registered under a name while its init runs: its manager can
+  # call it by name before init returns, and both wait.
+  defmodule NamedManager do
+    @moduledoc false
+    use GenServer
+
+    alias Argus.Test.Fixtures.CallCycle.NamedWorker
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+    def register, do: GenServer.call(__MODULE__, :register)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:register, _from, s), do: {:reply, :ok, s}
+
+    @impl true
+    def handle_info(:poll, s) do
+      NamedWorker.status()
+      {:noreply, s}
+    end
+  end
+
+  defmodule NamedWorker do
+    @moduledoc false
+    use GenServer
+
+    alias Argus.Test.Fixtures.CallCycle.NamedManager
+
+    def start_link(arg), do: GenServer.start_link(__MODULE__, arg, name: __MODULE__)
+    def status, do: GenServer.call(__MODULE__, :status)
+
+    @impl true
+    def init(arg) do
+      :ok = NamedManager.register()
+      {:ok, arg}
+    end
+
+    @impl true
+    def handle_call(:status, _from, s), do: {:reply, :ok, s}
+  end
+
+  # A peer that answers the start's own request by calling the starting
+  # process: the start deadlocks every time.
+  defmodule Greeter do
+    @moduledoc false
+    use GenServer
+
+    alias Argus.Test.Fixtures.CallCycle.Joiner
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+    def hello(pid), do: GenServer.call(__MODULE__, {:hello, pid})
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_call({:hello, pid}, _from, s), do: {:reply, Joiner.name(pid), s}
+  end
+
+  defmodule Joiner do
+    @moduledoc false
+    use GenServer
+
+    alias Argus.Test.Fixtures.CallCycle.Greeter
+
+    def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+    def name(pid), do: GenServer.call(pid, :name)
+
+    @impl true
+    def init(arg) do
+      Greeter.hello(self())
+      {:ok, arg}
+    end
+
+    @impl true
+    def handle_call(:name, _from, s), do: {:reply, :joiner, s}
+  end
 end

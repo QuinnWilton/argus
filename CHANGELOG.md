@@ -2584,6 +2584,19 @@ of a server module closed a cycle no process can deadlock in: klife's
 calls `Producer`'s. A module that runs no process of its own is never a
 side of one.
 
+**Fixed.** A wait a process makes only while it starts — from `init/1`,
+or from a Phoenix channel's `join/3` — closes a `blocking.call_cycle`
+only when the process can be named during its start (a registered name,
+or a call to it by name) or when the peer's `handle_call/3` clause for
+that request calls it back. Otherwise the peer can reach it by the pid
+it hands over alone, and answers before it can call back. Phoenix
+LiveView's upload channel registers with the LiveView from `join/3`,
+and `Phoenix.LiveView.Channel` <-> `UploadChannel` was reported on two
+corpus checkouts; the LiveView replies at once and calls the channel
+later, through the pid it kept. A peer that defers its reply to the
+start's request and calls the starting process from another callback is
+not seen (the reply is not followed).
+
 ### startup
 
 **Fixed.** `startup.unbounded_effect_in_init` and `blocks_on_peer`'s

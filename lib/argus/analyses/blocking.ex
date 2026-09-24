@@ -14,8 +14,10 @@ defmodule Argus.Analyses.Blocking do
     downstream budget.
   - `call_cycle(mod_a, mod_b, witness_a, witness_b, phase)` — two modules
     whose processes synchronously call each other (`call`: each witness
-    runs on its module's own process, reached from a callback) or both
-    from `handle_continue/2` (`continue`: a startup deadlock); the edges in
+    runs on its module's own process, reached from a callback; a wait
+    made only while an unnamed process starts counts only where the
+    peer's handler calls it back) or both from `handle_continue/2`
+    (`continue`: a startup deadlock); the edges in
     `call_cycle_path` are its related frames, marked `tag` when the hop
     was attributed by message tag. `self` is the cycle of one: a
     synchronous call to the calling process itself, which gen exits with

@@ -170,6 +170,44 @@ defmodule Argus.Analyses.BlockingCycleTest do
       assert cycle?(results, CallCycle.Awaiter, CallCycle.Awaited)
     end
 
+    test "a wait an unnamed channel makes only while it joins does not close a cycle" do
+      skip_without_souffle()
+
+      # LiveView's upload channel registers with the view from join/3,
+      # handing it self(); the view answers at once and calls the channel
+      # later, through the pid it kept. Nothing else can reach the channel
+      # while it joins.
+      assert {:ok, results} = Memo.analyze([CallCycle.View, CallCycle.UploadChannel], :blocking)
+      assert results["call_cycle"] == []
+    end
+
+    test "a wait an unnamed server makes only in init/1 does not close a cycle" do
+      skip_without_souffle()
+
+      assert {:ok, results} = Memo.analyze([CallCycle.Manager, CallCycle.Worker], :blocking)
+      assert results["call_cycle"] == []
+    end
+
+    test "a server named while its init/1 waits can be called in it" do
+      skip_without_souffle()
+
+      # NamedManager calls NamedWorker by name, which it holds from the
+      # moment the start registers it: both can wait at once.
+      assert {:ok, results} =
+               Memo.analyze([CallCycle.NamedManager, CallCycle.NamedWorker], :blocking)
+
+      assert cycle?(results, CallCycle.NamedManager, CallCycle.NamedWorker)
+    end
+
+    test "a peer that answers the start's request by calling back is a cycle" do
+      skip_without_souffle()
+
+      # Greeter's :hello clause calls the Joiner whose init/1 is waiting
+      # for that very reply: the start deadlocks every time.
+      assert {:ok, results} = Memo.analyze([CallCycle.Greeter, CallCycle.Joiner], :blocking)
+      assert cycle?(results, CallCycle.Greeter, CallCycle.Joiner)
+    end
+
     test "runs without error on module with no cycles" do
       skip_without_souffle()
 

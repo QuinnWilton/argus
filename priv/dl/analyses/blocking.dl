@@ -296,26 +296,84 @@ cycle_candidate(a, b) :- module_sync_dep(a, b, _), module_sync_dep(b, a, _).
 
 holds.seed(w, w) :- cycle_candidate(a, b), module_sync_dep(a, b, w).
 
-// Where `mod`'s process runs its own code: its callbacks, a process
-// module's under a behaviour the table does not list included.
-.decl process_code(mod: symbol, func: symbol)
+// Where `mod`'s process starts running its code: its startup ("start":
+// init/1, or a channel's join/3, which the channel server runs in the
+// channel's process before it is joined), or once it runs ("run"): the
+// other callbacks, a process module's under a behaviour the table does
+// not list included.
+.decl process_code(mod: symbol, func: symbol, phase: symbol)
 
-process_code(m, f) :- process_entry(m, f).
+process_code(m, f, "start") :- init_function(m, f).
 
-process_code(m, f) :-
+process_code(m, f, "start") :-
+  behaves_as(m, "Phoenix.Channel"),
+  function_def(f, m, "join", 3, _).
+
+process_code(m, f, "run") :- process_entry(m, f), !init_function(m, f).
+
+process_code(m, f, "run") :-
   process_behaviour_module(m),
   function_def(f, m, name, _, _),
-  callback_name(name).
+  callback_name(name),
+  !init_function(m, f).
 
-// One direction of a cycle: a's process waits on b's at `w`, a function
-// of a's it runs.
-.decl cycle_edge(a: symbol, b: symbol, w: symbol)
+// a's process waits on b's at `w`, a function of a's it runs.
+.decl process_dep(a: symbol, b: symbol, w: symbol, phase: symbol)
 
-cycle_edge(a, b, w) :-
+process_dep(a, b, w, phase) :-
   cycle_candidate(a, b),
   module_sync_dep(a, b, w),
-  process_code(a, e),
+  process_code(a, e, phase),
   holds.reaches(e, w).
+
+// ── A wait made on the way up ────────────────────────────────────────
+//
+// A process that waits on a peer only while it starts, and has no name,
+// is reachable during its start by the pid it hands out alone: a
+// starter's start_link has not returned it, and no registry holds it. A
+// peer that learns the pid from the call it is answering, and answers
+// before calling back, cannot close the cycle — the start is over by
+// then. Phoenix LiveView's upload channel registers with the LiveView
+// from join/3, handing it `self()`; the LiveView replies at once and
+// calls the channel only later, through the pid it kept.
+//
+// The wait counts when the process can be named while it starts (a
+// registered name, or a call to it by name, anywhere), or when the
+// peer's handle_call clause the request enters calls it back: the
+// start deadlocks on its own request. A peer whose request handling the
+// program cannot see (no handle_call/3 of its) is taken to call back.
+//
+// Known limit: a peer that holds the start's request unanswered (a
+// `{:noreply, _}` without a reply) and calls the starting process from
+// another callback deadlocks too; the reply is not followed, and that
+// wait is not reported.
+.decl nameable(mod: symbol)
+
+nameable(m) :- named_process(m, _).
+nameable(m) :- named_pid(_, p), server_process(p, m).
+nameable(m) :- sync_call(_, m).
+nameable(m) :- async_cast(_, m).
+
+// b's handler of the request a's start makes at `w` calls a back.
+.decl calls_back(b: symbol, a: symbol, w: symbol)
+
+calls_back(b, a, w) :-
+  process_dep(a, b, w, "start"),
+  !handle_call_function(b, _).
+
+calls_back(b, a, w) :-
+  process_dep(a, b, w, "start"),
+  reaches_sync_request(w, b, request),
+  clause_dep(b, clause, a, _),
+  (request = clause ; clause = "any" ; request = "any").
+
+// One direction of a cycle: a wait a's process makes once it runs, or
+// on its way up where the start can be caught in it.
+.decl cycle_edge(a: symbol, b: symbol, w: symbol)
+
+cycle_edge(a, b, w) :- process_dep(a, b, w, "run").
+cycle_edge(a, b, w) :- process_dep(a, b, w, "start"), nameable(a).
+cycle_edge(a, b, w) :- calls_back(b, a, w).
 
 call_cycle(a, b, wa, wb, "continue", sa, sb) :-
   continue_dep(a, b, wa),
