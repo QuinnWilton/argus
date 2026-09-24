@@ -66,6 +66,16 @@ never arrives), a multicall names the node that did not answer, and a
 yield has `nb_yield/2`. `Argus.Findings.rpc_api/1` names every variant;
 `erpc_multicall` read as its raw name.
 
+**Added.** "RPC without a bounded timeout" follows a timeout the
+function takes as a parameter to the callers that pass `:infinity`
+there: a wrapper's `timeout \\ :infinity` compiles to a lower arity
+that does, and every call through it waits forever. The site's timeout
+read as unknown and was never reported. `unbounded_wait`'s `detail` is
+`caller` for such a row, and `blocking.rpc_infinity_caller(func, site,
+caller)` gives each caller as a related frame ("passes :infinity as
+the timeout"). Only a literal `:infinity` at the call is followed, not
+one forwarded through a further wrapper's parameter.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile

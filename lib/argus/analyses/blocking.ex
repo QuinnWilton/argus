@@ -169,12 +169,26 @@ defmodule Argus.Analyses.Blocking do
           {:site, :symbol, "instruction ID of the call, empty for infinity and rpc_in_callback"},
           {:kind, :symbol, "infinity | rpc | rpc_in_callback | global"},
           {:api, :symbol, "the call target, rpc variant, or :global operation"},
-          {:detail, :symbol, "for global, the resolved retries"},
+          {:detail, :symbol,
+           "for global, the resolved retries; for rpc, 'caller' when the timeout is a " <>
+             "parameter a caller passes as :infinity (rpc_infinity_caller)"},
           {:nodes, :symbol,
            "for global, the nodes the lock waits on: cluster | local | unknown; else empty"}
         ],
         key: [:func, :kind, :api, :detail, :nodes],
         doc: "A wait with no deadline: an :infinity hop, an rpc, a cluster-wide lock."
+      },
+      %{
+        name: :rpc_infinity_caller,
+        fields: [
+          {:func, :symbol, "the function making the rpc"},
+          {:site, :symbol, "the rpc call instruction"},
+          {:caller, :symbol, "a function that passes :infinity as its timeout parameter"}
+        ],
+        key: [:func, :site, :caller],
+        evidence: %{of: :unbounded_wait, on: [:func, :site]},
+        doc:
+          "The callers that pass :infinity to an rpc's timeout parameter, attached to its finding."
       },
       %{
         name: :partial_noproc_catch,
@@ -387,6 +401,21 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
+  def finding(:unbounded_wait, [func, site, "rpc", variant, "caller", _]) do
+    Findings.new(
+      :warning,
+      "RPC without a bounded timeout",
+      "#{func} calls #{Findings.rpc_api(variant)} with the timeout it takes as a " <>
+        "parameter, and a caller passes `:infinity` there (a default argument, " <>
+        "`timeout \\\\ :infinity`, does this). Through that caller, a peer that " <>
+        "stays connected but never answers holds this process forever. A node " <>
+        "that goes away is noticed only after net_ticktime, about a minute by default.",
+      at: Findings.at_instr(site),
+      at_label: "a caller passes :infinity as this timeout",
+      help: [rpc_timeout_help(variant) <> ", and give the parameter a finite default"]
+    )
+  end
+
   def finding(:unbounded_wait, [func, site, "rpc", variant, _, _]) do
     Findings.new(
       :warning,
@@ -496,6 +525,10 @@ defmodule Argus.Analyses.Blocking do
 
   def evidence(:bottleneck_caller, [caller_mod, _target_mod, witness]) do
     Findings.related("caller #{caller_mod}", Findings.at_func(witness))
+  end
+
+  def evidence(:rpc_infinity_caller, [_func, _site, caller]) do
+    Findings.related("passes :infinity as the timeout", Findings.at_func(caller))
   end
 
   defp where("direct", callback), do: "and #{callback} is that callback"

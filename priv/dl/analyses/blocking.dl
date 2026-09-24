@@ -497,7 +497,15 @@ receive_in_callback(id, func, callback, behaviour, proximity, "true") :-
 // An rpc or a :global op init/1 reaches is startup's finding
 // (blocks_on_peer, "remote" and "global"): the same site, with the
 // supervisor's start held on it, reported there once.
-unbounded_wait(func, call, "rpc", variant, "", "") :- rpc_without_timeout(func, call, variant).
+// `detail` is "caller" when the timeout is a parameter a caller passes
+// as :infinity (rpc_infinity_caller names them), empty otherwise.
+unbounded_wait(func, call, "rpc", variant, "", "") :-
+  rpc_without_timeout(func, call, variant),
+  rpc_call(call, _, _, "-1").
+
+unbounded_wait(func, call, "rpc", variant, "caller", "") :-
+  rpc_without_timeout(func, call, variant),
+  rpc_infinity_caller(func, call, _).
 
 .decl rpc_without_timeout(func: symbol, call: symbol, variant: symbol)
 
@@ -512,10 +520,28 @@ rpc_without_timeout(func, call, variant) :-
 
 makes_rpc(f, call, variant) :- rpc_call(call, f, variant, _).
 
-// The variants whose arity leaves the timeout out wait for :infinity.
+// The variants whose arity leaves the timeout out wait for :infinity,
+// as does an explicit :infinity; so does a timeout the function takes
+// as a parameter that a caller passes as :infinity.
 .decl no_timeout(call: symbol) inline
 
 no_timeout(call) :- rpc_call(call, _, _, "-1").
+no_timeout(call) :- rpc_infinity_caller(_, call, _).
+
+// A wrapper's `timeout \\ :infinity` compiles to remote/4 calling
+// remote/5 with :infinity, and the rpc in remote/5 reads its timeout
+// from the parameter: unknown at the site ("0"), infinity for every call
+// through remote/4. `caller` is the function that passes it. Only a
+// literal :infinity at the call is followed, not one forwarded through
+// a further parameter: call_arg_forward stops at the fourth argument,
+// where a timeout is seldom.
+.decl rpc_infinity_caller(func: symbol, call: symbol, caller: symbol)
+.output rpc_infinity_caller
+
+rpc_infinity_caller(func, call, caller) :-
+  rpc_call(call, func, _, "0"),
+  rpc_timeout_param(call, p),
+  infinity_arg(caller, func, p).
 
 // A remote function that answers without waiting on anything: a BIF,
 // an ETS or persistent_term read, a clock. On a connected peer it

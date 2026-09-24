@@ -129,6 +129,31 @@ defmodule Argus.Analyses.BlockingRpcTest do
     end
   end
 
+  describe "unbounded_wait: a timeout taken as a parameter" do
+    test "is flagged when a caller passes :infinity, with that caller as a frame" do
+      skip_without_souffle()
+
+      modules = [Argus.Test.Fixtures.RpcTimeoutParam]
+      results = analyze(modules)
+
+      assert [["Argus.Test.Fixtures.RpcTimeoutParam:remote/5", "caller", ""]] =
+               Rows.where(results, :blocking, "unbounded_wait",
+                 kind: "rpc",
+                 drop: [:kind, :site, :api]
+               )
+
+      assert [["Argus.Test.Fixtures.RpcTimeoutParam:remote/5", _site, caller]] =
+               results["rpc_infinity_caller"]
+
+      assert caller == "Argus.Test.Fixtures.RpcTimeoutParam:remote/4"
+
+      {:ok, findings} = Argus.Findings.run(modules, analyses: [:blocking])
+      [finding] = Enum.filter(findings.findings, &(&1.title == "RPC without a bounded timeout"))
+      assert finding.detail =~ "a caller passes `:infinity` there"
+      assert [%{label: "passes :infinity as the timeout"}] = finding.related
+    end
+  end
+
   describe "unbounded_wait: rpc to a function that answers at once" do
     test "is not flagged; the same call to one that can wait is" do
       skip_without_souffle()

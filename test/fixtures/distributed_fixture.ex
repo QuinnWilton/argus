@@ -268,3 +268,18 @@ defmodule Argus.Test.Fixtures.RpcCollectors do
   def poll(key), do: :rpc.nb_yield(key)
   def await_bounded(req), do: :erpc.receive_response(req, 5000)
 end
+
+defmodule Argus.Test.Fixtures.RpcTimeoutParam do
+  @moduledoc false
+
+  # remote/4 calls remote/5 with :infinity: every call through it waits
+  # forever. Flagged, with remote/4 as the caller.
+  def remote(node, mod, fun, args, timeout \\ :infinity),
+    do: :rpc.call(node, mod, fun, args, timeout)
+
+  # Every caller passes a bound: quiet.
+  def bounded(node, mod, fun, args, timeout \\ 5000),
+    do: :rpc.call(node, mod, fun, args, timeout)
+
+  def lookup(node, key), do: bounded(node, :peer_directory, :lookup, [key], 1000)
+end
