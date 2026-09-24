@@ -10,6 +10,17 @@ What 0.20.0 will ship; the release dates this heading and drops the
 `-dev` from `mix.exs`. Grouped by concern. Each entry opens with what it
 does: **Added**, **Changed**, **Fixed** or **Removed**.
 
+### A monitor the caller collects
+
+**Added.** Schema 87. `awaits_down_after(func, call)` (Monitor
+extractor): every path in `func` from the call at `call` to its return
+waits for a :DOWN — a receive with no `after` whose `{:DOWN, …}`
+clause takes any monitor's (the ref not compared) or the one whose ref
+the call returned, a `Process.demonitor(ref, [:flush])` of that ref, or
+a call to a function of the module that holds such a receive or calls
+one. A path that raises is not asked; a wait in a closure or in another
+module is not seen. Read by `mailbox`.
+
 ### A run redoes only what an edit invalidates
 
 **Added.** `Argus.Pipeline.run_shards/3` extracts into a directory per

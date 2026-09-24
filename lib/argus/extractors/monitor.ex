@@ -36,6 +36,8 @@ defmodule Argus.Extractors.Monitor do
     :DOWN handler; unlike `callback_tag` this is emitted for every
     function, because a gen_statem funnels its :info events into private
     helpers that no callback name identifies
+  - `awaits_down_after(func, call)` — every path in `func` from the call
+    at `call` to its return waits for a `:DOWN` (below)
 
   Whether the ref is dropped is read from the instructions after the
   call, along every path: the ref arrives in `{x, 0}`, and it is dropped
@@ -45,6 +47,24 @@ defmodule Argus.Extractors.Monitor do
   declaring no live registers. A read on any path, a return, and anything
   the scan does not understand count as kept, which is the direction
   that keeps the fact honest.
+
+  ## A monitor the caller collects
+
+  A function may take a monitor and return with it live on purpose: its
+  caller goes on to wait for the `:DOWN`. OTP's old supervisor shutdown,
+  copied into GenStage's ConsumerSupervisor and Horde's
+  ProcessesSupervisor, monitors each child in `monitor_child/1`, looks
+  once (`after 0`) for an `{:EXIT, ...}` already in the mailbox, and
+  returns; its caller then blocks in `wait_children` until every child's
+  `{:DOWN, ...}` has come. `awaits_down_after(func, call)` names the
+  calls such a wait follows on every path to `func`'s return: a receive
+  with no `after` whose `{:DOWN, ...}` clause takes any monitor's (the
+  ref is not compared), or the one whose ref the call returned; a
+  `Process.demonitor(ref, [:flush])` of that ref; or a call to a function
+  of this module that holds such a receive, or calls one that does. A
+  path that raises is not asked: the wait was for a caller that is
+  unwinding. A receive in a closure, and a wait in another module, are
+  not seen, and leave the call without a row.
   """
 
   @behaviour Argus.Extractor
@@ -54,7 +74,16 @@ defmodule Argus.Extractors.Monitor do
   alias Argus.Instr
   alias Argus.InstrId
 
-  import Argus.Extractor.Helpers, only: [cfg: 2, each_remote_call: 3, register: 1]
+  import Argus.Extractor.Helpers,
+    only: [
+      cfg: 2,
+      cfg: 3,
+      each_remote_call: 3,
+      match_local_call: 1,
+      match_remote_call: 1,
+      register: 1
+    ]
+
   import Argus.Extractor.Facts, only: [add_fact: 3]
   import Argus.Extractor.Resolve, only: [resolve_atom: 3]
   import Argus.Extractor.Terms, only: [list_elements: 1]
@@ -62,6 +91,7 @@ defmodule Argus.Extractors.Monitor do
   @impl true
   def relations,
     do: [
+      :awaits_down_after,
       :demonitor_call,
       :matches_down,
       :monitor_call,
@@ -73,6 +103,7 @@ defmodule Argus.Extractors.Monitor do
     module_data
     |> each_remote_call(%{}, &handle(&1, &2, &3, module_data))
     |> emit_matches_down(mod, functions)
+    |> emit_awaits_down_after(module_data)
   end
 
   defp emit_matches_down(facts, mod, functions) do
@@ -355,4 +386,369 @@ defmodule Argus.Extractors.Monitor do
         false
     end)
   end
+
+  # ── A monitor the caller collects ────────────────────────────────────
+
+  # A function that waits for any :DOWN (a receive for any monitor's, a
+  # call to a collector) is walked from every call it makes; one whose
+  # only waits are for a particular ref (a pinned receive, a flushing
+  # demonitor) from the calls that ref comes from; the rest (nearly all)
+  # cost one scan for their receives.
+  defp emit_awaits_down_after(facts, %{module: mod, functions: functions} = module_data) do
+    receives =
+      Map.new(functions, fn {:function, name, arity, _entry, instrs} ->
+        {{name, arity}, down_receives(instrs)}
+      end)
+
+    collectors = collectors(mod, functions, receives)
+
+    Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
+      ctx = %{
+        mod: mod,
+        instrs: instrs,
+        receives: Map.fetch!(receives, {name, arity}),
+        collectors: collectors
+      }
+
+      with [_ | _] = calls <- calls_to_walk(ctx),
+           %Argus.Cfg.Function{} = fun <- cfg(module_data, name, arity) do
+        func_id = InstrId.func_id(mod, name, arity)
+
+        for call <- calls, collected_after?(fun, ctx, call), reduce: acc do
+          acc -> add_fact(acc, :awaits_down_after, [func_id, InstrId.mint(func_id, call)])
+        end
+      else
+        _ -> acc
+      end
+    end)
+  end
+
+  # The calls a wait in the function could follow, by instruction index.
+  defp calls_to_walk(ctx) do
+    indexed = Enum.with_index(ctx.instrs)
+
+    waits_for_any? =
+      Enum.any?(ctx.receives, fn {_idx, clauses} -> :any in clauses end) or
+        Enum.any?(ctx.instrs, &collector_call?(&1, ctx))
+
+    if waits_for_any? do
+      for {instr, idx} <- indexed, Instr.call?(instr), do: idx
+    else
+      pinned =
+        for {_idx, clauses} <- ctx.receives,
+            {:pinned, at, reg} <- clauses,
+            do: origin_call(ctx.instrs, at, reg)
+
+      flushed =
+        for {instr, idx} <- indexed,
+            demonitor?(instr),
+            flush_option(ctx.instrs, idx) == "flush",
+            do: origin_call(ctx.instrs, idx, {:x, 0})
+
+      (pinned ++ flushed) |> Enum.reject(&is_nil/1) |> Enum.uniq() |> Enum.sort()
+    end
+  end
+
+  # The call whose result `reg` holds at `at`, directly or as an element
+  # of it, on every path; nil when none or several.
+  defp origin_call(instrs, at, reg) do
+    Resolve.trace(instrs, at, register(reg), nil, fn
+      {:param, _position}, _follow ->
+        nil
+
+      {writer, {:get_tuple_element, src, _index, _dst}}, follow ->
+        follow.(writer, src)
+
+      {writer, instr}, _follow ->
+        if Instr.call?(instr), do: writer
+    end)
+  end
+
+  # Every path from the call at `call` to the function's return passes a
+  # wait for a :DOWN. A path that raises ends without returning, and one
+  # that loops forever never returns either; neither is a return that
+  # leaves the monitor behind.
+  defp collected_after?(fun, ctx, call) do
+    result =
+      Walk.explore(fun, ctx.instrs, [call + 1],
+        on_instr: fn instr, idx ->
+          cond do
+            waits_for_down?(instr, idx, call, ctx) -> :prune
+            Instr.exits?(instr) and not raises?(instr) -> {:halt, :returns}
+            true -> :continue
+          end
+        end
+      )
+
+    match?({:done, _}, result)
+  end
+
+  defp waits_for_down?({:loop_rec, _fail, _dst}, idx, call, ctx) do
+    ctx.receives
+    |> Map.get(idx, [])
+    |> Enum.any?(fn
+      :any -> true
+      {:pinned, at, reg} -> origin_call(ctx.instrs, at, reg) == call
+      :other -> false
+    end)
+  end
+
+  defp waits_for_down?(instr, idx, call, ctx) do
+    collector_call?(instr, ctx) or
+      (demonitor?(instr) and flush_option(ctx.instrs, idx) == "flush" and
+         origin_call(ctx.instrs, idx, {:x, 0}) == call)
+  end
+
+  defp collector_call?(instr, ctx) do
+    case match_local_call(instr) do
+      {:ok, mod, name, arity} -> mod == ctx.mod and MapSet.member?(ctx.collectors, {name, arity})
+      :none -> false
+    end
+  end
+
+  defp demonitor?(instr) do
+    case match_remote_call(instr) do
+      {:ok, mod, :demonitor, 2} -> mod in [:erlang, Process]
+      _ -> false
+    end
+  end
+
+  # A tail call that never returns: the path raises.
+  @raising [:error, :exit, :throw, :raise, :nif_error]
+  defp raises?(instr) do
+    case match_remote_call(instr) do
+      {:ok, :erlang, name, _arity} -> name in @raising
+      _ -> false
+    end
+  end
+
+  # The functions of the module that wait for any monitor's :DOWN in a
+  # receive with no `after`, and those that call one, to a fixpoint.
+  defp collectors(mod, functions, receives) do
+    calls =
+      Map.new(functions, fn {:function, name, arity, _entry, instrs} ->
+        callees =
+          for instr <- instrs,
+              {:ok, ^mod, callee, callee_arity} <- [match_local_call(instr)],
+              uniq: true,
+              do: {callee, callee_arity}
+
+        {{name, arity}, callees}
+      end)
+
+    waiting =
+      for {key, receives} <- receives,
+          Enum.any?(receives, fn {_idx, clauses} -> :any in clauses end),
+          into: MapSet.new(),
+          do: key
+
+    close_collectors(waiting, calls)
+  end
+
+  defp close_collectors(set, calls) do
+    grown =
+      for {key, callees} <- calls,
+          not MapSet.member?(set, key),
+          Enum.any?(callees, &MapSet.member?(set, &1)),
+          into: set,
+          do: key
+
+    if MapSet.size(grown) == MapSet.size(set), do: set, else: close_collectors(grown, calls)
+  end
+
+  # The receives with no `after`, by loop_rec index, each with its
+  # {:DOWN, ...} clauses: `:any` when a clause does not compare the ref,
+  # `{:pinned, at, reg}` when it compares it with `reg` at `at`, `:other`
+  # when it compares it with anything else. A receive with an `after`
+  # can end without the message, and is no wait.
+  defp down_receives(instrs) do
+    tuple = List.to_tuple(instrs)
+    labels = for {{:label, l}, idx} <- Enum.with_index(instrs), into: %{}, do: {l, idx}
+
+    for {{:loop_rec, {:f, fail}, _dst}, idx} <- Enum.with_index(instrs),
+        blocking?(tuple, Map.get(labels, fail)),
+        into: %{},
+        do: {idx, down_clauses(tuple, idx, labels)}
+  end
+
+  # The empty-mailbox block of a receive with no `after` is a `wait`;
+  # with one it is a `wait_timeout`, or `timeout` for `after 0`.
+  defp blocking?(_tuple, nil), do: false
+
+  defp blocking?(tuple, idx) when idx < tuple_size(tuple) do
+    case elem(tuple, idx) do
+      {:label, _} -> blocking?(tuple, idx + 1)
+      {:line, _} -> blocking?(tuple, idx + 1)
+      {:wait, _} -> true
+      _ -> false
+    end
+  end
+
+  defp blocking?(_tuple, _idx), do: false
+
+  # Walks the clause heads of the receive at `idx` — each test's pass
+  # edge falls through, its fail edge is the next clause — carrying the
+  # registers that hold the message, its first element and its second,
+  # and what the path has established of them. A path reaching
+  # `remove_message` has matched a clause.
+  defp down_clauses(tuple, idx, labels) do
+    start = %{idx: idx + 1, msg: [{:x, 0}], tags: [], refs: [], tag: nil, ref: :any}
+    walk_heads([start], tuple, labels, %{}, [])
+  end
+
+  defp walk_heads([], _tuple, _labels, _seen, acc), do: acc |> Enum.uniq() |> Enum.sort()
+
+  defp walk_heads([state | rest], tuple, labels, seen, acc) do
+    if state.idx >= tuple_size(tuple) or Map.has_key?(seen, state) do
+      walk_heads(rest, tuple, labels, seen, acc)
+    else
+      seen = Map.put(seen, state, true)
+
+      case head(elem(tuple, state.idx), state, labels) do
+        {:matched, %{tag: :DOWN, ref: ref}} -> walk_heads(rest, tuple, labels, seen, [ref | acc])
+        {:matched, _other} -> walk_heads(rest, tuple, labels, seen, acc)
+        next -> walk_heads(next ++ rest, tuple, labels, seen, acc)
+      end
+    end
+  end
+
+  defp head(:remove_message, state, _labels), do: {:matched, state}
+  defp head({:loop_rec_end, _}, _state, _labels), do: []
+  defp head({:loop_rec, _, _}, _state, _labels), do: []
+  defp head({:wait, _}, _state, _labels), do: []
+  defp head({:wait_timeout, _, _}, _state, _labels), do: []
+  defp head(:timeout, _state, _labels), do: []
+
+  defp head(
+         {:test, :is_tagged_tuple, {:f, fail}, [src, _size, {:atom, tag}]} = instr,
+         state,
+         labels
+       ) do
+    if held?(src, state.msg),
+      do: pass(narrow(state, tag)) ++ goto(state, fail, labels),
+      else: generic_head(instr, state, labels)
+  end
+
+  defp head({:test, :is_eq_exact, {:f, fail}, [a, b]} = instr, state, labels) do
+    cond do
+      tag = compared_atom(state.tags, a, b) ->
+        pass(narrow(state, tag)) ++ goto(state, fail, labels)
+
+      other = compared_with(state.refs, a, b) ->
+        pass(%{state | ref: pinned(state.idx, other)}) ++ goto(state, fail, labels)
+
+      true ->
+        generic_head(instr, state, labels)
+    end
+  end
+
+  defp head({:select_val, src, {:f, fail}, {:list, pairs}} = instr, state, labels) do
+    cond do
+      held?(src, state.tags) ->
+        arms =
+          pairs
+          |> Enum.chunk_every(2)
+          |> Enum.flat_map(fn
+            [{:atom, tag}, {:f, l}] -> goto(narrow(state, tag), l, labels)
+            [_value, {:f, l}] -> goto(state, l, labels)
+            _malformed -> []
+          end)
+
+        arms ++ goto(state, fail, labels)
+
+      held?(src, state.refs) ->
+        generic_head(instr, %{state | ref: :other}, labels)
+
+      true ->
+        generic_head(instr, state, labels)
+    end
+  end
+
+  defp head({:get_tuple_element, src, index, dst} = instr, state, _labels) do
+    next = carry(state, instr)
+
+    next =
+      cond do
+        not held?(src, state.msg) -> next
+        index == 0 -> %{next | tags: Enum.sort([register(dst) | next.tags])}
+        index == 1 -> %{next | refs: Enum.sort([register(dst) | next.refs])}
+        true -> next
+      end
+
+    [%{next | idx: state.idx + 1}]
+  end
+
+  defp head(instr, state, labels), do: generic_head(instr, state, labels)
+
+  # Any other instruction: both edges, with the tracked registers carried.
+  # A comparison this does not read that involves the ref constrains it
+  # (`:other`); a type test (`is_reference`) does not.
+  defp generic_head(instr, state, labels) do
+    state = if compares_ref?(instr, state.refs), do: %{state | ref: :other}, else: state
+    next = carry(state, instr)
+    fall = if Instr.falls_through?(instr), do: [%{next | idx: state.idx + 1}], else: []
+    fall ++ Enum.flat_map(Instr.targets(instr), &goto(next, &1, labels))
+  end
+
+  @comparisons [:is_eq_exact, :is_ne_exact, :is_eq, :is_ne, :is_lt, :is_ge]
+
+  defp compares_ref?({:test, op, _fail, args}, refs) when op in @comparisons and is_list(args),
+    do: Enum.any?(args, &held?(&1, refs))
+
+  defp compares_ref?(_instr, _refs), do: false
+
+  defp pass(nil), do: []
+  defp pass(state), do: [%{state | idx: state.idx + 1}]
+
+  defp goto(nil, _label, _labels), do: []
+
+  defp goto(state, label, labels) do
+    case Map.fetch(labels, label) do
+      {:ok, idx} -> [%{state | idx: idx}]
+      :error -> []
+    end
+  end
+
+  # The state once the message's tag is `tag`, or nil when the path
+  # already established another: that edge cannot be taken.
+  defp narrow(%{tag: nil} = state, tag), do: %{state | tag: tag}
+  defp narrow(%{tag: tag} = state, tag), do: state
+  defp narrow(_state, _tag), do: nil
+
+  defp compared_atom(tags, a, b) do
+    cond do
+      held?(a, tags) -> atom_of(b)
+      held?(b, tags) -> atom_of(a)
+      true -> nil
+    end
+  end
+
+  defp atom_of({:atom, atom}), do: atom
+  defp atom_of(_operand), do: nil
+
+  defp compared_with(refs, a, b) do
+    cond do
+      held?(a, refs) -> b
+      held?(b, refs) -> a
+      true -> nil
+    end
+  end
+
+  defp pinned(at, operand) do
+    case register(operand) do
+      {kind, _} = reg when kind in [:x, :y] -> {:pinned, at, reg}
+      _literal -> :other
+    end
+  end
+
+  defp carry(state, instr) do
+    %{
+      state
+      | msg: instr |> Instr.carry(state.msg) |> Enum.sort(),
+        tags: instr |> Instr.carry(state.tags) |> Enum.sort(),
+        refs: instr |> Instr.carry(state.refs) |> Enum.sort()
+    }
+  end
+
+  defp held?(operand, regs), do: register(operand) in regs
 end

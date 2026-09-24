@@ -65,6 +65,26 @@ defmodule Argus.Schema.Monitors do
         `no_flush`, the direction that keeps a finding rather than discharging \
         one on a guess.
         """
+      },
+      %{
+        name: :awaits_down_after,
+        layer: 2,
+        fields: [
+          {:func, :symbol, "the calling function"},
+          {:call, :symbol, "a call in it that returns"}
+        ],
+        doc: """
+        Every path in `func` from the call at `call` to its return waits for \
+        a :DOWN: a receive with no `after` whose `{:DOWN, ...}` clause takes \
+        any monitor's, or the one whose ref the call returned; a \
+        `Process.demonitor(ref, [:flush])` of that ref; or a call to a \
+        function of the module that holds such a receive or calls one. A \
+        monitor the callee left live is the caller's to collect: OTP's old \
+        supervisor shutdown monitors each child, looks once (`after 0`) for \
+        an exit already queued, and returns, and its caller then waits for \
+        every child's :DOWN. A path that raises is not asked; a wait in a \
+        closure or another module is not seen.
+        """
       }
     ]
   end

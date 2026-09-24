@@ -26,6 +26,50 @@ defmodule Argus.Extractors.MonitorTest do
     end
   end
 
+  describe "awaits_down_after" do
+    # The functions each row's call calls, by name, for the rows in `func`.
+    defp awaited_calls(mod, func) do
+      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
+
+      instrs =
+        Enum.find_value(data.functions, fn
+          {:function, ^func, _arity, _entry, instrs} -> instrs
+          _ -> nil
+        end)
+
+      for [_func, id] <- Map.get(Monitor.extract(data), :awaits_down_after, []),
+          {:ok, %Argus.InstrId{func: name, idx: idx}} = Argus.InstrId.parse(id),
+          name == Atom.to_string(func) do
+        case Enum.at(instrs, idx) do
+          {:call, _, {_mod, callee, _arity}} -> callee
+          {:call_ext, _, {:extfunc, _mod, callee, _arity}} -> callee
+        end
+      end
+      |> Enum.sort()
+    end
+
+    test "the call that monitors every child is followed by the wait for every :DOWN" do
+      assert :monitor_children in awaited_calls(M.CollectedByCaller, :terminate_children)
+    end
+
+    test "a caller that never waits has no rows" do
+      assert awaited_calls(M.ReturnsLive, :unlink_all) == []
+    end
+
+    test "a wait on one branch does not follow the call" do
+      refute :filter in awaited_calls(M.WaitsOnOnePath, :stop_children)
+    end
+
+    test "a wait pinned to the ref the call returned follows it" do
+      assert awaited_calls(M.CollectedByRef, :stop) == [:monitor_and_signal]
+      assert awaited_calls(M.FlushedByCaller, :ping) == [:monitor_and_signal]
+    end
+
+    test "a wait pinned to another ref does not" do
+      refute :monitor_and_signal in awaited_calls(M.WaitsForAnotherRef, :stop)
+    end
+  end
+
   describe "read through Argus.Instr" do
     alias Argus.Test.Fixtures.Instr, as: Fixture
 

@@ -143,6 +143,197 @@ defmodule Argus.Test.Fixtures.MonitorLeak do
     end
   end
 
+  defmodule CollectedByCaller do
+    @moduledoc """
+    GenStage's ConsumerSupervisor shutdown, after OTP's old supervisor:
+    `monitor_child/1` monitors, looks once (`after 0`) for an exit already
+    queued, and returns with the monitor live; its caller then waits for
+    every child's :DOWN.
+    """
+    def terminate_children(pids) do
+      monitored = monitor_children(pids)
+      Enum.each(Map.keys(monitored), &Process.exit(&1, :shutdown))
+      wait_children(monitored, map_size(monitored))
+    end
+
+    defp monitor_children(pids) do
+      Enum.reduce(pids, %{}, fn pid, acc ->
+        case monitor_child(pid) do
+          :ok -> Map.put(acc, pid, true)
+          {:error, _reason} -> acc
+        end
+      end)
+    end
+
+    defp monitor_child(pid) do
+      ref = Process.monitor(pid)
+      Process.unlink(pid)
+
+      receive do
+        {:EXIT, ^pid, reason} ->
+          receive do
+            {:DOWN, ^ref, :process, ^pid, _} -> {:error, reason}
+          end
+      after
+        0 -> :ok
+      end
+    end
+
+    defp wait_children(_pids, 0), do: :ok
+
+    defp wait_children(pids, size) do
+      receive do
+        {:DOWN, _ref, :process, pid, _reason} -> wait_children(Map.delete(pids, pid), size - 1)
+      end
+    end
+  end
+
+  defmodule ReturnsLive do
+    @moduledoc "The same monitor_child/1, whose caller never waits: the monitors outlive the look."
+    def unlink_all(pids), do: Enum.filter(pids, &(monitor_child(&1) == :ok))
+
+    defp monitor_child(pid) do
+      ref = Process.monitor(pid)
+      Process.unlink(pid)
+
+      receive do
+        {:EXIT, ^pid, reason} ->
+          receive do
+            {:DOWN, ^ref, :process, ^pid, _} -> {:error, reason}
+          end
+      after
+        0 -> :ok
+      end
+    end
+  end
+
+  defmodule WaitsOnOnePath do
+    @moduledoc "The caller waits only when asked to: on the other path the monitors stay live."
+    def stop_children(pids, wait?) do
+      monitored = Enum.filter(pids, &(monitor_child(&1) == :ok))
+
+      if wait? do
+        Enum.each(monitored, &Process.exit(&1, :shutdown))
+        wait_children(length(monitored))
+      else
+        :ok
+      end
+    end
+
+    defp monitor_child(pid) do
+      Process.monitor(pid)
+
+      receive do
+        {:EXIT, ^pid, _reason} -> :exited
+      after
+        0 -> :ok
+      end
+    end
+
+    defp wait_children(0), do: :ok
+
+    defp wait_children(n) do
+      receive do
+        {:DOWN, _ref, :process, _pid, _reason} -> wait_children(n - 1)
+      end
+    end
+  end
+
+  defmodule CollectedOnOneCaller do
+    @moduledoc "One caller waits for the :DOWN, another does not: the second leaves it live."
+    def stop(pid) do
+      :ok = monitor_child(pid)
+      Process.exit(pid, :shutdown)
+
+      receive do
+        {:DOWN, _ref, :process, ^pid, _reason} -> :ok
+      end
+    end
+
+    def check(pid), do: monitor_child(pid)
+
+    defp monitor_child(pid) do
+      Process.monitor(pid)
+
+      receive do
+        {:EXIT, ^pid, _reason} -> :exited
+      after
+        0 -> :ok
+      end
+    end
+  end
+
+  defmodule CollectedByRef do
+    @moduledoc "The ref goes back to the caller, whose wait pins it."
+    def stop(pid) do
+      ref = monitor_and_signal(pid)
+
+      receive do
+        {:DOWN, ^ref, :process, _, reason} -> reason
+      end
+    end
+
+    defp monitor_and_signal(pid) do
+      ref = Process.monitor(pid)
+      send(pid, :stop)
+
+      receive do
+        {:stopping, ^pid} -> :ok
+      after
+        0 -> :ok
+      end
+
+      ref
+    end
+  end
+
+  defmodule FlushedByCaller do
+    @moduledoc "The ref goes back to the caller, which demonitors it with :flush."
+    def ping(pid) do
+      ref = monitor_and_signal(pid)
+      Process.demonitor(ref, [:flush])
+      :ok
+    end
+
+    defp monitor_and_signal(pid) do
+      ref = Process.monitor(pid)
+      send(pid, :ping)
+
+      receive do
+        {:pong, ^pid} -> :ok
+      after
+        0 -> :ok
+      end
+
+      ref
+    end
+  end
+
+  defmodule WaitsForAnotherRef do
+    @moduledoc "The caller waits for the :DOWN of a monitor of its own, not the one it was handed."
+    def stop(pid, other) do
+      _ref = monitor_and_signal(pid)
+      ref = Process.monitor(other)
+
+      receive do
+        {:DOWN, ^ref, :process, _, reason} -> reason
+      end
+    end
+
+    defp monitor_and_signal(pid) do
+      ref = Process.monitor(pid)
+      send(pid, :stop)
+
+      receive do
+        {:stopping, ^pid} -> :ok
+      after
+        0 -> :ok
+      end
+
+      ref
+    end
+  end
+
   defmodule NeverReleases do
     @moduledoc """
     The Postgrex.Parameters shape: monitors on insert, deletes the entry on
