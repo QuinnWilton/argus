@@ -27,7 +27,9 @@ defmodule Argus.Analyses.Blocking do
     related frames.
   - `receive_in_callback(id, func, callback, behaviour, proximity,
     bounded)` — a `receive` on an OTP process's own stack, `bounded`
-    false when it has no `after` and can hang.
+    false when it has no `after` and can hang, true when it has one, down
+    when it has none but takes the `:DOWN` of a monitor its function
+    took, and so ends no later than the monitored process.
   - `unbounded_wait(func, site, kind, api, detail, nodes)` — a wait with
     no deadline: `infinity` on a hop that itself serves synchronous
     callers, an `rpc` with the default infinity timeout, an
@@ -68,6 +70,9 @@ defmodule Argus.Analyses.Blocking do
       # call_arg and call_arg_forward: a target forwarded through a wrapper.
       Argus.Extractors.CallArgs,
       Argus.Extractors.ErrorHandling,
+      # A receive that takes the :DOWN of a monitor its function took ends
+      # no later than the monitored process (recv_down).
+      Argus.Extractors.Monitor,
       # A call whose target is a pid resolves through process points-to
       # (clientlib/processes.dl, in the points-to stage): where the pid was
       # started, and names.
@@ -160,7 +165,9 @@ defmodule Argus.Analyses.Blocking do
           {:callback, :symbol, "the OTP callback it runs under"},
           {:behaviour, :symbol, "the behaviour that owns the process loop"},
           {:proximity, :symbol, "direct (in the callback) | helper (one call away)"},
-          {:bounded, :symbol, "false when the receive has no after clause"}
+          {:bounded, :symbol,
+           "false when the receive has no after clause, true when it has one, " <>
+             "down when it has none but takes the :DOWN of a monitor its function took"}
         ],
         key: [:id],
         doc: "A receive on an OTP process's own stack, with or without a timeout."
@@ -401,6 +408,25 @@ defmodule Argus.Analyses.Blocking do
       to_block: :receive,
       at_label: "receive on the callback's own stack",
       help: ["take the message in handle_info/2 instead of a receive inside the callback"]
+    )
+  end
+
+  def finding(:receive_in_callback, [id, func, callback, behaviour, proximity, "down"]) do
+    Findings.new(
+      :warning,
+      "receive inside a #{behaviour} callback",
+      "#{func} runs a `receive` with no `after`, #{where(proximity, callback)}, " <>
+        "and it takes the :DOWN of the process it monitored: the runtime sends " <>
+        "that once the process exits, or at once if it was already gone, so the " <>
+        "wait cannot outlast it. Until then it holds the #{behaviour} process on " <>
+        "its own stack, and :sys calls and queued requests wait behind it.",
+      at: Findings.at_instr(id),
+      to_block: :receive,
+      at_label: "waits for the monitored process to exit",
+      help: [
+        "if that process may linger, give the wait an `after` that kills it " <>
+          "and waits for the :DOWN again, as Task.shutdown/2 does"
+      ]
     )
   end
 

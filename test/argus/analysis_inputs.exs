@@ -3,7 +3,7 @@
 # change in the unit of incremental work: review the diff.
 [
   blocking:
-    ~w(async_cast call_arg call_arg_forward call_edge call_site call_site_target call_tag callback_tag catch_tag catch_total clause_call dynamic_call fun_handed_to fun_ref function_def global_op handle_continue_clause implements_behaviour infinity_arg init_continues_to named_pid named_process process_call process_start recv_pattern recv_start remote_call rpc_call rpc_target rpc_timeout_param self_call server_process statem_event_clause sync_call sync_call_site sync_call_timeout timer_arm try_call),
+    ~w(async_cast call_arg call_arg_forward call_edge call_site call_site_target call_tag callback_tag catch_tag catch_total clause_call dynamic_call fun_handed_to fun_ref function_def global_op handle_continue_clause implements_behaviour infinity_arg init_continues_to named_pid named_process process_call process_start recv_down recv_pattern recv_start remote_call rpc_call rpc_target rpc_timeout_param self_call server_process statem_event_clause sync_call sync_call_site sync_call_timeout timer_arm try_call),
   coupling:
     ~w(async_cast call_arg call_arg_forward call_edge call_site call_site_target call_tag callback_tag child_spec_restart dynamic_call dynamic_child fun_handed_to fun_ref function_def implements_behaviour matches_down monitor_call name_lookup named_pid pid_call pid_signal prior_talks_to_process private_process process_call process_link process_signal process_start server_process sup_call supervisor supervisor_child supervisor_child_name supervisor_site sync_call sync_call_site),
   coverage:

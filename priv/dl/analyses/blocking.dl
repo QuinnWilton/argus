@@ -32,7 +32,8 @@
 //   on: "cluster", "local" or "unknown"; empty for the other kinds).
 // `receive_in_callback(id, func, callback, behaviour, proximity, bounded)`
 //   — a receive on an OTP process's own stack, `bounded` "false" when
-//   it has no after clause and can hang.
+//   it has no after clause and can hang, "true" when it has one, "down"
+//   when it has none but takes the :DOWN of a monitor its function took.
 .decl call_chain(from: symbol, to: symbol, kind: symbol, depth: number, inferred: symbol, caller_ms: number, downstream_ms: number)
 .output call_chain
 
@@ -568,6 +569,23 @@ flush_receive(id) :-
 // and is reported there once.
 receive_in_callback(id, func, callback, behaviour, proximity, "false") :-
   recv_start(id, func, 1, _),
+  !recv_down(id, func, _),
+  callback_reaches(callback, func, proximity),
+  otp_callback(callback, _, _, behaviour),
+  !init_function(_, callback),
+  !flush_receive(id).
+
+// A receive with no `after` that takes the :DOWN of a monitor its own
+// function took (recv_down): the runtime delivers that :DOWN once the
+// monitored process exits, or at once if it was already gone, so the
+// wait ends no later than that process. Its other clauses can only end
+// it sooner. A terminate/2 that stops a process and waits for it to go
+// (Broadway's Topology and Terminator) cannot hang on it; what it holds
+// is the callback, for as long as that process lives. Reported as a
+// bounded receive, "down"; init/1's is startup's, as above.
+receive_in_callback(id, func, callback, behaviour, proximity, "down") :-
+  recv_start(id, func, 1, _),
+  recv_down(id, func, _),
   callback_reaches(callback, func, proximity),
   otp_callback(callback, _, _, behaviour),
   !init_function(_, callback),

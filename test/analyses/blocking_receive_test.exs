@@ -22,7 +22,14 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     CallbackReceive.TimerFlushAfterZero,
     CallbackReceive.CancelThenBoundedWait,
     CallbackReceive.CancelThenWait,
-    CallbackReceive.PlainProcess
+    CallbackReceive.PlainProcess,
+    CallbackReceive.AwaitsOwnDown,
+    CallbackReceive.AwaitsDoneOrDown,
+    CallbackReceive.AwaitsReplyOrDown,
+    CallbackReceive.KillsAfterGrace,
+    CallbackReceive.AwaitsAnotherDown,
+    CallbackReceive.AwaitsNormalDown,
+    CallbackReceive.DemonitorsThenAwaits
   ]
 
   setup_all do
@@ -47,6 +54,15 @@ defmodule Argus.Analyses.BlockingReceiveTest do
   end
 
   defp funcs(rows), do: Enum.map(rows, fn [_id, func, _cb, _beh, _prox] -> func end)
+
+  # The receives a :DOWN bounds, beside the blocking and timed ones.
+  defp run_down(source, modules) do
+    {blocking, bounded} = run(source, modules)
+    assert {:ok, results} = solve(source, modules)
+
+    {blocking, bounded,
+     Rows.where(results, :blocking, "receive_in_callback", bounded: "down", drop: [:bounded])}
+  end
 
   describe "detection" do
     test "a blocking receive in a callback is reported", ctx do
@@ -174,6 +190,73 @@ defmodule Argus.Analyses.BlockingReceiveTest do
 
       assert blocking == []
       assert bounded == []
+    end
+  end
+
+  describe "a receive for the :DOWN of a monitor its function took" do
+    # The runtime sends that :DOWN once the process exits, or at once if
+    # it was already gone: the wait cannot outlast the monitored process.
+    test "is bounded by the monitored process, not reported as blocking", ctx do
+      skip_without_souffle()
+
+      for {mod, callback} <- [
+            {CallbackReceive.AwaitsOwnDown, "terminate/2"},
+            {CallbackReceive.AwaitsDoneOrDown, "terminate/2"},
+            {CallbackReceive.AwaitsReplyOrDown, "handle_call/3"}
+          ] do
+        {blocking, bounded, down} = run_down(ctx, [mod])
+
+        assert blocking == [], "#{inspect(mod)} reported as a blocking receive"
+        assert bounded == []
+        assert [[_id, _func, cb, "GenServer", _proximity]] = down
+        assert cb =~ callback
+      end
+    end
+
+    test "a grace period, then a kill and a wait: one timed receive, one bounded by the :DOWN",
+         ctx do
+      skip_without_souffle()
+
+      {blocking, bounded, down} = run_down(ctx, [CallbackReceive.KillsAfterGrace])
+
+      assert blocking == []
+      assert [[timed, _, _, "GenServer", "direct"]] = bounded
+      assert [[waited, _, _, "GenServer", "direct"]] = down
+      assert timed != waited
+    end
+
+    test "a :DOWN for a ref taken elsewhere, a pinned reason, or a demonitor first still blocks",
+         ctx do
+      skip_without_souffle()
+
+      for mod <- [
+            CallbackReceive.AwaitsAnotherDown,
+            CallbackReceive.AwaitsNormalDown,
+            CallbackReceive.DemonitorsThenAwaits
+          ] do
+        {blocking, _bounded, down} = run_down(ctx, [mod])
+
+        assert [[_id, func, _cb, "GenServer", "direct"]] = blocking, inspect(mod)
+        assert func =~ "handle_call/3"
+        assert down == []
+      end
+    end
+
+    test "the finding says what bounds the wait, not that it has a timeout" do
+      attrs =
+        Argus.Analyses.Blocking.finding(:receive_in_callback, [
+          "M:terminate/2#9",
+          "M:terminate/2",
+          "M:terminate/2",
+          "GenServer",
+          "direct",
+          "down"
+        ])
+
+      assert attrs.severity == :warning
+      assert attrs.title == "receive inside a GenServer callback"
+      assert attrs.detail =~ "takes the :DOWN of the process it monitored"
+      refute attrs.detail =~ "has a timeout"
     end
   end
 

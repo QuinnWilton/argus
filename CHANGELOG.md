@@ -12,6 +12,19 @@ does: **Added**, **Changed**, **Fixed** or **Removed**.
 
 ### Waits that end on their own
 
+**Fixed.** `blocking.receive_in_callback` no longer reports a receive
+that waits for its own monitor's `:DOWN` as "Blocking receive inside a
+GenServer callback" (error). The runtime sends that `:DOWN` once the
+process exits, or at once if it was already gone, so the wait cannot
+outlast the monitored process. Such a receive (`recv_down`, below) is
+`bounded` "down" and reported as "receive inside a GenServer callback"
+(warning), whose detail says it holds the callback until that process
+exits and whose help is Task.shutdown/2's shape: an `after` that kills
+it and waits again. Broadway's `Topology.terminate/2` (stops its
+supervisor and waits for it to go) and `Topology.Terminator`'s
+terminate/2 (waits for each consumer's `{:done, pid}` or `:DOWN`) move
+from the error to the warning. `blocking` runs `Argus.Extractors.Monitor`.
+
 **Fixed.** `recv_start`'s `blocking` column read a timed receive as
 blocking when a receive without `after` followed it in the same
 function: the scan of the empty-mailbox block for `wait` or
