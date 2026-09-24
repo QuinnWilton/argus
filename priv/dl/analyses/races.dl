@@ -309,8 +309,11 @@ another_process_writes(name, f) :-
 // nothing in the program writes the table back from a read or counts in
 // it (`writes_back`):
 //
-// - a delete: deleting twice is deleting once (an invalidation, the
-//   cleanup of a row the read found stale);
+// - a delete decided only by whether the row is there: deleting twice
+//   is deleting once (an invalidation). A delete decided by what the row
+//   holds — its owner, its expiry — can delete the row another process
+//   put there in between (a lock's next owner), and is reported; a
+//   delete_object deletes only the object it names, and is not;
 // - a refill: a write whose value a call, or a read of another store
 //   (Mnesia behind an ETS cache), makes — the cache-aside `[] -> v =
 //   load(k); :ets.insert(t, {k, v})` — where both racers compute the
@@ -505,8 +508,13 @@ shared_write(s) :- name_release(s, _, _, _, _).
 
 harmless_race(f, r, w) :-
   reads_then_writes(f, r, w, name, _),
-  ets_op(w, _, _, op, _),
-  (op = "delete" ; op = "delete_object"),
+  ets_op(w, _, _, "delete", _),
+  !tests_row_fields(r),
+  !writes_back(name).
+
+harmless_race(f, r, w) :-
+  reads_then_writes(f, r, w, name, _),
+  ets_op(w, _, _, "delete_object", _),
   !writes_back(name).
 
 harmless_race(f, r, w) :-

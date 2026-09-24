@@ -952,6 +952,37 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  defmodule LockRelease do
+    @moduledoc """
+    A release that checks the owner, then deletes by key: another process
+    that took the lock in between loses it to the delete.
+    """
+    def start, do: :ets.new(:locks, [:named_table, :public])
+
+    def acquire(lock, owner), do: :ets.insert_new(:locks, {lock, owner})
+
+    def release(lock, owner) do
+      case :ets.lookup(:locks, lock) do
+        [{^lock, ^owner}] -> :ets.delete(:locks, lock)
+        _ -> false
+      end
+    end
+  end
+
+  defmodule LockReleaseObject do
+    @moduledoc "The same release with delete_object: it deletes only the owner's own row."
+    def start, do: :ets.new(:object_locks, [:named_table, :public])
+
+    def acquire(lock, owner), do: :ets.insert_new(:object_locks, {lock, owner})
+
+    def release(lock, owner) do
+      case :ets.lookup(:object_locks, lock) do
+        [{^lock, ^owner}] -> :ets.delete_object(:object_locks, {lock, owner})
+        _ -> false
+      end
+    end
+  end
+
   defmodule MnesiaExpire do
     @moduledoc """
     blockster's OAuth state: read it, and delete it when expired. The

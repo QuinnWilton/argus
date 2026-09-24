@@ -117,6 +117,16 @@ defmodule Argus.Analyses.EtsCheckActTest do
       assert [{"handle/2", ":notified", "0"}] = races([C.NotifyOnce])
     end
 
+    test "a delete decided by the row's owner is reported: it can take the next owner's row" do
+      skip_without_souffle()
+      assert [{"release/2", ":locks", "0"}] = races([C.LockRelease])
+    end
+
+    test "a delete_object of the owner's own row is not" do
+      skip_without_souffle()
+      assert races([C.LockReleaseObject]) == []
+    end
+
     test "a first insert over a key update_counter counts into is reported" do
       skip_without_souffle()
       assert [{"hit/1", ":hits", "0"}] = races([C.CounterClobber])

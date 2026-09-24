@@ -207,6 +207,14 @@ decision also sends or calls (`[] -> insert({id, true}); send(mailer,
 74's `field_decides` and `effect_decided`); a constant marker with
 nothing else under it (supavisor's circuit breaker) still is not.
 
+**Fixed.** `ets_check_act`'s delete exemption holds only for a delete
+decided by whether the row is there. "Deleting twice is deleting once"
+covers a delete racing a delete, not a delete racing a fresh insert: a
+release that checks the row's owner and then deletes by key can delete
+the next owner's lock. A delete decided by what the row holds is
+reported; an invalidation (`[{^key, _}] -> delete`) and a
+`delete_object`, which deletes only the object it names, are not.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile
