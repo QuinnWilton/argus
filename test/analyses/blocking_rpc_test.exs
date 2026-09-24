@@ -20,6 +20,7 @@ defmodule Argus.Analyses.BlockingRpcTest do
     Argus.Test.Fixtures.RpcCollectors,
     Argus.Test.Fixtures.RpcTimeoutParam,
     Argus.Test.Fixtures.RpcQuickTargets,
+    Argus.Test.Fixtures.RpcSelfBounded,
     Argus.Test.Fixtures.RpcViaHelperInInit
   ]
 
@@ -187,6 +188,17 @@ defmodule Argus.Analyses.BlockingRpcTest do
                "Argus.Test.Fixtures.RpcQuickTargets:lookup/2",
                "Argus.Test.Fixtures.RpcQuickTargets:scan/2"
              ]
+    end
+  end
+
+  describe "unbounded_wait: rpc to a function that bounds its own wait" do
+    test "which_applications/0 is not flagged; which_applications/1 is", ctx do
+      skip_without_souffle()
+
+      results = analyze(ctx, [Argus.Test.Fixtures.RpcSelfBounded])
+      funcs = Enum.map(waits(results, "rpc"), fn [func, _site, _variant] -> func end)
+
+      assert funcs == ["Argus.Test.Fixtures.RpcSelfBounded:apps_within/2"]
     end
   end
 

@@ -635,6 +635,7 @@ rpc_without_timeout(func, call, variant) :-
   makes_rpc(func, call, variant),
   no_timeout(call),
   !answers_at_once(call),
+  !bounds_its_wait(call),
   !during_init(call).
 
 // An :rpc call a function makes, and which of the rpc functions it is.
@@ -749,6 +750,26 @@ quick_api("Application", "get_env").
 quick_api("Application", "fetch_env").
 quick_api("Application", "fetch_env!").
 quick_api(":application", "get_env").
+
+// A remote function that waits, but with a deadline of its own, so the
+// rpc answers within it (with the function's exit, as {:badrpc, _} or
+// an :erpc exception). :application.which_applications/0 calls the
+// application controller with gen_server's default five seconds, which
+// a controller busy starting an application runs out; `/1` waits as long
+// as its argument says, and rpc_arity tells the two apart.
+// Application.started_applications/0 is the same call.
+.decl bounds_its_wait(call: symbol)
+
+bounds_its_wait(call) :-
+  rpc_target(call, target),
+  rpc_arity(call, n),
+  self_bounded_api(mod, fun, n),
+  target = cat(mod, cat(".", fun)).
+
+.decl self_bounded_api(mod: symbol, fun: symbol, arity: number)
+
+self_bounded_api(":application", "which_applications", 0).
+self_bounded_api("Application", "started_applications", 0).
 
 // A site init/1 runs — an rpc or a :global op, in init/1 or in anything
 // it calls on its own stack — holds the supervisor's start, and is

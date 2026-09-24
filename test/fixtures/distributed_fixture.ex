@@ -262,6 +262,20 @@ defmodule Argus.Test.Fixtures.RpcQuickTargets do
   def scan(node, table), do: :rpc.call(node, :ets, :select, [table, [{:_, [], [:"$_"]}]])
 end
 
+defmodule Argus.Test.Fixtures.RpcSelfBounded do
+  @moduledoc false
+
+  # Swarm's Tracker shape: which_applications/0 waits at most
+  # gen_server's default five seconds on the application controller, so
+  # the rpc answers within them. Quiet.
+  def apps(node), do: :rpc.call(node, :application, :which_applications, [])
+  def started(node), do: :erpc.call(node, Application, :started_applications, [])
+
+  # With a timeout of the caller's, which may be :infinity: flagged.
+  def apps_within(node, timeout),
+    do: :rpc.call(node, :application, :which_applications, [timeout])
+end
+
 defmodule Argus.Test.Fixtures.RpcCollectors do
   @moduledoc false
 

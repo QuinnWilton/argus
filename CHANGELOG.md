@@ -12,6 +12,15 @@ does: **Added**, **Changed**, **Fixed** or **Removed**.
 
 ### Waits that end on their own
 
+**Fixed.** "RPC without a bounded timeout" no longer fires on a remote
+function that bounds its own wait: `:application.which_applications/0`
+and `Application.started_applications/0` call the application
+controller with gen_server's default five seconds (`bounds_its_wait`,
+`self_bounded_api(mod, fun, arity)` in blocking.dl, read against
+`rpc_target` and `rpc_arity`). `/1`, whose timeout may be `:infinity`,
+is still reported. Swarm's `Tracker.ensure_swarm_started_on_remote_node/3`
+is no longer reported.
+
 **Fixed.** "RPC without a bounded timeout" no longer fires on an ETS
 write or a step through a table (`insert`, `insert_new`, `delete`,
 `delete_object`, `update_counter`, `update_element`, `take`, `first`,
