@@ -454,6 +454,69 @@ defmodule Argus.Test.Fixtures.Consistency do
     end
   end
 
+  defmodule WrongClassDeviant do
+    @moduledoc """
+    Three sites rescue update_counter's ArgumentError; the fourth sits in
+    a try that catches only :exit, which lets the badarg through.
+    """
+    def a(k) do
+      :ets.update_counter(:wrong_class_deviant, k, 1)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def b(k) do
+      :ets.update_counter(:wrong_class_deviant, k, 2)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def c(k) do
+      :ets.update_counter(:wrong_class_deviant, k, 3)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def d(k) do
+      :ets.update_counter(:wrong_class_deviant, k, 4)
+    catch
+      :exit, _ -> 0
+    end
+  end
+
+  defmodule CallersWrongClass do
+    @moduledoc """
+    Three sites rescue update_counter's ArgumentError; the fourth is in a
+    private helper whose only caller calls it inside a try that catches
+    only :exit. A try stands on every way in, and none takes the error.
+    """
+    def a(k) do
+      :ets.update_counter(:callers_wrong_class, k, 1)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def b(k) do
+      :ets.update_counter(:callers_wrong_class, k, 2)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def c(k) do
+      :ets.update_counter(:callers_wrong_class, k, 3)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def d(k) do
+      {:ok, bump(k)}
+    catch
+      :exit, _ -> 0
+    end
+
+    defp bump(k), do: :ets.update_counter(:callers_wrong_class, k, 4)
+  end
+
   defmodule CallerGuards do
     @moduledoc """
     Three sites rescue update_counter's ArgumentError in their own

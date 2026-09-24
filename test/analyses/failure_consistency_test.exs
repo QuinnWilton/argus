@@ -12,7 +12,8 @@ defmodule Argus.Analyses.FailureConsistencyTest do
   defp rows(modules) do
     {:ok, results} = Argus.analyze(modules, :failure)
 
-    for [func, _site, callee, belief, agree, deviate, _target] <- results["inconsistent_handling"],
+    for [func, _site, callee, belief, agree, deviate, _target | _] <-
+          results["inconsistent_handling"],
         do: {func, callee, belief, String.to_integer(agree), String.to_integer(deviate)}
   end
 
@@ -112,6 +113,75 @@ defmodule Argus.Analyses.FailureConsistencyTest do
     end
   end
 
+  describe "how the deviant stands" do
+    defp stands(modules) do
+      {:ok, result} = Argus.run_analyses(modules, analyses: [:failure])
+      {:ok, results} = Argus.analyze(modules, :failure)
+
+      [[_, _, _, "exception_guarded", _, _, _, raises, cover, caught]] =
+        results["inconsistent_handling"]
+
+      [f] = Enum.filter(result.findings, &(&1.title =~ "update_counter" or &1.title =~ "call/2"))
+      {{raises, cover, caught}, f}
+    end
+
+    test "a site no try covers, here or on some way in, is called bare" do
+      skip_without_souffle()
+      assert {{"exit", "none", ""}, f} = stands([C.DeviantBare])
+
+      assert f.title ==
+               "GenServer.call/2 called bare where every other call site catches its exit"
+
+      assert f.detail =~ "calls GenServer.call/2 with no try around it"
+      assert f.detail =~ "4 of the 5 call sites in this program catch its exit"
+      assert f.at_label == "called outside any try"
+
+      # A helper one caller guards and another calls bare: none here, and
+      # some way in passes none.
+      assert {{"error", "none", ""}, f} = stands([C.HelperOutsideTry])
+      assert f.title =~ "called bare where every other call site catches its error"
+    end
+
+    test "a site in a try that takes nothing says so" do
+      skip_without_souffle()
+      assert {{"error", "try", ""}, f} = stands([C.HiddenDeviant])
+
+      assert f.title ==
+               ":ets.update_counter/3 called in a try that lets its error through " <>
+                 "where every other call site catches it"
+
+      assert f.detail =~
+               "calls :ets.update_counter/3 inside a try that catches nothing; " <>
+                 "the call raises an error, and 3 of the 4 call sites"
+
+      assert f.at_label == "in a try that catches nothing"
+      refute f.title =~ "bare"
+    end
+
+    test "a site in a try that takes another class names what it takes" do
+      skip_without_souffle()
+      assert {{"error", "try", "exit"}, f} = stands([C.WrongClassDeviant])
+      assert f.detail =~ "inside a try that catches only :exit; the call raises an error"
+      assert f.at_label == "in a try that catches only :exit"
+      assert hd(f.help) == "catch the error in that try, as the other sites do"
+    end
+
+    test "a site every way into which passes a try of another class says so" do
+      skip_without_souffle()
+      assert {{"error", "callers", ""}, f} = stands([C.CallersWrongClass])
+
+      assert f.title ==
+               ":ets.update_counter/3 called with its error uncaught " <>
+                 "where every other call site catches it"
+
+      assert f.detail =~
+               "outside any try; every way into the function passes one, " <>
+                 "but not always one that catches an error"
+
+      assert f.at_label == "outside any try; its callers' tries miss an error"
+    end
+  end
+
   describe "a guard the callers hold" do
     test "a private helper called only inside a try is guarded by it" do
       skip_without_souffle()
@@ -155,7 +225,7 @@ defmodule Argus.Analyses.FailureConsistencyTest do
     defp targets(modules) do
       {:ok, results} = Argus.analyze(modules, :failure)
 
-      for [func, _, _, _, agree, deviate, target] <- results["inconsistent_handling"],
+      for [func, _, _, _, agree, deviate, target | _] <- results["inconsistent_handling"],
           do: {func, agree, deviate, target}
     end
 
@@ -240,6 +310,9 @@ defmodule Argus.Analyses.FailureConsistencyTest do
         "result_checked",
         to_string(agree),
         to_string(deviate),
+        "",
+        "",
+        "",
         ""
       ])
     end
@@ -261,11 +334,14 @@ defmodule Argus.Analyses.FailureConsistencyTest do
           "exception_guarded",
           "9",
           "3",
+          "",
+          "exit",
+          "none",
           ""
         ])
 
-      assert guarded.title =~ "called bare where most call sites guard it"
-      assert guarded.detail =~ "9 of the 12 call sites"
+      assert guarded.title =~ "called bare where most call sites catch its exit"
+      assert guarded.detail =~ "9 of the 12 call sites in this program catch its exit"
     end
 
     test "names the counts and the callee, and anchors the deviant site" do

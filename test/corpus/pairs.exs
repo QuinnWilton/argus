@@ -330,7 +330,8 @@
     issue: "supavisor@a8463de",
     module: "Supavisor.DbHandler",
     pre: "a8463de46ae77fb3a2f49a53eda1d6680caa0ad3",
-    finding: {:failure, ":gen_statem.call/3 called bare where every other call site guards it"}
+    finding:
+      {:failure, ":gen_statem.call/3 called bare where every other call site catches its exit"}
   },
   # blockster_v2 e8b3d3c: EngagementTracker.deduct_user_token_balance/4 reads
   # a user's balances with a dirty_read in one helper and writes the deducted
@@ -466,7 +467,9 @@
     issue: "sequin@46ce4e1",
     module: "Sequin.DebouncedLogger",
     pre: "46ce4e1048437575ce3c40ebb3eb589a4b9e4f27",
-    finding: {:failure, ":ets.update_counter/3 called bare where every other call site guards it"}
+    finding:
+      {:failure,
+       ":ets.update_counter/3 called bare where every other call site catches its error"}
   },
   # The same bug as the race it is: log/4's lookup decides the bucket is
   # there and update_counter/3 acts on it, while flush_bucket/4, which a

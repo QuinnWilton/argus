@@ -561,6 +561,9 @@ defmodule Argus.FindingsTest do
           "result_checked",
           "5",
           "1",
+          "",
+          "",
+          "",
           ""
         ])
 

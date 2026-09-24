@@ -12,6 +12,27 @@ does: **Added**, **Changed**, **Fixed** or **Removed**.
 
 ### What the program's other sites believe
 
+**Changed.** Schema 86. `failure.inconsistent_handling` gains `raises`,
+`cover` and `caught`: for an `exception_guarded` deviant, the class the
+call raises, and how the site stands — `none` (no try around it, here or
+on some way in), `try` (inside a try whose handler takes `caught`, other
+classes or nothing) or `callers` (every way in passes a try, not always
+one that takes the class). Empty for `result_checked`. Only the finding
+builder reads them.
+
+**Fixed.** The `exception_guarded` finding says what is true of its
+site. It said "outside a try" of a call inside a try that lets its class
+through (an `after`, `catch :exit` around a badarg); that site now reads
+"called in a try that lets its error through", with "inside a try that
+catches only :exit; the call raises an error" (or "catches nothing").
+A bare site's title says what the other sites do in the class-aware
+sense: "called bare where every other call site catches its error" (was
+"guards it"), and the detail "N of the M call sites in this program
+catch its error" (was "wrap in one"). The label names the site's
+standing ("called outside any try", "in a try that catches only :exit")
+in place of "the one site that disagrees", and the fix says which class
+to catch.
+
 **Changed.** Schema 76. `call_result(id, func, callee, fate, raises,
 target)`: `guard` and `guard_end` are gone, and `raises` names the class a
 failing call raises (`exit` for a call into a process, `error` for a BIF

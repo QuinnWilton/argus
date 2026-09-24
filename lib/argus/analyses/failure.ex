@@ -20,13 +20,18 @@ defmodule Argus.Analyses.Failure do
     started itself is not one; an exit process points-to resolves to a
     supervisor's child names the child as `target`, and its supervisor
     (`exit_target_owner`) is a related frame.
-  - `inconsistent_handling(func, site, callee, belief, agree, deviate, target)` —
+  - `inconsistent_handling(func, site, callee, belief, agree, deviate, target, raises, cover, caught)` —
     a call site that breaks with the program's own convention for its
     callee: `belief` is `result_checked` (a clear majority of the sites
     match the result; this one discards it) or `exception_guarded` (a
     clear majority wrap the call in a `try` that takes what it raises;
     this one does not). The title says "every other call site" only when
-    this one is the sole deviant, and "most call sites" otherwise. `agree` and
+    this one is the sole deviant, and "most call sites" otherwise. For
+    `exception_guarded`, `raises` is the class the call raises and `cover`
+    says how the site stands: `none` (no try around it, here or on some
+    way in: "called bare"), `try` (inside a try whose handler takes
+    `caught`, other classes or nothing) or `callers` (every way in passes
+    a try, not always one that takes the class). `agree` and
     `deviate` are the counts, and the severity is how unlikely the
     deviation is by chance. The population is the callee's sites on the
     same literal `target` (a table, a name) once any of them agrees, and
@@ -106,7 +111,15 @@ defmodule Argus.Analyses.Failure do
           {:agree, :number, "sites that follow the convention"},
           {:deviate, :number, "sites that break it, this one included"},
           {:target, :symbol,
-           "the literal first argument the population shares; empty for all sites"}
+           "the literal first argument the population shares; empty for all sites"},
+          {:raises, :symbol,
+           "for exception_guarded, the class the call raises (error | exit | *); else empty"},
+          {:cover, :symbol,
+           "for exception_guarded, try (a try here takes other classes, or nothing), " <>
+             "callers (every way in passes a try, not all of which take the class) " <>
+             "or none (no try here, and some way in passes none); else empty"},
+          {:caught, :symbol,
+           "for cover try, the classes that try takes, space-separated; else empty"}
         ],
         key: [:func, :site, :belief],
         doc: "A call site that breaks with how the program's other sites treat the same callee."
@@ -158,26 +171,26 @@ defmodule Argus.Analyses.Failure do
   end
 
   @impl true
-  def finding(:inconsistent_handling, [func, site, callee, belief, agree, deviate, _target]) do
+  def finding(:inconsistent_handling, [func, site, callee, belief, agree, deviate, _target | how]) do
     {agree, deviate} = {String.to_integer(agree), String.to_integer(deviate)}
     total = agree + deviate
+    name = Findings.call_name(callee)
 
     # clear_majority lets a quarter of the population deviate: with more
     # than one deviant, "every other" is not true of this one's peers.
-    {others, ending} =
-      if deviate == 1, do: {"every other call site", "s"}, else: {"most call sites", ""}
+    {others, s, es} =
+      if deviate == 1, do: {"every other call site", "s", "es"}, else: {"most call sites", "", ""}
 
-    {title, what, fix} =
-      case belief do
-        "result_checked" ->
-          {"#{Findings.call_name(callee)} result ignored where #{others} check#{ending} it",
-           "discards the result of #{Findings.call_name(callee)}, which #{agree} of the #{total} call " <>
-             "sites in this program match on", "match on the result as the other sites do"}
+    {title, what, at_label, fix} =
+      case {belief, how} do
+        {"result_checked", _} ->
+          {"#{name} result ignored where #{others} check#{s} it",
+           "discards the result of #{name}, which #{agree} of the #{total} call " <>
+             "sites in this program match on", "the one site that disagrees",
+           "match on the result as the other sites do"}
 
-        "exception_guarded" ->
-          {"#{Findings.call_name(callee)} called bare where #{others} guard#{ending} it",
-           "calls #{Findings.call_name(callee)} outside a try, which #{agree} of the #{total} call sites " <>
-             "in this program wrap in one", "guard the call as the other sites do"}
+        {"exception_guarded", [raises, cover, caught]} ->
+          guarded_deviant(name, raises, cover, caught, {others, es, agree, total})
       end
 
     Findings.new(
@@ -188,7 +201,7 @@ defmodule Argus.Analyses.Failure do
         "site written without the convention in mind, or one the convention " <>
         "grew around.",
       at: Findings.at_site_in_func(site, func),
-      at_label: "the one site that disagrees",
+      at_label: at_label,
       help: [fix, "or, if this site is right, the other #{agree} are worth a look"]
     )
   end
@@ -331,6 +344,66 @@ defmodule Argus.Analyses.Failure do
       at_label: "may be nil here",
       help: ["send to the registered name directly, or match nil explicitly"]
     )
+  end
+
+  # A site the belief finds unguarded, said as it is: outside any try
+  # ("none"), inside one whose handler takes other classes or nothing
+  # ("try"; `caught` names what it does take), or reached only through
+  # callers' tries, not all of which take the class ("callers").
+  defp guarded_deviant(name, raises, cover, caught, {others, es, agree, total}) do
+    exc = raised(raises)
+    peers = "#{agree} of the #{total} call sites in this program catch its #{exc}"
+
+    case cover do
+      "try" ->
+        takes = caught_classes(caught)
+
+        {"#{name} called in a try that lets its #{exc} through where #{others} catch#{es} it",
+         "calls #{name} inside a try that #{takes}; the call raises #{article(exc)}, " <>
+           "and #{peers}", "in a try that #{takes}",
+         "catch the #{exc} in that try, as the other sites do"}
+
+      "callers" ->
+        {"#{name} called with its #{exc} uncaught where #{others} catch#{es} it",
+         "calls #{name} outside any try; every way into the function passes one, " <>
+           "but not always one that catches #{article(exc)}, and #{peers}",
+         "outside any try; its callers' tries miss #{article(exc)}",
+         "catch the #{exc} here or in the callers, as the other sites do"}
+
+      "none" ->
+        {"#{name} called bare where #{others} catch#{es} its #{exc}",
+         "calls #{name} with no try around it, in its own body or on some way into it; " <>
+           "#{peers}", "called outside any try",
+         "wrap the call in a try that catches the #{exc}, as the other sites do"}
+
+      # A standing the rules do not write: say only what the belief says.
+      _unknown ->
+        {"#{name} not guarded where #{others} catch#{es} its #{exc}",
+         "calls #{name} where no try that catches #{article(exc)} covers it; #{peers}",
+         "no try that catches #{article(exc)} covers this call",
+         "catch the #{exc} here or in the callers, as the other sites do"}
+    end
+  end
+
+  # The class a failing call raises, as a reader names it; `*` is a call
+  # whose class the extractor does not know.
+  defp raised("error"), do: "error"
+  defp raised("exit"), do: "exit"
+  defp raised("throw"), do: "throw"
+  defp raised(_unknown), do: "exception"
+
+  defp article("error"), do: "an error"
+  defp article("exit"), do: "an exit"
+  defp article("exception"), do: "an exception"
+  defp article("throw"), do: "a throw"
+
+  # What the try around a deviant site takes: nothing (an `after`, a
+  # handler that raises again) or classes other than the call's.
+  defp caught_classes(""), do: "catches nothing"
+
+  defp caught_classes(caught) do
+    classes = caught |> String.split(" ", trim: true) |> Enum.map(&":#{&1}")
+    "catches only " <> Enum.join(classes, " and ")
   end
 
   # Engler's ranking: how many standard deviations the agreeing fraction

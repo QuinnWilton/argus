@@ -41,7 +41,7 @@
 .decl orphan_process(func: symbol, site: symbol, kind: symbol, target: symbol)
 .output orphan_process
 
-.decl inconsistent_handling(func: symbol, site: symbol, callee: symbol, belief: symbol, agree: number, deviate: number, target: symbol)
+.decl inconsistent_handling(func: symbol, site: symbol, callee: symbol, belief: symbol, agree: number, deviate: number, target: symbol, raises: symbol, cover: symbol, caught: symbol)
 .output inconsistent_handling
 
 // ── Swallowed errors ─────────────────────────────────────────────
@@ -374,6 +374,19 @@ exposed.guarded_edge(f, g, class) :-
   try_covers_closure(id, f, g),
   try_takes(id, class).
 
+// "try", a kind no call raises: whether a try of any kind — one that
+// takes nothing included — stands on every way in. It tells a site no
+// try reaches from one whose callers' tries take other classes.
+exposed.root(f, "try") :- function_def(f, _, _, _, 1).
+
+exposed.root(g, "try") :-
+  closure_def(f, g),
+  starts_process(f).
+
+exposed.guarded(call, "try") :- try_covers(_, _, call, _).
+
+exposed.guarded_edge(f, g, "try") :- try_covers_closure(_, f, g).
+
 .decl starts_process(func: symbol)
 
 starts_process(f) :- process_start(_, f, _, kind, _), kind != "server".
@@ -505,11 +518,87 @@ judged_in(site, b, "") :-
   fails_on_missing_row(c),
   shared_belief(c, b).
 
-inconsistent_handling(func, site, callee, "result_checked", used, ignored, scope) :-
+inconsistent_handling(func, site, callee, "result_checked", used, ignored, scope, "", "", "") :-
   ignored_where_most_are_used(func, site, callee, used, ignored, scope).
 
-inconsistent_handling(func, site, callee, "exception_guarded", guarded, bare, scope) :-
-  bare_where_most_are_guarded(func, site, callee, guarded, bare, scope).
+inconsistent_handling(func, site, callee, "exception_guarded", guarded, bare, scope, raises, cover, caught) :-
+  bare_where_most_are_guarded(func, site, callee, guarded, bare, scope),
+  call_result(site, func, callee, _, raises, _),
+  bare_cover(site, cover, caught).
+
+// ── How a bare site stands ──────────────────────────────────────
+//
+// What the finding says of a site no guard takes, each true of it:
+// "try", a try in its own function covers it but takes other classes,
+// or nothing (an `after`, a handler that raises again), and `caught`
+// names what it does take, space-separated; "callers", no try covers it
+// here, and every way into its function passes one, not all of which
+// take the class; "none", no try covers it here, and some way in passes
+// none.
+.decl bare_cover(site: symbol, cover: symbol, caught: symbol)
+
+bare_cover(site, "try", caught) :-
+  deviant_site(site),
+  try_covers(_, _, site, _),
+  caught_upto(site, 3, caught).
+
+bare_cover(site, "callers", "") :-
+  deviant_site(site),
+  !try_covers(_, _, site, _),
+  program_call(site, f, _, _, _),
+  covered_on_every_way_in(f).
+
+bare_cover(site, "none", "") :-
+  deviant_site(site),
+  !try_covers(_, _, site, _),
+  program_call(site, f, _, _, _),
+  !covered_on_every_way_in(f).
+
+.decl deviant_site(site: symbol)
+
+deviant_site(site) :- bare_where_most_are_guarded(_, site, _, _, _, _).
+
+.decl covered_on_every_way_in(func: symbol)
+
+covered_on_every_way_in(f) :-
+  called_internally(f),
+  !exposed.reaches(f, "try").
+
+// The classes the tries covering a deviant site take, joined in a fixed
+// order: `caught_upto(site, i, s)` has looked at the first `i`.
+.decl class_order(i: number, class: symbol)
+
+class_order(0, "error").
+class_order(1, "exit").
+class_order(2, "throw").
+
+.decl deviant_catches(site: symbol, class: symbol)
+
+deviant_catches(site, class) :-
+  deviant_site(site),
+  try_covers(id, _, site, _),
+  try_takes(id, class),
+  class != "*".
+
+.decl caught_upto(site: symbol, i: number, caught: symbol)
+
+caught_upto(site, 0, "") :- deviant_site(site), try_covers(_, _, site, _).
+
+caught_upto(site, i + 1, c) :-
+  caught_upto(site, i, ""),
+  class_order(i, c),
+  deviant_catches(site, c).
+
+caught_upto(site, i + 1, cat(s, " ", c)) :-
+  caught_upto(site, i, s),
+  s != "",
+  class_order(i, c),
+  deviant_catches(site, c).
+
+caught_upto(site, i + 1, s) :-
+  caught_upto(site, i, s),
+  class_order(i, c),
+  !deviant_catches(site, c).
 
 // A site unchecked_result or startup already owns is not reported twice.
 .decl ignored_where_most_are_used(func: symbol, site: symbol, callee: symbol, used: number, ignored: number, scope: symbol)
@@ -540,18 +629,18 @@ bare_where_most_are_guarded(func, site, callee, guarded, bare, scope) :-
 // `guard` is "here" for a try in the site's own function, with the
 // handler's end, and "callers" for a site its callers guard.
 handling_site(callee, "exception_guarded", site, f, "here", guard_end, t) :-
-  inconsistent_handling(_, _, callee, "exception_guarded", _, _, t),
+  inconsistent_handling(_, _, callee, "exception_guarded", _, _, t, _, _, _),
   program_site(site, f, callee, _, "try", t2),
   guarded_here(site, guard_end),
   (t = "" ; t = t2).
 
 handling_site(callee, "exception_guarded", site, f, "callers", "", t) :-
-  inconsistent_handling(_, _, callee, "exception_guarded", _, _, t),
+  inconsistent_handling(_, _, callee, "exception_guarded", _, _, t, _, _, _),
   program_site(site, f, callee, _, "try", t2),
   !guarded_here(site, _),
   (t = "" ; t = t2).
 
 handling_site(callee, "result_checked", site, f, "", "", t) :-
-  inconsistent_handling(_, _, callee, "result_checked", _, _, t),
+  inconsistent_handling(_, _, callee, "result_checked", _, _, t, _, _, _),
   program_site(site, f, callee, "used", _, t2),
   (t = "" ; t = t2).

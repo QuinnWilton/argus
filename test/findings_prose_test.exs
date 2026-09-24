@@ -32,10 +32,14 @@ defmodule Argus.FindingsProseTest do
           "exception_guarded",
           "3",
           "1",
+          "",
+          "exit",
+          "none",
           ""
         ])
 
-      assert attrs.title == ":gen_statem.call/3 called bare where every other call site guards it"
+      assert attrs.title ==
+               ":gen_statem.call/3 called bare where every other call site catches its exit"
     end
 
     test "an unredacted field reads as a field access, not Mod.:field" do
