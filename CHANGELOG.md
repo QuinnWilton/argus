@@ -52,6 +52,21 @@ any site does, guarded by its callers' tries. db_connection's
 rescue, is no longer the deviant. The evidence frame of a site its
 callers guard says so.
 
+**Changed.** `failure.inconsistent_handling`'s population no longer
+depends on how the target is spelled for a callee that fails on a
+missing row (`:ets.update_counter`, `:ets.lookup_element`). A site on a
+literal table was judged only by that table's sites, and one on a
+variable by every site of the callee: sequin's logger was a deviant with
+`table_name` and would not have been with `@table`. A site on a known
+target none of whose sites agree is now judged by every site of such a
+callee when the agreeing sites span two tables or more. A target that
+has an agreeing site of its own is judged by its own sites, whatever
+the callee (postgrex's SCRAM cache reads its table guarded once and
+bare once, where it knows the row is there), and a callee that fails
+when the table or the server is missing keeps a belief per target.
+mnesia's one bare read of its stats table is still not a deviant from
+gvar's 120 guarded ones.
+
 **Changed.** `failure.inconsistent_handling`'s title says "every other
 call site" only when the reported site is the population's one deviant,
 and "most call sites" when there are more: `clear_majority` lets up to a

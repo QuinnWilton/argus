@@ -29,8 +29,11 @@ defmodule Argus.Analyses.Failure do
     this one is the sole deviant, and "most call sites" otherwise. `agree` and
     `deviate` are the counts, and the severity is how unlikely the
     deviation is by chance. The population is the callee's sites on the
-    same literal `target` (a table, a name) when the site has one, and
-    every site of the callee when it does not (`target` empty).
+    same literal `target` (a table, a name) once any of them agrees, and
+    every site of the callee when the target is unknown (`target`
+    empty). A known target none of whose sites agree is judged by every
+    site of a callee that fails on a missing row (`update_counter`,
+    `lookup_element`) when the agreeing sites span two targets or more.
   """
 
   @behaviour Argus.Analysis

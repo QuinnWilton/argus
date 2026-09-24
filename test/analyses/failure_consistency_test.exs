@@ -175,6 +175,22 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       assert func =~ "SameTargetBare:e/1"
     end
 
+    test "is every site of the callee when the belief spans targets" do
+      skip_without_souffle()
+      assert [{func, "3", "1", ""}] = targets([C.SequinLiteral])
+      assert func =~ "SequinLiteral:log/1"
+    end
+
+    test "is the target's own sites once any of them agrees" do
+      skip_without_souffle()
+      assert targets([C.OwnSplit]) == []
+    end
+
+    test "spans targets only for a callee that fails on a missing row" do
+      skip_without_souffle()
+      assert targets([C.TableMissing]) == []
+    end
+
     test "is every site of the callee when the site's target is unknown" do
       skip_without_souffle()
       assert [{func, "4", "1", ""}] = targets([C.UnknownTargetBare])

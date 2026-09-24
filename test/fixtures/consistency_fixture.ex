@@ -648,6 +648,38 @@ defmodule Argus.Test.Fixtures.Consistency do
     end
   end
 
+  defmodule SequinLiteral do
+    @moduledoc """
+    sequin's shape with literal tables: two sites rescue update_counter
+    on :metrics and one on :counts, and log/1 calls it bare on :log, the
+    only site on that table. The belief spans two tables, so it is the
+    program's, and log/1 is judged by it, as it would be were its table
+    a variable.
+    """
+    def m1(k) do
+      :ets.update_counter(:metrics, k, {2, 1})
+    rescue
+      ArgumentError -> :ets.insert(:metrics, {k, 1, 0})
+    end
+
+    def m2(k) do
+      :ets.update_counter(:metrics, k, [{3, 1}])
+    rescue
+      ArgumentError -> :ets.insert(:metrics, {k, 0, 1})
+    end
+
+    def count(k) do
+      :ets.update_counter(:counts, k, {2, 1})
+    rescue
+      ArgumentError -> :ets.insert(:counts, {k, 1})
+    end
+
+    def log(k) do
+      _ = :ets.update_counter(:log, k, {2, 1})
+      :ok
+    end
+  end
+
   defmodule ReraiseOnly do
     @moduledoc """
     Three sites rescue update_counter's error only to log it and raise
@@ -678,5 +710,77 @@ defmodule Argus.Test.Fixtures.Consistency do
     end
 
     def d(k), do: :ets.update_counter(:reraise_only, k, 4)
+  end
+
+  defmodule OwnSplit do
+    @moduledoc """
+    postgrex's SCRAM.LockedCache: a guarded read of :own_split and a bare
+    one, where the program knows the row is there, beside four guarded
+    reads of two other tables. :own_split has shown how it is treated,
+    one against one, and is judged by its own sites: no deviant.
+    """
+    def soft(k) do
+      :ets.lookup_element(:own_split, k, 2)
+    catch
+      :error, :badarg -> nil
+    end
+
+    def hard(k), do: {:ok, :ets.lookup_element(:own_split, k, 2)}
+
+    def p1(k) do
+      :ets.lookup_element(:split_a, k, 2)
+    rescue
+      ArgumentError -> nil
+    end
+
+    def p2(k) do
+      :ets.lookup_element(:split_a, k, 3)
+    rescue
+      ArgumentError -> nil
+    end
+
+    def p3(k) do
+      :ets.lookup_element(:split_b, k, 2)
+    rescue
+      ArgumentError -> nil
+    end
+
+    def p4(k) do
+      :ets.lookup_element(:split_b, k, 3)
+    rescue
+      ArgumentError -> nil
+    end
+  end
+
+  defmodule TableMissing do
+    @moduledoc """
+    Three caches rescue :ets.delete/2 on their own tables, and a fourth
+    deletes from its table bare after checking it exists (blockster's
+    BuxMinter). delete fails when the table is missing, not the row:
+    whether one table exists says nothing of another, so there is no
+    belief across tables.
+    """
+    def a(k) do
+      :ets.delete(:missing_a, k)
+    rescue
+      ArgumentError -> true
+    end
+
+    def b(k) do
+      :ets.delete(:missing_b, k)
+    rescue
+      ArgumentError -> true
+    end
+
+    def c(k) do
+      :ets.delete(:missing_c, k)
+    rescue
+      ArgumentError -> true
+    end
+
+    def d(k) do
+      if :ets.whereis(:missing_d) != :undefined, do: :ets.delete(:missing_d, k)
+      :ok
+    end
   end
 end

@@ -231,12 +231,29 @@ unchecked_result(func, id, "Process.whereis", name) :-
 // a tail call too: what it raises reaches its callers, whose tries
 // guard it as they guard any call in the function (guarded_by_callers).
 //
-// The population is the callee's sites on the same target — the table,
-// the server — when the site's first argument is a literal: mnesia
-// reads its gvar table under a catch 120 times and its stats table bare
-// once, on purpose, and pooling the two made the one a deviant. A site
-// whose target is unknown (`scope` "") is judged against every site of
-// the callee.
+// The population a site is judged in (`scope`) is its target's own
+// sites — the table, the server, when the site's first argument is a
+// literal — once any of them agrees: the target has shown how the
+// program treats it. mnesia reads its gvar table under a catch 120
+// times and its stats table bare once, on purpose; gvar's habit is not
+// a belief about stats. A site whose target is unknown (`scope` "") is
+// judged by every site of the callee: it may be on the convention's own
+// table.
+//
+// A known target none of whose sites agree is judged by every site of
+// the callee only when the callee fails on a missing row
+// (update_counter, lookup_element) and the agreeing sites span two
+// targets or more. Such a failure is about the table's contents, not
+// the table, so the belief holds across tables: sequin's logger learns
+// its guard from the benchmark's two stats tables, and would with
+// `@table` as with `table_name`. A callee that fails when the table or
+// the server is missing (`:ets.delete/2`, GenServer.call) keeps a belief
+// per target.
+//
+// Known limit: an unknown target is judged by every table's sites, even
+// when the table it names always has the row (a table seeded at init);
+// resolving it through the ETS table identity (ets.dl) would narrow the
+// pool, and is not done.
 
 // A call site in a function another module's macro wrote — `use
 // Ecto.Repo` defines `stop/1` in every repo, on the `use` line — or in a
@@ -413,12 +430,66 @@ times_ignored(c, t, n) :- fate_count(c, t, "ignored", n).
 times_guarded(c, t, n) :- guard_count(c, t, "try", n).
 times_bare(c, t, n) :- guard_count(c, t, "bare", n).
 
-// The one site in question: its result dropped, or the call made bare.
+// The one site in question, its result dropped or the call made bare,
+// and the population (`scope`) it is judged in.
 .decl result_ignored(site: symbol, func: symbol, callee: symbol, scope: symbol) inline
 .decl called_bare(site: symbol, func: symbol, callee: symbol, scope: symbol) inline
 
-result_ignored(site, f, c, t) :- program_site(site, f, c, "ignored", _, t).
-called_bare(site, f, c, t) :- program_site(site, f, c, _, "bare", t).
+result_ignored(site, f, c, scope) :-
+  program_site(site, f, c, "ignored", _, _),
+  judged_in(site, "result_checked", scope).
+
+called_bare(site, f, c, scope) :-
+  program_site(site, f, c, _, "bare", _),
+  judged_in(site, "exception_guarded", scope).
+
+// How each site stands with each belief, and on what target.
+.decl stance(site: symbol, callee: symbol, belief: symbol, side: symbol, target: symbol)
+
+stance(site, c, "result_checked", "agree", t) :- program_site(site, _, c, "used", _, t).
+stance(site, c, "result_checked", "deviate", t) :- program_site(site, _, c, "ignored", _, t).
+stance(site, c, "exception_guarded", "agree", t) :- program_site(site, _, c, _, "try", t).
+stance(site, c, "exception_guarded", "deviate", t) :- program_site(site, _, c, _, "bare", t).
+
+// A target some of whose sites agree: it is judged by its own.
+.decl own_convention(callee: symbol, belief: symbol, target: symbol)
+
+own_convention(c, b, t) :- stance(_, c, b, "agree", t), t != "".
+
+// The agreeing sites span two targets or more (an unknown one counts
+// as one): a belief about the callee, not one table's habit.
+.decl agreeing_target(callee: symbol, belief: symbol, target: symbol)
+
+agreeing_target(c, b, t) :- stance(_, c, b, "agree", t).
+
+.decl shared_belief(callee: symbol, belief: symbol)
+
+shared_belief(c, b) :-
+  agreeing_target(c, b, _),
+  count : { agreeing_target(c, b, _) } >= 2.
+
+// A callee that fails on a missing row, whatever the table.
+.decl fails_on_missing_row(callee: symbol)
+
+fails_on_missing_row(":ets:update_counter/3").
+fails_on_missing_row(":ets:update_counter/4").
+fails_on_missing_row(":ets:lookup_element/3").
+fails_on_missing_row(":ets:lookup_element/4").
+
+.decl judged_in(site: symbol, belief: symbol, scope: symbol)
+
+judged_in(site, b, t) :-
+  stance(site, c, b, "deviate", t),
+  own_convention(c, b, t).
+
+judged_in(site, b, "") :- stance(site, _, b, "deviate", "").
+
+judged_in(site, b, "") :-
+  stance(site, c, b, "deviate", t),
+  t != "",
+  !own_convention(c, b, t),
+  fails_on_missing_row(c),
+  shared_belief(c, b).
 
 inconsistent_handling(func, site, callee, "result_checked", used, ignored, scope) :-
   ignored_where_most_are_used(func, site, callee, used, ignored, scope).
