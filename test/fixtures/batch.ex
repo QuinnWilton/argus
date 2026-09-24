@@ -20,6 +20,9 @@ defmodule Argus.Test.Batch do
   its set alone and fails unless the two agree, relation by relation.
   Run a batched module with it after adding a set or changing a rule
   its fixtures meet; a set that disagrees is solved on its own too.
+
+  Both solves go through the suite's store (`Argus.Test.Memo.store/0`),
+  so a run after an edit solves again only what the edit invalidated.
   """
 
   @enforce_keys [:analysis, :modules, :owner, :result]
@@ -41,7 +44,7 @@ defmodule Argus.Test.Batch do
       analysis: analysis,
       modules: modules,
       owner: owner_regex(modules),
-      result: Argus.analyze(modules, analysis)
+      result: Argus.analyze(modules, analysis, cache: Argus.Test.Memo.store())
     }
   end
 
@@ -85,7 +88,7 @@ defmodule Argus.Test.Batch do
   end
 
   defp verify!(batch, set, sliced) do
-    alone = Argus.analyze(set, batch.analysis)
+    alone = Argus.analyze(set, batch.analysis, cache: Argus.Test.Memo.store())
 
     case {normalize(alone), normalize(sliced)} do
       {same, same} ->
