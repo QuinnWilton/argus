@@ -543,6 +543,29 @@ defmodule Argus.Pipeline.EmitTest do
       facts = emit_func([{:loop_rec, {:f, 5}, {:x, 0}}])
       assert [[_id, _caller, _blocking, "5"]] = facts[:recv_start]
     end
+
+    # Phoenix's Channel.Server.close/2: a grace period for the :DOWN, then
+    # a kill and a wait without one. The first receive's empty-mailbox
+    # block ends in wait_timeout; the second's wait comes after it.
+    test "a timed receive before a blocking one is timed" do
+      facts =
+        emit_func([
+          {:label, 1},
+          {:loop_rec, {:f, 2}, {:x, 0}},
+          :remove_message,
+          {:label, 2},
+          {:wait_timeout, {:f, 1}, {:integer, 100}},
+          :timeout,
+          {:label, 3},
+          {:loop_rec, {:f, 4}, {:x, 0}},
+          :remove_message,
+          {:label, 4},
+          {:wait, {:f, 3}}
+        ])
+
+      assert [["TestMod:test_func/0#1", _, "0", "2"], ["TestMod:test_func/0#7", _, "1", "4"]] =
+               Enum.sort(facts[:recv_start])
+    end
   end
 
   describe "exception facts" do

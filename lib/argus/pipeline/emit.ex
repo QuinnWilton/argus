@@ -113,17 +113,18 @@ defmodule Argus.Pipeline.Emit do
   # Scan the empty-mailbox block for whichever of wait/wait_timeout comes
   # first. An unresolvable label is reported as non-blocking: this feeds a
   # "this receive can hang" finding, and guessing yes without evidence
-  # would put a fabricated hang in front of someone.
+  # would put a fabricated hang in front of someone. The scan stops at
+  # the first of the two: a later receive's `wait` is not this one's
+  # (find_value would pass over a `false` and find it).
   defp blocking_wait?(_instrs, nil), do: false
 
   defp blocking_wait?(instrs, from) do
-    instrs
-    |> Enum.drop(from)
-    |> Enum.find_value(false, fn
-      {:wait, _} -> true
-      {:wait_timeout, _, _} -> false
-      _ -> nil
-    end)
+    first =
+      instrs
+      |> Enum.drop(from)
+      |> Enum.find(&(match?({:wait, _}, &1) or match?({:wait_timeout, _, _}, &1)))
+
+    match?({:wait, _}, first)
   end
 
   # "Is there a branch after this call, in this function?" — answered here,

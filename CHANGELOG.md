@@ -12,6 +12,14 @@ does: **Added**, **Changed**, **Fixed** or **Removed**.
 
 ### Waits that end on their own
 
+**Fixed.** `recv_start`'s `blocking` column read a timed receive as
+blocking when a receive without `after` followed it in the same
+function: the scan of the empty-mailbox block for `wait` or
+`wait_timeout` passed over the timed one's `wait_timeout` and found the
+later receive's `wait`. Phoenix's `Channel.Server.close/2` (a grace
+period for the `:DOWN`, then a kill and a wait) had both of its
+receives recorded as blocking.
+
 **Fixed.** `mailbox.unconsumed_monitor` "timed_wait" ("leaves a monitor
 live after its wait times out") leaves out a monitor whose `:DOWN` a
 receive with no `after` in its own function takes (`recv_down`): it is
