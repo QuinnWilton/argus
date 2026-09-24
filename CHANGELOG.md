@@ -21,6 +21,20 @@ a call to a function of the module that holds such a receive or calls
 one. A path that raises is not asked; a wait in a closure or in another
 module is not seen. Read by `mailbox`.
 
+**Fixed.** `mailbox.unconsumed_monitor`'s `timed_wait` ("… leaves a
+monitor live after its wait times out", an error) no longer reports a
+monitor its callers go on to collect: every way the program has into
+the monitoring function passes a call that `awaits_down_after` names,
+and none comes from an exported function, one nothing calls, or what a
+spawn runs. That is OTP's old supervisor shutdown, whose
+`monitor_child/1` looks once with `after 0` and returns the monitor to
+`wait_children`: GenStage's `ConsumerSupervisor.monitor_child/1` and
+Horde's `ProcessesSupervisor.monitor_child/1` were false positives
+(corpus: gen_stage ×2, horde ×3 checkouts gone; no other title moved).
+A caller that waits on only some paths, one caller that waits beside
+one that does not, and a wait pinned to another monitor's ref still
+report it.
+
 ### A run redoes only what an edit invalidates
 
 **Added.** `Argus.Pipeline.run_shards/3` extracts into a directory per

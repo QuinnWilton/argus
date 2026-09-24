@@ -15,7 +15,14 @@ defmodule Argus.Analyses.MailboxMonitorTest do
     M.FlushesInHelper,
     M.InEach,
     M.TaskGivesUp,
-    M.TaskPolls
+    M.TaskPolls,
+    M.CollectedByCaller,
+    M.ReturnsLive,
+    M.WaitsOnOnePath,
+    M.CollectedOnOneCaller,
+    M.CollectedByRef,
+    M.FlushedByCaller,
+    M.WaitsForAnotherRef
   ]
 
   @servers [
@@ -96,6 +103,47 @@ defmodule Argus.Analyses.MailboxMonitorTest do
   test "a flush in the helper discharges it", ctx do
     skip_without_souffle()
     refute named?(funcs(ctx), "MonitorLeak.FlushesInHelper")
+  end
+
+  describe "a monitor the caller goes on to collect" do
+    test "the supervisor shutdown shape is not reported", ctx do
+      skip_without_souffle()
+
+      # GenStage's ConsumerSupervisor and Horde's ProcessesSupervisor:
+      # monitor_child/1 looks once with `after 0` and returns with the
+      # monitor live, and terminate_children then waits for every :DOWN.
+      refute named?(funcs(ctx), "MonitorLeak.CollectedByCaller")
+    end
+
+    test "the same monitor_child/1 is reported when its caller never waits", ctx do
+      skip_without_souffle()
+      assert named?(funcs(ctx), "MonitorLeak.ReturnsLive:monitor_child/1")
+    end
+
+    test "a wait on only some paths after the call does not collect it", ctx do
+      skip_without_souffle()
+      assert named?(funcs(ctx), "MonitorLeak.WaitsOnOnePath:monitor_child/1")
+    end
+
+    test "one caller that waits does not cover another that does not", ctx do
+      skip_without_souffle()
+      assert named?(funcs(ctx), "MonitorLeak.CollectedOnOneCaller:monitor_child/1")
+    end
+
+    test "a caller waiting on the ref it was handed collects it", ctx do
+      skip_without_souffle()
+      refute named?(funcs(ctx), "MonitorLeak.CollectedByRef")
+    end
+
+    test "a caller demonitoring the ref it was handed with :flush collects it", ctx do
+      skip_without_souffle()
+      refute named?(funcs(ctx), "MonitorLeak.FlushedByCaller")
+    end
+
+    test "a caller waiting on another monitor's :DOWN does not", ctx do
+      skip_without_souffle()
+      assert named?(funcs(ctx), "MonitorLeak.WaitsForAnotherRef:monitor_and_signal/1")
+    end
   end
 
   describe "over a server's lifetime" do

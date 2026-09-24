@@ -226,6 +226,28 @@
   reaches(g, k) :- reaches(f, k), fun_ref(f, g).
 }
 
+// Backward, along the ways in no guard covers: the functions that reach
+// a seed through calls the instance does not mark `guarded`. A fun
+// handed to a call (fun_handed) is held against that call; any other
+// edge with no call instruction (a closure kept, an apply) is open. A
+// seed's callers that are all guarded leave it reached from nothing but
+// itself.
+.comp BackwardUnguarded {
+  .decl seed(func: symbol, target: symbol)
+  .decl guarded(call: symbol)
+  .decl reaches(func: symbol, target: symbol)
+
+  reaches(f, t) :- seed(f, t).
+  reaches(f, t) :- reaches(h, t), call_instr(f, h, id), !guarded(id).
+  reaches(f, t) :- reaches(h, t), fun_handed(id, f, h), !guarded(id).
+
+  reaches(f, t) :-
+    reaches(h, t),
+    call_edge(f, h),
+    !call_instr(f, h, _),
+    !fun_handed(_, f, h).
+}
+
 // The same, walked against the edges: from a few interesting functions
 // to the callers that reach them within `limit` calls.
 .comp BackwardBoundedCallReach {

@@ -606,9 +606,65 @@ flush.seed(func) :- demonitor_call(_, func, "flush").
 unconsumed_monitor(mod, func, id, "timed_wait") :-
   monitor_call(id, func, _),
   function_def(func, mod, _, _, _),
+  outlives_its_wait(func),
+  !collected_by_callers(func).
+
+// A function that monitors and waits with an `after`, and neither
+// flushes nor ends its process: the monitor is live when the wait gives
+// up, and the function returns with it.
+.decl outlives_its_wait(func: symbol)
+
+outlives_its_wait(func) :-
+  monitor_call(_, func, _),
   timed_wait.reaches(func),
   !flush.reaches(func),
   !ends_its_process(func).
+
+// ── A monitor its callers collect ────────────────────────────────────
+//
+// Returning with a monitor live is the protocol, not a leak, when the
+// caller goes on to wait for the :DOWN. OTP's old supervisor shutdown,
+// which GenStage's ConsumerSupervisor and Horde's ProcessesSupervisor
+// copy, monitors each child in monitor_child/1, looks once with `after
+// 0` for an {:EXIT, ...} already queued, and returns :ok; its caller
+// then blocks in wait_children until every child's {:DOWN, ...} has
+// come. awaits_down_after names the calls such a wait follows on every
+// path (a receive with no `after` taking any :DOWN, or the one for the
+// ref the call returned, or a demonitor with :flush of that ref).
+//
+// The monitor is collected when every way the program has into the
+// monitoring function passes such a call. Walked backward from each
+// function the rule would report, over the ways in no wait follows
+// (BackwardUnguarded, in reach.dl). A walk that reaches an exported
+// function (its callers are outside the program), one nothing calls,
+// or what a spawn runs (its process is not the caller's, and its wait
+// collects nothing of this one) leaves the monitor exposed. A
+// monitoring function nothing reaches but through one uncovered cycle
+// is not collected either: some way in must be a covered call.
+.init uncollected = BackwardUnguarded
+
+uncollected.seed(g, g) :- outlives_its_wait(g).
+uncollected.guarded(id) :- awaits_down_after(_, id).
+
+.decl collection_exposed(func: symbol)
+
+collection_exposed(g) :- uncollected.reaches(f, g), function_def(f, _, _, _, 1).
+collection_exposed(g) :- uncollected.reaches(f, g), !call_edge(_, f).
+collection_exposed(g) :- uncollected.reaches(h, g), runs_elsewhere(_, h).
+
+.decl collected_by_callers(func: symbol)
+
+collected_by_callers(g) :-
+  uncollected.reaches(h, g),
+  call_instr(f, h, id),
+  awaits_down_after(f, id),
+  !collection_exposed(g).
+
+collected_by_callers(g) :-
+  uncollected.reaches(h, g),
+  fun_handed(id, f, h),
+  awaits_down_after(f, id),
+  !collection_exposed(g).
 
 // A function whose return ends the process that runs it: what a spawn
 // or a task runs, or what that runs as its last call, when nothing else
