@@ -286,23 +286,19 @@ defmodule Argus.Cache.Facts do
   end
 
   # What the pipeline is asked about bases, and whether to keep the
-  # ones it computes: a run extracting the base's own shard computes
-  # every base (the emitter's rows are no base's), and keeps them if
-  # none are kept; a run of extractors alone reads them back, or
-  # computes and keeps them.
-  defp bases_opts(entry, paths, base_missing?) do
-    cond do
-      base_missing? and File.exists?(entry) ->
-        {[], false}
+  # ones it computes. A run extracting the base's own shard computes
+  # every base (the emitter's rows are no base's) and keeps none: it is
+  # the first run over these beams or the first since the base's code
+  # moved — every schema bump — and keeping them costs such a run a
+  # tenth more for runs that may never come. A run of extractors alone
+  # reads them back, or computes them and keeps them for the next one:
+  # iterating on an extractor pays that once.
+  defp bases_opts(_entry, _paths, true = _base_missing?), do: {[], false}
 
-      base_missing? ->
-        {[keep_bases: true], true}
-
-      true ->
-        case read_bases(entry, length(paths)) do
-          {:ok, kept} -> {[bases: kept], false}
-          :miss -> {[keep_bases: true], true}
-        end
+  defp bases_opts(entry, paths, false) do
+    case read_bases(entry, length(paths)) do
+      {:ok, kept} -> {[bases: kept], false}
+      :miss -> {[keep_bases: true], true}
     end
   end
 

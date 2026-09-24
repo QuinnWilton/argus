@@ -154,10 +154,11 @@ names one with `cache:` on `Argus.run_analyses/2`, `Argus.analyze/3` or
   disassembly, decoded facts, control-flow graphs and reaching
   definitions (the per-function solutions `Argus.Instr.Reaching.export/1`
   carries) — for a set of beams, keyed by the beams, the base's code and
-  the runtime. An extraction that computes the base keeps them; one
-  whose base shard is kept but an extractor's is not runs that
-  extractor over them — on the corpus, a quarter of the cost for most
-  extractors. The decoded facts (`module_data.typed`) are read back only
+  the runtime. A run of extractors alone (the base's shard kept) keeps
+  them, and the runs after it run their extractors over them — on the
+  corpus, a quarter of the cost for most extractors. A run that
+  extracts the base's own shard (cold, or after the base's code moved)
+  keeps none: it would cost it a tenth more. The decoded facts (`module_data.typed`) are read back only
   for `Argus.Pipeline.typed_readers/0`; `CodeClosureTest` fails when
   another extractor computes them — add it to that list. Dependence
   reads them and calls five other extractors, so an edit to any of
@@ -199,7 +200,8 @@ names one with `cache:` on `Argus.run_analyses/2`, `Argus.analyze/3` or
   `ARGUS_CORPUS_ONLY=…`) and `mix argus.corpus tally --title …`.
 - Iterating on an extractor: its extractor tests call the pipeline
   directly; the analysis tests reading its relations re-extract its
-  shard alone, over the kept bases, and solve again only where its rows
+  shard alone — the first run after the base moved keeps the bases, the
+  later ones run over them — and solve again only where its rows
   changed.
 - A refactor of shared extraction code re-extracts everything once;
   when the facts come out byte-identical nothing is solved again.

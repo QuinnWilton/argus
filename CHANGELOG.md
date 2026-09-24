@@ -214,12 +214,14 @@ the environment it reads, with each module it read from argus's own
 application or found absent recorded and checked on every hit. Only
 missing shards are extracted, and a run that lost a module to a timeout
 keeps none. Each set of beams' bases are kept too (`bases/` in the
-store, keyed by the beams, the base's code and the runtime): the run
-that extracts the base's own shard keeps them, and one that extracts
-only extractors runs them over the kept bases — after an edit to one
-extractor, re-extracting its shard over the corpus costs a quarter of
-what it did, the base having been most of it. They weigh 131 MB over
-the corpus's 74 checkouts. A run's facts are each relation file's digest and source,
+store, keyed by the beams, the base's code and the runtime) by the
+first run that extracts extractors alone — not by one that extracts
+the base's own shard, the first run after the base's code moved (every
+schema bump), which they would cost a tenth more — and the runs after
+it run their extractors over them: an extractor extracted again over
+the corpus costs a quarter of what it did, one that reads the decoded
+facts two thirds. They weigh 278 MB over the corpus's 74 checkouts,
+against 1.4 GB of facts. A run's facts are each relation file's digest and source,
 with no directory until a solve misses: it places only the files its
 program reads, as symbolic links into the store (`materialize/2`;
 `prepare/3` places what the solves about to fan out read, where

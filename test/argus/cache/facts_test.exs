@@ -64,40 +64,59 @@ defmodule Argus.Cache.FactsTest do
       assert String.starts_with?(added, "Argus.Extractors.Mnesia-")
     end
 
-    test "an extractor extracted after the others runs over the bases they kept",
+    test "extractors extracted again keep the bases, and the next ones run over them",
          %{tmp_dir: tmp} do
       store = Path.join(tmp, "store")
+      bases = fn -> store |> Cache.dir(:bases) |> File.ls() |> then(&elem(&1, 1)) end
+
+      # The base's own shard extracted: no bases kept.
       assert {:ok, _} = Facts.extract(@modules, @extractors, [], store)
-      assert [kept] = store |> Cache.dir(:bases) |> File.ls!()
+      assert bases.() == :enoent
+
+      # Extractors alone: the bases computed are kept.
+      assert {:ok, _} =
+               Facts.extract(@modules, @extractors ++ [Argus.Extractors.Mnesia], [], store)
+
+      assert [kept] = bases.()
       entry = Path.join(Cache.dir(store, :bases), kept)
       File.touch!(entry, System.os_time(:second) - 3600)
 
       assert {:ok, facts} =
-               Facts.extract(@modules, @extractors ++ [Argus.Extractors.Mnesia], [], store)
+               Facts.extract(@modules, @extractors ++ [Argus.Extractors.Monitor], [], store)
 
       # Read back (a hit touches it), not computed and kept again.
-      assert store |> Cache.dir(:bases) |> File.ls!() == [kept]
+      assert bases.() == [kept]
       assert File.stat!(entry, time: :posix).mtime > System.os_time(:second) - 60
 
       fresh = Path.join(tmp, "fresh")
-      assert {:ok, _} = Pipeline.run_shards(@modules, [{Argus.Extractors.Mnesia, fresh}])
+      assert {:ok, _} = Pipeline.run_shards(@modules, [{Argus.Extractors.Monitor, fresh}])
 
       for {name, {_digest, [path]}} <- facts.relations,
-          String.contains?(path, "Argus.Extractors.Mnesia-") do
+          String.contains?(path, "Argus.Extractors.Monitor-") do
         assert File.read!(path) == File.read!(Path.join(fresh, name))
       end
 
       # The options that shape rows do not key a base.
-      assert {:ok, _} = Facts.extract(@modules, @extractors, [trace_imprecision: true], store)
-      assert store |> Cache.dir(:bases) |> File.ls!() == [kept]
+      assert {:ok, _} =
+               Facts.extract(
+                 @modules,
+                 [Argus.Extractors.Monitor],
+                 [trace_imprecision: true],
+                 store
+               )
+
+      assert bases.() == [kept]
     end
 
-    test "a run that lost a module keeps no bases", %{tmp_dir: store} do
+    test "a run of extractors alone that lost a module keeps neither shards nor bases",
+         %{tmp_dir: store} do
+      assert {:ok, _} = Facts.extract(@modules, [], [], store)
+      assert [base] = shards(store)
+
       assert {:ok, facts} = Facts.extract(@modules, @extractors, [timeout: 1], store)
-      assert Facts.extraction_errors(facts) =~ "did not finish"
       Facts.release(facts)
       refute File.exists?(Cache.dir(store, :bases))
-      assert shards(store) == []
+      assert shards(store) == [base]
     end
 
     test "the options that shape rows key the shards", %{tmp_dir: store} do
