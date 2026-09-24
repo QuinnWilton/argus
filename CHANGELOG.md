@@ -343,13 +343,16 @@ counts in.
 
 ### Solves kept across corpus runs
 
-**Added.** `Argus.Souffle.run/3` takes `solve_cache:`, a directory of
-kept solves for the content of the facts directory it reads
-(`Argus.Souffle.Cache`). A solve whose program (with its transitive
-includes) and solver have not moved since it was kept is read back
-rather than run. The caller keeps one directory per content of the
-facts, and nothing in the facts is read to key it. Off by default: a
-run without it solves as before.
+**Added.** `Argus.run_analyses/2` and `Argus.Souffle.run/3` take
+`solve_cache:`, a directory of kept solves for the content of the facts
+directory the run reads (`Argus.Souffle.Cache`). A solve whose program
+(with its transitive includes) and solver have not moved since it was
+kept is read back rather than run, the points-to stage among them; an
+analysis that reads that stage is keyed on its program too
+(`Argus.Analysis.Extraction.solve_cache/2`). The caller keeps one
+directory per content of the facts, and nothing in the facts is read
+to key it; `run_analyses/2` refuses the option without `facts_dir:`.
+Off by default: a run without it solves as before.
 
 **Changed.** `Argus.Souffle.input_relations/2`'s memo no longer reads
 and hashes every file under `priv/dl` on each call: the digest is kept

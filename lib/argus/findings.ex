@@ -219,6 +219,12 @@ defmodule Argus.Findings do
     wrote for these modules, to evaluate without extracting again. The
     caller owns it; without this option the run extracts into a
     temporary directory and removes it afterwards.
+  - `:solve_cache` — with `:facts_dir`, a directory of kept solves for
+    that facts directory's content (`Argus.Souffle.Cache`): a solve
+    whose program and solver have not moved since it was kept is read
+    back rather than run, the points-to stage included. The caller keeps
+    one such directory per content of the facts — `Argus.Corpus` keeps
+    it in the facts cache entry. Off by default.
   - `:concurrency` — parallel Souffle solves (default: the scheduler
     count, capped at 4; each solve holds its own copy of the call graph's
     closure). Extraction always runs at scheduler width.

@@ -33,6 +33,7 @@ defmodule Argus.Analysis.Extraction do
   alias Argus.Analysis.Catalog
   alias Argus.Pipeline
   alias Argus.Souffle
+  alias Argus.Souffle.Cache
 
   # CallArgs is a universal extractor — it emits call_arg facts that
   # clientlib/calls.dl's resolved_arg uses to resolve sync_call /
@@ -215,6 +216,20 @@ defmodule Argus.Analysis.Extraction do
       {:ok, relations} -> Enum.any?(relations, &(&1 in @points_to_relations))
       {:error, _} -> true
     end
+  end
+
+  @doc """
+  The `:solve_cache` an analysis's solve is kept under, given the
+  directory a caller keeps for its facts (`Argus.Souffle.Cache`): the
+  points-to stage derived into those facts is named by its program, for
+  the analyses that read it and no others, so an edit to
+  `points_to.dl` re-solves exactly those.
+  """
+  @spec solve_cache(Path.t(), Analysis.analysis()) :: Cache.t()
+  def solve_cache(dir, analysis) do
+    if reads_points_to?(analysis),
+      do: {dir, [Cache.program_digest(points_to_rules_path())]},
+      else: {dir, []}
   end
 
   @doc """

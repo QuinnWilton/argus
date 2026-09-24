@@ -1,8 +1,10 @@
 defmodule Argus.Findings.RunnerTest do
   use ExUnit.Case, async: true
 
+  alias Argus.Analysis.Extraction
   alias Argus.Findings
   alias Argus.Findings.Runner
+  alias Argus.Souffle.Cache
 
   @moduletag :tmp_dir
 
@@ -14,6 +16,51 @@ defmodule Argus.Findings.RunnerTest do
   test "a selection that does not resolve is an error before anything runs" do
     assert {:error, {:unknown_analysis, :nope}} = Runner.run([:lists], analyses: [:nope])
     assert {:error, {:invalid_analyses, "all"}} = Runner.run([:lists], analyses: "all")
+  end
+
+  test "a solve cache names a facts directory's solves, and a run without one is refused" do
+    assert_raise ArgumentError, ~r/needs one/, fn ->
+      Runner.run([:lists], analyses: [:effects], solve_cache: "/nonexistent")
+    end
+  end
+
+  test "a solve cache keys each analysis, and the points-to stage only for its readers",
+       %{tmp_dir: dir} do
+    if not Argus.Souffle.available?(), do: flunk("souffle not installed")
+
+    {:ok, facts} =
+      Argus.Analysis.extract_facts([:lists], [:startup, :effects], points_to: :deferred)
+
+    solves = Path.join(dir, "solves")
+
+    try do
+      assert {:ok, first} =
+               Runner.run([:lists],
+                 analyses: [:startup, :effects],
+                 facts_dir: facts,
+                 solve_cache: solves
+               )
+
+      kept = solves |> File.ls!() |> Enum.map(&(&1 |> String.split("-") |> hd())) |> Enum.sort()
+      assert kept == ["effects", "points_to", "startup"]
+
+      assert Extraction.solve_cache(solves, :startup) ==
+               {solves, [Cache.program_digest(Argus.Analysis.points_to_rules_path())]}
+
+      assert Extraction.solve_cache(solves, :effects) == {solves, []}
+
+      # Read back: the same findings.
+      assert {:ok, again} =
+               Runner.run([:lists],
+                 analyses: [:startup, :effects],
+                 facts_dir: facts,
+                 solve_cache: solves
+               )
+
+      assert again.findings == first.findings
+    after
+      File.rm_rf(Path.dirname(facts))
+    end
   end
 
   # A solver that fails the points-to stage and runs everything else.

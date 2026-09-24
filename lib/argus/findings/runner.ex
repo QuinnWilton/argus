@@ -27,6 +27,12 @@ defmodule Argus.Findings.Runner do
   def run(modules, opts) when is_list(modules) and is_list(opts) do
     {selection, opts} = Keyword.pop(opts, :analyses, :all)
 
+    # The cache stands for a facts directory's content; one the run
+    # extracts itself has no name the caller could have kept it under.
+    if Keyword.has_key?(opts, :solve_cache) and not Keyword.has_key?(opts, :facts_dir) do
+      raise ArgumentError, ":solve_cache names the solves of a :facts_dir, and needs one"
+    end
+
     with {:ok, requests} <- Sets.resolve(selection),
          :ok <- ensure_souffle(opts) do
       evaluate(modules, requests, opts)
@@ -128,6 +134,7 @@ defmodule Argus.Findings.Runner do
   # analysis's own name.
   defp run_one(mod, facts_dir, :ok, opts) do
     name = mod.name()
+    opts = salt_solve_cache(opts, name)
     {elapsed_us, result} = :timer.tc(fn -> Analysis.run_rules(facts_dir, name, opts) end)
     duration_ms = div(elapsed_us, 1000)
 
@@ -157,6 +164,18 @@ defmodule Argus.Findings.Runner do
 
       {:error, reason} ->
         [{:degraded, %{analysis: name, reason: reason, detail: degradation_detail(name, reason)}}]
+    end
+  end
+
+  # A `:solve_cache` directory stands for the facts as the caller handed
+  # them in; what was derived into them since is keyed per analysis.
+  defp salt_solve_cache(opts, name) do
+    case Keyword.get(opts, :solve_cache) do
+      dir when is_binary(dir) ->
+        Keyword.put(opts, :solve_cache, Analysis.Extraction.solve_cache(dir, name))
+
+      _ ->
+        opts
     end
   end
 
