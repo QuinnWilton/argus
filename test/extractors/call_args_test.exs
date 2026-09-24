@@ -254,4 +254,37 @@ defmodule Argus.Extractors.CallArgsTest do
       end
     end
   end
+
+  describe "infinity_arg" do
+    # A wrapper's `timeout \\ :infinity` compiles to a clause of the
+    # lower arity that calls the full one with :infinity — here the fifth
+    # argument, past where call_arg stops.
+    test "records :infinity at any position, and nothing else" do
+      [{_mod, bin}] =
+        Code.compile_string("""
+        defmodule Argus.CallArgsTest.Infinity do
+          def remote(n, m, f, a, timeout \\\\ :infinity), do: {n, m, f, a, timeout}
+          def early(t), do: sleep(:infinity, t)
+          def bounded(n), do: remote(n, M, :f, [], 5000)
+          defp sleep(t, u), do: {t, u}
+        end
+        """)
+
+      {:ok, data} = Argus.Pipeline.Disassemble.disassemble_path(bin)
+      rows = Enum.sort(CallArgs.extract(data)[:infinity_arg] || [])
+
+      assert rows == [
+               [
+                 "Argus.CallArgsTest.Infinity:early/1",
+                 "Argus.CallArgsTest.Infinity:sleep/2",
+                 "0"
+               ],
+               [
+                 "Argus.CallArgsTest.Infinity:remote/4",
+                 "Argus.CallArgsTest.Infinity:remote/5",
+                 "4"
+               ]
+             ]
+    end
+  end
 end

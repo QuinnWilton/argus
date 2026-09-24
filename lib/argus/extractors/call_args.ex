@@ -23,6 +23,9 @@ defmodule Argus.Extractors.CallArgs do
     a tuple the caller builds as the argument: what its element `index`
     (0 or 1) is, in the vocabulary of `key_identity/4`.
 
+  - `infinity_arg(caller, callee, arg_pos)` when the argument is the
+    literal `:infinity`, at any position: a timeout a wrapper hands on.
+
   Only the first 4 arguments (positions 0–3) are resolved per call
   site. Module/table/server references sit in the first few positions
   in all OTP calling conventions; capping at 4 bounds fact volume to
@@ -39,7 +42,7 @@ defmodule Argus.Extractors.CallArgs do
   import Argus.Extractor.Helpers, only: [each_call: 3]
   import Argus.Extractor.Facts, only: [add_fact: 3]
   import Argus.Extractor.Identity, only: [key_identity: 3, tuple_element_identity: 5]
-  import Argus.Extractor.Resolve, only: [resolve_to_arg_or_atom: 3]
+  import Argus.Extractor.Resolve, only: [resolve_register: 3, resolve_to_arg_or_atom: 3]
 
   alias Argus.Pipeline.Normalize
 
@@ -53,7 +56,8 @@ defmodule Argus.Extractors.CallArgs do
       :call_arg_element,
       :call_arg_field,
       :call_arg_forward,
-      :call_arg_tuple
+      :call_arg_tuple,
+      :infinity_arg
     ]
 
   @impl true
@@ -68,17 +72,37 @@ defmodule Argus.Extractors.CallArgs do
   defp emit_call_args(facts, ctx, callee_id, arity) do
     limit = min(arity, @max_args)
 
-    if limit == 0 do
-      facts
-    else
-      Enum.reduce(0..(limit - 1), facts, fn pos, acc ->
-        # No call-site instruction ID: it renumbered on every edit and no
-        # rule ever bound it (see Argus.Schema). Callers reason about which
-        # FUNCTION passes which argument, not which instruction does.
-        emit_arg(acc, ctx, callee_id, pos)
-      end)
-    end
+    facts =
+      if limit == 0 do
+        facts
+      else
+        Enum.reduce(0..(limit - 1), facts, fn pos, acc ->
+          # No call-site instruction ID: it renumbered on every edit and no
+          # rule ever bound it (see Argus.Schema). Callers reason about which
+          # FUNCTION passes which argument, not which instruction does.
+          emit_arg(acc, ctx, callee_id, pos)
+        end)
+      end
+
+    infinity_args(facts, ctx, callee_id, limit, arity)
   end
+
+  # :infinity past the fourth argument, where call_arg stops: a timeout
+  # is often the fifth (`:rpc.call/5`, a wrapper around it). Within the
+  # first four, emit_arg records it as it resolves the atom.
+  defp infinity_args(facts, _ctx, _callee_id, from, arity) when from >= arity, do: facts
+
+  defp infinity_args(facts, ctx, callee_id, from, arity) do
+    Enum.reduce(from..(arity - 1)//1, facts, fn pos, acc ->
+      case resolve_register(ctx.instrs, ctx.idx, {:x, pos}) do
+        {:ok, :infinity} -> infinity_arg(acc, ctx, callee_id, pos)
+        _ -> acc
+      end
+    end)
+  end
+
+  defp infinity_arg(facts, ctx, callee_id, pos),
+    do: add_fact(facts, :infinity_arg, [ctx.func_id, callee_id, to_string(pos)])
 
   # A forwarded parameter goes to its own relation with a real number
   # column rather than into call_arg's value column as `"arg:N"`. The
@@ -94,6 +118,11 @@ defmodule Argus.Extractors.CallArgs do
           to_string(pos),
           to_string(n)
         ])
+
+      {:atom, ":infinity" = str} ->
+        facts
+        |> add_fact(:call_arg, [ctx.func_id, callee_id, to_string(pos), str])
+        |> infinity_arg(ctx, callee_id, pos)
 
       {:atom, str} ->
         add_fact(facts, :call_arg, [ctx.func_id, callee_id, to_string(pos), str])

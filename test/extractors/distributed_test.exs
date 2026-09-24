@@ -24,6 +24,18 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
         def multi3(ns), do: GenServer.multi_call(ns, Srv, :ping)
         def multi4(ns), do: GenServer.multi_call(ns, Srv, :ping, 900)
         def dirty(s), do: :gen_statem.call(s, :ping, {:dirty_timeout, 800})
+        def block4(n), do: :rpc.block_call(n, Cache, :get, [])
+        def block5(n), do: :rpc.block_call(n, Cache, :get, [], 900)
+        def yield1(key), do: :rpc.yield(key)
+        def nb_yield2(key), do: :rpc.nb_yield(key, :infinity)
+        def recv1(req), do: :erpc.receive_response(req)
+        def recv2(req), do: :erpc.receive_response(req, 600)
+        def alive(n, pid), do: :rpc.call(n, Process, :alive?, [pid])
+        def tab(n), do: :rpc.call(n, :ets, :tab2list, [:t])
+        def mc3(), do: :rpc.multicall(:ets, :lookup, [:t, :k])
+        def mc4t(), do: :rpc.multicall(:ets, :lookup, [:t, :k], 100)
+        def mcnodes(ns), do: :rpc.multicall(ns, :ets, :lookup, [:t, :k])
+        def remote(n, m, f, a, timeout \\\\ :infinity), do: :rpc.call(n, m, f, a, timeout)
       end
       """)
 
@@ -33,6 +45,16 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
 
     %{
       rpc: Map.new(facts[:rpc_call], fn [_id, func, v, t] -> {short.(func), {v, t}} end),
+      target:
+        Map.new(facts[:rpc_call], fn [id, func, _v, _t] ->
+          [target] = for [^id, target] <- facts[:rpc_target], do: target
+          {short.(func), target}
+        end),
+      timeout_param:
+        Map.new(facts[:rpc_timeout_param], fn [id, pos] ->
+          [func] = for [^id, func, _, _] <- facts[:rpc_call], do: func
+          {short.(func), pos}
+        end),
       sync:
         Map.new(facts[:sync_call_timeout], fn [func, callee, t] ->
           {short.(func), {callee, t}}
@@ -90,6 +112,46 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
       assert rpc["rmulti_timeout/1"] == {"multicall", "4000"}
     end
 
+    test "block_call, yield and receive_response wait forever without a timeout", %{rpc: rpc} do
+      assert rpc["block4/1"] == {"block_call", "-1"}
+      assert rpc["block5/1"] == {"block_call", "900"}
+      assert rpc["yield1/1"] == {"yield", "-1"}
+      assert rpc["nb_yield2/1"] == {"nb_yield", "-1"}
+      assert rpc["recv1/1"] == {"erpc_receive", "-1"}
+      assert rpc["recv2/1"] == {"erpc_receive", "600"}
+    end
+
+    test "a timeout that is a parameter says which one", %{rpc: rpc, timeout_param: params} do
+      assert rpc["remote/5"] == {"rpc", "0"}
+      assert params == %{"remote/5" => "4"}
+    end
+  end
+
+  describe "extract/1 — the remote function an rpc runs" do
+    test "is read from the M and F arguments", %{target: target} do
+      assert target["alive/2"] == "Process.alive?"
+      assert target["tab/1"] == ":ets.tab2list"
+      assert target["block4/1"] == "Cache.get"
+      assert target["erpc4/2"] == "M.f"
+    end
+
+    test "multicall's M and F move with its nodes argument", %{target: target} do
+      assert target["mc3/0"] == ":ets.lookup"
+      assert target["mc4t/0"] == ":ets.lookup"
+      assert target["mcnodes/1"] == ":ets.lookup"
+      assert target["rmulti_nodes/2"] == "M.f"
+    end
+
+    test "a fun, a parameter, or an answer asked for elsewhere", %{target: target} do
+      assert target["erpc2/2"] == "fun"
+      assert target["emulti3/2"] == "fun"
+      assert target["remote/5"] == "dynamic"
+      assert target["yield1/1"] == "dynamic"
+      assert target["recv1/1"] == "dynamic"
+    end
+  end
+
+  describe "extract/1 — synchronous call timeouts" do
     test "multi_call names its server second and its timeout fourth", %{sync: sync} do
       assert sync["multi3/1"] == {"Srv", "-1"}
       assert sync["multi4/1"] == {"Srv", "900"}

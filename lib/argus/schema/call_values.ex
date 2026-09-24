@@ -110,6 +110,21 @@ defmodule Argus.Schema.CallValues do
         """
       },
       %{
+        name: :infinity_arg,
+        layer: 2,
+        fields: [
+          {:caller, :symbol, "calling function ID"},
+          {:callee, :symbol, "callee function ID (mod:func/arity)"},
+          {:arg_pos, :number, "0-based argument position"}
+        ],
+        doc: """
+        A call passes the literal `:infinity` as an argument, at any \
+        position — call_arg stops at the fourth, and a timeout is often \
+        the fifth. A wrapper whose timeout defaults to :infinity compiles \
+        to a clause that calls the full arity with it.
+        """
+      },
+      %{
         name: :call_arg_forward,
         layer: 2,
         fields: [

@@ -10,6 +10,22 @@ What 0.20.0 will ship; the release dates this heading and drops the
 `-dev` from `mix.exs`. Grouped by concern. Each entry opens with what it
 does: **Added**, **Changed**, **Fixed** or **Removed**.
 
+### A remote call that never answers
+
+**Changed.** Schema 72. `rpc_call` records `:rpc.block_call/4,5`,
+`:rpc.yield/1`, `:rpc.nb_yield/2` and `:erpc.receive_response/1,2,3`
+(variants `block_call`, `yield`, `nb_yield`, `erpc_receive`): each
+waits for an answer, forever where the arity leaves the timeout out.
+`nb_yield/1` and `wait_response` do not wait and stay out. Two
+relations beside it: `rpc_target(id, target)`, the remote function as
+`Mod.fun` from the M and F arguments (`"fun"` for the forms that take
+a fun, `"dynamic"` where the site does not name it), and
+`rpc_timeout_param(id, param)`, when the timeout is one of the
+function's parameters on every path. `infinity_arg(caller, callee,
+arg_pos)` (`Argus.Extractors.CallArgs`) records a literal `:infinity`
+argument at any position; `call_arg` stops at the fourth, and a
+wrapper's `timeout \\ :infinity` passes it fifth.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile

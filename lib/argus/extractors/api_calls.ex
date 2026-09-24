@@ -26,7 +26,7 @@ defmodule Argus.Extractors.ApiCalls do
     `sync_call_site` — each synchronous call's target and timeout, by site
   - `unsafe_atom_creation`, `unsafe_deserialization`, `code_execution`
   - `port_open`
-  - `rpc_call`, `global_register`, `global_op`, `node_operation`,
+  - `rpc_call`, `rpc_target`, `rpc_timeout_param`, `global_register`, `global_op`, `node_operation`,
     `distributed_store_op`
   """
 
@@ -38,7 +38,14 @@ defmodule Argus.Extractors.ApiCalls do
   import Argus.Extractor.Facts, only: [add_fact: 3, track_dynamic: 5, track_imprecision: 4]
 
   import Argus.Extractor.Resolve,
-    only: [module_target: 3, node_list: 3, resolve_atom: 3, resolve_register: 3, timeout_ms: 3]
+    only: [
+      arg_position: 3,
+      module_target: 3,
+      node_list: 3,
+      resolve_atom: 3,
+      resolve_register: 3,
+      timeout_ms: 3
+    ]
 
   # ── The table ──────────────────────────────────────────────────────────
 
@@ -135,6 +142,45 @@ defmodule Argus.Extractors.ApiCalls do
 
   @dets_ops ~w(open_file close lookup insert delete match_object select first next sync info)a
 
+  # Remote calls that wait for an answer: {mfa, variant, timeout,
+  # target}. The timeout is "-1" where the arity leaves it out and the
+  # default is :infinity, or the argument that holds it; the target is
+  # the remote function, read from the M and F arguments, "fun" for the
+  # forms that take a fun, and "dynamic" where the site does not name it
+  # (a yield or receive_response collects what an earlier request asked).
+  #
+  # rpc:multicall(M, F, A) and multicall(Nodes, M, F, A) wait forever;
+  # multicall(M, F, A, Timeout) is the other /4, told apart by what its
+  # third argument holds. erpc's default timeout is infinity too:
+  # call(Node, Fun), call(Node, M, F, A), and multicall likewise with
+  # Nodes. block_call is call without the rex server's parallelism,
+  # yield(Key) and receive_response(ReqId) wait for an answer an earlier
+  # async_call or send_request asked for, forever unless given a timeout;
+  # nb_yield(Key) and wait_response(ReqId) do not wait, and are not here.
+  @rpc_calls [
+    {{:rpc, :call, 4}, "rpc", {:const, "-1"}, {:target, 1, 2}},
+    {{:rpc, :call, 5}, "rpc", {:timeout, 4, :rpc_timeout}, {:target, 1, 2}},
+    {{:rpc, :block_call, 4}, "block_call", {:const, "-1"}, {:target, 1, 2}},
+    {{:rpc, :block_call, 5}, "block_call", {:timeout, 4, :rpc_timeout}, {:target, 1, 2}},
+    {{:rpc, :multicall, 3}, "multicall", {:const, "-1"}, {:target, 0, 1}},
+    {{:rpc, :multicall, 4}, "multicall", {:multicall_timeout, 3, :rpc_timeout},
+     :multicall_target},
+    {{:rpc, :multicall, 5}, "multicall", {:timeout, 4, :rpc_timeout}, {:target, 1, 2}},
+    {{:rpc, :yield, 1}, "yield", {:const, "-1"}, {:const, "dynamic"}},
+    {{:rpc, :nb_yield, 2}, "nb_yield", {:timeout, 1, :rpc_timeout}, {:const, "dynamic"}},
+    {{:erpc, :call, 2}, "erpc", {:const, "-1"}, {:const, "fun"}},
+    {{:erpc, :call, 3}, "erpc", {:timeout, 2, :rpc_timeout}, {:const, "fun"}},
+    {{:erpc, :call, 4}, "erpc", {:const, "-1"}, {:target, 1, 2}},
+    {{:erpc, :call, 5}, "erpc", {:timeout, 4, :rpc_timeout}, {:target, 1, 2}},
+    {{:erpc, :multicall, 2}, "erpc_multicall", {:const, "-1"}, {:const, "fun"}},
+    {{:erpc, :multicall, 3}, "erpc_multicall", {:timeout, 2, :rpc_timeout}, {:const, "fun"}},
+    {{:erpc, :multicall, 4}, "erpc_multicall", {:const, "-1"}, {:target, 1, 2}},
+    {{:erpc, :multicall, 5}, "erpc_multicall", {:timeout, 4, :rpc_timeout}, {:target, 1, 2}},
+    {{:erpc, :receive_response, 1}, "erpc_receive", {:const, "-1"}, {:const, "dynamic"}},
+    {{:erpc, :receive_response, [2, 3]}, "erpc_receive", {:timeout, 1, :rpc_timeout},
+     {:const, "dynamic"}}
+  ]
+
   # A synchronous call's site row repeats what sync_call and
   # sync_call_timeout say about the function, for the rules that must pair
   # a call's target with its own timeout; its readers record no
@@ -197,35 +243,6 @@ defmodule Argus.Extractors.ApiCalls do
             [:id, :func, {:const, "System.shell"}, {:command, 0}]},
            {{:os, :cmd, [1, 2]}, :port_open, [:id, :func, {:const, "os.cmd"}, {:command, 0}]},
            # ── distributed ──
-           {{:rpc, :call, 4}, :rpc_call, [:id, :func, {:const, "rpc"}, {:const, "-1"}]},
-           {{:rpc, :call, 5}, :rpc_call,
-            [:id, :func, {:const, "rpc"}, {:timeout, 4, :rpc_timeout}]},
-           # multicall(M, F, A) and multicall(Nodes, M, F, A) wait
-           # forever; multicall(M, F, A, Timeout) is the other /4, told
-           # apart by what its last argument holds.
-           {{:rpc, :multicall, 3}, :rpc_call,
-            [:id, :func, {:const, "multicall"}, {:const, "-1"}]},
-           {{:rpc, :multicall, 4}, :rpc_call,
-            [:id, :func, {:const, "multicall"}, {:multicall_timeout, 3, :rpc_timeout}]},
-           {{:rpc, :multicall, 5}, :rpc_call,
-            [:id, :func, {:const, "multicall"}, {:timeout, 4, :rpc_timeout}]},
-           # erpc's default timeout is infinity: call(Node, Fun),
-           # call(Node, Fun, Timeout), call(Node, M, F, A),
-           # call(Node, M, F, A, Timeout); multicall likewise with Nodes.
-           {{:erpc, :call, 2}, :rpc_call, [:id, :func, {:const, "erpc"}, {:const, "-1"}]},
-           {{:erpc, :call, 3}, :rpc_call,
-            [:id, :func, {:const, "erpc"}, {:timeout, 2, :rpc_timeout}]},
-           {{:erpc, :call, 4}, :rpc_call, [:id, :func, {:const, "erpc"}, {:const, "-1"}]},
-           {{:erpc, :call, 5}, :rpc_call,
-            [:id, :func, {:const, "erpc"}, {:timeout, 4, :rpc_timeout}]},
-           {{:erpc, :multicall, 2}, :rpc_call,
-            [:id, :func, {:const, "erpc_multicall"}, {:const, "-1"}]},
-           {{:erpc, :multicall, 3}, :rpc_call,
-            [:id, :func, {:const, "erpc_multicall"}, {:timeout, 2, :rpc_timeout}]},
-           {{:erpc, :multicall, 4}, :rpc_call,
-            [:id, :func, {:const, "erpc_multicall"}, {:const, "-1"}]},
-           {{:erpc, :multicall, 5}, :rpc_call,
-            [:id, :func, {:const, "erpc_multicall"}, {:timeout, 4, :rpc_timeout}]},
            {{:global, :register_name, [2, 3]}, :global_register,
             [:id, :func, {:atom, 0, :global_register_name}, :arity]},
            # A lock call that leaves out its node list takes the lock on
@@ -253,6 +270,15 @@ defmodule Argus.Extractors.ApiCalls do
            {{:global, :send, 2}, :global_op,
             [:id, :func, {:const, "send"}, {:const, "0"}, {:const, ""}]}
          ])
+         |> Kernel.++(
+           for {mfa, variant, timeout, target} <- @rpc_calls,
+               row <- [
+                 {mfa, :rpc_call, [:id, :func, {:const, variant}, timeout]},
+                 {mfa, :rpc_target, [:id, target]},
+                 {mfa, :rpc_timeout_param, [:id, {:timeout_param, timeout}]}
+               ],
+               do: row
+         )
          |> Kernel.++(for mfa <- @node_ops, do: {mfa, :node_operation, [:id, :func, :fun]})
          |> Kernel.++(
            for op <- @mnesia_ops,
@@ -332,6 +358,8 @@ defmodule Argus.Extractors.ApiCalls do
       :node_operation,
       :port_open,
       :rpc_call,
+      :rpc_target,
+      :rpc_timeout_param,
       :sup_call,
       :sync_call,
       :sync_call_site,
@@ -427,6 +455,51 @@ defmodule Argus.Extractors.ApiCalls do
       _ -> read({:timeout, n, category}, ctx, mfa, facts, rel)
     end
   end
+
+  # The remote function a call names, "Mod.fun" as the M and F
+  # arguments spell it, or "dynamic" when either is not a literal atom.
+  defp read({:target, m, f}, ctx, _mfa, facts, _rel) do
+    with {:ok, mod} when is_atom(mod) and mod != :dynamic <-
+           resolve_register(ctx.instrs, ctx.idx, {:x, m}),
+         {:ok, fun} when is_atom(fun) and fun != :dynamic <-
+           resolve_register(ctx.instrs, ctx.idx, {:x, f}) do
+      {"#{inspect(mod)}.#{fun}", facts}
+    else
+      _ -> {"dynamic", facts}
+    end
+  end
+
+  # multicall(Nodes, M, F, A) names its function third, multicall(M, F,
+  # A, Timeout) second: told apart as {:multicall_timeout, 3, _} does.
+  defp read(:multicall_target, ctx, mfa, facts, rel) do
+    case resolve_register(ctx.instrs, ctx.idx, {:x, 2}) do
+      {:ok, fun} when is_atom(fun) and fun != :dynamic ->
+        read({:target, 1, 2}, ctx, mfa, facts, rel)
+
+      _ ->
+        read({:target, 0, 1}, ctx, mfa, facts, rel)
+    end
+  end
+
+  # Which of the function's parameters a timeout argument is, when it is
+  # one on every path (a wrapper's `timeout \\ :infinity`): the rules
+  # ask whether a caller passes :infinity there. Any other timeout —
+  # a literal, the default, something computed — adds no row.
+  defp read({:timeout_param, {:timeout, n, _category}}, ctx, _mfa, facts, _rel) do
+    case arg_position(ctx.instrs, ctx.idx, {:x, n}) do
+      {:ok, k} -> {to_string(k), facts}
+      :no -> {:skip, facts}
+    end
+  end
+
+  defp read({:timeout_param, {:multicall_timeout, n, _category}}, ctx, mfa, facts, rel) do
+    case resolve_register(ctx.instrs, ctx.idx, {:x, n - 1}) do
+      {:ok, fun} when is_atom(fun) and fun != :dynamic -> {:skip, facts}
+      _ -> read({:timeout_param, {:timeout, n, :rpc_timeout}}, ctx, mfa, facts, rel)
+    end
+  end
+
+  defp read({:timeout_param, {:const, _}}, _ctx, _mfa, facts, _rel), do: {:skip, facts}
 
   defp read({:retries, n}, ctx, _mfa, facts, rel) do
     value =

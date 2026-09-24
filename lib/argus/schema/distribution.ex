@@ -27,11 +27,46 @@ defmodule Argus.Schema.Distribution do
         fields: [
           {:id, :symbol, "instruction ID"},
           {:func, :symbol, "containing function ID"},
-          {:variant, :symbol, "RPC variant (rpc, erpc, multicall)"},
+          {:variant, :symbol,
+           "RPC variant: rpc, block_call, multicall, yield, nb_yield (the :rpc functions), " <>
+             "erpc, erpc_multicall, erpc_receive (:erpc.call, multicall, receive_response)"},
           {:timeout, :symbol,
            "timeout in ms, -1 for :infinity, 0 when unknown — as sync_call_timeout"}
         ],
-        doc: "RPC call with timeout information."
+        doc: """
+        A remote call that waits for its answer, with its timeout: a call, \
+        a multicall, or the collection of an answer an earlier async_call or \
+        send_request asked for (yield, nb_yield/2, receive_response).
+        """
+      },
+      %{
+        name: :rpc_target,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the rpc_call instruction ID"},
+          {:target, :symbol,
+           "the remote function as `Mod.fun` (`Process.alive?`, `:ets.lookup`), " <>
+             "'fun' for the forms that take a fun, 'dynamic' when the site does not name it"}
+        ],
+        doc: """
+        What an rpc_call runs on the other node, from its M and F arguments. \
+        A yield or receive_response collects an answer another site asked \
+        for, and names no target: 'dynamic'.
+        """
+      },
+      %{
+        name: :rpc_timeout_param,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the rpc_call instruction ID"},
+          {:param, :number, "0-based position of the function's parameter the timeout is"}
+        ],
+        doc: """
+        An rpc_call whose timeout is one of its function's parameters on \
+        every path (its timeout column says 0, unknown): a wrapper's \
+        `timeout \\\\ :infinity`. With infinity_arg, the rules ask whether a \
+        caller passes :infinity there.
+        """
       },
       %{
         name: :global_register,
