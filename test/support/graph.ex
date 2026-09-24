@@ -172,7 +172,13 @@ defmodule Scry.Test.Graph do
   """
   @spec incremental(Database.t(), [atom()]) :: %{optional(atom()) => term()}
   def incremental(db, analyses) do
-    Map.new(analyses, &{&1, Scry.Analysis.souffle_solve(db, &1)})
+    # As the runner demands them: the merged relations first, here, then
+    # the solves side by side — they share everything upstream.
+    _relations = Scry.Analysis.program_relation_facts(db, :all)
+
+    analyses
+    |> Task.async_stream(&{&1, Scry.Analysis.souffle_solve(db, &1)}, timeout: :infinity)
+    |> Map.new(fn {:ok, entry} -> entry end)
   end
 
   @doc """

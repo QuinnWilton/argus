@@ -39,8 +39,11 @@ defmodule Scry.AnalysisParityTest do
   end
 
   defp assert_parity(db, paths, analyses, label, batch \\ nil) do
+    # The batch oracle runs beside the incremental solves: independent
+    # work over the same beams.
+    oracle = if batch, do: nil, else: Task.async(fn -> Graph.batch(paths, analyses) end)
     incremental = Graph.incremental(db, analyses)
-    batch = batch || Graph.batch(paths, analyses)
+    batch = batch || Task.await(oracle, :infinity)
 
     for analysis <- analyses do
       assert {:ok, _rows} = incremental[analysis], "#{label}: #{analysis} degraded"
