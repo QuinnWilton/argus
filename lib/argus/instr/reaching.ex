@@ -24,7 +24,10 @@ defmodule Argus.Instr.Reaching do
   function many times pay for it once, and the emitter's normalized list
   and the extractors' raw one share it. A different module replaces it.
   `uses/2` reads a whole module's reaching definitions off the same
-  solutions: the pipeline's `module_data.reaching`.
+  solutions: the pipeline's `module_data.reaching`. `export/1` and
+  `restore/2` carry a module's solutions to another process, so the
+  walks over a module's kept base (`Argus.Pipeline.Base`) find its
+  functions solved.
   """
 
   alias Argus.Dataflow
@@ -178,6 +181,39 @@ defmodule Argus.Instr.Reaching do
     end
   end
 
+  @doc """
+  The solutions of `functions`' instruction lists (solved here when this
+  process has not yet), one per function in order, as a term another
+  process can take up with `restore/2`: the blocks and what reaches each
+  one, without the instructions they index.
+  """
+  @spec export([{:function, atom(), arity(), term(), [Instr.instr()]}]) :: [term()]
+  def export(functions) do
+    for {:function, _name, _arity, _entry, instrs} <- functions,
+        do: solution(instrs).blocks
+  end
+
+  @doc """
+  Keeps the solutions `export/1` made of the same `functions`, as if
+  this process had solved them: `sources/3` and `uses/2` over those
+  instruction lists answer from them, as they would have from a solve.
+  """
+  @spec restore([{:function, atom(), arity(), term(), [Instr.instr()]}], [term()]) :: :ok
+  def restore(functions, exported) do
+    functions
+    |> Enum.zip(exported)
+    |> Enum.each(fn {{:function, _name, _arity, _entry, instrs}, blocks} ->
+      # No skeleton: it is how a twin list borrows a solution
+      # (`solve/2`), and a list met after this one is solved anew.
+      keep(instrs, %{
+        code: List.to_tuple(instrs),
+        skeleton: nil,
+        blocks: blocks,
+        block_of: block_of(blocks)
+      })
+    end)
+  end
+
   # --- the per-function solution -----------------------------------------
 
   defp solution(instrs) do
@@ -197,10 +233,22 @@ defmodule Argus.Instr.Reaching do
 
       nil ->
         solution = solve(instrs, cached)
-        kept = Enum.take([{instrs, solution} | cached], 2)
-        Process.put(@cache, {module, Map.put(functions, key, kept)})
+        keep(instrs, solution)
         solution
     end
+  end
+
+  defp keep(instrs, solution) do
+    {module, key} = cache_key(instrs)
+
+    functions =
+      case Process.get(@cache) do
+        {^module, functions} -> functions
+        _other -> %{}
+      end
+
+    kept = Enum.take([{instrs, solution} | Map.get(functions, key, [])], 2)
+    Process.put(@cache, {module, Map.put(functions, key, kept)})
   end
 
   # A function is named by its func_info; code without one (a fragment
@@ -261,17 +309,16 @@ defmodule Argus.Instr.Reaching do
 
     defs = Map.new(indexed, fn {{defs, _targets, _next?, _l}, idx} -> {idx, defs} end)
     blocks = ids |> Dataflow.block_ins(succ, defs, entry) |> Enum.with_index()
+    blocks = Map.new(blocks, fn {{block, in_map}, n} -> {n, {List.to_tuple(block), in_map}} end)
+    %{block_of: block_of(blocks), blocks: blocks}
+  end
 
-    %{
-      block_of:
-        for(
-          {{block, _in}, n} <- blocks,
-          {idx, pos} <- Enum.with_index(block),
-          into: %{},
-          do: {idx, {n, pos}}
-        ),
-      blocks: Map.new(blocks, fn {{block, in_map}, n} -> {n, {List.to_tuple(block), in_map}} end)
-    }
+  # Each instruction's block and its position there.
+  defp block_of(blocks) do
+    for {n, {block, _in}} <- blocks,
+        {idx, pos} <- block |> Tuple.to_list() |> Enum.with_index(),
+        into: %{},
+        do: {idx, {n, pos}}
   end
 
   # The entry is the instruction after func_info, where the parameters

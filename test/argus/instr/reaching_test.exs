@@ -44,6 +44,48 @@ defmodule Argus.Instr.ReachingTest do
     end
   end
 
+  describe "export/1 and restore/2" do
+    test "another process answers from the restored solutions as from its own" do
+      {:ok, data} = Disassemble.disassemble_path(to_string(:code.which(:gen_server)))
+      fresh = Reaching.uses(data.module, data.functions)
+      exported = Reaching.export(data.functions)
+
+      probes =
+        for {:function, _, _, _, instrs} <- data.functions,
+            idx <- 0..(length(instrs) - 1)//7,
+            reg <- [{:x, 0}, {:x, 1}, {:y, 0}],
+            do: {instrs, idx, reg}
+
+      answers = for {instrs, idx, reg} <- probes, do: Reaching.sources(instrs, idx, reg)
+
+      # A copy of the instruction lists, as a kept base holds them.
+      copy = :erlang.binary_to_term(:erlang.term_to_binary({data.functions, exported}))
+
+      task =
+        Task.async(fn ->
+          {functions, exported} = copy
+          :ok = Reaching.restore(functions, exported)
+          restored = Reaching.uses(data.module, functions)
+
+          restored_answers =
+            for {:function, _, _, _, instrs} <- functions,
+                idx <- 0..(length(instrs) - 1)//7,
+                reg <- [{:x, 0}, {:x, 1}, {:y, 0}],
+                do: Reaching.sources(instrs, idx, reg)
+
+          {restored, restored_answers, Process.get(:argus_instr_reaching)}
+        end)
+
+      {restored, restored_answers, kept} = Task.await(task)
+      assert restored == fresh
+      assert restored_answers == answers
+      # Every function answered from what was restored, none solved anew.
+      {_module, functions} = kept
+
+      assert Enum.all?(functions, fn {_key, [{_instrs, solution}]} -> solution.skeleton == nil end)
+    end
+  end
+
   describe "agreement with Argus.Dataflow" do
     @modules [:lists, :gen_server, :proc_lib, :beam_ssa_codegen, Enum, GenServer, Registry] ++
                [Argus.Test.Fixtures.Instr]
