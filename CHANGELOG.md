@@ -149,7 +149,7 @@ every path to the call established; one row per tag, none for a call
 some path reaches with no tag established. From
 `Argus.Extractor.Dispatch.argument_tags/2`, a walk over every path through
 the function, so a `case` on the argument in the body refines as a clause
-head does. Read by nothing yet.
+head does. Read by `blocking`'s call chains.
 
 **Removed.** Schema 60. `move`, `allocate`, `deallocate`, `try_end` and
 `module_attribute`: no Datalog rule and no in-process pass read them (the
@@ -1397,8 +1397,28 @@ or OTP.
 
 **Changed.** `blocking.call_chain` ("chain") keeps only the shortest chain between two
 servers (a Souffle subsumption), where it enumerated every path length up
-to ten and reported one at random, and no longer passes through a module
-in a synchronous call cycle: the cycle is its own finding.
+to ten and reported one at random, and no longer passes through a
+synchronous call cycle: the cycle is its own finding.
+
+**Changed.** A chain is made of requests, not modules: a hop is the call a
+handle_call/3 clause makes, with the tag it sends, into the clause of the
+next server that tag enters (`clause_call`, schema 61), and a chain stops at a
+clause on a cycle of requests rather than at every module in a call
+cycle. By module, a cycle through one clause swallowed a chain through
+another: encore's fugue seeds Countersubject -> Answer -> Subject beside
+the Answer <-> Countersubject cycle Answer's `:echo` clause closes, and
+the chain was lost when chains stopped at cycle members. A call into a
+function with a literal first atom enters only that clause of it, so a
+handler calling `Router.route(:local, n)` no longer waits on what the
+`:remote` clause calls (fugue's Router tripwire). A clause the extractor
+cannot tell (a helper that dispatches, a catch-all) serves every request,
+and a request with no literal tag enters every clause, so where neither is
+known the chain is the module-granular one. `call_cycle` stays by module:
+a server busy in one clause cannot answer a call into another.
+`clientlib/calls.dl` gains `sync_request_at`, `sync_request` and
+`reaches_sync_request` (the synchronous dependencies with their request's
+tag) and `site_request` / `site_clause`, the same per call site of the
+functions a consumer seeds `site_demand` with.
 
 **Changed.** One site, one concern: an rpc in `init/1`, and a blocking `:global` op
 `init/1` reaches, are `startup.blocks_on_peer`'s findings ("remote",

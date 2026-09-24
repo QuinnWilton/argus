@@ -3,7 +3,7 @@
 # change in the unit of incremental work: review the diff.
 [
   blocking:
-    ~w(async_cast call_arg call_arg_forward call_edge call_site call_tag callback_tag catch_tag catch_total dynamic_call fun_ref function_def global_op handle_continue_clause implements_behaviour init_continues_to named_process pid_arg pid_base pid_call pid_field pid_load pid_message pid_object pid_register pid_result pid_return pid_sets process_start recv_pattern recv_start remote_call rpc_call statem_event_clause supervisor_child supervisor_child_name sync_call sync_call_site sync_call_timeout timer_arm try_call),
+    ~w(async_cast call_arg call_arg_forward call_edge call_site call_tag callback_tag catch_tag catch_total clause_call dynamic_call fun_ref function_def global_op handle_continue_clause implements_behaviour init_continues_to named_process pid_arg pid_base pid_call pid_field pid_load pid_message pid_object pid_register pid_result pid_return pid_sets process_start recv_pattern recv_start remote_call rpc_call statem_event_clause supervisor_child supervisor_child_name sync_call sync_call_site sync_call_timeout timer_arm try_call),
   coupling:
     ~w(async_cast call_arg call_arg_forward call_edge call_site call_tag callback_tag child_spec_restart dynamic_call dynamic_child fun_ref function_def implements_behaviour matches_down monitor_call name_lookup named_process pid_arg pid_base pid_call pid_field pid_load pid_message pid_object pid_register pid_result pid_return pid_sets pid_signal prior_talks_to_process process_link process_start statem_event_clause sup_call supervisor supervisor_child supervisor_child_name supervisor_site sync_call sync_call_site),
   coverage:

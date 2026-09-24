@@ -34,3 +34,10 @@ self_directed_call(caller, mod) :-
 
 // A self-directed call is a sync dependency on the caller's own module.
 sync_dep(caller, mod) :- self_directed_call(caller, mod).
+
+// The request it makes is the tag its own handler answers.
+sync_request_at(caller, id, mod, tag) :-
+  call_tag(id, caller, "call", tag),
+  function_def(caller, mod, _, _, _),
+  function_def(handler, mod, "handle_call", 3, _),
+  callback_tag(handler, "handle_call", tag).

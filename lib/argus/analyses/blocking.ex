@@ -56,6 +56,9 @@ defmodule Argus.Analyses.Blocking do
       Argus.Extractors.OTP,
       Argus.Extractors.ApiCalls,
       Argus.Extractors.CallbackTag,
+      # The clause of a handle_call/3, or of a guarded dispatcher, each
+      # call runs in: a chain follows the clause a request enters.
+      Argus.Extractors.ClauseCall,
       # The sync_call rows the chains follow are partly derived through
       # call_arg and call_arg_forward: a target forwarded through a wrapper.
       Argus.Extractors.CallArgs,

@@ -10,6 +10,11 @@
 //   genserver_sync_api(func, mod) / genserver_async_api(func, mod)
 //   sync_dep(func, mod) / async_dep(func, mod)               — direct
 //   reaches_sync_dep(func, mod) / reaches_async_dep(func, mod) — transitive
+//   sync_request_at(func, site, mod, tag) / reaches_sync_request(func, mod, tag)
+//     — the same waits, with the request's tag
+//   site_request(func, site, mod, tag) — per call site of a function a
+//     consumer names in site_demand, entering callees by their literal
+//     first argument
 //   sync_dep_timeout(func, mod, timeout_ms) / reaches_sync_dep_timeout
 //   module_reaches(from_mod, to_mod, witness)  — to_mod a supervised module
 //   stateful_module_dep(from_mod, to_mod, witness)
@@ -365,6 +370,180 @@ reaches_sync_dep(f, m) :-
   call_edge(f, g),
   !runs_elsewhere(f, g),
   reaches_sync_dep(g, m).
+
+// ── Which request ──────────────────────────────────────────────────────
+//
+// The same waits, with the request they make: the tag the message
+// carries (call_tag — the atom, or the first element of the tuple), or
+// "any" where it carries none the program can see. A chain through a
+// server follows the clause the request enters, so a request is what a
+// hop is made of; reaches_sync_request(f, m, _) holds exactly where
+// reaches_sync_dep(f, m) does.
+
+// The tag of the sync call at `id`, "any" when its message has none.
+.decl sent_tag(id: symbol, func: symbol, tag: symbol)
+
+sent_tag(id, f, tag) :- sync_call_site(id, f, _, _), call_tag(id, f, "call", tag).
+sent_tag(id, f, "any") :- sync_call_site(id, f, _, _), !call_tag(id, f, "call", _).
+
+// `func` itself waits on `mod` with a request tagged `tag`, at `site`
+// ("" when the wait has no site of func's: a literal target handed to a
+// wrapper). One clause per sync_dep clause that has a site;
+// resolved_calls.dl adds the self-directed one.
+.decl sync_request_at(func: symbol, site: symbol, mod: symbol, tag: symbol)
+
+sync_request_at(f, id, m, tag) :-
+  sync_call_site(id, f, m, _),
+  m != "dynamic",
+  m != ":dynamic",
+  !match("via:.*", m),
+  sent_tag(id, f, tag).
+
+sync_request_at(f, "", m, "any") :-
+  sync_call(f, m),
+  m != "dynamic",
+  m != ":dynamic",
+  !match("via:.*", m),
+  !sync_call_site(_, f, m, _).
+
+sync_request_at(f, anchor, m, tag) :-
+  process_call(f, anchor, site, "call", p),
+  server_process(p, m),
+  sent_tag(site, _, tag).
+
+sync_request_at(f, anchor, m, "any") :-
+  process_call(f, anchor, site, "call", p),
+  server_process(p, m),
+  !sync_call_site(site, _, _, _).
+
+sync_request_at(f, id, m, tag) :-
+  tag_resolved_site(id, f, "call", m),
+  sync_call_site(id, f, t, _),
+  unresolved_target(t),
+  call_tag(id, f, "call", tag).
+
+// The requests a server's client API function makes: the tags it sends,
+// "any" for a call of its with none or when the call is a callee's.
+.decl api_request_tag(func: symbol, tag: symbol)
+
+api_request_tag(g, tag) :- genserver_sync_api(g, _), call_tag(_, g, "call", tag).
+
+api_request_tag(g, "any") :-
+  genserver_sync_api(g, _),
+  sync_call_site(id, g, _, _),
+  !call_tag(id, g, "call", _).
+
+api_request_tag(g, "any") :- genserver_sync_api(g, _), !call_tag(_, g, "call", _).
+
+.decl sync_request_known(func: symbol, mod: symbol, tag: symbol)
+
+sync_request_known(f, m, tag) :- sync_request_at(f, _, m, tag).
+
+sync_request_known(f, m, tag) :-
+  call_edge(f, g),
+  genserver_sync_api(g, m),
+  function_def(f, fm, _, _, _),
+  fm != m,
+  api_request_tag(g, tag).
+
+.decl sync_request_seen(func: symbol, mod: symbol)
+
+sync_request_seen(f, m) :- sync_request_known(f, m, _).
+
+// Every sync_dep has a request: "any" for one no clause above names, so
+// a dependency this file learns to make later is never lost here.
+.decl sync_request(func: symbol, mod: symbol, tag: symbol)
+
+sync_request(f, m, tag) :- sync_request_known(f, m, tag).
+sync_request(f, m, "any") :- sync_dep(f, m), !sync_request_seen(f, m).
+
+.decl reaches_sync_request(func: symbol, mod: symbol, tag: symbol)
+
+reaches_sync_request(f, m, tag) :- sync_request(f, m, tag).
+
+reaches_sync_request(f, m, tag) :-
+  call_edge(f, g),
+  !runs_elsewhere(f, g),
+  reaches_sync_request(g, m, tag).
+
+// ── Which request, per call site ──────────────────────────────────────
+//
+// site_request(f, site, m, tag): the call at `site` in `f` leads to a
+// wait on m's process with a request tagged `tag` ("" for a hop with no
+// call instruction of f's: a closure, a fun handed on, a literal target
+// given to a wrapper). Asked of the functions a consumer seeds
+// site_demand with, and of every callee they enter with a literal first
+// argument: `Router.route(:local, n)` enters only route/2's :local clause
+// (clause_call), so what the :remote clause waits on is not the caller's
+// wait — the guarded dispatcher a call graph by function merges into
+// one. A callee entered any other way is taken whole, as
+// reaches_sync_request takes it.
+.decl site_demand(func: symbol)
+
+// Every call `f` makes to `g` passes the literal atom `value` first (one
+// row per atom when the calls differ). An argument forwarded from f's
+// own parameters, or unresolved, enters every clause.
+.decl literal_entry(func: symbol, callee: symbol, value: symbol)
+
+literal_entry(f, g, a) :-
+  site_demand(f),
+  call_arg(f, g, 0, a),
+  match(":.*", a),
+  !call_arg(f, g, 0, "dynamic"),
+  !call_arg_forward(f, g, 0, _).
+
+site_demand(g) :- site_demand(f), call_instr(f, g, _), literal_entry(f, g, _).
+
+.decl site_request(func: symbol, site: symbol, mod: symbol, tag: symbol)
+
+site_request(f, id, m, tag) :- site_demand(f), sync_request_at(f, id, m, tag).
+
+site_request(f, id, m, tag) :-
+  site_demand(f),
+  call_instr(f, g, id),
+  !runs_elsewhere(f, g),
+  !literal_entry(f, g, _),
+  reaches_sync_request(g, m, tag).
+
+site_request(f, id, m, tag) :-
+  site_demand(f),
+  call_instr(f, g, id),
+  !runs_elsewhere(f, g),
+  literal_entry(f, g, a),
+  site_request(g, s, m, tag),
+  site_clause(g, s, c),
+  (c = a ; c = "any").
+
+site_request(f, id, m, tag) :-
+  site_demand(f),
+  call_instr(f, g, id),
+  genserver_sync_api(g, m),
+  function_def(f, fm, _, _, _),
+  fm != m,
+  api_request_tag(g, tag).
+
+site_request(f, "", m, tag) :-
+  site_demand(f),
+  call_edge(f, g),
+  !call_instr(f, g, _),
+  !runs_elsewhere(f, g),
+  reaches_sync_request(g, m, tag).
+
+site_request(f, "", m, tag) :-
+  site_demand(f),
+  call_edge(f, g),
+  !call_instr(f, g, _),
+  genserver_sync_api(g, m),
+  function_def(f, fm, _, _, _),
+  fm != m,
+  api_request_tag(g, tag).
+
+// The first-argument tag the clause holding `site` serves: clause_call's,
+// or "any" for a call every clause shares, or a hop with no site.
+.decl site_clause(func: symbol, site: symbol, tag: symbol)
+
+site_clause(f, id, tag) :- site_request(f, id, _, _), clause_call(id, f, tag).
+site_clause(f, id, "any") :- site_request(f, id, _, _), !clause_call(id, f, _).
 
 .decl reaches_async_dep(func: symbol, mod: symbol)
 

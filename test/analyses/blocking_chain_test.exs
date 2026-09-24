@@ -56,6 +56,30 @@ defmodule Argus.Analyses.BlockingChainTest do
                from =~ "CycW" and to =~ "CycZ"
              end)
     end
+
+    test "a chain beside a cycle through another clause of the same server is reported" do
+      skip_without_souffle()
+      alias Argus.Test.Fixtures.ChainShapes, as: S
+
+      {:ok, results} =
+        Argus.analyze(
+          [S.FugAnswer, S.FugCounter, S.FugSubject, S.FugRouter, S.FugRelay],
+          :blocking
+        )
+
+      # FugAnswer's :echo clause and FugCounter's :invert clause wait on
+      # each other: the cycle is reported as ever.
+      assert [[a, b | _]] = results["call_cycle"]
+      assert {a, b} == {inspect(S.FugAnswer), inspect(S.FugCounter)}
+
+      # The :answer request :invert makes never enters :echo, so the chain
+      # FugCounter -> FugAnswer -> FugSubject is not a walk round the cycle.
+      # And :answer calls FugRouter.route(:local, _), whose :remote clause
+      # is the one that calls FugRelay: no chain goes there.
+      assert chains(results, "chain") == [
+               [inspect(S.FugCounter), inspect(S.FugSubject), "2", "static"]
+             ]
+    end
   end
 
   describe "call_chain" do

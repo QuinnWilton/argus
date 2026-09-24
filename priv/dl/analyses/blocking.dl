@@ -40,9 +40,37 @@
 .output receive_in_callback
 
 // ══ Call chains through handle_call ═════════════════════════════════
-.decl callback_sync_dep(from_mod: symbol, to_mod: symbol)
+//
+// A chain is made of requests, not modules: a request enters one clause
+// of the server's handle_call/3 (clause_call says which calls each
+// clause makes), and that clause's own synchronous calls are the next
+// hops. Fugue's Countersubject answers :invert by calling Answer with
+// :answer, whose clause calls Subject — a chain of two — while Answer's
+// :echo clause calls Countersubject back, closing a cycle the :answer
+// request never enters. Tracked by module, that cycle swallowed the
+// chain beside it.
+//
+// Where a clause is unknown (a body that dispatches through a helper, a
+// catch-all) the node is (mod, "any"), which every request to the module
+// enters; where a request's tag is unknown (a message built at runtime)
+// it is "any", which enters every clause. With both unknown throughout,
+// this is the module-granular chain the rule used to compute, less the
+// hops a handler reaches only through a clause of a guarded dispatcher
+// its literal argument never enters (site_request, clientlib/calls.dl).
 
-callback_sync_dep(from_mod, to_mod) :- handler_dep(from_mod, "handle_call", to_mod, "call", _).
+// The requests a handle_call/3's calls make, per call site and clause
+// (clientlib/calls.dl's site_request, site_clause).
+site_demand(h) :- handle_call_function(_, h).
+
+// A request tagged `clause` to `mod` makes a request tagged `request` of
+// `to`'s server.
+.decl clause_dep(mod: symbol, clause: symbol, to: symbol, request: symbol)
+
+clause_dep(mod, clause, to, request) :-
+  handle_call_function(mod, h),
+  site_request(h, id, to, request),
+  site_clause(h, id, clause),
+  mod != to.
 
 // NOTE deliberately no `stateful_module_dep` clause here. It was
 // `handle_call_function(from_mod, _), stateful_module_dep(from_mod,
@@ -56,59 +84,126 @@ callback_sync_dep(from_mod, to_mod) :- handler_dep(from_mod, "handle_call", to_m
 // false positives (0 came from it that were real); the genuine chains
 // all derive from the genserver_sync_api rules above.
 
+// A request tagged `request` to `mod` enters its clause `clause`: the one
+// for that tag, or one serving any request; a request whose tag is
+// unknown enters every clause.
+.decl requested(mod: symbol, request: symbol)
+
+requested(to, request) :- clause_dep(_, _, to, request).
+
+.decl enters(mod: symbol, request: symbol, clause: symbol)
+
+enters(m, request, clause) :-
+  requested(m, request),
+  clause_dep(m, clause, _, _),
+  (request = clause ; clause = "any" ; request = "any").
+
 // ── Timeout chain computation ────────────────────────────────────────
 
-// Transitive timeout chain: if A's handle_call syncs to B, and B's
-// handle_call syncs to C, then A has a chain through B to C.
-.decl timeout_chain(from: symbol, to: symbol, depth: number)
+// A request into clause `clause` of `from` reaches `to`'s server through
+// `depth` handle_call hops.
+.decl request_chain(from: symbol, clause: symbol, to: symbol, depth: number)
 
-// Base case: direct callback sync dependency (depth 1).
-timeout_chain(from, to, 1) :-
-  callback_sync_dep(from, to),
+// Base case: the clause itself calls `to` (depth 1).
+request_chain(from, clause, to, 1) :-
+  clause_dep(from, clause, to, _),
   behaves_as(to, "GenServer").
 
-// Recursive case: chain through intermediate GenServer. A module in a
-// synchronous call cycle is not passed through: the cycle is its own,
-// graver finding (call_cycle), and every length around it was once a
-// chain of its own. Only the shortest chain between two servers is
-// kept — the one the finding reports — so no path is enumerated at
-// every length up to the bound.
-timeout_chain(from, to, d + 1) :-
-  callback_sync_dep(from, mid),
-  !chain_cycle_member(mid),
-  timeout_chain(mid, to, d),
+// Recursive case: through the clause the request enters in an
+// intermediate server. A clause on a cycle of requests is not passed
+// through: every length around the cycle was once a chain of its own,
+// and a server that can wait on itself is call_cycle's finding. Only the
+// shortest chain from a clause to a server is kept — the one the finding
+// reports — so no path is enumerated at every length up to the bound.
+request_chain(from, clause, to, d + 1) :-
+  clause_dep(from, clause, mid, request),
+  enters(mid, request, mid_clause),
+  !chain_cycle_clause(mid, mid_clause),
+  request_chain(mid, mid_clause, to, d),
   from != to,
   d < 10.
 
+request_chain(from, clause, to, d1) <= request_chain(from, clause, to, d2) :- d2 <= d1.
+
+// One request following another, and the clauses on a cycle of them.
+.decl clause_step(mod: symbol, clause: symbol, to: symbol, to_clause: symbol)
+
+clause_step(m, c, to, tc) :- clause_dep(m, c, to, request), enters(to, request, tc).
+
+.decl clause_reach(mod: symbol, clause: symbol, to: symbol, to_clause: symbol)
+
+clause_reach(m, c, to, tc) :- clause_step(m, c, to, tc).
+
+clause_reach(m, c, to, tc) :-
+  clause_step(m, c, mid, mc),
+  clause_reach(mid, mc, to, tc).
+
+.decl chain_cycle_clause(mod: symbol, clause: symbol)
+
+chain_cycle_clause(m, c) :- clause_reach(m, c, m, c).
+
+// The shortest chain between two servers, from any clause of the first.
+.decl timeout_chain(from: symbol, to: symbol, depth: number)
+
+timeout_chain(from, to, d) :- request_chain(from, _, to, d).
+
 timeout_chain(from, to, d1) <= timeout_chain(from, to, d2) :- d2 <= d1.
-
-.decl chain_cycle_member(mod: symbol)
-
-chain_cycle_member(m) :- call_cycle(m, _, _, _, "call", _, _).
-chain_cycle_member(m) :- call_cycle(_, m, _, _, "call", _, _).
 
 // ── Output: timeout chain risk ───────────────────────────────────────
 
-// Chains of depth >= 2 are risky: the outermost caller's timeout must
-// accommodate the sum of all intermediate timeouts.
 // A hop that exists only by tag attribution, and the chains that cross
 // one: an inferred hop is the first thing to doubt in a long chain.
-.decl callback_tag_dep(from_mod: symbol, to_mod: symbol)
+// The calls of h that reach `to` through a tag-attributed hop.
+.decl handler_inferred(h: symbol, site: symbol, to: symbol)
 
-callback_tag_dep(from_mod, to_mod) :- handler_dep(from_mod, "handle_call", to_mod, "tag", _).
+handler_inferred(h, id, to) :-
+  handle_call_function(_, h),
+  tag_resolved_site(id, h, "call", to),
+  sync_call_site(id, h, t, _),
+  unresolved_target(t).
+
+handler_inferred(h, id, to) :-
+  handle_call_function(_, h),
+  call_instr(h, g, id),
+  !runs_elsewhere(h, g),
+  reaches_tag_dep(g, to).
+
+handler_inferred(h, "", to) :-
+  handle_call_function(_, h),
+  call_edge(h, g),
+  !call_instr(h, g, _),
+  !runs_elsewhere(h, g),
+  reaches_tag_dep(g, to).
+
+.decl clause_tag_dep(mod: symbol, clause: symbol, to: symbol)
+
+clause_tag_dep(mod, clause, to) :-
+  handle_call_function(mod, h),
+  handler_inferred(h, id, to),
+  site_request(h, id, to, _),
+  site_clause(h, id, clause),
+  mod != to.
+
+.decl request_chain_inferred(from: symbol, clause: symbol, to: symbol)
+
+request_chain_inferred(from, clause, to) :-
+  request_chain(from, clause, to, _),
+  clause_tag_dep(from, clause, to).
+
+request_chain_inferred(from, clause, to) :-
+  clause_dep(from, clause, mid, request),
+  enters(mid, request, mid_clause),
+  !chain_cycle_clause(mid, mid_clause),
+  request_chain(mid, mid_clause, to, _),
+  from != to,
+  (clause_tag_dep(from, clause, mid) ; request_chain_inferred(mid, mid_clause, to)).
 
 .decl timeout_chain_inferred(from: symbol, to: symbol)
 
-timeout_chain_inferred(from, to) :-
-  timeout_chain(from, to, _),
-  callback_tag_dep(from, to).
+timeout_chain_inferred(from, to) :- request_chain_inferred(from, _, to).
 
-timeout_chain_inferred(from, to) :-
-  callback_sync_dep(from, mid),
-  timeout_chain(mid, to, _),
-  from != to,
-  (callback_tag_dep(from, mid) ; timeout_chain_inferred(mid, to)).
-
+// Chains of depth >= 2 are risky: the outermost caller's timeout must
+// accommodate the sum of all intermediate timeouts.
 call_chain(from, to, "chain", depth, "tag", 0, 0) :-
   timeout_chain(from, to, depth),
   depth >= 2,
