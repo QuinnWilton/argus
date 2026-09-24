@@ -401,6 +401,100 @@ defmodule Argus.Test.Fixtures.Hypothesized do
     def handle_info(:poll, state), do: {:noreply, state}
   end
 
+  defmodule WriteBuffer do
+    @moduledoc false
+    # Plausible's Ingestion.WriteBuffer: the :tick timer is cancelled and
+    # re-armed on handle_cast's buffer-full branch, which every insert
+    # can take, and in handle_call(:flush), which only the test helpers
+    # request (WriteBufferTestSupport).
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: opts[:name])
+    def insert(server, row), do: GenServer.cast(server, {:insert, row})
+    def flush(server), do: GenServer.call(server, :flush, :infinity)
+
+    @impl true
+    def init(opts) do
+      timer = Process.send_after(self(), :tick, opts[:interval])
+      {:ok, %{buffer: [], size: 0, max: opts[:max], interval: opts[:interval], timer: timer}}
+    end
+
+    @impl true
+    def handle_cast({:insert, row}, state) do
+      state = %{state | buffer: [row | state.buffer], size: state.size + 1}
+
+      if state.size >= state.max do
+        Process.cancel_timer(state.timer)
+        timer = Process.send_after(self(), :tick, state.interval)
+        {:noreply, %{state | buffer: [], size: 0, timer: timer}}
+      else
+        {:noreply, state}
+      end
+    end
+
+    @impl true
+    def handle_info(:tick, state) do
+      timer = Process.send_after(self(), :tick, state.interval)
+      {:noreply, %{state | buffer: [], size: 0, timer: timer}}
+    end
+
+    @impl true
+    def handle_call(:flush, _from, state) do
+      Process.cancel_timer(state.timer)
+      timer = Process.send_after(self(), :tick, state.interval)
+      {:reply, :ok, %{state | buffer: [], size: 0, timer: timer}}
+    end
+  end
+
+  defmodule WriteBufferIngest do
+    @moduledoc false
+    # The program's own caller: every event goes through insert/2.
+    def track(event), do: WriteBuffer.insert(WriteBuffer, event)
+  end
+
+  defmodule WriteBufferTestSupport do
+    @moduledoc false
+    # Test support compiled with the program, as Plausible's TestUtils
+    # is: it calls into ExUnit, and it is flush/1's only caller.
+    def drain do
+      ExUnit.Callbacks.on_exit(fn -> :ok end)
+      WriteBuffer.flush(WriteBuffer)
+    end
+  end
+
+  defmodule FlushOnlyBuffer do
+    @moduledoc false
+    # The same timer cancelled only in handle_call(:flush), which only
+    # the test helpers request: still the module's finding, anchored
+    # there.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+    def flush(server), do: GenServer.call(server, :flush_only, :infinity)
+
+    @impl true
+    def init(interval), do: {:ok, %{interval: interval, timer: arm(interval)}}
+
+    @impl true
+    def handle_call(:flush_only, _from, state) do
+      Process.cancel_timer(state.timer)
+      {:reply, :ok, %{state | timer: arm(state.interval)}}
+    end
+
+    @impl true
+    def handle_info(:tick, state), do: {:noreply, %{state | timer: arm(state.interval)}}
+
+    defp arm(interval), do: Process.send_after(self(), :tick, interval)
+  end
+
+  defmodule FlushOnlyBufferTestSupport do
+    @moduledoc false
+    def drain(server) do
+      ExUnit.Callbacks.on_exit(fn -> :ok end)
+      FlushOnlyBuffer.flush(server)
+    end
+  end
+
   defmodule TwoTimersViaHelper do
     @moduledoc false
     # nebulex's Local.Generation: a cleanup timer and a heartbeat timer,

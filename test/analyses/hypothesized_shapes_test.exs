@@ -123,6 +123,56 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
     refute own == Argus.InstrId.format(id)
   end
 
+  describe "where a key's finding points" do
+    @buffer [H.WriteBuffer, H.WriteBufferIngest, H.WriteBufferTestSupport]
+
+    defp timer_finding(modules) do
+      assert {:ok, %{findings: findings}} = Memo.run_analyses(modules, analyses: [:mailbox])
+
+      assert [finding] =
+               Enum.filter(
+                 findings,
+                 &(&1.title == "Timer cancelled without flushing its message")
+               )
+
+      finding
+    end
+
+    test "at the cancel the program runs, not the one only its tests request" do
+      skip_without_souffle()
+
+      # Plausible's WriteBuffer: handle_call(:flush) sorts first by name,
+      # but only the test support requests :flush; the buffer-full branch
+      # of handle_cast is the path inserts take.
+      finding = timer_finding(@buffer)
+      assert %Argus.InstrId{func: "handle_cast"} = finding.instr
+
+      assert [%{label: "armed with :tick here", instr: %{func: "handle_cast"}}, also] =
+               finding.related
+
+      assert also.label == "also cancelled here, on a path only the tests take"
+      assert %Argus.InstrId{func: "handle_call"} = also.instr
+    end
+
+    test "a flush/1 nothing calls is a public API, and ranks with the rest" do
+      skip_without_souffle()
+
+      # Without the test support, nothing tells the two cancels apart:
+      # the least row, as before.
+      finding = timer_finding([H.WriteBuffer, H.WriteBufferIngest])
+      assert %Argus.InstrId{func: "handle_call"} = finding.instr
+      refute Enum.any?(finding.related, &(&1.label =~ "only the tests"))
+    end
+
+    test "a key whose only cancel is under test is still reported, there" do
+      skip_without_souffle()
+
+      finding = timer_finding([H.FlushOnlyBuffer, H.FlushOnlyBufferTestSupport])
+      assert %Argus.InstrId{func: "handle_call"} = finding.instr
+      refute Enum.any?(finding.related, &(&1.label =~ "only the tests"))
+    end
+  end
+
   test "a timer armed and cancelled within one call, from a local ref, is reported" do
     skip_without_souffle()
 

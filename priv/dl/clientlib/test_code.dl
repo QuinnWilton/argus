@@ -1,0 +1,57 @@
+// Code only the program's tests run.
+//
+// A dev or test build compiles test support with the program
+// (Plausible's TestUtils, a DataCase, a ConnCase), and some functions
+// of the program proper are called from nowhere else: a buffer's
+// `flush/0` that only the test helpers call. A module that calls into
+// ExUnit is test code; a function of the program that test code
+// reaches, and nothing outside it, runs only under test.
+//
+// For choosing among sites, not for judging them: a rule that has
+// several places to point at points at the one the program itself
+// runs. A library's public function that only its compiled test
+// helpers call reads as run only under test too, which is why no rule
+// quiets a finding on it.
+//
+// Requires imports.dl.
+
+.decl test_module(mod: symbol)
+
+test_module(m) :-
+  function_def(f, m, _, _, _),
+  remote_call(_, f, callee, _, _),
+  match("ExUnit([.].*)?", callee).
+
+.decl test_code(func: symbol)
+
+test_code(f) :- function_def(f, m, _, _, _), test_module(m).
+
+// What the program runs outside its tests: forward from the functions
+// nothing in the program calls (callbacks, entry points, a public API),
+// never through test code.
+.decl runs_outside_tests(func: symbol)
+
+runs_outside_tests(f) :-
+  function_def(f, _, _, _, _),
+  !test_code(f),
+  !call_edge(_, f).
+
+runs_outside_tests(g) :-
+  runs_outside_tests(f),
+  call_edge(f, g),
+  !test_code(g).
+
+// What test code calls, and what that calls.
+.decl reached_from_tests(func: symbol)
+
+reached_from_tests(g) :- test_code(f), call_edge(f, g).
+reached_from_tests(g) :- reached_from_tests(f), call_edge(f, g).
+
+// Test code, and what only test code reaches.
+.decl runs_under_test(func: symbol)
+
+runs_under_test(f) :- test_code(f).
+
+runs_under_test(f) :-
+  reached_from_tests(f),
+  !runs_outside_tests(f).

@@ -122,6 +122,20 @@ defmodule Argus.Analyses.Mailbox do
         doc: "A cancelled timer's message may already be in the mailbox and is not told apart."
       },
       %{
+        name: :timer_cancel_under_test,
+        fields: [
+          {:mod, :symbol, "the process module"},
+          {:key, :symbol, "the state key holding the timer ref"},
+          {:site, :symbol, "a cancel_timer call on a path only the tests take"},
+          {:func, :symbol, "the function it is in"}
+        ],
+        key: [:mod, :key, :site],
+        evidence: %{of: :timer_cancel_without_flush, on: [:mod, :key], limit: 3},
+        doc:
+          "Where a timer is also cancelled, on a path only the program's tests take, " <>
+            "attached to the finding anchored where the program itself cancels it."
+      },
+      %{
         name: :unreceived_message,
         fields: [
           {:mod, :symbol, "the sending module"},
@@ -652,6 +666,13 @@ defmodule Argus.Analyses.Mailbox do
 
   def evidence(:task_yield_site, [func, _kind, site]) do
     Findings.related("collected with Task.yield here", Findings.at_site_in_func(site, func))
+  end
+
+  def evidence(:timer_cancel_under_test, [mod, _key, site, _func]) do
+    Findings.related(
+      "also cancelled here, on a path only the tests take",
+      Findings.at_site(site, mod)
+    )
   end
 
   # A monitor's :DOWN dropped by a catch-all is a monitor that does

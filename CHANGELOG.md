@@ -10,6 +10,30 @@ What 0.20.0 will ship; the release dates this heading and drops the
 `-dev` from `mix.exs`. Grouped by concern. Each entry opens with what it
 does: **Added**, **Changed**, **Fixed** or **Removed**.
 
+### A timer finding where the program cancels it
+
+**Changed.** `mailbox.timer_cancel_without_flush` is still one finding
+per module and state key, but it points at a cancel the program itself
+runs over one only its tests reach, and then at an arm likewise; a key
+whose cancels are all under test is reported as before. Plausible's
+`Ingestion.WriteBuffer` cancels its `:tick` timer in `handle_cast`'s
+buffer-full branch and in `handle_call(:flush)`, which only its test
+helpers request; the finding pointed at `handle_call/3` because the
+least row orders by function name, and now points at `handle_cast/2`
+(write_buffer.ex:53). A cancel left out is a related frame of the
+finding: **Added** `mailbox.timer_cancel_under_test(mod, key, site,
+func)`, an evidence relation ("also cancelled here, on a path only the
+tests take"). Which modules are reported does not change; corpus tally
+unchanged.
+
+**Added.** `clientlib/test_code.dl`: `test_module` (a module that calls
+into ExUnit — test support compiled with the program), `test_code`,
+`runs_outside_tests` (forward from the functions nothing calls, never
+through test code), `reached_from_tests` and `runs_under_test`. For
+choosing among sites, not for quieting a finding: a library's public
+function that only its compiled test helpers call reads as under test
+too.
+
 ### A monitor the caller collects
 
 **Added.** Schema 87. `awaits_down_after(func, call)` (Monitor

@@ -15,6 +15,7 @@
 .include "../clientlib/otp.dl"
 .include "../clientlib/process_statem.dl"
 .include "../clientlib/sends.dl"
+.include "../clientlib/test_code.dl"
 .include "../clientlib/vocabulary.dl"
 
 // ══ The outputs ═════════════════════════════════════════════════════
@@ -354,10 +355,99 @@ cancel_without_flush(cancel, arm, key, message) :-
   !handles_that_message(cancel, message).
 
 timer_cancel_without_flush(mod, cancel, arm, key, message, cancel_site, arm_site) :-
+  timer_ranked(mod, cancel, arm, key, message, cancel_site, arm_site),
+  !site_under_test(arm_site).
+
+timer_cancel_without_flush(mod, cancel, arm, key, message, cancel_site, arm_site) :-
+  timer_ranked(mod, cancel, arm, key, message, cancel_site, arm_site),
+  !arm_off_test(mod, key).
+
+// Every cancel and arm that pair up under a key.
+.decl timer_pair(mod: symbol, cancel: symbol, arm: symbol, key: symbol, message: symbol, cancel_site: symbol, arm_site: symbol)
+
+timer_pair(mod, cancel, arm, key, message, cancel_site, arm_site) :-
   cancel_without_flush(cancel_site, arm_site, key, message),
   cancel_site(cancel, key, cancel_site),
   rearm_site(arm_site, arm, key, message),
   in_module(cancel, mod).
+
+// ── Where a key's finding points ──
+//
+// A key is one finding however many cancels and arms pair up under it
+// (the relation's dedupe key), and the finding points at the least row,
+// which orders by function name. Plausible's WriteBuffer cancels its
+// :tick timer in handle_cast's buffer-full branch, the path every
+// insert can take, and in handle_call(:flush), which only its test
+// helpers request; the name put handle_call first. The rows keep a
+// cancel the program itself runs over one only its tests reach
+// (test_code.dl), and then an arm likewise; a key whose cancels are all
+// under test keeps them all. The cancels left out are the finding's
+// related frames (timer_cancel_under_test). Which modules and keys are
+// reported does not change.
+.decl timer_ranked(mod: symbol, cancel: symbol, arm: symbol, key: symbol, message: symbol, cancel_site: symbol, arm_site: symbol)
+
+timer_ranked(mod, cancel, arm, key, message, cancel_site, arm_site) :-
+  timer_pair(mod, cancel, arm, key, message, cancel_site, arm_site),
+  !site_under_test(cancel_site).
+
+timer_ranked(mod, cancel, arm, key, message, cancel_site, arm_site) :-
+  timer_pair(mod, cancel, arm, key, message, cancel_site, arm_site),
+  !cancel_off_test(mod, key).
+
+// Some cancel under the key runs outside the tests.
+.decl cancel_off_test(mod: symbol, key: symbol)
+
+cancel_off_test(mod, key) :-
+  timer_pair(mod, _, _, key, _, cancel_site, _),
+  !site_under_test(cancel_site).
+
+// Some arm of the ranked rows runs outside the tests.
+.decl arm_off_test(mod: symbol, key: symbol)
+
+arm_off_test(mod, key) :-
+  timer_ranked(mod, _, _, key, _, _, arm_site),
+  !site_under_test(arm_site).
+
+// A cancel or arm site whose function runs only under test, or is a
+// callback every request for which comes from code that does.
+.decl site_under_test(site: symbol)
+
+site_under_test(id) :- cancel_site(c, _, id), runs_under_test(c).
+site_under_test(id) :- cancel_site(c, _, id), requested_only_under_test(c).
+site_under_test(id) :- rearm_site(id, a, _, _), runs_under_test(a).
+site_under_test(id) :- rearm_site(id, a, _, _), requested_only_under_test(a).
+
+// A handle_call/3 or handle_cast/2 whose requests the program sends
+// only from code under test: some site sends one of the tags it
+// compares, of its kind, and every such site runs only under test.
+// Over-approximated by callback_tag (every atom its body compares), so a
+// callback with any request sent from elsewhere is not one.
+.decl requested_only_under_test(callback: symbol)
+.decl requested_outside_tests(callback: symbol)
+
+requested_outside_tests(h) :-
+  kind_callback(kind, cb),
+  function_def(h, _, cb, _, _),
+  callback_tag(h, cb, tag),
+  call_tag(_, s, kind, tag),
+  !runs_under_test(s).
+
+requested_only_under_test(h) :-
+  kind_callback(kind, cb),
+  function_def(h, _, cb, _, _),
+  callback_tag(h, cb, tag),
+  call_tag(_, s, kind, tag),
+  runs_under_test(s),
+  !requested_outside_tests(h).
+
+// ── Evidence: a cancel only the tests reach ──
+.decl timer_cancel_under_test(mod: symbol, key: symbol, site: symbol, func: symbol)
+.output timer_cancel_under_test
+
+timer_cancel_under_test(mod, key, cancel_site, cancel) :-
+  timer_pair(mod, cancel, _, key, _, cancel_site, _),
+  site_under_test(cancel_site),
+  cancel_off_test(mod, key).
 
 // The cancel_timer `cancel` takes the ref kept under `key` (cancel_site
 // above).
