@@ -52,6 +52,25 @@ defmodule Argus.Schema.ErrorHandling do
         """
       },
       %{
+        name: :catch_tuple_tag,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the try instruction"},
+          {:func, :symbol, "the function"},
+          {:class, :symbol, "the class the clause catches: 'error' | 'exit' | 'throw' | '*'"},
+          {:tag, :symbol, "an atom the clause compares as a tuple's first element"}
+        ],
+        doc: """
+        The `catch_tag` rows whose atom heads a tuple the clause tests for: \
+        an `is_tagged_tuple`, or a comparison on a register holding a tuple's \
+        first element. `catch :exit, {:noproc, _}` has one; `catch :exit, \
+        :noproc`, which compares the reason itself, has only the `catch_tag` \
+        row. A `GenServer.call` to a dead process exits with \
+        `{:noproc, {GenServer, :call, _}}` and a `GenServer.stop` with bare \
+        `:noproc`, so the two forms catch different exits.
+        """
+      },
+      %{
         name: :catch_falls_through,
         layer: 2,
         fields: [

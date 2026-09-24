@@ -237,6 +237,11 @@ supervisor's own child: one nested in an earlier branch is restarted by
 its own supervisor, and the caller is left alone. The prose says both
 "run under" the supervisor rather than being its children.
 
+**Fixed.** A try guards the sibling call by name only with
+`catch :exit, {:noproc, _}` (`catch_tuple_tag`, schema 74). A bare
+`catch :exit, :noproc` is `GenServer.stop`'s reason and never matches
+a call's `{:noproc, {GenServer, :call, _}}`: such a call is reported.
+
 **Fixed.** A path from terminate/2 through a closure or a function
 reference is guarded by the call that runs the fun, not by any
 exit-catching try in the function: a try around an unrelated
@@ -342,6 +347,15 @@ struct, the types, the constructors analysis modules build with, and
 its moduledoc says which submodule holds what.
 
 ### Fact schema and extraction
+
+**Added.** Schema 74. `catch_tuple_tag(id, func, class, tag)`: the
+`catch_tag` atoms a clause compares as a tuple's first element — an
+`is_tagged_tuple`, or a comparison on a register holding element 0 —
+rather than the reason itself. `catch :exit, {:noproc, _}` has a row;
+`catch :exit, :noproc` has only its `catch_tag`. A `GenServer.call` to
+a dead process exits with `{:noproc, {GenServer, :call, _}}`, a
+`GenServer.stop` with bare `:noproc`, so the two catch different exits.
+`CatchClauses.analyse/2`'s summary gains `tuple_tags`.
 
 **Added.** Schema 73. `fun_handed(id, caller, callee)`: the call at
 `id` is handed, as a fun value, a function that runs `callee` — a

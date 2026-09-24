@@ -648,6 +648,7 @@ defmodule Argus.Test.Fixtures.SiblingGuard do
           G.ClosureInside,
           G.RefTryElsewhere,
           G.ClosureInTask,
+          G.NoprocBare,
           G.Directory
         ],
         strategy: :one_for_one
@@ -985,6 +986,34 @@ defmodule Argus.Test.Fixtures.SiblingGuard do
     @impl true
     def terminate(_reason, state) do
       Task.start(fn -> Directory.unregister(__MODULE__) end)
+      File.close(state.log)
+    end
+  end
+
+  defmodule NoprocBare do
+    @moduledoc """
+    The try names a bare :noproc, GenServer.stop's reason. The call exits
+    with {:noproc, {GenServer, :call, _}}, which the clause never
+    matches: the file is still not closed.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.SiblingGuard.Directory
+
+    @impl true
+    def init(state) do
+      Process.flag(:trap_exit, true)
+      {:ok, state}
+    end
+
+    @impl true
+    def terminate(_reason, state) do
+      try do
+        Directory.unregister(__MODULE__)
+      catch
+        :exit, :noproc -> :ok
+      end
+
       File.close(state.log)
     end
   end

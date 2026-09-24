@@ -193,7 +193,8 @@ defmodule Argus.Analyses.ShutdownTest do
       G.ClosureTryElsewhere,
       G.ClosureInside,
       G.RefTryElsewhere,
-      G.ClosureInTask
+      G.ClosureInTask,
+      G.NoprocBare
     ]
 
     test "only a try covering the call, or the call toward it, guards it" do
@@ -223,6 +224,8 @@ defmodule Argus.Analyses.ShutdownTest do
                "HelperTryElsewhere",
                # past the inner try's end, the outer one takes only errors
                "NestedAfterInner",
+               # a bare :noproc never matches a call's {:noproc, _} exit
+               "NoprocBare",
                # the function reference's Enum.each follows the try's end
                "RefTryElsewhere",
                # the try covers another call; the sibling call follows it

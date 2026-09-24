@@ -135,14 +135,18 @@ cleanup_defect(mod, behaviour, "truncated", category, api, via) :-
 // call itself; either counts.
 //
 // The call at `call` is covered by a try whose handler takes the exit
-// (covered_by_catch, exceptions.dl), or names the :noproc reason.
+// (covered_by_catch, exceptions.dl), or names the :noproc reason a
+// synchronous call exits with: `{:noproc, _}`, a tuple (catch_tuple_tag).
+// A bare `catch :exit, :noproc` is GenServer.stop's reason, and never
+// matches a call's `{:noproc, {GenServer, :call, _}}`; every call this
+// rule guards leads to such a call.
 .decl exit_guarded(call: symbol)
 
 exit_guarded(call) :- covered_by_catch(call, _, _, "exit").
 
 exit_guarded(call) :-
   try_covers(t, f, call, "try"),
-  catch_tag(t, f, "exit", ":noproc").
+  catch_tuple_tag(t, f, "exit", ":noproc").
 
 // Some try in the function takes the exit. What is left to ask of a
 // dependency with no call site to hold against a try, and of an edge
@@ -152,7 +156,7 @@ exit_guarded(call) :-
 .decl catches_exit(func: symbol)
 
 catches_exit(f) :- catches_class(f, "exit").
-catches_exit(f) :- catch_tag(_, f, "exit", ":noproc").
+catches_exit(f) :- catch_tuple_tag(_, f, "exit", ":noproc").
 
 // A call that waits for another module's process to answer. A call to a
 // connection the module started for itself (private_dep, calls.dl) is

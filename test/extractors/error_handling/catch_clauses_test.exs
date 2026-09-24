@@ -50,4 +50,63 @@ defmodule Argus.Extractors.ErrorHandling.CatchClausesTest do
       assert summary.tags == [{:*, :noproc}]
     end
   end
+
+  describe "a tuple's tag, apart from the reason itself" do
+    test "an is_tagged_tuple on the reason is a tuple tag" do
+      summary =
+        handler([
+          {:test, :is_tagged_tuple, {:f, 6}, [{:x, 1}, 2, {:atom, :noproc}]},
+          :return,
+          {:label, 6},
+          {:bif, :raise, {:f, 0}, [{:x, 2}, {:x, 1}], {:x, 0}}
+        ])
+
+      assert summary.tags == [{:*, :noproc}]
+      assert summary.tuple_tags == [{:*, :noproc}]
+    end
+
+    test "comparing the reason itself with an atom is not" do
+      summary =
+        handler([
+          {:test, :is_eq_exact, {:f, 6}, [{:x, 1}, {:atom, :noproc}]},
+          :return,
+          {:label, 6},
+          {:bif, :raise, {:f, 0}, [{:x, 2}, {:x, 1}], {:x, 0}}
+        ])
+
+      assert summary.tags == [{:*, :noproc}]
+      assert summary.tuple_tags == []
+    end
+
+    test "a comparison on a tuple's first element, through a copy, is a tuple tag" do
+      summary =
+        handler([
+          {:test, :is_tuple, {:f, 6}, [{:x, 1}]},
+          {:get_tuple_element, {:x, 1}, 0, {:x, 3}},
+          {:move, {:x, 3}, {:x, 4}},
+          {:select_val, {:x, 4}, {:f, 6}, {:list, [{:atom, :noproc}, {:f, 7}]}},
+          {:label, 7},
+          :return,
+          {:label, 6},
+          {:bif, :raise, {:f, 0}, [{:x, 2}, {:x, 1}], {:x, 0}}
+        ])
+
+      assert summary.tuple_tags == [{:*, :noproc}]
+    end
+
+    test "a register overwritten after holding the first element is no longer one" do
+      summary =
+        handler([
+          {:get_tuple_element, {:x, 1}, 0, {:x, 3}},
+          {:get_tuple_element, {:x, 1}, 1, {:x, 3}},
+          {:test, :is_eq_exact, {:f, 6}, [{:x, 3}, {:atom, :noproc}]},
+          :return,
+          {:label, 6},
+          {:bif, :raise, {:f, 0}, [{:x, 2}, {:x, 1}], {:x, 0}}
+        ])
+
+      assert summary.tags == [{:*, :noproc}]
+      assert summary.tuple_tags == []
+    end
+  end
 end
