@@ -16,7 +16,7 @@ defmodule Scry.AnalysisRulesTest do
   @analyses [:coupling, :mailbox]
 
   setup_all do
-    %{paths: Graph.compile_parity!(Path.join(System.tmp_dir!(), "scry_rules_ebin"))}
+    %{paths: Graph.parity!()}
   end
 
   setup %{paths: paths} do

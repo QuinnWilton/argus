@@ -44,7 +44,7 @@ defmodule Scry.AnalysisPruneRaceTest do
   end
 
   test "a directory pruned during the solve is rebuilt and solved", %{tmp_dir: dir} do
-    paths = Graph.compile_parity!(Path.join(System.tmp_dir!(), "scry_race_ebin"))
+    paths = Graph.parity!()
     db = Graph.new_db(paths)
     # Everything up to the solve, with the real solver.
     %{dir: facts} = Scry.Analysis.analysis_facts_dir(db, :mailbox)
@@ -64,7 +64,7 @@ defmodule Scry.AnalysisPruneRaceTest do
   end
 
   test "a relation store entry that is not the file is replaced", %{tmp_dir: _dir} do
-    paths = Graph.compile_parity!(Path.join(System.tmp_dir!(), "scry_race_ebin"))
+    paths = Graph.parity!()
     db = Graph.new_db(paths)
     %{dir: facts} = Scry.Analysis.analysis_facts_dir(db, :mailbox)
 

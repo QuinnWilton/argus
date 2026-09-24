@@ -33,7 +33,7 @@ defmodule Scry.AnalysisParityTest do
   ]
 
   setup_all do
-    paths = Graph.compile_parity!(Path.join(System.tmp_dir!(), "scry_parity_ebin"))
+    paths = Graph.parity!()
     {:ok, analyses} = Argus.Analysis.set(:all)
     %{paths: paths, analyses: analyses}
   end

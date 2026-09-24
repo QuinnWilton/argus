@@ -21,8 +21,80 @@ defmodule Scry.Test.Graph do
   @parity Path.expand("../fixtures/parity", __DIR__)
 
   @doc """
-  Compiles the parity fixture into `dest` (wiped first) and returns
+  The parity fixture, compiled once per test run and shared: returns
   `module => beam_path` for every module it defines.
+
+  The build directory is keyed by the fixture's sources and the
+  compiler versions, and built under a lock, so every module that asks —
+  concurrently, async — reads the same beams, and none of them compiles
+  the fixture's modules into this VM a second time (a concurrent second
+  compile of a module being defined is a compile error). The directory
+  goes on the code path, where extraction reads a remote callee's specs
+  from, as a project's ebin would be; `use_parity!/1` does the same in a
+  peer handed the paths.
+  """
+  @spec parity!() :: %{optional(module()) => String.t()}
+  def parity! do
+    digest = parity_key()
+    key = {__MODULE__, :parity, digest}
+
+    paths =
+      :persistent_term.get(key, nil) ||
+        :global.trans({key, self()}, fn ->
+          :persistent_term.get(key, nil) ||
+            tap(build_parity!(Path.join(System.tmp_dir!(), "scry_parity_#{digest}")), fn paths ->
+              :persistent_term.put(key, paths)
+            end)
+        end)
+
+    use_parity!(paths)
+  end
+
+  @doc """
+  Puts the parity build directory behind `paths` on the code path (a
+  peer's), and returns `paths`.
+  """
+  @spec use_parity!(%{optional(module()) => String.t()}) :: %{optional(module()) => String.t()}
+  def use_parity!(paths) do
+    paths |> Map.values() |> hd() |> Path.dirname() |> Code.append_path()
+    paths
+  end
+
+  defp parity_key do
+    sources =
+      [Path.join(@parity, "*.ex"), Path.join(@parity, "erl/*.erl")]
+      |> Enum.flat_map(&Path.wildcard/1)
+      |> Enum.sort()
+      |> Enum.map(&{Path.relative_to(&1, @parity), File.read!(&1)})
+
+    {sources, System.version(), :erlang.system_info(:otp_release)}
+    |> :erlang.term_to_binary()
+    |> :erlang.md5()
+    |> Base.encode16(case: :lower)
+  end
+
+  # Built beside `dest` and renamed into place: a directory under the
+  # final name is always complete.
+  defp build_parity!(dest) do
+    if File.dir?(dest) do
+      beams(dest)
+    else
+      staging = "#{dest}.#{System.unique_integer([:positive])}"
+      compile_parity!(staging)
+
+      case File.rename(staging, dest) do
+        :ok -> :ok
+        {:error, _} -> File.rm_rf!(staging)
+      end
+
+      beams(dest)
+    end
+  end
+
+  @doc """
+  Compiles the parity fixture into `dest` (wiped first) and returns
+  `module => beam_path` for every module it defines. Tests share one
+  build through `parity!/0` instead: this compiles into the calling VM.
   """
   @spec compile_parity!(Path.t()) :: %{optional(module()) => String.t()}
   def compile_parity!(dest) do
@@ -43,7 +115,11 @@ defmodule Scry.Test.Graph do
         :compile.file(String.to_charlist(erl), [:debug_info, outdir: String.to_charlist(dest)])
     end
 
-    for path <- Path.wildcard(Path.join(dest, "*.beam")), into: %{} do
+    beams(dest)
+  end
+
+  defp beams(dir) do
+    for path <- Path.wildcard(Path.join(dir, "*.beam")), into: %{} do
       {path |> Path.basename(".beam") |> String.to_atom(), path}
     end
   end

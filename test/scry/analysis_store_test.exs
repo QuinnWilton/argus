@@ -15,7 +15,7 @@ defmodule Scry.AnalysisStoreTest do
   @store Path.join(System.tmp_dir!(), "scry_souffle/relations")
 
   setup_all do
-    %{paths: Graph.compile_parity!(Path.join(System.tmp_dir!(), "scry_store_ebin"))}
+    %{paths: Graph.parity!()}
   end
 
   test "a relation's digest names the file it stored", %{paths: paths} do

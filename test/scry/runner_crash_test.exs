@@ -14,7 +14,7 @@ defmodule Scry.RunnerCrashTest do
   @moduletag timeout: 300_000
 
   test "a raising analysis is degraded, not the run" do
-    paths = Graph.compile_parity!(Path.join(System.tmp_dir!(), "scry_crash_ebin"))
+    paths = Graph.parity!()
     db = Graph.new_db(paths)
     Graph.incremental(db, [:coupling, :mailbox])
 

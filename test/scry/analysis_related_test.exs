@@ -12,7 +12,7 @@ defmodule Scry.AnalysisRelatedTest do
   @moduletag timeout: 300_000
 
   test "an unreceived message's receive frame lands on the receive" do
-    paths = Graph.compile_parity!(Path.join(System.tmp_dir!(), "scry_related_ebin"))
+    paths = Graph.parity!()
     db = Graph.new_db(paths)
 
     {:ok, by_file} = Scry.Analysis.analysis_diagnostics(db, :mailbox)
