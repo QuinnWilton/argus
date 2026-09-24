@@ -10,6 +10,16 @@ What 0.20.0 will ship; the release dates this heading and drops the
 `-dev` from `mix.exs`. Grouped by concern. Each entry opens with what it
 does: **Added**, **Changed**, **Fixed** or **Removed**.
 
+### Priors asked side by side
+
+**Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile
+of its own, `:argus_priors`, that gives each request an idle connection
+or opens a new one (`max_keep_alive_length: 0`, up to 64 kept alive).
+On httpc's default profile a request waits in the queue of a busy
+keep-alive connection rather than open another, so requests in flight
+shared however many connections the first burst had opened: at 32 in
+flight over Plausible, 11, and each request took three times as long.
+
 ### Process points-to, derived once
 
 **Changed.** Process points-to (`clientlib/processes.dl`) is a stage of

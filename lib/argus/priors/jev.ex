@@ -9,6 +9,14 @@ defmodule Argus.Priors.Jev do
   and 5xx are retried with exponential backoff; anything else is an error
   the driver records and moves past.
 
+  Requests go over the `:argus_priors` httpc profile rather
+  than the default one. httpc queues a keep-alive request behind a busy
+  connection rather than open another, so on the default profile a
+  driver's requests in flight share the few connections its first burst
+  opened and wait on each other; this profile hands each request an idle
+  connection or a new one (`max_keep_alive_length: 0`), keeping them
+  alive for the next request, up to 64 at once.
+
   ## Options
 
   - `:api_key` — default `TYPESAFE_API_KEY` from the environment
@@ -22,10 +30,16 @@ defmodule Argus.Priors.Jev do
   @endpoint "https://api.typesafe.ai/v1/systemone"
   @model "jev-1.13.0"
   @env_var "TYPESAFE_API_KEY"
+  @profile :argus_priors
+  @profile_options [max_sessions: 64, max_keep_alive_length: 0, keep_alive_timeout: 120_000]
 
   @doc "The pinned model name."
   @spec model() :: String.t()
   def model, do: @model
+
+  @doc "The httpc profile requests go over."
+  @spec profile() :: atom()
+  def profile, do: @profile
 
   @doc "The environment variable the key is read from."
   @spec env_var() :: String.t()
@@ -61,7 +75,24 @@ defmodule Argus.Priors.Jev do
   defp start_clients do
     with {:ok, _} <- Application.ensure_all_started(:inets),
          {:ok, _} <- Application.ensure_all_started(:ssl) do
-      :ok
+      start_profile()
+    end
+  end
+
+  # Concurrent first requests race to start the profile; the losers see
+  # it started. Options are set on every request because a loser can get
+  # here before the winner has set them: the call is idempotent and cheap
+  # beside the request itself.
+  defp start_profile do
+    started =
+      case :inets.start(:httpc, profile: @profile) do
+        {:ok, _} -> :ok
+        {:error, {:already_started, _}} -> :ok
+        {:error, reason} -> {:error, {:httpc_profile, reason}}
+      end
+
+    with :ok <- started do
+      :httpc.set_options(@profile_options, @profile)
     end
   end
 
@@ -73,7 +104,7 @@ defmodule Argus.Priors.Jev do
     request = {String.to_charlist(endpoint), headers, ~c"application/json", body}
     http_opts = [timeout: timeout, ssl: ssl_opts()]
 
-    case :httpc.request(:post, request, http_opts, body_format: :binary) do
+    case :httpc.request(:post, request, http_opts, [body_format: :binary], @profile) do
       {:ok, {{_, 200, _}, resp_headers, resp}} ->
         decode(resp, resp_headers)
 
