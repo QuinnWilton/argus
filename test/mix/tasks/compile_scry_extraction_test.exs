@@ -65,12 +65,12 @@ defmodule Mix.Tasks.Compile.ScryExtractionTest do
 
       assert partial(diagnostics) == []
       assert length(findings(diagnostics)) == 5
-      assert length(QueryLog.executions(log, :module_extraction)) == 5
+      assert length(QueryLog.extracted(log)) == 5
 
       # And with nothing left to retry, the next run is a noop again.
       QueryLog.reset(log)
       assert {:noop, _} = Fixture.compile!()
-      assert QueryLog.executions(log, :module_extraction) == []
+      assert QueryLog.extracted(log) == []
     end)
   end
 

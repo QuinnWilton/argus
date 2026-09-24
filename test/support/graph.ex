@@ -127,6 +127,10 @@ defmodule Scry.Test.Graph do
   @doc """
   A database with both layers registered and the driver's inputs set
   the way `Scry.Runner` sets them, over `paths`.
+
+  Options: `rules: false` and `producers: false` leave the rules digests
+  and the producer list unset, as planchette does; `producer_list:`
+  names the producers the modules' facts are joined from.
   """
   @spec new_db(%{optional(module()) => String.t()}, keyword()) :: Database.t()
   def new_db(paths, opts \\ []) do
@@ -142,6 +146,12 @@ defmodule Scry.Test.Graph do
 
       for {key, digest} <- Scry.Fingerprint.rules(all),
           do: :ok = Input.set(db, :rules_digest, key, digest)
+    end
+
+    # And the producers (planchette does).
+    if Keyword.get(opts, :producers, true) do
+      producers = Keyword.get(opts, :producer_list, Scry.Analysis.producers())
+      :ok = Input.set(db, :producers, :all, producers)
     end
 
     Enum.each(Scry.Analysis.prior_relations(), &(:ok = Input.set(db, :prior_rows, &1, [])))

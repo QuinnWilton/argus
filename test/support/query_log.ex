@@ -55,6 +55,18 @@ defmodule Scry.Test.QueryLog do
     |> Enum.sort()
   end
 
+  @doc """
+  The modules extracted again, sorted: those for which any argus
+  producer's `producer_extraction` re-executed.
+  """
+  @spec extracted(pid()) :: [module()]
+  def extracted(agent) do
+    agent
+    |> executions(:producer_extraction)
+    |> Enum.map(fn {module, _producer} -> module end)
+    |> Enum.uniq()
+  end
+
   @doc "Keys for which `query_name` early-cutoff, sorted."
   @spec cutoffs(pid(), atom()) :: [term()]
   def cutoffs(agent, query_name) do

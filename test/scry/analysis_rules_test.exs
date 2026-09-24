@@ -2,7 +2,8 @@ defmodule Scry.AnalysisRulesTest do
   @moduledoc """
   What a warm graph does when the argus it runs moves without any beam
   moving: a rule edit re-solves exactly the analyses whose programs it
-  touched and re-extracts nothing; an argus code change re-extracts.
+  touched and re-extracts nothing; an argus code change re-extracts
+  every producer.
 
   The query log's telemetry handlers are VM-wide, so the graphs run in
   this module's peer (`Scry.Test.Peer`).
@@ -29,7 +30,7 @@ defmodule Scry.AnalysisRulesTest do
   defp in_graph(%{peer: peer, paths: paths}, opts, fun) do
     Peer.run(peer, fn ->
       Graph.use_parity!(paths)
-      db = Graph.new_db(paths, Keyword.take(opts, [:rules]))
+      db = Graph.new_db(paths, Keyword.take(opts, [:rules, :producers, :producer_list]))
       log = QueryLog.start()
 
       try do
@@ -49,7 +50,7 @@ defmodule Scry.AnalysisRulesTest do
       Graph.incremental(db, @analyses)
 
       assert QueryLog.executions(log, :souffle_solve) == [:mailbox]
-      assert QueryLog.executions(log, :module_extraction) == []
+      assert QueryLog.extracted(log) == []
       assert QueryLog.executions(log, :stage0_facts) == []
     end)
   end
@@ -60,7 +61,7 @@ defmodule Scry.AnalysisRulesTest do
       Graph.incremental(db, @analyses)
 
       assert QueryLog.executions(log, :stage0_facts) == [:all]
-      assert QueryLog.executions(log, :module_extraction) == []
+      assert QueryLog.extracted(log) == []
     end)
   end
 
@@ -73,18 +74,42 @@ defmodule Scry.AnalysisRulesTest do
       assert QueryLog.executions(log, :stage0_facts) == []
       # The same rows staged again: nothing reading them re-solves.
       assert QueryLog.executions(log, :souffle_solve) == []
-      assert QueryLog.executions(log, :module_extraction) == []
+      assert QueryLog.extracted(log) == []
     end)
   end
 
-  test "an argus code change re-extracts every module", %{paths: paths} = context do
+  test "an argus code change re-extracts every producer and re-solves every analysis",
+       %{paths: paths} = context do
     in_graph(context, [warm: true], fn db, log ->
       :ok = Input.set(db, :env_fingerprint, :all, %{test: 2})
       Graph.incremental(db, @analyses)
 
-      assert length(QueryLog.executions(log, :module_extraction)) == map_size(paths)
+      assert length(QueryLog.executions(log, :producer_extraction)) ==
+               map_size(paths) * length(Scry.Analysis.producers())
+
       assert Enum.sort(QueryLog.executions(log, :souffle_solve)) == @analyses
     end)
+  end
+
+  test "without the producer list, extraction joins every producer the same",
+       %{paths: paths} = context do
+    # A frontend that does not name argus's producers (planchette's),
+    # over the same beams: the modules' facts are the ones a graph that
+    # names them has.
+    modules = paths |> Map.keys() |> Enum.sort() |> Enum.take_every(7)
+
+    materialized = fn opts ->
+      in_graph(context, opts, fn db, _log ->
+        symbols = Scry.Symbols.for_db(db)
+
+        for module <- modules, into: %{} do
+          {:ok, facts} = Scry.Analysis.module_extraction(db, module)
+          {module, Argus.Facts.materialize(facts, symbols)}
+        end
+      end)
+    end
+
+    assert materialized.(producers: false) == materialized.([])
   end
 
   test "without rules digests, a revision that moves nothing solves nothing", context do

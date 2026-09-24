@@ -105,7 +105,7 @@ defmodule Mix.Tasks.Compile.ScryConfigTest do
         # No Archive extraction, so no task findings; the couplings
         # (Sonar/Queue against Notifier via Application) and Sonar's
         # handle_info are unaffected.
-        refute Depot.Archive in QueryLog.executions(log, :module_extraction)
+        refute Depot.Archive in QueryLog.extracted(log)
         assert Enum.sort(codes(diags)) == ["coupling", "coupling", "mailbox"]
       end)
     end

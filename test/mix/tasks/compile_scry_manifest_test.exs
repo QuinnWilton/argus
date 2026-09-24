@@ -11,6 +11,7 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
   use ExUnit.Case, async: true
   use Scry.Test.Peer
 
+  alias Roux.Lang.Manifest
   alias Scry.Test.{Fixture, Peer, QueryLog}
 
   @moduletag timeout: 300_000
@@ -100,6 +101,63 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
     end)
   end
 
+  # Rewrites the last run's manifest through `fun`, handed the database
+  # it restores.
+  defp rewrite!(fun) do
+    manifest = Scry.Runner.manifest_file()
+    {:ok, data} = Manifest.load(manifest)
+    db = Roux.Database.new()
+
+    try do
+      :ok = Roux.Lang.register_module(db, Scry.Frontend)
+      :ok = Roux.Lang.register_module(db, Scry.Analysis)
+      :ok = Manifest.restore(db, data)
+      fun.(db)
+      :ok = Manifest.write(db, data.sources, manifest)
+    after
+      Roux.Database.shutdown(db)
+    end
+  end
+
+  defp memo_keys(query) do
+    {:ok, data} = Manifest.load(Scry.Runner.manifest_file())
+
+    for {{^query, key}, _entry} <- Manifest.memo_entries(data), do: key
+  end
+
+  test "a manifest an older scry wrote keeps no joined copy of the facts", %{
+    peer: peer,
+    copy: copy
+  } do
+    Fixture.checkout!(copy, @quick, :depot_quick)
+
+    Fixture.in_peer(peer, copy, :depot_quick, fn _log ->
+      cold = compile!()
+      %{modules: modules} = Scry.Scanner.scan(Scry.Config.load())
+
+      # As an older scry left it: each module's facts joined and memoized
+      # in `module_extraction`, which its semantic digest read, under a
+      # fingerprint of another shape.
+      rewrite!(fn db ->
+        for module <- Map.keys(modules) do
+          {:ok, _facts} = Scry.Analysis.module_extraction(db, module)
+          {:ok, entry} = Roux.Memo.get(db, {:module_semantic_facts, module})
+          deps = [{:module_extraction, module}]
+          :ok = Roux.Memo.put(db, {:module_semantic_facts, module}, %{entry | dependencies: deps})
+        end
+
+        :ok = Roux.Input.set(db, :env_fingerprint, :all, %{older: :shape})
+      end)
+
+      assert length(memo_keys(:module_extraction)) == map_size(modules)
+
+      warm = compile!()
+
+      assert memo_keys(:module_extraction) == []
+      assert counts_by_code(scry_diagnostics(warm)) == counts_by_code(scry_diagnostics(cold))
+    end)
+  end
+
   test "touch without edit is a noop past the prefilter", %{peer: peer, copy: copy} do
     Fixture.checkout!(copy, @quick, :depot_quick)
 
@@ -114,7 +172,7 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
 
       QueryLog.reset(log)
       compile!()
-      assert QueryLog.executions(log, :module_extraction) == []
+      assert QueryLog.extracted(log) == []
       assert QueryLog.executions(log, :souffle_solve) == []
     end)
   end
@@ -136,7 +194,7 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
       assert counts_by_code(scry_diagnostics(result)) ==
                %{"coupling" => 2, "mailbox" => 3}
 
-      assert QueryLog.executions(log, :module_extraction) != []
+      assert QueryLog.extracted(log) != []
     end)
   end
 end
