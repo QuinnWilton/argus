@@ -155,6 +155,11 @@ defmodule Argus.Analyses.EtsCheckActTest do
       assert races([C.BreakerTrip]) == []
     end
 
+    test "an expired row deleted from a table of refills is not: losing a copy is a miss" do
+      skip_without_souffle()
+      assert races([C.ExpiringCache]) == []
+    end
+
     test "a delete_object of the owner's own row is not" do
       skip_without_souffle()
       assert races([C.LockReleaseObject]) == []

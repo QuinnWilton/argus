@@ -1122,6 +1122,33 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  defmodule ExpiringCache do
+    @moduledoc """
+    A cache whose rows expire: a read that finds an expired row deletes it.
+    Every row the table holds is a refill, so a row deleted in the window
+    is a cached copy, and losing one is a miss.
+    """
+    def start, do: :ets.new(:expiring_cache, [:named_table, :public])
+
+    def get(key, now) do
+      case :ets.lookup(:expiring_cache, key) do
+        [{^key, value, expires}] when expires > now ->
+          value
+
+        [{^key, _value, _expires}] ->
+          :ets.delete(:expiring_cache, key)
+          nil
+
+        [] ->
+          value = load(key)
+          :ets.insert(:expiring_cache, {key, value, now + 60})
+          value
+      end
+    end
+
+    defp load(key), do: {:loaded, key}
+  end
+
   defmodule LockRelease do
     @moduledoc """
     A release that checks the owner, then deletes by key: another process

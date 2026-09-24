@@ -217,8 +217,12 @@ decided by whether the row is there. "Deleting twice is deleting once"
 covers a delete racing a delete, not a delete racing a fresh insert: a
 release that checks the row's owner and then deletes by key can delete
 the next owner's lock. A delete decided by what the row holds is
-reported; an invalidation (`[{^key, _}] -> delete`) and a
-`delete_object`, which deletes only the object it names, are not.
+reported, unless every row the table is written is a refill: then the
+row a delete can lose is a cached copy, and losing one is a miss (an
+expired cache row deleted on read; blockster's settings caches,
+invalidated after a caller decides on a setting's value). An
+invalidation (`[{^key, _}] -> delete`) and a `delete_object`, which
+deletes only the object it names, are not reported.
 
 **Fixed.** `ets_check_act`'s refill exemption — both racers compute the
 same value, so either write is right — no longer covers a value the

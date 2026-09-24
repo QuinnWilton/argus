@@ -373,8 +373,10 @@ writes_after_start(g) :- runs.spawned(_, _, r), writer_walk.reaches(r, g).
 // - a delete decided only by whether the row is there: deleting twice
 //   is deleting once (an invalidation). A delete decided by what the row
 //   holds — its owner, its expiry — can delete the row another process
-//   put there in between (a lock's next owner), and is reported; a
-//   delete_object deletes only the object it names, and is not;
+//   put there in between (a lock's next owner), and is reported, unless
+//   every row the table is written is a refill (below): then the row it
+//   deletes is a cached copy, and losing one is a miss. A delete_object
+//   deletes only the object it names, and is not reported;
 // - a refill: a write whose value a call, or a read of another store
 //   (Mnesia behind an ETS cache), makes — the cache-aside `[] -> v =
 //   load(k); :ets.insert(t, {k, v})` — where both racers compute the
@@ -535,6 +537,27 @@ result_leaves(h) :- rows.act(_, h, _, _, _, _), call_decided(_, _, "call", h).
 result_leaves(h) :- rows.act(_, h, _, _, _, _), call_arg_depends(_, _, _, "call", h).
 result_leaves(h) :- rows.act(_, h, _, _, _, _), returns_depends(_, "call", h).
 
+// A table some insert writes a value into that is not a refill: state
+// of its own, not cached copies (a lock's owner, a claim, a count).
+.decl stores_state(name: symbol)
+
+stores_state(name) :-
+  ets_op(w, _, _, op, "write"),
+  (op = "insert" ; op = "insert_new"),
+  ets_op_table(w, name),
+  !refilled(w).
+
+.decl refilled(w: symbol)
+
+refilled(w) :- ets_op(w, h, _, _, "write"), site_reads(w, h, kind, src), refill_source(kind, src).
+
+refilled(w) :-
+  ets_op(w, h, _, _, "write"),
+  site_reads(w, h, "param", p),
+  call_arg_reads(_, h, n, kind, src),
+  refill_source(kind, src),
+  p = to_string(n).
+
 .decl recomputed(w: symbol)
 
 recomputed(w) :-
@@ -662,6 +685,12 @@ harmless_race(f, r, w) :-
   !tests_row_fields(r),
   !writes_back(name, ks, k).
 
+harmless_race(f, r, w) :-
+  reads_then_writes(f, r, w, name, _),
+  pair_key_of(f, r, w, ks, k),
+  ets_op(w, _, _, "delete", _),
+  !stores_state(name),
+  !writes_back(name, ks, k).
 
 harmless_race(f, r, w) :-
   reads_then_writes(f, r, w, name, _),
