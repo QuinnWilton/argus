@@ -661,29 +661,6 @@ its moduledoc says which submodule holds what.
 
 ### Fact schema and extraction
 
-**Added.** Schema 75. `skipped_on_shutdown(id, func)`: the call at `id`,
-in a `terminate/2` or `terminate/3` that chooses its clause by the
-reason, does not run when the reason is `:shutdown`
-(`Argus.Extractors.ClauseCall`). New `Argus.Extractor.Dispatch.
-reached_with/3`: the instructions reached when an argument is a given
-atom, each test on it taking only the edge that atom takes.
-
-**Added.** Schema 74. `catch_tuple_tag(id, func, class, tag)`: the
-`catch_tag` atoms a clause compares as a tuple's first element — an
-`is_tagged_tuple`, or a comparison on a register holding element 0 —
-rather than the reason itself. `catch :exit, {:noproc, _}` has a row;
-`catch :exit, :noproc` has only its `catch_tag`. A `GenServer.call` to
-a dead process exits with `{:noproc, {GenServer, :call, _}}`, a
-`GenServer.stop` with bare `:noproc`, so the two catch different exits.
-`CatchClauses.analyse/2`'s summary gains `tuple_tags`.
-
-**Added.** Schema 73. `fun_handed(id, caller, callee)`: the call at
-`id` is handed, as a fun value, a function that runs `callee` — a
-closure the caller builds, or a literal external fun — in an argument
-position the call's result does not carry (`Argus.Pipeline.Emit.
-FunRefs.handed_rows/2`). The call graph's edge into a closure or a fun
-reference has no call instruction; this names the call it runs inside,
-so a rule asking whether a `try` covers the edge asks it of that call.
 **Changed.** Schema 85, no shape change. `mnesia_op` has the plain
 `read`, `write`, `delete`, `delete_object`, `match_object`, `select`
 and `index_read` of a closure handed to a dirty activity
@@ -755,6 +732,29 @@ spelling was its own `local`. `ets_key`, `ets_value`, `ets_call_arg`,
 `mnesia_op` and `name_lookup`/`creating_op` read it. Like a `local`, it
 names something only within one function.
 
+**Added.** Schema 75. `skipped_on_shutdown(id, func)`: the call at `id`,
+in a `terminate/2` or `terminate/3` that chooses its clause by the
+reason, does not run when the reason is `:shutdown`
+(`Argus.Extractors.ClauseCall`). New `Argus.Extractor.Dispatch.
+reached_with/3`: the instructions reached when an argument is a given
+atom, each test on it taking only the edge that atom takes.
+
+**Added.** Schema 74. `catch_tuple_tag(id, func, class, tag)`: the
+`catch_tag` atoms a clause compares as a tuple's first element — an
+`is_tagged_tuple`, or a comparison on a register holding element 0 —
+rather than the reason itself. `catch :exit, {:noproc, _}` has a row;
+`catch :exit, :noproc` has only its `catch_tag`. A `GenServer.call` to
+a dead process exits with `{:noproc, {GenServer, :call, _}}`, a
+`GenServer.stop` with bare `:noproc`, so the two catch different exits.
+`CatchClauses.analyse/2`'s summary gains `tuple_tags`.
+
+**Added.** Schema 73. `fun_handed(id, caller, callee)`: the call at
+`id` is handed, as a fun value, a function that runs `callee` — a
+closure the caller builds, or a literal external fun — in an argument
+position the call's result does not carry (`Argus.Pipeline.Emit.
+FunRefs.handed_rows/2`). The call graph's edge into a closure or a fun
+reference has no call instruction; this names the call it runs inside,
+so a rule asking whether a `try` covers the edge asks it of that call.
 **Changed.** Schema 71. `schema_field(mod, field)` gains a third
 column, `type`: the field's Ecto type from `__schema__(:type, field)`,
 which `Argus.Extractors.EctoSchema` reads from `__schema__/2`'s
