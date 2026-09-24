@@ -54,6 +54,13 @@ defmodule Argus.Extractors.Dependence do
     a row tests no element; `[{^k, cur}] when cur >= serial` tests the
     row's key (element 0) and its value (element 1). An
     `:ets.lookup_element/3` answer is element 1 of its row.
+  - `field_compared(func, kind, source, pos, other_kind, other_source)` —
+    what a comparison (a test, or a comparison BIF) compares element `pos`
+    of the source's tuple with: the other operand's sources, by data
+    alone, that the element is not made of itself. `cur >= serial`
+    compares element 1 of the row with parameter 1; `blocked > now`, a
+    clock read, has no row. The control half is left out: every value
+    under a key match would otherwise be compared with the key.
   - `effect_decided(func, kind, source)` — a message send, or a runtime
     call that changes something outside the function
     (`Argus.Purity.Effects`: a process, a port, a file, the network, a
@@ -99,6 +106,7 @@ defmodule Argus.Extractors.Dependence do
   alias Argus.Extractors.ETS
   alias Argus.Extractors.Mnesia
   alias Argus.Extractors.ProcessRegistry
+  alias Argus.Instr
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
   alias Argus.Purity.Effects
@@ -120,6 +128,7 @@ defmodule Argus.Extractors.Dependence do
       :call_arg_reads,
       :call_decided,
       :effect_decided,
+      :field_compared,
       :field_decides,
       :returns_depends,
       :site_depends,
@@ -222,12 +231,23 @@ defmodule Argus.Extractors.Dependence do
 
   # The instructions whose shape the flow asks about beyond what they read
   # and write: %{elements: %{idx => n}} for a projection of tuple element
-  # n (from 0), and %{sends: MapSet} for the sends.
+  # n (from 0), %{sends: MapSet} for the sends, and %{comparisons: %{idx =>
+  # [operand]}} for a test or a BIF comparing two terms.
+  @compare_tests [:is_lt, :is_ge, :is_eq, :is_ne, :is_eq_exact, :is_ne_exact]
+  @compare_bifs [:<, :>, :"=<", :>=, :==, :"/=", :"=:=", :"=/="]
+
   defp shapes(instrs) do
     instrs
     |> Enum.with_index()
-    |> Enum.reduce(%{elements: %{}, sends: MapSet.new()}, fn {instr, idx}, acc ->
+    |> Enum.reduce(%{elements: %{}, sends: MapSet.new(), comparisons: %{}}, fn {instr, idx},
+                                                                               acc ->
       case instr do
+        {:test, op, _fail, [_a, _b] = operands} when op in @compare_tests ->
+          put_in(acc, [:comparisons, idx], operands)
+
+        {:bif, op, _fail, [_a, _b] = operands, _dst} when op in @compare_bifs ->
+          put_in(acc, [:comparisons, idx], operands)
+
         {:get_tuple_element, _src, n, _dst} when is_integer(n) ->
           put_in(acc, [:elements, idx], n)
 
@@ -281,7 +301,8 @@ defmodule Argus.Extractors.Dependence do
     # of, as opposed to what it runs under.
     data_ctx = %{ctx | deciders: %{}, decider_of: %{}, decided: %{}}
     {data_outs, _} = solve(idxs, data_ctx)
-    Enum.reduce(idxs, facts, &emit_reads(&2, &1, data_ctx, data_outs))
+    facts = Enum.reduce(idxs, facts, &emit_reads(&2, &1, data_ctx, data_outs))
+    emit_field_compares(facts, func_id, data_ctx, data_outs)
   end
 
   # Every write's sources, and what each deciding block's decision
@@ -418,6 +439,42 @@ defmodule Argus.Extractors.Dependence do
 
   defp emit_send(facts, false, _here, _ctx), do: facts
   defp emit_send(facts, true, here, ctx), do: rows(facts, :effect_decided, [ctx.func_id], here)
+
+  # What each comparison compares a tuple's element with: for an operand
+  # holding element n of a source, the sources of the other operand that
+  # the first is not made of itself (a lookup's row is made of the key it
+  # was asked for; comparing the row's value is not comparing it with the
+  # key), by data alone.
+  defp emit_field_compares(facts, func_id, data_ctx, data_outs) do
+    for {idx, operands} <- data_ctx.shapes.comparisons,
+        inputs = ValueFlow.inputs(data_ctx.index.reads, data_outs, idx, &{:param, &1}),
+        deps = Enum.map(operands, &operand_deps(inputs, &1)),
+        {mine, i} <- Enum.with_index(deps),
+        {theirs, j} <- Enum.with_index(deps),
+        i != j,
+        {:field, n, source} <- mine,
+        other <- theirs,
+        base?(other),
+        not MapSet.member?(mine, other),
+        reduce: facts do
+      acc ->
+        add_fact(
+          acc,
+          :field_compared,
+          [func_id | encode(source)] ++ [to_string(n) | encode(other)]
+        )
+    end
+  end
+
+  defp operand_deps(inputs, operand) do
+    case Instr.register(operand) do
+      {kind, n} when kind in [:x, :y] -> Map.get(inputs, "#{kind}#{n}", MapSet.new())
+      _literal -> MapSet.new()
+    end
+  end
+
+  defp base?({:field, _n, _source}), do: false
+  defp base?(_source), do: true
 
   # Every element a decision tests, by the source whose tuple it is.
   defp emit_field_decisions(facts, func_id, tested) do

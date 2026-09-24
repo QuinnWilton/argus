@@ -608,6 +608,13 @@ position the call's result does not carry (`Argus.Pipeline.Emit.
 FunRefs.handed_rows/2`). The call graph's edge into a closure or a fun
 reference has no call instruction; this names the call it runs inside,
 so a rule asking whether a `try` covers the edge asks it of that call.
+**Added.** Schema 80. `field_compared(func, kind, source, pos,
+other_kind, other_source)` (`Argus.Extractors.Dependence`): what a
+deciding test compares element `pos` of the source's tuple with, by data
+alone — `[{^k, cur}] when cur >= serial` compares element 1 of the
+lookup's row with parameter 1. A comparison with a value the facts do
+not name (a clock read) has no row. `races` reads it (below).
+
 **Added.** Schema 79. Two `Argus.Extractors.Dependence` relations.
 `field_decides(func, kind, source, pos)`: a test in the function
 decides on element `pos` of a tuple the source holds (a

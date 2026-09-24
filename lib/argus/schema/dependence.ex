@@ -125,6 +125,26 @@ defmodule Argus.Schema.Dependence do
         """
       },
       %{
+        name: :field_compared,
+        layer: 2,
+        fields: [
+          {:func, :func_id, "the function"},
+          {:kind, :symbol, "param | call | site"},
+          {:source, :symbol, "as site_depends"},
+          {:pos, :number, "the tuple element tested, as field_decides"},
+          {:other_kind, :symbol, "param | call | site"},
+          {:other_source, :symbol, "as site_depends"}
+        ],
+        doc: """
+        A test in the function compares element `pos` of a tuple the source \
+        holds with a value made from the other source, by data alone: \
+        `[{^k, cur}] when cur >= serial` compares element 1 of the lookup's \
+        row with parameter 1, and element 0 with parameter 0. A comparison \
+        with a value nothing in the facts names (a clock read) has no row. \
+        Function-level.
+        """
+      },
+      %{
         name: :effect_decided,
         layer: 2,
         fields: [

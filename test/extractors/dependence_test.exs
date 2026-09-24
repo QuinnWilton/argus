@@ -74,6 +74,19 @@ defmodule Argus.Extractors.DependenceTest do
     end
   end
 
+  describe "field_compared" do
+    test "what a tested element is compared with, by data", %{facts: facts} do
+      [lookup] = sites_at("LaterBranchKey:bump/2", {:ets, :lookup, 2})
+
+      compared =
+        for [_f, "site", ^lookup, pos, kind, source] <- facts.field_compared,
+            do: {pos, kind, source}
+
+      # `when count >= limit`: element 1 against the second parameter.
+      assert {"1", "param", "1"} in compared
+    end
+  end
+
   describe "effect_decided" do
     test "a send under a lookup's decision", %{facts: facts} do
       [lookup] = sites_at("NotifyOnce:handle/2", {:ets, :lookup, 2})
