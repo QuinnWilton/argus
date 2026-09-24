@@ -140,6 +140,17 @@ layer's list and, for the in-process ones, in `@in_process_only`. The
 API, `all/0`'s order, the generated `.dl` files and the schema version
 are unchanged; `in_process_only/0` lists its relations in schema order.
 
+**Added.** Schema 61. `clause_call(id, func, tag)`, from the new
+`Argus.Extractors.ClauseCall`: for a function that chooses its clause by
+its first argument — a `handle_call/3` by its request, a guarded
+dispatcher like `route(:local, n)` / `route(:remote, n)` — the calls each
+clause makes, with the tag (the atom, or the first element of the tuple)
+every path to the call established; one row per tag, none for a call
+some path reaches with no tag established. From
+`Argus.Extractor.Dispatch.argument_tags/2`, a walk over every path through
+the function, so a `case` on the argument in the body refines as a clause
+head does. Read by nothing yet.
+
 **Removed.** Schema 60. `move`, `allocate`, `deallocate`, `try_end` and
 `module_attribute`: no Datalog rule and no in-process pass read them (the
 walks read the instructions; the extractors that need an attribute read

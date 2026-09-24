@@ -40,6 +40,26 @@ defmodule Argus.Schema.Callbacks do
         """
       },
       %{
+        name: :clause_call,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "a call"},
+          {:func, :symbol, "the function holding it"},
+          {:tag, :symbol, "the inspected tag its first argument is established to be"}
+        ],
+        doc: """
+        The call at `id` runs only while `func`'s first argument is `tag` — \
+        the atom, or the first element of the tuple, some path to the call \
+        tested it against — one row per such tag. A call some path reaches \
+        without establishing a tag has no row. Exact per path, unlike \
+        `callback_tag`: a synchronous call chain follows the clause of \
+        handle_call/3 a request enters, and the clause of a guarded \
+        dispatcher (`route(:local, n)`) a literal argument enters, so the \
+        `:echo` clause that closes a cycle does not stand for the `:answer` \
+        clause beside it.
+        """
+      },
+      %{
         name: :init_continues_to,
         layer: 2,
         fields: [

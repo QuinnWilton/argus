@@ -10,6 +10,8 @@ defmodule Argus.Extractor.Dispatch do
   copies of these readings; this is the one.
   """
 
+  alias Argus.Instr
+
   @doc "The label of the function's `func_info` instruction, or `nil`."
   @spec func_info_label([tuple()]) :: non_neg_integer() | nil
   def func_info_label(instrs) do
@@ -384,6 +386,170 @@ defmodule Argus.Extractor.Dispatch do
 
   defp arm_targets([_value, _target | rest], atom, labels), do: arm_targets(rest, atom, labels)
   defp arm_targets(_other, _atom, _labels), do: []
+
+  @doc """
+  The tags each instruction can run under, of the argument in
+  `register` (a callback's request, a dispatcher's first argument): for
+  every instruction index reached from the entry, the atoms the argument
+  was established to be (a bare atom, or the first element of a tuple) on
+  some path to it, plus `:any` when some path reaches it without having
+  established one.
+
+  `handle_call({:answer, n}, _, s)` and `handle_call({:echo, n}, _, s)`
+  compile into one function that tests the request's tag and branches to
+  a body per clause; an instruction in the `:answer` body is reached only
+  along paths where the tag test for `:answer` passed, so it runs under
+  `[":answer"]`. A catch-all clause, or a body that dispatches through a
+  helper, is reached with no tag established and runs under `:any`.
+  `route(:local, n)` and `route(:remote, n)` are the same shape.
+
+  Every path is walked — both edges of each test, every select arm, the
+  handlers of a `try` — carrying the registers that hold the argument and
+  its tag (`Argus.Instr.carry/2` between the tests this reads itself), so
+  a nested `case` on the argument in the body refines the tag just as a
+  clause head does, and a tag is never attributed along a path where the
+  register compared no longer holds the argument. A test on an
+  established tag prunes the edge it contradicts. Sound for the question
+  it answers: the tags listed are every tag some path can carry there.
+  """
+  @spec argument_tags([tuple()], {:x, non_neg_integer()}) :: %{
+          non_neg_integer() => MapSet.t(String.t() | :any)
+        }
+  def argument_tags(instrs, register) do
+    tuple = List.to_tuple(instrs)
+    labels = labels(instrs)
+    start = %{idx: entry_index(instrs), msg: [register], tag_regs: [], tag: nil}
+    # `seen` is a map, not a MapSet: dialyzer loses the MapSet's opacity
+    # through the recursion.
+    walk_tags([start], tuple, labels, %{}, %{})
+  end
+
+  defp walk_tags([], _tuple, _labels, _seen, acc), do: acc
+
+  defp walk_tags([state | rest], tuple, labels, seen, acc) do
+    key = {state.idx, state.msg, state.tag_regs, state.tag}
+
+    if state.idx >= tuple_size(tuple) or Map.has_key?(seen, key) do
+      walk_tags(rest, tuple, labels, seen, acc)
+    else
+      tag = state.tag || :any
+      acc = Map.update(acc, state.idx, MapSet.new([tag]), &MapSet.put(&1, tag))
+      next = tag_step(elem(tuple, state.idx), state, labels)
+      walk_tags(next ++ rest, tuple, labels, Map.put(seen, key, true), acc)
+    end
+  end
+
+  # The successor states of the instruction at state.idx.
+  defp tag_step({:test, op, {:f, fail}, [a, b]} = instr, state, labels)
+       when op in [:is_eq_exact, :is_ne_exact] do
+    case compared_tag(state, a, b) do
+      nil ->
+        generic_tag_step(instr, state, labels)
+
+      atom ->
+        equal = narrow(state, atom)
+        other = if state.tag == atom, do: nil, else: advance(state, instr)
+
+        {on_pass, on_fail} = if op == :is_eq_exact, do: {equal, other}, else: {other, equal}
+
+        List.wrap(on_pass && %{on_pass | idx: state.idx + 1}) ++
+          List.wrap(on_fail && goto(on_fail, fail, labels))
+    end
+  end
+
+  defp tag_step(
+         {:test, :is_tagged_tuple, {:f, fail}, [src, _arity, {:atom, atom}]} = instr,
+         state,
+         labels
+       )
+       when is_atom(atom) do
+    if held?(src, state.msg) do
+      pass = narrow(state, inspect(atom))
+
+      List.wrap(pass && %{pass | idx: state.idx + 1}) ++
+        List.wrap(goto(advance(state, instr), fail, labels))
+    else
+      generic_tag_step(instr, state, labels)
+    end
+  end
+
+  defp tag_step({:select_val, src, {:f, fail}, {:list, pairs}} = instr, state, labels) do
+    if held?(src, state.msg) or held?(src, state.tag_regs) do
+      arms =
+        pairs
+        |> Enum.chunk_every(2)
+        |> Enum.flat_map(fn
+          [{:atom, atom}, {:f, l}] when is_atom(atom) ->
+            List.wrap(goto(narrow(state, inspect(atom)), l, labels))
+
+          [_value, {:f, l}] ->
+            List.wrap(goto(advance(state, instr), l, labels))
+
+          _malformed ->
+            []
+        end)
+
+      arms ++ List.wrap(goto(advance(state, instr), fail, labels))
+    else
+      generic_tag_step(instr, state, labels)
+    end
+  end
+
+  defp tag_step({:get_tuple_element, src, 0, dst} = instr, state, _labels) do
+    next = advance(state, instr)
+
+    if held?(src, state.msg),
+      do: [
+        %{next | idx: state.idx + 1, tag_regs: Enum.sort(Enum.uniq([reg(dst) | next.tag_regs]))}
+      ],
+      else: [%{next | idx: state.idx + 1}]
+  end
+
+  defp tag_step(instr, state, labels), do: generic_tag_step(instr, state, labels)
+
+  defp generic_tag_step(instr, state, labels) do
+    next = advance(state, instr)
+    fall = if Instr.falls_through?(instr), do: [%{next | idx: state.idx + 1}], else: []
+    fall ++ Enum.flat_map(Instr.targets(instr), &List.wrap(goto(next, &1, labels)))
+  end
+
+  # The atom a test compares a request (or its tag) register against.
+  defp compared_tag(state, a, b) do
+    cond do
+      held?(a, state.msg) or held?(a, state.tag_regs) -> atom_operand(b)
+      held?(b, state.msg) or held?(b, state.tag_regs) -> atom_operand(a)
+      true -> nil
+    end
+  end
+
+  defp atom_operand({:atom, atom}) when is_atom(atom), do: inspect(atom)
+  defp atom_operand(_operand), do: nil
+
+  # The state once the tag is `atom`, or nil when the path already
+  # established another: that edge cannot be taken.
+  defp narrow(%{tag: nil} = state, atom), do: %{state | tag: atom}
+  defp narrow(%{tag: atom} = state, atom), do: state
+  defp narrow(_state, _atom), do: nil
+
+  # The registers holding the request and its tag after `instr`.
+  defp advance(state, instr) do
+    %{
+      state
+      | msg: instr |> Instr.carry(state.msg) |> Enum.sort(),
+        tag_regs: instr |> Instr.carry(state.tag_regs) |> Enum.sort()
+    }
+  end
+
+  defp goto(nil, _label, _labels), do: nil
+
+  defp goto(state, label, labels) do
+    case Map.fetch(labels, label) do
+      {:ok, idx} -> %{state | idx: idx}
+      :error -> nil
+    end
+  end
+
+  defp held?(operand, regs), do: reg(operand) in regs
 
   @doc "Label → instruction index for the function."
   @spec labels([tuple()]) :: %{non_neg_integer() => non_neg_integer()}
