@@ -4,8 +4,6 @@ defmodule Argus.Clientlib.ProcessesTest do
   alias Argus.{Analysis, Pipeline, Souffle}
   alias Argus.Test.Fixtures.PidFlow
 
-  @moduletag :tmp_dir
-
   @modules [
     PidFlow.Worker,
     PidFlow.Owner,
@@ -57,9 +55,21 @@ defmodule Argus.Clientlib.ProcessesTest do
   # The relations of processes.dl the points-to stage does not stage.
   @internal ~w(param_pts returns_pts self_pid statem_data_pts)
 
-  defp solve(tmp_dir, outputs) do
+  # Every relation a test below reads. One extraction and one solve per
+  # program serve the module: the rows of a relation do not depend on
+  # which others a program outputs, and each test only reads them.
+  @outputs ~w(async_dep call_site_target call_target exit_to_own_process genserver_sync_api
+              instance named_pid param_pts private_process process_call process_start
+              reaches_sync_dep returns_pts self_call self_pid send_target server_process
+              signal_target statem_data_pts supervised_process sync_dep sync_dep_timeout
+              sync_site tag_resolved_site watched_process)
+
+  setup_all do
     unless Souffle.available?(), do: flunk("souffle not installed")
-    facts_dir = Path.join(tmp_dir, "facts")
+
+    dir = Path.join(System.tmp_dir!(), "argus_processes_#{System.unique_integer([:positive])}")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    facts_dir = Path.join(dir, "facts")
 
     {:ok, _} =
       Pipeline.run(@modules, facts_dir,
@@ -80,14 +90,14 @@ defmodule Argus.Clientlib.ProcessesTest do
 
     # What the stage keeps to itself is asked of its own program; what it
     # stages, of the program the analyses include.
-    {internal, staged} = Enum.split_with(outputs, &(&1 in @internal))
+    {internal, staged} = Enum.split_with(@outputs, &(&1 in @internal))
 
     results =
       Map.merge(
-        run(tmp_dir, facts_dir, "internal.dl", internal, """
+        run(dir, facts_dir, "internal.dl", internal, """
         .include "#{Analysis.points_to_rules_path()}"
         """),
-        run(tmp_dir, facts_dir, "staged.dl", staged, """
+        run(dir, facts_dir, "staged.dl", staged, """
         .include "#{Path.join(priv_dl(), "clientlib/imports.dl")}"
         .include "#{Path.join(priv_dl(), "clientlib/otp.dl")}"
         .include "#{Path.join(priv_dl(), "clientlib/process_statem.dl")}"
@@ -96,17 +106,26 @@ defmodule Argus.Clientlib.ProcessesTest do
         """)
       )
 
-    Map.new(results, fn {relation, rows} ->
-      {relation, Enum.map(rows, fn row -> Enum.map(row, &short/1) end)}
-    end)
+    %{
+      results:
+        Map.new(results, fn {relation, rows} ->
+          {relation, Enum.map(rows, fn row -> Enum.map(row, &short/1) end)}
+        end)
+    }
   end
 
-  defp run(_tmp_dir, _facts_dir, _name, [], _includes), do: %{}
+  defp solve(%{results: results}, outputs) do
+    for relation <- outputs, not Map.has_key?(results, relation) do
+      flunk("#{relation} is not solved: add it to @outputs")
+    end
 
-  defp run(tmp_dir, facts_dir, name, outputs, includes) do
-    rules_path = Path.join(tmp_dir, name)
+    Map.take(results, outputs)
+  end
+
+  defp run(dir, facts_dir, name, outputs, includes) do
+    rules_path = Path.join(dir, name)
     File.write!(rules_path, includes <> Enum.map_join(outputs, "\n", &".output #{&1}"))
-    output_dir = Path.join(tmp_dir, Path.rootname(name))
+    output_dir = Path.join(dir, Path.rootname(name))
     File.mkdir_p!(output_dir)
     # A program of its own output directory: the stage's `.output`s write
     # files named like the facts, which must not land in facts_dir.
@@ -122,8 +141,8 @@ defmodule Argus.Clientlib.ProcessesTest do
 
   defp unsited(rows), do: Enum.map(rows, fn row -> Enum.map(row, &unsite/1) end)
 
-  test "a pid follows a wrapper's result and two parameters to a cast", %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(returns_pts param_pts call_target))
+  test "a pid follows a wrapper's result and two parameters to a cast", ctx do
+    r = solve(ctx, ~w(returns_pts param_pts call_target))
 
     # Worker.start_link is a factory: the process Owner.run keeps is its own.
     assert ["Worker:ping/1", "0", "start Owner:run/0"] in unsited(r["param_pts"])
@@ -138,16 +157,16 @@ defmodule Argus.Clientlib.ProcessesTest do
            )
   end
 
-  test "resolved calls become dependencies on the server's module", %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(sync_dep async_dep))
+  test "resolved calls become dependencies on the server's module", ctx do
+    r = solve(ctx, ~w(sync_dep async_dep))
 
     assert ["Owner:direct/0", "Worker"] in r["sync_dep"]
     assert ["Owner:run/0", "Worker"] in r["sync_dep"]
     assert ["Owner:run/0", "Worker"] in r["async_dep"]
   end
 
-  test "a helper's parameter is each caller's pid, not all of them", %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(sync_dep process_call sync_site))
+  test "a helper's parameter is each caller's pid, not all of them", ctx do
+    r = solve(ctx, ~w(sync_dep process_call sync_site))
     deps = for ["User" <> _ = f, m] <- r["sync_dep"], do: {f, m}
 
     assert {"UserA:handle_call/3", "TargetA"} in deps
@@ -170,16 +189,16 @@ defmodule Argus.Clientlib.ProcessesTest do
            )
   end
 
-  test "a dependency carries the timeout of the call that makes it", %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(sync_dep_timeout))
+  test "a dependency carries the timeout of the call that makes it", ctx do
+    r = solve(ctx, ~w(sync_dep_timeout))
     timeouts = for ["Timed:handle_call/3", m, ms] <- r["sync_dep_timeout"], do: {m, ms}
 
     assert {"TargetA", "-1"} in timeouts
     refute {"TargetA", "5000"} in timeouts
   end
 
-  test "self() and a server's state carry a peer's pid", %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(param_pts sync_dep))
+  test "self() and a server's state carry a peer's pid", ctx do
+    r = solve(ctx, ~w(param_pts sync_dep))
     params = unsited(r["param_pts"])
 
     # A starts B with self(): B's init/1, and so B's state, holds A.
@@ -191,8 +210,8 @@ defmodule Argus.Clientlib.ProcessesTest do
     assert ["CycleB:handle_call/3", "CycleA"] in r["sync_dep"]
   end
 
-  test "each pid in a state map stays under its key", %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(call_target sync_dep))
+  test "each pid in a state map stays under its key", ctx do
+    r = solve(ctx, ~w(call_target sync_dep))
 
     # Front holds both Back and Side, and calls only Back.
     assert ["Front:handle_call/3", "call", "start Front:init/1"] in unsited(r["call_target"])
@@ -207,8 +226,8 @@ defmodule Argus.Clientlib.ProcessesTest do
   end
 
   test "a list field and a scalar field of one state reach different processes",
-       %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(send_target))
+       ctx do
+    r = solve(ctx, ~w(send_target))
     sends = for [_, "Relay:handle_info/2", m, p] <- r["send_target"], do: {m, unsite(p)}
 
     assert {":event", "spawn Subscriber:go/0"} in sends
@@ -216,8 +235,8 @@ defmodule Argus.Clientlib.ProcessesTest do
     refute {":event", "spawn Relay:init/1"} in sends
   end
 
-  test "a registered name and a captured pid route sends", %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(named_pid send_target))
+  test "a registered name and a captured pid route sends", ctx do
+    r = solve(ctx, ~w(named_pid send_target))
 
     assert [":loops", "spawn Loops:start/0"] in unsited(r["named_pid"])
 
@@ -233,23 +252,23 @@ defmodule Argus.Clientlib.ProcessesTest do
   end
 
   test "a child a supervisor starts on request is a process its caller holds",
-       %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(call_target))
+       ctx do
+    r = solve(ctx, ~w(call_target))
     assert ["Owner:dynamic/0", "call", "server Owner:dynamic/0"] in unsited(r["call_target"])
   end
 
   test "a GenServer a child spec names is a server, so self() in it resolves",
-       %{tmp_dir: tmp_dir} do
+       ctx do
     # Kid starts through a helper with a computed module: no start call in
     # the program names it, only Tree's child spec.
-    r = solve(tmp_dir, ~w(self_pid process_start))
+    r = solve(ctx, ~w(self_pid process_start))
     refute Enum.any?(r["process_start"], &(Enum.at(&1, 4) == "Kid"))
     assert ["Kid:init/1", "child Tree#0"] in r["self_pid"]
   end
 
   test "a pid in a cast's message reaches the handler and the server's state",
-       %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(param_pts call_target))
+       ctx do
+    r = solve(ctx, ~w(param_pts call_target))
     params = unsited(r["param_pts"])
 
     assert ["Hub:subscribe/1", "0", "server Listener:start_link/1"] in params
@@ -260,8 +279,8 @@ defmodule Argus.Clientlib.ProcessesTest do
            )
   end
 
-  test "starts beyond start_link are processes", %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(call_site_target send_target process_start))
+  test "starts beyond start_link are processes", ctx do
+    r = solve(ctx, ~w(call_site_target send_target process_start))
     targets = for [_, f, kind, p] <- unsited(r["call_site_target"]), do: {f, kind, p}
 
     # {:ok, {pid, ref}} from start_monitor, a Task's pid, an Agent.
@@ -276,13 +295,13 @@ defmodule Argus.Clientlib.ProcessesTest do
            )
   end
 
-  test "a pid in a function's sixth parameter", %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(param_pts))
+  test "a pid in a function's sixth parameter", ctx do
+    r = solve(ctx, ~w(param_pts))
     assert ["Starts:seven/7", "5", "spawn Starts:wide/0"] in unsited(r["param_pts"])
   end
 
-  test "names live in three registries and a child spec", %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(named_pid call_site_target))
+  test "names live in three registries and a child spec", ctx do
+    r = solve(ctx, ~w(named_pid call_site_target))
     names = unsited(r["named_pid"])
 
     assert ["{:global, :names}", "server Names:start_link/1"] in names
@@ -299,16 +318,16 @@ defmodule Argus.Clientlib.ProcessesTest do
   end
 
   test "a registration of another pid names that pid, not the caller's module",
-       %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(named_pid))
+       ctx do
+    r = solve(ctx, ~w(named_pid))
     # Names spawns a helper and registers it: ProcessRegistry's
     # module-level guess says Names' own process holds the name.
     assert for([":names_helper", p] <- unsited(r["named_pid"]), do: p) ==
              ["spawn Names:park/0"]
   end
 
-  test "self() in a helper is the process that calls it", %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(self_pid send_target))
+  test "self() in a helper is the process that calls it", ctx do
+    r = solve(ctx, ~w(self_pid send_target))
 
     assert ["SelfHelper:remind/0", "spawn SelfHelper:start/0"] in unsited(r["self_pid"])
 
@@ -318,8 +337,8 @@ defmodule Argus.Clientlib.ProcessesTest do
            )
   end
 
-  test "self() in a closure is the process that runs it", %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(self_pid))
+  test "self() in a closure is the process that runs it", ctx do
+    r = solve(ctx, ~w(self_pid))
 
     procs = fn pattern ->
       for [f, p] <- unsited(r["self_pid"]), f =~ pattern, into: MapSet.new(), do: p
@@ -331,8 +350,8 @@ defmodule Argus.Clientlib.ProcessesTest do
     assert procs.(~r/^Joiner:-init\/1-fun-\d-\/0$/) == MapSet.new(["spawn Joiner:init/1"])
   end
 
-  test "a call points-to resolves is not attributed by its tag", %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(sync_dep tag_resolved_site))
+  test "a call points-to resolves is not attributed by its tag", ctx do
+    r = solve(ctx, ~w(sync_dep tag_resolved_site))
 
     # :reindex is named by Decoy alone, but the call goes to the AnyCall
     # Reindexer started.
@@ -341,8 +360,8 @@ defmodule Argus.Clientlib.ProcessesTest do
     refute Enum.any?(r["tag_resolved_site"], &match?([_, "Reindexer:handle_call/3" | _], &1))
   end
 
-  test "a server module's function that calls another server is a proxy", %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(sync_dep reaches_sync_dep genserver_sync_api))
+  test "a server module's function that calls another server is a proxy", ctx do
+    r = solve(ctx, ~w(sync_dep reaches_sync_dep genserver_sync_api))
 
     # ProxyApi.ask/0 calls Answerer by name: ProxyUser waits on Answerer,
     # and ask/0 is not ProxyApi's own client API.
@@ -351,18 +370,18 @@ defmodule Argus.Clientlib.ProcessesTest do
     assert ["ProxyUser:use/0", "Answerer"] in r["reaches_sync_dep"]
   end
 
-  test "a wrapper forwarding its target to :gen_statem.call is a peer call", %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(sync_dep))
+  test "a wrapper forwarding its target to :gen_statem.call is a peer call", ctx do
+    r = solve(ctx, ~w(sync_dep))
     assert ["StatemClient:do_call/2", "Machine"] in r["sync_dep"]
   end
 
-  test "a gen_statem's data carries its pids from state to state", %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(sync_dep statem_data_pts))
+  test "a gen_statem's data carries its pids from state to state", ctx do
+    r = solve(ctx, ~w(sync_dep statem_data_pts))
     assert ["Machine:idle/3", "Back"] in r["sync_dep"]
   end
 
-  test "exit signals, monitors and links go to the processes they name", %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(signal_target watched_process exit_to_own_process))
+  test "exit signals, monitors and links go to the processes they name", ctx do
+    r = solve(ctx, ~w(signal_target watched_process exit_to_own_process))
     signals = for [_, f, signal, p] <- unsited(r["signal_target"]), do: {f, signal, p}
 
     # The helper Keeper started and keeps in its state.
@@ -380,15 +399,15 @@ defmodule Argus.Clientlib.ProcessesTest do
   end
 
   test "a call to self() or to its own name from a callback is a self-call",
-       %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(self_call))
+       ctx do
+    r = solve(ctx, ~w(self_call))
     calls = for [f, _site] <- r["self_call"], do: f
 
     assert Enum.count(calls, &(&1 == "Keeper:handle_call/3")) == 2
   end
 
-  test "a pid a server replies with reaches its caller", %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(sync_dep process_call))
+  test "a pid a server replies with reaches its caller", ctx do
+    r = solve(ctx, ~w(sync_dep process_call))
     # The directory keeps workers under keys it does not know and replies
     # with one; the client calls what it gets.
     assert ["DirectoryClient:ping/1", "Back"] in r["sync_dep"]
@@ -399,9 +418,9 @@ defmodule Argus.Clientlib.ProcessesTest do
   end
 
   test "a private start of a supervised module is not the supervised child",
-       %{tmp_dir: tmp_dir} do
+       ctx do
     r =
-      solve(tmp_dir, ~w(process_call instance supervised_process private_process server_process))
+      solve(ctx, ~w(process_call instance supervised_process private_process server_process))
 
     targets = for ["ConnUser:handle_call/3", _, _, "call", p] <- r["process_call"], do: p
     assert targets == ["start ConnUser:init/1#8"]
@@ -419,8 +438,8 @@ defmodule Argus.Clientlib.ProcessesTest do
     assert ["start ConnUser:init/1#8", "Conn"] in r["server_process"]
   end
 
-  test "a computed module, apply and a library pid name no process", %{tmp_dir: tmp_dir} do
-    r = solve(tmp_dir, ~w(call_target send_target))
+  test "a computed module, apply and a library pid name no process", ctx do
+    r = solve(ctx, ~w(call_target send_target))
 
     for row <- r["call_target"] ++ r["send_target"] do
       refute Enum.any?(row, &String.starts_with?(&1, "Quiet:")), inspect(row)
