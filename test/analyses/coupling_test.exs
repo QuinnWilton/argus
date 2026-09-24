@@ -11,16 +11,7 @@ defmodule Argus.Analyses.CouplingTest do
   end
 
   # Beams of `source`, written where Argus.analyze/2 can read them.
-  defp compile_beams(source) do
-    dir = Path.join(System.tmp_dir!(), "argus_coupling_#{System.unique_integer([:positive])}")
-    File.mkdir_p!(dir)
-
-    for {mod, beam} <- Code.compile_string(source) do
-      path = Path.join(dir, "#{mod}.beam")
-      File.write!(path, beam)
-      path
-    end
-  end
+  defp compile_beams(source), do: Memo.compile_beams(source)
 
   describe "sibling_dependency: restart_isolation" do
     test "analyzes coupling under one_for_one supervisors" do
@@ -295,21 +286,8 @@ defmodule Argus.Analyses.CouplingTest do
     end
 
     defp coupling_rows(facts) do
-      dir =
-        Path.join(
-          System.tmp_dir!(),
-          "ofo_coupling_test_#{:erlang.unique_integer([:positive])}"
-        )
-
-      File.mkdir_p!(dir)
-
-      try do
-        :ok = Argus.Pipeline.write_facts(facts, dir)
-        assert {:ok, results} = Argus.Analysis.run_rules(dir, :coupling)
-        results["sibling_dependency"] || []
-      after
-        File.rm_rf(dir)
-      end
+      assert {:ok, results} = Argus.Test.Memo.run_rules(facts, :coupling)
+      results["sibling_dependency"] || []
     end
   end
 end

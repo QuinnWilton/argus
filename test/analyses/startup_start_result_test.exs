@@ -42,21 +42,8 @@ defmodule Argus.Analyses.StartupStartResultTest do
     end
 
     defp ignored_start_rows(facts) do
-      dir =
-        Path.join(
-          System.tmp_dir!(),
-          "startup_test_#{:erlang.unique_integer([:positive])}"
-        )
-
-      File.mkdir_p!(dir)
-
-      try do
-        :ok = Argus.Pipeline.write_facts(facts, dir)
-        assert {:ok, results} = Argus.Analysis.run_rules(dir, :startup)
-        results["ignored_start_result"] || []
-      after
-        File.rm_rf(dir)
-      end
+      assert {:ok, results} = Argus.Test.Memo.run_rules(facts, :startup)
+      results["ignored_start_result"] || []
     end
   end
 end

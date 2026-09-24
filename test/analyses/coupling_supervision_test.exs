@@ -113,24 +113,11 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
     end
 
     defp dependency_rows(facts, reason \\ "restart_policy") do
-      dir =
-        Path.join(
-          System.tmp_dir!(),
-          "coupling_test_#{:erlang.unique_integer([:positive])}"
-        )
+      assert {:ok, results} = Argus.Test.Memo.run_rules(facts, :coupling)
 
-      File.mkdir_p!(dir)
-
-      try do
-        :ok = Argus.Pipeline.write_facts(facts, dir)
-        assert {:ok, results} = Argus.Analysis.run_rules(dir, :coupling)
-
-        results
-        |> Map.get("sibling_dependency", [])
-        |> Enum.filter(&(Enum.at(&1, 3) == reason))
-      after
-        File.rm_rf(dir)
-      end
+      results
+      |> Map.get("sibling_dependency", [])
+      |> Enum.filter(&(Enum.at(&1, 3) == reason))
     end
   end
 

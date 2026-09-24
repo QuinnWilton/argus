@@ -51,6 +51,90 @@ defmodule Argus.Test.Memo do
     if Argus.Cache.enabled?(), do: Argus.Cache.prune(store(), max_age: 7 * 24 * 60 * 60), else: []
   end
 
+  @doc """
+  Resolves what each shipped program reads (`Argus.Souffle.input_relations/2`)
+  from the suite's store, asking the solver only for a program edited
+  since, in parallel: every later ask in the run is the VM's memo. The
+  answer is the program's (keyed by its content and the solver), not a
+  test's; without a store (`ARGUS_NO_CACHE`) each program is asked once.
+  """
+  @spec warm_programs() :: :ok
+  def warm_programs do
+    if Argus.Souffle.available?() do
+      programs =
+        if Argus.Cache.enabled?(), do: [programs: Path.join(store(), "programs")], else: []
+
+      [Argus.Analysis.stage0_rules_path(), Argus.Analysis.points_to_rules_path()]
+      |> Kernel.++(for name <- Argus.Analysis.builtin_analyses(), do: rules_path(name))
+      |> Task.async_stream(&Argus.Souffle.input_relations(&1, programs), timeout: :infinity)
+      |> Stream.run()
+    end
+
+    :ok
+  end
+
+  defp rules_path(name) do
+    {:ok, path} = Argus.Analysis.Catalog.rules_path(name)
+    path
+  end
+
+  @doc """
+  An analysis's rules solved over hand-built facts (`Argus.Pipeline.write_facts/2`
+  into a directory of the call's own, removed after), each solve kept in
+  the suite's store and keyed on what it reads (`solve_cache:`).
+  """
+  @spec run_rules(map(), atom()) :: {:ok, map()} | {:error, term()}
+  def run_rules(facts, analysis) do
+    dir =
+      Path.join(
+        System.tmp_dir!(),
+        "argus_rules_#{:os.getpid()}_#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(dir)
+
+    try do
+      :ok = Argus.Pipeline.write_facts(facts, dir)
+      Argus.Analysis.run_rules(dir, analysis, solve_cache: Path.join(store(), "solves"))
+    after
+      File.rm_rf(dir)
+    end
+  end
+
+  @doc """
+  Beams of the modules `source` defines, written where a path names
+  them: under a directory named by the source's digest (and the
+  compiler's), so the same source is the same beams at the same paths
+  in every run — what the
+  suite's store keys a fixture set's facts on. Written under a scratch
+  name and renamed, so a test beside this one compiling the same source
+  never reads half a file.
+  """
+  @spec compile_beams(String.t()) :: [Path.t()]
+  def compile_beams(source) do
+    compiler = System.version() <> System.otp_release()
+
+    digest =
+      :crypto.hash(:sha256, [compiler, source])
+      |> Base.encode16(case: :lower)
+      |> binary_part(0, 16)
+
+    dir = Path.join(System.tmp_dir!(), "argus_beams_#{digest}")
+    File.mkdir_p!(dir)
+
+    for {mod, beam} <- Code.compile_string(source) do
+      path = Path.join(dir, "#{mod}.beam")
+
+      unless File.exists?(path) do
+        scratch = "#{path}.#{:os.getpid()}.#{System.unique_integer([:positive])}"
+        File.write!(scratch, beam)
+        File.rename!(scratch, path)
+      end
+
+      path
+    end
+  end
+
   @doc "`Argus.analyze(modules, analysis)`, once per run, through the suite's store."
   @spec analyze([module() | String.t()], Argus.Analysis.analysis(), keyword()) ::
           {:ok, map()} | {:error, term()}
