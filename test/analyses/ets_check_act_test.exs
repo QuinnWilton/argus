@@ -107,6 +107,16 @@ defmodule Argus.Analyses.EtsCheckActTest do
       assert [{"claim/1", ":claims", "0"}] = races([C.Claim])
     end
 
+    test "a guard on what the row holds is reported, whatever the racers return" do
+      skip_without_souffle()
+      assert [{"put/2", ":serials_ok", "0"}] = races([C.SerialsOk])
+    end
+
+    test "a marker whose decision also sends is reported: both racers send" do
+      skip_without_souffle()
+      assert [{"handle/2", ":notified", "0"}] = races([C.NotifyOnce])
+    end
+
     test "a first insert over a key update_counter counts into is reported" do
       skip_without_souffle()
       assert [{"hit/1", ":hits", "0"}] = races([C.CounterClobber])

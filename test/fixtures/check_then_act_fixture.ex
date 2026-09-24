@@ -910,6 +910,27 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  defmodule SerialsOk do
+    @moduledoc """
+    The talk's Serials with both branches returning :ok: the guard on the
+    stored serial still lets the older serial land last, whatever the
+    racers are told.
+    """
+    def start, do: :ets.new(:serials_ok, [:named_table, :public])
+
+    @spec put(term(), integer()) :: :ok
+    def put(k, serial) do
+      case :ets.lookup(:serials_ok, k) do
+        [{^k, cur}] when cur >= serial ->
+          :ok
+
+        _ ->
+          :ets.insert(:serials_ok, {k, serial})
+          :ok
+      end
+    end
+  end
+
   defmodule NotifyOnce do
     @moduledoc """
     An idempotency marker whose decision also sends: both racers mark the

@@ -316,11 +316,17 @@ another_process_writes(name, f) :-
 //   load(k); :ets.insert(t, {k, v})` — where both racers compute the
 //   same thing and either write is right;
 // - a trip: a write of a value made of neither the read nor a call
-//   (`{key, :blocked_until, t}`), where the decision stays in the
-//   program: no caller branches on what the function returns, and no
-//   exported function hands it out. A claim — `[] -> insert({k,
-//   :in_flight}); :ok` — hands its decision to a caller that acts on it
-//   alone, and is reported: both racers are told they won.
+//   (`{key, :blocked_until, t}`), decided only by whether the row is
+//   there, with nothing else under the decision — no send, no call, no
+//   other write — and a decision that stays in the program: no caller
+//   branches on what the function returns, and no exported function
+//   hands it out. Both racers write the same thing and do nothing else.
+//   A claim — `[] -> insert({k, :in_flight}); :ok` — hands its decision
+//   to a caller that acts on it alone, and is reported: both racers are
+//   told they won. So is a guard on what the row holds (`[{^k, cur}]
+//   when cur >= serial`), whichever value the racers return: the older
+//   serial can land last. And a marker whose decision also runs a send
+//   or a call: both racers run it.
 //
 // "Made of" is data dependence alone (site_reads, call_arg_reads): a
 // value computed under a test on the read, but not from it, does not
@@ -447,6 +453,54 @@ decision_escapes(c) :-
   function_def(g, _, _, _, 1),
   !callee_returns(g, "constant").
 
+// The read's decision looks at what the row holds, past its key: a test
+// of element 1 on, where the read's value is carried, or in a helper it
+// is handed to (field_decides). Whether a row is there, and whether its
+// key is the one asked for, say nothing of what it holds.
+.decl tests_row_fields(read: symbol)
+
+tests_row_fields(r) :-
+  rows.carries(f, kind, src, r, _, _, _, _),
+  field_decides(f, kind, src, pos),
+  pos >= 1.
+
+tests_row_fields(r) :-
+  rows.carries(f, kind, src, r, _, _, _, _),
+  call_arg_depends(f, h, n, kind, src),
+  field_decides(h, "param", q, pos),
+  q = to_string(n),
+  pos >= 1.
+
+// The read's decision runs more than the write: a send or an outside
+// effect (effect_decided), a call that does not lead to the write, or a
+// write of some other shared state.
+.decl decides_more(read: symbol, write: symbol)
+
+decides_more(r, w) :-
+  reads_then_writes(_, r, w, _, _),
+  rows.carries(f, kind, src, r, _, _, _, _),
+  effect_decided(f, kind, src).
+
+decides_more(r, w) :-
+  reads_then_writes(_, r, w, _, _),
+  rows.carries(f, kind, src, r, _, _, _, _),
+  call_decided(f, g, kind, src),
+  !rows.acts_if(g, w, _, _, _, _, _, _).
+
+decides_more(r, w) :-
+  reads_then_writes(_, r, w, _, _),
+  rows.carries(f, kind, src, r, _, _, _, _),
+  site_depends(s, f, kind, src),
+  s != w,
+  shared_write(s).
+
+.decl shared_write(site: symbol)
+
+shared_write(s) :- ets_op(s, _, _, _, "write").
+shared_write(s) :- mnesia_op(s, _, _, "write", _, _, _, _).
+shared_write(s) :- creating_op(s, _, _, _, _, _).
+shared_write(s) :- name_release(s, _, _, _, _).
+
 .decl harmless_race(func: symbol, read: symbol, write: symbol)
 
 harmless_race(f, r, w) :-
@@ -465,6 +519,8 @@ harmless_race(f, r, w) :-
   reads_then_writes(f, r, w, name, _),
   !carries_read(w),
   !writes_back(name),
+  !tests_row_fields(r),
+  !decides_more(r, w),
   !decision_escapes(r).
 
 .decl ets_check_act(mod: symbol, func: symbol, name: symbol, key: symbol, read: symbol, write: symbol)

@@ -195,6 +195,18 @@ runtime — to be shared. `shared_table` held only when an `:ets.new/2`
 in view named the table and was not private, so a table named from
 config was never reported.
 
+**Fixed.** `ets_check_act`'s trip exemption — a write that carries
+nothing of the read, on a table nothing writes back, whose decision
+stays inside — now also asks that the decision look only at whether
+the row is there, and run nothing but the write. A guard on what the
+row holds (`[{^k, cur}] when cur >= serial -> :ok`) was exempt whenever
+the function returned `:ok` on both branches or its caller ignored the
+result, though the older serial still lands last; and a marker whose
+decision also sends or calls (`[] -> insert({id, true}); send(mailer,
+...)`) was exempt though both racers send. Both are reported (schema
+74's `field_decides` and `effect_decided`); a constant marker with
+nothing else under it (supavisor's circuit breaker) still is not.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile
