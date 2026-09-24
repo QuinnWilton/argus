@@ -36,6 +36,9 @@ defmodule Argus.Extractors.ErrorHandling do
   - `catch_falls_through(id, func, tag)` — a `case` inside the handler,
     reached after comparing `tag`, has no clause for some value, so an
     unexpected reason is a CaseClauseError
+  - `try_covers(id, func, call, kind)` — the try (or Erlang `catch`) at
+    `id` covers the call at `call`: an exception the call raises goes to
+    that try's handler
   - `try_call(id, func, callee, call, guard_end)` — a peer call (`GenServer.call`,
     `:gen_statem.call`, `:erpc.call`, ...) the `try` at `id` guards
   - `mailbox_writer(id, func, kind)` — a call after which something other
@@ -58,6 +61,7 @@ defmodule Argus.Extractors.ErrorHandling do
 
   @behaviour Argus.Extractor
 
+  alias Argus.Cfg.Walk
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Dispatch
   alias Argus.Extractor.Helpers
@@ -148,7 +152,8 @@ defmodule Argus.Extractors.ErrorHandling do
       :timer_ref,
       :timer_store,
       :trap_exit,
-      :try_call
+      :try_call,
+      :try_covers
     ]
 
   @impl true
@@ -172,6 +177,7 @@ defmodule Argus.Extractors.ErrorHandling do
       |> emit_self_sends(mod, module_data.functions)
       |> emit_timer_flows(mod, module_data.functions)
       |> emit_cancel_clauses(module_data)
+      |> emit_try_coverage(module_data)
 
     origins = Identity.origins_index(module_data)
 
@@ -600,6 +606,68 @@ defmodule Argus.Extractors.ErrorHandling do
   # A cancel inside a handle_info/2 clause whose head is a literal
   # message: `def handle_info(:heartbeat, s)` cancelling the ref of the
   # timer that sent :heartbeat cancels a timer that has already fired.
+  # Which calls each try covers. A try's protected region is not the
+  # instructions between `try` and `try_end` in the stream: it is every
+  # instruction on a path from the `try` that has not yet passed its
+  # `try_end` (or reached its `try_case`, the handler, which runs with the
+  # try already closed). Walked on the function's graph, so a region that
+  # jumps out to shared code and back, a nested try's handler (still inside
+  # the outer region, whose handler takes what it re-raises), and code the
+  # compiler placed after the handler all fall where control puts them.
+  # Erlang's `catch Expr` is the same shape, ended by `catch_end`, which
+  # both paths reach.
+  defp emit_try_coverage(facts, module_data) do
+    mod = module_data.module
+
+    Enum.reduce(module_data.functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
+      regions =
+        for {{op, reg, {:f, _handler}}, idx} <- Enum.with_index(instrs),
+            op in [:try, :catch],
+            do: {op, reg, idx}
+
+      case regions do
+        [] ->
+          acc
+
+        _ ->
+          fun = Helpers.cfg(module_data, name, arity)
+          func_id = Normalize.func_id(mod, name, arity)
+          Enum.reduce(regions, acc, &cover(&2, fun, func_id, instrs, &1))
+      end
+    end)
+  end
+
+  # No graph (the function's could not be built): no rows, and a rule
+  # asking whether a call is covered reads it as bare.
+  defp cover(facts, nil, _func_id, _instrs, _region), do: facts
+
+  defp cover(facts, fun, func_id, instrs, {op, reg, idx}) do
+    {:done, visited} =
+      Walk.explore(fun, instrs, [idx + 1],
+        on_instr: fn instr, at ->
+          if at == idx or region_end?(op, reg, instr), do: :prune, else: :continue
+        end
+      )
+
+    table = List.to_tuple(instrs)
+    id = InstrId.mint(func_id, idx)
+
+    visited
+    |> Enum.sort()
+    |> Enum.filter(fn at ->
+      instr = elem(table, at)
+      Instr.call?(instr) or Instr.tail_call?(instr)
+    end)
+    |> Enum.reduce(facts, fn at, acc ->
+      add_fact(acc, :try_covers, [id, func_id, InstrId.mint(func_id, at), to_string(op)])
+    end)
+  end
+
+  defp region_end?(:try, reg, {:try_end, reg}), do: true
+  defp region_end?(:try, reg, {:try_case, reg}), do: true
+  defp region_end?(:catch, reg, {:catch_end, reg}), do: true
+  defp region_end?(_op, _reg, _instr), do: false
+
   defp emit_cancel_clauses(facts, module_data) do
     for %{mfa: mfa, func_id: func_id, instrs: instrs, idx: idx} <-
           CallSites.for_module(module_data),

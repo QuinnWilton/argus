@@ -486,3 +486,255 @@ defmodule Argus.Test.Fixtures.SiblingOrder do
     end
   end
 end
+
+defmodule Argus.Test.Fixtures.SiblingGuard do
+  @moduledoc """
+  Which try guards terminate/2's call to a sibling: the one whose
+  protected region holds that call, or the call leading to the helper
+  that makes it. The directory starts last, so shutdown stops it before
+  any writer: every unguarded call is the bug.
+  """
+
+  defmodule Directory do
+    @moduledoc false
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+    def unregister(who), do: GenServer.call(__MODULE__, {:unregister, who})
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def handle_call({:unregister, _who}, _from, state), do: {:reply, :ok, state}
+  end
+
+  defmodule Sup do
+    @moduledoc false
+    use Supervisor
+
+    alias Argus.Test.Fixtures.SiblingGuard, as: G
+
+    @impl true
+    def init(_opts) do
+      Supervisor.init(
+        [
+          G.CallInside,
+          G.TryElsewhere,
+          G.HelperInside,
+          G.HelperGuards,
+          G.HelperTryElsewhere,
+          G.ErrorOnly,
+          G.NestedOuterExit,
+          G.NestedAfterInner,
+          G.NoprocInside,
+          G.Directory
+        ],
+        strategy: :one_for_one
+      )
+    end
+  end
+
+  defmodule CallInside do
+    @moduledoc "The sibling call inside the exit-catching try: guarded."
+    use GenServer
+
+    alias Argus.Test.Fixtures.SiblingGuard.Directory
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def terminate(_reason, _state) do
+      try do
+        Directory.unregister(__MODULE__)
+      catch
+        :exit, _ -> :ok
+      end
+    end
+  end
+
+  defmodule TryElsewhere do
+    @moduledoc "The try catches exits around another call; the sibling call follows its end."
+    use GenServer
+
+    alias Argus.Test.Fixtures.SiblingGuard.Directory
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def terminate(_reason, state) do
+      try do
+        GenServer.stop(state, :normal)
+      catch
+        :exit, _ -> :ok
+      end
+
+      Directory.unregister(__MODULE__)
+    end
+  end
+
+  defmodule HelperInside do
+    @moduledoc "The call into the helper that makes the sibling call is inside the try."
+    use GenServer
+
+    alias Argus.Test.Fixtures.SiblingGuard.Directory
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def terminate(_reason, _state) do
+      try do
+        leave()
+      catch
+        :exit, _ -> :ok
+      end
+    end
+
+    defp leave do
+      :ok = Directory.unregister(__MODULE__)
+      :left
+    end
+  end
+
+  defmodule HelperGuards do
+    @moduledoc "The helper has its own try around the sibling call."
+    use GenServer
+
+    alias Argus.Test.Fixtures.SiblingGuard.Directory
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def terminate(_reason, _state) do
+      :ok = leave()
+      :ok
+    end
+
+    defp leave do
+      try do
+        Directory.unregister(__MODULE__)
+      catch
+        :exit, _ -> :ok
+      end
+    end
+  end
+
+  defmodule HelperTryElsewhere do
+    @moduledoc "The helper's try covers another call; its sibling call is after the end."
+    use GenServer
+
+    alias Argus.Test.Fixtures.SiblingGuard.Directory
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def terminate(_reason, state) do
+      :ok = leave(state)
+      :ok
+    end
+
+    defp leave(state) do
+      try do
+        GenServer.stop(state, :normal)
+      catch
+        :exit, _ -> :ok
+      end
+
+      Directory.unregister(__MODULE__)
+    end
+  end
+
+  defmodule ErrorOnly do
+    @moduledoc "The try around the sibling call catches only errors: the exit escapes."
+    use GenServer
+
+    alias Argus.Test.Fixtures.SiblingGuard.Directory
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def terminate(_reason, _state) do
+      try do
+        Directory.unregister(__MODULE__)
+      catch
+        :error, _ -> :ok
+      end
+    end
+  end
+
+  defmodule NestedOuterExit do
+    @moduledoc "An inner try catches errors, the outer one exits: the call is inside both."
+    use GenServer
+
+    alias Argus.Test.Fixtures.SiblingGuard.Directory
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def terminate(_reason, _state) do
+      try do
+        try do
+          Directory.unregister(__MODULE__)
+        catch
+          :error, _ -> :ok
+        end
+      catch
+        :exit, _ -> :ok
+      end
+    end
+  end
+
+  defmodule NestedAfterInner do
+    @moduledoc """
+    The inner try catches exits around another call; the sibling call
+    follows its end, still inside an outer try that catches only errors.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.SiblingGuard.Directory
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def terminate(_reason, state) do
+      try do
+        try do
+          GenServer.stop(state, :normal)
+        catch
+          :exit, _ -> :ok
+        end
+
+        Directory.unregister(__MODULE__)
+      catch
+        :error, _ -> :ok
+      end
+    end
+  end
+
+  defmodule NoprocInside do
+    @moduledoc "The try around the sibling call takes the :noproc exit by name."
+    use GenServer
+
+    alias Argus.Test.Fixtures.SiblingGuard.Directory
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def terminate(_reason, _state) do
+      try do
+        Directory.unregister(__MODULE__)
+      catch
+        :exit, {:noproc, _} -> :ok
+      end
+    end
+  end
+end

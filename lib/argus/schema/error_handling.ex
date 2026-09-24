@@ -85,6 +85,25 @@ defmodule Argus.Schema.ErrorHandling do
         """
       },
       %{
+        name: :try_covers,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the try (or catch) instruction"},
+          {:func, :symbol, "the function"},
+          {:call, :instr_id, "a call inside its protected region"},
+          {:kind, :symbol, "'try' | 'catch' (Erlang's `catch Expr`, which takes every class)"}
+        ],
+        doc: """
+        The try at `id` covers the call at `call`: the call is on a path \
+        from the try that has not passed its `try_end`, so what it raises \
+        goes to that try's handler, whose classes and reasons are \
+        catch_total and catch_tag at the same `id`. Walked on the \
+        function's control-flow graph: a call after the try's `end` is not \
+        covered, a call inside a nested try is covered by both, and a call \
+        in a nested try's handler by the outer one alone.
+        """
+      },
+      %{
         name: :rpc_result,
         layer: 2,
         fields: [

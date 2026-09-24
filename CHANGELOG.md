@@ -134,6 +134,18 @@ and have `resolve/2` raise `ArgumentError` on it in the window between
 row goes in first now, and a binary that loses the `insert_new` race
 deletes the row it wrote. `races.ets_publish_order` found it.
 
+**Added.** Schema 69. `try_covers(id, func, call, kind)` — the try
+(`kind` "try") or Erlang `catch Expr` ("catch") at `id` covers the call
+at `call`: the call is on a path from the try that has not passed its
+`try_end` (`catch_end` for a catch), walked on the function's graph
+with `Argus.Cfg.Walk`, so a call after the try's `end` is not covered,
+a call inside nested tries is covered by each, and one in a nested
+try's handler by the outer try alone. What the handler takes stays in
+`catch_total` and `catch_tag` at the same `id`; `clientlib/exceptions.dl`
+joins the two as `covered_by_catch(call, func, try_site, class)` (a
+`catch` takes every class). From `Argus.Extractors.ErrorHandling`; read
+by `shutdown` (below).
+
 **Changed.** Schema 68. `prior_sensitive` gains `detail_permille`
 before `permille`, and `permille` is now the probability of `kind` — the
 sum over its details — where it was the chosen detail's. `kind` is the

@@ -3,8 +3,8 @@
 // `catch_total(id, func, class)` says a clause of the try at `id` takes
 // every reason of `class` (`*` for every class); `catch_tag` names one
 // reason. The questions rules ask are "does anything here catch an
-// exit" and "does THIS try catch an exit", so both granularities are
-// named.
+// exit", "does THIS try catch an exit" and "is THIS call inside a try
+// that catches an exit", so all three granularities are named.
 //
 // Requires imports.dl.
 
@@ -21,6 +21,22 @@ site_catches_class(id, func, class) :- catch_total(id, func, class), class != "*
 site_catches_class(id, func, "error") :- catch_total(id, func, "*").
 site_catches_class(id, func, "exit") :- catch_total(id, func, "*").
 site_catches_class(id, func, "throw") :- catch_total(id, func, "*").
+
+// The call at `call` is inside the protected region of the try at
+// `try_site` (try_covers: on a path from the try that has not passed its
+// `try_end`, walked on the function's graph), and that try's handler
+// takes every reason of `class`. Erlang's `catch Expr` takes every class.
+// What a rule asks when the question is whether THIS call is guarded,
+// not whether its function has a handler somewhere.
+.decl covered_by_catch(call: symbol, func: symbol, try_site: symbol, class: symbol)
+
+covered_by_catch(call, f, t, class) :-
+  try_covers(t, f, call, "try"),
+  site_catches_class(t, f, class).
+
+covered_by_catch(call, f, t, class) :-
+  try_covers(t, f, call, "catch"),
+  (class = "error" ; class = "exit" ; class = "throw").
 
 // A handler in `func` that takes the ArgumentError (:badarg) a BIF raises
 // on a missing table or a taken name: a bare rescue or catch-all of

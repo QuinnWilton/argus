@@ -103,6 +103,70 @@ defmodule Argus.Extractors.ErrorHandlingTest do
     end
   end
 
+  describe "extract/1 — try_covers" do
+    alias Argus.Extractor.Helpers
+    alias Argus.Test.Fixtures.SiblingGuard, as: G
+
+    # {try index, callee, kind} for every call a try in `name/arity` covers.
+    defp covered(mod, name, arity) do
+      data = disassemble(mod)
+      instrs = Helpers.find_function(data.functions, name, arity)
+      func = Argus.Pipeline.Normalize.func_id(mod, name, arity)
+
+      data
+      |> ErrorHandling.extract()
+      |> Map.get(:try_covers, [])
+      |> Enum.filter(fn [_try, f, _call, _kind] -> f == func end)
+      |> Enum.map(fn [try_id, ^func, call, kind] ->
+        {:ok, %{idx: try_idx}} = Argus.InstrId.parse(try_id)
+        {:ok, %{idx: call_idx}} = Argus.InstrId.parse(call)
+        {try_idx, callee(Enum.at(instrs, call_idx)), kind}
+      end)
+      |> Enum.sort()
+    end
+
+    defp callee(instr) do
+      with :none <- Helpers.match_remote_call(instr),
+           :none <- Helpers.match_local_call(instr) do
+        :dynamic
+      else
+        {:ok, m, f, a} -> "#{inspect(m)}.#{f}/#{a}"
+      end
+    end
+
+    @unregister "Argus.Test.Fixtures.SiblingGuard.Directory.unregister/1"
+
+    test "a call inside the try is covered" do
+      assert [{_try, @unregister, "try"}] = covered(G.CallInside, :terminate, 2)
+    end
+
+    test "a call after the try's end is not" do
+      assert [{_try, "GenServer.stop/2", "try"}] = covered(G.TryElsewhere, :terminate, 2)
+    end
+
+    test "a call inside nested tries is covered by both" do
+      assert [{outer, @unregister, "try"}, {inner, @unregister, "try"}] =
+               covered(G.NestedOuterExit, :terminate, 2)
+
+      assert outer < inner
+    end
+
+    test "a call after an inner try's end is covered by the outer one alone" do
+      assert [
+               {outer, @unregister, "try"},
+               {outer, "GenServer.stop/2", "try"},
+               {inner, "GenServer.stop/2", "try"}
+             ] = covered(G.NestedAfterInner, :terminate, 2)
+
+      assert outer < inner
+    end
+
+    test "Erlang's catch covers the expression it wraps, and no more" do
+      assert [{_catch, ":ets.lookup/2", "catch"}] = covered(:ets_catch_reader, :lookup, 1)
+      assert covered(:ets_catch_reader, :peek, 1) == []
+    end
+  end
+
   describe "extract/1 — trap_exit" do
     test "detects Process.flag(:trap_exit, true)" do
       facts = ErrorHandling.extract(disassemble(Argus.Test.Fixtures.TrapExitModule))
