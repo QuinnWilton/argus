@@ -41,7 +41,8 @@ defmodule Argus.Symbols do
     @moduledoc """
     The default store: two public ETS tables and an atomic counter, so
     parallel extraction workers intern without coordination. A binary
-    that loses the insert race takes the id the winner assigned.
+    that loses the insert race takes the id the winner assigned. An id is
+    resolvable before any process can be handed it.
     """
 
     @behaviour Argus.Symbols.Store
@@ -76,12 +77,18 @@ defmodule Argus.Symbols do
           id
 
         [] ->
+          # The reverse row goes in before the id is published in
+          # forward: another process can find the id there the moment
+          # insert_new lands, and resolve/2 must then find its row. A
+          # loser's reverse row names an id nobody was handed; it is
+          # deleted.
           id = :atomics.add_get(counter, 1, 1)
+          true = :ets.insert(reverse, {id, binary})
 
           if :ets.insert_new(forward, {binary, id}) do
-            true = :ets.insert(reverse, {id, binary})
             id
           else
+            :ets.delete(reverse, id)
             [{_, winner}] = :ets.lookup(forward, binary)
             winner
           end

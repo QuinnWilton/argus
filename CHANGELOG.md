@@ -52,6 +52,13 @@ its moduledoc says which submodule holds what.
 
 ### Fact schema and extraction
 
+**Fixed.** `Argus.Symbols.ETS.intern/2` wrote an id into `forward`
+before writing its `reverse` row, so another process could find the id
+and have `resolve/2` raise `ArgumentError` on it in the window between
+(thousands of times in a 20,000-key run with four readers). The reverse
+row goes in first now, and a binary that loses the `insert_new` race
+deletes the row it wrote. `races.ets_publish_order` found it.
+
 **Added.** Schema 62. Three ETS relations, all `Argus.Extractors.ETS`'s
 and read by `races`. `ets_table_path(id, source, root, path)` says where
 an operation's table operand was read from: a literal name, a parameter

@@ -27,6 +27,40 @@ defmodule Argus.SymbolsTest do
     assert Enum.uniq(hd(results)) |> length() == 500
   end
 
+  test "an id found in the forward table resolves at once" do
+    # A reader that spins on the forward table takes each id the moment it
+    # is published and resolves it. When intern/2 published before writing
+    # the reverse row, thousands of these resolves raised per run.
+    store = Symbols.ETS.new()
+    keys = for i <- 1..5_000, do: "k#{i}"
+
+    readers =
+      for _ <- 1..4 do
+        Task.async(fn ->
+          Enum.count(keys, fn key ->
+            id = published(store, key)
+
+            try do
+              Symbols.ETS.resolve(store, id) != key
+            rescue
+              ArgumentError -> true
+            end
+          end)
+        end)
+      end
+
+    Enum.each(keys, &Symbols.ETS.intern(store, &1))
+
+    assert Enum.map(readers, &Task.await(&1, 60_000)) == [0, 0, 0, 0]
+  end
+
+  defp published(store, key) do
+    case :ets.lookup(store.forward, key) do
+      [{_, id}] -> id
+      [] -> published(store, key)
+    end
+  end
+
   test "instr_id/2 parses once and caches; non-IDs are :error", %{symbols: s} do
     id = Symbols.intern(s, "Demo:run/2#7")
 
