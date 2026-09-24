@@ -19,7 +19,10 @@ defmodule Argus.Analyses.Races do
     another process can write. A delete, a refill every racer computes
     alike, and a write whose decision never leaves the function are not
     lost updates, unless the program also writes the table back from a
-    read or counts in it.
+    read or counts in it. Nor is an update or a delete of a row only its
+    holder writes: every row the table gets is made at a key minted there
+    (a reference, a monitor, a unique integer) and handed to one process,
+    and the others' writes that reach it only remove it.
   - `mnesia_check_act(mod, func, table, key, read, write, op)` — a dirty
     read decides or feeds a dirty write (`op`: `dirty_write`,
     `dirty_delete` or `dirty_delete_object`) of the same record, and

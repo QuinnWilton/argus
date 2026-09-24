@@ -505,6 +505,22 @@ writer unless the pair's act can make the row again. An
 it would be had the pair run first; an `insert` puts a revoked row back,
 and still counts.
 
+**Fixed.** `ets_check_act` leaves out an update or a delete of a row
+only its holder writes. When every write that can make a row of the
+table keys it by a value minted there — a reference (`make_ref/0`, a
+monitor) or a unique integer — the row a pair reads was made for
+whoever the key was handed to, and a pair many processes run is many
+holders at their own rows; the other writes that reach a row remove
+it, which an act that makes no row cannot lose to.
+`Postgrex.Parameters.put/3` was reported in every Postgrex tree: the
+owner inserts `{Process.monitor(pid), params}` with `insert_new` and
+replies the reference, the connection updates its row with
+`update_element`, and the owner deletes the row on `:DOWN`. A table that
+also makes rows at keys its callers name, and a pair that writes back
+with `insert`, stay reported. Where a minted key goes afterwards the
+facts do not say, so a program that hands one to several processes is
+not seen.
+
 **Fixed.** `mnesia_check_act` finds the read-modify-write that updates
 the record it read in place: `[rec] = dirty_read(t, k)` and then
 `dirty_write(put_elem(rec, 2, n + 1))`, an Elixir record's update, or

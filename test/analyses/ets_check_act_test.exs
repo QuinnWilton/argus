@@ -36,7 +36,11 @@ defmodule Argus.Analyses.EtsCheckActTest do
     C.ExpiringCache,
     C.LockReleaseObject,
     C.CounterClobber,
-    C.UnnamedTable
+    C.UnnamedTable,
+    C.HeldParameters,
+    C.HeldParametersNamed,
+    C.HeldParametersInsert,
+    C.HeldSessions
   ]
 
   setup_all do
@@ -242,6 +246,32 @@ defmodule Argus.Analyses.EtsCheckActTest do
     test "a first insert over a key update_counter counts into is reported", ctx do
       skip_without_souffle()
       assert [{"hit/1", ":hits", "0"}] = races(ctx, [C.CounterClobber])
+    end
+  end
+
+  describe "rows only their holder writes" do
+    test "a row made at a monitor of its caller, updated in place by that caller", ctx do
+      skip_without_souffle()
+      assert races(ctx, [C.HeldParameters]) == []
+    end
+
+    test "a row made at a fresh reference the opener returns", ctx do
+      skip_without_souffle()
+      assert races(ctx, [C.HeldSessions]) == []
+    end
+
+    test "a table that also makes rows at keys its callers name is reported", ctx do
+      skip_without_souffle()
+
+      assert [{"put/3", "Argus.Test.Fixtures.CheckThenAct.HeldParametersNamed", "0"}] =
+               races(ctx, [C.HeldParametersNamed])
+    end
+
+    test "a write back with insert is reported: it can put a removed row back", ctx do
+      skip_without_souffle()
+
+      assert [{"put/3", "Argus.Test.Fixtures.CheckThenAct.HeldParametersInsert", "0"}] =
+               races(ctx, [C.HeldParametersInsert])
     end
   end
 

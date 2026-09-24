@@ -779,6 +779,68 @@ harmless_race(f, r, w) :-
   !decides_more(r, w),
   !decision_escapes(r).
 
+// ── Rows only their holder writes ────────────────────────────────
+//
+// A row whose key is minted where the row is made — a reference
+// (make_ref, a monitor) or a unique integer — can be found only by whoever
+// the key is handed to. When every write that can make a row of the
+// table mints its key so, and the pair's act makes no row (an
+// update_element, a delete), the row the pair reads was made for a holder
+// of its key, and the pair running in many processes is many holders at
+// their own rows: two racers on one row would share a key minted to be
+// handed to one. The other writes that reach the row remove it, and an
+// act that loses to a removal changes nothing — the row ends removed, as
+// it would had the act come first. Postgrex.Parameters is the shape: the
+// owner inserts `{Process.monitor(pid), params}` with insert_new and
+// replies the reference to the connection that asked, the connection
+// updates its row with update_element, and the owner deletes the row when
+// the connection goes down. Where a key goes once it is minted the facts
+// do not say, so a program that hands one minted key to several processes
+// is not seen.
+.decl minting_call(mod: symbol, func: symbol, arity: number)
+
+minting_call(":erlang", "make_ref", 0).
+minting_call(":erlang", "monitor", 2).
+minting_call(":erlang", "monitor", 3).
+minting_call(":erlang", "unique_integer", 0).
+minting_call(":erlang", "unique_integer", 1).
+minting_call("System", "unique_integer", 0).
+minting_call("System", "unique_integer", 1).
+
+.decl minted_key(write: symbol)
+
+minted_key(w) :-
+  makes_row(w),
+  op_key(w, "local", made),
+  remote_call(made, _, m, n, a),
+  minting_call(m, n, a).
+
+// A table whose rows are made at minted keys and at no other: some write
+// mints, and none that makes a row keys it by what it is given or
+// computes.
+.decl mints_rows(kind: symbol, table: symbol)
+.decl names_rows(kind: symbol, table: symbol)
+
+mints_rows(k, t) :- ets_table(w, k, t), minted_key(w).
+names_rows(k, t) :- ets_table(w, k, t), makes_row(w), !minted_key(w).
+
+.decl held_table(kind: symbol, table: symbol)
+
+held_table(k, t) :- mints_rows(k, t), !names_rows(k, t).
+
+// The pair's act makes no row, and every table it may touch is held.
+.decl on_unheld_table(write: symbol)
+
+on_unheld_table(w) :- reads_then_writes(_, _, w, _, _), ets_table(w, k, t), !held_table(k, t).
+
+.decl held_row(write: symbol)
+
+held_row(w) :-
+  reads_then_writes(_, _, w, _, _),
+  !makes_row(w),
+  ets_table(w, _, _),
+  !on_unheld_table(w).
+
 .decl ets_check_act(mod: symbol, func: symbol, name: symbol, key: symbol, read: symbol, write: symbol)
 .output ets_check_act
 
@@ -787,6 +849,7 @@ ets_check_act(mod, func, table, key, read, write) :-
   public_table(table),
   another_process_writes(table, func),
   !harmless_race(func, read, write),
+  !held_row(write),
   in_module(func, mod).
 
 // ── Published before it is complete ──────────────────────────────

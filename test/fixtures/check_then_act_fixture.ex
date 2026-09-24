@@ -1297,6 +1297,140 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  # ── Rows only their holder writes ────────────────────────────────
+
+  defmodule HeldParameters do
+    @moduledoc """
+    Postgrex.Parameters: the owner makes each caller's row at a monitor of
+    the caller and replies the reference, the caller updates its own row
+    with update_element, and the owner deletes the row when the caller
+    goes down. Many callers run put/3, each at the row made for it.
+    """
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+
+    def insert(params), do: GenServer.call(__MODULE__, {:insert, params})
+
+    def put(ref, name, value) do
+      case :ets.lookup(__MODULE__, ref) do
+        [{^ref, params}] ->
+          :ets.update_element(__MODULE__, ref, {2, Map.put(params, name, value)})
+
+        [] ->
+          false
+      end
+    end
+
+    @impl true
+    def init(nil), do: {:ok, :ets.new(__MODULE__, [:public, :named_table])}
+
+    @impl true
+    def handle_call({:insert, params}, {pid, _}, table) do
+      ref = Process.monitor(pid)
+      true = :ets.insert_new(table, {ref, params})
+      {:reply, ref, table}
+    end
+
+    @impl true
+    def handle_info({:DOWN, ref, :process, _, _}, table) do
+      :ets.delete(table, ref)
+      {:noreply, table}
+    end
+  end
+
+  defmodule HeldParametersNamed do
+    @moduledoc """
+    HeldParameters with a second way in: seed/2 makes a row at a key its
+    caller names, which any number of processes can know.
+    """
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+
+    def insert(params), do: GenServer.call(__MODULE__, {:insert, params})
+
+    def seed(key, params), do: :ets.insert(__MODULE__, {key, params})
+
+    def put(ref, name, value) do
+      case :ets.lookup(__MODULE__, ref) do
+        [{^ref, params}] ->
+          :ets.update_element(__MODULE__, ref, {2, Map.put(params, name, value)})
+
+        [] ->
+          false
+      end
+    end
+
+    @impl true
+    def init(nil), do: {:ok, :ets.new(__MODULE__, [:public, :named_table])}
+
+    @impl true
+    def handle_call({:insert, params}, {pid, _}, table) do
+      ref = Process.monitor(pid)
+      true = :ets.insert_new(table, {ref, params})
+      {:reply, ref, table}
+    end
+  end
+
+  defmodule HeldParametersInsert do
+    @moduledoc """
+    HeldParameters writing the row back with insert: a put that loses to
+    the owner's delete puts the gone caller's row back.
+    """
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+
+    def insert(params), do: GenServer.call(__MODULE__, {:insert, params})
+
+    def put(ref, name, value) do
+      case :ets.lookup(__MODULE__, ref) do
+        [{^ref, params}] -> :ets.insert(__MODULE__, {ref, Map.put(params, name, value)})
+        [] -> false
+      end
+    end
+
+    @impl true
+    def init(nil), do: {:ok, :ets.new(__MODULE__, [:public, :named_table])}
+
+    @impl true
+    def handle_call({:insert, params}, {pid, _}, table) do
+      ref = Process.monitor(pid)
+      true = :ets.insert_new(table, {ref, params})
+      {:reply, ref, table}
+    end
+
+    @impl true
+    def handle_info({:DOWN, ref, :process, _, _}, table) do
+      :ets.delete(table, ref)
+      {:noreply, table}
+    end
+  end
+
+  defmodule HeldSessions do
+    @moduledoc """
+    Rows made at a fresh reference the opener returns, counted up with
+    update_element by whoever holds it, and deleted on close.
+    """
+    def start, do: :ets.new(:held_sessions, [:named_table, :public])
+
+    def open(user) do
+      ref = make_ref()
+      :ets.insert(:held_sessions, {ref, user, 0})
+      ref
+    end
+
+    def touch(ref) do
+      case :ets.lookup(:held_sessions, ref) do
+        [{^ref, _user, uses}] -> :ets.update_element(:held_sessions, ref, {3, uses + 1})
+        [] -> false
+      end
+    end
+
+    def close(ref), do: :ets.delete(:held_sessions, ref)
+  end
+
   defmodule MnesiaExpire do
     @moduledoc """
     blockster's OAuth state: read it, and delete it when expired. The
