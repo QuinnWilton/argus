@@ -12,11 +12,14 @@ defmodule Scry.Test.Fixture do
   module starts in library code, and sonar.ex's handle_info/2 without a
   catch-all), nothing else.
 
-  The scry compiler task itself is resolved from THIS test VM (the host
-  app), so the fixture needs no dependency on scry.
+  The scry compiler task itself is resolved from this test VM's code
+  path (the host app's, which a peer starts from), so the fixture needs
+  no dependency on scry.
   """
 
   import ExUnit.CaptureIO, only: [with_io: 1, with_io: 2]
+
+  alias Scry.Test.{Peer, QueryLog}
 
   @fixture Path.expand("../fixtures/depot", __DIR__)
 
@@ -75,6 +78,29 @@ defmodule Scry.Test.Fixture do
 
       result
     end)
+  end
+
+  @doc """
+  Runs `fun` inside the checked-out fixture at `copy` (as `app`), in
+  `peer` (`Scry.Test.Peer`), with this peer's earlier fixture modules
+  unloaded and a `Scry.Test.QueryLog` started for the call: `fun` takes
+  the log and its value comes back.
+  """
+  @spec in_peer(pid(), Path.t(), atom(), (pid() -> result)) :: result when result: term()
+  def in_peer(peer, copy, app, fun) when is_function(fun, 1) do
+    Peer.apply(peer, __MODULE__, :in_project_logged, [copy, app, fun])
+  end
+
+  @doc false
+  def in_project_logged(copy, app, fun) do
+    unload!()
+    log = QueryLog.start()
+
+    try do
+      Mix.Project.in_project(app, copy, fn _module -> fun.(log) end)
+    after
+      QueryLog.detach(log)
+    end
   end
 
   @doc """
