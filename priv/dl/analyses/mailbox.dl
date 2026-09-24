@@ -303,17 +303,17 @@ terminate_helper2(h) :-
   (terminate_callback(g, _, _) ; terminate_helper(g)),
   !called_outside_terminate2(h).
 
-.decl only_on_the_way_out(func: symbol)
+.decl runs_only_on_the_way_out(func: symbol)
 
-only_on_the_way_out(c) :- terminate_callback(c, _, _).
-only_on_the_way_out(c) :- terminate_helper(c).
-only_on_the_way_out(c) :- terminate_helper2(c).
+runs_only_on_the_way_out(c) :- terminate_callback(c, _, _).
+runs_only_on_the_way_out(c) :- terminate_helper(c).
+runs_only_on_the_way_out(c) :- terminate_helper2(c).
 
 // The cancel is in the handle_info/2 clause of the timer's own message:
 // the message is the one being handled, not one left behind.
-.decl handles_that_message(cancel_site: symbol, cancel: symbol, message: symbol) inline
+.decl handles_that_message(cancel: symbol, message: symbol) inline
 
-handles_that_message(cs, c, msg) :- cancel_clause(cs, c, msg).
+handles_that_message(cancel, msg) :- cancel_clause(cancel, _, msg).
 
 // A ref that never leaves the function: armed, then cancelled from the
 // local the send_after returned (`ref = send_after(...); work();
@@ -325,9 +325,9 @@ timer_cancel_without_flush(mod, cancel, cancel, "", message, cancel_site, arm_si
   local_message(arm_site, message),
   in_module(cancel, mod),
   !init_function(mod, cancel),
-  !only_on_the_way_out(cancel),
+  !runs_only_on_the_way_out(cancel),
   !takes_message(mod, message),
-  !handles_that_message(cancel_site, cancel, message).
+  !handles_that_message(cancel_site, message).
 
 // A cancel of a timer the same function armed and kept in a local.
 .decl cancels_local(cancel_site: symbol, cancel: symbol, arm_site: symbol) inline
@@ -349,31 +349,69 @@ local_message(id, lit) :-
 // arm must be one that can follow the cancel: a timer armed only in
 // init/1 and cancelled later is stopped, not re-armed, and its stale
 // message is handled once as an ordinary one.
+//
+// `cancel` and `arm` are the cancel_timer and send_after instructions;
+// the functions holding them are the output's cancel and arm columns.
+.decl cancel_without_flush(cancel: symbol, arm: symbol, key: symbol, message: symbol)
+
+cancel_without_flush(cancel, arm, key, message) :-
+  cancels_under(cancel, key),
+  rearms_under(arm, key, message),
+  in_same_module(cancel, arm),
+  !cancelled_on_the_way_out(cancel),
+  !module_receives(cancel, message),
+  !handles_that_message(cancel, message).
+
 timer_cancel_without_flush(mod, cancel, arm, key, message, cancel_site, arm_site) :-
-  cancels_under(cancel_site, cancel, key),
-  rearms_under(arm_site, arm, key, message),
-  in_module(cancel, mod),
-  in_module(arm, mod),
-  !only_on_the_way_out(cancel),
-  !takes_message(mod, message),
-  !handles_that_message(cancel_site, cancel, message).
+  cancel_without_flush(cancel_site, arm_site, key, message),
+  cancel_site(cancel, key, cancel_site),
+  rearm_site(arm_site, arm, key, message),
+  in_module(cancel, mod).
 
-// The cancel_timer at `cancel_site` in `cancel` takes the ref kept
-// under `key` (cancel_site above).
-.decl cancels_under(cancel_site: symbol, cancel: symbol, key: symbol) inline
+// The cancel_timer `cancel` takes the ref kept under `key` (cancel_site
+// above).
+.decl cancels_under(cancel: symbol, key: symbol) inline
 
-cancels_under(cs, c, key) :- cancel_site(c, key, cs).
+cancels_under(cancel, key) :- cancel_site(_, key, cancel).
+
+// The send_after `arm` keeps its ref under `key`, and the timer carries
+// `message`.
+.decl rearms_under(arm: symbol, key: symbol, message: symbol) inline
+
+rearms_under(arm, key, msg) :- rearm_site(arm, _, key, msg).
 
 // The send_after at `arm_site` in `arm` keeps its ref under `key`, and
 // the timer carries `message`; an arm in init/1 does not re-arm.
-.decl rearms_under(arm_site: symbol, arm: symbol, key: symbol, message: symbol)
+.decl rearm_site(arm_site: symbol, arm: symbol, key: symbol, message: symbol)
 
-rearms_under(arm_site, a, key, msg) :-
+rearm_site(arm_site, a, key, msg) :-
   timer_key(a, key),
   stored_message(key, a, msg),
   timer_arm(arm_site, a, "self", _, _, _),
   in_module(a, mod),
   !init_function(mod, a).
+
+// The functions holding the cancel and the arm are in one module.
+.decl in_same_module(cancel: symbol, arm: symbol)
+
+in_same_module(cancel, arm) :-
+  cancel_site(c, _, cancel),
+  rearm_site(arm, a, _, _),
+  in_module(c, mod),
+  in_module(a, mod).
+
+// The cancel is in terminate/2, or a helper only it runs.
+.decl cancelled_on_the_way_out(cancel: symbol)
+
+cancelled_on_the_way_out(cancel) :- cancel_site(c, _, cancel), runs_only_on_the_way_out(c).
+
+// A receive in the module holding the cancel takes the message.
+.decl module_receives(cancel: symbol, message: symbol)
+
+module_receives(cancel, msg) :-
+  cancel_site(c, _, cancel),
+  in_module(c, mod),
+  takes_message(mod, msg).
 
 // ── Evidence: where a monitored entry is removed, where a task is yielded ─
 .decl monitored_entry_removal(mod: symbol, kind: symbol, site: symbol, func: symbol)
