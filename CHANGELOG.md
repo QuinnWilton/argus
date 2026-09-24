@@ -215,6 +215,16 @@ the next owner's lock. A delete decided by what the row holds is
 reported; an invalidation (`[{^key, _}] -> delete`) and a
 `delete_object`, which deletes only the object it names, are not.
 
+**Fixed.** `ets_check_act`'s refill exemption — both racers compute the
+same value, so either write is right — no longer covers a value the
+call mints (a random API, a unique integer, a ref, or a project function
+that makes or returns one) when the writing function hands it out: each
+racer returns its own token, and only one is stored. `races` reads
+`impure_call` (`Argus.Extractors.Purity`) for it. The `CacheRefill`
+fixture pinned as quiet a loader that stamped `System.unique_integer/0`
+into its value and returned it; that is this shape, and its loader is
+now a pure function of the key.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile

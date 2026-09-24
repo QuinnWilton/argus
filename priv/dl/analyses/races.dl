@@ -317,7 +317,9 @@ another_process_writes(name, f) :-
 // - a refill: a write whose value a call, or a read of another store
 //   (Mnesia behind an ETS cache), makes — the cache-aside `[] -> v =
 //   load(k); :ets.insert(t, {k, v})` — where both racers compute the
-//   same thing and either write is right;
+//   same thing and either write is right. Not when the call mints the
+//   value — a random token, a unique integer, a ref — and the function
+//   hands it out: each racer returns its own, and only one is stored;
 // - a trip: a write of a value made of neither the read nor a call
 //   (`{key, :blocked_until, t}`), decided only by whether the row is
 //   there, with nothing else under the decision — no send, no call, no
@@ -412,6 +414,47 @@ refill_source("call", g) :- site_reads(_, _, "call", g).
 refill_source("call", g) :- call_arg_reads(_, _, _, "call", g).
 refill_source("site", r) :- site_reads(_, _, "site", r), !ets_op(r, _, _, _, _).
 refill_source("site", r) :- call_arg_reads(_, _, _, "site", r), !ets_op(r, _, _, _, _).
+
+// A call that mints its value: a random API, a unique integer or a ref,
+// or a project function that makes one or returns what one made.
+.decl unique_api(api: symbol)
+
+unique_api("System.unique_integer/0").
+unique_api("System.unique_integer/1").
+unique_api(":erlang.unique_integer/0").
+unique_api(":erlang.unique_integer/1").
+unique_api(":erlang.make_ref/0").
+unique_api("Kernel.make_ref/0").
+
+.decl mints(callee: symbol)
+
+mints(g) :-
+  impure_call(id, _, _, "random", _),
+  remote_call(id, _, m, n, a),
+  g = cat(m, ":", n, "/", to_string(a)).
+
+mints(g) :- function_def(g, _, _, _, _), impure_call(_, g, _, "random", _).
+mints(g) :- function_def(g, _, _, _, _), impure_call(_, g, api, _, _), unique_api(api).
+mints(g) :- function_def(g, _, _, _, _), returns_depends(g, "call", g2), mints(g2).
+
+// The write's value is minted by a call the writing function also
+// returns, to a caller that uses it or one outside the program.
+.decl mint_handed_out(w: symbol)
+
+mint_handed_out(w) :-
+  rows.act(w, h, _, _, _, _),
+  site_reads(w, h, "call", g),
+  mints(g),
+  returns_depends(h, "call", g),
+  result_leaves(h).
+
+.decl result_leaves(func: symbol)
+
+result_leaves(h) :- rows.act(_, h, _, _, _, _), function_def(h, _, _, _, 1).
+result_leaves(h) :- rows.act(_, h, _, _, _, _), site_depends(_, _, "call", h).
+result_leaves(h) :- rows.act(_, h, _, _, _, _), call_decided(_, _, "call", h).
+result_leaves(h) :- rows.act(_, h, _, _, _, _), call_arg_depends(_, _, _, "call", h).
+result_leaves(h) :- rows.act(_, h, _, _, _, _), returns_depends(_, "call", h).
 
 .decl recomputed(w: symbol)
 
@@ -521,6 +564,7 @@ harmless_race(f, r, w) :-
   reads_then_writes(f, r, w, name, _),
   !carries_read(w),
   recomputed(w),
+  !mint_handed_out(w),
   !writes_back(name).
 
 harmless_race(f, r, w) :-

@@ -83,6 +83,9 @@ defmodule Argus.Analyses.Races do
       Argus.Extractors.CallArgs,
       Argus.Extractors.Dependence,
       Argus.Extractors.Specs,
+      # Which calls mint a value (a random API, a unique integer, a ref):
+      # a refill of one each racer returns is not both racers' answer.
+      Argus.Extractors.Purity,
       # The processes a spawn, a task or an agent starts: entries of their
       # own for RunsConcurrently (clientlib/concurrency.dl).
       Argus.Extractors.PidFlow

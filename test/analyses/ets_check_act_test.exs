@@ -90,6 +90,12 @@ defmodule Argus.Analyses.EtsCheckActTest do
       assert races([C.CacheRefill]) == []
     end
 
+    test "a refill that mints the value it hands out is reported: each racer returns its own" do
+      skip_without_souffle()
+      assert [{"token/1", ":tokens", "0"}] = races([C.TokenMint])
+      assert [{"id/1", ":ids", "0"}] = races([C.IdMint])
+    end
+
     test "the refill is reported on a table the program writes back from a read" do
       skip_without_souffle()
       found = races([C.RefillWrittenBack])

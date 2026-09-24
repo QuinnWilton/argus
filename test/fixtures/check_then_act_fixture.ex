@@ -775,7 +775,46 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
       end
     end
 
-    defp load(key), do: {:loaded, key, System.unique_integer()}
+    defp load(key), do: {:loaded, key}
+  end
+
+  defmodule TokenMint do
+    @moduledoc """
+    A refill that mints a token and hands it out: each racer returns its
+    own token, and only one of them is stored.
+    """
+    def start, do: :ets.new(:tokens, [:named_table, :public])
+
+    def token(user) do
+      case :ets.lookup(:tokens, user) do
+        [{^user, token}] ->
+          token
+
+        [] ->
+          token = Base.encode64(:crypto.strong_rand_bytes(16))
+          :ets.insert(:tokens, {user, token})
+          token
+      end
+    end
+  end
+
+  defmodule IdMint do
+    @moduledoc "The same refill, the value minted in a helper: a unique id."
+    def start, do: :ets.new(:ids, [:named_table, :public])
+
+    def id(name) do
+      case :ets.lookup(:ids, name) do
+        [{^name, id}] ->
+          id
+
+        [] ->
+          id = new_id()
+          :ets.insert(:ids, {name, id})
+          id
+      end
+    end
+
+    defp new_id, do: {:id, System.unique_integer([:positive])}
   end
 
   defmodule RefillWrittenBack do
