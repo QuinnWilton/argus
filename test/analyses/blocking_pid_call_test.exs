@@ -2,6 +2,7 @@ defmodule Argus.Analyses.BlockingPidCallTest do
   use ExUnit.Case, async: true
 
   alias Argus.Test.Fixtures.PidCalls
+  alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   setup do
@@ -11,7 +12,7 @@ defmodule Argus.Analyses.BlockingPidCallTest do
 
   defp analyze do
     {:ok, r} =
-      Argus.analyze(
+      Memo.analyze(
         [PidCalls.Waiter, PidCalls.Slow, PidCalls.Impatient, PidCalls.Middle, PidCalls.Tail],
         :blocking
       )
@@ -53,7 +54,7 @@ defmodule Argus.Analyses.BlockingPidCallTest do
   end
 
   test "a gen_statem's data carries the pid its state function calls" do
-    {:ok, r} = Argus.analyze([PidCalls.StatemFront, PidCalls.StatemPeer], :blocking)
+    {:ok, r} = Memo.analyze([PidCalls.StatemFront, PidCalls.StatemPeer], :blocking)
 
     # StatemFront calls the StatemPeer it keeps in its data; StatemPeer
     # calls StatemFront by name. The first edge is the data's, not a guess
@@ -71,7 +72,7 @@ defmodule Argus.Analyses.BlockingPidCallTest do
   end
 
   test "a closure beside a child spec's fun is the handler's own" do
-    {:ok, r} = Argus.analyze([PidCalls.HandOffCaster, PidCalls.Named], :blocking)
+    {:ok, r} = Memo.analyze([PidCalls.HandOffCaster, PidCalls.Named], :blocking)
 
     assert [[caster, named | _]] = Rows.where(r, :blocking, "call_chain", kind: "cast")
     assert {caster, named} == {inspect(PidCalls.HandOffCaster), inspect(PidCalls.Named)}

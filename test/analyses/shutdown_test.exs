@@ -4,6 +4,7 @@ defmodule Argus.Analyses.ShutdownTest do
   alias Argus.Extractor.Helpers
   alias Argus.Souffle
   alias Argus.Test.Fixtures.Shutdown, as: S
+  alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   @all [
@@ -21,7 +22,7 @@ defmodule Argus.Analyses.ShutdownTest do
 
   # Every test reads the same solve of @all: solved once, read-only.
   setup_all do
-    %{solved: Argus.analyze(@all, :shutdown)}
+    %{solved: Memo.analyze(@all, :shutdown)}
   end
 
   defp skip_without_souffle do
@@ -69,7 +70,7 @@ defmodule Argus.Analyses.ShutdownTest do
       alias Argus.Test.Fixtures.ShutdownSiblings, as: Sib
 
       {:ok, r} =
-        Argus.analyze(
+        Memo.analyze(
           [Sib.Sup, Sib.Producer, Sib.Watchman, Sib.CarefulWatchman],
           :shutdown
         )
@@ -103,7 +104,7 @@ defmodule Argus.Analyses.ShutdownTest do
     alias Argus.Test.Fixtures.SiblingOrder, as: O
 
     defp kinds(sup, extra \\ []) do
-      {:ok, r} = Argus.analyze([sup, O.Writer, O.Directory | extra], :shutdown)
+      {:ok, r} = Memo.analyze([sup, O.Writer, O.Directory | extra], :shutdown)
 
       r
       |> Rows.where(:shutdown, "teardown_touches_sibling", phase: "terminate")
@@ -123,7 +124,7 @@ defmodule Argus.Analyses.ShutdownTest do
       skip_without_souffle()
 
       {:ok, r} =
-        Argus.analyze([O.NonTrappingCalleeLater, O.NonTrappingWriter, O.Directory], :shutdown)
+        Memo.analyze([O.NonTrappingCalleeLater, O.NonTrappingWriter, O.Directory], :shutdown)
 
       assert Rows.where(r, :shutdown, "teardown_touches_sibling", phase: "terminate") == []
     end
@@ -165,7 +166,7 @@ defmodule Argus.Analyses.ShutdownTest do
       assert kinds(O.CalleeEarlierUnknownStrategy) == [{"call_unordered", @writer, @directory}]
 
       {:ok, findings} =
-        Argus.run_analyses([O.CalleeEarlierUnknownStrategy, O.Writer, O.Directory],
+        Memo.run_analyses([O.CalleeEarlierUnknownStrategy, O.Writer, O.Directory],
           analyses: [:shutdown]
         )
 
@@ -201,7 +202,7 @@ defmodule Argus.Analyses.ShutdownTest do
 
     test "only a try covering the call, or the call toward it, guards it" do
       skip_without_souffle()
-      {:ok, r} = Argus.analyze(@guard_fixtures, :shutdown)
+      {:ok, r} = Memo.analyze(@guard_fixtures, :shutdown)
 
       callers =
         r
@@ -240,7 +241,7 @@ defmodule Argus.Analyses.ShutdownTest do
 
     test "the path starts at the call after the try, not the one inside it" do
       skip_without_souffle()
-      {:ok, r} = Argus.analyze(@guard_fixtures, :shutdown)
+      {:ok, r} = Memo.analyze(@guard_fixtures, :shutdown)
       mod = "Argus.Test.Fixtures.SiblingGuard.TryElsewhere"
       terminate = mod <> ":terminate/2"
 
@@ -266,7 +267,7 @@ defmodule Argus.Analyses.ShutdownTest do
       alias Argus.Test.Fixtures.ForeignChildren, as: F
 
       {:ok, r} =
-        Argus.analyze(
+        Memo.analyze(
           [
             F.LibraryTree,
             F.AppTree,

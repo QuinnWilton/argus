@@ -2,6 +2,7 @@ defmodule Argus.Analyses.StartupContinueTest do
   use ExUnit.Case, async: true
 
   alias Argus.Souffle
+  alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   defp skip_without_souffle do
@@ -27,7 +28,7 @@ defmodule Argus.Analyses.StartupContinueTest do
       ]
 
       # A continue cycle is blocking's call_cycle in the continue phase.
-      assert {:ok, results} = Argus.analyze(modules, :blocking)
+      assert {:ok, results} = Memo.analyze(modules, :blocking)
       cycles = Rows.where(results, :blocking, "call_cycle", phase: "continue")
       assert cycles != []
 
@@ -48,7 +49,7 @@ defmodule Argus.Analyses.StartupContinueTest do
         Argus.Test.Fixtures.ContinueLateSiblingSupervisor
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :startup)
+      assert {:ok, results} = Memo.analyze(modules, :startup)
       hits = continue_to_later(results)
       assert hits != []
 
@@ -68,7 +69,7 @@ defmodule Argus.Analyses.StartupContinueTest do
         Argus.Test.Fixtures.SafeContinueOrderSupervisor
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :startup)
+      assert {:ok, results} = Memo.analyze(modules, :startup)
 
       # The unsafe supervisor isn't in the modules list, so the only
       # supervisor visible to the analysis is the safe one. No findings.
@@ -85,10 +86,10 @@ defmodule Argus.Analyses.StartupContinueTest do
         Argus.Test.Fixtures.SafeContinueExternalTargetSupervisor
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :startup)
+      assert {:ok, results} = Memo.analyze(modules, :startup)
       assert continue_to_later(results) == []
 
-      assert {:ok, blocking} = Argus.analyze(modules, :blocking)
+      assert {:ok, blocking} = Memo.analyze(modules, :blocking)
       assert Rows.where(blocking, :blocking, "call_cycle", phase: "continue") == []
     end
 
@@ -101,7 +102,7 @@ defmodule Argus.Analyses.StartupContinueTest do
         Argus.Test.Fixtures.SafeContinueCastSupervisor
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :startup)
+      assert {:ok, results} = Memo.analyze(modules, :startup)
       assert continue_to_later(results) == []
     end
 
@@ -114,7 +115,7 @@ defmodule Argus.Analyses.StartupContinueTest do
         Argus.Test.Fixtures.DefensiveContinueSupervisor
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :startup)
+      assert {:ok, results} = Memo.analyze(modules, :startup)
 
       # The defensive variant still triggers the literal pattern 2
       # (the call IS still there in the bytecode), and the crash-loop
@@ -133,7 +134,7 @@ defmodule Argus.Analyses.StartupContinueTest do
       skip_without_souffle()
 
       assert {:ok, results} =
-               Argus.analyze(
+               Memo.analyze(
                  [
                    Argus.Test.Fixtures.TimeoutDeferredInit,
                    Argus.Test.Fixtures.ContinueDeferredInit

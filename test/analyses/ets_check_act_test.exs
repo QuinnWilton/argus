@@ -5,6 +5,7 @@ defmodule Argus.Analyses.EtsCheckActTest do
   alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Fixtures.CheckThenAct, as: C
+  alias Argus.Test.Memo
 
   # Every test reads its fixtures' rows from one solve of them all
   # (`Argus.Test.Batch`; ARGUS_VERIFY_BATCH=1 checks each slice against
@@ -45,7 +46,7 @@ defmodule Argus.Analyses.EtsCheckActTest do
   # A set that shares a module with another test's is about what the
   # modules do together: it is solved on its own (`:alone`), and the
   # batch holds only disjoint sets.
-  defp solve(:alone, modules), do: Argus.analyze(modules, :races)
+  defp solve(:alone, modules), do: Memo.analyze(modules, :races)
   defp solve(%{batch: batch}, modules), do: Batch.analyze(batch, modules)
 
   defp skip_without_souffle do

@@ -2,6 +2,7 @@ defmodule Argus.Analyses.MailboxInfoTest do
   use ExUnit.Case, async: true
 
   alias Argus.Souffle
+  alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   defp skip_without_souffle do
@@ -9,7 +10,7 @@ defmodule Argus.Analyses.MailboxInfoTest do
   end
 
   defp analyze(modules) do
-    assert {:ok, results} = Argus.analyze(modules, :mailbox)
+    assert {:ok, results} = Memo.analyze(modules, :mailbox)
     results
   end
 

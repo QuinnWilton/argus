@@ -4,13 +4,14 @@ defmodule Argus.Analyses.FailureConsistencyTest do
   alias Argus.Analyses.Failure
   alias Argus.Souffle
   alias Argus.Test.Fixtures.Consistency, as: C
+  alias Argus.Test.Memo
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
   defp rows(modules) do
-    {:ok, results} = Argus.analyze(modules, :failure)
+    {:ok, results} = Memo.analyze(modules, :failure)
 
     for [func, _site, callee, belief, agree, deviate, _target | _] <-
           results["inconsistent_handling"],
@@ -49,7 +50,7 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       skip_without_souffle()
       assert rows([C.StartIgnored]) == []
 
-      {:ok, startup} = Argus.analyze([C.StartIgnored], :startup)
+      {:ok, startup} = Memo.analyze([C.StartIgnored], :startup)
       assert [[func, "GenServer.start_link/3"]] = startup["ignored_start_result"]
       assert func =~ "StartIgnored:f/1"
     end
@@ -115,8 +116,8 @@ defmodule Argus.Analyses.FailureConsistencyTest do
 
   describe "how the deviant stands" do
     defp stands(modules) do
-      {:ok, result} = Argus.run_analyses(modules, analyses: [:failure])
-      {:ok, results} = Argus.analyze(modules, :failure)
+      {:ok, result} = Memo.run_analyses(modules, analyses: [:failure])
+      {:ok, results} = Memo.analyze(modules, :failure)
 
       [[_, _, _, "exception_guarded", _, _, _, raises, cover, caught]] =
         results["inconsistent_handling"]
@@ -193,7 +194,7 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       assert [{func, _, "exception_guarded", 3, 1}] = rows([C.GuardedByCallers])
       assert func =~ "GuardedByCallers:d/1"
 
-      {:ok, result} = Argus.run_analyses([C.GuardedByCallers], analyses: [:failure])
+      {:ok, result} = Memo.run_analyses([C.GuardedByCallers], analyses: [:failure])
       assert [f] = Enum.filter(result.findings, &(&1.title =~ "called bare"))
       assert length(f.related) == 3
 
@@ -223,7 +224,7 @@ defmodule Argus.Analyses.FailureConsistencyTest do
 
   describe "the population" do
     defp targets(modules) do
-      {:ok, results} = Argus.analyze(modules, :failure)
+      {:ok, results} = Memo.analyze(modules, :failure)
 
       for [func, _, _, _, agree, deviate, target | _] <- results["inconsistent_handling"],
           do: {func, agree, deviate, target}
@@ -269,7 +270,10 @@ defmodule Argus.Analyses.FailureConsistencyTest do
 
     test "draws the evidence from the deviant's own population" do
       skip_without_souffle()
-      {:ok, result} = Argus.run_analyses([C.SameTargetBare, C.OtherTable], analyses: [:failure])
+
+      {:ok, result} =
+        Memo.run_analyses([C.SameTargetBare, C.OtherTable], analyses: [:failure])
+
       assert [f] = Enum.filter(result.findings, &(&1.title =~ "called bare"))
       assert f.related != []
       assert Enum.all?(f.related, &(elem(&1.mfa, 0) == C.SameTargetBare))
@@ -354,7 +358,7 @@ defmodule Argus.Analyses.FailureConsistencyTest do
 
     test "shows a few of the sites that follow the convention" do
       skip_without_souffle()
-      {:ok, result} = Argus.run_analyses([C.DeviantIgnore], analyses: [:failure])
+      {:ok, result} = Memo.run_analyses([C.DeviantIgnore], analyses: [:failure])
 
       assert [f] = Enum.filter(result.findings, &(&1.title =~ "result ignored"))
       labels = Enum.map(f.related, & &1.label)

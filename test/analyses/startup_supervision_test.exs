@@ -2,6 +2,7 @@ defmodule Argus.Analyses.StartupSupervisionTest do
   use ExUnit.Case, async: true
 
   alias Argus.Souffle
+  alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   defp skip_without_souffle do
@@ -27,7 +28,7 @@ defmodule Argus.Analyses.StartupSupervisionTest do
         Argus.Test.Fixtures.WorkerB
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :startup)
+      assert {:ok, results} = Memo.analyze(modules, :startup)
 
       assert Map.has_key?(results, "blocks_on_peer")
     end
@@ -43,7 +44,7 @@ defmodule Argus.Analyses.StartupSupervisionTest do
         Argus.Test.Fixtures.InitDepWorker
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :startup)
+      assert {:ok, results} = Memo.analyze(modules, :startup)
 
       assert Enum.any?(later_siblings(results), fn [child, dep | _] ->
                String.contains?(child, "InitProcessCaller") and
@@ -64,7 +65,7 @@ defmodule Argus.Analyses.StartupSupervisionTest do
         Argus.Test.Fixtures.InitDepWorker
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :startup)
+      assert {:ok, results} = Memo.analyze(modules, :startup)
 
       refute Enum.any?(later_siblings(results), fn [child, _dep | _] ->
                String.contains?(child, "InitPureCaller")
@@ -78,7 +79,8 @@ defmodule Argus.Analyses.StartupSupervisionTest do
     test "state written after Supervisor.start_link is noted; before it is not" do
       skip_without_souffle()
 
-      {:ok, r} = Argus.analyze([Shapes.LateWarmup, Shapes.EarlyWarmup, Shapes.Conn], :startup)
+      {:ok, r} =
+        Memo.analyze([Shapes.LateWarmup, Shapes.EarlyWarmup, Shapes.Conn], :startup)
 
       funcs = Enum.map(Map.get(r, "post_start_initialization", []), &hd/1) |> Enum.uniq()
       assert funcs == ["Argus.Test.Fixtures.SupervisionShapes.LateWarmup:start_link/1"]

@@ -2,6 +2,7 @@ defmodule Argus.Analyses.SingletonShapesTest do
   use ExUnit.Case, async: true
 
   alias Argus.Test.Fixtures.{CatchShapes, EtsOwners, InitRecv}
+  alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   defp skip_without_souffle do
@@ -28,7 +29,7 @@ defmodule Argus.Analyses.SingletonShapesTest do
     skip_without_souffle()
 
     {:ok, r} =
-      Argus.analyze(
+      Memo.analyze(
         [CatchShapes.NoprocOnly, CatchShapes.NoprocAndShutdown, CatchShapes.AnyExit],
         :blocking
       )
@@ -40,7 +41,7 @@ defmodule Argus.Analyses.SingletonShapesTest do
   test "an :erpc rescue with no clause for transport failures is reported" do
     skip_without_souffle()
 
-    {:ok, r} = Argus.analyze([CatchShapes.Erpc], :failure)
+    {:ok, r} = Memo.analyze([CatchShapes.Erpc], :failure)
 
     assert erpc_rows(r) == ["Argus.Test.Fixtures.CatchShapes.Erpc:partial/4"]
   end
@@ -49,7 +50,7 @@ defmodule Argus.Analyses.SingletonShapesTest do
     skip_without_souffle()
 
     {:ok, r} =
-      Argus.analyze(
+      Memo.analyze(
         [
           EtsOwners.Owner,
           EtsOwners.GuardedOwner,
@@ -79,7 +80,7 @@ defmodule Argus.Analyses.SingletonShapesTest do
   test "a table read inside an Erlang catch is guarded; the same read outside one is not" do
     skip_without_souffle()
 
-    {:ok, r} = Argus.analyze([:ets_catch_reader], :ets)
+    {:ok, r} = Memo.analyze([:ets_catch_reader], :ets)
 
     assert rows(r, "ets_read_outside_owner", 2) == [":ets_catch_reader:peek/1"]
   end
@@ -88,7 +89,7 @@ defmodule Argus.Analyses.SingletonShapesTest do
     skip_without_souffle()
 
     {:ok, r} =
-      Argus.analyze(
+      Memo.analyze(
         [InitRecv.Blocking, InitRecv.Bounded, InitRecv.Later, InitRecv.Waits],
         :startup
       )
@@ -104,7 +105,7 @@ defmodule Argus.Analyses.SingletonShapesTest do
     skip_without_souffle()
 
     {:ok, r} =
-      Argus.analyze(
+      Memo.analyze(
         [InitRecv.Waits, InitRecv.AwaitsEach, InitRecv.SpawnsLoop, InitRecv.Blocking],
         :startup
       )
@@ -121,7 +122,8 @@ defmodule Argus.Analyses.SingletonShapesTest do
     # Nor is the fun HandsOff puts in a child spec; but beside another
     # closure it is not known to be the child's, and the wait in
     # HandsOffAndWaits's Enum.each closure is init's.
-    {:ok, handed} = Argus.analyze([InitRecv.HandsOff, InitRecv.HandsOffAndWaits], :startup)
+    {:ok, handed} =
+      Memo.analyze([InitRecv.HandsOff, InitRecv.HandsOffAndWaits], :startup)
 
     assert handed
            |> Rows.where(:startup, "unbounded_effect_in_init", kind: "receive")
@@ -129,7 +131,7 @@ defmodule Argus.Analyses.SingletonShapesTest do
            |> Enum.uniq() == ["Argus.Test.Fixtures.InitRecv.HandsOffAndWaits"]
 
     {:ok, findings} =
-      Argus.run_analyses([InitRecv.Waits, InitRecv.SpawnsLoop], analyses: [:startup])
+      Memo.run_analyses([InitRecv.Waits, InitRecv.SpawnsLoop], analyses: [:startup])
 
     assert ["init/1 waits on a message with no timeout"] ==
              findings.findings |> Enum.map(& &1.title) |> Enum.filter(&(&1 =~ "waits on"))
@@ -140,7 +142,8 @@ defmodule Argus.Analyses.SingletonShapesTest do
 
     alias InitRecv.TaskCalls
 
-    {:ok, r} = Argus.analyze([TaskCalls.Sup, TaskCalls.Early, TaskCalls.Later], :startup)
+    {:ok, r} =
+      Memo.analyze([TaskCalls.Sup, TaskCalls.Early, TaskCalls.Later], :startup)
 
     assert Rows.where(r, :startup, "blocks_on_peer", phase: "init", kind: "call") == []
   end
@@ -148,13 +151,13 @@ defmodule Argus.Analyses.SingletonShapesTest do
   test "a connect, a lock or a supervisor call in a task init/1 starts holds nothing" do
     skip_without_souffle()
 
-    {:ok, r} = Argus.analyze([InitRecv.SpawnsWork], :startup)
+    {:ok, r} = Memo.analyze([InitRecv.SpawnsWork], :startup)
 
     assert Rows.where(r, :startup, "unbounded_effect_in_init", kind: "connect") == []
     assert Rows.where(r, :startup, "blocks_on_peer", kind: ["global", "sup"]) == []
 
     # The lock still waits without bound in the task, which blocking says.
-    {:ok, b} = Argus.analyze([InitRecv.SpawnsWork], :blocking)
+    {:ok, b} = Memo.analyze([InitRecv.SpawnsWork], :blocking)
 
     assert [["Argus.Test.Fixtures.InitRecv.SpawnsWork:connect/2" | _]] =
              Rows.where(b, :blocking, "unbounded_wait", kind: "global")

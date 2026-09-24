@@ -2,6 +2,7 @@ defmodule Argus.Clientlib.TagResolutionTest do
   use ExUnit.Case, async: true
 
   alias Argus.{Analysis, Pipeline, Souffle}
+  alias Argus.Test.Memo
 
   @moduletag :tmp_dir
 
@@ -134,7 +135,10 @@ defmodule Argus.Clientlib.TagResolutionTest do
     skip_without_souffle()
 
     {:ok, results} =
-      Argus.analyze([Argus.Test.Fixtures.TagServerA, Argus.Test.Fixtures.TagServerB], :blocking)
+      Memo.analyze(
+        [Argus.Test.Fixtures.TagServerA, Argus.Test.Fixtures.TagServerB],
+        :blocking
+      )
 
     assert [[_, _, _, _, "call", _, _]] = results["call_cycle"]
 

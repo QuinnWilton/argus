@@ -4,6 +4,7 @@ defmodule Argus.Analyses.BlockingRpcTest do
   alias Argus.Analyses.Blocking
   alias Argus.Souffle
   alias Argus.Test.Batch
+  alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   # Every test reads its fixtures' rows from one solve of them all
@@ -196,7 +197,7 @@ defmodule Argus.Analyses.BlockingRpcTest do
       assert waits(results, "rpc") == []
       assert waits(results, "global") == []
 
-      {:ok, startup} = Argus.analyze(modules, :startup)
+      {:ok, startup} = Memo.analyze(modules, :startup)
       kinds = startup["blocks_on_peer"] |> Enum.map(&Enum.at(&1, 3)) |> Enum.sort()
       assert "global" in kinds and "remote" in kinds
     end
@@ -213,7 +214,7 @@ defmodule Argus.Analyses.BlockingRpcTest do
 
       assert funcs == ["Argus.Test.Fixtures.RpcViaHelperInInit:fetch_later/1"]
 
-      {:ok, startup} = Argus.analyze(modules, :startup)
+      {:ok, startup} = Memo.analyze(modules, :startup)
       assert [[_init, "init", _, "remote" | _]] = startup["blocks_on_peer"]
     end
   end

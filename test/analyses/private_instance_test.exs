@@ -2,6 +2,7 @@ defmodule Argus.Analyses.PrivateInstanceTest do
   use ExUnit.Case, async: true
 
   alias Argus.Test.Fixtures.PrivateConn, as: P
+  alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   @modules [P.Conn, P.Pool, P.Cache, P.Reporter, P.Tree]
@@ -15,7 +16,7 @@ defmodule Argus.Analyses.PrivateInstanceTest do
   defp short(mod), do: mod |> String.split(".") |> List.last()
 
   test "a sibling's own connection is not the supervised one it couples to" do
-    {:ok, r} = Argus.analyze(@modules, :coupling)
+    {:ok, r} = Memo.analyze(@modules, :coupling)
 
     coupled =
       r
@@ -28,7 +29,7 @@ defmodule Argus.Analyses.PrivateInstanceTest do
   end
 
   test "terminate/2 and a handler stopping a connection of its own touch no sibling" do
-    {:ok, r} = Argus.analyze(@modules, :shutdown)
+    {:ok, r} = Memo.analyze(@modules, :shutdown)
     touched = r |> Map.get("teardown_touches_sibling", []) |> pairs()
 
     assert {"Reporter", "Cache"} in touched

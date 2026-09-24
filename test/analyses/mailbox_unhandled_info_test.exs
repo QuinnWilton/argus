@@ -3,6 +3,7 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
 
   alias Argus.Analyses.Mailbox
   alias Argus.Test.Fixtures.UnhandledInfo, as: U
+  alias Argus.Test.Memo
 
   @all [
     U.MemoryCheck,
@@ -24,7 +25,7 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
 
   setup_all do
     unless Argus.Souffle.available?(), do: flunk("souffle not installed")
-    {:ok, results} = Argus.analyze(@all, :mailbox)
+    {:ok, results} = Memo.analyze(@all, :mailbox)
     short = &String.replace(&1, "Argus.Test.Fixtures.UnhandledInfo.", "")
 
     rows =

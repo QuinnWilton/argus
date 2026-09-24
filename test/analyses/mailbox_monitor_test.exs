@@ -3,6 +3,7 @@ defmodule Argus.Analyses.MailboxMonitorTest do
 
   alias Argus.Souffle
   alias Argus.Test.Fixtures.MonitorLeak, as: M
+  alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   @all [
@@ -27,7 +28,7 @@ defmodule Argus.Analyses.MailboxMonitorTest do
 
   # Every test reads the same solve of @all: solved once, read-only.
   setup_all do
-    %{solved: Argus.analyze(@all, :mailbox)}
+    %{solved: Memo.analyze(@all, :mailbox)}
   end
 
   defp skip_without_souffle do
@@ -99,7 +100,7 @@ defmodule Argus.Analyses.MailboxMonitorTest do
 
   describe "over a server's lifetime" do
     defp servers do
-      assert {:ok, r} = Argus.analyze(@servers, :mailbox)
+      assert {:ok, r} = Memo.analyze(@servers, :mailbox)
       r
     end
 

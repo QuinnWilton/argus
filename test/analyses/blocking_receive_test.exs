@@ -4,6 +4,7 @@ defmodule Argus.Analyses.BlockingReceiveTest do
   alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Fixtures.CallbackReceive
+  alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   # Every test reads its fixtures' rows from one solve of them all
@@ -31,7 +32,7 @@ defmodule Argus.Analyses.BlockingReceiveTest do
   # A set that shares a module with another test's is about what the
   # modules do together: it is solved on its own (`:alone`), and the
   # batch holds only disjoint sets.
-  defp solve(:alone, modules), do: Argus.analyze(modules, :blocking)
+  defp solve(:alone, modules), do: Memo.analyze(modules, :blocking)
   defp solve(%{batch: batch}, modules), do: Batch.analyze(batch, modules)
 
   defp skip_without_souffle do
@@ -87,7 +88,7 @@ defmodule Argus.Analyses.BlockingReceiveTest do
       {blocking, _} = run(ctx, [CallbackReceive.StatemBlockingInInit])
       refute Enum.any?(blocking, fn [_, func | _] -> func =~ "init/1" end)
 
-      {:ok, startup} = Argus.analyze([CallbackReceive.StatemBlockingInInit], :startup)
+      {:ok, startup} = Memo.analyze([CallbackReceive.StatemBlockingInInit], :startup)
       assert [[_mod, "receive", func, _site]] = startup["unbounded_effect_in_init"]
       assert func =~ "StatemBlockingInInit:init/1"
     end

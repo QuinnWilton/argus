@@ -2,6 +2,7 @@ defmodule Argus.Analyses.BlockingChainTest do
   use ExUnit.Case, async: true
 
   alias Argus.Souffle
+  alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   defp skip_without_souffle do
@@ -35,7 +36,8 @@ defmodule Argus.Analyses.BlockingChainTest do
       skip_without_souffle()
       alias Argus.Test.Fixtures.ChainShapes, as: S
 
-      {:ok, results} = Argus.analyze([S.ShortA, S.ShortB, S.ShortC, S.ShortD], :blocking)
+      {:ok, results} =
+        Memo.analyze([S.ShortA, S.ShortB, S.ShortC, S.ShortD], :blocking)
 
       depths =
         for [from, to, depth, _] <- chains(results, "chain"),
@@ -49,7 +51,7 @@ defmodule Argus.Analyses.BlockingChainTest do
       skip_without_souffle()
       alias Argus.Test.Fixtures.ChainShapes, as: S
 
-      {:ok, results} = Argus.analyze([S.CycW, S.CycX, S.CycY, S.CycZ], :blocking)
+      {:ok, results} = Memo.analyze([S.CycW, S.CycX, S.CycY, S.CycZ], :blocking)
       assert results["call_cycle"] != []
 
       refute Enum.any?(chains(results, "chain"), fn [from, to, _, _] ->
@@ -62,7 +64,7 @@ defmodule Argus.Analyses.BlockingChainTest do
       alias Argus.Test.Fixtures.ChainShapes, as: S
 
       {:ok, results} =
-        Argus.analyze(
+        Memo.analyze(
           [S.FugAnswer, S.FugCounter, S.FugSubject, S.FugRouter, S.FugRelay],
           :blocking
         )
@@ -92,7 +94,7 @@ defmodule Argus.Analyses.BlockingChainTest do
         Argus.Test.Fixtures.TimeoutChain.ServerC
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :blocking)
+      assert {:ok, results} = Memo.analyze(modules, :blocking)
       assert Map.has_key?(results, "call_chain")
 
       risks = chains(results, "chain")
@@ -114,7 +116,7 @@ defmodule Argus.Analyses.BlockingChainTest do
         Argus.Test.Fixtures.TimeoutChain.ServerC
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :blocking)
+      assert {:ok, results} = Memo.analyze(modules, :blocking)
       assert Map.has_key?(results, "call_chain")
 
       blocking = chains(results, "cast")
@@ -135,7 +137,7 @@ defmodule Argus.Analyses.BlockingChainTest do
         Argus.Test.Fixtures.TimeoutChain.ServerWithInfinityTimeout
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :blocking)
+      assert {:ok, results} = Memo.analyze(modules, :blocking)
       assert Map.has_key?(results, "unbounded_wait")
 
       # infinity_timeout_in_chain requires callback_sync_dep_timeout with -1
@@ -160,7 +162,7 @@ defmodule Argus.Analyses.BlockingChainTest do
     test "runs without error on modules with no GenServer callbacks" do
       skip_without_souffle()
 
-      assert {:ok, results} = Argus.analyze([:maps], :blocking)
+      assert {:ok, results} = Memo.analyze([:maps], :blocking)
       assert Map.has_key?(results, "call_chain")
       assert Map.has_key?(results, "call_chain")
     end
@@ -181,7 +183,7 @@ defmodule Argus.Analyses.BlockingChainTest do
         Argus.Test.Fixtures.TimeoutChain.ChainInner
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :blocking)
+      assert {:ok, results} = Memo.analyze(modules, :blocking)
 
       refute Enum.any?(chains(results, "chain"), fn [from | _] ->
                String.contains?(from, "ChainOuter")
@@ -199,7 +201,7 @@ defmodule Argus.Analyses.BlockingChainTest do
         Argus.Test.Fixtures.TimeoutChain.ServerC
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :blocking)
+      assert {:ok, results} = Memo.analyze(modules, :blocking)
 
       # TightBudgetServer gives DeepServer 1000ms, but DeepServer's own
       # downstream call waits up to the 5000ms default.
@@ -222,7 +224,7 @@ defmodule Argus.Analyses.BlockingChainTest do
         Argus.Test.Fixtures.TimeoutChain.ServerC
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :blocking)
+      assert {:ok, results} = Memo.analyze(modules, :blocking)
 
       # The chain itself is still reported as a risk...
       assert chains(results, "chain") != []

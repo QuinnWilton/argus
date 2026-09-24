@@ -13,13 +13,16 @@ defmodule Argus.Analyses.GlobalLockNodesTest do
   alias Argus.Souffle
   alias Argus.Test.Fixtures.GlobalNodes
   alias Argus.Test.Fixtures.ReachPath
+  alias Argus.Test.Memo
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
   defp findings(modules, analysis) do
-    assert {:ok, %{findings: findings}} = Argus.run_analyses(modules, analyses: [analysis])
+    assert {:ok, %{findings: findings}} =
+             Memo.run_analyses(modules, analyses: [analysis])
+
     findings
   end
 

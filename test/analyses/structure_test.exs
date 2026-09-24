@@ -3,13 +3,14 @@ defmodule Argus.Analyses.StructureTest do
 
   alias Argus.Souffle
   alias Argus.Test.Fixtures.SupervisionShapes, as: Shapes
+  alias Argus.Test.Memo
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
   defp analyze(modules) do
-    assert {:ok, results} = Argus.analyze(modules, :structure)
+    assert {:ok, results} = Memo.analyze(modules, :structure)
     results
   end
 
@@ -21,7 +22,7 @@ defmodule Argus.Analyses.StructureTest do
     ]
 
     defp as_worker do
-      assert {:ok, r} = Argus.analyze(@sup_mods, :structure)
+      assert {:ok, r} = Memo.analyze(@sup_mods, :structure)
       r |> Map.get("supervisor_registered_as_worker", []) |> Enum.map(&hd/1)
     end
 
@@ -46,7 +47,7 @@ defmodule Argus.Analyses.StructureTest do
       skip_without_souffle()
 
       {:ok, r} =
-        Argus.analyze(
+        Memo.analyze(
           [Shapes.PermanentConsumers, Shapes.TemporaryConsumers, Shapes.EventWorker],
           :structure
         )

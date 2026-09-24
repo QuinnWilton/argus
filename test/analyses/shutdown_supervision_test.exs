@@ -2,6 +2,7 @@ defmodule Argus.Analyses.ShutdownSupervisionTest do
   use ExUnit.Case, async: true
 
   alias Argus.Souffle
+  alias Argus.Test.Memo
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
@@ -17,7 +18,7 @@ defmodule Argus.Analyses.ShutdownSupervisionTest do
         Argus.Test.Fixtures.PermanentQuitter
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :shutdown)
+      assert {:ok, results} = Memo.analyze(modules, :shutdown)
 
       assert [[sup, child, ":normal", site, _sup_site]] =
                results["permanent_child_stops_normally"]

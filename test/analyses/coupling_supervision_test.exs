@@ -3,6 +3,7 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
 
   alias Argus.Souffle
   alias Argus.Test.Fixtures.SupervisionShapes, as: Shapes
+  alias Argus.Test.Memo
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
@@ -22,7 +23,7 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
         Argus.Test.Fixtures.WorkerA
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :coupling)
+      assert {:ok, results} = Memo.analyze(modules, :coupling)
 
       rows =
         results["rest_for_one_orphaned_children"]
@@ -138,7 +139,7 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
       skip_without_souffle()
 
       {:ok, r} =
-        Argus.analyze(
+        Memo.analyze(
           [
             Shapes.DualManager,
             Shapes.StatemDualManager,

@@ -3,6 +3,7 @@ defmodule Argus.Analyses.CouplingTest do
 
   alias Argus.Analyses.Coupling
   alias Argus.Souffle
+  alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   defp skip_without_souffle do
@@ -31,7 +32,7 @@ defmodule Argus.Analyses.CouplingTest do
         Argus.Test.Fixtures.WorkerB
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :coupling)
+      assert {:ok, results} = Memo.analyze(modules, :coupling)
 
       assert Map.has_key?(results, "sibling_dependency")
     end
@@ -45,7 +46,7 @@ defmodule Argus.Analyses.CouplingTest do
         Argus.Test.Fixtures.WorkerA
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :startup)
+      assert {:ok, results} = Memo.analyze(modules, :startup)
 
       # RuntimeCallerWorker calls WorkerA only from handle_call, not init:
       # no later-sibling row.
@@ -115,7 +116,7 @@ defmodule Argus.Analyses.CouplingTest do
         end
         """)
 
-      assert {:ok, results} = Argus.analyze(paths, :coupling)
+      assert {:ok, results} = Memo.analyze(paths, :coupling)
       assert results["sibling_dependency"] == []
     end
 
@@ -154,7 +155,7 @@ defmodule Argus.Analyses.CouplingTest do
         end
         """)
 
-      assert {:ok, results} = Argus.analyze(paths, :coupling)
+      assert {:ok, results} = Memo.analyze(paths, :coupling)
 
       assert [["Argus.CouplingTest.MonOwner", _sup, "Argus.CouplingTest.MonChild" | _] | _] =
                results["dual_restart_authority"]

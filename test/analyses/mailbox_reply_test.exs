@@ -3,6 +3,7 @@ defmodule Argus.Analyses.MailboxReplyTest do
 
   alias Argus.Souffle
   alias Argus.Test.Fixtures.Reply, as: R
+  alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   @all [
@@ -19,7 +20,7 @@ defmodule Argus.Analyses.MailboxReplyTest do
 
   # Every test reads the same solve of @all: solved once, read-only.
   setup_all do
-    %{solved: Argus.analyze(@all, :mailbox)}
+    %{solved: Memo.analyze(@all, :mailbox)}
   end
 
   defp skip_without_souffle do

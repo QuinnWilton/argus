@@ -3,6 +3,7 @@ defmodule Argus.Analyses.ShutdownMonitorTest do
 
   alias Argus.Souffle
   alias Argus.Test.Fixtures.MonitorLeak, as: M
+  alias Argus.Test.Memo
 
   @servers [
     M.NeverReleases,
@@ -18,7 +19,7 @@ defmodule Argus.Analyses.ShutdownMonitorTest do
 
   describe "over a server's lifetime" do
     defp servers do
-      assert {:ok, r} = Argus.analyze(@servers, :shutdown)
+      assert {:ok, r} = Memo.analyze(@servers, :shutdown)
       r
     end
 

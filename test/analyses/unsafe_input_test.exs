@@ -7,6 +7,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
   alias Argus.Test.Fixtures.RequestSurface
   alias Argus.Test.Fixtures.Taint
   alias Argus.Test.Fixtures.UnboundedChildren, as: U
+  alias Argus.Test.Memo
 
   # Every test reads its fixtures' rows from one solve of them all
   # (`Argus.Test.Batch`; ARGUS_VERIFY_BATCH=1 checks each slice against
@@ -44,7 +45,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
   # A set that shares a module with another test's is about what the
   # modules do together: it is solved on its own (`:alone`), and the
   # batch holds only disjoint sets.
-  defp solve(:alone, modules), do: Argus.analyze(modules, :unsafe_input)
+  defp solve(:alone, modules), do: Memo.analyze(modules, :unsafe_input)
   defp solve(%{batch: batch}, modules), do: Batch.analyze(batch, modules)
 
   defp skip_without_souffle do

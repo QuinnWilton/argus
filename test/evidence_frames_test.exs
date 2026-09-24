@@ -11,6 +11,7 @@ defmodule Argus.EvidenceFramesTest do
   alias Argus.InstrId
   alias Argus.Souffle
   alias Argus.Test.Fixtures
+  alias Argus.Test.Memo
 
   setup do
     unless Souffle.available?(), do: flunk("souffle not installed")
@@ -19,7 +20,7 @@ defmodule Argus.EvidenceFramesTest do
 
   defp findings(modules, analysis) do
     assert {:ok, %{findings: findings, degraded: []}} =
-             Argus.run_analyses(modules, analyses: [analysis])
+             Memo.run_analyses(modules, analyses: [analysis])
 
     findings
   end

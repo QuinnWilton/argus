@@ -2,6 +2,7 @@ defmodule Argus.Analyses.BlockingFanInTest do
   use ExUnit.Case, async: true
 
   alias Argus.Souffle
+  alias Argus.Test.Memo
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
@@ -18,7 +19,7 @@ defmodule Argus.Analyses.BlockingFanInTest do
         Argus.Test.Fixtures.MyGenServer
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :blocking)
+      assert {:ok, results} = Memo.analyze(modules, :blocking)
       assert Map.has_key?(results, "bottleneck_caller")
       assert Map.has_key?(results, "sync_call_fan_in")
 
@@ -39,7 +40,7 @@ defmodule Argus.Analyses.BlockingFanInTest do
         Argus.Test.Fixtures.BottleneckCallerE
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :blocking)
+      assert {:ok, results} = Memo.analyze(modules, :blocking)
 
       fan_in = results["sync_call_fan_in"]
       assert length(fan_in) == 1
@@ -61,7 +62,7 @@ defmodule Argus.Analyses.BlockingFanInTest do
     test "runs without error on modules with no sync calls" do
       skip_without_souffle()
 
-      assert {:ok, results} = Argus.analyze([:maps], :blocking)
+      assert {:ok, results} = Memo.analyze([:maps], :blocking)
       assert Map.has_key?(results, "bottleneck_caller")
       assert Map.has_key?(results, "sync_call_fan_in")
     end

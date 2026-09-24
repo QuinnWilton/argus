@@ -2,13 +2,14 @@ defmodule Argus.Analyses.StartupStartResultTest do
   use ExUnit.Case, async: true
 
   alias Argus.Souffle
+  alias Argus.Test.Memo
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
   defp analyze(modules) do
-    assert {:ok, results} = Argus.analyze(modules, :startup)
+    assert {:ok, results} = Memo.analyze(modules, :startup)
     results
   end
 

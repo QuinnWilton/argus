@@ -2,6 +2,7 @@ defmodule Argus.Analyses.MailboxTaskTest do
   use ExUnit.Case, async: true
 
   alias Argus.Souffle
+  alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   defp skip_without_souffle do
@@ -18,7 +19,7 @@ defmodule Argus.Analyses.MailboxTaskTest do
       skip_without_souffle()
 
       assert {:ok, results} =
-               Argus.analyze([Argus.Test.Fixtures.LeakedTaskModule], :mailbox)
+               Memo.analyze([Argus.Test.Fixtures.LeakedTaskModule], :mailbox)
 
       assert Map.has_key?(results, "task_result_defect")
       leaked = leaked(results)
@@ -40,7 +41,7 @@ defmodule Argus.Analyses.MailboxTaskTest do
         Argus.Test.Fixtures.LeakedTaskModule
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :mailbox)
+      assert {:ok, results} = Memo.analyze(modules, :mailbox)
 
       leaked = leaked(results)
 
@@ -63,7 +64,7 @@ defmodule Argus.Analyses.MailboxTaskTest do
         Argus.Test.Fixtures.LeakedTaskModule
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :mailbox)
+      assert {:ok, results} = Memo.analyze(modules, :mailbox)
       leaked = leaked(results)
 
       # No named behaviour, but a handle_info/2 — the reply is consumed.
@@ -79,7 +80,7 @@ defmodule Argus.Analyses.MailboxTaskTest do
         Argus.Test.Fixtures.LeakedTaskModule
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :mailbox)
+      assert {:ok, results} = Memo.analyze(modules, :mailbox)
 
       leaked = leaked(results)
 
@@ -102,7 +103,7 @@ defmodule Argus.Analyses.MailboxTaskTest do
         Argus.Test.Fixtures.LeakedTaskModule
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :mailbox)
+      assert {:ok, results} = Memo.analyze(modules, :mailbox)
 
       leaked = leaked(results)
 
@@ -125,7 +126,7 @@ defmodule Argus.Analyses.MailboxTaskTest do
         Argus.Test.Fixtures.LeakedTaskModule
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :mailbox)
+      assert {:ok, results} = Memo.analyze(modules, :mailbox)
 
       leaked = leaked(results)
 
@@ -148,7 +149,7 @@ defmodule Argus.Analyses.MailboxTaskTest do
         Argus.Test.Fixtures.LeakedTaskModule
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :mailbox)
+      assert {:ok, results} = Memo.analyze(modules, :mailbox)
 
       leaked = leaked(results)
 
@@ -171,7 +172,7 @@ defmodule Argus.Analyses.MailboxTaskTest do
         Argus.Test.Fixtures.LeakedTaskModule
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :mailbox)
+      assert {:ok, results} = Memo.analyze(modules, :mailbox)
 
       leaked = leaked(results)
 
@@ -189,7 +190,7 @@ defmodule Argus.Analyses.MailboxTaskTest do
     test "runs without error on modules with no task calls" do
       skip_without_souffle()
 
-      assert {:ok, results} = Argus.analyze([:maps], :mailbox)
+      assert {:ok, results} = Memo.analyze([:maps], :mailbox)
       assert Map.has_key?(results, "task_result_defect")
     end
   end
@@ -199,7 +200,7 @@ defmodule Argus.Analyses.MailboxTaskTest do
       skip_without_souffle()
 
       assert {:ok, results} =
-               Argus.analyze(
+               Memo.analyze(
                  [Argus.Test.Fixtures.YieldsLinkedTask, Argus.Test.Fixtures.TrapsAndYields],
                  :mailbox
                )
@@ -212,7 +213,7 @@ defmodule Argus.Analyses.MailboxTaskTest do
       skip_without_souffle()
 
       assert {:ok, results} =
-               Argus.analyze(
+               Memo.analyze(
                  [Argus.Test.Fixtures.LibraryPmap, Argus.Test.Fixtures.GenServerTaskConsumer],
                  :mailbox
                )

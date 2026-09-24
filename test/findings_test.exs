@@ -7,6 +7,7 @@ defmodule Argus.FindingsTest do
   alias Argus.InstrId
   alias Argus.Souffle
   alias Argus.Test.Fixtures
+  alias Argus.Test.Memo
 
   doctest Argus.Findings
 
@@ -69,7 +70,7 @@ defmodule Argus.FindingsTest do
       skip_without_souffle()
 
       assert {:ok, %Findings{} = result} =
-               Argus.run_analyses([Fixtures.UnlinkedSpawner], analyses: [:failure])
+               Memo.run_analyses([Fixtures.UnlinkedSpawner], analyses: [:failure])
 
       assert [finding] = result.findings
       assert_finding_shape(finding)
@@ -96,7 +97,7 @@ defmodule Argus.FindingsTest do
         Fixtures.WorkerB
       ]
 
-      assert {:ok, result} = Argus.run_analyses(modules, analyses: [:coupling])
+      assert {:ok, result} = Memo.run_analyses(modules, analyses: [:coupling])
 
       assert result.findings != []
       Enum.each(result.findings, &assert_finding_shape/1)
@@ -136,7 +137,7 @@ defmodule Argus.FindingsTest do
         Fixtures.EtsParamTable
       ]
 
-      assert {:ok, result} = Argus.run_analyses(modules, analyses: [:ets])
+      assert {:ok, result} = Memo.run_analyses(modules, analyses: [:ets])
 
       Enum.each(result.findings, &assert_finding_shape/1)
 
@@ -154,7 +155,7 @@ defmodule Argus.FindingsTest do
       skip_without_souffle()
 
       {:ok, result} =
-        Argus.run_analyses(
+        Memo.run_analyses(
           [
             Fixtures.EtsSharedCounters,
             Fixtures.EtsSharedCountersClient,
@@ -186,7 +187,7 @@ defmodule Argus.FindingsTest do
         Fixtures.SafeModule
       ]
 
-      assert {:ok, result} = Argus.run_analyses(modules, analyses: [:unsafe_input])
+      assert {:ok, result} = Memo.run_analyses(modules, analyses: [:unsafe_input])
 
       Enum.each(result.findings, &assert_finding_shape/1)
       assert result.findings != []
@@ -219,14 +220,16 @@ defmodule Argus.FindingsTest do
 
     test "a name argus retired is unknown" do
       assert {:error, {:unknown_analysis, :atom_safety}} =
-               Argus.run_analyses([Fixtures.UnsafeAtomCreation], analyses: [:atom_safety])
+               Memo.run_analyses([Fixtures.UnsafeAtomCreation],
+                 analyses: [:atom_safety]
+               )
     end
 
     test "a name asked for twice runs once" do
       skip_without_souffle()
 
       assert {:ok, result} =
-               Argus.run_analyses([Fixtures.UnsafeAtomCreation],
+               Memo.run_analyses([Fixtures.UnsafeAtomCreation],
                  analyses: [:unsafe_input, :exposure, :unsafe_input]
                )
 
@@ -237,7 +240,7 @@ defmodule Argus.FindingsTest do
       skip_without_souffle()
 
       assert {:ok, result} =
-               Argus.run_analyses([Fixtures.UnsafeAtomCreation], analyses: :security)
+               Memo.run_analyses([Fixtures.UnsafeAtomCreation], analyses: :security)
 
       assert Enum.map(result.ran, & &1.analysis) == Argus.Analysis.set(:security) |> elem(1)
     end
@@ -247,7 +250,7 @@ defmodule Argus.FindingsTest do
 
       modules = [Fixtures.CycleServerA, Fixtures.CycleServerB]
 
-      assert {:ok, result} = Argus.run_analyses(modules, analyses: [:blocking])
+      assert {:ok, result} = Memo.run_analyses(modules, analyses: [:blocking])
 
       Enum.each(result.findings, &assert_finding_shape/1)
 
@@ -265,7 +268,7 @@ defmodule Argus.FindingsTest do
     test ":all runs every builtin analysis except coverage" do
       skip_without_souffle()
 
-      assert {:ok, result} = Argus.run_analyses([Fixtures.UnlinkedSpawner])
+      assert {:ok, result} = Memo.run_analyses([Fixtures.UnlinkedSpawner])
 
       ran_names = Enum.map(result.ran, & &1.analysis) |> Enum.sort()
       expected = Argus.Analysis.builtin_analyses() |> List.delete(:coverage) |> Enum.sort()
@@ -279,24 +282,24 @@ defmodule Argus.FindingsTest do
   describe "run/2 degradation" do
     test "unknown analysis name is an error" do
       assert {:error, {:unknown_analysis, :nonexistent}} =
-               Argus.run_analyses([:lists], analyses: [:nonexistent])
+               Memo.run_analyses([:lists], analyses: [:nonexistent])
     end
 
     test "invalid analyses option is an error" do
       assert {:error, {:invalid_analyses, :some}} =
-               Argus.run_analyses([:lists], analyses: :some)
+               Memo.run_analyses([:lists], analyses: :some)
     end
 
     test "empty analysis selection runs nothing" do
       assert {:ok, %Findings{findings: [], ran: [], degraded: []}} =
-               Argus.run_analyses([:lists], analyses: [])
+               Memo.run_analyses([:lists], analyses: [])
     end
 
     test "a failing analysis degrades with a note while the result still returns" do
       skip_without_souffle()
 
       assert {:ok, result} =
-               Argus.run_analyses([Fixtures.UnlinkedSpawner],
+               Memo.run_analyses([Fixtures.UnlinkedSpawner],
                  analyses: [:failure],
                  souffle_timeout: 1
                )
@@ -314,7 +317,7 @@ defmodule Argus.FindingsTest do
       skip_without_souffle()
 
       assert {:error, {:not_found, :fake_module_xyz}} =
-               Argus.run_analyses([:fake_module_xyz], analyses: [:failure])
+               Memo.run_analyses([:fake_module_xyz], analyses: [:failure])
     end
   end
 

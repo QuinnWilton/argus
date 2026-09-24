@@ -2,6 +2,7 @@ defmodule Argus.Analyses.FailureStartChildTest do
   use ExUnit.Case, async: true
 
   alias Argus.Souffle
+  alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   defp skip_without_souffle do
@@ -13,7 +14,7 @@ defmodule Argus.Analyses.FailureStartChildTest do
       skip_without_souffle()
 
       assert {:ok, results} =
-               Argus.analyze([Argus.Test.Fixtures.UncheckedStartChild], :failure)
+               Memo.analyze([Argus.Test.Fixtures.UncheckedStartChild], :failure)
 
       assert Map.has_key?(results, "unchecked_result")
 

@@ -4,6 +4,7 @@ defmodule Argus.Analyses.EffectsPurityTest do
   alias Argus.Purity.Effects
   alias Argus.Souffle
   alias Argus.Test.Fixtures.Purity, as: P
+  alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   doctest Argus.Purity.Effects
@@ -22,7 +23,7 @@ defmodule Argus.Analyses.EffectsPurityTest do
   end
 
   defp run(modules \\ @all) do
-    assert {:ok, r} = Argus.analyze(modules, :effects)
+    assert {:ok, r} = Memo.analyze(modules, :effects)
 
     %{
       verified: Map.get(r, "purity_verified", []) |> Enum.map(&hd/1),
@@ -200,7 +201,7 @@ defmodule Argus.Analyses.EffectsPurityTest do
       skip_without_souffle()
 
       assert {:ok, r} =
-               Argus.analyze([P.HigherOrder, P.GoodCaller, P.BadCaller], :effects)
+               Memo.analyze([P.HigherOrder, P.GoodCaller, P.BadCaller], :effects)
 
       assert [[caller, callee, closure, "io", "IO.puts/1"]] =
                Rows.where(r, :effects, "impure_closure_to_pure", drop: [:site, :effect_site])
@@ -214,7 +215,7 @@ defmodule Argus.Analyses.EffectsPurityTest do
       skip_without_souffle()
 
       assert {:ok, %{findings: findings}} =
-               Argus.run_analyses([P.HigherOrder, P.BadCaller], analyses: [:effects])
+               Memo.run_analyses([P.HigherOrder, P.BadCaller], analyses: [:effects])
 
       assert [finding] = Enum.filter(findings, &(&1.module == P.BadCaller))
       assert %Argus.InstrId{func: "trace", arity: 1} = finding.instr
@@ -230,7 +231,7 @@ defmodule Argus.Analyses.EffectsPurityTest do
       skip_without_souffle()
 
       assert {:ok, %{findings: findings}} =
-               Argus.run_analyses([P.DirectEffects], analyses: [:effects])
+               Memo.run_analyses([P.DirectEffects], analyses: [:effects])
 
       logs = Enum.find(findings, &(&1.mfa == {P.DirectEffects, :logs, 1}))
       assert logs.at_label == "declared pure here"
@@ -240,7 +241,7 @@ defmodule Argus.Analyses.EffectsPurityTest do
     test "passing a pure closure is not reported" do
       skip_without_souffle()
 
-      assert {:ok, r} = Argus.analyze([P.HigherOrder, P.GoodCaller], :effects)
+      assert {:ok, r} = Memo.analyze([P.HigherOrder, P.GoodCaller], :effects)
       assert Map.get(r, "impure_closure_to_pure", []) == []
     end
 

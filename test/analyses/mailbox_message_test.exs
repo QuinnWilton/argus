@@ -3,13 +3,14 @@ defmodule Argus.Analyses.MailboxMessageTest do
 
   alias Argus.Souffle
   alias Argus.Test.Fixtures.MessageContract, as: M
+  alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   @all [M.Mismatch, M.Agrees, M.CatchAll, M.StaleWrite, M.Forwarder, M.Sink]
 
   # Every test reads the same solve of @all: solved once, read-only.
   setup_all do
-    %{solved: Argus.analyze(@all, :mailbox)}
+    %{solved: Memo.analyze(@all, :mailbox)}
   end
 
   defp skip_without_souffle do

@@ -4,6 +4,7 @@ defmodule Argus.Analyses.ExposureSecretsTest do
   alias Argus.Analyses.Exposure
   alias Argus.Souffle
   alias Argus.Test.Fixtures.Secret, as: S
+  alias Argus.Test.Memo
 
   @derived [S.DerivedExcept, S.DerivedOnly, S.LeakyOnly, S.EctoDerived, S.RedactOverridden]
 
@@ -17,7 +18,7 @@ defmodule Argus.Analyses.ExposureSecretsTest do
   end
 
   defp rows do
-    assert {:ok, r} = Argus.analyze(@all, :exposure)
+    assert {:ok, r} = Memo.analyze(@all, :exposure)
     Map.get(r, "unredacted_secret", [])
   end
 
@@ -115,7 +116,7 @@ defmodule Argus.Analyses.ExposureSecretsTest do
     test "without the impl module in view, redact: true is taken at its word" do
       skip_without_souffle()
 
-      assert {:ok, r} = Argus.analyze([S.RedactOverridden], :exposure)
+      assert {:ok, r} = Memo.analyze([S.RedactOverridden], :exposure)
       assert Map.get(r, "unredacted_secret", []) == []
     end
 

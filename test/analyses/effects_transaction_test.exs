@@ -4,6 +4,7 @@ defmodule Argus.Analyses.EffectsTransactionTest do
   alias Argus.Purity.Effects
   alias Argus.Souffle
   alias Argus.Test.Fixtures.Transaction, as: T
+  alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   @all [
@@ -21,7 +22,7 @@ defmodule Argus.Analyses.EffectsTransactionTest do
   end
 
   defp findings(modules \\ @all) do
-    assert {:ok, r} = Argus.analyze(modules, :effects)
+    assert {:ok, r} = Memo.analyze(modules, :effects)
 
     r
     |> Rows.where(:effects, "effect_in_context",
@@ -92,7 +93,7 @@ defmodule Argus.Analyses.EffectsTransactionTest do
       skip_without_souffle()
 
       assert {:ok, %{findings: findings}} =
-               Argus.run_analyses([T.FakeRepo, T.Unsafe], analyses: [:effects])
+               Memo.run_analyses([T.FakeRepo, T.Unsafe], analyses: [:effects])
 
       assert [finding] = Enum.filter(findings, &(&1.module == T.Unsafe))
       assert finding.at_label == "opens the transaction here"

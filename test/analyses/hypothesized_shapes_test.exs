@@ -2,6 +2,7 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
   use ExUnit.Case, async: true
 
   alias Argus.Test.Fixtures.Hypothesized, as: H
+  alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   defp skip_without_souffle do
@@ -20,7 +21,7 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
     skip_without_souffle()
 
     {:ok, r} =
-      Argus.analyze(
+      Memo.analyze(
         [
           H.RpcCaseNoBadrpc,
           H.RpcCaseWithBadrpc,
@@ -53,7 +54,7 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
     skip_without_souffle()
 
     {:ok, r} =
-      Argus.analyze(
+      Memo.analyze(
         [
           H.TimerCancelNoFlush,
           H.TimerCancelWithFlush,
@@ -102,7 +103,7 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
   test "a cancel in the clause of the timer's own message is not the finding; another cancel is" do
     skip_without_souffle()
 
-    {:ok, r} = Argus.analyze([H.TimerCancelOwnClauseAndDown], :mailbox)
+    {:ok, r} = Memo.analyze([H.TimerCancelOwnClauseAndDown], :mailbox)
 
     sites =
       r
@@ -126,7 +127,7 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
     skip_without_souffle()
 
     {:ok, r} =
-      Argus.analyze(
+      Memo.analyze(
         [H.TimerLocalNoFlush, H.TimerLocalFlushed, H.TimerLocalStartTimer, H.TimerLocalEitherArm],
         :mailbox
       )
@@ -163,7 +164,10 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
     skip_without_souffle()
 
     {:ok, r} =
-      Argus.analyze([H.NolinkPartialInfo, H.NolinkBothClauses, H.NolinkCollected], :mailbox)
+      Memo.analyze(
+        [H.NolinkPartialInfo, H.NolinkBothClauses, H.NolinkCollected],
+        :mailbox
+      )
 
     nolink = Rows.where(r, :mailbox, "partial_handler", source: "task_nolink")
 
@@ -177,7 +181,7 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
     skip_without_souffle()
 
     {:ok, r} =
-      Argus.analyze(
+      Memo.analyze(
         [H.ConnectInInit, H.ConnectWithBackoff, H.ConnectWithGenericBackoff],
         :startup
       )
@@ -192,7 +196,7 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
     skip_without_souffle()
 
     {:ok, r} =
-      Argus.analyze(
+      Memo.analyze(
         [
           H.SiblingStop.Sup,
           H.SiblingStop.Workers,
@@ -215,7 +219,7 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
     skip_without_souffle()
 
     {:ok, r} =
-      Argus.analyze(
+      Memo.analyze(
         [
           H.CachedPid.Sup,
           H.CachedPid.RestSup,

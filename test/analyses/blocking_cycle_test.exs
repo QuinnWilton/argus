@@ -2,6 +2,7 @@ defmodule Argus.Analyses.BlockingCycleTest do
   use ExUnit.Case, async: true
 
   alias Argus.Souffle
+  alias Argus.Test.Memo
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
@@ -16,7 +17,7 @@ defmodule Argus.Analyses.BlockingCycleTest do
         Argus.Test.Fixtures.CycleServerB
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :blocking)
+      assert {:ok, results} = Memo.analyze(modules, :blocking)
       assert Map.has_key?(results, "call_cycle")
       assert Map.has_key?(results, "call_cycle_path")
 
@@ -39,7 +40,7 @@ defmodule Argus.Analyses.BlockingCycleTest do
       a = Argus.Test.Fixtures.PidFlow.CycleA
       b = Argus.Test.Fixtures.PidFlow.CycleB
 
-      assert {:ok, results} = Argus.analyze([a, b], :blocking)
+      assert {:ok, results} = Memo.analyze([a, b], :blocking)
 
       assert Enum.any?(results["call_cycle"], fn [x, y | _] ->
                Enum.sort([x, y]) == Enum.sort([inspect(a), inspect(b)])
@@ -61,7 +62,7 @@ defmodule Argus.Analyses.BlockingCycleTest do
       hub = Argus.Test.Fixtures.PidFlow.Hub
       listener = Argus.Test.Fixtures.PidFlow.Listener
 
-      assert {:ok, results} = Argus.analyze([hub, listener], :blocking)
+      assert {:ok, results} = Memo.analyze([hub, listener], :blocking)
 
       assert Enum.any?(results["call_cycle_path"], fn
                [_, _, from, to, _, "static", _] ->
@@ -80,7 +81,7 @@ defmodule Argus.Analyses.BlockingCycleTest do
       # too and the pair looked like a deadlock, and C → A → B like a chain
       # of ten hops.
       mods = for m <- [Front, Back, Side], do: Module.concat(Argus.Test.Fixtures.PidFlow, m)
-      assert {:ok, results} = Argus.analyze(mods, :blocking)
+      assert {:ok, results} = Memo.analyze(mods, :blocking)
 
       assert results["call_cycle"] == []
 
@@ -100,14 +101,14 @@ defmodule Argus.Analyses.BlockingCycleTest do
         for m <- [SafeCall, UserA, UserB, TargetA, TargetB],
             do: Module.concat(Argus.Test.Fixtures.PidFlow, m)
 
-      assert {:ok, results} = Argus.analyze(mods, :blocking)
+      assert {:ok, results} = Memo.analyze(mods, :blocking)
       assert results["call_cycle"] == []
     end
 
     test "runs without error on module with no cycles" do
       skip_without_souffle()
 
-      assert {:ok, results} = Argus.analyze([:maps], :blocking)
+      assert {:ok, results} = Memo.analyze([:maps], :blocking)
       assert Map.has_key?(results, "call_cycle")
     end
 
@@ -124,7 +125,7 @@ defmodule Argus.Analyses.BlockingCycleTest do
         Argus.Test.Fixtures.GenEventCycleB
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :blocking)
+      assert {:ok, results} = Memo.analyze(modules, :blocking)
       cycles = results["call_cycle"]
       assert cycles != []
 

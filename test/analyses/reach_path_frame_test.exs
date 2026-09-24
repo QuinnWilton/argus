@@ -4,6 +4,7 @@ defmodule Argus.Analyses.ReachPathFrameTest do
   alias Argus.Lines
   alias Argus.Souffle
   alias Argus.Test.Fixtures.ReachPath
+  alias Argus.Test.Memo
 
   @source Path.expand("../fixtures/reach_path_fixture.ex", __DIR__)
 
@@ -22,7 +23,9 @@ defmodule Argus.Analyses.ReachPathFrameTest do
   end
 
   defp findings(modules, analysis) do
-    assert {:ok, %{findings: findings}} = Argus.run_analyses(modules, analyses: [analysis])
+    assert {:ok, %{findings: findings}} =
+             Memo.run_analyses(modules, analyses: [analysis])
+
     findings
   end
 

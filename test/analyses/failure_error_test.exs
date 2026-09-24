@@ -3,6 +3,7 @@ defmodule Argus.Analyses.FailureErrorTest do
 
   alias Argus.Souffle
   alias Argus.Test.Batch
+  alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   # Every test reads its fixtures' rows from one solve of them all
@@ -121,7 +122,7 @@ defmodule Argus.Analyses.FailureErrorTest do
       assert func =~ "Killer:handle_cast/2"
       assert target == inspect(ExitSignals.Worker)
 
-      {:ok, findings} = Argus.run_analyses(mods, analyses: [:failure])
+      {:ok, findings} = Memo.run_analyses(mods, analyses: [:failure])
       [finding] = Enum.filter(findings.findings, &(&1.title =~ "Process.exit"))
       assert [%{label: label}] = finding.related
       assert label == "#{inspect(ExitSignals.Worker)} is #{inspect(ExitSignals.Tree)}'s child"

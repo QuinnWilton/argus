@@ -106,6 +106,10 @@ those frameworks need.
   before-change tally stays warm for the after-change one, and
   `mix argus.corpus prune [--keep N]` reclaims the rest. A new rule
   comes with a pair.
+- Tests solve through `Argus.Test.Memo` (`analyze/3`, `run_analyses/2`):
+  the same modules and analysis are solved once per run and every later
+  caller reads the answer, an immutable term; a call with options always
+  solves.
 - A test module whose tests each solve a small fixture set of one
   analysis solves them all once in `setup_all` (`Argus.Test.Batch`) and
   each test reads its set's rows. The sets in a batch are disjoint; a

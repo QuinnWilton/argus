@@ -2,6 +2,7 @@ defmodule Argus.Analyses.CoverageTest do
   use ExUnit.Case, async: true
 
   alias Argus.Souffle
+  alias Argus.Test.Memo
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
@@ -23,7 +24,7 @@ defmodule Argus.Analyses.CoverageTest do
     test "coverage_supervisor_no_children matches Enum.map-built children" do
       skip_without_souffle()
 
-      assert {:ok, results} = Argus.analyze(@fixtures, :coverage)
+      assert {:ok, results} = Memo.analyze(@fixtures, :coverage)
 
       sups = results["coverage_supervisor_no_children"] || []
 
@@ -35,7 +36,7 @@ defmodule Argus.Analyses.CoverageTest do
     test "coverage_ets_unused matches a named table with no ops" do
       skip_without_souffle()
 
-      assert {:ok, results} = Argus.analyze(@fixtures, :coverage)
+      assert {:ok, results} = Memo.analyze(@fixtures, :coverage)
 
       unused = results["coverage_ets_unused"] || []
       assert Enum.any?(unused, fn [name] -> name == ":coverage_dead_cache" end)
@@ -44,7 +45,7 @@ defmodule Argus.Analyses.CoverageTest do
     test "coverage_genserver_isolated matches a GenServer with no callers" do
       skip_without_souffle()
 
-      assert {:ok, results} = Argus.analyze(@fixtures, :coverage)
+      assert {:ok, results} = Memo.analyze(@fixtures, :coverage)
 
       isolated = results["coverage_genserver_isolated"] || []
 
@@ -64,7 +65,7 @@ defmodule Argus.Analyses.CoverageTest do
         Argus.Test.Fixtures.CoveragePidClient
       ]
 
-      assert {:ok, results} = Argus.analyze(mods, :coverage)
+      assert {:ok, results} = Memo.analyze(mods, :coverage)
 
       assert (results["coverage_genserver_isolated"] || []) == []
       assert (results["coverage_named_process_unreachable"] || []) == []
@@ -75,7 +76,7 @@ defmodule Argus.Analyses.CoverageTest do
     test "imprecision_event fires for genserver_callee on dynamic targets" do
       skip_without_souffle()
 
-      assert {:ok, results} = Argus.analyze(@fixtures, :coverage)
+      assert {:ok, results} = Memo.analyze(@fixtures, :coverage)
 
       events = results["imprecision_event"] || []
 
@@ -91,7 +92,7 @@ defmodule Argus.Analyses.CoverageTest do
     test "imprecision_event covers multiple categories across the fixture set" do
       skip_without_souffle()
 
-      assert {:ok, results} = Argus.analyze(@fixtures, :coverage)
+      assert {:ok, results} = Memo.analyze(@fixtures, :coverage)
 
       events = results["imprecision_event"] || []
       categories = events |> Enum.map(fn [c, _, _, _] -> c end) |> Enum.uniq()
@@ -106,7 +107,7 @@ defmodule Argus.Analyses.CoverageTest do
       # the imprecision fact file is empty — the tracing gate must be
       # off for non-coverage runs, otherwise we'd be paying for it on
       # every analysis.
-      assert {:ok, results} = Argus.analyze(@fixtures, :ets)
+      assert {:ok, results} = Memo.analyze(@fixtures, :ets)
 
       # Other analyses don't declare imprecision_event as an output
       # relation, so it won't appear in the results map even if facts

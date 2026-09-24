@@ -3,6 +3,7 @@ defmodule Argus.Analyses.ExposureTlsTest do
 
   alias Argus.Souffle
   alias Argus.Test.Fixtures.Tls, as: T
+  alias Argus.Test.Memo
 
   @all [T.ForcesNone, T.OffersChoice, T.Verifies, T.DefaultsSilently, T.DynamicOpts]
 
@@ -11,7 +12,7 @@ defmodule Argus.Analyses.ExposureTlsTest do
   end
 
   defp funcs(relation) do
-    assert {:ok, r} = Argus.analyze(@all, :exposure)
+    assert {:ok, r} = Memo.analyze(@all, :exposure)
     r |> Map.get(relation, []) |> Enum.map(&hd/1) |> Enum.uniq() |> Enum.sort()
   end
 

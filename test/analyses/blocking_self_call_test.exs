@@ -2,6 +2,7 @@ defmodule Argus.Analyses.BlockingSelfCallTest do
   use ExUnit.Case, async: true
 
   alias Argus.Test.Fixtures.PidCalls
+  alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   setup do
@@ -10,7 +11,7 @@ defmodule Argus.Analyses.BlockingSelfCallTest do
   end
 
   test "a call to self(), to the module's own name or through a helper is a self-call" do
-    {:ok, r} = Argus.analyze([PidCalls.SelfCaller], :blocking)
+    {:ok, r} = Memo.analyze([PidCalls.SelfCaller], :blocking)
 
     funcs =
       r
@@ -26,7 +27,7 @@ defmodule Argus.Analyses.BlockingSelfCallTest do
 
   test "the finding anchors at the call and names :calling_self" do
     {:ok, %{findings: findings}} =
-      Argus.run_analyses([PidCalls.SelfCaller], analyses: [:blocking])
+      Memo.run_analyses([PidCalls.SelfCaller], analyses: [:blocking])
 
     self_calls =
       Enum.filter(findings, &(&1.title == "Synchronous call to the calling process itself"))

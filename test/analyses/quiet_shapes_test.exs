@@ -9,6 +9,7 @@ defmodule Argus.Analyses.QuietShapesTest do
 
   alias Argus.Test.Fixtures.Quiet
   alias Argus.Test.Fixtures.ShutdownSiblings, as: Sib
+  alias Argus.Test.Memo
   alias Argus.Test.Rows
 
   defp skip_without_souffle do
@@ -87,7 +88,7 @@ defmodule Argus.Analyses.QuietShapesTest do
     test "#{analysis}: #{names} stay quiet on the near-miss shapes" do
       skip_without_souffle()
 
-      {:ok, results} = Argus.analyze(@modules, unquote(analysis))
+      {:ok, results} = Memo.analyze(@modules, unquote(analysis))
 
       for relation <- unquote(Macro.escape(relations)) do
         assert quiet_rows(results, unquote(analysis), relation) == [],
@@ -100,7 +101,10 @@ defmodule Argus.Analyses.QuietShapesTest do
     skip_without_souffle()
 
     {:ok, r} =
-      Argus.analyze([Sib.Sup, Sib.Producer, Sib.Watchman, Sib.GuardedWatchman], :shutdown)
+      Memo.analyze(
+        [Sib.Sup, Sib.Producer, Sib.Watchman, Sib.GuardedWatchman],
+        :shutdown
+      )
 
     mods =
       r

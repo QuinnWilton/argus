@@ -14,6 +14,7 @@ defmodule Argus.Analyses.InitLockTest do
 
   alias Argus.Souffle
   alias Argus.Test.Fixtures.InitLock
+  alias Argus.Test.Memo
 
   @startup_titles [
     "Cluster-wide lock during init",
@@ -45,7 +46,7 @@ defmodule Argus.Analyses.InitLockTest do
     ]
 
     assert {:ok, %{findings: findings}} =
-             Argus.run_analyses(modules, analyses: [:startup, :blocking])
+             Memo.run_analyses(modules, analyses: [:startup, :blocking])
 
     by_module =
       findings
@@ -172,7 +173,7 @@ defmodule Argus.Analyses.InitLockTest do
 
     test "startup reads the clauses on its own, without blocking's extractors" do
       assert {:ok, %{findings: findings}} =
-               Argus.run_analyses([InitLock.SharedHelper], analyses: [:startup])
+               Memo.run_analyses([InitLock.SharedHelper], analyses: [:startup])
 
       refute Enum.any?(findings, &(&1.title in @startup_titles))
     end

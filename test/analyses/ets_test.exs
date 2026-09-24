@@ -2,6 +2,7 @@ defmodule Argus.Analyses.EtsTest do
   use ExUnit.Case, async: true
 
   alias Argus.Souffle
+  alias Argus.Test.Memo
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
@@ -20,7 +21,7 @@ defmodule Argus.Analyses.EtsTest do
         Argus.Test.Fixtures.EtsParamTable
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :ets)
+      assert {:ok, results} = Memo.analyze(modules, :ets)
 
       # Informational relations are no longer output.
       refute Map.has_key?(results, "ets_owner_process")
@@ -44,7 +45,7 @@ defmodule Argus.Analyses.EtsTest do
         Argus.Test.Fixtures.EtsPermanentSupervisor
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :ets)
+      assert {:ok, results} = Memo.analyze(modules, :ets)
 
       # EtsOwner is a permanent child — table recreated on restart.
       unprotected = results["ets_unprotected_owner"]
@@ -62,7 +63,7 @@ defmodule Argus.Analyses.EtsTest do
         Argus.Test.Fixtures.ErlangStyleEtsSupervisor
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :ets)
+      assert {:ok, results} = Memo.analyze(modules, :ets)
 
       # EtsOwner is a permanent child under an Erlang-style supervisor.
       unprotected = results["ets_unprotected_owner"]
@@ -79,7 +80,7 @@ defmodule Argus.Analyses.EtsTest do
         Argus.Test.Fixtures.EtsApplicationOwner
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :ets)
+      assert {:ok, results} = Memo.analyze(modules, :ets)
 
       # Application modules live for the entire app — not a real risk.
       unprotected = results["ets_unprotected_owner"]
@@ -94,7 +95,7 @@ defmodule Argus.Analyses.EtsTest do
 
       modules = [Argus.Test.Fixtures.EtsOwner]
 
-      assert {:ok, results} = Argus.analyze(modules, :ets)
+      assert {:ok, results} = Memo.analyze(modules, :ets)
 
       unprotected = results["ets_unprotected_owner"]
 
@@ -114,7 +115,7 @@ defmodule Argus.Analyses.EtsTest do
         Argus.Test.Fixtures.EtsWarmCache
       ]
 
-      assert {:ok, results} = Argus.analyze(modules, :ets)
+      assert {:ok, results} = Memo.analyze(modules, :ets)
 
       assert [[":audit_log", "Argus.Test.Fixtures.EtsGrowOnly", site]] =
                results["ets_write_only_table"]

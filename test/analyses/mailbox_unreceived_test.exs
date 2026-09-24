@@ -3,6 +3,7 @@ defmodule Argus.Analyses.MailboxUnreceivedTest do
 
   alias Argus.Analyses.Mailbox
   alias Argus.Test.Fixtures.UnreceivedMessage, as: U
+  alias Argus.Test.Memo
 
   @all [
     U.Shop,
@@ -21,7 +22,7 @@ defmodule Argus.Analyses.MailboxUnreceivedTest do
 
   defp rows do
     unless Argus.Souffle.available?(), do: flunk("souffle not installed")
-    {:ok, results} = Argus.analyze(@all, :mailbox)
+    {:ok, results} = Memo.analyze(@all, :mailbox)
 
     for [mod, func, _site, message, runs, starter, _spawn, _recv] <-
           results["unreceived_message"] do
@@ -65,7 +66,7 @@ defmodule Argus.Analyses.MailboxUnreceivedTest do
     mods =
       for m <- [Relay, Subscriber], do: Module.concat(Argus.Test.Fixtures.PidFlow, m)
 
-    {:ok, results} = Argus.analyze(mods, :mailbox)
+    {:ok, results} = Memo.analyze(mods, :mailbox)
     assert results["unreceived_message"] == []
   end
 
