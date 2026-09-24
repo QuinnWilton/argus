@@ -57,8 +57,9 @@ producers and solves the edit invalidated run again. A run whose solves
 are all kept makes no facts directory; `extract_facts/3` returns
 read-only links byte-identical to a fresh extraction. The findings are
 the ones a run without a store returns, every field but the durations.
-Ignored with `facts_dir:`, with `priors:` (they are derived into the
-directory each time) and under `ARGUS_NO_CACHE`.
+Priors are asked every run, as without a store, and the solves that
+read them are keyed on what the model said. Ignored with `facts_dir:`
+and under `ARGUS_NO_CACHE`.
 
 **Changed.** `Argus.Corpus.analyze/2` runs through each checkout's
 store (`Argus.Corpus.store/1`, `<checkout>/.argus-facts`) in place of

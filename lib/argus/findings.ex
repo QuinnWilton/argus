@@ -229,8 +229,8 @@ defmodule Argus.Findings do
     only when missing (`Argus.Cache.Facts`), each solve is keyed on the
     content of what it reads, and a run whose solves are all kept makes
     no facts directory at all. After an edit, only what it invalidated
-    runs again. Ignored with `:facts_dir`, with `:priors`, and under
-    `ARGUS_NO_CACHE`.
+    runs again. Priors are asked every run, as without a store.
+    Ignored with `:facts_dir` and under `ARGUS_NO_CACHE`.
   - `:concurrency` — parallel Souffle solves (default: the scheduler
     count, capped at 4; each solve holds its own copy of the call graph's
     closure). Extraction always runs at scheduler width.

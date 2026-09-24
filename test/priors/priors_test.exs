@@ -44,9 +44,14 @@ defmodule Argus.PriorsTest do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
+  # The fixtures' facts and the solves come from the suite's store; the
+  # priors are asked every run, which is what these tests test.
+  defp through_store(opts, analyses),
+    do: opts |> Keyword.put(:analyses, analyses) |> Keyword.put(:cache, Argus.Test.Memo.store())
+
   defp run(opts) do
     assert {:ok, %Argus.Findings{degraded: []} = r} =
-             Argus.Findings.run(@mods, Keyword.put(opts, :analyses, [:exposure]))
+             Argus.Findings.run(@mods, through_store(opts, [:exposure]))
 
     Enum.filter(r.findings, &(&1.title =~ "printed by inspect"))
   end
@@ -125,6 +130,21 @@ defmodule Argus.PriorsTest do
            ) == run([])
   end
 
+  @tag :cache
+  test "through a store, priors are asked every run and the findings are a fresh run's",
+       %{tmp_dir: dir} do
+    skip_without_souffle()
+    store = Path.join(dir, "store")
+    opts = [analyses: [:exposure]] ++ priors(Path.join(dir, "answers"))
+
+    assert {:ok, afresh} = Argus.Findings.run(@mods, opts)
+    assert {:ok, cold} = Argus.Findings.run(@mods, [cache: store] ++ opts)
+    assert {:ok, warm} = Argus.Findings.run(@mods, [cache: store] ++ opts)
+
+    for run <- [cold, warm], do: assert(run.findings == afresh.findings)
+    assert Enum.any?(afresh.findings, &(&1.provenance == :heuristic))
+  end
+
   test "an unknown mode is refused" do
     assert_raise ArgumentError, ~r/:cached_only or :live/, fn ->
       Argus.Findings.run(@mods, analyses: [:exposure], priors: :sometimes)
@@ -194,7 +214,7 @@ defmodule Argus.PriorsTest do
 
     defp sinks(opts) do
       assert {:ok, %Argus.Findings{degraded: []} = r} =
-               Argus.Findings.run(@taint, Keyword.put(opts, :analyses, [:unsafe_input]))
+               Argus.Findings.run(@taint, through_store(opts, [:unsafe_input]))
 
       r.findings |> Enum.filter(&(&1.title =~ "atom creation")) |> Enum.sort_by(& &1.mfa)
     end
@@ -302,7 +322,7 @@ defmodule Argus.PriorsTest do
 
     defp couplings(opts) do
       assert {:ok, %Argus.Findings{degraded: []} = r} =
-               Argus.Findings.run(@facade, Keyword.put(opts, :analyses, [:coupling]))
+               Argus.Findings.run(@facade, through_store(opts, [:coupling]))
 
       Enum.filter(r.findings, &(&1.title =~ "one_for_one"))
     end

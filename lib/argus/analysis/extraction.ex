@@ -71,9 +71,9 @@ defmodule Argus.Analysis.Extraction do
   from it or extracted and kept there (`Argus.Cache.Facts`), stage 0 and
   the points-to stage are solved through it, and the directory returned
   is hard links into it, byte-identical to one extracted afresh — its
-  files are read-only, and the caller removes it as any other. Ignored
-  when `priors:` asks for priors (they are derived into the directory
-  each time) and under `ARGUS_NO_CACHE`.
+  links are read-only, and the caller removes it as any other. Priors
+  are derived into it every time, as without a store. Ignored under
+  `ARGUS_NO_CACHE`.
   """
   @spec extract_facts(modules :: [atom() | String.t()], [Analysis.analysis()], keyword()) ::
           {:ok, Path.t()} | {:error, term()}
@@ -131,8 +131,8 @@ defmodule Argus.Analysis.Extraction do
   # names (`Argus.Cache.Facts`), with stage 0 solved into them and the
   # points-to stage unless `points_to: :deferred`: `{:ok, facts}` for
   # the caller to release, `:uncached` when there is no store to use
-  # (none named, stores off, priors asked for, or a producer whose code
-  # no key can name), or the error extraction would return.
+  # (none named, stores off, or a producer whose code no key can name),
+  # or the error extraction would return.
   @spec cached_facts([atom() | String.t()], [Analysis.analysis()], keyword()) ::
           {:ok, Facts.t()} | :uncached | {:error, term()}
   def cached_facts(modules, analyses, opts) do
@@ -140,22 +140,36 @@ defmodule Argus.Analysis.Extraction do
   end
 
   defp cached(modules, analyses, opts) do
-    with store when is_binary(store) <- store(opts),
+    with store when is_binary(store) <- Argus.Cache.store(opts) || :uncached,
          {:ok, facts} <- shards(modules, opts, store),
-         {:ok, facts} <- solve_stage(facts, stage0_rules_path(), :stage0, opts) do
-      programs = [programs: Argus.Cache.dir(store, :programs)]
-
-      if Keyword.get(opts, :points_to, :derive) == :derive and
-           Enum.any?(analyses, &reads_points_to?(&1, programs)),
-         do: solve_stage(facts, points_to_rules_path(), :points_to, opts),
-         else: {:ok, facts}
+         {:ok, facts} <- solve_stage(facts, stage0_rules_path(), :stage0, opts),
+         {:ok, facts} <- cached_points_to(facts, analyses, opts) do
+      cached_priors(facts, opts)
     end
   end
 
-  defp store(opts) do
-    if Keyword.get(opts, :priors, :off) == :off,
-      do: Argus.Cache.store(opts) || :uncached,
-      else: :uncached
+  defp cached_points_to(facts, analyses, opts) do
+    programs = [programs: Argus.Cache.dir(facts.store, :programs)]
+
+    if Keyword.get(opts, :points_to, :derive) == :derive and
+         Enum.any?(analyses, &reads_points_to?(&1, programs)),
+       do: solve_stage(facts, points_to_rules_path(), :points_to, opts),
+       else: {:ok, facts}
+  end
+
+  # Priors are asked afresh every run, as without a store: into a
+  # directory of the facts, whose `prior_*` files then join the facts by
+  # their content, so the solves reading them are keyed on what the
+  # model said.
+  defp cached_priors(facts, opts) do
+    if Keyword.get(opts, :priors, :off) == :off do
+      {:ok, facts}
+    else
+      with {:ok, facts} <- Facts.materialize(facts),
+           :ok <- derive_priors(facts.dir, opts) do
+        Facts.refresh(facts, Enum.map(Argus.Schema.layer_3(), &"#{&1.name}.facts"))
+      end
+    end
   end
 
   defp shards(modules, opts, store) do

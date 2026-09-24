@@ -443,6 +443,26 @@ defmodule Argus.Cache.Facts do
   end
 
   @doc """
+  The facts after files of their directory were written in place (the
+  `prior_*` relations `Argus.Priors` derives into it): each of `names`
+  joins them by its content now, from the directory.
+  """
+  @spec refresh(t(), [String.t()]) :: {:ok, t()} | {:error, term()}
+  def refresh(%__MODULE__{dir: dir} = facts, names) when is_binary(dir) do
+    Enum.reduce_while(names, {:ok, facts}, fn name, {:ok, facts} ->
+      path = Path.join(dir, name)
+
+      case Cache.file_digest(path) do
+        {:ok, digest} ->
+          {:cont, {:ok, %{facts | relations: Map.put(facts.relations, name, {digest, [path]})}}}
+
+        {:error, reason} ->
+          {:halt, {:error, {:digest_failed, name, reason}}}
+      end
+    end)
+  end
+
+  @doc """
   Removes what the facts made outside the store: the directory and any
   shards a run that lost a module kept for itself.
   """
