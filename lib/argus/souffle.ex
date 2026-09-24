@@ -434,6 +434,12 @@ defmodule Argus.Souffle do
     end
   end
 
+  @doc false
+  # The relations a solve wrote into `output_dir` (its `.csv` files),
+  # as `run/3` returns them: what a caller keeping solves reads back.
+  @spec read_outputs(Path.t()) :: {:ok, result()} | {:error, term()}
+  def read_outputs(output_dir), do: parse_output(output_dir)
+
   defp parse_output(output_dir) do
     with {:ok, files} <- File.ls(output_dir) do
       csv_files = Enum.filter(files, &String.ends_with?(&1, ".csv"))

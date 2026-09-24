@@ -43,13 +43,17 @@ defmodule Argus.Findings.Runner do
   @spec extraction_errors(Path.t()) :: [Findings.extraction_error()]
   def extraction_errors(facts_dir) do
     case File.read(Path.join(facts_dir, "extraction_error.facts")) do
-      {:ok, content} ->
-        for [mod, step, reason] <- Argus.Tsv.decode(content) do
-          %{module: Anchor.module_atom(mod), source: mod, step: step, reason: reason}
-        end
+      {:ok, content} -> parse_extraction_errors(content)
+      {:error, _} -> []
+    end
+  end
 
-      {:error, _} ->
-        []
+  @doc false
+  # The errors an `extraction_error.facts` file's content holds.
+  @spec parse_extraction_errors(binary()) :: [Findings.extraction_error()]
+  def parse_extraction_errors(content) do
+    for [mod, step, reason] <- Argus.Tsv.decode(content) do
+      %{module: Anchor.module_atom(mod), source: mod, step: step, reason: reason}
     end
   end
 

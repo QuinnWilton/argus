@@ -155,7 +155,7 @@ defmodule Argus.Cache do
   (default 3), or — with `max_age:` seconds — once it has been
   untouched that long, however recent. `keep:` names entries never
   removed. A staging name untouched for a day is a crashed writer's,
-  and goes too.
+  and goes too, as does a run's scratch directory under `work/`.
 
   The hour is how long an entry is presumed in use: a hit touches it.
   The `recent:` entries are the baselines: a run before a change and
@@ -163,8 +163,16 @@ defmodule Argus.Cache do
   """
   @spec stale(Path.t(), [prune_option()]) :: [Path.t()]
   def stale(root, opts \\ []) do
+    # A run's scratch directory (`work/<os pid>-<n>`) is a crashed run's
+    # once a day has passed, as a staging name is.
+    work =
+      stale_entries(Path.join(root, "work"), [], fn name, _type ->
+        if Regex.match?(~r/^\d+-\d+$/, name), do: :staging
+      end)
+
     @subdirs
     |> Enum.flat_map(&stale_entries(Path.join(root, &1), opts, fn name, _type -> kind(name) end))
+    |> Kernel.++(work)
     |> Enum.sort()
   end
 

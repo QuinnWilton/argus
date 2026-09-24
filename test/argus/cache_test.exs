@@ -88,6 +88,16 @@ defmodule Argus.CacheTest do
              ["notes", "p-#{key("a")}", "p-#{key("c")}", "p-#{key("d")}.123.4"]
   end
 
+  test "a run's scratch directory goes after a day", %{tmp_dir: root} do
+    entries(root, [
+      {"work/123-4", 25 * @hour},
+      {"work/123-5", 2 * @hour},
+      {"work/notes", 48 * @hour}
+    ])
+
+    assert Cache.stale(root) == [Path.join(root, "work/123-4")]
+  end
+
   test "an installed entry is read-only, and a second install of the key loses",
        %{tmp_dir: root} do
     entry = Path.join(root, "p-#{key("a")}")

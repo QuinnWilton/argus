@@ -28,9 +28,26 @@ touched within the hour are spared) and `ARGUS_NO_CACHE`, which turns
 every store off.
 
 **Deprecated.** `Argus.Souffle.Cache.kept?/3` (always false: a solve
-is keyed on what it reads, which a cache directory does not name) and
+is keyed on what it reads, which a cache directory does not name),
+`Argus.Souffle.Cache.entry/3` (nil; `entry/4` takes the facts) and
 `Argus.Analysis.Extraction.solve_cache/2` (the directory itself is the
 `solve_cache:`; nothing is folded in for a stage).
+
+**Added.** `Argus.Cache.Facts`: facts extracted through a store, each
+producer's rows kept as a shard keyed by the beams, the code that
+producer runs (`Argus.Cache.Code`: its import-table closure and the
+base's, from its roots through this project and its dependencies), the
+runtime and the options that shape rows — and, for the specs extractor,
+the environment it reads, with each module it read from argus's own
+application or found absent recorded and checked on every hit. Only
+missing shards are extracted, and a run that lost a module to a timeout
+keeps none. A run's facts are each relation file's digest and source,
+materialized on demand as hard links byte-identical to
+`Argus.Pipeline.run/3`'s directory; `solve/3` keys a solve on the
+digests of exactly what it reads, and a stage's outputs join the facts
+by content. `Argus.Cache.CodeTest` runs every producer with call
+counting on and checks that nothing it executes lies outside its
+closure.
 
 **Changed.** `Argus.Pipeline.run/3` writes a relation's rows grouped
 by producer — the base's first, then each extractor's in the order
