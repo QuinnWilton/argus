@@ -39,10 +39,10 @@ defmodule Argus.Extractors.Mnesia do
 
   @behaviour Argus.Extractor
 
-  alias Argus.Extractor.Identity
-  alias Argus.InstrId
   alias Argus.Extractor.Helpers
+  alias Argus.Extractor.Identity
   alias Argus.Extractor.Resolve
+  alias Argus.InstrId
   alias Argus.Pipeline.Normalize
   import Argus.Extractor.Helpers, only: [each_remote_call: 3]
   import Argus.Extractor.Facts, only: [add_fact: 3]

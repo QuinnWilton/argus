@@ -47,6 +47,7 @@ defmodule Argus.Extractors.ETS do
   alias Argus.Cfg
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
+  alias Argus.Extractor.Identity
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
@@ -109,8 +110,8 @@ defmodule Argus.Extractors.ETS do
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
-    index = Argus.Extractor.Identity.origins_index(module_data)
-    returns = Argus.Extractor.Identity.returned_elements(module_data, index)
+    index = Identity.origins_index(module_data)
+    returns = Identity.returned_elements(module_data, index)
     fields = table_fields(module_data)
 
     module_data
