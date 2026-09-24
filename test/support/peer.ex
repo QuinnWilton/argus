@@ -41,7 +41,11 @@ defmodule Scry.Test.Peer do
     File.rm_rf!(tmp)
     File.mkdir_p!(tmp)
 
-    args = Enum.flat_map(code_path(), &[~c"-pa", &1])
+    # No scheduler busy-waiting: a peer mostly waits on souffle, and a
+    # dozen of them spinning at once take the CPU the solves need.
+    args =
+      [~c"+sbwt", ~c"none", ~c"+sbwtdcpu", ~c"none", ~c"+sbwtdio", ~c"none"] ++
+        Enum.flat_map(code_path(), &[~c"-pa", &1])
 
     {:ok, peer, _node} =
       :peer.start_link(%{
