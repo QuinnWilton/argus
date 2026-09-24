@@ -144,9 +144,10 @@ exit_guarded(call) :-
   catch_tag(t, f, "exit", ":noproc").
 
 // Some try in the function takes the exit. What is left to ask of a
-// dependency with no call site to hold against a try (a function
-// reference handed to a call, a closure): any exit-catching try in the
-// function counts, which errs quiet.
+// dependency with no call site to hold against a try, and of an edge
+// into a fun that no call is handed (a fun stored, then called through a
+// variable): any exit-catching try in the function counts, which errs
+// quiet.
 .decl catches_exit(func: symbol)
 
 catches_exit(f) :- catches_class(f, "exit").
@@ -159,11 +160,28 @@ catches_exit(f) :- catch_tag(_, f, "exit", ":noproc").
 
 waits_on(f, m) :- sync_dep(f, m), !private_dep(f, m).
 
-// The call in `func` that waits on `mod`: sync_site, and a call that a
-// message tag attributed to mod (sync_dep's tag clause, calls.dl).
+// The call in `func` that runs a fun value `callee`: the call it is
+// handed to (`Enum.each(ids, &Directory.unregister/1)`), or an apply
+// whose target resolves to it.
+.decl fun_site(func: symbol, callee: symbol, id: symbol)
+
+fun_site(f, g, id) :- fun_handed(id, f, g).
+fun_site(f, g, id) :- resolved_apply(id, f, g).
+
+// The call in `func` that waits on `mod`: sync_site, a call that a
+// message tag attributed to mod (sync_dep's tag clause, calls.dl), and
+// the call a fun of mod's synchronous API is handed to — the call that
+// runs it, and that a try must cover.
 .decl wait_site(func: symbol, mod: symbol, id: symbol)
 
 wait_site(f, m, id) :- sync_site(f, m, id).
+
+wait_site(f, m, id) :-
+  genserver_sync_api(g, m),
+  fun_site(f, g, id),
+  !call_instr(f, g, _),
+  function_def(f, fm, _, _, _),
+  fm != m.
 
 wait_site(f, m, id) :-
   tag_resolved_site(id, f, "call", m),
@@ -189,14 +207,18 @@ waits_unguarded(f, m) :-
 // path's call in terminate/2. A try around any call on the path guards
 // what lies beyond it: the call in terminate/2 into the helper, a call
 // between helpers, the helper's own call to the sibling's API. An edge
-// with no call instruction (a closure handed to a call, a function
-// reference) has no call to hold against a try, and is open when its
-// caller has no exit-catching try at all; `first` is then empty.
+// with no call instruction (a closure, a function reference) is held
+// against the call that runs it (fun_site): Horde's
+// `Enum.each(signal_to, fn ... end)` is open because no try covers the
+// Enum.each, whatever another try in terminate/2 catches. Only a fun no
+// call is handed falls back to the function-wide reading (catches_exit).
+// `first` is empty for such an edge.
 .init open_path = ForwardGuardedCallReach
 
 open_path.root(t) :- is_terminate(t, _).
 open_path.limit(3).
 open_path.guarded(call) :- exit_guarded(call).
+open_path.handed(f, g, call) :- fun_site(f, g, call).
 open_path.sealed(f) :- catches_exit(f).
 
 .decl reaches_unguarded(handler: symbol, via: symbol)

@@ -457,6 +457,40 @@ defmodule Argus.Pipeline.EmitTest do
     end
   end
 
+  describe "fun_handed" do
+    test "names the call a closure or a literal fun is handed to" do
+      facts =
+        emit_func([
+          # Enum.each(peers, fn p -> ... end): the closure runs inside Enum.each.
+          {:make_fun3, {TestMod, :"-test_func/0-fun-0-", 1}, 0, 0, {:x, 1}, {:list, []}},
+          {:call_ext, 2, {:extfunc, Enum, :each, 2}},
+          {:move, {:literal, &URI.parse/1}, {:x, 1}},
+          {:call_ext, 2, {:extfunc, Enum, :map, 2}},
+          :return
+        ])
+
+      assert [
+               [each_id, "TestMod:test_func/0", "TestMod:-test_func/0-fun-0-/1"],
+               [map_id, "TestMod:test_func/0", "URI:parse/1"]
+             ] = Enum.sort_by(facts[:fun_handed], &Enum.at(&1, 2))
+
+      assert {:ok, %{idx: 1}} = Argus.InstrId.parse(each_id)
+      assert {:ok, %{idx: 3}} = Argus.InstrId.parse(map_id)
+    end
+
+    test "a fun the call hands back is not handed to it" do
+      facts =
+        emit_func([
+          {:move, {:atom, :on_fail}, {:x, 1}},
+          {:move, {:literal, &URI.decode/1}, {:x, 2}},
+          {:call_ext, 3, {:extfunc, Keyword, :get, 3}},
+          :return
+        ])
+
+      assert facts[:fun_handed] == nil
+    end
+  end
+
   describe "control flow facts" do
     test "emits jump" do
       facts = emit_func([{:jump, {:f, 5}}])

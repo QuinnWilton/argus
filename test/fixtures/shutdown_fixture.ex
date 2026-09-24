@@ -528,6 +528,9 @@ defmodule Argus.Test.Fixtures.SiblingGuard do
           G.NestedOuterExit,
           G.NestedAfterInner,
           G.NoprocInside,
+          G.ClosureTryElsewhere,
+          G.ClosureInside,
+          G.RefTryElsewhere,
           G.Directory
         ],
         strategy: :one_for_one
@@ -735,6 +738,87 @@ defmodule Argus.Test.Fixtures.SiblingGuard do
       catch
         :exit, {:noproc, _} -> :ok
       end
+    end
+  end
+
+  defmodule ClosureTryElsewhere do
+    @moduledoc """
+    The audit's shape: a try catches exits around an unrelated stop, and
+    the sibling call is in a closure handed to Enum.each after its end.
+    Nothing covers the Enum.each, so nothing catches the exit.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.SiblingGuard.Directory
+
+    @impl true
+    def init(state) do
+      Process.flag(:trap_exit, true)
+      {:ok, state}
+    end
+
+    @impl true
+    def terminate(_reason, state) do
+      try do
+        GenServer.stop(state.conn)
+      catch
+        :exit, _ -> :ok
+      end
+
+      Enum.each(state.peers, fn peer -> :ok = Directory.unregister(peer) end)
+      File.close(state.log)
+    end
+  end
+
+  defmodule ClosureInside do
+    @moduledoc "The Enum.each that runs the closure is inside the exit-catching try."
+    use GenServer
+
+    alias Argus.Test.Fixtures.SiblingGuard.Directory
+
+    @impl true
+    def init(state) do
+      Process.flag(:trap_exit, true)
+      {:ok, state}
+    end
+
+    @impl true
+    def terminate(_reason, state) do
+      try do
+        Enum.each(state.peers, fn peer -> :ok = Directory.unregister(peer) end)
+      catch
+        :exit, _ -> :ok
+      end
+
+      File.close(state.log)
+    end
+  end
+
+  defmodule RefTryElsewhere do
+    @moduledoc """
+    The sibling's API handed as a function reference, after a try around
+    another call: the Enum.each that runs it is not covered.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.SiblingGuard.Directory
+
+    @impl true
+    def init(state) do
+      Process.flag(:trap_exit, true)
+      {:ok, state}
+    end
+
+    @impl true
+    def terminate(_reason, state) do
+      try do
+        GenServer.stop(state.conn)
+      catch
+        :exit, _ -> :ok
+      end
+
+      Enum.each(state.peers, &Directory.unregister/1)
+      File.close(state.log)
     end
   end
 end

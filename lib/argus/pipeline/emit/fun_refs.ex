@@ -21,6 +21,13 @@ defmodule Argus.Pipeline.Emit.FunRefs do
   function that also calls the target directly gets no row: the call
   relations already give that edge, and a rule that sets fun-held edges
   aside (a fun may run in another process) must not lose the call.
+
+  `fun_handed` rows name the call itself: the call at `id` that is handed
+  the fun, closures included. A call graph edge through a fun has no call
+  instruction of its own, so a rule that asks whether that edge is
+  guarded (a `try` around it) holds it against the call the fun is handed
+  to — `Enum.each(peers, fn p -> ... end)` runs the closure inside
+  `Enum.each`, and only a try around that call catches what it raises.
   """
 
   alias Argus.Extractor.Helpers
@@ -40,7 +47,11 @@ defmodule Argus.Pipeline.Emit.FunRefs do
       instrs
       |> Enum.with_index()
       |> Enum.reduce({MapSet.new(), MapSet.new()}, fn {instr, idx}, {refs, called} ->
-        refs = Enum.reduce(handed(instrs, idx, instr), refs, &MapSet.put(&2, &1))
+        refs =
+          for {:external, callee} <- handed(instrs, idx, instr),
+              reduce: refs,
+              do: (acc -> MapSet.put(acc, callee))
+
         {refs, called(instr, called)}
       end)
 
@@ -50,17 +61,37 @@ defmodule Argus.Pipeline.Emit.FunRefs do
     |> Enum.map(&[func_id, &1])
   end
 
+  @doc """
+  One `[id, caller, callee]` row per call in `normalized` handed a fun
+  that runs `callee`: a closure the function builds (`make_fun3`) or a
+  literal external fun, in an argument position the call's result does
+  not carry. Sorted and without duplicates.
+  """
+  @spec handed_rows(String.t(), [{String.t(), tuple() | atom()}]) :: [[String.t()]]
+  def handed_rows(func_id, normalized) do
+    instrs = Enum.map(normalized, fn {_id, instr} -> instr end)
+
+    normalized
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {{id, instr}, idx} ->
+      for {_kind, callee} <- handed(instrs, idx, instr), do: [id, func_id, callee]
+    end)
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
   # The funs a call at `idx` is handed in argument positions its result
-  # does not carry.
+  # does not carry, as `{kind, callee}`: `:closure` for a `make_fun3`,
+  # `:external` for a literal or `erlang:make_fun/3` external fun.
   defp handed(instrs, idx, instr) do
     case callee(instr) do
       {:ok, {mod, fun, arity}, carried} ->
         for pos <- 0..(arity - 1)//1,
             pos not in carried,
             {kind, {m, f, a}} <- [Resolve.fun_origin(instrs, idx, {:x, pos})],
-            kind == :external,
+            kind in [:closure, :external],
             not (m == mod and f == fun and a == arity),
-            do: InstrId.func_id(m, f, a)
+            do: {kind, InstrId.func_id(m, f, a)}
 
       :none ->
         []

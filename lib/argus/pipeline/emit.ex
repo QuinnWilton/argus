@@ -659,9 +659,14 @@ defmodule Argus.Pipeline.Emit do
   # anyway, which only the whole function can say
   # (`Argus.Pipeline.Emit.FunRefs`).
   defp emit_fun_refs(facts, func_id, normalized) do
+    facts =
+      func_id
+      |> FunRefs.rows(normalized)
+      |> Enum.reduce(facts, &add_fact(&2, :fun_ref, &1))
+
     func_id
-    |> FunRefs.rows(normalized)
-    |> Enum.reduce(facts, &add_fact(&2, :fun_ref, &1))
+    |> FunRefs.handed_rows(normalized)
+    |> Enum.reduce(facts, &add_fact(&2, :fun_handed, &1))
   end
 
   # What a spawn runs is in its arguments, so it is resolved here, where

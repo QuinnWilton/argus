@@ -211,6 +211,21 @@ entries rather than a path, and the call would add the instruction-level
 `call_site` to that analysis's input set, re-solving it on every body
 edit.
 
+### A call on the way out, audited
+
+`shutdown.teardown_touches_sibling`'s terminate half ("terminate/2 calls
+a sibling that may already be down"), after a precision audit.
+
+**Fixed.** A path from terminate/2 through a closure or a function
+reference is guarded by the call that runs the fun, not by any
+exit-catching try in the function: a try around an unrelated
+`GenServer.stop` no longer silences `Enum.each(peers, fn p -> ...
+GenServer.call ... end)` after its `end`, and a sibling API handed as
+`&Directory.unregister/1` is waited on at the `Enum.each` that runs it
+(`fun_handed`, schema 73; `resolved_apply` for an apply).
+`ForwardGuardedCallReach` gains a `handed(func, callee, call)` input;
+only a fun no call is handed keeps the function-wide `sealed` reading.
+
 ### A sibling the supervisor has already stopped
 
 **Changed.** `shutdown.teardown_touches_sibling` ("terminate/2 calls a
@@ -300,6 +315,14 @@ struct, the types, the constructors analysis modules build with, and
 its moduledoc says which submodule holds what.
 
 ### Fact schema and extraction
+
+**Added.** Schema 73. `fun_handed(id, caller, callee)`: the call at
+`id` is handed, as a fun value, a function that runs `callee` — a
+closure the caller builds, or a literal external fun — in an argument
+position the call's result does not carry (`Argus.Pipeline.Emit.
+FunRefs.handed_rows/2`). The call graph's edge into a closure or a fun
+reference has no call instruction; this names the call it runs inside,
+so a rule asking whether a `try` covers the edge asks it of that call.
 
 **Changed.** Schema 71. `schema_field(mod, field)` gains a third
 column, `type`: the field's Ecto type from `__schema__(:type, field)`,
