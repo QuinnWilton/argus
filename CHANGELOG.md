@@ -145,7 +145,6 @@ read as unknown and was never reported. `unbounded_wait`'s `detail` is
 caller)` gives each caller as a related frame ("passes :infinity as
 the timeout"). Only a literal `:infinity` at the call is followed, not
 one forwarded through a further wrapper's parameter.
-||||||| parent of 4a81fb7 ([findings] inconsistent_handling says "most" past one deviant)
 ### Check-then-act, read closer
 
 What a precision audit of `ets_missing_row`, `ets_check_act` and
