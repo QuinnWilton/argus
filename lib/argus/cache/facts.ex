@@ -250,7 +250,8 @@ defmodule Argus.Cache.Facts do
             }
 
             File.write!(Path.join(staging, @manifest), :erlang.term_to_binary(manifest))
-            {producer, {settle(staging, entry, lost), manifest}}
+            names = [@manifest | Map.keys(manifest.relations)]
+            {producer, {settle(staging, entry, names, lost), manifest}}
           end)
 
         {:ok, extracted, keep_scratch(facts, lost, staged)}
@@ -263,14 +264,14 @@ defmodule Argus.Cache.Facts do
 
   # Installed, or — when the run lost a module — left as it is, for this
   # run alone (`release/1` removes it).
-  defp settle(staging, entry, []) do
-    case Cache.install(staging, entry) do
+  defp settle(staging, entry, names, []) do
+    case Cache.install(staging, entry, names) do
       :ok -> entry
       {:error, _} -> staging
     end
   end
 
-  defp settle(staging, _entry, _lost), do: staging
+  defp settle(staging, _entry, _names, _lost), do: staging
 
   defp keep_scratch(facts, [], _staged), do: facts
 

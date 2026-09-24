@@ -177,7 +177,10 @@ that extractor's rows alone.
 content — its entries' layout, their retention (`Argus.Cache.stale/2`,
 `prune/2`: within each group the three most recent and anything
 touched within the hour are spared) and `ARGUS_NO_CACHE`, which turns
-every store off.
+every store off. An entry is written under a staging name
+(`staging/1`, one `mkdir` where its parent is there) and installed
+read-only (`install/3`, which chmods the files the writer names rather
+than listing the directory).
 
 **Added.** `Argus.Cache.Facts`: facts extracted through a store, each
 producer's rows kept as a shard keyed by the beams, the code that

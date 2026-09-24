@@ -109,22 +109,48 @@ defmodule Argus.Cache do
   def staging(entry) do
     staging = "#{entry}.#{:os.getpid()}.#{System.unique_integer([:positive])}"
 
-    case File.mkdir_p(staging) do
+    case mkdir(staging) do
       :ok -> {:ok, staging}
       {:error, reason} -> {:error, {:mkdir_failed, reason}}
     end
   end
 
+  @doc false
+  # A directory whose parent is most often there already: one `mkdir`,
+  # and the parents made only when it says they are missing. A cold run
+  # makes thousands of these, and `File.mkdir_p/1` asks after each
+  # parent first.
+  @spec mkdir(Path.t()) :: :ok | {:error, File.posix()}
+  def mkdir(dir) do
+    case File.mkdir(dir) do
+      :ok ->
+        :ok
+
+      {:error, :enoent} ->
+        with :ok <- File.mkdir_p(Path.dirname(dir)) do
+          case File.mkdir(dir) do
+            :ok -> :ok
+            {:error, :eexist} -> :ok
+            {:error, _} = error -> error
+          end
+        end
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
   @doc """
   Installs a finished staging directory (or file) as `entry`, its files
-  made read-only first. Another writer that installed the same key first
-  wins, and this copy is discarded; either way `entry` holds the result
-  afterwards. Any other failure leaves `staging` in place for the
-  caller.
+  made read-only first — `names`, the files the caller wrote into it,
+  or every file it holds. Another writer that installed the same key
+  first wins, and this copy is discarded; either way `entry` holds the
+  result afterwards. Any other failure leaves `staging` in place for
+  the caller.
   """
-  @spec install(Path.t(), Path.t()) :: :ok | {:error, File.posix()}
-  def install(staging, entry) do
-    read_only(staging)
+  @spec install(Path.t(), Path.t(), [String.t()] | nil) :: :ok | {:error, File.posix()}
+  def install(staging, entry, names \\ nil) do
+    read_only(staging, names)
 
     case File.rename(staging, entry) do
       :ok ->
@@ -139,13 +165,15 @@ defmodule Argus.Cache do
     end
   end
 
-  defp read_only(path) do
+  defp read_only(path, nil) do
     case File.ls(path) do
-      {:ok, names} -> Enum.each(names, &File.chmod(Path.join(path, &1), 0o444))
+      {:ok, names} -> read_only(path, names)
       {:error, :enotdir} -> File.chmod(path, 0o444)
       {:error, _} -> :ok
     end
   end
+
+  defp read_only(path, names), do: Enum.each(names, &File.chmod(Path.join(path, &1), 0o444))
 
   @doc """
   The entries of a store (its `shards/`, `solves/` and `programs/`)

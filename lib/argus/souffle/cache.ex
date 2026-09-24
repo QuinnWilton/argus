@@ -133,7 +133,7 @@ defmodule Argus.Souffle.Cache do
   def install(staging, entry) do
     with {:ok, digests} <- digest_outputs(staging),
          :ok <- File.write(Path.join(staging, @manifest), :erlang.term_to_binary(digests)) do
-      Argus.Cache.install(staging, entry)
+      Argus.Cache.install(staging, entry, [@manifest | Map.keys(digests)])
     end
   end
 

@@ -115,6 +115,20 @@ defmodule Argus.CacheTest do
     assert Cache.fetch(Path.join(root, "p-#{key("b")}")) == :miss
   end
 
+  test "a staging directory is made where no parent is yet, and an install names its files",
+       %{tmp_dir: root} do
+    entry = Path.join([root, "fresh", "deeper", "p-#{key("a")}"])
+    assert {:ok, staging} = Cache.staging(entry)
+    assert File.dir?(staging)
+    assert {:ok, again} = Cache.staging(entry)
+    assert again != staging
+
+    File.write!(Path.join(staging, "named.csv"), "x")
+    assert :ok = Cache.install(staging, entry, ["named.csv"])
+    assert File.stat!(Path.join(entry, "named.csv")).access == :read
+    File.rm_rf!(again)
+  end
+
   test "a file's digest is of its bytes", %{tmp_dir: tmp} do
     one = Path.join(tmp, "one")
     File.write!(one, "a\tb\n")
