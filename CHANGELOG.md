@@ -12,6 +12,28 @@ does: **Added**, **Changed**, **Fixed** or **Removed**.
 
 ### Waits that end on their own
 
+**Fixed.** "RPC without a bounded timeout" judges a closure the rpc
+runs (`:erpc.call(node, fn -> ... end)`, `rpc_closure` in blocking.dl)
+by what it runs: its body and the functions of its own module it
+reaches. A closure runs on the peer only where the same version of its
+module is loaded (anywhere else the call fails with badfun), so that is
+the code analyzed here. It can wait, and the rpc is reported, when it
+runs a receive with no `after`, a call through a fun value or an apply,
+a function of another module handed as a fun, or a call out of its
+module that answers in no time argus knows of: not a vetted function
+(`quick_api`, `answers_from_os` for a file's metadata,
+`self_bounded_api`), not a module that only computes (`computes_only`:
+Enum, Map, String, `:lists`, ...), not an `:erlang` BIF outside
+`erlang_waits` (apply, hibernate, the port calls, suspend and remote
+garbage collection, `system_flag`), and not a call or rpc with a finite
+timeout of its own. A call into another module of the program counts as
+a wait: the peer runs it by name. A remote function named by M and F is
+still judged only by the vetted lists, for the same reason: a pure
+`Cache.get/1` here may be anything on the peer. A fun the closure
+captured and hands to Enum is not seen. Req's
+`Utils.encode_form_part/2` (`File.stat!(path).size` on the node that
+holds the file) is no longer reported.
+
 **Fixed.** "RPC without a bounded timeout" no longer fires on a remote
 function that bounds its own wait: `:application.which_applications/0`
 and `Application.started_applications/0` call the application

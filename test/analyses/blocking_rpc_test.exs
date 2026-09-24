@@ -21,6 +21,7 @@ defmodule Argus.Analyses.BlockingRpcTest do
     Argus.Test.Fixtures.RpcTimeoutParam,
     Argus.Test.Fixtures.RpcQuickTargets,
     Argus.Test.Fixtures.RpcSelfBounded,
+    [Argus.Test.Fixtures.RpcClosures, Argus.Test.Fixtures.RpcClosures.Directory],
     Argus.Test.Fixtures.RpcViaHelperInInit
   ]
 
@@ -199,6 +200,41 @@ defmodule Argus.Analyses.BlockingRpcTest do
       funcs = Enum.map(waits(results, "rpc"), fn [func, _site, _variant] -> func end)
 
       assert funcs == ["Argus.Test.Fixtures.RpcSelfBounded:apps_within/2"]
+    end
+  end
+
+  describe "unbounded_wait: rpc of a closure" do
+    # A closure runs on the peer only where this version of its module is
+    # loaded (badfun anywhere else): it is judged by its body.
+    test "is flagged only when something it runs can wait", ctx do
+      skip_without_souffle()
+
+      results =
+        analyze(ctx, [Argus.Test.Fixtures.RpcClosures, Argus.Test.Fixtures.RpcClosures.Directory])
+
+      funcs =
+        results
+        |> waits("rpc")
+        |> Enum.map(fn [func, _site, _variant] -> func |> String.split(":") |> List.last() end)
+        |> Enum.sort()
+
+      assert funcs == ~w(await/1 handed/2 named/2 other_module/2 ping_forever/2)
+    end
+
+    # The effect model records `x.field`'s helper as a dot_dispatch
+    # dynamic_call when it runs: the answer must not turn on that.
+    test "is judged alike when every analysis's extractors run" do
+      skip_without_souffle()
+
+      modules = [Argus.Test.Fixtures.RpcClosures, Argus.Test.Fixtures.RpcClosures.Directory]
+      {:ok, results} = Memo.run_analyses(modules, analyses: :all)
+
+      funcs =
+        for %{analysis: :blocking, title: "RPC without a bounded timeout", mfa: {_, f, a}} <-
+              results.findings,
+            do: "#{f}/#{a}"
+
+      assert Enum.sort(funcs) == ~w(await/1 handed/2 named/2 other_module/2 ping_forever/2)
     end
   end
 

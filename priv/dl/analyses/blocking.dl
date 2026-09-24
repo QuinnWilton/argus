@@ -687,6 +687,16 @@ answers_at_once(call) :-
   quick_api(mod, fun),
   target = cat(mod, cat(".", fun)).
 
+answers_at_once(call) :-
+  rpc_target(call, target),
+  answers_from_os(mod, fun),
+  target = cat(mod, cat(".", fun)).
+
+// A closure the rpc runs, when nothing it runs can wait (fun_waits).
+answers_at_once(call) :-
+  rpc_closure(call, _),
+  !fun_waits(call).
+
 .decl quick_api(mod: symbol, fun: symbol)
 
 quick_api("Process", "alive?").
@@ -770,6 +780,164 @@ bounds_its_wait(call) :-
 
 self_bounded_api(":application", "which_applications", 0).
 self_bounded_api("Application", "started_applications", 0).
+
+// A file's metadata: the node's file server asks the OS and answers. It
+// is a kernel process no program process can keep from answering; what
+// it waits on is the disk.
+.decl answers_from_os(mod: symbol, fun: symbol)
+
+answers_from_os("File", "stat").
+answers_from_os("File", "stat!").
+answers_from_os("File", "lstat").
+answers_from_os("File", "lstat!").
+answers_from_os("File", "exists?").
+answers_from_os("File", "regular?").
+answers_from_os("File", "dir?").
+answers_from_os(":file", "read_file_info").
+answers_from_os(":file", "read_link_info").
+answers_from_os(":filelib", "is_file").
+answers_from_os(":filelib", "is_dir").
+answers_from_os(":filelib", "is_regular").
+answers_from_os(":filelib", "file_size").
+
+// ── A closure the rpc runs ───────────────────────────────────────────
+//
+// `:erpc.call(node, fn -> File.stat!(path).size end)` runs a closure,
+// and a closure runs on the peer only where the same version of its
+// module is loaded: anywhere else the call fails at once with badfun.
+// So what it runs is the code analyzed here — the closure's body and the
+// functions it calls in its own module — and it is judged by that code.
+// A remote function named by M and F is not: the peer runs whatever it
+// has loaded under that name (lesson 1's `Cache.get/1`, a pure function
+// here, may be anything there), and only the vetted OTP and Elixir
+// functions above answer for it. An external fun (`&Mod.f/0`) is called
+// by name too, and is not a closure.
+.decl rpc_closure(call: symbol, closure: symbol)
+
+rpc_closure(call, g) :-
+  rpc_target(call, "fun"),
+  fun_handed(call, f, g),
+  closure_def(f, g).
+
+// What the closure runs: its module's functions it reaches, a process
+// it spawns included (louder, never quieter).
+.init rpc_fun = ForwardIntraModuleReach
+
+rpc_fun.root(call, g) :- rpc_closure(call, g).
+
+// The closure can wait when something it runs can: a receive with no
+// `after`, a fun it cannot see (a call through a fun value, an apply, a
+// function of another module handed as a fun), or a call out of its
+// module that no list above says answers — which includes another
+// module of this program, run by name as a named rpc target is. A call
+// or an rpc with a finite timeout of its own answers in time. Not seen:
+// a fun the closure captured and hands to Enum, whose call looks like
+// Enum's own.
+.decl fun_waits(call: symbol)
+
+fun_waits(call) :- rpc_fun.reaches(call, f), recv_start(_, f, 1, _).
+fun_waits(call) :- rpc_fun.reaches(call, f), dynamic_call(_, f, kind), unseen_call(kind).
+
+fun_waits(call) :-
+  rpc_fun.reaches(call, f),
+  fun_ref(f, g),
+  function_def(f, own, _, _, _),
+  !function_def(g, own, _, _, _).
+
+fun_waits(call) :-
+  rpc_fun.reaches(call, f),
+  fun_call(f, id, _, _, _),
+  !answers_in_time(id).
+
+// The dynamic_call kinds the emitter records: a call through a fun
+// value, an apply. The effect model adds `dot_dispatch` for `x.field`'s
+// helper when it runs, which answers_in_time reads as the call it is;
+// the answer must not turn on which extractors ran.
+.decl unseen_call(kind: symbol)
+
+unseen_call("call_fun").
+unseen_call("apply").
+
+// The calls out of its module a function the closure runs makes.
+.decl fun_call(func: symbol, id: symbol, mod: symbol, fun: symbol, arity: number)
+
+fun_call(f, id, mod, fun, arity) :-
+  rpc_fun.reaches(_, f),
+  remote_call(id, f, mod, fun, arity),
+  function_def(f, own, _, _, _),
+  mod != own.
+
+.decl answers_in_time(id: symbol)
+
+answers_in_time(id) :- fun_call(_, id, mod, fun, _), quick_api(mod, fun).
+answers_in_time(id) :- fun_call(_, id, mod, fun, _), answers_from_os(mod, fun).
+answers_in_time(id) :- fun_call(_, id, mod, fun, n), self_bounded_api(mod, fun, n).
+answers_in_time(id) :- fun_call(_, id, mod, _, _), computes_only(mod).
+answers_in_time(id) :- fun_call(_, id, ":erlang", fun, _), !erlang_waits(fun).
+// `x.field` on a value the compiler could not prove a map compiles to
+// this helper: on a map it reads the field. On an atom it would call
+// that module's zero-arity function, a form deprecated with a warning.
+answers_in_time(id) :- fun_call(_, id, ":elixir_erl_pass", "no_parens_remote", 2).
+answers_in_time(id) :- fun_call(f, id, _, _, _), sync_call_site(id, f, _, t), t > 0.
+
+answers_in_time(id) :-
+  fun_call(f, id, _, _, _),
+  rpc_call(id, f, _, t),
+  t != "-1",
+  t != "0".
+
+// Modules whose functions compute a value from their arguments, and the
+// exceptions a `raise` builds.
+.decl computes_only(mod: symbol)
+
+computes_only("Enum").
+computes_only("Map").
+computes_only("MapSet").
+computes_only("List").
+computes_only("Keyword").
+computes_only("Tuple").
+computes_only("String").
+computes_only("Integer").
+computes_only("Float").
+computes_only("Atom").
+computes_only("Base").
+computes_only("Bitwise").
+computes_only("Range").
+computes_only("Access").
+computes_only("URI").
+computes_only(":lists").
+computes_only(":maps").
+computes_only(":sets").
+computes_only(":ordsets").
+computes_only(":orddict").
+computes_only(":gb_trees").
+computes_only(":gb_sets").
+computes_only(":string").
+computes_only(":binary").
+computes_only(":unicode").
+computes_only(":proplists").
+computes_only(":math").
+computes_only(":queue").
+computes_only("Exception").
+computes_only("ArgumentError").
+computes_only("RuntimeError").
+computes_only("KeyError").
+computes_only("ErlangError").
+
+// The :erlang functions that can wait: a message (hibernate), a busy
+// port, another process being suspended or collected, the schedulers,
+// or code they cannot see (apply). Every other :erlang function answers.
+.decl erlang_waits(fun: symbol)
+
+erlang_waits("apply").
+erlang_waits("hibernate").
+erlang_waits("port_command").
+erlang_waits("port_call").
+erlang_waits("port_control").
+erlang_waits("suspend_process").
+erlang_waits("garbage_collect").
+erlang_waits("check_process_code").
+erlang_waits("system_flag").
 
 // A site init/1 runs — an rpc or a :global op, in init/1 or in anything
 // it calls on its own stack — holds the supervisor's start, and is

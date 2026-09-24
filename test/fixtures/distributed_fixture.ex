@@ -276,6 +276,45 @@ defmodule Argus.Test.Fixtures.RpcSelfBounded do
     do: :rpc.call(node, :application, :which_applications, [timeout])
 end
 
+defmodule Argus.Test.Fixtures.RpcClosures do
+  @moduledoc false
+
+  # A closure runs on the peer only where this version of the module is
+  # loaded, so its body is the code that runs: judged by what it calls.
+
+  # Req's Utils.encode_form_part/2 shape: a file's size, read on the
+  # node that holds it. Quiet.
+  def size(node, path), do: :erpc.call(node, fn -> File.stat!(path).size end)
+
+  # An ETS read and arithmetic; a helper of this module; calls with a
+  # timeout of their own (GenServer.call/2's is five seconds). Quiet.
+  def count(node, table), do: :erpc.call(node, fn -> :ets.info(table, :size) + 1 end)
+  def local(node, key), do: :erpc.call(node, fn -> pick(key) end)
+  def ping(node, server), do: :erpc.call(node, fn -> GenServer.call(server, :ping, 1_000) end)
+  def ping_default(node, server), do: :erpc.call(node, fn -> GenServer.call(server, :ping) end)
+
+  # Each can wait forever: flagged.
+  def ping_forever(node, server),
+    do: :erpc.call(node, fn -> GenServer.call(server, :ping, :infinity) end)
+
+  def await(node), do: :erpc.call(node, fn -> receive(do: (msg -> msg)) end)
+  def other_module(node, key), do: :erpc.call(node, fn -> __MODULE__.Directory.get(key) end)
+  def handed(node, fun), do: :erpc.call(node, fun)
+
+  # A function of this module named by M and F: the peer runs whatever it
+  # has loaded under that name, pure here or not. Flagged.
+  def named(node, key), do: :rpc.call(node, __MODULE__, :pick, [key])
+
+  def pick(key), do: Map.get(%{a: 1}, key)
+
+  defmodule Directory do
+    @moduledoc false
+
+    # Pure here; run by name on the peer.
+    def get(key), do: Map.get(%{a: 1}, key)
+  end
+end
+
 defmodule Argus.Test.Fixtures.RpcCollectors do
   @moduledoc false
 
