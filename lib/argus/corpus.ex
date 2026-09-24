@@ -27,8 +27,10 @@ defmodule Argus.Corpus do
   that extraction reaches (`engine_digest/0`), the runtime and the
   solver, so a change to any of them misses. None of it names the
   directory argus was built in, so every worktree of one commit shares
-  the entries, and a stale entry is pruned when a fresh one is
-  installed.
+  the entries. Installing an entry prunes the checkout's stale ones
+  (`stale_facts/2`), sparing the few most recently used — the baseline
+  of a before-and-after comparison among them — and `mix argus.corpus
+  prune` does the same across every checkout.
 
   `analyze_all/2` runs checkouts `jobs/0` at a time; the test gate and
   `mix argus.corpus tally` both go through it.
@@ -251,7 +253,7 @@ defmodule Argus.Corpus do
 
   @facts_cache ".argus-facts"
 
-  # A hit touches its entry: what `prune_facts/2` reads to tell an entry
+  # A hit touches its entry: what `stale_facts/2` reads to tell an entry
   # a VM beside this one is using from one nobody will use again.
   defp facts(co, beams) do
     digest = facts_digest(beams)
@@ -285,7 +287,7 @@ defmodule Argus.Corpus do
         File.cp_r!(fresh, Path.join(staging, "facts"))
 
         case File.rename(staging, entry) do
-          :ok -> prune_facts(cache, digest)
+          :ok -> prune_facts(cache, keep: digest)
           {:error, reason} when reason in [:eexist, :enotempty, :eisdir] -> File.rm_rf!(staging)
         end
 
@@ -297,32 +299,97 @@ defmodule Argus.Corpus do
     end
   end
 
-  @stale_after_seconds 60 * 60
+  @live_seconds 60 * 60
+  @orphaned_staging_seconds 24 * 60 * 60
+  @keep_recent 3
+
+  @typedoc """
+  What `stale_facts/2` spares beyond the entries in use: `keep:`, an
+  entry never removed (the one just installed), and `recent:`, how many
+  of the others survive regardless of age (default 3), the most
+  recently touched first.
+  """
+  @type prune_option :: {:keep, String.t()} | {:recent, non_neg_integer()}
 
   @doc """
-  Removes the entries of a checkout's facts cache other than `keep` that
-  no run has touched for an hour.
+  The entries of a checkout's facts cache (`<checkout>/.argus-facts`)
+  that `prune_facts/2` removes: every installed entry untouched for an
+  hour, other than `keep:` and the `recent:` most recently touched among
+  them; and a staging directory untouched for a day.
 
-  An entry under another digest was extracted by an argus, a solver or
-  a build that is gone — or by a VM running beside this one on other
-  code. A hit touches its entry, so one in use is never older than
-  the run using it, and removing it from under that run left its
-  solves with no facts to read. Only installed entries are candidates,
-  never a staging directory another VM may still be filling.
+  An hour is how long an entry is presumed in use: a hit touches its
+  entry, so one a VM beside this one is reading is never older than the
+  run reading it, and removing it would leave that run's solves with no
+  facts. The `recent:` entries are the baselines: an agent that tallies
+  before a change to extraction and again after needs the first entry
+  still there at the end, however long the change took. A staging
+  directory is one a VM is filling or one whose VM died mid-copy; after
+  a day it is the latter.
   """
-  @spec prune_facts(Path.t(), String.t()) :: :ok
-  def prune_facts(cache, keep) do
+  @spec stale_facts(Path.t(), [prune_option()]) :: [Path.t()]
+  def stale_facts(cache, opts \\ []) do
+    keep = Keyword.get(opts, :keep)
+    recent = Keyword.get(opts, :recent, @keep_recent)
     now = System.os_time(:second)
 
-    for entry <- File.ls!(cache),
-        entry != keep,
-        Regex.match?(~r/^[0-9a-f]{64}$/, entry),
-        path = Path.join(cache, entry),
-        {:ok, %File.Stat{mtime: touched}} <- [File.stat(path, time: :posix)],
-        now - touched > @stale_after_seconds,
-        do: File.rm_rf!(path)
+    entries =
+      for name <- ls(cache),
+          path = Path.join(cache, name),
+          {:ok, %File.Stat{mtime: touched, type: :directory}} <- [File.stat(path, time: :posix)],
+          kind = entry_kind(name),
+          kind != nil,
+          do: {kind, name, path, now - touched}
 
-    :ok
+    stale_installed =
+      for(
+        {:installed, name, path, age} <- entries,
+        name != keep,
+        age > @live_seconds,
+        do: {age, path}
+      )
+      |> Enum.sort()
+      |> Enum.drop(recent)
+      |> Enum.map(fn {_age, path} -> path end)
+
+    orphaned =
+      for {:staging, _name, path, age} <- entries, age > @orphaned_staging_seconds, do: path
+
+    Enum.sort(stale_installed ++ orphaned)
+  end
+
+  @doc """
+  Removes `stale_facts/2` from a checkout's facts cache; the paths it
+  removed.
+  """
+  @spec prune_facts(Path.t(), [prune_option()]) :: [Path.t()]
+  def prune_facts(cache, opts \\ []) do
+    stale = stale_facts(cache, opts)
+    Enum.each(stale, &File.rm_rf!/1)
+    stale
+  end
+
+  @doc "The facts cache of every checkout under `root/0` that has one."
+  @spec facts_caches() :: [Path.t()]
+  def facts_caches do
+    for name <- ls(root()),
+        cache = Path.join([root(), name, @facts_cache]),
+        File.dir?(cache),
+        do: cache
+  end
+
+  defp ls(dir) do
+    case File.ls(dir) do
+      {:ok, names} -> Enum.sort(names)
+      {:error, _} -> []
+    end
+  end
+
+  defp entry_kind(name) do
+    cond do
+      Regex.match?(~r/^[0-9a-f]{64}$/, name) -> :installed
+      Regex.match?(~r/^[0-9a-f]{64}\.\d+\.\d+$/, name) -> :staging
+      true -> nil
+    end
   end
 
   defp facts_digest(beams) do

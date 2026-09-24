@@ -1714,6 +1714,14 @@ gate does: the cache is keyed on the dependencies on the code path, and
 a dev-environment tally extracted every checkout a second time.
 `ARGUS_CORPUS_JOBS` that is not a positive integer raises.
 
+**Changed.** Pruning a checkout's facts cache keeps the three most
+recently used entries beside the one just installed and any touched
+within the hour (`Argus.Corpus.stale_facts/2`), so the baseline of a
+before-and-after tally survives the change it measures; a staging
+directory a crashed run left is removed after a day. **Added.**
+`mix argus.corpus prune [--keep N] [--dry-run]` applies the same policy
+to every checkout and reports what it reclaimed.
+
 **Fixed.** `Argus.Corpus.ensure/2` returned every beam twice when the
 project is the repository root, and listed both a dev and a test build;
 each beam once now, from one build.

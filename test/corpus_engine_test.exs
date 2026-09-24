@@ -46,23 +46,79 @@ defmodule Argus.CorpusEngineTest do
     refute String.Chars in modules
   end
 
+  defp entries(cache, names_and_ages) do
+    now = System.os_time(:second)
+
+    for {name, age} <- names_and_ages do
+      path = Path.join(cache, name)
+      File.mkdir_p!(Path.join(path, "facts"))
+      File.touch!(path, now - age)
+    end
+  end
+
+  defp digest(char), do: String.duplicate(char, 64)
+
+  @hour 60 * 60
+
   @tag :tmp_dir
-  test "pruning spares the kept entry, anything touched within the hour, and staging",
+  test "pruning spares the kept entry, anything touched within the hour, and the most recent",
        %{tmp_dir: cache} do
-    keep = String.duplicate("a", 64)
-    live = String.duplicate("b", 64)
-    stale = String.duplicate("c", 64)
-    staging = "#{stale}.123.4"
+    entries(cache, [
+      {digest("a"), 30 * @hour},
+      {digest("b"), 60},
+      {digest("c"), 2 * @hour},
+      {digest("d"), 3 * @hour},
+      {digest("e"), 4 * @hour},
+      {digest("f"), 5 * @hour}
+    ])
 
-    for entry <- [keep, live, stale, staging], do: File.mkdir_p!(Path.join(cache, entry))
+    # Beside the kept a and the live b, the two most recent of the rest.
+    assert Corpus.stale_facts(cache, keep: digest("a"), recent: 2) ==
+             Enum.map([digest("e"), digest("f")], &Path.join(cache, &1))
 
-    two_hours_ago = System.os_time(:second) - 2 * 60 * 60
-    File.touch!(Path.join(cache, stale), two_hours_ago)
-    File.touch!(Path.join(cache, staging), two_hours_ago)
-    File.touch!(Path.join(cache, keep), two_hours_ago)
+    assert Corpus.prune_facts(cache, keep: digest("a"), recent: 2) ==
+             Enum.map([digest("e"), digest("f")], &Path.join(cache, &1))
 
-    assert :ok = Corpus.prune_facts(cache, keep)
-    assert Enum.sort(File.ls!(cache)) == Enum.sort([keep, live, staging])
+    assert Enum.sort(File.ls!(cache)) == Enum.map(~w(a b c d), &digest/1)
+  end
+
+  @tag :tmp_dir
+  test "a baseline outlives an hour of work under the default retention",
+       %{tmp_dir: cache} do
+    # A before-tally's entry, then three extraction changes, each tallied.
+    entries(cache, [
+      {digest("a"), 6 * @hour},
+      {digest("b"), 4 * @hour},
+      {digest("c"), 2 * @hour}
+    ])
+
+    entries(cache, [{digest("d"), 0}])
+    assert Corpus.prune_facts(cache, keep: digest("d")) == []
+  end
+
+  @tag :tmp_dir
+  test "nothing touched within the hour is pruned, however many there are",
+       %{tmp_dir: cache} do
+    entries(cache, for(c <- ~w(a b c d e f), do: {digest(c), 60}))
+    assert Corpus.prune_facts(cache, recent: 0) == []
+  end
+
+  @tag :tmp_dir
+  test "a staging directory is pruned only once a day has passed; other names never",
+       %{tmp_dir: cache} do
+    entries(cache, [
+      {"#{digest("a")}.123.4", 2 * @hour},
+      {"#{digest("b")}.123.5", 25 * @hour},
+      {"notes", 48 * @hour}
+    ])
+
+    File.write!(Path.join(cache, digest("c")), "a file, not an entry")
+
+    assert Corpus.stale_facts(cache, recent: 0) == [Path.join(cache, "#{digest("b")}.123.5")]
+  end
+
+  test "a missing cache has nothing to prune" do
+    assert Corpus.stale_facts("/nonexistent/argus-facts") == []
   end
 
   test "the digest is stable within a VM" do

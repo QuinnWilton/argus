@@ -71,12 +71,18 @@ those frameworks need.
   compiling each tree once into `ARGUS_CORPUS_DIR` (default
   `~/.cache/argus/corpus`) and caching each tree's facts beside it,
   keyed by the beams, the code and Datalog extraction reaches
-  (`Argus.Corpus.engine_modules/0` — not prose or rules), the runtime
-  and the solver, so a warm run only solves; `mix test --exclude corpus` skips
+  (`Argus.Corpus.engine_modules/0` — not prose or rules, hashed by
+  `Argus.BeamDigest`, which leaves out where argus was built), the
+  runtime and the solver, so a warm run only solves — in any worktree of
+  the same commit; `mix test --exclude corpus` skips
   it, `ARGUS_CORPUS_ONLY=redix#334` narrows it, `ARGUS_CORPUS_JOBS` sets
   how many checkouts are analyzed at once (default 4), `mix argus.corpus
   fetch` warms the cache and `mix argus.corpus tally` counts every title
-  across the trees — the noise check after a rule changes. A new rule
+  across the trees — the noise check after a rule changes. The tally
+  runs in `MIX_ENV=test` and shares the gate's entries; each checkout
+  keeps its three most recent entries beyond any used in the last hour,
+  so a before-change tally stays warm for the after-change one, and
+  `mix argus.corpus prune [--keep N]` reclaims the rest. A new rule
   comes with a pair.
 - Test modules are `async: true` unless they touch VM-wide state (the
   environment, `Mix.shell/1`, compiler options); a sync module says why
