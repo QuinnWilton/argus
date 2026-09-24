@@ -411,6 +411,19 @@ cluster-wide lock during init" at `:warning` (each try still waits on
 every node in the list); a positive count over `[node()]` is quiet, as
 the help promises.
 
+**Fixed.** The walk from a lock back to init/1 is `global_path`
+(`clientlib/global_reach.dl`), read by startup and by blocking's
+`during_init` alike, so a lock is one of the two analyses' finding. It
+enters only the clauses a literal first argument matches
+(`clause_call`): `sync(:boot, s)` in init/1 no longer reaches the lock
+in `sync(:locked, s)` that only handle_continue/2 enters. It steps into
+a task init/1 starts with `Task.async` (or `Task.Supervisor.async`) and
+waits for with `Task.await`, `await_many`, `yield` or `yield_many`
+(`awaits_task` in `clientlib/runs_elsewhere.dl`, function-level), where
+the task's lock holds init. startup now runs
+`Argus.Extractors.ClauseCall`, and stage 0's `call_site` keeps the
+`Task` async, await and yield calls.
+
 ### Funs that leave the caller's stack
 
 **Fixed.** `runs_elsewhere` (`clientlib/runs_elsewhere.dl`) says which

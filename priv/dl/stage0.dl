@@ -54,9 +54,9 @@ call_site(id, caller, mod, func, arity) :-
   anchor_api(mod, func).
 
 // The library calls findings point at: a synchronous call, a child
-// started under a supervisor, a tree started, a socket waited on; and
-// the call that hands a function's fun to a child
-// (runs_elsewhere, in runs_elsewhere.dl).
+// started under a supervisor, a tree started, a socket waited on; the
+// call that hands a function's fun to a child, and a task started and
+// awaited (runs_elsewhere, in runs_elsewhere.dl).
 .decl anchor_api(mod: symbol, func: symbol)
 
 anchor_api("GenServer", "call").
@@ -72,6 +72,13 @@ anchor_api("Supervisor", "start_link").
 anchor_api(":gen_tcp", "recv").
 anchor_api(":ssl", "recv").
 anchor_api("Supervisor", "start_child").
+anchor_api("Task", "async").
+anchor_api("Task", "await").
+anchor_api("Task", "await_many").
+anchor_api("Task", "yield").
+anchor_api("Task", "yield_many").
+anchor_api("Task.Supervisor", "async").
+anchor_api("Task.Supervisor", "async_nolink").
 
 .output call_site(filename="call_site.facts")
 

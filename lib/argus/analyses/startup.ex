@@ -60,7 +60,10 @@ defmodule Argus.Analyses.Startup do
       # A call whose target is a pid resolves through process points-to
       # (clientlib/processes.dl, in the points-to stage): where the pid was
       # started, and names.
-      Argus.Extractors.PidFlow
+      Argus.Extractors.PidFlow,
+      # A call with a literal first argument enters only the clauses that
+      # match it (clientlib/global_reach.dl's lock walk).
+      Argus.Extractors.ClauseCall
     ]
 
   @impl true

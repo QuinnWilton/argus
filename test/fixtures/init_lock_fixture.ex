@@ -4,9 +4,10 @@ defmodule Argus.Test.Fixtures.InitLock do
   (2026-09-24) found it misjudging, one module each, beside the controls
   that must keep their verdict.
 
-  What decides a finding here: whether the `:global` lock keeps
-  retrying until it is granted (retries), and whether init/1 is on its
-  stack when it runs (callbacks, starts).
+  What decides a finding: whether the `:global` lock keeps retrying
+  until it is granted (retries), whether init/1 is on its stack when it
+  runs (callbacks, tasks, starts) and which clause of a shared helper
+  init/1 enters.
   """
 
   # ── Retries ─────────────────────────────────────────────────────────
@@ -204,6 +205,67 @@ defmodule Argus.Test.Fixtures.InitLock do
     def init(name) do
       {:ok, _} = Task.start_link(fn -> :global.set_lock({name, self()}) end)
       {:ok, name}
+    end
+  end
+
+  # ── A task init/1 waits for ─────────────────────────────────────────
+
+  defmodule AwaitedTask do
+    @moduledoc "Task.async then Task.await: init/1 waits for the lock. Reported."
+    use GenServer
+
+    def init(name) do
+      Task.async(fn -> :global.set_lock({name, self()}) end) |> Task.await(:infinity)
+      {:ok, name}
+    end
+  end
+
+  defmodule UnawaitedTask do
+    @moduledoc """
+    Control: Task.async whose result init/1 keeps in its state and awaits
+    later, in handle_info. Quiet.
+    """
+    use GenServer
+
+    def init(name) do
+      task = Task.async(fn -> :global.set_lock({name, self()}) end)
+      {:ok, %{name: name, task: task}}
+    end
+
+    def handle_info({ref, _}, %{task: %{ref: ref}} = state), do: {:noreply, state}
+  end
+
+  # ── Which clause init/1 enters ──────────────────────────────────────
+
+  defmodule SharedHelper do
+    @moduledoc """
+    init/1 and handle_continue/2 share sync/2, and only the :locked
+    clause, which init/1 never enters, takes the lock. Quiet.
+    """
+    use GenServer
+
+    def init(s), do: {:ok, sync(:boot, s), {:continue, :lock}}
+    def handle_continue(:lock, s), do: {:noreply, sync(:locked, s)}
+
+    def sync(:boot, s), do: s
+
+    def sync(:locked, s) do
+      true = :global.set_lock({:k, self()})
+      s
+    end
+  end
+
+  defmodule SharedHelperEntered do
+    @moduledoc "Control: init/1 enters the :locked clause. Reported."
+    use GenServer
+
+    def init(s), do: {:ok, sync(:locked, s)}
+
+    def sync(:boot, s), do: s
+
+    def sync(:locked, s) do
+      true = :global.set_lock({:k, self()})
+      s
     end
   end
 end

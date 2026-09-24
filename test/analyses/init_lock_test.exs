@@ -5,9 +5,9 @@ defmodule Argus.Analyses.InitLockTest do
   verdict (`Argus.Test.Fixtures.InitLock`).
 
   A lock init/1 holds is startup's finding; blocking steps aside for it
-  (its `during_init` walks the same edges), so each lock is reported by
-  one of the two, and a lock the walk sets aside becomes blocking's
-  "Cluster-wide :global synchronization" again.
+  (its `during_init` reads the same walk, `global_path`), so each lock is
+  reported by one of the two, and a lock the walk sets aside becomes
+  blocking's "Cluster-wide :global synchronization" again.
   """
 
   use ExUnit.Case, async: true
@@ -37,7 +37,11 @@ defmodule Argus.Analyses.InitLockTest do
       InitLock.WarmupBeside,
       InitLock.SpecClosure,
       InitLock.HelperStart,
-      InitLock.SpawnedLock
+      InitLock.SpawnedLock,
+      InitLock.AwaitedTask,
+      InitLock.UnawaitedTask,
+      InitLock.SharedHelper,
+      InitLock.SharedHelperEntered
     ]
 
     assert {:ok, %{findings: findings}} =
@@ -145,6 +149,37 @@ defmodule Argus.Analyses.InitLockTest do
 
     test "a task init/1 starts and does not wait for", %{by_module: by_module} do
       not_init_lock(by_module, InitLock.SpawnedLock)
+    end
+  end
+
+  describe "a task init/1 awaits" do
+    test "Task.async then Task.await holds init for as long as the lock",
+         %{by_module: by_module} do
+      f = init_lock(by_module, InitLock.AwaitedTask)
+      assert f.title == "Cluster-wide lock during init"
+      assert Enum.any?(f.related, &(&1.label == "init/1 reaches it from here"))
+    end
+
+    test "a task awaited only in a later callback does not", %{by_module: by_module} do
+      not_init_lock(by_module, InitLock.UnawaitedTask)
+    end
+  end
+
+  describe "which clause init/1 enters" do
+    test "a literal first argument enters only its clause", %{by_module: by_module} do
+      not_init_lock(by_module, InitLock.SharedHelper)
+    end
+
+    test "startup reads the clauses on its own, without blocking's extractors" do
+      assert {:ok, %{findings: findings}} =
+               Argus.run_analyses([InitLock.SharedHelper], analyses: [:startup])
+
+      refute Enum.any?(findings, &(&1.title in @startup_titles))
+    end
+
+    test "the clause init/1 enters is still reported", %{by_module: by_module} do
+      f = init_lock(by_module, InitLock.SharedHelperEntered)
+      assert f.title == "Cluster-wide lock during init"
     end
   end
 end

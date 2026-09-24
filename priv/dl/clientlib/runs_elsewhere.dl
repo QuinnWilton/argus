@@ -139,3 +139,34 @@ hands_funs_off(f) :- process_start(_, f, _, kind, "dynamic"), kind != "server".
 hands_funs_off(f) :-
   call_site(_, f, m, "start_child", _),
   (m = "Supervisor" ; m = "DynamicSupervisor").
+
+// ── A task the caller waits for ──────────────────────────────────────
+//
+// `Task.async(fn -> ... end) |> Task.await()`: the closure runs in the
+// task's process, so the edge stays runs_elsewhere (a receive in it is
+// the task's, and self() is the task), but func waits for what it does.
+// A walk asking what holds func up (startup's lock during init) steps
+// into it. `start` is the async call. Function-level: an await, yield
+// or await_many anywhere in func is taken to collect this task, as
+// error_handling's task collection does.
+.decl awaits_task(func: symbol, start: symbol, runs: symbol)
+
+awaits_task(f, id, g) :-
+  process_start(id, f, _, "spawn", g),
+  call_site(id, f, m, a, _),
+  async_start(m, a),
+  call_site(_, f, "Task", w, _),
+  task_wait(w).
+
+.decl async_start(mod: symbol, func: symbol)
+
+async_start("Task", "async").
+async_start("Task.Supervisor", "async").
+async_start("Task.Supervisor", "async_nolink").
+
+.decl task_wait(func: symbol)
+
+task_wait("await").
+task_wait("await_many").
+task_wait("yield").
+task_wait("yield_many").

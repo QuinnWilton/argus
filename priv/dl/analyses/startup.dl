@@ -15,6 +15,7 @@
 .include "../clientlib/process_statem.dl"
 .include "../clientlib/resolved_calls.dl"
 .include "../clientlib/vocabulary.dl"
+.include "../clientlib/global_reach.dl"
 
 // ══ The outputs ═════════════════════════════════════════════════════
 //
@@ -422,22 +423,17 @@ deferral_defect(mod, "init_timeout", site, to_string(ms)) :-
 
 // The worst case: a :global lock that retries until it is granted
 // (lock_until_granted, clientlib/vocabulary.dl), held from supervisor
-// startup — in init/1, or in anything init/1 calls on its own stack
-// (lock_reach). The supervisor waits on the lock, and the lock waits on
-// the nodes in its list: every connected node when `dep` is "cluster",
-// only this node's global server when it is "local" (it still waits
-// forever on a local holder), and
+// startup — in init/1, or in anything init/1 runs on its own stack or
+// waits for (global_path, clientlib/global_reach.dl). The supervisor
+// waits on the lock, and the lock waits on the nodes in its list: every
+// connected node when `dep` is "cluster", only this node's global server
+// when it is "local" (it still waits forever on a local holder), and
 // "unknown" when the list is not in the bytecode. A retry count the
 // bytecode does not show is assumed :infinity, the default the wrappers
 // forward, and the row says so by its kind ("global_assumed"). `lock` is
 // the :global call itself, in whichever function holds it (init/1
 // included). One row per site — finding builders dedupe on (func,
 // nodes, op).
-.init lock_reach = SameProcessReach
-
-lock_reach.seed(holder, lock) :- lock_until_granted(lock, holder, _, _, _).
-lock_reach.seed(holder, lock) :- bounded_lock(lock, holder, _, _, _).
-
 blocks_on_peer(init, "init", nodes, "global", "", "", lock, op) :-
   lock_during_init(init, lock),
   global_op(lock, _, op, "infinity", nodes).
@@ -472,11 +468,12 @@ bounded_lock_during_init(init, lock) :-
   gives_up_after_retries(lock),
   waits_on_other_nodes(lock).
 
-// `func` reaches the function holding `site` on its own stack: calls
-// that stay in the calling process (lock_reach).
+// `func` is on the stack when the :global call at `site` runs: the calls
+// that stay in the calling process, entering only the clauses a literal
+// first argument matches, and the tasks it awaits (global_path).
 .decl reaches_in_same_process(func: symbol, site: symbol) inline
 
-reaches_in_same_process(f, site) :- lock_reach.reaches(f, site).
+reaches_in_same_process(f, site) :- global_path(f, _, site).
 
 // A :global call that retries until it is granted (lock_until_granted).
 .decl retries_until_locked(site: symbol) inline
@@ -500,7 +497,8 @@ init_lock(init, lock) :- lock_during_init(init, lock).
 init_lock(init, lock) :- bounded_lock_during_init(init, lock).
 
 // Where init/1's path to a lock in a helper starts: the call in init/1
-// whose callee, on init's own stack, reaches the lock. The finding's "init/1 reaches it from here"
+// whose callee, on init's own stack, reaches the lock (or the Task.async
+// whose task init/1 awaits). The finding's "init/1 reaches it from here"
 // frame points at that call; a path that leaves init/1 through something
 // with no call instruction (a closure it runs, a fun it applies) points
 // at init/1 itself, `call` empty — unless the lock is in an anonymous
@@ -514,10 +512,9 @@ init_lock(init, lock) :- bounded_lock_during_init(init, lock).
 
 init_lock_step(init, lock, call) :-
   init_lock(init, lock),
-  !global_op(lock, init, _, _, _),
-  call_instr(init, g, call),
-  !runs_elsewhere(init, g),
-  lock_reach.reaches(g, lock).
+  global_path(init, call, lock),
+  call != "",
+  call != lock.
 
 .decl init_lock_stepped(init: symbol, lock: symbol)
 
