@@ -392,9 +392,11 @@ defmodule Argus.Analyses.Blocking do
       :warning,
       "RPC without a bounded timeout",
       "#{func} calls #{Findings.rpc_api(variant)} with an infinity timeout (the " <>
-        "default when none is passed, or `:infinity` given explicitly). A " <>
-        "partitioned, overloaded, or restarting peer blocks this process " <>
-        "indefinitely — distributed calls need explicit deadlines.",
+        "default when none is passed, or `:infinity` given explicitly). A peer " <>
+        "that stays connected but never answers, its callee deadlocked or " <>
+        "waiting on something that never comes, holds this process forever. " <>
+        "A node that goes away is noticed only after net_ticktime, about a " <>
+        "minute by default.",
       at: Findings.at_instr(site),
       at_label: "no timeout bounds this call",
       help: ["pass a timeout (the last argument) and take `{:badrpc, :timeout}` as a result"]

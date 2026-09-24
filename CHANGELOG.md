@@ -50,6 +50,14 @@ these do not wait. Horde's `Registry.process_alive?/1`
 and phoenix_live_dashboard's `SystemInfo.node_capabilities/2`
 (`:code.is_loaded`) are no longer reported.
 
+**Fixed.** "RPC without a bounded timeout" said a partitioned or
+restarting peer blocks the caller indefinitely. It does not: erpc,
+under `:rpc.call` since OTP 23, monitors the peer, and once
+net_ticktime notices it gone (about a minute by default) the call
+returns `{:badrpc, :nodedown}` or raises `{:erpc, :noconnection}`. The
+detail now says a peer that stays connected but never answers holds the
+caller forever, and a node that goes away is noticed after net_ticktime.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile

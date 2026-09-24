@@ -487,7 +487,11 @@ receive_in_callback(id, func, callback, behaviour, proximity, "true") :-
 
 // ── RPC without timeout ──────────────────────────────────────────
 
-// RPC call using default infinity timeout — hangs on netsplit.
+// RPC call using default infinity timeout — hangs while a connected
+// peer never answers. A peer that goes away is not forever: erpc (under
+// :rpc.call since OTP 23) monitors it, and once net_ticktime notices,
+// about a minute by default, :rpc.call returns {:badrpc, :nodedown}
+// and :erpc.call raises {:erpc, :noconnection}.
 // site is the rpc call instruction. One row per site — finding
 // builders dedupe on (func, variant).
 // An rpc or a :global op init/1 reaches is startup's finding

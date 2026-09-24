@@ -32,6 +32,27 @@ defmodule Argus.Analyses.BlockingRpcTest do
     end
   end
 
+  describe "unbounded_wait: rpc prose" do
+    # A peer that goes away is noticed within net_ticktime (erpc monitors
+    # it); forever is a connected peer whose callee never answers.
+    test "says what waits forever, and what only waits for net_ticktime" do
+      attrs =
+        Argus.Analyses.Blocking.finding(:unbounded_wait, [
+          "M:f/1",
+          "M:f/1#3",
+          "rpc",
+          "rpc",
+          "",
+          ""
+        ])
+
+      assert attrs.detail =~ "stays connected but never answers"
+      assert attrs.detail =~ "holds this process forever"
+      assert attrs.detail =~ "net_ticktime"
+      refute attrs.detail =~ "partitioned"
+    end
+  end
+
   describe "unbounded_wait: rpc to a function that answers at once" do
     test "is not flagged; the same call to one that can wait is" do
       skip_without_souffle()
