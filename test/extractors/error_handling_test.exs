@@ -101,6 +101,25 @@ defmodule Argus.Extractors.ErrorHandlingTest do
     end
   end
 
+  describe "extract/1 — try_covers_closure" do
+    alias Argus.Test.Fixtures.Consistency, as: C
+
+    defp covered_closures(mod) do
+      {:ok, facts} = Argus.Pipeline.extract([mod], extractors: [ErrorHandling])
+      Enum.map(facts[:try_covers_closure] || [], fn [_try, _func, closure] -> closure end)
+    end
+
+    test "a closure only calls inside the try read is covered, wherever it is built" do
+      # The compiler builds ClosureInTry's closure before the try.
+      assert [closure] = covered_closures(C.ClosureInTry)
+      assert closure =~ "ClosureInTry:-d/1-fun-0-/1"
+    end
+
+    test "a closure whose value leaves the try is not" do
+      assert covered_closures(C.ClosureEscapes) == []
+    end
+  end
+
   describe "extract/1 — try_covers" do
     alias Argus.Extractor.Helpers
     alias Argus.Test.Fixtures.SiblingGuard, as: G

@@ -453,4 +453,198 @@ defmodule Argus.Test.Fixtures.Consistency do
       send(self(), :bumped)
     end
   end
+
+  defmodule CallerGuards do
+    @moduledoc """
+    Three sites rescue update_counter's ArgumentError in their own
+    function. The fourth is in a private helper whose only caller calls
+    it inside a try that rescues it, and the fifth in one reached through
+    another helper under the same kind of try (db_connection's
+    Holder.hash_holder/2, under maybe_disconnect/3's rescue): both are
+    guarded, by their callers. The first helper tail-calls, and so hands
+    its exception to the caller as it hands its result.
+    """
+    def a(k) do
+      :ets.update_counter(:caller_guards, k, 1)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def b(k) do
+      :ets.update_counter(:caller_guards, k, 2)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def c(k) do
+      :ets.update_counter(:caller_guards, k, 3)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def d(k) do
+      bump(k)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def e(k) do
+      reason(k) || false
+    rescue
+      _ -> false
+    end
+
+    defp bump(k), do: :ets.update_counter(:caller_guards, k, 4)
+
+    defp reason(k), do: hash(k) > 10
+
+    defp hash(k) do
+      n = :ets.update_counter(:caller_guards, k, 5)
+      n * 2
+    end
+  end
+
+  defmodule ClosureInTry do
+    @moduledoc """
+    Three sites rescue update_counter's ArgumentError; the fourth runs in
+    a closure that Enum.each calls inside a try that rescues it, in the
+    same process: guarded.
+    """
+    def a(k) do
+      :ets.update_counter(:closure_in_try, k, 1)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def b(k) do
+      :ets.update_counter(:closure_in_try, k, 2)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def c(k) do
+      :ets.update_counter(:closure_in_try, k, 3)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def d(ks) do
+      Enum.each(ks, fn k -> :ets.update_counter(:closure_in_try, k, 4) end)
+    rescue
+      ArgumentError -> 0
+    end
+  end
+
+  defmodule TaskInTry do
+    @moduledoc """
+    The same closure handed to Task.async inside the try runs in the
+    task's process, where the rescue does not reach: still the deviant.
+    """
+    def a(k) do
+      :ets.update_counter(:task_in_try, k, 1)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def b(k) do
+      :ets.update_counter(:task_in_try, k, 2)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def c(k) do
+      :ets.update_counter(:task_in_try, k, 3)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def d(k) do
+      Task.await(Task.async(fn -> :ets.update_counter(:task_in_try, k, 4) end))
+    rescue
+      ArgumentError -> 0
+    end
+  end
+
+  defmodule HelperOutsideTry do
+    @moduledoc """
+    A private helper one caller calls inside a rescue and another calls
+    bare: some way in is unguarded, and the helper's site is the deviant.
+    """
+    def a(k) do
+      :ets.update_counter(:helper_outside, k, 1)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def b(k) do
+      :ets.update_counter(:helper_outside, k, 2)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def c(k) do
+      :ets.update_counter(:helper_outside, k, 3)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def d(k) do
+      bump(k)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def e(k), do: {:ok, bump(k)}
+
+    defp bump(k), do: :ets.update_counter(:helper_outside, k, 4)
+  end
+
+  defmodule GuardedByCallers do
+    @moduledoc """
+    Three private helpers call update_counter bare, each called only
+    inside a rescue; a public function calls it bare. The belief is
+    held by the callers' tries, and the evidence says so.
+    """
+    def a(k) do
+      {:ok, bump1(k)}
+    rescue
+      ArgumentError -> 0
+    end
+
+    def b(k) do
+      {:ok, bump2(k)}
+    rescue
+      ArgumentError -> 0
+    end
+
+    def c(k) do
+      {:ok, bump3(k)}
+    rescue
+      ArgumentError -> 0
+    end
+
+    def d(k), do: {:ok, :ets.update_counter(:guarded_by_callers, k, 4)}
+
+    defp bump1(k), do: :ets.update_counter(:guarded_by_callers, k, 1)
+    defp bump2(k), do: :ets.update_counter(:guarded_by_callers, k, 2)
+    defp bump3(k), do: :ets.update_counter(:guarded_by_callers, k, 3)
+  end
+
+  defmodule ClosureEscapes do
+    @moduledoc """
+    A closure called inside a rescue and also returned: whoever the
+    caller hands it to may run it anywhere, so the try does not cover it.
+    """
+    def d(k) do
+      f = fn -> :ets.update_counter(:closure_escapes, k, 4) end
+
+      try do
+        f.()
+      rescue
+        ArgumentError -> 0
+      end
+
+      f
+    end
+  end
 end

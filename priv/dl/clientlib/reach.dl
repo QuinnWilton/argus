@@ -199,6 +199,24 @@
     open_fun_edge(g, h).
 }
 
+// Forward, by kind, along the calls no guard of that kind covers: what
+// runs, on some path from a root, with no guard of `kind` around it. A
+// call the instance marks `guarded` for a kind stops the path for that
+// kind; a closure the function builds is entered unless the instance
+// marks the edge `guarded_edge`, and a function reference always is.
+// Its complement is what every path reaches only through a guard.
+.comp ForwardUnguardedSet {
+  .decl root(func: symbol, kind: symbol)
+  .decl guarded(call: symbol, kind: symbol)
+  .decl guarded_edge(func: symbol, callee: symbol, kind: symbol)
+  .decl reaches(func: symbol, kind: symbol)
+
+  reaches(f, k) :- root(f, k).
+  reaches(g, k) :- reaches(f, k), call_instr(f, g, call), !guarded(call, k).
+  reaches(g, k) :- reaches(f, k), closure_def(f, g), !guarded_edge(f, g, k).
+  reaches(g, k) :- reaches(f, k), fun_ref(f, g).
+}
+
 // The same, walked against the edges: from a few interesting functions
 // to the callers that reach them within `limit` calls.
 .comp BackwardBoundedCallReach {

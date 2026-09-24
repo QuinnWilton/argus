@@ -146,14 +146,17 @@ defmodule Argus.Schema.ErrorHandling do
         fields: [
           {:id, :symbol, "the try (or catch) instruction"},
           {:func, :symbol, "the function"},
-          {:closure, :func_id, "the closure built inside its protected region"}
+          {:closure, :func_id, "a closure whose value only calls inside the region read"}
         ],
         doc: """
-        The try at `id` covers the `make_fun` that builds `closure`: the \
-        fun is made on a path from the try that has not passed its \
-        `try_end`. A fun handed from there to `Enum.each` runs under the \
-        handler; whether it is handed to another process instead is the \
-        rules' question.
+        Every read of the closure's value in the function is a call inside \
+        the try's protected region: it is handed to `Enum.each` there, or \
+        called, and not returned, stored or sent. Where the closure is built \
+        does not matter; the compiler hoists one with nothing to capture \
+        out of the try. Whether the call it is handed to runs it in another \
+        process is the rules' question. `fun_handed` names the calls a fun is \
+        handed to, but has no row for a fun returned, stored or called \
+        through a variable, so it cannot say the fun runs nowhere else.
         """
       },
       %{

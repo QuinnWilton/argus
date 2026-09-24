@@ -574,6 +574,7 @@ defmodule Argus.FindingsTest do
           "",
           ":my_mod:other/0",
           "",
+          "",
           ""
         ])
 

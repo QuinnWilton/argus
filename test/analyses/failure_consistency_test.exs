@@ -107,6 +107,45 @@ defmodule Argus.Analyses.FailureConsistencyTest do
     end
   end
 
+  describe "a guard the callers hold" do
+    test "a private helper called only inside a try is guarded by it" do
+      skip_without_souffle()
+      assert rows([C.CallerGuards]) == []
+    end
+
+    test "a belief its callers hold is shown as theirs" do
+      skip_without_souffle()
+      assert [{func, _, "exception_guarded", 3, 1}] = rows([C.GuardedByCallers])
+      assert func =~ "GuardedByCallers:d/1"
+
+      {:ok, result} = Argus.run_analyses([C.GuardedByCallers], analyses: [:failure])
+      assert [f] = Enum.filter(result.findings, &(&1.title =~ "called bare"))
+      assert length(f.related) == 3
+
+      assert Enum.all?(
+               f.related,
+               &(&1.label == "guarded by a try around every call of its function")
+             )
+    end
+
+    test "a closure run inside a try, in the same process, is guarded by it" do
+      skip_without_souffle()
+      assert rows([C.ClosureInTry]) == []
+    end
+
+    test "a closure handed to another process is not" do
+      skip_without_souffle()
+      assert [{func, _, "exception_guarded", 3, 1}] = rows([C.TaskInTry])
+      assert func =~ "TaskInTry:-d/1-fun-0-/1"
+    end
+
+    test "a helper with one bare way in is the deviant" do
+      skip_without_souffle()
+      assert [{func, _, "exception_guarded", 3, 1}] = rows([C.HelperOutsideTry])
+      assert func =~ "HelperOutsideTry:bump/1"
+    end
+  end
+
   describe "the population" do
     defp targets(modules) do
       {:ok, results} = Argus.analyze(modules, :failure)

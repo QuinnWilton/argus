@@ -38,6 +38,19 @@ covered_by_catch(call, f, t, class) :-
   try_covers(t, f, call, "catch"),
   (class = "error" ; class = "exit" ; class = "throw").
 
+// The try (or `catch`) at `id` takes some reason of `class`: a path
+// through its handler establishes the class and returns without raising
+// again (catch_class), whatever it asks of the reason — `rescue
+// ArgumentError` takes the class error, as `catch :error, _` does. A
+// handler with no class test takes every class; `class` "*" asks
+// whether it takes anything at all. An `after`, or a rescue that only
+// re-raises, takes nothing.
+.decl try_takes(id: symbol, class: symbol)
+
+try_takes(id, class) :- catch_class(id, _, class, _), class != "*".
+try_takes(id, class) :- catch_class(id, _, "*", _), (class = "error" ; class = "exit" ; class = "throw").
+try_takes(id, "*") :- catch_class(id, _, _, _).
+
 // A handler in `func` that takes the ArgumentError (:badarg) a BIF raises
 // on a missing table or a taken name: a bare rescue or catch-all of
 // class error, one naming ArgumentError or :badarg, or Erlang's `catch

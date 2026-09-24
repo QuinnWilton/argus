@@ -225,9 +225,11 @@ unchecked_result(func, id, "Process.whereis", name) :-
 // Engler et al. named "bugs as deviant behavior". The belief needs
 // three agreeing sites before it counts, and the deviants must be a
 // quarter or fewer of the population: three checked against three
-// ignored is a convention, not a slip. Only the used/ignored and
-// try/bare fates take part; a tail call hands its result on and says
-// nothing about either belief.
+// ignored is a convention, not a slip. In the result belief only the
+// used and ignored fates take part: a tail call hands its result on and
+// says nothing about it. In the exception belief every site takes part,
+// a tail call too: what it raises reaches its callers, whose tries
+// guard it as they guard any call in the function (guarded_by_callers).
 //
 // The population is the callee's sites on the same target — the table,
 // the server — when the site's first argument is a literal: mnesia
@@ -263,14 +265,18 @@ program_call(site, f, callee, fate, t) :-
 // A try guards a call when it covers the call (try_covers: on a path
 // from the try that has not passed its end, so not in its `else` or
 // after it) and its handler takes the class the call raises when it
-// fails (call_result's `raises`): an exit for a call into a process, an
-// error for a BIF or an ETS operation. A try that takes nothing — an
-// `after`, a rescue that re-raises — guards nothing, and neither does
-// `catch :exit` around a badarg. Erlang's `catch Expr` takes every
-// class (catch_class "*").
+// fails (call_result's `raises`; try_takes, in exceptions.dl): an exit
+// for a call into a process, an error for a BIF or an ETS operation. A
+// try that takes nothing — an `after`, a rescue that re-raises — guards
+// nothing, and neither does `catch :exit` around a badarg. Erlang's
+// `catch Expr` takes every class.
 .decl guarded_site(site: symbol)
 
 guarded_site(site) :- guarded_here(site, _).
+
+guarded_site(site) :-
+  call_result(site, f, _, _, class, _),
+  guarded_by_callers(f, class).
 
 // The try in the site's own function that guards it, and where its
 // handler ends: the evidence frame's span.
@@ -279,21 +285,68 @@ guarded_site(site) :- guarded_here(site, _).
 guarded_here(site, span_end) :-
   call_result(site, _, _, _, class, _),
   try_covers(id, _, site, _),
-  takes(id, class),
+  try_takes(id, class),
   catch_class(id, _, _, span_end).
 
-// The classes the program's sites raise, and which of them each try
-// takes: a handler with no class test takes them all; "*", a site that
-// raises either, is taken by any handler that takes something.
+// ── A guard the callers hold ────────────────────────────────────
+//
+// A try guards what runs inside it in the same process, not only the
+// calls written between its `try` and its `end`: a helper called only
+// from inside `try ... rescue`, and a closure handed to Enum.each there,
+// fail into that handler. So a site's function is guarded for a class
+// when every way the program has into it passes a try that takes the
+// class. An exported function is an entry: callers outside the program
+// may call it bare. A closure built in a function that starts a process
+// may run in that process instead, where no try of the builder's
+// reaches, and so is an entry too.
+//
+// Computed as its complement: the functions some path from an entry
+// reaches past no such try (ForwardUnguardedSet, in reach.dl).
+.decl guarded_by_callers(func: symbol, class: symbol)
+
+guarded_by_callers(f, class) :-
+  called_internally(f),
+  raised_class(class),
+  !exposed.reaches(f, class).
+
+// A private function the program calls, or a closure it builds: one
+// with no way in is dead, not guarded.
+.decl called_internally(func: symbol)
+
+called_internally(g) :-
+  call_instr(_, g, _),
+  function_def(g, _, _, _, 0).
+
+called_internally(g) :- closure_def(_, g).
+
+// The classes the program's sites raise: what the walk asks about.
 .decl raised_class(class: symbol)
 
 raised_class(class) :- call_result(_, _, _, _, class, _).
 
-.decl takes(id: symbol, class: symbol)
+.init exposed = ForwardUnguardedSet
 
-takes(id, class) :- catch_class(id, _, class, _), class != "*".
-takes(id, class) :- catch_class(id, _, "*", _), raised_class(class).
-takes(id, "*") :- catch_class(id, _, _, _).
+exposed.root(f, class) :-
+  function_def(f, _, _, _, 1),
+  raised_class(class).
+
+exposed.root(g, class) :-
+  closure_def(f, g),
+  starts_process(f),
+  raised_class(class).
+
+exposed.guarded(call, class) :-
+  try_covers(id, _, call, _),
+  try_takes(id, class).
+
+exposed.guarded_edge(f, g, class) :-
+  try_covers_closure(id, f, g),
+  try_takes(id, class).
+
+.decl starts_process(func: symbol)
+
+starts_process(f) :- process_start(_, f, _, kind, _), kind != "server".
+starts_process(f) :- hands_funs_off(f).
 
 .decl fate_count(callee: symbol, scope: symbol, fate: symbol, n: number)
 
@@ -396,16 +449,24 @@ bare_where_most_are_guarded(func, site, callee, guarded, bare, scope) :-
 // The sites that follow the convention, attached to the finding as its
 // evidence: what the convention looks like, drawn from the
 // population the deviant was judged against.
-.decl handling_site(callee: symbol, belief: symbol, site: symbol, func: symbol, guard_end: symbol, target: symbol)
+.decl handling_site(callee: symbol, belief: symbol, site: symbol, func: symbol, guard: symbol, guard_end: symbol, target: symbol)
 .output handling_site
 
-handling_site(callee, "exception_guarded", site, f, guard_end, t) :-
+// `guard` is "here" for a try in the site's own function, with the
+// handler's end, and "callers" for a site its callers guard.
+handling_site(callee, "exception_guarded", site, f, "here", guard_end, t) :-
   inconsistent_handling(_, _, callee, "exception_guarded", _, _, t),
   program_site(site, f, callee, _, "try", t2),
   guarded_here(site, guard_end),
   (t = "" ; t = t2).
 
-handling_site(callee, "result_checked", site, f, "", t) :-
+handling_site(callee, "exception_guarded", site, f, "callers", "", t) :-
+  inconsistent_handling(_, _, callee, "exception_guarded", _, _, t),
+  program_site(site, f, callee, _, "try", t2),
+  !guarded_here(site, _),
+  (t = "" ; t = t2).
+
+handling_site(callee, "result_checked", site, f, "", "", t) :-
   inconsistent_handling(_, _, callee, "result_checked", _, _, t),
   program_site(site, f, callee, "used", _, t2),
   (t = "" ; t = t2).

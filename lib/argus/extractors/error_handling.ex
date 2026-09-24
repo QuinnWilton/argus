@@ -47,8 +47,8 @@ defmodule Argus.Extractors.ErrorHandling do
   - `try_covers(id, func, call, kind)` — the try (or Erlang `catch`) at
     `id` covers the call at `call`: an exception the call raises goes to
     that try's handler
-  - `try_covers_closure(id, func, closure)` — the try (or `catch`) at `id`
-    covers the instruction that builds the closure `closure`
+  - `try_covers_closure(id, func, closure)` — every read of the closure
+    `closure`'s value is a call the try (or `catch`) at `id` covers
   - `try_call(id, func, callee, call, guard_end)` — a peer call (`GenServer.call`,
     `:gen_statem.call`, `:erpc.call`, ...) the `try` at `id` guards
   - `mailbox_writer(id, func, kind)` — a call after which something other
@@ -80,6 +80,7 @@ defmodule Argus.Extractors.ErrorHandling do
   alias Argus.Extractors.ErrorHandling.CatchClauses
   alias Argus.Extractors.ErrorHandling.ClauseHead
   alias Argus.Instr
+  alias Argus.Instr.Reaching
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
@@ -639,16 +640,17 @@ defmodule Argus.Extractors.ErrorHandling do
         _ ->
           fun = Helpers.cfg(module_data, name, arity)
           func_id = Normalize.func_id(mod, name, arity)
-          Enum.reduce(regions, acc, &cover(&2, fun, func_id, instrs, &1))
+          closures = closure_uses(instrs)
+          Enum.reduce(regions, acc, &cover(&2, fun, func_id, instrs, closures, &1))
       end
     end)
   end
 
   # No graph (the function's could not be built): no rows, and a rule
   # asking whether a call is covered reads it as bare.
-  defp cover(facts, nil, _func_id, _instrs, _region), do: facts
+  defp cover(facts, nil, _func_id, _instrs, _closures, _region), do: facts
 
-  defp cover(facts, fun, func_id, instrs, {op, reg, idx}) do
+  defp cover(facts, fun, func_id, instrs, closures, {op, reg, idx}) do
     {:done, visited} =
       Walk.explore(fun, instrs, [idx + 1],
         on_instr: fn instr, at ->
@@ -659,21 +661,100 @@ defmodule Argus.Extractors.ErrorHandling do
     table = List.to_tuple(instrs)
     id = InstrId.mint(func_id, idx)
 
-    visited
-    |> Enum.sort()
-    |> Enum.reduce(facts, fn at, acc ->
-      case elem(table, at) do
-        # A closure built inside the region: what it raises reaches the
-        # handler when it runs there, handed to Enum.each and the like.
-        {:make_fun3, {m, f, a}, _, _, _, _} ->
-          add_fact(acc, :try_covers_closure, [id, func_id, InstrId.func_id(m, f, a)])
+    facts =
+      visited
+      |> Enum.sort()
+      |> Enum.filter(fn at ->
+        instr = elem(table, at)
+        Instr.call?(instr) or Instr.tail_call?(instr)
+      end)
+      |> Enum.reduce(facts, fn at, acc ->
+        add_fact(acc, :try_covers, [id, func_id, InstrId.mint(func_id, at), to_string(op)])
+      end)
 
-        instr ->
-          if Instr.call?(instr) or Instr.tail_call?(instr),
-            do:
-              add_fact(acc, :try_covers, [id, func_id, InstrId.mint(func_id, at), to_string(op)]),
-            else: acc
-      end
+    # A closure whose every use is a call inside the region — handed to
+    # Enum.each there, or called — runs under the handler. The compiler
+    # hoists a closure with nothing to capture out of the try, so where
+    # it is built says nothing; where its value goes does.
+    in_region = MapSet.new(visited)
+
+    closures
+    |> Enum.filter(fn {_closure, uses} ->
+      Enum.all?(uses, fn at ->
+        MapSet.member?(in_region, at) and Instr.call?(elem(table, at))
+      end)
+    end)
+    |> Enum.map(&elem(&1, 0))
+    |> Enum.sort()
+    |> Enum.reduce(facts, fn closure, acc ->
+      add_fact(acc, :try_covers_closure, [id, func_id, closure])
+    end)
+  end
+
+  # Each closure the function builds, with every instruction that reads
+  # its value other than to copy it: a call it is handed to, or anything
+  # else it escapes into (a tuple, a message, the return). A closure
+  # whose value nothing reads is left out: it runs nowhere.
+  defp closure_uses(instrs) do
+    builds =
+      instrs
+      |> Enum.with_index()
+      |> Enum.flat_map(fn
+        {{:make_fun3, {m, f, a}, _, _, _, _}, at} -> [{InstrId.func_id(m, f, a), at}]
+        _other -> []
+      end)
+      |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+
+    if builds == %{} do
+      []
+    else
+      indexed = Enum.with_index(instrs)
+
+      for {closure, at} <- builds,
+          uses = fun_uses(instrs, indexed, Map.new(at, &{&1, true})),
+          uses != [],
+          do: {closure, uses}
+    end
+  end
+
+  defp fun_uses(instrs, indexed, builds) do
+    for {instr, at} <- indexed,
+        reg <- Instr.uses(instr),
+        not copy_of?(instr, reg),
+        holds_fun?(instrs, at, reg, builds, %{}),
+        uniq: true,
+        do: at
+  end
+
+  defp copy_of?(instr, reg) do
+    Instr.defs(instr) != [] and
+      Enum.all?(Instr.defs(instr), &(Instr.copy_source(instr, &1) == reg))
+  end
+
+  # Whether `reg` can hold the fun one of `builds` made when control
+  # reaches `at`: written there by the build, or copied from a register
+  # that held it. `builds` and `seen` are plain maps: a MapSet is opaque
+  # to dialyzer through the recursion.
+  defp holds_fun?(instrs, at, reg, builds, seen) do
+    Reaching.sources(instrs, at, reg)
+    |> Enum.any?(fn
+      {:param, _} ->
+        false
+
+      src ->
+        cond do
+          Map.has_key?(builds, src) ->
+            true
+
+          Map.has_key?(seen, {src, reg}) ->
+            false
+
+          true ->
+            case Instr.copy_source(Reaching.at(instrs, src), reg) do
+              nil -> false
+              from -> holds_fun?(instrs, src, from, builds, Map.put(seen, {src, reg}, true))
+            end
+        end
     end)
   end
 

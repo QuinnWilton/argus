@@ -115,6 +115,9 @@ defmodule Argus.Analyses.Failure do
           {:belief, :symbol, "result_checked | exception_guarded"},
           {:site, :symbol, "a call site that follows the convention"},
           {:func, :symbol, "the function it is in"},
+          {:guard, :symbol,
+           "for exception_guarded, here (a try in its own function) or callers " <>
+             "(every way into its function passes one); else empty"},
           {:guard_end, :symbol,
            "for exception_guarded, the guard's last instruction; else empty"},
           {:target, :symbol, "the population's target, as inconsistent_handling"}
@@ -343,15 +346,21 @@ defmodule Argus.Analyses.Failure do
     )
   end
 
-  def evidence(:handling_site, [_callee, belief, site, func, guard_end, _target]) do
-    case belief do
-      "exception_guarded" ->
+  def evidence(:handling_site, [_callee, belief, site, func, guard, guard_end, _target]) do
+    case {belief, guard} do
+      {"exception_guarded", "callers"} ->
+        Findings.related(
+          "guarded by a try around every call of its function",
+          Findings.at_site_in_func(site, func)
+        )
+
+      {"exception_guarded", _here} ->
         Findings.related("guarded by this {guard}", Findings.at_site_in_func(site, func),
           to: Findings.at_instr(guard_end),
           to_block: :guard
         )
 
-      "result_checked" ->
+      {"result_checked", _} ->
         Findings.related("its result matched here", Findings.at_site_in_func(site, func))
     end
   end

@@ -31,6 +31,19 @@ Expr` now counts as a guard; a program that keeps
 `case catch ets:update_counter(...)` as its convention was all bare,
 and its one truly bare site was not reported.
 
+**Fixed.** `failure.inconsistent_handling` counts a call as guarded
+when its callers guard it: a private helper called only inside a try
+that takes the class, and a closure whose value only calls inside such
+a try read (`Enum.each(ks, fn k -> ... end)`), run under its handler.
+The call graph is walked from the exported functions down every call
+site no such try covers; what is not reached that way is guarded. A
+closure built in a function that starts a process may run in that
+process, and is not. A tail call takes part in the exception belief as
+any site does, guarded by its callers' tries. db_connection's
+`Holder.hash_holder/2`, reached only from inside `maybe_disconnect/3`'s
+rescue, is no longer the deviant. The evidence frame of a site its
+callers guard says so.
+
 **Changed.** `failure.inconsistent_handling`'s title says "every other
 call site" only when the reported site is the population's one deviant,
 and "most call sites" when there are more: `clear_majority` lets up to a
