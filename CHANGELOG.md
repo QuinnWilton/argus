@@ -33,6 +33,11 @@ the anchor is the rpc). It read only an rpc written in init/1 itself, so
 a helper's rpc was reported by blocking as a generic unbounded wait. An
 rpc in a process init/1 starts is not followed.
 
+**Changed.** `blocking.unbounded_wait` "rpc" leaves out an rpc init/1
+reaches on its own stack, not only one written in init/1: startup
+reports it (above). A helper init/1 shares with handle_call/3 is then
+reported only as startup's, as a `:global` lock already was.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile

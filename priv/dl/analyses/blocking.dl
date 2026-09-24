@@ -490,9 +490,9 @@ receive_in_callback(id, func, callback, behaviour, proximity, "true") :-
 // RPC call using default infinity timeout — hangs on netsplit.
 // site is the rpc call instruction. One row per site — finding
 // builders dedupe on (func, variant).
-// An rpc in init/1, or a :global op init/1 reaches, is startup's
-// finding (blocks_on_peer, "remote" and "global"): the same site, with
-// the supervisor's start held on it, reported there once.
+// An rpc or a :global op init/1 reaches is startup's finding
+// (blocks_on_peer, "remote" and "global"): the same site, with the
+// supervisor's start held on it, reported there once.
 unbounded_wait(func, call, "rpc", variant, "", "") :- rpc_without_timeout(func, call, variant).
 
 .decl rpc_without_timeout(func: symbol, call: symbol, variant: symbol)
@@ -512,17 +512,19 @@ makes_rpc(f, call, variant) :- rpc_call(call, f, variant, _).
 
 no_timeout(call) :- rpc_call(call, _, _, "-1").
 
-// A site init/1 runs — an rpc in init/1 itself, or a :global op it
-// reaches on its own stack — holds the supervisor's start, and is
-// startup's finding (blocks_on_peer). Reported there, once.
-.init init_global_reach = SameProcessReach
+// A site init/1 runs — an rpc or a :global op, in init/1 or in anything
+// it calls on its own stack — holds the supervisor's start, and is
+// startup's finding (blocks_on_peer, which follows both the same way).
+// Reported there, once. A helper init/1 shares with handle_call/3 is
+// then reported only as startup's: the start is the worse wait.
+.init init_reach = SameProcessReach
 
-init_global_reach.seed(g, site) :- global_op(site, g, _, _, _).
+init_reach.seed(g, site) :- global_op(site, g, _, _, _).
+init_reach.seed(g, site) :- rpc_call(site, g, _, _).
 
 .decl during_init(site: symbol)
 
-during_init(call) :- makes_rpc(f, call, _), is_init(f).
-during_init(site) :- init_global_reach.reaches(f, site), is_init(f).
+during_init(site) :- init_reach.reaches(f, site), is_init(f).
 
 // ── RPC in GenServer callback ────────────────────────────────────
 

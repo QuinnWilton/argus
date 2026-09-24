@@ -47,6 +47,20 @@ defmodule Argus.Analyses.BlockingRpcTest do
     end
   end
 
+  describe "a helper init/1 calls on its own stack" do
+    test "is startup's finding, and an rpc init/1 does not reach stays here" do
+      skip_without_souffle()
+
+      modules = [Argus.Test.Fixtures.RpcViaHelperInInit]
+      funcs = Enum.map(waits(analyze(modules), "rpc"), fn [func, _site, _variant] -> func end)
+
+      assert funcs == ["Argus.Test.Fixtures.RpcViaHelperInInit:fetch_later/1"]
+
+      {:ok, startup} = Argus.analyze(modules, :startup)
+      assert [[_init, "init", _, "remote" | _]] = startup["blocks_on_peer"]
+    end
+  end
+
   describe "unbounded_wait: rpc_in_callback" do
     test "flags RPC directly inside handle_call" do
       skip_without_souffle()
