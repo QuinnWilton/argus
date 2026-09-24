@@ -1084,6 +1084,44 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  defmodule BreakerTrip do
+    @moduledoc """
+    supavisor's CircuitBreaker.record_failures/3: not blocked (the stored
+    block has expired, against the clock), so record the failure and trip
+    the block, and have a helper tell the other nodes. Both racers write
+    the same block and send the same news.
+    """
+    require Logger
+
+    def start, do: :ets.new(:breaker_blocks, [:named_table, :public])
+
+    @spec record_failure(term()) :: :ok
+    def record_failure(key) do
+      now = System.system_time(:second)
+
+      case :ets.lookup(:breaker_blocks, key) do
+        [{^key, blocked}] when blocked > now ->
+          :ok
+
+        _ ->
+          if count(key) >= 5 do
+            :ets.insert(:breaker_blocks, {key, now + 30})
+            Logger.warning("breaker opened for #{inspect(key)}")
+            tell_nodes(key, now + 30)
+          end
+
+          :ok
+      end
+    end
+
+    defp count(key), do: :erlang.phash2(key, 10)
+
+    defp tell_nodes(key, until) do
+      for node <- Node.list(), do: send({__MODULE__, node}, {:open, key, until})
+      :ok
+    end
+  end
+
   defmodule LockRelease do
     @moduledoc """
     A release that checks the owner, then deletes by key: another process

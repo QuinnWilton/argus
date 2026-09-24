@@ -150,6 +150,11 @@ defmodule Argus.Analyses.EtsCheckActTest do
       assert [{"release/2", ":locks", "0"}] = races([C.LockRelease])
     end
 
+    test "a trip checked against the clock, whose helper tells the other nodes, is not" do
+      skip_without_souffle()
+      assert races([C.BreakerTrip]) == []
+    end
+
     test "a delete_object of the owner's own row is not" do
       skip_without_souffle()
       assert races([C.LockReleaseObject]) == []

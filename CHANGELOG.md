@@ -197,15 +197,20 @@ config was never reported.
 
 **Fixed.** `ets_check_act`'s trip exemption — a write that carries
 nothing of the read, on a table nothing writes back, whose decision
-stays inside — now also asks that the decision look only at whether
-the row is there, and run nothing but the write. A guard on what the
-row holds (`[{^k, cur}] when cur >= serial -> :ok`) was exempt whenever
-the function returned `:ok` on both branches or its caller ignored the
-result, though the older serial still lands last; and a marker whose
-decision also sends or calls (`[] -> insert({id, true}); send(mailer,
-...)`) was exempt though both racers send. Both are reported (schema
-74's `field_decides` and `effect_decided`); a constant marker with
-nothing else under it (supavisor's circuit breaker) still is not.
+stays inside — no longer covers a guard on what the row holds, nor a
+marker whose decision also sends. A guard (`[{^k, cur}] when cur >=
+serial -> :ok`, then `insert({k, serial})`: a field of the row compared
+with the value the write stores, schema 80's `field_compared`) was
+exempt whenever the function returned `:ok` on both branches or its
+caller ignored the result, though the older serial still lands last. A
+marker whose decision sends or makes another write (`[] -> insert({id,
+true}); send(mailer, ...)`, schema 79's `effect_decided`) was exempt
+though both racers send. A check of the row against a clock (`blocked >
+now`) is an expiry, not a guard, and a send in a helper the decision
+calls is not counted: supavisor's `CircuitBreaker.record_failures/3`
+trips its block when the stored one has expired and has a helper tell
+the other nodes, and both racers write the same block and send the same
+news.
 
 **Fixed.** `ets_check_act`'s delete exemption holds only for a delete
 decided by whether the row is there. "Deleting twice is deleting once"

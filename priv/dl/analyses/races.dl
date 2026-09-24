@@ -382,17 +382,22 @@ writes_after_start(g) :- runs.spawned(_, _, r), writer_walk.reaches(r, g).
 //   value — a random token, a unique integer, a ref — and the function
 //   hands it out: each racer returns its own, and only one is stored;
 // - a trip: a write of a value made of neither the read nor a call
-//   (`{key, :blocked_until, t}`), decided only by whether the row is
-//   there, with nothing else under the decision — no send, no call, no
-//   other write — and a decision that stays in the program: no caller
-//   branches on what the function returns, and no exported function
-//   hands it out. Both racers write the same thing and do nothing else.
-//   A claim — `[] -> insert({k, :in_flight}); :ok` — hands its decision
-//   to a caller that acts on it alone, and is reported: both racers are
-//   told they won. So is a guard on what the row holds (`[{^k, cur}]
-//   when cur >= serial`), whichever value the racers return: the older
-//   serial can land last. And a marker whose decision also runs a send
-//   or a call: both racers run it.
+//   (`{key, :blocked_until, t}`), not guarded by what the row holds,
+//   with no send or other write under the decision, and a decision that
+//   stays in the program: no caller branches on what the function
+//   returns, and no exported function hands it out. Both racers write
+//   the same thing. A claim — `[] -> insert({k, :in_flight}); :ok` —
+//   hands its decision to a caller that acts on it alone, and is
+//   reported: both racers are told they won. So is a guard on what the
+//   row holds, compared with the value the write stores (`[{^k, cur}]
+//   when cur >= serial`, then `insert({k, serial})`), whichever value
+//   the racers return: the older serial can land last. And a marker
+//   whose decision also sends, or makes another write: both racers do.
+//   A check of the row against a clock (`blocked > now`) is an expiry,
+//   not a guard; and a send made in a helper the decision calls is not
+//   seen, since which helpers only log or re-send what every racer
+//   agrees on (a circuit breaker telling the other nodes it opened) the
+//   facts do not say.
 //
 // "Made of" is data dependence alone (site_reads, call_arg_reads): a
 // value computed under a test on the read, but not from it, does not
@@ -591,21 +596,48 @@ tests_row_fields(r) :-
   q = to_string(n),
   pos >= 1.
 
-// The read's decision runs more than the write: a send or an outside
-// effect (effect_decided), a call that does not lead to the write, or a
-// write of some other shared state.
+// A guard on what the row holds: the decision compares a field past the
+// key with a value the write then stores (field_compared), where the
+// read's value is carried or in a helper it is handed to.
+.decl guards_row(read: symbol, write: symbol)
+
+guards_row(r, w) :-
+  reads_then_writes(_, r, w, _, _),
+  rows.carries(f, kind, src, r, _, _, _, _),
+  field_compared(f, kind, src, pos, ok, os),
+  pos >= 1,
+  rows.act(w, f, _, _, _, _),
+  site_reads(w, f, ok, os).
+
+guards_row(r, w) :-
+  reads_then_writes(_, r, w, _, _),
+  rows.carries(f, kind, src, r, _, _, _, _),
+  field_compared(f, kind, src, pos, ok, os),
+  pos >= 1,
+  rows.act(w, h, _, _, _, _),
+  site_reads(w, h, "param", q),
+  call_arg_reads(f, h, n, ok, os),
+  q = to_string(n).
+
+guards_row(r, w) :-
+  reads_then_writes(_, r, w, _, _),
+  rows.carries(f, kind, src, r, _, _, _, _),
+  call_arg_depends(f, h, n, kind, src),
+  field_compared(h, "param", q, pos, ok, os),
+  q = to_string(n),
+  pos >= 1,
+  rows.act(w, h, _, _, _, _),
+  site_reads(w, h, ok, os).
+
+// The read's decision runs more than the write, in the function where
+// the read's value decides: a send or an outside effect
+// (effect_decided), or a write of some other shared state.
 .decl decides_more(read: symbol, write: symbol)
 
 decides_more(r, w) :-
   reads_then_writes(_, r, w, _, _),
   rows.carries(f, kind, src, r, _, _, _, _),
   effect_decided(f, kind, src).
-
-decides_more(r, w) :-
-  reads_then_writes(_, r, w, _, _),
-  rows.carries(f, kind, src, r, _, _, _, _),
-  call_decided(f, g, kind, src),
-  !rows.acts_if(g, w, _, _, _, _, _, _).
 
 decides_more(r, w) :-
   reads_then_writes(_, r, w, _, _),
@@ -630,6 +662,7 @@ harmless_race(f, r, w) :-
   !tests_row_fields(r),
   !writes_back(name, ks, k).
 
+
 harmless_race(f, r, w) :-
   reads_then_writes(f, r, w, name, _),
   pair_key_of(f, r, w, ks, k),
@@ -649,7 +682,7 @@ harmless_race(f, r, w) :-
   pair_key_of(f, r, w, ks, k),
   !carries_read(w),
   !writes_back(name, ks, k),
-  !tests_row_fields(r),
+  !guards_row(r, w),
   !decides_more(r, w),
   !decision_escapes(r).
 
