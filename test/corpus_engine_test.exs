@@ -117,6 +117,40 @@ defmodule Argus.CorpusEngineTest do
     assert Corpus.stale_facts(cache, recent: 0) == [Path.join(cache, "#{digest("b")}.123.5")]
   end
 
+  @tag :tmp_dir
+  test "kept solves are pruned by the same policy, each program on its own",
+       %{tmp_dir: solves} do
+    entries(solves, [
+      {"races-#{digest("a")}", 5 * @hour},
+      {"races-#{digest("b")}", 4 * @hour},
+      {"races-#{digest("c")}", 3 * @hour},
+      {"races-#{digest("d")}", 60},
+      {"points_to-#{digest("a")}", 9 * @hour},
+      {"points_to-#{digest("b")}.123.4", 25 * @hour},
+      {"notes", 48 * @hour}
+    ])
+
+    # races keeps its live solve and its most recent other; points_to's
+    # one solve is its most recent; the day-old staging directory goes.
+    assert Corpus.prune_solves(solves, recent: 1) ==
+             Enum.map(
+               ["points_to-#{digest("b")}.123.4", "races-#{digest("a")}", "races-#{digest("b")}"],
+               &Path.join(solves, &1)
+             )
+
+    assert Enum.sort(File.ls!(solves)) ==
+             ["notes", "points_to-#{digest("a")}", "races-#{digest("c")}", "races-#{digest("d")}"]
+  end
+
+  @tag :tmp_dir
+  test "the solves of every installed entry are found, and no other", %{tmp_dir: cache} do
+    entries(cache, [{digest("a"), 0}, {digest("b"), 0}, {"#{digest("c")}.1.2", 0}])
+    File.mkdir_p!(Path.join([cache, digest("a"), "solves"]))
+    File.mkdir_p!(Path.join([cache, "#{digest("c")}.1.2", "solves"]))
+
+    assert Corpus.solve_caches(cache) == [Path.join([cache, digest("a"), "solves"])]
+  end
+
   test "a missing cache has nothing to prune" do
     assert Corpus.stale_facts("/nonexistent/argus-facts") == []
   end

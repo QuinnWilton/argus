@@ -354,6 +354,17 @@ directory per content of the facts, and nothing in the facts is read
 to key it; `run_analyses/2` refuses the option without `facts_dir:`.
 Off by default: a run without it solves as before.
 
+**Changed.** `Argus.Corpus.analyze/2` keeps each checkout's solves in
+its facts cache entry, under `solves/`. A warm corpus run with no rule
+edited solves nothing (72 checkouts: 1,016 solves and 191 s of solver
+time before, none now) and reads the entry's facts in place instead of
+linking an overlay of them; a rule edit re-solves only the programs
+that include it, an edit to `points_to.dl` the stage and its seven
+readers. The findings are identical, every field, to solving afresh.
+`Argus.Corpus.stale_solves/2`, `prune_solves/2` and `solve_caches/1`
+apply the facts cache's prune policy to each program's solves, and
+`mix argus.corpus prune` prunes them in the entries it keeps.
+
 **Changed.** `Argus.Souffle.input_relations/2`'s memo no longer reads
 and hashes every file under `priv/dl` on each call: the digest is kept
 while the files are unchanged, looked at again at most once a second.

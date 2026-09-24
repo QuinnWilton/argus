@@ -21,16 +21,18 @@ defmodule Argus.Corpus do
   set: argus runs over its `ebin` from this VM.
 
   The facts extracted from a checkout are cached beside it, in
-  `.argus-facts/<digest>/facts`, so a warm run costs only the solves.
-  Extraction is most of the cost of a large tree and its inputs never
+  `.argus-facts/<digest>/facts`, so a warm run extracts nothing, and the
+  solves over them in `.argus-facts/<digest>/solves` (`analyze/2`), so
+  a warm run with no rule edited solves nothing either. Extraction is most of the cost of a large tree and its inputs never
   move between runs: the digest covers the beams, the code and Datalog
   that extraction reaches (`engine_digest/0`), the runtime and the
   solver, so a change to any of them misses. None of it names the
   directory argus was built in, so every worktree of one commit shares
   the entries. Installing an entry prunes the checkout's stale ones
   (`stale_facts/2`), sparing the few most recently used — the baseline
-  of a before-and-after comparison among them — and `mix argus.corpus
-  prune` does the same across every checkout.
+  of a before-and-after comparison among them — an analysis prunes its
+  entry's stale solves the same way (`stale_solves/2`) — and `mix
+  argus.corpus prune` does both across every checkout.
 
   `analyze_all/2` runs checkouts `jobs/0` at a time; the test gate and
   `mix argus.corpus tally` both go through it.
@@ -63,6 +65,13 @@ defmodule Argus.Corpus do
   of an umbrella under `apps/`).
   """
   @type checkout :: %{name: String.t(), dir: String.t(), project: String.t(), sha: String.t()}
+
+  alias Argus.Analysis.Catalog
+  alias Argus.Analysis.Extraction
+  alias Argus.Souffle.Cache
+
+  # Beside the facts in each facts cache entry: `analyze/2`'s kept solves.
+  @solves "solves"
 
   @pairs_file Path.join([__DIR__, "..", "..", "test", "corpus", "pairs.exs"]) |> Path.expand()
 
@@ -119,24 +128,58 @@ defmodule Argus.Corpus do
   over its cached facts, extracting them first only when no entry for
   the current `engine_digest/0` and beams exists.
 
-  The points-to stage is derived on every run, beside the entry rather
-  than in it (`overlay/1`): its rules are rules, which move without
-  moving the engine digest, so an entry that kept its rows would serve
-  them to the next rule edit.
+  Each solve is kept in the entry, under `solves/`, keyed by its
+  program and the solver (`Argus.Souffle.Cache`): a warm run with no
+  rule edited reads every solve back, and a rule edit re-solves only
+  the programs it reaches. The points-to stage is one of them, and
+  lands beside the entry rather than in it (`overlay/1`): its rules are
+  rules, which move without moving the engine digest, so an entry whose
+  facts kept its rows would serve them to the next rule edit.
   """
   @spec analyze(pair(), :pre | :fix) :: {:ok, Argus.Findings.t()} | {:error, term()}
   def analyze(pair, side) do
     with %{} = co <- checkout(pair, side) || {:error, "no #{side} side for #{pair.issue}"},
          {:ok, beams} <- ensure(pair, side),
          {:ok, facts_dir} <- facts(co, beams) do
+      solves = Path.join(Path.dirname(facts_dir), @solves)
+
+      try do
+        solve(beams, facts_dir, solves)
+      after
+        prune_solves(solves)
+      end
+    end
+  end
+
+  # Every solve kept: the entry's own facts are read, and nothing is
+  # derived into them — no solve runs, and the points-to stage is kept
+  # with the rest (`stage0: :provided` says it is not to be derived).
+  # Otherwise the solves run over an overlay.
+  defp solve(beams, facts_dir, solves) do
+    opts = [analyses: :all, solve_cache: solves]
+
+    if all_kept?(solves) do
+      Argus.run_analyses(beams, [facts_dir: facts_dir, stage0: :provided] ++ opts)
+    else
       overlay = overlay(facts_dir)
 
       try do
-        Argus.run_analyses(beams, analyses: :all, facts_dir: overlay)
+        Argus.run_analyses(beams, [facts_dir: overlay] ++ opts)
       after
         File.rm_rf(overlay)
       end
     end
+  end
+
+  defp all_kept?(solves) do
+    {:ok, analyses} = Argus.Analysis.set(:all)
+    bin = Argus.Souffle.executable()
+
+    bin != nil and
+      Enum.all?(analyses, fn name ->
+        {:ok, rules} = Catalog.rules_path(name)
+        Cache.kept?(Extraction.solve_cache(solves, name), rules, bin)
+      end)
   end
 
   # A scratch directory of hard links to a cache entry's files, which a
@@ -222,6 +265,11 @@ defmodule Argus.Corpus do
         ) :: [{checkout(), result}]
         when result: term()
   def analyze_all(checkouts, reduce \\ & &1) do
+    # What each analysis reads is resolved (and memoized) once, here,
+    # rather than by every job at once as its first solve asks.
+    {:ok, analyses} = Argus.Analysis.set(:all)
+    Enum.each(analyses, &Extraction.reads_points_to?/1)
+
     # Unordered, then sorted back: a large tree finishing late holds up
     # no other checkout's slot.
     checkouts
@@ -373,29 +421,58 @@ defmodule Argus.Corpus do
   a day it is the latter.
   """
   @spec stale_facts(Path.t(), [prune_option()]) :: [Path.t()]
-  def stale_facts(cache, opts \\ []) do
+  def stale_facts(cache, opts \\ []), do: stale(cache, opts, &facts_entry_kind/1)
+
+  @doc """
+  The kept solves of one facts cache entry (`<entry>/solves`, see
+  `analyze/2`) that `prune_solves/2` removes, by `stale_facts/2`'s
+  policy applied to each program on its own: every solve untouched for
+  an hour beyond the `recent:` most recently touched of its program
+  (default 3), other than `keep:`, and a staging directory untouched
+  for a day. A rule edit leaves its program's earlier solves behind;
+  the policy keeps the before-edit ones for a comparison, as it keeps
+  the facts.
+  """
+  @spec stale_solves(Path.t(), [prune_option()]) :: [Path.t()]
+  def stale_solves(solves, opts \\ []), do: stale(solves, opts, &solve_entry_kind/1)
+
+  @doc """
+  Removes `stale_solves/2` from one entry's kept solves; the paths it
+  removed.
+  """
+  @spec prune_solves(Path.t(), [prune_option()]) :: [Path.t()]
+  def prune_solves(solves, opts \\ []) do
+    stale = stale_solves(solves, opts)
+    Enum.each(stale, &File.rm_rf!/1)
+    stale
+  end
+
+  # Entries are grouped by what `kind_of` names them: each group keeps
+  # its own `recent:` survivors.
+  defp stale(dir, opts, kind_of) do
     keep = Keyword.get(opts, :keep)
     recent = Keyword.get(opts, :recent, @keep_recent)
     now = System.os_time(:second)
 
     entries =
-      for name <- ls(cache),
-          path = Path.join(cache, name),
+      for name <- ls(dir),
+          path = Path.join(dir, name),
           {:ok, %File.Stat{mtime: touched, type: :directory}} <- [File.stat(path, time: :posix)],
-          kind = entry_kind(name),
+          kind = kind_of.(name),
           kind != nil,
           do: {kind, name, path, now - touched}
 
     stale_installed =
       for(
-        {:installed, name, path, age} <- entries,
+        {{:installed, group}, name, path, age} <- entries,
         name != keep,
         age > @live_seconds,
-        do: {age, path}
+        do: {group, age, path}
       )
-      |> Enum.sort()
-      |> Enum.drop(recent)
-      |> Enum.map(fn {_age, path} -> path end)
+      |> Enum.group_by(&elem(&1, 0), &Tuple.delete_at(&1, 0))
+      |> Enum.flat_map(fn {_group, aged} ->
+        aged |> Enum.sort() |> Enum.drop(recent) |> Enum.map(&elem(&1, 1))
+      end)
 
     orphaned =
       for {:staging, _name, path, age} <- entries, age > @orphaned_staging_seconds, do: path
@@ -423,6 +500,16 @@ defmodule Argus.Corpus do
         do: cache
   end
 
+  @doc "The kept solves of every installed entry of a facts cache."
+  @spec solve_caches(Path.t()) :: [Path.t()]
+  def solve_caches(cache) do
+    for name <- ls(cache),
+        facts_entry_kind(name) == {:installed, :facts},
+        solves = Path.join([cache, name, @solves]),
+        File.dir?(solves),
+        do: solves
+  end
+
   defp ls(dir) do
     case File.ls(dir) do
       {:ok, names} -> Enum.sort(names)
@@ -430,11 +517,20 @@ defmodule Argus.Corpus do
     end
   end
 
-  defp entry_kind(name) do
+  defp facts_entry_kind(name) do
     cond do
-      Regex.match?(~r/^[0-9a-f]{64}$/, name) -> :installed
+      Regex.match?(~r/^[0-9a-f]{64}$/, name) -> {:installed, :facts}
       Regex.match?(~r/^[0-9a-f]{64}\.\d+\.\d+$/, name) -> :staging
       true -> nil
+    end
+  end
+
+  # `<program>-<key>`, as `Argus.Souffle.Cache` names a kept solve.
+  defp solve_entry_kind(name) do
+    case Regex.run(~r/^([a-z0-9_]+)-[0-9a-f]{64}(\.\d+\.\d+)?$/, name) do
+      [_, program] -> {:installed, program}
+      [_, _program, _staging] -> :staging
+      nil -> nil
     end
   end
 
@@ -532,7 +628,9 @@ defmodule Argus.Corpus do
     end)
     |> :crypto.hash_update(:erlang.term_to_binary({declarations, Enum.sort(all)}))
     |> then(fn hash ->
-      Enum.reduce(stage0_programs(), hash, fn file, hash ->
+      Argus.Analysis.stage0_rules_path()
+      |> Cache.program_files()
+      |> Enum.reduce(hash, fn {_spelled, file}, hash ->
         hash
         |> :crypto.hash_update(Path.basename(file))
         |> :crypto.hash_update(File.read!(file))
@@ -550,35 +648,10 @@ defmodule Argus.Corpus do
     |> Base.encode16(case: :lower)
   end
 
-  # Stage 0 and everything it includes, transitively, resolved the way
-  # Souffle resolves an include: relative to the including file.
-  defp stage0_programs do
-    walk_includes([Argus.Analysis.stage0_rules_path()], [])
-  end
-
-  defp walk_includes([], seen), do: Enum.reverse(seen)
-
-  defp walk_includes([file | rest], seen) do
-    if file in seen do
-      walk_includes(rest, seen)
-    else
-      included =
-        ~r/^\.include\s+"([^"]+)"/m
-        |> Regex.scan(File.read!(file))
-        |> Enum.map(fn [_, rel] -> Path.expand(rel, Path.dirname(file)) end)
-
-      walk_includes(included ++ rest, [file | seen])
-    end
-  end
-
   defp souffle_version do
-    case System.find_executable("souffle") do
-      nil ->
-        "no souffle"
-
-      bin ->
-        {out, _status} = System.cmd(bin, ["--version"], stderr_to_stdout: true)
-        out
+    case Argus.Souffle.executable() do
+      nil -> "no souffle"
+      bin -> Cache.version(bin)
     end
   end
 

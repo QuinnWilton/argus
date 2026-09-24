@@ -21,7 +21,9 @@ defmodule Mix.Tasks.Argus.Corpus do
   `Argus.Corpus.stale_facts/2` names: entries untouched for an hour
   beyond the `--keep` most recent (default 3), and staging directories
   a crashed run left a day ago. An entry touched within the hour is
-  never removed — a run beside this one may be reading it.
+  never removed — a run beside this one may be reading it. Within each
+  entry that stays, the kept solves of each program go by the same
+  policy (`Argus.Corpus.stale_solves/2`).
   """
 
   use Mix.Task
@@ -121,7 +123,17 @@ defmodule Mix.Tasks.Argus.Corpus do
 
     {count, bytes} =
       Enum.reduce(Corpus.facts_caches(), {0, 0}, fn cache, {count, bytes} ->
-        stale = Corpus.stale_facts(cache, policy)
+        stale_entries = Corpus.stale_facts(cache, policy)
+
+        # The kept solves of the entries that stay; a removed entry takes
+        # its own with it.
+        stale_solves =
+          for solves <- Corpus.solve_caches(cache),
+              Path.dirname(solves) not in stale_entries,
+              path <- Corpus.stale_solves(solves, policy),
+              do: path
+
+        stale = stale_entries ++ stale_solves
         size = stale |> Enum.map(&tree_bytes/1) |> Enum.sum()
         unless dry_run?, do: Enum.each(stale, &File.rm_rf!/1)
         {count + length(stale), bytes + size}

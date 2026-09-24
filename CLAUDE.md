@@ -89,15 +89,21 @@ those frameworks need.
   keyed by the beams, the code and Datalog extraction reaches
   (`Argus.Corpus.engine_modules/0` — not prose or rules, hashed by
   `Argus.BeamDigest`, which leaves out where argus was built), the
-  runtime and the solver, so a warm run only solves — in any worktree of
-  the same commit; `mix test --exclude corpus` skips
+  runtime and the solver, so a warm run extracts nothing — in any
+  worktree of the same commit. Each entry keeps its solves too, under `solves/`
+  (`Argus.Souffle.Cache`), keyed by the program with its transitive
+  includes, the solver, and for a reader of the points-to stage that
+  stage's program: a warm run with no rule edited solves nothing and
+  reads the entry's facts in place, and a rule edit re-solves only the
+  programs it reaches. `mix test --exclude corpus` skips
   it, `ARGUS_CORPUS_ONLY=redix#334` narrows it, `ARGUS_CORPUS_JOBS` sets
   how many checkouts are analyzed at once (default 4), `mix argus.corpus
   fetch` warms the cache and `mix argus.corpus tally` counts every title
   across the trees — the noise check after a rule changes. The tally
   runs in `MIX_ENV=test` and shares the gate's entries; each checkout
   keeps its three most recent entries beyond any used in the last hour,
-  so a before-change tally stays warm for the after-change one, and
+  and each entry the three most recent solves of each program, so a
+  before-change tally stays warm for the after-change one, and
   `mix argus.corpus prune [--keep N]` reclaims the rest. A new rule
   comes with a pair.
 - Test modules are `async: true` unless they touch VM-wide state (the
