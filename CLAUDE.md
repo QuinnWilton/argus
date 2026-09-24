@@ -142,9 +142,11 @@ names one with `cache:` on `Argus.run_analyses/2`, `Argus.analyze/3` or
   its shard records what it read of argus's own beams (the fixtures and
   their library stubs) or found absent, checked on every hit. A missing
   shard is extracted alone (`Argus.Pipeline.run_shards/3`); the rows of
-  a producer do not depend on which others run (`ShardsTest`). A run's
-  facts materialize, only when a solve misses, as hard links
-  byte-identical to `Argus.Pipeline.run/3`'s directory.
+  a producer do not depend on which others run (`ShardsTest`). A run
+  makes a facts directory only when a solve misses, and places in it
+  only the files that program reads, as symbolic links into the store;
+  `Facts.materialize/1` (what `extract_facts/3` returns) is the whole
+  directory as hard links, byte-identical to `Argus.Pipeline.run/3`'s.
 - **Solves** (`Argus.Souffle.Cache`): keyed by the program with its
   includes, the solver's version and the digests of exactly the files
   the program reads (`Argus.Souffle.input_files/2`). Stage outputs join

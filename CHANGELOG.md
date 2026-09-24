@@ -191,10 +191,13 @@ the environment it reads, with each module it read from argus's own
 application or found absent recorded and checked on every hit. Only
 missing shards are extracted, and a run that lost a module to a timeout
 keeps none. A run's facts are each relation file's digest and source,
-materialized on demand as hard links byte-identical to
-`Argus.Pipeline.run/3`'s directory; `solve/3` keys a solve on the
-digests of exactly what it reads, and a stage's outputs join the facts
-by content. `Argus.Cache.CodeTest` runs every producer with call
+with no directory until a solve misses: it places only the files its
+program reads, as symbolic links into the store (`materialize/2`;
+`prepare/3` places what the solves about to fan out read, where
+`kept_solves?/3` says whether they are all kept), and
+`materialize/1` makes the whole directory as hard links byte-identical
+to `Argus.Pipeline.run/3`'s. `solve/3` keys a solve on the digests of
+exactly what it reads, and a stage's outputs join the facts by content. `Argus.Cache.CodeTest` runs every producer with call
 counting on and checks that nothing it executes lies outside its
 closure.
 

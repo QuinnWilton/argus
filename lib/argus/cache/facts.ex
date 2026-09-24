@@ -34,11 +34,14 @@ defmodule Argus.Cache.Facts do
   A run's facts are a map from each relation file to its content's
   digest and the files that hold it — a shard's file, several shards'
   files joined, or a solve's output — with no directory until one is
-  needed (`materialize/1`): a run whose solves are all kept never makes
-  one. A directory made is hard links into the store (a copy across
-  volumes), put together as `Argus.Pipeline.Shards` joins producers, so
-  it is byte-identical to what `Argus.Pipeline.run/3` would have
-  written.
+  needed: a run whose solves are all kept never makes one. A solve that
+  misses places in a directory only the files its program reads, as
+  symbolic links into the store (`materialize/2`); on a cold run that
+  was most of the store's cost, every schema relation hard-linked or
+  written empty for solves that each read a few dozen. `materialize/1`
+  makes the whole directory, hard links a caller can keep, put together
+  as `Argus.Pipeline.Shards` joins producers: byte-identical to what
+  `Argus.Pipeline.run/3` would have written.
 
   ## Solves
 
@@ -60,7 +63,7 @@ defmodule Argus.Cache.Facts do
   @manifest ".argus-shard"
 
   @enforce_keys [:store, :group, :relations]
-  defstruct [:store, :group, :relations, work: nil, dir: nil]
+  defstruct [:store, :group, :relations, work: nil, dir: nil, placed: %{}, complete: false]
 
   @typedoc """
   A relation file's content: its digest, and the files whose bytes,
@@ -71,16 +74,19 @@ defmodule Argus.Cache.Facts do
   @typedoc """
   A run's facts: the store they are kept in, the group naming this set
   of beams' entries (the first 16 hex digits of their digest), each
-  relation file's `t:source/0`, and — once `materialize/1` made one — a
-  directory holding them, inside a scratch directory `release/1`
-  removes.
+  relation file's `t:source/0`, and — once a solve or `materialize/1`
+  made one — a directory holding them, inside a scratch directory
+  `release/1` removes: `placed` says which files it holds, how each was
+  placed and from what, and `complete` whether it holds them all.
   """
   @type t :: %__MODULE__{
           store: Path.t(),
           group: String.t(),
           relations: %{String.t() => source()},
           work: Path.t() | nil,
-          dir: Path.t() | nil
+          dir: Path.t() | nil,
+          placed: %{String.t() => {:link | :symlink, [Path.t()]}},
+          complete: boolean()
         }
 
   @doc """
@@ -399,44 +405,143 @@ defmodule Argus.Cache.Facts do
 
   @doc """
   The facts in a directory: `facts.dir`, made on first call — every
-  relation file linked from the store, every schema relation without
-  rows an empty file, as `Argus.Pipeline.run/3` leaves them.
+  relation file linked from the store (hard links, copies across
+  volumes), every schema relation without rows an empty file, as
+  `Argus.Pipeline.run/3` leaves them. A file a solve placed there as a
+  symbolic link (`materialize/2`) is linked again, so the directory
+  outlives the store's entries: it is the caller's to keep.
   """
   @spec materialize(t()) :: {:ok, t()} | {:error, term()}
-  def materialize(%__MODULE__{dir: dir} = facts) when is_binary(dir), do: {:ok, facts}
+  def materialize(%__MODULE__{complete: true} = facts), do: {:ok, facts}
 
   def materialize(%__MODULE__{} = facts) do
-    work = work_dir(facts)
-    dir = Path.join(work, "facts")
-    facts = %{facts | work: work}
+    names = Enum.uniq(Map.keys(facts.relations) ++ MapSet.to_list(schema_files()))
 
-    with :ok <- File.mkdir_p(dir),
-         :ok <-
-           Shards.assemble(Map.new(facts.relations, fn {n, {_d, p}} -> {n, p} end), dir, :link),
-         :ok <- touch_empty(dir, facts.relations) do
-      {:ok, %{facts | dir: dir}}
+    with {:ok, facts} <- place(facts, names, :link) do
+      {:ok, %{facts | complete: true}}
     end
   end
 
-  defp touch_empty(dir, relations) do
-    Enum.reduce_while(schema_files(), :ok, fn name, :ok ->
-      if Map.has_key?(relations, name) do
-        {:cont, :ok}
-      else
-        case File.write(Path.join(dir, name), "") do
-          :ok -> {:cont, :ok}
-          {:error, reason} -> {:halt, {:error, {:write_failed, name, reason}}}
+  @doc """
+  The facts in a directory holding at least the relation files `names`
+  (a schema relation without rows as an empty file; a name the facts do
+  not hold, such as a stage not derived yet, left out), for a solve of
+  this run: `facts.dir`, made on first call, with each file not there
+  yet placed as a symbolic link into the store. Only what a solve reads
+  is placed, and a link is a fraction of a hard link's cost; the links
+  last as long as the entries they name, which a run touches (`Argus.Cache`).
+  """
+  @spec materialize(t(), [String.t()]) :: {:ok, t()} | {:error, term()}
+  def materialize(%__MODULE__{} = facts, names), do: place(facts, names, :symlink)
+
+  defp place(facts, names, mode) do
+    with {:ok, facts} <- ensure_dir(facts) do
+      Enum.reduce_while(names, {:ok, facts}, fn name, {:ok, facts} ->
+        case place_one(facts, name, mode) do
+          {:ok, facts} -> {:cont, {:ok, facts}}
+          {:error, _} = error -> {:halt, error}
         end
-      end
-    end)
+      end)
+    end
+  end
+
+  # A file already there from the same source stays (a hard link serves
+  # a request for a symbolic one); a missing one is made in place, and
+  # one from another source — a stage's output over what the directory
+  # held — is made beside it and renamed over it.
+  defp place_one(facts, name, mode) do
+    case sources(facts, name) do
+      :none ->
+        {:ok, facts}
+
+      {:ok, paths} ->
+        target = Path.join(facts.dir, name)
+
+        result =
+          case Map.fetch(facts.placed, name) do
+            {:ok, {placed_mode, ^paths}} when placed_mode == mode or placed_mode == :link -> :kept
+            {:ok, _other} -> Shards.place(paths, target, mode)
+            :error -> create(paths, target, mode)
+          end
+
+        case result do
+          :kept -> {:ok, facts}
+          :ok -> {:ok, %{facts | placed: Map.put(facts.placed, name, {mode, paths})}}
+          {:error, _} = error -> error
+        end
+    end
+  end
+
+  # What a relation file holds: its source's files, none for a schema
+  # relation without rows, or `:none` when the facts do not hold it.
+  defp sources(%__MODULE__{relations: relations}, name) do
+    case Map.fetch(relations, name) do
+      {:ok, {_digest, paths}} -> {:ok, paths}
+      :error -> if MapSet.member?(schema_files(), name), do: {:ok, []}, else: :none
+    end
+  end
+
+  # A file made where none is: a link made in place, an empty file
+  # written. A relation joined from parts is written whole beside it and
+  # renamed (`Argus.Pipeline.Shards.place/3`).
+  defp create([], target, _mode) do
+    case File.write(target, "") do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:place_failed, target, reason}}
+    end
+  end
+
+  # A solve fanned out beside others places only what `prepare/3` did
+  # not; should two place the same file (a kept solve pruned between the
+  # two), the one that finds it there takes it: within one directory a
+  # name has one source.
+  defp create([path], target, :symlink) do
+    case File.ln_s(path, target) do
+      :ok -> :ok
+      {:error, :eexist} -> :ok
+      {:error, reason} -> {:error, {:place_failed, target, reason}}
+    end
+  end
+
+  defp create([path], target, :link) do
+    case File.ln(path, target) do
+      :ok ->
+        :ok
+
+      {:error, :eexist} ->
+        :ok
+
+      {:error, _} ->
+        case File.cp(path, target) do
+          :ok -> :ok
+          {:error, reason} -> {:error, {:place_failed, target, reason}}
+        end
+    end
+  end
+
+  defp create(paths, target, mode), do: Shards.place(paths, target, mode)
+
+  defp ensure_dir(%__MODULE__{dir: dir} = facts) when is_binary(dir), do: {:ok, facts}
+
+  defp ensure_dir(%__MODULE__{} = facts) do
+    work = work_dir(facts)
+    dir = Path.join(work, "facts")
+
+    case File.mkdir(dir) do
+      :ok -> {:ok, %{facts | work: work, dir: dir}}
+      {:error, reason} -> {:error, {:mkdir_failed, dir, reason}}
+    end
   end
 
   defp work_dir(%__MODULE__{work: work}) when is_binary(work), do: work
 
   defp work_dir(%__MODULE__{store: store}) do
     work = Path.join([store, "work", "#{:os.getpid()}-#{System.unique_integer([:positive])}"])
-    File.mkdir_p!(work)
-    work
+
+    case Cache.mkdir(work) do
+      :ok -> work
+      {:error, reason} -> raise File.Error, reason: reason, action: "make directory", path: work
+    end
   end
 
   @doc """
@@ -451,7 +556,13 @@ defmodule Argus.Cache.Facts do
 
       case Cache.file_digest(path) do
         {:ok, digest} ->
-          {:cont, {:ok, %{facts | relations: Map.put(facts.relations, name, {digest, [path]})}}}
+          {:cont,
+           {:ok,
+            %{
+              facts
+              | relations: Map.put(facts.relations, name, {digest, [path]}),
+                placed: Map.put(facts.placed, name, {:link, [path]})
+            }}}
 
         {:error, reason} ->
           {:halt, {:error, {:digest_failed, name, reason}}}
@@ -487,7 +598,7 @@ defmodule Argus.Cache.Facts do
   def digest(%__MODULE__{relations: relations}, name) do
     case Map.fetch(relations, name) do
       {:ok, {digest, _paths}} -> digest
-      :error -> if name in schema_files(), do: empty_digest(), else: "absent"
+      :error -> if MapSet.member?(schema_files(), name), do: empty_digest(), else: "absent"
     end
   end
 
@@ -497,6 +608,11 @@ defmodule Argus.Cache.Facts do
   """
   @spec entry(t(), Path.t(), keyword()) :: {:ok, Path.t()} | {:error, term()}
   def entry(%__MODULE__{} = facts, rules_path, opts) do
+    with {:ok, entry, _inputs} <- keyed(facts, rules_path, opts), do: {:ok, entry}
+  end
+
+  # The entry, and the relation files the program reads.
+  defp keyed(facts, rules_path, opts) do
     with {:ok, bin} <- souffle_bin(opts),
          {:ok, inputs} <-
            Souffle.input_files(rules_path,
@@ -505,7 +621,7 @@ defmodule Argus.Cache.Facts do
            ) do
       digests = Enum.map(inputs, &{&1, digest(facts, &1)})
       solves = Cache.dir(facts.store, :solves)
-      {:ok, Souffle.Cache.named(solves, facts.group, rules_path, bin, digests)}
+      {:ok, Souffle.Cache.named(solves, facts.group, rules_path, bin, digests), inputs}
     end
   end
 
@@ -524,16 +640,38 @@ defmodule Argus.Cache.Facts do
   end
 
   @doc """
+  Readies the solves of `rules_paths` to run side by side over the
+  facts: when one of them is not kept, the directory holds every file
+  the ones not kept read (`materialize/2`), so none of them places a
+  file while another reads the directory. The facts are returned as
+  they are when every solve is kept, and a program whose inputs cannot
+  be resolved is left to its solve to report.
+  """
+  @spec prepare(t(), [Path.t()], keyword()) :: {:ok, t()} | {:error, term()}
+  def prepare(%__MODULE__{} = facts, rules_paths, opts) do
+    missing =
+      for rules_path <- rules_paths,
+          {:ok, entry, inputs} <- [keyed(facts, rules_path, opts)],
+          not File.exists?(entry),
+          input <- inputs,
+          uniq: true,
+          do: input
+
+    if missing == [], do: {:ok, facts}, else: materialize(facts, missing)
+  end
+
+  @doc """
   Solves `rules_path` over the facts, or reads the kept solve back:
   `{:ok, results, facts}` with the results as `Argus.Souffle.run/3`
   returns them, and the facts with any `.facts` file the program writes
   (a stage's) in place of what they held — in the directory too, when
-  there is one. A miss solves over `facts.dir`, made first when there is
-  none. Honors `:souffle_bin` and `:souffle_timeout`.
+  it held that file. A miss solves over `facts.dir`, placing there
+  first what the program reads (`materialize/2`). Honors `:souffle_bin`
+  and `:souffle_timeout`.
   """
   @spec solve(t(), Path.t(), keyword()) :: {:ok, Souffle.result(), t()} | {:error, term()}
   def solve(%__MODULE__{} = facts, rules_path, opts) do
-    with {:ok, entry} <- entry(facts, rules_path, opts) do
+    with {:ok, entry, inputs} <- keyed(facts, rules_path, opts) do
       case Cache.fetch(entry) do
         {:ok, entry} ->
           with {:ok, results} <- Souffle.read_outputs(entry),
@@ -542,22 +680,26 @@ defmodule Argus.Cache.Facts do
           end
 
         :miss ->
-          solve_and_keep(facts, entry, rules_path, opts)
+          solve_and_keep(facts, entry, inputs, rules_path, opts)
       end
     end
   end
 
   # A directory made for this solve alone goes with a failure.
-  defp solve_and_keep(facts, entry, rules_path, opts) do
-    with {:ok, materialized} <- materialize(facts) do
-      case solve_into(materialized, entry, rules_path, opts) do
-        {:ok, _results, _facts} = ok ->
-          ok
+  defp solve_and_keep(facts, entry, inputs, rules_path, opts) do
+    case materialize(facts, inputs) do
+      {:ok, placed} ->
+        case solve_into(placed, entry, rules_path, opts) do
+          {:ok, _results, _facts} = ok ->
+            ok
 
-        {:error, _} = error ->
-          if facts.work == nil, do: release(materialized)
-          error
-      end
+          {:error, _} = error ->
+            if facts.work == nil, do: release(placed)
+            error
+        end
+
+      {:error, _} = error ->
+        error
     end
   end
 
@@ -587,7 +729,10 @@ defmodule Argus.Cache.Facts do
   end
 
   # A stage's outputs (the `.facts` files a program writes) join the
-  # facts by their content, and replace what the directory held.
+  # facts by their content, and replace what the directory held: in a
+  # complete directory every one, in one a solve placed files into
+  # only those it placed (the others are placed when a solve reads
+  # them).
   defp put_outputs(facts, entry) do
     with {:ok, digests} <- Souffle.Cache.manifest(entry) do
       outputs =
@@ -597,16 +742,23 @@ defmodule Argus.Cache.Facts do
         path = Path.join(entry, name)
         facts = %{facts | relations: Map.put(facts.relations, name, {digest, [path]})}
 
-        case place_output(facts.dir, path, name) do
-          :ok -> {:cont, {:ok, facts}}
+        case place_output(facts, name) do
+          {:ok, facts} -> {:cont, {:ok, facts}}
           {:error, _} = error -> {:halt, error}
         end
       end)
     end
   end
 
-  defp place_output(nil, _path, _name), do: :ok
-  defp place_output(dir, path, name), do: Shards.place([path], Path.join(dir, name), :link)
+  defp place_output(%__MODULE__{dir: nil} = facts, _name), do: {:ok, facts}
+  defp place_output(%__MODULE__{complete: true} = facts, name), do: place_one(facts, name, :link)
+
+  defp place_output(%__MODULE__{} = facts, name) do
+    case Map.fetch(facts.placed, name) do
+      {:ok, {mode, _paths}} -> place_one(facts, name, mode)
+      :error -> {:ok, facts}
+    end
+  end
 
   defp souffle_bin(opts) do
     case Keyword.get(opts, :souffle_bin) || Souffle.executable() do

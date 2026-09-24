@@ -149,8 +149,9 @@ defmodule Argus.Findings.Runner do
     end
   end
 
-  # Facts through a store get a directory before the solves fan out
-  # when one of them is not kept, so they share it.
+  # Facts through a store get a directory before the solves fan out,
+  # holding what the solves that are not kept read, so they share it
+  # and none places a file while another reads.
   defp prepare({:cached, facts} = source, requests, points_to, opts) do
     rules =
       for mod <- requests,
@@ -158,11 +159,9 @@ defmodule Argus.Findings.Runner do
           {:ok, path} <- [Analysis.Catalog.rules_path(mod.name())],
           do: path
 
-    with false <- Facts.kept_solves?(facts, rules, opts),
-         {:ok, facts} <- Facts.materialize(facts) do
-      {:cached, facts}
-    else
-      _kept_or_failed -> source
+    case Facts.prepare(facts, rules, opts) do
+      {:ok, facts} -> {:cached, facts}
+      {:error, _} -> source
     end
   end
 

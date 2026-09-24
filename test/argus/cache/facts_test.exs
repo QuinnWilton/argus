@@ -258,6 +258,65 @@ defmodule Argus.Cache.FactsTest do
       end
     end
 
+    test "a solve that misses places what it reads, as links; materialize/1 makes the rest",
+         %{tmp_dir: tmp} do
+      unless Argus.Souffle.available?(), do: flunk("souffle not installed")
+      {stage, down} = programs!(tmp)
+      store = Path.join(tmp, "store")
+      edge = Path.join(tmp, "edge.facts")
+      File.write!(edge, "a\tb\n")
+
+      facts = facts(store, edge)
+      facts = %{facts | relations: Map.put(facts.relations, "call_edge.facts", {"x", [edge]})}
+
+      assert {:ok, %{}, staged} = Facts.solve(facts, stage, [])
+      assert File.ls!(staged.dir) == ["edge.facts"]
+      assert {:ok, %File.Stat{type: :symlink}} = File.lstat(Path.join(staged.dir, "edge.facts"))
+
+      # The stage's output is placed when a solve reads it.
+      assert {:ok, %{"out" => [["a"]]}, solved} = Facts.solve(staged, down, [])
+      assert solved.dir == staged.dir
+      assert Enum.sort(File.ls!(solved.dir)) == ["edge.facts", "node.facts"]
+
+      # The whole directory: every relation and schema file, and no
+      # symbolic link left to outlive the store's entries.
+      assert {:ok, full} = Facts.materialize(solved)
+
+      try do
+        names = File.ls!(full.dir)
+        assert "call_edge.facts" in names
+        assert "instruction.facts" in names
+        assert File.read!(Path.join(full.dir, "node.facts")) == "a\n"
+
+        for name <- names do
+          assert {:ok, %File.Stat{type: :regular}} = File.lstat(Path.join(full.dir, name))
+        end
+      after
+        Facts.release(full)
+      end
+
+      refute File.exists?(full.work)
+    end
+
+    test "prepare places what the solves not kept read, and nothing once they are kept",
+         %{tmp_dir: tmp} do
+      unless Argus.Souffle.available?(), do: flunk("souffle not installed")
+      {stage, _down} = programs!(tmp)
+      store = Path.join(tmp, "store")
+      edge = Path.join(tmp, "edge.facts")
+      File.write!(edge, "a\tb\n")
+      facts = facts(store, edge)
+
+      assert {:ok, prepared} = Facts.prepare(facts, [stage], [])
+      assert File.ls!(prepared.dir) == ["edge.facts"]
+      assert {:ok, %{}, solved} = Facts.solve(prepared, stage, [])
+      assert solved.work == prepared.work
+      Facts.release(solved)
+
+      assert {:ok, kept} = Facts.prepare(facts, [stage], [])
+      assert kept.dir == nil
+    end
+
     test "a failed solve is reported and not kept", %{tmp_dir: tmp} do
       unless Argus.Souffle.available?(), do: flunk("souffle not installed")
       store = Path.join(tmp, "store")

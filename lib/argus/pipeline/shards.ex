@@ -51,9 +51,10 @@ defmodule Argus.Pipeline.Shards do
 
   @doc """
   Puts the rows of `files`, in order, at `target`, replacing what is
-  there: see `assemble/3`.
+  there: see `assemble/3`. `:symlink` places a lone part as a symbolic
+  link to it.
   """
-  @spec place([Path.t()], Path.t(), :move | :link) :: :ok | {:error, term()}
+  @spec place([Path.t()], Path.t(), :move | :link | :symlink) :: :ok | {:error, term()}
   def place([], target, _mode), do: write_new(target, fn _device -> :ok end)
 
   def place([file], target, :move) do
@@ -73,6 +74,15 @@ defmodule Argus.Pipeline.Shards do
       end
 
     with :ok <- result, :ok <- rename(scratch, target), do: :ok
+  end
+
+  def place([file], target, :symlink) do
+    scratch = scratch_name(target)
+
+    case File.ln_s(file, scratch) do
+      :ok -> rename(scratch, target)
+      {:error, reason} -> {:error, {:place_failed, target, reason}}
+    end
   end
 
   def place(files, target, _mode) do
