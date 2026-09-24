@@ -22,6 +22,9 @@ defmodule Argus.Cache do
     * `programs/` — the relations each program reads, as Souffle
       resolves them (`Argus.Souffle.input_relations/2`), kept so a warm
       run starts no solver at all.
+    * `ebins/` — the hashes of each dependency ebin's beams under a
+      stamp of their stats (`Argus.Specs.environment_digest/1`), so a
+      fresh VM keys the specs extractor without reading every beam.
     * `bases/` — each module's base for a set of beams
       (`Argus.Pipeline.Base`: its disassembly, decoded facts,
       control-flow graphs and reaching definitions), keyed by the beams,
@@ -55,7 +58,7 @@ defmodule Argus.Cache do
   @type prune_option ::
           {:keep, [String.t()]} | {:recent, non_neg_integer()} | {:max_age, pos_integer()}
 
-  @subdirs ~w(shards solves programs bases)
+  @subdirs ~w(shards solves programs bases ebins)
 
   # Always spared: an entry touched within the hour may be one a run
   # beside this one is reading.
@@ -90,9 +93,12 @@ defmodule Argus.Cache do
     end
   end
 
-  @doc "One of the store's directories: `:shards`, `:solves`, `:programs` or `:bases`."
-  @spec dir(Path.t(), :shards | :solves | :programs | :bases) :: Path.t()
-  def dir(root, kind) when kind in [:shards, :solves, :programs, :bases],
+  @doc """
+  One of the store's directories: `:shards`, `:solves`, `:programs`,
+  `:bases` or `:ebins`.
+  """
+  @spec dir(Path.t(), :shards | :solves | :programs | :bases | :ebins) :: Path.t()
+  def dir(root, kind) when kind in [:shards, :solves, :programs, :bases, :ebins],
     do: Path.join(root, Atom.to_string(kind))
 
   @doc """
@@ -181,7 +187,8 @@ defmodule Argus.Cache do
   defp read_only(path, names), do: Enum.each(names, &File.chmod(Path.join(path, &1), 0o444))
 
   @doc """
-  The entries of a store (its `shards/`, `solves/`, `programs/` and `bases/`)
+  The entries of a store (its `shards/`, `solves/`, `programs/`, `bases/`
+  and `ebins/`)
   that `prune/2` removes. Within each group (`<group>-<key>`, see the
   moduledoc) an entry goes once it has been untouched for an hour and
   is not among the `recent:` most recently touched of its group

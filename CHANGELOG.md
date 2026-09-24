@@ -229,6 +229,17 @@ the base's already goes: every producer's walk used to read the whole
 pipeline's import tables again. Seven producers' digests in a fresh VM
 take half the time.
 
+**Changed.** `Argus.Specs.environment_digest/1` keeps each dependency
+ebin's beam hashes under a stamp of the beams' stats (name,
+modification time, size, inode): in the VM, and with the new `cache:`
+option on disk, so a fresh VM stats the beams where it read and hashed
+every one (177 ms to 24 ms in argus's test environment; a larger
+project's dependencies cost more). `Argus.Cache.Facts` passes its
+store's new `ebins/`. An ebin holding a beam written within the last two
+seconds is hashed every time and kept nowhere, since a stamp cannot
+tell two writes within one second apart. A VM looks at the digest again
+at most once a second, where it used to keep the first one for good.
+
 **Added.** `cache:` on `Argus.run_analyses/2`, `Argus.analyze/3` and
 `Argus.Analysis.extract_facts/3` names a store: the facts are read from
 its shards or extracted into them, stage 0, the points-to stage and

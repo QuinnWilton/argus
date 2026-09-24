@@ -146,7 +146,7 @@ defmodule Argus.Cache.Facts do
     Enum.reduce_while(producers, {:ok, []}, fn producer, {:ok, acc} ->
       case Code.digest(producer) do
         {:ok, code} ->
-          key = Cache.key(common ++ [code, environment(producer)])
+          key = Cache.key(common ++ [code, environment(producer, store)])
           entry = Path.join(Cache.dir(store, :shards), "#{name(producer)}-#{group}-#{key}")
           {:cont, {:ok, [{producer, entry} | acc]}}
 
@@ -174,9 +174,9 @@ defmodule Argus.Cache.Facts do
     [written, to_string(Keyword.get(opts, :trace_imprecision, false))]
   end
 
-  defp environment(producer) do
+  defp environment(producer, store) do
     if Code.reads_installed?(producer),
-      do: Argus.Specs.environment_digest(exclude: [:panoptes]),
+      do: Argus.Specs.environment_digest(exclude: [:panoptes], cache: Cache.dir(store, :ebins)),
       else: ""
   end
 

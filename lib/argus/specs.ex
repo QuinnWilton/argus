@@ -170,11 +170,19 @@ defmodule Argus.Specs do
   A version alone names the code of an installed OTP or Elixir
   application, but not of a dependency: a path or git dependency, or an
   umbrella sibling, changes its beams (and its specs) without moving its
-  version. Hashing those beams costs one read of each, done in parallel
-  and memoized per VM, code path and `:exclude` list. Each beam is
-  hashed by `Argus.BeamDigest` with its debug info, which is where the
-  specs are read from, and without the directory it was built in: a
-  dependency built in two checkouts of one project digests the same.
+  version. Hashing those beams costs one read of each, done in parallel.
+  Each beam is hashed by `Argus.BeamDigest` with its debug info, which
+  is where the specs are read from, and without the directory it was
+  built in: a dependency built in two checkouts of one project digests
+  the same.
+
+  The hashes are kept per ebin, under a stamp of its beams' stats (name,
+  modification time, size, inode): in the VM, and — with `:cache` — on
+  disk, so a fresh VM stats the beams rather than reading them. An ebin
+  holding a beam written within the last two seconds is hashed every
+  time and kept nowhere: a stamp cannot tell two writes within one
+  second apart. The digest itself is kept per code path and `:exclude`
+  list, and looked at again at most once a second.
 
   ## Options
 
@@ -183,21 +191,44 @@ defmodule Argus.Specs do
       applications' beams itself — the program under analysis, or its
       own code — excludes them, so an edit to one does not move the
       digest of everything else.
+    * `:cache` — a directory to keep each ebin's hashes in across VMs
+      (`Argus.Cache.Facts` passes its store's `ebins/`).
   """
+  # How long a kept environment digest is trusted without a look.
+  @recheck_ms 1_000
+
   @spec environment_digest(keyword()) :: String.t()
   def environment_digest(opts \\ []) do
     exclude = opts |> Keyword.get(:exclude, []) |> Enum.sort() |> Enum.uniq()
+    cache = Keyword.get(opts, :cache)
     key = {__MODULE__, :environment_digest, :code.get_path(), exclude}
+    now = System.monotonic_time(:millisecond)
 
     case :persistent_term.get(key, nil) do
-      nil ->
-        digest = compute_environment_digest(exclude)
-        :persistent_term.put(key, digest)
-        digest
+      {digest, checked} ->
+        if now - :atomics.get(checked, 1) < @recheck_ms do
+          digest
+        else
+          case compute_environment_digest(exclude, cache) do
+            ^digest ->
+              :atomics.put(checked, 1, now)
+              digest
 
-      digest ->
-        digest
+            moved ->
+              keep_environment_digest(key, moved, now)
+          end
+        end
+
+      nil ->
+        keep_environment_digest(key, compute_environment_digest(exclude, cache), now)
     end
+  end
+
+  defp keep_environment_digest(key, digest, now) do
+    checked = :atomics.new(1, signed: true)
+    :atomics.put(checked, 1, now)
+    :persistent_term.put(key, {digest, checked})
+    digest
   end
 
   # ── Reading ─────────────────────────────────────────────────────────
@@ -466,7 +497,7 @@ defmodule Argus.Specs do
 
   # ── Environment ─────────────────────────────────────────────────────
 
-  defp compute_environment_digest(exclude) do
+  defp compute_environment_digest(exclude, cache) do
     stable = stable_roots()
 
     apps =
@@ -486,7 +517,7 @@ defmodule Argus.Specs do
           into: MapSet.new(),
           do: dir
 
-    digests = beam_digests(hashed)
+    digests = beam_digests(hashed, cache)
 
     apps
     |> Enum.map(fn {app, vsn, dir} ->
@@ -516,26 +547,136 @@ defmodule Argus.Specs do
   end
 
   # Every beam in each of `ebins`, by name and `Argus.BeamDigest`, as
-  # `%{ebin => [{name, hash}]}` sorted by name. The reads are the cost,
-  # so they run in parallel across every ebin at once.
-  defp beam_digests(ebins) do
-    ebins
-    |> Enum.flat_map(fn ebin ->
-      Enum.map(Path.wildcard(Path.join(ebin, "*.beam")), &{ebin, &1})
-    end)
-    |> Task.async_stream(
-      fn {ebin, beam} ->
-        content =
-          case Argus.BeamDigest.digest(beam, debug_info: true) do
-            {:ok, hash} -> hash
-            {:error, reason} -> reason
-          end
+  # `%{ebin => [{name, hash}]}` sorted by name: each ebin's as kept under
+  # the stamp of its beams, and the rest hashed. The reads are the cost,
+  # so they run in parallel across every ebin hashed at once.
+  defp beam_digests(ebins, cache) do
+    now = System.os_time(:second)
 
-        {ebin, {Path.basename(beam), content}}
-      end,
-      timeout: :infinity
-    )
-    |> Enum.group_by(fn {:ok, {ebin, _}} -> ebin end, fn {:ok, {_, entry}} -> entry end)
-    |> Map.new(fn {ebin, entries} -> {ebin, Enum.sort(entries)} end)
+    {kept, missing} =
+      ebins
+      |> Enum.map(fn ebin -> {ebin, ebin_stamp(ebin, now)} end)
+      |> Enum.map(fn {ebin, stamp} -> {ebin, stamp, kept_digests(ebin, stamp, cache)} end)
+      |> Enum.split_with(fn {_ebin, _stamp, found} -> found != :miss end)
+
+    hashed =
+      missing
+      |> Enum.flat_map(fn {ebin, {beams, _stats, _racy?}, :miss} ->
+        Enum.map(beams, &{ebin, &1})
+      end)
+      |> Task.async_stream(
+        fn {ebin, beam} ->
+          content =
+            case Argus.BeamDigest.digest(beam, debug_info: true) do
+              {:ok, hash} -> hash
+              {:error, reason} -> reason
+            end
+
+          {ebin, {Path.basename(beam), content}}
+        end,
+        timeout: :infinity
+      )
+      |> Enum.group_by(fn {:ok, {ebin, _}} -> ebin end, fn {:ok, {_, entry}} -> entry end)
+
+    for {ebin, stamp, :miss} <- missing do
+      entries = hashed |> Map.get(ebin, []) |> Enum.sort()
+      keep_digests(ebin, stamp, entries, cache)
+      {ebin, entries}
+    end
+    |> Map.new()
+    |> Map.merge(Map.new(kept, fn {ebin, _stamp, {:ok, entries}} -> {ebin, entries} end))
+  end
+
+  @racy_seconds 2
+  @ebin_format "argus-ebin-digests-1"
+
+  # An ebin's beams and the stamp of them: each one's name, modification
+  # time, size and inode, and whether one was written too recently to
+  # tell a later write within the same second apart.
+  defp ebin_stamp(ebin, now) do
+    beams = ebin |> Path.join("*.beam") |> Path.wildcard() |> Enum.sort()
+
+    stats =
+      for beam <- beams do
+        case File.stat(beam, time: :posix) do
+          {:ok, %File.Stat{mtime: mtime, size: size, inode: inode}} ->
+            {Path.basename(beam), mtime, size, inode}
+
+          {:error, reason} ->
+            {Path.basename(beam), reason}
+        end
+      end
+
+    racy? =
+      Enum.any?(stats, fn
+        {_name, mtime, _size, _inode} -> mtime >= now - @racy_seconds
+        _unreadable -> true
+      end)
+
+    {beams, stats, racy?}
+  end
+
+  # `{:ok, entries}` kept for this stamp, in the VM or in `cache`, or
+  # `:miss`.
+  defp kept_digests(_ebin, {_beams, _stats, true}, _cache), do: :miss
+
+  defp kept_digests(ebin, {_beams, stats, false}, cache) do
+    case :persistent_term.get({__MODULE__, :ebin, ebin}, nil) do
+      {^stats, entries} ->
+        {:ok, entries}
+
+      _ ->
+        with path when is_binary(path) <- ebin_entry(ebin, stats, cache),
+             {:ok, bytes} <- File.read(path),
+             {:ok, entries} when is_list(entries) <- safe_decode(bytes) do
+          # Touched as a store's hit is, so retention sees it in use.
+          File.touch(path)
+          :persistent_term.put({__MODULE__, :ebin, ebin}, {stats, entries})
+          {:ok, entries}
+        else
+          _ -> :miss
+        end
+    end
+  end
+
+  # Kept in the VM and in `cache` unless the stamp is racy; a cache that
+  # cannot be written to goes without.
+  defp keep_digests(_ebin, {_beams, _stats, true}, _entries, _cache), do: :ok
+
+  defp keep_digests(ebin, {_beams, stats, false}, entries, cache) do
+    :persistent_term.put({__MODULE__, :ebin, ebin}, {stats, entries})
+
+    with path when is_binary(path) <- ebin_entry(ebin, stats, cache),
+         false <- File.exists?(path),
+         :ok <- File.mkdir_p(cache) do
+      staging = "#{path}.#{:os.getpid()}.#{System.unique_integer([:positive])}"
+
+      with :ok <- File.write(staging, :erlang.term_to_binary(entries)),
+           :ok <- File.rename(staging, path) do
+        :ok
+      else
+        _ -> File.rm(staging)
+      end
+    end
+
+    :ok
+  end
+
+  # `<application>-<key>`: the ebin's application directory and a
+  # digest of the ebin's path and stamp.
+  defp ebin_entry(_ebin, _stats, nil), do: nil
+
+  defp ebin_entry(ebin, stats, cache) do
+    key =
+      :crypto.hash(:sha256, :erlang.term_to_binary({@ebin_format, ebin, stats}))
+      |> Base.encode16(case: :lower)
+
+    Path.join(cache, "#{ebin |> Path.dirname() |> Path.basename()}-#{key}")
+  end
+
+  defp safe_decode(bytes) do
+    {:ok, :erlang.binary_to_term(bytes, [:safe])}
+  rescue
+    ArgumentError -> :error
   end
 end

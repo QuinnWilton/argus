@@ -139,7 +139,9 @@ names one with `cache:` on `Argus.run_analyses/2`, `Argus.analyze/3` or
   (`Argus.Cache.Code`: the import-table closure from the extractor and
   from `Argus.Pipeline`, hashed by `Argus.BeamDigest`), the runtime and
   the row-shaping options. The specs extractor's key adds the
-  environment (`Argus.Specs.environment_digest/1`, argus left out), and
+  environment (`Argus.Specs.environment_digest/1`, argus left out; each
+  dependency ebin's hashes kept in `ebins/` under a stamp of its beams'
+  stats), and
   its shard records what it read of argus's own beams (the fixtures and
   their library stubs) or found absent, checked on every hit. A missing
   shard is extracted alone (`Argus.Pipeline.run_shards/3`); the rows of
