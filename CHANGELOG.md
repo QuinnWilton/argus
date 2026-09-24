@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `mix scry` reports a project whose findings fail the compiler's
+  `fail_on`. It compiled first with the plain compile task, which exits
+  when scry's own compiler returns `:error` — so a project with one
+  error-severity finding (argus's monitor leak is one by default) got no
+  report at all, text or JSON. The task now compiles with
+  `--return-errors`, reports scry's findings whatever their severity
+  (`--fail-above` is its gate), and raises only when another compiler
+  failed: an ebin that is not the source's has nothing sound to analyze.
 - argus 0.20 moves the three check-then-act races into a concern of
   their own, `races`: `registry_race` from `structure`, `ets_check_act`
   and `mnesia_check_act` from `ets`. Their findings report as

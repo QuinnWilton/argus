@@ -130,4 +130,59 @@ defmodule Mix.Tasks.ScryTest do
       refute output =~ "coverage"
     end)
   end
+
+  describe "the compile it runs first" do
+    # Own checkouts with their own app atoms: in_project caches project
+    # config by app name, and these need a scry: config of their own.
+    test "a finding that fails the compiler's fail_on is reported, not fatal" do
+      app = :depot_task_error
+
+      copy =
+        Fixture.checkout!(
+          Path.join(System.tmp_dir!(), "scry_#{app}"),
+          [severity: [mailbox: :error]],
+          app
+        )
+
+      Mix.Project.in_project(app, copy, fn _module ->
+        # mix compile fails here: the mailbox findings are errors and
+        # fail_on is :error. Built once so stdout carries only the JSON;
+        # cleared so the task's own compile runs (warm) and sees :error.
+        assert {:error, _diagnostics} = compile!()
+        Mix.Task.clear()
+
+        {json, _stderr} =
+          with_io(:stderr, fn ->
+            capture_io(fn -> Mix.Task.rerun("scry", ["--format", "json"]) end)
+          end)
+
+        entries = JSON.decode!(json)
+        assert length(entries) == 5
+
+        mailbox = Enum.filter(entries, &(&1["analysis"] == "mailbox"))
+        assert length(mailbox) == 3
+        assert Enum.all?(mailbox, &(&1["severity"] == "error"))
+      end)
+    end
+
+    test "a project that does not compile is an error, with no report" do
+      app = :depot_task_broken
+      copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "scry_#{app}"), [], app)
+
+      File.write!(
+        Path.join(copy, "lib/depot/broken.ex"),
+        "defmodule Depot.Broken do\n  def f(, do: :ok\nend\n"
+      )
+
+      Mix.Project.in_project(app, copy, fn _module ->
+        Mix.Task.clear()
+
+        capture_io(:stderr, fn ->
+          assert_raise Mix.Error, ~r/does not compile/, fn ->
+            capture_io(fn -> Mix.Task.rerun("scry", ["--format", "json"]) end)
+          end
+        end)
+      end)
+    end
+  end
 end

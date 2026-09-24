@@ -17,6 +17,10 @@ defmodule Mix.Tasks.Scry do
       mix scry --include-deps       # feed dependency beams to the call graph
       mix scry --force              # ignore the manifest, recompute everything
 
+  A finding at or above the compiler's `fail_on` fails `mix compile`, not
+  this task: it is reported here like any other, and `--fail-above` is
+  the gate. A project that does not compile is an error.
+
   Unlike the compiler (which degrades with a notice), a missing souffle
   binary here is an error: a one-shot analysis run without a solver has
   nothing to say.
@@ -52,11 +56,7 @@ defmodule Mix.Tasks.Scry do
     if opts[:list] do
       list()
     else
-      # Without --no-prune-code-paths, a project that declares an explicit
-      # `applications:` list has every dependency outside that list — scry
-      # and its own deps included — pruned from the code path by the
-      # compile step, and the analysis below fails to load Scry.Config.
-      Mix.Task.run("compile", ["--no-prune-code-paths"])
+      compile!()
       analyze(opts, positional)
     end
   end
@@ -82,6 +82,29 @@ defmodule Mix.Tasks.Scry do
       |> Enum.map_join("\n", fn {name, members} -> "    #{name}: #{Enum.join(members, " ")}" end)
 
     IO.puts("\nSets (as an analysis name in config or on the command line):\n\n#{sets}")
+  end
+
+  # Without --no-prune-code-paths, a project that declares an explicit
+  # `applications:` list has every dependency outside that list — scry
+  # and its own deps included — pruned from the code path by the compile
+  # step, and the analysis below fails to load Scry.Config.
+  #
+  # With --return-errors, an :error status comes back instead of exiting.
+  # The compiler chain ends with scry's own compiler, whose status is
+  # :error whenever a finding reaches `fail_on` — exactly the findings
+  # this task exists to report, so that status must not stop it. An error
+  # from any other compiler means the ebin is not the source's, and there
+  # is nothing sound to analyze.
+  defp compile! do
+    case Mix.Task.run("compile", ["--no-prune-code-paths", "--return-errors"]) do
+      {:error, diagnostics} ->
+        if Enum.any?(diagnostics, &(&1.severity == :error and &1.compiler_name != "scry")) do
+          Mix.raise("scry: the project does not compile; fix the errors above first")
+        end
+
+      _ok_or_noop ->
+        :ok
+    end
   end
 
   defp analyze(opts, positional) do
