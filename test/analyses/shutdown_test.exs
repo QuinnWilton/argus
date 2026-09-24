@@ -194,7 +194,9 @@ defmodule Argus.Analyses.ShutdownTest do
       G.ClosureInside,
       G.RefTryElsewhere,
       G.ClosureInTask,
-      G.NoprocBare
+      G.NoprocBare,
+      G.ShutdownClauseFirst,
+      G.OtherReasonFirst
     ]
 
     test "only a try covering the call, or the call toward it, guards it" do
@@ -214,7 +216,8 @@ defmodule Argus.Analyses.ShutdownTest do
       # try takes the exit the inner one lets through), NoprocInside (the
       # handler names :noproc), ClosureInside (the Enum.each that runs the
       # closure is inside the try), ClosureInTask (the call runs in a task
-      # terminate/2 does not wait for).
+      # terminate/2 does not wait for), ShutdownClauseFirst (the call is in
+      # the clause for reasons other than :shutdown).
       assert callers == [
                # the closure's Enum.each follows an unrelated try's end
                "ClosureTryElsewhere",
@@ -226,6 +229,8 @@ defmodule Argus.Analyses.ShutdownTest do
                "NestedAfterInner",
                # a bare :noproc never matches a call's {:noproc, _} exit
                "NoprocBare",
+               # the clause for :normal comes first; :shutdown takes the next
+               "OtherReasonFirst",
                # the function reference's Enum.each follows the try's end
                "RefTryElsewhere",
                # the try covers another call; the sibling call follows it

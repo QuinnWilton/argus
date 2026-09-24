@@ -649,6 +649,8 @@ defmodule Argus.Test.Fixtures.SiblingGuard do
           G.RefTryElsewhere,
           G.ClosureInTask,
           G.NoprocBare,
+          G.ShutdownClauseFirst,
+          G.OtherReasonFirst,
           G.Directory
         ],
         strategy: :one_for_one
@@ -1014,6 +1016,56 @@ defmodule Argus.Test.Fixtures.SiblingGuard do
         :exit, :noproc -> :ok
       end
 
+      File.close(state.log)
+    end
+  end
+
+  defmodule ShutdownClauseFirst do
+    @moduledoc """
+    The sibling call is in the clause for reasons other than :shutdown,
+    after the one that takes it: a supervisor stopping the process passes
+    :shutdown and never runs it. Only a {:stop, ...} or a crash does,
+    while the directory is up.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.SiblingGuard.Directory
+
+    @impl true
+    def init(state) do
+      Process.flag(:trap_exit, true)
+      {:ok, state}
+    end
+
+    @impl true
+    def terminate(:shutdown, state), do: File.close(state.log)
+
+    def terminate(_reason, state) do
+      Directory.unregister(__MODULE__)
+      File.close(state.log)
+    end
+  end
+
+  defmodule OtherReasonFirst do
+    @moduledoc """
+    A clause for :normal comes first; the sibling call is in the clause
+    that takes every other reason, :shutdown among them.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.SiblingGuard.Directory
+
+    @impl true
+    def init(state) do
+      Process.flag(:trap_exit, true)
+      {:ok, state}
+    end
+
+    @impl true
+    def terminate(:normal, state), do: File.close(state.log)
+
+    def terminate(_reason, state) do
+      Directory.unregister(__MODULE__)
       File.close(state.log)
     end
   end

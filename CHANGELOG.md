@@ -242,6 +242,14 @@ its own supervisor, and the caller is left alone. The prose says both
 `catch :exit, :noproc` is `GenServer.stop`'s reason and never matches
 a call's `{:noproc, {GenServer, :call, _}}`: such a call is reported.
 
+**Fixed.** A sibling call terminate/2 makes only for reasons other than
+`:shutdown` — the reason a supervisor stopping the process passes — is
+not reported: `terminate(:shutdown, s)` followed by
+`terminate(reason, s)` makes the second clause's call only after a
+`{:stop, ...}` or a crash, while the sibling is up (`skipped_on_shutdown`,
+schema 75; the analysis now runs `Argus.Extractors.ClauseCall`). A
+clause for `:normal` ahead of the call's does not spare it.
+
 **Fixed.** A path from terminate/2 through a closure or a function
 reference is guarded by the call that runs the fun, not by any
 exit-catching try in the function: a try around an unrelated
@@ -347,6 +355,13 @@ struct, the types, the constructors analysis modules build with, and
 its moduledoc says which submodule holds what.
 
 ### Fact schema and extraction
+
+**Added.** Schema 75. `skipped_on_shutdown(id, func)`: the call at `id`,
+in a `terminate/2` or `terminate/3` that chooses its clause by the
+reason, does not run when the reason is `:shutdown`
+(`Argus.Extractors.ClauseCall`). New `Argus.Extractor.Dispatch.
+reached_with/3`: the instructions reached when an argument is a given
+atom, each test on it taking only the edge that atom takes.
 
 **Added.** Schema 74. `catch_tuple_tag(id, func, class, tag)`: the
 `catch_tag` atoms a clause compares as a tuple's first element — an

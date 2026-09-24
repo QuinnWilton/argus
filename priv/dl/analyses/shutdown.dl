@@ -148,6 +148,16 @@ exit_guarded(call) :-
   try_covers(t, f, call, "try"),
   catch_tuple_tag(t, f, "exit", ":noproc").
 
+// A call spared on the way out: a try takes its exit (exit_guarded), or
+// it never runs when a supervisor stops the process, which passes
+// terminate/2 the reason :shutdown (skipped_on_shutdown: the call sits in
+// a clause for other reasons, `terminate(:normal, s)`, or after one that
+// took :shutdown).
+.decl spared(call: symbol)
+
+spared(call) :- exit_guarded(call).
+spared(call) :- skipped_on_shutdown(call, _).
+
 // Some try in the function takes the exit. What is left to ask of a
 // dependency with no call site to hold against a try, and of an edge
 // into a fun that no call is handed (a fun stored, then called through a
@@ -200,7 +210,7 @@ wait_site(f, m, id) :-
 waits_unguarded(f, m) :-
   waits_on(f, m),
   wait_site(f, m, id),
-  !exit_guarded(id).
+  !spared(id).
 
 waits_unguarded(f, m) :-
   waits_on(f, m),
@@ -225,7 +235,7 @@ waits_unguarded(f, m) :-
 
 open_path.root(t) :- is_terminate(t, _).
 open_path.limit(3).
-open_path.guarded(call) :- exit_guarded(call).
+open_path.guarded(call) :- spared(call).
 open_path.handed(f, g, call) :- fun_site(f, g, call).
 open_path.sealed(f) :- catches_exit(f).
 open_path.elsewhere(call) :- process_start(call, _, _, kind, _), kind != "server".
@@ -413,7 +423,7 @@ closure_in_terminate(t, via) :-
 // around it, else empty.
 .decl unguarded_site_or_empty(func: symbol, mod: symbol, site: symbol)
 
-unguarded_site_or_empty(f, m, id) :- wait_site(f, m, id), !exit_guarded(id).
+unguarded_site_or_empty(f, m, id) :- wait_site(f, m, id), !spared(id).
 unguarded_site_or_empty(f, m, "") :- waits_unguarded(f, m), !wait_site(f, m, _).
 
 .decl supervisor_site_or_empty(sup: symbol, site: symbol)

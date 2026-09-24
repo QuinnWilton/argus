@@ -518,6 +518,173 @@ defmodule Argus.Extractor.Dispatch do
     fall ++ Enum.flat_map(Instr.targets(instr), &List.wrap(goto(next, &1, labels)))
   end
 
+  @doc """
+  The instruction indices reached from the entry when the argument in
+  `register` is the atom `value`: a test on the argument (or a copy of
+  it) takes only the edge that value takes, and every other instruction
+  both. `terminate(:shutdown, s)` followed by `terminate(reason, s)`
+  compiles into one function whose second body is reached only when the
+  reason is not `:shutdown`; with `value` `:shutdown`, its instructions
+  are not in the set.
+
+  An atom fails every type test but `is_atom` (and passes the tests a
+  term of any type passes), equals only itself, and is no tuple, so
+  `select_tuple_arity` takes its fail label. A test this does not read
+  takes both edges, which keeps the set a superset of what runs.
+  """
+  @spec reached_with([tuple()], {:x, non_neg_integer()}, atom()) :: MapSet.t(non_neg_integer())
+  def reached_with(instrs, register, value) when is_atom(value) do
+    tuple = List.to_tuple(instrs)
+    labels = labels(instrs)
+
+    # `seen` and `reached` are maps, not MapSets, for the reason
+    # argument_tags/2's `seen` is: dialyzer loses the opacity through the
+    # recursion.
+    [{entry_index(instrs), [register]}]
+    |> walk_fixed(tuple, labels, value, %{}, %{})
+    |> Map.keys()
+    |> MapSet.new()
+  end
+
+  defp walk_fixed([], _tuple, _labels, _value, _seen, reached), do: reached
+
+  defp walk_fixed([{idx, held} = state | rest], tuple, labels, value, seen, reached) do
+    if idx >= tuple_size(tuple) or Map.has_key?(seen, state) do
+      walk_fixed(rest, tuple, labels, value, seen, reached)
+    else
+      next = fixed_step(elem(tuple, idx), idx, held, labels, value)
+
+      walk_fixed(
+        next ++ rest,
+        tuple,
+        labels,
+        value,
+        Map.put(seen, state, true),
+        Map.put(reached, idx, true)
+      )
+    end
+  end
+
+  defp fixed_step({:test, op, {:f, fail}, [a, b]} = instr, idx, held, labels, value)
+       when op in [:is_eq_exact, :is_ne_exact, :is_eq, :is_ne] do
+    other =
+      cond do
+        held?(a, held) -> {:ok, b}
+        held?(b, held) -> {:ok, a}
+        true -> :none
+      end
+
+    case other do
+      {:ok, operand} ->
+        case literal_equal?(operand, value) do
+          :unknown ->
+            generic_fixed_step(instr, idx, held, labels)
+
+          equal? ->
+            passes? = if op in [:is_eq_exact, :is_eq], do: equal?, else: not equal?
+            held = Enum.sort(Instr.carry(instr, held))
+            if passes?, do: [{idx + 1, held}], else: fixed_goto(fail, held, labels)
+        end
+
+      :none ->
+        generic_fixed_step(instr, idx, held, labels)
+    end
+  end
+
+  defp fixed_step({:test, op, {:f, fail}, [src | _]} = instr, idx, held, labels, _value)
+       when op in [
+              :is_atom,
+              :is_tuple,
+              :is_tagged_tuple,
+              :test_arity,
+              :is_list,
+              :is_nonempty_list,
+              :is_nil,
+              :is_map,
+              :is_binary,
+              :is_bitstr,
+              :is_integer,
+              :is_float,
+              :is_number,
+              :is_pid,
+              :is_port,
+              :is_reference,
+              :is_function,
+              :is_function2
+            ] do
+    if held?(src, held) do
+      held = Enum.sort(Instr.carry(instr, held))
+      if op == :is_atom, do: [{idx + 1, held}], else: fixed_goto(fail, held, labels)
+    else
+      generic_fixed_step(instr, idx, held, labels)
+    end
+  end
+
+  defp fixed_step(
+         {:select_val, src, {:f, fail}, {:list, pairs}} = instr,
+         idx,
+         held,
+         labels,
+         value
+       ) do
+    if held?(src, held) do
+      held = Enum.sort(Instr.carry(instr, held))
+
+      pairs
+      |> Enum.chunk_every(2)
+      |> Enum.find_value(fixed_goto(fail, held, labels), fn
+        [operand, {:f, l}] ->
+          if literal_equal?(operand, value) == true, do: fixed_goto(l, held, labels)
+
+        _malformed ->
+          nil
+      end)
+    else
+      generic_fixed_step(instr, idx, held, labels)
+    end
+  end
+
+  defp fixed_step(
+         {:select_tuple_arity, src, {:f, fail}, _arms} = instr,
+         idx,
+         held,
+         labels,
+         _value
+       ) do
+    if held?(src, held),
+      do: fixed_goto(fail, Enum.sort(Instr.carry(instr, held)), labels),
+      else: generic_fixed_step(instr, idx, held, labels)
+  end
+
+  defp fixed_step(instr, idx, held, labels, _value),
+    do: generic_fixed_step(instr, idx, held, labels)
+
+  defp generic_fixed_step(instr, idx, held, labels) do
+    held = Enum.sort(Instr.carry(instr, held))
+    fall = if Instr.falls_through?(instr), do: [{idx + 1, held}], else: []
+    fall ++ Enum.flat_map(Instr.targets(instr), &fixed_goto(&1, held, labels))
+  end
+
+  defp fixed_goto(label, held, labels) do
+    case Map.fetch(labels, label) do
+      {:ok, idx} -> [{idx, held}]
+      :error -> []
+    end
+  end
+
+  # Whether a literal operand equals the atom `value`: an atom compares
+  # by identity, and every other literal kind differs from any atom
+  # (`nil` is the empty list). A register is not known.
+  defp literal_equal?({:atom, a}, value), do: a == value
+  defp literal_equal?({:literal, term}, value), do: term === value
+  defp literal_equal?(nil, _value), do: false
+
+  defp literal_equal?({kind, _}, _value)
+       when kind in [:integer, :float, :char, :string, :binary],
+       do: false
+
+  defp literal_equal?(_operand, _value), do: :unknown
+
   # The atom a test compares a request (or its tag) register against.
   defp compared_tag(state, a, b) do
     cond do

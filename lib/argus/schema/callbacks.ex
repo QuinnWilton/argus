@@ -92,6 +92,23 @@ defmodule Argus.Schema.Callbacks do
         """
       },
       %{
+        name: :skipped_on_shutdown,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "a call"},
+          {:func, :symbol, "the terminate/2 or terminate/3 holding it"}
+        ],
+        doc: """
+        The call at `id` does not run when `func`, a `terminate/2` or \
+        `terminate/3` that chooses its clause by the reason, is called with \
+        `:shutdown` — the reason a supervisor stopping the process passes. \
+        It sits in a clause for other reasons (`terminate(:normal, s)`), or \
+        after one that took `:shutdown`. Every path is walked with the \
+        reason fixed (`Argus.Extractor.Dispatch.reached_with/3`), so a test \
+        this does not read keeps the call.
+        """
+      },
+      %{
         name: :init_continues_to,
         layer: 2,
         fields: [

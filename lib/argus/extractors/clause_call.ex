@@ -18,6 +18,13 @@ defmodule Argus.Extractors.ClauseCall do
     inspected); one row per tag some path to it establishes. A call some
     path reaches without establishing one has no row: it runs whatever
     the argument is.
+  - `skipped_on_shutdown(id, func)` — the call at `id`, in a
+    `terminate/2` or `terminate/3` that chooses its clause by the reason,
+    does not run when the reason is `:shutdown`, the one a supervisor
+    stopping the process passes (`Argus.Extractor.Dispatch.reached_with/3`):
+    it sits in a clause for other reasons (`terminate(:normal, s)`), or
+    after one that took `:shutdown` (`terminate(:shutdown, s)` and then
+    `terminate(reason, s)`).
   """
 
   @behaviour Argus.Extractor
@@ -30,7 +37,7 @@ defmodule Argus.Extractors.ClauseCall do
   import Argus.Extractor.Facts, only: [add_fact: 3]
 
   @impl true
-  def relations, do: [:clause_call]
+  def relations, do: [:clause_call, :skipped_on_shutdown]
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
@@ -49,14 +56,30 @@ defmodule Argus.Extractors.ClauseCall do
   defp emit(facts, func_id, instrs, sites) do
     tags = Dispatch.argument_tags(instrs, {:x, 0})
 
-    for site <- sites,
-        set = Map.get(tags, site.idx, MapSet.new([:any])),
-        not MapSet.member?(set, :any),
-        tag <- Enum.sort(set),
-        reduce: facts do
-      acc -> add_fact(acc, :clause_call, [InstrId.mint(func_id, site.idx), func_id, tag])
+    facts =
+      for site <- sites,
+          set = Map.get(tags, site.idx, MapSet.new([:any])),
+          not MapSet.member?(set, :any),
+          tag <- Enum.sort(set),
+          reduce: facts do
+        acc -> add_fact(acc, :clause_call, [InstrId.mint(func_id, site.idx), func_id, tag])
+      end
+
+    if terminate?(func_id), do: emit_skipped(facts, func_id, instrs, sites), else: facts
+  end
+
+  defp emit_skipped(facts, func_id, instrs, sites) do
+    reached = Dispatch.reached_with(instrs, {:x, 0}, :shutdown)
+
+    for site <- sites, not MapSet.member?(reached, site.idx), reduce: facts do
+      acc -> add_fact(acc, :skipped_on_shutdown, [InstrId.mint(func_id, site.idx), func_id])
     end
   end
+
+  # terminate/2 (GenServer) and terminate/3 (gen_statem) take the reason
+  # first.
+  defp terminate?(func_id),
+    do: String.ends_with?(func_id, ":terminate/2") or String.ends_with?(func_id, ":terminate/3")
 
   # The walk is paid only by a function that compares its first argument,
   # or the first element of it, with an atom somewhere: the rest have no

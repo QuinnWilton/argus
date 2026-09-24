@@ -63,4 +63,30 @@ defmodule Argus.Extractor.ClauseCallTest do
   test "a call a helper makes has no site in handle_call/3", %{tags: tags} do
     refute Map.has_key?(tags, "helper")
   end
+
+  describe "skipped_on_shutdown" do
+    alias Argus.Test.Fixtures.SiblingGuard, as: G
+
+    defp skipped_callees(mod) do
+      {:ok, facts} = Argus.Pipeline.extract([mod], extractors: [Argus.Extractors.ClauseCall])
+      skipped = facts |> Map.get(:skipped_on_shutdown, []) |> Enum.map(&hd/1) |> MapSet.new()
+
+      for [id, _caller, callee_mod, func, _arity] <- Map.fetch!(facts, :remote_call),
+          MapSet.member?(skipped, id),
+          do: {callee_mod, func}
+    end
+
+    test "a call after the clause that takes :shutdown is skipped on shutdown" do
+      skipped = skipped_callees(G.ShutdownClauseFirst)
+
+      assert {"Argus.Test.Fixtures.SiblingGuard.Directory", "unregister"} in skipped
+      # Of the two File.close calls, the :shutdown clause's own runs.
+      assert Enum.count(skipped, &(&1 == {"File", "close"})) == 1
+    end
+
+    test "a call in the clause every other reason takes runs on shutdown" do
+      assert skipped_callees(G.OtherReasonFirst) |> Enum.filter(&(elem(&1, 1) == "unregister")) ==
+               []
+    end
+  end
 end
