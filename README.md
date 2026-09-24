@@ -42,16 +42,17 @@ the expensive IR-lifting step those frameworks need. BEAM instructions map
 to Datalog facts directly, with no intermediate representation.
 
 ```
-.beam → disassemble → facts (emitter + extractors) → stage 0 call graph → Souffle rules → findings
+.beam → disassemble → facts (emitter + extractors) → stage 0 call graph → process points-to → Souffle rules → findings
 ```
 
 The emitter walks every instruction and records the generic facts —
 instructions, registers, control flow, calls, literals. The extractors
 read the same bytecode for what the analyses reason about: behaviours,
 supervision trees, process calls, monitors, ETS, return shapes. A shared
-call graph is derived once per run, and each analysis is one Souffle
-program over the facts and a common rule library, producing findings with
-a severity, a source anchor and a remediation hint.
+call graph, and which process each pid can be, are derived once per run,
+and each analysis is one Souffle program over the facts and a common rule
+library, producing findings with a severity, a source anchor and a
+remediation hint.
 
 ## Analyses
 

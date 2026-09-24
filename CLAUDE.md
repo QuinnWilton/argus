@@ -18,7 +18,7 @@ those frameworks need.
 - `lib/argus/analysis.ex` — the analysis behaviour and the entry points
   for running one; `analysis/` holds what they delegate to (`Sets`:
   concerns and named sets, `Catalog`: discovery, `Extraction`: the facts
-  directory, stage 0, priors). `lib/argus/findings.ex` — the finding
+  directory, stage 0, the points-to stage, priors). `lib/argus/findings.ex` — the finding
   struct, types and the constructors a builder calls (one alias:
   `Findings.new/4`, `Findings.at_site/2`, ...); `findings/` holds
   `Runner`, `Build`, `Rows`, `Evidence`, `Anchor` and `Names`.
@@ -29,8 +29,10 @@ those frameworks need.
   shape digest, and every bump gets a CHANGELOG entry. `mix argus.gen.dl`
   regenerates `priv/dl/base.dl` and `layer2.dl` from it.
 - `priv/dl/stage0.dl` — the call graph derived once per run;
-  `priv/dl/clientlib/` — the shared rule library; `priv/dl/analyses/` —
-  one Souffle program per analysis.
+  `priv/dl/points_to.dl` — process points-to (`clientlib/processes.dl`)
+  derived once per run after it, read by the analyses as facts through
+  `clientlib/staged_processes.dl`; `priv/dl/clientlib/` — the shared
+  rule library; `priv/dl/analyses/` — one Souffle program per analysis.
 - `lib/argus/cfg.ex`, `dataflow.ex`, `purity/` — control flow, def-use and
   effect models, also consumed by downstream tools (gloss, planchette).
 - There is no CLI here: scry's Mix compiler is how the analyses are run
@@ -64,6 +66,20 @@ those frameworks need.
 - Stage 0 keeps the volatile instruction-level relations out of every
   analysis's input set; `test/argus/dl_declarations_test.exs` pins each
   analysis's inputs so an incrementality regression cannot land silently.
+- A whole-program fixpoint several analyses need is a stage, not a
+  clientlib include: included, it is recomputed in every solve that asks
+  (process points-to was ~90% of seven analyses' solves on a large
+  program). The points-to stage stages only what analyses read (the
+  processes and targets, not the terms that hold them: `source_pts` is
+  100+ MB on a large program); a rule that needs another of its
+  relations adds it to `points_to.dl`'s outputs and to
+  `staged_processes.dl`. Anything a program adds to the fixpoint's
+  inputs belongs in the stage, for every analysis alike, and must leave
+  the others' rows unchanged (signals are staged apart for that).
+- Souffle expands a rule with k disjunctive alternatives into k rules,
+  each with the whole body: a disjunction over a large join multiplies
+  both compile time and the join. Test a condition on a few columns
+  with a small relation instead (`check_then_act.dl`'s `may_agree`).
 - Souffle is an external tool on PATH, shelled out to via `Argus.Souffle`.
 - `test/corpus/pairs.exs` is the closed-issue corpus: for each pair a
   rule's finding is present at the commit before the fix and absent at

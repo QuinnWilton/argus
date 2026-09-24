@@ -1,25 +1,29 @@
-// Which process an exit signal, a monitor or a link goes to, over the
-// points-to in processes.dl: pid_signal rows join pid_use, so a helper
+// Which process an exit signal, a monitor or a link goes to. The
+// points-to stage resolves every signal alongside the calls (a helper
 // that monitors or kills its parameter is resolved at each caller, like
-// a helper that calls it.
-//
-// Apart from processes.dl, as sends.dl is, so an analysis that asks only
-// about calls does not read every signal in the program.
+// a helper that calls it) and stages them apart, as process_signal, so
+// an analysis that asks only about calls does not read every signal in
+// the program. Here they rejoin the calls and the uses they come from,
+// as they were before the stage split them off.
 //
 // Prerequisites: include clientlib/imports.dl and clientlib/otp.dl
-// (which brings processes.dl) before this file.
+// (which brings staged_processes.dl) before this file.
 
 pid_use(id, f, kind, sk, s) :- pid_signal(id, f, kind, sk, s).
 
-reads_name(f, n) :- pid_signal(_, f, _, "name", n).
-reads_self(f) :- pid_signal(_, f, _, "self", _).
+// Signal kinds (exit, monitor, link, unlink) are not call kinds, so a
+// call's rows are the same with or without these.
+.decl process_signal(func: symbol, anchor: symbol, site: symbol, signal: symbol, proc: symbol)
+.input process_signal
+
+process_call(f, a, id, signal, p) :- process_signal(f, a, id, signal, p).
 
 // The exit signal, monitor, link or unlink at `id` in `func` may go to
 // `proc`.
 .decl signal_target(id: symbol, func: symbol, signal: symbol, proc: symbol)
 
 signal_target(id, g, signal, p) :-
-  process_call(_, _, id, signal, p),
+  process_signal(_, _, id, signal, p),
   pid_signal(id, g, signal, _, _).
 
 // A process something monitors or links to: its crash is observed.

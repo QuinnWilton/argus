@@ -54,6 +54,9 @@ defmodule Argus.Clientlib.ProcessesTest do
 
   defp priv_dl, do: Path.join(:code.priv_dir(:panoptes), "dl")
 
+  # The relations of processes.dl the points-to stage does not stage.
+  @internal ~w(param_pts returns_pts self_pid statem_data_pts)
+
   defp solve(tmp_dir, outputs) do
     unless Souffle.available?(), do: flunk("souffle not installed")
     facts_dir = Path.join(tmp_dir, "facts")
@@ -73,23 +76,42 @@ defmodule Argus.Clientlib.ProcessesTest do
       )
 
     :ok = Analysis.derive_stage0(facts_dir)
+    :ok = Analysis.derive_points_to(facts_dir)
 
-    rules = """
-    .include "#{Path.join(priv_dl(), "clientlib/imports.dl")}"
-    .include "#{Path.join(priv_dl(), "clientlib/otp.dl")}"
-    .include "#{Path.join(priv_dl(), "clientlib/process_statem.dl")}"
-    .include "#{Path.join(priv_dl(), "clientlib/sends.dl")}"
-    .include "#{Path.join(priv_dl(), "clientlib/signals.dl")}"
-    #{Enum.map_join(outputs, "\n", &".output #{&1}")}
-    """
+    # What the stage keeps to itself is asked of its own program; what it
+    # stages, of the program the analyses include.
+    {internal, staged} = Enum.split_with(outputs, &(&1 in @internal))
 
-    rules_path = Path.join(tmp_dir, "processes.dl")
-    File.write!(rules_path, rules)
-    {:ok, results} = Souffle.run(facts_dir, rules_path)
+    results =
+      Map.merge(
+        run(tmp_dir, facts_dir, "internal.dl", internal, """
+        .include "#{Analysis.points_to_rules_path()}"
+        """),
+        run(tmp_dir, facts_dir, "staged.dl", staged, """
+        .include "#{Path.join(priv_dl(), "clientlib/imports.dl")}"
+        .include "#{Path.join(priv_dl(), "clientlib/otp.dl")}"
+        .include "#{Path.join(priv_dl(), "clientlib/process_statem.dl")}"
+        .include "#{Path.join(priv_dl(), "clientlib/sends.dl")}"
+        .include "#{Path.join(priv_dl(), "clientlib/signals.dl")}"
+        """)
+      )
 
     Map.new(results, fn {relation, rows} ->
       {relation, Enum.map(rows, fn row -> Enum.map(row, &short/1) end)}
     end)
+  end
+
+  defp run(_tmp_dir, _facts_dir, _name, [], _includes), do: %{}
+
+  defp run(tmp_dir, facts_dir, name, outputs, includes) do
+    rules_path = Path.join(tmp_dir, name)
+    File.write!(rules_path, includes <> Enum.map_join(outputs, "\n", &".output #{&1}"))
+    output_dir = Path.join(tmp_dir, Path.rootname(name))
+    File.mkdir_p!(output_dir)
+    # A program of its own output directory: the stage's `.output`s write
+    # files named like the facts, which must not land in facts_dir.
+    {:ok, results} = Souffle.run(facts_dir, rules_path, output_dir: output_dir)
+    Map.take(results, outputs)
   end
 
   defp short(s), do: String.replace(s, "Argus.Test.Fixtures.PidFlow.", "")

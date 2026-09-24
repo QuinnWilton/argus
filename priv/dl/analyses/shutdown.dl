@@ -473,8 +473,7 @@ teardown_touches_sibling(mod, sib, "handler", "stop", via, sup, h, site, sup_sit
 stop_arg(h, via, p) :-
   handler_function(_, h),
   pid_arg(_, h, via, "0", "call", sk, s),
-  source_pts(h, sk, s, p),
-  process(p).
+  source_process(h, sk, s, p).
 
 .decl private_stop(handler: symbol, via: symbol, sib: symbol)
 

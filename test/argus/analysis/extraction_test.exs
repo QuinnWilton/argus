@@ -17,6 +17,60 @@ defmodule Argus.Analysis.ExtractionTest do
     end
   end
 
+  describe "the points-to stage" do
+    test "is derived when an analysis reads it, and only then" do
+      assert {:ok, reads} = Extraction.extract_facts([:lists], [:startup])
+      assert {:ok, reads_not} = Extraction.extract_facts([:lists], [:effects])
+
+      assert {:ok, deferred} =
+               Extraction.extract_facts([:lists], [:startup], points_to: :deferred)
+
+      try do
+        staged = &File.exists?(Path.join(&1, "#{&2}.facts"))
+
+        for relation <- Extraction.points_to_relations() do
+          assert staged.(reads, relation)
+          refute staged.(reads_not, relation)
+          refute staged.(deferred, relation)
+        end
+      after
+        for dir <- [reads, reads_not, deferred], do: File.rm_rf!(Path.dirname(dir))
+      end
+    end
+
+    test "is read by the analyses that ask about processes" do
+      assert Extraction.reads_points_to?(:startup)
+      assert Extraction.reads_points_to?(:races)
+      refute Extraction.reads_points_to?(:effects)
+      refute Extraction.reads_points_to?(:structure)
+    end
+
+    test "stage0: :provided trusts the caller for it too", %{tmp_dir: dir} do
+      assert :ok = Extraction.ensure_points_to(dir, [:startup], stage0: :provided)
+      assert File.ls!(dir) == []
+    end
+
+    test "is not derived for analyses that do not read it", %{tmp_dir: dir} do
+      assert :ok = Extraction.ensure_points_to(dir, [:effects, :structure], [])
+      assert File.ls!(dir) == []
+    end
+
+    test "a staged directory is left as it is", %{tmp_dir: dir} do
+      for relation <- Extraction.points_to_relations() do
+        File.write!(Path.join(dir, "#{relation}.facts"), "")
+      end
+
+      assert :ok = Extraction.ensure_points_to(dir, [:startup], [])
+      assert length(File.ls!(dir)) == length(Extraction.points_to_relations())
+    end
+
+    test "the program ships in priv/dl" do
+      assert File.exists?(Extraction.points_to_rules_path())
+      assert Extraction.points_to_rules_path() == Argus.Analysis.points_to_rules_path()
+      assert Extraction.points_to_relations() == Argus.Analysis.points_to_relations()
+    end
+  end
+
   describe "ensure_stage0/2" do
     test "stage0: :provided trusts the caller, even with nothing there", %{tmp_dir: dir} do
       assert :ok = Extraction.ensure_stage0(dir, stage0: :provided)

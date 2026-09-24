@@ -5,7 +5,7 @@ defmodule Argus.ClientlibTest do
 
   The program includes the real `imports.dl` and `otp.dl`, so every
   schema relation is declared as the analyses see it; the facts not
-  named here are empty.
+  named here are empty, and the points-to stage is derived from them.
   """
   use ExUnit.Case, async: true
 
@@ -96,6 +96,10 @@ defmodule Argus.ClientlibTest do
         Enum.map_join(rows, "", &(Enum.join(&1, "\t") <> "\n"))
       )
     end
+
+    # Which process a pid can be is the points-to stage's, derived from
+    # the same facts as the analyses derive it.
+    :ok = Argus.Analysis.derive_points_to(facts)
 
     lib = Path.join(:code.priv_dir(:panoptes), "dl/clientlib")
     program = Path.join(dir, "vocabulary.dl")

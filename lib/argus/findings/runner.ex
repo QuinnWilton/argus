@@ -60,9 +60,11 @@ defmodule Argus.Findings.Runner do
     case facts_dir(modules, names, opts) do
       {:ok, facts_dir, owned?} ->
         try do
+          points_to = Analysis.Extraction.ensure_points_to(facts_dir, names, opts)
+
           outcomes =
             requests
-            |> Task.async_stream(&run_one(&1, facts_dir, opts),
+            |> Task.async_stream(&run_one(&1, facts_dir, points_to, opts),
               max_concurrency: Keyword.get(opts, :concurrency, default_solve_concurrency()),
               ordered: true,
               # Souffle.run bounds each evaluation with :souffle_timeout, so the
@@ -96,19 +98,35 @@ defmodule Argus.Findings.Runner do
     end
   end
 
+  # The points-to stage is staged once, by `evaluate/3`, before the
+  # solves fan out: each would otherwise find it missing and derive it
+  # into the same directory at once.
   defp facts_dir(modules, names, opts) do
     case Keyword.fetch(opts, :facts_dir) do
       {:ok, dir} ->
         {:ok, dir, false}
 
       :error ->
+        opts = Keyword.put(opts, :points_to, :deferred)
         with {:ok, dir} <- Analysis.extract_facts(modules, names, opts), do: {:ok, dir, true}
+    end
+  end
+
+  # A failed points-to stage grounds only the analyses that read it;
+  # the rest solve as usual.
+  defp run_one(mod, facts_dir, {:error, reason}, opts) do
+    name = mod.name()
+
+    if Analysis.Extraction.reads_points_to?(name) do
+      [{:degraded, %{analysis: name, reason: reason, detail: degradation_detail(name, reason)}}]
+    else
+      run_one(mod, facts_dir, :ok, opts)
     end
   end
 
   # One solve per analysis module; every row is a finding under the
   # analysis's own name.
-  defp run_one(mod, facts_dir, opts) do
+  defp run_one(mod, facts_dir, :ok, opts) do
     name = mod.name()
     {elapsed_us, result} = :timer.tc(fn -> Analysis.run_rules(facts_dir, name, opts) end)
     duration_ms = div(elapsed_us, 1000)
@@ -191,6 +209,11 @@ defmodule Argus.Findings.Runner do
 
   defp degradation_detail(name, {:souffle_error, exit_code, _output}) do
     "The #{name} analysis failed: Souffle exited with status #{exit_code}."
+  end
+
+  defp degradation_detail(name, {:points_to, reason}) do
+    "The #{name} analysis did not run: the process points-to it reads " <>
+      "(priv/dl/points_to.dl) could not be derived: #{inspect(reason)}."
   end
 
   defp degradation_detail(name, reason) do

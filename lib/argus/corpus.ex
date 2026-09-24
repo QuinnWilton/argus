@@ -118,14 +118,53 @@ defmodule Argus.Corpus do
   Clones and compiles the checkout if needed (`ensure/2`), then solves
   over its cached facts, extracting them first only when no entry for
   the current `engine_digest/0` and beams exists.
+
+  The points-to stage is derived on every run, beside the entry rather
+  than in it (`overlay/1`): its rules are rules, which move without
+  moving the engine digest, so an entry that kept its rows would serve
+  them to the next rule edit.
   """
   @spec analyze(pair(), :pre | :fix) :: {:ok, Argus.Findings.t()} | {:error, term()}
   def analyze(pair, side) do
     with %{} = co <- checkout(pair, side) || {:error, "no #{side} side for #{pair.issue}"},
          {:ok, beams} <- ensure(pair, side),
          {:ok, facts_dir} <- facts(co, beams) do
-      Argus.run_analyses(beams, analyses: :all, facts_dir: facts_dir)
+      overlay = overlay(facts_dir)
+
+      try do
+        Argus.run_analyses(beams, analyses: :all, facts_dir: overlay)
+      after
+        File.rm_rf(overlay)
+      end
     end
+  end
+
+  # A scratch directory of hard links to a cache entry's files, which a
+  # run derives the points-to stage into: an installed entry is never
+  # written, so VMs sharing it never read a file another is writing.
+  # Copied where the scratch directory is on another volume.
+  defp overlay(facts_dir) do
+    dir =
+      Path.join(
+        System.tmp_dir!(),
+        "argus_corpus_#{:os.getpid()}_#{System.unique_integer([:positive])}"
+      )
+
+    File.rm_rf!(dir)
+    File.mkdir_p!(dir)
+    staged = MapSet.new(Argus.Analysis.points_to_relations(), &"#{&1}.facts")
+
+    for file <- File.ls!(facts_dir), not MapSet.member?(staged, file) do
+      source = Path.join(facts_dir, file)
+      target = Path.join(dir, file)
+
+      case File.ln(source, target) do
+        :ok -> :ok
+        {:error, _} -> File.cp!(source, target)
+      end
+    end
+
+    dir
   end
 
   @doc """
@@ -280,7 +319,9 @@ defmodule Argus.Corpus do
   defp extract_into_cache(co, digest, beams) do
     {:ok, analyses} = Argus.Analysis.set(:all)
 
-    with {:ok, fresh} <- Argus.Analysis.extract_facts(beams, analyses) do
+    # Stage 0 is part of the entry (its rules are in the digest); the
+    # points-to stage is not (`analyze/2`).
+    with {:ok, fresh} <- Argus.Analysis.extract_facts(beams, analyses, points_to: :deferred) do
       cache = Path.join(co.dir, @facts_cache)
       entry = Path.join(cache, digest)
 

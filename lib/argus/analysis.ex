@@ -28,9 +28,9 @@ defmodule Argus.Analysis do
     rows.
   - `extract_facts/3`, then `run_rules/3` per analysis, is the same run
     in two steps, for a caller that keeps the facts directory (scry,
-    encore); `derive_stage0/2`, `input_relations/1` and
-    `filter_to_outputs/2` serve incremental consumers that project a
-    directory per analysis.
+    encore); `derive_stage0/2`, `derive_points_to/2`,
+    `input_relations/1` and `filter_to_outputs/2` serve incremental
+    consumers that project a directory per analysis.
 
   The code behind these lives in three modules, each delegated to from
   here: `Argus.Analysis.Sets` (concerns, sets and how a selection
@@ -254,6 +254,27 @@ defmodule Argus.Analysis do
   @spec stage0_rules_path() :: Path.t()
   defdelegate stage0_rules_path(), to: Extraction
 
+  @doc "The relations stage 0 writes."
+  @spec stage0_relations() :: [String.t()]
+  defdelegate stage0_relations(), to: Extraction
+
+  @doc """
+  Derives the points-to stage (which process a pid can be) into a facts
+  directory stage 0 has been derived into: see
+  `Argus.Analysis.Extraction.derive_points_to/2`. Incremental consumers
+  call it directly and memoize the result.
+  """
+  @spec derive_points_to(Path.t(), keyword()) :: :ok | {:error, term()}
+  defdelegate derive_points_to(facts_dir, opts \\ []), to: Extraction
+
+  @doc "The path to the points-to stage's rules file."
+  @spec points_to_rules_path() :: Path.t()
+  defdelegate points_to_rules_path(), to: Extraction
+
+  @doc "The relations the points-to stage writes."
+  @spec points_to_relations() :: [String.t()]
+  defdelegate points_to_relations(), to: Extraction
+
   # ── Solving ─────────────────────────────────────────────────────────
 
   @doc """
@@ -318,7 +339,8 @@ defmodule Argus.Analysis do
   @spec run_rules(Path.t(), analysis(), keyword()) :: {:ok, result()} | {:error, term()}
   def run_rules(facts_dir, analysis, opts \\ []) do
     with {:ok, rules_path} <- Catalog.rules_path(analysis),
-         :ok <- Extraction.ensure_stage0(facts_dir, opts) do
+         :ok <- Extraction.ensure_stage0(facts_dir, opts),
+         :ok <- Extraction.ensure_points_to(facts_dir, [analysis], opts) do
       Souffle.run(facts_dir, rules_path, opts)
     end
   end

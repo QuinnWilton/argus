@@ -1,7 +1,7 @@
 // Who waits on whom.
 //
-// Requires imports.dl, behaviours.dl, callbacks.dl, processes.dl and
-// runs_elsewhere.dl (otp.dl includes all of them).
+// Requires imports.dl, behaviours.dl, callbacks.dl, staged_processes.dl
+// and runs_elsewhere.dl (otp.dl includes all of them).
 // Reads the extracted sync_call / sync_call_site / async_cast /
 // sync_call_timeout / call_arg / call_arg_forward facts and answers one question in a few shapes: does this function, or
 // this module, synchronously depend on that module's process.

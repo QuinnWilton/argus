@@ -10,6 +10,50 @@ What 0.20.0 will ship; the release dates this heading and drops the
 `-dev` from `mix.exs`. Grouped by concern. Each entry opens with what it
 does: **Added**, **Changed**, **Fixed** or **Removed**.
 
+### Process points-to, derived once
+
+**Changed.** Process points-to (`clientlib/processes.dl`) is a stage of
+its own, `priv/dl/points_to.dl`, derived once per run after stage 0,
+into the same facts directory, instead of inside every solve that asks
+which process a pid can be. The fixpoint was most of each of those
+solves on a large program — over ssl, public_key and kernel, four of
+the ~4.5 s blocking, coupling, coverage, failure, mailbox, shutdown and
+startup each took, and races as well — and it was the same fixpoint in
+each. The analyses read what the stage writes
+(`Argus.Analysis.points_to_relations/0`: the processes, the resolved
+targets, and of what each source points to, the processes and ETS
+tables) through `clientlib/staged_processes.dl`, which `otp.dl` now
+includes in place of `processes.dl`. Over the four benchmark sets
+(Phoenix's stack, mnesia+inets+ssh, ssl+public_key+kernel, logflare)
+every analysis's output rows are identical; those solves drop to
+0.2–0.7 s each, plus one points-to solve of 0.5–4.2 s.
+
+The stage follows a gen_statem's data, exit signals, monitors and links,
+and ETS tables for every analysis alike (before, only an analysis that
+included `process_statem.dl`, `signals.dl` or `tables.dl` did). None of
+them changes what another analysis sees: signal kinds are not call
+kinds, so they are staged apart (`process_signal`, which `signals.dl`
+joins back into `process_call` and `pid_use`), and a table is a leaf no
+field or process is read out of. `runs_elsewhere` moved to
+`clientlib/runs_elsewhere.dl` and is still derived per analysis (it
+needs no points-to, so an analysis that only walks a process's own calls
+does not read the stage); `call_instr` moved to `imports.dl`,
+`statem_process` to `behaviours.dl`.
+
+`extract_facts/3` derives the stage when a selected analysis reads it
+(`points_to: :deferred` leaves it to the caller), `run_rules/3` when it
+is missing, and `Argus.Findings.run/2` stages it once before the solves
+fan out; a points-to failure degrades only the analyses that read it
+(`{:points_to, reason}`). New: `Argus.Analysis.derive_points_to/2`,
+`points_to_rules_path/0`, `points_to_relations/0`,
+`stage0_relations/0`; `Extraction.ensure_points_to/3` and
+`reads_points_to?/1`. `stage0: :provided` covers both stages. The
+corpus cache keeps stage 0 but not the stage, which is rules: each run
+derives it into a directory of hard links beside the entry. The pinned
+input sets moved accordingly (`test/argus/analysis_inputs.exs`): the
+analyses that read points-to no longer read the `pid_*` summaries, and
+coverage no longer reads the call graph at all.
+
 ### Check-then-act without the copies
 
 **Changed.** `clientlib/check_then_act.dl` tests how two identities'

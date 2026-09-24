@@ -24,6 +24,7 @@ defmodule Argus.Clientlib.TagResolutionTest do
       )
 
     :ok = Analysis.derive_stage0(facts_dir)
+    :ok = Analysis.derive_points_to(facts_dir)
 
     rules =
       """

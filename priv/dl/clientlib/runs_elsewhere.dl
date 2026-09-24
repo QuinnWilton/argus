@@ -3,8 +3,10 @@
 // over what one process runs (reach.dl's SameProcess variants, calls.dl's
 // waits) stops at these edges.
 //
-// Derived from the start sites and the call graph alone, apart from
-// process points-to (processes.dl), which reads it too.
+// Apart from the points-to stage (points_to.dl) and read there too: it
+// is derived from the start sites and the call graph alone, so an
+// analysis that walks a process's own calls does not wait for, or read,
+// the process points-to.
 //
 // Prerequisites: include clientlib/imports.dl before this file.
 

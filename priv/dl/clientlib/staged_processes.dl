@@ -1,0 +1,79 @@
+// Which process a pid can be, as the points-to stage (priv/dl/points_to.dl)
+// derived it: the relations of processes.dl the analyses read, staged
+// once per program and read here as facts. Each is documented where
+// processes.dl derives it.
+//
+// The fixpoint behind them is most of a solve over a large program, and
+// every analysis that asked about processes used to recompute it. It is
+// the same fixpoint for each of them, so it is computed once; what an
+// analysis may add to it (sends.dl, signals.dl) it adds over the staged
+// rows.
+//
+// Prerequisites: include clientlib/imports.dl before this file (otp.dl
+// does).
+
+// Processes: those running a module's callbacks, each instance of a
+// start with its start site, a supervisor's children, the processes a
+// function keeps for itself, and every process the program names.
+.decl server_process(proc: symbol, mod: symbol)
+.input server_process
+
+.decl instance(proc: symbol, base: symbol)
+.input instance
+
+.decl supervised_process(proc: symbol, sup: symbol, pos: number)
+.input supervised_process
+
+.decl private_process(proc: symbol, func: symbol, site: symbol)
+.input private_process
+
+.decl process(proc: symbol)
+.input process
+
+// A registered name may hold a pid of `proc`.
+.decl named_pid(name: symbol, proc: symbol)
+.input named_pid
+
+// `func` waits on (call), casts to (cast) or sends to (info) `proc`,
+// through the use at `site`, in `func` or in a helper `func` hands the
+// pid to at `anchor`. Signals are staged apart (signals.dl).
+.decl process_call(func: symbol, anchor: symbol, site: symbol, api_kind: symbol, proc: symbol)
+.input process_call
+
+// The call, cast or send at `id` in `func` may target `proc`, whoever
+// supplies it.
+.decl call_site_target(id: symbol, func: symbol, api_kind: symbol, proc: symbol)
+.input call_site_target
+
+// A synchronous call that is provably to the calling process itself.
+.decl self_call(func: symbol, site: symbol)
+.input self_call
+
+// What a source, seen from inside `func`, may point to — only the
+// processes and the ETS tables: the terms that hold them are the bulk
+// of source_pts (118 MB of it over ssl, public_key and kernel), and no
+// analysis reads them.
+.decl source_process(func: symbol, src_kind: symbol, src: symbol, proc: symbol)
+.input source_process
+
+.decl source_table(func: symbol, src_kind: symbol, src: symbol, table: symbol)
+.input source_table
+
+// ── Derived here, over the staged rows ─────────────────────────────
+
+// Everything that goes to a process: a call, cast or send; signals.dl
+// adds the signals.
+.decl pid_use(id: symbol, func: symbol, kind: symbol, src_kind: symbol, src: symbol)
+
+pid_use(id, f, kind, sk, s) :- pid_call(id, f, kind, sk, s).
+
+// `func` calls or casts to `proc`, itself or through a helper.
+.decl call_target(func: symbol, api_kind: symbol, proc: symbol)
+
+call_target(f, kind, p) :- process_call(f, _, _, kind, p).
+
+// The module whose code starts a process.
+.decl started_by_module(proc: symbol, mod: symbol)
+
+started_by_module(p, m) :- process_start(_, f, p, _, _), function_def(f, m, _, _, _).
+started_by_module(p, m) :- private_process(p, f, _), function_def(f, m, _, _, _).

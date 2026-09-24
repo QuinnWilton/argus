@@ -1,7 +1,8 @@
-// Which process a send reaches, over the points-to in processes.dl.
+// Which process a send reaches, over the targets the points-to stage
+// resolved (processes.dl, staged by points_to.dl).
 //
 // Prerequisites: include clientlib/imports.dl and clientlib/otp.dl
-// (which brings processes.dl) before this file.
+// (which brings staged_processes.dl) before this file.
 
 // The send at `id` in `func`, carrying `message`, may reach `proc`: the
 // send's own target, or, when `func` sends to its parameter, whatever its

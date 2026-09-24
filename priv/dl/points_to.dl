@@ -1,0 +1,62 @@
+// The points-to stage — which process a pid can be, derived once.
+//
+// Process points-to (clientlib/processes.dl) is a whole-program fixpoint
+// over PidFlow's per-function summaries, and on a large program it is
+// most of what a solve costs: over ssl, public_key and kernel it was four
+// of the four and a half seconds each of blocking, coupling, failure,
+// mailbox, shutdown, startup, coverage and races spent, the same rows
+// derived in each. Like stage 0 (stage0.dl), this derives them once, and
+// the analyses read the result as facts (clientlib/staged_processes.dl).
+//
+// It runs after stage 0, whose call graph it reads, into the same facts
+// directory, and writes only what an analysis reads: the processes, the
+// resolved targets, and of what each source points to, the processes and
+// tables (not the terms that hold them, the bulk of it). For an
+// incremental consumer it is a cutoff seam of its own: most edits leave
+// every process and target where it was.
+//
+// Outputs are written as `.facts`, the format the analyses read.
+
+.include "clientlib/imports.dl"
+.include "clientlib/behaviours.dl"
+.include "clientlib/callbacks.dl"
+.include "clientlib/process_statem.dl"
+.include "clientlib/runs_elsewhere.dl"
+.include "clientlib/processes.dl"
+
+.output server_process(filename="server_process.facts")
+.output instance(filename="instance.facts")
+.output supervised_process(filename="supervised_process.facts")
+.output private_process(filename="private_process.facts")
+.output process(filename="process.facts")
+.output named_pid(filename="named_pid.facts")
+.output call_site_target(filename="call_site_target.facts")
+.output self_call(filename="self_call.facts")
+
+// The calls, casts and sends, and apart from them the exit signals,
+// monitors and links, which only signals.dl reads.
+.decl staged_process_call(func: symbol, anchor: symbol, site: symbol, api_kind: symbol, proc: symbol)
+
+staged_process_call(f, a, id, kind, p) :- process_call(f, a, id, kind, p), pid_call(id, _, kind, _, _).
+
+.output staged_process_call(filename="process_call.facts")
+
+.decl process_signal(func: symbol, anchor: symbol, site: symbol, signal: symbol, proc: symbol)
+
+process_signal(f, a, id, kind, p) :- process_call(f, a, id, kind, p), pid_signal(id, _, kind, _, _).
+
+.output process_signal(filename="process_signal.facts")
+
+// What a source may point to, where it is a process (shutdown's stops)
+// or a table (tables.dl).
+.decl source_process(func: symbol, src_kind: symbol, src: symbol, proc: symbol)
+
+source_process(f, sk, s, p) :- source_pts(f, sk, s, p), process(p).
+
+.output source_process(filename="source_process.facts")
+
+.decl source_table(func: symbol, src_kind: symbol, src: symbol, table: symbol)
+
+source_table(f, sk, s, t) :- source_pts(f, sk, s, t), table_alloc(_, _, t).
+
+.output source_table(filename="source_table.facts")

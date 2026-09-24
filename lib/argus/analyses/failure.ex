@@ -59,7 +59,8 @@ defmodule Argus.Analyses.Failure do
       # supervisor owns it (clientlib/processes.dl, signals.dl).
       Argus.Extractors.PidFlow,
       Argus.Extractors.Supervision,
-      # A gen_statem's state functions and data (clientlib/process_statem.dl).
+      # A gen_statem's state functions and data (clientlib/process_statem.dl,
+      # and processes.dl in the points-to stage).
       Argus.Extractors.GenStatem
     ]
 

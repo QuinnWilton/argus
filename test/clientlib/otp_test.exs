@@ -32,6 +32,7 @@ defmodule Argus.Clientlib.OtpTest do
 
       # imports.dl reads the staged call graph rather than deriving it.
       :ok = Argus.Analysis.derive_stage0(facts_dir)
+      :ok = Argus.Analysis.derive_points_to(facts_dir)
 
       rules = """
       .include "#{Path.join(priv_dl(), "clientlib/imports.dl")}"

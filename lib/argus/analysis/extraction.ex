@@ -4,12 +4,17 @@ defmodule Argus.Analysis.Extraction do
 
   One extraction serves every selected analysis: the pipeline
   (`Argus.Pipeline.run/3`) runs the union of the analyses' extractors
-  once, then two derivations write into the same directory:
+  once, then three derivations write into the same directory:
 
   - **Stage 0** (`priv/dl/stage0.dl`) derives the shared call graph
     (`call_edge`, `call_site`, `unconditional_call_edge`, `call_tag`)
     once, so no analysis re-derives it and the volatile
     instruction-level relations stay out of every analysis's input set.
+  - **Points-to** (`priv/dl/points_to.dl`), when a selected analysis
+    reads it, derives which process a pid can be
+    (`points_to_relations/0`) once: the fixpoint is most of a solve
+    over a large program, and it is the same for every analysis that
+    asks.
   - **Priors** (`Argus.Priors`), only when `:priors` asks for them, fill
     the `prior_*` relations the heuristic rules read.
 
@@ -17,8 +22,8 @@ defmodule Argus.Analysis.Extraction do
   pipeline records it as an `extraction_error` row and goes on, and
   `Argus.Findings.extraction_errors/1` reads the rows back.
 
-  `Argus.Analysis` delegates `extract_facts/3`, `derive_stage0/2` and
-  `stage0_rules_path/0` here.
+  `Argus.Analysis` delegates `extract_facts/3`, `derive_stage0/2`,
+  `derive_points_to/2`, their rules paths and relation lists here.
   """
 
   require Logger
@@ -37,6 +42,11 @@ defmodule Argus.Analysis.Extraction do
   # The relations stage 0 writes; a directory holding all four is staged.
   @stage0_relations ~w(call_edge call_site unconditional_call_edge call_tag)
 
+  # The relations the points-to stage writes (points_to.dl's outputs).
+  @points_to_relations ~w(server_process instance supervised_process private_process process
+                          named_pid process_call process_signal call_site_target self_call
+                          source_process source_table)
+
   @doc """
   Extracts facts from the given modules once, for one or more analyses.
 
@@ -48,7 +58,12 @@ defmodule Argus.Analysis.Extraction do
   re-extraction.
 
   Returns `{:ok, facts_dir}` or `{:error, reason}`; a stage-0 failure is
-  `{:error, {:stage0, reason}}`.
+  `{:error, {:stage0, reason}}`, a points-to one `{:error, {:points_to,
+  reason}}`.
+
+  `points_to: :deferred` leaves the points-to stage to the caller, who
+  stages it with `ensure_points_to/3` and decides what its failure means
+  (`Argus.Findings.run/2` degrades only the analyses that read it).
   """
   @spec extract_facts(modules :: [atom() | String.t()], [Analysis.analysis()], keyword()) ::
           {:ok, Path.t()} | {:error, term()}
@@ -70,8 +85,16 @@ defmodule Argus.Analysis.Extraction do
          facts_dir = Path.join(work_dir, "facts"),
          {:ok, _} <- Pipeline.run(modules, facts_dir, opts),
          :ok <- derive_stage0(facts_dir, opts),
+         :ok <- points_to_unless_deferred(facts_dir, analyses, opts),
          :ok <- derive_priors(facts_dir, opts) do
       {:ok, facts_dir}
+    end
+  end
+
+  defp points_to_unless_deferred(facts_dir, analyses, opts) do
+    case Keyword.get(opts, :points_to, :derive) do
+      :deferred -> :ok
+      :derive -> ensure_points_to(facts_dir, analyses, opts)
     end
   end
 
@@ -143,6 +166,81 @@ defmodule Argus.Analysis.Extraction do
   @spec stage0_rules_path() :: Path.t()
   def stage0_rules_path, do: Catalog.priv_dl("stage0.dl")
 
+  @doc "The relations stage 0 writes."
+  @spec stage0_relations() :: [String.t()]
+  def stage0_relations, do: @stage0_relations
+
+  @doc """
+  Derives the points-to stage into an existing facts directory that
+  stage 0 has been derived into.
+
+  Process points-to (`clientlib/processes.dl`) is a whole-program
+  fixpoint, and every analysis that asks which process a pid can be
+  used to derive it inside its own solve: over a large program, most of
+  the solve, and the same rows each time. This derives them once, and
+  the analyses read `points_to_relations/0` as facts
+  (`clientlib/staged_processes.dl`).
+
+  Like stage 0, an incremental consumer calls it directly and memoizes
+  the result: its outputs move only when a process or a resolved target
+  does, not on every edit that renumbers the instructions it reads.
+
+  Writes the `points_to_relations/0` files into `facts_dir`. Idempotent.
+  """
+  @spec derive_points_to(Path.t(), keyword()) :: :ok | {:error, term()}
+  def derive_points_to(facts_dir, opts \\ []) do
+    case Souffle.run(facts_dir, points_to_rules_path(), Keyword.put(opts, :output_dir, facts_dir)) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, {:points_to, reason}}
+    end
+  end
+
+  @doc "The path to the points-to stage's rules file."
+  @spec points_to_rules_path() :: Path.t()
+  def points_to_rules_path, do: Catalog.priv_dl("points_to.dl")
+
+  @doc "The relations the points-to stage writes."
+  @spec points_to_relations() :: [String.t()]
+  def points_to_relations, do: @points_to_relations
+
+  @doc """
+  Whether an analysis reads what the points-to stage writes, as Souffle
+  resolves its inputs. An analysis whose inputs cannot be resolved is
+  taken to read it: deriving the stage then reports the real trouble.
+  """
+  @spec reads_points_to?(Analysis.analysis()) :: boolean()
+  def reads_points_to?(analysis) do
+    case Analysis.input_relations(analysis) do
+      {:ok, relations} -> Enum.any?(relations, &(&1 in @points_to_relations))
+      {:error, _} -> true
+    end
+  end
+
+  @doc """
+  Derives the points-to stage into `facts_dir` when one of `analyses`
+  reads it and it is not already there.
+
+  `stage0: :provided` in `opts` opts out, as it does for stage 0: a
+  caller that projects a directory per analysis supplies the staged
+  relations the analysis reads itself.
+  """
+  @spec ensure_points_to(Path.t(), [Analysis.analysis()], keyword()) :: :ok | {:error, term()}
+  def ensure_points_to(facts_dir, analyses, opts) do
+    cond do
+      Keyword.get(opts, :stage0, :auto) == :provided ->
+        :ok
+
+      Enum.all?(@points_to_relations, &File.exists?(Path.join(facts_dir, "#{&1}.facts"))) ->
+        :ok
+
+      not Enum.any?(analyses, &reads_points_to?/1) ->
+        :ok
+
+      true ->
+        derive_points_to(facts_dir, opts)
+    end
+  end
+
   @doc """
   Derives stage 0 into `facts_dir` unless it is already there.
 
@@ -153,11 +251,12 @@ defmodule Argus.Analysis.Extraction do
   ad-hoc probes — get it derived on demand rather than having to know
   about staging at all.
 
-  `stage0: :provided` in `opts` opts out entirely. A caller that projects
-  a fact directory down to exactly the relations one analysis reads
-  knows whether call_edge is among them; for an analysis that does not
-  read it the file is legitimately absent, and auto-deriving would fail
-  on the layer-1 facts such a directory deliberately omits.
+  `stage0: :provided` in `opts` opts out entirely, of this stage and of
+  the points-to one (`ensure_points_to/3`). A caller that projects a
+  fact directory down to exactly the relations one analysis reads knows
+  whether call_edge is among them; for an analysis that does not read it
+  the file is legitimately absent, and auto-deriving would fail on the
+  layer-1 facts such a directory deliberately omits.
   """
   @spec ensure_stage0(Path.t(), keyword()) :: :ok | {:error, term()}
   def ensure_stage0(facts_dir, opts) do

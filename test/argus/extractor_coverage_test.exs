@@ -27,7 +27,9 @@ defmodule Argus.ExtractorCoverageTest do
       exactly zero was not believable.
 
   Layer-1 relations are excluded: `Argus.Pipeline.Emit` always produces
-  those, so no extractor need claim them.
+  those, so no extractor need claim them. An analysis that reads the
+  points-to stage's outputs reads what that stage reads, from the same
+  extraction: its extractors must fill those too.
   """
 
   use ExUnit.Case, async: true
@@ -72,10 +74,13 @@ defmodule Argus.ExtractorCoverageTest do
     # documented meaning of "priors off", not a clean zero in disguise.
     priors = Schema.layer_3() |> Enum.map(& &1.name) |> MapSet.new()
     outputs = extractor_outputs()
+    staged = Analysis.points_to_relations()
+    {:ok, stage_reads} = Souffle.input_relations(Analysis.points_to_rules_path())
 
     gaps =
       for mod <- Analysis.builtin_analysis_modules(),
           {:ok, reads} = Analysis.input_relations(mod.name()),
+          reads = through_points_to(reads, staged, stage_reads),
           produced =
             mod.extractors()
             |> Enum.map(&Map.get(outputs, &1, MapSet.new()))
@@ -95,5 +100,13 @@ defmodule Argus.ExtractorCoverageTest do
            "an analysis reading a relation nothing fills reports a clean zero, " <>
              "which is indistinguishable from a codebase with no such bug:\n" <>
              Enum.join(gaps, "\n")
+  end
+
+  # An analysis's reads, with the staged points-to relations it reads
+  # replaced by what the stage reads to derive them.
+  defp through_points_to(reads, staged, stage_reads) do
+    if Enum.any?(reads, &(&1 in staged)),
+      do: Enum.uniq((reads -- staged) ++ stage_reads),
+      else: reads
   end
 end

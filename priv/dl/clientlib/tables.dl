@@ -34,14 +34,13 @@
 // fields. The fallback holds only where nothing better does, and only
 // within the module: it assumes a module means one table by one field.
 //
-// Prerequisites: imports.dl and otp.dl (processes.dl).
+// Prerequisites: imports.dl and otp.dl (staged_processes.dl).
 
 // ── Tables as objects ───────────────────────────────────────────────
 
 // An ETS table is an object of process points-to, allocated by the
-// :ets.new/2 that made it. Seeded here, so only an analysis that asks
-// about tables pays for following them.
-source_pts(f, "table", t, t) :- table_alloc(_, f, t).
+// :ets.new/2 that made it (processes.dl seeds it). The points-to stage
+// hands on only where tables go: source_table, in staged_processes.dl.
 
 // ── Creation sites ──────────────────────────────────────────────────
 
@@ -112,7 +111,7 @@ known_table(id, "named", name) :-
 // The table the operand may be, by points-to.
 known_table(id, k, t) :-
   table_use(id, f, sk, s),
-  source_pts(f, sk, s, x),
+  source_table(f, sk, s, x),
   table_alloc(n, _, x),
   site_table(n, k, t).
 

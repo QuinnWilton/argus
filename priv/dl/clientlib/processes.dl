@@ -26,11 +26,24 @@
 // point to", and a rule that concludes something from it asks what a
 // process does NOT do.
 //
-// Where sends go is in sends.dl, apart, so an analysis that asks only
-// about calls does not read every send in the program.
+// The rules run once per program, in the points-to stage
+// (priv/dl/points_to.dl), not in every analysis that asks: the fixpoint
+// is most of what a solve over a large program costs, and it was
+// recomputed by each of them. The stage stages what the analyses read
+// (clientlib/staged_processes.dl declares it), and a gen_statem's data
+// (process_statem.dl's process_entry rule), exit signals, monitors and
+// links (pid_signal) and ETS tables (table_alloc) are followed here for
+// every analysis alike. None of those changes what the others see: a
+// signal's target is a use of its own kind, and a table is a leaf no
+// process is read out of.
+//
+// Where sends go (sends.dl) and which signal goes where (signals.dl) are
+// asked apart, over the staged targets, so an analysis that asks only
+// about calls does not read every send or signal in the program.
 //
 // Prerequisites: include clientlib/imports.dl, behaviours.dl,
-// callbacks.dl and runs_elsewhere.dl before this file (otp.dl does).
+// callbacks.dl, process_statem.dl and runs_elsewhere.dl before this file
+// (points_to.dl does).
 
 // ── Processes ───────────────────────────────────────────────────────
 
@@ -157,6 +170,7 @@ reads_name(f, n) :- pid_message(_, f, _, "name", n).
 reads_name(f, n) :- pid_register(_, f, _, "name", n).
 reads_name(f, n) :- pid_field(f, _, _, "name", n).
 reads_name(f, n) :- pid_base(f, _, "name", n).
+reads_name(f, n) :- pid_signal(_, f, _, "name", n).
 
 source_pts(f, "proc", p, p) :- process_start(_, f, p, _, _).
 source_pts(f, "obj", o, o) :- pid_object(f, o, _, _, _).
@@ -174,6 +188,12 @@ source_pts(f, "result", c, cat("start ", c)) :- kept_fresh(c, f, x), process_sta
 source_pts(f, "result", c, cat("result ", c)) :- kept_fresh(c, f, x), start_object(x, _).
 source_pts(f, "name", n, p) :- reads_name(f, n), named_pid(n, p).
 source_pts(f, "self", "self", p) :- self_pid(f, p).
+
+// An ETS table is an object too, allocated by the :ets.new/2 that made
+// it (clientlib/tables.dl asks where it goes). Named "table <site>", so
+// it is never a process nor a term a field is read out of: a leaf of
+// every relation below.
+source_pts(f, "table", t, t) :- table_alloc(_, f, t).
 
 // A GenServer.call returns the server's reply: the second field of a
 // `{:reply, reply, state}` its handle_call/3 returns. Every reply of the
@@ -323,6 +343,7 @@ reads_self(f) :- pid_message(_, f, _, "self", _).
 reads_self(f) :- pid_register(_, f, _, "self", _).
 reads_self(f) :- pid_field(f, _, _, "self", _).
 reads_self(f) :- pid_base(f, _, "self", _).
+reads_self(f) :- pid_signal(_, f, _, "self", _).
 
 .decl self_relevant(func: symbol)
 
@@ -392,10 +413,11 @@ entry_pts(f, k, x) :- state_in(m, f, k), state_pts(m, x).
 .decl targets_field(func: symbol, pos: symbol, sel: symbol, api_kind: symbol, site: symbol)
 
 // Everything that goes to a process: a call, cast or send (pid_call),
-// and, where signals.dl is included, an exit signal, a monitor or a link.
+// an exit signal, a monitor or a link (pid_signal).
 .decl pid_use(id: symbol, func: symbol, kind: symbol, src_kind: symbol, src: symbol)
 
 pid_use(id, f, kind, sk, s) :- pid_call(id, f, kind, sk, s).
+pid_use(id, f, kind, sk, s) :- pid_signal(id, f, kind, sk, s).
 
 targets_param(g, k, kind, id) :- pid_use(id, g, kind, "param", k).
 targets_param(f, j, kind, id) :-
@@ -430,6 +452,8 @@ source_field_pts(f, sk, s, sel, x) :-
 // (unlink) `proc`: through the use at `site`, which is in `func` itself
 // or in a helper `func` hands the pid to at `anchor` (the site a finding
 // about `func` points at). `anchor` = `site` when the use is `func`'s own.
+// The stage hands the calls, casts and sends on as process_call and the
+// signals as process_signal; signals.dl puts them back together.
 .decl process_call(func: symbol, anchor: symbol, site: symbol, api_kind: symbol, proc: symbol)
 
 // A target `func` resolves itself.
@@ -509,12 +533,6 @@ call_site_target(id, g, kind, p) :-
   process_call(_, _, id, kind, p),
   pid_call(id, g, kind, _, _).
 
-// The module whose code starts a process.
-.decl started_by_module(proc: symbol, mod: symbol)
-
-started_by_module(p, m) :- process_start(_, f, p, _, _), function_def(f, m, _, _, _).
-started_by_module(p, m) :- private_process(p, f, _), function_def(f, m, _, _, _).
-
 // A synchronous call that is provably to the calling process itself — to
 // self(), or to a name only the caller's module's processes hold, from
 // that module's own process — which gen exits with `calling_self`.
@@ -542,11 +560,6 @@ self_call(f, id) :-
   named_module(n, m),
   !named_otherwise(n, m).
 
-// `func` calls or casts to `proc`, itself or through a helper.
-.decl call_target(func: symbol, api_kind: symbol, proc: symbol)
-
-call_target(f, kind, p) :- process_call(f, _, _, kind, p).
-
 // ── Messages ────────────────────────────────────────────────────────
 
 // A call, cast or send delivers its message to the handler of the server
@@ -566,3 +579,57 @@ entry_pts(h, "0", x) :-
   server_process(p, m),
   message_handler(kind, name, arity),
   function_def(h, m, name, arity, _).
+
+// ── A gen_statem's data ─────────────────────────────────────────────
+//
+// What init/1 and the state functions return becomes the data the next
+// state function (or terminate/3) is called with: the field of the
+// returned tuple its tag puts the data in — {:ok, state, data},
+// {:next_state, state, data}, {:keep_state, data}, {:repeat_state,
+// data}, {:stop, reason, data}, {:stop_and_reply, reason, replies,
+// data}, each with its optional actions.
+.decl statem_data_slot(tag: symbol, arity: symbol, sel: symbol)
+
+statem_data_slot(":ok", "3", "{2}").
+statem_data_slot(":ok", "4", "{2}").
+statem_data_slot(":next_state", "3", "{2}").
+statem_data_slot(":next_state", "4", "{2}").
+statem_data_slot(":keep_state", "2", "{1}").
+statem_data_slot(":keep_state", "3", "{1}").
+statem_data_slot(":repeat_state", "2", "{1}").
+statem_data_slot(":repeat_state", "3", "{1}").
+statem_data_slot(":stop", "3", "{2}").
+statem_data_slot(":stop_and_reply", "4", "{3}").
+
+.decl statem_data_out(mod: symbol, func: symbol)
+
+statem_data_out(m, f) :- statem_process(m), function_def(f, m, "init", 1, _).
+statem_data_out(m, f) :- statem_event_clause(m, f, _).
+
+// State functions take (event_type, content, data); handle_event/4 takes
+// (event_type, content, state, data); terminate/3 (reason, state, data).
+.decl statem_data_in(mod: symbol, func: symbol, pos: symbol)
+
+statem_data_in(m, f, "2") :- statem_event_clause(m, f, _), function_def(f, m, _, 3, _).
+statem_data_in(m, f, "3") :- statem_event_clause(m, f, _), function_def(f, m, "handle_event", 4, _).
+statem_data_in(m, f, "2") :- statem_process(m), function_def(f, m, "terminate", 3, _).
+
+.decl statem_data_pts(mod: symbol, x: symbol)
+
+statem_data_pts(m, x) :-
+  statem_data_out(m, g),
+  returns_pts(g, t),
+  pid_object(_, t, "tuple", tag, n),
+  statem_data_slot(tag, n, sel),
+  field_pts(t, sel, x).
+
+entry_pts(f, k, x) :- statem_data_in(m, f, k), statem_data_pts(m, x).
+
+// A call, cast or send to a gen_statem is an event: its message is the
+// state function's content, the second parameter.
+entry_pts(h, "1", x) :-
+  pid_message(id, f, kind, sk, s),
+  source_pts(f, sk, s, x),
+  call_site_target(id, f, kind, p),
+  server_process(p, m),
+  statem_event_clause(m, h, _).
