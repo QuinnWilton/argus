@@ -13,6 +13,7 @@ defmodule Argus.Extractor.Identity do
   alias Argus.Instr
   alias Argus.Instr.Reaching
   alias Argus.InstrId
+  alias Argus.Pipeline.Normalize
 
   @doc """
   What identifies the value in `register` at `idx`, in the vocabulary two
@@ -103,7 +104,17 @@ defmodule Argus.Extractor.Identity do
   function being asked about: what `key_identity/4` needs to name a value
   by the instruction that made it.
   """
-  @type origins :: {%{{String.t(), non_neg_integer(), String.t()} => [term()]}, String.t()}
+  @type origins ::
+          {%{{String.t(), non_neg_integer(), String.t()} => [term()]}, String.t()}
+          | {%{{String.t(), non_neg_integer(), String.t()} => [term()]}, String.t(), returns()}
+
+  @typedoc """
+  Which of a module's functions return a parameter's tuple with element
+  n unchanged (`returned_elements/2`): `%{{func_id, n} => param}`. Given
+  as the third element of `origins`, a local call's result is followed
+  into the argument it passes there.
+  """
+  @type returns :: %{{String.t(), non_neg_integer()} => non_neg_integer()}
 
   @doc """
   The module's reaching definitions (`Argus.Extractor.Helpers.reaching/1`)
@@ -143,7 +154,9 @@ defmodule Argus.Extractor.Identity do
   defp local_identity(_instrs, _idx, _register, _origins, depth) when depth > @max_move_chain,
     do: {"dynamic", ""}
 
-  defp local_identity(instrs, idx, register, {index, func_id} = origins, depth) do
+  defp local_identity(instrs, idx, register, origins, depth) do
+    {index, func_id} = {elem(origins, 0), elem(origins, 1)}
+
     with {kind, n} when kind in [:x, :y] <- Instr.register(register),
          [%InstrId{idx: def_idx}] <- Map.get(index, {func_id, idx, "#{kind}#{n}"}) do
       instr = Reaching.at(instrs, def_idx)
@@ -197,7 +210,12 @@ defmodule Argus.Extractor.Identity do
   tuple that is still parameter P names its element as `{"element N",
   "P"}` — a record handed to a helper, whose caller's argument says what
   the element is. A tuple from anywhere else — a call result — says
-  nothing about its elements, and is `{"dynamic", ""}`.
+  nothing about its elements, and is `{"dynamic", ""}` — except that a
+  record updated in place (`put_elem/3`, `R#r{f = V}`, an Elixir record's
+  update) keeps every element the update does not set, and the head of
+  what `:mnesia.dirty_read` or `:ets.lookup` returned holds the table and
+  key the read was asked for: `[rec] = dirty_read(t, k)` and then
+  `dirty_write(put_elem(rec, 2, n + 1))` writes the record it read.
   """
   @spec tuple_element_identity(
           [term()],
@@ -218,6 +236,137 @@ defmodule Argus.Extractor.Identity do
       {_at, {:move, {:literal, tuple}, _dst}}, _follow
       when is_tuple(tuple) and tuple_size(tuple) > n ->
         {"literal", Terms.spell(elem(tuple, n))}
+
+      # A record updated in place, `R#r{f = V}` or an Elixir record's
+      # update: element n is the original's unless the update sets it.
+      {at, {:update_record, _hint, _size, src, _dst, {:list, updates}}}, follow ->
+        if (n + 1) in updated_positions(updates), do: @dynamic_identity, else: follow.(at, src)
+
+      # A local helper that hands back its parameter's tuple with element n
+      # unchanged (a pipeline of `put_elem`s): the argument's element n.
+      {at, {call, _arity, {mod, fun, arity}}}, follow when call in [:call, :call_only] ->
+        case Map.fetch(returns_of(origins), {Normalize.func_id(mod, fun, arity), n}) do
+          {:ok, pos} -> follow.(at, {:x, pos})
+          :error -> @dynamic_identity
+        end
+
+      # The head of a list a read returned: the row or record it found.
+      {at, {:get_list, src, _hd, _tl}}, _follow ->
+        row_element(instrs, at, src, n, origins)
+
+      {at, {:get_hd, src, _dst}}, _follow ->
+        row_element(instrs, at, src, n, origins)
+
+      {at, instr}, follow ->
+        case Helpers.match_remote_call(instr) do
+          {:ok, :erlang, :setelement, 3} -> setelement_element(instrs, at, n, follow)
+          _ -> @dynamic_identity
+        end
+
+      _writer, _follow ->
+        @dynamic_identity
+    end)
+  end
+
+  # `put_elem(t, i, v)`, called at `at`: element n is t's unless i is n.
+  defp setelement_element(instrs, at, n, follow) do
+    case Resolve.resolve_register(instrs, at, {:x, 0}) do
+      {:ok, i} when is_integer(i) and i != n + 1 -> follow.(at, {:x, 1})
+      _ -> @dynamic_identity
+    end
+  end
+
+  defp returns_of({_index, _func_id, returns}), do: returns
+  defp returns_of(_origins), do: %{}
+
+  @doc """
+  The module's functions that return a parameter's tuple with element 0
+  or 1 unchanged: every exit returns element n of the same parameter,
+  through updates that set other elements (`record |> put_elem(3, ...)
+  |> put_elem(4, ...)`). A Mnesia record's table and key, an ETS row's
+  key. `%{{func_id, n} => param}`, the third element of `origins`.
+  """
+  @spec returned_elements(map(), %{{String.t(), non_neg_integer(), String.t()} => [term()]}) ::
+          returns()
+  def returned_elements(module_data, index) do
+    for {:function, name, arity, _entry, instrs} <- module_data.functions,
+        func_id = Normalize.func_id(module_data.module, name, arity),
+        n <- [0, 1],
+        {:ok, pos} <- [returned_element(instrs, n, {index, func_id})],
+        into: %{},
+        do: {{func_id, n}, pos}
+  end
+
+  defp returned_element(instrs, n, origins) do
+    exits =
+      for {instr, idx} <- Enum.with_index(instrs),
+          identity = exit_element(instrs, idx, instr, n, origins),
+          identity != :none,
+          do: identity
+
+    want = "element #{n}"
+
+    case Enum.uniq(exits) do
+      [{^want, pos}] -> {:ok, String.to_integer(pos)}
+      _ -> :error
+    end
+  end
+
+  defp exit_element(instrs, idx, :return, n, origins),
+    do: tuple_element_identity(instrs, idx, {:x, 0}, n, origins)
+
+  defp exit_element(instrs, idx, instr, n, origins) do
+    tail? = match?({:call_ext_only, _, _}, instr) or match?({:call_ext_last, _, _, _}, instr)
+
+    case {tail?, Helpers.match_remote_call(instr)} do
+      {true, {:ok, :erlang, :setelement, 3}} ->
+        setelement_element(instrs, idx, n, fn at, reg ->
+          tuple_element_identity(instrs, at, reg, n, origins)
+        end)
+
+      {true, _other} ->
+        @dynamic_identity
+
+      {false, _} ->
+        if tail_call?(instr), do: @dynamic_identity, else: :none
+    end
+  end
+
+  defp tail_call?(instr) do
+    match?({:call_only, _, _}, instr) or match?({:call_last, _, _, _}, instr) or
+      match?({:apply_last, _, _}, instr) or match?({:call_fun2, _, _, _}, instr)
+  end
+
+  defp updated_positions(updates) do
+    updates
+    |> Enum.chunk_every(2)
+    |> Enum.map(fn
+      [{:integer, i} | _] -> i
+      [i | _] -> i
+    end)
+  end
+
+  # Element n of a row or record a read found, in the read's own terms:
+  # a Mnesia record's table and key are what `dirty_read` was asked for
+  # (`dirty_read(t, k)`, or the `{t, k}` it was handed); an ETS row's key
+  # is what `lookup` was asked for. Its other elements are the store's,
+  # and name nothing.
+  defp row_element(instrs, at, list, n, origins) do
+    Resolve.trace(instrs, at, list, @dynamic_identity, fn
+      {call_at, instr}, _follow ->
+        case {Helpers.match_remote_call(instr), n} do
+          {{:ok, :mnesia, :dirty_read, 2}, n} when n in [0, 1] ->
+            key_identity(instrs, call_at, {:x, n}, origins)
+
+          {{:ok, :mnesia, :dirty_read, 1}, n} when n in [0, 1] ->
+            tuple_element_identity(instrs, call_at, {:x, 0}, n, origins)
+
+          {{:ok, :ets, :lookup, 2}, 0} ->
+            key_identity(instrs, call_at, {:x, 1}, origins)
+
+          _ ->
+            @dynamic_identity
+        end
 
       _writer, _follow ->
         @dynamic_identity

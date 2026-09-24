@@ -267,6 +267,15 @@ read-modify-write of a record table went unreported by
 is a wildcard names no key, and a `select` match spec, whose head sits
 in a list, is left out, as a dynamic key is.
 
+**Fixed.** `mnesia_check_act` finds the read-modify-write that updates
+the record it read in place: `[rec] = dirty_read(t, k)` and then
+`dirty_write(put_elem(rec, 2, n + 1))`, an Elixir record's update, or
+a helper's `put_elem` pipeline (schema 83). The write's table and key
+were `dynamic`, so only a program that rebuilt the whole tuple was
+seen: blockster's `update_user_betting_stats/5` was reported only
+through the fresh record written in its `[] ->` branch, and the lost
+update of the stats it read went unseen.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile
@@ -630,6 +639,16 @@ position the call's result does not carry (`Argus.Pipeline.Emit.
 FunRefs.handed_rows/2`). The call graph's edge into a closure or a fun
 reference has no call instruction; this names the call it runs inside,
 so a rule asking whether a `try` covers the edge asks it of that call.
+**Changed.** Schema 83, no shape change. `Identity.tuple_element_identity/5`
+follows a record updated in place — `put_elem/3` (`setelement/3`),
+`R#r{f = V}` and an Elixir record's update (`update_record`), and a
+local helper whose every exit returns a parameter's tuple with the
+element unchanged (`Identity.returned_elements/2`, passed as the third
+element of `origins`) — to the element it keeps, and the head of what
+`:mnesia.dirty_read` or `:ets.lookup` returned to the table and key the
+read was asked for. `mnesia_op`'s table and key and `ets_key`'s key
+for an insert name them where they were `dynamic`.
+
 **Changed.** Schema 82, no shape change. `ets_key` has a row for
 `:ets.match/2` and `:ets.match_object/2`: the pattern's first element,
 the key it matches, unless that is `:_` or a pattern variable, which

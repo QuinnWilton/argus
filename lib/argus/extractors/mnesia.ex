@@ -63,9 +63,10 @@ defmodule Argus.Extractors.Mnesia do
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     index = Identity.origins_index(module_data)
+    returns = Identity.returned_elements(module_data, index)
 
     each_remote_call(module_data, %{}, fn facts, ctx, mfa ->
-      handle_call(facts, Map.put(ctx, :origins, {index, ctx.func_id}), mfa)
+      handle_call(facts, Map.put(ctx, :origins, {index, ctx.func_id, returns}), mfa)
     end)
   end
 

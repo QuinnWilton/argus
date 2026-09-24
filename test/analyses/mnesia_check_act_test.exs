@@ -27,6 +27,24 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
              ]
     end
 
+    test "the record the read found, updated in place and written back" do
+      skip_without_souffle()
+      assert [{"bump/1", ":counters", "0", "bump/1", "bump/1"}] = races([C.MnesiaPutElem])
+      assert [{"bump/1", ":counters", "0", "bump/1", "bump/1"}] = races([C.MnesiaRecordUpdate])
+    end
+
+    test "the record the read found, updated by a helper's put_elem pipeline" do
+      skip_without_souffle()
+
+      assert [{"record_bet/2", ":betting_stats", "0", "record_bet/2", "record_bet/2"}] =
+               races([C.MnesiaHelperUpdate])
+    end
+
+    test "an update in place that sets the key writes another record" do
+      skip_without_souffle()
+      assert races([C.MnesiaPutElemKey]) == []
+    end
+
     test "deleting the record the read found expired is not a lost update" do
       skip_without_souffle()
       assert races([C.MnesiaExpire]) == []

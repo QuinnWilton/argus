@@ -110,11 +110,12 @@ defmodule Argus.Extractors.ETS do
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     index = Argus.Extractor.Identity.origins_index(module_data)
+    returns = Argus.Extractor.Identity.returned_elements(module_data, index)
     fields = table_fields(module_data)
 
     module_data
     |> each_remote_call(%{}, fn facts, ctx, mfa ->
-      handle_call(facts, Map.put(ctx, :origins, {index, ctx.func_id}), mfa, fields)
+      handle_call(facts, Map.put(ctx, :origins, {index, ctx.func_id, returns}), mfa, fields)
     end)
     |> emit_tid_args(module_data)
     |> emit_effect_order(module_data, index)

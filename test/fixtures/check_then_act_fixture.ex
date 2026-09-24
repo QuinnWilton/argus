@@ -1274,6 +1274,52 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  defmodule MnesiaPutElem do
+    @moduledoc "The counter updated in place: put_elem on the record the read found."
+    def bump(key) do
+      [rec] = :mnesia.dirty_read(:counters, key)
+      :mnesia.dirty_write(put_elem(rec, 2, elem(rec, 2) + 1))
+    end
+  end
+
+  defmodule MnesiaRecordUpdate do
+    @moduledoc "The same with an Elixir record's update."
+    require Record
+    Record.defrecord(:counter, key: nil, n: 0)
+
+    def bump(key) do
+      [c] = :mnesia.dirty_read({:counters, key})
+      :mnesia.dirty_write(counter(c, n: counter(c, :n) + 1))
+    end
+  end
+
+  defmodule MnesiaHelperUpdate do
+    @moduledoc """
+    blockster's update_user_betting_stats: the record the read found is
+    updated by a helper's put_elem pipeline and written back.
+    """
+    def record_bet(user, amount) do
+      case :mnesia.dirty_read(:betting_stats, user) do
+        [record] -> :mnesia.dirty_write(add_bet(record, amount))
+        [] -> :ok
+      end
+    end
+
+    defp add_bet(record, amount) do
+      record
+      |> put_elem(2, elem(record, 2) + 1)
+      |> put_elem(3, elem(record, 3) + amount)
+    end
+  end
+
+  defmodule MnesiaPutElemKey do
+    @moduledoc "An update that sets the key: another record's, not the one read."
+    def copy(from, to) do
+      [rec] = :mnesia.dirty_read(:counters, from)
+      :mnesia.dirty_write(put_elem(rec, 1, to))
+    end
+  end
+
   defmodule MnesiaHelpers do
     @moduledoc "The read and the write sit in helpers; the read's result is handed to the write."
     def bump(key), do: put(key, get(key))
