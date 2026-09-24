@@ -31,6 +31,14 @@ Expr` now counts as a guard; a program that keeps
 `case catch ets:update_counter(...)` as its convention was all bare,
 and its one truly bare site was not reported.
 
+**Fixed.** `catch_class` counts a class a handler takes only on a path
+that ends in a return: a clause that re-raises in tail position
+(`reraise e, __STACKTRACE__`, `:erlang.raise(kind, reason, stack)`,
+unwrapping `e.original` included) keeps nothing from propagating, and
+`CatchClauses` reports what its paths return from as `handled`. finch's
+`HTTP2.Pool.request/5`, whose `catch kind, error` logs and raises again,
+no longer makes a belief out of the calls it wraps.
+
 **Fixed.** `failure.inconsistent_handling` counts a call as guarded
 when its callers guard it: a private helper called only inside a try
 that takes the class, and a closure whose value only calls inside such

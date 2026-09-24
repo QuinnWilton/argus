@@ -91,6 +91,11 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       assert rows([C.WrongClass]) == []
     end
 
+    test "a handler that raises what it caught again guards nothing" do
+      skip_without_souffle()
+      assert rows([C.ReraiseOnly]) == []
+    end
+
     test "a site under a try that lets the call's class through is the deviant" do
       skip_without_souffle()
       assert [{func, callee, "exception_guarded", 3, 1}] = rows([C.HiddenDeviant])

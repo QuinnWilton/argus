@@ -647,4 +647,36 @@ defmodule Argus.Test.Fixtures.Consistency do
       f
     end
   end
+
+  defmodule ReraiseOnly do
+    @moduledoc """
+    Three sites rescue update_counter's error only to log it and raise
+    it again (finch's HTTP2.Pool.request/5 shape): the exception still
+    propagates, so they guard nothing, and the bare fourth breaks no
+    belief.
+    """
+    def a(k) do
+      :ets.update_counter(:reraise_only, k, 1)
+    rescue
+      e ->
+        send(self(), {:failed, e})
+        reraise e, __STACKTRACE__
+    end
+
+    def b(k) do
+      :ets.update_counter(:reraise_only, k, 2)
+    catch
+      kind, reason ->
+        send(self(), {:failed, reason})
+        :erlang.raise(kind, reason, __STACKTRACE__)
+    end
+
+    def c(k) do
+      :ets.update_counter(:reraise_only, k, 3)
+    rescue
+      e in ErlangError -> reraise e.original, __STACKTRACE__
+    end
+
+    def d(k), do: :ets.update_counter(:reraise_only, k, 4)
+  end
 end

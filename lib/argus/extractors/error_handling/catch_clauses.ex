@@ -59,7 +59,11 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
   element; `falls_through` are the tags compared on
   a path that reaches a `case` with no clause for its value — the
   compiler emits such a `case` of its own for `e.field` access, so the
-  tags say which `case` it was.
+  tags say which `case` it was. `handled` are the classes established
+  on a catching path that ends in a return rather than a re-raise in
+  tail position: what the handler keeps from propagating. A clause that
+  unwraps the reason and re-raises it catches its class, but handles
+  nothing.
   """
   @type summary :: %{
           classes: [atom()],
@@ -67,6 +71,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
           tags: [{atom(), atom()}],
           tuple_tags: [{atom(), atom()}],
           falls_through: [atom()],
+          handled: [atom()],
           visited: [non_neg_integer()],
           last: non_neg_integer() | nil
         }
@@ -85,6 +90,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
           tags: [],
           tuple_tags: [],
           falls_through: [],
+          handled: [],
           visited: [],
           last: nil
         }
@@ -103,6 +109,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
           tags: acc.tags |> MapSet.to_list() |> Enum.sort(),
           tuple_tags: acc.tuple_tags |> MapSet.to_list() |> Enum.sort(),
           falls_through: acc.falls_through |> MapSet.to_list() |> Enum.sort(),
+          handled: acc.handled |> MapSet.to_list() |> Enum.sort(),
           visited: seen |> Enum.map(&elem(&1, 0)) |> Enum.uniq() |> Enum.sort(),
           last: acc.last
         }
@@ -144,6 +151,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
       tags: MapSet.new(),
       tuple_tags: MapSet.new(),
       falls_through: MapSet.new(),
+      handled: MapSet.new(),
       last: start
     }
   end
@@ -351,7 +359,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
         {seen, acc}
 
       Instr.exits?(instr) ->
-        {seen, caught(acc, path)}
+        {seen, instr |> tail_reraise?() |> handled(caught(acc, path), path)}
 
       true ->
         path = %{
@@ -414,6 +422,16 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
       r -> MapSet.member?(path.aliases, r)
     end
   end
+
+  defp handled(true, acc, _path), do: acc
+  defp handled(false, acc, path), do: %{acc | handled: MapSet.put(acc.handled, path.class || :*)}
+
+  defp tail_reraise?({:call_ext_only, _arity, {:extfunc, mod, fun, a}}), do: reraise?(mod, fun, a)
+
+  defp tail_reraise?({:call_ext_last, _arity, {:extfunc, mod, fun, a}, _}),
+    do: reraise?(mod, fun, a)
+
+  defp tail_reraise?(_instr), do: false
 
   defp reraise?({:call_ext, _arity, {:extfunc, mod, fun, a}}), do: reraise?(mod, fun, a)
   defp reraise?(_instr), do: false

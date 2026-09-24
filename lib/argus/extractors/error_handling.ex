@@ -1183,7 +1183,7 @@ defmodule Argus.Extractors.ErrorHandling do
     summary = CatchClauses.analyse(ctx.instrs, handler_label)
 
     facts =
-      case summary.classes do
+      case summary.handled do
         [] ->
           facts
 
