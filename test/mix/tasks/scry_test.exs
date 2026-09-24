@@ -17,12 +17,16 @@ defmodule Mix.Tasks.ScryTest do
   @moduletag timeout: 300_000
   @moduletag :souffle
 
+  # The two analyses with findings on the fixture (the five the reports
+  # count); `--list` marks the default set whatever the config says.
+  @quick [analyses: [:coupling, :mailbox]]
+
   # One checkout, compiled once: every test here reads the warm manifest
   # and none edits the fixture, so the cold compile is paid per module,
   # not per test. The `compile!()` each test opens with is then a no-op.
   setup_all do
     peer = Peer.start!()
-    copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "scry_task_depot"))
+    copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "scry_task_depot"), @quick)
     Fixture.in_peer(peer, copy, :depot, fn _log -> compile!() end)
     %{copy: copy, peer: peer}
   end
@@ -139,7 +143,7 @@ defmodule Mix.Tasks.ScryTest do
       copy =
         Fixture.checkout!(
           Path.join(System.tmp_dir!(), "scry_#{app}"),
-          [severity: [mailbox: :error]],
+          [severity: [mailbox: :error]] ++ @quick,
           app
         )
 
@@ -166,7 +170,7 @@ defmodule Mix.Tasks.ScryTest do
 
     test "a project that does not compile is an error, with no report", %{peer: peer} do
       app = :depot_task_broken
-      copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "scry_#{app}"), [], app)
+      copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "scry_#{app}"), @quick, app)
 
       File.write!(
         Path.join(copy, "lib/depot/broken.ex"),

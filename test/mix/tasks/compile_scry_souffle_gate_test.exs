@@ -13,6 +13,9 @@ defmodule Mix.Tasks.Compile.ScrySouffleGateTest do
 
   @moduletag timeout: 300_000
 
+  # The two analyses with findings on the fixture; both read stage 0.
+  @quick [analyses: [:coupling, :mailbox]]
+
   setup_all do
     %{peer: Peer.start!()}
   end
@@ -23,7 +26,7 @@ defmodule Mix.Tasks.Compile.ScrySouffleGateTest do
     copy =
       Fixture.checkout!(
         Path.join(System.tmp_dir!(), "scry_gate_#{app}"),
-        scry_config,
+        Keyword.merge(@quick, scry_config),
         app
       )
 

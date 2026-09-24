@@ -13,6 +13,10 @@ defmodule Mix.Tasks.Compile.ScryConfigTest do
 
   @moduletag timeout: 300_000
 
+  # The two analyses with findings on the fixture: the scenarios are
+  # about what the config does to findings, not about the other solves.
+  @quick [analyses: [:coupling, :mailbox]]
+
   setup_all do
     %{peer: Peer.start!()}
   end
@@ -24,7 +28,7 @@ defmodule Mix.Tasks.Compile.ScryConfigTest do
     copy =
       Fixture.checkout!(
         Path.join(System.tmp_dir!(), "scry_cfg_#{app}"),
-        scry_config,
+        Keyword.merge(@quick, scry_config),
         app
       )
 

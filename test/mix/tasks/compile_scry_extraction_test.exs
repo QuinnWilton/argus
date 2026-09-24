@@ -17,6 +17,9 @@ defmodule Mix.Tasks.Compile.ScryExtractionTest do
   @moduletag :souffle
   @moduletag timeout: 300_000
 
+  # The two analyses with findings on the fixture (five of them).
+  @quick [analyses: [:coupling, :mailbox]]
+
   setup_all do
     %{peer: Peer.start!()}
   end
@@ -35,7 +38,7 @@ defmodule Mix.Tasks.Compile.ScryExtractionTest do
     copy =
       Fixture.checkout!(
         Path.join(System.tmp_dir!(), "scry_extraction_timeout"),
-        [],
+        @quick,
         :depot_timeout
       )
 
@@ -75,7 +78,7 @@ defmodule Mix.Tasks.Compile.ScryExtractionTest do
     copy =
       Fixture.checkout!(
         Path.join(System.tmp_dir!(), "scry_extraction_garbage"),
-        [],
+        @quick,
         :depot_garbage
       )
 

@@ -16,6 +16,11 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
   @moduletag timeout: 300_000
   @moduletag :souffle
 
+  # The two analyses with findings on the fixture: these are about what
+  # a warm run re-does, not about the default set's goldens (which
+  # `Mix.Tasks.Compile.ScryTest` pins).
+  @quick [analyses: [:coupling, :mailbox]]
+
   setup_all do
     %{peer: Peer.start!()}
   end
@@ -74,12 +79,12 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
     peer: peer,
     copy: copy
   } do
-    Fixture.checkout!(copy)
+    Fixture.checkout!(copy, @quick, :depot_quick)
 
-    Fixture.in_peer(peer, copy, :depot, fn _log ->
+    Fixture.in_peer(peer, copy, :depot_quick, fn _log ->
       compile!()
       %{apps: apps} = Scry.Scanner.scan(Scry.Config.load())
-      assert apps == [:depot]
+      assert apps == [:depot_quick]
       before = fresh_env(apps)
       unwatched = fresh_env([])
 
@@ -96,9 +101,9 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
   end
 
   test "touch without edit is a noop past the prefilter", %{peer: peer, copy: copy} do
-    Fixture.checkout!(copy)
+    Fixture.checkout!(copy, @quick, :depot_quick)
 
-    Fixture.in_peer(peer, copy, :depot, fn log ->
+    Fixture.in_peer(peer, copy, :depot_quick, fn log ->
       compile!()
 
       # Touch a beam directly (mtime moves, content identical): the
@@ -115,9 +120,9 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
   end
 
   test "corrupt manifest falls back to a clean cold build", %{peer: peer, copy: copy} do
-    Fixture.checkout!(copy)
+    Fixture.checkout!(copy, @quick, :depot_quick)
 
-    Fixture.in_peer(peer, copy, :depot, fn log ->
+    Fixture.in_peer(peer, copy, :depot_quick, fn log ->
       result = compile!()
       assert counts_by_code(scry_diagnostics(result)) != %{}
 

@@ -24,7 +24,13 @@ defmodule Scry.RunnerDemandTest do
   def handle(_event, _measurements, _metadata, _agent), do: :ok
 
   test "solves overlap in time, on more than one process" do
-    copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "scry_demand_depot"), [], :depot_demand)
+    # Two solves are enough to overlap; the others would only add time.
+    copy =
+      Fixture.checkout!(
+        Path.join(System.tmp_dir!(), "scry_demand_depot"),
+        [analyses: [:coupling, :mailbox]],
+        :depot_demand
+      )
 
     events =
       Fixture.in_peer(Peer.start!(), copy, :depot_demand, fn _log ->

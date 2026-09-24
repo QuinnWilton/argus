@@ -14,12 +14,17 @@ defmodule Mix.Tasks.Compile.ScryPriorsTest do
   @moduletag timeout: 300_000
   @moduletag :souffle
 
+  # Coupling reads the priors (`prior_talks_to_process`); with mailbox,
+  # every finding the fixture has. The questions are asked whatever the
+  # analyses.
+  @quick [analyses: [:coupling, :mailbox]]
+
   setup_all do
     %{peer: Peer.start!()}
   end
 
   defp checkout!(app) do
-    copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "scry_priors_#{app}"), [], app)
+    copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "scry_priors_#{app}"), @quick, app)
     {copy, app}
   end
 
@@ -28,7 +33,7 @@ defmodule Mix.Tasks.Compile.ScryPriorsTest do
   # The runner directly, on the beams the compile left: what it returns
   # carries every entry field, which a diagnostic does not.
   defp run(scry_config, manifest) do
-    Scry.Runner.run(Scry.Config.load(scry_config), manifest: manifest, force: false)
+    Scry.Runner.run(Scry.Config.load(@quick ++ scry_config), manifest: manifest, force: false)
   end
 
   defp entries(result), do: result.findings_by_file |> Map.values() |> List.flatten()
