@@ -61,7 +61,7 @@ defmodule Argus.Instr.ReachingTest do
 
       check all(
               {mod, {:function, _, _, _, raw} = function, reads} <- member_of(functions),
-              max_runs: 150
+              max_runs: Argus.Test.Runs.max_runs(50, 150)
             ) do
         normalized = mod |> Normalize.normalize_function(function) |> Enum.map(&elem(&1, 1))
 

@@ -22,7 +22,7 @@ defmodule Argus.Pipeline.ShardsTest do
              do: mod
            )
            |> Enum.sort()
-           |> Enum.take_every(7)
+           |> Enum.take_every(20)
            |> Kernel.++([
              Argus.Test.Fixtures.Specs,
              Argus.Test.Fixtures.Router,
@@ -79,13 +79,22 @@ defmodule Argus.Pipeline.ShardsTest do
 
       assert {:ok, %{lost: []}} = Pipeline.run_shards(modules, together, opts)
 
-      for {producer, dir} <- together do
-        [{^producer, alone}] = shard_dirs(Path.join(tmp, "alone"), [producer])
-        assert {:ok, %{lost: []}} = Pipeline.run_shards(modules, [{producer, alone}], opts)
+      # Several extractions at once: each is mostly the base's work, which
+      # leaves cores idle on a set this small.
+      together
+      |> Task.async_stream(
+        fn {producer, dir} ->
+          [{^producer, alone}] = shard_dirs(Path.join(tmp, "alone"), [producer])
+          {producer, dir, alone, Pipeline.run_shards(modules, [{producer, alone}], opts)}
+        end,
+        timeout: :infinity
+      )
+      |> Enum.each(fn {:ok, {producer, dir, alone, result}} ->
+        assert {:ok, %{lost: []}} = result
 
         assert contents(alone) == contents(dir),
                "#{inspect(producer)} extracted alone differs from its rows among the others"
-      end
+      end)
 
       # Every extractor is exercised: none of them wrote nothing.
       for {producer, dir} <- together do

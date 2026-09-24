@@ -2,16 +2,13 @@ defmodule Argus.CfgBuildTest do
   # In-process basic-block CFG construction. Fixtures are compiled here and
   # hand-checked; the structural properties at the bottom run over every
   # fixture plus a real stdlib module.
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Argus.Cfg
   alias Argus.Cfg.Function
 
   defp cfg_for(source) do
-    previous = Code.get_compiler_option(:debug_info)
-    Code.put_compiler_option(:debug_info, true)
     [{module, beam} | _] = Code.compile_string(source, "nofile")
-    Code.put_compiler_option(:debug_info, previous)
 
     dir = Path.join(System.tmp_dir!(), "argus_cfg_#{:erlang.unique_integer([:positive])}")
     File.mkdir_p!(dir)

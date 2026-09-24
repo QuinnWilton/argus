@@ -178,12 +178,12 @@ defmodule Argus.AnalysisTest do
     test "answers as without one, and reads the answer back", %{tmp_dir: store} do
       modules = [Argus.Test.Fixtures.EtsBounded, Argus.Test.Fixtures.MissingRow]
 
-      assert {:ok, afresh} = Argus.analyze(modules, :races)
-      assert {:ok, ^afresh} = Argus.analyze(modules, :races, cache: store)
+      assert {:ok, afresh} = Argus.analyze(modules, :startup)
+      assert {:ok, ^afresh} = Argus.analyze(modules, :startup, cache: store)
       solved = store |> Path.join("solves") |> File.ls!() |> Enum.sort()
-      assert Enum.map(solved, &hd(String.split(&1, "-"))) == ["points_to", "races", "stage0"]
+      assert Enum.map(solved, &hd(String.split(&1, "-"))) == ["points_to", "stage0", "startup"]
 
-      assert {:ok, ^afresh} = Argus.analyze(modules, :races, cache: store)
+      assert {:ok, ^afresh} = Argus.analyze(modules, :startup, cache: store)
       assert store |> Path.join("solves") |> File.ls!() |> Enum.sort() == solved
     end
   end

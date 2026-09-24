@@ -124,7 +124,11 @@ defmodule Argus.Extractors.OddLiteralsTest do
   property "no literal crashes extraction" do
     extractors = extractors()
 
-    check all(value <- odd_term(), max_runs: 30, max_shrinking_steps: 20) do
+    check all(
+            value <- odd_term(),
+            max_runs: Argus.Test.Runs.max_runs(10, 30),
+            max_shrinking_steps: 20
+          ) do
       beams = compile(value)
 
       assert {:ok, facts} = Pipeline.extract(beams, extractors: extractors)

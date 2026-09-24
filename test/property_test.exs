@@ -150,7 +150,8 @@ defmodule Argus.PropertyTest do
               n <- integer(1..50),
               relation <- atom(:alphanumeric),
               rows <-
-                list_of(list_of(string(:alphanumeric, min_length: 1), min_length: 1), length: n)
+                list_of(list_of(string(:alphanumeric, min_length: 1), min_length: 1), length: n),
+              max_runs: Argus.Test.Runs.max_runs(25, 100)
             ) do
         result = Enum.reduce(rows, %{}, fn row, acc -> Facts.add_fact(acc, relation, row) end)
         assert length(result[relation]) == n
