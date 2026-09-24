@@ -48,6 +48,17 @@ defmodule Scry.AnalysisRulesTest do
     assert QueryLog.executions(log, :module_extraction) == []
   end
 
+  test "a points-to rule edit re-derives the stage, not the call graph", %{db: db, log: log} do
+    :ok = Input.set(db, :rules_digest, :points_to, "points_to.dl edited")
+    Graph.incremental(db, @analyses)
+
+    assert QueryLog.executions(log, :points_to_facts) == [:all]
+    assert QueryLog.executions(log, :stage0_facts) == []
+    # The same rows staged again: nothing reading them re-solves.
+    assert QueryLog.executions(log, :souffle_solve) == []
+    assert QueryLog.executions(log, :module_extraction) == []
+  end
+
   test "an argus code change re-extracts every module", %{db: db, log: log, paths: paths} do
     :ok = Input.set(db, :env_fingerprint, :all, %{test: 2})
     Graph.incremental(db, @analyses)

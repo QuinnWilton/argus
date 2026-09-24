@@ -13,7 +13,8 @@ defmodule Scry.Fingerprint do
     dependency never moves its version at all), so the version alone
     let a warm manifest serve rows the current code would not compute.
     Moving it re-extracts every module.
-  - `:rules_digest` (`rules/1`) — per analysis (and `:stage0`), the
+  - `:rules_digest` (`rules/1`) — per analysis (and `:stage0`,
+    `:points_to`), the
     Datalog it runs: its rules file and everything that file
     `.include`s, transitively, plus the solver's version. A rule edit
     moves only the digests of the analyses whose programs contain the
@@ -37,7 +38,7 @@ defmodule Scry.Fingerprint do
           specs_environment: String.t()
         }
 
-  @typedoc "A `:rules_digest` key: an analysis, or the shared stage 0."
+  @typedoc "A `:rules_digest` key: an analysis, or a shared stage (`:stage0`, `:points_to`)."
   @type rules_key :: atom()
 
   @doc """
@@ -68,8 +69,9 @@ defmodule Scry.Fingerprint do
   end
 
   @doc """
-  The rules digest of each of `analyses`, and of `:stage0` (the shared
-  call-graph program every solve reads). Each covers the analysis's
+  The rules digest of each of `analyses`, and of `:stage0` and
+  `:points_to` (the shared call graph and process points-to programs
+  the solves read). Each covers the analysis's
   rules file, every file it includes, transitively, and the solver's
   version (`souffle_version/0`).
   """
@@ -78,7 +80,10 @@ defmodule Scry.Fingerprint do
     souffle = souffle_version()
 
     programs =
-      [{:stage0, Argus.Analysis.stage0_rules_path()}] ++
+      [
+        {:stage0, Argus.Analysis.stage0_rules_path()},
+        {:points_to, Argus.Analysis.points_to_rules_path()}
+      ] ++
         for analysis <- analyses, {:ok, path} <- [rules_path(analysis)], do: {analysis, path}
 
     Map.new(programs, fn {key, path} -> {key, digest({souffle, program_digest(path)})} end)

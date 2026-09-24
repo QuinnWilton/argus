@@ -37,12 +37,17 @@ Two layers over one `Roux.Database`:
    key or value shape without planchette in the same review.
    `Scry.Fingerprint` stamps what the graph depends on beyond the
    beams: `env_fingerprint` (runtime, schema, and digests of the argus
-   and scry ebins — read by `module_extraction`, stage 0, the solves and
-   findings, so any argus code change re-extracts) and a per-analysis
+   and scry ebins — read by `module_extraction`, the stages, the solves
+   and findings, so any argus code change re-extracts) and a per-analysis
    `rules_digest` (the analysis's `.dl` and its transitive includes,
    plus the souffle version — read by `analysis_input_relations`,
-   `stage0_facts` and `souffle_solve`, so a rule edit re-solves exactly
-   the analyses it touched and re-extracts nothing). A frontend that
+   `stage0_facts`, `points_to_facts` and `souffle_solve`, so a rule edit
+   re-solves exactly the analyses it touched and re-extracts nothing).
+   Argus's shared stages are queries of their own, each a cutoff seam:
+   `stage0_facts` (the call graph) and `points_to_facts` (process
+   points-to, `Argus.Analysis.points_to_relations/0`), with `:stage0`
+   and `:points_to` rules digests; a projection takes a stage's outputs
+   from its query, never from extraction. A frontend that
    never sets `rules_digest` (planchette) reads it as nil. The LSP-only surface —
    supervision tree, flowistry focus/slicing, the debug twin — lives in
    planchette (`Planchette.SupTree`, `Planchette.Focus`) and registers

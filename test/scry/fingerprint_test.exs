@@ -132,7 +132,7 @@ defmodule Scry.FingerprintTest do
 
     test "the shipped programs digest, and differ per analysis" do
       digests = Scry.Fingerprint.rules([:mailbox, :coupling])
-      assert Map.keys(digests) |> Enum.sort() == [:coupling, :mailbox, :stage0]
+      assert Map.keys(digests) |> Enum.sort() == [:coupling, :mailbox, :points_to, :stage0]
       assert digests.mailbox != digests.coupling
     end
   end

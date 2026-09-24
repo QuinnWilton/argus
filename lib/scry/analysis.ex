@@ -21,6 +21,12 @@ defmodule Scry.Analysis do
        (shared call graph —
         THE second cutoff seam)
            │
+      points_to_facts(:all) ─ points_to_digest(relation)
+       (process points-to, read by the
+        analyses that ask about processes —
+        a third seam: most edits move no
+        process and no resolved target)
+           │
       analysis_facts_dir(analysis)  ← content-addressed, projected to the
            │                          relations THIS analysis reads
       souffle_solve(analysis)       ← and rules_digest(analysis)
@@ -56,10 +62,10 @@ defmodule Scry.Analysis do
   compares with `==`); Souffle has set semantics, so ordering cannot
   change results.
 
-  Purity deviation: `analysis_facts_dir`, `stage0_facts` and
-  `souffle_solve` touch the filesystem and shell out — content-addressed
-  and idempotent, the same pragmatic loophole as the frontend's code
-  loading.
+  Purity deviation: `analysis_facts_dir`, `stage0_facts`,
+  `points_to_facts` and `souffle_solve` touch the filesystem and shell
+  out — content-addressed and idempotent, the same pragmatic loophole as
+  the frontend's code loading.
 
   ## Shared-layer contract
 
@@ -71,12 +77,12 @@ defmodule Scry.Analysis do
   frontend contract this module demands, by name: the queries
   `:module_beam`, `:module_map`, and `:file_of`, and the input
   `:env_fingerprint` (inputs are the frontend's to declare — this module
-  defines queries only). The `:rules_digest` input (per analysis, and
-  `:stage0`) is optional: a frontend that never sets it reads it as
-  `nil` and relies on its `:env_fingerprint` to move when rules do. So
-  is the `:ignored_beam` input (per module): it names the modules the
-  frontend watches without analyzing, whose specs a caller's extraction
-  reads off the code path.
+  defines queries only). The `:rules_digest` input (per analysis,
+  `:stage0` and `:points_to`) is optional: a frontend that never sets it
+  reads it as `nil` and relies on its `:env_fingerprint` to move when
+  rules do. So is the `:ignored_beam` input (per module): it names the
+  modules the frontend watches without analyzing, whose specs a caller's
+  extraction reads off the code path.
   """
 
   use Roux.Query
@@ -99,6 +105,11 @@ defmodule Scry.Analysis do
   # The call graph stage 0 derives, which an analysis's projection takes
   # from `stage0_facts` instead of from extraction.
   @stage0_outputs [:call_edge, :call_site, :call_tag, :unconditional_call_edge]
+
+  # What the points-to stage derives (which process a pid can be), which
+  # a projection takes from `points_to_facts`. Named by argus, which
+  # stages them: the list moves with its rules.
+  @points_to_outputs Enum.map(Argus.Analysis.points_to_relations(), &String.to_atom/1)
 
   defquery :module_extraction, key: module, returns: {:ok, map()} | {:error, term()} do
     # The rows are a function of argus's fact schema as much as of the
@@ -416,6 +427,14 @@ defmodule Scry.Analysis do
     end
   end
 
+  # The same for one of the points-to stage's outputs.
+  defquery :points_to_digest, key: relation, returns: String.t() | nil do
+    case Runtime.query(db, :points_to_facts, :all) do
+      {:ok, facts} -> stored_digest(relation, Map.fetch!(facts, relation), Symbols.for_db(db))
+      {:error, _} -> nil
+    end
+  end
+
   # The relations a given analysis reads, straight from argus (which
   # resolves them from Souffle's transformed RAM — the form that actually
   # executes). A failure to resolve them is a value, never an empty list:
@@ -476,6 +495,34 @@ defmodule Scry.Analysis do
     end
   end
 
+  # The points-to stage: which process a pid can be, derived once for
+  # every analysis that asks instead of inside each of their solves. It
+  # reads PidFlow's per-function summaries, which move with most body
+  # edits, but its outputs (the processes, the resolved targets) rarely
+  # do: roux backdates it, and the analyses reading it validate green.
+  #
+  # A failed derivation is a value, as stage 0's is: the analyses that
+  # read it degrade with it, the others never demand it.
+  defquery :points_to_facts,
+    key: :all,
+    returns: {:ok, %{atom() => [tuple()]}} | {:error, term()} do
+    _fingerprint = Runtime.input!(db, :env_fingerprint, :all)
+    _rules = rules_digest(db, :points_to)
+    symbols = Symbols.for_db(db)
+
+    with {:ok, relations} <- points_to_input_relations(),
+         {:ok, stage0} <- stage0_if_read(db, relations),
+         entries = Enum.map(relations, &relation_entry(db, &1, stage0, %{})),
+         dir = materialize_facts(entries, "points_to", symbols),
+         :ok <- Argus.Analysis.derive_points_to(dir) do
+      {:ok,
+       Facts.intern(
+         Map.new(@points_to_outputs, &{&1, read_facts_file(Path.join(dir, "#{&1}.facts"))}),
+         symbols
+       )}
+    end
+  end
+
   # A fact directory holding exactly what one analysis reads. Content
   # addressed, so an unchanged projection reuses the directory on disk and
   # — the point — an unchanged projection means roux never re-executes the
@@ -492,19 +539,26 @@ defmodule Scry.Analysis do
   # `{:ok, [{relation, digest, rows}]}` for everything the analysis reads.
   defp analysis_facts_entries(db, analysis) do
     with {:ok, relations} <- Runtime.query(db, :analysis_input_relations, analysis),
-         {:ok, stage0} <- stage0_if_read(db, relations) do
-      entries =
-        for relation <- relations do
-          if relation in @stage0_outputs do
-            # Stage 0's outputs, not extracted relations.
-            {relation, Runtime.query(db, :stage0_digest, relation), Map.fetch!(stage0, relation)}
-          else
-            {relation, Runtime.query(db, :relation_digest, relation),
-             Runtime.query(db, :relation_rows, relation)}
-          end
-        end
+         {:ok, stage0} <- stage0_if_read(db, relations),
+         {:ok, points_to} <- points_to_if_read(db, relations) do
+      {:ok, Enum.map(relations, &relation_entry(db, &1, stage0, points_to))}
+    end
+  end
 
-      {:ok, entries}
+  # `{relation, digest, rows}`: a stage's output from that stage, any
+  # other relation from extraction.
+  defp relation_entry(db, relation, stage0, points_to) do
+    cond do
+      relation in @stage0_outputs ->
+        {relation, Runtime.query(db, :stage0_digest, relation), Map.fetch!(stage0, relation)}
+
+      relation in @points_to_outputs ->
+        {relation, Runtime.query(db, :points_to_digest, relation),
+         Map.fetch!(points_to, relation)}
+
+      true ->
+        {relation, Runtime.query(db, :relation_digest, relation),
+         Runtime.query(db, :relation_rows, relation)}
     end
   end
 
@@ -513,6 +567,13 @@ defmodule Scry.Analysis do
   defp stage0_if_read(db, relations) do
     if Enum.any?(relations, &(&1 in @stage0_outputs)),
       do: Runtime.query(db, :stage0_facts, :all),
+      else: {:ok, %{}}
+  end
+
+  # The points-to stage likewise, only for an analysis that reads it.
+  defp points_to_if_read(db, relations) do
+    if Enum.any?(relations, &(&1 in @points_to_outputs)),
+      do: Runtime.query(db, :points_to_facts, :all),
       else: {:ok, %{}}
   end
 
@@ -547,9 +608,10 @@ defmodule Scry.Analysis do
     end
 
     # The directory holds exactly the relations this analysis reads, with
-    # the call graph already supplied from `stage0_facts` when it is among
-    # them. Argus must not try to derive stage 0 itself: the layer-1 facts
-    # it would need are deliberately absent from a projected directory.
+    # the call graph and the points-to already supplied from
+    # `stage0_facts` and `points_to_facts` when they are among them.
+    # Argus must not try to derive either stage itself: the facts they
+    # would need are deliberately absent from a projected directory.
     case Argus.Analysis.run_rules(dir, analysis, stage0: :provided) do
       {:ok, results} ->
         outputs =
@@ -1152,7 +1214,7 @@ defmodule Scry.Analysis do
     for name <- names,
         atom = safe_existing_atom(name),
         atom != nil,
-        atom in @stage0_outputs or MapSet.member?(known, atom),
+        atom in @stage0_outputs or atom in @points_to_outputs or MapSet.member?(known, atom),
         do: atom
   end
 
@@ -1169,6 +1231,15 @@ defmodule Scry.Analysis do
     case Argus.Souffle.input_relations(Argus.Analysis.stage0_rules_path()) do
       {:ok, relations} -> {:ok, to_relation_atoms(relations)}
       {:error, reason} -> {:error, {:stage0, {:input_relations, reason}}}
+    end
+  end
+
+  # What points_to.dl reads, asked of Souffle for the same reason: stage
+  # 0's outputs among them, taken from `stage0_facts`.
+  defp points_to_input_relations do
+    case Argus.Souffle.input_relations(Argus.Analysis.points_to_rules_path()) do
+      {:ok, relations} -> {:ok, to_relation_atoms(relations)}
+      {:error, reason} -> {:error, {:points_to, {:input_relations, reason}}}
     end
   end
 

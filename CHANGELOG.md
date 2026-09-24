@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- argus 0.20 derives process points-to once per run, as a stage after
+  stage 0 (`priv/dl/points_to.dl`), instead of inside each of the nine
+  solves that read it. The graph follows: `points_to_facts(:all)`
+  derives it from the relations the stage reads (stage 0's among them)
+  and `points_to_digest(relation)` names each output, so an analysis's
+  projection takes the staged relations it reads from there, as it takes
+  the call graph from `stage0_facts`. It is a cutoff seam of its own: an
+  edit that moves PidFlow's summaries but no process or resolved target
+  re-derives the stage and re-solves nothing below it. The stage has its
+  own rules digest (`:points_to`); a failed derivation degrades only the
+  analyses that read it, and is dropped from the manifest like stage 0's.
 - `mix scry` reports a project whose findings fail the compiler's
   `fail_on`. It compiled first with the plain compile task, which exits
   when scry's own compiler returns `:error` — so a project with one

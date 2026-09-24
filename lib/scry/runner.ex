@@ -218,7 +218,9 @@ defmodule Scry.Runner do
   # under).
   defp drop_degraded(db, analyses) do
     roots =
-      for key <- [{:stage0_facts, :all} | for(q <- @degradable, a <- analyses, do: {q, a})],
+      for key <-
+            [{:stage0_facts, :all}, {:points_to_facts, :all}] ++
+              for(q <- @degradable, a <- analyses, do: {q, a}),
           match?({:ok, %Memo.Entry{value: {:error, _}}}, Memo.get(db, key)),
           do: key
 
