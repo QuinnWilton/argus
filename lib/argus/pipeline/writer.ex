@@ -3,15 +3,21 @@ defmodule Argus.Pipeline.Writer do
   Appends one module's facts at a time to per-relation `.facts` files,
   opening each file on first use. Rows land in the order extraction
   yields them, which `Argus.Pipeline` keeps deterministic.
+
+  Each file's bytes are hashed as they are written (`digests/1`): a
+  store keys what reads a file on its digest (`Argus.Cache.Facts`), and
+  reading every file back to hash it cost a cold run as much again as
+  writing it.
   """
 
   @enforce_keys [:dir, :written, :files]
-  defstruct [:dir, :written, :files]
+  defstruct [:dir, :written, :files, hashes: %{}]
 
   @type t :: %__MODULE__{
           dir: Path.t(),
           written: MapSet.t(atom()) | nil,
-          files: %{atom() => File.io_device()}
+          files: %{atom() => File.io_device()},
+          hashes: %{atom() => :crypto.hash_state()}
         }
 
   @spec new(Path.t(), MapSet.t(atom()) | nil) :: t()
@@ -23,10 +29,10 @@ defmodule Argus.Pipeline.Writer do
       if rows == [] or skip?(writer, relation) do
         {:cont, {:ok, writer}}
       else
-        with {:ok, device, writer} <- device(writer, relation),
-             :ok <- write(device, writer.dir, relation, Enum.reverse(rows)) do
-          {:cont, {:ok, writer}}
-        else
+        bytes = Argus.Tsv.encode(Enum.reverse(rows))
+
+        case write_bytes(writer, relation, bytes) do
+          {:ok, writer} -> {:cont, {:ok, writer}}
           error -> {:halt, error}
         end
       end
@@ -52,10 +58,8 @@ defmodule Argus.Pipeline.Writer do
   @spec append_encoded(t(), %{atom() => binary()}) :: {:ok, t()} | {:error, term()}
   def append_encoded(writer, encoded) do
     Enum.reduce_while(encoded, {:ok, writer}, fn {relation, bytes}, {:ok, writer} ->
-      with {:ok, device, writer} <- device(writer, relation),
-           :ok <- write_bytes(device, writer.dir, relation, bytes) do
-        {:cont, {:ok, writer}}
-      else
+      case write_bytes(writer, relation, bytes) do
+        {:ok, writer} -> {:cont, {:ok, writer}}
         error -> {:halt, error}
       end
     end)
@@ -64,6 +68,18 @@ defmodule Argus.Pipeline.Writer do
   @spec close(t()) :: :ok
   def close(%__MODULE__{files: files}) do
     Enum.each(files, fn {_relation, device} -> File.close(device) end)
+  end
+
+  @doc """
+  The SHA-256, as lowercase hex, of the bytes this writer appended to
+  each file it opened, by file name (`jump.facts`): the file's digest
+  when the writer created it, as it does in a directory of its own.
+  """
+  @spec digests(t()) :: %{String.t() => String.t()}
+  def digests(%__MODULE__{hashes: hashes}) do
+    Map.new(hashes, fn {relation, hash} ->
+      {"#{relation}.facts", hash |> :crypto.hash_final() |> Base.encode16(case: :lower)}
+    end)
   end
 
   defp skip?(%__MODULE__{written: nil}, _relation), do: false
@@ -84,13 +100,18 @@ defmodule Argus.Pipeline.Writer do
     end
   end
 
-  defp write(device, dir, relation, rows),
-    do: write_bytes(device, dir, relation, Argus.Tsv.encode(rows))
+  defp write_bytes(writer, relation, bytes) do
+    with {:ok, device, writer} <- device(writer, relation) do
+      case :file.write(device, bytes) do
+        :ok ->
+          hash = Map.get_lazy(writer.hashes, relation, fn -> :crypto.hash_init(:sha256) end)
 
-  defp write_bytes(device, dir, relation, bytes) do
-    case :file.write(device, bytes) do
-      :ok -> :ok
-      {:error, reason} -> {:error, {:write_failed, Path.join(dir, "#{relation}.facts"), reason}}
+          {:ok,
+           %{writer | hashes: Map.put(writer.hashes, relation, :crypto.hash_update(hash, bytes))}}
+
+        {:error, reason} ->
+          {:error, {:write_failed, Path.join(writer.dir, "#{relation}.facts"), reason}}
+      end
     end
   end
 end

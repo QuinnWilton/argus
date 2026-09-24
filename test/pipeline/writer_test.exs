@@ -46,4 +46,25 @@ defmodule Argus.Pipeline.WriterTest do
     assert appended["call_edge.facts"] == "N:g/0\ta\\tb\n"
     refute Map.has_key?(appended, "label_at.facts")
   end
+
+  test "each file's digest is its bytes', hashed as they were written", %{tmp_dir: tmp} do
+    written = MapSet.new([:jump, :call_edge])
+
+    {:ok, writer} =
+      [%{jump: [["M:f/1#0", "1"]]}, %{jump: [["N:g/0#1", "7"]], call_edge: [["N:g/0", "x"]]}]
+      |> Enum.reduce({:ok, Writer.new(tmp, written)}, fn facts, {:ok, w} ->
+        Writer.append_encoded(w, Writer.encode(facts, written))
+      end)
+
+    Writer.close(writer)
+
+    expected =
+      for file <- File.ls!(tmp), into: %{} do
+        {file,
+         :crypto.hash(:sha256, File.read!(Path.join(tmp, file))) |> Base.encode16(case: :lower)}
+      end
+
+    assert Writer.digests(writer) == expected
+    assert Map.keys(expected) |> Enum.sort() == ["call_edge.facts", "jump.facts"]
+  end
 end

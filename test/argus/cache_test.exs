@@ -115,18 +115,12 @@ defmodule Argus.CacheTest do
     assert Cache.fetch(Path.join(root, "p-#{key("b")}")) == :miss
   end
 
-  test "file digests are of the bytes, one file or several joined", %{tmp_dir: tmp} do
+  test "a file's digest is of its bytes", %{tmp_dir: tmp} do
     one = Path.join(tmp, "one")
-    two = Path.join(tmp, "two")
     File.write!(one, "a\tb\n")
-    File.write!(two, "c\n")
 
     assert {:ok, digest} = Cache.file_digest(one)
     assert digest == Base.encode16(:crypto.hash(:sha256, "a\tb\n"), case: :lower)
-
-    assert Cache.files_digest([one, two]) ==
-             {:ok, Base.encode16(:crypto.hash(:sha256, "a\tb\nc\n"), case: :lower)}
-
     assert {:error, :enoent} = Cache.file_digest(Path.join(tmp, "none"))
   end
 end

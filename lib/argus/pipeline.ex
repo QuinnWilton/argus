@@ -63,8 +63,16 @@ defmodule Argus.Pipeline do
     * `installed` — the modules whose specs were read from the code
       path (`Argus.Specs.installed/2`) while extracting: beyond the
       beams, what `Argus.Extractors.Specs`'s rows depend on.
+    * `digests` — for each producer, the SHA-256 (lowercase hex) of
+      each file it wrote, by file name, hashed as the rows were written
+      (`Argus.Pipeline.Writer.digests/1`): what a store keys the
+      solves reading them on, without reading them back.
   """
-  @type shard_info :: %{lost: [String.t()], installed: [module()]}
+  @type shard_info :: %{
+          lost: [String.t()],
+          installed: [module()],
+          digests: %{producer() => %{String.t() => String.t()}}
+        }
 
   @type extract_opts :: [
           concurrency: pos_integer(),
@@ -220,7 +228,8 @@ defmodule Argus.Pipeline do
         |> case do
           {:ok, writers, lost} ->
             close_all(writers)
-            {:ok, %{lost: lost, installed: installed_reads(memo)}}
+            digests = Map.new(writers, fn {producer, w} -> {producer, Writer.digests(w)} end)
+            {:ok, %{lost: lost, installed: installed_reads(memo), digests: digests}}
 
           {:error, _} = error ->
             error

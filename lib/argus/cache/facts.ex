@@ -239,13 +239,13 @@ defmodule Argus.Cache.Facts do
     dirs = for {producer, _entry, staging} <- staged, do: {producer, staging}
 
     case Pipeline.run_shards(paths, dirs, opts) do
-      {:ok, %{lost: lost, installed: installed}} ->
+      {:ok, %{lost: lost, installed: installed, digests: digests}} ->
         reads = recorded_reads(installed)
 
         extracted =
           Map.new(staged, fn {producer, entry, staging} ->
             manifest = %{
-              relations: digest_files(staging),
+              relations: Map.get(digests, producer, %{}),
               reads: if(Code.reads_installed?(producer), do: reads, else: [])
             }
 
@@ -281,14 +281,11 @@ defmodule Argus.Cache.Facts do
     %{facts | work: work}
   end
 
-  defp digest_files(dir) do
-    for name <- File.ls!(dir), String.ends_with?(name, ".facts"), into: %{} do
-      {:ok, digest} = Cache.file_digest(Path.join(dir, name))
-      {name, digest}
-    end
-  end
-
-  # Each relation file's source, the producers' files joined in order.
+  # Each relation file's source, the producers' files joined in order. A
+  # file joined from several parts is named by its parts' digests, in
+  # order: the same parts are the same bytes, so a solve keyed on it is
+  # read back exactly when they are unchanged, and nothing is read to
+  # say so.
   defp join(producers, manifests) do
     producers
     |> Enum.flat_map(fn producer ->
@@ -301,9 +298,8 @@ defmodule Argus.Cache.Facts do
         {name, {digest, [path]}}
 
       {name, parts} ->
-        paths = Enum.map(parts, &elem(&1, 1))
-        {:ok, digest} = Cache.files_digest(paths)
-        {name, {digest, paths}}
+        digest = Cache.key(["joined" | Enum.map(parts, &elem(&1, 0))])
+        {name, {digest, Enum.map(parts, &elem(&1, 1))}}
     end)
   end
 

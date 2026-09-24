@@ -158,10 +158,12 @@ report it.
 producer — `:base` (the emitter's facts, `def_use`, `conditional_call`
 and the extraction errors of the steps they come from) or one
 extractor — and reports the modules it lost to a timeout or a crashed
-worker and the modules whose specs it read from the code path.
-`Argus.Pipeline.Shards` joins such directories into a facts directory.
-A producer's rows do not depend on which other producers run, so one
-can be extracted again on its own.
+worker, the modules whose specs it read from the code path, and each
+file's SHA-256, hashed as its rows were written
+(`Argus.Pipeline.Writer.digests/1`), so a store never reads a file back
+to key what reads it. `Argus.Pipeline.Shards` joins such directories
+into a facts directory. A producer's rows do not depend on which other
+producers run, so one can be extracted again on its own.
 
 **Added.** `Argus.Pipeline.extract_shards/3` returns each producer's
 rows apart, in memory and in any `format:` `extract/2` takes: the rows

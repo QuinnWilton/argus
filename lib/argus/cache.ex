@@ -273,29 +273,6 @@ defmodule Argus.Cache do
     end
   end
 
-  @doc false
-  # SHA-256 of files' bytes concatenated, as lowercase hex.
-  @spec files_digest([Path.t()]) :: {:ok, String.t()} | {:error, File.posix()}
-  def files_digest(paths) do
-    Enum.reduce_while(paths, {:ok, :crypto.hash_init(:sha256)}, fn path, {:ok, hash} ->
-      case File.open(path, [:read, :raw, :binary, {:read_ahead, 1_048_576}]) do
-        {:ok, device} ->
-          try do
-            {:cont, {:ok, hash_device(device, hash)}}
-          after
-            File.close(device)
-          end
-
-        {:error, _} = error ->
-          {:halt, error}
-      end
-    end)
-    |> case do
-      {:ok, hash} -> {:ok, hash |> :crypto.hash_final() |> Base.encode16(case: :lower)}
-      error -> error
-    end
-  end
-
   defp hash_device(device, hash) do
     case :file.read(device, 1_048_576) do
       {:ok, data} -> hash_device(device, :crypto.hash_update(hash, data))
