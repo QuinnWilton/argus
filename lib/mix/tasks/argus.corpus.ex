@@ -11,10 +11,15 @@ defmodule Mix.Tasks.Argus.Corpus do
 
   `fetch` is what `Argus.CorpusTest` does lazily; running it first keeps
   the test run itself short. `tally` is the noise check after a rule
-  changes: which titles fire, how often, and on what.
+  changes: which titles fire, how often, and on what. It analyzes each
+  checkout once, `ARGUS_CORPUS_JOBS` at a time (`Argus.Corpus.jobs/0`),
+  and its output does not depend on which finishes first.
+
   """
 
   use Mix.Task
+
+  @usage "usage: mix argus.corpus fetch | tally [--title SUBSTRING]"
 
   alias Argus.Corpus
 
@@ -25,7 +30,7 @@ defmodule Mix.Tasks.Argus.Corpus do
     case args do
       ["fetch" | _] -> fetch()
       ["tally" | rest] -> tally(rest)
-      _ -> Mix.raise("usage: mix argus.corpus fetch | tally [--title SUBSTRING]")
+      _ -> Mix.raise(@usage)
     end
   end
 
@@ -47,14 +52,17 @@ defmodule Mix.Tasks.Argus.Corpus do
     filter = Keyword.get(opts, :title)
 
     rows =
-      for pair <- Corpus.pairs(),
-          side <- [:pre, :fix],
-          co = Corpus.checkout(pair, side),
-          co != nil,
-          {:ok, results} <- [Corpus.analyze(pair, side)],
-          finding <- results.findings,
-          filter == nil or String.contains?(finding.title, filter),
-          do: {finding.analysis, finding.title, co.name, finding.mfa}
+      Corpus.pairs()
+      |> Corpus.checkouts()
+      |> Corpus.analyze_all(&rows(&1, filter))
+      |> Enum.flat_map(fn
+        {co, {:ok, rows}} ->
+          for {a, t, mfa} <- rows, do: {a, t, co.name, mfa}
+
+        {co, {:error, why}} ->
+          Mix.shell().error("#{co.name}: #{format_error(why)}")
+          []
+      end)
 
     if filter do
       Enum.each(rows, fn {a, t, name, mfa} ->
@@ -63,7 +71,7 @@ defmodule Mix.Tasks.Argus.Corpus do
     else
       rows
       |> Enum.frequencies_by(fn {a, t, _, _} -> {a, t} end)
-      |> Enum.sort_by(fn {_, n} -> -n end)
+      |> Enum.sort_by(fn {{a, t}, n} -> {-n, a, t} end)
       |> Enum.each(fn {{a, t}, n} ->
         Mix.shell().info(
           String.pad_leading(to_string(n), 5) <>
@@ -74,4 +82,19 @@ defmodule Mix.Tasks.Argus.Corpus do
 
     :ok
   end
+
+  # Only the columns the tally prints leave the analyzing task.
+  defp rows({:ok, results}, filter) do
+    rows =
+      for finding <- results.findings,
+          filter == nil or String.contains?(finding.title, filter),
+          do: {finding.analysis, finding.title, finding.mfa}
+
+    {:ok, rows}
+  end
+
+  defp rows({:error, _} = error, _filter), do: error
+
+  defp format_error(why) when is_binary(why), do: why
+  defp format_error(why), do: inspect(why)
 end

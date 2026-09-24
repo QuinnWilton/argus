@@ -33,6 +33,13 @@ defmodule Argus.MixProject do
     ]
   end
 
+  # The corpus tally runs where the corpus gate does: the facts cache is
+  # keyed on the dependencies on the code path, so a tally in another
+  # environment would extract every checkout a second time.
+  def cli do
+    [preferred_envs: ["argus.corpus": :test]]
+  end
+
   def application do
     [
       # inets, ssl and public_key: Argus.Priors.Jev's HTTP client. They are

@@ -30,4 +30,16 @@ defmodule Argus.CorpusCheckoutTest do
     assert nested.dir == plain.dir
     assert nested.project == Path.join(plain.dir, "elixir")
   end
+
+  test "each tree is analyzed once, under the first pair naming it, in pair order" do
+    fixed = Map.put(@pair, :fix, "fedcba9876543210fedcba9876543210fedcba98")
+    again = %{fixed | issue: "firezone#2", finding: {:exposure, "y"}}
+    other = %{@pair | repo: "example/oban", issue: "oban#3"}
+
+    assert [
+             {%{name: "firezone-0123456"}, ^fixed, :pre},
+             {%{name: "firezone-fedcba9"}, ^fixed, :fix},
+             {%{name: "oban-0123456"}, ^other, :pre}
+           ] = Corpus.checkouts([fixed, again, other])
+  end
 end

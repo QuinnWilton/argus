@@ -25,38 +25,21 @@ defmodule Argus.CorpusTest do
            s -> s |> String.split(",", trim: true) |> Enum.map(&String.trim/1)
          end)
 
-  @jobs (case System.get_env("ARGUS_CORPUS_JOBS") do
-           nil -> min(4, System.schedulers_online())
-           s -> String.to_integer(s)
-         end)
-
   @selected Enum.filter(Corpus.pairs(), fn pair ->
               @only == nil or Enum.any?(@only, &String.contains?(pair.issue, &1))
             end)
 
-  # One analysis per checkout, however many pairs share it, at @jobs
-  # abreast: each is extraction at scheduler width on a cold cache and
-  # four solves on a warm one. Only what the tests read is kept — the
+  # One analysis per checkout, however many pairs share it, through
+  # `Corpus.analyze_all/2`. Only what the tests read is kept — the
   # findings of a large tree are megabytes of prose that would otherwise
   # be copied into every test's context.
   setup_all do
     if Argus.Souffle.available?() do
       results =
-        for(
-          pair <- @selected,
-          side <- [:pre, :fix],
-          co = Corpus.checkout(pair, side),
-          co != nil,
-          do: {co.name, pair, side}
-        )
-        |> Enum.uniq_by(fn {name, _pair, _side} -> name end)
-        |> Task.async_stream(
-          fn {name, pair, side} -> {name, slim(Corpus.analyze(pair, side))} end,
-          max_concurrency: @jobs,
-          ordered: false,
-          timeout: :infinity
-        )
-        |> Map.new(fn {:ok, entry} -> entry end)
+        @selected
+        |> Corpus.checkouts()
+        |> Corpus.analyze_all(&slim/1)
+        |> Map.new(fn {co, result} -> {co.name, result} end)
 
       %{results: results}
     else

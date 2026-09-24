@@ -30,6 +30,9 @@ defmodule Argus.Corpus do
   the entries, and a stale entry is pruned when a fresh one is
   installed.
 
+  `analyze_all/2` runs checkouts `jobs/0` at a time; the test gate and
+  `mix argus.corpus tally` both go through it.
+
   The project's `elixir:` requirement is relaxed so an old tree builds on
   the current toolchain; a pair may name an `elixir:` version instead,
   exported as `ASDF_ELIXIR_VERSION` for the compile.
@@ -116,6 +119,76 @@ defmodule Argus.Corpus do
          {:ok, facts_dir} <- facts(co, beams) do
       Argus.run_analyses(beams, analyses: :all, facts_dir: facts_dir)
     end
+  end
+
+  @doc """
+  How many checkouts `analyze_all/2` runs at once: `ARGUS_CORPUS_JOBS`,
+  or 4 (at most the scheduler count). Each is extraction at scheduler
+  width on a cold cache and up to four solves on a warm one, so more
+  than a few only contend.
+  """
+  @spec jobs() :: pos_integer()
+  def jobs do
+    case System.get_env("ARGUS_CORPUS_JOBS") do
+      nil ->
+        min(4, System.schedulers_online())
+
+      value ->
+        case Integer.parse(String.trim(value)) do
+          {jobs, ""} when jobs > 0 ->
+            jobs
+
+          _ ->
+            raise ArgumentError,
+                  "ARGUS_CORPUS_JOBS must be a positive integer, got: #{inspect(value)}"
+        end
+    end
+  end
+
+  @doc """
+  The distinct checkouts the pairs need, as `{checkout, pair, side}` in
+  pair order: a tree shared by several pairs appears once, under the
+  first pair naming it.
+  """
+  @spec checkouts([pair()]) :: [{checkout(), pair(), :pre | :fix}]
+  def checkouts(pairs) do
+    for(
+      pair <- pairs,
+      side <- [:pre, :fix],
+      co = checkout(pair, side),
+      co != nil,
+      do: {co, pair, side}
+    )
+    |> Enum.uniq_by(fn {co, _pair, _side} -> co.name end)
+  end
+
+  @doc """
+  `analyze/2` over each of `checkouts` (as `checkouts/1` returns them),
+  `jobs/0` at a time; `{checkout, reduce.(result)}` in input order.
+
+  `reduce` runs in the task that analyzed the checkout, so only what it
+  keeps crosses back: the findings of a large tree are megabytes of
+  prose a caller rarely wants whole.
+  """
+  @spec analyze_all(
+          [{checkout(), pair(), :pre | :fix}],
+          ({:ok, Argus.Findings.t()} | {:error, term()} -> result)
+        ) :: [{checkout(), result}]
+        when result: term()
+  def analyze_all(checkouts, reduce \\ & &1) do
+    # Unordered, then sorted back: a large tree finishing late holds up
+    # no other checkout's slot.
+    checkouts
+    |> Enum.with_index()
+    |> Task.async_stream(
+      fn {{co, pair, side}, index} -> {index, co, reduce.(analyze(pair, side))} end,
+      max_concurrency: jobs(),
+      ordered: false,
+      timeout: :infinity
+    )
+    |> Enum.map(fn {:ok, entry} -> entry end)
+    |> Enum.sort_by(fn {index, _co, _result} -> index end)
+    |> Enum.map(fn {_index, co, result} -> {co, result} end)
   end
 
   @doc """

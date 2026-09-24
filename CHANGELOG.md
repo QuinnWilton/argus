@@ -1703,6 +1703,17 @@ are read from), so the same dependency built in two checkouts of one
 project digests the same. The digest's value changes once: scry's
 fingerprint, which folds it in, misses once on upgrade.
 
+**Changed.** `mix argus.corpus tally` analyzes the checkouts
+`ARGUS_CORPUS_JOBS` at a time (`Argus.Corpus.analyze_all/2`, which
+`Argus.CorpusTest` uses too) instead of one after another, and each
+checkout once: a tree two pairs share was counted twice. Its order no
+longer depends on map iteration (count, then analysis and title). A
+checkout that fails to build is reported on stderr instead of silently
+dropped. `mix argus.corpus` runs in `MIX_ENV=test` by default, as the
+gate does: the cache is keyed on the dependencies on the code path, and
+a dev-environment tally extracted every checkout a second time.
+`ARGUS_CORPUS_JOBS` that is not a positive integer raises.
+
 **Fixed.** `Argus.Corpus.ensure/2` returned every beam twice when the
 project is the repository root, and listed both a dev and a test build;
 each beam once now, from one build.
