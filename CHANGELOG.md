@@ -60,6 +60,24 @@ the ones a run without a store returns, every field but the durations.
 Ignored with `facts_dir:`, with `priors:` (they are derived into the
 directory each time) and under `ARGUS_NO_CACHE`.
 
+**Changed.** `Argus.Corpus.analyze/2` runs through each checkout's
+store (`Argus.Corpus.store/1`, `<checkout>/.argus-facts`) in place of
+the whole-facts entries keyed on the engine digest: an edit to one
+extractor re-extracts that extractor's shard over each checkout, an
+edit to a rule re-solves what reads it, and an edit that leaves the
+facts byte-identical (a refactor of `Argus.Instr`) re-extracts and
+solves nothing again. `Argus.Corpus.stale_facts/2` and `prune_facts/2`
+(and `mix argus.corpus prune`) prune the store per producer and per
+program, and the older whole-facts entries by the same policy; nothing
+reads those any more. The specs extractor's shard records what it read
+of argus's own application: in `MIX_ENV=test` that holds the fixtures'
+stubs of `Oban.Worker`, `Phoenix.LiveView` and the like, which a
+corpus checkout's calls resolve to — the engine digest left them out.
+
+**Deprecated.** `Argus.Corpus.engine_digest/0` and `engine_modules/0`:
+nothing is keyed on the engine as a whole; a producer's code is
+`Argus.Cache.Code.closure/1`.
+
 **Changed.** `Argus.Pipeline.run/3` writes a relation's rows grouped
 by producer — the base's first, then each extractor's in the order
 `extractors:` names them, each group in module order — where it

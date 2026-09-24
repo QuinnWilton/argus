@@ -181,7 +181,7 @@ defmodule Argus.Cache.Facts do
     case Cache.fetch(entry) do
       {:ok, entry} ->
         with {:ok, %{reads: reads}} <- read_manifest(entry),
-             true <- Enum.all?(reads, fn {mod, was} -> installed(mod) == was end) do
+             true <- Enum.all?(reads, fn {name, was} -> installed(name) == was end) do
           :hit
         else
           _ -> :stale
@@ -310,20 +310,23 @@ defmodule Argus.Cache.Facts do
   # ── The code path a producer read ───────────────────────────────────
 
   # What each module read from the code path was, for those the
-  # environment digest does not cover.
+  # environment digest does not cover. By name: a manifest is read with
+  # no new atoms made, and a module the analyzed program calls is
+  # rarely one this VM knows.
   defp recorded_reads(modules) do
-    for mod <- Enum.sort(modules),
-        was = installed(mod),
+    for name <- modules |> Enum.map(&Atom.to_string/1) |> Enum.sort(),
+        was = installed(name),
         was != :environment,
-        do: {mod, was}
+        do: {name, was}
   end
 
-  # A module as `Argus.Specs.installed/2` would find it: absent, in the
-  # environment digest, or a beam of argus's own application (its
-  # fixtures, in a test run), by its digest with debug info.
-  defp installed(mod) do
-    if MapSet.member?(available(), Atom.to_string(mod)) do
-      case :code.which(mod) do
+  # A module, by name, as `Argus.Specs.installed/2` would find it:
+  # absent, in the environment digest, or a beam of argus's own
+  # application (its fixtures, in a test run — and the stubs of other
+  # libraries' behaviours they define), by its digest with debug info.
+  defp installed(name) do
+    if MapSet.member?(available(), name) do
+      case :code.which(String.to_atom(name)) do
         path when is_list(path) and path != [] ->
           path = List.to_string(path)
 

@@ -20,19 +20,20 @@ defmodule Argus.Corpus do
   never compiles again. Nothing is added to the project's dependency
   set: argus runs over its `ebin` from this VM.
 
-  The facts extracted from a checkout are cached beside it, in
-  `.argus-facts/<digest>/facts`, so a warm run extracts nothing, and the
-  solves over them in `.argus-facts/<digest>/solves` (`analyze/2`), so
-  a warm run with no rule edited solves nothing either. Extraction is most of the cost of a large tree and its inputs never
-  move between runs: the digest covers the beams, the code and Datalog
-  that extraction reaches (`engine_digest/0`), the runtime and the
-  solver, so a change to any of them misses. None of it names the
-  directory argus was built in, so every worktree of one commit shares
-  the entries. Installing an entry prunes the checkout's stale ones
-  (`stale_facts/2`), sparing the few most recently used — the baseline
-  of a before-and-after comparison among them — an analysis prunes its
-  entry's stale solves the same way (`stale_solves/2`) — and `mix
-  argus.corpus prune` does both across every checkout.
+  Each checkout keeps a store beside it, `.argus-facts` (`Argus.Cache`):
+  every producer's facts as a shard and every solve, keyed by content
+  (`analyze/2`). A warm run extracts nothing and solves nothing; after
+  an edit to one extractor only that extractor's shard is extracted
+  again, after an edit to a rule only the programs it reaches solve
+  again, and a solve whose inputs came out byte-identical is read back.
+  None of the keys names the directory argus was built in, so every
+  worktree of one commit shares the entries. An analysis prunes its
+  checkout's store (`stale_facts/2`), sparing within each producer and
+  program the few most recently used — the baseline of a
+  before-and-after comparison among them — and `mix argus.corpus prune`
+  does so across every checkout. Entries an older argus kept whole
+  (`<digest>/facts` with its `solves/`) are never read, and go by the
+  same policy.
 
   `analyze_all/2` runs checkouts `jobs/0` at a time; the test gate and
   `mix argus.corpus tally` both go through it.
@@ -66,8 +67,10 @@ defmodule Argus.Corpus do
   """
   @type checkout :: %{name: String.t(), dir: String.t(), project: String.t(), sha: String.t()}
 
-  alias Argus.Analysis.Extraction
   alias Argus.Souffle.Cache
+
+  # Each checkout's store, beside it.
+  @facts_cache ".argus-facts"
 
   # Beside the facts in each facts cache entry: `analyze/2`'s kept solves.
   @solves "solves"
@@ -123,75 +126,30 @@ defmodule Argus.Corpus do
   Runs every analysis over one side of a pair; the findings as
   `Argus.run_analyses/2` returns them.
 
-  Clones and compiles the checkout if needed (`ensure/2`), then solves
-  over its cached facts, extracting them first only when no entry for
-  the current `engine_digest/0` and beams exists.
-
-  Each solve is kept in the entry, under `solves/`, keyed by its
-  program, the solver and the content of the files it reads
-  (`Argus.Souffle.Cache`): a warm run with no rule edited reads every
-  solve back, and a rule edit re-solves only the programs it reaches
-  and those whose inputs it changed. The points-to stage is one of
-  them, and lands beside the entry rather than in it (`overlay/1`): its
-  rules are rules, which move without moving the engine digest, so an
-  entry whose facts kept its rows would serve them to the next rule
-  edit.
+  Clones and compiles the checkout if needed (`ensure/2`), then runs
+  through the checkout's store (`cache:`, `Argus.Cache`): the facts are
+  read from its shards, extracting only the producers no entry holds
+  for the current code, and each solve is read back when what it reads
+  is unchanged. Under `ARGUS_NO_CACHE` everything is extracted and
+  solved afresh. The store is pruned afterwards (`prune_facts/2`).
   """
   @spec analyze(pair(), :pre | :fix) :: {:ok, Argus.Findings.t()} | {:error, term()}
   def analyze(pair, side) do
     with %{} = co <- checkout(pair, side) || {:error, "no #{side} side for #{pair.issue}"},
-         {:ok, beams} <- ensure(pair, side),
-         {:ok, facts_dir} <- facts(co, beams) do
-      solves = Path.join(Path.dirname(facts_dir), @solves)
+         {:ok, beams} <- ensure(pair, side) do
+      store = store(co)
 
       try do
-        solve(beams, facts_dir, solves)
+        Argus.run_analyses(beams, analyses: :all, cache: store)
       after
-        prune_solves(solves)
+        if Argus.Cache.enabled?(), do: prune_facts(store)
       end
     end
   end
 
-  # The solves run over an overlay of the entry, which the points-to
-  # stage is derived into; each is read back from `solves` when its
-  # inputs are the ones it was kept for.
-  defp solve(beams, facts_dir, solves) do
-    overlay = overlay(facts_dir)
-
-    try do
-      Argus.run_analyses(beams, facts_dir: overlay, analyses: :all, solve_cache: solves)
-    after
-      File.rm_rf(overlay)
-    end
-  end
-
-  # A scratch directory of hard links to a cache entry's files, which a
-  # run derives the points-to stage into: an installed entry is never
-  # written, so VMs sharing it never read a file another is writing.
-  # Copied where the scratch directory is on another volume.
-  defp overlay(facts_dir) do
-    dir =
-      Path.join(
-        System.tmp_dir!(),
-        "argus_corpus_#{:os.getpid()}_#{System.unique_integer([:positive])}"
-      )
-
-    File.rm_rf!(dir)
-    File.mkdir_p!(dir)
-    staged = MapSet.new(Argus.Analysis.points_to_relations(), &"#{&1}.facts")
-
-    for file <- File.ls!(facts_dir), not MapSet.member?(staged, file) do
-      source = Path.join(facts_dir, file)
-      target = Path.join(dir, file)
-
-      case File.ln(source, target) do
-        :ok -> :ok
-        {:error, _} -> File.cp!(source, target)
-      end
-    end
-
-    dir
-  end
+  @doc "A checkout's store (`Argus.Cache`): `<checkout>/.argus-facts`."
+  @spec store(checkout()) :: Path.t()
+  def store(%{dir: dir}), do: Path.join(dir, @facts_cache)
 
   @doc """
   How many checkouts `analyze_all/2` runs at once: `ARGUS_CORPUS_JOBS`,
@@ -248,11 +206,6 @@ defmodule Argus.Corpus do
         ) :: [{checkout(), result}]
         when result: term()
   def analyze_all(checkouts, reduce \\ & &1) do
-    # What each analysis reads is resolved (and memoized) once, here,
-    # rather than by every job at once as its first solve asks.
-    {:ok, analyses} = Argus.Analysis.set(:all)
-    Enum.each(analyses, &Extraction.reads_points_to?/1)
-
     # Unordered, then sorted back: a large tree finishing late holds up
     # no other checkout's slot.
     checkouts
@@ -285,6 +238,7 @@ defmodule Argus.Corpus do
   rule, the corpus harness itself change without moving a fact, and a
   digest over all of them would re-extract every checkout on each edit.
   """
+  @deprecated "A checkout's facts are shards keyed per producer (Argus.Cache.Code)"
   @spec engine_digest() :: String.t()
   def engine_digest do
     key = {__MODULE__, :engine_digest}
@@ -326,81 +280,38 @@ defmodule Argus.Corpus do
 
   # ── Facts cache ───────────────────────────────────────────────────────
 
-  @facts_cache ".argus-facts"
-
-  # A hit touches its entry: what `stale_facts/2` reads to tell an entry
-  # a VM beside this one is using from one nobody will use again.
-  defp facts(co, beams) do
-    digest = facts_digest(beams)
-    entry = Path.join([co.dir, @facts_cache, digest])
-    facts_dir = Path.join(entry, "facts")
-
-    if File.dir?(facts_dir) do
-      File.touch(entry)
-      {:ok, facts_dir}
-    else
-      extract_into_cache(co, digest, beams)
-    end
-  end
-
-  # Extracted where `extract_facts/3` puts it, copied into a staging
-  # directory beside the entry and renamed into place: the entry is
-  # complete or absent, never half-written. Another VM installing the
-  # same digest first wins the rename, and its entry is the one used.
-  defp extract_into_cache(co, digest, beams) do
-    {:ok, analyses} = Argus.Analysis.set(:all)
-
-    # Stage 0 is part of the entry (its rules are in the digest); the
-    # points-to stage is not (`analyze/2`).
-    with {:ok, fresh} <- Argus.Analysis.extract_facts(beams, analyses, points_to: :deferred) do
-      cache = Path.join(co.dir, @facts_cache)
-      entry = Path.join(cache, digest)
-
-      staging =
-        Path.join(cache, "#{digest}.#{:os.getpid()}.#{System.unique_integer([:positive])}")
-
-      try do
-        File.mkdir_p!(staging)
-        File.cp_r!(fresh, Path.join(staging, "facts"))
-
-        case File.rename(staging, entry) do
-          :ok -> prune_facts(cache, keep: digest)
-          {:error, reason} when reason in [:eexist, :enotempty, :eisdir] -> File.rm_rf!(staging)
-        end
-
-        {:ok, Path.join(entry, "facts")}
-      after
-        File.rm_rf(Path.dirname(fresh))
-        File.rm_rf(staging)
-      end
-    end
-  end
-
   @typedoc """
   What `stale_facts/2` spares beyond the entries in use: `keep:`, an
-  entry never removed (the one just installed), and `recent:`, how many
-  of the others survive regardless of age (default 3), the most
-  recently touched first.
+  entry never removed, and `recent:`, how many of the others survive
+  regardless of age (default 3), the most recently touched first.
   """
   @type prune_option :: {:keep, String.t()} | {:recent, non_neg_integer()}
 
   @doc """
-  The entries of a checkout's facts cache (`<checkout>/.argus-facts`)
-  that `prune_facts/2` removes: every installed entry untouched for an
-  hour, other than `keep:` and the `recent:` most recently touched among
-  them; and a staging directory untouched for a day.
+  The entries of a checkout's store (`<checkout>/.argus-facts`) that
+  `prune_facts/2` removes: `Argus.Cache.stale/2`'s — within each
+  producer's shards and each program's solves, every entry untouched
+  for an hour other than `keep:` and the `recent:` most recently
+  touched — and, among the whole-facts entries an older argus kept
+  (`<digest>/facts`), every one untouched for an hour beyond `keep:`
+  and the `recent:` most recent; and a staging directory untouched for
+  a day.
 
   An hour is how long an entry is presumed in use: a hit touches its
   entry, so one a VM beside this one is reading is never older than the
-  run reading it, and removing it would leave that run's solves with no
-  facts. The `recent:` entries are the baselines: an agent that tallies
-  before a change to extraction and again after needs the first entry
-  still there at the end, however long the change took. A staging
-  directory is one a VM is filling or one whose VM died mid-copy; after
-  a day it is the latter.
+  run reading it. The `recent:` entries are the baselines: an agent that
+  tallies before a change to extraction and again after needs the first
+  entries still there at the end, however long the change took. A
+  staging directory is one a VM is filling or one whose VM died
+  mid-copy; after a day it is the latter.
   """
   @spec stale_facts(Path.t(), [prune_option()]) :: [Path.t()]
-  def stale_facts(cache, opts \\ []), do: stale(cache, opts, &facts_entry_kind/2)
+  def stale_facts(cache, opts \\ []) do
+    Enum.sort(
+      stale(cache, opts, &facts_entry_kind/2) ++
+        Argus.Cache.stale(cache, Keyword.update(opts, :keep, [], &List.wrap/1))
+    )
+  end
 
   @doc """
   The kept solves of one facts cache entry (`<entry>/solves`, see
@@ -492,19 +403,6 @@ defmodule Argus.Corpus do
     end
   end
 
-  defp facts_digest(beams) do
-    beams
-    |> Enum.sort_by(&Path.basename/1)
-    |> Enum.reduce(:crypto.hash_init(:sha256), fn beam, hash ->
-      hash
-      |> :crypto.hash_update(Path.basename(beam))
-      |> :crypto.hash_update(File.read!(beam))
-    end)
-    |> :crypto.hash_update(engine_digest())
-    |> :crypto.hash_final()
-    |> Base.encode16(case: :lower)
-  end
-
   @doc """
   The modules whose code the facts depend on: every module a remote
   call reaches from the extraction's entry points — `Argus.Analysis`,
@@ -516,6 +414,7 @@ defmodule Argus.Corpus do
   reached; the analyses that name them are not in the set, only their
   declarations are, as data.
   """
+  @deprecated "A producer's code is Argus.Cache.Code.closure/1"
   @spec engine_modules() :: [module()]
   def engine_modules do
     extractors_declared =

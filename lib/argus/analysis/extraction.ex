@@ -143,8 +143,10 @@ defmodule Argus.Analysis.Extraction do
     with store when is_binary(store) <- store(opts),
          {:ok, facts} <- shards(modules, opts, store),
          {:ok, facts} <- solve_stage(facts, stage0_rules_path(), :stage0, opts) do
+      programs = [programs: Argus.Cache.dir(store, :programs)]
+
       if Keyword.get(opts, :points_to, :derive) == :derive and
-           Enum.any?(analyses, &reads_points_to?/1),
+           Enum.any?(analyses, &reads_points_to?(&1, programs)),
          do: solve_stage(facts, points_to_rules_path(), :points_to, opts),
          else: {:ok, facts}
     end
@@ -295,12 +297,13 @@ defmodule Argus.Analysis.Extraction do
 
   @doc """
   Whether an analysis reads what the points-to stage writes, as Souffle
-  resolves its inputs. An analysis whose inputs cannot be resolved is
-  taken to read it: deriving the stage then reports the real trouble.
+  resolves its inputs (`programs:` as `Argus.Analysis.input_relations/2`
+  takes it). An analysis whose inputs cannot be resolved is taken to
+  read it: deriving the stage then reports the real trouble.
   """
-  @spec reads_points_to?(Analysis.analysis()) :: boolean()
-  def reads_points_to?(analysis) do
-    case Analysis.input_relations(analysis) do
+  @spec reads_points_to?(Analysis.analysis(), keyword()) :: boolean()
+  def reads_points_to?(analysis, opts \\ []) do
+    case Analysis.input_relations(analysis, opts) do
       {:ok, relations} -> Enum.any?(relations, &(&1 in @points_to_relations))
       {:error, _} -> true
     end

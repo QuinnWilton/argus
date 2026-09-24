@@ -124,19 +124,42 @@ defmodule Argus.Cache.FactsTest do
       manifest = Path.join(entry, ".argus-shard")
       recorded = manifest |> File.read!() |> :erlang.binary_to_term()
 
-      assert [{Argus.Test.Fixtures.Specs, {:beam, _digest}}] = recorded.reads
+      assert [{"Elixir.Argus.Test.Fixtures.Specs", {:beam, _digest}}] = recorded.reads
 
       File.chmod!(manifest, 0o644)
 
       File.write!(
         manifest,
-        :erlang.term_to_binary(%{recorded | reads: [{Argus.Test.Fixtures.Specs, {:beam, "old"}}]})
+        :erlang.term_to_binary(%{
+          recorded
+          | reads: [{"Elixir.Argus.Test.Fixtures.Specs", {:beam, "old"}}]
+        })
       )
 
       assert {:ok, _} = Facts.extract([caller], [Argus.Extractors.Specs], [], store)
       recorded = manifest |> File.read!() |> :erlang.binary_to_term()
-      assert [{Argus.Test.Fixtures.Specs, {:beam, digest}}] = recorded.reads
+      assert [{"Elixir.Argus.Test.Fixtures.Specs", {:beam, digest}}] = recorded.reads
       assert digest != "old"
+    end
+
+    test "a read of a module this VM has never named still holds", %{tmp_dir: store} do
+      assert {:ok, _} = Facts.extract([:lists], [Argus.Extractors.Specs], [], store)
+
+      [entry] =
+        for name <- shards(store), name =~ "Specs", do: Path.join(Cache.dir(store, :shards), name)
+
+      manifest = Path.join(entry, ".argus-shard")
+      recorded = manifest |> File.read!() |> :erlang.binary_to_term()
+
+      # The analyzed program's own modules are absent from this VM's code
+      # path, and their names are no atoms here.
+      unknown = "Elixir.Argus.Cache.FactsTest.Never#{System.unique_integer([:positive])}"
+      File.chmod!(manifest, 0o644)
+      File.write!(manifest, :erlang.term_to_binary(%{recorded | reads: [{unknown, :absent}]}))
+      %File.Stat{inode: inode} = File.stat!(entry)
+
+      assert {:ok, _} = Facts.extract([:lists], [Argus.Extractors.Specs], [], store)
+      assert File.stat!(entry).inode == inode
     end
   end
 

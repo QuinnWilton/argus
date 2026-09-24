@@ -5,8 +5,9 @@ defmodule Argus.CorpusTest do
   absent on the fix.
 
   The first run clones and compiles each tree into `ARGUS_CORPUS_DIR`
-  (default `~/.cache/argus/corpus`) and caches its facts beside it; later
-  runs only solve. Every checkout the selected pairs need is analyzed
+  (default `~/.cache/argus/corpus`) and keeps its facts and solves in a
+  store beside it (`Argus.Corpus.store/1`); a later run extracts and
+  solves only what an edit invalidated. Every checkout the selected pairs need is analyzed
   once, up to `ARGUS_CORPUS_JOBS` at a time (default 4, at most the
   scheduler count), before the pairs are checked. Narrow a run with
   `ARGUS_CORPUS_ONLY=redix#334,oban` (substrings of the issue name), or

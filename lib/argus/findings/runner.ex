@@ -137,7 +137,9 @@ defmodule Argus.Findings.Runner do
     do: {Analysis.Extraction.ensure_points_to(dir, names, opts), source}
 
   defp stage_points_to({:cached, facts} = source, names, opts) do
-    if Enum.any?(names, &Analysis.Extraction.reads_points_to?/1) do
+    programs = [programs: Argus.Cache.dir(facts.store, :programs)]
+
+    if Enum.any?(names, &Analysis.Extraction.reads_points_to?(&1, programs)) do
       case Facts.solve(facts, Analysis.points_to_rules_path(), opts) do
         {:ok, _results, facts} -> {:ok, {:cached, facts}}
         {:error, reason} -> {{:error, {:points_to, reason}}, source}

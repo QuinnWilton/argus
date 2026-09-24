@@ -17,13 +17,15 @@ defmodule Mix.Tasks.Argus.Corpus do
   checkout once, `ARGUS_CORPUS_JOBS` at a time (`Argus.Corpus.jobs/0`),
   and its output does not depend on which finishes first.
 
-  `prune` removes, from every checkout, the cached facts
-  `Argus.Corpus.stale_facts/2` names: entries untouched for an hour
-  beyond the `--keep` most recent (default 3), and staging directories
-  a crashed run left a day ago. An entry touched within the hour is
-  never removed — a run beside this one may be reading it. Within each
-  entry that stays, the kept solves of each program go by the same
-  policy (`Argus.Corpus.stale_solves/2`).
+  `prune` removes, from every checkout's store, what
+  `Argus.Corpus.stale_facts/2` names: within each producer's shards and
+  each program's solves, the entries untouched for an hour beyond the
+  `--keep` most recent (default 3); the whole-facts entries an older
+  argus kept, by the same policy; and staging directories a crashed run
+  left a day ago. An entry touched within the hour is never removed — a
+  run beside this one may be reading it. Within each older entry that
+  stays, the kept solves of each program go by the same policy
+  (`Argus.Corpus.stale_solves/2`).
   """
 
   use Mix.Task
