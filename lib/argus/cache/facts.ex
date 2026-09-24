@@ -577,14 +577,30 @@ defmodule Argus.Cache.Facts do
   @spec release(t()) :: :ok
   def release(%__MODULE__{work: nil}), do: :ok
 
-  def release(%__MODULE__{work: work}) do
+  def release(%__MODULE__{work: work} = facts) do
     case File.read(Path.join(work, "lost")) do
       {:ok, dirs} -> dirs |> String.split("\n", trim: true) |> Enum.each(&File.rm_rf/1)
       {:error, _} -> :ok
     end
 
-    File.rm_rf(work)
+    remove_work(facts)
     :ok
+  end
+
+  # The directory holds the files placed in it, removed by name: walking
+  # it asks after each file first, as long again on a busy disk. Anything
+  # else there — a file a solve fanned out beside others placed, which
+  # this copy of the facts does not name, or the list of a lost run's
+  # shards — leaves a directory that will not go, and it is walked.
+  defp remove_work(%__MODULE__{work: work, dir: dir, placed: placed}) do
+    if dir, do: Enum.each(Map.keys(placed), &File.rm(Path.join(dir, &1)))
+
+    with :ok <- if(dir, do: File.rmdir(dir), else: :ok),
+         :ok <- File.rmdir(work) do
+      :ok
+    else
+      {:error, _} -> File.rm_rf(work)
+    end
   end
 
   # ── Solves ──────────────────────────────────────────────────────────

@@ -298,6 +298,20 @@ defmodule Argus.Cache.FactsTest do
       refute File.exists?(full.work)
     end
 
+    test "release removes the directory, a file the facts do not name included",
+         %{tmp_dir: tmp} do
+      edge = Path.join(tmp, "edge.facts")
+      File.write!(edge, "a\tb\n")
+
+      assert {:ok, facts} =
+               Facts.materialize(facts(Path.join(tmp, "store"), edge), ["edge.facts"])
+
+      File.write!(Path.join(facts.dir, "stray.facts"), "")
+      assert :ok = Facts.release(facts)
+      refute File.exists?(facts.work)
+      assert File.read!(edge) == "a\tb\n"
+    end
+
     test "prepare places what the solves not kept read, and nothing once they are kept",
          %{tmp_dir: tmp} do
       unless Argus.Souffle.available?(), do: flunk("souffle not installed")
