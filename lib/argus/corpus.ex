@@ -37,7 +37,11 @@ defmodule Argus.Corpus do
 
   The project's `elixir:` requirement is relaxed so an old tree builds on
   the current toolchain; a pair may name an `elixir:` version instead,
-  exported as `ASDF_ELIXIR_VERSION` for the compile.
+  exported as `ASDF_ELIXIR_VERSION` for the compile, and an `otp:`
+  version, whose asdf install's `bin` leads the compile's `PATH` (a
+  locked Erlang dependency that no longer builds on OTP 28, like an old
+  rabbit_common's `'street-address'` macro). The two go together: an
+  Elixir built for OTP 28 does not load on 27.
   """
 
   @type pair :: %{
@@ -46,6 +50,7 @@ defmodule Argus.Corpus do
           required(:pre) => String.t(),
           optional(:fix) => String.t(),
           optional(:elixir) => String.t(),
+          optional(:otp) => String.t(),
           optional(:subdir) => String.t(),
           optional(:module) => String.t(),
           required(:finding) => {atom(), String.t()}
@@ -595,14 +600,42 @@ defmodule Argus.Corpus do
     end
   end
 
-  # A clean environment for the child mix: the parent runs in MIX_ENV=test
-  # with its own build paths, none of which the checkout must inherit.
-  defp compile_env(pair) do
+  @doc """
+  The environment a pair's tree is compiled in: a clean one for the child
+  mix (the parent runs in MIX_ENV=test with its own build paths, none of
+  which the checkout must inherit), with the pair's `elixir:` and `otp:`
+  asdf installs leading its `PATH`.
+  """
+  @spec compile_env(pair()) :: [{String.t(), String.t() | nil}]
+  def compile_env(pair) do
     base = [{"MIX_ENV", "dev"}, {"MIX_BUILD_PATH", nil}, {"MIX_DEPS_PATH", nil}, {"MIX_EXS", nil}]
 
-    case Map.get(pair, :elixir) do
-      nil -> base
-      version -> [{"ASDF_ELIXIR_VERSION", version} | base]
+    bins =
+      for {key, dir} <- [elixir: "elixir", otp: "erlang"],
+          version = Map.get(pair, key),
+          do: Path.expand("~/.asdf/installs/#{dir}/#{version}/bin")
+
+    # The Elixir's own MIX_HOME: an archive built for one OTP does not
+    # load on another, and the parent's MIX_HOME is its own Elixir's.
+    env =
+      case Map.get(pair, :elixir) do
+        nil ->
+          base
+
+        version ->
+          home = Path.expand("~/.asdf/installs/elixir/#{version}/.mix")
+          [{"ASDF_ELIXIR_VERSION", version}, {"MIX_HOME", home}, {"MIX_ARCHIVES", nil} | base]
+      end
+
+    env =
+      case Map.get(pair, :otp) do
+        nil -> env
+        version -> [{"ASDF_ERLANG_VERSION", version} | env]
+      end
+
+    case bins do
+      [] -> env
+      bins -> [{"PATH", Enum.join(bins ++ [System.get_env("PATH", "")], ":")} | env]
     end
   end
 
@@ -642,8 +675,16 @@ defmodule Argus.Corpus do
     end
   end
 
+  # The command is looked up on the compile's PATH, which may lead with
+  # the pair's own toolchain, not the parent's.
   defp run([cmd | args], cwd, env, step) do
-    case System.cmd(cmd, args, cd: cwd, env: env, stderr_to_stdout: true) do
+    exe =
+      case List.keyfind(env, "PATH", 0) do
+        {"PATH", path} -> :os.find_executable(to_charlist(cmd), to_charlist(path)) || cmd
+        nil -> cmd
+      end
+
+    case System.cmd(to_string(exe), args, cd: cwd, env: env, stderr_to_stdout: true) do
       {_out, 0} -> :ok
       {out, status} -> {:error, "#{step} failed (exit #{status}):\n#{tail(out)}"}
     end

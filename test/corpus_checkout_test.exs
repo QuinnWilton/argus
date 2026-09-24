@@ -42,4 +42,18 @@ defmodule Argus.CorpusCheckoutTest do
              {%{name: "oban-0123456"}, ^other, :pre}
            ] = Corpus.checkouts([fixed, again, other])
   end
+
+  test "a pair's toolchain leads the compile's PATH, with its own MIX_HOME" do
+    assert {"MIX_ENV", "dev"} in Corpus.compile_env(@pair)
+    refute List.keymember?(Corpus.compile_env(@pair), "PATH", 0)
+
+    env = Corpus.compile_env(Map.merge(@pair, %{otp: "27.3.3", elixir: "1.18.3-otp-27"}))
+    {"PATH", path} = List.keyfind(env, "PATH", 0)
+
+    assert [elixir, erlang | _] = String.split(path, ":")
+    assert elixir == Path.expand("~/.asdf/installs/elixir/1.18.3-otp-27/bin")
+    assert erlang == Path.expand("~/.asdf/installs/erlang/27.3.3/bin")
+    assert {"MIX_HOME", Path.expand("~/.asdf/installs/elixir/1.18.3-otp-27/.mix")} in env
+    assert {"ASDF_ERLANG_VERSION", "27.3.3"} in env
+  end
 end

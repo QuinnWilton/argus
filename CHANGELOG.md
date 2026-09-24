@@ -1693,6 +1693,16 @@ realtime, logflare, hexpm and OTP 20 such rows drop out (hexpm's
 
 ### Corpus and tooling
 
+**Added.** A corpus pair may name an `otp:` version beside `elixir:`:
+the asdf installs of both lead the compile's `PATH`, with that Elixir's
+own `MIX_HOME` (an archive built for one OTP does not load on another),
+and the command is looked up on that `PATH`. A tree whose locked Erlang
+dependency no longer builds on OTP 28 builds on the OTP it was written
+for: sequin's rabbit_common on 27, astarte's (which uses `maybe` as an
+atom) on 26. `Argus.Corpus.compile_env/1` is public. An OTP 26 install
+needs hex and rebar3 placed by hand: its httpc rejects builds.hex.pm's
+certificate.
+
 **Added.** `Argus.Corpus` pairs take `subdir:` for a repository whose Mix project is
 not at the root — `mix.exs` under `elixir/`, one app of an umbrella under
 `apps/` — so a fix in such a tree can be a pair. The clone is still one
