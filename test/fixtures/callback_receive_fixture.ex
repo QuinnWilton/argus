@@ -136,6 +136,51 @@ defmodule Argus.Test.Fixtures.CallbackReceive do
     end
   end
 
+  defmodule TimerFlushAfterZero do
+    @moduledoc """
+    The flush as the cancel_timer docs also give it: cancel, then take the
+    timer's message if it was already delivered, without waiting for it.
+    """
+    @behaviour GenServer
+
+    def init(arg), do: {:ok, %{ref: Process.send_after(self(), :tick, 10), arg: arg}}
+
+    def handle_cast(:reset, %{ref: ref} = state) do
+      Process.cancel_timer(ref)
+
+      receive do
+        :tick -> :ok
+      after
+        0 -> :ok
+      end
+
+      {:noreply, %{state | ref: Process.send_after(self(), :tick, 10)}}
+    end
+  end
+
+  defmodule CancelThenBoundedWait do
+    @moduledoc """
+    Cancels its :tick timer, then waits (with a bound) for a :reply no
+    timer sends: a bounded receive is no flush either unless it takes the
+    timer's message.
+    """
+    @behaviour GenServer
+
+    def init(arg), do: {:ok, %{ref: Process.send_after(self(), :tick, 10), arg: arg}}
+
+    def handle_cast(:stop_and_wait, %{ref: ref} = state) do
+      Process.cancel_timer(ref)
+
+      receive do
+        :reply -> :ok
+      after
+        100 -> :ok
+      end
+
+      {:noreply, %{state | ref: nil}}
+    end
+  end
+
   defmodule CancelThenWait do
     @moduledoc """
     Cancels its :tick timer, then blocks on a :reply no timer sends: the

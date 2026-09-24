@@ -30,6 +30,15 @@ their columns and every finding are unchanged (the corpus's 1,213
 findings compared whole, before and after, are identical); no
 input set moved.
 
+**Fixed.** `blocking.receive_in_callback` no longer reports the bounded
+flush — `Process.cancel_timer(ref)` followed by `receive :tick -> :ok
+after 0 -> :ok end`, the form the cancel_timer docs give — as a receive
+in a callback. The blocking form of the flush was already exempt; the
+bounded one now is too, on the same terms (the function cancels a timer
+and the receive can take its message), at any bound, since the facts
+carry whether a receive can block but not its timeout. Found by a talk's
+worked example; the corpus change is one row, sequin's
+`ReorderBuffer.maybe_cancel_flush_batch_timer/1`, which is that idiom.
 
 ### Analysis names
 

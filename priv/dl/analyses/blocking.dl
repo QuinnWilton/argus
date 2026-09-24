@@ -451,7 +451,7 @@ waits_for_other(id) :-
 .decl flush_receive(recv: symbol)
 
 flush_receive(id) :-
-  recv_start(id, func, 1, _),
+  recv_start(id, func, _, _),
   cancels_timer(func),
   !waits_for_other(id).
 
@@ -469,11 +469,18 @@ receive_in_callback(id, func, callback, behaviour, proximity, "false") :-
   !flush_receive(id).
 
 // A receive WITH a timeout. It cannot hang, but it still consumes from the
-// behaviour's mailbox and still re-scans the queue.
+// behaviour's mailbox and still re-scans the queue. The flush is the
+// exception here too: `receive :tick -> :ok after 0 -> :ok end` after a
+// cancel is the form the cancel_timer docs give for taking a timer's
+// message that was already delivered, and it takes exactly the message
+// the callback means to drop. The facts carry whether a receive can
+// block, not its timeout, so a bounded flush is exempt at any bound; a
+// bounded receive cannot hang, and this one takes the timer's message.
 receive_in_callback(id, func, callback, behaviour, proximity, "true") :-
   recv_start(id, func, 0, _),
   callback_reaches(callback, func, proximity),
-  otp_callback(callback, _, _, behaviour).
+  otp_callback(callback, _, _, behaviour),
+  !flush_receive(id).
 
 // ══ Remote calls and cluster-wide locks ═════════════════════════════
 
