@@ -13,10 +13,14 @@
 // published in one ETS table before the row another table keys by it
 // exists (ets_publish_order).
 //
-// Each is a CheckThenAct instance (clientlib/check_then_act.dl), which
-// says where a check's result meets an act that depends on it, across
-// functions. Whether a second process can run the function where they
-// meet is one RunsConcurrently instance for all three, seeded with every
+// Which table an ETS operation touches is clientlib/tables.dl's
+// ets_table, for the rules that ask across functions and modules.
+//
+// The check-then-act rules are CheckThenAct instances
+// (clientlib/check_then_act.dl), which says where a check's result meets
+// an act that depends on it, across functions. Whether a second process
+// can run the function where they meet is one RunsConcurrently instance
+// for all of them, seeded with every
 // meeting and every write the rules ask about: what a function's
 // callers are does not depend on which store it touches.
 
@@ -27,6 +31,7 @@
 .include "../clientlib/concurrency.dl"
 .include "../clientlib/check_then_act.dl"
 .include "../clientlib/specs.dl"
+.include "../clientlib/tables.dl"
 
 .init runs = RunsConcurrently
 
@@ -467,69 +472,118 @@ ets_check_act(mod, func, name, key, read, write) :-
 // publish V in A, and when publishing can lose (insert_new), delete the B
 // row it wrote.
 //
-// Nothing here needs V's name. The rule joins the two writes on V's
-// identity in the function that makes them (ets_value, ets_key: the same
-// parameter, field or instruction), orders them by the function's graph
-// (ets_write_order), and matches the tables to their readers by an
-// identity that holds across the module's functions: a named table by its
-// name, and an unnamed one by the map field it is kept under
-// (ets_table_path from a parameter) — how one module hands itself two
-// unnamed tables, and the only thing that tells them apart when both were
-// created with the same name.
+// The two writes may be the function's own or its callees': a function
+// runs an insert where it makes it or at the call whose callee, on the
+// same stack, makes it (insert_at), and each is read in the function's
+// terms — a callee's key in its parameter is the argument the call
+// passes (ets_call_arg). They are in order when the second is reached
+// from the first within one trip through the function (ets_effect_order:
+// a loop's back edge does not order a pair both ways). Nothing here needs
+// V's name: the writes join on V's identity (ets_value against ets_key),
+// the tables on what clientlib/tables.dl says each operation may touch.
 
-// A table in terms the module's functions share.
-.decl table_in_module(id: symbol, mod: symbol, kind: symbol, ident: symbol)
+// A call that runs its callee on the caller's stack.
+.decl same_stack_site(site: symbol, caller: symbol, callee: symbol)
 
-table_in_module(id, mod, "named", name) :-
-  ets_op(id, f, name, _, _),
-  name != "dynamic",
-  ets_new(n, _, name),
-  ets_option(n, "named_table", "true"),
-  function_def(f, mod, _, _, _).
+same_stack_site(c, f, g) :- local_call(c, f, g, _), !runs_elsewhere(f, g).
 
-table_in_module(id, mod, "field", path) :-
-  ets_table_path(id, "param", _, path),
-  path != "",
-  ets_op(id, f, _, _, _),
-  function_def(f, mod, _, _, _).
+same_stack_site(c, f, g) :-
+  remote_call(c, f, m, n, a),
+  g = cat(m, ":", n, "/", to_string(a)),
+  function_def(g, _, _, _, _),
+  !runs_elsewhere(f, g).
 
-.decl same_table(a: symbol, b: symbol)
+.decl object_insert(w: symbol, func: symbol)
 
-same_table(a, b) :-
-  ets_write_order(_, a, b),
-  table_in_module(a, m, k, t),
-  table_in_module(b, m, k, t).
+object_insert(w, f) :- ets_op(w, f, _, "insert", "write").
+object_insert(w, f) :- ets_op(w, f, _, "insert_new", "write").
 
-// No table of that name is private: a reader in another process can see
-// it. A table that is not found stays quiet.
-.decl readable_elsewhere(id: symbol)
+.decl reaches_insert(func: symbol)
 
-readable_elsewhere(id) :-
-  ets_op(id, _, name, _, _),
-  name != "dynamic",
-  ets_new(_, _, name),
-  !private_table(name).
+reaches_insert(f) :- object_insert(_, f).
+reaches_insert(f) :- same_stack_site(_, f, g), reaches_insert(g).
 
-.decl private_table(name: symbol)
+.decl lift_needed(func: symbol)
 
-private_table(name) :- ets_new(n, _, name), ets_option(n, "access", "private").
+lift_needed(f) :- ets_effect_order(f, _, _).
+lift_needed(g) :- lift_needed(f), same_stack_site(_, f, g), reaches_insert(g).
+
+// `func` runs the insert `w` at `at`: w itself, or a call leading to it.
+.decl insert_at(func: symbol, at: symbol, w: symbol)
+
+insert_at(f, w, w) :- lift_needed(f), object_insert(w, f).
+
+insert_at(f, c, w) :-
+  lift_needed(f),
+  same_stack_site(c, f, g),
+  reaches_insert(g),
+  insert_at(g, _, w).
+
+// The insert's key and the values past it, in `func`'s terms. A literal
+// means the same everywhere; a parameter is what the call passes.
+.decl key_in(func: symbol, at: symbol, w: symbol, source: symbol, key: symbol)
+
+key_in(f, w, w, s, k) :- insert_at(f, w, w), ets_key(w, s, k).
+
+key_in(f, c, w, "literal", k) :-
+  insert_at(f, c, w),
+  c != w,
+  same_stack_site(c, f, g),
+  key_in(g, _, w, "literal", k).
+
+key_in(f, c, w, s, k) :-
+  insert_at(f, c, w),
+  c != w,
+  same_stack_site(c, f, g),
+  key_in(g, _, w, "param", p),
+  ets_call_arg(c, g, p, s, k).
+
+.decl value_in(func: symbol, at: symbol, w: symbol, pos: number, source: symbol, value: symbol)
+
+value_in(f, w, w, pos, s, v) :- insert_at(f, w, w), ets_value(w, pos, s, v).
+
+value_in(f, c, w, pos, "literal", v) :-
+  insert_at(f, c, w),
+  c != w,
+  same_stack_site(c, f, g),
+  value_in(g, _, w, pos, "literal", v).
+
+value_in(f, c, w, pos, s, v) :-
+  insert_at(f, c, w),
+  c != w,
+  same_stack_site(c, f, g),
+  value_in(g, _, w, pos, "param", p),
+  ets_call_arg(c, g, p, s, v).
 
 // W1 writes V into A's row, W2 then writes B's row keyed by V. A value
 // that is a literal is known without reading A.
+.decl publish_candidate(func: symbol, publish: symbol, complete: symbol)
+
+publish_candidate(f, w1, w2) :-
+  ets_effect_order(f, a1, a2),
+  insert_at(f, a1, w1),
+  insert_at(f, a2, w2),
+  w1 != w2,
+  value_in(f, a1, w1, _, vs, v),
+  vs != "literal",
+  key_in(f, a2, w2, vs, v).
+
+// The two writes may touch one table: then it is one row replacing
+// another, not a value published ahead of its row.
+.decl may_share_table(a: symbol, b: symbol)
+
+may_share_table(w1, w2) :-
+  publish_candidate(_, w1, w2),
+  ets_table(w1, k, t),
+  ets_table(w2, k, t).
+
 .decl publishes_early(func: symbol, publish: symbol, complete: symbol)
 
 publishes_early(f, w1, w2) :-
-  ets_write_order(f, w1, w2),
-  ets_op(w1, f, _, op1, "write"),
-  (op1 = "insert" ; op1 = "insert_new"),
-  ets_op(w2, f, _, op2, "write"),
-  (op2 = "insert" ; op2 = "insert_new"),
-  ets_value(w1, _, vs, v),
-  vs != "literal",
-  ets_key(w2, vs, v),
-  table_in_module(w1, m, _, _),
-  table_in_module(w2, m, _, _),
-  !same_table(w1, w2).
+  publish_candidate(f, w1, w2),
+  ets_table(w1, _, _),
+  ets_table(w2, _, _),
+  !may_share_table(w1, w2).
 
 // A read that raises when the key has no row. lookup_element/4 and
 // update_counter/4 take a default and do not; update_element answers
@@ -552,21 +606,106 @@ hands_out(r) :- ets_op(r, _, _, "lookup", _), site_reads(_, _, "site", r).
 hands_out(r) :- ets_op(r, _, _, "lookup", _), call_arg_reads(_, _, _, "site", r).
 hands_out(r) :- ets_op(r, _, _, op, "read"), op != "lookup", op != "member", op != "info".
 
+// A table another process can read. A "field" table is the one its
+// operations were created with a name of (ets_op), not private.
+.decl readable_elsewhere(id: symbol, kind: symbol, ident: symbol)
+
+readable_elsewhere(id, k, t) :- ets_table(id, k, t), k != "field", table_readable_elsewhere(k, t).
+
+readable_elsewhere(id, "field", t) :-
+  ets_table(id, "field", t),
+  ets_op(id, _, name, _, _),
+  name != "dynamic",
+  ets_new(n, _, name),
+  !ets_option(n, "access", "private").
+
+// The reader of B and the tables it shares with the writes.
+.decl publish_reader_candidate(func: symbol, publish: symbol, complete: symbol, reader: symbol, g: symbol, ak: symbol, a: symbol)
+
+publish_reader_candidate(f, w1, w2, r, g, ak, a) :-
+  publishes_early(f, w1, w2),
+  ets_table(w1, ak, a),
+  ets_op(ra, _, _, _, "read"),
+  ets_table(ra, ak, a),
+  hands_out(ra),
+  ets_table(w2, bk, b),
+  raises_on_missing(r, g),
+  ets_table(r, bk, b),
+  ets_key(r, ks, _),
+  ks != "literal",
+  readable_elsewhere(w2, bk, b),
+  !rescues_argument_error(g).
+
+// ── Where the reader's key comes from ──
+//
+// The reader must be able to hold V: its key made from a read of A, or
+// from something the program cannot see the origin of — a parameter of a
+// function outside callers can reach (exported, or taken as a fun), a
+// call nothing summarises. A key the program shows is made from other
+// things does not read A's values.
+.decl key_needed(func: symbol, kind: symbol, src: symbol)
+
+key_needed(g, "param", p) :- publish_reader_candidate(_, _, _, r, g, _, _), ets_key(r, "param", p).
+
+key_needed(g, k, s) :-
+  publish_reader_candidate(_, _, _, r, g, _, _),
+  ets_key(r, ks, _),
+  ks != "param",
+  site_reads(r, g, k, s).
+
+key_needed(c, k, s) :-
+  key_needed(g, "param", p),
+  call_arg_reads(c, g, n, k, s),
+  p = to_string(n).
+
+key_needed(h, k, s) :- key_needed(_, "call", h), returns_depends(h, k, s).
+
+.decl from_table(func: symbol, kind: symbol, src: symbol, tk: symbol, t: symbol)
+
+from_table(g, "site", ra, tk, t) :-
+  key_needed(g, "site", ra),
+  ets_op(ra, g, _, _, "read"),
+  ets_table(ra, tk, t).
+
+from_table(g, "call", h, tk, t) :-
+  key_needed(g, "call", h),
+  returns_depends(h, k, s),
+  from_table(h, k, s, tk, t).
+
+from_table(g, "param", p, tk, t) :-
+  key_needed(g, "param", p),
+  call_arg_reads(c, g, n, k, s),
+  p = to_string(n),
+  from_table(c, k, s, tk, t).
+
+// Sources whose origin the program does not show.
+.decl open_source(func: symbol, kind: symbol, src: symbol)
+
+open_source(g, "param", p) :- key_needed(g, "param", p), function_def(g, _, _, _, 1).
+open_source(g, "param", p) :- key_needed(g, "param", p), fun_ref(_, g).
+open_source(g, "call", h) :- key_needed(g, "call", h), !returns_depends(h, _, _).
+open_source(g, k, s) :- key_needed(g, "param", p), call_arg_reads(c, g, n, k, s), p = to_string(n), open_source(c, k, s).
+open_source(g, "call", h) :- key_needed(g, "call", h), returns_depends(h, k, s), open_source(h, k, s).
+
+.decl key_may_come_from(r: symbol, tk: symbol, t: symbol)
+
+key_may_come_from(r, tk, t) :-
+  publish_reader_candidate(_, _, _, r, g, tk, t),
+  ets_key(r, "param", p),
+  (from_table(g, "param", p, tk, t) ; open_source(g, "param", p)).
+
+key_may_come_from(r, tk, t) :-
+  publish_reader_candidate(_, _, _, r, g, tk, t),
+  ets_key(r, ks, _),
+  ks != "param",
+  site_reads(r, g, k, s),
+  (from_table(g, k, s, tk, t) ; open_source(g, k, s)).
+
 .decl publish_reader(func: symbol, publish: symbol, complete: symbol, reader: symbol, g: symbol)
 
 publish_reader(f, w1, w2, r, g) :-
-  publishes_early(f, w1, w2),
-  table_in_module(w1, m, ak, a),
-  ets_op(ra, _, _, _, "read"),
-  table_in_module(ra, m, ak, a),
-  hands_out(ra),
-  table_in_module(w2, m, bk, b),
-  raises_on_missing(r, g),
-  table_in_module(r, m, bk, b),
-  ets_key(r, ks, _),
-  ks != "literal",
-  readable_elsewhere(w2),
-  !rescues_argument_error(g).
+  publish_reader_candidate(f, w1, w2, r, g, ak, a),
+  key_may_come_from(r, ak, a).
 
 runs.seed(f) :- publish_reader(f, _, _, _, _).
 runs.seed(g) :- publish_reader(_, _, _, _, g).
@@ -583,16 +722,19 @@ publish_concurrent(f, g) :-
   runs.entry_reaches(m, g),
   !runs.entry_reaches(m, f).
 
-// A table is spelled by its identity's kind and the identity: "named"
-// and the name, or "field" and the path it is kept under.
+// A table is spelled by its identity's kind and the identity: "named" and
+// the name, "new" and the :ets.new/2 site, or "field" and the module and
+// the path it is kept under.
 .decl ets_publish_order(mod: symbol, func: symbol, published_kind: symbol, published_in: symbol, completed_kind: symbol, completed_in: symbol, publish: symbol, complete: symbol, reader: symbol)
 .output ets_publish_order
 
 ets_publish_order(mod, f, ak, a, bk, b, w1, w2, r) :-
   publish_reader(f, w1, w2, r, g),
   publish_concurrent(f, g),
-  table_in_module(w1, mod, ak, a),
-  table_in_module(w2, mod, bk, b).
+  function_def(f, mod, _, _, _),
+  ets_table(w1, ak, a),
+  ets_table(w2, bk, b),
+  ets_table(r, bk, b).
 
 // ── Dirty read, then dirty write ─────────────────────────────────
 //

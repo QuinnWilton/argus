@@ -32,9 +32,12 @@ defmodule Argus.Analyses.Races do
     that took the value from the first table and reads the second at it
     with a read that raises on a missing row (`reader`:
     `:ets.lookup_element/3`, `:ets.update_counter/3`) crashes with
-    `badarg`. A table is known across the module's functions by its name
-    (`named`) or by the map field it is kept under (`field`, the path
-    from a parameter).
+    `badarg`. The two writes may be `func`'s own or its callees'.
+
+  A table is what `clientlib/tables.dl` says an operation may touch:
+  `named` and its name, `new` and the `:ets.new/2` site that made it
+  (followed as process points-to follows a pid), or, where neither is
+  known, `field` and the module and map path it is read under.
 
   Every check-then-act finding is a `:warning` anchored at the act, with
   the check as a related frame; a publish-order finding is a `:warning`
@@ -131,10 +134,10 @@ defmodule Argus.Analyses.Races do
         fields: [
           {:mod, :symbol, "the module"},
           {:func, :symbol, "the function making both writes"},
-          {:published_kind, :symbol, "named | field: how the first table is known"},
+          {:published_kind, :symbol, "named | new | field: how the first table is known"},
           {:published_in, :symbol,
-           "the first table: its name, or the field path it is kept under"},
-          {:completed_kind, :symbol, "named | field: how the second table is known"},
+           "the first table: its name, the :ets.new/2 site, or the module and field path"},
+          {:completed_kind, :symbol, "named | new | field: how the second table is known"},
           {:completed_in, :symbol, "the second table, likewise"},
           {:publish, :symbol, "instruction ID of the write that makes the value findable"},
           {:complete, :symbol, "instruction ID of the later write of the row keyed by it"},
@@ -280,7 +283,11 @@ defmodule Argus.Analyses.Races do
     )
   end
 
-  defp describe_table("field", path), do: "the table held under #{path}"
+  # A "field" table is spelled with its module, which the prose has.
+  defp describe_table("field", ident),
+    do: "the table held under #{ident |> String.split(" ", parts: 2) |> List.last()}"
+
+  defp describe_table("new", site), do: "the table made at #{site}"
   defp describe_table(_named, name), do: name
 
   # The name as the function sees it. A parameter's key is its position,

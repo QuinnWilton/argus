@@ -214,4 +214,192 @@ defmodule Argus.Test.Fixtures.PublishOrder do
 
     def data(key), do: :ets.lookup_element(:data, key, 2)
   end
+
+  # ── Tables known by where they were made ──────────────────────────
+
+  defmodule LocalPair do
+    @moduledoc """
+    Two unnamed tables that live in a tuple, never in a map field or under
+    a name: only the `:ets.new/2` calls that made them tell them apart,
+    followed to their operations as a pid is.
+    """
+    def new, do: {:ets.new(:names, [:set, :public]), :ets.new(:ids, [:set, :public])}
+
+    def register({names, ids}, name) do
+      id = System.unique_integer([:positive])
+      :ets.insert(names, {name, id})
+      :ets.insert(ids, {id, name})
+      id
+    end
+
+    def id_of({names, _ids}, name) do
+      [{_, id}] = :ets.lookup(names, name)
+      id
+    end
+
+    def name_of({_names, ids}, id), do: :ets.lookup_element(ids, id, 2)
+
+    def demo do
+      tables = new()
+      register(tables, "a")
+      name_of(tables, id_of(tables, "a"))
+    end
+  end
+
+  defmodule LocalPairSafe do
+    @moduledoc "The same tuple of tables, written row first."
+    def new, do: {:ets.new(:names, [:set, :public]), :ets.new(:ids, [:set, :public])}
+
+    def register({names, ids}, name) do
+      id = System.unique_integer([:positive])
+      :ets.insert(ids, {id, name})
+      :ets.insert(names, {name, id})
+      id
+    end
+
+    def id_of({names, _ids}, name) do
+      [{_, id}] = :ets.lookup(names, name)
+      id
+    end
+
+    def name_of({_names, ids}, id), do: :ets.lookup_element(ids, id, 2)
+
+    def demo do
+      tables = new()
+      register(tables, "a")
+      name_of(tables, id_of(tables, "a"))
+    end
+  end
+
+  defmodule SameFieldTwoMaps do
+    @moduledoc """
+    Two maps that keep different tables under one field name, `:t`. By
+    field alone they are one table and nothing is published; by where each
+    was made they are two.
+    """
+    def new, do: {%{t: :ets.new(:names, [:set, :public])}, %{t: :ets.new(:ids, [:set, :public])}}
+
+    def register(%{t: names}, %{t: ids}, name) do
+      id = System.unique_integer([:positive])
+      :ets.insert(names, {name, id})
+      :ets.insert(ids, {id, name})
+      id
+    end
+
+    def id_of(%{t: names}, name) do
+      [{_, id}] = :ets.lookup(names, name)
+      id
+    end
+
+    def name_of(%{t: ids}, id), do: :ets.lookup_element(ids, id, 2)
+
+    def demo do
+      {names, ids} = new()
+      register(names, ids, "a")
+      name_of(ids, id_of(names, "a"))
+    end
+  end
+
+  # ── Writes split across a call ────────────────────────────────────
+
+  defmodule HelperCompletes do
+    @moduledoc "The value is published here; the row it points to is written by a helper, after."
+    def setup do
+      :ets.new(:people_by_name, [:named_table, :public, :set])
+      :ets.new(:people_by_id, [:named_table, :public, :set])
+    end
+
+    def add(name) do
+      id = System.unique_integer([:positive])
+      :ets.insert(:people_by_name, {name, id})
+      index(id, name)
+    end
+
+    defp index(id, name), do: :ets.insert(:people_by_id, {id, name})
+
+    def name_of(name) do
+      [{_, id}] = :ets.lookup(:people_by_name, name)
+      :ets.lookup_element(:people_by_id, id, 2)
+    end
+  end
+
+  defmodule HelperFirst do
+    @moduledoc "The helper writes the row before the value is published."
+    def setup do
+      :ets.new(:pets_by_name, [:named_table, :public, :set])
+      :ets.new(:pets_by_id, [:named_table, :public, :set])
+    end
+
+    def add(name) do
+      id = System.unique_integer([:positive])
+      index(id, name)
+      :ets.insert(:pets_by_name, {name, id})
+    end
+
+    defp index(id, name), do: :ets.insert(:pets_by_id, {id, name})
+
+    def name_of(name) do
+      [{_, id}] = :ets.lookup(:pets_by_name, name)
+      :ets.lookup_element(:pets_by_id, id, 2)
+    end
+  end
+
+  # ── Where the reader's key comes from ─────────────────────────────
+
+  defmodule KeyFromElsewhere do
+    @moduledoc """
+    The raising reader only ever reads the second table at a key taken
+    from a third table, never at an id handed out by the first.
+    """
+    def setup do
+      :ets.new(:cars_by_name, [:named_table, :public, :set])
+      :ets.new(:cars_by_id, [:named_table, :public, :set])
+      :ets.new(:current_car, [:named_table, :public, :set])
+    end
+
+    def add(name) do
+      id = System.unique_integer([:positive])
+      :ets.insert(:cars_by_name, {name, id})
+      :ets.insert(:cars_by_id, {id, name})
+      id
+    end
+
+    def id_of(name) do
+      [{_, id}] = :ets.lookup(:cars_by_name, name)
+      id
+    end
+
+    def current, do: name_at(current_id())
+
+    defp current_id do
+      [{:current, id}] = :ets.lookup(:current_car, :current)
+      id
+    end
+
+    defp name_at(id), do: :ets.lookup_element(:cars_by_id, id, 2)
+  end
+
+  defmodule KeyFromFirst do
+    @moduledoc "The same private reader, handed an id read out of the first table."
+    def setup do
+      :ets.new(:boats_by_name, [:named_table, :public, :set])
+      :ets.new(:boats_by_id, [:named_table, :public, :set])
+    end
+
+    def add(name) do
+      id = System.unique_integer([:positive])
+      :ets.insert(:boats_by_name, {name, id})
+      :ets.insert(:boats_by_id, {id, name})
+      id
+    end
+
+    def rename(name), do: name_at(id_of(name))
+
+    defp id_of(name) do
+      [{_, id}] = :ets.lookup(:boats_by_name, name)
+      id
+    end
+
+    defp name_at(id), do: :ets.lookup_element(:boats_by_id, id, 2)
+  end
 end

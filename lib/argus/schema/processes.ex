@@ -238,6 +238,35 @@ defmodule Argus.Schema.Processes do
         """
       },
       %{
+        name: :table_alloc,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "instruction ID of the :ets.new/2 call"},
+          {:func, :func_id, "function containing it"},
+          {:table, :symbol, "the table: \"table <id>\""}
+        ],
+        doc: """
+        An ETS table allocation site, an object of the same points-to \
+        analysis a process is: the reference an unnamed table is, or the \
+        name a named table is answered with, flows from here as a `table` \
+        source through parameters, returns, fields and a server's state.
+        """
+      },
+      %{
+        name: :table_use,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "instruction ID of the :ets call"},
+          {:func, :func_id, "function containing it"},
+          {:src_kind, :symbol, "as in pid_arg, or table"},
+          {:src, :symbol, "as in pid_arg, or the table"}
+        ],
+        doc: """
+        The table operand of the ETS operation at `id` is the source: \
+        clientlib/tables.dl chains it to the tables it may be.
+        """
+      },
+      %{
         name: :start_error_compared,
         layer: 2,
         fields: [

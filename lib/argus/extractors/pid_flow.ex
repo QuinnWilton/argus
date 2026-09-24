@@ -46,6 +46,7 @@ defmodule Argus.Extractors.PidFlow do
     load's id, see `pid_load`);
   - `reply` — what the `GenServer.call` at a site returned: the reply of
     the server the call reaches.
+  - `table` — the ETS table the `:ets.new/2` at a site made.
 
   ## Emitted facts
 
@@ -88,6 +89,12 @@ defmodule Argus.Extractors.PidFlow do
   - `pid_sets(obj, sel)` — a field an update sets, shadowing the base's.
   - `pid_load(func, load, sel, src_kind, src)` — the load `load` reads the
     field `sel` of the source.
+  - `table_alloc(id, func, table)` — the `:ets.new/2` at `id` makes the
+    table `table` (`"table <id>"`), an object like a process: a `table`
+    source, the reference an unnamed table is or the name a named one is
+    answered with.
+  - `table_use(id, func, src_kind, src)` — the `:ets` operation at `id`
+    names its table with the source: `clientlib/tables.dl` resolves it.
 
   ## Reading the bytecode
 
@@ -262,7 +269,9 @@ defmodule Argus.Extractors.PidFlow do
       :pid_field,
       :pid_base,
       :pid_sets,
-      :pid_load
+      :pid_load,
+      :table_alloc,
+      :table_use
     ]
 
   @impl true
@@ -725,6 +734,9 @@ defmodule Argus.Extractors.PidFlow do
       Map.has_key?(ctx.fun.starts, idx) ->
         start_result(ctx, Map.fetch!(ctx.fun.starts, idx), r)
 
+      mfa == {:ets, :new, 2} ->
+        write(r, {:x, 0}, MapSet.new([{:table, table(ctx.fun, idx)}]))
+
       Map.has_key?(@lookups, mfa) ->
         write(r, {:x, 0}, lookup(ctx, instrs, idx, Map.fetch!(@lookups, mfa)))
 
@@ -1145,8 +1157,22 @@ defmodule Argus.Extractors.PidFlow do
     |> emit_register(at, ictx, mfa)
     |> emit_send(at, ictx, mfa)
     |> emit_signal(at, ictx, mfa)
+    |> emit_table(at, ictx, mfa)
     |> emit_tail(at, ictx, site)
   end
+
+  # An ETS table is an object too, allocated by the `:ets.new/2` that made
+  # it: the reference an unnamed table is, or the name a named table is
+  # answered with. Every other `:ets` call names its table in x0.
+  defp emit_table(facts, at, _ictx, {:ets, :new, 2}) do
+    add_fact(facts, :table_alloc, [site(at.fun, at.idx), at.fun.func_id, table(at.fun, at.idx)])
+  end
+
+  defp emit_table(facts, at, ictx, {:ets, _func, arity}) when arity > 0 do
+    sources(facts, at, :table_use, [site(at.fun, at.idx), at.fun.func_id], val(ictx, {:x, 0}))
+  end
+
+  defp emit_table(facts, _at, _ictx, _mfa), do: facts
 
   # Every argument of a call into project code.
   defp emit_args(facts, at, ictx, %{mfa: {_m, _f, arity} = mfa} = site) do
@@ -1437,6 +1463,9 @@ defmodule Argus.Extractors.PidFlow do
       {:proc, proc} ->
         [{"proc", proc}]
 
+      {:table, table} ->
+        [{"table", table}]
+
       {:param, k} ->
         [{"param", Integer.to_string(k)}]
 
@@ -1476,6 +1505,7 @@ defmodule Argus.Extractors.PidFlow do
   defp emit_row(facts, :pid_field, row), do: add_fact(facts, :pid_field, row)
   defp emit_row(facts, :pid_base, row), do: add_fact(facts, :pid_base, row)
   defp emit_row(facts, :pid_load, row), do: add_fact(facts, :pid_load, row)
+  defp emit_row(facts, :table_use, row), do: add_fact(facts, :table_use, row)
 
   # ── Names ────────────────────────────────────────────────────────────
 
@@ -1497,4 +1527,6 @@ defmodule Argus.Extractors.PidFlow do
   end
 
   defp callee({mod, fun, arity}), do: Normalize.func_id(mod, fun, arity)
+
+  defp table(fun, idx), do: "table " <> site(fun, idx)
 end

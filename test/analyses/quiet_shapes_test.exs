@@ -34,7 +34,10 @@ defmodule Argus.Analyses.QuietShapesTest do
     Quiet.ClockInTerminate,
     Quiet.StoreSourcedSink,
     Quiet.LoopWithCatchAll,
-    Argus.Test.Fixtures.PublishOrder.ReverseFirst
+    Argus.Test.Fixtures.PublishOrder.ReverseFirst,
+    Argus.Test.Fixtures.PublishOrder.LocalPairSafe,
+    Argus.Test.Fixtures.PublishOrder.HelperFirst,
+    Argus.Test.Fixtures.PublishOrder.KeyFromElsewhere
   ]
 
   @expect_quiet %{

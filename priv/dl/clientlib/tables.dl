@@ -1,0 +1,149 @@
+// Which ETS tables an operation may touch.
+//
+// A table is known the way the runtime knows it. A named table is its
+// name, the same table wherever the name is spelled. An unnamed table is
+// its reference, which only the :ets.new/2 call that made it hands out:
+// it is an allocation site, and where the reference goes is the question
+// process points-to already answers for pids (processes.dl: a `table`
+// source, through parameters, returns, map and tuple fields, a server's
+// state, a closure's environment and a spawned function's arguments). So
+//
+//   ets_table(id, "named", ":name")  — a named table;
+//   ets_table(id, "new", site)       — the unnamed table made at `site`;
+//
+// for an operation `id` (or an :ets.new site, as the table it makes). An
+// operand is a set of tables, not one: `cfg.table || @default` is
+// whatever the field holds or the default, and both are answers.
+//
+// A name reaches an operation spelled at it, as one arm of a join
+// (ets_table_path's literal answers), or through the parameters callers
+// pass it in (call_arg, forwarded). Names are atoms and the points-to
+// analysis follows references, not atoms, so a name kept in a field or a
+// server's state and read back is known only when the :ets.new/2 that
+// answered it is what was stored: then it is that site's table.
+//
+// What points-to cannot see — a table handed over by a call it cannot
+// follow, `store.intern(state, b)` with `store` a module in a struct —
+// leaves an operation with no table. For a table read out of a
+// parameter's map there is one fallback, spelled
+//
+//   ets_table(id, "field", "<module> <path>")
+//
+// the path of map keys it is read under: two unnamed tables a module
+// hands itself in one map, `%{forward: f, reverse: r}`, are its two
+// fields. The fallback holds only where nothing better does, and only
+// within the module: it assumes a module means one table by one field.
+//
+// Prerequisites: imports.dl and otp.dl (processes.dl).
+
+// ── Tables as objects ───────────────────────────────────────────────
+
+// An ETS table is an object of process points-to, allocated by the
+// :ets.new/2 that made it. Seeded here, so only an analysis that asks
+// about tables pays for following them.
+source_pts(f, "table", t, t) :- table_alloc(_, f, t).
+
+// ── Creation sites ──────────────────────────────────────────────────
+
+.decl named_site(site: symbol)
+
+named_site(n) :- ets_new(n, _, _), ets_option(n, "named_table", "true").
+
+// The names a site gives its table: spelled there, or arriving in the
+// parameter the name operand is read from.
+.decl site_name(site: symbol, name: symbol)
+
+site_name(n, name) :- ets_new(n, _, name), name != "dynamic".
+site_name(n, name) :- ets_new(n, _, "dynamic"), ets_table_path(n, "literal", name, "").
+
+site_name(n, name) :-
+  ets_new(n, f, "dynamic"),
+  ets_table_path(n, "param", p, ""),
+  name_at_param(f, p, name).
+
+.decl site_table(site: symbol, kind: symbol, ident: symbol)
+
+site_table(n, "named", name) :- named_site(n), site_name(n, name).
+site_table(n, "new", n) :- ets_new(n, _, _), !named_site(n).
+
+// ── Names through parameters ────────────────────────────────────────
+
+.decl name_param_needed(func: symbol, pos: symbol)
+
+name_param_needed(f, p) :- ets_table_path(id, "param", p, ""), ets_op(id, f, _, _, _).
+name_param_needed(f, p) :- ets_table_path(id, "param", p, ""), ets_new(id, f, _).
+
+name_param_needed(c, to_string(m)) :-
+  name_param_needed(f, p),
+  call_arg_forward(c, f, n, m),
+  p = to_string(n).
+
+// A literal a caller passes the parameter, directly or through a chain of
+// callers forwarding their own.
+.decl name_at_param(func: symbol, pos: symbol, name: symbol)
+
+name_at_param(f, p, name) :-
+  name_param_needed(f, p),
+  call_arg(_, f, n, name),
+  name != "dynamic",
+  p = to_string(n).
+
+name_at_param(f, p, name) :-
+  name_param_needed(f, p),
+  call_arg_forward(c, f, n, m),
+  p = to_string(n),
+  name_at_param(c, to_string(m), name).
+
+// ── Operations ──────────────────────────────────────────────────────
+
+.decl known_table(id: symbol, kind: symbol, ident: symbol)
+
+// A name spelled at the operation, alone or as one arm.
+known_table(id, "named", name) :-
+  ets_op(id, _, _, _, _),
+  ets_table_path(id, "literal", name, "").
+
+// A name a caller passes.
+known_table(id, "named", name) :-
+  ets_op(id, f, _, _, _),
+  ets_table_path(id, "param", p, ""),
+  name_at_param(f, p, name).
+
+// The table the operand may be, by points-to.
+known_table(id, k, t) :-
+  table_use(id, f, sk, s),
+  source_pts(f, sk, s, x),
+  table_alloc(n, _, x),
+  site_table(n, k, t).
+
+// A creation site is the table it makes.
+known_table(n, k, t) :- site_table(n, k, t).
+
+.decl ets_table(id: symbol, kind: symbol, ident: symbol)
+
+ets_table(id, k, t) :- known_table(id, k, t).
+
+.decl has_known_table(id: symbol)
+
+has_known_table(id) :- known_table(id, _, _).
+
+// Nothing better: the map field of a parameter it was read under.
+ets_table(id, "field", cat(mod, " ", path)) :-
+  ets_table_path(id, "param", _, path),
+  path != "",
+  ets_op(id, f, _, _, _),
+  !has_known_table(id),
+  function_def(f, mod, _, _, _).
+
+// ── Access ──────────────────────────────────────────────────────────
+
+// A table another process can read: made somewhere the program shows, and
+// not private. A "field" table is the one its module creates under the
+// name the operation resolved to, as before identity by site.
+.decl table_private(kind: symbol, ident: symbol)
+
+table_private(k, t) :- site_table(n, k, t), ets_option(n, "access", "private").
+
+.decl table_readable_elsewhere(kind: symbol, ident: symbol)
+
+table_readable_elsewhere(k, t) :- site_table(_, k, t), !table_private(k, t).

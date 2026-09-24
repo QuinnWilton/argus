@@ -59,6 +59,22 @@ and have `resolve/2` raise `ArgumentError` on it in the window between
 row goes in first now, and a binary that loses the `insert_new` race
 deletes the row it wrote. `races.ets_publish_order` found it.
 
+**Changed.** Schema 63. `ets_write_order` is replaced by
+`ets_effect_order(func, first, then)`: two effects of one function in
+order, each an `insert`/`insert_new` or a call into project code (so an
+insert a callee makes is ordered where the call is), at least one an
+insert or a call to a function of the module that inserts. Order is
+reachability without a loop's back edge (an edge into a block that
+dominates its source), where it was reachability: a pair in a loop body
+was ordered both ways. **Added:** `ets_call_arg(id, callee, pos, source,
+value)`, what identifies each argument of those calls, in `ets_key`'s
+vocabulary, so a callee's key reads in its caller's terms;
+`table_alloc(id, func, table)` and `table_use(id, func, src_kind, src)`,
+PidFlow's (below). `ets_table_path` keeps every arm of a join, so
+`cfg.table || @default` has a row for the field and one for the literal
+(`Resolve.access_paths/4`, where it kept one only when the arms agreed), and has rows
+for `:ets.new/2`'s name operand too.
+
 **Added.** Schema 62. Three ETS relations, all `Argus.Extractors.ETS`'s
 and read by `races`. `ets_table_path(id, source, root, path)` says where
 an operation's table operand was read from: a literal name, a parameter
@@ -549,6 +565,15 @@ tests are `Argus.Instr`'s. A `trim` or `deallocate` ends the `y`
 registers it does not keep.
 
 ### Process points-to
+
+**Added.** An ETS table is an object of the same analysis:
+`table_alloc(id, func, table)` is the `:ets.new/2` that makes `"table
+<id>"` — the reference an unnamed table is, or the name a named one is
+answered with — and `table_use(id, func, src_kind, src)` says which
+source an ETS operation's table operand is. The table goes wherever a
+pid would: through parameters, returns, map and tuple fields, a
+server's state, a closure's environment, a spawned function's
+arguments.
 
 **Fixed.** `PidFlow` spells a literal `{:global, name}` or `{:via, mod,
 key}` name, and a literal map key it selects on, with `Helpers.spell/1`,
@@ -1178,6 +1203,25 @@ its transaction site, and a function whose transactions name two repos
 has no body: nothing says whose the closure is.
 
 ### races
+
+**Changed.** Which ETS tables an operation may touch is one relation,
+`ets_table(id, kind, ident)` (clientlib/tables.dl): `named` and the name,
+spelled at the operation, as one arm of a join, or passed by callers;
+`new` and the `:ets.new/2` site of an unnamed table, followed by process
+points-to; and, only where neither answers, `field`, the module and the
+map path a parameter's table is read under. `ets_publish_order` matches
+its tables on it, where it knew a table by name or by field within the
+module: two unnamed tables in a tuple, or kept under one field name in
+two maps, or handed to another module, are told apart by where each was
+made. Its two writes may be the function's own or its callees' (a
+function runs an insert at the call that leads to it, and reads the
+callee's key in its own terms through `ets_call_arg`), ordered by
+`ets_effect_order`. And the reader's key must be able to hold the value:
+made from a read of the first table, through callers, returns and
+parameters (`site_reads`, `call_arg_reads`, `returns_depends`), or from a
+source whose origin the program does not show — a parameter of an
+exported function or one taken as a fun, a call nothing summarises. A
+reader only ever handed keys from elsewhere is quiet.
 
 **Added.** `ets_publish_order`: a function writes a row of one ETS table
 holding a value (`{name, id}`), and only then the row another table keys

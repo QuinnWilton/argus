@@ -162,7 +162,7 @@ defmodule Argus.Schema.CallValues do
         ],
         doc: """
         Where the table operand of an ETS operation was read from: a root and \
-        the map keys read from it (Resolve.access_paths/4). Two tables handed \
+        the map keys read from it (Resolve.access_path/4). Two tables handed \
         to a function in one map, `%{forward: f, reverse: r}`, are two paths \
         under one root where ets_op knows both by the name they were created \
         with. Absent when the operand's writers disagree; a table named by a \
@@ -204,18 +204,36 @@ defmodule Argus.Schema.CallValues do
         """
       },
       %{
-        name: :ets_write_order,
+        name: :ets_effect_order,
         layer: 2,
         fields: [
-          {:func, :func_id, "the function both writes are in"},
-          {:first, :instr_id, "instruction ID of the earlier ETS write"},
-          {:then, :instr_id, "instruction ID of an ETS write control can reach from it"}
+          {:func, :func_id, "the function both effects are in"},
+          {:first, :instr_id, "an insert/insert_new, or a call into project code"},
+          {:then, :instr_id, "an effect control reaches from it without closing a loop"}
         ],
         doc: """
-        Two ETS writes in one function, the second reachable from the first \
-        in the control-flow graph. Ordering is positional, computed where the \
-        graph is (as call_followed_by_branch is); a loop orders a pair both \
-        ways.
+        Two effects of one function in order within one trip through it: \
+        inserts, and the calls a callee's inserts hide behind. An edge into a \
+        block that dominates its source is a loop's back edge and is not \
+        followed, so a loop body's writes are ordered as each iteration makes \
+        them, not both ways. At least one of the two is an insert or a call \
+        to a function of the same module that inserts.
+        """
+      },
+      %{
+        name: :ets_call_arg,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "a call ets_effect_order orders"},
+          {:callee, :func_id, "the function called"},
+          {:pos, :symbol, "0-based argument position, as a symbol"},
+          {:source, :symbol, "literal | param | field | local"},
+          {:value, :symbol, "as ets_key spells its key"}
+        ],
+        doc: """
+        What identifies an argument of the call, in ets_key's vocabulary: a \
+        callee's insert keyed by its parameter is keyed, in the caller, by \
+        what the caller passes there.
         """
       },
       %{

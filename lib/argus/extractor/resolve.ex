@@ -407,14 +407,15 @@ defmodule Argus.Extractor.Resolve do
   @type access_path :: {String.t(), String.t(), String.t()}
 
   @doc """
-  Where the value in `register` at `idx` was read from, as a root and the
-  map keys read on the way down from it: `%{forward: t} = tables` and
-  `tables.forward` both read `t` from the parameter `tables` under
-  `:forward`, and `state.tables.forward` reads it under `:tables`, then
-  `:forward`. Copies are followed, and so is the compiler's slow path for
-  `map.key`, which agrees with the fast path at their join.
+  Everywhere the value in `register` at `idx` may have been read from,
+  each as a root and the map keys read on the way down from it:
+  `%{forward: t} = tables` and `tables.forward` both read `t` from the
+  parameter `tables` under `:forward`, and `state.tables.forward` reads
+  it under `:tables`, then `:forward`. Copies are followed, and so is the
+  compiler's slow path for `map.key`, which agrees with the fast path at
+  their join.
 
-  Returns `[{source, root, path}]`, or `[]`:
+  Each answer is `{source, root, path}`:
 
   - `{"literal", inspected, ""}` — an atom, binary or integer;
   - `{"param", "N", path}` — read from the function's parameter N;
@@ -423,56 +424,57 @@ defmodule Argus.Extractor.Resolve do
     reference), a tuple's element.
 
   `path` is the keys, each spelled as `map_field_of/3` spells it, joined
-  by `"."` (`":tables.:forward"`), and `""` for the root itself. Anything
-  else — a join whose arms disagree, a key that is not a literal, a local
-  root without `func_id` — has no answer.
+  by `"."` (`":tables.:forward"`), and `""` for the root itself.
 
-  Two operands with the same answer in one function hold the same value.
-  Two read from one root under different keys are read from different
-  fields, which is how a function tells apart two tables it was handed in
-  one map, as `Argus.Extractors.ETS` does for `ets_table_path`. A join
-  keeps an answer only when its arms agree, as every walk here does; a
-  table named `cfg.table || @default` has two answers, and would need
-  the walk to keep each arm's instead, which is why the answer is a list.
+  Unlike the other walks here, a join keeps every arm's answers: the
+  value is one of them, and `cfg.table || @default` is the parameter's
+  field or the literal, so both are answers. An arm that cannot be
+  followed — a key that is not a literal, a local root without
+  `func_id` — contributes nothing, and the answer is `[]` when none can.
+  Two operands in one function that share an answer may hold the same
+  value; two read from one root under different keys are read from
+  different fields, which is how a function tells apart two tables it
+  was handed in one map, as `Argus.Extractors.ETS` does for
+  `ets_table_path`.
   """
   @spec access_paths([term()], non_neg_integer(), register(), String.t() | nil) ::
           [access_path()]
   def access_paths(instrs, idx, register, func_id \\ nil) do
-    case walk(fn -> path(instrs, idx, Instr.register(register), [], func_id) end) do
-      :dynamic -> []
-      answer -> [answer]
-    end
+    walk(fn -> paths(instrs, idx, Instr.register(register), [], func_id) end)
   end
 
-  defp path(instrs, idx, reg, keys, func_id) do
-    step({:path, idx, reg, keys}, :dynamic, fn ->
-      across(instrs, idx, reg, :dynamic, fn
-        {:param, k} -> {"param", to_string(k), Enum.join(keys, ".")}
-        at -> path_from(instrs, at, Reaching.at(instrs, at), reg, keys, func_id)
+  defp paths(instrs, idx, reg, keys, func_id) do
+    step({:paths, idx, reg, keys}, [], fn ->
+      instrs
+      |> Reaching.sources(idx, reg)
+      |> Enum.flat_map(fn
+        {:param, k} -> [{"param", to_string(k), Enum.join(keys, ".")}]
+        at -> paths_from(instrs, at, Reaching.at(instrs, at), reg, keys, func_id)
       end)
+      |> Enum.uniq()
     end)
   end
 
-  defp path_from(instrs, at, instr, reg, keys, func_id) do
+  defp paths_from(instrs, at, instr, reg, keys, func_id) do
     case {Instr.copy_source(instr, reg), instr} do
       {{kind, _} = source, _instr} when kind in [:x, :y] ->
-        path(instrs, at, source, keys, func_id)
+        paths(instrs, at, source, keys, func_id)
 
       {nil, {:get_map_elements, _fail, src, {:list, pairs}}} ->
         case find_map_key(pairs, reg) do
           {:ok, {:atom, key}} ->
-            path(instrs, at, Instr.register(src), [inspect(key) | keys], func_id)
+            paths(instrs, at, Instr.register(src), [inspect(key) | keys], func_id)
 
           {:ok, {:literal, key}} ->
-            path(instrs, at, Instr.register(src), [Terms.spell(key) | keys], func_id)
+            paths(instrs, at, Instr.register(src), [Terms.spell(key) | keys], func_id)
 
           _ ->
-            :dynamic
+            []
         end
 
       {nil, {:get_tuple_element, src, 1, _dst}} ->
         case slow_path_map(instrs, at, Instr.register(src)) do
-          {:ok, map_at, key} -> path(instrs, map_at, {:x, 0}, [key | keys], func_id)
+          {:ok, map_at, key} -> paths(instrs, map_at, {:x, 0}, [key | keys], func_id)
           :none -> local_root(at, keys, func_id)
         end
 
@@ -483,22 +485,22 @@ defmodule Argus.Extractor.Resolve do
         literal_root(literal)
 
       _literal_with_keys ->
-        :dynamic
+        []
     end
   end
 
-  defp literal_root({:atom, atom}), do: {"literal", inspect(atom), ""}
-  defp literal_root({:integer, n}), do: {"literal", inspect(n), ""}
+  defp literal_root({:atom, atom}), do: [{"literal", inspect(atom), ""}]
+  defp literal_root({:integer, n}), do: [{"literal", inspect(n), ""}]
 
   defp literal_root({:literal, value}) when is_binary(value),
-    do: {"literal", Terms.spell(value), ""}
+    do: [{"literal", Terms.spell(value), ""}]
 
-  defp literal_root(_other), do: :dynamic
+  defp literal_root(_other), do: []
 
-  defp local_root(_at, _keys, nil), do: :dynamic
+  defp local_root(_at, _keys, nil), do: []
 
   defp local_root(at, keys, func_id),
-    do: {"local", InstrId.mint(func_id, at), Enum.join(keys, ".")}
+    do: [{"local", InstrId.mint(func_id, at), Enum.join(keys, ".")}]
 
   # The `elixir_erl_pass:no_parens_remote/2` call whose result `reg`
   # holds at `idx` — the slow path of `map.key` — with its key, the map

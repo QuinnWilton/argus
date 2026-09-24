@@ -21,7 +21,7 @@ defmodule Argus.Extractors.ETS do
     the table `:ets.new(name, ...)` returned in `caller`: an unnamed table
     handed to the code that uses it
   - `ets_table_path(id, source, root, path)` — where the table operand of
-    an operation was read from (`Resolve.access_paths/4`): a literal name,
+    an operation was read from (`Resolve.access_path/4`): a literal name,
     a parameter or a local value, and the map keys read from it. Two
     tables one function was handed in one map (`%{forward: f, reverse:
     r}`) are two paths, where `ets_op` knows both by the name they were
@@ -29,8 +29,14 @@ defmodule Argus.Extractors.ETS do
   - `ets_value(id, pos, source, value)` — what identifies element `pos`
     (1 and up) of the object an `insert`/`insert_new` writes, as
     `ets_key` identifies element 0
-  - `ets_write_order(func, first, then)` — two ETS writes in one
-    function, `then` reachable from `first` in its control-flow graph
+  - `ets_effect_order(func, first, then)` — two effects of one function,
+    each an `insert`/`insert_new` or a call into project code, `then`
+    reachable from `first` without closing a loop; at least one of the two
+    is an insert or a call to a function of this module that inserts
+  - `ets_call_arg(id, callee, pos, source, value)` — what identifies
+    argument `pos` of the call at `id` that `ets_effect_order` orders, in
+    `ets_key`'s vocabulary: how a callee's key or value reads in its
+    caller
   """
 
   @behaviour Argus.Extractor
@@ -72,6 +78,10 @@ defmodule Argus.Extractors.ETS do
   # by sits among the first few.
   @max_value_pos 7
 
+  # Call arguments looked at: the first few, as call_arg. A table, a key
+  # and a value sit early in every calling convention.
+  @max_args 4
+
   @impl true
   def relations,
     do: [
@@ -83,7 +93,8 @@ defmodule Argus.Extractors.ETS do
       :ets_table_path,
       :ets_tid_arg,
       :ets_value,
-      :ets_write_order
+      :ets_effect_order,
+      :ets_call_arg
     ]
 
   @doc "Whether a remote call is an ETS operation, for `Argus.Extractors.Dependence`."
@@ -102,41 +113,130 @@ defmodule Argus.Extractors.ETS do
       handle_call(facts, Map.put(ctx, :origins, {index, ctx.func_id}), mfa, fields)
     end)
     |> emit_tid_args(module_data)
-    |> emit_write_order(module_data)
+    |> emit_effect_order(module_data, index)
   end
 
-  # ── Writes in order ──────────────────────────────────────────────
+  # ── Effects in order ─────────────────────────────────────────────
 
-  # For each function with two ETS writes or more, the pairs one runs
-  # before the other on some path: an ordering question the Datalog side
-  # cannot ask without the instruction stream (`call_followed_by_branch`
-  # is the same trade).
-  defp emit_write_order(facts, module_data) do
-    facts
-    |> Map.get(:ets_op, [])
-    |> Enum.filter(fn [_id, _func, _table, _op, kind] -> kind == "write" end)
-    |> Enum.group_by(fn [_id, func | _] -> func end, fn [id | _] -> id end)
-    |> Enum.filter(fn {_func, ids} -> match?([_, _ | _], ids) end)
+  # A write that publishes a value and the write that completes it may
+  # sit in one function or in the functions it calls. For each function
+  # that inserts, or that calls two functions of this module that insert
+  # (directly or through each other), the pairs of its effects — its
+  # inserts and its calls into project code — one of which runs before
+  # the other within one trip through it; and, for the calls, what
+  # identifies each argument, so a callee's key can be read in the
+  # caller's terms. A pair of calls to two other modules' writers, with
+  # no insert here, is not ordered: which functions of another module
+  # insert is not known while this one is extracted.
+  @object_writes ["insert", "insert_new"]
+
+  defp emit_effect_order(facts, module_data, index) do
+    inserts =
+      facts
+      |> Map.get(:ets_op, [])
+      |> Enum.filter(fn [_id, _func, _table, op, kind] ->
+        kind == "write" and op in @object_writes
+      end)
+      |> Enum.group_by(fn [_id, func | _] -> func end, fn [id | _] -> id end)
+
+    sites =
+      module_data
+      |> CallSites.for_module()
+      |> Enum.filter(&project_call?/1)
+      |> Enum.group_by(& &1.func_id)
+
+    writers = local_writers(module_data.module, inserts, sites)
+
+    sites
+    |> Map.keys()
+    |> Enum.concat(Map.keys(inserts))
+    |> Enum.uniq()
     |> Enum.sort()
-    |> Enum.reduce(facts, fn {func, ids}, acc ->
-      {name, arity} = Normalize.func_id_name_arity(func)
+    |> Enum.reduce(facts, fn func, acc ->
+      own = Map.get(inserts, func, [])
+      calls = Map.get(sites, func, [])
+      writer_calls = Enum.filter(calls, &MapSet.member?(writers, callee(&1)))
 
-      case Helpers.cfg(module_data, name, arity) do
-        nil ->
-          acc
-
-        fun ->
-          at = Map.new(ids, fn id -> {id, instr_idx(id)} end)
-
-          for first <- Enum.sort(ids),
-              then <- Enum.sort(ids),
-              first != then,
-              reaches?(fun, at[first], at[then]),
-              reduce: acc do
-            inner -> add_fact(inner, :ets_write_order, [func, first, then])
-          end
+      if own == [] and length(writer_calls) < 2 do
+        acc
+      else
+        order_effects(acc, module_data, func, own, calls, writer_calls, index)
       end
     end)
+  end
+
+  defp order_effects(facts, module_data, func, own, calls, writer_calls, index) do
+    {name, arity} = Normalize.func_id_name_arity(func)
+
+    case Helpers.cfg(module_data, name, arity) do
+      nil ->
+        facts
+
+      fun ->
+        call_ids = Map.new(calls, fn site -> {InstrId.mint(func, site.idx), site} end)
+        anchors = MapSet.new(own ++ Enum.map(writer_calls, &InstrId.mint(func, &1.idx)))
+        effects = Enum.sort(own ++ Map.keys(call_ids))
+        at = Map.new(effects, fn id -> {id, instr_idx(id)} end)
+
+        pairs =
+          for first <- effects,
+              then <- effects,
+              first != then,
+              MapSet.member?(anchors, first) or MapSet.member?(anchors, then),
+              reaches?(fun, at[first], at[then]),
+              do: {first, then}
+
+        facts =
+          Enum.reduce(pairs, facts, fn {first, then}, acc ->
+            add_fact(acc, :ets_effect_order, [func, first, then])
+          end)
+
+        pairs
+        |> Enum.flat_map(fn {a, b} -> [a, b] end)
+        |> Enum.uniq()
+        |> Enum.filter(&Map.has_key?(call_ids, &1))
+        |> Enum.reduce(facts, fn id, acc ->
+          call_args(acc, id, Map.fetch!(call_ids, id), {index, func})
+        end)
+    end
+  end
+
+  defp call_args(facts, id, %{instrs: instrs, idx: idx, mfa: {_m, _f, arity}} = site, origins) do
+    for pos <- 0..(min(arity, @max_args) - 1)//1,
+        {source, value} = key_identity(instrs, idx, {:x, pos}, origins),
+        source != "dynamic",
+        reduce: facts do
+      acc -> add_fact(acc, :ets_call_arg, [id, callee(site), to_string(pos), source, value])
+    end
+  end
+
+  defp project_call?(%{remote?: false}), do: true
+
+  defp project_call?(%{mfa: {mod, _f, _a}}),
+    do: mod != :ets and not Argus.Extractor.Runtime.module?(mod)
+
+  defp callee(%{mfa: {m, f, a}}), do: Normalize.func_id(m, f, a)
+
+  # This module's functions that insert, directly or through a local
+  # call to one that does.
+  defp local_writers(module, inserts, sites) do
+    direct = inserts |> Map.keys() |> MapSet.new()
+
+    edges =
+      for {func, calls} <- sites,
+          %{mfa: {^module, _f, _a}} = site <- calls,
+          do: {func, callee(site)}
+
+    grow(direct, edges)
+  end
+
+  defp grow(writers, edges) do
+    grown =
+      Enum.reduce(edges, writers, fn {caller, callee}, acc ->
+        if MapSet.member?(acc, callee), do: MapSet.put(acc, caller), else: acc
+      end)
+
+    if MapSet.size(grown) == MapSet.size(writers), do: writers, else: grow(grown, edges)
   end
 
   defp instr_idx(id) do
@@ -144,15 +244,17 @@ defmodule Argus.Extractors.ETS do
     idx
   end
 
-  # Whether control can pass from instruction `from` to instruction `to`:
-  # later in the same block, or in a block the edges lead to (the same
-  # block again, round a loop).
+  # Whether control can pass from instruction `from` to instruction `to`
+  # within one trip through the function: later in the same block, or in
+  # a block the forward edges lead to. An edge into a block that dominates
+  # its source closes a loop; following it would order two writes in one
+  # loop body both ways, when each iteration makes them in one order.
   defp reaches?(fun, from, to) do
     case {Cfg.Function.block_at(fun, from), Cfg.Function.block_at(fun, to)} do
       {nil, _} -> false
       {_, nil} -> false
-      {%{id: same}, %{id: same}} when from < to -> true
-      {a, %{id: target}} -> reach_block(fun, successors(a), target, %{})
+      {%{id: same}, %{id: same}} -> from < to
+      {a, %{id: target}} -> reach_block(fun, forward(fun, a), target, %{})
     end
   end
 
@@ -167,9 +269,13 @@ defmodule Argus.Extractors.ETS do
         reach_block(fun, rest, target, seen)
 
       true ->
-        next = successors(Map.fetch!(fun.blocks, id))
+        next = forward(fun, Map.fetch!(fun.blocks, id))
         reach_block(fun, next ++ rest, target, Map.put(seen, id, true))
     end
+  end
+
+  defp forward(fun, %Cfg.Block{id: id} = block) do
+    Enum.reject(successors(block), &Cfg.Function.dominates?(fun, &1, id))
   end
 
   defp successors(%Cfg.Block{succs: succs}), do: Enum.map(succs, &elem(&1, 0))
@@ -179,7 +285,6 @@ defmodule Argus.Extractors.ETS do
   # A table ref leaves the function that created it as a call argument or
   # a closure's captured variable. Only the first @max_args positions, as
   # call_arg: the table sits early in every calling convention.
-  @max_args 4
 
   defp emit_tid_args(facts, module_data) do
     facts =
@@ -226,11 +331,13 @@ defmodule Argus.Extractors.ETS do
     |> track_dynamic(table_name, ctx, :ets_table_name_new, :ets_new)
     |> add_fact(:ets_new, [id, ctx.func_id, table_name])
     |> emit_options(id, options)
+    |> table_path(id, ctx)
   end
 
   defp handle_call(facts, ctx, {:ets, func, arity}, fields) do
     id = InstrId.mint(ctx.func_id, ctx.idx)
     table_ref = resolve_table(ctx, fields)
+
     kind = classify_op(func, arity)
 
     facts

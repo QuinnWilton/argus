@@ -22,8 +22,11 @@ defmodule Argus.Analyses.EtsPublishOrderTest do
     test "two unnamed tables told apart by the map field they are kept under" do
       skip_without_souffle()
 
-      assert [{"intern/2", ":forward", ":reverse", "intern/2", "intern/2", "resolve/2"}] =
+      assert [{"intern/2", forward, reverse, "intern/2", "intern/2", "resolve/2"}] =
                published([P.MapFields])
+
+      assert String.ends_with?(forward, "MapFields :forward")
+      assert String.ends_with?(reverse, "MapFields :reverse")
     end
 
     test "the same tables written row first, value second, stay quiet" do
@@ -43,6 +46,42 @@ defmodule Argus.Analyses.EtsPublishOrderTest do
 
       assert [{"open/2", ":sessions", ":session_hits", _, _, "hit/1"}] =
                published([P.CountedById])
+    end
+
+    test "unnamed tables in a tuple, known by the :ets.new/2 that made each" do
+      skip_without_souffle()
+
+      assert [{"register/2", first, second, "register/2", "register/2", "name_of/2"}] =
+               published([P.LocalPair])
+
+      assert first =~ "LocalPair:new/0#"
+      assert second =~ "LocalPair:new/0#"
+      assert first != second
+      assert published([P.LocalPairSafe]) == []
+    end
+
+    test "one field name in two maps is two tables when each was made apart" do
+      skip_without_souffle()
+
+      assert [{"register/3", first, second, _, _, "name_of/2"}] = published([P.SameFieldTwoMaps])
+      assert first != second
+    end
+
+    test "the row a helper writes after the value is published" do
+      skip_without_souffle()
+
+      assert [{"add/1", ":people_by_name", ":people_by_id", "add/1", "index/2", "name_of/1"}] =
+               published([P.HelperCompletes])
+
+      assert published([P.HelperFirst]) == []
+    end
+
+    test "a reader that is never handed a value from the first table stays quiet" do
+      skip_without_souffle()
+      assert published([P.KeyFromElsewhere]) == []
+
+      assert [{"add/1", ":boats_by_name", ":boats_by_id", _, _, "name_at/1"}] =
+               published([P.KeyFromFirst])
     end
 
     test "a reader with a default, or one that rescues the miss, stays quiet" do
@@ -75,7 +114,7 @@ defmodule Argus.Analyses.EtsPublishOrderTest do
       assert {"resolve/2", "param", "0", ":reverse"} in paths
     end
 
-    test "ets_value and ets_write_order join the id written into one table to the other's key" do
+    test "ets_value and ets_effect_order join the id written into one table to the other's key" do
       {:ok, facts} = Argus.Pipeline.extract([P.MapFields], extractors: [Argus.Extractors.ETS])
 
       [insert_new] = for [id, _, _, "insert_new", _] <- facts.ets_op, do: id
@@ -86,13 +125,8 @@ defmodule Argus.Analyses.EtsPublishOrderTest do
 
       assert [^insert, "local", ^made] = Enum.find(facts.ets_key, &(hd(&1) == insert))
 
-      assert [_func, ^insert_new, ^insert] =
-               Enum.find(facts.ets_write_order, &(Enum.at(&1, 1) == insert_new))
-
-      refute Enum.any?(
-               facts.ets_write_order,
-               &(Enum.at(&1, 1) == insert and Enum.at(&1, 2) == insert_new)
-             )
+      assert Enum.any?(facts.ets_effect_order, &match?([_, ^insert_new, ^insert], &1))
+      refute Enum.any?(facts.ets_effect_order, &match?([_, ^insert, ^insert_new], &1))
     end
   end
 
