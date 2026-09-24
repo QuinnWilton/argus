@@ -63,12 +63,18 @@ defmodule Argus.Findings.Names do
 
   @doc """
   The API an rpc variant column names: the rules classify a remote call
-  as `"rpc"`, `"multicall"` or `"erpc"`; the reader wants the function.
+  by `rpc_call`'s variant (`"rpc"`, `"multicall"`, `"erpc"`, ...); the
+  reader wants the function.
   """
   @spec rpc_api(String.t()) :: String.t()
   def rpc_api("rpc"), do: ":rpc.call"
+  def rpc_api("block_call"), do: ":rpc.block_call"
   def rpc_api("multicall"), do: ":rpc.multicall"
+  def rpc_api("yield"), do: ":rpc.yield"
+  def rpc_api("nb_yield"), do: ":rpc.nb_yield"
   def rpc_api("erpc"), do: ":erpc.call"
+  def rpc_api("erpc_multicall"), do: ":erpc.multicall"
+  def rpc_api("erpc_receive"), do: ":erpc.receive_response"
   def rpc_api(other) when is_binary(other), do: other
 
   @doc """

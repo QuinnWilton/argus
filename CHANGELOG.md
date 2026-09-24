@@ -58,6 +58,14 @@ returns `{:badrpc, :nodedown}` or raises `{:erpc, :noconnection}`. The
 detail now says a peer that stays connected but never answers holds the
 caller forever, and a node that goes away is noticed after net_ticktime.
 
+**Fixed.** "RPC without a bounded timeout" helps each API by what its
+timeout does: `:rpc.call` and `block_call` answer `{:badrpc,
+:timeout}`, `:erpc.call` and `receive_response/2` raise `{:erpc,
+:timeout}` (the help said to match `{:badrpc, :timeout}`, a value that
+never arrives), a multicall names the node that did not answer, and a
+yield has `nb_yield/2`. `Argus.Findings.rpc_api/1` names every variant;
+`erpc_multicall` read as its raw name.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile

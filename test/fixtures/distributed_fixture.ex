@@ -253,3 +253,18 @@ defmodule Argus.Test.Fixtures.RpcQuickTargets do
   # The same call to a function that can wait: flagged.
   def lookup(node, key), do: :rpc.call(node, :peer_directory, :lookup, [key])
 end
+
+defmodule Argus.Test.Fixtures.RpcCollectors do
+  @moduledoc false
+
+  # Each waits for an answer with no timeout: flagged.
+  def block(node), do: :rpc.block_call(node, :peer_directory, :peers, [])
+  def collect(key), do: :rpc.yield(key)
+  def await(req), do: :erpc.receive_response(req)
+
+  # Each has a timeout, or does not wait: quiet.
+  def block_bounded(node), do: :rpc.block_call(node, :peer_directory, :peers, [], 5000)
+  def collect_bounded(key), do: :rpc.nb_yield(key, 5000)
+  def poll(key), do: :rpc.nb_yield(key)
+  def await_bounded(req), do: :erpc.receive_response(req, 5000)
+end

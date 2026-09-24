@@ -1,6 +1,7 @@
 defmodule Argus.Analyses.BlockingRpcTest do
   use ExUnit.Case, async: true
 
+  alias Argus.Analyses.Blocking
   alias Argus.Souffle
   alias Argus.Test.Rows
 
@@ -37,7 +38,7 @@ defmodule Argus.Analyses.BlockingRpcTest do
     # it); forever is a connected peer whose callee never answers.
     test "says what waits forever, and what only waits for net_ticktime" do
       attrs =
-        Argus.Analyses.Blocking.finding(:unbounded_wait, [
+        Blocking.finding(:unbounded_wait, [
           "M:f/1",
           "M:f/1#3",
           "rpc",
@@ -50,6 +51,81 @@ defmodule Argus.Analyses.BlockingRpcTest do
       assert attrs.detail =~ "holds this process forever"
       assert attrs.detail =~ "net_ticktime"
       refute attrs.detail =~ "partitioned"
+    end
+  end
+
+  describe "unbounded_wait: rpc help" do
+    defp help(variant) do
+      [help] =
+        Blocking.finding(:unbounded_wait, [
+          "M:f/1",
+          "M:f/1#3",
+          "rpc",
+          variant,
+          "",
+          ""
+        ]).help
+
+      help
+    end
+
+    # Only :rpc.call answers a timeout with a value; following that advice
+    # for :erpc.call matches a value that never arrives.
+    test "says what each API does when its timeout runs out" do
+      assert help("rpc") =~ "{:badrpc, :timeout}"
+      assert help("block_call") =~ "{:badrpc, :timeout}"
+      assert help("multicall") =~ "bad nodes"
+      assert help("erpc") =~ "raises `{:erpc, :timeout}`"
+      assert help("erpc_multicall") =~ "{:error, {:erpc, :timeout}}"
+      assert help("yield") =~ ":rpc.nb_yield/2"
+      assert help("nb_yield") =~ ":rpc.nb_yield/2"
+      assert help("erpc_receive") =~ ":erpc.receive_response/2"
+
+      for variant <- ~w(multicall erpc erpc_multicall yield nb_yield erpc_receive) do
+        refute help(variant) =~ "badrpc", variant
+      end
+    end
+
+    test "names every variant's function in the detail" do
+      for {variant, api} <- [
+            {"rpc", ":rpc.call"},
+            {"block_call", ":rpc.block_call"},
+            {"multicall", ":rpc.multicall"},
+            {"yield", ":rpc.yield"},
+            {"nb_yield", ":rpc.nb_yield"},
+            {"erpc", ":erpc.call"},
+            {"erpc_multicall", ":erpc.multicall"},
+            {"erpc_receive", ":erpc.receive_response"}
+          ] do
+        attrs =
+          Blocking.finding(:unbounded_wait, [
+            "M:f/1",
+            "M:f/1#3",
+            "rpc",
+            variant,
+            "",
+            ""
+          ])
+
+        assert attrs.detail =~ "calls #{api} with", variant
+      end
+    end
+  end
+
+  describe "unbounded_wait: the waits beyond call and multicall" do
+    test "block_call, yield and receive_response without a timeout are flagged" do
+      skip_without_souffle()
+
+      results = analyze([Argus.Test.Fixtures.RpcCollectors])
+
+      found =
+        waits(results, "rpc") |> Enum.map(fn [func, _site, v] -> {func, v} end) |> Enum.sort()
+
+      assert found == [
+               {"Argus.Test.Fixtures.RpcCollectors:await/1", "erpc_receive"},
+               {"Argus.Test.Fixtures.RpcCollectors:block/1", "block_call"},
+               {"Argus.Test.Fixtures.RpcCollectors:collect/1", "yield"}
+             ]
     end
   end
 

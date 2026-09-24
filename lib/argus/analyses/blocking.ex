@@ -399,7 +399,7 @@ defmodule Argus.Analyses.Blocking do
         "minute by default.",
       at: Findings.at_instr(site),
       at_label: "no timeout bounds this call",
-      help: ["pass a timeout (the last argument) and take `{:badrpc, :timeout}` as a result"]
+      help: [rpc_timeout_help(variant)]
     )
   end
 
@@ -500,4 +500,40 @@ defmodule Argus.Analyses.Blocking do
 
   defp where("direct", callback), do: "and #{callback} is that callback"
   defp where(_helper, callback), do: "reached directly from the callback #{callback}"
+
+  # What a timeout does when it runs out differs by API: :rpc answers
+  # with a value, :erpc raises, a multicall names the node, and a yield
+  # has a timed form of its own. The help says the one the call gets.
+  @spec rpc_timeout_help(String.t()) :: String.t()
+  defp rpc_timeout_help(variant) when variant in ["rpc", "block_call"],
+    do: "pass a timeout (the last argument) and take `{:badrpc, :timeout}` as a result"
+
+  defp rpc_timeout_help("multicall"),
+    do:
+      "pass a timeout (the last argument); a node that does not answer in time is " <>
+        "in the bad nodes of the `{results, bad_nodes}` result"
+
+  defp rpc_timeout_help("erpc"),
+    do:
+      "pass a timeout (the last argument); when it runs out the call raises " <>
+        "`{:erpc, :timeout}`, so rescue `ErlangError` or catch `:error` around it"
+
+  defp rpc_timeout_help("erpc_multicall"),
+    do:
+      "pass a timeout (the last argument); a node that does not answer in time " <>
+        "gives `{:error, {:erpc, :timeout}}` in its place in the results"
+
+  defp rpc_timeout_help(variant) when variant in ["yield", "nb_yield"],
+    do:
+      "collect the answer with `:rpc.nb_yield/2` and a finite timeout; it " <>
+        "returns `:timeout` when the answer has not come"
+
+  defp rpc_timeout_help("erpc_receive"),
+    do:
+      "pass a timeout to `:erpc.receive_response/2`; when it runs out it raises " <>
+        "`{:erpc, :timeout}`, so rescue `ErlangError` or catch `:error` around it"
+
+  # A variant rpc_call does not emit today: the timeout's advice in general.
+  defp rpc_timeout_help(_variant),
+    do: "pass a timeout (the last argument) and handle the call running out of it"
 end

@@ -2,6 +2,7 @@ defmodule Argus.Extractors.CallArgsTest do
   use ExUnit.Case, async: true
 
   alias Argus.Extractors.CallArgs
+  alias Argus.Pipeline.Disassemble
 
   defp extract(module) do
     {:ok, data} =
@@ -69,7 +70,7 @@ defmodule Argus.Extractors.CallArgsTest do
         end
         """)
 
-      {:ok, data} = Argus.Pipeline.Disassemble.disassemble_path(bin)
+      {:ok, data} = Disassemble.disassemble_path(bin)
       facts = CallArgs.extract(data)
 
       values = for [_caller, ":ets:lookup/2", "1", value] <- facts[:call_arg], do: value
@@ -270,7 +271,7 @@ defmodule Argus.Extractors.CallArgsTest do
         end
         """)
 
-      {:ok, data} = Argus.Pipeline.Disassemble.disassemble_path(bin)
+      {:ok, data} = Disassemble.disassemble_path(bin)
       rows = Enum.sort(CallArgs.extract(data)[:infinity_arg] || [])
 
       assert rows == [

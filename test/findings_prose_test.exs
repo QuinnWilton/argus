@@ -59,6 +59,11 @@ defmodule Argus.FindingsProseTest do
       assert Findings.rpc_api("rpc") == ":rpc.call"
       assert Findings.rpc_api("multicall") == ":rpc.multicall"
       assert Findings.rpc_api("erpc") == ":erpc.call"
+      assert Findings.rpc_api("erpc_multicall") == ":erpc.multicall"
+      assert Findings.rpc_api("block_call") == ":rpc.block_call"
+      assert Findings.rpc_api("yield") == ":rpc.yield"
+      assert Findings.rpc_api("nb_yield") == ":rpc.nb_yield"
+      assert Findings.rpc_api("erpc_receive") == ":erpc.receive_response"
       assert Findings.rpc_api("other") == "other"
     end
   end
