@@ -216,6 +216,16 @@ edit.
 `shutdown.teardown_touches_sibling`'s terminate half ("terminate/2 calls
 a sibling that may already be down"), after a precision audit.
 
+**Fixed.** The caller must trap exits (`traps_exits`, the same file's
+condition for `cleanup_defect`). A supervisor stops a child with
+`exit(pid, :shutdown)`, and a child that does not trap is killed without
+running terminate/2; its terminate/2 then runs only after a
+`{:stop, ...}` or a crash, while the sibling is up. The cleanup such a
+module loses is `cleanup_defect` "never_runs". All three kinds (`call`,
+`call_restart`, `call_unordered`) check it. The `SiblingGuard` test
+fixtures, which never trapped and were reported only by that accident,
+now trap exits.
+
 **Fixed.** A path from terminate/2 through a closure or a function
 reference is guarded by the call that runs the fun, not by any
 exit-catching try in the function: a try around an unrelated

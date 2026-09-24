@@ -119,6 +119,15 @@ defmodule Argus.Analyses.ShutdownTest do
       assert kinds(O.CalleeStartsLater) == [{"call", @writer, @directory}]
     end
 
+    test "a caller that does not trap exits is not terminated by the shutdown" do
+      skip_without_souffle()
+
+      {:ok, r} =
+        Argus.analyze([O.NonTrappingCalleeLater, O.NonTrappingWriter, O.Directory], :shutdown)
+
+      assert Rows.where(r, :shutdown, "teardown_touches_sibling", phase: "terminate") == []
+    end
+
     test "a sibling started before the caller is still up, under one_for_one" do
       skip_without_souffle()
       assert kinds(O.CalleeStartsEarlier) == []

@@ -267,6 +267,13 @@ terminate_waits_unguarded(mod, terminate, helper, sibling) :-
 //   one_for_all). Under one_for_one an earlier sibling's crash does not
 //   touch mod, and its restart is ordinary let-it-crash, not this rule.
 //
+// Both run terminate/2 while the supervisor stops mod, which it does
+// with exit(pid, :shutdown): only a process that traps exits runs
+// terminate/2 then (traps_exits). One that does not is killed without
+// it, and its terminate/2 runs only after a {:stop, ...} or a crash,
+// while the sibling is up; that cleanup never running is
+// cleanup_defect's "never_runs", not this.
+//
 // When the listing or the strategy does not settle which applies — the
 // same module started on both sides of mod, or a strategy argus did not
 // read — the row stays, as "call_unordered", for the builder to report
@@ -276,11 +283,13 @@ terminate_waits_unguarded(mod, terminate, helper, sibling) :-
 
 calls_sibling_stopped_by_shutdown(mod, terminate, via, sibling, sup) :-
   terminate_waits_unguarded(mod, terminate, via, sibling),
+  traps_exits(mod),
   sibling(sup, mod, sibling),
   stops_before(sup, sibling, mod).
 
 calls_sibling_stopped_by_restart(mod, terminate, via, sibling, sup) :-
   terminate_waits_unguarded(mod, terminate, via, sibling),
+  traps_exits(mod),
   sibling(sup, mod, sibling),
   stops_before(sup, mod, sibling),
   restarts_later_siblings(sup).
@@ -297,6 +306,7 @@ teardown_touches_sibling(mod, sibling, "terminate", "call_restart", via, sup, fu
 
 teardown_touches_sibling(mod, sibling, "terminate", "call_unordered", via, sup, func, site, sup_site) :-
   terminate_waits_unguarded(mod, func, via, sibling),
+  traps_exits(mod),
   sibling(sup, mod, sibling),
   order_unsettled(sup, sibling, mod),
   unguarded_site_or_empty(via, sibling, site),

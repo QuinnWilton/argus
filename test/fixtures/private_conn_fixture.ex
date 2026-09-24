@@ -30,6 +30,8 @@ defmodule Argus.Test.Fixtures.PrivateConn do
 
     @impl true
     def init(:ok) do
+      # Traps, so its terminate/2 runs when the supervisor stops it.
+      Process.flag(:trap_exit, true)
       {:ok, conn} = Conn.start_link(:private)
       {:ok, %{conn: conn}}
     end
@@ -70,7 +72,11 @@ defmodule Argus.Test.Fixtures.PrivateConn do
     def start_link(_), do: GenServer.start_link(__MODULE__, :ok)
 
     @impl true
-    def init(:ok), do: {:ok, nil}
+    def init(:ok) do
+      # Traps, so its terminate/2 runs when the supervisor stops it.
+      Process.flag(:trap_exit, true)
+      {:ok, nil}
+    end
 
     @impl true
     def handle_call(:report, _from, s), do: {:reply, GenServer.call(Cache, :get), s}

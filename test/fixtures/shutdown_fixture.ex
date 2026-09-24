@@ -434,6 +434,42 @@ defmodule Argus.Test.Fixtures.SiblingOrder do
     end
   end
 
+  defmodule NonTrappingWriter do
+    @moduledoc """
+    The writer's terminate/2 calls the directory, but the writer does not
+    trap exits: a supervisor's shutdown kills it without running
+    terminate/2, which then runs only after a {:stop, ...} or a crash,
+    while the directory is up.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def terminate(_reason, _state) do
+      :ok = Argus.Test.Fixtures.SiblingOrder.Directory.unregister(__MODULE__)
+    end
+  end
+
+  defmodule NonTrappingCalleeLater do
+    @moduledoc "The non-trapping writer first, the directory after."
+    use Supervisor
+
+    @impl true
+    def init(_opts) do
+      Supervisor.init(
+        [
+          Argus.Test.Fixtures.SiblingOrder.NonTrappingWriter,
+          Argus.Test.Fixtures.SiblingOrder.Directory
+        ],
+        strategy: :one_for_one
+      )
+    end
+  end
+
   defmodule CalleeStartsLater do
     @moduledoc "The writer first, the directory after: shutdown stops the directory first."
     use Supervisor
@@ -492,7 +528,8 @@ defmodule Argus.Test.Fixtures.SiblingGuard do
   Which try guards terminate/2's call to a sibling: the one whose
   protected region holds that call, or the call leading to the helper
   that makes it. The directory starts last, so shutdown stops it before
-  any writer: every unguarded call is the bug.
+  any writer, and every writer traps exits, so its terminate/2 runs on
+  that shutdown: every unguarded call is the bug.
   """
 
   defmodule Directory do
@@ -546,7 +583,10 @@ defmodule Argus.Test.Fixtures.SiblingGuard do
     alias Argus.Test.Fixtures.SiblingGuard.Directory
 
     @impl true
-    def init(state), do: {:ok, state}
+    def init(state) do
+      Process.flag(:trap_exit, true)
+      {:ok, state}
+    end
 
     @impl true
     def terminate(_reason, _state) do
@@ -565,7 +605,10 @@ defmodule Argus.Test.Fixtures.SiblingGuard do
     alias Argus.Test.Fixtures.SiblingGuard.Directory
 
     @impl true
-    def init(state), do: {:ok, state}
+    def init(state) do
+      Process.flag(:trap_exit, true)
+      {:ok, state}
+    end
 
     @impl true
     def terminate(_reason, state) do
@@ -586,7 +629,10 @@ defmodule Argus.Test.Fixtures.SiblingGuard do
     alias Argus.Test.Fixtures.SiblingGuard.Directory
 
     @impl true
-    def init(state), do: {:ok, state}
+    def init(state) do
+      Process.flag(:trap_exit, true)
+      {:ok, state}
+    end
 
     @impl true
     def terminate(_reason, _state) do
@@ -610,7 +656,10 @@ defmodule Argus.Test.Fixtures.SiblingGuard do
     alias Argus.Test.Fixtures.SiblingGuard.Directory
 
     @impl true
-    def init(state), do: {:ok, state}
+    def init(state) do
+      Process.flag(:trap_exit, true)
+      {:ok, state}
+    end
 
     @impl true
     def terminate(_reason, _state) do
@@ -634,7 +683,10 @@ defmodule Argus.Test.Fixtures.SiblingGuard do
     alias Argus.Test.Fixtures.SiblingGuard.Directory
 
     @impl true
-    def init(state), do: {:ok, state}
+    def init(state) do
+      Process.flag(:trap_exit, true)
+      {:ok, state}
+    end
 
     @impl true
     def terminate(_reason, state) do
@@ -660,7 +712,10 @@ defmodule Argus.Test.Fixtures.SiblingGuard do
     alias Argus.Test.Fixtures.SiblingGuard.Directory
 
     @impl true
-    def init(state), do: {:ok, state}
+    def init(state) do
+      Process.flag(:trap_exit, true)
+      {:ok, state}
+    end
 
     @impl true
     def terminate(_reason, _state) do
@@ -679,7 +734,10 @@ defmodule Argus.Test.Fixtures.SiblingGuard do
     alias Argus.Test.Fixtures.SiblingGuard.Directory
 
     @impl true
-    def init(state), do: {:ok, state}
+    def init(state) do
+      Process.flag(:trap_exit, true)
+      {:ok, state}
+    end
 
     @impl true
     def terminate(_reason, _state) do
@@ -705,7 +763,10 @@ defmodule Argus.Test.Fixtures.SiblingGuard do
     alias Argus.Test.Fixtures.SiblingGuard.Directory
 
     @impl true
-    def init(state), do: {:ok, state}
+    def init(state) do
+      Process.flag(:trap_exit, true)
+      {:ok, state}
+    end
 
     @impl true
     def terminate(_reason, state) do
@@ -730,7 +791,10 @@ defmodule Argus.Test.Fixtures.SiblingGuard do
     alias Argus.Test.Fixtures.SiblingGuard.Directory
 
     @impl true
-    def init(state), do: {:ok, state}
+    def init(state) do
+      Process.flag(:trap_exit, true)
+      {:ok, state}
+    end
 
     @impl true
     def terminate(_reason, _state) do
