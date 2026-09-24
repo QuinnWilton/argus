@@ -15,6 +15,7 @@
 .include "../clientlib/otp.dl"
 .include "../clientlib/process_statem.dl"
 .include "../clientlib/sends.dl"
+.include "../clientlib/vocabulary.dl"
 
 // ══ The outputs ═════════════════════════════════════════════════════
 //
@@ -171,16 +172,8 @@ returns_to_key(f, key) :-
   returns_call(g, f),
   returns_to_key(g, key).
 
-// The map key the ref cancelled in `c` was read from, at the site or
-// at a caller that read it and passed it down.
-.decl cancel_key(cancel: symbol, key: symbol)
-
-cancel_key(c, key) :- timer_cancel(_, c, "field", key, _).
-
-cancel_key(c, key) :-
-  timer_cancel(_, c, "param", _, pos),
-  param_field(c, pos, key).
-
+// The map key a parameter carries a field of, from the callers that
+// read it and passed it down.
 .decl param_field(func: symbol, pos: number, key: symbol)
 
 param_field(f, pos, key) :- call_arg_field(_, f, pos, key).
@@ -264,7 +257,8 @@ takes_message(mod, lit) :-
 .decl timer_cancel_without_flush(mod: symbol, cancel: symbol, arm: symbol, key: symbol, message: symbol, cancel_site: symbol, arm_site: symbol)
 .output timer_cancel_without_flush
 
-// The cancel_timer instruction in `cancel` that read the ref from `key`.
+// The cancel_timer instruction in `cancel` that read the ref from `key`:
+// at the site, or at a caller that read it and passed it down.
 .decl cancel_site(cancel: symbol, key: symbol, id: symbol)
 
 cancel_site(c, key, id) :- timer_cancel(id, c, "field", key, _).
@@ -309,26 +303,38 @@ terminate_helper2(h) :-
   (terminate_callback(g, _, _) ; terminate_helper(g)),
   !called_outside_terminate2(h).
 
-.decl cancel_cannot_go_stale(func: symbol)
+.decl only_on_the_way_out(func: symbol)
 
-cancel_cannot_go_stale(c) :- terminate_callback(c, _, _).
-cancel_cannot_go_stale(c) :- terminate_helper(c).
-cancel_cannot_go_stale(c) :- terminate_helper2(c).
+only_on_the_way_out(c) :- terminate_callback(c, _, _).
+only_on_the_way_out(c) :- terminate_helper(c).
+only_on_the_way_out(c) :- terminate_helper2(c).
+
+// The cancel is in the handle_info/2 clause of the timer's own message:
+// the message is the one being handled, not one left behind.
+.decl handles_that_message(cancel_site: symbol, cancel: symbol, message: symbol) inline
+
+handles_that_message(cs, c, msg) :- cancel_clause(cs, c, msg).
 
 // A ref that never leaves the function: armed, then cancelled from the
 // local the send_after returned (`ref = send_after(...); work();
 // cancel_timer(ref)`). No state key pairs them; the arming site does.
 // The function runs again on the next request, so a message the timer
 // delivered before the cancel is handled as the next run's.
-timer_cancel_without_flush(mod, c, c, "", lit, cs, arm_id) :-
+timer_cancel_without_flush(mod, cancel, cancel, "", message, cancel_site, arm_site) :-
+  cancels_local(cancel_site, cancel, arm_site),
+  local_message(arm_site, message),
+  in_module(cancel, mod),
+  !init_function(mod, cancel),
+  !only_on_the_way_out(cancel),
+  !takes_message(mod, message),
+  !handles_that_message(cancel_site, cancel, message).
+
+// A cancel of a timer the same function armed and kept in a local.
+.decl cancels_local(cancel_site: symbol, cancel: symbol, arm_site: symbol) inline
+
+cancels_local(cs, c, arm_id) :-
   timer_cancel(cs, c, "local", arm_id, _),
-  timer_arm(arm_id, c, "self", _, _, _),
-  function_def(c, mod, _, _, _),
-  !cancel_cannot_go_stale(c),
-  !init_function(mod, c),
-  local_message(arm_id, lit),
-  !takes_message(mod, lit),
-  !cancel_clause(cs, c, lit).
+  timer_arm(arm_id, c, "self", _, _, _).
 
 .decl local_message(arm_site: symbol, message: symbol)
 
@@ -338,21 +344,36 @@ local_message(id, lit) :-
   timer_arm(id, a, "self", "param", pos, _),
   resolved_arg(a, pos, lit).
 
-// A ref kept under a state key. The arm must be one that can follow the
-// cancel: a timer armed only in init/1 and cancelled later is stopped,
-// not re-armed, and its stale message is handled once as an ordinary one.
-timer_cancel_without_flush(mod, c, a, key, lit, cs, arm_id) :-
-  cancel_key(c, key),
-  function_def(c, mod, _, _, _),
-  !cancel_cannot_go_stale(c),
+// A ref kept under a state key: cancelled from it in one place, and
+// armed again under it — with the message it carries — in another. The
+// arm must be one that can follow the cancel: a timer armed only in
+// init/1 and cancelled later is stopped, not re-armed, and its stale
+// message is handled once as an ordinary one.
+timer_cancel_without_flush(mod, cancel, arm, key, message, cancel_site, arm_site) :-
+  cancels_under(cancel_site, cancel, key),
+  rearms_under(arm_site, arm, key, message),
+  in_module(cancel, mod),
+  in_module(arm, mod),
+  !only_on_the_way_out(cancel),
+  !takes_message(mod, message),
+  !handles_that_message(cancel_site, cancel, message).
+
+// The cancel_timer at `cancel_site` in `cancel` takes the ref kept
+// under `key` (cancel_site above).
+.decl cancels_under(cancel_site: symbol, cancel: symbol, key: symbol) inline
+
+cancels_under(cs, c, key) :- cancel_site(c, key, cs).
+
+// The send_after at `arm_site` in `arm` keeps its ref under `key`, and
+// the timer carries `message`; an arm in init/1 does not re-arm.
+.decl rearms_under(arm_site: symbol, arm: symbol, key: symbol, message: symbol)
+
+rearms_under(arm_site, a, key, msg) :-
   timer_key(a, key),
-  function_def(a, mod, _, _, _),
-  !init_function(mod, a),
-  stored_message(key, a, lit),
-  !takes_message(mod, lit),
-  cancel_site(c, key, cs),
-  !cancel_clause(cs, c, lit),
-  timer_arm(arm_id, a, "self", _, _, _).
+  stored_message(key, a, msg),
+  timer_arm(arm_site, a, "self", _, _, _),
+  in_module(a, mod),
+  !init_function(mod, a).
 
 // ── Evidence: where a monitored entry is removed, where a task is yielded ─
 .decl monitored_entry_removal(mod: symbol, kind: symbol, site: symbol, func: symbol)

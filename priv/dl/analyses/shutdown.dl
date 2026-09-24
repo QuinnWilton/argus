@@ -13,6 +13,7 @@
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
 .include "../clientlib/process_statem.dl"
+.include "../clientlib/vocabulary.dl"
 
 // ══ terminate/2 and the exits it needs to trap ══════════════════════
 .decl traps_exits(mod: symbol)
@@ -129,10 +130,17 @@ cleanup_defect(mod, behaviour, "truncated", category, api, via) :-
 // through the sibling's API (`Producer.pause()`), so the try guards a
 // local call rather than GenServer.call itself: any exit-catching try in
 // the function counts, which errs quiet.
-.decl guarded_exit_call(func: symbol)
+.decl catches_exit(func: symbol)
 
-guarded_exit_call(f) :- catches_class(f, "exit").
-guarded_exit_call(f) :- catch_tag(_, f, "exit", ":noproc").
+catches_exit(f) :- catches_class(f, "exit").
+catches_exit(f) :- catch_tag(_, f, "exit", ":noproc").
+
+// A call that waits for another module's process to answer. A call to a
+// connection the module started for itself (private_dep, calls.dl) is
+// not a call to the sibling.
+.decl waits_on(func: symbol, mod: symbol) inline
+
+waits_on(f, m) :- sync_dep(f, m), !private_dep(f, m).
 
 // Teardown that touches a sibling the supervisor owns, in one relation:
 // `phase` is "terminate" (terminate/2 waits on a sibling that may already
@@ -145,22 +153,18 @@ guarded_exit_call(f) :- catch_tag(_, f, "exit", ":noproc").
 
 .decl sibling_call(mod: symbol, sibling: symbol, func: symbol, via: symbol, sup: symbol)
 
-// A call to a connection the module started for itself
-// (private_dep, calls.dl) is not a call to the sibling.
-sibling_call(mod, sibling, func, func, sup) :-
-  terminate_callback(func, mod, _),
-  sync_dep(func, sibling),
-  !private_dep(func, sibling),
-  !guarded_exit_call(func),
+sibling_call(mod, sibling, terminate, terminate, sup) :-
+  is_terminate(terminate, mod),
+  waits_on(terminate, sibling),
+  !catches_exit(terminate),
   sibling(sup, mod, sibling).
 
-sibling_call(mod, sibling, func, via, sup) :-
-  terminate_callback(func, mod, _),
-  terminate_reach.reaches(func, via, _),
-  sync_dep(via, sibling),
-  !private_dep(via, sibling),
-  !guarded_exit_call(func),
-  !guarded_exit_call(via),
+sibling_call(mod, sibling, terminate, helper, sup) :-
+  is_terminate(terminate, mod),
+  terminate_reach.reaches(terminate, helper, _),
+  waits_on(helper, sibling),
+  !catches_exit(terminate),
+  !catches_exit(helper),
   sibling(sup, mod, sibling).
 
 teardown_touches_sibling(mod, sibling, "terminate", "call", via, sup, func, site, sup_site) :-

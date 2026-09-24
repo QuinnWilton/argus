@@ -12,6 +12,7 @@
 .include "../clientlib/otp.dl"
 .include "../clientlib/process_statem.dl"
 .include "../clientlib/resolved_calls.dl"
+.include "../clientlib/vocabulary.dl"
 
 // ══ The outputs ═════════════════════════════════════════════════════
 //
@@ -484,18 +485,32 @@ receive_in_callback(id, func, callback, behaviour, proximity, "true") :-
 // An rpc in init/1, or a :global op init/1 reaches, is startup's
 // finding (blocks_on_peer, "remote" and "global"): the same site, with
 // the supervisor's start held on it, reported there once.
+unbounded_wait(func, call, "rpc", variant, "") :-
+  makes_rpc(func, call, variant),
+  no_timeout(call),
+  !during_init(call).
+
+// An :rpc call a function makes, and which of the rpc functions it is.
+.decl makes_rpc(func: symbol, call: symbol, variant: symbol) inline
+
+makes_rpc(f, call, variant) :- rpc_call(call, f, variant, _).
+
+// The variants whose arity leaves the timeout out wait for :infinity.
+.decl no_timeout(call: symbol) inline
+
+no_timeout(call) :- rpc_call(call, _, _, "-1").
+
+// A site init/1 runs — an rpc in init/1 itself, or a :global op it
+// reaches on its own stack — holds the supervisor's start, and is
+// startup's finding (blocks_on_peer). Reported there, once.
 .init init_global_reach = SameProcessReach
 
 init_global_reach.seed(g, site) :- global_op(site, g, _, _).
 
-.decl init_owned_site(site: symbol)
+.decl during_init(site: symbol)
 
-init_owned_site(id) :- rpc_call(id, f, _, _), init_function(_, f).
-init_owned_site(id) :- init_global_reach.reaches(f, id), init_function(_, f).
-
-unbounded_wait(func, id, "rpc", variant, "") :-
-  rpc_call(id, func, variant, "-1"),
-  !init_owned_site(id).
+during_init(call) :- makes_rpc(f, call, _), is_init(f).
+during_init(site) :- init_global_reach.reaches(f, site), is_init(f).
 
 // ── RPC in GenServer callback ────────────────────────────────────
 
@@ -519,11 +534,9 @@ unbounded_wait(func, "", "rpc_in_callback", variant, "") :-
 // retries = "0" means try once and return immediately — non-blocking.
 // site is the :global call instruction. One row per site — finding
 // builders dedupe on (func, op, retries).
-unbounded_wait(func, id, "global", op, retries) :-
-  global_op(id, func, op, retries),
-  retries != "0",
-  retries != "dynamic",
-  !init_owned_site(id).
+unbounded_wait(func, lock, "global", op, retries) :-
+  cluster_lock(lock, func, op, retries),
+  !during_init(lock).
 
 // ══ A peer call that catches :noproc but not :shutdown ══════════════
 

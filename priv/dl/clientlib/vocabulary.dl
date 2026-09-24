@@ -1,0 +1,49 @@
+// The words the findings' top-level rules are written in.
+//
+// A finding rule should read aloud as the sentence it checks:
+//
+//   unbounded_wait(func, call, "rpc", variant, "") :-
+//     makes_rpc(func, call, variant),
+//     no_timeout(call),
+//     !during_init(call).
+//
+// These are the terms more than one analysis says: a function's module,
+// the callbacks a process runs at its edges, a cluster-wide lock, a
+// public table. Each is inlined — Souffle substitutes the body where the
+// word is used — so naming a concept costs no relation of its own. What
+// only one analysis says lives in that analysis's file, next to the rule
+// that reads it.
+//
+// Included after otp.dl, whose callbacks these name.
+
+// A function and the module it is defined in.
+.decl in_module(func: symbol, mod: symbol) inline
+
+in_module(f, m) :- function_def(f, m, _, _, _).
+
+// init/1 of a behaviour module: the callback its supervisor waits on.
+.decl is_init(func: symbol) inline
+
+is_init(f) :- init_function(_, f).
+
+// terminate/2 of a module whose behaviour runs one.
+.decl is_terminate(func: symbol, mod: symbol) inline
+
+is_terminate(f, m) :- terminate_callback(f, m, _).
+
+// A :global lock or transaction that retries until it gets its way.
+// `retries` is :infinity or a positive count (retried with backoff);
+// "0" tries once and returns, and "dynamic" is not known to block.
+.decl cluster_lock(site: symbol, func: symbol, op: symbol, retries: symbol) inline
+
+cluster_lock(site, f, op, retries) :-
+  global_op(site, f, op, retries),
+  retries != "0",
+  retries != "dynamic".
+
+// An ETS table created :public under a name: any process can write it.
+.decl public_table(name: symbol) inline
+
+public_table(name) :-
+  ets_new(id, _, name),
+  ets_option(id, "access", "public").

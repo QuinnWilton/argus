@@ -34,6 +34,7 @@
 .include "../clientlib/check_then_act.dl"
 .include "../clientlib/specs.dl"
 .include "../clientlib/tables.dl"
+.include "../clientlib/vocabulary.dl"
 
 .init runs = RunsConcurrently
 
@@ -198,18 +199,18 @@ registry_race(mod, f, lookup_api, create_api, key_source, key, check, act) :-
 
 .init rows = CheckThenAct
 
-.decl ets_deciding_read(op: symbol)
+.decl deciding_read_op(op: symbol)
 
-ets_deciding_read("lookup").
-ets_deciding_read("lookup_element").
-ets_deciding_read("member").
+deciding_read_op("lookup").
+deciding_read_op("lookup_element").
+deciding_read_op("member").
 
-.decl ets_plain_write(op: symbol)
+.decl plain_write_op(op: symbol)
 
-ets_plain_write("insert").
-ets_plain_write("delete").
-ets_plain_write("delete_object").
-ets_plain_write("update_element").
+plain_write_op("insert").
+plain_write_op("delete").
+plain_write_op("delete_object").
+plain_write_op("update_element").
 
 // The table in the operation's own function's terms.
 .decl ets_table_ident(id: symbol, ts: symbol, t: symbol)
@@ -217,17 +218,29 @@ ets_plain_write("update_element").
 ets_table_ident(id, "literal", name) :- ets_op(id, _, name, _, _), name != "dynamic".
 ets_table_ident(id, "param", to_string(p)) :- ets_op(id, _, "dynamic", _, _), ets_op_param(id, p).
 
-rows.check(r, f, ts, t, ks, k) :-
-  ets_op(r, f, _, op, "read"),
-  ets_deciding_read(op),
-  ets_table_ident(r, ts, t),
-  ets_key(r, ks, k).
+rows.check(read, func, table_kind, table, key_kind, key) :-
+  deciding_read(read, func),
+  local_table_and_key(read, table_kind, table, key_kind, key).
 
-rows.act(w, f, ts, t, ks, k) :-
-  ets_op(w, f, _, op, "write"),
-  ets_plain_write(op),
-  ets_table_ident(w, ts, t),
-  ets_key(w, ks, k).
+rows.act(write, func, table_kind, table, key_kind, key) :-
+  plain_write(write, func),
+  local_table_and_key(write, table_kind, table, key_kind, key).
+
+// A read whose answer a caller can decide on, and a write that is not
+// one of the atomic forms.
+.decl deciding_read(read: symbol, func: symbol) inline
+.decl plain_write(write: symbol, func: symbol) inline
+
+deciding_read(r, f) :- ets_op(r, f, _, op, "read"), deciding_read_op(op).
+plain_write(w, f) :- ets_op(w, f, _, op, "write"), plain_write_op(op).
+
+// An operation's table and key, the table in its own function's terms
+// (ets_table_ident) or as clientlib/tables.dl knows it (ets_table).
+.decl local_table_and_key(op: symbol, table_kind: symbol, table: symbol, key_kind: symbol, key: symbol) inline
+.decl table_and_key(op: symbol, table_kind: symbol, table: symbol, key_kind: symbol, key: symbol) inline
+
+local_table_and_key(op, ts, t, ks, k) :- ets_table_ident(op, ts, t), ets_key(op, ks, k).
+table_and_key(op, tk, t, ks, k) :- ets_table(op, tk, t), ets_key(op, ks, k).
 
 // The table a parameter holds where a pair meets on it: a name a caller
 // passes there, or the reference :ets.new returned in a caller, through
@@ -261,22 +274,22 @@ table_at_param(f, p, name) :-
   p = to_string(n),
   table_at_param(c, to_string(m), name).
 
-.decl ets_pair(func: symbol, read: symbol, write: symbol, name: symbol, key: symbol)
+.decl reads_then_writes(func: symbol, read: symbol, write: symbol, name: symbol, key: symbol)
 
-ets_pair(f, r, w, name, k) :- rows.meets(f, r, w, "literal", name, _, k).
-ets_pair(f, r, w, name, k) :- rows.meets(f, r, w, "param", p, _, k), table_at_param(f, p, name).
+reads_then_writes(f, r, w, name, k) :- rows.meets(f, r, w, "literal", name, _, k).
+reads_then_writes(f, r, w, name, k) :- rows.meets(f, r, w, "param", p, _, k), table_at_param(f, p, name).
 
-runs.seed(f) :- ets_pair(f, _, _, _, _).
+runs.seed(f) :- reads_then_writes(f, _, _, _, _).
 runs.seed(f) :- ets_op(_, f, _, _, "write").
 
-.decl ets_concurrent_write(name: symbol, func: symbol)
+.decl another_process_writes(name: symbol, func: symbol)
 
-ets_concurrent_write(name, f) :-
-  ets_pair(f, _, _, name, _),
+another_process_writes(name, f) :-
+  reads_then_writes(f, _, _, name, _),
   !runs.single_process(f).
 
-ets_concurrent_write(name, f) :-
-  ets_pair(f, _, _, name, _),
+another_process_writes(name, f) :-
+  reads_then_writes(f, _, _, name, _),
   runs.single_process(f),
   runs.entry_reaches(m, f),
   ets_op(_, g, name, _, "write"),
@@ -371,7 +384,7 @@ ets_op_table(id, name) :-
 table_param_needed(f, to_string(p)) :-
   ets_op(id, f, "dynamic", op, "write"),
   ets_op_param(id, p),
-  (op = "update_counter" ; ets_plain_write(op)).
+  (op = "update_counter" ; plain_write_op(op)).
 
 .decl writes_back(name: symbol)
 
@@ -410,7 +423,7 @@ recomputed(w) :-
 .decl decision_returned(func: symbol, check: symbol)
 
 decision_returned(f, c) :-
-  ets_pair(f, c, _, _, _),
+  reads_then_writes(f, c, _, _, _),
   rows.carries(f, kind, src, c, _, _, _, _),
   returns_depends(f, kind, src).
 
@@ -430,22 +443,22 @@ decision_escapes(c) :-
   function_def(g, _, _, _, 1),
   !callee_returns(g, "constant").
 
-.decl benign_pair(func: symbol, read: symbol, write: symbol)
+.decl harmless_race(func: symbol, read: symbol, write: symbol)
 
-benign_pair(f, r, w) :-
-  ets_pair(f, r, w, name, _),
+harmless_race(f, r, w) :-
+  reads_then_writes(f, r, w, name, _),
   ets_op(w, _, _, op, _),
   (op = "delete" ; op = "delete_object"),
   !writes_back(name).
 
-benign_pair(f, r, w) :-
-  ets_pair(f, r, w, name, _),
+harmless_race(f, r, w) :-
+  reads_then_writes(f, r, w, name, _),
   !carries_read(w),
   recomputed(w),
   !writes_back(name).
 
-benign_pair(f, r, w) :-
-  ets_pair(f, r, w, name, _),
+harmless_race(f, r, w) :-
+  reads_then_writes(f, r, w, name, _),
   !carries_read(w),
   !writes_back(name),
   !decision_escapes(r).
@@ -453,13 +466,12 @@ benign_pair(f, r, w) :-
 .decl ets_check_act(mod: symbol, func: symbol, name: symbol, key: symbol, read: symbol, write: symbol)
 .output ets_check_act
 
-ets_check_act(mod, func, name, key, read, write) :-
-  ets_pair(func, read, write, name, key),
-  ets_new(id, _, name),
-  ets_option(id, "access", "public"),
-  function_def(func, mod, _, _, _),
-  ets_concurrent_write(name, func),
-  !benign_pair(func, read, write).
+ets_check_act(mod, func, table, key, read, write) :-
+  reads_then_writes(func, read, write, table, key),
+  public_table(table),
+  another_process_writes(table, func),
+  !harmless_race(func, read, write),
+  in_module(func, mod).
 
 // ── Published before it is complete ──────────────────────────────
 //
@@ -590,13 +602,13 @@ publishes_early(f, w1, w2) :-
 // A read that raises when the key has no row. lookup_element/4 and
 // update_counter/4 take a default and do not; update_element answers
 // false.
-.decl raises_on_missing(r: symbol, func: symbol)
+.decl raises_if_missing(r: symbol, func: symbol)
 
-raises_on_missing(r, g) :-
+raises_if_missing(r, g) :-
   ets_op(r, g, _, "lookup_element", _),
   remote_call(r, _, ":ets", "lookup_element", 3).
 
-raises_on_missing(r, g) :-
+raises_if_missing(r, g) :-
   ets_op(r, g, _, "update_counter", _),
   remote_call(r, _, ":ets", "update_counter", 3).
 
@@ -631,7 +643,7 @@ publish_reader_candidate(f, w1, w2, r, g, ak, a) :-
   ets_table(ra, ak, a),
   hands_out(ra),
   ets_table(w2, bk, b),
-  raises_on_missing(r, g),
+  raises_if_missing(r, g),
   ets_table(r, bk, b),
   ets_key(r, ks, _),
   ks != "literal",
@@ -703,24 +715,24 @@ key_may_come_from(r, tk, t) :-
   site_reads(r, g, k, s),
   (from_table(g, k, s, tk, t) ; open_source(g, k, s)).
 
-.decl publish_reader(func: symbol, publish: symbol, complete: symbol, reader: symbol, g: symbol)
+.decl reads_in_the_gap(func: symbol, publish: symbol, complete: symbol, reader: symbol, g: symbol)
 
-publish_reader(f, w1, w2, r, g) :-
+reads_in_the_gap(f, w1, w2, r, g) :-
   publish_reader_candidate(f, w1, w2, r, g, ak, a),
   key_may_come_from(r, ak, a).
 
-runs.seed(f) :- publish_reader(f, _, _, _, _).
-runs.seed(g) :- publish_reader(_, _, _, _, g).
+runs.seed(f) :- reads_in_the_gap(f, _, _, _, _).
+runs.seed(g) :- reads_in_the_gap(_, _, _, _, g).
 
 // The reader can run while the writer is between the two writes: in
 // more than one process, or one the writer's process does not reach.
-.decl publish_concurrent(func: symbol, reader: symbol)
+.decl can_run_in_between(func: symbol, reader: symbol)
 
-publish_concurrent(f, g) :- publish_reader(f, _, _, _, g), !runs.single_process(f).
-publish_concurrent(f, g) :- publish_reader(f, _, _, _, g), !runs.single_process(g).
+can_run_in_between(f, g) :- reads_in_the_gap(f, _, _, _, g), !runs.single_process(f).
+can_run_in_between(f, g) :- reads_in_the_gap(f, _, _, _, g), !runs.single_process(g).
 
-publish_concurrent(f, g) :-
-  publish_reader(f, _, _, _, g),
+can_run_in_between(f, g) :-
+  reads_in_the_gap(f, _, _, _, g),
   runs.entry_reaches(m, g),
   !runs.entry_reaches(m, f).
 
@@ -730,13 +742,17 @@ publish_concurrent(f, g) :-
 .decl ets_publish_order(mod: symbol, func: symbol, published_kind: symbol, published_in: symbol, completed_kind: symbol, completed_in: symbol, publish: symbol, complete: symbol, reader: symbol)
 .output ets_publish_order
 
-ets_publish_order(mod, f, ak, a, bk, b, w1, w2, r) :-
-  publish_reader(f, w1, w2, r, g),
-  publish_concurrent(f, g),
-  function_def(f, mod, _, _, _),
-  ets_table(w1, ak, a),
-  ets_table(w2, bk, b),
-  ets_table(r, bk, b).
+ets_publish_order(mod, writer, pub_kind, pub_table, row_kind, row_table, publish, complete, reader) :-
+  reads_in_the_gap(writer, publish, complete, reader, reader_func),
+  can_run_in_between(writer, reader_func),
+  in_module(writer, mod),
+  table_of(publish, pub_kind, pub_table),
+  table_of(complete, row_kind, row_table),
+  table_of(reader, row_kind, row_table).
+
+.decl table_of(op: symbol, table_kind: symbol, table: symbol) inline
+
+table_of(op, tk, t) :- ets_table(op, tk, t).
 
 // ── Read, then a row that may be gone ────────────────────────────
 //
@@ -761,60 +777,57 @@ ets_publish_order(mod, f, ak, a, bk, b, w1, w2, r) :-
 
 .init missing = CheckThenAct
 
-missing.check(r, f, tk, t, ks, k) :-
-  ets_op(r, f, _, op, "read"),
-  ets_deciding_read(op),
-  ets_table(r, tk, t),
-  ets_key(r, ks, k).
+missing.check(read, func, table_kind, table, key_kind, key) :-
+  deciding_read(read, func),
+  table_and_key(read, table_kind, table, key_kind, key).
 
-missing.act(a, f, tk, t, ks, k) :-
-  raises_on_missing(a, f),
-  ets_table(a, tk, t),
-  ets_key(a, ks, k).
+missing.act(act, func, table_kind, table, key_kind, key) :-
+  raises_if_missing(act, func),
+  table_and_key(act, table_kind, table, key_kind, key).
 
-.decl row_remover(id: symbol, func: symbol, tk: symbol, t: symbol)
+.decl removes_rows(id: symbol, func: symbol, tk: symbol, t: symbol)
 
-row_remover(d, h, tk, t) :-
+removes_rows(d, h, tk, t) :-
   ets_op(d, h, _, op, _),
   (op = "take" ; op = "delete" ; op = "delete_object" ; op = "select_delete" ; op = "match_delete" ; op = "delete_all_objects"),
   ets_table(d, tk, t).
 
-.decl missing_pair(func: symbol, check: symbol, act: symbol, g: symbol, tk: symbol, t: symbol)
+.decl acts_on_found_row(func: symbol, check: symbol, act: symbol, g: symbol, tk: symbol, t: symbol)
 
-missing_pair(f, c, a, g, tk, t) :-
+acts_on_found_row(f, c, a, g, tk, t) :-
   missing.meets(f, c, a, tk, t, _, _),
-  raises_on_missing(a, g),
+  raises_if_missing(a, g),
   readable_elsewhere(a, tk, t),
   !rescues_argument_error(f),
   !rescues_argument_error(g).
 
-runs.seed(f) :- missing_pair(f, _, _, _, _, _).
-runs.seed(h) :- missing_pair(_, _, _, _, tk, t), row_remover(_, h, tk, t).
+runs.seed(f) :- acts_on_found_row(f, _, _, _, _, _).
+runs.seed(h) :- acts_on_found_row(_, _, _, _, tk, t), removes_rows(_, h, tk, t).
 
 // The remover can run while the pair's function is between the check and
 // the act: the pair's function runs in more than one process, or the
 // remover runs in a process that does not run it.
-.decl missing_concurrent(func: symbol, remover: symbol)
+.decl can_remove_in_between(func: symbol, remover: symbol)
 
-missing_concurrent(f, d) :-
-  missing_pair(f, _, _, _, tk, t),
-  row_remover(d, _, tk, t),
+can_remove_in_between(f, d) :-
+  acts_on_found_row(f, _, _, _, tk, t),
+  removes_rows(d, _, tk, t),
   !runs.single_process(f).
 
-missing_concurrent(f, d) :-
-  missing_pair(f, _, _, _, tk, t),
-  row_remover(d, h, tk, t),
+can_remove_in_between(f, d) :-
+  acts_on_found_row(f, _, _, _, tk, t),
+  removes_rows(d, h, tk, t),
   runs.entry_reaches(m, h),
   !runs.entry_reaches(m, f).
 
 .decl ets_missing_row(mod: symbol, func: symbol, table_kind: symbol, table: symbol, check: symbol, act: symbol, remover: symbol)
 .output ets_missing_row
 
-ets_missing_row(mod, f, tk, t, c, a, d) :-
-  missing_pair(f, c, a, _, tk, t),
-  row_remover(d, _, tk, t),
-  missing_concurrent(f, d),
-  function_def(f, mod, _, _, _).
+ets_missing_row(mod, func, table_kind, table, check, act, remover) :-
+  acts_on_found_row(func, check, act, _, table_kind, table),
+  removes_rows(remover, _, table_kind, table),
+  can_remove_in_between(func, remover),
+  in_module(func, mod).
 
 // ── Dirty read, then dirty write ─────────────────────────────────
 //
@@ -829,14 +842,17 @@ ets_missing_row(mod, f, tk, t, c, a, d) :-
 
 .init records = CheckThenAct
 
-records.check(r, f, ts, t, ks, k) :- mnesia_op(r, f, _, "read", ts, t, ks, k).
-records.act(w, f, ts, t, ks, k) :- mnesia_op(w, f, _, "write", ts, t, ks, k).
+records.check(read, func, table_kind, table, key_kind, key) :-
+  mnesia_op(read, func, _, "read", table_kind, table, key_kind, key).
 
-.decl mnesia_pair(func: symbol, read: symbol, write: symbol, table: symbol, key: symbol)
+records.act(write, func, table_kind, table, key_kind, key) :-
+  mnesia_op(write, func, _, "write", table_kind, table, key_kind, key).
 
-mnesia_pair(f, r, w, t, k) :- records.meets(f, r, w, "literal", t, _, k).
-mnesia_pair(f, r, w, t, k) :- records.meets(f, r, w, "param", p, _, k), table_at_param(f, p, t).
-mnesia_pair(f, r, w, t, k) :- records.meets(f, r, w, "element 0", p, _, k), table_at_record(f, p, t).
+.decl reads_then_writes_record(func: symbol, read: symbol, write: symbol, table: symbol, key: symbol)
+
+reads_then_writes_record(f, r, w, t, k) :- records.meets(f, r, w, "literal", t, _, k).
+reads_then_writes_record(f, r, w, t, k) :- records.meets(f, r, w, "param", p, _, k), table_at_param(f, p, t).
+reads_then_writes_record(f, r, w, t, k) :- records.meets(f, r, w, "element 0", p, _, k), table_at_record(f, p, t).
 
 // A record handed in whole names its table in its first element: the
 // callers' tuples say which (elvengard_ecs's insert_new(record), called
@@ -862,17 +878,17 @@ table_at_record(f, p, t) :-
   p = to_string(n),
   table_at_record(c, to_string(m), t).
 
-runs.seed(f) :- mnesia_pair(f, _, _, _, _).
+runs.seed(f) :- reads_then_writes_record(f, _, _, _, _).
 runs.seed(f) :- mnesia_op(_, f, _, "write", _, _, _, _).
 
-.decl mnesia_concurrent_write(table: symbol, func: symbol)
+.decl another_process_writes_record(table: symbol, func: symbol)
 
-mnesia_concurrent_write(t, f) :-
-  mnesia_pair(f, _, _, t, _),
+another_process_writes_record(t, f) :-
+  reads_then_writes_record(f, _, _, t, _),
   !runs.single_process(f).
 
-mnesia_concurrent_write(t, f) :-
-  mnesia_pair(f, _, _, t, _),
+another_process_writes_record(t, f) :-
+  reads_then_writes_record(f, _, _, t, _),
   runs.single_process(f),
   runs.entry_reaches(m, f),
   mnesia_op(_, g, _, "write", "literal", t, _, _),
@@ -936,16 +952,21 @@ record_writes_back(t) :-
 table_param_needed(f, p) :- mnesia_op(_, f, _, "write", "param", p, _, _).
 
 mnesia_check_act(mod, func, table, key, read, write, op) :-
-  mnesia_pair(func, read, write, table, key),
-  function_def(func, mod, _, _, _),
-  mnesia_concurrent_write(table, func),
-  mnesia_op(write, _, op, _, _, _, _, _),
-  !deletes_unaccumulated(write, table).
+  reads_then_writes_record(func, read, write, table, key),
+  another_process_writes_record(table, func),
+  !harmless_delete(write, table),
+  mnesia_call(write, op),
+  in_module(func, mod).
 
-.decl deletes_unaccumulated(write: symbol, table: symbol)
+// Which dirty operation a Mnesia call is.
+.decl mnesia_call(site: symbol, op: symbol) inline
 
-deletes_unaccumulated(w, t) :-
-  mnesia_pair(_, _, w, t, _),
+mnesia_call(site, op) :- mnesia_op(site, _, op, _, _, _, _, _).
+
+.decl harmless_delete(write: symbol, table: symbol)
+
+harmless_delete(w, t) :-
+  reads_then_writes_record(_, _, w, t, _),
   mnesia_op(w, _, op, _, _, _, _, _),
   (op = "dirty_delete" ; op = "dirty_delete_object"),
   !record_writes_back(t).

@@ -11,6 +11,7 @@
 .include "../clientlib/process_statem.dl"
 .include "../clientlib/signals.dl"
 .include "../clientlib/specs.dl"
+.include "../clientlib/vocabulary.dl"
 
 // ══ The three outputs ═══════════════════════════════════════════════
 //
@@ -291,23 +292,48 @@ start_result_owned(site) :-
   ignored_error_result(site, _, callee),
   (contains(".start_link/", callee) ; contains(".start/", callee)).
 
+// The program's belief is its clear majority: three or more sites that
+// agree, and the deviants a quarter or fewer of the population.
+.decl clear_majority(agree: number, deviate: number) inline
+
+clear_majority(agree, deviate) :-
+  agree >= 3,
+  deviate * 4 <= agree + deviate.
+
+// How many of the callee's sites in `scope` bind its result, drop it,
+// guard the call with a try, or make it bare.
+.decl times_used(callee: symbol, scope: symbol, n: number) inline
+.decl times_ignored(callee: symbol, scope: symbol, n: number) inline
+.decl times_guarded(callee: symbol, scope: symbol, n: number) inline
+.decl times_bare(callee: symbol, scope: symbol, n: number) inline
+
+times_used(c, t, n) :- fate_count(c, t, "used", n).
+times_ignored(c, t, n) :- fate_count(c, t, "ignored", n).
+times_guarded(c, t, n) :- guard_count(c, t, "try", n).
+times_bare(c, t, n) :- guard_count(c, t, "bare", n).
+
+// The one site in question: its result dropped, or the call made bare.
+.decl result_ignored(site: symbol, func: symbol, callee: symbol, scope: symbol) inline
+.decl called_bare(site: symbol, func: symbol, callee: symbol, scope: symbol) inline
+
+result_ignored(site, f, c, t) :- program_site(site, f, c, "ignored", _, _, t).
+called_bare(site, f, c, t) :- program_site(site, f, c, _, "bare", _, t).
+
 // A site unchecked_result or startup already owns is not reported twice.
-inconsistent_handling(func, site, callee, "result_checked", used, ignored, t) :-
-  program_site(site, func, callee, "ignored", _, _, t),
+inconsistent_handling(func, site, callee, "result_checked", used, ignored, scope) :-
+  result_ignored(site, func, callee, scope),
   !result_uncheckable(callee),
-  fate_count(callee, t, "used", used),
-  fate_count(callee, t, "ignored", ignored),
-  used >= 3,
-  ignored * 4 <= used + ignored,
+  times_used(callee, scope, used),
+  times_ignored(callee, scope, ignored),
+  clear_majority(used, ignored),
   !unchecked_result(func, site, _, _),
   !start_result_owned(site).
 
-inconsistent_handling(func, site, callee, "exception_guarded", guarded, bare, t) :-
-  program_site(site, func, callee, _, "bare", _, t),
-  guard_count(callee, t, "try", guarded),
-  guard_count(callee, t, "bare", bare),
-  guarded >= 3,
-  bare * 4 <= guarded + bare.
+inconsistent_handling(func, site, callee, "exception_guarded", guarded, bare, scope) :-
+  called_bare(site, func, callee, scope),
+  times_guarded(callee, scope, guarded),
+  times_bare(callee, scope, bare),
+  clear_majority(guarded, bare).
 
 // The sites that follow the convention, attached to the finding as its
 // evidence: what "every other call site" looks like, drawn from the

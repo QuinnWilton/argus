@@ -10,6 +10,27 @@ What 0.20.0 will ship; the release dates this heading and drops the
 `-dev` from `mix.exs`. Grouped by concern. Each entry opens with what it
 does: **Added**, **Changed**, **Fixed** or **Removed**.
 
+### Rules that read as their sentence
+
+**Changed.** The top-level rules of the findings people read most —
+`blocking.unbounded_wait` (rpc and :global), `startup.blocks_on_peer`
+(a cluster-wide lock in init/1), `shutdown.teardown_touches_sibling`
+(through `sibling_call`), `mailbox.timer_cancel_without_flush`,
+`failure.inconsistent_handling`, and `races.ets_check_act`,
+`ets_missing_row`, `ets_publish_order` and `mnesia_check_act` — are
+written in named concepts (`makes_rpc`, `no_timeout`, `during_init`,
+`cluster_lock`, `waits_on`, `catches_exit`, `cancels_under`,
+`rearms_under`, `clear_majority`, `reads_then_writes`, `public_table`,
+`another_process_writes`, ...) with the plumbing underneath, so each
+reads aloud as what it checks. Terms shared between analyses live in
+`priv/dl/clientlib/vocabulary.dl`; single-use terms stay beside their
+rule. The concepts are Soufflé `inline` relations where they are
+non-recursive, so naming one materializes nothing. Output relations,
+their columns and every finding are unchanged (the corpus's 1,213
+findings compared whole, before and after, are identical); no
+input set moved.
+
+
 ### Analysis names
 
 **Removed.** The alias table for the analysis names retired in 0.17
