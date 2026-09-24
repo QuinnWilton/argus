@@ -142,6 +142,18 @@ defmodule Argus.Pipeline.ShardsTest do
       assert File.ls!(monolithic) |> Enum.reject(&String.ends_with?(&1, ".facts")) == []
     end
 
+    test "names the modules it lost, whether or not the base's rows are asked for",
+         %{tmp_dir: tmp} do
+      for producers <- [[:base, Argus.Extractors.ETS], [Argus.Extractors.ETS]] do
+        dirs = shard_dirs(Path.join(tmp, "#{length(producers)}"), producers)
+
+        assert {:ok, %{lost: lost}} =
+                 Pipeline.run_shards([:gen_server, :supervisor], dirs, timeout: 1)
+
+        assert Enum.sort(lost) == [":gen_server", ":supervisor"]
+      end
+    end
+
     test "names the modules whose installed specs it read", %{tmp_dir: tmp} do
       dirs = shard_dirs(tmp, [Argus.Extractors.Specs])
 

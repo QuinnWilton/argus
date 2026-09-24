@@ -243,22 +243,27 @@ defmodule Argus.Pipeline do
       writers = Map.new(dirs, fn {producer, dir} -> {producer, Writer.new(dir, written)} end)
       memo = new_memo()
 
+      # The names a module's base extraction errors give are read here,
+      # whether or not the base's rows are written: for a module the run
+      # lost they are the module's, which a run of extractors alone would
+      # otherwise not know it lost.
       shape = fn produced, kept ->
         encoded =
           for {producer, facts} <- produced,
               MapSet.member?(selected, producer),
               do: {producer, Writer.encode(facts, written)}
 
-        {encoded, kept}
+        names = for {:base, %{extraction_error: rows}} <- produced, [name | _] <- rows, do: name
+        {encoded, kept, names}
       end
 
       try do
         inputs
         |> extract_stream(opts, memo, how, shape)
         |> Enum.reduce_while({:ok, writers, [], []}, fn
-          {status, {encoded, kept}}, {:ok, writers, lost, bases}
+          {status, {encoded, kept, names}}, {:ok, writers, lost, bases}
           when status in [:ok, :lost] ->
-            lost = if status == :lost, do: lost ++ lost_names(encoded), else: lost
+            lost = if status == :lost, do: lost ++ names, else: lost
             bases = if keep?, do: [kept | bases], else: bases
 
             case append_all(writers, encoded) do
@@ -316,14 +321,6 @@ defmodule Argus.Pipeline do
   end
 
   defp close_all(writers), do: Enum.each(writers, fn {_producer, w} -> Writer.close(w) end)
-
-  # The module a lost module's one `extraction_error` row names, from
-  # the encoded row: `<module>\t<step>\t<reason>`.
-  defp lost_names(encoded) do
-    for {:base, %{extraction_error: bytes}} <- encoded,
-        [name | _] <- Argus.Tsv.decode(bytes),
-        do: name
-  end
 
   # The modules whose installed specs the run read: the memo's keys
   # (`Argus.Specs.installed/2` and the types it resolved through).

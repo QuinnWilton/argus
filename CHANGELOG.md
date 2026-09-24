@@ -189,6 +189,13 @@ tenth more, most of it the decoded facts. A run of extractors alone no
 longer derives the base's own `def_use` and `conditional_call` rows,
 which it wrote nowhere.
 
+**Fixed.** `Argus.Pipeline.run_shards/3` reports the modules a run of
+extractors alone lost to a timeout or a crashed worker. It read their
+names off the base's rows, which such a run does not write, so it
+reported none, and `Argus.Cache.Facts` kept the extractors' shards
+without the lost modules' rows: a shard that depended on the machine's
+load.
+
 **Added.** `Argus.Cache`: a store of results on disk, keyed by
 content — its entries' layout, their retention (`Argus.Cache.stale/2`,
 `prune/2`: within each group the three most recent and anything
