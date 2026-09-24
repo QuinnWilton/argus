@@ -529,6 +529,20 @@ what one counts into the array the other's insert replaces is lost.
 The refill exemption excused Hammer's fixed window, whose key is built
 from a clock call, as a value both racers compute alike.
 
+**Fixed.** `ets_check_act` sees a table the program's users hand in. A
+table parameter no caller in view fills — every call passes on a
+parameter of its own, up to an exported function of a module the rest
+of the program does not call into, and not a process callback — holds
+the users' table. A function more than one process runs writes it from
+each caller's process, which only a public table allows, so the pair is
+reported as on a public table, its `name` spelled `param N`. Hammer's
+atomic backends (hammer#129, now a corpus pair) were missed: `use
+Hammer` hands in the user's own table, and nothing in the library names
+it. Upstream HEAD also has the shape in `Hammer.Atomic.FixWindow.inc/4`
+and `set/4` and `FixWindowPerKey.set/4`, which #130 left writing with
+`insert`, and a lost update in the ETS backends' `LeakyBucket.hit/5`
+and `TokenBucket.hit/5`, which insert what they computed from a lookup.
+
 **Fixed.** `mnesia_check_act` finds the read-modify-write that updates
 the record it read in place: `[rec] = dirty_read(t, k)` and then
 `dirty_write(put_elem(rec, 2, n + 1))`, an Elixir record's update, or

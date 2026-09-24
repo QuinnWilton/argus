@@ -23,7 +23,11 @@ defmodule Argus.Analyses.Races do
     array the row holds). Nor is an update or a delete of a row only its
     holder writes: every row the table gets is made at a key minted there
     (a reference, a monitor, a unique integer) and handed to one process,
-    and the others' writes that reach it only remove it.
+    and the others' writes that reach it only remove it. A table the
+    program's users hand in, which nothing in view names, is `name`d by
+    the parameter it arrives in (`param 0`, counted from 0): a function
+    more than one process runs writes it from each caller's process,
+    which only a public table allows.
   - `mnesia_check_act(mod, func, table, key, read, write, op)` — a dirty
     read decides or feeds a dirty write (`op`: `dirty_write`,
     `dirty_delete` or `dirty_delete_object`) of the same record, and
@@ -126,7 +130,8 @@ defmodule Argus.Analyses.Races do
         fields: [
           {:mod, :symbol, "the module"},
           {:func, :symbol, "the function where the read's result meets the write"},
-          {:name, :symbol, "the table"},
+          {:name, :symbol,
+           "the table: its name, or `param N` for one func's callers outside the program hand in"},
           {:key, :symbol, "the key, as func identifies it"},
           {:read, :symbol, "instruction ID of the read"},
           {:write, :symbol, "instruction ID of the write it decides or feeds"}
@@ -232,11 +237,13 @@ defmodule Argus.Analyses.Races do
   end
 
   def finding(:ets_check_act, [mod, func, name, _key, read, write]) do
+    {table, shared} = ets_table_prose(name)
+
     Findings.new(
       :warning,
       "Read-then-write race on an ETS key",
-      "#{func} reads a key of #{name}#{Findings.elsewhere(read, func)} and writes it" <>
-        "#{Findings.elsewhere(write, func)} as the read says to. The table is public and " <>
+      "#{func} reads a key of #{table}#{Findings.elsewhere(read, func)} and writes it" <>
+        "#{Findings.elsewhere(write, func)} as the read says to. #{shared} " <>
         "another process can write it between the two, so the write acts on a row that " <>
         "may have changed — the read-decide-write race that the ETS built-ins are " <>
         "documented not to protect against.",
@@ -246,7 +253,7 @@ defmodule Argus.Analyses.Races do
       help: [
         "make the check and the write one operation: `:ets.insert_new/2`, " <>
           "`:ets.update_counter/4` with a default, or `:ets.select_replace/2`",
-        "or route writes to #{name} through its owner process and make the table `:protected`"
+        "or route writes to #{table} through its owner process and make the table `:protected`"
       ]
     )
   end
@@ -350,6 +357,23 @@ defmodule Argus.Analyses.Races do
     )
   end
 
+  # The table an ETS check-then-act touches, and why another process can
+  # write it: a public table by its name, or one its callers outside the
+  # program hand in, by the parameter it arrives in.
+  defp ets_table_prose("param " <> position = name) do
+    case Integer.parse(position) do
+      {n, ""} when n in 0..9 ->
+        {"the table in its #{ordinal(n)} argument",
+         "The table is its callers', and each writes it from its own process, " <>
+           "which only a public table allows:"}
+
+      _ ->
+        {name, "The table is public and"}
+    end
+  end
+
+  defp ets_table_prose(name), do: {name, "The table is public and"}
+
   # A "field" table is spelled with its module, which the prose has.
   defp describe_table("field", ident), do: "the table held under #{field_path(ident)}"
   defp describe_table("new", site), do: "the table made at #{site}"
@@ -370,16 +394,16 @@ defmodule Argus.Analyses.Races do
 
   defp describe_key("param", position) do
     case Integer.parse(position) do
-      {n, ""} when n in 0..9 ->
-        ordinal = Enum.at(~w(first second third fourth fifth sixth seventh eighth ninth tenth), n)
-        "the name in its #{ordinal} argument"
-
-      _ ->
-        "the name"
+      {n, ""} when n in 0..9 -> "the name in its #{ordinal(n)} argument"
+      _ -> "the name"
     end
   end
 
   defp describe_key(_local_dynamic_or_any, _key), do: "the name"
+
+  # An argument's place, counted from 0.
+  defp ordinal(n),
+    do: Enum.at(~w(first second third fourth fifth sixth seventh eighth ninth tenth), n)
 
   defp lookup("whereis"), do: "whereis"
   defp lookup("registry_lookup"), do: "Registry.lookup"

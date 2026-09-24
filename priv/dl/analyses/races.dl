@@ -199,7 +199,8 @@ registry_race(mod, f, lookup_api, create_api, key_source, key, check, act) :-
 // (clientlib/check_then_act.dl), and the table may arrive as a
 // parameter: by name, or as the reference :ets.new returned in some
 // caller — the paper's own example builds an unnamed public table and
-// hands it to a closure that spawned processes run.
+// hands it to a closure that spawned processes run — or from the
+// program's users, when no caller in view fills it.
 
 .init rows = CheckThenAct
 
@@ -312,6 +313,57 @@ table_at_param(f, p, name) :-
 reads_then_writes(f, r, w, name, k) :- rows.meets(f, r, w, "literal", name, _, k).
 reads_then_writes(f, r, w, name, k) :- rows.meets(f, r, w, "param", p, _, k), table_at_param(f, p, name).
 
+reads_then_writes(f, r, w, name, k) :- rows.meets(f, r, w, "param", p, _, k), open_table(f, p, name).
+
+// ── A table the program's users hand in ──
+//
+// A parameter no caller in view fills — every call passes on a parameter
+// of its own, up to an exported function of a module the rest of the
+// program does not call into — holds whatever table the program's users
+// pass: Hammer's `hit(table, key, ...)`, which `use Hammer` calls with
+// the user's own table. Nothing in view names it, so it is named by the
+// function and the parameter it arrives in, and is one table only within
+// that function. Where it was made, and with which options, is out of
+// view; what is in view is that the function writes it from every
+// caller's process, which a protected or private table refuses in all
+// but its owner's. A function more than one process runs is reported on
+// it as on a public table (ets_check_act); one process's is not, since
+// no other writer of a table nothing names can be found.
+.decl table_filled_in_view(func: symbol, pos: symbol)
+
+table_filled_in_view(f, p) :- table_param_needed(f, p), call_arg(_, f, n, _), p = to_string(n).
+table_filled_in_view(f, p) :- table_param_needed(f, p), ets_tid_arg(_, f, n, _), p = to_string(n).
+
+table_filled_in_view(f, p) :-
+  table_param_needed(f, p),
+  call_arg_forward(c, f, n, m),
+  p = to_string(n),
+  table_filled_in_view(c, to_string(m)).
+
+// The parameter reaches the function from a caller outside the program:
+// the function is such a caller's way in (exported, in a module no other
+// module of the program calls, and not a callback the runtime calls with
+// what the program's own init returned), or is handed it by one.
+.decl table_from_outside(func: symbol, pos: symbol)
+
+table_from_outside(f, p) :-
+  table_param_needed(f, p),
+  function_def(f, m, _, _, 1),
+  !called_by_other_module(m),
+  !process_entry(_, f).
+
+table_from_outside(f, p) :-
+  table_param_needed(f, p),
+  call_arg_forward(c, f, n, m),
+  p = to_string(n),
+  table_from_outside(c, to_string(m)).
+
+.decl open_table(func: symbol, pos: symbol, name: symbol)
+
+open_table(f, p, cat("param ", p, " of ", f)) :-
+  table_from_outside(f, p),
+  !table_filled_in_view(f, p).
+
 runs.seed(f) :- reads_then_writes(f, _, _, _, _).
 runs.seed(f) :- ets_op(_, f, _, _, "write").
 
@@ -343,6 +395,7 @@ another_process_writes(name, f) :-
 
 pair_key(f, name, ks, k) :- rows.meets(f, _, _, "literal", name, ks, k).
 pair_key(f, name, ks, k) :- rows.meets(f, _, _, "param", p, ks, k), table_at_param(f, p, name).
+pair_key(f, name, ks, k) :- rows.meets(f, _, _, "param", p, ks, k), open_table(f, p, name).
 
 .decl other_writer(func: symbol, name: symbol, writer_func: symbol)
 
@@ -527,6 +580,11 @@ ets_op_table(id, name) :-
   ets_op(id, f, "dynamic", _, _),
   ets_op_param(id, p),
   table_at_param(f, to_string(p), name).
+
+ets_op_table(id, name) :-
+  ets_op(id, f, "dynamic", _, _),
+  ets_op_param(id, p),
+  open_table(f, to_string(p), name).
 
 table_param_needed(f, to_string(p)) :-
   ets_op(id, f, "dynamic", op, "write"),
@@ -866,6 +924,16 @@ ets_check_act(mod, func, table, key, read, write) :-
   another_process_writes(table, func),
   !harmless_race(func, read, write),
   !held_row(write),
+  in_module(func, mod).
+
+// On a table the program's users hand in, the table is spelled by the
+// parameter it arrives in, counted from 0 as a key's is ("param 0"):
+// nothing names it.
+ets_check_act(mod, func, cat("param ", p), key, read, write) :-
+  reads_then_writes(func, read, write, table, key),
+  open_table(func, p, table),
+  !runs.single_process(func),
+  !harmless_race(func, read, write),
   in_module(func, mod).
 
 // ── Published before it is complete ──────────────────────────────

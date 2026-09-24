@@ -1455,6 +1455,60 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     def close(ref), do: :ets.delete(:held_sessions, ref)
   end
 
+  # ── A table the program's users hand in ──────────────────────────
+
+  defmodule HandedCounters do
+    @moduledoc """
+    Hammer's atomic backend before hammer#130: the table is whatever the
+    caller hands in, an absent key gets a counter array with insert, and a
+    hit counts into the array the lookup finds. Two first hits each insert
+    one, and what the first counts into its array is lost when the
+    second's replaces it.
+    """
+    def hit(table, key, limit) do
+      case :ets.lookup(table, key) do
+        [{_, counter}] ->
+          count = :atomics.add_get(counter, 1, 1)
+          if count <= limit, do: {:allow, count}, else: {:deny, limit}
+
+        [] ->
+          :ets.insert(table, {key, :atomics.new(1, signed: false)})
+          hit(table, key, limit)
+      end
+    end
+  end
+
+  defmodule HandedCountersFixed do
+    @moduledoc "hammer#130's fix: the first array is made with insert_new, and a loser's is dropped."
+    def hit(table, key, limit) do
+      case :ets.lookup(table, key) do
+        [{_, counter}] ->
+          count = :atomics.add_get(counter, 1, 1)
+          if count <= limit, do: {:allow, count}, else: {:deny, limit}
+
+        [] ->
+          :ets.insert_new(table, {key, :atomics.new(1, signed: false)})
+          hit(table, key, limit)
+      end
+    end
+  end
+
+  defmodule FetchedTable do
+    @moduledoc """
+    A counts table the program keeps under a persistent_term and hands to
+    add/2 itself: an argument the program fills is its own table, not one
+    its users hand in, and with nothing naming it the pair is left alone.
+    """
+    def bump(key), do: add(:persistent_term.get({__MODULE__, :table}), key)
+
+    def add(table, key) do
+      case :ets.lookup(table, key) do
+        [{^key, n}] -> :ets.insert(table, {key, n + 1})
+        [] -> :ets.insert(table, {key, 1})
+      end
+    end
+  end
+
   defmodule MnesiaExpire do
     @moduledoc """
     blockster's OAuth state: read it, and delete it when expired. The

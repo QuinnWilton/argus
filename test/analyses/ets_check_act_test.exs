@@ -41,6 +41,9 @@ defmodule Argus.Analyses.EtsCheckActTest do
     C.HeldParametersNamed,
     C.HeldParametersInsert,
     C.HeldSessions,
+    C.HandedCounters,
+    C.HandedCountersFixed,
+    C.FetchedTable,
     C.WindowCounters
   ]
 
@@ -281,6 +284,23 @@ defmodule Argus.Analyses.EtsCheckActTest do
     end
   end
 
+  describe "a table the program's users hand in" do
+    test "is named by the parameter it arrives in: hammer#129's first insert", ctx do
+      skip_without_souffle()
+      assert [{"hit/3", "param 0", "1"}] = races(ctx, [C.HandedCounters])
+    end
+
+    test "insert_new, hammer#130's fix, is quiet", ctx do
+      skip_without_souffle()
+      assert races(ctx, [C.HandedCountersFixed]) == []
+    end
+
+    test "one the program fills in itself is not the users'", ctx do
+      skip_without_souffle()
+      assert races(ctx, [C.FetchedTable]) == []
+    end
+  end
+
   describe "ets_check_act across functions" do
     test "a read helper's result handed to a multi-clause write helper meets in the caller",
          ctx do
@@ -330,6 +350,16 @@ defmodule Argus.Analyses.EtsCheckActTest do
       assert [%{label: "the read it depends on"}] = f.related
       assert Enum.any?(f.help, &(&1 =~ "insert_new"))
       refute f.detail =~ " in M."
+    end
+
+    test "names a table the callers hand in by its argument, and says why it is shared" do
+      row = ["M", "M:hit/3", "param 0", "1", "M:hit/3#4", "M:hit/3#9"]
+      f = Races.finding(:ets_check_act, row)
+
+      assert f.detail =~ "reads a key of the table in its first argument"
+      assert f.detail =~ "only a public table allows"
+      refute f.detail =~ "param 0"
+      assert Enum.any?(f.help, &(&1 =~ "route writes to the table in its first argument"))
     end
 
     test "names the helpers when the read and the write sit outside the meeting function" do
