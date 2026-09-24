@@ -40,7 +40,8 @@ defmodule Argus.Analyses.EtsCheckActTest do
     C.HeldParameters,
     C.HeldParametersNamed,
     C.HeldParametersInsert,
-    C.HeldSessions
+    C.HeldSessions,
+    C.WindowCounters
   ]
 
   setup_all do
@@ -246,6 +247,11 @@ defmodule Argus.Analyses.EtsCheckActTest do
     test "a first insert over a key update_counter counts into is reported", ctx do
       skip_without_souffle()
       assert [{"hit/1", ":hits", "0"}] = races(ctx, [C.CounterClobber])
+    end
+
+    test "a row holding a counter array is counted in, not refilled", ctx do
+      skip_without_souffle()
+      assert [{"hit/2", ":window_counters", _}] = races(ctx, [C.WindowCounters])
     end
   end
 

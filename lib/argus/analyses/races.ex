@@ -19,7 +19,8 @@ defmodule Argus.Analyses.Races do
     another process can write. A delete, a refill every racer computes
     alike, and a write whose decision never leaves the function are not
     lost updates, unless the program also writes the table back from a
-    read or counts in it. Nor is an update or a delete of a row only its
+    read or counts in it (update_counter, or an `:atomics` or `:counters`
+    array the row holds). Nor is an update or a delete of a row only its
     holder writes: every row the table gets is made at a key minted there
     (a reference, a monitor, a unique integer) and handed to one process,
     and the others' writes that reach it only remove it.

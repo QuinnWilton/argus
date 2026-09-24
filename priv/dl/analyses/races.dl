@@ -541,6 +541,22 @@ table_param_needed(f, to_string(p)) :-
 
 write_back(id, name) :- ets_op(id, _, _, "update_counter", _), ets_op_table(id, name).
 write_back(w, name) :- carries_read(w), ets_op_table(w, name).
+write_back(w, name) :- stores_counters(w), ets_op_table(w, name).
+
+// A row that holds a counter array — an :atomics or :counters reference
+// made where the row is inserted — is counted in as update_counter counts
+// in a row, through the array instead of the table: Hammer's atomic
+// backend inserts `{key, :atomics.new(2, [])}` and adds to the array a
+// later lookup finds. Each racer makes an array of its own, and what one
+// counts into the array the other's insert replaces is lost.
+.decl stores_counters(write: symbol)
+
+stores_counters(w) :-
+  ets_op(w, _, _, op, "write"),
+  (op = "insert" ; op = "insert_new"),
+  ets_value(w, _, "local", made),
+  remote_call(made, _, m, "new", 2),
+  (m = ":atomics" ; m = ":counters").
 
 .decl writes_back(name: symbol, key_kind: symbol, key: symbol)
 

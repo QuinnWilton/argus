@@ -1159,6 +1159,30 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  defmodule WindowCounters do
+    @moduledoc """
+    Hammer's fixed window: the row's key is made by a call (the window the
+    clock is in) and its value is a counter array, so the insert is no
+    refill both racers agree on: each counts into an array of its own.
+    """
+    def start, do: :ets.new(:window_counters, [:named_table, :public])
+
+    def hit(key, scale) do
+      full_key = {key, window(scale)}
+
+      case :ets.lookup(:window_counters, full_key) do
+        [{_, counter}] ->
+          :atomics.add_get(counter, 1, 1)
+
+        [] ->
+          :ets.insert(:window_counters, {full_key, :atomics.new(1, signed: false)})
+          hit(key, scale)
+      end
+    end
+
+    def window(scale), do: div(System.system_time(:millisecond), scale)
+  end
+
   defmodule SerialsOk do
     @moduledoc """
     The talk's Serials with both branches returning :ok: the guard on the

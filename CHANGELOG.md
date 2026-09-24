@@ -521,6 +521,14 @@ with `insert`, stay reported. Where a minted key goes afterwards the
 facts do not say, so a program that hands one to several processes is
 not seen.
 
+**Fixed.** `ets_check_act` takes a row that holds an `:atomics` or
+`:counters` array, made where the row is inserted, as one the program
+counts in, as it takes a row `update_counter` bumps: each racer's
+`insert({key, :atomics.new(2, [])})` makes an array of its own, and
+what one counts into the array the other's insert replaces is lost.
+The refill exemption excused Hammer's fixed window, whose key is built
+from a clock call, as a value both racers compute alike.
+
 **Fixed.** `mnesia_check_act` finds the read-modify-write that updates
 the record it read in place: `[rec] = dirty_read(t, k)` and then
 `dirty_write(put_elem(rec, 2, n + 1))`, an Elixir record's update, or
