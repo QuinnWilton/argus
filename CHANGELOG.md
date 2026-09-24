@@ -393,6 +393,27 @@ worked example (`[node() | Node.list()]`) and nebulex's
 Replicated.Bootstrap (a node list from `Cluster.get_nodes/1`, unread)
 both stay cluster-wide.
 
+### Funs that leave the caller's stack
+
+**Fixed.** `runs_elsewhere` (`clientlib/runs_elsewhere.dl`) says which
+edges leave the caller's stack, for every same-process walk and for
+process points-to. A fun the caller only registers or keeps is one
+now: handed only to a callback registrar (`:telemetry.attach` and
+`attach_many`, `:persistent_term.put`, the process dictionary, the
+application env) or to no call at all (built into the state init/1
+returns, a message, a child spec), and not called by the caller. A
+`:telemetry` handler that takes a lock was "Cluster-wide lock during
+init". A closure the caller hands to a call is no longer set aside
+because an unrelated start of an unknown fun (`Supervisor.start_child`
+of a spec, `Task.start_link(opts[:warmup])`) sits beside it: the "only
+closure" rule counts only the closures built into a term, and a fun
+handed to a helper that starts a process on it is set aside by that
+call. Stage 0 stages `fun_handed_to(caller, fun, callee)`, the function
+each call in `fun_handed` calls, for it to read. On the corpus, sequin's MutexedSupervisor no
+longer reports "init/1 makes a synchronous supervisor call" from the
+`on_acquired` callback its init builds into a child's options (its
+MutexOwner runs it later); nothing else moved.
+
 ### Analysis names
 
 **Removed.** The alias table for the analysis names retired in 0.17

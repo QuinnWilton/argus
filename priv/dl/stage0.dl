@@ -134,3 +134,22 @@ call_tag(id, caller, "cast", tag) :-
   match(":.*", tag).
 
 .output call_tag(filename="call_tag.facts")
+
+// Which function each call a fun is handed to calls (fun_handed names
+// the call by its instruction): `Enum:each/2`, `:telemetry:attach/4`, a
+// local helper. runs_elsewhere asks it whether that call runs the fun
+// on the caller's stack, starts a process on it or keeps it for later.
+// Staged, so the analyses read neither remote_call nor local_call for it.
+.decl fun_handed_to(caller: symbol, fun: symbol, callee: symbol)
+
+fun_handed_to(f, g, callee) :-
+  fun_handed(id, f, g),
+  remote_call(id, f, mod, func, arity),
+  callee = cat(mod, ":", func, "/", to_string(arity)).
+
+fun_handed_to(f, g, callee) :-
+  fun_handed(id, f, g),
+  local_call(id, f, callee, _).
+
+.output fun_handed_to(filename="fun_handed_to.facts")
+

@@ -7,7 +7,8 @@ defmodule Argus.Analysis.Extraction do
   once, then three derivations write into the same directory:
 
   - **Stage 0** (`priv/dl/stage0.dl`) derives the shared call graph
-    (`call_edge`, `call_site`, `unconditional_call_edge`, `call_tag`)
+    (`call_edge`, `call_site`, `unconditional_call_edge`, `call_tag`,
+    `fun_handed_to`)
     once, so no analysis re-derives it and the volatile
     instruction-level relations stay out of every analysis's input set.
   - **Points-to** (`priv/dl/points_to.dl`), when a selected analysis
@@ -40,7 +41,7 @@ defmodule Argus.Analysis.Extraction do
   @universal_extractors [Argus.Extractors.CallArgs]
 
   # The relations stage 0 writes; a directory holding all four is staged.
-  @stage0_relations ~w(call_edge call_site unconditional_call_edge call_tag)
+  @stage0_relations ~w(call_edge call_site unconditional_call_edge call_tag fun_handed_to)
 
   # The relations the points-to stage writes (points_to.dl's outputs).
   @points_to_relations ~w(server_process instance supervised_process private_process process

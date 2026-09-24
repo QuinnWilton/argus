@@ -9,7 +9,7 @@ defmodule Argus.Analysis.ExtractionTest do
     assert {:ok, facts_dir} = Extraction.extract_facts([:lists], [:startup])
 
     try do
-      for relation <- ~w(call_edge call_site unconditional_call_edge call_tag) do
+      for relation <- ~w(call_edge call_site unconditional_call_edge call_tag fun_handed_to) do
         assert File.exists?(Path.join(facts_dir, "#{relation}.facts"))
       end
     after
@@ -78,12 +78,12 @@ defmodule Argus.Analysis.ExtractionTest do
     end
 
     test "a staged directory is left as it is", %{tmp_dir: dir} do
-      for relation <- ~w(call_edge call_site unconditional_call_edge call_tag) do
+      for relation <- ~w(call_edge call_site unconditional_call_edge call_tag fun_handed_to) do
         File.write!(Path.join(dir, "#{relation}.facts"), "")
       end
 
       assert :ok = Extraction.ensure_stage0(dir, [])
-      assert length(File.ls!(dir)) == 4
+      assert length(File.ls!(dir)) == 5
     end
   end
 

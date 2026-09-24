@@ -315,8 +315,9 @@ named_pid(n, p) :-
 // a function either calls, the same process: a callback's helper, a
 // client API a callback calls, or a closure handed to Enum.map runs on
 // the caller's stack. What a start runs is not followed (runs_elsewhere:
-// a task's closure is the task's), and only functions on the way to a
-// self() are, so the relation stays the size of its use.
+// a task's closure is the task's), nor a fun registered or kept to run
+// later (a :telemetry handler runs in the emitter), and only functions on
+// the way to a self() are, so the relation stays the size of its use.
 .decl self_pid(func: symbol, proc: symbol)
 
 self_pid(f, p) :- process_entry(m, f), server_process(p, m).

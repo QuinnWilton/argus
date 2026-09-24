@@ -83,7 +83,9 @@ defmodule Argus.ClientlibTest do
     File.mkdir_p!(facts)
 
     # Every input relation needs a facts file, empty or not.
-    for name <- Schema.names() ++ [:call_edge, :call_site, :unconditional_call_edge, :call_tag] do
+    for name <-
+          Schema.names() ++
+            [:call_edge, :call_site, :unconditional_call_edge, :call_tag, :fun_handed_to] do
       File.write!(Path.join(facts, "#{name}.facts"), "")
     end
 

@@ -68,6 +68,11 @@
 .decl call_tag(id: symbol, caller: symbol, kind: symbol, tag: symbol)
 .input call_tag
 
+// The function each call handed a fun calls (stage 0, from fun_handed):
+// the caller, the fun, and the callee (`mod:func/arity`).
+.decl fun_handed_to(caller: symbol, fun: symbol, callee: symbol)
+.input fun_handed_to
+
 // The instruction in `func` that calls the project function `callee`:
 // the site a finding points at when a rule knows only the functions.
 // Over the staged call_site, so no analysis reads remote_call for it.

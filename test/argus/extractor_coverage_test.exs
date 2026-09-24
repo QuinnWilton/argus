@@ -51,6 +51,7 @@ defmodule Argus.ExtractorCoverageTest do
              :call_site,
              :unconditional_call_edge,
              :call_tag,
+             :fun_handed_to,
              :call_reachable
            ])
 

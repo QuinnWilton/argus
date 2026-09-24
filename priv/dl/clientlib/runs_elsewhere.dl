@@ -1,26 +1,48 @@
-// Which calls lead into another process: the edge from a function that
-// starts a spawn, a task or an agent to what that process runs. A walk
+// Which calls lead off the caller's stack: the edge from a function that
+// starts a spawn, a task or an agent to what that process runs, and the
+// edge to a fun it only registers or keeps for later. A walk
 // over what one process runs (reach.dl's SameProcess variants, calls.dl's
 // waits) stops at these edges.
 //
 // Apart from the points-to stage (points_to.dl) and read there too: it
-// is derived from the start sites and the call graph alone, so an
-// analysis that walks a process's own calls does not wait for, or read,
-// the process points-to.
+// is derived from the start sites and the call graph (with stage 0's
+// fun_handed_to) alone, so an analysis that walks a process's own calls
+// does not wait for, or read, the process points-to.
 //
 // Prerequisites: include clientlib/imports.dl before this file.
+//
+// Known limit: a fun built into a term that a call then runs on the
+// caller's stack (`run(on_start: fn -> ... end)`, the callee calling
+// `opts[:on_start].()`) is taken to be kept, since fun_handed follows a
+// fun into call arguments, not into the terms around it. That errs
+// quiet: what it holds is not reported as the caller's.
 
-// `func`'s edge to `callee` leads into another process: callee is what a
-// spawn, a task or an agent in func runs, and func does not call it
-// itself. A closure or fun reference of func's is set aside too when it
-// is func's only one and func starts a process on a fun points-to does
-// not follow (the fun came from a variable, or a helper spawns its
-// parameter) or a child whose spec may hold a fun: with one there is
-// nothing to confuse the handed one with. A function with several keeps them all:
-// which one is handed off is not known, and one handed to Enum.each
-// runs in the caller's process. A closure handed to Task.async_stream is
-// not set aside either: the caller waits for what it does. Told without
-// closure_def (by the compiler's name for a closure), which the
+// `func`'s edge to `callee` leads off func's stack: callee runs in
+// another process, or later, and not while func runs.
+//
+// Into another process: callee is what a spawn, a task or an agent in
+// func runs, and func does not call it itself; or func hands callee's
+// fun to a helper that starts a process on the fun it is handed
+// (`start_worker(fn -> ... end)`). A closure func builds into a term
+// rather than handing it to a call is set aside too when it is func's
+// only such closure and func starts a process on a fun points-to does
+// not follow (the fun came from a variable, or a spec) or a child whose
+// spec may hold a fun: with one there is nothing to confuse the handed
+// one with. A closure func hands to a call (Enum.each) is never that
+// one: a start of `opts[:warmup]` beside `Enum.each(names, fn ...)`
+// leaves the closure on func's stack.
+//
+// Later: a fun func only registers or keeps, and does not call — handed
+// only to a callback registrar (`:telemetry.attach`, which runs it in
+// whichever process emits the event), or to no call at all (built into
+// the state init/1 returns, or into a message). It runs after func has
+// returned, if at all.
+//
+// A closure handed to Task.async_stream is not set aside: the caller
+// waits for what it does. Neither is a fun handed to a call this file
+// does not know (a library's higher-order function may run it in the
+// caller's process: Enum.each, :telemetry.span, Repo.transaction). Told
+// without closure_def (by the compiler's name for a closure), which the
 // supervision family must not read (stage0_test).
 .decl runs_elsewhere(func: symbol, callee: symbol)
 
@@ -37,35 +59,80 @@ runs_elsewhere(f, g) :-
 
 calls_fun(f) :- dynamic_call(_, f, "call_fun").
 
+// Handed to a helper that starts a process on the fun it is handed, and
+// to no call that may run it here.
 runs_elsewhere(f, g) :-
-  hands_funs_off(f),
-  closure_edge(f, g),
-  closure_edges(f, 1),
+  fun_handed_to(f, g, h),
+  fun_sink(h, "start"),
+  !runs_handed(f, g),
   !call_instr(f, g, _).
 
-.decl closure_edge(func: symbol, closure: symbol)
+// The only closure func builds into a term, beside a start whose fun is
+// not known.
+runs_elsewhere(f, g) :-
+  hands_funs_off(f),
+  held_closure(f, g),
+  held_closures(f, 1),
+  !call_instr(f, g, _).
 
-closure_edge(f, g) :-
+// Registered or kept, never run here.
+runs_elsewhere(f, g) :-
+  fun_edge(f, g),
+  !runs_handed(f, g),
+  !started_handed(f, g),
+  !call_instr(f, g, _),
+  !calls_fun(f).
+
+// A closure func builds, or a fun it hands on (fun_ref).
+.decl fun_edge(func: symbol, fun: symbol)
+
+fun_edge(f, g) :- call_edge(f, g), match(".*:-.*-fun-[0-9]+-/[0-9]+", g).
+fun_edge(f, g) :- fun_ref(f, g).
+
+// What a call does with a fun it is handed, where this file knows: a
+// helper that starts a process on it ("start"), or a registrar that
+// keeps it for another process to run later ("keep"). Any other call
+// may run it on the caller's stack.
+.decl fun_sink(callee: symbol, how: symbol)
+
+fun_sink(h, "start") :- process_start(_, h, _, kind, "dynamic"), kind != "server".
+fun_sink(":telemetry:attach/4", "keep").
+fun_sink(":telemetry:attach_many/4", "keep").
+fun_sink(":persistent_term:put/2", "keep").
+fun_sink("Process:put/2", "keep").
+fun_sink(":erlang:put/2", "keep").
+fun_sink("Application:put_env/3", "keep").
+fun_sink("Application:put_env/4", "keep").
+fun_sink(":application:set_env/3", "keep").
+fun_sink(":application:set_env/4", "keep").
+
+// func hands g to a call that may run it on func's stack.
+.decl runs_handed(func: symbol, fun: symbol)
+
+runs_handed(f, g) :- fun_handed_to(f, g, h), !fun_sink(h, _).
+
+.decl started_handed(func: symbol, fun: symbol)
+
+started_handed(f, g) :- fun_handed_to(f, g, h), fun_sink(h, "start").
+
+// A closure func builds and hands to no call: into a term.
+.decl held_closure(func: symbol, closure: symbol)
+
+held_closure(f, g) :-
   hands_funs_off(f),
   call_edge(f, g),
-  (match(".*:-.*-fun-[0-9]+-/[0-9]+", g) ; fun_ref(f, g)).
+  match(".*:-.*-fun-[0-9]+-/[0-9]+", g),
+  !fun_handed_to(f, g, _).
 
-.decl closure_edges(func: symbol, n: number)
+.decl held_closures(func: symbol, n: number)
 
-closure_edges(f, n) :-
-  closure_edge(f, _),
-  n = count : { closure_edge(f, _) }.
+held_closures(f, n) :-
+  held_closure(f, _),
+  n = count : { held_closure(f, _) }.
 
 .decl hands_funs_off(func: symbol)
 
 hands_funs_off(f) :- process_start(_, f, _, kind, "dynamic"), kind != "server".
-
-// `start_worker(fn -> ... end)`: the start is a helper's, on its
-// parameter.
-hands_funs_off(f) :-
-  call_edge(f, h),
-  process_start(_, h, _, kind, "dynamic"),
-  kind != "server".
 
 // A child spec built around a fun (`start: {Task, :start_link, [fn ->
 // ... end]}`) runs it in the child.
