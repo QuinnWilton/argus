@@ -86,6 +86,8 @@ defmodule Argus.Analyses.Races do
       # Which calls mint a value (a random API, a unique integer, a ref):
       # a refill of one each racer returns is not both racers' answer.
       Argus.Extractors.Purity,
+      # :global.trans, whose closures a cluster lock serializes.
+      Argus.Extractors.ApiCalls,
       # The processes a spawn, a task or an agent starts: entries of their
       # own for RunsConcurrently (clientlib/concurrency.dl).
       Argus.Extractors.PidFlow

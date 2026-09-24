@@ -114,6 +114,18 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
                races([C.MnesiaIndexThenWrite])
     end
 
+    test "a cluster lock every writer takes serializes the pair" do
+      skip_without_souffle()
+      assert races([C.MnesiaGlobalLock]) == []
+    end
+
+    test "one writer outside the lock unserializes it" do
+      skip_without_souffle()
+
+      assert [{"-bump/1-fun-0-/1", ":locked_counters", _, _, _}] =
+               races([C.MnesiaGlobalLock, C.MnesiaLockBypass])
+    end
+
     test "a table only its owner's callbacks write has one writer" do
       skip_without_souffle()
       assert races([C.MnesiaOwner]) == []

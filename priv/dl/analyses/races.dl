@@ -1341,14 +1341,55 @@ runs.seed(f) :- mnesia_op(_, f, _, "write", _, _, _, _).
 
 another_process_writes_record(t, f) :-
   reads_then_writes_record(f, _, _, t, _),
-  !runs.single_process(f).
+  !runs.single_process(f),
+  !serialized_by_lock(f, t).
 
 another_process_writes_record(t, f) :-
   reads_then_writes_record(f, _, _, t, _),
   runs.single_process(f),
   runs.entry_reaches(m, f),
   mnesia_write_table(_, g, t),
-  runs.runs_apart_from(m, g).
+  runs.runs_apart_from(m, g),
+  !serialized_by_lock(f, t).
+
+// ── A cluster lock every writer takes ──
+//
+// Dirty operations skip Mnesia's locks, not an external mutex: a pair in
+// a closure `:global.trans/2` runs, on a table every writer writes under
+// such a closure too, is serialized. A closure is taken to run under the
+// lock when the function that builds it calls :global.trans (the facts
+// do not say which closure a call is handed), and so is a private
+// function only such closures call. The lock's identity is not compared:
+// writers under different locks are taken as serialized, so the rule
+// stays quiet where it cannot tell.
+.decl locked_closure(func: symbol)
+
+locked_closure(c) :- global_op(_, f, "trans", _, _), closure_def(f, c).
+
+.decl called_unlocked(func: symbol)
+
+called_unlocked(g) :- mnesia_write_table(_, g, _), call_edge(h, g), !locked_closure(h).
+
+.decl under_lock(func: symbol)
+
+under_lock(g) :- locked_closure(g).
+
+under_lock(g) :-
+  mnesia_write_table(_, g, _),
+  function_def(g, _, _, _, 0),
+  call_edge(_, g),
+  !called_unlocked(g).
+
+.decl unlocked_writer(table: symbol)
+
+unlocked_writer(t) :- mnesia_write_table(_, g, t), !under_lock(g).
+
+.decl serialized_by_lock(func: symbol, table: symbol)
+
+serialized_by_lock(f, t) :-
+  reads_then_writes_record(f, _, _, t, _),
+  under_lock(f),
+  !unlocked_writer(t).
 
 // The table a Mnesia write touches, by name: spelled there, named by
 // what callers pass the parameter it arrives in, or the first element of

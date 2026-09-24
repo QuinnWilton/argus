@@ -295,6 +295,15 @@ takes no lock and is reported as the `dirty_*` spelling is (schema 85).
 Only the closure's own calls: a helper it calls is not known to run in
 the activity.
 
+**Fixed.** `mnesia_check_act` takes a cluster lock as serializing: a
+pair in a closure `:global.trans/2` runs, on a table every writer writes
+under such a closure (or in a private function only such closures
+call), is not reported. Dirty operations skip Mnesia's locks, not an
+external mutex. The lock's identity is not compared, so writers under
+different locks are taken as serialized; one writer outside a lock
+keeps the finding. `races` now runs `Argus.Extractors.ApiCalls` for
+`global_op`.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile

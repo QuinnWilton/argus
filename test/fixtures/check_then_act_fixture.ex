@@ -1399,6 +1399,26 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  defmodule MnesiaGlobalLock do
+    @moduledoc "The counter serialized by a cluster lock every writer of the table takes."
+    def bump(key) do
+      :global.trans({{:locked_counter, key}, self()}, fn ->
+        n =
+          case :mnesia.dirty_read(:locked_counters, key) do
+            [] -> 0
+            [{:locked_counters, ^key, n}] -> n
+          end
+
+        :mnesia.dirty_write({:locked_counters, key, n + 1})
+      end)
+    end
+  end
+
+  defmodule MnesiaLockBypass do
+    @moduledoc "A writer of MnesiaGlobalLock's table that takes no lock."
+    def reset(key), do: :mnesia.dirty_write({:locked_counters, key, 0})
+  end
+
   defmodule MnesiaUpdateCounter do
     @moduledoc "The atomic form."
     def bump(key), do: :mnesia.dirty_update_counter(:counters, key, 1)
