@@ -180,6 +180,15 @@ One unguarded caller keeps the finding.
 ...)` — is one key: the check and the act meet on it, as they did when
 the key was bound to a variable first (schema 77, below).
 
+**Fixed.** `ets_missing_row` asks the remover's key when it can rule
+the remover out. A remover of the calling process's own row
+(`:ets.delete(t, self())`) takes only its own process's row, so it does
+not race a pair keyed by `self()` (schema 78, below); a remover of a
+literal row takes that row alone, not another literal's nor the rows
+kept beside it under parameters (a `:__total__` next to the keyed
+counts). A remover whose key the facts cannot equate to the pair's — a
+flush keyed by what a timer was handed — still counts.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile
@@ -543,6 +552,12 @@ position the call's result does not carry (`Argus.Pipeline.Emit.
 FunRefs.handed_rows/2`). The call graph's edge into a closure or a fun
 reference has no call instruction; this names the call it runs inside,
 so a rule asking whether a `try` covers the edge asks it of that call.
+**Changed.** Schema 78, no shape change. A value `self()` made is
+`{"self", ""}` in `Argus.Extractor.Identity`'s vocabulary, the calling
+process, where it was the `local` of whichever `self()` call made it:
+two calls of `self()` in one function are one key. It names something
+only within one function, and crosses no call.
+
 **Changed.** Schema 77, no shape change. A key a tuple is built of
 values that each have an identity is named by them, in order:
 `{"tuple", "{param 0, param 1}"}` (`Argus.Extractor.Identity`), where it

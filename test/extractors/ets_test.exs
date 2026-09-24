@@ -8,6 +8,33 @@ defmodule Argus.Extractors.ETSTest do
     data
   end
 
+  describe "keys a value's maker names" do
+    defp keys(mod) do
+      facts = ETS.extract(disassemble(mod))
+      ops = Map.new(facts[:ets_op], fn [id, func, _t, op, _k] -> {id, {short(func), op}} end)
+      for [id, source, key] <- facts[:ets_key], do: {ops[id], {source, key}}
+    end
+
+    defp short(func), do: func |> String.split(":") |> List.last()
+
+    test "self() is the calling process, however many calls of it" do
+      keys = keys(Argus.Test.Fixtures.MissingRow.OwnRow)
+
+      assert {{"hit/0", "lookup"}, {"self", ""}} in keys
+      assert {{"hit/0", "update_counter"}, {"self", ""}} in keys
+      assert {{"done/0", "delete"}, {"self", ""}} in keys
+    end
+
+    test "a tuple spelled out at each site is named by its elements" do
+      keys = keys(Argus.Test.Fixtures.MissingRow.InlineTupleKey)
+      key = {"tuple", "{param 0, param 1}"}
+
+      assert {{"log/2", "lookup"}, key} in keys
+      assert {{"log/2", "update_counter"}, key} in keys
+      assert {{"log/2", "insert"}, key} in keys
+    end
+  end
+
   describe "extract/1" do
     test "detects ets_new for named table" do
       facts = ETS.extract(disassemble(Argus.Test.Fixtures.EtsOwner))

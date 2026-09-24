@@ -74,6 +74,28 @@ defmodule Argus.Analyses.EtsMissingRowTest do
     end
   end
 
+  describe "ets_missing_row: which rows a remover can take" do
+    test "a process's own row, removed only by the process that owns it, stays quiet" do
+      skip_without_souffle()
+      assert missing([Fixture.OwnRow]) == []
+    end
+
+    test "a remover of whichever process's row it is handed can take it" do
+      skip_without_souffle()
+
+      assert [{"hit/0", "named", ":reaped_row_counts", "hit/0", "hit/0", "reap/1"}] =
+               missing([Fixture.OwnRowReaped])
+    end
+
+    test "a literal row's remover takes only that row" do
+      skip_without_souffle()
+
+      # total/0's pair is raced by reset_total/0 alone; hit/1's keyed rows by neither.
+      assert [{"total/0", "named", ":sentinel_counts", "total/0", "total/0", "reset_total/0"}] =
+               missing([Fixture.SentinelRow])
+    end
+  end
+
   describe "ets_missing_row across functions" do
     test "the act in a helper the found-row branch calls" do
       skip_without_souffle()

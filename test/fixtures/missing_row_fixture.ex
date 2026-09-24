@@ -299,6 +299,68 @@ defmodule Argus.Test.Fixtures.MissingRow do
     def flush(key), do: :ets.take(@table, key)
   end
 
+  # ── Which rows a remover can take ────────────────────────────────
+
+  defmodule OwnRow do
+    @moduledoc "Each process counts in its own row, keyed by self(), and removes only its own."
+    @table :own_row_counts
+
+    def setup, do: :ets.new(@table, [:set, :named_table, :public])
+
+    def hit do
+      me = self()
+
+      case :ets.lookup(@table, me) do
+        [] -> :ets.insert(@table, {me, 1})
+        [_existing] -> :ets.update_counter(@table, me, {2, 1})
+      end
+    end
+
+    def done, do: :ets.delete(@table, self())
+  end
+
+  defmodule OwnRowReaped do
+    @moduledoc "The same per-process rows, and a reaper that deletes whichever process's row it is handed."
+    @table :reaped_row_counts
+
+    def setup, do: :ets.new(@table, [:set, :named_table, :public])
+
+    def hit do
+      me = self()
+
+      case :ets.lookup(@table, me) do
+        [] -> :ets.insert(@table, {me, 1})
+        [_existing] -> :ets.update_counter(@table, me, {2, 1})
+      end
+    end
+
+    def reap(pid), do: :ets.delete(@table, pid)
+  end
+
+  defmodule SentinelRow do
+    @moduledoc "A remover of a literal row kept beside the keyed counts: never a counted key's row."
+    @table :sentinel_counts
+
+    def setup, do: :ets.new(@table, [:set, :named_table, :public])
+
+    def hit(key) do
+      case :ets.lookup(@table, key) do
+        [] -> :ets.insert(@table, {key, 1})
+        [_existing] -> :ets.update_counter(@table, key, {2, 1})
+      end
+    end
+
+    def total do
+      case :ets.lookup(@table, :__total__) do
+        [] -> :ets.insert(@table, {:__total__, 1})
+        [_existing] -> :ets.update_counter(@table, :__total__, {2, 1})
+      end
+    end
+
+    def reset_total, do: :ets.delete(@table, :__total__)
+    def reset_hits, do: :ets.delete(@table, :__hits__)
+  end
+
   defmodule InlineTupleKey do
     @moduledoc "A composite key spelled out at the lookup and again at the count."
     @table :inline_tuple_buckets

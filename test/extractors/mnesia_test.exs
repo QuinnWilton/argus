@@ -46,7 +46,9 @@ defmodule Argus.Extractors.MnesiaTest do
     keys = for {_, op, _, _, key} <- ops(C.MnesiaJoinedKey), do: {op, key}
 
     assert {"dirty_write", {"dynamic", ""}} in keys
-    assert {"dirty_read", {"tuple", "{param 0, literal :a}"}} = List.keyfind(keys, "dirty_read", 0)
+
+    assert {"dirty_read", {"tuple", "{param 0, literal :a}"}} =
+             List.keyfind(keys, "dirty_read", 0)
   end
 
   test "the transactional and the atomic operations are not dirty reads or writes" do

@@ -775,9 +775,14 @@ table_of(op, tk, t) :- ets_table(op, tk, t).
 // operation that deletes rows of that table — take, delete, a
 // delete_object, select_delete or match_delete, or deleting the table —
 // in a function that can run while the pair's function is between the
-// two. The key is not asked of the remover: a flush keyed by the
-// arguments a timer was handed is not a key the facts can equate to the
-// check's.
+// two. The key is asked of the remover only to rule it out: a flush keyed
+// by the arguments a timer was handed is not a key the facts can equate
+// to the check's, so a remover counts unless its key can never be the
+// pair's. A process's own row (keyed by self()) is removed by the
+// process that owns it, and one removing self()'s row in another process
+// removes that process's; a literal key names a row of its own, other
+// than a different literal's and than the rows kept beside it under
+// parameters (a `:__total__` next to the keyed counts).
 
 .init missing = CheckThenAct
 
@@ -910,22 +915,58 @@ remover_in(d, h) :- found_row_act(_, table), removes_rows(d, table), ets_op(d, h
 runs.seed(f) :- found_row_act(f, _).
 runs.seed(h) :- remover_in(_, h).
 
-// The remover can run while `func` is between the check and the act:
-// `func` runs in more than one process, or the remover runs in a process
-// that does not run it.
+// The remover can run while `func` is between the check and the act,
+// and take the row a pair in `func` acts on: `func` runs in more than one
+// process, or the remover runs in a process that does not run it.
 .decl can_run_in_between(remover: symbol, func: symbol)
 
 can_run_in_between(d, f) :-
   found_row_act(f, table),
   removes_rows(d, table),
+  may_remove_pair_row(d, f),
   !runs.single_process(f).
 
 can_run_in_between(d, f) :-
   found_row_act(f, table),
   removes_rows(d, table),
+  may_remove_pair_row(d, f),
   remover_in(d, h),
   runs.entry_reaches(m, h),
   !runs.entry_reaches(m, f).
+
+// The key of a pair `func` reports, and whether a remover's key can be it.
+.decl found_pair_key(func: symbol, table: EtsTable, key_kind: symbol, key: symbol)
+
+found_pair_key(f, [tk, t], ks, k) :-
+  missing.meets(f, _, a, lifted_kind, t, ks, k),
+  table_kind_as(tk, lifted_kind),
+  fails_if_row_missing(a, f),
+  shared_table(a, [tk, t]).
+
+.decl may_remove_pair_row(remover: symbol, func: symbol)
+
+may_remove_pair_row(d, f) :-
+  found_pair_key(f, table, ks, k),
+  removes_rows(d, table),
+  !keyed_apart(d, ks, k).
+
+// The remover's key can never be the pair's key (ks, k).
+.decl keyed_apart(remover: symbol, key_kind: symbol, key: symbol)
+
+keyed_apart(d, "self", "") :- remover_in(d, _), ets_key(d, "self", "").
+keyed_apart(d, "self", "") :- remover_in(d, _), ets_key(d, "literal", _).
+keyed_apart(d, "literal", k) :- remover_in(d, _), ets_key(d, "self", ""), found_pair_key(_, _, "literal", k).
+
+keyed_apart(d, "literal", k) :-
+  remover_in(d, _),
+  ets_key(d, "literal", k2),
+  found_pair_key(_, _, "literal", k),
+  k != k2.
+
+keyed_apart(d, "param", k) :-
+  remover_in(d, _),
+  ets_key(d, "literal", _),
+  found_pair_key(_, _, "param", k).
 
 .decl missing_row_race(func: symbol, table: EtsTable, check: symbol, act: symbol, remover: symbol)
 

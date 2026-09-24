@@ -32,11 +32,12 @@ defmodule Argus.Extractor.Identity do
   write — although nothing says what it is. Several definitions reaching
   the read (a join) stay dynamic. The instruction ID names a site in one
   function, so a local identity never agrees with anything outside it.
-  A tuple built of values that each have an identity says more than
-  where it was made: it is `{"tuple", "{param 0, param 1}"}`, its
-  elements' identities in order, so `{mod, fun}` spelled out at a lookup
-  and again at the write is the same key. It names something only within
-  one function.
+  Two origins say more than where: `self()` is `{"self", ""}`, the
+  calling process, however many calls of it there are; and a tuple built
+  of values that each have an identity is `{"tuple", "{param 0, param
+  1}"}`, its elements' identities in order, so `{mod, fun}` spelled out
+  at a lookup and again at the write is the same key. Both name something
+  only within one function.
   """
   @spec key_identity([term()], non_neg_integer(), Resolve.register(), origins() | nil) ::
           {String.t(), String.t()}
@@ -164,12 +165,15 @@ defmodule Argus.Extractor.Identity do
   end
 
   # What the one instruction that made a value says about it, beyond
-  # where it was made. A tuple built of values that each have an identity
-  # is those identities in order, so `{mod, fun}` spelled out at a lookup
-  # and again at the write is one key, as it is when bound to a variable
-  # once: `{"tuple", "{param 0, param 1}"}`. It still names something only
-  # within one function (its elements are a parameter, a local), and
-  # crosses no call.
+  # where it was made. `self()` is the calling process, whichever call of
+  # it made the value: `{"self", ""}`. A tuple built of values that each
+  # have an identity is those identities in order, so `{mod, fun}` spelled
+  # out at a lookup and again at the write is one key, as it is when bound
+  # to a variable once: `{"tuple", "{param 0, param 1}"}`. Both still name
+  # something only within one function (a parameter, a local, the calling
+  # process), and cross no call.
+  defp made_by(_instrs, _idx, {:bif, :self, _fail, [], _dst}, _origins), do: {"self", ""}
+
   defp made_by(instrs, idx, {:put_tuple2, _dst, {:list, elements}}, origins)
        when elements != [] do
     identities = Enum.map(elements, &element_identity(instrs, idx, &1, origins))
