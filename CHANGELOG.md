@@ -10,6 +10,19 @@ What 0.20.0 will ship; the release dates this heading and drops the
 `-dev` from `mix.exs`. Grouped by concern. Each entry opens with what it
 does: **Added**, **Changed**, **Fixed** or **Removed**.
 
+### Check-then-act without the copies
+
+**Changed.** `clientlib/check_then_act.dl` tests how two identities'
+sources agree with two relations (`either_any`, `may_agree`) instead of
+a disjunction in each rule that asks, and walks from a value to the acts
+it decides once for all the checks it carries (`decides`). Souffle
+expands a rule with k alternatives into k rules, each with the whole
+body: races.dl compiled to 1,593 clauses (685 now), spent ~2.8 s
+compiling before reading a fact (0.7 s now; it was 260 of the 359 s of
+solver CPU in the test suite without the corpus), and repeated
+`joined`'s five-atom join per alternative — 26 of the 28 s races took
+over mnesia+inets+ssh (2.2 s now). The rows are identical.
+
 ### Rules that read as their sentence
 
 **Changed.** The top-level rules of the findings people read most —

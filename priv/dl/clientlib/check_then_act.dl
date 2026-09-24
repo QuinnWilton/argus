@@ -215,6 +215,45 @@ liftable(s) :- call_arg_tuple(_, _, _, i, _, _), s = cat("element ", to_string(i
     lift(h, g, ks, k, ks2, k2).
   .plan 1:(3,2,1,4,5), 2:(4,2,1,3,5), 3:(5,2,1,3,4)
 
+  // ── How two sources relate ────────────────────────────────────────
+  //
+  // Whether two identities can meet is mostly a question about their
+  // sources, not their values: either is `any`, or both are names a
+  // caller may rename. It is asked of the sources in play, as relations,
+  // rather than spelled out as a disjunction in each rule that asks:
+  // Souffle turns a rule with k alternatives into k rules, each with the
+  // whole body. Spelled out, the two identities' conditions made 36
+  // copies of each joined rule and 144 of deferred's, which was most of
+  // the clauses Souffle compiled for the four instances (three seconds
+  // before it read a fact) and, run once per alternative, most of the
+  // solve.
+  //
+  // Every source a rule compares comes from a check, an act or a lift,
+  // so `source` holds them all.
+
+  .decl source(s: symbol)
+
+  source(s) :- check(_, _, s, _, _, _).
+  source(s) :- check(_, _, _, _, s, _).
+  source(s) :- act(_, _, s, _, _, _).
+  source(s) :- act(_, _, _, _, s, _).
+  source(s) :- lift(_, _, _, _, s, _).
+
+  // Either identity is `any`: they agree whatever the values.
+  .decl either_any(s: symbol, s2: symbol)
+
+  either_any("any", s2) :- source(s2).
+  either_any(s, "any") :- source(s).
+
+  // They agree, or differ only in names a caller may rename: both are
+  // parameters' (or elements of them), or one is and the other a literal.
+  .decl may_agree(s: symbol, s2: symbol)
+
+  may_agree(s, s2) :- either_any(s, s2).
+  may_agree(s, s2) :- liftable(s), liftable(s2).
+  may_agree(s, "literal") :- liftable(s).
+  may_agree("literal", s2) :- liftable(s2).
+
   // ── Where they meet ───────────────────────────────────────────────
   //
   // joined(f, c, a, check's identities, act's identities): in f the
@@ -223,44 +262,57 @@ liftable(s) :- call_arg_tuple(_, _, _, i, _, _), s = cat("element ", to_string(i
 
   .decl joined(f: symbol, c: symbol, a: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol, rs2: symbol, r2: symbol, ks2: symbol, k2: symbol)
 
-  // The act is in f.
   joined(f, c, a, rs, r, ks, k, rs2, r2, ks2, k2) :-
     carries(f, kind, src, c, rs, r, ks, k),
+    decides(f, kind, src, a, rs2, r2, ks2, k2),
+    (rs = rs2, r = r2, rs != "dynamic" ; may_agree(rs, rs2)),
+    (ks = ks2, k = k2, ks != "dynamic" ; may_agree(ks, ks2)).
+
+  // decides(f, kind, src, a, ...): in f, the value (kind, src) decides
+  // or feeds act a, whose resource and key in f's terms follow. Asked
+  // only of the values that carry a check, and once for all the checks
+  // a value carries: joined with carries in the rule above instead, the
+  // walk to the act was repeated per check it carried.
+  .decl carrier(f: symbol, kind: symbol, src: symbol)
+
+  carrier(f, kind, src) :- carries(f, kind, src, _, _, _, _, _).
+
+  .decl decides(f: symbol, kind: symbol, src: symbol, a: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol)
+
+  // The act is in f.
+  decides(f, kind, src, a, rs, r, ks, k) :-
+    carrier(f, kind, src),
     site_depends(a, f, kind, src),
-    act(a, f, rs2, r2, ks2, k2),
-    (rs = rs2, r = r2, rs != "dynamic" ; rs = "any" ; rs2 = "any" ; liftable(rs), (liftable(rs2) ; rs2 = "literal") ; rs = "literal", liftable(rs2)),
-    (ks = ks2, k = k2, ks != "dynamic" ; ks = "any" ; ks2 = "any" ; liftable(ks), (liftable(ks2) ; ks2 = "literal") ; ks = "literal", liftable(ks2)).
+    act(a, f, rs, r, ks, k).
 
   // The carrier decides a call that reaches the act.
-  joined(f, c, a, rs, r, ks, k, rs2, r2, ks2, k2) :-
-    carries(f, kind, src, c, rs, r, ks, k),
+  decides(f, kind, src, a, rs2, r2, ks2, k2) :-
+    carrier(f, kind, src),
     call_decided(f, g, kind, src),
-    acts_if(g, a, _, _, rs1, r1, ks1, k1),
-    lift(f, g, rs1, r1, rs2, r2),
-    lift(f, g, ks1, k1, ks2, k2),
-    (rs = rs2, r = r2, rs != "dynamic" ; rs = "any" ; rs2 = "any" ; liftable(rs), (liftable(rs2) ; rs2 = "literal") ; rs = "literal", liftable(rs2)),
-    (ks = ks2, k = k2, ks != "dynamic" ; ks = "any" ; ks2 = "any" ; liftable(ks), (liftable(ks2) ; ks2 = "literal") ; ks = "literal", liftable(ks2)).
+    acts_if(g, a, _, _, rs, r, ks, k),
+    lift(f, g, rs, r, rs2, r2),
+    lift(f, g, ks, k, ks2, k2).
+  .plan 1:(3,2,1,4,5), 2:(4,2,1,3,5), 3:(5,2,1,3,4)
 
   // The carrier is handed to a callee whose act depends on it.
-  joined(f, c, a, rs, r, ks, k, rs2, r2, ks2, k2) :-
-    carries(f, kind, src, c, rs, r, ks, k),
+  decides(f, kind, src, a, rs2, r2, ks2, k2) :-
+    carrier(f, kind, src),
     call_arg_depends(f, g, n, kind, src),
-    acts_if(g, a, "param", to_string(n), rs1, r1, ks1, k1),
-    lift(f, g, rs1, r1, rs2, r2),
-    lift(f, g, ks1, k1, ks2, k2),
-    (rs = rs2, r = r2, rs != "dynamic" ; rs = "any" ; rs2 = "any" ; liftable(rs), (liftable(rs2) ; rs2 = "literal") ; rs = "literal", liftable(rs2)),
-    (ks = ks2, k = k2, ks != "dynamic" ; ks = "any" ; ks2 = "any" ; liftable(ks), (liftable(ks2) ; ks2 = "literal") ; ks = "literal", liftable(ks2)).
+    acts_if(g, a, "param", to_string(n), rs, r, ks, k),
+    lift(f, g, rs, r, rs2, r2),
+    lift(f, g, ks, k, ks2, k2).
+  .plan 1:(3,2,1,4,5), 2:(4,2,1,3,5), 3:(5,2,1,3,4)
 
   // Two identities agree when they are equal and known, or either is
-  // any; they disagree otherwise. Spelled inline, as comparisons, so the
-  // recursion below needs no negation.
+  // any; they disagree otherwise. Spelled as comparisons and positive
+  // atoms, so the recursion below needs no negation.
 
   .decl met(f: symbol, c: symbol, a: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol)
 
   met(f, c, a, rs, r, ks, k) :-
     joined(f, c, a, rs, r, ks, k, rs2, r2, ks2, k2),
-    (rs = rs2, r = r2, rs != "dynamic" ; rs = "any" ; rs2 = "any"),
-    (ks = ks2, k = k2, ks != "dynamic" ; ks = "any" ; ks2 = "any").
+    (rs = rs2, r = r2, rs != "dynamic" ; either_any(rs, rs2)),
+    (ks = ks2, k = k2, ks != "dynamic" ; either_any(ks, ks2)).
 
   // A pair that agrees only once f's parameters are named: carried up to
   // each caller, renaming both sides at once, until the two agree (they
@@ -283,13 +335,13 @@ liftable(s) :- call_arg_tuple(_, _, _, i, _, _), s = cat("element ", to_string(i
 
   met(h, c, a, xs, x, ys, y) :-
     lifted(h, c, a, xs, x, ys, y, xs2, x2, ys2, y2),
-    (xs = xs2, x = x2, xs != "dynamic" ; xs = "any" ; xs2 = "any"),
-    (ys = ys2, y = y2, ys != "dynamic" ; ys = "any" ; ys2 = "any").
+    (xs = xs2, x = x2, xs != "dynamic" ; either_any(xs, xs2)),
+    (ys = ys2, y = y2, ys != "dynamic" ; either_any(ys, ys2)).
 
   deferred(h, c, a, xs, x, ys, y, xs2, x2, ys2, y2) :-
     lifted(h, c, a, xs, x, ys, y, xs2, x2, ys2, y2),
-    (xs = xs2, x = x2, xs != "dynamic" ; xs = "any" ; xs2 = "any" ; liftable(xs), (liftable(xs2) ; xs2 = "literal") ; xs = "literal", liftable(xs2)),
-    (ys = ys2, y = y2, ys != "dynamic" ; ys = "any" ; ys2 = "any" ; liftable(ys), (liftable(ys2) ; ys2 = "literal") ; ys = "literal", liftable(ys2)),
+    (xs = xs2, x = x2, xs != "dynamic" ; may_agree(xs, xs2)),
+    (ys = ys2, y = y2, ys != "dynamic" ; may_agree(ys, ys2)),
     (xs != xs2, xs != "any", xs2 != "any" ; x != x2, xs != "any", xs2 != "any" ;
      ys != ys2, ys != "any", ys2 != "any" ; y != y2, ys != "any", ys2 != "any").
 
