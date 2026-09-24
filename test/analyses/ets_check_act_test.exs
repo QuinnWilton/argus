@@ -128,6 +128,18 @@ defmodule Argus.Analyses.EtsCheckActTest do
                )
     end
 
+    test "another process that only deletes loses nothing to an update_element" do
+      skip_without_souffle()
+      assert races(:alone, [C.SerializedTouch, C.TouchClient, C.TouchReaper]) == []
+    end
+
+    test "another process that writes the row whole still races it" do
+      skip_without_souffle()
+
+      assert [{"handle_call/3", ":touched_sessions", _}] =
+               Enum.uniq(races(:alone, [C.SerializedTouch, C.TouchClient, C.TouchImporter]))
+    end
+
     test "a row seeded in another process's init/1, before the serialized counter runs" do
       skip_without_souffle()
       assert races(:alone, [C.SeedingOwner, C.SerializedCounter]) == []

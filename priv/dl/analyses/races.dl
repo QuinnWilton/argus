@@ -352,7 +352,42 @@ other_writer(f, name, g) :-
   ets_op(w, g, name, _, "write"),
   pair_key(f, name, ks, k),
   !written_apart(w, ks, k),
+  !removal_loses_nothing(f, name, w),
   writes_after_start(g).
+
+// A removal is undone only by a pair whose act can make the row again:
+// an insert after it puts the removed row back (a revoked session
+// restored). An update_element or a delete after it changes nothing, and
+// the table ends as it would had the pair run first.
+.decl removal(write: symbol)
+
+removal(w) :- ets_op(w, _, _, "delete", "write").
+removal(w) :- ets_op(w, _, _, "delete_object", "write").
+removal(w) :- ets_op(w, _, _, "delete_all_objects", "write").
+removal(w) :- ets_op(w, _, _, "select_delete", "write").
+removal(w) :- ets_op(w, _, _, "take", "write").
+
+// A write that can make a row: an insert, or a counter bump with a
+// default object.
+.decl makes_row(write: symbol)
+
+makes_row(w) :- ets_op(w, _, _, "insert", "write").
+makes_row(w) :- ets_op(w, _, _, "insert_new", "write").
+makes_row(w) :-
+  ets_op(w, _, _, "update_counter", "write"),
+  remote_call(w, _, ":ets", "update_counter", 4).
+
+// A pair of the function on the table whose act can make a row.
+.decl pair_makes_rows(func: symbol, name: symbol)
+
+pair_makes_rows(f, name) :- reads_then_writes(f, _, w, name, _), makes_row(w).
+
+.decl removal_loses_nothing(func: symbol, name: symbol, write: symbol)
+
+removal_loses_nothing(f, name, w) :-
+  reads_then_writes(f, _, _, name, _),
+  removal(w),
+  !pair_makes_rows(f, name).
 
 // The write's key can never be the pair's key (ks, k).
 .decl written_apart(write: symbol, key_kind: symbol, key: symbol)

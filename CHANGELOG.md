@@ -497,6 +497,14 @@ read-modify-write of a record table went unreported by
 is a wildcard names no key, and a `select` match spec, whose head sits
 in a list, is left out, as a dynamic key is.
 
+**Fixed.** When `ets_check_act`'s pair runs in one process, another
+process that only removes rows (`delete`, `delete_object`,
+`select_delete`, `take`, `delete_all_objects`) is no longer its other
+writer unless the pair's act can make the row again. An
+`update_element` or a delete that loses to a removal leaves the table as
+it would be had the pair run first; an `insert` puts a revoked row back,
+and still counts.
+
 **Fixed.** `mnesia_check_act` finds the read-modify-write that updates
 the record it read in place: `[rec] = dirty_read(t, k)` and then
 `dirty_write(put_elem(rec, 2, n + 1))`, an Elixir record's update, or

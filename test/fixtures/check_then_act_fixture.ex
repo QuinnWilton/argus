@@ -609,6 +609,85 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     def reset_all, do: SerializedSessionCache.clear()
   end
 
+  defmodule SerializedTouch do
+    @moduledoc """
+    A session table whose owner stamps a session's last use in its own
+    handle_call/3, reading the row and updating it with update_element:
+    the one writer of an open session, bar a removal.
+    """
+    use GenServer
+
+    @table :touched_sessions
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, [], name: __MODULE__)
+
+    def open(key), do: GenServer.call(__MODULE__, {:open, key})
+    def touch(key, at), do: GenServer.call(__MODULE__, {:touch, key, at})
+
+    @impl true
+    def init([]) do
+      _ = :ets.new(@table, [:named_table, :set, :public])
+      {:ok, %{}}
+    end
+
+    @impl true
+    def handle_call({:open, key}, _from, state),
+      do: {:reply, :ets.insert_new(@table, {key, 0}), state}
+
+    def handle_call({:touch, key, at}, _from, state) do
+      case :ets.lookup(@table, key) do
+        [{^key, last}] -> {:reply, :ets.update_element(@table, key, {2, max(last, at)}), state}
+        [] -> {:reply, false, state}
+      end
+    end
+  end
+
+  defmodule TouchClient do
+    @moduledoc "SerializedTouch's client in the program."
+    alias Argus.Test.Fixtures.CheckThenAct.SerializedTouch
+
+    def login(key), do: SerializedTouch.open(key)
+    def seen(key), do: SerializedTouch.touch(key, System.system_time(:second))
+  end
+
+  defmodule TouchReaper do
+    @moduledoc """
+    A second process that deletes SerializedTouch's rows: whichever lands
+    first, the session ends deleted.
+    """
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, [], name: __MODULE__)
+
+    @impl true
+    def init([]), do: {:ok, %{}}
+
+    @impl true
+    def handle_cast({:revoke, key}, state) do
+      :ets.delete(:touched_sessions, key)
+      {:noreply, state}
+    end
+  end
+
+  defmodule TouchImporter do
+    @moduledoc """
+    A second process that writes SerializedTouch's rows whole: a stamp it
+    writes between the owner's read and update is overwritten.
+    """
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, [], name: __MODULE__)
+
+    @impl true
+    def init([]), do: {:ok, %{}}
+
+    @impl true
+    def handle_cast({:import, key, at}, state) do
+      :ets.insert(:touched_sessions, {key, at})
+      {:noreply, state}
+    end
+  end
+
   defmodule SeedingOwner do
     @moduledoc """
     Creates the counters' table and seeds a row in its own init/1, before
