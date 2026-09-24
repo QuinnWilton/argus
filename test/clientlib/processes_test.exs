@@ -46,6 +46,11 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.Answerer,
     PidFlow.ProxyApi,
     PidFlow.ProxyUser,
+    PidFlow.NamedCall,
+    PidFlow.NamedUserA,
+    PidFlow.NamedUserB,
+    PidFlow.NamedTargetA,
+    PidFlow.NamedTargetB,
     PidFlow.StatemClient,
     PidFlow.Quiet
   ]
@@ -372,7 +377,31 @@ defmodule Argus.Clientlib.ProcessesTest do
 
   test "a wrapper forwarding its target to :gen_statem.call is a peer call", ctx do
     r = solve(ctx, ~w(sync_dep))
-    assert ["StatemClient:do_call/2", "Machine"] in r["sync_dep"]
+    # The caller that names Machine waits on it, not the wrapper it hands
+    # the name to.
+    assert ["StatemClient:status/0", "Machine"] in r["sync_dep"]
+    refute ["StatemClient:do_call/2", "Machine"] in r["sync_dep"]
+  end
+
+  test "a name handed to a wrapper is the target of the call that hands it", ctx do
+    r = solve(ctx, ~w(sync_dep reaches_sync_dep sync_site))
+
+    # Each caller waits on the server it names, through the helper or its
+    # wrapper, and on no other caller's: the helper waits on none.
+    assert ["NamedUserA:handle_call/3", "NamedTargetA"] in r["sync_dep"]
+    assert ["NamedUserB:handle_call/3", "NamedTargetB"] in r["sync_dep"]
+    refute ["NamedUserA:handle_call/3", "NamedTargetB"] in r["reaches_sync_dep"]
+    refute ["NamedUserB:handle_call/3", "NamedTargetA"] in r["reaches_sync_dep"]
+    refute Enum.any?(r["sync_dep"], &match?(["NamedCall:" <> _, _], &1))
+
+    # Anchored at the call into the wrapper.
+    assert Enum.any?(
+             r["sync_site"],
+             &match?(
+               ["NamedUserB:handle_call/3", "NamedTargetB", "NamedUserB:handle_call/3#" <> _],
+               &1
+             )
+           )
   end
 
   test "a gen_statem's data carries its pids from state to state", ctx do

@@ -42,18 +42,47 @@ resolved_arg(callee, callee_pos, val) :-
   call_arg_forward(forwarder, callee, callee_pos, fwd_param),
   resolved_arg(forwarder, fwd_param, val).
 
-// `defp fetch(server), do: GenServer.call(server, ...)` called with a
-// literal: the wrapper synchronously calls that module. A gen_statem's
-// call or cast is as much a peer call (peer_call, peer_cast below).
-sync_call(func, target) :-
-  call_arg_forward(func, callee, 0, fwd_pos),
-  peer_call(callee),
-  resolved_arg(func, fwd_pos, target).
+// ── A literal target handed to a wrapper ──────────────────────────────
+//
+// `def flush(server), do: GenServer.call(server, :flush)` called as
+// `flush(Cache)`: the caller waits on Cache, at its call into the
+// wrapper. The literal is not resolved in the wrapper, whose parameter
+// is every target any caller hands it: resolved there, each caller of
+// the wrapper reached every caller's target, and two thin modules over
+// one server's API (`def flush, do: Buffer.flush(__MODULE__)`, in each)
+// called each other. So the wrapper is a summary, "parameter `pos`
+// becomes a peer call's target", lifted to the caller that passes the
+// literal — as processes.dl lifts a pid handed to a helper
+// (targets_param). The wrapper's own call keeps the target the extractor
+// gave it, "dynamic". A gen_statem's call or cast is as much a peer call
+// (peer_call, peer_cast below).
+.decl target_param(func: symbol, pos: number, kind: symbol)
 
-async_cast(func, target) :-
-  call_arg_forward(func, callee, 0, fwd_pos),
-  peer_cast(callee),
-  resolved_arg(func, fwd_pos, target).
+target_param(f, p, "call") :- call_arg_forward(f, callee, 0, p), peer_call(callee).
+target_param(f, p, "cast") :- call_arg_forward(f, callee, 0, p), peer_cast(callee).
+target_param(f, p, kind) :- call_arg_forward(f, g, k, p), target_param(g, k, kind).
+
+// `func` passes the literal `target` into a wrapper's target parameter:
+// a call ("call") or cast ("cast") of func's own.
+.decl named_target(func: symbol, kind: symbol, target: symbol)
+
+named_target(f, kind, t) :-
+  call_arg(f, g, k, t),
+  t != "dynamic",
+  target_param(g, k, kind).
+
+sync_call(f, t) :- named_target(f, "call", t).
+async_cast(f, t) :- named_target(f, "cast", t).
+
+// The calls into the wrapper that make it: the site a dependency on the
+// target points at.
+.decl named_target_site(func: symbol, site: symbol, kind: symbol, target: symbol)
+
+named_target_site(f, id, kind, t) :-
+  call_arg(f, g, k, t),
+  t != "dynamic",
+  target_param(g, k, kind),
+  call_instr(f, g, id).
 
 // ── Client API ─────────────────────────────────────────────────────────
 //
@@ -168,6 +197,11 @@ sync_site(f, m, id) :-
 sync_site(f, m, id) :-
   process_call(f, id, _, "call", p),
   server_process(p, m).
+
+sync_site(f, m, id) :-
+  named_target_site(f, id, "call", m),
+  m != ":dynamic",
+  !match("via:.*", m).
 
 .decl async_dep(func: symbol, mod: symbol)
 
@@ -395,7 +429,14 @@ sync_request_at(f, "", m, "any") :-
   m != "dynamic",
   m != ":dynamic",
   !match("via:.*", m),
-  !sync_call_site(_, f, m, _).
+  !sync_call_site(_, f, m, _),
+  !named_target_site(f, _, "call", m).
+
+// A literal target handed to a wrapper: at the call into it.
+sync_request_at(f, id, m, "any") :-
+  named_target_site(f, id, "call", m),
+  m != ":dynamic",
+  !match("via:.*", m).
 
 sync_request_at(f, anchor, m, tag) :-
   process_call(f, anchor, site, "call", p),

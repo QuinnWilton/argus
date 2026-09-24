@@ -2559,6 +2559,22 @@ or for anything. One whose every clause waits for some other literal, in
 a module whose timers all carry known literals, is reported. When the
 module arms no timer the program can see, the receive stays suppressed.
 
+**Fixed.** A literal target handed to a wrapper is the dependency of the
+call that hands it (`clientlib/calls.dl`). `def flush(server), do:
+GenServer.call(server, :flush)` called as `flush(EventBuffer)` resolved
+the literal in the wrapper, whose parameter is every target any caller
+passes, and each caller of the wrapper then waited on every caller's
+target. Plausible's Event and Session write buffers — two modules of
+`def flush, do: WriteBuffer.flush(__MODULE__)` over one server module —
+were three "Synchronous call cycle" errors: the wrappers called each
+other, and the server module called both. The wrapper is now a summary
+(`target_param`: a parameter that becomes a call's or cast's target,
+through any depth of forwarding) lifted to each call passing a literal
+(`named_target`), as `processes.dl` lifts a pid handed to a helper, and
+the dependency is anchored at the call into the wrapper (`sync_site`,
+`sync_request_at`). Every analysis reading `sync_dep` sees the change;
+the corpus tally is unchanged.
+
 ### startup
 
 **Fixed.** `startup.unbounded_effect_in_init` and `blocks_on_peer`'s

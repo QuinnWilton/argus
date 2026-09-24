@@ -2,10 +2,20 @@ defmodule Argus.Analyses.BlockingCycleTest do
   use ExUnit.Case, async: true
 
   alias Argus.Souffle
+  alias Argus.Test.Fixtures.{CallCycle, PidFlow}
   alias Argus.Test.Memo
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
+  end
+
+  # A "call" cycle between the two modules, in either order.
+  defp cycle?(results, a, b) do
+    pair = Enum.sort([inspect(a), inspect(b)])
+
+    Enum.any?(results["call_cycle"], fn [x, y, _, _, phase | _] ->
+      phase == "call" and Enum.sort([x, y]) == pair
+    end)
   end
 
   describe "call_cycle.dl" do
@@ -100,6 +110,45 @@ defmodule Argus.Analyses.BlockingCycleTest do
       mods =
         for m <- [SafeCall, UserA, UserB, TargetA, TargetB],
             do: Module.concat(Argus.Test.Fixtures.PidFlow, m)
+
+      assert {:ok, results} = Memo.analyze(mods, :blocking)
+      assert results["call_cycle"] == []
+    end
+
+    test "a name each caller hands a shared helper is that caller's target alone" do
+      skip_without_souffle()
+
+      # NamedUserA and NamedUserB call their own targets through NamedCall;
+      # NamedTargetB calls NamedUserA back by name. With the helper's
+      # parameter every caller's name, NamedUserA "called" NamedTargetB.
+      mods =
+        for m <- [NamedCall, NamedUserA, NamedUserB, NamedTargetA, NamedTargetB],
+            do: Module.concat(Argus.Test.Fixtures.PidFlow, m)
+
+      assert {:ok, results} = Memo.analyze(mods, :blocking)
+      assert results["call_cycle"] == []
+    end
+
+    test "a cycle through a helper both servers call each other by" do
+      skip_without_souffle()
+
+      mods =
+        for m <- [NamedCall, NamedPeerA, NamedPeerB],
+            do: Module.concat(Argus.Test.Fixtures.PidFlow, m)
+
+      assert {:ok, results} = Memo.analyze(mods, :blocking)
+      assert cycle?(results, PidFlow.NamedPeerA, PidFlow.NamedPeerB)
+    end
+
+    test "thin wrappers over one server module do not call each other" do
+      skip_without_souffle()
+
+      # Plausible's Event and Session write buffers: each names an instance
+      # of WriteBuffer after itself and forwards to its API. No process
+      # calls another; the wrappers run no process at all.
+      mods =
+        for m <- [WriteBuffer, EventBuffer, SessionBuffer, Buffers],
+            do: Module.concat(CallCycle, m)
 
       assert {:ok, results} = Memo.analyze(mods, :blocking)
       assert results["call_cycle"] == []

@@ -737,6 +737,110 @@ defmodule Argus.Test.Fixtures.PidFlow do
     def use, do: Argus.Test.Fixtures.PidFlow.ProxyApi.ask()
   end
 
+  defmodule NamedCall do
+    @moduledoc """
+    A helper servers call a peer through by the peer's name, and a wrapper
+    of it: the name each caller passes is that caller's target alone.
+    """
+    def call(server, msg), do: GenServer.call(server, msg)
+    def ping(server), do: call(server, :ping)
+  end
+
+  defmodule NamedUserA do
+    @moduledoc """
+    Calls NamedTargetA through the helper; NamedUserB calls NamedTargetB
+    through its wrapper, and NamedTargetB calls NamedUserA back by name.
+    Only a helper whose parameter is every caller's name at once makes
+    that a cycle.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.PidFlow.{NamedCall, NamedTargetA}
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:go, _from, s), do: {:reply, NamedCall.call(NamedTargetA, :ping), s}
+  end
+
+  defmodule NamedUserB do
+    @moduledoc false
+    use GenServer
+
+    alias Argus.Test.Fixtures.PidFlow.{NamedCall, NamedTargetB}
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:go, _from, s), do: {:reply, NamedCall.ping(NamedTargetB), s}
+  end
+
+  defmodule NamedTargetA do
+    @moduledoc false
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:ping, _from, s), do: {:reply, :pong, s}
+  end
+
+  defmodule NamedTargetB do
+    @moduledoc false
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:ping, _from, s),
+      do: {:reply, GenServer.call(Argus.Test.Fixtures.PidFlow.NamedUserA, :go), s}
+  end
+
+  defmodule NamedPeerA do
+    @moduledoc """
+    Calls NamedPeerB through the helper's wrapper, which calls NamedPeerA
+    back through it: a cycle through the helper both ways.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.PidFlow.{NamedCall, NamedPeerB}
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:ping, _from, s), do: {:reply, NamedCall.ping(NamedPeerB), s}
+  end
+
+  defmodule NamedPeerB do
+    @moduledoc false
+    use GenServer
+
+    alias Argus.Test.Fixtures.PidFlow.{NamedCall, NamedPeerA}
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:ping, _from, s), do: {:reply, NamedCall.ping(NamedPeerA), s}
+  end
+
   defmodule StatemClient do
     @moduledoc "Reaches a gen_statem through a wrapper that forwards its target."
     def status, do: do_call(Argus.Test.Fixtures.PidFlow.Machine, :status)
