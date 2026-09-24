@@ -10,6 +10,26 @@ What 0.20.0 will ship; the release dates this heading and drops the
 `-dev` from `mix.exs`. Grouped by concern. Each entry opens with what it
 does: **Added**, **Changed**, **Fixed** or **Removed**.
 
+### A run redoes only what an edit invalidates
+
+**Added.** `Argus.Pipeline.run_shards/3` extracts into a directory per
+producer — `:base` (the emitter's facts, `def_use`, `conditional_call`
+and the extraction errors of the steps they come from) or one
+extractor — and reports the modules it lost to a timeout or a crashed
+worker and the modules whose specs it read from the code path.
+`Argus.Pipeline.Shards` joins such directories into a facts directory.
+A producer's rows do not depend on which other producers run, so one
+can be extracted again on its own.
+
+**Changed.** `Argus.Pipeline.run/3` writes a relation's rows grouped
+by producer — the base's first, then each extractor's in the order
+`extractors:` names them, each group in module order — where it
+interleaved them module by module. Three relations have more than one
+producer (`extraction_error`, `imprecision`, `dynamic_call`); every
+other file is byte-identical to before. `Argus.Findings.extraction_errors/1`
+lists the errors in that order. An extractor named twice in
+`extractors:` runs once.
+
 ### What the program's other sites believe
 
 **Changed.** Schema 86. `failure.inconsistent_handling` gains `raises`,

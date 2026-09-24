@@ -16,6 +16,22 @@ defmodule Argus.Pipeline do
     fact set never exists in memory at once. `extract/2` returns the
     merged facts in memory.
 
+  ## Producers
+
+  Each row has one producer: `:base`, the facts every extraction makes
+  (`Emit`'s, `def_use` and `conditional_call`, and the extraction errors
+  of the steps they come from), or the extractor that emitted it. A
+  producer's rows depend on the modules and on its own code, and on no
+  other producer's: that is what lets `run_shards/3` extract some
+  producers on their own, into a directory each, and a store keep them
+  apart (`Argus.Cache.Facts`). `run/3` writes a relation's rows grouped
+  by producer — `:base` first, then the extractors in the order
+  `extractors:` names them, each group in module order — which is what
+  joining the producers' directories in that order gives
+  (`Argus.Pipeline.Shards`). Nearly every relation has one producer; the
+  few with several are `extraction_error`, `imprecision` and
+  `dynamic_call`.
+
   A module's failures stay with the module: an extractor that raises, or
   a module that outlives the per-module `:timeout`, is recorded as an
   `extraction_error` row (see `Argus.Schema`) and the run goes on over
@@ -28,7 +44,26 @@ defmodule Argus.Pipeline do
   alias Argus.Extractor.Helpers
   alias Argus.Instr.Reaching
   alias Argus.InstrId
-  alias Argus.Pipeline.{Disassemble, Emit, Writer}
+  alias Argus.Pipeline.{Disassemble, Emit, Shards, Writer}
+
+  @typedoc """
+  Who emits a row: `:base` (the emitter and the derivations every
+  extraction makes) or an extractor module.
+  """
+  @type producer :: :base | module()
+
+  @typedoc """
+  What `run_shards/3` reports beside the directories it wrote:
+
+    * `lost` — the modules (as `extraction_error` names them) whose
+      extraction timed out or whose worker exited. What they would have
+      produced depends on the machine's load as much as on the code, so
+      a run that lost one is no answer to keep.
+    * `installed` — the modules whose specs were read from the code
+      path (`Argus.Specs.installed/2`) while extracting: beyond the
+      beams, what `Argus.Extractors.Specs`'s rows depend on.
+  """
+  @type shard_info :: %{lost: [String.t()], installed: [module()]}
 
   @type extract_opts :: [
           concurrency: pos_integer(),
@@ -84,6 +119,11 @@ defmodule Argus.Pipeline do
   relations that exist only for the in-process control-flow and dataflow
   passes (`Argus.Schema.in_process_only/0`), which no Souffle program
   reads and which are most of the fact volume.
+
+  Each producer's rows are written to a directory of its own inside
+  `output_dir` and moved into place when the run is done (see
+  "Producers" above); an extractor named twice in `extractors:` runs
+  once.
   """
   @spec run(
           modules :: [Disassemble.module_input()],
@@ -92,25 +132,84 @@ defmodule Argus.Pipeline do
         ) ::
           {:ok, Path.t()} | {:error, term()}
   def run(modules, output_dir, opts \\ []) do
+    producers = [:base | Enum.uniq(Keyword.get(opts, :extractors, []))]
+
+    parts =
+      Path.join(
+        output_dir,
+        ".argus-producers-#{:os.getpid()}-#{System.unique_integer([:positive])}"
+      )
+
+    dirs =
+      producers |> Enum.with_index() |> Enum.map(fn {p, i} -> {p, Path.join(parts, "#{i}")} end)
+
+    try do
+      with :ok <- File.mkdir_p(output_dir),
+           :ok <- touch_relations(output_dir),
+           {:ok, _info} <- run_shards(modules, dirs, opts),
+           :ok <-
+             dirs
+             |> Enum.map(&elem(&1, 1))
+             |> Shards.parts()
+             |> Shards.assemble(output_dir, :move) do
+        {:ok, output_dir}
+      end
+    after
+      File.rm_rf(parts)
+    end
+  end
+
+  @doc """
+  Extracts facts from the given modules and writes each producer's rows
+  to a directory of its own: `dirs` pairs producers (`t:producer/0`)
+  with directories, `:base` first when it is there. The extractors that
+  run are the ones named; `:base` is computed whether or not it is
+  named, since every extractor reads what it computes, and its rows are
+  written only when it is. `extractors:` is ignored.
+
+  A producer's directory holds a `.facts` file for each relation it
+  emitted rows for, and nothing else: no empty files, unlike `run/3`.
+  Its rows are the ones `run/3` writes for it — they do not depend on
+  which other producers run — so joining the directories of `:base`
+  and of each extractor, in `run/3`'s order, gives `run/3`'s directory
+  (`Argus.Pipeline.Shards`). `relations:`, `trace_imprecision:`,
+  `concurrency:` and `timeout:` mean what they do for `run/3`.
+
+  Returns `{:ok, info}` (`t:shard_info/0`) or `{:error, reason}`.
+  """
+  @spec run_shards([Disassemble.module_input()], [{producer(), Path.t()}], run_opts()) ::
+          {:ok, shard_info()} | {:error, term()}
+  def run_shards(modules, dirs, opts \\ []) do
     written =
       case Keyword.get(opts, :relations, :all) do
         :all -> nil
         names -> MapSet.new(names)
       end
 
-    with :ok <- File.mkdir_p(output_dir),
-         :ok <- touch_relations(output_dir),
+    selected = MapSet.new(dirs, &elem(&1, 0))
+    extractors = for {producer, _dir} <- dirs, producer != :base, do: producer
+    opts = Keyword.put(opts, :extractors, extractors)
+
+    with :ok <- mkdir_all(dirs),
          {:ok, paths} <- Disassemble.resolve_paths(modules) do
-      writer = Writer.new(output_dir, written)
+      writers = Map.new(dirs, fn {producer, dir} -> {producer, Writer.new(dir, written)} end)
       memo = new_memo()
+
+      shape = fn produced ->
+        for {producer, facts} <- produced,
+            MapSet.member?(selected, producer),
+            do: {producer, Writer.encode(facts, written)}
+      end
 
       try do
         paths
-        |> extract_stream(opts, memo, &Writer.encode(&1, written))
-        |> Enum.reduce_while({:ok, writer}, fn
-          {:ok, encoded}, {:ok, writer} ->
-            case Writer.append_encoded(writer, encoded) do
-              {:ok, writer} -> {:cont, {:ok, writer}}
+        |> extract_stream(opts, memo, shape)
+        |> Enum.reduce_while({:ok, writers, []}, fn
+          {status, encoded}, {:ok, writers, lost} when status in [:ok, :lost] ->
+            lost = if status == :lost, do: lost ++ lost_names(encoded), else: lost
+
+            case append_all(writers, encoded) do
+              {:ok, writers} -> {:cont, {:ok, writers, lost}}
               {:error, _} = error -> {:halt, error}
             end
 
@@ -118,14 +217,56 @@ defmodule Argus.Pipeline do
             {:halt, {:error, reason}}
         end)
         |> case do
-          {:ok, writer} -> with :ok <- Writer.close(writer), do: {:ok, output_dir}
-          {:error, _} = error -> error
+          {:ok, writers, lost} ->
+            close_all(writers)
+            {:ok, %{lost: lost, installed: installed_reads(memo)}}
+
+          {:error, _} = error ->
+            error
         end
       after
-        Writer.close(writer)
+        close_all(writers)
         :ets.delete(memo)
       end
     end
+  end
+
+  defp mkdir_all(dirs) do
+    Enum.reduce_while(dirs, :ok, fn {_producer, dir}, :ok ->
+      case File.mkdir_p(dir) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {:mkdir_failed, dir, reason}}}
+      end
+    end)
+  end
+
+  defp append_all(writers, encoded) do
+    Enum.reduce_while(encoded, {:ok, writers}, fn {producer, bytes}, {:ok, writers} ->
+      case Writer.append_encoded(Map.fetch!(writers, producer), bytes) do
+        {:ok, writer} -> {:cont, {:ok, Map.put(writers, producer, writer)}}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp close_all(writers), do: Enum.each(writers, fn {_producer, w} -> Writer.close(w) end)
+
+  # The module a lost module's one `extraction_error` row names, from
+  # the encoded row: `<module>\t<step>\t<reason>`.
+  defp lost_names(encoded) do
+    for {:base, %{extraction_error: bytes}} <- encoded,
+        [name | _] <- Argus.Tsv.decode(bytes),
+        do: name
+  end
+
+  # The modules whose installed specs the run read: the memo's keys
+  # (`Argus.Specs.installed/2` and the types it resolved through).
+  defp installed_reads(memo) do
+    for {{kind, module}, _value} <- :ets.tab2list(memo),
+        kind in [:specs, :types],
+        is_atom(module),
+        uniq: true,
+        do: module
   end
 
   @doc """
@@ -160,8 +301,11 @@ defmodule Argus.Pipeline do
           paths
           |> extract_stream(opts, memo, shape)
           |> Enum.reduce(%{}, fn
-            {:ok, module_facts}, acc -> merge_facts(acc, module_facts)
-            {:error, reason}, _acc -> throw({:extraction_error, reason})
+            {status, module_facts}, acc when status in [:ok, :lost] ->
+              merge_facts(acc, module_facts)
+
+            {:error, reason}, _acc ->
+              throw({:extraction_error, reason})
           end)
         after
           :ets.delete(memo)
@@ -173,7 +317,9 @@ defmodule Argus.Pipeline do
     {:extraction_error, reason} -> {:error, reason}
   end
 
-  # One `{:ok, facts} | {:error, reason}` per module, in input order.
+  # One `{:ok, shaped} | {:lost, shaped} | {:error, reason}` per module,
+  # in input order: `:lost` for a module that outlived the timeout or
+  # whose worker exited, whose facts are its one `extraction_error` row.
   #
   # Nothing a module does takes the caller down. The workers are linked to
   # the caller, so a raise that escaped one would exit the caller (scry's
@@ -185,12 +331,14 @@ defmodule Argus.Pipeline do
   # beside what was extracted, and the run goes on. Only an input that
   # cannot be read at all (`{:error, reason}` from disassembly) ends it.
   #
-  # `shape` is what the worker does to a module's facts before they cross
-  # to the caller, which takes them one module at a time in input order:
-  # interning them (`extract/2`), or encoding them as the lines of their
-  # files (`run/3`), so the caller only writes. Encoding in the caller
-  # left the workers waiting on it: on the Phoenix stack writing the facts
-  # took longer than extracting them at eight workers.
+  # `shape` is what the worker does to a module's facts — a list of
+  # `{producer, facts}`, `:base` first — before they cross to the
+  # caller, which takes them one module at a time in input order:
+  # merging and interning them (`extract/2`), or encoding each
+  # producer's as the lines of its files (`run_shards/3`), so the caller
+  # only writes. Encoding in the caller left the workers waiting on it: on
+  # the Phoenix stack writing the facts took longer than extracting them
+  # at eight workers.
   defp extract_stream(paths, opts, memo, shape) do
     concurrency = Keyword.get(opts, :concurrency, System.schedulers_online())
     extractors = Keyword.get(opts, :extractors, [])
@@ -222,10 +370,10 @@ defmodule Argus.Pipeline do
 
       {:exit, {path, :timeout}} ->
         reason = "extraction did not finish within #{task_timeout} ms"
-        {:ok, shape.(lost_module(path, reason))}
+        {:lost, shape.(lost_module(path, reason))}
 
       {:exit, {path, reason}} ->
-        {:ok, shape.(lost_module(path, "extraction exited: #{one_line(inspect(reason))}"))}
+        {:lost, shape.(lost_module(path, "extraction exited: #{one_line(inspect(reason))}"))}
     end)
   end
 
@@ -254,6 +402,9 @@ defmodule Argus.Pipeline do
     end
   end
 
+  # `{:ok, [{producer, facts}]}`, `:base` first and then each extractor
+  # in order: what each producer made of the module, its failures with
+  # it (a base step's in `:base`, an extractor's in its own).
   defp module_facts(path, extractors, memo) do
     with {:ok, data} <- Disassemble.disassemble_path(path) do
       mod_str = inspect(data.module)
@@ -297,25 +448,24 @@ defmodule Argus.Pipeline do
         |> with_debug_info(extractors)
 
       # One extractor's failure costs its own rows and nothing else.
-      {extractor_facts, errors} =
-        Enum.reduce(extractors, {%{}, errors}, fn extractor, {acc, errors} ->
-          case attempt(inspect(extractor), fn -> extractor.extract(data) end, errors) do
-            {nil, errors} -> {acc, errors}
-            {facts, errors} -> {merge_facts(acc, facts), errors}
+      produced =
+        for extractor <- extractors do
+          case attempt(inspect(extractor), fn -> extractor.extract(data) end, []) do
+            {nil, failed} -> {extractor, error_facts(mod_str, failed)}
+            {facts, []} -> {extractor, facts}
           end
-        end)
+        end
 
       {conditional, errors} =
         attempt("conditional_call", fn -> derive_conditional_calls(base_facts, cfgs) end, errors)
 
-      facts =
+      base =
         base_facts
-        |> merge_facts(extractor_facts)
         |> merge_facts(derive_def_use(reaching))
         |> merge_facts(conditional || %{})
         |> merge_facts(error_facts(mod_str, errors))
 
-      {:ok, facts}
+      {:ok, [{:base, base} | produced]}
     end
   end
 
@@ -367,18 +517,30 @@ defmodule Argus.Pipeline do
   end
 
   # The facts of a module none of whose facts survived: its one
-  # `extraction_error` row.
+  # `extraction_error` row, which is the base's.
   defp lost_module(path, reason) do
-    error_facts(module_label(path), [{"pipeline", reason}])
+    [{:base, error_facts(module_label(path), [{"pipeline", reason}])}]
   end
 
-  # What `extract/2`'s workers make of a module's facts. Decoding each
-  # module's rows where they were extracted gives the rows decoding the
-  # merged facts would (a row decodes on its own), in parallel: decoding
-  # the Phoenix stack's in the caller took longer than extracting it.
-  defp extract_shape(:raw, _symbols), do: & &1
-  defp extract_shape(:typed, _symbols), do: &Argus.Facts.decode/1
-  defp extract_shape(:interned, symbols), do: &Argus.Facts.intern(&1, symbols)
+  # What `extract/2`'s workers make of a module's facts: the producers'
+  # merged, `:base` first. Decoding each module's rows where they were
+  # extracted gives the rows decoding the merged facts would (a row
+  # decodes on its own), in parallel: decoding the Phoenix stack's in
+  # the caller took longer than extracting it.
+  defp extract_shape(format, symbols) do
+    finish =
+      case format do
+        :raw -> & &1
+        :typed -> &Argus.Facts.decode/1
+        :interned -> &Argus.Facts.intern(&1, symbols)
+      end
+
+    fn produced ->
+      produced
+      |> Enum.reduce(%{}, fn {_producer, facts}, acc -> merge_facts(acc, facts) end)
+      |> finish.()
+    end
+  end
 
   # The module's name as `function_def` spells it, read from the beam's
   # header alone; the path when even that fails (and a placeholder for

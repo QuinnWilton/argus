@@ -1,0 +1,181 @@
+defmodule Argus.Pipeline.ShardsTest do
+  @moduledoc """
+  Each producer's rows are its own: extracting one producer alone gives
+  the rows it gives beside every other, and the producers' directories,
+  joined in order, are `Argus.Pipeline.run/3`'s directory byte for byte.
+  That is what lets a store keep each producer's rows apart and re-extract
+  one of them after an edit (`Argus.Cache.Facts`).
+  """
+  use ExUnit.Case, async: true
+
+  alias Argus.Pipeline
+  alias Argus.Pipeline.Shards
+
+  @moduletag :tmp_dir
+
+  # A spread of the fixtures, the ones a few extractors need, and some
+  # runtime modules for shapes the fixtures do not have: every extractor
+  # emits rows for some of them (the test checks).
+  @modules for(
+             mod <- Application.spec(:panoptes, :modules),
+             String.starts_with?(Atom.to_string(mod), "Elixir.Argus.Test.Fixtures."),
+             do: mod
+           )
+           |> Enum.sort()
+           |> Enum.take_every(7)
+           |> Kernel.++([
+             Argus.Test.Fixtures.Specs,
+             Argus.Test.Fixtures.Router,
+             Argus.Test.Fixtures.Tls.ForcesNone,
+             Argus.Test.Fixtures.DerivedInspect.OneField,
+             Inspect.Argus.Test.Fixtures.DerivedInspect.OneField,
+             Logger.Formatter,
+             URI,
+             :gen_server,
+             :supervisor
+           ])
+
+  # A Phoenix endpoint's socket table, which no fixture compiles (the
+  # Endpoint extractor reads it).
+  setup_all do
+    [{_mod, endpoint}] =
+      Code.compile_string("""
+      defmodule Argus.Pipeline.ShardsTest.Endpoint do
+        def __sockets__, do: [{"/live", Phoenix.LiveView.Socket, [websocket: [], longpoll: []]}]
+      end
+      """)
+
+    %{modules: @modules ++ [endpoint]}
+  end
+
+  defp extractors do
+    {:ok, all} = Argus.Analysis.set(:all)
+
+    Enum.uniq(
+      [Argus.Extractors.CallArgs] ++
+        Enum.flat_map(all ++ [:coverage], fn name ->
+          {:ok, mod} = Argus.Analysis.fetch_module(name)
+          mod.extractors()
+        end)
+    )
+  end
+
+  defp contents(dir) do
+    for name <- dir |> File.ls!() |> Enum.sort(),
+        String.ends_with?(name, ".facts"),
+        into: %{},
+        do: {name, File.read!(Path.join(dir, name))}
+  end
+
+  defp shard_dirs(root, producers),
+    do: Enum.map(producers, &{&1, Path.join(root, inspect(&1))})
+
+  describe "run_shards/3" do
+    test "a producer extracted alone writes the rows it writes beside the others",
+         %{tmp_dir: tmp, modules: modules} do
+      producers = [:base | extractors()]
+      together = shard_dirs(Path.join(tmp, "together"), producers)
+      opts = [trace_imprecision: true]
+
+      assert {:ok, %{lost: []}} = Pipeline.run_shards(modules, together, opts)
+
+      for {producer, dir} <- together do
+        [{^producer, alone}] = shard_dirs(Path.join(tmp, "alone"), [producer])
+        assert {:ok, %{lost: []}} = Pipeline.run_shards(modules, [{producer, alone}], opts)
+
+        assert contents(alone) == contents(dir),
+               "#{inspect(producer)} extracted alone differs from its rows among the others"
+      end
+
+      # Every extractor is exercised: none of them wrote nothing.
+      for {producer, dir} <- together do
+        assert contents(dir) != %{}, "#{inspect(producer)} wrote no rows over the fixtures"
+      end
+    end
+
+    test "joined in producer order, the directories are run/3's",
+         %{tmp_dir: tmp, modules: modules} do
+      extractors = extractors()
+      staged = Argus.Schema.names() -- Argus.Schema.in_process_only()
+      opts = [extractors: extractors, relations: staged, trace_imprecision: true]
+
+      monolithic = Path.join(tmp, "run")
+      assert {:ok, ^monolithic} = Pipeline.run(modules, monolithic, opts)
+
+      dirs = shard_dirs(Path.join(tmp, "shards"), [:base | extractors])
+      assert {:ok, _info} = Pipeline.run_shards(modules, dirs, opts)
+
+      joined = Path.join(tmp, "joined")
+      File.mkdir_p!(joined)
+      Pipeline.write_facts(%{}, joined)
+      parts = dirs |> Enum.map(&elem(&1, 1)) |> Shards.parts()
+      assert :ok = Shards.assemble(parts, joined, :link)
+
+      assert contents(joined) == contents(monolithic)
+      assert File.ls!(monolithic) |> Enum.reject(&String.ends_with?(&1, ".facts")) == []
+    end
+
+    test "names the modules whose installed specs it read", %{tmp_dir: tmp} do
+      dirs = shard_dirs(tmp, [Argus.Extractors.Specs])
+
+      assert {:ok, %{installed: installed}} =
+               Pipeline.run_shards([Argus.Test.Fixtures.Specs], dirs)
+
+      assert GenServer in installed
+      assert {:ok, %{installed: []}} = Pipeline.run_shards([:lists], shard_dirs(tmp, [:base]))
+    end
+  end
+
+  describe "run/3" do
+    test "a relation with several producers keeps each producer's rows together",
+         %{tmp_dir: tmp} do
+      # `dynamic_call`: the emitter's `call_fun`/`apply` rows, then
+      # Purity's `dot_dispatch` ones, each in module order.
+      {:ok, _} = Pipeline.run(@modules, tmp, extractors: [Argus.Extractors.Purity])
+
+      kinds =
+        tmp
+        |> Path.join("dynamic_call.facts")
+        |> File.read!()
+        |> Argus.Tsv.decode()
+        |> Enum.map(&List.last/1)
+        |> Enum.dedup_by(&(&1 == "dot_dispatch"))
+
+      assert Enum.count(kinds, &(&1 == "dot_dispatch")) == 1
+      assert List.last(kinds) == "dot_dispatch"
+    end
+  end
+
+  describe "place/3" do
+    test "a linked relation is never written through", %{tmp_dir: tmp} do
+      part = Path.join(tmp, "part.facts")
+      File.write!(part, "a\tb\n")
+      target = Path.join(tmp, "target.facts")
+      File.write!(target, "stale\n")
+
+      assert :ok = Shards.place([part], target, :link)
+      assert File.read!(target) == "a\tb\n"
+
+      # Replacing the target again replaces the link, not the part.
+      other = Path.join(tmp, "other.facts")
+      File.write!(other, "c\td\n")
+      assert :ok = Shards.place([other, part], target, :link)
+      assert File.read!(target) == "c\td\na\tb\n"
+      assert File.read!(part) == "a\tb\n"
+    end
+
+    test "no parts is an empty file; a moved part leaves its place", %{tmp_dir: tmp} do
+      target = Path.join(tmp, "target.facts")
+      File.write!(target, "stale\n")
+      assert :ok = Shards.place([], target, :move)
+      assert File.read!(target) == ""
+
+      part = Path.join(tmp, "part.facts")
+      File.write!(part, "a\n")
+      assert :ok = Shards.place([part], target, :move)
+      assert File.read!(target) == "a\n"
+      refute File.exists?(part)
+      assert tmp |> File.ls!() |> Enum.sort() == ["target.facts"]
+    end
+  end
+end

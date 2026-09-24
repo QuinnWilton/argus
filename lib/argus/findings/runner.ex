@@ -41,9 +41,10 @@ defmodule Argus.Findings.Runner do
 
   @doc """
   The extraction errors recorded in a facts directory
-  (`Argus.Analysis.extract_facts/3` writes them as `extraction_error`),
-  in the order extraction met them. A directory without the file has
-  none.
+  (`Argus.Analysis.extract_facts/3` writes them as `extraction_error`):
+  the base steps' first, then each extractor's in turn, each in module
+  order (`Argus.Pipeline`'s producers). A directory without the file
+  has none.
   """
   @spec extraction_errors(Path.t()) :: [Findings.extraction_error()]
   def extraction_errors(facts_dir) do
