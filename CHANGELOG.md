@@ -146,6 +146,22 @@ caller)` gives each caller as a related frame ("passes :infinity as
 the timeout"). Only a literal `:infinity` at the call is followed, not
 one forwarded through a further wrapper's parameter.
 ||||||| parent of 4a81fb7 ([findings] inconsistent_handling says "most" past one deviant)
+### Check-then-act, read closer
+
+What a precision audit of `ets_missing_row`, `ets_check_act` and
+`mnesia_check_act` found, one entry per finding.
+
+**Fixed.** `ets_missing_row` follows the check across function calls.
+CheckThenAct lifted only literals, `any`, parameters and their elements
+across a call, and the rule names tables as `clientlib/tables.dl` does
+(a named table, an `:ets.new/2` site, a module's field), so a check and
+an act in different functions never met: a count in a helper the
+found-row branch calls, a check in a helper that returns it, or a count
+in another module. A named table and an `:ets.new/2` site now cross
+every call unchanged (`global_identity`), and a table a module keeps
+under a field of its own crosses calls within the module
+(`module_identity`). The other instances name their resources by
+literals and parameters, and are unchanged.
 
 ### Priors asked side by side
 

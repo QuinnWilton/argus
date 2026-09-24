@@ -41,6 +41,29 @@ defmodule Argus.Analyses.EtsMissingRowTest do
     end
   end
 
+  describe "ets_missing_row across functions" do
+    test "the act in a helper the found-row branch calls" do
+      skip_without_souffle()
+
+      assert [{"log/1", "named", ":helper_act_buckets", "log/1", "bump/1", "flush/1"}] =
+               missing([Fixture.HelperAct])
+    end
+
+    test "the check in a helper that returns it" do
+      skip_without_souffle()
+
+      assert [{"log/1", "named", ":helper_check_buckets", "exists?/1", "log/1", "flush/1"}] =
+               missing([Fixture.HelperCheck])
+    end
+
+    test "the act in another module" do
+      skip_without_souffle()
+
+      assert [{"log/1", "named", ":cross_module_buckets", "log/1", "bump/1", "flush/1"}] =
+               missing([Fixture.CrossModuleAct, Fixture.Counter])
+    end
+  end
+
   describe "finding" do
     test "anchors the act and relates the check and the remover" do
       row = [

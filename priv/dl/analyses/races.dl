@@ -781,13 +781,25 @@ table_of(op, tk, t) :- ets_table(op, tk, t).
 
 .init missing = CheckThenAct
 
-missing.check(read, func, table_kind, table, key_kind, key) :-
+missing.check(read, func, lifted_kind, table, key_kind, key) :-
   deciding_read(read, func),
-  table_and_key(read, table_kind, table, key_kind, key).
+  table_and_key(read, table_kind, table, key_kind, key),
+  table_kind_as(table_kind, lifted_kind).
 
-missing.act(act, func, table_kind, table, key_kind, key) :-
+missing.act(act, func, lifted_kind, table, key_kind, key) :-
   raises_if_missing(act, func),
-  table_and_key(act, table_kind, table, key_kind, key).
+  table_and_key(act, table_kind, table, key_kind, key),
+  table_kind_as(table_kind, lifted_kind).
+
+// A table's kind as CheckThenAct lifts it across calls: a named table and
+// an :ets.new/2 site are the same table in every function; a table a
+// module keeps under a field of its own is, within the module
+// (check_then_act.dl's global_identity and module_identity).
+.decl table_kind_as(table_kind: symbol, lifted_kind: symbol)
+
+table_kind_as("named", "named").
+table_kind_as("new", "new").
+table_kind_as("field", "module field").
 
 // The rule is written in the words below, one per line, each over a
 // whole table: a table is its kind and identity together (ets_table's
@@ -814,7 +826,9 @@ fails_if_row_missing(act, func) :-
 // (CheckThenAct's meets, followed across calls).
 .decl act_depends_on_check(func: symbol, check: symbol, act: symbol, table: EtsTable)
 
-act_depends_on_check(func, check, act, [tk, t]) :- missing.meets(func, check, act, tk, t, _, _).
+act_depends_on_check(func, check, act, [tk, t]) :-
+  missing.meets(func, check, act, lifted_kind, t, _, _),
+  table_kind_as(tk, lifted_kind).
 
 // The act's table is one another process can read.
 .decl shared_table(act: symbol, table: EtsTable) inline

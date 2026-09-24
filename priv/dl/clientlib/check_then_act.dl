@@ -28,8 +28,11 @@
 // whatever the caller passes there (call_arg, call_arg_forward,
 // call_arg_field, call_arg_element), and an element of one the same
 // element of what the caller passes (call_arg_forward, call_arg_tuple).
-// A field, a local or a dynamic value does not cross, and the pair goes
-// quiet rather than guess.
+// A literal, a named ETS table and the :ets.new/2 site of an unnamed one
+// cross unchanged (global_identity), and a table a module keeps under a
+// field of its own crosses within the module (module_identity). A key
+// read from a map field, a local or a dynamic value does not cross, and
+// the pair goes quiet rather than guess.
 //
 // Calls through a closure's captured variables are not followed: CallArgs
 // says nothing about a make_fun3 environment. An unknown higher-order call
@@ -66,6 +69,26 @@ liftable("param").
 liftable(s) :- call_arg_element(_, _, _, _, i), s = cat("element ", to_string(i)).
 liftable(s) :- call_arg_tuple(_, _, _, i, _, _), s = cat("element ", to_string(i)).
 
+// An identity that names the same thing wherever it is spelled, and so
+// crosses every call unchanged: a literal, `any`, a named ETS table
+// ("named" and its name) or the :ets.new/2 site that made an unnamed one
+// ("new" and the site).
+.decl global_identity(source: symbol)
+
+global_identity("literal").
+global_identity("any").
+global_identity("named").
+global_identity("new").
+
+// One that names the same thing throughout its module and nowhere else:
+// a table a module keeps under a map field of its own ("module field"
+// and the module and path; clientlib/tables.dl's "field" table). It
+// crosses a call within the module. A key read from a map field
+// ("field") does not: the map is the function's own.
+.decl module_identity(source: symbol)
+
+module_identity("module field").
+
 .comp CheckThenAct {
   .decl check(site: symbol, func: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol)
   .decl act(site: symbol, func: symbol, rs: symbol, r: symbol, ks: symbol, k: symbol)
@@ -84,7 +107,14 @@ liftable(s) :- call_arg_tuple(_, _, _, i, _, _), s = cat("element ", to_string(i
 
   .decl lift(f: symbol, g: symbol, s: symbol, v: symbol, s2: symbol, v2: symbol)
 
-  lift(f, g, s, v, s, v) :- needs(g, s, v), (s = "literal" ; s = "any"), call_edge(f, g).
+  lift(f, g, s, v, s, v) :- needs(g, s, v), global_identity(s), call_edge(f, g).
+
+  lift(f, g, s, v, s, v) :-
+    needs(g, s, v),
+    module_identity(s),
+    call_edge(f, g),
+    function_def(f, m, _, _, _),
+    function_def(g, m, _, _, _).
 
   lift(f, g, "param", q, "param", to_string(p)) :-
     needs(g, "param", q),

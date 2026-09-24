@@ -119,4 +119,71 @@ defmodule Argus.Test.Fixtures.MissingRow do
       {:noreply, state}
     end
   end
+
+  # ── Across functions ─────────────────────────────────────────────
+
+  defmodule HelperAct do
+    @moduledoc "The count sits in a helper the found-row branch calls."
+    @table :helper_act_buckets
+
+    def setup, do: :ets.new(@table, [:set, :named_table, :public])
+
+    def log(key) do
+      case :ets.lookup(@table, key) do
+        [] ->
+          :ets.insert(@table, {key, 0})
+          _ = :timer.apply_after(10, __MODULE__, :flush, [key])
+          :ok
+
+        [_existing] ->
+          bump(key)
+      end
+    end
+
+    defp bump(key), do: :ets.update_counter(@table, key, {2, 1})
+
+    def flush(key), do: :ets.take(@table, key)
+  end
+
+  defmodule HelperCheck do
+    @moduledoc "The check sits in a helper that returns whether the row is there."
+    @table :helper_check_buckets
+
+    def setup, do: :ets.new(@table, [:set, :named_table, :public])
+
+    def log(key) do
+      if exists?(key) do
+        :ets.update_counter(@table, key, {2, 1})
+      else
+        :ets.insert(@table, {key, 0})
+        _ = :timer.apply_after(10, __MODULE__, :flush, [key])
+        :ok
+      end
+    end
+
+    defp exists?(key), do: :ets.member(@table, key)
+
+    def flush(key), do: :ets.take(@table, key)
+  end
+
+  defmodule CrossModuleAct do
+    @moduledoc "The count is another module's function."
+    @table :cross_module_buckets
+
+    def setup, do: :ets.new(@table, [:set, :named_table, :public])
+
+    def log(key) do
+      case :ets.lookup(@table, key) do
+        [] -> :ets.insert(@table, {key, 0})
+        [_existing] -> Argus.Test.Fixtures.MissingRow.Counter.bump(key)
+      end
+    end
+
+    def flush(key), do: :ets.take(@table, key)
+  end
+
+  defmodule Counter do
+    @moduledoc "CrossModuleAct's count."
+    def bump(key), do: :ets.update_counter(:cross_module_buckets, key, {2, 1})
+  end
 end
