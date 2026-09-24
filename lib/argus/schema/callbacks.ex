@@ -26,6 +26,38 @@ defmodule Argus.Schema.Callbacks do
         """
       },
       %{
+        name: :callback_drops,
+        layer: 2,
+        fields: [
+          {:func, :symbol, "the callback"},
+          {:callback, :symbol, "'handle_call' | 'handle_cast' | 'handle_info'"}
+        ],
+        doc: """
+        The callback's catch-all does nothing with the message but log it or \
+        ignore it: every path from its body hands the message, or what is \
+        made of it, only to Logger, `:logger`, IO or `inspect/2`. GenServer's \
+        own handle_info/2 is one. A catch-all that calls anything else with \
+        it, returns it, stores it or tests it is not.
+        """
+      },
+      %{
+        name: :callback_open,
+        layer: 2,
+        fields: [
+          {:func, :symbol, "the callback"},
+          {:callback, :symbol, "'handle_call' | 'handle_cast' | 'handle_info'"},
+          {:shape, :symbol, "'any' | 'tuple'"}
+        ],
+        doc: """
+        Some clause other than a catch-all takes the message by its shape \
+        alone, never comparing it or its tag to a value: `msg when \
+        is_atom(msg)` (`any`), `{ref, result} when is_reference(ref)` \
+        (`tuple`, a tuple of any tag). `callback_tag` names nothing such a \
+        clause takes, so a rule asking whether a message is taken asks \
+        this too.
+        """
+      },
+      %{
         name: :callback_total,
         layer: 2,
         fields: [

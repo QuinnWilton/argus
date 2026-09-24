@@ -1,0 +1,306 @@
+defmodule Argus.Test.Fixtures.UnhandledInfo do
+  @moduledoc """
+  Fixtures for `mailbox.unhandled_info`: a message a GenServer is sent —
+  by a send points-to follows to it, a timer it arms for itself, or a
+  monitor it takes — that no clause of its handle_info/2 takes. The
+  positives are the shapes of real fixes (sequin's :max_memory_check,
+  astarte's re-armed :init, oban's leaked listeners, teslamate's
+  :repair); the quiet neighbours take the message, hand it on, or cannot
+  be judged.
+  """
+
+  defmodule MemoryCheck do
+    @moduledoc "Arms :memory_check from handle_continue and has clauses for two other messages: a crash."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(opts), do: {:ok, opts, {:continue, :init}}
+
+    @impl true
+    def handle_continue(:init, state) do
+      schedule_memory_check()
+      {:noreply, state}
+    end
+
+    @impl true
+    def handle_info(:log, state), do: {:noreply, state}
+    def handle_info(:changed, state), do: {:noreply, state}
+
+    defp schedule_memory_check, do: Process.send_after(self(), :memory_check, 300_000)
+  end
+
+  defmodule Reconnect do
+    @moduledoc "Re-arms :connect after a lost connection; only :DOWN has a clause."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(_opts), do: {:ok, :not_connected}
+
+    @impl true
+    def handle_info({:DOWN, _ref, :process, _pid, _reason}, _state) do
+      schedule_connect()
+      {:noreply, :not_connected}
+    end
+
+    defp schedule_connect, do: Process.send_after(self(), :connect, 10_000)
+  end
+
+  defmodule Listeners do
+    @moduledoc "Monitors each listener and drops the :DOWN in a catch-all: dead listeners pile up."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+    def listen, do: GenServer.call(__MODULE__, :listen)
+
+    @impl true
+    def init(_opts), do: {:ok, %{}}
+
+    @impl true
+    def handle_call(:listen, {pid, _}, listeners) do
+      Process.monitor(pid)
+      {:reply, :ok, Map.put(listeners, pid, true)}
+    end
+
+    @impl true
+    def handle_info({:notify, payload}, listeners) do
+      for {pid, _} <- listeners, do: send(pid, payload)
+      {:noreply, listeners}
+    end
+
+    def handle_info(_message, listeners), do: {:noreply, listeners}
+  end
+
+  defmodule Repair do
+    @moduledoc "Arms :repair on an interval and handles it in handle_cast; handle_info only logs."
+    use GenServer
+    require Logger
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(opts) do
+      {:ok, _} = :timer.send_interval(60_000, self(), :repair)
+      {:ok, opts}
+    end
+
+    @impl true
+    def handle_cast(:repair, state), do: {:noreply, state}
+
+    @impl true
+    def handle_info(msg, state) do
+      Logger.warning("Unexpected message: #{inspect(msg)}")
+      {:noreply, state}
+    end
+  end
+
+  defmodule Ticker do
+    @moduledoc "Sends itself :tick and has no handle_info of its own."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(opts) do
+      send(self(), :tick)
+      {:ok, opts}
+    end
+  end
+
+  defmodule Pinger do
+    @moduledoc "A client pings the server it started; the server takes only :pong."
+    alias Argus.Test.Fixtures.UnhandledInfo.PingServer
+
+    def run do
+      {:ok, pid} = PingServer.start_link([])
+      send(pid, :ping)
+    end
+  end
+
+  defmodule PingServer do
+    @moduledoc false
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+
+    @impl true
+    def handle_info(:pong, state), do: {:noreply, state}
+  end
+
+  # ── Quiet ─────────────────────────────────────────────────────────
+
+  defmodule Handled do
+    @moduledoc "Arms :refresh and has a clause for it; monitors and takes :DOWN."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(opts) do
+      Process.send_after(self(), :refresh, 1_000)
+      {:ok, opts}
+    end
+
+    @impl true
+    def handle_call({:watch, pid}, _from, state) do
+      Process.monitor(pid)
+      {:reply, :ok, state}
+    end
+
+    @impl true
+    def handle_info(:refresh, state), do: {:noreply, state}
+    def handle_info({:DOWN, _, :process, _, _}, state), do: {:noreply, state}
+  end
+
+  defmodule Delegates do
+    @moduledoc "The catch-all hands every message to a helper, which may take it."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(opts) do
+      Process.send_after(self(), :flush, 1_000)
+      {:ok, opts}
+    end
+
+    @impl true
+    def handle_info(msg, state), do: handle_message(msg, state)
+
+    defp handle_message(:flush, state), do: {:noreply, state}
+    defp handle_message(_other, state), do: {:noreply, state}
+  end
+
+  defmodule OpenClause do
+    @moduledoc "A clause takes any atom by its type alone; a {ref, result} clause any 2-tuple."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(opts) do
+      Process.send_after(self(), :sweep, 1_000)
+      send(self(), {:job, 1})
+      {:ok, opts}
+    end
+
+    @impl true
+    def handle_info(event, state) when is_atom(event), do: {:noreply, [event | state]}
+    def handle_info({ref, result}, state) when is_reference(ref), do: {:noreply, [result | state]}
+  end
+
+  defmodule WaitsForDown do
+    @moduledoc "Monitors and waits for the :DOWN in the same callback."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+
+    @impl true
+    def handle_call({:stop, pid}, _from, state) do
+      ref = Process.monitor(pid)
+      Process.exit(pid, :kill)
+
+      receive do
+        {:DOWN, ^ref, :process, _, _} -> :ok
+      end
+
+      {:reply, :ok, state}
+    end
+
+    @impl true
+    def handle_info(:other, state), do: {:noreply, state}
+  end
+
+  defmodule Flushes do
+    @moduledoc "Monitors around a call and demonitors with :flush."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+
+    @impl true
+    def handle_call({:ask, pid}, _from, state) do
+      ref = Process.monitor(pid)
+      reply = GenServer.call(pid, :question)
+      Process.demonitor(ref, [:flush])
+      {:reply, reply, state}
+    end
+
+    @impl true
+    def handle_info(:other, state), do: {:noreply, state}
+  end
+
+  defmodule Client do
+    @moduledoc "A client function monitors in its caller's process: the :DOWN is the caller's."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    def await_down do
+      ref = Process.monitor(Process.whereis(__MODULE__))
+      ref
+    end
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+
+    @impl true
+    def handle_info(:other, state), do: {:noreply, state}
+  end
+
+  # ── gen_statem ──────────────────────────────────────────────────────
+
+  defmodule Poller do
+    @moduledoc "A state machine arms :poll for itself; no state has a clause for it, :idle no catch-all."
+    @behaviour :gen_statem
+
+    def start_link(opts), do: :gen_statem.start_link(__MODULE__, opts, [])
+
+    @impl true
+    def callback_mode, do: :state_functions
+
+    @impl true
+    def init(opts) do
+      Process.send_after(self(), :poll, 1_000)
+      {:ok, :idle, opts}
+    end
+
+    def idle({:call, from}, :status, data), do: {:keep_state, data, [{:reply, from, :idle}]}
+    def idle(:cast, :go, data), do: {:next_state, :busy, data}
+
+    def busy(:info, _msg, data), do: {:keep_state, data}
+    def busy(:cast, :stop, data), do: {:next_state, :idle, data}
+  end
+
+  defmodule PollerTakes do
+    @moduledoc "The same machine with a state that takes :poll: the message is one some state expects."
+    @behaviour :gen_statem
+
+    def start_link(opts), do: :gen_statem.start_link(__MODULE__, opts, [])
+
+    @impl true
+    def callback_mode, do: :state_functions
+
+    @impl true
+    def init(opts) do
+      Process.send_after(self(), :poll, 1_000)
+      {:ok, :idle, opts}
+    end
+
+    def idle(:cast, :go, data), do: {:next_state, :busy, data}
+
+    def busy(:info, :poll, data), do: {:keep_state, data}
+    def busy(:cast, :stop, data), do: {:next_state, :idle, data}
+  end
+end

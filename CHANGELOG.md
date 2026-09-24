@@ -59,6 +59,16 @@ and have `resolve/2` raise `ArgumentError` on it in the window between
 row goes in first now, and a binary that loses the `insert_new` race
 deletes the row it wrote. `races.ets_publish_order` found it.
 
+**Added.** Schema 66. `callback_drops(func, callback)` — the callback's
+catch-all does nothing with the message but log or ignore it (a forward
+walk from its body: the message reaches only Logger, `:logger`, IO or
+`inspect/2`); `callback_open(func, callback, shape)` — a clause other
+than a catch-all takes the message by its shape alone (`any`: `msg when
+is_atom(msg)`; `tuple`: `{ref, result}`); `statem_info_tag(mod, func,
+tag)` and `statem_info_open(mod, func, shape)`, the same two questions
+of a gen_statem's content. `Argus.Extractors.CallbackTag.MessageClauses`
+reads them; `Argus.Extractor.Dispatch.clause_start?/3` is public.
+
 **Added.** Schema 65. `call_arg_element(caller, callee, arg_pos,
 param_pos, index)` — the argument is element `index` of the caller's
 parameter — and `call_arg_tuple(caller, callee, arg_pos, index, source,
@@ -1107,6 +1117,40 @@ every loaded module; it resolves once per alias entry, against the
 concern that runs it.
 
 ### mailbox
+
+**Added.** `mailbox.unhandled_info(mod, func, site, message, source,
+server, handler, fallback)` — the GenServer half of what
+`unreceived_message` asks of a spawned process: a message a server is
+sent (`source`: a `send` process points-to follows to it, a `timer` it
+arms for itself, the `{:DOWN, …}` of a `monitor` it takes in its own
+callbacks) that no clause of its handle_info/2 takes. `fallback` is what
+takes it instead: nothing (`crash`, "No handle_info/2 clause for a
+message the server is sent", a FunctionClauseError), a catch-all that
+only logs or ignores it (`catch_all`, "A message the server is sent
+reaches only its catch-all handle_info/2" — a warning for a monitor's
+:DOWN, a monitor that does nothing; info for a message the program
+sends, which a catch-all may be meant to take), or GenServer's own
+handle_info/2 (`default`). Sent to a gen_statem that no callback of
+takes it, a state function with no :info catch-all is `state_crash`
+("No clause for a message a gen_statem is sent"). Not judged: a catch-all
+that hands the message on, a clause that takes it by shape
+(`callback_open`), a message a receive in the server's callbacks could
+take, a monitor its function waits on or flushes. partial_handler's
+"runtime" and "late_message" catch-all findings step aside for a module
+a `crash` names, and "statem_info" for a state a `state_crash` names.
+Corpus: three fix pairs — oban@5518653 (Notifiers.PG dropped each
+listener's :DOWN in its catch-all and leaked the listener),
+sequin@6693949 (SlotMessageStore armed :max_memory_check with no clause
+and no catch-all), astarte@f3edb85 (AMQPEventsProducer re-armed :init
+after a refactor removed its clause). Those are the rule's only rows
+over the corpus, realtime, logflare, hexpm and OTP's kernel, stdlib,
+mnesia, ssl, inets and ssh; no other finding moved. The ~120-repo scan
+that found no pair for `unreceived_message` found every real "message
+never received" fix in a handle_info/2, which is why the rule is here.
+teslamate@91f6a8f (:repair armed by `:timer.send_interval/3`, handled in
+handle_cast, dropped by a logging catch-all) is the same shape and is
+caught by the fixtures, but its 2020 tree does not build on any
+installed toolchain.
 
 **Fixed.** An armed timer's ref handed to a function of the module
 (`{:noreply, put_timer(state, ref)}`) goes where that function puts its

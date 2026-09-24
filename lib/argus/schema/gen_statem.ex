@@ -102,6 +102,34 @@ defmodule Argus.Schema.GenStatem do
             "consumer with the source finds the clause head by."
       },
       %{
+        name: :statem_info_open,
+        layer: 2,
+        fields: [
+          {:mod, :symbol, "module name"},
+          {:func, :symbol, "the state function or handle_event/4"},
+          {:shape, :symbol, "'any' | 'tuple'"}
+        ],
+        doc: """
+        Some clause other than a catch-all takes the event content by its \
+        shape alone, never comparing it or its tag to a value — \
+        `callback_open` for a gen_statem's content, `{x, 1}`.
+        """
+      },
+      %{
+        name: :statem_info_tag,
+        layer: 2,
+        fields: [
+          {:mod, :symbol, "module name"},
+          {:func, :symbol, "the state function or handle_event/4"},
+          {:tag, :symbol, "an atom the callback compares anything to"}
+        ],
+        doc: """
+        An atom the callback compares somewhere — an event content's tag \
+        among the event types and state names. Over-approximated as \
+        `callback_tag` is: a rule asks whether a tag is NOT taken.
+        """
+      },
+      %{
         name: :statem_info_catchall,
         layer: 2,
         fields: [

@@ -187,6 +187,49 @@
     pre: "e562c63922ea3518d7963bef3e84b433dae5cd80",
     finding: {:failure, "RPC result matched without a {:badrpc, _} clause"}
   },
+  # ── A message a GenServer is sent and has no clause for ────────────
+  # oban 5518653 "Remove monitored processes from listeners list": the PG
+  # notifier monitored every listener in handle_call and dropped the
+  # :DOWN in its catch-all, so dead listeners piled up and it kept
+  # dispatching to them. The fix is the :DOWN clause.
+  %{
+    repo: "oban-bg/oban",
+    issue: "oban@5518653",
+    module: "Oban.Notifiers.PG",
+    pre: "9448f0380da28624c52eaaf83eef08982260eb02",
+    fix: "55186534272612aa65ba7e03d62602a012a99fe3",
+    finding: {:mailbox, "A message the server is sent reaches only its catch-all handle_info/2"}
+  },
+  # sequin 6693949: c996f2b made SlotMessageStore arm :max_memory_check
+  # from handle_continue with no handle_info clause for it and no
+  # catch-all — a FunctionClauseError five minutes after every start.
+  # Its locked rabbit_common predates OTP 28's public_key headers.
+  %{
+    repo: "sequinstream/sequin",
+    issue: "sequin@6693949",
+    module: "Sequin.DatabasesRuntime.SlotMessageStore",
+    otp: "27.3.3",
+    elixir: "1.18.3-otp-27",
+    pre: "94fbd525996e9c980c57dcccd99f4ba2eaab65dc",
+    fix: "6693949a27af272c4783a86536d67911de289d22",
+    finding: {:mailbox, "No handle_info/2 clause for a message the server is sent"}
+  },
+  # astarte f3edb85 "correctly reconnect to amqp after a connection loss":
+  # a refactor removed AMQPEventsProducer's :init clause and left
+  # schedule_connect/0 re-arming :init after a lost connection; its only
+  # clause took :DOWN. Its locked rabbit_common uses `maybe` as an atom,
+  # a keyword from OTP 27.
+  %{
+    repo: "astarte-platform/astarte",
+    issue: "astarte@f3edb85",
+    subdir: "apps/astarte_data_updater_plant",
+    module: "Astarte.DataUpdaterPlant.AMQPEventsProducer",
+    otp: "26.2.5.6",
+    elixir: "1.18.4-otp-26",
+    pre: "6539a98bf4ebd1d43940aa083717669b1f5f6c07",
+    fix: "f3edb85d33c4151cf6b8a1770eae8da3d7040865",
+    finding: {:mailbox, "No handle_info/2 clause for a message the server is sent"}
+  },
   %{
     repo: "beam-bots/bb",
     issue: "bb#214",

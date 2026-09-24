@@ -24,11 +24,16 @@ defmodule Argus.Extractors.CallbackTag do
   - `callback_total(func, callback)` — some clause accepts every message,
     whatever it demands of the state (`handle_info(msg, {stack, cont})`
     is a catch-all for messages), so no tag can fail
+  - `callback_drops(func, callback)` — the catch-all only logs or ignores
+    the message (`MessageClauses.catch_all_drops?/2`)
+  - `callback_open(func, callback, shape)` — a clause takes the message
+    by its shape alone (`MessageClauses.open_shapes/2`)
   """
 
   @behaviour Argus.Extractor
 
   alias Argus.Extractor.Dispatch
+  alias Argus.Extractors.CallbackTag.MessageClauses
   alias Argus.InstrId
 
   import Argus.Extractor.Facts, only: [add_fact: 3]
@@ -42,6 +47,8 @@ defmodule Argus.Extractors.CallbackTag do
   @impl true
   def relations,
     do: [
+      :callback_drops,
+      :callback_open,
       :callback_ref_head,
       :callback_tag,
       :callback_total
@@ -61,8 +68,20 @@ defmodule Argus.Extractors.CallbackTag do
           |> emit_tags(func_id, callback, instrs)
           |> emit_total(func_id, callback, instrs)
           |> emit_ref_head(func_id, callback, instrs)
+          |> emit_clauses(func_id, callback, instrs)
       end
     end)
+  end
+
+  defp emit_clauses(facts, func_id, callback, instrs) do
+    facts =
+      instrs
+      |> MessageClauses.open_shapes({:x, 0})
+      |> Enum.reduce(facts, &add_fact(&2, :callback_open, [func_id, callback, to_string(&1)]))
+
+    if MessageClauses.catch_all_drops?(instrs, {:x, 0}),
+      do: add_fact(facts, :callback_drops, [func_id, callback]),
+      else: facts
   end
 
   defp emit_tags(facts, func_id, callback, instrs) do

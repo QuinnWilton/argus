@@ -63,8 +63,9 @@
 // demonitor without :flush, an {:EXIT, ...} from a Plug's port. Bandit's
 // connection process crashed on exactly those until a catch-all landed.
 //
-// Subsumed by trap_exit_without_exit_clause when that fires: one
-// finding per module, the more specific one.
+// Subsumed by trap_exit_without_exit_clause when that fires, and by
+// unhandled_info's "crash" when a message the module is sent names the
+// clause that is missing: one finding per module, the more specific one.
 .decl receives_runtime_messages(mod: symbol)
 
 receives_runtime_messages(mod) :- trap_exit(_, mod).
@@ -81,7 +82,8 @@ partial_handler(mod, h, "runtime", "catchall", "") :-
   (behaves_as(mod, "GenServer") ; behaves_as(mod, "GenStage")),
   partial_handle_info(mod, h),
   receives_runtime_messages(mod),
-  !trap_exit_without_exit_clause(mod, _).
+  !trap_exit_without_exit_clause(mod, _),
+  !info_crash(mod).
 
 // ── handle_info without a catch-all, with a late-message source ──
 //
@@ -128,7 +130,8 @@ partial_handler(mod, h, "late_message", "catchall", "") :-
   late_message_source(mod),
   !receives_runtime_messages(mod),
   !trap_exit_without_exit_clause(mod, _),
-  !statem_process(mod).
+  !statem_process(mod),
+  !info_crash(mod).
 
 // ── A timer cancelled but not flushed ────────────────────────────────
 //
@@ -715,6 +718,7 @@ partial_handler(mod, func, "statem_info", "catchall", state) :-
   statem_module(mod, "state_functions"),
   statem_state(mod, state, func),
   function_def(func, mod, _, _, _),
+  !unhandled_info(_, _, _, _, _, mod, func, "state_crash"),
   !statem_info_catchall(mod, func),
   !statem_event_catchall(mod, func),
   statem_state(mod, other, g),
@@ -822,3 +826,199 @@ unreceived_message(mod, func, site, m, runs, starter, spawn, recv) :-
   !process_takes(runs, "any"),
   !process_opaque(runs),
   function_def(func, mod, _, _, _).
+
+// ══ A message its server has no clause for ═════════════════════════
+//
+// The GenServer half of the question unreceived_message asks of a
+// spawned process. A message reaches a server's handle_info/2 three
+// ways the program spells out: a send process points-to follows to the
+// server (sends.dl), a timer the server arms for itself, and a monitor
+// the server takes, whose {:DOWN, …} the runtime sends. When no clause
+// of handle_info/2 takes the message, what happens depends on what the
+// module has in its place (`fallback`):
+//
+// - "crash": clauses and no catch-all. The message is a
+//   FunctionClauseError that takes the server down, every time it is
+//   sent (sequin's SlotMessageStore armed :max_memory_check and handled
+//   it nowhere; astarte's AMQPEventsProducer re-armed :init after a
+//   refactor removed its clause).
+// - "catch_all": a catch-all that does nothing with the message but log
+//   it or ignore it (callback_drops). The message is dropped: the
+//   monitor's :DOWN that should have removed a listener (oban's
+//   Notifiers.PG leaked every dead listener), the timer whose work
+//   never runs (teslamate's Repair armed :repair beside a handle_cast
+//   for it). A catch-all may be meant, so this is its own kind.
+// - "default": no handle_info/2 but GenServer's own, which logs the
+//   message as an error and drops it.
+// - "state_crash": a gen_statem's state function (or handle_event/4)
+//   with no :info catch-all, where no callback of the machine takes the
+//   message (below).
+//
+// A catch-all that hands the message on — to a helper, into the state —
+// may take it there, and is not judged. Neither is a message a clause
+// could take by its shape alone (callback_open: `msg when is_atom(msg)`
+// takes any atom, `{ref, result}` a tuple of any tag). Judged for a
+// literal atom and a tuple with a literal tag, :DOWN included. A message
+// the server's own receives could take (a selective receive in a
+// callback), and a monitor whose function waits on it or demonitors with
+// :flush, are not judged.
+.decl unhandled_info(mod: symbol, func: symbol, site: symbol, message: symbol, source: symbol, server: symbol, handler: symbol, fallback: symbol)
+.output unhandled_info
+
+// A message a server is sent, and where it comes from: `func` sends it
+// at `site`, to a server running `server`'s callbacks.
+.decl info_message(server: symbol, func: symbol, site: symbol, message: symbol, source: symbol)
+
+info_message(m, f, id, msg, "send") :-
+  send_target(id, f, msg, p),
+  msg != "dynamic",
+  server_process(p, m).
+
+// A timer or a monitor in a function a server's callbacks run: the
+// callback's process arms it, so the message comes back to that server.
+.init info_reach = SameProcessReach
+
+info_reach.seed(f, f) :- timer_arm(_, f, "self", "bare", _, _).
+info_reach.seed(f, f) :- monitor_call(_, f, _).
+
+.decl runs_in_server(mod: symbol, func: symbol)
+
+runs_in_server(m, f) :-
+  process_entry(m, c),
+  info_reach.reaches(c, f),
+  server_process(_, m).
+
+info_message(m, f, id, lit, "timer") :-
+  timer_arm(id, f, "self", "bare", _, lit),
+  runs_in_server(m, f).
+
+// A monitor its own function waits on, in a receive or behind a
+// demonitor with :flush, is consumed where it is taken.
+.init receive_reach = SameProcessReachSet
+
+receive_reach.seed(f) :- recv_pattern(_, f, _).
+
+info_message(m, f, id, "{:DOWN, …}", "monitor") :-
+  monitor_call(id, f, _),
+  runs_in_server(m, f),
+  !receive_reach.reaches(f),
+  !flush.reaches(f).
+
+// Whether `tag` is what `message` is told apart by: the atom itself, or
+// a tuple's literal tag (`{:tag, …}`, as pid_send spells it). Joined from
+// the tag's side with cat/2: the message is not parsed.
+.decl tag_of(message: symbol, tag: symbol)
+
+tag_of(msg, tag) :- info_message(_, _, _, msg, _), callback_tag(_, "handle_info", tag), msg = tag.
+
+tag_of(msg, tag) :-
+  info_message(_, _, _, msg, _),
+  callback_tag(_, "handle_info", tag),
+  msg = cat("{", cat(tag, ", …}")).
+
+tag_of(msg, tag) :- info_message(_, _, _, msg, _), statem_info_tag(_, _, tag), msg = tag.
+
+tag_of(msg, tag) :-
+  info_message(_, _, _, msg, _),
+  statem_info_tag(_, _, tag),
+  msg = cat("{", cat(tag, ", …}")).
+
+// A receive in the server's own code that could take the message.
+.decl server_receives(mod: symbol, message: symbol)
+
+server_receives(m, msg) :-
+  info_message(m, _, _, msg, _),
+  server_side(m, g),
+  recv_pattern(_, g, x),
+  (x = msg ; x = "any").
+
+// Where the message goes instead of a clause of its own.
+.decl info_fallback(mod: symbol, message: symbol, handler: symbol, fallback: symbol)
+
+info_fallback(m, msg, h, "crash") :-
+  info_message(m, _, _, msg, _),
+  partial_handle_info(m, h).
+
+info_fallback(m, msg, h, "catch_all") :-
+  info_message(m, _, _, msg, _),
+  function_def(h, m, "handle_info", 2, _),
+  callback_drops(h, "handle_info"),
+  !macro_generated(h, _).
+
+info_fallback(m, msg, h, "default") :-
+  info_message(m, _, _, msg, _),
+  function_def(h, m, "handle_info", 2, _),
+  callback_drops(h, "handle_info"),
+  macro_generated(h, _).
+
+// A message some clause could take: its tag is compared, or a clause
+// tests the message by shape alone and a tuple of any tag, or an atom,
+// could pass it.
+.decl info_taken(handler: symbol, message: symbol)
+
+info_taken(h, msg) :-
+  info_fallback(_, msg, h, _),
+  tag_of(msg, tag),
+  callback_tag(h, "handle_info", tag).
+
+info_taken(h, msg) :- info_fallback(_, msg, h, _), callback_open(h, "handle_info", "any").
+
+info_taken(h, msg) :-
+  info_fallback(_, msg, h, _),
+  match("[{].*", msg),
+  callback_open(h, "handle_info", "tuple").
+
+unhandled_info(mod, f, id, msg, source, m, h, fallback) :-
+  info_message(m, f, id, msg, source),
+  (behaves_as(m, "GenServer") ; behaves_as(m, "GenStage")),
+  !statem_process(m),
+  info_fallback(m, msg, h, fallback),
+  !info_taken(h, msg),
+  !server_receives(m, msg),
+  function_def(f, mod, _, _, _).
+
+// ── The same message sent to a gen_statem ──────────────────────────
+//
+// It arrives as an :info event, in whatever state the machine is in: a
+// state function (or handle_event/4) with neither an :info catch-all nor
+// one for every event crashes on it. Judged only when no callback of the
+// machine compares its tag or takes it by shape (statem_info_tag,
+// statem_info_open): a message some state takes may be one the program
+// only sends while the machine is in that state. A catch-all is not
+// judged here — whether it drops the content is not read for a machine.
+.decl statem_takes(mod: symbol, message: symbol)
+
+statem_takes(m, msg) :-
+  info_message(m, _, _, msg, _),
+  tag_of(msg, tag),
+  statem_info_tag(m, _, tag).
+
+statem_takes(m, msg) :- info_message(m, _, _, msg, _), statem_info_open(m, _, "any").
+
+statem_takes(m, msg) :-
+  info_message(m, _, _, msg, _),
+  match("[{].*", msg),
+  statem_info_open(m, _, "tuple").
+
+// A callback of the machine's that crashes on an :info it has no clause
+// for: a state function, or handle_event/4.
+.decl statem_info_partial(mod: symbol, func: symbol)
+
+statem_info_partial(m, h) :-
+  statem_process(m),
+  statem_event_clause(m, h, _),
+  !statem_info_catchall(m, h),
+  !statem_event_catchall(m, h).
+
+unhandled_info(mod, f, id, msg, source, m, h, "state_crash") :-
+  info_message(m, f, id, msg, source),
+  statem_info_partial(m, h),
+  !statem_takes(m, msg),
+  !server_receives(m, msg),
+  function_def(f, mod, _, _, _).
+
+// The module's partial handle_info/2 is already named by a message it
+// cannot take: partial_handler's catch-all findings step aside.
+.decl info_crash(mod: symbol)
+
+info_crash(m) :- unhandled_info(_, _, _, _, _, m, _, "crash").

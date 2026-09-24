@@ -34,6 +34,15 @@ defmodule Argus.Analyses.Mailbox do
     whose receives (the spawned function's, and those of what it calls in
     its own process) has a clause for `message`: it stays in that
     mailbox, and every later receive scans past it.
+  - `unhandled_info(mod, func, site, message, source, server, handler, fallback)` —
+    a message a GenServer is sent (`source`: a `send` process points-to
+    follows to it, a `timer` it arms for itself, the `:DOWN` of a
+    `monitor` it takes) that no clause of its handle_info/2 takes:
+    `fallback` says what does instead — nothing (`crash`, a
+    FunctionClauseError), a `catch_all` that only logs or ignores it, or
+    GenServer's `default` handle_info/2, which logs it as an error; or,
+    sent to a gen_statem none of whose callbacks takes it, a state with no
+    `:info` catch-all (`state_crash`, `handler` is that state's function).
   """
 
   @behaviour Argus.Analysis
@@ -65,7 +74,9 @@ defmodule Argus.Analyses.Mailbox do
       Argus.Extractors.PidFlow,
       Argus.Extractors.ProcessRegistry,
       # A GenServer a child spec names is a server process too.
-      Argus.Extractors.Supervision
+      Argus.Extractors.Supervision,
+      # Which handle_info/2 is GenServer's own (unhandled_info's "default").
+      Argus.Extractors.Generated
     ]
 
   @impl true
@@ -124,6 +135,21 @@ defmodule Argus.Analyses.Mailbox do
         ],
         key: [:site, :runs],
         doc: "A message sent to a spawned process whose receive has no clause for it."
+      },
+      %{
+        name: :unhandled_info,
+        fields: [
+          {:mod, :symbol, "the sending module"},
+          {:func, :symbol, "the function that sends, arms the timer or monitors"},
+          {:site, :symbol, "the send, the timer or the monitor"},
+          {:message, :symbol, "the literal atom, {:tag, …}, or {:DOWN, …}"},
+          {:source, :symbol, "send | timer | monitor"},
+          {:server, :symbol, "the GenServer module whose handle_info/2 it reaches"},
+          {:handler, :symbol, "its handle_info/2, or the gen_statem state function"},
+          {:fallback, :symbol, "crash | catch_all | default | state_crash"}
+        ],
+        key: [:site, :server],
+        doc: "A message a GenServer is sent that no clause of its handle_info/2 takes."
       },
       %{
         name: :monitored_entry_removal,
@@ -301,6 +327,52 @@ defmodule Argus.Analyses.Mailbox do
         "add a clause for #{message} to the receive that should take it",
         "or send a message the process's receives expect"
       ]
+    )
+  end
+
+  def finding(:unhandled_info, [mod, func, site, message, source, server, handler, fallback]) do
+    {title, severity, what} =
+      case fallback do
+        "crash" ->
+          {"No handle_info/2 clause for a message the server is sent", :warning,
+           "none of its clauses matches it and there is no catch-all, so it is a " <>
+             "FunctionClauseError that takes the server down each time it arrives"}
+
+        "catch_all" ->
+          {"A message the server is sent reaches only its catch-all handle_info/2",
+           catch_all_severity(source),
+           "no clause names it, and the catch-all that takes it does nothing with it " <>
+             "but log it or ignore it"}
+
+        "default" ->
+          {"A message is sent to a server with no handle_info/2 of its own", :warning,
+           "the module has no handle_info/2 but the one GenServer defines, which logs " <>
+             "the message as an error and drops it"}
+
+        "state_crash" ->
+          {"No clause for a message a gen_statem is sent", :warning,
+           "it arrives as an :info event, no callback of the machine has a clause for " <>
+             "it, and #{Findings.call_name(handler)} has no :info catch-all, so in that " <>
+             "state it is a FunctionClauseError that takes the machine down"}
+      end
+
+    lands =
+      if fallback == "state_crash",
+        do: "whose callbacks take its events",
+        else: "whose handle_info/2 is where it lands"
+
+    Findings.new(
+      severity,
+      title,
+      "#{sent(source, func, message)} #{server}, #{lands}: #{what}.",
+      at: Findings.at_site(site, mod),
+      at_label: sent_label(source),
+      related: [
+        Findings.related("the callback it reaches", Findings.at_func(handler),
+          to_block: :function
+        )
+      ],
+      help: unhandled_help(source, fallback, message)
     )
   end
 
@@ -581,4 +653,39 @@ defmodule Argus.Analyses.Mailbox do
   def evidence(:task_yield_site, [func, _kind, site]) do
     Findings.related("collected with Task.yield here", Findings.at_site_in_func(site, func))
   end
+
+  # A monitor's :DOWN dropped by a catch-all is a monitor that does
+  # nothing: the cleanup it was taken for is missing. A message the
+  # program sends may be meant for the catch-all.
+  defp catch_all_severity("monitor"), do: :warning
+  defp catch_all_severity(_source), do: :info
+
+  defp sent("monitor", func, _message),
+    do:
+      "#{Findings.call_name(func)} monitors a process from a server's callbacks, so its {:DOWN, …} goes to"
+
+  defp sent("timer", func, message),
+    do: "#{Findings.call_name(func)} arms a timer that sends #{message} to"
+
+  defp sent(_send, func, message), do: "#{Findings.call_name(func)} sends #{message} to"
+
+  defp sent_label("monitor"), do: "the :DOWN of this monitor"
+  defp sent_label("timer"), do: "the timer is armed here"
+  defp sent_label(_send), do: "the message is sent here"
+
+  defp unhandled_help("monitor", _fallback, _message),
+    do: [
+      "add a `handle_info({:DOWN, ref, :process, pid, reason}, state)` clause that " <>
+        "releases what the monitor was for",
+      "or wait for the :DOWN where the monitor is taken, or demonitor it with `[:flush]`"
+    ]
+
+  defp unhandled_help(_source, "catch_all", message),
+    do: [
+      "add a handle_info/2 clause for #{message}",
+      "or, if the catch-all is meant to take it, stop sending it"
+    ]
+
+  defp unhandled_help(_source, _fallback, message),
+    do: ["add a handle_info/2 clause for #{message}", "or send a message a clause takes"]
 end

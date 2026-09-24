@@ -240,10 +240,15 @@ defmodule Argus.Extractor.Dispatch do
   # not continue into it.
   defp head_step(_instr, _idx, path, _tuple, _labels, seen), do: {not path.tested, seen}
 
-  # Whether the block at `label` is a clause head: after bookkeeping and
-  # register shuffling it tests something or is the failure exit. A body
-  # fallback calls.
-  defp clause_start?(label, tuple, labels) do
+  @doc """
+  Whether the block at `label` is a clause head: after bookkeeping and
+  register shuffling it tests something or is the failure exit. A body
+  fallback calls. `tuple` is the function's instructions as a tuple,
+  `labels` its label index (`labels/1`).
+  """
+  @spec clause_start?(non_neg_integer(), tuple(), %{non_neg_integer() => non_neg_integer()}) ::
+          boolean()
+  def clause_start?(label, tuple, labels) do
     case Map.fetch(labels, label) do
       :error -> false
       {:ok, idx} -> clause_start_at?(idx + 1, tuple)

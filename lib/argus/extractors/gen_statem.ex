@@ -25,6 +25,10 @@ defmodule Argus.Extractors.GenStatem do
     without replying, postponing, or keeping `from`
   - `statem_info_catchall(mod, func)` — some clause accepts `:info` with any content
   - `statem_event_catchall(mod, func)` — some clause accepts any event
+  - `statem_info_tag(mod, func, tag)` — an atom the callback compares,
+    over-approximating the content tags it takes
+  - `statem_info_open(mod, func, shape)` — a clause takes the content by
+    its shape alone (`CallbackTag.MessageClauses.open_shapes/2` on `{x, 1}`)
 
   The clause-head walk behind the last three lives in
   `Argus.Extractors.GenStatem.EventClauses`.
@@ -37,6 +41,8 @@ defmodule Argus.Extractors.GenStatem do
 
   @behaviour Argus.Extractor
 
+  alias Argus.Extractor.Dispatch
+  alias Argus.Extractors.CallbackTag.MessageClauses
   alias Argus.Extractors.GenStatem.{CallClauses, EventClauses}
   alias Argus.Instr
   alias Argus.InstrId
@@ -69,6 +75,8 @@ defmodule Argus.Extractors.GenStatem do
       :statem_event_clause,
       :statem_call_unreplied,
       :statem_info_catchall,
+      :statem_info_open,
+      :statem_info_tag,
       :statem_initial,
       :statem_module,
       :statem_state,
@@ -342,6 +350,18 @@ defmodule Argus.Extractors.GenStatem do
       if clauses.event_catchall?,
         do: add_fact(facts, :statem_event_catchall, [mod_str, func_id]),
         else: facts
+
+    # What the content is compared to, and which clauses take it by
+    # shape alone: what an :info message sent to the machine meets.
+    facts =
+      instrs
+      |> Dispatch.compared_atoms(:any)
+      |> Enum.reduce(facts, &add_fact(&2, :statem_info_tag, [mod_str, func_id, inspect(&1)]))
+
+    facts =
+      instrs
+      |> MessageClauses.open_shapes({:x, 1})
+      |> Enum.reduce(facts, &add_fact(&2, :statem_info_open, [mod_str, func_id, to_string(&1)]))
 
     Enum.reduce(CallClauses.analyse(fun, instrs), facts, fn {idx, tag}, acc ->
       add_fact(acc, :statem_call_unreplied, [mod_str, func_id, InstrId.mint(func_id, idx), tag])
