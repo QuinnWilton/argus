@@ -25,8 +25,10 @@ defmodule Argus.Corpus do
   Extraction is most of the cost of a large tree and its inputs never
   move between runs: the digest covers the beams, the code and Datalog
   that extraction reaches (`engine_digest/0`), the runtime and the
-  solver, so a change to any of them misses, and a stale entry is
-  pruned when a fresh one is installed.
+  solver, so a change to any of them misses. None of it names the
+  directory argus was built in, so every worktree of one commit shares
+  the entries, and a stale entry is pruned when a fresh one is
+  installed.
 
   The project's `elixir:` requirement is relaxed so an old tree builds on
   the current toolchain; a pair may name an `elixir:` version instead,
@@ -118,7 +120,9 @@ defmodule Argus.Corpus do
 
   @doc """
   A digest of everything on argus's side that decides what facts a beam
-  yields: the compiled code of `engine_modules/0`, what each analysis
+  yields: the compiled code of `engine_modules/0` (`Argus.BeamDigest`,
+  so a build in another worktree of the same code has the same digest
+  and reuses the entries), what each analysis
   declares it extracts with, the Datalog stage 0 derives the call graph
   with, the OTP and Elixir the extraction runs on, the applications on
   the code path whose specs `Argus.Extractors.Specs` reads
@@ -227,9 +231,8 @@ defmodule Argus.Corpus do
   no run has touched for an hour.
 
   An entry under another digest was extracted by an argus, a solver or
-  a build that is gone — or by a VM running beside this one, since
-  another worktree's build carries its own source paths and so its own
-  digest. A hit touches its entry, so one in use is never older than
+  a build that is gone — or by a VM running beside this one on other
+  code. A hit touches its entry, so one in use is never older than
   the run using it, and removing it from under that run left its
   solves with no facts to read. Only installed entries are candidates,
   never a staging directory another VM may still be filling.
@@ -335,9 +338,11 @@ defmodule Argus.Corpus do
 
     engine_modules()
     |> Enum.reduce(:crypto.hash_init(:sha256), fn mod, hash ->
+      {:ok, code} = Argus.BeamDigest.digest(beam_of(mod))
+
       hash
       |> :crypto.hash_update(Atom.to_string(mod))
-      |> :crypto.hash_update(File.read!(beam_of(mod)))
+      |> :crypto.hash_update(code)
     end)
     |> :crypto.hash_update(:erlang.term_to_binary({declarations, Enum.sort(all)}))
     |> then(fn hash ->

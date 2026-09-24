@@ -171,7 +171,10 @@ defmodule Argus.Specs do
   application, but not of a dependency: a path or git dependency, or an
   umbrella sibling, changes its beams (and its specs) without moving its
   version. Hashing those beams costs one read of each, done in parallel
-  and memoized per VM, code path and `:exclude` list.
+  and memoized per VM, code path and `:exclude` list. Each beam is
+  hashed by `Argus.BeamDigest` with its debug info, which is where the
+  specs are read from, and without the directory it was built in: a
+  dependency built in two checkouts of one project digests the same.
 
   ## Options
 
@@ -512,7 +515,7 @@ defmodule Argus.Specs do
     dir == root or String.starts_with?(dir, root <> "/")
   end
 
-  # Every beam in each of `ebins`, by name and content hash, as
+  # Every beam in each of `ebins`, by name and `Argus.BeamDigest`, as
   # `%{ebin => [{name, hash}]}` sorted by name. The reads are the cost,
   # so they run in parallel across every ebin at once.
   defp beam_digests(ebins) do
@@ -523,8 +526,8 @@ defmodule Argus.Specs do
     |> Task.async_stream(
       fn {ebin, beam} ->
         content =
-          case File.read(beam) do
-            {:ok, binary} -> :crypto.hash(:sha256, binary)
+          case Argus.BeamDigest.digest(beam, debug_info: true) do
+            {:ok, hash} -> hash
             {:error, reason} -> reason
           end
 

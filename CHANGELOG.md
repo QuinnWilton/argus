@@ -1674,10 +1674,34 @@ that). Extraction was over
 90% of a large tree's analysis and its inputs never move between runs.
 `Argus.CorpusTest` analyzes each checkout once, `ARGUS_CORPUS_JOBS` (default
 4) at a time, before checking the pairs. An entry under another digest is
-pruned only once no run has touched it for an hour: a VM beside this one —
-another worktree's build has its own digest — may still be reading it. The suite's analysis tests run
+pruned only once no run has touched it for an hour: a VM beside this one
+may still be reading it. The suite's analysis tests run
 `async: true`; the tests that set VM-wide state (`PATH`, `TYPESAFE_API_KEY`,
 `ARGUS_PRIORS_DIR`) live in their own sync modules.
+
+**Added.** `Argus.BeamDigest`: a compiled module's digest that names its
+code, not the tree it was built in. It hashes every chunk but the
+compile info, the docs and the Elixir checker's table (and the debug
+info unless asked for), with the build root — the directory holding
+the beam's `_build` — replaced by `$ROOT` in the literals, attributes,
+debug info and line table, and the two fields derived from the bytes
+(`FunT`'s `OldUniq`, a `vsn` attribute) cleared. A path outside the
+build root still keys it.
+
+**Fixed.** The corpus facts cache missed in every worktree but the one
+that filled it: `Argus.Corpus.engine_digest/0` hashed the engine's beams
+byte for byte, and a beam carries the absolute path it was compiled
+in. It goes through `Argus.BeamDigest` now, so every worktree of one
+commit shares the entries; a comment or `@doc` edit that moves no line
+of an engine module no longer re-extracts either. A second worktree at
+the main checkout's commit tallies warm on its first run (184 s cold
+before).
+
+**Changed.** `Argus.Specs.environment_digest/1` hashes a dependency's
+beams with `Argus.BeamDigest`, debug info included (it is where specs
+are read from), so the same dependency built in two checkouts of one
+project digests the same. The digest's value changes once: scry's
+fingerprint, which folds it in, misses once on upgrade.
 
 **Fixed.** `Argus.Corpus.ensure/2` returned every beam twice when the
 project is the repository root, and listed both a dev and a test build;

@@ -8,11 +8,12 @@ defmodule Argus.SpecsEnvironmentTest do
   @moduletag :tmp_dir
 
   # An application directory the way a path dependency's build leaves it:
-  # an ebin holding the `.app` file and one beam returning `returns`.
-  # The spec says the same: under `mix test` the compiler keeps no debug
-  # info, so the body is what makes the two builds differ.
-  defp app_dir(root, name, returns) do
-    ebin = Path.join([root, name, "ebin"])
+  # an ebin holding the `.app` file and one beam returning `returns`,
+  # compiled from `root/deps/<name>/lib`. Its spec says the same, and it
+  # keeps its debug info (`mix test` compiles without), which is where
+  # specs are read from and where the source path lands.
+  defp app_dir(root, name, returns, ebin \\ nil) do
+    ebin = ebin || Path.join([root, name, "ebin"])
     File.mkdir_p!(ebin)
 
     File.write!(
@@ -21,12 +22,16 @@ defmodule Argus.SpecsEnvironmentTest do
     )
 
     [{ArgusEnvProbe, beam}] =
-      Code.compile_string("""
-      defmodule ArgusEnvProbe do
-        @spec run() :: #{returns}
-        def run, do: #{returns}
-      end
-      """)
+      Code.compile_string(
+        """
+        defmodule ArgusEnvProbe do
+          @compile :debug_info
+          @spec run() :: #{returns}
+          def run, do: #{returns}
+        end
+        """,
+        Path.join([root, "deps", name, "lib", "probe.ex"])
+      )
 
     :code.purge(ArgusEnvProbe)
     :code.delete(ArgusEnvProbe)
@@ -64,5 +69,27 @@ defmodule Argus.SpecsEnvironmentTest do
 
     assert a == b
     assert a != with_path(before, &Specs.environment_digest/0)
+  end
+
+  test "a dependency built in two checkouts of one project digests the same" do
+    # Outside the working directory, as in `Argus.BeamDigestTest`.
+    tmp = Path.join(System.tmp_dir!(), "argus-specs-env-#{System.unique_integer([:positive])}")
+    on_exit(fn -> File.rm_rf!(tmp) end)
+
+    # Where Mix puts a dependency's build: `<project>/_build/<env>/lib`.
+    in_project = fn project ->
+      root = Path.join(tmp, project)
+      ebin = Path.join([root, "_build", "test", "lib", "argus_env_probe", "ebin"])
+      app_dir(root, "argus_env_probe", ":ok", ebin)
+    end
+
+    here = in_project.("argus")
+    there = in_project.("wt/argus-other")
+
+    assert File.read!(Path.join(here, "Elixir.ArgusEnvProbe.beam")) !=
+             File.read!(Path.join(there, "Elixir.ArgusEnvProbe.beam"))
+
+    assert with_path(here, &Specs.environment_digest/0) ==
+             with_path(there, &Specs.environment_digest/0)
   end
 end
