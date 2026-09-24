@@ -164,6 +164,8 @@ embed as `embeds_one Sequin.Sinks.Gcp.Credentials`, a collection as
 `array of string` — and `dynamic` when the dispatch or the type has
 another shape. No rule reads it; it is there for `Sensitivity` to show the
 model. A rule reading `schema_field` adds a column; `exposure`'s do.
+`prior_sensitive`'s `detail` gains `secret_reference` and `public_key`,
+both details of `none` (Sensitivity v2, under exposure).
 
 **Changed.** Schema 70. `global_op` gains `nodes`, the shape of the
 call's node list: `"local"` for a list of only the local node
@@ -1841,6 +1843,42 @@ a socket with no timeout" are for a `:gen_tcp`/`:ssl` recv with
 `:infinity`.
 
 ### exposure
+
+**Changed.** `Argus.Priors.Questions.Sensitivity` is at prompt version 2,
+so cached version-1 answers stop being hits and every field is asked
+afresh. Version 1 asked what kind of data a field holds from its name
+and its siblings' names, and its only secret-adjacent answers were
+secrets: in a talk's priors hunt over 32 corpus checkouts, four of the
+six warnings resting on it were not secrets — nerves_hub's
+`OrgKey.key` (an Ed25519 public key, 0.97), `SharedSecretAuth.key` twice
+(the key's public id beside its `secret`, 0.91 and 0.96) and blockster's
+`PlatformAccount.credentials_ref` (a reference, 0.91). Version 2 shows
+each field with its Ecto type (schema 69) and asks what the field holds,
+with two more answers that are not secrets: `secret_reference` (a key's
+id or name, a handle to credentials kept elsewhere) and `public_key`
+(the public half of a pair). It drops the `must_redact` noul, which no
+rule read. Re-run over the same 32 checkouts: the four warnings leave
+(the ids and the reference are answered `secret_reference`, the public
+key a secret at 0.83, under 0.9), `nkey_seed` (1.00), `NatsSink.jwt`
+(1.00) and `GcpPubsubSink.credentials` (0.94, where its type
+`embeds_one Sequin.Sinks.Gcp.Credentials` is what keeps it over 0.9:
+the question without the types answers 0.87) stay, and two warnings
+arrive, both secrets: blockster's `Airdrop.Round.server_seed` (a
+provably-fair seed kept secret until the draw, 0.99) and
+`XOauthState.code_verifier` (a PKCE verifier, a secret at 0.97 as
+before, whose likeliest kind is now credential at 0.53 over token at
+0.44, so a warning where it was an info-level token). One info-level row leaves: sequin's
+`ApiToken.hashed_token` (a hash of the token, 0.66). Heuristic
+findings go from 20 (6 warnings, 2 secrets) to 16 (4 warnings, 4
+secrets). On the priors spike's labelled schema fields (26) coverage at
+0.7 goes from 96% to 100% at 96% precision, every labelled secret still
+fires, and one fixture field arrives at 0.95 (`body` in a module named
+`...Secret.Ordinary`; the same schema under another name answers
+`none` at 0.97); on its synthetic schemas (93 fields) from 87% to 95%
+coverage and 94% to 98% precision, with 18 of 20 secrets over 0.9
+where version 1 had 19, and no false one where version 1 had one. A
+request costs about 30% more input tokens. The corpus runs without
+priors and does not move.
 
 **Fixed.** `exposure.unredacted_secret_inferred` gated on the chosen
 kind's probability, so a field the model was sure is a secret but split

@@ -1,24 +1,36 @@
 defmodule Argus.Priors.Questions.Sensitivity do
   @moduledoc """
-  What an Ecto field holds, from its name and its siblings' names.
+  What an Ecto field holds, from its name, its type and the schema
+  around it.
 
   `exposure` knows fifteen substrings (`api_key`, `password`, ...). A
-  field the table cannot name — `totp_seed`, `teams_key`, `webhook_url`,
+  field the table cannot name — `totp_seed`, `teams_key`, `nkey_seed`,
   a `secret_first` beside a `secret_second` — is one the model can, and a
   field the table over-matches (`api_key_count`) is one it can doubt.
-  The calibration spike measured 98% precision at a probability of 0.9
-  on names read from beams and on names of public projects' schemas,
-  which is where `exposure`'s threshold comes from.
 
-  Every field of a schema is asked in one request, the whole field list
-  as the shared state; the answer per field is a `choice` over seven
-  kinds and a `noul` for whether printing the value would leak. The row
-  carries the coarse kind a rule reads (`secret | personal | none`), the
-  likeliest fine kind within it and that kind's probability, and last
-  the coarse kind's own probability: the sum over its fine kinds. A rule
-  gates on the sum. `jwt` at 0.89 token and 0.11 credential is a secret
-  at 1.00 — the model is sure it is one and unsure only which — where
-  the chosen kind's 0.89 alone falls under `exposure`'s 0.9.
+  Every field of a schema is asked in one request. The shared state is
+  the schema: its module, every field with its Ecto type (a
+  `Sequin.Encrypted.Field`, an `embeds_one Sequin.Sinks.Gcp.Credentials`
+  says what a bare name does not) and the fields already redacted. The
+  answer per field is a `choice` over nine kinds, and two of them exist
+  to say what a secret-sounding name holds when it is not the secret: a
+  `secret_reference` (a key's id or name, a handle to credentials kept
+  elsewhere) and a `public_key` (the public half of a pair). Version 1
+  had neither, so the probability that a field was *about* a secret had
+  nowhere to go but `credential`: on 32 corpus checkouts four of its six
+  warnings were a public key, two public key ids and a
+  `credentials_ref`. Version 2 answers those `none` or below 0.9 while
+  the real ones (`nkey_seed`, `jwt`, an embedded GCP credential) stay
+  at 0.95 and above.
+
+  The row carries the coarse kind a rule reads (`secret | personal |
+  none`), the likeliest fine kind within it and that kind's probability,
+  and last the coarse kind's own probability: the sum over its fine
+  kinds. A rule gates on the sum. `jwt` at 0.89 token and 0.11
+  credential is a secret at 1.00 — the model is sure it is one and
+  unsure only which — where the chosen kind's 0.89 alone falls under
+  `exposure`'s 0.9. A reference and a public key are details of `none`,
+  so their mass counts against a secret, never for it.
 
   The coarse kind is the one with the most mass, which is the chosen
   kind's class unless the rest outweigh it (`none` at 0.4 against token
@@ -32,6 +44,8 @@ defmodule Argus.Priors.Questions.Sensitivity do
     "credential" => "secret",
     "password" => "secret",
     "token" => "secret",
+    "secret_reference" => "none",
+    "public_key" => "none",
     "pii" => "personal",
     "financial" => "personal",
     "health" => "personal",
@@ -40,10 +54,14 @@ defmodule Argus.Priors.Questions.Sensitivity do
 
   @criteria %{
     credential:
-      "A secret granting access to another system: an API key, client secret, private or signing key, access key",
+      "The secret value itself, granting access to another system: an API key, client secret, private or signing key, key seed, access key",
     password: "A user's password, or a password hash, for this system",
     token:
-      "Bearer or session material with a lifetime: an access, refresh, session, auth, reset or confirmation token",
+      "The bearer or session token value itself: an access, refresh, session, auth, reset or confirmation token",
+    secret_reference:
+      "Names or points to a secret without holding its value: a key id or key name, a key prefix, a reference, path or handle to credentials stored elsewhere",
+    public_key:
+      "The public half of a key pair, a certificate, or a key published by design: safe to share",
     pii:
       "Personal data identifying a person: email, name, address, phone, national id, birth date, IP address",
     financial:
@@ -57,7 +75,7 @@ defmodule Argus.Priors.Questions.Sensitivity do
   def relation, do: :prior_sensitive
 
   @impl true
-  def prompt_version, do: 1
+  def prompt_version, do: 2
 
   @impl true
   def relations_read, do: [:schema_field, :redacted_field]
@@ -71,25 +89,45 @@ defmodule Argus.Priors.Questions.Sensitivity do
 
     facts
     |> Map.get(:schema_field, [])
-    |> Enum.group_by(& &1.mod, & &1.field)
+    |> Enum.group_by(& &1.mod)
     |> Enum.sort()
-    |> Enum.flat_map(fn {mod, fields} ->
-      names = fields |> Enum.map(&strip/1) |> Enum.uniq() |> Enum.sort()
-      redacted_names = redacted |> Map.get(mod, []) |> Enum.map(&strip/1) |> Enum.sort()
+    |> Enum.flat_map(fn {mod, rows} ->
+      fields = shown_fields(rows)
 
-      for field <- Enum.sort(Enum.uniq(fields)) do
+      redacted_names =
+        redacted |> Map.get(mod, []) |> Enum.map(&strip/1) |> Enum.uniq() |> Enum.sort()
+
+      for field <- rows |> Enum.map(& &1.field) |> Enum.uniq() |> Enum.sort() do
         %{
           id: {mod, field},
           batch_key: mod,
           state: %{
             schema_module: mod,
             field: strip(field),
-            fields: names,
+            fields: fields,
             redacted_fields: redacted_names
           }
         }
       end
     end)
+  end
+
+  # Each field by name with its type; a type the extractor could not read
+  # is left out rather than shown as `dynamic`, which the model would
+  # read as a claim about the field.
+  defp shown_fields(rows) do
+    rows
+    |> Enum.uniq_by(& &1.field)
+    |> Enum.map(fn row ->
+      case Map.get(row, :type) do
+        type when is_binary(type) and type not in ["", "dynamic"] ->
+          %{name: strip(row.field), type: type}
+
+        _ ->
+          %{name: strip(row.field)}
+      end
+    end)
+    |> Enum.sort_by(& &1.name)
   end
 
   @impl true
@@ -106,26 +144,18 @@ defmodule Argus.Priors.Questions.Sensitivity do
   def questions(subjects) do
     subjects
     |> Enum.with_index()
-    |> Enum.flat_map(fn {subject, i} ->
+    |> Map.new(fn {subject, i} ->
       field = subject.state.field
 
-      [
-        {"kind__#{i}",
-         %{
-           type: "choice",
-           instructions:
-             "What kind of data does the field `#{field}` hold? Judge from its name and the names around it.",
-           criteria: @criteria
-         }},
-        {"must_redact__#{i}",
-         %{
-           type: "noul",
-           instructions:
-             "Printing the value of `#{field}` in a log line or an inspect output would leak a secret or personal data."
-         }}
-      ]
+      {"kind__#{i}",
+       %{
+         type: "choice",
+         instructions:
+           "What does the field `#{field}` hold? Judge from its name, its type and the schema around it. " <>
+             "A secret's id, name or public half is not the secret.",
+         criteria: @criteria
+       }}
     end)
-    |> Map.new()
   end
 
   @impl true

@@ -12,7 +12,7 @@
 .decl prior_reads(func: symbol, source: symbol, permille: number)
 .input prior_reads
 
-// What a field or configuration key holds, judged from its name and the names around it (Argus.Priors.Questions.Sensitivity). `kind` is the class a rule consumes and `permille` its total probability, so a field the model is sure is a secret but splits between token and credential is a secret at the sum; `detail` is the likeliest finer kind within it.
+// What a field or configuration key holds, judged from its name, its type and the schema around it (Argus.Priors.Questions.Sensitivity); a secret's id, name or public half is `none`, not a secret. `kind` is the class a rule consumes and `permille` its total probability, so a field the model is sure is a secret but splits between token and credential is a secret at the sum; `detail` is the likeliest finer kind within it.
 //
 .decl prior_sensitive(subject_kind: symbol, mod: symbol, name: symbol, kind: symbol, detail: symbol, detail_permille: number, permille: number)
 .input prior_sensitive

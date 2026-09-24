@@ -40,39 +40,69 @@ defmodule Argus.Priors.Questions.SensitivityTest do
       |> Sensitivity.subjects()
       |> Enum.filter(&(&1.batch_key == inspect(S.PartlyRedacted)))
 
+    # No __schema__/2 here, so no types: a field is its name alone.
     assert Sensitivity.state(subjects) == %{
              subject_kind: "schema_field",
              schema_module: inspect(S.PartlyRedacted),
-             fields: ["api_key", "client_secret", "id"],
+             fields: [%{name: "api_key"}, %{name: "client_secret"}, %{name: "id"}],
              redacted_fields: ["api_key"]
            }
   end
 
+  test "each field is shown with its type when the schema says one" do
+    subjects =
+      facts() |> Sensitivity.subjects() |> Enum.filter(&(&1.batch_key == inspect(S.Heuristic)))
+
+    assert Sensitivity.state(subjects).fields == [
+             %{name: "id", type: "id"},
+             %{name: "label", type: "string"},
+             %{name: "totp_seed", type: "Argus.Test.Encrypted.Binary"}
+           ]
+  end
+
+  test "a type the extractor could not read is left out, not shown as dynamic" do
+    facts = %{
+      schema_field: [
+        %{mod: "A", field: ":key", type: "dynamic"},
+        %{mod: "A", field: ":name", type: "string"}
+      ],
+      redacted_field: []
+    }
+
+    assert [%{state: %{fields: [%{name: "key"}, %{name: "name", type: "string"}]}} | _] =
+             Sensitivity.subjects(facts)
+  end
+
   test "the state holds names only" do
-    for subject <- Sensitivity.subjects(facts()) do
-      for {_k, v} <- subject.state, s <- List.wrap(v) do
-        refute s =~ ~r/#\d+$/, "an instruction id leaked into the state: #{s}"
-        refute s =~ ~r/\d{6,}/, "a long number leaked into the state: #{s}"
-      end
+    for subject <- Sensitivity.subjects(facts()), {_k, v} <- subject.state, s <- strings(v) do
+      refute s =~ ~r/#\d+$/, "an instruction id leaked into the state: #{s}"
+      refute s =~ ~r/\d{6,}/, "a long number leaked into the state: #{s}"
     end
   end
 
-  test "one choice and one noul per subject, suffixed by position" do
+  defp strings(v) when is_binary(v), do: [v]
+  defp strings(v) when is_map(v), do: v |> Map.values() |> Enum.flat_map(&strings/1)
+  defp strings(v) when is_list(v), do: Enum.flat_map(v, &strings/1)
+  defp strings(_), do: []
+
+  test "one choice per subject, suffixed by position, with somewhere for a secret's name to go" do
     subjects =
       facts() |> Sensitivity.subjects() |> Enum.filter(&(&1.batch_key == inspect(S.Heuristic)))
 
     questions = Sensitivity.questions(subjects)
 
-    assert Map.keys(questions) |> Enum.sort() ==
-             ~w(kind__0 kind__1 kind__2 must_redact__0 must_redact__1 must_redact__2)
+    assert Map.keys(questions) |> Enum.sort() == ~w(kind__0 kind__1 kind__2)
 
     assert questions["kind__1"].type == "choice"
     assert questions["kind__1"].instructions =~ "`label`"
+    assert questions["kind__1"].instructions =~ "its type"
 
     assert Map.keys(questions["kind__1"].criteria) |> Enum.sort() ==
-             ~w(credential financial health none password pii token)a
+             ~w(credential financial health none password pii public_key secret_reference token)a
+  end
 
-    assert questions["must_redact__2"].type == "noul"
+  test "the prompt version is part of every cache key: v2 asks afresh" do
+    assert Sensitivity.prompt_version() == 2
   end
 
   test "rows map the chosen kind to its class and probability to permille" do
@@ -152,6 +182,61 @@ defmodule Argus.Priors.Questions.SensitivityTest do
 
     answers = %{"kind__0" => %{"choice" => "banana", "probabilities" => %{}}}
     assert Sensitivity.rows(subjects, answers) == []
+  end
+
+  test "a secret's reference or public half is `none`, and its mass counts against a secret" do
+    subjects =
+      facts() |> Sensitivity.subjects() |> Enum.filter(&(&1.batch_key == inspect(S.Heuristic)))
+
+    # nerves_hub's SharedSecretAuth.key beside its `secret`, and an
+    # Ed25519 public key: version 1 had nowhere to put either but
+    # `credential`.
+    answers = %{
+      "kind__0" => %{
+        "choice" => "secret_reference",
+        "probabilities" => %{"secret_reference" => 0.74, "credential" => 0.26}
+      },
+      "kind__1" => %{
+        "choice" => "credential",
+        "probabilities" => %{"credential" => 0.55, "public_key" => 0.3, "none" => 0.15}
+      },
+      "kind__2" => %{
+        "choice" => "credential",
+        "probabilities" => %{"credential" => 0.83, "public_key" => 0.17}
+      }
+    }
+
+    assert Sensitivity.rows(subjects, answers) == [
+             [
+               "schema_field",
+               inspect(S.Heuristic),
+               ":id",
+               "none",
+               "secret_reference",
+               "740",
+               "740"
+             ],
+             # 0.55 against 0.45 for none: a secret, but at 0.55, far
+             # under exposure's 0.9.
+             [
+               "schema_field",
+               inspect(S.Heuristic),
+               ":label",
+               "secret",
+               "credential",
+               "550",
+               "550"
+             ],
+             [
+               "schema_field",
+               inspect(S.Heuristic),
+               ":totp_seed",
+               "secret",
+               "credential",
+               "830",
+               "830"
+             ]
+           ]
   end
 
   test "permille clamps and rounds" do
