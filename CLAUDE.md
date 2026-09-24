@@ -22,7 +22,9 @@ those frameworks need.
   struct, types and the constructors a builder calls (one alias:
   `Findings.new/4`, `Findings.at_site/2`, ...); `findings/` holds
   `Runner`, `Build`, `Rows`, `Evidence`, `Anchor` and `Names`.
-- `lib/argus/schema.ex` — the fact schema. `@schema_version` is what
+- `lib/argus/schema.ex` — the fact schema's API; each relation is declared
+  once, with its layer and in-process flag, in its concern's module under
+  `lib/argus/schema/`. `@schema_version` is what
   downstream tools key their caches on; `Argus.SchemaVersionTest` pins its
   shape digest, and every bump gets a CHANGELOG entry. `mix argus.gen.dl`
   regenerates `priv/dl/base.dl` and `layer2.dl` from it.
@@ -41,12 +43,11 @@ those frameworks need.
   instruction reads, writes and where control goes (its test asserts
   every instruction in OTP, Elixir and the deps is known). The emitter's
   `def`/`use`/`next` rows come from it; a backward register walk asks
-  `Argus.Instr.Reaching` for the writes that reach (through the `Helpers`
-  walks or `Helpers.trace/5`), and a forward one steps with
+  `Argus.Instr.Reaching` for the writes that reach (through the
+  `Argus.Extractor.Resolve` walks or `Resolve.trace/5`), and a forward one steps with
   `Argus.Instr.carry/2`. `Argus.Cfg` reads fall-through from the `next`
   facts the emitter derives from it. A new walk keeps no instruction
-  table of its own (process_registry's `checked_walk` predates this and
-  is to move); a walk may refine what Instr says only where it knows
+  table of its own; a walk may refine what Instr says only where it knows
   more than the instruction does, and says why (catch_clauses ends a
   path at `raw_raise` because a handler re-raises a class that is
   always valid).

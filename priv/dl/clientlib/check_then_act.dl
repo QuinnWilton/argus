@@ -21,7 +21,7 @@
 // A family instantiates the component with its checks and acts, each
 // naming what it touches in its own function's terms: a resource (the
 // registry, the table) and a key, each a source-value pair in the
-// vocabulary of Helpers.key_identity/3 (literal, param, field, dynamic)
+// vocabulary of Argus.Extractor.Identity.key_identity/3 (literal, param, field, dynamic)
 // plus `any`, which agrees with everything: Process.registered/0 reads
 // every name, and start_child hides its name in the child spec. Across a
 // call, a parameter becomes whatever the caller passes there (call_arg,
