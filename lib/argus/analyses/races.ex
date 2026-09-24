@@ -23,7 +23,10 @@ defmodule Argus.Analyses.Races do
   - `mnesia_check_act(mod, func, table, key, read, write, op)` — a dirty
     read decides or feeds a dirty write (`op`: `dirty_write`,
     `dirty_delete` or `dirty_delete_object`) of the same record, and
-    another process can write the table.
+    another process can write the table. A table only one process
+    writes is not reported; that process is one per node, so a table
+    replicated to nodes that each run its owner is taken as having one
+    writer.
   - `ets_publish_order(mod, func, published_kind, published_in,
     completed_kind, completed_in, publish, complete, reader)` — not a
     check-then-act but a race on the same stores: `func` writes a row of

@@ -304,6 +304,13 @@ different locks are taken as serialized; one writer outside a lock
 keeps the finding. `races` now runs `Argus.Extractors.ApiCalls` for
 `global_op`.
 
+**Changed.** `mnesia_check_act`'s one-writer excuse says what it
+assumes, in `races.dl` and the analysis's doc: one process per node. A
+locally registered owner runs on every node, and a replicated table is
+written by each node's owner, which the excuse does not see; whether a
+table is replicated is `create_table`'s copies lists, which the facts do
+not show.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile

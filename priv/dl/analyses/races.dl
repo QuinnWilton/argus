@@ -1285,6 +1285,16 @@ ets_missing_row(mod, func, table_kind, table, check, act, remover) :-
 // process on every node, so no access mode excuses it; one process that
 // is the table's only writer does. :mnesia.transaction/1 and
 // dirty_update_counter are the fixes.
+//
+// Known limit: "one process" is one per node. A server registered under
+// a local name runs once on each node, and a table replicated to several
+// nodes (ram_copies or disc_copies on more than one) is written by each
+// node's owner, so the excuse is unsound there. It is kept: whether a
+// table is replicated is create_table's copies lists, which are almost
+// always computed at runtime (`[node() | Node.list()]`, config) and which
+// the facts do not show, and honouring the excuse only for a :global or
+// :via owner would report every locally registered owner on a
+// single-node deployment, the common case.
 
 .init records = CheckThenAct
 
