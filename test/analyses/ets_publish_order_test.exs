@@ -3,14 +3,41 @@ defmodule Argus.Analyses.EtsPublishOrderTest do
 
   alias Argus.Analyses.Races
   alias Argus.Souffle
+  alias Argus.Test.Batch
   alias Argus.Test.Fixtures.PublishOrder, as: P
+
+  # Every test reads its fixtures' rows from one solve of them all
+  # (`Argus.Test.Batch`; ARGUS_VERIFY_BATCH=1 checks each slice against
+  # a solve of its own).
+  @batched [
+    P.MapFields,
+    P.ReverseFirst,
+    P.NamedTables,
+    P.CountedById,
+    P.LocalPair,
+    P.LocalPairSafe,
+    P.SameFieldTwoMaps,
+    P.HelperCompletes,
+    P.HelperFirst,
+    P.KeyFromElsewhere,
+    P.KeyFromFirst,
+    P.DefaultedReader,
+    P.RescuedReader,
+    P.PrivateTables,
+    P.OwnerOnly,
+    P.SameKey
+  ]
+
+  setup_all do
+    %{batch: Batch.solve(:races, [@batched])}
+  end
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
-  defp published(modules) do
-    {:ok, results} = Argus.analyze(modules, :races)
+  defp published(%{batch: batch}, modules) do
+    {:ok, results} = Batch.analyze(batch, modules)
 
     for [_mod, func, _ak, a, _bk, b, publish, complete, reader] <-
           results["ets_publish_order"],
@@ -19,84 +46,86 @@ defmodule Argus.Analyses.EtsPublishOrderTest do
   end
 
   describe "ets_publish_order" do
-    test "two unnamed tables told apart by the map field they are kept under" do
+    test "two unnamed tables told apart by the map field they are kept under", ctx do
       skip_without_souffle()
 
       assert [{"intern/2", forward, reverse, "intern/2", "intern/2", "resolve/2"}] =
-               published([P.MapFields])
+               published(ctx, [P.MapFields])
 
       assert String.ends_with?(forward, "MapFields :forward")
       assert String.ends_with?(reverse, "MapFields :reverse")
     end
 
-    test "the same tables written row first, value second, stay quiet" do
+    test "the same tables written row first, value second, stay quiet", ctx do
       skip_without_souffle()
-      assert published([P.ReverseFirst]) == []
+      assert published(ctx, [P.ReverseFirst]) == []
     end
 
-    test "two named tables, the id handed out by a lookup of the first" do
+    test "two named tables, the id handed out by a lookup of the first", ctx do
       skip_without_souffle()
 
       assert [{"register/2", ":users_by_name", ":users_by_id", _, _, "name_of/1"}] =
-               published([P.NamedTables])
+               published(ctx, [P.NamedTables])
     end
 
-    test "update_counter/3 on the missing row raises as lookup_element/3 does" do
+    test "update_counter/3 on the missing row raises as lookup_element/3 does", ctx do
       skip_without_souffle()
 
       assert [{"open/2", ":sessions", ":session_hits", _, _, "hit/1"}] =
-               published([P.CountedById])
+               published(ctx, [P.CountedById])
     end
 
-    test "unnamed tables in a tuple, known by the :ets.new/2 that made each" do
+    test "unnamed tables in a tuple, known by the :ets.new/2 that made each", ctx do
       skip_without_souffle()
 
       assert [{"register/2", first, second, "register/2", "register/2", "name_of/2"}] =
-               published([P.LocalPair])
+               published(ctx, [P.LocalPair])
 
       assert first =~ "LocalPair:new/0#"
       assert second =~ "LocalPair:new/0#"
       assert first != second
-      assert published([P.LocalPairSafe]) == []
+      assert published(ctx, [P.LocalPairSafe]) == []
     end
 
-    test "one field name in two maps is two tables when each was made apart" do
+    test "one field name in two maps is two tables when each was made apart", ctx do
       skip_without_souffle()
 
-      assert [{"register/3", first, second, _, _, "name_of/2"}] = published([P.SameFieldTwoMaps])
+      assert [{"register/3", first, second, _, _, "name_of/2"}] =
+               published(ctx, [P.SameFieldTwoMaps])
+
       assert first != second
     end
 
-    test "the row a helper writes after the value is published" do
+    test "the row a helper writes after the value is published", ctx do
       skip_without_souffle()
 
       assert [{"add/1", ":people_by_name", ":people_by_id", "add/1", "index/2", "name_of/1"}] =
-               published([P.HelperCompletes])
+               published(ctx, [P.HelperCompletes])
 
-      assert published([P.HelperFirst]) == []
+      assert published(ctx, [P.HelperFirst]) == []
     end
 
-    test "a reader that is never handed a value from the first table stays quiet" do
+    test "a reader that is never handed a value from the first table stays quiet", ctx do
       skip_without_souffle()
-      assert published([P.KeyFromElsewhere]) == []
+      assert published(ctx, [P.KeyFromElsewhere]) == []
 
       assert [{"add/1", ":boats_by_name", ":boats_by_id", _, _, "name_at/1"}] =
-               published([P.KeyFromFirst])
+               published(ctx, [P.KeyFromFirst])
     end
 
-    test "a reader with a default, or one that rescues the miss, stays quiet" do
+    test "a reader with a default, or one that rescues the miss, stays quiet", ctx do
       skip_without_souffle()
-      assert published([P.DefaultedReader, P.RescuedReader]) == []
+      assert published(ctx, [P.DefaultedReader, P.RescuedReader]) == []
     end
 
-    test "private tables, and protected ones only their owner touches, stay quiet" do
+    test "private tables, and protected ones only their owner touches, stay quiet", ctx do
       skip_without_souffle()
-      assert published([P.PrivateTables, P.OwnerOnly]) == []
+      assert published(ctx, [P.PrivateTables, P.OwnerOnly]) == []
     end
 
-    test "two tables keyed by the same thing are not a publication" do
+    test "two tables keyed by the same thing are not a publication", ctx do
       skip_without_souffle()
-      assert published([P.SameKey]) == []
+      assert published(ctx, [P.SameKey]) == []
     end
   end
 

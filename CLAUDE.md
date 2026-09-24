@@ -106,6 +106,14 @@ those frameworks need.
   before-change tally stays warm for the after-change one, and
   `mix argus.corpus prune [--keep N]` reclaims the rest. A new rule
   comes with a pair.
+- A test module whose tests each solve a small fixture set of one
+  analysis solves them all once in `setup_all` (`Argus.Test.Batch`) and
+  each test reads its set's rows. The sets in a batch are disjoint; a
+  set that shares a module with another test's is about the modules
+  together and is solved on its own (`:alone`). After adding a set or
+  changing a rule the fixtures meet, run the module with
+  `ARGUS_VERIFY_BATCH=1`: every slice is checked against a solve of its
+  set alone.
 - Test modules are `async: true` unless they touch VM-wide state (the
   environment, `Mix.shell/1`, compiler options); a sync module says why
   in a comment above its `use ExUnit.Case`.

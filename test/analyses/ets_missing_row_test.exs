@@ -3,14 +3,43 @@ defmodule Argus.Analyses.EtsMissingRowTest do
 
   alias Argus.Analyses.Races
   alias Argus.Souffle
+  alias Argus.Test.Batch
   alias Argus.Test.Fixtures.MissingRow, as: Fixture
+
+  # Every test reads its fixtures' rows from one solve of them all
+  # (`Argus.Test.Batch`; ARGUS_VERIFY_BATCH=1 checks each slice against
+  # a solve of its own).
+  @batched [
+    Fixture.Debounce,
+    Fixture.Debounce.Config,
+    Fixture.InlineTupleKey,
+    Fixture.NameFromConfig,
+    Fixture.WithDefault,
+    Fixture.Rescued,
+    Fixture.OneOwner,
+    Fixture.UnrelatedRescue,
+    Fixture.HelperRescue,
+    Fixture.CallerRescues,
+    Fixture.OneCallerRescues,
+    Fixture.OwnRow,
+    Fixture.OwnRowReaped,
+    Fixture.SentinelRow,
+    Fixture.HelperAct,
+    Fixture.HelperCheck,
+    Fixture.CrossModuleAct,
+    Fixture.Counter
+  ]
+
+  setup_all do
+    %{batch: Batch.solve(:races, [@batched])}
+  end
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
-  defp missing(modules) do
-    {:ok, results} = Argus.analyze(modules, :races)
+  defp missing(%{batch: batch}, modules) do
+    {:ok, results} = Batch.analyze(batch, modules)
 
     for [_mod, func, kind, table, check, act, remover] <- results["ets_missing_row"],
         uniq: true,
@@ -18,111 +47,111 @@ defmodule Argus.Analyses.EtsMissingRowTest do
   end
 
   describe "ets_missing_row" do
-    test "a count after a lookup, while a timer's flush takes the row (sequin's shape)" do
+    test "a count after a lookup, while a timer's flush takes the row (sequin's shape)", ctx do
       skip_without_souffle()
 
       assert [{"log/1", "named", ":debounce_buckets", "log/1", "log/1", "flush/2"}] =
-               missing([Fixture.Debounce, Fixture.Debounce.Config])
+               missing(ctx, [Fixture.Debounce, Fixture.Debounce.Config])
     end
 
-    test "a composite key spelled out at the check and again at the act is one key" do
+    test "a composite key spelled out at the check and again at the act is one key", ctx do
       skip_without_souffle()
 
       assert [{"log/2", "named", ":inline_tuple_buckets", "log/2", "log/2", "flush/1"}] =
-               missing([Fixture.InlineTupleKey])
+               missing(ctx, [Fixture.InlineTupleKey])
     end
 
-    test "a named table made under a name that arrives at runtime is shared" do
+    test "a named table made under a name that arrives at runtime is shared", ctx do
       skip_without_souffle()
 
       assert [{"log/2", "named", ":config_buckets", "log/2", "log/2", "flush/1"}] =
-               missing([Fixture.NameFromConfig])
+               missing(ctx, [Fixture.NameFromConfig])
     end
 
-    test "counting with a default object stays quiet" do
+    test "counting with a default object stays quiet", ctx do
       skip_without_souffle()
-      assert missing([Fixture.WithDefault]) == []
+      assert missing(ctx, [Fixture.WithDefault]) == []
     end
 
-    test "a rescued miss stays quiet" do
+    test "a rescued miss stays quiet", ctx do
       skip_without_souffle()
-      assert missing([Fixture.Rescued]) == []
+      assert missing(ctx, [Fixture.Rescued]) == []
     end
 
-    test "one process counting and flushing in its own callbacks stays quiet" do
+    test "one process counting and flushing in its own callbacks stays quiet", ctx do
       skip_without_souffle()
-      assert missing([Fixture.OneOwner]) == []
+      assert missing(ctx, [Fixture.OneOwner]) == []
     end
   end
 
   describe "ets_missing_row: where the miss is rescued" do
-    test "a rescue around unrelated code after the act does not take its miss" do
+    test "a rescue around unrelated code after the act does not take its miss", ctx do
       skip_without_souffle()
 
       assert [{"log/2", "named", ":unrelated_rescue_buckets", "log/2", "log/2", "flush/1"}] =
-               missing([Fixture.UnrelatedRescue])
+               missing(ctx, [Fixture.UnrelatedRescue])
     end
 
-    test "a helper that rescues its own act stays quiet" do
+    test "a helper that rescues its own act stays quiet", ctx do
       skip_without_souffle()
-      assert missing([Fixture.HelperRescue]) == []
+      assert missing(ctx, [Fixture.HelperRescue]) == []
     end
 
-    test "a private function whose one caller rescues around the call stays quiet" do
+    test "a private function whose one caller rescues around the call stays quiet", ctx do
       skip_without_souffle()
-      assert missing([Fixture.CallerRescues]) == []
+      assert missing(ctx, [Fixture.CallerRescues]) == []
     end
 
-    test "one caller that does not rescue keeps it reported" do
+    test "one caller that does not rescue keeps it reported", ctx do
       skip_without_souffle()
 
       assert [{"do_log/1", "named", ":one_caller_rescue_buckets", _, _, "flush/1"}] =
-               missing([Fixture.OneCallerRescues])
+               missing(ctx, [Fixture.OneCallerRescues])
     end
   end
 
   describe "ets_missing_row: which rows a remover can take" do
-    test "a process's own row, removed only by the process that owns it, stays quiet" do
+    test "a process's own row, removed only by the process that owns it, stays quiet", ctx do
       skip_without_souffle()
-      assert missing([Fixture.OwnRow]) == []
+      assert missing(ctx, [Fixture.OwnRow]) == []
     end
 
-    test "a remover of whichever process's row it is handed can take it" do
+    test "a remover of whichever process's row it is handed can take it", ctx do
       skip_without_souffle()
 
       assert [{"hit/0", "named", ":reaped_row_counts", "hit/0", "hit/0", "reap/1"}] =
-               missing([Fixture.OwnRowReaped])
+               missing(ctx, [Fixture.OwnRowReaped])
     end
 
-    test "a literal row's remover takes only that row" do
+    test "a literal row's remover takes only that row", ctx do
       skip_without_souffle()
 
       # total/0's pair is raced by reset_total/0 alone; hit/1's keyed rows by neither.
       assert [{"total/0", "named", ":sentinel_counts", "total/0", "total/0", "reset_total/0"}] =
-               missing([Fixture.SentinelRow])
+               missing(ctx, [Fixture.SentinelRow])
     end
   end
 
   describe "ets_missing_row across functions" do
-    test "the act in a helper the found-row branch calls" do
+    test "the act in a helper the found-row branch calls", ctx do
       skip_without_souffle()
 
       assert [{"log/1", "named", ":helper_act_buckets", "log/1", "bump/1", "flush/1"}] =
-               missing([Fixture.HelperAct])
+               missing(ctx, [Fixture.HelperAct])
     end
 
-    test "the check in a helper that returns it" do
+    test "the check in a helper that returns it", ctx do
       skip_without_souffle()
 
       assert [{"log/1", "named", ":helper_check_buckets", "exists?/1", "log/1", "flush/1"}] =
-               missing([Fixture.HelperCheck])
+               missing(ctx, [Fixture.HelperCheck])
     end
 
-    test "the act in another module" do
+    test "the act in another module", ctx do
       skip_without_souffle()
 
       assert [{"log/1", "named", ":cross_module_buckets", "log/1", "bump/1", "flush/1"}] =
-               missing([Fixture.CrossModuleAct, Fixture.Counter])
+               missing(ctx, [Fixture.CrossModuleAct, Fixture.Counter])
     end
   end
 
