@@ -609,6 +609,75 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     def reset_all, do: SerializedSessionCache.clear()
   end
 
+  defmodule SeedingOwner do
+    @moduledoc """
+    Creates the counters' table and seeds a row in its own init/1, before
+    its supervisor starts SerializedCounter.
+    """
+    use GenServer
+
+    def start_link(first), do: GenServer.start_link(__MODULE__, first, name: __MODULE__)
+
+    @impl true
+    def init(first) do
+      :ets.new(:serialized_counts, [:named_table, :public])
+      :ets.insert(:serialized_counts, {first, 0})
+      {:ok, %{}}
+    end
+  end
+
+  defmodule SerializedCounter do
+    @moduledoc "Every bump serialized in its own handle_call/3: the only writer once it runs."
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, [], name: __MODULE__)
+
+    @impl true
+    def init([]), do: {:ok, %{}}
+
+    @impl true
+    def handle_call({:bump, k}, _from, state) do
+      case :ets.lookup(:serialized_counts, k) do
+        [{^k, n}] -> :ets.insert(:serialized_counts, {k, n + 1})
+        [] -> :ets.insert(:serialized_counts, {k, 1})
+      end
+
+      {:reply, :ok, state}
+    end
+  end
+
+  defmodule VersionStamper do
+    @moduledoc "Another process that writes a literal row of its own beside the counts."
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, [], name: __MODULE__)
+
+    @impl true
+    def init([]), do: {:ok, %{}}
+
+    @impl true
+    def handle_cast({:stamp, version}, state) do
+      :ets.insert(:serialized_counts, {:__version__, version})
+      {:noreply, state}
+    end
+  end
+
+  defmodule CountImporter do
+    @moduledoc "Another process that writes counts by key while the counter runs."
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, [], name: __MODULE__)
+
+    @impl true
+    def init([]), do: {:ok, %{}}
+
+    @impl true
+    def handle_cast({:import, k, n}, state) do
+      :ets.insert(:serialized_counts, {k, n})
+      {:noreply, state}
+    end
+  end
+
   defmodule BroadwayCount do
     @moduledoc """
     A Broadway pipeline's processors run handle_message/3 many at a time:

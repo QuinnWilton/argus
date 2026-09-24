@@ -296,8 +296,69 @@ another_process_writes(name, f) :-
   reads_then_writes(f, _, _, name, _),
   runs.single_process(f),
   runs.entry_reaches(m, f),
-  ets_op(_, g, name, _, "write"),
+  other_writer(f, name, g),
   runs.runs_apart_from(m, g).
+
+// ── The other writer ──
+//
+// Asked when the pair runs in one process: a write of the table in `g`
+// that can land on the pair's row after that process has started. Not a
+// write whose key can never be the pair's (a different literal, or a
+// literal row kept beside rows keyed by what the caller passes: a seeded
+// `{:schema_version, 1}` beside the counts), and not one that runs only
+// while its own process starts — reached from other processes only
+// through an init/1 or an Application's start/2, which an ordered
+// supervisor start runs before it starts the serialized process's
+// siblings.
+.decl pair_key(func: symbol, name: symbol, key_kind: symbol, key: symbol)
+
+pair_key(f, name, ks, k) :- rows.meets(f, _, _, "literal", name, ks, k).
+pair_key(f, name, ks, k) :- rows.meets(f, _, _, "param", p, ks, k), table_at_param(f, p, name).
+
+.decl other_writer(func: symbol, name: symbol, writer_func: symbol)
+
+other_writer(f, name, g) :-
+  reads_then_writes(f, _, _, name, _),
+  runs.single_process(f),
+  ets_op(w, g, name, _, "write"),
+  pair_key(f, name, ks, k),
+  !written_apart(w, ks, k),
+  writes_after_start(g).
+
+// The write's key can never be the pair's key (ks, k).
+.decl written_apart(write: symbol, key_kind: symbol, key: symbol)
+
+written_apart(w, "literal", k) :-
+  pair_key(_, name, "literal", k),
+  ets_op(w, _, name, _, "write"),
+  ets_key(w, "literal", k2),
+  k != k2.
+
+written_apart(w, ks, k) :-
+  pair_key(_, name, ks, k),
+  ks != "literal",
+  ks != "any",
+  ets_op(w, _, name, _, "write"),
+  ets_key(w, "literal", _).
+
+.init writer_walk = SameProcessReach
+
+writer_walk.seed(g, g) :-
+  reads_then_writes(f, _, _, name, _),
+  runs.single_process(f),
+  ets_op(_, g, name, _, "write").
+
+.decl startup_callback(func: symbol)
+
+startup_callback(c) :- process_entry(_, c), function_def(c, _, "init", 1, _).
+startup_callback(c) :- behaves_as(m, "Application"), function_def(c, m, "start", 2, _).
+
+.decl writes_after_start(func: symbol)
+
+writes_after_start(g) :- process_entry(_, c), writer_walk.reaches(c, g), !startup_callback(c).
+writes_after_start(g) :- open_entry(c), writer_walk.reaches(c, g), !startup_callback(c).
+writes_after_start(g) :- request_entry(e, _), writer_walk.reaches(e, g).
+writes_after_start(g) :- runs.spawned(_, _, r), writer_walk.reaches(r, g).
 
 // ── Races both racers win ────────────────────────────────────────
 //
@@ -889,8 +950,8 @@ table_of(op, tk, t) :- ets_table(op, tk, t).
 // pair's. A process's own row (keyed by self()) is removed by the
 // process that owns it, and one removing self()'s row in another process
 // removes that process's; a literal key names a row of its own, other
-// than a different literal's and than the rows kept beside it under
-// parameters (a `:__total__` next to the keyed counts).
+// than a different literal's and than the rows kept beside it under keys
+// callers pass (a `:__total__` next to the keyed counts).
 
 .init missing = CheckThenAct
 
@@ -1081,10 +1142,13 @@ keyed_apart(d, "literal", k) :-
   found_pair_key(_, _, "literal", k),
   k != k2.
 
-keyed_apart(d, "param", k) :-
+keyed_apart(d, ks, k) :-
   remover_in(d, _),
   ets_key(d, "literal", _),
-  found_pair_key(_, _, "param", k).
+  found_pair_key(_, _, ks, k),
+  ks != "literal",
+  ks != "self",
+  ks != "any".
 
 .decl missing_row_race(func: symbol, table: EtsTable, check: symbol, act: symbol, remover: symbol)
 

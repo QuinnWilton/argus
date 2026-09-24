@@ -78,6 +78,23 @@ defmodule Argus.Analyses.EtsCheckActTest do
                Enum.uniq(races([C.SerializedSessionCache, C.SessionAccounts, C.SessionReaper]))
     end
 
+    test "a row seeded in another process's init/1, before the serialized counter runs" do
+      skip_without_souffle()
+      assert races([C.SeedingOwner, C.SerializedCounter]) == []
+    end
+
+    test "another process that writes only a literal row of its own beside the counts" do
+      skip_without_souffle()
+      assert races([C.SeedingOwner, C.SerializedCounter, C.VersionStamper]) == []
+    end
+
+    test "another process that writes counts by key while the counter runs races it" do
+      skip_without_souffle()
+
+      assert [{"handle_call/3", ":serialized_counts", _}] =
+               Enum.uniq(races([C.SeedingOwner, C.SerializedCounter, C.CountImporter]))
+    end
+
     test "different keys are not a race" do
       skip_without_souffle()
       assert races([C.DifferentKeys]) == []

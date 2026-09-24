@@ -225,6 +225,17 @@ fixture pinned as quiet a loader that stamped `System.unique_integer/0`
 into its value and returned it; that is this shape, and its loader is
 now a pure function of the key.
 
+**Fixed.** When `ets_check_act`'s pair runs in one process, the other
+writer it counts must be able to land on the pair's row after that
+process starts. A write of a literal key other than the pair's, or of a
+literal row beside rows keyed by what callers pass (a seeded
+`{:schema_version, 1}` beside the counts), is not the pair's row; and a
+write reached from other processes only through an `init/1` or an
+Application's `start/2` — a table seeded by its creator — runs before
+an ordered supervisor start reaches the serialized process's siblings.
+`ets_missing_row`'s removers take the same view of a literal row kept
+beside keys callers pass, whatever the source of those keys.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile
