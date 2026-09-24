@@ -66,7 +66,6 @@ defmodule Argus.Corpus do
   """
   @type checkout :: %{name: String.t(), dir: String.t(), project: String.t(), sha: String.t()}
 
-  alias Argus.Analysis.Catalog
   alias Argus.Analysis.Extraction
   alias Argus.Souffle.Cache
 
@@ -129,12 +128,14 @@ defmodule Argus.Corpus do
   the current `engine_digest/0` and beams exists.
 
   Each solve is kept in the entry, under `solves/`, keyed by its
-  program and the solver (`Argus.Souffle.Cache`): a warm run with no
-  rule edited reads every solve back, and a rule edit re-solves only
-  the programs it reaches. The points-to stage is one of them, and
-  lands beside the entry rather than in it (`overlay/1`): its rules are
-  rules, which move without moving the engine digest, so an entry whose
-  facts kept its rows would serve them to the next rule edit.
+  program, the solver and the content of the files it reads
+  (`Argus.Souffle.Cache`): a warm run with no rule edited reads every
+  solve back, and a rule edit re-solves only the programs it reaches
+  and those whose inputs it changed. The points-to stage is one of
+  them, and lands beside the entry rather than in it (`overlay/1`): its
+  rules are rules, which move without moving the engine digest, so an
+  entry whose facts kept its rows would serve them to the next rule
+  edit.
   """
   @spec analyze(pair(), :pre | :fix) :: {:ok, Argus.Findings.t()} | {:error, term()}
   def analyze(pair, side) do
@@ -151,35 +152,17 @@ defmodule Argus.Corpus do
     end
   end
 
-  # Every solve kept: the entry's own facts are read, and nothing is
-  # derived into them — no solve runs, and the points-to stage is kept
-  # with the rest (`stage0: :provided` says it is not to be derived).
-  # Otherwise the solves run over an overlay.
+  # The solves run over an overlay of the entry, which the points-to
+  # stage is derived into; each is read back from `solves` when its
+  # inputs are the ones it was kept for.
   defp solve(beams, facts_dir, solves) do
-    opts = [analyses: :all, solve_cache: solves]
+    overlay = overlay(facts_dir)
 
-    if all_kept?(solves) do
-      Argus.run_analyses(beams, [facts_dir: facts_dir, stage0: :provided] ++ opts)
-    else
-      overlay = overlay(facts_dir)
-
-      try do
-        Argus.run_analyses(beams, [facts_dir: overlay] ++ opts)
-      after
-        File.rm_rf(overlay)
-      end
+    try do
+      Argus.run_analyses(beams, facts_dir: overlay, analyses: :all, solve_cache: solves)
+    after
+      File.rm_rf(overlay)
     end
-  end
-
-  defp all_kept?(solves) do
-    {:ok, analyses} = Argus.Analysis.set(:all)
-    bin = Argus.Souffle.executable()
-
-    bin != nil and
-      Enum.all?(analyses, fn name ->
-        {:ok, rules} = Catalog.rules_path(name)
-        Cache.kept?(Extraction.solve_cache(solves, name), rules, bin)
-      end)
   end
 
   # A scratch directory of hard links to a cache entry's files, which a
@@ -393,10 +376,6 @@ defmodule Argus.Corpus do
     end
   end
 
-  @live_seconds 60 * 60
-  @orphaned_staging_seconds 24 * 60 * 60
-  @keep_recent 3
-
   @typedoc """
   What `stale_facts/2` spares beyond the entries in use: `keep:`, an
   entry never removed (the one just installed), and `recent:`, how many
@@ -421,7 +400,7 @@ defmodule Argus.Corpus do
   a day it is the latter.
   """
   @spec stale_facts(Path.t(), [prune_option()]) :: [Path.t()]
-  def stale_facts(cache, opts \\ []), do: stale(cache, opts, &facts_entry_kind/1)
+  def stale_facts(cache, opts \\ []), do: stale(cache, opts, &facts_entry_kind/2)
 
   @doc """
   The kept solves of one facts cache entry (`<entry>/solves`, see
@@ -434,7 +413,7 @@ defmodule Argus.Corpus do
   the facts.
   """
   @spec stale_solves(Path.t(), [prune_option()]) :: [Path.t()]
-  def stale_solves(solves, opts \\ []), do: stale(solves, opts, &solve_entry_kind/1)
+  def stale_solves(solves, opts \\ []), do: stale(solves, opts, &solve_entry_kind/2)
 
   @doc """
   Removes `stale_solves/2` from one entry's kept solves; the paths it
@@ -447,37 +426,11 @@ defmodule Argus.Corpus do
     stale
   end
 
-  # Entries are grouped by what `kind_of` names them: each group keeps
-  # its own `recent:` survivors.
+  # `Argus.Cache`'s retention policy: each group keeps its own
+  # `recent:` survivors.
   defp stale(dir, opts, kind_of) do
-    keep = Keyword.get(opts, :keep)
-    recent = Keyword.get(opts, :recent, @keep_recent)
-    now = System.os_time(:second)
-
-    entries =
-      for name <- ls(dir),
-          path = Path.join(dir, name),
-          {:ok, %File.Stat{mtime: touched, type: :directory}} <- [File.stat(path, time: :posix)],
-          kind = kind_of.(name),
-          kind != nil,
-          do: {kind, name, path, now - touched}
-
-    stale_installed =
-      for(
-        {{:installed, group}, name, path, age} <- entries,
-        name != keep,
-        age > @live_seconds,
-        do: {group, age, path}
-      )
-      |> Enum.group_by(&elem(&1, 0), &Tuple.delete_at(&1, 0))
-      |> Enum.flat_map(fn {_group, aged} ->
-        aged |> Enum.sort() |> Enum.drop(recent) |> Enum.map(&elem(&1, 1))
-      end)
-
-    orphaned =
-      for {:staging, _name, path, age} <- entries, age > @orphaned_staging_seconds, do: path
-
-    Enum.sort(stale_installed ++ orphaned)
+    opts = Keyword.update(opts, :keep, [], &List.wrap/1)
+    Argus.Cache.stale_entries(dir, opts, kind_of)
   end
 
   @doc """
@@ -504,7 +457,7 @@ defmodule Argus.Corpus do
   @spec solve_caches(Path.t()) :: [Path.t()]
   def solve_caches(cache) do
     for name <- ls(cache),
-        facts_entry_kind(name) == {:installed, :facts},
+        facts_entry_kind(name, :directory) == {:installed, :facts},
         solves = Path.join([cache, name, @solves]),
         File.dir?(solves),
         do: solves
@@ -517,7 +470,10 @@ defmodule Argus.Corpus do
     end
   end
 
-  defp facts_entry_kind(name) do
+  # A directory, never a file of that name.
+  defp facts_entry_kind(_name, type) when type != :directory, do: nil
+
+  defp facts_entry_kind(name, :directory) do
     cond do
       Regex.match?(~r/^[0-9a-f]{64}$/, name) -> {:installed, :facts}
       Regex.match?(~r/^[0-9a-f]{64}\.\d+\.\d+$/, name) -> :staging
@@ -526,7 +482,9 @@ defmodule Argus.Corpus do
   end
 
   # `<program>-<key>`, as `Argus.Souffle.Cache` names a kept solve.
-  defp solve_entry_kind(name) do
+  defp solve_entry_kind(_name, type) when type != :directory, do: nil
+
+  defp solve_entry_kind(name, :directory) do
     case Regex.run(~r/^([a-z0-9_]+)-[0-9a-f]{64}(\.\d+\.\d+)?$/, name) do
       [_, program] -> {:installed, program}
       [_, _program, _staging] -> :staging

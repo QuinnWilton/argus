@@ -1,39 +1,49 @@
 defmodule Argus.Souffle.Cache do
   @moduledoc """
-  Solve outputs kept on disk, so a solve whose program and solver have
-  not moved is read back instead of run again: `Argus.Souffle.run/3`
-  consults it when given `solve_cache:`.
+  Solve outputs kept on disk, so a solve whose inputs have not moved is
+  read back instead of run again: `Argus.Souffle.run/3` consults it when
+  given `solve_cache:`, and `Argus.Cache.Facts` for every solve of a run
+  with `cache:` (the stage-0 call graph, the points-to stage, each
+  analysis).
 
-  The caller keeps one cache directory per content of the facts it
-  solves over, so the facts are named by the directory and never read:
-  `Argus.Corpus` keeps it inside the facts cache entry the solves read.
-  A solve is keyed on its program (`program_digest/1`, its transitive
-  includes with it), the solver's version, and a salt the caller folds
-  in for what was derived into the facts directory after the entry was
-  made (the points-to stage an analysis reads,
-  `Argus.Analysis.Extraction.solve_cache/2`).
+  A solve is keyed on everything that decides its outputs: the program
+  with its transitive includes (`program_digest/1`), the solver's
+  version, and the content of exactly the relation files the program
+  reads, as Souffle resolves them (`Argus.Souffle.input_relations/2`).
+  Nothing else in the facts directory takes part, so an edit that
+  leaves a program's inputs byte-identical — a refactor of the
+  extraction, a rule edit upstream whose stage came out the same —
+  solves nothing again; and a stage's outputs feed the solves after it
+  by their content, so a change that leaves stage 0's output unchanged
+  re-solves nothing downstream.
 
   An entry is a directory of the solver's own output files, named
-  `<program>-<key>`, written into a staging directory beside it and
-  renamed into place: complete or absent, never half-written. A second
-  solve of the same key racing the first loses the rename and discards
-  its copy. A hit touches its entry, which is what a pruner reads to tell
-  an entry in use from one nobody will read again (`Argus.Corpus`). Only
-  a solve that succeeded is kept; a failure is reported every time.
+  `<program>-<key>` (or `<program>-<group>-<key>`, a group naming whose
+  facts they were for retention's sake, `Argus.Cache.stale/2`), with a
+  manifest of each output file's digest beside them (`manifest/1`): a
+  stage's outputs are the next solve's inputs, keyed by those digests.
+  It is written and installed as `Argus.Cache` describes: complete or
+  absent, read-only, touched on every hit. Only a solve that succeeded
+  is kept; a failure is reported every time.
 
   The outputs are the solver's, not their parse: a change to how argus
   reads them needs no invalidation.
   """
 
   @typedoc """
-  A cache directory, and the salt folded into each key: binaries naming
-  what the facts directory holds beyond the content the directory stands
-  for.
+  A cache directory, or a directory and the group its entries are named
+  under.
   """
-  @type t :: {Path.t(), [binary()]}
+  @type t :: Path.t() | {Path.t(), String.t()}
+
+  @typedoc "Each relation file a solve reads, by name, and its content's digest."
+  @type input_digests :: [{String.t(), String.t()}]
 
   # Moves every key: bump it when what an entry holds changes shape.
-  @format "argus-solve-cache-1"
+  @format "argus-solve-cache-2"
+
+  # The digests of an entry's outputs, beside them.
+  @manifest ".argus-digests"
 
   # How long `stamped/2` trusts its files without a look, and the size
   # below which it looks at their content, not only their stat.
@@ -41,79 +51,136 @@ defmodule Argus.Souffle.Cache do
   @content_stamp 1_000_000
 
   @doc """
-  The entry directory a solve of `rules_path` would use under the
-  options' `:solve_cache`, or nil when they name none.
+  The entry a solve of `rules_path` over `facts_dir` would use under the
+  options' `:solve_cache`: `{:ok, entry}`, nil when they name none (or
+  stores are off, `Argus.Cache.enabled?/0`), or an error when the
+  program's inputs cannot be resolved. Reads and digests each file the
+  program reads.
   """
-  @spec entry(Path.t(), String.t(), keyword()) :: Path.t() | nil
-  def entry(rules_path, bin, opts) do
-    case Keyword.get(opts, :solve_cache) do
-      nil -> nil
-      dir when is_binary(dir) -> keyed_entry(dir, [], rules_path, bin)
-      {dir, salt} when is_binary(dir) and is_list(salt) -> keyed_entry(dir, salt, rules_path, bin)
+  @spec entry(Path.t(), String.t(), Path.t(), keyword()) ::
+          {:ok, Path.t()} | nil | {:error, term()}
+  def entry(rules_path, bin, facts_dir, opts) do
+    with {dir, group} <- cache_option(opts),
+         {:ok, inputs} <- Argus.Souffle.input_files(rules_path, souffle_bin: bin) do
+      digests =
+        Enum.map(inputs, fn file ->
+          case Argus.Cache.file_digest(Path.join(facts_dir, file)) do
+            {:ok, digest} -> {file, digest}
+            {:error, _} -> {file, "absent"}
+          end
+        end)
+
+      {:ok, named(dir, group, rules_path, bin, digests)}
     end
   end
 
-  defp keyed_entry(dir, salt, rules_path, bin) do
-    key = digest([@format, program_digest(rules_path), version(bin) | salt])
-    Path.join(dir, "#{program_name(rules_path)}-#{key}")
+  @doc """
+  The entry a solve of `rules_path` would use under the options'
+  `:solve_cache`, without the facts it reads: nil, since a kept solve
+  is keyed on their content.
+  """
+  @deprecated "A kept solve is keyed on the files it reads; use entry/4"
+  @spec entry(Path.t(), String.t(), keyword()) :: nil
+  def entry(_rules_path, _bin, _opts), do: nil
+
+  defp cache_option(opts) do
+    case Keyword.get(opts, :solve_cache) do
+      nil ->
+        nil
+
+      dir when is_binary(dir) ->
+        if Argus.Cache.enabled?(), do: {dir, nil}, else: nil
+
+      {dir, group} when is_binary(dir) and is_binary(group) ->
+        if Argus.Cache.enabled?(), do: {dir, group}, else: nil
+
+      other ->
+        raise ArgumentError,
+              ":solve_cache must be a directory or {directory, group}, got: #{inspect(other)}"
+    end
   end
 
   @doc """
-  Whether a solve of `rules_path` is kept in `cache` (touching it, as a
-  hit does): a caller that finds every solve it needs kept may skip
-  preparing the facts they would read.
+  The entry of a solve of `rules_path` under `dir`, given the digest of
+  each file it reads: `<program>-<key>`, or `<program>-<group>-<key>`.
   """
-  @spec kept?(t(), Path.t(), String.t()) :: boolean()
-  def kept?({dir, salt}, rules_path, bin) do
-    match?({:ok, _}, fetch(keyed_entry(dir, salt, rules_path, bin)))
+  @spec named(Path.t(), String.t() | nil, Path.t(), String.t(), input_digests()) :: Path.t()
+  def named(dir, group, rules_path, bin, digests) do
+    key =
+      Argus.Cache.key([
+        @format,
+        program_digest(rules_path),
+        version(bin)
+        | Enum.flat_map(Enum.sort(digests), fn {file, digest} -> [file, digest] end)
+      ])
+
+    name = program_name(rules_path)
+    Path.join(dir, if(group, do: "#{name}-#{group}-#{key}", else: "#{name}-#{key}"))
   end
+
+  @doc """
+  Whether a solve of `rules_path` is kept in `cache`: always false now.
+  A solve is keyed on the content of the files it reads, which a cache
+  directory alone does not name.
+  """
+  @deprecated "A kept solve is keyed on the files it reads; solve with Argus.Souffle.run/3"
+  @spec kept?(t() | {Path.t(), [binary()]}, Path.t(), String.t()) :: false
+  def kept?(_cache, _rules_path, _bin), do: false
 
   @doc """
   Reads back a kept solve: `{:ok, entry}` (touched, so a pruner sees it
   in use) or `:miss`.
   """
   @spec fetch(Path.t()) :: {:ok, Path.t()} | :miss
-  def fetch(entry) do
-    if File.dir?(entry) do
-      File.touch(entry)
-      {:ok, entry}
-    else
-      :miss
-    end
-  end
+  defdelegate fetch(entry), to: Argus.Cache
 
   @doc """
   A fresh staging directory for a solve that will be kept at `entry`.
   """
   @spec staging(Path.t()) :: {:ok, Path.t()} | {:error, term()}
-  def staging(entry) do
-    staging = "#{entry}.#{:os.getpid()}.#{System.unique_integer([:positive])}"
+  defdelegate staging(entry), to: Argus.Cache
 
-    case File.mkdir_p(staging) do
-      :ok -> {:ok, staging}
-      {:error, reason} -> {:error, {:mkdir_failed, reason}}
+  @doc """
+  Installs a finished solve's staging directory as `entry`, with the
+  manifest of its outputs' digests (`manifest/1`). Another solve that
+  installed the same key first wins, and this copy is discarded; either
+  way `entry` holds the outputs afterwards. Any other failure leaves
+  `staging` in place for the caller.
+  """
+  @spec install(Path.t(), Path.t()) :: :ok | {:error, term()}
+  def install(staging, entry) do
+    with {:ok, digests} <- digest_outputs(staging),
+         :ok <- File.write(Path.join(staging, @manifest), :erlang.term_to_binary(digests)) do
+      Argus.Cache.install(staging, entry)
+    end
+  end
+
+  defp digest_outputs(dir) do
+    with {:ok, files} <- File.ls(dir) do
+      Enum.reduce_while(Enum.sort(files), {:ok, %{}}, fn file, {:ok, acc} ->
+        if String.starts_with?(file, ".") do
+          {:cont, {:ok, acc}}
+        else
+          case Argus.Cache.file_digest(Path.join(dir, file)) do
+            {:ok, digest} -> {:cont, {:ok, Map.put(acc, file, digest)}}
+            {:error, reason} -> {:halt, {:error, {:digest_failed, file, reason}}}
+          end
+        end
+      end)
     end
   end
 
   @doc """
-  Installs a finished solve's staging directory as `entry`. Another
-  solve that installed the same key first wins, and this copy is
-  discarded; either way `entry` holds the outputs afterwards. Any other
-  failure leaves `staging` in place for the caller.
+  Each output file of a kept solve and its content's digest, from the
+  manifest `install/2` wrote.
   """
-  @spec install(Path.t(), Path.t()) :: :ok | {:error, File.posix()}
-  def install(staging, entry) do
-    case File.rename(staging, entry) do
-      :ok ->
-        :ok
-
-      {:error, reason} when reason in [:eexist, :enotempty, :eisdir] ->
-        File.rm_rf(staging)
-        :ok
-
-      {:error, _} = error ->
-        error
+  @spec manifest(Path.t()) :: {:ok, %{String.t() => String.t()}} | {:error, term()}
+  def manifest(entry) do
+    with {:ok, bytes} <- File.read(Path.join(entry, @manifest)) do
+      {:ok, :erlang.binary_to_term(bytes, [:safe])}
     end
+  rescue
+    ArgumentError -> {:error, :bad_manifest}
   end
 
   @doc """
@@ -126,9 +193,16 @@ defmodule Argus.Souffle.Cache do
   def place(entry, output_dir) do
     with {:ok, files} <- File.ls(entry),
          :ok <- File.mkdir_p(output_dir) do
-      Enum.reduce_while(files, :ok, fn file, :ok ->
-        case File.cp(Path.join(entry, file), Path.join(output_dir, file)) do
-          :ok -> {:cont, :ok}
+      files
+      |> Enum.reject(&String.starts_with?(&1, "."))
+      |> Enum.reduce_while(:ok, fn file, :ok ->
+        target = Path.join(output_dir, file)
+        # A kept file is read-only, and a copy keeps its mode: the copy is
+        # the caller's to write.
+        with :ok <- File.cp(Path.join(entry, file), target),
+             :ok <- File.chmod(target, 0o644) do
+          {:cont, :ok}
+        else
           {:error, reason} -> {:halt, {:error, {:copy_failed, file, reason}}}
         end
       end)
@@ -145,21 +219,41 @@ defmodule Argus.Souffle.Cache do
   def program_digest(rules_path) do
     path = Path.expand(rules_path)
 
-    stamped({__MODULE__, :program_digest, path}, fn ->
-      files = program_files(path)
+    if shipped?(path) do
+      stamped({__MODULE__, :program_digest, path}, fn -> compute_program_digest(path) end)
+    else
+      path |> compute_program_digest() |> elem(1)
+    end
+  end
 
-      digest =
-        Enum.reduce(files, :crypto.hash_init(:sha256), fn {spelled, file}, hash ->
-          content = File.read!(file)
+  # A program argus ships is read at most once a second (`stamped/2`):
+  # every solve of every corpus checkout asks. One anywhere else — a
+  # test's, a caller's own — is read on every call, so an edit is seen
+  # at once.
+  defp shipped?(path) do
+    case :code.priv_dir(:panoptes) do
+      dir when is_list(dir) ->
+        String.starts_with?(path, Path.join(List.to_string(dir), "dl") <> "/")
 
-          hash
-          |> :crypto.hash_update(<<byte_size(spelled)::32>> <> spelled)
-          |> :crypto.hash_update(<<byte_size(content)::64>> <> content)
-        end)
-        |> :crypto.hash_final()
+      _ ->
+        false
+    end
+  end
 
-      {Enum.map(files, &elem(&1, 1)), digest}
-    end)
+  defp compute_program_digest(path) do
+    files = program_files(path)
+
+    digest =
+      Enum.reduce(files, :crypto.hash_init(:sha256), fn {spelled, file}, hash ->
+        content = File.read!(file)
+
+        hash
+        |> :crypto.hash_update(<<byte_size(spelled)::32>> <> spelled)
+        |> :crypto.hash_update(<<byte_size(content)::64>> <> content)
+      end)
+      |> :crypto.hash_final()
+
+    {Enum.map(files, &elem(&1, 1)), digest}
   end
 
   @doc """
@@ -246,7 +340,7 @@ defmodule Argus.Souffle.Cache do
       walk(rest, seen, acc)
     else
       included =
-        ~r/^\s*\.include\s+"([^"]+)"/m
+        ~r/^\s*[.#]include\s+"([^"]+)"/m
         |> Regex.scan(File.read!(path))
         |> Enum.map(fn [_, rel] -> {rel, Path.expand(rel, Path.dirname(path))} end)
 
@@ -274,14 +368,8 @@ defmodule Argus.Souffle.Cache do
     end)
   end
 
-  defp program_name(rules_path), do: Path.basename(rules_path, ".dl")
-
-  defp digest(parts) do
-    parts
-    |> Enum.reduce(:crypto.hash_init(:sha256), fn part, hash ->
-      :crypto.hash_update(hash, <<byte_size(part)::64>> <> part)
-    end)
-    |> :crypto.hash_final()
-    |> Base.encode16(case: :lower)
-  end
+  @doc false
+  # The name a program's entries start with.
+  @spec program_name(Path.t()) :: String.t()
+  def program_name(rules_path), do: Path.basename(rules_path, ".dl")
 end

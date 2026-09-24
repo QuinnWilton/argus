@@ -24,11 +24,12 @@ defmodule Argus.Souffle do
   - `:souffle_bin` — path to the souffle binary (default: auto-detect on PATH)
   - `:souffle_timeout` — milliseconds before the run is aborted (default: 5 min)
   - `:output_dir` — where Souffle should write `.csv` outputs (default: tmpdir)
-  - `:solve_cache` — a directory of kept solves for the content of
-    `facts_dir`, or `{dir, salt}` (`Argus.Souffle.Cache`): a solve whose
-    program and solver have not moved is read back from it rather than
-    run. The caller keeps one directory per content of the facts; nothing
-    in `facts_dir` is read to key it. Off by default.
+  - `:solve_cache` — a directory of kept solves, or `{dir, group}`
+    (`Argus.Souffle.Cache`): a solve whose program, solver and input
+    files have not moved is read back from it rather than run. Keyed by
+    the content of exactly the files in `facts_dir` the program reads,
+    so any facts directory can share one. Off by default, and ignored
+    under `ARGUS_NO_CACHE` (`Argus.Cache.enabled?/0`).
   """
   @spec run(Path.t(), Path.t(), keyword()) :: {:ok, result()} | {:error, term()}
   def run(facts_dir, rules_path, opts \\ []) do
@@ -41,9 +42,11 @@ defmodule Argus.Souffle do
       bin ->
         timeout = Keyword.get(opts, :souffle_timeout, @default_souffle_timeout)
 
-        case Cache.entry(rules_path, bin, opts) do
-          nil -> run_uncached(bin, facts_dir, rules_path, timeout, opts)
-          entry -> run_cached(entry, bin, facts_dir, rules_path, timeout, opts)
+        # A program whose inputs cannot be resolved is solved uncached:
+        # the solve reports the real trouble.
+        case Cache.entry(rules_path, bin, facts_dir, opts) do
+          {:ok, entry} -> run_cached(entry, bin, facts_dir, rules_path, timeout, opts)
+          _none_or_error -> run_uncached(bin, facts_dir, rules_path, timeout, opts)
         end
     end
   end
@@ -145,29 +148,51 @@ defmodule Argus.Souffle do
   walker misses transitively included declarations). Only the RAM says
   what will actually be opened.
 
-  For a program shipped under argus's `priv/dl`, the answer is memoized
-  for the life of the VM: it depends on nothing but the Datalog sources
-  and the solver, so the memo is versioned by a digest of every file
-  under `priv/dl` (recomputed when one of them is modified) and the
-  solver binary's identity, and an edited rule or a swapped solver
-  misses. A program anywhere else is resolved on
-  every call.
+  The answer is memoized for the life of the VM, keyed by the program
+  with its includes (`Argus.Souffle.Cache.program_digest/1`) and the
+  solver: an edited rule or a swapped solver misses. `programs:` names a
+  directory where it is kept across VMs as well (`Argus.Cache`), so a
+  warm run starts no solver to ask.
   """
   @spec input_relations(Path.t(), keyword()) :: {:ok, [String.t()]} | {:error, term()}
   def input_relations(rules_path, opts \\ []) do
+    with {:ok, inputs} <- inputs(rules_path, opts) do
+      {:ok, inputs |> Enum.map(&elem(&1, 0)) |> Enum.uniq() |> Enum.sort()}
+    end
+  end
+
+  @doc """
+  The files `input_relations/2`'s relations are read from, in a facts
+  directory: `<relation>.facts`, unless the program names another file.
+  """
+  @spec input_files(Path.t(), keyword()) :: {:ok, [String.t()]} | {:error, term()}
+  def input_files(rules_path, opts \\ []) do
+    with {:ok, inputs} <- inputs(rules_path, opts) do
+      {:ok, inputs |> Enum.map(&elem(&1, 1)) |> Enum.uniq() |> Enum.sort()}
+    end
+  end
+
+  defp inputs(rules_path, opts) do
     case Keyword.get(opts, :souffle_bin, find_souffle()) do
       nil ->
         {:error, :souffle_not_found}
 
       bin ->
-        case shipped_program_key(rules_path, bin) do
-          nil -> resolve_input_relations(bin, rules_path)
-          key -> memoized(key, fn -> resolve_input_relations(bin, rules_path) end)
+        path = Path.expand(rules_path)
+
+        if File.regular?(path) do
+          version = {Cache.program_digest(path), bin, Cache.version(bin)}
+
+          memoized({{__MODULE__, :inputs, path}, version}, fn ->
+            kept(Keyword.get(opts, :programs), path, bin, version)
+          end)
+        else
+          resolve_inputs(bin, path)
         end
     end
   end
 
-  defp resolve_input_relations(bin, rules_path) do
+  defp resolve_inputs(bin, rules_path) do
     args = ["--show=transformed-ram", rules_path]
 
     case System.cmd(bin, args, stderr_to_stdout: false) do
@@ -176,23 +201,47 @@ defmodule Argus.Souffle do
     end
   end
 
-  # `{key, version}` for a program under priv/dl, nil for any other. The
-  # persistent term is keyed by the program alone and carries the version
-  # it was resolved under: an edit overwrites one term instead of leaking
-  # a new one per digest.
-  defp shipped_program_key(rules_path, bin) do
-    with dir when is_list(dir) <- :code.priv_dir(:panoptes),
-         dl_dir = Path.join(List.to_string(dir), "dl"),
-         path = Path.expand(rules_path),
-         true <- String.starts_with?(path, dl_dir <> "/") do
-      {{__MODULE__, :input_relations, path}, {directory_digest(dl_dir), bin, Cache.version(bin)}}
+  # The answer kept in a store's `programs/`, or resolved and kept there.
+  defp kept(nil, path, bin, _version), do: resolve_inputs(bin, path)
+
+  defp kept(dir, path, bin, {program, _bin, version}) do
+    key = Argus.Cache.key(["argus-inputs-1", program, version])
+    entry = Path.join(dir, "#{Cache.program_name(path)}-#{key}")
+
+    with {:ok, entry} <- Argus.Cache.fetch(entry),
+         {:ok, text} <- File.read(entry) do
+      {:ok,
+       for(
+         line <- String.split(text, "\n", trim: true),
+         do: List.to_tuple(String.split(line, "\t"))
+       )}
     else
-      _ -> nil
+      _missing ->
+        with {:ok, inputs} = ok <- resolve_inputs(bin, path) do
+          keep_inputs(entry, inputs)
+          ok
+        end
+    end
+  end
+
+  # A store that cannot be written to is resolved around, not failed on.
+  defp keep_inputs(entry, inputs) do
+    staging = "#{entry}.#{:os.getpid()}.#{System.unique_integer([:positive])}"
+    text = Enum.map(inputs, fn {name, file} -> [name, "\t", file, "\n"] end)
+
+    with :ok <- File.mkdir_p(Path.dirname(entry)),
+         :ok <- File.write(staging, text),
+         :ok <- Argus.Cache.install(staging, entry) do
+      :ok
+    else
+      _ -> File.rm(staging)
     end
   end
 
   # Only a resolved answer is kept: a failure is reported every time it
-  # happens, and never served from the memo.
+  # happens, and never served from the memo. The persistent term is
+  # keyed by the program alone and carries the version it was resolved
+  # under: an edit overwrites one term instead of leaking one per digest.
   defp memoized({key, version}, resolve) do
     case :persistent_term.get(key, nil) do
       {^version, result} ->
@@ -210,41 +259,21 @@ defmodule Argus.Souffle do
     end
   end
 
-  # Every regular file under `dir`, by relative path and content; read
-  # again only when one of them moved (`Argus.Souffle.Cache.stamped/2`).
-  # A file added beside them changes no program until one that is there
-  # includes it, which moves that one.
-  defp directory_digest(dir) do
-    Cache.stamped({__MODULE__, :directory_digest, dir}, fn ->
-      files =
-        dir
-        |> Path.join("**")
-        |> Path.wildcard()
-        |> Enum.filter(&File.regular?/1)
-        |> Enum.sort()
-
-      digest =
-        files
-        |> Enum.reduce(:crypto.hash_init(:sha256), fn file, hash ->
-          hash
-          |> :crypto.hash_update(Path.relative_to(file, dir))
-          |> :crypto.hash_update(File.read!(file))
-        end)
-        |> :crypto.hash_final()
-
-      {files, digest}
-    end)
-  end
-
   # RAM IO directives look like:
   #   IO <name> (IO="file",...,operation="input",...)
   # Outputs carry operation="output"; only inputs are fact files we must
-  # supply.
+  # supply. An input read from another file than `<name>.facts` names it
+  # in a `filename` attribute.
   defp parse_ram_inputs(output) do
     ~r/IO\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+\((?<attrs>[^)]*)\)/
     |> Regex.scan(output, capture: :all)
     |> Enum.filter(fn [_full, _name, attrs] -> attrs =~ ~s(operation="input") end)
-    |> Enum.map(fn [_full, name, _attrs] -> name end)
+    |> Enum.map(fn [_full, name, attrs] ->
+      case Regex.run(~r/filename="([^"]*)"/, attrs) do
+        [_, file] -> {name, file}
+        nil -> {name, name <> ".facts"}
+      end
+    end)
     |> Enum.uniq()
     |> Enum.sort()
   end

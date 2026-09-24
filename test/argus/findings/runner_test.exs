@@ -1,10 +1,8 @@
 defmodule Argus.Findings.RunnerTest do
   use ExUnit.Case, async: true
 
-  alias Argus.Analysis.Extraction
   alias Argus.Findings
   alias Argus.Findings.Runner
-  alias Argus.Souffle.Cache
 
   @moduletag :tmp_dir
 
@@ -18,13 +16,8 @@ defmodule Argus.Findings.RunnerTest do
     assert {:error, {:invalid_analyses, "all"}} = Runner.run([:lists], analyses: "all")
   end
 
-  test "a solve cache names a facts directory's solves, and a run without one is refused" do
-    assert_raise ArgumentError, ~r/needs one/, fn ->
-      Runner.run([:lists], analyses: [:effects], solve_cache: "/nonexistent")
-    end
-  end
-
-  test "a solve cache keys each analysis, and the points-to stage only for its readers",
+  @tag :cache
+  test "a solve cache keeps each analysis's solve and the points-to stage's, read back as they were",
        %{tmp_dir: dir} do
     if not Argus.Souffle.available?(), do: flunk("souffle not installed")
 
@@ -44,12 +37,7 @@ defmodule Argus.Findings.RunnerTest do
       kept = solves |> File.ls!() |> Enum.map(&(&1 |> String.split("-") |> hd())) |> Enum.sort()
       assert kept == ["effects", "points_to", "startup"]
 
-      assert Extraction.solve_cache(solves, :startup) ==
-               {solves, [Cache.program_digest(Argus.Analysis.points_to_rules_path())]}
-
-      assert Extraction.solve_cache(solves, :effects) == {solves, []}
-
-      # Read back: the same findings.
+      # Read back: the same findings, and nothing solved again.
       assert {:ok, again} =
                Runner.run([:lists],
                  analyses: [:startup, :effects],
@@ -58,9 +46,24 @@ defmodule Argus.Findings.RunnerTest do
                )
 
       assert again.findings == first.findings
+      assert length(File.ls!(solves)) == 3
     after
       File.rm_rf(Path.dirname(facts))
     end
+  end
+
+  @tag :cache
+  test "a solve cache needs no facts directory of the caller's", %{tmp_dir: dir} do
+    if not Argus.Souffle.available?(), do: flunk("souffle not installed")
+    solves = Path.join(dir, "solves")
+
+    assert {:ok, first} = Runner.run([:lists], analyses: [:effects], solve_cache: solves)
+    assert {:ok, again} = Runner.run([:lists], analyses: [:effects], solve_cache: solves)
+    assert again.findings == first.findings
+
+    # Stage 0 is a solve like any other.
+    kept = solves |> File.ls!() |> Enum.map(&(&1 |> String.split("-") |> hd())) |> Enum.sort()
+    assert kept == ["effects", "stage0"]
   end
 
   # A solver that fails the points-to stage and runs everything else.

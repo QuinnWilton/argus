@@ -33,7 +33,6 @@ defmodule Argus.Analysis.Extraction do
   alias Argus.Analysis.Catalog
   alias Argus.Pipeline
   alias Argus.Souffle
-  alias Argus.Souffle.Cache
 
   # CallArgs is a universal extractor — it emits call_arg facts that
   # clientlib/calls.dl's resolved_arg uses to resolve sync_call /
@@ -220,17 +219,14 @@ defmodule Argus.Analysis.Extraction do
 
   @doc """
   The `:solve_cache` an analysis's solve is kept under, given the
-  directory a caller keeps for its facts (`Argus.Souffle.Cache`): the
-  points-to stage derived into those facts is named by its program, for
-  the analyses that read it and no others, so an edit to
-  `points_to.dl` re-solves exactly those.
+  directory a caller keeps its solves in: that directory. A kept solve
+  is keyed on the content of the files it reads (`Argus.Souffle.Cache`),
+  the points-to stage's outputs among them, so an analysis needs
+  nothing folded in for what was derived into its facts.
   """
-  @spec solve_cache(Path.t(), Analysis.analysis()) :: Cache.t()
-  def solve_cache(dir, analysis) do
-    if reads_points_to?(analysis),
-      do: {dir, [Cache.program_digest(points_to_rules_path())]},
-      else: {dir, []}
-  end
+  @deprecated "Pass the directory itself as :solve_cache"
+  @spec solve_cache(Path.t(), Analysis.analysis()) :: Path.t()
+  def solve_cache(dir, _analysis), do: dir
 
   @doc """
   Derives the points-to stage into `facts_dir` when one of `analyses`

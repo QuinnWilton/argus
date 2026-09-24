@@ -33,10 +33,18 @@ defmodule Argus.Souffle.CacheTest do
     {Path.join(dir, "p.dl"), facts}
   end
 
-  defp kept(cache), do: cache |> File.ls!() |> Enum.sort()
+  defp kept(cache) do
+    case File.ls(cache) do
+      {:ok, names} -> Enum.sort(names)
+      {:error, :enoent} -> []
+    end
+  end
 
   describe "a solve cache" do
-    test "reads a kept solve back: the directory stands for the facts, which are not read",
+    # They test the store, which ARGUS_NO_CACHE turns off.
+    @describetag :cache
+
+    test "reads a kept solve back while the files it reads are unchanged",
          %{tmp_dir: tmp} do
       skip_without_souffle()
       {rules, facts} = program!(tmp)
@@ -46,8 +54,20 @@ defmodule Argus.Souffle.CacheTest do
       assert [<<"p-", key::binary-size(64)>>] = kept(cache)
       assert key =~ ~r/^[0-9a-f]+$/
 
-      File.write!(Path.join(facts, "edge.facts"), "c\td\n")
+      # A file the program does not read is not part of the key.
+      File.write!(Path.join(facts, "unread.facts"), "x\n")
       assert {:ok, %{"path" => [["a", "b"]]}} = Souffle.run(facts, rules, solve_cache: cache)
+      assert length(kept(cache)) == 1
+
+      # One it reads is: new content, a new solve.
+      File.write!(Path.join(facts, "edge.facts"), "c\td\n")
+      assert {:ok, %{"path" => [["c", "d"]]}} = Souffle.run(facts, rules, solve_cache: cache)
+      assert length(kept(cache)) == 2
+
+      # And the old content finds the old solve again.
+      File.write!(Path.join(facts, "edge.facts"), "a\tb\n")
+      assert {:ok, %{"path" => [["a", "b"]]}} = Souffle.run(facts, rules, solve_cache: cache)
+      assert length(kept(cache)) == 2
     end
 
     test "an edit to an included file is a new solve", %{tmp_dir: tmp} do
@@ -57,22 +77,35 @@ defmodule Argus.Souffle.CacheTest do
 
       assert {:ok, %{"path" => [["a", "b"]]}} = Souffle.run(facts, rules, solve_cache: cache)
 
+      # A program outside priv/dl is read on every call.
       File.write!(Path.join(tmp, "lib/path.dl"), "path(y, x) :- edge(x, y).\n")
-      # The stamps are trusted for a second (`Cache.stamped/2`).
-      Process.sleep(1_100)
 
       assert {:ok, %{"path" => [["b", "a"]]}} = Souffle.run(facts, rules, solve_cache: cache)
       assert length(kept(cache)) == 2
     end
 
-    test "a salt is part of the key", %{tmp_dir: tmp} do
+    test "a group is part of the entry's name, for retention", %{tmp_dir: tmp} do
       skip_without_souffle()
       {rules, facts} = program!(tmp)
       cache = Path.join(tmp, "solves")
 
-      assert {:ok, _} = Souffle.run(facts, rules, solve_cache: {cache, ["one"]})
-      assert {:ok, _} = Souffle.run(facts, rules, solve_cache: {cache, ["two"]})
-      assert length(kept(cache)) == 2
+      assert {:ok, _} = Souffle.run(facts, rules, solve_cache: {cache, "one"})
+      assert [<<"p-one-", _key::binary-size(64)>>] = kept(cache)
+    end
+
+    test "a kept solve's files are read-only, beside a manifest of their digests",
+         %{tmp_dir: tmp} do
+      skip_without_souffle()
+      {rules, facts} = program!(tmp)
+      cache = Path.join(tmp, "solves")
+
+      assert {:ok, _} = Souffle.run(facts, rules, solve_cache: cache)
+      [name] = kept(cache)
+      entry = Path.join(cache, name)
+
+      assert File.stat!(Path.join(entry, "path.csv")).access == :read
+      assert {:ok, %{"path.csv" => digest}} = Cache.manifest(entry)
+      assert {:ok, ^digest} = Argus.Cache.file_digest(Path.join(entry, "path.csv"))
     end
 
     test "copies the outputs into a caller's output directory, hit or miss", %{tmp_dir: tmp} do
@@ -85,8 +118,11 @@ defmodule Argus.Souffle.CacheTest do
         target = Path.join(out, "path.csv")
         assert File.read!(target) == "a\tb\n"
 
-        # A copy: writing it leaves the kept solve alone.
+        # A copy, the caller's to write: writing it leaves the kept solve
+        # alone.
         assert File.stat!(target).links == 1
+        assert File.stat!(target).access == :read_write
+        refute File.exists?(Path.join(out, ".argus-digests"))
       end
     end
 
@@ -99,6 +135,39 @@ defmodule Argus.Souffle.CacheTest do
       assert {:error, {:souffle_error, _, _}} = Souffle.run(facts, rules, solve_cache: cache)
       assert {:error, {:souffle_error, _, _}} = Souffle.run(facts, rules, solve_cache: cache)
       assert kept(cache) == []
+    end
+  end
+
+  describe "input files" do
+    test "are the files the program reads, named by a filename it gives",
+         %{tmp_dir: tmp} do
+      skip_without_souffle()
+      rules = Path.join(tmp, "q.dl")
+
+      File.write!(rules, """
+      .decl a(x: symbol)
+      .input a
+      .decl b(x: symbol)
+      .input b(filename="other.facts")
+      .decl unused(x: symbol)
+      .input unused
+      .decl out(x: symbol)
+      .output out
+      out(x) :- a(x), b(x).
+      """)
+
+      assert {:ok, ["a.facts", "other.facts"]} = Souffle.input_files(rules)
+      assert {:ok, ["a", "b"]} = Souffle.input_relations(rules)
+    end
+
+    test "are kept in a store's programs directory for the next VM", %{tmp_dir: tmp} do
+      skip_without_souffle()
+      {rules, _facts} = program!(tmp)
+      programs = Path.join(tmp, "programs")
+
+      assert {:ok, ["edge"]} = Souffle.input_relations(rules, programs: programs)
+      assert [<<"p-", _key::binary-size(64)>> = name] = File.ls!(programs)
+      assert File.read!(Path.join(programs, name)) == "edge\tedge.facts\n"
     end
   end
 

@@ -21,6 +21,17 @@ worker and the modules whose specs it read from the code path.
 A producer's rows do not depend on which other producers run, so one
 can be extracted again on its own.
 
+**Added.** `Argus.Cache`: a store of results on disk, keyed by
+content — its entries' layout, their retention (`Argus.Cache.stale/2`,
+`prune/2`: within each group the three most recent and anything
+touched within the hour are spared) and `ARGUS_NO_CACHE`, which turns
+every store off.
+
+**Deprecated.** `Argus.Souffle.Cache.kept?/3` (always false: a solve
+is keyed on what it reads, which a cache directory does not name) and
+`Argus.Analysis.Extraction.solve_cache/2` (the directory itself is the
+`solve_cache:`; nothing is folded in for a stage).
+
 **Changed.** `Argus.Pipeline.run/3` writes a relation's rows grouped
 by producer — the base's first, then each extractor's in the order
 `extractors:` names them, each group in module order — where it
@@ -364,33 +375,35 @@ counts in.
 ### Solves kept across corpus runs
 
 **Added.** `Argus.run_analyses/2` and `Argus.Souffle.run/3` take
-`solve_cache:`, a directory of kept solves for the content of the facts
-directory the run reads (`Argus.Souffle.Cache`). A solve whose program
-(with its transitive includes) and solver have not moved since it was
-kept is read back rather than run, the points-to stage among them; an
-analysis that reads that stage is keyed on its program too
-(`Argus.Analysis.Extraction.solve_cache/2`). The caller keeps one
-directory per content of the facts, and nothing in the facts is read
-to key it; `run_analyses/2` refuses the option without `facts_dir:`.
-Off by default: a run without it solves as before.
+`solve_cache:`, a directory of kept solves (`Argus.Souffle.Cache`), or
+`{dir, group}` to name the entries' group for retention. A solve is
+keyed on its program with its transitive includes, the solver's
+version, and the content of exactly the relation files the program
+reads (`Argus.Souffle.input_files/2`): one whose inputs have not moved
+since it was kept is read back rather than run, the stages among them,
+and a stage's outputs key the solves after it by their content. So a
+change that leaves a program's inputs byte-identical — an edit
+upstream whose stage came out the same — solves nothing again. One
+directory serves any facts. A kept solve's files are read-only, beside
+a manifest of their digests. Off by default, and ignored under
+`ARGUS_NO_CACHE` (`Argus.Cache.enabled?/0`).
 
-**Changed.** `Argus.Corpus.analyze/2` keeps each checkout's solves in
-its facts cache entry, under `solves/`. A warm corpus run with no rule
-edited solves nothing (72 checkouts: 1,016 solves and 191 s of solver
-time before, none now) and reads the entry's facts in place instead of
-linking an overlay of them; a rule edit re-solves only the programs
-that include it, an edit to `points_to.dl` the stage and its seven
-readers. The findings are identical, every field, to solving afresh.
+**Changed.** `Argus.Corpus.analyze/2` keeps each checkout's solves.
+A warm corpus run with no rule edited solves nothing (72 checkouts:
+1,016 solves and 191 s of solver time before, none now); a rule edit
+re-solves only the programs that include it and those whose inputs it
+changed. The findings are identical, every field, to solving afresh.
 `Argus.Corpus.stale_solves/2`, `prune_solves/2` and `solve_caches/1`
 apply the facts cache's prune policy to each program's solves, and
 `mix argus.corpus prune` prunes them in the entries it keeps.
 
-**Changed.** `Argus.Souffle.input_relations/2`'s memo no longer reads
-and hashes every file under `priv/dl` on each call: the digest is kept
-while the files are unchanged, looked at again at most once a second.
-`Argus.Souffle.executable/0` looks `souffle` up once per value of
-`PATH`. On a busy disk the reads were most of a warm corpus run's
-system time.
+**Changed.** `Argus.Souffle.input_relations/2` is memoized for any
+program, keyed by its content with its includes and the solver, and
+`programs:` keeps the answer in a store's directory across VMs, so a
+warm run asks no solver. A program argus ships is read at most once a
+second; one elsewhere on every call. `Argus.Souffle.executable/0`
+looks `souffle` up once per value of `PATH`. On a busy disk the reads
+were most of a warm corpus run's system time.
 
 ### Priors asked side by side
 
