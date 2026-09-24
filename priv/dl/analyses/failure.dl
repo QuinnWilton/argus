@@ -319,8 +319,16 @@ times_bare(c, t, n) :- guard_count(c, t, "bare", n).
 result_ignored(site, f, c, t) :- program_site(site, f, c, "ignored", _, _, t).
 called_bare(site, f, c, t) :- program_site(site, f, c, _, "bare", _, t).
 
-// A site unchecked_result or startup already owns is not reported twice.
 inconsistent_handling(func, site, callee, "result_checked", used, ignored, scope) :-
+  ignored_where_most_are_used(func, site, callee, used, ignored, scope).
+
+inconsistent_handling(func, site, callee, "exception_guarded", guarded, bare, scope) :-
+  bare_where_most_are_guarded(func, site, callee, guarded, bare, scope).
+
+// A site unchecked_result or startup already owns is not reported twice.
+.decl ignored_where_most_are_used(func: symbol, site: symbol, callee: symbol, used: number, ignored: number, scope: symbol)
+
+ignored_where_most_are_used(func, site, callee, used, ignored, scope) :-
   result_ignored(site, func, callee, scope),
   !result_uncheckable(callee),
   times_used(callee, scope, used),
@@ -329,7 +337,9 @@ inconsistent_handling(func, site, callee, "result_checked", used, ignored, scope
   !unchecked_result(func, site, _, _),
   !start_result_owned(site).
 
-inconsistent_handling(func, site, callee, "exception_guarded", guarded, bare, scope) :-
+.decl bare_where_most_are_guarded(func: symbol, site: symbol, callee: symbol, guarded: number, bare: number, scope: symbol)
+
+bare_where_most_are_guarded(func, site, callee, guarded, bare, scope) :-
   called_bare(site, func, callee, scope),
   times_guarded(callee, scope, guarded),
   times_bare(callee, scope, bare),
