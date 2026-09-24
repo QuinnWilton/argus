@@ -1112,16 +1112,20 @@ fails_if_row_missing(act, func) :-
 // helper does. The act is unguarded from `func` when some path of calls
 // from `func` that passes no such handler (clientlib/reach.dl's
 // ForwardGuardedCallReach) reaches the act's function, and nothing
-// around the act itself takes the error either. An edge with no call
-// site — into a closure or a fun handed to a call — has no site to ask
-// about: it is followed unless its function has a handler that takes the
-// error somewhere, the function-wide answer.
+// around the act itself takes the error either. A closure or a fun
+// handed to a call is asked of the call it is handed to (fun_handed,
+// resolved_apply), and one handed to a process start runs elsewhere; an
+// edge that names no such call is followed unless its function has a
+// handler that takes the error somewhere, the function-wide answer.
 .init unguarded_path = ForwardGuardedCallReach
 
 unguarded_path.root(f) :- missing.meets(f, _, _, _, _, _, _).
 unguarded_path.limit(16).
 unguarded_path.guarded(c) :- site_rescues_argument_error(c, _).
+unguarded_path.handed(f, g, id) :- fun_handed(id, f, g).
+unguarded_path.handed(f, g, id) :- resolved_apply(id, f, g).
 unguarded_path.sealed(f) :- rescues_argument_error(f).
+unguarded_path.elsewhere(c) :- process_start(c, _, _, kind, _), kind != "server".
 
 .decl raises_unguarded(func: symbol, act: symbol)
 
