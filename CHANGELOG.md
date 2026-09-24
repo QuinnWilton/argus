@@ -311,6 +311,16 @@ written by each node's owner, which the excuse does not see; whether a
 table is replicated is `create_table`'s copies lists, which the facts do
 not show.
 
+**Changed.** `mnesia_check_act` leaves out the ETS rule's trip as well
+as a delete (`harmless_record_race`): a dirty write of a value made of
+neither the read nor a call, not guarded by what the record holds, with
+no send or other write under the decision and a decision that stays in
+the program — `[] -> dirty_write({:prefs, user, defaults})`, then
+`:ok`. Both racers write the same record. A claim that tells its caller
+it won, and a guard on the record's contents (ztlp's serial check),
+stay reported, as does anything on a table the program writes back or
+counts in.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile

@@ -126,6 +126,16 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
                races([C.MnesiaGlobalLock, C.MnesiaLockBypass])
     end
 
+    test "an idempotent default whose decision stays inside is not reported" do
+      skip_without_souffle()
+      assert races([C.MnesiaEnsureDefault]) == []
+    end
+
+    test "a claim whose decision the caller gets is reported" do
+      skip_without_souffle()
+      assert [{"claim/1", ":prefs_claims", _, _, _}] = races([C.MnesiaClaim])
+    end
+
     test "a table only its owner's callbacks write has one writer" do
       skip_without_souffle()
       assert races([C.MnesiaOwner]) == []

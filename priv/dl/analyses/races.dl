@@ -1477,7 +1477,7 @@ table_param_needed(f, p) :- mnesia_op(_, f, _, "write", "param", p, _, _).
 mnesia_check_act(mod, func, table, key, read, write, op) :-
   reads_then_writes_record(func, read, write, table, key),
   another_process_writes_record(table, func),
-  !harmless_delete(write, table),
+  !harmless_record_race(func, read, write),
   dirty_op(write, op),
   in_module(func, mod).
 
@@ -1486,10 +1486,89 @@ mnesia_check_act(mod, func, table, key, read, write, op) :-
 
 dirty_op(site, op) :- mnesia_op(site, _, op, _, _, _, _, _).
 
-.decl harmless_delete(write: symbol, table: symbol)
+// ── Mnesia races both racers win ──
+//
+// The ETS rule's (above), for records: a delete, and a trip — a write of
+// a value made of neither the read nor a call, not guarded by what the
+// record holds, with no send or other write under the decision, whose
+// decision stays in the program (`[] -> dirty_write({:prefs, user,
+// defaults})`, then `:ok`). Both racers write the same record. Neither
+// is harmless on a table the program writes back from a read or counts
+// in. A claim, which hands its decision to the caller, and a guard on
+// the record's contents (ztlp's serial check) stay reported.
+.decl harmless_record_race(func: symbol, read: symbol, write: symbol)
 
-harmless_delete(w, t) :-
-  reads_then_writes_record(_, _, w, t, _),
+harmless_record_race(f, r, w) :-
+  reads_then_writes_record(f, r, w, t, _),
   mnesia_op(w, _, op, _, _, _, _, _),
   (op = "dirty_delete" ; op = "dirty_delete_object"),
   !record_writes_back(t).
+
+harmless_record_race(f, r, w) :-
+  reads_then_writes_record(f, r, w, t, _),
+  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
+  !record_carries_read(w),
+  !record_writes_back(t),
+  !guards_record(r, w),
+  !record_decides_more(r, w),
+  !record_decision_escapes(r).
+
+// A guard on what the record holds: a field past the table and the key
+// (element 2 on) compared with a value the write stores.
+.decl guards_record(read: symbol, write: symbol)
+
+guards_record(r, w) :-
+  reads_then_writes_record(_, r, w, _, _),
+  records.carries(f, kind, src, r, _, _, _, _),
+  field_compared(f, kind, src, pos, ok, os),
+  pos >= 2,
+  records.act(w, f, _, _, _, _),
+  site_reads(w, f, ok, os).
+
+guards_record(r, w) :-
+  reads_then_writes_record(_, r, w, _, _),
+  records.carries(f, kind, src, r, _, _, _, _),
+  field_compared(f, kind, src, pos, ok, os),
+  pos >= 2,
+  records.act(w, h, _, _, _, _),
+  site_reads(w, h, "param", q),
+  call_arg_reads(f, h, n, ok, os),
+  q = to_string(n).
+
+.decl record_decides_more(read: symbol, write: symbol)
+
+record_decides_more(r, w) :-
+  reads_then_writes_record(_, r, w, _, _),
+  records.carries(f, kind, src, r, _, _, _, _),
+  effect_decided(f, kind, src).
+
+record_decides_more(r, w) :-
+  reads_then_writes_record(_, r, w, _, _),
+  records.carries(f, kind, src, r, _, _, _, _),
+  site_depends(s, f, kind, src),
+  s != w,
+  shared_write(s).
+
+// The decision leaves the function, as decision_escapes asks of ETS.
+.decl record_decision_returned(func: symbol, check: symbol)
+
+record_decision_returned(f, c) :-
+  reads_then_writes_record(f, c, _, _, _),
+  records.carries(f, kind, src, c, _, _, _, _),
+  returns_depends(f, kind, src).
+
+record_decision_returned(g, c) :-
+  record_decision_returned(f, c),
+  records.carries(g, "call", f, c, _, _, _, _),
+  returns_depends(g, "call", f).
+
+.decl record_decision_escapes(check: symbol)
+
+record_decision_escapes(c) :-
+  record_decision_returned(g, c),
+  call_decided(_, _, "call", g).
+
+record_decision_escapes(c) :-
+  record_decision_returned(g, c),
+  function_def(g, _, _, _, 1),
+  !callee_returns(g, "constant").

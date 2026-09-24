@@ -1419,6 +1419,36 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     def reset(key), do: :mnesia.dirty_write({:locked_counters, key, 0})
   end
 
+  defmodule MnesiaEnsureDefault do
+    @moduledoc """
+    An idempotent default: absent, so write the same constant record.
+    Both racers write it, and the decision stays inside.
+    """
+    @spec ensure_default(term()) :: :ok
+    def ensure_default(user) do
+      case :mnesia.dirty_read(:prefs, user) do
+        [] -> :mnesia.dirty_write({:prefs, user, %{theme: :light}})
+        _ -> :ok
+      end
+
+      :ok
+    end
+  end
+
+  defmodule MnesiaClaim do
+    @moduledoc "The same absent check handing its decision back: both racers are told they won."
+    def claim(user) do
+      case :mnesia.dirty_read(:prefs_claims, user) do
+        [] ->
+          :mnesia.dirty_write({:prefs_claims, user, :mine})
+          :ok
+
+        _ ->
+          {:error, :taken}
+      end
+    end
+  end
+
   defmodule MnesiaUpdateCounter do
     @moduledoc "The atomic form."
     def bump(key), do: :mnesia.dirty_update_counter(:counters, key, 1)
