@@ -276,6 +276,18 @@ seen: blockster's `update_user_betting_stats/5` was reported only
 through the fresh record written in its `[] ->` branch, and the lost
 update of the stats it read went unseen.
 
+**Fixed.** `mnesia_check_act` finds the other writer and the write-back
+where they are. When the pair runs in its table's one owning process,
+another writer counted only if it spelled the table: one handed the
+record by a helper (`defp save(rec), do: :mnesia.dirty_write(rec)`,
+the table the record's first element), or the table as a parameter,
+was not seen, nor was a transaction's write or `dirty_update_counter`,
+though a dirty read-modify-write takes no lock against either (schema
+79). The same helpers and counters now write a table back, so a
+dirty delete on it is reported, as it is on a table written back in
+place. Both resolve the table through `mnesia_write_table`; the acts
+stay the dirty writes.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile
@@ -639,6 +651,12 @@ position the call's result does not carry (`Argus.Pipeline.Emit.
 FunRefs.handed_rows/2`). The call graph's edge into a closure or a fun
 reference has no call instruction; this names the call it runs inside,
 so a rule asking whether a `try` covers the edge asks it of that call.
+**Changed.** Schema 84, no shape change. `mnesia_op` has rows of kind
+`write` for a transaction's `:mnesia.write/1,3`, `delete/1,3` and
+`delete_object/1,3`, and for `dirty_update_counter/2,3`: not dirty
+acts, but writes of the table a dirty read-modify-write takes no lock
+against. `Argus.Extractors.Mnesia.site?/1` names them too.
+
 **Changed.** Schema 83, no shape change. `Identity.tuple_element_identity/5`
 follows a record updated in place — `put_elem/3` (`setelement/3`),
 `R#r{f = V}` and an Elixir record's update (`update_record`), and a

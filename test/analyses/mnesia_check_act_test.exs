@@ -108,6 +108,26 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
       skip_without_souffle()
       assert races([C.MnesiaOwner]) == []
     end
+
+    test "another writer through a helper handed the record, in a transaction, or counting" do
+      skip_without_souffle()
+
+      for other <- [C.MnesiaOwnerResetter, C.MnesiaOwnerTxnResetter, C.MnesiaOwnerCounter] do
+        assert [{"handle_call/3", ":owned_counters", _, _, _}] = races([C.MnesiaOwner, other]),
+               "#{inspect(other)}"
+      end
+    end
+
+    test "a delete on a table written back through a record helper, or counted into" do
+      skip_without_souffle()
+
+      assert Enum.any?(
+               races([C.MnesiaExpireSaved]),
+               &match?({"fetch/2", ":saved_uses", _, _, _}, &1)
+             )
+
+      assert [{"fetch/2", ":hits", _, _, _}] = races([C.MnesiaExpireHits])
+    end
   end
 
   describe "finding" do

@@ -1412,6 +1412,59 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  defmodule MnesiaOwnerResetter do
+    @moduledoc "Resets MnesiaOwner's counters from any caller, through a helper handed the record."
+    def reset(key), do: save({:owned_counters, key, 0})
+
+    defp save(record), do: :mnesia.dirty_write(record)
+  end
+
+  defmodule MnesiaOwnerTxnResetter do
+    @moduledoc "Resets MnesiaOwner's counters in a transaction, which a dirty write does not wait for."
+    def reset(key), do: :mnesia.transaction(fn -> :mnesia.write({:owned_counters, key, 0}) end)
+  end
+
+  defmodule MnesiaOwnerCounter do
+    @moduledoc "Counts into MnesiaOwner's table with the atomic counter, from any caller."
+    def bump(key), do: :mnesia.dirty_update_counter(:owned_counters, key, 1)
+  end
+
+  defmodule MnesiaExpireSaved do
+    @moduledoc """
+    MnesiaExpireCounted with the write-back through a helper handed the
+    whole record: the delete can still remove a use counted in between.
+    """
+    def fetch(key, now) do
+      case :mnesia.dirty_read({:saved_uses, key}) do
+        [{:saved_uses, ^key, _n, expires}] when expires > now -> :ok
+        [_expired] -> :mnesia.dirty_delete({:saved_uses, key})
+        [] -> :none
+      end
+    end
+
+    def use(key, expires) do
+      case :mnesia.dirty_read({:saved_uses, key}) do
+        [{:saved_uses, ^key, n, exp}] -> save({:saved_uses, key, n + 1, exp})
+        [] -> save({:saved_uses, key, 1, expires})
+      end
+    end
+
+    defp save(record), do: :mnesia.dirty_write(record)
+  end
+
+  defmodule MnesiaExpireHits do
+    @moduledoc "An expiry on a table another function counts into with dirty_update_counter."
+    def fetch(key, now) do
+      case :mnesia.dirty_read({:hits, key}) do
+        [{:hits, ^key, _n, expires}] when expires > now -> :ok
+        [_expired] -> :mnesia.dirty_delete({:hits, key})
+        [] -> :none
+      end
+    end
+
+    def hit(key), do: :mnesia.dirty_update_counter(:hits, key, 1)
+  end
+
   defmodule MnesiaRecordHelper do
     @moduledoc """
     elvengard_ecs's insert_new before its fix: the helper reads by the

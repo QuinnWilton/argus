@@ -1292,7 +1292,17 @@ records.check(read, func, table_kind, table, key_kind, key) :-
   mnesia_op(read, func, _, "read", table_kind, table, key_kind, key).
 
 records.act(write, func, table_kind, table, key_kind, key) :-
-  mnesia_op(write, func, _, "write", table_kind, table, key_kind, key).
+  mnesia_op(write, func, op, "write", table_kind, table, key_kind, key),
+  dirty_write_op(op).
+
+// The dirty writes, the acts. A transaction's writes and
+// dirty_update_counter write the table too (the other writer, and what
+// writes a table back), but are not the race's act.
+.decl dirty_write_op(op: symbol)
+
+dirty_write_op("dirty_write").
+dirty_write_op("dirty_delete").
+dirty_write_op("dirty_delete_object").
 
 .decl reads_then_writes_record(func: symbol, read: symbol, write: symbol, table: symbol, key: symbol)
 
@@ -1337,17 +1347,36 @@ another_process_writes_record(t, f) :-
   reads_then_writes_record(f, _, _, t, _),
   runs.single_process(f),
   runs.entry_reaches(m, f),
-  mnesia_op(_, g, _, "write", "literal", t, _, _),
+  mnesia_write_table(_, g, t),
   runs.runs_apart_from(m, g).
+
+// The table a Mnesia write touches, by name: spelled there, named by
+// what callers pass the parameter it arrives in, or the first element of
+// the record callers build and hand it (`defp save(rec), do:
+// :mnesia.dirty_write(rec)`). A transaction's write and the atomic
+// counter are writes too: a dirty read-modify-write takes no lock, and
+// either can land between its read and its write.
+.decl mnesia_write_table(write: symbol, func: symbol, table: symbol)
+
+mnesia_write_table(w, f, t) :- mnesia_op(w, f, _, "write", "literal", t, _, _).
+
+mnesia_write_table(w, f, t) :-
+  mnesia_op(w, f, _, "write", "param", p, _, _),
+  table_at_param(f, p, t).
+
+mnesia_write_table(w, f, t) :-
+  mnesia_op(w, f, _, "write", "element 0", p, _, _),
+  table_at_record(f, p, t).
+
+record_param_needed(f, p) :- mnesia_op(_, f, _, "write", "element 0", p, _, _).
 
 .decl mnesia_check_act(mod: symbol, func: symbol, table: symbol, key: symbol, read: symbol, write: symbol, op: symbol)
 .output mnesia_check_act
 
 // A dirty_delete of the record the read found (the cleanup of an
 // expired nonce) is not a lost update unless the program also writes the
-// table back from a read: deleting twice is deleting once. dirty_update_counter
-// is not extracted, so a table only it counts into is not known to
-// accumulate.
+// table back from a read, or counts in it with dirty_update_counter:
+// deleting twice is deleting once.
 .decl record_carries_read(w: symbol)
 
 record_carries_read(w) :-
@@ -1386,14 +1415,11 @@ record_carries_read(w) :-
 
 .decl record_writes_back(table: symbol)
 
-record_writes_back(t) :-
-  record_carries_read(w),
-  mnesia_op(w, _, _, "write", "literal", t, _, _).
+record_writes_back(t) :- record_carries_read(w), mnesia_write_table(w, _, t).
 
 record_writes_back(t) :-
-  record_carries_read(w),
-  mnesia_op(w, f, _, "write", "param", p, _, _),
-  table_at_param(f, p, t).
+  mnesia_op(w, _, "dirty_update_counter", _, _, _, _, _),
+  mnesia_write_table(w, _, t).
 
 table_param_needed(f, p) :- mnesia_op(_, f, _, "write", "param", p, _, _).
 

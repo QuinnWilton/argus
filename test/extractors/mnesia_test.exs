@@ -51,15 +51,20 @@ defmodule Argus.Extractors.MnesiaTest do
              List.keyfind(keys, "dirty_read", 0)
   end
 
-  test "the transactional and the atomic operations are not dirty reads or writes" do
-    assert ops(C.MnesiaTransaction) == []
-    assert ops(C.MnesiaUpdateCounter) == []
+  test "a transaction's write and the atomic counter are writes, but not dirty ones" do
+    assert [{"-bump/1-fun-0-/1", "write", "write", {"literal", ":counters"}, {"param", "0"}}] =
+             ops(C.MnesiaTransaction)
+
+    assert [
+             {"bump/1", "dirty_update_counter", "write", {"literal", ":counters"}, {"param", "0"}}
+           ] = ops(C.MnesiaUpdateCounter)
   end
 
-  test "site?/1 is exactly the dirty reads and writes" do
+  test "site?/1 is the dirty reads and writes, and the writes under them" do
     assert Mnesia.site?({:mnesia, :dirty_read, 2})
     assert Mnesia.site?({:mnesia, :dirty_delete_object, 1})
-    refute Mnesia.site?({:mnesia, :dirty_update_counter, 3})
+    assert Mnesia.site?({:mnesia, :dirty_update_counter, 3})
+    assert Mnesia.site?({:mnesia, :write, 1})
     refute Mnesia.site?({:mnesia, :read, 2})
     refute Mnesia.site?({:ets, :lookup, 2})
   end

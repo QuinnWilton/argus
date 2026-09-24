@@ -13,7 +13,9 @@ defmodule Argus.Extractors.Mnesia do
   - `mnesia_op(id, func, op, kind, table_source, table, key_source, key)`
     — a dirty read (`dirty_read`, `dirty_match_object`, `dirty_select`,
     `dirty_index_read`, `dirty_index_match_object`) or write (`dirty_write`, `dirty_delete`,
-    `dirty_delete_object`), with the table and the key it touches in the
+    `dirty_delete_object`), or a write that is not dirty but changes the
+    table under one (a transaction's `write`, `delete` or
+    `delete_object`, and `dirty_update_counter`), with the table and the key it touches in the
     vocabulary of `Identity.key_identity/3`. The one-argument forms carry
     both in a tuple: `dirty_read({table, key})`, `dirty_delete({table,
     key})`, and a record whose first element is its table and whose
@@ -21,8 +23,11 @@ defmodule Argus.Extractors.Mnesia do
     their key — a match spec, a secondary index, a pattern whose key is
     `:_` — reads every key of its table: `any`.
 
-  `dirty_update_counter` is atomic — the fix, not the bug — and is not a
-  write here. Neither are the transactional `read`/`write`.
+  `dirty_update_counter` is atomic — the fix, not the bug — and a
+  transaction's operations are isolated from each other; neither is a
+  dirty act, but both write the table, and a dirty read-modify-write that
+  one lands between loses it. The rules tell them apart by `op`. A
+  transactional `read` is not extracted.
   """
 
   @behaviour Argus.Extractor
@@ -48,13 +53,25 @@ defmodule Argus.Extractors.Mnesia do
     {:dirty_delete, 1} => {"write", {{:x, 0}, 0}, {{:x, 0}, 1}},
     {:dirty_delete, 2} => {"write", {:x, 0}, {:x, 1}},
     {:dirty_delete_object, 1} => {"write", {{:x, 0}, 0}, {{:x, 0}, 1}},
-    {:dirty_delete_object, 2} => {"write", {:x, 0}, {{:x, 1}, 1}}
+    {:dirty_delete_object, 2} => {"write", {:x, 0}, {{:x, 1}, 1}},
+    # Writes that are not dirty acts, but change the table under one:
+    # a transaction's writes (a dirty operation takes no lock, so a
+    # transaction can write between a dirty read and its dirty write), and
+    # the atomic counter.
+    {:write, 1} => {"write", {{:x, 0}, 0}, {{:x, 0}, 1}},
+    {:write, 3} => {"write", {:x, 0}, {{:x, 1}, 1}},
+    {:delete, 1} => {"write", {{:x, 0}, 0}, {{:x, 0}, 1}},
+    {:delete, 3} => {"write", {:x, 0}, {:x, 1}},
+    {:delete_object, 1} => {"write", {{:x, 0}, 0}, {{:x, 0}, 1}},
+    {:delete_object, 3} => {"write", {:x, 0}, {{:x, 1}, 1}},
+    {:dirty_update_counter, 2} => {"write", {{:x, 0}, 0}, {{:x, 0}, 1}},
+    {:dirty_update_counter, 3} => {"write", {:x, 0}, {:x, 1}}
   }
 
   @impl true
   def relations, do: [:mnesia_op]
 
-  @doc "Whether a remote call is a dirty Mnesia read or write, for `Argus.Extractors.Dependence`."
+  @doc "Whether a remote call is a Mnesia read or write extracted here, for `Argus.Extractors.Dependence`."
   @spec site?(mfa()) :: boolean()
   def site?({:mnesia, op, arity}), do: Map.has_key?(@ops, {op, arity})
   def site?(_mfa), do: false
