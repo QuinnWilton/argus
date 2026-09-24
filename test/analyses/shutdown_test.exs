@@ -102,8 +102,8 @@ defmodule Argus.Analyses.ShutdownTest do
   describe "terminate_calls_sibling: which sibling the supervisor has stopped" do
     alias Argus.Test.Fixtures.SiblingOrder, as: O
 
-    defp kinds(sup) do
-      {:ok, r} = Argus.analyze([sup, O.Writer, O.Directory], :shutdown)
+    defp kinds(sup, extra \\ []) do
+      {:ok, r} = Argus.analyze([sup, O.Writer, O.Directory | extra], :shutdown)
 
       r
       |> Rows.where(:shutdown, "teardown_touches_sibling", phase: "terminate")
@@ -136,6 +136,28 @@ defmodule Argus.Analyses.ShutdownTest do
     test "under rest_for_one, the earlier sibling's crash is what terminates the caller" do
       skip_without_souffle()
       assert kinds(O.CalleeEarlierRestForOne) == [{"call_restart", @writer, @directory}]
+    end
+
+    test "a caller nested in an earlier branch finds a later sibling stopped" do
+      skip_without_souffle()
+      assert kinds(O.NestedCallerFirst, [O.WriterSup]) == [{"call", @writer, @directory}]
+    end
+
+    test "a sibling nested in a later branch is stopped before the caller" do
+      skip_without_souffle()
+      assert kinds(O.NestedCalleeLater, [O.DirectorySup]) == [{"call", @writer, @directory}]
+    end
+
+    test "under rest_for_one, an earlier child's crash takes down a later branch's caller" do
+      skip_without_souffle()
+
+      assert kinds(O.NestedCallerRestForOne, [O.WriterSup]) ==
+               [{"call_restart", @writer, @directory}]
+    end
+
+    test "a sibling nested in an earlier branch is restarted there, leaving the caller" do
+      skip_without_souffle()
+      assert kinds(O.NestedCalleeRestForOne, [O.DirectorySup]) == []
     end
 
     test "an earlier sibling under a strategy argus cannot read is reported less surely" do

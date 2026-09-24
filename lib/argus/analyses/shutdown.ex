@@ -85,12 +85,13 @@ defmodule Argus.Analyses.Shutdown do
         name: :teardown_touches_sibling,
         fields: [
           {:mod, :symbol, "the process whose teardown touches the sibling"},
-          {:sibling, :symbol, "the sibling child"},
+          {:sibling, :symbol,
+           "the sibling: a child of sup (a handler's stop), or a module in another of its branches (terminate)"},
           {:phase, :symbol, "terminate | handler"},
           {:kind, :symbol,
            "call | call_restart | call_unordered (order or strategy unknown) | stop"},
           {:via, :symbol, "function performing the call or stop"},
-          {:sup, :symbol, "the supervisor both sit under"},
+          {:sup, :symbol, "the supervisor both sit under, where their branches meet"},
           {:handler, :symbol, "the callback of mod the row belongs to"},
           {:site, :symbol, "the call that makes the dependency, when direct; else empty"},
           {:sup_site, :symbol, "where the supervisor places both, else empty"}
@@ -256,12 +257,12 @@ defmodule Argus.Analyses.Shutdown do
     Findings.new(
       severity,
       "terminate/2 calls a sibling that may already be down",
-      "#{mod}'s terminate/2 waits on #{sibling}#{through(via, mod)}, and both are " <>
-        "children of #{sup}. #{why}: the call exits with :noproc and terminate/2 " <>
+      "#{mod}'s terminate/2 waits on #{sibling}#{through(via, mod)}, and both run " <>
+        "under #{sup}. #{why}: the call exits with :noproc and terminate/2 " <>
         "crashes, skipping whatever cleanup followed.",
       at: Findings.at_site_in_func(site, via, mod),
       at_label: label,
-      related: placed_by(sup, sup_site),
+      related: placed_by(sup, sup_site, "both run under #{sup}, placed here"),
       help: ["wrap the call in `try ... catch :exit, _ -> :ok`, or make it a cast", fix]
     )
   end
@@ -429,13 +430,13 @@ defmodule Argus.Analyses.Shutdown do
      "or order the children so #{sibling} outlives #{mod}'s terminate/2"}
   end
 
-  defp placed_by(_sup, ""), do: []
-
   defp placed_by(sup, sup_site),
-    do: [
-      Findings.related(
-        "both are children of #{sup}, placed here",
-        Findings.at_site(sup_site, sup)
-      )
-    ]
+    do: placed_by(sup, sup_site, "both are children of #{sup}, placed here")
+
+  # A terminate/2 row's two may sit in branches under sup rather than be
+  # its children: sup is where their branches meet.
+  defp placed_by(_sup, "", _label), do: []
+
+  defp placed_by(sup, sup_site, label),
+    do: [Findings.related(label, Findings.at_site(sup_site, sup))]
 end

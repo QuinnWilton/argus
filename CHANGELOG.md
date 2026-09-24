@@ -226,6 +226,17 @@ module loses is `cleanup_defect` "never_runs". All three kinds (`call`,
 fixtures, which never trapped and were reported only by that accident,
 now trap exits.
 
+**Fixed.** The order is the branches', not the direct children's
+(`starts_before`, `child_subtree`): a supervisor stops a whole later
+child, a nested supervisor and everything under it, before an earlier
+one. A caller nested in an earlier branch (`[WorkerSup, Directory]`,
+Writer under WorkerSup) and a sibling nested in a later branch are now
+reported, with `sup` the supervisor where the two branches meet. A
+restart (`call_restart`) still needs the sibling to be that
+supervisor's own child: one nested in an earlier branch is restarted by
+its own supervisor, and the caller is left alone. The prose says both
+"run under" the supervisor rather than being its children.
+
 **Fixed.** A path from terminate/2 through a closure or a function
 reference is guarded by the call that runs the fun, not by any
 exit-catching try in the function: a try around an unrelated

@@ -470,6 +470,85 @@ defmodule Argus.Test.Fixtures.SiblingOrder do
     end
   end
 
+  defmodule WriterSup do
+    @moduledoc "A branch holding the writer."
+    use Supervisor
+
+    @impl true
+    def init(_opts) do
+      Supervisor.init([Argus.Test.Fixtures.SiblingOrder.Writer], strategy: :one_for_one)
+    end
+  end
+
+  defmodule DirectorySup do
+    @moduledoc "A branch holding the directory."
+    use Supervisor
+
+    @impl true
+    def init(_opts) do
+      Supervisor.init([Argus.Test.Fixtures.SiblingOrder.Directory], strategy: :one_for_one)
+    end
+  end
+
+  defmodule NestedCallerFirst do
+    @moduledoc """
+    The audit's shape: the writer under a branch started first, the
+    directory after it. Shutdown stops the directory, then the writer's
+    branch, and the writer's terminate/2 finds the directory gone.
+    """
+    use Supervisor
+
+    @impl true
+    def init(_opts) do
+      Supervisor.init(
+        [Argus.Test.Fixtures.SiblingOrder.WriterSup, Argus.Test.Fixtures.SiblingOrder.Directory],
+        strategy: :one_for_one
+      )
+    end
+  end
+
+  defmodule NestedCalleeLater do
+    @moduledoc "The writer first, the directory under a branch started after it."
+    use Supervisor
+
+    @impl true
+    def init(_opts) do
+      Supervisor.init(
+        [Argus.Test.Fixtures.SiblingOrder.Writer, Argus.Test.Fixtures.SiblingOrder.DirectorySup],
+        strategy: :one_for_one
+      )
+    end
+  end
+
+  defmodule NestedCallerRestForOne do
+    @moduledoc "The directory crashing takes the writer's whole branch down."
+    use Supervisor
+
+    @impl true
+    def init(_opts) do
+      Supervisor.init(
+        [Argus.Test.Fixtures.SiblingOrder.Directory, Argus.Test.Fixtures.SiblingOrder.WriterSup],
+        strategy: :rest_for_one
+      )
+    end
+  end
+
+  defmodule NestedCalleeRestForOne do
+    @moduledoc """
+    The directory under an earlier branch: its own supervisor restarts it,
+    and the writer is not terminated. Shutdown stops the writer first.
+    """
+    use Supervisor
+
+    @impl true
+    def init(_opts) do
+      Supervisor.init(
+        [Argus.Test.Fixtures.SiblingOrder.DirectorySup, Argus.Test.Fixtures.SiblingOrder.Writer],
+        strategy: :rest_for_one
+      )
+    end
+  end
+
   defmodule CalleeStartsLater do
     @moduledoc "The writer first, the directory after: shutdown stops the directory first."
     use Supervisor

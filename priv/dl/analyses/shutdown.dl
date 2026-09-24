@@ -123,8 +123,9 @@ cleanup_defect(mod, behaviour, "truncated", category, api, via) :-
 // time. terminate/2 runs while that is under way, so a sibling under the
 // same supervisor may already be gone: the call exits with :noproc and
 // terminate/2 itself crashes, taking whatever cleanup followed with it
-// (oban#21's Watchman pausing its Producer). Only direct siblings — the
-// modules whose lifetime the same supervisor sequences — count.
+// (oban#21's Watchman pausing its Producer). Siblings are the modules
+// whose lifetimes one supervisor sequences: its children, and what sits
+// under them.
 // A catch that takes the :noproc exit (oban's fix) is the shape that
 // survives the sibling being gone, but only for the call it covers: a
 // try around some other call, with the sibling call after its `end`,
@@ -267,6 +268,16 @@ terminate_waits_unguarded(mod, terminate, helper, sibling) :-
 //   one_for_all). Under one_for_one an earlier sibling's crash does not
 //   touch mod, and its restart is ordinary let-it-crash, not this rule.
 //
+// The order is the branches': a supervisor stops a whole later child,
+// a nested supervisor and everything under it, before an earlier one.
+// So the sibling may sit deep in a later branch, and mod deep in an
+// earlier one (`[WorkerSup, Directory]` with Writer under WorkerSup:
+// Directory is gone before WorkerSup stops Writer); `sup` is the
+// supervisor where their branches meet (starts_before, supervision.dl).
+// A restart needs the crash to reach sup: the sibling is sup's own child.
+// One nested in an earlier branch is restarted by its own supervisor,
+// which leaves mod alone.
+//
 // Both run terminate/2 while the supervisor stops mod, which it does
 // with exit(pid, :shutdown): only a process that traps exits runs
 // terminate/2 then (traps_exits). One that does not is killed without
@@ -284,15 +295,13 @@ terminate_waits_unguarded(mod, terminate, helper, sibling) :-
 calls_sibling_stopped_by_shutdown(mod, terminate, via, sibling, sup) :-
   terminate_waits_unguarded(mod, terminate, via, sibling),
   traps_exits(mod),
-  sibling(sup, mod, sibling),
   stops_before(sup, sibling, mod).
 
 calls_sibling_stopped_by_restart(mod, terminate, via, sibling, sup) :-
   terminate_waits_unguarded(mod, terminate, via, sibling),
   traps_exits(mod),
-  sibling(sup, mod, sibling),
   stops_before(sup, mod, sibling),
-  restarts_later_siblings(sup).
+  crash_restarts_later(sup, sibling).
 
 teardown_touches_sibling(mod, sibling, "terminate", "call", via, sup, func, site, sup_site) :-
   calls_sibling_stopped_by_shutdown(mod, func, via, sibling, sup),
@@ -307,22 +316,20 @@ teardown_touches_sibling(mod, sibling, "terminate", "call_restart", via, sup, fu
 teardown_touches_sibling(mod, sibling, "terminate", "call_unordered", via, sup, func, site, sup_site) :-
   terminate_waits_unguarded(mod, func, via, sibling),
   traps_exits(mod),
-  sibling(sup, mod, sibling),
   order_unsettled(sup, sibling, mod),
   unguarded_site_or_empty(via, sibling, site),
   supervisor_site_or_empty(sup, sup_site).
 
-// `later` is listed after `earlier` somewhere in sup's children.
+// `later` sits in a branch of sup listed after one that holds
+// `earlier`: the branch is `later` itself, or a supervisor above it.
 .decl started_after(sup: symbol, later: symbol, earlier: symbol)
 
 started_after(sup, later, earlier) :-
-  sibling(sup, earlier, later),
-  supervisor_child(sup, earlier_at, earlier, _, _),
-  supervisor_child(sup, later_at, later, _, _),
-  later_at > earlier_at.
+  starts_before(sup, earlier, later, _, _),
+  later != earlier.
 
-// sup's shutdown stops `first` before `other`: started after it, and
-// never before it.
+// sup's shutdown stops `first` before `other`: first's branch was
+// started after other's, and never before it.
 .decl stops_before(sup: symbol, first: symbol, other: symbol)
 
 stops_before(sup, first, other) :-
@@ -335,6 +342,14 @@ stops_before(sup, first, other) :-
 
 restarts_later_siblings(sup) :- supervisor(sup, "rest_for_one").
 restarts_later_siblings(sup) :- supervisor(sup, "one_for_all").
+
+// `child`'s crash makes sup terminate the children started after it:
+// child is sup's own, under rest_for_one or one_for_all.
+.decl crash_restarts_later(sup: symbol, child: symbol)
+
+crash_restarts_later(sup, child) :-
+  supervisor_child(sup, _, child, _, _),
+  restarts_later_siblings(sup).
 
 .decl strategy_known(sup: symbol)
 
@@ -349,6 +364,7 @@ order_unsettled(sup, sibling, mod) :-
 
 order_unsettled(sup, sibling, mod) :-
   stops_before(sup, mod, sibling),
+  supervisor_child(sup, _, sibling, _, _),
   !strategy_known(sup).
 
 // Where terminate/2's path to a helper that calls the sibling begins:
