@@ -31,6 +31,24 @@ defmodule Argus.Analyses.StartupDistributedTest do
              end)
     end
 
+    test "flags an rpc init/1 reaches through a helper on its own stack" do
+      skip_without_souffle()
+
+      results = analyze([Argus.Test.Fixtures.RpcViaHelperInInit])
+      rows = remote(results)
+
+      assert [["Argus.Test.Fixtures.RpcViaHelperInInit:init/1", site, "rpc"]] = rows
+      assert site =~ "RpcViaHelperInInit:fetch/1#"
+    end
+
+    test "does not flag an rpc in a process init/1 starts" do
+      skip_without_souffle()
+
+      results = analyze([Argus.Test.Fixtures.RpcSpawnedFromInit])
+
+      assert remote(results) == []
+    end
+
     test "flags Node.connect in init/1" do
       skip_without_souffle()
 

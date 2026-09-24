@@ -96,6 +96,47 @@ defmodule Argus.Test.Fixtures.RpcInInit do
   def handle_call(:get, _from, state), do: {:reply, state, state}
 end
 
+defmodule Argus.Test.Fixtures.RpcViaHelperInInit do
+  @moduledoc false
+  use GenServer
+
+  def start_link(node), do: GenServer.start_link(__MODULE__, node)
+
+  # The rpc is in a helper init/1 calls on its own stack: it holds the
+  # supervisor's start as one in init/1 does, and is startup's finding.
+  @impl true
+  def init(node), do: {:ok, fetch(node)}
+
+  # The rpc in a process init/1 starts runs in that process, not init's.
+  @impl true
+  def handle_call(:refresh, _from, node) do
+    spawn(fn -> fetch_later(node) end)
+    {:reply, :ok, node}
+  end
+
+  defp fetch(node), do: :rpc.call(node, :peer_directory, :peers, [])
+  defp fetch_later(node), do: :rpc.call(node, :peer_directory, :refresh, [])
+end
+
+defmodule Argus.Test.Fixtures.RpcSpawnedFromInit do
+  @moduledoc false
+  use GenServer
+
+  def start_link(node), do: GenServer.start_link(__MODULE__, node)
+
+  # The rpc runs in a process init/1 starts: the start does not wait on it.
+  @impl true
+  def init(node) do
+    spawn(fn -> announce(node) end)
+    {:ok, node}
+  end
+
+  @impl true
+  def handle_call(:get, _from, state), do: {:reply, state, state}
+
+  defp announce(node), do: :rpc.call(node, :peer_directory, :announce, [node()])
+end
+
 defmodule Argus.Test.Fixtures.PlainInit do
   @moduledoc false
 

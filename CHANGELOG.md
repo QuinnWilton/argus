@@ -26,6 +26,13 @@ arg_pos)` (`Argus.Extractors.CallArgs`) records a literal `:infinity`
 argument at any position; `call_arg` stops at the fourth, and a
 wrapper's `timeout \\ :infinity` passes it fifth.
 
+**Changed.** `startup.blocks_on_peer` "remote" follows an rpc as it
+follows a `:global` lock: one in `init/1`, or in anything `init/1` calls
+on its own stack, holds the supervisor's start (`func` is the init/1;
+the anchor is the rpc). It read only an rpc written in init/1 itself, so
+a helper's rpc was reported by blocking as a generic unbounded wait. An
+rpc in a process init/1 starts is not followed.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile

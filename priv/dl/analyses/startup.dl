@@ -506,9 +506,19 @@ lock_in_init_closure(init, lock) :-
 
 // site is the distributed-op instruction inside init. One row per
 // site — finding builders dedupe on (func, op).
-blocks_on_peer(func, "init", "", "remote", "", "", id, op) :-
-  rpc_call(id, func, op, _),
-  init_function(_, func).
+//
+// An rpc is followed as a :global lock is (lock_reach): in init/1, or in
+// anything init/1 calls on its own stack, `func` being init/1. blocking
+// leaves out the same sites (its during_init), so a helper's rpc holding
+// the start is reported here, once.
+.init rpc_reach = SameProcessReach
+
+rpc_reach.seed(holder, id) :- rpc_call(id, holder, _, _).
+
+blocks_on_peer(init, "init", "", "remote", "", "", id, op) :-
+  rpc_call(id, _, op, _),
+  init_function(_, init),
+  rpc_reach.reaches(init, id).
 
 blocks_on_peer(func, "init", "", "remote", "", "", id, op) :-
   global_register(id, func, _, _),
