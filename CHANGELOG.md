@@ -206,7 +206,13 @@ runtime and the options that shape rows — and, for the specs extractor,
 the environment it reads, with each module it read from argus's own
 application or found absent recorded and checked on every hit. Only
 missing shards are extracted, and a run that lost a module to a timeout
-keeps none. A run's facts are each relation file's digest and source,
+keeps none. Each set of beams' bases are kept too (`bases/` in the
+store, keyed by the beams, the base's code and the runtime): the run
+that extracts the base's own shard keeps them, and one that extracts
+only extractors runs them over the kept bases — after an edit to one
+extractor, re-extracting its shard over the corpus costs a quarter of
+what it did, the base having been most of it. They weigh 131 MB over
+the corpus's 74 checkouts. A run's facts are each relation file's digest and source,
 with no directory until a solve misses: it places only the files its
 program reads, as symbolic links into the store (`materialize/2`;
 `prepare/3` places what the solves about to fan out read, where

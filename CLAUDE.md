@@ -148,24 +148,36 @@ names one with `cache:` on `Argus.run_analyses/2`, `Argus.analyze/3` or
   only the files that program reads, as symbolic links into the store;
   `Facts.materialize/1` (what `extract_facts/3` returns) is the whole
   directory as hard links, byte-identical to `Argus.Pipeline.run/3`'s.
+- **Bases** (`Argus.Pipeline.Base`): each module's base — its
+  disassembly, control-flow graphs and reaching definitions (the
+  per-function solutions `Argus.Instr.Reaching.export/1` carries) — for
+  a set of beams, keyed by the beams, the base's code and the runtime.
+  An extraction that computes the base keeps them; one whose base shard
+  is kept but an extractor's is not runs that extractor over them —
+  on the corpus, a quarter of the cost for most extractors. The decoded facts (`module_data.typed`) are
+  not kept: over a kept base they are re-emitted only for
+  `Argus.Pipeline.typed_readers/0`, and `CodeClosureTest` fails when
+  another extractor computes them — add it to that list.
 - **Solves** (`Argus.Souffle.Cache`): keyed by the program with its
   includes, the solver's version and the digests of exactly the files
   the program reads (`Argus.Souffle.input_files/2`). Stage outputs join
   the facts by content, so a solve downstream of a stage whose output
   came out the same is read back — early cutoff.
-- **What moves a key**: an extractor edit moves that extractor's shard;
-  an edit to anything the base reaches (`Argus.Instr`, the extractor
-  helpers, the emitter, `Writer`, `Tsv`) moves every shard, and then the
-  solves run again only if the facts came out different; a rule edit
-  moves the programs that include it. The solver, the stores, the
-  analyses' prose and the corpus harness move nothing.
-  `Argus.Cache.CodeClosureTest` runs each producer with call counting
-  and fails if it executes a module outside its key.
-- **Retention**: within each producer's shards and each program's
-  solves (per set of beams), the three most recent entries and anything
-  touched within the hour are spared; the suite's store also drops a
-  set untouched for a week. Entries are read-only; a run links them into
-  a scratch directory of its own.
+- **What moves a key**: an extractor edit moves that extractor's shard
+  and nothing else (it re-extracts over the kept bases); an edit to
+  anything the base reaches (`Argus.Instr`, the extractor helpers, the
+  emitter, `Writer`, `Tsv`, `Argus.Schema` — so every schema bump)
+  moves every shard and every base, and then the solves run again only
+  if the facts came out different; a rule edit moves the programs that
+  include it. The solver, the stores, the analyses' prose and the
+  corpus harness move nothing. `Argus.Cache.CodeClosureTest` runs each
+  producer with call counting, the extractors over kept bases too, and
+  fails if one executes a module outside its key.
+- **Retention**: within each producer's shards, each program's solves
+  and the bases (per set of beams), the three most recent entries and
+  anything touched within the hour are spared; the suite's store also
+  drops a set untouched for a week. Entries are read-only; a run links
+  them into a scratch directory of its own.
 - **`ARGUS_NO_CACHE=1`** turns every store off: each run extracts and
   solves afresh, and the store tests (`@tag :cache`) are skipped. Use it
   after changing how a key is made or what a producer can read, when an
@@ -183,7 +195,8 @@ names one with `cache:` on `Argus.run_analyses/2`, `Argus.analyze/3` or
   `ARGUS_CORPUS_ONLY=…`) and `mix argus.corpus tally --title …`.
 - Iterating on an extractor: its extractor tests call the pipeline
   directly; the analysis tests reading its relations re-extract its
-  shard alone, and solve again only where its rows changed.
+  shard alone, over the kept bases, and solve again only where its rows
+  changed.
 - A refactor of shared extraction code re-extracts everything once;
   when the facts come out byte-identical nothing is solved again.
 - Slow properties check a sample; `ARGUS_PROPERTIES=full` runs their

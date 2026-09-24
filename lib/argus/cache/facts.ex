@@ -61,6 +61,7 @@ defmodule Argus.Cache.Facts do
 
   @format "argus-shard-1"
   @manifest ".argus-shard"
+  @bases_format "argus-bases-1\n"
 
   @enforce_keys [:store, :group, :relations]
   defstruct [:store, :group, :relations, work: nil, dir: nil, placed: %{}, complete: false]
@@ -113,7 +114,9 @@ defmodule Argus.Cache.Facts do
       for {_producer, entry, :stale} <- looked, do: File.rm_rf(entry)
       facts = %__MODULE__{store: store, group: String.slice(beams, 0, 16), relations: %{}}
 
-      with {:ok, extracted, facts} <- extract_missing(facts, paths, misses, opts) do
+      bases = bases_entry(beams, store)
+
+      with {:ok, extracted, facts} <- extract_missing(facts, paths, misses, opts, bases) do
         manifests = Map.new(hits, fn {p, entry} -> {p, {entry, read_manifest!(entry)}} end)
         {:ok, %{facts | relations: join(producers, Map.merge(manifests, extracted))}}
       end
@@ -214,11 +217,11 @@ defmodule Argus.Cache.Facts do
   # The missing producers extracted in one run of the pipeline, each
   # into a staging directory in the store, and installed unless the run
   # lost a module. `{:ok, %{producer => {dir, manifest}}, facts}`.
-  defp extract_missing(facts, _paths, [], _opts), do: {:ok, %{}, facts}
+  defp extract_missing(facts, _paths, [], _opts, _bases), do: {:ok, %{}, facts}
 
-  defp extract_missing(facts, paths, misses, opts) do
+  defp extract_missing(facts, paths, misses, opts, bases) do
     with {:ok, staged} <- stage(misses) do
-      run_missing(facts, paths, staged, opts)
+      run_missing(facts, paths, staged, opts, bases)
     end
   end
 
@@ -241,11 +244,13 @@ defmodule Argus.Cache.Facts do
     end
   end
 
-  defp run_missing(facts, paths, staged, opts) do
+  defp run_missing(facts, paths, staged, opts, bases) do
     dirs = for {producer, _entry, staging} <- staged, do: {producer, staging}
+    {bases_opts, keep?} = bases_opts(bases, paths, List.keymember?(dirs, :base, 0))
 
-    case Pipeline.run_shards(paths, dirs, opts) do
-      {:ok, %{lost: lost, installed: installed, digests: digests}} ->
+    case Pipeline.run_shards(paths, dirs, opts ++ bases_opts) do
+      {:ok, %{lost: lost, installed: installed, digests: digests} = info} ->
+        if keep? and lost == [], do: keep_bases(bases, info.bases)
         reads = recorded_reads(installed)
 
         extracted =
@@ -267,6 +272,85 @@ defmodule Argus.Cache.Facts do
         error
     end
   end
+
+  # ── Bases ───────────────────────────────────────────────────────────
+
+  # The entry holding each module's base for these beams
+  # (`Argus.Pipeline.Base`): keyed by them, the runtime and the code of
+  # the base, which is what computes one — not by the options that
+  # shape rows, since a base holds none.
+  defp bases_entry(beams, store) do
+    {:ok, code} = Code.digest(:base)
+    key = Cache.key([@bases_format, beams | runtime()] ++ [code])
+    Path.join(Cache.dir(store, :bases), "#{String.slice(beams, 0, 16)}-#{key}")
+  end
+
+  # What the pipeline is asked about bases, and whether to keep the
+  # ones it computes: a run extracting the base's own shard computes
+  # every base (the emitter's rows are no base's), and keeps them if
+  # none are kept; a run of extractors alone reads them back, or
+  # computes and keeps them.
+  defp bases_opts(entry, paths, base_missing?) do
+    cond do
+      base_missing? and File.exists?(entry) ->
+        {[], false}
+
+      base_missing? ->
+        {[keep_bases: true], true}
+
+      true ->
+        case read_bases(entry, length(paths)) do
+          {:ok, kept} -> {[bases: kept], false}
+          :miss -> {[keep_bases: true], true}
+        end
+    end
+  end
+
+  # A module's base, or nil for one that had none, each length-prefixed
+  # after the format: the file is read once and each base handed to its
+  # worker as a slice of it.
+  defp read_bases(entry, count) do
+    with {:ok, entry} <- Cache.fetch(entry),
+         {:ok, <<@bases_format, ^count::32, rest::binary>>} <- File.read(entry),
+         {:ok, bases} <- split_bases(rest, count, []) do
+      {:ok, bases}
+    else
+      _ -> :miss
+    end
+  end
+
+  defp split_bases(<<>>, 0, acc), do: {:ok, Enum.reverse(acc)}
+
+  defp split_bases(<<0::64, rest::binary>>, n, acc) when n > 0,
+    do: split_bases(rest, n - 1, [nil | acc])
+
+  defp split_bases(<<size::64, base::binary-size(size), rest::binary>>, n, acc) when n > 0,
+    do: split_bases(rest, n - 1, [base | acc])
+
+  defp split_bases(_bytes, _n, _acc), do: :error
+
+  # Written under a staging name and installed, as every entry is; a
+  # store that cannot take it goes without.
+  defp keep_bases(entry, bases) do
+    staging = "#{entry}.#{:os.getpid()}.#{System.unique_integer([:positive])}"
+
+    body =
+      Enum.map(bases, fn
+        nil -> <<0::64>>
+        base -> [<<byte_size(base)::64>>, base]
+      end)
+
+    with :ok <- Cache.mkdir(Path.dirname(entry)) |> existing(),
+         :ok <- File.write(staging, [@bases_format, <<length(bases)::32>> | body]),
+         :ok <- Cache.install(staging, entry) do
+      :ok
+    else
+      _ -> File.rm(staging)
+    end
+  end
+
+  defp existing({:error, :eexist}), do: :ok
+  defp existing(result), do: result
 
   # Installed, or — when the run lost a module — left as it is, for this
   # run alone (`release/1` removes it).

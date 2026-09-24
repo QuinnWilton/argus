@@ -22,6 +22,11 @@ defmodule Argus.Cache do
     * `programs/` — the relations each program reads, as Souffle
       resolves them (`Argus.Souffle.input_relations/2`), kept so a warm
       run starts no solver at all.
+    * `bases/` — each module's base for a set of beams
+      (`Argus.Pipeline.Base`: its disassembly, decoded facts,
+      control-flow graphs and reaching definitions), keyed by the beams,
+      the base's code and the runtime, so an extractor extracted again
+      after an edit to it runs over them instead of computing them.
 
   ## Entries
 
@@ -50,7 +55,7 @@ defmodule Argus.Cache do
   @type prune_option ::
           {:keep, [String.t()]} | {:recent, non_neg_integer()} | {:max_age, pos_integer()}
 
-  @subdirs ~w(shards solves programs)
+  @subdirs ~w(shards solves programs bases)
 
   # Always spared: an entry touched within the hour may be one a run
   # beside this one is reading.
@@ -85,9 +90,9 @@ defmodule Argus.Cache do
     end
   end
 
-  @doc "One of the store's directories: `:shards`, `:solves` or `:programs`."
-  @spec dir(Path.t(), :shards | :solves | :programs) :: Path.t()
-  def dir(root, kind) when kind in [:shards, :solves, :programs],
+  @doc "One of the store's directories: `:shards`, `:solves`, `:programs` or `:bases`."
+  @spec dir(Path.t(), :shards | :solves | :programs | :bases) :: Path.t()
+  def dir(root, kind) when kind in [:shards, :solves, :programs, :bases],
     do: Path.join(root, Atom.to_string(kind))
 
   @doc """
@@ -176,7 +181,7 @@ defmodule Argus.Cache do
   defp read_only(path, names), do: Enum.each(names, &File.chmod(Path.join(path, &1), 0o444))
 
   @doc """
-  The entries of a store (its `shards/`, `solves/` and `programs/`)
+  The entries of a store (its `shards/`, `solves/`, `programs/` and `bases/`)
   that `prune/2` removes. Within each group (`<group>-<key>`, see the
   moduledoc) an entry goes once it has been untouched for an hour and
   is not among the `recent:` most recently touched of its group
