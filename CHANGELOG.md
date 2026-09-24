@@ -38,6 +38,18 @@ reaches on its own stack, not only one written in init/1: startup
 reports it (above). A helper init/1 shares with handle_call/3 is then
 reported only as startup's, as a `:global` lock already was.
 
+**Fixed.** `blocking.unbounded_wait` "rpc" ("RPC without a bounded
+timeout") no longer fires on a remote function that answers without
+waiting on anything: a process or ETS lookup, a clock,
+`:persistent_term.get`, `:code.is_loaded` (`quick_remote` in
+blocking.dl, read against `rpc_target`). On a connected peer such a
+call returns, and a peer that goes away is noticed within net_ticktime;
+what can keep the caller forever is a callee that never answers, and
+these do not wait. Horde's `Registry.process_alive?/1`
+(`Process.alive?`), nerves_hub's `CLISessionCache` (`:ets.tab2list`)
+and phoenix_live_dashboard's `SystemInfo.node_capabilities/2`
+(`:code.is_loaded`) are no longer reported.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile

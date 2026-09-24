@@ -32,6 +32,17 @@ defmodule Argus.Analyses.BlockingRpcTest do
     end
   end
 
+  describe "unbounded_wait: rpc to a function that answers at once" do
+    test "is not flagged; the same call to one that can wait is" do
+      skip_without_souffle()
+
+      results = analyze([Argus.Test.Fixtures.RpcQuickTargets])
+      funcs = Enum.map(waits(results, "rpc"), fn [func, _site, _variant] -> func end)
+
+      assert funcs == ["Argus.Test.Fixtures.RpcQuickTargets:lookup/2"]
+    end
+  end
+
   describe "a wait init/1 holds is startup's finding" do
     test "an rpc in init/1, and a :global lock init/1 reaches, are reported once, by startup" do
       skip_without_souffle()

@@ -219,7 +219,7 @@ defmodule Argus.Test.Fixtures.RpcViaHelperCallback do
     {:reply, do_fetch(node), state}
   end
 
-  defp do_fetch(node), do: :rpc.call(node, Node, :list, [])
+  defp do_fetch(node), do: :rpc.call(node, :peer_directory, :peers, [])
 end
 
 defmodule Argus.Test.Fixtures.GlobalLockInInit do
@@ -237,4 +237,19 @@ defmodule Argus.Test.Fixtures.GlobalLockInInit do
   end
 
   defp lock(key), do: :global.set_lock({key, self()}, [node()])
+end
+
+defmodule Argus.Test.Fixtures.RpcQuickTargets do
+  @moduledoc false
+
+  # Each remote function answers without waiting on anything: on a
+  # connected peer the call returns, and a peer that goes away is noticed
+  # within net_ticktime. None needs a deadline.
+  def alive?(node, pid), do: :rpc.call(node, Process, :alive?, [pid])
+  def sessions(node), do: :rpc.call(node, :ets, :tab2list, [:sessions])
+  def loaded?(node), do: :rpc.call(node, :code, :is_loaded, [__MODULE__])
+  def alive_everywhere(nodes, pid), do: :erpc.multicall(nodes, Process, :alive?, [pid])
+
+  # The same call to a function that can wait: flagged.
+  def lookup(node, key), do: :rpc.call(node, :peer_directory, :lookup, [key])
 end
