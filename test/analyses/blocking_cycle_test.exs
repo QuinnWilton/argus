@@ -154,6 +154,22 @@ defmodule Argus.Analyses.BlockingCycleTest do
       assert results["call_cycle"] == []
     end
 
+    test "a client function in a server module is not that server waiting" do
+      skip_without_souffle()
+
+      # Producer.produce/1 calls Batcher, but it runs in its caller; only
+      # Batcher's process calls Producer's (klife's Producer and Batcher).
+      assert {:ok, results} = Memo.analyze([CallCycle.Producer, CallCycle.Batcher], :blocking)
+      assert results["call_cycle"] == []
+    end
+
+    test "a task the server waits for holds it in the cycle" do
+      skip_without_souffle()
+
+      assert {:ok, results} = Memo.analyze([CallCycle.Awaiter, CallCycle.Awaited], :blocking)
+      assert cycle?(results, CallCycle.Awaiter, CallCycle.Awaited)
+    end
+
     test "runs without error on module with no cycles" do
       skip_without_souffle()
 

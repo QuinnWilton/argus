@@ -258,19 +258,64 @@ unbounded_wait(cat(mod, ":handle_call/3"), "", "infinity", target, "", "") :-
   behaves_as(target, "GenServer").
 
 // ══ Mutual synchronous dependency ═══════════════════════════════════
-// `phase` is "call" for two modules that synchronously call each other
-// anywhere, "continue" when both do so from handle_continue/2: both
+// `phase` is "call" for two modules whose processes synchronously call
+// each other, "continue" when both do so from handle_continue/2: both
 // return from init, the supervisor proceeds, and neither ever reads its
 // mailbox. "self" is a process calling itself (mod_a = mod_b).
 .decl call_cycle(mod_a: symbol, mod_b: symbol, witness_a: symbol, witness_b: symbol, phase: symbol, site_a: symbol, site_b: symbol)
 .output call_cycle
 
 call_cycle(a, b, wa, wb, "call", sa, sb) :-
-  module_sync_dep(a, b, wa),
-  module_sync_dep(b, a, wb),
+  cycle_edge(a, b, wa),
+  cycle_edge(b, a, wb),
   a < b,
   sync_site_or_empty(wa, b, sa),
   sync_site_or_empty(wb, a, sb).
+
+// ── Which process waits ──────────────────────────────────────────────
+//
+// A deadlock is two processes each waiting on the other's mailbox, and
+// module_sync_dep(a, b, w) says only that a function of a's waits on
+// b's process: a function runs in whichever process calls it. A
+// client function of a's (`def produce(recs), do: Batcher.produce(...)`,
+// klife's Producer) runs in its caller, and a module with no process of
+// its own (Plausible's `def flush, do: WriteBuffer.flush(__MODULE__)`)
+// never waits as itself. So a direction of a cycle is a wait a's own
+// process makes: a witness that runs on its stack, entered at one of
+// a's callbacks — or in a task it awaits, which holds it just the same.
+//
+// Asked only of the pairs that depend on each other both ways, backwards
+// from their witnesses.
+.decl cycle_candidate(a: symbol, b: symbol)
+
+cycle_candidate(a, b) :- module_sync_dep(a, b, _), module_sync_dep(b, a, _).
+
+// `holds.reaches(f, w)`: f runs the witness w while it runs, on its own
+// stack or in a task it waits for.
+.init holds = HoldingReach
+
+holds.seed(w, w) :- cycle_candidate(a, b), module_sync_dep(a, b, w).
+
+// Where `mod`'s process runs its own code: its callbacks, a process
+// module's under a behaviour the table does not list included.
+.decl process_code(mod: symbol, func: symbol)
+
+process_code(m, f) :- process_entry(m, f).
+
+process_code(m, f) :-
+  process_behaviour_module(m),
+  function_def(f, m, name, _, _),
+  callback_name(name).
+
+// One direction of a cycle: a's process waits on b's at `w`, a function
+// of a's it runs.
+.decl cycle_edge(a: symbol, b: symbol, w: symbol)
+
+cycle_edge(a, b, w) :-
+  cycle_candidate(a, b),
+  module_sync_dep(a, b, w),
+  process_code(a, e),
+  holds.reaches(e, w).
 
 call_cycle(a, b, wa, wb, "continue", sa, sb) :-
   continue_dep(a, b, wa),
@@ -309,7 +354,7 @@ sync_site_or_empty(f, m, "") :- continue_dep(_, m, f), !sync_site(f, m, _).
 
 call_cycle_path(a, b, from_mod, to_mod, witness, "tag", site) :-
   call_cycle(a, b, _, _, "call", _, _),
-  module_sync_dep(from_mod, to_mod, witness),
+  cycle_edge(from_mod, to_mod, witness),
   (from_mod = a ; from_mod = b),
   (to_mod = a ; to_mod = b),
   reaches_tag_dep(witness, to_mod),
@@ -317,7 +362,7 @@ call_cycle_path(a, b, from_mod, to_mod, witness, "tag", site) :-
 
 call_cycle_path(a, b, from_mod, to_mod, witness, "static", site) :-
   call_cycle(a, b, _, _, "call", _, _),
-  module_sync_dep(from_mod, to_mod, witness),
+  cycle_edge(from_mod, to_mod, witness),
   (from_mod = a ; from_mod = b),
   (to_mod = a ; to_mod = b),
   !reaches_tag_dep(witness, to_mod),

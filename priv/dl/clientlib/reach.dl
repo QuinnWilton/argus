@@ -52,6 +52,15 @@
   reaches(f, t) :- call_edge(f, g), !runs_elsewhere(f, g), reaches(g, t).
 }
 
+// What holds the caller up while it runs: its own stack, as
+// SameProcessReach, and a task it awaits (awaits_task, runs_elsewhere.dl):
+// `Task.async(fn -> ... end) |> Task.await()` runs the closure elsewhere
+// and waits for it all the same.
+.comp HoldingReach : Backward {
+  reaches(f, t) :- call_edge(f, g), !runs_elsewhere(f, g), reaches(g, t).
+  reaches(f, t) :- awaits_task(f, _, g), reaches(g, t).
+}
+
 .comp IntraModuleReach : Backward {
   reaches(f, t) :-
     call_edge(f, g),

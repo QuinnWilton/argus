@@ -99,4 +99,86 @@ defmodule Argus.Test.Fixtures.CallCycle do
     @impl true
     def init(_opts), do: Supervisor.init([EventBuffer, SessionBuffer], strategy: :one_for_one)
   end
+
+  # ── A client function in a server module (klife's Producer) ──────────
+
+  defmodule Producer do
+    @moduledoc """
+    produce/1 is a client function: it runs in whichever process calls it.
+    Producer's own process only answers :new_epoch.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.CallCycle.Batcher
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+    def produce(records), do: Batcher.produce(records)
+    def new_epoch, do: GenServer.call(__MODULE__, :new_epoch)
+
+    @impl true
+    def init(:ok), do: {:ok, 0}
+
+    @impl true
+    def handle_call(:new_epoch, _from, epoch), do: {:reply, epoch + 1, epoch + 1}
+  end
+
+  defmodule Batcher do
+    @moduledoc false
+    use GenServer
+
+    alias Argus.Test.Fixtures.CallCycle.Producer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+    def produce(records), do: GenServer.call(__MODULE__, {:produce, records})
+
+    @impl true
+    def init(:ok), do: {:ok, []}
+
+    @impl true
+    def handle_call({:produce, records}, _from, state),
+      do: {:reply, {:ok, Producer.new_epoch()}, records ++ state}
+  end
+
+  # ── A task the server waits for ──────────────────────────────────────
+
+  defmodule Awaiter do
+    @moduledoc """
+    Waits for a task that calls Awaited, whose handler calls Awaiter
+    back: Awaiter is blocked in Task.await, so the cycle is real.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.CallCycle.Awaited
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+    def ask, do: GenServer.call(__MODULE__, :ask)
+    def ping, do: GenServer.call(__MODULE__, :ping)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:ask, _from, s) do
+      answer = Task.async(fn -> Awaited.get() end) |> Task.await()
+      {:reply, answer, s}
+    end
+
+    def handle_call(:ping, _from, s), do: {:reply, :pong, s}
+  end
+
+  defmodule Awaited do
+    @moduledoc false
+    use GenServer
+
+    alias Argus.Test.Fixtures.CallCycle.Awaiter
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+    def get, do: GenServer.call(__MODULE__, :get)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:get, _from, s), do: {:reply, Awaiter.ping(), s}
+  end
 end

@@ -2575,6 +2575,15 @@ the dependency is anchored at the call into the wrapper (`sync_site`,
 `sync_request_at`). Every analysis reading `sync_dep` sees the change;
 the corpus tally is unchanged.
 
+**Fixed.** `blocking.call_cycle` ("call") is a cycle between processes:
+each direction is a wait the module's own process makes, at a function
+it runs — reached from one of its callbacks on its own stack, or in a
+task it awaits. By module, any function counted, and a client function
+of a server module closed a cycle no process can deadlock in: klife's
+`Producer.produce/3` runs in its caller, and only `Batcher`'s process
+calls `Producer`'s. A module that runs no process of its own is never a
+side of one.
+
 ### startup
 
 **Fixed.** `startup.unbounded_effect_in_init` and `blocks_on_peer`'s

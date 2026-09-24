@@ -13,8 +13,9 @@ defmodule Argus.Analyses.Blocking do
     `budget` where the caller's timeout is shorter than the callee's own
     downstream budget.
   - `call_cycle(mod_a, mod_b, witness_a, witness_b, phase)` — two modules
-    that synchronously call each other, anywhere (`call`) or both from
-    `handle_continue/2` (`continue`: a startup deadlock); the edges in
+    whose processes synchronously call each other (`call`: each witness
+    runs on its module's own process, reached from a callback) or both
+    from `handle_continue/2` (`continue`: a startup deadlock); the edges in
     `call_cycle_path` are its related frames, marked `tag` when the hop
     was attributed by message tag. `self` is the cycle of one: a
     synchronous call to the calling process itself, which gen exits with
@@ -103,10 +104,10 @@ defmodule Argus.Analyses.Blocking do
         fields: [
           {:mod_a, :symbol, "first module in cycle"},
           {:mod_b, :symbol, "second module in cycle"},
-          {:witness_a, :symbol, "function in mod_a carrying the a→b dependency"},
-          {:witness_b, :symbol, "function in mod_b carrying the b→a return path"},
+          {:witness_a, :symbol, "function mod_a's process runs that carries the a→b dependency"},
+          {:witness_b, :symbol, "function mod_b's process runs that carries the b→a return path"},
           {:phase, :symbol,
-           "call (anywhere) | continue (both from handle_continue/2) | " <>
+           "call (their processes, from their callbacks) | continue (both from handle_continue/2) | " <>
              "self (a process calling itself; mod_a = mod_b)"},
           {:site_a, :symbol, "the call in witness_a, when direct; else empty"},
           {:site_b, :symbol, "the call in witness_b, when direct; else empty"}
