@@ -155,6 +155,16 @@ its moduledoc says which submodule holds what.
 
 ### Fact schema and extraction
 
+**Changed.** Schema 71. `schema_field(mod, field)` gains a third
+column, `type`: the field's Ecto type from `__schema__(:type, field)`,
+which `Argus.Extractors.EctoSchema` reads from `__schema__/2`'s
+dispatch the way it reads `__schema__/1`'s. It is spelled for a reader
+— `string`, a custom type by its module (`Sequin.Encrypted.Field`), an
+embed as `embeds_one Sequin.Sinks.Gcp.Credentials`, a collection as
+`array of string` — and `dynamic` when the dispatch or the type has
+another shape. No rule reads it; it is there for `Sensitivity` to show the
+model. A rule reading `schema_field` adds a column; `exposure`'s do.
+
 **Changed.** Schema 70. `global_op` gains `nodes`, the shape of the
 call's node list: `"local"` for a list of only the local node
 (`[node()]`, `[Node.self()]`, `Node.list(:this)`), `"cluster"` for one

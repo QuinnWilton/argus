@@ -52,7 +52,7 @@ secret_kind("session_token", "token").
 .decl matches_kind(mod: symbol, field: symbol, kind: symbol)
 
 matches_kind(mod, field, kind) :-
-  schema_field(mod, field),
+  schema_field(mod, field, _),
   secret_kind(fragment, kind),
   contains(fragment, field),
   !secret_metadata(field).
@@ -64,7 +64,7 @@ matches_kind(mod, field, kind) :-
 .decl secret_metadata(field: symbol)
 
 secret_metadata(field) :-
-  schema_field(_, field),
+  schema_field(_, field, _),
   match(".*_(at|on|date|time|count|expires|expiry|expiration|ttl|set|length|version)", field).
 
 // A field can match more than one fragment — `smtp_password` is both a
@@ -97,7 +97,7 @@ sensitive_field(mod, field, kind) :-
 
 derive_hides(mod, field) :-
   inspect_derived(mod),
-  schema_field(mod, field),
+  schema_field(mod, field, _),
   !inspect_shows(mod, field).
 
 .decl hidden_from_inspect(mod: symbol, field: symbol)
@@ -123,12 +123,12 @@ shows_redacted(mod) :- redacted_field(mod, field), inspect_shows(mod, field).
 
 own_derive(mod) :- inspect_derived(mod), hides_unredacted(mod).
 own_derive(mod) :- inspect_derived(mod), shows_redacted(mod).
-own_derive(mod) :- inspect_derived(mod), schema_field(mod, _), !redacted_field(mod, _).
+own_derive(mod) :- inspect_derived(mod), schema_field(mod, _, _), !redacted_field(mod, _).
 
 .decl hides_via(mod: symbol, via: symbol)
 
 hides_via(mod, "derive") :- own_derive(mod).
-hides_via(mod, "redact") :- schema_field(mod, _), !own_derive(mod).
+hides_via(mod, "redact") :- schema_field(mod, _, _), !own_derive(mod).
 
 // A schema that hides something has answered the question, and answered
 // it differently here. That is a stronger finding than one that never
@@ -174,7 +174,7 @@ unredacted_secret(mod, field, kind, "unaware", via) :-
 
 model_named_secret(mod, field, detail, p) :-
   prior_sensitive("schema_field", mod, field, "secret", detail, _, p),
-  schema_field(mod, field),
+  schema_field(mod, field, _),
   p >= 900,
   !matches_kind(mod, field, _).
 

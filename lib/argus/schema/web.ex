@@ -33,9 +33,18 @@ defmodule Argus.Schema.Web do
         layer: 2,
         fields: [
           {:mod, :symbol, "the schema module"},
-          {:field, :symbol, "a persisted field"}
+          {:field, :symbol, "a persisted field"},
+          {:type, :symbol,
+           "its Ecto type as a reader is told it: 'string', a custom type's module, " <>
+             "'embeds_one Mod', 'array of string'; 'dynamic' when __schema__/2 does not say"}
         ],
-        doc: "A field on an Ecto schema, read from the literal in __schema__/1."
+        doc: """
+        A field on an Ecto schema, read from the literal in `__schema__/1`, \
+        with its type from `__schema__(:type, field)`. No rule reads the type; \
+        `Argus.Priors.Questions.Sensitivity` shows it to the model beside the \
+        name, where `Sequin.Encrypted.Field` or `embeds_one \
+        Sequin.Sinks.Gcp.Credentials` says what the name alone does not.
+        """
       },
       %{
         name: :redacted_field,

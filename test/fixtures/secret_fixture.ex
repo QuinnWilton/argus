@@ -42,6 +42,48 @@ defmodule Argus.Test.Fixtures.Secret do
     def __schema__(:fields), do: [:id, :totp_seed, :label]
     def __schema__(:redact_fields), do: []
     def __schema__(_other), do: nil
+
+    # The types, as Ecto compiles them: a dispatch on the key, then one on
+    # the field. `Sensitivity` shows them to the model beside the names.
+    def __schema__(:type, :id), do: :id
+    def __schema__(:type, :totp_seed), do: Argus.Test.Encrypted.Binary
+    def __schema__(:type, :label), do: :string
+    def __schema__(:association, _field), do: nil
+    def __schema__(:embed, _field), do: nil
+    def __schema__(:field_source, field), do: field
+    def __schema__(:virtual_type, _field), do: nil
+  end
+
+  defmodule Typed do
+    @moduledoc """
+    Every shape of type `__schema__(:type, field)` returns: a primitive, a
+    custom type's module, an embed in Ecto's current and older spellings,
+    a parameterized type, a collection, and one no reader could name.
+    Nothing here is a secret; the extractor's spelling of each is.
+    """
+    def __schema__(:fields),
+      do: [:id, :body, :profile, :history, :status, :tags, :scores, :opaque, :untyped]
+
+    def __schema__(:redact_fields), do: []
+    def __schema__(_other), do: nil
+
+    def __schema__(:type, :id), do: :binary_id
+    def __schema__(:type, :body), do: MyApp.Markdown
+
+    def __schema__(:type, :profile),
+      do: {:parameterized, {Ecto.Embedded, %{cardinality: :one, related: MyApp.Profile}}}
+
+    def __schema__(:type, :history),
+      do: {:parameterized, Ecto.Embedded, %{cardinality: :many, related: MyApp.Change}}
+
+    def __schema__(:type, :status), do: {:parameterized, {Ecto.Enum, %{type: :string}}}
+    def __schema__(:type, :tags), do: {:array, :string}
+    def __schema__(:type, :scores), do: {:map, :integer}
+    def __schema__(:type, :opaque), do: {:weird, 1}
+    def __schema__(:association, _field), do: nil
+    def __schema__(:embed, _field), do: nil
+    def __schema__(:field_source, field), do: field
+    def __schema__(:virtual_type, _field), do: nil
   end
 
   defmodule Ordinary do

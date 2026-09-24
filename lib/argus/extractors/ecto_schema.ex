@@ -22,9 +22,22 @@ defmodule Argus.Extractors.EctoSchema do
   in the analyzer, which is not a thing an analysis should do to code it was
   pointed at.
 
+  Each field's type comes from `__schema__/2`, compiled the same way: a
+  `select_val` on the key, then one on the field for `:type`, then a
+  literal per field. A type is what a reader of the schema is told about
+  a field beyond its name — `Sequin.Encrypted.Field` says the value is a
+  secret someone thought worth encrypting, `{:embeds_one,
+  Sequin.Sinks.Gcp.Credentials}` what an opaque `credentials` holds — and
+  `Argus.Priors.Questions.Sensitivity` hands it to the model with the
+  name. It is spelled for that reader: a primitive by name (`string`), a
+  custom type by its module, an embed as `embeds_one Mod` or
+  `embeds_many Mod`, a collection as `array of string`; a type in any
+  other shape, or a schema whose `__schema__/2` is not that dispatch, is
+  `dynamic`.
+
   ## Emitted facts
 
-  - `schema_field(mod, field)` — a persisted field
+  - `schema_field(mod, field, type)` — a persisted field and its type
   - `redacted_field(mod, field)` — one excluded from `inspect/1`
   """
 
@@ -44,14 +57,15 @@ defmodule Argus.Extractors.EctoSchema do
 
   @impl true
   def extract(%{module: mod, functions: functions}) do
-    case Enum.find(functions, &match?({:function, :__schema__, 1, _, _}, &1)) do
+    case find_function(functions, 1) do
       nil ->
         %{}
 
-      {:function, _, _, _, instrs} ->
+      instrs ->
         mod_str = inspect(mod)
         labels = label_index(instrs)
-        dispatch = dispatch_table(instrs)
+        dispatch = dispatch_table(instrs, {:x, 0})
+        types = field_types(find_function(functions, 2))
 
         Enum.reduce(@keys, %{}, fn {key, relation}, facts ->
           dispatch
@@ -59,24 +73,84 @@ defmodule Argus.Extractors.EctoSchema do
           |> literal_at(labels, instrs)
           |> schema_values()
           |> Enum.filter(&is_atom/1)
-          |> Enum.reduce(facts, &add_fact(&2, relation, [mod_str, inspect(&1)]))
+          |> Enum.reduce(facts, fn field, acc ->
+            add_fact(acc, relation, row(relation, mod_str, field, types))
+          end)
         end)
     end
   end
 
-  defp dispatch_table(instrs) do
-    Enum.find_value(instrs, %{}, fn
-      {:select_val, {:x, 0}, _fail, {:list, pairs}} ->
-        pairs
-        |> Enum.chunk_every(2)
-        |> Enum.flat_map(fn
-          [{:atom, key}, {:f, label}] -> [{key, label}]
-          _ -> []
-        end)
-        |> Map.new()
+  defp row(:schema_field, mod, field, types),
+    do: [mod, inspect(field), Map.get(types, field, "dynamic")]
 
-      _ ->
-        false
+  defp row(:redacted_field, mod, field, _types), do: [mod, inspect(field)]
+
+  defp find_function(functions, arity) do
+    Enum.find_value(functions, fn
+      {:function, :__schema__, ^arity, _, instrs} -> instrs
+      _ -> nil
+    end)
+  end
+
+  # `__schema__(:type, field)`: the key's clause dispatches on the field,
+  # and each field's clause returns its type as a literal.
+  defp field_types(nil), do: %{}
+
+  defp field_types(instrs) do
+    labels = label_index(instrs)
+
+    with label when is_integer(label) <- Map.get(dispatch_table(instrs, {:x, 0}), :type),
+         {:ok, idx} <- Map.fetch(labels, label),
+         {:select_val, {:x, 1}, _fail, {:list, pairs}} <- Enum.at(instrs, idx + 1) do
+      for {field, field_label} <- pairs(pairs), into: %{} do
+        case value_at(field_label, labels, instrs) do
+          {:ok, type} -> {field, type_name(type)}
+          :error -> {field, "dynamic"}
+        end
+      end
+    else
+      _ -> %{}
+    end
+  end
+
+  @doc """
+  A type as the model reads it: a primitive by name, a custom or
+  parameterized type by its module, an embed by what it embeds, a
+  collection by what it holds, and `dynamic` for any other shape.
+  """
+  @spec type_name(term()) :: String.t()
+  def type_name(type) when is_atom(type) and not is_nil(type),
+    do: type |> inspect() |> String.trim_leading(":")
+
+  def type_name({:parameterized, {Ecto.Embedded, embed}}), do: embed_name(embed)
+  def type_name({:parameterized, Ecto.Embedded, embed}), do: embed_name(embed)
+  def type_name({:parameterized, {mod, _params}}) when is_atom(mod), do: type_name(mod)
+  def type_name({:parameterized, mod, _params}) when is_atom(mod), do: type_name(mod)
+  def type_name({:array, inner}), do: "array of " <> type_name(inner)
+  def type_name({:map, inner}), do: "map of " <> type_name(inner)
+  def type_name(_other), do: "dynamic"
+
+  defp embed_name(%{cardinality: :many, related: related}) when is_atom(related),
+    do: "embeds_many " <> inspect(related)
+
+  defp embed_name(%{cardinality: :one, related: related}) when is_atom(related),
+    do: "embeds_one " <> inspect(related)
+
+  defp embed_name(_other), do: "dynamic"
+
+  defp dispatch_table(instrs, reg) do
+    Enum.find_value(instrs, %{}, fn
+      {:select_val, ^reg, _fail, {:list, pairs}} -> Map.new(pairs(pairs))
+      _ -> false
+    end)
+  end
+
+  defp pairs(pairs) do
+    pairs
+    |> Enum.chunk_every(2)
+    |> Enum.flat_map(fn
+      [{:atom, key}, {:f, label}] -> [{key, label}]
+      _ -> []
     end)
   end
 
@@ -89,20 +163,29 @@ defmodule Argus.Extractors.EctoSchema do
   defp schema_values(value), do: List.wrap(value)
 
   # A key's clause is a literal moved into {x,0} and returned. Anything
-  # else — a computed value, a call — yields nothing rather than a guess.
-  defp literal_at(nil, _labels, _instrs), do: []
-
+  # else — a computed value, a call — yields nothing rather than a guess;
+  # a list key's clause holds a list literal, a type's an atom or a tuple.
   defp literal_at(label, labels, instrs) do
+    case value_at(label, labels, instrs) do
+      {:ok, value} when is_list(value) -> value
+      _ -> []
+    end
+  end
+
+  defp value_at(nil, _labels, _instrs), do: :error
+
+  defp value_at(label, labels, instrs) do
     case Map.fetch(labels, label) do
       :error ->
-        []
+        :error
 
       {:ok, idx} ->
         instrs
         |> Enum.drop(idx + 1)
         |> Enum.take(3)
-        |> Enum.find_value([], fn
-          {:move, {:literal, value}, {:x, 0}} -> value
+        |> Enum.find_value(:error, fn
+          {:move, {:literal, value}, {:x, 0}} -> {:ok, value}
+          {:move, {:atom, value}, {:x, 0}} -> {:ok, value}
           _ -> false
         end)
     end
