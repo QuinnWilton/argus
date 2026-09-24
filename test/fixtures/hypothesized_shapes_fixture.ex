@@ -244,6 +244,107 @@ defmodule Argus.Test.Fixtures.Hypothesized do
     defp arm(interval), do: Process.send_after(self(), :tick, interval)
   end
 
+  defmodule TimerFlushedElsewhere do
+    @moduledoc false
+    # A receive for :heartbeat in another function is no flush: the
+    # handle_call that cancels and re-arms leaves a delivered :heartbeat
+    # behind all the same.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(interval), do: {:ok, %{interval: interval, timer: arm(interval)}}
+
+    @impl true
+    def handle_call({:set_interval, interval}, _from, state) do
+      Process.cancel_timer(state.timer)
+      {:reply, :ok, %{state | interval: interval, timer: arm(interval)}}
+    end
+
+    @impl true
+    def handle_cast(:stop_beating, state) do
+      await_last_beat()
+      {:noreply, state}
+    end
+
+    @impl true
+    def handle_info(:heartbeat, state),
+      do: {:noreply, %{state | timer: arm(state.interval)}}
+
+    defp await_last_beat do
+      receive do
+        :heartbeat -> :ok
+      after
+        100 -> :ok
+      end
+    end
+
+    defp arm(interval), do: Process.send_after(self(), :heartbeat, interval)
+  end
+
+  defmodule TimerFlushInHelper do
+    @moduledoc false
+    # The flush lives in a helper the cancelling function calls.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(interval), do: {:ok, %{interval: interval, timer: arm(interval)}}
+
+    @impl true
+    def handle_call({:set_interval, interval}, _from, state) do
+      Process.cancel_timer(state.timer)
+      flush_tick()
+      {:reply, :ok, %{state | interval: interval, timer: arm(interval)}}
+    end
+
+    @impl true
+    def handle_info(:tick, state), do: {:noreply, %{state | timer: arm(state.interval)}}
+
+    defp flush_tick do
+      receive do
+        :tick -> :ok
+      after
+        0 -> :ok
+      end
+    end
+
+    defp arm(interval), do: Process.send_after(self(), :tick, interval)
+  end
+
+  defmodule TimerCancelHelperFlushInCaller do
+    @moduledoc false
+    # The ref is handed down to a cancel helper; the caller flushes.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(interval), do: {:ok, %{interval: interval, timer: arm(interval)}}
+
+    @impl true
+    def handle_call({:set_interval, interval}, _from, state) do
+      cancel(state.timer)
+
+      receive do
+        :tick -> :ok
+      after
+        0 -> :ok
+      end
+
+      {:reply, :ok, %{state | interval: interval, timer: arm(interval)}}
+    end
+
+    @impl true
+    def handle_info(:tick, state), do: {:noreply, %{state | timer: arm(state.interval)}}
+
+    defp cancel(ref), do: Process.cancel_timer(ref)
+
+    defp arm(interval), do: Process.send_after(self(), :tick, interval)
+  end
+
   defmodule TwoTimers do
     @moduledoc false
     # Cancels the poll timer (armed once, in init) and arms the tick

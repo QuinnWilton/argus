@@ -1439,6 +1439,17 @@ module), as `unconsumed_monitor` already did: a client function of the
 same module (`def await_up, do: Process.monitor(whereis(__MODULE__))`)
 runs in the caller, and its `:DOWN` never reaches the server.
 
+**Fixed.** `mailbox.timer_cancel_without_flush` takes a receive for the
+timer's message as its flush only where the cancel is: in the function
+holding the cancel, a caller that handed the ref down to a cancel
+helper, or a function one of those calls in the same process. A receive
+for the message anywhere in the module used to silence the finding, so
+a `receive :heartbeat` that handle_cast/2 waits in hid the missing flush
+after the cancel in handle_call/3. Whether the receive comes after the
+cancel inside the function is not asked. Over the corpus the two
+flushes the rule ever saw are in the cancelling function, and no
+finding moves. No schema change.
+
 **Changed.** Schema 53. `mailbox.timer_cancel_without_flush` leaves out two cancels
 that cannot leave a stale message behind. One in the `handle_info/2`
 clause of the very message the timer sends (`def

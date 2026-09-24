@@ -153,7 +153,9 @@ partial_handler(mod, h, "late_message", "catchall", "") :-
 // call_arg_field). A cancel and an arm pair up only on the same key,
 // so a module with a heartbeat and a reconnect timer gets two verdicts.
 // The flush must name the armed message (recv_pattern), or match
-// anything.
+// anything, and be where the cancel is: in the function that cancels,
+// or one it calls (flushes_after_cancel). A receive for the message in
+// an unrelated function of the module is no flush.
 
 // The map key the ref armed in `a` ends up under.
 .decl timer_key(arm: symbol, key: symbol)
@@ -243,17 +245,6 @@ literal_toward(f, w, a, pos, lit) :-
   call_arg(f, w, wpos, lit),
   lit != "dynamic".
 
-// A receive in the module takes the message: by name, or a clause that
-// matches anything (`after 0` with a wildcard, the cancel_timer docs'
-// blocking receive, Ostinato.Eager).
-.decl takes_message(mod: symbol, message: symbol)
-
-takes_message(mod, lit) :- receives_message(mod, lit).
-
-takes_message(mod, lit) :-
-  receives_message(mod, "any"),
-  armed_message(_, lit).
-
 .decl timer_cancel_without_flush(mod: symbol, cancel: symbol, arm: symbol, key: symbol, message: symbol, cancel_site: symbol, arm_site: symbol)
 .output timer_cancel_without_flush
 
@@ -326,7 +317,7 @@ timer_cancel_without_flush(mod, cancel, cancel, "", message, cancel_site, arm_si
   in_module(cancel, mod),
   !init_function(mod, cancel),
   !runs_only_on_the_way_out(cancel),
-  !takes_message(mod, message),
+  !flushes_after_cancel(cancel_site, message),
   !handles_that_message(cancel_site, message).
 
 // A cancel of a timer the same function armed and kept in a local.
@@ -359,7 +350,7 @@ cancel_without_flush(cancel, arm, key, message) :-
   rearms_under(arm, key, message),
   in_same_module(cancel, arm),
   !cancelled_on_the_way_out(cancel),
-  !module_receives(cancel, message),
+  !flushes_after_cancel(cancel, message),
   !handles_that_message(cancel, message).
 
 timer_cancel_without_flush(mod, cancel, arm, key, message, cancel_site, arm_site) :-
@@ -405,13 +396,49 @@ in_same_module(cancel, arm) :-
 
 cancelled_on_the_way_out(cancel) :- cancel_site(c, _, cancel), runs_only_on_the_way_out(c).
 
-// A receive in the module holding the cancel takes the message.
-.decl module_receives(cancel: symbol, message: symbol)
+// A receive where the cancel is takes the message: by name, or a clause
+// that matches anything (`after 0` with a wildcard, the cancel_timer
+// docs' blocking receive, Ostinato.Eager). Where the cancel is means the
+// function holding it, a caller that read the ref and handed it down to
+// a cancel helper, or a function one of those calls in the same process
+// (a `flush_tick/0` helper). A receive for the message elsewhere in the
+// module runs on some other path: one handle_cast/2 waits in does not
+// flush the heartbeat handle_call/3 cancels, and used to silence it.
+// Whether the receive runs after the cancel inside the function is not
+// asked: the order needs the instruction-level CFG facts stage 0 keeps
+// out of the analyses' inputs.
+.decl flushes_after_cancel(cancel: symbol, message: symbol)
 
-module_receives(cancel, msg) :-
-  cancel_site(c, _, cancel),
-  in_module(c, mod),
-  takes_message(mod, msg).
+flushes_after_cancel(cancel, msg) :-
+  cancel_scope.reaches(cancel, f),
+  recv_pattern(_, f, msg).
+
+flushes_after_cancel(cancel, msg) :-
+  cancel_scope.reaches(cancel, f),
+  recv_pattern(_, f, "any"),
+  armed_message(_, msg).
+
+// The functions the cancel_timer `cancel` belongs to, and what they run
+// in their own process.
+.init cancel_scope = ForwardSameProcessReach
+
+cancel_scope.root(cancel, c) :- timer_cancel(cancel, c, _, _, _).
+cancel_scope.root(cancel, g) :- hands_down_ref(cancel, g).
+
+// `func` passes the ref the cancel_timer `cancel` takes as a parameter,
+// read from its state or its own parameter (param_field's path).
+.decl hands_down_ref(cancel: symbol, func: symbol)
+.decl ref_param(cancel: symbol, func: symbol, pos: number)
+
+ref_param(cancel, c, pos) :- timer_cancel(cancel, c, "param", _, pos).
+
+ref_param(cancel, g, gpos) :-
+  ref_param(cancel, f, pos),
+  call_arg_forward(g, f, pos, gpos).
+
+hands_down_ref(cancel, g) :-
+  ref_param(cancel, f, pos),
+  (call_arg_field(g, f, pos, _) ; call_arg_forward(g, f, pos, _)).
 
 // ── Evidence: where a monitored entry is removed, where a task is yielded ─
 .decl monitored_entry_removal(mod: symbol, kind: symbol, site: symbol, func: symbol)

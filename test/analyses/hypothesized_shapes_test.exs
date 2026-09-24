@@ -54,6 +54,9 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
           H.TimerCancelWithFlush,
           H.TimerCancelBlockingFlush,
           H.TimerCancelWrongFlush,
+          H.TimerFlushedElsewhere,
+          H.TimerFlushInHelper,
+          H.TimerCancelHelperFlushInCaller,
           H.TimerWithRef,
           H.TimerForwarded,
           H.TimerHelper,
@@ -82,6 +85,7 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
     assert reported == [
              {"Argus.Test.Fixtures.Hypothesized.TimerCancelNoFlush", ":timer", ":tick"},
              {"Argus.Test.Fixtures.Hypothesized.TimerCancelWrongFlush", ":timer", ":tick"},
+             {"Argus.Test.Fixtures.Hypothesized.TimerFlushedElsewhere", ":timer", ":heartbeat"},
              {"Argus.Test.Fixtures.Hypothesized.TimerForwarded", ":timer", ":heartbeat"},
              {"Argus.Test.Fixtures.Hypothesized.TimerHelper", ":tick_ref", ":tick"},
              {"Argus.Test.Fixtures.Hypothesized.TwoTimersViaHelper", ":cleanup_ref", ":cleanup"},
