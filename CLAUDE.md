@@ -149,15 +149,17 @@ names one with `cache:` on `Argus.run_analyses/2`, `Argus.analyze/3` or
   `Facts.materialize/1` (what `extract_facts/3` returns) is the whole
   directory as hard links, byte-identical to `Argus.Pipeline.run/3`'s.
 - **Bases** (`Argus.Pipeline.Base`): each module's base — its
-  disassembly, control-flow graphs and reaching definitions (the
-  per-function solutions `Argus.Instr.Reaching.export/1` carries) — for
-  a set of beams, keyed by the beams, the base's code and the runtime.
-  An extraction that computes the base keeps them; one whose base shard
-  is kept but an extractor's is not runs that extractor over them —
-  on the corpus, a quarter of the cost for most extractors. The decoded facts (`module_data.typed`) are
-  not kept: over a kept base they are re-emitted only for
-  `Argus.Pipeline.typed_readers/0`, and `CodeClosureTest` fails when
-  another extractor computes them — add it to that list.
+  disassembly, decoded facts, control-flow graphs and reaching
+  definitions (the per-function solutions `Argus.Instr.Reaching.export/1`
+  carries) — for a set of beams, keyed by the beams, the base's code and
+  the runtime. An extraction that computes the base keeps them; one
+  whose base shard is kept but an extractor's is not runs that
+  extractor over them — on the corpus, a quarter of the cost for most
+  extractors. The decoded facts (`module_data.typed`) are read back only
+  for `Argus.Pipeline.typed_readers/0`; `CodeClosureTest` fails when
+  another extractor computes them — add it to that list. Dependence
+  reads them and calls five other extractors, so an edit to any of
+  those re-extracts it too.
 - **Solves** (`Argus.Souffle.Cache`): keyed by the program with its
   includes, the solver's version and the digests of exactly the files
   the program reads (`Argus.Souffle.input_files/2`). Stage outputs join

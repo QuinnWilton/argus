@@ -174,20 +174,20 @@ module's facts per producer, so an edit to one extractor re-extracts
 that extractor's rows alone.
 
 **Added.** `Argus.Pipeline.Base`: a module's base — its disassembly,
-control-flow graphs and reaching definitions, the per-function
-solutions `Argus.Instr.Reaching` keeps (carried to another process by
-`Argus.Instr.Reaching.export/1` and `restore/2`) — kept as a binary and
-read back. `Argus.Pipeline.run_shards/3` returns each module's with
-`keep_bases: true` and runs its extractors over them with `bases:`,
-computing afresh any it has none of or cannot read; the extractors'
-rows are byte-identical either way, checked over every corpus checkout.
-The decoded facts are not kept: they would weigh more than the rest
-together and cost a cold extraction a tenth more to write, and only
-three extractors read them (`Argus.Pipeline.typed_readers/0`: over a
-kept base their facts are emitted and decoded again, and
+decoded facts, control-flow graphs and reaching definitions, the
+per-function solutions `Argus.Instr.Reaching` keeps (carried to another
+process by `Argus.Instr.Reaching.export/1` and `restore/2`) — kept as a
+binary and read back. `Argus.Pipeline.run_shards/3` returns each
+module's with `keep_bases: true` and runs its extractors over them with
+`bases:`, computing afresh any it has none of or cannot read; the
+extractors' rows are byte-identical either way, checked over every
+corpus checkout. Each part is decoded only when read: the decoded facts
+only for the extractors that read them (`Argus.Pipeline.typed_readers/0`;
 `Argus.Cache.CodeClosureTest` fails when another extractor computes
-them). A run of extractors alone no longer derives the base's own
-`def_use` and `conditional_call` rows, which it wrote nowhere.
+them over a kept base). Keeping the bases costs a cold extraction a
+tenth more, most of it the decoded facts. A run of extractors alone no
+longer derives the base's own `def_use` and `conditional_call` rows,
+which it wrote nowhere.
 
 **Added.** `Argus.Cache`: a store of results on disk, keyed by
 content — its entries' layout, their retention (`Argus.Cache.stale/2`,

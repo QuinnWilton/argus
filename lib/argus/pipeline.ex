@@ -122,10 +122,10 @@ defmodule Argus.Pipeline do
   @spec typed_relations() :: [atom()]
   def typed_relations, do: @typed_relations
 
-  # The extractors that read the decoded facts (`Helpers.typed/1`): over
-  # a kept base, which holds none, they are emitted and decoded again
-  # only when one of them runs. `Argus.Cache.CodeClosureTest` fails when
-  # an extractor off the list computes them.
+  # The extractors that read the decoded facts (`Helpers.typed/1`): a
+  # kept base's are read back only when one of them runs.
+  # `Argus.Cache.CodeClosureTest` fails when an extractor off the list
+  # computes them.
   @typed_readers [
     Argus.Extractors.Dependence,
     Argus.Extractors.ParamFlow,
@@ -134,10 +134,10 @@ defmodule Argus.Pipeline do
 
   @doc """
   The extractors that read `module_data.typed` (through
-  `Argus.Extractor.Helpers.typed/1`). A kept base
-  (`Argus.Pipeline.Base`) holds no decoded facts: over one, they are
-  emitted and decoded again only when one of these runs, and any other
-  extractor finds none in `module_data`.
+  `Argus.Extractor.Helpers.typed/1`): over a kept base
+  (`Argus.Pipeline.Base`), the decoded facts are read back only when
+  one of them runs, and any other extractor finds none in
+  `module_data`.
   """
   @spec typed_readers() :: [module()]
   def typed_readers, do: @typed_readers
@@ -591,12 +591,12 @@ defmodule Argus.Pipeline do
   # derivations only they hold are skipped when not, and a base kept
   # from an earlier run (`how.kept`) stands in for computing one.
   defp module_facts(path, extractors, memo, %{kept: kept} = how) when is_binary(kept) do
-    case restore(kept, path) do
+    case restore(kept, path, extractors) do
       {:ok, restored} ->
         data =
           restored.data
           |> Map.merge(%{cfg: restored.cfg, reaching: restored.reaching})
-          |> with_typed(restored.typed?, extractors)
+          |> with_typed(restored.typed)
           |> extractor_data(memo, extractors)
 
         {:ok, [{:base, %{}} | run_extractors(data, extractors)], nil}
@@ -693,9 +693,10 @@ defmodule Argus.Pipeline do
     _ -> nil
   end
 
-  # A kept base read back; one that cannot be read is computed afresh.
-  defp restore(kept, path) do
-    {:ok, Base.restore(kept, path)}
+  # A kept base read back, its decoded facts only for an extractor that
+  # reads them; one that cannot be read is computed afresh.
+  defp restore(kept, path, extractors) do
+    {:ok, Base.restore(kept, path, typed: Enum.any?(extractors, &(&1 in @typed_readers)))}
   rescue
     _ -> :error
   end
@@ -703,32 +704,11 @@ defmodule Argus.Pipeline do
   defp decode_typed(base_facts),
     do: base_facts |> Map.take(@typed_relations) |> Argus.Facts.decode()
 
-  # A kept base holds no decoded facts (`Argus.Pipeline.Base`): none when
-  # they could not be decoded, as when the base was computed; emitted
-  # and decoded again when an extractor that reads them runs; for any
-  # other, no `typed` in the module data, and
-  # `Argus.Extractor.Helpers.typed/1` computes them should one ask after
-  # all.
-  defp with_typed(data, false, _extractors), do: Map.put(data, :typed, nil)
-
-  defp with_typed(data, true, extractors) do
-    if Enum.any?(extractors, &(&1 in @typed_readers)) do
-      base_facts =
-        Emit.emit_module(
-          data.module,
-          data.exports,
-          data.imports,
-          data.attributes,
-          data.functions,
-          data.line_table
-        )
-
-      {typed, _errors} = attempt("decode", fn -> decode_typed(base_facts) end, [])
-      Map.put(data, :typed, typed)
-    else
-      data
-    end
-  end
+  # Decoded facts not read back leave no `typed` in the module data:
+  # `Argus.Extractor.Helpers.typed/1` computes them for an extractor that
+  # asks after all.
+  defp with_typed(data, {:ok, typed}), do: Map.put(data, :typed, typed)
+  defp with_typed(data, :not_read), do: data
 
   # The extractors that read the debug-info chunk (`Helpers.debug_info/1`).
   # An Elixir module's chunk holds its whole definition, and inflating and

@@ -10,9 +10,10 @@ defmodule Argus.Cache.CodeClosureTest do
 
   The kept bases (`Argus.Pipeline.Base`) are keyed on the base's code
   too: the base runs here keeping them, and each extractor runs again
-  over them, within its closure — and, unless it reads the decoded
-  facts (`Argus.Pipeline.typed_readers/0`), without the emitter, which
-  only a typed reader should need over a kept base.
+  over them, within its closure and without the emitter — a kept base
+  holds the decoded facts, read back for the extractors that read them
+  (`Argus.Pipeline.typed_readers/0`), and one missing from that list
+  computes them again.
   """
   use ExUnit.Case,
     async: true,
@@ -120,11 +121,9 @@ defmodule Argus.Cache.CodeClosureTest do
       assert Enum.reject(ran ++ over_kept, &MapSet.member?(closure, &1)) == [],
              "#{inspect(producer)} runs code its key does not cover"
 
-      if producer != :base and producer not in Argus.Pipeline.typed_readers() do
-        refute Argus.Pipeline.Emit in over_kept,
-               "#{inspect(producer)} computes the decoded facts over a kept base: " <>
-                 "add it to Argus.Pipeline's @typed_readers"
-      end
+      refute Argus.Pipeline.Emit in over_kept,
+             "#{inspect(producer)} computes the decoded facts over a kept base: " <>
+               "add it to Argus.Pipeline's @typed_readers"
     end
   end
 end

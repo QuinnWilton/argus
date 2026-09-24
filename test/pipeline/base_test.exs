@@ -58,17 +58,18 @@ defmodule Argus.Pipeline.BaseTest do
         Task.await(
           Task.async(fn ->
             {data, typed, cfg, reaching} = computed(path)
-            {Base.keep(data, typed, cfg, reaching), {data, cfg, reaching}}
+            {Base.keep(data, typed, cfg, reaching), {data, typed, cfg, reaching}}
           end)
         )
 
       restored = Task.await(Task.async(fn -> Base.restore(kept, path) end))
-      {data, cfg, reaching} = fresh
+      {data, typed, cfg, reaching} = fresh
 
       assert restored.data == data, "#{inspect(mod)}: the disassembly"
+      assert restored.typed == {:ok, typed}, "#{inspect(mod)}: the decoded facts"
       assert restored.cfg == cfg, "#{inspect(mod)}: the control-flow graphs"
       assert restored.reaching == reaching, "#{inspect(mod)}: the reaching definitions"
-      assert restored.typed?
+      assert Base.restore(kept, path, typed: false).typed == :not_read
     end
   end
 
@@ -76,7 +77,11 @@ defmodule Argus.Pipeline.BaseTest do
     {data, _typed, _cfg, _reaching} = computed(path(:gen_server))
     kept = Base.keep(data, nil, %{}, nil)
 
-    assert %{cfg: %{}, reaching: nil, typed?: false} = Base.restore(kept, "elsewhere.beam")
+    for typed? <- [true, false] do
+      assert %{cfg: %{}, reaching: nil, typed: {:ok, nil}} =
+               Base.restore(kept, "elsewhere.beam", typed: typed?)
+    end
+
     assert Base.restore(kept, "elsewhere.beam").data.beam == "elsewhere.beam"
   end
 
