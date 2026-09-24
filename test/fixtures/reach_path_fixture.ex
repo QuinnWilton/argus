@@ -7,7 +7,28 @@ defmodule Argus.Test.Fixtures.ReachPath do
   """
 
   defmodule ClusterLock do
-    @moduledoc "init/1 reaches a cluster-wide lock one call down."
+    @moduledoc """
+    init/1 reaches a cluster-wide lock one call down: the talk's lesson
+    (hundred_eyes, l2_calls/bug.ex), line for line.
+    """
+    use GenServer
+
+    def init(name) do
+      :ok = join(name)
+      :ok = lock(name)
+      {:ok, name}
+    end
+
+    def join(name), do: :pg.join(name, self())
+
+    def lock(name) do
+      true = :global.set_lock({name, self()}, [node() | Node.list()])
+      :ok
+    end
+  end
+
+  defmodule LocalLock do
+    @moduledoc "ClusterLock with the lock taken on the local node alone."
     use GenServer
 
     def init(name) do
@@ -38,7 +59,7 @@ defmodule Argus.Test.Fixtures.ReachPath do
     def acquire(name), do: take(name)
 
     def take(name) do
-      true = :global.set_lock({name, self()}, [node()])
+      true = :global.set_lock({name, self()}, [node() | Node.list()])
       :ok
     end
   end

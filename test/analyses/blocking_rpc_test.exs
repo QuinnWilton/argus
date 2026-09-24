@@ -17,7 +17,8 @@ defmodule Argus.Analyses.BlockingRpcTest do
     do: Rows.where(results, :blocking, "unbounded_wait", kind: "global", drop: [:kind])
 
   defp waits(results, kind),
-    do: Rows.where(results, :blocking, "unbounded_wait", kind: kind, drop: [:kind, :detail])
+    do:
+      Rows.where(results, :blocking, "unbounded_wait", kind: kind, drop: [:kind, :detail, :nodes])
 
   describe "unbounded_wait: rpc" do
     test "flags :rpc.call without a timeout, not the timeout variant" do
@@ -80,7 +81,7 @@ defmodule Argus.Analyses.BlockingRpcTest do
       results = analyze([Argus.Test.Fixtures.GlobalLockModule])
 
       funcs =
-        Enum.map(waits(results, "global"), fn [func, _site, _op, _retries] -> func end)
+        Enum.map(waits(results, "global"), fn [func, _site, _op, _retries, _nodes] -> func end)
 
       assert Enum.any?(funcs, &String.contains?(&1, "lock_default"))
       assert Enum.any?(funcs, &String.contains?(&1, "lock_infinity"))

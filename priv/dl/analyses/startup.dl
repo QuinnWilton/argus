@@ -25,9 +25,10 @@
 //   dependency on a later sibling), "sup" (a supervisor management call;
 //   `detail` is api.op, `dep` the target), "blocking_server" (the callee
 //   runs but its handler `detail` blocks at `site`), "parent" (a
-//   handle_continue calls its own supervisor), "global" (a cluster-wide
-//   lock; `detail` is the op) or "remote" (an rpc, a node operation, a
-//   distributed store; `detail` is the op). `ordering` is where the peer
+//   handle_continue calls its own supervisor), "global" (a :global lock
+//   that retries; `detail` is the op, `dep` the nodes it waits on:
+//   "cluster", "local" or "unknown") or "remote" (an rpc, a node
+//   operation, a distributed store; `detail` is the op). `ordering` is where the peer
 //   starts relative to this child under `sup`: "later" (a deadlock by
 //   construction, or a race from handle_continue), "earlier",
 //   "parent", "unknown" (no tree places both), or empty. `site` anchors
@@ -414,23 +415,26 @@ deferral_defect(mod, "init_timeout", site, to_string(ms)) :-
 
 // ══ Distributed operations in init/1 ════════════════════════════════
 
-// ── A cluster-wide lock in init/1 ────────────────────────────────
+// ── A :global lock in init/1 ─────────────────────────────────────
 
 // The worst case: a :global lock that retries until it gets its way
-// (cluster_lock, clientlib/vocabulary.dl), held from supervisor
+// (retrying_lock, clientlib/vocabulary.dl), held from supervisor
 // startup — in init/1, or in anything init/1 calls on its own stack.
-// It waits on every node, and the supervisor waits on it. `lock` is
-// the :global call itself, in whichever function holds it (init/1
-// included: a seed is in its own reach). One row per site — finding
-// builders dedupe on (func, op).
+// The supervisor waits on the lock, and the lock waits on the nodes in
+// its list: every connected node when `dep` is "cluster", only this
+// node's global server when it is "local" (it still waits forever on a
+// local holder), and "unknown" when the list is not in the bytecode.
+// `lock` is the :global call itself, in whichever function holds it
+// (init/1 included: a seed is in its own reach). One row per site —
+// finding builders dedupe on (func, nodes, op).
 .init lock_reach = SameProcessReach
 
-lock_reach.seed(holder, lock) :- cluster_lock(lock, holder, _, _).
+lock_reach.seed(holder, lock) :- retrying_lock(lock, holder, _, _, _).
 
-blocks_on_peer(init, "init", "", "global", "", "", lock, op) :-
+blocks_on_peer(init, "init", nodes, "global", "", "", lock, op) :-
   is_init(init),
   lock_reach.reaches(init, lock),
-  cluster_lock(lock, _, op, _).
+  retrying_lock(lock, _, op, _, nodes).
 
 // Where init/1's path to a lock in a helper starts: the call in init/1
 // whose callee, on init's own stack, reaches the lock. The finding's
@@ -446,7 +450,7 @@ blocks_on_peer(init, "init", "", "global", "", "", lock, op) :-
 .decl init_lock_step(init: symbol, lock: symbol, call: symbol)
 
 init_lock_step(init, lock, call) :-
-  blocks_on_peer(init, "init", "", "global", "", "", lock, _),
+  blocks_on_peer(init, "init", _, "global", "", "", lock, _),
   !global_op(lock, init, _, _, _),
   call_instr(init, g, call),
   !runs_elsewhere(init, g),
@@ -459,7 +463,7 @@ init_lock_stepped(init, lock) :- init_lock_step(init, lock, _).
 init_lock_path(init, lock, call) :- init_lock_step(init, lock, call).
 
 init_lock_path(init, lock, "") :-
-  blocks_on_peer(init, "init", "", "global", "", "", lock, _),
+  blocks_on_peer(init, "init", _, "global", "", "", lock, _),
   global_op(lock, holder, _, _, _),
   holder != init,
   !lock_in_init_closure(init, lock),
@@ -470,7 +474,7 @@ init_lock_path(init, lock, "") :-
 .decl lock_in_init_closure(init: symbol, lock: symbol)
 
 lock_in_init_closure(init, lock) :-
-  blocks_on_peer(init, "init", "", "global", "", "", lock, _),
+  blocks_on_peer(init, "init", _, "global", "", "", lock, _),
   global_op(lock, holder, _, _, _),
   function_def(init, m, n, a, _),
   contains(cat(m, ":-", n, "/", to_string(a), "-fun-"), holder).

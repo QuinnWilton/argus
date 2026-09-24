@@ -22,19 +22,20 @@
 //   "tag" when a hop was attributed by message tag), "cast" (a
 //   handle_cast that makes a synchronous call), "budget" (the caller's
 //   `caller_ms` timeout is shorter than the callee's own `downstream_ms`).
-// `unbounded_wait(func, site, kind, api, detail)` — a wait with no
+// `unbounded_wait(func, site, kind, api, detail, nodes)` — a wait with no
 //   deadline: ":infinity" on a hop that itself serves callers
 //   ("infinity"; `func` is the handle_call, `api` the target), a remote
 //   call with the default infinity timeout ("rpc"), a remote call inside
 //   a callback ("rpc_in_callback"), a :global lock with retries
-//   ("global"; `detail` is the retries).
+//   ("global"; `detail` is the retries, `nodes` whose agreement it waits
+//   on: "cluster", "local" or "unknown"; empty for the other kinds).
 // `receive_in_callback(id, func, callback, behaviour, proximity, bounded)`
 //   — a receive on an OTP process's own stack, `bounded` "false" when
 //   it has no after clause and can hang.
 .decl call_chain(from: symbol, to: symbol, kind: symbol, depth: number, inferred: symbol, caller_ms: number, downstream_ms: number)
 .output call_chain
 
-.decl unbounded_wait(func: symbol, site: symbol, kind: symbol, api: symbol, detail: symbol)
+.decl unbounded_wait(func: symbol, site: symbol, kind: symbol, api: symbol, detail: symbol, nodes: symbol)
 .output unbounded_wait
 
 .decl receive_in_callback(id: symbol, func: symbol, callback: symbol, behaviour: symbol, proximity: symbol, bounded: symbol)
@@ -251,7 +252,7 @@ call_chain(a, b, "budget", 1, "", t_ab, t_bc) :-
 // ── Output: infinity timeout in chain ──────────────────────────────
 
 // Sync call in a chain uses :infinity timeout — can block forever.
-unbounded_wait(cat(mod, ":handle_call/3"), "", "infinity", target, "") :-
+unbounded_wait(cat(mod, ":handle_call/3"), "", "infinity", target, "", "") :-
   callback_sync_dep_timeout(mod, target, -1),
   behaves_as(target, "GenServer").
 
@@ -492,7 +493,7 @@ receive_in_callback(id, func, callback, behaviour, proximity, "true") :-
 // An rpc in init/1, or a :global op init/1 reaches, is startup's
 // finding (blocks_on_peer, "remote" and "global"): the same site, with
 // the supervisor's start held on it, reported there once.
-unbounded_wait(func, call, "rpc", variant, "") :-
+unbounded_wait(func, call, "rpc", variant, "", "") :-
   makes_rpc(func, call, variant),
   no_timeout(call),
   !during_init(call).
@@ -530,19 +531,22 @@ during_init(site) :- init_global_reach.reaches(f, site), is_init(f).
 // as making an RPC, even when the concrete action provably routes local.
 // All 13 of the analysis's transitive findings were false; the RPC sites
 // themselves are already surfaced by rpc_without_timeout.
-unbounded_wait(func, "", "rpc_in_callback", variant, "") :-
+unbounded_wait(func, "", "rpc_in_callback", variant, "", "") :-
   rpc_call(_, func, variant, _),
   handler_function(_, func).
 
 // ── Blocking :global synchronization ─────────────────────────────
 
-// :global.set_lock and :global.trans block on netsplit when retries
-// is :infinity or any positive integer (which retries with backoff).
+// :global.set_lock and :global.trans wait without bound when retries
+// is :infinity or any positive integer (which retries with backoff);
 // retries = "0" means try once and return immediately — non-blocking.
+// A lock over the cluster's nodes waits on every one of them and
+// stalls on a netsplit; one over `[node()]` waits only on a local
+// holder. `nodes` says which (retrying_lock, clientlib/vocabulary.dl).
 // site is the :global call instruction. One row per site — finding
-// builders dedupe on (func, op, retries).
-unbounded_wait(func, lock, "global", op, retries) :-
-  cluster_lock(lock, func, op, retries),
+// builders dedupe on (func, op, retries, nodes).
+unbounded_wait(func, lock, "global", op, retries, nodes) :-
+  retrying_lock(lock, func, op, retries, nodes),
   !during_init(lock).
 
 // ══ A peer call that catches :noproc but not :shutdown ══════════════

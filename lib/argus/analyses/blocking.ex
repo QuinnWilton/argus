@@ -25,11 +25,13 @@ defmodule Argus.Analyses.Blocking do
   - `receive_in_callback(id, func, callback, behaviour, proximity,
     bounded)` — a `receive` on an OTP process's own stack, `bounded`
     false when it has no `after` and can hang.
-  - `unbounded_wait(func, site, kind, api, detail)` — a wait with no
-    deadline: `infinity` on a hop that itself serves synchronous callers,
-    an `rpc` with the default infinity timeout, an `rpc_in_callback`
-    (remote latency becomes local unavailability), or a `global` lock
-    with retries (one distributed lock every caller shares).
+  - `unbounded_wait(func, site, kind, api, detail, nodes)` — a wait with
+    no deadline: `infinity` on a hop that itself serves synchronous
+    callers, an `rpc` with the default infinity timeout, an
+    `rpc_in_callback` (remote latency becomes local unavailability), or a
+    `global` lock with retries (one distributed lock every caller shares
+    when `nodes` is `cluster` or `unknown`; a lock on this node alone
+    when it is `local`).
   - `partial_noproc_catch(func, site, callee)` — a peer call whose catch
     covers `:noproc` but not the peer stopping mid-call.
   """
@@ -165,9 +167,11 @@ defmodule Argus.Analyses.Blocking do
           {:site, :symbol, "instruction ID of the call, empty for infinity and rpc_in_callback"},
           {:kind, :symbol, "infinity | rpc | rpc_in_callback | global"},
           {:api, :symbol, "the call target, rpc variant, or :global operation"},
-          {:detail, :symbol, "for global, the resolved retries"}
+          {:detail, :symbol, "for global, the resolved retries"},
+          {:nodes, :symbol,
+           "for global, the nodes the lock waits on: cluster | local | unknown; else empty"}
         ],
-        key: [:func, :kind, :api, :detail],
+        key: [:func, :kind, :api, :detail, :nodes],
         doc: "A wait with no deadline: an :infinity hop, an rpc, a cluster-wide lock."
       },
       %{
@@ -256,7 +260,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:unbounded_wait, [func, _, "infinity", target, _]) do
+  def finding(:unbounded_wait, [func, _, "infinity", target, _, _]) do
     mod = String.replace_suffix(func, ":handle_call/3", "")
 
     Findings.new(
@@ -381,7 +385,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:unbounded_wait, [func, site, "rpc", variant, _]) do
+  def finding(:unbounded_wait, [func, site, "rpc", variant, _, _]) do
     Findings.new(
       :warning,
       "RPC without a bounded timeout",
@@ -395,7 +399,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:unbounded_wait, [func, _, "rpc_in_callback", variant, _]) do
+  def finding(:unbounded_wait, [func, _, "rpc_in_callback", variant, _, _]) do
     Findings.new(
       :warning,
       "RPC inside a GenServer callback",
@@ -409,7 +413,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:unbounded_wait, [func, site, "global", op, retries]) do
+  def finding(:unbounded_wait, [func, site, "global", op, retries, "cluster"]) do
     Findings.new(
       :info,
       "Cluster-wide :global synchronization",
@@ -419,6 +423,38 @@ defmodule Argus.Analyses.Blocking do
         "partition recovery stalls them all.",
       at: Findings.at_instr(site),
       at_label: "cluster-wide operation",
+      help: ["bound `retries` so a partition fails this caller instead of holding it"]
+    )
+  end
+
+  def finding(:unbounded_wait, [func, site, "global", op, retries, "local"]) do
+    Findings.new(
+      :info,
+      "Local :global lock without a retry bound",
+      "#{func} calls :global.#{op} with retries = #{retries} over only the " <>
+        "local node. No other node takes part, so a partition cannot stall " <>
+        "it, but the caller waits for as long as another process on this " <>
+        "node holds the lock.",
+      at: Findings.at_instr(site),
+      at_label: "lock on this node alone, retried until it is free",
+      help: ["bound `retries` so a held lock fails this caller instead of holding it"]
+    )
+  end
+
+  # "unknown": the node list is not in the bytecode. Reported as the
+  # cluster-wide lock it may be, saying it is assumed — as is any list
+  # not known to be local or cluster.
+  def finding(:unbounded_wait, [func, site, "global", op, retries, _nodes]) do
+    Findings.new(
+      :info,
+      "Cluster-wide :global synchronization",
+      "#{func} calls :global.#{op} with retries = #{retries}, and a node " <>
+        "list the bytecode does not show, so this assumes it holds the " <>
+        "connected nodes. Over the cluster, :global operations serialize " <>
+        "across every node — fine when deliberate, but every caller shares " <>
+        "one distributed lock, and partition recovery stalls them all.",
+      at: Findings.at_instr(site),
+      at_label: "assumed cluster-wide: the node list could not be read",
       help: ["bound `retries` so a partition fails this caller instead of holding it"]
     )
   end

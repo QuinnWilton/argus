@@ -13,7 +13,9 @@ defmodule Argus.Analyses.Startup do
     `detail` saying whether every init takes the path), a `cast` to a
     later sibling, a `sup` management call, a `blocking_server` whose
     handler blocks without bound, the `parent` supervisor mid-start, a
-    `global` lock or a `remote` operation on the boot path.
+    `global` lock that retries (`dep` says whether it waits on the
+    `cluster`, only the `local` node, or an `unknown` node list) or a
+    `remote` operation on the boot path.
   - `unbounded_effect_in_init(mod, kind, api)` — init/1, in its own
     process, reaches a socket `recv` with `:infinity`, a `receive` with no
     `after`, or a `connect` nothing in the module can retry.
@@ -68,7 +70,8 @@ defmodule Argus.Analyses.Startup do
         fields: [
           {:mod, :symbol, "the child module (the init function, for global and remote)"},
           {:phase, :symbol, "init | continue"},
-          {:dep, :symbol, "the peer waited on (empty for global and remote)"},
+          {:dep, :symbol,
+           "the peer waited on; for global, the nodes the lock waits on (cluster | local | unknown); empty for remote"},
           {:kind, :symbol, "call | cast | sup | blocking_server | parent | global | remote"},
           {:ordering, :symbol, "later | earlier | parent | unknown, or empty"},
           {:sup, :symbol, "the supervisor placing both, when the ordering is known"},
@@ -77,14 +80,16 @@ defmodule Argus.Analyses.Startup do
            "conditional | unconditional for a call, api.op for sup, the handler for blocking_server, the op for global and remote"}
         ],
         # A supervisor call is one finding per operation, a blocking server
-        # one per peer, a remote or global op one per op; the rest one per
-        # (child, peer) under a supervisor, the synchronous row winning.
+        # one per peer, a remote op one per op, a global op one per op and
+        # node list (a local and a cluster-wide lock say different things);
+        # the rest one per (child, peer) under a supervisor, the synchronous
+        # row winning.
         key:
           {:kind,
            %{
              "sup" => [:mod, :detail],
              "blocking_server" => [:mod, :dep],
-             "global" => [:mod, :detail],
+             "global" => [:mod, :dep, :detail],
              "remote" => [:mod, :detail],
              default: [:mod, :phase, :dep, :ordering, :sup]
            }},
@@ -128,7 +133,7 @@ defmodule Argus.Analyses.Startup do
         key: [:init, :lock],
         earliest: :call,
         evidence: %{of: :blocks_on_peer, on: [init: :mod, lock: :site]},
-        doc: "Where init/1's path to a cluster-wide lock in a helper begins."
+        doc: "Where init/1's path to a :global lock in a helper begins."
       },
       %{
         name: :deferral_defect,
@@ -453,7 +458,7 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:blocks_on_peer, [func, "init", _, "global", _, _, site, op]) do
+  def finding(:blocks_on_peer, [func, "init", "cluster", "global", _, _, site, op]) do
     Findings.new(
       :error,
       "Cluster-wide lock during init",
@@ -463,6 +468,46 @@ defmodule Argus.Analyses.Startup do
         "cluster is partitioned or slow.",
       at: Findings.at_site_in_func(site, func),
       at_label: "cluster-wide lock reached from init/1",
+      help: ["defer the lock to handle_continue/2 so the start completes without the cluster"]
+    )
+  end
+
+  # [node()]: only this node's global server takes part. The lock does
+  # not wait on the cluster, but it still retries until it is free.
+  def finding(:blocks_on_peer, [func, "init", "local", "global", _, _, site, op]) do
+    Findings.new(
+      :warning,
+      "Lock during init",
+      "#{func} reaches :global.#{op} from init/1, over only the local " <>
+        "node. No other node takes part, so the cluster cannot stall it, " <>
+        "but the lock retries until it is free: init, and the supervisor's " <>
+        "start sequence with it, waits for as long as another process on " <>
+        "this node holds the lock.",
+      at: Findings.at_site_in_func(site, func),
+      at_label: "lock reached from init/1; it waits on this node's holders",
+      help: [
+        "defer the lock to handle_continue/2, or bound its retries " <>
+          "(:global.set_lock/3) so a held lock fails the start instead of hanging it"
+      ]
+    )
+  end
+
+  # "unknown": the node list is not in the bytecode (a parameter, a
+  # call's result). Reported as the cluster-wide lock it may be, saying
+  # it is assumed — as is any list not known to be local or cluster.
+  def finding(:blocks_on_peer, [func, "init", _nodes, "global", _, _, site, op]) do
+    Findings.new(
+      :error,
+      "Cluster-wide lock during init",
+      "#{func} reaches :global.#{op} from init/1, with a node list the " <>
+        "bytecode does not show, so this assumes it holds the connected " <>
+        "nodes. init blocks the supervisor's start sequence, and a lock " <>
+        "over the cluster blocks on cluster-wide agreement — local startup " <>
+        "then hangs whenever the cluster is partitioned or slow. A list of " <>
+        "only [node()] waits on this node's holders alone.",
+      at: Findings.at_site_in_func(site, func),
+      at_label:
+        "lock reached from init/1; its node list could not be read, so assumed cluster-wide",
       help: ["defer the lock to handle_continue/2 so the start completes without the cluster"]
     )
   end

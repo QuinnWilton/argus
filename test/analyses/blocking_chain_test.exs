@@ -144,7 +144,7 @@ defmodule Argus.Analyses.BlockingChainTest do
       infinity =
         Rows.where(results, :blocking, "unbounded_wait",
           kind: "infinity",
-          drop: [:site, :kind, :detail]
+          drop: [:site, :kind, :detail, :nodes]
         )
 
       # If the extractor detects the :infinity timeout, it should flag it.

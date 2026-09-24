@@ -19,7 +19,7 @@ does: **Added**, **Changed**, **Fixed** or **Removed**.
 `failure.inconsistent_handling`, and `races.ets_check_act`,
 `ets_missing_row`, `ets_publish_order` and `mnesia_check_act` — are
 written in named concepts (`makes_rpc`, `no_timeout`, `during_init`,
-`cluster_lock`, `waits_on`, `catches_exit`, `cancels_under`,
+`retrying_lock`, `waits_on`, `catches_exit`, `cancels_under`,
 `rearms_under`, `clear_majority`, `reads_then_writes`, `public_table`,
 `another_process_writes`, ...) with the plumbing underneath, so each
 reads aloud as what it checks. Terms shared between analyses live in
@@ -84,6 +84,34 @@ reported at `:info`, its label saying the order is unknown. Order
 comes from `supervisor_child`'s positions; the prose and help now say
 which sequence stops the sibling, and the reorder suggestion no longer
 points at a start order the rule would flag.
+
+### A lock on the local node alone
+
+**Fixed.** `startup.blocks_on_peer` called every retrying `:global`
+lock init/1 reaches "Cluster-wide lock during init", including one over
+`[node()]`, where only this node's global server takes part: that lock
+still waits forever on a local holder, but no other node, so the
+cluster cannot stall it. The lock's node list now decides: a list
+holding the connected nodes (`[node() | Node.list()]`, `Node.list()`)
+or no list at all (`set_lock/1`, `trans/2`, which mean every known
+node) stays "Cluster-wide lock during init" at `:error`; `[node()]` is
+"Lock during init" at `:warning`, its label and help saying it waits on
+this node's holders and pointing at `set_lock/3`'s retries as well as
+handle_continue/2. A list the bytecode does not show — a parameter, a
+call's result — stays cluster-wide, the stronger claim, and its prose
+and label say the list could not be read and is assumed to hold the
+cluster. `blocks_on_peer`'s `dep` holds the node list for a "global"
+row (`cluster`, `local` or `unknown`; it was empty), and a global row
+dedupes on (mod, dep, op), so a local and a cluster-wide lock init/1
+both reach are two findings. `blocking.unbounded_wait` gains a `nodes`
+column (empty for its other kinds) and reads it the same way: its
+"global" row over `[node()]` is "Local :global lock without a retry
+bound", still `:info`, and an unread list keeps the cluster-wide title
+with the same caveat. The vocabulary's `cluster_lock` is
+`retrying_lock`, with the node list as a fifth column. The talk's
+worked example (`[node() | Node.list()]`) and nebulex's
+Replicated.Bootstrap (a node list from `Cluster.get_nodes/1`, unread)
+both stay cluster-wide.
 
 ### Analysis names
 

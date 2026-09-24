@@ -535,7 +535,7 @@ defmodule Argus.FindingsTest do
             {Failure, :unhandled_failure, ["Foo.Bar:baz/1", "", "rescue", "", ""]},
             {Failure, :unhandled_failure, ["Foo.Bar:baz/1", "dynamic", "rpc", "case", ""]},
             {Argus.Analyses.Startup, :blocks_on_peer,
-             ["Foo.Bar:baz/1", "init", "", "global", "", "", "dynamic", "trans"]},
+             ["Foo.Bar:baz/1", "init", "unknown", "global", "", "", "dynamic", "trans"]},
             {Argus.Analyses.Startup, :post_start_initialization,
              ["Foo.Bar:baz/1", "", "X:y/0", ""]},
             {Argus.Analyses.Blocking, :partial_noproc_catch,
