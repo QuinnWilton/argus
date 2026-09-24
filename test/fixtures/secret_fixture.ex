@@ -62,4 +62,66 @@ defmodule Argus.Test.Fixtures.Secret do
     def __schema__(:redact_fields), do: []
     def __schema__(_other), do: nil
   end
+
+  defmodule DerivedExcept do
+    @moduledoc """
+    `@derive {Inspect, except: [...]}` hides what `redact: true` would:
+    the excluded secrets are quiet, and the secret the list forgot is
+    reported, with the derive as the place to fix it. sequin's NatsSink
+    before 035ee6f, which added `:nkey_seed` to such a list.
+    """
+    @derive {Inspect, except: [:password, :jwt]}
+    defstruct [:id, :host, :password, :jwt, :sendgrid_api_key]
+
+    def __schema__(:fields), do: [:id, :host, :password, :jwt, :sendgrid_api_key]
+    def __schema__(:redact_fields), do: []
+    def __schema__(_other), do: nil
+  end
+
+  defmodule DerivedOnly do
+    @moduledoc "`only:` names what is printed; every secret here is left out."
+    @derive {Inspect, only: [:id, :name]}
+    defstruct [:id, :name, :client_secret, :access_token]
+
+    def __schema__(:fields), do: [:id, :name, :client_secret, :access_token]
+    def __schema__(:redact_fields), do: []
+    def __schema__(_other), do: nil
+  end
+
+  defmodule LeakyOnly do
+    @moduledoc "`only:` that names a secret prints it."
+    @derive {Inspect, only: [:id, :api_key]}
+    defstruct [:id, :api_key, :password]
+
+    def __schema__(:fields), do: [:id, :api_key, :password]
+    def __schema__(:redact_fields), do: []
+    def __schema__(_other), do: nil
+  end
+
+  defmodule EctoDerived do
+    @moduledoc """
+    What Ecto writes for `redact: true`: the redacted fields, and a derive
+    that excludes exactly them. The fix for the other secret is still
+    `redact: true`.
+    """
+    @derive {Inspect, except: [:password]}
+    defstruct [:id, :password, :api_key]
+
+    def __schema__(:fields), do: [:id, :password, :api_key]
+    def __schema__(:redact_fields), do: [:password]
+    def __schema__(_other), do: nil
+  end
+
+  defmodule RedactOverridden do
+    @moduledoc """
+    `redact: true` under the schema's own `@derive Inspect`: Ecto derives
+    nothing then, so the redacted field is printed after all.
+    """
+    @derive Inspect
+    defstruct [:id, :password]
+
+    def __schema__(:fields), do: [:id, :password]
+    def __schema__(:redact_fields), do: [:password]
+    def __schema__(_other), do: nil
+  end
 end

@@ -2,13 +2,15 @@ defmodule Argus.Analyses.Exposure do
   @moduledoc """
   Credentials printed, or sent unauthenticated.
 
-  - `unredacted_secret(mod, field, kind, aware)` — an Ecto schema field
-    that looks like a credential, password or token and is not declared
-    `redact: true`, so `inspect/1` prints it in full: Logger calls,
-    changeset errors, LiveView debug output, crash reports, and any
-    error reporter that serialises state. `aware` says whether the
-    schema redacts some other field, which makes the omission an
-    oversight rather than an unfamiliar API.
+  - `unredacted_secret(mod, field, kind, aware, via)` — an Ecto schema
+    field that looks like a credential, password or token and that
+    `inspect/1` prints in full — neither `redact: true` nor left out of
+    the struct's `@derive {Inspect, ...}` — into Logger calls, changeset
+    errors, LiveView debug output, crash reports, and any error reporter
+    that serialises state. `aware` says whether the schema hides some
+    other field, which makes the omission an oversight rather than an
+    unfamiliar API; `via` says where the fix goes, `redact` or the
+    schema's own `derive` (which makes `redact: true` a no-op).
   - `disables_verification(func, id)` — `verify: :verify_none`: the
     peer's certificate is not checked against any trust anchor and its
     hostname is not matched. Encryption without authentication is the
@@ -33,7 +35,8 @@ defmodule Argus.Analyses.Exposure do
   def rules_file, do: "analyses/exposure.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.EctoSchema, Argus.Extractors.Tls]
+  def extractors,
+    do: [Argus.Extractors.EctoSchema, Argus.Extractors.DerivedInspect, Argus.Extractors.Tls]
 
   @impl true
   def output_relations do
@@ -44,7 +47,8 @@ defmodule Argus.Analyses.Exposure do
           {:mod, :symbol, "the schema"},
           {:field, :symbol, "the field"},
           {:kind, :symbol, "credential | password | token"},
-          {:aware, :symbol, "whether the schema redacts anything else"}
+          {:aware, :symbol, "whether the schema hides anything else from inspect/1"},
+          {:via, :symbol, "redact | derive — where the schema hides fields"}
         ],
         key: [:mod, :field],
         doc: "A secret-looking field that inspect/1 will print in full."
@@ -55,7 +59,8 @@ defmodule Argus.Analyses.Exposure do
           {:mod, :symbol, "the schema"},
           {:field, :symbol, "the field"},
           {:kind, :symbol, "credential | password | token"},
-          {:aware, :symbol, "whether the schema redacts anything else"},
+          {:aware, :symbol, "whether the schema hides anything else from inspect/1"},
+          {:via, :symbol, "redact | derive — where the schema hides fields"},
           {:permille, :number, "the classifier's probability, in thousandths"}
         ],
         key: [:mod, :field],
@@ -86,13 +91,14 @@ defmodule Argus.Analyses.Exposure do
   end
 
   @impl true
-  def finding(:unredacted_secret, [mod, field, kind, aware]) do
+  def finding(:unredacted_secret, [mod, field, kind, aware, via]) do
     Findings.new(
       severity(kind),
       # The field as a reader writes its access, `User.password_hash`;
       # the facts spell the key as an atom, `:password_hash`.
       "#{mod}.#{String.trim_leading(field, ":")} is printed by inspect/1",
-      "#{field} is not declared redact: true, so it appears in full wherever " <>
+      why_printed(via, mod, field) <>
+        ", so it appears in full wherever " <>
         "the struct is inspected — Logger calls, changeset errors, LiveView " <>
         "debug output, crash reports, and any error reporter that serialises " <>
         "state. " <>
@@ -101,17 +107,17 @@ defmodule Argus.Analyses.Exposure do
       # line; the field's own line is in the source, under its name.
       at: Findings.at_mfa(mod, :__schema__, 1),
       at_source: field,
-      at_label: "declared without redact: true",
-      help: ["add `redact: true` to the field"]
+      at_label: at_label(via),
+      help: [fix(via, field)]
     )
   end
 
   # The same finding as the structural one, made heuristic: a step down
   # in severity, and a help line with the probability — the reader knows
   # a model, not a substring, named the field.
-  def finding(:unredacted_secret_inferred, [mod, field, kind, aware, permille]) do
+  def finding(:unredacted_secret_inferred, [mod, field, kind, aware, via, permille]) do
     Findings.heuristic(
-      finding(:unredacted_secret, [mod, field, kind, aware]),
+      finding(:unredacted_secret, [mod, field, kind, aware, via]),
       String.to_integer(permille),
       "a classifier names #{field} as a #{kind}"
     )
@@ -179,8 +185,27 @@ defmodule Argus.Analyses.Exposure do
   defp consequence("token"), do: "Bearer material, usable until it expires."
   defp consequence(_other), do: ""
 
+  defp why_printed("derive", mod, field),
+    do: "#{mod} derives Inspect with a field list that keeps #{field}"
+
+  defp why_printed(_redact, _mod, field), do: "#{field} is not declared redact: true"
+
+  defp at_label("derive"), do: "kept by the schema's derived Inspect"
+  defp at_label(_redact), do: "declared without redact: true"
+
+  # Ecto derives Inspect for its redacted fields only when the schema
+  # derives none itself, so under a schema's own derive `redact: true`
+  # changes nothing.
+  defp fix("derive", field) do
+    "leave #{field} out of the schema's `@derive {Inspect, ...}` — add it to " <>
+      "`except:`, or drop it from `only:`; `redact: true` has no effect on a " <>
+      "schema that derives Inspect itself"
+  end
+
+  defp fix(_redact, _field), do: "add `redact: true` to the field"
+
   defp awareness("aware", mod) do
-    "#{mod} redacts some other field, so the pattern is already known here " <>
+    "#{mod} hides some other field from inspect/1, so the pattern is already known here " <>
       "and was not applied to this one — which makes this an oversight rather " <>
       "than an unfamiliar API."
   end

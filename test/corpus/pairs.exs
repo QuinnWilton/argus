@@ -214,6 +214,21 @@
     fix: "6693949a27af272c4783a86536d67911de289d22",
     finding: {:mailbox, "No handle_info/2 clause for a message the server is sent"}
   },
+  # sequin 035ee6f "Remove sensitive sink values from IO.inspect": NatsSink
+  # held a NATS password, JWT and nkey seed and printed all three; the fix
+  # is `@derive {Inspect, except: [:password, :jwt, :nkey_seed]}`, no
+  # `redact: true`. Only :password is in the name table (the other two are
+  # a prior's, which the corpus runs without); the derive hides all three.
+  %{
+    repo: "sequinstream/sequin",
+    issue: "sequin@035ee6f",
+    module: "Sequin.Consumers.NatsSink",
+    otp: "27.3.3",
+    elixir: "1.18.3-otp-27",
+    pre: "ad46d68c109354a3f6a554c1eb5a120fd7c90834",
+    fix: "035ee6fcbb399f8920d4468d217853b0bcd051da",
+    finding: {:exposure, "Sequin.Consumers.NatsSink.password is printed by inspect/1"}
+  },
   # astarte f3edb85 "correctly reconnect to amqp after a connection loss":
   # a refactor removed AMQPEventsProducer's :init clause and left
   # schedule_connect/0 re-arming :init after a lost connection; its only

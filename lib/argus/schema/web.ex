@@ -1,7 +1,8 @@
 defmodule Argus.Schema.Web do
   @moduledoc """
-  What a web application declares: its routes, and the fields of its
-  Ecto schemas with the ones it redacts.
+  What a web application declares: its routes, the fields of its Ecto
+  schemas with the ones it redacts, and which fields a derived `Inspect`
+  prints.
 
   Layer 2 of `Argus.Schema`, which reads the relations from here.
   """
@@ -44,8 +45,37 @@ defmodule Argus.Schema.Web do
           {:field, :symbol, "a field declared redact: true"}
         ],
         doc: """
-        A field Ecto excludes from `inspect/1`. Absence is the interesting \
-        case — `redact` defaults to off — so consumers ask by negation.
+        A field declared `redact: true`, which Ecto excludes from `inspect/1` \
+        unless the schema derives `Inspect` itself (`inspect_derived`). \
+        Absence is the interesting case — `redact` defaults to off — so \
+        consumers ask by negation.
+        """
+      },
+      %{
+        name: :inspect_derived,
+        layer: 2,
+        fields: [
+          {:mod, :symbol, "the struct module"}
+        ],
+        doc: """
+        The struct's `Inspect` is derived — `@derive Inspect` with or without \
+        `except:`/`only:`, or Ecto's own derive for its `redact: true` fields — \
+        read from the `Inspect.<Struct>` implementation module. When there is \
+        one, it alone decides which fields `inspect/1` prints \
+        (`inspect_shows`). A hand-written implementation has no row.
+        """
+      },
+      %{
+        name: :inspect_shows,
+        layer: 2,
+        fields: [
+          {:mod, :symbol, "the struct module"},
+          {:field, :symbol, "a field its derived Inspect prints"}
+        ],
+        doc: """
+        A field a derived `Inspect` prints: the fields its guard admits, \
+        after `except:` and `only:`. A field of an `inspect_derived` struct \
+        with no row here is hidden from `inspect/1`.
         """
       }
     ]

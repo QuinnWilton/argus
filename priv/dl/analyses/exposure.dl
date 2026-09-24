@@ -12,7 +12,8 @@
 // ══ Secrets a schema prints ═════════════════════════════════════════
 // Credentials an inspect/1 will print.
 //
-// Ecto's `redact: true` keeps a field out of `inspect/1`. It defaults to
+// Ecto's `redact: true` keeps a field out of `inspect/1`, and so does
+// `@derive {Inspect, except: [...]}` (or `only: [...]`). Both default to
 // off, so a struct holding a third-party API key prints it in full — into
 // Logger calls, changeset error output, LiveView debug, crash reports, and
 // whatever error reporter is installed. Nothing at the field's definition
@@ -84,26 +85,73 @@ sensitive_field(mod, field, kind) :-
   secret_rank(kind, rank),
   rank = min r : { matches_kind(mod, field, other), secret_rank(other, r) }.
 
-// A schema that redacts something has answered the question, and answered
+// What inspect/1 leaves out. Ecto implements `redact: true` by deriving
+// Inspect with `except:` the redacted fields — unless the schema derives
+// Inspect itself, in which case its own list is all there is and
+// `redact: true` hides nothing. So a derived Inspect, when one is in
+// view, is the whole answer: a field it does not show is hidden, and a
+// field it shows is printed whatever `redact:` says. Without one in view
+// (a hand-written impl, or a run that did not include the impl module),
+// `redact: true` is taken at its word.
+.decl derive_hides(mod: symbol, field: symbol)
+
+derive_hides(mod, field) :-
+  inspect_derived(mod),
+  schema_field(mod, field),
+  !inspect_shows(mod, field).
+
+.decl hidden_from_inspect(mod: symbol, field: symbol)
+
+hidden_from_inspect(mod, field) :-
+  redacted_field(mod, field),
+  !inspect_derived(mod).
+
+hidden_from_inspect(mod, field) :- derive_hides(mod, field).
+
+// Where the fix goes: the field's `redact: true`, or — when the schema
+// derives Inspect itself — that derive's field list. Ecto's own derive
+// hides exactly the redacted fields; any other derive is the schema's.
+.decl hides_unredacted(mod: symbol)
+
+hides_unredacted(mod) :- derive_hides(mod, field), !redacted_field(mod, field).
+
+.decl shows_redacted(mod: symbol)
+
+shows_redacted(mod) :- redacted_field(mod, field), inspect_shows(mod, field).
+
+.decl own_derive(mod: symbol)
+
+own_derive(mod) :- inspect_derived(mod), hides_unredacted(mod).
+own_derive(mod) :- inspect_derived(mod), shows_redacted(mod).
+own_derive(mod) :- inspect_derived(mod), schema_field(mod, _), !redacted_field(mod, _).
+
+.decl hides_via(mod: symbol, via: symbol)
+
+hides_via(mod, "derive") :- own_derive(mod).
+hides_via(mod, "redact") :- schema_field(mod, _), !own_derive(mod).
+
+// A schema that hides something has answered the question, and answered
 // it differently here. That is a stronger finding than one that never
 // considered it, and the finding text says so — one sequin schema redacts a
 // field while twenty-four of its siblings do not.
 .decl schema_redacts_something(mod: symbol)
 
-schema_redacts_something(mod) :- redacted_field(mod, _).
+schema_redacts_something(mod) :- hidden_from_inspect(mod, _).
 
-.decl unredacted_secret(mod: symbol, field: symbol, kind: symbol, aware: symbol)
+.decl unredacted_secret(mod: symbol, field: symbol, kind: symbol, aware: symbol, via: symbol)
 .output unredacted_secret
 
-unredacted_secret(mod, field, kind, "aware") :-
+unredacted_secret(mod, field, kind, "aware", via) :-
   sensitive_field(mod, field, kind),
-  !redacted_field(mod, field),
-  schema_redacts_something(mod).
+  !hidden_from_inspect(mod, field),
+  schema_redacts_something(mod),
+  hides_via(mod, via).
 
-unredacted_secret(mod, field, kind, "unaware") :-
+unredacted_secret(mod, field, kind, "unaware", via) :-
   sensitive_field(mod, field, kind),
-  !redacted_field(mod, field),
-  !schema_redacts_something(mod).
+  !hidden_from_inspect(mod, field),
+  !schema_redacts_something(mod),
+  hides_via(mod, via).
 
 // ── A secret the table cannot name ──────────────────────────────────
 //
@@ -125,18 +173,20 @@ model_named_secret(mod, field, detail, p) :-
   p >= 900,
   !matches_kind(mod, field, _).
 
-.decl unredacted_secret_inferred(mod: symbol, field: symbol, kind: symbol, aware: symbol, permille: number)
+.decl unredacted_secret_inferred(mod: symbol, field: symbol, kind: symbol, aware: symbol, via: symbol, permille: number)
 .output unredacted_secret_inferred
 
-unredacted_secret_inferred(mod, field, kind, "aware", p) :-
+unredacted_secret_inferred(mod, field, kind, "aware", via, p) :-
   model_named_secret(mod, field, kind, p),
-  !redacted_field(mod, field),
-  schema_redacts_something(mod).
+  !hidden_from_inspect(mod, field),
+  schema_redacts_something(mod),
+  hides_via(mod, via).
 
-unredacted_secret_inferred(mod, field, kind, "unaware", p) :-
+unredacted_secret_inferred(mod, field, kind, "unaware", via, p) :-
   model_named_secret(mod, field, kind, p),
-  !redacted_field(mod, field),
-  !schema_redacts_something(mod).
+  !hidden_from_inspect(mod, field),
+  !schema_redacts_something(mod),
+  hides_via(mod, via).
 
 // ══ TLS without verification ════════════════════════════════════════
 // TLS that encrypts without authenticating.

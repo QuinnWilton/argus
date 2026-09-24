@@ -13,7 +13,7 @@
   ets:
     ~w(call_arg call_arg_forward call_edge catch_tag catch_total closure_def dynamic_child ets_new ets_op ets_op_param ets_option function_def implements_behaviour statem_event_clause supervisor_child try_start),
   exposure:
-    ~w(function_def prior_sensitive redacted_field schema_field tls_connect tls_verification),
+    ~w(function_def inspect_derived inspect_shows prior_sensitive redacted_field schema_field tls_connect tls_verification),
   failure:
     ~w(bare_rescue call_edge call_followed_by_branch call_result call_site catch_falls_through catch_tag catch_total closure_def dynamic_call exit_call fun_ref function_def ignored_error_result implements_behaviour macro_generated name_lookup named_process pid_arg pid_base pid_call pid_field pid_load pid_message pid_object pid_register pid_result pid_return pid_sets pid_signal process_start remote_call rpc_call rpc_result spawn_call spec_return statem_event_clause supervisor_child supervisor_child_name supervisor_site tail_call try_call),
   mailbox:

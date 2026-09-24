@@ -44,7 +44,8 @@ defmodule Argus.FindingsProseTest do
           "MyApp.User",
           ":password_hash",
           "password",
-          "unaware"
+          "unaware",
+          "redact"
         ])
 
       assert attrs.title == "MyApp.User.password_hash is printed by inspect/1"

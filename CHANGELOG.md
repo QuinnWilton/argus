@@ -134,6 +134,18 @@ and have `resolve/2` raise `ArgumentError` on it in the window between
 row goes in first now, and a binary that loses the `insert_new` race
 deletes the row it wrote. `races.ets_publish_order` found it.
 
+**Added.** Schema 67. `inspect_derived(mod)` — the struct's `Inspect`
+is derived — and `inspect_shows(mod, field)` — a field it prints, after
+`except:` and `only:`. `Argus.Extractors.DerivedInspect` reads them from
+the `Inspect.<Struct>` implementation module: its `inspect/2` calls
+`Struct.__info__(:struct)` and hands the kept fields to `Inspect.Any` or
+`Inspect.Map`, and the fields kept are the atoms the comprehension's
+filter compares the field against (Elixir 1.18 and 1.19 compile both
+options to that one guard). A hand-written `defimpl Inspect` has no row.
+`redacted_field`'s doc says what it is now: a field declared
+`redact: true`, which Ecto honours only when the schema derives no
+`Inspect` itself. Read by `exposure` (below).
+
 **Added.** Schema 66. `callback_drops(func, callback)` — the callback's
 catch-all does nothing with the message but log or ignore it (a forward
 walk from its body: the message reaches only Logger, `:logger`, IO or
@@ -1756,6 +1768,25 @@ a socket with no timeout" are for a `:gen_tcp`/`:ssl` recv with
 `:infinity`.
 
 ### exposure
+
+**Fixed.** `exposure.unredacted_secret` (and `unredacted_secret_inferred`)
+knew only Ecto's `redact: true`, so a field kept out of `inspect/1` by
+`@derive {Inspect, except: [...]}` or `only: [...]` was reported as
+printed. The derived `Inspect`, when its module is in the run, is now the
+answer (schema 67): a field it does not show is hidden, and one it shows
+is printed even under `redact: true`, which Ecto ignores once a schema
+derives `Inspect` itself. The relations gain a `via` column, `redact` or
+`derive`, and a finding under the schema's own derive sends the fix to
+its field list instead of to `redact: true`. Found by a talk's priors
+hunt: sequin's `Gcp.Credentials.private_key` was reported although
+excluded, and sequin 035ee6f's fix for `NatsSink` (a derive, no
+`redact:`) would not have cleared it. New pair `sequin@035ee6f`.
+Corpus: 23 `unredacted_secret` rows leave, all sequin and each a field
+its schema's derive excludes (19 at 46ce4e1 — every sink's `password`,
+`secret_access_key`, `api_key` and the like, and four of
+`Gcp.Credentials`; `PostgresDatabase.password` and
+`Gcp.Credentials.private_key` at 6693949 and 94fbd52); none arrive, and
+no other analysis moves.
 
 **Changed.** `exposure.unredacted_secret` no longer reports a field that names a
 secret but holds a fact about it — `password_reset_sent_at`,
