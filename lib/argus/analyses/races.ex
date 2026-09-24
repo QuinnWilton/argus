@@ -24,9 +24,22 @@ defmodule Argus.Analyses.Races do
     read decides or feeds a dirty write (`op`: `dirty_write`,
     `dirty_delete` or `dirty_delete_object`) of the same record, and
     another process can write the table.
+  - `ets_publish_order(mod, func, published_kind, published_in,
+    completed_kind, completed_in, publish, complete, reader)` — not a
+    check-then-act but a race on the same stores: `func` writes a row of
+    one table holding a value (`publish`), and only then the row another
+    table keys by that value (`complete`). Between the two, a process
+    that took the value from the first table and reads the second at it
+    with a read that raises on a missing row (`reader`:
+    `:ets.lookup_element/3`, `:ets.update_counter/3`) crashes with
+    `badarg`. A table is known across the module's functions by its name
+    (`named`) or by the map field it is kept under (`field`, the path
+    from a parameter).
 
-  Every finding is a `:warning` anchored at the act, with the check as a
-  related frame.
+  Every check-then-act finding is a `:warning` anchored at the act, with
+  the check as a related frame; a publish-order finding is a `:warning`
+  anchored at the early write, with the completing write and the reader
+  as related frames.
   """
 
   @behaviour Argus.Analysis
@@ -40,7 +53,8 @@ defmodule Argus.Analyses.Races do
   def description,
     do:
       "check-then-act races on a process name, an ETS key or a Mnesia record that " <>
-        "another process can write between the check and the act"
+        "another process can write between the check and the act, and ETS values " <>
+        "published before the rows they point to"
 
   @impl true
   def rules_file, do: "analyses/races.dl"
@@ -111,6 +125,24 @@ defmodule Argus.Analyses.Races do
         key: [:func, :table, :key],
         doc:
           "A dirty read decides or feeds a dirty write of the same record another process can write."
+      },
+      %{
+        name: :ets_publish_order,
+        fields: [
+          {:mod, :symbol, "the module"},
+          {:func, :symbol, "the function making both writes"},
+          {:published_kind, :symbol, "named | field: how the first table is known"},
+          {:published_in, :symbol,
+           "the first table: its name, or the field path it is kept under"},
+          {:completed_kind, :symbol, "named | field: how the second table is known"},
+          {:completed_in, :symbol, "the second table, likewise"},
+          {:publish, :symbol, "instruction ID of the write that makes the value findable"},
+          {:complete, :symbol, "instruction ID of the later write of the row keyed by it"},
+          {:reader, :symbol, "instruction ID of a read of the second table that raises on a miss"}
+        ],
+        key: [:func, :publish, :complete],
+        doc:
+          "A value is published in one ETS table before the row another table keys by it exists."
       }
     ]
   end
@@ -209,6 +241,47 @@ defmodule Argus.Analyses.Races do
       ]
     )
   end
+
+  def finding(:ets_publish_order, [
+        mod,
+        func,
+        published_kind,
+        published_in,
+        completed_kind,
+        completed_in,
+        publish,
+        complete,
+        reader
+      ]) do
+    first = describe_table(published_kind, published_in)
+    second = describe_table(completed_kind, completed_in)
+
+    Findings.new(
+      :warning,
+      "ETS row published before the row it points to",
+      "#{func} writes a value into #{first}#{Findings.elsewhere(publish, func)}, " <>
+        "and only then writes the row of #{second} keyed by that value" <>
+        "#{Findings.elsewhere(complete, func)}. Both tables are shared: between the two " <>
+        "writes another process can find the value in #{first} and read #{second} at it" <>
+        "#{Findings.elsewhere(reader, func)}, with a read that raises ArgumentError " <>
+        "(badarg) when the row is not there yet.",
+      at: Findings.at_site(publish, mod),
+      at_label: "this write makes the value findable before its row in #{second} exists",
+      related: [
+        Findings.related("the row it points to is written here", Findings.at_site(complete, mod)),
+        Findings.related("a read that raises on the missing row", Findings.at_site(reader, mod))
+      ],
+      help: [
+        "write the row of #{second} first, then publish the value in #{first}; " <>
+          "if publishing can lose (`:ets.insert_new/2`), delete the row the loser wrote",
+        "or read with a default: `:ets.lookup_element/4` (OTP 26), or `:ets.lookup/2` " <>
+          "and handle `[]`"
+      ]
+    )
+  end
+
+  defp describe_table("field", path), do: "the table held under #{path}"
+  defp describe_table(_named, name), do: name
 
   # The name as the function sees it. A parameter's key is its position,
   # which reads as a number only to the facts.

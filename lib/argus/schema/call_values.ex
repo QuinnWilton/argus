@@ -150,6 +150,26 @@ defmodule Argus.Schema.CallValues do
         """
       },
       %{
+        name: :ets_table_path,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "instruction ID of the ETS operation"},
+          {:source, :symbol, "literal | param | local"},
+          {:root, :symbol,
+           "the inspected name, the parameter's 0-based position, or the instruction that made the value"},
+          {:path, :symbol,
+           "the map keys read from the root, joined by \".\"; empty for the root itself"}
+        ],
+        doc: """
+        Where the table operand of an ETS operation was read from: a root and \
+        the map keys read from it (Resolve.access_paths/4). Two tables handed \
+        to a function in one map, `%{forward: f, reverse: r}`, are two paths \
+        under one root where ets_op knows both by the name they were created \
+        with. Absent when the operand's writers disagree; a table named by a \
+        join (`cfg.table || @default`) is to have one row per arm.
+        """
+      },
+      %{
         name: :ets_tid_arg,
         layer: 2,
         fields: [
@@ -165,6 +185,37 @@ defmodule Argus.Schema.CallValues do
         caller. An unnamed table is known by the name it was created with, so \
         an operation on the parameter joins ets_new like a named one. \
         Function-level, like call_arg.
+        """
+      },
+      %{
+        name: :ets_value,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "instruction ID of the insert or insert_new"},
+          {:pos, :number, "0-based element position, 1 and up (element 0 is ets_key)"},
+          {:source, :symbol, "literal | param | field | local"},
+          {:value, :symbol, "as ets_key spells its key"}
+        ],
+        doc: """
+        What identifies an element past the key of the object an insert or \
+        insert_new writes, in ets_key's vocabulary: a row holding a value \
+        another table is keyed by joins that table's key on it. An element \
+        nothing identifies has no row.
+        """
+      },
+      %{
+        name: :ets_write_order,
+        layer: 2,
+        fields: [
+          {:func, :func_id, "the function both writes are in"},
+          {:first, :instr_id, "instruction ID of the earlier ETS write"},
+          {:then, :instr_id, "instruction ID of an ETS write control can reach from it"}
+        ],
+        doc: """
+        Two ETS writes in one function, the second reachable from the first \
+        in the control-flow graph. Ordering is positional, computed where the \
+        graph is (as call_followed_by_branch is); a loop orders a pair both \
+        ways.
         """
       },
       %{

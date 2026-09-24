@@ -33,7 +33,8 @@ defmodule Argus.Analyses.QuietShapesTest do
     Quiet.GenericTimeoutStatem,
     Quiet.ClockInTerminate,
     Quiet.StoreSourcedSink,
-    Quiet.LoopWithCatchAll
+    Quiet.LoopWithCatchAll,
+    Argus.Test.Fixtures.PublishOrder.ReverseFirst
   ]
 
   @expect_quiet %{
@@ -51,7 +52,7 @@ defmodule Argus.Analyses.QuietShapesTest do
       "unreceived_message"
     ],
     structure: ~w(consumer_supervisor_permanent_child),
-    races: ~w(registry_race ets_check_act),
+    races: ~w(registry_race ets_check_act ets_publish_order),
     coupling: ~w(dual_restart_authority),
     blocking: ~w(partial_noproc_catch),
     failure: [{"unhandled_failure", kind: "erpc_transport"}, "inconsistent_handling"],

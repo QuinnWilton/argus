@@ -69,7 +69,7 @@ separate analyses, so a defect has one owner.
 | `mailbox` | messages that arrive with no clause for them, and replies that never come |
 | `failure` | error paths swallowed, half-caught or ignored |
 | `structure` | child specs, registrations and tree shapes that are wrong on their own |
-| `races` | check-then-act races on a process name, an ETS key or a Mnesia record that another process can write between the check and the act |
+| `races` | check-then-act races on a process name, an ETS key or a Mnesia record that another process can write between the check and the act, and ETS values published before the rows they point to |
 | `state_machine` | gen_statem states no transition reaches, and terminal states that never stop |
 | `ets` | ETS table ownership, concurrency options and lifecycle |
 | `effects` | `@pure` contracts, and effects inside a transaction that a rollback cannot undo |

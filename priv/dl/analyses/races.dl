@@ -9,6 +9,10 @@
 // - mnesia_check_act: a dirty read decides or feeds a dirty write of
 //   the same record.
 //
+// And one that is not check-then-act but shares the stores: a value
+// published in one ETS table before the row another table keys by it
+// exists (ets_publish_order).
+//
 // Each is a CheckThenAct instance (clientlib/check_then_act.dl), which
 // says where a check's result meets an act that depends on it, across
 // functions. Whether a second process can run the function where they
@@ -449,6 +453,146 @@ ets_check_act(mod, func, name, key, read, write) :-
   function_def(func, mod, _, _, _),
   ets_concurrent_write(name, func),
   !benign_pair(func, read, write).
+
+// ── Published before it is complete ──────────────────────────────
+//
+// Two tables that map each way — names to ids, ids back to names — and a
+// function that writes both: first a row of A holding a value V
+// (`{name, id}`), then B's row keyed by V (`{id, name}`). Once the first
+// write lands, V can be found: another process that takes V out of A and
+// reads B at it before the second write lands finds no row. That is a
+// lost update in no sense — both writes happen — but the reader that
+// raises on a missing row (lookup_element/3, update_counter/3) crashes
+// with badarg in the window. The fix is the order: write B first, then
+// publish V in A, and when publishing can lose (insert_new), delete the B
+// row it wrote.
+//
+// Nothing here needs V's name. The rule joins the two writes on V's
+// identity in the function that makes them (ets_value, ets_key: the same
+// parameter, field or instruction), orders them by the function's graph
+// (ets_write_order), and matches the tables to their readers by an
+// identity that holds across the module's functions: a named table by its
+// name, and an unnamed one by the map field it is kept under
+// (ets_table_path from a parameter) — how one module hands itself two
+// unnamed tables, and the only thing that tells them apart when both were
+// created with the same name.
+
+// A table in terms the module's functions share.
+.decl table_in_module(id: symbol, mod: symbol, kind: symbol, ident: symbol)
+
+table_in_module(id, mod, "named", name) :-
+  ets_op(id, f, name, _, _),
+  name != "dynamic",
+  ets_new(n, _, name),
+  ets_option(n, "named_table", "true"),
+  function_def(f, mod, _, _, _).
+
+table_in_module(id, mod, "field", path) :-
+  ets_table_path(id, "param", _, path),
+  path != "",
+  ets_op(id, f, _, _, _),
+  function_def(f, mod, _, _, _).
+
+.decl same_table(a: symbol, b: symbol)
+
+same_table(a, b) :-
+  ets_write_order(_, a, b),
+  table_in_module(a, m, k, t),
+  table_in_module(b, m, k, t).
+
+// No table of that name is private: a reader in another process can see
+// it. A table that is not found stays quiet.
+.decl readable_elsewhere(id: symbol)
+
+readable_elsewhere(id) :-
+  ets_op(id, _, name, _, _),
+  name != "dynamic",
+  ets_new(_, _, name),
+  !private_table(name).
+
+.decl private_table(name: symbol)
+
+private_table(name) :- ets_new(n, _, name), ets_option(n, "access", "private").
+
+// W1 writes V into A's row, W2 then writes B's row keyed by V. A value
+// that is a literal is known without reading A.
+.decl publishes_early(func: symbol, publish: symbol, complete: symbol)
+
+publishes_early(f, w1, w2) :-
+  ets_write_order(f, w1, w2),
+  ets_op(w1, f, _, op1, "write"),
+  (op1 = "insert" ; op1 = "insert_new"),
+  ets_op(w2, f, _, op2, "write"),
+  (op2 = "insert" ; op2 = "insert_new"),
+  ets_value(w1, _, vs, v),
+  vs != "literal",
+  ets_key(w2, vs, v),
+  table_in_module(w1, m, _, _),
+  table_in_module(w2, m, _, _),
+  !same_table(w1, w2).
+
+// A read that raises when the key has no row. lookup_element/4 and
+// update_counter/4 take a default and do not; update_element answers
+// false.
+.decl raises_on_missing(r: symbol, func: symbol)
+
+raises_on_missing(r, g) :-
+  ets_op(r, g, _, "lookup_element", _),
+  remote_call(r, _, ":ets", "lookup_element", 3).
+
+raises_on_missing(r, g) :-
+  ets_op(r, g, _, "update_counter", _),
+  remote_call(r, _, ":ets", "update_counter", 3).
+
+// A read of A that hands out what it found: the way V reaches a reader.
+.decl hands_out(r: symbol)
+
+hands_out(r) :- ets_op(r, _, _, "lookup", _), returns_depends(_, "site", r).
+hands_out(r) :- ets_op(r, _, _, "lookup", _), site_reads(_, _, "site", r).
+hands_out(r) :- ets_op(r, _, _, "lookup", _), call_arg_reads(_, _, _, "site", r).
+hands_out(r) :- ets_op(r, _, _, op, "read"), op != "lookup", op != "member", op != "info".
+
+.decl publish_reader(func: symbol, publish: symbol, complete: symbol, reader: symbol, g: symbol)
+
+publish_reader(f, w1, w2, r, g) :-
+  publishes_early(f, w1, w2),
+  table_in_module(w1, m, ak, a),
+  ets_op(ra, _, _, _, "read"),
+  table_in_module(ra, m, ak, a),
+  hands_out(ra),
+  table_in_module(w2, m, bk, b),
+  raises_on_missing(r, g),
+  table_in_module(r, m, bk, b),
+  ets_key(r, ks, _),
+  ks != "literal",
+  readable_elsewhere(w2),
+  !rescues_argument_error(g).
+
+runs.seed(f) :- publish_reader(f, _, _, _, _).
+runs.seed(g) :- publish_reader(_, _, _, _, g).
+
+// The reader can run while the writer is between the two writes: in
+// more than one process, or one the writer's process does not reach.
+.decl publish_concurrent(func: symbol, reader: symbol)
+
+publish_concurrent(f, g) :- publish_reader(f, _, _, _, g), !runs.single_process(f).
+publish_concurrent(f, g) :- publish_reader(f, _, _, _, g), !runs.single_process(g).
+
+publish_concurrent(f, g) :-
+  publish_reader(f, _, _, _, g),
+  runs.entry_reaches(m, g),
+  !runs.entry_reaches(m, f).
+
+// A table is spelled by its identity's kind and the identity: "named"
+// and the name, or "field" and the path it is kept under.
+.decl ets_publish_order(mod: symbol, func: symbol, published_kind: symbol, published_in: symbol, completed_kind: symbol, completed_in: symbol, publish: symbol, complete: symbol, reader: symbol)
+.output ets_publish_order
+
+ets_publish_order(mod, f, ak, a, bk, b, w1, w2, r) :-
+  publish_reader(f, w1, w2, r, g),
+  publish_concurrent(f, g),
+  table_in_module(w1, mod, ak, a),
+  table_in_module(w2, mod, bk, b).
 
 // ── Dirty read, then dirty write ─────────────────────────────────
 //

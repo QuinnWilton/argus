@@ -52,6 +52,23 @@ its moduledoc says which submodule holds what.
 
 ### Fact schema and extraction
 
+**Added.** Schema 62. Three ETS relations, all `Argus.Extractors.ETS`'s
+and read by `races`. `ets_table_path(id, source, root, path)` says where
+an operation's table operand was read from: a literal name, a parameter
+or a local value (the instruction that made it), and the map keys read
+on the way down from it (`Resolve.access_paths/4`, `":tables.:forward"`).
+`ets_op` knows an unnamed table by the name `:ets.new/2` gave it, so two
+tables created with one name and handed around in one map
+(`%{forward: f, reverse: r}`) were one table to every rule; their paths
+tell them apart, in one function and, from a parameter, across a
+module's functions. A join whose arms disagree has no row today; the
+relation is many-valued so a table named `cfg.table || @default` can
+have one per arm. `ets_value(id, pos, source, value)` identifies the
+elements past the key of the object an `insert`/`insert_new` writes, in
+`ets_key`'s vocabulary. `ets_write_order(func, first, then)` orders two
+ETS writes in one function by its control-flow graph, computed where the
+graph is, as `call_followed_by_branch` is.
+
 **Changed.** The pipeline decodes only the relations the in-process passes
 read (`Argus.Pipeline.typed_relations/0`) into `module_data.typed`, and
 `Helpers.typed/1` builds the same: decoding every relation was 23% of
@@ -1154,6 +1171,26 @@ its transaction site, and a function whose transactions name two repos
 has no body: nothing says whose the closure is.
 
 ### races
+
+**Added.** `ets_publish_order`: a function writes a row of one ETS table
+holding a value (`{name, id}`), and only then the row another table keys
+by that value (`{id, name}`), while a reader elsewhere takes values out
+of the first table and reads the second at them with a read that raises
+on a missing row (`:ets.lookup_element/3`, `:ets.update_counter/3`).
+Between the two writes the value can be found and its row cannot, and
+the reader crashes with `badarg`. The fix is the order: the row first,
+then the value, and a publish that can lose (`insert_new`) deletes the
+row its loser wrote. The two writes join on the value's identity in
+their function (`ets_value` against `ets_key`) and are ordered by
+`ets_write_order`; the tables are matched to their readers by name for a
+named table and by the map field it is kept under for an unnamed one
+(`ets_table_path` from a parameter). Quiet when the reader takes a
+default or rescues `ArgumentError`, when no table of the name is found
+or one is private, when the two tables are one, and when the writer and
+the reader run only in one and the same process. A `:warning` anchored
+at the early write, with the completing write and the reader as related
+frames. Corpus: no row, and the tally is otherwise unchanged (1,143
+rows before and after); the rule has no fix pair in `pairs.exs` yet.
 
 **Changed.** Whether two processes can run a function (`RunsConcurrently`,
 clientlib/concurrency.dl) counts the processes a spawn, a task or an

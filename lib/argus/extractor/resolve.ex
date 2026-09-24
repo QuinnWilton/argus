@@ -13,6 +13,7 @@ defmodule Argus.Extractor.Resolve do
   alias Argus.Extractor.Terms
   alias Argus.Instr
   alias Argus.Instr.Reaching
+  alias Argus.InstrId
 
   @type register :: {:x, non_neg_integer()} | {:y, non_neg_integer()}
 
@@ -395,6 +396,132 @@ defmodule Argus.Extractor.Resolve do
           case Instr.copy_source(instr, reg) do
             {kind, _} = source when kind in [:x, :y] -> traced(instrs, at, source, none, answer)
             _ -> answer.({at, instr}, follow)
+          end
+      end)
+    end)
+  end
+
+  @typedoc """
+  Where a value was read from: `{source, root, path}` — see `access_paths/4`.
+  """
+  @type access_path :: {String.t(), String.t(), String.t()}
+
+  @doc """
+  Where the value in `register` at `idx` was read from, as a root and the
+  map keys read on the way down from it: `%{forward: t} = tables` and
+  `tables.forward` both read `t` from the parameter `tables` under
+  `:forward`, and `state.tables.forward` reads it under `:tables`, then
+  `:forward`. Copies are followed, and so is the compiler's slow path for
+  `map.key`, which agrees with the fast path at their join.
+
+  Returns `[{source, root, path}]`, or `[]`:
+
+  - `{"literal", inspected, ""}` — an atom, binary or integer;
+  - `{"param", "N", path}` — read from the function's parameter N;
+  - `{"local", instr_id, path}` — given `func_id`, read from the value
+    the instruction `instr_id` made: a call's result (`:ets.new/2`'s
+    reference), a tuple's element.
+
+  `path` is the keys, each spelled as `map_field_of/3` spells it, joined
+  by `"."` (`":tables.:forward"`), and `""` for the root itself. Anything
+  else — a join whose arms disagree, a key that is not a literal, a local
+  root without `func_id` — has no answer.
+
+  Two operands with the same answer in one function hold the same value.
+  Two read from one root under different keys are read from different
+  fields, which is how a function tells apart two tables it was handed in
+  one map, as `Argus.Extractors.ETS` does for `ets_table_path`. A join
+  keeps an answer only when its arms agree, as every walk here does; a
+  table named `cfg.table || @default` has two answers, and would need
+  the walk to keep each arm's instead, which is why the answer is a list.
+  """
+  @spec access_paths([term()], non_neg_integer(), register(), String.t() | nil) ::
+          [access_path()]
+  def access_paths(instrs, idx, register, func_id \\ nil) do
+    case walk(fn -> path(instrs, idx, Instr.register(register), [], func_id) end) do
+      :dynamic -> []
+      answer -> [answer]
+    end
+  end
+
+  defp path(instrs, idx, reg, keys, func_id) do
+    step({:path, idx, reg, keys}, :dynamic, fn ->
+      across(instrs, idx, reg, :dynamic, fn
+        {:param, k} -> {"param", to_string(k), Enum.join(keys, ".")}
+        at -> path_from(instrs, at, Reaching.at(instrs, at), reg, keys, func_id)
+      end)
+    end)
+  end
+
+  defp path_from(instrs, at, instr, reg, keys, func_id) do
+    case {Instr.copy_source(instr, reg), instr} do
+      {{kind, _} = source, _instr} when kind in [:x, :y] ->
+        path(instrs, at, source, keys, func_id)
+
+      {nil, {:get_map_elements, _fail, src, {:list, pairs}}} ->
+        case find_map_key(pairs, reg) do
+          {:ok, {:atom, key}} ->
+            path(instrs, at, Instr.register(src), [inspect(key) | keys], func_id)
+
+          {:ok, {:literal, key}} ->
+            path(instrs, at, Instr.register(src), [Terms.spell(key) | keys], func_id)
+
+          _ ->
+            :dynamic
+        end
+
+      {nil, {:get_tuple_element, src, 1, _dst}} ->
+        case slow_path_map(instrs, at, Instr.register(src)) do
+          {:ok, map_at, key} -> path(instrs, map_at, {:x, 0}, [key | keys], func_id)
+          :none -> local_root(at, keys, func_id)
+        end
+
+      {nil, _instr} ->
+        local_root(at, keys, func_id)
+
+      {literal, _instr} when keys == [] ->
+        literal_root(literal)
+
+      _literal_with_keys ->
+        :dynamic
+    end
+  end
+
+  defp literal_root({:atom, atom}), do: {"literal", inspect(atom), ""}
+  defp literal_root({:integer, n}), do: {"literal", inspect(n), ""}
+
+  defp literal_root({:literal, value}) when is_binary(value),
+    do: {"literal", Terms.spell(value), ""}
+
+  defp literal_root(_other), do: :dynamic
+
+  defp local_root(_at, _keys, nil), do: :dynamic
+
+  defp local_root(at, keys, func_id),
+    do: {"local", InstrId.mint(func_id, at), Enum.join(keys, ".")}
+
+  # The `elixir_erl_pass:no_parens_remote/2` call whose result `reg`
+  # holds at `idx` — the slow path of `map.key` — with its key, the map
+  # being its `x0` at the call's index.
+  defp slow_path_map(instrs, idx, reg) do
+    step({:slow_path_map, idx, reg}, :none, fn ->
+      across(instrs, idx, reg, :none, fn
+        {:param, _k} ->
+          :none
+
+        at ->
+          case Reaching.at(instrs, at) do
+            {:call_ext, 2, {:extfunc, :elixir_erl_pass, :no_parens_remote, 2}} ->
+              case value(instrs, at, {:x, 1}) do
+                {:ok, key} when is_atom(key) and key != :dynamic -> {:ok, at, inspect(key)}
+                _ -> :none
+              end
+
+            instr ->
+              case Instr.copy_source(instr, reg) do
+                {kind, _} = source when kind in [:x, :y] -> slow_path_map(instrs, at, source)
+                _ -> :none
+              end
           end
       end)
     end)
