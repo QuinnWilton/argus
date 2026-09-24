@@ -27,12 +27,6 @@ content — its entries' layout, their retention (`Argus.Cache.stale/2`,
 touched within the hour are spared) and `ARGUS_NO_CACHE`, which turns
 every store off.
 
-**Deprecated.** `Argus.Souffle.Cache.kept?/3` (always false: a solve
-is keyed on what it reads, which a cache directory does not name),
-`Argus.Souffle.Cache.entry/3` (nil; `entry/4` takes the facts) and
-`Argus.Analysis.Extraction.solve_cache/2` (the directory itself is the
-`solve_cache:`; nothing is folded in for a stage).
-
 **Added.** `Argus.Cache.Facts`: facts extracted through a store, each
 producer's rows kept as a shard keyed by the beams, the code that
 producer runs (`Argus.Cache.Code`: its import-table closure and the
@@ -74,10 +68,6 @@ reads those any more. The specs extractor's shard records what it read
 of argus's own application: in `MIX_ENV=test` that holds the fixtures'
 stubs of `Oban.Worker`, `Phoenix.LiveView` and the like, which a
 corpus checkout's calls resolve to — the engine digest left them out.
-
-**Deprecated.** `Argus.Corpus.engine_digest/0` and `engine_modules/0`:
-nothing is keyed on the engine as a whole; a producer's code is
-`Argus.Cache.Code.closure/1`.
 
 **Changed.** `Argus.Pipeline.run/3` writes a relation's rows grouped
 by producer — the base's first, then each extractor's in the order
@@ -2774,12 +2764,10 @@ directory per `<repo>-<sha7>`; relaxing the Elixir requirement, building
 and finding beams happen in the project, and an umbrella app's beams are
 found in the umbrella's `_build`.
 
-**Changed.** The closed-issue corpus caches the facts of each checkout beside it
-(`.argus-facts/<digest>/facts`), keyed by the beams, the code and
-Datalog that extraction reaches (`Argus.Corpus.engine_modules/0`: the
-pipeline, the extractors and what they call through beam_spy and ctf,
-the analyses' extractor declarations, stage 0's includes — not a
-finding's prose or a rule), the runtime and the solver; `Argus.Corpus.analyze/2`
+**Changed.** The closed-issue corpus keeps the facts of each checkout in
+a store beside it (`.argus-facts`; see "A run redoes only what an edit
+invalidates" for how it is keyed), so a warm run extracts nothing and
+an edit re-extracts only what it reaches; `Argus.Corpus.analyze/2`
 takes the pair and side and solves over the cache, and `analyze/1`, which
 extracted a list of beams afresh, is removed (`Argus.run_analyses/2` does
 that). Extraction was over
@@ -2801,11 +2789,11 @@ debug info and line table, and the two fields derived from the bytes
 build root still keys it.
 
 **Fixed.** The corpus facts cache missed in every worktree but the one
-that filled it: `Argus.Corpus.engine_digest/0` hashed the engine's beams
-byte for byte, and a beam carries the absolute path it was compiled
-in. It goes through `Argus.BeamDigest` now, so every worktree of one
-commit shares the entries; a comment or `@doc` edit that moves no line
-of an engine module no longer re-extracts either. A second worktree at
+that filled it: its key hashed the engine's beams byte for byte, and a
+beam carries the absolute path it was compiled in. Code is keyed
+through `Argus.BeamDigest` now (`Argus.Cache.Code`), so every worktree
+of one commit shares the entries; a comment or `@doc` edit that moves
+no line of the code a producer runs no longer re-extracts either. A second worktree at
 the main checkout's commit tallies warm on its first run (184 s cold
 before).
 

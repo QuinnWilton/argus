@@ -324,17 +324,6 @@ defmodule Argus.Analysis.Extraction do
   end
 
   @doc """
-  The `:solve_cache` an analysis's solve is kept under, given the
-  directory a caller keeps its solves in: that directory. A kept solve
-  is keyed on the content of the files it reads (`Argus.Souffle.Cache`),
-  the points-to stage's outputs among them, so an analysis needs
-  nothing folded in for what was derived into its facts.
-  """
-  @deprecated "Pass the directory itself as :solve_cache"
-  @spec solve_cache(Path.t(), Analysis.analysis()) :: Path.t()
-  def solve_cache(dir, _analysis), do: dir
-
-  @doc """
   Derives the points-to stage into `facts_dir` when one of `analyses`
   reads it and it is not already there.
 

@@ -74,15 +74,6 @@ defmodule Argus.Souffle.Cache do
     end
   end
 
-  @doc """
-  The entry a solve of `rules_path` would use under the options'
-  `:solve_cache`, without the facts it reads: nil, since a kept solve
-  is keyed on their content.
-  """
-  @deprecated "A kept solve is keyed on the files it reads; use entry/4"
-  @spec entry(Path.t(), String.t(), keyword()) :: nil
-  def entry(_rules_path, _bin, _opts), do: nil
-
   defp cache_option(opts) do
     case Keyword.get(opts, :solve_cache) do
       nil ->
@@ -117,15 +108,6 @@ defmodule Argus.Souffle.Cache do
     name = program_name(rules_path)
     Path.join(dir, if(group, do: "#{name}-#{group}-#{key}", else: "#{name}-#{key}"))
   end
-
-  @doc """
-  Whether a solve of `rules_path` is kept in `cache`: always false now.
-  A solve is keyed on the content of the files it reads, which a cache
-  directory alone does not name.
-  """
-  @deprecated "A kept solve is keyed on the files it reads; solve with Argus.Souffle.run/3"
-  @spec kept?(t() | {Path.t(), [binary()]}, Path.t(), String.t()) :: false
-  def kept?(_cache, _rules_path, _bin), do: false
 
   @doc """
   Reads back a kept solve: `{:ok, entry}` (touched, so a pruner sees it

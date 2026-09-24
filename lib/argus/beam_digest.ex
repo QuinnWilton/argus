@@ -23,7 +23,8 @@ defmodule Argus.BeamDigest do
       dependency's specs from its debug info.
 
   `Line` stays: an extraction that crashes records where
-  (`Argus.Pipeline`), so an engine module's line table can reach a fact.
+  (`Argus.Pipeline`), so the line table of the code a producer runs
+  (`Argus.Cache.Code`) can reach a fact.
   A comment edit that moves no line leaves the digest alone; one that
   moves a line does not.
 

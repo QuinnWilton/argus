@@ -67,8 +67,6 @@ defmodule Argus.Corpus do
   """
   @type checkout :: %{name: String.t(), dir: String.t(), project: String.t(), sha: String.t()}
 
-  alias Argus.Souffle.Cache
-
   # Each checkout's store, beside it.
   @facts_cache ".argus-facts"
 
@@ -221,39 +219,6 @@ defmodule Argus.Corpus do
     |> Enum.map(fn {_index, co, result} -> {co, result} end)
   end
 
-  @doc """
-  A digest of everything on argus's side that decides what facts a beam
-  yields: the compiled code of `engine_modules/0` (`Argus.BeamDigest`,
-  so a build in another worktree of the same code has the same digest
-  and reuses the entries), what each analysis
-  declares it extracts with, the Datalog stage 0 derives the call graph
-  with, the OTP and Elixir the extraction runs on, the applications on
-  the code path whose specs `Argus.Extractors.Specs` reads
-  (`Argus.Specs.environment_digest/1`: their versions, and the beams of
-  every dependency outside OTP and Elixir except argus's own), and the
-  solver's version.
-  Computed once per VM.
-
-  Narrower than the whole of argus on purpose: a finding's prose, a
-  rule, the corpus harness itself change without moving a fact, and a
-  digest over all of them would re-extract every checkout on each edit.
-  """
-  @deprecated "A checkout's facts are shards keyed per producer (Argus.Cache.Code)"
-  @spec engine_digest() :: String.t()
-  def engine_digest do
-    key = {__MODULE__, :engine_digest}
-
-    case :persistent_term.get(key, nil) do
-      nil ->
-        digest = compute_engine_digest()
-        :persistent_term.put(key, digest)
-        digest
-
-      digest ->
-        digest
-    end
-  end
-
   @doc "The `{analysis, title}` pairs among findings."
   @spec titles(map()) :: MapSet.t({atom(), String.t()})
   def titles(%{findings: findings}) do
@@ -400,115 +365,6 @@ defmodule Argus.Corpus do
       [_, program] -> {:installed, program}
       [_, _program, _staging] -> :staging
       nil -> nil
-    end
-  end
-
-  @doc """
-  The modules whose code the facts depend on: every module a remote
-  call reaches from the extraction's entry points — `Argus.Analysis`,
-  `Argus.Pipeline`, every `Argus.Extractors` module and every extractor
-  an analysis declares — through this project and its dependencies
-  (beam_spy's disassembly, ctf's literals), stopping at OTP and Elixir,
-  whose versions the digest carries instead. Dynamic dispatch is not a
-  remote call, which is why the extractors are roots and not merely
-  reached; the analyses that name them are not in the set, only their
-  declarations are, as data.
-  """
-  @deprecated "A producer's code is Argus.Cache.Code.closure/1"
-  @spec engine_modules() :: [module()]
-  def engine_modules do
-    extractors_declared =
-      Enum.flat_map(Argus.Analysis.builtin_analysis_modules(), & &1.extractors())
-
-    extractors_shipped =
-      for mod <- Application.spec(:panoptes, :modules),
-          String.starts_with?(Atom.to_string(mod), "Elixir.Argus.Extractors."),
-          do: mod
-
-    roots = [Argus.Analysis, Argus.Pipeline] ++ extractors_declared ++ extractors_shipped
-
-    roots
-    |> reachable(%{})
-    |> Enum.sort()
-  end
-
-  defp reachable([], seen), do: Map.keys(seen)
-
-  defp reachable([mod | rest], seen) do
-    if Map.has_key?(seen, mod) or not digested?(mod) do
-      reachable(rest, seen)
-    else
-      {:ok, {^mod, [imports: imports]}} =
-        :beam_lib.chunks(String.to_charlist(beam_of(mod)), [:imports])
-
-      called = for {callee, _fun, _arity} <- imports, uniq: true, do: callee
-      reachable(called ++ rest, Map.put(seen, mod, true))
-    end
-  end
-
-  # A module of this project or a dependency; OTP's and Elixir's own are
-  # covered by their versions, and a consolidated protocol is the build's
-  # dispatch table, not code that shapes a fact.
-  defp digested?(mod) do
-    case :code.which(mod) do
-      path when is_list(path) ->
-        path = List.to_string(path)
-
-        not String.starts_with?(path, List.to_string(:code.root_dir())) and
-          not String.starts_with?(path, elixir_root()) and
-          "consolidated" not in Path.split(path)
-
-      _not_a_file ->
-        false
-    end
-  end
-
-  defp elixir_root, do: :elixir |> :code.lib_dir() |> List.to_string() |> Path.dirname()
-
-  defp beam_of(mod), do: mod |> :code.which() |> List.to_string()
-
-  defp compute_engine_digest do
-    declarations =
-      Argus.Analysis.builtin_analysis_modules()
-      |> Enum.map(&{&1.name(), &1.extractors()})
-      |> Enum.sort()
-
-    {:ok, all} = Argus.Analysis.set(:all)
-
-    engine_modules()
-    |> Enum.reduce(:crypto.hash_init(:sha256), fn mod, hash ->
-      {:ok, code} = Argus.BeamDigest.digest(beam_of(mod))
-
-      hash
-      |> :crypto.hash_update(Atom.to_string(mod))
-      |> :crypto.hash_update(code)
-    end)
-    |> :crypto.hash_update(:erlang.term_to_binary({declarations, Enum.sort(all)}))
-    |> then(fn hash ->
-      Argus.Analysis.stage0_rules_path()
-      |> Cache.program_files()
-      |> Enum.reduce(hash, fn {_spelled, file}, hash ->
-        hash
-        |> :crypto.hash_update(Path.basename(file))
-        |> :crypto.hash_update(File.read!(file))
-      end)
-    end)
-    |> :crypto.hash_update(System.version())
-    |> :crypto.hash_update(System.otp_release())
-    |> :crypto.hash_update(:erlang.system_info(:version) |> List.to_string())
-    |> :crypto.hash_update(souffle_version())
-    # Argus's own beams are left out: `engine_modules/0` above already
-    # names the ones extraction reaches, and the rest (prose, rules, this
-    # harness, the test fixtures) must not move the key.
-    |> :crypto.hash_update(Argus.Specs.environment_digest(exclude: [:panoptes]))
-    |> :crypto.hash_final()
-    |> Base.encode16(case: :lower)
-  end
-
-  defp souffle_version do
-    case Argus.Souffle.executable() do
-      nil -> "no souffle"
-      bin -> Cache.version(bin)
     end
   end
 
