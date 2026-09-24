@@ -35,6 +35,10 @@ those frameworks need.
   rule library; `priv/dl/analyses/` — one Souffle program per analysis.
 - `lib/argus/cfg.ex`, `dataflow.ex`, `purity/` — control flow, def-use and
   effect models, also consumed by downstream tools (gloss, planchette).
+- `lib/argus/cache.ex` and `cache/` — the stores (see "Caches"): entry
+  layout and retention, each producer's code key (`Code`), and the
+  sharded facts and the solves over them (`Facts`);
+  `lib/argus/pipeline/shards.ex` joins producers' directories.
 - There is no CLI here: scry's Mix compiler is how the analyses are run
   over a project; this package is the engine and the in-VM API
   (`Argus.run_analyses/2`, `Argus.Findings.run/2`, `Argus.Pipeline.extract/2`).
@@ -85,31 +89,22 @@ those frameworks need.
   rule's finding is present at the commit before the fix and absent at
   the fix. `Argus.CorpusTest` runs it as part of `mix test`, cloning and
   compiling each tree once into `ARGUS_CORPUS_DIR` (default
-  `~/.cache/argus/corpus`) and caching each tree's facts beside it,
-  keyed by the beams, the code and Datalog extraction reaches
-  (`Argus.Corpus.engine_modules/0` — not prose or rules, hashed by
-  `Argus.BeamDigest`, which leaves out where argus was built), the
-  runtime and the solver, so a warm run extracts nothing — in any
-  worktree of the same commit. Each entry keeps its solves too, under `solves/`
-  (`Argus.Souffle.Cache`), keyed by the program with its transitive
-  includes, the solver, and for a reader of the points-to stage that
-  stage's program: a warm run with no rule edited solves nothing and
-  reads the entry's facts in place, and a rule edit re-solves only the
-  programs it reaches. `mix test --exclude corpus` skips
-  it, `ARGUS_CORPUS_ONLY=redix#334` narrows it, `ARGUS_CORPUS_JOBS` sets
-  how many checkouts are analyzed at once (default 4), `mix argus.corpus
+  `~/.cache/argus/corpus`) and analyzing it through a store beside it
+  (`<checkout>/.argus-facts`, see "Caches" below) — in any worktree of
+  the same commit. `mix test --exclude corpus` skips it,
+  `ARGUS_CORPUS_ONLY=redix#334` narrows it, `ARGUS_CORPUS_JOBS` sets how
+  many checkouts are analyzed at once (default 4), `mix argus.corpus
   fetch` warms the cache and `mix argus.corpus tally` counts every title
   across the trees — the noise check after a rule changes. The tally
-  runs in `MIX_ENV=test` and shares the gate's entries; each checkout
-  keeps its three most recent entries beyond any used in the last hour,
-  and each entry the three most recent solves of each program, so a
-  before-change tally stays warm for the after-change one, and
-  `mix argus.corpus prune [--keep N]` reclaims the rest. A new rule
-  comes with a pair.
-- Tests solve through `Argus.Test.Memo` (`analyze/3`, `run_analyses/2`):
-  the same modules and analysis are solved once per run and every later
-  caller reads the answer, an immutable term; a call with options always
-  solves.
+  runs in `MIX_ENV=test` and shares the gate's stores; `mix
+  argus.corpus prune [--keep N]` reclaims what the retention policy
+  lets go. A new rule comes with a pair.
+- Tests solve through `Argus.Test.Memo` (`analyze/3`, `run_analyses/2`,
+  `run_rules/2` over hand-built facts, `compile_beams/1` for modules a
+  test compiles): the same modules and analysis are solved once per run
+  and every later caller reads the answer, an immutable term; across
+  runs they go through the suite's store. A call with options of its
+  own always solves, without the store.
 - A test module whose tests each solve a small fixture set of one
   analysis solves them all once in `setup_all` (`Argus.Test.Batch`) and
   each test reads its set's rows. The sets in a batch are disjoint; a
@@ -127,6 +122,69 @@ those frameworks need.
   vocabulary belongs in `priv/dl/clientlib/`, not in an analysis file.
 - Over-approximate in the direction that stays quiet: a fact that cannot
   be sure says `"dynamic"`, and rules ask what is NOT handled.
+
+## Caches
+
+A store (`Argus.Cache`) keeps extraction and solve results on disk,
+keyed by content, so a run redoes only what an edit invalidates. The
+corpus keeps one per checkout, the test suite one at
+`_build/test/argus-cache` (`Argus.Test.Memo.store/0`), and any caller
+names one with `cache:` on `Argus.run_analyses/2`, `Argus.analyze/3` or
+`extract_facts/3`.
+
+- **Shards** (`Argus.Cache.Facts`): each producer's rows — `:base` (the
+  emitter, def_use, conditional_call) or one extractor — kept apart,
+  keyed by the beams (path and content), the code that producer runs
+  (`Argus.Cache.Code`: the import-table closure from the extractor and
+  from `Argus.Pipeline`, hashed by `Argus.BeamDigest`), the runtime and
+  the row-shaping options. The specs extractor's key adds the
+  environment (`Argus.Specs.environment_digest/1`, argus left out), and
+  its shard records what it read of argus's own beams (the fixtures and
+  their library stubs) or found absent, checked on every hit. A missing
+  shard is extracted alone (`Argus.Pipeline.run_shards/3`); the rows of
+  a producer do not depend on which others run (`ShardsTest`). A run's
+  facts materialize, only when a solve misses, as hard links
+  byte-identical to `Argus.Pipeline.run/3`'s directory.
+- **Solves** (`Argus.Souffle.Cache`): keyed by the program with its
+  includes, the solver's version and the digests of exactly the files
+  the program reads (`Argus.Souffle.input_files/2`). Stage outputs join
+  the facts by content, so a solve downstream of a stage whose output
+  came out the same is read back — early cutoff.
+- **What moves a key**: an extractor edit moves that extractor's shard;
+  an edit to anything the base reaches (`Argus.Instr`, the extractor
+  helpers, the emitter, `Writer`, `Tsv`) moves every shard, and then the
+  solves run again only if the facts came out different; a rule edit
+  moves the programs that include it. The solver, the stores, the
+  analyses' prose and the corpus harness move nothing.
+  `Argus.Cache.CodeClosureTest` runs each producer with call counting
+  and fails if it executes a module outside its key.
+- **Retention**: within each producer's shards and each program's
+  solves (per set of beams), the three most recent entries and anything
+  touched within the hour are spared; the suite's store also drops a
+  set untouched for a week. Entries are read-only; a run links them into
+  a scratch directory of its own.
+- **`ARGUS_NO_CACHE=1`** turns every store off: each run extracts and
+  solves afresh, and the store tests (`@tag :cache`) are skipped. Use it
+  after changing how a key is made or what a producer can read, when an
+  answer looks stale, to measure a cold run, and once before a release.
+
+### The dev loop
+
+- `mix test --exclude corpus` after an edit re-extracts only the
+  producers the edit reaches over each fixture set and re-solves only
+  what reads what moved; warm, it solves only the tests of the solver
+  and the pipeline themselves. `mix test` adds the corpus, which after an
+  extractor edit re-extracts that extractor's shard over each checkout.
+- Iterating on a rule: `mix test test/analyses/<x>_test.exs` solves only
+  that analysis's fixture sets again; then `mix test --only corpus` (or
+  `ARGUS_CORPUS_ONLY=…`) and `mix argus.corpus tally --title …`.
+- Iterating on an extractor: its extractor tests call the pipeline
+  directly; the analysis tests reading its relations re-extract its
+  shard alone, and solve again only where its rows changed.
+- A refactor of shared extraction code re-extracts everything once;
+  when the facts come out byte-identical nothing is solved again.
+- Slow properties check a sample; `ARGUS_PROPERTIES=full` runs their
+  full count (before a release, or after changing what they cover).
 
 ## Commit message style
 
@@ -146,4 +204,6 @@ mix argus.gen.dl         # Regenerate priv/dl/{base,layer2}.dl after a schema ch
 mix argus.pins           # Regenerate test/argus/analysis_inputs.exs after a rule change
 mix argus.corpus fetch   # Warm the closed-issue corpus cache; `tally` counts titles across it
 mix test --exclude corpus  # The suite without the corpus
+ARGUS_NO_CACHE=1 mix test  # Every store off: extract and solve afresh
+ARGUS_PROPERTIES=full mix test  # Slow properties at their full count
 ```
