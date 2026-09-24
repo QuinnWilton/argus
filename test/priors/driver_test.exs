@@ -161,6 +161,93 @@ defmodule Argus.Priors.DriverTest do
     assert length(entries) == 2
   end
 
+  # Holds each request until `:gate` are in flight at once (or a second
+  # has passed), recording the most it saw: a pool that asked one at a
+  # time would see 1 and wait out every gate.
+  defmodule GateOracle do
+    @behaviour Argus.Priors.Oracle
+
+    @impl true
+    def ask(request, opts) do
+      counter = Keyword.fetch!(opts, :counter)
+      n = :atomics.add_get(counter, 1, 1)
+      :atomics.put(counter, 2, max(n, :atomics.get(counter, 2)))
+      wait_for(counter, Keyword.fetch!(opts, :gate), System.monotonic_time(:millisecond) + 1_000)
+      result = TableOracle.ask(request, opts)
+      :atomics.sub(counter, 1, 1)
+      result
+    end
+
+    defp wait_for(counter, gate, deadline) do
+      cond do
+        :atomics.get(counter, 2) >= gate ->
+          :ok
+
+        System.monotonic_time(:millisecond) > deadline ->
+          :timeout
+
+        true ->
+          Process.sleep(5)
+          wait_for(counter, gate, deadline)
+      end
+    end
+  end
+
+  # The same question under another name, so two questions share a run.
+  defmodule OtherQuestion do
+    @behaviour Argus.Priors.Question
+
+    @impl true
+    def relation, do: :prior_other
+    @impl true
+    def prompt_version, do: 1
+    @impl true
+    defdelegate relations_read, to: Question
+    @impl true
+    defdelegate subjects(facts), to: Question
+    @impl true
+    defdelegate state(subjects), to: Question
+    @impl true
+    defdelegate questions(subjects), to: Question
+    @impl true
+    defdelegate rows(subjects, answers), to: Question
+  end
+
+  test "every question's requests are in flight together, up to the concurrency",
+       %{tmp_dir: dir} do
+    counter = :atomics.new(2, [])
+
+    # Batches of one: 4 requests per question, 8 in all, 6 at a time.
+    {rows, stats} =
+      Driver.derive_all(
+        [Question, OtherQuestion],
+        @facts,
+        opts(dir,
+          oracle: GateOracle,
+          oracle_opts: [notify: self(), counter: counter, gate: 6],
+          batch_size: 1,
+          concurrency: 6
+        )
+      )
+
+    # More than one question's four requests were in flight at once.
+    assert :atomics.get(counter, 2) == 6
+    assert length(rows[Question]) == 4 and rows[Question] == rows[OtherQuestion]
+    assert stats[Question].asked == 4 and stats[OtherQuestion].asked == 4
+  end
+
+  test "derive_all gives each question derive/3's rows and stats", %{tmp_dir: dir} do
+    {:ok, rows, stats} = Driver.derive(Question, @facts, opts(dir, cache_dir: :none))
+
+    assert {%{Question => ^rows, OtherQuestion => ^rows},
+            %{Question => ^stats, OtherQuestion => ^stats}} =
+             Driver.derive_all(
+               [Question, OtherQuestion],
+               @facts,
+               opts(dir, cache_dir: :none)
+             )
+  end
+
   defp flush do
     receive do
       {:asked, _} -> flush()

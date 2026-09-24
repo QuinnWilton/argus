@@ -20,6 +20,19 @@ keep-alive connection rather than open another, so requests in flight
 shared however many connections the first burst had opened: at 32 in
 flight over Plausible, 11, and each request took three times as long.
 
+**Changed.** `Argus.Priors.rows/2` and `derive/2` ask every question's
+requests from one pool (`Argus.Priors.Driver.derive_all/3`) instead of
+one question after another, each with its own rounds and tail; the
+questions' subjects are computed side by side and a question's requests
+go out as soon as its subjects are ready. The default `:concurrency` is
+16, up from 8: over Plausible's 115 requests 32 in flight nearly
+doubled each request's time with nothing gained, and no rate-limit
+response came back at any setting. Requests and cache keys are
+unchanged, and replaying the same answers gives the same rows. Over
+Plausible the requests now take about 1.5 s where they took 3; what
+remains of the priors phase is reading the facts and computing the
+subjects.
+
 ### Process points-to, derived once
 
 **Changed.** Process points-to (`clientlib/processes.dl`) is a stage of

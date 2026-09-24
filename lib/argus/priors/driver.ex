@@ -30,7 +30,7 @@ defmodule Argus.Priors.Driver do
         }
 
   @default_batch 10
-  @default_concurrency 8
+  @default_concurrency 16
 
   @doc """
   Rows of `question.relation()` for `facts`.
@@ -48,10 +48,72 @@ defmodule Argus.Priors.Driver do
   """
   @spec derive(module(), Argus.Facts.t(), keyword()) :: {:ok, [[String.t()]], stats()}
   def derive(question, facts, opts) do
+    {rows, stats} = derive_all([question], facts, opts)
+    {:ok, Map.fetch!(rows, question), Map.fetch!(stats, question)}
+  end
+
+  @doc """
+  `derive/3` for several questions at once, as
+  `{%{question => rows}, %{question => stats}}`.
+
+  Every question's requests share one pool of `:concurrency`: a run is
+  as long as all its requests divided by the pool, not the sum of each
+  question's rounds and tail. The questions' subjects are computed side
+  by side, and a question's requests are asked as soon as its own
+  subjects are ready, while a slower question is still being planned.
+  Answers arrive in any order; rows are sorted, so that order never
+  shows. Options are `derive/3`'s.
+  """
+  @spec derive_all([module()], Argus.Facts.t(), keyword()) ::
+          {%{module() => [[String.t()]]}, %{module() => stats()}}
+  def derive_all(questions, facts, opts) do
     mode = Keyword.fetch!(opts, :mode)
     model = Keyword.get(opts, :model, Argus.Priors.Jev.model())
     batch_size = Keyword.get(opts, :batch_size, @default_batch)
 
+    # A plan is announced before its requests, so a question with none
+    # still gets rows and stats.
+    questions = Enum.uniq(questions)
+
+    {plans, results} =
+      questions
+      |> Task.async_stream(&plan(&1, Map.take(facts, &1.relations_read()), model, batch_size),
+        max_concurrency: max(length(questions), 1),
+        timeout: :infinity,
+        ordered: false
+      )
+      |> Stream.flat_map(fn {:ok, plan} ->
+        [{:planned, plan} | Enum.map(plan.requests, &{:ask, plan, &1})]
+      end)
+      |> Task.async_stream(
+        fn
+          {:planned, plan} ->
+            {:planned, plan}
+
+          {:ask, plan, req} ->
+            {:answered, plan.question, answer(req, plan.generation, mode, opts)}
+        end,
+        max_concurrency: Keyword.get(opts, :concurrency, @default_concurrency),
+        timeout: :infinity,
+        ordered: false
+      )
+      |> Enum.reduce({%{}, %{}}, fn
+        {:ok, {:planned, plan}}, {plans, results} ->
+          {Map.put(plans, plan.question, plan), results}
+
+        {:ok, {:answered, question, result}}, {plans, results} ->
+          {plans, Map.update(results, question, [result], &[result | &1])}
+      end)
+
+    Enum.reduce(questions, {%{}, %{}}, fn question, {rows, stats} ->
+      mine = Map.get(results, question, [])
+
+      {Map.put(rows, question, rows(question, mine)),
+       Map.put(stats, question, stats(plans[question].subjects, mine))}
+    end)
+  end
+
+  defp plan(question, facts, model, batch_size) do
     generation = %{
       model: model,
       question: inspect(question),
@@ -75,25 +137,17 @@ defmodule Argus.Priors.Driver do
         %{subjects: chunk, request: request, key: Cache.key(generation, request)}
       end)
 
-    results =
-      requests
-      |> Task.async_stream(&answer(&1, generation, mode, opts),
-        max_concurrency: Keyword.get(opts, :concurrency, @default_concurrency),
-        timeout: :infinity,
-        ordered: true
-      )
-      |> Enum.map(fn {:ok, result} -> result end)
+    %{question: question, generation: generation, subjects: subjects, requests: requests}
+  end
 
-    rows =
-      results
-      |> Enum.flat_map(fn
-        {:ok, req, answers, _} -> question.rows(req.subjects, answers)
-        {:error, _, _} -> []
-      end)
-      |> Enum.uniq()
-      |> Enum.sort()
-
-    {:ok, rows, stats(subjects, results)}
+  defp rows(question, results) do
+    results
+    |> Enum.flat_map(fn
+      {:ok, req, answers, _} -> question.rows(req.subjects, answers)
+      {:error, _, _} -> []
+    end)
+    |> Enum.uniq()
+    |> Enum.sort()
   end
 
   defp answer(req, generation, mode, opts) do

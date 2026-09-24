@@ -122,16 +122,11 @@ defmodule Argus.Priors do
   @spec rows(Argus.Facts.t(), keyword()) ::
           {%{atom() => [[String.t()]]}, %{module() => Driver.stats()}}
   def rows(facts, opts) do
-    mode = Keyword.fetch!(opts, :mode)
     questions = Keyword.get(opts, :questions, @questions)
+    {rows, stats} = Driver.derive_all(questions, facts, opts)
 
-    Enum.reduce(questions, {%{}, %{}}, fn question, {rows, stats} ->
-      {:ok, relation_rows, question_stats} =
-        Driver.derive(question, facts, Keyword.put(opts, :mode, mode))
-
-      {Map.put(rows, question.relation(), relation_rows),
-       Map.put(stats, question, question_stats)}
-    end)
+    {Map.new(rows, fn {question, relation_rows} -> {question.relation(), relation_rows} end),
+     stats}
   end
 
   @doc """
