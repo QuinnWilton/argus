@@ -730,12 +730,12 @@ runs.seed(g) :- reads_in_the_gap(_, _, _, _, g).
 
 // The reader can run while the writer is between the two writes: in
 // more than one process, or one the writer's process does not reach.
-.decl can_run_in_between(func: symbol, reader: symbol)
+.decl can_read_in_the_gap(func: symbol, reader: symbol)
 
-can_run_in_between(f, g) :- reads_in_the_gap(f, _, _, _, g), !runs.single_process(f).
-can_run_in_between(f, g) :- reads_in_the_gap(f, _, _, _, g), !runs.single_process(g).
+can_read_in_the_gap(f, g) :- reads_in_the_gap(f, _, _, _, g), !runs.single_process(f).
+can_read_in_the_gap(f, g) :- reads_in_the_gap(f, _, _, _, g), !runs.single_process(g).
 
-can_run_in_between(f, g) :-
+can_read_in_the_gap(f, g) :-
   reads_in_the_gap(f, _, _, _, g),
   runs.entry_reaches(m, g),
   !runs.entry_reaches(m, f).
@@ -748,7 +748,7 @@ can_run_in_between(f, g) :-
 
 ets_publish_order(mod, writer, pub_kind, pub_table, row_kind, row_table, publish, complete, reader) :-
   reads_in_the_gap(writer, publish, complete, reader, reader_func),
-  can_run_in_between(writer, reader_func),
+  can_read_in_the_gap(writer, reader_func),
   in_module(writer, mod),
   table_of(publish, pub_kind, pub_table),
   table_of(complete, row_kind, row_table),
@@ -789,48 +789,94 @@ missing.act(act, func, table_kind, table, key_kind, key) :-
   raises_if_missing(act, func),
   table_and_key(act, table_kind, table, key_kind, key).
 
-.decl removes_rows(id: symbol, func: symbol, tk: symbol, t: symbol)
+// The rule is written in the words below, one per line, each over a
+// whole table: a table is its kind and identity together (ets_table's
+// two columns), so no line has to spell the kind.
+.type EtsTable = [kind: symbol, ident: symbol]
 
-removes_rows(d, h, tk, t) :-
-  ets_op(d, h, _, op, _),
+// A read that decides whether a row is there.
+.decl checks_row_exists(check: symbol) inline
+
+checks_row_exists(check) :- deciding_read(check, _).
+
+// An operation that raises when the row is missing, and nothing rescues
+// the raise: not the act's own function, nor `func`, where the check's
+// result meets it.
+.decl fails_if_row_missing(act: symbol, func: symbol)
+
+fails_if_row_missing(act, func) :-
+  missing.meets(func, _, act, _, _, _, _),
+  raises_if_missing(act, g),
+  !rescues_argument_error(func),
+  !rescues_argument_error(g).
+
+// In `func`, the check's result decides the act, on one key of `table`
+// (CheckThenAct's meets, followed across calls).
+.decl act_depends_on_check(func: symbol, check: symbol, act: symbol, table: EtsTable)
+
+act_depends_on_check(func, check, act, [tk, t]) :- missing.meets(func, check, act, tk, t, _, _).
+
+// The act's table is one another process can read.
+.decl shared_table(act: symbol, table: EtsTable) inline
+
+shared_table(act, [tk, t]) :- readable_elsewhere(act, tk, t).
+
+// An operation that deletes rows of the table: take, delete,
+// delete_object, select_delete, match_delete, or deleting them all.
+.decl removes_rows(remover: symbol, table: EtsTable)
+
+removes_rows(d, [tk, t]) :-
+  ets_op(d, _, _, op, _),
   (op = "take" ; op = "delete" ; op = "delete_object" ; op = "select_delete" ; op = "match_delete" ; op = "delete_all_objects"),
   ets_table(d, tk, t).
 
-.decl acts_on_found_row(func: symbol, check: symbol, act: symbol, g: symbol, tk: symbol, t: symbol)
+// The pairs the rule asks about, for the questions it asks of processes.
+.decl found_row_act(func: symbol, table: EtsTable)
 
-acts_on_found_row(f, c, a, g, tk, t) :-
-  missing.meets(f, c, a, tk, t, _, _),
-  raises_if_missing(a, g),
-  readable_elsewhere(a, tk, t),
-  !rescues_argument_error(f),
-  !rescues_argument_error(g).
+found_row_act(func, table) :-
+  act_depends_on_check(func, _, act, table),
+  fails_if_row_missing(act, func),
+  shared_table(act, table).
 
-runs.seed(f) :- acts_on_found_row(f, _, _, _, _, _).
-runs.seed(h) :- acts_on_found_row(_, _, _, _, tk, t), removes_rows(_, h, tk, t).
+.decl remover_in(remover: symbol, func: symbol)
 
-// The remover can run while the pair's function is between the check and
-// the act: the pair's function runs in more than one process, or the
-// remover runs in a process that does not run it.
-.decl can_remove_in_between(func: symbol, remover: symbol)
+remover_in(d, h) :- found_row_act(_, table), removes_rows(d, table), ets_op(d, h, _, _, _).
 
-can_remove_in_between(f, d) :-
-  acts_on_found_row(f, _, _, _, tk, t),
-  removes_rows(d, _, tk, t),
+runs.seed(f) :- found_row_act(f, _).
+runs.seed(h) :- remover_in(_, h).
+
+// The remover can run while `func` is between the check and the act:
+// `func` runs in more than one process, or the remover runs in a process
+// that does not run it.
+.decl can_run_in_between(remover: symbol, func: symbol)
+
+can_run_in_between(d, f) :-
+  found_row_act(f, table),
+  removes_rows(d, table),
   !runs.single_process(f).
 
-can_remove_in_between(f, d) :-
-  acts_on_found_row(f, _, _, _, tk, t),
-  removes_rows(d, h, tk, t),
+can_run_in_between(d, f) :-
+  found_row_act(f, table),
+  removes_rows(d, table),
+  remover_in(d, h),
   runs.entry_reaches(m, h),
   !runs.entry_reaches(m, f).
+
+.decl missing_row_race(func: symbol, table: EtsTable, check: symbol, act: symbol, remover: symbol)
+
+missing_row_race(func, table, check, act, remover) :-
+  checks_row_exists(check),
+  fails_if_row_missing(act, func),
+  act_depends_on_check(func, check, act, table),
+  shared_table(act, table),
+  removes_rows(remover, table),
+  can_run_in_between(remover, func).
 
 .decl ets_missing_row(mod: symbol, func: symbol, table_kind: symbol, table: symbol, check: symbol, act: symbol, remover: symbol)
 .output ets_missing_row
 
 ets_missing_row(mod, func, table_kind, table, check, act, remover) :-
-  acts_on_found_row(func, check, act, _, table_kind, table),
-  removes_rows(remover, _, table_kind, table),
-  can_remove_in_between(func, remover),
+  missing_row_race(func, [table_kind, table], check, act, remover),
   in_module(func, mod).
 
 // ── Dirty read, then dirty write ─────────────────────────────────
@@ -959,13 +1005,13 @@ mnesia_check_act(mod, func, table, key, read, write, op) :-
   reads_then_writes_record(func, read, write, table, key),
   another_process_writes_record(table, func),
   !harmless_delete(write, table),
-  mnesia_call(write, op),
+  dirty_op(write, op),
   in_module(func, mod).
 
 // Which dirty operation a Mnesia call is.
-.decl mnesia_call(site: symbol, op: symbol) inline
+.decl dirty_op(site: symbol, op: symbol) inline
 
-mnesia_call(site, op) :- mnesia_op(site, _, op, _, _, _, _, _).
+dirty_op(site, op) :- mnesia_op(site, _, op, _, _, _, _, _).
 
 .decl harmless_delete(write: symbol, table: symbol)
 
