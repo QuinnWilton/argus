@@ -100,6 +100,11 @@ defmodule Argus.Analyses.EtsCheckActTest do
       assert [{"deposit/2", ":accts", "0"}] = Enum.uniq(races([C.RecordTable]))
     end
 
+    test "a match on the key is a read that decides; a match with no key names none" do
+      skip_without_souffle()
+      assert [{"bump/1", ":matched_counts", "0"}] = Enum.uniq(races([C.MatchThenWrite]))
+    end
+
     test "different keys are not a race" do
       skip_without_souffle()
       assert races([C.DifferentKeys]) == []

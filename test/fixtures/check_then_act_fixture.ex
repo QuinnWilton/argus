@@ -697,6 +697,25 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  defmodule MatchThenWrite do
+    @moduledoc "A match on the key decides the write, as a lookup would."
+    def start, do: :ets.new(:matched_counts, [:named_table, :public])
+
+    def bump(k) do
+      case :ets.match_object(:matched_counts, {k, :_}) do
+        [{^k, n}] -> :ets.insert(:matched_counts, {k, n + 1})
+        [] -> :ets.insert(:matched_counts, {k, 1})
+      end
+    end
+
+    def owned_by(owner) do
+      case :ets.match_object(:matched_counts, {:_, owner}) do
+        [] -> :ets.insert(:matched_counts, {owner, 0})
+        _ -> true
+      end
+    end
+  end
+
   defmodule BroadwayCount do
     @moduledoc """
     A Broadway pipeline's processors run handle_message/3 many at a time:

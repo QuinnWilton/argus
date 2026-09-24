@@ -8,6 +8,20 @@ defmodule Argus.Extractors.ETSTest do
     data
   end
 
+  describe "match patterns" do
+    test "a pattern's key is its first element, unless that is a wildcard" do
+      facts = ETS.extract(disassemble(Argus.Test.Fixtures.CheckThenAct.MatchThenWrite))
+      ops = Map.new(facts[:ets_op], fn [id, func, _t, op, _k] -> {id, {func, op}} end)
+
+      keyed =
+        for [id, source, key] <- facts[:ets_key],
+            {func, "match_object"} <- [ops[id]],
+            do: {func |> String.split(":") |> List.last(), source, key}
+
+      assert keyed == [{"bump/1", "param", "0"}]
+    end
+  end
+
   describe "keypos" do
     test "a table keyed past the first element says which" do
       facts = ETS.extract(disassemble(Argus.Test.Fixtures.CheckThenAct.RecordTable))

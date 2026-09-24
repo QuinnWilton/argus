@@ -261,6 +261,12 @@ the insert of the updated record never agreed on a key, and the classic
 read-modify-write of a record table went unreported by
 `ets_check_act` and `ets_missing_row` alike.
 
+**Fixed.** A match on the key — `:ets.match_object(t, {k, :_})`, or
+`:ets.match/2` — decides as a lookup does: it is a check for
+`ets_check_act` and `ets_missing_row` (schema 82). A pattern whose key
+is a wildcard names no key, and a `select` match spec, whose head sits
+in a list, is left out, as a dynamic key is.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile
@@ -624,6 +630,11 @@ position the call's result does not carry (`Argus.Pipeline.Emit.
 FunRefs.handed_rows/2`). The call graph's edge into a closure or a fun
 reference has no call instruction; this names the call it runs inside,
 so a rule asking whether a `try` covers the edge asks it of that call.
+**Changed.** Schema 82, no shape change. `ets_key` has a row for
+`:ets.match/2` and `:ets.match_object/2`: the pattern's first element,
+the key it matches, unless that is `:_` or a pattern variable, which
+match every key.
+
 **Changed.** Schema 81, no shape change. `ets_option` has a `keypos`
 row, the key's element in an object from 1, for an `:ets.new/2` given
 `keypos: N`. `races` reads it to key an inserted record by its key

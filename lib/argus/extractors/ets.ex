@@ -17,7 +17,8 @@ defmodule Argus.Extractors.ETS do
     function's own parameter `pos`, so a caller's literal names the table
   - `ets_key(id, source, key)` — what identifies the key operand of an
     operation (`Argus.Extractor.Identity.key_identity/4`); for `insert`/`insert_new` the
-    key is the first element of the object tuple
+    key is the first element of the object tuple, and for `match`/`match_object`
+    the first element of the pattern, when it is not a wildcard
   - `ets_tid_arg(caller, callee, arg_pos, name)` — at some call in
     `caller`, or in the environment of a closure it builds, the argument is
     the table `:ets.new(name, ...)` returned in `caller`: an unnamed table
@@ -74,6 +75,7 @@ defmodule Argus.Extractors.ETS do
   # is inside the object they insert.
   @keyed_ops ~w(lookup lookup_element member delete update_element update_counter take)a
   @object_ops ~w(insert insert_new)a
+  @pattern_ops ~w(match match_object)a
 
   # The object elements past the key that `ets_value` names: a row
   # carries a handful of columns, and the value another table is keyed
@@ -361,6 +363,25 @@ defmodule Argus.Extractors.ETS do
   defp maybe_key(facts, id, ctx, func) when func in @object_ops do
     {source, key} = tuple_element_identity(ctx.instrs, ctx.idx, {:x, 1}, 0, ctx.origins)
     add_fact(facts, :ets_key, [id, source, key])
+  end
+
+  # A match pattern's first element is the key it matches, when it names
+  # one: `:ets.match_object(t, {k, :_})` reads k's row as a lookup does.
+  # A pattern variable (`:"$1"`) or `:_` there matches every key, and the
+  # read names none.
+  defp maybe_key(facts, id, ctx, func) when func in @pattern_ops do
+    case tuple_element_identity(ctx.instrs, ctx.idx, {:x, 1}, 0, ctx.origins) do
+      {"literal", ":" <> name} = identity ->
+        if String.starts_with?(name, ["_", "\"$", "$"]),
+          do: facts,
+          else: add_fact(facts, :ets_key, [id | Tuple.to_list(identity)])
+
+      {"dynamic", _} ->
+        facts
+
+      {source, key} ->
+        add_fact(facts, :ets_key, [id, source, key])
+    end
   end
 
   defp maybe_key(facts, _id, _ctx, _func), do: facts

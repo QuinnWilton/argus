@@ -209,6 +209,12 @@ deciding_read_op("lookup").
 deciding_read_op("lookup_element").
 deciding_read_op("member").
 
+// A match on the key decides as a lookup does. A select's match spec
+// nests its head in a list, and is left out: its key is not extracted,
+// as a dynamic key is not.
+deciding_read_op("match").
+deciding_read_op("match_object").
+
 .decl plain_write_op(op: symbol)
 
 plain_write_op("insert").
