@@ -58,6 +58,20 @@
     fix: "e67e61a04120cd07507cbf2c372a3f9dc7189bc0",
     finding: {:coupling, "Two restart authorities for the same child"}
   },
+  # jackalope 8b7415f "Change the application supervision strategy to rest
+  # for one": Hare casts and calls Hare.TortoiseClient, which lives in the
+  # sibling Hare.Supervisor branch of the one_for_one Hare.TopSupervisor, so
+  # either restarting alone left the other holding subscription state the
+  # restart threw away. The fix is the strategy change and nothing else;
+  # its message spells out the dependency.
+  %{
+    repo: "smartrent/jackalope",
+    issue: "jackalope@8b7415f",
+    module: "Hare.Application",
+    pre: "35b067010384f34a3215d2f71b5eba4341d6423d",
+    fix: "8b7415f2d9149e3aa80c2ad4cd4cc84d7af869b8",
+    finding: {:coupling, "Coupled children under one_for_one"}
+  },
   %{
     repo: "phoenixframework/phoenix",
     issue: "phoenix#5981",
