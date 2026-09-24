@@ -80,6 +80,33 @@ defmodule Argus.Analyses.FailureConsistencyTest do
     end
   end
 
+  describe "what guards a call" do
+    test "a try whose handler takes nothing guards nothing" do
+      skip_without_souffle()
+      assert rows([C.AfterOnly]) == []
+    end
+
+    test "a handler that takes another class, or re-raises, guards nothing" do
+      skip_without_souffle()
+      assert rows([C.WrongClass]) == []
+    end
+
+    test "a site under a try that lets the call's class through is the deviant" do
+      skip_without_souffle()
+      assert [{func, callee, "exception_guarded", 3, 1}] = rows([C.HiddenDeviant])
+      assert func =~ "HiddenDeviant:d/1"
+      assert callee =~ "update_counter/3"
+    end
+
+    test "Erlang's catch takes every class" do
+      skip_without_souffle()
+      # `ec`: three `catch` sites and a bare one; `mx`: three try sites and
+      # one `catch`, all guarded.
+      assert [{":consistency_catch:d/1", ":ets:update_counter/3", "exception_guarded", 3, 1}] =
+               rows([:consistency_catch])
+    end
+  end
+
   describe "the population" do
     defp targets(modules) do
       {:ok, results} = Argus.analyze(modules, :failure)

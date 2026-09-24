@@ -156,14 +156,16 @@ defmodule Argus.Schema.CallValues do
           {:func, :func_id, "function containing the call"},
           {:callee, :func_id, "callee function ID (mod:func/arity)"},
           {:fate, :symbol, "used | ignored | returned | dynamic"},
-          {:guard, :symbol, "try | bare"},
-          {:guard_end, :symbol, "for try, the handler's last instruction; else empty"},
+          {:raises, :symbol,
+           "the class a failing call raises: exit (a call into a process) | " <>
+             "error (a BIF, an ETS operation) | * (either)"},
           {:target, :symbol, "the first argument, inspected, when it is a literal; else empty"}
         ],
         doc: """
         A call to a process or OTP API, or to anything that starts a process, \
-        with what became of its result and whether the site sits inside a \
-        try, and what it acts on when a literal says. One row per site, so a \
+        with what became of its result, the class it raises when it fails \
+        (what a try must take to guard it: try_covers and catch_class), and \
+        what it acts on when a literal says. One row per site, so a \
         rule can count how the other sites of the same callee (on the same \
         target) behave and report the one that disagrees.
         """

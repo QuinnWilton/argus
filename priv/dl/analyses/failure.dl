@@ -239,35 +239,83 @@ unchecked_result(func, id, "Process.whereis", name) :-
 // A call site in a function another module's macro wrote — `use
 // Ecto.Repo` defines `stop/1` in every repo, on the `use` line — or in a
 // closure inside one is the library's choice, not the program's: it
-// neither holds a belief nor breaks one.
-.decl program_site(site: symbol, func: symbol, callee: symbol, fate: symbol, guard: symbol, guard_end: symbol, target: symbol)
+// neither holds a belief nor breaks one. `guard` is "try" when a try
+// takes what the call raises (guarded_site), else "bare".
+.decl program_site(site: symbol, func: symbol, callee: symbol, fate: symbol, guard: symbol, target: symbol)
 
-program_site(site, f, callee, fate, guard, guard_end, t) :-
-  call_result(site, f, callee, fate, guard, guard_end, t),
+program_site(site, f, callee, fate, "try", t) :-
+  program_call(site, f, callee, fate, t),
+  guarded_site(site).
+
+program_site(site, f, callee, fate, "bare", t) :-
+  program_call(site, f, callee, fate, t),
+  !guarded_site(site).
+
+.decl program_call(site: symbol, func: symbol, callee: symbol, fate: symbol, target: symbol)
+
+program_call(site, f, callee, fate, t) :-
+  call_result(site, f, callee, fate, _, t),
   enclosing_function(f, owner),
   !macro_generated(owner, _).
+
+// ── What guards a call ──────────────────────────────────────────
+//
+// A try guards a call when it covers the call (try_covers: on a path
+// from the try that has not passed its end, so not in its `else` or
+// after it) and its handler takes the class the call raises when it
+// fails (call_result's `raises`): an exit for a call into a process, an
+// error for a BIF or an ETS operation. A try that takes nothing — an
+// `after`, a rescue that re-raises — guards nothing, and neither does
+// `catch :exit` around a badarg. Erlang's `catch Expr` takes every
+// class (catch_class "*").
+.decl guarded_site(site: symbol)
+
+guarded_site(site) :- guarded_here(site, _).
+
+// The try in the site's own function that guards it, and where its
+// handler ends: the evidence frame's span.
+.decl guarded_here(site: symbol, span_end: symbol)
+
+guarded_here(site, span_end) :-
+  call_result(site, _, _, _, class, _),
+  try_covers(id, _, site, _),
+  takes(id, class),
+  catch_class(id, _, _, span_end).
+
+// The classes the program's sites raise, and which of them each try
+// takes: a handler with no class test takes them all; "*", a site that
+// raises either, is taken by any handler that takes something.
+.decl raised_class(class: symbol)
+
+raised_class(class) :- call_result(_, _, _, _, class, _).
+
+.decl takes(id: symbol, class: symbol)
+
+takes(id, class) :- catch_class(id, _, class, _), class != "*".
+takes(id, class) :- catch_class(id, _, "*", _), raised_class(class).
+takes(id, "*") :- catch_class(id, _, _, _).
 
 .decl fate_count(callee: symbol, scope: symbol, fate: symbol, n: number)
 
 fate_count(callee, "", fate, n) :-
-  program_site(_, _, callee, fate, _, _, _),
-  n = count : { program_site(_, _, callee, fate, _, _, _) }.
+  program_site(_, _, callee, fate, _, _),
+  n = count : { program_site(_, _, callee, fate, _, _) }.
 
 fate_count(callee, t, fate, n) :-
-  program_site(_, _, callee, fate, _, _, t),
+  program_site(_, _, callee, fate, _, t),
   t != "",
-  n = count : { program_site(_, _, callee, fate, _, _, t) }.
+  n = count : { program_site(_, _, callee, fate, _, t) }.
 
 .decl guard_count(callee: symbol, scope: symbol, guard: symbol, n: number)
 
 guard_count(callee, "", guard, n) :-
-  program_site(_, _, callee, _, guard, _, _),
-  n = count : { program_site(_, _, callee, _, guard, _, _) }.
+  program_site(_, _, callee, _, guard, _),
+  n = count : { program_site(_, _, callee, _, guard, _) }.
 
 guard_count(callee, t, guard, n) :-
-  program_site(_, _, callee, _, guard, _, t),
+  program_site(_, _, callee, _, guard, t),
   t != "",
-  n = count : { program_site(_, _, callee, _, guard, _, t) }.
+  n = count : { program_site(_, _, callee, _, guard, t) }.
 
 // A result is worth checking only if the callee can fail by returning:
 // a callee whose spec names no failure value (`:ets.new/2` returns a
@@ -316,8 +364,8 @@ times_bare(c, t, n) :- guard_count(c, t, "bare", n).
 .decl result_ignored(site: symbol, func: symbol, callee: symbol, scope: symbol) inline
 .decl called_bare(site: symbol, func: symbol, callee: symbol, scope: symbol) inline
 
-result_ignored(site, f, c, t) :- program_site(site, f, c, "ignored", _, _, t).
-called_bare(site, f, c, t) :- program_site(site, f, c, _, "bare", _, t).
+result_ignored(site, f, c, t) :- program_site(site, f, c, "ignored", _, t).
+called_bare(site, f, c, t) :- program_site(site, f, c, _, "bare", t).
 
 inconsistent_handling(func, site, callee, "result_checked", used, ignored, scope) :-
   ignored_where_most_are_used(func, site, callee, used, ignored, scope).
@@ -353,10 +401,11 @@ bare_where_most_are_guarded(func, site, callee, guarded, bare, scope) :-
 
 handling_site(callee, "exception_guarded", site, f, guard_end, t) :-
   inconsistent_handling(_, _, callee, "exception_guarded", _, _, t),
-  program_site(site, f, callee, _, "try", guard_end, t2),
+  program_site(site, f, callee, _, "try", t2),
+  guarded_here(site, guard_end),
   (t = "" ; t = t2).
 
 handling_site(callee, "result_checked", site, f, "", t) :-
   inconsistent_handling(_, _, callee, "result_checked", _, _, t),
-  program_site(site, f, callee, "used", _, _, t2),
+  program_site(site, f, callee, "used", _, t2),
   (t = "" ; t = t2).

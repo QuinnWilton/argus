@@ -22,6 +22,24 @@ defmodule Argus.Schema.ErrorHandling do
         doc: "Try/catch handler that catches all exceptions without filtering or reraising."
       },
       %{
+        name: :catch_class,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the try (or catch) instruction"},
+          {:func, :symbol, "the function"},
+          {:class, :symbol, "a class the handler takes: 'error' | 'exit' | 'throw' | '*'"},
+          {:span_end, :symbol, "the handler's own last line marker; empty for a catch or none"}
+        ],
+        doc: """
+        The handler of the try at `id` takes `class`: some path through it \
+        establishes the class and returns without raising again, whatever \
+        it asks of the reason. A handler that only re-raises (`after`, \
+        `rescue e -> reraise e, __STACKTRACE__`) has no row; `*` is a path \
+        with no class test. Erlang's `catch Expr` takes every class: one \
+        row, `*`, and no span of its own.
+        """
+      },
+      %{
         name: :catch_total,
         layer: 2,
         fields: [
@@ -120,6 +138,22 @@ defmodule Argus.Schema.ErrorHandling do
         function's control-flow graph: a call after the try's `end` is not \
         covered, a call inside a nested try is covered by both, and a call \
         in a nested try's handler by the outer one alone.
+        """
+      },
+      %{
+        name: :try_covers_closure,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the try (or catch) instruction"},
+          {:func, :symbol, "the function"},
+          {:closure, :func_id, "the closure built inside its protected region"}
+        ],
+        doc: """
+        The try at `id` covers the `make_fun` that builds `closure`: the \
+        fun is made on a path from the try that has not passed its \
+        `try_end`. A fun handed from there to `Enum.each` runs under the \
+        handler; whether it is handed to another process instead is the \
+        rules' question.
         """
       },
       %{

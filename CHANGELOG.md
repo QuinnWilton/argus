@@ -12,11 +12,31 @@ does: **Added**, **Changed**, **Fixed** or **Removed**.
 
 ### What the program's other sites believe
 
+**Changed.** Schema 76. `call_result(id, func, callee, fate, raises,
+target)`: `guard` and `guard_end` are gone, and `raises` names the class a
+failing call raises (`exit` for a call into a process, `error` for a BIF
+or an ETS operation, `*` for either). `catch_class(id, func, class,
+span_end)` says which classes a try's handler takes on a path that
+returns (none for an `after` or a rescue that only re-raises; `*` with
+no class test, and for Erlang's `catch Expr`), and
+`try_covers_closure(id, func, closure)` which closures a try's region
+builds. Only `failure` read the dropped columns.
+
+**Fixed.** `failure.inconsistent_handling` counts a call as guarded only
+when a try covering it (`try_covers`) takes the class the call raises.
+Any enclosing `try` used to count: an `after`, a `catch :exit` around an
+ETS badarg, and a rescue that re-raises made a belief out of sites that
+handle nothing, and hid a deviant in the same shapes. Erlang's `catch
+Expr` now counts as a guard; a program that keeps
+`case catch ets:update_counter(...)` as its convention was all bare,
+and its one truly bare site was not reported.
+
 **Changed.** `failure.inconsistent_handling`'s title says "every other
 call site" only when the reported site is the population's one deviant,
 and "most call sites" when there are more: `clear_majority` lets up to a
 quarter of the sites deviate, and nine guarded against three bare
 reported three sites, each titled as though it were the only one.
+
 ### A remote call that never answers
 
 **Changed.** Schema 72. `rpc_call` records `:rpc.block_call/4,5`,

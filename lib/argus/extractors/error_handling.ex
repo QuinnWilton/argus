@@ -18,16 +18,21 @@ defmodule Argus.Extractors.ErrorHandling do
   - `bare_rescue(id, func)` — catch-all rescue without filtering or reraising
   - `trap_exit(func, mod)` — `Process.flag(:trap_exit, true)` call site
   - `exit_call(id, func, target)` — explicit `Process.exit/2` or `:erlang.exit/1,2`
-  - `call_result(id, func, callee, fate, guard, guard_end, target)` — every call to a process
+  - `call_result(id, func, callee, fate, raises, target)` — every call to a process
     or OTP API (and every `start_link`/`start`/`start_child`), with what
     became of its result (`used`, `ignored`, `returned` for a tail call,
-    `dynamic`), whether the site sits inside a `try` (`try` | `bare`), and
-    its first argument when that is a literal (the table, the name).
+    `dynamic`), the class it raises when it fails (`exit` for a call into
+    a process, `error` for a BIF or an ETS operation, `*` when either),
+    and its first argument when that is a literal (the table, the name).
+    Whether a try takes what it raises is try_covers and catch_class.
     The population a consistency rule counts: which fate the other call
     sites of the same callee chose is the belief, and the odd one out is
     the finding (Engler et al., "Bugs as deviant behavior").
   - `ignored_error_result(id, func, callee)` — call to known ok/error API where
     result is not pattern matched
+  - `catch_class(id, func, class, span_end)` — some path through the
+    handler of the try (or Erlang `catch`) at `id` catches `class` and
+    does not raise again (`*`: with no class test)
   - `catch_total(id, func, class)` — some clause catches `class` without
     a pattern on the reason
   - `catch_tag(id, func, class, tag)` — an atom a clause catching `class`
@@ -42,6 +47,8 @@ defmodule Argus.Extractors.ErrorHandling do
   - `try_covers(id, func, call, kind)` — the try (or Erlang `catch`) at
     `id` covers the call at `call`: an exception the call raises goes to
     that try's handler
+  - `try_covers_closure(id, func, closure)` — the try (or `catch`) at `id`
+    covers the instruction that builds the closure `closure`
   - `try_call(id, func, callee, call, guard_end)` — a peer call (`GenServer.call`,
     `:gen_statem.call`, `:erpc.call`, ...) the `try` at `id` guards
   - `mailbox_writer(id, func, kind)` — a call after which something other
@@ -142,6 +149,7 @@ defmodule Argus.Extractors.ErrorHandling do
       :call_result,
       :cancel_clause,
       :catch_falls_through,
+      :catch_class,
       :catch_tag,
       :catch_total,
       :catch_tuple_tag,
@@ -157,7 +165,8 @@ defmodule Argus.Extractors.ErrorHandling do
       :timer_store,
       :trap_exit,
       :try_call,
-      :try_covers
+      :try_covers,
+      :try_covers_closure
     ]
 
   @impl true
@@ -228,28 +237,43 @@ defmodule Argus.Extractors.ErrorHandling do
 
   defp maybe_call_result(facts, ctx, {mod, func, arity}) do
     if process_api?(mod, func) and not generated_function?(ctx.func_id) do
-      id = InstrId.mint(ctx.func_id, ctx.idx)
-      callee = Normalize.func_id(mod, func, arity)
-
-      {guard, guard_end} =
-        case guard_label(ctx.instrs, ctx.idx) do
-          nil -> {"bare", ""}
-          {label, try_idx} -> {"try", handler_end(ctx, label, try_idx)}
-        end
-
       add_fact(facts, :call_result, [
-        id,
+        InstrId.mint(ctx.func_id, ctx.idx),
         ctx.func_id,
-        callee,
+        Normalize.func_id(mod, func, arity),
         result_fate(ctx),
-        guard,
-        guard_end,
+        raises(mod),
         call_target(ctx)
       ])
     else
       facts
     end
   end
+
+  # The class a failing call raises, which a guard must take to guard it.
+  # A call into a process — a GenServer, a supervisor, an agent, a task
+  # awaited — fails with an exit (noproc, timeout, the server's own
+  # crash); a BIF or an ETS operation with an error (badarg). A start
+  # function of the program's own is either, or neither: any class a
+  # handler takes counts ("*").
+  @exit_modules [
+    GenServer,
+    Supervisor,
+    DynamicSupervisor,
+    PartitionSupervisor,
+    Task,
+    Task.Supervisor,
+    Agent,
+    :gen_server,
+    :gen_statem,
+    :supervisor
+  ]
+
+  @error_modules [Registry, Process, :erlang, :ets]
+
+  defp raises(mod) when mod in @exit_modules, do: "exit"
+  defp raises(mod) when mod in @error_modules, do: "error"
+  defp raises(_mod), do: "*"
 
   # What the call acts on, when its first argument is a literal: the
   # table, the server name, the supervisor. Sites on different targets
@@ -285,27 +309,6 @@ defmodule Argus.Extractors.ErrorHandling do
       result_ignored?(after_call) -> "ignored"
       result_used?(after_call) -> "used"
       true -> "dynamic"
-    end
-  end
-
-  # A try region is linear in the instruction stream: it opens with `try`
-  # and closes with `try_end` (no exception) or `try_case` (the handler),
-  # both naming the same register, so the tries still open at `idx` are a
-  # stack walked from the function's start.
-  # The handler label and index of the innermost try open at `idx`, or nil.
-  defp guard_label(instrs, idx) do
-    instrs
-    |> Enum.take(idx)
-    |> Enum.with_index()
-    |> Enum.reduce([], fn
-      {{:try, reg, {:f, label}}, try_idx}, open -> [{reg, label, try_idx} | open]
-      {{:try_end, reg}, _}, open -> List.keydelete(open, reg, 0)
-      {{:try_case, reg}, _}, open -> List.keydelete(open, reg, 0)
-      _instr, open -> open
-    end)
-    |> case do
-      [] -> nil
-      [{_reg, label, try_idx} | _] -> {label, try_idx}
     end
   end
 
@@ -658,12 +661,19 @@ defmodule Argus.Extractors.ErrorHandling do
 
     visited
     |> Enum.sort()
-    |> Enum.filter(fn at ->
-      instr = elem(table, at)
-      Instr.call?(instr) or Instr.tail_call?(instr)
-    end)
     |> Enum.reduce(facts, fn at, acc ->
-      add_fact(acc, :try_covers, [id, func_id, InstrId.mint(func_id, at), to_string(op)])
+      case elem(table, at) do
+        # A closure built inside the region: what it raises reaches the
+        # handler when it runs there, handed to Enum.each and the like.
+        {:make_fun3, {m, f, a}, _, _, _, _} ->
+          add_fact(acc, :try_covers_closure, [id, func_id, InstrId.func_id(m, f, a)])
+
+        instr ->
+          if Instr.call?(instr) or Instr.tail_call?(instr),
+            do:
+              add_fact(acc, :try_covers, [id, func_id, InstrId.mint(func_id, at), to_string(op)]),
+            else: acc
+      end
     end)
   end
 
@@ -1092,6 +1102,19 @@ defmodule Argus.Extractors.ErrorHandling do
     summary = CatchClauses.analyse(ctx.instrs, handler_label)
 
     facts =
+      case summary.classes do
+        [] ->
+          facts
+
+        classes ->
+          span_end = handler_end(ctx, handler_label, ctx.idx)
+
+          Enum.reduce(classes, facts, fn class, acc ->
+            add_fact(acc, :catch_class, [id, ctx.func_id, to_string(class), span_end])
+          end)
+      end
+
+    facts =
       Enum.reduce(summary.totals, facts, fn class, acc ->
         add_fact(acc, :catch_total, [id, ctx.func_id, to_string(class)])
       end)
@@ -1135,6 +1158,13 @@ defmodule Argus.Extractors.ErrorHandling do
           acc
       end
     end)
+  end
+
+  # Erlang's `catch Expr` takes every class: an error or an exit becomes
+  # {'EXIT', Reason}, a throw its value. Its handler is the code after
+  # `catch_end`, which the normal exit runs too: no span of its own.
+  defp maybe_catch_clauses(facts, ctx, {:catch, _reg, {:f, _label}}) do
+    add_fact(facts, :catch_class, [InstrId.mint(ctx.func_id, ctx.idx), ctx.func_id, "*", ""])
   end
 
   defp maybe_catch_clauses(facts, _ctx, _instr), do: facts

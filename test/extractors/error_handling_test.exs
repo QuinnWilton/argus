@@ -95,11 +95,9 @@ defmodule Argus.Extractors.ErrorHandlingTest do
       # no marker), not the send/2 seven lines further on.
       assert line_of.(guard_end) == line_of.(call) + 3
 
-      # A process call's own row ends its guard at the same place.
-      assert [%{guard: "try", guard_end: result_end}] =
-               Enum.filter(facts.call_result, &(&1.id == call))
-
-      assert result_end == guard_end
+      # The handler's own row ends its span at the same place.
+      assert [%{id: try_id}] = facts.try_call
+      assert [%{span_end: ^guard_end}] = Enum.filter(facts.catch_class, &(&1.id == try_id))
     end
   end
 

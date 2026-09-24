@@ -367,4 +367,90 @@ defmodule Argus.Test.Fixtures.Consistency do
     defp check({:ok, pid}), do: pid
     defp check({:error, _}), do: nil
   end
+
+  defmodule AfterOnly do
+    @moduledoc """
+    Three sites call update_counter inside a try with only an `after`,
+    one bare. An `after` takes nothing: no site guards the call, and
+    there is no belief to break.
+    """
+    def a(k) do
+      :ets.update_counter(:after_only, k, 1)
+    after
+      send(self(), :done)
+    end
+
+    def b(k) do
+      :ets.update_counter(:after_only, k, 2)
+    after
+      send(self(), :done)
+    end
+
+    def c(k) do
+      :ets.update_counter(:after_only, k, 3)
+    after
+      send(self(), :done)
+    end
+
+    def d(k), do: :ets.update_counter(:after_only, k, 4)
+  end
+
+  defmodule WrongClass do
+    @moduledoc """
+    Three sites wrap update_counter in `catch :exit` and one is bare. The
+    call fails with an error (badarg), which `catch :exit` does not take,
+    so these guard nothing either; a rescue that only re-raises is the
+    same.
+    """
+    def a(k) do
+      :ets.update_counter(:wrong_class, k, 1)
+    catch
+      :exit, _ -> 0
+    end
+
+    def b(k) do
+      :ets.update_counter(:wrong_class, k, 2)
+    catch
+      :exit, _ -> 0
+    end
+
+    def c(k) do
+      :ets.update_counter(:wrong_class, k, 3)
+    rescue
+      e -> reraise e, __STACKTRACE__
+    end
+
+    def d(k), do: :ets.update_counter(:wrong_class, k, 4)
+  end
+
+  defmodule HiddenDeviant do
+    @moduledoc """
+    Three sites rescue update_counter's ArgumentError; the fourth sits in
+    a try with only an `after`, which lets the badarg through. It is the
+    deviant, as a bare call would be.
+    """
+    def a(k) do
+      :ets.update_counter(:hidden, k, 1)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def b(k) do
+      :ets.update_counter(:hidden, k, 2)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def c(k) do
+      :ets.update_counter(:hidden, k, 3)
+    rescue
+      ArgumentError -> 0
+    end
+
+    def d(k) do
+      :ets.update_counter(:hidden, k, 4)
+    after
+      send(self(), :bumped)
+    end
+  end
 end
