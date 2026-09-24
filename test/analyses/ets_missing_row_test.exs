@@ -25,6 +25,13 @@ defmodule Argus.Analyses.EtsMissingRowTest do
                missing([Fixture.Debounce, Fixture.Debounce.Config])
     end
 
+    test "a composite key spelled out at the check and again at the act is one key" do
+      skip_without_souffle()
+
+      assert [{"log/2", "named", ":inline_tuple_buckets", "log/2", "log/2", "flush/1"}] =
+               missing([Fixture.InlineTupleKey])
+    end
+
     test "counting with a default object stays quiet" do
       skip_without_souffle()
       assert missing([Fixture.WithDefault]) == []

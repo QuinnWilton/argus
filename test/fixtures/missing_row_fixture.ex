@@ -298,4 +298,25 @@ defmodule Argus.Test.Fixtures.MissingRow do
 
     def flush(key), do: :ets.take(@table, key)
   end
+
+  defmodule InlineTupleKey do
+    @moduledoc "A composite key spelled out at the lookup and again at the count."
+    @table :inline_tuple_buckets
+
+    def setup, do: :ets.new(@table, [:set, :named_table, :public])
+
+    def log(mod, fun) do
+      case :ets.lookup(@table, {mod, fun}) do
+        [] ->
+          :ets.insert(@table, {{mod, fun}, 0})
+          _ = :timer.apply_after(10, __MODULE__, :flush, [{mod, fun}])
+          :ok
+
+        [_existing] ->
+          :ets.update_counter(@table, {mod, fun}, {2, 1})
+      end
+    end
+
+    def flush(key), do: :ets.take(@table, key)
+  end
 end

@@ -175,6 +175,11 @@ covers a call on every path from the meeting function down to it
 that nothing outside the program can call, is rescued by its callers.
 One unguarded caller keeps the finding.
 
+**Fixed.** A composite key written out at each call —
+`:ets.lookup(t, {mod, fun})`, then `:ets.update_counter(t, {mod, fun},
+...)` — is one key: the check and the act meet on it, as they did when
+the key was bound to a variable first (schema 77, below).
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile
@@ -538,6 +543,15 @@ position the call's result does not carry (`Argus.Pipeline.Emit.
 FunRefs.handed_rows/2`). The call graph's edge into a closure or a fun
 reference has no call instruction; this names the call it runs inside,
 so a rule asking whether a `try` covers the edge asks it of that call.
+**Changed.** Schema 77, no shape change. A key a tuple is built of
+values that each have an identity is named by them, in order:
+`{"tuple", "{param 0, param 1}"}` (`Argus.Extractor.Identity`), where it
+was `{"local", instr_id}`, the one instruction that built it. So a
+composite key spelled out at a lookup and again at the write, `{mod,
+fun}` twice, is one key, as it was when bound to a variable once; each
+spelling was its own `local`. `ets_key`, `ets_value`, `ets_call_arg`,
+`mnesia_op` and `name_lookup`/`creating_op` read it. Like a `local`, it
+names something only within one function.
 
 **Changed.** Schema 71. `schema_field(mod, field)` gains a third
 column, `type`: the field's Ecto type from `__schema__(:type, field)`,
