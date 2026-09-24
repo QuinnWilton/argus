@@ -31,6 +31,7 @@ defmodule Argus.Analysis.Extraction do
 
   alias Argus.Analysis
   alias Argus.Analysis.Catalog
+  alias Argus.Cache.Facts
   alias Argus.Pipeline
   alias Argus.Souffle
 
@@ -65,23 +66,41 @@ defmodule Argus.Analysis.Extraction do
   `points_to: :deferred` leaves the points-to stage to the caller, who
   stages it with `ensure_points_to/3` and decides what its failure means
   (`Argus.Findings.run/2` degrades only the analyses that read it).
+
+  `cache:` names a store (`Argus.Cache`): each producer's facts are read
+  from it or extracted and kept there (`Argus.Cache.Facts`), stage 0 and
+  the points-to stage are solved through it, and the directory returned
+  is hard links into it, byte-identical to one extracted afresh — its
+  files are read-only, and the caller removes it as any other. Ignored
+  when `priors:` asks for priors (they are derived into the directory
+  each time) and under `ARGUS_NO_CACHE`.
   """
   @spec extract_facts(modules :: [atom() | String.t()], [Analysis.analysis()], keyword()) ::
           {:ok, Path.t()} | {:error, term()}
   def extract_facts(modules, analyses, opts \\ []) do
-    default_extractors =
-      analyses
-      |> Enum.flat_map(&default_extractors_for/1)
-      |> Enum.uniq()
-
-    opts =
-      opts
-      |> Keyword.update(:extractors, default_extractors, &Enum.uniq(default_extractors ++ &1))
-      |> Keyword.put_new(:relations, staged_relations(analyses))
-      |> maybe_enable_imprecision_tracing(analyses)
-
+    opts = pipeline_opts(analyses, opts)
     Argus.Priors.check!(opts)
 
+    case cached(modules, analyses, opts) do
+      {:ok, facts} ->
+        case Facts.materialize(facts) do
+          {:ok, facts} ->
+            {:ok, facts.dir}
+
+          {:error, _} = error ->
+            Facts.release(facts)
+            error
+        end
+
+      :uncached ->
+        extract_afresh(modules, analyses, opts)
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  defp extract_afresh(modules, analyses, opts) do
     with {:ok, work_dir} <- create_work_dir(),
          facts_dir = Path.join(work_dir, "facts"),
          {:ok, _} <- Pipeline.run(modules, facts_dir, opts),
@@ -89,6 +108,76 @@ defmodule Argus.Analysis.Extraction do
          :ok <- points_to_unless_deferred(facts_dir, analyses, opts),
          :ok <- derive_priors(facts_dir, opts) do
       {:ok, facts_dir}
+    end
+  end
+
+  # What the pipeline runs with for these analyses: their extractors
+  # (and any the caller adds), the relations they may read, and
+  # imprecision tracing for coverage.
+  defp pipeline_opts(analyses, opts) do
+    default_extractors =
+      analyses
+      |> Enum.flat_map(&default_extractors_for/1)
+      |> Enum.uniq()
+
+    opts
+    |> Keyword.update(:extractors, default_extractors, &Enum.uniq(default_extractors ++ &1))
+    |> Keyword.put_new(:relations, staged_relations(analyses))
+    |> maybe_enable_imprecision_tracing(analyses)
+  end
+
+  @doc false
+  # The facts `extract_facts/3` would extract, through the store `cache:`
+  # names (`Argus.Cache.Facts`), with stage 0 solved into them and the
+  # points-to stage unless `points_to: :deferred`: `{:ok, facts}` for
+  # the caller to release, `:uncached` when there is no store to use
+  # (none named, stores off, priors asked for, or a producer whose code
+  # no key can name), or the error extraction would return.
+  @spec cached_facts([atom() | String.t()], [Analysis.analysis()], keyword()) ::
+          {:ok, Facts.t()} | :uncached | {:error, term()}
+  def cached_facts(modules, analyses, opts) do
+    cached(modules, analyses, pipeline_opts(analyses, opts))
+  end
+
+  defp cached(modules, analyses, opts) do
+    with store when is_binary(store) <- store(opts),
+         {:ok, facts} <- shards(modules, opts, store),
+         {:ok, facts} <- solve_stage(facts, stage0_rules_path(), :stage0, opts) do
+      if Keyword.get(opts, :points_to, :derive) == :derive and
+           Enum.any?(analyses, &reads_points_to?/1),
+         do: solve_stage(facts, points_to_rules_path(), :points_to, opts),
+         else: {:ok, facts}
+    end
+  end
+
+  defp store(opts) do
+    if Keyword.get(opts, :priors, :off) == :off,
+      do: Argus.Cache.store(opts) || :uncached,
+      else: :uncached
+  end
+
+  defp shards(modules, opts, store) do
+    shard_opts = Keyword.take(opts, [:relations, :trace_imprecision, :concurrency, :timeout])
+
+    case Facts.extract(modules, Keyword.fetch!(opts, :extractors), shard_opts, store) do
+      {:error, {:uncacheable, _}} -> :uncached
+      other -> other
+    end
+  end
+
+  @doc false
+  # A stage solved into cached facts: the facts with its outputs, or
+  # `{:error, {stage, reason}}` (the facts released).
+  @spec solve_stage(Facts.t(), Path.t(), :stage0 | :points_to, keyword()) ::
+          {:ok, Facts.t()} | {:error, term()}
+  def solve_stage(facts, rules_path, stage, opts) do
+    case Facts.solve(facts, rules_path, opts) do
+      {:ok, _results, facts} ->
+        {:ok, facts}
+
+      {:error, reason} ->
+        Facts.release(facts)
+        {:error, {stage, reason}}
     end
   end
 

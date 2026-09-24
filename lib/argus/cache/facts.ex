@@ -527,9 +527,22 @@ defmodule Argus.Cache.Facts do
     end
   end
 
+  # A directory made for this solve alone goes with a failure.
   defp solve_and_keep(facts, entry, rules_path, opts) do
-    with {:ok, facts} <- materialize(facts),
-         {:ok, staging} <- Cache.staging(entry) do
+    with {:ok, materialized} <- materialize(facts) do
+      case solve_into(materialized, entry, rules_path, opts) do
+        {:ok, _results, _facts} = ok ->
+          ok
+
+        {:error, _} = error ->
+          if facts.work == nil, do: release(materialized)
+          error
+      end
+    end
+  end
+
+  defp solve_into(facts, entry, rules_path, opts) do
+    with {:ok, staging} <- Cache.staging(entry) do
       solve_opts =
         opts
         |> Keyword.take([:souffle_bin, :souffle_timeout])
@@ -583,18 +596,14 @@ defmodule Argus.Cache.Facts do
   end
 
   @doc """
-  The extraction errors the facts hold (`Argus.Findings.extraction_errors/1`).
+  The content of the facts' `extraction_error.facts`, as a directory of
+  them would hold it (`Argus.Findings.extraction_errors/1` reads it).
   """
-  @spec extraction_errors(t()) :: [Argus.Findings.extraction_error()]
+  @spec extraction_errors(t()) :: binary()
   def extraction_errors(%__MODULE__{relations: relations}) do
     case Map.fetch(relations, "extraction_error.facts") do
-      {:ok, {_digest, paths}} ->
-        paths
-        |> Enum.map_join(&File.read!/1)
-        |> Argus.Findings.Runner.parse_extraction_errors()
-
-      :error ->
-        []
+      {:ok, {_digest, paths}} -> Enum.map_join(paths, &File.read!/1)
+      :error -> ""
     end
   end
 

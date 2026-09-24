@@ -288,12 +288,24 @@ defmodule Argus.Analysis do
   - `:concurrency` — number of parallel extraction workers (default: schedulers)
   - `:extractors` — list of domain extractor modules to run
   - `:souffle_bin` — path to souffle binary (default: auto-detect)
+  - `:cache` — a store (`Argus.Cache`) the facts and every solve are
+    kept in and read back from: after an edit, only the producers and
+    solves it invalidated run again (`extract_facts/3`)
   """
   @spec run(modules :: [atom() | String.t()], analysis(), keyword()) ::
           {:ok, result()} | {:error, term()}
   def run(modules, analysis, opts \\ []) do
-    with {:ok, rules_path} <- Catalog.rules_path(analysis),
-         {:ok, facts_dir} <- extract_facts(modules, [analysis], opts) do
+    with {:ok, rules_path} <- Catalog.rules_path(analysis) do
+      case Extraction.cached_facts(modules, [analysis], opts) do
+        {:ok, facts} -> run_cached(facts, analysis, rules_path, opts)
+        :uncached -> run_afresh(modules, analysis, rules_path, opts)
+        {:error, _} = error -> error
+      end
+    end
+  end
+
+  defp run_afresh(modules, analysis, rules_path, opts) do
+    with {:ok, facts_dir} <- extract_facts(modules, [analysis], opts) do
       try do
         with {:ok, results} <- Souffle.run(facts_dir, rules_path, opts) do
           {:ok, filter_to_outputs(results, analysis)}
@@ -301,6 +313,20 @@ defmodule Argus.Analysis do
       after
         File.rm_rf(Path.dirname(facts_dir))
       end
+    end
+  end
+
+  # Through a store: the solve is read back when what it reads is
+  # unchanged, and no facts directory is made unless it is not.
+  defp run_cached(facts, analysis, rules_path, opts) do
+    case Argus.Cache.Facts.solve(facts, rules_path, opts) do
+      {:ok, results, solved} ->
+        Argus.Cache.Facts.release(solved)
+        {:ok, filter_to_outputs(results, analysis)}
+
+      {:error, _} = error ->
+        Argus.Cache.Facts.release(facts)
+        error
     end
   end
 

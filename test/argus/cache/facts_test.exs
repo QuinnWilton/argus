@@ -93,7 +93,9 @@ defmodule Argus.Cache.FactsTest do
 
       try do
         assert contents(facts.dir) == contents(monolithic)
-        assert Facts.extraction_errors(facts) == Argus.Findings.extraction_errors(monolithic)
+
+        assert Facts.extraction_errors(facts) ==
+                 File.read!(Path.join(monolithic, "extraction_error.facts"))
       after
         Facts.release(facts)
       end

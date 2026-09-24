@@ -224,6 +224,13 @@ defmodule Argus.Findings do
     it was kept is read back rather than run, the points-to stage
     included. Keyed by the content of what each program reads, so one
     directory serves any facts. Off by default.
+  - `:cache` — a store (`Argus.Cache`) the facts and every solve are
+    kept in and read back from: each producer's facts are extracted
+    only when missing (`Argus.Cache.Facts`), each solve is keyed on the
+    content of what it reads, and a run whose solves are all kept makes
+    no facts directory at all. After an edit, only what it invalidated
+    runs again. Ignored with `:facts_dir`, with `:priors`, and under
+    `ARGUS_NO_CACHE`.
   - `:concurrency` — parallel Souffle solves (default: the scheduler
     count, capped at 4; each solve holds its own copy of the call graph's
     closure). Extraction always runs at scheduler width.

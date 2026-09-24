@@ -98,6 +98,68 @@ defmodule Argus.Findings.RunnerTest do
     assert detail =~ "points_to.dl"
   end
 
+  describe "through a store" do
+    @describetag :cache
+
+    # A solver that answers what a warm run asks — its version, a
+    # program's inputs — and fails any solve.
+    defp failing_solves!(dir) do
+      bin = Path.join(dir, "souffle-no-solves")
+
+      File.write!(bin, """
+      #!/bin/sh
+      case " $* " in
+        *" -F "*) echo "no solves here" >&2; exit 4 ;;
+      esac
+      exec #{System.find_executable("souffle")} "$@"
+      """)
+
+      File.chmod!(bin, 0o755)
+      bin
+    end
+
+    defp without_durations({:ok, findings}),
+      do: %{findings | ran: Enum.map(findings.ran, &Map.delete(&1, :duration_ms))}
+
+    test "finds what a run without one finds, and a warm run solves nothing",
+         %{tmp_dir: dir} do
+      store = Path.join(dir, "store")
+      modules = [Argus.Test.Fixtures.EtsBounded, Argus.Test.Fixtures.MissingRow, :gen_server]
+      opts = [analyses: [:startup, :effects, :races]]
+
+      afresh = without_durations(Runner.run(modules, opts))
+      assert without_durations(Runner.run(modules, [cache: store] ++ opts)) == afresh
+
+      warm = Runner.run(modules, [cache: store, souffle_bin: failing_solves!(dir)] ++ opts)
+      assert without_durations(warm) == afresh
+      assert store |> Path.join("work") |> File.ls!() == []
+    end
+
+    test "a failed points-to stage degrades only the analyses that read it",
+         %{tmp_dir: dir} do
+      assert {:ok, %Findings{ran: ran, degraded: degraded}} =
+               Runner.run([:lists],
+                 analyses: [:startup, :effects],
+                 souffle_bin: failing_points_to!(dir),
+                 cache: Path.join(dir, "store")
+               )
+
+      assert [%{analysis: :effects}] = ran
+      assert [%{analysis: :startup, reason: {:points_to, {:souffle_error, 3, _}}}] = degraded
+    end
+
+    test "a failed stage 0 degrades every analysis", %{tmp_dir: dir} do
+      assert {:ok, %Findings{ran: [], degraded: degraded}} =
+               Runner.run([:lists],
+                 analyses: [:startup, :effects],
+                 souffle_bin: failing_solves!(dir),
+                 cache: Path.join(dir, "store")
+               )
+
+      assert Enum.map(degraded, & &1.analysis) == [:startup, :effects]
+    end
+  end
+
   describe "extraction_errors/1" do
     test "reads the rows in order, a module that does not parse keeping its source",
          %{tmp_dir: dir} do

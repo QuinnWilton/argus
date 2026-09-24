@@ -49,6 +49,17 @@ by content. `Argus.Cache.CodeTest` runs every producer with call
 counting on and checks that nothing it executes lies outside its
 closure.
 
+**Added.** `cache:` on `Argus.run_analyses/2`, `Argus.analyze/3` and
+`Argus.Analysis.extract_facts/3` names a store: the facts are read from
+its shards or extracted into them, stage 0, the points-to stage and
+every analysis are solved through it, and after an edit only the
+producers and solves the edit invalidated run again. A run whose solves
+are all kept makes no facts directory; `extract_facts/3` returns
+read-only links byte-identical to a fresh extraction. The findings are
+the ones a run without a store returns, every field but the durations.
+Ignored with `facts_dir:`, with `priors:` (they are derived into the
+directory each time) and under `ARGUS_NO_CACHE`.
+
 **Changed.** `Argus.Pipeline.run/3` writes a relation's rows grouped
 by producer — the base's first, then each extractor's in the order
 `extractors:` names them, each group in module order — where it

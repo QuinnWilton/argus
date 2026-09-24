@@ -14,6 +14,7 @@ defmodule Argus.Findings.Runner do
 
   alias Argus.Analysis
   alias Argus.Analysis.Sets
+  alias Argus.Cache.Facts
   alias Argus.Findings
   alias Argus.Findings.Anchor
   alias Argus.Findings.Build
@@ -62,14 +63,15 @@ defmodule Argus.Findings.Runner do
   defp evaluate(modules, requests, opts) do
     names = Enum.map(requests, & &1.name())
 
-    case facts_dir(modules, names, opts) do
-      {:ok, facts_dir, owned?} ->
-        try do
-          points_to = Analysis.Extraction.ensure_points_to(facts_dir, names, opts)
+    case facts(modules, names, opts) do
+      {:ok, source} ->
+        {points_to, source} = stage_points_to(source, names, opts)
+        source = prepare(source, requests, points_to, opts)
 
+        try do
           outcomes =
             requests
-            |> Task.async_stream(&run_one(&1, facts_dir, points_to, opts),
+            |> Task.async_stream(&run_one(&1, source, points_to, opts),
               max_concurrency: Keyword.get(opts, :concurrency, default_solve_concurrency()),
               ordered: true,
               # Souffle.run bounds each evaluation with :souffle_timeout, so the
@@ -78,9 +80,9 @@ defmodule Argus.Findings.Runner do
             )
             |> Enum.flat_map(fn {:ok, outcomes} -> outcomes end)
 
-          {:ok, %{collect(outcomes) | extraction_errors: extraction_errors(facts_dir)}}
+          {:ok, %{collect(outcomes) | extraction_errors: source_errors(source)}}
         after
-          if owned?, do: File.rm_rf(Path.dirname(facts_dir))
+          release(source)
         end
 
       # Stage 0 (the shared call graph) is a Souffle evaluation like any
@@ -103,37 +105,105 @@ defmodule Argus.Findings.Runner do
     end
   end
 
-  # The points-to stage is staged once, by `evaluate/3`, before the
-  # solves fan out: each would otherwise find it missing and derive it
-  # into the same directory at once.
-  defp facts_dir(modules, names, opts) do
+  # Where the facts are: `{:dir, dir, owned?}`, a directory the caller
+  # handed in or the run extracted, or `{:cached, facts}`, through the
+  # store `cache:` names (`Argus.Cache.Facts`). The points-to stage is
+  # staged once, by `evaluate/3`, before the solves fan out: each would
+  # otherwise find it missing and derive it into the same directory at
+  # once.
+  defp facts(modules, names, opts) do
     case Keyword.fetch(opts, :facts_dir) do
       {:ok, dir} ->
-        {:ok, dir, false}
+        {:ok, {:dir, dir, false}}
 
       :error ->
         opts = Keyword.put(opts, :points_to, :deferred)
-        with {:ok, dir} <- Analysis.extract_facts(modules, names, opts), do: {:ok, dir, true}
+
+        case Analysis.Extraction.cached_facts(modules, names, opts) do
+          {:ok, facts} ->
+            {:ok, {:cached, facts}}
+
+          :uncached ->
+            with {:ok, dir} <- Analysis.extract_facts(modules, names, opts),
+                 do: {:ok, {:dir, dir, true}}
+
+          {:error, _} = error ->
+            error
+        end
     end
   end
 
+  defp stage_points_to({:dir, dir, _owned?} = source, names, opts),
+    do: {Analysis.Extraction.ensure_points_to(dir, names, opts), source}
+
+  defp stage_points_to({:cached, facts} = source, names, opts) do
+    if Enum.any?(names, &Analysis.Extraction.reads_points_to?/1) do
+      case Facts.solve(facts, Analysis.points_to_rules_path(), opts) do
+        {:ok, _results, facts} -> {:ok, {:cached, facts}}
+        {:error, reason} -> {{:error, {:points_to, reason}}, source}
+      end
+    else
+      {:ok, source}
+    end
+  end
+
+  # Facts through a store get a directory before the solves fan out
+  # when one of them is not kept, so they share it.
+  defp prepare({:cached, facts} = source, requests, points_to, opts) do
+    rules =
+      for mod <- requests,
+          points_to == :ok or not Analysis.Extraction.reads_points_to?(mod.name()),
+          {:ok, path} <- [Analysis.Catalog.rules_path(mod.name())],
+          do: path
+
+    with false <- Facts.kept_solves?(facts, rules, opts),
+         {:ok, facts} <- Facts.materialize(facts) do
+      {:cached, facts}
+    else
+      _kept_or_failed -> source
+    end
+  end
+
+  defp prepare(source, _requests, _points_to, _opts), do: source
+
+  defp solve(name, {:dir, dir, _owned?}, opts), do: Analysis.run_rules(dir, name, opts)
+
+  # A solve that made a directory of its own (it missed where the
+  # others were kept) removes it.
+  defp solve(name, {:cached, facts}, opts) do
+    with {:ok, rules} <- Analysis.Catalog.rules_path(name),
+         {:ok, results, solved} <- Facts.solve(facts, rules, opts) do
+      if solved.work != facts.work, do: Facts.release(solved)
+      {:ok, results}
+    end
+  end
+
+  defp source_errors({:dir, dir, _owned?}), do: extraction_errors(dir)
+
+  defp source_errors({:cached, facts}),
+    do: facts |> Facts.extraction_errors() |> parse_extraction_errors()
+
+  defp release({:dir, dir, true}), do: File.rm_rf(Path.dirname(dir))
+  defp release({:dir, _dir, false}), do: :ok
+  defp release({:cached, facts}), do: Facts.release(facts)
+
   # A failed points-to stage grounds only the analyses that read it;
   # the rest solve as usual.
-  defp run_one(mod, facts_dir, {:error, reason}, opts) do
+  defp run_one(mod, source, {:error, reason}, opts) do
     name = mod.name()
 
     if Analysis.Extraction.reads_points_to?(name) do
       [{:degraded, %{analysis: name, reason: reason, detail: degradation_detail(name, reason)}}]
     else
-      run_one(mod, facts_dir, :ok, opts)
+      run_one(mod, source, :ok, opts)
     end
   end
 
   # One solve per analysis module; every row is a finding under the
   # analysis's own name.
-  defp run_one(mod, facts_dir, :ok, opts) do
+  defp run_one(mod, source, :ok, opts) do
     name = mod.name()
-    {elapsed_us, result} = :timer.tc(fn -> Analysis.run_rules(facts_dir, name, opts) end)
+    {elapsed_us, result} = :timer.tc(fn -> solve(name, source, opts) end)
     duration_ms = div(elapsed_us, 1000)
 
     case result do

@@ -17,6 +17,39 @@ defmodule Argus.Analysis.ExtractionTest do
     end
   end
 
+  describe "through a store" do
+    @describetag :cache
+
+    defp contents(dir) do
+      for name <- dir |> File.ls!() |> Enum.sort(), into: %{} do
+        {name, File.read!(Path.join(dir, name))}
+      end
+    end
+
+    test "the directory is the one extracted afresh, staged, and read-only links",
+         %{tmp_dir: store} do
+      modules = [Argus.Test.Fixtures.EtsBounded, Argus.Test.Fixtures.MissingRow, :gen_server]
+
+      assert {:ok, afresh} = Extraction.extract_facts(modules, [:startup, :races])
+      assert {:ok, cold} = Extraction.extract_facts(modules, [:startup, :races], cache: store)
+      assert {:ok, warm} = Extraction.extract_facts(modules, [:startup, :races], cache: store)
+
+      try do
+        assert contents(cold) == contents(afresh)
+        assert contents(warm) == contents(afresh)
+
+        linked = Path.join(warm, "call_arg.facts")
+        assert File.stat!(linked).links > 1
+        assert File.stat!(linked).access == :read
+      after
+        for dir <- [afresh, cold, warm], do: File.rm_rf!(Path.dirname(dir))
+      end
+
+      # Removing a directory as a caller does leaves the store whole.
+      assert store |> Path.join("work") |> File.ls!() == []
+    end
+  end
+
   describe "the points-to stage" do
     test "is derived when an analysis reads it, and only then" do
       assert {:ok, reads} = Extraction.extract_facts([:lists], [:startup])
