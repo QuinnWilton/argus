@@ -926,6 +926,30 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     defp load(_key), do: 0
   end
 
+  defmodule CacheWithHits do
+    @moduledoc """
+    A cache-aside refill on a table that also counts hits, in a literal row
+    of its own: the count can never land on a cached key's row.
+    """
+    def start, do: :ets.new(:hit_cache, [:named_table, :public])
+
+    def get(key) do
+      :ets.update_counter(:hit_cache, :__hits__, {2, 1}, {:__hits__, 0})
+
+      case :ets.lookup(:hit_cache, key) do
+        [{^key, value}] ->
+          value
+
+        [] ->
+          value = load(key)
+          :ets.insert(:hit_cache, {key, value})
+          value
+      end
+    end
+
+    defp load(key), do: {:loaded, key}
+  end
+
   defmodule Trip do
     @moduledoc """
     A circuit breaker (supavisor's): not tripped, so trip it. Both racers

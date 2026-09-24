@@ -462,10 +462,23 @@ table_param_needed(f, to_string(p)) :-
   ets_op_param(id, p),
   (op = "update_counter" ; plain_write_op(op)).
 
-.decl writes_back(name: symbol)
+// A write that writes the table back from a read, or counts in it,
+// where it can land on the row of the pair keyed (ks, k): not at a
+// literal key other than the pair's, nor at a literal row beside keys
+// callers pass (a `:__hits__` counter beside the cached rows).
+.decl write_back(write: symbol, name: symbol)
 
-writes_back(name) :- ets_op(id, _, _, "update_counter", _), ets_op_table(id, name).
-writes_back(name) :- carries_read(w), ets_op_table(w, name).
+write_back(id, name) :- ets_op(id, _, _, "update_counter", _), ets_op_table(id, name).
+write_back(w, name) :- carries_read(w), ets_op_table(w, name).
+
+.decl writes_back(name: symbol, key_kind: symbol, key: symbol)
+
+writes_back(name, ks, k) :- pair_key(_, name, ks, k), write_back(w, name), !written_apart(w, ks, k).
+
+// The key a pair meets on, in the meeting function's terms.
+.decl pair_key_of(func: symbol, read: symbol, write: symbol, key_kind: symbol, key: symbol)
+
+pair_key_of(f, r, w, ks, k) :- reads_then_writes(f, r, w, _, _), rows.meets(f, r, w, _, _, ks, k).
 
 // A write made by a call, or by a read of some other store (Mnesia, the
 // registry): the refill.
@@ -612,26 +625,30 @@ shared_write(s) :- name_release(s, _, _, _, _).
 
 harmless_race(f, r, w) :-
   reads_then_writes(f, r, w, name, _),
+  pair_key_of(f, r, w, ks, k),
   ets_op(w, _, _, "delete", _),
   !tests_row_fields(r),
-  !writes_back(name).
+  !writes_back(name, ks, k).
 
 harmless_race(f, r, w) :-
   reads_then_writes(f, r, w, name, _),
+  pair_key_of(f, r, w, ks, k),
   ets_op(w, _, _, "delete_object", _),
-  !writes_back(name).
+  !writes_back(name, ks, k).
 
 harmless_race(f, r, w) :-
   reads_then_writes(f, r, w, name, _),
+  pair_key_of(f, r, w, ks, k),
   !carries_read(w),
   recomputed(w),
   !mint_handed_out(w),
-  !writes_back(name).
+  !writes_back(name, ks, k).
 
 harmless_race(f, r, w) :-
   reads_then_writes(f, r, w, name, _),
+  pair_key_of(f, r, w, ks, k),
   !carries_read(w),
-  !writes_back(name),
+  !writes_back(name, ks, k),
   !tests_row_fields(r),
   !decides_more(r, w),
   !decision_escapes(r).

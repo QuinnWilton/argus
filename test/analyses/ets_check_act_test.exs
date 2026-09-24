@@ -120,6 +120,11 @@ defmodule Argus.Analyses.EtsCheckActTest do
       assert {"bump/1", ":counted_cache", "0"} in found
     end
 
+    test "a count kept in a literal row of its own does not write the refilled rows back" do
+      skip_without_souffle()
+      assert races([C.CacheWithHits]) == []
+    end
+
     test "a trip whose decision stays inside is not reported" do
       skip_without_souffle()
       assert races([C.Trip]) == []

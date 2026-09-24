@@ -236,6 +236,15 @@ an ordered supervisor start reaches the serialized process's siblings.
 `ets_missing_row`'s removers take the same view of a literal row kept
 beside keys callers pass, whatever the source of those keys.
 
+**Fixed.** `ets_check_act`'s write-back test is asked of the pair's key,
+not the whole table. One `update_counter` of a separate literal row —
+a `:__hits__` count beside a cache's rows — turned off the delete,
+refill and trip exemptions for every pair on the table. A write-back
+now counts against a pair only where it can land on the pair's row:
+not at a literal key other than the pair's, nor at a literal row
+beside keys callers pass. Where either key is not known, the table-wide
+answer stands.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile
