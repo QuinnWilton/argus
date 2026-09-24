@@ -48,6 +48,10 @@ defmodule Argus.Extractors.PidFlow do
     the server the call reaches.
   - `table` — the ETS table the `:ets.new/2` at a site made.
 
+  A timer's `apply_after/4`, `apply_interval/4` and `apply_repeatedly/4`
+  start a process too: the MFA runs in it, handed the argument list, and
+  the `{:ok, tref}` it answers names no process.
+
   ## Emitted facts
 
   - `process_start(id, func, proc, kind, runs)` — the start at `id` starts
@@ -193,7 +197,12 @@ defmodule Argus.Extractors.PidFlow do
     {Task.Supervisor, :async_nolink, 4} => {:task, {:mfa, 1}},
     {Task.Supervisor, :start_child, 2} => {:ok, {:fun, 1}},
     {Task.Supervisor, :start_child, 3} => {:ok, {:fun, 1}},
-    {Task.Supervisor, :start_child, 4} => {:ok, {:mfa, 1}}
+    {Task.Supervisor, :start_child, 4} => {:ok, {:mfa, 1}},
+    # A timer runs the MFA in a process of its own when it fires, and
+    # answers `{:ok, tref}`: nothing the caller can reach the process by.
+    {:timer, :apply_after, 4} => {:none, {:mfa, 1}},
+    {:timer, :apply_interval, 4} => {:none, {:mfa, 1}},
+    {:timer, :apply_repeatedly, 4} => {:none, {:mfa, 1}}
   }
 
   # An Agent is a server of Agent.Server's callbacks, whose state the
@@ -840,6 +849,8 @@ defmodule Argus.Extractors.PidFlow do
     sel = literal_selector(ctx.fun.instrs, ctx.idx, key)
     load(ctx, val(ctx, {:x, term}), sel, load_id(ctx, sel), r)
   end
+
+  defp start_result(_ctx, %{shape: :none}, r), do: r
 
   defp start_result(_ctx, %{proc: proc, shape: :pid}, r),
     do: write(r, {:x, 0}, MapSet.new([{:proc, proc}]))

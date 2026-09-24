@@ -101,6 +101,29 @@ defmodule Argus.Analyses.EtsPublishOrderTest do
   end
 
   describe "facts" do
+    test "ets_table_path keeps each arm of a join" do
+      {:ok, facts} =
+        Argus.Pipeline.extract([Argus.Test.Fixtures.MissingRow.Debounce],
+          extractors: [Argus.Extractors.ETS]
+        )
+
+      [lookup] = for [id, _, _, "lookup", _] <- facts.ets_op, do: id
+      paths = for [^lookup, source, root, path] <- facts.ets_table_path, do: {source, root, path}
+
+      assert {"literal", ":debounce_buckets", ""} in paths
+      assert {"param", "0", ":table_name"} in paths
+    end
+
+    test "take is a read and a write" do
+      {:ok, facts} =
+        Argus.Pipeline.extract([Argus.Test.Fixtures.MissingRow.Debounce],
+          extractors: [Argus.Extractors.ETS]
+        )
+
+      kinds = for [_, _, _, "take", kind] <- facts.ets_op, do: kind
+      assert Enum.sort(kinds) == ["read", "write"]
+    end
+
     test "ets_table_path names each table by the parameter field it is read from" do
       {:ok, facts} = Argus.Pipeline.extract([P.MapFields], extractors: [Argus.Extractors.ETS])
 

@@ -6,6 +6,8 @@
 //   registration or unregistration of the name;
 // - ets_check_act: an ETS read decides or feeds a plain write of the
 //   same key on a public table;
+// - ets_missing_row: an ETS read decides a row is there and an act that
+//   raises without it follows, while another process can remove the row;
 // - mnesia_check_act: a dirty read decides or feeds a dirty write of
 //   the same record.
 //
@@ -735,6 +737,84 @@ ets_publish_order(mod, f, ak, a, bk, b, w1, w2, r) :-
   ets_table(w1, ak, a),
   ets_table(w2, bk, b),
   ets_table(r, bk, b).
+
+// ── Read, then a row that may be gone ────────────────────────────
+//
+// `case :ets.lookup(t, k) do [_] -> :ets.update_counter(t, k, {2, 1})`
+// decides that the row is there and acts on it with an operation that
+// raises when it is not (update_counter/3, lookup_element/3). No write of
+// the key is lost — the act's own failure is the bug: another process
+// that takes or deletes the row between the two leaves the act a missing
+// key, and the process that only meant to count crashes with badarg.
+// sequin's DebouncedLogger counts repeats of a log line this way while a
+// timer's flush, in a process of its own, takes the row.
+//
+// The pair is CheckThenAct's (clientlib/check_then_act.dl): a deciding
+// read and a raising act on one table and key, in one function or across
+// the functions the read's result reaches. The row's remover is any
+// operation that deletes rows of that table — take, delete, a
+// delete_object, select_delete or match_delete, or deleting the table —
+// in a function that can run while the pair's function is between the
+// two. The key is not asked of the remover: a flush keyed by the
+// arguments a timer was handed is not a key the facts can equate to the
+// check's.
+
+.init missing = CheckThenAct
+
+missing.check(r, f, tk, t, ks, k) :-
+  ets_op(r, f, _, op, "read"),
+  ets_deciding_read(op),
+  ets_table(r, tk, t),
+  ets_key(r, ks, k).
+
+missing.act(a, f, tk, t, ks, k) :-
+  raises_on_missing(a, f),
+  ets_table(a, tk, t),
+  ets_key(a, ks, k).
+
+.decl row_remover(id: symbol, func: symbol, tk: symbol, t: symbol)
+
+row_remover(d, h, tk, t) :-
+  ets_op(d, h, _, op, _),
+  (op = "take" ; op = "delete" ; op = "delete_object" ; op = "select_delete" ; op = "match_delete" ; op = "delete_all_objects"),
+  ets_table(d, tk, t).
+
+.decl missing_pair(func: symbol, check: symbol, act: symbol, g: symbol, tk: symbol, t: symbol)
+
+missing_pair(f, c, a, g, tk, t) :-
+  missing.meets(f, c, a, tk, t, _, _),
+  raises_on_missing(a, g),
+  readable_elsewhere(a, tk, t),
+  !rescues_argument_error(f),
+  !rescues_argument_error(g).
+
+runs.seed(f) :- missing_pair(f, _, _, _, _, _).
+runs.seed(h) :- missing_pair(_, _, _, _, tk, t), row_remover(_, h, tk, t).
+
+// The remover can run while the pair's function is between the check and
+// the act: the pair's function runs in more than one process, or the
+// remover runs in a process that does not run it.
+.decl missing_concurrent(func: symbol, remover: symbol)
+
+missing_concurrent(f, d) :-
+  missing_pair(f, _, _, _, tk, t),
+  row_remover(d, _, tk, t),
+  !runs.single_process(f).
+
+missing_concurrent(f, d) :-
+  missing_pair(f, _, _, _, tk, t),
+  row_remover(d, h, tk, t),
+  runs.entry_reaches(m, h),
+  !runs.entry_reaches(m, f).
+
+.decl ets_missing_row(mod: symbol, func: symbol, table_kind: symbol, table: symbol, check: symbol, act: symbol, remover: symbol)
+.output ets_missing_row
+
+ets_missing_row(mod, f, tk, t, c, a, d) :-
+  missing_pair(f, c, a, _, tk, t),
+  row_remover(d, _, tk, t),
+  missing_concurrent(f, d),
+  function_def(f, mod, _, _, _).
 
 // ── Dirty read, then dirty write ─────────────────────────────────
 //

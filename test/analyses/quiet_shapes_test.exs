@@ -37,7 +37,8 @@ defmodule Argus.Analyses.QuietShapesTest do
     Argus.Test.Fixtures.PublishOrder.ReverseFirst,
     Argus.Test.Fixtures.PublishOrder.LocalPairSafe,
     Argus.Test.Fixtures.PublishOrder.HelperFirst,
-    Argus.Test.Fixtures.PublishOrder.KeyFromElsewhere
+    Argus.Test.Fixtures.PublishOrder.KeyFromElsewhere,
+    Argus.Test.Fixtures.MissingRow.OneOwner
   ]
 
   @expect_quiet %{
@@ -55,7 +56,7 @@ defmodule Argus.Analyses.QuietShapesTest do
       "unreceived_message"
     ],
     structure: ~w(consumer_supervisor_permanent_child),
-    races: ~w(registry_race ets_check_act ets_publish_order),
+    races: ~w(registry_race ets_check_act ets_publish_order ets_missing_row),
     coupling: ~w(dual_restart_authority),
     blocking: ~w(partial_noproc_catch),
     failure: [{"unhandled_failure", kind: "erpc_transport"}, "inconsistent_handling"],

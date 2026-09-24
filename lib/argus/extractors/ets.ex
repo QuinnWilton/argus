@@ -338,11 +338,9 @@ defmodule Argus.Extractors.ETS do
     id = InstrId.mint(ctx.func_id, ctx.idx)
     table_ref = resolve_table(ctx, fields)
 
-    kind = classify_op(func, arity)
-
     facts
     |> track_dynamic(table_ref, ctx, :ets_table_ref_op, :ets_op)
-    |> add_fact(:ets_op, [id, ctx.func_id, table_ref, to_string(func), kind])
+    |> ops(id, ctx.func_id, table_ref, func, arity)
     |> maybe_table_param(id, table_ref, ctx)
     |> table_path(id, ctx)
     |> maybe_key(id, ctx, func)
@@ -529,9 +527,21 @@ defmodule Argus.Extractors.ETS do
 
   # Classify an ETS operation into read/write/delete.
   # :ets.delete/1 is table deletion; :ets.delete/2 is key deletion (a write).
-  defp classify_op(:delete, 1), do: "delete"
-  defp classify_op(:delete, _arity), do: "write"
-  defp classify_op(func, _arity) when func in @read_ops, do: "read"
-  defp classify_op(func, _arity) when func in @write_ops, do: "write"
-  defp classify_op(_func, _arity), do: "unknown"
+  defp ops(facts, id, func_id, table_ref, func, arity) do
+    for kind <- classify_op(func, arity), reduce: facts do
+      acc -> add_fact(acc, :ets_op, [id, func_id, table_ref, to_string(func), kind])
+    end
+  end
+
+  # take/2 reads the row and deletes it: a read to the rules that ask
+  # what a lookup decides, and a write to the ones that ask who else
+  # changes the table.
+  defp classify_op(:take, 2), do: ["read", "write"]
+  defp classify_op(func, arity), do: [classify_one(func, arity)]
+
+  defp classify_one(:delete, 1), do: "delete"
+  defp classify_one(:delete, _arity), do: "write"
+  defp classify_one(func, _arity) when func in @read_ops, do: "read"
+  defp classify_one(func, _arity) when func in @write_ops, do: "write"
+  defp classify_one(_func, _arity), do: "unknown"
 end

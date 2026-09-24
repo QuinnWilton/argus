@@ -394,5 +394,17 @@
     module: "Sequin.DebouncedLogger",
     pre: "46ce4e1048437575ce3c40ebb3eb589a4b9e4f27",
     finding: {:failure, ":ets.update_counter/3 called bare where every other call site guards it"}
+  },
+  # The same bug as the race it is: log/4's lookup decides the bucket is
+  # there and update_counter/3 acts on it, while flush_bucket/4, which a
+  # :timer.apply_after runs in a process of its own, takes the row. The
+  # table is `cfg.table_name || @default_table`, the default's arm naming
+  # the table setup_ets/0 creates.
+  %{
+    repo: "sequinstream/sequin",
+    issue: "sequin@46ce4e1",
+    module: "Sequin.DebouncedLogger",
+    pre: "46ce4e1048437575ce3c40ebb3eb589a4b9e4f27",
+    finding: {:races, "ETS row acted on after another process may have removed it"}
   }
 ]

@@ -59,6 +59,15 @@ and have `resolve/2` raise `ArgumentError` on it in the window between
 row goes in first now, and a binary that loses the `insert_new` race
 deletes the row it wrote. `races.ets_publish_order` found it.
 
+**Changed.** Schema 64, no shape change. `ets_op` has two rows for
+`:ets.take/2`, a `read` and a `write`: it reads the row and deletes it,
+and was `unknown`. `process_start` has a row for each
+`:timer.apply_after/4`, `apply_interval/4` and `apply_repeatedly/4`
+(Process points-to, below). Corpus: `ets.ets_read_outside_owner` gains
+bb's `BB.Command.ResultCache.fetch_and_delete/1`, a take of the table its
+GenServer creates in `init/1` with no heir, from the caller's process —
+real, the class of the lookups it already reports; nothing else moves.
+
 **Changed.** Schema 63. `ets_write_order` is replaced by
 `ets_effect_order(func, first, then)`: two effects of one function in
 order, each an `insert`/`insert_new` or a call into project code (so an
@@ -573,7 +582,9 @@ answered with — and `table_use(id, func, src_kind, src)` says which
 source an ETS operation's table operand is. The table goes wherever a
 pid would: through parameters, returns, map and tuple fields, a
 server's state, a closure's environment, a spawned function's
-arguments.
+arguments. `:timer.apply_after/4`, `apply_interval/4` and
+`apply_repeatedly/4` are starts: the MFA runs in a process of its own,
+with the argument list, and nothing the caller holds names it.
 
 **Fixed.** `PidFlow` spells a literal `{:global, name}` or `{:via, mod,
 key}` name, and a literal map key it selects on, with `Helpers.spell/1`,
@@ -1203,6 +1214,21 @@ its transaction site, and a function whose transactions name two repos
 has no body: nothing says whose the closure is.
 
 ### races
+
+**Added.** `ets_missing_row`: a read decides a row is there
+(`case :ets.lookup(t, k) do [_] -> ...`) and an operation that raises
+when it is not acts on it (`:ets.update_counter/3`,
+`:ets.lookup_element/3`), while a take or delete of the table's rows can
+run in another process between the two. No update is lost; the act
+crashes with `badarg` on the row the other process removed. Built on
+CheckThenAct with the tables of clientlib/tables.dl; the remover's key
+is not asked, since a flush keyed by the arguments a timer was handed is
+no key the facts can equate to the check's. Quiet when the act has a
+default (`update_counter/4`) or `ArgumentError` is rescued, when the
+table is private, and when the remover cannot run while the pair's
+function is between the two. Corpus: sequin's DebouncedLogger (46ce4e1,
+live upstream), the count its timer's flush takes the row from under, is
+a present-only pair; it was the consistency rule's `info` alone.
 
 **Changed.** Which ETS tables an operation may touch is one relation,
 `ets_table(id, kind, ident)` (clientlib/tables.dl): `named` and the name,

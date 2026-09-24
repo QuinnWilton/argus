@@ -33,6 +33,12 @@ defmodule Argus.Analyses.Races do
     with a read that raises on a missing row (`reader`:
     `:ets.lookup_element/3`, `:ets.update_counter/3`) crashes with
     `badarg`. The two writes may be `func`'s own or its callees'.
+  - `ets_missing_row(mod, func, table_kind, table, check, act, remover)` —
+    a read decides that a row is there (`check`) and an operation that
+    raises when it is not acts on it (`act`: `:ets.update_counter/3`,
+    `:ets.lookup_element/3`), while `remover`, a take or delete of the
+    table's rows, can run in another process between the two: the act
+    crashes on the row the remover took.
 
   A table is what `clientlib/tables.dl` says an operation may touch:
   `named` and its name, `new` and the `:ets.new/2` site that made it
@@ -42,7 +48,8 @@ defmodule Argus.Analyses.Races do
   Every check-then-act finding is a `:warning` anchored at the act, with
   the check as a related frame; a publish-order finding is a `:warning`
   anchored at the early write, with the completing write and the reader
-  as related frames.
+  as related frames; a missing-row finding is a `:warning` anchored at the
+  act, with the check and the remover as related frames.
   """
 
   @behaviour Argus.Analysis
@@ -56,8 +63,9 @@ defmodule Argus.Analyses.Races do
   def description,
     do:
       "check-then-act races on a process name, an ETS key or a Mnesia record that " <>
-        "another process can write between the check and the act, and ETS values " <>
-        "published before the rows they point to"
+        "another process can write between the check and the act, ETS values " <>
+        "published before the rows they point to, and ETS rows acted on after another " <>
+        "process may have removed them"
 
   @impl true
   def rules_file, do: "analyses/races.dl"
@@ -146,6 +154,21 @@ defmodule Argus.Analyses.Races do
         key: [:func, :publish, :complete],
         doc:
           "A value is published in one ETS table before the row another table keys by it exists."
+      },
+      %{
+        name: :ets_missing_row,
+        fields: [
+          {:mod, :symbol, "the module"},
+          {:func, :symbol, "the function where the read's result meets the act"},
+          {:table_kind, :symbol, "named | new | field"},
+          {:table, :symbol, "the table, as table_kind spells it"},
+          {:check, :symbol, "instruction ID of the read that decides the row is there"},
+          {:act, :symbol, "instruction ID of the operation that raises when it is not"},
+          {:remover, :symbol, "instruction ID of a take or delete another process can run"}
+        ],
+        key: [:func, :act],
+        doc:
+          "A read decides a row is there and a raising operation acts on it while another process can remove it."
       }
     ]
   end
@@ -279,6 +302,34 @@ defmodule Argus.Analyses.Races do
           "if publishing can lose (`:ets.insert_new/2`), delete the row the loser wrote",
         "or read with a default: `:ets.lookup_element/4` (OTP 26), or `:ets.lookup/2` " <>
           "and handle `[]`"
+      ]
+    )
+  end
+
+  def finding(:ets_missing_row, [mod, func, kind, table, check, act, remover]) do
+    name = describe_table(kind, table)
+
+    Findings.new(
+      :warning,
+      "ETS row acted on after another process may have removed it",
+      "#{func} reads a key of #{name}#{Findings.elsewhere(check, func)} and, finding the " <>
+        "row, acts on it with an operation that raises when the row is missing" <>
+        "#{Findings.elsewhere(act, func)}. Another process can take or delete the row " <>
+        "between the two#{Findings.elsewhere(remover, func)}, and the act then raises " <>
+        "ArgumentError (badarg) in a process that meant only to update the row.",
+      at: Findings.at_site(act, mod),
+      at_label: "this raises if the row was removed after the read",
+      related: [
+        Findings.related("the read that decided the row was there", Findings.at_site(check, mod)),
+        Findings.related(
+          "another process can remove the row here",
+          Findings.at_site(remover, mod)
+        )
+      ],
+      help: [
+        "make the act one step that tolerates a missing row: `:ets.update_counter/4` with a " <>
+          "default object, or `:ets.lookup_element/4` (OTP 26)",
+        "or rescue `ArgumentError` around the act, as a row that went away is an expected outcome"
       ]
     )
   end
