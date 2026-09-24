@@ -29,8 +29,8 @@
 // Where sends go is in sends.dl, apart, so an analysis that asks only
 // about calls does not read every send in the program.
 //
-// Prerequisites: include clientlib/imports.dl, behaviours.dl and
-// callbacks.dl before this file (otp.dl does).
+// Prerequisites: include clientlib/imports.dl, behaviours.dl,
+// callbacks.dl and runs_elsewhere.dl before this file (otp.dl does).
 
 // ── Processes ───────────────────────────────────────────────────────
 
@@ -328,69 +328,6 @@ reads_self(f) :- pid_base(f, _, "self", _).
 
 self_relevant(f) :- reads_self(f).
 self_relevant(f) :- same_process_call(f, g), self_relevant(g).
-
-// `func`'s edge to `callee` leads into another process: callee is what a
-// spawn, a task or an agent in func runs, and func does not call it
-// itself. A closure or fun reference of func's is set aside too when it
-// is func's only one and func starts a process on a fun points-to does
-// not follow (the fun came from a variable, or a helper spawns its
-// parameter) or a child whose spec may hold a fun: with one there is
-// nothing to confuse the handed one with. A function with several keeps them all:
-// which one is handed off is not known, and one handed to Enum.each
-// runs in the caller's process. A closure handed to Task.async_stream is
-// not set aside either: the caller waits for what it does. Told without
-// closure_def (by the compiler's name for a closure), which the
-// supervision family must not read (stage0_test).
-.decl runs_elsewhere(func: symbol, callee: symbol)
-
-runs_elsewhere(f, g) :-
-  process_start(_, f, _, kind, g),
-  kind != "server",
-  !call_instr(f, g, _),
-  !calls_fun(f).
-
-// A function that calls a fun value may run the one it starts inline as
-// well (`worker = fn -> ... end`, then a task or `worker.()`, which the
-// compiler makes a call to the closure when it can: call_instr).
-.decl calls_fun(func: symbol)
-
-calls_fun(f) :- dynamic_call(_, f, "call_fun").
-
-runs_elsewhere(f, g) :-
-  hands_funs_off(f),
-  closure_edge(f, g),
-  closure_edges(f, 1),
-  !call_instr(f, g, _).
-
-.decl closure_edge(func: symbol, closure: symbol)
-
-closure_edge(f, g) :-
-  hands_funs_off(f),
-  call_edge(f, g),
-  (match(".*:-.*-fun-[0-9]+-/[0-9]+", g) ; fun_ref(f, g)).
-
-.decl closure_edges(func: symbol, n: number)
-
-closure_edges(f, n) :-
-  closure_edge(f, _),
-  n = count : { closure_edge(f, _) }.
-
-.decl hands_funs_off(func: symbol)
-
-hands_funs_off(f) :- process_start(_, f, _, kind, "dynamic"), kind != "server".
-
-// `start_worker(fn -> ... end)`: the start is a helper's, on its
-// parameter.
-hands_funs_off(f) :-
-  call_edge(f, h),
-  process_start(_, h, _, kind, "dynamic"),
-  kind != "server".
-
-// A child spec built around a fun (`start: {Task, :start_link, [fn ->
-// ... end]}`) runs it in the child.
-hands_funs_off(f) :-
-  call_site(_, f, m, "start_child", _),
-  (m = "Supervisor" ; m = "DynamicSupervisor").
 
 // ── A GenServer's state ─────────────────────────────────────────────
 

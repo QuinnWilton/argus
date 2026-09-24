@@ -17,10 +17,6 @@ process_module(mod) :- process_behaviour_module(mod).
 
 behaviour_module(mod) :- implements_behaviour(mod, _).
 
-.decl statem_process(mod: symbol)
-
-statem_process(mod) :- behaves_as(mod, "GenStateMachine").
-
 // Defines handle_info at any arity.
 .decl has_handle_info(mod: symbol)
 

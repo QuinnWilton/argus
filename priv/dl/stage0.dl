@@ -56,7 +56,7 @@ call_site(id, caller, mod, func, arity) :-
 // The library calls findings point at: a synchronous call, a child
 // started under a supervisor, a tree started, a socket waited on; and
 // the call that hands a function's fun to a child
-// (runs_elsewhere, in processes.dl).
+// (runs_elsewhere, in runs_elsewhere.dl).
 .decl anchor_api(mod: symbol, func: symbol)
 
 anchor_api("GenServer", "call").

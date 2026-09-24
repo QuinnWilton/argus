@@ -106,3 +106,9 @@ process_behaviour("GenStateMachine", "terminating").
 process_behaviour("GenEvent", "terminating").
 process_behaviour("Broadway", "terminating").
 process_behaviour("Phoenix.LiveView", "terminating").
+
+// A gen_statem: its state functions and its data are the process
+// points-to's and the mailbox rules' (process_statem.dl, process.dl).
+.decl statem_process(mod: symbol)
+
+statem_process(mod) :- behaves_as(mod, "GenStateMachine").

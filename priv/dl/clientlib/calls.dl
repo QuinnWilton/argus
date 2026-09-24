@@ -1,6 +1,7 @@
 // Who waits on whom.
 //
-// Requires imports.dl, behaviours.dl, callbacks.dl and processes.dl.
+// Requires imports.dl, behaviours.dl, callbacks.dl, processes.dl and
+// runs_elsewhere.dl (otp.dl includes all of them).
 // Reads the extracted sync_call / sync_call_site / async_cast /
 // sync_call_timeout / call_arg / call_arg_forward facts and answers one question in a few shapes: does this function, or
 // this module, synchronously depend on that module's process.
@@ -146,16 +147,6 @@ sync_dep(f, m) :-
 sync_dep(f, m) :-
   process_call(f, _, _, "call", p),
   server_process(p, m).
-
-// The instruction in `func` that calls the project function `callee`:
-// the site a finding points at when a rule knows only the functions.
-// Over the staged call_site, so no analysis reads remote_call for it.
-.decl call_instr(func: symbol, callee: symbol, id: symbol)
-
-call_instr(f, g, id) :-
-  call_site(id, f, mod, name, arity),
-  g = cat(mod, cat(":", cat(name, cat("/", to_string(arity))))),
-  function_def(g, _, _, _, _).
 
 // The instruction in `func` that makes it depend synchronously on
 // `mod`: the GenServer.call itself, or the call into mod's own
@@ -355,7 +346,7 @@ async_dep(f, m) :-
 
 // A wait is the waiting process's: the dependency is not propagated
 // over the edge into what a spawn, task or agent runs (runs_elsewhere,
-// processes.dl) — init/1 does not wait on what the task it starts
+// runs_elsewhere.dl) — init/1 does not wait on what the task it starts
 // calls. The closure itself, a function of the same module, still
 // holds it, so module-level dependencies are unchanged.
 //

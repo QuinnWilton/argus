@@ -21,7 +21,7 @@
 // SameProcess subtracts the edges into what a start runs (a receive
 // inside `spawn(fn -> ... end)` or `spawn(&M.loop/0)` runs elsewhere,
 // one inside a closure handed to Enum.map in the caller's process:
-// runs_elsewhere, in processes.dl, which a SameProcess instance needs);
+// runs_elsewhere, in runs_elsewhere.dl, which a SameProcess instance needs);
 // IntraModule stays inside one module. Each variant states its step in its own
 // recursive clause rather than copying `call_edge` into a per-instance
 // relation, so an analysis with four instances pays for four closures,
