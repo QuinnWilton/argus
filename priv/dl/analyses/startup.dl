@@ -26,8 +26,11 @@
 //   `detail` is api.op, `dep` the target), "blocking_server" (the callee
 //   runs but its handler `detail` blocks at `site`), "parent" (a
 //   handle_continue calls its own supervisor), "global" (a :global lock
-//   that retries; `detail` is the op, `dep` the nodes it waits on:
-//   "cluster", "local" or "unknown") or "remote" (an rpc, a node
+//   that retries until it is granted; `detail` is the op, `dep` the nodes
+//   it waits on: "cluster", "local" or "unknown"), "global_assumed" (the
+//   same, with a retry count the bytecode does not show, assumed
+//   :infinity), "global_bounded" (a lock over other nodes that gives up
+//   after a positive retry count) or "remote" (an rpc, a node
 //   operation, a distributed store; `detail` is the op). `ordering` is where the peer
 //   starts relative to this child under `sup`: "later" (a deadlock by
 //   construction, or a race from handle_continue), "earlier",
@@ -417,23 +420,31 @@ deferral_defect(mod, "init_timeout", site, to_string(ms)) :-
 
 // ── A :global lock in init/1 ─────────────────────────────────────
 
-// The worst case: a :global lock that retries until it gets its way
-// (retrying_lock, clientlib/vocabulary.dl), held from supervisor
-// startup — in init/1, or in anything init/1 calls on its own stack.
-// The supervisor waits on the lock, and the lock waits on the nodes in
-// its list: every connected node when `dep` is "cluster", only this
-// node's global server when it is "local" (it still waits forever on a
-// local holder), and "unknown" when the list is not in the bytecode.
-// `lock` is the :global call itself, in whichever function holds it
-// (init/1 included: a seed is in its own reach). One row per site —
-// finding builders dedupe on (func, nodes, op).
+// The worst case: a :global lock that retries until it is granted
+// (lock_until_granted, clientlib/vocabulary.dl), held from supervisor
+// startup — in init/1, or in anything init/1 calls on its own stack
+// (lock_reach). The supervisor waits on the lock, and the lock waits on
+// the nodes in its list: every connected node when `dep` is "cluster",
+// only this node's global server when it is "local" (it still waits
+// forever on a local holder), and
+// "unknown" when the list is not in the bytecode. A retry count the
+// bytecode does not show is assumed :infinity, the default the wrappers
+// forward, and the row says so by its kind ("global_assumed"). `lock` is
+// the :global call itself, in whichever function holds it (init/1
+// included). One row per site — finding builders dedupe on (func,
+// nodes, op).
 .init lock_reach = SameProcessReach
 
-lock_reach.seed(holder, lock) :- retrying_lock(lock, holder, _, _, _).
+lock_reach.seed(holder, lock) :- lock_until_granted(lock, holder, _, _, _).
+lock_reach.seed(holder, lock) :- bounded_lock(lock, holder, _, _, _).
 
 blocks_on_peer(init, "init", nodes, "global", "", "", lock, op) :-
   lock_during_init(init, lock),
-  retrying_lock(lock, _, op, _, nodes).
+  global_op(lock, _, op, "infinity", nodes).
+
+blocks_on_peer(init, "init", nodes, "global_assumed", "", "", lock, op) :-
+  lock_during_init(init, lock),
+  global_op(lock, _, op, "dynamic", nodes).
 
 .decl lock_during_init(init: symbol, lock: symbol)
 
@@ -442,32 +453,67 @@ lock_during_init(init, lock) :-
   reaches_in_same_process(init, lock),
   retries_until_locked(lock).
 
+// A lock with a positive retry count gives up and returns false, after
+// backoff that OTP caps at 8 s a try. Over [node()] that is the fix the
+// "local" finding recommends, and is quiet. Over other nodes each try
+// still asks every one of them, and a partitioned node holds a try until
+// the node is declared down, so the start waits for a bounded but
+// possibly long time: reported one severity below the other kinds, as
+// "global_bounded".
+blocks_on_peer(init, "init", nodes, "global_bounded", "", "", lock, op) :-
+  bounded_lock_during_init(init, lock),
+  bounded_lock(lock, _, op, _, nodes).
+
+.decl bounded_lock_during_init(init: symbol, lock: symbol)
+
+bounded_lock_during_init(init, lock) :-
+  is_init(init),
+  reaches_in_same_process(init, lock),
+  gives_up_after_retries(lock),
+  waits_on_other_nodes(lock).
+
 // `func` reaches the function holding `site` on its own stack: calls
 // that stay in the calling process (lock_reach).
 .decl reaches_in_same_process(func: symbol, site: symbol) inline
 
 reaches_in_same_process(f, site) :- lock_reach.reaches(f, site).
 
-// A :global call that retries until it gets its way (retrying_lock).
+// A :global call that retries until it is granted (lock_until_granted).
 .decl retries_until_locked(site: symbol) inline
 
-retries_until_locked(site) :- retrying_lock(site, _, _, _, _).
+retries_until_locked(site) :- lock_until_granted(site, _, _, _, _).
+
+// A :global call that retries a bounded number of times (bounded_lock).
+.decl gives_up_after_retries(site: symbol) inline
+
+gives_up_after_retries(site) :- bounded_lock(site, _, _, _, _).
+
+// Its node list holds other nodes, or may (not "local").
+.decl waits_on_other_nodes(site: symbol) inline
+
+waits_on_other_nodes(site) :- global_op(site, _, _, _, nodes), nodes != "local".
+
+// A lock during init, of any kind reported above.
+.decl init_lock(init: symbol, lock: symbol)
+
+init_lock(init, lock) :- lock_during_init(init, lock).
+init_lock(init, lock) :- bounded_lock_during_init(init, lock).
 
 // Where init/1's path to a lock in a helper starts: the call in init/1
-// whose callee, on init's own stack, reaches the lock. The finding's
-// "init/1 reaches it from here" frame points at that call; a path that
-// leaves init/1 through something with no call instruction (a closure
-// it runs, a fun it applies) points at init/1 itself, `call` empty —
-// unless the lock is in an anonymous function written inside init/1,
-// whose line the finding's anchor already is. The earliest such call is
-// kept (the relation's `earliest`).
+// whose callee, on init's own stack, reaches the lock. The finding's "init/1 reaches it from here"
+// frame points at that call; a path that leaves init/1 through something
+// with no call instruction (a closure it runs, a fun it applies) points
+// at init/1 itself, `call` empty — unless the lock is in an anonymous
+// function written inside init/1, whose line the finding's anchor
+// already is. The earliest such call is kept (the relation's
+// `earliest`).
 .decl init_lock_path(init: symbol, lock: symbol, call: symbol)
 .output init_lock_path
 
 .decl init_lock_step(init: symbol, lock: symbol, call: symbol)
 
 init_lock_step(init, lock, call) :-
-  blocks_on_peer(init, "init", _, "global", "", "", lock, _),
+  init_lock(init, lock),
   !global_op(lock, init, _, _, _),
   call_instr(init, g, call),
   !runs_elsewhere(init, g),
@@ -480,7 +526,7 @@ init_lock_stepped(init, lock) :- init_lock_step(init, lock, _).
 init_lock_path(init, lock, call) :- init_lock_step(init, lock, call).
 
 init_lock_path(init, lock, "") :-
-  blocks_on_peer(init, "init", _, "global", "", "", lock, _),
+  init_lock(init, lock),
   global_op(lock, holder, _, _, _),
   holder != init,
   !lock_in_init_closure(init, lock),
@@ -491,7 +537,7 @@ init_lock_path(init, lock, "") :-
 .decl lock_in_init_closure(init: symbol, lock: symbol)
 
 lock_in_init_closure(init, lock) :-
-  blocks_on_peer(init, "init", _, "global", "", "", lock, _),
+  init_lock(init, lock),
   global_op(lock, holder, _, _, _),
   function_def(init, m, n, a, _),
   contains(cat(m, ":-", n, "/", to_string(a), "-fun-"), holder).

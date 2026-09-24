@@ -73,7 +73,8 @@ defmodule Argus.Analyses.Startup do
           {:phase, :symbol, "init | continue"},
           {:dep, :symbol,
            "the peer waited on; for global, the nodes the lock waits on (cluster | local | unknown); empty for remote"},
-          {:kind, :symbol, "call | cast | sup | blocking_server | parent | global | remote"},
+          {:kind, :symbol,
+           "call | cast | sup | blocking_server | parent | global | global_assumed | global_bounded | remote"},
           {:ordering, :symbol, "later | earlier | parent | unknown, or empty"},
           {:sup, :symbol, "the supervisor placing both, when the ordering is known"},
           {:site, :symbol, "the tree definition for a later sibling, else the call site"},
@@ -91,6 +92,8 @@ defmodule Argus.Analyses.Startup do
              "sup" => [:mod, :detail],
              "blocking_server" => [:mod, :dep],
              "global" => [:mod, :dep, :detail],
+             "global_assumed" => [:mod, :dep, :detail],
+             "global_bounded" => [:mod, :dep, :detail],
              "remote" => [:mod, :detail],
              default: [:mod, :phase, :dep, :ordering, :sup]
            }},
@@ -459,56 +462,42 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:blocks_on_peer, [func, "init", "cluster", "global", _, _, site, op]) do
-    Findings.new(
-      :error,
-      "Cluster-wide lock during init",
-      "#{func} reaches :global.#{op} from init/1. init blocks the " <>
-        "supervisor's start sequence, and the :global op blocks on " <>
-        "cluster-wide agreement — local startup now hangs whenever the " <>
-        "cluster is partitioned or slow.",
-      at: Findings.at_site_in_func(site, func),
-      at_label: "cluster-wide lock reached from init/1",
-      help: ["defer the lock to handle_continue/2 so the start completes without the cluster"]
-    )
+  # A lock that retries until it is granted ("global"), or whose retry
+  # count the bytecode does not show and is assumed :infinity
+  # ("global_assumed"). Its node list decides what it waits on: the
+  # connected nodes ("cluster"), this node's global server alone
+  # ("local"), or a list the bytecode does not show ("unknown", reported
+  # as the cluster-wide lock it may be, saying it is assumed).
+  def finding(:blocks_on_peer, [func, "init", nodes, kind, _, _, site, op])
+      when kind in ["global", "global_assumed"] do
+    init_lock(func, nodes, kind == "global_assumed", site, op)
   end
 
-  # [node()]: only this node's global server takes part. The lock does
-  # not wait on the cluster, but it still retries until it is free.
-  def finding(:blocks_on_peer, [func, "init", "local", "global", _, _, site, op]) do
+  # A positive retry count over other nodes: it gives up, but each try
+  # waits on every node in the list.
+  def finding(:blocks_on_peer, [func, "init", nodes, "global_bounded", _, _, site, op]) do
+    assumed = nodes != "cluster"
+
     Findings.new(
       :warning,
-      "Lock during init",
-      "#{func} reaches :global.#{op} from init/1, over only the local " <>
-        "node. No other node takes part, so the cluster cannot stall it, " <>
-        "but the lock retries until it is free: init, and the supervisor's " <>
-        "start sequence with it, waits for as long as another process on " <>
-        "this node holds the lock.",
-      at: Findings.at_site_in_func(site, func),
-      at_label: "lock reached from init/1; it waits on this node's holders",
-      help: [
-        "defer the lock to handle_continue/2, or bound its retries " <>
-          "(:global.set_lock/3) so a held lock fails the start instead of hanging it"
-      ]
-    )
-  end
-
-  # "unknown": the node list is not in the bytecode (a parameter, a
-  # call's result). Reported as the cluster-wide lock it may be, saying
-  # it is assumed — as is any list not known to be local or cluster.
-  def finding(:blocks_on_peer, [func, "init", _nodes, "global", _, _, site, op]) do
-    Findings.new(
-      :error,
-      "Cluster-wide lock during init",
-      "#{func} reaches :global.#{op} from init/1, with a node list the " <>
-        "bytecode does not show, so this assumes it holds the connected " <>
-        "nodes. init blocks the supervisor's start sequence, and a lock " <>
-        "over the cluster blocks on cluster-wide agreement — local startup " <>
-        "then hangs whenever the cluster is partitioned or slow. A list of " <>
-        "only [node()] waits on this node's holders alone.",
+      "Bounded cluster-wide lock during init",
+      "#{func} reaches :global.#{op} from init/1 with a bounded retry count" <>
+        if(assumed,
+          do:
+            ", and a node list the bytecode does not show, so this assumes it holds the connected nodes. ",
+          else: ". "
+        ) <>
+        "It gives up and returns false once its retries are spent, after up to 8 s of " <>
+        "backoff between tries, but each try asks every node in the list: a node that is " <>
+        "partitioned and not yet declared down holds the try, and init, and the " <>
+        "supervisor's start sequence, wait with it.",
       at: Findings.at_site_in_func(site, func),
       at_label:
-        "lock reached from init/1; its node list could not be read, so assumed cluster-wide",
+        if(assumed,
+          do:
+            "bounded lock reached from init/1; its node list could not be read, so assumed cluster-wide",
+          else: "bounded cluster-wide lock reached from init/1"
+        ),
       help: ["defer the lock to handle_continue/2 so the start completes without the cluster"]
     )
   end
@@ -580,4 +569,80 @@ defmodule Argus.Analyses.Startup do
   def evidence(:init_reaches_recv, [mod, _api, call]) do
     Findings.related("reached from #{mod}.init/1", Findings.at_site(call, mod))
   end
+
+  defp init_lock(func, "cluster", assumed_retries, site, op) do
+    Findings.new(
+      :error,
+      "Cluster-wide lock during init",
+      "#{func} reaches :global.#{op} from init/1. init blocks the " <>
+        "supervisor's start sequence, and the :global op blocks on " <>
+        "cluster-wide agreement — local startup now hangs whenever the " <>
+        "cluster is partitioned or slow." <> assumed_retries_sentence(assumed_retries),
+      at: Findings.at_site_in_func(site, func),
+      at_label: "cluster-wide lock reached from init/1" <> assumed_retries_label(assumed_retries),
+      help: ["defer the lock to handle_continue/2 so the start completes without the cluster"]
+    )
+  end
+
+  # [node()]: only this node's global server takes part. The lock does
+  # not wait on the cluster, but it still retries until it is free.
+  defp init_lock(func, "local", assumed_retries, site, op) do
+    Findings.new(
+      :warning,
+      "Lock during init",
+      "#{func} reaches :global.#{op} from init/1, over only the local " <>
+        "node. No other node takes part, so the cluster cannot stall it, " <>
+        "but the lock retries until it is free: init, and the supervisor's " <>
+        "start sequence with it, waits for as long as another process on " <>
+        "this node holds the lock." <> assumed_retries_sentence(assumed_retries),
+      at: Findings.at_site_in_func(site, func),
+      at_label:
+        "lock reached from init/1; it waits on this node's holders" <>
+          assumed_retries_label(assumed_retries),
+      help: [
+        "defer the lock to handle_continue/2, or bound its retries " <>
+          "(:global.set_lock/3) so a held lock fails the start instead of hanging it"
+      ]
+    )
+  end
+
+  # "unknown": the node list is not in the bytecode (a parameter, a
+  # call's result). Reported as the cluster-wide lock it may be, saying
+  # it is assumed — as is any list not known to be local or cluster.
+  defp init_lock(func, _nodes, assumed_retries, site, op) do
+    Findings.new(
+      :error,
+      "Cluster-wide lock during init",
+      "#{func} reaches :global.#{op} from init/1, with a node list the " <>
+        "bytecode does not show, so this assumes it holds the connected " <>
+        "nodes. init blocks the supervisor's start sequence, and a lock " <>
+        "over the cluster blocks on cluster-wide agreement — local startup " <>
+        "then hangs whenever the cluster is partitioned or slow. A list of " <>
+        "only [node()] waits on this node's holders alone." <>
+        assumed_retries_sentence(assumed_retries),
+      at: Findings.at_site_in_func(site, func),
+      at_label:
+        if(assumed_retries,
+          do:
+            "lock reached from init/1; its node list and retry count could not be read, " <>
+              "so assumed cluster-wide and :infinity",
+          else:
+            "lock reached from init/1; its node list could not be read, so assumed cluster-wide"
+        ),
+      help: ["defer the lock to handle_continue/2 so the start completes without the cluster"]
+    )
+  end
+
+  defp assumed_retries_sentence(false), do: ""
+
+  defp assumed_retries_sentence(true) do
+    " Its retry count is not in the bytecode (a parameter, an option), so " <>
+      "this assumes :infinity, the default; a positive count gives up and " <>
+      "returns false instead."
+  end
+
+  defp assumed_retries_label(false), do: ""
+
+  defp assumed_retries_label(true),
+    do: "; its retry count could not be read, so assumed :infinity"
 end

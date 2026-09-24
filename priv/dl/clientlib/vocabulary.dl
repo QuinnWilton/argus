@@ -37,19 +37,39 @@ is_init(f) :- init_function(_, f).
 
 is_terminate(f, m) :- terminate_callback(f, m, _).
 
-// A :global lock or transaction that retries until it gets its way.
-// `retries` is :infinity or a positive count (retried with backoff);
-// "0" tries once and returns, and "dynamic" is not known to block.
-// `nodes` says whose agreement it waits on: "cluster" (every connected
-// node — the list holds them, or was left out), "local" (only this
-// node's global server, `[node()]`) or "unknown" (a list the bytecode
-// does not show).
+// A :global lock or transaction that retries when the lock is held:
+// `retries` is :infinity or a positive count (retried with backoff, then
+// false); "0" tries once and returns, and "dynamic" is a count the
+// bytecode does not show. `nodes` says whose agreement it waits on:
+// "cluster" (every connected node — the list holds them, or was left
+// out), "local" (only this node's global server, `[node()]`) or
+// "unknown" (a list the bytecode does not show).
 .decl retrying_lock(site: symbol, func: symbol, op: symbol, retries: symbol, nodes: symbol) inline
 
 retrying_lock(site, f, op, retries, nodes) :-
   global_op(site, f, op, retries, nodes),
   retries != "0",
   retries != "dynamic".
+
+// A :global lock that retries until it is granted: `retries` is
+// :infinity, or a count the bytecode does not show ("dynamic"), assumed
+// :infinity — the default a wrapper forwards (Nebulex's transaction/3
+// takes `Keyword.get(opts, :retries, :infinity)`) — as a node list it
+// does not show is assumed to be the cluster.
+.decl lock_until_granted(site: symbol, func: symbol, op: symbol, retries: symbol, nodes: symbol) inline
+
+lock_until_granted(site, f, op, retries, nodes) :-
+  global_op(site, f, op, retries, nodes),
+  (retries = "infinity" ; retries = "dynamic").
+
+// A :global lock that gives up: a positive retry count. OTP's set_lock
+// sleeps up to 1/4 s before the first retry, doubling to at most 8 s,
+// and returns false once the retries are spent.
+.decl bounded_lock(site: symbol, func: symbol, op: symbol, retries: symbol, nodes: symbol) inline
+
+bounded_lock(site, f, op, retries, nodes) :-
+  retrying_lock(site, f, op, retries, nodes),
+  retries != "infinity".
 
 // An ETS table created :public under a name: any process can write it.
 .decl public_table(name: symbol) inline

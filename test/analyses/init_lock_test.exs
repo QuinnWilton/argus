@@ -17,13 +17,18 @@ defmodule Argus.Analyses.InitLockTest do
 
   @startup_titles [
     "Cluster-wide lock during init",
-    "Lock during init"
+    "Lock during init",
+    "Bounded cluster-wide lock during init"
   ]
 
   setup_all do
     unless Souffle.available?(), do: flunk("souffle not installed")
 
     modules = [
+      InitLock.Bounded,
+      InitLock.BoundedLocal,
+      InitLock.DynamicRetries,
+      InitLock.NoRetries,
       InitLock.TelemetryHandler,
       InitLock.TelemetryClosure,
       InitLock.StoredCallback,
@@ -65,6 +70,39 @@ defmodule Argus.Analyses.InitLockTest do
     findings = lock_findings(by_module, mod)
     refute Enum.any?(findings, &(&1.title in @startup_titles)), inspect(findings)
     assert [%{analysis: :blocking, title: "Cluster-wide :global synchronization"}] = findings
+  end
+
+  describe "retries" do
+    test "a positive count over the cluster is a bounded lock, a severity lower",
+         %{by_module: by_module} do
+      f = init_lock(by_module, InitLock.Bounded)
+      assert f.title == "Bounded cluster-wide lock during init"
+      assert f.severity == :warning
+      assert f.at_label == "bounded cluster-wide lock reached from init/1"
+      assert f.detail =~ "returns false"
+      assert Enum.any?(f.related, &(&1.label == "init/1 reaches it from here"))
+    end
+
+    test "a positive count over [node()] is the fix the local finding recommends: quiet",
+         %{by_module: by_module} do
+      assert lock_findings(by_module, InitLock.BoundedLocal) == []
+    end
+
+    test "a count the bytecode does not show is assumed :infinity, and says so",
+         %{by_module: by_module} do
+      f = init_lock(by_module, InitLock.DynamicRetries)
+      assert f.title == "Cluster-wide lock during init"
+      assert f.severity == :error
+
+      assert f.at_label ==
+               "cluster-wide lock reached from init/1; its retry count could not be read, so assumed :infinity"
+
+      assert f.detail =~ "assumes :infinity"
+    end
+
+    test "retries 0 tries once: quiet", %{by_module: by_module} do
+      assert lock_findings(by_module, InitLock.NoRetries) == []
+    end
   end
 
   describe "funs init/1 does not run" do

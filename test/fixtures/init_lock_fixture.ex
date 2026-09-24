@@ -4,9 +4,69 @@ defmodule Argus.Test.Fixtures.InitLock do
   (2026-09-24) found it misjudging, one module each, beside the controls
   that must keep their verdict.
 
-  What decides a finding here: whether init/1 is on the lock's stack
-  when it runs (callbacks, starts).
+  What decides a finding here: whether the `:global` lock keeps
+  retrying until it is granted (retries), and whether init/1 is on its
+  stack when it runs (callbacks, starts).
   """
+
+  # ── Retries ─────────────────────────────────────────────────────────
+
+  defmodule Bounded do
+    @moduledoc """
+    Three retries over the cluster: set_lock/3 gives up after at most
+    1.75 s of backoff and returns false. Not a lock that waits until it
+    is granted, but each try still asks every node in the list.
+    """
+    use GenServer
+
+    def init(name) do
+      _ = lock(name)
+      {:ok, name}
+    end
+
+    def lock(name), do: :global.set_lock({name, self()}, [node() | Node.list()], 3)
+  end
+
+  defmodule BoundedLocal do
+    @moduledoc """
+    Three retries over `[node()]`: the fix the local finding's help
+    recommends. Quiet.
+    """
+    use GenServer
+
+    def init(name) do
+      _ = :global.set_lock({name, self()}, [node()], 3)
+      {:ok, name}
+    end
+  end
+
+  defmodule DynamicRetries do
+    @moduledoc """
+    Retries forwarded from the options, defaulting to :infinity — the
+    shape of Nebulex.Adapter.Transaction. The count is not in the
+    bytecode, so the rule assumes :infinity, as it assumes the cluster
+    for a node list it cannot read.
+    """
+    use GenServer
+
+    def init(opts) do
+      _ = acquire(opts[:name], Keyword.get(opts, :retries, :infinity))
+      {:ok, opts}
+    end
+
+    def acquire(name, retries),
+      do: :global.set_lock({name, self()}, [node() | Node.list()], retries)
+  end
+
+  defmodule NoRetries do
+    @moduledoc "Retries 0 tries once and returns. Quiet."
+    use GenServer
+
+    def init(name) do
+      _ = :global.set_lock({name, self()}, [node() | Node.list()], 0)
+      {:ok, name}
+    end
+  end
 
   # ── Funs init/1 does not run ────────────────────────────────────────
 

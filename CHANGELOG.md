@@ -393,6 +393,24 @@ worked example (`[node() | Node.list()]`) and nebulex's
 Replicated.Bootstrap (a node list from `Cluster.get_nodes/1`, unread)
 both stay cluster-wide.
 
+### A lock during init, as OTP runs it
+
+**Fixed.** `startup.blocks_on_peer`'s "global" row called any lock with a
+positive retry count one that "retries until it gets its way", though
+`:global.set_lock/3` with N retries gives up after N backoff sleeps
+(1/4 s doubling to 8 s) and returns false; following the "Lock during
+init" help (bound the retries) did not clear it. A lock init/1 holds is
+now reported by what its retries say (`lock_until_granted` and
+`bounded_lock` in `clientlib/vocabulary.dl`): `:infinity` stays "global";
+a count the bytecode does not show (a parameter, an option — Nebulex's
+`transaction/3` forwards `Keyword.get(opts, :retries, :infinity)`) is
+the new kind "global_assumed", reported with the same title and
+severity and saying it assumes `:infinity`, where it was dropped; a
+positive count over other nodes is "global_bounded", "Bounded
+cluster-wide lock during init" at `:warning` (each try still waits on
+every node in the list); a positive count over `[node()]` is quiet, as
+the help promises.
+
 ### Funs that leave the caller's stack
 
 **Fixed.** `runs_elsewhere` (`clientlib/runs_elsewhere.dl`) says which
