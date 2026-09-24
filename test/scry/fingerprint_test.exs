@@ -154,6 +154,26 @@ defmodule Scry.FingerprintTest do
       assert Scry.Fingerprint.code_digest(dir) != before
     end
 
+    test "a rebuild whose type checker table differs digests the same", %{tmp_dir: dir} do
+      # Compiling the same source again beside other code can write a
+      # different `ExCk` chunk; the code is the same.
+      source = :code.which(Scry.Fingerprint)
+      {:ok, _module, chunks} = :beam_lib.all_chunks(source)
+      assert List.keymember?(chunks, ~c"ExCk", 0)
+
+      write = fn chunks ->
+        {:ok, beam} = :beam_lib.build_module(chunks)
+        File.write!(Path.join(dir, "Elixir.Scry.Fingerprint.beam"), beam)
+        Scry.Fingerprint.code_digest(dir)
+      end
+
+      original = write.(chunks)
+      assert write.(List.keyreplace(chunks, ~c"ExCk", 0, {~c"ExCk", "rebuilt"})) == original
+
+      {~c"Code", code} = List.keyfind(chunks, ~c"Code", 0)
+      refute write.(List.keyreplace(chunks, ~c"Code", 0, {~c"Code", code <> <<0>>})) == original
+    end
+
     test "the environment carries the argus and scry code digests" do
       env = Scry.Fingerprint.env()
       assert env.argus_code =~ ~r/^[0-9a-f]{32}$/

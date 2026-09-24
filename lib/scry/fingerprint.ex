@@ -150,21 +150,34 @@ defmodule Scry.Fingerprint do
   end
 
   @doc """
-  A digest of every `.beam` in `ebin`, by name and content.
+  A digest of every `.beam` in `ebin`, by name and by what its code
+  does (`Argus.BeamDigest`: every chunk but the compile info, the docs
+  and the Elixir type checker's export table, with the build root taken
+  out; with `debug_info: true`, the debug info too). A rebuild of the
+  same code digests the same, in any checkout: the type checker's table
+  can come out different when the same source is compiled again beside
+  other code, and would otherwise move the digest with nothing changed.
+  A file `Argus.BeamDigest` cannot read is digested by its bytes.
   """
-  @spec code_digest(Path.t()) :: String.t()
-  def code_digest(ebin) do
+  @spec code_digest(Path.t(), [Argus.BeamDigest.option()]) :: String.t()
+  def code_digest(ebin, opts \\ []) do
     ebin
     |> Path.join("*.beam")
     |> Path.wildcard()
     |> Enum.sort()
-    |> Enum.reduce(:erlang.md5_init(), fn beam, context ->
-      context
-      |> :erlang.md5_update(Path.basename(beam))
-      |> :erlang.md5_update(File.read!(beam))
-    end)
-    |> :erlang.md5_final()
-    |> Base.encode16(case: :lower)
+    |> Task.async_stream(&{Path.basename(&1), beam_digest(&1, opts)},
+      ordered: true,
+      timeout: :infinity
+    )
+    |> Enum.map(fn {:ok, part} -> part end)
+    |> digest()
+  end
+
+  defp beam_digest(beam, opts) do
+    case Argus.BeamDigest.digest(beam, opts) do
+      {:ok, digest} -> digest
+      {:error, _unreadable} -> {:bytes, File.read(beam)}
+    end
   end
 
   defp app_code_digest(app) do
