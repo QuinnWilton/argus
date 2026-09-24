@@ -134,6 +134,15 @@ and have `resolve/2` raise `ArgumentError` on it in the window between
 row goes in first now, and a binary that loses the `insert_new` race
 deletes the row it wrote. `races.ets_publish_order` found it.
 
+**Changed.** Schema 68. `prior_sensitive` gains `detail_permille`
+before `permille`, and `permille` is now the probability of `kind` — the
+sum over its details — where it was the chosen detail's. `kind` is the
+class with the most mass (the chosen detail's on a tie) and `detail` the
+likeliest detail within it. A rule reading the relation positionally
+adds a column. The cached answers already hold the whole distribution,
+so no request changed and `Sensitivity`'s prompt version stays 1:
+recorded answers replay into the new rows.
+
 **Added.** Schema 67. `inspect_derived(mod)` — the struct's `Inspect`
 is derived — and `inspect_shows(mod, field)` — a field it prints, after
 `except:` and `only:`. `Argus.Extractors.DerivedInspect` reads them from
@@ -1768,6 +1777,21 @@ a socket with no timeout" are for a `:gen_tcp`/`:ssl` recv with
 `:infinity`.
 
 ### exposure
+
+**Fixed.** `exposure.unredacted_secret_inferred` gated on the chosen
+kind's probability, so a field the model was sure is a secret but split
+between kinds fell under 0.9: sequin's `NatsSink.jwt` (token 0.89,
+credential 0.11), `github_token` (0.86 + 0.14), `api_token` (0.81 +
+0.19), `totp_seed` (0.87 + 0.13). It gates on the probability that the
+field is a secret of any kind now (schema 68), reports the likeliest
+kind, and the help line says both ("names :jwt a secret, most likely a
+token"). Replayed over the recorded answers of a talk's priors hunt (32
+corpus trees), four info-level rows arrive — `NatsSink.jwt` (real, fixed
+upstream in 035ee6f), blockster's `User.telegram_connect_token` and
+`XOauthState.code_verifier` (bearer material), and blockster's
+`Hub.token` (a currency ticker: wrong) — none leave, and the six
+warnings are the same six. The corpus runs without priors and does not
+move.
 
 **Fixed.** `exposure.unredacted_secret` (and `unredacted_secret_inferred`)
 knew only Ecto's `redact: true`, so a field kept out of `inspect/1` by

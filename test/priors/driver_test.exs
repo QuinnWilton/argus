@@ -98,10 +98,10 @@ defmodule Argus.Priors.DriverTest do
     assert {:ok, rows, stats} = Driver.derive(Question, @facts, opts(dir))
 
     assert rows == [
-             ["schema_field", "A", ":id", "none", "none", "970"],
-             ["schema_field", "A", ":label", "none", "none", "970"],
-             ["schema_field", "A", ":totp_seed", "secret", "credential", "950"],
-             ["schema_field", "B", ":email", "personal", "pii", "900"]
+             ["schema_field", "A", ":id", "none", "none", "970", "970"],
+             ["schema_field", "A", ":label", "none", "none", "970", "970"],
+             ["schema_field", "A", ":totp_seed", "secret", "credential", "950", "950"],
+             ["schema_field", "B", ":email", "personal", "pii", "900", "900"]
            ]
 
     assert stats == %{subjects: 4, requests: 2, cached: 0, asked: 2, failed: 0, input_tokens: 200}
@@ -150,7 +150,7 @@ defmodule Argus.Priors.DriverTest do
     end
 
     assert {:ok, rows, stats} = Driver.derive(Question, @facts, opts(dir, oracle: Flaky))
-    assert [["schema_field", "B", ":email", "personal", "pii", "900"]] = rows
+    assert [["schema_field", "B", ":email", "personal", "pii", "900", "900"]] = rows
     assert stats.failed == 1 and stats.asked == 1
     assert Cache.entries(dir) |> Map.values() |> List.flatten() |> length() == 1
   end

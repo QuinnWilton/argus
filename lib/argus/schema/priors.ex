@@ -41,14 +41,19 @@ defmodule Argus.Schema.Priors do
           {:subject_kind, :symbol, "'schema_field' | 'config_key'"},
           {:mod, :symbol, "the schema module, or the module reading the key"},
           {:name, :symbol, "the field or key, spelled as schema_field spells it (':email')"},
-          {:kind, :symbol, "'secret' | 'personal' | 'none'"},
-          {:detail, :symbol, "credential | password | token | pii | financial | health | none"},
-          {:permille, :number, "the model's probability for `detail`, in thousandths"}
+          {:kind, :symbol, "'secret' | 'personal' | 'none' — the class with the most mass"},
+          {:detail, :symbol,
+           "credential | password | token | pii | financial | health | none — the likeliest within `kind`"},
+          {:detail_permille, :number, "the model's probability for `detail`, in thousandths"},
+          {:permille, :number,
+           "the model's probability for `kind`, the sum over its details, in thousandths"}
         ],
         doc: """
         What a field or configuration key holds, judged from its name and the \
         names around it (Argus.Priors.Questions.Sensitivity). `kind` is the \
-        class a rule consumes; `detail` is the finer one the model chose.
+        class a rule consumes and `permille` its total probability, so a field \
+        the model is sure is a secret but splits between token and credential \
+        is a secret at the sum; `detail` is the likeliest finer kind within it.
         """
       },
       %{

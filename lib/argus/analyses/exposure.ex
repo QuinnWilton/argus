@@ -61,7 +61,8 @@ defmodule Argus.Analyses.Exposure do
           {:kind, :symbol, "credential | password | token"},
           {:aware, :symbol, "whether the schema hides anything else from inspect/1"},
           {:via, :symbol, "redact | derive — where the schema hides fields"},
-          {:permille, :number, "the classifier's probability, in thousandths"}
+          {:permille, :number,
+           "the classifier's probability that the field is a secret of any kind, in thousandths"}
         ],
         key: [:mod, :field],
         doc:
@@ -119,7 +120,7 @@ defmodule Argus.Analyses.Exposure do
     Findings.heuristic(
       finding(:unredacted_secret, [mod, field, kind, aware, via]),
       String.to_integer(permille),
-      "a classifier names #{field} as a #{kind}"
+      "a classifier names #{field} a secret, most likely a #{kind}"
     )
   end
 

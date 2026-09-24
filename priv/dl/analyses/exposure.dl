@@ -164,11 +164,16 @@ unredacted_secret(mod, field, kind, "unaware", via) :-
 // the calibration spike measured 98% precision — as their own relation,
 // so the structural rows above are byte-identical with priors on or off,
 // and the finding says it is heuristic.
+//
+// The 0.9 is the probability that the field is a secret at all, summed
+// over credential, password and token: `jwt` at 0.89 token and 0.11
+// credential is a secret the model is sure of, and unsure only which
+// kind. The kind reported is the likeliest of the three.
 
 .decl model_named_secret(mod: symbol, field: symbol, kind: symbol, permille: number)
 
 model_named_secret(mod, field, detail, p) :-
-  prior_sensitive("schema_field", mod, field, "secret", detail, p),
+  prior_sensitive("schema_field", mod, field, "secret", detail, _, p),
   schema_field(mod, field),
   p >= 900,
   !matches_kind(mod, field, _).

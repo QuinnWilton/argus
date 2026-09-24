@@ -86,10 +86,64 @@ defmodule Argus.Priors.Questions.SensitivityTest do
     }
 
     assert Sensitivity.rows(subjects, answers) == [
-             ["schema_field", inspect(S.Heuristic), ":id", "none", "none", "990"],
-             ["schema_field", inspect(S.Heuristic), ":label", "none", "none", "800"],
-             ["schema_field", inspect(S.Heuristic), ":totp_seed", "secret", "credential", "935"]
+             ["schema_field", inspect(S.Heuristic), ":id", "none", "none", "990", "990"],
+             ["schema_field", inspect(S.Heuristic), ":label", "none", "none", "800", "800"],
+             [
+               "schema_field",
+               inspect(S.Heuristic),
+               ":totp_seed",
+               "secret",
+               "credential",
+               "935",
+               "935"
+             ]
            ]
+  end
+
+  test "a secret split across kinds is a secret at the sum, reported by its likeliest kind" do
+    subjects =
+      facts() |> Sensitivity.subjects() |> Enum.filter(&(&1.batch_key == inspect(S.Heuristic)))
+
+    # sequin's NatsSink.jwt, as Jev answered it: sure it is a secret,
+    # unsure whether a token or a credential. The chosen kind alone is
+    # 0.89, under exposure's 0.9; the class is 1.00.
+    answers = %{
+      "kind__0" => %{
+        "choice" => "none",
+        "probabilities" => %{"none" => 0.4, "token" => 0.3, "credential" => 0.3}
+      },
+      "kind__2" => %{
+        "choice" => "token",
+        "probabilities" => %{"token" => 0.89, "credential" => 0.11, "none" => 0.0}
+      }
+    }
+
+    assert Sensitivity.rows(subjects, answers) == [
+             # The rest outweigh the choice: a secret at 0.6, and of two
+             # equal kinds, the first by name.
+             ["schema_field", inspect(S.Heuristic), ":id", "secret", "credential", "300", "600"],
+             [
+               "schema_field",
+               inspect(S.Heuristic),
+               ":totp_seed",
+               "secret",
+               "token",
+               "890",
+               "1000"
+             ]
+           ]
+  end
+
+  test "a tie between classes goes to the chosen kind's" do
+    subjects =
+      facts() |> Sensitivity.subjects() |> Enum.filter(&(&1.batch_key == inspect(S.Heuristic)))
+
+    answers = %{
+      "kind__0" => %{"choice" => "pii", "probabilities" => %{"pii" => 0.5, "token" => 0.5}}
+    }
+
+    assert [["schema_field", _, ":id", "personal", "pii", "500", "500"]] =
+             Sensitivity.rows(subjects, answers)
   end
 
   test "a missing or unknown answer yields no row" do

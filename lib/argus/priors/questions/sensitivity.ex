@@ -14,7 +14,16 @@ defmodule Argus.Priors.Questions.Sensitivity do
   as the shared state; the answer per field is a `choice` over seven
   kinds and a `noul` for whether printing the value would leak. The row
   carries the coarse kind a rule reads (`secret | personal | none`), the
-  kind chosen, and its probability in thousandths.
+  likeliest fine kind within it and that kind's probability, and last
+  the coarse kind's own probability: the sum over its fine kinds. A rule
+  gates on the sum. `jwt` at 0.89 token and 0.11 credential is a secret
+  at 1.00 — the model is sure it is one and unsure only which — where
+  the chosen kind's 0.89 alone falls under `exposure`'s 0.9.
+
+  The coarse kind is the one with the most mass, which is the chosen
+  kind's class unless the rest outweigh it (`none` at 0.4 against token
+  and credential at 0.3 each is a secret at 0.6); a tie goes to the
+  chosen kind's class.
   """
 
   @behaviour Argus.Priors.Question
@@ -125,14 +134,58 @@ defmodule Argus.Priors.Questions.Sensitivity do
     |> Enum.with_index()
     |> Enum.flat_map(fn {%{id: {mod, field}}, i} ->
       case answers["kind__#{i}"] do
-        %{"choice" => detail, "probabilities" => probs} when is_map_key(@kinds, detail) ->
-          p = probs |> Map.get(detail, 0.0) |> permille()
-          [["schema_field", mod, field, @kinds[detail], detail, Integer.to_string(p)]]
+        %{"choice" => choice, "probabilities" => probs} when is_map_key(@kinds, choice) ->
+          {kind, mass} = coarse(choice, probs)
+          {detail, p} = likeliest(kind, choice, probs)
+
+          [
+            [
+              "schema_field",
+              mod,
+              field,
+              kind,
+              detail,
+              Integer.to_string(permille(p)),
+              Integer.to_string(permille(mass))
+            ]
+          ]
 
         _ ->
           []
       end
     end)
+  end
+
+  # The coarse kind with the most mass, the chosen kind's class on a tie.
+  defp coarse(choice, probs) do
+    chosen = @kinds[choice]
+
+    @kinds
+    |> Map.values()
+    |> Enum.uniq()
+    |> Enum.map(&{&1, mass(&1, probs)})
+    |> Enum.sort_by(fn {kind, m} -> {-m, kind != chosen, kind} end)
+    |> hd()
+  end
+
+  defp mass(kind, probs) do
+    for {detail, ^kind} <- @kinds, reduce: 0.0 do
+      acc -> acc + probability(probs, detail)
+    end
+  end
+
+  # The likeliest fine kind of a coarse one, the model's choice on a tie.
+  defp likeliest(kind, choice, probs) do
+    for({detail, ^kind} <- @kinds, do: {detail, probability(probs, detail)})
+    |> Enum.sort_by(fn {detail, p} -> {-p, detail != choice, detail} end)
+    |> hd()
+  end
+
+  defp probability(probs, detail) do
+    case Map.get(probs, detail) do
+      p when is_number(p) -> p
+      _ -> 0.0
+    end
   end
 
   @doc "A probability as an integer in thousandths, clamped to 0..1000."

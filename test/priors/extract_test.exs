@@ -66,9 +66,25 @@ defmodule Argus.Priors.ExtractTest do
       )
 
     assert rows(dir) == [
-             ["schema_field", inspect(S.Heuristic), ":id", "secret", "credential", "910"],
-             ["schema_field", inspect(S.Heuristic), ":label", "secret", "credential", "910"],
-             ["schema_field", inspect(S.Heuristic), ":totp_seed", "secret", "credential", "910"]
+             ["schema_field", inspect(S.Heuristic), ":id", "secret", "credential", "910", "910"],
+             [
+               "schema_field",
+               inspect(S.Heuristic),
+               ":label",
+               "secret",
+               "credential",
+               "910",
+               "910"
+             ],
+             [
+               "schema_field",
+               inspect(S.Heuristic),
+               ":totp_seed",
+               "secret",
+               "credential",
+               "910",
+               "910"
+             ]
            ]
   end
 

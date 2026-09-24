@@ -67,7 +67,15 @@ defmodule Argus.Priors.RowsTest do
     assert rows[:prior_sensitive] ==
              for(
                field <- ~w(:id :name :sendgrid_api_key :smtp_password),
-               do: ["schema_field", inspect(S.Exposed), field, "secret", "credential", "600"]
+               do: [
+                 "schema_field",
+                 inspect(S.Exposed),
+                 field,
+                 "secret",
+                 "credential",
+                 "600",
+                 "600"
+               ]
              )
 
     assert stats[Argus.Priors.Questions.Sensitivity].asked == 1

@@ -112,7 +112,9 @@ whether `totp_seed` is a secret, which the fifteen substrings `exposure`
 knows cannot say. `Argus.Priors` asks those of a System-One model
 (typesafe.ai's Jev) and writes the answers into the facts as a third
 layer of relations, `prior_*`, each row with the model's probability in
-thousandths. A rule reads a prior only as a positive premise: it can add
+thousandths — for a class of answers, the sum over it: a field the model
+is sure is a secret but splits between token and credential is a secret
+at the sum. A rule reads a prior only as a positive premise: it can add
 a finding marked `provenance: :heuristic` with its `confidence`, or move
 a severity, never remove a structural row. Off by default, and a run
 without priors is the run it always was.
