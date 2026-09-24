@@ -85,4 +85,18 @@ defmodule Argus.Analyses.ReachPathFrameTest do
     frame = frame(f, "terminate/2 reaches it from here")
     assert frame_line(mods, frame) == line_of("      unregister()")
   end
+
+  test "a sibling called in a closure written inside terminate/2 gets no head frame" do
+    skip_without_souffle()
+    mods = [ReachPath.EachTree, ReachPath.EachWriter, ReachPath.Directory]
+
+    [f] =
+      Enum.filter(
+        findings(mods, :shutdown),
+        &(&1.title == "terminate/2 calls a sibling that may already be down")
+      )
+
+    refute Enum.any?(f.related, &(&1.label == "terminate/2 reaches it from here")),
+           "the anchor is already inside terminate/2's source: #{inspect(f.related)}"
+  end
 end

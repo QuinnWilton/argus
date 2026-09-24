@@ -86,6 +86,34 @@ defmodule Argus.Test.Fixtures.ReachPath do
     end
   end
 
+  defmodule EachWriter do
+    @moduledoc "Horde's shape: the sibling call is in a closure written inside terminate/2."
+    use GenServer
+
+    def init(names) do
+      Process.flag(:trap_exit, true)
+      {:ok, names}
+    end
+
+    def terminate(_reason, names) do
+      Enum.each(names, fn name ->
+        :ok = GenServer.call(Argus.Test.Fixtures.ReachPath.Directory, {:unregister, name})
+      end)
+    end
+  end
+
+  defmodule EachTree do
+    @moduledoc "Starts the closure-calling writer first, then the directory."
+    use Supervisor
+
+    def init(:ok) do
+      Supervisor.init(
+        [Argus.Test.Fixtures.ReachPath.EachWriter, Argus.Test.Fixtures.ReachPath.Directory],
+        strategy: :one_for_one
+      )
+    end
+  end
+
   defmodule Tree do
     @moduledoc "Starts the writer first, then the directory it unregisters from."
     use Supervisor

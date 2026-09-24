@@ -239,8 +239,11 @@ order_unsettled(sup, b, a) :- stops_before(sup, a, b), !strategy_known(sup).
 // Where terminate/2's path to a helper that calls the sibling begins:
 // the call in terminate/2 whose callee is the helper, or reaches it
 // within terminate_reach's bound (three calls). A path through something
-// with no call instruction (a closure terminate/2 runs) points at
-// terminate/2 itself, `call` empty. The earliest such call is kept.
+// with no call instruction (a closure it hands to a call) points at
+// terminate/2 itself, `call` empty — unless the helper is an anonymous
+// function written inside terminate/2 (Horde's `Enum.each(signal_to,
+// fn ... end)`), whose line the finding's anchor already is. The
+// earliest such call is kept.
 .decl terminate_path(handler: symbol, via: symbol, call: symbol)
 .output terminate_path
 
@@ -261,7 +264,17 @@ terminate_path(t, via, call) :- terminate_step(t, via, call).
 terminate_path(t, via, "") :-
   teardown_touches_sibling(_, _, "terminate", _, via, _, t, _, _),
   via != t,
+  !closure_in_terminate(t, via),
   !terminate_stepped(t, via).
+
+// The helper is an anonymous function written inside terminate/2
+// (`M:-terminate/2-fun-0-/1`): its line is inside terminate/2's source.
+.decl closure_in_terminate(handler: symbol, via: symbol)
+
+closure_in_terminate(t, via) :-
+  teardown_touches_sibling(_, _, "terminate", _, via, _, t, _, _),
+  function_def(t, m, n, a, _),
+  contains(cat(m, ":-", n, "/", to_string(a), "-fun-"), via).
 
 .decl site_or_empty_sync(func: symbol, mod: symbol, site: symbol)
 

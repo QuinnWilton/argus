@@ -55,8 +55,9 @@ the earliest in the function is kept: an output relation may now
 declare `earliest: column`, and `Argus.Findings.Rows.dedupe/2` keeps
 that group's earliest instruction instead of its least row (instruction
 IDs do not sort by position as strings). A path that leaves the entry
-through no call instruction — a closure it runs — keeps pointing at the
-entry. New evidence relations `init_lock_path` and `terminate_path`;
+through no call instruction — a closure it hands to a call — keeps
+pointing at the entry, unless the site is in an anonymous function
+written inside the entry, whose line the finding's anchor already is. New evidence relations `init_lock_path` and `terminate_path`;
 `init_reaches_recv` gains a `call` column. The findings are unchanged;
 only these frames move or appear. `unsafe_input.sink_export` ("reachable
 from X, which is exported") still points at the export: it names

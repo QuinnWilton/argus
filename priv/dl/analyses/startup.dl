@@ -436,8 +436,10 @@ blocks_on_peer(init, "init", "", "global", "", "", lock, op) :-
 // whose callee, on init's own stack, reaches the lock. The finding's
 // "init/1 reaches it from here" frame points at that call; a path that
 // leaves init/1 through something with no call instruction (a closure
-// it runs, a fun it applies) points at init/1 itself, `call` empty.
-// The earliest such call is kept (the relation's `earliest`).
+// it runs, a fun it applies) points at init/1 itself, `call` empty —
+// unless the lock is in an anonymous function written inside init/1,
+// whose line the finding's anchor already is. The earliest such call is
+// kept (the relation's `earliest`).
 .decl init_lock_path(init: symbol, lock: symbol, call: symbol)
 .output init_lock_path
 
@@ -458,8 +460,20 @@ init_lock_path(init, lock, call) :- init_lock_step(init, lock, call).
 
 init_lock_path(init, lock, "") :-
   blocks_on_peer(init, "init", "", "global", "", "", lock, _),
-  !global_op(lock, init, _, _),
+  global_op(lock, holder, _, _),
+  holder != init,
+  !lock_in_init_closure(init, lock),
   !init_lock_stepped(init, lock).
+
+// The lock is in an anonymous function written inside init/1
+// (`M:-init/1-fun-0-/1`): its line is inside init/1's own source.
+.decl lock_in_init_closure(init: symbol, lock: symbol)
+
+lock_in_init_closure(init, lock) :-
+  blocks_on_peer(init, "init", "", "global", "", "", lock, _),
+  global_op(lock, holder, _, _),
+  function_def(init, m, n, a, _),
+  contains(cat(m, ":-", n, "/", to_string(a), "-fun-"), holder).
 
 // ── Distributed operations in init ───────────────────────────────
 
