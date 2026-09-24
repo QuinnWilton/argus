@@ -13,9 +13,10 @@ defmodule Argus.Pipeline.ShardsTest do
 
   @moduletag :tmp_dir
 
-  # A spread of the fixtures, the ones a few extractors need, and some
-  # runtime modules for shapes the fixtures do not have: every extractor
-  # emits rows for some of them (the test checks).
+  # A spread of the fixtures, the ones a few extractors need (named, so
+  # that a fixture added elsewhere cannot move them out of the spread), and
+  # some runtime modules for shapes the fixtures do not have: every
+  # extractor emits rows for some of them (the test checks).
   @modules for(
              mod <- Application.spec(:panoptes, :modules),
              String.starts_with?(Atom.to_string(mod), "Elixir.Argus.Test.Fixtures."),
@@ -26,6 +27,7 @@ defmodule Argus.Pipeline.ShardsTest do
            |> Kernel.++([
              Argus.Test.Fixtures.Specs,
              Argus.Test.Fixtures.Router,
+             Argus.Test.Fixtures.Secret.Typed,
              Argus.Test.Fixtures.Tls.ForcesNone,
              Argus.Test.Fixtures.DerivedInspect.OneField,
              Inspect.Argus.Test.Fixtures.DerivedInspect.OneField,
