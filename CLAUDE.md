@@ -130,13 +130,51 @@ Optional longer explanation.
 - Use `stream_data` for property-based testing.
 - Compiler tests drive the fixture project in `test/fixtures/depot`
   (copied to a tmp dir by `Scry.Test.Fixture`) via
-  `Mix.Project.in_project/3` + `Mix.Task.rerun("compile")` — the real
-  chain, so `:elixir` genuinely produces the beams scry reads. The
+  `Mix.Project.in_project/3` + `Mix.Task.rerun("compile")`, in a peer
+  (`Fixture.in_peer/4`) — the real chain, so `:elixir` genuinely produces the beams scry reads. The
   fixture's cold-build findings (two couplings at the tree definition,
   one leaked task) and rendered frames are golden-pinned; keep it
   self-contained and dependency-free.
 - Telemetry edit-replay tests assert exact recompute sets
   (`test/support/query_log.ex`).
+
+### The async rule
+
+Every module is `async: true` unless it mutates VM-wide state in the
+test VM itself, and a test that needs VM-wide state runs in a peer
+instead. VM-wide means: the Mix project stack and the working directory
+(every fixture compile), `PATH` and other env vars, application env,
+telemetry handlers (a `QueryLog` sees every roux event in its VM), the
+code path, loaded modules and compiler options, and the souffle scratch
+root (a prune or a store edit reaches every solve reading it).
+
+- `Scry.Test.Peer` starts a second BEAM from this VM's code path, with
+  Mix in `:test`, this VM's compiler options, and its own `TMPDIR` (so
+  its own scratch root). `use Scry.Test.Peer` in the test module keeps
+  its bytecode, so `Peer.run(peer, fn -> ... end)` runs the module's
+  own closures there, assertions and all; an exception comes back with
+  the peer's stacktrace. `Fixture.in_peer/4` runs a closure inside a
+  checked-out fixture there with a `QueryLog` attached. One peer per
+  module (`setup_all`), per test where a test leaves the VM changed.
+- Inside a peer, compute temp paths inside the closure
+  (`System.tmp_dir!/0` is the peer's), and return plain data: a pid does
+  not survive the trip back.
+- Still `async: false`: `Scry.ConfigTest` (clears `TYPESAFE_API_KEY`)
+  and the spec probes (`AnalysisSpecsTest`, `AnalysisFrontendSpecsTest`:
+  code path, module loading, compiler options) — cheap, and they run
+  after the async modules.
+- `test_helper.exs` points `TMPDIR` at one directory per run, removed
+  after the suite: fixture checkouts, the parity build and the main VM's
+  scratch root are shared with nothing else on the machine.
+- `Scry.Test.Graph.parity!/0` compiles the parity fixture once per run
+  (content-keyed, under a lock) and puts it on the code path; hand the
+  paths to a peer with `Graph.use_parity!/1`. Never compile it per
+  module: two async compiles of one module collide.
+- Solve only what a test reads. Only `Mix.Tasks.Compile.ScryTest` pins
+  the default set's goldens; tests about config, the souffle gate,
+  extraction failures, priors, the task and warm runs use
+  `analyses: [:coupling, :mailbox]` — every finding the depot fixture
+  has, both read stage 0, and coupling reads the priors.
 
 ## Non-goals (v1, keep the README honest)
 
