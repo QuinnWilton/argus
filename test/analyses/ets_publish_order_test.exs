@@ -202,10 +202,38 @@ defmodule Argus.Analyses.EtsPublishOrderTest do
       assert f.mfa == {M, :intern, 2}
       assert f.detail =~ "the table held under :forward"
       assert f.detail =~ "in M.resolve/2"
+      assert f.at_label == "this publishes the value before its row in :reverse exists"
 
-      assert [%{label: "the row it points to is written here"}, %{label: label}] = f.related
-      assert label =~ "raises"
+      assert [
+               %{label: "the row it points to is written here"},
+               %{label: "a read that raises if the row is not there yet"}
+             ] = f.related
+
       assert Enum.any?(f.help, &(&1 =~ "first"))
+    end
+
+    test "the label names a field table by its path and a named table by its name" do
+      label = fn kind, table ->
+        row = [
+          "M",
+          "M:add/1",
+          kind,
+          ":by_name",
+          kind,
+          table,
+          "M:add/1#3",
+          "M:add/1#9",
+          "M:get/1#2"
+        ]
+
+        Races.finding(:ets_publish_order, row).at_label
+      end
+
+      assert label.("field", "M :state.:by_id") ==
+               "this publishes the value before its row in :state.:by_id exists"
+
+      assert label.("named", ":by_id") ==
+               "this publishes the value before its row in :by_id exists"
     end
   end
 

@@ -289,6 +289,7 @@ defmodule Argus.Analyses.Races do
       ]) do
     first = describe_table(published_kind, published_in)
     second = describe_table(completed_kind, completed_in)
+    row_in = label_table(completed_kind, completed_in)
 
     Findings.new(
       :warning,
@@ -300,10 +301,13 @@ defmodule Argus.Analyses.Races do
         "#{Findings.elsewhere(reader, func)}, with a read that raises ArgumentError " <>
         "(badarg) when the row is not there yet.",
       at: Findings.at_site(publish, mod),
-      at_label: "this write makes the value findable before its row in #{second} exists",
+      at_label: "this publishes the value before its row in #{row_in} exists",
       related: [
         Findings.related("the row it points to is written here", Findings.at_site(complete, mod)),
-        Findings.related("a read that raises on the missing row", Findings.at_site(reader, mod))
+        Findings.related(
+          "a read that raises if the row is not there yet",
+          Findings.at_site(reader, mod)
+        )
       ],
       help: [
         "write the row of #{second} first, then publish the value in #{first}; " <>
@@ -343,11 +347,17 @@ defmodule Argus.Analyses.Races do
   end
 
   # A "field" table is spelled with its module, which the prose has.
-  defp describe_table("field", ident),
-    do: "the table held under #{ident |> String.split(" ", parts: 2) |> List.last()}"
-
+  defp describe_table("field", ident), do: "the table held under #{field_path(ident)}"
   defp describe_table("new", site), do: "the table made at #{site}"
   defp describe_table(_named, name), do: name
+
+  # A label sits beside the code, which shows the map the table is read
+  # from, so it names a field table by its path alone (`:reverse`), as it
+  # names a named table by its name.
+  defp label_table("field", ident), do: field_path(ident)
+  defp label_table(kind, ident), do: describe_table(kind, ident)
+
+  defp field_path(ident), do: ident |> String.split(" ", parts: 2) |> List.last()
 
   # The name as the function sees it. A parameter's key is its position,
   # which reads as a number only to the facts.

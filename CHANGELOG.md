@@ -2408,6 +2408,15 @@ means: "asks whether the name in its first argument is registered" where
 it said "asks whether 0 is registered" — a parameter's position, printed
 as a number, in 11 of the 14 name-race findings across the corpus.
 
+**Changed.** `ets_publish_order`'s labels fit beside the code they mark. The early
+write's label is "this publishes the value before its row in :reverse
+exists" (was "this write makes the value findable before its row in the
+table held under :reverse exists", 90 columns after an indent of 40),
+naming a field table by its path and a named table by its name; the
+reader's frame is "a read that raises if the row is not there yet" (was
+"a read that raises on the missing row"). The title, the detail and the
+relation are unchanged.
+
 ### unsafe_input
 
 **Fixed.** Request taint follows a propagator's data argument, not its key.
