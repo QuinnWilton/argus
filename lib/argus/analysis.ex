@@ -96,6 +96,7 @@ defmodule Argus.Analysis do
   alias Argus.Analysis.Catalog
   alias Argus.Analysis.Extraction
   alias Argus.Analysis.Sets
+  alias Argus.Cache.Facts
   alias Argus.Souffle
 
   # Behaviour callbacks.
@@ -319,13 +320,13 @@ defmodule Argus.Analysis do
   # Through a store: the solve is read back when what it reads is
   # unchanged, and no facts directory is made unless it is not.
   defp run_cached(facts, analysis, rules_path, opts) do
-    case Argus.Cache.Facts.solve(facts, rules_path, opts) do
+    case Facts.solve(facts, rules_path, opts) do
       {:ok, results, solved} ->
-        Argus.Cache.Facts.release(solved)
+        Facts.release(solved)
         {:ok, filter_to_outputs(results, analysis)}
 
       {:error, _} = error ->
-        Argus.Cache.Facts.release(facts)
+        Facts.release(facts)
         error
     end
   end
