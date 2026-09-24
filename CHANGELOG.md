@@ -163,6 +163,14 @@ worker and the modules whose specs it read from the code path.
 A producer's rows do not depend on which other producers run, so one
 can be extracted again on its own.
 
+**Added.** `Argus.Pipeline.extract_shards/3` returns each producer's
+rows apart, in memory and in any `format:` `extract/2` takes: the rows
+`run_shards/3` writes to each producer's directory, with the same report
+of lost modules and of the modules whose specs were read from the code
+path. For a caller that keeps producers' rows itself: scry memoizes a
+module's facts per producer, so an edit to one extractor re-extracts
+that extractor's rows alone.
+
 **Added.** `Argus.Cache`: a store of results on disk, keyed by
 content — its entries' layout, their retention (`Argus.Cache.stale/2`,
 `prune/2`: within each group the three most recent and anything

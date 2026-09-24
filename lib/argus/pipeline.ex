@@ -24,13 +24,14 @@ defmodule Argus.Pipeline do
   producer's rows depend on the modules and on its own code, and on no
   other producer's: that is what lets `run_shards/3` extract some
   producers on their own, into a directory each, and a store keep them
-  apart (`Argus.Cache.Facts`). `run/3` writes a relation's rows grouped
-  by producer — `:base` first, then the extractors in the order
-  `extractors:` names them, each group in module order — which is what
-  joining the producers' directories in that order gives
-  (`Argus.Pipeline.Shards`). Nearly every relation has one producer; the
-  few with several are `extraction_error`, `imprecision` and
-  `dynamic_call`.
+  apart (`Argus.Cache.Facts`) — or `extract_shards/3` return them apart
+  in memory, for a caller that keeps them itself. `run/3` writes a
+  relation's rows grouped by producer — `:base` first, then the
+  extractors in the order `extractors:` names them, each group in module
+  order — which is what joining the producers' directories in that order
+  gives (`Argus.Pipeline.Shards`). Nearly every relation has one
+  producer; the few with several are `extraction_error`, `imprecision`
+  and `dynamic_call`.
 
   A module's failures stay with the module: an extractor that raises, or
   a module that outlives the per-module `:timeout`, is recorded as an
@@ -317,6 +318,108 @@ defmodule Argus.Pipeline do
     {:extraction_error, reason} -> {:error, reason}
   end
 
+  @doc """
+  Extracts facts from the given modules and returns each producer's rows
+  apart, in memory: `run_shards/3`'s directories as `extract/2` returns
+  facts.
+
+  `producers` names the producers (`t:producer/0`) whose rows come back.
+  The extractors that run are the ones named; `:base` is computed whether
+  or not it is named, since every extractor reads what it computes. A
+  producer's rows are the ones it gives beside any other producers (see
+  "Producers"), each relation's in the order `run_shards/3` writes them,
+  and a producer named that emitted no rows maps to an empty map. `format:`, `symbols:`,
+  `trace_imprecision:`, `concurrency:` and `timeout:` mean what they do
+  for `extract/2`; `extractors:` is ignored.
+
+  Returns `{:ok, facts, info}`: each named producer's facts, and what
+  `run_shards/3` reports beside them (`t:shard_info/0`). Only an input
+  that cannot be read is an error.
+  """
+  @spec extract_shards([Disassemble.module_input()], [producer()], extract_opts()) ::
+          {:ok, %{producer() => Emit.facts() | Argus.Facts.t()}, shard_info()}
+          | {:error, term()}
+  def extract_shards(modules, producers, opts \\ []) do
+    format = Keyword.get(opts, :format, :raw)
+
+    if format == :interned and not match?(%Argus.Symbols{}, opts[:symbols]) do
+      raise ArgumentError, "format: :interned needs the symbols: table the ids refer to"
+    end
+
+    producers = Enum.uniq(producers)
+    selected = MapSet.new(producers)
+    extractors = for producer <- producers, producer != :base, do: producer
+    opts = Keyword.put(opts, :extractors, extractors)
+    finish = format_facts(format, Keyword.get(opts, :symbols))
+
+    # The worker keeps the named producers' facts, in the order
+    # `run_shards/3` writes them and formatted, and the names its base's
+    # extraction errors give, which for a module it lost are the module's.
+    shape = fn produced ->
+      shards =
+        for {p, facts} <- produced,
+            MapSet.member?(selected, p),
+            do: {p, facts |> in_file_order() |> finish.()}
+
+      names = for {:base, %{extraction_error: rows}} <- produced, [name | _] <- rows, do: name
+      {shards, names}
+    end
+
+    with {:ok, paths} <- Disassemble.resolve_paths(modules) do
+      memo = new_memo()
+
+      try do
+        paths
+        |> extract_stream(opts, memo, shape)
+        |> Enum.reduce_while({:ok, [], []}, fn
+          {status, {shards, names}}, {:ok, chunks, lost} when status in [:ok, :lost] ->
+            lost = if status == :lost, do: lost ++ names, else: lost
+            {:cont, {:ok, [shards | chunks], lost}}
+
+          {:error, reason}, _ ->
+            {:halt, {:error, reason}}
+        end)
+        |> case do
+          {:ok, chunks, lost} ->
+            facts = join_shards(producers, Enum.reverse(chunks))
+            {:ok, facts, %{lost: lost, installed: installed_reads(memo)}}
+
+          {:error, _} = error ->
+            error
+        end
+      after
+        :ets.delete(memo)
+      end
+    end
+  end
+
+  # A module's facts as `Writer` writes them: the relations with rows,
+  # each in the order it lands in the file (extraction prepends).
+  defp in_file_order(facts) do
+    for {relation, rows} <- facts, rows != [], into: %{}, do: {relation, Enum.reverse(rows)}
+  end
+
+  # Each producer's facts over the modules, `modules` holding each
+  # module's `[{producer, facts}]` in module order: a relation's rows are
+  # its rows from each module, in that order.
+  defp join_shards(producers, modules) do
+    by_producer =
+      modules
+      |> Enum.concat()
+      |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+
+    Map.new(producers, fn producer ->
+      facts =
+        by_producer
+        |> Map.get(producer, [])
+        |> Enum.flat_map(&Map.to_list/1)
+        |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+        |> Map.new(fn {relation, rows} -> {relation, Enum.concat(rows)} end)
+
+      {producer, facts}
+    end)
+  end
+
   # One `{:ok, shaped} | {:lost, shaped} | {:error, reason}` per module,
   # in input order: `:lost` for a module that outlived the timeout or
   # whose worker exited, whose facts are its one `extraction_error` row.
@@ -528,12 +631,7 @@ defmodule Argus.Pipeline do
   # decodes on its own), in parallel: decoding the Phoenix stack's in
   # the caller took longer than extracting it.
   defp extract_shape(format, symbols) do
-    finish =
-      case format do
-        :raw -> & &1
-        :typed -> &Argus.Facts.decode/1
-        :interned -> &Argus.Facts.intern(&1, symbols)
-      end
+    finish = format_facts(format, symbols)
 
     fn produced ->
       produced
@@ -541,6 +639,11 @@ defmodule Argus.Pipeline do
       |> finish.()
     end
   end
+
+  # Raw rows as `format:` asks for them.
+  defp format_facts(:raw, _symbols), do: & &1
+  defp format_facts(:typed, _symbols), do: &Argus.Facts.decode/1
+  defp format_facts(:interned, symbols), do: &Argus.Facts.intern(&1, symbols)
 
   # The module's name as `function_def` spells it, read from the beam's
   # header alone; the path when even that fails (and a placeholder for

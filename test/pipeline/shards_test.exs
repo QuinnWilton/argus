@@ -140,6 +140,87 @@ defmodule Argus.Pipeline.ShardsTest do
     end
   end
 
+  describe "extract_shards/3" do
+    # Each producer's rows as its directory holds them: by file name, the
+    # rows in order.
+    defp rows_by_file(facts) do
+      Map.new(facts, fn {relation, rows} -> {"#{relation}.facts", rows} end)
+    end
+
+    defp decoded(dir),
+      do: Map.new(contents(dir), fn {name, text} -> {name, Argus.Tsv.decode(text)} end)
+
+    test "each producer's rows are the rows run_shards/3 writes for it",
+         %{tmp_dir: tmp, modules: modules} do
+      producers = [:base | extractors()]
+      opts = [trace_imprecision: true]
+      dirs = shard_dirs(tmp, producers)
+      assert {:ok, %{lost: []}} = Pipeline.run_shards(modules, dirs, opts)
+
+      assert {:ok, facts, %{lost: [], installed: installed}} =
+               Pipeline.extract_shards(modules, producers, opts)
+
+      assert Map.keys(facts) |> Enum.sort() == Enum.sort(producers)
+      assert GenServer in installed
+
+      for {producer, dir} <- dirs do
+        assert rows_by_file(facts[producer]) == decoded(dir),
+               "#{inspect(producer)}'s rows differ from its directory"
+      end
+    end
+
+    test "a producer named alone has the rows it has among the others; the base is optional",
+         %{modules: modules} do
+      producers = [:base, Argus.Extractors.ETS, Argus.Extractors.Specs]
+      assert {:ok, together, _info} = Pipeline.extract_shards(modules, producers)
+
+      assert {:ok, %{Argus.Extractors.ETS => ets}, _info} =
+               Pipeline.extract_shards(modules, [Argus.Extractors.ETS])
+
+      assert ets == together[Argus.Extractors.ETS]
+      assert ets != %{}
+
+      # A producer named that made no rows is there, empty.
+      assert {:ok, %{Argus.Extractors.ETS => %{}}, _info} =
+               Pipeline.extract_shards([:lists], [Argus.Extractors.ETS])
+    end
+
+    test "interned rows materialize to the raw ones", %{modules: modules} do
+      symbols = Argus.Symbols.new()
+      producers = [:base, Argus.Extractors.Specs]
+      assert {:ok, raw, _} = Pipeline.extract_shards(modules, producers)
+
+      assert {:ok, interned, _} =
+               Pipeline.extract_shards(modules, producers, format: :interned, symbols: symbols)
+
+      for producer <- producers do
+        assert Argus.Facts.materialize(interned[producer], symbols) == raw[producer]
+      end
+
+      assert_raise ArgumentError, ~r/symbols/, fn ->
+        Pipeline.extract_shards(modules, producers, format: :interned)
+      end
+    end
+
+    test "a module that outlives the timeout is lost, its one row the base's" do
+      assert {:ok, facts, %{lost: ["Argus.Test.Fixtures.Specs"]}} =
+               Pipeline.extract_shards(
+                 [Argus.Test.Fixtures.Specs],
+                 [:base, Argus.Extractors.Specs],
+                 timeout: 0
+               )
+
+      assert %{extraction_error: [["Argus.Test.Fixtures.Specs", "pipeline", _reason]]} =
+               facts[:base]
+
+      assert facts[Argus.Extractors.Specs] == %{}
+    end
+
+    test "an input that cannot be read is an error" do
+      assert {:error, _} = Pipeline.extract_shards(["/nonexistent/Nope.beam"], [:base])
+    end
+  end
+
   describe "run/3" do
     test "a relation with several producers keeps each producer's rows together",
          %{tmp_dir: tmp} do
