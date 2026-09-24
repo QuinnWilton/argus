@@ -59,6 +59,17 @@ and have `resolve/2` raise `ArgumentError` on it in the window between
 row goes in first now, and a binary that loses the `insert_new` race
 deletes the row it wrote. `races.ets_publish_order` found it.
 
+**Added.** Schema 65. `call_arg_element(caller, callee, arg_pos,
+param_pos, index)` — the argument is element `index` of the caller's
+parameter — and `call_arg_tuple(caller, callee, arg_pos, index, source,
+value)` — element 0 or 1 of a tuple the caller builds as the argument,
+as `key_identity/4` names it. `Identity.key_identity/4` names an
+element of a parameter `{"element N", "P"}` (through `get_tuple_element`
+or the `element/2` BIF), and `tuple_element_identity/5` names an
+element of a tuple that is still a parameter the same way; both said
+`{"dynamic", ""}`. `mnesia_op` rows now include the dirty reads by
+pattern, match spec and index (races, below).
+
 **Changed.** Schema 64, no shape change. `ets_op` has two rows for
 `:ets.take/2`, a `read` and a `write`: it reads the row and deletes it,
 and was `unknown`. `process_start` has a row for each
@@ -1214,6 +1225,33 @@ its transaction site, and a function whose transactions name two repos
 has no body: nothing says whose the closure is.
 
 ### races
+
+**Changed.** A check and an act that name what they touch by different
+parameters meet where a caller names both alike (`CheckThenAct`,
+clientlib/check_then_act.dl). elvengard_ecs's `do_insert_new(type, key,
+record)` dirty_read `{type, key}` and dirty_wrote `record` when the read
+was empty; only `insert_new/1`, which handed it `elem(record, 0)`,
+`elem(record, 1)` and `record`, and `create_entity/3`, which built the
+record, say the two are one record. A pair whose identities differ only
+in parameters (or in elements of parameters, against a literal) is
+carried up the call graph, both sides renamed at each call, until the
+two agree — it meets in that caller — or a side stops being a
+parameter's. A table named as a record's first element resolves at the
+callers that build the record (`table_at_record`). Mnesia's
+`dirty_match_object` (by the pattern's key; `:_` reads every key),
+`dirty_select`, `dirty_index_read` and `dirty_index_match_object`
+(every key of the table) are reads. Corpus: elvengard_ecs@1118693 is a
+fix pair; blockster_v2 gains four Mnesia rows — an idempotency check by
+a secondary index before inserting a referral earning (twice, the live
+and the backfill path), an X-account uniqueness check by
+`dirty_match_object` before writing a connection, and a dev seeding
+script's read-then-seed of a pool other processes write — and
+nerves_hub_web one ETS row (`CLISessionCache.handle_call/3` reads a
+session through `get/1` and writes it through `put/2`, keyed by an
+element of the message; the cache serializes it in its own process,
+and the other writer the rule counts is the exported `clear/0`, which
+only the tests call). OTP's mnesia, kernel, stdlib, ssl and inets:
+unchanged.
 
 **Added.** `ets_missing_row`: a read decides a row is there
 (`case :ets.lookup(t, k) do [_] -> ...`) and an operation that raises

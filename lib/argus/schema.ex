@@ -54,7 +54,7 @@ defmodule Argus.Schema do
   # saying what changed and who reads it. Downstream, the version rides
   # scry's and planchette's `env_fingerprint` so extraction memos never
   # outlive the encoder that wrote them.
-  @schema_version 64
+  @schema_version 65
 
   # Each relation is declared once, in the module of its concern, with its
   # flags; the order of the modules and of the relations in each is the

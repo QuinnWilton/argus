@@ -929,4 +929,61 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
       {:reply, :ok, state}
     end
   end
+
+  defmodule MnesiaRecordHelper do
+    @moduledoc """
+    elvengard_ecs's insert_new before its fix: the helper reads by the
+    record's table and key, handed in as elements, and writes the record
+    itself. Only the caller, which builds the record, says they are one.
+    """
+    def create(id, value) do
+      case insert_new({:entities, id, value}) do
+        :ok -> {:ok, id}
+        error -> error
+      end
+    end
+
+    defp insert_new(record), do: do_insert_new(elem(record, 0), elem(record, 1), record)
+
+    defp do_insert_new(type, key, record) do
+      case :mnesia.dirty_read({type, key}) do
+        [] -> :mnesia.dirty_write(record)
+        _ -> {:error, :already_exists}
+      end
+    end
+  end
+
+  defmodule MnesiaRecordOther do
+    @moduledoc "The helper reads one record's key and writes another record: never the same."
+    def copy(id, other_id, value) do
+      put_if_absent({:entities, id, value}, {:entities, other_id, value})
+    end
+
+    defp put_if_absent(probe, record) do
+      case :mnesia.dirty_read({elem(probe, 0), elem(probe, 1)}) do
+        [] -> :mnesia.dirty_write(record)
+        _ -> :exists
+      end
+    end
+  end
+
+  defmodule MnesiaMatchThenWrite do
+    @moduledoc "A match on the key decides the write: dirty_match_object is a read too."
+    def claim(id, owner) do
+      case :mnesia.dirty_match_object({:claims, id, :_}) do
+        [] -> :mnesia.dirty_write({:claims, id, owner})
+        _ -> {:error, :taken}
+      end
+    end
+  end
+
+  defmodule MnesiaIndexThenWrite do
+    @moduledoc "A lookup by a secondary index decides the write of a new record: every key is read."
+    def register(email, id) do
+      case :mnesia.dirty_index_read(:users, email, :email) do
+        [] -> :mnesia.dirty_write({:users, id, email})
+        _ -> {:error, :taken}
+      end
+    end
+  end
 end

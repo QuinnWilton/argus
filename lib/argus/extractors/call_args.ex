@@ -16,6 +16,12 @@ defmodule Argus.Extractors.CallArgs do
   - `call_arg_field(caller, callee, arg_pos, key)` when the argument was
     read from a map under a literal key (`start_timer(ms, state.ref)`):
     which piece of the caller's state a helper is handed.
+  - `call_arg_element(caller, callee, arg_pos, param_pos, index)` when
+    the argument is element `index` of the caller's parameter
+    (`elem(record, 1)`).
+  - `call_arg_tuple(caller, callee, arg_pos, index, source, value)` for
+    a tuple the caller builds as the argument: what its element `index`
+    (0 or 1) is, in the vocabulary of `key_identity/4`.
 
   Only the first 4 arguments (positions 0–3) are resolved per call
   site. Module/table/server references sit in the first few positions
@@ -32,19 +38,22 @@ defmodule Argus.Extractors.CallArgs do
 
   import Argus.Extractor.Helpers, only: [each_call: 3]
   import Argus.Extractor.Facts, only: [add_fact: 3]
-  import Argus.Extractor.Identity, only: [key_identity: 3]
-  import Argus.Extractor.Resolve, only: [map_field_of: 3, resolve_to_arg_or_atom: 3]
+  import Argus.Extractor.Identity, only: [key_identity: 3, tuple_element_identity: 5]
+  import Argus.Extractor.Resolve, only: [resolve_to_arg_or_atom: 3]
 
   alias Argus.Pipeline.Normalize
 
   @max_args 4
+  @tuple_elements 2
 
   @impl true
   def relations,
     do: [
       :call_arg,
+      :call_arg_element,
       :call_arg_field,
-      :call_arg_forward
+      :call_arg_forward,
+      :call_arg_tuple
     ]
 
   @impl true
@@ -96,21 +105,42 @@ defmodule Argus.Extractors.CallArgs do
           {"literal", value} ->
             add_fact(facts, :call_arg, [ctx.func_id, callee_id, to_string(pos), value])
 
-          _ ->
-            dynamic_arg(facts, ctx, callee_id, pos)
+          identity ->
+            facts
+            |> add_fact(:call_arg, [ctx.func_id, callee_id, to_string(pos), "dynamic"])
+            |> dynamic_arg(ctx, callee_id, pos, identity)
+            |> tuple_arg(ctx, callee_id, pos)
         end
     end
   end
 
-  defp dynamic_arg(facts, ctx, callee_id, pos) do
-    facts = add_fact(facts, :call_arg, [ctx.func_id, callee_id, to_string(pos), "dynamic"])
+  defp dynamic_arg(facts, ctx, callee_id, pos, {"field", key}),
+    do: add_fact(facts, :call_arg_field, [ctx.func_id, callee_id, to_string(pos), key])
 
-    case map_field_of(ctx.instrs, ctx.idx, {:x, pos}) do
-      {:ok, key} ->
-        add_fact(facts, :call_arg_field, [ctx.func_id, callee_id, to_string(pos), key])
+  defp dynamic_arg(facts, ctx, callee_id, pos, {"element " <> n, param}),
+    do: add_fact(facts, :call_arg_element, [ctx.func_id, callee_id, to_string(pos), param, n])
 
-      :dynamic ->
-        facts
-    end
+  defp dynamic_arg(facts, _ctx, _callee_id, _pos, _identity), do: facts
+
+  # A tuple built for the call: what its first two elements are — a
+  # record's table and key, an ETS object's key — for a callee that names
+  # them as elements of its parameter.
+  defp tuple_arg(facts, ctx, callee_id, pos) do
+    Enum.reduce(0..(@tuple_elements - 1), facts, fn n, acc ->
+      case tuple_element_identity(ctx.instrs, ctx.idx, {:x, pos}, n, nil) do
+        {"dynamic", _} ->
+          acc
+
+        {source, value} ->
+          add_fact(acc, :call_arg_tuple, [
+            ctx.func_id,
+            callee_id,
+            to_string(pos),
+            to_string(n),
+            source,
+            value
+          ])
+      end
+    end)
   end
 end

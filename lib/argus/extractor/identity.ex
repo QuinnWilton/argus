@@ -18,7 +18,8 @@ defmodule Argus.Extractor.Identity do
   What identifies the value in `register` at `idx`, in the vocabulary two
   sites can be joined on: `{"literal", inspected}` for an atom, binary or
   integer; `{"param", "N"}` when it is still the function's parameter N;
-  `{"field", key}` when it was read from a map under a literal key; else
+  `{"field", key}` when it was read from a map under a literal key;
+  `{"element N", "P"}` when it is element N (from 0) of parameter P; else
   `{"dynamic", ""}`. A lookup and a create that agree on source and key
   name the same thing — the identity-through-a-name idea the timer rules
   use, spelled once.
@@ -47,10 +48,47 @@ defmodule Argus.Extractor.Identity do
 
           :no ->
             case Resolve.map_field_of(instrs, idx, register) do
-              {:ok, key} -> {"field", key}
-              :dynamic -> local_identity(instrs, idx, register, origins)
+              {:ok, key} ->
+                {"field", key}
+
+              :dynamic ->
+                case param_element(instrs, idx, register) do
+                  {:ok, identity} -> identity
+                  :no -> local_identity(instrs, idx, register, origins)
+                end
             end
         end
+    end
+  end
+
+  # An element of a parameter: `elem(record, 1)`, compiled to
+  # `get_tuple_element` when the compiler knows the parameter is a tuple
+  # and to the `element/2` BIF (1-based) when it does not. Named
+  # `{"element N", "P"}`, N counted from 0 as tuple_element_identity/5
+  # counts: the caller's argument at P says what it is.
+  defp param_element(instrs, idx, register) do
+    Resolve.trace(instrs, idx, register, :no, fn
+      {:param, _k}, _follow ->
+        :no
+
+      {at, {:get_tuple_element, src, n, _dst}}, _follow ->
+        element_of_param(instrs, at, src, n)
+
+      {at, {:bif, :element, _fail, [{:integer, n}, src], _dst}}, _follow when n >= 1 ->
+        element_of_param(instrs, at, src, n - 1)
+
+      {at, {:gc_bif, :element, _fail, _live, [{:integer, n}, src], _dst}}, _follow when n >= 1 ->
+        element_of_param(instrs, at, src, n - 1)
+
+      _writer, _follow ->
+        :no
+    end)
+  end
+
+  defp element_of_param(instrs, at, src, n) do
+    case Resolve.arg_position(instrs, at, src) do
+      {:ok, pos} -> {:ok, {"element #{n}", to_string(pos)}}
+      :no -> :no
     end
   end
 
@@ -124,9 +162,10 @@ defmodule Argus.Extractor.Identity do
   ETS object's key, a Mnesia record's table and key. The tuple is built by
   `put_tuple2` on the way to `idx` (through copies), or is one literal;
   when the arms of a `case` each build it, their identities must agree. A
-  tuple from anywhere else — a parameter passed straight through, a call
-  result — says nothing about its elements, and is `{"dynamic", ""}`:
-  resolving the whole tuple would lose WHICH parameter an element was.
+  tuple that is still parameter P names its element as `{"element N",
+  "P"}` — a record handed to a helper, whose caller's argument says what
+  the element is. A tuple from anywhere else — a call result — says
+  nothing about its elements, and is `{"dynamic", ""}`.
   """
   @spec tuple_element_identity(
           [term()],
@@ -137,8 +176,8 @@ defmodule Argus.Extractor.Identity do
         ) :: {String.t(), String.t()}
   def tuple_element_identity(instrs, idx, register, n, origins \\ nil) do
     Resolve.trace(instrs, idx, register, @dynamic_identity, fn
-      {:param, _k}, _follow ->
-        @dynamic_identity
+      {:param, k}, _follow ->
+        {"element #{n}", to_string(k)}
 
       {at, {:put_tuple2, _dst, {:list, elements}}}, _follow when length(elements) > n ->
         element_identity(instrs, at, Enum.at(elements, n), origins)

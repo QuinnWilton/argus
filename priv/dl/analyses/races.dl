@@ -836,6 +836,31 @@ records.act(w, f, ts, t, ks, k) :- mnesia_op(w, f, _, "write", ts, t, ks, k).
 
 mnesia_pair(f, r, w, t, k) :- records.meets(f, r, w, "literal", t, _, k).
 mnesia_pair(f, r, w, t, k) :- records.meets(f, r, w, "param", p, _, k), table_at_param(f, p, t).
+mnesia_pair(f, r, w, t, k) :- records.meets(f, r, w, "element 0", p, _, k), table_at_record(f, p, t).
+
+// A record handed in whole names its table in its first element: the
+// callers' tuples say which (elvengard_ecs's insert_new(record), called
+// with `entity(id: id, ...)`), through any parameter that forwards it.
+.decl record_param_needed(func: symbol, pos: symbol)
+
+record_param_needed(f, p) :- records.meets(f, _, _, "element 0", p, _, _).
+record_param_needed(c, to_string(m)) :-
+  record_param_needed(f, p),
+  call_arg_forward(c, f, n, m),
+  p = to_string(n).
+
+.decl table_at_record(func: symbol, pos: symbol, name: symbol)
+
+table_at_record(f, p, t) :-
+  record_param_needed(f, p),
+  call_arg_tuple(_, f, n, 0, "literal", t),
+  p = to_string(n).
+
+table_at_record(f, p, t) :-
+  record_param_needed(f, p),
+  call_arg_forward(c, f, n, m),
+  p = to_string(n),
+  table_at_record(c, to_string(m), t).
 
 runs.seed(f) :- mnesia_pair(f, _, _, _, _).
 runs.seed(f) :- mnesia_op(_, f, _, "write", _, _, _, _).

@@ -73,6 +73,43 @@ defmodule Argus.Schema.CallValues do
         """
       },
       %{
+        name: :call_arg_element,
+        layer: 2,
+        fields: [
+          {:caller, :symbol, "calling function ID"},
+          {:callee, :symbol, "called function ID"},
+          {:arg_pos, :number, "argument position (0-based)"},
+          {:param_pos, :number, "the caller's parameter the element is taken from (0-based)"},
+          {:index, :number, "the element's position in that tuple (0-based)"}
+        ],
+        doc: """
+        The argument at `arg_pos` is element `index` of the caller's own \
+        parameter (`elem(record, 1)`, a `get_tuple_element` or the \
+        `element/2` BIF): what a helper that names the value by its own \
+        parameter is handed, in the caller's terms. Only emitted where \
+        call_arg says 'dynamic'.
+        """
+      },
+      %{
+        name: :call_arg_tuple,
+        layer: 2,
+        fields: [
+          {:caller, :symbol, "calling function ID"},
+          {:callee, :symbol, "called function ID"},
+          {:arg_pos, :number, "argument position (0-based)"},
+          {:index, :number, "the element's position in the tuple (0 or 1)"},
+          {:source, :symbol, "literal | param | field | element N"},
+          {:value, :symbol, "the element, in the vocabulary of key_identity"}
+        ],
+        doc: """
+        The argument at `arg_pos` is a tuple the caller builds, and its \
+        element `index` is `(source, value)` in the caller's terms: a \
+        record's table (element 0) and key (element 1), an ETS object's \
+        key. A callee that names the element by its parameter is handed \
+        this. Elements the caller cannot name are not emitted.
+        """
+      },
+      %{
         name: :call_arg_forward,
         layer: 2,
         fields: [

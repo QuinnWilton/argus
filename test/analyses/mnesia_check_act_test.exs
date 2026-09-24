@@ -66,6 +66,26 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
       assert races([C.MnesiaTransaction, C.MnesiaUpdateCounter, C.MnesiaOtherKey]) == []
     end
 
+    test "a record handed to a helper as elements and whole meets where the caller builds it" do
+      skip_without_souffle()
+
+      assert [{"create/2", ":entities", _key, "do_insert_new/3", "do_insert_new/3"}] =
+               races([C.MnesiaRecordHelper])
+    end
+
+    test "elements of one record and another record whole are not the same record" do
+      skip_without_souffle()
+      assert races([C.MnesiaRecordOther]) == []
+    end
+
+    test "a match on the key and a lookup by an index are reads" do
+      skip_without_souffle()
+      assert [{"claim/2", ":claims", _, "claim/2", "claim/2"}] = races([C.MnesiaMatchThenWrite])
+
+      assert [{"register/2", ":users", _, "register/2", "register/2"}] =
+               races([C.MnesiaIndexThenWrite])
+    end
+
     test "a table only its owner's callbacks write has one writer" do
       skip_without_souffle()
       assert races([C.MnesiaOwner]) == []

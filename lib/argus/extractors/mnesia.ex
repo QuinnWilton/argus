@@ -11,12 +11,15 @@ defmodule Argus.Extractors.Mnesia do
   ## Emitted facts
 
   - `mnesia_op(id, func, op, kind, table_source, table, key_source, key)`
-    — a dirty read (`dirty_read`) or write (`dirty_write`, `dirty_delete`,
+    — a dirty read (`dirty_read`, `dirty_match_object`, `dirty_select`,
+    `dirty_index_read`, `dirty_index_match_object`) or write (`dirty_write`, `dirty_delete`,
     `dirty_delete_object`), with the table and the key it touches in the
     vocabulary of `Identity.key_identity/3`. The one-argument forms carry
     both in a tuple: `dirty_read({table, key})`, `dirty_delete({table,
     key})`, and a record whose first element is its table and whose
-    second is its key.
+    second is its key. A read that finds records by something other than
+    their key — a match spec, a secondary index, a pattern whose key is
+    `:_` — reads every key of its table: `any`.
 
   `dirty_update_counter` is atomic — the fix, not the bug — and is not a
   write here. Neither are the transactional `read`/`write`.
@@ -35,6 +38,11 @@ defmodule Argus.Extractors.Mnesia do
   @ops %{
     {:dirty_read, 1} => {"read", {{:x, 0}, 0}, {{:x, 0}, 1}},
     {:dirty_read, 2} => {"read", {:x, 0}, {:x, 1}},
+    {:dirty_match_object, 1} => {"read", {{:x, 0}, 0}, {{:x, 0}, 1}},
+    {:dirty_match_object, 2} => {"read", {:x, 0}, {{:x, 1}, 1}},
+    {:dirty_select, 2} => {"read", {:x, 0}, :any},
+    {:dirty_index_read, 3} => {"read", {:x, 0}, :any},
+    {:dirty_index_match_object, 2} => {"read", {:x, 0}, :any},
     {:dirty_write, 1} => {"write", {{:x, 0}, 0}, {{:x, 0}, 1}},
     {:dirty_write, 2} => {"write", {:x, 0}, {{:x, 1}, 1}},
     {:dirty_delete, 1} => {"write", {{:x, 0}, 0}, {{:x, 0}, 1}},
@@ -65,7 +73,7 @@ defmodule Argus.Extractors.Mnesia do
     case Map.fetch(@ops, {op, arity}) do
       {:ok, {kind, table_at, key_at}} ->
         {table_source, table} = identity(ctx, table_at)
-        {key_source, key} = identity(ctx, key_at)
+        {key_source, key} = ctx |> identity(key_at) |> wildcard()
 
         add_fact(facts, :mnesia_op, [
           InstrId.mint(ctx.func_id, ctx.idx),
@@ -88,5 +96,10 @@ defmodule Argus.Extractors.Mnesia do
   defp identity(ctx, {{_kind, _n} = reg, element}),
     do: tuple_element_identity(ctx.instrs, ctx.idx, reg, element, ctx.origins)
 
+  defp identity(_ctx, :any), do: {"any", ""}
   defp identity(ctx, reg), do: key_identity(ctx.instrs, ctx.idx, reg, ctx.origins)
+
+  # A match pattern's `:_` key matches every key.
+  defp wildcard({"literal", ":_"}), do: {"any", ""}
+  defp wildcard(identity), do: identity
 end

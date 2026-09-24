@@ -299,6 +299,21 @@
     pre: "39fa3297a256bf69bad33d4152e18de745d6dc59",
     finding: {:races, "Read-then-write race on a Mnesia record"}
   },
+  # elvengard_ecs 1118693 "Fix MnesiaBackend race condition on insert_new":
+  # do_insert_new/4 dirty_reads {type, key} and dirty_writes the record when
+  # the read is empty — an insert-if-absent two processes can both pass.
+  # The helper names the key by its parameters and the record whole, so
+  # they are one record only where create_entity/3 builds it and
+  # insert_new/1 hands it on as elements and whole. The fix moves the pair
+  # into a transaction.
+  %{
+    repo: "elvengard-mmo/elvengard_ecs",
+    issue: "elvengard_ecs@1118693",
+    module: "ElvenGard.ECS.MnesiaBackend",
+    pre: "20c52974c4f58f3921203416202fc413714df40e",
+    fix: "1118693fcf6f1413b048a5dd8e0c5e5520f90d4e",
+    finding: {:races, "Read-then-write race on a Mnesia record"}
+  },
   # ── exposure: a secret inspect/1 prints ──────────────────────────────
   # langchain#266 redacted :api_key in six embedded schemas at once and
   # missed ChatPerplexity, which still reports at fix — the module anchor
