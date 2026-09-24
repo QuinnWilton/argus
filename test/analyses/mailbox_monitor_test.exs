@@ -25,12 +25,17 @@ defmodule Argus.Analyses.MailboxMonitorTest do
     M.DropsRef
   ]
 
+  # Every test reads the same solve of @all: solved once, read-only.
+  setup_all do
+    %{solved: Argus.analyze(@all, :mailbox)}
+  end
+
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
-  defp funcs do
-    assert {:ok, r} = Argus.analyze(@all, :mailbox)
+  defp funcs(%{solved: solved}) do
+    assert {:ok, r} = solved
 
     r
     |> Rows.where(:mailbox, "unconsumed_monitor", kind: "timed_wait")
@@ -40,56 +45,56 @@ defmodule Argus.Analyses.MailboxMonitorTest do
 
   defp named?(list, f), do: Enum.any?(list, &String.contains?(&1, f))
 
-  test "a monitor before a timed wait is reported" do
+  test "a monitor before a timed wait is reported", ctx do
     skip_without_souffle()
-    assert named?(funcs(), "MonitorLeak.Leaks")
+    assert named?(funcs(ctx), "MonitorLeak.Leaks")
   end
 
-  test "demonitor with :flush discharges it" do
+  test "demonitor with :flush discharges it", ctx do
     skip_without_souffle()
 
     # Plain demonitor/1 would not: a {:DOWN, ...} already sent stays in the
     # mailbox, and only [:flush] removes it.
-    refute named?(funcs(), "MonitorLeak.Flushes")
+    refute named?(funcs(ctx), "MonitorLeak.Flushes")
   end
 
-  test "a receive with no after clause cannot leak" do
+  test "a receive with no after clause cannot leak", ctx do
     skip_without_souffle()
 
     # It consumes either the reply or the {:DOWN, ...}. This is the whole
     # discriminator — every monitor-plus-receive in Livebook is this shape,
     # and dropping them is what makes the one real finding worth reading.
-    refute named?(funcs(), "MonitorLeak.Blocks")
+    refute named?(funcs(ctx), "MonitorLeak.Blocks")
   end
 
-  test "a timed wait with no monitor has nothing to leak" do
+  test "a timed wait with no monitor has nothing to leak", ctx do
     skip_without_souffle()
-    refute named?(funcs(), "MonitorLeak.NoMonitor")
+    refute named?(funcs(ctx), "MonitorLeak.NoMonitor")
   end
 
-  test "a timed wait one call below the monitor leaks the same way" do
+  test "a timed wait one call below the monitor leaks the same way", ctx do
     skip_without_souffle()
 
     # Finch's HTTP/2 pool: monitor in request/…, the `after` in a private
     # loop. The function reported is the one that established the monitor.
-    assert named?(funcs(), "MonitorLeak.LeaksThroughHelper:request/1")
+    assert named?(funcs(ctx), "MonitorLeak.LeaksThroughHelper:request/1")
   end
 
-  test "a wait in a closure the caller runs leaks in the caller" do
+  test "a wait in a closure the caller runs leaks in the caller", ctx do
     skip_without_souffle()
-    assert named?(funcs(), "MonitorLeak.InEach:-wait_all/1-fun-0-")
+    assert named?(funcs(ctx), "MonitorLeak.InEach:-wait_all/1-fun-0-")
   end
 
-  test "a monitor a task leaves on its way out ends with the task" do
+  test "a monitor a task leaves on its way out ends with the task", ctx do
     skip_without_souffle()
-    refute named?(funcs(), "MonitorLeak.TaskGivesUp")
+    refute named?(funcs(ctx), "MonitorLeak.TaskGivesUp")
     # One that waits again carries the stale :DOWN into its next wait.
-    assert named?(funcs(), "MonitorLeak.TaskPolls:poll/1")
+    assert named?(funcs(ctx), "MonitorLeak.TaskPolls:poll/1")
   end
 
-  test "a flush in the helper discharges it" do
+  test "a flush in the helper discharges it", ctx do
     skip_without_souffle()
-    refute named?(funcs(), "MonitorLeak.FlushesInHelper")
+    refute named?(funcs(ctx), "MonitorLeak.FlushesInHelper")
   end
 
   describe "over a server's lifetime" do

@@ -19,12 +19,17 @@ defmodule Argus.Analyses.ShutdownTest do
     S.CleansUpElsewhere
   ]
 
+  # Every test reads the same solve of @all: solved once, read-only.
+  setup_all do
+    %{solved: Argus.analyze(@all, :shutdown)}
+  end
+
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
-  defp results do
-    assert {:ok, r} = Argus.analyze(@all, :shutdown)
+  defp results(%{solved: solved}) do
+    assert {:ok, r} = solved
     r
   end
 
@@ -233,11 +238,11 @@ defmodule Argus.Analyses.ShutdownTest do
   end
 
   describe "detection" do
-    test "durable cleanup without trap_exit is reported" do
+    test "durable cleanup without trap_exit is reported", ctx do
       skip_without_souffle()
 
       assert [[mod, behaviour, "io", api, via]] =
-               only(results(), "cleanup_never_runs", "Shutdown.Leaks")
+               only(results(ctx), "cleanup_never_runs", "Shutdown.Leaks")
 
       assert mod =~ "Shutdown.Leaks"
       assert behaviour == "GenServer"
@@ -245,19 +250,19 @@ defmodule Argus.Analyses.ShutdownTest do
       assert via =~ "terminate"
     end
 
-    test "cleanup several calls below terminate/2 is attributed to its site" do
+    test "cleanup several calls below terminate/2 is attributed to its site", ctx do
       skip_without_souffle()
 
       assert [[_mod, _b, "io", _api, via]] =
-               only(results(), "cleanup_never_runs", "LeaksIndirect")
+               only(results(ctx), "cleanup_never_runs", "LeaksIndirect")
 
       assert via =~ "persist", "blamed terminate/2 rather than the function at fault"
     end
 
-    test "unclassified work in terminate/2 is reported separately" do
+    test "unclassified work in terminate/2 is reported separately", ctx do
       skip_without_souffle()
 
-      mods = modules(results(), "cleanup_unclear")
+      mods = modules(results(ctx), "cleanup_unclear")
 
       assert named?(mods, "Shutdown.Unclear"),
              "a call into the application's own code is where most cleanup lives"
@@ -265,10 +270,10 @@ defmodule Argus.Analyses.ShutdownTest do
       refute named?(mods, "UnclearTraps"), "trapping means the callback is reached"
     end
 
-    test "unbounded work is reported when the module does trap" do
+    test "unbounded work is reported when the module does trap", ctx do
       skip_without_souffle()
 
-      assert [[mod, _b, "network", api, _via]] = rows(results(), "terminate_may_be_truncated")
+      assert [[mod, _b, "network", api, _via]] = rows(results(ctx), "terminate_may_be_truncated")
       assert mod =~ "Truncatable"
       assert api =~ "request"
     end
@@ -278,10 +283,10 @@ defmodule Argus.Analyses.ShutdownTest do
     # Every positive above has a twin that does identical work while
     # trapping. If those twins were also reported, the analysis would be
     # detecting "has a terminate/2" and nothing else.
-    test "the same cleanup is not reported when the module traps exits" do
+    test "the same cleanup is not reported when the module traps exits", ctx do
       skip_without_souffle()
 
-      mods = modules(results(), "cleanup_never_runs")
+      mods = modules(results(ctx), "cleanup_never_runs")
 
       assert named?(mods, "Shutdown.Leaks")
       refute named?(mods, "Shutdown.Traps"), "trapping means terminate/2 actually runs"
@@ -295,11 +300,11 @@ defmodule Argus.Analyses.ShutdownTest do
     # — connection-pool internals five hops down Mutex.release -> Redis ->
     # wpool. Right module, meaningless witness, and indistinguishable from
     # luck until read against source.
-    test "cleanup is attributed within a few hops of terminate/2" do
+    test "cleanup is attributed within a few hops of terminate/2", ctx do
       skip_without_souffle()
 
       assert [[_mod, _b, "io", api, via]] =
-               only(results(), "cleanup_never_runs", "LeaksIndirect")
+               only(results(ctx), "cleanup_never_runs", "LeaksIndirect")
 
       assert via =~ "persist", "two hops is inside the bound"
       assert api =~ "write"
@@ -307,35 +312,35 @@ defmodule Argus.Analyses.ShutdownTest do
   end
 
   describe "what is deliberately not reported" do
-    test "logging is not cleanup" do
+    test "logging is not cleanup", ctx do
       skip_without_souffle()
-      r = results()
+      r = results(ctx)
 
       refute named?(modules(r, "cleanup_never_runs"), "LogsOnly")
       refute named?(modules(r, "cleanup_unclear"), "LogsOnly")
     end
 
-    test "reads have nothing to lose by being skipped" do
+    test "reads have nothing to lose by being skipped", ctx do
       skip_without_souffle()
-      r = results()
+      r = results(ctx)
 
       refute named?(modules(r, "cleanup_never_runs"), "ReadsOnly")
       refute named?(modules(r, "cleanup_unclear"), "ReadsOnly")
     end
 
-    test "cleanup outside terminate/2 is not this analysis's business" do
+    test "cleanup outside terminate/2 is not this analysis's business", ctx do
       skip_without_souffle()
 
-      refute named?(modules(results(), "cleanup_never_runs"), "CleansUpElsewhere")
+      refute named?(modules(results(ctx), "cleanup_never_runs"), "CleansUpElsewhere")
     end
 
-    test "a module with classified cleanup is not also reported as unclear" do
+    test "a module with classified cleanup is not also reported as unclear", ctx do
       skip_without_souffle()
 
       # Otherwise the precise finding and the vague one would name the same
       # module, and the vague one adds nothing.
-      assert named?(modules(results(), "cleanup_never_runs"), "Shutdown.Leaks")
-      refute named?(modules(results(), "cleanup_unclear"), "Shutdown.Leaks")
+      assert named?(modules(results(ctx), "cleanup_never_runs"), "Shutdown.Leaks")
+      refute named?(modules(results(ctx), "cleanup_unclear"), "Shutdown.Leaks")
     end
   end
 
