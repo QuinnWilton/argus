@@ -148,16 +148,36 @@ defmodule Argus.Test.Fixtures.Consistency do
     Four sites read :gvar under a catch; one reads :stats bare, the only
     site on that table. mnesia's own shape (mnesia_lib:read_counter/1):
     each table keeps its own convention, and the bare read is not a
-    deviant from the other table's.
+    deviant from the other table's. The four guarded reads are four
+    call sites, as in SameTargetBare: pooled with :stats, they would be
+    four against one.
     """
     def a(k), do: gvar(k)
-    def b(k), do: gvar(k)
-    def c(k), do: gvar(k)
-    def d(k), do: gvar(k)
+    def b(k), do: gvar2(k)
+    def c(k), do: gvar3(k)
+    def d(k), do: gvar4(k)
 
     def e(k), do: :ets.lookup_element(:stats, k, 2)
 
     defp gvar(k) do
+      :ets.lookup_element(:gvar, k, 2)
+    catch
+      :error, :badarg -> nil
+    end
+
+    defp gvar2(k) do
+      :ets.lookup_element(:gvar, k, 2)
+    catch
+      :error, :badarg -> nil
+    end
+
+    defp gvar3(k) do
+      :ets.lookup_element(:gvar, k, 2)
+    catch
+      :error, :badarg -> nil
+    end
+
+    defp gvar4(k) do
       :ets.lookup_element(:gvar, k, 2)
     catch
       :error, :badarg -> nil

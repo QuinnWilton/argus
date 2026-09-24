@@ -91,6 +91,15 @@ defmodule Argus.Analyses.FailureConsistencyTest do
     test "is the callee's sites on the same literal target" do
       skip_without_souffle()
       assert targets([C.PerTarget]) == []
+
+      # Four call sites on :gvar, not one helper called four times: pooled
+      # with :stats they would be four against one, so the quiet result
+      # above is the scoping's.
+      {:ok, facts} =
+        Argus.Pipeline.extract([C.PerTarget], extractors: [Argus.Extractors.ErrorHandling])
+
+      assert Enum.count(facts[:call_result], &(List.last(&1) == ":gvar")) == 4
+
       assert [{func, "4", "1", ":gvar"}] = targets([C.SameTargetBare])
       assert func =~ "SameTargetBare:e/1"
     end
