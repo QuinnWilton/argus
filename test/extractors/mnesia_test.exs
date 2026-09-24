@@ -60,12 +60,12 @@ defmodule Argus.Extractors.MnesiaTest do
            ] = ops(C.MnesiaUpdateCounter)
   end
 
-  test "site?/1 is the dirty reads and writes, and the writes under them" do
+  test "site?/1 is the dirty reads and writes, the writes under them, and a dirty activity's" do
     assert Mnesia.site?({:mnesia, :dirty_read, 2})
     assert Mnesia.site?({:mnesia, :dirty_delete_object, 1})
     assert Mnesia.site?({:mnesia, :dirty_update_counter, 3})
     assert Mnesia.site?({:mnesia, :write, 1})
-    refute Mnesia.site?({:mnesia, :read, 2})
+    assert Mnesia.site?({:mnesia, :read, 2})
     refute Mnesia.site?({:ets, :lookup, 2})
   end
 end

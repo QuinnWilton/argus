@@ -23,6 +23,13 @@ defmodule Argus.Extractors.Mnesia do
     their key — a match spec, a secondary index, a pattern whose key is
     `:_` — reads every key of its table: `any`.
 
+  A closure handed to a dirty activity — `async_dirty/1`, `sync_dirty/1`,
+  `ets/1`, or `activity/2` with one of those contexts — runs its plain
+  `read`, `write`, `delete`, `delete_object`, `match_object`, `select`
+  and `index_read` without locks: each is extracted as its dirty twin
+  (`op` `dirty_read`, `dirty_write`, ...). Only the closure's own calls:
+  a helper it calls is not known to run in the activity.
+
   `dirty_update_counter` is atomic — the fix, not the bug — and a
   transaction's operations are isolated from each other; neither is a
   dirty act, but both write the table, and a dirty read-modify-write that
@@ -34,6 +41,9 @@ defmodule Argus.Extractors.Mnesia do
 
   alias Argus.Extractor.Identity
   alias Argus.InstrId
+  alias Argus.Extractor.Helpers
+  alias Argus.Extractor.Resolve
+  alias Argus.Pipeline.Normalize
   import Argus.Extractor.Helpers, only: [each_remote_call: 3]
   import Argus.Extractor.Facts, only: [add_fact: 3]
   import Argus.Extractor.Identity, only: [key_identity: 4, tuple_element_identity: 5]
@@ -68,12 +78,36 @@ defmodule Argus.Extractors.Mnesia do
     {:dirty_update_counter, 3} => {"write", {:x, 0}, {:x, 1}}
   }
 
+  # A closure run in a dirty activity context is dirty throughout: its
+  # plain read, write and delete take no lock (`async_dirty/1`,
+  # `sync_dirty/1`, `ets/1`, or `activity/2` given one of those
+  # contexts). Each op there is spelled as its dirty twin.
+  @dirty_contexts [:async_dirty, :sync_dirty, :ets]
+
+  @in_dirty_context %{
+    {:read, 1} => {"dirty_read", "read", {{:x, 0}, 0}, {{:x, 0}, 1}},
+    {:read, 2} => {"dirty_read", "read", {:x, 0}, {:x, 1}},
+    {:read, 3} => {"dirty_read", "read", {:x, 0}, {:x, 1}},
+    {:match_object, 1} => {"dirty_match_object", "read", {{:x, 0}, 0}, {{:x, 0}, 1}},
+    {:match_object, 3} => {"dirty_match_object", "read", {:x, 0}, {{:x, 1}, 1}},
+    {:select, 2} => {"dirty_select", "read", {:x, 0}, :any},
+    {:index_read, 3} => {"dirty_index_read", "read", {:x, 0}, :any},
+    {:write, 1} => {"dirty_write", "write", {{:x, 0}, 0}, {{:x, 0}, 1}},
+    {:write, 3} => {"dirty_write", "write", {:x, 0}, {{:x, 1}, 1}},
+    {:delete, 1} => {"dirty_delete", "write", {{:x, 0}, 0}, {{:x, 0}, 1}},
+    {:delete, 3} => {"dirty_delete", "write", {:x, 0}, {:x, 1}},
+    {:delete_object, 1} => {"dirty_delete_object", "write", {{:x, 0}, 0}, {{:x, 0}, 1}},
+    {:delete_object, 3} => {"dirty_delete_object", "write", {:x, 0}, {{:x, 1}, 1}}
+  }
+
   @impl true
   def relations, do: [:mnesia_op]
 
   @doc "Whether a remote call is a Mnesia read or write extracted here, for `Argus.Extractors.Dependence`."
   @spec site?(mfa()) :: boolean()
-  def site?({:mnesia, op, arity}), do: Map.has_key?(@ops, {op, arity})
+  def site?({:mnesia, op, arity}),
+    do: Map.has_key?(@ops, {op, arity}) or Map.has_key?(@in_dirty_context, {op, arity})
+
   def site?(_mfa), do: false
 
   @impl true
@@ -81,28 +115,68 @@ defmodule Argus.Extractors.Mnesia do
   def extract(module_data) do
     index = Identity.origins_index(module_data)
     returns = Identity.returned_elements(module_data, index)
+    dirty = dirty_closures(module_data)
 
     each_remote_call(module_data, %{}, fn facts, ctx, mfa ->
-      handle_call(facts, Map.put(ctx, :origins, {index, ctx.func_id, returns}), mfa)
+      ctx =
+        ctx
+        |> Map.put(:origins, {index, ctx.func_id, returns})
+        |> Map.put(:dirty?, MapSet.member?(dirty, ctx.func_id))
+
+      handle_call(facts, ctx, mfa)
     end)
+  end
+
+  # The closures this module hands to a dirty activity: the make_fun3 the
+  # fun operand comes from, in the function that makes the call.
+  defp dirty_closures(module_data) do
+    for {:function, _name, _arity, _entry, instrs} <- module_data.functions,
+        {instr, idx} <- Enum.with_index(instrs),
+        {:ok, :mnesia, fun, arity} <- [Helpers.match_remote_call(instr)],
+        {:ok, reg} <- [dirty_fun_operand(instrs, idx, fun, arity)],
+        closure = closure_made(instrs, idx, reg),
+        closure != nil,
+        into: MapSet.new(),
+        do: closure
+  end
+
+  defp dirty_fun_operand(_instrs, _idx, fun, arity)
+       when fun in [:async_dirty, :sync_dirty, :ets] and arity in [1, 2],
+       do: {:ok, {:x, 0}}
+
+  defp dirty_fun_operand(instrs, idx, :activity, arity) when arity in [2, 3, 4] do
+    case Resolve.resolve_register(instrs, idx, {:x, 0}) do
+      {:ok, context} when context in @dirty_contexts -> {:ok, {:x, 1}}
+      _ -> :error
+    end
+  end
+
+  defp dirty_fun_operand(_instrs, _idx, _fun, _arity), do: :error
+
+  defp closure_made(instrs, idx, reg) do
+    Resolve.trace(instrs, idx, reg, nil, fn
+      {_at, {:make_fun3, {mod, name, arity}, _index, _uniq, _dst, _env}}, _follow ->
+        Normalize.func_id(mod, name, arity)
+
+      _writer, _follow ->
+        nil
+    end)
+  end
+
+  defp handle_call(facts, %{dirty?: true} = ctx, {:mnesia, op, arity} = mfa) do
+    case Map.fetch(@in_dirty_context, {op, arity}) do
+      {:ok, {dirty_op, kind, table_at, key_at}} ->
+        add_op(facts, ctx, dirty_op, kind, table_at, key_at)
+
+      :error ->
+        handle_call(facts, %{ctx | dirty?: false}, mfa)
+    end
   end
 
   defp handle_call(facts, ctx, {:mnesia, op, arity}) do
     case Map.fetch(@ops, {op, arity}) do
       {:ok, {kind, table_at, key_at}} ->
-        {table_source, table} = identity(ctx, table_at)
-        {key_source, key} = ctx |> identity(key_at) |> wildcard()
-
-        add_fact(facts, :mnesia_op, [
-          InstrId.mint(ctx.func_id, ctx.idx),
-          ctx.func_id,
-          to_string(op),
-          kind,
-          table_source,
-          table,
-          key_source,
-          key
-        ])
+        add_op(facts, ctx, to_string(op), kind, table_at, key_at)
 
       :error ->
         facts
@@ -110,6 +184,22 @@ defmodule Argus.Extractors.Mnesia do
   end
 
   defp handle_call(facts, _ctx, _mfa), do: facts
+
+  defp add_op(facts, ctx, op, kind, table_at, key_at) do
+    {table_source, table} = identity(ctx, table_at)
+    {key_source, key} = ctx |> identity(key_at) |> wildcard()
+
+    add_fact(facts, :mnesia_op, [
+      InstrId.mint(ctx.func_id, ctx.idx),
+      ctx.func_id,
+      op,
+      kind,
+      table_source,
+      table,
+      key_source,
+      key
+    ])
+  end
 
   defp identity(ctx, {{_kind, _n} = reg, element}),
     do: tuple_element_identity(ctx.instrs, ctx.idx, reg, element, ctx.origins)

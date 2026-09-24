@@ -79,6 +79,16 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
       assert races([C.MnesiaJoinedKey]) == []
     end
 
+    test "a read-modify-write in a dirty activity" do
+      skip_without_souffle()
+
+      assert [
+               {"-bump/1-fun-0-/1", ":counters", "0", _, _},
+               {"-bump_in_activity/1-fun-0-/1", ":counters", "0", _, _} | _
+             ] =
+               races([C.MnesiaAsyncDirty]) |> Enum.uniq_by(&elem(&1, 0)) |> Enum.sort()
+    end
+
     test "a transaction, the atomic counter, and a different record are quiet" do
       skip_without_souffle()
       assert races([C.MnesiaTransaction, C.MnesiaUpdateCounter, C.MnesiaOtherKey]) == []

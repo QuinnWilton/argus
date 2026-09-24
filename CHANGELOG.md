@@ -288,6 +288,13 @@ dirty delete on it is reported, as it is on a table written back in
 place. Both resolve the table through `mnesia_write_table`; the acts
 stay the dirty writes.
 
+**Fixed.** `mnesia_check_act` reads a dirty activity as dirty: a
+read-modify-write with `:mnesia.read` and `:mnesia.write` inside
+`:mnesia.async_dirty(fn -> ... end)`, or `activity(:sync_dirty, ...)`,
+takes no lock and is reported as the `dirty_*` spelling is (schema 85).
+Only the closure's own calls: a helper it calls is not known to run in
+the activity.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile
@@ -651,6 +658,14 @@ position the call's result does not carry (`Argus.Pipeline.Emit.
 FunRefs.handed_rows/2`). The call graph's edge into a closure or a fun
 reference has no call instruction; this names the call it runs inside,
 so a rule asking whether a `try` covers the edge asks it of that call.
+**Changed.** Schema 85, no shape change. `mnesia_op` has the plain
+`read`, `write`, `delete`, `delete_object`, `match_object`, `select`
+and `index_read` of a closure handed to a dirty activity
+(`:mnesia.async_dirty/1`, `sync_dirty/1`, `ets/1`, or `activity/2` with
+one of those contexts), spelled as their dirty twins (`dirty_read`,
+`dirty_write`, ...): they take no lock. `Mnesia.site?/1` names the
+plain operations.
+
 **Changed.** Schema 84, no shape change. `mnesia_op` has rows of kind
 `write` for a transaction's `:mnesia.write/1,3`, `delete/1,3` and
 `delete_object/1,3`, and for `dirty_update_counter/2,3`: not dirty

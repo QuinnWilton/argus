@@ -1375,6 +1375,30 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  defmodule MnesiaAsyncDirty do
+    @moduledoc "The counter in a dirty activity: its plain read and write take no lock."
+    def bump(key) do
+      :mnesia.async_dirty(fn ->
+        n =
+          case :mnesia.read(:counters, key) do
+            [] -> 0
+            [{:counters, ^key, n}] -> n
+          end
+
+        :mnesia.write({:counters, key, n + 1})
+      end)
+    end
+
+    def bump_in_activity(key) do
+      :mnesia.activity(:sync_dirty, fn ->
+        case :mnesia.read({:counters, key}) do
+          [] -> :mnesia.write({:counters, key, 1})
+          [{:counters, ^key, n}] -> :mnesia.write({:counters, key, n + 1})
+        end
+      end)
+    end
+  end
+
   defmodule MnesiaUpdateCounter do
     @moduledoc "The atomic form."
     def bump(key), do: :mnesia.dirty_update_counter(:counters, key, 1)
