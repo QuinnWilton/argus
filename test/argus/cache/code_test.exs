@@ -36,6 +36,13 @@ defmodule Argus.Cache.CodeTest do
     assert Argus.Extractors.ETS in ets
     assert base -- ets == []
 
+    # What an extractor reaches beyond the base, through the others it
+    # calls, is its own.
+    {:ok, dependence} = Code.closure(Argus.Extractors.Dependence)
+    dependence = Enum.map(dependence, &elem(&1, 0))
+    assert Argus.Extractors.ETS in dependence and Argus.Extractors.PidFlow in dependence
+    assert base -- dependence == []
+
     for producer <- producers(),
         {:ok, closure} = Code.closure(producer),
         mod <- [

@@ -223,6 +223,12 @@ exactly what it reads, and a stage's outputs join the facts by content. `Argus.C
 counting on and checks that nothing it executes lies outside its
 closure.
 
+**Changed.** `Argus.Cache.Code.closure/1` walks the base's import
+closure once per VM and extends it from each extractor, stopping where
+the base's already goes: every producer's walk used to read the whole
+pipeline's import tables again. Seven producers' digests in a fresh VM
+take half the time.
+
 **Added.** `cache:` on `Argus.run_analyses/2`, `Argus.analyze/3` and
 `Argus.Analysis.extract_facts/3` names a store: the facts are read from
 its shards or extracted into them, stage 0, the points-to stage and

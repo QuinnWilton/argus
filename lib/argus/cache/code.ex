@@ -40,9 +40,21 @@ defmodule Argus.Cache.Code do
   """
   @spec closure(producer()) ::
           {:ok, [{module(), Path.t() | :absent}]} | {:error, {:no_beam, module()}}
-  def closure(producer) do
-    memo({:closure, producer}, fn ->
-      with {:ok, modules} <- producer |> roots() |> reachable(%{}) do
+  def closure(:base) do
+    memo({:closure, :base}, fn ->
+      with {:ok, modules} <- reachable([Argus.Pipeline], %{}) do
+        {:ok, Enum.sort(modules)}
+      end
+    end)
+  end
+
+  # An extractor's is the base's and what the extractor reaches besides:
+  # the walk from the extractor stops where the base's closure, read
+  # once, already goes.
+  def closure(extractor) when is_atom(extractor) do
+    memo({:closure, extractor}, fn ->
+      with {:ok, base} <- closure(:base),
+           {:ok, modules} <- reachable([extractor], Map.new(base)) do
         {:ok, Enum.sort(modules)}
       end
     end)
@@ -97,9 +109,6 @@ defmodule Argus.Cache.Code do
       {:error, _} -> true
     end
   end
-
-  defp roots(:base), do: [Argus.Pipeline]
-  defp roots(extractor) when is_atom(extractor), do: [extractor, Argus.Pipeline]
 
   defp reachable([], seen), do: {:ok, Map.to_list(seen)}
 
