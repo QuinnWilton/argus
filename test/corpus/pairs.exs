@@ -309,6 +309,21 @@
     fix: "8c7a5b2f2940c615b5ae23ee5b67e5c5a6fc0a72",
     finding: {:races, "Read-then-write race on an ETS key"}
   },
+  # hammer#129: the atomic backends looked a key up and, when it was absent,
+  # inserted a fresh :atomics array with insert; two first hits each insert
+  # one, and the hit counted into the replaced array is lost. The table is
+  # the one `use Hammer` hands in, which nothing in the library names. #130
+  # (7.0.1) makes the first array with insert_new in each hit/5, and misses
+  # the same shape in Hammer.Atomic.FixWindow's inc/4 and set/4, which the
+  # rule still reports at the fix — hence LeakyBucket here.
+  %{
+    repo: "ExHammer/hammer",
+    issue: "hammer#129",
+    module: "Hammer.Atomic.LeakyBucket",
+    pre: "7dcff06c63916a126dc780e15371136126932222",
+    fix: "252029ee0d9207b21144093fc466346e5f8368a5",
+    finding: {:races, "Read-then-write race on an ETS key"}
+  },
   # tesla#768: Tesla.Mock.agent_set/1 looked the mock agent up by name and
   # started it under the test supervisor when absent; two tests doing so at
   # once made one of them lose. The fix takes {:error, {:already_started, _}}.
