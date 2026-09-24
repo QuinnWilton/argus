@@ -2,15 +2,17 @@ defmodule Mix.Tasks.ScryTest do
   @moduledoc """
   The standalone one-shot task, driven inside the fixture project. The
   compiler runs first (via the full chain), so the standalone runs
-  exercise the shared-manifest warm path.
+  exercise the shared-manifest warm path. In this module's peer
+  (`Scry.Test.Peer`): the Mix project stack, the working directory and
+  telemetry are VM-wide.
   """
 
-  # Mix project stack + cwd changes — never async.
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
+  use Scry.Test.Peer
 
   import ExUnit.CaptureIO
 
-  alias Scry.Test.{Fixture, QueryLog}
+  alias Scry.Test.{Fixture, Peer, QueryLog}
 
   @moduletag timeout: 300_000
   @moduletag :souffle
@@ -19,21 +21,18 @@ defmodule Mix.Tasks.ScryTest do
   # and none edits the fixture, so the cold compile is paid per module,
   # not per test. The `compile!()` each test opens with is then a no-op.
   setup_all do
+    peer = Peer.start!()
     copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "scry_task_depot"))
-    Mix.Project.in_project(:depot, copy, fn _module -> compile!() end)
-    %{copy: copy}
+    Fixture.in_peer(peer, copy, :depot, fn _log -> compile!() end)
+    %{copy: copy, peer: peer}
   end
 
-  setup do
-    log = QueryLog.start()
-    on_exit(fn -> QueryLog.detach(log) end)
-    %{log: log}
-  end
+  defp in_project(%{peer: peer, copy: copy}, fun), do: Fixture.in_peer(peer, copy, :depot, fun)
 
   defp compile!, do: Fixture.compile!()
 
-  test "runs warm off the compiler's manifest and reports", %{copy: copy, log: log} do
-    Mix.Project.in_project(:depot, copy, fn _module ->
+  test "runs warm off the compiler's manifest and reports", context do
+    in_project(context, fn log ->
       compile!()
 
       # The standalone task shares the compiler's manifest: nothing
@@ -54,8 +53,8 @@ defmodule Mix.Tasks.ScryTest do
     end)
   end
 
-  test "--format json emits the stable schema", %{copy: copy} do
-    Mix.Project.in_project(:depot, copy, fn _module ->
+  test "--format json emits the stable schema", context do
+    in_project(context, fn _log ->
       compile!()
 
       json =
@@ -85,8 +84,8 @@ defmodule Mix.Tasks.ScryTest do
     end)
   end
 
-  test "--fail-above raises when the count is exceeded", %{copy: copy} do
-    Mix.Project.in_project(:depot, copy, fn _module ->
+  test "--fail-above raises when the count is exceeded", context do
+    in_project(context, fn _log ->
       compile!()
 
       assert_raise Mix.Error, ~r/5 findings exceed --fail-above 0/, fn ->
@@ -100,8 +99,8 @@ defmodule Mix.Tasks.ScryTest do
     end)
   end
 
-  test "positional analyses narrow the run; unknown names abort", %{copy: copy} do
-    Mix.Project.in_project(:depot, copy, fn _module ->
+  test "positional analyses narrow the run; unknown names abort", context do
+    in_project(context, fn _log ->
       compile!()
 
       output =
@@ -119,8 +118,8 @@ defmodule Mix.Tasks.ScryTest do
     end)
   end
 
-  test "--list names every analysis and marks the default set", %{copy: copy} do
-    Mix.Project.in_project(:depot, copy, fn _module ->
+  test "--list names every analysis and marks the default set", context do
+    in_project(context, fn _log ->
       output = capture_io(fn -> Mix.Task.rerun("scry", ["--list"]) end)
 
       assert output =~ "* coupling"
@@ -134,7 +133,7 @@ defmodule Mix.Tasks.ScryTest do
   describe "the compile it runs first" do
     # Own checkouts with their own app atoms: in_project caches project
     # config by app name, and these need a scry: config of their own.
-    test "a finding that fails the compiler's fail_on is reported, not fatal" do
+    test "a finding that fails the compiler's fail_on is reported, not fatal", %{peer: peer} do
       app = :depot_task_error
 
       copy =
@@ -144,7 +143,7 @@ defmodule Mix.Tasks.ScryTest do
           app
         )
 
-      Mix.Project.in_project(app, copy, fn _module ->
+      Fixture.in_peer(peer, copy, app, fn _log ->
         # mix compile fails here: the mailbox findings are errors and
         # fail_on is :error. Built once so stdout carries only the JSON;
         # cleared so the task's own compile runs (warm) and sees :error.
@@ -165,7 +164,7 @@ defmodule Mix.Tasks.ScryTest do
       end)
     end
 
-    test "a project that does not compile is an error, with no report" do
+    test "a project that does not compile is an error, with no report", %{peer: peer} do
       app = :depot_task_broken
       copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "scry_#{app}"), [], app)
 
@@ -174,7 +173,7 @@ defmodule Mix.Tasks.ScryTest do
         "defmodule Depot.Broken do\n  def f(, do: :ok\nend\n"
       )
 
-      Mix.Project.in_project(app, copy, fn _module ->
+      Fixture.in_peer(peer, copy, app, fn _log ->
         Mix.Task.clear()
 
         capture_io(:stderr, fn ->

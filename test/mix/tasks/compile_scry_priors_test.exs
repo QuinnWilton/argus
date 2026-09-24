@@ -1,19 +1,25 @@
 defmodule Mix.Tasks.Compile.ScryPriorsTest do
   @moduledoc """
   Priors through scry: the classifier's rows as an input, off by default,
-  asked once and then served from the cache and the manifest.
+  asked once and then served from the cache and the manifest. In this
+  module's peer (`Scry.Test.Peer`): the Mix project stack and the
+  working directory are VM-wide.
   """
 
-  # Mix project stack + cwd — never async.
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
+  use Scry.Test.Peer
 
-  alias Scry.Test.Fixture
+  alias Scry.Test.{Fixture, Peer}
 
   @moduletag timeout: 300_000
   @moduletag :souffle
 
-  defp checkout!(scry_config, app) do
-    copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "scry_priors_#{app}"), scry_config, app)
+  setup_all do
+    %{peer: Peer.start!()}
+  end
+
+  defp checkout!(app) do
+    copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "scry_priors_#{app}"), [], app)
     {copy, app}
   end
 
@@ -30,8 +36,9 @@ defmodule Mix.Tasks.Compile.ScryPriorsTest do
   defp keys(result),
     do: result |> entries() |> Enum.map(&{&1.code, &1.title, &1.file, &1.line}) |> Enum.sort()
 
-  test "off by default, then on: a superset served from the cache and the manifest on the warm run" do
-    {copy, app} = checkout!([], :depot_priors)
+  test "off by default, then on: a superset served from the cache and the manifest on the warm run",
+       %{peer: peer} do
+    {copy, app} = checkout!(:depot_priors)
 
     scratch =
       Path.join(System.tmp_dir!(), "scry_priors_cache_#{System.unique_integer([:positive])}")
@@ -50,7 +57,7 @@ defmodule Mix.Tasks.Compile.ScryPriorsTest do
       ]
     ]
 
-    Mix.Project.in_project(app, copy, fn _module ->
+    Fixture.in_peer(peer, copy, app, fn _log ->
       assert {_status, _} = compile!()
       manifest = Path.join(scratch, "manifest")
 
@@ -94,8 +101,8 @@ defmodule Mix.Tasks.Compile.ScryPriorsTest do
     end)
   end
 
-  test "cached_only with an empty cache is the run without priors" do
-    {copy, app} = checkout!([], :depot_priors_empty)
+  test "cached_only with an empty cache is the run without priors", %{peer: peer} do
+    {copy, app} = checkout!(:depot_priors_empty)
 
     scratch =
       Path.join(System.tmp_dir!(), "scry_priors_empty_#{System.unique_integer([:positive])}")
@@ -103,7 +110,7 @@ defmodule Mix.Tasks.Compile.ScryPriorsTest do
     File.rm_rf!(scratch)
     File.mkdir_p!(scratch)
 
-    Mix.Project.in_project(app, copy, fn _module ->
+    Fixture.in_peer(peer, copy, app, fn _log ->
       assert {_status, _} = compile!()
       off = run([], Path.join(scratch, "m1"))
 

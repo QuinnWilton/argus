@@ -3,20 +3,22 @@ defmodule Mix.Tasks.Compile.ScryExtractionTest do
   What extraction could not do is reported beside the findings — the
   analyses ran on partial facts — and is never a permanent memo: the
   next run extracts the module again.
+
+  The Mix project stack, the working directory, application env and
+  telemetry are VM-wide: the tests run in this module's peer
+  (`Scry.Test.Peer`).
   """
 
-  # Mix project stack + cwd + application env — never async.
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
+  use Scry.Test.Peer
 
-  alias Scry.Test.{Fixture, QueryLog}
+  alias Scry.Test.{Fixture, Peer, QueryLog}
 
   @moduletag :souffle
   @moduletag timeout: 300_000
 
-  setup do
-    log = QueryLog.start()
-    on_exit(fn -> QueryLog.detach(log) end)
-    %{log: log}
+  setup_all do
+    %{peer: Peer.start!()}
   end
 
   defp scry(diagnostics), do: Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
@@ -29,7 +31,7 @@ defmodule Mix.Tasks.Compile.ScryExtractionTest do
     diagnostics |> scry() |> Enum.filter(&String.starts_with?(&1.message, "[scry."))
   end
 
-  test "a module extraction timed out on is reported, and retried next run", %{log: log} do
+  test "a module extraction timed out on is reported, and retried next run", %{peer: peer} do
     copy =
       Fixture.checkout!(
         Path.join(System.tmp_dir!(), "scry_extraction_timeout"),
@@ -37,7 +39,7 @@ defmodule Mix.Tasks.Compile.ScryExtractionTest do
         :depot_timeout
       )
 
-    Mix.Project.in_project(:depot_timeout, copy, fn _module ->
+    Fixture.in_peer(peer, copy, :depot_timeout, fn log ->
       # Every module outlives a 0 ms budget: all of them lose their facts.
       Application.put_env(:scry, :extraction_timeout, 0)
 
@@ -69,7 +71,7 @@ defmodule Mix.Tasks.Compile.ScryExtractionTest do
     end)
   end
 
-  test "a beam that cannot be read is reported, and the rest still analyzed" do
+  test "a beam that cannot be read is reported, and the rest still analyzed", %{peer: peer} do
     copy =
       Fixture.checkout!(
         Path.join(System.tmp_dir!(), "scry_extraction_garbage"),
@@ -77,7 +79,7 @@ defmodule Mix.Tasks.Compile.ScryExtractionTest do
         :depot_garbage
       )
 
-    Mix.Project.in_project(:depot_garbage, copy, fn _module ->
+    Fixture.in_peer(peer, copy, :depot_garbage, fn _log ->
       Fixture.compile!()
 
       File.write!(

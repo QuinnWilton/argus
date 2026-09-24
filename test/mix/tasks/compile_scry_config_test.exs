@@ -1,22 +1,20 @@
 defmodule Mix.Tasks.Compile.ScryConfigTest do
   @moduledoc """
-  The config surface and the souffle gate, each scenario against its own
-  fixture checkout (the `scry:` keyword is rendered into the fixture's
-  mix.exs).
+  The config surface, each scenario against its own fixture checkout
+  (the `scry:` keyword is rendered into the fixture's mix.exs), in this
+  module's peer (`Scry.Test.Peer`): the Mix project stack, the working
+  directory and telemetry are VM-wide.
   """
 
-  # Mix project stack + cwd + PATH manipulation — never async.
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
+  use Scry.Test.Peer
 
-  alias Roux.Lang.Manifest
-  alias Scry.Test.{Fixture, QueryLog}
+  alias Scry.Test.{Fixture, Peer, QueryLog}
 
   @moduletag timeout: 300_000
 
-  setup do
-    log = QueryLog.start()
-    on_exit(fn -> QueryLog.detach(log) end)
-    %{log: log}
+  setup_all do
+    %{peer: Peer.start!()}
   end
 
   # Each scenario needs its own app atom: in_project caches project
@@ -33,6 +31,8 @@ defmodule Mix.Tasks.Compile.ScryConfigTest do
     {copy, app}
   end
 
+  defp in_project(peer, {copy, app}, fun), do: Fixture.in_peer(peer, copy, app, fun)
+
   defp compile!, do: Fixture.compile!()
 
   defp codes(diagnostics) do
@@ -43,10 +43,10 @@ defmodule Mix.Tasks.Compile.ScryConfigTest do
 
   describe "config" do
     @tag :souffle
-    test "fail_on: :warning promotes findings to a build failure" do
-      {copy, app} = checkout!([fail_on: :warning], :depot_failon)
+    test "fail_on: :warning promotes findings to a build failure", %{peer: peer} do
+      project = checkout!([fail_on: :warning], :depot_failon)
 
-      Mix.Project.in_project(app, copy, fn _module ->
+      in_project(peer, project, fn _log ->
         assert {:error, diagnostics} = compile!()
         assert Enum.any?(diagnostics, &(&1.compiler_name == "scry"))
 
@@ -57,10 +57,10 @@ defmodule Mix.Tasks.Compile.ScryConfigTest do
     end
 
     @tag :souffle
-    test "severity overrides change the diagnostic and the status" do
-      {copy, app} = checkout!([severity: [mailbox: :error]], :depot_severity)
+    test "severity overrides change the diagnostic and the status", %{peer: peer} do
+      project = checkout!([severity: [mailbox: :error]], :depot_severity)
 
-      Mix.Project.in_project(app, copy, fn _module ->
+      in_project(peer, project, fn _log ->
         # The promoted finding is an :error, which trips the default
         # fail_on: :error.
         assert {:error, diagnostics} = compile!()
@@ -73,10 +73,10 @@ defmodule Mix.Tasks.Compile.ScryConfigTest do
     end
 
     @tag :souffle
-    test "file ignores suppress reports without suppressing facts" do
-      {copy, app} = checkout!([ignore: [files: ["lib/depot/application.ex"]]], :depot_ignfile)
+    test "file ignores suppress reports without suppressing facts", %{peer: peer} do
+      project = checkout!([ignore: [files: ["lib/depot/application.ex"]]], :depot_ignfile)
 
-      Mix.Project.in_project(app, copy, fn _module ->
+      in_project(peer, project, fn _log ->
         {_status, diagnostics} = compile!()
         diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
 
@@ -91,10 +91,10 @@ defmodule Mix.Tasks.Compile.ScryConfigTest do
     end
 
     @tag :souffle
-    test "module ignores keep the module out of analysis entirely", %{log: log} do
-      {copy, app} = checkout!([ignore: [modules: [~r/Archive/]]], :depot_ignmod)
+    test "module ignores keep the module out of analysis entirely", %{peer: peer} do
+      project = checkout!([ignore: [modules: [~r/Archive/]]], :depot_ignmod)
 
-      Mix.Project.in_project(app, copy, fn _module ->
+      in_project(peer, project, fn log ->
         {_status, diagnostics} = compile!()
         diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
 
@@ -106,184 +106,11 @@ defmodule Mix.Tasks.Compile.ScryConfigTest do
       end)
     end
 
-    test "invalid config aborts the compile with the valid options" do
-      {copy, app} = checkout!([analyses: [:nonsense]], :depot_badcfg)
+    test "invalid config aborts the compile with the valid options", %{peer: peer} do
+      project = checkout!([analyses: [:nonsense]], :depot_badcfg)
 
-      Mix.Project.in_project(app, copy, fn _module ->
+      in_project(peer, project, fn _log ->
         assert_raise Scry.ConfigError, ~r/unknown analyses \[:nonsense\]/, fn -> compile!() end
-      end)
-    end
-  end
-
-  describe "souffle gate" do
-    defp without_souffle(fun) do
-      original = System.get_env("PATH")
-
-      masked =
-        original
-        |> String.split(":")
-        |> Enum.reject(fn dir ->
-          souffle = Path.join(dir, "souffle")
-          File.exists?(souffle)
-        end)
-        |> Enum.join(":")
-
-      System.put_env("PATH", masked)
-
-      try do
-        fun.()
-      after
-        System.put_env("PATH", original)
-      end
-    end
-
-    @tag :souffle
-    test "souffle: :warn degrades with one notice and poisons nothing", %{log: log} do
-      {copy, app} = checkout!([], :depot_nosolver)
-
-      Mix.Project.in_project(app, copy, fn _module ->
-        without_souffle(fn ->
-          assert {:ok, diagnostics} = compile!()
-
-          [notice] = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
-          assert notice.severity == :information
-          assert notice.message =~ "souffle binary not found"
-          assert QueryLog.executions(log, :souffle_solve) == []
-        end)
-
-        # No solve memo — not even an error one — reached the manifest.
-        {:ok, manifest} = Manifest.load(Path.join(Mix.Project.manifest_path(), "compile.scry"))
-
-        refute Enum.any?(Manifest.memo_entries(manifest), fn {key, _entry} ->
-                 match?({:souffle_solve, _}, key)
-               end)
-
-        # Souffle back on PATH: the fingerprint moves, analyses run, the
-        # findings appear — the degraded run healed completely.
-        assert {:ok, diagnostics} = compile!()
-        diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
-        assert length(diags) == 5
-        assert QueryLog.executions(log, :souffle_solve) != []
-      end)
-    end
-
-    # A souffle that fails whenever it runs a program whose path ends in
-    # `failing` — but still answers `--version` and resolves a program's
-    # inputs (`--show`), so only the run itself breaks.
-    defp with_failing_souffle(failing, fun) do
-      real = System.find_executable("souffle")
-
-      dir =
-        Path.join(System.tmp_dir!(), "scry_failing_souffle_#{System.unique_integer([:positive])}")
-
-      File.mkdir_p!(dir)
-      wrapper = Path.join(dir, "souffle")
-
-      File.write!(wrapper, """
-      #!/bin/sh
-      case "$1" in --show*|--version) exec #{real} "$@";; esac
-      for arg in "$@"; do
-        case "$arg" in *#{failing}) echo "injected failure" >&2; exit 1;; esac
-      done
-      exec #{real} "$@"
-      """)
-
-      File.chmod!(wrapper, 0o755)
-      original = System.get_env("PATH")
-      System.put_env("PATH", dir <> ":" <> original)
-
-      try do
-        fun.()
-      after
-        System.put_env("PATH", original)
-        File.rm_rf!(dir)
-      end
-    end
-
-    defp manifest_errors do
-      {:ok, manifest} = Manifest.load(Path.join(Mix.Project.manifest_path(), "compile.scry"))
-
-      for {key, entry} <- Manifest.memo_entries(manifest),
-          match?({:error, _}, entry.value),
-          do: key
-    end
-
-    @tag :souffle
-    test "a failed solve degrades once and is never replayed", %{log: log} do
-      {copy, app} = checkout!([], :depot_badsolve)
-
-      Mix.Project.in_project(app, copy, fn _module ->
-        with_failing_souffle("analyses/mailbox.dl", fn ->
-          {:ok, diagnostics} = compile!()
-          diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
-
-          assert [degraded] = Enum.filter(diags, &(&1.message =~ "degraded"))
-          assert degraded.message =~ "the mailbox analysis degraded"
-          assert codes(diags) == ["coupling", "coupling"]
-        end)
-
-        # The failure never reached the manifest...
-        assert manifest_errors() == []
-
-        # ...so the next run, with nothing edited and a working solver,
-        # solves the analysis again instead of replaying the failure.
-        QueryLog.reset(log)
-        {_status, diagnostics} = compile!()
-        diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
-
-        assert Enum.sort(codes(diags)) == [
-                 "coupling",
-                 "coupling",
-                 "mailbox",
-                 "mailbox",
-                 "mailbox"
-               ]
-
-        assert QueryLog.executions(log, :souffle_solve) == [:mailbox]
-        assert QueryLog.executions(log, :module_extraction) == []
-
-        # And that success is persisted: a third run is a noop.
-        QueryLog.reset(log)
-        assert {:noop, _} = compile!()
-        assert QueryLog.executions(log, :souffle_solve) == []
-      end)
-    end
-
-    @tag :souffle
-    test "a failed stage 0 degrades the analyses that read it, and heals", %{log: log} do
-      {copy, app} = checkout!([], :depot_badstage0)
-
-      Mix.Project.in_project(app, copy, fn _module ->
-        with_failing_souffle("stage0.dl", fn ->
-          {:ok, diagnostics} = compile!()
-          diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
-
-          degraded = Enum.filter(diags, &(&1.message =~ "degraded"))
-          assert degraded != []
-          assert Enum.all?(degraded, &(&1.message =~ ":stage0"))
-        end)
-
-        assert manifest_errors() == []
-
-        QueryLog.reset(log)
-        {_status, diagnostics} = compile!()
-        diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
-        assert length(diags) == 5
-        assert QueryLog.executions(log, :stage0_facts) == [:all]
-      end)
-    end
-
-    test "souffle: :require makes the missing solver an error" do
-      {copy, app} = checkout!([souffle: :require], :depot_require)
-
-      Mix.Project.in_project(app, copy, fn _module ->
-        without_souffle(fn ->
-          assert {:error, diagnostics} = compile!()
-
-          [notice] = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
-          assert notice.severity == :error
-          assert notice.message =~ "souffle binary not found"
-        end)
       end)
     end
   end

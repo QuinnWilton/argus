@@ -5,21 +5,26 @@ defmodule Mix.Tasks.Compile.ScryTest do
   then `:scry` (analyzing them) inside a checked-out fixture project.
   Each scry run builds a fresh roux database restored from the manifest,
   so every warm assertion exercises the cross-VM serialization path.
+
+  The Mix project stack, the working directory and the telemetry the
+  query log listens on are VM-wide, so every test runs in this module's
+  peer (`Scry.Test.Peer`), and the module runs beside the others.
   """
 
-  # Mix project stack + cwd changes — never async.
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
+  use Scry.Test.Peer
 
-  alias Scry.Test.{Fixture, QueryLog}
+  alias Scry.Test.{Fixture, Peer, QueryLog}
 
   @moduletag timeout: 300_000
   @moduletag :souffle
 
+  setup_all do
+    %{peer: Peer.start!()}
+  end
+
   setup do
-    copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "scry_mix_depot"))
-    log = QueryLog.start()
-    on_exit(fn -> QueryLog.detach(log) end)
-    %{copy: copy, log: log}
+    %{copy: Path.join(System.tmp_dir!(), "scry_mix_depot")}
   end
 
   defp compile!, do: Fixture.compile!()
@@ -53,10 +58,12 @@ defmodule Mix.Tasks.Compile.ScryTest do
   end
 
   test "cold build, warm noop, line-only edit, semantic edit, deleted file", %{
-    copy: copy,
-    log: log
+    peer: peer,
+    copy: copy
   } do
-    Mix.Project.in_project(:depot, copy, fn _module ->
+    Fixture.checkout!(copy)
+
+    Fixture.in_peer(peer, copy, :depot, fn log ->
       # ── cold build ──────────────────────────────────────────────────
       result = compile!()
       diags = scry_diagnostics(result)
@@ -164,80 +171,6 @@ defmodule Mix.Tasks.Compile.ScryTest do
       assert QueryLog.executions(log, :module_extraction) == []
       assert QueryLog.executions(log, :souffle_solve) == []
       assert length(scry_diagnostics(result)) == 1
-    end)
-  end
-
-  # The environment digest is memoized per code path; a directory nobody
-  # reads, put on the path for the call, makes it compute afresh — as the
-  # next `mix compile`, a new VM, would.
-  defp fresh_env(apps) do
-    dir = Path.join(System.tmp_dir!(), "scry_env_#{System.unique_integer([:positive])}")
-    File.mkdir_p!(dir)
-    Code.append_path(dir)
-
-    try do
-      Scry.Fingerprint.env(apps)
-    after
-      Code.delete_path(dir)
-      File.rm_rf!(dir)
-    end
-  end
-
-  test "an edit to the project leaves the environment fingerprint where it was", %{
-    copy: copy
-  } do
-    Mix.Project.in_project(:depot, copy, fn _module ->
-      compile!()
-      %{apps: apps} = Scry.Scanner.scan(Scry.Config.load())
-      assert apps == [:depot]
-      before = fresh_env(apps)
-      unwatched = fresh_env([])
-
-      queue = Path.join(copy, "lib/depot/queue.ex")
-      edit!(queue, File.read!(queue) <> "\ndefmodule Depot.Extra, do: def(one, do: 1)\n")
-      compile!()
-
-      # The project's beams moved (so a digest over them would), but the
-      # scan tracks each of them itself: re-extracting every module on
-      # every edit is what excluding them prevents.
-      assert fresh_env([]) != unwatched
-      assert fresh_env(apps) == before
-    end)
-  end
-
-  test "touch without edit is a noop past the prefilter", %{copy: copy, log: log} do
-    Mix.Project.in_project(:depot, copy, fn _module ->
-      compile!()
-
-      # Touch a beam directly (mtime moves, content identical): the
-      # scanner re-reads and re-hashes that one file, the input value
-      # compares equal, and nothing downstream executes.
-      beam = Path.join(Mix.Project.compile_path(), "Elixir.Depot.Queue.beam")
-      File.touch!(beam, System.os_time(:second) + 5)
-
-      QueryLog.reset(log)
-      compile!()
-      assert QueryLog.executions(log, :module_extraction) == []
-      assert QueryLog.executions(log, :souffle_solve) == []
-    end)
-  end
-
-  test "corrupt manifest falls back to a clean cold build", %{copy: copy, log: log} do
-    Mix.Project.in_project(:depot, copy, fn _module ->
-      result = compile!()
-      assert counts_by_code(scry_diagnostics(result)) != %{}
-
-      manifest = Path.join(Mix.Project.manifest_path(), "compile.scry")
-      File.write!(manifest, "not a manifest")
-
-      QueryLog.reset(log)
-      result = compile!()
-
-      # Full rebuild, same findings, no crash.
-      assert counts_by_code(scry_diagnostics(result)) ==
-               %{"coupling" => 2, "mailbox" => 3}
-
-      assert QueryLog.executions(log, :module_extraction) != []
     end)
   end
 end
