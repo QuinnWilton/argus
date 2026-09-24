@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- An argus edit re-extracts only the argus producers it reached, and
+  re-solves only what their rows moved. Extraction is memoized per
+  module and producer (`producer_extraction({module, producer})`:
+  `:base`, the facts every extraction makes, or one extractor, through
+  `Argus.Pipeline.extract_shards/3`), each keyed by a digest of the code
+  it runs (`Argus.Cache.Code`, a new `:producer_digest` input); a
+  module's semantic digest joins its producers, and backdates where a
+  re-extracted producer's rows came out the same.
+  `module_extraction(module)` is that join as a query, for planchette;
+  scry itself no longer demands it (a manifest from before drops its
+  copies on the first run). The
+  environment fingerprint no longer carries argus's code, version,
+  schema or the specs environment: an edit to one extractor used to
+  re-extract every module with every extractor and re-run every solve
+  (each read the fingerprint). The specs environment keys the specs
+  extractor alone, less argus's own beams, which a read of one of
+  argus's modules keys instead (`:argus_code`), as a read of an
+  analyzed or ignored module is keyed by that module. Findings are
+  rebuilt on any argus edit (`:argus_code`); a relation's text is
+  re-encoded when the base's code moves. How argus runs Souffle is keyed
+  as argus keys its own solves: by the rules and the solver's version.
+  The runner prewarms exactly the extractions the edit invalidated, and
+  takes the producers' digests again only when argus's code, the
+  runtime or the specs environment moved. `Scry.Fingerprint.env/1` is
+  deprecated for `env/0` and `producers/2`. Needs argus with
+  `Argus.Pipeline.extract_shards/3`.
 - argus 0.20 derives process points-to once per run, as a stage after
   stage 0 (`priv/dl/points_to.dl`), instead of inside each of the nine
   solves that read it. The graph follows: `points_to_facts(:all)`

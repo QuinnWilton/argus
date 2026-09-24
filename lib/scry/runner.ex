@@ -100,7 +100,7 @@ defmodule Scry.Runner do
       {findings_by_file, degraded, extraction_errors} =
         if souffle? do
           cold? = force? or prior_sources == %{} or env.fingerprint_changed?
-          plan = extraction_plan(discovered, cold?, changed ++ retried)
+          plan = extraction_plan(discovered, cold?, changed ++ retried, env.moved_producers)
           analyze(db, config, discovered, plan)
         else
           {%{}, [], []}
@@ -131,14 +131,22 @@ defmodule Scry.Runner do
   end
 
   # The inputs that describe the run rather than the beams: the
-  # environment fingerprint, the project root, argus's producers, and —
-  # with a solver — the rules digests. `moved?` when any of them, or an
-  # analysis without a memo from the last run, means this run has
-  # something to write down.
+  # environment fingerprint, the project root, argus's producers and
+  # code, and — with a solver — the rules digests. `moved?` when any of
+  # them, or an analysis without a memo from the last run, means this
+  # run has something to write down; `moved_producers` are the producers
+  # whose rows every module needs extracted again (their code moved, or
+  # they are new).
   defp sync_environment(db, config, souffle?, apps) do
-    fingerprint_changed? = set(db, :env_fingerprint, :all, Scry.Fingerprint.env(apps))
+    fingerprint_changed? = set(db, :env_fingerprint, :all, Scry.Fingerprint.env())
     :ok = Input.set(db, :project_root, :all, File.cwd!())
-    producers_changed? = set(db, :producers, :all, Scry.Analysis.producers())
+
+    producers = Scry.Analysis.producers()
+    producers_changed? = set(db, :producers, :all, producers)
+
+    argus = Scry.Fingerprint.argus_code()
+    argus_changed? = set(db, :argus_code, :all, argus)
+    moved_producers = set_producer_digests(db, producers, apps, argus)
 
     # Only solves read the rules, and none is demanded without a solver.
     rules_changed? = souffle? and set_rules(db, config.analyses)
@@ -150,7 +158,10 @@ defmodule Scry.Runner do
 
     %{
       fingerprint_changed?: fingerprint_changed?,
-      moved?: fingerprint_changed? or producers_changed? or rules_changed? or unsolved?
+      moved_producers: Enum.sort(moved_producers),
+      moved?:
+        fingerprint_changed? or producers_changed? or moved_producers != [] or argus_changed? or
+          rules_changed? or unsolved?
     }
   end
 
@@ -173,6 +184,38 @@ defmodule Scry.Runner do
     :ok
   end
 
+  # Sets each producer's digest; returns the producers whose digest moved.
+  # Taking them walks each producer's code in a fresh VM, most of what a
+  # warm run would add; while the stamp they are a function of holds
+  # (`Scry.Fingerprint.producer_stamp/2`), the last run's stand.
+  defp set_producer_digests(db, producers, apps, argus) do
+    stamp = Scry.Fingerprint.producer_stamp(argus, apps)
+
+    digests =
+      case stored_digests(db, producers, stamp) do
+        {:ok, stored} -> stored
+        :stale -> Scry.Fingerprint.producers(producers, apps)
+      end
+
+    :ok = Input.set(db, :producer_stamp, :all, stamp)
+    for {producer, digest} <- digests, set(db, :producer_digest, producer, digest), do: producer
+  end
+
+  defp stored_digests(_db, _producers, nil = _stamp), do: :stale
+
+  defp stored_digests(db, producers, stamp) do
+    stored =
+      for producer <- producers,
+          {:ok, digest} <- [Input.fetch(db, :producer_digest, producer)],
+          into: %{},
+          do: {producer, digest}
+
+    if Input.fetch(db, :producer_stamp, :all) == {:ok, stamp} and
+         map_size(stored) == length(producers),
+       do: {:ok, stored},
+       else: :stale
+  end
+
   # Sets an input; true when its value moved.
   defp set(db, input, key, value) do
     moved? = Input.fetch(db, input, key) != {:ok, value}
@@ -180,14 +223,21 @@ defmodule Scry.Runner do
     moved?
   end
 
-  # What to extract ahead of the graph, `module => :all`: every module
-  # on a cold run; otherwise every module whose beam changed or whose
-  # last extraction failed.
-  defp extraction_plan(discovered, true = _cold?, _changed),
+  # What to extract ahead of the graph, `module => producers | :all`:
+  # every producer of every module on a cold run; otherwise every
+  # producer of a module whose beam changed or whose last extraction
+  # failed, and the moved producers of every other module.
+  defp extraction_plan(discovered, true = _cold?, _changed, _moved_producers),
     do: Map.new(discovered, fn {module, _path} -> {module, :all} end)
 
-  defp extraction_plan(discovered, false = _cold?, changed),
-    do: for(module <- changed, Map.has_key?(discovered, module), into: %{}, do: {module, :all})
+  defp extraction_plan(discovered, false = _cold?, changed, moved_producers) do
+    moved =
+      if moved_producers == [],
+        do: %{},
+        else: Map.new(discovered, fn {module, _path} -> {module, moved_producers} end)
+
+    for module <- changed, Map.has_key?(discovered, module), into: moved, do: {module, :all}
+  end
 
   # Extracts `to_extract` ahead of the graph, then demands every
   # analysis. A failed solve is not a fact about the program — a solver

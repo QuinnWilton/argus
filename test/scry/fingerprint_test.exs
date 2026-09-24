@@ -154,6 +154,18 @@ defmodule Scry.FingerprintTest do
       assert Scry.Fingerprint.code_digest(dir) != before
     end
 
+    test "the environment carries scry's code, and no argus code" do
+      env = Scry.Fingerprint.env()
+      assert env.scry_code =~ ~r/^[0-9a-f]{32}$/
+      assert Map.keys(env) |> Enum.sort() == [:elixir, :otp, :scry, :scry_code]
+    end
+
+    test "argus's code is every argus beam, debug info included" do
+      ebin = Path.join(to_string(:code.lib_dir(:panoptes)), "ebin")
+      assert Scry.Fingerprint.argus_code() == Scry.Fingerprint.code_digest(ebin, debug_info: true)
+      refute Scry.Fingerprint.argus_code() == Scry.Fingerprint.code_digest(ebin)
+    end
+
     test "a rebuild whose type checker table differs digests the same", %{tmp_dir: dir} do
       # Compiling the same source again beside other code can write a
       # different `ExCk` chunk; the code is the same.
@@ -173,24 +185,49 @@ defmodule Scry.FingerprintTest do
       {~c"Code", code} = List.keyfind(chunks, ~c"Code", 0)
       refute write.(List.keyreplace(chunks, ~c"Code", 0, {~c"Code", code <> <<0>>})) == original
     end
+  end
 
-    test "the environment carries the argus and scry code digests" do
-      env = Scry.Fingerprint.env()
-      assert env.argus_code =~ ~r/^[0-9a-f]{32}$/
-      assert env.scry_code =~ ~r/^[0-9a-f]{32}$/
+  describe "producers/2" do
+    test "each producer carries the code it runs, a specs reader the environment too" do
+      digests = Scry.Fingerprint.producers(Scry.Analysis.producers())
+
+      assert Map.keys(digests) |> Enum.sort() == Enum.sort(Scry.Analysis.producers())
+      assert Argus.Cache.Code.reads_installed?(Argus.Extractors.Specs)
+
+      for {producer, %{code: code, environment: environment}} <- digests do
+        assert {:ok, ^code} = Argus.Cache.Code.digest(producer)
+
+        if Argus.Cache.Code.reads_installed?(producer),
+          do: assert(environment == Argus.Specs.environment_digest(exclude: [:panoptes])),
+          else: assert(environment == nil)
+      end
+
+      # One extractor's code is not another's.
+      assert digests[Argus.Extractors.ETS].code != digests[Argus.Extractors.Specs].code
     end
 
-    test "the environment carries the applications the specs are read from" do
-      assert Scry.Fingerprint.env().specs_environment == Argus.Specs.environment_digest()
+    test "the stamp moves with argus's code, and is none when the scan watches argus's" do
+      stamp = Scry.Fingerprint.producer_stamp("argus", [:scry])
+      assert stamp == Scry.Fingerprint.producer_stamp("argus", [:scry])
+      refute stamp == Scry.Fingerprint.producer_stamp("argus, edited", [:scry])
+
+      # The environment leaves a watched application's beams out: with
+      # argus's own among them, the stamp cannot vouch for its code.
+      assert Scry.Fingerprint.producer_stamp("argus", [:scry, :panoptes]) == nil
+      assert Scry.Fingerprint.producer_stamp("argus", [:scry, :beam_spy]) == nil
     end
 
     test "the applications the scan watches are named by version alone" do
-      # Their beams move with every edit; the graph tracks each one.
-      assert Scry.Fingerprint.env([:scry]).specs_environment ==
-               Argus.Specs.environment_digest(exclude: [:scry])
+      # Their beams move with every edit; the graph tracks each read of
+      # one, as it does argus's own.
+      %{Argus.Extractors.Specs => watched} =
+        Scry.Fingerprint.producers([Argus.Extractors.Specs], [:scry])
 
-      refute Scry.Fingerprint.env([:scry]).specs_environment ==
-               Scry.Fingerprint.env().specs_environment
+      %{Argus.Extractors.Specs => unwatched} =
+        Scry.Fingerprint.producers([Argus.Extractors.Specs])
+
+      assert watched.environment == Argus.Specs.environment_digest(exclude: [:panoptes, :scry])
+      refute watched.environment == unwatched.environment
     end
   end
 end

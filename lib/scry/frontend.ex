@@ -21,8 +21,14 @@ defmodule Scry.Frontend do
   - `:env_fingerprint` input — `:all =>` toolchain map
     (`Scry.Fingerprint.env/0`); `:high` durability so an upgrade
     invalidates the whole graph.
-  - `:producers` input — `:all =>` the argus producers every module's
-    facts are joined from, in order (`Scry.Analysis.producers/0`).
+  - `:producer_digest` input — each argus producer (`:base` or an
+    extractor) `=>` a digest of the code it runs, and for the specs
+    extractor the environment it reads (`Scry.Fingerprint.producers/2`);
+    an argus edit re-extracts the producers it reached and nothing else.
+  - `:producers` input — `:all =>` the producers every module's facts
+    are joined from, in order (`Scry.Analysis.producers/0`).
+  - `:argus_code` input — `:all =>` a digest of argus's own beams
+    (`Scry.Fingerprint.argus_code/0`): what the findings are built by.
   - `:rules_digest` input — analysis (or `:stage0`) `=>` a digest of
     the Datalog it runs (`Scry.Fingerprint.rules/1`); a rule edit
     re-solves the analyses whose programs it touched and re-extracts
@@ -53,7 +59,9 @@ defmodule Scry.Frontend do
   definput(:module_set, durability: :medium)
   definput(:ignored_beam, durability: :medium)
   definput(:env_fingerprint, durability: :high)
+  definput(:producer_digest, durability: :high)
   definput(:producers, durability: :high)
+  definput(:argus_code, durability: :high)
   definput(:rules_digest, durability: :high)
 
   # The project's root directory, for a beam whose recorded source path
@@ -74,6 +82,12 @@ defmodule Scry.Frontend do
   # is not a fact about the beam). `producer_extraction` reads it only when
   # set.
   definput(:extraction_attempt, durability: :medium)
+
+  # `:all =>` what every producer digest is a function of
+  # (`Scry.Fingerprint.producer_stamp/2`), as the last run took it: while
+  # it holds, the runner keeps the digests it set. Driver bookkeeping no
+  # query reads, so `:low`.
+  definput(:producer_stamp, durability: :low)
 
   # `:all =>` the modules whose last extraction failed, for the next run
   # to retry. Driver bookkeeping no query reads; `:low` so that setting it

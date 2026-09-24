@@ -60,23 +60,24 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
     end
   end
 
-  # The environment digest is memoized per code path; a directory nobody
-  # reads, put on the path for the call, makes it compute afresh — as the
-  # next `mix compile`, a new VM, would.
+  # The specs extractor's digest, whose environment digest is memoized
+  # per code path; a directory nobody reads, put on the path for the
+  # call, makes it compute afresh — as the next `mix compile`, a new VM,
+  # would.
   defp fresh_env(apps) do
     dir = Path.join(System.tmp_dir!(), "scry_env_#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     Code.append_path(dir)
 
     try do
-      Scry.Fingerprint.env(apps)
+      Scry.Fingerprint.producers([Argus.Extractors.Specs], apps)
     after
       Code.delete_path(dir)
       File.rm_rf!(dir)
     end
   end
 
-  test "an edit to the project leaves the environment fingerprint where it was", %{
+  test "an edit to the project leaves the specs extractor's digest where it was", %{
     peer: peer,
     copy: copy
   } do
@@ -94,10 +95,30 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
       compile!()
 
       # The project's beams moved (so a digest over them would), but the
-      # scan tracks each of them itself: re-extracting every module on
-      # every edit is what excluding them prevents.
+      # scan tracks each of them itself: re-extracting every module's
+      # specs on every edit is what excluding them prevents.
       assert fresh_env([]) != unwatched
       assert fresh_env(apps) == before
+    end)
+  end
+
+  # Rewrites what the last run recorded of one producer's digest, as if
+  # it had seen other code: with the stamp its digests hang on moved
+  # too, as an edit to argus moves it, the next run takes the digest
+  # again and finds it moved.
+  defp edited_since!(producer) do
+    rewrite!(fn db ->
+      :ok = Roux.Input.set(db, :producer_digest, producer, %{code: "before", environment: nil})
+      :ok = Roux.Input.set(db, :producer_stamp, :all, :before)
+    end)
+  end
+
+  defp stored_input(input, key) do
+    {:ok, data} = Manifest.load(Scry.Runner.manifest_file())
+
+    Enum.find_value(Manifest.memo_entries(data), fn
+      {{:input, ^input, ^key}, entry} -> {:ok, entry.value}
+      _ -> nil
     end)
   end
 
@@ -123,6 +144,36 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
     {:ok, data} = Manifest.load(Scry.Runner.manifest_file())
 
     for {{^query, key}, _entry} <- Manifest.memo_entries(data), do: key
+  end
+
+  test "producers' digests stand while nothing they run moved", %{peer: peer, copy: copy} do
+    Fixture.checkout!(copy, @quick, :depot_quick)
+
+    Fixture.in_peer(peer, copy, :depot_quick, fn log ->
+      compile!()
+      {:ok, taken} = stored_input(:producer_digest, Argus.Extractors.ETS)
+
+      # A digest the last run recorded, with nothing it is a function of
+      # moved since, is not taken again: this one would not survive it.
+      stale = %{code: "recorded", environment: nil}
+      rewrite!(&(:ok = Roux.Input.set(&1, :producer_digest, Argus.Extractors.ETS, stale)))
+
+      compile!()
+      assert stored_input(:producer_digest, Argus.Extractors.ETS) == {:ok, stale}
+
+      # The stamp moved (argus's code, the runtime, the environment): taken
+      # again, and the extractor runs again with it.
+      rewrite!(&(:ok = Roux.Input.set(&1, :producer_stamp, :all, :moved)))
+
+      QueryLog.reset(log)
+      compile!()
+      assert stored_input(:producer_digest, Argus.Extractors.ETS) == {:ok, taken}
+
+      assert QueryLog.executions(log, :producer_extraction)
+             |> Enum.map(&elem(&1, 1))
+             |> Enum.uniq() ==
+               [Argus.Extractors.ETS]
+    end)
   end
 
   test "a manifest an older scry wrote keeps no joined copy of the facts", %{
@@ -154,6 +205,36 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
       warm = compile!()
 
       assert memo_keys(:module_extraction) == []
+      assert counts_by_code(scry_diagnostics(warm)) == counts_by_code(scry_diagnostics(cold))
+    end)
+  end
+
+  test "an edit to one argus extractor re-extracts that extractor alone", %{
+    peer: peer,
+    copy: copy
+  } do
+    Fixture.checkout!(copy, @quick, :depot_quick)
+
+    Fixture.in_peer(peer, copy, :depot_quick, fn log ->
+      cold = compile!()
+      %{modules: modules} = Scry.Scanner.scan(Scry.Config.load())
+
+      # The last run ran other ETS code: as if the extractor was edited
+      # since.
+      edited_since!(Argus.Extractors.ETS)
+
+      QueryLog.reset(log)
+      warm = compile!()
+
+      assert Enum.sort(QueryLog.executions(log, :producer_extraction)) ==
+               for(
+                 module <- modules |> Map.keys() |> Enum.sort(),
+                 do: {module, Argus.Extractors.ETS}
+               )
+
+      # Its rows came out the same: nothing above them runs.
+      assert QueryLog.executions(log, :module_semantic_facts) == []
+      assert QueryLog.executions(log, :souffle_solve) == []
       assert counts_by_code(scry_diagnostics(warm)) == counts_by_code(scry_diagnostics(cold))
     end)
   end

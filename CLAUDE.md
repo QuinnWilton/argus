@@ -27,7 +27,8 @@ disk-beam frontend.
 Two layers over one `Roux.Database`:
 
 1. **Frontend** (`Scry.Frontend`): inputs `beam_meta` (module →
-   %{path, mtime, size, hash}, :medium), `module_set`, `env_fingerprint`
+   %{path, mtime, size, hash}, :medium), `module_set`, `env_fingerprint`,
+   `producer_digest`, `producers`, `argus_code`, `rules_digest`
    (:high); queries `module_beam` (disk read; the tracked signal is the
    hash input), `file_of` (beam compile_info source, realpath-normalized),
    `module_map`. Registers the same query names as planchette's frontend —
@@ -36,22 +37,60 @@ Two layers over one `Roux.Database`:
 2. **Analysis** (`Scry.Analysis`): never rename a query, never change a
    key or value shape without planchette in the same review.
    `Scry.Fingerprint` stamps what the graph depends on beyond the
-   beams: `env_fingerprint` (runtime, schema, and digests of the argus
-   and scry ebins — read by `module_extraction`, the stages, the solves
-   and findings, so any argus code change re-extracts) and a per-analysis
-   `rules_digest` (the analysis's `.dl` and its transitive includes,
-   plus the souffle version — read by `analysis_input_relations`,
-   `stage0_facts`, `points_to_facts` and `souffle_solve`, so a rule edit
-   re-solves exactly the analyses it touched and re-extracts nothing).
+   beams:
+   - `env_fingerprint` — the runtime and a digest of scry's ebin, read
+     by every extraction, the stages, the solves and findings: moving it
+     re-runs everything.
+   - `producer_digest` per argus producer (`:base` — the emitter,
+     `def_use`, `conditional_call` — or one extractor) — the code it
+     runs (`Argus.Cache.Code.digest/1`), plus, for the specs extractor,
+     the specs environment less argus and the watched apps. Extraction
+     is memoized per `{module, producer}` (`producer_extraction`, via
+     `Argus.Pipeline.extract_shards/3`), and joined in the `producers`
+     input's order where a module's facts are needed whole
+     (`module_semantic_facts`, `program_relation_facts`; the line table
+     reads the base's alone): an argus edit re-extracts the producers it
+     reached, and where their rows come out equal the semantic digest
+     validates green. The join is never memoized on scry's path — the
+     rows would be stored twice (the manifest grew a third);
+     `module_extraction`, the same join as a query, is planchette's. The
+     base's digest also keys the relation text (`relation_digest` and the
+     stage digests: `Argus.Tsv` is base code). Taking the digests walks
+     import tables in a fresh VM (~150ms on realtime), so the runner keeps
+     the last run's while `producer_stamp` (runtime, argus's code, the
+     specs environment) holds; with `include_deps` there is no stamp.
+   - `argus_code` — every argus beam: read by `findings` (prose,
+     identity rules; cheap to rebuild) and by a specs extraction that
+     read one of argus's modules.
+   - `rules_digest` per analysis — the `.dl` and its transitive
+     includes, plus the souffle version — read by
+     `analysis_input_relations`, `stage0_facts`, `points_to_facts` and
+     `souffle_solve`, so a rule edit re-solves exactly the analyses it
+     touched and re-extracts nothing. How argus runs Souffle is keyed
+     the way argus keys its own solves: by program and solver, not by
+     argus's code (after changing that, `--force`).
+
+   The runner prewarms exactly what the edit invalidated (`module =>
+   producers`, across the schedulers). A `producer_extraction` that
+   finds nothing parked extracts serially: the join's first producer
+   (`:base`) re-executes only when what every producer reads moved, so
+   it extracts them all in one pass and parks the rest for the join;
+   any other producer extracts itself alone. `drop_prewarmed/0` returns
+   what no query took (tests assert it is empty). Pin re-extraction in
+   tests with `QueryLog.extracted/1` (the modules any producer
+   re-extracted), not with `module_extraction`, which scry never runs.
+
    Argus's shared stages are queries of their own, each a cutoff seam:
    `stage0_facts` (the call graph) and `points_to_facts` (process
    points-to, `Argus.Analysis.points_to_relations/0`), with `:stage0`
    and `:points_to` rules digests; a projection takes a stage's outputs
-   from its query, never from extraction. A frontend that
-   never sets `rules_digest` (planchette) reads it as nil. The LSP-only surface —
-   supervision tree, flowistry focus/slicing, the debug twin — lives in
-   planchette (`Planchette.SupTree`, `Planchette.Focus`) and registers
-   its own queries next to these.
+   from its query, never from extraction. A frontend that never sets
+   `rules_digest`, `producer_digest`, `producers` or `argus_code`
+   (planchette) reads them as unset: no edge, and the join falls back
+   to `Scry.Analysis.producers/0`. The LSP-only surface — supervision
+   tree, flowistry focus/slicing, the debug twin — lives in planchette
+   (`Planchette.SupTree`, `Planchette.Focus`) and registers its own
+   queries next to these.
 
 Driver side (never inside queries): `Scry.Scanner` (beam discovery +
 mtime/size/hash diff vs manifest sources), `Scry.Runner` (db lifecycle,
