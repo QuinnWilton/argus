@@ -19,6 +19,8 @@ defmodule Argus.Extractors.DependenceTest do
     C.DispatchHelper,
     C.MnesiaCounter,
     C.PublicCache,
+    C.LaterBranchKey,
+    C.NotifyOnce,
     :padl2010_ets_inc
   ]
 
@@ -55,6 +57,31 @@ defmodule Argus.Extractors.DependenceTest do
     Enum.find_value(CallSites.index(data.module, data.functions), fn site ->
       if site.func_id == InstrId.func_id(m, f, a) and site.idx == idx, do: site.mfa
     end)
+  end
+
+  describe "field_decides" do
+    test "a guard on a row's value tests its element; a test for a row tests none", %{
+      facts: facts
+    } do
+      [lookup] = sites_at("LaterBranchKey:bump/2", {:ets, :lookup, 2})
+      tested = for [_f, "site", ^lookup, pos] <- facts.field_decides, do: pos
+
+      # `[{_key, count}] when count >= limit` tests the row's element 1.
+      assert "1" in tested
+
+      [cache_lookup] = sites_at("PublicCache:put_if_absent/2", {:ets, :lookup, 2})
+      assert for([_f, "site", ^cache_lookup, _pos] <- facts.field_decides, do: true) == []
+    end
+  end
+
+  describe "effect_decided" do
+    test "a send under a lookup's decision", %{facts: facts} do
+      [lookup] = sites_at("NotifyOnce:handle/2", {:ets, :lookup, 2})
+      assert Enum.any?(facts.effect_decided, &match?([_, "site", ^lookup], &1))
+
+      [cache_lookup] = sites_at("PublicCache:put_if_absent/2", {:ets, :lookup, 2})
+      refute Enum.any?(facts.effect_decided, &match?([_, "site", ^cache_lookup], &1))
+    end
   end
 
   describe "site_depends" do

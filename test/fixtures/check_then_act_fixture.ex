@@ -910,6 +910,27 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  defmodule NotifyOnce do
+    @moduledoc """
+    An idempotency marker whose decision also sends: both racers mark the
+    id, and both send the charge.
+    """
+    def start, do: :ets.new(:notified, [:named_table, :public])
+
+    @spec handle(term(), term()) :: :ok
+    def handle(id, payload) do
+      case :ets.lookup(:notified, id) do
+        [] ->
+          :ets.insert(:notified, {id, true})
+          send(:mailer, {:charge, payload})
+          :ok
+
+        _ ->
+          :ok
+      end
+    end
+  end
+
   defmodule MnesiaExpire do
     @moduledoc """
     blockster's OAuth state: read it, and delete it when expired. The

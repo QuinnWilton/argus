@@ -104,6 +104,40 @@ defmodule Argus.Schema.Dependence do
         call_arg_depends by data alone, for calls (not closures): the argument \
         is made from the source. Function-level.
         """
+      },
+      %{
+        name: :field_decides,
+        layer: 2,
+        fields: [
+          {:func, :func_id, "the function"},
+          {:kind, :symbol, "param | call | site"},
+          {:source, :symbol, "as site_depends"},
+          {:pos, :number,
+           "the tuple element tested, from 0: an ETS row's key is 0, a Mnesia record's 1"}
+        ],
+        doc: """
+        A test in the function decides on element `pos` of a tuple the source \
+        holds, or on something made from it: `[{^k, cur}] when cur >= serial` \
+        tests element 1 of the lookup's row. A test of the source's shape \
+        alone — whether a lookup found a row — is not one; comparing the \
+        row's key is one at the key's position. An `:ets.lookup_element/3` \
+        answer is element 1 of its row. Function-level.
+        """
+      },
+      %{
+        name: :effect_decided,
+        layer: 2,
+        fields: [
+          {:func, :func_id, "the function"},
+          {:kind, :symbol, "param | call | site"},
+          {:source, :symbol, "as site_depends"}
+        ],
+        doc: """
+        A message send, or a call into the runtime that changes something \
+        outside the function (Argus.Purity.Effects: a process, a port, a \
+        file, the network, a node; not logging), runs only because of a test \
+        on the source. Project calls are call_decided's. Function-level.
+        """
       }
     ]
   end

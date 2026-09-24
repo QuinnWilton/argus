@@ -558,6 +558,20 @@ position the call's result does not carry (`Argus.Pipeline.Emit.
 FunRefs.handed_rows/2`). The call graph's edge into a closure or a fun
 reference has no call instruction; this names the call it runs inside,
 so a rule asking whether a `try` covers the edge asks it of that call.
+**Added.** Schema 79. Two `Argus.Extractors.Dependence` relations.
+`field_decides(func, kind, source, pos)`: a test in the function
+decides on element `pos` of a tuple the source holds (a
+`get_tuple_element`, or `element/2` with a literal index), or on a value
+made from one — `[{^k, cur}] when cur >= serial` tests element 0 (the
+key) and element 1 of the lookup's row; a test of whether a lookup found
+a row tests none. An `:ets.lookup_element` answer is element 1 of its
+row. `effect_decided(func, kind, source)`: a send, or a runtime call
+that changes something outside the function (a process, a port, a
+file, the network, a node, by `Argus.Purity.Effects`; not logging,
+clocks, randomness or the process dictionary), runs only because of a
+test on the source; the runtime's calls are otherwise not in the
+dependence relations. `races` reads both (below).
+
 **Changed.** Schema 78, no shape change. A value `self()` made is
 `{"self", ""}` in `Argus.Extractor.Identity`'s vocabulary, the calling
 process, where it was the `local` of whichever `self()` call made it:

@@ -47,6 +47,20 @@ defmodule Argus.Extractors.Dependence do
     runs under. A check-then-act race that writes back what it read is a
     lost update; one whose write only runs because of the read, with a
     value from elsewhere, may be a refill both racers agree on.
+  - `field_decides(func, kind, source, pos)` — a test in the function
+    decides on element `pos` of a tuple the source holds (a
+    `get_tuple_element`, or `element/2` with a literal index), or on a
+    value made from one. A check that decides only whether a lookup found
+    a row tests no element; `[{^k, cur}] when cur >= serial` tests the
+    row's key (element 0) and its value (element 1). An
+    `:ets.lookup_element/3` answer is element 1 of its row.
+  - `effect_decided(func, kind, source)` — a message send, or a runtime
+    call that changes something outside the function
+    (`Argus.Purity.Effects`: a process, a port, a file, the network, a
+    node; logging, clocks, randomness and the process dictionary are not
+    counted), runs only because of a test on the source. The runtime's
+    calls are otherwise not emitted (below); a project call under a
+    decision is `call_decided`'s.
 
   The call relations are per function, not per site: an edit that keeps
   the flow does not move them, and they stay out of the volatile
@@ -87,6 +101,7 @@ defmodule Argus.Extractors.Dependence do
   alias Argus.Extractors.ProcessRegistry
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
+  alias Argus.Purity.Effects
 
   import Argus.Extractor.Helpers, only: [register: 1]
   import Argus.Extractor.Facts, only: [add_fact: 3]
@@ -95,7 +110,8 @@ defmodule Argus.Extractors.Dependence do
   @max_evaluations 64
 
   @typep source :: {:param, non_neg_integer()} | {:call, String.t()} | {:site, String.t()}
-  @typep deps :: MapSet.t(source())
+  @typep field :: {:field, non_neg_integer(), source()}
+  @typep deps :: MapSet.t(source() | field())
 
   @impl true
   def relations,
@@ -103,6 +119,8 @@ defmodule Argus.Extractors.Dependence do
       :call_arg_depends,
       :call_arg_reads,
       :call_decided,
+      :effect_decided,
+      :field_decides,
       :returns_depends,
       :site_depends,
       :site_reads
@@ -124,12 +142,15 @@ defmodule Argus.Extractors.Dependence do
       index = index(module_data, typed, reaching)
 
       module_data.functions
-      |> Enum.reduce(%{}, fn {:function, name, arity, _entry, _instrs}, acc ->
+      |> Enum.reduce(%{}, fn {:function, name, arity, _entry, instrs}, acc ->
         func_id = Normalize.func_id(module_data.module, name, arity)
 
         case Helpers.cfg(module_data, name, arity) do
-          nil -> acc
-          fun -> function_facts(acc, func_id, fun, function_index(index, func_id))
+          nil ->
+            acc
+
+          fun ->
+            function_facts(acc, func_id, fun, function_index(index, func_id), shapes(instrs))
         end
       end)
       |> Map.new(fn {relation, rows} -> {relation, rows |> Enum.uniq() |> Enum.sort()} end)
@@ -199,9 +220,35 @@ defmodule Argus.Extractors.Dependence do
     end
   end
 
+  # The instructions whose shape the flow asks about beyond what they read
+  # and write: %{elements: %{idx => n}} for a projection of tuple element
+  # n (from 0), and %{sends: MapSet} for the sends.
+  defp shapes(instrs) do
+    instrs
+    |> Enum.with_index()
+    |> Enum.reduce(%{elements: %{}, sends: MapSet.new()}, fn {instr, idx}, acc ->
+      case instr do
+        {:get_tuple_element, _src, n, _dst} when is_integer(n) ->
+          put_in(acc, [:elements, idx], n)
+
+        {:bif, :element, _fail, [{:integer, n}, _src], _dst} when n >= 1 ->
+          put_in(acc, [:elements, idx], n - 1)
+
+        {:gc_bif, :element, _fail, _live, [{:integer, n}, _src], _dst} when n >= 1 ->
+          put_in(acc, [:elements, idx], n - 1)
+
+        :send ->
+          %{acc | sends: MapSet.put(acc.sends, idx)}
+
+        _other ->
+          acc
+      end
+    end)
+  end
+
   # ── One function ────────────────────────────────────────────────────
 
-  defp function_facts(facts, func_id, %CfgFunction{} = fun, index) do
+  defp function_facts(facts, func_id, %CfgFunction{} = fun, index, shapes) do
     idxs =
       fun.blocks
       |> Map.values()
@@ -219,6 +266,7 @@ defmodule Argus.Extractors.Dependence do
     ctx = %{
       func_id: func_id,
       index: index,
+      shapes: shapes,
       block_of: block_of,
       deciders: deciders,
       decider_of: decider_of(fun, deciders),
@@ -227,6 +275,7 @@ defmodule Argus.Extractors.Dependence do
 
     {outs, tested} = solve(idxs, ctx)
     facts = Enum.reduce(idxs, facts, &emit(&2, &1, ctx, outs, tested))
+    facts = emit_field_decisions(facts, func_id, tested)
 
     # The same flow with no decision counted: what an argument is made
     # of, as opposed to what it runs under.
@@ -306,20 +355,40 @@ defmodule Argus.Extractors.Dependence do
       case {Map.fetch(ctx.index.calls, idx), Map.fetch(ctx.index.copies, idx)} do
         {{:ok, call}, _copy} -> call_result(idx, call, inputs, ctx)
         {:error, {:ok, copy}} -> copied(copy, reg, inputs)
-        {:error, :error} -> union(inputs)
+        {:error, :error} -> union(inputs) |> element_of(Map.get(ctx.shapes.elements, idx))
       end
 
     MapSet.union(base, here)
   end
 
+  # A projection of element n: what the tuple depends on, and, for each
+  # source the tuple is made of, element n of it — the fields a test can
+  # decide on. Only a source's own elements are tagged; an element of an
+  # element is still made from the field it was taken out of.
+  defp element_of(deps, nil), do: deps
+
+  defp element_of(deps, n) do
+    Enum.reduce(deps, deps, fn
+      {:field, _n, _source}, acc -> acc
+      source, acc -> MapSet.put(acc, {:field, n, source})
+    end)
+  end
+
   defp call_result(idx, {{mod, fun, arity} = mfa, remote?}, inputs, ctx) do
     cond do
       not remote? -> MapSet.new([{:call, Normalize.func_id(mod, fun, arity)}])
-      site?(mfa) -> MapSet.put(union(inputs), {:site, InstrId.mint(ctx.func_id, idx)})
+      site?(mfa) -> site_result(mfa, InstrId.mint(ctx.func_id, idx), inputs)
       runtime?(mod) -> union(inputs)
       true -> MapSet.put(union(inputs), {:call, Normalize.func_id(mod, fun, arity)})
     end
   end
+
+  # A shared-state operation's result: the site. What `:ets.lookup_element`
+  # answers is already a field of the row, element 1 of it.
+  defp site_result({:ets, :lookup_element, _arity}, site, inputs),
+    do: inputs |> union() |> MapSet.put({:site, site}) |> MapSet.put({:field, 1, {:site, site}})
+
+  defp site_result(_mfa, site, inputs), do: inputs |> union() |> MapSet.put({:site, site})
 
   # A copy (move, swap, trim) writes each register from the one it
   # copied; a union over its reads would mix a trim's renumbered slots.
@@ -342,8 +411,21 @@ defmodule Argus.Extractors.Dependence do
 
     facts
     |> emit_call(Map.get(ctx.index.calls, idx), idx, inputs, here, ctx)
+    |> emit_send(MapSet.member?(ctx.shapes.sends, idx), here, ctx)
     |> emit_closure(Map.get(ctx.index.closures, idx), inputs, here, ctx)
     |> emit_return(idx, inputs, here, ctx)
+  end
+
+  defp emit_send(facts, false, _here, _ctx), do: facts
+  defp emit_send(facts, true, here, ctx), do: rows(facts, :effect_decided, [ctx.func_id], here)
+
+  # Every element a decision tests, by the source whose tuple it is.
+  defp emit_field_decisions(facts, func_id, tested) do
+    for {_decider, decision} <- tested,
+        {:field, n, source} <- decision,
+        reduce: facts do
+      acc -> add_fact(acc, :field_decides, [func_id | encode(source)] ++ [to_string(n)])
+    end
   end
 
   defp emit_call(facts, nil, _idx, _inputs, _here, _ctx), do: facts
@@ -355,7 +437,7 @@ defmodule Argus.Extractors.Dependence do
         rows(facts, :site_depends, [site, ctx.func_id], MapSet.union(here, union(inputs)))
 
       remote? and runtime?(mod) ->
-        facts
+        if effect?(mfa), do: rows(facts, :effect_decided, [ctx.func_id], here), else: facts
 
       true ->
         callee = Normalize.func_id(mod, fun, arity)
@@ -449,9 +531,24 @@ defmodule Argus.Extractors.Dependence do
     end
   end
 
+  # A runtime call that changes something outside the function. Logging,
+  # clocks, randomness and the process dictionary change nothing another
+  # process or the outside world acts on; ETS and Mnesia are sites.
+  @quiet_effects [:logging, :time, :random, :process_dict, :ets]
+
+  defp effect?({mod, fun, _arity}) do
+    case Effects.classify(inspect(mod), to_string(fun)) do
+      {:impure, category, :write} -> category not in @quiet_effects
+      _other -> false
+    end
+  end
+
+  # A field tag is flow-internal: every relation but field_decides names
+  # the sources themselves.
   defp rows(facts, relation, prefix, deps) do
-    Enum.reduce(deps, facts, fn source, acc ->
-      add_fact(acc, relation, prefix ++ encode(source))
+    Enum.reduce(deps, facts, fn
+      {:field, _n, _source}, acc -> acc
+      source, acc -> add_fact(acc, relation, prefix ++ encode(source))
     end)
   end
 
