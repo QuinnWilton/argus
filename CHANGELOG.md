@@ -12,6 +12,14 @@ does: **Added**, **Changed**, **Fixed** or **Removed**.
 
 ### Waits that end on their own
 
+**Fixed.** `mailbox.unconsumed_monitor` "timed_wait" ("leaves a monitor
+live after its wait times out") leaves out a monitor whose `:DOWN` a
+receive with no `after` in its own function takes (`recv_down`): it is
+waited out there, as the rule already counts a blocking receive's.
+Phoenix's `Channel.Server.close/2` and `Socket.shutdown_duplicate_channel/1`
+give the channel a grace period, then kill it and wait for the `:DOWN`.
+Read per function, as the timed wait is. `mailbox` reads `recv_down`.
+
 **Added.** Schema 88. `recv_down(id, func, monitor)`
 (`Argus.Extractors.Monitor`): a receive with a clause that takes the
 `:DOWN` of a monitor its own function took. The clause heads are run on

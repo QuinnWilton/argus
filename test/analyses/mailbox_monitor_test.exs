@@ -22,7 +22,8 @@ defmodule Argus.Analyses.MailboxMonitorTest do
     M.CollectedOnOneCaller,
     M.CollectedByRef,
     M.FlushedByCaller,
-    M.WaitsForAnotherRef
+    M.WaitsForAnotherRef,
+    M.GraceThenKill
   ]
 
   @servers [
@@ -98,6 +99,11 @@ defmodule Argus.Analyses.MailboxMonitorTest do
     refute named?(funcs(ctx), "MonitorLeak.TaskGivesUp")
     # One that waits again carries the stale :DOWN into its next wait.
     assert named?(funcs(ctx), "MonitorLeak.TaskPolls:poll/1")
+  end
+
+  test "a kill after the grace period, then a wait for the :DOWN, waits it out", ctx do
+    skip_without_souffle()
+    refute named?(funcs(ctx), "MonitorLeak.GraceThenKill")
   end
 
   test "a flush in the helper discharges it", ctx do

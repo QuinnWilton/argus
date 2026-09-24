@@ -65,6 +65,24 @@ defmodule Argus.Test.Fixtures.MonitorLeak do
     end
   end
 
+  defmodule GraceThenKill do
+    @moduledoc """
+    Phoenix's Channel.Server.close/2: a grace period for the :DOWN, then a
+    kill and a wait for it with no `after`. The monitor is waited out.
+    """
+    def close(pid, timeout) do
+      ref = Process.monitor(pid)
+
+      receive do
+        {:DOWN, ^ref, _, _, _} -> :ok
+      after
+        timeout ->
+          Process.exit(pid, :kill)
+          receive do: ({:DOWN, ^ref, _, _, _} -> :ok)
+      end
+    end
+  end
+
   defmodule Flushes do
     @moduledoc "Same wait, but the monitor is cancelled and the mailbox cleared."
     def wait(pid) do
