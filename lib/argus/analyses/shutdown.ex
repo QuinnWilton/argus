@@ -86,7 +86,8 @@ defmodule Argus.Analyses.Shutdown do
           {:mod, :symbol, "the process whose teardown touches the sibling"},
           {:sibling, :symbol, "the sibling child"},
           {:phase, :symbol, "terminate | handler"},
-          {:kind, :symbol, "call | stop"},
+          {:kind, :symbol,
+           "call | call_restart | call_unordered (order or strategy unknown) | stop"},
           {:via, :symbol, "function performing the call or stop"},
           {:sup, :symbol, "the supervisor both sit under"},
           {:handler, :symbol, "the callback of mod the row belongs to"},
@@ -230,32 +231,37 @@ defmodule Argus.Analyses.Shutdown do
     )
   end
 
+  # Two of the supervisor's own sequences stop the sibling before they
+  # terminate mod: its shutdown, in reverse start order ("call", a sibling
+  # started after mod), and its rest_for_one or one_for_all restart
+  # ("call_restart", a sibling started before mod whose crash is why mod
+  # is terminated). When the listing or strategy does not settle which
+  # applies ("call_unordered"), the finding is reported a step less
+  # surely, saying so.
   def finding(:teardown_touches_sibling, [
         mod,
         sibling,
         "terminate",
-        "call",
+        kind,
         via,
         sup,
         _handler,
         site,
         sup_site
-      ]) do
+      ])
+      when kind in ["call", "call_restart", "call_unordered"] do
+    {severity, why, label, fix} = sibling_order(kind, mod, sibling, sup)
+
     Findings.new(
-      :warning,
+      severity,
       "terminate/2 calls a sibling that may already be down",
       "#{mod}'s terminate/2 waits on #{sibling}#{through(via, mod)}, and both are " <>
-        "children of #{sup}. A supervisor stops its children one at a time, in " <>
-        "reverse start order, so while #{mod} is terminating #{sibling} may already " <>
-        "have exited: the call exits with :noproc and terminate/2 crashes, " <>
-        "skipping whatever cleanup followed.",
+        "children of #{sup}. #{why}: the call exits with :noproc and terminate/2 " <>
+        "crashes, skipping whatever cleanup followed.",
       at: Findings.at_site_in_func(site, via, mod),
-      at_label: "synchronous call to a sibling during shutdown",
+      at_label: label,
       related: placed_by(sup, sup_site),
-      help: [
-        "wrap the call in `try ... catch :exit, _ -> :ok`, or make it a cast",
-        "if #{sibling} must outlive #{mod}, start it earlier under a `rest_for_one` supervisor"
-      ]
+      help: ["wrap the call in `try ... catch :exit, _ -> :ok`, or make it a cast", fix]
     )
   end
 
@@ -394,6 +400,33 @@ defmodule Argus.Analyses.Shutdown do
   # helper terminate/2 reaches, or an anonymous function inside it.
   defp through(via, mod) when via == mod <> ":terminate/2", do: ""
   defp through(via, _mod), do: " (through #{via})"
+
+  defp sibling_order("call", mod, sibling, sup) do
+    {:warning,
+     "#{sibling} is started after #{mod}, and a supervisor stops its children in " <>
+       "reverse start order, so when #{sup} shuts down #{sibling} has already exited " <>
+       "by the time #{mod}'s terminate/2 runs", "synchronous call to a sibling that stops first",
+     "or start #{sibling} before #{mod}, so a shutdown stops #{mod} first"}
+  end
+
+  defp sibling_order("call_restart", mod, sibling, sup) do
+    {:warning,
+     "#{sibling} is started before #{mod}, and #{sup} restarts the children started " <>
+       "after one that crashes (rest_for_one or one_for_all), so when #{sibling} " <>
+       "crashes #{sup} terminates #{mod} too, and its terminate/2 calls the sibling " <>
+       "that just exited", "synchronous call to the sibling whose crash stops this process",
+     "or let terminate/2 finish without #{sibling}: it runs here because #{sibling} died"}
+  end
+
+  defp sibling_order("call_unordered", mod, sibling, sup) do
+    {:info,
+     "#{sup}'s child list or restart strategy does not settle whether #{sibling} is " <>
+       "still up: a supervisor stops a sibling started after #{mod} before #{mod}, and " <>
+       "under rest_for_one or one_for_all an earlier sibling's crash is what terminates " <>
+       "#{mod}",
+     "synchronous call to a sibling during shutdown (start order or strategy unknown)",
+     "or order the children so #{sibling} outlives #{mod}'s terminate/2"}
+  end
 
   defp placed_by(_sup, ""), do: []
 

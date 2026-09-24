@@ -93,6 +93,51 @@ defmodule Argus.Analyses.ShutdownTest do
     end
   end
 
+  describe "terminate_calls_sibling: which sibling the supervisor has stopped" do
+    alias Argus.Test.Fixtures.SiblingOrder, as: O
+
+    defp kinds(sup) do
+      {:ok, r} = Argus.analyze([sup, O.Writer, O.Directory], :shutdown)
+
+      r
+      |> Rows.where(:shutdown, "teardown_touches_sibling", phase: "terminate")
+      |> Enum.map(fn [mod, sib, _phase, kind | _] -> {kind, mod, sib} end)
+      |> Enum.uniq()
+    end
+
+    @writer "Argus.Test.Fixtures.SiblingOrder.Writer"
+    @directory "Argus.Test.Fixtures.SiblingOrder.Directory"
+
+    test "a sibling started after the caller is stopped first on shutdown" do
+      skip_without_souffle()
+      assert kinds(O.CalleeStartsLater) == [{"call", @writer, @directory}]
+    end
+
+    test "a sibling started before the caller is still up, under one_for_one" do
+      skip_without_souffle()
+      assert kinds(O.CalleeStartsEarlier) == []
+    end
+
+    test "under rest_for_one, the earlier sibling's crash is what terminates the caller" do
+      skip_without_souffle()
+      assert kinds(O.CalleeEarlierRestForOne) == [{"call_restart", @writer, @directory}]
+    end
+
+    test "an earlier sibling under a strategy argus cannot read is reported less surely" do
+      skip_without_souffle()
+      assert kinds(O.CalleeEarlierUnknownStrategy) == [{"call_unordered", @writer, @directory}]
+
+      {:ok, findings} =
+        Argus.run_analyses([O.CalleeEarlierUnknownStrategy, O.Writer, O.Directory],
+          analyses: [:shutdown]
+        )
+
+      [f] = Enum.filter(findings.findings, &(&1.title =~ "terminate/2 calls a sibling"))
+      assert f.severity == :info
+      assert f.at_label =~ "unknown"
+    end
+  end
+
   describe "foreign_dynamic_children" do
     test "children started under another tree are reported unless terminate/2 stops them" do
       skip_without_souffle()

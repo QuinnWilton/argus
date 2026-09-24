@@ -64,6 +64,26 @@ entries rather than a path, and the call would add the instruction-level
 `call_site` to that analysis's input set, re-solving it on every body
 edit.
 
+### A sibling the supervisor has already stopped
+
+**Changed.** `shutdown.teardown_touches_sibling` ("terminate/2 calls a
+sibling that may already be down") fires only for a sibling the
+supervisor itself has stopped before it terminates the caller. Two of
+its sequences do: its shutdown, which stops children in reverse start
+order, so a sibling started *after* the caller is gone (kind `call`,
+any strategy); and its rest_for_one or one_for_all restart, where a
+sibling started *before* the caller crashing is why the caller is
+terminated (kind `call_restart`; oban#21's Producer and Watchman,
+Horde's SignalShutdown). A sibling started before the caller under
+one_for_one is still up while the caller terminates, and is no longer
+reported. When the child list or the strategy does not settle which
+applies — the same module listed on both sides of the caller, or a
+strategy chosen at runtime — the row is kept as `call_unordered` and
+reported at `:info`, its label saying the order is unknown. Order
+comes from `supervisor_child`'s positions; the prose and help now say
+which sequence stops the sibling, and the reorder suggestion no longer
+points at a start order the rule would flag.
+
 ### Analysis names
 
 **Removed.** The alias table for the analysis names retired in 0.17

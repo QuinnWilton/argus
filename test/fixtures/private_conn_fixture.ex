@@ -89,7 +89,9 @@ defmodule Argus.Test.Fixtures.PrivateConn do
 
     @impl true
     def init(nil) do
-      Supervisor.init([{Conn, :shared}, Pool, Cache, Reporter], strategy: :one_for_one)
+      # Reporter before Cache: shutdown stops Cache first, so Reporter's
+      # terminate/2 calling it is the sibling call the rule is about.
+      Supervisor.init([{Conn, :shared}, Pool, Reporter, Cache], strategy: :one_for_one)
     end
   end
 end

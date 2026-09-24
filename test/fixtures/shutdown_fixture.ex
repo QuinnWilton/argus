@@ -185,7 +185,9 @@ defmodule Argus.Test.Fixtures.ShutdownSiblings do
         Argus.Test.Fixtures.ShutdownSiblings.GuardedWatchman
       ]
 
-      Supervisor.init(children, strategy: :one_for_one)
+      # oban's queue supervisor: the Producer crashing takes the Watchman
+      # down with it, and the Watchman's terminate/2 calls the dead Producer.
+      Supervisor.init(children, strategy: :rest_for_one)
     end
   end
 
@@ -388,6 +390,99 @@ defmodule Argus.Test.Fixtures.ShutdownSiblings.GuardedWatchman do
       Argus.Test.Fixtures.ShutdownSiblings.Producer.pause()
     catch
       :exit, _ -> :ok
+    end
+  end
+end
+
+defmodule Argus.Test.Fixtures.SiblingOrder do
+  @moduledoc """
+  Which sibling a terminate/2 may call depends on who the supervisor has
+  already stopped: under any strategy, one started after the caller stops
+  first on shutdown; under rest_for_one or one_for_all, one started
+  before the caller is the one whose crash terminates it.
+  """
+
+  defmodule Directory do
+    @moduledoc false
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+    def unregister(who), do: GenServer.call(__MODULE__, {:unregister, who})
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def handle_call({:unregister, _who}, _from, state), do: {:reply, :ok, state}
+  end
+
+  defmodule Writer do
+    @moduledoc false
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      Process.flag(:trap_exit, true)
+      {:ok, state}
+    end
+
+    @impl true
+    def terminate(_reason, _state) do
+      :ok = Argus.Test.Fixtures.SiblingOrder.Directory.unregister(__MODULE__)
+    end
+  end
+
+  defmodule CalleeStartsLater do
+    @moduledoc "The writer first, the directory after: shutdown stops the directory first."
+    use Supervisor
+
+    @impl true
+    def init(_opts) do
+      Supervisor.init(
+        [Argus.Test.Fixtures.SiblingOrder.Writer, Argus.Test.Fixtures.SiblingOrder.Directory],
+        strategy: :one_for_one
+      )
+    end
+  end
+
+  defmodule CalleeStartsEarlier do
+    @moduledoc "The directory first: shutdown stops the writer while the directory is up."
+    use Supervisor
+
+    @impl true
+    def init(_opts) do
+      Supervisor.init(
+        [Argus.Test.Fixtures.SiblingOrder.Directory, Argus.Test.Fixtures.SiblingOrder.Writer],
+        strategy: :one_for_one
+      )
+    end
+  end
+
+  defmodule CalleeEarlierRestForOne do
+    @moduledoc "oban#21's shape: the directory crashing is why the writer is terminated."
+    use Supervisor
+
+    @impl true
+    def init(_opts) do
+      Supervisor.init(
+        [Argus.Test.Fixtures.SiblingOrder.Directory, Argus.Test.Fixtures.SiblingOrder.Writer],
+        strategy: :rest_for_one
+      )
+    end
+  end
+
+  defmodule CalleeEarlierUnknownStrategy do
+    @moduledoc "The directory first, under a strategy chosen at runtime."
+    use Supervisor
+
+    @impl true
+    def init(opts) do
+      Supervisor.init(
+        [Argus.Test.Fixtures.SiblingOrder.Directory, Argus.Test.Fixtures.SiblingOrder.Writer],
+        strategy: Keyword.fetch!(opts, :strategy)
+      )
     end
   end
 end
