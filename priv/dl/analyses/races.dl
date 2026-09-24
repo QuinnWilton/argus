@@ -243,8 +243,31 @@ plain_write(w, f) :- ets_op(w, f, _, op, "write"), plain_write_op(op).
 .decl local_table_and_key(op: symbol, table_kind: symbol, table: symbol, key_kind: symbol, key: symbol) inline
 .decl table_and_key(op: symbol, table_kind: symbol, table: symbol, key_kind: symbol, key: symbol) inline
 
-local_table_and_key(op, ts, t, ks, k) :- ets_table_ident(op, ts, t), ets_key(op, ks, k).
-table_and_key(op, tk, t, ks, k) :- ets_table(op, tk, t), ets_key(op, ks, k).
+local_table_and_key(op, ts, t, ks, k) :- ets_table_ident(op, ts, t), op_key(op, ks, k).
+table_and_key(op, tk, t, ks, k) :- ets_table(op, tk, t), op_key(op, ks, k).
+
+// An operation's key. The extractor takes an inserted object's key from
+// its first element (ets_key); on a table made with `keypos: N`, N > 1 —
+// an Erlang or Elixir record's, keyed past the record's tag — it is
+// element N - 1 (ets_value).
+.decl op_key(op: symbol, key_kind: symbol, key: symbol)
+
+op_key(op, ks, k) :- ets_key(op, ks, k), !keyed_past_zero(op, _).
+
+op_key(op, ks, k) :-
+  keyed_past_zero(op, v),
+  ets_value(op, pos, ks, k),
+  to_string(pos + 1) = v.
+
+.decl keyed_past_zero(op: symbol, keypos: symbol)
+
+keyed_past_zero(op, v) :-
+  ets_op(op, _, _, o, "write"),
+  (o = "insert" ; o = "insert_new"),
+  ets_table(op, tk, t),
+  site_table(n, tk, t),
+  ets_option(n, "keypos", v),
+  v != "1".
 
 // The table a parameter holds where a pair meets on it: a name a caller
 // passes there, or the reference :ets.new returned in a caller, through
@@ -331,7 +354,7 @@ other_writer(f, name, g) :-
 written_apart(w, "literal", k) :-
   pair_key(_, name, "literal", k),
   ets_op(w, _, name, _, "write"),
-  ets_key(w, "literal", k2),
+  op_key(w, "literal", k2),
   k != k2.
 
 written_apart(w, ks, k) :-
@@ -339,7 +362,7 @@ written_apart(w, ks, k) :-
   ks != "literal",
   ks != "any",
   ets_op(w, _, name, _, "write"),
-  ets_key(w, "literal", _).
+  op_key(w, "literal", _).
 
 .init writer_walk = SameProcessReach
 

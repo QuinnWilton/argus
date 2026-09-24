@@ -8,6 +8,13 @@ defmodule Argus.Extractors.ETSTest do
     data
   end
 
+  describe "keypos" do
+    test "a table keyed past the first element says which" do
+      facts = ETS.extract(disassemble(Argus.Test.Fixtures.CheckThenAct.RecordTable))
+      assert Enum.any?(facts[:ets_option], &match?([_, "keypos", "2"], &1))
+    end
+  end
+
   describe "keys a value's maker names" do
     defp keys(mod) do
       facts = ETS.extract(disassemble(mod))

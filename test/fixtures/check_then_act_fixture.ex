@@ -678,6 +678,25 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  defmodule RecordTable do
+    @moduledoc """
+    A read-modify-write on a table of Elixir records, keyed by the
+    record's second element (`keypos: 2`): the insert's key is the id,
+    not the record's tag.
+    """
+    require Record
+    Record.defrecord(:acct, id: nil, balance: 0)
+
+    def start, do: :ets.new(:accts, [:named_table, :public, keypos: 2])
+
+    def deposit(id, amount) do
+      case :ets.lookup(:accts, id) do
+        [acct(balance: balance)] -> :ets.insert(:accts, acct(id: id, balance: balance + amount))
+        [] -> :ets.insert(:accts, acct(id: id, balance: amount))
+      end
+    end
+  end
+
   defmodule BroadwayCount do
     @moduledoc """
     A Broadway pipeline's processors run handle_message/3 many at a time:

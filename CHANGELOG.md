@@ -254,6 +254,13 @@ not at a literal key other than the pair's, nor at a literal row
 beside keys callers pass. Where either key is not known, the table-wide
 answer stands.
 
+**Fixed.** An insert into a table made with `keypos: N` is keyed by
+element N of its object, not the first. On a table of Erlang or Elixir
+records the first element is the record's tag, so a lookup by id and
+the insert of the updated record never agreed on a key, and the classic
+read-modify-write of a record table went unreported by
+`ets_check_act` and `ets_missing_row` alike.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile
@@ -617,6 +624,11 @@ position the call's result does not carry (`Argus.Pipeline.Emit.
 FunRefs.handed_rows/2`). The call graph's edge into a closure or a fun
 reference has no call instruction; this names the call it runs inside,
 so a rule asking whether a `try` covers the edge asks it of that call.
+**Changed.** Schema 81, no shape change. `ets_option` has a `keypos`
+row, the key's element in an object from 1, for an `:ets.new/2` given
+`keypos: N`. `races` reads it to key an inserted record by its key
+rather than by its tag (below).
+
 **Added.** Schema 80. `field_compared(func, kind, source, pos,
 other_kind, other_source)` (`Argus.Extractors.Dependence`): what a
 deciding test compares element `pos` of the source's tuple with, by data

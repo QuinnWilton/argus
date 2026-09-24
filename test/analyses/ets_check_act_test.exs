@@ -95,6 +95,11 @@ defmodule Argus.Analyses.EtsCheckActTest do
                Enum.uniq(races([C.SeedingOwner, C.SerializedCounter, C.CountImporter]))
     end
 
+    test "a table of records keyed past the tag (keypos: 2)" do
+      skip_without_souffle()
+      assert [{"deposit/2", ":accts", "0"}] = Enum.uniq(races([C.RecordTable]))
+    end
+
     test "different keys are not a race" do
       skip_without_souffle()
       assert races([C.DifferentKeys]) == []

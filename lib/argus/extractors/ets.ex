@@ -9,7 +9,9 @@ defmodule Argus.Extractors.ETS do
   ## Emitted facts
 
   - `ets_new(id, func, name)` — table creation point
-  - `ets_option(id, key, value)` — parsed option from `:ets.new/2`
+  - `ets_option(id, key, value)` — parsed option from `:ets.new/2`: `type`,
+    `access`, `named_table`, `heir`, `read_concurrency`, `write_concurrency`
+    and `keypos` (the key's element in an object, from 1)
   - `ets_op(id, func, table_ref, op, kind)` — ETS read/write/delete operation
   - `ets_op_param(id, pos)` — the table operand of that operation is the
     function's own parameter `pos`, so a caller's literal names the table
@@ -513,6 +515,11 @@ defmodule Argus.Extractors.ETS do
 
   # Named table flag.
   defp parse_option(:named_table), do: {"named_table", "true"}
+
+  # Which element of an object is its key, from 1: an Erlang record's
+  # table keys by its second (`keypos: 2`), past the record's tag.
+  defp parse_option({:keypos, pos}) when is_integer(pos) and pos >= 1,
+    do: {"keypos", Integer.to_string(pos)}
 
   # Heir setting.
   defp parse_option({:heir, _pid, _data}), do: {"heir", "true"}
