@@ -2,10 +2,16 @@
 //
 // A finding rule should read aloud as the sentence it checks:
 //
-//   unbounded_wait(func, call, "rpc", variant, "", "") :-
+//   rpc_without_timeout(func, call, variant) :-
 //     makes_rpc(func, call, variant),
 //     no_timeout(call),
 //     !during_init(call).
+//
+// The output relation's shape — the kind constants, the columns other
+// kinds fill — goes in a one-line rule of its own that reads the
+// sentence (`unbounded_wait(func, call, "rpc", variant, "", "") :-
+// rpc_without_timeout(func, call, variant).`), so the sentence carries
+// only the words it is about.
 //
 // These are the terms more than one analysis says: a function's module,
 // the callbacks a process runs at its edges, a lock that retries, a

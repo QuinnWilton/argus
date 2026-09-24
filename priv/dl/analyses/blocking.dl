@@ -493,7 +493,11 @@ receive_in_callback(id, func, callback, behaviour, proximity, "true") :-
 // An rpc in init/1, or a :global op init/1 reaches, is startup's
 // finding (blocks_on_peer, "remote" and "global"): the same site, with
 // the supervisor's start held on it, reported there once.
-unbounded_wait(func, call, "rpc", variant, "", "") :-
+unbounded_wait(func, call, "rpc", variant, "", "") :- rpc_without_timeout(func, call, variant).
+
+.decl rpc_without_timeout(func: symbol, call: symbol, variant: symbol)
+
+rpc_without_timeout(func, call, variant) :-
   makes_rpc(func, call, variant),
   no_timeout(call),
   !during_init(call).
