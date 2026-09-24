@@ -4,7 +4,7 @@ defmodule Scry.AnalysisRelatedTest do
   frame's own source fragment (`at_source`) the last step.
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Scry.Test.Graph
 

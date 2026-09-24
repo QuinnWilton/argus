@@ -4,16 +4,23 @@ defmodule Scry.AnalysisPruneRaceTest do
   runs), and another process can prune a fact directory while Souffle
   is reading it. The solve rebuilds it and runs again instead of
   reporting the analysis degraded.
+
+  In this module's peer (`Scry.Test.Peer`): `PATH` is VM-wide, and the
+  scratch root these tests prune from under a solve is the peer's own.
   """
 
-  # PATH manipulation — never async.
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
+  use Scry.Test.Peer
 
-  alias Scry.Test.Graph
+  alias Scry.Test.{Graph, Peer}
 
   @moduletag :souffle
   @moduletag :tmp_dir
   @moduletag timeout: 300_000
+
+  setup_all do
+    %{paths: Graph.parity!(), peer: Peer.start!()}
+  end
 
   # A souffle that, the first time it is asked to run a program, deletes
   # the fact directory it was handed and fails — a prune lost mid-solve.
@@ -43,9 +50,16 @@ defmodule Scry.AnalysisPruneRaceTest do
     marker
   end
 
-  test "a directory pruned during the solve is rebuilt and solved", %{tmp_dir: dir} do
-    paths = Graph.parity!()
-    db = Graph.new_db(paths)
+  test "a directory pruned during the solve is rebuilt and solved", %{
+    tmp_dir: dir,
+    paths: paths,
+    peer: peer
+  } do
+    Peer.run(peer, fn -> pruned_during_solve(dir, paths) end)
+  end
+
+  defp pruned_during_solve(dir, paths) do
+    db = Graph.new_db(Graph.use_parity!(paths))
     # Everything up to the solve, with the real solver.
     %{dir: facts} = Scry.Analysis.analysis_facts_dir(db, :mailbox)
 
@@ -63,9 +77,12 @@ defmodule Scry.AnalysisPruneRaceTest do
     end
   end
 
-  test "a relation store entry that is not the file is replaced", %{tmp_dir: _dir} do
-    paths = Graph.parity!()
-    db = Graph.new_db(paths)
+  test "a relation store entry that is not the file is replaced", %{paths: paths, peer: peer} do
+    Peer.run(peer, fn -> store_entry_replaced(paths) end)
+  end
+
+  defp store_entry_replaced(paths) do
+    db = Graph.new_db(Graph.use_parity!(paths))
     %{dir: facts} = Scry.Analysis.analysis_facts_dir(db, :mailbox)
 
     # The directory goes (pruned), and one of the files it linked is

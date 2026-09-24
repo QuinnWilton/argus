@@ -5,7 +5,7 @@ defmodule Scry.RunnerCrashTest do
   analyses still report.
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Roux.Memo
   alias Scry.Test.Graph

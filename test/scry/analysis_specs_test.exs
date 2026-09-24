@@ -10,6 +10,8 @@ defmodule Scry.AnalysisSpecsTest do
   changing its spec re-extracts its callers too.
   """
 
+  # The probe's ebin goes on the code path, and its modules are loaded
+  # and purged: VM-wide.
   use ExUnit.Case, async: false
 
   alias Scry.Test.Graph

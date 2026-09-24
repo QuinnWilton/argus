@@ -6,6 +6,8 @@ defmodule Scry.AnalysisFrontendSpecsTest do
   extracted again when the callee leaves the frontend's `:module_map`.
   """
 
+  # The probe's ebin goes on the code path, and its modules are loaded
+  # and purged: VM-wide.
   use ExUnit.Case, async: false
 
   alias Roux.Input

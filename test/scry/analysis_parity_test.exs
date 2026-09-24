@@ -13,9 +13,14 @@ defmodule Scry.AnalysisParityTest do
   a PADL race's registrar).
   """
 
-  use ExUnit.Case, async: false
+  # In its own peer (`Scry.Test.Peer`), whose scratch root is its own:
+  # every analysis, a dozen times over, mints more fact directories than
+  # the root keeps, and a prune here must not take one a solve elsewhere
+  # is reading.
+  use ExUnit.Case, async: true
+  use Scry.Test.Peer
 
-  alias Scry.Test.Graph
+  alias Scry.Test.{Graph, Peer}
 
   # A dozen batch runs of every analysis: out of the default run, in CI
   # and before any change to the shared layer (`mix test --include parity`).
@@ -33,9 +38,8 @@ defmodule Scry.AnalysisParityTest do
   ]
 
   setup_all do
-    paths = Graph.parity!()
     {:ok, analyses} = Argus.Analysis.set(:all)
-    %{paths: paths, analyses: analyses}
+    %{paths: Graph.parity!(), analyses: analyses, peer: Peer.start!()}
   end
 
   defp assert_parity(db, paths, analyses, label, batch \\ nil) do
@@ -59,8 +63,13 @@ defmodule Scry.AnalysisParityTest do
 
   test "incremental equals batch, cold and across cross-module edits", %{
     paths: paths,
-    analyses: analyses
+    analyses: analyses,
+    peer: peer
   } do
+    Peer.run(peer, fn -> parity(Graph.use_parity!(paths), analyses) end)
+  end
+
+  defp parity(paths, analyses) do
     for module <- @edits do
       assert Map.has_key?(paths, module), "the fixture no longer defines #{inspect(module)}"
     end

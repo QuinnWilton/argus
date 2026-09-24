@@ -1,6 +1,10 @@
 defmodule Scry.FingerprintTest do
-  # PATH manipulation — never async.
-  use ExUnit.Case, async: false
+  # The souffle_version tests move PATH, which is VM-wide: they run in
+  # this module's peer (`Scry.Test.Peer`), and the module runs async.
+  use ExUnit.Case, async: true
+  use Scry.Test.Peer
+
+  alias Scry.Test.Peer
 
   @moduletag :tmp_dir
 
@@ -24,59 +28,62 @@ defmodule Scry.FingerprintTest do
     File.chmod!(path, 0o755)
   end
 
-  defp with_path(dir, fun) do
-    original = System.get_env("PATH")
-    System.put_env("PATH", dir <> ":" <> original)
+  # `fun` in the peer, with `dir` first on its PATH.
+  defp with_path(peer, dir, fun) do
+    Peer.run(peer, fn ->
+      original = System.get_env("PATH")
+      System.put_env("PATH", dir <> ":" <> original)
 
-    try do
-      fun.()
-    after
-      System.put_env("PATH", original)
-    end
+      try do
+        fun.()
+      after
+        System.put_env("PATH", original)
+      end
+    end)
   end
 
   describe "souffle_version/0" do
-    test "records the solver's version, not the banner's rule", %{tmp_dir: dir} do
+    setup do
+      %{peer: Peer.start!()}
+    end
+
+    test "records the solver's version, not the banner's rule", %{tmp_dir: dir, peer: peer} do
       fake_souffle!(dir, "2.5")
 
-      assert with_path(dir, fn -> Scry.Fingerprint.souffle_version() end) ==
+      assert with_path(peer, dir, fn -> Scry.Fingerprint.souffle_version() end) ==
                "2.5 (64-bit words)"
     end
 
-    test "moves when the version or the word size does", %{tmp_dir: dir} do
+    test "moves when the version or the word size does", %{tmp_dir: dir, peer: peer} do
       fake_souffle!(dir, "2.5")
-      old = with_path(dir, fn -> Scry.Fingerprint.rules([:mailbox]) end)
+      old = with_path(peer, dir, fn -> Scry.Fingerprint.rules([:mailbox]) end)
 
       fake_souffle!(dir, "2.6")
-      new = with_path(dir, fn -> Scry.Fingerprint.rules([:mailbox]) end)
+      new = with_path(peer, dir, fn -> Scry.Fingerprint.rules([:mailbox]) end)
       assert old.mailbox != new.mailbox
       assert old.stage0 != new.stage0
 
       fake_souffle!(dir, "2.6", 32)
-      assert with_path(dir, fn -> Scry.Fingerprint.rules([:mailbox]) end) != new
+      assert with_path(peer, dir, fn -> Scry.Fingerprint.rules([:mailbox]) end) != new
     end
 
-    test "fingerprints an unfamiliar banner whole", %{tmp_dir: dir} do
+    test "fingerprints an unfamiliar banner whole", %{tmp_dir: dir, peer: peer} do
       path = Path.join(dir, "souffle")
       File.write!(path, "#!/bin/sh\necho 'souffle nightly abc123'\n")
       File.chmod!(path, 0o755)
-      nightly = with_path(dir, fn -> Scry.Fingerprint.souffle_version() end)
+      nightly = with_path(peer, dir, fn -> Scry.Fingerprint.souffle_version() end)
 
       File.write!(path, "#!/bin/sh\necho 'souffle nightly def456'\n")
       assert nightly =~ "unrecognized:"
-      assert with_path(dir, fn -> Scry.Fingerprint.souffle_version() end) != nightly
+      assert with_path(peer, dir, fn -> Scry.Fingerprint.souffle_version() end) != nightly
     end
 
-    test "is unknown without a solver", %{tmp_dir: dir} do
+    test "is unknown without a solver", %{tmp_dir: dir, peer: peer} do
       # PATH narrowed to a directory with no souffle in it.
-      original = System.get_env("PATH")
-      System.put_env("PATH", dir)
-
-      try do
+      Peer.run(peer, fn ->
+        System.put_env("PATH", dir)
         assert Scry.Fingerprint.souffle_version() == "unknown"
-      after
-        System.put_env("PATH", original)
-      end
+      end)
     end
   end
 

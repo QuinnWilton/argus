@@ -1,4 +1,5 @@
 defmodule Scry.ConfigTest do
+  # One test clears TYPESAFE_API_KEY, which is VM-wide.
   use ExUnit.Case, async: false
 
   alias Scry.Config

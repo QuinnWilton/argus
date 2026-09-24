@@ -5,7 +5,7 @@ defmodule Scry.AnalysisSemanticTest do
   move only lines or the vsn checksum.
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Scry.Test.Graph
 
