@@ -61,3 +61,13 @@ rescues_argument_error(f) :- catches_class(f, "error").
 rescues_argument_error(f) :- catch_tag(_, f, "error", "ArgumentError").
 rescues_argument_error(f) :- catch_tag(_, f, "error", ":badarg").
 rescues_argument_error(f) :- try_start(_, f, "catch", _).
+
+// The same question asked of one call: the call at `call` in `func` is
+// inside a try whose handler takes the ArgumentError, or inside Erlang's
+// `catch Expr`. What a rule asks when a handler elsewhere in the function
+// — around unrelated code after the call — must not count.
+.decl site_rescues_argument_error(call: symbol, func: symbol)
+
+site_rescues_argument_error(c, f) :- covered_by_catch(c, f, _, "error").
+site_rescues_argument_error(c, f) :- try_covers(t, f, c, "try"), catch_tag(t, f, "error", "ArgumentError").
+site_rescues_argument_error(c, f) :- try_covers(t, f, c, "try"), catch_tag(t, f, "error", ":badarg").

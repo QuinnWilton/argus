@@ -163,6 +163,18 @@ under a field of its own crosses calls within the module
 (`module_identity`). The other instances name their resources by
 literals and parameters, and are unchanged.
 
+**Fixed.** `ets_missing_row` asks whether the act's ArgumentError is
+rescued of the act and the calls that lead to it, not of whole
+functions. A `rescue` anywhere in the meeting function or the act's
+function silenced it, even one around unrelated code after the act;
+now the act is rescued when a handler that takes the error (class
+error, `ArgumentError`, `:badarg`, or Erlang's `catch`) covers it, or
+covers a call on every path from the meeting function down to it
+(`clientlib/exceptions.dl`'s `site_rescues_argument_error`, over
+`try_covers`). A private function whose every call is so covered, and
+that nothing outside the program can call, is rescued by its callers.
+One unguarded caller keeps the finding.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile

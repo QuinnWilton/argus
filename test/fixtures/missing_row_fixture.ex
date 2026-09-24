@@ -186,4 +186,116 @@ defmodule Argus.Test.Fixtures.MissingRow do
     @moduledoc "CrossModuleAct's count."
     def bump(key), do: :ets.update_counter(:cross_module_buckets, key, {2, 1})
   end
+
+  # ── Where the miss is rescued ────────────────────────────────────
+
+  defmodule UnrelatedRescue do
+    @moduledoc "A rescue around unrelated code after the count: the count's miss still raises."
+    @table :unrelated_rescue_buckets
+
+    def setup, do: :ets.new(@table, [:set, :named_table, :public])
+
+    def log(key, payload) do
+      case :ets.lookup(@table, key) do
+        [] ->
+          :ets.insert(@table, {key, 0})
+          _ = :timer.apply_after(10, __MODULE__, :flush, [key])
+          :ok
+
+        [_existing] ->
+          :ets.update_counter(@table, key, {2, 1})
+      end
+
+      try do
+        :erlang.binary_to_term(payload)
+      rescue
+        _ -> :bad
+      end
+    end
+
+    def flush(key), do: :ets.take(@table, key)
+  end
+
+  defmodule HelperRescue do
+    @moduledoc "The helper that counts rescues its own miss."
+    @table :helper_rescue_buckets
+
+    def setup, do: :ets.new(@table, [:set, :named_table, :public])
+
+    def log(key) do
+      case :ets.lookup(@table, key) do
+        [] ->
+          :ets.insert(@table, {key, 0})
+          _ = :timer.apply_after(10, __MODULE__, :flush, [key])
+          :ok
+
+        [_existing] ->
+          safe_bump(key)
+      end
+    end
+
+    defp safe_bump(key) do
+      :ets.update_counter(@table, key, {2, 1})
+    rescue
+      ArgumentError -> 0
+    end
+
+    def flush(key), do: :ets.take(@table, key)
+  end
+
+  defmodule CallerRescues do
+    @moduledoc "The one caller of the private function that counts rescues the miss around the call."
+    @table :caller_rescue_buckets
+
+    def setup, do: :ets.new(@table, [:set, :named_table, :public])
+
+    def log(key) do
+      do_log(key)
+    rescue
+      ArgumentError -> :ok
+    end
+
+    defp do_log(key) do
+      case :ets.lookup(@table, key) do
+        [] ->
+          :ets.insert(@table, {key, 0})
+          _ = :timer.apply_after(10, __MODULE__, :flush, [key])
+          :ok
+
+        [_existing] ->
+          :ets.update_counter(@table, key, {2, 1})
+      end
+    end
+
+    def flush(key), do: :ets.take(@table, key)
+  end
+
+  defmodule OneCallerRescues do
+    @moduledoc "One caller rescues around the call and the other does not."
+    @table :one_caller_rescue_buckets
+
+    def setup, do: :ets.new(@table, [:set, :named_table, :public])
+
+    def log(key) do
+      do_log(key)
+    rescue
+      ArgumentError -> :ok
+    end
+
+    def log_unguarded(key), do: do_log(key)
+
+    defp do_log(key) do
+      case :ets.lookup(@table, key) do
+        [] ->
+          :ets.insert(@table, {key, 0})
+          _ = :timer.apply_after(10, __MODULE__, :flush, [key])
+          :ok
+
+        [_existing] ->
+          :ets.update_counter(@table, key, {2, 1})
+      end
+    end
+
+    def flush(key), do: :ets.take(@table, key)
+  end
 end

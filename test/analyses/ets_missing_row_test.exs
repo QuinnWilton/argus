@@ -41,6 +41,32 @@ defmodule Argus.Analyses.EtsMissingRowTest do
     end
   end
 
+  describe "ets_missing_row: where the miss is rescued" do
+    test "a rescue around unrelated code after the act does not take its miss" do
+      skip_without_souffle()
+
+      assert [{"log/2", "named", ":unrelated_rescue_buckets", "log/2", "log/2", "flush/1"}] =
+               missing([Fixture.UnrelatedRescue])
+    end
+
+    test "a helper that rescues its own act stays quiet" do
+      skip_without_souffle()
+      assert missing([Fixture.HelperRescue]) == []
+    end
+
+    test "a private function whose one caller rescues around the call stays quiet" do
+      skip_without_souffle()
+      assert missing([Fixture.CallerRescues]) == []
+    end
+
+    test "one caller that does not rescue keeps it reported" do
+      skip_without_souffle()
+
+      assert [{"do_log/1", "named", ":one_caller_rescue_buckets", _, _, "flush/1"}] =
+               missing([Fixture.OneCallerRescues])
+    end
+  end
+
   describe "ets_missing_row across functions" do
     test "the act in a helper the found-row branch calls" do
       skip_without_souffle()

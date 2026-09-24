@@ -812,15 +812,66 @@ table_kind_as("field", "module field").
 checks_row_exists(check) :- deciding_read(check, _).
 
 // An operation that raises when the row is missing, and nothing rescues
-// the raise: not the act's own function, nor `func`, where the check's
-// result meets it.
+// the raise: not a handler around the act, nor one around any call on
+// some path from `func`, where the check's result meets it, down to the
+// act, nor one around every call to `func`.
 .decl fails_if_row_missing(act: symbol, func: symbol)
 
 fails_if_row_missing(act, func) :-
   missing.meets(func, _, act, _, _, _, _),
-  raises_if_missing(act, g),
-  !rescues_argument_error(func),
-  !rescues_argument_error(g).
+  raises_unguarded(func, act),
+  !callers_rescue(func).
+
+// ── Whether the raise is rescued ──
+//
+// Asked of the act's site and of the calls that lead to it, not of whole
+// functions: a `rescue` around unrelated code after the act does not
+// take the act's ArgumentError, and a handler around the call to a
+// helper does. The act is unguarded from `func` when some path of calls
+// from `func` that passes no such handler (clientlib/reach.dl's
+// ForwardGuardedCallReach) reaches the act's function, and nothing
+// around the act itself takes the error either. An edge with no call
+// site — into a closure or a fun handed to a call — has no site to ask
+// about: it is followed unless its function has a handler that takes the
+// error somewhere, the function-wide answer.
+.init unguarded_path = ForwardGuardedCallReach
+
+unguarded_path.root(f) :- missing.meets(f, _, _, _, _, _, _).
+unguarded_path.limit(16).
+unguarded_path.guarded(c) :- site_rescues_argument_error(c, _).
+unguarded_path.sealed(f) :- rescues_argument_error(f).
+
+.decl raises_unguarded(func: symbol, act: symbol)
+
+raises_unguarded(f, a) :-
+  missing.meets(f, _, a, _, _, _, _),
+  raises_if_missing(a, f),
+  !site_rescues_argument_error(a, f).
+
+raises_unguarded(f, a) :-
+  missing.meets(f, _, a, _, _, _, _),
+  raises_if_missing(a, g),
+  unguarded_path.reaches(f, g, _, _),
+  !site_rescues_argument_error(a, g).
+
+// Every call to `func` is inside a handler that takes the error, and no
+// caller the program does not show can call it: not exported, not handed
+// out as a fun, and reached only through call sites. One unguarded caller
+// keeps the finding.
+.decl rescue_asked(func: symbol)
+
+rescue_asked(f) :- missing.meets(f, _, _, _, _, _, _).
+
+.decl called_unguarded(func: symbol)
+
+called_unguarded(f) :- rescue_asked(f), call_instr(h, f, c), !site_rescues_argument_error(c, h).
+called_unguarded(f) :- rescue_asked(f), function_def(f, _, _, _, 1).
+called_unguarded(f) :- rescue_asked(f), fun_ref(_, f).
+called_unguarded(f) :- rescue_asked(f), call_edge(h, f), !call_instr(h, f, _).
+
+.decl callers_rescue(func: symbol)
+
+callers_rescue(f) :- rescue_asked(f), call_instr(_, f, _), !called_unguarded(f).
 
 // In `func`, the check's result decides the act, on one key of `table`
 // (CheckThenAct's meets, followed across calls).
