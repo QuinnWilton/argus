@@ -76,13 +76,17 @@ defmodule Argus.Pipeline.ShardsTest do
     do: Enum.map(producers, &{&1, Path.join(root, inspect(&1))})
 
   describe "run_shards/3" do
-    test "a producer extracted alone writes the rows it writes beside the others",
+    test "a producer extracted alone writes the rows it writes beside the others, over kept bases too",
          %{tmp_dir: tmp, modules: modules} do
       producers = [:base | extractors()]
       together = shard_dirs(Path.join(tmp, "together"), producers)
       opts = [trace_imprecision: true]
 
-      assert {:ok, %{lost: []}} = Pipeline.run_shards(modules, together, opts)
+      assert {:ok, %{lost: [], bases: bases}} =
+               Pipeline.run_shards(modules, together, [keep_bases: true] ++ opts)
+
+      assert length(bases) == length(modules)
+      assert Enum.all?(bases, &is_binary/1)
 
       # Several extractions at once: each is mostly the base's work, which
       # leaves cores idle on a set this small.
@@ -90,15 +94,24 @@ defmodule Argus.Pipeline.ShardsTest do
       |> Task.async_stream(
         fn {producer, dir} ->
           [{^producer, alone}] = shard_dirs(Path.join(tmp, "alone"), [producer])
-          {producer, dir, alone, Pipeline.run_shards(modules, [{producer, alone}], opts)}
+          [{^producer, over}] = shard_dirs(Path.join(tmp, "over_bases"), [producer])
+          result = Pipeline.run_shards(modules, [{producer, alone}], opts)
+          over_bases = Pipeline.run_shards(modules, [{producer, over}], [bases: bases] ++ opts)
+          {producer, dir, alone, over, result, over_bases}
         end,
         timeout: :infinity
       )
-      |> Enum.each(fn {:ok, {producer, dir, alone, result}} ->
+      |> Enum.each(fn {:ok, {producer, dir, alone, over, result, over_bases}} ->
         assert {:ok, %{lost: []}} = result
+        assert {:ok, %{lost: []}} = over_bases
 
         assert contents(alone) == contents(dir),
                "#{inspect(producer)} extracted alone differs from its rows among the others"
+
+        # The base's own rows are the emitter's: it never runs over a
+        # kept base, and computes its own.
+        assert contents(over) == contents(dir),
+               "#{inspect(producer)} extracted over kept bases differs from its rows computed afresh"
       end)
 
       # Every extractor is exercised: none of them wrote nothing.
@@ -257,6 +270,19 @@ defmodule Argus.Pipeline.ShardsTest do
       assert :ok = Shards.place([other, part], target, :link)
       assert File.read!(target) == "c\td\na\tb\n"
       assert File.read!(part) == "a\tb\n"
+    end
+
+    test "a lone part is placed as a symbolic link to it, replacing what is there",
+         %{tmp_dir: tmp} do
+      part = Path.join(tmp, "part.facts")
+      File.write!(part, "a\tb\n")
+      target = Path.join(tmp, "target.facts")
+      File.write!(target, "stale\n")
+
+      assert :ok = Shards.place([part], target, :symlink)
+      assert File.read!(target) == "a\tb\n"
+      assert {:ok, ^part} = File.read_link(target)
+      assert tmp |> File.ls!() |> Enum.sort() == ["part.facts", "target.facts"]
     end
 
     test "no parts is an empty file; a moved part leaves its place", %{tmp_dir: tmp} do

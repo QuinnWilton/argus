@@ -7,6 +7,12 @@ defmodule Argus.Cache.CodeClosureTest do
   checks the reading against what executed. The producers are split
   three ways, each part in a VM of its own, so the parts run side by
   side.
+
+  The kept bases (`Argus.Pipeline.Base`) are keyed on the base's code
+  too: the base runs here keeping them, and each extractor runs again
+  over them, within its closure — and, unless it reads the decoded
+  facts (`Argus.Pipeline.typed_readers/0`), without the emitter, which
+  only a typed reader should need over a kept base.
   """
   use ExUnit.Case,
     async: true,
@@ -54,10 +60,17 @@ defmodule Argus.Cache.CodeClosureTest do
 
   Enum.each(mods, &Code.ensure_loaded/1)
 
-  run = fn producer ->
+  scratch = fn -> Path.join(System.tmp_dir!(), "argus_code_#{:os.getpid()}_#{System.unique_integer([:positive])}") end
+
+  # The bases the extractors run over, kept untraced.
+  dir = scratch.()
+  {:ok, %{bases: bases}} = Argus.Pipeline.run_shards(beams, [{:base, dir}], keep_bases: true)
+  File.rm_rf!(dir)
+
+  run = fn producer, opts ->
     for m <- mods, do: :erlang.trace_pattern({m, :_, :_}, true, [:call_count])
-    dir = Path.join(System.tmp_dir!(), "argus_code_#{:os.getpid()}_#{System.unique_integer([:positive])}")
-    {:ok, _} = Argus.Pipeline.run_shards(beams, [{producer, dir}], trace_imprecision: true)
+    dir = scratch.()
+    {:ok, _} = Argus.Pipeline.run_shards(beams, [{producer, dir}], [trace_imprecision: true] ++ opts)
     File.rm_rf!(dir)
 
     executed =
@@ -72,7 +85,10 @@ defmodule Argus.Cache.CodeClosureTest do
     executed
   end
 
-  Map.new(producers, &{&1, run.(&1)})
+  Map.new(producers, fn
+    :base -> {:base, %{fresh: run.(:base, keep_bases: true), kept: []}}
+    extractor -> {extractor, %{fresh: run.(extractor, []), kept: run.(extractor, bases: bases)}}
+  end)
   """
 
   test "every module a producer executes is in its closure", %{part: part, parts: parts} do
@@ -97,12 +113,18 @@ defmodule Argus.Cache.CodeClosureTest do
     for producer <- producers do
       {:ok, closure} = Code.closure(producer)
       closure = MapSet.new(closure, &elem(&1, 0))
-      ran = Map.fetch!(executed, producer)
+      %{fresh: ran, kept: over_kept} = Map.fetch!(executed, producer)
 
       assert ran != [], "#{inspect(producer)} executed nothing"
 
-      assert Enum.reject(ran, &MapSet.member?(closure, &1)) == [],
+      assert Enum.reject(ran ++ over_kept, &MapSet.member?(closure, &1)) == [],
              "#{inspect(producer)} runs code its key does not cover"
+
+      if producer != :base and producer not in Argus.Pipeline.typed_readers() do
+        refute Argus.Pipeline.Emit in over_kept,
+               "#{inspect(producer)} computes the decoded facts over a kept base: " <>
+                 "add it to Argus.Pipeline's @typed_readers"
+      end
     end
   end
 end

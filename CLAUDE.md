@@ -12,7 +12,8 @@ those frameworks need.
 ### Layout
 
 - `lib/argus/pipeline/` — disassemble (via beam_spy), normalize, and emit
-  the generic bytecode facts; `lib/argus/extractors/` — the domain
+  the generic bytecode facts; `base.ex` keeps what the pipeline computes
+  of a module for the extractors; `lib/argus/extractors/` — the domain
   extractors; `lib/argus/analyses/` — one module per analysis, declaring
   its extractors, output relations and finding builders.
 - `lib/argus/analysis.ex` — the analysis behaviour and the entry points
