@@ -21,7 +21,8 @@
 //   exception that nothing takes. `kind` is "rescue" (a catch-all rescue
 //   discards the exception; site is the try), "erpc_transport" (a
 //   rescue around :erpc.call has no clause for transport failures; site
-//   is the guarded call), or the rpc variant "rpc" | "multicall" | "erpc" whose
+//   is the guarded call), or the rpc variant "rpc" | "block_call" |
+//   "yield" | "multicall" | "erpc" whose
 //   result is matched by shape with no {:badrpc, _} clause (`shape` =
 //   "case") or used as a boolean (`shape` = "boolean"); site is the call.
 // `unchecked_result(func, site, api, name)` — a result used without its
@@ -119,8 +120,21 @@ unhandled_failure(func, call, "erpc_transport", "", guard_end) :-
 // fix: catch {:erpc, :noconnection} -> false).
 unhandled_failure(f, id, v, "case", "") :-
   rpc_call(id, f, v, _),
-  (v = "rpc" ; v = "multicall"),
+  answers_badrpc(v),
   rpc_result(id, f, "case").
+
+// The :rpc forms whose answer is the {:badrpc, _} itself: call,
+// block_call, the yield that collects an async_call, and multicall
+// (whose failures are its bad-nodes list; the shape a rule matches is
+// the pair). nb_yield wraps the answer in {:value, _}, so a case over it
+// has a clause for the wrapper, and the badrpc it leaves out is nested:
+// not this rule's shape.
+.decl answers_badrpc(variant: symbol)
+
+answers_badrpc("rpc").
+answers_badrpc("block_call").
+answers_badrpc("yield").
+answers_badrpc("multicall").
 
 // Used as a boolean: tested against true/false/nil after the call, or
 // returned as the result of a predicate (a function named `...?`), whose
@@ -136,7 +150,7 @@ rpc_boolean_use(id, f) :-
 
 unhandled_failure(f, id, v, "boolean", "") :-
   rpc_call(id, f, v, _),
-  (v = "rpc" ; v = "multicall"),
+  answers_badrpc(v),
   rpc_boolean_use(id, f).
 
 unhandled_failure(f, id, "erpc", "boolean", "") :-

@@ -30,6 +30,38 @@ defmodule Argus.Test.Fixtures.Hypothesized do
     end
   end
 
+  defmodule BlockCallCaseNoBadrpc do
+    @moduledoc false
+    # :rpc.block_call answers a gone node as :rpc.call does.
+    def status(node) do
+      case :rpc.block_call(node, :mnesia, :system_info, [:running_db_nodes]) do
+        nodes when is_list(nodes) -> {:ok, nodes}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  defmodule YieldBoolean do
+    @moduledoc false
+    # :rpc.yield hands back the {:badrpc, _} an async_call got.
+    def alive?(pid) do
+      key = :rpc.async_call(node(pid), Process, :alive?, [pid])
+      Enum.member?(Node.list(), node(pid)) && :rpc.yield(key)
+    end
+  end
+
+  defmodule NbYieldCase do
+    @moduledoc false
+    # nb_yield wraps the answer: a case over {:value, _} and :timeout is
+    # not the shape the rule reads.
+    def poll(key) do
+      case :rpc.nb_yield(key, 1000) do
+        {:value, nodes} when is_list(nodes) -> {:ok, nodes}
+        :timeout -> :pending
+      end
+    end
+  end
+
   defmodule RpcBoolean do
     @moduledoc false
     # horde before 30bb1a1: {:badrpc, :nodedown} is truthy.

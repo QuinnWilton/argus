@@ -25,6 +25,9 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
           H.RpcCaseNoBadrpc,
           H.RpcCaseWithBadrpc,
           H.RpcBoolean,
+          H.BlockCallCaseNoBadrpc,
+          H.YieldBoolean,
+          H.NbYieldCase,
           H.ErpcBooleanNoRescue,
           H.ErpcBooleanRescued
         ],
@@ -38,9 +41,11 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
       |> Enum.map(&{hd(&1), Enum.at(&1, 3)})
 
     assert Enum.sort(reported) == [
+             {"Argus.Test.Fixtures.Hypothesized.BlockCallCaseNoBadrpc:status/1", "case"},
              {"Argus.Test.Fixtures.Hypothesized.ErpcBooleanNoRescue:alive?/1", "boolean"},
              {"Argus.Test.Fixtures.Hypothesized.RpcBoolean:alive?/1", "boolean"},
-             {"Argus.Test.Fixtures.Hypothesized.RpcCaseNoBadrpc:status/1", "case"}
+             {"Argus.Test.Fixtures.Hypothesized.RpcCaseNoBadrpc:status/1", "case"},
+             {"Argus.Test.Fixtures.Hypothesized.YieldBoolean:alive?/1", "boolean"}
            ]
   end
 

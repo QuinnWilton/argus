@@ -989,6 +989,7 @@ defmodule Argus.Extractors.ErrorHandling do
     {:rpc, :call, 5},
     {:rpc, :block_call, 4},
     {:rpc, :block_call, 5},
+    {:rpc, :yield, 1},
     {:rpc, :multicall, 2},
     {:rpc, :multicall, 3},
     {:rpc, :multicall, 4},

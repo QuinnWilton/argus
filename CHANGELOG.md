@@ -89,6 +89,13 @@ arg_pos)` (`Argus.Extractors.CallArgs`) records a literal `:infinity`
 argument at any position; `call_arg` stops at the fourth, and a
 wrapper's `timeout \\ :infinity` passes it fifth.
 
+**Fixed.** `failure`'s `{:badrpc, _}` rules (an rpc result matched by
+shape with no badrpc clause, or used as a boolean) read `:rpc.block_call`
+and `:rpc.yield/1` as well as `:rpc.call` and `:rpc.multicall`: each
+answers a gone node with the tuple itself. `rpc_result` records
+`:rpc.yield/1` (part of schema 76). `:rpc.nb_yield` wraps the answer in
+`{:value, _}` and stays out.
+
 **Changed.** `startup.blocks_on_peer` "remote" follows an rpc as it
 follows a `:global` lock: one in `init/1`, or in anything `init/1` calls
 on its own stack, holds the supervisor's start (`func` is the init/1;
