@@ -107,7 +107,7 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
       assert Map.has_key?(facts, :global_op)
       ops = facts[:global_op]
 
-      assert Enum.any?(ops, fn [_id, func, op, retries] ->
+      assert Enum.any?(ops, fn [_id, func, op, retries, _nodes] ->
                String.contains?(func, "lock_default") and
                  op == "set_lock" and retries == "infinity"
              end)
@@ -117,7 +117,7 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
       facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
       ops = facts[:global_op]
 
-      assert Enum.any?(ops, fn [_id, func, op, retries] ->
+      assert Enum.any?(ops, fn [_id, func, op, retries, _nodes] ->
                String.contains?(func, "try_lock_once") and
                  op == "set_lock" and retries == "0"
              end)
@@ -127,7 +127,7 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
       facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
       ops = facts[:global_op]
 
-      assert Enum.any?(ops, fn [_id, func, _op, retries] ->
+      assert Enum.any?(ops, fn [_id, func, _op, retries, _nodes] ->
                String.contains?(func, "lock_infinity") and retries == "infinity"
              end)
     end
@@ -136,7 +136,7 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
       facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
       ops = facts[:global_op]
 
-      assert Enum.any?(ops, fn [_id, func, _op, retries] ->
+      assert Enum.any?(ops, fn [_id, func, _op, retries, _nodes] ->
                String.contains?(func, "lock_with_retries") and retries == "5"
              end)
     end
@@ -145,7 +145,7 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
       facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
       ops = facts[:global_op]
 
-      assert Enum.any?(ops, fn [_id, func, op, retries] ->
+      assert Enum.any?(ops, fn [_id, func, op, retries, _nodes] ->
                String.contains?(func, "trans_default") and
                  op == "trans" and retries == "infinity"
              end)
@@ -155,9 +155,59 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
       facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
       ops = facts[:global_op]
 
-      assert Enum.any?(ops, fn [_id, _func, op, retries] ->
+      assert Enum.any?(ops, fn [_id, _func, op, retries, _nodes] ->
                op == "del_lock" and retries == "0"
              end)
+    end
+  end
+
+  describe "extract/1 — :global node lists" do
+    setup do
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalNodes.Shapes))
+
+      nodes =
+        for [_id, func, op, _retries, nodes] <- facts[:global_op],
+            do: {func |> String.split(":") |> List.last(), op, nodes}
+
+      %{nodes: nodes}
+    end
+
+    test "a list of only the local node is local", %{nodes: nodes} do
+      assert {"local/1", "set_lock", "local"} in nodes
+      assert {"local_self/1", "set_lock", "local"} in nodes
+      assert {"this/1", "set_lock", "local"} in nodes
+      assert {"trans_local/2", "trans", "local"} in nodes
+    end
+
+    test "a list holding the connected nodes is cluster", %{nodes: nodes} do
+      assert {"cluster/1", "set_lock", "cluster"} in nodes
+      assert {"nodes_only/1", "set_lock", "cluster"} in nodes
+      assert {"erl_nodes/1", "set_lock", "cluster"} in nodes
+      assert {"appended/1", "set_lock", "cluster"} in nodes
+      assert {"trans_cluster/2", "trans", "cluster"} in nodes
+    end
+
+    test "a list held in a variable is read where it was built", %{nodes: nodes} do
+      assert {"held/1", "set_lock", "cluster"} in nodes
+      assert {"held/1", "del_lock", "cluster"} in nodes
+    end
+
+    test "an omitted list means every known node", %{nodes: nodes} do
+      assert {"default/1", "set_lock", "cluster"} in nodes
+      assert {"trans_default/2", "trans", "cluster"} in nodes
+    end
+
+    test "a list the bytecode does not show is unknown", %{nodes: nodes} do
+      assert {"arg/2", "set_lock", "unknown"} in nodes
+      assert {"cons_arg/2", "set_lock", "unknown"} in nodes
+      assert {"named/1", "set_lock", "unknown"} in nodes
+    end
+
+    test "a lookup and a send carry no node list" do
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.GlobalLockModule))
+
+      assert [[_id, _func, "whereis_name", "0", ""]] =
+               Enum.filter(facts[:global_op], &(Enum.at(&1, 2) == "whereis_name"))
     end
   end
 

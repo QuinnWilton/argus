@@ -447,7 +447,7 @@ blocks_on_peer(init, "init", "", "global", "", "", lock, op) :-
 
 init_lock_step(init, lock, call) :-
   blocks_on_peer(init, "init", "", "global", "", "", lock, _),
-  !global_op(lock, init, _, _),
+  !global_op(lock, init, _, _, _),
   call_instr(init, g, call),
   !runs_elsewhere(init, g),
   lock_reach.reaches(g, lock).
@@ -460,7 +460,7 @@ init_lock_path(init, lock, call) :- init_lock_step(init, lock, call).
 
 init_lock_path(init, lock, "") :-
   blocks_on_peer(init, "init", "", "global", "", "", lock, _),
-  global_op(lock, holder, _, _),
+  global_op(lock, holder, _, _, _),
   holder != init,
   !lock_in_init_closure(init, lock),
   !init_lock_stepped(init, lock).
@@ -471,7 +471,7 @@ init_lock_path(init, lock, "") :-
 
 lock_in_init_closure(init, lock) :-
   blocks_on_peer(init, "init", "", "global", "", "", lock, _),
-  global_op(lock, holder, _, _),
+  global_op(lock, holder, _, _, _),
   function_def(init, m, n, a, _),
   contains(cat(m, ":-", n, "/", to_string(a), "-fun-"), holder).
 

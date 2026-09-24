@@ -38,7 +38,7 @@ defmodule Argus.Extractors.ApiCalls do
   import Argus.Extractor.Facts, only: [add_fact: 3, track_dynamic: 5, track_imprecision: 4]
 
   import Argus.Extractor.Resolve,
-    only: [module_target: 3, resolve_atom: 3, resolve_register: 3, timeout_ms: 3]
+    only: [module_target: 3, node_list: 3, resolve_atom: 3, resolve_register: 3, timeout_ms: 3]
 
   # ── The table ──────────────────────────────────────────────────────────
 
@@ -228,18 +228,30 @@ defmodule Argus.Extractors.ApiCalls do
             [:id, :func, {:const, "erpc_multicall"}, {:timeout, 4, :rpc_timeout}]},
            {{:global, :register_name, [2, 3]}, :global_register,
             [:id, :func, {:atom, 0, :global_register_name}, :arity]},
+           # A lock call that leaves out its node list takes the lock on
+           # every known node — `[node() | nodes()]` — so the omitted
+           # argument is "cluster".
+           {{:global, :set_lock, 1}, :global_op,
+            [:id, :func, {:const, "set_lock"}, {:const, "infinity"}, {:const, "cluster"}]},
            {{:global, :set_lock, 2}, :global_op,
-            [:id, :func, {:const, "set_lock"}, {:const, "infinity"}]},
+            [:id, :func, {:const, "set_lock"}, {:const, "infinity"}, {:nodes, 1}]},
            {{:global, :set_lock, 3}, :global_op,
-            [:id, :func, {:const, "set_lock"}, {:retries, 2}]},
-           {{:global, :del_lock, [1, 2]}, :global_op,
-            [:id, :func, {:const, "del_lock"}, {:const, "0"}]},
-           {{:global, :trans, [2, 3]}, :global_op,
-            [:id, :func, {:const, "trans"}, {:const, "infinity"}]},
-           {{:global, :trans, 4}, :global_op, [:id, :func, {:const, "trans"}, {:retries, 3}]},
+            [:id, :func, {:const, "set_lock"}, {:retries, 2}, {:nodes, 1}]},
+           {{:global, :del_lock, 1}, :global_op,
+            [:id, :func, {:const, "del_lock"}, {:const, "0"}, {:const, "cluster"}]},
+           {{:global, :del_lock, 2}, :global_op,
+            [:id, :func, {:const, "del_lock"}, {:const, "0"}, {:nodes, 1}]},
+           {{:global, :trans, 2}, :global_op,
+            [:id, :func, {:const, "trans"}, {:const, "infinity"}, {:const, "cluster"}]},
+           {{:global, :trans, 3}, :global_op,
+            [:id, :func, {:const, "trans"}, {:const, "infinity"}, {:nodes, 2}]},
+           {{:global, :trans, 4}, :global_op,
+            [:id, :func, {:const, "trans"}, {:retries, 3}, {:nodes, 2}]},
+           # A name lookup and a send take no node list.
            {{:global, :whereis_name, 1}, :global_op,
-            [:id, :func, {:const, "whereis_name"}, {:const, "0"}]},
-           {{:global, :send, 2}, :global_op, [:id, :func, {:const, "send"}, {:const, "0"}]}
+            [:id, :func, {:const, "whereis_name"}, {:const, "0"}, {:const, ""}]},
+           {{:global, :send, 2}, :global_op,
+            [:id, :func, {:const, "send"}, {:const, "0"}, {:const, ""}]}
          ])
          |> Kernel.++(for mfa <- @node_ops, do: {mfa, :node_operation, [:id, :func, :fun]})
          |> Kernel.++(
@@ -426,6 +438,13 @@ defmodule Argus.Extractors.ApiCalls do
       end
 
     {value, track_dynamic(facts, value, ctx, :global_op_retries, rel)}
+  end
+
+  defp read({:nodes, n}, ctx, _mfa, facts, rel) do
+    case node_list(ctx.instrs, ctx.idx, {:x, n}) do
+      "unknown" -> {"unknown", track_imprecision(facts, ctx, :global_op_nodes, rel)}
+      nodes -> {nodes, facts}
+    end
   end
 
   defp read({:deserialization_safety, n}, ctx, _mfa, facts, rel) do

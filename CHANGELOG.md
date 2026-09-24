@@ -127,6 +127,20 @@ its moduledoc says which submodule holds what.
 
 ### Fact schema and extraction
 
+**Changed.** Schema 70. `global_op` gains `nodes`, the shape of the
+call's node list: `"local"` for a list of only the local node
+(`[node()]`, `[Node.self()]`, `Node.list(:this)`), `"cluster"` for one
+holding the connected nodes (`:erlang.nodes/0,1` or `Node.list/0,1`,
+alone, consed onto or appended with `++`) and for a call that omits the
+list (`set_lock/1`, `del_lock/1`, `trans/2`), `"unknown"` for anything
+else, and empty for `whereis_name` and `send`, which take none. New
+`Argus.Extractor.Resolve.node_list/3` reads it: a `Resolve.trace/5`
+walk over the list's cells, where the `node/0` BIF (or `Node.self/0`)
+is the local node, a call to `nodes/0,1` is the connected nodes, and
+paths that disagree are unknown. An unknown list records a
+`global_op_nodes` imprecision. `:global.set_lock/1`, not extracted
+before, is now.
+
 **Fixed.** `Argus.Symbols.ETS.intern/2` wrote an id into `forward`
 before writing its `reverse` row, so another process could find the id
 and have `resolve/2` raise `ArgumentError` on it in the window between

@@ -37,7 +37,7 @@ is_terminate(f, m) :- terminate_callback(f, m, _).
 .decl cluster_lock(site: symbol, func: symbol, op: symbol, retries: symbol) inline
 
 cluster_lock(site, f, op, retries) :-
-  global_op(site, f, op, retries),
+  global_op(site, f, op, retries, _),
   retries != "0",
   retries != "dynamic".
 

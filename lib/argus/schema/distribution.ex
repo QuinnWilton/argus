@@ -56,7 +56,9 @@ defmodule Argus.Schema.Distribution do
           {:id, :symbol, "instruction ID"},
           {:func, :symbol, "containing function ID"},
           {:op, :symbol, "operation: set_lock | trans | del_lock | whereis_name | send"},
-          {:retries, :symbol, "retry count: \"infinity\" | \"0\" | integer | \"dynamic\""}
+          {:retries, :symbol, "retry count: \"infinity\" | \"0\" | integer | \"dynamic\""},
+          {:nodes, :symbol,
+           "the nodes that take part: \"local\" | \"cluster\" | \"unknown\", empty for whereis_name and send"}
         ],
         doc: """
         `:global` synchronization primitives. The retries field is the third \
@@ -64,9 +66,16 @@ defmodule Argus.Schema.Distribution do
         it to distinguish blocking calls (`infinity` or large positive \
         integers) from non-blocking try-once calls (`0`).
 
-        `:global.set_lock/2` and `:global.trans/2,3` default to infinity \
+        `:global.set_lock/1,2` and `:global.trans/2,3` default to infinity \
         retries — recorded as `"infinity"` even when the source code omits \
         the argument.
+
+        The nodes field is the node list's shape, which says whose \
+        agreement the lock waits on: `"local"` for `[node()]` (only this \
+        node's global server), `"cluster"` for a list holding the connected \
+        nodes (`[node() | Node.list()]`, `Node.list()`) or an omitted list, \
+        which means every known node, and `"unknown"` for a list the \
+        bytecode does not show (`Argus.Extractor.Resolve.node_list/3`).
         """
       },
       %{

@@ -3,7 +3,7 @@ defmodule Argus.Extractor.Resolve do
   What a register holds at an instruction, read backwards through the
   writes that reach it (`Argus.Instr.Reaching`): the value itself
   (`resolve_register/3` and the verdicts built on it — `resolve_atom/3`,
-  `value_at/3`, `module_target/3`, `timeout_ms/3`), whether it is still a
+  `value_at/3`, `module_target/3`, `timeout_ms/3`, `node_list/3`), whether it is still a
   parameter (`arg_position/3`), the map key or call it came from
   (`map_field_of/3`, `call_result_origin/3`), the fun or list it is
   (`fun_origin/3`, `list_length/3`), and `trace/5` for a question none of
@@ -988,6 +988,94 @@ defmodule Argus.Extractor.Resolve do
         "dynamic"
     end
   end
+
+  @doc """
+  Which nodes a `:global` node-list argument names, as `global_op`
+  spells it: `"local"` for a list of only the local node (`[node()]`,
+  `[Node.self()]`), `"cluster"` for one that holds the connected nodes
+  (`Node.list/0,1` or `:erlang.nodes/0,1`, alone, consed onto, or
+  appended with `++`), and `"unknown"` for anything else: a parameter, a
+  call's result, a literal list of node names, or paths that disagree.
+
+  The walk reads the list's cells: a cell's head must be the local node
+  for the list to stay local, and a tail holding the connected nodes
+  makes the list cluster-wide whatever else it holds. `nodes(:this)`
+  is the local node alone.
+  """
+  @spec node_list([tuple()], non_neg_integer(), register()) :: String.t()
+  def node_list(instrs, idx, register) do
+    answer = fn writer, follow -> nodes_written(instrs, writer, follow) end
+
+    case trace(instrs, idx, register, :unknown, answer) do
+      :local -> "local"
+      :cluster -> "cluster"
+      _ -> "unknown"
+    end
+  end
+
+  # What a writer put in the register, as a node set: `:self` (the local
+  # node's name), `:empty` (`[]`), `:local` (a list of only the local
+  # node), `:cluster` (a list holding the connected nodes) or `:unknown`.
+  defp nodes_written(_instrs, {:param, _k}, _follow), do: :unknown
+
+  defp nodes_written(_instrs, {_at, {:bif, :node, _fail, [], _dst}}, _follow), do: :self
+
+  defp nodes_written(_instrs, {at, {:put_list, head, tail, _dst}}, follow),
+    do: cons(node_operand(at, head, follow), node_operand(at, tail, follow))
+
+  # A literal copied in (a register copy is followed before this).
+  defp nodes_written(_instrs, {at, {:move, src, _dst}}, follow),
+    do: node_operand(at, src, follow)
+
+  defp nodes_written(instrs, {at, instr}, follow) do
+    case call_target_mfa(instr) do
+      {:ok, {:erlang, :node, 0}} ->
+        :self
+
+      {:ok, {Node, :self, 0}} ->
+        :self
+
+      {:ok, {m, f, 0}} when {m, f} in [{:erlang, :nodes}, {Node, :list}] ->
+        :cluster
+
+      {:ok, {m, f, 1}} when {m, f} in [{:erlang, :nodes}, {Node, :list}] ->
+        nodes_of(instrs, at)
+
+      {:ok, {m, f, 2}} when {m, f} in [{:erlang, :++}, {:lists, :append}] ->
+        append(follow.(at, {:x, 0}), follow.(at, {:x, 1}))
+
+      _ ->
+        :unknown
+    end
+  end
+
+  # nodes(:this) and nodes([:this]) are the local node; every other
+  # argument names connected nodes, or may.
+  defp nodes_of(instrs, at) do
+    case value(instrs, at, {:x, 0}) do
+      {:ok, :this} -> :local
+      {:ok, [:this]} -> :local
+      _ -> :cluster
+    end
+  end
+
+  defp node_operand(at, operand, follow) do
+    case Instr.register(operand) do
+      nil -> :empty
+      {:literal, []} -> :empty
+      {kind, _} = reg when kind in [:x, :y] -> follow.(at, reg)
+      _ -> :unknown
+    end
+  end
+
+  defp cons(_head, :cluster), do: :cluster
+  defp cons(:self, tail) when tail in [:empty, :local], do: :local
+  defp cons(_head, _tail), do: :unknown
+
+  defp append(a, b) when a == :cluster or b == :cluster, do: :cluster
+  defp append(:empty, :empty), do: :empty
+  defp append(a, b) when a in [:empty, :local] and b in [:empty, :local], do: :local
+  defp append(_a, _b), do: :unknown
 
   @doc """
   A timeout argument as the schema spells it: the milliseconds, `"-1"`

@@ -512,7 +512,7 @@ no_timeout(call) :- rpc_call(call, _, _, "-1").
 // startup's finding (blocks_on_peer). Reported there, once.
 .init init_global_reach = SameProcessReach
 
-init_global_reach.seed(g, site) :- global_op(site, g, _, _).
+init_global_reach.seed(g, site) :- global_op(site, g, _, _, _).
 
 .decl during_init(site: symbol)
 
