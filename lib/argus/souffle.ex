@@ -8,6 +8,8 @@ defmodule Argus.Souffle do
 
   """
 
+  alias Argus.Souffle.Cache
+
   @type result :: %{String.t() => [[String.t()]]}
 
   # 5 minutes default timeout for Souffle execution.
@@ -22,6 +24,11 @@ defmodule Argus.Souffle do
   - `:souffle_bin` — path to the souffle binary (default: auto-detect on PATH)
   - `:souffle_timeout` — milliseconds before the run is aborted (default: 5 min)
   - `:output_dir` — where Souffle should write `.csv` outputs (default: tmpdir)
+  - `:solve_cache` — a directory of kept solves for the content of
+    `facts_dir`, or `{dir, salt}` (`Argus.Souffle.Cache`): a solve whose
+    program and solver have not moved is read back from it rather than
+    run. The caller keeps one directory per content of the facts; nothing
+    in `facts_dir` is read to key it. Off by default.
   """
   @spec run(Path.t(), Path.t(), keyword()) :: {:ok, result()} | {:error, term()}
   def run(facts_dir, rules_path, opts \\ []) do
@@ -34,20 +41,77 @@ defmodule Argus.Souffle do
       bin ->
         timeout = Keyword.get(opts, :souffle_timeout, @default_souffle_timeout)
 
-        case resolve_output_dir(opts) do
-          {:ok, output_dir} ->
-            try do
-              run_souffle(bin, facts_dir, rules_path, output_dir, timeout)
-            after
-              # A directory chosen by the caller is theirs to keep (stage 0
-              # writes its outputs into the facts directory this way); one
-              # this module made is gone once the CSVs are read.
-              unless Keyword.has_key?(opts, :output_dir), do: File.rm_rf(output_dir)
-            end
-
-          {:error, _} = error ->
-            error
+        case Cache.entry(rules_path, bin, opts) do
+          nil -> run_uncached(bin, facts_dir, rules_path, timeout, opts)
+          entry -> run_cached(entry, bin, facts_dir, rules_path, timeout, opts)
         end
+    end
+  end
+
+  defp run_uncached(bin, facts_dir, rules_path, timeout, opts) do
+    case resolve_output_dir(opts) do
+      {:ok, output_dir} ->
+        try do
+          run_souffle(bin, facts_dir, rules_path, output_dir, timeout)
+        after
+          # A directory chosen by the caller is theirs to keep (stage 0
+          # writes its outputs into the facts directory this way); one
+          # this module made is gone once the CSVs are read.
+          unless Keyword.has_key?(opts, :output_dir), do: File.rm_rf(output_dir)
+        end
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  # A kept solve is read from its entry; a missing one is solved into a
+  # staging directory and installed. Either way a caller's `:output_dir`
+  # receives a copy of the outputs, as if the solver had written them.
+  # A cache that cannot be written to is solved around, not failed on.
+  defp run_cached(entry, bin, facts_dir, rules_path, timeout, opts) do
+    case Cache.fetch(entry) do
+      {:ok, entry} ->
+        with :ok <- place(entry, opts), do: parse_output(entry)
+
+      :miss ->
+        case Cache.staging(entry) do
+          {:ok, staging} ->
+            solve_and_keep(entry, staging, bin, facts_dir, rules_path, timeout, opts)
+
+          {:error, _} ->
+            run_uncached(bin, facts_dir, rules_path, timeout, opts)
+        end
+    end
+  end
+
+  defp solve_and_keep(entry, staging, bin, facts_dir, rules_path, timeout, opts) do
+    case run_souffle(bin, facts_dir, rules_path, staging, timeout) do
+      {:ok, result} ->
+        # Not kept (the rename failed): the outputs are read from the
+        # staging directory, which goes with this call.
+        from =
+          case Cache.install(staging, entry) do
+            :ok -> entry
+            {:error, _} -> staging
+          end
+
+        try do
+          with :ok <- place(from, opts), do: {:ok, result}
+        after
+          if from == staging, do: File.rm_rf(staging)
+        end
+
+      {:error, _} = error ->
+        File.rm_rf(staging)
+        error
+    end
+  end
+
+  defp place(entry, opts) do
+    case Keyword.fetch(opts, :output_dir) do
+      {:ok, output_dir} -> Cache.place(entry, output_dir)
+      :error -> :ok
     end
   end
 
@@ -84,8 +148,9 @@ defmodule Argus.Souffle do
   For a program shipped under argus's `priv/dl`, the answer is memoized
   for the life of the VM: it depends on nothing but the Datalog sources
   and the solver, so the memo is versioned by a digest of every file
-  under `priv/dl` and the solver binary's identity, and an edited rule
-  or a swapped solver misses. A program anywhere else is resolved on
+  under `priv/dl` (recomputed when one of them is modified) and the
+  solver binary's identity, and an edited rule or a swapped solver
+  misses. A program anywhere else is resolved on
   every call.
   """
   @spec input_relations(Path.t(), keyword()) :: {:ok, [String.t()]} | {:error, term()}
@@ -119,9 +184,8 @@ defmodule Argus.Souffle do
     with dir when is_list(dir) <- :code.priv_dir(:panoptes),
          dl_dir = Path.join(List.to_string(dir), "dl"),
          path = Path.expand(rules_path),
-         true <- String.starts_with?(path, dl_dir <> "/"),
-         {:ok, %File.Stat{mtime: mtime, size: size}} <- File.stat(bin) do
-      {{__MODULE__, :input_relations, path}, {directory_digest(dl_dir), bin, mtime, size}}
+         true <- String.starts_with?(path, dl_dir <> "/") do
+      {{__MODULE__, :input_relations, path}, {directory_digest(dl_dir), bin, Cache.version(bin)}}
     else
       _ -> nil
     end
@@ -146,19 +210,30 @@ defmodule Argus.Souffle do
     end
   end
 
-  # Every regular file under `dir`, by relative path and content.
+  # Every regular file under `dir`, by relative path and content; read
+  # again only when one of them moved (`Argus.Souffle.Cache.stamped/2`).
+  # A file added beside them changes no program until one that is there
+  # includes it, which moves that one.
   defp directory_digest(dir) do
-    dir
-    |> Path.join("**")
-    |> Path.wildcard()
-    |> Enum.filter(&File.regular?/1)
-    |> Enum.sort()
-    |> Enum.reduce(:crypto.hash_init(:sha256), fn file, hash ->
-      hash
-      |> :crypto.hash_update(Path.relative_to(file, dir))
-      |> :crypto.hash_update(File.read!(file))
+    Cache.stamped({__MODULE__, :directory_digest, dir}, fn ->
+      files =
+        dir
+        |> Path.join("**")
+        |> Path.wildcard()
+        |> Enum.filter(&File.regular?/1)
+        |> Enum.sort()
+
+      digest =
+        files
+        |> Enum.reduce(:crypto.hash_init(:sha256), fn file, hash ->
+          hash
+          |> :crypto.hash_update(Path.relative_to(file, dir))
+          |> :crypto.hash_update(File.read!(file))
+        end)
+        |> :crypto.hash_final()
+
+      {files, digest}
     end)
-    |> :crypto.hash_final()
   end
 
   # RAM IO directives look like:
@@ -174,12 +249,26 @@ defmodule Argus.Souffle do
     |> Enum.sort()
   end
 
-  defp find_souffle do
-    case System.find_executable("souffle") do
-      nil -> nil
-      path -> path
+  @doc """
+  The `souffle` on `PATH`, or nil. Looked up once per VM for each value
+  of `PATH`: a lookup stats every directory on it, and every solve asks.
+  """
+  @spec executable() :: String.t() | nil
+  def executable do
+    key = {__MODULE__, :executable, System.get_env("PATH")}
+
+    case :persistent_term.get(key, :unknown) do
+      :unknown ->
+        found = System.find_executable("souffle")
+        :persistent_term.put(key, found)
+        found
+
+      found ->
+        found
     end
   end
+
+  defp find_souffle, do: executable()
 
   defp resolve_output_dir(opts) do
     case Keyword.fetch(opts, :output_dir) do

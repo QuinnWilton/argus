@@ -341,6 +341,23 @@ it won, and a guard on the record's contents (ztlp's serial check),
 stay reported, as does anything on a table the program writes back or
 counts in.
 
+### Solves kept across corpus runs
+
+**Added.** `Argus.Souffle.run/3` takes `solve_cache:`, a directory of
+kept solves for the content of the facts directory it reads
+(`Argus.Souffle.Cache`). A solve whose program (with its transitive
+includes) and solver have not moved since it was kept is read back
+rather than run. The caller keeps one directory per content of the
+facts, and nothing in the facts is read to key it. Off by default: a
+run without it solves as before.
+
+**Changed.** `Argus.Souffle.input_relations/2`'s memo no longer reads
+and hashes every file under `priv/dl` on each call: the digest is kept
+while the files are unchanged, looked at again at most once a second.
+`Argus.Souffle.executable/0` looks `souffle` up once per value of
+`PATH`. On a busy disk the reads were most of a warm corpus run's
+system time.
+
 ### Priors asked side by side
 
 **Fixed.** `Argus.Priors.Jev` sends its requests over an httpc profile
