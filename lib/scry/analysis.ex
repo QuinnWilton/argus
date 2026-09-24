@@ -103,8 +103,10 @@ defmodule Scry.Analysis do
   @facts_format_version 2
 
   # The call graph stage 0 derives, which an analysis's projection takes
-  # from `stage0_facts` instead of from extraction.
-  @stage0_outputs [:call_edge, :call_site, :call_tag, :unconditional_call_edge]
+  # from `stage0_facts` instead of from extraction. Named by argus, as the
+  # points-to outputs are: a relation stage 0 gains is read from its
+  # output, never looked for in extraction's rows.
+  @stage0_outputs Enum.map(Argus.Analysis.stage0_relations(), &String.to_atom/1)
 
   # What the points-to stage derives (which process a pid can be), which
   # a projection takes from `points_to_facts`. Named by argus, which
