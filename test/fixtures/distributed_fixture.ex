@@ -250,8 +250,16 @@ defmodule Argus.Test.Fixtures.RpcQuickTargets do
   def loaded?(node), do: :rpc.call(node, :code, :is_loaded, [__MODULE__])
   def alive_everywhere(nodes, pid), do: :erpc.multicall(nodes, Process, :alive?, [pid])
 
-  # The same call to a function that can wait: flagged.
+  # Livebook's ZTA.LivebookTeams shape: an ETS write on a key, an exit
+  # signal. Neither waits on another process.
+  def forget(node, table, key), do: :erpc.call(node, :ets, :delete, [table, key])
+  def bump(node, table, key), do: :rpc.call(node, :ets, :update_counter, [table, key, 1])
+  def stop(node, pid), do: :erpc.call(node, :erlang, :exit, [pid, :kill])
+
+  # The same call to a function that can wait: flagged. So is a match
+  # spec over a table, which can run long on a large one.
   def lookup(node, key), do: :rpc.call(node, :peer_directory, :lookup, [key])
+  def scan(node, table), do: :rpc.call(node, :ets, :select, [table, [{:_, [], [:"$_"]}]])
 end
 
 defmodule Argus.Test.Fixtures.RpcCollectors do

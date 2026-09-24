@@ -183,7 +183,10 @@ defmodule Argus.Analyses.BlockingRpcTest do
       results = analyze(ctx, [Argus.Test.Fixtures.RpcQuickTargets])
       funcs = Enum.map(waits(results, "rpc"), fn [func, _site, _variant] -> func end)
 
-      assert funcs == ["Argus.Test.Fixtures.RpcQuickTargets:lookup/2"]
+      assert Enum.sort(funcs) == [
+               "Argus.Test.Fixtures.RpcQuickTargets:lookup/2",
+               "Argus.Test.Fixtures.RpcQuickTargets:scan/2"
+             ]
     end
   end
 

@@ -666,60 +666,89 @@ rpc_infinity_caller(func, call, caller) :-
   infinity_arg(caller, func, p).
 
 // A remote function that answers without waiting on anything: a BIF,
-// an ETS or persistent_term read, a clock. On a connected peer it
-// returns; a peer that goes away is noticed within net_ticktime. What
-// the call can wait on forever is the callee, and this one does not
-// wait. `rpc.call(n, Process, :alive?, [pid])` needs no deadline.
-// Vetted one by one: an `:ets` read and `:code.is_loaded` (an ETS read
-// since OTP 26) take no lock; `:ets.select` and friends are left out,
-// they can run long on a large table. A target left off the list is
-// still reported, the direction that stays loud about a real wait.
+// an ETS or persistent_term read or write, a clock, a signal. On a
+// connected peer it returns; a peer that goes away is noticed within
+// net_ticktime. What the call can wait on forever is the callee, and
+// this one does not wait. `rpc.call(n, Process, :alive?, [pid])` needs
+// no deadline. Vetted one by one: an `:ets` operation on a key (a
+// lookup, an insert, a delete, a counter, a step to the next key) and
+// `:code.is_loaded` (an ETS read since OTP 26) take no lock another
+// process holds; `:ets.delete/1` frees a whole table and tab2list copies
+// one, in time proportional to the table and waiting on no process.
+// `:ets.select`, `match` and the folds are left out: a match spec over a
+// large table can run long. An exit signal or a send is queued and
+// returns. A target left off the list is still reported, the direction
+// that stays loud about a real wait.
 .decl answers_at_once(call: symbol)
 
-answers_at_once(call) :- rpc_target(call, target), quick_remote(target).
+answers_at_once(call) :-
+  rpc_target(call, target),
+  quick_api(mod, fun),
+  target = cat(mod, cat(".", fun)).
 
-.decl quick_remote(target: symbol)
+.decl quick_api(mod: symbol, fun: symbol)
 
-quick_remote("Process.alive?").
-quick_remote("Process.whereis").
-quick_remote("Process.info").
-quick_remote("Process.list").
-quick_remote("Process.registered").
-quick_remote(":erlang.is_process_alive").
-quick_remote(":erlang.whereis").
-quick_remote(":erlang.process_info").
-quick_remote(":erlang.processes").
-quick_remote(":erlang.registered").
-quick_remote(":erlang.system_info").
-quick_remote(":erlang.memory").
-quick_remote(":erlang.statistics").
-quick_remote(":erlang.node").
-quick_remote(":erlang.nodes").
-quick_remote(":erlang.system_time").
-quick_remote(":erlang.monotonic_time").
-quick_remote("Node.self").
-quick_remote("Node.list").
-quick_remote("Node.alive?").
-quick_remote("System.system_time").
-quick_remote("System.monotonic_time").
-quick_remote("System.os_time").
-quick_remote("System.version").
-quick_remote("System.otp_release").
-quick_remote(":os.timestamp").
-quick_remote(":os.system_time").
-quick_remote(":os.getpid").
-quick_remote(":ets.lookup").
-quick_remote(":ets.lookup_element").
-quick_remote(":ets.member").
-quick_remote(":ets.info").
-quick_remote(":ets.tab2list").
-quick_remote(":ets.whereis").
-quick_remote(":persistent_term.get").
-quick_remote(":code.is_loaded").
-quick_remote("Application.get_env").
-quick_remote("Application.fetch_env").
-quick_remote("Application.fetch_env!").
-quick_remote(":application.get_env").
+quick_api("Process", "alive?").
+quick_api("Process", "whereis").
+quick_api("Process", "info").
+quick_api("Process", "list").
+quick_api("Process", "registered").
+quick_api(":erlang", "is_process_alive").
+quick_api(":erlang", "whereis").
+quick_api(":erlang", "process_info").
+quick_api(":erlang", "processes").
+quick_api(":erlang", "registered").
+quick_api(":erlang", "system_info").
+quick_api(":erlang", "memory").
+quick_api(":erlang", "statistics").
+quick_api(":erlang", "node").
+quick_api(":erlang", "nodes").
+quick_api(":erlang", "system_time").
+quick_api(":erlang", "monotonic_time").
+quick_api(":erlang", "exit").
+quick_api("Process", "exit").
+quick_api(":erlang", "send").
+quick_api("Process", "send").
+quick_api(":erlang", "function_exported").
+quick_api(":erlang", "module_loaded").
+quick_api("Node", "self").
+quick_api("Node", "list").
+quick_api("Node", "alive?").
+quick_api("System", "system_time").
+quick_api("System", "monotonic_time").
+quick_api("System", "os_time").
+quick_api("System", "version").
+quick_api("System", "otp_release").
+quick_api(":os", "timestamp").
+quick_api(":os", "system_time").
+quick_api(":os", "getpid").
+quick_api(":ets", "lookup").
+quick_api(":ets", "lookup_element").
+quick_api(":ets", "member").
+quick_api(":ets", "info").
+quick_api(":ets", "tab2list").
+quick_api(":ets", "whereis").
+quick_api(":ets", "insert").
+quick_api(":ets", "insert_new").
+quick_api(":ets", "delete").
+quick_api(":ets", "delete_object").
+quick_api(":ets", "update_counter").
+quick_api(":ets", "update_element").
+quick_api(":ets", "take").
+quick_api(":ets", "first").
+quick_api(":ets", "last").
+quick_api(":ets", "next").
+quick_api(":ets", "prev").
+quick_api(":ets", "first_lookup").
+quick_api(":ets", "last_lookup").
+quick_api(":ets", "next_lookup").
+quick_api(":ets", "prev_lookup").
+quick_api(":persistent_term", "get").
+quick_api(":code", "is_loaded").
+quick_api("Application", "get_env").
+quick_api("Application", "fetch_env").
+quick_api("Application", "fetch_env!").
+quick_api(":application", "get_env").
 
 // A site init/1 runs — an rpc or a :global op, in init/1 or in anything
 // it calls on its own stack — holds the supervisor's start, and is

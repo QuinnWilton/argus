@@ -12,6 +12,18 @@ does: **Added**, **Changed**, **Fixed** or **Removed**.
 
 ### Waits that end on their own
 
+**Fixed.** "RPC without a bounded timeout" no longer fires on an ETS
+write or a step through a table (`insert`, `insert_new`, `delete`,
+`delete_object`, `update_counter`, `update_element`, `take`, `first`,
+`last`, `next`, `prev` and their `_lookup` forms), on an exit signal or
+a send (`:erlang.exit`, `Process.exit`, `:erlang.send`, `Process.send`),
+or on `:erlang.function_exported` and `module_loaded`: none waits on
+another process. `quick_remote(target)` is now `quick_api(mod, fun)`,
+spelled against `rpc_target`. `:ets.select`, `match` and the folds stay
+off the list. Livebook's `ZTA.LivebookTeams.validate_access_token/4`
+(`:ets.delete` of a token on the node that holds it) is no longer
+reported.
+
 **Added.** Schema 89. `rpc_arity(id, arity)` (`Argus.Extractors.ApiCalls`):
 how many arguments an rpc_call hands its remote function, when the
 argument list is known whole on every path (a literal, or cons cells of
