@@ -154,13 +154,13 @@ defmodule Argus.Pipeline do
 
     try do
       with :ok <- File.mkdir_p(output_dir),
-           :ok <- touch_relations(output_dir),
            {:ok, _info} <- run_shards(modules, dirs, opts),
            :ok <-
              dirs
              |> Enum.map(&elem(&1, 1))
              |> Shards.parts()
-             |> Shards.assemble(output_dir, :move) do
+             |> Shards.assemble(output_dir, :move),
+           :ok <- touch_relations(output_dir) do
         {:ok, output_dir}
       end
     after
@@ -783,30 +783,43 @@ defmodule Argus.Pipeline do
   """
   @spec write_facts(Emit.facts(), Path.t()) :: :ok | {:error, term()}
   def write_facts(facts, output_dir) do
-    with :ok <- touch_relations(output_dir) do
-      Enum.reduce_while(facts, :ok, fn {relation, rows}, :ok ->
-        path = Path.join(output_dir, "#{relation}.facts")
+    Enum.reduce_while(facts, :ok, fn {relation, rows}, :ok ->
+      path = Path.join(output_dir, "#{relation}.facts")
 
-        # An explicitly-empty relation produces a zero-byte file, not a
-        # lone newline: Souffle reads the blank line as a tuple with
-        # missing columns and aborts with "Values missing in line 1".
-        case File.write(path, Argus.Tsv.encode(Enum.reverse(rows))) do
-          :ok -> {:cont, :ok}
-          {:error, reason} -> {:halt, {:error, {:write_failed, path, reason}}}
-        end
-      end)
+      # An explicitly-empty relation produces a zero-byte file, not a
+      # lone newline: Souffle reads the blank line as a tuple with
+      # missing columns and aborts with "Values missing in line 1".
+      case File.write(path, Argus.Tsv.encode(Enum.reverse(rows))) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {:write_failed, path, reason}}}
+      end
+    end)
+    |> case do
+      :ok -> touch_relations(output_dir)
+      error -> error
     end
   end
 
   # Empty files for every schema relation, so Souffle never fails on a
-  # missing .input file. Existing files are left alone.
+  # missing .input file. Existing files are left alone: the directory is
+  # listed once, where asking after each file was most of a small
+  # extraction's time.
   defp touch_relations(output_dir) do
-    Enum.reduce_while(Argus.Schema.names(), :ok, fn name, :ok ->
-      path = Path.join(output_dir, "#{name}.facts")
+    case File.ls(output_dir) do
+      {:ok, names} -> touch_missing(output_dir, MapSet.new(names))
+      {:error, reason} -> {:error, {:write_failed, output_dir, reason}}
+    end
+  end
 
-      if File.exists?(path) do
+  defp touch_missing(output_dir, existing) do
+    Enum.reduce_while(Argus.Schema.names(), :ok, fn name, :ok ->
+      file = "#{name}.facts"
+
+      if MapSet.member?(existing, file) do
         {:cont, :ok}
       else
+        path = Path.join(output_dir, file)
+
         case File.write(path, "") do
           :ok -> {:cont, :ok}
           {:error, reason} -> {:halt, {:error, {:write_failed, path, reason}}}

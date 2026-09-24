@@ -143,6 +143,20 @@ defmodule Argus.PipelineTest do
     test "empty module list returns ok with output dir", %{tmp_dir: tmp_dir} do
       assert {:ok, ^tmp_dir} = Pipeline.run([], tmp_dir)
     end
+
+    test "every schema relation gets a file, and one already there is left alone",
+         %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "prior_sensitive.facts"), "kept\n")
+      assert {:ok, ^tmp_dir} = Pipeline.run([:lists], tmp_dir)
+
+      for name <- Argus.Schema.names() do
+        assert File.exists?(Path.join(tmp_dir, "#{name}.facts")),
+               "missing .facts file for #{name}"
+      end
+
+      assert File.read!(Path.join(tmp_dir, "prior_sensitive.facts")) == "kept\n"
+      assert File.read!(Path.join(tmp_dir, "function_def.facts")) =~ ":lists"
+    end
   end
 
   describe "extract/2 imprecision tracing" do
