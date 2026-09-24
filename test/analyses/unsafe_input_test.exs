@@ -3,16 +3,56 @@ defmodule Argus.Analyses.UnsafeInputTest do
 
   alias Argus.Analyses.UnsafeInput
   alias Argus.Souffle
+  alias Argus.Test.Batch
   alias Argus.Test.Fixtures.RequestSurface
   alias Argus.Test.Fixtures.Taint
   alias Argus.Test.Fixtures.UnboundedChildren, as: U
+
+  # Every test reads its fixtures' rows from one solve of them all
+  # (`Argus.Test.Batch`; ARGUS_VERIFY_BATCH=1 checks each slice against
+  # a solve of its own).
+  @batched [
+    U.Worker,
+    U.UncappedSup,
+    U.CappedSup,
+    U.PublicLive,
+    U.CappedLive,
+    U.Internal,
+    Argus.Test.Fixtures.UnsafeAtomCreation,
+    Argus.Test.Fixtures.UnsafeDeserialization,
+    Argus.Test.Fixtures.CodeExecution,
+    Argus.Test.Fixtures.SafeModule,
+    RequestSurface.DirectPlug,
+    RequestSurface.SafeCallback,
+    Taint.StoreSourcedPlug,
+    Taint.StoreSourcedAdjacent,
+    Taint.StoreSourcedWorker,
+    Taint.FlowLiveView,
+    Taint.FlowTransitive,
+    Taint.FlowClosureEnv,
+    Taint.SocketOnly,
+    Taint.SessionOnly,
+    Taint.LiteralAtom,
+    Taint.ExistingAtom,
+    Taint.HofElement
+  ]
+
+  setup_all do
+    %{batch: Batch.solve(:unsafe_input, [@batched])}
+  end
+
+  # A set that shares a module with another test's is about what the
+  # modules do together: it is solved on its own (`:alone`), and the
+  # batch holds only disjoint sets.
+  defp solve(:alone, modules), do: Argus.analyze(modules, :unsafe_input)
+  defp solve(%{batch: batch}, modules), do: Batch.analyze(batch, modules)
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
-  defp analyze(modules) do
-    assert {:ok, results} = Argus.analyze(modules, :unsafe_input)
+  defp analyze(source, modules) do
+    assert {:ok, results} = solve(source, modules)
     results
   end
 
@@ -20,9 +60,9 @@ defmodule Argus.Analyses.UnsafeInputTest do
     do: for([_id, func, api, ^sink | _] <- results["sink_without_request_path"], do: {func, api})
 
   describe "sinks no request reaches" do
-    test "flags dynamic atom creation reachable from an export, not to_existing_atom" do
+    test "flags dynamic atom creation reachable from an export, not to_existing_atom", ctx do
       skip_without_souffle()
-      rows = local(analyze([Argus.Test.Fixtures.UnsafeAtomCreation]), "atom")
+      rows = local(analyze(ctx, [Argus.Test.Fixtures.UnsafeAtomCreation]), "atom")
       funcs = Enum.map(rows, &elem(&1, 0))
       apis = Enum.map(rows, &elem(&1, 1))
       # String.to_atom/1 compiles down to the :erlang.binary_to_atom BIF.
@@ -32,9 +72,9 @@ defmodule Argus.Analyses.UnsafeInputTest do
       refute Enum.any?(apis, &String.contains?(&1, "existing"))
     end
 
-    test "[:safe] downgrades a deserialization but does not clear it" do
+    test "[:safe] downgrades a deserialization but does not clear it", ctx do
       skip_without_souffle()
-      rows = local(analyze([Argus.Test.Fixtures.UnsafeDeserialization]), "deserialization")
+      rows = local(analyze(ctx, [Argus.Test.Fixtures.UnsafeDeserialization]), "deserialization")
       funcs = Enum.map(rows, &elem(&1, 0))
       assert Enum.any?(funcs, &String.contains?(&1, "decode_unsafe"))
       # Paginator CVE-2020-15150 is remote code execution THROUGH `[:safe]`.
@@ -42,11 +82,11 @@ defmodule Argus.Analyses.UnsafeInputTest do
       refute Enum.any?(funcs, &String.contains?(&1, "decode_validated"))
     end
 
-    test "the deserialization finding says what the options were, and grades [:safe] down" do
+    test "the deserialization finding says what the options were, and grades [:safe] down", ctx do
       skip_without_souffle()
 
       by_func =
-        analyze([Argus.Test.Fixtures.UnsafeDeserialization])["sink_without_request_path"]
+        analyze(ctx, [Argus.Test.Fixtures.UnsafeDeserialization])["sink_without_request_path"]
         |> Enum.filter(&(Enum.at(&1, 3) == "deserialization"))
         |> Map.new(fn [_id, func, _api, _sink, safety] = row ->
           {func |> String.split(":") |> List.last(),
@@ -101,11 +141,13 @@ defmodule Argus.Analyses.UnsafeInputTest do
                unsafe.severity == :error
     end
 
-    test "flags eval and shell-out APIs, not a fully-literal System.cmd" do
+    test "flags eval and shell-out APIs, not a fully-literal System.cmd", ctx do
       skip_without_souffle()
 
       funcs =
-        analyze([Argus.Test.Fixtures.CodeExecution]) |> local("code") |> Enum.map(&elem(&1, 0))
+        analyze(ctx, [Argus.Test.Fixtures.CodeExecution])
+        |> local("code")
+        |> Enum.map(&elem(&1, 0))
 
       assert Enum.any?(funcs, &String.contains?(&1, "eval"))
       assert Enum.any?(funcs, &String.contains?(&1, "os_cmd"))
@@ -113,16 +155,16 @@ defmodule Argus.Analyses.UnsafeInputTest do
       refute Enum.any?(funcs, &String.contains?(&1, "static_system_cmd"))
     end
 
-    test "a module using only safe APIs produces no findings" do
+    test "a module using only safe APIs produces no findings", ctx do
       skip_without_souffle()
-      results = analyze([Argus.Test.Fixtures.SafeModule])
+      results = analyze(ctx, [Argus.Test.Fixtures.SafeModule])
       assert results["sink_without_request_path"] == []
       assert results["sink_reachable"] == []
     end
   end
 
-  defp atom_rows(modules) do
-    for [id, func, api, "atom", entry, kind, prox | _] <- analyze(modules)["sink_reachable"],
+  defp atom_rows(ctx, modules) do
+    for [id, func, api, "atom", entry, kind, prox | _] <- analyze(ctx, modules)["sink_reachable"],
         do: [id, func, api, entry, kind, prox]
   end
 
@@ -136,7 +178,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
   describe "request surfaces" do
     test "a behaviour callback is an entry point; a bare exported function is not" do
       skip_without_souffle()
-      results = analyze([RequestSurface.DirectPlug, RequestSurface.NotAnEntryPoint])
+      results = analyze(:alone, [RequestSurface.DirectPlug, RequestSurface.NotAnEntryPoint])
 
       rows =
         for [id, func, api, "atom", entry, kind, prox | _] <- results["sink_reachable"],
@@ -161,7 +203,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
       skip_without_souffle()
 
       rows =
-        atom_rows([
+        atom_rows(:alone, [
           RequestSurface.DirectPlug,
           RequestSurface.AdjacentLiveView,
           RequestSurface.TransitiveWorker
@@ -172,108 +214,112 @@ defmodule Argus.Analyses.UnsafeInputTest do
       assert proximity_for(rows, "level_two") == ["flow"]
     end
 
-    test "a sink reachable from a request is not also reported as export-reachable" do
+    test "a sink reachable from a request is not also reported as export-reachable", ctx do
       skip_without_souffle()
-      results = analyze([RequestSurface.DirectPlug])
+      results = analyze(ctx, [RequestSurface.DirectPlug])
       assert results["sink_reachable"] != []
       assert results["sink_without_request_path"] == []
     end
 
-    test "a safe conversion in a callback is not flagged" do
+    test "a safe conversion in a callback is not flagged", ctx do
       skip_without_souffle()
-      assert proximity_for(atom_rows([RequestSurface.SafeCallback]), "SafeCallback") == []
+      assert proximity_for(atom_rows(ctx, [RequestSurface.SafeCallback]), "SafeCallback") == []
     end
 
-    test "a sink inside the callback is direct" do
+    test "a sink inside the callback is direct", ctx do
       skip_without_souffle()
-      rows = atom_rows([Taint.StoreSourcedPlug])
+      rows = atom_rows(ctx, [Taint.StoreSourcedPlug])
       assert proximity_for(rows, "StoreSourcedPlug") == ["direct"]
       assert [[_id, _func, api, entry, "plug", "direct"]] = rows
       assert String.contains?(api, "binary_to_atom")
       assert String.contains?(entry, "call/2")
     end
 
-    test "a sink one call away is adjacent" do
+    test "a sink one call away is adjacent", ctx do
       skip_without_souffle()
-      rows = atom_rows([Taint.StoreSourcedAdjacent])
+      rows = atom_rows(ctx, [Taint.StoreSourcedAdjacent])
       assert proximity_for(rows, "convert") == ["adjacent"]
       assert Enum.all?(rows, fn [_, _, _, _, kind, _] -> kind == "live_view" end)
     end
 
-    test "a sink further down the call graph is transitive" do
+    test "a sink further down the call graph is transitive", ctx do
       skip_without_souffle()
-      rows = atom_rows([Taint.StoreSourcedWorker])
+      rows = atom_rows(ctx, [Taint.StoreSourcedWorker])
       assert proximity_for(rows, "level_two") == ["transitive"]
       assert Enum.all?(rows, fn [_, _, _, _, kind, _] -> kind == "oban_job" end)
     end
 
     test "direct and adjacent are distinguished within one run" do
       skip_without_souffle()
-      rows = atom_rows([Taint.StoreSourcedPlug, Taint.StoreSourcedAdjacent])
+      rows = atom_rows(:alone, [Taint.StoreSourcedPlug, Taint.StoreSourcedAdjacent])
       assert proximity_for(rows, "StoreSourcedPlug") == ["direct"]
       assert proximity_for(rows, "convert") == ["adjacent"]
     end
   end
 
   describe "proven flow" do
-    test "a head pattern and a helper called from a second clause both carry the params" do
+    test "a head pattern and a helper called from a second clause both carry the params", ctx do
       skip_without_souffle()
-      rows = atom_rows([Taint.FlowLiveView])
+      rows = atom_rows(ctx, [Taint.FlowLiveView])
       assert proximity_for(rows, "handle_event") == ["flow"]
       assert proximity_for(rows, "order_by") == ["flow"]
       assert Enum.all?(rows, fn [_, _, _, entry, "live_view", _] -> entry =~ "handle_event" end)
     end
 
-    test "the job's args reach a sink two calls down" do
+    test "the job's args reach a sink two calls down", ctx do
       skip_without_souffle()
-      assert proximity_for(atom_rows([Taint.FlowTransitive]), "level_two") == ["flow"]
+      assert proximity_for(atom_rows(ctx, [Taint.FlowTransitive]), "level_two") == ["flow"]
     end
 
-    test "a captured request value reaches the sink inside the closure" do
+    test "a captured request value reaches the sink inside the closure", ctx do
       skip_without_souffle()
-      rows = atom_rows([Taint.FlowClosureEnv])
+      rows = atom_rows(ctx, [Taint.FlowClosureEnv])
       assert ["flow"] = proximity_for(rows, "FlowClosureEnv")
     end
 
     test "a flow replaces the path rows for its site: one row per sink" do
       skip_without_souffle()
-      rows = atom_rows([Taint.FlowLiveView, Taint.FlowTransitive])
+      rows = atom_rows(:alone, [Taint.FlowLiveView, Taint.FlowTransitive])
       ids = Enum.map(rows, &hd/1)
       assert ids == Enum.uniq(ids)
       assert Enum.all?(rows, fn [_, _, _, _, _, prox] -> prox == "flow" end)
     end
 
-    test "a flow sink is not also reported as export-reachable" do
+    test "a flow sink is not also reported as export-reachable", ctx do
       skip_without_souffle()
-      assert analyze([Taint.FlowLiveView])["sink_without_request_path"] == []
+      assert analyze(ctx, [Taint.FlowLiveView])["sink_without_request_path"] == []
     end
 
     test "data from storage is a path, never a flow" do
       skip_without_souffle()
 
       rows =
-        atom_rows([Taint.StoreSourcedPlug, Taint.StoreSourcedAdjacent, Taint.StoreSourcedWorker])
+        atom_rows(:alone, [
+          Taint.StoreSourcedPlug,
+          Taint.StoreSourcedAdjacent,
+          Taint.StoreSourcedWorker
+        ])
 
       refute "flow" in Enum.map(rows, &List.last/1)
     end
 
-    test "the socket, the session and a literal are not the request" do
+    test "the socket, the session and a literal are not the request", ctx do
       skip_without_souffle()
-      rows = atom_rows([Taint.SocketOnly, Taint.SessionOnly, Taint.LiteralAtom])
+      rows = atom_rows(ctx, [Taint.SocketOnly, Taint.SessionOnly, Taint.LiteralAtom])
       assert Enum.map(rows, &List.last/1) |> Enum.uniq() == ["direct"]
     end
 
-    test "the safe conversion is not a sink" do
+    test "the safe conversion is not a sink", ctx do
       skip_without_souffle()
-      assert atom_rows([Taint.ExistingAtom]) == []
+      assert atom_rows(ctx, [Taint.ExistingAtom]) == []
     end
 
     # Element flow through a higher-order function's closure is not
     # followed: the closure's parameter is the element, and no fact ties
     # it to the collection it came from. The sink stays a path.
-    test "an element handed to a closure is a known gap: adjacent, not flow" do
+    test "an element handed to a closure is a known gap: adjacent, not flow", ctx do
       skip_without_souffle()
-      assert proximity_for(atom_rows([Taint.HofElement]), "HofElement") == ["adjacent"]
+      assert proximity_for(atom_rows(ctx, [Taint.HofElement]), "HofElement") == ["adjacent"]
     end
   end
 
@@ -369,27 +415,32 @@ defmodule Argus.Analyses.UnsafeInputTest do
   describe "unbounded children" do
     @all [U.Worker, U.UncappedSup, U.CappedSup, U.PublicLive, U.CappedLive, U.Internal]
 
-    defp callers do
-      analyze(@all)["unbounded_children_from_request"]
+    defp callers(ctx) do
+      analyze(ctx, @all)["unbounded_children_from_request"]
       |> Enum.map(fn [_s, _c, via, _k] -> via end)
       |> Enum.sort()
     end
 
     defp named?(list, f), do: Enum.any?(list, &String.contains?(&1, f))
 
-    test "an uncapped supervisor driven by a request is reported; a ceiling discharges it" do
+    test "an uncapped supervisor driven by a request is reported; a ceiling discharges it", ctx do
       skip_without_souffle()
-      callers = callers()
+      callers = callers(ctx)
       assert named?(callers, "PublicLive")
       refute named?(callers, "CappedLive"), "max_children is the whole fix"
       refute named?(callers, "Internal")
     end
 
-    test "the finding names the entry surface it came from" do
+    test "the finding names the entry surface it came from", ctx do
       skip_without_souffle()
 
       assert [[sup, child, _via, kind]] =
-               Enum.filter(analyze(@all)["unbounded_children_from_request"], fn [_s, _c, v, _k] ->
+               Enum.filter(analyze(ctx, @all)["unbounded_children_from_request"], fn [
+                                                                                       _s,
+                                                                                       _c,
+                                                                                       v,
+                                                                                       _k
+                                                                                     ] ->
                  v =~ "PublicLive"
                end)
 

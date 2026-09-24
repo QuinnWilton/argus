@@ -3,14 +3,35 @@ defmodule Argus.Analyses.BlockingRpcTest do
 
   alias Argus.Analyses.Blocking
   alias Argus.Souffle
+  alias Argus.Test.Batch
   alias Argus.Test.Rows
+
+  # Every test reads its fixtures' rows from one solve of them all
+  # (`Argus.Test.Batch`; ARGUS_VERIFY_BATCH=1 checks each slice against
+  # a solve of its own).
+  @batched [
+    Argus.Test.Fixtures.RpcInInit,
+    Argus.Test.Fixtures.GlobalLockInInit,
+    Argus.Test.Fixtures.RpcCaller,
+    Argus.Test.Fixtures.RpcInCallback,
+    Argus.Test.Fixtures.RpcViaHelperCallback,
+    Argus.Test.Fixtures.GlobalLockModule,
+    Argus.Test.Fixtures.RpcCollectors,
+    Argus.Test.Fixtures.RpcTimeoutParam,
+    Argus.Test.Fixtures.RpcQuickTargets,
+    Argus.Test.Fixtures.RpcViaHelperInInit
+  ]
+
+  setup_all do
+    %{batch: Batch.solve(:blocking, [@batched])}
+  end
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
-  defp analyze(modules) do
-    assert {:ok, results} = Argus.analyze(modules, :blocking)
+  defp analyze(%{batch: batch}, modules) do
+    assert {:ok, results} = Batch.analyze(batch, modules)
     results
   end
 
@@ -22,10 +43,10 @@ defmodule Argus.Analyses.BlockingRpcTest do
       Rows.where(results, :blocking, "unbounded_wait", kind: kind, drop: [:kind, :detail, :nodes])
 
   describe "unbounded_wait: rpc" do
-    test "flags :rpc.call without a timeout, not the timeout variant" do
+    test "flags :rpc.call without a timeout, not the timeout variant", ctx do
       skip_without_souffle()
 
-      results = analyze([Argus.Test.Fixtures.RpcCaller])
+      results = analyze(ctx, [Argus.Test.Fixtures.RpcCaller])
       funcs = Enum.map(waits(results, "rpc"), fn [func, _site, _variant] -> func end)
 
       assert Enum.any?(funcs, &String.contains?(&1, "call_no_timeout"))
@@ -113,10 +134,10 @@ defmodule Argus.Analyses.BlockingRpcTest do
   end
 
   describe "unbounded_wait: the waits beyond call and multicall" do
-    test "block_call, yield and receive_response without a timeout are flagged" do
+    test "block_call, yield and receive_response without a timeout are flagged", ctx do
       skip_without_souffle()
 
-      results = analyze([Argus.Test.Fixtures.RpcCollectors])
+      results = analyze(ctx, [Argus.Test.Fixtures.RpcCollectors])
 
       found =
         waits(results, "rpc") |> Enum.map(fn [func, _site, v] -> {func, v} end) |> Enum.sort()
@@ -130,11 +151,11 @@ defmodule Argus.Analyses.BlockingRpcTest do
   end
 
   describe "unbounded_wait: a timeout taken as a parameter" do
-    test "is flagged when a caller passes :infinity, with that caller as a frame" do
+    test "is flagged when a caller passes :infinity, with that caller as a frame", ctx do
       skip_without_souffle()
 
       modules = [Argus.Test.Fixtures.RpcTimeoutParam]
-      results = analyze(modules)
+      results = analyze(ctx, modules)
 
       assert [["Argus.Test.Fixtures.RpcTimeoutParam:remote/5", "caller", ""]] =
                Rows.where(results, :blocking, "unbounded_wait",
@@ -155,10 +176,10 @@ defmodule Argus.Analyses.BlockingRpcTest do
   end
 
   describe "unbounded_wait: rpc to a function that answers at once" do
-    test "is not flagged; the same call to one that can wait is" do
+    test "is not flagged; the same call to one that can wait is", ctx do
       skip_without_souffle()
 
-      results = analyze([Argus.Test.Fixtures.RpcQuickTargets])
+      results = analyze(ctx, [Argus.Test.Fixtures.RpcQuickTargets])
       funcs = Enum.map(waits(results, "rpc"), fn [func, _site, _variant] -> func end)
 
       assert funcs == ["Argus.Test.Fixtures.RpcQuickTargets:lookup/2"]
@@ -166,11 +187,12 @@ defmodule Argus.Analyses.BlockingRpcTest do
   end
 
   describe "a wait init/1 holds is startup's finding" do
-    test "an rpc in init/1, and a :global lock init/1 reaches, are reported once, by startup" do
+    test "an rpc in init/1, and a :global lock init/1 reaches, are reported once, by startup",
+         ctx do
       skip_without_souffle()
 
       modules = [Argus.Test.Fixtures.RpcInInit, Argus.Test.Fixtures.GlobalLockInInit]
-      results = analyze(modules)
+      results = analyze(ctx, modules)
       assert waits(results, "rpc") == []
       assert waits(results, "global") == []
 
@@ -181,11 +203,13 @@ defmodule Argus.Analyses.BlockingRpcTest do
   end
 
   describe "a helper init/1 calls on its own stack" do
-    test "is startup's finding, and an rpc init/1 does not reach stays here" do
+    test "is startup's finding, and an rpc init/1 does not reach stays here", ctx do
       skip_without_souffle()
 
       modules = [Argus.Test.Fixtures.RpcViaHelperInInit]
-      funcs = Enum.map(waits(analyze(modules), "rpc"), fn [func, _site, _variant] -> func end)
+
+      funcs =
+        Enum.map(waits(analyze(ctx, modules), "rpc"), fn [func, _site, _variant] -> func end)
 
       assert funcs == ["Argus.Test.Fixtures.RpcViaHelperInInit:fetch_later/1"]
 
@@ -195,23 +219,23 @@ defmodule Argus.Analyses.BlockingRpcTest do
   end
 
   describe "unbounded_wait: rpc_in_callback" do
-    test "flags RPC directly inside handle_call" do
+    test "flags RPC directly inside handle_call", ctx do
       skip_without_souffle()
 
-      results = analyze([Argus.Test.Fixtures.RpcInCallback])
+      results = analyze(ctx, [Argus.Test.Fixtures.RpcInCallback])
 
       assert Enum.any?(waits(results, "rpc_in_callback"), fn [func, _site, _variant] ->
                String.contains?(func, "RpcInCallback:handle_call/3")
              end)
     end
 
-    test "does not flag RPC reached only transitively through a helper" do
+    test "does not flag RPC reached only transitively through a helper", ctx do
       skip_without_souffle()
 
       # Deliberate direct-only scope: the transitive clause (call_reachable
       # through a guarded dispatcher) produced only false positives on the
       # corpus. The RPC itself is still reported by rpc_without_timeout.
-      results = analyze([Argus.Test.Fixtures.RpcViaHelperCallback])
+      results = analyze(ctx, [Argus.Test.Fixtures.RpcViaHelperCallback])
 
       assert waits(results, "rpc_in_callback") == []
 
@@ -222,10 +246,10 @@ defmodule Argus.Analyses.BlockingRpcTest do
   end
 
   describe "unbounded_wait: global" do
-    test "flags blocking lock acquisition, not zero-retry attempts" do
+    test "flags blocking lock acquisition, not zero-retry attempts", ctx do
       skip_without_souffle()
 
-      results = analyze([Argus.Test.Fixtures.GlobalLockModule])
+      results = analyze(ctx, [Argus.Test.Fixtures.GlobalLockModule])
 
       funcs =
         Enum.map(waits(results, "global"), fn [func, _site, _op, _retries, _nodes] -> func end)
