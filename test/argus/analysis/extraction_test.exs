@@ -50,6 +50,30 @@ defmodule Argus.Analysis.ExtractionTest do
     end
   end
 
+  describe "through a store, an extractor compiled in memory" do
+    @describetag :cache
+
+    test "is extracted afresh: no key can name its code", %{tmp_dir: store} do
+      [{extractor, _beam}] =
+        Code.compile_string("""
+        defmodule Argus.Analysis.ExtractionTest.InMemory do
+          def relations, do: [:http_route]
+          def extract(_data), do: %{http_route: [["M", "GET", "/", "M", "f", "0"]]}
+        end
+        """)
+
+      opts = [extractors: [extractor], cache: store]
+      assert {:ok, dir} = Extraction.extract_facts([:lists], [:structure], opts)
+
+      try do
+        assert File.read!(Path.join(dir, "http_route.facts")) =~ "GET"
+        refute File.exists?(Path.join(store, "shards"))
+      after
+        File.rm_rf!(Path.dirname(dir))
+      end
+    end
+  end
+
   describe "the points-to stage" do
     test "is derived when an analysis reads it, and only then" do
       assert {:ok, reads} = Extraction.extract_facts([:lists], [:startup])
