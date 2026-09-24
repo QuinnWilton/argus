@@ -12,6 +12,14 @@ does: **Added**, **Changed**, **Fixed** or **Removed**.
 
 ### Waits that end on their own
 
+**Added.** Schema 89. `rpc_arity(id, arity)` (`Argus.Extractors.ApiCalls`):
+how many arguments an rpc_call hands its remote function, when the
+argument list is known whole on every path (a literal, or cons cells of
+known values ending in `[]`). A list holding an unknown value has no
+row: `[t]` and `[t | rest]` read alike. It tells
+`:application.which_applications/0`, which waits at most gen_server's
+default five seconds, from `/1`, which waits as long as it is told.
+
 **Fixed.** `blocking.receive_in_callback` no longer reports a receive
 that waits for its own monitor's `:DOWN` as "Blocking receive inside a
 GenServer callback" (error). The runtime sends that `:DOWN` once the

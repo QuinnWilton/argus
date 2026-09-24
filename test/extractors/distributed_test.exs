@@ -36,6 +36,10 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
         def mc4t(), do: :rpc.multicall(:ets, :lookup, [:t, :k], 100)
         def mcnodes(ns), do: :rpc.multicall(ns, :ets, :lookup, [:t, :k])
         def remote(n, m, f, a, timeout \\\\ :infinity), do: :rpc.call(n, m, f, a, timeout)
+        def apps(n), do: :rpc.call(n, :application, :which_applications, [])
+        def apps_within(n, t), do: :rpc.call(n, :application, :which_applications, [t])
+        def pair(n), do: :erpc.call(n, :ets, :lookup, [:t, :k])
+        def mc3_none(), do: :rpc.multicall(:erlang, :node, [])
       end
       """)
 
@@ -49,6 +53,11 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
         Map.new(facts[:rpc_call], fn [id, func, _v, _t] ->
           [target] = for [^id, target] <- facts[:rpc_target], do: target
           {short.(func), target}
+        end),
+      arity:
+        Map.new(facts[:rpc_arity], fn [id, n] ->
+          [func] = for [^id, func, _, _] <- facts[:rpc_call], do: func
+          {short.(func), n}
         end),
       timeout_param:
         Map.new(facts[:rpc_timeout_param], fn [id, pos] ->
@@ -148,6 +157,27 @@ defmodule Argus.Extractors.ApiCalls.DistributedTest do
       assert target["remote/5"] == "dynamic"
       assert target["yield1/1"] == "dynamic"
       assert target["recv1/1"] == "dynamic"
+    end
+  end
+
+  describe "extract/1 — how many arguments the remote function gets" do
+    test "is the length of a list known whole", %{arity: arity} do
+      assert arity["apps/1"] == "0"
+      assert arity["pair/1"] == "2"
+      assert arity["tab/1"] == "1"
+      assert arity["block4/1"] == "0"
+      assert arity["mc3_none/0"] == "0"
+      assert arity["mc4t/0"] == "2"
+      assert arity["mcnodes/1"] == "2"
+    end
+
+    # [t] and [t | rest] both read as [:dynamic]: a list holding an
+    # unknown has no length here.
+    test "a list holding an unknown, a parameter, a fun, or no target has none",
+         %{arity: arity} do
+      for func <- ~w(apps_within/2 alive/2 erpc4/2 remote/5 erpc2/2 emulti3/2 yield1/1 recv1/1) do
+        refute Map.has_key?(arity, func), func
+      end
     end
   end
 

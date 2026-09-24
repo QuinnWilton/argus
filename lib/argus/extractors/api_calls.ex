@@ -26,7 +26,8 @@ defmodule Argus.Extractors.ApiCalls do
     `sync_call_site` — each synchronous call's target and timeout, by site
   - `unsafe_atom_creation`, `unsafe_deserialization`, `code_execution`
   - `port_open`
-  - `rpc_call`, `rpc_target`, `rpc_timeout_param`, `global_register`, `global_op`, `node_operation`,
+  - `rpc_call`, `rpc_target`, `rpc_timeout_param`, `rpc_arity`, `global_register`, `global_op`,
+    `node_operation`,
     `distributed_store_op`
   """
 
@@ -275,7 +276,8 @@ defmodule Argus.Extractors.ApiCalls do
                row <- [
                  {mfa, :rpc_call, [:id, :func, {:const, variant}, timeout]},
                  {mfa, :rpc_target, [:id, target]},
-                 {mfa, :rpc_timeout_param, [:id, {:timeout_param, timeout}]}
+                 {mfa, :rpc_timeout_param, [:id, {:timeout_param, timeout}]},
+                 {mfa, :rpc_arity, [:id, {:arity_of, target}]}
                ],
                do: row
          )
@@ -357,6 +359,7 @@ defmodule Argus.Extractors.ApiCalls do
       :global_register,
       :node_operation,
       :port_open,
+      :rpc_arity,
       :rpc_call,
       :rpc_target,
       :rpc_timeout_param,
@@ -481,6 +484,22 @@ defmodule Argus.Extractors.ApiCalls do
     end
   end
 
+  # How many arguments the remote function gets: the length of the list
+  # after F, when every path builds it whole. A `:dynamic` element may be
+  # an unknown value or an unknown tail, so a list holding one has no
+  # length here. The forms that take a fun or name no target have none.
+  defp read({:arity_of, {:target, _m, f}}, ctx, _mfa, facts, _rel),
+    do: {arg_count(ctx, f + 1), facts}
+
+  defp read({:arity_of, :multicall_target}, ctx, _mfa, facts, _rel) do
+    case resolve_register(ctx.instrs, ctx.idx, {:x, 2}) do
+      {:ok, fun} when is_atom(fun) and fun != :dynamic -> {arg_count(ctx, 3), facts}
+      _ -> {arg_count(ctx, 2), facts}
+    end
+  end
+
+  defp read({:arity_of, {:const, _}}, _ctx, _mfa, facts, _rel), do: {:skip, facts}
+
   # Which of the function's parameters a timeout argument is, when it is
   # one on every path (a wrapper's `timeout \\ :infinity`): the rules
   # ask whether a caller passes :infinity there. Any other timeout —
@@ -582,6 +601,14 @@ defmodule Argus.Extractors.ApiCalls do
 
       _ ->
         {:pass, facts}
+    end
+  end
+
+  defp arg_count(ctx, n) do
+    case resolve_register(ctx.instrs, ctx.idx, {:x, n}) do
+      {:ok, nil} -> "0"
+      {:ok, args} when is_list(args) -> if :dynamic in args, do: :skip, else: "#{length(args)}"
+      _ -> :skip
     end
   end
 

@@ -69,6 +69,21 @@ defmodule Argus.Schema.Distribution do
         """
       },
       %{
+        name: :rpc_arity,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the rpc_call instruction ID"},
+          {:arity, :number, "how many arguments the remote function is called with"}
+        ],
+        doc: """
+        The length of the argument list an rpc_call hands its remote \
+        function (rpc_target), when that list is known whole on every path: \
+        a literal, or cons cells of known values ending in `[]`. \
+        `:application.which_applications/0` waits at most gen_server's five \
+        seconds; `/1` waits as long as its argument says.
+        """
+      },
+      %{
         name: :global_register,
         layer: 2,
         fields: [
