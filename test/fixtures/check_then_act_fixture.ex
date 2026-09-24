@@ -481,6 +481,134 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  defmodule SerializedSessionCache do
+    @moduledoc """
+    nerves_hub_web's CLISessionCache: a public table whose read-then-write
+    runs in the owner's handle_call/3, so callers never interleave it. The
+    other writers are the owner's own callbacks, and an exported clear/0
+    nothing in the program calls (nerves_hub_web's tests do).
+    """
+    use GenServer
+
+    @table :serialized_sessions
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, [], name: __MODULE__)
+
+    @impl true
+    def init([]) do
+      _ = :ets.new(@table, [:named_table, :set, :public, read_concurrency: true])
+      Process.send_after(self(), :sweep, 60_000)
+      {:ok, %{}}
+    end
+
+    def get_and_update(key, fun), do: GenServer.call(__MODULE__, {:get_and_update, key, fun})
+
+    @impl true
+    def handle_call({:get_and_update, key, fun}, _from, state) do
+      case fun.(get(key)) do
+        {return, {:put, session}} ->
+          :ok = put(key, session)
+          {:reply, return, state}
+
+        {return, :noop} ->
+          {:reply, return, state}
+      end
+    end
+
+    @impl true
+    def handle_info({:put, key, session}, state) do
+      :ets.insert(@table, {key, session, session.expires_at})
+      {:noreply, state}
+    end
+
+    def handle_info(:sweep, state) do
+      now = System.system_time(:second)
+      :ets.select_delete(@table, [{{:_, :_, :"$1"}, [{:<, :"$1", now}], [true]}])
+      Process.send_after(self(), :sweep, 60_000)
+      {:noreply, state}
+    end
+
+    def put(key, session) do
+      :ets.insert(@table, {key, session, session.expires_at})
+      :ok
+    end
+
+    def get(key) do
+      case :ets.lookup(@table, key) do
+        [{^key, session, _expires_at}] -> {:ok, session}
+        [] -> :error
+      end
+    end
+
+    def clear do
+      :ets.delete_all_objects(@table)
+      :ok
+    end
+  end
+
+  defmodule SessionAccounts do
+    @moduledoc """
+    SerializedSessionCache's client in the program, as nerves_hub_web's
+    Accounts is CLISessionCache's: with it in view, clear/0 is a function
+    no caller in the program calls, not API.
+    """
+    alias Argus.Test.Fixtures.CheckThenAct.SerializedSessionCache
+
+    def confirm(token) do
+      SerializedSessionCache.get_and_update(token, fn
+        {:ok, session} -> {:ok, {:put, %{session | confirmed: true}}}
+        :error -> {{:error, :not_found}, :noop}
+      end)
+    end
+
+    def fetch(token), do: SerializedSessionCache.get(token)
+  end
+
+  defmodule SessionReaper do
+    @moduledoc """
+    A second process that deletes SerializedSessionCache's rows: a session
+    it revokes between the owner's read and write is written back.
+    """
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, [], name: __MODULE__)
+
+    @impl true
+    def init([]), do: {:ok, %{}}
+
+    @impl true
+    def handle_cast({:revoke, key}, state) do
+      :ets.delete(:serialized_sessions, key)
+      {:noreply, state}
+    end
+  end
+
+  defmodule SessionImporter do
+    @moduledoc "A second process that inserts into SerializedSessionCache's table."
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, [], name: __MODULE__)
+
+    @impl true
+    def init([]), do: {:ok, %{}}
+
+    @impl true
+    def handle_cast({:import, key, session}, state) do
+      :ets.insert(:serialized_sessions, {key, session, session.expires_at})
+      {:noreply, state}
+    end
+  end
+
+  defmodule SessionAdmin do
+    @moduledoc """
+    A module nothing in the program calls into, whose exported function
+    clears SerializedSessionCache: API for callers outside the program.
+    """
+    alias Argus.Test.Fixtures.CheckThenAct.SerializedSessionCache
+
+    def reset_all, do: SerializedSessionCache.clear()
+  end
+
   defmodule BroadwayCount do
     @moduledoc """
     A Broadway pipeline's processors run handle_message/3 many at a time:

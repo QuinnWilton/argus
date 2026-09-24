@@ -19,10 +19,44 @@
 // closure (a comprehension's body), or in a function that calls itself —
 // and is one process otherwise (a worker init/1 spawns).
 //
+// Whether a process other than a given entry's can run a function
+// (runs_apart_from, which the races ask of the other writer when the
+// check-then-act runs in one process) asks where a function no entry
+// reaches is called from. A caller outside the program — a library's
+// user — can be any process. An exported function is such an entry
+// (open_entry) when nothing in the program calls it and no other module
+// of the program calls into its module: the module is the program's
+// face to its callers. A module other modules of the program call is
+// one the program is the client of, with its callers in view, and an
+// exported function of it none of them calls is unused (the tests,
+// which are not in the beams, may call it), not an entry.
+// nerves_hub_web's CLISessionCache is the shape: Accounts calls its
+// get_and_update/2 and get/1, and only the tests call its clear/0. The
+// same module in a library nothing calls into is all API, clear/0
+// included. What this misses is a module a library both calls itself
+// and hands its users, through a function the library never calls.
+//
 // Instantiate with the sites of interest as seeds; the closure is
 // backward from them, never forward from every entry. Prerequisites:
 // imports.dl, otp.dl (process_entry, behaves_as, dynamic_child,
 // runs_elsewhere) and request_entry.dl.
+
+// A module some other module of the program calls into.
+.decl called_by_other_module(mod: symbol)
+
+called_by_other_module(m) :-
+  call_edge(c, g),
+  function_def(g, m, _, _, _),
+  function_def(c, cm, _, _, _),
+  cm != m.
+
+// An exported function only a caller outside the program can call.
+.decl open_entry(func: symbol)
+
+open_entry(f) :-
+  function_def(f, m, _, _, 1),
+  !call_edge(_, f),
+  !called_by_other_module(m).
 
 .comp RunsConcurrently {
   .decl seed(func: symbol)
@@ -61,4 +95,14 @@
 
   .decl single_process(func: symbol)
   single_process(t) :- entry_reaches(_, t), !second_process(t).
+
+  // A seed a caller outside the program can run, in its own process.
+  .decl outside_reaches(func: symbol)
+  outside_reaches(t) :- seed(t), walk.reaches(c, t), open_entry(c).
+
+  // A process other than entry m's can run g: another entry reaches it,
+  // or a caller outside the program can.
+  .decl runs_apart_from(entry: symbol, func: symbol) inline
+  runs_apart_from(m, g) :- !entry_reaches(m, g), entry_reaches(_, g).
+  runs_apart_from(m, g) :- !entry_reaches(m, g), outside_reaches(g).
 }

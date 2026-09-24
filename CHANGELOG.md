@@ -1345,6 +1345,32 @@ has no body: nothing says whose the closure is.
 
 ### races
 
+**Fixed.** A read-then-write that runs in one process is raced by a
+writer only a caller outside the program runs when that caller can
+exist. `ets_check_act` and `mnesia_check_act` counted every writer the
+pair's process does not reach, so a function nothing in the program
+calls always counted, as if a library's user called it.
+`RunsConcurrently` (clientlib/concurrency.dl) now says which such
+functions outside callers have (`open_entry`): an exported function
+nothing in the program calls, in a module no other module of the
+program calls into. A module the program is the client of has its
+callers in view, and a function of it none of them calls is unused, not
+an entry; one an open entry reaches still counts, and so does any
+writer another entry's process runs. nerves_hub_web's CLISessionCache
+serializes `get_and_update/2` in its own `handle_call/3`; the only
+other writer the rule counted was `clear/0`, which only the tests call,
+while `Accounts` calls the cache's other functions. The same cache in a
+library nothing calls into is still reported, `clear/0` being API.
+What this misses: a module a library both calls itself and hands its
+users, through a function it never calls. Corpus: 10 ETS rows to 7.
+nerves_hub_web's CLISessionCache goes at both checkouts, and ztlp's
+`AdminApiRateLimiter.do_check/1`, the same shape: its token bucket is
+serialized through `handle_call/3` (the moduledoc's fix for the
+lookup-then-insert race), MetricsServer calls its `check/1`, and the
+other writer was `reset/0`, documented as a test helper. ztlp's
+unserialized `RateLimiter` and `RegistrationAuth`, hammer#94, postgrex
+and blockster stay; Mnesia rows and every other title are unchanged.
+
 **Changed.** A check and an act that name what they touch by different
 parameters meet where a caller names both alike (`CheckThenAct`,
 clientlib/check_then_act.dl). elvengard_ecs's `do_insert_new(type, key,

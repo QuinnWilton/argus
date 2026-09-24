@@ -187,9 +187,13 @@ registry_race(mod, f, lookup_api, create_api, key_source, key, check, act) :-
 // (Christakis and Sagonas, 2010, on ETS). The pair is a race when both
 // touch the same key, the table is public — a protected table has one
 // writer — and a second process can write it: the function where the
-// pair meets runs in more than one process, or some function outside
-// that process writes the table. insert_new, update_counter and
-// select_replace are the atomic forms and the fix.
+// pair meets runs in more than one process, or a function some other
+// process runs writes the table — another entry's, or one a caller
+// outside the program can call (runs_apart_from, clientlib/concurrency.dl).
+// A cache that serializes its read-then-write in its own process is not
+// raced by an exported clear/0 no caller in the program calls, when the
+// program calls the cache's other functions. insert_new, update_counter
+// and select_replace are the atomic forms and the fix.
 //
 // The read and the write may sit in different functions
 // (clientlib/check_then_act.dl), and the table may arrive as a
@@ -293,7 +297,7 @@ another_process_writes(name, f) :-
   runs.single_process(f),
   runs.entry_reaches(m, f),
   ets_op(_, g, name, _, "write"),
-  !runs.entry_reaches(m, g).
+  runs.runs_apart_from(m, g).
 
 // ── Races both racers win ────────────────────────────────────────
 //
@@ -892,7 +896,7 @@ another_process_writes_record(t, f) :-
   runs.single_process(f),
   runs.entry_reaches(m, f),
   mnesia_op(_, g, _, "write", "literal", t, _, _),
-  !runs.entry_reaches(m, g).
+  runs.runs_apart_from(m, g).
 
 .decl mnesia_check_act(mod: symbol, func: symbol, table: symbol, key: symbol, read: symbol, write: symbol, op: symbol)
 .output mnesia_check_act

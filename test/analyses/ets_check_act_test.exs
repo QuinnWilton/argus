@@ -45,6 +45,39 @@ defmodule Argus.Analyses.EtsCheckActTest do
       assert races([C.ProtectedOwnerOnly]) == []
     end
 
+    test "a cache serialized in its owner, whose clear/0 no caller in the program calls" do
+      skip_without_souffle()
+      assert races([C.SerializedSessionCache, C.SessionAccounts]) == []
+    end
+
+    test "the same cache with no client in view is API, clear/0 included" do
+      skip_without_souffle()
+
+      assert [{"handle_call/3", ":serialized_sessions", _}] =
+               Enum.uniq(races([C.SerializedSessionCache]))
+    end
+
+    test "a function outside callers can call reaches the cache's clear/0" do
+      skip_without_souffle()
+
+      assert [{"handle_call/3", ":serialized_sessions", _}] =
+               Enum.uniq(races([C.SerializedSessionCache, C.SessionAccounts, C.SessionAdmin]))
+    end
+
+    test "another process that inserts into the serialized cache's table races it" do
+      skip_without_souffle()
+
+      assert [{"handle_call/3", ":serialized_sessions", _}] =
+               Enum.uniq(races([C.SerializedSessionCache, C.SessionAccounts, C.SessionImporter]))
+    end
+
+    test "another process that deletes from it races it too: the write puts a revoked row back" do
+      skip_without_souffle()
+
+      assert [{"handle_call/3", ":serialized_sessions", _}] =
+               Enum.uniq(races([C.SerializedSessionCache, C.SessionAccounts, C.SessionReaper]))
+    end
+
     test "different keys are not a race" do
       skip_without_souffle()
       assert races([C.DifferentKeys]) == []
