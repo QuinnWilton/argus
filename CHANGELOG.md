@@ -11,7 +11,9 @@
   project, now about 6). A program that includes a file outside the
   tree is computed every run. On a miss the programs are digested side
   by side, so the solver resolves what each loads in parallel after a
-  schema edit.
+  schema edit (about 0.85 s there). With the next entries, scry's part
+  of a warm `mix compile` there went from 921–952 ms to 870–882 ms, and
+  of a one-module edit from 4.3–5.1 s to 4.1–4.3 s.
 - A query that reads argus's schema depends on the entries it read, not
   on the schema's code: argus's accessors record each entry they return
   (`Argus.Cache.Reads`), and `schema_read(entry)`, a new query, is one
@@ -30,7 +32,16 @@
   re-extract the modules whose rows it holds and re-solve the programs
   that load it. Those modules are found before the graph runs (each
   module's recorded entries, when argus's code moved) and extracted
-  across the schedulers, as a changed beam's module is.
+  across the schedulers, as a changed beam's module is. On a
+  350-module project (scry's part of `mix compile` after argus built,
+  two runs each): a relation added with its version bump went from
+  6.3–6.4 s (all 350 modules extracted, all 13 analyses and both stages
+  solved) to 2.0–2.8 s (nothing extracted or solved: the findings
+  built again, the rules digests computed again); a field of
+  `supervisor` renamed with the bump, from 6.7–7.0 s to 2.7–3.3 s (the
+  8 modules with `supervisor` rows extracted, the 3 programs that load
+  it solved). Each extraction's recorded entries grow the manifest
+  about 1% (20.3 to 20.6 MB there).
 - A solve is keyed on its program as the solve loads it
   (`Argus.Souffle.Cache.declared_digest/2`, as argus keys its own
   solves): of argus's generated declaration files, only the
@@ -53,8 +64,9 @@
 - argus's own beams are digested for `:argus_code` as the dependencies'
   are for the environment: kept in the store's `ebins/` under a stamp
   of their stats (`Argus.Specs.ebin_digests/2`), so a warm run stats
-  them instead of reading and digesting each one
-  (`Scry.Fingerprint.argus_code/1` takes `cache:`).
+  them instead of reading and digesting each one (52–63 ms to about
+  7 ms in a fresh VM on a 350-module project;
+  `Scry.Fingerprint.argus_code/1` takes `cache:`).
 - A warm run no longer spends a second hashing every dependency's
   beams for the environment fingerprint. argus keeps each dependency
   ebin's hashes in a store beside the manifest
