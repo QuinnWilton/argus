@@ -3434,6 +3434,14 @@ the caller makes to the callee passes a literal list there; and
 `sink_copy(id, func, first)`, a sink call repeating an earlier one on
 the same source line.
 
+**Fixed.** `sink_copy` merges only what the compiler copied: a call made
+of what the line's first call is made of (`sink_arg_derived` alike), or
+one on a path that excludes the first's
+(`Argus.Cfg.Function.precedes?/3` either way). Two calls one after the
+other on one line whose arguments come from different places —
+`{String.to_atom(Application.get_env(...)), String.to_atom(b)}` — are
+two sinks, and the request's was lost behind the configuration's.
+
 **Fixed.** Request taint follows an element into the closure a
 higher-order call runs on it: `Enum.map(params["ids"], fn id ->
 String.to_atom(id) end)` is a flow, not a path

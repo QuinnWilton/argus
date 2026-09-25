@@ -17,6 +17,7 @@ defmodule Argus.Extractor.ParamFlowTest do
           Taint.Allow,
           Taint.ParamAllowlist,
           Taint.SameLine,
+          Taint.SameLineMixed,
           Taint.HofElement,
           Taint.FlowLiveView
         ],
@@ -127,6 +128,7 @@ defmodule Argus.Extractor.ParamFlowTest do
     end
 
     test "a second sink call of the same API on the same line is a copy", %{taint: facts} do
+      # SameLineMixed's two calls come from different places: no copy.
       assert [[second, func, first]] = facts.sink_copy
       assert func =~ "SameLine:handle_event/3"
       assert second != first

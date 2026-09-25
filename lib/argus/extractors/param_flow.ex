@@ -30,7 +30,10 @@ defmodule Argus.Extractors.ParamFlow do
     makes to the callee passes a literal list at `arg_pos`.
   - `sink_copy(id, func, first)` — the sink call at `id` repeats `first`,
     the earliest call of the same API in the function on the same source
-    line: code the compiler duplicated.
+    line: code the compiler duplicated. A copy is made of what `first` is
+    made of (`sink_arg_derived` alike), or sits on a path that excludes
+    `first`'s; two calls one after the other on one line whose arguments
+    come from different places are two calls, not copies.
 
   ## Reading the bytecode
 
@@ -95,7 +98,7 @@ defmodule Argus.Extractors.ParamFlow do
       |> emit_closures(module_data, inputs)
       |> emit_bounded_sinks(module_data)
       |> emit_allowlists(module_data)
-      |> emit_sink_copies(module_data)
+      |> emit_sink_copies(module_data, inputs)
       |> Map.new(fn {relation, rows} -> {relation, rows |> Enum.uniq() |> Enum.sort()} end)
     else
       nil -> %{}
@@ -395,7 +398,7 @@ defmodule Argus.Extractors.ParamFlow do
 
   # Sink calls of one API on one source line of one function, past the
   # first: the compiler's copies of one call.
-  defp emit_sink_copies(facts, %{module: mod, functions: functions} = module_data) do
+  defp emit_sink_copies(facts, %{module: mod, functions: functions} = module_data, inputs) do
     line_table = Map.get(module_data, :line_table, %{})
 
     tuples =
@@ -413,13 +416,44 @@ defmodule Argus.Extractors.ParamFlow do
       {{_f, _mfa, nil}, _sites}, acc ->
         acc
 
-      {{f, _mfa, _line}, sites}, acc ->
-        [first | rest] = Enum.sort_by(sites, & &1.idx)
+      {{_f, _mfa, _line}, [_one]}, acc ->
+        acc
 
-        Enum.reduce(rest, acc, fn %{idx: idx}, inner ->
+      {{f, {_m, _fun, arity}, _line}, sites}, acc ->
+        [first | rest] = Enum.sort_by(sites, & &1.idx)
+        derived = &sink_inputs(inputs, f, &1.idx, arity)
+        fun = fn -> cfg_of(module_data, f) end
+
+        rest
+        |> Enum.filter(&(derived.(&1) == derived.(first) or exclusive?(fun, first.idx, &1.idx)))
+        |> Enum.reduce(acc, fn %{idx: idx}, inner ->
           add_fact(inner, :sink_copy, [InstrId.mint(f, idx), f, InstrId.mint(f, first.idx)])
         end)
     end)
+  end
+
+  # What each argument of the sink call at `idx` is derived from.
+  defp sink_inputs(inputs, func_id, idx, arity) do
+    site_inputs = inputs_at(inputs, func_id, idx)
+    for pos <- 0..(arity - 1)//1, do: Map.get(site_inputs, "x#{pos}", MapSet.new())
+  end
+
+  # Two sites no trip through the function makes both of: a compiler's
+  # copies of one expression into branches that exclude each other.
+  defp exclusive?(fun, a, b) do
+    case fun.() do
+      nil ->
+        false
+
+      graph ->
+        not Argus.Cfg.Function.precedes?(graph, a, b) and
+          not Argus.Cfg.Function.precedes?(graph, b, a)
+    end
+  end
+
+  defp cfg_of(module_data, func_id) do
+    {name, arity} = Normalize.func_id_name_arity(func_id)
+    Helpers.cfg(module_data, name, arity)
   end
 
   # The source line in effect at `idx`: the nearest line marker before it.

@@ -214,4 +214,18 @@ defmodule Argus.Test.Fixtures.Taint do
       {:noreply, socket}
     end
   end
+
+  defmodule SameLineMixed do
+    @moduledoc """
+    Two atoms made on one line, one of configuration and one of the
+    request's own value: two calls one after the other whose arguments
+    come from different places, not the compiler's copies of one.
+    """
+    @behaviour Phoenix.LiveView
+
+    def handle_event("pair", %{"b" => b}, socket) do
+      _ = {String.to_atom(Application.get_env(:probe, :default_key)), String.to_atom(b)}
+      {:noreply, socket}
+    end
+  end
 end

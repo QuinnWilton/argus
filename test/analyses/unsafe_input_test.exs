@@ -39,6 +39,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
     Taint.GuardAllowlist,
     Taint.BodyAllowlist,
     Taint.SameLine,
+    Taint.SameLineMixed,
     Argus.Test.Fixtures.AtomSources,
     Argus.Test.Fixtures.AtomFromMessages,
     Argus.Test.Fixtures.AtomProcessName,
@@ -360,6 +361,11 @@ defmodule Argus.Analyses.UnsafeInputTest do
     test "two atoms made on one line are one finding", ctx do
       skip_without_souffle()
       assert [_] = atom_rows(ctx, [Taint.SameLine])
+    end
+
+    test "two atoms on one line made of different things are two findings", ctx do
+      skip_without_souffle()
+      assert [_, _] = Enum.uniq_by(atom_rows(ctx, [Taint.SameLineMixed]), &hd/1)
     end
   end
 
