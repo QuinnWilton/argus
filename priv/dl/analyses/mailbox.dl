@@ -1139,10 +1139,11 @@ unreceived_message(mod, func, site, m, runs, starter, spawn, recv) :-
 // ══ A message its server has no clause for ═════════════════════════
 //
 // The GenServer half of the question unreceived_message asks of a
-// spawned process. A message reaches a server's handle_info/2 three
+// spawned process. A message reaches a server's handle_info/2 four
 // ways the program spells out: a send process points-to follows to the
-// server (sends.dl), a timer the server arms for itself, and a monitor
-// the server takes, whose {:DOWN, …} the runtime sends. When no clause
+// server (sends.dl), a timer the server arms for itself, a monitor
+// the server takes, whose {:DOWN, …} the runtime sends, and a socket the
+// server makes active, whose close the runtime sends. When no clause
 // of handle_info/2 takes the message, what happens depends on what the
 // module has in its place (`fallback`):
 //
@@ -1189,6 +1190,8 @@ info_message(m, f, id, msg, "send") :-
 
 info_reach.seed(f, f) :- timer_arm(id, f, "self", _, _, _), timer_tag(id, _).
 info_reach.seed(f, f) :- monitor_call(_, f, _).
+info_reach.seed(f, f) :- socket_activation(f, _, _).
+info_reach.seed(f, f) :- socket_opened(f, _).
 
 .decl runs_in_server(mod: symbol, func: symbol)
 
@@ -1221,6 +1224,112 @@ info_message(m, f, id, "{:DOWN, …}", "monitor") :-
   runs_in_server(m, f),
   !receive_reach.reaches(f),
   !flush.reaches(f).
+
+// ── The close of a socket the server holds ───────────────────────────
+//
+// An active socket (`active: true`, `:once` or a count) sends what it
+// receives to the process that controls it, and its end the same way:
+// `{:tcp_closed, socket}` for TCP, `{:ssl_closed, socket}` for TLS, when
+// the peer closes, the network drops or an alert ends the session. With
+// no clause for it the first disconnect is a crash (kafka_ex#381's new
+// client took only its own :update_metadata); a catch-all that only logs
+// it leaves the server holding a socket that is gone (cqerl's TLS clients
+// took `{:tcp_closed, _}`, let `{:ssl_closed, _}` fall into the catch-all,
+// and answered every query after a server restart with a timeout).
+//
+// The server's process makes a socket active where it connects one
+// (`:gen_tcp.connect/3,4`, `:ssl.connect/2,3,4`, active unless the
+// options say otherwise) or sets its options (`:inet.setopts/2`,
+// `:ssl.setopts/2`, a transport module's `setopts/2` through a variable)
+// with a literal mode, or where it hands a wrapper of the program's the
+// literal list the wrapper sets (`Socket.setopts(s, [:binary, active:
+// true])`, through any chain of parameters). Which close that means
+// follows the socket: `:ssl.setopts/2` a TLS one's, `:inet.setopts/2` a
+// TCP one's when the server's process connects TCP sockets (it may be a
+// UDP one, which has no close), a transport in a variable either kind the
+// process connects. Soundness rests on the extractor's literal reading:
+// options it cannot read say nothing, so a socket made active by options
+// built at runtime is missed, never assumed. A function that hands its
+// socket to another process (controlling_process) is not judged: the
+// messages go to that process. Nor is an accepted socket, which takes
+// its mode from the listening socket.
+.decl socket_active_mode(mode: symbol)
+
+socket_active_mode("true").
+socket_active_mode("once").
+socket_active_mode("n").
+socket_active_mode("default").
+
+// The literal a caller hands a wrapper's options parameter, directly or
+// forwarded through its own parameters.
+.decl socket_opts_needed(func: symbol, pos: number)
+
+socket_opts_needed(g, p) :- socket_active(_, g, _, "param", p).
+socket_opts_needed(f, q) :- socket_opts_needed(g, p), call_arg_forward(f, g, p, q).
+
+.decl socket_opts_at(func: symbol, pos: number, site: symbol, caller: symbol, mode: symbol)
+
+socket_opts_at(g, p, id, c, mode) :- socket_opts_needed(g, p), socket_opts_arg(id, c, g, p, mode).
+
+socket_opts_at(g, p, id, c, mode) :-
+  socket_opts_needed(g, p),
+  call_arg_forward(f, g, p, q),
+  socket_opts_at(f, q, id, c, mode).
+
+// `func` makes a socket of `transport` active at `site`: the call itself,
+// or the call handing a wrapper the literal it sets.
+.decl socket_activation(func: symbol, site: symbol, transport: symbol)
+
+socket_activation(f, id, t) :- socket_active(id, f, t, mode, _), socket_active_mode(mode).
+
+socket_activation(c, id, t) :-
+  socket_active(_, g, t, "param", p),
+  socket_opts_at(g, p, id, c, mode),
+  socket_active_mode(mode).
+
+// A function that connects, or sets options on, a socket of a known kind.
+.decl socket_opened(func: symbol, transport: symbol)
+
+socket_opened(f, t) :- socket_active(_, f, t, _, _), (t = "tcp" ; t = "ssl").
+
+// A function that hands a socket to another process.
+.decl hands_socket_off(func: symbol)
+
+hands_socket_off(f) :- remote_call(_, f, ":gen_tcp", "controlling_process", 2).
+hands_socket_off(f) :- remote_call(_, f, ":ssl", "controlling_process", 2).
+
+// The kinds of socket a server's process connects.
+.decl server_holds(server: symbol, transport: symbol)
+
+server_holds(m, t) :- socket_opened(f, t), runs_in_server(m, f).
+
+.decl socket_close(transport: symbol, message: symbol)
+
+socket_close("tcp", "{:tcp_closed, …}").
+socket_close("ssl", "{:ssl_closed, …}").
+
+.decl activation_close(func: symbol, site: symbol, server: symbol, message: symbol)
+
+activation_close(f, id, m, msg) :-
+  socket_activation(f, id, t),
+  socket_close(t, msg),
+  runs_in_server(m, f).
+
+activation_close(f, id, m, msg) :-
+  socket_activation(f, id, "inet"),
+  runs_in_server(m, f),
+  server_holds(m, "tcp"),
+  socket_close("tcp", msg).
+
+activation_close(f, id, m, msg) :-
+  socket_activation(f, id, "any"),
+  runs_in_server(m, f),
+  server_holds(m, t),
+  socket_close(t, msg).
+
+info_message(m, f, id, msg, "socket") :-
+  activation_close(f, id, m, msg),
+  !hands_socket_off(f).
 
 // Whether `tag` is what `message` is told apart by: the atom itself, or
 // a tuple's literal tag (`{:tag, …}`, as pid_send spells it). Joined from

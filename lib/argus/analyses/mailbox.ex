@@ -37,7 +37,9 @@ defmodule Argus.Analyses.Mailbox do
   - `unhandled_info(mod, func, site, message, source, server, handler, fallback)` —
     a message a GenServer is sent (`source`: a `send` process points-to
     follows to it, a `timer` it arms for itself, the `:DOWN` of a
-    `monitor` it takes) that no clause of its handle_info/2 takes:
+    `monitor` it takes, the close of a `socket` it makes active —
+    `{:tcp_closed, …}` or `{:ssl_closed, …}`) that no clause of its
+    handle_info/2 takes:
     `fallback` says what does instead — nothing (`crash`, a
     FunctionClauseError), a `catch_all` that only logs or ignores it, or
     GenServer's `default` handle_info/2, which logs it as an error; or,
@@ -76,7 +78,9 @@ defmodule Argus.Analyses.Mailbox do
       # A GenServer a child spec names is a server process too.
       Argus.Extractors.Supervision,
       # Which handle_info/2 is GenServer's own (unhandled_info's "default").
-      Argus.Extractors.Generated
+      Argus.Extractors.Generated,
+      # The sockets a server makes active (unhandled_info's "socket").
+      Argus.Extractors.Sockets
     ]
 
   @impl true
@@ -154,15 +158,20 @@ defmodule Argus.Analyses.Mailbox do
         name: :unhandled_info,
         fields: [
           {:mod, :symbol, "the sending module"},
-          {:func, :symbol, "the function that sends, arms the timer or monitors"},
-          {:site, :symbol, "the send, the timer or the monitor"},
-          {:message, :symbol, "the literal atom, {:tag, …}, or {:DOWN, …}"},
-          {:source, :symbol, "send | timer | monitor"},
+          {:func, :symbol,
+           "the function that sends, arms the timer, monitors or makes the socket active"},
+          {:site, :symbol, "the send, the timer, the monitor or the socket's activation"},
+          {:message, :symbol,
+           "the literal atom, {:tag, …}, {:DOWN, …}, {:tcp_closed, …} or {:ssl_closed, …}"},
+          {:source, :symbol, "send | timer | monitor | socket"},
           {:server, :symbol, "the GenServer module whose handle_info/2 it reaches"},
           {:handler, :symbol, "its handle_info/2, or the gen_statem state function"},
           {:fallback, :symbol, "crash | catch_all | default | state_crash"}
         ],
-        key: [:site, :server],
+        # A socket's close is the handler's defect, not the activation's:
+        # one finding per server and handler, whichever sites make its
+        # sockets active.
+        key: {:source, %{"socket" => [:server, :handler], default: [:site, :server]}},
         doc: "A message a GenServer is sent that no clause of its handle_info/2 takes."
       },
       %{
@@ -340,6 +349,52 @@ defmodule Argus.Analyses.Mailbox do
       help: [
         "add a clause for #{message} to the receive that should take it",
         "or send a message the process's receives expect"
+      ]
+    )
+  end
+
+  # The close of a socket the server holds: the handler is where the
+  # clause is missing, and the activation is why the message comes.
+  def finding(:unhandled_info, [mod, func, site, message, "socket", server, handler, fallback]) do
+    {title, what} =
+      case fallback do
+        "crash" ->
+          {"No handle_info/2 clause for the close of the server's socket",
+           "none of its clauses matches it and there is no catch-all, so the first " <>
+             "disconnect is a FunctionClauseError that takes the server down"}
+
+        "catch_all" ->
+          {"The close of the server's socket reaches only its catch-all handle_info/2",
+           "no clause names it and the catch-all only logs or ignores it, so the server " <>
+             "goes on holding a socket that is gone, and learns of it only when a send or " <>
+             "a recv fails"}
+
+        "default" ->
+          {"The close of the server's socket reaches only GenServer's default handle_info/2",
+           "the module has no handle_info/2 but the one GenServer defines, which logs it " <>
+             "as an error and drops it, so the server goes on holding a socket that is gone"}
+
+        "state_crash" ->
+          {"No clause for the close of a gen_statem's socket",
+           "no callback of the machine has a clause for it, and " <>
+             "#{Findings.call_name(handler)} has no :info catch-all, so the first " <>
+             "disconnect in that state is a FunctionClauseError that takes the machine down"}
+      end
+
+    Findings.new(
+      :warning,
+      title,
+      "#{Findings.call_name(func)} makes #{socket_kind(message)} socket active in " <>
+        "#{server}'s process, so the socket's end arrives there as #{message} whenever " <>
+        "the connection goes, the peer closing or the network dropping: #{what}.",
+      at: Findings.at_func(handler),
+      at_label: "no clause here takes #{message}",
+      related: [Findings.related("the socket is made active here", Findings.at_site(site, mod))],
+      help: [
+        "add a `handle_info(#{socket_clause(message)}, state)` clause that closes the " <>
+          "connection and reconnects or stops",
+        "or keep the socket passive (`active: false`) and read it with a timed recv, which " <>
+          "returns `{:error, :closed}`"
       ]
     )
   end
@@ -680,6 +735,12 @@ defmodule Argus.Analyses.Mailbox do
   # program sends may be meant for the catch-all.
   defp catch_all_severity("monitor"), do: :warning
   defp catch_all_severity(_source), do: :info
+
+  defp socket_kind("{:ssl_closed, …}"), do: "a TLS"
+  defp socket_kind(_tcp), do: "a TCP"
+
+  defp socket_clause("{:ssl_closed, …}"), do: "{:ssl_closed, socket}"
+  defp socket_clause(_tcp), do: "{:tcp_closed, socket}"
 
   defp sent("monitor", func, _message),
     do:

@@ -1,7 +1,8 @@
 defmodule Argus.Schema.OwnedResources do
   @moduledoc """
   The resources a process owns and loses with it: ETS tables, their
-  options and the operations on them, and ports.
+  options and the operations on them, ports, and the sockets it
+  controls.
 
   Layer 2 of `Argus.Schema`, which reads the relations from here.
   """
@@ -65,6 +66,40 @@ defmodule Argus.Schema.OwnedResources do
           "Port creation point. A port is owned by the opening process and dies " <>
             "when it terminates — so, like an ETS table, it attributes to that " <>
             "process in the supervision tree."
+      },
+      %{
+        name: :socket_active,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "instruction ID of the connect or setopts call"},
+          {:func, :symbol, "containing function ID"},
+          {:transport, :symbol,
+           ~s(the socket's messages: "tcp", "ssl", "inet" (:inet.setopts/2, a TCP or UDP socket\) or "any" (a setopts/2 through a module in a variable\))},
+          {:mode, :symbol,
+           ~s(the literal :active value: "true" | "once" | "n" | "false"; "default" for a connect whose literal options leave it out, "unset" for such a setopts, "param" or "dynamic")},
+          {:param, :number, "the 0-based parameter the options come from, for \"param\"; else -1"}
+        ],
+        doc: """
+        A call that opens a TCP or TLS socket or sets its options, and the \
+        `:active` mode its literal options give. An active socket delivers its \
+        data and its close (`{:tcp_closed, s}`, `{:ssl_closed, s}`) as messages \
+        to the process that controls it. Options built at runtime are "dynamic".
+        """
+      },
+      %{
+        name: :socket_opts_arg,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "instruction ID of the call"},
+          {:caller, :symbol, "calling function ID"},
+          {:callee, :symbol, "callee function ID (mod:func/arity)"},
+          {:pos, :number, "0-based argument position"},
+          {:mode, :symbol, "the :active value: true | once | n | false"}
+        ],
+        doc: """
+        A call handing a literal option list with an `:active` entry: what a \
+        wrapper's `socket_active` row whose mode is "param" resolves to.
+        """
       }
     ])
   end

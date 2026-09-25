@@ -10,6 +10,39 @@ What 0.20.0 will ship; the release dates this heading and drops the
 `-dev` from `mix.exs`. Grouped by concern. Each entry opens with what it
 does: **Added**, **Changed**, **Fixed** or **Removed**.
 
+### Sockets a server holds
+
+Classes mined from fixed bugs.
+
+**Added.** `mailbox.unhandled_info` has a fourth source, `socket`: a
+server that makes a TCP or TLS socket active in its own process is sent
+the socket's end, `{:tcp_closed, s}` or `{:ssl_closed, s}`, however the
+connection goes, and a handle_info/2 (or a gen_statem's :info handler)
+with no clause for it crashes on the first disconnect or, with a
+catch-all that only logs, leaves the server holding a socket that is
+gone. The socket is made active where the server's process connects one
+whose literal options leave `:active` at its default or set it
+(`:gen_tcp.connect/3,4`, `:ssl.connect/2,3,4`), sets it with
+`:inet.setopts/2`, `:ssl.setopts/2` or a transport module's `setopts/2`,
+or hands a wrapper of the program's the literal list it sets (kafka_ex's
+`Socket.setopts(s, [..., {:active, true}])`). A TLS socket needs
+`{:ssl_closed, _}`: a clause for `{:tcp_closed, _}` does not take it
+(cqerl's and mongodb's TLS clients). Not judged: options built at
+runtime, a socket the same function hands to another process, an
+accepted socket, a catch-all that hands the message on, and a receive in
+the callback that takes the close. Titles: "No handle_info/2 clause for
+the close of the server's socket", "The close of the server's socket
+reaches only its catch-all handle_info/2", "The close of the server's
+socket reaches only GenServer's default handle_info/2", "No clause for
+the close of a gen_statem's socket"; all `:warning`, anchored at the
+handler with the activation as a related frame, one per server and
+handler (the relation's key is now per source).
+
+**Changed.** Schema 97. `Argus.Extractors.Sockets` (new) writes
+`socket_active(id, func, transport, mode, param)` and
+`socket_opts_arg(id, caller, callee, pos, mode)`, in
+`Argus.Schema.OwnedResources`. mailbox runs it.
+
 ### Process rules, read against real programs
 
 **Fixed.** `mailbox.unhandled_info` no longer reports a timer whose
