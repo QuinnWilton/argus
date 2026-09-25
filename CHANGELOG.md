@@ -180,6 +180,33 @@ neighbours of each are permanent fixtures in `test/soundness/`.
   is tooling's test support, including helpers calling ExUnit.Callbacks,
   ExUnit.Assertions or ExUnit.Case — one definition.
 
+### Soundness, round 2: monitors, timer loops, startup, shutdown and state machines
+
+The second review of the night's precision rounds found suppressions
+that silenced the real bug of their class on a nearby path, caller,
+source, branch or clause. Each fix below keeps the quieted shape quiet
+where the reasoning holds, and every review probe and adversarial
+neighbour is a positive fixture in `test/soundness/<concern>_test.exs`
+at the severity the rule gave it before the suppression.
+
+**Fixed.** A wait for a `:DOWN` is the receive clause that takes it,
+never the receive. `Argus.Extractors.Monitor` stopped its walks at the
+`loop_rec` of any receive with a `:DOWN` clause, so "monitor, ask, wait
+for the reply or the `:DOWN`" read as collecting the monitor (mailbox's
+dropped ref, lost) and "start, then wait for `{:ready, pid}` or the
+`:DOWN`" as waiting the child out (unsafe_input's unbounded children,
+lost). `awaits_down_after`, `awaits_child_exit` and the callee's
+tuple-collected returns now prune a path at the `:DOWN` clause's
+`remove_message`, one reading of a receive's clauses for blocking and
+timed receives alike (a `remove_message` another clause's path reaches,
+where the compiler shares a body, is no take). A collector a caller's
+call counts as a wait takes a `:DOWN` on every path to its return, or is
+a receive loop that takes one on every path from its receive. mailbox's
+`waited_out` moved to `clientlib/receive.dl` beside `down_bounded`,
+defined by that walk alone: a blocking receive pinning the monitor's
+ref (`recv_down`) no longer counts on paths that leave by another
+clause.
+
 ### Priors, round 3: tooling, and programs found on PATH
 
 **Added.** Schema 118. `tooling_module(mod, basis)` from a new

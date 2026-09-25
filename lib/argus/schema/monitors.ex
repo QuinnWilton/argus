@@ -46,11 +46,13 @@ defmodule Argus.Schema.Monitors do
         fields: [{:func, :symbol, "the function"}],
         doc: """
         Every start `func` makes (a call named `start*` or `spawn*`) is \
-        followed, on every path to its return, by a receive with no \
-        `after` that takes the `:DOWN` of any monitor, or of a monitor the \
-        function takes after that start: what it starts lives no longer \
-        than the call (Livebook's `UniqueTask.run/2`). A path that raises \
-        is not asked (`Argus.Extractors.Monitor`).
+        followed, on every path to its return, by a receive clause that \
+        takes the `:DOWN` of any monitor, or of a monitor the function takes \
+        after that start: what it starts lives no longer than the call \
+        (Livebook's `UniqueTask.run/2`). The clause, not the receive: one for \
+        the child's answer, or a timed receive's `after`, leaves the child \
+        alive on its path. A path that raises is not asked \
+        (`Argus.Extractors.Monitor`).
         """
       },
       %{
@@ -165,11 +167,14 @@ defmodule Argus.Schema.Monitors do
           {:call, :symbol, "a call in it that returns"}
         ],
         doc: """
-        Every path in `func` from the call at `call` to its return waits for \
-        a :DOWN: a receive with no `after` whose `{:DOWN, ...}` clause takes \
-        any monitor's, or the one whose ref the call returned; a \
-        `Process.demonitor(ref, [:flush])` of that ref; or a call to a \
-        function of the module that holds such a receive or calls one. A \
+        Every path in `func` from the call at `call` to its return takes \
+        a :DOWN: a receive's `{:DOWN, ...}` clause that takes any monitor's, \
+        or the one whose ref the call returned (the clause, not the receive: \
+        another clause, or a timed receive's `after`, leaves with the \
+        monitor live); a `Process.demonitor(ref, [:flush])` of that ref; or \
+        a call to a function of the module that takes one on every path to \
+        its return (a receive loop's end, a path that never enters its \
+        receive, taken on trust). A \
         monitor the callee left live is the caller's to collect: OTP's old \
         supervisor shutdown monitors each child, looks once (`after 0`) for \
         an exit already queued, and returns, and its caller then waits for \

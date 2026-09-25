@@ -91,13 +91,17 @@ defmodule Argus.Extractors.Monitor do
   once (`after 0`) for an `{:EXIT, ...}` already in the mailbox, and
   returns; its caller then blocks in `wait_children` until every child's
   `{:DOWN, ...}` has come. `awaits_down_after(func, call)` names the
-  calls such a wait follows on every path to `func`'s return: a receive
-  with no `after` whose `{:DOWN, ...}` clause takes any monitor's (the
-  ref is not compared), or the one whose ref the call returned; a
+  calls such a wait follows on every path to `func`'s return: a receive's
+  `{:DOWN, ...}` clause that takes any monitor's (the ref is not
+  compared), or the one whose ref the call returned; a
   `Process.demonitor(ref, [:flush])` of that ref; or a call to a function
-  of this module that holds such a receive, or calls one that does. A
-  timed receive's clause that takes such a `:DOWN` collects it on its
-  own path (a grace period, then a kill and a wait). A callee that
+  of this module that takes one on every path to its return, or is a
+  receive loop taking one on every path from its receive (a path that
+  never enters the receive is the loop's end, taken on trust). The wait
+  is the clause, never the receive: `receive do {:reply, x} -> ...;
+  {:DOWN, ...} -> ... end` leaves with the monitor live on the reply
+  path, and a timed receive does on its `after` (a grace period, then a
+  kill and a wait, takes it on both). A callee that
   collects on some returns and returns an atom on every path that leaves
   its monitor live (the supervisor forks' `monitor_child/1`: `{error,
   Reason}` after the `:DOWN`, `ok` before it) has its collected side
@@ -123,6 +127,7 @@ defmodule Argus.Extractors.Monitor do
   @behaviour Argus.Extractor
 
   alias Argus.Cfg.Walk
+  alias Argus.Extractor.Dispatch
   alias Argus.Extractor.Resolve
   alias Argus.Extractors.Monitor.ExitSignal
   alias Argus.Extractors.Monitor.Flush
@@ -1026,27 +1031,26 @@ defmodule Argus.Extractors.Monitor do
 
   # ── A monitor the caller collects ────────────────────────────────────
 
-  # A function that waits for any :DOWN (a receive for any monitor's, a
-  # call to a collector) is walked from every call it makes; one whose
-  # only waits are for a particular ref (a pinned receive, a flushing
-  # demonitor) from the calls that ref comes from; the rest (nearly all)
-  # cost one scan for their receives.
+  # A function that waits for any :DOWN (a receive clause taking any
+  # monitor's, a call to a collector) is walked from every call it makes;
+  # one whose only waits are for a particular ref (a pinned clause, a
+  # flushing demonitor) from the calls that ref comes from; the rest
+  # (nearly all) cost one scan for their receives.
   defp emit_awaits_down_after(facts, %{module: mod, functions: functions} = module_data) do
-    receives =
+    takes =
       Map.new(functions, fn {:function, name, arity, _entry, instrs} ->
-        {{name, arity}, down_receives(instrs)}
+        {{name, arity}, down_takes(instrs)}
       end)
 
-    collectors = collectors(mod, functions, receives)
-    tuple_collected = tuple_collected(module_data, receives, collectors)
-    facts = emit_awaits_child_exit(facts, module_data, receives)
+    collectors = collectors(module_data, takes)
+    tuple_collected = tuple_collected(module_data, takes, collectors)
+    facts = emit_awaits_child_exit(facts, module_data, takes)
 
     Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
       ctx = %{
         mod: mod,
         instrs: instrs,
-        receives: Map.fetch!(receives, {name, arity}),
-        takes: timed_down_takes(instrs),
+        takes: takes_at(Map.fetch!(takes, {name, arity})),
         collectors: collectors,
         tuple_collected: tuple_collected
       }
@@ -1069,16 +1073,14 @@ defmodule Argus.Extractors.Monitor do
     indexed = Enum.with_index(ctx.instrs)
 
     waits_for_any? =
-      Enum.any?(ctx.receives, fn {_idx, clauses} -> :any in clauses end) or
+      Enum.any?(ctx.takes, fn {_at, ref} -> ref == :any end) or
         Enum.any?(ctx.instrs, &collector_call?(&1, ctx))
 
     if waits_for_any? do
       for {instr, idx} <- indexed, Instr.call?(instr), do: idx
     else
       pinned =
-        for {_idx, clauses} <- ctx.receives,
-            {:pinned, at, reg} <- clauses,
-            do: origin_call(ctx.instrs, at, reg)
+        for {_at, {:pinned, at, reg}} <- ctx.takes, do: origin_call(ctx.instrs, at, reg)
 
       flushed =
         for {instr, idx} <- indexed,
@@ -1116,7 +1118,7 @@ defmodule Argus.Extractors.Monitor do
       Walk.explore(fun, ctx.instrs, [call + 1],
         on_instr: fn instr, idx ->
           cond do
-            waits_for_down?(instr, idx, call, ctx) -> :prune
+            waits_for_down?(instr, idx, [call], ctx) -> :prune
             Instr.exits?(instr) and not raises?(instr) -> {:halt, :returns}
             true -> :continue
           end
@@ -1133,15 +1135,17 @@ defmodule Argus.Extractors.Monitor do
   # monitors it and blocks for its :DOWN: the child lives no longer than
   # the call. Every start in the function (a call named start* or spawn*)
   # must be followed, on every path to the function's return, by a
-  # receive with no `after` whose :DOWN clause takes any monitor's, or
-  # pins the ref of a monitor the function takes after that start. A path
-  # that raises is not asked. A start with no such wait on some path (the
-  # child outlives the call there) leaves the function without a row.
-  defp emit_awaits_child_exit(facts, %{module: mod, functions: functions} = module_data, receives) do
+  # receive clause that takes a :DOWN: any monitor's, or that of a monitor
+  # the function takes after that start (its pinned ref). The receive
+  # alone is not enough: a clause for the child's answer (`{:ready, ^pid}`)
+  # leaves it with the child alive. A path that raises is not asked. A
+  # start with no such take on some path (the child outlives the call
+  # there) leaves the function without a row.
+  defp emit_awaits_child_exit(facts, %{module: mod, functions: functions} = module_data, takes) do
     for {:function, name, arity, _entry, instrs} <- functions,
         starts = for({instr, idx} <- Enum.with_index(instrs), starts?(instr), do: idx),
         starts != [],
-        down = Map.fetch!(receives, {name, arity}),
+        down = takes_at(Map.fetch!(takes, {name, arity})),
         down != %{},
         %Argus.Cfg.Function{} = fun <- [cfg(module_data, name, arity)],
         Enum.all?(starts, &child_awaited?(fun, instrs, down, &1)),
@@ -1165,22 +1169,20 @@ defmodule Argus.Extractors.Monitor do
     match?({:done, _}, result)
   end
 
-  defp waits_after?({:loop_rec, _fail, _dst}, idx, down, instrs, start) do
-    down
-    |> Map.get(idx, [])
-    |> Enum.any?(fn
-      :any ->
+  defp waits_after?(:remove_message, idx, down, instrs, start) do
+    case Map.fetch(down, idx) do
+      {:ok, :any} ->
         true
 
-      {:pinned, at, reg} ->
+      {:ok, {:pinned, at, reg}} ->
         case origin_call(instrs, at, reg) do
           nil -> false
           monitor -> monitor > start and monitor_call?(Enum.at(instrs, monitor))
         end
 
-      :other ->
+      _ ->
         false
-    end)
+    end
   end
 
   defp waits_after?(_instr, _idx, _down, _instrs, _start), do: false
@@ -1227,7 +1229,7 @@ defmodule Argus.Extractors.Monitor do
   end
 
   # `%{{name, arity} => the atoms it returns with its monitor live}`.
-  defp tuple_collected(%{module: mod, functions: functions} = module_data, receives, collectors) do
+  defp tuple_collected(%{module: mod, functions: functions} = module_data, takes, collectors) do
     for {:function, name, arity, _entry, instrs} <- functions,
         monitors = monitor_sites(instrs),
         monitors != [],
@@ -1235,8 +1237,7 @@ defmodule Argus.Extractors.Monitor do
         ctx = %{
           mod: mod,
           instrs: instrs,
-          receives: Map.fetch!(receives, {name, arity}),
-          takes: timed_down_takes(instrs),
+          takes: takes_at(Map.fetch!(takes, {name, arity})),
           collectors: collectors
         },
         {:ok, atoms} <- [live_return_atoms(fun, ctx, monitors)],
@@ -1258,7 +1259,7 @@ defmodule Argus.Extractors.Monitor do
       Walk.explore(fun, ctx.instrs, Enum.map(monitors, &(&1 + 1)),
         on_instr: fn instr, idx ->
           cond do
-            waits_for_down?(instr, idx, nil, ctx) -> :prune
+            waits_for_down?(instr, idx, monitors, ctx) -> :prune
             instr == :return -> :prune
             Instr.exits?(instr) and not raises?(instr) -> {:halt, :no}
             true -> :continue
@@ -1288,34 +1289,28 @@ defmodule Argus.Extractors.Monitor do
     end)
   end
 
-  defp waits_for_down?({:loop_rec, _fail, _dst}, idx, call, ctx) do
-    ctx.receives
-    |> Map.get(idx, [])
-    |> Enum.any?(fn
-      :any -> true
-      {:pinned, at, reg} -> origin_call(ctx.instrs, at, reg) == call
-      :other -> false
-    end)
-  end
-
-  # The clause of a timed receive that took a :DOWN: this path has it.
-  defp waits_for_down?(:remove_message, idx, call, ctx) do
-    case Map.fetch(Map.get(ctx, :takes, %{}), idx) do
+  # A wait for the :DOWN of the monitor one of `calls` took. It is the
+  # clause of a receive that took a :DOWN (any monitor's, or the one
+  # whose ref the call returned), not the receive: a clause for the
+  # peer's answer leaves it with the monitor live. So is a flushing
+  # demonitor of that ref, and a call to a collector.
+  defp waits_for_down?(:remove_message, idx, calls, ctx) do
+    case Map.fetch(ctx.takes, idx) do
       {:ok, :any} -> true
-      {:ok, {:pinned, at, reg}} -> origin_call(ctx.instrs, at, reg) == call
+      {:ok, {:pinned, at, reg}} -> origin_call(ctx.instrs, at, reg) in calls
       _ -> false
     end
   end
 
-  defp waits_for_down?(instr, idx, call, ctx) do
+  defp waits_for_down?(instr, idx, calls, ctx) do
     collector_call?(instr, ctx) or
       (demonitor?(instr) and flush_option(ctx.instrs, idx) == "flush" and
-         origin_call(ctx.instrs, idx, {:x, 0}) == call)
+         origin_call(ctx.instrs, idx, {:x, 0}) in calls)
   end
 
   defp collector_call?(instr, ctx) do
     case match_local_call(instr) do
-      {:ok, mod, name, arity} -> mod == ctx.mod and MapSet.member?(ctx.collectors, {name, arity})
+      {:ok, mod, name, arity} -> mod == ctx.mod and Map.has_key?(ctx.collectors, {name, arity})
       :none -> false
     end
   end
@@ -1336,9 +1331,20 @@ defmodule Argus.Extractors.Monitor do
     end
   end
 
-  # The functions of the module that wait for any monitor's :DOWN in a
-  # receive with no `after`, and those that call one, to a fixpoint.
-  defp collectors(mod, functions, receives) do
+  # The functions of the module a call to which is a wait for any
+  # monitor's :DOWN, as `%{{name, arity} => true}`: every path from the
+  # function's entry to its return takes a :DOWN (a receive clause that
+  # does not compare the ref) or calls another collector. Or it is a
+  # receive loop — it calls itself, and holds a receive with no `after`
+  # taking any :DOWN — and every path from that receive to the return
+  # takes one or calls a collector: a path that never enters the receive
+  # is the loop's end (wait_children's count reaching 0), taken on trust.
+  # A receive whose other clause returns (the peer's answer, then a
+  # return) is no wait: that path leaves the monitor live. The greatest
+  # set that holds, so a loop's call to itself counts: from every
+  # function that takes such a :DOWN or calls one that does, the ones
+  # with a path past every wait are dropped until none is.
+  defp collectors(%{module: mod, functions: functions} = module_data, takes) do
     calls =
       Map.new(functions, fn {:function, name, arity, _entry, instrs} ->
         callees =
@@ -1350,39 +1356,106 @@ defmodule Argus.Extractors.Monitor do
         {{name, arity}, callees}
       end)
 
-    waiting =
-      for {key, receives} <- receives,
-          Enum.any?(receives, fn {_idx, clauses} -> :any in clauses end),
-          into: MapSet.new(),
-          do: key
+    seeds =
+      for {key, entries} <- takes,
+          Enum.any?(entries, &(&1.ref == :any)),
+          into: %{},
+          do: {key, true}
 
-    close_collectors(waiting, calls)
+    code = Map.new(functions, fn {:function, name, arity, _entry, instrs} -> {{name, arity}, instrs} end)
+
+    check = fn {name, arity} = key, set ->
+      collects?(module_data, key, Map.fetch!(code, key), Map.fetch!(takes, key), %{
+        mod: mod,
+        collectors: set,
+        self: key,
+        recursive: {name, arity} in Map.fetch!(calls, key)
+      })
+    end
+
+    seeds |> close_collectors(calls) |> shrink_collectors(check)
   end
 
   defp close_collectors(set, calls) do
     grown =
       for {key, callees} <- calls,
-          not MapSet.member?(set, key),
-          Enum.any?(callees, &MapSet.member?(set, &1)),
+          not Map.has_key?(set, key),
+          Enum.any?(callees, &Map.has_key?(set, &1)),
           into: set,
-          do: key
+          do: {key, true}
 
-    if MapSet.size(grown) == MapSet.size(set), do: set, else: close_collectors(grown, calls)
+    if map_size(grown) == map_size(set), do: set, else: close_collectors(grown, calls)
   end
 
-  # The receives with no `after`, by loop_rec index, each with its
-  # {:DOWN, ...} clauses: `:any` when a clause does not compare the ref,
-  # `{:pinned, at, reg}` when it compares it with `reg` at `at`, `:other`
-  # when it compares it with anything else. A receive with an `after`
-  # can end without the message, and is no wait.
-  defp down_receives(instrs) do
+  defp shrink_collectors(set, check) do
+    kept = for {key, true} <- set, check.(key, set), into: %{}, do: {key, true}
+    if map_size(kept) == map_size(set), do: set, else: shrink_collectors(kept, check)
+  end
+
+  defp collects?(module_data, {name, arity}, instrs, entries, ctx) do
+    takes = takes_at(entries)
+
+    on_instr = fn instr, idx ->
+      cond do
+        Map.get(takes, idx) == :any -> :prune
+        collector_call?(instr, ctx) -> :prune
+        Instr.exits?(instr) and not raises?(instr) -> {:halt, :returns}
+        true -> :continue
+      end
+    end
+
+    loops = for %{blocking: true, ref: :any, loop: loop} <- entries, uniq: true, do: loop
+
+    starts =
+      if ctx.recursive and loops != [],
+        do: loops,
+        else: [Dispatch.entry_index(instrs)]
+
+    case cfg(module_data, name, arity) do
+      %Argus.Cfg.Function{} = fun ->
+        match?({:done, _}, Walk.explore(fun, instrs, starts, on_instr: on_instr))
+
+      _ ->
+        false
+    end
+  end
+
+  # ── The :DOWN clauses of a function's receives ──────────────────────
+  #
+  # Where a receive takes a :DOWN: the `remove_message` of each clause
+  # whose pattern is `{:DOWN, ...}`, as `%{loop:, blocking:, at:, ref:}`
+  # — the receive's `loop_rec`, whether it has no `after`, the
+  # `remove_message`, and the ref: `:any` when the clause does not
+  # compare it, `{:pinned, at, reg}` when it compares it with `reg` at
+  # `at`, `:other` when with anything else. A `remove_message` some other
+  # clause's path also reaches (the compiler shares identical clause
+  # bodies) is not a take: that path took something else.
+  #
+  # A wait for a :DOWN is such a clause, never the receive: the other
+  # clauses of `receive do {:reply, x} -> ...; {:DOWN, ...} -> ... end`
+  # leave it with the monitor live. Each walk above prunes a path there.
+  defp down_takes(instrs) do
     tuple = List.to_tuple(instrs)
     labels = for {{:label, l}, idx} <- Enum.with_index(instrs), into: %{}, do: {l, idx}
 
-    for {{:loop_rec, {:f, fail}, _dst}, idx} <- Enum.with_index(instrs),
-        blocking?(tuple, Map.get(labels, fail)),
-        into: %{},
-        do: {idx, down_clauses(tuple, idx, labels)}
+    for {{:loop_rec, {:f, fail}, _dst}, loop} <- Enum.with_index(instrs),
+        blocking <- [blocking?(tuple, Map.get(labels, fail))],
+        start = %{idx: loop + 1, msg: [{:x, 0}], tags: [], refs: [], tag: nil, ref: :any},
+        {at, matched} <-
+          [start]
+          |> take_heads(tuple, labels, %{}, [])
+          |> Enum.group_by(fn {at, _state} -> at end, fn {_at, state} -> state end),
+        Enum.all?(matched, &(&1.tag == :DOWN)),
+        do: %{loop: loop, blocking: blocking, at: at, ref: one_ref(matched)}
+  end
+
+  defp takes_at(entries), do: Map.new(entries, &{&1.at, &1.ref})
+
+  defp one_ref(matched) do
+    case matched |> Enum.map(& &1.ref) |> Enum.uniq() do
+      [ref] -> ref
+      _several -> :other
+    end
   end
 
   # The empty-mailbox block of a receive with no `after` is a `wait`;
@@ -1400,31 +1473,11 @@ defmodule Argus.Extractors.Monitor do
 
   defp blocking?(_tuple, _idx), do: false
 
-  # Walks the clause heads of the receive at `idx` — each test's pass
-  # edge falls through, its fail edge is the next clause — carrying the
-  # registers that hold the message, its first element and its second,
-  # and what the path has established of them. A path reaching
-  # `remove_message` has matched a clause.
-  defp down_clauses(tuple, idx, labels) do
-    start = %{idx: idx + 1, msg: [{:x, 0}], tags: [], refs: [], tag: nil, ref: :any}
-    walk_heads([start], tuple, labels, %{}, [])
-  end
-
-  # The DOWN clauses of every receive that has an `after`, by where each
-  # takes its message: `%{remove_message index => ref}`. A timed receive
-  # is no wait, but the path that took a :DOWN in it has collected it.
-  defp timed_down_takes(instrs) do
-    tuple = List.to_tuple(instrs)
-    labels = for {{:label, l}, idx} <- Enum.with_index(instrs), into: %{}, do: {l, idx}
-
-    for {{:loop_rec, {:f, fail}, _dst}, idx} <- Enum.with_index(instrs),
-        not blocking?(tuple, Map.get(labels, fail)),
-        start = %{idx: idx + 1, msg: [{:x, 0}], tags: [], refs: [], tag: nil, ref: :any},
-        {at, ref} <- take_heads([start], tuple, labels, %{}, []),
-        into: %{},
-        do: {at, ref}
-  end
-
+  # Walks the clause heads of a receive — each test's pass edge falls
+  # through, its fail edge is the next clause — carrying the registers
+  # that hold the message, its first element and its second, and what the
+  # path has established of them. A path reaching `remove_message` has
+  # matched a clause: `{remove_message index, state}` for each.
   defp take_heads([], _tuple, _labels, _seen, acc), do: acc
 
   defp take_heads([state | rest], tuple, labels, seen, acc) do
@@ -1434,30 +1487,8 @@ defmodule Argus.Extractors.Monitor do
       seen = Map.put(seen, state, true)
 
       case head(elem(tuple, state.idx), state, labels) do
-        {:matched, %{tag: :DOWN, ref: ref, idx: at}} ->
-          take_heads(rest, tuple, labels, seen, [{at, ref} | acc])
-
-        {:matched, _other} ->
-          take_heads(rest, tuple, labels, seen, acc)
-
-        next ->
-          take_heads(next ++ rest, tuple, labels, seen, acc)
-      end
-    end
-  end
-
-  defp walk_heads([], _tuple, _labels, _seen, acc), do: acc |> Enum.uniq() |> Enum.sort()
-
-  defp walk_heads([state | rest], tuple, labels, seen, acc) do
-    if state.idx >= tuple_size(tuple) or Map.has_key?(seen, state) do
-      walk_heads(rest, tuple, labels, seen, acc)
-    else
-      seen = Map.put(seen, state, true)
-
-      case head(elem(tuple, state.idx), state, labels) do
-        {:matched, %{tag: :DOWN, ref: ref}} -> walk_heads(rest, tuple, labels, seen, [ref | acc])
-        {:matched, _other} -> walk_heads(rest, tuple, labels, seen, acc)
-        next -> walk_heads(next ++ rest, tuple, labels, seen, acc)
+        {:matched, matched} -> take_heads(rest, tuple, labels, seen, [{matched.idx, matched} | acc])
+        next -> take_heads(next ++ rest, tuple, labels, seen, acc)
       end
     end
   end
