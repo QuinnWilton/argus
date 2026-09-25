@@ -154,6 +154,29 @@ defmodule Argus.Pipeline.ShardsTest do
       end
     end
 
+    test "reports what each producer read of the schema: the base's reads and its own",
+         %{tmp_dir: tmp, modules: modules} do
+      producers = [:base, Argus.Extractors.ETS, Argus.Extractors.Dependence]
+      dirs = shard_dirs(Path.join(tmp, "fresh"), producers)
+
+      assert {:ok, %{reads: reads, bases: bases}} =
+               Pipeline.run_shards(modules, dirs, keep_bases: true)
+
+      # The pipeline decodes the relations the in-process passes read,
+      # by their columns, and nothing else of the schema.
+      typed = MapSet.new(Pipeline.typed_relations(), &"columns #{&1}")
+      assert reads[:base] != []
+      assert Enum.all?(reads[:base], &MapSet.member?(typed, &1))
+      assert reads[Argus.Extractors.ETS] == reads[:base]
+      assert :ordsets.subtract(reads[:base], reads[Argus.Extractors.Dependence]) == []
+
+      # Over kept bases, what computed them is the caller's to add: a
+      # base read back reads nothing of the schema.
+      over = shard_dirs(Path.join(tmp, "over"), [Argus.Extractors.ETS])
+      assert {:ok, %{reads: reads}} = Pipeline.run_shards(modules, over, bases: bases)
+      assert reads[Argus.Extractors.ETS] == []
+    end
+
     test "names the modules whose installed specs it read", %{tmp_dir: tmp} do
       dirs = shard_dirs(tmp, [Argus.Extractors.Specs])
 
@@ -208,6 +231,19 @@ defmodule Argus.Pipeline.ShardsTest do
       # A producer named that made no rows is there, empty.
       assert {:ok, %{Argus.Extractors.ETS => %{}}, _info} =
                Pipeline.extract_shards([:lists], [Argus.Extractors.ETS])
+    end
+
+    test "what formatting a producer's rows read is among its reads", %{modules: modules} do
+      producers = [:base, Argus.Extractors.ETS]
+      assert {:ok, raw, %{reads: reads}} = Pipeline.extract_shards(modules, producers)
+
+      assert {:ok, _typed, %{reads: typed_reads}} =
+               Pipeline.extract_shards(modules, producers, format: :typed)
+
+      for producer <- producers do
+        formatted = for relation <- Map.keys(raw[producer]), do: "columns #{relation}"
+        assert typed_reads[producer] == :ordsets.union(reads[producer], Enum.sort(formatted))
+      end
     end
 
     test "interned rows materialize to the raw ones", %{modules: modules} do

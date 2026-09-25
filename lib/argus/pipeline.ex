@@ -40,6 +40,7 @@ defmodule Argus.Pipeline do
   `{:error, reason}`.
   """
 
+  alias Argus.Cache.Reads
   alias Argus.Cfg
   alias Argus.Extractor.Facts
   alias Argus.Extractor.Helpers
@@ -67,6 +68,14 @@ defmodule Argus.Pipeline do
       (lowercase hex) of each file it wrote, by file name, hashed as the
       rows were written (`Argus.Pipeline.Writer.digests/1`): what a
       store keys the solves reading them on, without reading them back.
+    * `reads` — for `:base` and each extractor that ran, what its rows
+      depend on of the schema (`Argus.Cache.Reads`), sorted: the base's
+      what computing the modules' bases read (and its own derivations,
+      when its rows were asked for), an extractor's those and its own.
+      Over bases read from `bases:`, what computed them is not among
+      them: the caller that kept them knows it. From
+      `extract_shards/3`, for each producer named, what formatting its
+      rows read too.
     * `bases` — with `keep_bases: true`, each module's base
       (`Argus.Pipeline.Base.keep/4`), in input order: nil for a module
       whose base was not computed (it could not be disassembled or
@@ -76,6 +85,7 @@ defmodule Argus.Pipeline do
           required(:lost) => [String.t()],
           required(:installed) => [module()],
           optional(:digests) => %{producer() => %{String.t() => String.t()}},
+          optional(:reads) => %{producer() => [Argus.Cache.Reads.read()]},
           optional(:bases) => [binary() | nil]
         }
 
@@ -243,27 +253,30 @@ defmodule Argus.Pipeline do
       # whether or not the base's rows are written: for a module the run
       # lost they are the module's, which a run of extractors alone would
       # otherwise not know it lost.
-      shape = fn produced, kept ->
+      shape = fn produced, kept, reads ->
         encoded =
           for {producer, facts} <- produced,
               MapSet.member?(selected, producer),
               do: {producer, Writer.encode(facts, written)}
 
         names = for {:base, %{extraction_error: rows}} <- produced, [name | _] <- rows, do: name
-        {encoded, kept, names}
+        {encoded, kept, names, reads}
       end
+
+      read_by = Map.new([:base | extractors], &{&1, []})
 
       try do
         inputs
         |> extract_stream(opts, memo, how, shape)
-        |> Enum.reduce_while({:ok, writers, [], []}, fn
-          {status, {encoded, kept, names}}, {:ok, writers, lost, bases}
+        |> Enum.reduce_while({:ok, writers, [], [], read_by}, fn
+          {status, {encoded, kept, names, reads}}, {:ok, writers, lost, bases, read_by}
           when status in [:ok, :lost] ->
             lost = if status == :lost, do: lost ++ names, else: lost
             bases = if keep?, do: [kept | bases], else: bases
+            read_by = add_reads(read_by, reads)
 
             case append_all(writers, encoded) do
-              {:ok, writers} -> {:cont, {:ok, writers, lost, bases}}
+              {:ok, writers} -> {:cont, {:ok, writers, lost, bases, read_by}}
               {:error, _} = error -> {:halt, error}
             end
 
@@ -271,10 +284,17 @@ defmodule Argus.Pipeline do
             {:halt, {:error, reason}}
         end)
         |> case do
-          {:ok, writers, lost, bases} ->
+          {:ok, writers, lost, bases, read_by} ->
             close_all(writers)
             digests = Map.new(writers, fn {producer, w} -> {producer, Writer.digests(w)} end)
-            info = %{lost: lost, installed: installed_reads(memo), digests: digests}
+
+            info = %{
+              lost: lost,
+              installed: installed_reads(memo),
+              digests: digests,
+              reads: read_by
+            }
+
             {:ok, if(keep?, do: Map.put(info, :bases, Enum.reverse(bases)), else: info)}
 
           {:error, _} = error ->
@@ -285,6 +305,13 @@ defmodule Argus.Pipeline do
         :ets.delete(memo)
       end
     end
+  end
+
+  # Each producer's reads over the modules so far, and one module's.
+  defp add_reads(read_by, reads) do
+    Map.new(read_by, fn {producer, read} ->
+      {producer, :ordsets.union(read, Map.get(reads, producer, []))}
+    end)
   end
 
   # Each path with the base to read back for it, or nil: none when the
@@ -414,14 +441,20 @@ defmodule Argus.Pipeline do
     # The worker keeps the named producers' facts, in the order
     # `run_shards/3` writes them and formatted, and the names its base's
     # extraction errors give, which for a module it lost are the module's.
-    shape = fn produced, _kept ->
-      shards =
-        for {p, facts} <- produced,
-            MapSet.member?(selected, p),
-            do: {p, facts |> in_file_order() |> finish.()}
+    #
+    # Formatting reads the schema (`format: :typed` and `:interned`
+    # decode by each relation's columns), so what a producer's facts
+    # read includes what formatting them did.
+    shape = fn produced, _kept, reads ->
+      {shards, reads} =
+        for {p, facts} <- produced, MapSet.member?(selected, p), reduce: {[], reads} do
+          {shards, reads} ->
+            {formatted, read} = Reads.track(fn -> facts |> in_file_order() |> finish.() end)
+            {[{p, formatted} | shards], Map.update(reads, p, read, &:ordsets.union(&1, read))}
+        end
 
       names = for {:base, %{extraction_error: rows}} <- produced, [name | _] <- rows, do: name
-      {shards, names}
+      {Enum.reverse(shards), names, Map.take(reads, producers)}
     end
 
     with {:ok, paths} <- Disassemble.resolve_paths(modules) do
@@ -436,18 +469,19 @@ defmodule Argus.Pipeline do
           %{base: MapSet.member?(selected, :base), keep: false},
           shape
         )
-        |> Enum.reduce_while({:ok, [], []}, fn
-          {status, {shards, names}}, {:ok, chunks, lost} when status in [:ok, :lost] ->
+        |> Enum.reduce_while({:ok, [], [], Map.new(producers, &{&1, []})}, fn
+          {status, {shards, names, reads}}, {:ok, chunks, lost, read_by}
+          when status in [:ok, :lost] ->
             lost = if status == :lost, do: lost ++ names, else: lost
-            {:cont, {:ok, [shards | chunks], lost}}
+            {:cont, {:ok, [shards | chunks], lost, add_reads(read_by, reads)}}
 
           {:error, reason}, _ ->
             {:halt, {:error, reason}}
         end)
         |> case do
-          {:ok, chunks, lost} ->
+          {:ok, chunks, lost, read_by} ->
             facts = join_shards(producers, Enum.reverse(chunks))
-            {:ok, facts, %{lost: lost, installed: installed_reads(memo)}}
+            {:ok, facts, %{lost: lost, installed: installed_reads(memo), reads: read_by}}
 
           {:error, _} = error ->
             error
@@ -541,11 +575,11 @@ defmodule Argus.Pipeline do
 
       {:exit, {{path, _kept}, :timeout}} ->
         reason = "extraction did not finish within #{task_timeout} ms"
-        {:lost, shape.(lost_module(path, reason), nil)}
+        {:lost, shape.(lost_module(path, reason), nil, %{})}
 
       {:exit, {{path, _kept}, reason}} ->
         reason = "extraction exited: #{one_line(inspect(reason))}"
-        {:lost, shape.(lost_module(path, reason), nil)}
+        {:lost, shape.(lost_module(path, reason), nil, %{})}
     end)
   end
 
@@ -555,35 +589,80 @@ defmodule Argus.Pipeline do
   # which is naturally scoped to this Task.async_stream worker, and the
   # try/after guarantees the flag is cleared before the worker returns
   # to the async pool.
+  #
+  # `shape` takes the module's facts, its kept base and the schema
+  # reads (`Argus.Cache.Reads`) each producer's rows depend on. A module
+  # whose extraction raised past every step's own rescue is the base's
+  # one `extraction_error` row, and depends on whatever was read before
+  # the raise.
   defp extract_module(path, extractors, trace_imprecision, how, shape, memo) do
     if trace_imprecision, do: Facts.enable_tracing()
 
     try do
-      with {:ok, facts, kept} <- module_facts(path, extractors, memo, how) do
-        # Shaped here, in the worker, so the rows cross to the caller as
-        # tuples of small integers or as the bytes of their lines rather
-        # than as every string they hold.
-        {:ok, shape.(facts, kept)}
+      case Reads.track(fn -> shaped_module(path, extractors, how, shape, memo) end) do
+        {{:crashed, facts}, recorded} -> {:ok, shape.(facts, nil, %{base: recorded})}
+        {result, _recorded} -> result
       end
-    rescue
-      exception ->
-        {:ok, shape.(lost_module(path, describe(:error, exception, __STACKTRACE__)), nil)}
-    catch
-      kind, reason ->
-        {:ok, shape.(lost_module(path, describe(kind, reason, __STACKTRACE__)), nil)}
     after
       if trace_imprecision, do: Facts.disable_tracing()
     end
   end
 
-  # `{:ok, [{producer, facts}], kept}`, `:base` first and then each
-  # extractor in order: what each producer made of the module, its
+  defp shaped_module(path, extractors, how, shape, memo) do
+    with {:ok, facts, kept, reads} <- module_facts(path, extractors, memo, how) do
+      # Shaped here, in the worker, so the rows cross to the caller as
+      # tuples of small integers or as the bytes of their lines rather
+      # than as every string they hold.
+      {:ok, shape.(facts, kept, reads)}
+    end
+  rescue
+    exception -> {:crashed, lost_module(path, describe(:error, exception, __STACKTRACE__))}
+  catch
+    kind, reason -> {:crashed, lost_module(path, describe(kind, reason, __STACKTRACE__))}
+  end
+
+  # `{:ok, [{producer, facts}], kept, reads}`, `:base` first and then
+  # each extractor in order: what each producer made of the module, its
   # failures with it (a base step's in `:base`, an extractor's in its
-  # own), and — when `how.keep` asks — its base (`Argus.Pipeline.Base`).
-  # `how.base` says whether the base's own rows are wanted: the
-  # derivations only they hold are skipped when not, and a base kept
-  # from an earlier run (`how.kept`) stands in for computing one.
-  defp module_facts(path, extractors, memo, %{kept: kept} = how) when is_binary(kept) do
+  # own), when `how.keep` asks its base (`Argus.Pipeline.Base`), and
+  # what each producer read of the schema: the base what computing the
+  # module's base read and its own derivations, an extractor that and
+  # its own reads. `how.base` says whether the base's own rows are
+  # wanted: the derivations only they hold are skipped when not, and a
+  # base kept from an earlier run (`how.kept`) stands in for computing
+  # one.
+  defp module_facts(path, extractors, memo, how) do
+    case Reads.track(fn -> module_base(path, extractors, memo, how) end) do
+      {{:ok, data, derive, kept}, module_reads} ->
+        produced = run_extractors(data, extractors)
+        {base, base_reads} = Reads.track(fn -> if how.base, do: derive.(), else: %{} end)
+
+        reads =
+          Map.new([
+            {:base, :ordsets.union(module_reads, base_reads)}
+            | for(
+                {extractor, _facts, own} <- produced,
+                do: {extractor, :ordsets.union(module_reads, own)}
+              )
+          ])
+
+        facts = [
+          {:base, base} | for({extractor, facts, _own} <- produced, do: {extractor, facts})
+        ]
+
+        {:ok, facts, kept, reads}
+
+      {{:error, _} = error, _module_reads} ->
+        error
+    end
+  end
+
+  # What the extractors read of a module: `{:ok, data, derive, kept}`,
+  # the module data they run over, the derivation of the base's own
+  # rows (a function, run only when they are wanted), and the base to
+  # keep, if asked for. A kept base that cannot be read is computed
+  # afresh.
+  defp module_base(path, extractors, memo, %{kept: kept} = how) when is_binary(kept) do
     case restore(kept, path, extractors) do
       {:ok, restored} ->
         data =
@@ -592,14 +671,14 @@ defmodule Argus.Pipeline do
           |> with_typed(restored.typed)
           |> extractor_data(memo, extractors)
 
-        {:ok, [{:base, %{}} | run_extractors(data, extractors)], nil}
+        {:ok, data, fn -> %{} end, nil}
 
       :error ->
-        module_facts(path, extractors, memo, %{how | kept: nil})
+        module_base(path, extractors, memo, %{how | kept: nil})
     end
   end
 
-  defp module_facts(path, extractors, memo, how) do
+  defp module_base(path, extractors, memo, how) do
     with {:ok, data} <- Disassemble.disassemble_path(path) do
       mod_str = inspect(data.module)
 
@@ -624,30 +703,26 @@ defmodule Argus.Pipeline do
       {reaching, errors} = attempt("reaching", fn -> reaching(typed, data) end, errors)
       kept = if how.keep, do: keep(data, typed, cfgs, reaching)
 
-      produced =
+      data =
         data
         |> Map.merge(%{cfg: cfgs, typed: typed, reaching: reaching})
         |> extractor_data(memo, extractors)
-        |> run_extractors(extractors)
 
-      base =
-        if how.base do
-          {conditional, errors} =
-            attempt(
-              "conditional_call",
-              fn -> derive_conditional_calls(base_facts, cfgs) end,
-              errors
-            )
+      derive = fn ->
+        {conditional, errors} =
+          attempt(
+            "conditional_call",
+            fn -> derive_conditional_calls(base_facts, cfgs) end,
+            errors
+          )
 
-          base_facts
-          |> merge_facts(derive_def_use(reaching))
-          |> merge_facts(conditional || %{})
-          |> merge_facts(error_facts(mod_str, errors))
-        else
-          %{}
-        end
+        base_facts
+        |> merge_facts(derive_def_use(reaching))
+        |> merge_facts(conditional || %{})
+        |> merge_facts(error_facts(mod_str, errors))
+      end
 
-      {:ok, [{:base, base} | produced], kept}
+      {:ok, data, derive, kept}
     end
   end
 
@@ -666,14 +741,18 @@ defmodule Argus.Pipeline do
     |> with_debug_info(extractors)
   end
 
-  # One extractor's failure costs its own rows and nothing else.
+  # One extractor's failure costs its own rows and nothing else. Each
+  # comes back with what it read of the schema itself.
   defp run_extractors(data, extractors) do
     mod_str = inspect(data.module)
 
     for extractor <- extractors do
-      case attempt(inspect(extractor), fn -> extractor.extract(data) end, []) do
-        {nil, failed} -> {extractor, error_facts(mod_str, failed)}
-        {facts, []} -> {extractor, facts}
+      {result, reads} =
+        Reads.track(fn -> attempt(inspect(extractor), fn -> extractor.extract(data) end, []) end)
+
+      case result do
+        {nil, failed} -> {extractor, error_facts(mod_str, failed), reads}
+        {facts, []} -> {extractor, facts, reads}
       end
     end
   end
@@ -764,7 +843,7 @@ defmodule Argus.Pipeline do
   defp extract_shape(format, symbols) do
     finish = format_facts(format, symbols)
 
-    fn produced, _kept ->
+    fn produced, _kept, _reads ->
       produced
       |> Enum.reduce(%{}, fn {_producer, facts}, acc -> merge_facts(acc, facts) end)
       |> finish.()

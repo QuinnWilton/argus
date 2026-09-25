@@ -312,6 +312,14 @@ for a caller that keys on the schema entries a producer read instead;
 `schema_module?/1` names those modules. The default, `:included`, is
 the closure as before.
 
+**Added.** `Argus.Pipeline.run_shards/3` and `extract_shards/3` report
+what each producer's rows depend on of the schema (`reads`,
+`Argus.Cache.Reads`): the base's what computing the modules' bases
+read, an extractor's those and its own, and from `extract_shards/3`
+what formatting a producer's rows read (`format: :typed` and
+`:interned` decode by each relation's columns). Each worker tracks the
+base, each extractor and the base's own derivations apart.
+
 ### What the program's other sites believe
 
 **Changed.** Schema 86. `failure.inconsistent_handling` gains `raises`,
