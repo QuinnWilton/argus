@@ -67,6 +67,45 @@ defmodule Argus.Test.Fixtures.UnboundedChildren do
     def render(assigns), do: assigns
   end
 
+  defmodule TaskLive do
+    @moduledoc "A request starts a task on a Task.Supervisor that nothing bounds: the bug."
+    @behaviour Phoenix.LiveView
+
+    def mount(_p, _s, socket), do: {:ok, socket}
+
+    def handle_event("fire", params, socket) do
+      Task.Supervisor.start_child(Argus.Test.Fixtures.UnboundedChildren.TaskSup, fn ->
+        send(self(), params)
+      end)
+
+      {:noreply, socket}
+    end
+
+    def render(assigns), do: assigns
+  end
+
+  defmodule StreamLive do
+    @moduledoc """
+    Quiet: `async_stream_nolink` runs at most `max_concurrency` tasks at a
+    time for the request that enumerates it, and the enumeration waits
+    for each, so what it starts lives no longer than the request.
+    """
+    @behaviour Phoenix.LiveView
+
+    def mount(_p, _s, socket), do: {:ok, socket}
+
+    def handle_event("check", %{"targets" => targets}, socket) do
+      results =
+        Argus.Test.Fixtures.UnboundedChildren.TaskSup
+        |> Task.Supervisor.async_stream_nolink(targets, fn target -> {target, :ok} end)
+        |> Enum.to_list()
+
+      {:noreply, Map.put(socket, :results, results)}
+    end
+
+    def render(assigns), do: assigns
+  end
+
   defmodule Internal do
     @moduledoc """
     Uncapped, but only reachable from code the operator drives. Most dynamic

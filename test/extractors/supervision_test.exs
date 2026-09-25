@@ -244,6 +244,25 @@ defmodule Argus.Extractors.SupervisionTest do
     end
   end
 
+  describe "extract/1 — task_supervisor_start" do
+    test "each Task.Supervisor start says which call made it" do
+      starts = fn mod ->
+        {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
+
+        for [_id, func, op] <- Map.get(Supervision.extract(data), :task_supervisor_start, []),
+            do: {func |> String.split(":") |> List.last(), op}
+      end
+
+      assert starts.(Argus.Test.Fixtures.UnboundedChildren.TaskLive) == [
+               {"handle_event/3", "start_child"}
+             ]
+
+      assert starts.(Argus.Test.Fixtures.UnboundedChildren.StreamLive) == [
+               {"handle_event/3", "async_stream_nolink"}
+             ]
+    end
+  end
+
   describe "extract/1 — registered child names" do
     test "records the :name option from a child spec alongside its position" do
       {:ok, data} =

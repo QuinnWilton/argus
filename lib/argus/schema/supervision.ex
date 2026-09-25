@@ -128,6 +128,21 @@ defmodule Argus.Schema.Supervision do
         """
       },
       %{
+        name: :task_supervisor_start,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "the call"},
+          {:func, :func_id, "the function making it"},
+          {:op, :symbol, "start_child, async, async_nolink, async_stream or async_stream_nolink"}
+        ],
+        doc: """
+        A task started under a Task.Supervisor, beside its `dynamic_child` \
+        row (child `Task`), which does not say how: `async_stream` and \
+        `async_stream_nolink` run at most `max_concurrency` tasks at a time \
+        for the process enumerating the stream, the others start one each.
+        """
+      },
+      %{
         name: :supervisor_max_children,
         layer: 2,
         fields: [

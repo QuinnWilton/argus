@@ -62,7 +62,8 @@ defmodule Argus.Extractors.Supervision do
       :supervisor_child_form,
       :supervisor_child_name,
       :supervisor_max_children,
-      :supervisor_site
+      :supervisor_site,
+      :task_supervisor_start
     ]
 
   @impl true
@@ -271,6 +272,11 @@ defmodule Argus.Extractors.Supervision do
     facts
     |> track_dynamic(sup, ctx, :dynamic_supervisor_parent, :dynamic_child)
     |> add_fact(:dynamic_child, [sup, "Task", ctx.func_id])
+    |> add_fact(:task_supervisor_start, [
+      InstrId.mint(ctx.func_id, ctx.idx),
+      ctx.func_id,
+      to_string(fun)
+    ])
   end
 
   defp handle_dynamic_start(facts, _ctx, _mfa, _self_sup, _functions), do: facts

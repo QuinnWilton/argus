@@ -2518,8 +2518,9 @@ The site is reported by request proximity as for atoms. When no request reaches 
 - The long-poll supervisor is the only dependency transport the rule knows.
 - The finding's prose names `DynamicSupervisor.start_child/2` even for a Task.Supervisor start.
 - There is one finding per `(sup, child)`.
+- Tasks a function starts only through Task.Supervisor's `async_stream` or `async_stream_nolink` (`task_supervisor_start`) are not judged: the stream runs at most `max_concurrency` of them at a time for the process that enumerates it, and waits for each, so they live no longer than the request (`StreamLive`; supavisor's health-check endpoint). A function that also starts tasks another way keeps its row (`TaskLive`, `Task.Supervisor.start_child/2` from a request, still fires).
 
-**Fixtures.** Positive: `PublicLive` (with `UncappedSup` and `Worker`). Quiet: `CappedLive` (with `CappedSup`) and `Internal`. All are under `UnboundedChildren` (test/fixtures/unbounded_children_fixture.ex). Test: test/analyses/unsafe_input_test.exs ("unbounded children"). The disabled-transport arm has no analysis fixture; test/extractors/endpoint_test.exs pins the `socket_transport` extraction it reads.
+**Fixtures.** Positive: `PublicLive` (with `UncappedSup` and `Worker`), `TaskLive`. Quiet: `CappedLive` (with `CappedSup`), `Internal` and `StreamLive`. All are under `UnboundedChildren` (test/fixtures/unbounded_children_fixture.ex). Test: test/analyses/unsafe_input_test.exs ("unbounded children"). The disabled-transport arm has no analysis fixture; test/extractors/endpoint_test.exs pins the `socket_transport` extraction it reads.
 
 **Corpus.** None.
 

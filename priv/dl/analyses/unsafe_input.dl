@@ -414,7 +414,39 @@ unbounded_children_from_request(sup, child, via, kind) :-
   uncapped_supervisor(sup),
   dynamic_child(sup, child, via),
   externally_reachable(via, _, kind),
-  !disabled_transport(sup).
+  !disabled_transport(sup),
+  !stream_only(via, child).
+
+// Tasks the request's own enumeration runs: Task.Supervisor's
+// async_stream and async_stream_nolink start at most max_concurrency
+// tasks at a time for the process that enumerates the stream, and it
+// waits for each, so what they start lives no longer than the request.
+// A function that also starts tasks another way keeps its row: the
+// Task dynamic_child row is per function, not per call (TaskLive fires,
+// StreamLive is quiet).
+.decl task_stream_op(op: symbol)
+
+task_stream_op("async_stream").
+task_stream_op("async_stream_nolink").
+
+.decl task_start_op(op: symbol)
+
+task_start_op("start_child").
+task_start_op("async").
+task_start_op("async_nolink").
+
+.decl stream_only(via: symbol, child: symbol)
+
+stream_only(via, "Task") :-
+  task_supervisor_start(_, via, op),
+  task_stream_op(op),
+  !starts_tasks_otherwise(via).
+
+.decl starts_tasks_otherwise(via: symbol)
+
+starts_tasks_otherwise(via) :-
+  task_supervisor_start(_, via, op),
+  task_start_op(op).
 
 // A dangerous path in a dependency is not a finding when nothing turns
 // it on. Phoenix's long-poll transport starts a process per

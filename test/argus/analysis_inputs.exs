@@ -29,5 +29,5 @@
   structure:
     ~w(function_def global_register implements_behaviour process_register supervisor_child supervisor_child_form supervisor_site),
   unsafe_input:
-    ~w(async_cast call_arg_allowlist call_arg_derived call_arg_reads call_edge code_execution dynamic_child function_def http_route implements_behaviour prior_reads returns_reads sink_arg_bounded sink_arg_derived sink_copy sink_reads socket_transport supervisor_max_children sync_call_site unsafe_atom_creation unsafe_deserialization)
+    ~w(async_cast call_arg_allowlist call_arg_derived call_arg_reads call_edge code_execution dynamic_child function_def http_route implements_behaviour prior_reads returns_reads sink_arg_bounded sink_arg_derived sink_copy sink_reads socket_transport supervisor_max_children sync_call_site task_supervisor_start unsafe_atom_creation unsafe_deserialization)
 ]

@@ -19,6 +19,8 @@ defmodule Argus.Analyses.UnsafeInputTest do
     U.PublicLive,
     U.CappedLive,
     U.Internal,
+    U.TaskLive,
+    U.StreamLive,
     Argus.Test.Fixtures.UnsafeAtomCreation,
     Argus.Test.Fixtures.UnsafeDeserialization,
     Argus.Test.Fixtures.CodeExecution,
@@ -533,7 +535,16 @@ defmodule Argus.Analyses.UnsafeInputTest do
   end
 
   describe "unbounded children" do
-    @all [U.Worker, U.UncappedSup, U.CappedSup, U.PublicLive, U.CappedLive, U.Internal]
+    @all [
+      U.Worker,
+      U.UncappedSup,
+      U.CappedSup,
+      U.PublicLive,
+      U.CappedLive,
+      U.Internal,
+      U.TaskLive,
+      U.StreamLive
+    ]
 
     defp callers(ctx) do
       analyze(ctx, @all)["unbounded_children_from_request"]
@@ -549,6 +560,13 @@ defmodule Argus.Analyses.UnsafeInputTest do
       assert named?(callers, "PublicLive")
       refute named?(callers, "CappedLive"), "max_children is the whole fix"
       refute named?(callers, "Internal")
+    end
+
+    test "a task a request starts is reported; a stream the request enumerates is not", ctx do
+      skip_without_souffle()
+      callers = callers(ctx)
+      assert named?(callers, "TaskLive")
+      refute named?(callers, "StreamLive"), "async_stream lives no longer than its request"
     end
 
     test "the finding names the entry surface it came from", ctx do

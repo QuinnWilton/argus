@@ -59,6 +59,17 @@ default even as a call) and `Effects.classify/3`, whose pure arities keep
 and `Kernel.node` are reads. Over argus's own beams the verdicts are
 unchanged.
 
+**Changed.** `unsafe_input.unbounded_children_from_request` leaves out
+tasks a function starts only through Task.Supervisor's `async_stream`
+or `async_stream_nolink`: the stream runs at most `max_concurrency` of
+them at a time for the process enumerating it and waits for each, so
+they live no longer than the request. A function that also starts tasks
+another way keeps its row. New relation `task_supervisor_start(id,
+func, op)` from the Supervision extractor says which call started a
+`Task` dynamic child. The corpus tally is unchanged; the rows it
+removes are supavisor's health-check endpoint, reached once controller
+actions are request entries (below). Schema 106.
+
 ### Classes mined from fixed bugs
 
 Three classes from round 1 of mining fixed bugs (178 classified; the
