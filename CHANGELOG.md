@@ -342,6 +342,20 @@ extraction through a store and `Argus.Findings.run/2` all decide the
 same way; a consumer that keys the stage on its program keys it on
 `points_to_bounded_rules_path/0` too.
 
+### FP hunt, round 3: seven more programs, and anchors at the site
+
+**Added.** `Argus.Lines.declaration_line/1`: the line a module is
+declared on — its `defmodule`, or its `-module` attribute — read from
+the beam's debug info (an Elixir module's `:anno`, an Erlang module's
+abstract code), or `nil` for a beam without it. A finding about a module
+as a whole (a supervisor registered as a worker, a later sibling in a
+start order, the innermost callee of a chain) carries no function, and
+line 1 of its file is another module's `defmodule` when the file
+defines several; no instruction carries the declaration, so the Line
+chunk cannot say. Read from the beam rather than the facts: only the
+modules a module-level finding names ask, and the debug info is the
+bulk of an Elixir beam. scry anchors module-level findings there.
+
 ### FP hunt, round 2: eight more programs, and the anchors round 1 left
 
 **Fixed.** A blocking cast (`call_chain` kind `cast`) anchors at the

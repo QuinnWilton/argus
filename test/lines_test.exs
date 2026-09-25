@@ -74,4 +74,71 @@ defmodule Argus.LinesTest do
     assert call_ids != []
     assert Enum.all?(call_ids, fn id -> is_integer(Lines.resolve(lines, id)) end)
   end
+
+  describe "declaration_line/1" do
+    # The fixtures are compiled by Mix, with debug info; a module
+    # Code.compile_string/2 compiles under `mix test` has none.
+    test "each module of a multi-module file is declared on its own line" do
+      file = Path.expand("fixtures/supervision_fixture.ex", __DIR__)
+
+      declared =
+        for {line, n} <- file |> File.read!() |> String.split("\n") |> Enum.with_index(1),
+            [_, name] <- [Regex.run(~r/^defmodule ([\w.]+) do/, line)],
+            into: %{},
+            do: {Module.concat([name]), n}
+
+      assert map_size(declared) > 10
+
+      for {mod, n} <- declared do
+        assert Lines.declaration_line(to_string(:code.which(mod))) == n, inspect(mod)
+      end
+    end
+
+    test "a nested module is declared on its own line, and bytes read as the path" do
+      outer = to_string(:code.which(Argus.Test.Fixtures.CallbackReceive))
+      inner = to_string(:code.which(Argus.Test.Fixtures.CallbackReceive.BlockingInCallback))
+
+      assert Lines.declaration_line(outer) == 1
+      assert Lines.declaration_line(inner) == 11
+      assert Lines.declaration_line(File.read!(inner)) == 11
+    end
+
+    test "an Erlang module is declared on its -module attribute" do
+      forms =
+        erlang_forms(
+          "%% A header comment.\n\n-module(argus_lines_decl).\n-export([f/0]).\nf() -> ok.\n"
+        )
+
+      {:ok, _mod, beam} = :compile.forms(forms, [:debug_info, :binary])
+
+      assert Lines.declaration_line(beam) == 3
+    end
+
+    test "a beam without debug info does not say" do
+      forms = erlang_forms("-module(argus_lines_bare).\n-export([f/0]).\nf() -> ok.\n")
+      {:ok, _mod, beam} = :compile.forms(forms, [:binary])
+
+      assert Lines.declaration_line(beam) == nil
+      assert Lines.declaration_line("not a beam") == nil
+    end
+  end
+
+  defp erlang_forms(text) do
+    {:ok, tokens, _end} = :erl_scan.string(String.to_charlist(text))
+
+    tokens
+    |> Enum.chunk_while(
+      [],
+      fn
+        {:dot, _} = dot, acc -> {:cont, Enum.reverse([dot | acc]), []}
+        token, acc -> {:cont, [token | acc]}
+      end,
+      fn acc -> {:cont, acc} end
+    )
+    |> Enum.reject(&(&1 == []))
+    |> Enum.map(fn form_tokens ->
+      {:ok, form} = :erl_parse.parse_form(form_tokens)
+      form
+    end)
+  end
 end

@@ -105,4 +105,59 @@ defmodule Argus.Lines do
       _ -> nil
     end
   end
+
+  @doc """
+  The line a module is declared on — its `defmodule`, or its `-module`
+  attribute — or `nil` when the beam does not say.
+
+  A finding about a module as a whole (a supervisor registered as a
+  worker, a later sibling in a start order) carries no function, and
+  line 1 of its file is another module's line when the file defines
+  several. No instruction carries the declaration: the Line chunk
+  records function bodies only, and every function a module's compiler
+  adds (`__info__/1`, `module_info/0`) is under the no-location marker.
+  The debug info has it: an Elixir module's definition map holds the
+  `defmodule` line in `:anno` (`:line` in older Elixirs), an Erlang
+  module's abstract code its `-module` attribute. A beam compiled
+  without debug info yields `nil`, and so does a line of 0.
+
+  Read from the beam, not from the facts: the debug info is the bulk of
+  an Elixir beam (decoding it costs a fifth of a disassembly), and only
+  the few modules a module-level finding names ask. `beam` is a `.beam`
+  path or the beam's bytes.
+  """
+  @spec declaration_line(Path.t() | binary()) :: pos_integer() | nil
+  def declaration_line(beam) when is_binary(beam) do
+    case Argus.Extractor.Helpers.debug_info(%{beam: beam}) do
+      {:ok, {:debug_info_v1, backend, data}} -> declared_at(backend, data)
+      _ -> nil
+    end
+  end
+
+  defp declared_at(:elixir_erl, {:elixir_v1, %{} = definition, _specs}) do
+    definition
+    |> Map.get(:anno, Map.get(definition, :line))
+    |> anno_line()
+  end
+
+  defp declared_at(:erl_abstract_code, {forms, _options}) when is_list(forms) do
+    Enum.find_value(forms, fn
+      {:attribute, anno, :module, _name} -> anno_line(anno)
+      _form -> nil
+    end)
+  end
+
+  defp declared_at(_backend, _data), do: nil
+
+  defp anno_line(nil), do: nil
+
+  defp anno_line(anno) do
+    case :erl_anno.line(anno) do
+      line when is_integer(line) and line > 0 -> line
+      _ -> nil
+    end
+  rescue
+    # An anno of a shape erl_anno does not take has no line to give.
+    _ -> nil
+  end
 end
