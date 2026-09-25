@@ -92,6 +92,26 @@ defmodule Argus.Test.Fixtures.ConditionalInitServer do
   end
 end
 
+defmodule Argus.Test.Fixtures.HeadMatchInitServer do
+  @moduledoc """
+  Erlang's `init([]) ->`: the head matches its argument, and the other
+  side of that test is a function_clause error, not a start that skips
+  the call. The call runs on every start that completes.
+  """
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init([]) do
+    {:ok, pid} = start_worker()
+    GenServer.call(Argus.Test.Fixtures.WorkerA, :ping)
+    {:ok, %{worker: pid}}
+  end
+
+  def start_worker, do: Agent.start_link(fn -> %{} end)
+end
+
 defmodule Argus.Test.Fixtures.StartsChildrenInInit do
   @moduledoc "The Broadway/Oban shape: children started synchronously from init/1."
   use GenServer

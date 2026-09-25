@@ -171,6 +171,16 @@ defmodule Argus.Analyses.StartupInitTest do
       assert kinds["Argus.Test.Fixtures.SyncInitServer"] == "unconditional"
     end
 
+    test "a head match or a badmatch is no branch: its other side raises" do
+      skip_without_souffle()
+
+      modules = [Argus.Test.Fixtures.HeadMatchInitServer, Argus.Test.Fixtures.WorkerA]
+      assert {:ok, results} = Memo.analyze(modules, :startup)
+
+      assert [["Argus.Test.Fixtures.HeadMatchInitServer", _callee, "unconditional"]] =
+               sync_calls(results)
+    end
+
     test "each peer's call is judged by its own branch" do
       skip_without_souffle()
 

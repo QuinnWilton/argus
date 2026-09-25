@@ -258,11 +258,15 @@ defmodule Argus.Schema.Bytecode do
         ],
         doc: """
         A call instruction (local, remote, or BIF) that does not execute on \
-        every path through its function: its basic block is control-dependent \
-        on a branch. Derived per module from the control-flow graph's \
-        post-dominator tree, so an analysis can tell "init/1 calls X" from \
-        "init/1 calls X when an option is set" without reading `instruction` \
-        or reconstructing control flow in Datalog.
+        every path through its function that completes (returns or tail \
+        calls): its block is not on every such path \
+        (`Argus.Cfg.Function.completing_blocks/1`). A path that raises is \
+        none of them, so a clause head failing into `func_info` or a \
+        badmatch is no branch. Derived per module from the control-flow \
+        graph, so an analysis can tell "init/1 calls X" from "init/1 calls \
+        X when an option is set" without reading `instruction` or \
+        reconstructing control flow in Datalog. A function no path of which \
+        completes falls back to control dependence on any branch.
         """
       },
       %{

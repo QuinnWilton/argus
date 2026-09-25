@@ -359,11 +359,12 @@ Work in a phase whose invariants do not hold yet: `init/1` runs inside the super
 **Assumptions and limits.**
 - This is a note, not a diagnosis: where D starts relative to C is unknown.
 - The conditional verdict looks only at the first call out of `init/1`; a branch deeper in a helper still reads as unconditional.
+- A test whose other side only raises is no branch (`conditional_call`, `Cfg.Function.completing_blocks/1`): Erlang's `init([]) ->` head, whose failure is a function_clause error, and a `{:ok, pid} = start()` badmatch decide nothing a completed start goes on from. Before round 2 of the FP hunt every call in such an init read as conditional, and ejabberd's 64 and mongooseim's 18 "can block" notes said "on some paths only" of calls every start makes (`HeadMatchInitServer`, unconditional).
 - "Likely supervised" is a module-level guess (a behaviour and `start_link/1`), used only to quiet the finding.
 - A call to a sibling the tree does place later is reported here too, beside the deadlock, though the prose says the place could not be established.
 - A Plug's or Ecto type's `init/1` is not a process's and is not judged (`PidFlow.PlugLike`).
 
-**Fixtures.** Positive: `SyncInitServer` with `WorkerA` (unconditional), `ConditionalInitServer` (conditional), `MixedInitServer` with `WorkerA` and `WorkerB` (one of each) (test/fixtures/sync_init_fixture.ex, test/fixtures/supervision_fixture.ex). Quiet: `SafeOrderSupervisor`, `DisjointSupervisor` with `CallerSupervisor`, `TopologyServer` (a tree defined in a GenServer's `init/1`), `PidFlow.PlugLike` with `PidFlow.Hub` (test/fixtures/pid_flow_fixture.ex), `InitRecv.TaskCalls`. Asserted in test/analyses/startup_init_test.exs and singleton_shapes_test.exs.
+**Fixtures.** Positive: `SyncInitServer` with `WorkerA` (unconditional), `HeadMatchInitServer` (unconditional behind a head match and a badmatch), `ConditionalInitServer` (conditional), `MixedInitServer` with `WorkerA` and `WorkerB` (one of each) (test/fixtures/sync_init_fixture.ex, test/fixtures/supervision_fixture.ex). Quiet: `SafeOrderSupervisor`, `DisjointSupervisor` with `CallerSupervisor`, `TopologyServer` (a tree defined in a GenServer's `init/1`), `PidFlow.PlugLike` with `PidFlow.Hub` (test/fixtures/pid_flow_fixture.ex), `InitRecv.TaskCalls`. Asserted in test/analyses/startup_init_test.exs and singleton_shapes_test.exs.
 
 **Corpus.** None.
 

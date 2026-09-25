@@ -352,6 +352,14 @@ defmodule Argus.Cfg do
   # all fail to one landing pad has as many predecessors there as it has
   # clauses, each as deep as its clause: quadratic, and 1.7 s of
   # idna_mapping's graphs. The tree is the same whichever way it is found.
+  @doc false
+  # The dominator solver, for a graph a caller derives from a function's
+  # blocks (`Argus.Cfg.Function.completing_blocks/1`): `preds` and
+  # `succs` map a node to `{node, kind}` edges; returns `%{node => idom}`
+  # for the nodes `entry` reaches, the entry itself absent.
+  @spec dominator_tree(term(), map(), map()) :: %{term() => term()}
+  def dominator_tree(entry, preds, succs), do: dominators(entry, preds, succs)
+
   defp dominators(entry, preds, succs) do
     {order, dfnum, parent} = preorder(entry, succs)
     vertex = List.to_tuple(order)

@@ -950,22 +950,22 @@ defmodule Argus.Pipeline do
     if rows == [], do: %{}, else: %{def_use: rows}
   end
 
-  # Call instructions whose block is control-dependent on a branch in the
-  # same function — the calls that only happen on some paths. Positional
-  # like def_use (keyed on instruction IDs), and derived here for the same
-  # reason: the post-dominator tree exists in Argus.Cfg, and the
-  # alternative is reconstructing it from `instruction`/`branch`/`jump`
-  # rows in Datalog on every solve.
+  # Call instructions that do not run on every path through their
+  # function that completes — the calls that only happen on some paths.
+  # A path that raises is none of them: a clause head failing into
+  # func_info (Erlang's `init([]) ->`) or a badmatch decides nothing a
+  # caller goes on from (Cfg.Function.completing_blocks/1). A function
+  # no path of which completes falls back to control dependence.
+  # Positional like def_use (keyed on instruction IDs), and derived here
+  # for the same reason: the graphs exist in Argus.Cfg, and the
+  # alternative is reconstructing them in Datalog on every solve.
   defp derive_conditional_calls(base_facts, cfgs) do
     call_ids =
       for relation <- [:local_call, :remote_call, :bif_call],
           [id | _] <- Map.get(base_facts, relation, []),
           do: id
 
-    conditional_blocks =
-      Map.new(cfgs, fn {key, fun} ->
-        {key, fun |> Cfg.Function.control_deps() |> Map.keys() |> MapSet.new()}
-      end)
+    conditional_blocks = Map.new(cfgs, fn {key, fun} -> {key, conditional_blocks(fun)} end)
 
     rows =
       for id <- call_ids,
@@ -980,6 +980,16 @@ defmodule Argus.Pipeline do
     case rows do
       [] -> %{}
       rows -> %{conditional_call: Enum.sort(rows)}
+    end
+  end
+
+  defp conditional_blocks(fun) do
+    case Cfg.Function.completing_blocks(fun) do
+      nil ->
+        fun |> Cfg.Function.control_deps() |> Map.keys() |> MapSet.new()
+
+      always ->
+        for {id, _block} <- fun.blocks, not MapSet.member?(always, id), into: MapSet.new(), do: id
     end
   end
 

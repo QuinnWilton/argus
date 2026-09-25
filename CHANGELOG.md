@@ -148,6 +148,17 @@ table elsewhere, so an explicit `{:keypos, 1}` (vernemq's cluster-state
 table) defeated the literal-key overwrite; only a keypos other than 1
 does now.
 
+**Fixed.** `conditional_call` no longer counts a test whose other side
+only raises as a branch: a call is conditional when it is not on every
+path through its function that completes (returns or tail calls;
+`Argus.Cfg.Function.completing_blocks/1`). Erlang's `init([]) ->` head
+fails into `func_info`, so every call in such an init read as
+conditional, and startup's "init/1 can block on a synchronous call"
+said "on some paths only" of calls every start makes (ejabberd 64 notes,
+mongooseim 18); a `{:ok, pid} = start()` badmatch did the same. The
+stage-0 `unconditional_call_edge` and failure's "what init/1 always
+runs" read it too. `Argus.Cfg.dominator_tree/3` exposes the solver.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

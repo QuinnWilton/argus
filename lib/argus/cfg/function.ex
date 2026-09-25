@@ -164,6 +164,83 @@ defmodule Argus.Cfg.Function do
     |> Map.new(fn {dependent, deciders} -> {dependent, Enum.sort(deciders)} end)
   end
 
+  @doc """
+  The blocks every path from the entry to a completion passes through: a
+  return or a tail call, not a raise. `nil` when no path completes.
+
+  A path that raises is no run of the function a caller goes on from: a
+  clause head that fails into `func_info` (Erlang's `init([]) ->`), a
+  `{:ok, pid} = start()` whose other side is a badmatch, a case whose
+  default is a `case_end`. `control_deps/1` counts the raising side as a
+  way the function can go, so every call after such a test is
+  control-dependent on it; here the test decides nothing, and what
+  follows it runs whenever the function completes. A block only raising
+  paths reach is on none of these, so it is not in the set.
+
+  They are the dominators of a virtual exit every completion leads to, in
+  the graph of the blocks that can complete: the exit's dominator chain.
+  """
+  @spec completing_blocks(t()) :: MapSet.t(Block.id()) | nil
+  def completing_blocks(%__MODULE__{blocks: blocks, entry: entry}) do
+    completes = completing(blocks)
+
+    if MapSet.member?(completes, entry) do
+      succs =
+        Map.new(completes, fn id ->
+          block = Map.fetch!(blocks, id)
+
+          edges =
+            if block.terminator in [:return, :tail_call],
+              do: [{:exit, :virtual}],
+              else:
+                for(
+                  {to, kind} <- block.succs,
+                  MapSet.member?(completes, to),
+                  uniq: true,
+                  do: {to, kind}
+                )
+
+          {id, edges}
+        end)
+
+      preds =
+        Enum.reduce(succs, %{}, fn {from, edges}, acc ->
+          Enum.reduce(edges, acc, fn {to, kind}, a ->
+            Map.update(a, to, [{from, kind}], &[{from, kind} | &1])
+          end)
+        end)
+
+      idom = Argus.Cfg.dominator_tree(entry, preds, succs)
+      chain(Map.fetch!(idom, :exit), idom, entry, MapSet.new())
+    end
+  end
+
+  defp chain(node, _idom, entry, acc) when node == entry, do: MapSet.put(acc, node)
+
+  defp chain(node, idom, entry, acc),
+    do: chain(Map.fetch!(idom, node), idom, entry, MapSet.put(acc, node))
+
+  # The blocks with a path to a return or a tail call.
+  defp completing(blocks) do
+    exits =
+      for {id, %Block{terminator: t}} <- blocks, t in [:return, :tail_call], do: id
+
+    grow(exits, MapSet.new(exits), blocks)
+  end
+
+  defp grow([], seen, _blocks), do: seen
+
+  defp grow([id | rest], seen, blocks) do
+    new =
+      for {pred, _kind} <- Map.fetch!(blocks, id).preds,
+          Map.has_key?(blocks, pred),
+          not MapSet.member?(seen, pred),
+          uniq: true,
+          do: pred
+
+    grow(new ++ rest, Enum.reduce(new, seen, &MapSet.put(&2, &1)), blocks)
+  end
+
   defp pdom_walk(node, stop, ipdom, acc \\ [])
   defp pdom_walk(node, stop, _ipdom, acc) when node == stop, do: acc
   defp pdom_walk(:exit, _stop, _ipdom, acc), do: acc
