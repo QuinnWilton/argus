@@ -37,6 +37,19 @@ catch-all handle_info/2. The rules reading `recv_pattern` (the timer
 flush, `unhandled_info`, `unreceived_message`, blocking's cancel_timer
 idiom) now see those receives.
 
+**Fixed.** ":infinity timeout inside a call chain" no longer reports a
+hop into a server whose handle_call/3 answers at once
+(`answers_straight_away` in blocking.dl): what it runs in its own
+module has no receive without `after`, no call through a fun or an
+apply, and no call out of the module that the rpc rule's vocabulary
+(`answers_in_time`, now over `out_call`, which both walks share) does
+not vouch for. Nothing downstream of such a server can hang the caller;
+Phoenix's CodeReloader stops its own Proxy, whose `:stop` clause only
+replies. A server that is busy with another request, or stuck in
+another callback, still delays the call; the hop adds no wait of its
+own. Phoenix's `MixListener.purge/1` (it purges code) and mnesia's
+servers are still reported.
+
 **Fixed.** A call into the logging or telemetry API (`:logger`,
 `:error_logger`, `Logger`, `:telemetry`) no longer makes its caller
 wait on those libraries' own servers (`side_call` in

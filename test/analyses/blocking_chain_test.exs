@@ -189,6 +189,20 @@ defmodule Argus.Analyses.BlockingChainTest do
       refute Enum.any?(infinity(results), fn [_func, target] -> target == ":logger_server" end)
       refute Enum.any?(chains(results, "chain"), fn [_, to, _, _] -> to == ":logger_server" end)
     end
+
+    test "an :infinity hop into a server that answers at once ends the chain" do
+      skip_without_souffle()
+
+      {:ok, results} =
+        Memo.analyze([S.StopsProxy, S.Proxy, S.AsksWorker, S.Worker], :blocking)
+
+      assert infinity(results) == [
+               [
+                 "Argus.Test.Fixtures.SidePaths.AsksWorker:handle_call/3",
+                 "Argus.Test.Fixtures.SidePaths.Worker"
+               ]
+             ]
+    end
   end
 
   describe "no chain through a pure-function reach" do

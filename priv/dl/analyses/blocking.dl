@@ -254,10 +254,53 @@ call_chain(a, b, "budget", 1, "", t_ab, t_bc) :-
 
 // ── Output: infinity timeout in chain ──────────────────────────────
 
-// Sync call in a chain uses :infinity timeout — can block forever.
+// Sync call in a chain uses :infinity timeout — can block forever, when
+// the server called waits on something itself. One whose handle_call/3
+// answers at once (answers_straight_away, below) ends the chain: nothing
+// downstream of it can hang the caller (Phoenix's CodeReloader stops its
+// own Proxy, whose :stop clause only replies).
 unbounded_wait(cat(mod, ":handle_call/3"), "", "infinity", target, "", "") :-
   callback_sync_dep_timeout(mod, target, -1),
-  behaves_as(target, "GenServer").
+  behaves_as(target, "GenServer"),
+  !answers_straight_away(target).
+
+// ── A server that answers at once ──────────────────────────────────────
+//
+// A handle_call/3 that answers from what its process holds: what it runs
+// in its own module has no receive without `after`, no call it cannot
+// see (a fun, an apply, another module's function handed as a fun), and
+// no call out of its module that answers_in_time does not vouch for —
+// the rpc rule's vocabulary of calls that return at once. Asked of the
+// servers an :infinity hop reaches. A server can still be slow because
+// it is busy with another request, or stuck in another callback; the
+// hop does not add a wait of its own to the chain.
+.decl infinity_target(mod: symbol)
+
+infinity_target(m) :- callback_sync_dep_timeout(_, m, -1).
+
+.init answer_reach = ForwardIntraModuleReach
+
+answer_reach.root(h, h) :- infinity_target(m), handle_call_function(m, h).
+
+.decl call_waits(handler: symbol)
+
+call_waits(h) :- answer_reach.reaches(h, f), recv_start(_, f, 1, _).
+call_waits(h) :- answer_reach.reaches(h, f), dynamic_call(_, f, kind), unseen_call(kind).
+
+call_waits(h) :-
+  answer_reach.reaches(h, f),
+  fun_ref(f, g),
+  function_def(f, own, _, _, _),
+  !function_def(g, own, _, _, _).
+
+call_waits(h) :-
+  answer_reach.reaches(h, f),
+  out_call(f, id, _, _, _),
+  !answers_in_time(id).
+
+.decl answers_straight_away(mod: symbol)
+
+answers_straight_away(m) :- infinity_target(m), handle_call_function(m, h), !call_waits(h).
 
 // ══ Mutual synchronous dependency ═══════════════════════════════════
 // `phase` is "call" for two modules whose processes synchronously call
@@ -771,7 +814,7 @@ fun_waits(call) :-
 
 fun_waits(call) :-
   rpc_fun.reaches(call, f),
-  fun_call(f, id, _, _, _),
+  out_call(f, id, _, _, _),
   !answers_in_time(id).
 
 // The dynamic_call kinds the emitter records: a call through a fun
@@ -783,30 +826,37 @@ fun_waits(call) :-
 unseen_call("call_fun").
 unseen_call("apply").
 
-// The calls out of its module a function the closure runs makes.
-.decl fun_call(func: symbol, id: symbol, mod: symbol, fun: symbol, arity: number)
+// The calls out of its module a function makes, for the functions two
+// walks ask about: what an rpc's closure runs, and what a server's
+// handle_call/3 runs (answers_straight_away).
+.decl asked_about(func: symbol)
 
-fun_call(f, id, mod, fun, arity) :-
-  rpc_fun.reaches(_, f),
+asked_about(f) :- rpc_fun.reaches(_, f).
+asked_about(f) :- answer_reach.reaches(_, f).
+
+.decl out_call(func: symbol, id: symbol, mod: symbol, fun: symbol, arity: number)
+
+out_call(f, id, mod, fun, arity) :-
+  asked_about(f),
   remote_call(id, f, mod, fun, arity),
   function_def(f, own, _, _, _),
   mod != own.
 
 .decl answers_in_time(id: symbol)
 
-answers_in_time(id) :- fun_call(_, id, mod, fun, _), quick_api(mod, fun).
-answers_in_time(id) :- fun_call(_, id, mod, fun, _), answers_from_os(mod, fun).
-answers_in_time(id) :- fun_call(_, id, mod, fun, n), self_bounded_api(mod, fun, n).
-answers_in_time(id) :- fun_call(_, id, mod, _, _), computes_only(mod).
-answers_in_time(id) :- fun_call(_, id, ":erlang", fun, _), !erlang_waits(fun).
+answers_in_time(id) :- out_call(_, id, mod, fun, _), quick_api(mod, fun).
+answers_in_time(id) :- out_call(_, id, mod, fun, _), answers_from_os(mod, fun).
+answers_in_time(id) :- out_call(_, id, mod, fun, n), self_bounded_api(mod, fun, n).
+answers_in_time(id) :- out_call(_, id, mod, _, _), computes_only(mod).
+answers_in_time(id) :- out_call(_, id, ":erlang", fun, _), !erlang_waits(fun).
 // `x.field` on a value the compiler could not prove a map compiles to
 // this helper: on a map it reads the field. On an atom it would call
 // that module's zero-arity function, a form deprecated with a warning.
-answers_in_time(id) :- fun_call(_, id, ":elixir_erl_pass", "no_parens_remote", 2).
-answers_in_time(id) :- fun_call(f, id, _, _, _), sync_call_site(id, f, _, t), t > 0.
+answers_in_time(id) :- out_call(_, id, ":elixir_erl_pass", "no_parens_remote", 2).
+answers_in_time(id) :- out_call(f, id, _, _, _), sync_call_site(id, f, _, t), t > 0.
 
 answers_in_time(id) :-
-  fun_call(f, id, _, _, _),
+  out_call(f, id, _, _, _),
   rpc_call(id, f, _, t),
   t > 0.
 

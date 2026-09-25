@@ -32,8 +32,13 @@ defmodule Argus.Test.Fixtures.PidCalls do
     @impl true
     def init(:ok), do: {:ok, nil}
 
+    # Slow indeed: the work waits on something of its own, so the
+    # :infinity hop into it is a chain of waits.
     @impl true
-    def handle_call(:work, _from, s), do: {:reply, :done, s}
+    def handle_call(:work, _from, s) do
+      Process.sleep(5_000)
+      {:reply, :done, s}
+    end
   end
 
   defmodule Impatient do
