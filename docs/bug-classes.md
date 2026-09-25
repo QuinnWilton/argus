@@ -72,6 +72,12 @@ classes of one risk get one severity.
   resolved (a holder the rule infers, a dependency by message tag or
   module, a model's prior) steps down one level from its resolved form,
   and says so (`basis`, `provenance: :heuristic`).
+- **Tooling.** A finding in code only developers' tools or tests run
+  steps down one level from the severity its class gives it, and says
+  why: a Mix task or a helper Mix tasks share, a project's test support
+  compiled into the build, or the test helpers a library ships in its
+  `lib/`. Its defect costs a developer's command or a test run, not the
+  running system (`Argus.Findings.Tooling`).
 - **Sinks.** unsafe_input grades by what the sink does with outside
   data and how near a way in it is: at the sink's own severity when data
   from a request flows to it or it sits in the request handler, a step
@@ -255,6 +261,13 @@ than more; it errs loud when the same uncertainty can add a finding.
 - **Meaning.** `api_export(f)` is an exported function a caller outside the program may call: every export but a macro (`MACRO-…`, which the compiler calls), `module_info` and the `__name__` reflection functions a `use` defines for its library. `library_face(f)` is such an export of a module no other module of the program calls into; `open_entry(f)` a library face nothing in the program calls.
 - **Direction.** A function the program also calls stays its users' API (loud for an export). A module another module calls is taken as having its callers in view, so an export of it none of them calls is unused, not a way in (quiet).
 - **Used by.** failure (exposed roots), mailbox (a collection's caller), races (outside tables, escaping decisions, open key sources, unguarded callers) and unsafe_input (caller input, export reach).
+
+### Code only tools and tests run
+
+- **Names.** `tooling` (tooling.dl), over the `tooling_module` fact.
+- **Meaning.** `tooling(mod, basis, permille)`: only developers' tools or tests run mod. `tooling_module` says so by the module's name (`mix`: an Elixir module under `Mix.`, which a release does not ship) or by the path compile_info records (`test_support`: a `test/support/` directory, or a `test/` directory within three of a `lib/`, where Phoenix, Plug and LiveView keep the test helpers they ship). Every analysis outputs the rows, and `Argus.Findings.Build` steps each finding anchored in such a module down one level.
+- **Direction.** Quiet, toward the structural severity: a module neither signal names is the product, a project's `test/fixtures` (its stand-ins for the product) is not test support, and calling ExUnit is no signal (Livebook runs its users' doctests with it). A finding anchored in the product about tooling code (a supervisor starting a dev-only child) stays where it is.
+- **Used by.** Every analysis but coverage, through `Argus.Findings.Tooling`.
 
 ### Code the program did not write
 

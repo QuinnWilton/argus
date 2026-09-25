@@ -52,7 +52,8 @@ defmodule Argus.Analyses.Effects do
       Argus.Extractors.ETS,
       Argus.Extractors.ApiCalls,
       Argus.Extractors.ProcessRegistry,
-      Argus.Extractors.OTP
+      Argus.Extractors.OTP,
+      Argus.Extractors.Tooling
     ]
 
   @impl true
@@ -104,7 +105,8 @@ defmodule Argus.Analyses.Effects do
         fields: [{:func, :symbol, "the function declared pure"}],
         key: [:func],
         doc: "A declared-pure function whose reachable calls are all effect-free."
-      }
+      },
+      Argus.Findings.Tooling.relation()
     ]
   end
 

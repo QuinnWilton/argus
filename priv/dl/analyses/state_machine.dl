@@ -6,6 +6,11 @@
 // can read.
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/tooling.dl"
+
+// A finding in code only developers' tools or tests run steps down a
+// level (clientlib/tooling.dl, Argus.Findings.Tooling).
+.output tooling
 
 // ── Mode scoping ─────────────────────────────────────────────────
 //

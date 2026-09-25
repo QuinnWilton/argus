@@ -14,8 +14,11 @@ defmodule Argus.Analysis do
   An output relation's rows are findings, rendered by the optional
   `c:finding/2` callback, unless the relation declares `:evidence`: its
   rows are then related frames of the finding they join, rendered by
-  `c:evidence/2`. A relation keys its rows (`t:row_key/0`) so the
-  witnesses of one defect are one finding. `Argus.Findings` turns a
+  `c:evidence/2`, or `retier: :tooling`: its rows name the modules only
+  developers' tools or tests run, and every finding anchored in one
+  steps down a level (`Argus.Findings.Tooling`; every built-in declares
+  it, from `clientlib/tooling.dl`). A relation keys its rows
+  (`t:row_key/0`) so the witnesses of one defect are one finding. `Argus.Findings` turns a
   solve's rows into findings and holds the helpers `c:finding/2`
   builds them with; a finding that rests on a prior (`Argus.Priors`) is
   marked heuristic there.
@@ -137,7 +140,8 @@ defmodule Argus.Analysis do
           required(:doc) => String.t(),
           optional(:key) => row_key(),
           optional(:earliest) => atom(),
-          optional(:evidence) => evidence()
+          optional(:evidence) => evidence(),
+          optional(:retier) => :tooling
         }
 
   @callback name() :: atom()
@@ -227,7 +231,8 @@ defmodule Argus.Analysis do
 
   @doc """
   The output relations of an analysis whose rows are findings: every
-  output relation but the evidence ones.
+  output relation but the evidence ones and the one that re-tiers them
+  (`retier: :tooling`).
   """
   @spec finding_relations(atom()) :: {:ok, [output_relation()]} | :error
   defdelegate finding_relations(name), to: Catalog

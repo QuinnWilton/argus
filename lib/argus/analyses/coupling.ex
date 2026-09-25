@@ -60,7 +60,8 @@ defmodule Argus.Analyses.Coupling do
       Argus.Extractors.PidFlow,
       # A gen_statem's state functions and data (clientlib/process_statem.dl,
       # and processes.dl in the points-to stage).
-      Argus.Extractors.GenStatem
+      Argus.Extractors.GenStatem,
+      Argus.Extractors.Tooling
     ]
 
   @impl true
@@ -117,7 +118,8 @@ defmodule Argus.Analyses.Coupling do
         ],
         key: [:mod, :sup, :child],
         doc: "A supervisor and a monitoring process both restart the same child."
-      }
+      },
+      Argus.Findings.Tooling.relation()
     ]
   end
 

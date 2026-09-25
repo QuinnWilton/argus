@@ -407,6 +407,23 @@ defmodule Argus.Schema.CallValues do
         """
       },
       %{
+        name: :tooling_module,
+        layer: 2,
+        fields: [
+          {:mod, :symbol, "the module, inspected"},
+          {:basis, :symbol,
+           "mix (an Elixir module under Mix.) | test_support (compiled from test/support/ " <>
+             "or from a test/ directory within a lib/)"}
+        ],
+        doc: """
+        A module only developers' tools or tests run, as its name or the \
+        path compile_info records says (`Argus.Extractors.Tooling`): a Mix \
+        task or the helpers Mix tasks share, a project's test support compiled \
+        into a dev build, the test helpers a library ships in its own lib/. \
+        Every analysis steps a finding there down (clientlib/tooling.dl).
+        """
+      },
+      %{
         name: :name_release,
         layer: 2,
         fields: [

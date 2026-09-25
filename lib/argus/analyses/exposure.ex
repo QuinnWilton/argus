@@ -40,7 +40,12 @@ defmodule Argus.Analyses.Exposure do
 
   @impl true
   def extractors,
-    do: [Argus.Extractors.EctoSchema, Argus.Extractors.DerivedInspect, Argus.Extractors.Tls]
+    do: [
+      Argus.Extractors.EctoSchema,
+      Argus.Extractors.DerivedInspect,
+      Argus.Extractors.Tls,
+      Argus.Extractors.Tooling
+    ]
 
   @impl true
   def output_relations do
@@ -94,7 +99,8 @@ defmodule Argus.Analyses.Exposure do
         ],
         key: [:func, :api],
         doc: "A TLS connect whose literal options never mention :verify."
-      }
+      },
+      Argus.Findings.Tooling.relation()
     ]
   end
 

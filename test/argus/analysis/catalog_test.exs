@@ -16,12 +16,22 @@ defmodule Argus.Analysis.CatalogTest do
     assert Analysis.output_relations(:mailbox) == Catalog.output_relations(:mailbox)
   end
 
-  test "finding relations leave out the evidence relations" do
+  test "finding relations leave out the evidence relations and the tooling re-tier" do
     {:ok, all} = Catalog.output_relations(:blocking)
     {:ok, findings} = Catalog.finding_relations(:blocking)
 
     assert Enum.any?(all, &Map.has_key?(&1, :evidence))
-    assert findings == Enum.reject(all, &Map.has_key?(&1, :evidence))
+    assert Argus.Findings.Tooling.relation() in all
+
+    assert findings ==
+             Enum.reject(all, &(Map.has_key?(&1, :evidence) or Map.has_key?(&1, :retier)))
+  end
+
+  test "every built-in but coverage declares the tooling re-tier and runs its extractor" do
+    for mod <- Catalog.modules(), mod.name() != :coverage do
+      assert Argus.Findings.Tooling.relation() in mod.output_relations(), inspect(mod)
+      assert Argus.Extractors.Tooling in mod.extractors(), inspect(mod)
+    end
   end
 
   describe "rules_path/1" do

@@ -1,0 +1,20 @@
+// Code only developers' tools or tests run.
+//
+// A dev or test build compiles more than the product: Mix tasks and the
+// helpers they share, a project's test support, the test helpers a
+// library ships in its own lib/, a development-only seed or dashboard.
+// A defect there costs a developer's command or a test run, not the
+// running system, and every analysis steps its finding down one level
+// (Argus.Findings.Tooling, by the finding's module).
+//
+// tooling(mod, basis, permille): the module is tooling because its
+// name or source path says so (`tooling_module`: basis "mix" or
+// "test_support", permille 1000). A module neither names is the
+// product: the word errs quiet, toward the structural severity.
+//
+// An analysis includes this file and declares `.output tooling`; its
+// rows re-tier the analysis's findings and are no findings themselves.
+
+.decl tooling(mod: symbol, basis: symbol, permille: number)
+
+tooling(m, basis, 1000) :- tooling_module(m, basis).

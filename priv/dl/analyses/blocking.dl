@@ -16,6 +16,11 @@
 .include "../clientlib/global_reach.dl"
 .include "../clientlib/timer_flush.dl"
 .include "../clientlib/replies.dl"
+.include "../clientlib/tooling.dl"
+
+// A finding in code only developers' tools or tests run steps down a
+// level (clientlib/tooling.dl, Argus.Findings.Tooling).
+.output tooling
 
 // ══ The outputs ═════════════════════════════════════════════════════
 //

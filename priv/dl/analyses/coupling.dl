@@ -12,6 +12,11 @@
 .include "../clientlib/otp.dl"
 .include "../clientlib/signals.dl"
 .include "../clientlib/process_statem.dl"
+.include "../clientlib/tooling.dl"
+
+// A finding in code only developers' tools or tests run steps down a
+// level (clientlib/tooling.dl, Argus.Findings.Tooling).
+.output tooling
 
 // ══ Coupling under one_for_one ══════════════════════════════════════
 .decl derived_process_link(from_mod: symbol, to_mod: symbol)

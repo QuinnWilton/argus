@@ -7,9 +7,10 @@ defmodule Argus.Findings.Build do
   row goes through the analysis's `finding/2` callback (or, without one,
   a generic `:info` rendering of the relation's doc and the row's
   columns), the frames of its evidence rows are appended to its
-  `related` (`Argus.Findings.Evidence`), it is stamped with the
-  analysis's name, and its prose is put in plain names
-  (`Argus.Findings.Names`).
+  `related` (`Argus.Findings.Evidence`), it steps down a level when its
+  module is one the analysis's `tooling` rows name (`retier: :tooling`,
+  `Argus.Findings.Tooling`), it is stamped with the analysis's name, and
+  its prose is put in plain names (`Argus.Findings.Names`).
 
   A builder that raises on a row costs that row only: the row is
   reported with its raw columns (a generic finding, or a generic frame
@@ -26,6 +27,7 @@ defmodule Argus.Findings.Build do
   alias Argus.Findings.Evidence
   alias Argus.Findings.Names
   alias Argus.Findings.Rows
+  alias Argus.Findings.Tooling
 
   @typedoc "A row whose builder raised: its relation, the row, and the exception."
   @type failure :: %{relation: atom(), row: [String.t()], exception: Exception.t()}
@@ -42,11 +44,13 @@ defmodule Argus.Findings.Build do
     has_builder? = function_exported?(mod, :finding, 2)
     joins = Evidence.joins(mod, relations)
     {evidence, evidence_failures} = Evidence.frames(mod, relations, results, joins, &guarded/4)
+    tooling = tooling(relations, results)
 
     {findings, failures} =
       for {relation_string, rows} <- Enum.sort(results),
           relation = Map.fetch!(relations, relation_string),
           not Map.has_key?(relation, :evidence),
+          not Map.has_key?(relation, :retier),
           row <- Rows.dedupe(relation, rows),
           reduce: {[], []} do
         {findings, failures} ->
@@ -60,6 +64,7 @@ defmodule Argus.Findings.Build do
           finding =
             attrs
             |> Map.update(:related, [], &(&1 ++ Evidence.for_row(evidence, joins, relation, row)))
+            |> Tooling.retier(tooling)
             |> Map.put(:analysis, mod.name())
             |> Map.put(:concern, mod.name())
             |> Names.render()
@@ -68,6 +73,17 @@ defmodule Argus.Findings.Build do
       end
 
     {Enum.reverse(findings), Enum.reverse(failures) ++ evidence_failures}
+  end
+
+  # The modules the analysis's `retier: :tooling` relation names, if it
+  # declares one.
+  defp tooling(relations, results) do
+    rows =
+      for {name, %{retier: :tooling}} <- relations,
+          row <- Map.get(results, name, []),
+          do: row
+
+    Tooling.index(rows)
   end
 
   # One row's builder, run so that its crash costs that row only: the

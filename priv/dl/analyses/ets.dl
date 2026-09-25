@@ -17,6 +17,11 @@
 .include "../clientlib/imports.dl"
 .include "../clientlib/otp.dl"
 .include "../clientlib/process_statem.dl"
+.include "../clientlib/tooling.dl"
+
+// A finding in code only developers' tools or tests run steps down a
+// level (clientlib/tooling.dl, Argus.Findings.Tooling).
+.output tooling
 
 // ── Ownership & lifecycle ──────────────────────────────────────────
 

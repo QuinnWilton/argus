@@ -12,6 +12,38 @@ does: **Added**, **Changed**, **Fixed** or **Removed**.
 
 ### Priors, round 3: tooling, and programs found on PATH
 
+**Added.** Schema 118. `tooling_module(mod, basis)` from a new
+extractor, `Argus.Extractors.Tooling`: a module only developers' tools
+or tests run, by its name (`mix`: an Elixir module under `Mix.`, a task
+or a helper Mix tasks share, which a release does not ship) or by the
+path compile_info records (`test_support`: a `test/support/` directory,
+or a `test/` directory within three of a `lib/`, where Phoenix, Plug
+and LiveView keep the test helpers they ship). A checkout under a
+directory named `test` has `lib` below it and is not; a project's
+`test/fixtures`, argus's own among them, is not either. Calling ExUnit
+was weighed and left out: Livebook's doctest runner calls it, and is
+the product.
+
+**Changed.** Every analysis but coverage runs that extractor, includes
+`clientlib/tooling.dl` and outputs `tooling(mod, basis, permille)`,
+declared by `Argus.Findings.Tooling.relation/0` under a new output
+relation key, `retier: :tooling`: its rows are no findings, and
+`Argus.Findings.Build` steps each finding anchored in a module they name
+down one level (`:error` to `:warning`, `:warning` to `:info`), its help
+saying what the module is. Nothing is removed, and an `:info` finding
+stays `:info`. `Argus.Analysis.finding_relations/1` leaves the relation
+out; scry, which builds through `Argus.Findings.build/2`, steps its
+findings with no change of its own. The severity rubric has the rule
+("Tooling"), the vocabulary the word ("Code only tools and tests run").
+Over the fifteen evaluation programs (logflare, realtime, sequin,
+supavisor, blockster_v2, hexpm, nerves_hub, livebook, the Phoenix stack,
+OTP's kernel, stdlib and mnesia, ejabberd, rabbitmq, akkoma, mongooseim
+and vernemq) 36 of 2,432 findings in 19 modules step down: Phoenix's
+generators and the Mix tasks of hexpm, realtime, sequin and akkoma
+(`Mix.Pleroma`'s "registered by two modules", a false positive, among
+them), LiveView's and Plug's test helpers, nerves_hub's socket test
+client, logflare's test utilities.
+
 **Fixed.** A program `System.find_executable/1` or
 `:os.find_executable/1,2` finds for a literal name is that program:
 `System.cmd` of it is no code execution, as a literal program's is not

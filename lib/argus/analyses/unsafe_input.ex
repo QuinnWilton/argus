@@ -78,7 +78,8 @@ defmodule Argus.Analyses.UnsafeInput do
       Argus.Extractors.Endpoint,
       # What a call's arguments are made of whatever the callee
       # (call_arg_reads): whether a caller's input reaches an atom.
-      Argus.Extractors.Dependence
+      Argus.Extractors.Dependence,
+      Argus.Extractors.Tooling
     ]
 
   @sink_fields [
@@ -160,7 +161,8 @@ defmodule Argus.Analyses.UnsafeInput do
         ],
         key: [:sup, :child],
         doc: "start_child on an uncapped DynamicSupervisor, reachable from a request."
-      }
+      },
+      Argus.Findings.Tooling.relation()
     ]
   end
 

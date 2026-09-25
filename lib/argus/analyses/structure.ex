@@ -39,7 +39,8 @@ defmodule Argus.Analyses.Structure do
       Argus.Extractors.Supervision,
       Argus.Extractors.OTP,
       Argus.Extractors.ApiCalls,
-      Argus.Extractors.ProcessRegistry
+      Argus.Extractors.ProcessRegistry,
+      Argus.Extractors.Tooling
     ]
 
   @impl true
@@ -85,7 +86,8 @@ defmodule Argus.Analyses.Structure do
         ],
         key: [:func, :name],
         doc: "global.register_name without conflict resolution callback."
-      }
+      },
+      Argus.Findings.Tooling.relation()
     ]
   end
 

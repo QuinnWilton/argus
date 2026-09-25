@@ -14,6 +14,11 @@
 .include "../clientlib/otp.dl"
 .include "../clientlib/process_statem.dl"
 .include "../clientlib/vocabulary.dl"
+.include "../clientlib/tooling.dl"
+
+// A finding in code only developers' tools or tests run steps down a
+// level (clientlib/tooling.dl, Argus.Findings.Tooling).
+.output tooling
 
 // ══ terminate/2 and the exits it needs to trap ══════════════════════
 .decl traps_exits(mod: symbol)

@@ -37,7 +37,11 @@ defmodule Argus.FindingHeadsTest do
         shapes = Map.get(heads, Atom.to_string(relation.name), [])
         assert shapes != [], "#{relation.name} is an output with no rule head in its .dl"
 
-        for shape <- shapes, row <- expand(relation, shape) do
+        # A re-tier relation's rows move the analysis's findings and
+        # render nothing of their own (Argus.Findings.Tooling).
+        for shape <- shapes,
+            not Map.has_key?(relation, :retier),
+            row <- expand(relation, shape) do
           assert_renders(@mod, relation, row)
         end
       end

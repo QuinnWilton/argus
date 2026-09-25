@@ -63,7 +63,8 @@ defmodule Argus.Analyses.Shutdown do
       # (clientlib/processes.dl, in the points-to stage): where the pid was
       # started, and names.
       Argus.Extractors.PidFlow,
-      Argus.Extractors.ProcessRegistry
+      Argus.Extractors.ProcessRegistry,
+      Argus.Extractors.Tooling
     ]
 
   @impl true
@@ -175,7 +176,8 @@ defmodule Argus.Analyses.Shutdown do
         key: [:sup, :child],
         doc:
           "A permanent child returns {:stop, :normal | :shutdown, ...}; the supervisor restarts it."
-      }
+      },
+      Argus.Findings.Tooling.relation()
     ]
   end
 

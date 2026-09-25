@@ -28,7 +28,7 @@ defmodule Argus.Analyses.StateMachine do
   def rules_file, do: "analyses/state_machine.dl"
 
   @impl true
-  def extractors, do: [Argus.Extractors.GenStatem]
+  def extractors, do: [Argus.Extractors.GenStatem, Argus.Extractors.Tooling]
 
   @impl true
   def output_relations do
@@ -52,7 +52,8 @@ defmodule Argus.Analyses.StateMachine do
         ],
         key: [:mod, :state],
         doc: "State entered from another that no transition leaves and that doesn't stop."
-      }
+      },
+      Argus.Findings.Tooling.relation()
     ]
   end
 

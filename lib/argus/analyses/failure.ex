@@ -82,7 +82,8 @@ defmodule Argus.Analyses.Failure do
       Argus.Extractors.GenStatem,
       # Which named table a process owns and which rows it seeds: an ETS
       # call its arguments say cannot fail takes no part in a belief.
-      Argus.Extractors.ETS
+      Argus.Extractors.ETS,
+      Argus.Extractors.Tooling
     ]
 
   @impl true
@@ -207,7 +208,8 @@ defmodule Argus.Analyses.Failure do
         key: [:func, :target, :sup],
         evidence: %{of: :orphan_process, on: [:func, :target]},
         doc: "The supervisor that owns an exit signal's target, attached to its finding."
-      }
+      },
+      Argus.Findings.Tooling.relation()
     ]
   end
 

@@ -8,6 +8,11 @@
 // they minted themselves.
 
 .include "../clientlib/imports.dl"
+.include "../clientlib/tooling.dl"
+
+// A finding in code only developers' tools or tests run steps down a
+// level (clientlib/tooling.dl, Argus.Findings.Tooling).
+.output tooling
 
 // ══ Secrets a schema prints ═════════════════════════════════════════
 // Credentials an inspect/1 will print.

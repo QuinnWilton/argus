@@ -12,6 +12,11 @@
 .include "../clientlib/signals.dl"
 .include "../clientlib/specs.dl"
 .include "../clientlib/vocabulary.dl"
+.include "../clientlib/tooling.dl"
+
+// A finding in code only developers' tools or tests run steps down a
+// level (clientlib/tooling.dl, Argus.Findings.Tooling).
+.output tooling
 
 // ══ The three outputs ═══════════════════════════════════════════════
 //

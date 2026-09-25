@@ -65,7 +65,8 @@ defmodule Argus.Analyses.Startup do
       Argus.Extractors.PidFlow,
       # A call with a literal first argument enters only the clauses that
       # match it (clientlib/global_reach.dl's lock walk).
-      Argus.Extractors.ClauseCall
+      Argus.Extractors.ClauseCall,
+      Argus.Extractors.Tooling
     ]
 
   @impl true
@@ -187,7 +188,8 @@ defmodule Argus.Analyses.Startup do
           {:callee, :symbol, "start function"}
         ],
         doc: "GenServer/Supervisor start result not pattern matched."
-      }
+      },
+      Argus.Findings.Tooling.relation()
     ]
   end
 

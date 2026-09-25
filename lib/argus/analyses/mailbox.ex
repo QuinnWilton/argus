@@ -89,7 +89,8 @@ defmodule Argus.Analyses.Mailbox do
       Argus.Extractors.ParamFlow,
       # Which clause of handle_info/2 a call runs in (clause_call): a
       # periodic timer loop is the clause for its own message.
-      Argus.Extractors.ClauseCall
+      Argus.Extractors.ClauseCall,
+      Argus.Extractors.Tooling
     ]
 
   @impl true
@@ -266,7 +267,8 @@ defmodule Argus.Analyses.Mailbox do
              default: [:mod, :func, :site]
            }},
         doc: "A tag the module cannot handle, or a reply a caller waits for that never comes."
-      }
+      },
+      Argus.Findings.Tooling.relation()
     ]
   end
 

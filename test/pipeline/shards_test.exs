@@ -34,6 +34,7 @@ defmodule Argus.Pipeline.ShardsTest do
              Argus.Test.Fixtures.Tls.ForcesNone,
              Argus.Test.Fixtures.DerivedInspect.OneField,
              Inspect.Argus.Test.Fixtures.DerivedInspect.OneField,
+             Mix.ArgusFixtures.Seed,
              Logger.Formatter,
              URI,
              :gen_server,

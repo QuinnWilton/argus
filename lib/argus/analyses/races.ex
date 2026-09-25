@@ -122,7 +122,8 @@ defmodule Argus.Analyses.Races do
       Argus.Extractors.ApiCalls,
       # The processes a spawn, a task or an agent starts: entries of their
       # own for RunsConcurrently (clientlib/concurrency.dl).
-      Argus.Extractors.PidFlow
+      Argus.Extractors.PidFlow,
+      Argus.Extractors.Tooling
     ]
 
   @impl true
@@ -238,7 +239,8 @@ defmodule Argus.Analyses.Races do
         key: [:func, :act],
         doc:
           "A read decides a row is there and a raising operation acts on it while another process can remove it."
-      }
+      },
+      Argus.Findings.Tooling.relation()
     ]
   end
 

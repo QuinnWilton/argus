@@ -51,12 +51,13 @@ defmodule Argus.Analysis.Catalog do
 
   @doc """
   The output relations of an analysis whose rows are findings: every
-  output relation but the evidence ones.
+  output relation but the evidence ones and the one that re-tiers them
+  (`retier: :tooling`).
   """
   @spec finding_relations(atom()) :: {:ok, [Analysis.output_relation()]} | :error
   def finding_relations(name) do
     with {:ok, relations} <- output_relations(name) do
-      {:ok, Enum.reject(relations, &Map.has_key?(&1, :evidence))}
+      {:ok, Enum.reject(relations, &(Map.has_key?(&1, :evidence) or Map.has_key?(&1, :retier)))}
     end
   end
 

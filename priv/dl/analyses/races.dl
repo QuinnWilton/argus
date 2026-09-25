@@ -35,6 +35,11 @@
 .include "../clientlib/specs.dl"
 .include "../clientlib/tables.dl"
 .include "../clientlib/vocabulary.dl"
+.include "../clientlib/tooling.dl"
+
+// A finding in code only developers' tools or tests run steps down a
+// level (clientlib/tooling.dl, Argus.Findings.Tooling).
+.output tooling
 
 .init runs = RunsConcurrently
 

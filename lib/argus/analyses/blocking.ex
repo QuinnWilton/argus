@@ -91,7 +91,8 @@ defmodule Argus.Analyses.Blocking do
       Argus.Extractors.Sockets,
       # A handle_call/3 that returns {:noreply, _} answers later
       # (callback_return, clientlib/replies.dl): no immediate answer.
-      Argus.Extractors.Reply
+      Argus.Extractors.Reply,
+      Argus.Extractors.Tooling
     ]
 
   @impl true
@@ -235,7 +236,8 @@ defmodule Argus.Analyses.Blocking do
         ],
         key: [:func, :site],
         doc: "A peer call whose catch covers :noproc but not the peer stopping mid-call."
-      }
+      },
+      Argus.Findings.Tooling.relation()
     ]
   end
 
