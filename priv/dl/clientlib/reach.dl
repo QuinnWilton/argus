@@ -110,6 +110,12 @@
   reaches(f) :- call_edge(f, g), !runs_elsewhere(f, g), reaches(g).
 }
 
+// The same, less the edges the instance names `cut`.
+.comp SameProcessReachSetCut : BackwardSet {
+  .decl cut(func: symbol, callee: symbol)
+  reaches(f) :- call_edge(f, g), !runs_elsewhere(f, g), !cut(f, g), reaches(g).
+}
+
 // ── Forward: what each root reaches ──────────────────────────────────
 
 .comp Forward {

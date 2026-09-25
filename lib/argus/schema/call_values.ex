@@ -372,6 +372,20 @@ defmodule Argus.Schema.CallValues do
         """
       },
       %{
+        name: :macro_written,
+        layer: 2,
+        fields: [{:func, :func_id, "function ID (mod:func/arity)"}],
+        doc: """
+        Every clause of `func` was written by another module's macro, or \
+        marked `generated: true` (`Argus.Extractors.Generated`): the \
+        module wrote none of it. `macro_generated` reads the definition's \
+        metadata, which is its first clause's, and so names a function \
+        whose first clause a `use` injected ahead of the module's own; \
+        this reads each clause's. `use Cachex.Warmer`'s handle_info/2 is \
+        one.
+        """
+      },
+      %{
         name: :name_release,
         layer: 2,
         fields: [

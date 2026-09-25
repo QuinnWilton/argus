@@ -198,10 +198,28 @@ defmodule Argus.Schema.ErrorHandling do
         """
       },
       %{
+        name: :apply_param,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the call through a fun, or the apply"},
+          {:func, :symbol, "the function"},
+          {:pos, :number, "the parameter holding the fun or the module"}
+        ],
+        doc: """
+        The call through a fun (or the apply) at `id` runs what `func`'s \
+        parameter `pos` holds: the fun, or the module an apply names. Its \
+        callers choose what runs (`Argus.Extractors.ErrorHandling`). A \
+        call through a fun the function builds, a literal external fun or \
+        an apply that resolves (`resolved_apply`) has no row: the call \
+        graph follows it. One through anything else is mailbox_writer's \
+        `apply`.
+        """
+      },
+      %{
         name: :timer_tag,
         layer: 2,
         fields: [
-          {:id, :symbol, "the send_after / send_interval site"},
+          {:id, :symbol, "the send_after / send_interval / start_timer site"},
           {:tag, :symbol, "the inspected atom"}
         ],
         doc: """
@@ -209,9 +227,10 @@ defmodule Argus.Schema.ErrorHandling do
         as a clause head or a receive compares it: the message itself when \
         it is an atom, or the first element of a tuple — a literal one \
         (`{:warm_up, 5}`) or one the arming site builds \
-        (`{:retry, attempts - 1}`). No row when the message is anything \
-        else or does not resolve. A literal tuple's `literal` in \
-        timer_arm spells the whole term, which no tag equals.
+        (`{:retry, attempts - 1}`). `:erlang.start_timer/3,4`'s is \
+        `:timeout`: it sends `{:timeout, ref, msg}`. No row when the \
+        message is anything else or does not resolve. A literal tuple's \
+        `literal` in timer_arm spells the whole term, which no tag equals.
         """
       },
       %{

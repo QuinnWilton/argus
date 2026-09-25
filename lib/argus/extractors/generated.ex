@@ -15,11 +15,20 @@ defmodule Argus.Extractors.Generated do
   and beams without Elixir debug info yield nothing: their macros are
   the preprocessor's, and leave no trace to read.
 
+  A definition's own metadata is its first clause's: a `use` that
+  injects a clause ahead of the module's own (`use Sequin.ProcessMetrics`
+  before SlotMessageStore's handle_info/2 clauses) marks the whole
+  definition. Each clause carries its metadata too, and `macro_written`
+  asks every one.
+
   ## Emitted facts
 
   - `macro_generated(func, by)` — `func` was defined by a macro of module
     `by` (inspected), or `generated` when only the `generated: true`
     marker says so.
+  - `macro_written(func)` — every clause of `func` was written by another
+    module's macro (or marked generated): the module wrote none of it,
+    as `use Cachex.Warmer`'s handle_info/2
   """
 
   @behaviour Argus.Extractor
@@ -31,20 +40,29 @@ defmodule Argus.Extractors.Generated do
   alias Argus.Pipeline.Normalize
 
   @impl true
-  def relations, do: [:macro_generated]
+  def relations, do: [:macro_generated, :macro_written]
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
     mod = module_data.module
 
-    for {{name, arity}, _kind, meta, _clauses} <- definitions(module_data),
+    for {{name, arity}, _kind, meta, clauses} <- definitions(module_data),
         by = generated_by(meta, mod),
         by != nil,
         reduce: %{} do
-      acc -> add_fact(acc, :macro_generated, [Normalize.func_id(mod, name, arity), by])
+      acc ->
+        func_id = Normalize.func_id(mod, name, arity)
+        acc = add_fact(acc, :macro_generated, [func_id, by])
+
+        if Enum.all?(clauses, &clause_generated?(&1, mod)),
+          do: add_fact(acc, :macro_written, [func_id]),
+          else: acc
     end
   end
+
+  defp clause_generated?({meta, _args, _guards, _body}, mod), do: generated_by(meta, mod) != nil
+  defp clause_generated?(_clause, _mod), do: false
 
   defp generated_by(meta, mod) do
     case {Keyword.get(meta, :context), Keyword.get(meta, :generated, false)} do

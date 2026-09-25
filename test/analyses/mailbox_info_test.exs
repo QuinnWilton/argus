@@ -56,6 +56,27 @@ defmodule Argus.Analyses.MailboxInfoTest do
     end
   end
 
+  describe "partial_handler: late_message sources" do
+    alias Argus.Test.Fixtures.LateMessage, as: L
+
+    test "a fun a callback is handed is a source; a closure, a timed call, a macro's handler are not" do
+      skip_without_souffle()
+
+      results =
+        analyze([L.Warmer, L.HandsClosure, L.TimedCall, L.StartTimer, L.RunsSentFun])
+
+      assert Enum.map(partial(results, "late_message"), fn [mod, _f] -> mod end) ==
+               ["Argus.Test.Fixtures.LateMessage.RunsSentFun"]
+    end
+
+    test "the logger's own machinery is no source, though it applies its handlers" do
+      skip_without_souffle()
+
+      results = analyze([L.LogsOnTick, :logger, :logger_backend])
+      assert partial(results, "late_message") == []
+    end
+  end
+
   describe "partial_handler: runtime" do
     test "a monitoring GenServer with only a :DOWN clause is reported" do
       skip_without_souffle()

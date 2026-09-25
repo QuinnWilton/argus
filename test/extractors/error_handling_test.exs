@@ -54,6 +54,24 @@ defmodule Argus.Extractors.ErrorHandlingTest do
     end
   end
 
+  describe "extract/1 — apply_param and the apply writer" do
+    alias Argus.Test.Fixtures.LateMessage
+
+    defp applies(mod) do
+      facts = ErrorHandling.extract(disassemble(mod))
+      name = &(&1 |> String.split(":") |> List.last())
+
+      {for([_id, func, pos] <- Map.get(facts, :apply_param, []), do: {name.(func), pos}),
+       for([_id, func, "apply"] <- Map.get(facts, :mailbox_writer, []), do: name.(func))}
+    end
+
+    test "a call through a parameter names it; through the state it is an apply" do
+      assert applies(LateMessage.HandsClosure) == {[{"with_retry/1", "0"}], []}
+      assert applies(LateMessage.RunsSentFun) == {[{"run/1", "0"}], []}
+      assert applies(LateMessage.Warmer) == {[], ["execute/1"]}
+    end
+  end
+
   describe "extract/1 — returns_call" do
     test "a function returns a local callee's result only from a tail call" do
       facts = ErrorHandling.extract(disassemble(Argus.Test.Fixtures.ReturnsCall))

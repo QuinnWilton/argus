@@ -102,10 +102,59 @@ partial_handler(mod, h, "runtime", "catchall", "") :-
 // reach the shape is a style note, and stays quiet. Info: the two rules
 // above stay the warning-grade shapes. A source in what a callback
 // spawns or hands a task writes to that process's mailbox, not this one.
-.init mailbox_reach = SameProcessReachSet
+//
+// Not sources:
+// - a timed GenServer (gen) call: since OTP 24 gen waits on an alias
+//   it deactivates when it gives up, and a reply sent after that is
+//   dropped. gen_stage#238's late message was hackney's, from the
+//   stream it ran (an apply, below);
+// - the logging and telemetry APIs (side_call, clientlib/calls.dl):
+//   their handlers are dispatched by value and write to no mailbox of
+//   the caller's that the program can see, and :telemetry's own apply
+//   of a handler fun is that dispatch;
+// - a call through a fun or a module the process's own code builds or
+//   names (apply_param resolved at its callers, below): what it runs is
+//   in the call graph, and walked.
+.init mailbox_reach = SameProcessReachSetCut
 
+mailbox_reach.cut(f, g) :- side_call(f, g).
 mailbox_reach.seed(f) :- mailbox_writer(id, f, kind), kind != "cancel", !handled_self_timer(id).
-mailbox_reach.seed(f) :- sync_call_timeout(f, _, ms), ms != -1.
+mailbox_reach.seed(c) :- hands_unseen(c).
+
+// A function that calls through its parameter runs what its callers hand
+// it (apply_param). A caller that forwards its own parameter into that
+// position asks its callers in turn; one that hands a fun it builds or a
+// literal external fun (fun_handed), or names a literal module, shows
+// what runs. Any other caller hands code the program does not show — a
+// fun it read from its state, a module it was sent — and is a source,
+// as is a callback calling through its own parameter: the behaviour
+// fills those, with the message or the state (a server whose state is
+// the fun it runs). A closure calling a fun it captured is asked of no
+// caller: what it captured is its builder's, and not followed.
+.decl applies_through(func: symbol, pos: number)
+
+applies_through(f, k) :- apply_param(_, f, k).
+applies_through(c, k2) :- applies_through(f, k), call_arg_forward(c, f, k, k2).
+
+.decl hands_unseen(caller: symbol)
+
+hands_unseen(c) :-
+  applies_through(f, k),
+  call_instr(c, f, id),
+  !fun_handed(id, c, _),
+  !call_arg_forward(c, f, k, _),
+  !names_module(c, f, k).
+
+hands_unseen(f) :- applies_through(f, _), process_entry(_, f).
+
+// `caller` hands `callee` a literal module at `pos` on every call.
+.decl names_module(caller: symbol, callee: symbol, pos: number)
+
+names_module(c, f, k) :-
+  applies_through(f, k),
+  call_arg(c, f, k, v),
+  v != "dynamic",
+  !call_arg(c, f, k, "dynamic").
 
 // A timer the process arms for itself whose message's tag (timer_tag:
 // the atom, or a tuple's first element) its own handle_info/2 compares
@@ -122,15 +171,30 @@ handled_self_timer(id) :-
   callback_tag(h, "handle_info", tag),
   function_def(h, mod, _, _, _).
 
+// :erlang.start_timer/3,4 (no timer_arm: its message carries the ref,
+// and the flush rules do not ask of it) sends `{:timeout, ref, msg}`.
+handled_self_timer(id) :-
+  mailbox_writer(id, f, "timer"),
+  !timer_arm(id, _, _, _, _, _),
+  timer_tag(id, tag),
+  function_def(f, mod, _, _, _),
+  callback_tag(h, "handle_info", tag),
+  function_def(h, mod, _, _, _).
+
 .decl late_message_source(mod: symbol)
 
 late_message_source(mod) :-
   process_entry(mod, c),
   mailbox_reach.reaches(c).
 
+// A handle_info/2 every clause of which a library's macro wrote
+// (macro_written: `use Cachex.Warmer`'s) is that library's protocol for
+// its own messages, and the finding would point at the `use` line, where
+// the module has nothing to add a clause to.
 partial_handler(mod, h, "late_message", "catchall", "") :-
   (behaves_as(mod, "GenServer") ; behaves_as(mod, "GenStage")),
   partial_handle_info(mod, h),
+  !macro_written(h),
   late_message_source(mod),
   !receives_runtime_messages(mod),
   !trap_exit_without_exit_clause(mod, _),

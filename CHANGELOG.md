@@ -37,6 +37,40 @@ catch-all handle_info/2. The rules reading `recv_pattern` (the timer
 flush, `unhandled_info`, `unreceived_message`, blocking's cancel_timer
 idiom) now see those receives.
 
+**Fixed.** "handle_info/2 has no catch-all" (`partial_handler`'s
+"late_message" source) no longer fires on a server whose only sources
+are ones the program shows, or on a handle_info/2 a library's macro
+wrote. On logflare it went from 22 rows to 9, on the Phoenix stack from
+6 to 3; gen_stage#238 and commanded#332 still fire. Not sources now:
+a timed GenServer call (since OTP 24 gen waits on an alias it
+deactivates when it gives up, and a late reply is dropped); a call into
+the logging or telemetry API (`side_call`: its handlers run by value,
+and `:telemetry`'s apply of a handler fun is that dispatch;
+`SameProcessReachSetCut` in clientlib/reach.dl); an `:erlang.start_timer`
+timer whose `:timeout` the handler takes; and a call through a fun or a
+module whose callers show what runs (`apply_param`: a fun they build and
+hand down, a literal module; one they forward is asked of their
+callers). A caller that hands a fun from somewhere else — its state, a
+message — is a source (`hands_unseen`), as is a callback calling
+through its own parameter, which the behaviour fills. A handle_info/2
+every clause of which another module's macro wrote (`macro_written`:
+`use Cachex.Warmer`'s, seven of logflare's) is that library's protocol,
+and the finding would point at the `use` line.
+
+**Changed.** Schema 94. `mailbox_writer`'s `apply` kind is a call
+through a fun or a module read from somewhere the call graph does not
+reach (the state, a message, a call's result). A call through a fun the
+function builds, a literal external fun, or an apply that resolves has
+no row (the call graph follows it); one through the function's own
+parameter is `apply_param(id, func, pos)` (added), for a rule to ask its
+callers. `timer_tag` names `:timeout` for `:erlang.start_timer/3,4`.
+`macro_written(func)` (added, `Argus.Extractors.Generated`): every clause
+of `func` was written by another module's macro or marked generated.
+`macro_generated` reads the definition's metadata, which is its first
+clause's; a `use` that injects one clause ahead of the module's own
+(sequin's `ProcessMetrics`) marks the whole definition there, and not
+here.
+
 **Fixed.** ":infinity timeout inside a call chain" no longer reports a
 hop into a server whose handle_call/3 answers at once
 (`answers_straight_away` in blocking.dl): what it runs in its own
