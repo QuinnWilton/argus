@@ -665,5 +665,17 @@
     pre: "f89ed6ec0b4388a32aff889501701fb5ce617c6b",
     fix: "c1e2a0154d30acc943ed28b0087ed4b7797c730a",
     finding: {:mailbox, "No handle_info/2 clause for the close of the server's socket"}
+  },
+  # ── ets: a named table a server's start_link creates ─────────────────
+  # ex_uid2: Dsp.start_link created the named keyring table and then
+  # started the GenServer, so the table belonged to the supervisor and a
+  # restart raised on :ets.new; the fix moves the call into init/1.
+  %{
+    repo: "market-ops/ex_uid2",
+    issue: "ex_uid2@69e7279",
+    module: "ExUid2.Dsp",
+    pre: "b3e9fad7c9576123a96c6b8a34130cf76dfe6bbd",
+    fix: "69e72793b5b2ecabe4848d6ca2088d0575c31ca9",
+    finding: {:ets, "Named ETS table created in start_link fails the server's restart"}
   }
 ]

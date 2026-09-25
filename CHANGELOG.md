@@ -10,9 +10,27 @@ What 0.20.0 will ship; the release dates this heading and drops the
 `-dev` from `mix.exs`. Grouped by concern. Each entry opens with what it
 does: **Added**, **Changed**, **Fixed** or **Removed**.
 
-### Sockets a server holds
+### Classes mined from fixed bugs
 
-Classes mined from fixed bugs.
+Three classes from round 1 of mining fixed bugs (178 classified; the
+catalog in `docs/bug-classes.md` records the formalizations and the
+ranked backlog), with fix pairs for each.
+
+**Added.** `ets.ets_created_in_start(name, mod, site, start)`: a
+server's `start_link` creates a named ETS table ("Named ETS table created
+in start_link fails the server's restart", `:warning`). `start_link` runs
+in whoever starts the server, its supervisor when it is a child, so the
+table belongs to the supervisor and outlives the server; the restart
+calls `start_link` again and `:ets.new` raises on the taken name, and
+the child cannot restart. A start function is a process module's
+exported `start_link/1` that starts a server itself; the table is made on
+its own stack and not by the module's own callbacks. Not judged: a start
+function that asks first (`:ets.whereis/1`, `:ets.info/1`), rescues the
+ArgumentError at the call, or gives the table away; an unnamed table; a
+`restart: :temporary` child. Pair: ex_uid2@69e7279 (Dsp moved the call
+into init/1). Over 30 large trees and OTP's ssl, inets, ssh, kernel,
+mnesia and stdlib it made one row, OTP's `ssl_dist_sup:start_link/0`
+(with `-ssl_dist_optfile`), a real instance.
 
 **Added.** `mailbox.unhandled_info` has a fourth source, `socket`: a
 server that makes a TCP or TLS socket active in its own process is sent

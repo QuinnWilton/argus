@@ -20,6 +20,11 @@ defmodule Argus.Analyses.Ets do
   - `ets_unnamed_in_process(name, mod, site)` — an unnamed table created
     in a process, reachable only through its reference. `:info`: often
     deliberate.
+  - `ets_created_in_start(name, mod, site, start)` — a server's
+    `start_link` (`start`) creates a named table: it runs in the starting
+    process, the supervisor for a child, so the table outlives the
+    server's crash and the restart's `:ets.new` raises on the taken name.
+    `:warning`.
 
   `site` is the `:ets.new` call, where every finding but the read outside
   the owner anchors. Tables whose name is computed at runtime take part
@@ -49,7 +54,10 @@ defmodule Argus.Analyses.Ets do
       Argus.Extractors.Supervision,
       Argus.Extractors.ErrorHandling,
       Argus.Extractors.GenStatem,
-      Argus.Extractors.CallArgs
+      Argus.Extractors.CallArgs,
+      # Where a process starts (process_start): the same-process walk of
+      # ets_created_in_start sets aside what a start runs (runs_elsewhere).
+      Argus.Extractors.PidFlow
     ]
 
   @impl true
@@ -125,6 +133,17 @@ defmodule Argus.Analyses.Ets do
         ],
         key: [:name, :mod],
         doc: "Unnamed table created in a process."
+      },
+      %{
+        name: :ets_created_in_start,
+        fields: [
+          {:name, :symbol, "table name, or dynamic"},
+          {:mod, :symbol, "the server module"},
+          {:site, :symbol, "instruction ID of the :ets.new/2 call"},
+          {:start, :symbol, "the server's start_link, on whose stack the call runs"}
+        ],
+        key: [:site],
+        doc: "A server's start_link creates a named table, which its restart cannot create again."
       }
     ]
   end
@@ -240,6 +259,35 @@ defmodule Argus.Analyses.Ets do
       help: [
         "name the table (`:named_table`), or hand its reference to whatever " <>
           "must read or delete it"
+      ]
+    )
+  end
+
+  def finding(:ets_created_in_start, [name, mod, site, start]) do
+    table = if name == "dynamic", do: "a named table", else: "the named table #{name}"
+
+    Findings.new(
+      :warning,
+      "Named ETS table created in start_link fails the server's restart",
+      "#{Findings.call_name(start)} creates #{table}. start_link runs in whoever starts " <>
+        "#{mod}'s server, its supervisor when it is a child, not in the server, so the " <>
+        "table belongs to the supervisor and outlives the server. When the server " <>
+        "crashes, the restart calls start_link again and :ets.new raises ArgumentError " <>
+        "on a name that is still taken: the child cannot restart, and its supervisor " <>
+        "retries until its restart intensity is spent and exits.",
+      at: Findings.at_site(site, mod),
+      at_label: "runs in the supervisor, once per start",
+      related: [
+        Findings.related("the start function the supervisor calls", Findings.at_func(start),
+          to_block: :function
+        )
+      ],
+      help: [
+        "create the table in init/1, in the server's own process, so it goes with the " <>
+          "server and comes back with its restart",
+        "or, to keep it across restarts on purpose, create it once where it is owned for " <>
+          "good (the application, or a supervisor's init/1) and make start_link skip it " <>
+          "when `:ets.whereis/1` finds it"
       ]
     )
   end

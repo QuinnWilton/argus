@@ -11,7 +11,7 @@
   effects:
     ~w(call_edge call_site closure_def dynamic_call ets_new ets_op implements_behaviour impure_call port_open process_register protocol_dispatch pure_contract recv_start remote_call resolved_apply send_msg spawn_call unknown_call),
   ets:
-    ~w(call_arg call_arg_forward call_edge catch_tag catch_total closure_def dynamic_child ets_new ets_op ets_op_param ets_option function_def implements_behaviour statem_event_clause supervisor_child try_start),
+    ~w(call_arg call_arg_forward call_edge call_site catch_tag catch_total child_spec_restart closure_def dynamic_call dynamic_child ets_new ets_op ets_op_param ets_option fun_handed_to fun_ref function_def implements_behaviour process_start remote_call statem_event_clause supervisor_child try_covers try_start),
   exposure:
     ~w(function_def inspect_derived inspect_shows prior_sensitive redacted_field schema_field tls_connect tls_verification),
   failure:
