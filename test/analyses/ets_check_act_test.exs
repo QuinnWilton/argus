@@ -44,7 +44,9 @@ defmodule Argus.Analyses.EtsCheckActTest do
     C.HandedCounters,
     C.HandedCountersFixed,
     C.FetchedTable,
-    C.WindowCounters
+    C.WindowCounters,
+    C.GvarAccessors,
+    C.SerialAccessors
   ]
 
   setup_all do
@@ -301,6 +303,38 @@ defmodule Argus.Analyses.EtsCheckActTest do
     end
   end
 
+  describe "ets_check_act through accessors" do
+    test "a shared key through one-line accessors meets at the calls, in the caller", ctx do
+      skip_without_souffle()
+
+      {:ok, results} = Batch.analyze(ctx.batch, [C.GvarAccessors])
+
+      assert [[_mod, func, ":gvar", "0", read, write]] = results["ets_check_act"]
+      assert short(func) == "add/2"
+      # The read is the call to val/1, the write the call to set/2, both in
+      # add/2: not the lookup and the insert inside the accessors.
+      assert short(read) == "add/2"
+      assert short(write) == "add/2"
+    end
+
+    test "a literal handed to an accessor, or reached down a chain, is no shared key", ctx do
+      skip_without_souffle()
+
+      {:ok, results} = Batch.analyze(ctx.batch, [C.GvarAccessors])
+      funcs = for [_, func | _] <- results["ets_check_act"], do: short(func)
+
+      refute "maybe_work/0" in funcs
+      refute "running?/0" in funcs
+      refute "level/0" in funcs
+    end
+
+    test "accessors whose bodies name the row meet where both are called", ctx do
+      skip_without_souffle()
+
+      assert [{"sync/1", ":decisions", ":serial"}] = races(ctx, [C.SerialAccessors])
+    end
+  end
+
   describe "ets_check_act across functions" do
     test "a read helper's result handed to a multi-clause write helper meets in the caller",
          ctx do
@@ -312,10 +346,17 @@ defmodule Argus.Analyses.EtsCheckActTest do
         for [_mod, func, ":helper_cache", "0", read, write] <- results["ets_check_act"],
             do: {short(func), short(read), short(write)}
 
-      assert Enum.uniq(Enum.map(sites, &elem(&1, 0))) == ["bump/1"]
-      assert Enum.all?(sites, fn {_, read, write} -> read == "fetch/1" and write == "store/2" end)
-      # One row per store/2 clause's insert.
-      assert length(sites) == 2
+      # fetch/1 is an accessor, one lookup: the read is its call in bump/1.
+      # store/2's two clauses insert, one race: the second is a frame.
+      assert [{"bump/1", "bump/1", "store/2"}] = sites
+
+      assert [[_write, "also_writes", other, _func]] =
+               for(
+                 [_, "also_writes", _, _] = frame <- results["ets_race_frame"],
+                 do: frame
+               )
+
+      assert short(other) == "store/2"
     end
 
     test "a pair that meets in a helper is not reported again in its caller", ctx do

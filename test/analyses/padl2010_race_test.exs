@@ -78,12 +78,13 @@ defmodule Argus.Analyses.Padl2010RaceTest do
 
       rows = rows(ctx, [:padl2010_ets_inc], "ets_check_act")
 
-      assert [{"ets_inc/2", ":some_tab_name", ":some_key"}] =
-               rows
-               |> Enum.map(fn [_, f, name, key, _, _] -> {fa(f), name, key} end)
-               |> Enum.uniq()
+      # Both inserts, one race: the first is the finding, the second its
+      # frame.
+      assert [[_, f, ":some_tab_name", ":some_key", _, write]] = rows
+      assert fa(f) == "ets_inc/2"
 
-      assert length(rows) == 2
+      assert [[^write, "also_writes", _, _]] =
+               rows(ctx, [:padl2010_ets_inc], "ets_race_frame")
     end
   end
 
@@ -152,17 +153,17 @@ defmodule Argus.Analyses.Padl2010RaceTest do
 
       rows = rows(ctx, [:padl2010_loop], "ets_check_act")
 
-      assert [{"tick/2", ":loop_hits", ":hits"}] =
-               rows
-               |> Enum.map(fn [_, f, name, key, _, _] -> {fa(f), name, key} end)
-               |> Enum.uniq()
+      assert [[_, f, ":loop_hits", ":hits", read, write]] = rows
+      assert fa(f) == "tick/2"
 
-      # Both inserts sit before the lookup in the loop body.
-      assert length(rows) == 2
+      # Both inserts sit before the lookup in the loop body; the second is
+      # the finding's frame.
+      assert index(write) < index(read)
 
-      for [_, _, _, _, read, write] <- rows do
-        assert index(write) < index(read)
-      end
+      assert [[^write, "also_writes", other, _]] =
+               rows(ctx, [:padl2010_loop], "ets_race_frame")
+
+      assert index(other) < index(read)
     end
   end
 

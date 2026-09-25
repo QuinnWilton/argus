@@ -2037,4 +2037,78 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
       end
     end
   end
+
+  defmodule GvarAccessors do
+    @moduledoc """
+    mnesia_lib's global variables: a public table read and written through
+    one-line accessors, val/1 and set/2. add/2 reads a variable and writes
+    it back through them, over the key it holds: a race, reported at its
+    set/2 call. maybe_work/0 decides on running?/0, which reads `:status`
+    through val/1, and a helper far down another path sets `:status`: one
+    literal, no flow between them. level/0 fills a default for a literal
+    it reads itself, through set/2: a literal row, not a shared key.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      :ets.new(:gvar, [:named_table, :public, :set])
+      {:ok, state}
+    end
+
+    def val(var), do: :ets.lookup_element(:gvar, var, 2)
+    def set(var, value), do: :ets.insert(:gvar, {var, value})
+
+    def add(var, value), do: set(var, [value | val(var)])
+
+    def running?, do: val(:status) == :running
+
+    def maybe_work do
+      if running?(), do: work(), else: :idle
+    end
+
+    defp work, do: finish(:done)
+
+    defp finish(result) do
+      set(:status, :stopping)
+      result
+    end
+
+    def level do
+      case :ets.lookup(:gvar, :level) do
+        [] ->
+          set(:level, 0)
+          0
+
+        [{:level, level}] ->
+          level
+      end
+    end
+  end
+
+  defmodule SerialAccessors do
+    @moduledoc """
+    mnesia_recover's transaction serial: accessors whose own bodies name
+    the row, and a guarded maximum over them. Two syncs both pass the
+    check, and the smaller can land last: met where both are called.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      :ets.new(:decisions, [:named_table, :public, :set])
+      {:ok, state}
+    end
+
+    def serial, do: :ets.lookup_element(:decisions, :serial, 2)
+    def set_serial(value), do: :ets.insert(:decisions, {:serial, value})
+
+    def sync(counter) do
+      if counter > serial(), do: set_serial(counter + 1), else: :ignore
+    end
+  end
 end

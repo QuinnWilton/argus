@@ -16,7 +16,11 @@ defmodule Argus.Analyses.Races do
     (`literal`, `param`, `field`, `local`, `dynamic` or `any`).
   - `ets_check_act(mod, func, name, key, read, write)` — an ETS read
     decides or feeds a plain write of the same key on a public table
-    another process can write. A delete, a refill every racer computes
+    another process can write. One row per write. An operation that is
+    the whole body of an accessor (`mnesia_lib:set/2`) is its callers':
+    the pair meets where the accessor is called, over a key held as a
+    variable there when the accessor takes it as a parameter, and `read`
+    or `write` is that call. A delete, a refill every racer computes
     alike, and a write whose decision never leaves the function are not
     lost updates, unless the program also writes the table back from a
     read or counts in it (update_counter, or an `:atomics` or `:counters`
@@ -41,6 +45,9 @@ defmodule Argus.Analyses.Races do
     since: the weakest, an `:info`). A table only one process writes is
     not reported; that process is one per node, so a table replicated to
     nodes that each run its owner is taken as having one writer.
+  - `ets_race_frame(write, role, site, func)` — evidence for an ETS
+    finding: the same race's other writes (`also_writes`) and the other
+    reads deciding the write (`read`).
   - `mnesia_race_frame(write, role, site, func)` — evidence for a
     Mnesia finding: the same race's other writes (`also_writes`), the
     other reads deciding the write (`read`), and, for a pair one process
@@ -147,8 +154,22 @@ defmodule Argus.Analyses.Races do
           {:read, :symbol, "instruction ID of the read"},
           {:write, :symbol, "instruction ID of the write it decides or feeds"}
         ],
-        key: [:func, :name, :key],
+        key: [:write],
         doc: "A read decides a write of the same key on a public table another process can write."
+      },
+      %{
+        name: :ets_race_frame,
+        fields: [
+          {:write, :symbol, "the finding's write"},
+          {:role, :symbol, "also_writes | read"},
+          {:site, :symbol, "instruction ID of the other write or the other read"},
+          {:func, :symbol, "the function the site is reported from"}
+        ],
+        key: [:write, :role, :site],
+        evidence: %{of: :ets_check_act, on: [:write], limit: 4},
+        doc:
+          "The same race's other writes and the other reads deciding the write, attached to " <>
+            "its finding."
       },
       %{
         name: :mnesia_check_act,
@@ -420,13 +441,21 @@ defmodule Argus.Analyses.Races do
   end
 
   @impl true
-  def evidence(:mnesia_race_frame, [_write, "also_writes", site, func]) do
+  def evidence(frame, [_write, "also_writes", site, func])
+      when frame in [:ets_race_frame, :mnesia_race_frame] do
     Findings.related("the same race writes here too", Findings.at_site_in_func(site, func))
   end
 
   def evidence(:mnesia_race_frame, [_write, "other_writer", site, func]) do
     Findings.related(
       "written here too, outside the one process the pair runs in",
+      Findings.at_site_in_func(site, func)
+    )
+  end
+
+  def evidence(:ets_race_frame, [_write, "read", site, func]) do
+    Findings.related(
+      "also decided by this read, where it meets the write in " <> Findings.call_name(func),
       Findings.at_site_in_func(site, func)
     )
   end

@@ -2662,6 +2662,36 @@ has no body: nothing says whose the closure is.
 
 ### races
 
+**Fixed.** `ets_check_act` judges an operation that is the whole body
+of an accessor — one ETS operation on a named table and no other
+shared-state operation, as mnesia_lib's `set/2` (`?ets_insert(
+mnesia_gvar, {Var, Val})`) and `read_counter/1` are — at the accessor's
+calls (`ets_accessor`, `ets_meets`). A pair with such an operation meets
+in a function that calls the accessor itself, not further up, where a
+literal one call passes agrees with a read of the same literal through
+a chain of calls; and when the accessor takes its key as a parameter,
+over a key the meeting function holds as a variable and hands both
+sides (`add/2`'s `val(Var)` and `set(Var, ...)`). An accessor whose own
+body names the row (`trans_tid_serial()`, `set_trans_tid_serial/1`) is
+a row of its own, met where both are called. The finding's `read` and
+`write` are the calls to the accessors, not the operations inside them.
+Known limit: a read and a write of one literal row through parameter
+accessors, both called in one function (`n = read_counter(:c)`,
+`set_counter(:c, n + 1)`), is not reported.
+
+**Changed.** `ets_check_act` is one finding per write (key `[:write]`),
+as `mnesia_check_act` is: of the pairs a write is in, the least read and
+function where they meet; the others, and the same race's later writes
+in one function (`add_lsort/2`'s three `set/2` calls), are frames of the
+new evidence relation `ets_race_frame(write, role, site, func)`. OTP
+(mnesia, kernel, stdlib): 34 findings to 4 — 28 were anchored inside
+`mnesia_lib:set/2`, reached from `is_running/0`, `use_dir/0` and
+`system_info/1` reads a chain of calls away from a `set/2` of the same
+literal; 3 at `insert_cstruct/3` and 2 at `set_counter/2` were the same
+chains. What stays is `add/2`, `del/2`, `add_lsort/2` (a read-modify-
+write of a shared variable) and `sync_trans_tid_serial/1` (a guarded
+maximum over the serial). Every other program's rows are unchanged.
+
 **Changed.** `mnesia_check_act` is one finding per dirty write, and
 says which race it is: a trailing `kind` column, the key `[:write]`, and
 the evidence relation `mnesia_race_frame(write, role, site, func)`. Of
