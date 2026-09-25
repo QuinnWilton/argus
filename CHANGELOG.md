@@ -81,6 +81,15 @@ wait. blocking runs the extractor too.
 
 ### Process rules, read against real programs
 
+**Fixed.** A trap_exit set in a fun the module hands to a process start
+is that process's, not the module server's (`module_traps`,
+clientlib/process.dl). gen_server2's multi_call middleman and elixir-ls's
+OutputDevice Task trap in funs they spawn, and were "trap_exit without an
+:EXIT handler" for a server that never traps. The same predicate now
+decides `shutdown`'s "the module traps exits" (a server whose spawned fun
+traps still dies with its supervisor's signal, and its cleanup is
+reported) and mailbox's runtime-message source and linked-task check.
+
 **Fixed.** The effect model (`Argus.Purity.Effects`) called string
 work I/O. `:io_lib` builds the characters `:io` writes and writes none
 itself: it is pure. `:inet`'s address parsing and printing (`ntoa/1`,

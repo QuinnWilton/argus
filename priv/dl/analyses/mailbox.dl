@@ -70,7 +70,7 @@
 // clause that is missing: one finding per module, the more specific one.
 .decl receives_runtime_messages(mod: symbol)
 
-receives_runtime_messages(mod) :- trap_exit(_, mod).
+receives_runtime_messages(mod) :- module_traps(_, mod).
 
 // A monitor the server itself holds: taken on its own stack (a callback,
 // or what one reaches in the module). A client function of the same
@@ -703,7 +703,7 @@ task_result_defect(owner, id, "yield_linked") :-
   (remote_call(_, g, "Task", "yield", _) ; remote_call(_, g, "Task", "yield_many", _)),
   enclosing_function(g, owner),
   function_def(owner, mod, _, _, _),
-  !trap_exit(_, mod).
+  !module_traps(_, mod).
 
 // ── A linked task inside library code ────────────────────────────────
 //

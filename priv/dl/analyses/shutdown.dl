@@ -18,7 +18,7 @@
 // ══ terminate/2 and the exits it needs to trap ══════════════════════
 .decl traps_exits(mod: symbol)
 
-traps_exits(mod) :- trap_exit(_, mod).
+traps_exits(mod) :- module_traps(_, mod).
 
 // ── Cleanup worth running ────────────────────────────────────────
 //
@@ -668,7 +668,7 @@ shared_stop(h, via, sib) :-
 .output unhandled_exit_signal
 
 unhandled_exit_signal(mod, "no_handler", func) :-
-  trap_exit(func, mod),
+  module_traps(func, mod),
   !has_handle_info(mod),
   !statem_process(mod).
 

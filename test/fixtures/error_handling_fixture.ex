@@ -293,6 +293,32 @@ defmodule Argus.Test.Fixtures.TrapsWithoutExitClause do
   def handle_info({:plug_conn, :sent}, state), do: {:noreply, state}
 end
 
+defmodule Argus.Test.Fixtures.SpawnsATrapper do
+  @moduledoc """
+  The twin of TrapsWithoutExitClause whose trap_exit is set in a fun it
+  spawns: the middleman traps, not the server, and the server's
+  handle_info/2 is never handed an {:EXIT, ...}.
+  """
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(state) do
+    parent = self()
+
+    spawn(fn ->
+      Process.flag(:trap_exit, true)
+      send(parent, :ready)
+    end)
+
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_info(:ready, state), do: {:noreply, state}
+end
+
 defmodule Argus.Test.Fixtures.TrapsWithExitClause do
   @moduledoc false
   use GenServer

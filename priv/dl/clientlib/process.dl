@@ -42,6 +42,23 @@ partial_handle_info(mod, func) :-
   function_def(func, mod, "handle_info", 2, _),
   !callback_total(func, "handle_info").
 
+// The module's own process traps exits: a trap_exit set anywhere but in
+// a closure the module hands to a process start and never calls itself
+// (runs_elsewhere). gen_server2's multi_call middleman and elixir-ls's
+// OutputDevice Task trap in funs they spawn; the flag is that process's,
+// and the module's server still dies with its supervisor's signal, and
+// never receives an {:EXIT, ...} for the fun's links.
+.decl module_traps(func: symbol, mod: symbol)
+
+module_traps(func, mod) :- trap_exit(func, mod), !traps_elsewhere(func).
+
+.decl traps_elsewhere(func: symbol)
+
+traps_elsewhere(func) :-
+  trap_exit(func, _),
+  runs_elsewhere(_, func),
+  !call_instr(_, func, _).
+
 // A module that traps exits and has a handle_info/2 whose clauses never
 // take an {:EXIT, ...}: the trapped exit arrives as a message nothing
 // matches. `witness` is the function that sets trap_exit. A gen_statem
@@ -49,7 +66,7 @@ partial_handle_info(mod, func) :-
 .decl trap_exit_without_exit_clause(mod: symbol, witness: symbol)
 
 trap_exit_without_exit_clause(mod, func) :-
-  trap_exit(func, mod),
+  module_traps(func, mod),
   partial_handle_info(mod, h),
   !callback_tag(h, "handle_info", ":EXIT"),
   !statem_process(mod).

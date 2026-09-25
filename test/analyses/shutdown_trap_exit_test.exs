@@ -24,12 +24,14 @@ defmodule Argus.Analyses.ShutdownTrapExitTest do
       results =
         analyze([
           Argus.Test.Fixtures.TrapsWithoutExitClause,
-          Argus.Test.Fixtures.TrapsWithExitClause
+          Argus.Test.Fixtures.TrapsWithExitClause,
+          Argus.Test.Fixtures.SpawnsATrapper
         ])
 
       mods = Enum.map(exit_rows(results, "no_exit_clause"), fn [mod, _w] -> mod end)
 
-      assert mods == ["Argus.Test.Fixtures.TrapsWithoutExitClause"]
+      assert mods == ["Argus.Test.Fixtures.TrapsWithoutExitClause"],
+             "a trap_exit in a fun the server spawns is that process's, not the server's"
 
       # Having a handle_info at all satisfies the coarser rule; this one is
       # about which clauses it has.
