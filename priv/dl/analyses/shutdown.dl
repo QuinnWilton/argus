@@ -27,7 +27,7 @@ traps_exits(mod) :- module_traps(_, mod).
 // lease, or tells another system it is going away loses something real.
 // Reads are excluded for the same reason they are excluded from
 // transaction safety: there is nothing there to lose. The categories are
-// the effect model's durable ones (effects.dl). Releasing what the
+// the effect model's durable ones (effect_model.dl). Releasing what the
 // process holds — a monitor, a link, a timer, its own socket, port or
 // file (released_at_exit) — is not among them: the runtime releases each
 // when the process exits, however it exits.
@@ -137,7 +137,7 @@ unclassified_cleanup(mod, behaviour, api, via, id) :-
   !structural_call(api).
 
 // Building a struct or a message is not cleanup (structural_call, in
-// effects.dl): DBConnection.Connection was reported for `Kernel.struct!/2`
+// effect_model.dl): DBConnection.Connection was reported for `Kernel.struct!/2`
 // inside an exception constructor. A soundness choice made for one
 // contract should not become noise in another.
 
@@ -153,7 +153,7 @@ cleanup_defect(mod, behaviour, "unclear", "", api, via) :-
 
 // Slow work inside terminate, for a module that DOES trap exits — so the
 // callback is reached, but may not finish. Network and port calls are the
-// ones with no bound of their own (slow_effect, in effects.dl).
+// ones with no bound of their own (slow_effect, in effect_model.dl).
 
 cleanup_defect(mod, behaviour, "truncated", category, api, via) :-
   cleanup_in_terminate(mod, behaviour, category, api, via),
@@ -721,7 +721,7 @@ unhandled_exit_signal(mod, "no_exit_clause", func) :-
 // process's, and so is its :DOWN. The kill is the server's doing wherever
 // its callbacks make it happen, a process they start included (`spawn(fn
 // -> GenServer.stop(conn) end)`): the :DOWN still comes to the server
-// that monitors (server_caused, clientlib/process.dl).
+// that monitors (server_caused, clientlib/process_kind.dl).
 
 kills_monitored_child(mod, site, kill_site) :-
   server_side(mod, f),

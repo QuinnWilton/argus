@@ -85,7 +85,7 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### Where a process's own code starts
 
-- **Names.** `process_entry`, `server_side` (callbacks.dl, process_statem.dl, process.dl).
+- **Names.** `process_entry`, `server_side` (callbacks.dl, process_statem.dl, process_kind.dl).
 - **Meaning.** `process_entry(mod, f)` is a function where mod's process starts running mod's code: its loop callbacks, its init/1, a terminate/2 and, where the analysis includes process_statem.dl, a gen_statem's state functions. What an entry reaches in its own process runs in that process; what only the module's API reaches runs in its callers. `server_side(mod, f)` is what a callback or state function reaches without leaving the module.
 - **Direction.** `server_side` stays in the module but does not cut `runs_elsewhere`, so a closure a callback spawns counts as the server's own code (loud), and a helper in another module does not (quiet). The terminate/2 clause of `process_entry` is not gated on a behaviour.
 - **Used by.** blocking, ets, failure, mailbox, races and shutdown (`process_entry`); mailbox and shutdown (`server_side`).
@@ -169,7 +169,7 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### The startup phase
 
-- **Names.** `is_init`, `init_dep`, `continue_dep`, `handler_dep`, `deferral_path`, `unconditional_call_edge` (vocabulary.dl, entries.dl, clientlib/startup.dl, stage0.dl).
+- **Names.** `is_init`, `init_dep`, `continue_dep`, `handler_dep`, `deferral_path`, `unconditional_call_edge` (vocabulary.dl, entries.dl, clientlib/deferral.dl, stage0.dl).
 - **Meaning.** init/1 of a process module runs inside its supervisor's start, so what it waits on holds the whole start. `init_dep(mod, to, kind, w)` is init/1 reaching a synchronous ("call") or one-way ("cast") dependency, with no filter for mod's own module; `continue_dep` is a handle_continue init/1 continues to that waits on another module; `handler_dep` is a request handler's wait ("tag" when only attribution makes it). `deferral_path(mod, kind)` names a module's ways to try again later: a timer, a message to itself, a handle_continue, a gen_statem timeout. `unconditional_call_edge` answers whether a dependency holds on every path through init/1.
 - **Direction.** The phase ends at init/1's return: code after `:proc_lib.init_ack` is cut only in startup's own receive walk, so the lock and rpc walks still count it as init's (loud).
 - **Used by.** startup and blocking.
@@ -218,10 +218,10 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### Receives and mailbox handlers
 
-- **Names.** `receives`, `timed_receive`, `blocking_receive`, `receives_message`, `mailbox_handler`, `partial_handle_info`, `trap_exit_without_exit_clause`, `module_demonitors` (receive.dl, process.dl).
+- **Names.** `receives`, `timed_receive`, `blocking_receive`, `receives_message`, `mailbox_handler`, `partial_handle_info`, `trap_exit_without_exit_clause`, `module_demonitors` (receive.dl, process_kind.dl).
 - **Meaning.** receive.dl names the receive questions so the encoding of `recv_start` stays in one place: any receive in a function, one with an `after`, one without. `mailbox_handler(mod)` takes arbitrary messages (a handle_info/2, or a gen_statem's handle_event/4); `partial_handle_info(mod, h)` is a handle_info/2 with no catch-all, where a message no clause matches is a FunctionClauseError; `trap_exit_without_exit_clause` traps exits and has a partial handle_info/2 with no `{:EXIT, …}` clause.
 - **Direction.** Receive shapes are per function, not per receive; rules that anchor at one receive read `recv_start` directly.
-- **Used by.** effects and mailbox (receive.dl), mailbox and shutdown (process.dl).
+- **Used by.** effects and mailbox (receive.dl), mailbox and shutdown (process_kind.dl).
 
 ### A late-message source
 
@@ -246,7 +246,7 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### Effect categories
 
-- **Names.** `durable_effect`, `slow_effect`, `structural_call`, `config_writer`, `config_write_api`, `removal_api` (clientlib/effects.dl).
+- **Names.** `durable_effect`, `slow_effect`, `structural_call`, `config_writer`, `config_write_api`, `removal_api` (clientlib/effect_model.dl).
 - **Meaning.** The effect model classifies each call by category and mode (`impure_call`). `durable_effect` is a category that leaves the process and cannot be taken back (io, network, process, ets, port, node; logging is not io); `slow_effect` one with no bound of its own (network, port); `structural_call` an unknown call into Kernel, Access, Enum, Map, Keyword, `:lists` or `:maps`, which builds data. `config_writer` writes state other processes read (persistent_term, ETS inserts, application env); `removal_api` removes an entry from a map, set, list or ETS table.
 - **Direction.** Reads never count as effects worth keeping, so a missed write in an unclassified call is quiet.
 - **Used by.** effects and shutdown (durable), shutdown (slow, structural), startup (config), mailbox (removal).
@@ -687,7 +687,7 @@ Cleanup that cannot run, or teardown that hurts a peer. OTP runs terminate/2 whe
 
 **Corpus.** Fix pairs: `phoenix_live_view@2b4d182` (phoenixframework/phoenix_live_view, de89632 → 2b4d182, `Phoenix.LiveView.UploadChannel`) and `bandit@094d3c5` (mtrudel/bandit, f72e4e8 → 094d3c5, `Bandit.HTTP1.Handler`); each fix leaves a sibling module with the shape (LiveViewTest's UploadClient, Bandit's InitialHandler).
 
-**Precision.** Leaving gen_statem out removed two false positives on a 15-project corpus, Swarm's Tracker among them, which matches `{:EXIT, ...}` in its state functions (5cebc80). `no_exit_clause` came from Bandit's handler (e3ce1b5); moving it into clientlib/process.dl left the output identical over the corpus and four large programs (dd9649a). Not measured.
+**Precision.** Leaving gen_statem out removed two false positives on a 15-project corpus, Swarm's Tracker among them, which matches `{:EXIT, ...}` in its state functions (5cebc80). `no_exit_clause` came from Bandit's handler (e3ce1b5); moving it into clientlib/process_kind.dl left the output identical over the corpus and four large programs (dd9649a). Not measured.
 
 ### A sibling called from terminate/2 after the supervisor stopped it
 
@@ -3313,8 +3313,8 @@ interaction rather than reach (L17).
 - coupling's `rest_for_one_orphaned_children.confidence`
   (`named`/`inferred`) and `sibling_dependency.basis`
   (`resolved`/`inferred`/`doubted`) are one idea.
-- clientlib/startup.dl and clientlib/effects.dl share names with the
-  analyses; clientlib/process.dl and processes.dl differ by a letter.
+- clientlib/deferral.dl and clientlib/effect_model.dl share names with the
+  analyses; clientlib/process_kind.dl and processes.dl differ by a letter.
 - Titles that interpolate a column (a depth, a caller count, a
   behaviour, a timeout, a table name, a state, a module, a field) cannot
   be pinned generically by a corpus pair or an encore golden.

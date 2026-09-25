@@ -979,7 +979,7 @@ on_the_way_out(mod, f) :- server_side(mod, f), !live_reach.reaches(mod, f).
 recurses(g) :- process_tail(g), call_edge(g, h), monitor_loop.reaches(h, g).
 
 // Removing an entry from a map, set, keyword or ETS table (removal_api,
-// in effects.dl) — the bookkeeping paths a monitor's release belongs
+// in effect_model.dl) — the bookkeeping paths a monitor's release belongs
 // on. Anywhere in the module: Phoenix PubSub's Local removed
 // subscriptions from a public table in its client API, and the monitor
 // taken in handle_call stayed live all the same.
@@ -1295,7 +1295,7 @@ info_message(m, f, id, msg, "send") :-
 
 // A timer or a monitor in a function a server's callbacks run: the
 // callback's process arms it, so the message comes back to that server
-// (RunsInServer, clientlib/process.dl: any module's code on the server's
+// (RunsInServer, clientlib/process_kind.dl: any module's code on the server's
 // stack).
 .init info_reach = RunsInServer
 

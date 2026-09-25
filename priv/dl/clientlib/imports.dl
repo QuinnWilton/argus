@@ -106,7 +106,7 @@ call_instr(f, g, id) :-
 .include "closures.dl"
 .include "receive.dl"
 .include "exceptions.dl"
-.include "effects.dl"
+.include "effect_model.dl"
 .include "sinks.dl"
 // Ways in from outside the program: api_export, library_face, open_entry.
 .include "ways_in.dl"

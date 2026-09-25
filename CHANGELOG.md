@@ -307,7 +307,7 @@ receive in a callback (`CallbackReceive.WrappedServer`); a GenServer's
 client function named `join` is not one (`JoinsInClient`).
 
 **Changed.** A server's own code starts at `process_entry` in every
-reading of it (`clientlib/process.dl`): `server_side` (the module's own
+reading of it (`clientlib/process_kind.dl`): `server_side` (the module's own
 code on its server's stack), `RunsInServer` (any module's code on it,
 mailbox's timers, monitors and sockets; was mailbox's `runs_in_server`)
 and `server_caused` (what the entries make happen in the module, in any
@@ -372,13 +372,13 @@ value for a read's. Both now ask the reads of their own store. A delete
 decided only by whether the row is there is harmless only when the
 delete is all its decision does: one whose decision sends, where it
 decides or in a helper it decides the call of (`decision_sends`,
-`sends_message` in `clientlib/effects.dl`), has both racers send
+`sends_message` in `clientlib/effect_model.dl`), has both racers send
 (`CheckThenAct.CaptchaCheck`, ejabberd's `check_captcha/2`, which the
 loose write-back had kept reported for the wrong reason), and a fill or
 a trip is a write of a value, never a delete.
 
 **Changed.** Removing an ETS row, and an ETS operation that raises, are
-shared words (`clientlib/effects.dl`): `ets_removal_op` (delete, take,
+shared words (`clientlib/effect_model.dl`): `ets_removal_op` (delete, take,
 delete_object, select_delete, match_delete, delete_all_objects) and
 `ets_removes_every_key`, `ets_answers_missing_table` (info, whereis) and
 `ets_raises_without_row` (lookup_element/3, update_counter/3), read by
@@ -463,6 +463,15 @@ last column is `basis` (was `confidence`), `resolved` or `inferred`
 bump also covers two inputs whose meaning moved in this round:
 `recv_signal`'s "down" rows leave out a `:DOWN` a demonitor may have
 cancelled, and `ets_op` classifies `:ets.match_delete/2` as a write.
+
+**Changed.** Three clientlib files renamed, so no file of the
+vocabulary shares a name with an analysis or differs from another by a
+letter: `clientlib/startup.dl` is `deferral.dl` (how a process defers
+work past init/1), `clientlib/effects.dl` is `effect_model.dl` (the
+effect model's categories, and the ETS operation words), and
+`clientlib/process.dl` is `process_kind.dl` (what kind of process a
+module is; `processes.dl` is process points-to). An analysis outside
+this repository that includes them must follow.
 
 ### Priors for what a reader knows
 
@@ -686,7 +695,7 @@ phoenix_live_dashboard:rpc-wrapper. Over live projects and OTP: 4 real
 `is_booted/1`, whose `_ -> false` takes the tuple). Schema 107.
 
 **Changed.** Trapping exits is read per process (`module_traps`,
-clientlib/process.dl): a trap_exit on a process module's own stack (one
+clientlib/process_kind.dl): a trap_exit on a process module's own stack (one
 of its callbacks reaches it without leaving the process) is that
 module's, wherever the function lives, and a trap no process module's
 callbacks reach stays with the module holding it. A server whose init/1
@@ -803,7 +812,7 @@ A bag, or a table with a keypos of its own, still grows.
 
 **Fixed.** A trap_exit set in a fun the module hands to a process start
 is that process's, not the module server's (`module_traps`,
-clientlib/process.dl). gen_server2's multi_call middleman and elixir-ls's
+clientlib/process_kind.dl). gen_server2's multi_call middleman and elixir-ls's
 OutputDevice Task trap in funs they spawn, and were "trap_exit without an
 :EXIT handler" for a server that never traps. The same predicate now
 decides `shutdown`'s "the module traps exits" (a server whose spawned fun
@@ -879,7 +888,7 @@ shutdown. A call terminate/2 makes counts only when the reason
 `:shutdown` reaches it (`skipped_on_shutdown`), and a helper only when
 such a call leads to it. Releasing what the process holds — a monitor,
 a link, a BIF timer, its own socket, port or file (`released_at_exit`,
-clientlib/effects.dl) — is neither cleanup nor slow work: the runtime
+clientlib/effect_model.dl) — is neither cleanup nor slow work: the runtime
 releases each when the process exits, so kafka_ex's socket close and
 ejabberd_systemd's `gen_udp:close/1` are gone from "never traps exits"
 and "unbounded work inside the shutdown timeout" alike. A module's
@@ -925,7 +934,7 @@ is that process's (below).
 
 **Fixed.** A receive or a monitor in a closure a server's callback
 hands to a Task or a spawn is no longer the server's. `server_side`
-(clientlib/process.dl) walked the module's calls from the callbacks
+(clientlib/process_kind.dl) walked the module's calls from the callbacks
 without asking whether an edge leaves the process, so a Task closure
 receiving `:tick` counted as the server taking it, and
 `mailbox.unhandled_info` stayed quiet about the `:tick` timer that
