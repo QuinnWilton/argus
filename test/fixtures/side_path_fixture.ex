@@ -217,4 +217,52 @@ defmodule Argus.Test.Fixtures.SidePaths do
       {:noreply, []}
     end
   end
+
+  defmodule LogsAndAsks do
+    @moduledoc "Logs from handle_call, and asks a peer there too: the peer is a wait."
+    use GenServer
+
+    alias Argus.Test.Fixtures.SidePaths.Peer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+    def work, do: GenServer.call(__MODULE__, :work)
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+
+    @impl true
+    def handle_call(:work, _from, state) do
+      :logger.error(~c"working")
+      {:reply, Peer.ask(), state}
+    end
+  end
+
+  defmodule CallsLogsAndAsks do
+    @moduledoc "Calls LogsAndAsks from its own handle_call: a chain through it to the peer."
+    use GenServer
+
+    alias Argus.Test.Fixtures.SidePaths.LogsAndAsks
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+
+    @impl true
+    def handle_call(:relay, _from, state), do: {:reply, LogsAndAsks.work(), state}
+  end
+
+  defmodule Peer do
+    @moduledoc false
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+    def ask, do: GenServer.call(__MODULE__, :ask)
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+
+    @impl true
+    def handle_call(:ask, _from, state), do: {:reply, :ok, state}
+  end
 end

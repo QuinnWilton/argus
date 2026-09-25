@@ -190,6 +190,26 @@ defmodule Argus.Analyses.BlockingChainTest do
       refute Enum.any?(chains(results, "chain"), fn [_, to, _, _] -> to == ":logger_server" end)
     end
 
+    test "a server that logs and also asks a peer still forms a chain through it" do
+      skip_without_souffle()
+
+      {:ok, results} =
+        Memo.analyze(
+          [S.LogsAndAsks, S.CallsLogsAndAsks, S.Peer, :logger, :logger_backend, :logger_server],
+          :blocking
+        )
+
+      # The logger edge is cut; the peer edge beside it is not.
+      assert chains(results, "chain") == [
+               [
+                 "Argus.Test.Fixtures.SidePaths.CallsLogsAndAsks",
+                 "Argus.Test.Fixtures.SidePaths.Peer",
+                 "2",
+                 "static"
+               ]
+             ]
+    end
+
     test "an :infinity hop into a server that answers at once ends the chain" do
       skip_without_souffle()
 
