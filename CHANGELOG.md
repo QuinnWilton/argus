@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- A finding or frame that names a module alone — "Supervisor registered
+  as a worker", a later sibling, a chain's innermost callee — lands on
+  that module's `defmodule` (or `-module`) line, read from the beam's
+  debug info through `Argus.Lines.declaration_line/1` by a new
+  per-module query, `module_declaration_line`; so does a function with
+  no line of its own. It was line 1 of the file, which in a file that
+  defines several modules is another module's. Line 1 stays the answer
+  for a beam compiled without debug info. The parity fixture is now
+  compiled with debug info, as Mix compiles a project.
 - `mix scry --format json` carries each finding's `at_label`, the label
   of its own line (`null` when it has none). Argus's titles name the
   class of a finding and no longer the instance (argus 1721917: the

@@ -67,7 +67,7 @@ defmodule Scry.Test.Graph do
       |> Enum.sort()
       |> Enum.map(&{Path.relative_to(&1, @parity), File.read!(&1)})
 
-    {sources, System.version(), :erlang.system_info(:otp_release)}
+    {sources, System.version(), :erlang.system_info(:otp_release), :debug_info}
     |> :erlang.term_to_binary()
     |> :erlang.md5()
     |> Base.encode16(case: :lower)
@@ -105,10 +105,21 @@ defmodule Scry.Test.Graph do
 
     # The fixtures define modules this VM may already hold from an earlier
     # compile of the same sources; the conflict warnings are noise here.
-    capture_io(:stderr, fn ->
-      {:ok, _modules, _warnings} =
-        Kernel.ParallelCompiler.compile_to_path(elixir, dest, return_diagnostics: true)
-    end)
+    # With debug info, as Mix compiles a project: `mix test` turns it off
+    # for what a test compiles, and a module-level anchor reads its
+    # `defmodule` line from it. The option is VM-wide; a test compiling
+    # beside this one gets debug info too, which it never asserts against.
+    previous = Code.get_compiler_option(:debug_info)
+    Code.put_compiler_option(:debug_info, true)
+
+    try do
+      capture_io(:stderr, fn ->
+        {:ok, _modules, _warnings} =
+          Kernel.ParallelCompiler.compile_to_path(elixir, dest, return_diagnostics: true)
+      end)
+    after
+      Code.put_compiler_option(:debug_info, previous)
+    end
 
     for erl <- Path.wildcard(Path.join(@parity, "erl/*.erl")) do
       {:ok, _module} =

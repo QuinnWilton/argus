@@ -10,10 +10,10 @@ defmodule Scry.Analysis do
        │              │               module (Argus.Pipeline.extract_shards),
        │              │               and schema_read(entry) for each entry
        │              │               of argus's schema it read
-      module_semantic_facts   module_line_table
-       (digest of the facts    (anchor resolution,
-        minus line_info —       consumed late)
-        THE cutoff seam)
+      module_semantic_facts   module_line_table   module_declaration_line
+       (digest of the facts    (anchor resolution,  (a module-level anchor's
+        minus line_info —       consumed late)       line, read from the
+        THE cutoff seam)                             beam's debug info)
            │
       program_relation_facts(:all)  ← every module's facts merged once,
            │                          read through the digests above
@@ -352,6 +352,19 @@ defmodule Scry.Analysis do
 
       {:error, _} = error ->
         error
+    end
+  end
+
+  # The line `module` is declared on, for an anchor that names the
+  # module alone: line 1 is another module's in a file that defines
+  # several. From the beam's debug info (`Argus.Lines.declaration_line/1`),
+  # not the facts: only the modules a module-level finding names ask, and
+  # decoding every module's debug info would cost every extraction a
+  # fifth more. Nil when the beam has none.
+  defquery :module_declaration_line, key: module, returns: pos_integer() | nil do
+    case Runtime.query(db, :module_beam, module) do
+      {:ok, beam} -> Argus.Lines.declaration_line(beam)
+      _ -> nil
     end
   end
 
@@ -904,17 +917,21 @@ defmodule Scry.Analysis do
 
   # Best-effort line resolution through the module's line table:
   # instruction ID → exact line; MFA → the function's first line;
-  # module-only → line 1 (the defmodule line is not recoverable from
-  # bytecode — an honest, predictable anchor).
+  # module-only, or a function with no line of its own (one the
+  # compiler wrote), → the line the module is declared on; line 1 when
+  # the beam carries no debug info to say.
   defp anchor_line(db, module, finding) do
-    case Runtime.query(db, :module_line_table, module) do
-      {:ok, table} ->
-        instr_line(table, Map.get(finding, :instr)) ||
-          mfa_line(table, Map.get(finding, :mfa)) || 1
+    line =
+      case Runtime.query(db, :module_line_table, module) do
+        {:ok, table} ->
+          instr_line(table, Map.get(finding, :instr)) ||
+            mfa_line(table, Map.get(finding, :mfa))
 
-      {:error, _} ->
-        1
-    end
+        {:error, _} ->
+          nil
+      end
+
+    line || Runtime.query(db, :module_declaration_line, module) || 1
   end
 
   # The bytecode anchor, then the source's last step for a finding that
