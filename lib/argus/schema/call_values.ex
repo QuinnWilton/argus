@@ -419,6 +419,56 @@ defmodule Argus.Schema.CallValues do
         Together with call_arg_derived it lets a rule chain a request entry's \
         parameter to the sink's argument: a proven flow rather than a call path.
         """
+      },
+      %{
+        name: :sink_arg_bounded,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "instruction ID of the sink call"},
+          {:func, :func_id, "function containing the sink"},
+          {:arg_pos, :number, "0-based argument position at the sink"},
+          {:list_param, :symbol,
+           "empty when the bound holds; else the position of the function's list " <>
+             "parameter the bound needs to be a literal list"}
+        ],
+        doc: """
+        On every path to the sink, its argument is one of a set the program \
+        wrote: compared equal to a literal (a clause head, a guard's `in`, a \
+        case arm), or found in a literal list (`x in @allowed`, \
+        `:lists.member/2`, `Enum.member?/2`) on the branch where it holds \
+        (Argus.Extractors.ParamFlow.Bounded). A membership test against a list \
+        the function takes as a parameter bounds it only where the callers \
+        pass a literal list (call_arg_allowlist): `list_param` names that \
+        parameter.
+        """
+      },
+      %{
+        name: :sink_copy,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "instruction ID of the sink call"},
+          {:func, :func_id, "function containing it"},
+          {:first, :instr_id, "the earliest sink call of the same API on the same source line"}
+        ],
+        doc: """
+        A sink call the compiler duplicated: another call of the same API \
+        in the same function sits on the same source line, earlier. A body \
+        two clause heads share is compiled once per head.
+        """
+      },
+      %{
+        name: :call_arg_allowlist,
+        layer: 2,
+        fields: [
+          {:caller, :func_id, "the calling function"},
+          {:callee, :func_id, "the callee"},
+          {:arg_pos, :number, "0-based argument position"}
+        ],
+        doc: """
+        Every call the caller makes to the callee passes a literal list at \
+        the position (a module attribute is one once compiled). \
+        Function-level: one call passing anything else, and there is no row.
+        """
       }
     ])
   end

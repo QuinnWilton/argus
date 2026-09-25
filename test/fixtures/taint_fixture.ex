@@ -136,4 +136,82 @@ defmodule Argus.Test.Fixtures.Taint do
       {:noreply, socket}
     end
   end
+
+  defmodule GuardAllowlist do
+    @moduledoc """
+    logflare's SearchLV: the event name reaches the atom only through a
+    clause whose guard holds it to two literals. One of two atoms.
+    """
+    @behaviour Phoenix.LiveView
+
+    def handle_event(direction, _params, socket) when direction in ["backwards", "forwards"] do
+      _ = String.to_atom(direction)
+      {:noreply, socket}
+    end
+
+    def handle_event(_event, _params, socket), do: {:noreply, socket}
+  end
+
+  defmodule BodyAllowlist do
+    @moduledoc """
+    The same allowlist in the body: a short literal list (compiled to
+    comparisons), a long one (compiled to :lists.member/2), and a value
+    built of the allowed one.
+    """
+    @behaviour Phoenix.LiveView
+
+    @columns ~w(c01 c02 c03 c04 c05 c06 c07 c08 c09 c10 c11 c12 c13 c14 c15 c16 c17
+                c18 c19 c20 c21 c22 c23 c24 c25 c26 c27 c28 c29 c30 c31 c32 c33 c34)
+
+    def handle_event("tab", %{"tab" => tab}, socket) do
+      if tab in ["info", "logs"], do: String.to_atom("tab_" <> tab)
+      {:noreply, socket}
+    end
+
+    def handle_event("sort", %{"by" => column}, socket) do
+      if column in @columns, do: String.to_atom(column)
+      {:noreply, socket}
+    end
+  end
+
+  defmodule Allow do
+    @moduledoc "hexpm's safe_to_atom/2: an allowlist the caller hands in."
+    def safe_to_atom(binary, allowed) when is_binary(binary) do
+      if binary in allowed, do: String.to_atom(binary)
+    end
+
+    def safe_to_atom(_binary, _allowed), do: nil
+  end
+
+  defmodule ParamAllowlist do
+    @moduledoc "Every caller of Allow.safe_to_atom/2 hands it a literal list."
+    @behaviour Phoenix.LiveView
+
+    @sort ~w(name recent_downloads inserted_at)
+
+    def handle_event("sort", %{"sort" => sort}, socket) do
+      _ = Allow.safe_to_atom(sort, @sort)
+      {:noreply, socket}
+    end
+  end
+
+  defmodule OpenAllowlist do
+    @moduledoc "A caller hands the allowlist in from the request itself: no bound."
+    @behaviour Phoenix.LiveView
+
+    def handle_event("sort", %{"sort" => sort, "allowed" => allowed}, socket) do
+      _ = Allow.safe_to_atom(sort, allowed)
+      {:noreply, socket}
+    end
+  end
+
+  defmodule SameLine do
+    @moduledoc "Two atoms made on one line of source: one finding for the line."
+    @behaviour Phoenix.LiveView
+
+    def handle_event("pair", %{"a" => a, "b" => b}, socket) do
+      _ = {String.to_atom(a), String.to_atom(b)}
+      {:noreply, socket}
+    end
+  end
 end

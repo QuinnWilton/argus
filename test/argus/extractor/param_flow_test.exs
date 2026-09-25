@@ -4,10 +4,26 @@ defmodule Argus.Extractor.ParamFlowTest do
   alias Argus.Extractors.ParamFlow
 
   alias Argus.Test.Fixtures.ParamFlow.Shapes
+  alias Argus.Test.Fixtures.Taint
 
   setup_all do
     {:ok, facts} = Argus.Pipeline.extract([Shapes], extractors: [ParamFlow])
-    %{facts: facts}
+
+    {:ok, taint} =
+      Argus.Pipeline.extract(
+        [
+          Taint.GuardAllowlist,
+          Taint.BodyAllowlist,
+          Taint.Allow,
+          Taint.ParamAllowlist,
+          Taint.SameLine,
+          Taint.HofElement,
+          Taint.FlowLiveView
+        ],
+        extractors: [ParamFlow]
+      )
+
+    %{facts: facts, taint: taint}
   end
 
   defp derived(facts, func_fragment) do
@@ -82,16 +98,50 @@ defmodule Argus.Extractor.ParamFlowTest do
     assert sinks(facts, "literal/1") == []
   end
 
-  test "a closure a higher-order call runs takes the element as its first parameter" do
-    {:ok, facts} =
-      Argus.Pipeline.extract([Argus.Test.Fixtures.Taint.HofElement], extractors: [ParamFlow])
+  describe "bounded sinks, allowlists and copies" do
+    defp bounded(facts, fragment) do
+      for [_id, func, pos, list_param] <- Map.get(facts, :sink_arg_bounded, []),
+          String.contains?(func, fragment),
+          do: {String.to_integer(pos), list_param}
+    end
 
-    assert Enum.any?(facts.call_arg_derived, fn
-             [caller, closure, "0", "1"] ->
-               caller =~ "HofElement:handle_event/3" and closure =~ "-handle_event/3-fun-0-"
+    test "a value a guard or a literal list holds is bounded at the sink", %{taint: facts} do
+      assert {0, ""} in bounded(facts, "GuardAllowlist:handle_event/3")
 
-             _ ->
-               false
-           end)
+      assert [_, _ | _] =
+               Enum.filter(bounded(facts, "BodyAllowlist:handle_event/3"), &(&1 == {0, ""}))
+    end
+
+    test "a value found in a list parameter is bounded by that parameter", %{taint: facts} do
+      assert bounded(facts, "Allow:safe_to_atom/2") == [{0, "1"}]
+
+      assert [
+               "Argus.Test.Fixtures.Taint.ParamAllowlist:handle_event/3",
+               "Argus.Test.Fixtures.Taint.Allow:safe_to_atom/2",
+               "1"
+             ] in facts.call_arg_allowlist
+    end
+
+    test "a value made of the request is not bounded", %{taint: facts} do
+      assert bounded(facts, "FlowLiveView") == []
+    end
+
+    test "a second sink call of the same API on the same line is a copy", %{taint: facts} do
+      assert [[second, func, first]] = facts.sink_copy
+      assert func =~ "SameLine:handle_event/3"
+      assert second != first
+    end
+
+    test "a closure a higher-order call runs takes the element as its first parameter", %{
+      taint: facts
+    } do
+      assert Enum.any?(facts.call_arg_derived, fn
+               [caller, closure, "0", "1"] ->
+                 caller =~ "HofElement:handle_event/3" and closure =~ "-handle_event/3-fun-0-"
+
+               _ ->
+                 false
+             end)
+    end
   end
 end

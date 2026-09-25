@@ -49,12 +49,64 @@
 // sinks. It reaches the finding so the text can say which.
 .decl sink(id: symbol, func: symbol, api: symbol, kind: symbol, safety: symbol)
 
-sink(id, func, api, "atom", "") :- unsafe_atom_creation(id, func, api).
-sink(id, func, api, "code", "") :- code_execution(id, func, api).
+sink(id, func, api, "atom", "") :-
+  unsafe_atom_creation(id, func, api),
+  !bounded_input(id, func),
+  !repeated_site(id).
+
+sink(id, func, api, "code", "") :- code_execution(id, func, api), !repeated_site(id).
 
 sink(id, func, api, "deserialization", safety) :-
   unsafe_deserialization(id, func, api, safety),
-  unsafe_safety_class(safety).
+  unsafe_safety_class(safety),
+  !bounded_input(id, func),
+  !repeated_site(id).
+
+// ── Input the program bounds ─────────────────────────────────────
+//
+// A sink whose argument is one of a set the program wrote, on every path
+// to it — compared equal to a literal in a clause head, a guard's `in` or
+// a case arm, or found in a literal list on the branch where it holds
+// (sink_arg_bounded) — takes no attacker's input, however that input was
+// derived: logflare's `handle_event(dir, ...) when dir in ["backwards",
+// "forwards"]` makes one of two atoms. A membership test against a list
+// the function takes as a parameter bounds it where every caller passes
+// a literal list (call_arg_allowlist): hexpm's `safe_to_atom(bin,
+// allowed)`, called with `@sort_params`. Only the argument an atom or a
+// deserialization sink reads (position 0) is asked; a code sink's module
+// may be bounded while its function is not.
+.decl bounded_input(id: symbol, func: symbol)
+
+bounded_input(id, f) :- sink_arg_bounded(id, f, 0, "").
+
+bounded_input(id, f) :-
+  sink_arg_bounded(id, f, 0, q),
+  q != "",
+  call_edge(_, f),
+  !unlisted_caller(f, q).
+
+.decl unlisted_caller(func: symbol, pos: symbol)
+
+unlisted_caller(f, q) :-
+  sink_arg_bounded(_, f, 0, q),
+  q != "",
+  call_edge(c, f),
+  !allowlist_at(c, f, q).
+
+.decl allowlist_at(caller: symbol, callee: symbol, pos: symbol)
+
+allowlist_at(c, f, to_string(n)) :- call_arg_allowlist(c, f, n).
+
+// A copy of an earlier sink site: the compiler duplicated the code that
+// holds it (a body shared by two clause heads), and the source has one
+// call. The copy is reported as the first, once.
+.decl repeated_site(id: symbol)
+
+repeated_site(id) :- sink_copy(id, _, first), !bounded_first(first).
+
+.decl bounded_first(id: symbol)
+
+bounded_first(first) :- sink_copy(_, f, first), bounded_input(first, f).
 
 // ── Reachability from a request surface ──────────────────────────
 

@@ -3007,6 +3007,35 @@ relation are unchanged.
 
 ### unsafe_input
 
+**Fixed.** A sink whose argument is one of a set the program wrote, on
+every path to it, is not a sink (`bounded_input`): compared equal to a
+literal in a clause head, a guard's `in` or a case arm, found in a
+literal list (`x in @allowed`, `:lists.member/2`, `Enum.member?/2`) on
+the branch where it holds, or built of such a value and literals
+(`"tab_" <> tab`). A membership test against a list the function takes
+as a parameter bounds it where every caller passes a literal list:
+hexpm's `safe_to_atom(bin, allowed)`, called with `@sort_params`. Only
+an atom sink's and a deserialization's data argument is asked. And a
+sink call the compiler duplicated — the same API, on the same source
+line, in one function: a body two clause heads share — is one finding,
+not one per copy (`repeated_site`). logflare's SearchLV
+`handle_event/3` (`when direction in ["backwards", "forwards"]`, both
+copies) and hexpm's `Utils.safe_to_atom/2` are no longer "fed by request
+data"; livebook's LiveMarkdown.Import guards (`when output_size in
+["full", "wide"]` and five like it) are no longer "transitively
+reachable", and a `String.to_atom("literal")` is not a sink at all.
+
+**Added.** Schema 96. Three `Argus.Extractors.ParamFlow` relations:
+`sink_arg_bounded(id, func, arg_pos, list_param)`, the sink's argument
+bounded on every path to it (`Argus.Extractors.ParamFlow.Bounded`, a
+forward dataflow over the function's CFG that follows values through
+the registers and meets on every edge in; `list_param` names the list
+parameter the bound needs to be a literal list, empty when it holds
+outright); `call_arg_allowlist(caller, callee, arg_pos)`, every call
+the caller makes to the callee passes a literal list there; and
+`sink_copy(id, func, first)`, a sink call repeating an earlier one on
+the same source line.
+
 **Fixed.** Request taint follows an element into the closure a
 higher-order call runs on it: `Enum.map(params["ids"], fn id ->
 String.to_atom(id) end)` is a flow, not a path

@@ -20,6 +20,17 @@ defmodule Argus.Extractors.ParamFlow do
   - `sink_arg_derived(id, func, arg_pos, param_pos)` — the same, at a sink
     call site (`Argus.Extractors.ApiCalls.sink_mfas/0`), keyed on the site
     because the finding anchors there.
+  - `sink_arg_bounded(id, func, arg_pos, list_param)` — the sink's
+    argument is one of a set the program wrote, on every path to it:
+    compared equal to a literal, or found in a literal list on the branch
+    where it holds (`Argus.Extractors.ParamFlow.Bounded`); `list_param`,
+    when not empty, is the function's parameter that list is, which the
+    callers must fill with a literal list.
+  - `call_arg_allowlist(caller, callee, arg_pos)` — every call the caller
+    makes to the callee passes a literal list at `arg_pos`.
+  - `sink_copy(id, func, first)` — the sink call at `id` repeats `first`,
+    the earliest call of the same API in the function on the same source
+    line: code the compiler duplicated.
 
   ## Reading the bytecode
 
@@ -57,7 +68,9 @@ defmodule Argus.Extractors.ParamFlow do
   alias Argus.Extractor.Resolve
   alias Argus.Extractor.ValueFlow
   alias Argus.Extractors.ApiCalls
+  alias Argus.Extractors.ParamFlow.Bounded
   alias Argus.Extractors.ParamFlow.Propagators
+  alias Argus.Instr
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
@@ -67,7 +80,8 @@ defmodule Argus.Extractors.ParamFlow do
   @max_args 4
 
   @impl true
-  def relations, do: [:call_arg_derived, :sink_arg_derived]
+  def relations,
+    do: [:call_arg_allowlist, :call_arg_derived, :sink_arg_bounded, :sink_arg_derived, :sink_copy]
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
@@ -79,6 +93,9 @@ defmodule Argus.Extractors.ParamFlow do
       %{}
       |> emit_call_sites(module_data, inputs)
       |> emit_closures(module_data, inputs)
+      |> emit_bounded_sinks(module_data)
+      |> emit_allowlists(module_data)
+      |> emit_sink_copies(module_data)
       |> Map.new(fn {relation, rows} -> {relation, rows |> Enum.uniq() |> Enum.sort()} end)
     else
       nil -> %{}
@@ -339,6 +356,126 @@ defmodule Argus.Extractors.ParamFlow do
       end)
     end)
   end
+
+  # ── Bounded sinks and literal lists ──────────────────────────────────
+
+  # Each sink's arguments that are one of a set the program wrote on every
+  # path to it. Only functions holding a sink are solved.
+  defp emit_bounded_sinks(facts, %{module: mod, functions: functions} = module_data) do
+    sinks =
+      module_data
+      |> CallSites.for_module()
+      |> Enum.filter(&ApiCalls.sink?(&1.mfa))
+      |> Enum.group_by(& &1.func_id)
+
+    Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
+      func_id = Normalize.func_id(mod, name, arity)
+
+      with [_ | _] = sites <- Map.get(sinks, func_id, []),
+           %Argus.Cfg.Function{} = cfg <- Helpers.cfg(module_data, name, arity) do
+        bounds = Bounded.at(cfg, instrs, arity, Enum.map(sites, & &1.idx))
+
+        for %{idx: idx, mfa: {_m, _f, sink_arity}} <- sites,
+            pos <- 0..(sink_arity - 1)//1,
+            {:ok, bound} <- [Map.fetch(Map.get(bounds, idx, %{}), {:x, pos})],
+            reduce: acc do
+          inner ->
+            add_fact(inner, :sink_arg_bounded, [
+              InstrId.mint(func_id, idx),
+              func_id,
+              to_string(pos),
+              list_param(bound)
+            ])
+        end
+      else
+        _ -> acc
+      end
+    end)
+  end
+
+  # Sink calls of one API on one source line of one function, past the
+  # first: the compiler's copies of one call.
+  defp emit_sink_copies(facts, %{module: mod, functions: functions} = module_data) do
+    line_table = Map.get(module_data, :line_table, %{})
+
+    tuples =
+      Map.new(functions, fn {:function, n, a, _e, instrs} ->
+        {Normalize.func_id(mod, n, a), List.to_tuple(instrs)}
+      end)
+
+    module_data
+    |> CallSites.for_module()
+    |> Enum.filter(&ApiCalls.sink?(&1.mfa))
+    |> Enum.group_by(fn %{func_id: f, idx: idx, mfa: mfa} ->
+      {f, mfa, line_before(Map.fetch!(tuples, f), idx, line_table)}
+    end)
+    |> Enum.reduce(facts, fn
+      {{_f, _mfa, nil}, _sites}, acc ->
+        acc
+
+      {{f, _mfa, _line}, sites}, acc ->
+        [first | rest] = Enum.sort_by(sites, & &1.idx)
+
+        Enum.reduce(rest, acc, fn %{idx: idx}, inner ->
+          add_fact(inner, :sink_copy, [InstrId.mint(f, idx), f, InstrId.mint(f, first.idx)])
+        end)
+    end)
+  end
+
+  # The source line in effect at `idx`: the nearest line marker before it.
+  defp line_before(tuple, idx, line_table) do
+    Enum.find_value((idx - 1)..0//-1, fn i ->
+      case elem(tuple, i) do
+        {:line, ref} -> Map.get(line_table, ref)
+        _other -> nil
+      end
+    end)
+  end
+
+  defp list_param(:always), do: ""
+  defp list_param({:param, q}), do: to_string(q)
+
+  # The positions at which every call from a function to a callee passes
+  # a literal list: the list is moved into the argument register in the
+  # run of instructions before the call.
+  defp emit_allowlists(facts, %{module: mod, functions: functions} = module_data) do
+    by_function =
+      Map.new(functions, fn {:function, n, a, _e, instrs} ->
+        {Normalize.func_id(mod, n, a), List.to_tuple(instrs)}
+      end)
+
+    module_data
+    |> CallSites.for_module()
+    |> Enum.group_by(fn %{func_id: f, mfa: {m, fun, a}} -> {f, Normalize.func_id(m, fun, a)} end)
+    |> Enum.reduce(facts, fn {{caller, callee}, sites}, acc ->
+      tuple = Map.fetch!(by_function, caller)
+      {_m, _f, arity} = hd(sites).mfa
+
+      Enum.reduce(0..(min(arity, @max_args) - 1)//1, acc, fn pos, inner ->
+        if Enum.all?(sites, &literal_list_arg?(tuple, &1.idx, {:x, pos})),
+          do: add_fact(inner, :call_arg_allowlist, [caller, callee, to_string(pos)]),
+          else: inner
+      end)
+    end)
+  end
+
+  # The last write of `reg` before the call at `idx`, in the straight run
+  # of instructions ending there, is a move of a literal list.
+  defp literal_list_arg?(tuple, idx, reg) do
+    Enum.reduce_while((idx - 1)..0//-1, false, fn i, false ->
+      instr = elem(tuple, i)
+
+      cond do
+        match?({:label, _}, instr) -> {:halt, false}
+        not Instr.falls_through?(instr) -> {:halt, false}
+        Instr.clobbers?(instr, reg) -> {:halt, literal_list_move?(instr)}
+        true -> {:cont, false}
+      end
+    end)
+  end
+
+  defp literal_list_move?({:move, {:literal, list}, _dst}) when is_list(list), do: list != []
+  defp literal_list_move?(_instr), do: false
 
   # Only the first @max_args positions of a call, like call_arg.
   defp emit_call_arg(facts, _prefix, _derived, pos) when pos >= @max_args, do: facts

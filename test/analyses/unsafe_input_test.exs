@@ -35,7 +35,10 @@ defmodule Argus.Analyses.UnsafeInputTest do
     Taint.SessionOnly,
     Taint.LiteralAtom,
     Taint.ExistingAtom,
-    Taint.HofElement
+    Taint.HofElement,
+    Taint.GuardAllowlist,
+    Taint.BodyAllowlist,
+    Taint.SameLine
   ]
 
   setup_all do
@@ -306,8 +309,11 @@ defmodule Argus.Analyses.UnsafeInputTest do
 
     test "the socket, the session and a literal are not the request", ctx do
       skip_without_souffle()
-      rows = atom_rows(ctx, [Taint.SocketOnly, Taint.SessionOnly, Taint.LiteralAtom])
+      rows = atom_rows(ctx, [Taint.SocketOnly, Taint.SessionOnly])
       assert Enum.map(rows, &List.last/1) |> Enum.uniq() == ["direct"]
+
+      # A literal is one atom: not a sink at all.
+      assert atom_rows(ctx, [Taint.LiteralAtom]) == []
     end
 
     test "the safe conversion is not a sink", ctx do
@@ -320,6 +326,36 @@ defmodule Argus.Analyses.UnsafeInputTest do
     test "an element handed to a closure a higher-order call runs is a flow", ctx do
       skip_without_souffle()
       assert proximity_for(atom_rows(ctx, [Taint.HofElement]), "HofElement") == ["flow"]
+    end
+  end
+
+  describe "bounded input" do
+    test "a guard holding the value to literals bounds it: no sink", ctx do
+      skip_without_souffle()
+      assert atom_rows(ctx, [Taint.GuardAllowlist]) == []
+    end
+
+    test "a literal list in the body bounds it, short or long, and what is built of it", ctx do
+      skip_without_souffle()
+      assert atom_rows(ctx, [Taint.BodyAllowlist]) == []
+    end
+
+    test "an allowlist handed in bounds it where every caller hands a literal list" do
+      skip_without_souffle()
+      {:ok, results} = Memo.analyze([Taint.Allow, Taint.ParamAllowlist], :unsafe_input)
+      assert results["sink_reachable"] == []
+
+      {:ok, results} =
+        Memo.analyze([Taint.Allow, Taint.ParamAllowlist, Taint.OpenAllowlist], :unsafe_input)
+
+      # One site, reached from both entries.
+      assert [[_, func, _, "atom" | _]] = Enum.uniq_by(results["sink_reachable"], &hd/1)
+      assert func =~ "Allow:safe_to_atom/2"
+    end
+
+    test "two atoms made on one line are one finding", ctx do
+      skip_without_souffle()
+      assert [_] = atom_rows(ctx, [Taint.SameLine])
     end
   end
 
