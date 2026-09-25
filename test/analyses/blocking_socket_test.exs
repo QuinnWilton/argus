@@ -33,7 +33,7 @@ defmodule Argus.Analyses.BlockingSocketTest do
     {:ok, results} = Batch.analyze(batch, modules)
 
     rows =
-      for [func, _site, "socket", api, server, _] <- results["unbounded_wait"],
+      for [func, _site, "socket", api, server, _, _, _] <- results["unbounded_wait"],
           uniq: true,
           do: {short(func), api, short(server)}
 

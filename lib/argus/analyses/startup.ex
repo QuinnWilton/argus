@@ -112,7 +112,11 @@ defmodule Argus.Analyses.Startup do
           {:api, :symbol,
            "the receiving function, the function entering the loop, or the connect call"},
           {:site, :symbol,
-           "the socket recv or the receive, when the instruction is known; else empty"}
+           "the socket recv or the receive, when the instruction is known; else empty"},
+          {:peer, :symbol,
+           "for receive and down, 'local' when a prior is sure what the receive waits on " <>
+             "answers from inside the node; else empty"},
+          {:permille, :number, "the prior's probability in thousandths, else 0"}
         ],
         # One wait finding per waiting function: the inits that reach it
         # are its evidence frames.
@@ -187,8 +191,21 @@ defmodule Argus.Analyses.Startup do
     ]
   end
 
+  # A receive the model is sure waits on something inside the node that
+  # always answers (`Argus.Priors.Questions.PeerAnswers`): a heuristic
+  # finding a step down. No prior, no change.
+  defp answering(attrs, _recv, "", _p), do: attrs
+
+  defp answering(attrs, recv, "local", p) do
+    Findings.heuristic(
+      attrs,
+      String.to_integer(p),
+      "what #{Findings.call_name(recv)} waits on answers from inside the node"
+    )
+  end
+
   @impl true
-  def finding(:unbounded_effect_in_init, [mod, "connect", api, _site]) do
+  def finding(:unbounded_effect_in_init, [mod, "connect", api, _site, _, _]) do
     Findings.new(
       :warning,
       "init/1 connects with no reconnect path",
@@ -205,7 +222,7 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:unbounded_effect_in_init, [_mod, "recv", recv, site]) do
+  def finding(:unbounded_effect_in_init, [_mod, "recv", recv, site, _, _]) do
     Findings.new(
       :warning,
       "init/1 waits on a socket with no timeout",
@@ -222,7 +239,7 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:unbounded_effect_in_init, [_mod, "receive", recv, site]) do
+  def finding(:unbounded_effect_in_init, [_mod, "receive", recv, site, peer, p]) do
     Findings.new(
       :warning,
       "init/1 waits on a message with no timeout",
@@ -239,9 +256,10 @@ defmodule Argus.Analyses.Startup do
         "or wait after init returns (`{:continue, :await}`) so the start completes"
       ]
     )
+    |> answering(recv, peer, p)
   end
 
-  def finding(:unbounded_effect_in_init, [_mod, "down", recv, site]) do
+  def finding(:unbounded_effect_in_init, [_mod, "down", recv, site, peer, p]) do
     Findings.new(
       :info,
       "init/1 waits on another process with no timeout",
@@ -259,9 +277,10 @@ defmodule Argus.Analyses.Startup do
         "or wait after init returns (`{:continue, :await}`) so the start completes"
       ]
     )
+    |> answering(recv, peer, p)
   end
 
-  def finding(:unbounded_effect_in_init, [mod, "enter_loop", func, site]) do
+  def finding(:unbounded_effect_in_init, [mod, "enter_loop", func, site, _, _]) do
     Findings.new(
       :error,
       "init/1 enters the server loop before its start returns",

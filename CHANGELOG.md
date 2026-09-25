@@ -41,6 +41,35 @@ distribution handshake making atoms of a connecting node's name, its
 boot server's UDP decode and ejabberd's web admin. Cost of the question
 over all twelve sets: 287k input tokens, $0.012.
 
+**Added.** Schema 111. `prior_answers(kind, subject, peer,
+peer_permille, permille)` from `Argus.Priors.Questions.PeerAnswers`:
+whether a wait's peer answers every request from inside the node (a
+registry, a file server, a runtime driver, the exit of a process just
+stopped), or its answer waits on another node, an external program or
+something that may not happen. Asked of every server with a
+handle_call/3 (`kind` "server", one request each: its name, behaviours,
+API and what its handle_call calls) and of every function with a
+`receive` that has no `after` ("wait", a module's in one request).
+`permille` is `local`'s probability.
+
+**Changed.** `blocking.call_chain` and `blocking.unbounded_wait` gain
+`peer` and `permille` (nine and eight columns), and
+`startup.unbounded_effect_in_init` gains them too (six); every rule that
+made them now makes `chain_found`, `wait_found` or `init_effect`, and
+the output adds the prior. With priors on, a "cast" chain or an
+"infinity" wait on a server the model puts at 0.8 or more as answering
+from inside the node (by module, or by the name it registers), and a
+"receive" or "down" wait in init/1 whose peer it puts there, step down a
+severity, heuristic, saying so ("ServerC answers every call from inside
+the node (p=0.95)"). Without priors the columns are `""` and `0`. Over
+the evaluation programs, ejabberd and rabbitmq 33 of blocking's 62 cast
+and `:infinity` rows step down, and 16 of startup's 26 init waits (4 of
+them warnings); none goes, and on the 47 peers read by hand none that
+may not answer (`dist_ac`, `global`, a DBConnection pool, rabbit's AMQP
+writer, `peer:init/1`, `gen_server:multi_call`, kernel_config's node
+handshakes) is marked. Cost of the question over all twelve sets: 415k
+input tokens, $0.017.
+
 ### Bounds and roles a reader sees
 
 **Fixed.** An integer tested between two close ends is a bounded value

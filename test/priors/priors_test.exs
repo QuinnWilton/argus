@@ -369,6 +369,97 @@ defmodule Argus.PriorsTest do
     end
   end
 
+  describe "blocking and startup re-tier a wait on a peer that answers" do
+    alias Argus.Test.Fixtures.InitRecv
+    alias Argus.Test.Fixtures.TimeoutChain.{BlockingCastServer, ServerC}
+
+    # Answers every peer question with `peer` at `p`, the rest `remote`;
+    # any other question `none`.
+    defmodule PeerOracle do
+      @behaviour Argus.Priors.Oracle
+
+      @impl true
+      def ask(request, opts) do
+        peer = Keyword.get(opts, :peer, "local")
+        p = Keyword.get(opts, :p, 0.95)
+
+        answers =
+          for {id, q} <- request.questions, into: %{} do
+            if q.type == "choice" and is_map_key(q.criteria, :event) do
+              {id,
+               %{
+                 "type" => "choice",
+                 "choice" => peer,
+                 "confidence" => p,
+                 "probabilities" => Map.merge(%{"remote" => 1 - p}, %{peer => p})
+               }}
+            else
+              {id,
+               %{
+                 "type" => "choice",
+                 "choice" => "none",
+                 "confidence" => 0.99,
+                 "probabilities" => %{"none" => 0.99}
+               }}
+            end
+          end
+
+        {:ok,
+         %{
+           answers: answers,
+           usage: %{"input_tokens" => 40},
+           model: request.model,
+           request_id: nil
+         }}
+      end
+    end
+
+    @waits [BlockingCastServer, ServerC, InitRecv.Waits]
+
+    defp waits(opts) do
+      assert {:ok, %Argus.Findings{degraded: []} = r} =
+               Argus.Findings.run(@waits, through_store(opts, [:blocking, :startup]))
+
+      r.findings
+      |> Enum.filter(&(&1.title =~ "handle_cast blocks" or &1.title =~ "waits on a message"))
+      |> Enum.sort_by(&{&1.title, &1.mfa})
+    end
+
+    defp peers(dir, extra \\ []),
+      do: [
+        priors: :live,
+        priors_opts: Keyword.merge([oracle: PeerOracle, cache_dir: dir, model: "jev-test"], extra)
+      ]
+
+    test "off: the cast and the init wait are structural warnings" do
+      skip_without_souffle()
+      assert [cast, wait] = waits([])
+      assert cast.title == "handle_cast blocks on a synchronous call"
+      assert wait.title == "init/1 waits on a message with no timeout"
+      assert Enum.all?([cast, wait], &(&1.severity == :warning and &1.provenance == :structural))
+    end
+
+    test "on: a peer that answers from inside the node steps both down and says so", %{
+      tmp_dir: dir
+    } do
+      skip_without_souffle()
+      assert [cast, wait] = waits(peers(dir))
+      assert cast.severity == :info and cast.provenance == :heuristic and cast.confidence == 950
+      assert List.last(cast.help) =~ "#{inspect(ServerC)} answers every call from inside the node"
+      assert wait.severity == :info and wait.provenance == :heuristic
+      assert List.last(wait.help) =~ "waits on answers from inside the node (p=0.95)"
+      key = &Enum.map(&1, fn f -> {f.title, f.mfa} end)
+      assert key.(waits([])) == key.(waits(peers(dir)))
+    end
+
+    test "a peer that may not answer, or one scored under 0.8, changes nothing", %{tmp_dir: dir} do
+      skip_without_souffle()
+      off = waits([])
+      assert waits(peers(dir, oracle_opts: [peer: "remote"])) == off
+      assert waits(peers(Path.join(dir, "low"), oracle_opts: [p: 0.75])) == off
+    end
+  end
+
   describe "coupling doubts a dependency inferred from reaching a sibling" do
     alias Argus.Test.Fixtures.{FacadeCaller, FacadeHelper, FacadeSupervisor}
 

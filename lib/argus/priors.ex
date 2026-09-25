@@ -43,6 +43,7 @@ defmodule Argus.Priors do
   @type mode :: :off | :cached_only | :live
 
   @questions [
+    Argus.Priors.Questions.PeerAnswers,
     Argus.Priors.Questions.ProcessRole,
     Argus.Priors.Questions.Reads,
     Argus.Priors.Questions.Sensitivity,

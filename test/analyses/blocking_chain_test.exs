@@ -14,21 +14,21 @@ defmodule Argus.Analyses.BlockingChainTest do
     do:
       Rows.where(results, :blocking, "call_chain",
         kind: "chain",
-        drop: [:kind, :caller_ms, :downstream_ms]
+        drop: [:kind, :caller_ms, :downstream_ms, :peer, :permille]
       )
 
   defp chains(results, "cast"),
     do:
       Rows.where(results, :blocking, "call_chain",
         kind: "cast",
-        drop: [:kind, :depth, :inferred, :caller_ms, :downstream_ms]
+        drop: [:kind, :depth, :inferred, :caller_ms, :downstream_ms, :peer, :permille]
       )
 
   defp chains(results, "budget"),
     do:
       Rows.where(results, :blocking, "call_chain",
         kind: "budget",
-        drop: [:kind, :depth, :inferred]
+        drop: [:kind, :depth, :inferred, :peer, :permille]
       )
 
   describe "call_chain: which chains" do
@@ -146,7 +146,7 @@ defmodule Argus.Analyses.BlockingChainTest do
       infinity =
         Rows.where(results, :blocking, "unbounded_wait",
           kind: "infinity",
-          drop: [:site, :kind, :detail, :nodes]
+          drop: [:site, :kind, :detail, :nodes, :peer, :permille]
         )
 
       # If the extractor detects the :infinity timeout, it should flag it.
@@ -175,7 +175,7 @@ defmodule Argus.Analyses.BlockingChainTest do
       do:
         Rows.where(results, :blocking, "unbounded_wait",
           kind: "infinity",
-          drop: [:site, :kind, :detail, :nodes]
+          drop: [:site, :kind, :detail, :nodes, :peer, :permille]
         )
 
     test "a server that logs does not wait on the logger's servers" do

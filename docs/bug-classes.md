@@ -520,6 +520,7 @@ Work in a phase whose invariants do not hold yet: `init/1` runs inside the super
 - A peer that is alive and never answers a pinned-signal wait is the synchronous-call rules' concern, not this one's.
 - A loop's clause for its parent's exit does not bound its wait for the next message (`InitRecv.LoopsOnParent` is reported).
 - Suppressed: a loop `init/1` spawns (`InitRecv.SpawnsLoop`), a fun built into a child spec (`InitRecv.HandsOff`), a wait after the ack (`InitRecv.AcksThenLoops`, `AcksThenWaits`), waits bounded by a monitor or a port (`InitRecv.AsksWithMonitor`, `AwaitsHandedDown`, `ClosesPort`), and the flush (`InitRecv.FlushesTimer`).
+- With priors on, a receive the model puts at 0.8 or more as waiting on something inside the node that always answers (`prior_answers`, kind `wait`) steps down to `:info`, marked heuristic, as does the `down` kind (already `:info`): over the evaluation programs, ejabberd and rabbitmq 4 of the 11 `receive` rows (`:ets.all/0`, win32reg's port reply, supervisor2's child exits) and 12 of the 15 `down` rows; kernel_config's node handshakes, ejabberd's captcha, rabbit's disk monitor, `peer:init/1` and `gen_server:multi_call`'s receive keep theirs.
 
 **Fixtures.** Positive: `InitRecv.Waits`, `AwaitsEach`, `HandsOffAndWaits`, `WaitsBeforeAck`, `LoopsOnParent` (test/fixtures/init_recv_fixture.ex); `CallbackReceive.StatemBlockingInInit` (test/fixtures/callback_receive_fixture.ex); `ReachPath.WaitsInInit` (test/fixtures/reach_path_fixture.ex). Quiet: `InitRecv.SpawnsLoop`, `HandsOff`, `AcksThenLoops`, `AcksThenWaits`, `AsksWithMonitor`, `AwaitsHandedDown`, `ClosesPort`, `FlushesTimer`. Asserted in test/analyses/singleton_shapes_test.exs, blocking_receive_test.exs and reach_path_frame_test.exs.
 
@@ -817,14 +818,14 @@ A synchronous wait that can last forever or nest: every finding is a process wai
 **Assumptions and limits.**
 - Target resolution is the chain rule's; an unresolved target is missed.
 - GenServer only, and any clause of `handle_cast/2` counts: the rule does not follow which clause a cast enters.
-- The call's timeout and the target's behaviour are not read: a call to a server that answers at once is reported like an `:infinity` one.
+- The call's timeout and the target's behaviour are not read: a call to a server that answers at once is reported like an `:infinity` one. With priors on, a target the model puts at 0.8 or more as answering from inside the node (`prior_answers`, by module or registered name) steps the row down to `:info`, marked heuristic.
 - A cast handler calling its own module's process is the self-call finding, not this one.
 
-**Fixtures.** Positive: `TimeoutChain.BlockingCastServer` with `TimeoutChain.ServerC` (test/fixtures/timeout_chain_fixture.ex); `PidCalls.HandOffCaster` with `PidCalls.Named` (test/fixtures/pid_call_fixture.ex, a closure beside a child spec's fun stays the handler's own). Quiet: none. Asserted in test/analyses/blocking_chain_test.exs and blocking_pid_call_test.exs.
+**Fixtures.** Positive: `TimeoutChain.BlockingCastServer` with `TimeoutChain.ServerC` (test/fixtures/timeout_chain_fixture.ex); `PidCalls.HandOffCaster` with `PidCalls.Named` (test/fixtures/pid_call_fixture.ex, a closure beside a child spec's fun stays the handler's own). Quiet: none. Asserted in test/analyses/blocking_chain_test.exs and blocking_pid_call_test.exs; the prior re-tier in test/priors/priors_test.exs.
 
 **Corpus.** None.
 
-**Precision.** Not measured.
+**Precision.** Not measured. With priors on, 26 of the 46 rows over the evaluation programs, ejabberd and rabbitmq step down (ejabberd's hook registry and router, OTP's file, dets and disk_log servers, rabbit's GUID server); ejabberd_s2s (0.51), dist_ac, `global`, mnesia's event manager and rabbit's AMQP writer keep theirs.
 
 ### Caller's timeout shorter than the callee's downstream wait
 
@@ -857,6 +858,7 @@ A synchronous wait that can last forever or nest: every finding is a process wai
 - One finding per (M's `handle_call/3`, T), anchored at the function.
 - GenServer only: an `:infinity` call from a gen_statem's call handler is not seen.
 - Suppressed: a hop into a server whose handler answers at once (`SidePaths.Proxy`, Phoenix's CodeReloader stopping its own proxy), and waits reached only through the logging or telemetry API (`SidePaths.Logs`).
+- With priors on, a hop into a server the model puts at 0.8 or more as answering from inside the node (`prior_answers`) steps down to `:info`, marked heuristic: 7 of the 16 rows over the evaluation programs (mnesia's servers calling the dets, disk_log and subscriber servers, Phoenix's MixListener); the hops into `dist_ac`, a DBConnection pool and a LiveView channel keep theirs.
 
 **Fixtures.** Positive: `PidCalls.Waiter` → `PidCalls.Slow` (test/fixtures/pid_call_fixture.ex, a pid the server started); `SidePaths.AsksWorker` → `SidePaths.Worker` (test/fixtures/side_path_fixture.ex); `TimeoutChain.ServerWithInfinityTimeout` (test/fixtures/timeout_chain_fixture.ex, asserted only when the extractor records the timeout). Quiet: `SidePaths.StopsProxy` → `SidePaths.Proxy`; `SidePaths.Logs`/`CallsLogs` with OTP's logger. Asserted in test/analyses/blocking_pid_call_test.exs and blocking_chain_test.exs.
 

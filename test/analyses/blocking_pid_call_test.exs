@@ -24,7 +24,10 @@ defmodule Argus.Analyses.BlockingPidCallTest do
     # Waiter keeps the Slow it started in its state; the call's target is
     # the pid, which points-to follows back to Slow's start.
     assert [[func, "", "infinity", slow, "", ""]] =
-             Rows.where(analyze(), :blocking, "unbounded_wait", kind: "infinity")
+             Rows.where(analyze(), :blocking, "unbounded_wait",
+               kind: "infinity",
+               drop: [:peer, :permille]
+             )
 
     assert func == "#{inspect(PidCalls.Waiter)}:handle_call/3"
     assert slow == inspect(PidCalls.Slow)
@@ -35,7 +38,10 @@ defmodule Argus.Analyses.BlockingPidCallTest do
     # name; points-to resolves it, so the tag is not what proves the hop.
     assert [[_, _, 2, "static", 0, 0]] =
              analyze()
-             |> Rows.where(:blocking, "call_chain", kind: "chain", drop: [:kind])
+             |> Rows.where(:blocking, "call_chain",
+               kind: "chain",
+               drop: [:kind, :peer, :permille]
+             )
              |> Enum.map(fn [a, b, d, i, c, w] ->
                [a, b, String.to_integer(d), i, String.to_integer(c), String.to_integer(w)]
              end)
@@ -44,7 +50,10 @@ defmodule Argus.Analyses.BlockingPidCallTest do
   test "a budget through pids: one second for a callee that waits five" do
     assert [[impatient, middle, 1, _, 1_000, 5_000]] =
              analyze()
-             |> Rows.where(:blocking, "call_chain", kind: "budget", drop: [:kind])
+             |> Rows.where(:blocking, "call_chain",
+               kind: "budget",
+               drop: [:kind, :peer, :permille]
+             )
              |> Enum.map(fn [a, b, d, i, c, w] ->
                [a, b, String.to_integer(d), i, String.to_integer(c), String.to_integer(w)]
              end)
@@ -74,7 +83,9 @@ defmodule Argus.Analyses.BlockingPidCallTest do
   test "a closure beside a child spec's fun is the handler's own" do
     {:ok, r} = Memo.analyze([PidCalls.HandOffCaster, PidCalls.Named], :blocking)
 
-    assert [[caster, named | _]] = Rows.where(r, :blocking, "call_chain", kind: "cast")
+    assert [[caster, named | _]] =
+             Rows.where(r, :blocking, "call_chain", kind: "cast", drop: [:peer, :permille])
+
     assert {caster, named} == {inspect(PidCalls.HandOffCaster), inspect(PidCalls.Named)}
   end
 end

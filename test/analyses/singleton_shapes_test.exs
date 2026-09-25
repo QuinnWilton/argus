@@ -95,7 +95,10 @@ defmodule Argus.Analyses.SingletonShapesTest do
       )
 
     assert r
-           |> Rows.where(:startup, "unbounded_effect_in_init", kind: "recv")
+           |> Rows.where(:startup, "unbounded_effect_in_init",
+             kind: "recv",
+             drop: [:peer, :permille]
+           )
            |> Enum.map(&hd/1)
            |> Enum.uniq()
            |> Enum.sort() == ["Argus.Test.Fixtures.InitRecv.Blocking"]
@@ -110,7 +113,11 @@ defmodule Argus.Analyses.SingletonShapesTest do
         :startup
       )
 
-    rows = Rows.where(r, :startup, "unbounded_effect_in_init", kind: "receive")
+    rows =
+      Rows.where(r, :startup, "unbounded_effect_in_init",
+        kind: "receive",
+        drop: [:peer, :permille]
+      )
 
     # AwaitsEach's closure runs in init's process; SpawnsLoop's loop runs
     # in the process init spawns, and init returns without it.
@@ -126,7 +133,10 @@ defmodule Argus.Analyses.SingletonShapesTest do
       Memo.analyze([InitRecv.HandsOff, InitRecv.HandsOffAndWaits], :startup)
 
     assert handed
-           |> Rows.where(:startup, "unbounded_effect_in_init", kind: "receive")
+           |> Rows.where(:startup, "unbounded_effect_in_init",
+             kind: "receive",
+             drop: [:peer, :permille]
+           )
            |> Enum.map(&hd/1)
            |> Enum.uniq() == ["Argus.Test.Fixtures.InitRecv.HandsOffAndWaits"]
 
@@ -161,7 +171,7 @@ defmodule Argus.Analyses.SingletonShapesTest do
 
     mods = fn kind ->
       r
-      |> Rows.where(:startup, "unbounded_effect_in_init", kind: kind)
+      |> Rows.where(:startup, "unbounded_effect_in_init", kind: kind, drop: [:peer, :permille])
       |> Enum.map(&(&1 |> hd() |> String.replace("Argus.Test.Fixtures.InitRecv.", "")))
       |> Enum.uniq()
       |> Enum.sort()
@@ -184,8 +194,16 @@ defmodule Argus.Analyses.SingletonShapesTest do
     # With gen_server's own code in the program: the loop enter_loop
     # runs is the server's, entered after the ack.
     {:ok, r} = Memo.analyze([InitRecv.AcksThenLoops, :gen_server], :startup)
-    assert Rows.where(r, :startup, "unbounded_effect_in_init", kind: "receive") == []
-    assert Rows.where(r, :startup, "unbounded_effect_in_init", kind: "enter_loop") == []
+
+    assert Rows.where(r, :startup, "unbounded_effect_in_init",
+             kind: "receive",
+             drop: [:peer, :permille]
+           ) == []
+
+    assert Rows.where(r, :startup, "unbounded_effect_in_init",
+             kind: "enter_loop",
+             drop: [:peer, :permille]
+           ) == []
   end
 
   test "init/1 entering the server loop before any ack holds its start for good" do
@@ -194,7 +212,10 @@ defmodule Argus.Analyses.SingletonShapesTest do
     {:ok, r} = Memo.analyze([InitRecv.EntersWithoutAck, InitRecv.AcksThenLoops], :startup)
 
     assert [["Argus.Test.Fixtures.InitRecv.EntersWithoutAck", "enter_loop", api, _site]] =
-             Rows.where(r, :startup, "unbounded_effect_in_init", kind: "enter_loop")
+             Rows.where(r, :startup, "unbounded_effect_in_init",
+               kind: "enter_loop",
+               drop: [:peer, :permille]
+             )
 
     assert api == "Argus.Test.Fixtures.InitRecv.EntersWithoutAck:init/1"
   end
@@ -215,13 +236,17 @@ defmodule Argus.Analyses.SingletonShapesTest do
 
     {:ok, r} = Memo.analyze([InitRecv.SpawnsWork], :startup)
 
-    assert Rows.where(r, :startup, "unbounded_effect_in_init", kind: "connect") == []
+    assert Rows.where(r, :startup, "unbounded_effect_in_init",
+             kind: "connect",
+             drop: [:peer, :permille]
+           ) == []
+
     assert Rows.where(r, :startup, "blocks_on_peer", kind: ["global", "sup"]) == []
 
     # The lock still waits without bound in the task, which blocking says.
     {:ok, b} = Memo.analyze([InitRecv.SpawnsWork], :blocking)
 
     assert [["Argus.Test.Fixtures.InitRecv.SpawnsWork:connect/2" | _]] =
-             Rows.where(b, :blocking, "unbounded_wait", kind: "global")
+             Rows.where(b, :blocking, "unbounded_wait", kind: "global", drop: [:peer, :permille])
   end
 end

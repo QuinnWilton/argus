@@ -58,6 +58,29 @@ defmodule Argus.Schema.Priors do
         """
       },
       %{
+        name: :prior_answers,
+        layer: 3,
+        fields: [
+          {:kind, :symbol,
+           "'server' (a GenServer, by module) | 'wait' (a function with a receive that has no after)"},
+          {:subject, :symbol, "the server module or the waiting function"},
+          {:peer, :symbol, "local | remote | event — the likeliest"},
+          {:peer_permille, :number, "the model's probability for `peer`, in thousandths"},
+          {:permille, :number,
+           "the probability that the answer comes from inside the node, every time: `local`'s, " <>
+             "in thousandths"}
+        ],
+        doc: """
+        Whether a wait's peer answers every request from inside the node — a \
+        registry, a file server, a runtime driver, the exit of a process just \
+        stopped — or its answer waits on another node, an external program or \
+        something that may not happen (Argus.Priors.Questions.PeerAnswers). \
+        Asked of every server with a handle_call/3 and of every function with a \
+        `receive` that has no `after`, so blocking and startup can tell a hop to \
+        a local registry from one to a pool or another node.
+        """
+      },
+      %{
         name: :prior_sensitive,
         layer: 3,
         fields: [

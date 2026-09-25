@@ -39,11 +39,18 @@ defmodule Argus.Analyses.BlockingRpcTest do
   end
 
   defp waits(results, "global"),
-    do: Rows.where(results, :blocking, "unbounded_wait", kind: "global", drop: [:kind])
+    do:
+      Rows.where(results, :blocking, "unbounded_wait",
+        kind: "global",
+        drop: [:kind, :peer, :permille]
+      )
 
   defp waits(results, kind),
     do:
-      Rows.where(results, :blocking, "unbounded_wait", kind: kind, drop: [:kind, :detail, :nodes])
+      Rows.where(results, :blocking, "unbounded_wait",
+        kind: kind,
+        drop: [:kind, :detail, :nodes, :peer, :permille]
+      )
 
   describe "unbounded_wait: rpc" do
     test "flags :rpc.call without a timeout, not the timeout variant", ctx do
@@ -68,7 +75,9 @@ defmodule Argus.Analyses.BlockingRpcTest do
           "rpc",
           "rpc",
           "",
-          ""
+          "",
+          "",
+          "0"
         ])
 
       assert attrs.detail =~ "stays connected but never answers"
@@ -87,7 +96,9 @@ defmodule Argus.Analyses.BlockingRpcTest do
           "rpc",
           variant,
           "",
-          ""
+          "",
+          "",
+          "0"
         ]).help
 
       help
@@ -128,7 +139,9 @@ defmodule Argus.Analyses.BlockingRpcTest do
             "rpc",
             variant,
             "",
-            ""
+            "",
+            "",
+            "0"
           ])
 
         assert attrs.detail =~ "calls #{api} with", variant
@@ -163,7 +176,7 @@ defmodule Argus.Analyses.BlockingRpcTest do
       assert [["Argus.Test.Fixtures.RpcTimeoutParam:remote/5", "caller", ""]] =
                Rows.where(results, :blocking, "unbounded_wait",
                  kind: "rpc",
-                 drop: [:kind, :site, :api]
+                 drop: [:kind, :site, :api, :peer, :permille]
                )
 
       assert [["Argus.Test.Fixtures.RpcTimeoutParam:remote/5", _site, caller]] =

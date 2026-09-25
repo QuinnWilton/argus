@@ -272,7 +272,10 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
       )
 
     assert r
-           |> Rows.where(:startup, "unbounded_effect_in_init", kind: "connect")
+           |> Rows.where(:startup, "unbounded_effect_in_init",
+             kind: "connect",
+             drop: [:peer, :permille]
+           )
            |> Enum.map(&hd/1)
            |> Enum.uniq() == ["Argus.Test.Fixtures.Hypothesized.ConnectInInit"]
   end

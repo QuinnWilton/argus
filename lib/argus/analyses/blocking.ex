@@ -106,7 +106,11 @@ defmodule Argus.Analyses.Blocking do
           {:inferred, :symbol,
            "for a chain, 'tag' when a hop is attributed by message tag, else 'static'"},
           {:caller_ms, :number, "for a budget, the caller's timeout"},
-          {:downstream_ms, :number, "for a budget, the callee's downstream timeout"}
+          {:downstream_ms, :number, "for a budget, the callee's downstream timeout"},
+          {:peer, :symbol,
+           "for a cast, 'local' when a prior is sure the server called answers from inside " <>
+             "the node; else empty"},
+          {:permille, :number, "the prior's probability in thousandths, else 0"}
         ],
         # One chain finding per (from, to) pair: the depth relation is
         # recursive with only a `from != to` guard, so a genuine cycle
@@ -192,7 +196,11 @@ defmodule Argus.Analyses.Blocking do
              "parameter a caller passes as :infinity (rpc_infinity_caller); for socket, " <>
              "the server whose callback runs the call"},
           {:nodes, :symbol,
-           "for global, the nodes the lock waits on: cluster | local | unknown; else empty"}
+           "for global, the nodes the lock waits on: cluster | local | unknown; else empty"},
+          {:peer, :symbol,
+           "for infinity, 'local' when a prior is sure the server called answers from inside " <>
+             "the node; else empty"},
+          {:permille, :number, "the prior's probability in thousandths, else 0"}
         ],
         key: [:func, :kind, :api, :detail, :nodes],
         doc: "A wait with no deadline: an :infinity hop, an rpc, a cluster-wide lock."
@@ -224,8 +232,21 @@ defmodule Argus.Analyses.Blocking do
     ]
   end
 
+  # A wait on a server the model is sure answers every call from inside
+  # the node (`Argus.Priors.Questions.PeerAnswers`): a heuristic finding a
+  # step down. No prior, no change.
+  defp answering(attrs, _target, "", _p), do: attrs
+
+  defp answering(attrs, target, "local", p) do
+    Findings.heuristic(
+      attrs,
+      String.to_integer(p),
+      "#{target} answers every call from inside the node"
+    )
+  end
+
   @impl true
-  def finding(:call_chain, [from, to, "chain", depth, inferred, _, _]) do
+  def finding(:call_chain, [from, to, "chain", depth, inferred, _, _, _, _]) do
     inferred_note =
       if inferred == "tag",
         do:
@@ -258,7 +279,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:call_chain, [mod, target, "cast", _, _, _, _]) do
+  def finding(:call_chain, [mod, target, "cast", _, _, _, _, peer, p]) do
     Findings.new(
       :warning,
       "handle_cast blocks on a synchronous call",
@@ -274,9 +295,20 @@ defmodule Argus.Analyses.Blocking do
           "or run the call in a task and take its reply in handle_info/2"
       ]
     )
+    |> answering(target, peer, p)
   end
 
-  def finding(:call_chain, [caller, callee, "budget", _, _, caller_timeout, downstream_timeout]) do
+  def finding(:call_chain, [
+        caller,
+        callee,
+        "budget",
+        _,
+        _,
+        caller_timeout,
+        downstream_timeout,
+        _,
+        _
+      ]) do
     Findings.new(
       :error,
       "Call timeout shorter than the callee's downstream budget",
@@ -295,7 +327,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:unbounded_wait, [func, _, "infinity", target, _, _]) do
+  def finding(:unbounded_wait, [func, _, "infinity", target, _, _, peer, p]) do
     mod = String.replace_suffix(func, ":handle_call/3", "")
 
     Findings.new(
@@ -312,6 +344,7 @@ defmodule Argus.Analyses.Blocking do
           "the process that serves callers"
       ]
     )
+    |> answering(target, peer, p)
   end
 
   def finding(:call_cycle, [mod_a, mod_b, _wa, _wb, "continue", _sa, _sb]) do
@@ -439,7 +472,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:unbounded_wait, [func, site, "rpc", variant, "caller", _]) do
+  def finding(:unbounded_wait, [func, site, "rpc", variant, "caller", _, _, _]) do
     Findings.new(
       :warning,
       "RPC without a bounded timeout",
@@ -454,7 +487,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:unbounded_wait, [func, site, "rpc", variant, _, _]) do
+  def finding(:unbounded_wait, [func, site, "rpc", variant, _, _, _, _]) do
     Findings.new(
       :warning,
       "RPC without a bounded timeout",
@@ -470,7 +503,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:unbounded_wait, [func, _, "rpc_in_callback", variant, _, _]) do
+  def finding(:unbounded_wait, [func, _, "rpc_in_callback", variant, _, _, _, _]) do
     Findings.new(
       :warning,
       "RPC inside a GenServer callback",
@@ -484,7 +517,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:unbounded_wait, [func, site, "socket", api, server, _]) do
+  def finding(:unbounded_wait, [func, site, "socket", api, server, _, _, _]) do
     Findings.new(
       :warning,
       "Socket call with no timeout inside a callback",
@@ -504,7 +537,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:unbounded_wait, [func, site, "global", op, retries, "cluster"]) do
+  def finding(:unbounded_wait, [func, site, "global", op, retries, "cluster", _, _]) do
     Findings.new(
       :info,
       "Cluster-wide :global synchronization",
@@ -518,7 +551,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:unbounded_wait, [func, site, "global", op, retries, "local"]) do
+  def finding(:unbounded_wait, [func, site, "global", op, retries, "local", _, _]) do
     Findings.new(
       :info,
       "Local :global lock without a retry bound",
@@ -535,7 +568,7 @@ defmodule Argus.Analyses.Blocking do
   # "unknown": the node list is not in the bytecode. Reported as the
   # cluster-wide lock it may be, saying it is assumed — as is any list
   # not known to be local or cluster.
-  def finding(:unbounded_wait, [func, site, "global", op, retries, _nodes]) do
+  def finding(:unbounded_wait, [func, site, "global", op, retries, _nodes, _, _]) do
     Findings.new(
       :info,
       "Cluster-wide :global synchronization",

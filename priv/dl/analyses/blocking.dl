@@ -38,11 +38,18 @@
 //   — a receive on an OTP process's own stack, `bounded` "false" when
 //   it has no after clause and can hang, "true" when it has one, "down"
 //   when it has none but takes the :DOWN of a monitor its function took.
-.decl call_chain(from: symbol, to: symbol, kind: symbol, depth: number, inferred: symbol, caller_ms: number, downstream_ms: number)
+//   With priors on, a "cast" chain and an "infinity" wait carry `peer`
+//   ("local") and `permille` when the model is sure the server called
+//   answers every call from inside the node (below); else "" and 0.
+.decl call_chain(from: symbol, to: symbol, kind: symbol, depth: number, inferred: symbol, caller_ms: number, downstream_ms: number, peer: symbol, permille: number)
 .output call_chain
 
-.decl unbounded_wait(func: symbol, site: symbol, kind: symbol, api: symbol, detail: symbol, nodes: symbol)
+.decl unbounded_wait(func: symbol, site: symbol, kind: symbol, api: symbol, detail: symbol, nodes: symbol, peer: symbol, permille: number)
 .output unbounded_wait
+
+// What the rules below find, before a prior says whether the peer answers.
+.decl chain_found(from: symbol, to: symbol, kind: symbol, depth: number, inferred: symbol, caller_ms: number, downstream_ms: number)
+.decl wait_found(func: symbol, site: symbol, kind: symbol, api: symbol, detail: symbol, nodes: symbol)
 
 .decl receive_in_callback(id: symbol, func: symbol, callback: symbol, behaviour: symbol, proximity: symbol, bounded: symbol)
 .output receive_in_callback
@@ -212,19 +219,19 @@ timeout_chain_inferred(from, to) :- request_chain_inferred(from, _, to).
 
 // Chains of depth >= 2 are risky: the outermost caller's timeout must
 // accommodate the sum of all intermediate timeouts.
-call_chain(from, to, "chain", depth, "tag", 0, 0) :-
+chain_found(from, to, "chain", depth, "tag", 0, 0) :-
   timeout_chain(from, to, depth),
   depth >= 2,
   timeout_chain_inferred(from, to).
 
-call_chain(from, to, "chain", depth, "static", 0, 0) :-
+chain_found(from, to, "chain", depth, "static", 0, 0) :-
   timeout_chain(from, to, depth),
   depth >= 2,
   !timeout_chain_inferred(from, to).
 
 // ── Output: blocking cast handler ────────────────────────────────────
 
-call_chain(mod, target, "cast", 1, "", 0, 0) :- handler_dep(mod, "handle_cast", target, "call", _).
+chain_found(mod, target, "cast", 1, "", 0, 0) :- handler_dep(mod, "handle_cast", target, "call", _).
 
 // ── Timeout-aware sync dependency ──────────────────────────────────
 
@@ -247,7 +254,7 @@ callback_sync_dep_timeout(from_mod, to_mod, timeout_ms) :-
 // misconfiguration. The boundary case is real (equal budgets leave B
 // zero processing slack) but flagging it would mark nearly every
 // two-hop chain in real code as an error.
-call_chain(a, b, "budget", 1, "", t_ab, t_bc) :-
+chain_found(a, b, "budget", 1, "", t_ab, t_bc) :-
   callback_sync_dep_timeout(a, b, t_ab),
   callback_sync_dep_timeout(b, _, t_bc),
   t_ab > 0,     // not dynamic
@@ -262,7 +269,7 @@ call_chain(a, b, "budget", 1, "", t_ab, t_bc) :-
 // answers at once (answers_straight_away, below) ends the chain: nothing
 // downstream of it can hang the caller (Phoenix's CodeReloader stops its
 // own Proxy, whose :stop clause only replies).
-unbounded_wait(cat(mod, ":handle_call/3"), "", "infinity", target, "", "") :-
+wait_found(cat(mod, ":handle_call/3"), "", "infinity", target, "", "") :-
   callback_sync_dep_timeout(mod, target, -1),
   behaves_as(target, "GenServer"),
   !answers_straight_away(target).
@@ -660,7 +667,7 @@ init_recv(id) :-
   init_function(_, c),
   socket_reach.reaches(c, h).
 
-unbounded_wait(f, id, "socket", api, m, "") :-
+wait_found(f, id, "socket", api, m, "") :-
   socket_wait_server(id, f, api, m),
   !init_recv(id).
 
@@ -680,11 +687,11 @@ unbounded_wait(f, id, "socket", api, m, "") :-
 // supervisor's start held on it, reported there once.
 // `detail` is "caller" when the timeout is a parameter a caller passes
 // as :infinity (rpc_infinity_caller names them), empty otherwise.
-unbounded_wait(func, call, "rpc", variant, "", "") :-
+wait_found(func, call, "rpc", variant, "", "") :-
   rpc_without_timeout(func, call, variant),
   rpc_call(call, _, _, -1).
 
-unbounded_wait(func, call, "rpc", variant, "caller", "") :-
+wait_found(func, call, "rpc", variant, "caller", "") :-
   rpc_without_timeout(func, call, variant),
   rpc_infinity_caller(func, call, _).
 
@@ -1031,7 +1038,7 @@ during_init(site) :- global_path(f, _, site), is_init(f).
 // as making an RPC, even when the concrete action provably routes local.
 // All 13 of the analysis's transitive findings were false; the RPC sites
 // themselves are already surfaced by rpc_without_timeout.
-unbounded_wait(func, "", "rpc_in_callback", variant, "", "") :-
+wait_found(func, "", "rpc_in_callback", variant, "", "") :-
   rpc_call(_, func, variant, _),
   handler_function(_, func).
 
@@ -1045,7 +1052,7 @@ unbounded_wait(func, "", "rpc_in_callback", variant, "", "") :-
 // holder. `nodes` says which (retrying_lock, clientlib/vocabulary.dl).
 // site is the :global call instruction. One row per site — finding
 // builders dedupe on (func, op, retries, nodes).
-unbounded_wait(func, lock, "global", op, retries, nodes) :-
+wait_found(func, lock, "global", op, retries, nodes) :-
   retrying_lock(lock, func, op, retries, nodes),
   !during_init(lock).
 
@@ -1070,3 +1077,47 @@ partial_noproc_catch(func, id, callee, call, guard_end) :-
   !catch_tag(id, func, "exit", ":shutdown"),
   !catch_tag(id, func, "exit", ":normal"),
   !site_catches_class(id, func, "exit").
+
+// ══ A peer that answers, when priors are on ═════════════════════════
+//
+// A server the model is sure answers every call from inside the node
+// (Argus.Priors.Questions.PeerAnswers; off by default) — a hook
+// registry, a file server, a local state holder — is not the peer that
+// hangs a chain: a hop to it with no deadline, or made from a
+// handle_cast, waits on an answer that comes. The finding steps down and
+// says so; a server whose answer waits on another node, a pool or an
+// external program keeps its severity. A call names its server by module
+// or by the name it registers. 0.8 held every peer that may not answer
+// in the calibration (the highest scored 0.62).
+.decl answers_at(target: symbol, permille: number)
+
+answers_at(m, p) :- prior_answers("server", m, _, _, p).
+answers_at(name, p) :- named_process(m, name), prior_answers("server", m, _, _, p).
+
+.decl answering_peer(target: symbol, permille: number)
+
+answering_peer(t, p) :- answers_at(t, _), p = max q : answers_at(t, q), p >= 800.
+
+.decl answered_chain(from: symbol, to: symbol, kind: symbol)
+
+answered_chain(f, t, "cast") :- chain_found(f, t, "cast", _, _, _, _), answering_peer(t, _).
+
+call_chain(f, t, "cast", d, i, c, dm, "local", p) :-
+  chain_found(f, t, "cast", d, i, c, dm),
+  answering_peer(t, p).
+
+call_chain(f, t, k, d, i, c, dm, "", 0) :-
+  chain_found(f, t, k, d, i, c, dm),
+  !answered_chain(f, t, k).
+
+.decl answered_wait(kind: symbol, api: symbol)
+
+answered_wait("infinity", a) :- wait_found(_, _, "infinity", a, _, _), answering_peer(a, _).
+
+unbounded_wait(f, s, "infinity", a, d, n, "local", p) :-
+  wait_found(f, s, "infinity", a, d, n),
+  answering_peer(a, p).
+
+unbounded_wait(f, s, k, a, d, n, "", 0) :-
+  wait_found(f, s, k, a, d, n),
+  !answered_wait(k, a).
