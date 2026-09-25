@@ -68,8 +68,9 @@ defmodule Argus.Extractors.ErrorHandling do
     producer of gen_stage#238 ran user code that called hackney)
   - `apply_param(id, func, pos)` — the call through a fun, or the apply,
     at `id` runs what `func`'s parameter `pos` holds: its callers choose
-  - `timer_tag(id, tag)` — the atom the message of the timer armed at
-    `id` is told apart by: the message itself, or a tuple's first element
+  - `timer_tag(id, tag, arity)` — the atom the message of the timer armed
+    at `id` is told apart by: the message itself (`arity` 0), or a
+    tuple's first element (`arity` its size)
   - `cancel_clause(id, func, message)` — a cancel_timer inside a
     `handle_info/2` clause whose head is the literal `message`
   - `rpc_result(id, func, handling)` — how the result of an :rpc/:erpc
@@ -473,18 +474,19 @@ defmodule Argus.Extractors.ErrorHandling do
   end
 
   # The atom a receive or a clause head tells the timer's message apart
-  # by: the message itself when it is an atom, or the first element of a
-  # tuple, literal or built (`{:retry, attempts - 1}`, whose other
-  # elements the resolver leaves `:dynamic`). Nil for any other message,
-  # and for one the resolver cannot follow.
+  # by, and the message's arity: the message itself when it is an atom
+  # (arity 0), or the first element of a tuple, literal or built
+  # (`{:retry, attempts - 1}`, whose other elements the resolver leaves
+  # `:dynamic`), with the tuple's size. Nil for any other message, and
+  # for one the resolver cannot follow.
   defp timer_tag(ctx, msg_reg) do
     case resolve_register(ctx.instrs, ctx.idx, {:x, msg_reg}) do
       {:ok, atom} when is_atom(atom) and atom != :dynamic ->
-        inspect(atom)
+        {inspect(atom), 0}
 
       {:ok, tuple} when is_tuple(tuple) and tuple_size(tuple) > 0 ->
         case elem(tuple, 0) do
-          tag when is_atom(tag) and tag != :dynamic -> inspect(tag)
+          tag when is_atom(tag) and tag != :dynamic -> {inspect(tag), tuple_size(tuple)}
           _ -> nil
         end
 
@@ -495,11 +497,13 @@ defmodule Argus.Extractors.ErrorHandling do
 
   # :erlang.start_timer's message is `{:timeout, ref, msg}`, whatever
   # `msg` is.
-  defp start_timer_tag({:erlang, :start_timer, arity}) when arity in [3, 4], do: ":timeout"
+  defp start_timer_tag({:erlang, :start_timer, arity}) when arity in [3, 4], do: {":timeout", 3}
   defp start_timer_tag(_mfa), do: nil
 
   defp emit_timer_tag(facts, _id, nil), do: facts
-  defp emit_timer_tag(facts, id, tag), do: add_fact(facts, :timer_tag, [id, tag])
+
+  defp emit_timer_tag(facts, id, {tag, arity}),
+    do: add_fact(facts, :timer_tag, [id, tag, to_string(arity)])
 
   # Where the timer ref goes after the arming call: returned by the
   # function (a helper like `defp arm(ms), do: Process.send_after(...)`),

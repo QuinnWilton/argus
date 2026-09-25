@@ -167,7 +167,7 @@ names_module(c, f, k) :-
 
 handled_self_timer(id) :-
   timer_arm(id, f, "self", _, _, _),
-  timer_tag(id, tag),
+  timer_tag(id, tag, _),
   function_def(f, mod, _, _, _),
   callback_tag(h, "handle_info", tag),
   function_def(h, mod, _, _, _).
@@ -177,7 +177,7 @@ handled_self_timer(id) :-
 handled_self_timer(id) :-
   mailbox_writer(id, f, "timer"),
   !timer_arm(id, _, _, _, _, _),
-  timer_tag(id, tag),
+  timer_tag(id, tag, _),
   function_def(f, mod, _, _, _),
   callback_tag(h, "handle_info", tag),
   function_def(h, mod, _, _, _).
@@ -1183,7 +1183,7 @@ info_message(m, f, id, msg, "send") :-
 // callback's process arms it, so the message comes back to that server.
 .init info_reach = SameProcessReach
 
-info_reach.seed(f, f) :- timer_arm(id, f, "self", _, _, _), timer_tag(id, _).
+info_reach.seed(f, f) :- timer_arm(id, f, "self", _, _, _), timer_tag(id, _, _).
 info_reach.seed(f, f) :- monitor_call(_, f, _).
 info_reach.seed(f, f) :- socket_activation(f, _, _).
 info_reach.seed(f, f) :- socket_opened(f, _).
@@ -1200,12 +1200,12 @@ runs_in_server(m, f) :-
 // the site builds as pid_send spells one, `{:tag, …}`.
 info_message(m, f, id, lit, "timer") :-
   timer_arm(id, f, "self", "bare", _, lit),
-  timer_tag(id, _),
+  timer_tag(id, _, _),
   runs_in_server(m, f).
 
 info_message(m, f, id, cat("{", tag, ", …}"), "timer") :-
   timer_arm(id, f, "self", "dynamic", _, _),
-  timer_tag(id, tag),
+  timer_tag(id, tag, _),
   runs_in_server(m, f).
 
 // A monitor its own function waits on, in a receive or behind a
@@ -1333,7 +1333,7 @@ info_message(m, f, id, msg, "socket") :-
 // join would find no tag for it.
 .decl tag_of(message: symbol, tag: symbol)
 
-tag_of(msg, tag) :- info_message(_, _, id, msg, "timer"), timer_tag(id, tag).
+tag_of(msg, tag) :- info_message(_, _, id, msg, "timer"), timer_tag(id, tag, _).
 
 tag_of(msg, tag) :- info_message(_, _, _, msg, _), callback_tag(_, "handle_info", tag), msg = tag.
 

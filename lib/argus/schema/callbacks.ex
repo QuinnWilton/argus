@@ -26,6 +26,26 @@ defmodule Argus.Schema.Callbacks do
         """
       },
       %{
+        name: :callback_tag_shape,
+        layer: 2,
+        fields: [
+          {:func, :symbol, "the callback"},
+          {:callback, :symbol, "'handle_call' | 'handle_cast' | 'handle_info'"},
+          {:tag, :symbol, "an atom a clause head compares the message, or its tag, with"},
+          {:arity, :number,
+           "0 when the message is the atom, the tuple's size when it is its tag, -1 when that size is not known"}
+        ],
+        doc: """
+        A clause head of the callback takes the message as the atom `tag` \
+        (`arity` 0), or as a tuple of `arity` elements whose first is `tag` \
+        (`Argus.Extractors.CallbackTag.MessageClauses.tag_shapes/2`). Read \
+        on the heads alone, where callback_tag counts every atom the body \
+        compares: `handle_info(:timeout, s)` takes the atom, not \
+        `:erlang.start_timer`'s `{:timeout, ref, msg}`, and \
+        `handle_info({:tick, n}, s)` takes no `{:tick, 1, :slow}`.
+        """
+      },
+      %{
         name: :callback_drops,
         layer: 2,
         fields: [

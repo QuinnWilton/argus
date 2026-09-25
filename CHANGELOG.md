@@ -356,6 +356,17 @@ citing a rule for the unacknowledged loop that did not exist; this is
 it. A module whose init/1 is started by a bare spawn has no starter
 waiting, and is left alone.
 
+**Changed.** Schema 103. `timer_tag(id, tag, arity)` gains the
+message's arity: 0 for an atom, the tuple's size otherwise, 3 for
+`:erlang.start_timer`'s `{:timeout, ref, msg}`. **Added.**
+`callback_tag_shape(func, callback, tag, arity)`
+(`Argus.Extractors.CallbackTag.MessageClauses.tag_shapes/2`): the shapes
+the clause heads take a tag in — the atom (0), or a tuple of that many
+elements tagged so (-1 when its size is not known) — read on the heads
+alone, where `callback_tag` counts every atom the body compares.
+`handle_info(:timeout, s)` takes the atom, not a start_timer's
+3-tuple; `handle_info({:tick, n}, s)` takes no `{:tick, 1, :slow}`.
+
 **Changed.** Schema 102. `fun_handed(id, caller, callee, pos)` names
 the argument position the fun is handed in: a call handed a closure in
 one position and something else in another said only that it was handed

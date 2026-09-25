@@ -10,8 +10,21 @@ defmodule Argus.Extractors.CallbackTagTest do
 
     %{
       drops: for([f, "handle_info"] <- Map.get(facts, :callback_drops, []), do: short.(f)),
-      open: for([f, "handle_info", s] <- Map.get(facts, :callback_open, []), do: {short.(f), s})
+      open: for([f, "handle_info", s] <- Map.get(facts, :callback_open, []), do: {short.(f), s}),
+      shapes:
+        for(
+          [f, "handle_info", tag, arity] <- Map.get(facts, :callback_tag_shape, []),
+          do: {short.(f), tag, arity}
+        )
     }
+  end
+
+  test "a clause head takes a tag as the atom or as a tuple of its arity" do
+    %{shapes: shapes} = facts([U.WarmUp, U.Retry])
+    # handle_info({:put, origin, key, value}, _) and handle_info(:expire, _).
+    assert {"WarmUp:handle_info/2", ":put", "4"} in shapes
+    assert {"WarmUp:handle_info/2", ":expire", "0"} in shapes
+    refute {"WarmUp:handle_info/2", ":expire", "2"} in shapes
   end
 
   test "a catch-all that ignores or logs the message drops it; one that hands it on does not" do

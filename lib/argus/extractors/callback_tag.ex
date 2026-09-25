@@ -19,6 +19,10 @@ defmodule Argus.Extractors.CallbackTag do
   ## Emitted facts
 
   - `callback_tag(func, callback, tag)` — an atom the callback discriminates on
+  - `callback_tag_shape(func, callback, tag, arity)` — a clause head takes
+    the message as the atom `tag` (`arity` 0) or as a tuple of `arity`
+    elements tagged `tag` (-1: of no known arity)
+    (`MessageClauses.tag_shapes/2`)
   - `callback_ref_head(func, callback)` — a clause matches `{ref, _} when
     is_reference(ref)`, an async_nolink task's reply
   - `callback_total(func, callback)` — some clause accepts every message,
@@ -51,6 +55,7 @@ defmodule Argus.Extractors.CallbackTag do
       :callback_open,
       :callback_ref_head,
       :callback_tag,
+      :callback_tag_shape,
       :callback_total
     ]
 
@@ -78,6 +83,12 @@ defmodule Argus.Extractors.CallbackTag do
       instrs
       |> MessageClauses.open_shapes({:x, 0})
       |> Enum.reduce(facts, &add_fact(&2, :callback_open, [func_id, callback, to_string(&1)]))
+
+    facts =
+      for {tag, arity} <- MessageClauses.tag_shapes(instrs, {:x, 0}), reduce: facts do
+        acc ->
+          add_fact(acc, :callback_tag_shape, [func_id, callback, inspect(tag), to_string(arity)])
+      end
 
     if MessageClauses.catch_all_drops?(instrs, {:x, 0}),
       do: add_fact(facts, :callback_drops, [func_id, callback]),

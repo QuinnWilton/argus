@@ -32,21 +32,24 @@ defmodule Argus.Extractors.ErrorHandlingTest do
       facts = ErrorHandling.extract(disassemble(mod))
       arms = Map.new(facts[:timer_arm], fn [id, func | _] -> {id, func} end)
 
-      for [id, tag] <- Map.get(facts, :timer_tag, []) do
-        {arms |> Map.fetch!(id) |> String.split(":") |> List.last(), tag}
+      for [id, tag, arity] <- Map.get(facts, :timer_tag, []) do
+        {arms |> Map.fetch!(id) |> String.split(":") |> List.last(), tag, arity}
       end
       |> Enum.sort()
     end
 
-    test "an atom, a literal tuple and a built tuple are told apart by their tag" do
+    test "an atom, a literal tuple and a built tuple are told apart by their tag and arity" do
       assert tags(UnhandledInfo.WarmUp) == [
-               {"handle_info/2", ":expire"},
-               {"handle_info/2", ":warm_up"},
-               {"init/1", ":expire"},
-               {"init/1", ":warm_up"}
+               {"handle_info/2", ":expire", "0"},
+               {"handle_info/2", ":warm_up", "2"},
+               {"init/1", ":expire", "0"},
+               {"init/1", ":warm_up", "2"}
              ]
 
-      assert tags(UnhandledInfo.Retry) == [{"handle_info/2", ":backoff"}, {"init/1", ":retry"}]
+      assert tags(UnhandledInfo.Retry) == [
+               {"handle_info/2", ":backoff", "2"},
+               {"init/1", ":retry", "2"}
+             ]
     end
 
     test "a message that is neither an atom nor a tagged tuple has no tag" do

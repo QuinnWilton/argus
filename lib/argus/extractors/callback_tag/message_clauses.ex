@@ -1,6 +1,6 @@
 defmodule Argus.Extractors.CallbackTag.MessageClauses do
   @moduledoc """
-  Two questions about a callback's message clauses that the tags it
+  Three questions about a callback's message clauses that the tags it
   compares cannot answer.
 
   - Which clauses take a message by its shape alone (`open_shapes/2`)?
@@ -23,6 +23,14 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
     ever reaches a reporter — Logger, `:logger`, IO, `inspect/2` and the
     string conversion an interpolation makes — and taken by anything
     else that reads it: another call, a return, a send, a test.
+  - What shape does each tag a clause head compares take the message in
+    (`tag_shapes/2`)? `handle_info(:tick, s)` takes the atom, arity 0;
+    `handle_info({:tick, n}, s)` a 2-tuple tagged `:tick`. A timer armed
+    with `{:tick, 1, :slow}` is a 3-tuple no clause takes, whatever its
+    tag. The shape is what the path through the heads established: the
+    tuple's arity (`test_arity`, `is_tagged_tuple`, a `select_tuple_arity`
+    arm) when its tag was compared, 0 when the message itself was; -1 when
+    a tag was compared on a tuple of no known arity.
 
   The head walk is `Argus.Extractor.Dispatch.total_on?/2`'s, with more
   carried along the path: which tracked register is the message, which
@@ -58,7 +66,9 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
            tested: boolean(),
            passed: boolean(),
            valued: boolean(),
-           tuple: boolean()
+           tuple: boolean(),
+           shape_tag: atom() | nil,
+           arity: integer() | nil
          }
 
   @doc """
@@ -79,6 +89,22 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
       _entry ->
         []
     end)
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  @doc """
+  The `{tag, arity}` shapes the clause heads take the message in
+  `register` by: arity 0 for the atom itself, N for an N-tuple whose
+  element 0 is the tag, -1 for a tuple of no known arity. A clause whose
+  head compares no tag has none.
+  """
+  @spec tag_shapes([tuple()], Instr.reg()) :: [{atom(), integer()}]
+  def tag_shapes(instrs, register) do
+    for(
+      {_idx, %{shape_tag: tag, arity: arity}} when tag != nil <- entries(instrs, register),
+      do: {tag, arity || -1}
+    )
     |> Enum.uniq()
     |> Enum.sort()
   end
@@ -118,7 +144,9 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
       tested: false,
       passed: false,
       valued: false,
-      tuple: false
+      tuple: false,
+      shape_tag: nil,
+      arity: nil
     }
 
     {acc, _seen} = walk(start, path, tuple, labels, {[], MapSet.new()})
@@ -150,18 +178,21 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
         (op == :is_tagged_tuple and :msg in kinds)
 
     shaped? = op in @tuple_tests and :msg in kinds
-    branch(idx, l, {kinds != [], valued?, shaped?}, path, tuple, labels, st)
+    {pass, fail} = shapes(op, args, path)
+
+    branch(idx, l, {kinds != [], valued?, shaped?}, pass, fail, tuple, labels, st)
   end
 
   defp step({:test, _op, {:f, l}, src, _fields}, idx, path, tuple, labels, st),
-    do: branch(idx, l, {tracked?(path, src), false, false}, path, tuple, labels, st)
+    do: branch(idx, l, {tracked?(path, src), false, false}, path, path, tuple, labels, st)
 
   # A fail-labelled map read is a test on its subject; its destinations
   # hold map values, not the message.
   defp step({:get_map_elements, {:f, l}, src, {:list, kvs}}, idx, path, tuple, labels, st) do
     on_message? = tracked?(path, src)
     tracked = kvs |> Enum.drop_every(2) |> Enum.reduce(path.tracked, &Map.delete(&2, reg(&1)))
-    branch(idx, l, {on_message?, false, false}, %{path | tracked: tracked}, tuple, labels, st)
+    path = %{path | tracked: tracked}
+    branch(idx, l, {on_message?, false, false}, path, path, tuple, labels, st)
   end
 
   defp step({op, src, {:f, fail}, {:list, pairs}}, _idx, path, tuple, labels, st)
@@ -179,12 +210,15 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
             tuple: path.tuple or (op == :select_tuple_arity and kind == :msg)
         }
 
-    arms = pairs |> Enum.chunk_every(2) |> Enum.map(fn [_value, {:f, l}] -> {l, arm_path} end)
+    arms =
+      pairs
+      |> Enum.chunk_every(2)
+      |> Enum.map(fn [value, {:f, l}] -> {l, arm_shape(op, kind, value, arm_path)} end)
 
     default =
       case fail_path(kind != nil, path, fail, tuple, labels) do
         nil -> []
-        p -> [{fail, p}]
+        p -> [{fail, default_shape(op, kind, p)}]
       end
 
     Enum.reduce(arms ++ default, st, fn {l, p}, st -> goto(l, p, tuple, labels, st) end)
@@ -229,7 +263,9 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
   # The body: the path that entered it is recorded.
   defp step(_instr, idx, path, _tuple, _labels, {acc, seen}), do: {[{idx, path} | acc], seen}
 
-  defp branch(idx, fail, {on_message?, valued?, shaped?}, path, tuple, labels, st) do
+  # `path` goes on where the test passes, `failed` (the same path with
+  # the shape a failure establishes) where it fails.
+  defp branch(idx, fail, {on_message?, valued?, shaped?}, path, failed, tuple, labels, st) do
     pass_path =
       if on_message?,
         do: %{
@@ -243,11 +279,68 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
 
     st = walk(idx + 1, pass_path, tuple, labels, st)
 
-    case fail_path(on_message?, path, fail, tuple, labels) do
+    case fail_path(on_message?, failed, fail, tuple, labels) do
       nil -> st
       p -> goto(fail, p, tuple, labels, st)
     end
   end
+
+  # The shape each side of a test establishes: `{pass, fail}` paths. A
+  # comparison of the message with an atom takes the atom (arity 0); of
+  # its tag, a tuple so tagged; an arity test, a tuple of that arity. A
+  # failed comparison leaves the arity the path had; a failed arity test
+  # leaves none. `is_ne_exact` fails where the two are equal.
+  defp shapes(op, [a, b], path) when op in [:is_eq_exact, :is_eq, :is_ne_exact, :is_ne] do
+    equal =
+      case {Map.get(path.tracked, reg(a)), b, Map.get(path.tracked, reg(b)), a} do
+        {:msg, value, _, _} -> literal_shape(value, path)
+        {_, _, :msg, value} -> literal_shape(value, path)
+        {:tag, {:atom, x}, _, _} -> %{path | shape_tag: x}
+        {_, _, :tag, {:atom, x}} -> %{path | shape_tag: x}
+        _ -> path
+      end
+
+    unequal = if equal == path, do: path, else: %{path | shape_tag: nil}
+
+    if op in [:is_eq_exact, :is_eq], do: {equal, unequal}, else: {unequal, equal}
+  end
+
+  defp shapes(:is_tagged_tuple, [src, n, {:atom, x}], path) when is_integer(n) do
+    if Map.get(path.tracked, reg(src)) == :msg,
+      do: {%{path | shape_tag: x, arity: n}, %{path | shape_tag: nil, arity: nil}},
+      else: {path, path}
+  end
+
+  defp shapes(:test_arity, [src, n], path) when is_integer(n) do
+    if Map.get(path.tracked, reg(src)) == :msg,
+      do: {%{path | arity: n}, %{path | shape_tag: nil, arity: nil}},
+      else: {path, path}
+  end
+
+  defp shapes(_op, _args, path), do: {path, path}
+
+  defp arm_shape(:select_tuple_arity, :msg, n, path) when is_integer(n), do: %{path | arity: n}
+  defp arm_shape(:select_val, :msg, {:atom, x}, path), do: %{path | shape_tag: x, arity: 0}
+  defp arm_shape(:select_val, :tag, {:atom, x}, path), do: %{path | shape_tag: x}
+  defp arm_shape(_op, _kind, _value, path), do: path
+
+  defp default_shape(:select_tuple_arity, :msg, path), do: %{path | shape_tag: nil, arity: nil}
+
+  defp default_shape(:select_val, kind, path) when kind in [:msg, :tag],
+    do: %{path | shape_tag: nil}
+
+  defp default_shape(_op, _kind, path), do: path
+
+  # The message compared whole with a literal: an atom, or a tuple with
+  # an atom first (`handle_info({:tick, :fast}, s)` compiles to one
+  # comparison with the literal tuple).
+  defp literal_shape({:atom, x}, path), do: %{path | shape_tag: x, arity: 0}
+
+  defp literal_shape({:literal, t}, path)
+       when is_tuple(t) and tuple_size(t) > 0 and is_atom(elem(t, 0)),
+       do: %{path | shape_tag: elem(t, 0), arity: tuple_size(t)}
+
+  defp literal_shape(_value, path), do: path
 
   # As in Dispatch: a failed test on the message is the next clause, as
   # constrained as the prefix that passed; a failed test on the state

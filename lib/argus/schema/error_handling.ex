@@ -236,15 +236,17 @@ defmodule Argus.Schema.ErrorHandling do
         layer: 2,
         fields: [
           {:id, :symbol, "the send_after / send_interval / start_timer site"},
-          {:tag, :symbol, "the inspected atom"}
+          {:tag, :symbol, "the inspected atom"},
+          {:arity, :number, "0 when the message is the atom, else the tuple's size"}
         ],
         doc: """
         The atom the message of the timer armed at `id` is told apart by, \
         as a clause head or a receive compares it: the message itself when \
         it is an atom, or the first element of a tuple — a literal one \
         (`{:warm_up, 5}`) or one the arming site builds \
-        (`{:retry, attempts - 1}`). `:erlang.start_timer/3,4`'s is \
-        `:timeout`: it sends `{:timeout, ref, msg}`. No row when the \
+        (`{:retry, attempts - 1}`) — with the message's `arity`: 0 for \
+        the atom, the tuple's size otherwise. `:erlang.start_timer/3,4`'s \
+        is `:timeout`, 3: it sends `{:timeout, ref, msg}`. No row when the \
         message is anything else or does not resolve. A literal tuple's \
         `literal` in timer_arm spells the whole term, which no tag equals.
         """
