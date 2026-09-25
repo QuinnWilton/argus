@@ -26,8 +26,10 @@ defmodule Argus.Cache do
       a change that leaves stage 0's output unchanged re-solves nothing
       downstream of it.
     * `programs/` — the relations each program reads, as Souffle
-      resolves them (`Argus.Souffle.input_relations/2`), kept so a warm
-      run starts no solver at all.
+      resolves them (`Argus.Souffle.input_relations/2`), and the
+      solver's version under a stamp of its binary
+      (`Argus.Souffle.Cache.version/2`), kept so a warm run starts no
+      solver at all.
     * `ebins/` — the hashes of each dependency ebin's beams under a
       stamp of their stats (`Argus.Specs.environment_digest/1`), so a
       fresh VM keys the specs extractor without reading every beam.

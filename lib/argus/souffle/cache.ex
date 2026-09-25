@@ -501,16 +501,105 @@ defmodule Argus.Souffle.Cache do
   @spec version(String.t()) :: String.t()
   def version(bin) do
     stamped({__MODULE__, :version, bin}, fn ->
-      version =
-        try do
-          {out, _status} = System.cmd(bin, ["--version"], stderr_to_stdout: true)
-          out
-        rescue
-          _ -> "unrunnable"
-        end
-
+      {version, _exit} = ask_version(bin)
       {[bin], version}
     end)
+  end
+
+  @doc """
+  `version/1`, kept across VMs in `dir` — a store's `programs/`
+  (`Argus.Cache`), or nil for none — so a fresh VM starts no solver to
+  ask: under a stamp of the binary, its path and the modification time,
+  size and inode of the file it runs. It is the same answer
+  `version/1` gives in the VM after it.
+
+  A stamp names a file, not what the file runs. A script (`#!`), such as
+  a version manager's shim, can run another solver without moving, so
+  its version is asked in every VM, as without `dir`; so is a binary
+  written within the last two seconds, which a stamp cannot tell from a
+  second write within the same second, and an answer the solver gave
+  without exiting cleanly.
+  """
+  @spec version(String.t(), Path.t() | nil) :: String.t()
+  def version(bin, nil), do: version(bin)
+
+  def version(bin, dir) when is_binary(dir) do
+    stamped({__MODULE__, :version, bin}, fn -> {[bin], kept_version(bin, dir)} end)
+  end
+
+  # Moves every kept version: bump it when what an entry holds changes.
+  @version_format "argus-solver-version-1"
+  @racy_seconds 2
+
+  defp kept_version(bin, dir) do
+    case solver_stamp(bin) do
+      {:ok, stamp} ->
+        entry = Path.join(dir, "souffle-" <> Argus.Cache.key([@version_format, bin | stamp]))
+
+        with {:ok, entry} <- Argus.Cache.fetch(entry),
+             {:ok, version} <- File.read(entry) do
+          version
+        else
+          _missing ->
+            case ask_version(bin) do
+              {version, :clean} ->
+                keep_version(entry, version)
+                version
+
+              {version, :unclean} ->
+                version
+            end
+        end
+
+      :unstamped ->
+        {version, _exit} = ask_version(bin)
+        version
+    end
+  end
+
+  # The stat of the file `bin` runs (a symbolic link followed), unless
+  # the stamp cannot vouch for what it runs.
+  defp solver_stamp(bin) do
+    with {:ok, %File.Stat{type: :regular, mtime: mtime, size: size, inode: inode}} <-
+           File.stat(bin, time: :posix),
+         true <- mtime < System.os_time(:second) - @racy_seconds,
+         false <- script?(bin) do
+      {:ok, Enum.map([mtime, size, inode], &Integer.to_string/1)}
+    else
+      _ -> :unstamped
+    end
+  end
+
+  defp script?(bin) do
+    case File.open(bin, [:read, :binary], &IO.binread(&1, 2)) do
+      {:ok, "#!"} -> true
+      {:ok, _} -> false
+      {:error, _} -> true
+    end
+  end
+
+  # A store that cannot be written to is asked around, not failed on.
+  defp keep_version(entry, version) do
+    staging = "#{entry}.#{:os.getpid()}.#{System.unique_integer([:positive])}"
+
+    with :ok <- File.mkdir_p(Path.dirname(entry)),
+         :ok <- File.write(staging, version),
+         :ok <- Argus.Cache.install(staging, entry) do
+      :ok
+    else
+      _ -> File.rm(staging)
+    end
+  end
+
+  # `{output, :clean | :unclean}`: what the solver printed, and whether
+  # it exited cleanly — only a clean answer is kept across VMs.
+  defp ask_version(bin) do
+    case System.cmd(bin, ["--version"], stderr_to_stdout: true) do
+      {out, 0} -> {out, :clean}
+      {out, _status} -> {out, :unclean}
+    end
+  rescue
+    _ -> {"unrunnable", :unclean}
   end
 
   @doc false

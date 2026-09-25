@@ -372,6 +372,16 @@ solves in the suite (44 s); it now re-extracts and re-solves nothing
 renamed re-solves `exposure` alone; a version bump alone, or an edit
 to a decoded relation's prose, moves nothing.
 
+**Added.** `Argus.Souffle.Cache.version/2` keeps the solver's
+`--version` answer in a store's `programs/` under a stamp of its binary
+(path, and the modification time, size and inode of the file it runs),
+and `Argus.Souffle.input_relations/2` with `programs:` reads it there:
+a warm VM with a store starts no solver at all, where it asked the
+solver its version once per VM. A script (a version manager's shim can
+run another solver without moving), a binary written within the last
+two seconds and an answer given by failing are asked in every VM, as
+without a store.
+
 ### What the program's other sites believe
 
 **Changed.** Schema 86. `failure.inconsistent_handling` gains `raises`,

@@ -153,7 +153,9 @@ defmodule Argus.Souffle do
   declaration, but not the comments, of a file of declarations alone)
   and the solver: an edited rule or declaration, or a swapped solver,
   misses. `programs:` names a directory where it is kept across VMs as
-  well (`Argus.Cache`), so a warm run starts no solver to ask.
+  well (`Argus.Cache`), with the solver's version
+  (`Argus.Souffle.Cache.version/2`), so a warm run starts no solver to
+  ask.
   """
   @spec input_relations(Path.t(), keyword()) :: {:ok, [String.t()]} | {:error, term()}
   def input_relations(rules_path, opts \\ []) do
@@ -183,11 +185,14 @@ defmodule Argus.Souffle do
 
         if File.regular?(path) do
           # By the declarations, not their comments: a schema edit that
-          # moves only prose resolves nothing again.
-          version = {Cache.declared_digest(path, :all), bin, Cache.version(bin)}
+          # moves only prose resolves nothing again. With a store, the
+          # solver's version is kept there too: a warm VM starts no
+          # solver at all.
+          programs = Keyword.get(opts, :programs)
+          version = {Cache.declared_digest(path, :all), bin, Cache.version(bin, programs)}
 
           memoized({{__MODULE__, :inputs, path}, version}, fn ->
-            kept(Keyword.get(opts, :programs), path, bin, version)
+            kept(programs, path, bin, version)
           end)
         else
           resolve_inputs(bin, path)

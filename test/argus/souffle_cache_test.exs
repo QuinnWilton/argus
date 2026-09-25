@@ -166,8 +166,90 @@ defmodule Argus.Souffle.CacheTest do
       programs = Path.join(tmp, "programs")
 
       assert {:ok, ["edge"]} = Souffle.input_relations(rules, programs: programs)
-      assert [<<"p-", _key::binary-size(64)>> = name] = File.ls!(programs)
+
+      # Beside the solver's version, when its binary can be stamped
+      # (`version/2`).
+      assert [<<"p-", _key::binary-size(64)>> = name] =
+               programs |> File.ls!() |> Enum.reject(&String.starts_with?(&1, "souffle-"))
+
       assert File.read!(Path.join(programs, name)) == "edge\tedge.facts\n"
+    end
+  end
+
+  describe "version/2" do
+    # A solver on disk that is not a script: a link to a system binary,
+    # which answers `--version` as it answers anything (`echo` prints
+    # the argument back, `true` prints nothing, `false` fails).
+    defp solver!(tmp, target) do
+      bin = Path.join(tmp, "souffle")
+      File.rm(bin)
+      File.ln_s!(target, bin)
+      bin
+    end
+
+    defp kept_versions(dir) do
+      case File.ls(dir) do
+        {:ok, names} -> names |> Enum.filter(&String.starts_with?(&1, "souffle-")) |> Enum.sort()
+        {:error, :enoent} -> []
+      end
+    end
+
+    # The version a fresh VM — one that has asked no solver — gives.
+    defp fresh_version(bin, dir) do
+      {:ok, peer, _node} = :peer.start_link(%{connection: :standard_io})
+
+      try do
+        :ok = :peer.call(peer, :code, :add_pathsa, [:code.get_path()])
+        :peer.call(peer, Cache, :version, [bin, dir], 60_000)
+      after
+        :peer.stop(peer)
+      end
+    end
+
+    test "keeps the answer under the binary's stamp for the next VM", %{tmp_dir: tmp} do
+      bin = solver!(tmp, "/bin/echo")
+      dir = Path.join(tmp, "programs")
+      {answer, 0} = System.cmd(bin, ["--version"])
+
+      assert Cache.version(bin, dir) == answer
+      assert [<<"souffle-", _key::binary-size(64)>> = kept] = kept_versions(dir)
+      assert File.read!(Path.join(dir, kept)) == answer
+
+      # A fresh VM reads the kept answer instead of asking: a planted
+      # one shows.
+      File.chmod!(Path.join(dir, kept), 0o644)
+      File.write!(Path.join(dir, kept), "planted")
+      assert fresh_version(bin, dir) == "planted"
+
+      # Another binary at the same path is another stamp: asked again.
+      bin = solver!(tmp, "/usr/bin/true")
+      assert fresh_version(bin, dir) == ""
+      assert length(kept_versions(dir)) == 2
+    end
+
+    test "asks a script every time and keeps nothing", %{tmp_dir: tmp} do
+      # A version manager's shim runs another solver without moving.
+      bin = Path.join(tmp, "souffle")
+      File.write!(bin, "#!/bin/sh\necho 2.5\n")
+      File.chmod!(bin, 0o755)
+      File.touch!(bin, System.os_time(:second) - 60)
+      dir = Path.join(tmp, "programs")
+
+      assert Cache.version(bin, dir) == "2.5\n"
+      assert kept_versions(dir) == []
+    end
+
+    test "keeps nothing a solver answered by failing", %{tmp_dir: tmp} do
+      bin = solver!(tmp, "/usr/bin/false")
+      dir = Path.join(tmp, "programs")
+
+      assert Cache.version(bin, dir) == ""
+      assert kept_versions(dir) == []
+    end
+
+    test "without a store is version/1", %{tmp_dir: tmp} do
+      bin = solver!(tmp, "/bin/echo")
+      assert Cache.version(bin, nil) == Cache.version(bin)
     end
   end
 
