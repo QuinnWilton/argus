@@ -11,8 +11,12 @@ defmodule Argus.Analyses.Startup do
     made ready: a synchronous `call` (to a sibling that starts `later`,
     a deadlock by construction; or one whose place is `unknown`, with
     `detail` saying whether every init takes the path), a `cast` to a
-    later sibling, a `sup` management call, a `blocking_server` whose
-    handler blocks without bound, the `parent` supervisor mid-start, a
+    later sibling or a `window_call` to one that does not hold the start
+    (after init/1's ack, or in a task init/1 starts: a race with the
+    supervisor's start of it), a `sup` management call, a
+    `blocking_server` whose handler blocks without bound, the `parent`
+    supervisor mid-start (from handle_continue, or from init/1 after its
+    ack: phase `acked`), a
     `global` lock that retries (`dep` says whether it waits on the
     `cluster`, only the `local` node, or an `unknown` node list) or a
     `remote` operation on the boot path.
@@ -76,11 +80,11 @@ defmodule Argus.Analyses.Startup do
         name: :blocks_on_peer,
         fields: [
           {:mod, :symbol, "the child module (the init function, for global and remote)"},
-          {:phase, :symbol, "init | continue"},
+          {:phase, :symbol, "init | continue | acked (init/1 after its ack)"},
           {:dep, :symbol,
            "the peer waited on; for global, the nodes the lock waits on (cluster | local | unknown); empty for remote"},
           {:kind, :symbol,
-           "call | cast | sup | blocking_server | parent | global | global_assumed | global_bounded | remote"},
+           "call | cast | window_call | sup | blocking_server | parent | global | global_assumed | global_bounded | remote"},
           {:ordering, :symbol, "later | earlier | parent | unknown, or empty"},
           {:sup, :symbol, "the supervisor placing both, when the ordering is known"},
           {:site, :symbol,
@@ -486,6 +490,26 @@ defmodule Argus.Analyses.Startup do
           do: Findings.at_mfa(worker, :handle_continue, 2),
           else: Findings.at_site(site, worker)
         ),
+      at_label: "calls the parent supervisor here",
+      help: [
+        "move the supervisor query out of startup: pass the information as " <>
+          "an init argument, or query later from a message sent once the " <>
+          "tree is up"
+      ],
+      related: [Findings.related("parent supervisor", Findings.at_module(sup))]
+    )
+  end
+
+  def finding(:blocks_on_peer, [worker, "acked", sup, "parent", _, _, site, detail]) do
+    Findings.new(
+      :warning,
+      "init/1 calls its own supervisor after acknowledging its start",
+      "#{worker}'s init/1 acknowledges its start and then calls #{detail} on its " <>
+        "parent #{sup}, which has moved on to start the children after it and " <>
+        "reads no mailbox until they are up. The worker blocks until the rest " <>
+        "of the child list is up — and if any later child waits on #{worker}, " <>
+        "startup deadlocks. The ack released the start, not the tree.",
+      at: Findings.at_site(site, worker),
       at_label: "calls the parent supervisor here",
       help: [
         "move the supervisor query out of startup: pass the information as " <>

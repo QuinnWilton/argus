@@ -301,6 +301,13 @@ defmodule Argus.Analyses.SingletonShapesTest do
              "Argus.Test.Fixtures.InitAck.CallsBefore"
            ]
 
+    # The startup window does not end at the ack: the supervisor has moved
+    # on to start Later, and the call races it (a warning, not the
+    # deadlock).
+    assert heads.(phase: "init", kind: "window_call", ordering: "later") == [
+             "Argus.Test.Fixtures.InitAck.CallsAfter"
+           ]
+
     # After the ack they are the server's waits, and blocking's findings.
     {:ok, b} =
       Memo.analyze(
@@ -319,7 +326,7 @@ defmodule Argus.Analyses.SingletonShapesTest do
     assert waits.("global") == ["Argus.Test.Fixtures.InitAck.LockAfter:init/1"]
   end
 
-  test "a call a task init/1 starts makes to a later sibling is no deadlock" do
+  test "a call a task init/1 starts makes to a later sibling is no deadlock, but races it" do
     skip_without_souffle()
 
     alias InitRecv.TaskCalls
@@ -328,9 +335,15 @@ defmodule Argus.Analyses.SingletonShapesTest do
       Memo.analyze([TaskCalls.Sup, TaskCalls.Early, TaskCalls.Later], :startup)
 
     assert Rows.where(r, :startup, "blocks_on_peer", phase: "init", kind: "call") == []
+
+    # The task runs while the supervisor goes on to start Later.
+    assert r
+           |> Rows.where(:startup, "blocks_on_peer", phase: "init", kind: "window_call")
+           |> Enum.map(&hd/1)
+           |> Enum.uniq() == ["Argus.Test.Fixtures.InitRecv.TaskCalls.Early"]
   end
 
-  test "a cast a task init/1 starts makes to a later sibling is the task's" do
+  test "a cast a task init/1 starts makes to a later sibling races its start" do
     skip_without_souffle()
 
     alias InitRecv.TaskCasts
@@ -338,10 +351,17 @@ defmodule Argus.Analyses.SingletonShapesTest do
     {:ok, r} =
       Memo.analyze([TaskCasts.Sup, TaskCasts.InTask, TaskCasts.Direct, TaskCasts.Later], :startup)
 
+    # Review 2, item 11: InTask's task runs at once, while the supervisor
+    # goes on to start Later, and its cast to the unregistered name is
+    # dropped; 87209008 had made it the task's own and quiet.
     assert r
            |> Rows.where(:startup, "blocks_on_peer", phase: "init", kind: "cast")
            |> Enum.map(&hd/1)
-           |> Enum.uniq() == ["Argus.Test.Fixtures.InitRecv.TaskCasts.Direct"]
+           |> Enum.uniq()
+           |> Enum.sort() == [
+             "Argus.Test.Fixtures.InitRecv.TaskCasts.Direct",
+             "Argus.Test.Fixtures.InitRecv.TaskCasts.InTask"
+           ]
   end
 
   test "a connect, a lock or a supervisor call in a task init/1 starts holds nothing" do

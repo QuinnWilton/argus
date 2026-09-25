@@ -231,7 +231,8 @@ end
 defmodule Argus.Test.Fixtures.InitRecv.TaskCalls do
   @moduledoc false
   # init/1 starts a task that calls a sibling the supervisor starts
-  # later: the task waits, init does not, and the start is no deadlock.
+  # later: the task waits, init does not, and the start is no deadlock;
+  # the task's call races the sibling's start (a window_call).
 
   defmodule Early do
     @moduledoc false
@@ -278,9 +279,10 @@ end
 defmodule Argus.Test.Fixtures.InitRecv.TaskCasts do
   @moduledoc false
   # A cast to a sibling the supervisor starts later: InTask's init/1
-  # starts a task that makes it, whenever the task gets to it, and holds
-  # nothing; Direct's init/1 makes it itself, before the sibling exists,
-  # and the cast is dropped.
+  # starts a task that makes it at once, while the supervisor goes on to
+  # start the sibling, and the cast is dropped on nearly every boot;
+  # Direct's init/1 makes it itself, before the sibling exists, and the
+  # cast is dropped on every boot. Both are reported.
 
   defmodule InTask do
     @moduledoc false

@@ -3,7 +3,9 @@ defmodule Argus.Test.Fixtures.InitAck do
   Servers `:proc_lib.start_link/3` starts: what init/1 does before
   `:proc_lib.init_ack/1` holds its starter, and what it does after runs
   as the server, the start already returned. Each pair differs only in
-  which side of the ack the wait is on.
+  which side of the ack the wait is on. The startup window outlives the
+  ack: a call to a later sibling after it still races that sibling's
+  start.
   """
 
   defmodule RpcBefore do
@@ -81,7 +83,11 @@ defmodule Argus.Test.Fixtures.InitAck do
   end
 
   defmodule CallsAfter do
-    @moduledoc "The same call after the ack: the supervisor has moved on to start the sibling."
+    @moduledoc """
+    The same call after the ack: the supervisor has moved on to start the
+    sibling, so it is no deadlock, but the call races that start and
+    exits :noproc when it wins (reported, as a handle_continue's is).
+    """
     use GenServer
 
     alias Argus.Test.Fixtures.InitAck.Later

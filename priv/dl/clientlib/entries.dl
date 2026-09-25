@@ -10,20 +10,18 @@
 // Requires otp.dl (callbacks.dl, calls.dl and init_phase.dl in
 // particular).
 
-// init/1 reaches a synchronous ("call") or one-way ("cast") dependency
-// on another process before it acknowledges its start (init_phase.dl): an
-// init/1 that acks and then calls runs that call as the server. No
-// `mod != to` filter: an init that calls its own module is the caller's
-// to judge.
+// init/1 reaches a synchronous dependency ("call") on another process
+// before it acknowledges its start (init_phase.dl): what holds the
+// start. An init/1 that acks and then calls runs that call as the
+// server. No `mod != to` filter: an init that calls its own module is
+// the caller's to judge.
 .decl init_dep(mod: symbol, to_mod: symbol, kind: symbol, witness: symbol)
 
 init_dep(mod, to, "call", f) :- init_function(mod, f), !acks_in_init(f), reaches_sync_dep(f, to).
-init_dep(mod, to, "cast", f) :- init_function(mod, f), !acks_in_init(f), reaches_async_dep(f, to).
 
 // An init/1 that acks: its own calls before the ack (by site: a
 // function's dependencies are not), and what the helpers it calls before
-// the ack wait on. A cast carries no site, so an acking init/1's own
-// casts are all its phase's, before the ack or after.
+// the ack wait on.
 init_dep(mod, to, "call", f) :-
   init_function(mod, f),
   acks_in_init(f),
@@ -37,11 +35,41 @@ init_dep(mod, to, "call", f) :-
   g != f,
   sync_dep(g, to).
 
-init_dep(mod, to, "cast", f) :-
-  init_function(mod, f),
-  acks_in_init(f),
-  before_ack.reaches(f, g),
+// ── The startup window ───────────────────────────────────────────────
+//
+// What holds the start ends at the ack; the startup window does not.
+// Until the supervisor has started every child after this one, a call or
+// a cast to one of them lands on a name nobody holds: a cast is dropped
+// without an error, a call exits :noproc. init/1 runs in that window on
+// its own stack, before its ack and after it (the supervisor moves on
+// the moment it acks, as it does when a handle_continue runs), and so
+// does whatever init/1 starts: a task or a spawn runs at once, while the
+// supervisor goes on to the later siblings — a race nearly every boot
+// loses, and every boot when init/1 awaits the task. The window is
+// init/1's whole reach over the call graph, what runs elsewhere
+// included, less the logging and telemetry APIs (side_call, calls.dl).
+//
+// init_window_dep(mod, to, kind, witness): init/1 reaches a one-way
+// dependency ("cast"), or a synchronous one that does not hold its start
+// ("window_call": after the ack, or in what it starts) — the start-order
+// rule's warning, where "call" (init_dep) is its deadlock.
+.decl init_window_dep(mod: symbol, to_mod: symbol, kind: symbol, witness: symbol)
+
+.init init_window = ForwardCallReachCut
+
+init_window.cut(f, g) :- side_call(f, g).
+init_window.root(i, i) :- init_function(_, i).
+
+init_window_dep(mod, to, "cast", i) :-
+  init_function(mod, i),
+  init_window.reaches(i, g),
   async_dep(g, to).
+
+init_window_dep(mod, to, "window_call", i) :-
+  init_function(mod, i),
+  init_window.reaches(i, g),
+  sync_dep(g, to),
+  !init_dep(mod, to, "call", _).
 
 // A GenServer request handler waits on another process: through a
 // resolved call ("call"), or only through a tag-attributed one ("tag").

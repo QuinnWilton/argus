@@ -463,7 +463,8 @@ Work in a phase whose invariants do not hold yet: `init/1` runs inside the super
 - Children and dependencies are compared by module; two instances of one module under different supervisors are not told apart.
 - Target resolution is blocking's (literal names, client wrappers, process points-to, tag attribution); a call to an unresolved pid is missed.
 - The same call is also reported as "init/1 blocks on a synchronous call" (the unknown-place rule does not exclude a later sibling; the test pins both rows).
-- Suppressed: a call made in a task `init/1` starts (`InitRecv.TaskCalls`), and a call only to a pure function of the sibling's module (`InitPureCaller`).
+- Suppressed: a call made in a task `init/1` starts (`InitRecv.TaskCalls`), and a call only to a pure function of the sibling's module (`InitPureCaller`). Neither is silent: the task's call is the next class's `window_call`.
+- Only a call that holds the start counts: one before `init/1` acknowledges it (`:proc_lib.init_ack`, `init_phase.dl`). A call after the ack no longer holds the start, and is the next class's `window_call` (`InitAck.CallsAfter`).
 
 **Fixtures.** Positive: `DeadlockOrderSupervisor` with `SyncInitServer` and `WorkerA` (test/fixtures/sync_init_fixture.ex, test/fixtures/supervision_fixture.ex); `ProcessDepSupervisor` with `InitProcessCaller` and `InitDepWorker` (test/fixtures/supervision_fixture.ex). Quiet: `PureDepSupervisor` with `InitPureCaller` and `InitDepWorker`; `InitRecv.TaskCalls.Sup` with `Early` and `Later` (test/fixtures/init_recv_fixture.ex); `boot_order_sup`'s `boot_order_site` (a template child the manager starts once up) beside the reported `boot_order_early` (test/fixtures/erl). Reported, the nearest real bugs of the boot-order narrowing: `boot_nested_leaf` and `boot_nested_cont` (a static child two levels down an earlier branch), `boot_started_sup`'s `boot_order_site` (a template child an earlier sibling's init/1 starts) and `BootDyn.Worker` (a DynamicSupervisor child an earlier sibling's init/1 starts) (test/fixtures/erl, test/fixtures/supervision_fixture.ex). Asserted in test/analyses/startup_init_test.exs, startup_supervision_test.exs and singleton_shapes_test.exs.
 
@@ -473,17 +474,17 @@ Work in a phase whose invariants do not hold yet: `init/1` runs inside the super
 
 ### Child starts before a sibling it casts to
 
-`blocks_on_peer` · phase=`init`, kind=`cast`, ordering=`later`
+`blocks_on_peer` · phase=`init`, kind=`cast` | `window_call`, ordering=`later`
 · titles: "Child starts before its dependency" (`:warning`)
 
-**Property.** A supervisor S lists child C before child D, and C's `init/1` sends D's process a one-way request (a cast) and makes no synchronous call to it. When C's `init/1` runs, D is not alive yet: a cast to a name nothing has registered is dropped without an error, so whatever it was meant to start never happens. The finding anchors at the tree definition, with the function that casts and D as related frames.
+**Property.** A supervisor S lists child C before child D, and in the startup window C's `init/1` sends D's process a one-way request (`cast`), or a synchronous one that does not hold C's start (`window_call`: after `init/1` acknowledges its start, or in a task or spawn `init/1` starts). When it runs, D may not be alive yet: a cast to a name nothing has registered is dropped without an error, and a call exits `:noproc`, crashing C into a restart. The finding anchors at the tree definition, with `init/1` and D as related frames.
 
 **Assumptions and limits.**
-- A cast from a task or spawn `init/1` starts is counted as `init/1`'s own: the one-way dependency is propagated over every call edge, including the edge into what a start runs.
+- The window (`init_window_dep`, clientlib/entries.dl) is `init/1`'s whole reach over the call graph, what a task, spawn or agent it starts runs included, less the logging and telemetry APIs. A started process runs at once, while the supervisor goes on to the later siblings (a race nearly every boot loses; every boot when `init/1` awaits the task), and the supervisor moves on the moment `init/1` acks, as it does while a handle_continue runs. Soundness assumption: what `init/1` starts or runs after its ack runs before the later sibling registers. Review 2 found both halves suppressed: item 11 (87209008 made a task's cast the task's own: `InitRecv.TaskCasts.InTask`, now reported) and item 12 (b918a331 cut the walk at the ack: `InitAck.CallsAfter`, now reported). A closure created in `init/1` and run only later (kept in the state) is over-approximated as run in the window.
 - When C both calls and casts to D, only the synchronous deadlock is reported.
 - Static trees only, as above.
 
-**Fixtures.** None.
+**Fixtures.** Positive: `InitRecv.TaskCasts.InTask`, `InitRecv.TaskCasts.Direct`, `InitRecv.TaskCalls.Early` (`window_call`) (test/fixtures/init_recv_fixture.ex), `InitAck.CallsAfter` (test/fixtures/init_ack_fixture.ex), asserted in test/analyses/singleton_shapes_test.exs; `Soundness.Startup.TaskCast`, `AwaitedTaskCast`, `SpawnCast` (a bare spawn from a helper), `AckEarly`, `AckHelpers` (a call and a cast in a helper after the ack), in test/soundness/startup_test.exs.
 
 **Corpus.** None.
 
@@ -521,6 +522,7 @@ Work in a phase whose invariants do not hold yet: `init/1` runs inside the super
 - Reported for every management operation at `:info`: whether a child calls back is not asked.
 - `detail` is `api.op`; one finding per operation per module.
 - A supervisor call in a task `init/1` starts, or in a fun it builds into a child's options and does not run, is not `init/1`'s.
+- A call after `init/1` acknowledges its start (`:proc_lib.init_ack`) no longer holds the start, and is not this class's; one on the worker's own supervisor is the next class's `acked` phase.
 
 **Fixtures.** Positive: `StartsChildrenInInit` (test/fixtures/sync_init_fixture.ex, `DynamicSupervisor.start_child` on the name `PoolSup`). Quiet: `InitRecv.SpawnsWork` (test/fixtures/init_recv_fixture.ex). Asserted in test/analyses/startup_init_test.exs and singleton_shapes_test.exs.
 
@@ -567,14 +569,15 @@ Work in a phase whose invariants do not hold yet: `init/1` runs inside the super
 
 ### handle_continue calls its own supervisor
 
-`blocks_on_peer` · phase=`continue`, kind=`parent`
-· titles: "handle_continue calls its own supervisor" (`:warning`)
+`blocks_on_peer` · phase=`continue` | `acked`, kind=`parent`
+· titles: "handle_continue calls its own supervisor" (`:warning`); "init/1 calls its own supervisor after acknowledging its start" (`:warning`, phase `acked`)
 
 **Property.** A worker W whose `init/1` continues is a static child of supervisor S and not its last one, and a `handle_continue/2` of W, on its own stack, makes a supervisor management call on S (`Supervisor.which_children/1`, `count_children/1`, `start_child/2`, ...) or a synchronous call that waits on S's process. S is still in `start_link`, starting the children after W and not reading its mailbox, so W blocks until the rest of the child list is up; if a later child waits on W, startup deadlocks. `detail` is the management call's `api.op` (empty for a plain synchronous call) and `site` the call.
 
 **Assumptions and limits.**
 - Both a management call (`sup_management_call`, read through the continue's own stack by `sup_reach`, as init/1's supervisor calls are) and a synchronous call the call resolution sees as a dependency on S's process count. A target S is the supervisor module a call names (its registered name); a pid or a computed name is not judged.
 - W as S's last child is quiet (`ContinueLastChildCaller`): its init returning is S's last wait, and S reads its mailbox as soon as the continue runs. Whether a later child actually waits on W is not asked.
+- `acked`: the same management call made by W's `init/1` after it acknowledges its start (`:proc_lib.init_ack`), on its own stack or in a helper it calls there (`acked_on_stack`): the ack released the start, not the tree, and S is as busy as while a handle_continue runs. Review 2 (item 12) found b918a331 cutting this at the ack. Positive: `Soundness.Startup.AckAsksSup.Worker`, `AckSupHelper.Worker`; quiet: `AckLastAsksSup.Worker` (the last child) (test/soundness/startup_test.exs).
 - Static trees only.
 
 **Fixtures.** Positive: `ContinueParentCallerServer` with `ContinueParentSupervisor`, whose later child is `ContinueParentLaterSibling` (test/fixtures/continue_chain_fixture.ex). Quiet: `ContinueLastChildCaller` with `ContinueLastChildSupervisor`. Asserted in test/analyses/startup_continue_test.exs.
@@ -688,6 +691,7 @@ Work in a phase whose invariants do not hold yet: `init/1` runs inside the super
 - The rule does not ask whether `init/1` fails when the connect fails; an `init/1` that keeps the error and returns `{:ok, state}` is still reported.
 - `:gen_udp.open` binds a local port and does not wait on a remote dependency.
 - One finding per module; a connect in a task `init/1` starts is not `init/1`'s (`InitRecv.SpawnsWork`).
+- The walk is not cut where `init/1` acknowledges its start: a connect after the ack still crashes the child a moment after its start returned, into the same restart loop (review 2, item 12: b918a331 cut it). Positive: `Soundness.Startup.AckConnect`, `AckConnectHelper` (test/soundness/startup_test.exs).
 
 **Fixtures.** Positive: `Hypothesized.ConnectInInit` (test/fixtures/hypothesized_shapes_fixture.ex). Quiet: `Hypothesized.ConnectWithBackoff`, `Hypothesized.ConnectWithGenericBackoff`; `InitRecv.SpawnsWork`. Asserted in test/analyses/hypothesized_shapes_test.exs and singleton_shapes_test.exs.
 

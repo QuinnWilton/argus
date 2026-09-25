@@ -229,15 +229,11 @@ blocks_on_peer(mod, "init", callee, "call", "unknown", "", site, "conditional") 
   init_wait(mod, callee, site).
 
 // A call to a sibling that starts later is reported once, with the
-// tree ordering, under "Start order" below (later_sibling_call): the
+// tree ordering, under "Start order" below (later_sibling_dep): the
 // deadlock, not also a call of unknown place beside it.
 .decl later_sibling_call(child: symbol, dep: symbol)
 
-later_sibling_call(child, dep) :-
-  supervisor_site(sup, _),
-  boots_before(sup, child, dep, _, _),
-  init_dep(child, dep, "call", _),
-  child != dep.
+later_sibling_call(child, dep) :- later_sibling_dep(child, dep, "call", _, _, _).
 
 // ── Supervisor management calls from init/1 ──────────────────────────
 //
@@ -540,12 +536,13 @@ connect_api(api) :- impure_call(_, _, api, "network", _), match(":httpc.request/
 .init connect_reach = SameProcessReachCut
 
 connect_reach.cut(f, g) :- side_call(f, g).
-connect_reach.cut(f, g) :- acked_edge(f, g).
 
-connect_reach.seed(f, api) :-
-  impure_call(id, f, api, "network", _),
-  connect_api(api),
-  !start_acked(id, f).
+// Not cut at the ack: a connect after it still crashes the child a
+// moment after its start returned when the peer is not up yet, and the
+// supervisor restarts it at once, into the same crash, until the tree
+// gives up. The ack moves the crash out of the start, not out of the
+// restart loop.
+connect_reach.seed(f, api) :- impure_call(_, f, api, "network", _), connect_api(api).
 
 // A retry needs a way back in: a timer, a self-message, a
 // handle_continue, or a gen_statem's own timeout (postgrex's connections
@@ -559,17 +556,32 @@ init_effect(mod, "connect", api, "") :-
 
 // ── Anti-patterns ────────────────────────────────────────────────
 
-// A child's init/1 depends on another process, synchronously or by cast,
-// and that process starts later under the same supervisor: a synchronous
-// dependency is a deadlock by construction (the supervisor cannot reach
-// the dependency until this init returns), a one-way one runs against a
-// process that is not alive yet. One row per witness; the finding
-// builders keep one per (child, dep) and the synchronous one wins.
-blocks_on_peer(child, "init", dep, kind, "later", sup, sup_site, witness) :-
+// A child's init/1 depends on another process, and that process starts
+// later under the same supervisor. A synchronous dependency that holds
+// the start (init_dep "call": before the ack, on init/1's own stack) is a
+// deadlock by construction: the supervisor cannot reach the dependency
+// until this init returns. One in the startup window that does not hold
+// it (init_window_dep, entries.dl: a cast, or a call after the ack or in
+// what init/1 starts) runs against a process that is not alive yet: the
+// cast is dropped, the call exits :noproc, as a handle_continue's does.
+// One row per witness; the finding builders keep one per (child, dep)
+// and the synchronous one wins.
+.decl later_sibling_dep(child: symbol, dep: symbol, kind: symbol, sup: symbol, sup_site: symbol, witness: symbol)
+
+later_sibling_dep(child, dep, kind, sup, sup_site, witness) :-
   supervisor_site(sup, sup_site),
   boots_before(sup, child, dep, _, _),
   init_dep(child, dep, kind, witness),
   child != dep.
+
+later_sibling_dep(child, dep, kind, sup, sup_site, witness) :-
+  supervisor_site(sup, sup_site),
+  boots_before(sup, child, dep, _, _),
+  init_window_dep(child, dep, kind, witness),
+  child != dep.
+
+blocks_on_peer(child, "init", dep, kind, "later", sup, sup_site, witness) :-
+  later_sibling_dep(child, dep, kind, sup, sup_site, witness).
 
 // ══ Deferred startup: handle_continue ═══════════════════════════════
 //
@@ -612,6 +624,34 @@ has_later_sibling(sup, worker) :- boots_before(sup, worker, _, _, _).
 
 blocks_on_peer(worker, "continue", sup, "parent", "parent", sup, site, detail) :-
   continues_on_stack(worker, site, sup, detail),
+  supervisor(sup, _),
+  supervisor_child(sup, _, worker, _, _),
+  has_later_sibling(sup, worker).
+
+// The same call made by init/1 after it acknowledges its start
+// (acked_on_stack): the supervisor has moved on to the later children
+// and reads no mailbox until they are up, as it does while a
+// handle_continue runs. Not the start's hold, which ended at the ack.
+.decl acked_on_stack(worker: symbol, site: symbol, sup: symbol, detail: symbol)
+
+.init after_ack = ForwardSameProcessReachCut
+
+after_ack.cut(f, g) :- side_call(f, g).
+after_ack.root(i, g) :- before_ack.reaches(i, f), acked_edge(f, g).
+
+acked_on_stack(worker, site, sup, cat(api, ".", op)) :-
+  init_function(worker, i),
+  before_ack.reaches(i, f),
+  sup_management_call(site, f, api, op, sup),
+  start_acked(site, f).
+
+acked_on_stack(worker, site, sup, cat(api, ".", op)) :-
+  init_function(worker, i),
+  after_ack.reaches(i, g),
+  sup_management_call(site, g, api, op, sup).
+
+blocks_on_peer(worker, "acked", sup, "parent", "parent", sup, site, detail) :-
+  acked_on_stack(worker, site, sup, detail),
   supervisor(sup, _),
   supervisor_child(sup, _, worker, _, _),
   has_later_sibling(sup, worker).

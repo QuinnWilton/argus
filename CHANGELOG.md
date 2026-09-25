@@ -221,6 +221,24 @@ head fixes the tag to `:EXIT` or fixes none; the extractor's clause-head
 walk now also reads a clause that matches an atom message. Read by
 shutdown.
 
+**Fixed.** The startup window outlives what holds the start. Two
+suppressions had cut it short: a cast a task `init/1` starts makes was
+the task's own (87209008), and every walk of `init/1` ended at its
+`:proc_lib.init_ack` (b918a331). Both go on while the supervisor starts
+the later siblings. `init_dep` (clientlib/entries.dl) now names only a
+synchronous dependency that holds the start ("call": the deadlock); a
+new `init_window_dep` names what `init/1` reaches in the window, what it
+starts and what it runs after its ack included: a "cast", or a
+"window_call" that does not hold the start, both "Child starts before
+its dependency" (`:warning`) against a later sibling. A management call
+on the worker's own supervisor after the ack is a new `blocks_on_peer`
+phase, `acked`: "init/1 calls its own supervisor after acknowledging
+its start" (`:warning`, handle_continue's Pattern 3). A connect with no
+way to retry is read on both sides of the ack. startup's start-order
+rule and its `later_sibling_call` share one relation,
+`later_sibling_dep`. `InitRecv.TaskCasts.InTask` and
+`InitAck.CallsAfter` are reported now.
+
 ### Priors, round 3: tooling, and programs found on PATH
 
 **Added.** Schema 118. `tooling_module(mod, basis)` from a new
