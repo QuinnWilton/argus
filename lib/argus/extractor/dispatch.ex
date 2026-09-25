@@ -531,17 +531,28 @@ defmodule Argus.Extractor.Dispatch do
   term of any type passes), equals only itself, and is no tuple, so
   `select_tuple_arity` takes its fail label. A test this does not read
   takes both edges, which keeps the set a superset of what runs.
+
+  With `avoid`, an instruction index, the walk does not step onto it:
+  what is reached without passing it. An instruction reached with the
+  value but not without `avoid` is on every path the value takes to it.
   """
-  @spec reached_with([tuple()], {:x, non_neg_integer()}, atom()) :: MapSet.t(non_neg_integer())
-  def reached_with(instrs, register, value) when is_atom(value) do
+  @spec reached_with(
+          [tuple()],
+          {:x, non_neg_integer()},
+          atom(),
+          non_neg_integer() | nil
+        ) :: MapSet.t(non_neg_integer())
+  def reached_with(instrs, register, value, avoid \\ nil) when is_atom(value) do
     tuple = List.to_tuple(instrs)
     labels = labels(instrs)
 
     # `seen` and `reached` are maps, not MapSets, for the reason
     # argument_tags/2's `seen` is: dialyzer loses the opacity through the
-    # recursion.
+    # recursion. The avoided index is seen from the start.
+    seen = if avoid, do: %{avoid => true}, else: %{}
+
     [{entry_index(instrs), [register]}]
-    |> walk_fixed(tuple, labels, value, %{}, %{})
+    |> walk_fixed(tuple, labels, value, seen, %{})
     |> Map.keys()
     |> MapSet.new()
   end
@@ -549,7 +560,7 @@ defmodule Argus.Extractor.Dispatch do
   defp walk_fixed([], _tuple, _labels, _value, _seen, reached), do: reached
 
   defp walk_fixed([{idx, held} = state | rest], tuple, labels, value, seen, reached) do
-    if idx >= tuple_size(tuple) or Map.has_key?(seen, state) do
+    if idx >= tuple_size(tuple) or Map.has_key?(seen, state) or Map.has_key?(seen, idx) do
       walk_fixed(rest, tuple, labels, value, seen, reached)
     else
       next = fixed_step(elem(tuple, idx), idx, held, labels, value)

@@ -10,6 +10,21 @@ What 0.20.0 will ship; the release dates this heading and drops the
 `-dev` from `mix.exs`. Grouped by concern. Each entry opens with what it
 does: **Added**, **Changed**, **Fixed** or **Removed**.
 
+### Mining, round 3: the live bugs, read against their verdicts
+
+Round 2 of the FP hunt found real bugs in the programs it read; round 3
+of the mining asked of each whether argus reports it with the right
+class, severity and anchor, and fixed what it did not.
+
+**Added.** `info_clause_always(id, func, tag)` (ClauseCall): in a
+handle_info/2, the call at `id` runs on every path the clause for the
+atom `tag` takes to a return that goes on — every return or tail call
+the message reaches is reached only through it, a `{:stop, ...}` return
+and a tail call to `:erlang.error/1` and the other raises left out
+(`Argus.Extractor.Dispatch.reached_with/4`, which takes an instruction
+to avoid). `clause_call` now has a row for Erlang's `!` too (the `send`
+instruction, where Elixir's `send/2` is a call). Schema 117.
+
 ### Points-to that finishes on a large program
 
 **Fixed.** The points-to stage finishes on Ash (1,327 modules), where it

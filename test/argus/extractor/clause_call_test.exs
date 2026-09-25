@@ -64,6 +64,69 @@ defmodule Argus.Extractor.ClauseCallTest do
     refute Map.has_key?(tags, "helper")
   end
 
+  describe "info_clause_always" do
+    alias Argus.Test.Fixtures.TimerLoop, as: T
+
+    # The callees of the handle_info/2 sites that run on every path of
+    # their clause that goes on.
+    defp always(mod) do
+      {:ok, facts} = Argus.Pipeline.extract([mod], extractors: [Argus.Extractors.ClauseCall])
+
+      always =
+        facts |> Map.get(:info_clause_always, []) |> Map.new(fn [id, _f, tag] -> {id, tag} end)
+
+      for [id, _caller, callee_mod, func, _arity] <- Map.fetch!(facts, :remote_call),
+          tag = Map.get(always, id),
+          do: {callee_mod, func, tag}
+    end
+
+    test "a re-arm on the clause's one path is always; one on a branch is not" do
+      # The badmap raise the compiler puts after `state.interval` is no
+      # completion.
+      assert {":erlang", "send_after", ":reload"} in always(T.ReloadLoop)
+
+      refute Enum.any?(always(T.RetryLoop), &match?({":erlang", "send_after", _}, &1))
+    end
+
+    test "a return of {:stop, ...} leaves the loop, and does not count" do
+      [{_mod, bin}] =
+        Code.compile_string("""
+        defmodule Argus.ClauseCallTest.StopsOnError do
+          use GenServer
+          def init(s), do: {:ok, s}
+
+          def handle_info(:tick, state) do
+            case Application.get_env(:probe, :ok, :ok) do
+              :ok ->
+                Process.send_after(self(), :tick, 1000)
+                {:noreply, state}
+
+              reason ->
+                {:stop, reason, state}
+            end
+          end
+        end
+        """)
+
+      {:ok, data} = Argus.Pipeline.Disassemble.disassemble_path(bin)
+
+      assert [[_id, _func, ":tick"] | _] =
+               Argus.Extractors.ClauseCall.extract(data)
+               |> Map.get(:info_clause_always, [])
+               |> Enum.filter(fn [id, _, _] -> String.contains?(id, "handle_info") end)
+    end
+
+    test "an Erlang send is a site of its clause" do
+      {:ok, facts} =
+        Argus.Pipeline.extract([:timer_loop_resend], extractors: [Argus.Extractors.ClauseCall])
+
+      # The `!` in the clause for `report` is that clause's.
+      assert Enum.any?(facts[:clause_call], fn [id, _f, tag] ->
+               tag == ":report" and String.contains?(id, "handle_info")
+             end)
+    end
+  end
+
   describe "skipped_on_shutdown" do
     alias Argus.Test.Fixtures.SiblingGuard, as: G
 

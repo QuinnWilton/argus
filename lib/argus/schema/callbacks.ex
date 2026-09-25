@@ -100,7 +100,8 @@ defmodule Argus.Schema.Callbacks do
           {:tag, :symbol, "the inspected tag its first argument is established to be"}
         ],
         doc: """
-        The call at `id` runs only while `func`'s first argument is `tag` — \
+        The call (or Erlang `!`, the send instruction) at `id` runs only \
+        while `func`'s first argument is `tag` — \
         the atom, or the first element of the tuple, some path to the call \
         tested it against — one row per such tag. A call some path reaches \
         without establishing a tag has no row. Exact per path, unlike \
@@ -109,6 +110,25 @@ defmodule Argus.Schema.Callbacks do
         dispatcher (`route(:local, n)`) a literal argument enters, so the \
         `:echo` clause that closes a cycle does not stand for the `:answer` \
         clause beside it.
+        """
+      },
+      %{
+        name: :info_clause_always,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "a call, or an Erlang send"},
+          {:func, :symbol, "the handle_info/2 holding it"},
+          {:tag, :symbol, "the inspected atom the clause takes"}
+        ],
+        doc: """
+        In a handle_info/2, the call at `id` runs on every path the clause \
+        for the atom `tag` takes to a return that lets the process go on: \
+        every return or tail call the message reaches is reached only \
+        through `id` (`Argus.Extractor.Dispatch.reached_with/4`), a return \
+        of `{:stop, ...}` left out. A clause that re-arms its own message \
+        this way runs a periodic loop; one that re-arms on one branch (after \
+        a failed connect) retries until it is done. Computed for atom tags \
+        only.
         """
       },
       %{
