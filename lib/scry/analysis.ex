@@ -4,8 +4,8 @@ defmodule Scry.Analysis do
 
   ## Query DAG
 
-      module_beam(module)          producer_digest(producer)  [inputs]
-           │                        │
+      module_beam(module)                                 [frontend]
+           │
       producer_extraction({module, producer})  ← each argus producer's
        │              │                         rows (`:base` or one
        │              │                         extractor), apart
@@ -44,18 +44,6 @@ defmodule Scry.Analysis do
   The whole program meets in one node, `program_relation_facts`, and is
   projected from there — per relation, then per analysis — so an edit
   propagates past it only along the relations it actually moved.
-
-  The argus-edit story: argus's extraction runs as producers — `:base`
-  (the emitter's facts, `def_use`, `conditional_call`) and each
-  extractor — whose rows do not depend on one another, each keyed by the
-  code it runs (`Scry.Fingerprint.producers/2`). An edit to one
-  extractor moves its digest alone: that producer is extracted again for
-  every module, and where its rows come out equal roux backdates it, so
-  the module's semantic digest validates green without executing. An
-  edit to the code the base runs (`Argus.Instr`, the extractor helpers)
-  moves every producer's digest, and the same cutoff applies. Findings
-  are rebuilt on any argus edit (`:argus_code`); nothing is solved again
-  unless a relation moved.
 
   The line-shift immunity story: a whitespace/comment edit changes the
   beam (Line/Dbgi chunks) → every `producer_extraction` of the module
@@ -96,10 +84,8 @@ defmodule Scry.Analysis do
   defines queries only). The `:rules_digest` input (per analysis,
   `:stage0` and `:points_to`) is optional: a frontend that never sets it
   reads it as `nil` and relies on its `:env_fingerprint` to move when
-  rules do. So are `:producer_digest` (per producer), `:producers` (the
-  join's order, `producers/0` when unset) and `:argus_code`: a frontend
-  without them relies on its `:env_fingerprint` to move when argus does.
-  So is the `:ignored_beam` input (per module): it names the modules the
+  rules do. So is `:producers` (the join's order, `producers/0` when
+  unset). So is the `:ignored_beam` input (per module): it names the modules the
   frontend watches without analyzing, whose specs a caller's extraction
   reads off the code path.
 
@@ -146,14 +132,13 @@ defmodule Scry.Analysis do
   defquery :producer_extraction,
     key: {module, producer},
     returns: {:ok, map()} | {:error, term()} do
-    # The rows are a function of the runtime and of scry's own encoding
-    # (the fingerprint) as much as of the beam, and of the code the
-    # producer runs (its digest, read only when the frontend sets one:
-    # an edge to an input with no value validates as stale).
+    # The rows are a function of argus's code and fact schema as much as
+    # of the beam, and both ride the fingerprint — so a warm manifest
+    # cannot serve rows an older extractor wrote for an unchanged beam.
     _fingerprint = Runtime.input!(db, :env_fingerprint, :all)
-    _code = optional_input(db, :producer_digest, producer)
 
-    # A retry of a failed extraction moves this.
+    # A retry of a failed extraction moves this; read only when set, since
+    # an edge to an input with no value validates as stale.
     _attempt = optional_input(db, :extraction_attempt, module)
 
     case Runtime.query(db, :module_beam, module) do
@@ -233,13 +218,12 @@ defmodule Scry.Analysis do
   # Extraction the frontend did not prewarm. A module's producers are
   # joined in order (`module_facts/2`), so the first of them to execute
   # is the first in that order exactly when what they all read moved
-  # (the beam, the runtime, a retry): then every producer of the module
+  # (the beam, argus's code, a retry): then every producer of the module
   # is stale, and all of them are extracted in one pass (the base's work,
   # which is most of it, done once), this one's rows returned and the
-  # others' parked for their own queries, which the join demands next.
-  # Any other producer executes for a reason of its own — its code
-  # moved, or a module its specs were read from did — and is extracted
-  # alone, beside the base it reads.
+  # others' parked for their own queries, which the join demands next. Any other
+  # producer executes for a reason of its own — a module its specs were
+  # read from moved — and is extracted alone, beside the base it reads.
   defp extract_on_demand(db, module, producer, beam) do
     producers =
       case Runtime.untracked(fn -> producer_list(db) end) do
@@ -256,9 +240,9 @@ defmodule Scry.Analysis do
   # What the specs extractor read off the code path for this module
   # (`Argus.Pipeline.extract_shards/3`'s `installed`: each module whose
   # specs or types it looked up, found or not). The environment digest
-  # in the producer's key covers every application there but argus's
-  # own and the ones the frontend watches; a read of one of those
-  # records an edge that moves with it:
+  # in the fingerprint covers every application there but the ones the
+  # frontend watches; a read of one of those records an edge that moves
+  # with it:
   #
   # - a module of the program: an edge to its `file_of`. The rules
   #   ignore installed rows for a callee while it is analyzed (its own
@@ -268,8 +252,6 @@ defmodule Scry.Analysis do
   # - a module the frontend watches without analyzing (`:ignored_beam`,
   #   scry's `ignore: [modules: ...]`): an edge to that input, which
   #   moves whenever its beam — and so its specs — does.
-  # - a module of argus's own application (a program that calls argus):
-  #   an edge to `:argus_code`, which moves with every argus beam.
   #
   # Which reads are which is decided without an edge. A read that found
   # no module stays unrecorded: a module that appears later in a
@@ -279,45 +261,15 @@ defmodule Scry.Analysis do
 
   defp track_reads(db, module, reads) do
     program = db |> program_modules() |> MapSet.new()
-    argus = argus_modules()
 
-    argus_read? =
-      Enum.reduce(reads, false, fn read, argus_read? ->
-        cond do
-          read == module ->
-            argus_read?
-
-          MapSet.member?(program, read) ->
-            _ = Runtime.query(db, :file_of, read)
-            argus_read?
-
-          Roux.Input.exists?(db, :ignored_beam, read) ->
-            _ = Runtime.input(db, :ignored_beam, read)
-            argus_read?
-
-          true ->
-            argus_read? or MapSet.member?(argus, read)
-        end
-      end)
-
-    # One edge however many of argus's modules were read.
-    if argus_read?, do: _ = optional_input(db, :argus_code, :all)
-    :ok
-  end
-
-  # Argus's own modules, once per VM.
-  defp argus_modules do
-    key = {__MODULE__, :argus_modules}
-
-    case :persistent_term.get(key, nil) do
-      nil ->
-        modules = MapSet.new(Application.spec(:panoptes, :modules) || [])
-        :persistent_term.put(key, modules)
-        modules
-
-      modules ->
-        modules
-    end
+    Enum.each(reads, fn read ->
+      cond do
+        read == module -> :ok
+        MapSet.member?(program, read) -> _ = Runtime.query(db, :file_of, read)
+        Roux.Input.exists?(db, :ignored_beam, read) -> _ = Runtime.input(db, :ignored_beam, read)
+        true -> :ok
+      end
+    end)
   end
 
   # The modules the frontend analyzes: the keys of its `:module_map`, as
@@ -505,13 +457,7 @@ defmodule Scry.Analysis do
   # The rows are stringified once: the text they digest is the text a
   # fact directory needs, so it is written to the shared relation store
   # here, and materializing a directory only links it.
-  #
-  # The text is argus's encoding of the rows (`Argus.Facts.materialize/2`,
-  # `Argus.Tsv`), code the base producer runs too: its digest moving
-  # re-encodes, and the digest backdates wherever the text came out the
-  # same.
   defquery :relation_digest, key: relation, returns: String.t() do
-    _encoding = optional_input(db, :producer_digest, :base)
     rows = Runtime.query(db, :relation_rows, relation)
     stored_digest(relation, rows, Symbols.for_db(db))
   end
@@ -519,8 +465,6 @@ defmodule Scry.Analysis do
   # The same for one of stage 0's outputs: digested and stored once per
   # derivation, however many analyses read it.
   defquery :stage0_digest, key: relation, returns: String.t() | nil do
-    _encoding = optional_input(db, :producer_digest, :base)
-
     case Runtime.query(db, :stage0_facts, :all) do
       {:ok, facts} -> stored_digest(relation, Map.fetch!(facts, relation), Symbols.for_db(db))
       {:error, _} -> nil
@@ -529,8 +473,6 @@ defmodule Scry.Analysis do
 
   # The same for one of the points-to stage's outputs.
   defquery :points_to_digest, key: relation, returns: String.t() | nil do
-    _encoding = optional_input(db, :producer_digest, :base)
-
     case Runtime.query(db, :points_to_facts, :all) do
       {:ok, facts} -> stored_digest(relation, Map.fetch!(facts, relation), Symbols.for_db(db))
       {:error, _} -> nil
@@ -755,12 +697,9 @@ defmodule Scry.Analysis do
   # per-analysis grain means an analysis whose output rows are unchanged
   # stops propagation even when others changed.
   defquery :findings, key: analysis, returns: {:ok, [map()]} | {:error, term()} do
-    # Argus builds the findings (the analysis's prose, its identity
-    # rules): its code moving must rebuild them even when the solved rows
-    # backdate. Any argus edit does — building them is cheap, and moves
-    # no fact.
+    # Argus builds the findings: its code moving must rebuild them even
+    # when the solved rows backdate.
     _fingerprint = Runtime.input!(db, :env_fingerprint, :all)
-    _argus = optional_input(db, :argus_code, :all)
 
     case Runtime.query(db, :souffle_solve, analysis) do
       {:ok, outputs} ->
@@ -998,13 +937,12 @@ defmodule Scry.Analysis do
   module across the schedulers — of every producer the frontend joins
   (`:producers`, `producers/0` when unset) for a bare `module =>
   beam_path`, of the named ones for `module => {beam_path, producers}`
-  (after an argus edit that moved only their digests) — and parks each
-  producer's result for its `producer_extraction` to pick up: the query
-  still executes, records its dependencies and memoizes as before, it
-  just finds its answer waiting. A result is keyed by the canonical
-  beam's digest, so a beam that changed between the pre-pass and the
-  query is extracted again. `drop_prewarmed/0` clears what no query
-  took.
+  — and parks each producer's result for its `producer_extraction` to
+  pick up: the query still executes, records its dependencies and
+  memoizes as before, it just finds its answer waiting. A result is
+  keyed by the canonical beam's digest, so a beam that changed between
+  the pre-pass and the query is extracted again. `drop_prewarmed/0`
+  clears what no query took.
   """
   @spec prewarm_extractions(
           %{optional(module()) => String.t() | {String.t(), [Argus.Pipeline.producer()]}},

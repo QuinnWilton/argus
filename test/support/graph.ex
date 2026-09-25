@@ -129,7 +129,7 @@ defmodule Scry.Test.Graph do
   the way `Scry.Runner` sets them, over `paths`.
 
   Options: `rules: false` and `producers: false` leave the rules digests
-  and argus's producer inputs unset, as planchette does; `producer_list:`
+  and the producer list unset, as planchette does; `producer_list:`
   names the producers the modules' facts are joined from.
   """
   @spec new_db(%{optional(module()) => String.t()}, keyword()) :: Database.t()
@@ -148,14 +148,10 @@ defmodule Scry.Test.Graph do
           do: :ok = Input.set(db, :rules_digest, key, digest)
     end
 
-    # And argus's producers and code (planchette does).
+    # And the producers (planchette does).
     if Keyword.get(opts, :producers, true) do
       producers = Keyword.get(opts, :producer_list, Scry.Analysis.producers())
       :ok = Input.set(db, :producers, :all, producers)
-      :ok = Input.set(db, :argus_code, :all, Scry.Fingerprint.argus_code())
-
-      for {producer, digest} <- Scry.Fingerprint.producers(producers),
-          do: :ok = Input.set(db, :producer_digest, producer, digest)
     end
 
     Enum.each(Scry.Analysis.prior_relations(), &(:ok = Input.set(db, :prior_rows, &1, [])))
