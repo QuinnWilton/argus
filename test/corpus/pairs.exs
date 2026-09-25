@@ -431,6 +431,20 @@
     fix: "c3838cda2a7f65c4893291668c223b0d6acf4516",
     finding: {:unsafe_input, "Dynamic atom creation reachable from an exported function"}
   },
+  # The devices API put the raw `sort_direction` query param through
+  # String.to_atom/1; the fix maps "desc" and anything else to two atoms.
+  # The action is reached only through Phoenix's apply in action/2, so
+  # the finding needs controller actions as request entries.
+  %{
+    repo: "nerves-hub/nerves_hub_web",
+    issue: "nerves_hub_web#2942",
+    module: "NervesHubWeb.API.DeviceController",
+    pre: "0bb6b5cc55b801d97fa2fa72218eb7124e23e0c5",
+    fix: "3c4bcf5017bd91493437d6ad836d1e2427f618ba",
+    finding:
+      {:unsafe_input,
+       "Unbounded atom creation fed by request data from a Phoenix controller action (HTTP request)"}
+  },
   # CVE-2026-48597: String.to_atom(uri.scheme) in the Mint adapter, fixed
   # with a two-clause allowlist — the remediation the finding recommends.
   %{

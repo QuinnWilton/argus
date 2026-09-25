@@ -396,6 +396,7 @@ defmodule Argus.Analyses.UnsafeInput do
   defp route_opts(_proximity, label, help), do: [at_label: label, help: help]
 
   defp surface("plug"), do: "a Plug (HTTP request)"
+  defp surface("controller"), do: "a Phoenix controller action (HTTP request)"
   defp surface("live_view"), do: "a LiveView callback"
   defp surface("live_component"), do: "a LiveComponent event"
   defp surface("channel"), do: "a Phoenix Channel (websocket)"

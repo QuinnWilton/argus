@@ -42,6 +42,8 @@ defmodule Argus.Analyses.UnsafeInputTest do
     Taint.BodyAllowlist,
     Taint.SameLine,
     Taint.SameLineMixed,
+    Taint.Controller,
+    Taint.PlainPlugHelpers,
     Argus.Test.Fixtures.AtomSources,
     Argus.Test.Fixtures.AtomFromMessages,
     Argus.Test.Fixtures.AtomProcessName,
@@ -286,6 +288,22 @@ defmodule Argus.Analyses.UnsafeInputTest do
       skip_without_souffle()
       rows = atom_rows(ctx, [Taint.FlowClosureEnv])
       assert ["flow"] = proximity_for(rows, "FlowClosureEnv")
+    end
+
+    test "a controller action is a request entry, though no call reaches it", ctx do
+      skip_without_souffle()
+      rows = atom_rows(ctx, [Taint.Controller])
+      assert [[_id, func, _api, entry, "controller", "flow"]] = rows
+      assert func =~ "show/2"
+      assert entry =~ "show/2"
+    end
+
+    test "a plug's exported helper is no action", ctx do
+      skip_without_souffle()
+      results = analyze(ctx, [Taint.PlainPlugHelpers])
+      assert atom_rows(ctx, [Taint.PlainPlugHelpers]) == []
+      assert [[_id, func | _]] = results["sink_without_request_path"]
+      assert func =~ "label/2"
     end
 
     test "a flow replaces the path rows for its site: one row per sink" do

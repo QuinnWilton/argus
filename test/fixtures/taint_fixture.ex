@@ -228,4 +228,44 @@ defmodule Argus.Test.Fixtures.Taint do
       {:noreply, socket}
     end
   end
+
+  defmodule Controller do
+    @moduledoc """
+    A Phoenix controller as `use Phoenix.Controller` compiles it: `call/2`
+    runs the pipeline, whose `action/2` applies the action the router
+    named, read off the conn, so no call edge reaches an action. Each
+    exported arity-2 function of a module defining
+    `phoenix_controller_pipeline/2` is an action: the conn and the params
+    are the request. `show/2` converts a param to an atom (a flow);
+    `index/2` converts it safely.
+    """
+    @behaviour Plug
+
+    def init(opts), do: opts
+
+    def call(conn, opts), do: phoenix_controller_pipeline(conn, opts)
+
+    def phoenix_controller_pipeline(conn, opts), do: action(conn, opts)
+
+    def action(%{private: %{phoenix_action: name}} = conn, _opts),
+      do: apply(__MODULE__, name, [conn, conn.params])
+
+    def show(conn, %{"sort" => sort}), do: {conn, String.to_atom(sort)}
+
+    def index(conn, %{"sort" => sort}), do: {conn, String.to_existing_atom(sort)}
+  end
+
+  defmodule PlainPlugHelpers do
+    @moduledoc """
+    A Plug that is not a controller: its exported arity-2 helper is not
+    an action, and nothing a request reaches calls it.
+    """
+    @behaviour Plug
+
+    def init(opts), do: opts
+
+    def call(conn, _opts), do: conn
+
+    def label(_conn, name), do: String.to_atom(name)
+  end
 end

@@ -70,6 +70,23 @@ func, op)` from the Supervision extractor says which call started a
 removes are supavisor's health-check endpoint, reached once controller
 actions are request entries (below). Schema 106.
 
+**Fixed.** A Phoenix controller's actions were reachable from no request
+entry: `call/2` runs the pipeline, whose `action/2` applies the action
+name the router put in the conn, and an apply whose name is read at run
+time does not resolve. A sink in an action was at best "reachable from
+an exported function", and races never counted an action as run by
+many processes. Every exported arity-2 function of a Plug that defines
+`phoenix_controller_pipeline/2` (other than `call`, `action` and the
+pipeline) is now a `request_entry` of kind `controller`, its conn and
+params (positions 0 and 1) the request; titles say "a Phoenix
+controller action (HTTP request)". Pair: nerves_hub_web#2942 (the
+devices API's `sort_direction` query param through `String.to_atom/1`,
+"Unbounded atom creation fed by request data from a Phoenix controller
+action (HTTP request)"). Corpus tally: those 2 flow rows (one per
+checkout), Livebook's `UniqueTask` start (2, a start whose caller waits
+for the child's `:DOWN`), and 8 path rows relabelled from another entry
+kind; races unchanged.
+
 ### Classes mined from fixed bugs
 
 Three classes from round 1 of mining fixed bugs (178 classified; the

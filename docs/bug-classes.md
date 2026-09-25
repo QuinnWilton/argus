@@ -191,7 +191,7 @@ than more; it errs loud when the same uncertainty can add a finding.
 ### A request entry and its parameters
 
 - **Names.** `request_entry`, `request_param` (request_entry.dl).
-- **Meaning.** `request_entry(f, kind)` is a callback whose arguments carry data an outside party controls: a Plug's call/2 (controller actions included), a LiveView's mount/3, handle_params/3 and handle_event/3, a LiveComponent's handle_event/3, a channel's handle_in/3, an Oban worker's perform/1, a Broadway processor's handle_message/3 and handle_batch/4. `request_param(f, pos)` names the positions that carry it; a socket, a Plug's opts and a mount's signed session do not.
+- **Meaning.** `request_entry(f, kind)` is a callback whose arguments carry data an outside party controls: a Plug's call/2, a Phoenix controller's actions (every exported arity-2 function of a module that defines `phoenix_controller_pipeline/2`, kind `controller`; no call edge reaches them, since `action/2` applies the name the router put in the conn), a LiveView's mount/3, handle_params/3 and handle_event/3, a LiveComponent's handle_event/3, a channel's handle_in/3, an Oban worker's perform/1, a Broadway processor's handle_message/3 and handle_batch/4. `request_param(f, pos)` names the positions that carry it; a socket, a Plug's opts and a mount's signed session do not.
 - **Direction.** The list is closed: a surface it does not name (a raw cowboy handler, a GenStage consumer) is no entry (quiet).
 - **Used by.** unsafe_input, and races through concurrency.dl, which counts what a request entry reaches as run by many processes at once.
 
@@ -2408,7 +2408,7 @@ The program's own secrets flowing out belong to `exposure`. Races between the ma
 ### Unbounded atom creation from untrusted input
 
 `sink_reachable` · sink=`atom`; `sink_without_request_path` · sink=`atom`
-· titles: "Unbounded atom creation #{reached(proximity)} #{surface(kind)}". `reached` is "fed by request data from" (`flow`), "directly inside" (`direct`), "one call from" (`adjacent`) or "transitively reachable from" (`transitive`). `surface` is "a Plug (HTTP request)", "a LiveView callback", "a LiveComponent event", "a Phoenix Channel (websocket)", "an Oban job" or "a Broadway pipeline message". Severity is `:error` for `flow` and `direct`, `:warning` for `adjacent` and `:info` for `transitive`. With priors on, an `adjacent` or `transitive` row whose function reads storage, configuration, internal state or a constant drops one step and is marked heuristic. With no request path, the title is "Dynamic atom creation reachable from an exported function" (`:warning`).
+· titles: "Unbounded atom creation #{reached(proximity)} #{surface(kind)}". `reached` is "fed by request data from" (`flow`), "directly inside" (`direct`), "one call from" (`adjacent`) or "transitively reachable from" (`transitive`). `surface` is "a Plug (HTTP request)", "a Phoenix controller action (HTTP request)", "a LiveView callback", "a LiveComponent event", "a Phoenix Channel (websocket)", "an Oban job" or "a Broadway pipeline message". Severity is `:error` for `flow` and `direct`, `:warning` for `adjacent` and `:info` for `transitive`. With priors on, an `adjacent` or `transitive` row whose function reads storage, configuration, internal state or a constant drops one step and is marked heuristic. With no request path, the title is "Dynamic atom creation reachable from an exported function" (`:warning`).
 
 **Property.** A call at site s in function g to `String.to_atom/1`, `:erlang.binary_to_atom/1,2` or `:erlang.list_to_atom/1` takes an argument the program does not bound. Bounded means one of the following holds on every path to s:
 - the argument is compared equal to a literal (a clause head, a guard's `in`, a `case` arm);
@@ -2417,14 +2417,15 @@ The program's own secrets flowing out belong to `exposure`. Races between the ma
 - it is found in a list parameter that every caller fills with a literal list.
 
 The site is then reported in one of two ways.
-- **A request reaches it.** Some request entry e reaches g. The entries are: a Plug's `call/2`; a LiveView's `mount/3`, `handle_params/3` or `handle_event/3`; a LiveComponent's `handle_event/3`; a Channel's `handle_in/3`; an Oban worker's `perform/1`; a Broadway `handle_message/3` or `handle_batch/4`. The proximity is `flow` when one of e's request-carrying parameters reaches the argument through the per-function derivation summaries: destructuring, tuple and binary building, the known propagators, and an element handed to the closure of a higher-order call. Otherwise it is `direct` (g is e), `adjacent` (e calls g) or `transitive`.
+- **A request reaches it.** Some request entry e reaches g. The entries are: a Plug's `call/2`; a Phoenix controller's actions; a LiveView's `mount/3`, `handle_params/3` or `handle_event/3`; a LiveComponent's `handle_event/3`; a Channel's `handle_in/3`; an Oban worker's `perform/1`; a Broadway `handle_message/3` or `handle_batch/4`. The proximity is `flow` when one of e's request-carrying parameters reaches the argument through the per-function derivation summaries: destructuring, tuple and binary building, the known propagators, and an element handed to the closure of a higher-order call. Otherwise it is `direct` (g is e), `adjacent` (e calls g) or `transitive`.
 - **No request reaches it.** Some exported function reaches g, and the argument is made of a parameter of an exported function that nothing in the program calls. Process callbacks, Broadway's `process_name/2` and protocol implementations do not count as such functions.
 
 At run time, the atom table is fixed-size (1,048,576 atoms by default) and never garbage collected. Every distinct value an attacker supplies takes a slot for good, until the node aborts and takes every process on it down.
 
 **Assumptions and limits.**
-- Request entries are recognised by `@behaviour` plus callback name and arity. Only some parameters carry the request: the conn; a LiveView event's name and params; `handle_params`' params and URI; `mount/3`'s params but not its session, which the endpoint signs; a component's event and params; a channel's event and payload; an Oban job; Broadway messages.
-- A Phoenix controller counts as a Plug through its `call/2`. The call graph enters its actions only through Phoenix's `action/2`, which applies an action name read from the conn at run time. argus follows an apply only when its target resolves.
+- Request entries are recognised by `@behaviour` plus callback name and arity. Only some parameters carry the request: the conn; a controller action's conn and params; a LiveView event's name and params; `handle_params`' params and URI; `mount/3`'s params but not its session, which the endpoint signs; a component's event and params; a channel's event and payload; an Oban job; Broadway messages.
+- A Phoenix controller's actions are entries of their own (kind `controller`): the call graph enters them only through Phoenix's `action/2`, which applies an action name read from the conn at run time, and argus follows an apply only when its target resolves. A controller is a Plug that defines `phoenix_controller_pipeline/2`; every exported arity-2 function of it other than `call`, `action` and the pipeline counts, routed or not (a function plug the pipeline calls also takes the conn). A Plug that is not a controller has no such entries (`Taint.PlainPlugHelpers`). Until round 2 (2026-09-25) the actions were reachable from no entry, and a sink in one was at best "reachable from an exported function".
+- A cookie fetched with `Plug.Conn.fetch_cookies/2` is the server's: the options name the cookies to verify (`signed:`, `encrypted:`), and the propagator table does not carry the conn through that call (`Taint.CookieController`: a signed cookie decoded is quiet, one fetched with `fetch_cookies/1` is a flow). The price is the rest of that conn: its params read after the call are no flow.
 - A Channel's `join/3` and a Socket's `connect/3` are not request entries, although their topic, payload and params come from the client.
 - The flow summaries do not follow some shapes. A value returned from a local helper, a fun not built at the call, an argument past the fourth, and a value passed through a callee missing from the propagator table all stay a path. A missing flow row is therefore not evidence that the data comes from elsewhere.
 - The path proximities do not look at argument values, which is why `transitive` is `:info`. The prior re-tier (`prior_reads` at 0.7 and above) marks only path rows and never removes one.
@@ -2435,10 +2436,10 @@ At run time, the atom table is fixed-size (1,048,576 atoms by default) and never
 - Evidence frames: `sink_endpoint` names the HTTP route (verb and path) from Phoenix's `__routes__/0`. It cannot say whether the route is authenticated, because `pipe_through` is not in the route table. `sink_export` names up to three exported functions within six calls for the no-request arm.
 
 **Fixtures.**
-- Positive, `flow`: `DirectPlug`, `AdjacentLiveView` and `TransitiveWorker` under `RequestSurface` (test/fixtures/request_surface_fixture.ex). Also `FlowLiveView`, `FlowTransitive`, `FlowClosureEnv`, `HofElement`, `OpenAllowlist` (with `Allow`) and `SameLine` (one finding for two sinks on a line) under `Taint` (test/fixtures/taint_fixture.ex).
+- Positive, `flow`: `DirectPlug`, `AdjacentLiveView` and `TransitiveWorker` under `RequestSurface` (test/fixtures/request_surface_fixture.ex). Also `Controller` (`show/2`, a controller action no call reaches), `FlowLiveView`, `FlowTransitive`, `FlowClosureEnv`, `HofElement`, `OpenAllowlist` (with `Allow`) and `SameLine` (one finding for two sinks on a line) under `Taint` (test/fixtures/taint_fixture.ex).
 - Positive, path proximities (never `flow`): `StoreSourcedPlug` (direct), `StoreSourcedAdjacent` (adjacent) and `StoreSourcedWorker` (transitive), plus `SocketOnly` and `SessionOnly` (direct), all under `Taint`.
 - Positive, no request path: `UnsafeAtomCreation`, `AtomSources` (`input/1` and the closure in `keys/1`) and `ExportedSinkCaller`, all in test/fixtures/atom_safety_fixture.ex. The no-request path also covers `RequestSurface.NotAnEntryPoint`.
-- Quiet: `RequestSurface.SafeCallback`; `Taint.LiteralAtom`, `ExistingAtom`, `GuardAllowlist`, `BodyAllowlist` and `ParamAllowlist`; `AtomSources.env_level/0` and `name/1`; `AtomFromMessages` and `AtomProcessName` (atom_safety_fixture.ex); and `Quiet.StoreSourcedSink` (test/fixtures/quiet_shapes_fixture.ex), which must never be a `flow`.
+- Quiet: `RequestSurface.SafeCallback`; `Taint.Controller.index/2` (to_existing_atom) and `Taint.PlainPlugHelpers` (a plug's exported helper is no action, and is reported only on the no-request arm); `Taint.LiteralAtom`, `ExistingAtom`, `GuardAllowlist`, `BodyAllowlist` and `ParamAllowlist`; `AtomSources.env_level/0` and `name/1`; `AtomFromMessages` and `AtomProcessName` (atom_safety_fixture.ex); and `Quiet.StoreSourcedSink` (test/fixtures/quiet_shapes_fixture.ex), which must never be a `flow`.
 - Tests: test/analyses/unsafe_input_test.exs, test/analyses/quiet_shapes_test.exs, test/evidence_frames_test.exs (`sink_export`, `sink_endpoint`), and test/priors/priors_test.exs (the prior re-tier).
 
 **Corpus.** Fix pairs:
@@ -2447,14 +2448,16 @@ At run time, the atom table is fixed-size (1,048,576 atoms by default) and never
 - `absinthe_federation#133` (DivvyPayHQ/absinthe_federation, c53bb3b → c3838cd, `Absinthe.Federation.Schema.EntitiesField`).
 - `tesla:GHSA-h74c-q9j7-mpcm` (elixir-tesla/tesla, bb1a2c3 → 4699c3c, `Tesla.Adapter.Mint`).
 - `membrane_mp4_plugin#135` (membraneframework/membrane_mp4_plugin, 6a7458b → 56373d1, `Membrane.MP4.Container.Header`).
+- `nerves_hub_web#2942` (nerves-hub/nerves_hub_web, 0bb6b5c → 3c4bcf5, `NervesHubWeb.API.DeviceController`: "... fed by request data from a Phoenix controller action (HTTP request)"; the devices API's `sort_direction` query param through `String.to_atom/1`, found by round 2 once controller actions were entries).
 
-The last three pin "Dynamic atom creation reachable from an exported function".
+The absinthe_federation, tesla and membrane pairs pin "Dynamic atom creation reachable from an exported function".
 
 **Precision.**
 - In 6448ef4 the no-request title went from 261 rows to 65 over the evaluation programs (four apps, the Phoenix stack, and OTP's kernel, stdlib and mnesia). Before that, a reviewer sampled eight of the 261 rows, and all eight were false. Seven of those leave; logflare's Wobserver `string_to_module/1` stays.
 - The 65 are still "mostly library API doing what it is for", with a few real finds (lib/argus/analysis/sets.ex): the vulnerable tesla Mint adapter, logflare's `Ecto.UUID.Atom.cast/1`, and a realtime LiveDashboard page (CHANGELOG unsafe_input).
 - In 7bd8963, logflare's SearchLV and hexpm's `safe_to_atom/2` stopped being reported as fed by request data, and livebook's LiveMarkdown.Import guards stopped being reported as transitive. Both were false positives.
 - The request tiers were calibrated by hand when the request-surface analysis was added (CHANGELOG, request_surface entry). Every `direct` finding was real. `adjacent` was mixed: one real unvalidated URL parameter and one database primary key. Every `transitive` hit examined took its data from storage.
+- Controller actions as entries (round 2, 2026-09-25), over the corpus tally: 2 new `flow` rows, both nerves_hub_web's `DeviceController.index/2` (real; the fix pair above); 8 path rows relabelled from a LiveView, a LiveComponent or the no-request arm to the controller (the finding keeps the least entry kind), none new. Over changelog.com, firezone, sentry and exq: 1 new `adjacent` row (changelog's `NewsIssueController.template_for_issue/1`, `String.to_atom("show_#{NewsIssue.layout(issue)}")` of a stored record's layout: a path from storage, the adjacent tier's known false shape), and firezone's six signed-cookie decodes, which read as `flow` until `fetch_cookies/2` stopped carrying the conn (then path rows, as before).
 
 ### Untrusted deserialization
 
@@ -2519,6 +2522,7 @@ The site is reported by request proximity as for atoms. When no request reaches 
 - The finding's prose names `DynamicSupervisor.start_child/2` even for a Task.Supervisor start.
 - There is one finding per `(sup, child)`.
 - Tasks a function starts only through Task.Supervisor's `async_stream` or `async_stream_nolink` (`task_supervisor_start`) are not judged: the stream runs at most `max_concurrency` of them at a time for the process that enumerates it, and waits for each, so they live no longer than the request (`StreamLive`; supavisor's health-check endpoint). A function that also starts tasks another way keeps its row (`TaskLive`, `Task.Supervisor.start_child/2` from a request, still fires).
+- A start whose caller then waits for the child to exit is still reported: Livebook's `UniqueTask.run/2` starts a child per key under a `DynamicSupervisor`, monitors it and blocks for its `:DOWN`, so the children live no longer than their requests; reached from a controller since round 2, it is 2 rows over the corpus (a false shape a wait on the start's `:DOWN` would discharge).
 
 **Fixtures.** Positive: `PublicLive` (with `UncappedSup` and `Worker`), `TaskLive`. Quiet: `CappedLive` (with `CappedSup`), `Internal` and `StreamLive`. All are under `UnboundedChildren` (test/fixtures/unbounded_children_fixture.ex). Test: test/analyses/unsafe_input_test.exs ("unbounded children"). The disabled-transport arm has no analysis fixture; test/extractors/endpoint_test.exs pins the `socket_transport` extraction it reads.
 
@@ -3072,7 +3076,11 @@ fixture before fixing it, and says so under the item.
 4. **Phoenix controller actions may be unreachable from request
    entries**: Phoenix reaches an action through `action/2`'s apply of a
    name read from the conn, which `resolved_apply` does not resolve, and
-   no rule reads `http_route`'s `action` column.
+   no rule reads `http_route`'s `action` column. *Resolved in round 2*:
+   confirmed on changelog.com's facts (`PostController:call/2` reaches
+   `action/2` and an unresolved apply, never `index/2`) and by
+   `Taint.Controller`; a controller's exported arity-2 functions are
+   request entries of kind `controller`. Pair: nerves_hub_web#2942.
 5. **structure's global_register_risk quiet fixture passes
    `&:global.random_exit_name/3`**, OTP's default resolver, which behaves
    as the flagged `/2` form.

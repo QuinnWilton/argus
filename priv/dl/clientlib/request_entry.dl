@@ -14,11 +14,33 @@
 
 .decl request_entry(func: symbol, kind: symbol)
 
-// Plug.call/2 receives the conn. Phoenix controllers are Plugs, so this
-// covers controller actions' entry as well.
+// Plug.call/2 receives the conn. A Phoenix controller is a Plug too, but
+// its call/2 reaches its actions only through an apply (below).
 request_entry(func, "plug") :-
   behaves_as(mod, "Plug"),
   function_def(func, mod, "call", 2, _).
+
+// Phoenix controller actions. `use Phoenix.Controller` makes the module
+// a Plug whose call/2 runs phoenix_controller_pipeline/2, and its
+// action/2 applies the action the router named, read off the conn
+// (`apply(__MODULE__, action_name, [conn, conn.params])`): no call edge
+// reaches an action, so call/2 above reaches none of them. Every
+// exported arity-2 function of such a module is an action, or a
+// function plug the pipeline calls with the conn: its conn and params
+// are the request. The routes are not asked: a controller whose router
+// is outside the program still serves them.
+.decl phoenix_controller(mod: symbol)
+
+phoenix_controller(mod) :-
+  behaves_as(mod, "Plug"),
+  function_def(_, mod, "phoenix_controller_pipeline", 2, _).
+
+request_entry(func, "controller") :-
+  phoenix_controller(mod),
+  function_def(func, mod, name, 2, 1),
+  name != "call",
+  name != "action",
+  name != "phoenix_controller_pipeline".
 
 // LiveView: mount/3 takes params, handle_params/3 takes the query string,
 // handle_event/3 takes whatever the client's JS pushed.
@@ -60,6 +82,10 @@ request_entry(func, "broadway") :-
 
 // The conn: params, headers, body, cookies, path.
 request_param(func, 0) :- request_entry(func, "plug").
+
+// A controller action's conn and params.
+request_param(func, 0) :- request_entry(func, "controller").
+request_param(func, 1) :- request_entry(func, "controller").
 
 // handle_event/3: the event name and the pushed params.
 request_param(func, 0) :-
