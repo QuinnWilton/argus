@@ -20,6 +20,7 @@ defmodule Argus.SchemaPerturbationTest do
   use ExUnit.Case, async: true
 
   @moduletag :tmp_dir
+  @moduletag :cache_verify
 
   # Every fixture (extracting them all takes a second), and runtime
   # modules for shapes they do not have: the check reaches only the paths

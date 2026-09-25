@@ -219,8 +219,12 @@ names one with `cache:` on `Argus.run_analyses/2`, `Argus.analyze/3` or
   schema has every entry a producer did not read changed, and fails
   unless its rows are byte-identical; `Argus.Souffle.DeclaredDigestTest`
   does the same for every shipped program and the declarations it does
-  not load. Use `Argus.Schema.columns/1` when a relation's columns are
-  all a caller needs: its prose then keys nothing.
+  not load. The two perturbation tests are tagged `:cache_verify` and
+  left out of a plain `mix test` (they take seconds each and only move
+  with the schema, the stores or what a producer can read); CI includes
+  them, and so should a change to any of those:
+  `mix test --include cache_verify`. Use `Argus.Schema.columns/1` when a
+  relation's columns are all a caller needs: its prose then keys nothing.
 - **Retention**: within each producer's shards, each program's solves
   and the bases (per set of beams), the three most recent entries and
   anything touched within the hour are spared; the suite's store also
@@ -270,5 +274,6 @@ mix argus.pins           # Regenerate test/argus/analysis_inputs.exs after a rul
 mix argus.corpus fetch   # Warm the closed-issue corpus cache; `tally` counts titles across it
 mix test --exclude corpus  # The suite without the corpus
 ARGUS_NO_CACHE=1 mix test  # Every store off: extract and solve afresh
+mix test --include cache_verify  # Also the perturbation checks of the cache keys (CI runs these)
 ARGUS_PROPERTIES=full mix test  # Slow properties at their full count
 ```

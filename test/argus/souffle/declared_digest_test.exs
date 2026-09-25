@@ -20,6 +20,7 @@ defmodule Argus.Souffle.DeclaredDigestTest do
   alias Argus.Souffle.Cache
 
   @moduletag :tmp_dir
+  @moduletag :cache_verify
 
   @generated ~w(base.dl layer2.dl priors.dl)
 

@@ -104,7 +104,7 @@ jobs:
           MIX_ENV: dev
 
       - name: Run tests
-        run: mix test
+        run: mix test --include cache_verify
 
   dialyzer:
     name: Dialyzer

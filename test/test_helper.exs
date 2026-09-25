@@ -5,5 +5,9 @@ Argus.Test.Memo.warm_programs()
 ExUnit.after_suite(fn _result -> Argus.Test.Memo.prune() end)
 
 # A test of a store itself (`@tag :cache`) has nothing to test when
-# ARGUS_NO_CACHE turns the stores off.
-ExUnit.start(exclude: if(Argus.Cache.enabled?(), do: [], else: [:cache]))
+# ARGUS_NO_CACHE turns the stores off. The perturbation checks of what a
+# key covers (`@tag :cache_verify`) take seconds each and only move with
+# the schema, the stores or what a producer reads, so they run in CI and
+# on request (`mix test --include cache_verify`), not on every edit.
+exclude = if Argus.Cache.enabled?(), do: [:cache_verify], else: [:cache, :cache_verify]
+ExUnit.start(exclude: exclude)
