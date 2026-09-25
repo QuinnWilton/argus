@@ -47,9 +47,15 @@
 
 // ── Swallowed errors ─────────────────────────────────────────────
 
-// Catch-all rescue that silently discards exceptions.
+// Catch-all rescue that silently discards exceptions: around the
+// program's own logic, where it turns a bug into silence. A try that
+// protects only sends, signals, calls into other processes and name
+// operations (try_boundary) takes a dead peer, a timeout or a taken
+// name, which is what it was written to tolerate, and the peer that
+// crashed logged its own crash.
 unhandled_failure(func, id, "rescue", "", guard_end) :-
-  bare_rescue(id, func, guard_end).
+  bare_rescue(id, func, guard_end),
+  !try_boundary(id, func).
 
 // ── Exit in GenServer callback ───────────────────────────────────
 

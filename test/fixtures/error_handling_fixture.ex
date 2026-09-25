@@ -12,6 +12,75 @@ defmodule Argus.Test.Fixtures.BareRescue do
   end
 end
 
+defmodule Argus.Test.Fixtures.BoundaryRescue do
+  @moduledoc """
+  Catch-alls around what another process, a node or a name decides: a
+  send, a call into a server, a supervisor query, a named table that may
+  exist. What they take is a dead peer or a taken name, not a bug here.
+  """
+
+  def notify(pid, msg) do
+    try do
+      send(pid, {self(), msg})
+      :ok
+    catch
+      _, _ -> :ok
+    end
+  end
+
+  def safe_count(sup) do
+    try do
+      Supervisor.count_children(sup)
+    catch
+      _, _ -> %{}
+    end
+  end
+
+  def ask(server) do
+    try do
+      GenServer.call(server, :ping, 1_000)
+    catch
+      _, _ -> :down
+    end
+  end
+
+  def ensure_table do
+    try do
+      :ets.new(:boundary_rescue, [:named_table, :public])
+    catch
+      _, _ -> :boundary_rescue
+    end
+  end
+end
+
+defmodule Argus.Test.Fixtures.LogicRescue do
+  @moduledoc """
+  The twins of BoundaryRescue that guard the program's own logic too: a
+  match on the reply, arithmetic, a call into a helper. A catch-all there
+  swallows a bug.
+  """
+
+  def ask_and_match(server) do
+    try do
+      {:ok, n} = GenServer.call(server, :count, 1_000)
+      n + 1
+    catch
+      _, _ -> 0
+    end
+  end
+
+  def notify_decoded(pid, bin) do
+    try do
+      send(pid, decode(bin))
+      :ok
+    catch
+      _, _ -> :ok
+    end
+  end
+
+  defp decode(bin), do: :erlang.binary_to_term(bin, [:safe])
+end
+
 defmodule Argus.Test.Fixtures.FilteredRescue do
   @moduledoc false
 

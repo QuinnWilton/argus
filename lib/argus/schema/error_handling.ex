@@ -122,6 +122,22 @@ defmodule Argus.Schema.ErrorHandling do
         """
       },
       %{
+        name: :try_boundary,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the try (or catch) instruction"},
+          {:func, :symbol, "the function"}
+        ],
+        doc: """
+        The try at `id` protects only operations whose failure is another \
+        process's, a port's or a name's state — a send, an exit signal, a \
+        call into another process or node, a registration, a named \
+        `:ets.new` — and instructions that cannot raise \
+        (`Argus.Extractors.ErrorHandling.Boundary`). A catch-all around it \
+        takes a dead peer or a taken name, not a bug in the code it guards.
+        """
+      },
+      %{
         name: :try_covers,
         layer: 2,
         fields: [

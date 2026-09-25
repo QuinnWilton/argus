@@ -81,6 +81,21 @@ wait. blocking runs the extractor too.
 
 ### Process rules, read against real programs
 
+**Fixed.** `failure.unhandled_failure`'s "Catch-all rescue swallows
+exceptions" leaves a try that protects nothing but operations whose
+failure is another process's, a node's, a port's or a name's: a send, an
+exit signal, a registration, a call into a server or a supervisor, an
+`:erpc.call`, a named `:ets.new`, around instructions that cannot raise.
+Such a catch-all takes a dead peer or a taken name, which it was written
+to tolerate, and the peer that crashed logged its own crash; one that
+also guards a match on the reply, arithmetic or a call into the program
+still swallows a bug and is still reported. rabbitmq 70 rows to 51
+(gen_server2's sends, erpc probes, port closes), ejabberd 77 to 68.
+
+**Added.** Schema 99. `try_boundary(id, func)`: the try (or `catch`) at
+`id` protects only such operations
+(`Argus.Extractors.ErrorHandling.Boundary`).
+
 **Changed.** `failure.orphan_process`'s exit rows are one per function
 that sends the exit, anchored at the call, not one per callback that
 reaches it: Exq's Redis connection helper kills the connection on a

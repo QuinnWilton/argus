@@ -21,7 +21,9 @@ defmodule Argus.Analyses.FailureErrorTest do
     Argus.Test.Fixtures.SelfCrashCallback,
     Argus.Test.Fixtures.ExitSignals.OwnHelper,
     Argus.Test.Fixtures.ExitCaller,
-    Argus.Test.Fixtures.SharedKill
+    Argus.Test.Fixtures.SharedKill,
+    Argus.Test.Fixtures.BoundaryRescue,
+    Argus.Test.Fixtures.LogicRescue
   ]
 
   setup_all do
@@ -62,6 +64,23 @@ defmodule Argus.Analyses.FailureErrorTest do
 
       assert Enum.any?(funcs, &String.contains?(&1, "BareRescue"))
       refute Enum.any?(funcs, &String.contains?(&1, "FilteredRescue"))
+    end
+
+    test "a catch-all around what another process or a name decides is not flagged", ctx do
+      skip_without_souffle()
+
+      results =
+        analyze(ctx, [Argus.Test.Fixtures.BoundaryRescue, Argus.Test.Fixtures.LogicRescue])
+
+      funcs =
+        results
+        |> swallowed()
+        |> Enum.map(fn [func | _] -> func |> String.split(".") |> List.last() end)
+        |> Enum.sort()
+
+      assert funcs == ["LogicRescue:ask_and_match/1", "LogicRescue:notify_decoded/2"],
+             "a send, a call, a supervisor query and a named :ets.new alone are the peer's " <>
+               "or the name's to fail; a match, arithmetic or a helper beside them is not"
     end
 
     test "does not flag a handler that reifies the exception into a value", ctx do

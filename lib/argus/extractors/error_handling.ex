@@ -44,6 +44,9 @@ defmodule Argus.Extractors.ErrorHandling do
   - `catch_falls_through(id, func, tag)` — a `case` inside the handler,
     reached after comparing `tag`, has no clause for some value, so an
     unexpected reason is a CaseClauseError
+  - `try_boundary(id, func)` — the try (or Erlang `catch`) at `id`
+    protects nothing but sends, signals, calls into other processes and
+    name operations (`ErrorHandling.Boundary`)
   - `try_covers(id, func, call, kind)` — the try (or Erlang `catch`) at
     `id` covers the call at `call`: an exception the call raises goes to
     that try's handler
@@ -82,6 +85,7 @@ defmodule Argus.Extractors.ErrorHandling do
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Identity
   alias Argus.Extractor.Resolve
+  alias Argus.Extractors.ErrorHandling.Boundary
   alias Argus.Extractors.ErrorHandling.CatchClauses
   alias Argus.Extractors.ErrorHandling.ClauseHead
   alias Argus.Instr
@@ -174,6 +178,7 @@ defmodule Argus.Extractors.ErrorHandling do
       :timer_tag,
       :trap_exit,
       :try_call,
+      :try_boundary,
       :try_covers,
       :try_covers_closure
     ]
@@ -705,6 +710,11 @@ defmodule Argus.Extractors.ErrorHandling do
 
     table = List.to_tuple(instrs)
     id = InstrId.mint(func_id, idx)
+
+    facts =
+      if Boundary.region?(visited, table),
+        do: add_fact(facts, :try_boundary, [id, func_id]),
+        else: facts
 
     facts =
       visited
