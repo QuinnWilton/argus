@@ -355,7 +355,15 @@ schema has every entry a producer did not read changed (fields renamed,
 retyped and added, prose, in-process flags, layers, the set and order
 of the relations, the version) and fails unless each producer's rows
 are byte-identical, afresh and over kept bases, and its reads digest
-as they did; a read it made, changed, moves its key.
+as they did; a read it made, changed, moves its key. Measured over four
+large corpus checkouts (sequin, nerves_hub_web twice, blockster_v2:
+1,806 beams) and `mix test --exclude corpus`, one run each: a relation
+added (with its version bump) re-extracted 100 shards and re-solved 60
+programs over the checkouts (31 s), and 3,072 shards and 800 kept
+solves in the suite (44 s); it now re-extracts and re-solves nothing
+(4 s; 28 s, the suite's own solver tests). A field of `tls_connect`
+renamed re-solves `exposure` alone; a version bump alone, or an edit
+to a decoded relation's prose, moves nothing.
 
 ### What the program's other sites believe
 
