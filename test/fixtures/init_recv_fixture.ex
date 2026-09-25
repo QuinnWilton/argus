@@ -275,6 +275,70 @@ defmodule Argus.Test.Fixtures.InitRecv.TaskCalls do
   end
 end
 
+defmodule Argus.Test.Fixtures.InitRecv.TaskCasts do
+  @moduledoc false
+  # A cast to a sibling the supervisor starts later: InTask's init/1
+  # starts a task that makes it, whenever the task gets to it, and holds
+  # nothing; Direct's init/1 makes it itself, before the sibling exists,
+  # and the cast is dropped.
+
+  defmodule InTask do
+    @moduledoc false
+    use GenServer
+
+    alias Argus.Test.Fixtures.InitRecv.TaskCasts.Later
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok)
+
+    @impl true
+    def init(:ok) do
+      {:ok, _task} = Task.start_link(fn -> Later.poke() end)
+      {:ok, nil}
+    end
+  end
+
+  defmodule Direct do
+    @moduledoc false
+    use GenServer
+
+    alias Argus.Test.Fixtures.InitRecv.TaskCasts.Later
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok)
+
+    @impl true
+    def init(:ok) do
+      Later.poke()
+      {:ok, nil}
+    end
+  end
+
+  defmodule Later do
+    @moduledoc false
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+    def poke, do: GenServer.cast(__MODULE__, :poke)
+
+    @impl true
+    def init(:ok), do: {:ok, nil}
+
+    @impl true
+    def handle_cast(:poke, s), do: {:noreply, s}
+  end
+
+  defmodule Sup do
+    @moduledoc false
+    use Supervisor
+
+    alias Argus.Test.Fixtures.InitRecv.TaskCasts.{Direct, InTask, Later}
+
+    def start_link(_), do: Supervisor.start_link(__MODULE__, nil)
+
+    @impl true
+    def init(nil), do: Supervisor.init([InTask, Direct, Later], strategy: :one_for_one)
+  end
+end
+
 defmodule Argus.Test.Fixtures.InitRecv.AcksThenLoops do
   @moduledoc false
   # OTP's logger_olp: started with :proc_lib.start_link, init/1 acks its

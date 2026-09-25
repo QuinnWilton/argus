@@ -265,6 +265,20 @@ defmodule Argus.Analyses.SingletonShapesTest do
     assert Rows.where(r, :startup, "blocks_on_peer", phase: "init", kind: "call") == []
   end
 
+  test "a cast a task init/1 starts makes to a later sibling is the task's" do
+    skip_without_souffle()
+
+    alias InitRecv.TaskCasts
+
+    {:ok, r} =
+      Memo.analyze([TaskCasts.Sup, TaskCasts.InTask, TaskCasts.Direct, TaskCasts.Later], :startup)
+
+    assert r
+           |> Rows.where(:startup, "blocks_on_peer", phase: "init", kind: "cast")
+           |> Enum.map(&hd/1)
+           |> Enum.uniq() == ["Argus.Test.Fixtures.InitRecv.TaskCasts.Direct"]
+  end
+
   test "a connect, a lock or a supervisor call in a task init/1 starts holds nothing" do
     skip_without_souffle()
 

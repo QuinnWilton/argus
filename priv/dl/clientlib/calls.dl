@@ -645,12 +645,18 @@ site_request(f, "", m, tag) :-
 site_clause(f, id, tag) :- site_request(f, id, _, _), clause_call(id, f, tag).
 site_clause(f, id, "any") :- site_request(f, id, _, _), !clause_call(id, f, _).
 
+// The one-way counterpart of reaches_sync_dep, over the same edges: a
+// cast is the casting process's, so the dependency is not propagated
+// over the edge into what a spawn, task or agent runs (runs_elsewhere) —
+// a cast a task init/1 starts makes is the task's, made whenever the
+// task gets to it, not while init/1 runs — nor over a side path.
 .decl reaches_async_dep(func: symbol, mod: symbol)
 
 reaches_async_dep(f, m) :- async_dep(f, m).
 
 reaches_async_dep(f, m) :-
   call_edge(f, g),
+  !runs_elsewhere(f, g),
   !side_call(f, g),
   reaches_async_dep(g, m).
 

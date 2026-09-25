@@ -235,6 +235,31 @@ into it, so a closure that monitors and waits as its process's last act
 was "called otherwise" (ra's terminate/3 watcher, ejabberd's hook-trace
 timer). `called_otherwise` now skips an edge into what runs elsewhere.
 
+### One word per concept
+
+The consistency round: each concept the analyses shared under several
+definitions is written once in `priv/dl/clientlib/`, with a comment
+saying what it means and what it takes on trust, and each lesson one
+analysis learned is applied wherever the same shape arises
+(`docs/bug-classes.md`, "Consistency issues", says which item each
+entry resolves). Refactors that move no finding say so.
+
+**Changed.** Logging and telemetry are side paths (`side_call`) in every
+walk about a wait or a mailbox write, not only in calls.dl's dependency
+words and mailbox's late-message walk: startup's walks of init/1's stack
+(supervisor calls, socket and message waits, connects, rpcs, `:global`
+locks), mailbox's timer, monitor, flush and spawned-receive walks, and
+blocking's receive and socket walks; a handle_call/3 that logs answers
+at once. No finding moved over the evaluation programs, ejabberd,
+rabbitmq, emqx and the corpus; with OTP's logger in the program, a
+function that monitors and logs is no longer read as timing out on the
+logger's own gen call.
+
+**Changed.** A cast a spawn, task or agent makes is its own process's
+(`reaches_async_dep` cuts `runs_elsewhere`, as `reaches_sync_dep` does):
+a task init/1 starts that casts to a later sibling no longer makes
+"Child starts before its dependency" of init/1.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,
