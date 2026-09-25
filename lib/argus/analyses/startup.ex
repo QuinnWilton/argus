@@ -195,6 +195,11 @@ defmodule Argus.Analyses.Startup do
     ]
   end
 
+  # The call in init/1 on the way to its wait, or init/1 itself when the
+  # rule found none (a closure it hands on).
+  defp init_site("", mod), do: Findings.at_mfa(mod, :init, 1)
+  defp init_site(site, mod), do: Findings.at_site(site, mod)
+
   # A receive the model is sure waits on something inside the node that
   # always answers (`Argus.Priors.Questions.PeerAnswers`): a heuristic
   # finding a step down. No prior, no change.
@@ -303,7 +308,7 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:blocks_on_peer, [mod, "init", callee, "call", "unknown", _, _, "conditional"]) do
+  def finding(:blocks_on_peer, [mod, "init", callee, "call", "unknown", _, site, "conditional"]) do
     Findings.new(
       :info,
       "init/1 can block on a synchronous call",
@@ -313,7 +318,7 @@ defmodule Argus.Analyses.Startup do
         "argument). When that path is taken the tree's startup stalls for " <>
         "as long as #{callee} takes to answer; a proven startup deadlock is " <>
         "reported separately as an error.",
-      at: Findings.at_mfa(mod, :init, 1),
+      at: init_site(site, mod),
       at_label: "this init can block the start sequence",
       help: [
         "if the blocking path is an opt-in, document that it blocks " <>
@@ -323,7 +328,7 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:blocks_on_peer, [mod, "init", callee, "call", "unknown", _, _, "unconditional"]) do
+  def finding(:blocks_on_peer, [mod, "init", callee, "call", "unknown", _, site, "unconditional"]) do
     Findings.new(
       :info,
       "init/1 blocks on a synchronous call",
@@ -334,7 +339,7 @@ defmodule Argus.Analyses.Startup do
         "#{callee} runs relative to this init — its child spec is built at " <>
         "runtime — so this is a note, not a diagnosis; a proven startup " <>
         "deadlock is reported separately as an error.",
-      at: Findings.at_mfa(mod, :init, 1),
+      at: init_site(site, mod),
       at_label: "this init blocks the start sequence",
       help: [
         "defer the call to `handle_continue/2`: return " <>

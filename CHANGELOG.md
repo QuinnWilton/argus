@@ -370,6 +370,15 @@ clause and makes the seeded call in the `{:attach, _}` clause below.
 `site_a`/`site_b`. Empty when the wait has no call of the function's
 own, and the finding falls back to the function.
 
+**Fixed.** "init/1 blocks on a synchronous call" and "init/1 can block
+on a synchronous call" anchor at the call in `init/1` that makes the
+wait (or enters the helper or client API that does), before init
+acknowledges its start, preferring an unconditional one; the head of
+`init/1` was often tens of lines above it. `init_wait` (startup.dl)
+names it, and `blocks_on_peer`'s `site` carries it. Over the seven
+round-3 programs, 50 of these 51 findings moved from the function's
+head to the call.
+
 ### FP hunt, round 2: eight more programs, and the anchors round 1 left
 
 **Fixed.** A blocking cast (`call_chain` kind `cast`) anchors at the

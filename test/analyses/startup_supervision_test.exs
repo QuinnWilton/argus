@@ -52,6 +52,27 @@ defmodule Argus.Analyses.StartupSupervisionTest do
              end)
     end
 
+    test "a call of unknown place is anchored at the call in init/1, not at its head" do
+      skip_without_souffle()
+
+      # Without the supervisor, InitDepWorker's place is unknown: the
+      # finding is a note, on the GenServer.call a line below `def init`.
+      modules = [Argus.Test.Fixtures.InitProcessCaller, Argus.Test.Fixtures.InitDepWorker]
+      {:ok, %{findings: findings}} = Memo.run_analyses(modules, analyses: [:startup])
+
+      assert [finding] =
+               Enum.filter(findings, &(&1.title == "init/1 blocks on a synchronous call"))
+
+      assert finding.instr != nil
+
+      {:ok, facts} = Argus.Pipeline.extract(modules)
+      line = Argus.Lines.resolve(Argus.Lines.from_facts(facts), finding.instr)
+      source = Path.expand("../fixtures/supervision_fixture.ex", __DIR__)
+
+      assert source |> File.read!() |> String.split("\n") |> Enum.at(line - 1) =~
+               ":pong = GenServer.call(Argus.Test.Fixtures.InitDepWorker, :ping)"
+    end
+
     test "does not flag init calling only a pure function in the sibling's module" do
       skip_without_souffle()
 

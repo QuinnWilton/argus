@@ -155,25 +155,78 @@ unconditional_sync_call_in_init(mod, callee) :-
   genserver_sync_api(g, callee),
   mod != callee.
 
+// ── Where init/1 waits ─────────────────────────────────────────────────
+//
+// The call in init/1, before it acknowledges its start, on the way to
+// the wait on `callee`: the GenServer.call itself (or the tag-attributed
+// call on a pid it holds), or the call into the helper or client API
+// that makes it. A finding anchored at init/1 lands on its head, often
+// tens of lines above the call. An unconditional site is preferred where
+// init has one: the call that makes the finding "unconditional". Empty
+// when init/1 makes no call of its own on the way (a closure it hands
+// on), and the finding falls back to the function.
+.decl init_wait_site(mod: symbol, callee: symbol, site: symbol)
+
+init_wait_site(mod, callee, id) :-
+  raw_sync_call_in_init(mod, callee),
+  init_function(mod, f),
+  sync_site(f, callee, id),
+  !start_acked(id, f).
+
+init_wait_site(mod, callee, id) :-
+  raw_sync_call_in_init(mod, callee),
+  init_function(mod, f),
+  tag_resolved_site(id, f, "call", callee),
+  !start_acked(id, f).
+
+init_wait_site(mod, callee, id) :-
+  raw_sync_call_in_init(mod, callee),
+  init_function(mod, f),
+  call_instr(f, g, id),
+  !start_acked(id, f),
+  !runs_elsewhere(f, g),
+  !side_call(f, g),
+  reaches_sync_dep(g, callee).
+
+.decl init_waits_unconditionally_at(mod: symbol, callee: symbol)
+
+init_waits_unconditionally_at(mod, callee) :-
+  init_wait_site(mod, callee, id),
+  !conditional_call(id).
+
+.decl init_wait(mod: symbol, callee: symbol, site: symbol)
+
+init_wait(mod, callee, id) :- init_wait_site(mod, callee, id), !conditional_call(id).
+
+init_wait(mod, callee, id) :-
+  init_wait_site(mod, callee, id),
+  !init_waits_unconditionally_at(mod, callee).
+
+init_wait(mod, callee, "") :-
+  raw_sync_call_in_init(mod, callee),
+  !init_wait_site(mod, callee, _).
+
 // ── Filtered output ────────────────────────────────────────────────────
 
 // `kind` is "unconditional" when some path from init to the call runs on
 // every init, "conditional" when every path goes through a call site in
 // init that a branch guards (postgrex's `sync_connect: true`, goth's
 // `prefetch: :sync`).
-blocks_on_peer(mod, "init", callee, "call", "unknown", "", "", "unconditional") :-
+blocks_on_peer(mod, "init", callee, "call", "unknown", "", site, "unconditional") :-
   raw_sync_call_in_init(mod, callee),
   !init_safe_sibling(mod, callee),
   !init_safe_cross_supervisor(mod, callee),
   !later_sibling_call(mod, callee),
-  unconditional_sync_call_in_init(mod, callee).
+  unconditional_sync_call_in_init(mod, callee),
+  init_wait(mod, callee, site).
 
-blocks_on_peer(mod, "init", callee, "call", "unknown", "", "", "conditional") :-
+blocks_on_peer(mod, "init", callee, "call", "unknown", "", site, "conditional") :-
   raw_sync_call_in_init(mod, callee),
   !init_safe_sibling(mod, callee),
   !init_safe_cross_supervisor(mod, callee),
   !later_sibling_call(mod, callee),
-  !unconditional_sync_call_in_init(mod, callee).
+  !unconditional_sync_call_in_init(mod, callee),
+  init_wait(mod, callee, site).
 
 // A call to a sibling that starts later is reported once, with the
 // tree ordering, under "Start order" below (later_sibling_call): the
