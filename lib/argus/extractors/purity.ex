@@ -9,7 +9,8 @@ defmodule Argus.Extractors.Purity do
     beam's attribute chunk, so the contract is taken from the artifact
     rather than the source.
   - `impure_call(id, caller, api, category)` — a call to something with a
-    known observable effect.
+    known observable effect, a guard BIF's `bif` instruction included
+    (`self/0`, `node/0`, `:erlang.get/1`).
   - `unknown_call(id, caller, api)` — a call the effect model has no
     opinion about.
 
@@ -85,9 +86,19 @@ defmodule Argus.Extractors.Purity do
     scan_functions(module_data.module, module_data.functions, facts, fn
       acc, ctx, {:apply, _} -> record_apply(acc, ctx)
       acc, ctx, {:apply_last, _, _} -> record_apply(acc, ctx)
+      acc, ctx, {:bif, name, _fail, args, _dst} -> record_bif(acc, ctx, name, args)
+      acc, ctx, {:gc_bif, name, _fail, _live, args, _dst} -> record_bif(acc, ctx, name, args)
       acc, _ctx, _instr -> acc
     end)
   end
+
+  # A guard BIF compiles to a `bif` (or `gc_bif`) instruction, not a call:
+  # `self/0`, `node/0` and `:erlang.get/1` are effects the remote-call
+  # scan never sees. Classified by the same model as `:erlang` calls.
+  defp record_bif(facts, ctx, name, args) when is_atom(name) and is_list(args),
+    do: record(facts, ctx, :erlang, name, length(args))
+
+  defp record_bif(facts, _ctx, _name, _args), do: facts
 
   # `apply(M, F, A)` is only opaque when M and F are actually unknown.
   # When they resolve (`Argus.Pipeline.Emit.Applies`, whose
@@ -106,7 +117,7 @@ defmodule Argus.Extractors.Purity do
     api = "#{mod_str}.#{func_str}/#{arity}"
     id = InstrId.mint(ctx.func_id, ctx.idx)
 
-    case Effects.classify(mod_str, func_str) do
+    case Effects.classify(mod_str, func_str, arity) do
       {:impure, category, mode} ->
         add_fact(facts, :impure_call, [
           id,

@@ -127,6 +127,9 @@ defmodule Argus.Purity.Effects do
     {":erlang", "unregister"} => :process,
     {":erlang", "whereis"} => :process,
     {":erlang", "process_flag"} => :process,
+    # The calling process's identity: a guard BIF, compiled to a `bif`
+    # instruction rather than a call, so it is read there too.
+    {":erlang", "self"} => :process,
     {":erlang", "group_leader"} => :process,
     {":erlang", "halt"} => :process,
     {":erlang", "garbage_collect"} => :process,
@@ -313,6 +316,9 @@ defmodule Argus.Purity.Effects do
                     {"Registry", "count"},
                     {":erlang", "nodes"},
                     {":erlang", "node"},
+                    {":erlang", "self"},
+                    {"Kernel", "self"},
+                    {"Kernel", "node"},
                     {":erlang", "whereis"},
                     {":erlang", "process_info"},
                     {":erlang", "is_process_alive"},
@@ -436,6 +442,14 @@ defmodule Argus.Purity.Effects do
     :erl_anno :beam_lib :io_lib
   )
 
+  # A function whose arities differ in kind: `node/0` reads the local
+  # node's name, `node/1` computes the node a pid, port or reference lives
+  # on from its argument alone.
+  @pure_arities MapSet.new([
+                  {":erlang", "node", 1},
+                  {"Kernel", "node", 1}
+                ])
+
   # `:erlang` is mostly arithmetic, comparison, and type tests — all pure —
   # with a well-defined impure minority listed above. Treating the module as
   # pure-by-default and subtracting the effects is far more accurate than
@@ -527,6 +541,30 @@ defmodule Argus.Purity.Effects do
       true ->
         :unknown
     end
+  end
+
+  @doc """
+  Classify a call whose arity is known: a bif instruction, or a remote
+  call. An arity the model names as pure (`node/1`, which computes from
+  its argument, beside `node/0`, which reads the local node) is pure;
+  every other call is classified by `classify/2`.
+
+      iex> Argus.Purity.Effects.classify(":erlang", "node", 0)
+      {:impure, :node, :read}
+
+      iex> Argus.Purity.Effects.classify(":erlang", "node", 1)
+      :pure
+
+      iex> Argus.Purity.Effects.classify(":erlang", "self", 0)
+      {:impure, :process, :read}
+  """
+  @spec classify(String.t(), String.t(), non_neg_integer()) :: verdict()
+  @pure true
+  def classify(module, function, arity)
+      when is_binary(module) and is_binary(function) and is_integer(arity) do
+    if MapSet.member?(@pure_arities, {module, function, arity}),
+      do: :pure,
+      else: classify(module, function)
   end
 
   @doc """

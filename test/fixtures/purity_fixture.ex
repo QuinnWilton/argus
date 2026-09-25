@@ -60,6 +60,30 @@ defmodule Argus.Test.Fixtures.Purity do
     end
   end
 
+  defmodule BifEffects do
+    @moduledoc """
+    Effects that compile to a `bif` instruction rather than a call:
+    `self/0`, `node/0` and `:erlang.get/1`. The quiet half are guard BIFs
+    that compute from their arguments alone, `node/1` among them.
+    """
+    use Argus.Purity
+
+    @pure true
+    def me, do: self()
+
+    @pure true
+    def here, do: node()
+
+    @pure true
+    def cached(key), do: :erlang.get(key)
+
+    @pure true
+    def owner_node(pid) when is_pid(pid), do: node(pid)
+
+    @pure true
+    def head_size(tuple, list), do: {tuple_size(tuple), elem(tuple, 0), hd(list), length(list)}
+  end
+
   defmodule IndirectEffects do
     @moduledoc "Declared pure, effect one or more calls away."
     use Argus.Purity

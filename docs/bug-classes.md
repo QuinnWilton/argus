@@ -2320,14 +2320,14 @@ Another process takes or deletes the row between the check and the act, and the 
 **Assumptions and limits.**
 - The call graph is complete except for dynamic calls. An unresolved dynamic call is reported as unprovable (next class), never assumed harmless.
 - `Argus.Purity.Effects` is a table of module entries with per-function overrides. `Kernel` is deliberately unlisted. A function the table does not override takes its module's category, so some pure functions in impure modules are reported as violations: `:crypto.hash/2` (all of `:crypto` is `random`), `:io_lib.format/2` (all of `:io_lib` is `io`), and `:timer.seconds/1` (all of `:timer` is `process`).
-- The purity extractor classifies only remote calls and applies. A guard BIF that compiles to a `bif` instruction, such as `self/0` or `node/0`, is never classified. The model's `Kernel.self` and `:erlang.node` entries therefore apply only when those functions are captured or applied. This gap is in the one analysis that claims soundness.
+- The purity extractor classifies remote calls, applies and the `bif` and `gc_bif` instructions a guard BIF compiles to. Of those only `self/0` (a process read), `node/0` (a distribution read) and `:erlang.get/1` (a process-dictionary read) are effects; `node/1` computes from its argument and is pure (the model's `classify/3` names pure arities), as are the arithmetic and type-test BIFs (`BifEffects`). Until round 2 no BIF instruction was read, and `:erlang.self/0` was pure by `:erlang`'s default even as a call.
 - A call to another function that carries its own `@pure true` is trusted at the call site and checked at that function's definition (modular verification).
 - Reach does not look at argument values. An effect that sits only in a clause the function's literal argument never enters still counts.
 - One site can produce two findings with the same title. `:ets.insert/2`, `:ets.new/2`, `spawn`, `Port.open/2`, `System.cmd/2` and `Process.register/2` each produce one row from the effect model and one from a bytecode-level fact (`ets_op`, `ets_new`, `spawn_call`, `port_open`, `process_register`). The relation's key includes `api`, so both rows become findings.
 - The two spellings of the process dictionary get different categories: `Process.put/2` is `process`, and `:erlang.put/2` is `process_dict`.
 - When f also reaches an opaque call, the violation wins and f is not reported as unprovable.
 
-**Fixtures.** Positive: `DirectEffects`, `IndirectEffects`, `EffectfulClosure`, and `ResolvedApply` (`shout/1`), all under `Purity` (test/fixtures/purity_fixture.ex). Quiet: `Clean` and `ResolvedApply.reverse/1` (verified), and `Undeclared` (claims nothing, so nothing is reported). Test: test/analyses/effects_purity_test.exs.
+**Fixtures.** Positive: `DirectEffects`, `IndirectEffects`, `EffectfulClosure`, `ResolvedApply` (`shout/1`) and `BifEffects` (`me/0`, `here/0`, `cached/1`), all under `Purity` (test/fixtures/purity_fixture.ex). Quiet: `Clean`, `ResolvedApply.reverse/1` and `BifEffects`'s `owner_node/1` and `head_size/2` (verified), and `Undeclared` (claims nothing, so nothing is reported). Test: test/analyses/effects_purity_test.exs.
 
 **Corpus.** None.
 
@@ -2344,7 +2344,7 @@ Another process takes or deletes the row between the check and the act, and the 
 - A higher-order pure function, one that calls a fun it is handed, is always unprovable at its definition. This holds even when every caller hands it a pure closure: the call-site check (next class) does not discharge the warning.
 - A function is reported once per `(func, reason, detail)`, where `detail` is the call kind or the API. A pure function that reaches twenty unclassified APIs gets twenty warnings.
 - The `unclassified_call` remedy is an entry in `Argus.Purity.Effects`. Until the entry exists, each new library call a pure function reaches makes the function unprovable.
-- The BIF gap from the previous class applies: a `bif` instruction is neither an effect nor opaque.
+- A BIF instruction is an effect or pure, never opaque: every guard BIF is in the model (previous class).
 
 **Fixtures.** Positive: `Purity.Unprovable` (`applies/2` through `call_fun`, `dispatches/3` through `apply`). Quiet: `ResolvedApply.reverse/1`, whose literal apply target resolves and verifies. No fixture pins the `protocol_dispatch` or `unclassified_call` reasons, or the rule that a call to another `@pure` function is not opaque. Test: test/analyses/effects_purity_test.exs.
 
@@ -3065,7 +3065,9 @@ fixture before fixing it, and says so under the item.
    count, and the worker's last-child case is quiet.
 3. **The purity check never reads BIF instructions**: `self/0`, `node/0`
    and Erlang's `get/1` are silently pure, in the one analysis that
-   claims soundness.
+   claims soundness. *Resolved in round 2*: confirmed by `BifEffects`;
+   the extractor classifies `bif` and `gc_bif` instructions, and the
+   model has `:erlang.self/0` and a pure `node/1`.
 4. **Phoenix controller actions may be unreachable from request
    entries**: Phoenix reaches an action through `action/2`'s apply of a
    name read from the conn, which `resolved_apply` does not resolve, and

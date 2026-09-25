@@ -49,6 +49,16 @@ that is its supervisor's last child is quiet, since its init returning
 is the supervisor's last wait. 0 rows over the corpus and ten live
 projects, before and after.
 
+**Fixed.** The purity check never read a guard BIF: `self/0`, `node/0`
+and `:erlang.get/1` compile to a `bif` instruction, not a call, and a
+function declared pure that used them was verified. The Purity extractor
+now classifies `bif` and `gc_bif` instructions through the effect model,
+which gains `:erlang.self/0` (a process read; it was pure by `:erlang`'s
+default even as a call) and `Effects.classify/3`, whose pure arities keep
+`node/1` (computed from its argument) apart from `node/0`. `Kernel.self`
+and `Kernel.node` are reads. Over argus's own beams the verdicts are
+unchanged.
+
 ### Classes mined from fixed bugs
 
 Three classes from round 1 of mining fixed bugs (178 classified; the

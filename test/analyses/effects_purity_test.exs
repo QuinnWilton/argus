@@ -99,6 +99,22 @@ defmodule Argus.Analyses.EffectsPurityTest do
       assert {"process_dict", "Process.put/2"} = find(by_func, "DirectEffects:process_dict/1")
     end
 
+    test "an effect that compiles to a bif instruction is read, and a guard bif is not one" do
+      skip_without_souffle()
+
+      %{violated: violated, verified: verified} = run([P.BifEffects])
+
+      by_func =
+        Map.new(violated, fn [func, category, api, _via] -> {func, {category, api}} end)
+
+      assert {"process", ":erlang.self/0"} = find(by_func, "BifEffects:me/0")
+      assert {"node", ":erlang.node/0"} = find(by_func, "BifEffects:here/0")
+      assert {"process_dict", ":erlang.get/1"} = find(by_func, "BifEffects:cached/1")
+
+      assert Enum.any?(verified, &(&1 =~ "BifEffects:owner_node/1")), "node/1 reads its argument"
+      assert Enum.any?(verified, &(&1 =~ "BifEffects:head_size/2"))
+    end
+
     test "an effect several calls away is attributed to the function performing it" do
       skip_without_souffle()
 
