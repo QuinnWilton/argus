@@ -25,6 +25,12 @@ and a tail call to `:erlang.error/1` and the other raises left out
 to avoid). `clause_call` now has a row for Erlang's `!` too (the `send`
 instruction, where Elixir's `send/2` is a call). Schema 117.
 
+**Changed.** `timer_ref`'s flow is "discarded" for a ref no instruction
+reads before every register holding it is overwritten
+(`send_after(...)` then `{:noreply, state}`): nothing can cancel that
+timer. It was "dynamic", as a ref kept in a record or a tuple still is.
+No rule read "dynamic".
+
 ### Points-to that finishes on a large program
 
 **Fixed.** The points-to stage finishes on Ash (1,327 modules), where it

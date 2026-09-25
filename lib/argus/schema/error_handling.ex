@@ -314,14 +314,17 @@ defmodule Argus.Schema.ErrorHandling do
         fields: [
           {:id, :symbol, "the send_after / send_interval site"},
           {:func, :symbol, "the function"},
-          {:flow, :symbol, "'returned' | 'stored' | 'dynamic'"},
+          {:flow, :symbol, "'returned' | 'stored' | 'discarded' | 'dynamic'"},
           {:key, :symbol, "the inspected map key the ref is stored under, else ''"}
         ],
         doc: """
         Where the ref of the timer armed at `id` goes: returned by the \
         function (an arming helper), stored under a literal key of a map \
-        (`%{state | timer: ...}`, `Map.put(state, :timer, ...)`), or \
-        somewhere the walk cannot follow.
+        (`%{state | timer: ...}`, `Map.put(state, :timer, ...)`), dropped \
+        on the spot — every register holding it overwritten before any \
+        instruction reads it (`send_after(...)` then `{:noreply, state}`), \
+        so nothing can cancel the timer — or somewhere the walk cannot \
+        follow (a record, a tuple, another path).
         """
       },
       %{

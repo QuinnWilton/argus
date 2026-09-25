@@ -539,8 +539,12 @@ defmodule Argus.Extractors.ErrorHandling do
   defp ref_walk([:return | _], aliases, _instrs, _at, _env),
     do: if({:x, 0} in aliases, do: {"returned", ""}, else: {"dynamic", ""})
 
-  defp ref_walk([{:move, src, dst} | rest], aliases, instrs, at, env),
-    do: ref_walk(rest, retarget(aliases, src, dst), instrs, at + 1, env)
+  defp ref_walk([{:move, src, dst} | rest], aliases, instrs, at, env) do
+    case retarget(aliases, src, dst) do
+      [] -> if Map.get(env, :read, false), do: {"dynamic", ""}, else: {"discarded", ""}
+      kept -> ref_walk(rest, kept, instrs, at + 1, env)
+    end
+  end
 
   defp ref_walk(
          [{put_map, _f, _src, dst, _live, {:list, pairs}} | rest],
@@ -571,6 +575,14 @@ defmodule Argus.Extractors.ErrorHandling do
   # Any other call takes the ref somewhere the walk does not follow, or
   # clobbers it; a tail call, a jump, a raise end the path here — the
   # walk is linear, and what follows is another path.
+  #
+  # A ref no instruction reads before every register holding it is
+  # overwritten is dropped on the spot: `send_after(...)` followed by
+  # `{:noreply, state}`, or by a call it is not an argument of. That is
+  # "discarded", which only the arming function can say: nothing kept
+  # the ref, so nothing can cancel the timer. A ref an instruction reads
+  # into a term the walk does not follow (a record update, a tuple) is
+  # "dynamic", as is one on a path the walk leaves at a label.
   defp ref_walk([instr | rest], aliases, instrs, at, env) do
     case handed_to_helper(instr, aliases, env) do
       {:stored, key} ->
@@ -582,9 +594,20 @@ defmodule Argus.Extractors.ErrorHandling do
           else: ref_walk(rest, [{:x, 0} | y_aliases(aliases)], instrs, at + 1, env)
 
       :none ->
-        if Instr.call?(instr) or not Instr.falls_through?(instr),
-          do: {"dynamic", ""},
-          else: ref_walk(rest, Instr.carry(instr, aliases), instrs, at + 1, env)
+        read? = Enum.any?(Instr.uses(instr), &alias?(&1, aliases))
+        env = if read?, do: Map.put(env, :read, true), else: env
+        kept = Instr.carry(instr, aliases)
+
+        cond do
+          kept == [] and not read? and not Map.get(env, :read, false) and Instr.known?(instr) ->
+            {"discarded", ""}
+
+          Instr.call?(instr) or not Instr.falls_through?(instr) ->
+            {"dynamic", ""}
+
+          true ->
+            ref_walk(rest, kept, instrs, at + 1, env)
+        end
     end
   end
 

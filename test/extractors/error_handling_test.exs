@@ -2,6 +2,7 @@ defmodule Argus.Extractors.ErrorHandlingTest do
   use ExUnit.Case, async: true
 
   alias Argus.Extractors.ErrorHandling
+  alias Argus.Pipeline.Disassemble
 
   defp disassemble(mod) do
     {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
@@ -352,12 +353,50 @@ defmodule Argus.Extractors.ErrorHandlingTest do
         end
         """)
 
-      {:ok, data} = Argus.Pipeline.Disassemble.disassemble_path(bin)
+      {:ok, data} = Disassemble.disassemble_path(bin)
 
       flows =
         for [_id, _func, flow, key] <- ErrorHandling.extract(data)[:timer_ref], do: {flow, key}
 
       assert Enum.sort(flows) == [{"stored", ":poll"}, {"stored", ":timer"}]
+    end
+
+    test "a ref nothing reads before it is overwritten is discarded; one put in a term is not" do
+      [{_mod, bin}] =
+        Code.compile_string("""
+        defmodule Argus.ErrorHandlingTest.TimerDropped do
+          use GenServer
+          def init(s), do: {:ok, s}
+
+          def handle_info(:dropped, state) do
+            Process.send_after(self(), :dropped, 1000)
+            {:noreply, state}
+          end
+
+          def handle_info(:then_call, state) do
+            _ = Process.send_after(self(), :then_call, 1000)
+            {:noreply, notify(state)}
+          end
+
+          def handle_info(:replied, state) do
+            ref = Process.send_after(self(), :replied, 1000)
+            {:noreply, {state, ref}}
+          end
+
+          def handle_info(_msg, state), do: {:noreply, state}
+
+          defp notify(state), do: state
+        end
+        """)
+
+      {:ok, data} = Disassemble.disassemble_path(bin)
+
+      flows =
+        for [_id, _func, flow, key] <- ErrorHandling.extract(data)[:timer_ref], do: {flow, key}
+
+      # Only the ref built into a tuple may be kept: a caller or the
+      # state could read it back.
+      assert Enum.sort(flows) == [{"discarded", ""}, {"discarded", ""}, {"dynamic", ""}]
     end
   end
 
