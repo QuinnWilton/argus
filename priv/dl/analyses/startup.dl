@@ -204,10 +204,21 @@ blocks_on_peer(mod, "init", target, "sup", "", "", site, cat(api, ".", op)) :-
   sup_reach.reaches(func, site),
   sup_management_call(site, _, api, op, target).
 
-// Only operations with no bound of their own count (unbounded_sup_op):
-// a GenServer.call with :infinity waits for as long as the callee
-// takes. db_connection's fixed Watcher still start_childs from its
-// handler — that is the design, not the bug.
+// A handler of the server init/1 waits on that waits without a bound:
+// evidence for a report, so only operations with no bound of their own
+// count (unbounded_sup_op), and a synchronous call with :infinity
+// (sync_call_site, whichever API spells it: GenServer, gen_statem,
+// GenStage, Agent), which waits for as long as the callee takes.
+// db_connection's fixed Watcher still start_childs from its handler —
+// that is the design, not the bug. Every handler counts: a handle_info
+// that blocks holds up the call init/1 makes as surely as a
+// handle_call does.
+//
+// blocking's `answers_straight_away` is the dual, and differs on
+// purpose: it suppresses an :infinity hop, so it must hold only of a
+// handle_call/3 that provably answers at once, and every call it cannot
+// vouch for (answers_in_time) counts as a wait. This word reports, so it
+// holds only of a wait that provably has no bound.
 .decl handler_blocks(mod: symbol, handler: symbol, op_site: symbol)
 
 handler_blocks(mod, h, site) :-
@@ -223,16 +234,13 @@ handler_blocks(mod, h, site) :-
 
 handler_blocks(mod, h, site) :-
   handler_function(mod, h),
-  remote_call(site, h, "GenServer", "call", _),
   sync_call_site(site, h, _, -1).
 
 .init infinite_call_reach = SameProcessReachCut
 
 infinite_call_reach.cut(f, g) :- side_call(f, g).
 
-infinite_call_reach.seed(g, site) :-
-  remote_call(site, g, "GenServer", "call", _),
-  sync_call_site(site, g, _, -1).
+infinite_call_reach.seed(g, site) :- sync_call_site(site, g, _, -1).
 
 handler_blocks(mod, h, site) :-
   handler_function(mod, h),

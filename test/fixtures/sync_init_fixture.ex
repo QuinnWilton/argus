@@ -297,3 +297,49 @@ defmodule Argus.Test.Fixtures.InfiniteAppTree do
     Supervisor.init([{Argus.Test.Fixtures.InfiniteWatcher, []}], strategy: :one_for_one)
   end
 end
+
+defmodule Argus.Test.Fixtures.StatemCallWatcher do
+  @moduledoc """
+  A singleton whose handler waits forever on a gen_statem peer, through
+  `:gen_statem.call/3` rather than GenServer's spelling.
+  """
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  def watch(pid), do: GenServer.call(__MODULE__, {:watch, pid})
+
+  @impl true
+  def init(_), do: {:ok, %{}}
+
+  @impl true
+  def handle_call({:watch, pid}, _from, state) do
+    :ok = :gen_statem.call(Argus.Test.Fixtures.WorkerB, {:watch, pid}, :infinity)
+    {:reply, :ok, state}
+  end
+end
+
+defmodule Argus.Test.Fixtures.StatemCallWatchedPool do
+  @moduledoc "Started by users, not by the app tree; its init waits on the singleton."
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts) do
+    :ok = Argus.Test.Fixtures.StatemCallWatcher.watch(self())
+    {:ok, opts}
+  end
+end
+
+defmodule Argus.Test.Fixtures.StatemCallAppTree do
+  @moduledoc false
+  use Supervisor
+
+  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts) do
+    Supervisor.init([{Argus.Test.Fixtures.StatemCallWatcher, []}], strategy: :one_for_one)
+  end
+end

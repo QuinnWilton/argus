@@ -308,7 +308,11 @@ wait_found(cat(mod, ":handle_call/3"), "", "infinity", target, "", "") :-
 // Asked of the
 // servers an :infinity hop reaches. A server can still be slow because
 // it is busy with another request, or stuck in another callback; the
-// hop does not add a wait of its own to the chain.
+// hop does not add a wait of its own to the chain. startup's
+// `handler_blocks` is the dual, and differs on purpose: it reports, so
+// it holds only of a handler's wait that provably has no bound; this
+// word suppresses, so it holds only of an answer that provably comes at
+// once.
 .decl infinity_target(mod: symbol)
 
 infinity_target(m) :- callback_sync_dep_timeout(_, m, -1).

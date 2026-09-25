@@ -406,6 +406,14 @@ elsewhere), no longer every call from it: a task the owner starts that
 reads the table outlives the owner's crash
 (`EtsOwners.SpawnedReader`).
 
+**Changed.** "init/1 waits on a running server whose handler can block"
+counts a handler's synchronous call with `:infinity` whichever API
+spells it (`sync_call_site`: GenServer, gen_statem, GenStage, Agent);
+it read `GenServer.call/3` alone (`StatemCallWatcher`). startup's
+`handler_blocks` and blocking's `answers_straight_away` stay two words,
+duals that say why: one reports and holds only of a wait with no bound,
+the other suppresses and holds only of an answer that comes at once.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

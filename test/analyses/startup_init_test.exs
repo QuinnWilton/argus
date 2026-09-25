@@ -116,6 +116,28 @@ defmodule Argus.Analyses.StartupInitTest do
       assert op_site == call_b
     end
 
+    test "a handler's :infinity call blocks it whatever API spells the call" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.StatemCallAppTree,
+        Argus.Test.Fixtures.StatemCallWatcher,
+        Argus.Test.Fixtures.StatemCallWatchedPool,
+        Argus.Test.Fixtures.WorkerB
+      ]
+
+      assert {:ok, results} = Memo.analyze(modules, :startup)
+
+      assert [[mod, dep, op_site, _handler]] = blocking_servers(results)
+      assert mod == "Argus.Test.Fixtures.StatemCallWatchedPool"
+      assert dep == "Argus.Test.Fixtures.StatemCallWatcher"
+
+      [call] =
+        for [id, _, "Argus.Test.Fixtures.WorkerB", "-1"] <- sync_call_sites(modules), do: id
+
+      assert op_site == call
+    end
+
     test "a handler that only starts children is bounded and not reported" do
       skip_without_souffle()
 
