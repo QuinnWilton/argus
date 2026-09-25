@@ -12,6 +12,8 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
   use ExUnit.Case, async: true
   use Scry.Test.Peer
 
+  import ExUnit.CaptureIO, only: [with_io: 2]
+
   alias Roux.Lang.Manifest
   alias Scry.Test.{Fixture, Peer, QueryLog}
 
@@ -221,6 +223,36 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
       QueryLog.reset(log)
       assert {:noop, _} = compile!()
       assert QueryLog.executions(log, :module_extraction) == []
+    end)
+  end
+
+  test "argus keeps the dependencies' hashes beside the manifest; --force drops them", %{
+    copy: copy
+  } do
+    Fixture.checkout!(copy, @quick, :depot_quick)
+    # A VM that has hashed nothing, as `mix compile` starts: one that has
+    # keeps the hashes in memory and writes none.
+    peer = Peer.start!()
+
+    Fixture.in_peer(peer, copy, :depot_quick, fn _log ->
+      compile!()
+
+      # Scry's own dependencies are on the code path, outside OTP and
+      # Elixir: their hashes are what the store keeps.
+      ebins = Path.join(Scry.Runner.cache_dir(), "ebins")
+      assert File.ls!(ebins) != []
+
+      stale = Path.join(ebins, "stale-" <> String.duplicate("0", 64))
+      File.write!(stale, "")
+
+      {{status, _diagnostics}, _stderr} =
+        with_io(:stderr, fn -> Mix.Task.rerun("compile.scry", ["--force"]) end)
+
+      assert status in [:ok, :noop]
+      refute File.exists?(stale)
+
+      Mix.Tasks.Compile.Scry.clean()
+      refute File.exists?(Scry.Runner.cache_dir())
     end)
   end
 

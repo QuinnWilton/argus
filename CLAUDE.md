@@ -44,7 +44,17 @@ Two layers over one `Roux.Database`:
      schema version and the specs environment (every application on the
      code path, less argus's own and the watched ones' beams) — read by
      `module_extraction`, the stages, the solves and findings: moving it
-     re-runs everything.
+     re-runs everything. Hashing the dependencies' beams cost ~1 s a
+     run on a large project; argus keeps each ebin's hashes under a stat
+     stamp (name, mtime, size, inode; an ebin with a beam younger than
+     2 s is read whole) in the store `Scry.Runner.cache_dir/0`
+     (`<manifest_path>/compile.scry.cache`, `Argus.Cache` layout,
+     `ebins/`; atomic staging+rename writes, safe across VMs). `--force`
+     drops it (`env/2`'s `refresh:`; a VM's in-memory copy stands);
+     pruned when the fingerprint moves; `ARGUS_NO_CACHE` turns it off.
+     Known edge: a beam rewritten in place, same size, mtime set back,
+     keeps its old hashes — the scanner's own prefilter has the same
+     one.
    - `extraction_code` — ONE digest of the code argus's fact producers
      run: the union of `Argus.Cache.Code.closure/1` over `:base` and
      every extractor scry runs, plus `Argus.Schema` and every

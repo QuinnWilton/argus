@@ -3,7 +3,7 @@ defmodule Scry.Fingerprint do
   What the memoized graph is a function of beyond the beams, stamped by
   the driver into inputs.
 
-  - `:env_fingerprint` (`env/1`) — what every query runs on: the Elixir
+  - `:env_fingerprint` (`env/2`) — what every query runs on: the Elixir
     and OTP versions, scry's own code (`code_digest/2`; a path
     dependency moves its code without moving its version), argus's fact
     schema version, and the applications on the code path
@@ -67,9 +67,30 @@ defmodule Scry.Fingerprint do
   analyzed module as a `:beam_meta` input, an ignored one as an
   `:ignored_beam` input its callers depend on. Each excluded application
   is still named, by version.
+
+  Hashing every dependency's beams is most of what this costs (about a
+  second on a project with a hundred dependencies), so with `:cache`
+  argus keeps each ebin's hashes on disk under a stamp of its beams'
+  stats — name, modification time, size and inode — and a fresh VM
+  stats the beams instead of reading them. A beam written within the
+  last two seconds is read every time. One rewritten in place with
+  other code of the same size and its modification time set back (as
+  `touch -r` does) keeps its old hashes, as scry's own scan keeps a
+  beam of the same size and modification time; `refresh: true` is the
+  way out.
+
+  ## Options
+
+    * `:cache` — the store (`Argus.Cache`'s layout) to keep the hashes
+      in, under its `ebins/`; nil, or stores turned off with
+      `ARGUS_NO_CACHE`, keeps them in this VM alone.
+    * `:refresh` — drop what the store kept before computing, so every
+      ebin this VM has not hashed yet is hashed again and kept afresh
+      (`--force`). What this VM already holds stands: a fresh VM
+      computes all of it.
   """
-  @spec env([atom()]) :: env()
-  def env(watched \\ []) do
+  @spec env([atom()], keyword()) :: env()
+  def env(watched \\ [], opts \\ []) do
     %{
       elixir: System.version(),
       otp: System.otp_release(),
@@ -80,8 +101,23 @@ defmodule Scry.Fingerprint do
       # names every application there by version, and a dependency
       # outside OTP and Elixir also by its beams (a path dependency moves
       # its code without moving its version).
-      specs_environment: Argus.Specs.environment_digest(exclude: Enum.uniq([:panoptes | watched]))
+      specs_environment:
+        Argus.Specs.environment_digest(
+          [exclude: Enum.uniq([:panoptes | watched])] ++ ebins_cache(opts)
+        )
     }
+  end
+
+  defp ebins_cache(opts) do
+    case Argus.Cache.store(cache: Keyword.get(opts, :cache)) do
+      nil ->
+        []
+
+      store ->
+        ebins = Argus.Cache.dir(store, :ebins)
+        if Keyword.get(opts, :refresh, false), do: File.rm_rf(ebins)
+        [cache: ebins]
+    end
   end
 
   @doc """

@@ -19,7 +19,7 @@ defmodule Scry.Frontend do
     from that caller to this key is what re-extracts it when the
     ignored beam changes.
   - `:env_fingerprint` input — `:all =>` toolchain map
-    (`Scry.Fingerprint.env/1`); `:high` durability so an upgrade
+    (`Scry.Fingerprint.env/2`); `:high` durability so an upgrade
     invalidates the whole graph.
   - `:extraction_code` input — `:all =>` a digest of the code argus's
     fact producers run (`Scry.Fingerprint.extraction_code/0`): an

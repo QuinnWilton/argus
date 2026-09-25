@@ -63,6 +63,16 @@ defmodule Scry.Runner do
   def manifest_file, do: Path.join(Mix.Project.manifest_path(), "compile.scry")
 
   @doc """
+  The store beside the manifest (`Argus.Cache`'s layout) where argus
+  keeps what outlives a VM for this project: each dependency ebin's
+  beam hashes, which the environment fingerprint would otherwise read
+  every beam of every dependency for (`Scry.Fingerprint.env/2`). Shared
+  by `mix compile.scry` and `mix scry`, and removed with the manifest.
+  """
+  @spec cache_dir() :: String.t()
+  def cache_dir, do: Path.join(Mix.Project.manifest_path(), "compile.scry.cache")
+
+  @doc """
   Runs the configured analyses against the project's compiled beams.
 
   Options:
@@ -70,12 +80,16 @@ defmodule Scry.Runner do
   - `:manifest` (required) — the manifest path for cross-run
     incrementality.
   - `:force` — skip the warm start and recompute everything (default
-    `false`).
+    `false`); the store's dependency hashes are dropped and kept again.
+  - `:cache` — the store argus keeps across runs (`cache_dir/0`), or
+    nil (the default) for none: every run then hashes every dependency
+    beam again.
   """
   @spec run(Scry.Config.t(), keyword()) :: Result.t()
   def run(%Scry.Config{} = config, opts) do
     manifest_path = Keyword.fetch!(opts, :manifest)
     force? = Keyword.get(opts, :force, false)
+    cache = Keyword.get(opts, :cache)
 
     {db, prior_sources} = open(manifest_path, force?)
 
@@ -87,7 +101,7 @@ defmodule Scry.Runner do
         Scry.Scanner.sync(db, discovered, prior_sources, ignored)
 
       souffle? = Argus.Souffle.available?()
-      env = sync_environment(db, config, souffle?, apps)
+      env = sync_environment(db, config, souffle?, apps, cache: cache, refresh: force?)
 
       # A module whose extraction failed last run is extracted again: a
       # timeout under load is not a fact about the beam.
@@ -176,9 +190,17 @@ defmodule Scry.Runner do
   # of it), the project root, and — with a solver — the rules digests.
   # `moved?` when any of them, or an analysis without a memo from the
   # last run, means this run has something to write down.
-  defp sync_environment(db, config, souffle?, apps) do
+  defp sync_environment(db, config, souffle?, apps, env_opts) do
     :ok = Input.set(db, :graph_layout, :all, @layout)
-    fingerprint_changed? = set(db, :env_fingerprint, :all, Scry.Fingerprint.env(apps))
+    fingerprint_changed? = set(db, :env_fingerprint, :all, Scry.Fingerprint.env(apps, env_opts))
+
+    # A rebuilt dependency leaves its old beams' hashes behind; they go
+    # once nothing has read them for an hour, all but each application's
+    # three latest (`Argus.Cache.prune/2`). Looked at when the
+    # environment moved, as it does when a rebuild changed code, rather
+    # than on every run.
+    if fingerprint_changed?, do: prune(env_opts[:cache])
+
     extraction_changed? = set(db, :extraction_code, :all, Scry.Fingerprint.extraction_code())
     argus_changed? = set(db, :argus_code, :all, Scry.Fingerprint.argus_code())
     :ok = Input.set(db, :project_root, :all, File.cwd!())
@@ -198,6 +220,19 @@ defmodule Scry.Runner do
         fingerprint_changed? or extraction_changed? or argus_changed? or rules_changed? or
           unsolved?
     }
+  end
+
+  # A store that cannot be pruned (another user's files, a read-only
+  # volume) costs disk space, not a run.
+  defp prune(cache) do
+    case Argus.Cache.store(cache: cache) do
+      nil -> :ok
+      store -> _pruned = Argus.Cache.prune(store)
+    end
+
+    :ok
+  rescue
+    File.Error -> :ok
   end
 
   # Sets an input; true when its value moved.

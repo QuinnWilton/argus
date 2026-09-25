@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- A warm run no longer spends a second hashing every dependency's
+  beams for the environment fingerprint. argus keeps each dependency
+  ebin's hashes in a store beside the manifest
+  (`Scry.Runner.cache_dir/0`, `_build/<env>/lib/<app>/.mix/compile.scry.cache`)
+  under a stamp of its beams' stats, and a fresh VM stats the beams
+  instead of reading them: on a 350-module project with 116 dependency
+  ebins (3,947 beams), the digest went from about 950 ms to 180 ms.
+  scry's part of a warm `mix compile` there went from 1.73–1.83 s to
+  1.0–1.2 s.
+  A beam rewritten in place with other code of the same size and its
+  modification time set back keeps its old hashes, as scry's own scan
+  keeps such a beam; `--force` drops the store, and every dependency is
+  hashed again. `ARGUS_NO_CACHE=1` turns the store off, `mix clean`
+  removes it with the manifest, and hashes nothing has read for an hour
+  (past each application's three latest) are pruned when the
+  environment moves. `Scry.Fingerprint.env/2` takes `cache:` and
+  `refresh:`; `Scry.Runner.run/2` takes `cache:`.
 - The manifest records the layout of the query graph that wrote it
   (`:graph_layout`, a new frontend input), and a manifest of another
   layout — a scry whose queries are named, keyed or valued otherwise —

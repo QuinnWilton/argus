@@ -114,6 +114,7 @@ defmodule Mix.Tasks.Scry do
     result =
       Scry.Runner.run(config,
         manifest: Scry.Runner.manifest_file(),
+        cache: Scry.Runner.cache_dir(),
         force: Keyword.get(opts, :force, false)
       )
 

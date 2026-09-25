@@ -53,6 +53,7 @@ defmodule Mix.Tasks.Compile.Scry do
     result =
       Scry.Runner.run(config,
         manifest: manifest_file(),
+        cache: Scry.Runner.cache_dir(),
         force: Keyword.get(opts, :force, false)
       )
 
@@ -75,6 +76,7 @@ defmodule Mix.Tasks.Compile.Scry do
   def clean do
     File.rm(manifest_file())
     File.rm(sidecar_file())
+    File.rm_rf(Scry.Runner.cache_dir())
     :ok
   end
 
