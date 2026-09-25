@@ -87,6 +87,15 @@ checkout), Livebook's `UniqueTask` start (2, a start whose caller waits
 for the child's `:DOWN`), and 8 path rows relabelled from another entry
 kind; races unchanged.
 
+**Changed.** `Plug.Conn.fetch_cookies/2` no longer carries the conn's
+request data into its result (`fetch_cookies/1` still does): its options
+name the cookies to verify, and a `signed:` or `encrypted:` cookie is
+the server's own. Firezone decodes six signed session cookies with
+`binary_to_term(_, [:safe])`; once controller actions were entries they
+read as request data flowing into the decode (`:error`), and are path
+rows again (`:info`). The rest of the conn fetch_cookies/2 returns is
+no longer followed either, which errs quiet. Corpus tally unchanged.
+
 ### Classes mined from fixed bugs
 
 Three classes from round 1 of mining fixed bugs (178 classified; the

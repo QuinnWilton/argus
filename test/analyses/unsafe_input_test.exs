@@ -43,6 +43,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
     Taint.SameLine,
     Taint.SameLineMixed,
     Taint.Controller,
+    Taint.CookieController,
     Taint.PlainPlugHelpers,
     Argus.Test.Fixtures.AtomSources,
     Argus.Test.Fixtures.AtomFromMessages,
@@ -296,6 +297,18 @@ defmodule Argus.Analyses.UnsafeInputTest do
       assert [[_id, func, _api, entry, "controller", "flow"]] = rows
       assert func =~ "show/2"
       assert entry =~ "show/2"
+    end
+
+    test "a cookie fetched signed is the server's; one fetched unverified is request data",
+         ctx do
+      skip_without_souffle()
+
+      flows =
+        for [_id, func, _api, "deserialization", _entry, _kind, "flow" | _] <-
+              analyze(ctx, [Taint.CookieController])["sink_reachable"],
+            do: func |> String.split(":") |> List.last()
+
+      assert flows == ["prefs/2"]
     end
 
     test "a plug's exported helper is no action", ctx do

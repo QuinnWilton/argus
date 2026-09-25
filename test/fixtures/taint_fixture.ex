@@ -255,6 +255,35 @@ defmodule Argus.Test.Fixtures.Taint do
     def index(conn, %{"sort" => sort}), do: {conn, String.to_existing_atom(sort)}
   end
 
+  defmodule CookieController do
+    @moduledoc """
+    A controller reading cookies. `session/2` decodes a cookie it
+    fetched signed: the server wrote and signed it, so it is no request
+    data. `prefs/2` decodes one it fetched unverified: a flow.
+    """
+    @behaviour Plug
+    @compile {:no_warn_undefined, Plug.Conn}
+
+    def init(opts), do: opts
+
+    def call(conn, opts), do: phoenix_controller_pipeline(conn, opts)
+
+    def phoenix_controller_pipeline(conn, opts), do: action(conn, opts)
+
+    def action(%{private: %{phoenix_action: name}} = conn, _opts),
+      do: apply(__MODULE__, name, [conn, conn.params])
+
+    def session(conn, _params) do
+      conn = Plug.Conn.fetch_cookies(conn, signed: ["state"])
+      :erlang.binary_to_term(conn.cookies["state"], [:safe])
+    end
+
+    def prefs(conn, _params) do
+      conn = Plug.Conn.fetch_cookies(conn)
+      :erlang.binary_to_term(conn.cookies["prefs"], [:safe])
+    end
+  end
+
   defmodule PlainPlugHelpers do
     @moduledoc """
     A Plug that is not a controller: its exported arity-2 helper is not

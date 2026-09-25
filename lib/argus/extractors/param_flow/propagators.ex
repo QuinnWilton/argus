@@ -91,7 +91,12 @@ defmodule Argus.Extractors.ParamFlow.Propagators do
      [0]},
     {URI, ~w(decode decode_www_form decode_query parse new)a, :any, [0]},
     {Plug.Conn.Query, [:decode], :any, [0]},
-    {Plug.Conn, ~w(get_req_header fetch_query_params fetch_cookies read_body)a, :any, [0]},
+    {Plug.Conn, ~w(get_req_header fetch_query_params read_body)a, :any, [0]},
+    # fetch_cookies/2 names the cookies to verify: `signed:` and
+    # `encrypted:` values in the conn it returns are the server's own
+    # (firezone's session cookies, decoded with binary_to_term), and the
+    # conn is fresh rather than carry its other data along with them.
+    {Plug.Conn, [:fetch_cookies], 1, [0]},
     {Plug.Conn.Utils, :any, :any, [0]}
   ]
 
