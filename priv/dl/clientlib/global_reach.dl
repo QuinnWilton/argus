@@ -14,8 +14,8 @@
 // edge into a task the caller awaits (awaits_task): Task.async then
 // Task.await holds the caller for as long as the lock does. It is
 // clause-aware where a call says which clause it enters: a call whose
-// first argument is always the same literal atom enters only the clauses
-// that match it (clause_call), so `sync(:boot, s)` in init/1 does not
+// first argument is always the same literal atom (literal_first, in
+// calls.dl) enters only the clauses that match it (clause_call), so `sync(:boot, s)` in init/1 does not
 // reach the set_lock in `sync(:locked, s)` beside it — the fix the talk
 // recommends, with a helper shared by init/1 and handle_continue/2.
 // Anything else (a forwarded parameter, a computed value, a tuple) is
@@ -51,18 +51,6 @@ global_path(f, "", site) :-
 global_path(f, id, site) :-
   awaits_task(f, id, g),
   global_path(g, _, site).
-
-// Every call `f` makes to `g` passes the literal atom `value` first (one
-// row per atom when the calls differ), as calls.dl's literal_entry
-// reads it. Not narrowed to the callees on a :global path: the walk
-// negates it, so it cannot depend on the walk.
-.decl literal_first(func: symbol, callee: symbol, value: symbol)
-
-literal_first(f, g, a) :-
-  call_arg(f, g, 0, a),
-  match(":.*", a),
-  !call_arg(f, g, 0, "dynamic"),
-  !call_arg_forward(f, g, 0, _).
 
 // The first-argument tag the clause holding `call` serves, or "any" for
 // a call every clause shares, or a hop with no call.

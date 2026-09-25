@@ -551,16 +551,25 @@ reaches_sync_request(f, m, tag) :-
 .decl site_demand(func: symbol)
 
 // Every call `f` makes to `g` passes the literal atom `value` first (one
-// row per atom when the calls differ). An argument forwarded from f's
-// own parameters, or unresolved, enters every clause.
-.decl literal_entry(func: symbol, callee: symbol, value: symbol)
+// row per atom when the calls differ): the call enters only g's clauses
+// for that atom and the clauses that take any value (clause_call says
+// which clause a site belongs to). An argument forwarded from f's own
+// parameters, a computed value or a tuple enters every clause. The one
+// test the clause-aware walks share: site_request below and
+// global_reach.dl's global_path. Not narrowed to a demand: a walk that
+// negates it cannot depend on the walk.
+.decl literal_first(func: symbol, callee: symbol, value: symbol)
 
-literal_entry(f, g, a) :-
-  site_demand(f),
+literal_first(f, g, a) :-
   call_arg(f, g, 0, a),
   match(":.*", a),
   !call_arg(f, g, 0, "dynamic"),
   !call_arg_forward(f, g, 0, _).
+
+// literal_first, for the functions site_request is asked of.
+.decl literal_entry(func: symbol, callee: symbol, value: symbol)
+
+literal_entry(f, g, a) :- site_demand(f), literal_first(f, g, a).
 
 site_demand(g) :- site_demand(f), call_instr(f, g, _), literal_entry(f, g, _).
 
