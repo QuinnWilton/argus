@@ -107,6 +107,13 @@ ra's `swap_monitor/2` (the ref returned and stored) are quiet;
 ejabberd's router inits, which monitor in a `lists:foreach` fun, still
 report.
 
+**Fixed.** mailbox's monitor rules (`never_released`, `ref_discarded`,
+and `timed_wait` through `ends_its_process`) leave out what only
+`terminate/2,3` runs (`on_the_way_out`): the process exits when it
+returns, and the monitors it leaves go with it. exq's WorkerDrainer
+monitors every worker from terminate/2 and waits a grace period. The
+same drain reached from any other callback is reported as before.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

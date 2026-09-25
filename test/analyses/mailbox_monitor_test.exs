@@ -37,7 +37,9 @@ defmodule Argus.Analyses.MailboxMonitorTest do
     M.EachDropsRefs,
     M.ForeachDropsRefs,
     M.HelperKeepsRef,
-    M.HelperDropsRef
+    M.HelperDropsRef,
+    M.DrainsOnTerminate,
+    M.DrainsOnCall
   ]
 
   # Every test reads the same solve of @all: solved once, read-only.
@@ -179,9 +181,9 @@ defmodule Argus.Analyses.MailboxMonitorTest do
     test "monitoring on insert and deleting without demonitor is reported" do
       skip_without_souffle()
 
-      assert mods(servers(), "never_released") == [
-               "Argus.Test.Fixtures.MonitorLeak.NeverReleases"
-             ]
+      # DrainsOnCall is this rule's too (its drain also runs from a call).
+      assert mods(servers(), "never_released") -- ["Argus.Test.Fixtures.MonitorLeak.DrainsOnCall"] ==
+               ["Argus.Test.Fixtures.MonitorLeak.NeverReleases"]
     end
 
     test "a monitor whose ref is thrown away is reported on its own" do
@@ -223,6 +225,17 @@ defmodule Argus.Analyses.MailboxMonitorTest do
       # Quiet: the refs are mapped into a set, or kept in the state.
       refute named?(discarded, "MapsRefs")
       refute named?(discarded, "HelperKeepsRef")
+    end
+
+    test "what only terminate runs ends with the process" do
+      skip_without_souffle()
+
+      r = servers()
+      reported = Enum.flat_map(~w(never_released ref_discarded timed_wait), &mods(r, &1))
+
+      # Positive: the same drain, reached from handle_call/3 as well.
+      assert named?(reported, "DrainsOnCall")
+      refute named?(reported, "DrainsOnTerminate")
     end
 
     test "a monitor in a client API function is the caller's, not the server's" do

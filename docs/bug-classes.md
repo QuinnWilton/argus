@@ -1463,7 +1463,7 @@ No sampled rate.
 **Property.** A function takes a monitor and waits, in its own process, in a receive with an `after` clause. The wait may be in the function itself, in what it calls, or in a closure it runs. All of the following also hold:
 - No path of the function demonitors with `[:flush]`.
 - None of its blocking receives pins that monitor's `:DOWN`.
-- Its return does not end its process. A function whose return does is a spawned function's last act, called from nowhere else and not recursing.
+- Its return does not end its process. A function whose return does is a spawned function's last act, called from nowhere else and not recursing, or one only `terminate/2,3` reaches (`on_the_way_out`: no other callback or state function does), after which the process exits.
 - The monitor is not collected by the function's callers. It is collected when every way the program has into the function passes a call after which the caller waits for a `:DOWN` (or flushes it) on every path, and none of those ways comes from an exported function, an uncalled one or what a spawn runs.
 
 On the timeout branch the monitor is still live. The `{:DOWN, ...}` arrives after the function has returned, into whatever runs then. If no clause matches, it is a FunctionClauseError; otherwise a clause runs with a reason the code stopped caring about.
@@ -1494,9 +1494,10 @@ On the timeout branch the monitor is still live. The `{:DOWN, ...}` arrives afte
 - This is a module-wide heuristic, reported as info. Any map removal anywhere in the module counts, including the removal in the `:DOWN` handler, the one path where the monitor is already gone. e00304c kept that removal out of the evidence frames, but not out of the rule. So a server whose only removal is in its `:DOWN` clause is still reported, with no frame. Conversely, any demonitor anywhere in the module, of any ref, silences the rule.
 - Removal from a set, a keyword list or an ETS table is not seen, because `removal_api` lists map functions only.
 - A monitor whose ref is discarded is the next class, not this one. A monitor in a client function runs in the caller (`MonitorLeak.ClientSideMonitor`).
+- A monitor only `terminate/2,3` takes (`on_the_way_out`) ends with the process a moment later: exq's WorkerDrainer monitors every worker from terminate/2 and waits out a grace period (`MonitorLeak.DrainsOnTerminate`, quiet). The same drain also reached from a call is reported (`DrainsOnCall`). The ref-discarded class reads the same word.
 - There is one finding per module, anchored at a monitor site. Up to three removal sites are related frames (`monitored_entry_removal`).
 
-**Fixtures.** Positive: `MonitorLeak.NeverReleases` (`test/fixtures/monitor_fixture.ex`). Quiet: `MonitorLeak.ReleasesOnDelete`, `KillsMonitored`, `ClientSideMonitor`, `DropsRef` (same file). Asserted in `test/analyses/mailbox_monitor_test.exs`. The frames are asserted in `test/evidence_frames_test.exs`.
+**Fixtures.** Positive: `MonitorLeak.NeverReleases`, `DrainsOnCall` (`test/fixtures/monitor_fixture.ex`). Quiet: `MonitorLeak.ReleasesOnDelete`, `KillsMonitored`, `ClientSideMonitor`, `DropsRef`, `DrainsOnTerminate` (same file). Asserted in `test/analyses/mailbox_monitor_test.exs`. The frames are asserted in `test/evidence_frames_test.exs`.
 
 **Corpus.** Fix pairs: `postgrex#781` (elixir-ecto/postgrex, 313d6c9 → 85c7cf4, Postgrex.Parameters). Present-only: None.
 

@@ -629,4 +629,70 @@ defmodule Argus.Test.Fixtures.MonitorLeak do
 
     defp watch(pid), do: Process.monitor(pid)
   end
+
+  # terminate/2 is the last callback: what it leaves live ends with the
+  # process a moment later. The same drain run from handle_call/3 is not.
+
+  defmodule DrainsOnTerminate do
+    @moduledoc "exq's WorkerDrainer: monitor every worker on the way out, wait a grace period."
+    use GenServer
+
+    @impl true
+    def init(pids) do
+      Process.flag(:trap_exit, true)
+      {:ok, pids}
+    end
+
+    @impl true
+    def terminate(_reason, pids), do: drain(pids)
+
+    def drain(pids) do
+      pids |> Enum.map(fn pid -> Process.monitor(pid) end) |> MapSet.new() |> await()
+    end
+
+    def await(refs) do
+      if MapSet.size(refs) == 0 do
+        :ok
+      else
+        receive do
+          {:DOWN, ref, _, _, _} -> refs |> MapSet.delete(ref) |> await()
+        after
+          5_000 -> :ok
+        end
+      end
+    end
+  end
+
+  defmodule DrainsOnCall do
+    @moduledoc "The same drain, also run from handle_call/3: the server lives on."
+    use GenServer
+
+    @impl true
+    def init(pids) do
+      Process.flag(:trap_exit, true)
+      {:ok, pids}
+    end
+
+    @impl true
+    def handle_call(:drain, _from, pids), do: {:reply, drain(pids), pids}
+
+    @impl true
+    def terminate(_reason, pids), do: drain(pids)
+
+    def drain(pids) do
+      pids |> Enum.map(fn pid -> Process.monitor(pid) end) |> MapSet.new() |> await()
+    end
+
+    def await(refs) do
+      if MapSet.size(refs) == 0 do
+        :ok
+      else
+        receive do
+          {:DOWN, ref, _, _, _} -> refs |> MapSet.delete(ref) |> await()
+        after
+          5_000 -> :ok
+        end
+      end
+    end
+  end
 end

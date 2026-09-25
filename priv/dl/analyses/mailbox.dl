@@ -951,6 +951,32 @@ ends_its_process(g) :-
   !called_otherwise(g),
   !recurses(g).
 
+ends_its_process(g) :- on_the_way_out(_, g).
+
+// ── What only terminate runs ──────────────────────────────────────────
+//
+// terminate/2,3 is the last callback: the process exits when it
+// returns, and a monitor it takes, drops the ref of or leaves live
+// after a timed wait ends with it. exq's WorkerDrainer monitors every
+// worker from terminate/2 and waits out a grace period for their :DOWNs;
+// what the grace period leaves is gone a moment later. A function any
+// other callback (or state function) also reaches is not on the way
+// out: the same monitor taken in handle_call/3 is judged as ever.
+.init live_reach = ForwardIntraModuleSameProcessReach
+
+live_reach.root(mod, func) :-
+  otp_callback(func, mod, _, _),
+  !function_def(func, mod, "terminate", _, _).
+
+live_reach.root(mod, func) :-
+  statem_process(mod),
+  statem_state(mod, _, func),
+  function_def(func, mod, _, _, _).
+
+.decl on_the_way_out(mod: symbol, func: symbol)
+
+on_the_way_out(mod, f) :- server_side(mod, f), !live_reach.reaches(mod, f).
+
 .decl recurses(func: symbol)
 
 recurses(g) :- process_tail(g), call_edge(g, h), monitor_loop.reaches(h, g).
@@ -970,6 +996,7 @@ removes_entries(mod) :-
 
 unconsumed_monitor(mod, f, site, "never_released") :-
   server_side(mod, f),
+  !on_the_way_out(mod, f),
   monitor_call(site, f, _),
   !monitor_ref_dropped(site, f),
   removes_entries(mod),
@@ -986,6 +1013,7 @@ unconsumed_monitor(mod, f, site, "never_released") :-
 // removal path in evidence — the ref being gone is the whole story.
 unconsumed_monitor(mod, f, site, "ref_discarded") :-
   server_side(mod, f),
+  !on_the_way_out(mod, f),
   monitor_call(site, f, _),
   monitor_ref_dropped(site, f).
 
