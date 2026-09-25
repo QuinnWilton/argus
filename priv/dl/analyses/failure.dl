@@ -28,17 +28,18 @@
 // `unchecked_result(func, site, api, name)` — a result used without its
 //   failure case: Task.Supervisor.start_child discarded, or a
 //   Process.whereis of `name` used without its nil case.
-// `orphan_process(func, site, kind, target)` — a process nothing
-//   supervises: a bare spawn (`kind` = "spawn", site is the call) or an
-//   exit signal sent to `target` from a callback, past the supervisor
-//   that owns it (`kind` = "exit", site is the callback).
+// `orphan_process(func, site, kind, target, callback)` — a process
+//   nothing supervises: a bare spawn (`kind` = "spawn", site is the
+//   call) or an exit signal sent to `target` from a callback, past the
+//   supervisor that owns it (`kind` = "exit", site is the exit call,
+//   `func` the function making it and `callback` a callback running it).
 .decl unhandled_failure(func: symbol, site: symbol, kind: symbol, shape: symbol, span_end: symbol)
 .output unhandled_failure
 
 .decl unchecked_result(func: symbol, site: symbol, api: symbol, name: symbol)
 .output unchecked_result
 
-.decl orphan_process(func: symbol, site: symbol, kind: symbol, target: symbol)
+.decl orphan_process(func: symbol, site: symbol, kind: symbol, target: symbol, callback: symbol)
 .output orphan_process
 
 .decl inconsistent_handling(func: symbol, site: symbol, callee: symbol, belief: symbol, agree: number, deviate: number, target: symbol, raises: symbol, cover: symbol, caught: symbol)
@@ -82,21 +83,29 @@ exit_to_supervised(id, child, sup) :-
   supervised_process(p, sup, pos),
   supervisor_child(sup, pos, child, _, _).
 
-orphan_process(func, func, "exit", target) :-
-  callback_exit(func, id, target),
+// One finding per exit call, in the function that makes it, whichever
+// callbacks run it: Exq's Redis connection helper kills the connection
+// on a failover from every server that queries Redis, and that is one
+// exit, not ten. `callback` is one of the callbacks that reach it (the
+// finding keeps the least).
+orphan_process(g, id, "exit", target, callback) :-
+  callback_exit(callback, id, target),
+  exit_call(id, g, target),
   !exit_to_own_process(id, _),
   !exit_to_supervised(id, _, _).
 
-orphan_process(func, func, "exit", child) :-
-  callback_exit(func, id, _),
+orphan_process(g, id, "exit", child, callback) :-
+  callback_exit(callback, id, _),
+  exit_call(id, g, _),
   exit_to_supervised(id, child, _).
 
 // The supervisor that owns an exit's target: evidence on its finding.
 .decl exit_target_owner(func: symbol, target: symbol, sup: symbol, sup_site: symbol)
 .output exit_target_owner
 
-exit_target_owner(func, child, sup, sup_site) :-
-  callback_exit(func, id, _),
+exit_target_owner(g, child, sup, sup_site) :-
+  callback_exit(_, id, _),
+  exit_call(id, g, _),
   exit_to_supervised(id, child, sup),
   supervisor_site(sup, sup_site).
 
@@ -208,7 +217,7 @@ unchecked_result(func, id, "Task.Supervisor.start_child", "") :-
 
 // ══ Processes nobody watches ════════════════════════════════════════
 
-orphan_process(func, id, "spawn", "") :-
+orphan_process(func, id, "spawn", "", "") :-
   spawn_call(id, func, _, _, _, "spawn", _, _, _, _),
   !watched_spawn(id).
 

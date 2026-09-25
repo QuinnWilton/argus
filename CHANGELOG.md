@@ -81,6 +81,16 @@ wait. blocking runs the extractor too.
 
 ### Process rules, read against real programs
 
+**Changed.** `failure.orphan_process`'s exit rows are one per function
+that sends the exit, anchored at the call, not one per callback that
+reaches it: Exq's Redis connection helper kills the connection on a
+failover from every server that queries Redis, and was ten "Process.exit
+inside a GenServer callback" findings, one per callback; it is one, in
+the helper, with a frame at a callback that runs it. The relation gains
+a `callback` column (empty for a spawn); `site` is the exit call, and
+`exit_target_owner` joins on the function that makes it. exq 10 to 1,
+brod 6 to 2, rabbitmq 4 to 2.
+
 **Fixed.** `name_lookup`'s `checked` reads a comparison whose boolean
 is a value as a check, as it read one in a guard: `whereis(?MODULE) =/=
 undefined` returned from ejabberd_redis_sup's `is_started/0`, and

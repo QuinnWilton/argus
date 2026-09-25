@@ -19,7 +19,10 @@ defmodule Argus.Analyses.FailureSpawnTest do
       assert Map.has_key?(results, "orphan_process")
 
       unlinked =
-        Rows.where(results, :failure, "orphan_process", kind: "spawn", drop: [:kind, :target])
+        Rows.where(results, :failure, "orphan_process",
+          kind: "spawn",
+          drop: [:kind, :target, :callback]
+        )
 
       assert unlinked != []
 
@@ -40,7 +43,10 @@ defmodule Argus.Analyses.FailureSpawnTest do
 
       funcs =
         results
-        |> Rows.where(:failure, "orphan_process", kind: "spawn", drop: [:kind, :target])
+        |> Rows.where(:failure, "orphan_process",
+          kind: "spawn",
+          drop: [:kind, :target, :callback]
+        )
         |> Enum.map(fn [func, _id] -> func end)
 
       assert Enum.any?(funcs, &String.contains?(&1, "Watched:unwatched/0"))

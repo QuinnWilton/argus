@@ -20,7 +20,8 @@ defmodule Argus.Analyses.FailureErrorTest do
     Argus.Test.Fixtures.ExitingServer,
     Argus.Test.Fixtures.SelfCrashCallback,
     Argus.Test.Fixtures.ExitSignals.OwnHelper,
-    Argus.Test.Fixtures.ExitCaller
+    Argus.Test.Fixtures.ExitCaller,
+    Argus.Test.Fixtures.SharedKill
   ]
 
   setup_all do
@@ -44,7 +45,11 @@ defmodule Argus.Analyses.FailureErrorTest do
       )
 
   defp exits(results),
-    do: Rows.where(results, :failure, "orphan_process", kind: "exit", drop: [:site, :kind])
+    do:
+      Rows.where(results, :failure, "orphan_process",
+        kind: "exit",
+        drop: [:site, :kind, :callback]
+      )
 
   describe "unhandled_failure: rescue" do
     test "flags a bare rescue, not a filtered one", ctx do
@@ -89,6 +94,30 @@ defmodule Argus.Analyses.FailureErrorTest do
       assert Enum.any?(exits(results), fn [func, _target] ->
                String.contains?(func, "ExitingServer:handle_cast/2")
              end)
+    end
+
+    test "an exit is one finding at its call, whichever callbacks run it", ctx do
+      skip_without_souffle()
+
+      results = analyze(ctx, [Argus.Test.Fixtures.SharedKill])
+
+      funcs =
+        results
+        |> exits()
+        |> Enum.map(fn [func, _target] -> func |> String.split(":") |> List.last() end)
+        |> Enum.uniq()
+        |> Enum.sort()
+
+      assert funcs == ["handle_info/2", "reconnect/1"],
+             "the helper's exit once, and handle_info/2's own exit once"
+
+      {:ok, findings} = Memo.run_analyses([Argus.Test.Fixtures.SharedKill], analyses: [:failure])
+      exits = Enum.filter(findings.findings, &(&1.title =~ "Process.exit"))
+      assert length(exits) == 2
+
+      shared = Enum.find(exits, &match?({_, :reconnect, 1}, &1.mfa))
+      assert %{instr: %Argus.InstrId{func: "reconnect"}} = shared
+      assert [%{label: "a callback that runs it"}] = shared.related
     end
 
     test "does not flag exit/1 (a self-crash), only exit signals to a target", ctx do

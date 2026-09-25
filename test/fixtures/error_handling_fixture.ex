@@ -136,6 +136,39 @@ defmodule Argus.Test.Fixtures.ExitingServer do
   end
 end
 
+defmodule Argus.Test.Fixtures.SharedKill do
+  @moduledoc """
+  One exit call, in a helper three callbacks run (Exq's Redis failover
+  kill): one finding, at the helper's call. A second exit, made in a
+  callback of its own, is a second finding.
+  """
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call(:query, _from, state), do: {:reply, reconnect(state), state}
+
+  @impl true
+  def handle_cast(:query, state), do: {:noreply, reconnect(state)}
+
+  @impl true
+  def handle_info(:tick, state), do: {:noreply, reconnect(state)}
+
+  def handle_info({:stop_worker, pid}, state) do
+    Process.exit(pid, :shutdown)
+    {:noreply, state}
+  end
+
+  defp reconnect(%{conn: conn} = state) do
+    Process.exit(conn, :kill)
+    state
+  end
+end
+
 defmodule Argus.Test.Fixtures.StatemTrapExit do
   @moduledoc false
   @behaviour :gen_statem

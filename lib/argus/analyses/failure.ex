@@ -152,13 +152,19 @@ defmodule Argus.Analyses.Failure do
         name: :orphan_process,
         fields: [
           {:func, :symbol, "the function spawning or sending the exit"},
-          {:site, :symbol, "instruction ID of the spawn, or the callback for an exit"},
+          {:site, :symbol, "instruction ID of the spawn or the exit call"},
           {:kind, :symbol, "spawn | exit"},
           {:target, :symbol,
            "the exit target, for an exit: the supervised child's module when " <>
-             "points-to resolves it to one"}
+             "points-to resolves it to one"},
+          {:callback, :symbol, "for an exit, a callback that runs it; empty for a spawn"}
         ],
-        key: [:func, :site, :kind, :target],
+        # An exit is one finding per function that makes it, whichever
+        # callbacks run it and however many of its clauses do (a
+        # supervisor's shutdown kills, then kills harder); a spawn, one
+        # per call.
+        key: {:kind, %{"exit" => [:func, :target], default: [:func, :site, :target]}},
+        earliest: :site,
         doc: "A process nothing supervises: a bare spawn, or an exit signal past the supervisor."
       },
       %{
@@ -229,20 +235,30 @@ defmodule Argus.Analyses.Failure do
     )
   end
 
-  def finding(:orphan_process, [func, _site, "exit", target]) do
+  def finding(:orphan_process, [func, site, "exit", target, callback]) do
     whom = if target == "dynamic", do: "a process it holds as a value", else: target
+
+    where =
+      if func == callback,
+        do: "from inside a callback",
+        else: "in what the callback #{Findings.call_name(callback)} runs"
 
     Findings.new(
       :info,
       "Process.exit inside a GenServer callback",
-      "#{Findings.call_name(func)} sends an exit signal to #{whom} from inside a callback. " <>
+      "#{Findings.call_name(func)} sends an exit signal to #{whom} #{where}. " <>
         "This is often deliberate — process-manager handoff, registry " <>
         "name-conflict resolution, an ownership watcher killing dependents — " <>
         "but killing a process imperatively bypasses the supervisor that " <>
         "started it, so it is worth confirming the target is meant to be " <>
         "torn down this way rather than stopped through its own protocol.",
-      at: Findings.at_func(func),
+      at: Findings.at_site_in_func(site, func),
       at_label: "sends an exit signal from a callback",
+      related:
+        if(func == callback,
+          do: [],
+          else: [Findings.related("a callback that runs it", Findings.at_func(callback))]
+        ),
       help: [
         "stop the target through its own protocol (`GenServer.stop/1`, a message) " <>
           "or through its supervisor, if this is not a deliberate teardown"
@@ -324,7 +340,7 @@ defmodule Argus.Analyses.Failure do
     )
   end
 
-  def finding(:orphan_process, [func, id, "spawn", _]) do
+  def finding(:orphan_process, [func, id, "spawn", _, _]) do
     Findings.new(
       :warning,
       "Unlinked process spawned",
