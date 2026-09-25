@@ -179,4 +179,42 @@ defmodule Argus.Test.Fixtures.SidePaths do
       {:reply, :ok, state}
     end
   end
+
+  defmodule AsksDeferrer do
+    @moduledoc "Waits with :infinity on a server that parks the request."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+
+    @impl true
+    def handle_call(:ask, _from, state) do
+      {:reply, GenServer.call(Argus.Test.Fixtures.SidePaths.Deferrer, :wait, :infinity), state}
+    end
+  end
+
+  defmodule Deferrer do
+    @moduledoc """
+    Keeps `from` and answers nothing at once: it replies from
+    handle_info/2 when an :event comes, which may be never. Its
+    handle_call/3 runs nothing that waits, and still does not answer.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(_opts), do: {:ok, []}
+
+    @impl true
+    def handle_call(:wait, from, waiters), do: {:noreply, [from | waiters]}
+
+    @impl true
+    def handle_info(:event, waiters) do
+      Enum.each(waiters, &GenServer.reply(&1, :ok))
+      {:noreply, []}
+    end
+  end
 end

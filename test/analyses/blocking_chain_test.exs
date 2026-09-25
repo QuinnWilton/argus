@@ -204,6 +204,19 @@ defmodule Argus.Analyses.BlockingChainTest do
              ]
     end
 
+    test "a server that parks the request and replies later does not answer at once" do
+      skip_without_souffle()
+
+      {:ok, results} = Memo.analyze([S.AsksDeferrer, S.Deferrer], :blocking)
+
+      assert infinity(results) == [
+               [
+                 "Argus.Test.Fixtures.SidePaths.AsksDeferrer:handle_call/3",
+                 "Argus.Test.Fixtures.SidePaths.Deferrer"
+               ]
+             ]
+    end
+
     test "a task the server awaits holds the hop; one it only starts does not" do
       skip_without_souffle()
 

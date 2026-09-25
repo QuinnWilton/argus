@@ -15,6 +15,7 @@
 .include "../clientlib/vocabulary.dl"
 .include "../clientlib/global_reach.dl"
 .include "../clientlib/timer_flush.dl"
+.include "../clientlib/replies.dl"
 
 // ══ The outputs ═════════════════════════════════════════════════════
 //
@@ -268,11 +269,13 @@ unbounded_wait(cat(mod, ":handle_call/3"), "", "infinity", target, "", "") :-
 
 // ── A server that answers at once ──────────────────────────────────────
 //
-// A handle_call/3 that answers from what its process holds: what it runs
-// in its own module has no receive without `after`, no call it cannot
-// see (a fun, an apply, another module's function handed as a fun), and
-// no call out of its module that answers_in_time does not vouch for —
-// the rpc rule's vocabulary of calls that return at once. Asked of the
+// A handle_call/3 that answers from what its process holds: it replies
+// in its return, not later ({:noreply, …}, defers_reply), and what it
+// runs in its own module has no receive without `after`, no call it
+// cannot see (a fun, an apply, another module's function handed as a
+// fun), and no call out of its module that answers_in_time does not
+// vouch for — the rpc rule's vocabulary of calls that return at once.
+// Asked of the
 // servers an :infinity hop reaches. A server can still be slow because
 // it is busy with another request, or stuck in another callback; the
 // hop does not add a wait of its own to the chain.
@@ -289,6 +292,11 @@ answer_reach.root(h, h) :- infinity_target(m), handle_call_function(m, h).
 .decl call_waits(handler: symbol)
 
 call_waits(h) :- answer_reach.reaches(h, f), recv_start(_, f, 1, _).
+
+// A handler that returns {:noreply, …} answers later, from another
+// callback, when some other message comes — or never: the hop waits on
+// that, not on the handler.
+call_waits(h) :- infinity_target(m), defers_reply(m, h, _).
 call_waits(h) :- answer_reach.reaches(h, f), dynamic_call(_, f, kind), unseen_call(kind).
 
 call_waits(h) :-

@@ -261,6 +261,14 @@ another callback, still delays the call; the hop adds no wait of its
 own. Phoenix's `MixListener.purge/1` (it purges code) and mnesia's
 servers are still reported.
 
+**Fixed.** ":infinity timeout inside a call chain" no longer takes a
+server whose handle_call/3 returns `{:noreply, …}` for one that answers
+at once: it keeps `from` and replies from another callback when some
+other message comes, or never, and the hop waits on that
+(`defers_reply`, moved with `answers_calls` from mailbox.dl to
+clientlib/replies.dl, which both read; blocking runs the Reply
+extractor).
+
 **Fixed.** A call into the logging or telemetry API (`:logger`,
 `:error_logger`, `Logger`, `:telemetry`) no longer makes its caller
 wait on those libraries' own servers (`side_call` in

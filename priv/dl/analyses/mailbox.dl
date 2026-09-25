@@ -15,6 +15,7 @@
 .include "../clientlib/otp.dl"
 .include "../clientlib/process_statem.dl"
 .include "../clientlib/sends.dl"
+.include "../clientlib/replies.dl"
 .include "../clientlib/test_code.dl"
 .include "../clientlib/vocabulary.dl"
 
@@ -970,20 +971,9 @@ reply_defect(mod, sender, "", cat("self_", kind), tag) :-
   !callback_total(h, callback).
 
 // ══ A reply that can never be sent ══════════════════════════════════
-.decl answers_calls(mod: symbol, func: symbol)
-
-answers_calls(mod, func) :-
-  function_def(func, mod, "handle_call", 3, _),
-  behaves_as(mod, behaviour),
-  process_behaviour(behaviour, "gen_server_like").
-
-// ── Deferring ────────────────────────────────────────────────────
-
-.decl defers_reply(mod: symbol, func: symbol, id: symbol)
-
-defers_reply(mod, func, id) :-
-  answers_calls(mod, func),
-  callback_return(id, func, "handle_call", ":noreply").
+//
+// A handle_call/3 that defers its reply (`defers_reply`,
+// clientlib/replies.dl) has promised the caller one.
 
 // ── The promise cannot be kept ───────────────────────────────────
 //

@@ -87,7 +87,10 @@ defmodule Argus.Analyses.Blocking do
       # and processes.dl in the points-to stage).
       Argus.Extractors.GenStatem,
       # Socket calls and how long they wait (unbounded_wait's "socket").
-      Argus.Extractors.Sockets
+      Argus.Extractors.Sockets,
+      # A handle_call/3 that returns {:noreply, _} answers later
+      # (callback_return, clientlib/replies.dl): no immediate answer.
+      Argus.Extractors.Reply
     ]
 
   @impl true
