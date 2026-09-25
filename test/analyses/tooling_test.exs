@@ -8,7 +8,9 @@ defmodule Argus.Analyses.ToolingTest do
 
   use ExUnit.Case, async: true
 
+  alias Argus.Findings
   alias Argus.Test.Fixtures.Tooling.{DevSetup, Product}
+  alias Argus.Test.Memo
 
   @moduletag :tmp_dir
 
@@ -53,9 +55,9 @@ defmodule Argus.Analyses.ToolingTest do
     opts =
       opts
       |> Keyword.put(:analyses, [:unsafe_input])
-      |> Keyword.put(:cache, Argus.Test.Memo.store())
+      |> Keyword.put(:cache, Memo.store())
 
-    assert {:ok, %Argus.Findings{degraded: []} = r} = Argus.Findings.run(@mods, opts)
+    assert {:ok, %Findings{degraded: []} = r} = Findings.run(@mods, opts)
 
     r.findings
     |> Enum.filter(&(&1.title =~ "Dynamic code execution"))
@@ -127,7 +129,7 @@ defmodule Argus.Analyses.ToolingTest do
 
   describe "the tooling rows" do
     defp tooling_rows(facts) do
-      assert {:ok, results} = Argus.Test.Memo.run_rules(facts, :structure)
+      assert {:ok, results} = Memo.run_rules(facts, :structure)
       Enum.sort(results["tooling"] || [])
     end
 
