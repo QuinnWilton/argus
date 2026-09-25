@@ -89,7 +89,19 @@ defmodule Argus.Cache.FactsTest do
       assert File.stat!(entry, time: :posix).mtime > System.os_time(:second) - 60
 
       fresh = Path.join(tmp, "fresh")
-      assert {:ok, _} = Pipeline.run_shards(@modules, [{Argus.Extractors.Monitor, fresh}])
+
+      assert {:ok, %{reads: %{Argus.Extractors.Monitor => read}}} =
+               Pipeline.run_shards(@modules, [{Argus.Extractors.Monitor, fresh}])
+
+      # Over the kept bases the extractor read none of the schema itself;
+      # its entry is keyed on what computing them read.
+      [monitor] =
+        for name <- shards(store),
+            String.starts_with?(name, "Argus.Extractors.Monitor-"),
+            do: Path.join(Cache.dir(store, :shards), name)
+
+      manifest = monitor |> Path.join(".argus-shard") |> File.read!() |> :erlang.binary_to_term()
+      assert read != [] and for({{"schema", r}, _} <- manifest.reads, do: r) == read
 
       for {name, {_digest, [path]}} <- facts.relations,
           String.contains?(path, "Argus.Extractors.Monitor-") do
@@ -177,51 +189,68 @@ defmodule Argus.Cache.FactsTest do
       {_digest, [spec_return]} = Map.fetch!(facts.relations, "spec_return.facts")
       assert File.read!(spec_return) =~ "Argus.Test.Fixtures.Specs:total/0\ttotal\tinstalled"
 
-      # The fixture's beam is what the shard read; a shard that recorded
-      # another reading of it is stale.
+      # The fixture's beam is what the shard read, beside the schema
+      # entries the pipeline decoded; the reads index names them, and
+      # their values complete the entry's key.
       [entry] =
         for name <- shards(store), name =~ "Specs", do: Path.join(Cache.dir(store, :shards), name)
 
-      manifest = Path.join(entry, ".argus-shard")
-      recorded = manifest |> File.read!() |> :erlang.binary_to_term()
+      recorded = entry |> Path.join(".argus-shard") |> File.read!() |> :erlang.binary_to_term()
 
-      assert [{"Elixir.Argus.Test.Fixtures.Specs", {:beam, _digest}}] = recorded.reads
+      assert [{"Elixir.Argus.Test.Fixtures.Specs", {:beam, _digest}}] =
+               for({{"installed", name}, was} <- recorded.reads, do: {name, was})
 
-      File.chmod!(manifest, 0o644)
+      assert [_ | _] = for({{"schema", "columns " <> _}, _digest} <- recorded.reads, do: :read)
 
-      File.write!(
-        manifest,
-        :erlang.term_to_binary(%{
-          recorded
-          | reads: [{"Elixir.Argus.Test.Fixtures.Specs", {:beam, "old"}}]
-        })
-      )
+      [index] = indexes(store, "Argus.Extractors.Specs-")
 
-      assert {:ok, _} = Facts.extract([caller], [Argus.Extractors.Specs], [], store)
-      recorded = manifest |> File.read!() |> :erlang.binary_to_term()
-      assert [{"Elixir.Argus.Test.Fixtures.Specs", {:beam, digest}}] = recorded.reads
-      assert digest != "old"
+      assert index |> File.read!() |> :erlang.binary_to_term() ==
+               Enum.map(recorded.reads, &elem(&1, 0))
     end
 
-    test "a read of a module this VM has never named still holds", %{tmp_dir: store} do
-      assert {:ok, _} = Facts.extract([:lists], [Argus.Extractors.Specs], [], store)
-
-      [entry] =
-        for name <- shards(store), name =~ "Specs", do: Path.join(Cache.dir(store, :shards), name)
-
-      manifest = Path.join(entry, ".argus-shard")
-      recorded = manifest |> File.read!() |> :erlang.binary_to_term()
-
-      # The analyzed program's own modules are absent from this VM's code
-      # path, and their names are no atoms here.
-      unknown = "Elixir.Argus.Cache.FactsTest.Never#{System.unique_integer([:positive])}"
-      File.chmod!(manifest, 0o644)
-      File.write!(manifest, :erlang.term_to_binary(%{recorded | reads: [{unknown, :absent}]}))
+    test "an index naming a read the entry was not keyed on misses, and replaces no entry",
+         %{tmp_dir: store} do
+      assert {:ok, _} = Facts.extract([:lists], [], [], store)
+      [entry] = for name <- shards(store), do: Path.join(Cache.dir(store, :shards), name)
+      [index] = indexes(store, "base-")
+      reads = index |> File.read!() |> :erlang.binary_to_term()
       %File.Stat{inode: inode} = File.stat!(entry)
 
-      assert {:ok, _} = Facts.extract([:lists], [Argus.Extractors.Specs], [], store)
+      # A read whose value is what no entry was keyed on — a module the
+      # analyzed program calls, which is no atom in this VM.
+      unknown = "Elixir.Argus.Cache.FactsTest.Never#{System.unique_integer([:positive])}"
+      File.chmod!(index, 0o644)
+      File.write!(index, :erlang.term_to_binary(Enum.sort([{"installed", unknown} | reads])))
+
+      # Missed, and extracted again: its reads are what they were, so the
+      # entry they name is the one kept, never replaced under a reader.
+      assert {:ok, _} = Facts.extract([:lists], [], [], store)
       assert File.stat!(entry).inode == inode
+      assert index |> File.read!() |> :erlang.binary_to_term() == reads
+      assert [_] = for(name <- shards(store), String.starts_with?(name, "base-"), do: name)
     end
+
+    test "an extraction keyed on other reads is kept beside the entry, not over it",
+         %{tmp_dir: store} do
+      assert {:ok, first} = Facts.extract([:lists], [], [], store)
+      [entry] = for name <- shards(store), do: Path.join(Cache.dir(store, :shards), name)
+      [index] = indexes(store, "base-")
+
+      # As if the entry had been made under another schema: its name is
+      # not the one its reads complete now.
+      moved = String.replace(entry, ~r/-([0-9a-f]{64})$/, "-#{String.duplicate("0", 64)}")
+      File.rename!(entry, moved)
+
+      assert {:ok, again} = Facts.extract([:lists], [], [], store)
+      assert File.dir?(moved) and File.dir?(entry)
+      assert again.relations == first.relations
+      assert File.exists?(index)
+    end
+  end
+
+  defp indexes(store, prefix) do
+    dir = Cache.dir(store, :reads)
+    for name <- File.ls!(dir), String.starts_with?(name, prefix), do: Path.join(dir, name)
   end
 
   describe "solve/3" do

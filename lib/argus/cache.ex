@@ -11,8 +11,14 @@ defmodule Argus.Cache do
     * `shards/` — each producer's facts (`Argus.Cache.Facts`): the rows
       `:base` or one extractor made of a set of beams, keyed by the
       beams, the code the producer runs (`Argus.Cache.Code`), the
-      runtime and the options that shape its rows. An edit to one
-      extractor re-extracts that extractor's shard alone.
+      runtime, the options that shape its rows, and what it read
+      outside that code — the schema entries (`Argus.Cache.Reads`), the
+      specs of modules on the code path. An edit to one extractor
+      re-extracts that extractor's shard alone.
+    * `reads/` — for each producer's key before its reads, the reads
+      its last extraction made (names only): what a lookup reads again
+      to name the entry. Entries are never replaced, so a run reading
+      one is never pulled from under by a run keyed on other reads.
     * `solves/` — each Souffle solve's outputs (`Argus.Souffle.Cache`),
       keyed by the program with its includes, the solver, and the
       content of exactly the relation files the program reads. A solve
@@ -28,8 +34,9 @@ defmodule Argus.Cache do
     * `bases/` — each module's base for a set of beams
       (`Argus.Pipeline.Base`: its disassembly, decoded facts,
       control-flow graphs and reaching definitions), keyed by the beams,
-      the base's code and the runtime, so an extractor extracted again
-      after an edit to it runs over them instead of computing them.
+      the base's code, the runtime and what computing them read of the
+      schema, so an extractor extracted again after an edit to it runs
+      over them instead of computing them.
 
   ## Entries
 
@@ -58,7 +65,7 @@ defmodule Argus.Cache do
   @type prune_option ::
           {:keep, [String.t()]} | {:recent, non_neg_integer()} | {:max_age, pos_integer()}
 
-  @subdirs ~w(shards solves programs bases ebins)
+  @subdirs ~w(shards solves programs bases ebins reads)
 
   # Always spared: an entry touched within the hour may be one a run
   # beside this one is reading.
@@ -95,10 +102,10 @@ defmodule Argus.Cache do
 
   @doc """
   One of the store's directories: `:shards`, `:solves`, `:programs`,
-  `:bases` or `:ebins`.
+  `:bases`, `:ebins` or `:reads`.
   """
-  @spec dir(Path.t(), :shards | :solves | :programs | :bases | :ebins) :: Path.t()
-  def dir(root, kind) when kind in [:shards, :solves, :programs, :bases, :ebins],
+  @spec dir(Path.t(), :shards | :solves | :programs | :bases | :ebins | :reads) :: Path.t()
+  def dir(root, kind) when kind in [:shards, :solves, :programs, :bases, :ebins, :reads],
     do: Path.join(root, Atom.to_string(kind))
 
   @doc """
@@ -187,9 +194,8 @@ defmodule Argus.Cache do
   defp read_only(path, names), do: Enum.each(names, &File.chmod(Path.join(path, &1), 0o444))
 
   @doc """
-  The entries of a store (its `shards/`, `solves/`, `programs/`, `bases/`
-  and `ebins/`)
-  that `prune/2` removes. Within each group (`<group>-<key>`, see the
+  The entries of a store (its `shards/`, `solves/`, `programs/`, `bases/`,
+  `ebins/` and `reads/`) that `prune/2` removes. Within each group (`<group>-<key>`, see the
   moduledoc) an entry goes once it has been untouched for an hour and
   is not among the `recent:` most recently touched of its group
   (default 3), or — with `max_age:` seconds — once it has been

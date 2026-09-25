@@ -15,12 +15,13 @@ defmodule Argus.Schema do
 
   The schema is data, read only through the functions of this module
   and of its concern modules, each of which records the entry it
-  returns (`Argus.Cache.Reads`): what a producer's rows depend on is
-  then the entries it read, not this module's code. A new accessor
-  records what it returns, as the others do — `Argus.SchemaReadsTest`
-  calls every export and fails otherwise — and `columns/1` is the read
-  to make when a relation's columns are all a caller needs: its prose
-  is then no part of what the caller read.
+  returns (`Argus.Cache.Reads`): a producer's shard is keyed on the
+  entries it read, not on this module's code (`Argus.Cache.Code`), so
+  an edit to a relation no producer reads moves no shard. A new
+  accessor records what it returns, as the others do —
+  `Argus.SchemaReadsTest` calls every export and fails otherwise — and
+  `columns/1` is the read to make when a relation's columns are all a
+  caller needs: its prose is then no part of the key.
   """
 
   alias Argus.Cache.Reads
@@ -118,11 +119,12 @@ defmodule Argus.Schema do
   @names Enum.map(@all_relations, & &1.name)
 
   # Every accessor records the entry it returns (`Argus.Cache.Reads`):
-  # an accessor that returned schema data without recording it would
-  # hide from a caller keyed on the reads what its rows depend on.
-  # `Argus.SchemaReadsTest` calls every export here and in the concern
-  # modules, and fails unless each records a read naming exactly what it
-  # returned; `reread/1` answers each read again.
+  # a producer's rows are keyed on the entries it read, not on this
+  # module's code, and an accessor that returned schema data without
+  # recording it would leave a stale shard in place after an edit to
+  # that entry. `Argus.SchemaReadsTest` calls every export here and in
+  # the concern modules, and fails unless each records a read naming
+  # exactly what it returned; `reread/1` answers each read again.
 
   @doc """
   The fact-schema version, asserted by in-process consumers at compile time.

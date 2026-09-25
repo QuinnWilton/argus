@@ -33,11 +33,13 @@ defmodule Argus.Cache.Code do
   literals: keyed as code, an edit to any relation moves every key.
   With `schema: :recorded` they are left out — walked through, so what
   they call is still keyed — for a caller that keys on the entries a
-  producer read of them instead (`Argus.Cache.Reads`). That is sound
-  because they are data: every
+  producer read of them instead (`Argus.Cache.Reads`), as
+  `Argus.Cache.Facts` does. That is sound because they are data: every
   export of theirs records the entry it returns
-  (`Argus.SchemaReadsTest`). By default (`schema: :included`) they are
-  keyed as any other code, for a caller that records no reads.
+  (`Argus.SchemaReadsTest`), and a producer's rows move with nothing of
+  theirs it did not record (`Argus.SchemaPerturbationTest`). By default
+  (`schema: :included`) they are keyed as any other code, for a caller
+  that records no reads.
   """
 
   @typedoc "`:base` or an extractor module (`Argus.Pipeline.producer/0`)."

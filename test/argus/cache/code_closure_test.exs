@@ -14,6 +14,11 @@ defmodule Argus.Cache.CodeClosureTest do
   holds the decoded facts, read back for the extractors that read them
   (`Argus.Pipeline.typed_readers/0`), and one missing from that list
   computes them again.
+
+  The closures are the ones a store keys on (`schema: :recorded`),
+  without the schema's modules: a producer executes those outside its
+  code key, and is keyed on the entries it read of them instead — which
+  every export records (`Argus.SchemaReadsTest`).
   """
   use ExUnit.Case,
     async: true,
@@ -112,14 +117,16 @@ defmodule Argus.Cache.CodeClosureTest do
       end
 
     for producer <- producers do
-      {:ok, closure} = Code.closure(producer)
+      {:ok, closure} = Code.closure(producer, schema: :recorded)
       closure = MapSet.new(closure, &elem(&1, 0))
       %{fresh: ran, kept: over_kept} = Map.fetch!(executed, producer)
 
       assert ran != [], "#{inspect(producer)} executed nothing"
 
-      assert Enum.reject(ran ++ over_kept, &MapSet.member?(closure, &1)) == [],
-             "#{inspect(producer)} runs code its key does not cover"
+      outside =
+        Enum.reject(ran ++ over_kept, &(MapSet.member?(closure, &1) or Code.schema_module?(&1)))
+
+      assert outside == [], "#{inspect(producer)} runs code its key does not cover"
 
       refute Argus.Pipeline.Emit in over_kept,
              "#{inspect(producer)} computes the decoded facts over a kept base: " <>

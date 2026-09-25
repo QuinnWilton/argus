@@ -1,13 +1,16 @@
 defmodule Argus.Cache.Reads do
   @moduledoc """
-  What a producer read of the schema (`Argus.Schema`) while it ran: what
-  a store can key its rows on in place of the schema's code.
+  What a producer read of the schema (`Argus.Schema`) while it ran: the
+  part of its rows' key its code does not name.
 
-  The schema's modules hold every relation as literals: keyed as code
-  (`Argus.Cache.Code`), any edit to any relation moves every producer's
-  key. A producer depends on the entries it reads — the pipeline
-  decodes a few Layer-1 relations by their columns, and nothing else —
-  so each accessor of the schema records the entry it returned.
+  A producer's shard is keyed on its code (`Argus.Cache.Code`), but not
+  on `Argus.Schema`'s: the schema's modules hold every relation as
+  literals, and keyed as code, any edit to any relation moved every
+  producer's key. A producer depends on the entries it reads — the
+  pipeline decodes a few Layer-1 relations by their columns, and
+  nothing else — so each accessor of the schema records the entry it
+  returned, and a store keys the rows on what those entries are when
+  it looks them up (`Argus.Cache.Facts`).
 
   ## Recording
 
@@ -23,11 +26,15 @@ defmodule Argus.Cache.Reads do
   read again when a store keys on it (`digest/1`), through the same
   accessor (`Argus.Schema.reread/1`). `Argus.SchemaReadsTest` calls
   every export of the schema's modules and fails unless each records a
-  read whose value is exactly what it returned.
+  read whose value is exactly what it returned, and
+  `Argus.SchemaPerturbationTest` runs every producer against a schema in
+  which every entry it did not read is changed, and fails unless its
+  rows are byte-identical.
 
   Only the process that calls `track/1` records: a producer that handed
   schema data to a process of its own would need to track there too
-  (none does).
+  (none does; the perturbation test would find one that read the
+  schema there).
   """
 
   @typedoc """

@@ -1,9 +1,10 @@
 defmodule Argus.SchemaReadsTest do
   @moduledoc """
-  What a producer read of the schema is what its accessors recorded
-  (`Argus.Cache.Reads`). That holds only while nothing hands out schema
-  data without recording the read. This calls every export of
-  `Argus.Schema` and of every module under it, with every valid argument, and fails
+  A producer's shard is keyed on the schema entries it read, not on the
+  schema's code (`Argus.Cache.Reads`; `Argus.Cache.Code` with `schema:
+  :recorded`). That holds only while nothing hands out schema data
+  without recording the read. This calls every export of `Argus.Schema`
+  and of every module under it, with every valid argument, and fails
   unless each call records a read whose value (`Argus.Schema.reread/1`)
   is exactly what it returned — so an accessor added without recording,
   or recording less than it returns, fails here.

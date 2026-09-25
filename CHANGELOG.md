@@ -337,6 +337,26 @@ shipped program does not load, over the fixtures' facts, and checks
 that the program loads the same relations and writes the same files
 byte for byte under the same key.
 
+**Changed.** A shard and the kept bases are keyed on the schema
+entries their producer read, not on the schema's code
+(`Argus.Cache.Code` with `schema: :recorded`, and the reads
+`Argus.Pipeline.run_shards/3` reports): a schema edit re-extracts only
+the producers that read what it changed — today the columns of the
+relations the pipeline decodes (`Argus.Pipeline.typed_relations/0`),
+read by every producer, and nothing else. The reads are known only
+after a run, so a store keeps, per key of the rest, the reads the last
+extraction made (`reads/`, names only), and a lookup asks them again:
+their values complete the entry's name. The specs extractor's reads of
+the code path are keyed so too. Entries are never replaced any more:
+a shard whose recorded reads moved is extracted beside the one kept,
+where it was removed and installed over — under a run reading it.
+`Argus.SchemaPerturbationTest` extracts every fixture in a VM whose
+schema has every entry a producer did not read changed (fields renamed,
+retyped and added, prose, in-process flags, layers, the set and order
+of the relations, the version) and fails unless each producer's rows
+are byte-identical, afresh and over kept bases, and its reads digest
+as they did; a read it made, changed, moves its key.
+
 ### What the program's other sites believe
 
 **Changed.** Schema 86. `failure.inconsistent_handling` gains `raises`,

@@ -11,17 +11,29 @@ defmodule Argus.Cache.Facts do
   keyed by everything that can change a byte of it:
 
     * the beams, by path and content, in the order given;
-    * the code the producer runs (`Argus.Cache.Code`): its own closure
-      and the base's, since it reads what the base computes;
+    * the code the producer runs (`Argus.Cache.Code`, `schema:
+      :recorded`): its own closure and the base's, since it reads what
+      the base computes — without the schema's modules, which are data;
     * the Elixir, OTP and ERTS it runs on;
     * the options that shape its rows: which relations are written and
       whether imprecision is traced;
     * for a producer that reads specs from the code path
       (`Argus.Extractors.Specs`), the environment
       (`Argus.Specs.environment_digest/1`, argus's own application
-      left out) and, recorded in the manifest and checked on every hit,
-      what each module it read from the code path outside that digest
-      was: absent, or a beam of argus's own application with its digest.
+      left out);
+    * what the producer read that none of that names, recorded while
+      it ran: each schema entry (`Argus.Cache.Reads`: the columns of
+      the relations the pipeline decodes, and whatever else a producer
+      asks the schema), and for the specs extractor what each module
+      it read from the code path outside the environment digest was —
+      absent, or a beam of argus's own application with its digest.
+
+  The last part is known only once the producer has run, so a lookup
+  is in two steps: the key of everything else names the reads its last
+  extraction made (`reads/`, names only), and those reads, asked again
+  now, complete the key of the entry. Nothing is ever replaced: a run
+  keyed on other reads (another worktree's schema) extracts its own
+  entry beside this one, and a run reading this one keeps reading it.
 
   An extraction looks every producer up and runs the pipeline for the
   missing ones alone (`Argus.Pipeline.run_shards/3`): after an edit to
@@ -54,14 +66,15 @@ defmodule Argus.Cache.Facts do
 
   alias Argus.Cache
   alias Argus.Cache.Code
+  alias Argus.Cache.Reads
   alias Argus.Pipeline
   alias Argus.Pipeline.Disassemble
   alias Argus.Pipeline.Shards
   alias Argus.Souffle
 
-  @format "argus-shard-1"
+  @format "argus-shard-2"
   @manifest ".argus-shard"
-  @bases_format "argus-bases-1\n"
+  @bases_format "argus-bases-2\n"
 
   @enforce_keys [:store, :group, :relations]
   defstruct [:store, :group, :relations, work: nil, dir: nil, placed: %{}, complete: false]
@@ -90,6 +103,15 @@ defmodule Argus.Cache.Facts do
           complete: boolean()
         }
 
+  # A read outside a producer's code key: a schema entry
+  # (`Argus.Cache.Reads`) or a module on the code path, each by name.
+  @typep read :: {String.t(), String.t()}
+
+  # Where an entry keyed before its reads is looked up: the directory
+  # its entries go in and the group they are named under, the key, and
+  # the index naming the reads the last extraction made.
+  @typep keyed :: %{dir: Path.t(), group: String.t(), key: String.t(), index: Path.t()}
+
   @doc """
   The facts of `modules` for `:base` and `extractors`, from the store's
   shards, extracting the missing ones. `opts` are
@@ -105,16 +127,19 @@ defmodule Argus.Cache.Facts do
     with {:ok, paths} <- Disassemble.resolve_paths(modules),
          beams = beams_digest(paths),
          {:ok, named} <- entries(producers, beams, opts, store) do
-      looked = Enum.map(named, fn {producer, entry} -> {producer, entry, lookup(entry)} end)
-      hits = for {producer, entry, :hit} <- looked, do: {producer, entry}
-      misses = for {producer, entry, found} <- looked, found != :hit, do: {producer, entry}
+      # The producers mostly read the same schema entries: each is asked
+      # once for all of them.
+      {looked, _now} =
+        Enum.map_reduce(named, %{}, fn {producer, keyed}, now ->
+          {found, now} = lookup(keyed, now)
+          {{producer, keyed, found}, now}
+        end)
 
-      # A shard whose recorded reads no longer hold is replaced: its key
-      # is the one the new shard is installed under.
-      for {_producer, entry, :stale} <- looked, do: File.rm_rf(entry)
+      hits = for {producer, _keyed, {:hit, entry}} <- looked, do: {producer, entry}
+      misses = for {producer, keyed, :miss} <- looked, do: {producer, keyed}
       facts = %__MODULE__{store: store, group: String.slice(beams, 0, 16), relations: %{}}
 
-      bases = bases_entry(beams, store)
+      bases = bases_keyed(beams, store)
 
       with {:ok, extracted, facts} <- extract_missing(facts, paths, misses, opts, bases) do
         manifests = Map.new(hits, fn {p, entry} -> {p, {entry, read_manifest!(entry)}} end)
@@ -138,17 +163,17 @@ defmodule Argus.Cache.Facts do
     |> then(&Cache.key([@format | &1]))
   end
 
-  # `{producer, entry}` for each producer, or why one cannot be keyed.
+  # `{producer, keyed}` for each producer, or why one cannot be keyed.
   defp entries(producers, beams, opts, store) do
     group = String.slice(beams, 0, 16)
     common = [@format, beams | runtime()] ++ shaping(opts)
 
     Enum.reduce_while(producers, {:ok, []}, fn producer, {:ok, acc} ->
-      case Code.digest(producer) do
+      case Code.digest(producer, schema: :recorded) do
         {:ok, code} ->
           key = Cache.key(common ++ [code, environment(producer, store)])
-          entry = Path.join(Cache.dir(store, :shards), "#{name(producer)}-#{group}-#{key}")
-          {:cont, {:ok, [{producer, entry} | acc]}}
+          keyed = keyed(Cache.dir(store, :shards), "#{name(producer)}-#{group}", key, store)
+          {:cont, {:ok, [{producer, keyed} | acc]}}
 
         {:error, reason} ->
           {:halt, {:error, {:uncacheable, reason}}}
@@ -158,6 +183,11 @@ defmodule Argus.Cache.Facts do
       {:ok, named} -> {:ok, Enum.reverse(named)}
       error -> error
     end
+  end
+
+  defp keyed(dir, group, key, store) do
+    index = Path.join(Cache.dir(store, :reads), "#{group}-#{Cache.key(["reads", key])}")
+    %{dir: dir, group: group, key: key, index: index}
   end
 
   defp runtime do
@@ -186,22 +216,102 @@ defmodule Argus.Cache.Facts do
   defp name(:base), do: "base"
   defp name(extractor), do: inspect(extractor)
 
-  # `:hit`, a kept shard whose recorded reads of the code path still
-  # hold; `:stale`, one whose reads moved (or whose manifest cannot be
-  # read); `:miss`.
-  defp lookup(entry) do
-    case Cache.fetch(entry) do
-      {:ok, entry} ->
-        with {:ok, %{reads: reads}} <- read_manifest(entry),
-             true <- Enum.all?(reads, fn {name, was} -> installed(name) == was end) do
-          :hit
-        else
-          _ -> :stale
-        end
+  # ── Keyed by what was read ──────────────────────────────────────────
 
-      :miss ->
-        :miss
+  # `{{:hit, entry} | :miss, now}`: the entry the reads the index names
+  # complete the key of, as they are now, if it is kept. `now` holds
+  # each read already asked in this lookup's run.
+  @spec lookup(keyed(), map()) :: {{:hit, Path.t()} | :miss, map()}
+  defp lookup(keyed, now) do
+    with {:ok, reads} <- read_index(keyed.index),
+         {values, now} = values(reads, now),
+         {:ok, entry} <- Cache.fetch(variant(keyed, values)) do
+      {{:hit, entry}, now}
+    else
+      _ -> {:miss, now}
     end
+  end
+
+  # The reads an index names. Read without making atoms: a module the
+  # analyzed program calls is rarely one this VM knows.
+  defp read_index(index) do
+    with {:ok, index} <- Cache.fetch(index),
+         {:ok, bytes} <- File.read(index),
+         reads when is_list(reads) <- :erlang.binary_to_term(bytes, [:safe]) do
+      {:ok, reads}
+    else
+      _ -> :miss
+    end
+  rescue
+    ArgumentError -> :miss
+  end
+
+  # Each read with what it is now.
+  @spec values([read()], map()) :: {[{read(), term()}], map()}
+  defp values(reads, now) do
+    Enum.map_reduce(reads, now, fn read, now ->
+      case now do
+        %{^read => value} ->
+          {{read, value}, now}
+
+        _ ->
+          value = current(read)
+          {{read, value}, Map.put(now, read, value)}
+      end
+    end)
+  end
+
+  defp current({"schema", read}), do: Reads.digest(read)
+  defp current({"installed", name}), do: installed(name)
+  defp current(read), do: {:unknown_read, read}
+
+  # The entry of these reads' values: the key before reads, completed.
+  defp variant(keyed, values) do
+    parts =
+      for {read, value} <- Enum.sort(values),
+          do: :erlang.term_to_binary({read, value}, [:deterministic])
+
+    Path.join(keyed.dir, "#{keyed.group}-#{Cache.key([keyed.key | parts])}")
+  end
+
+  # The index names the reads of the entry installed last, which a
+  # lookup asks again: the same reads unless the producer's code, or
+  # what it read, moved what it reads. A store that cannot take it goes
+  # without (the next lookup misses).
+  defp write_index(keyed, values) do
+    reads = values |> Enum.map(&elem(&1, 0)) |> Enum.sort()
+    staging = "#{keyed.index}.#{:os.getpid()}.#{System.unique_integer([:positive])}"
+
+    with :ok <- Cache.mkdir(Path.dirname(keyed.index)) |> existing(),
+         :ok <- File.write(staging, :erlang.term_to_binary(reads)),
+         :ok <- replace(staging, keyed.index) do
+      :ok
+    else
+      _ -> File.rm(staging)
+    end
+  end
+
+  # An index is a file, replaced whole: a lookup reads the old or the
+  # new one.
+  defp replace(staging, target) do
+    File.chmod(staging, 0o444)
+    File.rename(staging, target)
+  end
+
+  # What a producer read, as the manifest records it and a lookup asks
+  # again: the schema entries it read (and, over kept bases, what
+  # computing them read), and — for a producer that reads specs from the
+  # code path — each module it read there outside the environment digest.
+  defp shard_values(producer, read_by, bases_reads, installed, now) do
+    schema =
+      read_by
+      |> Map.get(producer, [])
+      |> :ordsets.union(if producer == :base, do: [], else: bases_reads)
+      |> Enum.map(&{"schema", &1})
+
+    code_path = if Code.reads_installed?(producer), do: installed, else: []
+    {values, now} = values(schema, now)
+    {Enum.sort(values ++ code_path), now}
   end
 
   defp read_manifest(entry) do
@@ -228,16 +338,17 @@ defmodule Argus.Cache.Facts do
     end
   end
 
-  # A staging directory for each missing shard; a store that cannot be
-  # written to is no store.
+  # A staging directory for each missing shard, named for its key
+  # before reads (its entry is named once they are known); a store that
+  # cannot be written to is no store.
   defp stage(misses) do
-    Enum.reduce_while(misses, {:ok, []}, fn {producer, entry}, {:ok, acc} ->
-      case Cache.staging(entry) do
+    Enum.reduce_while(misses, {:ok, []}, fn {producer, keyed}, {:ok, acc} ->
+      case Cache.staging(Path.join(keyed.dir, "#{keyed.group}-#{keyed.key}")) do
         {:ok, staging} ->
-          {:cont, {:ok, [{producer, entry, staging} | acc]}}
+          {:cont, {:ok, [{producer, keyed, staging} | acc]}}
 
         {:error, reason} ->
-          Enum.each(acc, fn {_p, _e, staging} -> File.rm_rf(staging) end)
+          Enum.each(acc, fn {_p, _keyed, staging} -> File.rm_rf(staging) end)
           {:halt, {:error, {:uncacheable, reason}}}
       end
     end)
@@ -248,71 +359,74 @@ defmodule Argus.Cache.Facts do
   end
 
   defp run_missing(facts, paths, staged, opts, bases) do
-    dirs = for {producer, _entry, staging} <- staged, do: {producer, staging}
-    {bases_opts, keep?} = bases_opts(bases, paths, List.keymember?(dirs, :base, 0))
+    dirs = for {producer, _keyed, staging} <- staged, do: {producer, staging}
+    base_missing? = List.keymember?(dirs, :base, 0)
+    {bases_opts, keep?, bases_reads} = bases_opts(bases, paths, base_missing?)
 
     case Pipeline.run_shards(paths, dirs, opts ++ bases_opts) do
-      {:ok, %{lost: lost, installed: installed, digests: digests} = info} ->
-        if keep? and lost == [], do: keep_bases(bases, info.bases)
-        reads = recorded_reads(installed)
+      {:ok, %{lost: lost, installed: installed, digests: digests, reads: read_by} = info} ->
+        if keep? and lost == [], do: keep_bases(bases, info.bases, Map.fetch!(read_by, :base))
+        installed = recorded_reads(installed)
 
-        extracted =
-          Map.new(staged, fn {producer, entry, staging} ->
-            manifest = %{
-              relations: Map.get(digests, producer, %{}),
-              reads: if(Code.reads_installed?(producer), do: reads, else: [])
-            }
-
+        {extracted, _now} =
+          Enum.map_reduce(staged, %{}, fn {producer, keyed, staging}, now ->
+            {values, now} = shard_values(producer, read_by, bases_reads, installed, now)
+            manifest = %{relations: Map.get(digests, producer, %{}), reads: values}
             File.write!(Path.join(staging, @manifest), :erlang.term_to_binary(manifest))
             names = [@manifest | Map.keys(manifest.relations)]
-            {producer, {settle(staging, entry, names, lost), manifest}}
+            dir = settle(staging, keyed, values, names, lost)
+            {{producer, {dir, manifest}}, now}
           end)
 
-        {:ok, extracted, keep_scratch(facts, lost, staged)}
+        {:ok, Map.new(extracted), keep_scratch(facts, lost, staged)}
 
       {:error, _} = error ->
-        Enum.each(staged, fn {_p, _entry, staging} -> File.rm_rf(staging) end)
+        Enum.each(staged, fn {_p, _keyed, staging} -> File.rm_rf(staging) end)
         error
     end
   end
 
   # ── Bases ───────────────────────────────────────────────────────────
 
-  # The entry holding each module's base for these beams
+  # Where each module's base for these beams is kept
   # (`Argus.Pipeline.Base`): keyed by them, the runtime and the code of
   # the base, which is what computes one — not by the options that
-  # shape rows, since a base holds none.
-  defp bases_entry(beams, store) do
-    {:ok, code} = Code.digest(:base)
+  # shape rows, since a base holds none — and by what computing them
+  # read of the schema.
+  defp bases_keyed(beams, store) do
+    {:ok, code} = Code.digest(:base, schema: :recorded)
     key = Cache.key([@bases_format, beams | runtime()] ++ [code])
-    Path.join(Cache.dir(store, :bases), "#{String.slice(beams, 0, 16)}-#{key}")
+    keyed(Cache.dir(store, :bases), String.slice(beams, 0, 16), key, store)
   end
 
-  # What the pipeline is asked about bases, and whether to keep the
-  # ones it computes. A run extracting the base's own shard computes
-  # every base (the emitter's rows are no base's) and keeps none: it is
-  # the first run over these beams or the first since the base's code
-  # moved — every schema bump — and keeping them costs such a run a
-  # tenth more for runs that may never come. A run of extractors alone
-  # reads them back, or computes them and keeps them for the next one:
-  # iterating on an extractor pays that once.
-  defp bases_opts(_entry, _paths, true = _base_missing?), do: {[], false}
+  # What the pipeline is asked about bases, whether to keep the ones it
+  # computes, and what the ones it reads back read of the schema. A run
+  # extracting the base's own shard computes every base (the emitter's
+  # rows are no base's) and keeps none: it is the first run over these
+  # beams or the first since the base's code moved, and keeping them
+  # costs such a run a tenth more for runs that may never come. A run of
+  # extractors alone reads them back, or computes them and keeps them
+  # for the next one: iterating on an extractor pays that once.
+  defp bases_opts(_keyed, _paths, true = _base_missing?), do: {[], false, []}
 
-  defp bases_opts(entry, paths, false) do
-    case read_bases(entry, length(paths)) do
-      {:ok, kept} -> {[bases: kept], false}
-      :miss -> {[keep_bases: true], true}
+  defp bases_opts(keyed, paths, false) do
+    case read_bases(keyed, length(paths)) do
+      {:ok, kept, reads} -> {[bases: kept], false, reads}
+      :miss -> {[keep_bases: true], true, []}
     end
   end
 
   # A module's base, or nil for one that had none, each length-prefixed
   # after the format: the file is read once and each base handed to its
-  # worker as a slice of it.
-  defp read_bases(entry, count) do
-    with {:ok, entry} <- Cache.fetch(entry),
+  # worker as a slice of it. With them, the schema entries computing
+  # them read, which the extractors run over them read too.
+  defp read_bases(keyed, count) do
+    with {:ok, reads} <- read_index(keyed.index),
+         {values, _now} = values(reads, %{}),
+         {:ok, entry} <- Cache.fetch(variant(keyed, values)),
          {:ok, <<@bases_format, ^count::32, rest::binary>>} <- File.read(entry),
          {:ok, bases} <- split_bases(rest, count, []) do
-      {:ok, bases}
+      {:ok, bases, for({"schema", read} <- reads, do: read)}
     else
       _ -> :miss
     end
@@ -328,9 +442,12 @@ defmodule Argus.Cache.Facts do
 
   defp split_bases(_bytes, _n, _acc), do: :error
 
-  # Written under a staging name and installed, as every entry is; a
-  # store that cannot take it goes without.
-  defp keep_bases(entry, bases) do
+  # Written under a staging name and installed, as every entry is, and
+  # named by what computing them read; a store that cannot take them
+  # goes without.
+  defp keep_bases(keyed, bases, reads) do
+    {values, _now} = reads |> Enum.map(&{"schema", &1}) |> values(%{})
+    entry = variant(keyed, values)
     staging = "#{entry}.#{:os.getpid()}.#{System.unique_integer([:positive])}"
 
     body =
@@ -342,7 +459,7 @@ defmodule Argus.Cache.Facts do
     with :ok <- Cache.mkdir(Path.dirname(entry)) |> existing(),
          :ok <- File.write(staging, [@bases_format, <<length(bases)::32>> | body]),
          :ok <- Cache.install(staging, entry) do
-      :ok
+      write_index(keyed, values)
     else
       _ -> File.rm(staging)
     end
@@ -351,16 +468,23 @@ defmodule Argus.Cache.Facts do
   defp existing({:error, :eexist}), do: :ok
   defp existing(result), do: result
 
-  # Installed, or — when the run lost a module — left as it is, for this
-  # run alone (`release/1` removes it).
-  defp settle(staging, entry, names, []) do
+  # Installed under the name its reads complete, and indexed — or, when
+  # the run lost a module, left as it is, for this run alone
+  # (`release/1` removes it).
+  defp settle(staging, keyed, values, names, []) do
+    entry = variant(keyed, values)
+
     case Cache.install(staging, entry, names) do
-      :ok -> entry
-      {:error, _} -> staging
+      :ok ->
+        write_index(keyed, values)
+        entry
+
+      {:error, _} ->
+        staging
     end
   end
 
-  defp settle(staging, _entry, _names, _lost), do: staging
+  defp settle(staging, _keyed, _values, _names, _lost), do: staging
 
   defp keep_scratch(facts, [], _staged), do: facts
 
@@ -396,14 +520,14 @@ defmodule Argus.Cache.Facts do
   # ── The code path a producer read ───────────────────────────────────
 
   # What each module read from the code path was, for those the
-  # environment digest does not cover. By name: a manifest is read with
-  # no new atoms made, and a module the analyzed program calls is
-  # rarely one this VM knows.
+  # environment digest does not cover, as reads and their values. By
+  # name: a manifest is read with no new atoms made, and a module the
+  # analyzed program calls is rarely one this VM knows.
   defp recorded_reads(modules) do
     for name <- modules |> Enum.map(&Atom.to_string/1) |> Enum.sort(),
         was = installed(name),
         was != :environment,
-        do: {name, was}
+        do: {{"installed", name}, was}
   end
 
   # A module, by name, as `Argus.Specs.installed/2` would find it:

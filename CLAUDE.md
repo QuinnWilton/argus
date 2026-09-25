@@ -25,7 +25,9 @@ those frameworks need.
   `Runner`, `Build`, `Rows`, `Evidence`, `Anchor` and `Names`.
 - `lib/argus/schema.ex` — the fact schema's API; each relation is declared
   once, with its layer and in-process flag, in its concern's module under
-  `lib/argus/schema/`. `@schema_version` is what
+  `lib/argus/schema/`. Only schema data lives under `Argus.Schema`, read
+  through accessors that record what they return (see "Caches"): code
+  there is keyed by nobody. `@schema_version` is what
   downstream tools key their caches on; `Argus.SchemaVersionTest` pins its
   shape digest, and every bump gets a CHANGELOG entry. `mix argus.gen.dl`
   regenerates `priv/dl/base.dl` and `layer2.dl` from it.
@@ -37,7 +39,8 @@ those frameworks need.
 - `lib/argus/cfg.ex`, `dataflow.ex`, `purity/` — control flow, def-use and
   effect models, also consumed by downstream tools (gloss, planchette).
 - `lib/argus/cache.ex` and `cache/` — the stores (see "Caches"): entry
-  layout and retention, each producer's code key (`Code`), and the
+  layout and retention, each producer's code key (`Code`) and the reads
+  it made outside it (`Reads`), and the
   sharded facts and the solves over them (`Facts`);
   `lib/argus/pipeline/shards.ex` joins producers' directories.
 - There is no CLI here: scry's Mix compiler is how the analyses are run
@@ -136,25 +139,34 @@ names one with `cache:` on `Argus.run_analyses/2`, `Argus.analyze/3` or
 - **Shards** (`Argus.Cache.Facts`): each producer's rows — `:base` (the
   emitter, def_use, conditional_call) or one extractor — kept apart,
   keyed by the beams (path and content), the code that producer runs
-  (`Argus.Cache.Code`: the import-table closure from the extractor and
-  from `Argus.Pipeline`, hashed by `Argus.BeamDigest`), the runtime and
-  the row-shaping options. The specs extractor's key adds the
-  environment (`Argus.Specs.environment_digest/1`, argus left out; each
-  dependency ebin's hashes kept in `ebins/` under a stamp of its beams'
-  stats), and
-  its shard records what it read of argus's own beams (the fixtures and
-  their library stubs) or found absent, checked on every hit. A missing
-  shard is extracted alone (`Argus.Pipeline.run_shards/3`); the rows of
-  a producer do not depend on which others run (`ShardsTest`). A run
-  makes a facts directory only when a solve misses, and places in it
-  only the files that program reads, as symbolic links into the store;
-  `Facts.materialize/1` (what `extract_facts/3` returns) is the whole
-  directory as hard links, byte-identical to `Argus.Pipeline.run/3`'s.
+  (`Argus.Cache.Code` with `schema: :recorded`: the import-table
+  closure from the extractor and from `Argus.Pipeline`, hashed by
+  `Argus.BeamDigest`, without the schema's modules), the runtime, the
+  row-shaping options, and what the producer read outside that code,
+  recorded as it ran: the schema entries (see "The schema is read
+  through its accessors" below) and, for the specs extractor, what it
+  read of argus's own beams (the fixtures and their library stubs) or
+  found absent; its key adds the environment too
+  (`Argus.Specs.environment_digest/1`, argus left out; each dependency
+  ebin's hashes kept in `ebins/` under a stamp of its beams' stats).
+  The reads are known only after a run, so `reads/` keeps, per key of
+  the rest, the names of the reads the last extraction made; a lookup
+  asks them again and their values complete the entry's name. Entries
+  are never replaced: a run keyed on other reads (another worktree's
+  schema) extracts beside, never over, one another run is reading. A
+  missing shard is extracted alone (`Argus.Pipeline.run_shards/3`); the
+  rows of a producer do not depend on which others run (`ShardsTest`).
+  A run makes a facts directory only when a solve misses, and places
+  in it only the files that program reads, as symbolic links into the
+  store; `Facts.materialize/1` (what `extract_facts/3` returns) is the
+  whole directory as hard links, byte-identical to
+  `Argus.Pipeline.run/3`'s.
 - **Bases** (`Argus.Pipeline.Base`): each module's base — its
   disassembly, decoded facts, control-flow graphs and reaching
   definitions (the per-function solutions `Argus.Instr.Reaching.export/1`
-  carries) — for a set of beams, keyed by the beams, the base's code and
-  the runtime. A run of extractors alone (the base's shard kept) keeps
+  carries) — for a set of beams, keyed by the beams, the base's code,
+  the runtime and the schema entries computing them read (an extractor
+  run over them is keyed on those too). A run of extractors alone (the base's shard kept) keeps
   them, and the runs after it run their extractors over them — on the
   corpus, a quarter of the cost for most extractors. A run that
   extracts the base's own shard (cold, or after the base's code moved)
@@ -179,13 +191,36 @@ names one with `cache:` on `Argus.run_analyses/2`, `Argus.analyze/3` or
 - **What moves a key**: an extractor edit moves that extractor's shard
   and nothing else (it re-extracts over the kept bases); an edit to
   anything the base reaches (`Argus.Instr`, the extractor helpers, the
-  emitter, `Writer`, `Tsv`, `Argus.Schema` — so every schema bump)
-  moves every shard and every base, and then the solves run again only
-  if the facts came out different or load a relation whose declaration
-  moved; a rule edit moves the programs that include it. The solver, the stores, the analyses' prose and the
-  corpus harness move nothing. `Argus.Cache.CodeClosureTest` runs each
-  producer with call counting, the extractors over kept bases too, and
-  fails if one executes a module outside its key.
+  emitter, `Writer`, `Tsv`) moves every shard and every base, and then
+  the solves run again only if the facts came out different; a rule
+  edit moves the programs that include it. A schema edit moves the
+  shards and bases whose producers read what it changed — the columns
+  of the relations the pipeline decodes (`Pipeline.typed_relations/0`),
+  nothing else today — and the solves that load a relation whose
+  declaration it changed; a new relation, a version bump or an edit to
+  prose moves nothing but the resolution of each program's inputs. The
+  solver, the stores, the analyses' prose and the corpus harness move
+  nothing. `Argus.Cache.CodeClosureTest` runs each producer with call
+  counting, the extractors over kept bases too, and fails if one
+  executes a module outside its key other than the schema's.
+- **The schema is read through its accessors**: `Argus.Schema` and its
+  concern modules are data, left out of every producer's code key; each
+  of their functions records the entry it returns (`Argus.Cache.Reads`,
+  in the process that tracks, carried back with the rows), and a
+  producer is keyed on what it recorded. So a producer reads the schema
+  only by calling those functions — never a copy kept in a
+  `persistent_term`, an ETS table or another process (a module
+  attribute computed at compile time is fine: it is the caller's code,
+  and Mix recompiles the caller). Three tests hold this:
+  `Argus.SchemaReadsTest` calls every export of every module under
+  `Argus.Schema` and fails unless each records a read naming exactly
+  what it returned (an export taking arguments must list them there);
+  `Argus.SchemaPerturbationTest` extracts every fixture in a VM whose
+  schema has every entry a producer did not read changed, and fails
+  unless its rows are byte-identical; `Argus.Souffle.DeclaredDigestTest`
+  does the same for every shipped program and the declarations it does
+  not load. Use `Argus.Schema.columns/1` when a relation's columns are
+  all a caller needs: its prose then keys nothing.
 - **Retention**: within each producer's shards, each program's solves
   and the bases (per set of beams), the three most recent entries and
   anything touched within the hour are spared; the suite's store also
