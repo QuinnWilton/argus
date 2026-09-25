@@ -86,6 +86,11 @@ too (`cancel_scope`): service_domain_db flushes beside its call to
 the nineteen live projects the flush rule's four rows are unchanged
 (`timer_flush_maps_get` pins the unflushed case).
 
+**Fixed.** `:timer.seconds/1`, `minutes/1`, `hours/1` and `hms/3` are pure
+in the effect model: `:timer` arms timers, and converts units without
+one. akkoma's `PurgeExpiredActivity.expires_late_enough?/1` read as a
+process write inside `ScheduledActivityWorker.perform/1`'s transaction.
+
 ### Points-to that finishes on a large program
 
 **Fixed.** The points-to stage finishes on Ash (1,327 modules), where it

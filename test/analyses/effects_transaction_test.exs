@@ -165,6 +165,11 @@ defmodule Argus.Analyses.EffectsTransactionTest do
       # The safe direction: a false "irreversible" costs a look, a false
       # "harmless" costs the bug.
       assert {:impure, :network, :write} = Effects.classify(":httpc", "request")
+
+      # :timer arms timers, and converts units without one.
+      assert {:impure, :process, :write} = Effects.classify(":timer", "send_after")
+      assert :pure = Effects.classify(":timer", "seconds")
+      assert :pure = Effects.classify(":timer", "hms")
       assert Effects.mode("SomeUnknown", "thing") == :write
     end
 

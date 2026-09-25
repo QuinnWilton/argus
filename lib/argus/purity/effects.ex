@@ -211,8 +211,17 @@ defmodule Argus.Purity.Effects do
   # Functions of an otherwise impure module that compute a value and
   # nothing else. `:inet` is sockets and name resolution, but its address
   # parsing and printing are string work: Firezone formatting an IP inside
-  # a transaction was "network I/O inside a Repo transaction".
+  # a transaction was "network I/O inside a Repo transaction". `:timer`'s
+  # unit conversions are arithmetic.
   @pure_functions MapSet.new([
+                    # :timer arms and cancels timers, and converts units:
+                    # `:timer.seconds(30)` is arithmetic (akkoma's
+                    # expiry check read as a process write inside a
+                    # transaction).
+                    {":timer", "seconds"},
+                    {":timer", "minutes"},
+                    {":timer", "hours"},
+                    {":timer", "hms"},
                     {":inet", "ntoa"},
                     {":inet", "parse_address"},
                     {":inet", "parse_strict_address"},
