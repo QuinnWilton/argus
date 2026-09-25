@@ -46,7 +46,10 @@ defmodule Argus.Analyses.EtsCheckActTest do
     C.FetchedTable,
     C.WindowCounters,
     C.GvarAccessors,
-    C.SerialAccessors
+    C.SerialAccessors,
+    C.CounterAccessors,
+    C.CounterAccessorChain,
+    C.AccessorThroughHelper
   ]
 
   setup_all do
@@ -309,7 +312,9 @@ defmodule Argus.Analyses.EtsCheckActTest do
 
       {:ok, results} = Batch.analyze(ctx.batch, [C.GvarAccessors])
 
-      assert [[_mod, func, ":gvar", "0", read, write]] = results["ets_check_act"]
+      assert [[_mod, func, ":gvar", "0", read, write]] =
+               for([_, _, _, "0" | _] = row <- results["ets_check_act"], do: row)
+
       assert short(func) == "add/2"
       # The read is the call to val/1, the write the call to set/2, both in
       # add/2: not the lookup and the insert inside the accessors.
@@ -317,7 +322,7 @@ defmodule Argus.Analyses.EtsCheckActTest do
       assert short(write) == "add/2"
     end
 
-    test "a literal handed to an accessor, or reached down a chain, is no shared key", ctx do
+    test "a literal an accessor is handed down another chain is no shared key", ctx do
       skip_without_souffle()
 
       {:ok, results} = Batch.analyze(ctx.batch, [C.GvarAccessors])
@@ -325,7 +330,46 @@ defmodule Argus.Analyses.EtsCheckActTest do
 
       refute "maybe_work/0" in funcs
       refute "running?/0" in funcs
-      refute "level/0" in funcs
+    end
+
+    test "a literal the meeting function hands the accessor itself is its own pair", ctx do
+      skip_without_souffle()
+
+      {:ok, results} = Batch.analyze(ctx.batch, [C.GvarAccessors])
+
+      # level/0 reads `:level` and hands set/2 the same literal: the pair
+      # is level/0's, reported at its set/2 call as the inline pair would
+      # be. add/2 writes back to whichever row its callers name.
+      assert [[_, func, ":gvar", ":level", read, write]] =
+               for([_, _, _, ":level" | _] = row <- results["ets_check_act"], do: row)
+
+      assert short(func) == "level/0"
+      assert short(read) == "level/0"
+      assert short(write) == "level/0"
+
+      # The counter's getter and setter, both handed `:count` in incr/0.
+      assert [{"incr/0", ":counter_accessors", ":count"}] =
+               races(ctx, [C.CounterAccessors])
+    end
+
+    test "an accessor the meeting function reaches through another call is its own site", ctx do
+      skip_without_souffle()
+
+      {:ok, results} = Batch.analyze(ctx.batch, [C.CounterAccessorChain])
+
+      # incr/0 calls set_count/1 but reaches count/0 through next/0: the
+      # write is the call, the read the lookup inside count/0.
+      assert [[_, func, ":counter_chain", ":count", read, write]] = results["ets_check_act"]
+      assert short(func) == "incr/0"
+      assert short(read) == "count/0"
+      assert short(write) == "incr/0"
+
+      {:ok, results} = Batch.analyze(ctx.batch, [C.AccessorThroughHelper])
+
+      assert [[_, func, ":accessor_helper", "0", read, write]] = results["ets_check_act"]
+      assert short(func) == "incr/1"
+      assert short(read) == "incr/1"
+      assert short(write) == "put/2"
     end
 
     test "accessors whose bodies name the row meet where both are called", ctx do

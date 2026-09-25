@@ -2045,8 +2045,11 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     it back through them, over the key it holds: a race, reported at its
     set/2 call. maybe_work/0 decides on running?/0, which reads `:status`
     through val/1, and a helper far down another path sets `:status`: one
-    literal, no flow between them. level/0 fills a default for a literal
-    it reads itself, through set/2: a literal row, not a shared key.
+    literal, no flow between them. level/0 (mnesia_loader's
+    compression_level/0) fills a default for a literal it reads itself,
+    handing set/2 the literal: the pair is level/0's own, as it would be
+    written inline, and add/2 writes back to a row its callers name, which
+    may be `:level`: a race.
     """
     use GenServer
 
@@ -2086,6 +2089,78 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
           level
       end
     end
+  end
+
+  defmodule CounterAccessors do
+    @moduledoc """
+    A counter behind a getter and a setter that take the key: incr/0
+    hands both the literal `:count`, and the setter stores the read plus
+    one. Two callers read the same count and one increment is lost.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      :ets.new(:counter_accessors, [:named_table, :public, :set])
+      {:ok, state}
+    end
+
+    def incr, do: put(:count, get(:count) + 1)
+    def get(key), do: :ets.lookup_element(:counter_accessors, key, 2)
+    def put(key, value), do: :ets.insert(:counter_accessors, {key, value})
+  end
+
+  defmodule CounterAccessorChain do
+    @moduledoc """
+    Accessors whose bodies name the row, the read one call further down:
+    incr/0 stores what next/0 returns, `count() + 1`. The meeting function
+    does not call count/0 itself, so the read is reported where it is.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      :ets.new(:counter_chain, [:named_table, :public, :set])
+      {:ok, state}
+    end
+
+    def incr, do: set_count(next())
+    def next, do: count() + 1
+    def count, do: :ets.lookup_element(:counter_chain, :count, 2)
+    def set_count(value), do: :ets.insert(:counter_chain, {:count, value})
+  end
+
+  defmodule AccessorThroughHelper do
+    @moduledoc """
+    A lookup, then the write through a helper that calls the one-line
+    accessor put/2: the meeting function reaches the accessor only
+    through store/2, so the write is reported at the insert itself.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(state) do
+      :ets.new(:accessor_helper, [:named_table, :public, :set])
+      {:ok, state}
+    end
+
+    def incr(key) do
+      [{^key, n}] = :ets.lookup(:accessor_helper, key)
+      store(key, n + 1)
+    end
+
+    defp store(key, value) do
+      send(self(), {:stored, key})
+      put(key, value)
+    end
+
+    def put(key, value), do: :ets.insert(:accessor_helper, {key, value})
   end
 
   defmodule SerialAccessors do

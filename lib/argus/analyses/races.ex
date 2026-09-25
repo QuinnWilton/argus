@@ -18,13 +18,15 @@ defmodule Argus.Analyses.Races do
     decides or feeds a plain write of the same key on a public table
     another process can write. One row per write. An operation that is
     the whole body of an accessor (`mnesia_lib:set/2`) is its callers':
-    the pair meets where the accessor is called, over a key held as a
-    variable there when the accessor takes it as a parameter, and `read`
-    or `write` is that call. A delete, a refill every racer computes
-    alike, and a write whose decision never leaves the function are not
-    lost updates, unless the program also writes the table back from a
-    read or counts in it (update_counter, or an `:atomics` or `:counters`
-    array the row holds). Nor is an update or a delete of a row only its
+    `read` or `write` is the meeting function's call to the accessor, or
+    the operation itself when the function reaches the accessor only
+    through another call. A literal key a parameter accessor is handed
+    somewhere other than where the pair meets names a row two chains
+    agree on, not a flow, and is not a pair. A delete, a refill every
+    racer computes alike, and a write whose decision never leaves the
+    function are not lost updates, unless the program also writes the
+    table back from a read or counts in it (update_counter, or an
+    `:atomics` or `:counters` array the row holds). Nor is an update or a delete of a row only its
     holder writes: every row the table gets is made at a key minted there
     (a reference, a monitor, a unique integer) and handed to one process,
     and the others' writes that reach it only remove it. A table the

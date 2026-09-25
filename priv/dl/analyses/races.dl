@@ -282,20 +282,25 @@ keyed_past_zero(op, v) :-
 // other shared-state operation — mnesia_lib:set/2 is `?ets_insert(
 // mnesia_gvar, {Var, Val})`, read_counter/1 one lookup_element — is an
 // accessor: its operation is its callers', made at the call. A pair with
-// an accessor's operation is judged where the accessor is called. It
-// meets in a function that calls the accessor itself, not further up,
-// where a literal one call passes agrees with a read of the same literal
-// through a chain of calls; and when the accessor takes its key as a
-// parameter, over a key the meeting function holds as a variable and
-// hands both sides — add/2's `val(Var)` and `set(Var, ...)`. A literal
-// key through such an accessor names a row, not a flow: is_running() in
-// one helper and set(mnesia_status, stopping) in another's error path,
-// both reached from one function, are not a check and its act. An
+// an accessor's operation is reported where the meeting function calls
+// the accessor; when it reaches the accessor only through other calls,
+// the pair stands all the same and is reported at the operation itself.
+//
+// One pair is not a flow: a literal key handed to an accessor that takes
+// its key as a parameter somewhere other than where the pair meets.
+// is_running() in one helper reads `mnesia_status` through val/1, and
+// set(mnesia_status, stopping) sits in another's error path, both
+// reached from one function: the literal names a row the two chains
+// agree on, and nothing the read returned flows to the write. When the
+// meeting function hands the accessor the literal itself —
+// `put(:count, get(:count) + 1)`, or compression_level/0's
+// `set(send_compressed, 0)` after its own read of send_compressed — the
+// pair is local, and stands as the same pair written inline would. A key
+// held as a variable crosses into the accessor's parameter and meets
+// wherever the two agree (add/2's `set(Var, [Val | val(Var)])`); an
 // accessor whose own body names the row (`trans_tid_serial()`,
-// `set_trans_tid_serial(v)`) is a row of its own, met where both are
-// called. Known limit: a read and a write of one literal row through
-// parameter accessors, both called in one function (`n =
-// read_counter(:c)`, `set_counter(:c, n + 1)`), is not reported.
+// `set_trans_tid_serial(v)`) is a row of its own, and meets wherever
+// both are reached.
 .decl ets_accessor(func: symbol, op: symbol, key_kind: symbol)
 
 ets_accessor(g, w, "param") :- lone_ets_op(g, w), op_key(w, ks, _), ks != "literal", ks != "dynamic".
@@ -334,39 +339,46 @@ accessor_call(f, r, c) :-
   function_def(g, m, n, a, _),
   call_site(c, f, m, n, a).
 
-// A pair whose accessor is not called where it meets, or whose parameter
-// accessor is handed a literal there.
-.decl unlifted(func: symbol, op: symbol, key_kind: symbol)
+// `func` hands the parameter accessor holding `op` the literal key `key`
+// itself: at the key's position, or, for a key made of a parameter (an
+// element of one), at a call of its own.
+.decl hands_literal(func: symbol, op: symbol, key: symbol)
 
-unlifted(f, op, ks) :-
-  rows.meets(f, _, op, _, _, ks, _),
-  ets_accessor(g, op, _),
-  g != f,
-  !accessor_call(f, op, _).
-
-unlifted(f, op, ks) :-
-  rows.meets(f, op, _, _, _, ks, _),
-  ets_accessor(g, op, _),
-  g != f,
-  !accessor_call(f, op, _).
-
-unlifted(f, op, "literal") :-
-  rows.meets(f, op, _, _, _, "literal", _),
+hands_literal(f, op, k) :-
+  meets_on_literal(f, op, k),
   ets_accessor(g, op, "param"),
-  g != f.
+  op_key(op, "param", q),
+  call_arg(f, g, n, k),
+  q = to_string(n).
 
-unlifted(f, op, "literal") :-
-  rows.meets(f, _, op, _, _, "literal", _),
+hands_literal(f, op, k) :-
+  meets_on_literal(f, op, k),
+  ets_accessor(_, op, "param"),
+  !op_key(op, "param", _),
+  accessor_call(f, op, _).
+
+.decl meets_on_literal(func: symbol, op: symbol, key: symbol)
+
+meets_on_literal(f, op, k) :- rows.meets(f, op, _, _, _, "literal", k).
+meets_on_literal(f, op, k) :- rows.meets(f, _, op, _, _, "literal", k).
+
+// A pair one of whose parameter accessors is handed the literal it
+// meets on somewhere else: a row two chains agree on.
+.decl unlifted(func: symbol, op: symbol, key_kind: symbol, key: symbol)
+
+unlifted(f, op, "literal", k) :-
+  meets_on_literal(f, op, k),
   ets_accessor(g, op, "param"),
-  g != f.
+  g != f,
+  !hands_literal(f, op, k).
 
 // The pairs that stand, accessors judged where they are called.
 .decl ets_meets(func: symbol, read: symbol, write: symbol, table_kind: symbol, table: symbol, key_kind: symbol, key: symbol)
 
 ets_meets(f, r, w, ts, t, ks, k) :-
   rows.meets(f, r, w, ts, t, ks, k),
-  !unlifted(f, r, ks),
-  !unlifted(f, w, ks).
+  !unlifted(f, r, ks, k),
+  !unlifted(f, w, ks, k).
 
 // The site a pair's operation is reported at in the function where it
 // meets: the operation, or the call to the accessor holding it.
@@ -643,6 +655,29 @@ carries_read(w) :-
   rows.act(w, h, _, _, _, _),
   site_reads(w, h, "call", g),
   returns_depends(g, "site", _).
+
+// A helper whose result is made of an ETS read, however many helpers
+// down: `set_count(next())`, where next/0 returns `count() + 1` and
+// count/0 is the lookup, writes the read back as surely as
+// `set_count(count() + 1)` does.
+carries_read(w) :-
+  value_write(w),
+  rows.act(w, h, _, _, _, _),
+  site_reads(w, h, "call", g),
+  returns_ets_read(g).
+
+carries_read(w) :-
+  value_write(w),
+  rows.act(w, h, _, _, _, _),
+  site_reads(w, h, "param", p),
+  call_arg_reads(_, h, n, "call", g),
+  returns_ets_read(g),
+  p = to_string(n).
+
+.decl returns_ets_read(func: symbol)
+
+returns_ets_read(g) :- returns_depends(g, "site", r), ets_op(r, _, _, _, "read").
+returns_ets_read(g) :- returns_depends(g, "call", g2), returns_ets_read(g2).
 
 // A local helper's result is made of the arguments it returns from:
 // `insert({k, next(n)})` writes the read's `n` back through `next/1`.

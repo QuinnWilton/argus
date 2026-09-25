@@ -2864,9 +2864,25 @@ sides (`add/2`'s `val(Var)` and `set(Var, ...)`). An accessor whose own
 body names the row (`trans_tid_serial()`, `set_trans_tid_serial/1`) is
 a row of its own, met where both are called. The finding's `read` and
 `write` are the calls to the accessors, not the operations inside them.
-Known limit: a read and a write of one literal row through parameter
-accessors, both called in one function (`n = read_counter(:c)`,
-`set_counter(:c, n + 1)`), is not reported.
+
+**Fixed.** `ets_check_act` reports the accessor pairs the change above
+dropped. A pair on a literal key is set aside only when a parameter
+accessor is handed that literal somewhere other than where the pair
+meets (`unlifted`, `hands_literal`): the chains mnesia_lib's noise came
+from. When the meeting function hands the literal itself —
+`put(:count, get(:count) + 1)` — the pair is its own, as the same pair
+written inline is. A pair whose accessor the meeting function reaches
+only through another call (`set_count(next())`, `store(key, n + 1)`
+calling `put/2`) stands, reported at the operation itself rather than
+dropped. A write whose value a helper returns from an ETS read however
+many helpers down (`returns_ets_read`) carries that read, and is no
+refill. On OTP six rows come back, each a function handing
+`mnesia_lib:set/2` the literal it has just read: the lazy defaults in
+`compression_level/0` and `max_transfer_size/0`, `mnesia_monitor`'s
+init/1 and `check_protocol/2`, and `mnesia_schema`'s `use_dir` writes
+in `prepare_op/3` and `purge_tmp_files/0`. Each is a race only if some
+other writer lands on that row meanwhile, which `add/2`'s computed keys
+and the start order leave open.
 
 **Changed.** `ets_check_act` is one finding per write (key `[:write]`),
 as `mnesia_check_act` is: of the pairs a write is in, the least read and
