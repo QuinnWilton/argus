@@ -382,6 +382,12 @@ run another solver without moving), a binary written within the last
 two seconds and an answer given by failing are asked in every VM, as
 without a store.
 
+**Added.** `Argus.Specs.ebin_digests/2`: every beam of an ebin by name
+and `Argus.BeamDigest` with its debug info, kept per ebin under the
+stamp `environment_digest/1` keeps a dependency's under, for a caller
+that keys an application it leaves out of that digest itself (scry
+keys argus's own beams without reading each one every run).
+
 ### What the program's other sites believe
 
 **Changed.** Schema 86. `failure.inconsistent_handling` gains `raises`,

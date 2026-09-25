@@ -224,6 +224,22 @@ defmodule Argus.Specs do
     end
   end
 
+  @doc """
+  Every beam in each of `ebins`, by name and `Argus.BeamDigest` with its
+  debug info, sorted by name: what `environment_digest/1` keys a
+  dependency's code by, for a caller that keys an application it
+  leaves out of that digest itself (scry keys argus's own beams). A
+  beam that cannot be read is named with the reason instead.
+
+  Kept as `environment_digest/1` keeps them: per ebin, under a stamp of
+  its beams' stats, in the VM and — with `:cache` — on disk, so a fresh
+  VM stats the beams rather than reading them; an ebin holding a beam
+  written within the last two seconds is hashed every time.
+  """
+  @spec ebin_digests([Path.t()], keyword()) :: %{Path.t() => [{String.t(), term()}]}
+  def ebin_digests(ebins, opts \\ []) when is_list(ebins),
+    do: beam_digests(ebins, Keyword.get(opts, :cache))
+
   defp keep_environment_digest(key, digest, now) do
     checked = :atomics.new(1, signed: true)
     :atomics.put(checked, 1, now)

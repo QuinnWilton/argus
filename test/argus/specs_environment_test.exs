@@ -107,6 +107,29 @@ defmodule Argus.SpecsEnvironmentTest do
     assert in_peer(ebin, opts) == first
   end
 
+  test "an ebin's digests are each beam's, kept under the stamp the environment reads",
+       %{tmp_dir: tmp} do
+    ebin = app_dir(Path.join(tmp, "app"), "argus_env_probe", ":ok")
+    beam = Path.join(ebin, "Elixir.ArgusEnvProbe.beam")
+    File.touch!(beam, System.os_time(:second) - 60)
+    cache = Path.join(tmp, "ebins")
+    {:ok, hash} = Argus.BeamDigest.digest(beam, debug_info: true)
+
+    assert Specs.ebin_digests([ebin], cache: cache) ==
+             %{ebin => [{"Elixir.ArgusEnvProbe.beam", hash}]}
+
+    # The entry the environment digest reads: a fresh VM's digest with
+    # it planted shows the plant, as one keyed by `environment_digest/1`
+    # itself does.
+    first = in_peer(ebin, cache: cache)
+
+    assert [kept] =
+             cache |> File.ls!() |> Enum.filter(&String.starts_with?(&1, "argus_env_probe-"))
+
+    File.write!(Path.join(cache, kept), :erlang.term_to_binary([{"planted", "hash"}]))
+    assert in_peer(ebin, cache: cache) != first
+  end
+
   test "an ebin written a moment ago is hashed every time and kept nowhere", %{tmp_dir: tmp} do
     ebin = app_dir(Path.join(tmp, "app"), "argus_env_probe", ":ok")
     cache = Path.join(tmp, "ebins")
