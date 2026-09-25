@@ -2207,11 +2207,12 @@ Another process takes or deletes the row between the check and the act, and the 
 **Assumptions and limits.**
 - "The owner's callbacks reach" is call-graph reach from the process's callbacks, not reach within its process: a function both the owner's callbacks and callers' processes call is taken to run in the owner, and so is a closure the owner hands to another process, so those reads are missed.
 - The rescue is asked of the reader's whole function, not of the read: a rescue around unrelated code in the reader silences it.
+- A reader that asks `:ets.whereis/1` of the table in the same function reads only while it is there (`asks_before_reading`; hackney's HTTP/3 connection table, Sentry's dedupe and its test registry: 4 rows over 18 projects). Asked of the function, as the rescue is, so a `whereis` whose answer the read ignores is taken for a guard; the window between the question and the read is left. A question asked in another function guards nothing (`WhereisElsewhereOwner`).
 - A read through a table reference held in state or a variable, rather than a literal name passed through parameters, is not tied to T.
 - Whether the owner restarts at all is not asked; an owner that never comes back makes the window permanent, which the finding still describes.
 - One finding per owner module and reader function, anchored at the read, with the `:ets.new/2` as a related frame.
 
-**Fixtures.** Positive: `EtsOwners.Owner`, `EtsOwners.HelperOwner` with `EtsOwners.Helper` (test/fixtures/ets_reader_fixture.ex); `:ets_catch_reader` `peek/1` (test/fixtures/erl/ets_catch_reader.erl). Quiet: `EtsOwners.GuardedOwner`, `ClosureGuardedOwner`, `HeirOwner`, `InsideOwner`, `InfoOwner`, `BadargOwner`, `DynamicOwnerNamedRead`; `:ets_catch_reader` `lookup/1`; `Quiet.RescueAllReader` (test/fixtures/quiet_shapes_fixture.ex). Asserted by test/analyses/singleton_shapes_test.exs and test/analyses/quiet_shapes_test.exs.
+**Fixtures.** Positive: `EtsOwners.Owner`, `EtsOwners.HelperOwner` with `EtsOwners.Helper` (test/fixtures/ets_reader_fixture.ex); `:ets_catch_reader` `peek/1` (test/fixtures/erl/ets_catch_reader.erl). Positive also: `EtsOwners.WhereisElsewhereOwner`. Quiet: `EtsOwners.GuardedOwner`, `WhereisOwner`, `ClosureGuardedOwner`, `HeirOwner`, `InsideOwner`, `InfoOwner`, `BadargOwner`, `DynamicOwnerNamedRead`; `:ets_catch_reader` `lookup/1`; `Quiet.RescueAllReader` (test/fixtures/quiet_shapes_fixture.ex). Asserted by test/analyses/singleton_shapes_test.exs and test/analyses/quiet_shapes_test.exs.
 
 **Corpus.** Fix pairs: `redix#338` (whatyouhide/redix, b77331e → b31bd23, Redix.Cluster.Manager). Present-only: none.
 

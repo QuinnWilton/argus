@@ -42,6 +42,47 @@ defmodule Argus.Test.Fixtures.EtsOwners do
     end
   end
 
+  defmodule WhereisOwner do
+    @moduledoc false
+    # hackney's HTTP/3 table, Sentry's dedupe: the reader asks whether the
+    # table is there before reading it.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    def lookup(key) do
+      case :ets.whereis(:ets_reader_whereis) do
+        :undefined -> []
+        _ -> :ets.lookup(:ets_reader_whereis, key)
+      end
+    end
+
+    @impl true
+    def init(_opts) do
+      :ets.new(:ets_reader_whereis, [:named_table, :protected, :set])
+      {:ok, %{}}
+    end
+  end
+
+  defmodule WhereisElsewhereOwner do
+    @moduledoc false
+    # The question asked in one function, the read made in another: a
+    # caller that reads without asking is not guarded by it.
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    def ready?, do: :ets.whereis(:ets_reader_whereis_elsewhere) != :undefined
+
+    def lookup(key), do: :ets.lookup(:ets_reader_whereis_elsewhere, key)
+
+    @impl true
+    def init(_opts) do
+      :ets.new(:ets_reader_whereis_elsewhere, [:named_table, :protected, :set])
+      {:ok, %{}}
+    end
+  end
+
   defmodule InfoOwner do
     @moduledoc false
     # :ets.info answers :undefined for a table that is gone: no raise.

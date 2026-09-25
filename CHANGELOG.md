@@ -199,6 +199,12 @@ REPL and ranch protocol, akkoma's raw WebSocket transport and rabbit's
 reader are quiet; a raw `:gen_server` that traps with no handle_info
 still reports.
 
+**Fixed.** ets's "table read while its owner may be restarting" skips a
+reader that asks `:ets.whereis/1` of the table in the same function
+before reading it (hackney's HTTP/3 connection table, Sentry's dedupe
+and test registry). A question asked in another function guards
+nothing.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

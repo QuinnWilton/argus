@@ -261,6 +261,14 @@ raising_read(site) :- ets_op(site, _, _, op, "read"), op != "info".
 guarded(g) :- enclosing_function(g, a), rescues_argument_error(a).
 guarded(g) :- enclosing_function(g, a), closure_def(p, a), call_edge(p, t), rescues_argument_error(t).
 
+// A reader that asks `:ets.whereis/1` of the table before reading it
+// (hackney's HTTP/3 connection table, Sentry's dedupe) reads only while
+// the table is there. Asked of the reader's function, as the rescue is;
+// the window between the question and the read is left.
+.decl asks_before_reading(func: symbol, name: symbol)
+
+asks_before_reading(g, name) :- enclosing_function(g, a), ets_op(_, a, name, "whereis", _).
+
 .decl ets_read_outside_owner(name: symbol, owner: symbol, reader: symbol, site: symbol, created: symbol)
 .output ets_read_outside_owner
 
@@ -299,7 +307,8 @@ ets_read_outside_owner(name, owner, reader, site, id) :-
   !ets_option(id, "heir", "true"),
   named_read(name, reader, site),
   !owner_reaches(owner, reader),
-  !guarded(reader).
+  !guarded(reader),
+  !asks_before_reading(reader, name).
 
 // A table under a name computed at runtime: only the owner's own API
 // can be tied to it.

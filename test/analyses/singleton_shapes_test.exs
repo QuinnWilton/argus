@@ -88,6 +88,17 @@ defmodule Argus.Analyses.SingletonShapesTest do
            ]
   end
 
+  test "a reader that asks :ets.whereis/1 first is guarded; one that asks elsewhere is not" do
+    skip_without_souffle()
+
+    {:ok, r} =
+      Memo.analyze([EtsOwners.WhereisOwner, EtsOwners.WhereisElsewhereOwner], :ets)
+
+    assert rows(r, "ets_read_outside_owner", 2) == [
+             "Argus.Test.Fixtures.EtsOwners.WhereisElsewhereOwner:lookup/1"
+           ]
+  end
+
   test "a table read inside an Erlang catch is guarded; the same read outside one is not" do
     skip_without_souffle()
 
