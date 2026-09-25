@@ -40,8 +40,9 @@
 //   the tree definition for a later sibling, the call otherwise.
 // `unbounded_effect_in_init(mod, kind, api)` — init/1, in its own
 //   process, reaches a socket receive with :infinity ("recv"; `api` is
-//   the function), a `receive` with no `after` ("receive") or a connect
-//   with no way to retry ("connect").
+//   the function), a `receive` with no `after` ("receive"), one only the
+//   exit of the process it waits on ends ("down"), or a connect with no
+//   way to retry ("connect").
 // `deferral_defect(mod, kind, site, detail)` — deferred work that will
 //   not happen as written: an init timeout of `detail` ms that any
 //   earlier message cancels ("init_timeout"), or a defensive catch in
@@ -256,31 +257,62 @@ unbounded_effect_in_init(mod, "recv", r, site) :-
   recv_reach.reaches(f, r),
   recv_site_or_empty(r, site).
 
-// A `receive` with no `after` waits the same way, on the mailbox —
-// unless it cannot outlast what it waits for:
+// A `receive` with no `after` waits the same way, on the mailbox. How
+// long depends on what its clauses take:
 //
-// - it takes the exit signal of the process it waits on, pinned: the
-//   `:DOWN` of a monitor (recv_down, recv_signal "down"; gen's call,
-//   code_server's, a spawn_monitor's pair) or the `:EXIT` of a process
-//   or port it is linked to (recv_signal "exit"; peer's init/1 closes
-//   the port it opened and waits for that port's exit). If the peer is
-//   gone, the signal comes; one that is alive and never answers is a
-//   synchronous call's finding, not this one;
-// - it flushes a timer message cancel_timer/1 said was delivered
-//   (flush_receive, clientlib/timer_flush.dl).
-.decl bounded_receive(id: symbol)
+// - nothing that ends with a peer: it waits until the message comes,
+//   forever if the sender is gone or never sends ("receive");
+// - the exit signal of the process it waits on, pinned (`peer_bounded`):
+//   the `:DOWN` of a monitor (recv_down, recv_signal "down"; gen's call,
+//   code_server's, a hand-written request, a spawn_monitor's pair), or,
+//   in a process that traps exits, the `:EXIT` of a process or port its
+//   function links to (recv_signal "exit"; peer's init/1 closes the port
+//   it opened and waits for that port's exit). If the peer is gone the
+//   signal comes, but a peer that is alive and never answers holds the
+//   start as long as it lives ("down"). An `:EXIT` clause in a process
+//   that does not trap exits, or for a process nothing linked, never
+//   fires, and bounds nothing;
+// - a timer message cancel_timer/1 said was delivered (flush_receive,
+//   clientlib/timer_flush.dl): no wait at all.
+.decl peer_bounded(id: symbol)
 
-bounded_receive(id) :- recv_down(id, _, _).
-bounded_receive(id) :- recv_signal(id, _, _).
-bounded_receive(id) :- flush_receive(id).
+peer_bounded(id) :- recv_down(id, _, _).
+peer_bounded(id) :- recv_signal(id, _, "down").
+
+// The function makes a link its receive can be told of: a spawn_link,
+// a link, a port (linked to the process that opens it), a start_link.
+.decl links_in(func: symbol)
+
+links_in(f) :- spawn_call(_, f, _, _, _, "spawn_link", _, _, _, _).
+links_in(f) :- remote_call(_, f, ":erlang", "link", 1).
+links_in(f) :- remote_call(_, f, "Process", "link", 1).
+links_in(f) :- remote_call(_, f, ":erlang", "open_port", 2).
+links_in(f) :- remote_call(_, f, "Port", "open", 2).
+links_in(f) :- call_site(_, f, _, "start_link", _).
+
+// init/1 traps exits, itself or in what it runs in its own process.
+.init trap_reach = SameProcessReachSet
+
+trap_reach.seed(t) :- trap_exit(t, _).
+
+.decl init_traps_exits(mod: symbol)
+
+init_traps_exits(m) :- init_function(m, f), trap_reach.reaches(f).
+
+.decl exit_bounded(mod: symbol, id: symbol)
+
+exit_bounded(m, id) :-
+  recv_signal(id, r, "exit"),
+  links_in(r),
+  init_function(m, _),
+  init_traps_exits(m).
 
 // Only what runs before the start is acknowledged holds the starter. An
 // init/1 that calls `:proc_lib.init_ack/1` and then enters its own loop
 // (`:gen_server.enter_loop/3`: OTP's logger_olp) waits there as the
 // server it has become, after its start returned; so does anything it
 // calls after the ack (start_acked). The edge into enter_loop is cut
-// wherever it is: what that loop waits for is the server's, and an
-// enter_loop with no ack before it is another bug.
+// wherever it is: what that loop waits for is the server's.
 .decl acked_edge(func: symbol, callee: symbol)
 
 acked_edge(f, g) :- call_instr(f, g, id), start_acked(id, f), !unacked_call(f, g).
@@ -295,7 +327,7 @@ unacked_call(f, g) :- call_instr(f, g, id), !start_acked(id, f).
 unbounded_wait_at(f, id) :-
   recv_start(id, f, 1, _),
   !start_acked(id, f),
-  !bounded_receive(id).
+  !flush_receive(id).
 
 .init receive_reach = SameProcessReachCut
 
@@ -305,7 +337,22 @@ receive_reach.seed(f, f) :- unbounded_wait_at(f, _).
 unbounded_effect_in_init(mod, "receive", r, id) :-
   init_function(mod, f),
   receive_reach.reaches(f, r),
-  unbounded_wait_at(r, id).
+  unbounded_wait_at(r, id),
+  !peer_bounded(id),
+  !exit_bounded(mod, id).
+
+unbounded_effect_in_init(mod, "down", r, id) :-
+  init_function(mod, f),
+  receive_reach.reaches(f, r),
+  unbounded_wait_at(r, id),
+  peer_bounded(id).
+
+unbounded_effect_in_init(mod, "down", r, id) :-
+  init_function(mod, f),
+  receive_reach.reaches(f, r),
+  unbounded_wait_at(r, id),
+  !peer_bounded(id),
+  exit_bounded(mod, id).
 
 // The receive that waits: the recv call, the `receive`, or the call
 // that forwards :infinity into a helper's recv.
@@ -338,7 +385,8 @@ init_recv_step(mod, r, call) :-
   recv_reach.reaches(g, r).
 
 init_recv_step(mod, r, call) :-
-  unbounded_effect_in_init(mod, "receive", r, _),
+  unbounded_effect_in_init(mod, kind, r, _),
+  (kind = "receive" ; kind = "down"),
   init_function(mod, f),
   call_instr(f, g, call),
   !runs_elsewhere(f, g),
@@ -353,7 +401,7 @@ init_reaches_recv(mod, r, call) :- init_recv_step(mod, r, call).
 
 init_reaches_recv(mod, r, "") :-
   unbounded_effect_in_init(mod, kind, r, _),
-  (kind = "recv" ; kind = "receive"),
+  (kind = "recv" ; kind = "receive" ; kind = "down"),
   !init_recv_stepped(mod, r).
 
 // ── A connection made in init/1 with no way to try again ─────────────

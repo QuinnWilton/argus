@@ -137,30 +137,49 @@ defmodule Argus.Analyses.SingletonShapesTest do
              findings.findings |> Enum.map(& &1.title) |> Enum.filter(&(&1 =~ "waits on"))
   end
 
-  test "a wait that ends with the peer, a flush, or a wait after the ack holds no start" do
+  test "a flush, or a wait after the ack, holds no start; a wait a peer ends is a down" do
     skip_without_souffle()
 
-    quiet = [
+    fixtures = [
       InitRecv.AcksThenLoops,
       InitRecv.AcksThenWaits,
       InitRecv.AsksWithMonitor,
       InitRecv.AwaitsHandedDown,
       InitRecv.ClosesPort,
-      InitRecv.FlushesTimer
+      InitRecv.FlushesTimer,
+      InitRecv.FlushesOnFalse,
+      InitRecv.WaitsBeforeAck,
+      InitRecv.LoopsOnParent,
+      InitRecv.AsksByHand,
+      InitRecv.UnlinkedExit,
+      InitRecv.LinkedUntrapped,
+      InitRecv.CancelsHanded,
+      InitRecv.FlushesUnchecked
     ]
 
-    {:ok, r} = Memo.analyze(quiet ++ [InitRecv.WaitsBeforeAck, InitRecv.LoopsOnParent], :startup)
+    {:ok, r} = Memo.analyze(fixtures, :startup)
+
+    mods = fn kind ->
+      r
+      |> Rows.where(:startup, "unbounded_effect_in_init", kind: kind)
+      |> Enum.map(&(&1 |> hd() |> String.replace("Argus.Test.Fixtures.InitRecv.", "")))
+      |> Enum.uniq()
+      |> Enum.sort()
+    end
 
     # A receive before the ack holds the starter; a loop's clause for its
-    # parent's exit does not bound its wait for the next message.
-    assert r
-           |> Rows.where(:startup, "unbounded_effect_in_init", kind: "receive")
-           |> Enum.map(&hd/1)
-           |> Enum.uniq()
-           |> Enum.sort() == [
-             "Argus.Test.Fixtures.InitRecv.LoopsOnParent",
-             "Argus.Test.Fixtures.InitRecv.WaitsBeforeAck"
-           ]
+    # parent's exit does not bound its wait for the next message. An
+    # :EXIT clause bounds nothing unless the process traps exits and its
+    # function links to the one it waits on; a cancel bounds nothing
+    # unless the receive runs on its `false` side.
+    assert mods.("receive") ==
+             ~w(CancelsHanded FlushesUnchecked LinkedUntrapped LoopsOnParent UnlinkedExit
+                WaitsBeforeAck)
+
+    # A pinned :DOWN, or a trapped :EXIT of a linked port, ends the wait
+    # when the other process does; one that lives and does not answer
+    # holds the start.
+    assert mods.("down") == ~w(AsksByHand AsksWithMonitor AwaitsHandedDown ClosesPort)
 
     # With gen_server's own code in the program: the loop enter_loop
     # runs is the server's, entered after the ack.

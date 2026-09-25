@@ -1,11 +1,9 @@
-// The cancel_timer flush idiom: a blocking receive that is no hang.
+// The cancel_timer flush idiom: a receive that takes a timer's message
+// cancel_timer/1 said was already delivered.
 //
-// flush_receive(recv): the receive at `recv` flushes a timer message
-// cancel_timer/1 said was already delivered. Blocking's receive in a
-// callback and startup's wait during init both step aside for it.
-////
-// A blocking receive is NOT a bug when it is flushing an already-delivered
-// timer message:
+// flush_receive(recv): a receive with no `after` that is no hang. Blocking's
+// receive in a callback and startup's wait during init both step aside
+// for it:
 //
 //     if Process.cancel_timer(ref) == false do
 //       receive do :tick -> :ok end
@@ -13,24 +11,28 @@
 //
 // `cancel_timer/1` returning false means the timer had already expired, so
 // the message has already been sent and is sitting in the mailbox — the
-// receive is guaranteed to match, and OTP's own code is written this way.
-// This is the documented way to keep a stale timer message from being
-// mistaken for a fresh one later.
+// receive is guaranteed to match, and OTP's own code is written this way
+// (gen_server's mc_cancel_timer/2, Livebook's session). The receive must
+// run only on the `false` side of a test of that cancel's result, later
+// in the same function (recv_flush, Argus.Extractors.Monitor.Flush): a
+// cancel whose result nothing tests, or a receive the other side reaches
+// too, waits forever when the cancel succeeded and the message never
+// comes.
 //
-// Found by verification, not by anticipation: both blocking receives in the
-// first corpus sweep were this idiom, and reporting them as hangs would
-// have been the analysis's entire output on that project.
+// flush_poll(recv): a receive with an `after`, in a function that cancels
+// a timer, that can take the timer's message — `receive :tick -> :ok
+// after 0 -> :ok end`, the form the cancel_timer docs give. It cannot
+// hang whichever way the cancel went, and takes exactly the message the
+// function means to drop.
 //
-// The flush is the receive, not the function: a function that cancels a
-// timer suppresses a blocking receive of its own only when that receive
-// can take a timer's message — a clause for a literal one of the
-// module's timers is armed with, for :timeout (erlang:start_timer/3's
-// `{timeout, Ref, Msg}`), or for anything. A receive whose every clause
-// names some other literal, in a module whose timers all carry known
-// literals, is waiting for something else, and is reported. When the
-// module arms no timer the program can see (the ref came from a caller)
-// or arms one whose message is not a known literal, the receive may be
-// the flush, and stays suppressed: the quiet direction.
+// Both ask that the receive can take a timer's message — a clause for a
+// literal one of the module's timers is armed with, for :timeout
+// (erlang:start_timer/3's `{timeout, Ref, Msg}`), or for anything. A
+// receive whose every clause names some other literal, in a module whose
+// timers all carry known literals, is waiting for something else. When
+// the module arms no timer the program can see (the ref came from a
+// caller) or arms one whose message is not a known literal, the receive
+// may take it: the quiet direction.
 .decl cancels_timer(func: symbol)
 
 cancels_timer(func) :-
@@ -80,7 +82,14 @@ waits_for_other(id) :-
 .decl flush_receive(recv: symbol)
 
 flush_receive(id) :-
-  recv_start(id, func, _, _),
+  recv_start(id, _, 1, _),
+  recv_flush(id, _, _),
+  !waits_for_other(id).
+
+.decl flush_poll(recv: symbol)
+
+flush_poll(id) :-
+  recv_start(id, func, 0, _),
   cancels_timer(func),
   !waits_for_other(id).
 

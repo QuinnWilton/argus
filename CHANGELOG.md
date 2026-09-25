@@ -289,31 +289,45 @@ rule reads `variant = "spawn"` and now leaves the start alone.
 `PidFlow` reads `variant` only for `spawn_monitor`.
 
 **Fixed.** "init/1 waits on a message with no timeout" (startup's
-`unbounded_effect_in_init`, "receive") no longer reports a wait that
-cannot outlast what it waits for, or one made after the start returned.
-On OTP's kernel, stdlib and mnesia it went from 23 rows to 5. A receive
-is bounded when it takes the pinned `:DOWN` of the process it asked
-(`recv_down`, `recv_signal`: gen's and code_server's calls, file's and
-io's requests, proc_lib's `await_DOWN/2`, supervisor's shutdown, a
-`spawn_monitor`'s pair) or the pinned `:EXIT` of a process or port it
-is linked to (peer's init/1 waits for the port it closed): if the peer
-is gone, the signal comes, and a peer that is alive and never answers
-is the synchronous-call rules' finding. So is a receive that flushes a
-timer cancel_timer/1 said had fired (`flush_receive`, now in
-clientlib/timer_flush.dl, shared with blocking): Livebook's session and
-gen_server's multi_call. The walk from init/1 stops where the start is
-acknowledged (`start_acked`, and the edge into
+`unbounded_effect_in_init`, "receive") no longer reports a wait made
+after the start returned, or one that flushes a timer that has fired.
+The walk from init/1 stops where the start is acknowledged
+(`start_acked`, and the edge into
 `:gen_server.enter_loop`/`:gen_statem.enter_loop`): logger_olp's init
 acks and becomes the server, and its loop's receives are the server's
-(`SameProcessReachCut` in clientlib/reach.dl). Still reported:
-`:ets.all/0`'s and `:socket.close/1`'s waits for the runtime's reply,
-win32reg's port reply, and kernel_config's boot handshakes.
+(`SameProcessReachCut` in clientlib/reach.dl). A receive that runs only
+where cancel_timer/1 returned `false` takes a message already in the
+mailbox (`flush_receive`, now in clientlib/timer_flush.dl, shared with
+blocking): Livebook's session and gen_server's multi_call. A wait that
+takes the exit of the process it waits on is reported as its own kind
+(below).
+
+**Fixed.** A wait in init/1 that only the exit of the process it
+waits on ends is reported again, as "init/1 waits on another process
+with no timeout" (`unbounded_effect_in_init`, "down", an info): a
+hand-written request whose receive takes the pinned `:DOWN` of the
+peer it asked (`recv_down`, `recv_signal` "down") holds the start for
+as long as a live peer does not answer, and no synchronous-call rule
+sees a request the program writes itself. The change above dropped
+those waits with the flushes. A pinned `:EXIT` clause counts as the
+peer's exit only in a process that traps exits (`trap_exit` on init's
+own path) and a function that links to what it waits on (a
+spawn_link, a link, a port, a start_link: peer's init/1 closes the port
+it opened and waits for its exit); otherwise the `:EXIT` never arrives
+as a message, and the wait is a plain "receive". A cancel_timer/1 flush
+now needs the receive to run on the `false` side of a test of that
+cancel's result (`recv_flush`): a cancel nothing tests, a ref a caller
+handed in, or a receive the other side reaches too waits forever when
+the cancel succeeded. Blocking's receive rules read the same
+`flush_receive`; a receive with an `after` that takes a cancelled
+timer's message is `flush_poll`, as before.
 
 **Added.** Schema 100. `recv_flush(id, func, cancel)`
 (`Argus.Extractors.Monitor.Flush`): the receive at `id` runs only where
 the `cancel_timer` call at `cancel`, earlier in the function, returned
 `false` — every path from the entry passes the test of that result
-against `false` and leaves it by the `false` edge.
+against `false` and leaves it by the `false` edge. Read by
+clientlib/timer_flush.dl's `flush_receive`.
 
 **Added.** Schema 92. `recv_signal(id, func, signal)`
 (`Argus.Extractors.Monitor.ExitSignal`): a receive with a clause that

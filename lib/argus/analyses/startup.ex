@@ -18,7 +18,8 @@ defmodule Argus.Analyses.Startup do
     `remote` operation on the boot path.
   - `unbounded_effect_in_init(mod, kind, api, site)` — init/1, in its own
     process, reaches a socket `recv` with `:infinity`, a `receive` with no
-    `after`, or a `connect` nothing in the module can retry.
+    `after` (`down` when only the exit of the process it waits on ends
+    it), or a `connect` nothing in the module can retry.
   - `deferral_defect(mod, kind, site, detail)` — the `{:ok, state, 0}`
     idiom any earlier message cancels (`init_timeout`), or a defensive
     catch in handle_continue that turns a deadlock into a restart loop
@@ -106,14 +107,21 @@ defmodule Argus.Analyses.Startup do
         name: :unbounded_effect_in_init,
         fields: [
           {:mod, :symbol, "module whose init/1 reaches it"},
-          {:kind, :symbol, "recv | receive | connect"},
+          {:kind, :symbol, "recv | receive | down | connect"},
           {:api, :symbol, "the receiving function, or the connect call"},
           {:site, :symbol,
            "the socket recv or the receive, when the instruction is known; else empty"}
         ],
         # One wait finding per waiting function: the inits that reach it
         # are its evidence frames.
-        key: {:kind, %{"connect" => [:mod], "recv" => [:kind, :api], "receive" => [:kind, :api]}},
+        key:
+          {:kind,
+           %{
+             "connect" => [:mod],
+             "recv" => [:kind, :api],
+             "receive" => [:kind, :api],
+             "down" => [:kind, :api]
+           }},
         doc:
           "init/1 waits on a socket or its mailbox without bound, or connects with no way to retry."
       },
@@ -220,6 +228,26 @@ defmodule Argus.Analyses.Startup do
         "with it — forever, if the sender is gone or never sends.",
       at: Findings.at_site_in_func(site, recv),
       at_label: "waits with no `after`",
+      at_source: "receive",
+      to_block: :receive,
+      help: [
+        "add an `after` and fail the start with an error when it fires",
+        "or wait after init returns (`{:continue, :await}`) so the start completes"
+      ]
+    )
+  end
+
+  def finding(:unbounded_effect_in_init, [_mod, "down", recv, site]) do
+    Findings.new(
+      :info,
+      "init/1 waits on another process with no timeout",
+      "#{Findings.call_name(recv)} has a `receive` with no `after`, and init/1 reaches " <>
+        "it in its own process. The wait takes the exit of the process it waits " <>
+        "on, so it ends if that process dies; while it lives and does not answer, " <>
+        "the process is not started: its supervisor's start, and whoever called " <>
+        "start_child, wait with it.",
+      at: Findings.at_site_in_func(site, recv),
+      at_label: "waits until the other process answers or exits",
       at_source: "receive",
       to_block: :receive,
       help: [

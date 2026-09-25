@@ -530,15 +530,16 @@ callback_reaches(entry, callee, "helper") :-
 // ── The cancel_timer flush idiom ─────────────────────────────────
 //
 // flush_receive (clientlib/timer_flush.dl): a blocking receive that
-// takes a timer's message right after cancel_timer/1 said it had
-// already fired is no hang.
+// runs only where cancel_timer/1 said the timer had already fired, and
+// takes its message, is no hang. flush_poll: a receive with an `after`
+// that takes the message of a timer its function cancels.
 
 // A receive with no `after`, running on an OTP process's own stack. This
 // is the one that hangs: no timeout means no way out if the expected
 // message never arrives, and the supervisor can only brutal-kill.
 // A blocking receive init/1 reaches is startup's finding
-// (unbounded_effect_in_init, "receive"): it holds the supervisor's start,
-// and is reported there once.
+// (unbounded_effect_in_init, "receive" or "down"): it holds the
+// supervisor's start, and is reported there once.
 receive_in_callback(id, func, callback, behaviour, proximity, "false") :-
   recv_start(id, func, 1, _),
   !recv_down(id, func, _),
@@ -575,7 +576,7 @@ receive_in_callback(id, func, callback, behaviour, proximity, "true") :-
   recv_start(id, func, 0, _),
   callback_reaches(callback, func, proximity),
   otp_callback(callback, _, _, behaviour),
-  !flush_receive(id).
+  !flush_poll(id).
 
 // ══ A socket call with no timeout on an OTP process's own stack ══════
 //
