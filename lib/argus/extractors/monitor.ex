@@ -72,9 +72,16 @@ defmodule Argus.Extractors.Monitor do
   ref is not compared), or the one whose ref the call returned; a
   `Process.demonitor(ref, [:flush])` of that ref; or a call to a function
   of this module that holds such a receive, or calls one that does. A
-  path that raises is not asked: the wait was for a caller that is
-  unwinding. A receive in a closure, and a wait in another module, are
-  not seen, and leave the call without a row.
+  timed receive's clause that takes such a `:DOWN` collects it on its
+  own path (a grace period, then a kill and a wait). A callee that
+  collects on some returns and returns an atom on every path that leaves
+  its monitor live (the supervisor forks' `monitor_child/1`: `{error,
+  Reason}` after the `:DOWN`, `ok` before it) has its collected side
+  named by the caller's first test on the result: a tuple test's pass
+  edge, or the fail edge of a comparison with that one atom. A path that
+  raises is not asked: the wait was for a caller that is unwinding. A
+  receive in a closure, and a wait in another module, are not seen, and
+  leave the call without a row.
 
   ## A receive that takes its own monitor's :DOWN
 
@@ -872,13 +879,16 @@ defmodule Argus.Extractors.Monitor do
       end)
 
     collectors = collectors(mod, functions, receives)
+    tuple_collected = tuple_collected(module_data, receives, collectors)
 
     Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
       ctx = %{
         mod: mod,
         instrs: instrs,
         receives: Map.fetch!(receives, {name, arity}),
-        collectors: collectors
+        takes: timed_down_takes(instrs),
+        collectors: collectors,
+        tuple_collected: tuple_collected
       }
 
       with [_ | _] = calls <- calls_to_walk(ctx),
@@ -940,6 +950,8 @@ defmodule Argus.Extractors.Monitor do
   # that loops forever never returns either; neither is a return that
   # leaves the monitor behind.
   defp collected_after?(fun, ctx, call) do
+    collected_branch = collected_branch(ctx, call)
+
     result =
       Walk.explore(fun, ctx.instrs, [call + 1],
         on_instr: fn instr, idx ->
@@ -948,10 +960,111 @@ defmodule Argus.Extractors.Monitor do
             Instr.exits?(instr) and not raises?(instr) -> {:halt, :returns}
             true -> :continue
           end
-        end
+        end,
+        follow?: fn instr, kind -> collected_branch != {instr, kind} end
       )
 
     match?({:done, _}, result)
+  end
+
+  # ── A monitor its callee collected on the way back ──────────────────
+  #
+  # OTP's old supervisor, as rabbit's supervisor2 and brod's
+  # brod_supervisor3 copy it: monitor_child/1 monitors, and if the
+  # child's {'EXIT', ...} is already queued it waits there for the
+  # :DOWN and returns {error, Reason}; otherwise it returns ok with the
+  # monitor live. Its callers test the result: `is_tuple` sends the
+  # collected case straight back, and only the ok side waits for the
+  # :DOWN. So that side is the only one a wait must follow.
+  #
+  # A local function is tuple-collected when every return a path from
+  # its monitor reaches without passing a wait for a :DOWN returns an
+  # atom literal: a tuple it returns has waited. The first test on the
+  # call's result then names a collected edge: the pass edge of a tuple
+  # test (Erlang's `case monitor_child(Pid) of ok -> ...; {error, _} ->`),
+  # or the fail edge of a comparison with the one atom it returns live
+  # (Elixir's `case ... do :ok -> ...`). `{instr, edge}`, or nil.
+  @tuple_tests [:is_tuple, :is_tagged_tuple, :test_arity]
+
+  defp collected_branch(ctx, call) do
+    with {:ok, mod, name, arity} <- match_local_call(Enum.at(ctx.instrs, call)),
+         true <- mod == ctx.mod,
+         {:ok, live} <- Map.fetch(ctx.tuple_collected, {name, arity}) do
+      case Enum.at(ctx.instrs, call + 1) do
+        {:test, op, _fail, [arg | _]} = test when op in @tuple_tests ->
+          if register(arg) == {:x, 0}, do: {test, :branch_pass}
+
+        {:test, :is_eq_exact, _fail, [arg, {:atom, atom}]} = test ->
+          if register(arg) == {:x, 0} and live == [atom], do: {test, :branch_fail}
+
+        _ ->
+          nil
+      end
+    else
+      _ -> nil
+    end
+  end
+
+  # `%{{name, arity} => the atoms it returns with its monitor live}`.
+  defp tuple_collected(%{module: mod, functions: functions} = module_data, receives, collectors) do
+    for {:function, name, arity, _entry, instrs} <- functions,
+        monitors = monitor_sites(instrs),
+        monitors != [],
+        %Argus.Cfg.Function{} = fun <- [cfg(module_data, name, arity)],
+        ctx = %{
+          mod: mod,
+          instrs: instrs,
+          receives: Map.fetch!(receives, {name, arity}),
+          takes: timed_down_takes(instrs),
+          collectors: collectors
+        },
+        {:ok, atoms} <- [live_return_atoms(fun, ctx, monitors)],
+        into: %{},
+        do: {{name, arity}, atoms}
+  end
+
+  defp monitor_sites(instrs) do
+    for {instr, idx} <- Enum.with_index(instrs),
+        match_remote_call(instr) in [{:ok, :erlang, :monitor, 2}, {:ok, Process, :monitor, 1}],
+        do: idx
+  end
+
+  # The atoms every return reached from a monitor with the monitor live
+  # returns, when each is an atom literal: `{:ok, sorted atoms}`, or
+  # :error.
+  defp live_return_atoms(fun, ctx, monitors) do
+    returns =
+      Walk.explore(fun, ctx.instrs, Enum.map(monitors, &(&1 + 1)),
+        on_instr: fn instr, idx ->
+          cond do
+            waits_for_down?(instr, idx, nil, ctx) -> :prune
+            instr == :return -> :prune
+            Instr.exits?(instr) and not raises?(instr) -> {:halt, :no}
+            true -> :continue
+          end
+        end
+      )
+
+    with {:done, visited} <- returns,
+         atoms =
+           for(
+             at <- visited,
+             Enum.at(ctx.instrs, at) == :return,
+             do: returned_atom(ctx.instrs, at)
+           ),
+         [_ | _] <- atoms,
+         false <- nil in atoms do
+      {:ok, atoms |> Enum.uniq() |> Enum.sort()}
+    else
+      _ -> :error
+    end
+  end
+
+  defp returned_atom(instrs, idx) do
+    Resolve.trace(instrs, idx, {:x, 0}, nil, fn
+      {_at, {:move, {:atom, atom}, _dst}}, _follow -> atom
+      _writer, _follow -> nil
+    end)
   end
 
   defp waits_for_down?({:loop_rec, _fail, _dst}, idx, call, ctx) do
@@ -962,6 +1075,15 @@ defmodule Argus.Extractors.Monitor do
       {:pinned, at, reg} -> origin_call(ctx.instrs, at, reg) == call
       :other -> false
     end)
+  end
+
+  # The clause of a timed receive that took a :DOWN: this path has it.
+  defp waits_for_down?(:remove_message, idx, call, ctx) do
+    case Map.fetch(Map.get(ctx, :takes, %{}), idx) do
+      {:ok, :any} -> true
+      {:ok, {:pinned, at, reg}} -> origin_call(ctx.instrs, at, reg) == call
+      _ -> false
+    end
   end
 
   defp waits_for_down?(instr, idx, call, ctx) do
@@ -1065,6 +1187,42 @@ defmodule Argus.Extractors.Monitor do
   defp down_clauses(tuple, idx, labels) do
     start = %{idx: idx + 1, msg: [{:x, 0}], tags: [], refs: [], tag: nil, ref: :any}
     walk_heads([start], tuple, labels, %{}, [])
+  end
+
+  # The DOWN clauses of every receive that has an `after`, by where each
+  # takes its message: `%{remove_message index => ref}`. A timed receive
+  # is no wait, but the path that took a :DOWN in it has collected it.
+  defp timed_down_takes(instrs) do
+    tuple = List.to_tuple(instrs)
+    labels = for {{:label, l}, idx} <- Enum.with_index(instrs), into: %{}, do: {l, idx}
+
+    for {{:loop_rec, {:f, fail}, _dst}, idx} <- Enum.with_index(instrs),
+        not blocking?(tuple, Map.get(labels, fail)),
+        start = %{idx: idx + 1, msg: [{:x, 0}], tags: [], refs: [], tag: nil, ref: :any},
+        {at, ref} <- take_heads([start], tuple, labels, %{}, []),
+        into: %{},
+        do: {at, ref}
+  end
+
+  defp take_heads([], _tuple, _labels, _seen, acc), do: acc
+
+  defp take_heads([state | rest], tuple, labels, seen, acc) do
+    if state.idx >= tuple_size(tuple) or Map.has_key?(seen, state) do
+      take_heads(rest, tuple, labels, seen, acc)
+    else
+      seen = Map.put(seen, state, true)
+
+      case head(elem(tuple, state.idx), state, labels) do
+        {:matched, %{tag: :DOWN, ref: ref, idx: at}} ->
+          take_heads(rest, tuple, labels, seen, [{at, ref} | acc])
+
+        {:matched, _other} ->
+          take_heads(rest, tuple, labels, seen, acc)
+
+        next ->
+          take_heads(next ++ rest, tuple, labels, seen, acc)
+      end
+    end
   end
 
   defp walk_heads([], _tuple, _labels, _seen, acc), do: acc |> Enum.uniq() |> Enum.sort()

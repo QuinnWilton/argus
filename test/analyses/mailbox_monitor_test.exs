@@ -39,7 +39,9 @@ defmodule Argus.Analyses.MailboxMonitorTest do
     M.HelperKeepsRef,
     M.HelperDropsRef,
     M.DrainsOnTerminate,
-    M.DrainsOnCall
+    M.DrainsOnCall,
+    M.ForkShutdown,
+    M.ForkShutdownForgets
   ]
 
   # Every test reads the same solve of @all: solved once, read-only.
@@ -236,6 +238,19 @@ defmodule Argus.Analyses.MailboxMonitorTest do
       # Positive: the same drain, reached from handle_call/3 as well.
       assert named?(reported, "DrainsOnCall")
       refute named?(reported, "DrainsOnTerminate")
+    end
+
+    test "a supervisor fork's monitor_child is collected where its caller waits" do
+      skip_without_souffle()
+
+      r = servers()
+
+      # Positive: the caller's :ok side forgets the :DOWN.
+      assert named?(mods(r, "ref_discarded"), "ForkShutdownForgets")
+      assert named?(mods(r, "timed_wait"), "ForkShutdownForgets")
+
+      refute Enum.any?(mods(r, "ref_discarded"), &(&1 == inspect(M.ForkShutdown)))
+      refute Enum.any?(mods(r, "timed_wait"), &(&1 == inspect(M.ForkShutdown)))
     end
 
     test "a monitor in a client API function is the caller's, not the server's" do

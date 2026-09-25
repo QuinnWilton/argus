@@ -159,6 +159,18 @@ mongooseim 18); a `{:ok, pid} = start()` badmatch did the same. The
 stage-0 `unconditional_call_edge` and failure's "what init/1 always
 runs" read it too. `Argus.Cfg.dominator_tree/3` exposes the solver.
 
+**Fixed.** `awaits_down_after` follows a callee that collects the
+`:DOWN` on one of its returns: OTP's old supervisor's `monitor_child/1`,
+as rabbit's supervisor2 and brod's brod_supervisor3 copy it, returns
+`{error, Reason}` after waiting for it and `ok` with the monitor live;
+when every return a function makes with its monitor live is an atom,
+the caller's tuple test on the result (or its comparison with that
+atom) sends the collected side back unwaited. A timed receive's `:DOWN`
+clause collects on its own path. mailbox's `ref_discarded` now reads
+`waited_out` and `collected_by_callers` like the timed-wait class: the
+forks' four "drops the ref"/"leaves a monitor live" rows and rabbit's
+`stop_gc/2` (grace period, kill, wait) are quiet.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

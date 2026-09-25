@@ -879,6 +879,7 @@ outlives_its_wait(func) :-
 .init uncollected = BackwardUnguarded
 
 uncollected.seed(g, g) :- outlives_its_wait(g).
+uncollected.seed(g, g) :- monitor_ref_dropped(_, g).
 uncollected.guarded(id) :- awaits_down_after(_, id).
 
 .decl collection_exposed(func: symbol)
@@ -1002,11 +1003,20 @@ unconsumed_monitor(mod, f, site, "never_released") :-
 // table in another module; every unsubscribe left a monitor behind.
 // Reported separately from monitor_never_released because it needs no
 // removal path in evidence — the ref being gone is the whole story.
+//
+// A dropped ref whose :DOWN is waited for all the same is collected, not
+// lost: by the function itself (waited_out), or by every caller
+// (collected_by_callers). OTP's old supervisor, as rabbit's supervisor2
+// and brod's brod_supervisor3 copy it, monitors in monitor_child/1
+// without keeping the ref, and shutdown/2 waits for the child's :DOWN by
+// its pid.
 unconsumed_monitor(mod, f, site, "ref_discarded") :-
   server_side(mod, f),
   !on_the_way_out(mod, f),
   monitor_call(site, f, _),
-  monitor_ref_dropped(site, f).
+  monitor_ref_dropped(site, f),
+  !waited_out(site),
+  !collected_by_callers(f).
 
 // ══ A message the module sends itself and cannot handle ═════════════
 //

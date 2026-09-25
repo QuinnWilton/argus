@@ -695,4 +695,91 @@ defmodule Argus.Test.Fixtures.MonitorLeak do
       end
     end
   end
+
+  # OTP's old supervisor shutdown, as rabbit's supervisor2 and brod's
+  # brod_supervisor3 copy it: monitor_child/1 drops the ref and returns
+  # {:error, reason} having collected the :DOWN, or :ok with it live; the
+  # caller waits for the :DOWN by pid on the :ok side, first with a
+  # grace period, then after a kill.
+
+  defmodule ForkShutdown do
+    @moduledoc false
+    use GenServer
+
+    @impl true
+    def init(_), do: {:ok, %{}}
+
+    @impl true
+    def handle_call({:stop_child, pid}, _from, state), do: {:reply, shutdown(pid, 5_000), state}
+
+    defp shutdown(pid, time) do
+      case monitor_child(pid) do
+        :ok ->
+          Process.exit(pid, :shutdown)
+
+          receive do
+            {:DOWN, _ref, :process, ^pid, :shutdown} -> :ok
+            {:DOWN, _ref, :process, ^pid, other} -> {:error, other}
+          after
+            time ->
+              Process.exit(pid, :kill)
+
+              receive do
+                {:DOWN, _ref, :process, ^pid, other} -> {:error, other}
+              end
+          end
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end
+
+    defp monitor_child(pid) do
+      Process.monitor(pid)
+      Process.unlink(pid)
+
+      receive do
+        {:EXIT, ^pid, reason} ->
+          receive do
+            {:DOWN, _ref, :process, ^pid, _} -> {:error, reason}
+          end
+      after
+        0 -> :ok
+      end
+    end
+  end
+
+  defmodule ForkShutdownForgets do
+    @moduledoc "The same monitor_child, but the caller's :ok side never waits for the :DOWN."
+    use GenServer
+
+    @impl true
+    def init(_), do: {:ok, %{}}
+
+    @impl true
+    def handle_call({:stop_child, pid}, _from, state) do
+      case monitor_child(pid) do
+        :ok ->
+          Process.exit(pid, :shutdown)
+          {:reply, :ok, state}
+
+        {:error, reason} ->
+          {:reply, {:error, reason}, state}
+      end
+    end
+
+    defp monitor_child(pid) do
+      Process.monitor(pid)
+      Process.unlink(pid)
+
+      receive do
+        {:EXIT, ^pid, reason} ->
+          receive do
+            {:DOWN, _ref, :process, ^pid, _} -> {:error, reason}
+          end
+      after
+        0 -> :ok
+      end
+    end
+  end
 end
