@@ -60,6 +60,19 @@ makes atoms of a log template's `%{key}` placeholders, which
 creation reachable from an exported function"; the template is the
 caller's code, the value-source prior's to step down).
 
+**Changed.** Code execution a request reaches is never below
+`:warning` (`sink_reachable`, sink `code`): the path tiers that step
+the other sinks down with distance, and the `prior_reads` step-down of a
+path row, stop there. A code sink has no bound a program writes and no
+value test, so its reach from a request is itself the finding; and an
+admin-only surface is no exception — argus cannot see `pipe_through`,
+and an administrator's token that reaches code on the host is an
+escalation past the application's own authority (akkoma's admin config
+API, three `Code.eval_string` calls, one behind a sanitizer whose regex
+never matches). A proven flow stays `:error` on any route. Over the
+nineteen live projects one row moves (akkoma's third evaluation, which
+the regex propagators above make a flow anyway).
+
 ### Points-to that finishes on a large program
 
 **Fixed.** The points-to stage finishes on Ash (1,327 modules), where it

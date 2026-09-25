@@ -80,7 +80,12 @@ classes of one risk get one severity.
   reaches with no request path keeps the sink's severity: a library's
   exports are its way in, its callers' input its outside data, and the
   value-source prior steps a row down when the value is the program's
-  own.
+  own. Code execution is the exception to the distance steps: it has no
+  bound a program writes and no value test, so its reach from a request
+  is itself the finding, and it is never below `:warning` on any arm,
+  path or prior. An admin-only route keeps it: `pipe_through` is not in
+  the route table, and an administrator's token reaching code on the host
+  is an escalation past the application's own authority.
 
 ## Classes by concern
 
@@ -2633,7 +2638,7 @@ The site is reported by request proximity as for atoms. When no request reaches 
 ### Dynamic code execution
 
 `sink_reachable` · sink=`code`; `sink_without_request_path` · sink=`code`
-· titles: "Dynamic code execution #{reached(proximity)} #{surface(kind)}" (proximity severities as for atoms); "Dynamic code execution reachable from exports" (`:error`)
+· titles: "Dynamic code execution #{reached(proximity)} #{surface(kind)}" (`:error` for `flow` and `direct`, `:warning` for `adjacent` and `transitive`, and never below `:warning` after a prior); "Dynamic code execution reachable from exports" (`:error`)
 
 **Property.** Function g calls one of: `Code.eval_string/1,2,3`, `Code.compile_string/1,2`, `:os.cmd/1,2`, `System.shell/1,2`, or `System.cmd/2,3`. For `System.cmd/2,3`, the command must be non-literal, or a literal shell or interpreter (`sh`, `bash`, `python`, `erl`, `elixir` and the like) whose arguments are not literal. The call is reported by request proximity as for atoms. Otherwise it is reported when some exported function reaches g. At run time, if caller data reaches the argument, arbitrary code runs inside the node with all of the VM's privileges.
 
@@ -2642,12 +2647,13 @@ The site is reported by request proximity as for atoms. When no request reaches 
 - A literal non-interpreter program is never a sink, whatever its arguments, because argv is not parsed by a shell. Injection through arguments to such a program, such as a `git` option, is not reported.
 - `Code.eval_quoted`, `Code.eval_file`, `EEx.eval_string`, `:erl_eval` and `Port.open({:spawn, cmd}, ...)` are not sinks.
 - `sink_endpoint` names routes for atom and deserialization sinks only. A code sink's finding never gets a route frame.
+- Severity does not step below `:warning` with distance or with a prior (the rubric's exception): a transitive path from a request to code execution is worth reading whatever the value, where a transitive atom path most often reads storage. An admin-only route is no exception. Round 3 of the mining (2026-09-25) decided this on akkoma's admin config API: `Pleroma.ConfigDB.to_elixir_types/1` evaluates posted config three ways (an `:args` tuple's elements with `{` in them, a `:partial_chain` string behind a sanitizer regex whose mid-pattern `^` never matches, and a `~r` sigil rebuilt from the value), all reached from `ConfigController.update/2`, which needs an admin token with `admin:write`: host code execution for whoever holds or phishes that token.
 
-**Fixtures.** Positive: `CodeExecution` (`eval/1`, `os_cmd/1`, `system_cmd/2`). Quiet: `CodeExecution.static_system_cmd/0`, and `SafeModule`. Both are in test/fixtures/atom_safety_fixture.ex. The fixture also defines `static_command_dynamic_args/1`, `static_command_no_args/0` and `shell_with_dynamic_script/1`, which no test asserts on. Tests: test/analyses/unsafe_input_test.exs; the extraction is tested in test/extractors/atom_safety_test.exs.
+**Fixtures.** Positive: `CodeExecution` (`eval/1`, `os_cmd/1`, `system_cmd/2`), and `Taint.AdminConfigController` (test/fixtures/taint_fixture.ex: two flows, through `Regex.named_captures/2` and through the closure `Enum.map/2` runs, and a configured script two calls away, a transitive path at `:warning`). Quiet: `CodeExecution.static_system_cmd/0`, and `SafeModule`. Both are in test/fixtures/atom_safety_fixture.ex. The fixture also defines `static_command_dynamic_args/1`, `static_command_no_args/0` and `shell_with_dynamic_script/1`, which no test asserts on. Tests: test/analyses/unsafe_input_test.exs; the extraction is tested in test/extractors/atom_safety_test.exs.
 
 **Corpus.** None.
 
-**Precision.** Not measured. The only recorded correction is from the predecessor analysis: `System.cmd/2,3` with a literal command stopped being reported, and `System.cmd("free", [])` had been a false positive (CHANGELOG, `atom_safety`'s `code_injection_risk`).
+**Precision.** The only recorded correction is from the predecessor analysis: `System.cmd/2,3` with a literal command stopped being reported, and `System.cmd("free", [])` had been a false positive (CHANGELOG, `atom_safety`'s `code_injection_risk`). Round 2 of the FP hunt read akkoma's three request-reachable rows as real (admin-only) and the no-request rows of a configured tool or a `find_executable` of a literal program as false. Over the nineteen live projects the floor moves one row, akkoma's third evaluation, which the regex propagators make a flow.
 
 ### Unbounded process creation from a request
 

@@ -538,6 +538,41 @@ defmodule Argus.Analyses.UnsafeInputTest do
       assert %{severity: :info} = UnsafeInput.finding(:sink_reachable, row.("transitive"))
     end
 
+    test "code execution a request reaches is never below :warning" do
+      row = fn prox, source, p ->
+        [
+          "i",
+          "M:f/1",
+          "Code.eval_string/1",
+          "code",
+          "E:update/2",
+          "controller",
+          prox,
+          source,
+          p,
+          ""
+        ]
+      end
+
+      assert %{severity: :error} = UnsafeInput.finding(:sink_reachable, row.("flow", "", "0"))
+
+      assert %{severity: :warning} =
+               UnsafeInput.finding(:sink_reachable, row.("adjacent", "", "0"))
+
+      # The tier that is :info for the other sinks.
+      assert %{severity: :warning} =
+               UnsafeInput.finding(:sink_reachable, row.("transitive", "", "0"))
+
+      # A prior that says the function reads configuration still marks the
+      # row heuristic, and leaves it at :warning.
+      stepped = UnsafeInput.finding(:sink_reachable, row.("adjacent", "config", "900"))
+      assert stepped.severity == :warning and stepped.provenance == :heuristic
+
+      # The atom sink beside it keeps its tiers.
+      atom = row.("adjacent", "config", "900") |> List.replace_at(3, "atom")
+      assert %{severity: :info} = UnsafeInput.finding(:sink_reachable, atom)
+    end
+
     test "a flow says so, anchors the argument and tells the reader what to do" do
       row = [
         "i",

@@ -233,7 +233,7 @@ defmodule Argus.Analyses.UnsafeInput do
 
   def finding(:sink_reachable, [id, func, api, "code", entry, kind, proximity, source, p, _s]) do
     Findings.new(
-      severity(proximity),
+      code_severity(proximity),
       "Dynamic code execution #{reached(proximity)} #{surface(kind)}",
       route(func, api, entry, proximity, kind) <>
         " If any part of that argument is caller-influenced this is arbitrary " <>
@@ -241,6 +241,7 @@ defmodule Argus.Analyses.UnsafeInput do
       [at: Findings.at_instr(id)] ++ route_opts(proximity, "evaluated here", @code_help)
     )
     |> retier(func, proximity, source, p)
+    |> at_least(:warning)
   end
 
   def finding(:sink_reachable, [id, func, api, "atom", entry, kind, proximity, source, p, _s]) do
@@ -448,6 +449,23 @@ defmodule Argus.Analyses.UnsafeInput do
   defp severity("direct"), do: :error
   defp severity("adjacent"), do: :warning
   defp severity(_transitive), do: :info
+
+  # Code execution a request reaches is never below :warning, whatever
+  # the distance and whatever a prior says the function reads. The other
+  # sinks' tiers step down with distance because a path is not a flow
+  # and the transitive rows read storage; a code sink has no bound a
+  # program writes and no value test, so reach from a request is itself
+  # the finding. An admin-only route is no exception: argus cannot see
+  # `pipe_through`, and an administrator's token reaching code on the
+  # host is an escalation past the application's own authority (akkoma's
+  # ConfigDB evaluated posted config three ways).
+  defp code_severity(proximity), do: at_least(severity(proximity), :warning)
+
+  defp at_least(%{severity: severity} = attrs, floor),
+    do: %{attrs | severity: at_least(severity, floor)}
+
+  defp at_least(:info, :warning), do: :warning
+  defp at_least(severity, _floor), do: severity
 
   defp reached("flow"), do: "fed by request data from"
   defp reached("direct"), do: "directly inside"
