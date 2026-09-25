@@ -88,7 +88,8 @@ defmodule Argus.Extractors.Monitor.Flush do
 
   # The test that compares the cancel's result with `false`, and where
   # each side of it starts: `{:ok, test, false_starts, other_starts}`.
-  defp false_side(ctx, cancel), do: step(ctx, cancel + 1, MapSet.new([{:x, 0}]), 0)
+  # `held` is the registers holding the result: a short list.
+  defp false_side(ctx, cancel), do: step(ctx, cancel + 1, [{:x, 0}], 0)
 
   defp step(_ctx, _idx, _held, steps) when steps > @max_steps, do: :none
 
@@ -99,9 +100,9 @@ defmodule Argus.Extractors.Monitor.Flush do
 
       {:move, src, dst} ->
         held =
-          if MapSet.member?(held, register(src)),
-            do: MapSet.put(held, register(dst)),
-            else: MapSet.delete(held, register(dst))
+          if register(src) in held,
+            do: [register(dst) | held],
+            else: List.delete(held, register(dst))
 
         step(ctx, idx + 1, held, steps + 1)
 
@@ -109,7 +110,7 @@ defmodule Argus.Extractors.Monitor.Flush do
         compared(ctx, idx, op, l, a, b, held)
 
       {:select_val, src, {:f, l}, {:list, pairs}} ->
-        if MapSet.member?(held, register(src)), do: selected(ctx, idx, l, pairs), else: :none
+        if register(src) in held, do: selected(ctx, idx, l, pairs), else: :none
 
       _ ->
         :none
@@ -120,8 +121,8 @@ defmodule Argus.Extractors.Monitor.Flush do
 
   defp compared(ctx, idx, op, l, a, b, held) do
     against_false? =
-      (MapSet.member?(held, register(a)) and b == {:atom, false}) or
-        (MapSet.member?(held, register(b)) and a == {:atom, false})
+      (register(a) in held and b == {:atom, false}) or
+        (register(b) in held and a == {:atom, false})
 
     with true <- against_false?, {:ok, target} <- Map.fetch(ctx.labels, l) do
       if op in [:is_eq_exact, :is_eq],

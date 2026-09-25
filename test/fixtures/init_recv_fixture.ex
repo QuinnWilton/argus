@@ -583,3 +583,25 @@ defmodule Argus.Test.Fixtures.InitRecv.EntersWithoutAck do
   @impl true
   def handle_call(:ping, _from, state), do: {:reply, :pong, state}
 end
+
+defmodule Argus.Test.Fixtures.InitRecv.FlushesUnlessCancelled do
+  @moduledoc false
+  # The flush written the other way round: nothing to do when the cancel
+  # stopped the timer, a receive for its message when it had fired.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts) do
+    ref = Process.send_after(self(), :close, 60_000)
+
+    if Process.cancel_timer(ref) != false do
+      {:ok, opts}
+    else
+      receive do
+        :close -> {:ok, opts}
+      end
+    end
+  end
+end
