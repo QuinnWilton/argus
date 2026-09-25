@@ -409,7 +409,7 @@ defmodule Argus.Analyses.Mailbox do
     {title, severity, what} =
       case fallback do
         "crash" ->
-          {"No handle_info/2 clause for a message the server is sent", :warning,
+          {"No handle_info/2 clause for a message the server is sent", crash_severity(source),
            "none of its clauses matches it and there is no catch-all, so it is a " <>
              "FunctionClauseError that takes the server down each time it arrives"}
 
@@ -425,7 +425,7 @@ defmodule Argus.Analyses.Mailbox do
              "(GenServer's default, which logs the message as an error) drops it"}
 
         "state_crash" ->
-          {"No clause for a message a gen_statem is sent", :warning,
+          {"No clause for a message a gen_statem is sent", crash_severity(source),
            "it arrives as an :info event, no callback of the machine has a clause for " <>
              "it, and #{Findings.call_name(handler)} has no :info catch-all, so in that " <>
              "state it is a FunctionClauseError that takes the machine down"}
@@ -682,7 +682,7 @@ defmodule Argus.Analyses.Mailbox do
 
   def finding(:reply_defect, [mod, func, site, "statem_unreplied", tag]) do
     Findings.new(
-      :warning,
+      :error,
       "A {:call, from} clause never replies",
       "#{func} handles a {:call, from} event in this clause and returns " <>
         "without a {:reply, from, _} action, without postponing the event, and " <>
@@ -741,6 +741,13 @@ defmodule Argus.Analyses.Mailbox do
   # program sends may be meant for the catch-all.
   defp catch_all_severity("monitor"), do: :warning
   defp catch_all_severity(_source), do: :info
+
+  # A message the program sends or arms itself crashes the server on the
+  # path that sends it, with nothing else needed: the rubric's :error, as
+  # a call or cast with a tag the server cannot take is. A monitor's
+  # :DOWN comes only when the monitored process exits: :warning.
+  defp crash_severity("monitor"), do: :warning
+  defp crash_severity(_sent_or_armed), do: :error
 
   defp socket_kind("{:ssl_closed, …}"), do: "a TLS"
   defp socket_kind(_tcp), do: "a TCP"

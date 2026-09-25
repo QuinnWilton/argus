@@ -264,7 +264,9 @@ defmodule Argus.Analyses.BlockingReceiveTest do
           "down"
         ])
 
-      assert attrs.severity == :warning
+      # Bounded by its peer, as startup's "init/1 waits on another process"
+      # is: :info.
+      assert attrs.severity == :info
       assert attrs.title == "Receive inside an OTP callback"
       assert attrs.detail =~ "takes the exit of the process it waits on"
       refute attrs.detail =~ "has a timeout"

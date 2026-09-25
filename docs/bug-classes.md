@@ -778,7 +778,7 @@ The call exits with `:noproc`, so what it was for never happens, and terminate/2
 ### A permanent child that stops itself
 
 `permanent_child_stops_normally`
-· titles: "Permanent child stops itself and is restarted" (`:info`)
+· titles: "Permanent child stops itself and is restarted" (`:warning`)
 
 **Property.** Some supervisor P lists a child C as `:permanent`, and some callback of C other than terminate/2 returns `{:stop, :normal, ...}` or `{:stop, :shutdown, ...}` with a literal reason. A supervisor restarts a permanent child whatever its exit reason: the process asks to go away and is started straight back, what the stop was for (a graceful permdown, a drain-and-quit) is undone at once, and the restart counts toward P's intensity (Phoenix PubSub's tracker shards on graceful permdown, until their spec became `:transient`). One finding per supervisor and child, with P's child spec as a related frame.
 
@@ -840,7 +840,7 @@ A synchronous wait that can last forever or nest: every finding is a process wai
 ### Caller's timeout shorter than the callee's downstream wait
 
 `call_chain` · kind=`budget`
-· titles: "Call timeout shorter than the callee's downstream budget" (`:error`)
+· titles: "Call timeout shorter than the callee's downstream budget" (`:warning`)
 
 **Property.** GenServer A's `handle_call/3`, on its own stack, calls GenServer B with a finite timeout t_ab, and some `handle_call/3` of B calls another server with a finite timeout t_bc, where t_ab < t_bc. `caller_ms` is t_ab and `downstream_ms` is t_bc. A's call can time out, and A crash or retry, while B's work is still legitimately running, which duplicates effort and leaves state inconsistent.
 
@@ -953,7 +953,7 @@ A synchronous wait that can last forever or nest: every finding is a process wai
 ### Blocking receive in an OTP callback
 
 `receive_in_callback` · bounded=`false`
-· titles: "Blocking receive inside an OTP callback" (`:error`)
+· titles: "Blocking receive inside an OTP callback" (`:warning`)
 
 **Property.** A `receive` with no `after` runs on the stack of a process whose behaviour owns its receive loop (GenServer, gen_statem, GenEvent, GenStage, Broadway, Supervisor, LiveView, LiveComponent, Channel): in one of its callbacks other than `init/1`, or in a function that callback calls directly on the same process (a closure it runs included, what it spawns not: `runs_elsewhere`). The receive does not take the `:DOWN` of a monitor its own function took (`recv_down`) and is not the cancel_timer flush (`flush_receive`). It consumes from the mailbox the behaviour manages (system messages, `{:EXIT, ...}` when trapping, every monitor's `:DOWN`), and with no timeout it can block forever; a supervisor's shutdown then waits out the child's timeout and kills it.
 
@@ -973,7 +973,7 @@ A synchronous wait that can last forever or nest: every finding is a process wai
 ### Bounded receive in an OTP callback
 
 `receive_in_callback` · bounded=`true`, `down`
-· titles: "Receive inside an OTP callback" (`:warning`)
+· titles: "Receive inside an OTP callback" (`:info`: a timed receive, or one its peer's exit ends)
 
 **Property.** A `receive` runs on an OTP process's own stack, in a callback or one call away, and either has an `after` clause (`true`, `init/1` included) or has none but takes the `:DOWN` of a monitor its own function took (`down`, `init/1` excluded). It is not the cancel_timer flush at any bound. It cannot hang, or cannot outlast the monitored process, but it selectively consumes from the behaviour's mailbox: messages it does not match stay queued and are rescanned, system messages wait behind it, and a `down` wait holds the callback until the monitored process exits.
 
@@ -1132,7 +1132,7 @@ A synchronous wait that can last forever or nest: every finding is a process wai
 ### Sibling pid cached in init/1
 
 `sibling_dependency` · reason=`cached_pid`
-· titles: "Sibling pid cached in init/1 under one_for_one" (`:info`)
+· titles: "Sibling pid cached in init/1 under one_for_one" (`:warning`)
 
 **Property.** A GenServer module M is a direct child of a `:one_for_one` supervisor S; M's `init/1` itself looks up a literal name N with `Process.whereis/1`, where N is another direct child of S, by module or by the name its child spec gives it; and some request handler of M (`handler_function`) calls, casts or sends to the process registered under N through something other than the name, as process points-to follows it (`process_call`, `named_pid`). Where N names no process points-to knows, a handler's call or cast to a pid the extractor could not name stands in. When N's process restarts alone, M keeps the dead pid: every call exits with `:noproc` and every message is lost.
 
@@ -1319,7 +1319,7 @@ When the timer fires, the event raises FunctionClauseError or falls through to a
 ### A message a server is sent with no handle_info/2 clause
 
 `unhandled_info` · fallback=`crash`
-· titles: "No handle_info/2 clause for a message the server is sent" (`:warning`)
+· titles: "No handle_info/2 clause for a message the server is sent" (`:error` for a message the program sends or arms, `:warning` for a monitor's `:DOWN`)
 
 **Property.** A message reaches a GenServer or GenStage process in one of three ways the program spells out:
 - a send that process points-to follows to the server (`send_target`, `server_process`);
@@ -1366,7 +1366,7 @@ The message is a literal atom or a tuple with a literal atom tag. No clause of t
 ### A message a gen_statem is sent that no state takes
 
 `unhandled_info` · fallback=`state_crash`
-· titles: "No clause for a message a gen_statem is sent" (`:warning`)
+· titles: "No clause for a message a gen_statem is sent" (`:error` for a message the program sends or arms, `:warning` for a monitor's `:DOWN`)
 
 **Property.** A literal message reaches a gen_statem by a send that points-to follows, a timer its own code arms for itself, or a monitor it takes. No callback of the machine compares the message's tag in an `:info` clause, or takes `:info` content of its shape. No receive in the machine's code could take it. Some state function (or handle_event/4) has neither an `:info` catch-all nor a catch-all for every event. If the message arrives while the machine is in that state, it is a FunctionClauseError that takes the machine down.
 
@@ -1642,7 +1642,7 @@ For a call, the server raises FunctionClauseError and the caller exits with it, 
 ### A gen_statem call clause that never replies
 
 `reply_defect` · kind=`statem_unreplied`
-· titles: "A {:call, from} clause never replies" (`:warning`)
+· titles: "A {:call, from} clause never replies" (`:error`)
 
 **Property.** A gen_statem clause for a `{:call, from}` event has a path to a return that does none of three things: carry a `{:reply, from, _}` action, postpone the event, or hand `from` to anything (the data, a tuple, a call). The caller of `:gen_statem.call/2` waits `:infinity` by default, so it stays blocked for as long as the machine lives.
 
@@ -1799,8 +1799,8 @@ An error path the code could have seen and did not take: an exception a catch-al
 
 ### An exit signal from a callback past the supervisor
 
-`orphan_process` · kind=`exit`
-· titles: "Process.exit inside a GenServer callback" (`:info`)
+`orphan_process` · kind=`exit` | `exit_supervised`
+· titles: "Process.exit inside a GenServer callback" (`:warning` for kind `exit_supervised`, a child a supervisor owns; `:info` for `exit`)
 
 **Property.** Some GenServer message handler h (`handle_call`, `handle_cast`, `handle_info`, `handle_continue`) reaches, in its own process (`SameProcessReach`: not through a function a spawn or a task runs), a `Process.exit/2` or `:erlang.exit/2` sent to another process, where process points-to does not resolve every target to a process h's module started itself (`exit_to_own_process`). When a target resolves to a child a supervisor owns (`supervised_process`), `target` is that child and the supervisor is attached as a related frame (`exit_target_owner`: "#{child} is #{sup}'s child"); otherwise `target` is the literal name or `dynamic`. Killing a process imperatively bypasses the supervisor that started it and the target's own stop protocol: a permanent child is restarted at once, and nothing in the target's teardown runs.
 
@@ -2200,7 +2200,7 @@ Another process takes or deletes the row between the check and the act, and the 
 ### Table read while its owner may be restarting
 
 `ets_read_outside_owner`
-· titles: "ETS table read while its owner may be restarting" (`:info`)
+· titles: "ETS table read while its owner may be restarting" (`:warning`)
 
 **Property.** Some table T is created by an `:ets.new/2` in a function a process's own callbacks reach (the owner's process), with no `heir` option, and some read of T that raises when the table is gone (every read but `:ets.info/1,2`; `take` included) sits in a function the owner's callbacks do not reach, such as the module's API, run in callers' processes. T is named at the read, or passed as a literal through the reader's table parameters, and no handler that takes ArgumentError (a rescue of ArgumentError or `:badarg`, a bare rescue or `catch :error`, or Erlang's `catch`) sits in the reader, or, for a read inside a closure, in the function that built the closure or in a function that builder calls (a rescuing wrapper the closure is handed to). A table under a name computed at runtime is tied only to reads of computed-name tables in its owner's own module. From the moment the owner crashes until its restart reaches `:ets.new/2` again, the read raises ArgumentError in the caller instead of returning a value; Redix.Cluster's callers saw exactly that during a `:one_for_all` restart (redix#338).
 

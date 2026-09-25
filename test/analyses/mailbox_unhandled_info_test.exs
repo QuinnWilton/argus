@@ -124,8 +124,25 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
           "crash"
         ])
 
-      assert crash.severity == :warning
+      # A timer the program arms crashes the server with nothing else
+      # needed: :error, as a call with a tag the server cannot take is.
+      assert crash.severity == :error
       assert crash.title == "No handle_info/2 clause for a message the server is sent"
+
+      down_crash =
+        Mailbox.finding(:unhandled_info, [
+          "Mod",
+          "Mod:handle_call/3",
+          "Mod:handle_call/3#5",
+          "{:DOWN, …}",
+          "monitor",
+          "Mod",
+          "Mod:handle_info/2",
+          "crash"
+        ])
+
+      # A monitor's :DOWN comes only when the monitored process exits.
+      assert down_crash.severity == :warning
       assert crash.detail =~ ":tick"
       assert crash.detail =~ "FunctionClauseError"
 

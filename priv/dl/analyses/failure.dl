@@ -33,8 +33,9 @@
 //   `:proc_lib.start` whose process lives on past its ack (`kind` =
 //   "start"; site is the call for both), or an exit signal sent to
 //   `target` from a callback, past the supervisor that owns it (`kind` =
-//   "exit", site is the exit call, `func` the function making it and
-//   `callback` a callback running it).
+//   "exit", or "exit_supervised" when `target` is a supervisor's child;
+//   site is the exit call, `func` the function making it and `callback`
+//   a callback running it).
 .decl unhandled_failure(func: symbol, site: symbol, kind: symbol, shape: symbol, span_end: symbol)
 .output unhandled_failure
 
@@ -123,7 +124,10 @@ orphan_process(g, id, "exit", target, callback) :-
   !exit_to_own_process(id, _),
   !exit_to_supervised(id, _, _).
 
-orphan_process(g, id, "exit", child, callback) :-
+// "exit_supervised": the target is a child a supervisor owns, which it
+// will restart — a stop that fights the supervisor, where "exit" is to a
+// process the rule knows only as a value.
+orphan_process(g, id, "exit_supervised", child, callback) :-
   callback_exit(callback, id, _),
   exit_call(id, g, _),
   exit_to_supervised(id, child, _).

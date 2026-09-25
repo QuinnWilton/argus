@@ -552,6 +552,43 @@ check then insert race on a Mnesia table" → "Uniqueness
 check-then-insert race on a Mnesia table", hyphenated as the other
 check-then-act titles are.
 
+**Changed** severities, to one rubric (`docs/bug-classes.md`, "Severity
+rubric"): `:error` when the program shows the defect on a path it
+takes with nothing else needed, `:warning` when normal operation must
+supply something more (a peer that fails or stays silent, a timing
+window, a restart), `:info` when the harm turns on intent or
+configuration the facts do not show, or the wait is bounded; inferred
+evidence steps down one level. Moved:
+
+- blocking: "Blocking receive inside an OTP callback" `:error` →
+  `:warning` (a peer must stay silent; startup's "init/1 waits on a
+  message with no timeout" is `:warning`); "Receive inside an OTP
+  callback" `:warning` → `:info` for a timed receive and for one its
+  peer's exit ends (startup's "init/1 waits on another process with no
+  timeout" is `:info`); "Call timeout shorter than the callee's
+  downstream budget" `:error` → `:warning` (the downstream must be slow).
+- mailbox: "A {:call, from} clause never replies" `:warning` → `:error`
+  (a reply never sent, as "handle_call/3 defers a reply it cannot send"
+  is); "No handle_info/2 clause for a message the server is sent" and
+  "No clause for a message a gen_statem is sent" `:warning` → `:error`
+  for a message the program sends or arms itself (a send, a timer), as
+  "Server sends itself a tag it cannot handle" and "Timeout armed but
+  never handled" are; a monitor's `:DOWN` stays `:warning`.
+- ets: "ETS table read while its owner may be restarting" `:info` →
+  `:warning`, as races' "ETS row acted on after another process may have
+  removed it" is.
+- shutdown: "Permanent child stops itself and is restarted" `:info` →
+  `:warning`, as structure's "ConsumerSupervisor template restarts
+  finished children" is.
+- coupling: "Sibling pid cached in init/1 under one_for_one" `:info` →
+  `:warning`: proven through points-to, beside "Coupled children under
+  one_for_one" on the same pair at `:warning`.
+- failure: "Process.exit inside a GenServer callback" is `:warning` when
+  the target is a child a supervisor owns (`orphan_process` kind
+  `exit_supervised`, new), as shutdown's "A callback stops a sibling the
+  supervisor owns" is; an exit to a process known only as a value stays
+  `:info`.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

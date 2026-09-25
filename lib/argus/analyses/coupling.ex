@@ -278,7 +278,7 @@ defmodule Argus.Analyses.Coupling do
         _p
       ]) do
     Findings.new(
-      :info,
+      :warning,
       "Sibling pid cached in init/1 under one_for_one",
       "#{mod}'s init/1 looks up #{name} and its handlers call a pid held in " <>
         "state. Both are children of #{sup}, a :one_for_one supervisor: when " <>

@@ -322,7 +322,7 @@ defmodule Argus.Analyses.Blocking do
         _
       ]) do
     Findings.new(
-      :error,
+      :warning,
       "Call timeout shorter than the callee's downstream budget",
       "#{caller} calls #{callee} with a #{caller_timeout}ms timeout, but " <>
         "#{callee}'s own downstream sync calls budget #{downstream_timeout}ms. " <>
@@ -428,7 +428,7 @@ defmodule Argus.Analyses.Blocking do
 
   def finding(:receive_in_callback, [id, func, callback, behaviour, proximity, "false"]) do
     Findings.new(
-      :error,
+      :warning,
       "Blocking receive inside an OTP callback",
       "#{func} runs a `receive` with no `after`, #{where(proximity, callback)}. It " <>
         "executes on the #{behaviour} process's own stack, so it consumes from " <>
@@ -451,7 +451,7 @@ defmodule Argus.Analyses.Blocking do
 
   def finding(:receive_in_callback, [id, func, callback, behaviour, proximity, "true"]) do
     Findings.new(
-      :warning,
+      :info,
       "Receive inside an OTP callback",
       "#{func} runs a `receive`, #{where(proximity, callback)}. It has a " <>
         "timeout so it cannot hang, but it still executes on the #{behaviour} " <>
@@ -469,7 +469,7 @@ defmodule Argus.Analyses.Blocking do
 
   def finding(:receive_in_callback, [id, func, callback, behaviour, proximity, "down"]) do
     Findings.new(
-      :warning,
+      :info,
       "Receive inside an OTP callback",
       "#{func} runs a `receive` with no `after`, #{where(proximity, callback)}, " <>
         "and it takes the exit of the process it waits on: the :DOWN of the process " <>

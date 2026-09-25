@@ -19,8 +19,10 @@ defmodule Argus.Analyses.Failure do
     or an `exit` signal sent to `target` from a callback, past the
     supervisor that owns it. An exit to a process the sending module
     started itself is not one; an exit process points-to resolves to a
-    supervisor's child names the child as `target`, and its supervisor
-    (`exit_target_owner`) is a related frame.
+    supervisor's child is kind `exit_supervised` (`:warning`, where an
+    exit to a process known only as a value is `:info`), names the child
+    as `target`, and its supervisor (`exit_target_owner`) is a related
+    frame.
   - `inconsistent_handling(func, site, callee, belief, agree, deviate, target, raises, cover, caught)` —
     a call site that breaks with the program's own convention for its
     callee: `belief` is `result_checked` (a clear majority of the sites
@@ -172,7 +174,7 @@ defmodule Argus.Analyses.Failure do
         fields: [
           {:func, :symbol, "the function spawning or sending the exit"},
           {:site, :symbol, "instruction ID of the spawn or the exit call"},
-          {:kind, :symbol, "spawn | start | exit"},
+          {:kind, :symbol, "spawn | start | exit | exit_supervised"},
           {:target, :symbol,
            "the exit target, for an exit: the supervised child's module when " <>
              "points-to resolves it to one"},
@@ -182,7 +184,13 @@ defmodule Argus.Analyses.Failure do
         # callbacks run it and however many of its clauses do (a
         # supervisor's shutdown kills, then kills harder); a spawn or a
         # start, one per call.
-        key: {:kind, %{"exit" => [:func, :target], default: [:func, :site, :target]}},
+        key:
+          {:kind,
+           %{
+             "exit" => [:func, :target],
+             "exit_supervised" => [:func, :target],
+             default: [:func, :site, :target]
+           }},
         earliest: :site,
         doc:
           "A process nothing supervises: a bare spawn, a proc_lib start that outlives " <>
@@ -253,7 +261,8 @@ defmodule Argus.Analyses.Failure do
     )
   end
 
-  def finding(:orphan_process, [func, site, "exit", target, callback]) do
+  def finding(:orphan_process, [func, site, kind, target, callback])
+      when kind in ["exit", "exit_supervised"] do
     whom = if target == "dynamic", do: "a process it holds as a value", else: target
 
     where =
@@ -261,8 +270,11 @@ defmodule Argus.Analyses.Failure do
         do: "from inside a callback",
         else: "in what the callback #{Findings.call_name(callback)} runs"
 
+    # A child a supervisor owns will be restarted, so the stop fights the
+    # supervisor (:warning, as shutdown's handler stop is); a process
+    # known only as a value may be the caller's own to stop (:info).
     Findings.new(
-      :info,
+      if(kind == "exit_supervised", do: :warning, else: :info),
       "Process.exit inside a GenServer callback",
       "#{Findings.call_name(func)} sends an exit signal to #{whom} #{where}. " <>
         "This is often deliberate — process-manager handoff, registry " <>

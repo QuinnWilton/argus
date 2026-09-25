@@ -189,12 +189,22 @@ defmodule Argus.Analyses.FailureErrorTest do
       mods = [ExitSignals.Tree, ExitSignals.Worker, ExitSignals.Killer]
       results = analyze(ctx, mods)
 
-      assert [[func, target]] = exits(results)
+      assert exits(results) == []
+
+      assert [[func, target]] =
+               Rows.where(results, :failure, "orphan_process",
+                 kind: "exit_supervised",
+                 drop: [:site, :kind, :callback]
+               )
+
       assert func =~ "Killer:handle_cast/2"
       assert target == inspect(ExitSignals.Worker)
 
+      # A stop the supervisor will undo: :warning, where an exit to a
+      # process known only as a value is :info.
       {:ok, findings} = Memo.run_analyses(mods, analyses: [:failure])
       [finding] = Enum.filter(findings.findings, &(&1.title =~ "Process.exit"))
+      assert finding.severity == :warning
       assert [%{label: label}] = finding.related
       assert label == "#{inspect(ExitSignals.Worker)} is #{inspect(ExitSignals.Tree)}'s child"
     end

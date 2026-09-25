@@ -155,7 +155,7 @@ defmodule Argus.Analyses.Ets do
     table = if name == "dynamic", do: "a table", else: name
 
     Findings.new(
-      :info,
+      :warning,
       "ETS table read while its owner may be restarting",
       "#{owner} creates #{table} in its own process with no heir, and #{reader} " <>
         "reads it from whatever process calls it. While #{owner} is down — the " <>

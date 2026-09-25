@@ -375,7 +375,7 @@ defmodule Argus.Analyses.Shutdown do
 
   def finding(:permanent_child_stops_normally, [sup, child, reason, site, sup_site]) do
     Findings.new(
-      :info,
+      :warning,
       "Permanent child stops itself and is restarted",
       "#{child} returns {:stop, #{reason}, ...} from a callback, but " <>
         "#{sup} runs it as a :permanent child, and a supervisor restarts a " <>
