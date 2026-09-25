@@ -471,20 +471,25 @@ defmodule Argus.Analyses.UnsafeInputTest do
       refute Enum.any?(funcs, &(&1 =~ "MACRO-field"))
     end
 
-    test "is not reported of a close integer range", ctx do
+    test "is not reported of a close integer range, an atom, or an atom's name", ctx do
       skip_without_souffle()
+      results = analyze(ctx, [Argus.Test.Fixtures.AtomBounds])
 
       funcs =
-        ctx
-        |> analyze([Argus.Test.Fixtures.AtomBounds])
+        results
         |> local("atom")
         |> Enum.map(fn {func, _api} -> func |> String.split(":") |> List.last() end)
         |> Enum.uniq()
         |> Enum.sort()
 
       # The twins: a float passes `n >= 1 and n <= 8`, one end bounds
-      # nothing, and a hundred thousand values are not a bound.
-      assert funcs == ["between/1", "from/1", "wide/1"]
+      # nothing, a hundred thousand values are not a bound, an integer
+      # beside the atom is unbounded, and an untested name may be a string.
+      assert funcs == ["between/1", "from/1", "named/1", "numbered/2", "wide/1"]
+
+      # The atoms bound is a count, not a vetting of the bytes.
+      assert [{decode, _}] = local(results, "deserialization")
+      assert decode =~ "AtomBounds:decode/1"
     end
 
     test "is not reported of a server's own messages or a pipeline's own name", ctx do

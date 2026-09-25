@@ -355,14 +355,28 @@ defmodule Argus.Extractors.ApiCalls do
 
   @doc "Whether a concrete `{mod, fun, arity}` is one of `sink_mfas/0`."
   @spec sink?({module(), atom(), arity()}) :: boolean()
-  def sink?({mod, fun, arity}) do
-    Enum.any?(@sink_mfas, fn
-      {^mod, ^fun, :any} -> true
-      {^mod, ^fun, arities} when is_list(arities) -> arity in arities
-      {^mod, ^fun, ^arity} -> true
-      _ -> false
-    end)
-  end
+  def sink?(mfa), do: Enum.any?(@sink_mfas, &mfa_matches?(&1, mfa))
+
+  @atom_sink_mfas @table
+                  |> Enum.filter(fn {_mfa, rel, _cols} -> rel == :unsafe_atom_creation end)
+                  |> Enum.map(fn {mfa, _rel, _cols} -> mfa end)
+                  |> Enum.uniq()
+
+  @doc """
+  Whether a concrete `{mod, fun, arity}` is a sink that makes an atom
+  (`unsafe_atom_creation`): what matters of its argument is how many
+  values it can take, where a deserialization's is what its bytes are.
+  """
+  @spec atom_sink?({module(), atom(), arity()}) :: boolean()
+  def atom_sink?(mfa), do: Enum.any?(@atom_sink_mfas, &mfa_matches?(&1, mfa))
+
+  defp mfa_matches?({mod, fun, :any}, {mod, fun, _arity}), do: true
+
+  defp mfa_matches?({mod, fun, arities}, {mod, fun, arity}) when is_list(arities),
+    do: arity in arities
+
+  defp mfa_matches?({mod, fun, arity}, {mod, fun, arity}), do: true
+  defp mfa_matches?(_entry, _mfa), do: false
 
   @impl true
   def relations,

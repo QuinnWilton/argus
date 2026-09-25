@@ -23,10 +23,11 @@ defmodule Argus.Extractors.ParamFlow do
   - `sink_arg_bounded(id, func, arg_pos, list_param)` — the sink's
     argument is one of a set the program wrote, on every path to it:
     compared equal to a literal, found in a literal list on the branch
-    where it holds, or an integer between two close ends
-    (`Argus.Extractors.ParamFlow.Bounded`); `list_param`, when not empty, is the function's
-    parameter that list is, which the callers must fill with a literal
-    list.
+    where it holds, or an integer between two close ends — or, at an
+    atom sink, made of atoms that exist
+    (`Argus.Extractors.ParamFlow.Bounded`); `list_param`, when not
+    empty, is the function's parameter that list is, which the callers
+    must fill with a literal list.
   - `call_arg_allowlist(caller, callee, arg_pos)` — every call the caller
     makes to the callee passes a literal list at `arg_pos`.
   - `sink_copy(id, func, first)` — the sink call at `id` repeats `first`,
@@ -380,9 +381,10 @@ defmodule Argus.Extractors.ParamFlow do
            %Argus.Cfg.Function{} = cfg <- Helpers.cfg(module_data, name, arity) do
         bounds = Bounded.at(cfg, instrs, arity, Enum.map(sites, & &1.idx))
 
-        for %{idx: idx, mfa: {_m, _f, sink_arity}} <- sites,
+        for %{idx: idx, mfa: {_m, _f, sink_arity} = mfa} <- sites,
             pos <- 0..(sink_arity - 1)//1,
             {:ok, bound} <- [Map.fetch(Map.get(bounds, idx, %{}), {:x, pos})],
+            bound != :atoms or ApiCalls.atom_sink?(mfa),
             reduce: acc do
           inner ->
             add_fact(inner, :sink_arg_bounded, [
@@ -468,6 +470,7 @@ defmodule Argus.Extractors.ParamFlow do
   end
 
   defp list_param(:always), do: ""
+  defp list_param(:atoms), do: ""
   defp list_param({:param, q}), do: to_string(q)
 
   # The positions at which every call from a function to a callee passes

@@ -26,6 +26,25 @@ every export became an entry, is quiet. Over the evaluation programs
 and ejabberd and rabbitmq one more row goes, erl_scan's
 `list_to_atom([C])` under its 0..255 guard.
 
+**Fixed.** An atom made of atoms that exist is bounded at an atom sink:
+a value `is_atom/1` tested, or an atom's name read out of it
+(`Atom.to_string/1`, `atom_to_binary/1,2`, `atom_to_list/1`, which
+raise on anything else), with literals and bounded values —
+`:"#{name}_id"` behind `when is_atom(name)`, Erlang's
+`list_to_atom(atom_to_list(Tab) ++ "_sup")`. It makes one atom per atom
+that exists, not one per string a caller sends. The bound is a count,
+so a deserialization of an atom's name is still reported
+(`ApiCalls.atom_sink?/1` says which sinks take it). Twelve rows of
+"Dynamic atom creation reachable from an exported function" go over the
+evaluation programs, ejabberd and rabbitmq, each read: Ecto's
+`validate_confirmation/3`, logflare's pipeline `name/1`, erl_lint's
+`test_overriden_by_local/4`, inet_res's `make_options/1`, six of
+ejabberd's module-derived names (`_sup`, `_cache`, backend and db
+modules, a backup table) and rabbit's pool and restartable-child
+supervisors. A name no test says is an atom (`:"#{name}_id"` alone may
+interpolate a string) and an atom beside an unbounded integer
+(`:"#{prefix}_shard#{n}"`) stay reported.
+
 ### Mining, round 2: defects the catalog suspected, and missed instances
 
 Round 2 of the mining confirmed each rule defect the catalog suspected

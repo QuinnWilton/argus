@@ -41,14 +41,32 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   conversion of a bounded value (`Integer.to_string/1`,
   `String.Chars.to_string/1`, ...) is bounded too: the image of a finite
   set is finite, so `:"phrase_\#{n}"` makes one of eight atoms.
+
+  ## Atoms made of atoms
+
+  A value that is an atom — tested by `is_atom/1`, or read out of one by
+  `Atom.to_string/1`, `atom_to_list/1` and the like, which fail on
+  anything else — is one of the atoms that already exist, and an atom
+  made of it and of literals (`:"\#{name}_id"`, Erlang's
+  `list_to_atom(atom_to_list(Tab) ++ "_sup")`) is one more per existing
+  atom, not one per string an outside party can send. Such a value is
+  bounded `:atoms`, which only an atom sink takes as bounded: a
+  deserialization's question is what its bytes are, not how many there
+  can be. A program that feeds the atoms it makes back into the same
+  site grows one suffix at a time; that is not this shape, and its first
+  atom made of a string is reported where it is made.
   """
 
   alias Argus.Cfg.Function, as: CfgFunction
   alias Argus.Extractor.Helpers
   alias Argus.Instr
 
-  @typedoc "Why a value is bounded: always, or when the caller's parameter `q` is a literal list."
-  @type bound :: :always | {:param, non_neg_integer()}
+  @typedoc """
+  Why a value is bounded: always (one of a set the program wrote),
+  `:atoms` (made of atoms that exist and of values the program wrote), or
+  when the caller's parameter `q` is a literal list.
+  """
+  @type bound :: :always | :atoms | {:param, non_neg_integer()}
 
   @typep reg :: {:x | :y, non_neg_integer()}
 
@@ -94,6 +112,16 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
                  {Macro, :underscore, 1},
                  {Macro, :camelize, 1}
                ])
+
+  # What an atom's name is read out with: whatever the argument, the
+  # result is an existing atom's name, since anything else raises.
+  @atom_names MapSet.new([
+                {Atom, :to_string, 1},
+                {Atom, :to_charlist, 1},
+                {:erlang, :atom_to_binary, 1},
+                {:erlang, :atom_to_binary, 2},
+                {:erlang, :atom_to_list, 1}
+              ])
 
   # The membership tests: {module, function, arity} => {element position,
   # list position}.
@@ -228,6 +256,14 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
          _fun
        ) do
     narrow_range(after_instr, a, fn {_int, lo, hi} -> {true, lo, hi} end)
+  end
+
+  defp edge_state({:test, :is_atom, _fail, [a]}, :branch_pass, _succ, _state, after_instr, _fun) do
+    reg = Instr.register(a)
+
+    if register?(reg),
+      do: bound(after_instr, holders(after_instr, reg), :atoms),
+      else: after_instr
   end
 
   # A test that fails writes nothing (a bs_start_match's context only
@@ -370,20 +406,33 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     end
   end
 
-  # What a value made of values with these bounds is: bounded when each
-  # is always bounded.
+  # What a value made of values with these bounds is: always bounded when
+  # each is, made of atoms when each is one or the other.
   defp combine([_ | _] = bounds) do
-    if Enum.all?(bounds, &(&1 == :always)), do: :always, else: nil
+    cond do
+      Enum.all?(bounds, &(&1 == :always)) -> :always
+      Enum.all?(bounds, &(&1 in [:always, :atoms])) -> :atoms
+      true -> nil
+    end
   end
 
   defp combine([]), do: nil
 
   # The result of a conversion call, asked before the call destroys its
-  # arguments: a pure conversion of bounded arguments.
+  # arguments: an atom's name whatever the argument, or a pure conversion
+  # of bounded arguments.
   defp conversion(instr, state) do
-    with {:ok, mod, fun, arity} <- Helpers.match_remote_call(instr),
-         true <- MapSet.member?(@conversions, {mod, fun, arity}) do
-      combine(for i <- 0..(arity - 1)//1, do: Map.get(state.bounded, {:x, i}))
+    with {:ok, mod, fun, arity} <- Helpers.match_remote_call(instr) do
+      cond do
+        MapSet.member?(@atom_names, {mod, fun, arity}) ->
+          :atoms
+
+        MapSet.member?(@conversions, {mod, fun, arity}) ->
+          combine(for i <- 0..(arity - 1)//1, do: Map.get(state.bounded, {:x, i}))
+
+        true ->
+          nil
+      end
     else
       _ -> nil
     end
@@ -496,6 +545,8 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
 
   defp stronger(:always, _bound), do: :always
   defp stronger(_bound, :always), do: :always
+  defp stronger(:atoms, _bound), do: :atoms
+  defp stronger(_bound, :atoms), do: :atoms
   defp stronger(old, _new), do: old
 
   # `a >= b` (`ge?`) or `a < b` holds on this edge: a register compared
@@ -627,6 +678,8 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   defp weaker(same, same), do: same
   defp weaker(:always, other), do: other
   defp weaker(other, :always), do: other
+  defp weaker(:atoms, other), do: other
+  defp weaker(other, :atoms), do: other
   defp weaker(_one, _another), do: nil
 
   defp meet_groups(a, b) do

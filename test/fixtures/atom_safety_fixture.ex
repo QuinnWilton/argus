@@ -79,13 +79,17 @@ end
 
 defmodule Argus.Test.Fixtures.AtomBounds do
   @moduledoc """
-  Atoms made of values a guard bounds, each beside the twin that stays
-  reported. encore's capriccio `play/2`: `n in 1..8` makes one of eight
-  atoms, as does `is_integer(n) and n >= 1 and n <= 8` and a range
-  tested in the body.
+  Atoms made of values a guard or a conversion bounds, each beside the
+  twin that stays reported. encore's capriccio `play/2`: `n in 1..8`
+  makes one of eight atoms, as does `is_integer(n) and n >= 1 and n <= 8`
+  and a range tested in the body. An atom `is_atom/1` tested, or an
+  atom's name read out of it, makes one atom per atom that exists.
 
   Reported: a range with no integer test (every float between its ends
-  passes), a range with one end, and a range too wide to bound anything.
+  passes), a range with one end, a range too wide to bound anything, an
+  atom beside an integer nothing bounds, a name no guard says is an
+  atom, and an atom's name deserialized — a deserialization's question
+  is what its bytes are, not how many there can be.
   """
 
   def phrase(n) when n in 1..8, do: String.to_atom("phrase_#{n}")
@@ -96,11 +100,23 @@ defmodule Argus.Test.Fixtures.AtomBounds do
     if n in 0..3, do: :erlang.list_to_atom(~c"p" ++ :erlang.integer_to_list(n)), else: :none
   end
 
+  def suffixed(name) when is_atom(name), do: :"#{name}_id"
+
+  def renamed(name), do: String.to_atom(Atom.to_string(name) <> "_sup")
+
+  def renamed_list(name), do: :erlang.list_to_atom(:erlang.atom_to_list(name) ++ ~c"_sup")
+
   def between(n) when n >= 1 and n <= 8, do: String.to_atom("f_#{n}")
 
   def from(n) when is_integer(n) and n >= 1, do: String.to_atom("o_#{n}")
 
   def wide(n) when n in 1..100_000, do: String.to_atom("w_#{n}")
+
+  def numbered(name, n) when is_atom(name) and is_integer(n), do: :"#{name}_#{n}"
+
+  def named(name), do: :"#{name}_id"
+
+  def decode(name) when is_atom(name), do: :erlang.binary_to_term(Atom.to_string(name))
 end
 
 defmodule Argus.Test.Fixtures.AtomFromMessages do
