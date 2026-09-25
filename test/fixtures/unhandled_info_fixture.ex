@@ -257,6 +257,30 @@ defmodule Argus.Test.Fixtures.UnhandledInfo do
     end
   end
 
+  defmodule TickArity do
+    @moduledoc """
+    A refactor grew the timer's message to three elements; the clause
+    still takes two: `{:tick, 1, :slow}` crashes the server. The built
+    `{:tick, n, :slow}` too, and `{:tick, :fast}`, which a literal head
+    takes, does not.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(state) do
+      Process.send_after(self(), {:tick, 1, :slow}, 1_000)
+      Process.send_after(self(), {:tick, state.n, :slow}, 1_000)
+      Process.send_after(self(), {:tock, :fast}, 1_000)
+      {:ok, state}
+    end
+
+    @impl true
+    def handle_info({:tick, n}, state) when is_integer(n), do: {:noreply, state}
+    def handle_info({:tock, :fast}, state), do: {:noreply, state}
+  end
+
   defmodule TaskReceives do
     @moduledoc """
     The server arms :tick for itself and has no clause for it; a Task a

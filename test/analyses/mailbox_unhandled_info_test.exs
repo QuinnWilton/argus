@@ -27,7 +27,8 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
     U.WarmUp,
     U.Unjudged,
     U.TerminateWaits,
-    U.TaskReceives
+    U.TaskReceives,
+    U.TickArity
   ]
 
   setup_all do
@@ -82,8 +83,14 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
     assert {"TaskReceives:init/1", ":tick", "timer", "TaskReceives", "crash"} in rows
   end
 
+  test "a timer whose tag a clause takes in another shape is not taken", %{rows: rows} do
+    assert {"TickArity:init/1", "{:tick, 1, :slow}", "timer", "TickArity", "crash"} in rows
+    assert {"TickArity:init/1", "{:tick, …}", "timer", "TickArity", "crash"} in rows
+    refute Enum.any?(rows, &match?({_, "{:tock, :fast}", _, _, _}, &1))
+  end
+
   test "exactly those, and every quiet neighbour quiet", %{rows: rows} do
-    assert length(rows) == 11, inspect(rows, pretty: true)
+    assert length(rows) == 13, inspect(rows, pretty: true)
 
     quiet =
       ~w(Handled Delegates OpenClause WaitsForDown Flushes Client PollerTakes WarmUp Unjudged

@@ -188,6 +188,14 @@ tag tells `partial_handler`'s "late_message" source that a server
 takes the timer it arms for itself: a `{:tick, at}` timer beside a
 `{:tick, _}` clause is no late message.
 
+**Fixed.** `mailbox.unhandled_info` compares a timer's arity with the
+shapes its tag is taken in (`timer_tag`'s `arity`, `callback_tag_shape`),
+not the tag alone: a refactor that grew `{:tick, n}` to `{:tick, 1,
+:slow}` beside a `{:tick, n}` clause is a FunctionClauseError, and was
+taken for handled. A timer a literal tuple head takes whole
+(`handle_info({:tock, :fast}, s)`, one comparison with the tuple, no atom
+callback_tag sees) is taken in its shape.
+
 **Fixed.** `recv_pattern` is read in anonymous functions too. A `for`
 or an `Enum.each` whose body receives compiles that body into one, and
 its receives were skipped with the compiler's other generated

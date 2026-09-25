@@ -1436,6 +1436,15 @@ info_taken(h, msg) :-
   tag_of(msg, tag),
   callback_tag(h, "handle_info", tag).
 
+// A timer's message a clause head takes in its own shape: a literal
+// tuple head (`handle_info({:tick, :fast}, s)` is one comparison with
+// the tuple) compares no atom callback_tag sees.
+info_taken(h, msg) :-
+  info_fallback(_, msg, h, _),
+  info_message(_, _, id, msg, "timer"),
+  timer_tag(id, tag, ar),
+  callback_tag_shape(h, "handle_info", tag, ar).
+
 info_taken(h, msg) :- info_fallback(_, msg, h, _), callback_open(h, "handle_info", "any").
 
 info_taken(h, msg) :-
@@ -1449,6 +1458,19 @@ unhandled_info(mod, f, id, msg, source, m, h, fallback) :-
   !statem_process(m),
   info_fallback(m, msg, h, fallback),
   !info_taken(h, msg),
+  !server_receives(m, msg),
+  function_def(f, mod, _, _, _).
+
+// A timer whose tag a clause compares, but whose shape no clause head
+// takes (timer_refused: a `{:tick, 1, :slow}` beside `{:tick, n}`), is
+// as unhandled as one whose tag none compares.
+unhandled_info(mod, f, id, msg, "timer", m, h, fallback) :-
+  info_message(m, f, id, msg, "timer"),
+  (behaves_as(m, "GenServer") ; behaves_as(m, "GenStage")),
+  !statem_process(m),
+  info_fallback(m, msg, h, fallback),
+  info_taken(h, msg),
+  timer_refused(h, id),
   !server_receives(m, msg),
   function_def(f, mod, _, _, _).
 
