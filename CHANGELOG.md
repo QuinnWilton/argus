@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The manifest records the layout of the query graph that wrote it
+  (`:graph_layout`, a new frontend input), and a manifest of another
+  layout — a scry whose queries are named, keyed or valued otherwise —
+  is dropped unread: the run is cold. Validating a memo of a query this
+  scry does not define used to raise (`query ... is not registered`).
+  A manifest from before, which records no layout, is dropped once.
 - An argus edit outside the code argus's fact producers run extracts
   nothing. Extraction is keyed by one digest of that code
   (`:extraction_code`, a new frontend input,

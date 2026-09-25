@@ -81,6 +81,11 @@ defmodule Scry.Frontend do
   # set.
   definput(:extraction_attempt, durability: :medium)
 
+  # `:all =>` the layout of the graph the manifest was written by
+  # (`Scry.Runner`): a manifest of another is dropped before anything
+  # reads it. Driver bookkeeping no query reads, so `:low`.
+  definput(:graph_layout, durability: :low)
+
   # `:all =>` the modules whose last extraction failed, for the next run
   # to retry. Driver bookkeeping no query reads; `:low` so that setting it
   # after the analyses ran never makes the next run revalidate them.

@@ -7,7 +7,9 @@ defmodule Scry.Runner do
   One `Roux.Database` lives for the duration of a run; the manifest is
   the only continuity across OS processes. The manifest is written even
   when analyses degrade — the input syncs done this run stay warm, so
-  error-loop editing stays incremental.
+  error-loop editing stays incremental. It records the layout of the
+  graph that wrote it, and a manifest of another layout is dropped
+  unread: the run is cold.
 
   When souffle is missing, no solve is demanded at all: a memoized
   `{:error, :souffle_not_found}` would only heal when an input above it
@@ -75,14 +77,9 @@ defmodule Scry.Runner do
     manifest_path = Keyword.fetch!(opts, :manifest)
     force? = Keyword.get(opts, :force, false)
 
-    db = Database.new()
+    {db, prior_sources} = open(manifest_path, force?)
 
     try do
-      :ok = Roux.Lang.register_module(db, Scry.Frontend)
-      :ok = Roux.Lang.register_module(db, Scry.Analysis)
-
-      prior_sources = warm_start(db, manifest_path, force?)
-
       %{modules: discovered, ignored: ignored, duplicates: duplicates, apps: apps} =
         Scry.Scanner.scan(config)
 
@@ -129,9 +126,49 @@ defmodule Scry.Runner do
         changed?: changed?
       }
     after
-      Database.shutdown(db)
-      Roux.Runtime.drop_cached_values(db)
+      close(db)
     end
+  end
+
+  # The layout of the graph a manifest holds: the queries it memoizes,
+  # their keys, and what each one's value is. A manifest another layout
+  # wrote is not read at all: its memos can name a query this graph does
+  # not define (a scry that memoized extraction per argus producer left
+  # `producer_extraction` entries, which its semantic digests depend on,
+  # and validating one would run a query that is not there), or one it
+  # defines with another meaning. Bump it with any change that renames,
+  # removes or re-keys a query, or changes what a memo holds. A manifest
+  # without one predates it.
+  @layout 1
+
+  # A database with both layers registered and, unless `force?`, the
+  # manifest's state restored into it, with the sources the manifest
+  # recorded. A manifest of another layout is dropped whole — its memos,
+  # its interned symbols, its revisions — and the run is cold.
+  defp open(manifest_path, force?) do
+    db = Database.new()
+
+    try do
+      :ok = Roux.Lang.register_module(db, Scry.Frontend)
+      :ok = Roux.Lang.register_module(db, Scry.Analysis)
+      warm_start(db, manifest_path, force?)
+    rescue
+      exception ->
+        close(db)
+        reraise exception, __STACKTRACE__
+    else
+      {:ok, sources} ->
+        {db, sources}
+
+      :other_layout ->
+        close(db)
+        open(manifest_path, true)
+    end
+  end
+
+  defp close(db) do
+    Database.shutdown(db)
+    Roux.Runtime.drop_cached_values(db)
   end
 
   # The inputs that describe the run rather than the beams: the
@@ -140,6 +177,7 @@ defmodule Scry.Runner do
   # `moved?` when any of them, or an analysis without a memo from the
   # last run, means this run has something to write down.
   defp sync_environment(db, config, souffle?, apps) do
+    :ok = Input.set(db, :graph_layout, :all, @layout)
     fingerprint_changed? = set(db, :env_fingerprint, :all, Scry.Fingerprint.env(apps))
     extraction_changed? = set(db, :extraction_code, :all, Scry.Fingerprint.extraction_code())
     argus_changed? = set(db, :argus_code, :all, Scry.Fingerprint.argus_code())
@@ -283,16 +321,19 @@ defmodule Scry.Runner do
     |> Scry.Analysis.prewarm_extractions(db)
   end
 
-  defp warm_start(_db, _manifest_path, true), do: %{}
+  defp warm_start(_db, _manifest_path, true), do: {:ok, %{}}
 
   defp warm_start(db, manifest_path, false) do
     case Manifest.load(manifest_path) do
       {:ok, data} ->
         :ok = Manifest.restore(db, data)
-        Map.get(data, :sources, %{})
+
+        if Input.fetch(db, :graph_layout, :all) == {:ok, @layout},
+          do: {:ok, Map.get(data, :sources, %{})},
+          else: :other_layout
 
       :error ->
-        %{}
+        {:ok, %{}}
     end
   end
 

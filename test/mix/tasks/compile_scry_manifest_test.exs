@@ -166,6 +166,64 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
     end)
   end
 
+  defp memo_keys(query) do
+    {:ok, data} = Manifest.load(Scry.Runner.manifest_file())
+
+    for {{^query, key}, _entry} <- Manifest.memo_entries(data), do: key
+  end
+
+  test "a manifest another graph layout wrote is dropped, and the run is cold", %{
+    peer: peer,
+    copy: copy
+  } do
+    Fixture.checkout!(copy, @quick, :depot_quick)
+
+    Fixture.in_peer(peer, copy, :depot_quick, fn log ->
+      cold = compile!()
+      %{modules: modules} = Scry.Scanner.scan(Scry.Config.load())
+      modules = modules |> Map.keys() |> Enum.sort()
+
+      # As a scry that memoized extraction per argus producer left it:
+      # each module's rows under `producer_extraction`, a query this
+      # graph does not define, which its semantic digest depends on; a
+      # fingerprint of another shape; no layout. Validating a semantic
+      # digest would run that query.
+      rewrite!(fn db ->
+        for module <- modules do
+          producer = {:producer_extraction, {module, :base}}
+          {:ok, extraction} = Roux.Memo.get(db, {:module_extraction, module})
+          :ok = Roux.Memo.put(db, producer, extraction)
+          :ok = Roux.Memo.delete(db, {:module_extraction, module})
+
+          {:ok, semantic} = Roux.Memo.get(db, {:module_semantic_facts, module})
+
+          :ok =
+            Roux.Memo.put(db, {:module_semantic_facts, module}, %{
+              semantic
+              | dependencies: [producer]
+            })
+        end
+
+        :ok = Roux.Input.set(db, :env_fingerprint, :all, %{elixir: "an older shape"})
+        :ok = Roux.Memo.delete(db, {:input, :graph_layout, :all})
+      end)
+
+      QueryLog.reset(log)
+      warm = compile!()
+
+      # Cold, and right: every module extracted, every analysis solved.
+      assert QueryLog.executions(log, :module_extraction) == modules
+      assert QueryLog.executions(log, :souffle_solve) == [:coupling, :mailbox]
+      assert counts_by_code(scry_diagnostics(warm)) == counts_by_code(scry_diagnostics(cold))
+
+      # What it wrote holds nothing of the other layout, and is read back.
+      assert memo_keys(:producer_extraction) == []
+      QueryLog.reset(log)
+      assert {:noop, _} = compile!()
+      assert QueryLog.executions(log, :module_extraction) == []
+    end)
+  end
+
   test "touch without edit is a noop past the prefilter", %{peer: peer, copy: copy} do
     Fixture.checkout!(copy, @quick, :depot_quick)
 
