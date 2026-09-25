@@ -623,7 +623,7 @@ receive_in_callback(id, func, callback, behaviour, proximity, "true") :-
 // as :infinity (rpc_infinity_caller names them), empty otherwise.
 unbounded_wait(func, call, "rpc", variant, "", "") :-
   rpc_without_timeout(func, call, variant),
-  rpc_call(call, _, _, "-1").
+  rpc_call(call, _, _, -1).
 
 unbounded_wait(func, call, "rpc", variant, "caller", "") :-
   rpc_without_timeout(func, call, variant),
@@ -648,7 +648,7 @@ makes_rpc(f, call, variant) :- rpc_call(call, f, variant, _).
 // as a parameter that a caller passes as :infinity.
 .decl no_timeout(call: symbol) inline
 
-no_timeout(call) :- rpc_call(call, _, _, "-1").
+no_timeout(call) :- rpc_call(call, _, _, -1).
 no_timeout(call) :- rpc_infinity_caller(_, call, _).
 
 // A wrapper's `timeout \\ :infinity` compiles to remote/4 calling
@@ -662,7 +662,7 @@ no_timeout(call) :- rpc_infinity_caller(_, call, _).
 .output rpc_infinity_caller
 
 rpc_infinity_caller(func, call, caller) :-
-  rpc_call(call, func, _, "0"),
+  rpc_call(call, func, _, 0),
   rpc_timeout_param(call, p),
   infinity_arg(caller, func, p).
 
@@ -883,8 +883,7 @@ answers_in_time(id) :- fun_call(f, id, _, _, _), sync_call_site(id, f, _, t), t 
 answers_in_time(id) :-
   fun_call(f, id, _, _, _),
   rpc_call(id, f, _, t),
-  t != "-1",
-  t != "0".
+  t > 0.
 
 // Modules whose functions compute a value from their arguments, and the
 // exceptions a `raise` builds.

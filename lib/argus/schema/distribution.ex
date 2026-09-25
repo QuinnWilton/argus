@@ -30,7 +30,7 @@ defmodule Argus.Schema.Distribution do
           {:variant, :symbol,
            "RPC variant: rpc, block_call, multicall, yield, nb_yield (the :rpc functions), " <>
              "erpc, erpc_multicall, erpc_receive (:erpc.call, multicall, receive_response)"},
-          {:timeout, :symbol,
+          {:timeout, :number,
            "timeout in ms, -1 for :infinity, 0 when unknown — as sync_call_timeout"}
         ],
         doc: """

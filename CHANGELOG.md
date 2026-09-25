@@ -55,6 +55,13 @@ off the list. Livebook's `ZTA.LivebookTeams.validate_access_token/4`
 (`:ets.delete` of a token on the node that holds it) is no longer
 reported.
 
+**Changed.** Schema 90. `rpc_call`'s `timeout` column is a number, as
+`sync_call_timeout`'s is: milliseconds, -1 for `:infinity`, 0 when
+unknown. The values are the same; a rule compares them as numbers
+(`rpc_call(id, _, _, -1)`, `t > 0`) instead of as strings. Its readers
+are blocking.dl's `no_timeout`, `answers_in_time` and the
+`rpc_timeout_param` rule.
+
 **Added.** Schema 89. `rpc_arity(id, arity)` (`Argus.Extractors.ApiCalls`):
 how many arguments an rpc_call hands its remote function, when the
 argument list is known whole on every path (a literal, or cons cells of
