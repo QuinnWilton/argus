@@ -925,7 +925,8 @@ process_tail(g) :-
 called_otherwise(g) :-
   process_tail(g),
   call_edge(f, g),
-  !process_tail(f).
+  !process_tail(f),
+  !runs_elsewhere(f, g).
 
 called_otherwise(g) :-
   process_tail(g),

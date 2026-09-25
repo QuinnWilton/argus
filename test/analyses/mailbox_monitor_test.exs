@@ -15,6 +15,7 @@ defmodule Argus.Analyses.MailboxMonitorTest do
     M.FlushesInHelper,
     M.InEach,
     M.TaskGivesUp,
+    M.SpawnsWatcher,
     M.TaskPolls,
     M.CollectedByCaller,
     M.ReturnsLive,
@@ -109,6 +110,10 @@ defmodule Argus.Analyses.MailboxMonitorTest do
   test "a monitor a task leaves on its way out ends with the task", ctx do
     skip_without_souffle()
     refute named?(funcs(ctx), "MonitorLeak.TaskGivesUp")
+    # The spawned closure itself is the watcher's last act (its builder
+    # only hands it off); InEach's closure, run in the caller, still leaks.
+    refute named?(funcs(ctx), "MonitorLeak.SpawnsWatcher")
+    assert named?(funcs(ctx), "MonitorLeak.InEach:-wait_all/1-fun-0-")
     # One that waits again carries the stale :DOWN into its next wait.
     assert named?(funcs(ctx), "MonitorLeak.TaskPolls:poll/1")
   end

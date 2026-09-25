@@ -1473,7 +1473,7 @@ No sampled rate.
 **Property.** A function takes a monitor and waits, in its own process, in a receive with an `after` clause. The wait may be in the function itself, in what it calls, or in a closure it runs. All of the following also hold:
 - No path of the function demonitors with `[:flush]`.
 - None of its blocking receives pins that monitor's `:DOWN`.
-- Its return does not end its process. A function whose return does is a spawned function's last act, called from nowhere else and not recursing, or one only `terminate/2,3` reaches (`on_the_way_out`: no other callback or state function does), after which the process exits.
+- Its return does not end its process. A function whose return does is a spawned function's last act, called from nowhere else and not recursing (the edge by which its builder hands a spawned closure off is no call: ra's terminate/3 watcher and ejabberd's hook-trace timer, `SpawnsWatcher`), or one only `terminate/2,3` reaches (`on_the_way_out`: no other callback or state function does), after which the process exits.
 - The monitor is not collected by the function's callers. It is collected when every way the program has into the function passes a call after which the caller waits for a `:DOWN` (or flushes it) on every path, and none of those ways comes from an exported function, an uncalled one or what a spawn runs.
 
 On the timeout branch the monitor is still live. The `{:DOWN, ...}` arrives after the function has returned, into whatever runs then. If no clause matches, it is a FunctionClauseError; otherwise a clause runs with a reason the code stopped caring about.

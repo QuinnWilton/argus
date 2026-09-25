@@ -229,6 +229,12 @@ such a function: Livebook's `UniqueTask.run/2` starts a child per key,
 monitors it and blocks until it exits (2 corpus rows). unsafe_input now
 runs the Monitor extractor.
 
+**Fixed.** mailbox's "leaves a monitor live after its wait times out"
+took the edge by which a function hands a spawned closure off as a call
+into it, so a closure that monitors and waits as its process's last act
+was "called otherwise" (ra's terminate/3 watcher, ejabberd's hook-trace
+timer). `called_otherwise` now skips an edge into what runs elsewhere.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

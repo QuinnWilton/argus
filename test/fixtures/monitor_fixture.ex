@@ -50,6 +50,28 @@ defmodule Argus.Test.Fixtures.MonitorLeak do
     end
   end
 
+  defmodule SpawnsWatcher do
+    @moduledoc """
+    ra's terminate/3: a closure spawned to watch the process die and then
+    act, giving up after a grace period. The closure is what the spawn
+    runs, and its building function only hands it off: the monitor ends
+    with the watcher.
+    """
+    def watch_then_clean(pid, sup, child) do
+      spawn(fn ->
+        ref = Process.monitor(pid)
+
+        receive do
+          {:DOWN, ^ref, _, _, _} -> Supervisor.terminate_child(sup, child)
+        after
+          5000 -> :ok
+        end
+      end)
+
+      :ok
+    end
+  end
+
   defmodule TaskPolls do
     @moduledoc "A task that monitors and waits again and again: the stale :DOWN meets the next wait."
     def start(pid), do: Task.start(fn -> poll(pid) end)
