@@ -51,6 +51,16 @@ defmodule Argus.Extractors.Supervision do
 
   import Argus.Extractor.Terms, only: [list_elements: 1, mentions?: 2]
 
+  # The restart and type an OTP child spec states: what tells its tuple
+  # form from any other 6-tuple.
+  @restarts [:permanent, :transient, :temporary]
+  @child_types [:worker, :supervisor]
+
+  # Behaviour modules a start function names when the child's own module
+  # is among its arguments (`{gen_server, start_link, [{local, n}, Mod,
+  # Args, Opts]}`).
+  @starting_behaviours [GenServer, Supervisor, Agent, Task, :gen_server, :gen_statem, :supervisor]
+
   @impl true
   def relations,
     do: [
@@ -1096,6 +1106,7 @@ defmodule Argus.Extractors.Supervision do
   # {Module, args} — shorthand
   # {PartitionSupervisor, opts} — wrapper that replicates :child_spec across partitions
   # %{id: _, start: {Mod, :start_link, args}, restart: _, type: _} — full map
+  # {Id, {Mod, F, Args}, Restart, Shutdown, Type, Modules} — OTP's tuple form
   # Module — bare module name (uses Module.child_spec/1)
   #
   # Keyword pairs like {:strategy, :one_for_one} also match {atom, value},
@@ -1116,6 +1127,19 @@ defmodule Argus.Extractors.Supervision do
   # resolve the type from the child's own behaviour instead of trusting a
   # guess. `:permanent` happens to be right either way; `:worker` is wrong
   # for every supervisor written this way.
+  # OTP's tuple form, which Erlang supervisors still write (zotonic's
+  # zotonic_core_sup, ejabberd's, mongooseim's): the restart and type at
+  # their fixed positions tell it from any other 6-tuple, and they are
+  # stated, so the form is explicit. The child is the start function's
+  # module, as for a map spec.
+  defp extract_single_child_spec({_id, {mod, _fun, args}, restart, _shutdown, type, modules})
+       when is_atom(mod) and restart in @restarts and type in @child_types do
+    case spec_module(modules, mod, args) do
+      nil -> []
+      child -> [{child, restart, type, nil, :explicit}]
+    end
+  end
+
   defp extract_single_child_spec({mod, args}) when is_atom(mod) do
     if module_name?(mod), do: [{mod, :permanent, :worker, child_name(args), :shorthand}], else: []
   end
@@ -1137,6 +1161,43 @@ defmodule Argus.Extractors.Supervision do
   end
 
   defp extract_single_child_spec(_), do: []
+
+  # The child of an OTP tuple spec: its one callback module when the spec
+  # lists one (`[Mod]`, what the release handler upgrades), else the
+  # module its start function starts. A start through a wrapper of the
+  # supervisor's own (mongooseim's `{ejabberd_sup, start_linked_child,
+  # [Mod, Args]}`) names the child only in the modules list, so a list
+  # holding a value the bytecode does not show names no child: nil, and
+  # the spec is left out rather than read as the wrapper.
+  defp spec_module(modules, mod, args) do
+    cond do
+      not is_list(modules) and modules != :dynamic -> nil
+      is_list(modules) and :dynamic in modules -> nil
+      match?([m] when is_atom(m) and m not in [nil, true, false], modules) -> hd(modules)
+      true -> start_module(mod, args)
+    end
+  end
+
+  # The module a start function starts: its own, or for a behaviour's
+  # start function the first module among its arguments.
+  defp start_module(mod, args) when mod in @starting_behaviours and is_list(args) do
+    Enum.find(args, mod, &(is_atom(&1) and &1 not in [nil, true, false, :dynamic]))
+  end
+
+  defp start_module(mod, _args), do: mod
+
+  # An operand's value as far as the bytecode shows it: a literal, an
+  # atom, or what reaches a register (`:dynamic` where it cannot tell).
+  defp operand_value({:literal, value}, _instrs, _idx), do: {:ok, value}
+  defp operand_value({:atom, value}, _instrs, _idx), do: {:ok, value}
+  defp operand_value(nil, _instrs, _idx), do: {:ok, []}
+
+  defp operand_value(operand, instrs, idx) do
+    case element_register(operand) do
+      nil -> :error
+      reg -> resolve_register(instrs, idx, reg)
+    end
+  end
 
   # A child spec's `:name` option registers the process under a name — the
   # same name a `DynamicSupervisor.start_child(name, _)` call later targets.
@@ -1160,6 +1221,27 @@ defmodule Argus.Extractors.Supervision do
     case Atom.to_string(atom) do
       "Elixir." <> _ -> true
       _ -> Code.ensure_loaded?(atom)
+    end
+  end
+
+  # OTP's tuple form built at run time (an argument computed in init/1):
+  # `{Id, Start, Restart, Shutdown, Type, Modules}` with the restart and
+  # the type literal atoms at their positions, and the start's module
+  # resolved through the register that holds it.
+  defp extract_child_from_tuple_elements(
+         [_id, start, {:atom, restart}, _shutdown, {:atom, type}, modules],
+         instrs,
+         idx,
+         _functions
+       )
+       when restart in @restarts and type in @child_types do
+    with {:ok, {mod, _fun, args}} when is_atom(mod) and mod != :dynamic <-
+           operand_value(start, instrs, idx),
+         {:ok, modules} <- operand_value(modules, instrs, idx),
+         child when child != nil <- spec_module(modules, mod, args) do
+      [{child, restart, type, nil, :explicit}]
+    else
+      _ -> []
     end
   end
 

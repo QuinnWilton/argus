@@ -83,6 +83,21 @@ defmodule Argus.Analyses.EtsTest do
              end)
     end
 
+    test "an OTP tuple child spec is a supervisor's child as a map spec is" do
+      skip_without_souffle()
+
+      owner = fn modules ->
+        {:ok, results} = Memo.analyze(modules, :ets)
+        for [_name, ":tuple_spec_first" | _] <- results["ets_unprotected_owner"], do: :reported
+      end
+
+      # Alone, the owner's table dies with it; under tuple_spec_sup, whose
+      # `{first, {tuple_spec_first, start_link, []}, permanent, ...}` spec
+      # restarts it, the restart recreates the table.
+      assert owner.([:tuple_spec_first]) == [:reported]
+      assert owner.([:tuple_spec_first, :tuple_spec_sup]) == []
+    end
+
     test "suppresses unprotected_owner for Application modules" do
       skip_without_souffle()
 

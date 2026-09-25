@@ -411,6 +411,40 @@ defmodule Argus.Extractors.SupervisionTest do
     end
   end
 
+  describe "OTP tuple child specs" do
+    setup do
+      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(:tuple_spec_sup)))
+      %{facts: Supervision.extract(data)}
+    end
+
+    # init/1's three clauses compile into one function, so the children of
+    # all three are read as one tree, in the order the bytecode lists them;
+    # the assertions ask which children each spec shape yields.
+    test "a literal, a runtime-built and a wrapped spec each yield their child", %{facts: facts} do
+      children =
+        for [":tuple_spec_sup", _pos, child, restart, type] <- facts[:supervisor_child],
+            do: {child, restart, type}
+
+      # The literal list's callback modules; a `dynamic` modules list
+      # names the start function's module; the runtime-built spec's
+      # computed argument hides nothing its child is known by.
+      assert {":tuple_spec_first", "permanent", "worker"} in children
+      assert {":tuple_spec_pool_sup", "permanent", "supervisor"} in children
+      assert {":tuple_spec_buffer", "permanent", "worker"} in children
+      assert Enum.any?(children, &match?({":tuple_spec_last", _, "worker"}, &1))
+
+      # A start through the supervisor's own wrapper is not the wrapper's
+      # child: the modules list names the child, and a list the bytecode
+      # cannot show (worker_spec/1's parameter) names none.
+      refute Enum.any?(children, &match?({":tuple_spec_sup", _, _}, &1))
+    end
+
+    test "the stated type makes the form explicit", %{facts: facts} do
+      forms = for [":tuple_spec_sup", _pos, form] <- facts[:supervisor_child_form], do: form
+      assert forms != [] and Enum.all?(forms, &(&1 == "explicit"))
+    end
+  end
+
   describe "integration with extract pipeline" do
     test "extractor is usable via Pipeline.extract/2" do
       assert {:ok, facts} =

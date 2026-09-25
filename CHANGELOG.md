@@ -413,6 +413,25 @@ taking any message forwards to every clause), `ForwardingTwoClauseCaster`
 (a second clause forwards whatever it took) and `ForwardingGuardCaster`
 (the waiting clause takes any atom by a guard).
 
+**Fixed.** OTP's tuple child specs, `{Id, {M, F, A}, Restart, Shutdown,
+Type, Modules}`, are a supervisor's children, as map specs are
+(`Argus.Extractors.Supervision`): literal, or built at run time around a
+computed argument. Erlang supervisors still write them — zotonic's
+`zotonic_core_sup` and every supervisor below it, vernemq's, hackney's —
+and no child of such a tree was known: the permanent-child excuse for a
+table's owner, the start order and the coupling rules saw no tree. The
+child is the one callback module a spec lists (`[Mod]`), else the start
+function's module (a behaviour's start function's module argument); a
+spec whose modules list holds a value the bytecode does not show (a
+helper's parameter: mongooseim's `worker_spec(Mod)`) names no child, not
+the wrapper that starts it. Over the 26 live programs: "ETS table dies
+with its owner" 80 → 63, "init/1 blocks on a synchronous call" 123 → 84
+(their trees now place them), coupling +35 in zotonic, vernemq and
+hackney (judged below). Fixtures: `tuple_spec_sup` and
+`tuple_spec_first` (test/fixtures/erl), in the Supervision extractor's
+tests and ets_test.exs (the owner reported alone, excused under the
+supervisor).
+
 ### FP hunt, round 2: eight more programs, and the anchors round 1 left
 
 **Fixed.** A blocking cast (`call_chain` kind `cast`) anchors at the
