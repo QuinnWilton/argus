@@ -227,6 +227,48 @@ defmodule Argus.Test.Fixtures.SymmetricInfoStatem do
   def ready(:info, _msg, _data), do: :keep_state_and_data
 end
 
+defmodule Argus.Test.Fixtures.DataPatternInfoStatem do
+  @moduledoc """
+  Catch-alls that ask something of the machine's data or state and
+  nothing of the content: `ready/3` destructures the data, and
+  handle_event/4 of `OneStateInfoStatem` names the one state it has.
+  `busy/3` tests the content, and is no catch-all.
+  """
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :state_functions
+
+  @impl true
+  def init(_args), do: {:ok, :ready, %{events: []}}
+
+  def ready(:cast, :work, data), do: {:next_state, :busy, data}
+
+  def ready(:info, msg, %{events: events} = data),
+    do: {:keep_state, %{data | events: [msg | events]}}
+
+  def busy(:cast, :done, data), do: {:next_state, :ready, data}
+  def busy(:info, {:progress, _n}, %{events: _} = data), do: {:keep_state, data}
+end
+
+defmodule Argus.Test.Fixtures.OneStateInfoStatem do
+  @moduledoc false
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :handle_event_function
+
+  @impl true
+  def init(_args), do: {:ok, :only, %{events: []}}
+
+  @impl true
+  def handle_event(:info, msg, :only, %{events: events} = data),
+    do: {:keep_state, %{data | events: [msg | events]}}
+
+  def handle_event({:call, from}, :ping, :only, _data),
+    do: {:keep_state_and_data, [{:reply, from, :pong}]}
+end
+
 defmodule Argus.Test.Fixtures.TimeoutMismatchStatem do
   @moduledoc """
   The Postgrex SimpleConnection shape: a {:timeout, ms, content} action

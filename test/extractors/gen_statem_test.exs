@@ -194,6 +194,19 @@ defmodule Argus.Extractors.GenStatemTest do
       refute Map.has_key?(facts, :statem_event_catchall)
     end
 
+    test "an :info catch-all may ask anything of the data or the state, not of the content" do
+      facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.DataPatternInfoStatem))
+      catchalls = Enum.map(facts[:statem_info_catchall], fn [_mod, func] -> func end)
+
+      assert Enum.any?(catchalls, &String.ends_with?(&1, ":ready/3"))
+      refute Enum.any?(catchalls, &String.ends_with?(&1, ":busy/3"))
+
+      facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.OneStateInfoStatem))
+
+      assert [[_mod, func]] = facts[:statem_info_catchall]
+      assert String.ends_with?(func, ":handle_event/4")
+    end
+
     test "a clause with a wildcard event type is a total catch-all" do
       facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.SimpleStatem))
 

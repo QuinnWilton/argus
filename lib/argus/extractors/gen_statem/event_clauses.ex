@@ -65,6 +65,7 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
   def analyse(fun, instrs) do
     labels = Dispatch.labels(instrs)
     func_info = Dispatch.func_info_label(instrs)
+    context = context_registers(instrs)
 
     %{
       event_types: Enum.uniq(Enum.flat_map(instrs, &event_types_in/1) ++ tagged_types(instrs)),
@@ -73,11 +74,30 @@ defmodule Argus.Extractors.GenStatem.EventClauses do
           fun,
           instrs,
           Dispatch.continuations_after(instrs, @x0, :info, labels),
-          [@x0],
+          [@x0 | context],
           func_info
         ),
-      event_catchall?: reaches_body?(fun, instrs, [Dispatch.entry_index(instrs)], [], func_info)
+      event_catchall?:
+        reaches_body?(fun, instrs, [Dispatch.entry_index(instrs)], context, func_info)
     }
+  end
+
+  # The arguments that are not the event: a state function's data,
+  # `state(type, content, data)`, and handle_event/4's state and data,
+  # `handle_event(type, content, state, data)`. A clause that takes any
+  # content whatever it demands of them is a catch-all for the event, as
+  # a GenServer's `handle_info(msg, {stack, cont})` is for its messages
+  # (`callback_total`): Postgrex's ReplicationConnection takes every
+  # `:info` in its one state, `handle_event(:info, msg, @state, s)`, and
+  # hands it to its protocol. For handle_event/4 that is quieter than the
+  # truth: a clause for some states only counts as the machine's
+  # catch-all, and a message arriving in another state is not judged.
+  defp context_registers(instrs) do
+    case Enum.find(instrs, &match?({:func_info, _, _, _}, &1)) do
+      {:func_info, _mod, _name, 3} -> [{:x, 2}]
+      {:func_info, _mod, _name, 4} -> [{:x, 2}, {:x, 3}]
+      _ -> []
+    end
   end
 
   # ── Event types ──────────────────────────────────────────────────────

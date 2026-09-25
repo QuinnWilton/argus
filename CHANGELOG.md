@@ -2506,6 +2506,18 @@ concern that runs it.
 
 ### mailbox
 
+**Changed.** A gen_statem clause that takes an `:info` event with any
+content, whatever it asks of the data (a state function's third
+argument) or, in handle_event/4, of the state, is an `:info` catch-all
+(`statem_info_catchall`), and a clause that takes any event so is a
+total one: the reading GenServer's `callback_total` already had
+(`handle_info(msg, {stack, cont})` is a catch-all for messages).
+Postgrex's `ReplicationConnection` takes every :info in its one state,
+`handle_event(:info, msg, @state, s)`, and hands it to its protocol;
+the socket source above reported it as crashing on its close. For
+handle_event/4 this is quieter than the truth: a clause for some states
+counts as the machine's catch-all.
+
 **Added.** `mailbox.unhandled_info(mod, func, site, message, source,
 server, handler, fallback)` — the GenServer half of what
 `unreceived_message` asks of a spawned process: a message a server is
