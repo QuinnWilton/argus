@@ -1733,26 +1733,12 @@ any site does, guarded by its callers' tries. db_connection's
 rescue, is no longer the deviant. The evidence frame of a site its
 callers guard says so.
 
-**Changed.** `failure.inconsistent_handling`'s population no longer
-depends on how the target is spelled for a callee that fails on a
-missing row (`:ets.update_counter`, `:ets.lookup_element`). A site on a
-literal table was judged only by that table's sites, and one on a
-variable by every site of the callee: sequin's logger was a deviant with
-`table_name` and would not have been with `@table`. A site on a known
-target none of whose sites agree is now judged by every site of such a
-callee when the agreeing sites span two tables or more. A target that
-has an agreeing site of its own is judged by its own sites, whatever
-the callee (postgrex's SCRAM cache reads its table guarded once and
-bare once, where it knows the row is there), and a callee that fails
-when the table or the server is missing keeps a belief per target.
-mnesia's one bare read of its stats table is still not a deviant from
-gvar's 120 guarded ones.
-
-**Changed.** `failure.inconsistent_handling`'s title says "every other
-call site" only when the reported site is the population's one deviant,
-and "most call sites" when there are more: `clear_majority` lets up to a
-quarter of the sites deviate, and nine guarded against three bare
-reported three sites, each titled as though it were the only one.
+**Changed.** `failure.inconsistent_handling` no longer speaks of a
+site as the population's only deviant when there are more:
+`clear_majority` lets up to a quarter of the sites deviate, and nine
+guarded against three bare reported three sites, each as though it
+were the only one. (The title now names neither the callee nor the
+counts; the detail gives both: "One word per concept".)
 
 ### A remote call that never answers
 
@@ -4084,11 +4070,10 @@ on a missing row (`:ets.lookup_element/3`, `:ets.update_counter/3`).
 Between the two writes the value can be found and its row cannot, and
 the reader crashes with `badarg`. The fix is the order: the row first,
 then the value, and a publish that can lose (`insert_new`) deletes the
-row its loser wrote. The two writes join on the value's identity in
-their function (`ets_value` against `ets_key`) and are ordered by
-`ets_write_order`; the tables are matched to their readers by name for a
-named table and by the map field it is kept under for an unnamed one
-(`ets_table_path` from a parameter). Quiet when the reader takes a
+row its loser wrote. The two writes join on the value's identity
+(`ets_value` against `ets_key`) and are ordered by `ets_effect_order`;
+the tables are matched to their readers by `ets_table` (the entry
+above). Quiet when the reader takes a
 default or rescues `ArgumentError`, when no table of the name is found
 or one is private, when the two tables are one, and when the writer and
 the reader run only in one and the same process. A `:warning` anchored
@@ -4587,7 +4572,7 @@ inside a function `init/1` spawns, hands to a task or an agent (process
 points-to's `process_start`) or builds into a child spec does not hold the
 start, and was reported as though it did (`spawn_link(fn -> loop() end)`
 read as "init/1 waits on a socket with no timeout"). The walk is the new
-`ProcessReach` component over `runs_elsewhere` (processes.dl): every call
+`SameProcessReach` component over `runs_elsewhere` (reach.dl): every call
 edge but the one into what a start runs, so a closure handed to
 `Enum.each` still counts. On the corpus, supavisor's DbHandler no longer
 waits on a Manager whose `Supervisor.stop` runs in a task; in OTP's

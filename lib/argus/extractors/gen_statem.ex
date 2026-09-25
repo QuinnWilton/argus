@@ -34,7 +34,8 @@ defmodule Argus.Extractors.GenStatem do
   `Argus.Extractors.GenStatem.EventClauses`.
 
   - `statem_module(mod, callback_mode)` — gen_statem module identification
-  - `statem_state(mod, state)` — state in the machine
+  - `statem_state(mod, state, func)` — a state in the machine, and the
+    state function that handles it
   - `statem_transition(mod, from, event, to)` — state transition
   - `statem_helper_transition(mod, func, to)` — a transition a function
     that is not a state function returns on a state's behalf

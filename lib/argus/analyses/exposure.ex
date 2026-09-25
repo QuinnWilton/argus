@@ -11,6 +11,10 @@ defmodule Argus.Analyses.Exposure do
     other field, which makes the omission an oversight rather than an
     unfamiliar API; `via` says where the fix goes, `redact` or the
     schema's own `derive` (which makes `redact: true` a no-op).
+  - `unredacted_secret_inferred(mod, field, kind, aware, via, permille)`
+    — the same finding for a field the sensitivity prior names a secret
+    and no name fragment does: a step down in severity, heuristic, with
+    the prior's probability.
   - `disables_verification(func, id)` — `verify: :verify_none`: the
     peer's certificate is not checked against any trust anchor and its
     hostname is not matched. Encryption without authentication is the

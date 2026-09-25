@@ -8,7 +8,8 @@ defmodule Argus.Analyses.UnsafeInput do
   whole output of an input with no bound on its size) and code
   execution. Each is reported once, with how exposed it is:
 
-  - `sink_reachable(id, func, api, sink, entry, kind, proximity)` — the
+  - `sink_reachable(id, func, api, sink, entry, kind, proximity, source,
+    permille, safety)` — the
     sink is reachable from a request-handling callback (a Plug, a
     controller action, a LiveView, a Channel, an Oban job, a Broadway
     pipeline, a ThousandIsland or WebSock handler). Proximity is
@@ -17,7 +18,8 @@ defmodule Argus.Analyses.UnsafeInput do
     string building and forwarding, however far; `direct` means the sink
     is in the callback itself, operating on the request; `adjacent` one
     call away; `transitive` anywhere else in the callback's cone, a path
-    rather than a proven flow.
+    rather than a proven flow. `source` and `permille` are the value
+    prior's, as below; `safety` is a deserialization's option class.
   - `sink_without_request_path(id, func, api, sink, source, permille,
     safety)` — no request reaches it: atom creation and decompression of
     what an exported function's caller hands in, code execution reachable

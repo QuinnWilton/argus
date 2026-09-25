@@ -65,6 +65,24 @@ defmodule Argus.Analyses.RegistryRaceTest do
 
   defp short(id), do: id |> String.split("#") |> hd() |> String.split(".") |> List.last()
 
+  test "the key_source field's doc names every source the rule reports", ctx do
+    skip_without_souffle()
+    {:ok, results} = Batch.analyze(ctx.batch, @batched)
+
+    {:key_source, :symbol, doc} =
+      Races.output_relations()
+      |> Enum.find(&(&1.name == :registry_race))
+      |> Map.fetch!(:fields)
+      |> List.keyfind(:key_source, 0)
+
+    sources = for [_, _, _, _, source, _, _, _] <- results["registry_race"], do: source
+    assert sources != []
+
+    for source <- Enum.uniq(sources) do
+      assert doc =~ String.replace(source, ~r/\d+$/, "N"), "#{source} is not in: #{doc}"
+    end
+  end
+
   describe "registry_race: processes a server starts" do
     test "a task the owner's handler starts per message is many processes", ctx do
       skip_without_souffle()

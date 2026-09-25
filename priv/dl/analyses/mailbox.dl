@@ -2,8 +2,7 @@
 //
 // A process's mailbox is written by more than its owner: a task's
 // reply, a monitor's :DOWN, a timer that fired before it was cancelled,
-// a late reply to a timed call, a subscription's broadcast, the module's
-// own client API. Every finding here is a message and the clause that
+// a subscription's broadcast, the module's own client API. Every finding here is a message and the clause that
 // is not there for it, or the reply a caller waits for that never
 // comes: a handle_info without a catch-all, an async_nolink task whose
 // reply lands unhandled, a monitor left live past its wait, a cancelled
@@ -25,7 +24,7 @@
 // `partial_handler(mod, handler, source, missing, detail)` — a message
 //   with no clause for it. `source` says who writes it: "runtime" (the
 //   process monitors or traps exits), "late_message" (its callbacks reach
-//   a task, timer, subscription or timed call), "task_nolink" (an
+//   a task, timer, subscription or a fun they did not build), "task_nolink" (an
 //   async_nolink task started in `detail`; `missing` is "reply" or
 //   "down"), "statem_timeout" (`handler` is the state arming a timeout of
 //   kind `missing`), "statem_info" (the state function `handler`, for
@@ -94,13 +93,13 @@ partial_handler(mod, h, "runtime", "catch_all", "") :-
 // ── handle_info without a catch-all, with a late-message source ──
 //
 // The variant above needs the module itself to invite runtime messages.
-// A mailbox is written by more than its owner: a timed call that gave
-// up leaves a late reply (gen_stage#238, an hackney message crashing a
-// Flow producer), a Task.async replies, a timer fires after the state
+// A mailbox is written by more than its owner: a Task.async replies,
+// code the process runs through a closure or apply sends what it sends
+// (gen_stage#238: a hackney message crashing a Flow producer that ran
+// the user's stream), a timer fires after the state
 // that expected it is gone, a subscription broadcasts, a start-up
-// message is re-sent by a restart loop (cachex#314), and code the
-// process runs through a closure or apply is not its own to vouch for
-// (gen_stage#238's producer ran the user's stream). A partial
+// message is re-sent by a restart loop (cachex#314). A timed call that
+// gave up leaves no late reply since OTP 24 (below). A partial
 // handle_info/2 in a process whose callbacks reach such a source is a
 // FunctionClauseError waiting for that message. Without any source in
 // reach the shape is a style note, and stays quiet. Info: the two rules

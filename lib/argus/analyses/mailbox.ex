@@ -9,7 +9,8 @@ defmodule Argus.Analyses.Mailbox do
   - `partial_handler(mod, handler, source, missing, detail)` — a message
     with no clause for it. `source` says who writes it: `runtime`
     (monitors, trapped exits), `late_message` (a task, a timer, a
-    subscription, a timed call the callbacks reach), `task_nolink` (an
+    subscription, a fun the callbacks run that they did not build),
+    `task_nolink` (an
     `async_nolink` task's `reply` or `down`), `statem_timeout` (a timeout
     of kind `missing` no clause handles), `statem_info` (a state without
     the `:info` catch-all its siblings have).
