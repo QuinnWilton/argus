@@ -26,8 +26,8 @@ defmodule Argus.Analyses.Mailbox do
     apart from the next. The ref is kept under a state key, or (`key`
     empty) in a local of the one function that arms and cancels it.
   - `reply_defect(mod, func, site, kind, tag)` — a tag the module sends
-    its own server with no matching clause (`self_call`, `self_cast`), a
-    `handle_call` that defers a reply without keeping `from`
+    its own server with no matching clause (`unhandled_call`,
+    `unhandled_cast`), a `handle_call` that defers a reply without keeping `from`
     (`dropped_from`), or a `{:call, from}` clause that never answers
     (`statem_unreplied`).
   - `unreceived_message(mod, func, site, message, runs, starter, spawn, recv)` —
@@ -100,7 +100,7 @@ defmodule Argus.Analyses.Mailbox do
           {:source, :symbol,
            "runtime | late_message | task_nolink | statem_timeout | statem_info"},
           {:missing, :symbol,
-           "catchall, reply | down for task_nolink, the timeout kind for statem_timeout"},
+           "catch_all, reply | down for task_nolink, the timeout kind for statem_timeout"},
           {:detail, :symbol, "the function starting the task, or the state name for statem_info"}
         ],
         # A nolink task is one finding per start; a statem timeout one per
@@ -233,15 +233,15 @@ defmodule Argus.Analyses.Mailbox do
           {:mod, :symbol, "the module"},
           {:func, :symbol, "the sender, the handle_call/3, or the state function"},
           {:site, :symbol, "the return site, empty for a self message"},
-          {:kind, :symbol, "self_call | self_cast | dropped_from | statem_unreplied"},
+          {:kind, :symbol, "unhandled_call | unhandled_cast | dropped_from | statem_unreplied"},
           {:tag, :symbol, "the message tag, for a self message"}
         ],
         # A self message is one finding per tag, whoever sends it.
         key:
           {:kind,
            %{
-             "self_call" => [:mod, :tag],
-             "self_cast" => [:mod, :tag],
+             "unhandled_call" => [:mod, :tag],
+             "unhandled_cast" => [:mod, :tag],
              default: [:mod, :func, :site]
            }},
         doc: "A tag the module cannot handle, or a reply a caller waits for that never comes."
@@ -596,7 +596,7 @@ defmodule Argus.Analyses.Mailbox do
     )
   end
 
-  def finding(:reply_defect, [mod, sender, _, "self_" <> kind, tag]) do
+  def finding(:reply_defect, [mod, sender, _, "unhandled_" <> kind, tag]) do
     Findings.new(
       :error,
       "#{mod} sends itself #{tag}, which it cannot handle",

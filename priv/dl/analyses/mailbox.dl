@@ -40,8 +40,9 @@
 //   "linked_in_library" (started in library code, linked to whoever
 //   called it).
 // `reply_defect(mod, func, site, kind, tag)` — a reply that never comes:
-//   "self_call" | "self_cast" (the module sends its own server `tag` and
-//   has no clause for it; `func` is the sender), "dropped_from" (a
+//   "unhandled_call" | "unhandled_cast" (the module sends its own server
+//   `tag` and has no clause for it; `func` is the sender — not
+//   clientlib's `self_call`, a call provably to the calling process), "dropped_from" (a
 //   handle_call defers a reply without keeping `from`; `site` is the
 //   return), "statem_unreplied" (a {:call, from} clause answers nothing).
 .decl partial_handler(mod: symbol, handler: symbol, source: symbol, missing: symbol, detail: symbol)
@@ -82,7 +83,7 @@ receives_runtime_messages(mod) :-
   monitor_call(_, f, _),
   server_side(mod, f).
 
-partial_handler(mod, h, "runtime", "catchall", "") :-
+partial_handler(mod, h, "runtime", "catch_all", "") :-
   gen_server_like(mod),
   partial_handle_info(mod, h),
   !library_written(h),
@@ -233,7 +234,7 @@ late_message_source(mod) :-
 // to. One the program's own macro wrote is the program's: the clause
 // belongs in that macro. Every partial_handler source asks it.
 
-partial_handler(mod, h, "late_message", "catchall", "") :-
+partial_handler(mod, h, "late_message", "catch_all", "") :-
   gen_server_like(mod),
   partial_handle_info(mod, h),
   !library_written(h),
@@ -1076,7 +1077,7 @@ proxies(func) :-
   function_def(func, mod, _, _, _),
   other != mod.
 
-reply_defect(mod, sender, "", cat("self_", kind), tag) :-
+reply_defect(mod, sender, "", cat("unhandled_", kind), tag) :-
   call_tag(_, sender, kind, tag),
   function_def(sender, mod, _, _, _),
   kind_callback(kind, callback),
@@ -1128,7 +1129,7 @@ reply_defect(mod, func, id, "dropped_from", "") :-
 // statem_state carries one row per site a state is seen at — its own
 // function and every transition targeting it — so the function_def join
 // picks the definition.
-partial_handler(mod, func, "statem_info", "catchall", state) :-
+partial_handler(mod, func, "statem_info", "catch_all", state) :-
   statem_module(mod, "state_functions"),
   statem_state(mod, state, func),
   function_def(func, mod, _, _, _),

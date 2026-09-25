@@ -449,6 +449,14 @@ a message its catch-all drops is "catch_all", not GenServer's default
 (`UnhandledInfo.MixedCatchAll`); failure judges the module's own
 clauses of such a function.
 
+**Changed.** Two column values renamed, for one word per meaning:
+`reply_defect`'s kinds `self_call` and `self_cast` are `unhandled_call`
+and `unhandled_cast` (a tag the module sends its own server and has no
+clause for; `self_call` stays clientlib's call provably to the calling
+process), and `partial_handler.missing` spells `catch_all`, as
+`unhandled_info.fallback` does (was `catchall`). Consumers matching the
+old values must change.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

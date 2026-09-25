@@ -19,7 +19,10 @@ defmodule Argus.Analyses.MailboxMessageTest do
 
   defp mods(%{solved: solved}) do
     assert {:ok, r} = solved
-    r |> Rows.where(:mailbox, "reply_defect", kind: ~w(self_call self_cast)) |> Enum.map(&hd/1)
+
+    r
+    |> Rows.where(:mailbox, "reply_defect", kind: ~w(unhandled_call unhandled_cast))
+    |> Enum.map(&hd/1)
   end
 
   defp named?(list, f), do: Enum.any?(list, &String.contains?(&1, f))

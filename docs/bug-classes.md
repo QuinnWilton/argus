@@ -1596,7 +1596,7 @@ On the timeout branch the monitor is still live. The `{:DOWN, ...}` arrives afte
 
 ### A tag a module sends its own server with no clause for it
 
-`reply_defect` · kind=`self_call` | `self_cast`
+`reply_defect` · kind=`unhandled_call` | `unhandled_cast`
 · titles: "#{mod} sends itself #{tag}, which it cannot handle" (`:error`)
 
 **Property.** A function of a GenServer module makes a GenServer.call (or cast) whose message has a literal tag: an atom, or a tuple's first atom. The module's handle_call/3 (or handle_cast/2) neither compares that tag anywhere nor has a catch-all. The function is not a proxy:
