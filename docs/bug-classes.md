@@ -40,6 +40,48 @@ are defined once in the vocabulary below. A term "errs quiet" when what
 it cannot see yields fewer findings, and "errs loud" when the same
 uncertainty can add one.
 
+## Severity rubric
+
+A severity says how much the program itself shows, not how bad the
+worst case is. Every class's severity is chosen by these rules, and two
+classes of one risk get one severity.
+
+- **`:error`**: the program shows the defect on a path it takes, with
+  nothing else needed: a deadlock by construction (a call cycle, a call
+  to the calling process, a start that waits on a later sibling), a
+  contract the code breaks (a reply never sent, a message the program
+  sends or arms for a process that has no clause for it, a declared-pure
+  function with an effect), a structure fault (a supervisor registered
+  as a worker), a control turned off (TLS `verify_none`), outside data
+  that provably flows into a sink.
+- **`:warning`**: a crash, hang, leak or lost update that needs one more
+  thing a running system supplies: a peer that stays silent (a receive
+  with no `after`, a call with no bound), a timing window (a
+  check-then-act race), a crash elsewhere that the tree is built to
+  survive (a table gone with its owner, a read while the owner
+  restarts, a stale sibling pid), a restart (a permanent child that
+  stops itself), a message only a peer's exit sends (a monitor's
+  `:DOWN`). Robustness under failure is what argus is for, so the
+  consequence of a crash counts as ordinary operation.
+- **`:info`**: the harm turns on intent or configuration the facts do
+  not show (a deliberate kill of a process known only as a value, a
+  concurrency option, an idle timeout), or the wait is bounded (a
+  receive with an `after`, one its peer's exit ends), or the finding is a
+  verification (a verified `@pure`).
+- **Evidence.** A finding whose evidence is inferred rather than
+  resolved (a holder the rule infers, a dependency by message tag or
+  module, a model's prior) steps down one level from its resolved form,
+  and says so (`basis`, `provenance: :heuristic`).
+- **Sinks.** unsafe_input grades by what the sink does with outside
+  data and how near a way in it is: at the sink's own severity when data
+  from a request flows to it or it sits in the request handler, a step
+  down one call away, two steps (`:info`) three or more calls away,
+  where reach by function over-approximates. A sink an exported function
+  reaches with no request path keeps the sink's severity: a library's
+  exports are its way in, its callers' input its outside data, and the
+  value-source prior steps a row down when the value is the program's
+  own.
+
 ## Classes by concern
 
 | Concern | Classes | Owns |
@@ -78,17 +120,17 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### A behaviour and its callbacks
 
-- **Names.** `behaves_as`, `process_behaviour`, `otp_callback`, `callback_name`, `init_function` (`is_init`), `handle_call_function`, `handle_cast_function`, `handler_function`, `terminate_callback` (`is_terminate`), `process_behaviour_module`, `statem_process` (behaviours.dl, callbacks.dl, vocabulary.dl).
-- **Meaning.** `behaves_as(mod, b)` is the declared behaviour under one spelling for both languages (`:gen_server` is GenServer; Connection and Postgrex's connection wrappers are GenServer too), and an unlisted behaviour passes through unchanged. `process_behaviour` says whether a behaviour runs a callback loop over its own mailbox (`loop`), answers calls by GenServer's contract (`gen_server_like`) or calls terminate (`terminating`). `otp_callback` is a function with a loop callback's name (`callback_name`) in a loop-behaviour module; `init_function` is init/1 of a process module; `handler_function` is a GenServer's handle_call, handle_cast, handle_info or handle_continue.
-- **Direction.** Callbacks are matched by name at any arity, so a helper that shares a callback's name counts; a behaviour missing from the tables (a channel's join/3 is not a callback name) is not a process entry.
-- **Used by.** blocking, coupling, coverage, effects, ets, failure, mailbox, races, shutdown, startup, structure and unsafe_input.
+- **Names.** `behaves_as`, `process_behaviour`, `otp_callback`, `callback_name`, `behaviour_callback`, `message_callback`, `unlisted_server`, `gen_server_like`, `init_function` (`is_init`), `handle_call_function`, `handle_cast_function`, `handler_function`, `terminate_callback` (`is_terminate`), `process_behaviour_module`, `statem_process` (behaviours.dl, callbacks.dl, vocabulary.dl).
+- **Meaning.** `behaves_as(mod, b)` is the declared behaviour under one spelling for both languages (`:gen_server` is GenServer; Connection and Postgrex's connection wrappers are GenServer too), and an unlisted behaviour passes through unchanged. `process_behaviour` says whether a behaviour runs a callback loop over its own mailbox (`loop`), answers calls by GenServer's contract (`gen_server_like`) or calls terminate (`terminating`). `otp_callback` is a function with a loop callback's name (`callback_name`, every loop behaviour's `code_change` and `format_status` included) in a loop-behaviour module, a callback of one behaviour alone (`behaviour_callback`: a Channel's join/3 and handle_out/3, a LiveView's handle_async/3), or a callback of a server under a behaviour the tables do not list (`unlisted_server`: a module that declares one and handles calls, casts or messages, as rabbit's gen_server2 modules do). `message_callback` names the callbacks a process is started or sent its own data in. `gen_server_like(mod)` answers calls by GenServer's contract: GenServer, the wrappers aliased to it, GenStage, or an unlisted server with a handle_call/3; `handle_call_function`, `handle_cast_function` and `handler_function` (handle_call, handle_cast, handle_info, handle_continue) are its handlers, the one word every rule about who answers a call reads. `init_function` is init/1 of a process module.
+- **Direction.** Callbacks are matched by name at any arity, so a helper that shares a callback's name counts (loud); an unlisted server's callbacks count only when it handles calls, casts or messages, and a behaviour neither table names nor that shape reveals is not a process (quiet).
+- **Used by.** blocking, coupling, coverage, effects, ets, failure, mailbox, races, shutdown, startup, structure and unsafe_input; calls.dl's tag attribution, replies.dl and resolved_calls.dl (`handle_call_function`, `gen_server_like`).
 
 ### Where a process's own code starts
 
-- **Names.** `process_entry`, `server_side` (callbacks.dl, process_statem.dl, process_kind.dl).
-- **Meaning.** `process_entry(mod, f)` is a function where mod's process starts running mod's code: its loop callbacks, its init/1, a terminate/2 and, where the analysis includes process_statem.dl, a gen_statem's state functions. What an entry reaches in its own process runs in that process; what only the module's API reaches runs in its callers. `server_side(mod, f)` is what a callback or state function reaches without leaving the module.
-- **Direction.** `server_side` stays in the module but does not cut `runs_elsewhere`, so a closure a callback spawns counts as the server's own code (loud), and a helper in another module does not (quiet). The terminate/2 clause of `process_entry` is not gated on a behaviour.
-- **Used by.** blocking, ets, failure, mailbox, races and shutdown (`process_entry`); mailbox and shutdown (`server_side`).
+- **Names.** `process_entry`, `server_side`, `server_caused`, `RunsInServer` (callbacks.dl, process_statem.dl, process_kind.dl).
+- **Meaning.** `process_entry(mod, f)` is a function where mod's process starts running mod's code: its loop callbacks, its init/1, the terminate/2 of a process module and, where the analysis includes process_statem.dl, a gen_statem's state functions. What an entry reaches in its own process runs in that process; what only the module's API reaches runs in its callers. Three readings share that root: `server_side(mod, f)` is the module's own code on its server's stack (in the module, in the process: what the server itself holds, a monitor it takes, a receive of its protocol); `RunsInServer`, seeded with the functions a rule asks about, is any module's code on that stack, not through a side path, for a server the program starts; `server_caused(mod, f)` is what the entries make happen in the module in any process, the closures they spawn included (a kill made from a spawned closure is still the server's doing).
+- **Direction.** `server_side` and `RunsInServer` cut `runs_elsewhere`: a closure a callback spawns is its own process's (quiet for what the server holds). `server_caused` follows it on purpose.
+- **Used by.** blocking, ets, failure, mailbox, races and shutdown (`process_entry`); mailbox and shutdown (`server_side`); mailbox (`RunsInServer`: timers, monitors, sockets); shutdown (`server_caused`).
 
 ### A process, by points-to
 
@@ -106,15 +148,15 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### Runs elsewhere
 
-- **Names.** `runs_elsewhere`, `awaits_task`, `hands_funs_off`, `fun_sink` (runs_elsewhere.dl).
-- **Meaning.** `runs_elsewhere(f, g)` holds when f's edge to g leaves f's stack: g is what a spawn, task or agent in f runs and f does not call it itself; f hands g's fun to a helper that starts a process on it; g is the only closure f builds into a term beside a start whose fun is unknown; or g is a fun f only registers or keeps (`:telemetry.attach`, `:persistent_term.put`, the state init/1 returns) and never calls. `awaits_task(f, start, g)` restores the edge for a question about what holds f up: a Task.async whose task f awaits anywhere.
+- **Names.** `runs_elsewhere`, `awaits_task`, `hands_funs_off`, `fun_sink`, `task_start_api`, `task_wait`, `task_collect` (runs_elsewhere.dl).
+- **Meaning.** `runs_elsewhere(f, g)` holds when f's edge to g leaves f's stack: g is what a spawn, task or agent in f runs and f does not call it itself; f hands g's fun to a helper that starts a process on it; g is the only closure f builds into a term beside a start whose fun is unknown; or g is a fun f only registers or keeps (`:telemetry.attach`, `:persistent_term.put`, the state init/1 returns) and never calls. `awaits_task(f, start, g)` restores the edge for a question about what holds f up: a Task.async whose task f awaits anywhere. The Task API is named once: `task_start_api(mod, fun, link)` (async, async_nolink and the supervisor forms, and whether the task is linked), `task_wait` (await, yield and their many forms) and `task_collect` (those and `Task.shutdown`).
 - **Direction.** A fun handed to a call this file does not know stays on f's stack, since a library's higher-order function may run it there (loud). A fun built into a term that a callee then runs is taken as kept (quiet).
-- **Used by.** The same-process and holding reach components, calls.dl, global_reach.dl and the points-to stage; blocking, mailbox, races and startup directly; failure reads `hands_funs_off`.
+- **Used by.** The same-process and holding reach components, calls.dl, global_reach.dl and the points-to stage; blocking, mailbox, races and startup directly; failure reads `hands_funs_off`; mailbox the Task words.
 
 ### Reach over the call graph
 
-- **Names.** `CallReach`, `SameProcessReach`, `SameProcessReachCut`, `HoldingReach`, `IntraModuleReach`, their `…Set` forms, `ForwardCallReach`, `ForwardSameProcessReach`, `ForwardIntraModuleReach`, `ForwardCallReachSet`, `ForwardBoundedCallReach`, `BackwardBoundedCallReach` (reach.dl components).
-- **Meaning.** Each closure over `call_edge` is written once as a component: an analysis instantiates one, seeds it with the few functions it asks about, and reads `reaches`. Backward forms answer which functions reach a seed; forward forms, what a root reaches. The step is the difference: `CallReach` follows every edge; `SameProcessReach` drops `runs_elsewhere` edges, so it is what one process runs; `SameProcessReachCut` also drops edges the instance names (startup's calls after `:proc_lib.init_ack`, mailbox's side paths); `HoldingReach` adds awaited tasks; `IntraModuleReach` stays in one module; the bounded forms stop after a set number of calls.
+- **Names.** `CallReach`, `SameProcessReach`, `SameProcessReachCut`, `HoldingReach`, `IntraModuleReach`, their `…Set` forms, `ForwardCallReach`, `ForwardSameProcessReach`, `ForwardSameProcessReachCut`, `ForwardIntraModuleReach`, `ForwardIntraModuleSameProcessReach`, `ForwardIntraModuleHoldingReach`, `ForwardCallReachSet`, `ForwardBoundedCallReach`, `BackwardBoundedCallReach` (reach.dl components).
+- **Meaning.** Each closure over `call_edge` is written once as a component: an analysis instantiates one, seeds it with the few functions it asks about, and reads `reaches`. Backward forms answer which functions reach a seed; forward forms, what a root reaches. The step is the difference: `CallReach` follows every edge; `SameProcessReach` drops `runs_elsewhere` edges, so it is what one process runs; the `…Cut` forms also drop edges the instance names (every walk about a wait or a mailbox write cuts the side paths, `side_call`, and every walk of init/1's phase the edges after its ack, `acked_edge`); `HoldingReach` adds awaited tasks; `IntraModuleReach` stays in one module; the bounded forms stop after a set number of calls.
 - **Direction.** A question about one process asked with `CallReach` or `IntraModuleReach` attributes spawned work to its starter (loud where the result is a premise, quiet where it is negated).
 - **Used by.** blocking, coupling, effects, ets, failure, mailbox, races, shutdown, startup and unsafe_input.
 
@@ -127,23 +169,23 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### Clause-aware entry
 
-- **Names.** `literal_entry` and `site_clause` (calls.dl), `literal_first` and `clause_of` (global_reach.dl), over the `clause_call` fact.
+- **Names.** `literal_first`, `literal_entry` and `site_clause` (calls.dl), `clause_of` (global_reach.dl), over the `clause_call` fact.
 - **Meaning.** When every call from f to g passes the same literal atom first, the call enters only g's clauses for that atom and the clauses that take any value; `clause_call(site, g, tag)` says which clause a site in g belongs to. `Router.route(:local, n)` therefore does not wait on what the `:remote` clause waits on, though a call graph by function merges the two.
 - **Direction.** A forwarded parameter, a computed value or a tuple enters every clause (loud).
-- **Used by.** blocking (per-site requests) and blocking and startup (global lock reach). Each walk defines the test for itself.
+- **Used by.** blocking (per-site requests) and blocking and startup (global lock reach). `literal_first` is the one test; each walk only says which calls it asks about.
 
 ### Side paths
 
 - **Names.** `side_api`, `side_call` (calls.dl).
 - **Meaning.** `side_call(f, g)` is an edge from a function outside the logging and telemetry APIs (`:logger`, `:error_logger`, Logger, `:telemetry`) into one of them. Their handlers are dispatched by value, so the call graph reaches only the APIs' own machinery, which waits on its own servers and writes to no mailbox of the program's.
-- **Direction.** The waits calls.dl propagates and mailbox's late-message walk do not cross a side path; a handler the program attaches that does wait is not seen from the call site (quiet).
-- **Used by.** calls.dl's dependency words (blocking, coupling, shutdown, startup) and mailbox.
+- **Direction.** No walk about a wait or a mailbox write crosses a side path: calls.dl's dependency words, startup's walks of init/1's stack, mailbox's late-message, timer, monitor, flush and spawned-receive walks, blocking's receive and socket walks, and a handle_call/3 that logs still answers at once; a handler the program attaches that does wait is not seen from the call site (quiet).
+- **Used by.** calls.dl's dependency words (blocking, coupling, shutdown, startup), init_phase.dl and global_reach.dl, blocking, mailbox and startup.
 
 ### A wait on a peer
 
 - **Names.** `sync_dep`, `reaches_sync_dep`, `sync_site`, `genserver_sync_api`, `peer_call`, `unresolved_target`, `async_dep`, `reaches_async_dep`, `sync_dep_timeout`, `reaches_sync_dep_timeout` (calls.dl, resolved_calls.dl).
 - **Meaning.** `sync_dep(f, mod)` holds when f itself waits on mod's process: a synchronous call whose target is mod by name, a call into mod's client API (`genserver_sync_api`), a call points-to resolves to a server of mod, or a call attributed to mod by its message tag. `reaches_sync_dep` carries it back to every caller over edges that stay in the caller's process and are not side paths, and `sync_site` names the instruction. `async_dep` is the one-way counterpart; the timeout forms carry the call's timeout (-1 is :infinity).
-- **Direction.** A target in `unresolved_target` ("dynamic", ":dynamic", "via:…") never becomes a dependency (quiet). `reaches_async_dep` does not cut `runs_elsewhere`, so a cast a spawned closure makes is its starter's (loud).
+- **Direction.** A target in `unresolved_target` ("dynamic", ":dynamic", "via:…") never becomes a dependency (quiet). Every propagation cuts `runs_elsewhere`: a call or cast a spawned closure makes is its own process's.
 - **Used by.** blocking, coupling, shutdown and startup; blocking and startup also include resolved_calls.dl, whose self-directed rows extend `sync_dep`.
 
 ### Message-tag attribution
@@ -169,15 +211,15 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### The startup phase
 
-- **Names.** `is_init`, `init_dep`, `continue_dep`, `handler_dep`, `deferral_path`, `unconditional_call_edge` (vocabulary.dl, entries.dl, clientlib/deferral.dl, stage0.dl).
-- **Meaning.** init/1 of a process module runs inside its supervisor's start, so what it waits on holds the whole start. `init_dep(mod, to, kind, w)` is init/1 reaching a synchronous ("call") or one-way ("cast") dependency, with no filter for mod's own module; `continue_dep` is a handle_continue init/1 continues to that waits on another module; `handler_dep` is a request handler's wait ("tag" when only attribution makes it). `deferral_path(mod, kind)` names a module's ways to try again later: a timer, a message to itself, a handle_continue, a gen_statem timeout. `unconditional_call_edge` answers whether a dependency holds on every path through init/1.
-- **Direction.** The phase ends at init/1's return: code after `:proc_lib.init_ack` is cut only in startup's own receive walk, so the lock and rpc walks still count it as init's (loud).
+- **Names.** `is_init`, `init_dep`, `continue_dep`, `handler_dep`, `acked_edge`, `acks_in_init`, `before_ack`, `rpc_during_init`, `deferral_path`, `unconditional_call_edge` (vocabulary.dl, entries.dl, init_phase.dl, clientlib/deferral.dl, stage0.dl).
+- **Meaning.** init/1 of a process module runs inside its supervisor's start, so what it waits on holds the whole start. `init_dep(mod, to, kind, w)` is init/1 reaching a synchronous ("call") or one-way ("cast") dependency, with no filter for mod's own module; `continue_dep` is a handle_continue init/1 continues to that waits on another module; `handler_dep` is a request handler's wait ("tag" when only attribution makes it). `deferral_path(mod, kind)` names a module's ways to try again later: a timer, a message to itself, a handle_continue, a gen_statem timeout. `unconditional_call_edge` answers whether a dependency holds on every path through init/1. The phase ends where init/1 acknowledges its start: `acked_edge(f, g)` is an edge taken only after f's own `:proc_lib.init_ack` (or into an enter_loop, which is the server from then on), `acks_in_init` the few inits whose stack reaches one, and `before_ack` what such an init runs before it; every walk of the phase — `init_dep`, `global_path`, `rpc_during_init` (the one rpc walk startup and blocking share, so a site is init's finding or blocking's, never both), startup's supervisor, socket, receive, connect and trap walks — stops there.
+- **Direction.** An ack made in a helper init/1 calls, rather than on the edge's own function, is not seen: the phase runs on (loud).
 - **Used by.** startup and blocking.
 
 ### Global lock reach
 
 - **Names.** `global_path`, `retrying_lock`, `lock_until_granted`, `bounded_lock` (global_reach.dl, vocabulary.dl).
-- **Meaning.** `global_path(f, call, site)` holds when the `:global` operation at site runs while f waits on it: on f's stack, over edges that stay in f's process and enter only the clauses a literal first argument matches, or in a task f awaits; `call` is f's own call that starts the path. `lock_until_granted` is a lock or transaction whose retries are :infinity or not shown (then assumed :infinity, a forwarding wrapper's usual default), `bounded_lock` one that gives up after a positive count, and `retrying_lock` either.
+- **Meaning.** `global_path(f, call, site)` holds when the `:global` operation at site runs while f waits on it: on f's stack, over edges that stay in f's process and enter only the clauses a literal first argument matches, or in a task f awaits; `call` is f's own call that starts the path. It crosses no side path and, from an init/1, no edge after its ack. `lock_until_granted` is a lock or transaction whose retries are :infinity or not shown (then assumed :infinity, a forwarding wrapper's usual default), `bounded_lock` one that gives up after a positive count, and `retrying_lock` either.
 - **Direction.** An unknown retry count or node list is assumed the worst (loud); the one walk keeps a lock init's finding or blocking's, never both and never neither.
 - **Used by.** blocking and startup.
 
@@ -197,10 +239,31 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### Runs concurrently
 
-- **Names.** `RunsConcurrently` (`entry_reaches`, `many_instances`, `single_process`, `runs_apart_from`), `open_entry`, `called_by_other_module` (concurrency.dl).
-- **Meaning.** Seeded with the functions a rule asks about, the component walks back in one process to the entries that run each: a process module's entries, Application.start/2, and each spawn, task or agent start as an entry of its own. A seed runs in more than one process when two entries reach it, when a request entry does, or when its entry has many instances (a module with a request entry, a DynamicSupervisor child, a start reached from a request or a message handler, in a closure or in a recursive function); otherwise it is `single_process`. `open_entry` is an exported function nothing in the program calls, in a module no other module calls into: a caller outside the program runs it.
+- **Names.** `RunsConcurrently` (`entry_reaches`, `many_instances`, `single_process`, `runs_apart_from`) (concurrency.dl).
+- **Meaning.** Seeded with the functions a rule asks about, the component walks back in one process to the entries that run each: a process module's entries, Application.start/2, and each spawn, task or agent start as an entry of its own. A seed runs in more than one process when two entries reach it, when a request entry does, or when its entry has many instances (a module with a request entry, a DynamicSupervisor child, a start reached from a request or a message handler, in a closure or in a recursive function); otherwise it is `single_process`. An outside caller is asked of `open_entry` (ways_in.dl).
 - **Direction.** A function no entry reaches is neither single nor concurrent; races then asks `runs_apart_from` whether another entry or an outside caller can run the other side.
 - **Used by.** races.
+
+### Ways in from outside the program
+
+- **Names.** `api_export`, `library_face`, `open_entry`, `called_by_other_module` (ways_in.dl).
+- **Meaning.** `api_export(f)` is an exported function a caller outside the program may call: every export but a macro (`MACRO-…`, which the compiler calls), `module_info` and the `__name__` reflection functions a `use` defines for its library. `library_face(f)` is such an export of a module no other module of the program calls into; `open_entry(f)` a library face nothing in the program calls.
+- **Direction.** A function the program also calls stays its users' API (loud for an export). A module another module calls is taken as having its callers in view, so an export of it none of them calls is unused, not a way in (quiet).
+- **Used by.** failure (exposed roots), mailbox (a collection's caller), races (outside tables, escaping decisions, open key sources, unguarded callers) and unsafe_input (caller input, export reach).
+
+### Code the program did not write
+
+- **Names.** `library_written`, `program_module` (generated.dl), over the `macro_written` and `macro_generated` facts.
+- **Meaning.** `macro_written(f)`: a macro wrote every clause of f (or marked it `generated: true`). `macro_generated(f, by)`: the definition's metadata, which is its first clause's, names `by`'s macro, so a function whose first clause a `use` put ahead of the module's own is named too; it is read for `by` only. `library_written(f)`: every clause written by the macro of a module outside the program, whose finding would point at a `use` line.
+- **Direction.** A function the program's own macro wrote is the program's (loud); a library analyzed with the program is the program.
+- **Used by.** mailbox (every partial_handler source; unhandled_info's GenServer default) and failure (a belief counts no call a macro wrote).
+
+### Who holds ETS state
+
+- **Names.** `table_held`, `owner_reaches` (ets.dl); `table_owner`, `in_owner`, `seeded_row` (failure.dl); `held_table`, `held_row` (races.dl).
+- **Meaning.** Three words, apart on purpose. `table_held(name, mod, site)`: mod's process runs the `:ets.new` at site on its own stack, in mod's code or, for a named table, in a helper's; the table dies with that process. failure's `table_owner`: the table is made on every path through init/1 and never dropped, so while the process runs it is there, and `in_owner` is a function only that process runs. races' `held_row`: a row whose key only the writer that minted it can name.
+- **Direction.** `table_held` reports (a crash takes the table), so it takes any path; `table_owner` quiets (an operation cannot fail), so it asks every path. An unnamed table another module makes is a value it hands back, the caller's data, and not held (quiet).
+- **Used by.** ets, failure and races, each its own.
 
 ### Test code
 
@@ -218,10 +281,10 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### Receives and mailbox handlers
 
-- **Names.** `receives`, `timed_receive`, `blocking_receive`, `receives_message`, `mailbox_handler`, `partial_handle_info`, `trap_exit_without_exit_clause`, `module_demonitors` (receive.dl, process_kind.dl).
-- **Meaning.** receive.dl names the receive questions so the encoding of `recv_start` stays in one place: any receive in a function, one with an `after`, one without. `mailbox_handler(mod)` takes arbitrary messages (a handle_info/2, or a gen_statem's handle_event/4); `partial_handle_info(mod, h)` is a handle_info/2 with no catch-all, where a message no clause matches is a FunctionClauseError; `trap_exit_without_exit_clause` traps exits and has a partial handle_info/2 with no `{:EXIT, …}` clause.
+- **Names.** `receives`, `timed_receive`, `blocking_receive`, `receives_message`, `down_bounded`, `exit_pinned`, `links_in`, `mailbox_handler`, `partial_handle_info`, `trap_exit_without_exit_clause`, `module_demonitors` (receive.dl, process_kind.dl).
+- **Meaning.** receive.dl names the receive questions so the encoding of `recv_start` stays in one place: any receive in a function, one with an `after`, one without. A wait its peer ends is one word: `down_bounded(recv)` is a receive with no `after` that pins a monitor's `:DOWN` (of a monitor its own function took, or of a ref from anywhere, unless some path from the function's entry reaches it past a demonitor), and `exit_pinned(recv, f)` one that pins an `:EXIT`, bounded when f's process traps exits and f links to the process (`links_in`): the wait cannot outlast the process it waits on. `mailbox_handler(mod)` takes arbitrary messages (a handle_info/2, or a gen_statem's handle_event/4); `partial_handle_info(mod, h)` is a handle_info/2 with no catch-all, where a message no clause matches is a FunctionClauseError; `trap_exit_without_exit_clause` traps exits and has a partial handle_info/2 with no `{:EXIT, …}` clause.
 - **Direction.** Receive shapes are per function, not per receive; rules that anchor at one receive read `recv_start` directly.
-- **Used by.** effects and mailbox (receive.dl), mailbox and shutdown (process_kind.dl).
+- **Used by.** effects and mailbox (receive.dl), blocking and startup (`down_bounded`, `exit_pinned`), mailbox and shutdown (process_kind.dl).
 
 ### A late-message source
 
@@ -232,24 +295,24 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### Timer flush
 
-- **Names.** `flush_receive` (timer_flush.dl).
-- **Meaning.** `flush_receive(recv)` is a receive in a function that cancels a timer, where the receive can take the timer's message: a clause for a literal the module's timers carry, for `:timeout`, or for anything. cancel_timer returning false means the message is already in the mailbox, so the receive matches at once.
+- **Names.** `flush_receive`, `armed_literal`, `timer_message` (timer_flush.dl).
+- **Meaning.** `flush_receive(recv)` is a receive in a function that cancels a timer, where the receive can take the timer's message: a clause for a literal the module's timers carry, for `:timeout`, or for anything. cancel_timer returning false means the message is already in the mailbox, so the receive matches at once. `armed_literal(site, f, target, message)` is a timer's literal message, spelled at the arm or passed through a parameter, and `timer_message` its module-level projection.
 - **Direction.** When the module arms no timer the program can see, or one whose message is not a known literal, the receive may be the flush and is suppressed (quiet).
-- **Used by.** blocking (a receive in a callback) and startup (a receive during init). mailbox asks the mirror question, whether a cancel has a flush, with a local rule.
+- **Used by.** blocking (a receive in a callback) and startup (a receive during init); mailbox reads `armed_literal` for the messages its timers arm, and asks the mirror question, whether a cancel has a flush, with a local rule.
 
 ### What a try takes
 
 - **Names.** `catches_class`, `site_catches_class`, `try_takes`, `covered_by_catch`, `rescues_argument_error`, `site_rescues_argument_error` (exceptions.dl).
 - **Meaning.** One question at three granularities: does anything in f catch class c, does this try take c (a path through its handler establishes the class and returns without raising again), and is this call inside the protected region of a try that takes c (Erlang's `catch Expr` takes every class). The ArgumentError pair asks the same of the badarg a BIF raises on a missing table or a taken name.
 - **Direction.** The function-level forms count a handler around unrelated code (quiet); the site forms are the precise ones.
-- **Used by.** blocking, ets, failure, races and shutdown.
+- **Used by.** blocking, ets, failure, races and shutdown. ets, failure and races ask the site forms of a read or an act that raises.
 
 ### Effect categories
 
-- **Names.** `durable_effect`, `slow_effect`, `structural_call`, `config_writer`, `config_write_api`, `removal_api` (clientlib/effect_model.dl).
-- **Meaning.** The effect model classifies each call by category and mode (`impure_call`). `durable_effect` is a category that leaves the process and cannot be taken back (io, network, process, ets, port, node; logging is not io); `slow_effect` one with no bound of its own (network, port); `structural_call` an unknown call into Kernel, Access, Enum, Map, Keyword, `:lists` or `:maps`, which builds data. `config_writer` writes state other processes read (persistent_term, ETS inserts, application env); `removal_api` removes an entry from a map, set, list or ETS table.
+- **Names.** `durable_effect`, `slow_effect`, `structural_call`, `config_writer`, `config_write_api`, `removal_api`, `sends_message`, `ets_removal_op`, `ets_removes_every_key`, `ets_answers_missing_table`, `ets_raises_without_row` (clientlib/effect_model.dl).
+- **Meaning.** The effect model classifies each call by category and mode (`impure_call`). `durable_effect` is a category that leaves the process and cannot be taken back (io, network, process, ets, port, node; logging is not io); `slow_effect` one with no bound of its own (network, port); `structural_call` an unknown call into Kernel, Access, Enum, Map, Keyword, `:lists` or `:maps`, which builds data. `config_writer` writes state other processes read (persistent_term, ETS inserts, application env); `removal_api` removes an entry from a map, set, list or ETS table; `sends_message(site, f)` is a send in any spelling (`send_msg`, `:erlang.send`, `Process.send`). The ETS operations are named by what they do to rows: `ets_removal_op` removes rows (delete, take, delete_object, match_delete, select_delete, delete_all_objects), `ets_removes_every_key` the ones not known by a key, `ets_answers_missing_table` answers where the rest raise when the table is gone (info, whereis), and `ets_raises_without_row` raises when the key has no row (lookup_element/3, update_counter/3).
 - **Direction.** Reads never count as effects worth keeping, so a missed write in an unclassified call is quiet.
-- **Used by.** effects and shutdown (durable), shutdown (slow, structural), startup (config), mailbox (removal).
+- **Used by.** effects and shutdown (durable), shutdown (slow, structural), startup (config), mailbox (removal), races (sends, and the ETS words with ets and failure).
 
 ### A sink
 
@@ -267,17 +330,17 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### Check-then-act
 
-- **Names.** `CheckThenAct` (`check`, `act`, `meets`) (check_then_act.dl).
-- **Meaning.** An instance supplies checks (reads of shared state) and acts (writes of it), each naming a resource and a key in its own function's terms: a literal, a parameter, an element of one, a field, a local, a dynamic value or `any`. `meets(f, check, act, …)` holds where the check's result decides or feeds the act, in f or through the calls f makes, and both touch the same resource and key; an act that merely follows a read is not one.
+- **Names.** `CheckThenAct` (`check`, `act`, `meets`), `OnePerWrite`, `MadeOfRead` (check_then_act.dl).
+- **Meaning.** An instance supplies checks (reads of shared state) and acts (writes of it), each naming a resource and a key in its own function's terms: a literal, a parameter, an element of one, a field, a local, a dynamic value or `any`. `meets(f, check, act, …)` holds where the check's result decides or feeds the act, in f or through the calls f makes, and both touch the same resource and key; an act that merely follows a read is not one. `OnePerWrite` keeps one finding per write: the pair of the highest-ranked kind, its other reads related frames. `MadeOfRead` says a write stores what a read of the same store returned, by data alone (`site_reads`, `call_arg_reads`, `returns_reads`), through helpers that return a read and parameters any chain of callers fills; a value a read decided and did not make is not made of it.
 - **Direction.** Identities cross a call when the caller renames them (a parameter, an element), when they name the same thing everywhere (a literal, a named table, an `:ets.new` site), or within a module for a table it keeps under a field. A map field, a local, a dynamic value, a closure's environment and an unknown higher-order call do not cross, and the pair goes quiet.
-- **Used by.** races (registered names, ETS rows, missing rows, Mnesia records).
+- **Used by.** races (registered names, ETS rows, missing rows, Mnesia records; `OnePerWrite` and `MadeOfRead` for ETS and Mnesia alike).
 
 ### Closures and their owners
 
-- **Names.** `enclosing_function`, `sole_closure` (closures.dl).
-- **Meaning.** `enclosing_function(f, owner)` walks closure ownership to the top: a closure built inside a closure belongs to the function two levels up, and a function owns itself. `sole_closure(f, c)` is the one closure f builds, which stands in for the dataflow that would pair a closure with the call it is handed to.
-- **Direction.** With more than one closure, `sole_closure` says nothing (quiet).
-- **Used by.** ets, failure and mailbox (`enclosing_function`), effects (`sole_closure`).
+- **Names.** `enclosing_function`, `handed_closure`, `sole_closure` (closures.dl).
+- **Meaning.** `enclosing_function(f, owner)` walks closure ownership to the top: a closure built inside a closure belongs to the function two levels up, and a function owns itself. `handed_closure(site, f, c)` is the closure the call at site runs: the one the emitter saw handed to it (`fun_handed`), or, where no closure is handed at the site, f's only closure (`sole_closure`).
+- **Direction.** With more than one closure and none seen handed, it says nothing (quiet).
+- **Used by.** ets, failure and mailbox (`enclosing_function`), effects (`handed_closure`).
 
 ### A spec's claim
 
@@ -3105,8 +3168,11 @@ Parked or left:
 
 Found while writing this catalog (each concern drafted from its rules,
 builders, tests and history, then read against the others) and in a
-review of the 2026-09-25 precision commits. A later round fixes them;
-the few fixed in the round that wrote the catalog say so. Paths are
+review of the 2026-09-25 precision commits. The consistency round that
+followed (2026-09-25, CHANGELOG 0.20.0-dev "One word per concept") took
+each item: **Resolved** says what the one definition is now and who
+reads it; **Justified** says why two definitions stay apart, and where
+the reason is written; **Left** says what remains and why. Paths are
 under `priv/dl/` unless they say otherwise.
 
 ### One concept, several definitions
@@ -3119,22 +3185,48 @@ under `priv/dl/` unless they say otherwise.
    `callback_reaches` (one hop) and mailbox's `runs_in_server` are two
    more readings of the same idea; mailbox reads both `server_side` and
    `runs_in_server`.
+   *Resolved.* One root set, `process_entry`, and three readings in
+   clientlib/process_kind.dl: `server_side` (the module's own code on
+   its server's stack, cutting `runs_elsewhere`), `RunsInServer` (any
+   module's code on it; mailbox's timers, monitors and sockets, was
+   `runs_in_server`) and `server_caused` (what the entries make happen
+   in the module in any process; shutdown's kill side, was
+   `server_code`). blocking's receive in a callback starts at every
+   process entry of a loop, a gen_statem's state functions included, and
+   its `answer_reach` holds tasks it awaits but not what runs apart.
+   *Left:* the callback walk stays one call deep, since two calls down a
+   callback that calls a peer reaches gen's own timed receive.
 2. **A wait bounded by its peer (L13).** startup's `bounded_receive` is
    `recv_down` ∪ `recv_signal` ∪ `flush_receive`; blocking's
    `receive_in_callback` reads `recv_down` alone (kind `down`) and
    reports a receive that pins a linked process's `:EXIT` as unbounded;
    mailbox's `waited_out` reads `recv_down` alone. One clientlib word in
    receive.dl would serve all three.
+   *Resolved.* `down_bounded`, `exit_pinned` and `links_in` in
+   receive.dl, read by startup's init waits and blocking's receives in
+   callbacks; `recv_signal`'s "down" rows leave out a `:DOWN` some path
+   reaches past a demonitor. *Justified:* mailbox's `waited_out` still
+   asks `recv_down` alone: whether a wait consumes that very monitor, a
+   narrower question.
 3. **The end of the init/1 phase (L12).** The cut at
    `:proc_lib.init_ack` (`start_acked`) applies only to startup's receive
    walk; `global_path`, startup's `rpc_reach` and connect and recv walks,
    blocking's `during_init` and `init_dep` all count code after the ack
    as init's.
+   *Resolved.* clientlib/init_phase.dl: `acked_edge`, `acks_in_init`,
+   `before_ack`; `init_dep`, `global_path`, `rpc_during_init` and
+   startup's supervisor, socket, receive, connect and trap walks all
+   stop at the ack.
 4. **Side paths (L2).** `side_call` cuts calls.dl's dependency words and
    mailbox's `mailbox_reach`, but not startup's walks, mailbox's
    `info_reach` and `timed_wait`, or blocking's `answers_straight_away`
    and `fun_waits`, where a server that logs is never one that answers
    at once.
+   *Resolved.* Every walk about a wait or a mailbox write cuts
+   `side_call`: startup's init/1 walks, mailbox's timer, monitor, flush
+   and spawned-receive walks, blocking's receive and socket walks, and a
+   handle_call/3 that logs answers at once (`answers_in_time` vouches
+   for `side_api`).
 5. **Generated code (L3).** `macro_generated` (the first clause's
    metadata) and `macro_written` (every clause another module's macro
    wrote) are two words; only `late_message` reads `macro_written`.
@@ -3142,6 +3234,20 @@ under `priv/dl/` unless they say otherwise.
    coupling's `dual_restart_authority`, failure's rescue and orphan
    rules and every shutdown rule judge a handler a library wrote as the
    program's own.
+   *Resolved.* clientlib/generated.dl: `library_written` over
+   `macro_written` (every clause), with `macro_generated` read only for
+   the macro's module. mailbox's every partial_handler source steps
+   aside for a library's handler; unhandled_info's GenServer default and
+   failure's program calls read `macro_written`, so a clause a `use` put
+   first no longer makes the module's own handler a macro's.
+   *Justified:* shutdown's rules, coupling's `dual_restart_authority`
+   and failure's rescue and orphan rules judge the module's process (its
+   trap flag, its tree, its supervisor), which a `use` that writes a
+   callback leaves to the module; over the evaluation programs,
+   ejabberd, rabbitmq and emqx no finding of theirs is anchored in
+   library-written code (the only ones there are exposure's
+   `__schema__/1` anchor, refined to the field by design, and a fan-in
+   anchor).
 6. **A way in from outside the program.** Five spellings:
    concurrency.dl's `open_entry` (exported, uncalled, module called by
    no other module), unsafe_input's `outside_api` (exported, uncalled,
@@ -3149,94 +3255,183 @@ under `priv/dl/` unless they say otherwise.
    `table_from_outside` and `open_source`, failure's `exposed` roots
    (every export), and test_code.dl's `runs_outside_tests` roots. They
    disagree on whether an internal caller or a callback disqualifies.
+   *Resolved.* clientlib/ways_in.dl: `api_export`, `library_face`,
+   `open_entry`; failure's exposed roots, mailbox's collection check,
+   races' outside tables, escaping decisions, open key sources and
+   unguarded callers, and unsafe_input's caller input and export reach
+   read them. *Justified:* test_code.dl's `runs_outside_tests` roots at
+   every non-test function nothing calls, a different question (what the
+   program runs outside its tests, callbacks included).
 7. **Made of the read.** mnesia's check-then-act asks `returns_reads`
    (what a function returns by data alone); the ETS rules' `carries_read`
    asks `returns_depends`, which also counts a return decided by the read.
+   *Resolved.* `MadeOfRead` (check_then_act.dl), by data alone, for ETS
+   and Mnesia; a delete whose decision sends is not harmless
+   (`decision_sends`), which the loose write-back had hidden (ejabberd's
+   `check_captcha/2`, `CheckThenAct.CaptchaCheck`).
 8. **Who owns a table.** failure's `table_owner`/`in_owner`/`seeded_row`,
    ets.dl's `ets_owner_process` (any behaviour, module-level) and
    `owner_reaches` (`CallReach` from `process_entry`), races'
    `held_table`/`held_row`, and concurrency.dl's `entry_reaches` answer
    it four ways.
+   *Resolved.* ets.dl's owner is process-level (`table_held` over
+   `owner_reaches`, a `SameProcessReach`), with a helper's named table
+   held by the process that runs it. *Justified:* failure's
+   `table_owner` (made on every path through init/1, never dropped: the
+   quiet direction) and races' `held_row` (row ownership by minted key)
+   are other questions; the vocabulary's "Who holds ETS state" and
+   ets.dl say why. concurrency.dl's `entry_reaches` is which process
+   runs a function, not ownership.
 9. **The ranking of a check-then-act's reads and writes** is written
    twice, for ETS and for Mnesia, in races.dl.
+   *Resolved.* `OnePerWrite` (check_then_act.dl), instantiated for ETS
+   and Mnesia.
 10. **A table no view names.** races names a table a caller hands in by
     its parameter (`param N`); failure drops a site with no known target;
     ets.dl joins on the `:ets.new/2` atom with `name != "dynamic"` and
     does not use tables.dl's identities at all, so two unnamed tables
     made with one atom are one table there.
+    *Justified.* Each view errs quiet for its own question: races names a
+    caller's table by its parameter because a pair needs a key to meet
+    on; failure drops a site with no known target because a belief pooled
+    across unknown targets judged unrelated tables (364e74b). ets.dl's
+    ownership rules now report one finding per `:ets.new` site. *Left:*
+    ets.dl's concurrency hints and grow-only rule still join unnamed
+    tables made with one atom as one table; moving them onto tables.dl's
+    identities (the points-to identities races reads) is a rewrite of
+    those rules.
 11. **Removing an ETS row.** Five lists with different members:
     clientlib `removal_api` (effects.dl, no `delete_all_objects`), ets.dl
     `ets_removal_op`, races' `removal` (no `match_delete`) and
     `removes_rows`, failure's `removes_row`. The ETS extractor classifies
     `match_delete` as `unknown`, so only the name-matching lists see it.
+    *Resolved.* `ets_removal_op` and `ets_removes_every_key`
+    (clientlib/effect_model.dl), read by races, ets, failure and
+    `removal_api`; the ETS extractor classifies `match_delete` as a
+    write.
 12. **An ETS operation that raises.** races' `raises_if_missing` (a
     missing row), ets.dl's `raising_read` and failure's
     `fails_on_missing_table` (a missing table).
+    *Resolved.* `ets_raises_without_row` and `ets_answers_missing_table`
+    (effect_model.dl). *Justified:* failure keeps
+    `fails_on_missing_table`, stricter on purpose (a select's or a
+    match's spec can raise on its own), and says so.
 13. **A table another process can touch.** Three readings in races.dl
     alone: vocabulary.dl's `public_table` (explicitly `:public`, by name;
     ets_check_act), `readable_elsewhere` (not private, by identity;
     publish order), `shared_table` (also any named table out of view;
     missing row). The three ETS race rules disagree about one table.
+    *Justified.* Three questions: `public_table` (another process can
+    write the row: an act of ets_check_act is another writer's, so
+    `:public`), `readable_elsewhere` (another process can read it:
+    publish order's reader only reads) and `shared_table` (a row may go
+    missing: the owner of a protected table removes rows under its
+    readers, and a named table made out of view is assumed shared, loud,
+    because the act raises in whichever process runs it). races.dl says
+    which it asks where.
 14. **Callback names.** callbacks.dl's `callback_name`, unsafe_input's
     `runtime_callback`/`process_callback` (adds `code_change/3`,
     `format_status/1,2`, `process_name/2`; lacks `handle_event`, `mount`,
     GenStage's), and blocking's `process_code` (adds a Channel's
     `join/3`, which `process_entry` therefore misses everywhere else).
+    *Resolved.* One table in callbacks.dl: `callback_name` (with
+    `code_change` and `format_status`), `behaviour_callback` (a Channel's
+    join/3 and handle_out/3, a LiveView's handle_async/3),
+    `message_callback`, and `unlisted_server`; blocking's `process_code`
+    and unsafe_input's `runtime_callback` read it.
 15. **The handler that answers a call.** callbacks.dl's
     `handle_call_function` (GenServer only), mailbox's `answers_calls`
     (GenStage too), calls.dl's `tag_handler`, resolved_calls.dl and
     processes.dl each decide it; they disagree on GenStage and on
     whether a behaviour is required.
+    *Resolved.* `handle_call_function`, `handle_cast_function`,
+    `handler_function` over `gen_server_like` (GenServer, its wrappers,
+    GenStage, an unlisted server with handle_call/3), read by
+    callbacks.dl, replies.dl, calls.dl's tag attribution and
+    resolved_calls.dl.
 16. **A literal first argument and the clause it enters.** calls.dl's
     `literal_entry`/`site_clause` and global_reach.dl's
     `literal_first`/`clause_of` are one test written twice.
+    *Resolved.* `literal_first` is defined once, in calls.dl;
+    global_reach.dl reads it.
 17. **A literal a caller passes a parameter.** calls.dl's
     `resolved_arg`, tables.dl's `name_at_param`, races'
     `table_at_param` and `table_at_record`, startup's
     `infinite_recv_param`, and this round's mailbox `socket_opts_at` and
     blocking `socket_infinity_at` are the same demand-driven fixpoint,
     typed apart (number positions in some, symbols in others).
+    *Left.* One demand-driven fixpoint would serve all six, but they
+    differ in the position's type (number or symbol) and in what they
+    accept (an atom, any literal, a record's field, an option list); a
+    component generic over both is a refactor that moves no finding, not
+    done in this round.
 18. **An rpc on init's stack.** blocking's `init_reach` and startup's
     `rpc_reach` are two `SameProcessReach` instances with one seed; the
     "init's finding or blocking's, never both" split depends on them
     staying identical. The lock half was lifted into global_reach.dl for
     that reason and the rpc half was not.
+    *Resolved.* `rpc_during_init` in init_phase.dl, read by startup and
+    blocking.
 19. **A process that traps exits** is a module-level projection of
     `trap_exit` in shutdown (`traps_exits`), mailbox
     (`receives_runtime_messages`, `yield_linked`) and process.dl
     (`trap_exit_without_exit_clause`); a flag set in a client function or
     a spawned closure counts as the server's (L1).
+    *Resolved.* `module_traps` is a trap on the process's own stack
+    (mining round 2); mailbox's `yield_linked` asks whether the process
+    the yielding function runs in traps (`runs_trapping`), not its
+    module.
 20. **The Task API.** mailbox's `task_async_call`/`task_await_call`/
     `task_factory` and runs_elsewhere.dl's `async_start`/`task_wait`/
     `awaits_task` disagree on `async_nolink` and `Task.shutdown`.
+    *Resolved.* `task_start_api`, `task_wait`, `task_collect` in
+    runs_elsewhere.dl, read by mailbox and `awaits_task`.
 21. **A timer's message and its flush.** mailbox's `armed_message` and
     `local_message` restate timer_flush.dl's `timer_message` and
     `flush_receive`; mailbox does not include timer_flush.dl.
+    *Resolved.* `armed_literal` and `timer_message` in timer_flush.dl;
+    mailbox includes it.
 22. **The closure a call runs.** effects pairs a transaction or pure
     call with `sole_closure` (the one closure a function builds), where
     `fun_handed`/`fun_handed_to` have named the call a fun is handed to
     since e27eb7e.
+    *Resolved.* `handed_closure` (closures.dl), over `fun_handed`, with
+    `sole_closure` as its fallback only where no closure is handed at the
+    site.
 23. **Guarded by the callers.** failure's
     `guarded_site`/`guarded_by_callers`, races' `unguarded_path`/
     `called_unguarded` and ets.dl's function-wide `guarded` answer the
     same question at different granularities; ets_missing_row moved to
     site-level rescues (9406a24) for the false negative the
     function-wide form causes.
+    *Resolved.* ets.dl's read outside its owner asks the read's own site
+    (`read_rescued`), as races' missing row does. *Left:* failure's
+    `guarded_by_callers` walks every way in (`ForwardUnguardedSet`) where
+    races' `called_unguarded` looks one call up; lifting races onto the
+    walk is a change of its findings not made in this round.
 24. **A server that answers at once, or whose handler can block.**
     blocking's `answers_straight_away`/`call_waits` and startup's
     `handler_blocks`/`infinite_call_reach` are two definitions.
+    *Justified.* Duals that differ on purpose, both documented: startup's
+    `handler_blocks` reports and holds only of a wait with no bound;
+    blocking's `answers_straight_away` suppresses and holds only of an
+    answer that comes at once. `handler_blocks` now reads every
+    synchronous API (`sync_call_site`), not `GenServer.call` alone.
 25. **An unknown `:global` retry count (L16).** blocking drops it
     (`retrying_lock`), startup assumes `:infinity` (`lock_until_granted`);
     a positive count over `[node()]` is quiet in startup and "Local
     :global lock without a retry bound" in blocking.
+    *Resolved.* blocking reads `lock_until_granted` and `bounded_lock` on
+    startup's terms.
 26. **A one-way wait across a start.** calls.dl's `reaches_async_dep`
     does not cut `runs_elsewhere`, unlike its synchronous siblings, so a
     cast in a task init/1 starts is init/1's.
+    *Resolved.* `reaches_async_dep` cuts `runs_elsewhere`.
 27. **A gen_statem catch-all.** The event-clause walk counted a clause
     only if it tested nothing but the event type, where CallbackTag's
     `callback_total` takes a GenServer catch-all "whatever it demands of
     the state". Fixed in this round (391ecc6): the data, and
-    handle_event/4's state, may be tested.
+    handle_event/4's state, may be tested. *Resolved* (round 1).
 
 ### A lesson applied in one analysis and not its siblings
 
@@ -3255,7 +3450,14 @@ interaction rather than reach (L17).
   module co-occurrence; rest_for_one_orphaned_children takes any
   function of the owner's module; coupling's `stateful_module_dep`
   keeps its inferred module-level clause (graded, but reported at full
-  severity with priors off).
+  severity with priors off). *Resolved* for ets: a table's owner is the
+  process that runs its `:ets.new` (`table_held`), and mailbox's
+  `self_call` kind is `unhandled_call`, a different defect named apart
+  from clientlib's `self_call`. *Left:* duplicate_process_name,
+  kills_monitored_child, rest_for_one_orphaned_children and coupling's
+  inferred clause keep their module-level identities; each needs points-to
+  on a relation it does not read yet (a registration's process, a kill's
+  target, a start_child's caller).
 - **L5.** A later-sibling call from init/1 is two startup findings (the
   `:info` unknown-place note beside the deadlock); an rpc with no
   timeout in a callback is two blocking findings; a mutual
@@ -3267,30 +3469,44 @@ interaction rather than reach (L17).
   ordered_set two modules write is n(n−1)/2 findings; an async_nolink
   handler gets both the `task_nolink` warning and the late-message note;
   registry_race's key merges a start row and an unregister row.
+  *Resolved:* the later-sibling call is one finding (`later_sibling_call`),
+  and a helper's table several processes may make is one finding per
+  `:ets.new` site. *Left:* the others; each is a choice of which of two
+  titled findings owns a shape, weighed per concern.
 - **L6.** effects' `body_reach`, mailbox's `yield_linked` and
   `linked_in_library`, shutdown's `terminate_reach` and handler-stop
   walk, unsafe_input's request reach, startup's `config_reach` and
   ets.dl's `owner_reaches` follow edges into funs that run elsewhere;
   foreign_dynamic_children counts a linked `Task.Supervisor.async`.
+  *Resolved:* ets.dl's owner reach is a `SameProcessReach`, and every
+  walk this round unified (init/1's phase, the server's own code, the
+  async dependency) cuts `runs_elsewhere`. *Left:* effects' `body_reach`,
+  mailbox's `linked_in_library`, shutdown's walks, unsafe_input's request
+  reach and startup's `config_reach`, where following the spawned fun is
+  the question asked (a transaction body's effects, a request's data, a
+  terminate's work) or its fix changes findings not measured here.
 - **L7.** Only mailbox reads test_code.dl, and by its own header only to
   choose among sites. Populations (failure's beliefs, fan-in,
-  duplicate_process_name) count test support modules.
+  duplicate_process_name) count test support modules. *Left:* no
+  population rule here reads test_code.dl yet.
 - **L9.** blocking's budget, cast and `:infinity` rules, startup's
   `continue_dep` and `handler_blocks`, check_then_act.dl's `acts_if`,
   effects' purity walks and mailbox's source walks are function-granular.
+  *Left:* clause-aware entry (`literal_first`, now one definition) reaches
+  these walks only through a site-level request, which they do not make.
 - **L11.** ets_missing_row and ets_publish_order ask `entry_reaches`
   directly, not `runs_apart_from`; the ETS concurrency hints ask for two
-  modules, not two processes.
+  modules, not two processes. *Left.*
 - **L14.** Only ets_check_act lifts an accessor's operation to its
   callers; ets_missing_row, mnesia_check_act and registry_race still meet
-  through one-line helpers.
+  through one-line helpers. *Left.*
 - **L16.** Unresolved `:ets.new/2` options leave no `ets_option` rows, so
   heir, named_table and the concurrency options look absent and four ETS
   rules fire (loud); terminal_without_stop reports extraction gaps as
-  terminal states.
+  terminal states. *Left.*
 - **L17.** mailbox's `outlives_its_wait` accepts any timed receive in the
   function, not a wait on the monitor; failure's `exit_reach` is
-  unbounded and value-insensitive.
+  unbounded and value-insensitive. *Left.*
 
 ### Naming drift
 
@@ -3298,53 +3514,81 @@ interaction rather than reach (L17).
   site column `id`, `site`, `call`, `recv` or `anchor`, first or last;
   the kind column `api_kind`, `kind`, `signal` or `how`. callbacks.dl
   orders (module, function) in half its words and (function, module) in
-  the other half.
+  the other half. *Left:* renaming output columns changes every
+  consumer's row shape; the vocabulary names each word's columns.
 - `self_call` is two defects: mailbox's `reply_defect` kind (a call to
   the module's own server with a tag it has no clause for, usually from
   another process) and clientlib's `self_call` (a call provably to the
-  calling process, blocking's `call_cycle` "self").
+  calling process, blocking's `call_cycle` "self"). *Resolved:* the
+  kinds are `unhandled_call` and `unhandled_cast`.
 - `source` means who writes a message in `partial_handler` (and carries
   two process kinds) and how it arrives in `unhandled_info`.
   `partial_handler.missing` spells `catchall` where
-  `unhandled_info.fallback` spells `catch_all`.
+  `unhandled_info.fallback` spells `catch_all`. *Resolved:* both spell
+  `catch_all`. *Left:* `source`'s two meanings, which its field docs say.
 - `kind`, `via` and `sink` mean different things in different concerns;
   a table is `name` (the `:ets.new/2` atom) in ets_check_act and the ets
-  concern, `table` or `published_in` elsewhere.
+  concern, `table` or `published_in` elsewhere. *Left*, as the column
+  names above.
 - coupling's `rest_for_one_orphaned_children.confidence`
   (`named`/`inferred`) and `sibling_dependency.basis`
-  (`resolved`/`inferred`/`doubted`) are one idea.
-- clientlib/deferral.dl and clientlib/effect_model.dl share names with the
-  analyses; clientlib/process_kind.dl and processes.dl differ by a letter.
+  (`resolved`/`inferred`/`doubted`) are one idea. *Resolved:* the
+  column is `basis`, `resolved` or `inferred` (schema 112).
+- clientlib/startup.dl and clientlib/effects.dl shared names with the
+  analyses; clientlib/process.dl and processes.dl differed by a letter.
+  *Resolved:* they are deferral.dl, effect_model.dl and process_kind.dl.
 - Titles that interpolate a column (a depth, a caller count, a
   behaviour, a timeout, a table name, a state, a module, a field) cannot
   be pinned generically by a corpus pair or an encore golden.
+  *Resolved:* a title names the defect; a value that identifies one
+  instance, or moves with code a fix need not touch, is in the detail and
+  the at-label. Values from a closed set stay (a restart type, an effect
+  category, a request surface and proximity, a raised class).
 - Title style: fragments beside sentences ("Async task never awaited");
   one lowercase title ("children started under another tree outlive
   their owner"); "Start result ignored" and "start_child result not
   checked" for one family; hyphenated and unhyphenated check-then-act
-  titles.
+  titles. *Resolved:* capitalized, "start_child result ignored", and
+  "Uniqueness check-then-insert race". *Left:* noun-phrase titles beside
+  sentence titles, a style both halves of the catalog read well in.
 
 ### Severities that disagree for one risk
 
+Each is taken against the severity rubric at the top of this catalog.
+
 - A missing call reply: `dropped_from` `:error` (the caller waits five
   seconds) against `statem_unreplied` `:warning` (the caller waits
-  forever).
+  forever). *Resolved:* `statem_unreplied` is `:error`.
 - A crash on an unexpected message: "Timeout armed but never handled"
   `:error` against unhandled_info's `:warning`s; the runtime source
-  `:info` against `statem_info` `:warning`.
+  `:info` against `statem_info` `:warning`. *Resolved:* a message the
+  program sends or arms for a process with no clause for it is `:error`
+  in every form (a self tag, an armed timeout, unhandled_info's send and
+  timer sources); a monitor's `:DOWN` stays `:warning`. *Justified:* the
+  runtime source (`:info`) is a partial handle_info that a runtime
+  message may reach, and `statem_info` (`:warning`) a state its siblings'
+  catch-alls say needs one: the second has the program's own evidence.
 - A read that raises in a caller because what it reads may be gone:
   ets_read_outside_owner `:info` (the concern's only fix pair) against
-  ets_missing_row and ets_publish_order `:warning`.
+  ets_missing_row and ets_publish_order `:warning`. *Resolved:* `:warning`.
 - A permanent child that exits by design: structure's
   consumer_supervisor_permanent_child `:warning` against shutdown's
-  permanent_child_stops_normally `:info`.
+  permanent_child_stops_normally `:info`. *Resolved:* `:warning`.
 - Stopping a supervisor's child from a callback: failure's
   `orphan_process` kind `exit` `:info` against shutdown's handler stop
-  `:warning`, with different identity methods.
+  `:warning`, with different identity methods. *Resolved:* failure's
+  exit to a supervisor's child is `exit_supervised`, `:warning`; an exit
+  to a process known only as a value stays `:info`. *Left:* a site both
+  resolve is two findings, shutdown's by the child's name and failure's
+  by points-to.
 - unsafe_input: a sink a request reaches transitively is `:info`, the
-  same sink with no request path `:error`.
+  same sink with no request path `:error`. *Justified* in the rubric's
+  sinks clause: a request three calls away is graded down for the
+  over-approximation of reach by function, and an export is a library's
+  own way in; the value-source prior steps an export row down.
 - coupling: `cached_pid`, proven through points-to, is `:info` beside
-  `restart_isolation` on the same pair at `:warning`.
+  `restart_isolation` on the same pair at `:warning`. *Resolved:*
+  `:warning`.
 
 ### Stale documentation
 
@@ -3353,13 +3597,16 @@ interaction rather than reach (L17).
   `element N`), exposure.ex (no `unredacted_secret_inferred`),
   gen_statem.ex (`statem_state`). Those of blocking.ex, startup.ex,
   coupling.ex, shutdown.ex and mailbox.ex are fixed in this round.
+  *Resolved:* the four are current.
 - mailbox.dl and mailbox.ex still list a timed call as a late-message
   source (removed in 92f6404); `removal_api` claims sets, keyword lists
-  and ETS tables and lists only maps.
+  and ETS tables and lists only maps. *Resolved:* the timed call is
+  gone from both, and `removal_api` lists what it claims.
 - state_machine.dl's note that the initial state is guessed predates
-  `statem_initial` (schema 6).
+  `statem_initial` (schema 6). *Resolved:* the note reads the fact
+  first.
 - startup.dl says a later-sibling call is reported once; it is reported
-  twice (L5 above).
+  twice (L5 above). *Resolved:* it is reported once.
 - "fifteen substrings" (the fragment table has thirteen) in
   exposure.dl, the README, the secret fixture and
   lib/argus/priors/questions/sensitivity.ex. The first three are fixed
@@ -3369,6 +3616,8 @@ interaction rather than reach (L17).
 - CHANGELOG 0.20.0-dev entries that a later entry of the same unreleased
   section reverses (fe48541 by 364e74b; the publish-order "Added" by
   5c40a43; a CHANGELOG line naming the removed `ProcessReach`).
+  *Resolved:* the reversed entry is gone and the others describe what
+  ships.
 
 ### Suspected rule defects found while cataloguing
 
