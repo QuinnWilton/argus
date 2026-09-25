@@ -189,7 +189,7 @@ defmodule Argus.Extractors.ETS do
               then <- effects,
               first != then,
               MapSet.member?(anchors, first) or MapSet.member?(anchors, then),
-              reaches?(fun, at[first], at[then]),
+              Cfg.Function.precedes?(fun, at[first], at[then]),
               do: {first, then}
 
         facts =
@@ -249,42 +249,6 @@ defmodule Argus.Extractors.ETS do
     {:ok, %InstrId{idx: idx}} = InstrId.parse(id)
     idx
   end
-
-  # Whether control can pass from instruction `from` to instruction `to`
-  # within one trip through the function: later in the same block, or in
-  # a block the forward edges lead to. An edge into a block that dominates
-  # its source closes a loop; following it would order two writes in one
-  # loop body both ways, when each iteration makes them in one order.
-  defp reaches?(fun, from, to) do
-    case {Cfg.Function.block_at(fun, from), Cfg.Function.block_at(fun, to)} do
-      {nil, _} -> false
-      {_, nil} -> false
-      {%{id: same}, %{id: same}} -> from < to
-      {a, %{id: target}} -> reach_block(fun, forward(fun, a), target, %{})
-    end
-  end
-
-  defp reach_block(_fun, [], _target, _seen), do: false
-
-  defp reach_block(fun, [id | rest], target, seen) do
-    cond do
-      id == target ->
-        true
-
-      Map.has_key?(seen, id) ->
-        reach_block(fun, rest, target, seen)
-
-      true ->
-        next = forward(fun, Map.fetch!(fun.blocks, id))
-        reach_block(fun, next ++ rest, target, Map.put(seen, id, true))
-    end
-  end
-
-  defp forward(fun, %Cfg.Block{id: id} = block) do
-    Enum.reject(successors(block), &Cfg.Function.dominates?(fun, &1, id))
-  end
-
-  defp successors(%Cfg.Block{succs: succs}), do: Enum.map(succs, &elem(&1, 0))
 
   # ── Tables handed on ─────────────────────────────────────────────
 

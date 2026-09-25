@@ -11,6 +11,22 @@ defmodule Argus.Extractors.MnesiaTest do
         do: {func |> String.split(":") |> List.last(), op, kind, {ts, t}, {ks, k}}
   end
 
+  defp order(module) do
+    {:ok, facts} = Argus.Pipeline.extract([module], extractors: [Mnesia])
+
+    for [func, first, then] <- Map.get(facts, :mnesia_write_order, []),
+        do: {func |> String.split(":") |> List.last(), idx(first) < idx(then)}
+  end
+
+  defp idx(id), do: id |> String.split("#") |> List.last() |> String.to_integer()
+
+  test "two writes on one path are ordered; an upsert's two branches are not" do
+    # The marker, then the charge: one path.
+    assert order(C.MnesiaChargeOnce) == [{"charge_once/2", true}]
+    # `[] -> write(new); [r] -> write(r + 1)`: neither follows the other.
+    assert order(C.MnesiaExpireCounted) |> Enum.filter(&(elem(&1, 0) == "use/2")) == []
+  end
+
   test "dirty_read/2 and a record written with dirty_write/1: table and key from the record" do
     assert Enum.sort(ops(:padl2010_time_stamp)) == [
              {"create_time_stamp_table/0", "dirty_read", "read", {"literal", ":time_stamp"},

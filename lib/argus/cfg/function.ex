@@ -85,6 +85,45 @@ defmodule Argus.Cfg.Function do
   end
 
   @doc """
+  Whether control can pass from instruction `from` to instruction `to`
+  within one trip through the function: later in the same block, or in a
+  block the forward edges lead to. An edge into a block that dominates
+  its source closes a loop; following it would order two effects in one
+  loop body both ways, when each iteration makes them in one order.
+  """
+  @spec precedes?(t(), non_neg_integer(), non_neg_integer()) :: boolean()
+  def precedes?(%__MODULE__{} = fun, from, to) do
+    case {block_at(fun, from), block_at(fun, to)} do
+      {nil, _} -> false
+      {_, nil} -> false
+      {%Block{id: same}, %Block{id: same}} -> from < to
+      {a, %Block{id: target}} -> reach_block(fun, forward(fun, a), target, %{})
+    end
+  end
+
+  defp reach_block(_fun, [], _target, _seen), do: false
+
+  defp reach_block(fun, [id | rest], target, seen) do
+    cond do
+      id == target ->
+        true
+
+      Map.has_key?(seen, id) ->
+        reach_block(fun, rest, target, seen)
+
+      true ->
+        next = forward(fun, Map.fetch!(fun.blocks, id))
+        reach_block(fun, next ++ rest, target, Map.put(seen, id, true))
+    end
+  end
+
+  defp forward(fun, %Block{id: id, succs: succs}) do
+    succs
+    |> Enum.map(&elem(&1, 0))
+    |> Enum.reject(&dominates?(fun, &1, id))
+  end
+
+  @doc """
   Whether block `a` post-dominates block `b` (reflexively): every path from
   `b` to the function exit passes through `a`. `false` when `b` has no path
   to the exit.

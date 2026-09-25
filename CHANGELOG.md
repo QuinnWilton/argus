@@ -381,6 +381,13 @@ citing a rule for the unacknowledged loop that did not exist; this is
 it. A module whose init/1 is started by a bare spawn has no starter
 waiting, and is left alone.
 
+**Added.** Schema 104. `mnesia_write_order(func, first, then)`
+(`Argus.Extractors.Mnesia`): two Mnesia writes of one function, `then`
+reachable from `first` within one trip through it. Two writes ordered
+neither way are on paths that exclude each other, an upsert's two
+branches. The trip order is `Argus.Cfg.Function.precedes?/3`, which
+`ets_effect_order` already asked of the ETS extractor's own copy.
+
 **Changed.** Schema 103. `timer_tag(id, tag, arity)` gains the
 message's arity: 0 for an atom, the tuple's size otherwise, 3 for
 `:erlang.start_timer`'s `{:timeout, ref, msg}`. **Added.**

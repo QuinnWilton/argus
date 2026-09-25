@@ -313,6 +313,21 @@ defmodule Argus.Schema.CallValues do
         """
       },
       %{
+        name: :mnesia_write_order,
+        layer: 2,
+        fields: [
+          {:func, :func_id, "the function holding both writes"},
+          {:first, :instr_id, "a Mnesia write (mnesia_op kind write)"},
+          {:then, :instr_id, "a Mnesia write that can run after it"}
+        ],
+        doc: """
+        Two Mnesia writes of one function, `then` reachable from `first` \
+        within one trip through it (`Argus.Extractors.Mnesia`; a loop's \
+        back edge is not followed). Two writes ordered neither way are on \
+        paths that exclude each other: an upsert's two branches.
+        """
+      },
+      %{
         name: :name_lookup,
         layer: 2,
         fields: [

@@ -1565,6 +1565,54 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     end
   end
 
+  defmodule MnesiaSharedRead do
+    @moduledoc """
+    MnesiaExpireCounted with its read in one helper both functions call:
+    use/2 writes back a count (a lost update) and fetch/2 deletes an
+    expired record, which can remove a count use/2 made in between. Two
+    races of one read, one per function where it meets its write.
+    """
+    def use(key, expires) do
+      case get(key) do
+        [{:shared_uses, ^key, n, exp}] -> :mnesia.dirty_write({:shared_uses, key, n + 1, exp})
+        [] -> :mnesia.dirty_write({:shared_uses, key, 1, expires})
+      end
+    end
+
+    def fetch(key, now) do
+      case get(key) do
+        [{:shared_uses, ^key, _n, expires}] when expires > now -> :ok
+        [_expired] -> :mnesia.dirty_delete({:shared_uses, key})
+        [] -> :none
+      end
+    end
+
+    defp get(key), do: :mnesia.dirty_read({:shared_uses, key})
+  end
+
+  defmodule MnesiaChargeOnce do
+    @moduledoc """
+    An idempotency marker whose decision also records a charge in another
+    table: two racers both find no marker, both mark, and both charge. The
+    two writes are on one path, not an upsert's two branches.
+    """
+    def handle(id, payload) do
+      charge_once(id, payload)
+      :ok
+    end
+
+    defp charge_once(id, payload) do
+      case :mnesia.dirty_read({:charged, id}) do
+        [] ->
+          :mnesia.dirty_write({:charged, id, true})
+          :mnesia.dirty_write({:charges, make_ref(), id, payload})
+
+        _ ->
+          :skip
+      end
+    end
+  end
+
   defmodule MnesiaPutElem do
     @moduledoc "The counter updated in place: put_elem on the record the read found."
     def bump(key) do

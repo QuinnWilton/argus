@@ -22,6 +22,11 @@ defmodule Argus.Extractors.Mnesia do
     second is its key. A read that finds records by something other than
     their key — a match spec, a secondary index, a pattern whose key is
     `:_` — reads every key of its table: `any`.
+  - `mnesia_write_order(func, first, then)` — two of the function's writes
+    (`kind` "write" above), `then` reachable from `first` within one trip
+    through the function (`Argus.Cfg.Function.precedes?/3`). Two writes
+    ordered neither way are on paths that exclude each other: the two
+    branches of an upsert, `[] -> write(new); [r] -> write(update(r))`.
 
   A closure handed to a dirty activity — `async_dirty/1`, `sync_dirty/1`,
   `ets/1`, or `activity/2` with one of those contexts — runs its plain
@@ -101,7 +106,7 @@ defmodule Argus.Extractors.Mnesia do
   }
 
   @impl true
-  def relations, do: [:mnesia_op]
+  def relations, do: [:mnesia_op, :mnesia_write_order]
 
   @doc "Whether a remote call is a Mnesia read or write extracted here, for `Argus.Extractors.Dependence`."
   @spec site?(mfa()) :: boolean()
@@ -117,7 +122,8 @@ defmodule Argus.Extractors.Mnesia do
     returns = Identity.returned_elements(module_data, index)
     dirty = dirty_closures(module_data)
 
-    each_remote_call(module_data, %{}, fn facts, ctx, mfa ->
+    module_data
+    |> each_remote_call(%{}, fn facts, ctx, mfa ->
       ctx =
         ctx
         |> Map.put(:origins, {index, ctx.func_id, returns})
@@ -125,6 +131,42 @@ defmodule Argus.Extractors.Mnesia do
 
       handle_call(facts, ctx, mfa)
     end)
+    |> emit_write_order(module_data)
+  end
+
+  # The pairs of a function's writes one of which runs before the other
+  # within one trip through it. The graph is built only for a function
+  # with two writes.
+  defp emit_write_order(facts, module_data) do
+    facts
+    |> Map.get(:mnesia_op, [])
+    |> Enum.filter(fn [_id, _func, _op, kind | _] -> kind == "write" end)
+    |> Enum.group_by(fn [_id, func | _] -> func end, fn [id | _] -> id end)
+    |> Enum.filter(fn {_func, ids} -> length(Enum.uniq(ids)) > 1 end)
+    |> Enum.sort()
+    |> Enum.reduce(facts, fn {func, ids}, acc ->
+      {name, arity} = Normalize.func_id_name_arity(func)
+      order_writes(acc, func, Enum.uniq(ids), Helpers.cfg(module_data, name, arity))
+    end)
+  end
+
+  defp order_writes(facts, _func, _ids, nil), do: facts
+
+  defp order_writes(facts, func, ids, fun) do
+    at = Map.new(ids, fn id -> {id, instr_idx(id)} end)
+
+    for first <- ids,
+        then <- ids,
+        first != then,
+        Argus.Cfg.Function.precedes?(fun, at[first], at[then]),
+        reduce: facts do
+      acc -> add_fact(acc, :mnesia_write_order, [func, first, then])
+    end
+  end
+
+  defp instr_idx(id) do
+    {:ok, %InstrId{idx: idx}} = InstrId.parse(id)
+    idx
   end
 
   # The closures this module hands to a dirty activity: the make_fun3 the
