@@ -37,6 +37,27 @@ catch-all handle_info/2. The rules reading `recv_pattern` (the timer
 flush, `unhandled_info`, `unreceived_message`, blocking's cancel_timer
 idiom) now see those receives.
 
+**Fixed.** "init/1 waits on a message with no timeout" (startup's
+`unbounded_effect_in_init`, "receive") no longer reports a wait that
+cannot outlast what it waits for, or one made after the start returned.
+On OTP's kernel, stdlib and mnesia it went from 23 rows to 5. A receive
+is bounded when it takes the pinned `:DOWN` of the process it asked
+(`recv_down`, `recv_signal`: gen's and code_server's calls, file's and
+io's requests, proc_lib's `await_DOWN/2`, supervisor's shutdown, a
+`spawn_monitor`'s pair) or the pinned `:EXIT` of a process or port it
+is linked to (peer's init/1 waits for the port it closed): if the peer
+is gone, the signal comes, and a peer that is alive and never answers
+is the synchronous-call rules' finding. So is a receive that flushes a
+timer cancel_timer/1 said had fired (`flush_receive`, now in
+clientlib/timer_flush.dl, shared with blocking): Livebook's session and
+gen_server's multi_call. The walk from init/1 stops where the start is
+acknowledged (`start_acked`, and the edge into
+`:gen_server.enter_loop`/`:gen_statem.enter_loop`): logger_olp's init
+acks and becomes the server, and its loop's receives are the server's
+(`SameProcessReachCut` in clientlib/reach.dl). Still reported:
+`:ets.all/0`'s and `:socket.close/1`'s waits for the runtime's reply,
+win32reg's port reply, and kernel_config's boot handshakes.
+
 **Added.** Schema 92. `recv_signal(id, func, signal)`
 (`Argus.Extractors.Monitor.ExitSignal`): a receive with a clause that
 takes the exit signal of the process a pinned register names, whatever

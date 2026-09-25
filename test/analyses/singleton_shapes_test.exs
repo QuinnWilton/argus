@@ -137,6 +137,37 @@ defmodule Argus.Analyses.SingletonShapesTest do
              findings.findings |> Enum.map(& &1.title) |> Enum.filter(&(&1 =~ "waits on"))
   end
 
+  test "a wait that ends with the peer, a flush, or a wait after the ack holds no start" do
+    skip_without_souffle()
+
+    quiet = [
+      InitRecv.AcksThenLoops,
+      InitRecv.AcksThenWaits,
+      InitRecv.AsksWithMonitor,
+      InitRecv.AwaitsHandedDown,
+      InitRecv.ClosesPort,
+      InitRecv.FlushesTimer
+    ]
+
+    {:ok, r} = Memo.analyze(quiet ++ [InitRecv.WaitsBeforeAck, InitRecv.LoopsOnParent], :startup)
+
+    # A receive before the ack holds the starter; a loop's clause for its
+    # parent's exit does not bound its wait for the next message.
+    assert r
+           |> Rows.where(:startup, "unbounded_effect_in_init", kind: "receive")
+           |> Enum.map(&hd/1)
+           |> Enum.uniq()
+           |> Enum.sort() == [
+             "Argus.Test.Fixtures.InitRecv.LoopsOnParent",
+             "Argus.Test.Fixtures.InitRecv.WaitsBeforeAck"
+           ]
+
+    # With gen_server's own code in the program: the loop enter_loop
+    # runs is the server's, entered after the ack.
+    {:ok, r} = Memo.analyze([InitRecv.AcksThenLoops, :gen_server], :startup)
+    assert Rows.where(r, :startup, "unbounded_effect_in_init", kind: "receive") == []
+  end
+
   test "a call a task init/1 starts makes to a later sibling is no deadlock" do
     skip_without_souffle()
 

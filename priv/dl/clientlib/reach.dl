@@ -52,6 +52,15 @@
   reaches(f, t) :- call_edge(f, g), !runs_elsewhere(f, g), reaches(g, t).
 }
 
+// SameProcessReach, less the edges the instance names `cut`: what the
+// process runs before some point on its way, where calls made after it
+// are another phase's (startup's init/1 up to the acknowledgement of its
+// start).
+.comp SameProcessReachCut : Backward {
+  .decl cut(func: symbol, callee: symbol)
+  reaches(f, t) :- call_edge(f, g), !runs_elsewhere(f, g), !cut(f, g), reaches(g, t).
+}
+
 // What holds the caller up while it runs: its own stack, as
 // SameProcessReach, and a task it awaits (awaits_task, runs_elsewhere.dl):
 // `Task.async(fn -> ... end) |> Task.await()` runs the closure elsewhere
