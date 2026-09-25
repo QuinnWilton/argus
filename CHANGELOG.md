@@ -266,6 +266,22 @@ or a lock there is blocking's finding, no longer startup's
 (`InitAck.RpcAfter`, `LockAfter`, `CallsAfter` beside the reported
 `RpcBefore`, `LockBefore`, `CallsBefore`). blocking reads `start_acked`.
 
+**Changed.** A wait its peer ends is one definition
+(`clientlib/receive.dl`: `down_bounded`, `exit_pinned`, `links_in`),
+read by startup's init waits and blocking's receives in callbacks. A
+receive with no `after` that pins a monitor's `:DOWN` — of a monitor its
+own function took, or of a ref from anywhere — or, in a process that
+traps exits, the `:EXIT` of a process its function links to, is "down":
+bounded by that process. blocking read only the first: a callback
+pinning a ref its state holds (proc_lib's `await_DOWN/2` shape) or a
+trapped linked worker's `:EXIT` moves from "Blocking receive inside a …
+callback" (`:error`) to "receive inside a … callback" (`:warning`, prose
+naming the exit it takes). `recv_signal` leaves out a `:DOWN` some path
+from the function's entry reaches past a demonitor, which may have
+cancelled that very monitor, as `recv_down` does from its monitor.
+mailbox's `waited_out` still asks recv_down alone: whether a wait
+consumes that very monitor.
+
 **Changed.** A cast a spawn, task or agent makes is its own process's
 (`reaches_async_dep` cuts `runs_elsewhere`, as `reaches_sync_dep` does):
 a task init/1 starts that casts to a later sibling no longer makes

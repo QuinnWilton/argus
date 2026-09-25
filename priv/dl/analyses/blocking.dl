@@ -581,25 +581,43 @@ callback_reaches(entry, callee, "helper") :-
 // supervisor's start, and is reported there once.
 receive_in_callback(id, func, callback, behaviour, proximity, "false") :-
   recv_start(id, func, 1, _),
-  !recv_down(id, func, _),
+  !down_bounded(id),
+  callback_reaches(callback, func, proximity),
+  otp_callback(callback, m, _, behaviour),
+  !trapped_exit_ends(id, func, m),
+  !init_function(_, callback),
+  !flush_receive(id).
+
+// The receive takes the :EXIT of a process or port its function links to
+// (exit_pinned, clientlib/receive.dl), and `mod`'s server traps exits
+// (module_traps): the linked peer's exit ends the wait. A monitor's :DOWN
+// (down_bounded) ends it in any process.
+.decl trapped_exit_ends(id: symbol, func: symbol, mod: symbol)
+
+trapped_exit_ends(id, f, m) :- exit_pinned(id, f), module_traps(_, m).
+
+// A receive with no `after` that ends no later than its peer (down_bounded, trapped_exit_ends):
+// the runtime delivers the :DOWN once the monitored process exits, or at
+// once if it was already gone, and a trapped linked peer's exit arrives
+// as an :EXIT. Its other clauses can only end it sooner. A terminate/2
+// that stops a process and waits for it to go (Broadway's Topology and
+// Terminator) cannot hang on it; what it holds is the callback, for as
+// long as that process lives. Reported as a bounded receive, "down";
+// init/1's is startup's, as above.
+receive_in_callback(id, func, callback, behaviour, proximity, "down") :-
+  recv_start(id, func, 1, _),
+  down_bounded(id),
   callback_reaches(callback, func, proximity),
   otp_callback(callback, _, _, behaviour),
   !init_function(_, callback),
   !flush_receive(id).
 
-// A receive with no `after` that takes the :DOWN of a monitor its own
-// function took (recv_down): the runtime delivers that :DOWN once the
-// monitored process exits, or at once if it was already gone, so the
-// wait ends no later than that process. Its other clauses can only end
-// it sooner. A terminate/2 that stops a process and waits for it to go
-// (Broadway's Topology and Terminator) cannot hang on it; what it holds
-// is the callback, for as long as that process lives. Reported as a
-// bounded receive, "down"; init/1's is startup's, as above.
 receive_in_callback(id, func, callback, behaviour, proximity, "down") :-
   recv_start(id, func, 1, _),
-  recv_down(id, func, _),
+  !down_bounded(id),
   callback_reaches(callback, func, proximity),
-  otp_callback(callback, _, _, behaviour),
+  otp_callback(callback, m, _, behaviour),
+  trapped_exit_ends(id, func, m),
   !init_function(_, callback),
   !flush_receive(id).
 

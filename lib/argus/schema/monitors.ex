@@ -117,8 +117,10 @@ defmodule Argus.Schema.Monitors do
         pins (`"exit"`). Unlike recv_down, the pinned value may come from \
         anywhere: a parameter, a `spawn_monitor`'s pair, a port the \
         function opened. The receive ends no later than that process, \
-        while the monitor or the link is in place. A clause that tests \
-        the reason, or pins nothing, is not one.
+        while the monitor or the link is in place: a `:DOWN` is not one \
+        where some path from the function's entry to the receive \
+        demonitors (it may have cancelled that very monitor). A clause \
+        that tests the reason, or pins nothing, is not one.
         """
       },
       %{

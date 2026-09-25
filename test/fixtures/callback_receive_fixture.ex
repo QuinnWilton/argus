@@ -337,7 +337,12 @@ defmodule Argus.Test.Fixtures.CallbackReceive do
   end
 
   defmodule AwaitsAnotherDown do
-    @moduledoc "A :DOWN for a ref the callback did not take: nothing here says it comes."
+    @moduledoc """
+    A :DOWN pinned on a ref the callback did not take (its server's state
+    holds it): proc_lib's await_DOWN/2 shape. The pin says the wait ends
+    with that monitor's process, and nothing in the function removes the
+    monitor.
+    """
     @behaviour GenServer
 
     def init(ref), do: {:ok, ref}
@@ -345,6 +350,46 @@ defmodule Argus.Test.Fixtures.CallbackReceive do
     def handle_call(:wait, _from, ref) do
       receive do
         {:DOWN, ^ref, _, _, _} -> {:reply, :ok, ref}
+      end
+    end
+  end
+
+  defmodule AwaitsLinkedExit do
+    @moduledoc """
+    A server that traps exits links a worker and waits for its answer or
+    its :EXIT, pinned on the worker's pid: the worker's end ends the wait.
+    """
+    @behaviour GenServer
+
+    def init(arg) do
+      Process.flag(:trap_exit, true)
+      {:ok, arg}
+    end
+
+    def handle_call(:work, _from, arg) do
+      pid = spawn_link(fn -> exit({:done, arg}) end)
+
+      receive do
+        {:EXIT, ^pid, reason} -> {:reply, reason, arg}
+      end
+    end
+  end
+
+  defmodule AwaitsUntrappedExit do
+    @moduledoc """
+    The same wait in a server that does not trap exits: the worker's exit
+    kills the server or never arrives as a message, and the receive waits
+    on nothing that comes.
+    """
+    @behaviour GenServer
+
+    def init(arg), do: {:ok, arg}
+
+    def handle_call(:work, _from, arg) do
+      pid = spawn_link(fn -> exit({:done, arg}) end)
+
+      receive do
+        {:EXIT, ^pid, reason} -> {:reply, reason, arg}
       end
     end
   end

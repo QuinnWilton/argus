@@ -28,3 +28,52 @@ timed_receive(func) :- recv_start(_, func, 0, _).
 receives_message(mod, message) :-
   recv_pattern(_, f, message),
   function_def(f, mod, _, _, _).
+
+// ── A wait its peer ends ─────────────────────────────────────────────
+//
+// A receive with no `after` can still end no later than another process:
+// when a clause takes that process's exit signal, whatever the reason it
+// exits with, the wait lasts as long as the process lives. It is bounded
+// by its peer, not by time — a peer that is alive and never answers
+// holds it as long as it lives — and startup and blocking report such a
+// wait as "down", apart from one nothing ends. Two shapes:
+//
+// - down_bounded(recv): a clause takes the `:DOWN` of a monitor: one the
+//   receive's own function took, with no demonitor on the path to the
+//   receive (recv_down), or one whose ref the clause pins wherever it came
+//   from (recv_signal "down": proc_lib's await_DOWN(pid, ref), a
+//   spawn_monitor's pair, gen_server's multi_call alias), with no
+//   demonitor on any path from the function's entry to the receive: a
+//   demonitor there may have removed the very monitor, and its :DOWN
+//   never comes. The ref's monitor is taken on trust to be in place when
+//   the function is entered. The runtime delivers the :DOWN once the
+//   process exits, or at once if it is already gone.
+// - exit_pinned(recv, func): a clause takes the `:EXIT` of the process
+//   or port its sender pin names (recv_signal "exit"), in a function
+//   that links (links_in). It ends the wait only in a process that traps
+//   exits (in one that does not, the exit kills the waiter or never
+//   comes), and trapping is the process's, not the function's: the
+//   reader asks it (startup: init/1's own stack; blocking: the server's).
+//
+// mailbox asks another question of a monitor: whether a wait consumes
+// that very monitor's :DOWN (waited_out, recv_down alone), not whether a
+// wait ends.
+.decl down_bounded(recv: symbol)
+
+down_bounded(id) :- recv_down(id, _, _).
+down_bounded(id) :- recv_signal(id, _, "down").
+
+.decl exit_pinned(recv: symbol, func: symbol)
+
+exit_pinned(id, f) :- recv_signal(id, f, "exit"), links_in(f).
+
+// The function makes a link its receive can be told of: a spawn_link, a
+// link, a port (linked to the process that opens it), a start_link.
+.decl links_in(func: symbol)
+
+links_in(f) :- spawn_call(_, f, _, _, _, "spawn_link", _, _, _, _).
+links_in(f) :- remote_call(_, f, ":erlang", "link", 1).
+links_in(f) :- remote_call(_, f, "Process", "link", 1).
+links_in(f) :- remote_call(_, f, ":erlang", "open_port", 2).
+links_in(f) :- remote_call(_, f, "Port", "open", 2).
+links_in(f) :- call_site(_, f, _, "start_link", _).

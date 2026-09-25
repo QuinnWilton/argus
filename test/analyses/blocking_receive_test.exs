@@ -30,7 +30,9 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     CallbackReceive.KillsAfterGrace,
     CallbackReceive.AwaitsAnotherDown,
     CallbackReceive.AwaitsNormalDown,
-    CallbackReceive.DemonitorsThenAwaits
+    CallbackReceive.DemonitorsThenAwaits,
+    CallbackReceive.AwaitsLinkedExit,
+    CallbackReceive.AwaitsUntrappedExit
   ]
 
   setup_all do
@@ -194,16 +196,22 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     end
   end
 
-  describe "a receive for the :DOWN of a monitor its function took" do
+  describe "a receive its peer's exit ends" do
     # The runtime sends that :DOWN once the process exits, or at once if
     # it was already gone: the wait cannot outlast the monitored process.
     test "is bounded by the monitored process, not reported as blocking", ctx do
       skip_without_souffle()
 
+      # AwaitsAnotherDown pins a ref its server's state holds, as
+      # startup's AwaitsHandedDown pins one handed in (down_bounded,
+      # clientlib/receive.dl); AwaitsLinkedExit pins a linked worker's
+      # :EXIT in a server that traps exits.
       for {mod, callback} <- [
             {CallbackReceive.AwaitsOwnDown, "terminate/2"},
             {CallbackReceive.AwaitsDoneOrDown, "terminate/2"},
-            {CallbackReceive.AwaitsReplyOrDown, "handle_call/3"}
+            {CallbackReceive.AwaitsReplyOrDown, "handle_call/3"},
+            {CallbackReceive.AwaitsAnotherDown, "handle_call/3"},
+            {CallbackReceive.AwaitsLinkedExit, "handle_call/3"}
           ] do
         {blocking, bounded, down} = run_down(ctx, [mod])
 
@@ -226,14 +234,13 @@ defmodule Argus.Analyses.BlockingReceiveTest do
       assert timed != waited
     end
 
-    test "a :DOWN for a ref taken elsewhere, a pinned reason, or a demonitor first still blocks",
-         ctx do
+    test "a pinned reason, a demonitor first or an untrapped :EXIT still blocks", ctx do
       skip_without_souffle()
 
       for mod <- [
-            CallbackReceive.AwaitsAnotherDown,
             CallbackReceive.AwaitsNormalDown,
-            CallbackReceive.DemonitorsThenAwaits
+            CallbackReceive.DemonitorsThenAwaits,
+            CallbackReceive.AwaitsUntrappedExit
           ] do
         {blocking, _bounded, down} = run_down(ctx, [mod])
 
@@ -256,7 +263,7 @@ defmodule Argus.Analyses.BlockingReceiveTest do
 
       assert attrs.severity == :warning
       assert attrs.title == "receive inside a GenServer callback"
-      assert attrs.detail =~ "takes the :DOWN of the process it monitored"
+      assert attrs.detail =~ "takes the exit of the process it waits on"
       refute attrs.detail =~ "has a timeout"
     end
   end

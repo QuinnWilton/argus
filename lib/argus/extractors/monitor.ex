@@ -50,7 +50,8 @@ defmodule Argus.Extractors.Monitor do
   - `recv_signal(id, func, signal)` — a receive with a clause that takes
     the exit signal of the process a pinned register names, whatever its
     reason: a `:DOWN` (`"down"`) or an `:EXIT` (`"exit"`)
-    (`Argus.Extractors.Monitor.ExitSignal`)
+    (`Argus.Extractors.Monitor.ExitSignal`); a `:DOWN` only where no path
+    from the function's entry to the receive demonitors
   - `recv_flush(id, func, cancel)` — the receive runs only where the
     `cancel_timer` call at `cancel` returned `false`: the timer had fired,
     and its message is in the mailbox (`Argus.Extractors.Monitor.Flush`)
@@ -164,7 +165,7 @@ defmodule Argus.Extractors.Monitor do
     |> emit_matches_down(mod, functions)
     |> emit_awaits_down_after(module_data)
     |> emit_recv_down(module_data)
-    |> emit_recv_signal(mod, functions)
+    |> emit_recv_signal(module_data)
     |> emit_recv_flush(module_data)
   end
 
@@ -206,7 +207,15 @@ defmodule Argus.Extractors.Monitor do
   # loop waits for its next message, from anyone. Its :DOWN clauses stay
   # (gen_server's multi_call waits for one reply or :DOWN per call of
   # itself). A loop through another function is not seen.
-  defp emit_recv_signal(facts, mod, functions) do
+  #
+  # A :DOWN is taken while the monitor is in place: a receive some path
+  # from the function's entry reaches past a demonitor — of that ref or
+  # any other, flushed or not — waits for a :DOWN the demonitor may have
+  # cancelled, and is no row (`demonitors_before?`, as recv_down asks it
+  # from the monitor). A demonitor after the wait (the reply branch of a
+  # hand-rolled call) cancels nothing it waits for. The graph is built
+  # only for a function that demonitors.
+  defp emit_recv_signal(facts, %{module: mod, functions: functions} = module_data) do
     Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
       case for({{:loop_rec, _fail, _dst}, idx} <- Enum.with_index(instrs), do: idx) do
         [] ->
@@ -217,10 +226,14 @@ defmodule Argus.Extractors.Monitor do
           code = List.to_tuple(instrs)
           labels = labels(instrs)
           loops? = Enum.any?(instrs, &(match_local_call(&1) == {:ok, mod, name, arity}))
+          demonitors? = Enum.any?(instrs, &cancels_monitor?/1)
+          head = Enum.find_index(instrs, &match?({:func_info, _, _, _}, &1))
 
           for loop <- receives,
               signal <- ExitSignal.signals(code, labels, loop),
               not (loops? and signal == "exit"),
+              not (signal == "down" and demonitors? and
+                     demonitors_before?(cfg(module_data, name, arity), instrs, head, loop)),
               reduce: acc do
             acc -> add_fact(acc, :recv_signal, [InstrId.mint(func_id, loop), func_id, signal])
           end

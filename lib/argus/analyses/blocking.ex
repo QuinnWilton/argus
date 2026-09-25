@@ -472,10 +472,12 @@ defmodule Argus.Analyses.Blocking do
       :warning,
       "receive inside a #{behaviour} callback",
       "#{func} runs a `receive` with no `after`, #{where(proximity, callback)}, " <>
-        "and it takes the :DOWN of the process it monitored: the runtime sends " <>
-        "that once the process exits, or at once if it was already gone, so the " <>
-        "wait cannot outlast it. Until then it holds the #{behaviour} process on " <>
-        "its own stack, and :sys calls and queued requests wait behind it.",
+        "and it takes the exit of the process it waits on: the :DOWN of the process " <>
+        "it monitored, which the runtime sends once the process exits (or at once " <>
+        "if it was already gone), or, in a process that traps exits, the :EXIT of " <>
+        "a process it linked to. The wait cannot outlast that process. Until then " <>
+        "it holds the #{behaviour} process on its own stack, and :sys calls and " <>
+        "queued requests wait behind it.",
       at: Findings.at_instr(id),
       to_block: :receive,
       at_source: "receive",

@@ -111,6 +111,14 @@ defmodule Argus.Extractors.MonitorTest do
       assert signals(InitRecv.ClosesPort) == [{"init/1", "exit"}]
     end
 
+    test "a :DOWN is taken while the monitor is in place: a demonitor first is none" do
+      alias Argus.Test.Fixtures.CallbackReceive, as: R
+
+      assert signals(R.DemonitorsThenAwaits) == []
+      # The demonitor after the reply cancels nothing the wait takes.
+      assert signals(R.AwaitsReplyOrDown) == [{"handle_call/3", "down"}]
+    end
+
     test "a loop's clause for its parent's exit, and an unpinned wait, are none" do
       assert signals(InitRecv.LoopsOnParent) == []
       assert signals(InitRecv.Waits) == []
