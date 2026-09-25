@@ -97,6 +97,16 @@ defmodule Argus.EvidenceFramesTest do
     assert frame.mfa == {Fixtures.ExportedSinkCaller, :tag, 1}
   end
 
+  test "sink_export: a default-argument head is no frame beside the arity it calls" do
+    # tag/0 reaches the sink only through tag/1, from the same def line:
+    # its frame would repeat tag/1's and take one of the three frames.
+    assert [finding] = findings([Fixtures.DefaultArgSinkCaller], :unsafe_input)
+    assert finding.mfa == {Fixtures.DefaultArgSinkCaller, :to_tag, 1}
+
+    assert [frame] = finding.related
+    assert frame.mfa == {Fixtures.DefaultArgSinkCaller, :tag, 1}
+  end
+
   test "sink_endpoint: the HTTP routes a request-reachable sink sits behind" do
     live_view = Fixtures.RequestSurface.AdjacentLiveView
 

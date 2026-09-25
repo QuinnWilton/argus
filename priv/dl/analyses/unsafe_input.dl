@@ -416,11 +416,31 @@ sink_callers.limit(6).
 .decl sink_export(sink: symbol, export: symbol)
 .output sink_export
 
-sink_export(id, e) :-
+.decl sink_export_reach(sink: symbol, export: symbol)
+
+sink_export_reach(id, e) :-
   unreached_sink(id, func, _, _, _),
   sink_callers.reaches(func, e, d),
   d > 0,
   function_def(e, _, _, _, 1).
+
+sink_export(id, e) :-
+  sink_export_reach(id, e),
+  !forwards_to_listed_arity(id, e).
+
+// An export that calls a higher arity of itself, which is listed too: a
+// default-argument head (`start_link/0` calling `start_link/1` from the
+// same `def` line), or a wrapper filling in an option. Its frame would
+// say what the higher arity's says, and take one of the three.
+.decl forwards_to_listed_arity(sink: symbol, export: symbol)
+
+forwards_to_listed_arity(id, e) :-
+  sink_export_reach(id, e),
+  function_def(e, m, name, n, _),
+  call_edge(e, g),
+  function_def(g, m, name, k, _),
+  k > n,
+  sink_export_reach(id, g).
 
 // ── Which HTTP endpoint reaches the sink ─────────────────────────
 //

@@ -50,6 +50,17 @@ defmodule Argus.Test.Fixtures.ExportedSinkCaller do
   defp to_tag(input), do: String.to_atom(input)
 end
 
+defmodule Argus.Test.Fixtures.DefaultArgSinkCaller do
+  @moduledoc """
+  A private sink no request reaches below an exported function with a
+  default argument: `tag/0` only calls `tag/1`, from the same `def` line.
+  """
+
+  def tag(input \\ "default"), do: to_tag(input)
+
+  defp to_tag(input), do: String.to_atom(input)
+end
+
 defmodule Argus.Test.Fixtures.AtomSources do
   @moduledoc """
   Atom creation no request reaches, by where its argument comes from.

@@ -1605,7 +1605,7 @@ carry whether a receive can block but not its timeout. Found by a talk's
 worked example; the corpus change is one row, sequin's
 `ReorderBuffer.maybe_cancel_flush_batch_timer/1`, which is that idiom.
 
-### A coupling frame at the caller's call
+### Frames that name the caller, once
 
 **Fixed.** `coupling.sibling_dependency`'s "coupling call" and "coupling
 cast" frames, when the call into the sibling is several calls below the
@@ -1616,6 +1616,17 @@ head calling the full arity (sentry-elixir's
 row, so every caller's finding showed the same line of the sibling's
 API; each now shows its own call (`metrics.ex:180`, `transport.ex:54`).
 The findings are unchanged; only these frames move.
+
+**Changed.** `unsafe_input.sink_export` ("reachable from X, which is
+exported", three frames at most) leaves out an export that calls a
+higher arity of itself which is listed too: a default-argument head
+(`start_link/0` calling `start_link/1` from the same `def` line) or a
+wrapper filling in an argument. Its frame repeated the higher arity's,
+and, sorting first, took one of the three: exq's
+`Exq.Support.Opts.top_supervisor/1` showed `Exq.Api.start_link/0` and
+`/1` and `Exq.Enqueuer.start_link/0`, and now shows
+`Exq.Api.start_link/1`, `Exq.Enqueuer.start_link/1` and `Exq.start/2`.
+The findings are unchanged.
 
 ### Frames that point where the path starts
 
