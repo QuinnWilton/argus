@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+- An argus edit outside the code argus's fact producers run extracts
+  nothing. Extraction is keyed by one digest of that code
+  (`:extraction_code`, a new frontend input,
+  `Scry.Fingerprint.extraction_code/0`): the union of
+  `Argus.Cache.Code`'s closures over argus's base and every extractor
+  scry runs, with argus's schema modules
+  (`Scry.Fingerprint.extraction_closure/0`), each module digested by
+  `Argus.BeamDigest`. An edit to an extractor, or to what they all run,
+  re-extracts every module (and digests the relations' text again,
+  which argus's encoding writes); where a module's rows come out the
+  same, nothing above it runs. An edit elsewhere in argus — the
+  findings' prose, the analyses modules, the Souffle wrapper, its
+  caches — rebuilds the findings (`:argus_code`, every argus beam,
+  `Scry.Fingerprint.argus_code/0`) and extracts and solves nothing; it
+  used to re-extract every module and re-run every solve, because the
+  environment fingerprint, which every query reads, carried all of
+  argus's code. The fingerprint no longer carries argus's code or
+  version, and its specs environment leaves argus's own beams out: a
+  module whose extraction read argus's specs is keyed by `:argus_code`,
+  as one that read an analyzed or ignored module's is keyed by that
+  module. Those reads are now every module the specs extractor looked
+  up, the ones it resolved types through included
+  (`Argus.Pipeline.extract_shards/3`'s `installed`), not the called
+  modules alone. How argus runs Souffle is keyed as argus keys its own
+  solves, by the rules and the solver's version: after changing that,
+  `--force`. Code digests leave out what a rebuild of the same source
+  can change (the Elixir type checker's `ExCk` table, the compile info,
+  the docs), so recompiling unchanged scry or argus code moves nothing.
+  Needs argus with `Argus.Pipeline.extract_shards/3`.
 - argus 0.20 derives process points-to once per run, as a stage after
   stage 0 (`priv/dl/points_to.dl`), instead of inside each of the nine
   solves that read it. The graph follows: `points_to_facts(:all)`

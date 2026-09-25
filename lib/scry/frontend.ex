@@ -19,8 +19,15 @@ defmodule Scry.Frontend do
     from that caller to this key is what re-extracts it when the
     ignored beam changes.
   - `:env_fingerprint` input — `:all =>` toolchain map
-    (`Scry.Fingerprint.env/0`); `:high` durability so an upgrade
+    (`Scry.Fingerprint.env/1`); `:high` durability so an upgrade
     invalidates the whole graph.
+  - `:extraction_code` input — `:all =>` a digest of the code argus's
+    fact producers run (`Scry.Fingerprint.extraction_code/0`): an
+    extractor edit re-extracts every module, and an argus edit outside
+    that code extracts nothing.
+  - `:argus_code` input — `:all =>` a digest of every argus beam
+    (`Scry.Fingerprint.argus_code/0`): what the findings are built by,
+    and what a program calling argus reads specs from.
   - `:rules_digest` input — analysis (or `:stage0`) `=>` a digest of
     the Datalog it runs (`Scry.Fingerprint.rules/1`); a rule edit
     re-solves the analyses whose programs it touched and re-extracts
@@ -51,6 +58,8 @@ defmodule Scry.Frontend do
   definput(:module_set, durability: :medium)
   definput(:ignored_beam, durability: :medium)
   definput(:env_fingerprint, durability: :high)
+  definput(:extraction_code, durability: :high)
+  definput(:argus_code, durability: :high)
   definput(:rules_digest, durability: :high)
 
   # The project's root directory, for a beam whose recorded source path

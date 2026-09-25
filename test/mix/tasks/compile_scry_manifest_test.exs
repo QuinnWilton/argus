@@ -1,8 +1,9 @@
 defmodule Mix.Tasks.Compile.ScryManifestTest do
   @moduledoc """
   What a warm run trusts between runs, through the real chain: the
-  environment fingerprint an edit leaves alone, the beam prefilter a
-  touch passes, and the manifest a corrupt write falls back from.
+  environment fingerprint an edit leaves alone, argus's code digests an
+  argus edit moves, the beam prefilter a touch passes, and the manifest
+  a corrupt write falls back from.
 
   In this module's peer (`Scry.Test.Peer`): the Mix project stack, the
   working directory, the code path and telemetry are VM-wide.
@@ -11,6 +12,7 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
   use ExUnit.Case, async: true
   use Scry.Test.Peer
 
+  alias Roux.Lang.Manifest
   alias Scry.Test.{Fixture, Peer, QueryLog}
 
   @moduletag timeout: 300_000
@@ -97,6 +99,70 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
       # every edit is what excluding them prevents.
       assert fresh_env([]) != unwatched
       assert fresh_env(apps) == before
+    end)
+  end
+
+  # Rewrites the last run's manifest through `fun`, handed the database
+  # it restores.
+  defp rewrite!(fun) do
+    manifest = Scry.Runner.manifest_file()
+    {:ok, data} = Manifest.load(manifest)
+    db = Roux.Database.new()
+
+    try do
+      :ok = Roux.Lang.register_module(db, Scry.Frontend)
+      :ok = Roux.Lang.register_module(db, Scry.Analysis)
+      :ok = Manifest.restore(db, data)
+      fun.(db)
+      :ok = Manifest.write(db, data.sources, manifest)
+    after
+      Roux.Database.shutdown(db)
+    end
+  end
+
+  # As if the last run had seen other argus code: `input` holds what it
+  # recorded of it.
+  defp argus_edited_since!(input) do
+    rewrite!(&(:ok = Roux.Input.set(&1, input, :all, "before the edit")))
+  end
+
+  test "an edit to argus's producers re-extracts every module, and solves nothing it left",
+       %{peer: peer, copy: copy} do
+    Fixture.checkout!(copy, @quick, :depot_quick)
+
+    Fixture.in_peer(peer, copy, :depot_quick, fn log ->
+      cold = compile!()
+      %{modules: modules} = Scry.Scanner.scan(Scry.Config.load())
+      argus_edited_since!(:extraction_code)
+
+      QueryLog.reset(log)
+      warm = compile!()
+
+      assert QueryLog.executions(log, :module_extraction) == modules |> Map.keys() |> Enum.sort()
+
+      # The same rows: nothing above them runs.
+      assert QueryLog.executions(log, :module_semantic_facts) == []
+      assert QueryLog.executions(log, :souffle_solve) == []
+      assert QueryLog.executions(log, :findings) == []
+      assert counts_by_code(scry_diagnostics(warm)) == counts_by_code(scry_diagnostics(cold))
+    end)
+  end
+
+  test "an argus edit outside its producers rebuilds the findings, and extracts nothing",
+       %{peer: peer, copy: copy} do
+    Fixture.checkout!(copy, @quick, :depot_quick)
+
+    Fixture.in_peer(peer, copy, :depot_quick, fn log ->
+      cold = compile!()
+      argus_edited_since!(:argus_code)
+
+      QueryLog.reset(log)
+      warm = compile!()
+
+      assert QueryLog.executions(log, :findings) == [:coupling, :mailbox]
+      assert QueryLog.executions(log, :module_extraction) == []
+      assert QueryLog.executions(log, :souffle_solve) == []
+      assert counts_by_code(scry_diagnostics(warm)) == counts_by_code(scry_diagnostics(cold))
     end)
   end
 

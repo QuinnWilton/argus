@@ -7,19 +7,22 @@ defmodule Scry.AnalysisSpecsTest do
   callee: removing the callee re-extracts its callers, and a fresh batch
   extraction of what remains is what the graph then holds. A callee kept
   out of analysis by `ignore: [modules: ...]` is still on the code path:
-  changing its spec re-extracts its callers too.
+  changing its spec re-extracts its callers too. So is argus, whose
+  beams the environment digest leaves out: a caller of argus's code
+  re-extracts when argus's code moves, and no other module does.
   """
 
   # The probe's ebin goes on the code path, and its modules are loaded
   # and purged: VM-wide.
   use ExUnit.Case, async: false
 
-  alias Scry.Test.Graph
+  alias Scry.Test.{Graph, QueryLog}
 
   @moduletag :tmp_dir
 
   @callee ScrySpecProbe.Callee
   @caller ScrySpecProbe.Caller
+  @argus_caller ScrySpecProbe.ArgusCaller
 
   setup %{tmp_dir: dir} do
     ebin = Path.join(dir, "ebin")
@@ -32,7 +35,9 @@ defmodule Scry.AnalysisSpecsTest do
 
     on_exit(fn ->
       Code.delete_path(ebin)
-      for module <- [@callee, @caller], do: :code.purge(module) && :code.delete(module)
+
+      for module <- [@callee, @caller, @argus_caller],
+          do: :code.purge(module) && :code.delete(module)
     end)
 
     paths = %{
@@ -45,9 +50,7 @@ defmodule Scry.AnalysisSpecsTest do
 
   # The callee's spec says `returns`; the caller calls it.
   defp compile_probe!(dir, ebin, returns) do
-    source = Path.join(dir, "probe.ex")
-
-    File.write!(source, """
+    compile_source!(dir, ebin, "probe.ex", """
     defmodule #{inspect(@callee)} do
       @spec put(term()) :: #{returns}
       def put(_x), do: :ok
@@ -57,20 +60,25 @@ defmodule Scry.AnalysisSpecsTest do
       def run(x), do: #{inspect(@callee)}.put(x)
     end
     """)
+  end
+
+  defp compile_source!(dir, ebin, name, code) do
+    source = Path.join(dir, name)
+    File.write!(source, code)
 
     # Specs are read from debug info, which `mix test` turns off.
     previous = Code.compiler_options(debug_info: true)
 
     try do
       ExUnit.CaptureIO.capture_io(:stderr, fn ->
-        {:ok, _modules, _warnings} =
+        {:ok, modules, _warnings} =
           Kernel.ParallelCompiler.compile_to_path([source], ebin, return_diagnostics: true)
+
+        for module <- modules, do: :code.purge(module) && :code.delete(module)
       end)
     after
       Code.compiler_options(previous)
     end
-
-    for module <- [@callee, @caller], do: :code.purge(module) && :code.delete(module)
   end
 
   defp installed_about_callee(rows) do
@@ -116,6 +124,54 @@ defmodule Scry.AnalysisSpecsTest do
     %{ignored_moved?: true} = Scry.Scanner.sync(db, caller, sources, ignored)
 
     assert shapes_about_callee(Scry.Analysis.relation_facts(db, :spec_return)) == ["can_fail"]
+  end
+
+  test "a caller of argus re-extracts when argus's code moves, and no other module does", %{
+    paths: paths,
+    tmp_dir: dir
+  } do
+    ebin = Path.dirname(paths[@caller])
+
+    compile_source!(dir, ebin, "argus_probe.ex", """
+    defmodule #{inspect(@argus_caller)} do
+      def run, do: Argus.Schema.version()
+    end
+    """)
+
+    paths = Map.put(paths, @argus_caller, Path.join(ebin, "#{@argus_caller}.beam"))
+    db = Graph.new_db(paths)
+
+    try do
+      for module <- Map.keys(paths), do: {:ok, _} = Scry.Analysis.module_extraction(db, module)
+
+      # The specs of `Argus.Schema.version/0` were read off the code
+      # path, where the environment digest does not look.
+      assert argus_code_read?(db, @argus_caller)
+      refute argus_code_read?(db, @caller)
+      refute argus_code_read?(db, @callee)
+
+      # This module runs after every async one: the log sees this graph
+      # alone.
+      log = QueryLog.start()
+
+      try do
+        :ok = Roux.Input.set(db, :argus_code, :all, "argus edited")
+
+        for module <- Map.keys(paths),
+            do: {:ok, _} = Scry.Analysis.module_extraction(db, module)
+
+        assert QueryLog.executions(log, :module_extraction) == [@argus_caller]
+      after
+        QueryLog.detach(log)
+      end
+    after
+      Roux.Database.shutdown(db)
+    end
+  end
+
+  defp argus_code_read?(db, module) do
+    {:ok, deps} = Roux.Memo.dependencies(db, {:module_extraction, module})
+    {:input, :argus_code, :all} in deps
   end
 
   defp shapes_about_callee(rows) do

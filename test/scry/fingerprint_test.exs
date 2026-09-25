@@ -174,23 +174,73 @@ defmodule Scry.FingerprintTest do
       refute write.(List.keyreplace(chunks, ~c"Code", 0, {~c"Code", code <> <<0>>})) == original
     end
 
-    test "the environment carries the argus and scry code digests" do
+    test "argus's code is every argus beam, debug info included" do
+      ebin = Path.join(to_string(:code.lib_dir(:panoptes)), "ebin")
+      assert Scry.Fingerprint.argus_code() == Scry.Fingerprint.code_digest(ebin, debug_info: true)
+      refute Scry.Fingerprint.argus_code() == Scry.Fingerprint.code_digest(ebin)
+    end
+  end
+
+  describe "env/1" do
+    test "carries the runtime, scry's code and argus's schema, and no argus code" do
       env = Scry.Fingerprint.env()
-      assert env.argus_code =~ ~r/^[0-9a-f]{32}$/
       assert env.scry_code =~ ~r/^[0-9a-f]{32}$/
+      assert env.argus_schema == Argus.Schema.version()
+
+      assert Map.keys(env) |> Enum.sort() ==
+               [:argus_schema, :elixir, :otp, :scry, :scry_code, :specs_environment]
     end
 
-    test "the environment carries the applications the specs are read from" do
-      assert Scry.Fingerprint.env().specs_environment == Argus.Specs.environment_digest()
+    test "carries the applications the specs are read from, less argus's own beams" do
+      # A read of argus's specs is keyed by `:argus_code` where it
+      # happens; an argus edit must not move what every query reads.
+      assert Scry.Fingerprint.env().specs_environment ==
+               Argus.Specs.environment_digest(exclude: [:panoptes])
     end
 
     test "the applications the scan watches are named by version alone" do
       # Their beams move with every edit; the graph tracks each one.
       assert Scry.Fingerprint.env([:scry]).specs_environment ==
-               Argus.Specs.environment_digest(exclude: [:scry])
+               Argus.Specs.environment_digest(exclude: [:panoptes, :scry])
 
       refute Scry.Fingerprint.env([:scry]).specs_environment ==
                Scry.Fingerprint.env().specs_environment
+    end
+  end
+
+  describe "extraction_code/0" do
+    test "covers every producer's code and the schema, and nothing only findings run" do
+      {:ok, closure} = Scry.Fingerprint.extraction_closure()
+      modules = Enum.map(closure, &elem(&1, 0))
+      assert modules == Enum.sort(Enum.uniq(modules))
+
+      for producer <- [:base | Scry.Analysis.all_extractors()] do
+        {:ok, reached} = Argus.Cache.Code.closure(producer)
+        assert reached -- closure == [], "#{inspect(producer)} runs code the digest leaves out"
+      end
+
+      schema =
+        for module <- Application.spec(:panoptes, :modules),
+            String.starts_with?(Atom.to_string(module), "Elixir.Argus.Schema."),
+            do: module
+
+      assert schema != []
+      assert [Argus.Schema | schema] -- modules == []
+
+      # What argus runs only to solve and to report: an edit to it
+      # extracts nothing.
+      outside =
+        [Argus.Findings, Argus.Souffle, Argus.Cache.Code, Argus.Cache.Facts] ++
+          Argus.Analysis.builtin_analysis_modules()
+
+      assert Enum.filter(outside, &(&1 in modules)) == []
+    end
+
+    test "names the closure's code, not all of argus's" do
+      digest = Scry.Fingerprint.extraction_code()
+      assert digest =~ ~r/^[0-9a-f]{32}$/
+      assert Scry.Fingerprint.extraction_code() == digest
+      refute digest == Scry.Fingerprint.argus_code()
     end
   end
 end

@@ -98,7 +98,12 @@ defmodule Scry.Runner do
 
       {findings_by_file, degraded, extraction_errors} =
         if souffle? do
-          cold? = force? or prior_sources == %{} or env.fingerprint_changed?
+          # What every extraction reads moved: every module is extracted
+          # again, across the schedulers.
+          cold? =
+            force? or prior_sources == %{} or env.fingerprint_changed? or
+              env.extraction_changed?
+
           to_extract = if cold?, do: Map.keys(discovered), else: Enum.uniq(changed ++ retried)
           analyze(db, config, discovered, to_extract)
         else
@@ -130,13 +135,14 @@ defmodule Scry.Runner do
   end
 
   # The inputs that describe the run rather than the beams: the
-  # environment fingerprint, the project root, and — with a solver — the
-  # rules digests. `moved?` when any of them, or an analysis without a
-  # memo from the last run, means this run has something to write down.
+  # environment fingerprint, argus's code (what extraction runs, and all
+  # of it), the project root, and — with a solver — the rules digests.
+  # `moved?` when any of them, or an analysis without a memo from the
+  # last run, means this run has something to write down.
   defp sync_environment(db, config, souffle?, apps) do
-    fingerprint = Scry.Fingerprint.env(apps)
-    fingerprint_changed? = Input.fetch(db, :env_fingerprint, :all) != {:ok, fingerprint}
-    :ok = Input.set(db, :env_fingerprint, :all, fingerprint)
+    fingerprint_changed? = set(db, :env_fingerprint, :all, Scry.Fingerprint.env(apps))
+    extraction_changed? = set(db, :extraction_code, :all, Scry.Fingerprint.extraction_code())
+    argus_changed? = set(db, :argus_code, :all, Scry.Fingerprint.argus_code())
     :ok = Input.set(db, :project_root, :all, File.cwd!())
 
     # Only solves read the rules, and none is demanded without a solver.
@@ -149,8 +155,18 @@ defmodule Scry.Runner do
 
     %{
       fingerprint_changed?: fingerprint_changed?,
-      moved?: fingerprint_changed? or rules_changed? or unsolved?
+      extraction_changed?: extraction_changed?,
+      moved?:
+        fingerprint_changed? or extraction_changed? or argus_changed? or rules_changed? or
+          unsolved?
     }
+  end
+
+  # Sets an input; true when its value moved.
+  defp set(db, input, key, value) do
+    moved? = Input.fetch(db, input, key) != {:ok, value}
+    :ok = Input.set(db, input, key, value)
+    moved?
   end
 
   # Extracts `to_extract` ahead of the graph, then demands every
@@ -252,9 +268,7 @@ defmodule Scry.Runner do
     analyses
     |> Scry.Fingerprint.rules()
     |> Enum.reduce(false, fn {key, digest}, changed? ->
-      moved? = Input.fetch(db, :rules_digest, key) != {:ok, digest}
-      :ok = Input.set(db, :rules_digest, key, digest)
-      changed? or moved?
+      set(db, :rules_digest, key, digest) or changed?
     end)
   end
 

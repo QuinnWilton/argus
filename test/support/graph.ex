@@ -127,6 +127,10 @@ defmodule Scry.Test.Graph do
   @doc """
   A database with both layers registered and the driver's inputs set
   the way `Scry.Runner` sets them, over `paths`.
+
+  Options: `rules: false` and `argus: false` leave the rules digests and
+  argus's code digests (`:extraction_code`, `:argus_code`) unset, as
+  planchette does.
   """
   @spec new_db(%{optional(module()) => String.t()}, keyword()) :: Database.t()
   def new_db(paths, opts \\ []) do
@@ -142,6 +146,12 @@ defmodule Scry.Test.Graph do
 
       for {key, digest} <- Scry.Fingerprint.rules(all),
           do: :ok = Input.set(db, :rules_digest, key, digest)
+    end
+
+    # And argus's code (planchette does).
+    if Keyword.get(opts, :argus, true) do
+      :ok = Input.set(db, :extraction_code, :all, Scry.Fingerprint.extraction_code())
+      :ok = Input.set(db, :argus_code, :all, Scry.Fingerprint.argus_code())
     end
 
     Enum.each(Scry.Analysis.prior_relations(), &(:ok = Input.set(db, :prior_rows, &1, [])))
