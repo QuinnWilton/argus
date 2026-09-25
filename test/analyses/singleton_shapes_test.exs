@@ -72,19 +72,28 @@ defmodule Argus.Analyses.SingletonShapesTest do
           EtsOwners.HelperOwner,
           EtsOwners.InfoOwner,
           EtsOwners.BadargOwner,
-          EtsOwners.DynamicOwnerNamedRead
+          EtsOwners.DynamicOwnerNamedRead,
+          EtsOwners.UnrelatedRescueOwner,
+          EtsOwners.SpawnedReader
         ],
         :ets
       )
 
+    # A rescue guards the read it covers, not one elsewhere in the reader
+    # (UnrelatedRescueOwner); a task the owner starts runs apart from it
+    # (SpawnedReader).
     assert rows(r, "ets_read_outside_owner", 1) == [
              "Argus.Test.Fixtures.EtsOwners.HelperOwner",
-             "Argus.Test.Fixtures.EtsOwners.Owner"
+             "Argus.Test.Fixtures.EtsOwners.Owner",
+             "Argus.Test.Fixtures.EtsOwners.SpawnedReader",
+             "Argus.Test.Fixtures.EtsOwners.UnrelatedRescueOwner"
            ]
 
     assert rows(r, "ets_read_outside_owner", 2) == [
              "Argus.Test.Fixtures.EtsOwners.HelperOwner:lookup/1",
-             "Argus.Test.Fixtures.EtsOwners.Owner:lookup/1"
+             "Argus.Test.Fixtures.EtsOwners.Owner:lookup/1",
+             "Argus.Test.Fixtures.EtsOwners.SpawnedReader:-handle_cast/2-fun-0-/1",
+             "Argus.Test.Fixtures.EtsOwners.UnrelatedRescueOwner:lookup/1"
            ]
   end
 

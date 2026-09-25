@@ -158,6 +158,54 @@ defmodule Argus.Test.Fixtures.EtsOwners do
     end
   end
 
+  defmodule UnrelatedRescueOwner do
+    @moduledoc """
+    A rescue in the reader, around code after the read: it takes nothing
+    the read raises.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    def lookup(key) do
+      rows = :ets.lookup(:ets_reader_unrelated, key)
+
+      try do
+        Enum.map(rows, &elem(&1, 1))
+      rescue
+        ArgumentError -> []
+      end
+    end
+
+    @impl true
+    def init(_opts) do
+      :ets.new(:ets_reader_unrelated, [:named_table, :protected, :set])
+      {:ok, %{}}
+    end
+  end
+
+  defmodule SpawnedReader do
+    @moduledoc """
+    The owner's callback starts an unlinked task that reads the table: the
+    task outlives the owner's crash, and reads while the table is gone.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(_opts) do
+      :ets.new(:ets_reader_spawned, [:named_table, :protected, :set])
+      {:ok, %{}}
+    end
+
+    @impl true
+    def handle_cast({:report, key}, state) do
+      Task.start(fn -> IO.inspect(:ets.lookup(:ets_reader_spawned, key)) end)
+      {:noreply, state}
+    end
+  end
+
   defmodule HeirOwner do
     @moduledoc false
     use GenServer

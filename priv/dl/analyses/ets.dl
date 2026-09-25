@@ -234,8 +234,11 @@ ets_write_only_table(name, mod, id) :-
 // reach it: what only the API reaches runs in callers.
 // Backward from the table functions (creators and readers) to the
 // callbacks that reach them, so the closure is bounded by functions x
-// table functions rather than by every process's whole reach.
-.init ets_reach = CallReach
+// table functions rather than by every process's whole reach. The
+// owner's process's own stack (SameProcessReach): a table a closure the
+// owner spawns creates is that process's, and a read in it is made from
+// outside the owner, the table gone as soon as the owner restarts.
+.init ets_reach = SameProcessReach
 
 ets_reach.seed(f, f) :- ets_new(_, f, _).
 ets_reach.seed(f, f) :- ets_op(_, f, _, _, "read").
@@ -252,14 +255,36 @@ owner_reaches(mod, t) :- process_entry(mod, c), ets_reach.reaches(c, t).
 
 raising_read(site) :- ets_op(site, _, _, op, "read"), !ets_answers_missing_table(op).
 
-// A rescue that would catch the ArgumentError a missing table raises
-// (rescues_argument_error, in exceptions.dl) may sit in the function
-// that built the closure, at any depth, or in a function that one of
-// those parents calls.
-.decl guarded(func: symbol)
+// A rescue that catches the ArgumentError a missing table raises, around
+// the read itself (site_rescues_argument_error, in exceptions.dl): a
+// rescue around unrelated code elsewhere in the reader does not take it,
+// as ets_missing_row learned (9406a24). A read in a closure is rescued
+// where the closure is handed to a call a rescue covers, in its builder
+// or any function enclosing it, or to a function that rescues around
+// what it runs (a rescuing wrapper). A read through a caller's literal
+// (named_read's second clause) has no site in the caller, and asks the
+// caller's function as a whole (quiet).
+.decl read_rescued(site: symbol, func: symbol)
 
-guarded(g) :- enclosing_function(g, a), rescues_argument_error(a).
-guarded(g) :- enclosing_function(g, a), closure_def(p, a), call_edge(p, t), rescues_argument_error(t).
+read_rescued(site, g) :- ets_op(site, g, _, _, _), site_rescues_argument_error(site, g).
+
+read_rescued(site, g) :-
+  ets_op(site, g, _, _, _),
+  enclosing_function(g, a),
+  closure_def(b, a),
+  fun_handed(call, b, a, _),
+  site_rescues_argument_error(call, b).
+
+read_rescued(site, g) :-
+  ets_op(site, g, _, _, _),
+  enclosing_function(g, a),
+  closure_def(b, a),
+  fun_handed_to(b, a, t),
+  rescues_argument_error(t).
+
+.decl caller_rescues(func: symbol)
+
+caller_rescues(f) :- rescues_argument_error(f).
 
 // A reader that asks `:ets.whereis/1` of the table before reading it
 // (hackney's HTTP/3 connection table, Sentry's dedupe) reads only while
@@ -307,8 +332,19 @@ ets_read_outside_owner(name, owner, reader, site, id) :-
   !ets_option(id, "heir", "true"),
   named_read(name, reader, site),
   !owner_reaches(owner, reader),
-  !guarded(reader),
+  !read_guarded(reader, site),
   !asks_before_reading(reader, name).
+
+// The read at `site`, made by (or through a literal passed by) `reader`,
+// is rescued.
+.decl read_guarded(reader: symbol, site: symbol)
+
+read_guarded(reader, site) :- named_read(_, reader, site), read_rescued(site, reader).
+
+read_guarded(reader, site) :-
+  named_read(_, reader, site),
+  !ets_op(site, reader, _, _, _),
+  caller_rescues(reader).
 
 // A table under a name computed at runtime: only the owner's own API
 // can be tied to it.
@@ -321,7 +357,7 @@ ets_read_outside_owner("dynamic", owner, reader, site, id) :-
   raising_read(site),
   function_def(reader, owner, _, _, _),
   !owner_reaches(owner, reader),
-  !guarded(reader).
+  !read_rescued(site, reader).
 
 // ── A named table a start function creates ─────────────────────────
 //

@@ -395,6 +395,17 @@ never saw it; it is a write.
 a task init/1 starts that casts to a later sibling no longer makes
 "Child starts before its dependency" of init/1.
 
+**Changed.** "ETS table read outside its owner" asks, as failure and
+races do, whether the read itself is guarded: a rescue of
+`ArgumentError` around the read (or around the closure it runs in), or
+in the caller whose literal names the table. It asked whether the
+reading function rescued anywhere, so a rescue around code after the
+read hid a read that raises (`EtsOwners.UnrelatedRescueOwner`). The
+owner's code is what its process runs (`SameProcessReach`, as
+elsewhere), no longer every call from it: a task the owner starts that
+reads the table outlives the owner's crash
+(`EtsOwners.SpawnedReader`).
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,
