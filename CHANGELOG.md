@@ -96,6 +96,27 @@ read as request data flowing into the decode (`:error`), and are path
 rows again (`:info`). The rest of the conn fetch_cookies/2 returns is
 no longer followed either, which errs quiet. Corpus tally unchanged.
 
+**Added.** `failure.unhandled_failure`'s rpc arms follow the answer
+through wrappers. A function that returns an `:rpc.call`,
+`:rpc.block_call` or `:rpc.yield` answer, or another such function's
+result, is a wrapper; where a caller that compares nothing to `:badrpc`
+matches its result by shape or tests it as a boolean, the finding is at
+that call ("RPC result matched without a {:badrpc, _} clause", "RPC
+result used as a boolean"), naming the wrapper, with the rpc as a
+related frame (`rpc_wrapped`). EMQX's BPAPI audit (emqx#18287) fixed
+about fifteen such callers; new relation `result_tested(id, func, callee,
+how)` (`case`, `boolean`, `returned`) from the ErrorHandling extractor
+records what a function does with a call's result, runtime and
+compiler-made callees and predicates left out (about 7.5k rows on
+firezone's 1,240 beams). Multicall wrappers are not followed: their pair
+is always a pair. Corpus tally: 9 new rows, all the class
+(phoenix_live_dashboard's info components, Livebook's
+`ErlDist.initialize/2`); present-only pair
+phoenix_live_dashboard:rpc-wrapper. Over live projects and OTP: 4 real
+(ejabberd's `mod_configure`, rabbit's `await_startup/2,3`,
+`rabbit_khepri:check_cluster_consistency/2`) and 1 false (rabbit's
+`is_booted/1`, whose `_ -> false` takes the tuple). Schema 107.
+
 ### Classes mined from fixed bugs
 
 Three classes from round 1 of mining fixed bugs (178 classified; the

@@ -193,6 +193,29 @@ defmodule Argus.Schema.ErrorHandling do
         """
       },
       %{
+        name: :result_tested,
+        layer: 2,
+        fields: [
+          {:id, :instr_id, "the call"},
+          {:func, :func_id, "the function making it"},
+          {:callee, :func_id, "what it calls (Mod:fun/arity)"},
+          {:how, :symbol, "'case' | 'boolean' | 'returned'"}
+        ],
+        doc: """
+        What a function that compares nothing to :badrpc does with a call's \
+        result: matches it by shape where the function has a clause-less \
+        exit (`case`: an answer no clause takes raises), tests it against \
+        true/false/nil (`boolean`), or returns it as its own result \
+        (`returned`: a tail call, or the result in x0 at a return), local \
+        and remote callees alike. `rpc_result` says the same of an rpc \
+        API's own sites; this is what a caller does with a function that \
+        returns an rpc's answer. Calls into the runtime \
+        (`Argus.Extractor.Runtime`), to a function the compiler made, and \
+        to a predicate (a name ending in `?`, whose rpc is reported where \
+        it is made) are not rows.
+        """
+      },
+      %{
         name: :timer_arm,
         layer: 2,
         fields: [

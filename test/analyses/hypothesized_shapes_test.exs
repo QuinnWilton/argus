@@ -50,6 +50,41 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
            ]
   end
 
+  test "an rpc result a wrapper returns is judged where its caller matches it" do
+    skip_without_souffle()
+
+    {:ok, r} =
+      Memo.analyze(
+        [H.RpcProto, H.RpcFacade, H.RpcWrapperCaller, H.RpcWrapperCallerHandled],
+        :failure
+      )
+
+    reported =
+      r
+      |> Map.get("unhandled_failure", [])
+      |> Enum.map(fn [func, _site, variant, shape, _] -> {func, variant, shape} end)
+      |> Enum.sort()
+
+    # Reported at the caller's call, not at the rpc the wrapper returns.
+    assert reported == [
+             {"Argus.Test.Fixtures.Hypothesized.RpcWrapperCaller:delete/2", "rpc", "case"},
+             {"Argus.Test.Fixtures.Hypothesized.RpcWrapperCaller:status/2", "rpc", "case"}
+           ]
+
+    assert [[_func, _site, rpc_site, _wrapper]] =
+             Enum.filter(r["rpc_wrapped"], fn [func | _] ->
+               func =~ "RpcWrapperCaller:delete/2"
+             end)
+
+    assert rpc_site =~ "RpcProto:delete/2"
+
+    [row] =
+      Enum.filter(r["unhandled_failure"], fn [func | _] -> func =~ "RpcWrapperCaller:delete/2" end)
+
+    finding = Argus.Analyses.Failure.finding(:unhandled_failure, row)
+    assert finding.detail =~ "RpcFacade.delete/2, which returns :rpc.call's answer,"
+  end
+
   test "a timer cancelled and re-armed with a bare message, without a flush, is reported" do
     skip_without_souffle()
 

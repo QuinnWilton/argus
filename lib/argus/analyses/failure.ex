@@ -94,10 +94,24 @@ defmodule Argus.Analyses.Failure do
           {:kind, :symbol, "rescue | erpc_transport | rpc | multicall | erpc"},
           {:shape, :symbol,
            "for an rpc variant, case (matched, no clause) or boolean (truthy tuple)"},
-          {:span_end, :symbol, "for erpc_transport, the guard's last instruction; else empty"}
+          {:span_end, :symbol,
+           "for erpc_transport, the guard's last instruction; for an rpc answer a " <>
+             "wrapper returns, the wrapper the site calls; else empty"}
         ],
         key: [:func, :site],
         doc: "A failure value or exception that nothing takes."
+      },
+      %{
+        name: :rpc_wrapped,
+        fields: [
+          {:func, :symbol, "the function matching the wrapper's result"},
+          {:site, :symbol, "its call of the wrapper"},
+          {:rpc, :symbol, "the rpc whose answer the wrapper returns"},
+          {:wrapper, :symbol, "the function it calls"}
+        ],
+        key: [:func, :site, :rpc],
+        evidence: %{of: :unhandled_failure, on: [:func, :site], limit: 3},
+        doc: "The rpc a wrapper returns the answer of, attached to its caller's finding."
       },
       %{
         name: :unchecked_result,
@@ -303,11 +317,11 @@ defmodule Argus.Analyses.Failure do
     )
   end
 
-  def finding(:unhandled_failure, [func, site, variant, "boolean", _]) do
+  def finding(:unhandled_failure, [func, site, variant, "boolean", wrapper]) do
     Findings.new(
       :warning,
       "RPC result used as a boolean",
-      "#{func} uses the result of #{Findings.rpc_api(variant)} as a boolean. A node that is " <>
+      "#{func} uses the result of #{answer(variant, wrapper)} as a boolean. A node that is " <>
         "gone answers `{:badrpc, :nodedown}` (a timeout `{:badrpc, :timeout}`), " <>
         "and a tuple is truthy: the failure reads as true.",
       at: Findings.at_site_in_func(site, func),
@@ -316,11 +330,11 @@ defmodule Argus.Analyses.Failure do
     )
   end
 
-  def finding(:unhandled_failure, [func, site, variant, "case", _]) do
+  def finding(:unhandled_failure, [func, site, variant, "case", wrapper]) do
     Findings.new(
       :warning,
       "RPC result matched without a {:badrpc, _} clause",
-      "#{func} matches the result of #{Findings.rpc_api(variant)} by shape and has no clause " <>
+      "#{func} matches the result of #{answer(variant, wrapper)} by shape and has no clause " <>
         "for `{:badrpc, reason}` — a node that is down, a timeout, a remote " <>
         "exit — so a cluster failure is a CaseClauseError (or MatchError) " <>
         "instead of an error value.",
@@ -453,6 +467,13 @@ defmodule Argus.Analyses.Failure do
     "catches only " <> Enum.join(classes, " and ")
   end
 
+  # The rpc whose answer the site matches: its own, or the one a wrapper
+  # it calls returns.
+  defp answer(variant, ""), do: Findings.rpc_api(variant)
+
+  defp answer(variant, wrapper),
+    do: "#{Findings.call_name(wrapper)}, which returns #{Findings.rpc_api(variant)}'s answer,"
+
   # Engler's ranking: how many standard deviations the agreeing fraction
   # sits above a coin flip. Seven sites against one is two deviations; the
   # rule's floor of three against one is none, so it stays informational.
@@ -466,6 +487,13 @@ defmodule Argus.Analyses.Failure do
     Findings.related(
       "#{target} is #{sup}'s child",
       Findings.at_site(sup_site, sup)
+    )
+  end
+
+  def evidence(:rpc_wrapped, [_func, _site, rpc, wrapper]) do
+    Findings.related(
+      "#{Findings.call_name(wrapper)} returns this rpc's answer",
+      Findings.at_instr(rpc)
     )
   end
 

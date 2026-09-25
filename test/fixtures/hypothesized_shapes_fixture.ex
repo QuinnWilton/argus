@@ -20,6 +20,69 @@ defmodule Argus.Test.Fixtures.Hypothesized do
     end
   end
 
+  # EMQX's BPAPI shape (emqx#18287 fixed about fifteen callers): the rpc
+  # is the whole body of a proto module's function, a facade returns the
+  # proto's answer, and the API handler matches the facade's result for
+  # ok and error only. The {:badrpc, _} a gone node answers passes
+  # through both wrappers and meets the handler's case.
+  defmodule RpcProto do
+    @moduledoc false
+    def delete(node, id), do: :rpc.call(node, :ets, :delete, [:delayed, id])
+
+    def alive(node, pid), do: :rpc.call(node, :erlang, :is_process_alive, [pid])
+
+    # Takes the failure itself: no wrapper.
+    def lookup(node, id) do
+      case :rpc.call(node, :ets, :lookup, [:delayed, id]) do
+        {:badrpc, reason} -> {:error, reason}
+        rows -> {:ok, rows}
+      end
+    end
+  end
+
+  defmodule RpcFacade do
+    @moduledoc false
+    def delete(node, id), do: RpcProto.delete(node, id)
+  end
+
+  defmodule RpcWrapperCaller do
+    @moduledoc false
+    def delete(node, id) do
+      case RpcFacade.delete(node, id) do
+        true -> 204
+        {:error, :not_found} -> 404
+      end
+    end
+
+    # rabbit:await_startup/2's shape: true and false, and no clause for
+    # the {:badrpc, _} is_booting/1 passes through.
+    def status(node, pid) do
+      case RpcProto.alive(node, pid) do
+        true -> :up
+        false -> :down
+      end
+    end
+  end
+
+  defmodule RpcWrapperCallerHandled do
+    @moduledoc false
+    def delete(node, id) do
+      case RpcFacade.delete(node, id) do
+        true -> 204
+        {:badrpc, _} -> 503
+      end
+    end
+
+    def lookup(node, id) do
+      case RpcProto.lookup(node, id) do
+        {:ok, rows} -> rows
+        {:error, _} -> []
+      end
+    end
+
+    def passes_on(node, id), do: {:result, RpcFacade.delete(node, id)}
+  end
+
   defmodule RpcCaseWithBadrpc do
     @moduledoc false
     def status(node) do

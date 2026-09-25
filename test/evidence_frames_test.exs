@@ -63,6 +63,20 @@ defmodule Argus.EvidenceFramesTest do
     assert %InstrId{func: "init", arity: 1} = frame.instr
   end
 
+  test "rpc_wrapped: the rpc whose answer a wrapper returns to the matching caller" do
+    alias Fixtures.Hypothesized, as: H
+
+    assert [finding] =
+             [H.RpcProto, H.RpcFacade, H.RpcWrapperCaller]
+             |> findings(:failure)
+             |> Enum.filter(&(&1.mfa == {H.RpcWrapperCaller, :delete, 2}))
+
+    assert [frame] = finding.related
+    assert frame.label == "#{inspect(H.RpcFacade)}.delete/2 returns this rpc's answer"
+    assert frame.module == H.RpcProto
+    assert %InstrId{func: "delete", arity: 2} = frame.instr
+  end
+
   test "init_reaches_recv: the init/1 callbacks that reach an unbounded receive" do
     assert [finding] =
              [Fixtures.InitRecv.Blocking]

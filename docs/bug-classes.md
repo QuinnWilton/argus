@@ -1692,12 +1692,16 @@ An error path the code could have seen and did not take: an exception a catch-al
 - `:badrpc` compared anywhere in f quiets every rpc in f (quiet direction); the clause-less exit may belong to another `case` in f than the one matching the result (noisy direction).
 - `:rpc.nb_yield` wraps its answer in `{:value, _}`: a `case` over it has a clause for the wrapper, and the badrpc it leaves out is nested, not this shape (`NbYieldCase`).
 - For `:rpc.multicall` only the match of the `{results, bad_nodes}` pair is read, not the failures inside the results list.
+- **Through wrappers** (round 2, 2026-09-25). An rpc whose answer f returns (`rpc_result` "returned") makes f a wrapper, and so does returning a wrapper's result (`result_tested` "returned": a tail call or a returned result, local or remote); a wrapper compares nothing to `:badrpc`. The finding is then at a caller's call of the wrapper, where the caller matches the result by shape or tests it as a boolean (`result_tested` "case" or "boolean", in a function comparing nothing to `:badrpc`), with the rpc as a related frame (`rpc_wrapped`) and the wrapper named in the prose ("the result of `M.f/2`, which returns :rpc.call's answer,"). EMQX's BPAPI proto modules are the shape: the handler, a facade, the proto's one `rpc:call` (`RpcWrapperCaller` through `RpcFacade` and `RpcProto`).
+- Only an answer that is a `{:badrpc, _}` itself is carried through a wrapper (`:rpc.call`, `block_call`, `yield`): a multicall wrapper's pair is always a pair, and a caller's `{replies, _bad} = ...` takes it (mnesia's own multicall wrappers).
+- A wrapper that takes the failure itself (`RpcProto.lookup/2`, a `{:badrpc, _}` clause) wraps nothing; a caller with a `:badrpc` clause is quiet (`RpcWrapperCallerHandled`), as is one that stores or passes the result on. A predicate wrapper (a name ending in `?`) is judged at its own rpc, where its name makes the answer a boolean; calls into the runtime and to compiler-made functions are not read.
+- A wrapper whose `case` passes `{:badrpc, _}` = Err -> Err and everything else through unchanged is compiled to a bare return and reads as a wrapper (rabbit's `is_booting/1`): what it returns is still the tuple, so its callers are judged, rightly.
 
-**Fixtures.** Positive: `Hypothesized.RpcCaseNoBadrpc`, `Hypothesized.BlockCallCaseNoBadrpc` (test/fixtures/hypothesized_shapes_fixture.ex). Quiet: `Hypothesized.RpcCaseWithBadrpc`, `Hypothesized.NbYieldCase` (same file). No multicall or yield-in-a-case fixture. Asserted in test/analyses/hypothesized_shapes_test.exs.
+**Fixtures.** Positive: `Hypothesized.RpcCaseNoBadrpc`, `Hypothesized.BlockCallCaseNoBadrpc`, and through wrappers `Hypothesized.RpcWrapperCaller` (`delete/2` through `RpcFacade` and `RpcProto`, `status/2` through `RpcProto`) (test/fixtures/hypothesized_shapes_fixture.ex). Quiet: `Hypothesized.RpcCaseWithBadrpc`, `Hypothesized.NbYieldCase`, `Hypothesized.RpcWrapperCallerHandled` (a `:badrpc` clause, a wrapper that handles the failure, a result passed on) (same file). No multicall or yield-in-a-case fixture. Asserted in test/analyses/hypothesized_shapes_test.exs.
 
-**Corpus.** Present-only: `phoenix_live_dashboard#218` (phoenixframework/phoenix_live_dashboard, e562c63, Phoenix.LiveDashboard.SystemInfo).
+**Corpus.** Present-only: `phoenix_live_dashboard#218` (phoenixframework/phoenix_live_dashboard, e562c63, Phoenix.LiveDashboard.SystemInfo); `phoenix_live_dashboard:rpc-wrapper` (same tree, Phoenix.LiveDashboard.ProcessInfoComponent, which matches `SystemInfo.fetch_process_info/1`'s pass-through `:rpc.call` answer for `{:ok, info}` and `:error` only; the later "Use erpc" commit makes it raise instead, no fix of the class). EMQX's audit (emqx#18287, fix b32a01f, pre 8fe9f79) is the motivating fix; see the corpus comment for whether its tree builds here.
 
-**Precision.** Not measured.
+**Precision.** Round 2 (2026-09-25), the wrapper arm only. Corpus tally: 9 new rows, all in the class: phoenix_live_dashboard e562c63's seven info components and pages (the #218 shape, one call away) and Livebook's `ErlDist.initialize/2` (`{:ok, _} = start_node_manager(node, ...)`, an `:rpc.call` wrapper, twice). Live projects (ejabberd, rabbit and rabbit_common, eight more) and OTP kernel, mnesia, ssl and inets: 5 new rows, 4 real — ejabberd's `mod_configure` get_form closure (`case ejabberd_cluster:call(...) of Type when is_atom(Type) -> ...`, where the module's other sites take `{badrpc, _}`), rabbit's `await_startup/2,3` (`case is_booting(Node) of true -> ...; false -> ...`), and `rabbit_khepri:check_cluster_consistency/2`, whose `try {ok, remote_node_info(Node)} catch _:_ -> error end` catches nothing an rpc returns and has no clause for `{ok, {badrpc, _}}` — and 1 false: rabbit's `is_booted/1` tests the answer against `false` and sends everything else, the tuple included, to a `_ -> false` clause (the boolean arm cannot tell which branch a tuple takes). Multicall wrappers, which made mnesia's `{Replies, _Bad} = multicall(...)` rows before they were excluded, are out.
 
 ### A remote call's failure read as a boolean
 
@@ -1707,7 +1711,7 @@ An error path the code could have seen and did not take: an exception a catch-al
 **Property.** Some remote call in a function f whose result is tested against `true`, `false` or `nil` (an `&&`, an `if`), or is f's own return value where f's name ends in `?`, so its callers test it. For `:rpc.call`, `:rpc.block_call`, `:rpc.yield` or `:rpc.multicall`, a node that is gone answers `{:badrpc, :nodedown}`, and a tuple is truthy: the failure reads as true (horde's `member?(n) && :rpc.call(n, Process, :alive?, [pid])` said a process on a gone node was alive). For `:erpc.call` (kind `erpc`), f has no handler clause that takes every error and none that compares `:erpc`: a node that went away between the check that chose it and the call raises `{:erpc, :noconnection}` out of the predicate.
 
 **Assumptions and limits.**
-- The `?` naming convention is the only step across functions: a result returned from a function with another name and tested by its caller is not followed.
+- Besides the `?` naming convention, a result returned through a wrapper and tested against a boolean by its caller is followed (see the previous class, "Through wrappers"); the test does not say which branch the tuple takes, so a caller that sends everything but `false` to a `false` clause is still reported (rabbit's `is_booted/1`).
 - For `erpc`, a handler anywhere in f that takes every error, or compares `:erpc`, quiets the call whether or not it covers it (a function-wide reading, in the quiet direction).
 - `:erpc.call/2,3` (the fun forms) are not read.
 
@@ -2773,7 +2777,8 @@ badly they fail and how directly the bytecode shows them:
 
 The mining also found instances that existing classes miss as written.
 The largest are rpc results judged only where the rpc is made (EMQX
-fixed about fifteen wrapper sites in one audit), `trap_exit` keyed by
+fixed about fifteen wrapper sites in one audit; round 2 follows the
+answer through wrappers), `trap_exit` keyed by
 the module that sets it rather than the process that runs it, callback
 timeouts outside init/1, an unlinked `GenServer.start` not counted as a
 spawn, `insert_new` as the check of a missing-row race, and a library's

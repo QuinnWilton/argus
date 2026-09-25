@@ -86,6 +86,7 @@ defmodule Argus.Extractors.ErrorHandling do
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Identity
   alias Argus.Extractor.Resolve
+  alias Argus.Extractor.Runtime
   alias Argus.Extractors.ErrorHandling.Boundary
   alias Argus.Extractors.ErrorHandling.CatchClauses
   alias Argus.Extractors.ErrorHandling.ClauseHead
@@ -97,6 +98,7 @@ defmodule Argus.Extractors.ErrorHandling do
 
   import Argus.Extractor.Helpers,
     only: [
+      each_call: 3,
       each_remote_call: 3,
       find_function: 3,
       instructions_from_label: 2,
@@ -170,6 +172,7 @@ defmodule Argus.Extractors.ErrorHandling do
       :ignored_error_result,
       :mailbox_writer,
       :recv_pattern,
+      :result_tested,
       :returns_call,
       :rpc_result,
       :timer_arm,
@@ -221,6 +224,7 @@ defmodule Argus.Extractors.ErrorHandling do
       |> maybe_rpc_result(ctx, mfa)
       |> maybe_call_result(ctx, mfa)
     end)
+    |> emit_result_tests(module_data)
   end
 
   # The callees whose results a consistency rule may compare across the
@@ -1082,6 +1086,60 @@ defmodule Argus.Extractors.ErrorHandling do
       true -> result_use(Enum.drop(instrs, idx + 1), [{:x, 0}], instrs)
     end
   end
+
+  # How a function treats what a call it makes returns, where the
+  # function compares nothing to :badrpc: matched by shape in a function
+  # with a clause-less exit ("case"), tested against true/false/nil
+  # ("boolean"), or returned as its own result ("returned": a tail call,
+  # or the result left in x0 at a return). The rpc rule asks it of calls
+  # to a function that returns an rpc's answer (a wrapper, and a wrapper
+  # of one: EMQX's handler calls a facade that returns a proto's rpc),
+  # whose {:badrpc, _} meets the test in the caller. A call to an rpc API
+  # is `rpc_result`'s; a call into the runtime, or to a function the
+  # compiler made, has no wrapper to be; a predicate is tested as its
+  # name says.
+  defp emit_result_tests(facts, module_data) do
+    badrpc =
+      for {:function, name, arity, _entry, instrs} <- module_data.functions,
+          :badrpc in Dispatch.compared_atoms(instrs, :any),
+          into: MapSet.new(),
+          do: InstrId.func_id(module_data.module, name, arity)
+
+    each_call(module_data, facts, fn acc, ctx, {m, f, a} = mfa ->
+      with false <- MapSet.member?(badrpc, ctx.func_id),
+           false <- Runtime.module?(m) or mfa in @rpc_calls or predicate?(f) or lifted?(f),
+           how when how in ["case", "boolean", "returned"] <- tested(ctx) do
+        add_fact(acc, :result_tested, [
+          InstrId.mint(ctx.func_id, ctx.idx),
+          ctx.func_id,
+          InstrId.func_id(m, f, a),
+          how
+        ])
+      else
+        _ -> acc
+      end
+    end)
+  end
+
+  defp tested(ctx) do
+    instr = Enum.at(ctx.instrs, ctx.idx)
+
+    cond do
+      Instr.tail_call?(instr) -> "returned"
+      Instr.call?(instr) -> result_use(Enum.drop(ctx.instrs, ctx.idx + 1), [{:x, 0}], ctx.instrs)
+      true -> "other"
+    end
+  end
+
+  # A predicate's answer is a boolean by its name, and testing it is its
+  # contract (HEEx's `changed_assign?/2` is most of a LiveView app's
+  # tests). A predicate that returns an rpc's answer is reported at the
+  # rpc, where its own name makes the result a boolean.
+  defp predicate?(name), do: name |> Atom.to_string() |> String.ends_with?("?")
+
+  # A compiler-made function (`-inlined-__info__/1-`, a lifted closure)
+  # is no wrapper a program wrote.
+  defp lifted?(name), do: name |> Atom.to_string() |> String.starts_with?("-")
 
   @booleans [{:atom, true}, {:atom, false}, {:atom, nil}]
 

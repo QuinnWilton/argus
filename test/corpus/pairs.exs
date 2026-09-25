@@ -187,6 +187,44 @@
     pre: "e562c63922ea3518d7963bef3e84b433dae5cd80",
     finding: {:failure, "RPC result matched without a {:badrpc, _} clause"}
   },
+  # The same tree's info components match what SystemInfo's
+  # fetch_process_info/1 and its siblings return — each one :rpc.call's
+  # answer, passed through — for {:ok, info} and :error only; a node
+  # that is gone crashes the component (the class's wrapper arm). The
+  # later "Use erpc" commit (20b9e71) makes them raise instead, which is
+  # not a fix of the class, so this pair is present-only.
+  %{
+    repo: "phoenixframework/phoenix_live_dashboard",
+    issue: "phoenix_live_dashboard:rpc-wrapper",
+    module: "Phoenix.LiveDashboard.ProcessInfoComponent",
+    pre: "e562c63922ea3518d7963bef3e84b433dae5cd80",
+    finding: {:failure, "RPC result matched without a {:badrpc, _} clause"}
+  },
+  # EMQX's BPAPI audit (emqx#18287 fixed about fifteen callers of
+  # rpc-backed proto modules): the delayed-message DELETE handler matched
+  # emqx_delayed:delete_delayed_message/2's result — a facade returning
+  # emqx_delayed_proto_v2's `rpc:call` answer — for ok and not_found
+  # only, so an unreachable node was a case_clause and a 500. The finding
+  # is at the handler's closure, through two wrappers. The monorepo
+  # builds from its root, without its QUIC, RocksDB and jq NIFs.
+  %{
+    repo: "emqx/emqx",
+    issue: "emqx#18287",
+    module: ":emqx_delayed_api",
+    pre: "8fe9f79d71771303515e13e8c9a5f184e081af79",
+    fix: "b32a01f559e3afafdb66058fba04d85f45a44a3b",
+    otp: "27.3.3",
+    elixir: "1.18.3-otp-27",
+    app: "emqx_modules",
+    env: %{
+      "PROFILE" => "emqx-enterprise",
+      "MIX_ENV" => "emqx-enterprise",
+      "BUILD_WITHOUT_QUIC" => "1",
+      "BUILD_WITHOUT_ROCKSDB" => "1",
+      "BUILD_WITHOUT_JQ" => "1"
+    },
+    finding: {:failure, "RPC result matched without a {:badrpc, _} clause"}
+  },
   # ── A message a GenServer is sent and has no clause for ────────────
   # oban 5518653 "Remove monitored processes from listeners list": the PG
   # notifier monitored every listener in handle_call and dropped the

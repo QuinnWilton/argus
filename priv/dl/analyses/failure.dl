@@ -176,6 +176,72 @@ unhandled_failure(f, id, "erpc", "boolean", "") :-
   !catches_class(f, "error"),
   !catch_tag(_, f, "error", ":erpc").
 
+// ── An rpc answer a wrapper returns ───────────────────────────────────
+//
+// The answer of an rpc a function returns (rpc_result "returned") is its
+// callers' to judge: EMQX's BPAPI proto modules are one `rpc:call` each,
+// a facade returns the proto's answer, and the HTTP handler matched the
+// facade's result for ok and error only, so a gone node was a
+// CaseClauseError and a 500 (emqx#18287 fixed about fifteen such
+// callers). A wrapper returns an rpc's answer, or another wrapper's
+// (result_tested "returned", remote callees included); where its caller
+// matches that result by shape, or
+// tests it as a boolean, in a function comparing nothing to :badrpc
+// (result_tested), the {:badrpc, _} meets the test there. A function
+// that takes the failure itself (a :badrpc clause, rpc_result "badrpc")
+// wraps nothing. `rpc_wrapped` names the rpc for the finding's frame.
+.decl rpc_wrapper(w: symbol, variant: symbol, rpc: symbol)
+
+rpc_wrapper(w, v, id) :-
+  rpc_call(id, w, v, _),
+  wrapped_answer(v),
+  rpc_result(id, w, "returned"),
+  !predicate_function(w).
+
+// The answers that are a {:badrpc, _} themselves. A multicall's is the
+// {results, bad_nodes} pair, which a caller's `{replies, _bad} =` match
+// always takes (mnesia's own multicall wrappers): its failures are in
+// the lists, not this rule's shape.
+.decl wrapped_answer(variant: symbol)
+
+wrapped_answer("rpc").
+wrapped_answer("block_call").
+wrapped_answer("yield").
+
+rpc_wrapper(g, v, id) :-
+  result_tested(_, g, w, "returned"),
+  rpc_wrapper(w, v, id),
+  !predicate_function(g).
+
+// A predicate's rpc answer is reported where the rpc is (above).
+.decl predicate_function(f: symbol)
+
+predicate_function(f) :-
+  rpc_result(_, f, "returned"),
+  function_def(f, _, name, _, _),
+  match(".*\\?", name).
+
+predicate_function(f) :-
+  result_tested(_, f, _, "returned"),
+  function_def(f, _, name, _, _),
+  match(".*\\?", name).
+
+.decl rpc_wrapped(func: symbol, site: symbol, rpc: symbol, wrapper: symbol)
+.output rpc_wrapped
+
+rpc_wrapped(c, site, rpc, w) :-
+  result_tested(site, c, w, how),
+  how != "returned",
+  rpc_wrapper(w, _, rpc).
+
+unhandled_failure(c, site, v, "case", w) :-
+  result_tested(site, c, w, "case"),
+  rpc_wrapper(w, v, _).
+
+unhandled_failure(c, site, v, "boolean", w) :-
+  result_tested(site, c, w, "boolean"),
+  rpc_wrapper(w, v, _).
+
 // ══ Results discarded ═══════════════════════════════════════════════
 
 // ── Task.Supervisor.start_child detection ──────────────────────────────

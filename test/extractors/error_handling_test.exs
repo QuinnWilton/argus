@@ -360,4 +360,34 @@ defmodule Argus.Extractors.ErrorHandlingTest do
       assert Enum.sort(flows) == [{"stored", ":poll"}, {"stored", ":timer"}]
     end
   end
+
+  describe "result_tested" do
+    test "what a caller does with a call's result: case, boolean or returned" do
+      rows = fn mod ->
+        {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
+
+        data
+        |> Argus.Extractors.ErrorHandling.extract()
+        |> Map.get(:result_tested, [])
+        |> Enum.map(fn [_id, func, callee, how] ->
+          {func |> String.split(":") |> List.last(), callee |> String.split(".") |> List.last(),
+           how}
+        end)
+        |> Enum.sort()
+      end
+
+      alias Argus.Test.Fixtures.Hypothesized, as: H
+
+      assert rows.(H.RpcWrapperCaller) == [
+               {"delete/2", "RpcFacade:delete/2", "case"},
+               {"status/2", "RpcProto:alive/2", "case"}
+             ]
+
+      assert rows.(H.RpcFacade) == [{"delete/2", "RpcProto:delete/2", "returned"}]
+
+      # A function that compares :badrpc tests nothing for this relation;
+      # a result stored in a tuple is neither tested nor returned.
+      assert rows.(H.RpcWrapperCallerHandled) == [{"lookup/2", "RpcProto:lookup/2", "case"}]
+    end
+  end
 end
