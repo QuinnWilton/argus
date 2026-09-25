@@ -428,6 +428,7 @@ defmodule Argus.Analyses.Blocking do
         "process was holding.",
       at: Findings.at_instr(id),
       to_block: :receive,
+      at_source: "receive",
       at_label: "blocking receive on the callback's own stack",
       help: [
         "move the wait into a task and reply to the callback with a message, " <>
@@ -448,6 +449,7 @@ defmodule Argus.Analyses.Blocking do
         "and re-scanned by every later receive.",
       at: Findings.at_instr(id),
       to_block: :receive,
+      at_source: "receive",
       at_label: "receive on the callback's own stack",
       help: ["take the message in handle_info/2 instead of a receive inside the callback"]
     )
@@ -464,6 +466,7 @@ defmodule Argus.Analyses.Blocking do
         "its own stack, and :sys calls and queued requests wait behind it.",
       at: Findings.at_instr(id),
       to_block: :receive,
+      at_source: "receive",
       at_label: "waits for the monitored process to exit",
       help: [
         "if that process may linger, give the wait an `after` that kills it " <>

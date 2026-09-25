@@ -1605,7 +1605,7 @@ carry whether a receive can block but not its timeout. Found by a talk's
 worked example; the corpus change is one row, sequin's
 `ReorderBuffer.maybe_cancel_flush_batch_timer/1`, which is that idiom.
 
-### Frames that name the caller, once
+### Anchors and frames on the line they name
 
 **Fixed.** `coupling.sibling_dependency`'s "coupling call" and "coupling
 cast" frames, when the call into the sibling is several calls below the
@@ -1627,6 +1627,14 @@ and, sorting first, took one of the three: exq's
 `/1` and `Exq.Enqueuer.start_link/0`, and now shows
 `Exq.Api.start_link/1`, `Exq.Enqueuer.start_link/1` and `Exq.start/2`.
 The findings are unchanged.
+
+**Fixed.** `blocking.receive_in_callback` findings carry `at_source:
+"receive"`, as mailbox's and startup's receive anchors do. A receive's
+`loop_rec` has no line, so the bytecode puts it on the function head,
+which in a multi-clause function is another clause's: sentry-elixir's
+`Scheduler.wait_for_active/1` was reported at its first clause (`do:
+state`, line 506) and is now at the `receive` (509), bracketed to its
+end.
 
 ### Frames that point where the path starts
 

@@ -1,6 +1,7 @@
 defmodule Argus.Analyses.BlockingReceiveTest do
   use ExUnit.Case, async: true
 
+  alias Argus.Analyses.Blocking
   alias Argus.Souffle
   alias Argus.Test.Batch
   alias Argus.Test.Fixtures.CallbackReceive
@@ -244,7 +245,7 @@ defmodule Argus.Analyses.BlockingReceiveTest do
 
     test "the finding says what bounds the wait, not that it has a timeout" do
       attrs =
-        Argus.Analyses.Blocking.finding(:receive_in_callback, [
+        Blocking.finding(:receive_in_callback, [
           "M:terminate/2#9",
           "M:terminate/2",
           "M:terminate/2",
@@ -305,6 +306,29 @@ defmodule Argus.Analyses.BlockingReceiveTest do
       assert bounded != []
       assert Enum.any?(blocking, &String.contains?(&1, ":timer:"))
       assert Enum.any?(bounded, &String.contains?(&1, ":gen_server:"))
+    end
+  end
+
+  describe "the anchor" do
+    test "every placement anchors at the receive keyword, not the function's first clause" do
+      # A receive's loop_rec carries no line, so the bytecode puts it on
+      # the function head, which for a multi-clause function is another
+      # clause's (sentry-elixir's Scheduler.wait_for_active/1: line 506,
+      # `do: state`, against the receive at 509). The source fragment moves
+      # a consumer holding the source to the receive itself.
+      for bounded <- ["false", "true", "down"] do
+        attrs =
+          Blocking.finding(:receive_in_callback, [
+            "M:wait/1#9",
+            "M:wait/1",
+            "M:handle_call/3",
+            "GenServer",
+            "direct",
+            bounded
+          ])
+
+        assert {attrs.at_source, attrs.to_block} == {"receive", :receive}, bounded
+      end
     end
   end
 end
