@@ -45,7 +45,9 @@ defmodule Argus.Soundness.StartupTest do
     test "a call and a cast to later siblings in a helper after the ack" do
       mods = [S.AckHelpers.Cache, S.AckHelpers.Config, S.AckHelpers.Events, S.AckHelpers.Sup]
       found = fired(mods, :startup)
-      assert Enum.count(found, &(&1 == {:warning, @before_dep, {S.AckHelpers.Sup, :init, 1}})) == 2
+
+      assert Enum.count(found, &(&1 == {:warning, @before_dep, {S.AckHelpers.Sup, :init, 1}})) ==
+               2
     end
 
     # The parent reported it as init/1's supervisor call (:info); after
@@ -81,6 +83,44 @@ defmodule Argus.Soundness.StartupTest do
                [S.AckConnectHelper],
                :startup
              )
+    end
+  end
+
+  describe "a later child the extractor cannot read keeps the worker from being last (review 2, item 20)" do
+    @continue_parent "handle_continue calls its own supervisor"
+
+    for {name, group} <- [
+          {"a later child written with Supervisor.child_spec/2", ContSpec},
+          {"a child list appended from config", ContConfig},
+          {"a child list a local helper appends config to", ContHelper},
+          {"later children from an Enum.map", ContMapped}
+        ] do
+      @group Module.concat(S, group)
+      test name do
+        mods =
+          for m <- [Worker, Later, Shard, Sup],
+              Code.ensure_loaded?(Module.concat(@group, m)),
+              do: Module.concat(@group, m)
+
+        assert {:warning, @continue_parent, {Module.concat(@group, Worker), :handle_continue, 2}} in fired(
+                 mods,
+                 :startup
+               )
+      end
+    end
+
+    test "a deadlock on a later sibling written with Supervisor.child_spec/2" do
+      mods = [S.SpecOrder.Worker, S.SpecOrder.Later, S.SpecOrder.Sup]
+
+      assert {:error, "Startup deadlock: init waits on a later sibling",
+              {S.SpecOrder.Worker, :init, 1}} in fired(
+               mods,
+               :startup
+             )
+    end
+
+    test "a closed list's last child is quiet" do
+      assert fired([S.ContLast.Worker, S.ContLast.Earlier, S.ContLast.Sup], :startup) == []
     end
   end
 end

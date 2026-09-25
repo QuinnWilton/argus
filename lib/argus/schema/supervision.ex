@@ -53,6 +53,21 @@ defmodule Argus.Schema.Supervision do
         doc: "Child specification within a supervisor."
       },
       %{
+        name: :supervisor_children_open,
+        layer: 2,
+        fields: [{:sup, :symbol, "supervisor module"}],
+        doc: """
+        The supervisor's child list has an element or a tail the extractor \
+        cannot read: a list appended from config, an `Enum.map`, a \
+        parameter, a spec from a call it does not follow \
+        (`Supervisor.child_spec/2` it does). Its `supervisor_child` rows \
+        are partial, and their positions too: a child the list does not \
+        show may start after any it lists. A list read to its end is \
+        closed, and its rows are in source order \
+        (`Argus.Extractors.Supervision`).
+        """
+      },
+      %{
         name: :supervisor_child_form,
         layer: 2,
         fields: [

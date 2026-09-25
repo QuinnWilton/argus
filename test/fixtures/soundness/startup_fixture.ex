@@ -433,4 +433,253 @@ defmodule Argus.Test.Soundness.Startup do
     @impl true
     def handle_info({:tcp, _sock, _data}, s), do: {:noreply, s}
   end
+
+  # ── A later child the extractor cannot read (review 2, item 20) ──────
+  # 660c6296 quieted a worker that is its supervisor's last child; a
+  # child written with Supervisor.child_spec/2 was filed before it, and a
+  # list appended from config was not seen at all, so the worker looked
+  # last.
+
+  defmodule ContSpec do
+    @moduledoc false
+
+    defmodule Worker do
+      @moduledoc "handle_continue calls its own supervisor while it starts the child after it."
+      use GenServer
+      def start_link(o), do: GenServer.start_link(__MODULE__, o, name: __MODULE__)
+
+      @impl true
+      def init(_), do: {:ok, %{}, {:continue, :peers}}
+
+      @impl true
+      def handle_continue(:peers, s) do
+        kids = GenServer.call(Argus.Test.Soundness.Startup.ContSpec.Sup, :which_children)
+        {:noreply, Map.put(s, :kids, kids)}
+      end
+    end
+
+    defmodule Later do
+      @moduledoc false
+      use GenServer
+      def start_link(o), do: GenServer.start_link(__MODULE__, o, name: __MODULE__)
+
+      @impl true
+      def init(o), do: {:ok, o}
+    end
+
+    defmodule Sup do
+      @moduledoc "The later child is written with Supervisor.child_spec/2 (an id override)."
+      use Supervisor
+      def start_link(o), do: Supervisor.start_link(__MODULE__, o, name: __MODULE__)
+
+      @impl true
+      def init(_) do
+        children = [
+          Argus.Test.Soundness.Startup.ContSpec.Worker,
+          Supervisor.child_spec({Argus.Test.Soundness.Startup.ContSpec.Later, []}, id: :later)
+        ]
+
+        Supervisor.init(children, strategy: :one_for_one)
+      end
+    end
+  end
+
+  defmodule ContConfig do
+    @moduledoc false
+
+    defmodule Worker do
+      @moduledoc false
+      use GenServer
+      def start_link(o), do: GenServer.start_link(__MODULE__, o, name: __MODULE__)
+
+      @impl true
+      def init(_), do: {:ok, %{}, {:continue, :peers}}
+
+      @impl true
+      def handle_continue(:peers, s) do
+        kids = GenServer.call(Argus.Test.Soundness.Startup.ContConfig.Sup, :which_children)
+        {:noreply, Map.put(s, :kids, kids)}
+      end
+    end
+
+    defmodule Sup do
+      @moduledoc "The children after the worker come from the application's config."
+      use Supervisor
+      def start_link(o), do: Supervisor.start_link(__MODULE__, o, name: __MODULE__)
+
+      @impl true
+      def init(_) do
+        children = [
+          Argus.Test.Soundness.Startup.ContConfig.Worker
+          | Application.get_env(:argus, :soundness_workers, [])
+        ]
+
+        Supervisor.init(children, strategy: :one_for_one)
+      end
+    end
+  end
+
+  defmodule ContHelper do
+    @moduledoc false
+
+    defmodule Worker do
+      @moduledoc false
+      use GenServer
+      def start_link(o), do: GenServer.start_link(__MODULE__, o, name: __MODULE__)
+
+      @impl true
+      def init(_), do: {:ok, %{}, {:continue, :peers}}
+
+      @impl true
+      def handle_continue(:peers, s),
+        do:
+          {:noreply,
+           Map.put(
+             s,
+             :kids,
+             Supervisor.which_children(Argus.Test.Soundness.Startup.ContHelper.Sup)
+           )}
+    end
+
+    defmodule Sup do
+      @moduledoc "The list comes from a local helper that appends config."
+      use Supervisor
+      def start_link(o), do: Supervisor.start_link(__MODULE__, o, name: __MODULE__)
+
+      @impl true
+      def init(_), do: Supervisor.init(children(), strategy: :one_for_one)
+
+      defp children,
+        do: [
+          Argus.Test.Soundness.Startup.ContHelper.Worker
+          | Application.get_env(:argus, :soundness_extra, [])
+        ]
+    end
+  end
+
+  defmodule ContMapped do
+    @moduledoc false
+
+    defmodule Worker do
+      @moduledoc false
+      use GenServer
+      def start_link(o), do: GenServer.start_link(__MODULE__, o, name: __MODULE__)
+
+      @impl true
+      def init(_), do: {:ok, %{}, {:continue, :peers}}
+
+      @impl true
+      def handle_continue(:peers, s),
+        do:
+          {:noreply,
+           Map.put(s, :n, Supervisor.count_children(Argus.Test.Soundness.Startup.ContMapped.Sup))}
+    end
+
+    defmodule Shard do
+      @moduledoc false
+      use GenServer
+      def start_link(i), do: GenServer.start_link(__MODULE__, i)
+
+      @impl true
+      def init(i), do: {:ok, i}
+    end
+
+    defmodule Sup do
+      @moduledoc "The later children are an Enum.map of specs."
+      use Supervisor
+      alias Argus.Test.Soundness.Startup.ContMapped.{Shard, Worker}
+      def start_link(o), do: Supervisor.start_link(__MODULE__, o, name: __MODULE__)
+
+      @impl true
+      def init(n) do
+        shards = Enum.map(1..n, &Supervisor.child_spec({Shard, &1}, id: {:shard, &1}))
+        Supervisor.init([Worker | shards], strategy: :one_for_one)
+      end
+    end
+  end
+
+  defmodule SpecOrder do
+    @moduledoc false
+
+    defmodule Worker do
+      @moduledoc """
+      init/1 calls a sibling written with Supervisor.child_spec/2 after it:
+      the child list filed that sibling first, and the deadlock went unread.
+      """
+      use GenServer
+      def start_link(o), do: GenServer.start_link(__MODULE__, o, name: __MODULE__)
+
+      @impl true
+      def init(_), do: {:ok, Argus.Test.Soundness.Startup.SpecOrder.Later.get()}
+    end
+
+    defmodule Later do
+      @moduledoc false
+      use GenServer
+      def start_link(o), do: GenServer.start_link(__MODULE__, o, name: __MODULE__)
+      def get, do: GenServer.call(__MODULE__, :get)
+
+      @impl true
+      def init(o), do: {:ok, o}
+
+      @impl true
+      def handle_call(:get, _from, s), do: {:reply, s, s}
+    end
+
+    defmodule Sup do
+      @moduledoc false
+      use Supervisor
+      alias Argus.Test.Soundness.Startup.SpecOrder.{Later, Worker}
+      def start_link(o), do: Supervisor.start_link(__MODULE__, o, name: __MODULE__)
+
+      @impl true
+      def init(_),
+        do:
+          Supervisor.init([Worker, Supervisor.child_spec({Later, []}, id: :later)],
+            strategy: :one_for_one
+          )
+    end
+  end
+
+  defmodule ContLast do
+    @moduledoc false
+
+    defmodule Worker do
+      @moduledoc "Quiet: the worker is a closed list's last child."
+      use GenServer
+      def start_link(o), do: GenServer.start_link(__MODULE__, o, name: __MODULE__)
+
+      @impl true
+      def init(_), do: {:ok, %{}, {:continue, :peers}}
+
+      @impl true
+      def handle_continue(:peers, s),
+        do:
+          {:noreply,
+           Map.put(s, :kids, Supervisor.which_children(Argus.Test.Soundness.Startup.ContLast.Sup))}
+    end
+
+    defmodule Earlier do
+      @moduledoc false
+      use GenServer
+      def start_link(o), do: GenServer.start_link(__MODULE__, o, name: __MODULE__)
+
+      @impl true
+      def init(o), do: {:ok, o}
+    end
+
+    defmodule Sup do
+      @moduledoc false
+      use Supervisor
+      alias Argus.Test.Soundness.Startup.ContLast.{Earlier, Worker}
+      def start_link(o), do: Supervisor.start_link(__MODULE__, o, name: __MODULE__)
+
+      @impl true
+      def init(_),
+        do:
+          Supervisor.init([Supervisor.child_spec({Earlier, []}, id: :e), Worker],
+            strategy: :one_for_one
+          )
+    end
+  end
 end

@@ -476,4 +476,34 @@ defmodule Argus.Extractors.SupervisionTest do
              ]
     end
   end
+
+  describe "extract/1 — the child list, read in order" do
+    alias Argus.Test.Soundness.Startup, as: S
+
+    defp children(mod) do
+      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
+      facts = Supervision.extract(data)
+
+      rows =
+        for [_sup, pos, child | _] <- Map.get(facts, :supervisor_child, []),
+            do: {String.to_integer(pos), child}
+
+      {rows |> Enum.sort() |> Enum.map(&elem(&1, 1)),
+       Map.has_key?(facts, :supervisor_children_open)}
+    end
+
+    test "a Supervisor.child_spec/2 element is its spec's child, in its place" do
+      assert children(S.ContSpec.Sup) ==
+               {[inspect(S.ContSpec.Worker), inspect(S.ContSpec.Later)], false}
+
+      assert children(S.ContLast.Sup) ==
+               {[inspect(S.ContLast.Earlier), inspect(S.ContLast.Worker)], false}
+    end
+
+    test "a list the extractor cannot read to its end is open" do
+      assert children(S.ContConfig.Sup) == {[inspect(S.ContConfig.Worker)], true}
+      assert children(S.ContHelper.Sup) == {[inspect(S.ContHelper.Worker)], true}
+      assert {_, true} = children(S.ContMapped.Sup)
+    end
+  end
 end

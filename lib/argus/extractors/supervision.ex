@@ -26,12 +26,16 @@ defmodule Argus.Extractors.Supervision do
   - `post_start_call(func, site, callee)` — a call made after a
     Supervisor.start_link in the same function
   - `supervisor_child(sup, position, child_mod, restart, type)` — child spec
+  - `supervisor_children_open(sup)` — the child list has an element or a
+    tail this extractor cannot read: its children and positions are
+    partial
   - `named_process(mod, name)` — named process registration detected
   """
 
   @behaviour Argus.Extractor
 
   alias Argus.Extractor.CallSites
+  alias Argus.Extractor.Resolve
   alias Argus.InstrId
   alias Argus.Pipeline.Normalize
 
@@ -69,6 +73,7 @@ defmodule Argus.Extractors.Supervision do
       :dynamic_child,
       :supervisor,
       :supervisor_child,
+      :supervisor_children_open,
       :supervisor_child_form,
       :supervisor_child_name,
       :supervisor_max_children,
@@ -514,7 +519,14 @@ defmodule Argus.Extractors.Supervision do
       |> add_fact(:supervisor, [mod_str, word(strategy)])
       |> add_fact(:supervisor_site, [mod_str, site])
 
-    children = extract_children_with_helpers(instrs, all_functions)
+    {children, open?} =
+      case child_list(instrs, all_functions) do
+        {:closed, kids} -> {finish_children(kids), false}
+        :open -> {extract_children_with_helpers(instrs, all_functions), true}
+        :none -> {extract_children_with_helpers(instrs, all_functions), false}
+      end
+
+    facts = if open?, do: add_fact(facts, :supervisor_children_open, [mod_str]), else: facts
 
     facts =
       if children == [] do
@@ -554,6 +566,184 @@ defmodule Argus.Extractors.Supervision do
         acc
       end
     end)
+  end
+
+  # ── The child list, read in order ──────────────────────────────────
+  #
+  # The list the tree function hands Supervisor.init/2 or
+  # Supervisor.start_link/2 (or an Erlang init's `{ok, {Flags,
+  # Children}}` return builds), read element by element, the way the VM
+  # builds it: each cell's head, then what its tail held. `{:closed,
+  # children}` in source order when every element is a spec this
+  # extractor reads (a literal, a module, a `{Mod, args}` tuple, a map
+  # with a `:start`, a `Supervisor.child_spec/2` of one) and the list ends
+  # in a literal; `:open` when an element or the tail is computed: a list
+  # appended from config, an `Enum.map`, a parameter, a spec from a call
+  # it does not read. A local function returning the list is read through
+  # its returns, one level. `:none` when no such list is found; the flat
+  # scans below then read the children as before.
+  #
+  # An open list's children and positions are partial: a child the list
+  # does not show may start after any it lists (supervisor_children_open).
+  @list_depth 2
+
+  defp child_list(instrs, functions) do
+    case children_operand(instrs) do
+      nil -> :none
+      {idx, reg} -> read_list(instrs, idx, reg, functions, @list_depth)
+    end
+  end
+
+  defp children_operand(instrs) do
+    indexed = Enum.with_index(instrs)
+
+    Enum.find_value(indexed, fn {instr, idx} ->
+      case match_remote_call(instr) do
+        {:ok, Supervisor, f, 2} when f in [:init, :start_link] -> {idx, {:x, 0}}
+        _ -> nil
+      end
+    end) ||
+      Enum.find_value(indexed, fn
+        {{:put_tuple2, _dst, {:list, [{:atom, :ok}, inner]}}, idx} ->
+          erlang_children(instrs, idx, inner)
+
+        _ ->
+          nil
+      end)
+  end
+
+  # `{ok, {Flags, Children}}`: the children are the second element of the
+  # tuple the `ok` tuple holds.
+  defp erlang_children(instrs, idx, inner) do
+    with reg when reg != nil <- element_register(inner),
+         {at, children} <-
+           Resolve.trace(instrs, idx, reg, nil, fn
+             {at, {:put_tuple2, _dst, {:list, [_flags, children]}}}, _follow -> {at, children}
+             _writer, _follow -> nil
+           end) do
+      case element_register(children) do
+        nil -> nil
+        reg -> {at, reg}
+      end
+    end
+  end
+
+  defp read_list(_instrs, _idx, _reg, _functions, depth) when depth < 0, do: :open
+
+  defp read_list(instrs, idx, reg, functions, depth) do
+    Resolve.trace(instrs, idx, reg, :open, fn
+      {at, {:put_list, head, tail, _dst}}, _follow ->
+        with {:ok, kids} <- read_head(instrs, at, head, functions),
+             {:closed, rest} <- read_tail(instrs, at, tail, functions, depth) do
+          {:closed, kids ++ rest}
+        else
+          _ -> :open
+        end
+
+      {at, {:move, operand, _dst}}, _follow ->
+        read_tail(instrs, at, operand, functions, depth)
+
+      {:param, _}, _follow ->
+        :open
+
+      {_at, instr}, _follow ->
+        case match_local_call(instr) do
+          {:ok, _mod, name, arity} -> read_returned_list(functions, name, arity, depth - 1)
+          :none -> :open
+        end
+    end)
+  end
+
+  defp read_tail(_instrs, _idx, nil, _functions, _depth), do: {:closed, []}
+  defp read_tail(_instrs, _idx, {:atom, nil}, _functions, _depth), do: {:closed, []}
+  defp read_tail(_instrs, _idx, {:literal, list}, _functions, _depth), do: read_literal_list(list)
+
+  defp read_tail(instrs, idx, operand, functions, depth) do
+    case element_register(operand) do
+      nil -> :open
+      reg -> read_list(instrs, idx, reg, functions, depth)
+    end
+  end
+
+  defp read_literal_list(list) when is_list(list) do
+    specs = Enum.map(list_elements(list), &extract_single_child_spec/1)
+    if Enum.any?(specs, &(&1 == [])), do: :open, else: {:closed, Enum.concat(specs)}
+  end
+
+  defp read_literal_list(_other), do: :open
+
+  defp read_head(instrs, idx, operand, functions) do
+    case operand do
+      {:literal, value} ->
+        spec_or_error(extract_single_child_spec(value))
+
+      {:atom, _} ->
+        spec_or_error(extract_child_from_cons_operand(operand))
+
+      _ ->
+        case element_register(operand) do
+          nil -> :error
+          reg -> read_head_register(instrs, idx, reg, functions)
+        end
+    end
+  end
+
+  defp read_head_register(instrs, idx, reg, functions) do
+    Resolve.trace(instrs, idx, reg, :error, fn
+      {at, {:put_tuple2, _dst, {:list, elements}}}, _follow ->
+        spec_or_error(extract_child_from_tuple_elements(elements, instrs, at, functions))
+
+      {at, {op, _, _, _, _, {:list, pairs}}}, _follow when op in [:put_map_assoc, :put_map_exact] ->
+        spec_or_error(extract_child_from_map_pairs(pairs, instrs, at))
+
+      {at, {:move, operand, _dst}}, _follow ->
+        read_head(instrs, at, operand, functions)
+
+      {:param, _}, _follow ->
+        :error
+
+      {at, instr}, _follow ->
+        # Supervisor.child_spec/2 overrides a spec's fields; the module is
+        # its first argument's.
+        case match_remote_call(instr) do
+          {:ok, Supervisor, :child_spec, 2} -> read_head(instrs, at, {:x, 0}, functions)
+          _ -> :error
+        end
+    end)
+  end
+
+  defp spec_or_error([]), do: :error
+  defp spec_or_error(specs), do: {:ok, specs}
+
+  # A local function that returns the child list: the list each of its
+  # returns hands back, when they agree.
+  defp read_returned_list(_functions, _name, _arity, depth) when depth < 0, do: :open
+
+  defp read_returned_list(functions, name, arity, depth) do
+    with body when body != nil <- find_function(functions, name, arity),
+         [_ | _] = returns <-
+           for({:return, at} <- Enum.with_index(body), do: at) do
+      lists = Enum.map(returns, &read_list(body, &1, {:x, 0}, functions, depth))
+
+      case Enum.uniq(lists) do
+        [{:closed, _} = one] -> one
+        _ -> :open
+      end
+    else
+      _ -> :open
+    end
+  end
+
+  # What the flat scans' results go through: a spec naming only the
+  # behaviour that starts it (`{GenServer, :start_link, [runtime_mod,
+  # ...]}`) names no process module; the same module under the same
+  # registered name is one child.
+  defp finish_children(children) do
+    children
+    |> Enum.reject(fn {mod, _, _, _, _} ->
+      mod in [GenServer, Agent, Task, :gen_server, :gen_statem]
+    end)
+    |> Enum.uniq_by(fn {mod, _, _, name, _form} -> {mod, name} end)
   end
 
   # The literal child-spec scanners don't run inside scan_functions and

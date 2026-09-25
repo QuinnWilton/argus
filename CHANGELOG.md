@@ -239,6 +239,22 @@ rule and its `later_sibling_call` share one relation,
 `later_sibling_dep`. `InitRecv.TaskCasts.InTask` and
 `InitAck.CallsAfter` are reported now.
 
+**Fixed.** Schema 125. A worker whose handle_continue calls its own
+supervisor was quiet as the list's last child (660c6296) when a later
+child was one the Supervision extractor could not read: a
+`Supervisor.child_spec/2` element was filed first (its literal spec was
+scanned before the list), and a list appended from config was not seen.
+The extractor now reads the list handed to `Supervisor.init/2`,
+`Supervisor.start_link/2` or an Erlang init's `{ok, {Flags,
+Children}}`, element by element in source order (a
+`Supervisor.child_spec/2` element as its spec's child, a local helper's
+returned list one level down); a list read to its end sets the children
+and their positions. `supervisor_children_open(sup)`, new: an element or
+a tail it cannot read, so the rows are partial and a child may start
+after any of them. startup's `has_later_sibling` reads it: only a closed
+list's last child is quiet. The start-order deadlock on a later sibling
+written with `Supervisor.child_spec/2` is reported now too.
+
 ### Priors, round 3: tooling, and programs found on PATH
 
 **Added.** Schema 118. `tooling_module(mod, basis)` from a new
