@@ -784,6 +784,16 @@ default even as a call) and `Effects.classify/3`, whose pure arities keep
 and `Kernel.node` are reads. Over argus's own beams the verdicts are
 unchanged.
 
+**Fixed.** A purity violation through a read said the effect "is
+observable from outside the function" (or "visible outside the function
+and survives it", for `node/0`): `self/0`, `node/0`, `Process.whereis/1`
+and the other reads the effect model lists change nothing a caller can
+see. Their detail now says the call reads state the arguments do not
+carry, so what the function does is not determined by its arguments
+alone; writes keep their category's sentence, and a clock or a draw its
+own. Prose only: encore's partita, whose seeded `@pure` function reaches
+`self/0` on its way to `send/2`, showed it.
+
 **Changed.** `unsafe_input.unbounded_children_from_request` leaves out
 tasks a function starts only through Task.Supervisor's `async_stream`
 or `async_stream_nolink`: the stream runs at most `max_concurrency` of

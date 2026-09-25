@@ -30,6 +30,7 @@ defmodule Argus.Analyses.Effects do
   @behaviour Argus.Analysis
 
   alias Argus.Findings
+  alias Argus.Purity.Effects
 
   @impl true
   def name, do: :effects
@@ -113,7 +114,7 @@ defmodule Argus.Analyses.Effects do
       :error,
       "Function declared pure performs #{effect_phrase(category)}",
       "#{func} carries `@pure true`, but #{location(func, via)} calls #{api}, " <>
-        "which is #{effect_phrase(category)}. #{consequence(category)}",
+        "which is #{effect_phrase(category)}. #{consequence(category, api)}",
       at: Findings.at_func(func),
       at_label: "declared pure here",
       related: effect_frame("#{effect_phrase(category)} here", site),
@@ -271,6 +272,29 @@ defmodule Argus.Analyses.Effects do
   defp effect_phrase("code_loading"), do: "runtime code loading"
   defp effect_phrase("dynamic"), do: "a dynamic dispatch"
   defp effect_phrase(other), do: other
+
+  # A read changes nothing a caller can see, so what it costs a purity
+  # claim is what it depends on: state the arguments do not carry (the
+  # calling process, the node, a table). A clock or a draw says so in
+  # its own words.
+  defp consequence(category, _api) when category in ["time", "random"],
+    do: consequence(category)
+
+  defp consequence(category, api) do
+    if read_api?(api),
+      do:
+        "It reads state the arguments do not carry, so what the function does " <>
+          "is not determined by its arguments alone.",
+      else: consequence(category)
+  end
+
+  # The api as the rows spell it, `Module.function/arity`.
+  defp read_api?(api) do
+    case Regex.run(~r{^(.+)\.([^./]+)/\d+$}, api) do
+      [_, module, function] -> Effects.mode(module, function) == :read
+      nil -> false
+    end
+  end
 
   defp consequence(c) when c in ["time", "random"],
     do: "The result depends on when it ran, so it is not referentially transparent."

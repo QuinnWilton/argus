@@ -22,6 +22,46 @@ defmodule Argus.FindingsProseTest do
     end
   end
 
+  describe "a purity violation says what the effect costs the claim" do
+    defp pure_violation(category, api) do
+      Argus.Analyses.Effects.finding(:effect_in_context, [
+        "M.announce/1",
+        "pure_contract",
+        "",
+        category,
+        api,
+        "M.tell/1",
+        "M:tell/1#6",
+        ""
+      ])
+    end
+
+    test "a read is state the arguments do not carry, not an effect seen outside" do
+      for {category, api} <- [
+            {"process", ":erlang.self/0"},
+            {"node", ":erlang.node/0"},
+            {"process", "Process.whereis/1"}
+          ] do
+        detail = pure_violation(category, api).detail
+
+        assert detail =~ "It reads state the arguments do not carry", api
+        refute detail =~ "observable from outside", api
+        refute detail =~ "visible outside the function", api
+      end
+    end
+
+    test "a write keeps its category's consequence, and a clock its own" do
+      assert pure_violation("process", ":erlang.send/2").detail =~
+               "The effect is observable from outside the function."
+
+      assert pure_violation("node", ":erlang.disconnect_node/1").detail =~
+               "The effect is visible outside the function and survives it."
+
+      assert pure_violation("time", ":erlang.monotonic_time/0").detail =~
+               "The result depends on when it ran"
+    end
+  end
+
   describe "titles name what they are about as a reader writes it" do
     test "a convention's callee keeps its module" do
       attrs =
