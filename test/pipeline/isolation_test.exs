@@ -41,6 +41,13 @@ defmodule Argus.Pipeline.IsolationTest do
     def extract(%{module: mod}), do: %{works: [[inspect(mod)]]}
   end
 
+  defmodule Malformed do
+    @moduledoc false
+    @behaviour Argus.Extractor
+    def relations, do: [:malformed]
+    def extract(%{module: mod}), do: %{malformed: [[inspect(mod), -1]]}
+  end
+
   setup_all do
     beams =
       for name <- [Fast, Slow] do
@@ -105,6 +112,26 @@ defmodule Argus.Pipeline.IsolationTest do
                )
 
       assert %{extraction_error: [[_, "pipeline", _]]} = Argus.Facts.materialize(facts, symbols)
+    end
+  end
+
+  describe "an extractor whose row holds a non-string" do
+    # The writer met the value and failed the whole module, recorded as
+    # the base's failure: a store kept that under the base's key, which
+    # holds none of the extractor's code, and served the lost module
+    # after the extractor was fixed.
+    test "costs its own rows, in its own step", %{beams: [fast | _], tmp_dir: tmp_dir} do
+      assert {:ok, ^tmp_dir} = Pipeline.run([fast], tmp_dir, extractors: [Malformed, Works])
+
+      read = fn name ->
+        tmp_dir |> Path.join("#{name}.facts") |> File.read!() |> Argus.Tsv.decode()
+      end
+
+      assert [_ | _] = read.("function_def")
+      assert read.("works") == [["Argus.Pipeline.IsolationTest.Fast"]]
+      assert [["Argus.Pipeline.IsolationTest.Fast", step, reason]] = read.("extraction_error")
+      assert step == inspect(Malformed)
+      assert reason =~ "non-string"
     end
   end
 

@@ -1280,6 +1280,13 @@ its moduledoc says which submodule holds what.
 
 ### Fact schema and extraction
 
+**Fixed.** An extractor row holding a value that is not a string (a
+number column written as an integer) fails that extractor's own step,
+costing its rows alone. It used to fail the whole module when the
+writer met it, recorded as the base's failure: a store kept the lost
+module under the base's key, which holds none of the extractor's code,
+and went on serving it after the extractor was fixed.
+
 **Changed.** Schema 85, no shape change. `mnesia_op` has the plain
 `read`, `write`, `delete`, `delete_object`, `match_object`, `select`
 and `index_read` of a closure handed to a dirty activity

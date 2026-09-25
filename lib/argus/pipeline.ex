@@ -748,13 +748,32 @@ defmodule Argus.Pipeline do
 
     for extractor <- extractors do
       {result, reads} =
-        Reads.track(fn -> attempt(inspect(extractor), fn -> extractor.extract(data) end, []) end)
+        Reads.track(fn ->
+          attempt(inspect(extractor), fn -> well_formed!(extractor.extract(data)) end, [])
+        end)
 
       case result do
         {nil, failed} -> {extractor, error_facts(mod_str, failed), reads}
         {facts, []} -> {extractor, facts, reads}
       end
     end
+  end
+
+  # Every column is a string, as `Argus.Tsv` writes it. A value of any
+  # other type is the extractor's bug, and it fails the extractor's own
+  # step here: met later, by the writer, it failed the whole module, and
+  # that failure was recorded as the base's, in a shard whose key holds
+  # none of the extractor's code, so the store went on serving the lost
+  # module after the extractor was fixed.
+  defp well_formed!(facts) do
+    Enum.each(facts, fn {relation, rows} ->
+      case Enum.find(rows, &(not Enum.all?(&1, fn value -> is_binary(value) end))) do
+        nil -> :ok
+        row -> raise ArgumentError, "a #{relation} row holds a non-string: #{inspect(row)}"
+      end
+    end)
+
+    facts
   end
 
   # The base kept for a later run; a base that cannot be kept is not,
