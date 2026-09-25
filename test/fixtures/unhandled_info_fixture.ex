@@ -257,6 +257,37 @@ defmodule Argus.Test.Fixtures.UnhandledInfo do
     end
   end
 
+  defmodule TaskReceives do
+    @moduledoc """
+    The server arms :tick for itself and has no clause for it; a Task a
+    callback starts receives :tick. The Task's receive is the Task's
+    mailbox, not the server's: the timer still crashes the server.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(state) do
+      Process.send_after(self(), :tick, 1_000)
+      {:ok, state}
+    end
+
+    @impl true
+    def handle_cast(:go, state) do
+      Task.start(fn ->
+        receive do
+          :tick -> :ok
+        end
+      end)
+
+      {:noreply, state}
+    end
+
+    @impl true
+    def handle_info(:other, state), do: {:noreply, state}
+  end
+
   defmodule Unjudged do
     @moduledoc "A timer whose message is a binary, not an atom or a tagged tuple: not judged."
     use GenServer

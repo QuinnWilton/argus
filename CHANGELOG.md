@@ -196,7 +196,23 @@ a `for` in terminate/2 and waits for its `:DOWN` there, and
 `mailbox.unhandled_info` reported that `:DOWN` as reaching only the
 catch-all handle_info/2. The rules reading `recv_pattern` (the timer
 flush, `unhandled_info`, `unreceived_message`, blocking's cancel_timer
-idiom) now see those receives.
+idiom) now see those receives. A closure is the process's own only
+where it runs on the process's stack: one a callback hands to a Task,
+a spawn or a registrar runs apart (`runs_elsewhere`), and its receive
+is that process's (below).
+
+**Fixed.** A receive or a monitor in a closure a server's callback
+hands to a Task or a spawn is no longer the server's. `server_side`
+(clientlib/process.dl) walked the module's calls from the callbacks
+without asking whether an edge leaves the process, so a Task closure
+receiving `:tick` counted as the server taking it, and
+`mailbox.unhandled_info` stayed quiet about the `:tick` timer that
+crashes the server (`ForwardIntraModuleSameProcessReach` in
+clientlib/reach.dl, the walk `spawned_reach` already made). Blocking's
+`answer_reach`, which asks whether a server's handle_call/3 answers at
+once, walks the same stack plus a task the handler awaits
+(`ForwardIntraModuleHoldingReach`): a spawned waiter does not hold the
+caller, an awaited one does.
 
 **Fixed.** "handle_info/2 has no catch-all" (`partial_handler`'s
 "late_message" source) no longer fires on a server whose only sources

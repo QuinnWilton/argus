@@ -26,7 +26,8 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
     U.Retry,
     U.WarmUp,
     U.Unjudged,
-    U.TerminateWaits
+    U.TerminateWaits,
+    U.TaskReceives
   ]
 
   setup_all do
@@ -77,8 +78,12 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
     assert {"Retry:handle_info/2", "{:backoff, …}", "timer", "Retry", "crash"} in rows
   end
 
+  test "a receive in a closure a Task runs is the Task's, not the server's", %{rows: rows} do
+    assert {"TaskReceives:init/1", ":tick", "timer", "TaskReceives", "crash"} in rows
+  end
+
   test "exactly those, and every quiet neighbour quiet", %{rows: rows} do
-    assert length(rows) == 10, inspect(rows, pretty: true)
+    assert length(rows) == 11, inspect(rows, pretty: true)
 
     quiet =
       ~w(Handled Delegates OpenClause WaitsForDown Flushes Client PollerTakes WarmUp Unjudged

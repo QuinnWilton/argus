@@ -100,4 +100,83 @@ defmodule Argus.Test.Fixtures.SidePaths do
       end
     end
   end
+
+  defmodule AsksAwaiter do
+    @moduledoc "Waits with :infinity on a server that waits for a task of its own."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+
+    @impl true
+    def handle_call(:ask, _from, state) do
+      {:reply, GenServer.call(Argus.Test.Fixtures.SidePaths.Awaiter, :work, :infinity), state}
+    end
+  end
+
+  defmodule Awaiter do
+    @moduledoc """
+    Answers with what a task it awaits receives: the task runs apart, and
+    the handler waits for it all the same.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+
+    @impl true
+    def handle_call(:work, _from, state) do
+      task =
+        Task.async(fn ->
+          receive do
+            {:done, result} -> result
+          end
+        end)
+
+      {:reply, Task.await(task, :infinity), state}
+    end
+  end
+
+  defmodule AsksStarter do
+    @moduledoc "Waits with :infinity on a server that spawns a waiter and answers at once."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+
+    @impl true
+    def handle_call(:ask, _from, state) do
+      {:reply, GenServer.call(Argus.Test.Fixtures.SidePaths.Starter, :kick, :infinity), state}
+    end
+  end
+
+  defmodule Starter do
+    @moduledoc """
+    Spawns a process whose closure waits for a message, and replies at
+    once: the wait is that process's, and holds no caller.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+
+    @impl true
+    def handle_call(:kick, _from, state) do
+      spawn(fn ->
+        receive do
+          {:done, _result} -> :ok
+        end
+      end)
+
+      {:reply, :ok, state}
+    end
+  end
 end

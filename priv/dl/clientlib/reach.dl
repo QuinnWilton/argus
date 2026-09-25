@@ -160,6 +160,29 @@
     function_def(h, m, _, _, _).
 }
 
+// ForwardIntraModuleReach over what the root's own process runs: a
+// server's callbacks and the helpers they run in its module, less a
+// closure handed to a Task, a spawn or a registrar (runs_elsewhere). A
+// receive or a monitor there is that other process's.
+.comp ForwardIntraModuleSameProcessReach : Forward {
+  reaches(r, h) :-
+    reaches(r, g),
+    call_edge(g, h),
+    !runs_elsewhere(g, h),
+    function_def(g, m, _, _, _),
+    function_def(h, m, _, _, _).
+}
+
+// The same, and a task the process waits for (awaits_task,
+// runs_elsewhere.dl): what holds the root up until it returns.
+.comp ForwardIntraModuleHoldingReach : ForwardIntraModuleSameProcessReach {
+  reaches(r, h) :-
+    reaches(r, g),
+    awaits_task(g, _, h),
+    function_def(g, m, _, _, _),
+    function_def(h, m, _, _, _).
+}
+
 .comp ForwardSet {
   .decl root(func: symbol)
   .decl reaches(func: symbol)

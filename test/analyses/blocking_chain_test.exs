@@ -203,6 +203,20 @@ defmodule Argus.Analyses.BlockingChainTest do
                ]
              ]
     end
+
+    test "a task the server awaits holds the hop; one it only starts does not" do
+      skip_without_souffle()
+
+      {:ok, results} =
+        Memo.analyze([S.AsksAwaiter, S.Awaiter, S.AsksStarter, S.Starter], :blocking)
+
+      assert infinity(results) == [
+               [
+                 "Argus.Test.Fixtures.SidePaths.AsksAwaiter:handle_call/3",
+                 "Argus.Test.Fixtures.SidePaths.Awaiter"
+               ]
+             ]
+    end
   end
 
   describe "no chain through a pure-function reach" do

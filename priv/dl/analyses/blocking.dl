@@ -280,7 +280,9 @@ unbounded_wait(cat(mod, ":handle_call/3"), "", "infinity", target, "", "") :-
 
 infinity_target(m) :- callback_sync_dep_timeout(_, m, -1).
 
-.init answer_reach = ForwardIntraModuleReach
+// What holds the handler up: its own stack in its module, and a task it
+// waits for; not a closure it hands to a process that runs apart.
+.init answer_reach = ForwardIntraModuleHoldingReach
 
 answer_reach.root(h, h) :- infinity_target(m), handle_call_function(m, h).
 

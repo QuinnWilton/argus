@@ -72,9 +72,12 @@ trap_exit_without_exit_clause(mod, func) :-
   !statem_process(mod).
 
 // Runs on the server's own stack: a callback, a statem state function,
-// or what those reach without leaving the module. A client function of
-// the same module runs in its caller.
-.init server_reach = ForwardIntraModuleReach
+// or what those reach without leaving the module or the process. A
+// client function of the same module runs in its caller; a closure a
+// callback hands to a Task or a spawn runs in that process
+// (runs_elsewhere), and a receive or a monitor there is not the
+// server's.
+.init server_reach = ForwardIntraModuleSameProcessReach
 
 server_reach.root(mod, func) :-
   otp_callback(func, mod, _, _).
