@@ -136,6 +136,60 @@ defmodule Argus.Test.Fixtures.CatchShapes do
     end
   end
 
+  defmodule NoprocAndAnyTuple do
+    @moduledoc false
+    # brod's safe_gen_call: `exit:{noproc, _}` beside `exit:{Reason, _}`,
+    # which takes every tuple reason, `{:shutdown, _}` among them.
+    use GenServer
+
+    def start_link(parent), do: GenServer.start_link(__MODULE__, parent)
+
+    @impl true
+    def init(parent), do: {:ok, parent}
+
+    @impl true
+    def handle_info(:sync, parent) do
+      _ = sync_with_parent(parent)
+      {:noreply, parent}
+    end
+
+    defp sync_with_parent(parent) do
+      try do
+        GenServer.call(parent, {:child_mount, self()})
+      catch
+        :exit, {:noproc, _} -> {:error, :client_down}
+        :exit, {reason, _} -> {:error, {:client_down, reason}}
+      end
+    end
+  end
+
+  defmodule NoprocAndNamedTuple do
+    @moduledoc false
+    # A second clause that takes a tuple by its tag is not every tuple:
+    # {:timeout, _} beside {:noproc, _} still leaves {:shutdown, _} out.
+    use GenServer
+
+    def start_link(parent), do: GenServer.start_link(__MODULE__, parent)
+
+    @impl true
+    def init(parent), do: {:ok, parent}
+
+    @impl true
+    def handle_info(:sync, parent) do
+      _ = sync_with_parent(parent)
+      {:noreply, parent}
+    end
+
+    defp sync_with_parent(parent) do
+      try do
+        GenServer.call(parent, {:child_mount, self()})
+      catch
+        :exit, {:noproc, _} -> {:error, :client_down}
+        :exit, {:timeout, _} -> {:error, :timeout}
+      end
+    end
+  end
+
   defmodule Erpc do
     @moduledoc false
 

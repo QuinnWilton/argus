@@ -1099,7 +1099,16 @@ partial_noproc_catch(func, id, callee, call, guard_end) :-
   catch_tag(id, func, "exit", ":noproc"),
   !catch_tag(id, func, "exit", ":shutdown"),
   !catch_tag(id, func, "exit", ":normal"),
+  !catches_any_tuple_exit(id, func),
   !site_catches_class(id, func, "exit").
+
+// A clause that takes every tuple reason (`exit:{Reason, _}`, brod's
+// safe_gen_call): what a call to a peer that stops mid-call exits with,
+// `{:shutdown, {GenServer, :call, _}}`, is one.
+.decl catches_any_tuple_exit(id: symbol, func: symbol)
+
+catches_any_tuple_exit(id, f) :- catch_tuple_tag(id, f, "exit", "*").
+catches_any_tuple_exit(id, f) :- catch_tuple_tag(id, f, "*", "*").
 
 // ══ A peer that answers, when priors are on ═════════════════════════
 //

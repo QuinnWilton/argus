@@ -38,6 +38,17 @@ defmodule Argus.Analyses.SingletonShapesTest do
              ["Argus.Test.Fixtures.CatchShapes.NoprocOnly:sync_with_parent/1"]
   end
 
+  test "a clause that takes every tuple reason covers a peer that stops mid-call" do
+    skip_without_souffle()
+
+    {:ok, r} =
+      Memo.analyze([CatchShapes.NoprocAndAnyTuple, CatchShapes.NoprocAndNamedTuple], :blocking)
+
+    # Positive: a second clause for one more tag still leaves :shutdown out.
+    assert rows(r, "partial_noproc_catch") ==
+             ["Argus.Test.Fixtures.CatchShapes.NoprocAndNamedTuple:sync_with_parent/1"]
+  end
+
   test "an :erpc rescue with no clause for transport failures is reported" do
     skip_without_souffle()
 

@@ -39,6 +39,11 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
   `GenServer.stop` with bare `:noproc` — so a rule that asks about one
   reads the right set.
 
+  A clause that takes the reason by its shape alone, a tuple whose
+  elements it never compares (`catch exit:{Reason, _}`), is
+  `open_tuples`: it catches every tuple reason of its class, whatever
+  the tag, `{:shutdown, _}` and `{:normal, _}` among them.
+
   An Elixir `rescue X` tests the reason's `__struct__` (a `map_get`
   before `Exception.normalize/3`); the register that read holds is
   treated as a projection of the reason, so the clause counts as tested
@@ -50,6 +55,30 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
   @x0 {:x, 0}
   @x1 {:x, 1}
   @classes [:error, :exit, :throw]
+
+  # Tests of a term's type or size, which take a reason by its shape
+  # alone; every other test compares it with a value.
+  @shape_tests [
+    :is_tuple,
+    :test_arity,
+    :is_atom,
+    :is_binary,
+    :is_bitstr,
+    :is_integer,
+    :is_float,
+    :is_number,
+    :is_list,
+    :is_nonempty_list,
+    :is_nil,
+    :is_map,
+    :is_pid,
+    :is_port,
+    :is_reference,
+    :is_function,
+    :is_function2,
+    :is_boolean
+  ]
+  @tuple_tests [:is_tuple, :test_arity]
 
   @typedoc """
   What one handler catches. `classes` and `totals` are among `:error`,
@@ -70,6 +99,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
           totals: [atom()],
           tags: [{atom(), atom()}],
           tuple_tags: [{atom(), atom()}],
+          open_tuples: [atom()],
           falls_through: [atom()],
           handled: [atom()],
           visited: [non_neg_integer()],
@@ -89,6 +119,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
           totals: [],
           tags: [],
           tuple_tags: [],
+          open_tuples: [],
           falls_through: [],
           handled: [],
           visited: [],
@@ -108,6 +139,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
           totals: acc.totals |> MapSet.to_list() |> Enum.sort(),
           tags: acc.tags |> MapSet.to_list() |> Enum.sort(),
           tuple_tags: acc.tuple_tags |> MapSet.to_list() |> Enum.sort(),
+          open_tuples: acc.open_tuples |> MapSet.to_list() |> Enum.sort(),
           falls_through: acc.falls_through |> MapSet.to_list() |> Enum.sort(),
           handled: acc.handled |> MapSet.to_list() |> Enum.sort(),
           visited: seen |> Enum.map(&elem(&1, 0)) |> Enum.uniq() |> Enum.sort(),
@@ -133,10 +165,14 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
 
   # `heads` are the registers holding a tuple's first element, what a
   # comparison against a tuple's tag reads.
+  # `valued` is whether the path compared the reason, or a part of it,
+  # with a value; `tuple` whether it established the reason is a tuple.
   defp new_path do
     %{
       class: nil,
       tested: false,
+      valued: false,
+      tuple: false,
       aliases: MapSet.new([@x1]),
       heads: MapSet.new(),
       tags: MapSet.new(),
@@ -150,6 +186,7 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
       totals: MapSet.new(),
       tags: MapSet.new(),
       tuple_tags: MapSet.new(),
+      open_tuples: MapSet.new(),
       falls_through: MapSet.new(),
       handled: MapSet.new(),
       last: start
@@ -166,9 +203,10 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
   end
 
   # Depth-first from an instruction index; a position is re-entered only
-  # with a (class, tested) state it has not been entered with.
+  # with a (class, tested, valued, tuple) state it has not been entered
+  # with.
   defp walk(idx, path, instrs, labels, seen, acc) do
-    key = {idx, path.class, path.tested}
+    key = {idx, path.class, path.tested, path.valued, path.tuple}
 
     cond do
       idx >= tuple_size(instrs) ->
@@ -215,18 +253,46 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
         goto(fail, path, instrs, labels, seen, acc)
 
       alias?(a, path) or alias?(b, path) ->
-        branch(idx, fail, %{path | tested: true}, instrs, labels, seen, acc)
+        # Only the equal side is the compared value; the other side is
+        # every other one, as open as before the test.
+        tested = %{path | tested: true}
+        branch(idx, fail, %{tested | valued: true}, tested, instrs, labels, seen, acc)
 
       true ->
         branch(idx, fail, path, instrs, labels, seen, acc)
     end
   end
 
-  defp step({:test, _op, {:f, fail}, args} = instr, idx, path, instrs, labels, seen, acc)
+  defp step({:test, op, {:f, fail}, args} = instr, idx, path, instrs, labels, seen, acc)
        when is_list(args) do
     {path, acc} = note(path, acc, instr)
-    path = if Enum.any?(args, &alias?(&1, path)), do: %{path | tested: true}, else: path
-    branch(idx, fail, path, instrs, labels, seen, acc)
+
+    if Enum.any?(args, &alias?(&1, path)) do
+      tested = %{path | tested: true}
+
+      # A value test constrains the side where it holds (the unequal side
+      # of `is_ne_exact`); a shape test constrains nothing a value would.
+      {pass, failed} =
+        cond do
+          op in @shape_tests ->
+            shaped = %{
+              tested
+              | tuple: path.tuple or (op in @tuple_tests and reg(hd(args)) == @x1)
+            }
+
+            {shaped, tested}
+
+          op in [:is_ne_exact, :is_ne] ->
+            {tested, %{tested | valued: true}}
+
+          true ->
+            {%{tested | valued: true}, tested}
+        end
+
+      branch(idx, fail, pass, failed, instrs, labels, seen, acc)
+    else
+      branch(idx, fail, path, instrs, labels, seen, acc)
+    end
   end
 
   defp step({:test, _op, {:f, fail}, src, _fields}, idx, path, instrs, labels, seen, acc) do
@@ -261,14 +327,17 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
 
       goto(default, path, instrs, labels, seen, acc)
     else
-      path = if alias?(src, path), do: %{path | tested: true}, else: path
+      {arm_path, default_path} =
+        if alias?(src, path),
+          do: {%{path | tested: true, valued: true}, %{path | tested: true}},
+          else: {path, path}
 
       {seen, acc} =
         Enum.reduce(arms, {seen, acc}, fn [_val, {:f, l}], {s, a} ->
-          goto(l, path, instrs, labels, s, a)
+          goto(l, arm_path, instrs, labels, s, a)
         end)
 
-      goto(default, path, instrs, labels, seen, acc)
+      goto(default, default_path, instrs, labels, seen, acc)
     end
   end
 
@@ -281,7 +350,10 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
          seen,
          acc
        ) do
-    path = if alias?(src, path), do: %{path | tested: true}, else: path
+    path =
+      if alias?(src, path),
+        do: %{path | tested: true, tuple: path.tuple or reg(src) == @x1},
+        else: path
 
     {seen, acc} =
       pairs
@@ -381,9 +453,12 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
     end
   end
 
-  defp branch(idx, fail, path, instrs, labels, seen, acc) do
-    {seen, acc} = next(idx, path, instrs, labels, seen, acc)
-    goto(fail, path, instrs, labels, seen, acc)
+  defp branch(idx, fail, path, instrs, labels, seen, acc),
+    do: branch(idx, fail, path, path, instrs, labels, seen, acc)
+
+  defp branch(idx, fail, pass, failed, instrs, labels, seen, acc) do
+    {seen, acc} = next(idx, pass, instrs, labels, seen, acc)
+    goto(fail, failed, instrs, labels, seen, acc)
   end
 
   # ── Path state ──────────────────────────────────────────────────────
@@ -399,6 +474,11 @@ defmodule Argus.Extractors.ErrorHandling.CatchClauses do
         tags: Enum.reduce(pairs, acc.tags, &MapSet.put(&2, &1)),
         tuple_tags: Enum.reduce(tuple_pairs, acc.tuple_tags, &MapSet.put(&2, &1))
     }
+
+    acc =
+      if path.tested and path.tuple and not path.valued,
+        do: %{acc | open_tuples: MapSet.put(acc.open_tuples, class)},
+        else: acc
 
     if path.tested, do: acc, else: %{acc | totals: MapSet.put(acc.totals, class)}
   end

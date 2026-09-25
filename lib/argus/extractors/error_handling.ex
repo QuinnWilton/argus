@@ -40,7 +40,8 @@ defmodule Argus.Extractors.ErrorHandling do
     `rescue X` yields the struct name `X`
   - `catch_tuple_tag(id, func, class, tag)` — the catch_tag atoms a
     clause compares as a tuple's first element (`{:noproc, _}`), not
-    the reason itself (`:noproc`)
+    the reason itself (`:noproc`); `*` for a clause that takes any tuple
+    reason (`exit:{Reason, _}`)
   - `catch_falls_through(id, func, tag)` — a `case` inside the handler,
     reached after comparing `tag`, has no clause for some value, so an
     unexpected reason is a CaseClauseError
@@ -1389,9 +1390,17 @@ defmodule Argus.Extractors.ErrorHandling do
       end)
 
     facts =
-      Enum.reduce(summary.tuple_tags, facts, fn {class, tag}, acc ->
-        add_fact(acc, :catch_tuple_tag, [id, ctx.func_id, to_string(class), inspect(tag)])
-      end)
+      Enum.reduce(
+        summary.tuple_tags ++ Enum.map(summary.open_tuples, &{&1, :*}),
+        facts,
+        fn
+          {class, :*}, acc ->
+            add_fact(acc, :catch_tuple_tag, [id, ctx.func_id, to_string(class), "*"])
+
+          {class, tag}, acc ->
+            add_fact(acc, :catch_tuple_tag, [id, ctx.func_id, to_string(class), inspect(tag)])
+        end
+      )
 
     facts =
       Enum.reduce(summary.falls_through, facts, fn tag, acc ->

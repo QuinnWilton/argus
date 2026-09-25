@@ -171,6 +171,14 @@ clause collects on its own path. mailbox's `ref_discarded` now reads
 forks' four "drops the ref"/"leaves a monitor live" rows and rabbit's
 `stop_gc/2` (grace period, kill, wait) are quiet.
 
+**Changed.** Schema 112. `catch_tuple_tag`'s tag is `*` for a clause
+that takes any tuple reason by its shape alone, comparing none of its
+elements (`catch exit:{Reason, _}`); a value test now constrains only
+the side where it holds, so a clause after `{:noproc, _}` that takes the
+rest is open. blocking's "Peer call catches :noproc but not :shutdown"
+reads it: brod's `safe_gen_call/3` catches `{Reason, _}` beside
+`{noproc, _}`, the stopping peer's `{:shutdown, _}` included.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

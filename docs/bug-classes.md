@@ -1076,8 +1076,9 @@ A synchronous wait that can last forever or nest: every finding is a process wai
 - A clause counts as handling every atom it compares, so a clause that mentions `:shutdown` anywhere quiets the finding.
 - Only calls the `try` guards directly are judged.
 - Other exit reasons a peer can end a call with (`:killed`, `{:nodedown, _}`, a crash reason) are not asked about.
+- A clause that takes every tuple reason by its shape alone (`exit:{Reason, _}`, brod's `safe_gen_call/3`) covers a stopping peer: the peer's `{:shutdown, _}` is one (`catch_tuple_tag` `*`). A clause for one more tag (`{:timeout, _}`) does not.
 
-**Fixtures.** Positive: `CatchShapes.NoprocOnly` (test/fixtures/catch_shapes_fixture.ex). Quiet: `CatchShapes.NoprocAndShutdown`, `CatchShapes.AnyExit`; `Quiet.CatchesEveryExit` (test/fixtures/quiet_shapes_fixture.ex). Asserted in test/analyses/singleton_shapes_test.exs and quiet_shapes_test.exs.
+**Fixtures.** Positive: `CatchShapes.NoprocOnly`, `CatchShapes.NoprocAndNamedTuple` (test/fixtures/catch_shapes_fixture.ex). Quiet: `CatchShapes.NoprocAndShutdown`, `CatchShapes.AnyExit`, `CatchShapes.NoprocAndAnyTuple`; `Quiet.CatchesEveryExit` (test/fixtures/quiet_shapes_fixture.ex). Asserted in test/analyses/singleton_shapes_test.exs and quiet_shapes_test.exs.
 
 **Corpus.** Fix pairs: `phoenix_live_view#4359` (phoenixframework/phoenix_live_view, 01b8517 → b100e10, `Phoenix.LiveView.Channel`).
 
