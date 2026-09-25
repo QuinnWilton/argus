@@ -294,13 +294,13 @@
 
   reaches(f, t) :- seed(f, t).
   reaches(f, t) :- reaches(h, t), call_instr(f, h, id), !guarded(id).
-  reaches(f, t) :- reaches(h, t), fun_handed(id, f, h), !guarded(id).
+  reaches(f, t) :- reaches(h, t), fun_handed(id, f, h, _), !guarded(id).
 
   reaches(f, t) :-
     reaches(h, t),
     call_edge(f, h),
     !call_instr(f, h, _),
-    !fun_handed(_, f, h).
+    !fun_handed(_, f, h, _).
 }
 
 // The same, walked against the edges: from a few interesting functions

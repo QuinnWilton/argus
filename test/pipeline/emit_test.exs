@@ -496,9 +496,10 @@ defmodule Argus.Pipeline.EmitTest do
           :return
         ])
 
+      # Each in the position it is handed in: the second argument.
       assert [
-               [each_id, "TestMod:test_func/0", "TestMod:-test_func/0-fun-0-/1"],
-               [map_id, "TestMod:test_func/0", "URI:parse/1"]
+               [each_id, "TestMod:test_func/0", "TestMod:-test_func/0-fun-0-/1", "1"],
+               [map_id, "TestMod:test_func/0", "URI:parse/1", "1"]
              ] = Enum.sort_by(facts[:fun_handed], &Enum.at(&1, 2))
 
       assert {:ok, %{idx: 1}} = Argus.InstrId.parse(each_id)

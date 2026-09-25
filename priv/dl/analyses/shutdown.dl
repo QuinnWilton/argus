@@ -240,7 +240,7 @@ waits_on(f, m) :- sync_dep(f, m), !private_dep(f, m).
 // whose target resolves to it.
 .decl fun_site(func: symbol, callee: symbol, id: symbol)
 
-fun_site(f, g, id) :- fun_handed(id, f, g).
+fun_site(f, g, id) :- fun_handed(id, f, g, _).
 fun_site(f, g, id) :- resolved_apply(id, f, g).
 
 // The call in `func` that waits on `mod`: sync_site, a call that a

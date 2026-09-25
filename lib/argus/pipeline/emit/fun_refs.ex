@@ -48,7 +48,7 @@ defmodule Argus.Pipeline.Emit.FunRefs do
       |> Enum.with_index()
       |> Enum.reduce({MapSet.new(), MapSet.new()}, fn {instr, idx}, {refs, called} ->
         refs =
-          for {:external, callee} <- handed(instrs, idx, instr),
+          for {:external, callee, _pos} <- handed(instrs, idx, instr),
               reduce: refs,
               do: (acc -> MapSet.put(acc, callee))
 
@@ -62,10 +62,11 @@ defmodule Argus.Pipeline.Emit.FunRefs do
   end
 
   @doc """
-  One `[id, caller, callee]` row per call in `normalized` handed a fun
-  that runs `callee`: a closure the function builds (`make_fun3`) or a
-  literal external fun, in an argument position the call's result does
-  not carry. Sorted and without duplicates.
+  One `[id, caller, callee, pos]` row per argument of a call in
+  `normalized` that is handed a fun that runs `callee`: a closure the
+  function builds (`make_fun3`) or a literal external fun, in an argument
+  position `pos` the call's result does not carry. Sorted and without
+  duplicates.
   """
   @spec handed_rows(String.t(), [{String.t(), tuple() | atom()}]) :: [[String.t()]]
   def handed_rows(func_id, normalized) do
@@ -74,15 +75,17 @@ defmodule Argus.Pipeline.Emit.FunRefs do
     normalized
     |> Enum.with_index()
     |> Enum.flat_map(fn {{id, instr}, idx} ->
-      for {_kind, callee} <- handed(instrs, idx, instr), do: [id, func_id, callee]
+      for {_kind, callee, pos} <- handed(instrs, idx, instr),
+          do: [id, func_id, callee, to_string(pos)]
     end)
     |> Enum.uniq()
     |> Enum.sort()
   end
 
   # The funs a call at `idx` is handed in argument positions its result
-  # does not carry, as `{kind, callee}`: `:closure` for a `make_fun3`,
-  # `:external` for a literal or `erlang:make_fun/3` external fun.
+  # does not carry, as `{kind, callee, pos}`: `:closure` for a
+  # `make_fun3`, `:external` for a literal or `erlang:make_fun/3`
+  # external fun.
   defp handed(instrs, idx, instr) do
     case callee(instr) do
       {:ok, {mod, fun, arity}, carried} ->
@@ -91,7 +94,7 @@ defmodule Argus.Pipeline.Emit.FunRefs do
             {kind, {m, f, a}} <- [Resolve.fun_origin(instrs, idx, {:x, pos})],
             kind in [:closure, :external],
             not (m == mod and f == fun and a == arity),
-            do: {kind, InstrId.func_id(m, f, a)}
+            do: {kind, InstrId.func_id(m, f, a), pos}
 
       :none ->
         []

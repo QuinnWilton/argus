@@ -875,7 +875,7 @@ answers_from_os(":filelib", "file_size").
 
 rpc_closure(call, g) :-
   rpc_target(call, "fun"),
-  fun_handed(call, f, g),
+  fun_handed(call, f, g, _),
   closure_def(f, g).
 
 // What the closure runs: its module's functions it reaches, a process

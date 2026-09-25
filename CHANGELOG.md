@@ -356,6 +356,12 @@ citing a rule for the unacknowledged loop that did not exist; this is
 it. A module whose init/1 is started by a bare spawn has no starter
 waiting, and is left alone.
 
+**Changed.** Schema 102. `fun_handed(id, caller, callee, pos)` names
+the argument position the fun is handed in: a call handed a closure in
+one position and something else in another said only that it was handed
+a fun. Every reader matches the position with `_` but mailbox's
+`hands_unseen`, which asks whether the fun it runs is the one handed.
+
 **Added.** Schema 100. `recv_flush(id, func, cancel)`
 (`Argus.Extractors.Monitor.Flush`): the receive at `id` runs only where
 the `cancel_timer` call at `cancel`, earlier in the function, returned

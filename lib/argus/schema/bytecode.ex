@@ -327,7 +327,7 @@ defmodule Argus.Schema.Bytecode do
           {:callee, :func_id, "function the fun value runs (mod:func/arity)"}
         ],
         doc: """
-        A function hands `callee`, as a fun value, to a call that may invoke it, and does not call it itself (`Argus.Pipeline.Emit.FunRefs`): a literal external fun `&Mod.f/1`, or `erlang:make_fun/3` of literals, in an argument position whose data the call's result does not carry. `Enum.map(list, &URI.parse/1)` names `URI.parse/1` only here; `Keyword.get(opts, :on_fail, &M.f/2)` hands the fun back to be stored, and a fun built into a tuple, list or map, or held in a literal table, is not handed to a call. The call graph follows it like `closure_def`; the same-process walks set it aside where the call it is handed to starts a process on it or keeps it to run later (`fun_handed`, clientlib/runs_elsewhere.dl), as they do a closure. A local capture (`&helper/1`) is a `make_fun3`, and so a `closure_def`. A function that also calls `callee` directly has no row: the call relations already give that edge.
+        A function hands `callee`, as a fun value, to a call that may invoke it, and does not call it itself (`Argus.Pipeline.Emit.FunRefs`): a literal external fun `&Mod.f/1`, or `erlang:make_fun/3` of literals, in argument position `pos`, whose data the call's result does not carry. `Enum.map(list, &URI.parse/1)` names `URI.parse/1` only here; `Keyword.get(opts, :on_fail, &M.f/2)` hands the fun back to be stored, and a fun built into a tuple, list or map, or held in a literal table, is not handed to a call. The call graph follows it like `closure_def`; the same-process walks set it aside where the call it is handed to starts a process on it or keeps it to run later (`fun_handed`, clientlib/runs_elsewhere.dl), as they do a closure. A local capture (`&helper/1`) is a `make_fun3`, and so a `closure_def`. A function that also calls `callee` directly has no row: the call relations already give that edge.
         """
       },
       %{
@@ -336,7 +336,8 @@ defmodule Argus.Schema.Bytecode do
         fields: [
           {:id, :instr_id, "instruction ID of the call handed the fun"},
           {:caller, :func_id, "containing function ID"},
-          {:callee, :func_id, "function the fun value runs (mod:func/arity)"}
+          {:callee, :func_id, "function the fun value runs (mod:func/arity)"},
+          {:pos, :number, "0-based argument position the fun is handed in"}
         ],
         doc: """
         The call at `id` is handed, as a fun value, a function that runs `callee` (`Argus.Pipeline.Emit.FunRefs`): a closure the caller builds (`make_fun3`, a `closure_def`) or a literal external fun (a `fun_ref`), in an argument position whose data the call's result does not carry. The call graph's edge into a closure or a fun reference has no call instruction of its own; this is the call it runs inside, so a rule that asks whether a `try` covers the edge asks it of this call (`Enum.each(peers, fn p -> ... end)` runs the closure inside `Enum.each`). A fun stored, built into a term, or handed back by the call has no row.

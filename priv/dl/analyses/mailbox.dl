@@ -142,7 +142,7 @@ applies_through(c, k2) :- applies_through(f, k), call_arg_forward(c, f, k, k2).
 hands_unseen(c) :-
   applies_through(f, k),
   call_instr(c, f, id),
-  !fun_handed(id, c, _),
+  !fun_handed(id, c, _, _),
   !call_arg_forward(c, f, k, _),
   !names_module(c, f, k).
 
@@ -834,7 +834,7 @@ collected_by_callers(g) :-
 
 collected_by_callers(g) :-
   uncollected.reaches(h, g),
-  fun_handed(id, f, h),
+  fun_handed(id, f, h, _),
   awaits_down_after(f, id),
   !collection_exposed(g).
 
