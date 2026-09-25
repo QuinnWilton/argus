@@ -468,8 +468,8 @@ call_cycle(a, b, wa, wb, "continue", sa, sb) :-
   continue_dep(a, b, wa),
   continue_dep(b, a, wb),
   a < b,
-  sync_site_or_empty(wa, b, sa),
-  sync_site_or_empty(wb, a, sb).
+  continue_wait(a, b, sa),
+  continue_wait(b, a, sb).
 
 // A cycle of one: a synchronous call to the calling process itself — to
 // self(), to self() handed to a helper, or from a server's callback to a
@@ -503,7 +503,6 @@ sync_site_or_empty(f, m, "") :-
   !sync_site(f, m, _),
   !calls_into(f, m).
 
-sync_site_or_empty(f, m, "") :- continue_dep(_, m, f), !sync_site(f, m, _).
 
 .decl calls_into(func: symbol, mod: symbol)
 

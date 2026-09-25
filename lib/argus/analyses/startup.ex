@@ -83,7 +83,9 @@ defmodule Argus.Analyses.Startup do
            "call | cast | sup | blocking_server | parent | global | global_assumed | global_bounded | remote"},
           {:ordering, :symbol, "later | earlier | parent | unknown, or empty"},
           {:sup, :symbol, "the supervisor placing both, when the ordering is known"},
-          {:site, :symbol, "the tree definition for a later sibling, else the call site"},
+          {:site, :symbol,
+           "the tree definition for init/1's later sibling, else the call site (for a " <>
+             "continue, the call in handle_continue/2 on the way to the wait, or empty)"},
           {:detail, :symbol,
            "conditional | unconditional for a call, api.op for sup, the handler for blocking_server, the op for global and remote"}
         ],
@@ -437,7 +439,7 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:blocks_on_peer, [caller, "continue", callee, "call", "later", sup, _, _]) do
+  def finding(:blocks_on_peer, [caller, "continue", callee, "call", "later", sup, site, _]) do
     Findings.new(
       :warning,
       "handle_continue races a later sibling",
@@ -446,7 +448,11 @@ defmodule Argus.Analyses.Startup do
         "concurrently with the supervisor's start sequence, so whether " <>
         "#{callee} is alive when the call lands is a boot-time race — it " <>
         "works on the fast machine and fails in CI.",
-      at: Findings.at_mfa(caller, :handle_continue, 2),
+      at:
+        if(site == "",
+          do: Findings.at_mfa(caller, :handle_continue, 2),
+          else: Findings.at_site(site, caller)
+        ),
       at_label: "the racing call originates here",
       help: [
         "start `#{callee}` before `#{caller}` in `#{sup}`'s child list, or " <>

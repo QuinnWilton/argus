@@ -519,18 +519,15 @@ blocks_on_peer(child, "init", dep, kind, "later", sup, sup_site, witness) :-
   child != dep.
 
 // ══ Deferred startup: handle_continue ═══════════════════════════════
-.decl continue_sync_calls(from_mod: symbol, to_mod: symbol)
-
-continue_sync_calls(from_mod, to_mod) :- continue_dep(from_mod, to_mod, _).
-
+//
 // A.handle_continue sync-calls B AND B.handle_continue sync-calls A is
 // a call cycle in the continue phase, reported by blocking's call_cycle.
 
 // ── Pattern 2: handle_continue calls later-started sibling ───────────
 
-blocks_on_peer(caller, "continue", callee, "call", "later", sup, "", "") :-
+blocks_on_peer(caller, "continue", callee, "call", "later", sup, site, "") :-
   starts_before(sup, caller, callee, _, _),
-  continue_sync_calls(caller, callee).
+  continue_wait(caller, callee, site).
 
 // ── Pattern 3: handle_continue calls back into parent supervisor ─────
 
@@ -568,8 +565,8 @@ blocks_on_peer(worker, "continue", sup, "parent", "parent", sup, site, detail) :
 
 // A plain synchronous call on the supervisor's name (a GenServer.call
 // the call resolution sees) reaches the same mailbox.
-blocks_on_peer(worker, "continue", sup, "parent", "parent", sup, "", "") :-
-  continue_sync_calls(worker, sup),
+blocks_on_peer(worker, "continue", sup, "parent", "parent", sup, site, "") :-
+  continue_wait(worker, sup, site),
   supervisor(sup, _),
   supervisor_child(sup, _, worker, _, _),
   has_later_sibling(sup, worker).

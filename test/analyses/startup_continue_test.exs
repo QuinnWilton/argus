@@ -33,10 +33,12 @@ defmodule Argus.Analyses.StartupContinueTest do
       assert cycles != []
 
       # Cycle should pair the two cycle servers (lexicographic order from
-      # the dedup constraint).
-      assert Enum.any?(cycles, fn [a, b | _] ->
+      # the dedup constraint), each side at its call in handle_continue/2.
+      assert Enum.any?(cycles, fn [a, b, _wa, _wb, "continue", site_a, site_b] ->
                a == "Argus.Test.Fixtures.ContinueCycleServerA" and
-                 b == "Argus.Test.Fixtures.ContinueCycleServerB"
+                 b == "Argus.Test.Fixtures.ContinueCycleServerB" and
+                 site_a =~ "ContinueCycleServerA:handle_continue/2#" and
+                 site_b =~ "ContinueCycleServerB:handle_continue/2#"
              end)
     end
 
@@ -58,6 +60,32 @@ defmodule Argus.Analyses.StartupContinueTest do
                  caller == "Argus.Test.Fixtures.ContinueLateCallerServer" and
                  callee == "Argus.Test.Fixtures.ContinueLateTargetServer"
              end)
+    end
+
+    test "a later-sibling continue is anchored at its call, not the function's first clause" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.ContinueLateCallerServer,
+        Argus.Test.Fixtures.ContinueLateTargetServer,
+        Argus.Test.Fixtures.ContinueLateSiblingSupervisor
+      ]
+
+      assert {:ok, %{findings: findings}} = Memo.run_analyses(modules, analyses: [:startup])
+
+      assert [finding] =
+               Enum.filter(findings, &(&1.title == "handle_continue races a later sibling"))
+
+      assert finding.instr != nil
+
+      # ContinueLateCallerServer's handle_continue/2 opens with a pure
+      # :warm clause; the call is in the :setup clause below it.
+      {:ok, facts} = Argus.Pipeline.extract(modules)
+      line = Argus.Lines.resolve(Argus.Lines.from_facts(facts), finding.instr)
+      source = Path.expand("../fixtures/continue_chain_fixture.ex", __DIR__)
+
+      assert source |> File.read!() |> String.split("\n") |> Enum.at(line - 1) =~
+               "GenServer.call(Argus.Test.Fixtures.ContinueLateTargetServer, :ping)"
     end
 
     test "detects continue calling its own supervisor before the tree is up (Pattern 3)" do

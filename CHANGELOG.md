@@ -356,6 +356,20 @@ chunk cannot say. Read from the beam rather than the facts: only the
 modules a module-level finding names ask, and the debug info is the
 bulk of an Elixir beam. scry anchors module-level findings there.
 
+**Fixed.** A finding about a `handle_continue/2` wait — "handle_continue
+races a later sibling", "handle_continue calls its own supervisor" by a
+plain call, and the continue phase of "Mutual handle_continue deadlock"
+— anchors at the call in `handle_continue/2` on the way to the wait
+(the call itself, or the call into the helper that makes it), not at
+the function's head: every clause compiles into one function, and
+encore's fugue Coda heads its `handle_continue/2` with a pure `:prime`
+clause and makes the seeded call in the `{:attach, _}` clause below.
+`continue_site` and `continue_wait` (clientlib/entries.dl, beside
+`continue_dep`) name the call through `site_request`; startup's
+`blocks_on_peer` fills `site` with it and blocking's `call_cycle` its
+`site_a`/`site_b`. Empty when the wait has no call of the function's
+own, and the finding falls back to the function.
+
 ### FP hunt, round 2: eight more programs, and the anchors round 1 left
 
 **Fixed.** A blocking cast (`call_chain` kind `cast`) anchors at the

@@ -70,3 +70,23 @@ continue_dep(mod, to, f) :-
   handle_continue_clause(mod, _, f),
   reaches_sync_dep(f, to),
   mod != to.
+
+// Where a continue waits: the call in its handle_continue/2 on the way
+// to the wait on `to` (site_request, calls.dl), the GenServer.call itself
+// or the call into the helper that makes it; empty when the wait has no
+// call of the function's own (a closure it hands on). handle_continue/2
+// compiles every clause into one function, and the clause that makes the
+// call is rarely the first: encore's fugue Coda heads its
+// handle_continue/2 with a pure `:prime` clause and makes the seeded
+// call in the `{:attach, _}` clause below it, so a finding anchored at
+// the function lands on the pure clause.
+site_demand(f) :- continue_dep(_, _, f).
+
+.decl continue_site(func: symbol, to: symbol, site: symbol)
+
+continue_site(f, to, id) :- continue_dep(_, to, f), site_request(f, id, to, _), id != "".
+
+.decl continue_wait(mod: symbol, to: symbol, site: symbol)
+
+continue_wait(mod, to, id) :- continue_dep(mod, to, f), continue_site(f, to, id).
+continue_wait(mod, to, "") :- continue_dep(mod, to, f), !continue_site(f, to, _).

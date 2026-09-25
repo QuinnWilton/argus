@@ -97,7 +97,11 @@ defmodule Argus.Test.Fixtures.ContinueLateCallerServer do
   @impl true
   def init(_opts), do: {:ok, %{}, {:continue, :setup}}
 
+  # A pure clause heads the function, as in encore's fugue Coda: the
+  # finding belongs on the call below, not on this line.
   @impl true
+  def handle_continue(:warm, state), do: {:noreply, state}
+
   def handle_continue(:setup, state) do
     GenServer.call(Argus.Test.Fixtures.ContinueLateTargetServer, :ping)
     {:noreply, state}

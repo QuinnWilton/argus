@@ -136,8 +136,10 @@ defmodule Argus.Analyses.Blocking do
           {:phase, :symbol,
            "call (their processes, from their callbacks) | continue (both from handle_continue/2) | " <>
              "self (a process calling itself; mod_a = mod_b)"},
-          {:site_a, :symbol, "the call in witness_a, when direct; else empty"},
-          {:site_b, :symbol, "the call in witness_b, when direct; else empty"}
+          {:site_a, :symbol,
+           "the call in witness_a, when direct (for continue, the call on the way to the " <>
+             "wait, a helper's included); else empty"},
+          {:site_b, :symbol, "the call in witness_b, as site_a"}
         ],
         # A self-call is one finding per call site.
         key: {:phase, %{"self" => [:witness_a, :site_a], default: [:mod_a, :mod_b, :phase]}},
@@ -361,7 +363,7 @@ defmodule Argus.Analyses.Blocking do
     |> answering(target, peer, p)
   end
 
-  def finding(:call_cycle, [mod_a, mod_b, _wa, _wb, "continue", _sa, _sb]) do
+  def finding(:call_cycle, [mod_a, mod_b, witness_a, witness_b, "continue", site_a, site_b]) do
     Findings.new(
       :error,
       "Mutual handle_continue deadlock",
@@ -369,14 +371,16 @@ defmodule Argus.Analyses.Blocking do
         "Both return from init — the supervisor proceeds happily — then each " <>
         "blocks calling the other before ever reading its own mailbox. " <>
         "Neither can reply; both calls time out, forever, on every boot.",
-      at: Findings.at_mfa(mod_a, :handle_continue, 2),
+      at: Findings.at_site_in_func(site_a, witness_a, mod_a),
       at_label: "one side of the cycle blocks here",
       help: [
         "break the cycle: keep one direction synchronous and make the other " <>
           "asynchronous (a cast, or a message each side processes once both " <>
           "are up)"
       ],
-      related: [Findings.related("cycle partner", Findings.at_mfa(mod_b, :handle_continue, 2))]
+      related: [
+        Findings.related("cycle partner", Findings.at_site_in_func(site_b, witness_b, mod_b))
+      ]
     )
   end
 
