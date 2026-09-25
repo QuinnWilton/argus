@@ -220,19 +220,44 @@ sink_reachable(id, func, api, s, entry, kind, proximity, "", 0, safety) :-
 
 export_reach.root(func) :- function_def(func, _, _, _, 1).
 
-.decl sink_without_request_path(id: symbol, func: symbol, api: symbol, sink: symbol, safety: symbol)
-.output sink_without_request_path
+.decl unreached_sink(id: symbol, func: symbol, api: symbol, sink: symbol, safety: symbol)
 
-sink_without_request_path(id, func, api, "code", "") :-
+unreached_sink(id, func, api, "code", "") :-
   sink(id, func, api, "code", ""),
   export_reach.reaches(func),
   !sink_reachable(id, _, _, _, _, _, _, _, _, _).
 
-sink_without_request_path(id, func, api, "atom", "") :-
+unreached_sink(id, func, api, "atom", "") :-
   sink(id, func, api, "atom", ""),
   export_reach.reaches(func),
   caller_input(id),
   !sink_reachable(id, _, _, _, _, _, _, _, _, _).
+
+// What the value such a sink converts is, when priors are on
+// (Argus.Priors; off by default): library API handed a pool's name, a
+// dets file's own records or a mix task's command is doing what it is
+// for, and the finding says so at a step lower severity; one handed a
+// URL, a request's parameter or a connecting peer's name is the bug and
+// keeps its severity. 0.9 of the mass away from outside data is where
+// the calibration measured 98% precision (Questions.ValueSource).
+
+.decl sink_value(func: symbol, sink: symbol, source: symbol, permille: number)
+
+sink_value(func, s, source, p) :-
+  unreached_sink(_, func, _, s, _),
+  prior_value_source(func, s, source, _, p),
+  p >= 900.
+
+.decl sink_without_request_path(id: symbol, func: symbol, api: symbol, sink: symbol, source: symbol, permille: number, safety: symbol)
+.output sink_without_request_path
+
+sink_without_request_path(id, func, api, s, source, p, safety) :-
+  unreached_sink(id, func, api, s, safety),
+  sink_value(func, s, source, p).
+
+sink_without_request_path(id, func, api, s, "", 0, safety) :-
+  unreached_sink(id, func, api, s, safety),
+  !sink_value(func, s, _, _).
 
 // ── Atoms made of what a caller hands in ─────────────────────────
 //
@@ -369,13 +394,13 @@ inflate_input.seed(func, p, id) :-
 
 inflate_caller_input(id) :- inflate_input.reaches(f, _, id), outside_api(f).
 
-sink_without_request_path(id, func, api, "decompression", "") :-
+unreached_sink(id, func, api, "decompression", "") :-
   sink(id, func, api, "decompression", ""),
   export_reach.reaches(func),
   inflate_caller_input(id),
   !sink_reachable(id, _, _, _, _, _, _, _, _, _).
 
-sink_without_request_path(id, func, api, "deserialization", safety) :-
+unreached_sink(id, func, api, "deserialization", safety) :-
   sink(id, func, api, "deserialization", safety),
   !sink_reachable(id, _, _, _, _, _, _, _, _, _).
 
@@ -385,14 +410,14 @@ sink_without_request_path(id, func, api, "deserialization", safety) :-
 // anchor already.
 .init sink_callers = BackwardBoundedCallReach
 
-sink_callers.root(func, func) :- sink_without_request_path(_, func, _, _, _).
+sink_callers.root(func, func) :- unreached_sink(_, func, _, _, _).
 sink_callers.limit(6).
 
 .decl sink_export(sink: symbol, export: symbol)
 .output sink_export
 
 sink_export(id, e) :-
-  sink_without_request_path(id, func, _, _, _),
+  unreached_sink(id, func, _, _, _),
   sink_callers.reaches(func, e, d),
   d > 0,
   function_def(e, _, _, _, 1).

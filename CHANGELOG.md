@@ -10,6 +10,37 @@ What 0.20.0 will ship; the release dates this heading and drops the
 `-dev` from `mix.exs`. Grouped by concern. Each entry opens with what it
 does: **Added**, **Changed**, **Fixed** or **Removed**.
 
+### Priors for what a reader knows
+
+**Added.** Schema 110. `prior_value_source(func, sink, source,
+source_permille, permille)` from `Argus.Priors.Questions.ValueSource`:
+what the value a sink converts is — a name the operator configures,
+text from the program's code, data it stored itself, a message from its
+own cluster, a developer's or administrator's input to a tool, or data
+from outside the system — asked of the functions holding an unbounded
+atom, deserialization or code sink, the functions of a module in one
+request, with the model shown the module, its exported functions, and
+for each function the call, what else it calls, its literals and who
+calls it. `permille` is the mass away from outside data. The shared
+name index the new questions read is `Argus.Priors.Questions.Code`.
+
+**Changed.** `unsafe_input.sink_without_request_path` gains `source`
+and `permille` before `safety` (seven columns), and with priors on a
+row whose value the model puts at 0.9 or more away from outside data
+steps down a severity, `provenance: :heuristic`, with a help line
+saying what the value is ("what it decodes is data the program stored
+itself, not outside data (p=0.97)"). Without priors the columns are
+`""` and `0` and every row is as it was. Over the evaluation programs,
+ejabberd and rabbitmq, 173 of the 272 no-request rows of the three
+sinks it asks about step down (91 of 158 atoms, 71 of 87
+deserializations, 11 of 27 code executions; decompression is not asked
+yet), no row goes, and on 232 of them read by hand the re-tiered are 98%
+not outside data; 17 of the 20 outside-data rows keep their severity,
+among them tesla's Mint adapter (GHSA-h74c-q9j7-mpcm's shape), OTP's
+distribution handshake making atoms of a connecting node's name, its
+boot server's UDP decode and ejabberd's web admin. Cost of the question
+over all twelve sets: 287k input tokens, $0.012.
+
 ### Bounds and roles a reader sees
 
 **Fixed.** An integer tested between two close ends is a bounded value

@@ -278,6 +278,97 @@ defmodule Argus.PriorsTest do
     end
   end
 
+  describe "unsafe_input re-tiers a sink no request reaches by what its value is" do
+    alias Argus.Test.Fixtures.{AtomSources, CodeExecution, UnsafeDeserialization}
+
+    # Answers every value-source question with `source` at `p`, the rest
+    # of the mass on outside data; any other question `none`.
+    defmodule ValueOracle do
+      @behaviour Argus.Priors.Oracle
+
+      @impl true
+      def ask(request, opts) do
+        source = Keyword.get(opts, :source, "configured")
+        p = Keyword.get(opts, :p, 0.95)
+
+        answers =
+          for {id, q} <- request.questions, into: %{} do
+            if q.type == "choice" and is_map_key(q.criteria, :outside) do
+              {id,
+               %{
+                 "type" => "choice",
+                 "choice" => source,
+                 "confidence" => p,
+                 "probabilities" => Map.merge(%{"outside" => 1 - p}, %{source => p})
+               }}
+            else
+              {id,
+               %{
+                 "type" => "choice",
+                 "choice" => "none",
+                 "confidence" => 0.99,
+                 "probabilities" => %{"none" => 0.99}
+               }}
+            end
+          end
+
+        {:ok,
+         %{
+           answers: answers,
+           usage: %{"input_tokens" => 60},
+           model: request.model,
+           request_id: nil
+         }}
+      end
+    end
+
+    @unreached [AtomSources, UnsafeDeserialization, CodeExecution]
+
+    defp unreached(opts) do
+      assert {:ok, %Argus.Findings{degraded: []} = r} =
+               Argus.Findings.run(@unreached, through_store(opts, [:unsafe_input]))
+
+      Enum.sort_by(r.findings, &{&1.title, &1.mfa, &1.instr})
+    end
+
+    defp values(dir, extra \\ []),
+      do: [
+        priors: :live,
+        priors_opts:
+          Keyword.merge([oracle: ValueOracle, cache_dir: dir, model: "jev-test"], extra)
+      ]
+
+    test "off: every row is structural at its own severity" do
+      skip_without_souffle()
+      findings = unreached([])
+      assert Enum.all?(findings, &(&1.provenance == :structural))
+      assert Enum.any?(findings, &(&1.severity == :error))
+    end
+
+    test "on: each row steps down, says what its value is, and none goes", %{tmp_dir: dir} do
+      skip_without_souffle()
+      off = unreached([])
+      on = unreached(values(dir))
+      key = &Enum.map(&1, fn f -> {f.title, f.mfa, f.instr} end)
+      assert key.(off) == key.(on)
+
+      for {before, now} <- Enum.zip(off, on) do
+        assert now.provenance == :heuristic and now.confidence == 950
+        assert now.severity == if(before.severity == :error, do: :warning, else: :info)
+
+        assert List.last(now.help) =~
+                 "a name or setting the operator configures, not outside data"
+      end
+    end
+
+    test "outside data, or a mass under 0.9, leaves every row as it was", %{tmp_dir: dir} do
+      skip_without_souffle()
+      off = unreached([])
+      assert unreached(values(dir, oracle_opts: [source: "outside", p: 0.95])) == off
+      assert unreached(values(Path.join(dir, "low"), oracle_opts: [p: 0.85])) == off
+    end
+  end
+
   describe "coupling doubts a dependency inferred from reaching a sibling" do
     alias Argus.Test.Fixtures.{FacadeCaller, FacadeHelper, FacadeSupervisor}
 

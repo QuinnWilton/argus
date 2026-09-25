@@ -18,10 +18,15 @@ defmodule Argus.Analyses.UnsafeInput do
     is in the callback itself, operating on the request; `adjacent` one
     call away; `transitive` anywhere else in the callback's cone, a path
     rather than a proven flow.
-  - `sink_without_request_path(id, func, api, sink, safety)` — no request reaches
-    it: atom creation and decompression of what an exported function's
-    caller hands in, code execution reachable from an exported function,
-    and every deserialization without `:safe`.
+  - `sink_without_request_path(id, func, api, sink, source, permille,
+    safety)` — no request reaches it: atom creation and decompression of
+    what an exported function's caller hands in, code execution reachable
+    from an exported function, and every deserialization without `:safe`.
+    With priors on, `source` is what the model says the converted value is
+    when it is sure, at `permille`, that it is not outside data
+    (`Argus.Priors.Questions.ValueSource`, asked of atoms,
+    deserializations and code execution); the finding then steps down and
+    says so.
   - `sink_endpoint(sink, verb, path, plug)` — the HTTP route a sink is
     reachable from, when the router literal names one.
   - `unbounded_children_from_request(sup, child, via, kind)` —
@@ -107,6 +112,11 @@ defmodule Argus.Analyses.UnsafeInput do
         fields:
           @sink_fields ++
             [
+              {:source, :symbol,
+               "what the converted value is, when a prior is sure it is not outside data " <>
+                 "(configured | code | stored | cluster | operator), else empty"},
+              {:permille, :number,
+               "the prior's probability that the value is not outside data, in thousandths, else 0"},
               {:safety, :symbol,
                "for a deserialization, its option class: unsafe | atoms_only | dynamic; else empty"}
             ],
@@ -243,7 +253,7 @@ defmodule Argus.Analyses.UnsafeInput do
     |> retier(func, proximity, source, p)
   end
 
-  def finding(:sink_without_request_path, [id, func, api, "atom", _safety]) do
+  def finding(:sink_without_request_path, [id, func, api, "atom", source, p, _safety]) do
     Findings.new(
       :warning,
       "Dynamic atom creation reachable from an exported function",
@@ -255,9 +265,10 @@ defmodule Argus.Analyses.UnsafeInput do
       at_label: "atom interned from a string here",
       help: @atom_help
     )
+    |> trusted_value("the string it makes an atom of", source, p)
   end
 
-  def finding(:sink_without_request_path, [id, func, api, "deserialization", safety]) do
+  def finding(:sink_without_request_path, [id, func, api, "deserialization", source, p, safety]) do
     Findings.new(
       deserialization_severity(safety),
       deserialization_title(safety),
@@ -267,9 +278,10 @@ defmodule Argus.Analyses.UnsafeInput do
       at_label: "decoded here",
       help: deserialization_help(safety)
     )
+    |> trusted_value("what it decodes", source, p)
   end
 
-  def finding(:sink_without_request_path, [id, func, api, "decompression", _safety]) do
+  def finding(:sink_without_request_path, [id, func, api, "decompression", _source, _p, _safety]) do
     Findings.new(
       :warning,
       "Unbounded decompression of a caller's input",
@@ -281,7 +293,7 @@ defmodule Argus.Analyses.UnsafeInput do
     )
   end
 
-  def finding(:sink_without_request_path, [id, func, api, "code", _safety]) do
+  def finding(:sink_without_request_path, [id, func, api, "code", source, p, _safety]) do
     Findings.new(
       :error,
       "Dynamic code execution reachable from exports",
@@ -292,6 +304,7 @@ defmodule Argus.Analyses.UnsafeInput do
       at_label: "evaluated here",
       help: @code_help
     )
+    |> trusted_value("the command it runs", source, p)
   end
 
   def finding(:unbounded_children_from_request, [sup, child, via, kind]) do
@@ -345,6 +358,27 @@ defmodule Argus.Analyses.UnsafeInput do
   end
 
   defp retier(attrs, _func, _proximity, _source, _p), do: attrs
+
+  # A sink no request reaches whose value, the model is sure, is not
+  # outside data: a heuristic finding a step down that says what the
+  # value is (`Argus.Priors.Questions.ValueSource`). No prior, no change.
+  @value_kinds %{
+    "configured" => "a name or setting the operator configures",
+    "code" => "text from the program's own code",
+    "stored" => "data the program stored itself",
+    "cluster" => "a message from the program's own cluster",
+    "operator" => "a developer's or administrator's input to a tool"
+  }
+
+  defp trusted_value(attrs, _what, "", _p), do: attrs
+
+  defp trusted_value(attrs, what, source, p) when is_map_key(@value_kinds, source) do
+    Findings.heuristic(
+      attrs,
+      String.to_integer(p),
+      "#{what} is #{@value_kinds[source]}, not outside data"
+    )
+  end
 
   # What the options said, and what that leaves open. [:safe] stops new
   # atoms and references to unloaded modules; a fun referencing a loaded

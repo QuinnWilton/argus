@@ -35,6 +35,29 @@ defmodule Argus.Schema.Priors do
         """
       },
       %{
+        name: :prior_value_source,
+        layer: 3,
+        fields: [
+          {:func, :func_id, "the function holding the sink"},
+          {:sink, :symbol, "atom | deserialization | code — which kind of sink"},
+          {:source, :symbol,
+           "configured | code | stored | cluster | operator | outside — the likeliest kind of value"},
+          {:source_permille, :number, "the model's probability for `source`, in thousandths"},
+          {:permille, :number,
+           "the probability that the value is not outside data — the mass of every kind but " <>
+             "`outside` — in thousandths"}
+        ],
+        doc: """
+        What the value a sink converts is, judged from the names around the call \
+        (Argus.Priors.Questions.ValueSource): a name the operator configures, text \
+        from the program's code, data it stored itself, a message from its own \
+        cluster, a developer's or administrator's input to a tool — or data from \
+        outside the system. Asked about the functions holding an unbounded sink, \
+        so unsafe_input can tell library API handed a pool's name from one \
+        handed a URL.
+        """
+      },
+      %{
         name: :prior_sensitive,
         layer: 3,
         fields: [

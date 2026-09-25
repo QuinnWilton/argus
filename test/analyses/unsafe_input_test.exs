@@ -109,7 +109,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
       by_func =
         analyze(ctx, [Argus.Test.Fixtures.UnsafeDeserialization])["sink_without_request_path"]
         |> Enum.filter(&(Enum.at(&1, 3) == "deserialization"))
-        |> Map.new(fn [_id, func, _api, _sink, safety] = row ->
+        |> Map.new(fn [_id, func, _api, _sink, _source, _p, safety] = row ->
           {func |> String.split(":") |> List.last(),
            {safety, UnsafeInput.finding(:sink_without_request_path, row)}}
         end)
@@ -155,6 +155,8 @@ defmodule Argus.Analyses.UnsafeInputTest do
           "M:decode/1",
           ":erlang.binary_to_term/1",
           "deserialization",
+          "",
+          "0",
           "dynamic"
         ])
 
@@ -567,7 +569,15 @@ defmodule Argus.Analyses.UnsafeInputTest do
 
     test "a sink no request reaches keeps its own severity" do
       assert %{severity: :warning} =
-               UnsafeInput.finding(:sink_without_request_path, ["i", "M:f/1", "a", "atom", ""])
+               UnsafeInput.finding(:sink_without_request_path, [
+                 "i",
+                 "M:f/1",
+                 "a",
+                 "atom",
+                 "",
+                 "0",
+                 ""
+               ])
 
       assert %{severity: :error} =
                UnsafeInput.finding(:sink_without_request_path, [
@@ -575,11 +585,68 @@ defmodule Argus.Analyses.UnsafeInputTest do
                  "M:f/1",
                  "a",
                  "deserialization",
+                 "",
+                 "0",
                  "unsafe"
                ])
 
       assert %{severity: :error} =
-               UnsafeInput.finding(:sink_without_request_path, ["i", "M:f/1", "a", "code", ""])
+               UnsafeInput.finding(:sink_without_request_path, [
+                 "i",
+                 "M:f/1",
+                 "a",
+                 "code",
+                 "",
+                 "0",
+                 ""
+               ])
+    end
+
+    test "a value the prior is sure is not outside data steps down and says what it is" do
+      atom =
+        UnsafeInput.finding(:sink_without_request_path, [
+          "i",
+          "M:f/1",
+          "a",
+          "atom",
+          "configured",
+          "930",
+          ""
+        ])
+
+      assert atom.severity == :info and atom.provenance == :heuristic and atom.confidence == 930
+
+      assert List.last(atom.help) ==
+               "heuristic: the string it makes an atom of is a name or setting the operator " <>
+                 "configures, not outside data (p=0.93)"
+
+      decode =
+        UnsafeInput.finding(:sink_without_request_path, [
+          "i",
+          "M:f/1",
+          "a",
+          "deserialization",
+          "stored",
+          "960",
+          "unsafe"
+        ])
+
+      assert decode.severity == :warning and decode.provenance == :heuristic
+      assert List.last(decode.help) =~ "what it decodes is data the program stored itself"
+
+      code =
+        UnsafeInput.finding(:sink_without_request_path, [
+          "i",
+          "M:f/1",
+          "a",
+          "code",
+          "operator",
+          "910",
+          ""
+        ])
+
+      assert code.severity == :warning and
+               code.title == "Dynamic code execution reachable from exports"
     end
   end
 
@@ -603,7 +670,8 @@ defmodule Argus.Analyses.UnsafeInputTest do
             do: {short(func), kind, prox}
 
       local =
-        for [_id, func, _api, "decompression", _s] <- results["sink_without_request_path"],
+        for [_id, func, _api, "decompression", _source, _p, _s] <-
+              results["sink_without_request_path"],
             do: short(func)
 
       {reached, local}

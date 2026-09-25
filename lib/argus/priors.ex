@@ -5,7 +5,8 @@ defmodule Argus.Priors do
 
   Some judgements an analysis needs are ones a reader makes from names —
   whether `totp_seed` is a secret, whether a module fronts a process,
-  what a helper reads. `Argus.Priors` asks those of a System-One model
+  what a helper reads, whether the string a library makes an atom of is
+  a pool's name or a URL's scheme. `Argus.Priors` asks those of a System-One model
   (typesafe.ai's Jev, through `Argus.Priors.Jev`) and writes the answers
   into the facts directory as `prior_*` relations, each row with the
   model's probability in thousandths. Rules read them as a positive
@@ -44,7 +45,8 @@ defmodule Argus.Priors do
   @questions [
     Argus.Priors.Questions.ProcessRole,
     Argus.Priors.Questions.Reads,
-    Argus.Priors.Questions.Sensitivity
+    Argus.Priors.Questions.Sensitivity,
+    Argus.Priors.Questions.ValueSource
   ]
 
   @doc "The built-in questions."
