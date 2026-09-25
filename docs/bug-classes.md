@@ -1562,15 +1562,15 @@ On the timeout branch the monitor is still live. The `{:DOWN, ...}` arrives afte
 `task_result_defect` · kind=`linked_in_library`
 · titles: "Task.async in library code links to an unknown caller" (`:info`)
 
-**Property.** A function of a module that implements no behaviour (`behaviour_module`) starts a task with Task.async or Task.Supervisor.async, directly or in a closure it defines. It awaits somewhere in its reach and does not return the task. The task is linked to whichever process called the function. In a caller that traps exits, the task's normal exit arrives as an `{:EXIT, pid, :normal}` that Task.await never consumes. A crashing task takes an unrelated caller down with it.
+**Property.** A function that runs in its caller's process starts a task with Task.async or Task.Supervisor.async, directly or in a closure it defines: a function of a module that implements no behaviour, or a function of a process module (GenServer, Supervisor, gen_statem, ...) that its own callbacks do not reach on the server's stack (`server_side`), its client API. It awaits somewhere in its reach and does not return the task. The task is linked to whichever process called the function. In a caller that traps exits, the task's normal exit arrives as an `{:EXIT, pid, :normal}` that Task.await never consumes. A crashing task takes an unrelated caller down with it.
 
 **Assumptions and limits.**
-- Any behaviour module is exempt, because it owns its callers' expectations. That covers a process's module, a plug and an Ecto type.
+- A behaviour module that runs no process of its own (a plug, an Ecto type, a controller) is exempt: it owns its callers' expectations, and argus cannot tell its callbacks from its other functions. A process module is judged by where the function runs (round 2, 2026-09-25): its callbacks and what they reach in the module are the server's own (`ServerSideTaskAwait`, quiet), and its client API runs in whoever calls it (`PoolCallSupervisor.call/2`, elixir-nodejs#45's `NodeJS.Supervisor.call/3`). Until round 2 every behaviour module was exempt, the API of a `use Supervisor` or `use GenServer` module included.
 - The rule fires on essentially every Task.async plus await in plain library code, which is why it is info-grade. The maintainer notes record that it moved encore's and scry's fixture counts.
 - A closure counts for the function that defines it, even when the task links to a process started on that closure.
 - Test support compiled with the program is judged.
 
-**Fixtures.** Positive: `LibraryPmap` (`test/fixtures/unsafe_task_fixture.ex`). Quiet: `GenServerTaskConsumer` (same file); `Quiet.ServerAwaits` (`test/fixtures/quiet_shapes_fixture.ex`). Asserted in `test/analyses/mailbox_task_test.exs` and `test/analyses/quiet_shapes_test.exs`.
+**Fixtures.** Positive: `LibraryPmap`, `PoolCallSupervisor` (`test/fixtures/unsafe_task_fixture.ex`). Quiet: `GenServerTaskConsumer`, `ServerSideTaskAwait` (same file); `Quiet.ServerAwaits` (`test/fixtures/quiet_shapes_fixture.ex`). Asserted in `test/analyses/mailbox_task_test.exs` and `test/analyses/quiet_shapes_test.exs`.
 
 **Corpus.** Fix pairs: `ecto#2338` (elixir-ecto/ecto, 5422d31 → 12a7452, Ecto.Repo.Preloader). Present-only: None.
 

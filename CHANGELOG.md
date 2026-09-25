@@ -130,6 +130,17 @@ source, and the helper module, which runs no process, is not. No row
 moved over the corpus, ten live projects or OTP's kernel, ssl, mnesia
 and stdlib.
 
+**Changed.** "Task.async in library code links to an unknown caller"
+judges a process module's client API: a function of a GenServer,
+Supervisor or other process module that the module's own callbacks do
+not reach runs in whoever calls it, like a library function. Only a
+behaviour module that runs no process (a plug, a type) stays exempt.
+Pair: elixir-nodejs#45 (`NodeJS.Supervisor.call/3`, the library's
+public call in its `use Supervisor` module). Corpus tally: that row and
+aprs.me's `CircuitBreaker.call/3` (twice), whose task links the caller
+to the very function the breaker exists to isolate; live projects and
+OTP unchanged.
+
 ### Classes mined from fixed bugs
 
 Three classes from round 1 of mining fixed bugs (178 classified; the

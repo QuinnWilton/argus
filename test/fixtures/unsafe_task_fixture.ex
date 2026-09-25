@@ -213,3 +213,44 @@ defmodule Argus.Test.Fixtures.LibraryPmap do
     |> Enum.map(fn task -> Task.await(task) end)
   end
 end
+
+defmodule Argus.Test.Fixtures.PoolCallSupervisor do
+  @moduledoc false
+  # elixir-nodejs#45: the library's public call/2 lives in its `use
+  # Supervisor` module and runs in whoever calls it. The task links to
+  # that caller; a crashing worker takes it down, and a timed-out task's
+  # late reply lands in its mailbox.
+  use Supervisor
+
+  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts), do: Supervisor.init([], strategy: :one_for_one)
+
+  def call(fun, timeout) do
+    task = Task.async(fn -> fun.() end)
+
+    try do
+      Task.await(task, timeout)
+    catch
+      :exit, {:timeout, _} -> {:error, :timeout}
+    end
+  end
+end
+
+defmodule Argus.Test.Fixtures.ServerSideTaskAwait do
+  @moduledoc false
+  # Quiet: the task links to the server itself, in its own callback.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call({:run, fun}, _from, state) do
+    task = Task.async(fn -> fun.() end)
+    {:reply, Task.await(task), state}
+  end
+end

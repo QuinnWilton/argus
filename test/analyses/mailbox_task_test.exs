@@ -221,5 +221,21 @@ defmodule Argus.Analyses.MailboxTaskTest do
       funcs = Enum.map(tasks(results, "linked_in_library"), &hd/1)
       assert funcs == ["Argus.Test.Fixtures.LibraryPmap:pmap/2"]
     end
+
+    test "a process module's API runs in its caller; its own callbacks do not" do
+      skip_without_souffle()
+
+      assert {:ok, results} =
+               Memo.analyze(
+                 [
+                   Argus.Test.Fixtures.PoolCallSupervisor,
+                   Argus.Test.Fixtures.ServerSideTaskAwait
+                 ],
+                 :mailbox
+               )
+
+      funcs = Enum.map(tasks(results, "linked_in_library"), &hd/1)
+      assert funcs == ["Argus.Test.Fixtures.PoolCallSupervisor:call/2"]
+    end
   end
 end

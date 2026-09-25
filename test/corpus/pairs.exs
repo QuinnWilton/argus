@@ -50,6 +50,19 @@
     fix: "12a745234fa9bda86620708316b7682bd6454222",
     finding: {:mailbox, "Task.async in library code links to an unknown caller"}
   },
+  # The library's public call lives in its `use Supervisor` module and
+  # runs in whoever calls it: Task.async linked every caller to the pool
+  # worker's task (a crash took the caller down; a timed-out task's
+  # reply was left in its mailbox). The fix runs the transaction in the
+  # caller with no task.
+  %{
+    repo: "revelrylabs/elixir-nodejs",
+    issue: "elixir-nodejs#45",
+    module: "NodeJS.Supervisor",
+    pre: "cce7e0f988b59e66da539dd959e241d614b79917",
+    fix: "34029b6091093c6d0a79022e2f89203c4c142785",
+    finding: {:mailbox, "Task.async in library code links to an unknown caller"}
+  },
   %{
     repo: "whatyouhide/redix",
     issue: "redix#334",
