@@ -85,12 +85,17 @@ Two layers over one `Roux.Database`:
      `souffle_solve`, so a rule edit re-solves exactly the analyses it
      touched and re-extracts nothing, and a schema edit re-solves only
      the programs that load a relation whose declaration it changed.
-     The loaded relations and the solver's version are kept in the
-     store's `programs/` (the version under a stamp of the solver's
-     binary; `--force` drops it): a warm run starts no solver. How argus
-     runs Souffle and reads its output is keyed the way argus keys its
-     own solves: by program and solver, not by argus's code (after
-     changing that, `--force`).
+     The digests themselves are kept in the store's `programs/`
+     (`rules-<key>`) under a digest of every file of argus's `priv/dl`
+     (content, not stat) and the solver's version, so a warm run
+     computes none: the declared digests parse each program's files anew
+     in a fresh VM (~50 ms on realtime). On a miss they are computed
+     side by side from what each program loads and the solver's version,
+     both kept there too (the version under a stamp of the solver's
+     binary; `--force` drops `programs/`): a warm run starts no solver.
+     How argus runs Souffle and reads its output is keyed the way argus
+     keys its own solves: by program and solver, not by argus's code
+     (after changing that, `--force`).
 
    Extraction runs `Argus.Pipeline.extract_shards/3` over every producer
    and joins their rows (sorted per relation, as `extract/2` would give

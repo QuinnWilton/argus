@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- A warm run computes no rules digest. The digests are a function of
+  argus's Datalog tree and the solver, so they are kept in the store's
+  `programs/` under a digest of every file of the tree (by content) and
+  the solver's version: a warm run reads 50 small files and one entry,
+  where computing them parsed each program's files anew, fifteen
+  programs over the same fifty files (about 50 ms on a 350-module
+  project, now about 6). A program that includes a file outside the
+  tree is computed every run. On a miss the programs are digested side
+  by side, so the solver resolves what each loads in parallel after a
+  schema edit.
 - A query that reads argus's schema depends on the entries it read, not
   on the schema's code: argus's accessors record each entry they return
   (`Argus.Cache.Reads`), and `schema_read(entry)`, a new query, is one

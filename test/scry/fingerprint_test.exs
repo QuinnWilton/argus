@@ -69,35 +69,53 @@ defmodule Scry.FingerprintTest do
     end
 
     @tag :souffle
-    test "keeps what each program loads, and the solver's version, in the store", %{
-      tmp_dir: dir
-    } do
+    test "keeps the digests, what each program loads and the solver's version in the store",
+         %{tmp_dir: dir} do
       store = Path.join(dir, "store")
       programs = Path.join(store, "programs")
-      peer = Peer.start!()
 
-      {kept, bare} =
-        Peer.run(peer, fn ->
-          {Scry.Fingerprint.rules([:mailbox], cache: store), Scry.Fingerprint.rules([:mailbox])}
-        end)
+      # Each in a fresh VM, as a run is.
+      rules = fn opts ->
+        peer = Peer.start!()
 
-      assert kept == bare
+        try do
+          Peer.run(peer, fn -> Scry.Fingerprint.rules([:mailbox], opts) end)
+        after
+          :peer.stop(peer)
+        end
+      end
+
+      bare = rules.([])
+      assert rules.(cache: store) == bare
 
       names = File.ls!(programs)
 
-      for program <- ~w(mailbox stage0 points_to),
+      for program <- ~w(rules mailbox stage0 points_to),
           do: assert(Enum.any?(names, &String.starts_with?(&1, program <> "-")))
+
+      # A warm run reads the digests kept under the Datalog tree's
+      # content and the solver's version, computing none: a planted set
+      # shows.
+      [kept] = Enum.filter(names, &String.starts_with?(&1, "rules-"))
+      planted = Map.new(bare, fn {key, _digest} -> {key, "planted"} end)
+      File.chmod!(Path.join(programs, kept), 0o644)
+      File.write!(Path.join(programs, kept), :erlang.term_to_binary(planted))
+      assert rules.(cache: store) == planted
+
+      # One that lacks a program the run asks for is computed again.
+      File.write!(
+        Path.join(programs, kept),
+        :erlang.term_to_binary(Map.delete(planted, :mailbox))
+      )
+
+      assert rules.(cache: store) == bare
 
       # --force asks again: a stamp names the solver's file, not what it
       # runs.
-      planted = Path.join(programs, "planted-" <> String.duplicate("0", 64))
-      File.write!(planted, "")
-
-      assert Peer.run(peer, fn ->
-               Scry.Fingerprint.rules([:mailbox], cache: store, refresh: true)
-             end) == bare
-
-      refute File.exists?(planted)
+      stale = Path.join(programs, "stale-" <> String.duplicate("0", 64))
+      File.write!(stale, "")
+      assert rules.(cache: store, refresh: true) == bare
+      refute File.exists?(stale)
     end
   end
 

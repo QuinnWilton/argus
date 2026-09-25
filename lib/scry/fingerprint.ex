@@ -213,6 +213,10 @@ defmodule Scry.Fingerprint do
     end
   end
 
+  # Moves every kept set of rules digests: bump it when how one is
+  # computed changes.
+  @rules_format "scry-rules-1"
+
   @doc """
   The rules digest of each of `analyses`, and of `:stage0` and
   `:points_to` (the shared call graph and process points-to programs
@@ -224,13 +228,21 @@ defmodule Scry.Fingerprint do
   changed, and a relation added to the schema, a version bump or an
   edit to a relation's prose moves none.
 
+  With a store, a warm run computes none of it. The digests are a
+  function of argus's Datalog tree (`priv/dl`, every program's files
+  among them) and the solver, so they are kept in the store's
+  `programs/` under a digest of every file of the tree's content and
+  the solver's version — reading 50 small files where the declared
+  digests parse each program's files anew in every VM — as are what
+  each program loads and the solver's version itself (under a stamp of
+  its binary), which the digests are computed from on a miss. A program
+  that includes a file outside the tree is computed every run.
+
   ## Options
 
-    * `:cache` — the store (`Argus.Cache`'s layout) whose `programs/`
-      keeps what each program loads, as Souffle resolves it, and the
-      solver's version under a stamp of its binary, so a warm run asks
-      the solver nothing; nil, or stores turned off with
-      `ARGUS_NO_CACHE`, asks it once per VM.
+    * `:cache` — the store (`Argus.Cache`'s layout); nil, or stores
+      turned off with `ARGUS_NO_CACHE`, computes every digest and asks
+      the solver once per VM.
     * `:refresh` — drop what `programs/` kept first (`--force`), so the
       solver is asked again: a stamp names the binary's file, not what
       it runs.
@@ -238,9 +250,8 @@ defmodule Scry.Fingerprint do
   @spec rules([atom()], keyword()) :: %{optional(rules_key()) => String.t()}
   def rules(analyses, opts \\ []) do
     bin = Argus.Souffle.executable()
-    programs = programs_store(opts)
-    solver = if bin, do: Argus.Souffle.Cache.version(bin, programs), else: "unknown"
-    program_opts = [souffle_bin: bin, programs: programs]
+    store = programs_store(opts)
+    solver = if bin, do: Argus.Souffle.Cache.version(bin, store), else: "unknown"
 
     programs =
       [
@@ -249,9 +260,115 @@ defmodule Scry.Fingerprint do
       ] ++
         for analysis <- analyses, {:ok, path} <- [rules_path(analysis)], do: {analysis, path}
 
-    Map.new(programs, fn {key, path} ->
-      {key, digest({solver, program_digest(path, program_opts)})}
+    compute = fn -> compute_rules(programs, solver, souffle_bin: bin, programs: store) end
+
+    with dir when is_binary(dir) <- store,
+         {:ok, tree} <- tree_digest(programs) do
+      key = Argus.Cache.key([@rules_format, solver, bin || "", tree | program_names(programs)])
+      kept_rules(Path.join(dir, "rules-" <> key), programs, compute)
+    else
+      _ -> compute.()
+    end
+  end
+
+  # Side by side: each program's files are read and parsed afresh, and a
+  # program the store does not hold yet asks the solver what it loads
+  # (every program, after a schema edit).
+  defp compute_rules(programs, solver, program_opts) do
+    programs
+    |> Task.async_stream(
+      fn {key, path} -> {key, digest({solver, program_digest(path, program_opts)})} end,
+      ordered: false,
+      timeout: :infinity
+    )
+    |> Map.new(fn {:ok, entry} -> entry end)
+  end
+
+  defp program_names(programs) do
+    root = dl_root()
+
+    Enum.flat_map(Enum.sort(programs), fn {key, path} ->
+      [Atom.to_string(key), Path.relative_to(path, root)]
     end)
+  end
+
+  defp dl_root, do: Path.join(to_string(:code.priv_dir(:panoptes)), "dl")
+
+  # Every file of argus's Datalog tree, by name under it and content:
+  # what each program is, whatever it includes within the tree.
+  defp tree_digest(programs) do
+    root = dl_root()
+
+    if Enum.all?(programs, fn {_key, path} -> under?(path, root) end) do
+      root
+      |> Path.join("**/*.dl")
+      |> Path.wildcard()
+      |> Enum.sort()
+      |> Enum.reduce_while({:ok, []}, fn file, {:ok, parts} ->
+        case File.read(file) do
+          {:ok, content} ->
+            {:cont, {:ok, [Path.relative_to(file, root), :crypto.hash(:sha256, content) | parts]}}
+
+          {:error, _} ->
+            {:halt, :error}
+        end
+      end)
+      |> case do
+        {:ok, parts} -> {:ok, Argus.Cache.key(parts)}
+        :error -> :error
+      end
+    else
+      :error
+    end
+  end
+
+  defp under?(path, root), do: String.starts_with?(Path.expand(path), root <> "/")
+
+  # The digests kept at `entry`, or computed and kept there when every
+  # program's files lie within the tree its key names.
+  defp kept_rules(entry, programs, compute) do
+    with {:ok, entry} <- Argus.Cache.fetch(entry),
+         {:ok, bytes} <- File.read(entry),
+         {:ok, %{} = digests} <- safe_decode(bytes),
+         true <- Enum.all?(programs, fn {key, _path} -> is_map_key(digests, key) end) do
+      digests
+    else
+      _missing ->
+        digests = compute.()
+        if within_tree?(programs), do: keep(entry, digests)
+        digests
+    end
+  end
+
+  defp within_tree?(programs) do
+    root = dl_root()
+
+    Enum.all?(programs, fn {_key, path} ->
+      path
+      |> Argus.Souffle.Cache.program_files()
+      |> Enum.all?(fn {_spelled, file} -> under?(file, root) end)
+    end)
+  rescue
+    File.Error -> false
+  end
+
+  # A store that cannot be written to is computed around, not failed on.
+  defp keep(entry, digests) do
+    staging = "#{entry}.#{:os.getpid()}.#{System.unique_integer([:positive])}"
+
+    with :ok <- File.mkdir_p(Path.dirname(entry)),
+         :ok <- File.write(staging, :erlang.term_to_binary(digests)),
+         :ok <- Argus.Cache.install(staging, entry) do
+      :ok
+    else
+      _ -> File.rm(staging)
+    end
+  end
+
+  defp safe_decode(bytes) do
+    {:ok, :erlang.binary_to_term(bytes, [:safe])}
+  rescue
+    ArgumentError -> :error
   end
 
   # The store's `programs/`, emptied first on a refresh; nil for none.
