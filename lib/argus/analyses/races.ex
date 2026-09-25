@@ -28,13 +28,23 @@ defmodule Argus.Analyses.Races do
     the parameter it arrives in (`param 0`, counted from 0): a function
     more than one process runs writes it from each caller's process,
     which only a public table allows.
-  - `mnesia_check_act(mod, func, table, key, read, write, op)` — a dirty
-    read decides or feeds a dirty write (`op`: `dirty_write`,
+  - `mnesia_check_act(mod, func, table, key, read, write, op, kind)` — a
+    dirty read decides or feeds a dirty write (`op`: `dirty_write`,
     `dirty_delete` or `dirty_delete_object`) of the same record, and
-    another process can write the table. A table only one process
-    writes is not reported; that process is one per node, so a table
-    replicated to nodes that each run its owner is taken as having one
-    writer.
+    another process can write the table. One row per write: `kind` says
+    what the interleaving costs — `unique` (a search by index or pattern
+    found nothing and a new record is inserted: both racers insert),
+    `lost_update` (the write stores what the read returned), `guarded`
+    (the decision compares the record with the value written), `claim`
+    (an insert-if-absent whose answer the caller gets), `delete`, or
+    `fill` (a record computed afresh, over a write that may have landed
+    since: the weakest, an `:info`). A table only one process writes is
+    not reported; that process is one per node, so a table replicated to
+    nodes that each run its owner is taken as having one writer.
+  - `mnesia_race_frame(write, role, site, func)` — evidence for a
+    Mnesia finding: the same race's other writes (`also_writes`), the
+    other reads deciding the write (`read`), and, for a pair one process
+    runs, the writers outside that process (`other_writer`).
   - `ets_publish_order(mod, func, published_kind, published_in,
     completed_kind, completed_in, publish, complete, reader)` — not a
     check-then-act but a race on the same stores: `func` writes a row of
@@ -57,7 +67,8 @@ defmodule Argus.Analyses.Races do
   known, `field` and the module and map path it is read under.
 
   Every check-then-act finding is a `:warning` anchored at the act, with
-  the check as a related frame; a publish-order finding is a `:warning`
+  the check as a related frame, but a Mnesia fill, an `:info`; a
+  publish-order finding is a `:warning`
   anchored at the early write, with the completing write and the reader
   as related frames; a missing-row finding is a `:warning` anchored at the
   act, with the check and the remover as related frames.
@@ -148,11 +159,26 @@ defmodule Argus.Analyses.Races do
           {:key, :symbol, "the key, as func identifies it"},
           {:read, :symbol, "instruction ID of the dirty read"},
           {:write, :symbol, "instruction ID of the dirty write it decides or feeds"},
-          {:op, :symbol, "dirty_write | dirty_delete | dirty_delete_object"}
+          {:op, :symbol, "dirty_write | dirty_delete | dirty_delete_object"},
+          {:kind, :symbol, "unique | lost_update | guarded | claim | delete | fill"}
         ],
-        key: [:func, :table, :key],
+        key: [:write],
         doc:
           "A dirty read decides or feeds a dirty write of the same record another process can write."
+      },
+      %{
+        name: :mnesia_race_frame,
+        fields: [
+          {:write, :symbol, "the finding's dirty write"},
+          {:role, :symbol, "also_writes | other_writer | read"},
+          {:site, :symbol, "instruction ID of the other write, the outside writer or the read"},
+          {:func, :symbol, "the function the site is reached from"}
+        ],
+        key: [:write, :role, :site],
+        evidence: %{of: :mnesia_check_act, on: [:write], limit: 4},
+        doc:
+          "The same race's other writes, the other reads deciding the write, and the writers " <>
+            "outside the one process a pair runs in, attached to its finding."
       },
       %{
         name: :ets_publish_order,
@@ -258,24 +284,60 @@ defmodule Argus.Analyses.Races do
     )
   end
 
-  def finding(:mnesia_check_act, [mod, func, table, _key, read, write, op]) do
-    {acts, what} =
-      case op do
-        "dirty_write" ->
-          {"writes it back with a dirty write", "one of the writes is lost"}
+  def finding(:mnesia_check_act, [mod, func, table, _key, read, write, _op, "unique"]) do
+    Findings.new(
+      :warning,
+      "Uniqueness check then insert race on a Mnesia table",
+      "#{func} searches #{table} with a dirty read#{Findings.elsewhere(read, func)} — by an " <>
+        "index or a pattern, not by the record's key — and, finding nothing, inserts a new " <>
+        "record with a dirty write#{Findings.elsewhere(write, func)}. Dirty operations bypass " <>
+        "Mnesia's transactions: two callers that search in the same window both find " <>
+        "nothing and both insert, each under a key of its own — the duplicate the search " <>
+        "was there to prevent, which neither write overwrites.",
+      at: Findings.at_site(write, mod),
+      at_label: "this insert runs after a search that may be stale",
+      related: [
+        Findings.related("the search that found nothing", Findings.at_site(read, mod))
+      ],
+      help: [
+        "search and insert in one `:mnesia.transaction/1` (`:mnesia.index_read/3` or " <>
+          "`:mnesia.match_object/1` there, then `:mnesia.write/1`), so the second " <>
+          "insert waits for the first and sees it",
+        "or key the record by the value that must be unique, so a second insert is " <>
+          "the same record"
+      ]
+    )
+  end
 
-        _delete ->
-          {"deletes it with #{op}",
-           "the delete can remove a record another process wrote back in between"}
-      end
+  def finding(:mnesia_check_act, [mod, func, table, _key, read, write, op, "fill"]) do
+    Findings.new(
+      :info,
+      "Dirty write fills a Mnesia record on a stale read",
+      "#{func} reads a record of #{table} with a dirty read#{Findings.elsewhere(read, func)} " <>
+        "and, on what it found, writes a record it computed afresh with a dirty write" <>
+        "#{Findings.elsewhere(write, func)}. The table is written back from reads elsewhere, " <>
+        "or the decision does more than fill it: a write another process makes between the " <>
+        "two is overwritten by a value computed before it. Weaker than a lost update — the " <>
+        "fill is what a racer would compute too — but it can undo an update.",
+      at: Findings.at_site(write, mod),
+      at_label: "this #{String.replace(op, "_", " ")} may overwrite a newer record",
+      related: [Findings.related("the dirty read it depends on", Findings.at_site(read, mod))],
+      help: [
+        "read and write in one `:mnesia.transaction/1`, with `:mnesia.read/1` and " <>
+          "`:mnesia.write/1`",
+        "or fill only what is still absent, inside the transaction"
+      ]
+    )
+  end
 
+  def finding(:mnesia_check_act, [mod, func, table, _key, read, write, op, kind]) do
     Findings.new(
       :warning,
       "Read-then-write race on a Mnesia record",
       "#{func} reads a record of #{table} with a dirty read#{Findings.elsewhere(read, func)} " <>
-        "and #{acts}#{Findings.elsewhere(write, func)} decided by, " <>
-        "or computed from, what it read. Dirty operations bypass Mnesia's transactions: " <>
-        "another process can write the record between the two, and #{what}.",
+        "and #{record_act(kind, op)}#{Findings.elsewhere(write, func)}. Dirty operations " <>
+        "bypass Mnesia's transactions: another process can write the record between the " <>
+        "two, and #{record_loss(kind)}.",
       at: Findings.at_site(write, mod),
       at_label: "this #{String.replace(op, "_", " ")} acts on a read that may be stale",
       related: [Findings.related("the dirty read it depends on", Findings.at_site(read, mod))],
@@ -356,6 +418,52 @@ defmodule Argus.Analyses.Races do
       ]
     )
   end
+
+  @impl true
+  def evidence(:mnesia_race_frame, [_write, "also_writes", site, func]) do
+    Findings.related("the same race writes here too", Findings.at_site_in_func(site, func))
+  end
+
+  def evidence(:mnesia_race_frame, [_write, "other_writer", site, func]) do
+    Findings.related(
+      "written here too, outside the one process the pair runs in",
+      Findings.at_site_in_func(site, func)
+    )
+  end
+
+  def evidence(:mnesia_race_frame, [_write, "read", site, func]) do
+    Findings.related(
+      "also decided by this dirty read, where it meets the write in " <>
+        Findings.call_name(func),
+      Findings.at_site_in_func(site, func)
+    )
+  end
+
+  # What a Mnesia check-then-act does with the record, and what the
+  # interleaving loses, by kind.
+  defp record_act("lost_update", op),
+    do: "writes back a record made of what it read, with a #{String.replace(op, "_", " ")}"
+
+  defp record_act("guarded", _op),
+    do:
+      "compares the record with the value it then writes, and writes that value with a " <>
+        "dirty write"
+
+  defp record_act("claim", _op),
+    do: "writes the record when it found none, and tells its caller so, with a dirty write"
+
+  defp record_act(_delete, op), do: "deletes it with #{op}, as the read decided"
+
+  defp record_loss("lost_update"), do: "one of the writes is lost"
+
+  defp record_loss("guarded"),
+    do: "two updates can both pass the check and the older can land last"
+
+  defp record_loss("claim"),
+    do: "two callers can both find none, both write, and both be told they won"
+
+  defp record_loss(_delete),
+    do: "the delete can remove a record another process wrote back in between"
 
   # The table an ETS check-then-act touches, and why another process can
   # write it: a public table by its name, or one its callers outside the

@@ -1886,4 +1886,155 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
       end
     end
   end
+
+  defmodule MnesiaCachedTotals do
+    @moduledoc """
+    blockster's UnifiedMultiplier: two getters fill an empty record with a
+    total computed afresh through one save/2 helper, and three updaters
+    read the record, change one field and write it back. The fills fan in
+    to one write site, which is one finding — the weakest kind, a fill —
+    and each updater's write-back is its own lost update.
+    """
+    def get_total(user) do
+      case :mnesia.dirty_read({:totals, user}) do
+        [] ->
+          fresh = compute(user)
+          save(user, fresh)
+          fresh.total
+
+        [record] ->
+          elem(record, 4)
+      end
+    end
+
+    def get_parts(user) do
+      case :mnesia.dirty_read({:totals, user}) do
+        [] ->
+          fresh = compute(user)
+          save(user, fresh)
+          fresh
+
+        [record] ->
+          %{a: elem(record, 2), b: elem(record, 3), total: elem(record, 4)}
+      end
+    end
+
+    def update_a(user, a) do
+      case :mnesia.dirty_read({:totals, user}) do
+        [] -> refresh(user)
+        [record] -> :mnesia.dirty_write(put_elem(record, 2, a))
+      end
+    end
+
+    def update_b(user, b) do
+      case :mnesia.dirty_read({:totals, user}) do
+        [] -> refresh(user)
+        [record] -> :mnesia.dirty_write(put_elem(record, 3, b))
+      end
+    end
+
+    defp refresh(user), do: save(user, compute(user))
+
+    defp compute(user), do: %{a: user, b: user, total: user * 2}
+
+    defp save(user, parts),
+      do: :mnesia.dirty_write({:totals, user, parts.a, parts.b, parts.total})
+  end
+
+  defmodule MnesiaShadowedRead do
+    @moduledoc """
+    blockster's deduct_user_token_balance/4: the caller reads a balance and
+    hands a new one to set_balance/2, which reads the record again and
+    writes it — the `[]` branch a fresh record, the `[r]` branch the record
+    it just read with the balance put in. The write is judged by the read
+    beside it; the caller's read is a frame, not the finding's read.
+    """
+    def deduct(user, amount) do
+      case :mnesia.dirty_read({:balances, user}) do
+        [{:balances, ^user, _wallet, balance}] when balance >= amount ->
+          set_balance(user, balance - amount)
+
+        _ ->
+          {:error, :insufficient}
+      end
+    end
+
+    def set_balance(user, balance) do
+      case :mnesia.dirty_read({:balances, user}) do
+        [] -> :mnesia.dirty_write({:balances, user, nil, balance})
+        [record] -> :mnesia.dirty_write(put_elem(record, 3, balance))
+      end
+
+      {:ok, balance}
+    end
+  end
+
+  defmodule MnesiaUniqueQuiet do
+    @moduledoc """
+    blockster's referral earnings: an index read of the value that must be
+    unique finds nothing, and a record goes in under a fresh key. The
+    decision stays inside — both branches answer `:ok` — which would make
+    a key-read's fill harmless, but not a search's: each racer inserts a
+    record of its own, and the table keeps both.
+    """
+    @spec record(term(), term()) :: :ok
+    def record(hash, amount) do
+      case :mnesia.dirty_index_read(:earnings, hash, :hash) do
+        [] -> :mnesia.dirty_write({:earnings, make_ref(), hash, amount})
+        _ -> :ok
+      end
+
+      :ok
+    end
+  end
+
+  defmodule MnesiaGetOrDefault do
+    @moduledoc """
+    blockster's get_user_x_multiplier/1: an absent record is created with
+    defaults and the default returned, a present one answered from. A
+    get-or-create hands its caller a value, not a won claim; on a table
+    another function writes back, the default can overwrite a newer write:
+    a fill.
+    """
+    def get(user) do
+      case :mnesia.dirty_read({:prefs_x, user}) do
+        [] ->
+          :mnesia.dirty_write({:prefs_x, user, 1})
+          1
+
+        [record] ->
+          elem(record, 2)
+      end
+    end
+
+    def bump(user) do
+      [record] = :mnesia.dirty_read({:prefs_x, user})
+      :mnesia.dirty_write(put_elem(record, 2, elem(record, 2) + 1))
+    end
+  end
+
+  defmodule MnesiaTwoBranches do
+    @moduledoc """
+    The pool deduction: one read, and a write-back in each of two branches
+    (the full amount, what remains). One race, reported at the first write
+    with the second as a frame.
+    """
+    def deduct(post, amount) do
+      case :mnesia.dirty_read({:pools, post}) do
+        [] ->
+          {:ok, 0}
+
+        [record] ->
+          balance = elem(record, 2)
+
+          if balance >= amount do
+            :mnesia.dirty_write(put_elem(record, 2, balance - amount))
+            {:ok, amount}
+          else
+            :mnesia.dirty_write(put_elem(record, 2, 0))
+            {:ok, balance}
+          end
+      end
+    end
+  end
 end

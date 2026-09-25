@@ -92,8 +92,18 @@ defmodule Argus.Analyses.Padl2010RaceTest do
          ctx do
       skip_without_souffle()
 
-      assert [[":padl2010_time_stamp", func, ":time_stamp", ":ref_count", _read, _write, _op]] =
-               rows(ctx, [:padl2010_time_stamp], "mnesia_check_act")
+      assert [
+               [
+                 ":padl2010_time_stamp",
+                 func,
+                 ":time_stamp",
+                 ":ref_count",
+                 _read,
+                 _write,
+                 _op,
+                 "lost_update"
+               ]
+             ] = rows(ctx, [:padl2010_time_stamp], "mnesia_check_act")
 
       assert fa(func) == "create_time_stamp_table/0"
     end
@@ -102,7 +112,7 @@ defmodule Argus.Analyses.Padl2010RaceTest do
          ctx do
       skip_without_souffle()
 
-      assert [[_, func, ":time_stamp", ":ref_count", _read, _write, _op]] =
+      assert [[_, func, ":time_stamp", ":ref_count", _read, _write, _op, "lost_update"]] =
                rows(ctx, [:padl2010_snmp_shadow_table], "mnesia_check_act")
 
       assert fa(func) == "create_time_stamp_table/0"

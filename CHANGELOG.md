@@ -2662,6 +2662,59 @@ has no body: nothing says whose the closure is.
 
 ### races
 
+**Changed.** `mnesia_check_act` is one finding per dirty write, and
+says which race it is: a trailing `kind` column, the key `[:write]`, and
+the evidence relation `mnesia_race_frame(write, role, site, func)`. Of
+the pairs a write is in, the finding is the strongest kind, then the
+read in the write's own function — a write its function reads and
+decides on beside it is judged by that read, and a read further up
+(blockster's `deduct_user_token_balance/4` through
+`update_user_rogue_balance/4`) is a frame, not the finding's read —
+then the least read. The other reads, the same race's later writes (a
+second write-back of one read in one function) and, for a pair one
+process runs, the writers outside that process are related frames.
+The kinds:
+
+- `unique`, **Added**, "Uniqueness check then insert race on a Mnesia
+  table" (`:warning`): a search — a secondary index, a match spec, a
+  pattern keyed `:_` — found nothing and a new record goes in, under a
+  key of its own. Both racers insert, and the table keeps the
+  duplicate the search was there to prevent. Never a harmless trip, as
+  a key read's constant fill is: the racers write different records.
+  blockster's referral earnings (an index read of the commitment hash,
+  then a record under a fresh UUID) and its X-account lock
+  (`upsert_x_connection/2`'s match on the X user id).
+- `lost_update`, `guarded`, `claim` and `delete` keep "Read-then-write
+  race on a Mnesia record", with the prose of what each loses. A write
+  stores the read by data alone (`record_pair_carries`: the read, a
+  helper that returns it by `returns_reads`, or a value made of it
+  handed down the pair's own path), no longer through a value merely
+  computed under the read's decision — `CheckThenAct.carries` counts
+  those, and made blockster's `save_unified_multipliers/2` a lost
+  update of every getter that reads before it fills. A claim is an
+  insert-if-absent whose caller is told it won; a get-or-create that
+  answers with the record it read or the default it wrote
+  (`returns_reads`), an upsert whose read picks one of two writes, and
+  a fill of a value a call computes under the decision are not claims.
+- `fill`, **Added**, "Dirty write fills a Mnesia record on a stale
+  read" (`:info`): the write stores a record computed afresh, on a
+  table written back elsewhere or under a decision that does more. A
+  racer's write between the two is overwritten; weaker than a lost
+  update. A read's weaker pairs are branches of its strongest race (the
+  `[] -> insert` beside `[r] -> write back r + 1`) and are not reported
+  apart; an upsert's other branch is no longer "a decision that does
+  more" (`other_branch`).
+
+blockster_v2: 44 findings to 41 — the six at
+`unified_multiplier.ex:485`, one per getter and updater that reaches
+`save_unified_multipliers/2`, are one `fill`; each updater's own
+write-back of the record it read (`update_*_multiplier`) is its
+finding instead; the three at `engagement_tracker.ex:1717` (the `[]`
+branch of `update_user_rogue_balance/4`, reached from
+`deduct_user_token_balance/4` and `credit_user_token_balance/4`) are
+one `fill` judged by the helper's own read, with the callers' reads as
+frames; the referral earnings and the X-account lock are `unique`.
+
 **Added.** Schema 95. `returns_reads(func, kind, source)`
 (`Argus.Extractors.Dependence`): `returns_depends` by data alone — what
 the returned value is made of, not what it is chosen under. A getter
