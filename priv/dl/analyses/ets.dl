@@ -20,18 +20,56 @@
 
 // ── Ownership & lifecycle ──────────────────────────────────────────
 
-// Module that creates a table and runs as a process
-// (process_behaviour_module: a process behaviour's, or one that handles
-// messages as a server does). A module of another behaviour — grpc's
-// load-balancing strategies, whose init/1 makes an unnamed table and
-// hands it back in the state its caller keeps — runs in whoever calls
-// it, and owns nothing of its own.
-.decl ets_owner_process(name: symbol, mod: symbol, behaviour: symbol)
+// A table's owner is the process that runs its `:ets.new/2`: the one of
+// module `mod` whose own stack reaches the creating function
+// (owner_reaches, below: its process entries, in its process, into any
+// module). A server module's client function makes its caller's table (a
+// start function's table is the caller's: the start-function rule
+// below), and a behaviour whose functions no process of its own runs (a
+// plug, a storage module a library's server calls) owns none. The owner
+// is known only when the program starts it — a behaviour module's
+// process (process_behaviour_module) — and `behaviour` is that module's.
+// A module of another behaviour — grpc's load-balancing strategies,
+// whose init/1 makes an unnamed table and hands it back in the state
+// its caller keeps — runs in whoever calls it, and owns nothing of its
+// own.
+//
+// Code of another module makes a table the owner holds when the table is
+// named: shared state the helper sets up for the process
+// (`Metrics.init()` from the server's init/1). An unnamed table another
+// module makes is a value it hands back — a digraph's, a query cache's,
+// a connection's statement table — the caller's data, held as its state
+// is and gone when it is, by design.
+//
+// Three words about who holds ETS state, apart on purpose:
+// - this one (and owner_reaches): the process a table dies with,
+//   anywhere on its stack — the direction that reports (a crash takes
+//   the table, a caller's read raises);
+// - failure.dl's `table_owner`/`in_owner`/`seeded_row`: a table (and
+//   rows) created on EVERY path through init/1 and never dropped, and a
+//   function only that process runs — what makes an operation unable to
+//   fail, the direction that stays quiet, so it asks more;
+// - races.dl's `held_table`/`held_row`: rows, not tables — a row only
+//   the writer that minted its key can name.
+.decl table_held(name: symbol, mod: symbol, site: symbol)
 
-ets_owner_process(name, mod, behaviour) :-
-  ets_new(_, func, name),
+table_held(name, mod, id) :-
+  ets_new(id, func, name),
   name != "dynamic",
-  function_def(func, mod, _, _, _),
+  owner_reaches(mod, func),
+  function_def(func, mod, _, _, _).
+
+table_held(name, mod, id) :-
+  ets_new(id, func, name),
+  name != "dynamic",
+  owner_reaches(mod, func),
+  !function_def(func, mod, _, _, _),
+  ets_option(id, "named_table", "true").
+
+.decl ets_owner_process(name: symbol, mod: symbol, behaviour: symbol, site: symbol)
+
+ets_owner_process(name, mod, behaviour, id) :-
+  table_held(name, mod, id),
   behaves_as(mod, behaviour),
   process_behaviour_module(mod).
 
@@ -40,7 +78,7 @@ ets_owner_process(name, mod, behaviour) :-
 .decl ets_permanent_owner(name: symbol, mod: symbol)
 
 ets_permanent_owner(name, mod) :-
-  ets_owner_process(name, mod, _),
+  ets_owner_process(name, mod, _, _),
   supervisor_child(_, _, mod, "permanent", _).
 
 // Owner under a DynamicSupervisor.start_child — we don't know the
@@ -48,14 +86,14 @@ ets_permanent_owner(name, mod) :-
 // module is at least supervised, which is a strong enough signal
 // that we shouldn't false-positive on missing-heir for it.
 ets_permanent_owner(name, mod) :-
-  ets_owner_process(name, mod, _),
+  ets_owner_process(name, mod, _, _),
   dynamic_child(_, mod, _).
 
 // Application modules live for the entire app — table loss is not practical.
 .decl ets_application_owner(name: symbol, mod: symbol)
 
 ets_application_owner(name, mod) :-
-  ets_owner_process(name, mod, "Application").
+  ets_owner_process(name, mod, "Application", _).
 
 // Table without heir protection in a behaviour process.
 // If the owner crashes, the table vanishes.
@@ -66,9 +104,7 @@ ets_application_owner(name, mod) :-
 .output ets_unprotected_owner
 
 ets_unprotected_owner(name, mod, id) :-
-  ets_owner_process(name, mod, _),
-  ets_new(id, _, name),
-  name != "dynamic",
+  ets_owner_process(name, mod, _, id),
   !ets_option(id, "heir", "true"),
   !ets_permanent_owner(name, mod),
   !ets_application_owner(name, mod).
@@ -140,9 +176,7 @@ ets_ordered_set_contention(name, mod1, mod2, id) :-
 .output ets_unnamed_in_process
 
 ets_unnamed_in_process(name, mod, id) :-
-  ets_new(id, func, name),
-  name != "dynamic",
-  function_def(func, mod, _, _, _),
+  table_held(name, mod, id),
   process_module(mod),
   !ets_option(id, "named_table", "true").
 

@@ -357,3 +357,59 @@ defmodule Argus.Test.Fixtures.EtsSharedTunedClient do
   def read(key), do: :ets.lookup(:shared_tuned, key)
   def write(key, n), do: :ets.insert(:shared_tuned, {key, n})
 end
+
+defmodule Argus.Test.Fixtures.EtsTableHelper do
+  @moduledoc "Creates tables on the stack of whichever process calls it."
+
+  def create, do: :ets.new(:helper_made, [:set, :public, :named_table])
+  def create_unnamed, do: :ets.new(:helper_unnamed, [:set])
+end
+
+defmodule Argus.Test.Fixtures.EtsHelperOwner do
+  @moduledoc """
+  Its init/1 has a helper module create its tables: they are its
+  process's, and go when it does. The named one is shared state the
+  helper sets up for it; the unnamed one is a value the helper hands
+  back, held as its state is.
+  """
+  use GenServer
+
+  alias Argus.Test.Fixtures.EtsTableHelper
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(_) do
+    EtsTableHelper.create()
+    {:ok, EtsTableHelper.create_unnamed()}
+  end
+end
+
+defmodule Argus.Test.Fixtures.EtsClientCreated do
+  @moduledoc """
+  A server module whose client function creates a table: the table is
+  its caller's, not the server's.
+  """
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  def ensure_table, do: :ets.new(:client_made, [:set, :public, :named_table])
+  def ensure_unnamed, do: :ets.new(:client_unnamed, [:set])
+
+  @impl true
+  def init(_), do: {:ok, %{}}
+end
+
+defmodule Argus.Test.Fixtures.EtsSecondHelperOwner do
+  @moduledoc "A second server whose init/1 may make the helper's named table first."
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(_) do
+    Argus.Test.Fixtures.EtsTableHelper.create()
+    {:ok, %{}}
+  end
+end

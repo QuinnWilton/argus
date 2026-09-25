@@ -115,6 +115,62 @@ defmodule Argus.Analyses.EtsTest do
     end
   end
 
+  describe "a table's owner" do
+    test "is the process on whose stack :ets.new runs, not the module that spells it" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.EtsTableHelper,
+        Argus.Test.Fixtures.EtsHelperOwner,
+        Argus.Test.Fixtures.EtsClientCreated
+      ]
+
+      assert {:ok, results} = Memo.analyze(modules, :ets)
+
+      # A helper module's named table, made by a server's init/1, is the
+      # server's; the unnamed one it hands back is the server's data, and
+      # a server module's client function makes its caller's table, no
+      # process of the program calling it.
+      assert [[":helper_made", "Argus.Test.Fixtures.EtsHelperOwner", site]] =
+               results["ets_unprotected_owner"]
+
+      assert site =~ "EtsTableHelper:create/0#"
+      assert results["ets_unnamed_in_process"] == []
+    end
+
+    test "a table its own module makes in its process is still its own" do
+      skip_without_souffle()
+
+      assert {:ok, results} = Memo.analyze([Argus.Test.Fixtures.EtsUnnamed], :ets)
+
+      assert [[":anon_table", "Argus.Test.Fixtures.EtsUnnamed", _]] =
+               results["ets_unnamed_in_process"]
+
+      assert [[":anon_table", "Argus.Test.Fixtures.EtsUnnamed", _]] =
+               results["ets_unprotected_owner"]
+    end
+
+    test "a helper's table two processes may make is one finding" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.EtsTableHelper,
+        Argus.Test.Fixtures.EtsHelperOwner,
+        Argus.Test.Fixtures.EtsSecondHelperOwner
+      ]
+
+      assert {:ok, results} = Memo.analyze(modules, :ets)
+      rows = results["ets_unprotected_owner"]
+      assert length(rows) == 2
+
+      relation =
+        Enum.find(Argus.Analyses.Ets.output_relations(), &(&1.name == :ets_unprotected_owner))
+
+      assert [[":helper_made", "Argus.Test.Fixtures.EtsHelperOwner", _]] =
+               Argus.Findings.dedupe_rows(relation, rows)
+    end
+  end
+
   describe "ets_write_only_table" do
     test "a named table with inserts and no deletes is reported; bounded and warm caches are not" do
       skip_without_souffle()

@@ -414,6 +414,24 @@ it read `GenServer.call/3` alone (`StatemCallWatcher`). startup's
 duals that say why: one reports and holds only of a wait with no bound,
 the other suppresses and holds only of an answer that comes at once.
 
+**Changed.** A table's owner, in the ets concern, is the process that
+runs its `:ets.new/2` (`table_held` over `owner_reaches`: a process's
+own stack, into any module), no longer the module that spells the call.
+"ETS table dies with its owner" reports a helper module's named table a
+server's init/1 makes (`EtsHelperOwner`, missed before), and a named
+table a helper makes lazily for whichever process calls it first (a
+LiveView's `mount/3` calling an `ensure_table/0`: the table goes when
+that LiveView does); it no longer reports a server module's client
+function's table, which is its caller's (`EtsClientCreated`), a table a
+behaviour module no process of the program runs makes (a storage
+module a library's server calls), or a start function's, which is the
+start-function rule's alone. An unnamed table another module makes is a
+value it hands back — a digraph's, a statement cache — and not reported.
+One finding per `:ets.new` site (the key was table and module), under
+its least owner. ets.dl says why failure's `table_owner` (made on every
+path through init/1, never dropped: the quiet direction) and races'
+`held_row` (a row whose key only its minter names) are other words.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

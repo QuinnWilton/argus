@@ -80,10 +80,12 @@ defmodule Argus.Analyses.Ets do
         name: :ets_unprotected_owner,
         fields: [
           {:name, :symbol, "table name"},
-          {:mod, :symbol, "owner module"},
+          {:mod, :symbol, "the module of the process that runs the :ets.new/2"},
           {:site, :symbol, "instruction ID of the :ets.new/2 call"}
         ],
-        key: [:name, :mod],
+        # One finding per creation: a helper's named table that several
+        # processes may make first is one table, named by its least owner.
+        key: [:name, :site],
         doc: "Table owner lacks heir protection (excludes permanent children)."
       },
       %{
@@ -128,10 +130,10 @@ defmodule Argus.Analyses.Ets do
         name: :ets_unnamed_in_process,
         fields: [
           {:name, :symbol, "table name"},
-          {:mod, :symbol, "owner module"},
+          {:mod, :symbol, "the module of the process that runs the :ets.new/2"},
           {:site, :symbol, "instruction ID of the :ets.new/2 call"}
         ],
-        key: [:name, :mod],
+        key: [:name, :site],
         doc: "Unnamed table created in a process."
       },
       %{
