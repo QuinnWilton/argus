@@ -14,6 +14,7 @@
 .include "../clientlib/resolved_calls.dl"
 .include "../clientlib/vocabulary.dl"
 .include "../clientlib/global_reach.dl"
+.include "../clientlib/init_phase.dl"
 .include "../clientlib/timer_flush.dl"
 .include "../clientlib/replies.dl"
 
@@ -1036,18 +1037,14 @@ erlang_waits("system_flag").
 
 // A site init/1 runs — an rpc or a :global op, in init/1 or in anything
 // it calls on its own stack — holds the supervisor's start, and is
-// startup's finding (blocks_on_peer, which follows both the same way:
-// an rpc over init_reach, a :global op over global_path, the walk
-// startup's lock rule reads). Reported there, once. A helper init/1
+// startup's finding (blocks_on_peer, which reads the same walks:
+// rpc_during_init, clientlib/init_phase.dl, and global_path,
+// clientlib/global_reach.dl). Reported there, once. A helper init/1
 // shares with handle_call/3 is then reported only as startup's: the
 // start is the worse wait.
-.init init_reach = SameProcessReach
-
-init_reach.seed(g, site) :- rpc_call(site, g, _, _).
-
 .decl during_init(site: symbol)
 
-during_init(site) :- init_reach.reaches(f, site), is_init(f).
+during_init(site) :- rpc_during_init(_, site).
 during_init(site) :- global_path(f, _, site), is_init(f).
 
 // ── RPC in GenServer callback ────────────────────────────────────

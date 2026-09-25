@@ -1,0 +1,24 @@
+// What init/1 holds up: the waits on its own stack while its
+// supervisor's start waits on it.
+//
+// init/1 of a process module runs inside its starter's start: a
+// supervisor's, or whoever called start_child. A distributed operation
+// init/1 runs on its own stack holds that start, and is startup's finding
+// (a stalled start); the same site anywhere else is blocking's (a stalled
+// server). Both analyses read the walks here, so a site is init's finding
+// or blocking's, never both and never neither. global_reach.dl is the
+// :global half (global_path); this is the rpc half.
+//
+// Prerequisites: include clientlib/imports.dl and otp.dl before this
+// file.
+
+// `init` is init/1 of a process module, and the rpc at `site` runs on its
+// stack: in init/1, or in anything init/1 calls in its own process (not
+// what a spawn, task or agent runs: runs_elsewhere).
+.decl rpc_during_init(init: symbol, site: symbol)
+
+.init init_rpc_reach = SameProcessReach
+
+init_rpc_reach.seed(g, site) :- rpc_call(site, g, _, _).
+
+rpc_during_init(init, site) :- init_function(_, init), init_rpc_reach.reaches(init, site).
