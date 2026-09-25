@@ -3007,6 +3007,15 @@ relation are unchanged.
 
 ### unsafe_input
 
+**Fixed.** Request taint follows an element into the closure a
+higher-order call runs on it: `Enum.map(params["ids"], fn id ->
+String.to_atom(id) end)` is a flow, not a path
+(`Argus.Extractors.ParamFlow`: a closure the caller builds and hands to
+`Enum.map/2`, `Enum.each/2`, `Enum.reduce/3`, `Map.new/2`,
+`:lists.map/2`, `:lists.foldl/3` and the like takes the collection's
+element as its first parameter, in `call_arg_derived`). It was the
+known gap the `HofElement` fixture pinned as "adjacent".
+
 **Fixed.** Request taint follows a propagator's data argument, not its key.
 `Argus.Extractors.ParamFlow.Propagators` recorded `:maps.get(Key, Map)`
 at position 0, so taint through a direct `:maps.get` was lost (and a

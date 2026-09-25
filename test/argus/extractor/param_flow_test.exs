@@ -81,4 +81,17 @@ defmodule Argus.Extractor.ParamFlowTest do
   test "a literal argument derives from nothing", %{facts: facts} do
     assert sinks(facts, "literal/1") == []
   end
+
+  test "a closure a higher-order call runs takes the element as its first parameter" do
+    {:ok, facts} =
+      Argus.Pipeline.extract([Argus.Test.Fixtures.Taint.HofElement], extractors: [ParamFlow])
+
+    assert Enum.any?(facts.call_arg_derived, fn
+             [caller, closure, "0", "1"] ->
+               caller =~ "HofElement:handle_event/3" and closure =~ "-handle_event/3-fun-0-"
+
+             _ ->
+               false
+           end)
+  end
 end

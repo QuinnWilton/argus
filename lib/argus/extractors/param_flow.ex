@@ -42,16 +42,19 @@ defmodule Argus.Extractors.ParamFlow do
   the stack frame slot by slot, and a union over its reads would hand
   every kept slot every other slot's parameters.
 
-  Not followed, by design: element flow through a higher-order function's
-  closure (`Enum.map(params, fn p -> ... end)`:
-  the closure's parameter is the element, which no fact ties to the
-  collection), and a local helper's return value.
+  A higher-order call hands each element of its collection to the fun it
+  runs: a closure the caller builds and hands to `Enum.map/2`,
+  `Map.new/2`, `:lists.foldl/3` and the like takes the element as its
+  first parameter, derived from what the collection is. Not followed, by
+  design: a local helper's return value, and a fun that is not a closure
+  built where the call is made.
   """
 
   @behaviour Argus.Extractor
 
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
+  alias Argus.Extractor.Resolve
   alias Argus.Extractor.ValueFlow
   alias Argus.Extractors.ApiCalls
   alias Argus.Extractors.ParamFlow.Propagators
@@ -225,6 +228,11 @@ defmodule Argus.Extractors.ParamFlow do
   # ── Emission ─────────────────────────────────────────────────────────
 
   defp emit_call_sites(facts, module_data, inputs) do
+    instrs =
+      Map.new(module_data.functions, fn {:function, n, a, _e, is} ->
+        {Normalize.func_id(module_data.module, n, a), is}
+      end)
+
     module_data
     |> CallSites.for_module()
     |> Enum.reduce(facts, fn %{func_id: func_id, idx: idx, mfa: {mod, fun, arity} = mfa}, acc ->
@@ -233,11 +241,63 @@ defmodule Argus.Extractors.ParamFlow do
       callee = Normalize.func_id(mod, fun, arity)
       sink? = ApiCalls.sink?(mfa)
 
-      Enum.reduce(0..(arity - 1)//1, acc, fn pos, inner ->
-        derived = Map.get(site_inputs, "x#{pos}", MapSet.new())
-        inner = emit_call_arg(inner, [func_id, callee, to_string(pos)], derived, pos)
-        if sink?, do: emit_sink_arg(inner, [id, func_id, to_string(pos)], derived), else: inner
-      end)
+      acc =
+        Enum.reduce(0..(arity - 1)//1, acc, fn pos, inner ->
+          derived = Map.get(site_inputs, "x#{pos}", MapSet.new())
+          inner = emit_call_arg(inner, [func_id, callee, to_string(pos)], derived, pos)
+          if sink?, do: emit_sink_arg(inner, [id, func_id, to_string(pos)], derived), else: inner
+        end)
+
+      emit_element_flow(acc, mfa, func_id, idx, site_inputs, instrs)
+    end)
+  end
+
+  # A higher-order call hands each element of its collection to the fun it
+  # runs: `Map.new(params, fn {k, v} -> ... end)` runs the closure on data
+  # made of `params`. A closure the caller builds, at the fun position,
+  # takes the element as its first parameter; its captured variables are
+  # its trailing ones (emit_closures). {collection position, fun position}.
+  @element_calls %{
+    {Enum, :map, 2} => {0, 1},
+    {Enum, :flat_map, 2} => {0, 1},
+    {Enum, :each, 2} => {0, 1},
+    {Enum, :filter, 2} => {0, 1},
+    {Enum, :reject, 2} => {0, 1},
+    {Enum, :find, 2} => {0, 1},
+    {Enum, :group_by, 2} => {0, 1},
+    {Enum, :sort_by, 2} => {0, 1},
+    {Enum, :uniq_by, 2} => {0, 1},
+    {Enum, :reduce, 3} => {0, 2},
+    {Enum, :into, 3} => {0, 2},
+    {Enum, :map_join, 3} => {0, 2},
+    {Map, :new, 2} => {0, 1},
+    {:lists, :map, 2} => {1, 0},
+    {:lists, :foreach, 2} => {1, 0},
+    {:lists, :filter, 2} => {1, 0},
+    {:lists, :flatmap, 2} => {1, 0},
+    {:lists, :foldl, 3} => {2, 0}
+  }
+
+  defp emit_element_flow(facts, mfa, func_id, idx, site_inputs, instrs) do
+    with {:ok, {coll_pos, fun_pos}} <- Map.fetch(@element_calls, mfa),
+         derived when derived != [] <-
+           site_inputs |> Map.get("x#{coll_pos}", MapSet.new()) |> MapSet.to_list(),
+         {:ok, fun_instrs} <- Map.fetch(instrs, func_id),
+         closure when is_binary(closure) <- closure_at(fun_instrs, idx, {:x, fun_pos}) do
+      emit_call_arg(facts, [func_id, closure, "0"], MapSet.new(derived), 0)
+    else
+      _ -> facts
+    end
+  end
+
+  # The closure a register holds at a call: the make_fun3 it was built by.
+  defp closure_at(instrs, idx, reg) do
+    Resolve.trace(instrs, idx, reg, nil, fn
+      {_at, {:make_fun3, {mod, name, arity}, _index, _uniq, _dst, _env}}, _follow ->
+        Normalize.func_id(mod, name, arity)
+
+      _writer, _follow ->
+        nil
     end)
   end
 

@@ -128,7 +128,7 @@ defmodule Argus.Test.Fixtures.Taint do
   end
 
   defmodule HofElement do
-    @moduledoc "Element flow through a higher-order function's closure: a known gap, stays a path."
+    @moduledoc "Element flow through a higher-order function's closure: the closure runs on each id."
     @behaviour Phoenix.LiveView
 
     def handle_event(_event, %{"ids" => ids}, socket) do

@@ -315,12 +315,11 @@ defmodule Argus.Analyses.UnsafeInputTest do
       assert atom_rows(ctx, [Taint.ExistingAtom]) == []
     end
 
-    # Element flow through a higher-order function's closure is not
-    # followed: the closure's parameter is the element, and no fact ties
-    # it to the collection it came from. The sink stays a path.
-    test "an element handed to a closure is a known gap: adjacent, not flow", ctx do
+    # A closure a higher-order call runs takes the collection's element as
+    # its first parameter (ParamFlow's element flow).
+    test "an element handed to a closure a higher-order call runs is a flow", ctx do
       skip_without_souffle()
-      assert proximity_for(atom_rows(ctx, [Taint.HofElement]), "HofElement") == ["adjacent"]
+      assert proximity_for(atom_rows(ctx, [Taint.HofElement]), "HofElement") == ["flow"]
     end
   end
 
