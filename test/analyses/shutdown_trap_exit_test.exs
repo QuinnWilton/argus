@@ -92,6 +92,14 @@ defmodule Argus.Analyses.ShutdownTrapExitTest do
       assert exit_rows(results, "no_handler") == []
     end
 
+    test "a module that runs no gen_server misses no handle_info" do
+      skip_without_souffle()
+
+      # Positive: RawTrapExit (above) is a gen_server with no handle_info.
+      results = analyze([Argus.Test.Fixtures.TrapsForItsCaller])
+      assert exit_rows(results, "no_handler") == []
+    end
+
     test "does not flag a gen_statem that traps exits" do
       skip_without_souffle()
 

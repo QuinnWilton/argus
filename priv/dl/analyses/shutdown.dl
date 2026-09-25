@@ -669,8 +669,21 @@ shared_stop(h, via, sib) :-
 
 unhandled_exit_signal(mod, "no_handler", func) :-
   module_traps(func, mod),
+  gen_server_loop(mod),
   !has_handle_info(mod),
   !statem_process(mod).
+
+// A process whose trapped exits gen_server hands to handle_info/2: a
+// GenServer (or a wrapper that runs one), or a GenStage. Another loop
+// takes them its own way — gen_batch_server passes `{info, {'EXIT', ...}}`
+// to handle_batch/2 (ra's WAL), a cowboy_loop handler to info/3, a
+// hand-rolled loop to its own receive — and a module no process runs
+// (grpc's Mint adapter, whose connect/2 its connection process calls
+// through a variable) has no loop at all: none of them misses a
+// handle_info/2.
+.decl gen_server_loop(mod: symbol)
+
+gen_server_loop(m) :- behaves_as(m, b), process_behaviour(b, "gen_server_like").
 
 // ── Trap exit with a handle_info that never matches {:EXIT, ...} ──
 //

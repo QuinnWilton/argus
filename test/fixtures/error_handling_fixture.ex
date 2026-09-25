@@ -233,6 +233,19 @@ defmodule Argus.Test.Fixtures.RawTrapExit do
   def handle_cast(_msg, state), do: {:noreply, state}
 end
 
+defmodule Argus.Test.Fixtures.TrapsForItsCaller do
+  @moduledoc """
+  grpc's Mint adapter: `connect/2` traps exits in whatever process calls
+  it (the connection process, through a variable). This module runs no
+  process, so no gen_server of its own misses a handle_info/2.
+  """
+
+  def connect(host, opts) do
+    Process.flag(:trap_exit, true)
+    {:ok, %{host: host, opts: opts}}
+  end
+end
+
 defmodule Argus.Test.Fixtures.ExitingServer do
   @moduledoc false
   use GenServer

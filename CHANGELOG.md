@@ -189,6 +189,16 @@ worker, grpc's gun connection, firezone's Postgrex connections,
 ejabberd's MQTT-over-WebSocket session and ra's worker are quiet; a pid
 cast to a registry still reports.
 
+**Fixed.** shutdown's "trap_exit without an :EXIT handler" asks only of
+a module gen_server runs (a GenServer, a GenStage, or a wrapper the
+behaviour table maps to one): gen_batch_server hands trapped exits to
+`handle_batch/2`, a cowboy handler to `info/3`, a hand-rolled loop to its
+own receive, and a module no process runs traps for its caller. ra's WAL
+and meta store, grpc's Mint adapter and cowboy handler, vernemq's query
+REPL and ranch protocol, akkoma's raw WebSocket transport and rabbit's
+reader are quiet; a raw `:gen_server` that traps with no handle_info
+still reports.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,
