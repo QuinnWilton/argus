@@ -81,6 +81,14 @@ wait. blocking runs the extractor too.
 
 ### Process rules, read against real programs
 
+**Fixed.** `mailbox.unhandled_info` no longer takes a gen envelope sent
+by hand for a message. rabbit's `gen_server2:cast/2` is `Dest !
+{'$gen_cast', Request}`, and every server a caller hands it had that
+cast reported as reaching handle_info/2 ("No handle_info/2 clause", or
+only its catch-all). A gen loop takes `{:"$gen_call", …}` and
+`{:"$gen_cast", …}` to handle_call/3 and handle_cast/2 and `{:system,
+…}` to :sys (`gen_envelope`, clientlib/sends.dl). rabbitmq: 4 rows to 0.
+
 **Fixed.** `failure.unhandled_failure`'s "Catch-all rescue swallows
 exceptions" leaves a try that protects nothing but operations whose
 failure is another process's, a node's, a port's or a name's: a send, an

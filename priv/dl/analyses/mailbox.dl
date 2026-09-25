@@ -1182,6 +1182,7 @@ unreceived_message(mod, func, site, m, runs, starter, spawn, recv) :-
 info_message(m, f, id, msg, "send") :-
   send_target(id, f, msg, p),
   msg != "dynamic",
+  !gen_envelope(msg),
   server_process(p, m).
 
 // A timer or a monitor in a function a server's callbacks run: the

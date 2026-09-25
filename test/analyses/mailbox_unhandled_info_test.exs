@@ -13,6 +13,8 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
     U.Ticker,
     U.Pinger,
     U.PingServer,
+    U.EnvelopeCaster,
+    U.EnvelopeServer,
     U.Handled,
     U.Delegates,
     U.OpenClause,
@@ -47,6 +49,11 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
     assert {"Reconnect:schedule_connect/0", ":connect", "timer", "Reconnect", "crash"} in rows
   end
 
+  test "a gen envelope sent by hand is a call or a cast, not a message", %{rows: rows} do
+    sent = for {"EnvelopeCaster:run/0", message, "send", _, _} <- rows, do: message
+    assert sent == ["{:refresh_now, …}"]
+  end
+
   test "a monitor's :DOWN a catch-all drops", %{rows: rows} do
     assert {"Listeners:handle_call/3", "{:DOWN, …}", "monitor", "Listeners", "catch_all"} in rows
   end
@@ -71,7 +78,7 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
   end
 
   test "exactly those, and every quiet neighbour quiet", %{rows: rows} do
-    assert length(rows) == 9, inspect(rows, pretty: true)
+    assert length(rows) == 10, inspect(rows, pretty: true)
 
     quiet =
       ~w(Handled Delegates OpenClause WaitsForDown Flushes Client PollerTakes WarmUp Unjudged

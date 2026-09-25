@@ -133,6 +133,42 @@ defmodule Argus.Test.Fixtures.UnhandledInfo do
     def handle_info(:pong, state), do: {:noreply, state}
   end
 
+  defmodule EnvelopeCaster do
+    @moduledoc """
+    Sends the gen behaviours' own envelopes by hand, as rabbit's
+    gen_server2:cast/2 does: the server's loop takes a `{:"$gen_cast", _}`
+    to handle_cast/2 and a `{:"$gen_call", _, _}` to handle_call/3, never
+    to handle_info/2. The `{:refresh_now, _}` beside them is a message.
+    """
+    alias Argus.Test.Fixtures.UnhandledInfo.EnvelopeServer
+
+    def run do
+      {:ok, pid} = EnvelopeServer.start_link([])
+      send(pid, {:"$gen_cast", :refresh})
+      send(pid, {:"$gen_call", {self(), make_ref()}, :count})
+      send(pid, {:refresh_now, 1})
+    end
+  end
+
+  defmodule EnvelopeServer do
+    @moduledoc false
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+
+    @impl true
+    def handle_cast(:refresh, state), do: {:noreply, state}
+
+    @impl true
+    def handle_call(:count, _from, state), do: {:reply, 0, state}
+
+    @impl true
+    def handle_info(:tick, state), do: {:noreply, state}
+  end
+
   defmodule Retry do
     @moduledoc "Arms a literal `{:retry, 3}` and re-arms a built `{:backoff, n}`; no clause takes either."
     use GenServer

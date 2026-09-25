@@ -10,3 +10,17 @@
 .decl send_target(id: symbol, func: symbol, message: symbol, proc: symbol)
 
 send_target(id, f, m, p) :- pid_send(id, f, m, _, _), call_site_target(id, f, "info", p).
+
+// The gen behaviours' own envelopes. A gen_server's loop takes a
+// `{:"$gen_call", from, request}` to handle_call/3 and a
+// `{:"$gen_cast", request}` to handle_cast/2 (a gen_statem's to its state
+// function, as a call or a cast event), and a `{:system, from, request}`
+// to :sys: none reaches handle_info/2, or an :info event. A library that
+// sends one by hand — rabbit's gen_server2:cast/2 is `Dest ! {'$gen_cast',
+// Request}` — makes a call or a cast. Spelled as pid_send spells a tuple
+// by its tag.
+.decl gen_envelope(message: symbol)
+
+gen_envelope("{:\"$gen_call\", …}").
+gen_envelope("{:\"$gen_cast\", …}").
+gen_envelope("{:system, …}").
