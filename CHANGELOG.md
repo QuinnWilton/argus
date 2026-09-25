@@ -114,6 +114,19 @@ returns, and the monitors it leaves go with it. exq's WorkerDrainer
 monitors every worker from terminate/2 and waits a grace period. The
 same drain reached from any other callback is reported as before.
 
+**Fixed.** failure's catch-all rule no longer reports a `try` that
+builds and emits a log line and does nothing else: ra's logging macro
+wraps every line in `try ... catch _:_ -> ok end` so a failed handler
+never takes the Raft server down (ra 202 → 22 catch-alls; no other
+project's rows move). `try_boundary` holds for such a region
+(`ErrorHandling.Boundary.log_region?/3`): straight-line code, its only
+branches a guard or tag test failing into code that raises, holding a
+`:logger`/`:error_logger`/`Logger.bare_log` call or an `apply` of `log`
+on a computed module, where every other raising instruction's value
+reaches a log call's arguments from a line no earlier than the call's.
+Work beside the log line, or logged from the line before, is still
+reported.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

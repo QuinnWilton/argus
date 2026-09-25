@@ -51,6 +51,29 @@ defmodule Argus.Test.Fixtures.BoundaryRescue do
       _, _ -> :boundary_rescue
     end
   end
+
+  # ra's logging macro: the log line, its arguments built on its own
+  # lines, dispatched to a logger module the program configures, and a
+  # handler failure never taking the server down.
+  def note_members(cluster) do
+    try do
+      logger_mod().log(:debug, "members: ~p", [Map.keys(cluster)], %{domain: [:app]})
+    catch
+      _, _ -> :ok
+    end
+
+    :ok
+  end
+
+  def warn(reason) do
+    try do
+      :logger.warning("giving up: ~p", [reason])
+    catch
+      _, _ -> :ok
+    end
+  end
+
+  def logger_mod, do: :persistent_term.get(:app_logger, :logger)
 end
 
 defmodule Argus.Test.Fixtures.LogicRescue do
@@ -77,6 +100,28 @@ defmodule Argus.Test.Fixtures.LogicRescue do
       _, _ -> :ok
     end
   end
+
+  # A log line beside the work: the work's failure is swallowed too.
+  def apply_and_log(state) do
+    try do
+      apply_entry(state)
+      :logger.info("applied")
+    catch
+      _, _ -> :ok
+    end
+  end
+
+  # The work's result is logged, but the work is its own statement.
+  def apply_and_log_result(state) do
+    try do
+      result = apply_entry(state)
+      :logger.info("applied: ~p", [result])
+    catch
+      _, _ -> :ok
+    end
+  end
+
+  def apply_entry(state), do: Map.fetch!(state, :entry) + 1
 
   defp decode(bin), do: :erlang.binary_to_term(bin, [:safe])
 end

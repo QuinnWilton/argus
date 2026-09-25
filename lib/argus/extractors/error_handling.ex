@@ -46,7 +46,8 @@ defmodule Argus.Extractors.ErrorHandling do
     unexpected reason is a CaseClauseError
   - `try_boundary(id, func)` — the try (or Erlang `catch`) at `id`
     protects nothing but sends, signals, calls into other processes and
-    name operations (`ErrorHandling.Boundary`)
+    name operations, or nothing but a log line and its arguments
+    (`ErrorHandling.Boundary`)
   - `try_covers(id, func, call, kind)` — the try (or Erlang `catch`) at
     `id` covers the call at `call`: an exception the call raises goes to
     that try's handler
@@ -699,16 +700,17 @@ defmodule Argus.Extractors.ErrorHandling do
           fun = Helpers.cfg(module_data, name, arity)
           func_id = Normalize.func_id(mod, name, arity)
           closures = closure_uses(instrs)
-          Enum.reduce(regions, acc, &cover(&2, fun, func_id, instrs, closures, &1))
+          lines = Map.get(module_data, :line_table, %{})
+          Enum.reduce(regions, acc, &cover(&2, {fun, lines}, func_id, instrs, closures, &1))
       end
     end)
   end
 
   # No graph (the function's could not be built): no rows, and a rule
   # asking whether a call is covered reads it as bare.
-  defp cover(facts, nil, _func_id, _instrs, _closures, _region), do: facts
+  defp cover(facts, {nil, _lines}, _func_id, _instrs, _closures, _region), do: facts
 
-  defp cover(facts, fun, func_id, instrs, closures, {op, reg, idx}) do
+  defp cover(facts, {fun, lines}, func_id, instrs, closures, {op, reg, idx}) do
     {:done, visited} =
       Walk.explore(fun, instrs, [idx + 1],
         on_instr: fn instr, at ->
@@ -720,7 +722,7 @@ defmodule Argus.Extractors.ErrorHandling do
     id = InstrId.mint(func_id, idx)
 
     facts =
-      if Boundary.region?(visited, table),
+      if Boundary.region?(visited, table, lines),
         do: add_fact(facts, :try_boundary, [id, func_id]),
         else: facts
 

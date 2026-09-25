@@ -132,9 +132,11 @@ defmodule Argus.Schema.ErrorHandling do
         The try at `id` protects only operations whose failure is another \
         process's, a port's or a name's state — a send, an exit signal, a \
         call into another process or node, a registration, a named \
-        `:ets.new` — and instructions that cannot raise \
+        `:ets.new` — and instructions that cannot raise; or only the \
+        building and emitting of a log line \
         (`Argus.Extractors.ErrorHandling.Boundary`). A catch-all around it \
-        takes a dead peer or a taken name, not a bug in the code it guards.
+        takes a dead peer, a taken name or a failed log handler, not a bug \
+        in the code it guards.
         """
       },
       %{

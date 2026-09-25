@@ -78,9 +78,15 @@ defmodule Argus.Analyses.FailureErrorTest do
         |> Enum.map(fn [func | _] -> func |> String.split(".") |> List.last() end)
         |> Enum.sort()
 
-      assert funcs == ["LogicRescue:ask_and_match/1", "LogicRescue:notify_decoded/2"],
-             "a send, a call, a supervisor query and a named :ets.new alone are the peer's " <>
-               "or the name's to fail; a match, arithmetic or a helper beside them is not"
+      assert funcs == [
+               "LogicRescue:apply_and_log/1",
+               "LogicRescue:apply_and_log_result/1",
+               "LogicRescue:ask_and_match/1",
+               "LogicRescue:notify_decoded/2"
+             ],
+             "a send, a call, a supervisor query, a named :ets.new and a log line alone are " <>
+               "the peer's, the name's or the logger's to fail; a match, arithmetic or a " <>
+               "helper beside them, or work whose result is logged, is not"
     end
 
     test "does not flag a handler that reifies the exception into a value", ctx do
