@@ -17,6 +17,7 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
     C.MnesiaHelperUpdate,
     C.MnesiaPutElemKey,
     C.MnesiaExpire,
+    C.MnesiaCaptchaCheck,
     C.MnesiaExpireCounted,
     C.MnesiaHelpers,
     C.MnesiaComputedKey,
@@ -113,6 +114,8 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
     test "deleting the record the read found expired is not a lost update", ctx do
       skip_without_souffle()
       assert races(ctx, [C.MnesiaExpire]) == []
+      # A delete whose decision also tells another process, in a helper.
+      assert [_ | _] = races(ctx, [C.MnesiaCaptchaCheck])
     end
 
     test "the delete is reported on a table the program writes back from a read", ctx do

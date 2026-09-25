@@ -360,6 +360,23 @@ mailbox's collection check, races' outside tables, escaping decisions,
 open key sources and unguarded callers, and unsafe_input's caller input
 and export reach read them in place of "exported" spelled five ways.
 
+**Changed.** "Made of the read" is one definition for ETS and Mnesia
+(`MadeOfRead` in `clientlib/check_then_act.dl`): by data alone
+(`site_reads`, `call_arg_reads`, `returns_reads`), through helpers that
+return a read or what they are handed, and through parameters any chain
+of callers fills. The ETS rule's `carries_read` asked `returns_depends`,
+which also counts a value a read decided and did not make, and took a
+write made of any call whose result depended on any site as a
+write-back; the Mnesia rule's `record_carries_read` took any site's
+value for a read's. Both now ask the reads of their own store. A delete
+decided only by whether the row is there is harmless only when the
+delete is all its decision does: one whose decision sends, where it
+decides or in a helper it decides the call of (`decision_sends`,
+`sends_message` in `clientlib/effects.dl`), has both racers send
+(`CheckThenAct.CaptchaCheck`, ejabberd's `check_captcha/2`, which the
+loose write-back had kept reported for the wrong reason), and a fill or
+a trip is a write of a value, never a delete.
+
 **Changed.** A cast a spawn, task or agent makes is its own process's
 (`reaches_async_dep` cuts `runs_elsewhere`, as `reaches_sync_dep` does):
 a task init/1 starts that casts to a later sibling no longer makes

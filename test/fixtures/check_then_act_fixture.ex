@@ -1290,6 +1290,50 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
     defp load(key), do: {:loaded, key}
   end
 
+  defmodule CaptchaCheck do
+    @moduledoc """
+    ejabberd's check_captcha/2: finds the challenge, deletes it and tells
+    its owner it passed, in a helper. Two racers both find it, and both
+    tell the owner: deleting twice is deleting once, telling twice is not.
+    """
+    def start, do: :ets.new(:captchas, [:named_table, :public])
+
+    def put(id, owner), do: :ets.insert(:captchas, {id, owner})
+
+    def check(id) do
+      case :ets.lookup(:captchas, id) do
+        [{_id, owner}] ->
+          :ets.delete(:captchas, id)
+          notify(owner, id)
+          :ok
+
+        [] ->
+          :not_found
+      end
+    end
+
+    defp notify(owner, id), do: send(owner, {:passed, id})
+  end
+
+  defmodule CaptchaCheckInline do
+    @moduledoc "The same check that tells the owner itself."
+    def start, do: :ets.new(:inline_captchas, [:named_table, :public])
+
+    def put(id, owner), do: :ets.insert(:inline_captchas, {id, owner})
+
+    def check(id) do
+      case :ets.lookup(:inline_captchas, id) do
+        [{_id, owner}] ->
+          :ets.delete(:inline_captchas, id)
+          send(owner, {:passed, id})
+          :ok
+
+        [] ->
+          :not_found
+      end
+    end
+  end
+
   defmodule LockRelease do
     @moduledoc """
     A release that checks the owner, then deletes by key: another process
@@ -1507,6 +1551,29 @@ defmodule Argus.Test.Fixtures.CheckThenAct do
         [] -> :ets.insert(table, {key, 1})
       end
     end
+  end
+
+  defmodule MnesiaCaptchaCheck do
+    @moduledoc """
+    The captcha check over Mnesia: a dirty read finds the challenge, a
+    dirty delete removes it, and a helper tells the owner it passed: two
+    racers both tell it.
+    """
+    def check(id) do
+      case :mnesia.dirty_read({:captchas, id}) do
+        [{:captchas, ^id, owner}] ->
+          :mnesia.dirty_delete({:captchas, id})
+          notify(owner, id)
+          :ok
+
+        [] ->
+          :not_found
+      end
+    end
+
+    def put(id, owner), do: :mnesia.dirty_write({:captchas, id, owner})
+
+    defp notify(owner, id), do: send(owner, {:passed, id})
   end
 
   defmodule MnesiaExpire do

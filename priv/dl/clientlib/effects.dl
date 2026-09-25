@@ -106,3 +106,13 @@ released_at_exit(":ssl.close/1").
 released_at_exit(":socket.close/1").
 released_at_exit(":file.close/1").
 released_at_exit("File.close/1").
+
+// A message send at `site` in `func`: the `send` instruction Erlang's
+// `!` compiles to, or a call to `:erlang.send/2,3` or `Process.send/3`
+// (what Elixir's send/2 becomes).
+.decl sends_message(site: symbol, func: symbol)
+
+sends_message(id, f) :- send_msg(id, f).
+sends_message(id, f) :- remote_call(id, f, ":erlang", "send", _).
+sends_message(id, f) :- remote_call(id, f, "Process", "send", _).
+

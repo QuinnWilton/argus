@@ -606,7 +606,8 @@ writes_after_start(g) :- runs.spawned(_, _, r), writer_walk.reaches(r, g).
 //   every row the table is written is a fill (below): then the row it
 //   deletes is a cached copy, and losing one is a miss. A delete_object
 //   deletes only the object it names, and is not reported;
-// - a fill: a write whose value a call, or a read of another store
+// - a fill: a write of a value (an insert or update_element; a delete
+//   writes none, and is judged by the first shape alone) that a call, or a read of another store
 //   (Mnesia behind an ETS cache), makes — the cache-aside `[] -> v =
 //   load(k); :ets.insert(t, {k, v})` — where both racers compute the
 //   same thing and either write is right. Not when the call mints the
@@ -642,69 +643,15 @@ writes_after_start(g) :- runs.spawned(_, _, r), writer_walk.reaches(r, g).
 
 value_write(w) :- ets_op(w, _, _, op, "write"), (op = "insert" ; op = "update_element").
 
+// Made of a read, by data alone (MadeOfRead, clientlib/check_then_act.dl).
+.init ets_made = MadeOfRead
+
+ets_made.read(r) :- ets_op(r, _, _, _, "read").
+ets_made.write(w, h) :- value_write(w), rows.act(w, h, _, _, _, _).
+
 .decl carries_read(w: symbol)
 
-carries_read(w) :-
-  value_write(w),
-  rows.act(w, h, _, _, _, _),
-  site_reads(w, h, "site", r),
-  ets_op(r, _, _, _, "read").
-
-carries_read(w) :-
-  value_write(w),
-  rows.act(w, h, _, _, _, _),
-  site_reads(w, h, "call", g),
-  returns_depends(g, "site", _).
-
-// A helper whose result is made of an ETS read, however many helpers
-// down: `set_count(next())`, where next/0 returns `count() + 1` and
-// count/0 is the lookup, writes the read back as surely as
-// `set_count(count() + 1)` does.
-carries_read(w) :-
-  value_write(w),
-  rows.act(w, h, _, _, _, _),
-  site_reads(w, h, "call", g),
-  returns_ets_read(g).
-
-carries_read(w) :-
-  value_write(w),
-  rows.act(w, h, _, _, _, _),
-  site_reads(w, h, "param", p),
-  call_arg_reads(_, h, n, "call", g),
-  returns_ets_read(g),
-  p = to_string(n).
-
-.decl returns_ets_read(func: symbol)
-
-returns_ets_read(g) :- returns_depends(g, "site", r), ets_op(r, _, _, _, "read").
-returns_ets_read(g) :- returns_depends(g, "call", g2), returns_ets_read(g2).
-
-// A local helper's result is made of the arguments it returns from:
-// `insert({k, next(n)})` writes the read's `n` back through `next/1`.
-carries_read(w) :-
-  value_write(w),
-  rows.act(w, h, _, _, _, _),
-  site_reads(w, h, "call", g),
-  returns_depends(g, "param", q),
-  call_arg_reads(h, g, n, "site", r),
-  ets_op(r, _, _, _, "read"),
-  q = to_string(n).
-
-carries_read(w) :-
-  value_write(w),
-  rows.act(w, h, _, _, _, _),
-  site_reads(w, h, "param", p),
-  call_arg_reads(_, h, n, "site", r),
-  ets_op(r, _, _, _, "read"),
-  p = to_string(n).
-
-carries_read(w) :-
-  value_write(w),
-  rows.act(w, h, _, _, _, _),
-  site_reads(w, h, "param", p),
-  call_arg_reads(_, h, n, "call", g),
-  returns_depends(g, "site", _),
-  p = to_string(n).
+carries_read(w) :- ets_made.stores(w).
 
 // The table a write or a counter bump touches, by name.
 .decl ets_op_table(id: symbol, name: symbol)
@@ -951,29 +898,60 @@ shared_write(s) :- name_release(s, _, _, _, _).
 
 .decl harmless_race(func: symbol, read: symbol, write: symbol)
 
+// Deleting twice is deleting once only when the delete is all the
+// decision does: one whose decision also sends, where it decides or in a
+// helper it decides the call of (decision_sends: ejabberd's
+// check_captcha/2 deletes the captcha it found and tells its owner it
+// passed), has both racers send.
 harmless_race(f, r, w) :-
   reads_then_writes(f, r, w, name, _),
   pair_key_of(f, r, w, ks, k),
   ets_op(w, _, _, "delete", _),
   !tests_row_fields(r),
-  !writes_back(name, ks, k).
+  !writes_back(name, ks, k),
+  !decision_sends(r).
 
 harmless_race(f, r, w) :-
   reads_then_writes(f, r, w, name, _),
   pair_key_of(f, r, w, ks, k),
   ets_op(w, _, _, "delete", _),
   !stores_state(name),
-  !writes_back(name, ks, k).
+  !writes_back(name, ks, k),
+  !decision_sends(r).
 
 harmless_race(f, r, w) :-
   reads_then_writes(f, r, w, name, _),
   pair_key_of(f, r, w, ks, k),
   ets_op(w, _, _, "delete_object", _),
-  !writes_back(name, ks, k).
+  !writes_back(name, ks, k),
+  !decision_sends(r).
+
+// The read's decision sends a message: where its value is carried, an
+// effect runs because of it (effect_decided, function-level) in a
+// function that sends, or a function it decides the call of sends (one
+// call down). A second kill or a second stop of the same process is the
+// first one's echo (sequin's Havoc.stop/1, hackney's stop_pool/1); a
+// second message is one more the receiver acts on. Asked only of a delete: a trip's helper that re-sends what
+// every racer agrees on (supavisor's circuit breaker telling the other
+// nodes it opened) is left alone, as decides_more leaves it.
+.decl decision_sends(read: symbol)
+
+decision_sends(r) :-
+  reads_then_writes(_, r, _, _, _),
+  rows.carries(f, kind, src, r, _, _, _, _),
+  effect_decided(f, kind, src),
+  sends_message(_, f).
+
+decision_sends(r) :-
+  reads_then_writes(_, r, _, _, _),
+  rows.carries(f, kind, src, r, _, _, _, _),
+  call_decided(f, g, kind, src),
+  sends_message(_, g).
 
 harmless_race(f, r, w) :-
   reads_then_writes(f, r, w, name, _),
   pair_key_of(f, r, w, ks, k),
+  value_write(w),
   !carries_read(w),
   recomputed(w),
   !mint_handed_out(w),
@@ -982,6 +960,7 @@ harmless_race(f, r, w) :-
 harmless_race(f, r, w) :-
   reads_then_writes(f, r, w, name, _),
   pair_key_of(f, r, w, ks, k),
+  value_write(w),
   !carries_read(w),
   !writes_back(name, ks, k),
   !guards_row(r, w),
@@ -1782,41 +1761,16 @@ record_param_needed(f, p) :- mnesia_op(_, f, _, "write", "element 0", p, _, _).
 // expired nonce) is not a lost update unless the program also writes the
 // table back from a read, or counts in it with dirty_update_counter:
 // deleting twice is deleting once.
+// A dirty write that stores what a read of Mnesia returned, or a value
+// made of it, by data alone (MadeOfRead, clientlib/check_then_act.dl).
+.init record_made = MadeOfRead
+
+record_made.read(r) :- mnesia_op(r, _, _, "read", _, _, _, _).
+record_made.write(w, h) :- mnesia_op(w, _, "dirty_write", _, _, _, _, _), records.act(w, h, _, _, _, _).
+
 .decl record_carries_read(w: symbol)
 
-record_carries_read(w) :-
-  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
-  records.act(w, h, _, _, _, _),
-  site_reads(w, h, "site", _).
-
-record_carries_read(w) :-
-  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
-  records.act(w, h, _, _, _, _),
-  site_reads(w, h, "call", g),
-  returns_depends(g, "site", _).
-
-record_carries_read(w) :-
-  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
-  records.act(w, h, _, _, _, _),
-  site_reads(w, h, "call", g),
-  returns_depends(g, "param", q),
-  call_arg_reads(h, g, n, "site", _),
-  q = to_string(n).
-
-record_carries_read(w) :-
-  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
-  records.act(w, h, _, _, _, _),
-  site_reads(w, h, "param", p),
-  call_arg_reads(_, h, n, "site", _),
-  p = to_string(n).
-
-record_carries_read(w) :-
-  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
-  records.act(w, h, _, _, _, _),
-  site_reads(w, h, "param", p),
-  call_arg_reads(_, h, n, "call", g),
-  returns_depends(g, "site", _),
-  p = to_string(n).
+record_carries_read(w) :- record_made.stores(w).
 
 .decl record_writes_back(table: symbol)
 
@@ -1859,7 +1813,23 @@ harmless_record_race(f, r, w) :-
   reads_then_writes_record(f, r, w, t, _),
   mnesia_op(w, _, op, _, _, _, _, _),
   (op = "dirty_delete" ; op = "dirty_delete_object"),
-  !record_writes_back(t).
+  !record_writes_back(t),
+  !record_decision_sends(r).
+
+// The ETS rule's decision_sends, for records.
+.decl record_decision_sends(read: symbol)
+
+record_decision_sends(r) :-
+  reads_then_writes_record(_, r, _, _, _),
+  records.carries(f, kind, src, r, _, _, _, _),
+  effect_decided(f, kind, src),
+  sends_message(_, f).
+
+record_decision_sends(r) :-
+  reads_then_writes_record(_, r, _, _, _),
+  records.carries(f, kind, src, r, _, _, _, _),
+  call_decided(f, g, kind, src),
+  sends_message(_, g).
 
 harmless_record_race(f, r, w) :-
   reads_then_writes_record(f, r, w, t, _),

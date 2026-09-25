@@ -34,6 +34,8 @@ defmodule Argus.Analyses.EtsCheckActTest do
     C.LockRelease,
     C.BreakerTrip,
     C.ExpiringCache,
+    C.CaptchaCheck,
+    C.CaptchaCheckInline,
     C.LockReleaseObject,
     C.CounterClobber,
     C.UnnamedTable,
@@ -245,6 +247,11 @@ defmodule Argus.Analyses.EtsCheckActTest do
     test "an expired row deleted from a table of refills is not: losing a copy is a miss", ctx do
       skip_without_souffle()
       assert races(ctx, [C.ExpiringCache]) == []
+
+      # A delete whose decision also tells another process — itself, or
+      # in a helper it decides the call of — has both racers tell it.
+      assert [{"check/1", ":captchas", _}] = races(ctx, [C.CaptchaCheck])
+      assert [{"check/1", ":inline_captchas", _}] = races(ctx, [C.CaptchaCheckInline])
     end
 
     test "a delete_object of the owner's own row is not", ctx do

@@ -463,3 +463,74 @@ module_identity("module field").
 
   also_writes(w1, w2, f) :- later_branch(w2, w1), !later_branch(w1, _), chosen(f, _, w1, _).
 }
+
+// ── Made of a read ───────────────────────────────────────────────────
+//
+// Whether a write stores what a read returned, or a value made of it, by
+// data alone (Argus.Extractors.Dependence's site_reads, call_arg_reads,
+// returns_reads): a value computed under a test on the read, but not
+// from it, is not made of it (returns_depends and call_arg_depends, which
+// count a decision too, are CheckThenAct's carriers, not this). The
+// instance names the reads and the writes it asks about. A write stores a
+// read's value when, in the write's own function, what it writes is made
+// of:
+//
+// - the read's own result;
+// - a call's result, where the callee returns a read's result or a value
+//   made of one, however many helpers down (`set(next())`, next/0
+//   returning `count() + 1`), or returns what it is handed and is handed
+//   one (`insert({k, next(n)})`);
+// - a parameter some caller fills with such a value, through any chain of
+//   callers.
+//
+// Any read and any caller: which read, and which path, is the pair's own
+// question (mnesia's record_pair_carries_read). The ETS and the Mnesia
+// read-then-write rules each instantiate it, over their own stores.
+.comp MadeOfRead {
+  .decl read(site: symbol)
+  .decl write(site: symbol, func: symbol)
+
+  // The helper returns a value made of a read.
+  .decl returns_read(func: symbol)
+
+  returns_read(g) :- read(r), returns_reads(g, "site", r).
+  returns_read(g) :- returns_reads(g, "call", g2), returns_read(g2).
+
+  // The values the question reaches, in the function holding them.
+  .decl asked(func: symbol, kind: symbol, src: symbol)
+
+  asked(h, k, s) :- write(w, h), site_reads(w, h, k, s).
+
+  asked(c, k, s) :-
+    asked(h, "param", p),
+    call_arg_reads(c, h, n, k, s),
+    p = to_string(n).
+
+  asked(h, k, s) :-
+    asked(h, "call", g),
+    returns_reads(g, "param", q),
+    call_arg_reads(h, g, n, k, s),
+    q = to_string(n).
+
+  .decl made(func: symbol, kind: symbol, src: symbol)
+
+  made(h, "site", r) :- asked(h, "site", r), read(r).
+  made(h, "call", g) :- asked(h, "call", g), returns_read(g).
+
+  made(h, "call", g) :-
+    asked(h, "call", g),
+    returns_reads(g, "param", q),
+    call_arg_reads(h, g, n, k, s),
+    q = to_string(n),
+    made(h, k, s).
+
+  made(h, "param", p) :-
+    asked(h, "param", p),
+    call_arg_reads(c, h, n, k, s),
+    p = to_string(n),
+    made(c, k, s).
+
+  .decl stores(write: symbol)
+
+  stores(w) :- write(w, h), site_reads(w, h, k, s), made(h, k, s).
+}
