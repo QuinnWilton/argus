@@ -39,6 +39,33 @@ defmodule Argus.Analyses.ShutdownTrapExitTest do
     end
   end
 
+  describe "unhandled_exit_signal: the process that traps" do
+    test "a trap a helper sets is the calling server's, not the helper module's" do
+      skip_without_souffle()
+
+      results =
+        analyze([
+          Argus.Test.Fixtures.TrapHelper,
+          Argus.Test.Fixtures.TrapsThroughHelper,
+          Argus.Test.Fixtures.CleansUpThroughHelperTrap
+        ])
+
+      assert [["Argus.Test.Fixtures.TrapsThroughHelper", witness]] =
+               exit_rows(results, "no_exit_clause")
+
+      assert witness =~ "TrapHelper:enable/0"
+
+      # TrapHelper runs no process: no handle_info is missing from it.
+      assert exit_rows(results, "no_handler") == []
+
+      # The server that traps through the helper is not "never traps".
+      refute Enum.any?(
+               Map.get(results, "cleanup_defect", []),
+               &match?([_mod, _b, "never_runs" | _], &1)
+             )
+    end
+  end
+
   describe "unhandled_exit_signal: no_handler" do
     test "flags a raw :gen_server that traps exits with no handle_info" do
       skip_without_souffle()

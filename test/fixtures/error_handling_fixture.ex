@@ -605,3 +605,59 @@ defmodule Argus.Test.Fixtures.ReturnsCall do
 
   defp schedule(ms), do: Process.send_after(self(), :tick, ms)
 end
+
+defmodule Argus.Test.Fixtures.TrapHelper do
+  @moduledoc """
+  A plain module whose function sets trap_exit for whoever calls it: the
+  flag is the calling process's, never this module's (it runs no
+  process).
+  """
+  def enable do
+    Process.flag(:trap_exit, true)
+    :ok
+  end
+end
+
+defmodule Argus.Test.Fixtures.TrapsThroughHelper do
+  @moduledoc """
+  A server whose init/1 traps exits through TrapHelper.enable/0 and whose
+  handle_info/2 has no {:EXIT, ...} clause: the server is the process
+  that traps (postgrex's connect/1 trapping inside DBConnection's
+  connection process, M2-17).
+  """
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(state) do
+    :ok = Argus.Test.Fixtures.TrapHelper.enable()
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_info(:tick, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Fixtures.CleansUpThroughHelperTrap do
+  @moduledoc """
+  A server whose trap is set by a helper it calls in init/1 and whose
+  terminate/2 cleans up: it traps, so a supervisor's shutdown runs its
+  terminate/2.
+  """
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(path) do
+    :ok = Argus.Test.Fixtures.TrapHelper.enable()
+    {:ok, File.open!(path, [:write])}
+  end
+
+  @impl true
+  def handle_info({:EXIT, _pid, _reason}, file), do: {:noreply, file}
+
+  @impl true
+  def terminate(_reason, file), do: File.close(file)
+end

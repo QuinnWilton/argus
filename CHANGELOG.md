@@ -117,6 +117,19 @@ phoenix_live_dashboard:rpc-wrapper. Over live projects and OTP: 4 real
 `rabbit_khepri:check_cluster_consistency/2`) and 1 false (rabbit's
 `is_booted/1`, whose `_ -> false` takes the tuple). Schema 107.
 
+**Changed.** Trapping exits is read per process (`module_traps`,
+clientlib/process.dl): a trap_exit on a process module's own stack (one
+of its callbacks reaches it without leaving the process) is that
+module's, wherever the function lives, and a trap no process module's
+callbacks reach stays with the module holding it. A server whose init/1
+traps through a helper module (postgrex's `connect/1` trapping inside
+DBConnection's connection process) is now the process that traps, for
+shutdown's "trap_exit without an {:EXIT, ...} clause" and "cleans up in
+terminate/2 but never traps exits" and mailbox's runtime-message
+source, and the helper module, which runs no process, is not. No row
+moved over the corpus, ten live projects or OTP's kernel, ssl, mnesia
+and stdlib.
+
 ### Classes mined from fixed bugs
 
 Three classes from round 1 of mining fixed bugs (178 classified; the

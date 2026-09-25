@@ -48,9 +48,36 @@ partial_handle_info(mod, func) :-
 // OutputDevice Task trap in funs they spawn; the flag is that process's,
 // and the module's server still dies with its supervisor's signal, and
 // never receives an {:EXIT, ...} for the fun's links.
+//
+// The flag is the process's that runs the function setting it, which is
+// not always the module holding it: a server whose init/1 calls a
+// helper module's function that traps is the process that traps
+// (postgrex's connect/1 trapping in DBConnection's connection process),
+// and the helper module runs no process of its own. A trap on a process
+// module's own stack (a process_entry reaching it, SameProcessReach) is
+// that module's; one no process entry reaches (an API function such as
+// a start_link that traps in its caller, a library function whose
+// callers are outside the program) stays with the module holding it.
 .decl module_traps(func: symbol, mod: symbol)
 
-module_traps(func, mod) :- trap_exit(func, mod), !traps_elsewhere(func).
+module_traps(func, mod) :-
+  process_entry(mod, entry),
+  process_trap_reach.reaches(entry, func).
+
+module_traps(func, mod) :-
+  trap_exit(func, mod),
+  !traps_elsewhere(func),
+  !trap_on_process_stack(func).
+
+.init process_trap_reach = SameProcessReach
+
+process_trap_reach.seed(func, func) :- trap_exit(func, _), !traps_elsewhere(func).
+
+.decl trap_on_process_stack(func: symbol)
+
+trap_on_process_stack(func) :-
+  process_entry(_, entry),
+  process_trap_reach.reaches(entry, func).
 
 .decl traps_elsewhere(func: symbol)
 
