@@ -400,3 +400,66 @@ module_identity("module field").
 
   meets(f, c, a, rs, r, ks, k) :- met(f, c, a, rs, r, ks, k), !met_below(f, c, a).
 }
+
+// One finding per write.
+//
+// A write can be the act of several pairs: several reads decide it, or
+// feed it, and it meets them in more than one function. It is one race,
+// reported once: of the pairs a write is in, the strongest (the least
+// `rank`), then the least read, then the least function where they meet.
+// The others are the finding's frames. A write the same read decides in
+// the same way in the same function, later than another (`write_in`
+// names the function holding each; an index has no leading zeros, so a
+// shorter ID in one function is an earlier one), is the same race's other
+// branch — `[] -> insert; [r] -> write r + 1` of one counter, or add/2's
+// three set/2 calls — and a frame of the first. The ETS and the Mnesia
+// read-then-write rules each instantiate it, the ETS one with every pair
+// ranked alike.
+.comp OnePerWrite {
+  // In `func`, `read` decides or feeds `write`, a race of `kind` ranked
+  // `rank` (0 is the strongest).
+  .decl race(func: symbol, read: symbol, write: symbol, kind: symbol, rank: number)
+
+  // The function holding the write site.
+  .decl write_in(write: symbol, func: symbol)
+
+  .decl best_rank(write: symbol, rank: number)
+
+  best_rank(w, n) :- race(_, _, w, _, _), n = min m : { race(_, _, w, _, m) }.
+
+  .decl best(func: symbol, read: symbol, write: symbol, kind: symbol)
+
+  best(f, r, w, k) :- race(f, r, w, k, n), best_rank(w, n).
+
+  .decl outranked(func: symbol, read: symbol, write: symbol)
+
+  outranked(f, r, w) :- best(f, r, w, _), best(_, r2, w, _), r2 < r.
+  outranked(f, r, w) :- best(f, r, w, _), best(f2, r, w, _), f2 < f.
+
+  // The pair a write is reported at.
+  .decl chosen(func: symbol, read: symbol, write: symbol, kind: symbol)
+
+  chosen(f, r, w, k) :- best(f, r, w, k), !outranked(f, r, w).
+
+  // `write` is a later branch of the race `first` is reported for.
+  .decl later_branch(write: symbol, first: symbol)
+
+  later_branch(w2, w1) :-
+    chosen(f, r, w1, k),
+    chosen(f, r, w2, k),
+    w1 != w2,
+    write_in(w1, h),
+    write_in(w2, h),
+    (strlen(w1) < strlen(w2) ; strlen(w1) = strlen(w2), w1 < w2).
+
+  // The pairs that are findings.
+  .decl reported(func: symbol, read: symbol, write: symbol, kind: symbol)
+
+  reported(f, r, w, k) :- chosen(f, r, w, k), !later_branch(w, _).
+
+  // The later writes of a reported race, with the function it is
+  // reported from: the finding's "also_writes" frames.
+  .decl also_writes(first: symbol, write: symbol, func: symbol)
+
+  also_writes(w1, w2, f) :- later_branch(w2, w1), !later_branch(w1, _), chosen(f, _, w1, _).
+}

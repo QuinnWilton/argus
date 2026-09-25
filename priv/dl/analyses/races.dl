@@ -1075,41 +1075,23 @@ ets_race(mod, func, cat("param ", p), key, read_at, write_at) :-
   reported_at(func, write, write_at),
   in_module(func, mod).
 
-// One finding per write: of the pairs a write is in, the least read, then
-// the least function where they meet; the others are frames. A write the
-// same read decides in the same function, later than another, is the
-// same race's other branch (add_lsort/2's three set/2 calls): a frame of
-// the first.
-.decl site_function(site: symbol, func: symbol)
+// One finding per write (OnePerWrite, clientlib/check_then_act.dl), at
+// the sites it is reported at: of the pairs a write is in, the least
+// read, then the least function where they meet; the others are frames.
+// A write the same read decides in the same function, later than
+// another, is the same race's other branch (add_lsort/2's three set/2
+// calls): a frame of the first.
+.init ets_writes = OnePerWrite
 
-site_function(s, f) :- ets_race(_, _, _, _, _, s), ets_op(s, f, _, _, _).
-site_function(s, f) :- ets_race(_, _, _, _, _, s), call_site(s, f, _, _, _).
-
-.decl ets_outranked(func: symbol, read: symbol, write: symbol)
-
-ets_outranked(f, r, w) :- ets_race(_, f, _, _, r, w), ets_race(_, _, _, _, r2, w), r2 < r.
-ets_outranked(f, r, w) :- ets_race(_, f, _, _, r, w), ets_race(_, f2, _, _, r, w), f2 < f.
-
-.decl ets_chosen(func: symbol, read: symbol, write: symbol)
-
-ets_chosen(f, r, w) :- ets_race(_, f, _, _, r, w), !ets_outranked(f, r, w).
-
-.decl later_ets_branch(write: symbol, first: symbol)
-
-later_ets_branch(w2, w1) :-
-  ets_chosen(f, r, w1),
-  ets_chosen(f, r, w2),
-  w1 != w2,
-  site_function(w1, h),
-  site_function(w2, h),
-  (strlen(w1) < strlen(w2) ; strlen(w1) = strlen(w2), w1 < w2).
+ets_writes.race(f, r, w, "", 0) :- ets_race(_, f, _, _, r, w).
+ets_writes.write_in(s, f) :- ets_race(_, _, _, _, _, s), ets_op(s, f, _, _, _).
+ets_writes.write_in(s, f) :- ets_race(_, _, _, _, _, s), call_site(s, f, _, _, _).
 
 .decl ets_check_act(mod: symbol, func: symbol, name: symbol, key: symbol, read: symbol, write: symbol)
 .output ets_check_act
 
 ets_check_act(mod, f, t, k, r, w) :-
-  ets_chosen(f, r, w),
-  !later_ets_branch(w, _),
+  ets_writes.reported(f, r, w, _),
   ets_race(mod, f, t, k, r, w).
 
 // The same race's later writes ("also_writes") and the other reads that
@@ -1118,10 +1100,7 @@ ets_check_act(mod, f, t, k, r, w) :-
 .decl ets_race_frame(write: symbol, role: symbol, site: symbol, func: symbol)
 .output ets_race_frame
 
-ets_race_frame(w1, "also_writes", w2, f) :-
-  later_ets_branch(w2, w1),
-  !later_ets_branch(w1, _),
-  ets_chosen(f, _, w1).
+ets_race_frame(w1, "also_writes", w2, f) :- ets_writes.also_writes(w1, w2, f).
 
 ets_race_frame(w, "read", r2, f2) :-
   ets_check_act(_, _, _, _, r, w),
@@ -2296,43 +2275,18 @@ ranked_race(f, r, w, k, n) :-
   h != f,
   !read_in_own_function(w).
 
-.decl best_rank(write: symbol, rank: number)
+// One finding per write (OnePerWrite): at its strongest kind, then the
+// least read, then the least function.
+.init record_writes = OnePerWrite
 
-best_rank(w, n) :- ranked_race(_, _, w, _, _), n = min m : { ranked_race(_, _, w, _, m) }.
-
-.decl best_race(func: symbol, read: symbol, write: symbol, kind: symbol)
-
-best_race(f, r, w, k) :- ranked_race(f, r, w, k, n), best_rank(w, n).
-
-// Of a write's best pairs, the least read, then the least function.
-.decl outranked(func: symbol, read: symbol, write: symbol)
-
-outranked(f, r, w) :- best_race(f, r, w, _), best_race(_, r2, w, _), r2 < r.
-outranked(f, r, w) :- best_race(f, r, w, _), best_race(f2, r, w, _), f2 < f.
-
-.decl chosen_race(func: symbol, read: symbol, write: symbol, kind: symbol)
-
-chosen_race(f, r, w, k) :- best_race(f, r, w, k), !outranked(f, r, w).
-
-// Another write of the same race: in the same function, decided by the
-// same read in the same way, later in the function (an index has no
-// leading zeros, so a shorter ID in one function is an earlier one).
-.decl later_record_branch(write: symbol, first: symbol)
-
-later_record_branch(w2, w1) :-
-  chosen_race(f, r, w1, k),
-  chosen_race(f, r, w2, k),
-  w1 != w2,
-  records.act(w1, h, _, _, _, _),
-  records.act(w2, h, _, _, _, _),
-  (strlen(w1) < strlen(w2) ; strlen(w1) = strlen(w2), w1 < w2).
+record_writes.race(f, r, w, k, n) :- ranked_race(f, r, w, k, n).
+record_writes.write_in(w, h) :- ranked_race(_, _, w, _, _), records.act(w, h, _, _, _, _).
 
 .decl mnesia_check_act(mod: symbol, func: symbol, table: symbol, key: symbol, read: symbol, write: symbol, op: symbol, kind: symbol)
 .output mnesia_check_act
 
 mnesia_check_act(mod, f, t, key, r, w, op, k) :-
-  chosen_race(f, r, w, k),
-  !later_record_branch(w, _),
+  record_writes.reported(f, r, w, k),
   reads_then_writes_record(f, r, w, t, key),
   dirty_op(w, op),
   in_module(f, mod).
@@ -2345,10 +2299,7 @@ mnesia_check_act(mod, f, t, key, r, w, op, k) :-
 .decl mnesia_race_frame(write: symbol, role: symbol, site: symbol, func: symbol)
 .output mnesia_race_frame
 
-mnesia_race_frame(w1, "also_writes", w2, f) :-
-  later_record_branch(w2, w1),
-  !later_record_branch(w1, _),
-  chosen_race(f, _, w1, _).
+mnesia_race_frame(w1, "also_writes", w2, f) :- record_writes.also_writes(w1, w2, f).
 
 mnesia_race_frame(w, "other_writer", o, g) :-
   mnesia_check_act(_, f, t, _, _, w, _, _),
