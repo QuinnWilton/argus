@@ -36,7 +36,9 @@ defmodule Argus.Analyses.Blocking do
     `rpc_in_callback` (remote latency becomes local unavailability), or a
     `global` lock with retries (one distributed lock every caller shares
     when `nodes` is `cluster` or `unknown`; a lock on this node alone
-    when it is `local`).
+    when it is `local`), or a `socket` call with no timeout (a recv, a
+    connect, a TLS handshake) that a callback of `detail`, the server,
+    runs on its own stack.
   - `partial_noproc_catch(func, site, callee)` — a peer call whose catch
     covers `:noproc` but not the peer stopping mid-call.
   """
@@ -82,7 +84,9 @@ defmodule Argus.Analyses.Blocking do
       Argus.Extractors.Supervision,
       # A gen_statem's state functions and data (clientlib/process_statem.dl,
       # and processes.dl in the points-to stage).
-      Argus.Extractors.GenStatem
+      Argus.Extractors.GenStatem,
+      # Socket calls and how long they wait (unbounded_wait's "socket").
+      Argus.Extractors.Sockets
     ]
 
   @impl true
@@ -177,11 +181,12 @@ defmodule Argus.Analyses.Blocking do
         fields: [
           {:func, :symbol, "the waiting function (the handle_call/3, for infinity)"},
           {:site, :symbol, "instruction ID of the call, empty for infinity and rpc_in_callback"},
-          {:kind, :symbol, "infinity | rpc | rpc_in_callback | global"},
+          {:kind, :symbol, "infinity | rpc | rpc_in_callback | global | socket"},
           {:api, :symbol, "the call target, rpc variant, or :global operation"},
           {:detail, :symbol,
            "for global, the resolved retries; for rpc, 'caller' when the timeout is a " <>
-             "parameter a caller passes as :infinity (rpc_infinity_caller)"},
+             "parameter a caller passes as :infinity (rpc_infinity_caller); for socket, " <>
+             "the server whose callback runs the call"},
           {:nodes, :symbol,
            "for global, the nodes the lock waits on: cluster | local | unknown; else empty"}
         ],
@@ -475,6 +480,26 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
+  def finding(:unbounded_wait, [func, site, "socket", api, server, _]) do
+    Findings.new(
+      :warning,
+      "Socket call with no timeout inside a callback",
+      "#{Findings.call_name(func)} calls #{api}, which #{socket_wait(api)}, and " <>
+        "#{server}'s callbacks run it on the server's own stack. While it waits the " <>
+        "process answers nothing: its callers wait out their own timeouts, a " <>
+        "gen_statem's timeouts cannot fire, and a peer that stops answering holds the " <>
+        "process for as long as it likes.",
+      at: Findings.at_instr(site),
+      at_label: "waits with no timeout of its own",
+      help: [
+        "pass a finite timeout (`:gen_tcp.recv/3`, `:gen_tcp.connect/4`, " <>
+          "`:ssl.handshake/3`) and handle `{:error, :timeout}`",
+        "or make the socket active and take its data as messages, so the callback " <>
+          "never waits on the peer"
+      ]
+    )
+  end
+
   def finding(:unbounded_wait, [func, site, "global", op, retries, "cluster"]) do
     Findings.new(
       :info,
@@ -567,6 +592,11 @@ defmodule Argus.Analyses.Blocking do
   # with a value, :erpc raises, a multicall names the node, and a yield
   # has a timed form of its own. The help says the one the call gets.
   @spec rpc_timeout_help(String.t()) :: String.t()
+  defp socket_wait(":gen_tcp.connect/3"),
+    do: "waits until the operating system gives up on the connect, minutes on Linux"
+
+  defp socket_wait(_api), do: "waits with :infinity"
+
   defp rpc_timeout_help(variant) when variant in ["rpc", "block_call"],
     do: "pass a timeout (the last argument) and take `{:badrpc, :timeout}` as a result"
 

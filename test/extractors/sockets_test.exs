@@ -18,6 +18,14 @@ defmodule Argus.Extractors.SocketsTest do
     Enum.sort(rows)
   end
 
+  defp waits(module) do
+    rows =
+      for [_id, func, api, timeout, param] <- Map.get(facts(module), :socket_wait, []),
+          do: {name(func), api, timeout, param}
+
+    Enum.sort(rows)
+  end
+
   defp name(func_id), do: func_id |> String.split(":") |> List.last()
 
   describe "socket_active" do
@@ -55,6 +63,27 @@ defmodule Argus.Extractors.SocketsTest do
                {"handle_call/3", "setopts/2", "1", "true"},
                {"init/1", "create/4", "2", "false"}
              ]
+    end
+  end
+
+  describe "socket_wait" do
+    test "an arity that leaves the timeout out waits with :infinity" do
+      assert waits(F.RecvInCallback) == [{"handle_info/2", ":gen_tcp.recv/2", "infinity", "-1"}]
+      assert waits(F.ReconnectsInCall) == [{"connect/2", ":gen_tcp.connect/3", "infinity", "-1"}]
+    end
+
+    test "a literal timeout bounds it, and a parameter is named" do
+      assert waits(F.RecvBounded) == [{"handle_info/2", ":gen_tcp.recv/3", "bounded", "-1"}]
+      assert waits(F.ReconnectsBounded) == [{"connect/2", ":gen_tcp.connect/4", "bounded", "-1"}]
+      assert waits(F.InfinityThroughHelper) == [{"read/2", ":gen_tcp.recv/3", "param", "1"}]
+    end
+
+    test ":ssl.handshake/2 with options waits forever; with a timeout, as long as it says" do
+      assert waits(F.HandshakeInState) ==
+               [{"handle_event/4", ":ssl.handshake/2", "infinity", "-1"}]
+
+      assert waits(F.HandshakeBounded) ==
+               [{"handle_event/4", ":ssl.handshake/3", "bounded", "-1"}]
     end
   end
 

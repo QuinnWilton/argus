@@ -496,5 +496,31 @@
     module: "Sequin.DebouncedLogger",
     pre: "46ce4e1048437575ce3c40ebb3eb589a4b9e4f27",
     finding: {:races, "ETS row acted on after another process may have removed it"}
+  },
+  # ── blocking: a socket call with no timeout inside a callback ────────
+  # kafka_ex#556: the client's reconnect ran :gen_tcp.connect/3, whose
+  # timeout is the operating system's, from its handle_call/handle_info;
+  # against a black-holed broker every produce, fetch and commit behind it
+  # stalled for minutes. The fix passes connect/4 a timeout.
+  %{
+    repo: "kafkaex/kafka_ex",
+    issue: "kafka_ex#556",
+    module: "KafkaEx.Network.Socket",
+    pre: "c6ba2a73c1ff96f8943e6cf40a0bf10722217efc",
+    fix: "e33abf0bc5d34137c7cfc5513801c9ccbb2b5a62",
+    finding: {:blocking, "Socket call with no timeout inside a callback"}
+  },
+  # supavisor#1153: a client that sends an SSLRequest and stalls mid-TLS
+  # handshake held its ClientHandler, and its socket, forever: the
+  # handshake ran in a gen_statem callback as :ssl.handshake/2 with options,
+  # so no state timeout could fire. The fix passes handshake/3 2.5 s.
+  # (Supavisor.ClientHandler.Cancel's connect to the database stays at fix.)
+  %{
+    repo: "supabase/supavisor",
+    issue: "supavisor#1153",
+    module: "Supavisor.ClientHandler",
+    pre: "369dc8003667b44acada3e5700c993d6027d420a",
+    fix: "9d7df2d8c33d01bb1c3e69cb8c0ea118ed9fc4d4",
+    finding: {:blocking, "Socket call with no timeout inside a callback"}
   }
 ]

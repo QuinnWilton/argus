@@ -38,6 +38,24 @@ the close of a gen_statem's socket"; all `:warning`, anchored at the
 handler with the activation as a related frame, one per server and
 handler (the relation's key is now per source).
 
+**Added.** `blocking.unbounded_wait` kind `socket`: a socket call with
+no timeout of its own on an OTP callback's stack, other than init/1's
+("Socket call with no timeout inside a callback", `:warning`).
+`:gen_tcp.recv/2`, `:ssl.recv/2`, `:ssl.connect/2,3`,
+`:ssl.handshake/1` and `:ssl.handshake/2` with options wait with
+:infinity, as does any of them given `:infinity`, literally or through
+a parameter a caller fills; `:gen_tcp.connect/3` until the operating
+system gives up on the connect. `detail` is the server whose callback
+runs it. A recv init/1 reaches stays startup's finding, reported once;
+a wait in a fun that runs elsewhere (a task) is not the callback's.
+Corpus pairs: kafka_ex#556 (a reconnect's `:gen_tcp.connect/3` behind
+every produce) and supavisor#1153 (`:ssl.handshake/2` in the client
+handler, a client stalled mid-handshake holding it forever).
+
+**Changed.** Schema 98. `socket_wait(id, func, api, timeout, param)`
+(`Argus.Extractors.Sockets`): a blocking socket call and how long it may
+wait. blocking runs the extractor too.
+
 **Changed.** Schema 97. `Argus.Extractors.Sockets` (new) writes
 `socket_active(id, func, transport, mode, param)` and
 `socket_opts_arg(id, caller, callee, pos, mode)`, in

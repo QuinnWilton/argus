@@ -1,6 +1,7 @@
 defmodule Argus.Extractors.Sockets do
   @moduledoc """
-  TCP and TLS sockets: where a process makes one active.
+  TCP and TLS sockets: where a process makes one active, and where it
+  waits on one with no deadline.
 
   An active socket (`active: true`, `:once` or a count) delivers what it
   receives as messages to the process that controls it — the one that
@@ -14,6 +15,12 @@ defmodule Argus.Extractors.Sockets do
   again. Where the options are the enclosing function's parameter, a
   wrapper of the program's own (`Socket.setopts(s, [:binary, active:
   true])`), the call that hands the literal list down says the mode.
+
+  A passive socket is read with `recv`, and a socket call whose arity
+  leaves out the timeout waits with `:infinity`: `:gen_tcp.recv/2`,
+  `:gen_tcp.connect/3` (bounded only by the operating system's connect
+  timeout, minutes on Linux), `:ssl.recv/2`, `:ssl.connect/2,3`,
+  `:ssl.handshake/1` and `:ssl.handshake/2` with options.
 
   Only literal option lists are read. A list built at runtime is
   `"dynamic"`, and a rule treats it as saying nothing: a mode the
@@ -34,6 +41,10 @@ defmodule Argus.Extractors.Sockets do
   - `socket_opts_arg(id, caller, callee, pos, mode)` — the call at `id`
     hands `callee` a literal option list with an `:active` entry of
     `mode`, at argument `pos`: what a wrapper's `"param"` row resolves to.
+  - `socket_wait(id, func, api, timeout, param)` — a blocking socket call:
+    `timeout` is `"infinity"` (the arity leaves it out, or `:infinity` is
+    passed), `"bounded"` (a literal count), `"param"` (the function's
+    parameter `param`) or `"dynamic"`.
   """
 
   @behaviour Argus.Extractor
@@ -59,8 +70,25 @@ defmodule Argus.Extractors.Sockets do
     {:ranch_ssl, :setopts, 2} => {"ssl", :setopts, 1}
   }
 
+  # Blocking socket calls: the timeout's argument position, or :infinity
+  # when the arity leaves it out.
+  @waits %{
+    {:gen_tcp, :recv, 2} => :infinity,
+    {:gen_tcp, :recv, 3} => 2,
+    {:gen_tcp, :connect, 3} => :infinity,
+    {:gen_tcp, :connect, 4} => 3,
+    {:ssl, :recv, 2} => :infinity,
+    {:ssl, :recv, 3} => 2,
+    {:ssl, :connect, 2} => :infinity,
+    {:ssl, :connect, 3} => :connect3,
+    {:ssl, :connect, 4} => 3,
+    {:ssl, :handshake, 1} => :infinity,
+    {:ssl, :handshake, 2} => :handshake2,
+    {:ssl, :handshake, 3} => 2
+  }
+
   @impl true
-  def relations, do: [:socket_active, :socket_opts_arg]
+  def relations, do: [:socket_active, :socket_opts_arg, :socket_wait]
 
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
@@ -68,7 +96,11 @@ defmodule Argus.Extractors.Sockets do
     sites = CallSites.for_module(module_data)
 
     facts =
-      Enum.reduce(sites, %{}, fn site, acc -> activation(acc, site) end)
+      Enum.reduce(sites, %{}, fn site, acc ->
+        acc
+        |> activation(site)
+        |> wait(site)
+      end)
 
     facts
     |> transport_applies(mod, functions)
@@ -129,6 +161,9 @@ defmodule Argus.Extractors.Sockets do
       _ -> :unknown
     end
   end
+
+  defp list_at?(site, pos),
+    do: match?({:literal, l} when is_list(l), Resolve.value_at(site.instrs, site.idx, {:x, pos}))
 
   # The last `:active` entry wins, as the socket applies its options in
   # order. A part of the list the bytecode does not show, with no entry
@@ -223,6 +258,51 @@ defmodule Argus.Extractors.Sockets do
           Integer.to_string(pos),
           value_mode(value)
         ])
+    end
+  end
+
+  # ── Waits ──────────────────────────────────────────────────────────
+
+  defp wait(facts, %{remote?: true, mfa: {m, f, a} = mfa} = site) do
+    case Map.fetch(@waits, mfa) do
+      {:ok, pos} ->
+        {timeout, param} = timeout_at(site, pos)
+        api = "#{inspect(m)}.#{f}/#{a}"
+        id = InstrId.mint(site.func_id, site.idx)
+        add_fact(facts, :socket_wait, [id, site.func_id, api, timeout, param])
+
+      :error ->
+        facts
+    end
+  end
+
+  defp wait(facts, _site), do: facts
+
+  defp timeout_at(_site, :infinity), do: {"infinity", "-1"}
+
+  # `:ssl.connect(host, port, options)` waits forever; `connect(socket,
+  # options, timeout)` as long as its third argument says. Which form a
+  # call is, when neither argument is a literal, is not guessed.
+  defp timeout_at(site, :connect3) do
+    case connect3_form(site) do
+      :host -> {"infinity", "-1"}
+      :upgrade -> timeout_at(site, 2)
+      :unknown -> {"dynamic", "-1"}
+    end
+  end
+
+  # `:ssl.handshake(socket, options)` waits forever; `handshake(socket,
+  # timeout)` as long as it says.
+  defp timeout_at(site, :handshake2) do
+    if list_at?(site, 1), do: {"infinity", "-1"}, else: timeout_at(site, 1)
+  end
+
+  defp timeout_at(site, pos) do
+    case Resolve.value_at(site.instrs, site.idx, {:x, pos}) do
+      {:literal, :infinity} -> {"infinity", "-1"}
+      {:literal, n} when is_integer(n) -> {"bounded", "-1"}
+      {:arg, n} -> {"param", Integer.to_string(n)}
+      _ -> {"dynamic", "-1"}
     end
   end
 end

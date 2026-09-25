@@ -100,6 +100,24 @@ defmodule Argus.Schema.OwnedResources do
         A call handing a literal option list with an `:active` entry: what a \
         wrapper's `socket_active` row whose mode is "param" resolves to.
         """
+      },
+      %{
+        name: :socket_wait,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "instruction ID of the call"},
+          {:func, :symbol, "containing function ID"},
+          {:api, :symbol, "the call, spelled :gen_tcp.recv/2"},
+          {:timeout, :symbol,
+           ~s("infinity" (the arity leaves it out, or :infinity is passed\), "bounded", "param" or "dynamic")},
+          {:param, :number,
+           "the 0-based parameter the timeout comes from, for \"param\"; else -1"}
+        ],
+        doc: """
+        A blocking socket call — a recv, a connect, a TLS handshake — and how \
+        long it may wait. `:gen_tcp.connect/3` is bounded only by the operating \
+        system's connect timeout.
+        """
       }
     ])
   end

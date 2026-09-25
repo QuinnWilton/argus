@@ -30,7 +30,9 @@
 //   call with the default infinity timeout ("rpc"), a remote call inside
 //   a callback ("rpc_in_callback"), a :global lock with retries
 //   ("global"; `detail` is the retries, `nodes` whose agreement it waits
-//   on: "cluster", "local" or "unknown"; empty for the other kinds).
+//   on: "cluster", "local" or "unknown"; empty for the other kinds), a
+//   socket call with no timeout on a callback's stack ("socket"; `api`
+//   the call, `detail` the server whose callback runs it).
 // `receive_in_callback(id, func, callback, behaviour, proximity, bounded)`
 //   — a receive on an OTP process's own stack, `bounded` "false" when
 //   it has no after clause and can hang, "true" when it has one, "down"
@@ -572,6 +574,84 @@ receive_in_callback(id, func, callback, behaviour, proximity, "true") :-
   callback_reaches(callback, func, proximity),
   otp_callback(callback, _, _, behaviour),
   !flush_receive(id).
+
+// ══ A socket call with no timeout on an OTP process's own stack ══════
+//
+// The socket twin of a receive with no `after`. `:gen_tcp.recv/2`,
+// `:ssl.recv/2`, `:ssl.connect/2,3` (host, port and options),
+// `:ssl.handshake/1` and `:ssl.handshake/2` with options wait with
+// :infinity, and so does any of them given `:infinity`, literally or
+// through a parameter a caller fills; `:gen_tcp.connect/3` waits until
+// the operating system gives up on the connect, minutes on Linux. Made
+// from a callback, it holds the process: callers wait out their own
+// timeouts, a gen_statem's timeouts cannot fire, and a peer that stops
+// answering holds the process for as long as it likes (supavisor's
+// ClientHandler, a client stalled mid-handshake; kafka_ex's client, a
+// black-holed broker's connect behind every produce).
+//
+// Every OTP callback but init/1 counts, on its own stack
+// (SameProcessReach: a fun that runs elsewhere is not the callback's
+// wait). A recv init/1 reaches is startup's (unbounded_effect_in_init,
+// "recv"), reported there once; startup asks of a connect only whether
+// it can be retried, so a connect is judged here wherever it runs. A
+// process that is not an OTP behaviour's (a reader loop a spawn runs) is
+// made to wait, and is not judged.
+.decl socket_wait_infinity(site: symbol, func: symbol, api: symbol, holder: symbol)
+
+socket_wait_infinity(id, f, api, f) :- socket_wait(id, f, api, "infinity", _).
+
+socket_wait_infinity(id, f, api, c) :-
+  socket_wait(id, f, api, "param", p),
+  socket_infinity_at(f, p, c).
+
+// A caller passing :infinity as the timeout parameter, directly or
+// through its own.
+.decl socket_timeout_needed(func: symbol, pos: number)
+
+socket_timeout_needed(f, p) :- socket_wait(_, f, _, "param", p).
+socket_timeout_needed(f, q) :- socket_timeout_needed(g, p), call_arg_forward(f, g, p, q).
+
+.decl socket_infinity_at(func: symbol, pos: number, caller: symbol)
+
+socket_infinity_at(g, p, c) :- socket_timeout_needed(g, p), call_arg(c, g, p, ":infinity").
+
+socket_infinity_at(g, p, c) :-
+  socket_timeout_needed(g, p),
+  call_arg_forward(f, g, p, q),
+  socket_infinity_at(f, q, c).
+
+.init socket_reach = SameProcessReach
+
+socket_reach.seed(h, h) :- socket_wait_infinity(_, _, _, h).
+
+// The server whose callback, other than init/1, runs the wait.
+.decl socket_wait_server(site: symbol, func: symbol, api: symbol, server: symbol)
+
+socket_wait_server(id, f, api, m) :-
+  socket_wait_infinity(id, f, api, h),
+  otp_callback(c, m, name, _),
+  name != "init",
+  socket_reach.reaches(c, h).
+
+.decl socket_recv_api(api: symbol)
+
+socket_recv_api(":gen_tcp.recv/2").
+socket_recv_api(":gen_tcp.recv/3").
+socket_recv_api(":ssl.recv/2").
+socket_recv_api(":ssl.recv/3").
+
+// A recv init/1 runs: startup's.
+.decl init_recv(site: symbol)
+
+init_recv(id) :-
+  socket_wait_infinity(id, _, api, h),
+  socket_recv_api(api),
+  init_function(_, c),
+  socket_reach.reaches(c, h).
+
+unbounded_wait(f, id, "socket", api, m, "") :-
+  socket_wait_server(id, f, api, m),
+  !init_recv(id).
 
 // ══ Remote calls and cluster-wide locks ═════════════════════════════
 
