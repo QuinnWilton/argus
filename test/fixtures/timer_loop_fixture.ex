@@ -355,6 +355,135 @@ defmodule Argus.Test.Fixtures.TimerLoop do
     end
   end
 
+  # sequin's ConsumerProducer before f17a93e: every demand enters the
+  # receive function, which re-arms and stores its ref without reading it.
+  defmodule DemandRearm do
+    use GenStage
+
+    def init(_), do: {:producer, %{demand: 0, receive_timer: nil}}
+
+    def handle_demand(incoming, state),
+      do: receive_messages(%{state | demand: state.demand + incoming})
+
+    def handle_info(:receive_messages, state), do: receive_messages(state)
+
+    def receive_messages(state) do
+      {messages, state} = fetch(state)
+      timer = Process.send_after(self(), :receive_messages, 1000)
+      {:noreply, messages, %{state | receive_timer: timer}}
+    end
+
+    def fetch(state), do: {[], state}
+  end
+
+  # BroadwaySQS.Producer: the receive function's head asks for an empty
+  # receive_timer, so a demand arms only when no loop runs.
+  defmodule BroadwayGuard do
+    use GenStage
+
+    def init(_), do: {:producer, %{demand: 0, receive_timer: nil}}
+
+    def handle_demand(incoming, state),
+      do: receive_messages(%{state | demand: state.demand + incoming})
+
+    def handle_info(:receive_messages, state),
+      do: receive_messages(%{state | receive_timer: nil})
+
+    def receive_messages(%{receive_timer: nil} = state) do
+      timer = Process.send_after(self(), :receive_messages, 1000)
+      {:noreply, [], %{state | receive_timer: timer}}
+    end
+
+    def receive_messages(state), do: {:noreply, [], state}
+  end
+
+  # ant's Ant.Queue before b6f9f90: three clauses for :check_workers each
+  # re-arm through the helper, and each finished job's dequeue arms it
+  # again. No one call is on every path; the three together are.
+  defmodule ThreeClauseLoop do
+    use GenServer
+
+    def init(_), do: {:ok, %{workers: [], busy: false, interval: 1000}}
+
+    def handle_call({:dequeue, worker}, _from, state) do
+      schedule_check(0)
+      {:reply, :ok, %{state | workers: List.delete(state.workers, worker)}}
+    end
+
+    def handle_info(:check_workers, %{busy: true} = state) do
+      schedule_check(state.interval)
+      {:noreply, state}
+    end
+
+    def handle_info(:check_workers, %{workers: []} = state) do
+      schedule_check(state.interval)
+      {:noreply, state}
+    end
+
+    def handle_info(:check_workers, state) do
+      start_workers(state)
+      schedule_check(state.interval)
+      {:noreply, state}
+    end
+
+    def schedule_check(ms), do: Process.send_after(self(), :check_workers, ms)
+    def start_workers(_state), do: :ok
+  end
+
+  # xandra's ControlConnection before ffe09a8: the refresh re-arms on
+  # success and hands a failure to handle_continue/2, which reconnects;
+  # a topology event in the socket clause arms another refresh.
+  defmodule ContinueOnError do
+    use GenServer
+
+    def init(_), do: {:ok, %{interval: 60_000}}
+
+    def handle_info(:refresh_topology, state) do
+      case fetch_topology() do
+        {:ok, _peers} ->
+          schedule_refresh(state.interval)
+          {:noreply, state}
+
+        {:error, reason} ->
+          {:noreply, state, {:continue, {:disconnected, reason}}}
+      end
+    end
+
+    def handle_info({:tcp, _socket, "NEW_NODE"}, state) do
+      schedule_refresh(5000)
+      {:noreply, state}
+    end
+
+    def handle_continue({:disconnected, _reason}, state), do: {:noreply, state}
+
+    def schedule_refresh(ms), do: Process.send_after(self(), :refresh_topology, ms)
+    def fetch_topology, do: Application.get_env(:probe, :topology, {:error, :down})
+  end
+
+  # xandra's own shape: a `with` whose `else` the compiler lifts into a
+  # local fun that hands a failure to handle_continue/2.
+  defmodule WithElseContinue do
+    use GenServer
+
+    def init(_), do: {:ok, %{interval: 60_000}}
+
+    def handle_info(:refresh, state) do
+      with {:ok, peers} <- fetch(),
+           :ok <- check(peers) do
+        schedule_refresh(state.interval)
+        {:noreply, state}
+      else
+        {:error, reason} -> {:noreply, state, {:continue, {:disconnected, reason}}}
+      end
+    end
+
+    def handle_continue({:disconnected, _reason}, state), do: {:noreply, state}
+
+    def schedule_refresh(ms), do: Process.send_after(self(), :refresh, ms)
+    def fetch, do: Application.get_env(:probe, :peers, {:error, :down})
+    def check(_peers), do: Application.get_env(:probe, :check, :ok)
+  end
+
   # A one-shot retry, not a loop: no clause for :retry arms :retry.
   defmodule OneShot do
     use GenServer

@@ -40,6 +40,7 @@ defmodule Argus.Extractors.ClauseCall do
 
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Dispatch
+  alias Argus.Extractor.Helpers
   alias Argus.Extractor.Resolve
   alias Argus.Instr
   alias Argus.InstrId
@@ -53,6 +54,8 @@ defmodule Argus.Extractors.ClauseCall do
   @impl true
   @spec extract(Argus.Extractor.module_data()) :: Argus.Pipeline.Emit.facts()
   def extract(module_data) do
+    ending = {Map.get(module_data, :module), ending_functions(module_data)}
+
     module_data
     |> CallSites.for_module()
     |> Enum.concat(send_sites(module_data))
@@ -60,9 +63,42 @@ defmodule Argus.Extractors.ClauseCall do
     |> Enum.sort_by(&elem(&1, 0))
     |> Enum.reduce(%{}, fn {func_id, [%{instrs: instrs} | _] = sites}, acc ->
       if dispatches_on_first?(instrs),
-        do: emit(acc, func_id, instrs, Enum.sort_by(sites, & &1.idx)),
+        do: emit(acc, func_id, instrs, Enum.sort_by(sites, & &1.idx), ending),
         else: acc
     end)
+  end
+
+  # The functions of the module every completion of which stops the
+  # process or hands it to handle_continue/2: the clauses of a `with`'s
+  # `else` the compiler lifts into a local fun
+  # (`{:error, r} -> {:noreply, s, {:continue, {:disconnected, r}}}`),
+  # and what tail-calls only such functions. A tail call to one is no
+  # path by which the caller goes on. A plain map, not a MapSet: dialyzer
+  # loses the MapSet's opacity through the recursion.
+  defp ending_functions(%{module: mod, functions: functions}) do
+    bodies =
+      Map.new(functions, fn {:function, name, arity, _entry, instrs} ->
+        {{name, arity}, instrs}
+      end)
+
+    grow_ending(mod, bodies, %{})
+  end
+
+  defp ending_functions(_module_data), do: %{}
+
+  defp grow_ending(mod, bodies, ending) do
+    grown =
+      for {key, instrs} <- bodies,
+          not Map.has_key?(ending, key),
+          going_on(instrs, mod, ending) == [],
+          Enum.any?(instrs, &(&1 == :return or Instr.tail_call?(&1))),
+          reduce: ending do
+        acc -> Map.put(acc, key, true)
+      end
+
+    if map_size(grown) == map_size(ending),
+      do: ending,
+      else: grow_ending(mod, bodies, grown)
   end
 
   # Erlang's `Pid ! Msg` is the `send` instruction, not a call to
@@ -76,7 +112,7 @@ defmodule Argus.Extractors.ClauseCall do
 
   defp send_sites(_module_data), do: []
 
-  defp emit(facts, func_id, instrs, sites) do
+  defp emit(facts, func_id, instrs, sites, ending) do
     tags = Dispatch.argument_tags(instrs, {:x, 0})
 
     facts =
@@ -90,7 +126,7 @@ defmodule Argus.Extractors.ClauseCall do
 
     facts =
       if String.ends_with?(func_id, ":handle_info/2"),
-        do: emit_always(facts, func_id, instrs, sites, tags),
+        do: emit_always(facts, func_id, instrs, sites, tags, ending),
         else: facts
 
     if terminate?(func_id), do: emit_skipped(facts, func_id, instrs, sites), else: facts
@@ -99,8 +135,8 @@ defmodule Argus.Extractors.ClauseCall do
   # For each atom tag a site's clause names: the returns and tail calls
   # the message reaches that let the process go on, and whether each is
   # reached only through the site.
-  defp emit_always(facts, func_id, instrs, sites, tags) do
-    ends = going_on(instrs)
+  defp emit_always(facts, func_id, instrs, sites, tags, {mod, ending}) do
+    ends = going_on(instrs, mod, ending)
 
     tagged =
       for site <- sites,
@@ -117,13 +153,50 @@ defmodule Argus.Extractors.ClauseCall do
       |> Enum.uniq()
       |> Map.new(fn atom -> {atom, Dispatch.reached_with(instrs, {:x, 0}, atom)} end)
 
-    for {site, tag, atom} <- tagged,
+    # The sites of one tag that do the same thing — call one function, or
+    # arm or send one message — stand together: three clauses for a
+    # message that each call `schedule_check(ms)` re-arm on every path
+    # between them, though no one site is on all of them.
+    groups = Enum.group_by(tagged, fn {site, tag, _atom} -> {tag, act(instrs, site)} end)
+
+    for {{tag, _act}, [{_site, _tag, atom} | _] = group} <- Enum.sort(groups),
         ends_here = Enum.filter(ends, &MapSet.member?(reached[atom], &1)),
         ends_here != [],
-        without = Dispatch.reached_with(instrs, {:x, 0}, atom, site.idx),
+        without =
+          Dispatch.reached_with(
+            instrs,
+            {:x, 0},
+            atom,
+            Enum.map(group, fn {site, _, _} -> site.idx end)
+          ),
         not Enum.any?(ends_here, &MapSet.member?(without, &1)),
+        {site, _tag, _atom} <- group,
         reduce: facts do
       acc -> add_fact(acc, :info_clause_always, [InstrId.mint(func_id, site.idx), func_id, tag])
+    end
+  end
+
+  # What a site does, for telling sites of one clause apart: the message
+  # a timer or a send carries, else the function it calls.
+  @message_register %{
+    {:erlang, :send_after, 3} => 2,
+    {:erlang, :send_after, 4} => 2,
+    {:erlang, :start_timer, 3} => 2,
+    {:erlang, :start_timer, 4} => 2,
+    {:timer, :send_after, 2} => 1,
+    {:timer, :send_after, 3} => 2,
+    {:timer, :send_interval, 2} => 1,
+    {:timer, :send_interval, 3} => 2,
+    {:erlang, :send, 2} => 1,
+    {:erlang, :send, 3} => 1
+  }
+
+  defp act(instrs, %{idx: idx} = site) do
+    mfa = Map.get(site, :mfa, :send)
+
+    case Map.get(@message_register, mfa, if(mfa == :send, do: 1)) do
+      nil -> mfa
+      reg -> {mfa, Resolve.resolve_register(instrs, idx, {:x, reg})}
     end
   end
 
@@ -131,11 +204,19 @@ defmodule Argus.Extractors.ClauseCall do
   # but a return of `{:stop, ...}` and a tail call that raises (the
   # compiler's `:erlang.error({:badmap, _})`, a `raise`), which the graph
   # counts as a tail call like any other.
-  defp going_on(instrs) do
+  defp going_on(instrs, mod, ending) do
     for {instr, idx} <- Enum.with_index(instrs),
         instr == :return or (Instr.tail_call?(instr) and not raises?(instr)),
         not stops?(instrs, idx, instr),
+        not ends_in?(instr, mod, ending),
         do: idx
+  end
+
+  defp ends_in?(instr, mod, ending) do
+    case Helpers.match_local_call(instr) do
+      {:ok, ^mod, f, a} -> Map.has_key?(ending, {f, a})
+      _ -> false
+    end
   end
 
   @raising ~w(error exit throw raise nif_error)a
@@ -146,14 +227,28 @@ defmodule Argus.Extractors.ClauseCall do
   defp raises?({:call_ext_only, _arity, {:extfunc, :erlang, f, _}}), do: f in @raising
   defp raises?(_instr), do: false
 
+  # A return that stops the process, or hands it to handle_continue/2
+  # (`{:noreply, state, {:continue, {:disconnected, reason}}}`): the loop
+  # ends there, or the continue decides what comes next (xandra's refresh
+  # loop reconnects after a failed refresh, and re-arms from there).
   defp stops?(instrs, idx, :return) do
     case Resolve.resolve_register(instrs, idx, {:x, 0}) do
-      {:ok, value} when is_tuple(value) and tuple_size(value) > 0 -> elem(value, 0) == :stop
-      _ -> false
+      {:ok, value} when is_tuple(value) and tuple_size(value) > 0 ->
+        elem(value, 0) == :stop or continues?(value)
+
+      _ ->
+        false
     end
   end
 
   defp stops?(_instrs, _idx, _tail_call), do: false
+
+  defp continues?(value) do
+    case elem(value, tuple_size(value) - 1) do
+      {:continue, _} -> true
+      _ -> false
+    end
+  end
 
   # A tag as argument_tags spells it (`inspect/1` of the atom), back to
   # the atom; a tuple's tag is spelled the same, and the atom compared is

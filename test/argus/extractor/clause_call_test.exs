@@ -1,6 +1,8 @@
 defmodule Argus.Extractor.ClauseCallTest do
   use ExUnit.Case, async: true
 
+  alias Argus.Extractors.ClauseCall
+  alias Argus.Pipeline.Disassemble
   alias Argus.Test.Fixtures.ClauseCall.{Router, Server}
 
   # callee function name => the tags the call to it serves, keyed by
@@ -88,6 +90,34 @@ defmodule Argus.Extractor.ClauseCallTest do
       refute Enum.any?(always(T.RetryLoop), &match?({":erlang", "send_after", _}, &1))
     end
 
+    # The local functions the always-sites of `mod`'s handle_info/2 call.
+    defp always_local(mod) do
+      {:ok, data} = Disassemble.disassemble_path(File.read!(:code.which(mod)))
+      facts = ClauseCall.extract(data)
+
+      {:function, _, _, _, instrs} =
+        Enum.find(data.functions, &match?({:function, :handle_info, 2, _, _}, &1))
+
+      for [id, _func, _tag] <- Map.get(facts, :info_clause_always, []),
+          {:ok, %{idx: idx}} = Argus.InstrId.parse(id),
+          {:ok, _m, f, _a} <- [Argus.Extractor.Helpers.match_local_call(Enum.at(instrs, idx))],
+          do: f
+    end
+
+    test "the sites of one clause that call one function are always together" do
+      # ant's three :check_workers clauses each call schedule_check/1.
+      assert Enum.count(always_local(T.ThreeClauseLoop), &(&1 == :schedule_check)) == 3
+    end
+
+    test "a failure handed to handle_continue/2 leaves the loop to the continue" do
+      # xandra: re-armed on success, {:continue, {:disconnected, r}} on error.
+      assert :schedule_refresh in always_local(T.ContinueOnError)
+
+      # The same, from a `with`'s `else`, which the compiler lifts into a
+      # local fun the clause tail-calls.
+      assert :schedule_refresh in always_local(T.WithElseContinue)
+    end
+
     test "a return of {:stop, ...} leaves the loop, and does not count" do
       [{_mod, bin}] =
         Code.compile_string("""
@@ -108,10 +138,10 @@ defmodule Argus.Extractor.ClauseCallTest do
         end
         """)
 
-      {:ok, data} = Argus.Pipeline.Disassemble.disassemble_path(bin)
+      {:ok, data} = Disassemble.disassemble_path(bin)
 
       assert [[_id, _func, ":tick"] | _] =
-               Argus.Extractors.ClauseCall.extract(data)
+               ClauseCall.extract(data)
                |> Map.get(:info_clause_always, [])
                |> Enum.filter(fn [id, _, _] -> String.contains?(id, "handle_info") end)
     end
