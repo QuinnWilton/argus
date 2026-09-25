@@ -81,6 +81,12 @@ wait. blocking runs the extractor too.
 
 ### Process rules, read against real programs
 
+**Fixed.** `ets.ets_write_only_table` ("ETS table … only grows") leaves
+an insert whose key is a literal into a set table: it overwrites the one
+row its key names, however often it runs. rabbit_disk_monitor keeps four
+settings under literal keys and was reported as a table that only grows.
+A bag, or a table with a keypos of its own, still grows.
+
 **Fixed.** A trap_exit set in a fun the module hands to a process start
 is that process's, not the module server's (`module_traps`,
 clientlib/process.dl). gen_server2's multi_call middleman and elixir-ls's

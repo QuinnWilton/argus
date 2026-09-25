@@ -196,6 +196,41 @@ defmodule Argus.Test.Fixtures.EtsBounded do
   end
 end
 
+defmodule Argus.Test.Fixtures.EtsSettings do
+  @moduledoc """
+  rabbit_disk_monitor's shape: a set table whose every insert names its
+  key literally. Each overwrites the one row its key names; the table
+  holds two rows however often the setters run.
+  """
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  def set_limit(n), do: :ets.insert(:settings_table, {:limit, n})
+  def set_interval(ms), do: :ets.insert(:settings_table, {:interval, ms})
+
+  @impl true
+  def init(_) do
+    :ets.new(:settings_table, [:named_table, :protected, :set])
+    {:ok, %{}}
+  end
+end
+
+defmodule Argus.Test.Fixtures.EtsSettingsBag do
+  @moduledoc "The same literal keys into a bag: each insert adds a row. It only grows."
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  def set_limit(n), do: :ets.insert(:settings_bag, {:limit, n})
+
+  @impl true
+  def init(_) do
+    :ets.new(:settings_bag, [:named_table, :protected, :bag])
+    {:ok, %{}}
+  end
+end
+
 defmodule Argus.Test.Fixtures.EtsWarmCache do
   @moduledoc "Filled once in init/1, read forever: a cache, not a leak."
   use GenServer

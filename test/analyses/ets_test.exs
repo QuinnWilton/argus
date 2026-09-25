@@ -122,5 +122,16 @@ defmodule Argus.Analyses.EtsTest do
 
       assert site =~ "EtsGrowOnly:init/1#"
     end
+
+    test "a set table written only under literal keys holds one row per key" do
+      skip_without_souffle()
+
+      modules = [Argus.Test.Fixtures.EtsSettings, Argus.Test.Fixtures.EtsSettingsBag]
+      assert {:ok, results} = Memo.analyze(modules, :ets)
+
+      assert [[":settings_bag", "Argus.Test.Fixtures.EtsSettingsBag", _site]] =
+               results["ets_write_only_table"],
+             "a bag keeps every insert under the same key; a set overwrites it"
+    end
   end
 end

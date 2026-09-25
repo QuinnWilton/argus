@@ -178,10 +178,30 @@ ets_table_shrinks(name, owner) :-
 .decl ets_grows_outside_init(name: symbol)
 
 ets_grows_outside_init(name) :-
-  ets_op(_, f, name, op, "write"),
+  ets_op(id, f, name, op, "write"),
   (op = "insert" ; op = "insert_new"),
   function_def(f, _, fname, _, _),
-  fname != "init".
+  fname != "init",
+  !overwrites_row(id).
+
+// An insert whose key is a literal (ets_key) into a set table keyed on
+// the first element overwrites the one row that key names: however often
+// it runs, the table holds one row for it. rabbit_disk_monitor keeps its
+// four settings that way. A bag keeps every insert, and a table with a
+// keypos of its own is keyed on another element.
+.decl overwrites_row(id: symbol)
+
+overwrites_row(id) :-
+  ets_op(id, _, name, _, _),
+  ets_key(id, "literal", _),
+  ets_new(t, _, name),
+  !bag_table(t),
+  !ets_option(t, "keypos", _).
+
+.decl bag_table(table: symbol)
+
+bag_table(t) :- ets_option(t, "type", "bag").
+bag_table(t) :- ets_option(t, "type", "duplicate_bag").
 
 .decl ets_write_only_table(name: symbol, mod: symbol, site: symbol)
 .output ets_write_only_table
