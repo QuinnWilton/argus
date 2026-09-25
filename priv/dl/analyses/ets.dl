@@ -155,16 +155,9 @@ ets_unnamed_in_process(name, mod, id) :-
 // filled once in init/1 and read thereafter is a cache, not a leak, and
 // is not reported.
 //
-// Any removal on a dynamic table reference in the owner's module is
-// taken as possibly this table — the direction that stays quiet.
-.decl ets_removal_op(op: symbol)
-
-ets_removal_op("delete").
-ets_removal_op("delete_object").
-ets_removal_op("delete_all_objects").
-ets_removal_op("select_delete").
-ets_removal_op("match_delete").
-ets_removal_op("take").
+// Any removal (ets_removal_op, clientlib/effects.dl) on a dynamic table
+// reference in the owner's module is taken as possibly this table — the
+// direction that stays quiet.
 
 .decl ets_table_shrinks(name: symbol, owner: symbol)
 
@@ -253,10 +246,11 @@ ets_reach.seed(f, f) :- named_read(_, f, _).
 owner_reaches(mod, t) :- process_entry(mod, c), ets_reach.reaches(c, t).
 
 // :ets.info/1,2 answers :undefined for a table that is gone; it is how a
-// reader asks, not a read that raises.
+// reader asks, not a read that raises (ets_answers_missing_table,
+// clientlib/effects.dl).
 .decl raising_read(site: symbol)
 
-raising_read(site) :- ets_op(site, _, _, op, "read"), op != "info".
+raising_read(site) :- ets_op(site, _, _, op, "read"), !ets_answers_missing_table(op).
 
 // A rescue that would catch the ArgumentError a missing table raises
 // (rescues_argument_error, in exceptions.dl) may sit in the function

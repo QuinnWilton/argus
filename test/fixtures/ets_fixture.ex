@@ -112,6 +112,7 @@ defmodule Argus.Test.Fixtures.EtsAdminOps do
   @moduledoc false
 
   def delete_all(tab), do: :ets.delete_all_objects(tab)
+  def delete_matching(tab), do: :ets.match_delete(tab, {:_, :stale})
   def give_away(tab, pid), do: :ets.give_away(tab, pid, :gift)
   def rename_table(tab, name), do: :ets.rename(tab, name)
   def set_opts(tab), do: :ets.setopts(tab, [{:heir, self(), nil}])

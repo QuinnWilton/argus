@@ -580,19 +580,21 @@ seeded_row(t, k) :-
 removes_row(t, k) :-
   ets_op(w, _, t, op, "write"),
   ets_key(w, "literal", k),
-  (op = "delete" ; op = "take" ; op = "delete_object").
+  ets_removal_op(op),
+  !ets_removes_every_key(op).
 
 removes_row(t, k) :-
   ets_op(w, _, t, op, "write"),
   ets_key(w, ks, _),
   ks != "literal",
-  (op = "delete" ; op = "take" ; op = "delete_object"),
+  ets_removal_op(op),
+  !ets_removes_every_key(op),
   ets_op(w2, _, t, _, _),
   ets_key(w2, "literal", k).
 
 removes_row(t, k) :-
   ets_op(_, _, t, op, "write"),
-  (op = "delete_all_objects" ; op = "select_delete" ; op = "match_delete"),
+  ets_removes_every_key(op),
   ets_op(w2, _, t, _, _),
   ets_key(w2, "literal", k).
 

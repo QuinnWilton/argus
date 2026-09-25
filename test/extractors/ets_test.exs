@@ -172,6 +172,14 @@ defmodule Argus.Extractors.ETSTest do
              end)
     end
 
+    test "classifies match_delete as a write, as select_delete is" do
+      facts = ETS.extract(disassemble(Argus.Test.Fixtures.EtsAdminOps))
+
+      assert Enum.any?(facts[:ets_op], fn [_, _, _, op, kind] ->
+               op == "match_delete" and kind == "write"
+             end)
+    end
+
     test "classifies give_away, rename, setopts as write" do
       facts = ETS.extract(disassemble(Argus.Test.Fixtures.EtsAdminOps))
 

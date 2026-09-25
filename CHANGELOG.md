@@ -377,6 +377,19 @@ decides or in a helper it decides the call of (`decision_sends`,
 loose write-back had kept reported for the wrong reason), and a fill or
 a trip is a write of a value, never a delete.
 
+**Changed.** Removing an ETS row, and an ETS operation that raises, are
+shared words (`clientlib/effects.dl`): `ets_removal_op` (delete, take,
+delete_object, select_delete, match_delete, delete_all_objects) and
+`ets_removes_every_key`, `ets_answers_missing_table` (info, whereis) and
+`ets_raises_without_row` (lookup_element/3, update_counter/3), read by
+races (a removal a write loses nothing to, a remover of a found row, an
+act that raises without its row), ets (a table that only grows, a read
+that raises), failure (a seeded row nothing removes) and mailbox's
+bookkeeping (`removal_api`). The five lists disagreed on match_delete
+and delete_all_objects. **Fixed**: the ETS extractor classified
+`:ets.match_delete/2` as `unknown`, so the rules that ask for a write
+never saw it; it is a write.
+
 **Changed.** A cast a spawn, task or agent makes is its own process's
 (`reaches_async_dep` cuts `runs_elsewhere`, as `reaches_sync_dep` does):
 a task init/1 starts that casts to a later sibling no longer makes

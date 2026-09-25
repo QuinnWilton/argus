@@ -526,11 +526,7 @@ other_writer(f, name, g) :-
 // the table ends as it would had the pair run first.
 .decl removal(write: symbol)
 
-removal(w) :- ets_op(w, _, _, "delete", "write").
-removal(w) :- ets_op(w, _, _, "delete_object", "write").
-removal(w) :- ets_op(w, _, _, "delete_all_objects", "write").
-removal(w) :- ets_op(w, _, _, "select_delete", "write").
-removal(w) :- ets_op(w, _, _, "take", "write").
+removal(w) :- ets_op(w, _, _, op, "write"), ets_removal_op(op).
 
 // A write that can make a row: an insert, or a counter bump with a
 // default object.
@@ -1218,12 +1214,9 @@ publishes_early(f, w1, w2) :-
 .decl raises_if_missing(r: symbol, func: symbol)
 
 raises_if_missing(r, g) :-
-  ets_op(r, g, _, "lookup_element", _),
-  remote_call(r, _, ":ets", "lookup_element", 3).
-
-raises_if_missing(r, g) :-
-  ets_op(r, g, _, "update_counter", _),
-  remote_call(r, _, ":ets", "update_counter", 3).
+  ets_op(r, g, _, op, _),
+  remote_call(r, _, m, op, a),
+  ets_raises_without_row(m, op, a).
 
 // A read of A that hands out what it found: the way V reaches a reader.
 .decl hands_out(r: symbol)
@@ -1520,7 +1513,7 @@ made_in_view(k, t) :- site_table(_, k, t).
 
 removes_rows(d, [tk, t]) :-
   ets_op(d, _, _, op, _),
-  (op = "take" ; op = "delete" ; op = "delete_object" ; op = "select_delete" ; op = "match_delete" ; op = "delete_all_objects"),
+  ets_removal_op(op),
   ets_table(d, tk, t).
 
 // The pairs the rule asks about, for the questions it asks of processes.

@@ -70,7 +70,8 @@ defmodule Argus.Extractors.ETS do
                safe_fixtable)a
 
   @write_ops ~w(insert insert_new delete_object delete_all_objects update_element
-                update_counter select_delete select_replace give_away rename setopts)a
+                update_counter select_delete match_delete select_replace give_away rename
+                setopts)a
 
   # Operations whose key is the second argument, and the ones whose key
   # is inside the object they insert.
