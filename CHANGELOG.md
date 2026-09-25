@@ -45,6 +45,25 @@ supervisors. A name no test says is an atom (`:"#{name}_id"` alone may
 interpolate a string) and an atom beside an unbounded integer
 (`:"#{prefix}_shard#{n}"`) stay reported.
 
+**Fixed.** A server's `verify: :verify_none` is not "turns off TLS
+certificate verification": on a listening or accepted socket it means
+the server asks its clients for no certificate, which is how nearly
+every server runs. Schema 109: `tls_server_side(id, func)`
+(`Argus.Extractors.Tls`) marks the site of a server's call
+(`:ssl.listen/2`, `:ssl.handshake/2,3`, `:ranch.start_listener/5,6` and
+`child_spec/5,6`, `:cowboy.start_tls/3`, `Plug.Cowboy.https/3` and
+`child_spec/1`, Bandit's and ThousandIsland's `start_link/1` and
+`child_spec/1`) and a mention whose value is made, in its function, only
+into the options of one — through the lists, tuples and maps that build
+it and `Keyword.put/3` and its kin, and read nowhere else: a client's
+connect, a return, a message or a field keeps it reported.
+`exposure.disables_verification` leaves those, and
+`relies_on_default_verification` leaves a server's call, whose missing
+`verify` is the same choice. Over the evaluation programs, ejabberd and
+rabbitmq one row of 12 goes, supavisor's `ClientHandler.handle_event/4`
+(a handshake on an accepted socket); ejabberd's `fast_tls` listeners,
+a server by their options, stay.
+
 ### Mining, round 2: defects the catalog suspected, and missed instances
 
 Round 2 of the mining confirmed each rule defect the catalog suspected

@@ -5,7 +5,17 @@ defmodule Argus.Analyses.ExposureTlsTest do
   alias Argus.Test.Fixtures.Tls, as: T
   alias Argus.Test.Memo
 
-  @all [T.ForcesNone, T.OffersChoice, T.Verifies, T.DefaultsSilently, T.DynamicOpts]
+  @all [
+    T.ForcesNone,
+    T.OffersChoice,
+    T.Verifies,
+    T.DefaultsSilently,
+    T.DynamicOpts,
+    T.Listener,
+    T.Accepts,
+    T.ServesAndDials,
+    T.ReturnsOptions
+  ]
 
   defp skip_without_souffle do
     unless Souffle.available?(), do: flunk("souffle not installed")
@@ -44,6 +54,35 @@ defmodule Argus.Analyses.ExposureTlsTest do
 
       refute named?(names, "OffersChoice"),
              "naming :verify_peer anywhere means the caller can have a secure channel"
+    end
+  end
+
+  describe "a server's side" do
+    # On a listener or an accepted socket, verify_none means the server
+    # asks its clients for no certificate: ejabberd's HTTP listener,
+    # supavisor's client handler.
+    test "a listener's or an accepted socket's verify_none is not reported" do
+      skip_without_souffle()
+      names = funcs("disables_verification")
+
+      refute named?(names, "Listener")
+      refute named?(names, "Accepts")
+    end
+
+    test "a listener that leaves verify out is not left to a client's default" do
+      skip_without_souffle()
+      names = funcs("relies_on_default_verification")
+
+      refute named?(names, "Listener")
+      assert named?(names, "DefaultsSilently")
+    end
+
+    test "options that also reach a connect, or leave the function, are reported" do
+      skip_without_souffle()
+      names = funcs("disables_verification")
+
+      assert named?(names, "ServesAndDials")
+      assert named?(names, "ReturnsOptions")
     end
   end
 

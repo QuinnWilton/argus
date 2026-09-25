@@ -240,23 +240,34 @@ module_can_verify(mod) :-
   tls_verification(_, func, "peer"),
   function_def(func, mod, _, _, _).
 
+// A server's `verify_none` (tls_server_side: a listener's or an accepted
+// socket's options, made only into those) is not this bug: the server
+// does not ask its clients for a certificate, which is how nearly every
+// server runs. ejabberd's HTTP listener and supavisor's client handler
+// accept TLS that way. A setting that also reaches a client's connect,
+// a return or a field stays reported.
+
 .decl disables_verification(func: symbol, id: symbol)
 .output disables_verification
 
 disables_verification(func, id) :-
   tls_verification(id, func, "none"),
   function_def(func, mod, _, _, _),
-  !module_can_verify(mod).
+  !module_can_verify(mod),
+  !tls_server_side(id, func).
 
 // ── Verification left to the library's default ───────────────────
 //
 // Only for connects whose options are a literal list. A list built at
 // runtime may well set `verify` somewhere this cannot see, and a false
-// "insecure" on correctly configured code is worse than silence.
+// "insecure" on correctly configured code is worse than silence. A
+// server's call is not a connect: a server that leaves `verify` out does
+// not ask for client certificates, the usual configuration.
 
 .decl relies_on_default_verification(func: symbol, id: symbol, api: symbol)
 .output relies_on_default_verification
 
 relies_on_default_verification(func, id, api) :-
   tls_connect(id, func, api, "literal"),
-  tls_verification(id, func, "absent").
+  tls_verification(id, func, "absent"),
+  !tls_server_side(id, func).

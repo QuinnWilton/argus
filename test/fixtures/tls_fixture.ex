@@ -36,4 +36,46 @@ defmodule Argus.Test.Fixtures.Tls do
     @moduledoc "Options built at runtime — unknowable, so unreported."
     def connect(host, opts), do: :ssl.connect(host, 443, opts, 5000)
   end
+
+  defmodule Listener do
+    @moduledoc """
+    A server: `verify_none` on its listener means it asks its clients for
+    no certificate, and a listener that leaves `verify` out does the same.
+    """
+    def listen(port, certfile),
+      do: :ssl.listen(port, certfile: certfile, verify: :verify_none, active: false)
+
+    def listen_default(port), do: :ssl.listen(port, active: false)
+  end
+
+  defmodule Accepts do
+    @moduledoc """
+    supavisor's client handler: options built at runtime for the server's
+    handshake on an accepted socket.
+    """
+    def upgrade(sock, certs_keys) do
+      opts = [verify: :verify_none, certs_keys: certs_keys]
+      :ok = :inet.setopts(sock, active: false)
+      :ssl.handshake(sock, opts, 5000)
+    end
+  end
+
+  defmodule ServesAndDials do
+    @moduledoc "One option list for a listener and a client's connect: the client does not verify."
+    def start(port, host, certfile) do
+      opts = [verify: :verify_none, certfile: certfile]
+      {:ok, listener} = :ssl.listen(port, opts)
+      {:ok, conn} = :ssl.connect(host, 443, opts, 5000)
+      {listener, conn}
+    end
+  end
+
+  defmodule ReturnsOptions do
+    @moduledoc "Returns the options it listens with: where else they go is not seen."
+    def listen(port, certfile) do
+      opts = [verify: :verify_none, certfile: certfile]
+      {:ok, listener} = :ssl.listen(port, opts)
+      {listener, opts}
+    end
+  end
 end

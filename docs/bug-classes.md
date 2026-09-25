@@ -2622,20 +2622,21 @@ F's name must not end in a metadata suffix: `_at`, `_on`, `_date`, `_time`, `_co
 `disables_verification`
 · titles: "#{func} turns off TLS certificate verification" (`:error`)
 
-**Property.** An instruction in function f of module M names the atom `:verify_none`, either as an operand or inside a literal. No instruction in any function of M names `:verify_peer`, so M offers its callers no way to get a verified connection. The finding anchors at the instruction that names `:verify_none`. At run time, anyone able to answer for the host (through DNS, ARP, a proxy or the network) can end the session with a certificate they made themselves, and both ends report success.
+**Property.** An instruction in function f of module M names the atom `:verify_none`, either as an operand or inside a literal. No instruction in any function of M names `:verify_peer`, so M offers its callers no way to get a verified connection. The mention does not configure a server (`tls_server_side`): its value is not made, in f, only into the options of a server's call (`:ssl.listen/2`, `:ssl.handshake/2,3`, a Ranch or Cowboy TLS listener, a Plug.Cowboy, Bandit or ThousandIsland server), where `verify_none` means the server asks its clients for no certificate. The finding anchors at the instruction that names `:verify_none`. At run time, anyone able to answer for the host (through DNS, ARP, a proxy or the network) can end the session with a certificate they made themselves, and both ends report success.
 
 **Assumptions and limits.**
 - Any mention of the atom counts, including one in a literal that is not a TLS option list, such as a list of accepted modes. A single literal that names both atoms records only `:verify_none`.
 - The scope is the whole module, and it is generous: if M names `:verify_peer` anywhere, M is credited with offering verification, whether or not that branch is reachable. A false "insecure" on code that supports verification costs more than a miss.
 - A `:verify_peer` that checks nothing is not detected: a `verify_fun` that accepts every certificate, or a hostname check turned off.
 - A library's own spelling, such as hackney's `insecure: true`, is not recognised.
+- A server's setting is recognised only where its value goes, in its own function, into a server's call and nowhere else: not into a client's connect, a return, a message or a field. A listener named in a supervisor's child list is data, not a call, and a wrapper whose role is in its options (ejabberd's `fast_tls:tcp_to_tls/2`, a server unless the options say `connect`) is not read; both stay reported.
 - One finding per function.
 
-**Fixtures.** Positive: `ForcesNone`. Quiet: `OffersChoice`, `Verifies`, `DynamicOpts`. All are under `Tls` (test/fixtures/tls_fixture.ex). Test: test/analyses/exposure_tls_test.exs.
+**Fixtures.** Positive: `ForcesNone`; `ServesAndDials` (one option list for a listener and a client's connect) and `ReturnsOptions` (the listener's options also returned). Quiet: `OffersChoice`, `Verifies`, `DynamicOpts`; `Listener` (`:ssl.listen/2`) and `Accepts` (supavisor's handshake on an accepted socket). All are under `Tls` (test/fixtures/tls_fixture.ex). Test: test/analyses/exposure_tls_test.exs.
 
 **Corpus.** None.
 
-**Precision.** At introduction (e7ac7b4), the module-scope filter took sequin from 9 findings to 7. It dropped `Cldr.Http`, `WebSockex.Conn`, `TeslaMate.Mqtt` and `Kubereq.Step.TLS`, all of which support verification. Five survivors are first-party Sequin modules, read as real: both Redis sinks, the NATS and RabbitMQ connection caches, and `PostgresDatabase`, whose authors' TODO acknowledges the gap.
+**Precision.** At introduction (e7ac7b4), the module-scope filter took sequin from 9 findings to 7. It dropped `Cldr.Http`, `WebSockex.Conn`, `TeslaMate.Mqtt` and `Kubereq.Step.TLS`, all of which support verification. Five survivors are first-party Sequin modules, read as real: both Redis sinks, the NATS and RabbitMQ connection caches, and `PostgresDatabase`, whose authors' TODO acknowledges the gap. The server's side took one row of 12 over the evaluation programs, ejabberd and rabbitmq: supavisor's `ClientHandler.handle_event/4`, a handshake on a Postgres client's accepted socket. ejabberd's `ejabberd_c2s:init/1` and `ejabberd_http:init/3` (fast_tls, a server by its options) stay, a role only the options' reader can tell.
 
 ### TLS verification left to the library default
 
@@ -2648,10 +2649,10 @@ F's name must not end in a metadata suffix: `_at`, `_on`, `_date`, `_time`, `_co
 - Only literal option lists are read. A list built at run time is recorded as dynamic and never reported.
 - Only `:ssl` is read. Mint, hackney, Finch, `:httpc` and database drivers reach TLS through their own options.
 - The options position is fixed per API: `:ssl.connect/3` is read at position 2 (host, port, options). The socket-upgrade form `connect(socket, options, timeout)` therefore goes unread, and `:ssl.connect/2` is not listed at all.
-- The server-side APIs, `listen/2` and `handshake/2,3`, are included. On a server, a missing `:verify` means the server does not ask for client certificates, which is the usual configuration.
+- The server-side APIs, `listen/2` and `handshake/2,3`, are read but not reported (`tls_server_side`): on a server, a missing `:verify` means the server does not ask for client certificates, which is the usual configuration.
 - The rule does not know which OTP release the code targets. From OTP 26 the client default is `:verify_peer`.
 
-**Fixtures.** Positive: `Tls.DefaultsSilently`. Quiet: `Verifies`, `DynamicOpts`. Test: test/analyses/exposure_tls_test.exs.
+**Fixtures.** Positive: `Tls.DefaultsSilently`. Quiet: `Verifies`, `DynamicOpts`, `Listener.listen_default/1`. Test: test/analyses/exposure_tls_test.exs.
 
 **Corpus.** None.
 

@@ -38,6 +38,22 @@ defmodule Argus.Schema.Tls do
         such rather than guessed at: a false "this is insecure" on a call that \
         configures itself properly is worse than silence.
         """
+      },
+      %{
+        name: :tls_server_side,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the instruction"},
+          {:func, :symbol, "the function"}
+        ],
+        doc: """
+        A verification setting that configures a server: the site of a \
+        server's call (`:ssl.listen/2`, `:ssl.handshake/2,3`, a Ranch or \
+        Cowboy TLS listener, a Plug.Cowboy, Bandit or ThousandIsland server), \
+        or a mention whose value is made, in its function, only into the \
+        options of one. There `verify_none` means the server does not ask \
+        its clients for a certificate, not that it trusts a peer server.
+        """
       }
     ])
   end
