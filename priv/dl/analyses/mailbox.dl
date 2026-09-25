@@ -83,15 +83,62 @@ receives_runtime_messages(mod) :- module_traps(_, mod).
 // or what one reaches in the module). A client function of the same
 // module — `def await_up, do: Process.monitor(whereis(__MODULE__))` —
 // runs in the caller, and its :DOWN lands in the caller's mailbox.
-receives_runtime_messages(mod) :-
-  monitor_call(_, f, _),
-  server_side(mod, f).
+receives_runtime_messages(mod) :- monitors_on_own_stack(mod).
+
+// What the runtime writes has a clause: a server that monitors on its own
+// stack takes every process monitor's :DOWN (`{:DOWN, _ref, :process,
+// _pid, _reason}`, no pinned ref, no compared state field), and one that
+// traps exits every :EXIT. A late :DOWN after a demonitor without :flush
+// is a :DOWN like any other, and an :EXIT from a port a callback opened an
+// :EXIT (callback_takes_every, CallbackTag). eventstore's AdvisoryLocks
+// and Config.Store, FLAME's Pool, Lightning's RuntimeManager: their
+// clauses take every message the runtime can send them. A handler with a
+// clause per monitor (the ref pinned to the state) takes a subset, and
+// stays reported.
+.decl takes_runtime_messages(mod: symbol)
+
+takes_runtime_messages(mod) :-
+  partial_handle_info(mod, h),
+  receives_runtime_messages(mod),
+  (!monitors_on_own_stack(mod) ; callback_takes_every(h, "handle_info", ":DOWN", 5)),
+  (!module_traps(_, mod) ; callback_takes_every(h, "handle_info", ":EXIT", 3)),
+  !other_runtime_writer(mod).
+
+// The runtime writes more than a process monitor's :DOWN and an :EXIT to
+// a server that asks: a port monitor's `{:DOWN, ref, :port, port,
+// reason}` (a monitor whose type is not the literal :process), a port's
+// output (`{port, {:data, _}}`, `{port, {:exit_status, _}}`) to the
+// process that opened it, and `{:nodeup, n}`/`{:nodedown, n}` to one
+// that monitors nodes. A server whose own stack asks for any of them
+// keeps its finding, whatever its :DOWN and :EXIT clauses take.
+.decl other_runtime_writer(mod: symbol)
+
+other_runtime_writer(mod) :-
+  server_side(mod, f),
+  call_arg(f, ":erlang:monitor/2", 0, v),
+  v != ":process".
+
+other_runtime_writer(mod) :- server_side(mod, f), remote_call(_, f, ":erlang", "open_port", _).
+other_runtime_writer(mod) :- server_side(mod, f), remote_call(_, f, "Port", "open", _).
+other_runtime_writer(mod) :- server_side(mod, f), remote_call(_, f, ":net_kernel", "monitor_nodes", _).
+other_runtime_writer(mod) :- server_side(mod, f), remote_call(_, f, ":erlang", "monitor_node", _).
+other_runtime_writer(mod) :- server_side(mod, f), remote_call(_, f, "Node", "monitor", _).
+
+.decl monitors_on_own_stack(mod: symbol)
+
+monitors_on_own_stack(mod) :- monitor_call(_, f, _), server_side(mod, f).
+
+// Runtime messages some of which no clause takes: the finding's source,
+// and what the late-message variant below steps aside for.
+.decl runtime_uncovered(mod: symbol)
+
+runtime_uncovered(mod) :- receives_runtime_messages(mod), !takes_runtime_messages(mod).
 
 partial_handler(mod, h, "runtime", "catch_all", "") :-
   gen_server_like(mod),
   partial_handle_info(mod, h),
   !library_written(h),
-  receives_runtime_messages(mod),
+  runtime_uncovered(mod),
   !trap_exit_without_exit_clause(mod, _),
   !info_crash(mod).
 
@@ -243,7 +290,7 @@ partial_handler(mod, h, "late_message", "catch_all", "") :-
   partial_handle_info(mod, h),
   !library_written(h),
   late_message_source(mod),
-  !receives_runtime_messages(mod),
+  !runtime_uncovered(mod),
   !trap_exit_without_exit_clause(mod, _),
   !statem_process(mod),
   !info_crash(mod).

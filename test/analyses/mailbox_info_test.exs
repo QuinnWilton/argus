@@ -132,6 +132,53 @@ defmodule Argus.Analyses.MailboxInfoTest do
       assert mods == ["Argus.Test.Fixtures.MonitorsWithoutCatchall"]
     end
 
+    test "a handler taking every message the runtime sends is not reported" do
+      skip_without_souffle()
+
+      alias Argus.Test.Fixtures, as: F
+
+      results =
+        analyze([
+          F.MonitorsWithoutCatchall,
+          F.MonitorsTakingEveryDown,
+          F.MonitorsDownWhenActive,
+          F.TrapsTakingEveryExit,
+          F.TrapsTakingNormalExits
+        ])
+
+      # Every :DOWN (the ref unpinned, the state tested only for its
+      # struct) and every :EXIT taken leaves nothing the runtime writes
+      # unmatched; a pinned ref, a compared state field or one exit reason
+      # takes a subset.
+      assert partial(results, "runtime") |> Enum.map(fn [mod, _f] -> mod end) |> Enum.sort() ==
+               [
+                 inspect(F.MonitorsDownWhenActive),
+                 inspect(F.MonitorsWithoutCatchall),
+                 inspect(F.TrapsTakingNormalExits)
+               ]
+    end
+
+    test "a server the runtime writes more than a :DOWN or an :EXIT to keeps its finding" do
+      skip_without_souffle()
+
+      alias Argus.Test.Fixtures, as: F
+
+      probes = [
+        F.MonitorsPortTakingProcessDowns,
+        F.MonitorsNodesTakingDowns,
+        F.TrapsOpeningPort,
+        F.MonitorsDownGuardedByReason
+      ]
+
+      # A port monitor's :DOWN, node up/down, a port's output, a guarded
+      # reason: each crashes a handler that takes every process :DOWN or
+      # every :EXIT and no more.
+      assert partial(analyze(probes), "runtime")
+             |> Enum.map(fn [mod, _f] -> mod end)
+             |> Enum.sort() ==
+               probes |> Enum.map(&inspect/1) |> Enum.sort()
+    end
+
     test "a monitor taken in a client function, in the caller's process, is not the server's" do
       skip_without_souffle()
       results = analyze([Argus.Test.Fixtures.ClientMonitorsServer])

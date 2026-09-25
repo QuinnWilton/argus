@@ -32,6 +32,19 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
     arm) when its tag was compared, 0 when the message itself was; -1 when
     a tag was compared on a tuple of no known arity.
 
+  - Which shapes does some clause take every message of
+    (`takes_every/2`)? `handle_info({:DOWN, _ref, :process, _pid, _r},
+    %State{} = s)` takes every process monitor's `:DOWN`, whatever its
+    ref, pid and reason; `handle_info({:DOWN, ref, _, _, _}, %{ref:
+    ref})` takes one monitor's, and `handle_info({:EXIT, pid, :normal},
+    s)` one reason's. A clause takes every message of its shape when the
+    path through the heads to its body tested the message only for its
+    tuple-ness, its arity and its tag — and a `:DOWN`'s third element
+    against `:process`, which every process monitor's is — and the
+    other arguments only for their type (a struct's module, a record's
+    tag): a pinned element, a guard on one, or a compared field of the
+    state leaves the clause's messages a subset.
+
   The head walk is `Argus.Extractor.Dispatch.total_on?/2`'s, with more
   carried along the path: which tracked register is the message, which
   its tag (element 0) and which another part of it, and whether the path
@@ -68,7 +81,10 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
            valued: boolean(),
            tuple: boolean(),
            shape_tag: atom() | nil,
-           arity: integer() | nil
+           arity: integer() | nil,
+           constrained: boolean(),
+           parts: %{Instr.reg() => non_neg_integer()},
+           structs: MapSet.t(Instr.reg())
          }
 
   @doc """
@@ -104,6 +120,24 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
     for(
       {_idx, %{shape_tag: tag, arity: arity}} when tag != nil <- entries(instrs, register),
       do: {tag, arity || -1}
+    )
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  @doc """
+  The `{tag, arity}` shapes some clause takes every message of, whatever
+  its other elements and the state: arity 0 for the atom, N for an
+  N-tuple tagged `tag`. A clause whose head pins or guards an element,
+  or compares a field of another argument, takes a subset and is left
+  out.
+  """
+  @spec takes_every([tuple()], Instr.reg()) :: [{atom(), non_neg_integer()}]
+  def takes_every(instrs, register) do
+    for(
+      {_idx, %{shape_tag: tag, arity: arity, constrained: false}}
+      when tag != nil and is_integer(arity) and arity >= 0 <- entries(instrs, register),
+      do: {tag, arity}
     )
     |> Enum.uniq()
     |> Enum.sort()
@@ -146,7 +180,10 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
       valued: false,
       tuple: false,
       shape_tag: nil,
-      arity: nil
+      arity: nil,
+      constrained: false,
+      parts: %{},
+      structs: MapSet.new()
     }
 
     {acc, _seen} = walk(start, path, tuple, labels, {[], MapSet.new()})
@@ -179,19 +216,31 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
 
     shaped? = op in @tuple_tests and :msg in kinds
     {pass, fail} = shapes(op, args, path)
+    pass = constrain(pass, constraining?(op, args, path))
 
     branch(idx, l, {kinds != [], valued?, shaped?}, pass, fail, tuple, labels, st)
   end
 
-  defp step({:test, _op, {:f, l}, src, _fields}, idx, path, tuple, labels, st),
-    do: branch(idx, l, {tracked?(path, src), false, false}, path, path, tuple, labels, st)
+  defp step({:test, _op, {:f, l}, src, _fields}, idx, path, tuple, labels, st) do
+    pass = constrain(path, Map.get(path.tracked, reg(src)) != :msg)
+    branch(idx, l, {tracked?(path, src), false, false}, pass, path, tuple, labels, st)
+  end
 
   # A fail-labelled map read is a test on its subject; its destinations
   # hold map values, not the message.
   defp step({:get_map_elements, {:f, l}, src, {:list, kvs}}, idx, path, tuple, labels, st) do
     on_message? = tracked?(path, src)
     tracked = kvs |> Enum.drop_every(2) |> Enum.reduce(path.tracked, &Map.delete(&2, reg(&1)))
-    path = %{path | tracked: tracked}
+
+    # `%State{} = state` reads the struct's module to compare it: the
+    # register it lands in holds a type, not a value of the state's.
+    structs =
+      for [{:atom, :__struct__}, dst] <- Enum.chunk_every(kvs, 2),
+          not on_message?,
+          reduce: path.structs,
+          do: (acc -> MapSet.put(acc, reg(dst)))
+
+    path = %{path | tracked: tracked, structs: structs}
     branch(idx, l, {on_message?, false, false}, path, path, tuple, labels, st)
   end
 
@@ -201,13 +250,14 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
 
     arm_path =
       if kind == nil,
-        do: path,
+        do: constrain(path, true),
         else: %{
           path
           | tested: true,
             passed: true,
             valued: path.valued or (op == :select_val and kind in [:msg, :tag]),
-            tuple: path.tuple or (op == :select_tuple_arity and kind == :msg)
+            tuple: path.tuple or (op == :select_tuple_arity and kind == :msg),
+            constrained: path.constrained or kind == :part
         }
 
     arms =
@@ -240,7 +290,14 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
 
   defp step({:get_tuple_element, src, i, dst}, idx, path, tuple, labels, st) do
     kind = if Map.get(path.tracked, reg(src)) == :msg and i == 0, do: :tag, else: :part
-    walk(idx + 1, %{path | tracked: track(path.tracked, src, dst, kind)}, tuple, labels, st)
+
+    parts =
+      if Map.get(path.tracked, reg(src)) == :msg,
+        do: Map.put(path.parts, reg(dst), i),
+        else: Map.delete(path.parts, reg(dst))
+
+    path = %{path | tracked: track(path.tracked, src, dst, kind), parts: parts}
+    walk(idx + 1, path, tuple, labels, st)
   end
 
   defp step({op, src, dst}, idx, path, tuple, labels, st) when op in [:get_hd, :get_tl],
@@ -262,6 +319,43 @@ defmodule Argus.Extractors.CallbackTag.MessageClauses do
 
   # The body: the path that entered it is recorded.
   defp step(_instr, idx, path, _tuple, _labels, {acc, seen}), do: {[{idx, path} | acc], seen}
+
+  # Whether passing the test narrows which messages of the path's shape
+  # the clause takes. A test of the message's tuple-ness, arity or tag
+  # does not; one of another element does, but a `:DOWN`'s third element
+  # against `:process`, which every process monitor's is. A test of
+  # another argument (the state) does, but for its type: `is_map` and the
+  # struct's module a `%State{}` head compares, a record's tag.
+  defp constraining?(op, args, path) do
+    kinds = for a <- args, k = Map.get(path.tracked, reg(a)), do: k
+
+    cond do
+      :part in kinds -> not process_down_element?(op, args, path)
+      kinds != [] -> false
+      op in [:is_map, :is_tuple, :test_arity, :is_tagged_tuple] -> false
+      op in [:is_eq_exact, :is_eq] -> not struct_test?(args, path)
+      true -> true
+    end
+  end
+
+  defp process_down_element?(op, [a, b], path) when op in [:is_eq_exact, :is_eq] do
+    Enum.any?([{a, b}, {b, a}], fn {part, value} ->
+      Map.get(path.parts, reg(part)) == 2 and value == {:atom, :process}
+    end)
+  end
+
+  defp process_down_element?(_op, _args, _path), do: false
+
+  defp struct_test?([a, b], path) do
+    Enum.any?([{a, b}, {b, a}], fn {read, value} ->
+      MapSet.member?(path.structs, reg(read)) and match?({:atom, _}, value)
+    end)
+  end
+
+  defp struct_test?(_args, _path), do: false
+
+  defp constrain(path, false), do: path
+  defp constrain(path, true), do: %{path | constrained: true}
 
   # `path` goes on where the test passes, `failed` (the same path with
   # the shape a failure establishes) where it fails.

@@ -459,6 +459,42 @@ sibling's init/1 asks for) and `BootDyn.Worker` (a DynamicSupervisor
 child an earlier sibling's init/1 starts), in
 startup_supervision_test.exs.
 
+**Added.** `callback_takes_every(func, callback, tag, arity)` (schema
+120, CallbackTag): some clause of the callback takes every message of
+that shape, whatever its other elements and the state — its head tests
+the message only for its tuple-ness, arity and tag (and a `:DOWN`'s
+third element against `:process`, which every process monitor's is),
+and the other arguments only for their type (a struct's module, a
+record's tag) (`MessageClauses.takes_every/2`). A pinned element, a
+guard on one, or a compared state field takes a subset and yields no
+row.
+
+**Fixed.** "handle_info/2 has no catch-all in a process the runtime
+writes to" is quiet when a clause takes every message the runtime can
+send the process: every process monitor's `:DOWN` for a server that
+monitors on its own stack, and every `:EXIT` for one that traps
+(`takes_runtime_messages`, mailbox.dl). A late `:DOWN` after a demonitor
+without `:flush` is a `:DOWN` like any other, and an `:EXIT` from a
+port a callback opened an `:EXIT`. eventstore's AdvisoryLocks,
+Config.Store and Subscription, FLAME's Pool and Lightning's
+RuntimeManager were all reported with such clauses (round 3's sample:
+5 of 5 false; round 2's `runtime-messages-covered`, 4 more). Over the
+26 live programs the class goes 20 → 3. The late-message variant, which
+stepped aside for any module the runtime writes to, steps aside only
+while the runtime finding stands (`runtime_uncovered`), so 13 modules
+move to it (4 of 8 sampled true: user callbacks run in-process). A server
+whose own stack asks the runtime for more — a port monitor (a monitor
+whose type is not the literal `:process`), a port's output, node up and
+down — keeps its finding (`other_runtime_writer`). Fixtures:
+`MonitorsTakingEveryDown` and `TrapsTakingEveryExit` (quiet); reported,
+the nearest real bugs: `MonitorsWithoutCatchall` (now pinning its ref),
+`MonitorsDownWhenActive`, `TrapsTakingNormalExits`,
+`MonitorsPortTakingProcessDowns`, `MonitorsNodesTakingDowns`,
+`TrapsOpeningPort` and `MonitorsDownGuardedByReason`, in
+mailbox_info_test.exs and the CallbackTag extractor's tests;
+`LateMessage.MonitorMacro` pins its ref so `MonitorsInMacro` stays the
+program's own positive.
+
 ### FP hunt, round 2: eight more programs, and the anchors round 1 left
 
 **Fixed.** A blocking cast (`call_chain` kind `cast`) anchors at the

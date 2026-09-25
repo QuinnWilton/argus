@@ -25,6 +25,10 @@ defmodule Argus.Extractors.CallbackTag do
     (`MessageClauses.tag_shapes/2`)
   - `callback_ref_head(func, callback)` — a clause matches `{ref, _} when
     is_reference(ref)`, an async_nolink task's reply
+  - `callback_takes_every(func, callback, tag, arity)` — some clause takes
+    every message of that shape, whatever its other elements and the
+    state (`MessageClauses.takes_every/2`): a `{:DOWN, _, :process, _,
+    _}` clause every process monitor's `:DOWN`
   - `callback_total(func, callback)` — some clause accepts every message,
     whatever it demands of the state (`handle_info(msg, {stack, cont})`
     is a catch-all for messages), so no tag can fail
@@ -56,6 +60,7 @@ defmodule Argus.Extractors.CallbackTag do
       :callback_ref_head,
       :callback_tag,
       :callback_tag_shape,
+      :callback_takes_every,
       :callback_total
     ]
 
@@ -88,6 +93,17 @@ defmodule Argus.Extractors.CallbackTag do
       for {tag, arity} <- MessageClauses.tag_shapes(instrs, {:x, 0}), reduce: facts do
         acc ->
           add_fact(acc, :callback_tag_shape, [func_id, callback, inspect(tag), to_string(arity)])
+      end
+
+    facts =
+      for {tag, arity} <- MessageClauses.takes_every(instrs, {:x, 0}), reduce: facts do
+        acc ->
+          add_fact(acc, :callback_takes_every, [
+            func_id,
+            callback,
+            inspect(tag),
+            to_string(arity)
+          ])
       end
 
     if MessageClauses.catch_all_drops?(instrs, {:x, 0}),

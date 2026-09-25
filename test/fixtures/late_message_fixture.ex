@@ -246,11 +246,11 @@ defmodule Argus.Test.Fixtures.LateMessage do
         use GenServer
 
         def init(state) do
-          Process.monitor(state.peer)
-          {:ok, state}
+          ref = Process.monitor(state.peer)
+          {:ok, Map.put(state, :ref, ref)}
         end
 
-        def handle_info({:DOWN, _ref, :process, _pid, _reason}, state),
+        def handle_info({:DOWN, ref, :process, _pid, _reason}, %{ref: ref} = state),
           do: {:stop, :normal, state}
       end
     end

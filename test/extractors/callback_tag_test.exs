@@ -27,6 +27,30 @@ defmodule Argus.Extractors.CallbackTagTest do
     refute {"WarmUp:handle_info/2", ":expire", "2"} in shapes
   end
 
+  test "a clause takes every message of its shape only when it pins and compares nothing" do
+    alias Argus.Test.Fixtures, as: F
+
+    every = fn mod ->
+      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
+
+      for(
+        [_f, "handle_info", tag, arity] <-
+          Map.get(CallbackTag.extract(data), :callback_takes_every, []),
+        do: {tag, arity}
+      )
+      |> Enum.sort()
+    end
+
+    # `{:DOWN, ref, :process, _, _}` against a `%__MODULE__{}` state: every
+    # process monitor's :DOWN.
+    assert every.(F.MonitorsTakingEveryDown) == [{":DOWN", "5"}]
+    assert every.(F.TrapsTakingEveryExit) == [{":DOWN", "5"}, {":EXIT", "3"}]
+    # The ref pinned to the state, a state field compared, one exit reason.
+    assert every.(F.MonitorsWithoutCatchall) == []
+    assert every.(F.MonitorsDownWhenActive) == []
+    assert every.(F.TrapsTakingNormalExits) == [{":DOWN", "5"}]
+  end
+
   test "a catch-all that ignores or logs the message drops it; one that hands it on does not" do
     %{drops: drops} = facts([U.Listeners, U.Repair, U.Ticker, U.Delegates, U.Handled])
     assert "Listeners:handle_info/2" in drops

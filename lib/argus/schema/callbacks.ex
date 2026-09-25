@@ -46,6 +46,27 @@ defmodule Argus.Schema.Callbacks do
         """
       },
       %{
+        name: :callback_takes_every,
+        layer: 2,
+        fields: [
+          {:func, :symbol, "the callback"},
+          {:callback, :symbol, "'handle_call' | 'handle_cast' | 'handle_info'"},
+          {:tag, :symbol, "the atom, or the tuple's first element"},
+          {:arity, :number, "0 for the atom, the tuple's size otherwise"}
+        ],
+        doc: """
+        Some clause of the callback takes every message of this shape, \
+        whatever its other elements and the state \
+        (`Argus.Extractors.CallbackTag.MessageClauses.takes_every/2`): its \
+        head tests the message only for its tuple-ness, arity and tag (and \
+        a `:DOWN`'s third element against `:process`), and the other \
+        arguments only for their type (a struct's module, a record's tag). \
+        `handle_info({:DOWN, _ref, :process, _pid, _reason}, s)` takes \
+        every process monitor's `:DOWN`; a clause pinning the ref, or \
+        comparing a field of the state, takes a subset and is no row.
+        """
+      },
+      %{
         name: :callback_drops,
         layer: 2,
         fields: [

@@ -426,21 +426,129 @@ defmodule Argus.Test.Fixtures.TrapsWithExitClause do
 end
 
 defmodule Argus.Test.Fixtures.MonitorsWithoutCatchall do
-  @moduledoc "Monitors callers, handles only {:DOWN, ...}: anything else crashes it."
+  @moduledoc """
+  Monitors each watcher and takes the :DOWN of the one it watches now,
+  the ref pinned to the state: a :DOWN of an earlier one, arriving after
+  the next :watch replaced it, crashes it.
+  """
   use GenServer
 
   def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
 
   @impl true
-  def init(state), do: {:ok, state}
+  def init(_arg), do: {:ok, %{ref: nil}}
 
   @impl true
   def handle_call(:watch, {pid, _tag}, state) do
     ref = Process.monitor(pid)
-    {:reply, ref, state}
+    {:reply, ref, %{state | ref: ref}}
   end
 
   @impl true
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, %{ref: ref} = state),
+    do: {:noreply, %{state | ref: nil}}
+end
+
+defmodule Argus.Test.Fixtures.MonitorsTakingEveryDown do
+  @moduledoc """
+  Monitors callers and takes every process monitor's :DOWN, whatever
+  its ref: nothing the runtime sends it lacks a clause (eventstore's
+  AdvisoryLocks, FLAME's Pool).
+  """
+  use GenServer
+
+  defstruct watched: %{}
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(_arg), do: {:ok, %__MODULE__{}}
+
+  @impl true
+  def handle_call(:watch, {pid, _tag}, state) do
+    ref = Process.monitor(pid)
+    {:reply, ref, %{state | watched: Map.put(state.watched, ref, pid)}}
+  end
+
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, %__MODULE__{} = state),
+    do: {:noreply, %{state | watched: Map.delete(state.watched, ref)}}
+end
+
+defmodule Argus.Test.Fixtures.MonitorsDownWhenActive do
+  @moduledoc """
+  Takes a :DOWN only while its state says it is active: in any other
+  mode the same :DOWN crashes it.
+  """
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(_arg), do: {:ok, %{mode: :active}}
+
+  @impl true
+  def handle_call(:watch, {pid, _tag}, state) do
+    _ = Process.monitor(pid)
+    {:reply, :ok, state}
+  end
+
+  def handle_call(:pause, _from, state), do: {:reply, :ok, %{state | mode: :paused}}
+
+  @impl true
+  def handle_info({:DOWN, _ref, :process, _pid, _reason}, %{mode: :active} = state),
+    do: {:noreply, state}
+end
+
+defmodule Argus.Test.Fixtures.TrapsTakingEveryExit do
+  @moduledoc """
+  Traps exits and monitors, and takes every :EXIT and every :DOWN
+  (Lightning's RuntimeManager, eventstore's Subscription).
+  """
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(_arg) do
+    Process.flag(:trap_exit, true)
+    {:ok, %{}}
+  end
+
+  @impl true
+  def handle_call(:watch, {pid, _tag}, state) do
+    _ = Process.monitor(pid)
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_info({:EXIT, _from, reason}, state), do: {:stop, reason, state}
+  def handle_info({:DOWN, _ref, :process, _pid, _reason}, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Fixtures.TrapsTakingNormalExits do
+  @moduledoc """
+  Traps exits and takes every :DOWN, but only a :normal :EXIT: an
+  abnormal exit of a linked process crashes it by a FunctionClauseError.
+  """
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(_arg) do
+    Process.flag(:trap_exit, true)
+    {:ok, %{}}
+  end
+
+  @impl true
+  def handle_call(:watch, {pid, _tag}, state) do
+    _ = Process.monitor(pid)
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_info({:EXIT, _from, :normal}, state), do: {:noreply, state}
   def handle_info({:DOWN, _ref, :process, _pid, _reason}, state), do: {:noreply, state}
 end
 
@@ -750,4 +858,91 @@ defmodule Argus.Test.Fixtures.CleansUpThroughHelperTrap do
 
   @impl true
   def terminate(_reason, file), do: File.close(file)
+end
+
+# Adversarial probes for the "takes every :DOWN and :EXIT" suppression
+# (FP hunt round 3): each takes every process monitor's :DOWN or every
+# :EXIT, and the runtime still writes it something no clause takes.
+
+defmodule Argus.Test.Fixtures.MonitorsPortTakingProcessDowns do
+  @moduledoc "Monitors a port: its :DOWN says :port, and only :process ones are taken."
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(port), do: {:ok, %{port: port}}
+
+  @impl true
+  def handle_call(:watch, _from, state) do
+    ref = :erlang.monitor(:port, state.port)
+    {:reply, ref, state}
+  end
+
+  @impl true
+  def handle_info({:DOWN, _ref, :process, _pid, _reason}, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Fixtures.MonitorsNodesTakingDowns do
+  @moduledoc "Monitors nodes as well as processes: {:nodeup, n} has no clause."
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(_arg) do
+    :ok = :net_kernel.monitor_nodes(true)
+    {:ok, %{}}
+  end
+
+  @impl true
+  def handle_call(:watch, {pid, _tag}, state) do
+    _ = Process.monitor(pid)
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_info({:DOWN, _ref, :process, _pid, _reason}, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Fixtures.TrapsOpeningPort do
+  @moduledoc "Traps and opens a port: every :EXIT is taken, the port's output is not."
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(_arg) do
+    Process.flag(:trap_exit, true)
+    {:ok, %{}}
+  end
+
+  @impl true
+  def handle_call(:run, _from, state) do
+    port = Port.open({:spawn, "cat"}, [:binary])
+    {:reply, :ok, Map.put(state, :port, port)}
+  end
+
+  @impl true
+  def handle_info({:EXIT, _from, reason}, state), do: {:stop, reason, state}
+end
+
+defmodule Argus.Test.Fixtures.MonitorsDownGuardedByReason do
+  @moduledoc "Takes a :DOWN only when its reason is not :normal: a :normal one crashes it."
+  use GenServer
+
+  def start_link(arg), do: GenServer.start_link(__MODULE__, arg)
+
+  @impl true
+  def init(_arg), do: {:ok, %{}}
+
+  @impl true
+  def handle_call(:watch, {pid, _tag}, state) do
+    _ = Process.monitor(pid)
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_info({:DOWN, _ref, :process, _pid, reason}, state) when reason != :normal,
+    do: {:noreply, state}
 end
