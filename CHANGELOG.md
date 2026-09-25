@@ -10,6 +10,15 @@ What 0.20.0 will ship; the release dates this heading and drops the
 `-dev` from `mix.exs`. Grouped by concern. Each entry opens with what it
 does: **Added**, **Changed**, **Fixed** or **Removed**.
 
+### Points-to that finishes on a large program
+
+**Changed.** `source_process` and `source_table` are staged for the
+sources the analyses ask about — the first argument of a call a
+GenServer handler makes (shutdown's stops) and the table operand of an
+:ets operation (tables.dl) — not for every source of the program: the
+points-to of an arbitrary source is what the stage otherwise never
+needs. Every row an analysis joins is the same.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

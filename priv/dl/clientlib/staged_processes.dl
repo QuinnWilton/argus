@@ -50,9 +50,13 @@
 .input self_call
 
 // What a source, seen from inside `func`, may point to — only the
-// processes and the ETS tables: the terms that hold them are the bulk
-// of source_pts (118 MB of it over ssl, public_key and kernel), and no
-// analysis reads them.
+// processes and the ETS tables, and only for the sources the analyses
+// ask about: the first argument of a call a GenServer handler makes
+// (source_process, shutdown's stops) and the table operand of an :ets
+// operation (source_table, tables.dl). The terms that hold them are the
+// bulk of source_pts (118 MB of it over ssl, public_key and kernel), and
+// the points-to of an arbitrary source is what the stage otherwise never
+// needs; a rule that asks about another source adds it to points_to.dl.
 .decl source_process(func: symbol, src_kind: symbol, src: symbol, proc: symbol)
 .input source_process
 

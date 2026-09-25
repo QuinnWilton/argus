@@ -84,6 +84,9 @@ those frameworks need.
   `staged_processes.dl`. Anything a program adds to the fixpoint's
   inputs belongs in the stage, for every analysis alike, and must leave
   the others' rows unchanged (signals are staged apart for that).
+  `source_process` and `source_table` are staged only for the sources
+  the analyses ask about (points_to.dl names them); a rule asking about
+  another source adds it there.
 - Souffle expands a rule with k disjunctive alternatives into k rules,
   each with the whole body: a disjunction over a large join multiplies
   both compile time and the join. Test a condition on a few columns
