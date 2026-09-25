@@ -37,6 +37,16 @@ defmodule Argus.Analyses.EtsTest do
              end)
     end
 
+    test "a table a non-process behaviour's init makes is its caller's" do
+      skip_without_souffle()
+
+      modules = [Argus.Test.Fixtures.EtsStrategy, Argus.Test.Fixtures.EtsStrategyImpl]
+      assert {:ok, results} = Memo.analyze(modules, :ets)
+
+      # Positive: EtsOwner, a GenServer, fires above.
+      assert Map.get(results, "ets_unprotected_owner", []) == []
+    end
+
     test "suppresses unprotected_owner for permanent supervisor children" do
       skip_without_souffle()
 

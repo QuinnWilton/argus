@@ -216,6 +216,11 @@ queue status calls (6), rabbit's gen_server2 `msend/3` (3). A client API
 that matches its reply is no boundary function. The boundary list gains
 the cast forms and gen_fsm's calls.
 
+**Fixed.** ets's "ETS table dies with its owner" takes as owner a module
+that runs as a process (`process_behaviour_module`), not any module that
+declares a behaviour: a load-balancing strategy, a hook, an HTTP config
+or a `gen_mod` runs in its caller (grpc, vernemq, ejabberd: 8 rows).
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

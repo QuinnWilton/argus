@@ -20,14 +20,20 @@
 
 // ── Ownership & lifecycle ──────────────────────────────────────────
 
-// Module that creates a table and implements a behaviour (is a process).
+// Module that creates a table and runs as a process
+// (process_behaviour_module: a process behaviour's, or one that handles
+// messages as a server does). A module of another behaviour — grpc's
+// load-balancing strategies, whose init/1 makes an unnamed table and
+// hands it back in the state its caller keeps — runs in whoever calls
+// it, and owns nothing of its own.
 .decl ets_owner_process(name: symbol, mod: symbol, behaviour: symbol)
 
 ets_owner_process(name, mod, behaviour) :-
   ets_new(_, func, name),
   name != "dynamic",
   function_def(func, mod, _, _, _),
-  behaves_as(mod, behaviour).
+  behaves_as(mod, behaviour),
+  process_behaviour_module(mod).
 
 // Owner under a permanent supervisor child — the table will be
 // recreated on restart, so the missing heir is not a real risk.

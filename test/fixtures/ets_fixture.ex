@@ -261,6 +261,32 @@ defmodule Argus.Test.Fixtures.EtsSettingsKeypos2 do
   end
 end
 
+defmodule Argus.Test.Fixtures.EtsStrategy do
+  @moduledoc """
+  grpc's pick-first load balancer: a behaviour of its own, not a
+  process's; init/1 runs in the caller and hands the table back.
+  """
+  @callback init(keyword()) :: {:ok, map()}
+
+  def init(opts) do
+    tid = :ets.new(:ets_strategy, [:set, :public])
+    :ets.insert(tid, {:current, Keyword.get(opts, :first)})
+    {:ok, %{tid: tid}}
+  end
+end
+
+defmodule Argus.Test.Fixtures.EtsStrategyImpl do
+  @moduledoc false
+  @behaviour Argus.Test.Fixtures.EtsStrategy
+
+  @impl true
+  def init(opts) do
+    tid = :ets.new(:ets_strategy_impl, [:set, :public])
+    :ets.insert(tid, {:current, Keyword.get(opts, :first)})
+    {:ok, %{tid: tid}}
+  end
+end
+
 defmodule Argus.Test.Fixtures.EtsWarmCache do
   @moduledoc "Filled once in init/1, read forever: a cache, not a leak."
   use GenServer
