@@ -18,7 +18,9 @@
   relation's prose extracts and solves nothing (the findings are built
   again, as for any argus edit), while a relation's columns changed
   re-extract the modules whose rows it holds and re-solve the programs
-  that load it.
+  that load it. Those modules are found before the graph runs (each
+  module's recorded entries, when argus's code moved) and extracted
+  across the schedulers, as a changed beam's module is.
 - A solve is keyed on its program as the solve loads it
   (`Argus.Souffle.Cache.declared_digest/2`, as argus keys its own
   solves): of argus's generated declaration files, only the

@@ -137,7 +137,11 @@ Two layers over one `Roux.Database`:
 
 Driver side (never inside queries): `Scry.Scanner` (beam discovery +
 mtime/size/hash diff vs manifest sources), `Scry.Runner` (db lifecycle,
-warm start, input sync, souffle check, demand — the analyses solve
+warm start, input sync, souffle check, prewarm — every module when
+cold, else the changed and retried ones and, when `argus_code` moved,
+those whose extraction memo depends on a `schema_read` whose digest
+moved (`Scry.Analysis.schema_digest/1` against the memo) — then demand:
+the analyses solve
 concurrently, one task each, after the merged relations are demanded in
 the runner's own process, where the prewarmed extractions wait; with
 nothing prewarmed they are left in the memo table, since serving them

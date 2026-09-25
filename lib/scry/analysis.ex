@@ -199,8 +199,15 @@ defmodule Scry.Analysis do
   # after it ran, often inside the graph, where no input can be set.
   defquery :schema_read, key: read, returns: String.t() do
     _argus = optional_input(db, :argus_code, :all)
-    Argus.Cache.Reads.digest(read)
+    schema_digest(read)
   end
+
+  @doc false
+  # What `schema_read` holds for `read` now: the driver looks ahead with
+  # it (`Scry.Runner`) for the modules whose extraction read an entry
+  # that moved.
+  @spec schema_digest(String.t()) :: String.t()
+  def schema_digest(read), do: Argus.Cache.Reads.digest(read)
 
   # Runs `fun` (no query of this graph: what one read is its own) and
   # makes the running query depend on each schema entry it read.

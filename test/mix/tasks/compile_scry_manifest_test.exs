@@ -105,7 +105,7 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
   end
 
   # Rewrites the last run's manifest through `fun`, handed the database
-  # it restores.
+  # it restores; returns what `fun` does.
   defp rewrite!(fun) do
     manifest = Scry.Runner.manifest_file()
     {:ok, data} = Manifest.load(manifest)
@@ -115,8 +115,9 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
       :ok = Roux.Lang.register_module(db, Scry.Frontend)
       :ok = Roux.Lang.register_module(db, Scry.Analysis)
       :ok = Manifest.restore(db, data)
-      fun.(db)
+      result = fun.(db)
       :ok = Manifest.write(db, data.sources, manifest)
+      result
     after
       Roux.Database.shutdown(db)
     end
@@ -164,6 +165,55 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
       assert QueryLog.executions(log, :findings) == [:coupling, :mailbox]
       assert QueryLog.executions(log, :module_extraction) == []
       assert QueryLog.executions(log, :souffle_solve) == []
+
+      # No schema entry moved: nothing was extracted ahead of the graph.
+      assert QueryLog.hits(log, :program_relation_facts) == []
+      assert counts_by_code(scry_diagnostics(warm)) == counts_by_code(scry_diagnostics(cold))
+    end)
+  end
+
+  test "a schema entry that moved re-extracts the modules that read it, ahead of the graph",
+       %{peer: peer, copy: copy} do
+    Fixture.checkout!(copy, @quick, :depot_quick)
+
+    Fixture.in_peer(peer, copy, :depot_quick, fn log ->
+      cold = compile!()
+      %{modules: modules} = Scry.Scanner.scan(Scry.Config.load())
+      read = {:schema_read, "columns supervisor"}
+
+      # As if `supervisor` had other columns when the last run extracted:
+      # its entry's digest then, and argus's code then.
+      readers =
+        Enum.sort(
+          rewrite!(fn db ->
+            {:ok, entry} = Roux.Memo.get(db, read)
+
+            :ok =
+              Roux.Memo.put(db, read, %{entry | value: "before", hash: :erlang.phash2("before")})
+
+            :ok = Roux.Input.set(db, :argus_code, :all, "before the edit")
+
+            for module <- Map.keys(modules),
+                {:ok, dependencies} = Roux.Memo.dependencies(db, {:module_extraction, module}),
+                read in dependencies,
+                do: module
+          end)
+        )
+
+      # The tree's modules, not every module.
+      assert readers != []
+      assert length(readers) < map_size(modules)
+
+      QueryLog.reset(log)
+      warm = compile!()
+
+      assert QueryLog.executions(log, :module_extraction) == readers
+      assert QueryLog.executions(log, :module_semantic_facts) == []
+      assert QueryLog.executions(log, :souffle_solve) == []
+
+      # Extracted before the graph asked for them: the runner took the
+      # merged relations itself, where the extractions waited.
+      assert QueryLog.hits(log, :program_relation_facts) == [:all]
       assert counts_by_code(scry_diagnostics(warm)) == counts_by_code(scry_diagnostics(cold))
     end)
   end

@@ -120,7 +120,12 @@ defmodule Scry.Runner do
             force? or prior_sources == %{} or env.fingerprint_changed? or
               env.extraction_changed?
 
-          to_extract = if cold?, do: Map.keys(discovered), else: Enum.uniq(changed ++ retried)
+          to_extract =
+            if cold?,
+              do: Map.keys(discovered),
+              else:
+                Enum.uniq(changed ++ retried ++ schema_moved(db, discovered, env.argus_changed?))
+
           analyze(db, config, discovered, to_extract)
         else
           {%{}, [], []}
@@ -222,6 +227,7 @@ defmodule Scry.Runner do
     %{
       fingerprint_changed?: fingerprint_changed?,
       extraction_changed?: extraction_changed?,
+      argus_changed?: argus_changed?,
       moved?:
         fingerprint_changed? or extraction_changed? or argus_changed? or rules_changed? or
           unsolved?
@@ -266,6 +272,38 @@ defmodule Scry.Runner do
 
     :ok = Input.set(db, :failed_extractions, :all, Enum.sort(failed))
     {findings_by_file, degraded, extraction_errors}
+  end
+
+  # The modules whose last extraction read an entry of argus's schema
+  # that reads otherwise now (`Scry.Analysis`'s `schema_read`): the
+  # graph would extract them again one at a time, as it validates them;
+  # found here, they are extracted across the schedulers first. An entry
+  # moves only with argus's code, so only then is this looked at, each
+  # entry digested once whatever number of modules read it.
+  defp schema_moved(_db, _discovered, false), do: []
+
+  defp schema_moved(db, discovered, true) do
+    reads_of =
+      for module <- Map.keys(discovered),
+          {:ok, dependencies} <- [Memo.dependencies(db, {:module_extraction, module})],
+          do: {module, for({:schema_read, read} <- dependencies, do: read)}
+
+    moved =
+      reads_of
+      |> Enum.flat_map(&elem(&1, 1))
+      |> Enum.uniq()
+      |> Enum.filter(&entry_moved?(db, &1))
+      |> MapSet.new()
+
+    for {module, reads} <- reads_of, Enum.any?(reads, &MapSet.member?(moved, &1)), do: module
+  end
+
+  # Whether the digest an entry's memo holds is not what it reads now.
+  defp entry_moved?(db, read) do
+    case Memo.get(db, {:schema_read, read}) do
+      {:ok, %Memo.Entry{value: digest}} -> digest != Scry.Analysis.schema_digest(read)
+      :miss -> true
+    end
   end
 
   # Every module's extraction attempt: 0 when first seen, a fresh value
