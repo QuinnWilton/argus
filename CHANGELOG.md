@@ -37,6 +37,16 @@ catch-all handle_info/2. The rules reading `recv_pattern` (the timer
 flush, `unhandled_info`, `unreceived_message`, blocking's cancel_timer
 idiom) now see those receives.
 
+**Changed.** Schema 93. `spawn_call`'s `variant` is `"start"` for
+`:proc_lib.start/3,4`, and for `/5` when its spawn options neither link
+nor monitor: no link, but the caller waits for the process's
+`init_ack/1` and learns from it whether the start failed, and a
+proc_lib process reports its own crash. It was `"spawn"`, so
+`failure.orphan_process` reported peer's `start_orphan_supervision/0`
+as "Unlinked process spawned" — a bare spawn nothing observes. The
+rule reads `variant = "spawn"` and now leaves the start alone.
+`PidFlow` reads `variant` only for `spawn_monitor`.
+
 **Fixed.** "init/1 waits on a message with no timeout" (startup's
 `unbounded_effect_in_init`, "receive") no longer reports a wait that
 cannot outlast what it waits for, or one made after the start returned.

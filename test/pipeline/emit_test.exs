@@ -332,14 +332,41 @@ defmodule Argus.Pipeline.EmitTest do
 
       for {fun, arity, variant} <- [
             {:start_link, 3, "spawn_link"},
-            {:start, 4, "spawn"},
+            {:start, 4, "start"},
             {:start_monitor, 3, "spawn_monitor"},
-            {:spawn_link, 3, "spawn_link"}
+            {:spawn_link, 3, "spawn_link"},
+            {:spawn, 3, "spawn"}
           ] do
         facts = emit_func(mfa ++ [{:call_ext, arity, {:extfunc, :proc_lib, fun, arity}}])
         api = ":proc_lib.#{fun}/#{arity}"
 
         assert ["Cart", "init_it", "0", ^variant, ^api, "mfa", "-1", "2"] = spawned(facts)
+      end
+    end
+
+    test "proc_lib:start/5 is a start unless its spawn options tie it closer" do
+      mfa = [
+        {:move, {:atom, Cart}, {:x, 0}},
+        {:move, {:atom, :init_it}, {:x, 1}},
+        {:move, nil, {:x, 2}},
+        {:move, {:atom, :infinity}, {:x, 3}}
+      ]
+
+      for {opts, variant} <- [
+            {[], "start"},
+            {[:link], "spawn_link"},
+            {[:monitor], "spawn_monitor"}
+          ] do
+        facts =
+          emit_func(
+            mfa ++
+              [
+                {:move, {:literal, opts}, {:x, 4}},
+                {:call_ext, 5, {:extfunc, :proc_lib, :start, 5}}
+              ]
+          )
+
+        assert ["Cart", "init_it", "0", ^variant | _] = spawned(facts)
       end
     end
   end

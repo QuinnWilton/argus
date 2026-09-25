@@ -25,17 +25,26 @@ defmodule Argus.Pipeline.Emit.Spawns do
   `"spawn_link"` or `"spawn_monitor"`, read from the function's name or
   from a literal options list (`:link`, `:monitor`, `{:monitor, opts}`;
   a link is the stronger tie and wins), and `"spawn_opt"` when the
-  options are not literal. `proc_lib:start/3,4,5` is an unlinked start,
-  `start_link` a linked one and `start_monitor` a monitored one. `api`
-  is the spawning function, `Mod.fun/n`; `args` is the register the
-  argument list arrives in for the module-function forms (-1 for a fun).
+  options are not literal. `proc_lib:start/3,4,5` is `"start"`: no link
+  and no monitor, but the caller waits for the new process's
+  `init_ack/1` and learns from it whether the start failed, and the
+  process, being proc_lib's, reports its own crash. `start_link` is a
+  linked start and `start_monitor` a monitored one. `api` is the
+  spawning function, `Mod.fun/n`; `args` is the register the argument
+  list arrives in for the module-function forms (-1 for a fun).
   """
 
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Resolve
   alias Argus.Extractor.Terms
   @typep form :: {:fun, non_neg_integer()} | {:mfa, non_neg_integer()}
-  @typep tie :: :spawn | :spawn_link | :spawn_monitor | {:opts, non_neg_integer()}
+  @typep tie ::
+           :spawn
+           | :spawn_link
+           | :spawn_monitor
+           | :start
+           | {:opts, non_neg_integer()}
+           | {:start_opts, non_neg_integer()}
 
   # {mod, fun, arity} => {what runs, and where; how the process is tied}.
   @spawns (for {mod, names} <- [
@@ -58,9 +67,9 @@ defmodule Argus.Pipeline.Emit.Spawns do
             {:proc_lib, :spawn_opt, 3} => {{:fun, 1}, {:opts, 2}},
             {:proc_lib, :spawn_opt, 4} => {{:mfa, 0}, {:opts, 3}},
             {:proc_lib, :spawn_opt, 5} => {{:mfa, 1}, {:opts, 4}},
-            {:proc_lib, :start, 3} => {{:mfa, 0}, :spawn},
-            {:proc_lib, :start, 4} => {{:mfa, 0}, :spawn},
-            {:proc_lib, :start, 5} => {{:mfa, 0}, {:opts, 4}},
+            {:proc_lib, :start, 3} => {{:mfa, 0}, :start},
+            {:proc_lib, :start, 4} => {{:mfa, 0}, :start},
+            {:proc_lib, :start, 5} => {{:mfa, 0}, {:start_opts, 4}},
             {:proc_lib, :start_link, 3} => {{:mfa, 0}, :spawn_link},
             {:proc_lib, :start_link, 4} => {{:mfa, 0}, :spawn_link},
             {:proc_lib, :start_link, 5} => {{:mfa, 0}, :spawn_link},
@@ -154,22 +163,28 @@ defmodule Argus.Pipeline.Emit.Spawns do
 
   defp variant(_instrs, _idx, tie) when is_atom(tie), do: to_string(tie)
 
-  defp variant(instrs, idx, {:opts, n}) do
+  defp variant(instrs, idx, {:opts, n}), do: opts_variant(instrs, idx, n, "spawn")
+
+  # proc_lib:start/5's spawn options: with neither a link nor a monitor
+  # it is the synchronous start its /3 and /4 are.
+  defp variant(instrs, idx, {:start_opts, n}), do: opts_variant(instrs, idx, n, "start")
+
+  defp opts_variant(instrs, idx, n, untied) do
     case Resolve.resolve_register(instrs, idx, {:x, n}) do
       {:ok, opts} when is_list(opts) ->
-        if Terms.proper_list?(opts), do: tie_of(opts), else: "spawn_opt"
+        if Terms.proper_list?(opts), do: tie_of(opts, untied), else: "spawn_opt"
 
       _ ->
         "spawn_opt"
     end
   end
 
-  defp tie_of(opts) do
+  defp tie_of(opts, untied) do
     cond do
       :link in opts -> "spawn_link"
       :monitor in opts or Enum.any?(opts, &match?({:monitor, _}, &1)) -> "spawn_monitor"
       Enum.any?(opts, &(&1 == :dynamic)) -> "spawn_opt"
-      true -> "spawn"
+      true -> untied
     end
   end
 end

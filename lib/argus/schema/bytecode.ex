@@ -305,7 +305,7 @@ defmodule Argus.Schema.Bytecode do
           {:func, :symbol, "that function's name, or \"dynamic\""},
           {:arity, :number, "that function's arity, or -1"},
           {:variant, :symbol,
-           "how the process is tied to the caller: spawn, spawn_link, spawn_monitor, or spawn_opt (options not literal)"},
+           "how the process is tied to the caller: spawn, spawn_link, spawn_monitor, start (proc_lib's unlinked start, which waits for the process's init_ack), or spawn_opt (options not literal)"},
           {:api, :symbol,
            "the spawning function, Mod.fun/n (:erlang.spawn/1, :proc_lib.start_link/3)"},
           {:source, :symbol,

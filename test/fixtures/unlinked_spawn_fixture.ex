@@ -15,4 +15,13 @@ defmodule Argus.Test.Fixtures.UnlinkedSpawner do
     # spawn_monitor — monitored by caller. Not an orphan.
     spawn_monitor(fn -> :ok end)
   end
+
+  def start_synchronously do
+    # peer's start_orphan_supervision: proc_lib:start waits for the
+    # process's init_ack and returns a failed start as a value, and the
+    # process reports its own crash. Not a bare spawn.
+    :proc_lib.start(__MODULE__, :init_it, [self()])
+  end
+
+  def init_it(parent), do: :proc_lib.init_ack(parent, {:ok, self()})
 end

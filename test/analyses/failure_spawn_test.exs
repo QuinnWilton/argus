@@ -29,6 +29,7 @@ defmodule Argus.Analyses.FailureSpawnTest do
       assert Enum.any?(funcs, &String.contains?(&1, "spawn_unlinked"))
       refute Enum.any?(funcs, &String.contains?(&1, "spawn_linked"))
       refute Enum.any?(funcs, &String.contains?(&1, "spawn_monitored"))
+      refute Enum.any?(funcs, &String.contains?(&1, "start_synchronously"))
     end
 
     test "a spawn its caller monitors or links to afterwards is watched" do
