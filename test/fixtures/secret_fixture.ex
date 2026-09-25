@@ -33,6 +33,28 @@ defmodule Argus.Test.Fixtures.Secret do
     def __schema__(_other), do: nil
   end
 
+  defmodule WithEmbed do
+    @moduledoc """
+    akkoma's `Pleroma.MFA.Settings`: an `embeds_one :totp, TOTP do ... end`
+    block whose module (`WithEmbed.Totp`, below) holds the TOTP seed.
+    """
+    def __schema__(:fields), do: [:enabled, :totp]
+    def __schema__(:redact_fields), do: []
+    def __schema__(_other), do: nil
+
+    def __schema__(:type, :enabled), do: :boolean
+
+    def __schema__(:type, :totp),
+      do:
+        {:parameterized,
+         {Ecto.Embedded, %{cardinality: :one, related: Argus.Test.Fixtures.Secret.WithEmbed.Totp}}}
+
+    def __schema__(:association, _field), do: nil
+    def __schema__(:embed, _field), do: nil
+    def __schema__(:field_source, field), do: field
+    def __schema__(:virtual_type, _field), do: nil
+  end
+
   defmodule Heuristic do
     @moduledoc """
     A secret the substring table cannot name. `totp_seed` matches none of
@@ -167,3 +189,19 @@ defmodule Argus.Test.Fixtures.Secret do
     def __schema__(_other), do: nil
   end
 end
+
+# The module an `embeds_one :totp, TOTP do ... end` block compiles to
+# carries no line (every marker is line 0), as akkoma's
+# `Pleroma.MFA.Settings.TOTP` does: Ecto creates it from the block with no
+# location. Its seed is reported at `WithEmbed`, whose source holds it.
+Module.create(
+  Argus.Test.Fixtures.Secret.WithEmbed.Totp,
+  quote do
+    @moduledoc false
+    def __schema__(:fields), do: [:secret, :delivery_type]
+    def __schema__(:redact_fields), do: []
+    def __schema__(_other), do: nil
+  end,
+  file: __ENV__.file,
+  line: 0
+)

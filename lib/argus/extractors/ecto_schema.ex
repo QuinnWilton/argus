@@ -39,6 +39,10 @@ defmodule Argus.Extractors.EctoSchema do
 
   - `schema_field(mod, field, type)` — a persisted field and its type
   - `redacted_field(mod, field)` — one excluded from `inspect/1`
+  - `lineless_schema(mod)` — a schema whose `__schema__/1` carries no
+    line: an `embeds_one :totp, TOTP do ... end` block compiles its
+    module with none, so a finding about its fields is anchored at the
+    schema that embeds it
   """
 
   @behaviour Argus.Extractor
@@ -51,6 +55,7 @@ defmodule Argus.Extractors.EctoSchema do
   @impl true
   def relations,
     do: [
+      :lineless_schema,
       :redacted_field,
       :schema_field
     ]
@@ -67,7 +72,9 @@ defmodule Argus.Extractors.EctoSchema do
         dispatch = dispatch_table(instrs, {:x, 0})
         types = field_types(find_function(functions, 2))
 
-        Enum.reduce(@keys, %{}, fn {key, relation}, facts ->
+        start = if lineless?(instrs), do: add_fact(%{}, :lineless_schema, [mod_str]), else: %{}
+
+        Enum.reduce(@keys, start, fn {key, relation}, facts ->
           dispatch
           |> Map.get(key)
           |> literal_at(labels, instrs)
@@ -84,6 +91,13 @@ defmodule Argus.Extractors.EctoSchema do
     do: [mod, inspect(field), Map.get(types, field, "dynamic")]
 
   defp row(:redacted_field, mod, field, _types), do: [mod, inspect(field)]
+
+  # Every line marker in the function is line 0 (none): the module was
+  # compiled from a block that carries no location.
+  defp lineless?(instrs) do
+    lines = for {:line, n} <- instrs, do: n
+    lines != [] and Enum.all?(lines, &(&1 == 0))
+  end
 
   defp find_function(functions, arity) do
     Enum.find_value(functions, fn

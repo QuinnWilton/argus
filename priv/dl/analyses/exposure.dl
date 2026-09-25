@@ -138,20 +138,46 @@ hides_via(mod, "redact") :- schema_field(mod, _, _), !own_derive(mod).
 
 schema_redacts_something(mod) :- hidden_from_inspect(mod, _).
 
-.decl unredacted_secret(mod: symbol, field: symbol, kind: symbol, aware: symbol, via: symbol)
+// Where a schema's fields are anchored: its own `__schema__/1`, or, for
+// one compiled with no line (an `embeds_one ... do` block, lineless_schema),
+// the schema that embeds it, whose source holds the block — the outermost
+// one with a line, for an embed inside an embed. The field's line is found
+// from there by its name.
+.decl schema_anchor(mod: symbol, anchor: symbol)
+
+schema_anchor(mod, mod) :- schema_field(mod, _, _), !lineless_schema(mod).
+
+schema_anchor(mod, anchor) :-
+  lineless_schema(mod),
+  embedded_in(mod, parent),
+  schema_anchor(parent, anchor).
+
+.decl embedded_in(child: symbol, parent: symbol)
+
+embedded_in(child, parent) :-
+  lineless_schema(child),
+  schema_field(parent, _, type),
+  (type = cat("embeds_one ", child) ; type = cat("embeds_many ", child)).
+
+// A lineless schema no schema of the run embeds keeps its own anchor.
+schema_anchor(mod, mod) :- lineless_schema(mod), !embedded_in(mod, _).
+
+.decl unredacted_secret(mod: symbol, field: symbol, kind: symbol, aware: symbol, via: symbol, anchor: symbol)
 .output unredacted_secret
 
-unredacted_secret(mod, field, kind, "aware", via) :-
+unredacted_secret(mod, field, kind, "aware", via, anchor) :-
   sensitive_field(mod, field, kind),
   !hidden_from_inspect(mod, field),
   schema_redacts_something(mod),
-  hides_via(mod, via).
+  hides_via(mod, via),
+  schema_anchor(mod, anchor).
 
-unredacted_secret(mod, field, kind, "unaware", via) :-
+unredacted_secret(mod, field, kind, "unaware", via, anchor) :-
   sensitive_field(mod, field, kind),
   !hidden_from_inspect(mod, field),
   !schema_redacts_something(mod),
-  hides_via(mod, via).
+  hides_via(mod, via),
+  schema_anchor(mod, anchor).
 
 // ── A secret the table cannot name ──────────────────────────────────
 //
@@ -178,20 +204,22 @@ model_named_secret(mod, field, detail, p) :-
   p >= 900,
   !matches_kind(mod, field, _).
 
-.decl unredacted_secret_inferred(mod: symbol, field: symbol, kind: symbol, aware: symbol, via: symbol, permille: number)
+.decl unredacted_secret_inferred(mod: symbol, field: symbol, kind: symbol, aware: symbol, via: symbol, permille: number, anchor: symbol)
 .output unredacted_secret_inferred
 
-unredacted_secret_inferred(mod, field, kind, "aware", via, p) :-
+unredacted_secret_inferred(mod, field, kind, "aware", via, p, anchor) :-
   model_named_secret(mod, field, kind, p),
   !hidden_from_inspect(mod, field),
   schema_redacts_something(mod),
-  hides_via(mod, via).
+  hides_via(mod, via),
+  schema_anchor(mod, anchor).
 
-unredacted_secret_inferred(mod, field, kind, "unaware", via, p) :-
+unredacted_secret_inferred(mod, field, kind, "unaware", via, p, anchor) :-
   model_named_secret(mod, field, kind, p),
   !hidden_from_inspect(mod, field),
   !schema_redacts_something(mod),
-  hides_via(mod, via).
+  hides_via(mod, via),
+  schema_anchor(mod, anchor).
 
 // ══ TLS without verification ════════════════════════════════════════
 // TLS that encrypts without authenticating.

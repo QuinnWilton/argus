@@ -53,7 +53,35 @@ defmodule Argus.Analyses.ExposureSecretsTest do
     # The stronger finding: the pattern is known in this module and was not
     # applied to this field, so it is an oversight rather than an unfamiliar
     # API — and the finding says so.
-    assert [[_m, ":client_secret", "credential", "aware", "redact"]] = for_mod("PartlyRedacted")
+    assert [[_m, ":client_secret", "credential", "aware", "redact", _anchor]] =
+             for_mod("PartlyRedacted")
+  end
+
+  test "an embed compiled with no line is anchored at the schema that embeds it" do
+    skip_without_souffle()
+
+    assert {:ok, r} =
+             Memo.analyze([S.WithEmbed, S.WithEmbed.Totp, S.Exposed], :exposure)
+
+    rows = Map.get(r, "unredacted_secret", [])
+
+    # akkoma's Pleroma.MFA.Settings.TOTP: its seed at Settings' schema line.
+    assert [[totp, ":secret", "credential", _, _, anchor]] =
+             Enum.filter(rows, &String.ends_with?(hd(&1), "WithEmbed.Totp"))
+
+    assert totp == inspect(S.WithEmbed.Totp)
+    assert anchor == inspect(S.WithEmbed)
+
+    # A schema with lines keeps its own.
+    assert Enum.all?(
+             Enum.filter(rows, &(hd(&1) == inspect(S.Exposed))),
+             &(List.last(&1) == hd(&1))
+           )
+
+    finding = Exposure.finding(:unredacted_secret, hd(Enum.filter(rows, &(hd(&1) == totp))))
+    assert finding.mfa == {S.WithEmbed, :__schema__, 1}
+    assert finding.at_source == ":secret"
+    assert finding.title == "Secret field printed by inspect/1"
   end
 
   test "severity separates a live third-party credential from a hash" do
@@ -87,7 +115,7 @@ defmodule Argus.Analyses.ExposureSecretsTest do
 
       # :password and :jwt are excluded; :sendgrid_api_key is not, and the
       # place to fix it is the derive, where redact: true would do nothing.
-      assert [[_m, ":sendgrid_api_key", "credential", "aware", "derive"]] =
+      assert [[_m, ":sendgrid_api_key", "credential", "aware", "derive", _]] =
                for_mod("Secret.DerivedExcept")
     end
 
@@ -96,20 +124,21 @@ defmodule Argus.Analyses.ExposureSecretsTest do
 
       assert for_mod("Secret.DerivedOnly") == []
 
-      assert [[_m, ":api_key", "credential", "aware", "derive"]] =
+      assert [[_m, ":api_key", "credential", "aware", "derive", _]] =
                for_mod("Secret.LeakyOnly")
     end
 
     test "Ecto's own derive for redact: true leaves the fix at redact: true" do
       skip_without_souffle()
 
-      assert [[_m, ":api_key", "credential", "aware", "redact"]] = for_mod("Secret.EctoDerived")
+      assert [[_m, ":api_key", "credential", "aware", "redact", _]] =
+               for_mod("Secret.EctoDerived")
     end
 
     test "redact: true under the schema's own derive hides nothing" do
       skip_without_souffle()
 
-      assert [[_m, ":password", "password", "unaware", "derive"]] =
+      assert [[_m, ":password", "password", "unaware", "derive", _]] =
                for_mod("Secret.RedactOverridden")
     end
 

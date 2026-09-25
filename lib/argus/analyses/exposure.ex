@@ -2,7 +2,7 @@ defmodule Argus.Analyses.Exposure do
   @moduledoc """
   Credentials printed, or sent unauthenticated.
 
-  - `unredacted_secret(mod, field, kind, aware, via)` — an Ecto schema
+  - `unredacted_secret(mod, field, kind, aware, via, anchor)` — an Ecto schema
     field that looks like a credential, password or token and that
     `inspect/1` prints in full — neither `redact: true` nor left out of
     the struct's `@derive {Inspect, ...}` — into Logger calls, changeset
@@ -11,7 +11,7 @@ defmodule Argus.Analyses.Exposure do
     other field, which makes the omission an oversight rather than an
     unfamiliar API; `via` says where the fix goes, `redact` or the
     schema's own `derive` (which makes `redact: true` a no-op).
-  - `unredacted_secret_inferred(mod, field, kind, aware, via, permille)`
+  - `unredacted_secret_inferred(mod, field, kind, aware, via, permille, anchor)`
     — the same finding for a field the sensitivity prior names a secret
     and no name fragment does: a step down in severity, heuristic, with
     the prior's probability.
@@ -52,7 +52,9 @@ defmodule Argus.Analyses.Exposure do
           {:field, :symbol, "the field"},
           {:kind, :symbol, "credential | password | token"},
           {:aware, :symbol, "whether the schema hides anything else from inspect/1"},
-          {:via, :symbol, "redact | derive — where the schema hides fields"}
+          {:via, :symbol, "redact | derive — where the schema hides fields"},
+          {:anchor, :symbol,
+           "the schema the finding points at: the field's own, or, for an embed compiled with no line, the one embedding it"}
         ],
         key: [:mod, :field],
         doc: "A secret-looking field that inspect/1 will print in full."
@@ -66,7 +68,8 @@ defmodule Argus.Analyses.Exposure do
           {:aware, :symbol, "whether the schema hides anything else from inspect/1"},
           {:via, :symbol, "redact | derive — where the schema hides fields"},
           {:permille, :number,
-           "the classifier's probability that the field is a secret of any kind, in thousandths"}
+           "the classifier's probability that the field is a secret of any kind, in thousandths"},
+          {:anchor, :symbol, "as unredacted_secret's"}
         ],
         key: [:mod, :field],
         doc:
@@ -96,7 +99,10 @@ defmodule Argus.Analyses.Exposure do
   end
 
   @impl true
-  def finding(:unredacted_secret, [mod, field, kind, aware, via]) do
+  def finding(:unredacted_secret, [mod, field, kind, aware, via]),
+    do: finding(:unredacted_secret, [mod, field, kind, aware, via, mod])
+
+  def finding(:unredacted_secret, [mod, field, kind, aware, via, anchor]) do
     Findings.new(
       severity(kind),
       # The field as a reader writes its access, `User.password_hash`;
@@ -109,8 +115,10 @@ defmodule Argus.Analyses.Exposure do
         "state. " <>
         Enum.join(Enum.reject([consequence(kind), awareness(aware, mod)], &(&1 == "")), " "),
       # Bytecode places every generated schema function at the `schema do`
-      # line; the field's own line is in the source, under its name.
-      at: Findings.at_mfa(mod, :__schema__, 1),
+      # line; the field's own line is in the source, under its name. An
+      # `embeds_one ... do` block's module has no line: the schema that
+      # embeds it is where the block is.
+      at: Findings.at_mfa(anchor, :__schema__, 1),
       at_source: field,
       at_label: at_label(via, String.trim_leading(field, ":")),
       help: [fix(via, field)]
@@ -120,9 +128,12 @@ defmodule Argus.Analyses.Exposure do
   # The same finding as the structural one, made heuristic: a step down
   # in severity, and a help line with the probability — the reader knows
   # a model, not a substring, named the field.
-  def finding(:unredacted_secret_inferred, [mod, field, kind, aware, via, permille]) do
+  def finding(:unredacted_secret_inferred, [mod, field, kind, aware, via, permille]),
+    do: finding(:unredacted_secret_inferred, [mod, field, kind, aware, via, permille, mod])
+
+  def finding(:unredacted_secret_inferred, [mod, field, kind, aware, via, permille, anchor]) do
     Findings.heuristic(
-      finding(:unredacted_secret, [mod, field, kind, aware, via]),
+      finding(:unredacted_secret, [mod, field, kind, aware, via, anchor]),
       String.to_integer(permille),
       "a classifier names #{field} a secret, most likely a #{kind}"
     )

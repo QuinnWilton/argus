@@ -2704,7 +2704,7 @@ F's name must not end in a metadata suffix: `_at`, `_on`, `_date`, `_time`, `_co
 - A hand-written `defimpl Inspect` is not read. The schema keeps its `redact:` reading, so a field that such an implementation hides is reported unless the field is also `redact: true`.
 - When a schema's derived `Inspect` module is not in the run, `redact: true` is taken at its word.
 - Only Ecto schemas are read. Plain structs, process state and JSON encoders are out of scope.
-- The finding anchors at `__schema__/1`, refined to the field's line through its name in the source.
+- The finding anchors at `__schema__/1`, refined to the field's line through its name in the source. A schema compiled with no line (`lineless_schema`: every line marker of its `__schema__/1` is 0, as for the module an `embeds_one :totp, TOTP do ... end` block makes) is anchored at the schema that embeds it, the outermost one with a line, whose source holds the block; its fields' names refine the line from there (`WithEmbed`: akkoma's `Pleroma.MFA.Settings.TOTP.secret`, which pointed at no line before round 3 of the mining).
 
 **Fixtures.** Positive: `Exposed`, `PartlyRedacted` (the `aware` arm), `SecretMetadata` (only `:access_token`), `DerivedExcept`, `LeakyOnly` and `RedactOverridden` (all `via` = `derive`), and `EctoDerived` (`via` = `redact`). Quiet: `Redacted`, `Ordinary`, `DerivedOnly`, the metadata fields of `SecretMetadata`, and `RedactOverridden` run without its `Inspect` module. All are under `Secret` (test/fixtures/secret_fixture.ex). Test: test/analyses/exposure_secrets_test.exs.
 

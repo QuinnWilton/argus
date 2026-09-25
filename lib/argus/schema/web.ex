@@ -47,6 +47,19 @@ defmodule Argus.Schema.Web do
         """
       },
       %{
+        name: :lineless_schema,
+        layer: 2,
+        fields: [
+          {:mod, :symbol, "the schema module"}
+        ],
+        doc: """
+        An Ecto schema whose `__schema__/1` carries no line: every line \
+        marker is line 0. An `embeds_one :totp, TOTP do ... end` block \
+        compiles its module with none (akkoma's `Pleroma.MFA.Settings.TOTP`), \
+        so a finding about its fields is anchored at the schema that embeds it.
+        """
+      },
+      %{
         name: :redacted_field,
         layer: 2,
         fields: [

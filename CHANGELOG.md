@@ -123,6 +123,15 @@ deployment broadcast before commit (present-only pair
 ambry's broadcasts inside `Repo.transact/1` were missed for want of
 them.
 
+**Fixed.** An Ecto schema compiled with no line — the module an
+`embeds_one :totp, TOTP do ... end` block makes, every line marker 0 —
+put exposure's finding at no line (akkoma's
+`Pleroma.MFA.Settings.TOTP.secret`, an unredacted TOTP seed). Such a
+schema (`lineless_schema`, EctoSchema) is anchored at the schema that
+embeds it, whose source holds the block, and the field's name refines
+the line from there; `unredacted_secret` and its inferred twin gain an
+`anchor` column. Schema 117.
+
 ### Points-to that finishes on a large program
 
 **Fixed.** The points-to stage finishes on Ash (1,327 modules), where it
