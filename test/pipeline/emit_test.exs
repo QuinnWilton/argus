@@ -593,6 +593,28 @@ defmodule Argus.Pipeline.EmitTest do
       assert [["TestMod:test_func/0#1", _, "0", "2"], ["TestMod:test_func/0#7", _, "1", "4"]] =
                Enum.sort(facts[:recv_start])
     end
+
+    # io's execute_request/3: after the :DOWN, a look for the :EXIT with
+    # `after 0`, whose empty-mailbox block has no wait at all, inside a
+    # function whose other receive waits further down.
+    test "an after-0 receive before a blocking one is not blocking" do
+      facts =
+        emit_func([
+          {:label, 1},
+          {:loop_rec, {:f, 2}, {:x, 0}},
+          :remove_message,
+          {:label, 2},
+          :timeout,
+          {:label, 3},
+          {:loop_rec, {:f, 4}, {:x, 0}},
+          :remove_message,
+          {:label, 4},
+          {:wait, {:f, 3}}
+        ])
+
+      assert [["TestMod:test_func/0#1", _, "0", "2"], ["TestMod:test_func/0#6", _, "1", "4"]] =
+               Enum.sort(facts[:recv_start])
+    end
   end
 
   describe "exception facts" do

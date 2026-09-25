@@ -322,6 +322,13 @@ the cancel succeeded. Blocking's receive rules read the same
 `flush_receive`; a receive with an `after` that takes a cancelled
 timer's message is `flush_poll`, as before.
 
+**Fixed.** `recv_start`'s `blocking` is `0` for a receive with `after
+0`. Its empty-mailbox block goes straight to the after clause with a
+bare `timeout`, no `wait` and no `wait_timeout`, and the emitter's scan
+went on past it to a later receive's `wait`: io's `execute_request/3`
+looks for an `:EXIT` with `after 0` inside a receive that waits, and the
+look was taken for a second wait with no timeout.
+
 **Added.** "init/1 enters the server loop before its start returns"
 (`unbounded_effect_in_init`, "enter_loop", an error): an init/1 that
 reaches `:gen_server.enter_loop` or `:gen_statem.enter_loop` before any
