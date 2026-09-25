@@ -885,7 +885,7 @@ uncollected.guarded(id) :- awaits_down_after(_, id).
 
 .decl collection_exposed(func: symbol)
 
-collection_exposed(g) :- uncollected.reaches(f, g), function_def(f, _, _, _, 1).
+collection_exposed(g) :- uncollected.reaches(f, g), api_export(f).
 collection_exposed(g) :- uncollected.reaches(f, g), !call_edge(_, f).
 collection_exposed(g) :- uncollected.reaches(h, g), runs_elsewhere(_, h).
 

@@ -453,15 +453,15 @@ table_filled_in_view(f, p) :-
   table_filled_in_view(c, to_string(m)).
 
 // The parameter reaches the function from a caller outside the program:
-// the function is such a caller's way in (exported, in a module no other
-// module of the program calls, and not a callback the runtime calls with
-// what the program's own init returned), or is handed it by one.
+// the function is such a caller's way in (library_face,
+// clientlib/ways_in.dl: exported, in a module no other module of the
+// program calls; and not a callback the runtime calls with what the
+// program's own init returned), or is handed it by one.
 .decl table_from_outside(func: symbol, pos: symbol)
 
 table_from_outside(f, p) :-
   table_param_needed(f, p),
-  function_def(f, m, _, _, 1),
-  !called_by_other_module(m),
+  library_face(f),
   !process_entry(_, f).
 
 table_from_outside(f, p) :-
@@ -804,7 +804,7 @@ mint_handed_out(w) :-
 
 .decl result_leaves(func: symbol)
 
-result_leaves(h) :- rows.act(_, h, _, _, _, _), function_def(h, _, _, _, 1).
+result_leaves(h) :- rows.act(_, h, _, _, _, _), api_export(h).
 result_leaves(h) :- rows.act(_, h, _, _, _, _), site_depends(_, _, "call", h).
 result_leaves(h) :- rows.act(_, h, _, _, _, _), call_decided(_, _, "call", h).
 result_leaves(h) :- rows.act(_, h, _, _, _, _), call_arg_depends(_, _, _, "call", h).
@@ -871,7 +871,7 @@ decision_escapes(c) :-
 
 decision_escapes(c) :-
   decision_returned(g, c),
-  function_def(g, _, _, _, 1),
+  api_export(g),
   !callee_returns(g, "constant").
 
 // The read's decision looks at what the row holds, past its key: a test
@@ -1329,7 +1329,7 @@ from_table(g, "param", p, tk, t) :-
 // Sources whose origin the program does not show.
 .decl open_source(func: symbol, kind: symbol, src: symbol)
 
-open_source(g, "param", p) :- key_needed(g, "param", p), function_def(g, _, _, _, 1).
+open_source(g, "param", p) :- key_needed(g, "param", p), api_export(g).
 open_source(g, "param", p) :- key_needed(g, "param", p), fun_ref(_, g).
 open_source(g, "call", h) :- key_needed(g, "call", h), !returns_depends(h, _, _).
 open_source(g, k, s) :- key_needed(g, "param", p), call_arg_reads(c, g, n, k, s), p = to_string(n), open_source(c, k, s).
@@ -1504,7 +1504,7 @@ rescue_asked(f) :- missing.meets(f, _, _, _, _, _, _).
 .decl called_unguarded(func: symbol)
 
 called_unguarded(f) :- rescue_asked(f), call_instr(h, f, c), !site_rescues_argument_error(c, h).
-called_unguarded(f) :- rescue_asked(f), function_def(f, _, _, _, 1).
+called_unguarded(f) :- rescue_asked(f), api_export(f).
 called_unguarded(f) :- rescue_asked(f), fun_ref(_, f).
 called_unguarded(f) :- rescue_asked(f), call_edge(h, f), !call_instr(h, f, _).
 
@@ -1965,7 +1965,7 @@ record_decision_escapes(c) :-
 
 record_decision_escapes(c) :-
   record_decision_returned(g, c),
-  function_def(g, _, _, _, 1),
+  api_export(g),
   !callee_returns(g, "constant").
 
 // ── Which race a pair is ──

@@ -41,22 +41,7 @@
 // imports.dl, otp.dl (process_entry, behaves_as, dynamic_child,
 // runs_elsewhere) and request_entry.dl.
 
-// A module some other module of the program calls into.
-.decl called_by_other_module(mod: symbol)
-
-called_by_other_module(m) :-
-  call_edge(c, g),
-  function_def(g, m, _, _, _),
-  function_def(c, cm, _, _, _),
-  cm != m.
-
-// An exported function only a caller outside the program can call.
-.decl open_entry(func: symbol)
-
-open_entry(f) :-
-  function_def(f, m, _, _, 1),
-  !call_edge(_, f),
-  !called_by_other_module(m).
+// open_entry and called_by_other_module are clientlib/ways_in.dl's.
 
 .comp RunsConcurrently {
   .decl seed(func: symbol)

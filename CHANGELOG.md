@@ -349,6 +349,17 @@ repo's transaction beside another repo's is that repo's
 (`Transaction.TwoRepos`, once no finding at all). effects reads
 `fun_handed`.
 
+**Changed.** A way in from outside the program is one set of words
+(`clientlib/ways_in.dl`, included by imports.dl): `api_export` (an
+exported function a caller outside the program may call — not a macro,
+which the compiler calls, nor `module_info` or a `__name__` reflection
+function), `library_face` (such an export of a module no other module
+of the program calls into) and `open_entry` (a library face nothing in
+the program calls; was concurrency.dl's). failure's exposed roots,
+mailbox's collection check, races' outside tables, escaping decisions,
+open key sources and unguarded callers, and unsafe_input's caller input
+and export reach read them in place of "exported" spelled five ways.
+
 **Changed.** A cast a spawn, task or agent makes is its own process's
 (`reaches_async_dep` cuts `runs_elsewhere`, as `reaches_sync_dep` does):
 a task init/1 starts that casts to a later sibling no longer makes

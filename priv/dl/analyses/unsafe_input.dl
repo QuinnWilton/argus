@@ -219,7 +219,7 @@ sink_reachable(id, func, api, s, entry, kind, proximity, "", 0, safety) :-
 // deserialization. Reported here only, so a sink is one finding.
 .init export_reach = ForwardCallReachSet
 
-export_reach.root(func) :- function_def(func, _, _, _, 1).
+export_reach.root(func) :- api_export(func).
 
 .decl unreached_sink(id: symbol, func: symbol, api: symbol, sink: symbol, safety: symbol)
 
@@ -345,8 +345,8 @@ caller_input(id) :- atom_input.reaches(f, _, id), outside_api(f).
 .decl outside_api(func: symbol)
 
 outside_api(f) :-
-  function_def(f, m, n, a, 1),
-  !match("MACRO-.*", n),
+  api_export(f),
+  function_def(f, m, n, a, _),
   !runtime_callback(m, n, a),
   !function_def(_, m, "__impl__", 1, _).
 
@@ -417,7 +417,7 @@ sink_export_reach(id, e) :-
   unreached_sink(id, func, _, _, _),
   sink_callers.reaches(func, e, d),
   d > 0,
-  function_def(e, _, _, _, 1).
+  api_export(e).
 
 sink_export(id, e) :-
   sink_export_reach(id, e),

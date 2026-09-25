@@ -665,7 +665,7 @@ raised_class(class) :- call_result(_, _, _, _, class, _).
 .init exposed = ForwardUnguardedSet
 
 exposed.root(f, class) :-
-  function_def(f, _, _, _, 1),
+  api_export(f),
   raised_class(class).
 
 exposed.root(g, class) :-
@@ -684,7 +684,7 @@ exposed.guarded_edge(f, g, class) :-
 // "try", a kind no call raises: whether a try of any kind — one that
 // takes nothing included — stands on every way in. It tells a site no
 // try reaches from one whose callers' tries take other classes.
-exposed.root(f, "try") :- function_def(f, _, _, _, 1).
+exposed.root(f, "try") :- api_export(f).
 
 exposed.root(g, "try") :-
   closure_def(f, g),

@@ -1,0 +1,62 @@
+// Ways in from outside the program.
+//
+// The analyzed beams are not the whole system: a library's users, the
+// runtime and the compiler call into it too. Rules ask, of a function,
+// whether a caller the program does not show can call it, and they asked
+// it five ways (failure's exposed roots, unsafe_input's outside_api,
+// races' table_from_outside and open_source, concurrency's open_entry).
+// Two questions stand behind them, and are named here:
+//
+// - api_export(f): a caller outside the program may call f. Every
+//   exported function but those the compiler calls or makes: a macro
+//   (`MACRO-name`, run at compile time with the code that uses it), and
+//   the reflection a module is compiled with (`__info__/1`,
+//   `module_info/0,1`, `__struct__`, `__impl__`, `__schema__` and the
+//   other `__name__` functions a `use` defines for its library to read).
+//   A function the program also calls is still its users' API (an Ecto
+//   type's cast/1). Callbacks are exported, and the runtime calls them:
+//   a rule for which the runtime's call is not an outside party's leaves
+//   them out itself (unsafe_input's runtime_callback), and one for which
+//   it is — failure's guard, which no try of the program's covers —
+//   keeps them.
+// - library_face(f): an api_export of a module no other module of the
+//   program calls into — the program is that module's client nowhere, so
+//   its users are the ones who call it. A module other modules of the
+//   program call is one whose callers are in view: an export of it none
+//   of them calls is unused (the tests, not in the beams, may call it),
+//   not a way in. nerves_hub_web's CLISessionCache is the shape: Accounts
+//   calls its get_and_update/2 and get/1, and only the tests call its
+//   clear/0. The same module in a library nothing calls into is all API,
+//   clear/0 included. It misses a module a library both calls itself and
+//   hands its users, through a function the library never calls (quiet).
+//   open_entry(f) is a library_face nothing in the program calls.
+//
+// Requires imports.dl.
+
+.decl api_export(func: symbol)
+
+api_export(f) :-
+  function_def(f, _, n, _, 1),
+  !match("MACRO-.*", n),
+  !match("__.*__", n),
+  n != "module_info".
+
+// A module some other module of the program calls into.
+.decl called_by_other_module(mod: symbol)
+
+called_by_other_module(m) :-
+  call_edge(c, g),
+  function_def(g, m, _, _, _),
+  function_def(c, cm, _, _, _),
+  cm != m.
+
+.decl library_face(func: symbol)
+
+library_face(f) :-
+  api_export(f),
+  function_def(f, m, _, _, _),
+  !called_by_other_module(m).
+
+.decl open_entry(func: symbol)
+
+open_entry(f) :- library_face(f), !call_edge(_, f).
