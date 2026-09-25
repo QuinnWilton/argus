@@ -282,6 +282,15 @@ cancelled that very monitor, as `recv_down` does from its monitor.
 mailbox's `waited_out` still asks recv_down alone: whether a wait
 consumes that very monitor.
 
+**Changed.** blocking reports a `:global` lock outside init/1 on the
+terms startup reports one during it (`lock_until_granted`,
+`bounded_lock`): a retry count the bytecode does not show is assumed
+`:infinity` (it was dropped), and a positive count over `[node()]` alone
+is the fix, and quiet (it was "Local :global lock without a retry
+bound"). **Added** title: "Bounded cluster-wide :global lock" (`:info`)
+for a positive count over other nodes, which was "Cluster-wide :global
+synchronization".
+
 **Changed.** A cast a spawn, task or agent makes is its own process's
 (`reaches_async_dep` cuts `runs_elsewhere`, as `reaches_sync_dep` does):
 a task init/1 starts that casts to a later sibling no longer makes

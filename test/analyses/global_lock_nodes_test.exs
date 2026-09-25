@@ -124,5 +124,20 @@ defmodule Argus.Analyses.GlobalLockNodesTest do
       assert by_func[:arg].title == "Cluster-wide :global synchronization"
       assert by_func[:arg].at_label =~ "node list could not be read"
     end
+
+    # The terms startup reports a lock during init/1 on
+    # (clientlib/vocabulary.dl): a count the bytecode does not show is
+    # assumed :infinity, and a bounded count over [node()] is the fix.
+    test "an unread retry count is assumed :infinity", %{by_func: by_func} do
+      assert by_func[:forwarded_retries].title == "Cluster-wide :global synchronization"
+      assert by_func[:forwarded_retries].detail =~ "assumed :infinity"
+    end
+
+    test "a bounded lock over the cluster still asks every node; over [node()] it is quiet",
+         %{by_func: by_func} do
+      assert by_func[:bounded_cluster].title == "Bounded cluster-wide :global lock"
+      assert by_func[:trans_cluster].title == "Bounded cluster-wide :global lock"
+      refute Map.has_key?(by_func, :bounded_local)
+    end
   end
 end

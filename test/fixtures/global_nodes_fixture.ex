@@ -69,6 +69,15 @@ defmodule Argus.Test.Fixtures.GlobalNodes do
     def trans_local(k, f), do: :global.trans({k, self()}, f, [node()])
     def trans_cluster(k, f), do: :global.trans({k, self()}, f, [node() | Node.list()], 3)
 
+    # A positive retry count over [node()] gives up on a held local lock:
+    # the fix, quiet. The same count over the cluster still asks every node.
+    def bounded_local(k), do: :global.set_lock({k, self()}, [node()], 5)
+    def bounded_cluster(k), do: :global.set_lock({k, self()}, [node() | Node.list()], 5)
+
+    # A retry count a caller passes, which the bytecode does not show:
+    # assumed :infinity, as startup assumes it during init/1.
+    def forwarded_retries(k, n), do: :global.set_lock({k, self()}, [node() | Node.list()], n)
+
     def held(k) do
       ns = [node() | Node.list()]
       true = :global.set_lock({k, self()}, ns, :infinity)

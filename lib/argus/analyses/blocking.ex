@@ -554,25 +554,11 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:unbounded_wait, [func, site, "global", op, retries, "cluster", _, _]) do
-    Findings.new(
-      :info,
-      "Cluster-wide :global synchronization",
-      "#{func} calls :global.#{op} with retries = #{retries}. :global " <>
-        "operations serialize across the whole cluster — fine when " <>
-        "deliberate, but every caller shares one distributed lock, and " <>
-        "partition recovery stalls them all.",
-      at: Findings.at_instr(site),
-      at_label: "cluster-wide operation",
-      help: ["bound `retries` so a partition fails this caller instead of holding it"]
-    )
-  end
-
   def finding(:unbounded_wait, [func, site, "global", op, retries, "local", _, _]) do
     Findings.new(
       :info,
       "Local :global lock without a retry bound",
-      "#{func} calls :global.#{op} with retries = #{retries} over only the " <>
+      "#{func} calls :global.#{op} #{retries_phrase(retries)} over only the " <>
         "local node. No other node takes part, so a partition cannot stall " <>
         "it, but the caller waits for as long as another process on this " <>
         "node holds the lock.",
@@ -582,21 +568,36 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  # "unknown": the node list is not in the bytecode. Reported as the
-  # cluster-wide lock it may be, saying it is assumed — as is any list
-  # not known to be local or cluster.
-  def finding(:unbounded_wait, [func, site, "global", op, retries, _nodes, _, _]) do
+  def finding(:unbounded_wait, [func, site, "global", op, retries, nodes, _, _])
+      when retries in ["infinity", "dynamic"] do
     Findings.new(
       :info,
       "Cluster-wide :global synchronization",
-      "#{func} calls :global.#{op} with retries = #{retries}, and a node " <>
-        "list the bytecode does not show, so this assumes it holds the " <>
-        "connected nodes. Over the cluster, :global operations serialize " <>
-        "across every node — fine when deliberate, but every caller shares " <>
-        "one distributed lock, and partition recovery stalls them all.",
+      "#{func} calls :global.#{op} #{retries_phrase(retries)}#{nodes_phrase(nodes)}. " <>
+        ":global operations serialize across the whole cluster — fine when " <>
+        "deliberate, but every caller shares one distributed lock, and " <>
+        "partition recovery stalls them all.",
       at: Findings.at_instr(site),
-      at_label: "assumed cluster-wide: the node list could not be read",
+      at_label: nodes_label(nodes, "cluster-wide operation"),
       help: ["bound `retries` so a partition fails this caller instead of holding it"]
+    )
+  end
+
+  def finding(:unbounded_wait, [func, site, "global", op, retries, nodes, _, _]) do
+    Findings.new(
+      :info,
+      "Bounded cluster-wide :global lock",
+      "#{func} calls :global.#{op} with retries = #{retries}#{nodes_phrase(nodes)}. " <>
+        "It gives up and returns false once its retries are spent, after up to " <>
+        "8 s of backoff between tries, but each try asks every node in the " <>
+        "list: a node that is partitioned and not yet declared down holds the " <>
+        "try, and the caller with it.",
+      at: Findings.at_instr(site),
+      at_label: nodes_label(nodes, "bounded cluster-wide lock"),
+      help: [
+        "lock over `[node()]` when the lock guards only this node's state, " <>
+          "or give the caller a deadline of its own"
+      ]
     )
   end
 
@@ -682,4 +683,25 @@ defmodule Argus.Analyses.Blocking do
   # A variant rpc_call does not emit today: the timeout's advice in general.
   defp rpc_timeout_help(_variant),
     do: "pass a timeout (the last argument) and handle the call running out of it"
+
+  # How a lock retries: :infinity, a count the bytecode does not show
+  # (assumed :infinity, the default the wrappers forward), or a count.
+  defp retries_phrase("infinity"), do: "with retries = :infinity"
+
+  defp retries_phrase("dynamic"),
+    do:
+      "with a retry count the bytecode does not show, assumed :infinity as the wrappers forward it"
+
+  defp retries_phrase(n), do: "with retries = #{n}"
+
+  defp nodes_phrase("unknown"),
+    do:
+      ", and a node list the bytecode does not show, so this assumes it holds the connected nodes"
+
+  defp nodes_phrase(_), do: ""
+
+  defp nodes_label("unknown", _),
+    do: "assumed cluster-wide: the node list could not be read"
+
+  defp nodes_label(_, label), do: label
 end

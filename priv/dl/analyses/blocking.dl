@@ -1088,16 +1088,25 @@ wait_found(func, "", "rpc_in_callback", variant, "", "") :-
 
 // ── Blocking :global synchronization ─────────────────────────────
 
-// :global.set_lock and :global.trans wait without bound when retries
-// is :infinity or any positive integer (which retries with backoff);
-// retries = "0" means try once and return immediately — non-blocking.
-// A lock over the cluster's nodes waits on every one of them and
-// stalls on a netsplit; one over `[node()]` waits only on a local
-// holder. `nodes` says which (retrying_lock, clientlib/vocabulary.dl).
-// site is the :global call instruction. One row per site — finding
-// builders dedupe on (func, op, retries, nodes).
+// The locks startup reports during init/1, and on the same terms
+// (clientlib/vocabulary.dl): a :global.set_lock or :global.trans that
+// retries until it is granted — retries :infinity, or a count the
+// bytecode does not show, assumed :infinity as the wrappers forward it
+// (lock_until_granted) — over any nodes; and one that gives up after a
+// positive count (bounded_lock) but asks other nodes each try, so a
+// partitioned node holds every try until it is declared down. A bounded
+// lock over `[node()]` alone is the fix, and quiet. A lock over the
+// cluster's nodes stalls on a netsplit; one over `[node()]` waits only on
+// a local holder. `nodes` says which, `detail` the retries ("infinity",
+// "dynamic" or the count). site is the :global call instruction. One row
+// per site — finding builders dedupe on (func, op, retries, nodes).
 wait_found(func, lock, "global", op, retries, nodes) :-
-  retrying_lock(lock, func, op, retries, nodes),
+  lock_until_granted(lock, func, op, retries, nodes),
+  !during_init(lock).
+
+wait_found(func, lock, "global", op, retries, nodes) :-
+  bounded_lock(lock, func, op, retries, nodes),
+  nodes != "local",
   !during_init(lock).
 
 // ══ A peer call that catches :noproc but not :shutdown ══════════════
