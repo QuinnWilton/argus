@@ -6,13 +6,13 @@ defmodule Argus.Souffle.DeclaredDigestTest do
   loads for it. This checks that claim against the solver, for every
   shipped program over the fixtures' facts: in a copy of `priv/dl`
   whose generated files have every other declaration changed — fields
-  renamed, prose rewritten, a relation added — the program loads the
-  same relations and writes the same files, byte for byte, and its
-  digest does not move. With those declarations' types changed and a
-  field added as well, a program either does the same or no longer
-  compiles, which resolving its inputs reports before any solve is
-  keyed (so no kept solve stands in for the failure). And a change to
-  a declaration it loads moves its digest.
+  renamed, prose rewritten, and where no rule names it retyped and
+  widened; a relation added — the program loads the same relations and
+  writes the same files, byte for byte, and its digest does not move.
+  A declaration a pruned rule names, retyped, no longer compiles, and
+  resolving the program's inputs says so before any solve is keyed (so
+  no kept solve stands in for the failure). And a change to a
+  declaration it loads moves its digest.
   """
   use ExUnit.Case, async: true
 
@@ -91,7 +91,10 @@ defmodule Argus.Souffle.DeclaredDigestTest do
         |> Enum.sort()
         |> Enum.find_value(fn relation ->
           root = Path.join([tmp, Path.basename(program, ".dl"), relation])
-          broken = Path.join(perturb(root, dl, &(&1 == relation), &retype/1), relative)
+
+          broken =
+            Path.join(perturb(root, dl, &(&1 == relation), fn _, d -> retype(d) end), relative)
+
           if match?({:error, _}, Souffle.input_relations(broken)), do: broken
         end)
       end)
@@ -109,30 +112,26 @@ defmodule Argus.Souffle.DeclaredDigestTest do
     {:ok, original} = solve(facts, program, Path.join([tmp, name, "original"]))
     digest = Cache.declared_digest(program, kept)
 
-    # Renamed, reworded, one added: the program is the same program.
-    renamed = perturb(Path.join([tmp, name, "renamed"]), dl, &(&1 not in kept), &rename/1)
-    renamed_program = Path.join(renamed, relative)
-
-    assert Cache.declared_digest(renamed_program, kept) == digest, name
-    refute Cache.declared_digest(renamed_program, :all) == Cache.declared_digest(program, :all)
-    assert {:ok, ^kept} = Souffle.input_relations(renamed_program)
-    assert {:ok, ^original} = solve(facts, renamed_program, Path.join([tmp, name, "out_r"])), name
-
-    # Retyped too, and widened, where no rule names them: the same.
+    # Every declaration it does not load renamed and reworded — retyped
+    # and widened too where no rule names it — and one relation added:
+    # the program is the same program.
     named = named(program)
-    retype? = &(&1 not in kept and &1 not in named)
 
-    retyped =
-      perturb(Path.join([tmp, name, "retyped"]), dl, retype?, &(&1 |> rename() |> retype()))
+    change = fn relation, decl ->
+      if relation in named, do: rename(decl), else: decl |> rename() |> retype()
+    end
 
-    retyped_program = Path.join(retyped, relative)
-    assert Cache.declared_digest(retyped_program, kept) == digest, name
-    assert {:ok, ^kept} = Souffle.input_relations(retyped_program)
-    assert {:ok, ^original} = solve(facts, retyped_program, Path.join([tmp, name, "out_t"])), name
+    perturbed = perturb(Path.join([tmp, name, "perturbed"]), dl, &(&1 not in kept), change)
+    perturbed = Path.join(perturbed, relative)
+
+    assert Cache.declared_digest(perturbed, kept) == digest, name
+    refute Cache.declared_digest(perturbed, :all) == Cache.declared_digest(program, :all)
+    assert {:ok, ^kept} = Souffle.input_relations(perturbed)
+    assert {:ok, ^original} = solve(facts, perturbed, Path.join([tmp, name, "out"])), name
 
     # A declaration it loads moves its key.
     if loaded = Enum.find(kept, &generated?(dl, &1)) do
-      moved = perturb(Path.join([tmp, name, "moved"]), dl, &(&1 == loaded), &rename/1)
+      moved = perturb(Path.join([tmp, name, "moved"]), dl, &(&1 == loaded), &rename/2)
       refute Cache.declared_digest(Path.join(moved, relative), kept) == digest, name
     end
 
@@ -180,7 +179,7 @@ defmodule Argus.Souffle.DeclaredDigestTest do
       body =
         Enum.map_join(blocks, "\n", fn {relation, block} ->
           [decl, input] = String.split(block, "\n")
-          decl = if change?.(relation), do: change.(decl), else: decl
+          decl = if change?.(relation), do: change.(relation, decl), else: decl
           "// Perturbed prose for #{relation}.\n//\n#{decl}\n#{input}\n"
         end)
 
@@ -195,6 +194,8 @@ defmodule Argus.Souffle.DeclaredDigestTest do
 
     root
   end
+
+  defp rename(_relation, decl), do: rename(decl)
 
   defp rename(decl) do
     [_, name, fields] = Regex.run(~r/^\.decl (\w+)\((.*)\)$/, decl)
