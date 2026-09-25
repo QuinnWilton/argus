@@ -196,7 +196,13 @@ overwrites_row(id) :-
   ets_key(id, "literal", _),
   ets_new(t, _, name),
   !bag_table(t),
-  !ets_option(t, "keypos", _).
+  !keyed_elsewhere(t).
+
+// A keypos other than 1 keys the table on another element than the one
+// ets_key read; vernemq's cluster-state table spells the default out.
+.decl keyed_elsewhere(table: symbol)
+
+keyed_elsewhere(t) :- ets_option(t, "keypos", p), p != "1".
 
 .decl bag_table(table: symbol)
 

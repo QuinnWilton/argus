@@ -133,5 +133,15 @@ defmodule Argus.Analyses.EtsTest do
                results["ets_write_only_table"],
              "a bag keeps every insert under the same key; a set overwrites it"
     end
+
+    test "a keypos of 1 spelled out is the default; another keys the table elsewhere" do
+      skip_without_souffle()
+
+      modules = [Argus.Test.Fixtures.EtsSettingsKeypos1, Argus.Test.Fixtures.EtsSettingsKeypos2]
+      assert {:ok, results} = Memo.analyze(modules, :ets)
+
+      assert [[":settings_keypos2", "Argus.Test.Fixtures.EtsSettingsKeypos2", _site]] =
+               results["ets_write_only_table"]
+    end
   end
 end

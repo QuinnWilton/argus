@@ -143,6 +143,11 @@ program's own macro or header wrote is still reported.
 was the last call's before it (exq's Manager.Server, one line above
 `{:ok, state, 0}`); scry moves the anchor to the return's line.
 
+**Fixed.** ets's "only grows" took any `keypos` option as keying the
+table elsewhere, so an explicit `{:keypos, 1}` (vernemq's cluster-state
+table) defeated the literal-key overwrite; only a keypos other than 1
+does now.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

@@ -231,6 +231,36 @@ defmodule Argus.Test.Fixtures.EtsSettingsBag do
   end
 end
 
+defmodule Argus.Test.Fixtures.EtsSettingsKeypos1 do
+  @moduledoc "vernemq's cluster-state table: the default keypos spelled out, literal keys."
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  def set_limit(n), do: :ets.insert(:settings_keypos1, {:limit, n})
+
+  @impl true
+  def init(_) do
+    :ets.new(:settings_keypos1, [:named_table, :protected, :set, {:keypos, 1}])
+    {:ok, %{}}
+  end
+end
+
+defmodule Argus.Test.Fixtures.EtsSettingsKeypos2 do
+  @moduledoc "Keyed on the second element: the literal first one says nothing. It only grows."
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  def record(id, n), do: :ets.insert(:settings_keypos2, {:limit, id, n})
+
+  @impl true
+  def init(_) do
+    :ets.new(:settings_keypos2, [:named_table, :protected, :set, {:keypos, 2}])
+    {:ok, %{}}
+  end
+end
+
 defmodule Argus.Test.Fixtures.EtsWarmCache do
   @moduledoc "Filled once in init/1, read forever: a cache, not a leak."
   use GenServer

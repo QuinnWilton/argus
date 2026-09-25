@@ -2274,12 +2274,12 @@ Another process takes or deletes the row between the check and the act, and the 
 **Property.** Some table created with `:named_table` is inserted into (`insert` or `insert_new`, by its name) from a function not named `init`, and nothing removes rows from it: no `delete` of a key or of the table, `delete_object`, `delete_all_objects`, `select_delete`, `match_delete` or `take` on that name anywhere in the program, and no removal through a table reference of unknown name in the creating module. Every insert stays for the owner's life, which for a supervised process is the VM's: when entries have a natural end (a request completing, a check-in resolving), the table is a slow memory leak (Sentry's check-in ID mapping was one).
 
 **Assumptions and limits.**
-- Whether the inserted keys are bounded is not asked: a table written under a fixed set of keys, such as a configuration table, replaces rows rather than growing, and is reported (encore fugue's `:fugue_config`).
+- An insert whose key is a literal (`ets_key`) into a set or ordered_set keyed on the first element overwrites the one row its key names, and is no growth (`overwrites_row`, rabbit_disk_monitor's settings): a bag or duplicate_bag keeps every insert, and a keypos other than 1 keys the table on another element, so both still count; a `{:keypos, 1}` spelled out is the default (vernemq's cluster-state table). Otherwise whether the inserted keys are bounded is not asked: a key that is a parameter every caller fills with a literal, or a bounded counter, is reported (encore fugue's `:fugue_config`; vernemq's metric tables; a prior candidate).
 - "Outside init" is by name: a function named `init` of any arity in any module counts as filling at start, so a table filled in some other module's `init` and then only read is quiet; inserts in `handle_continue/2` count as growth.
 - Inserts whose table the extractor cannot name (a reference it does not resolve), and rows made by `update_counter/4` with a default, are not counted, so such tables are missed.
 - A removal on any reference of unknown name in the owner's module is taken as possibly this table (the quiet direction). Unnamed tables are not considered.
 
-**Fixtures.** Positive: `EtsGrowOnly`. Quiet: `EtsBounded`, `EtsWarmCache` (test/fixtures/ets_fixture.ex). Asserted by test/analyses/ets_test.exs.
+**Fixtures.** Positive: `EtsGrowOnly`, `EtsSettingsBag`, `EtsSettingsKeypos2`. Quiet: `EtsBounded`, `EtsWarmCache`, `EtsSettings`, `EtsSettingsKeypos1` (test/fixtures/ets_fixture.ex). Asserted by test/analyses/ets_test.exs.
 
 **Corpus.** None.
 
