@@ -620,5 +620,50 @@
     pre: "369dc8003667b44acada3e5700c993d6027d420a",
     fix: "9d7df2d8c33d01bb1c3e69cb8c0ea118ed9fc4d4",
     finding: {:blocking, "Socket call with no timeout inside a callback"}
+  },
+  # redix#99: SocketOwner's handle_info(:connect) read the AUTH and SELECT
+  # replies with :gen_tcp.recv/2; the fix threads the connect timeout in.
+  %{
+    repo: "whatyouhide/redix",
+    issue: "redix#99",
+    module: "Redix.Utils",
+    pre: "0d25d1fa036bc74e261ab9649e2b1245767d1a8c",
+    fix: "9a2eed624bb20bd89c6b0e14a764e53936fd256c",
+    finding: {:blocking, "Socket call with no timeout inside a callback"}
+  },
+  # supavisor#962: the DbHandler gen_statem connected upstream with
+  # :gen_tcp.connect/3 in its :connect event; the fix gives connect/4 1 s
+  # behind a proxy, 5 s otherwise.
+  %{
+    repo: "supabase/supavisor",
+    issue: "supavisor#962",
+    module: "Supavisor.DbHandler",
+    pre: "b1a680a9fd04d37553f0a5bbfdc84b16d4fe2913",
+    fix: "08c14231e920304e2e5265e05f4f6ab6c05560ce",
+    finding: {:blocking, "Socket call with no timeout inside a callback"}
+  },
+  # aprs.me: AprsIsConnection's handle_info(:connect) called
+  # :gen_tcp.connect/3; the fix passes 10 s. (Aprsme.Is keeps its own
+  # untimed connect at the fix.)
+  %{
+    repo: "aprsme/aprs.me",
+    issue: "aprs.me@709780f",
+    module: "Aprsme.AprsIsConnection",
+    pre: "d8ea2b785f9fa334472fc7c87ea67b5d143950d8",
+    fix: "709780ff24495318305c1297287577e229c53d80",
+    finding: {:blocking, "Socket call with no timeout inside a callback"}
+  },
+  # ── mailbox: the close of a socket the server holds ──────────────────
+  # exshome: MpvSocket connected to mpv with :gen_tcp.connect/3, whose
+  # socket is active by default, and took only its data; the first mpv
+  # restart crashed it. The fix adds a {:tcp_closed, _} clause that
+  # reconnects.
+  %{
+    repo: "exshome/exshome",
+    issue: "exshome@c1e2a01",
+    module: "Exshome.MpvSocket",
+    pre: "f89ed6ec0b4388a32aff889501701fb5ce617c6b",
+    fix: "c1e2a0154d30acc943ed28b0087ed4b7797c730a",
+    finding: {:mailbox, "No handle_info/2 clause for the close of the server's socket"}
   }
 ]
