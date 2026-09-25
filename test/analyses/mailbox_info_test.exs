@@ -59,14 +59,37 @@ defmodule Argus.Analyses.MailboxInfoTest do
   describe "partial_handler: late_message sources" do
     alias Argus.Test.Fixtures.LateMessage, as: L
 
-    test "a fun a callback is handed is a source; a closure, a timed call, a macro's handler are not" do
+    test "a fun a callback is handed is a source; a closure, a timed call, a library's handler are not" do
       skip_without_souffle()
 
+      # WarmerMacro is left out: the macro is a library's.
       results =
         analyze([L.Warmer, L.HandsClosure, L.TimedCall, L.StartTimer, L.RunsSentFun])
 
       assert Enum.map(partial(results, "late_message"), fn [mod, _f] -> mod end) ==
                ["Argus.Test.Fixtures.LateMessage.RunsSentFun"]
+    end
+
+    test "a handler the program's own macro wrote is the program's" do
+      skip_without_souffle()
+
+      results = analyze([L.Warmer, L.WarmerMacro])
+
+      assert Enum.map(partial(results, "late_message"), fn [mod, _f] -> mod end) ==
+               ["Argus.Test.Fixtures.LateMessage.Warmer"]
+    end
+
+    test "a start_timer's 3-tuple is not the idle :timeout; a captured or mixed fun is unseen" do
+      skip_without_souffle()
+
+      results = analyze([L.StartTimerIdle, L.CallsInClosure, L.HandsMixed])
+
+      assert partial(results, "late_message") |> Enum.map(fn [mod, _f] -> mod end) |> Enum.sort() ==
+               [
+                 "Argus.Test.Fixtures.LateMessage.CallsInClosure",
+                 "Argus.Test.Fixtures.LateMessage.HandsMixed",
+                 "Argus.Test.Fixtures.LateMessage.StartTimerIdle"
+               ]
     end
 
     test "the logger's own machinery is no source, though it applies its handlers" do

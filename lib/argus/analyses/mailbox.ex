@@ -81,7 +81,11 @@ defmodule Argus.Analyses.Mailbox do
       # Which handle_info/2 is GenServer's own (unhandled_info's "default").
       Argus.Extractors.Generated,
       # The sockets a server makes active (unhandled_info's "socket").
-      Argus.Extractors.Sockets
+      Argus.Extractors.Sockets,
+      # What a closure captured from its builder (call_arg_derived over a
+      # make_fun3's environment): a late message's source when it runs a
+      # fun the builder read from its state.
+      Argus.Extractors.ParamFlow
     ]
 
   @impl true

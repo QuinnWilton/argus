@@ -122,6 +122,77 @@ defmodule Argus.Test.Fixtures.LateMessage do
     end
   end
 
+  defmodule StartTimerIdle do
+    @moduledoc """
+    Arms :erlang.start_timer for itself — `{:timeout, ref, :refresh}` —
+    and has only GenServer's idle `:timeout` atom and one other clause:
+    the 3-tuple has no clause.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(state) do
+      :erlang.start_timer(1_000, self(), :refresh)
+      {:ok, state, 5_000}
+    end
+
+    @impl true
+    def handle_info(:timeout, state), do: {:stop, :normal, state}
+    def handle_info(:other, state), do: {:noreply, state}
+  end
+
+  defmodule CallsInClosure do
+    @moduledoc """
+    Runs a callback read from its state inside a closure Enum.each runs
+    in this process: the closure calls through what it captured.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+
+    @impl true
+    def handle_cast(:go, state) do
+      callback = state.callback
+      Enum.each(state.items, fn item -> callback.(item) end)
+      {:noreply, state}
+    end
+
+    @impl true
+    def handle_info(:tick, state), do: {:noreply, state}
+  end
+
+  defmodule HandsMixed do
+    @moduledoc """
+    Hands a helper an unseen fun (from a persistent term) in one argument
+    and a closure it builds in the other; the helper runs both.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+
+    @impl true
+    def handle_cast(:go, state) do
+      run(:persistent_term.get(:hook), fn -> :done end)
+      {:noreply, state}
+    end
+
+    defp run(hook, done) do
+      hook.()
+      done.()
+    end
+
+    @impl true
+    def handle_info(:tick, state), do: {:noreply, state}
+  end
+
   defmodule LogsOnTick do
     @moduledoc "Logs on each tick: the logger's handlers run by value, out of this mailbox's way."
     use GenServer

@@ -124,27 +124,44 @@ mailbox_reach.seed(c) :- hands_unseen(c).
 
 // A function that calls through its parameter runs what its callers hand
 // it (apply_param). A caller that forwards its own parameter into that
-// position asks its callers in turn; one that hands a fun it builds or a
-// literal external fun (fun_handed), or names a literal module, shows
-// what runs. Any other caller hands code the program does not show — a
-// fun it read from its state, a module it was sent — and is a source,
-// as is a callback calling through its own parameter: the behaviour
-// fills those, with the message or the state (a server whose state is
-// the fun it runs). A closure calling a fun it captured is asked of no
-// caller: what it captured is its builder's, and not followed.
+// position asks its callers in turn; one that hands, in that position, a
+// fun it builds or a literal external fun (fun_handed at the position),
+// or names a literal module, shows what runs. Any other caller hands
+// code the program does not show — a fun it read from its state, a
+// module it was sent, a fun in one argument beside a closure in another
+// — and is a source, as is a callback calling through its own
+// parameter: the behaviour fills those, with the message or the state (a
+// server whose state is the fun it runs). A closure calling through a
+// variable it captured runs what its builder captured: made of the
+// builder's parameter (call_arg_derived, a make_fun3's environment), the
+// builder's callers are asked; anything else — a fun the builder read
+// from its state (`cb = state.callback`, then `Enum.each(items, fn i ->
+// cb.(i) end)`), a call's result — the builder hands unseen.
 .decl applies_through(func: symbol, pos: number)
 
 applies_through(f, k) :- apply_param(_, f, k).
 applies_through(c, k2) :- applies_through(f, k), call_arg_forward(c, f, k, k2).
+applies_through(c, p) :- applies_through(f, k), captures(c, f, k, p).
+
+// The closure `closure` its builder makes holds, in its parameter `k`,
+// something made of the builder's parameter `p`.
+.decl captures(builder: symbol, closure: symbol, k: number, p: number)
+
+captures(c, f, k, p) :- closure_def(c, f), call_arg_derived(c, f, k, p).
 
 .decl hands_unseen(caller: symbol)
 
 hands_unseen(c) :-
   applies_through(f, k),
   call_instr(c, f, id),
-  !fun_handed(id, c, _, _),
+  !fun_handed(id, c, _, k),
   !call_arg_forward(c, f, k, _),
   !names_module(c, f, k).
+
+hands_unseen(c) :-
+  applies_through(f, k),
+  closure_def(c, f),
+  !call_arg_derived(c, f, k, _).
 
 hands_unseen(f) :- applies_through(f, _), process_entry(_, f).
 
@@ -157,12 +174,13 @@ names_module(c, f, k) :-
   v != "dynamic",
   !call_arg(c, f, k, "dynamic").
 
-// A timer the process arms for itself whose message's tag (timer_tag:
-// the atom, or a tuple's first element) its own handle_info/2 compares
-// leaves nothing unhandled behind: the late message is one the process
-// takes (a janitor's :purge, a metrics loop's :check, a warmer's
-// `{:warm, nil}`). A cancel writes nothing; the timer it stops was
-// armed somewhere, and that arm is the source if any.
+// A timer the process arms for itself whose message its own
+// handle_info/2 takes — the tag (timer_tag: the atom, or a tuple's first
+// element) compared, in a clause of the message's shape — leaves nothing
+// unhandled behind: the late message is one the process takes (a
+// janitor's :purge, a metrics loop's :check, a warmer's `{:warm, nil}`).
+// A cancel writes nothing; the timer it stops was armed somewhere, and
+// that arm is the source if any.
 .decl handled_self_timer(id: symbol)
 
 handled_self_timer(id) :-
@@ -170,17 +188,35 @@ handled_self_timer(id) :-
   timer_tag(id, tag, _),
   function_def(f, mod, _, _, _),
   callback_tag(h, "handle_info", tag),
-  function_def(h, mod, _, _, _).
+  function_def(h, mod, _, _, _),
+  !timer_refused(h, id).
 
 // :erlang.start_timer/3,4 (no timer_arm: its message carries the ref,
-// and the flush rules do not ask of it) sends `{:timeout, ref, msg}`.
+// and the flush rules do not ask of it) sends `{:timeout, ref, msg}`: a
+// 3-tuple, which GenServer's idle `handle_info(:timeout, s)` does not
+// take.
 handled_self_timer(id) :-
   mailbox_writer(id, f, "timer"),
   !timer_arm(id, _, _, _, _, _),
   timer_tag(id, tag, _),
   function_def(f, mod, _, _, _),
   callback_tag(h, "handle_info", tag),
-  function_def(h, mod, _, _, _).
+  function_def(h, mod, _, _, _),
+  !timer_refused(h, id).
+
+// The handler's clause heads take the timer's tag only in other shapes
+// (callback_tag_shape): `{:tick, n}` for a `{:tick, 1, :slow}` timer, the
+// atom `:timeout` for a start_timer's `{:timeout, ref, msg}`. A handler
+// whose heads say nothing of the tag (it compares it in its body), or
+// with a clause that takes a message by its shape alone, is not asked.
+.decl timer_refused(handler: symbol, id: symbol)
+
+timer_refused(h, id) :-
+  timer_tag(id, tag, ar),
+  callback_tag_shape(h, "handle_info", tag, _),
+  !callback_tag_shape(h, "handle_info", tag, ar),
+  !callback_tag_shape(h, "handle_info", tag, -1),
+  !callback_open(h, "handle_info", _).
 
 .decl late_message_source(mod: symbol)
 
@@ -189,13 +225,26 @@ late_message_source(mod) :-
   mailbox_reach.reaches(c).
 
 // A handle_info/2 every clause of which a library's macro wrote
-// (macro_written: `use Cachex.Warmer`'s) is that library's protocol for
-// its own messages, and the finding would point at the `use` line, where
-// the module has nothing to add a clause to.
+// (macro_written: `use Cachex.Warmer`'s, by a module outside the
+// program) is that library's protocol for its own messages, and the
+// finding would point at the `use` line, where the module has nothing to
+// add a clause to. One the program's own macro wrote is the program's:
+// the clause belongs in that macro.
+.decl library_written(handler: symbol)
+
+library_written(h) :-
+  macro_written(h),
+  macro_generated(h, by),
+  !program_module(by).
+
+.decl program_module(mod: symbol)
+
+program_module(m) :- function_def(_, m, _, _, _).
+
 partial_handler(mod, h, "late_message", "catchall", "") :-
   (behaves_as(mod, "GenServer") ; behaves_as(mod, "GenStage")),
   partial_handle_info(mod, h),
-  !macro_written(h),
+  !library_written(h),
   late_message_source(mod),
   !receives_runtime_messages(mod),
   !trap_exit_without_exit_clause(mod, _),

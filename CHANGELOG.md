@@ -234,6 +234,23 @@ every clause of which another module's macro wrote (`macro_written`:
 `use Cachex.Warmer`'s, seven of logflare's) is that library's protocol,
 and the finding would point at the `use` line.
 
+**Fixed.** "handle_info/2 has no catch-all" sees the late-message
+sources the change above lost. A closure calling through a variable it
+captured runs what its builder captured (`captures`, over ParamFlow's
+`call_arg_derived` for a `make_fun3`'s environment, which mailbox now
+extracts): made of the builder's parameter, the builder's callers are
+asked; a fun the builder read from its state (`cb = state.callback`,
+then `Enum.each(items, fn i -> cb.(i) end)`) is unseen. A caller shows
+what runs only when the fun it hands is in the position the callee
+calls through (`fun_handed`'s `pos`): an unseen fun beside a closure is
+unseen. A handle_info/2 a macro wrote is set aside only when the
+macro's module is outside the program (`library_written`); one the
+program's own `use` wrote is the program's to fix. And
+`:erlang.start_timer`'s `{:timeout, ref, msg}` is no message a
+`handle_info(:timeout, s)` takes: a timer whose tag the handler compares
+only in other shapes (`timer_refused`, over `callback_tag_shape`) is
+still a source.
+
 **Changed.** Schema 94. `mailbox_writer`'s `apply` kind is a call
 through a fun or a module read from somewhere the call graph does not
 reach (the state, a message, a call's result). A call through a fun the
