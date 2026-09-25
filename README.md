@@ -74,7 +74,7 @@ separate analyses, so a defect has one owner.
 | `state_machine` | gen_statem states no transition reaches, and terminal states that never stop |
 | `ets` | ETS table ownership, concurrency options and lifecycle |
 | `effects` | `@pure` contracts, and effects inside a transaction that a rollback cannot undo |
-| `unsafe_input` | atom exhaustion, unsafe deserialization and code execution reachable from a request |
+| `unsafe_input` | atom exhaustion, unsafe deserialization, unbounded decompression and code execution reachable from a request |
 | `exposure` | secrets that `inspect/1` prints, and TLS that does not verify the peer |
 | `coverage` | extractor coverage and imprecision (meta-analysis, opt-in) |
 

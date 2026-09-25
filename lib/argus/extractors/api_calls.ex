@@ -24,7 +24,8 @@ defmodule Argus.Extractors.ApiCalls do
   - `sync_call`, `sync_call_timeout`, `async_cast`, `sup_call` — process
     calls (GenServer, gen_statem, GenStage, Agent, gen_event, supervisors);
     `sync_call_site` — each synchronous call's target and timeout, by site
-  - `unsafe_atom_creation`, `unsafe_deserialization`, `code_execution`
+  - `unsafe_atom_creation`, `unsafe_deserialization`, `unsafe_decompression`,
+    `code_execution`
   - `port_open`
   - `rpc_call`, `rpc_target`, `rpc_timeout_param`, `rpc_arity`, `global_register`, `global_op`,
     `node_operation`,
@@ -227,6 +228,15 @@ defmodule Argus.Extractors.ApiCalls do
             [:id, :func, :mod_fun, {:const, "validated"}]},
            {{Plug.Crypto, :safe_binary_to_term, :any}, :unsafe_deserialization,
             [:id, :func, :mod_fun, {:const, "validated"}]},
+           # One-shot decompression: the whole output of an input with no
+           # bound on its size. The column is the compressed data's position
+           # (`inflate(Z, Data)` takes it second). The streaming forms that
+           # hand back a bounded chunk (`safeInflate/2`, `inflateChunk/1,2`)
+           # are the fix and no sink.
+           {{:zlib, :gunzip, 1}, :unsafe_decompression, [:id, :func, :api, {:const, "0"}]},
+           {{:zlib, :unzip, 1}, :unsafe_decompression, [:id, :func, :api, {:const, "0"}]},
+           {{:zlib, :uncompress, 1}, :unsafe_decompression, [:id, :func, :api, {:const, "0"}]},
+           {{:zlib, :inflate, [2, 3]}, :unsafe_decompression, [:id, :func, :api, {:const, "1"}]},
            {{Code, :eval_string, [1, 2, 3]}, :code_execution, [:id, :func, :api]},
            {{Code, :compile_string, [1, 2]}, :code_execution, [:id, :func, :api]},
            {{:os, :cmd, [1, 2]}, :code_execution, [:id, :func, :api]},
@@ -297,15 +307,20 @@ defmodule Argus.Extractors.ApiCalls do
   # Indexed by {mod, fun} at compile time; arity is checked per entry.
   @by_mod_fun Enum.group_by(@table, fn {{m, f, _a}, _rel, _cols} -> {m, f} end)
 
-  @sink_relations [:unsafe_atom_creation, :unsafe_deserialization, :code_execution]
+  @sink_relations [
+    :unsafe_atom_creation,
+    :unsafe_deserialization,
+    :unsafe_decompression,
+    :code_execution
+  ]
   @sink_mfas @table
              |> Enum.filter(fn {_mfa, rel, _cols} -> rel in @sink_relations end)
              |> Enum.map(fn {mfa, _rel, _cols} -> mfa end)
              |> Enum.uniq()
 
   @doc """
-  The calls `unsafe_input` treats as sinks — atom creation, deserialization
-  and code execution — as the table spells them: `{mod, fun, arity}` where
+  The calls `unsafe_input` treats as sinks — atom creation, deserialization,
+  one-shot decompression and code execution — as the table spells them: `{mod, fun, arity}` where
   `arity` may be a list or `:any`. One table, so a dataflow extractor and
   the sink extractor cannot disagree about what a sink is.
   """
@@ -368,6 +383,7 @@ defmodule Argus.Extractors.ApiCalls do
       :sync_call_site,
       :sync_call_timeout,
       :unsafe_atom_creation,
+      :unsafe_decompression,
       :unsafe_deserialization
     ]
 

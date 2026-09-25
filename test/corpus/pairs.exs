@@ -516,6 +516,35 @@
     fix: "56373d1ddc86968e55fbde795c14eeba24357b57",
     finding: {:unsafe_input, "Dynamic atom creation reachable from an exported function"}
   },
+  # ── unsafe_input: decompression ───────────────────────────────────────
+  # GHSA-mc85-72gr-vm9f: the Compression middleware gunzipped (and
+  # unzipped) the response body its call/3 is handed in one call, so a
+  # hostile server's few hundred bytes of layered gzip inflated into
+  # gigabytes; the fix streams through :zlib.safeInflate/2 under a
+  # required :max_body_size.
+  %{
+    repo: "elixir-tesla/tesla",
+    issue: "tesla:GHSA-mc85-72gr-vm9f",
+    module: "Tesla.Middleware.Compression",
+    pre: "db963dba67651b9abd1fc420a1d9679cf6efe182",
+    fix: "340f75b5d191dc747ef7ac6365bd002d1cd55a9d",
+    finding: {:unsafe_input, "Unbounded decompression of a caller's input"}
+  },
+  # GHSA-frh3-6pv6-rc8j: permessage-deflate inflated a whole WebSocket
+  # frame with :zlib.inflate/2; the fix inflates with safeInflate under a
+  # max_inflate_ratio. The frame reaches the inflate from the connection's
+  # handle_data/3 through frame parsing the flow summaries do not follow
+  # (a local helper's return), so the finding is a path, at :info.
+  %{
+    repo: "mtrudel/bandit",
+    issue: "bandit:GHSA-frh3-6pv6-rc8j",
+    module: "Bandit.WebSocket.PerMessageDeflate",
+    pre: "fc3cf61f636f1f2acd708783a260dd494c3444fe",
+    fix: "8156921a51e684a951221da7bc30a70a022f722e",
+    finding:
+      {:unsafe_input,
+       "Unbounded decompression transitively reachable from a ThousandIsland handler (socket data)"}
+  },
   # ── unsafe_input: deserialization ─────────────────────────────────────
   # Paginator decodes an opaque cursor straight off the query string. The
   # two commits are the two steps down: paginator#16 added [:safe], which

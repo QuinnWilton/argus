@@ -1,9 +1,11 @@
 // Attacker-shaped data reaching a sink.
 //
-// Three sinks matter on the BEAM: atom creation (the atom table is
+// Four sinks matter on the BEAM: atom creation (the atom table is
 // fixed-size and never collected, so distinct attacker-supplied values
 // kill the node), deserialization (binary_to_term materializes funs,
-// ports and references), and code execution. One relation, with the
+// ports and references), one-shot decompression (the whole output of an
+// input with no size bound: a few hundred bytes of gzip inflate to
+// gigabytes) and code execution. One relation, with the
 // proximity to a request surface as a column, says how exposed each
 // sink is:
 //
@@ -55,6 +57,20 @@ sink(id, func, api, "atom", "") :-
   !repeated_site(id).
 
 sink(id, func, api, "code", "") :- code_execution(id, func, api), !repeated_site(id).
+
+// A one-shot decompression's input has no bound the program can write:
+// a literal compressed blob is not a shape anyone decompresses, so no
+// allowlist quiets it. What bounds it is the streaming form, which is
+// not a sink.
+sink(id, func, api, "decompression", "") :-
+  unsafe_decompression(id, func, api, _),
+  !repeated_site(id).
+
+// The argument a decompression reads: the compressed data, not the
+// zstream `inflate/2` takes first (which lives in the handler's state).
+.decl sink_data_arg(id: symbol, func: symbol, pos: number)
+
+sink_data_arg(id, func, pos) :- unsafe_decompression(id, func, _, pos), sink(id, func, _, _, _).
 
 sink(id, func, api, "deserialization", safety) :-
   unsafe_deserialization(id, func, api, safety),
@@ -140,8 +156,14 @@ request_reaches(entry, kind, func, "transitive") :-
 .init sink_flow = ParamReach
 
 sink_flow.seed(func, pos, id) :-
-  sink(id, func, _, _, _),
+  sink(id, func, _, k, _),
+  k != "decompression",
   sink_arg_derived(id, func, _, pos).
+
+sink_flow.seed(func, pos, id) :-
+  sink(id, func, _, "decompression", _),
+  sink_data_arg(id, func, arg),
+  sink_arg_derived(id, func, arg, pos).
 
 .decl sink_flow_from(id: symbol, entry: symbol, kind: symbol)
 
@@ -325,6 +347,34 @@ process_callback("format_status", 1).
 process_callback("format_status", 2).
 process_callback("process_name", 2).
 
+// ── Decompression of what a caller hands in ──────────────────────
+//
+// As atoms: reported with no request path where the compressed data is
+// made of a parameter of an exported function (tesla's
+// Compression middleware inflating the response body its `call/3` is
+// handed, a client library's decompress of what its users pass).
+.init inflate_input = ParamReadsReach
+
+inflate_input.seed(func, to_string(pos), id) :-
+  sink(id, func, _, "decompression", ""),
+  sink_data_arg(id, func, arg),
+  sink_arg_derived(id, func, arg, pos).
+
+inflate_input.seed(func, p, id) :-
+  sink(id, func, _, "decompression", ""),
+  sink_data_arg(id, func, arg),
+  sink_reads(id, func, arg, "param", p).
+
+.decl inflate_caller_input(id: symbol)
+
+inflate_caller_input(id) :- inflate_input.reaches(f, _, id), outside_api(f).
+
+sink_without_request_path(id, func, api, "decompression", "") :-
+  sink(id, func, api, "decompression", ""),
+  export_reach.reaches(func),
+  inflate_caller_input(id),
+  !sink_reachable(id, _, _, _, _, _, _, _, _, _).
+
 sink_without_request_path(id, func, api, "deserialization", safety) :-
   sink(id, func, api, "deserialization", safety),
   !sink_reachable(id, _, _, _, _, _, _, _, _, _).
@@ -365,7 +415,8 @@ sink_export(id, e) :-
 
 sink_reach.seed(f, sink) :-
   call_edge(f, g),
-  (unsafe_atom_creation(sink, g, _) ; unsafe_deserialization(sink, g, _, _)).
+  (unsafe_atom_creation(sink, g, _) ; unsafe_deserialization(sink, g, _, _) ;
+   unsafe_decompression(sink, g, _, _)).
 
 sink_endpoint(sink, verb, path, plug) :-
   http_route(_, verb, path, plug, _),

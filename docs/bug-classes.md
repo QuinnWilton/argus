@@ -55,7 +55,7 @@ uncertainty can add one.
 | [`state_machine`](#state_machine) | 2 | gen_statem states no transition reaches, and terminal states that never stop |
 | [`ets`](#ets) | 8 | ETS table ownership, concurrency options and lifecycle |
 | [`effects`](#effects) | 4 | `@pure` contracts, and effects inside a transaction that a rollback cannot undo |
-| [`unsafe_input`](#unsafe_input) | 4 | atom exhaustion, unsafe deserialization and code execution reachable from a request |
+| [`unsafe_input`](#unsafe_input) | 5 | atom exhaustion, unsafe deserialization, unbounded decompression and code execution reachable from a request |
 | [`exposure`](#exposure) | 4 | secrets that `inspect/1` prints, and TLS that does not verify the peer |
 | [`coverage`](#coverage) | 5 | extractor coverage and imprecision (meta-analysis, opt-in) |
 
@@ -191,7 +191,7 @@ than more; it errs loud when the same uncertainty can add a finding.
 ### A request entry and its parameters
 
 - **Names.** `request_entry`, `request_param` (request_entry.dl).
-- **Meaning.** `request_entry(f, kind)` is a callback whose arguments carry data an outside party controls: a Plug's call/2, a Phoenix controller's actions (every exported arity-2 function of a module that defines `phoenix_controller_pipeline/2`, kind `controller`; no call edge reaches them, since `action/2` applies the name the router put in the conn), a LiveView's mount/3, handle_params/3 and handle_event/3, a LiveComponent's handle_event/3, a channel's handle_in/3, an Oban worker's perform/1, a Broadway processor's handle_message/3 and handle_batch/4. `request_param(f, pos)` names the positions that carry it; a socket, a Plug's opts and a mount's signed session do not.
+- **Meaning.** `request_entry(f, kind)` is a callback whose arguments carry data an outside party controls: a Plug's call/2, a Phoenix controller's actions (every exported arity-2 function of a module that defines `phoenix_controller_pipeline/2`, kind `controller`; no call edge reaches them, since `action/2` applies the name the router put in the conn), a LiveView's mount/3, handle_params/3 and handle_event/3, a LiveComponent's handle_event/3, a channel's handle_in/3, an Oban worker's perform/1, a Broadway processor's handle_message/3 and handle_batch/4, a ThousandIsland handler's handle_data/3 (the socket's bytes, kind `socket`) and a WebSock handler's handle_in/2 (a websocket frame, kind `websocket`). `request_param(f, pos)` names the positions that carry it; a socket, a Plug's opts and a mount's signed session do not.
 - **Direction.** The list is closed: a surface it does not name (a raw cowboy handler, a GenStage consumer) is no entry (quiet).
 - **Used by.** unsafe_input, and races through concurrency.dl, which counts what a request entry reaches as run by many processes at once.
 
@@ -2403,7 +2403,7 @@ The same commit notes that teslamate's geocoder is behind a module attribute, a 
 
 ## unsafe_input
 
-`unsafe_input` owns attacker-shaped data reaching a sink, and processes an outside party can create without limit. There are three sinks: atom creation, deserialization and code execution. Each sink site is reported once, with how exposed it is:
+`unsafe_input` owns attacker-shaped data reaching a sink, and processes an outside party can create without limit. There are four sinks: atom creation, deserialization, one-shot decompression and code execution. Each sink site is reported once, with how exposed it is:
 - `flow`: request data provably reaches the sink's argument.
 - `direct`, `adjacent` or `transitive`: a call path runs from a request surface to the sink.
 - The sink is reachable only from the program's own API.
@@ -2463,6 +2463,27 @@ The absinthe_federation, tesla and membrane pairs pin "Dynamic atom creation rea
 - In 7bd8963, logflare's SearchLV and hexpm's `safe_to_atom/2` stopped being reported as fed by request data, and livebook's LiveMarkdown.Import guards stopped being reported as transitive. Both were false positives.
 - The request tiers were calibrated by hand when the request-surface analysis was added (CHANGELOG, request_surface entry). Every `direct` finding was real. `adjacent` was mixed: one real unvalidated URL parameter and one database primary key. Every `transitive` hit examined took its data from storage.
 - Controller actions as entries (round 2, 2026-09-25), over the corpus tally: 2 new `flow` rows, both nerves_hub_web's `DeviceController.index/2` (real; the fix pair above); 8 path rows relabelled from a LiveView, a LiveComponent or the no-request arm to the controller (the finding keeps the least entry kind), none new. Over changelog.com, firezone, sentry and exq: 1 new `adjacent` row (changelog's `NewsIssueController.template_for_issue/1`, `String.to_atom("show_#{NewsIssue.layout(issue)}")` of a stored record's layout: a path from storage, the adjacent tier's known false shape), and firezone's six signed-cookie decodes, which read as `flow` until `fetch_cookies/2` stopped carrying the conn (then path rows, as before).
+
+### Unbounded decompression of network bytes
+
+`sink_reachable` · sink=`decompression`; `sink_without_request_path` · sink=`decompression`
+· titles: "Unbounded decompression #{reached(proximity)} #{surface(kind)}", severity by proximity as for atoms (`:error` for `flow` and `direct`, `:warning` for `adjacent`, `:info` for `transitive`); with no request path, "Unbounded decompression of a caller's input" (`:warning`).
+
+**Property.** A call at site s in function g to a one-shot decompression, `:zlib.gunzip/1`, `:zlib.unzip/1`, `:zlib.uncompress/1` or `:zlib.inflate/2,3` (`unsafe_decompression`, whose `data_pos` is the compressed data's argument: 0, or 1 for `inflate(Z, Data)`), returns the whole output of its input before anything can look at its size. The site is reported as for atoms: a request entry reaches g (`flow` when one of the entry's request-carrying parameters reaches the data argument, else a path), or, with no request path, the data argument is made of a parameter of an exported function (`outside_api`, the library's users' input: an HTTP client middleware's response body). At run time, a few hundred bytes of layered gzip inflate to gigabytes in the process's heap and the node runs out of memory (Bandit's GHSA-frh3-6pv6-rc8j, Tesla's GHSA-mc85-72gr-vm9f, Req's GHSA-655f-mp8p-96gv).
+
+**Assumptions and limits.**
+- The streaming forms that hand back a bounded chunk, `:zlib.safeInflate/2` and `inflateChunk/1,2`, are the fix and no sink (`BoundedFrameHandler`); whether a loop over them checks a cap is not asked.
+- Only the data argument is followed (`sink_data_arg`): `inflate/2`'s zstream lives in the handler's state and carries no request.
+- No bound the program writes quiets a site: there is no allowlist of compressed blobs. Data the program compressed itself from literals has no parameter to come from and is quiet (`OwnData`).
+- A ThousandIsland handler's `handle_data/3` and a WebSock handler's `handle_in/2` are request entries (kinds `socket`, `websocket`), for every sink. Frames parsed out of the socket's bytes through local helpers' returns are a path, not a flow (Bandit's pair is `transitive`, `:info`).
+- `:zip` and `:erl_tar` extraction, to memory or to disk, are not sinks yet; neither is an Elixir wrapper the program writes around `:zlib` beyond what the flow summaries follow.
+- The no-request arm asks only that a caller's parameter reaches the data, not that the caller's data comes from the network: a library that decompresses what its users hand it is reported, whether they hand it a response body or a file of their own (OTP's `raw_file_io_inflate`, Oban's notifier payloads).
+
+**Fixtures.** Positive: `FrameHandler` (socket, `flow`), `GzipBodyPlug` (plug, `flow`) and `ClientMiddleware` (no request path, its `call/3`'s body) under `Decompression` (test/fixtures/decompression_fixture.ex). Quiet: `BoundedFrameHandler` (safeInflate) and `OwnData` (a literal the program compressed). Tests: test/analyses/unsafe_input_test.exs ("decompression"), test/extractors/atom_safety_test.exs.
+
+**Corpus.** Fix pairs: `tesla:GHSA-mc85-72gr-vm9f` (elixir-tesla/tesla, db963db → 340f75b, `Tesla.Middleware.Compression`: "Unbounded decompression of a caller's input"; the fix streams through safeInflate under a required `:max_body_size`), `bandit:GHSA-frh3-6pv6-rc8j` (mtrudel/bandit, fc3cf61 → 8156921, `Bandit.WebSocket.PerMessageDeflate`: "... transitively reachable from a ThousandIsland handler (socket data)"; the fix inflates with safeInflate under `max_inflate_ratio`). Req's advisory (automatic decompression by default) is not a pair: its sink stays behind an opt-in.
+
+**Precision.** Round 2 (2026-09-25), read against source. Corpus tally: 10 rows, all no-request: Tesla's middleware in four checkouts before its fix (8, gunzip and unzip, real) and Oban's `Notifier.decode/1` (2, the payloads of its own Postgres notifications: false). Beyond the tally: changelog.com's `UrlKit.get_body/1` (gunzip of an arbitrary URL's response, reached from an Oban job, `transitive`: real), EMQX's rule-engine `gunzip/1`, `unzip/1` and `zip_uncompress/1` (SQL functions over MQTT payloads a client publishes: real), hex_hub's `RegistryFormat.decode_etf/1` (plausible), hexpm's `DownloadGeoip` mix task (a trusted URL: false), and OTP's `code:try_decompress/1`, `raw_file_io_inflate` (two) and `erl_tar:open1/4` (local files: false). About half the no-request rows are libraries decompressing what the caller hands them from a source of its own.
 
 ### Untrusted deserialization
 
@@ -2742,6 +2763,8 @@ badly they fail and how directly the bytecode shows them:
 2. **Unbounded decompression of network bytes.** `:zlib` inflate, gunzip
    or unzip of a request or response body with no size bound (three
    advisories: Bandit, Tesla, Req). A sink family for unsafe_input.
+   *Covered in round 2*: see "Unbounded decompression of network bytes"
+   above; `:zip` and `:erl_tar` extraction remain.
 3. **A resource released only on the success path.** A monitor, a
    checked-out socket or a started process that an error return or a
    raise in a caller's fun leaves behind (Finch, Mint, Ranch, ejabberd,

@@ -36,6 +36,26 @@ defmodule Argus.Extractors.ApiCalls.AtomSafetyTest do
     end
   end
 
+  describe "extract/1 — one-shot decompression" do
+    test "gunzip reads its first argument, inflate its second; safeInflate is no sink" do
+      rows = fn mod ->
+        for [_id, func, api, pos] <-
+              Map.get(ApiCalls.extract(disassemble(mod)), :unsafe_decompression, []),
+            do: {func |> String.split(":") |> List.last(), api, pos}
+      end
+
+      assert rows.(Argus.Test.Fixtures.Decompression.GzipBodyPlug) == [
+               {"call/2", ":zlib.gunzip/1", "0"}
+             ]
+
+      assert rows.(Argus.Test.Fixtures.Decompression.FrameHandler) == [
+               {"handle_data/3", ":zlib.inflate/2", "1"}
+             ]
+
+      assert rows.(Argus.Test.Fixtures.Decompression.BoundedFrameHandler) == []
+    end
+  end
+
   describe "extract/1 — unsafe deserialization" do
     test "detects binary_to_term/1 as unsafe" do
       facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.UnsafeDeserialization))

@@ -4,6 +4,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
   alias Argus.Analyses.UnsafeInput
   alias Argus.Souffle
   alias Argus.Test.Batch
+  alias Argus.Test.Fixtures.Decompression, as: D
   alias Argus.Test.Fixtures.RequestSurface
   alias Argus.Test.Fixtures.Taint
   alias Argus.Test.Fixtures.UnboundedChildren, as: U
@@ -48,6 +49,11 @@ defmodule Argus.Analyses.UnsafeInputTest do
     Argus.Test.Fixtures.AtomSources,
     Argus.Test.Fixtures.AtomFromMessages,
     Argus.Test.Fixtures.AtomProcessName,
+    D.FrameHandler,
+    D.BoundedFrameHandler,
+    D.GzipBodyPlug,
+    D.ClientMiddleware,
+    D.OwnData,
     [Argus.Test.Fixtures.AtomCallerInput, Argus.Test.Fixtures.AtomCallerInput.NameServer]
   ]
 
@@ -562,6 +568,59 @@ defmodule Argus.Analyses.UnsafeInputTest do
 
       assert frame.label == "reachable from GET /public/x/:id"
       assert frame.module == W.Controller
+    end
+  end
+
+  describe "decompression" do
+    defp inflates(ctx, modules) do
+      results = analyze(ctx, modules)
+
+      reached =
+        for [_id, func, _api, "decompression", _entry, kind, prox | _] <-
+              results["sink_reachable"],
+            do: {short(func), kind, prox}
+
+      local =
+        for [_id, func, _api, "decompression", _s] <- results["sink_without_request_path"],
+            do: short(func)
+
+      {reached, local}
+    end
+
+    defp short(func), do: func |> String.split(".") |> List.last()
+
+    test "a frame a socket handler inflates in one call is fed by the socket's data", ctx do
+      skip_without_souffle()
+
+      assert {[{"FrameHandler:handle_data/3", "socket", "flow"}], []} =
+               inflates(ctx, [D.FrameHandler])
+
+      finding =
+        UnsafeInput.finding(
+          :sink_reachable,
+          hd(analyze(ctx, [D.FrameHandler])["sink_reachable"])
+        )
+
+      assert finding.title ==
+               "Unbounded decompression fed by request data from a ThousandIsland handler (socket data)"
+
+      assert finding.severity == :error
+    end
+
+    test "a request body a plug gunzips is a flow", ctx do
+      skip_without_souffle()
+      assert {[{"GzipBodyPlug:call/2", "plug", "flow"}], []} = inflates(ctx, [D.GzipBodyPlug])
+    end
+
+    test "a body a client middleware's caller hands in is reported with no request path", ctx do
+      skip_without_souffle()
+      assert {[], ["ClientMiddleware:decompress/1"]} = inflates(ctx, [D.ClientMiddleware])
+    end
+
+    test "inflating in bounded chunks, or data the program wrote, is quiet", ctx do
+      skip_without_souffle()
+      assert {[], []} = inflates(ctx, [D.BoundedFrameHandler])
+      assert {[], []} = inflates(ctx, [D.OwnData])
     end
   end
 

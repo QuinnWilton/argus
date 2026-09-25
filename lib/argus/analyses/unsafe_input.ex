@@ -2,14 +2,16 @@ defmodule Argus.Analyses.UnsafeInput do
   @moduledoc """
   Attacker-shaped data reaching a sink.
 
-  Three sinks matter on the BEAM: atom creation (the atom table is
+  Four sinks matter on the BEAM: atom creation (the atom table is
   fixed-size and never collected), deserialization (`binary_to_term`
-  materializes funs, ports and references) and code execution. Each is
-  reported once, with how exposed it is:
+  materializes funs, ports and references), one-shot decompression (the
+  whole output of an input with no bound on its size) and code
+  execution. Each is reported once, with how exposed it is:
 
   - `sink_reachable(id, func, api, sink, entry, kind, proximity)` — the
     sink is reachable from a request-handling callback (a Plug, a
-    LiveView, a Channel, an Oban job, a Broadway pipeline). Proximity is
+    controller action, a LiveView, a Channel, an Oban job, a Broadway
+    pipeline, a ThousandIsland or WebSock handler). Proximity is
     the triage signal: `flow` means request data provably reaches the
     sink's argument — a parameter of the entry, through destructuring,
     string building and forwarding, however far; `direct` means the sink
@@ -17,8 +19,9 @@ defmodule Argus.Analyses.UnsafeInput do
     call away; `transitive` anywhere else in the callback's cone, a path
     rather than a proven flow.
   - `sink_without_request_path(id, func, api, sink, safety)` — no request reaches
-    it: atom creation and code execution reachable from an exported
-    function, and every deserialization without `:safe`.
+    it: atom creation and decompression of what an exported function's
+    caller hands in, code execution reachable from an exported function,
+    and every deserialization without `:safe`.
   - `sink_endpoint(sink, verb, path, plug)` — the HTTP route a sink is
     reachable from, when the router literal names one.
   - `unbounded_children_from_request(sup, child, via, kind)` —
@@ -35,7 +38,8 @@ defmodule Argus.Analyses.UnsafeInput do
   element handed to a closure) and their silence is not evidence.
   A sink no request reaches keeps the severities the sinks carried when
   they were reported by export reachability alone: deserialization is an
-  error, code execution an error, atom creation a warning.
+  error, code execution an error, atom creation and decompression a
+  warning.
   """
 
   @behaviour Argus.Analysis
@@ -47,7 +51,9 @@ defmodule Argus.Analyses.UnsafeInput do
 
   @impl true
   def description,
-    do: "atom exhaustion, unsafe deserialization and code execution reachable from a request"
+    do:
+      "atom exhaustion, unsafe deserialization, unbounded decompression and code execution " <>
+        "reachable from a request"
 
   @impl true
   def rules_file, do: "analyses/unsafe_input.dl"
@@ -70,7 +76,7 @@ defmodule Argus.Analyses.UnsafeInput do
     {:id, :symbol, "instruction ID of the sink call"},
     {:func, :symbol, "function containing the sink"},
     {:api, :symbol, "the API called"},
-    {:sink, :symbol, "atom | deserialization | code"}
+    {:sink, :symbol, "atom | deserialization | decompression | code"}
   ]
 
   # Keyed on the site, not the (site, entry) pair: a sink reachable from
@@ -155,7 +161,39 @@ defmodule Argus.Analyses.UnsafeInput do
       "names built from data"
   ]
 
+  @inflate_help [
+    "inflate in bounded chunks (`:zlib.safeInflate/2` or `inflateChunk/2`) and stop past a cap",
+    "or refuse a body whose size the transport has not already bounded"
+  ]
+
+  @inflate_risk " A few hundred bytes of compressed (or layered) input can " <>
+                  "inflate to gigabytes, and the whole output is built in the " <>
+                  "process's heap before anything can look at its size — the " <>
+                  "shape of Bandit's and Tesla's advisories."
+
   @impl true
+  def finding(:sink_reachable, [
+        id,
+        func,
+        api,
+        "decompression",
+        entry,
+        kind,
+        proximity,
+        source,
+        p,
+        _s
+      ]) do
+    Findings.new(
+      severity(proximity),
+      "Unbounded decompression #{reached(proximity)} #{surface(kind)}",
+      route(func, api, entry, proximity, kind) <> @inflate_risk,
+      [at: Findings.at_instr(id)] ++
+        route_opts(proximity, "inflated with no size bound here", @inflate_help)
+    )
+    |> retier(func, proximity, source, p)
+  end
+
   def finding(:sink_reachable, [
         id,
         func,
@@ -228,6 +266,18 @@ defmodule Argus.Analyses.UnsafeInput do
       at: Findings.at_instr(id),
       at_label: "decoded here",
       help: deserialization_help(safety)
+    )
+  end
+
+  def finding(:sink_without_request_path, [id, func, api, "decompression", _safety]) do
+    Findings.new(
+      :warning,
+      "Unbounded decompression of a caller's input",
+      "#{func} calls #{api} on data an exported function's caller hands in." <>
+        @inflate_risk,
+      at: Findings.at_instr(id),
+      at_label: "inflated with no size bound here",
+      help: @inflate_help
     )
   end
 
@@ -402,5 +452,7 @@ defmodule Argus.Analyses.UnsafeInput do
   defp surface("channel"), do: "a Phoenix Channel (websocket)"
   defp surface("oban_job"), do: "an Oban job"
   defp surface("broadway"), do: "a Broadway pipeline message"
+  defp surface("socket"), do: "a ThousandIsland handler (socket data)"
+  defp surface("websocket"), do: "a WebSock handler (websocket frame)"
   defp surface(other), do: other
 end

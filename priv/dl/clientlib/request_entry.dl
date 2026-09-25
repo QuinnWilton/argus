@@ -59,6 +59,19 @@ request_entry(func, "channel") :-
   behaves_as(mod, "Phoenix.Channel"),
   function_def(func, mod, "handle_in", 3, _).
 
+// A raw connection's bytes: ThousandIsland hands a handler each read off
+// the socket (Bandit's HTTP/1, HTTP/2 and WebSocket handlers are ones,
+// and so is any custom TCP protocol on it), and a WebSock handler each
+// websocket frame's payload (Bandit's and Cowboy's websocket upgrades
+// call it).
+request_entry(func, "socket") :-
+  behaves_as(mod, "ThousandIsland.Handler"),
+  function_def(func, mod, "handle_data", 3, _).
+
+request_entry(func, "websocket") :-
+  behaves_as(mod, "WebSock"),
+  function_def(func, mod, "handle_in", 2, _).
+
 // Background jobs are an untrusted boundary too — job args are usually
 // enqueued from user-facing code and round-trip through storage, so they
 // are attacker-influenced even though no socket is involved.
@@ -115,6 +128,10 @@ request_param(func, 0) :- request_entry(func, "live_component").
 request_param(func, 1) :- request_entry(func, "live_component").
 request_param(func, 0) :- request_entry(func, "channel").
 request_param(func, 1) :- request_entry(func, "channel").
+
+// The bytes read off the socket; the frame, `{payload, opcode: op}`.
+request_param(func, 0) :- request_entry(func, "socket").
+request_param(func, 0) :- request_entry(func, "websocket").
 
 // The job: its args round-tripped through storage from user-facing code.
 request_param(func, 0) :- request_entry(func, "oban_job").

@@ -141,6 +141,21 @@ aprs.me's `CircuitBreaker.call/3` (twice), whose task links the caller
 to the very function the breaker exists to isolate; live projects and
 OTP unchanged.
 
+**Added.** `unsafe_input` has a fourth sink, `decompression`: a one-shot
+`:zlib.gunzip/1`, `unzip/1`, `uncompress/1` or `inflate/2,3`
+(`unsafe_decompression(id, func, api, data_pos)` from the ApiCalls
+extractor, schema 108), which builds the whole output of an input with
+no size bound. Titles: "Unbounded decompression #{reached} #{surface}"
+for a request path, "Unbounded decompression of a caller's input"
+(`:warning`) where an exported function's parameter reaches the data.
+`safeInflate/2` and `inflateChunk/1,2` are not sinks. A ThousandIsland
+handler's `handle_data/3` and a WebSock handler's `handle_in/2` are
+request entries (kinds `socket`, `websocket`) for every sink. Pairs:
+tesla:GHSA-mc85-72gr-vm9f, bandit:GHSA-frh3-6pv6-rc8j. Corpus tally: 10
+rows (Tesla's middleware before its fix, 8; Oban's notifier payloads, 2,
+false); elsewhere changelog.com's URL fetcher and EMQX's rule-engine
+functions are real, OTP's compressed-file readers false.
+
 ### Classes mined from fixed bugs
 
 Three classes from round 1 of mining fixed bugs (178 classified; the

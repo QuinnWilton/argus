@@ -1,5 +1,6 @@
 # Stub behaviours for the request-surface, transaction, LiveView and
-# call-cycle fixtures. None of Phoenix, Plug, Oban, Broadway or Ecto is a dependency of argus;
+# call-cycle fixtures. None of Phoenix, Plug, Oban, Broadway, Ecto,
+# ThousandIsland or WebSock is a dependency of argus;
 # the fixtures declare `@behaviour` on them because the analyses read the
 # attribute out of the beam. A stub gives the attribute a behaviour to
 # name, and every callback is optional so a fixture implements only the
@@ -50,4 +51,18 @@ defmodule Broadway do
   @callback handle_message(term(), term(), term()) :: term()
   @callback handle_batch(term(), term(), term(), term()) :: term()
   @optional_callbacks handle_message: 3, handle_batch: 4
+end
+
+defmodule ThousandIsland.Handler do
+  @moduledoc false
+  @callback handle_connection(term(), term()) :: term()
+  @callback handle_data(term(), term(), term()) :: term()
+  @optional_callbacks handle_connection: 2, handle_data: 3
+end
+
+defmodule WebSock do
+  @moduledoc false
+  @callback init(term()) :: term()
+  @callback handle_in(term(), term()) :: term()
+  @optional_callbacks init: 1, handle_in: 2
 end
