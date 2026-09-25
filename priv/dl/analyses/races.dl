@@ -1929,17 +1929,41 @@ record_decides_more(r, w) :-
   shared_write(s),
   !other_branch(s, w).
 
-// Another dirty write in the write's own function: the upsert's other
-// branch (`[] -> insert; [r] -> update r`), which the read chooses
-// between. That the decision makes one of two writes is not a decision
-// that does more than write.
+// Another dirty write in the write's own function on a path that
+// excludes this one: the upsert's other branch (`[] -> insert; [r] ->
+// update r`), which the read chooses between. That the decision makes
+// one of two writes is not a decision that does more than write. A
+// second write the same path also makes — a marker, then the charge it
+// guards — is.
 .decl other_branch(site: symbol, write: symbol)
 
 other_branch(s, w) :-
   reads_then_writes_record(_, _, w, _, _),
-  mnesia_op(w, h, "dirty_write", _, _, _, _, _),
-  mnesia_op(s, h, "dirty_write", _, _, _, _, _),
-  s != w.
+  exclusive_writes(s, w).
+
+// Two dirty writes of one function that no trip through the function
+// makes both of (mnesia_write_order orders neither).
+.decl exclusive_writes(first: symbol, second: symbol)
+
+exclusive_writes(w1, w2) :-
+  mnesia_op(w1, h, "dirty_write", _, _, _, _, _),
+  mnesia_op(w2, h, "dirty_write", _, _, _, _, _),
+  w1 != w2,
+  !mnesia_write_order(h, w1, w2),
+  !mnesia_write_order(h, w2, w1).
+
+// ... of one table, as far as the facts say: a write whose table they
+// cannot name (`put_elem` on the record the read found) may be the
+// other's.
+.decl same_table_writes(first: symbol, second: symbol)
+
+same_table_writes(w1, w2) :-
+  exclusive_writes(w1, w2),
+  mnesia_op(w1, _, _, _, ts, t, _, _),
+  mnesia_op(w2, _, _, _, ts, t, _, _).
+
+same_table_writes(w1, w2) :- exclusive_writes(w1, w2), mnesia_op(w1, _, _, _, "dynamic", _, _, _).
+same_table_writes(w1, w2) :- exclusive_writes(w1, w2), mnesia_op(w2, _, _, _, "dynamic", _, _, _).
 
 // The decision leaves the function, as decision_escapes asks of ETS.
 .decl record_decision_returned(func: symbol, check: symbol)
@@ -1989,11 +2013,15 @@ record_decision_escapes(c) :-
 //   told they won (elvengard_ecs's insert_new);
 // - delete: the read decides a delete, on a table written back from a
 //   read elsewhere: the delete can remove a record written in between;
+// - decides_more: the read's decision runs more than the write — a send,
+//   an outside effect, another write on the same path (`record_decides_
+//   more`): an idempotency marker whose decision also records a charge,
+//   and both racers mark and charge;
 // - fill: the read found nothing, or decided some other way, and the
-//   write stores a record computed afresh, not made of the read — on a
-//   table written back elsewhere, or under a decision that does more.
-//   A racer's write between the two is overwritten by the fill: a stale
-//   cache fill, weaker than a lost update, and reported as such.
+//   write stores a record computed afresh, not made of the read, on a
+//   table written back elsewhere. A racer's write between the two is
+//   overwritten by the fill: a stale cache fill, weaker than a lost
+//   update, and reported as such.
 //
 // A finding is one per write: the pairs a write is in, reported at the
 // one whose kind is the strongest, then the one whose read sits in the
@@ -2115,18 +2143,17 @@ answers_with_read(f, r) :-
   record_value(f, kind, src, r),
   returns_reads(f, kind, src).
 
-// The read decides two dirty writes in one function: which to make, not
-// whether — an upsert. Its `[] ->` insert is not a claim: both branches
-// write, and what the caller is told does not say who won.
+// The read decides two dirty writes of one table in one function, on
+// paths that exclude each other: which to make, not whether — an
+// upsert. Its `[] ->` insert is not a claim: both branches write, and
+// what the caller is told does not say who won.
 .decl upsert(read: symbol)
 
 upsert(r) :-
   records.carries(h, kind, src, r, _, _, _, _),
   site_depends(w1, h, kind, src),
   site_depends(w2, h, kind, src),
-  w1 != w2,
-  mnesia_op(w1, h, "dirty_write", _, _, _, _, _),
-  mnesia_op(w2, h, "dirty_write", _, _, _, _, _).
+  same_table_writes(w1, w2).
 
 .decl record_race_kind(func: symbol, read: symbol, write: symbol, kind: symbol)
 
@@ -2158,6 +2185,35 @@ record_race_kind(f, r, w, "claim") :-
   !upsert(r),
   !record_recomputed(r, w),
   !answers_with_read(f, r).
+
+// The decision the read makes where it meets the write runs more than
+// the write: a send, an outside effect, another write on the same path —
+// a marker whose decision also records a charge. Both racers find no
+// marker, both mark, and both charge. Asked where the pair meets:
+// record_decides_more asks it of every function the read's value
+// reaches, where another write may be a race of its own.
+.decl decides_more_here(func: symbol, read: symbol, write: symbol)
+
+decides_more_here(f, r, w) :-
+  racing_record_pair(f, r, w),
+  records.carries(f, kind, src, r, _, _, _, _),
+  effect_decided(f, kind, src).
+
+decides_more_here(f, r, w) :-
+  racing_record_pair(f, r, w),
+  records.carries(f, kind, src, r, _, _, _, _),
+  site_depends(s, f, kind, src),
+  s != w,
+  shared_write(s),
+  !other_branch(s, w).
+
+record_race_kind(f, r, w, "decides_more") :-
+  racing_record_pair(f, r, w),
+  mnesia_op(w, _, "dirty_write", _, _, _, _, _),
+  !record_pair_carries(r, w),
+  !searches(r),
+  !guards_record(r, w),
+  decides_more_here(f, r, w).
 
 record_race_kind(f, r, w, "fill") :-
   racing_record_pair(f, r, w),
@@ -2203,16 +2259,19 @@ kind_rank("lost_update", 1).
 kind_rank("guarded", 2).
 kind_rank("claim", 3).
 kind_rank("delete", 3).
-kind_rank("fill", 4).
+kind_rank("decides_more", 4).
+kind_rank("fill", 5).
 
-// A read's weaker pairs are branches of its strongest race: the
-// `[] -> insert` beside the `[r] -> write back r + 1` of one counter is
-// one race, reported where it loses the most.
-.decl read_rank(read: symbol, rank: number)
+// A read's weaker pairs where it meets its writes are branches of its
+// strongest race there: the `[] -> insert` beside the `[r] -> write back
+// r + 1` of one counter is one race, reported where it loses the most.
+// Per meeting function: a get/1 helper two functions share decides a
+// write-back in one and a delete in the other, two races.
+.decl read_rank(func: symbol, read: symbol, rank: number)
 
-read_rank(r, n) :-
-  record_race_kind(_, r, _, _),
-  n = min m : { record_race_kind(_, r, _, k), kind_rank(k, m) }.
+read_rank(f, r, n) :-
+  record_race_kind(f, r, _, _),
+  n = min m : { record_race_kind(f, r, _, k), kind_rank(k, m) }.
 
 // A write its own function reads before, and decides on, is judged by
 // that read: a read further up is not the one the write acts on, unless
@@ -2226,13 +2285,13 @@ read_in_own_function(w) :- reads_then_writes_record(h, _, w, _, _), records.act(
 ranked_race(f, r, w, k, n) :-
   record_race_kind(f, r, w, k),
   kind_rank(k, n),
-  read_rank(r, n),
+  read_rank(f, r, n),
   records.act(w, f, _, _, _, _).
 
 ranked_race(f, r, w, k, n) :-
   record_race_kind(f, r, w, k),
   kind_rank(k, n),
-  read_rank(r, n),
+  read_rank(f, r, n),
   records.act(w, h, _, _, _, _),
   h != f,
   !read_in_own_function(w).

@@ -183,7 +183,8 @@ defmodule Argus.Analyses.Races do
           {:read, :symbol, "instruction ID of the dirty read"},
           {:write, :symbol, "instruction ID of the dirty write it decides or feeds"},
           {:op, :symbol, "dirty_write | dirty_delete | dirty_delete_object"},
-          {:kind, :symbol, "unique | lost_update | guarded | claim | delete | fill"}
+          {:kind, :symbol,
+           "unique | lost_update | guarded | claim | delete | decides_more | fill"}
         ],
         key: [:write],
         doc:
@@ -483,6 +484,11 @@ defmodule Argus.Analyses.Races do
   defp record_act("claim", _op),
     do: "writes the record when it found none, and tells its caller so, with a dirty write"
 
+  defp record_act("decides_more", _op),
+    do:
+      "writes the record with a dirty write, on a decision that also makes another write " <>
+        "or sends"
+
   defp record_act(_delete, op), do: "deletes it with #{op}, as the read decided"
 
   defp record_loss("lost_update"), do: "one of the writes is lost"
@@ -492,6 +498,11 @@ defmodule Argus.Analyses.Races do
 
   defp record_loss("claim"),
     do: "two callers can both find none, both write, and both be told they won"
+
+  defp record_loss("decides_more"),
+    do:
+      "two callers can both take the decision, and both make the rest of it: an " <>
+        "idempotency marker both set, and both charge"
 
   defp record_loss(_delete),
     do: "the delete can remove a record another process wrote back in between"

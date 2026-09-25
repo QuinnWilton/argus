@@ -39,7 +39,9 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
     C.MnesiaShadowedRead,
     C.MnesiaUniqueQuiet,
     C.MnesiaGetOrDefault,
-    C.MnesiaTwoBranches
+    C.MnesiaTwoBranches,
+    C.MnesiaSharedRead,
+    C.MnesiaChargeOnce
   ]
 
   setup_all do
@@ -268,6 +270,23 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
              )
     end
 
+    test "a read two functions share is ranked where it meets each write", ctx do
+      skip_without_souffle()
+      found = kinds(ctx, [C.MnesiaSharedRead])
+
+      # use/2's write-back does not make fetch/2's delete a weaker branch.
+      assert Enum.any?(found, &match?({"use/2", _, _, "lost_update"}, &1))
+      assert Enum.any?(found, &match?({"fetch/2", _, _, "delete"}, &1))
+    end
+
+    test "a marker whose decision also charges decides more than a fill", ctx do
+      skip_without_souffle()
+
+      # The two writes are on one path, to two tables: not an upsert's
+      # branches, and the charge is more than the marker.
+      assert [{"charge_once/2", _, _, "decides_more"}] = kinds(ctx, [C.MnesiaChargeOnce])
+    end
+
     test "a search that found nothing decides an insert that is never harmless", ctx do
       skip_without_souffle()
       assert [{"record/2", _, _, "unique"}] = kinds(ctx, [C.MnesiaUniqueQuiet])
@@ -371,6 +390,23 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
       assert f.severity == :info
       assert f.title =~ "fills"
       assert f.detail =~ "overwritten"
+    end
+
+    test "a decision that does more says so" do
+      finding =
+        Races.finding(:mnesia_check_act, [
+          "M",
+          "M:handle/2",
+          ":charged",
+          "0",
+          "M:handle/2#4",
+          "M:handle/2#9",
+          "dirty_write",
+          "decides_more"
+        ])
+
+      assert finding.severity == :warning
+      assert finding.detail =~ "both charge"
     end
 
     test "a claim and a guard say what the interleaving costs" do

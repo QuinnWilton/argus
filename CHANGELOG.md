@@ -3016,6 +3016,21 @@ chains. What stays is `add/2`, `del/2`, `add_lsort/2` (a read-modify-
 write of a shared variable) and `sync_trans_tid_serial/1` (a guarded
 maximum over the serial). Every other program's rows are unchanged.
 
+**Fixed.** `mnesia_check_act` reports the races the change below
+folded away. A read's strongest kind ranks its pairs per function where
+it meets them (`read_rank`), so a `get/1` helper whose read one function
+writes back and another deletes on is two races: the delete was a
+weaker branch of the write-back. And a marker whose decision also
+records a charge is no fill: the upsert that turns a `[] ->` insert into
+a fill (`upsert`, `other_branch`) needs its two writes on paths that
+exclude each other (`mnesia_write_order`) and of one table, as far as
+the facts name it; a decision that also makes another write on the same
+path, sends or has an outside effect, where the pair meets, is the new
+kind `decides_more`, a warning ranked after a claim. Blockster's lost
+updates, claims and search-then-insert stay; its dev-setup seeding
+(`DevSetup.seed_pools/2`, which prints under the decision) moves from
+fill to `decides_more`. The elvengard_ecs pair still fires.
+
 **Changed.** `mnesia_check_act` is one finding per dirty write, and
 says which race it is: a trailing `kind` column, the key `[:write]`, and
 the evidence relation `mnesia_race_frame(write, role, site, func)`. Of
