@@ -85,6 +85,12 @@ the edges of a call cycle, the callers of a bottleneck, the routes that
 reach a sink — are related frames of the finding rather than findings of
 their own.
 
+[docs/bug-classes.md](docs/bug-classes.md) states every class of bug the
+analyses report as a property of the program, with the assumptions its
+rule rests on, the fixtures and closed-issue pairs that pin it, and what
+is known of its precision; it ends with the consistency issues found
+across the concerns and the ranked classes argus does not yet catch.
+
 Named sets stand in for a list: `:all` (everything but `coverage`),
 `:default` (what scry runs unconfigured), `:security`, `:effects` and
 `:otp`. `unsafe_input` and `exposure` are `:security`'s, not

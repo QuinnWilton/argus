@@ -88,7 +88,7 @@ defmodule Argus.MixProject do
       main: "readme",
       source_ref: "v#{@version}",
       source_url: @source_url,
-      extras: ["README.md", "CHANGELOG.md"]
+      extras: ["README.md", "docs/bug-classes.md", "CHANGELOG.md"]
     ]
   end
 
