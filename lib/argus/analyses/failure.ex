@@ -13,8 +13,9 @@ defmodule Argus.Analyses.Failure do
   - `unchecked_result(func, site, api, name)` — a result used without
     its failure case: `Task.Supervisor.start_child` discarded, or a
     `Process.whereis` of `name` used without its nil case.
-  - `orphan_process(func, site, kind, target)` — a process nothing
+  - `orphan_process(func, site, kind, target, callback)` — a process nothing
     supervises: a bare `spawn` nothing links to or monitors afterwards,
+    a `start` (`:proc_lib.start`) whose process lives on past its ack,
     or an `exit` signal sent to `target` from a callback, past the
     supervisor that owns it. An exit to a process the sending module
     started itself is not one; an exit process points-to resolves to a
@@ -157,7 +158,7 @@ defmodule Argus.Analyses.Failure do
         fields: [
           {:func, :symbol, "the function spawning or sending the exit"},
           {:site, :symbol, "instruction ID of the spawn or the exit call"},
-          {:kind, :symbol, "spawn | exit"},
+          {:kind, :symbol, "spawn | start | exit"},
           {:target, :symbol,
            "the exit target, for an exit: the supervised child's module when " <>
              "points-to resolves it to one"},
@@ -165,11 +166,13 @@ defmodule Argus.Analyses.Failure do
         ],
         # An exit is one finding per function that makes it, whichever
         # callbacks run it and however many of its clauses do (a
-        # supervisor's shutdown kills, then kills harder); a spawn, one
-        # per call.
+        # supervisor's shutdown kills, then kills harder); a spawn or a
+        # start, one per call.
         key: {:kind, %{"exit" => [:func, :target], default: [:func, :site, :target]}},
         earliest: :site,
-        doc: "A process nothing supervises: a bare spawn, or an exit signal past the supervisor."
+        doc:
+          "A process nothing supervises: a bare spawn, a proc_lib start that outlives " <>
+            "its ack, or an exit signal past the supervisor."
       },
       %{
         name: :exit_target_owner,
@@ -355,6 +358,24 @@ defmodule Argus.Analyses.Failure do
       help: [
         "use `spawn_link/1,3` or `spawn_monitor/1,3` so crashes propagate, " <>
           "or start the process under a `Task.Supervisor`"
+      ]
+    )
+  end
+
+  def finding(:orphan_process, [func, id, "start", _, _]) do
+    Findings.new(
+      :warning,
+      "Process started unwatched past its start",
+      "#{func} starts a process with :proc_lib.start — no link, no monitor. The " <>
+        "call waits for the process's init_ack and hands back a failed start, but " <>
+        "the process goes on after the ack, and from then on nothing observes it: " <>
+        "if it crashes, proc_lib logs the crash and nothing restarts it or cleans up " <>
+        "after it.",
+      at: Findings.at_instr(id),
+      at_label: "started here, and watched only until its ack",
+      help: [
+        "use `:proc_lib.start_link/3` or `:proc_lib.start_monitor/3` so a later crash " <>
+          "reaches the caller, or start the process under a supervisor"
       ]
     )
   end

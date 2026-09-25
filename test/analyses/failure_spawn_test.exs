@@ -35,6 +35,20 @@ defmodule Argus.Analyses.FailureSpawnTest do
       refute Enum.any?(funcs, &String.contains?(&1, "start_synchronously"))
     end
 
+    test "a proc_lib:start whose worker loops after its ack is unwatched after it" do
+      skip_without_souffle()
+
+      assert {:ok, results} = Memo.analyze([Argus.Test.Fixtures.ProcLibWorker], :failure)
+
+      assert [[func, _id]] =
+               Rows.where(results, :failure, "orphan_process",
+                 kind: "start",
+                 drop: [:kind, :target, :callback]
+               )
+
+      assert func =~ "ProcLibWorker:start_worker/0"
+    end
+
     test "a spawn its caller monitors or links to afterwards is watched" do
       skip_without_souffle()
 

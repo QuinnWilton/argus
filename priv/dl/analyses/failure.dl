@@ -29,10 +29,12 @@
 //   failure case: Task.Supervisor.start_child discarded, or a
 //   Process.whereis of `name` used without its nil case.
 // `orphan_process(func, site, kind, target, callback)` — a process
-//   nothing supervises: a bare spawn (`kind` = "spawn", site is the
-//   call) or an exit signal sent to `target` from a callback, past the
-//   supervisor that owns it (`kind` = "exit", site is the exit call,
-//   `func` the function making it and `callback` a callback running it).
+//   nothing supervises: a bare spawn (`kind` = "spawn"), a
+//   `:proc_lib.start` whose process lives on past its ack (`kind` =
+//   "start"; site is the call for both), or an exit signal sent to
+//   `target` from a callback, past the supervisor that owns it (`kind` =
+//   "exit", site is the exit call, `func` the function making it and
+//   `callback` a callback running it).
 .decl unhandled_failure(func: symbol, site: symbol, kind: symbol, shape: symbol, span_end: symbol)
 .output unhandled_failure
 
@@ -226,6 +228,26 @@ unchecked_result(func, id, "Task.Supervisor.start_child", "") :-
 orphan_process(func, id, "spawn", "", "") :-
   spawn_call(id, func, _, _, _, "spawn", _, _, _, _),
   !watched_spawn(id).
+
+// `:proc_lib.start` waits for the process's init_ack and hands back a
+// failed start as a value, but the ack covers only the start: a worker
+// that goes on to loop after it is as unwatched as one proc_lib:spawn
+// started, and dies unnoticed. Not a process whose life ends at the ack,
+// the start the caller waited on being all of it.
+orphan_process(func, id, "start", "", "") :-
+  spawn_call(id, func, _, _, _, "start", _, _, _, _),
+  process_start(id, func, _, "spawn", g),
+  !ends_at_ack(g),
+  !watched_spawn(id).
+
+// The started function acknowledges its start and then makes no call
+// and no receive (start_acked has no row for it): it returns, and its
+// process ends.
+.decl ends_at_ack(func: symbol)
+
+ends_at_ack(g) :-
+  remote_call(_, g, ":proc_lib", "init_ack", _),
+  !start_acked(_, g).
 
 // A spawn whose process something monitors or links to afterwards
 // (signals.dl): its crash is observed.

@@ -321,6 +321,16 @@ as "Unlinked process spawned" — a bare spawn nothing observes. The
 rule reads `variant = "spawn"` and now leaves the start alone.
 `PidFlow` reads `variant` only for `spawn_monitor`.
 
+**Fixed.** `failure.orphan_process` reports a `:proc_lib.start` whose
+process lives on past its ack (kind `start`, "Process started unwatched
+past its start"): the ack covers the start, and a worker that loops
+after it is as unwatched as the same worker `:proc_lib.spawn` starts,
+which the rule reported all along. A process
+whose life ends at the ack (`ends_at_ack`: init_ack and then no call or
+receive, `start_acked`) is still left alone. peer's
+`start_orphan_supervision/0`, which loops after its ack to halt the
+node when its origin goes, is reported again.
+
 **Fixed.** "init/1 waits on a message with no timeout" (startup's
 `unbounded_effect_in_init`, "receive") no longer reports a wait made
 after the start returned, or one that flushes a timer that has fired.
