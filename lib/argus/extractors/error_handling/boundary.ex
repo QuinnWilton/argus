@@ -380,7 +380,7 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
 
         cond do
           log_call?(instr, atoms) ->
-            holds = step(instr, holds, MapSet.new())
+            holds = step(instr, holds, [])
             line = Map.get(lines, at)
             # A producer on an earlier line is a statement of its own.
             args =
@@ -403,12 +403,13 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
 
           inert?(instr) ->
             {:cont,
-             {:ok, produced, consumed, logged?, step(instr, holds, read), atoms(instr, atoms)}}
+             {:ok, produced, consumed, logged?, step(instr, holds, MapSet.to_list(read)),
+              atoms(instr, atoms)}}
 
           true ->
             {:cont,
              {:ok, MapSet.put(produced, at), consumed, logged?,
-              step(instr, holds, MapSet.put(read, at)), %{}}}
+              step(instr, holds, [at | MapSet.to_list(read)]), %{}}}
         end
     end)
     |> case do
@@ -435,14 +436,14 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
           do: {dst, Map.fetch!(holds, src)}
 
     built =
-      if MapSet.size(read) == 0,
+      if read == [],
         do: %{},
         else:
           for(
             dst <- Argus.Instr.defs(instr),
             Argus.Instr.copy_source(instr, dst) == nil,
             into: %{},
-            do: {dst, MapSet.to_list(read)}
+            do: {dst, Enum.uniq(read)}
           )
 
     carried |> Map.merge(copies) |> Map.merge(built)

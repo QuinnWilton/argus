@@ -211,21 +211,23 @@ defmodule Argus.Cfg.Function do
         end)
 
       idom = Argus.Cfg.dominator_tree(entry, preds, succs)
-      chain(Map.fetch!(idom, :exit), idom, entry, MapSet.new())
+      idom |> Map.fetch!(:exit) |> chain(idom, entry, []) |> MapSet.new()
     end
   end
 
-  defp chain(node, _idom, entry, acc) when node == entry, do: MapSet.put(acc, node)
+  defp chain(node, _idom, entry, acc) when node == entry, do: [node | acc]
 
   defp chain(node, idom, entry, acc),
-    do: chain(Map.fetch!(idom, node), idom, entry, MapSet.put(acc, node))
+    do: chain(Map.fetch!(idom, node), idom, entry, [node | acc])
 
-  # The blocks with a path to a return or a tail call.
+  # The blocks with a path to a return or a tail call. The walk keeps a
+  # plain map, not a MapSet: dialyzer rejects an opaque term threaded
+  # through recursion.
   defp completing(blocks) do
     exits =
       for {id, %Block{terminator: t}} <- blocks, t in [:return, :tail_call], do: id
 
-    grow(exits, MapSet.new(exits), blocks)
+    exits |> grow(Map.new(exits, &{&1, true}), blocks) |> Map.keys() |> MapSet.new()
   end
 
   defp grow([], seen, _blocks), do: seen
@@ -234,11 +236,11 @@ defmodule Argus.Cfg.Function do
     new =
       for {pred, _kind} <- Map.fetch!(blocks, id).preds,
           Map.has_key?(blocks, pred),
-          not MapSet.member?(seen, pred),
+          not Map.has_key?(seen, pred),
           uniq: true,
           do: pred
 
-    grow(new ++ rest, Enum.reduce(new, seen, &MapSet.put(&2, &1)), blocks)
+    grow(new ++ rest, Enum.reduce(new, seen, &Map.put(&2, &1, true)), blocks)
   end
 
   defp pdom_walk(node, stop, ipdom, acc \\ [])

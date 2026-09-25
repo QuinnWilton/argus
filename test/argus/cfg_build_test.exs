@@ -22,6 +22,41 @@ defmodule Argus.CfgBuildTest do
     Cfg.build(typed)
   end
 
+  test "completing_blocks: a test whose other side raises decides nothing; a branch does" do
+    cfgs =
+      cfg_for("""
+      defmodule CfgCompleting do
+        def head([]) do
+          {:ok, x} = fetch()
+          touch(x)
+        end
+
+        def branch(opt) do
+          if opt, do: touch(:a)
+          touch(:b)
+        end
+
+        def fetch, do: {:ok, 1}
+        def touch(x), do: x
+      end
+      """)
+
+    # head/1: its clause head and its badmatch fail into raising blocks;
+    # every block the function can complete through runs on every start.
+    head = cfgs[{"head", 1}]
+    always = Function.completing_blocks(head)
+    completing = for id <- head.rpo, head.blocks[id].terminator != :raise, do: id
+    assert completing != [] and Enum.all?(completing, &(&1 in always))
+
+    # branch/1: the `if` arm runs on some completing paths only.
+    branch = cfgs[{"branch", 1}]
+    always = Function.completing_blocks(branch)
+
+    assert Enum.any?(branch.rpo, fn id ->
+             branch.blocks[id].terminator != :raise and id not in always
+           end)
+  end
+
   test "a straight-line function is one returning block after the failure pad" do
     cfgs = cfg_for("defmodule CfgAdd do\n  def add(a, b), do: a + b\nend\n")
     fun = cfgs[{"add", 2}]

@@ -428,41 +428,45 @@ defmodule Argus.Extractors.Monitor do
   # from it (`{:ok, pid}`'s pid, a state map it is put in).
   defp kept_after?(fun, instrs, start) do
     tuple = List.to_tuple(instrs)
-    not handed_off?([{start + 1, MapSet.new([{:x, 0}])}], fun, tuple, MapSet.new())
+    not handed_off?([{start + 1, [{:x, 0}]}], fun, tuple, %{})
   end
 
+  # `holding` is a sorted list and `seen` a plain map: dialyzer rejects
+  # an opaque MapSet threaded through recursion.
   defp handed_off?([], _fun, _tuple, _seen), do: false
 
   defp handed_off?([{idx, holding} = state | rest], fun, tuple, seen) do
+    if idx >= tuple_size(tuple) or holding == [] or Map.has_key?(seen, state) do
+      handed_off?(rest, fun, tuple, seen)
+    else
+      step_handoff(state, rest, fun, tuple, seen)
+    end
+  end
+
+  defp step_handoff({idx, holding} = state, rest, fun, tuple, seen) do
+    instr = elem(tuple, idx)
+    used = instr |> Instr.uses() |> Enum.filter(&(&1 in holding))
+    used? = used != []
+
+    # The first argument of a call, and a send's destination, address
+    # the process (`:gun.await_up(pid, t)`, `GenServer.call(pid, m)`,
+    # `send(pid, m)`); anywhere else the pid is data another holder
+    # may keep.
+    as_data? = Enum.any?(used, &(&1 != {:x, 0}))
+
     cond do
-      idx >= tuple_size(tuple) or MapSet.size(holding) == 0 or MapSet.member?(seen, state) ->
-        handed_off?(rest, fun, tuple, seen)
+      as_data? and (instr == :send or match?({:send}, instr)) ->
+        true
+
+      as_data? and (Instr.call?(instr) or Instr.tail_call?(instr)) and
+          not bookkeeping?(instr) ->
+        true
 
       true ->
-        instr = elem(tuple, idx)
-        used = instr |> Instr.uses() |> Enum.filter(&MapSet.member?(holding, &1))
-        used? = used != []
-
-        # The first argument of a call, and a send's destination, address
-        # the process (`:gun.await_up(pid, t)`, `GenServer.call(pid, m)`,
-        # `send(pid, m)`); anywhere else the pid is data another holder
-        # may keep.
-        as_data? = Enum.any?(used, &(&1 != {:x, 0}))
-
-        cond do
-          as_data? and (instr == :send or match?({:send}, instr)) ->
-            true
-
-          as_data? and (Instr.call?(instr) or Instr.tail_call?(instr)) and
-              not bookkeeping?(instr) ->
-            true
-
-          true ->
-            built = if used?, do: Instr.defs(instr), else: []
-            holding = MapSet.new(Instr.carry(instr, holding) ++ built)
-            next = for at <- successors(fun, tuple, idx), do: {at, holding}
-            handed_off?(next ++ rest, fun, tuple, MapSet.put(seen, state))
-        end
+        built = if used?, do: Instr.defs(instr), else: []
+        holding = (Instr.carry(instr, holding) ++ built) |> Enum.uniq() |> Enum.sort()
+        next = for at <- successors(fun, tuple, idx), do: {at, holding}
+        handed_off?(next ++ rest, fun, tuple, Map.put(seen, state, true))
     end
   end
 
@@ -493,7 +497,7 @@ defmodule Argus.Extractors.Monitor do
   # the ref read nowhere; the question is the callers' instead.
   defp ref_lost?(module_data, ctx) do
     if Instr.tail_call?(Enum.at(ctx.instrs, ctx.idx)),
-      do: returned_ref_lost?(module_data, ctx.func_id, MapSet.new()),
+      do: returned_ref_lost?(module_data, ctx.func_id, []),
       else: ref_dropped?(cfg(module_data, ctx), ctx.instrs, ctx.idx + 1)
   end
 
@@ -509,10 +513,10 @@ defmodule Argus.Extractors.Monitor do
 
   defp returned_ref_lost?(module_data, func_id, seen) do
     with {:ok, %{func: name, arity: arity}} <- InstrId.parse_func(func_id),
-         false <- MapSet.member?(seen, func_id) or MapSet.size(seen) >= @max_hops,
+         false <- func_id in seen or length(seen) >= @max_hops,
          false <- {String.to_atom(name), arity} in module_data.exports,
          [_ | _] = uses <- uses_of(module_data, String.to_atom(name), arity) do
-      seen = MapSet.put(seen, func_id)
+      seen = [func_id | seen]
       Enum.all?(uses, &use_loses_ref?(module_data, &1, seen))
     else
       _ -> false
