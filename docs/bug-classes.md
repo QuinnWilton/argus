@@ -2883,9 +2883,9 @@ candidates) and 12 out of scope. Three of the uncovered classes became
 entries above in round 1 (the close of a socket the server holds, a
 socket call with no timeout inside a callback, a named table created in
 a server's start function), and round 2 added the decompression sink.
-The rest, ranked by how many projects fixed them, how badly they fail
-and how directly the bytecode shows them, each with what stands in its
-way:
+Round 3 (below the list) added the multiplied timer loop, item 5. The
+rest, ranked by how many projects fixed them, how badly they fail and how
+directly the bytecode shows them, each with what stands in its way:
 
 1. **Socket messages a library leaves in its caller.** A server that
    calls hackney (HTTPoison, ExAws, Tesla's hackney adapter) in its own
@@ -2969,6 +2969,153 @@ judged by `linked_in_library` (elixir-nodejs#45), and Phoenix controller
 actions are request entries. Still open: callback timeouts outside
 init/1, an unlinked `GenServer.start` not counted as a spawn, and
 `insert_new` as the check of a missing-row race.
+
+### Live bugs read against their verdicts (mining round 3)
+
+Round 2 of the FP hunt found real bugs in the live programs it read.
+Round 3 of the mining (2026-09-25) asked of each whether argus reports
+it with the right class, severity and anchor. None was fixed upstream at
+the clones' heads (fetched that day), so none is a corpus pair; the
+classes they exposed got pairs from other projects where one existed.
+
+1. **akkoma, unauthenticated atom exhaustion through OAuth app scopes.**
+   *Severity fixed.* `_scopes.html.eex` makes `:"scope_#{scope}"` of the
+   scopes of the app a `client_id` names, and `POST /api/v1/apps` stores
+   any scopes, unauthenticated. The three sites were `transitive`,
+   `:info`, for all three suspected reasons but the prior: the path found
+   ran from the token exchange's render of "token.json" into the view's
+   shared render/2 dispatch (the authorize action's
+   `Phoenix.Controller.render/3` is Phoenix's, not followed), and the
+   value came from a row, the transitive tier's usual storage; the prior
+   played no part (structural rows). The value is attacker-stored, a
+   second-order flow argus does not follow (the app's insert to the
+   template's read). What the bytecode does show is that the atom is made
+   of the template's assigns, per request: the new `rendered` proximity,
+   `:warning` ("Unbounded atom creation", above). The three akkoma sites
+   are its only rows over the live projects.
+2. **akkoma, admin config API evaluating posted input.** *Reported;
+   severity fixed; policy decided.* Two of the three `Code.eval_string`
+   sites were `flow`, `:error`; the third (a `~r` sigil rebuilt from a
+   pattern read with `Regex.named_captures/2`) was a transitive path at
+   `:info`, for want of Regex in the propagator table: now a flow. The
+   sanitizer (`String.replace` with a regex whose mid-pattern `^` never
+   matches) is data to argus, which counts `String.replace` as passing
+   its subject: the flow is right to ignore it. Policy: code execution a
+   request reaches is never below `:warning`, on any path or prior, and
+   an admin-only surface keeps it (the rubric's Sinks paragraph and the
+   code execution entry).
+3. **akkoma, posts streamed before the transaction commits.** *Reported
+   correctly, now once per transaction.* `ActivityPub.create/2` and five
+   other transactions reach `Streamer.stream/2`, which spawns a pusher
+   per topic from inside the transaction: "A process operation inside a
+   transaction", `:warning`. Each transaction also listed the pusher's
+   `Registry.dispatch/3` and sends and a `:timer.seconds/1` (misread as a
+   process write): 27 rows became one per transaction, at the spawn.
+4. **akkoma, TOTP secret and password-reset token printed by
+   inspect/1.** *TOTP reported at `:error`, anchor fixed; reset token
+   severity fixed.* The TOTP seed lives in an `embeds_one ... do` block's
+   module, which carries no line: the finding pointed at none, and now
+   points at the embedding schema's block. `PasswordResetToken.token`
+   matched no fragment and was the classifier's (`:info`, heuristic, or
+   nothing with priors off); a `token` field of a schema named for a
+   token is now a token (`:warning`), with `MFA.Token` and
+   `UserInviteToken` beside it.
+5. **vernemq, acl and passwd reloaders multiplying their timers.**
+   *New class* ("A periodic timer loop armed again while it runs"), with
+   three fix pairs from other projects (ant, xandra, sequin); vernemq's
+   own is a rebar3 tree the harness cannot build, and unfixed.
+6. **vernemq, `vmq_sysmon` re-adding the wrong handler after a crash.**
+   *Not formalized; kept in the backlog.* The general shape is
+   formalizable: a process that adds a supervised gen_event handler
+   (`gen_event:add_sup_handler/3`, `swap_sup_handler/3`) is sent
+   `{gen_event_EXIT, Handler, Reason}` when the handler fails, and a
+   handle_info/2 that takes no such message (or only one naming another
+   handler) drops it and never re-adds the handler. vernemq's instance is
+   out of reach twice over: the add goes through a dependency's wrapper
+   (`riak_sysmon_filter:add_custom_handler/2`, in riak_sysmon's beams,
+   not the program's), and its clause does take `gen_event_EXIT` — for
+   `riak_core_sysmon_handler`, a copy-paste — so a tag check passes; the
+   rule needs the clause head's second element compared with the added
+   handler's name. A hunt over ~160 files found no other mismatch and no
+   fix of one; four unfixed no-clause variants (bondy, monstats, minga,
+   drafter, the last two buildable Mix trees adding to
+   `:erl_signal_server`). Worth doing as an unhandled_info source when a
+   fix pair appears.
+7. **hackney, `hackney_h3`'s shared table owned by the first
+   connection.** *Reported correctly:* "ETS table dies with its owner",
+   `:warning`, at `ensure_table/0` (hackney_h3.erl:1012). The class's
+   sampled precision over the two FP hunt rounds is 6 of 9 (ejabberd's
+   hooks and captcha, rabbit's connection tracking and message store,
+   this one and MongooseIM's `ejabberd_local` real; grpc's two load
+   balancers and vernemq's bridge supervisor false).
+8. **MongooseIM.** *All three reported correctly.* The IQ handler
+   tables with no heir: "ETS table dies with its owner", `:warning`, at
+   `ejabberd_local:init/1` (three tables) and `mod_muc_iq:init/1`. The
+   aggregator workers losing pending writes when the pool stops:
+   "terminate/2 does work that a supervisor shutdown will skip",
+   `:warning`, at `mongoose_aggregator_worker:terminate/2`. The usage
+   reports sent with `verify_none`: "TLS certificate verification turned
+   off", `:error`, at `mongoose_system_metrics_sender:flush_reports/4`.
+9. **ra, `start_or_restart_cluster/5` crashing on `{badrpc, _}`.**
+   *Reported correctly, by the round-2 rpc-wrapper work:*
+   `ra_server_sup_sup:restart_server/3` is a bare `rpc:call` whose answer
+   the caller matches without a `badrpc` clause, twice ("RPC result
+   matched without a {:badrpc, _} clause", `:warning`, ra.erl:325 and the
+   list comprehension at :328).
+10. **nerves_hub_link, the Extensions ↔ Socket call cycle.** *Reported
+    correctly (`:error`); anchor fixed.* Extensions pushes to the Socket
+    from a comprehension's closure through `Socket.push_extensions_message/2`,
+    and the Socket's extensions topic calls `Extensions.offer/1`; both
+    are GenServer.calls with 5-second timeouts. The finding pointed at
+    the closure's first line (extensions.ex:299), six lines above the
+    push; it now points at the push (:305).
+
+### Round 3 of the mining: what is left
+
+73 fixed bugs classified (7 in classes argus has, 60 it could formalize,
+2 for a reader, 4 out of scope; `mining-round3.md` in the session
+notes). Beyond the timer loop and the transaction effects it implemented,
+ranked:
+
+1. **A local-only BIF on a pid that can be remote** (7 sightings: aprs.me
+   twice, firezone, serviceradar, sentry-elixir, phoenix_live_dashboard,
+   grpc): `Process.alive?/1` or `Process.info/2` on a pid from
+   `:global.whereis_name/1`, a `:global` or syn resolver's arguments,
+   `:pg` members or `$callers`, which raises for a remote pid. Needs the
+   pid's origin across calls; points-to has the sources. Pair aprs.me
+   9caab57 → 37c9ac7.
+2. **A resource released only on the success path** (item 3 above, 9 more
+   sightings): a file opened and never closed (thousand_island db0db57 →
+   45e7b51), a socket marked closed without closing it (mint fe80d7e →
+   56edf53), a release a raise skips.
+3. **A handle overwritten in the state without being closed** (5:
+   postgrex's reconnect leaked a port per reconnect, 9eee621 → 71095dc;
+   faktory_worker; oban and cubdb from round 1).
+4. **A LiveView broadcast with no handle_info/2 clause** (nerves_hub_web
+   1684dcf → c97ba3e, algora): unhandled_info's sources do not include a
+   PubSub subscription, and its servers do not include LiveViews.
+5. **A subscription made again and again** (oban cbd74ab → 9dd5106,
+   teiserver twice, livebook): each repeat delivers every later message
+   once more.
+6. **A subscription, monitor or timer in a disconnected mount**
+   (logflare 5c19a7a → ec7331b, livebook): mount/3 without
+   `connected?/1` registers the static render's process.
+7. **Draining that only cancels the timer** (broadway_sqs fb517d7 →
+   5b8f18a, broadway_cloud_pub_sub, off_broadway_redis_stream): a
+   producer keeps fetching after `prepare_for_draining/1`.
+8. **An rpc to an MFA the program does not export** (realtime twice):
+   decidable through the wrapper's literal arguments.
+9. Singletons: a conflict resolver that leaves the loser running
+   (Logflare), one deciding on node-local state (realtime), an asserted
+   start result after a stale `:pg` check (pogo), a `{:nodeup, _}` that
+   ignores replicated state (nerves_hub_web), a demand decrement that
+   does not match the events emitted (an OpenTelemetry exporter), a
+   `Port.close/1` after the port exited (muontrap).
+
+Prior candidates the round added: *is this call a start handshake the
+module's API makes once* (rabbit's `mirrored_supervisor` `{init, _}`,
+the timer loop's one false row); *does this retry loop's second arm fire
+while the loop runs* (the retry loops the timer rule leaves out).
 
 ### Prior candidates
 
