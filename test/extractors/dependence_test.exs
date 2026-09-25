@@ -184,6 +184,30 @@ defmodule Argus.Extractors.DependenceTest do
     end
   end
 
+  describe "sink_reads" do
+    setup do
+      {:ok, facts} =
+        Argus.Pipeline.extract(
+          [Argus.Test.Fixtures.AtomCallerInput, Argus.Test.Fixtures.AtomSources],
+          extractors: [Dependence]
+        )
+
+      %{
+        sinks:
+          for([_site, func, pos, kind, source] <- facts.sink_reads, do: {func, pos, kind, source})
+      }
+    end
+
+    test "a sink's argument is made of a parameter through the runtime's calls", %{sinks: sinks} do
+      assert {"Argus.Test.Fixtures.AtomCallerInput:key/1", "0", "param", "0"} in sinks
+      assert {"Argus.Test.Fixtures.AtomSources:input/1", "0", "param", "0"} in sinks
+    end
+
+    test "a lookup of the environment is not made of the variable's name", %{sinks: sinks} do
+      refute Enum.any?(sinks, fn {func, _, _, _} -> func =~ "cookie!" end)
+    end
+  end
+
   describe "emission" do
     test "no row names a runtime callee or a runtime call's result", %{facts: facts} do
       runtime = ~w(:erlang: Kernel: Enum: :lists: RuntimeError: Process:info)

@@ -47,6 +47,13 @@ defmodule Argus.Extractors.Dependence do
     argument's or the returned value is made of, not what it runs under. A check-then-act race that writes back what it read is a
     lost update; one whose write only runs because of the read, with a
     value from elsewhere, may be a refill both racers agree on.
+  - `sink_reads(site, func, arg_pos, kind, source)` — what argument
+    `arg_pos` of the sink call at `site` (`Argus.Extractors.ApiCalls.
+    sink_mfas/0`: atom creation, deserialization, code execution) is made
+    of, by data alone. The runtime's calls on the way carry their
+    arguments through, where ParamFlow's `sink_arg_derived` follows only
+    the propagators it lists: `String.to_atom(Macro.underscore(name))` is
+    made of `name` here and of nothing there.
   - `field_decides(func, kind, source, pos)` — a test in the function
     decides on element `pos` of a tuple the source holds (a
     `get_tuple_element`, or `element/2` with a literal index), or on a
@@ -83,6 +90,12 @@ defmodule Argus.Extractors.Dependence do
   leaking into every other caller's result. A `call_fun` or `apply`
   result depends on its arguments only.
 
+  By data alone (the `*_reads` relations), a lookup of the environment,
+  the application's configuration, a persistent term or the process
+  dictionary is made of its default, not of its key: `System.get_env(name)`
+  answers what the environment holds, which a caller naming the variable
+  does not choose.
+
   ## What is not emitted
 
   A call into the runtime's own applications (erts, kernel, stdlib,
@@ -103,6 +116,7 @@ defmodule Argus.Extractors.Dependence do
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Runtime
   alias Argus.Extractor.ValueFlow
+  alias Argus.Extractors.ApiCalls
   alias Argus.Extractors.ETS
   alias Argus.Extractors.Mnesia
   alias Argus.Extractors.ProcessRegistry
@@ -133,7 +147,8 @@ defmodule Argus.Extractors.Dependence do
       :returns_depends,
       :returns_reads,
       :site_depends,
-      :site_reads
+      :site_reads,
+      :sink_reads
     ]
 
   @doc """
@@ -300,7 +315,7 @@ defmodule Argus.Extractors.Dependence do
 
     # The same flow with no decision counted: what an argument is made
     # of, as opposed to what it runs under.
-    data_ctx = %{ctx | deciders: %{}, decider_of: %{}, decided: %{}}
+    data_ctx = Map.merge(ctx, %{deciders: %{}, decider_of: %{}, decided: %{}, data: true})
     {data_outs, _} = solve(idxs, data_ctx)
     facts = Enum.reduce(idxs, facts, &emit_reads(&2, &1, data_ctx, data_outs))
     emit_field_compares(facts, func_id, data_ctx, data_outs)
@@ -400,8 +415,47 @@ defmodule Argus.Extractors.Dependence do
     cond do
       not remote? -> MapSet.new([{:call, Normalize.func_id(mod, fun, arity)}])
       site?(mfa) -> site_result(mfa, InstrId.mint(ctx.func_id, idx), inputs)
+      runtime?(mod) and Map.get(ctx, :data, false) -> lookup_result(mfa, inputs)
       runtime?(mod) -> union(inputs)
       true -> MapSet.put(union(inputs), {:call, Normalize.func_id(mod, fun, arity)})
+    end
+  end
+
+  # By data alone, a read of the environment, the application's
+  # configuration, a persistent term or the process dictionary answers
+  # what is stored under its key, which is not made of the key:
+  # `System.get_env(name)` is not made of `name`. It is made of its
+  # default, where it takes one. Every other runtime call's result is
+  # made of its arguments. Under a decision the key still counts: which
+  # value comes back depends on it.
+  @lookups %{
+    {System, :get_env, 1} => nil,
+    {System, :get_env, 2} => 1,
+    {System, :fetch_env, 1} => nil,
+    {System, :fetch_env!, 1} => nil,
+    {:os, :getenv, 1} => nil,
+    {:os, :getenv, 2} => 1,
+    {Application, :get_env, 2} => nil,
+    {Application, :get_env, 3} => 2,
+    {Application, :fetch_env, 2} => nil,
+    {Application, :fetch_env!, 2} => nil,
+    {Application, :get_all_env, 1} => nil,
+    {:application, :get_env, 1} => nil,
+    {:application, :get_env, 2} => nil,
+    {:application, :get_env, 3} => 2,
+    {:application, :get_all_env, 1} => nil,
+    {:persistent_term, :get, 1} => nil,
+    {:persistent_term, :get, 2} => 1,
+    {Process, :get, 1} => nil,
+    {Process, :get, 2} => 1,
+    {:erlang, :get, 1} => nil
+  }
+
+  defp lookup_result(mfa, inputs) do
+    case Map.fetch(@lookups, mfa) do
+      {:ok, nil} -> MapSet.new()
+      {:ok, default} -> Map.get(inputs, "x#{default}", MapSet.new())
+      :error -> union(inputs)
     end
   end
 
@@ -545,6 +599,8 @@ defmodule Argus.Extractors.Dependence do
       {{mod, fun, arity} = mfa, remote?} ->
         inputs = inputs_of(idx, ctx, outs)
 
+        facts = emit_sink_reads(facts, remote? and ApiCalls.sink?(mfa), idx, arity, inputs, ctx)
+
         cond do
           remote? and site?(mfa) ->
             site = InstrId.mint(ctx.func_id, idx)
@@ -566,6 +622,25 @@ defmodule Argus.Extractors.Dependence do
             end)
         end
     end
+  end
+
+  # A sink's arguments, by what they are made of: the runtime's calls on
+  # the way carry their arguments through (`String.to_atom(
+  # Macro.underscore(name))` is made of `name`), where ParamFlow follows
+  # only the propagators it lists.
+  defp emit_sink_reads(facts, false, _idx, _arity, _inputs, _ctx), do: facts
+
+  defp emit_sink_reads(facts, true, idx, arity, inputs, ctx) do
+    site = InstrId.mint(ctx.func_id, idx)
+
+    Enum.reduce(0..(arity - 1)//1, facts, fn pos, acc ->
+      rows(
+        acc,
+        :sink_reads,
+        [site, ctx.func_id, to_string(pos)],
+        Map.get(inputs, "x#{pos}", MapSet.new())
+      )
+    end)
   end
 
   defp emit_closure(facts, nil, _inputs, _here, _ctx), do: facts

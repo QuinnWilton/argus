@@ -3290,6 +3290,19 @@ realtime LiveDashboard page making an atom of an event's `"fun"`. Its
 set membership does not change: `unsafe_input` is `:security`'s, and
 was never `:default`'s.
 
+**Added.** Schema 101. `sink_reads(site, func, arg_pos, kind, source)`
+(`Argus.Extractors.Dependence`): what a sink call's argument is made of,
+by data alone, the runtime's calls on the way carrying their arguments
+through: `String.to_atom(Macro.underscore(name))` is made of `name`,
+which `sink_arg_derived`'s propagators do not say.
+
+**Changed.** By data alone (`site_reads`, `call_arg_reads`,
+`returns_reads`, `sink_reads`), a read of the environment, the
+application's configuration, a persistent term or the process dictionary
+is made of its default, not of its key: `System.get_env(name)` answers
+what the environment holds, which a caller naming the variable does not
+choose. Under a decision (`*_depends`) the key still counts.
+
 **Fixed.** A sink whose argument is one of a set the program wrote, on
 every path to it, is not a sink (`bounded_input`): compared equal to a
 literal in a clause head, a guard's `in` or a case arm, found in a

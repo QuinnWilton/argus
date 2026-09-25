@@ -106,6 +106,23 @@ defmodule Argus.Schema.Dependence do
         """
       },
       %{
+        name: :sink_reads,
+        layer: 2,
+        fields: [
+          {:site, :instr_id, "a sink call: atom creation, deserialization or code execution"},
+          {:func, :func_id, "the function containing it"},
+          {:arg_pos, :number, "0-based argument position"},
+          {:kind, :symbol, "param | call | site"},
+          {:source, :symbol, "as site_depends"}
+        ],
+        doc: """
+        What the sink's argument is made of, by data alone \
+        (Argus.Extractors.Dependence): the runtime's calls on the way carry \
+        their arguments through, so `String.to_atom(Macro.underscore(name))` \
+        is made of `name`, which sink_arg_derived's propagators do not say.
+        """
+      },
+      %{
         name: :call_arg_reads,
         layer: 2,
         fields: [

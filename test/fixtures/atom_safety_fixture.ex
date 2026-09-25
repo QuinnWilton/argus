@@ -65,6 +65,10 @@ defmodule Argus.Test.Fixtures.AtomSources do
 
   def env_level, do: String.to_atom(System.get_env("LOG_LEVEL") || "info")
 
+  def cookie!(env), do: String.to_atom(System.get_env(env))
+
+  defmacro field(name), do: String.to_atom("#{name}_field")
+
   def default_name, do: name("main")
 
   def name(id), do: String.to_atom("#{id}-pipeline")
@@ -87,4 +91,30 @@ defmodule Argus.Test.Fixtures.AtomProcessName do
   @behaviour Broadway
 
   def process_name({:via, _module, {name, _id}}, base), do: String.to_atom("#{name}-#{base}")
+end
+
+defmodule Argus.Test.Fixtures.AtomCallerInput do
+  @moduledoc """
+  Atoms made of what a library's users hand in, three ways the walk from
+  the sink must follow: through a call no propagator table lists
+  (`Macro.underscore/1`), and through a client function that hands its
+  argument to its server in a call's message, which handle_call/3 makes
+  the atom of.
+  """
+
+  def key(name), do: String.to_atom(Macro.underscore(name))
+
+  defmodule NameServer do
+    @moduledoc "Interns the names its client API is handed."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+    def intern(name), do: GenServer.call(__MODULE__, {:intern, name})
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+
+    @impl true
+    def handle_call({:intern, name}, _from, state), do: {:reply, String.to_atom(name), state}
+  end
 end
