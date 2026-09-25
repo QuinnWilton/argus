@@ -291,6 +291,21 @@ bound"). **Added** title: "Bounded cluster-wide :global lock" (`:info`)
 for a positive count over other nodes, which was "Cluster-wide :global
 synchronization".
 
+**Changed.** One table of callbacks (`clientlib/callbacks.dl`): every
+loop behaviour's `code_change` and `format_status` run in its process,
+a channel's `join/3` and `handle_out/3` and a LiveView's
+`handle_async/3` are callbacks of theirs alone (`behaviour_callback`),
+and a server under a behaviour the table does not list (a module that
+declares one and handles calls, casts or messages) runs its callbacks
+in its own process (`unlisted_server`). blocking's `process_code` (which
+added a channel's join/3 and the unlisted servers by hand) and
+unsafe_input's `runtime_callback` (which listed its own names and
+arities) now read `otp_callback` (unsafe_input the callbacks a process
+is started or sent its own data in, `message_callback`), and every
+reader of `process_entry` sees the same entries. A receive in an unlisted server's callback is a
+receive in a callback (`CallbackReceive.WrappedServer`); a GenServer's
+client function named `join` is not one (`JoinsInClient`).
+
 **Changed.** A cast a spawn, task or agent makes is its own process's
 (`reaches_async_dep` cuts `runs_elsewhere`, as `reaches_sync_dep` does):
 a task init/1 starts that casts to a later sibling no longer makes

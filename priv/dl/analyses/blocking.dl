@@ -383,26 +383,19 @@ cycle_candidate(a, b) :- module_sync_dep(a, b, _), module_sync_dep(b, a, _).
 
 holds.seed(w, w) :- cycle_candidate(a, b), module_sync_dep(a, b, w).
 
-// Where `mod`'s process starts running its code: its startup ("start":
-// init/1, or a channel's join/3, which the channel server runs in the
-// channel's process before it is joined), or once it runs ("run"): the
-// other callbacks, a process module's under a behaviour the table does
-// not list included.
+// Where `mod`'s process starts running its code (process_entry): its
+// startup ("start": init/1, or a channel's join/3, which the channel
+// server runs in the channel's process before it is joined), or once it
+// runs ("run"): the other entries.
 .decl process_code(mod: symbol, func: symbol, phase: symbol)
 
-process_code(m, f, "start") :- init_function(m, f).
+.decl start_code(mod: symbol, func: symbol)
 
-process_code(m, f, "start") :-
-  behaves_as(m, "Phoenix.Channel"),
-  function_def(f, m, "join", 3, _).
+start_code(m, f) :- init_function(m, f).
+start_code(m, f) :- otp_callback(f, m, "join", "Phoenix.Channel").
 
-process_code(m, f, "run") :- process_entry(m, f), !init_function(m, f).
-
-process_code(m, f, "run") :-
-  process_behaviour_module(m),
-  function_def(f, m, name, _, _),
-  callback_name(name),
-  !init_function(m, f).
+process_code(m, f, "start") :- start_code(m, f).
+process_code(m, f, "run") :- process_entry(m, f), !start_code(m, f).
 
 // a's process waits on b's at `w`, a function of a's it runs.
 .decl process_dep(a: symbol, b: symbol, w: symbol, phase: symbol)

@@ -41,6 +41,7 @@
 
 .include "../clientlib/imports.dl"
 .include "../clientlib/behaviours.dl"
+.include "../clientlib/callbacks.dl"
 .include "../clientlib/request_entry.dl"
 
 // ── The sinks ────────────────────────────────────────────────────
@@ -350,27 +351,21 @@ outside_api(f) :-
   !function_def(_, m, "__impl__", 1, _).
 
 // What the runtime calls a process module with: its own start arguments,
-// its own messages, its own name.
+// its own messages, its own name. A process's callbacks that take them
+// (otp_callback and message_callback, clientlib/callbacks.dl; not a
+// LiveView's handle_event/3, which takes the client's), and Broadway's
+// process_name/2, which the topology calls with the pipeline's own name
+// when it starts.
 .decl runtime_callback(mod: symbol, name: symbol, arity: number)
 
 runtime_callback(m, n, a) :-
-  behaves_as(m, b),
-  process_behaviour(b, "loop"),
-  process_callback(n, a),
-  function_def(_, m, n, a, _).
+  otp_callback(f, m, n, _),
+  message_callback(n),
+  function_def(f, m, n, a, _).
 
-.decl process_callback(name: symbol, arity: number)
-
-process_callback("init", 1).
-process_callback("handle_call", 3).
-process_callback("handle_cast", 2).
-process_callback("handle_info", 2).
-process_callback("handle_continue", 2).
-process_callback("terminate", 2).
-process_callback("code_change", 3).
-process_callback("format_status", 1).
-process_callback("format_status", 2).
-process_callback("process_name", 2).
+runtime_callback(m, "process_name", 2) :-
+  behaves_as(m, "Broadway"),
+  function_def(_, m, "process_name", 2, _).
 
 // ── Decompression of what a caller hands in ──────────────────────
 //

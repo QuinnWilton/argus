@@ -354,6 +354,52 @@ defmodule Argus.Test.Fixtures.CallbackReceive do
     end
   end
 
+  defmodule Wrapper do
+    @moduledoc "A library's GenServer wrapper behaviour the behaviour table does not list."
+    @callback init(term) :: {:ok, term}
+    @callback handle_info(term, term) :: {:noreply, term}
+  end
+
+  defmodule WrappedServer do
+    @moduledoc """
+    A server under the unlisted wrapper: it handles messages as a server
+    does, so its handle_info/2 runs on its own process's stack.
+    """
+    @behaviour Argus.Test.Fixtures.CallbackReceive.Wrapper
+
+    @impl true
+    def init(arg), do: {:ok, arg}
+
+    @impl true
+    def handle_info(:sync, _state) do
+      receive do
+        {:synced, value} -> {:noreply, value}
+      end
+    end
+  end
+
+  defmodule JoinsInClient do
+    @moduledoc """
+    A GenServer whose client API is called join/3: `join` names a
+    callback of a channel's, not of a GenServer's, and this one runs in
+    its caller.
+    """
+    use GenServer
+
+    def join(server, topic, timeout) do
+      send(server, {:join, self(), topic})
+
+      receive do
+        {:joined, ^topic} -> :ok
+      after
+        timeout -> :timeout
+      end
+    end
+
+    @impl true
+    def init(arg), do: {:ok, arg}
+  end
+
   defmodule AwaitsLinkedExit do
     @moduledoc """
     A server that traps exits links a worker and waits for its answer or

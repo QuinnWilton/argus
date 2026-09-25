@@ -29,10 +29,44 @@ callback_name("handle_message").
 callback_name("handle_batch").
 callback_name("terminate").
 callback_name("mount").
+callback_name("code_change").
+callback_name("format_status").
+
+// The callbacks a loop calls with what its own process was started
+// with or sent: its start arguments, its calls, casts, messages and
+// continues, its exit, a code change, a status request. Not those an
+// outside party's data arrives in: a LiveView's events and params, a
+// channel's payloads, a Broadway or GenStage message (request_entry.dl
+// names the ones that carry a request). unsafe_input asks it of a
+// function a caller's input may reach.
+.decl message_callback(name: symbol)
+
+message_callback("init").
+message_callback("handle_call").
+message_callback("handle_cast").
+message_callback("handle_info").
+message_callback("handle_continue").
+message_callback("terminate").
+message_callback("code_change").
+message_callback("format_status").
+
+// Callbacks one behaviour's loop runs, too specific to name in every
+// loop module: a helper called `join` in a GenServer is its client API.
+// A channel's join/3 and handle_out/3 run in the channel's process (the
+// channel server calls join before the channel is joined); a LiveView's
+// and a LiveComponent's handle_async/3 in the LiveView's.
+.decl behaviour_callback(behaviour: symbol, name: symbol)
+
+behaviour_callback("Phoenix.Channel", "join").
+behaviour_callback("Phoenix.Channel", "handle_out").
+behaviour_callback("Phoenix.LiveView", "handle_async").
+behaviour_callback("Phoenix.LiveComponent", "handle_async").
 
 // A callback of a loop behaviour, with the canonical behaviour it belongs
 // to. Nine analyses each kept a private version of this, and they did
 // not agree on arities: ask function_def for the arity when it matters.
+// A callback name is matched at any arity, so a helper that shares one
+// counts (loud where a finding rests on it being the server's code).
 .decl otp_callback(func: symbol, mod: symbol, callback: symbol, behaviour: symbol)
 
 otp_callback(func, mod, name, behaviour) :-
@@ -40,6 +74,34 @@ otp_callback(func, mod, name, behaviour) :-
   process_behaviour(behaviour, "loop"),
   function_def(func, mod, name, _, _),
   callback_name(name).
+
+otp_callback(func, mod, name, behaviour) :-
+  behaves_as(mod, behaviour),
+  process_behaviour(behaviour, "loop"),
+  behaviour_callback(behaviour, name),
+  function_def(func, mod, name, _, _).
+
+// A server under a behaviour the table does not list: a module that
+// declares one and handles calls, casts or messages the way a server does
+// (process_behaviour_module's second clause, a library's GenServer
+// wrapper) runs its callbacks in its own process, as a listed one does.
+otp_callback(func, mod, name, behaviour) :-
+  unlisted_server(mod),
+  behaves_as(mod, behaviour),
+  function_def(func, mod, name, _, _),
+  callback_name(name).
+
+.decl unlisted_server(mod: symbol)
+
+unlisted_server(mod) :-
+  implements_behaviour(mod, _),
+  function_def(_, mod, h, _, _),
+  (h = "handle_call" ; h = "handle_cast" ; h = "handle_info"),
+  !loop_module(mod).
+
+.decl loop_module(mod: symbol)
+
+loop_module(mod) :- behaves_as(mod, b), process_behaviour(b, "loop").
 
 // A module that runs as a process: a process behaviour's
 // (process_behaviour: GenServer, Supervisor, gen_statem, GenStage, ...),

@@ -32,7 +32,9 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     CallbackReceive.AwaitsNormalDown,
     CallbackReceive.DemonitorsThenAwaits,
     CallbackReceive.AwaitsLinkedExit,
-    CallbackReceive.AwaitsUntrappedExit
+    CallbackReceive.AwaitsUntrappedExit,
+    CallbackReceive.WrappedServer,
+    CallbackReceive.JoinsInClient
   ]
 
   setup_all do
@@ -265,6 +267,26 @@ defmodule Argus.Analyses.BlockingReceiveTest do
       assert attrs.title == "receive inside a GenServer callback"
       assert attrs.detail =~ "takes the exit of the process it waits on"
       refute attrs.detail =~ "has a timeout"
+    end
+  end
+
+  describe "whose callbacks run on the server's stack" do
+    test "a server under a behaviour the table does not list", ctx do
+      skip_without_souffle()
+
+      {blocking, _bounded} = run(ctx, [CallbackReceive.WrappedServer])
+
+      assert [[_id, func, _cb, "Argus.Test.Fixtures.CallbackReceive.Wrapper", "direct"]] =
+               blocking
+
+      assert func =~ "WrappedServer:handle_info/2"
+    end
+
+    test "a GenServer's client function named like a channel callback runs in its caller",
+         ctx do
+      skip_without_souffle()
+
+      assert run(ctx, [CallbackReceive.JoinsInClient]) == {[], []}
     end
   end
 
