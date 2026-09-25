@@ -27,31 +27,75 @@ disk-beam frontend.
 Two layers over one `Roux.Database`:
 
 1. **Frontend** (`Scry.Frontend`): inputs `beam_meta` (module →
-   %{path, mtime, size, hash}, :medium), `module_set`, `env_fingerprint`
-   (:high); queries `module_beam` (disk read; the tracked signal is the
-   hash input), `file_of` (beam compile_info source, realpath-normalized),
-   `module_map`. Registers the same query names as planchette's frontend —
-   **query names are the ABI** (roux dispatches by name; memo keys are
-   {query_name, key}).
+   %{path, mtime, size, hash}, :medium), `module_set`, `env_fingerprint`,
+   `extraction_code`, `argus_code`, `rules_digest` (:high),
+   `graph_layout` (:low, driver bookkeeping); queries `module_beam` (disk
+   read; the tracked signal is the hash input), `file_of` (beam
+   compile_info source, realpath-normalized), `module_map`. Registers the
+   same query names as planchette's frontend — **query names are the
+   ABI** (roux dispatches by name; memo keys are {query_name, key}).
+   Planchette's tests pin `module_extraction` executions: it is THE
+   per-module extraction query, and scry demands it itself.
 2. **Analysis** (`Scry.Analysis`): never rename a query, never change a
    key or value shape without planchette in the same review.
    `Scry.Fingerprint` stamps what the graph depends on beyond the
-   beams: `env_fingerprint` (runtime, schema, and digests of the argus
-   and scry ebins — read by `module_extraction`, the stages, the solves
-   and findings, so any argus code change re-extracts) and a per-analysis
-   `rules_digest` (the analysis's `.dl` and its transitive includes,
-   plus the souffle version — read by `analysis_input_relations`,
-   `stage0_facts`, `points_to_facts` and `souffle_solve`, so a rule edit
-   re-solves exactly the analyses it touched and re-extracts nothing).
+   beams:
+   - `env_fingerprint` — the runtime, a digest of scry's ebin, argus's
+     schema version and the specs environment (every application on the
+     code path, less argus's own and the watched ones' beams) — read by
+     `module_extraction`, the stages, the solves and findings: moving it
+     re-runs everything.
+   - `extraction_code` — ONE digest of the code argus's fact producers
+     run: the union of `Argus.Cache.Code.closure/1` over `:base` and
+     every extractor scry runs, plus `Argus.Schema` and every
+     `Argus.Schema.*` beam listed explicitly (`extraction_closure/0`),
+     each by `Argus.BeamDigest`, with the producer list. Read by
+     `module_extraction` (an extractor or base edit re-extracts every
+     module; equal rows backdate at the semantic digest, so nothing
+     above runs) and by `relation_digest`/`stage0_digest`/
+     `points_to_digest` (the text is `Argus.Tsv`'s, base code). ~25 ms
+     per run, taken every run. An argus edit outside it (findings
+     prose, analyses modules, the Souffle wrapper, caches, corpus)
+     extracts nothing.
+   - `argus_code` — every argus beam with debug info: read by `findings`
+     (rebuilt on any argus edit, cheaply) and by a `module_extraction`
+     whose specs reads reached an argus module.
+   - `rules_digest` per analysis — the `.dl` and its transitive
+     includes, plus the souffle version — read by
+     `analysis_input_relations`, `stage0_facts`, `points_to_facts` and
+     `souffle_solve`, so a rule edit re-solves exactly the analyses it
+     touched and re-extracts nothing. How argus runs Souffle and reads
+     its output is keyed the way argus keys its own solves: by program
+     and solver, not by argus's code (after changing that, `--force`).
+
+   Extraction runs `Argus.Pipeline.extract_shards/3` over every producer
+   and joins their rows (sorted per relation, as `extract/2` would give
+   them) for its `installed` reads — every module whose specs or types
+   the specs extractor looked up — which record an edge per read that
+   the environment digest does not cover: a program module → its
+   `file_of`, an ignored one → its `ignored_beam`, an argus one →
+   `argus_code`. Memoizing per producer (`{module, producer}`) was tried
+   and reverted: it made an extractor edit ~40% cheaper but a project
+   edit slower and the manifest 12% bigger, and scry's users edit their
+   project.
+
+   **Follow-up (argus schema keys):** argus is taking the `Argus.Schema`
+   modules out of its producers' code closures and recording the schema
+   reads a producer makes instead, re-checked on cache hits. Until scry
+   keys `extraction_code` on those recorded reads, `extraction_closure/0`
+   MUST keep listing `Argus.Schema` and `Argus.Schema.*` explicitly —
+   drop that only when scry keys on the reads.
+
    Argus's shared stages are queries of their own, each a cutoff seam:
    `stage0_facts` (the call graph) and `points_to_facts` (process
    points-to, `Argus.Analysis.points_to_relations/0`), with `:stage0`
    and `:points_to` rules digests; a projection takes a stage's outputs
-   from its query, never from extraction. A frontend that
-   never sets `rules_digest` (planchette) reads it as nil. The LSP-only surface —
-   supervision tree, flowistry focus/slicing, the debug twin — lives in
-   planchette (`Planchette.SupTree`, `Planchette.Focus`) and registers
-   its own queries next to these.
+   from its query, never from extraction. A frontend that never sets
+   `rules_digest`, `extraction_code` or `argus_code` (planchette) reads
+   them as unset: no edge. The LSP-only surface — supervision tree,
+   flowistry focus/slicing, the debug twin — lives in planchette
+   (`Planchette.SupTree`, `Planchette.Focus`) and registers its own
+   queries next to these.
 
 Driver side (never inside queries): `Scry.Scanner` (beam discovery +
 mtime/size/hash diff vs manifest sources), `Scry.Runner` (db lifecycle,
@@ -67,6 +111,11 @@ Key invariants:
   chain — durability propagates as the min and `:low` derived memos are
   dropped from the manifest (the fact memos are the bulk of the win).
 - **Query values must survive `term_to_binary`** (manifest persistence).
+- **Manifest layout**: `Scry.Runner`'s `@layout` is recorded in the
+  manifest (`graph_layout`), and a manifest of another layout (or none)
+  is dropped unread — a cold run. Bump it with any change that renames,
+  removes or re-keys a query, or changes what a memo holds: an old memo
+  naming a query that no longer exists raises when validated.
 - **Artifact emission and rendering are driver work** from query values,
   never query side effects.
 - Souffle missing + `souffle: :warn`: never demand solves (no error
