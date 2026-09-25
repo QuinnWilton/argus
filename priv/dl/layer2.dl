@@ -271,6 +271,11 @@
 .decl field_decides(func: symbol, kind: symbol, source: symbol, pos: number)
 .input field_decides
 
+// `func` tests the map field under `key` against nil or undefined: a clause head `%{receive_timer: nil}`, an `if state.timer == nil`, an Erlang map pattern `tref := undefined`. A function that arms a timer only when the field keeping its ref is empty arms none beside a pending one (a Broadway producer's receive loop).
+//
+.decl field_nil_test(func: symbol, key: symbol)
+.input field_nil_test
+
 // `:global` synchronization primitives. The retries field is the third argument of `:global.set_lock/3` (or `:global.trans/4`); analyses use it to distinguish blocking calls (`infinity` or large positive integers) from non-blocking try-once calls (`0`).
 //
 // `:global.set_lock/1,2` and `:global.trans/2,3` default to infinity retries — recorded as `"infinity"` even when the source code omits the argument.
@@ -780,6 +785,11 @@
 //
 .decl timer_cancel(id: symbol, func: symbol, source: symbol, key: symbol, param: number)
 .input timer_cancel
+
+// The call at `site` is to a function of the module that returns a timer's ref (timer_ref "returned", or a wrapper returning such a function's result, returns_call), and `func` drops the result on the spot: every register holding it is overwritten before any instruction reads it. Nothing can cancel that timer, as with a send_after whose own function drops its ref ("discarded").
+//
+.decl timer_dropped(site: symbol, func: symbol, callee: symbol)
+.input timer_dropped
 
 // Where the ref of the timer armed at `id` goes: returned by the function (an arming helper), stored under a literal key of a map (`%{state | timer: ...}`, `Map.put(state, :timer, ...)`), dropped on the spot — every register holding it overwritten before any instruction reads it (`send_after(...)` then `{:noreply, state}`), so nothing can cancel the timer — or somewhere the walk cannot follow (a record, a tuple, another path).
 //

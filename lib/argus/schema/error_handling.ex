@@ -361,6 +361,38 @@ defmodule Argus.Schema.ErrorHandling do
         """
       },
       %{
+        name: :timer_dropped,
+        layer: 2,
+        fields: [
+          {:site, :symbol, "the call"},
+          {:func, :symbol, "the function making it"},
+          {:callee, :symbol, "the arming helper of the module it calls"}
+        ],
+        doc: """
+        The call at `site` is to a function of the module that returns a \
+        timer's ref (timer_ref "returned", or a wrapper returning such a \
+        function's result, returns_call), and `func` drops the result on the \
+        spot: every register holding it is overwritten before any \
+        instruction reads it. Nothing can cancel that timer, as with a \
+        send_after whose own function drops its ref ("discarded").
+        """
+      },
+      %{
+        name: :field_nil_test,
+        layer: 2,
+        fields: [
+          {:func, :symbol, "the function"},
+          {:key, :symbol, "the inspected map key"}
+        ],
+        doc: """
+        `func` tests the map field under `key` against nil or undefined: \
+        a clause head `%{receive_timer: nil}`, an `if state.timer == nil`, \
+        an Erlang map pattern `tref := undefined`. A function that arms a timer only \
+        when the field keeping its ref is empty arms none beside a pending \
+        one (a Broadway producer's receive loop).
+        """
+      },
+      %{
         name: :returns_call,
         layer: 2,
         fields: [

@@ -186,6 +186,8 @@ defmodule Argus.Extractors.ErrorHandling do
       :timer_cancel,
       :timer_ref,
       :timer_store,
+      :field_nil_test,
+      :timer_dropped,
       :timer_tag,
       :trap_exit,
       :try_call,
@@ -235,6 +237,62 @@ defmodule Argus.Extractors.ErrorHandling do
       |> maybe_call_result(ctx, mfa)
     end)
     |> emit_result_tests(module_data)
+    |> emit_dropped_refs(mod, module_data.functions)
+  end
+
+  # A call to an arming helper of this module that returns its timer's
+  # ref (`defp schedule(ms), do: Process.send_after(self(), :tick, ms)`),
+  # or to a wrapper returning one's result, whose result the caller drops
+  # on the spot: the ref is gone at that call, as a send_after's own is
+  # when its function drops it (timer_ref "discarded").
+  defp emit_dropped_refs(facts, mod, functions) do
+    arming =
+      for [_id, func, "returned", _key] <- Map.get(facts, :timer_ref, []),
+          into: MapSet.new(),
+          do: func
+
+    returning = returning_closure(arming, Map.get(facts, :returns_call, []))
+
+    if MapSet.size(returning) == 0 do
+      facts
+    else
+      Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
+        func_id = InstrId.func_id(mod, name, arity)
+
+        instrs
+        |> Enum.with_index()
+        |> Enum.reduce(acc, fn {instr, idx}, inner ->
+          with {:ok, ^mod, f, a} <- match_local_call(instr),
+               callee = InstrId.func_id(mod, f, a),
+               true <- MapSet.member?(returning, callee),
+               false <- Instr.tail_call?(instr),
+               {"discarded", _} <-
+                 ref_walk(
+                   Enum.drop(instrs, idx + 1),
+                   [{:x, 0}],
+                   instrs,
+                   idx + 1,
+                   %{functions: functions, seen: %{}}
+                 ) do
+            add_fact(inner, :timer_dropped, [InstrId.mint(func_id, idx), func_id, callee])
+          else
+            _ -> inner
+          end
+        end)
+      end)
+    end
+  end
+
+  # The arming helpers and the wrappers that return what one returns.
+  defp returning_closure(arming, returns) do
+    grown =
+      Enum.reduce(returns, arming, fn [func, callee], acc ->
+        if MapSet.member?(acc, callee), do: MapSet.put(acc, func), else: acc
+      end)
+
+    if MapSet.size(grown) == MapSet.size(arming),
+      do: arming,
+      else: returning_closure(grown, returns)
   end
 
   # The callees whose results a consistency rule may compare across the
@@ -782,8 +840,56 @@ defmodule Argus.Extractors.ErrorHandling do
         acc
         |> emit_stores(mod, func_id, instrs)
         |> emit_returns(mod, func_id, instrs)
+        |> emit_nil_tests(func_id, instrs)
       end
     end)
+  end
+
+  # The map fields the function tests against nil or undefined: a clause
+  # head `%{receive_timer: nil}`, an `if state.timer == nil`, Erlang's
+  # `#{tref := undefined}`. A function that arms a timer only when the
+  # field that keeps its ref is empty arms none beside a pending one (a
+  # Broadway producer's `handle_receive_messages/1`).
+  defp emit_nil_tests(facts, func_id, instrs) do
+    instrs
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {instr, idx} -> nil_tested(instrs, idx, instr) end)
+    |> Enum.uniq()
+    |> Enum.sort()
+    |> Enum.reduce(facts, fn key, acc -> add_fact(acc, :field_nil_test, [func_id, key]) end)
+  end
+
+  defp nil_tested(instrs, idx, {:test, op, _fail, [a, b]})
+       when op in [:is_eq_exact, :is_ne_exact, :is_eq, :is_ne] do
+    cond do
+      empty?(a) -> field_key(instrs, idx, b)
+      empty?(b) -> field_key(instrs, idx, a)
+      true -> []
+    end
+  end
+
+  defp nil_tested(instrs, idx, {:select_val, src, _fail, {:list, pairs}}) do
+    if pairs |> Enum.take_every(2) |> Enum.any?(&empty?/1),
+      do: field_key(instrs, idx, src),
+      else: []
+  end
+
+  defp nil_tested(_instrs, _idx, _instr), do: []
+
+  defp empty?({:atom, atom}), do: atom in [nil, :undefined]
+  defp empty?(_operand), do: false
+
+  defp field_key(instrs, idx, operand) do
+    case Instr.register(operand) do
+      {kind, _} = reg when kind in [:x, :y] ->
+        case map_field_of(instrs, idx, reg) do
+          {:ok, key} -> [key]
+          :dynamic -> []
+        end
+
+      _ ->
+        []
+    end
   end
 
   # A cancel inside a handle_info/2 clause whose head is a literal
@@ -1011,11 +1117,63 @@ defmodule Argus.Extractors.ErrorHandling do
 
   defp emit_store(facts, mod, func_id, instrs, idx, key, val) do
     with {kind, _} = r when kind in [:x, :y] <- register(val),
-         {:ok, {m, f, a}, _origin} <- call_result_origin(instrs, idx, r) do
+         {:ok, {m, f, a}} <- stored_callee(instrs, idx, r) do
       callee = InstrId.func_id(if(m == :local, do: mod, else: m), f, a)
       add_fact(facts, :timer_store, [func_id, spell(key), callee])
     else
       _ -> facts
+    end
+  end
+
+  # The function whose result the register holds: one call on every
+  # path, or calls to one function on each (`timer = case ... do [] ->
+  # schedule(timeout); _ -> schedule(0) end`, sequin's receive loop),
+  # nil or undefined on the others (the loop recording that it stopped).
+  defp stored_callee(instrs, idx, reg) do
+    case call_result_origin(instrs, idx, reg) do
+      {:ok, mfa, _origin} ->
+        {:ok, mfa}
+
+      :no ->
+        case instrs |> callee_walk(idx, reg, %{}) |> Enum.uniq() |> List.delete(:empty) do
+          [{:callee, mfa}] -> {:ok, mfa}
+          _ -> :no
+        end
+    end
+  end
+
+  defp callee_walk(instrs, idx, reg, seen) do
+    if Map.has_key?(seen, {idx, reg}) do
+      []
+    else
+      seen = Map.put(seen, {idx, reg}, true)
+
+      instrs
+      |> Reaching.sources(idx, reg)
+      |> Enum.flat_map(fn
+        {:param, _k} ->
+          [:no]
+
+        at ->
+          instr = Reaching.at(instrs, at)
+
+          case {Instr.copy_source(instr, reg), instr} do
+            {{kind, _} = source, _} when kind in [:x, :y] ->
+              callee_walk(instrs, at, source, seen)
+
+            {nil, {:call_ext, _, {:extfunc, m, f, a}}} when reg == {:x, 0} ->
+              [{:callee, {m, f, a}}]
+
+            {nil, {:call, _, {m, f, a}}} when reg == {:x, 0} ->
+              [{:callee, {m, f, a}}]
+
+            {{:atom, atom}, _} when atom in [nil, :undefined] ->
+              [:empty]
+
+            _ ->
+              [:no]
+          end
+      end)
     end
   end
 

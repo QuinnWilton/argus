@@ -361,6 +361,26 @@ defmodule Argus.Extractors.ErrorHandlingTest do
       assert Enum.sort(flows) == [{"stored", ":poll"}, {"stored", ":timer"}]
     end
 
+    test "a call that drops an arming helper's ref; a field tested against nil" do
+      {:ok, facts} =
+        Argus.Pipeline.extract(
+          [
+            Argus.Test.Fixtures.TimerLoop.ThreeClauseLoop,
+            Argus.Test.Fixtures.TimerLoop.BroadwayGuard
+          ],
+          extractors: [Argus.Extractors.ErrorHandling]
+        )
+
+      # Every call of schedule_check/1 drops the ref it returns: three in
+      # handle_info/2, one in handle_call/3.
+      dropped = for [_site, func, _callee] <- facts[:timer_dropped], do: func
+      assert Enum.count(dropped, &(&1 =~ "handle_info/2")) == 3
+      assert Enum.count(dropped, &(&1 =~ "handle_call/3")) == 1
+
+      assert [[func, ":receive_timer"]] = facts[:field_nil_test]
+      assert func =~ "receive_messages/1"
+    end
+
     test "a ref read with maps:get/3 is cancelled from that field" do
       {:ok, facts} =
         Argus.Pipeline.extract([:timer_loop_domain_db],
