@@ -91,6 +91,16 @@ in the effect model: `:timer` arms timers, and converts units without
 one. akkoma's `PurgeExpiredActivity.expires_late_enough?/1` read as a
 process write inside `ScheduledActivityWorker.perform/1`'s transaction.
 
+**Changed.** An effect inside a transaction stops at a start: the spawn
+of a closure or a literal fun, and a `Task` started on a fun, is the
+effect (a process operation, where it is made), and what the new process
+then does is not a finding of its own. akkoma streams a post from inside
+its transactions through `Streamer.stream/2`, a spawn per topic, and
+each transaction had the spawn, the pusher's `Registry.dispatch/3` and
+its sends as four or five findings: 27 rows over six functions are now
+one per transaction, at the spawn, which is the streaming-before-commit
+bug in every one of them.
+
 ### Points-to that finishes on a large program
 
 **Fixed.** The points-to stage finishes on Ash (1,327 modules), where it

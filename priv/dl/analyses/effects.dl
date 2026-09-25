@@ -324,10 +324,42 @@ transaction_on_another_repo(caller, repo) :-
 
 .decl escapes_transaction(opened: symbol, caller: symbol, repo: symbol, category: symbol, api: symbol, via: symbol, site: symbol)
 
-// Forward from the transaction bodies only.
-.init body_reach = ForwardCallReach
+// Forward from the transaction bodies only, and not into a function a
+// start hands to a new process: the start is the effect the transaction
+// cannot undo (a process operation, reported where it is made), and what
+// the new process then does happens beside the transaction, not in its
+// process — akkoma's `Streamer.stream/2` spawns a pusher per topic from
+// inside `ActivityPub.create/2`'s transaction, and the pusher's
+// Registry.dispatch/3 and sends were each a finding of their own beside
+// the spawn's. A closure a call hands to anything else (Enum.each, the
+// transaction itself) is still followed.
+.init body_reach = ForwardCallReachCut
 
 body_reach.root(body, body) :- transaction_body(_, _, _, body).
+body_reach.cut(g, h) :- starts_elsewhere(g, h).
+
+// `caller` hands `fun` to a start: a spawn whose fun resolves to it
+// (spawn_call), or a Task started on it.
+.decl starts_elsewhere(caller: symbol, fun: symbol)
+
+starts_elsewhere(f, g) :-
+  spawn_call(_, f, m, n, a, _, _, source, _, _),
+  (source = "closure" ; source = "fun"),
+  g = cat(m, cat(":", cat(n, cat("/", to_string(a))))).
+
+starts_elsewhere(f, g) :-
+  fun_handed(id, f, g, _),
+  remote_call(id, f, m, n, _),
+  task_start(m, n).
+
+.decl task_start(mod: symbol, func: symbol)
+
+task_start("Task", "start").
+task_start("Task", "start_link").
+task_start("Task", "async").
+task_start("Task.Supervisor", "start_child").
+task_start("Task.Supervisor", "async").
+task_start("Task.Supervisor", "async_nolink").
 
 // The repo is the one of the transaction the body belongs to: joining
 // the caller's transaction sites apart from its body paired a closure

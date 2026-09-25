@@ -145,6 +145,13 @@
   reaches(r, h) :- reaches(r, g), call_edge(g, h).
 }
 
+// ForwardCallReach, less the edges the instance names `cut` (effects:
+// the edge into what a start runs in a new process).
+.comp ForwardCallReachCut : Forward {
+  .decl cut(func: symbol, callee: symbol)
+  reaches(r, h) :- reaches(r, g), call_edge(g, h), !cut(g, h).
+}
+
 // Forward over what the root's own process runs (runs_elsewhere, as
 // SameProcessReach): a spawned function and the loop it calls.
 .comp ForwardSameProcessReach : Forward {

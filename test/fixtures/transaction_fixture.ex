@@ -53,6 +53,46 @@ defmodule Argus.Test.Fixtures.Transaction do
     end
   end
 
+  defmodule StreamsBeforeCommit do
+    @moduledoc """
+    akkoma's `ActivityPub.create/2`: the transaction's work streams the
+    new post, and the streamer spawns a pusher per topic. The spawn is
+    the effect a rollback cannot undo, one finding; what the pusher does
+    runs in its own process, beside the transaction.
+    """
+    def create(post) do
+      FakeRepo.transaction(fn ->
+        FakeRepo.insert(post)
+        stream(["public", "user"], post)
+      end)
+    end
+
+    def stream(topics, post) do
+      for topic <- topics do
+        spawn(fn -> push(topic, post) end)
+      end
+    end
+
+    def push(topic, post) do
+      Registry.dispatch(Streamer, topic, fn subscribers ->
+        for {pid, _} <- subscribers, do: send(pid, {:post, post})
+      end)
+    end
+  end
+
+  defmodule TaskBeforeCommit do
+    @moduledoc """
+    A Task started in the transaction: the start is the effect, and the
+    webhook the task posts is its own.
+    """
+    def create(post) do
+      FakeRepo.transaction(fn ->
+        FakeRepo.insert(post)
+        Task.start(fn -> :httpc.request(~c"http://hooks/new") end)
+      end)
+    end
+  end
+
   defmodule Unsafe do
     @moduledoc "The bug: an unrollbackable effect inside the transaction."
     def create(user) do

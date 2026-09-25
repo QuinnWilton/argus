@@ -50,6 +50,22 @@ defmodule Argus.Analyses.EffectsTransactionTest do
       assert via =~ "-create/1-fun-0-", "should name the closure, not the enclosing function"
     end
 
+    test "a start in the transaction is the effect, not what the new process does" do
+      skip_without_souffle()
+
+      rows = findings([T.FakeRepo, T.StreamsBeforeCommit, T.TaskBeforeCommit])
+
+      # One row each: the spawn and the Task start, where the work is
+      # handed to another process. The pusher's dispatch and sends, and
+      # the task's request, are that process's.
+      assert [[_, _, "process", spawn, stream]] = for_module(rows, "StreamsBeforeCommit")
+      assert spawn =~ "spawn"
+      assert stream =~ "stream/2"
+
+      assert [[_, _, "process", start, _via]] = for_module(rows, "TaskBeforeCommit")
+      assert start =~ "Task"
+    end
+
     test "an effect several calls inside the transaction is attributed to its site" do
       skip_without_souffle()
 

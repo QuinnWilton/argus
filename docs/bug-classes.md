@@ -2501,10 +2501,10 @@ Another process takes or deletes the row between the check and the act, and the 
 - Only effect-model calls are reported. An Erlang `!` send instruction and a `receive` are not effects here, although purity counts them.
 - The body is found by containment, not by dataflow. None of these is a body: a named fun (`Repo.transaction(&do_work/0)`), a fun built in another function and passed in, or an `Ecto.Multi.run/3` callback built outside the function that opens the transaction. In the other direction, a function that hands a Multi to the transaction but builds one unrelated closure has that closure taken as the body.
 - A function that opens transactions on two repos has no body, because nothing says which repo runs the closure.
-- Reach from the body is unbounded and does not look at argument values. It enters the repo's own code, and its dependencies' code when their beams are in the run. It also follows a fun into another process: a `Task.start/1` in the body is reported with the network call it makes, along with the connection-holding prose.
-- The effect model has gaps here too. `:io_lib.format/2` is an `io` write and reads as "file I/O". `:timer.seconds/1` is a `process` write. `Process.sleep/1` is reported, which is intended, because it holds the connection. But its finding says "The message has already been delivered, or the process already spawned", and the connection note appears only for `network` and `port`.
+- Reach from the body is unbounded and does not look at argument values. It enters the repo's own code, and its dependencies' code when their beams are in the run. It stops at a start: the spawn (`spawn_call` of a closure or a literal fun) or the `Task` start (`Task.start/1,2`, `async`, `Task.Supervisor.start_child`, `async`, `async_nolink`) is the effect, reported as a process operation where it is made, and what the new process does is not a finding of its own (`StreamsBeforeCommit`: akkoma streams a post from inside `ActivityPub.create/2`'s transaction, a spawn per topic, and each pusher's `Registry.dispatch/3` and sends were findings beside the spawn's; `TaskBeforeCommit`). A fun handed to anything else (Enum.each, the transaction) is still followed.
+- The effect model has gaps here too. `:io_lib.format/2` is an `io` write and reads as "file I/O". `Process.sleep/1` is reported, which is intended, because it holds the connection. But its finding says "The message has already been delivered, or the process already spawned", and the connection note appears only for `network` and `port`.
 
-**Fixtures.** Positive: `Unsafe`, `UnsafeIndirect` and `Sleeps` (with `FakeRepo`). Quiet: `LogsOnly`, `ReadsConfig`, `EffectOutside`, and `TwoRepos` (with `AuditRepo`). All are under `Transaction` (test/fixtures/transaction_fixture.ex). Test: test/analyses/effects_transaction_test.exs.
+**Fixtures.** Positive: `Unsafe`, `UnsafeIndirect`, `Sleeps`, and `StreamsBeforeCommit` and `TaskBeforeCommit` (one finding each, at the start) (with `FakeRepo`). Quiet: `LogsOnly`, `ReadsConfig`, `EffectOutside`, and `TwoRepos` (with `AuditRepo`). All are under `Transaction` (test/fixtures/transaction_fixture.ex). Test: test/analyses/effects_transaction_test.exs.
 
 **Corpus.** None.
 
@@ -2515,6 +2515,8 @@ Another process takes or deletes the row between the check and the act, and the 
 - realtime: a send inside a subscription transaction.
 
 The same commit notes that teslamate's geocoder is behind a module attribute, a dynamic dispatch the rule does not follow.
+
+Round 3 of the mining (2026-09-25) read akkoma's rows against its streaming bug (posts pushed to websocket clients before the transaction commits, so a rollback leaves a phantom post): 27 rows over six functions, each transaction's rows the spawn in `Streamer.stream/2` plus the pusher's dispatch and sends and a `:timer.seconds/1`, became one row per transaction, at the spawn, which is the bug in every one of them.
 
 ## unsafe_input
 
