@@ -2454,6 +2454,15 @@ and mailbox list the Supervision extractor for it.
 
 ### Findings: anchors, frames and prose
 
+**Fixed.** A `try` or `catch` instruction's `line_info` is the line of
+the expression it protects. The instruction comes before that
+expression's line marker, often first in a block a jump enters, where
+the line in effect was whatever the listing held last — another
+clause's: ejabberd's `parse_auth/1` reported its catch-all at the
+`Bearer` clause thirteen lines below the `try`, `mod_muc_room`'s at a
+function head 26 lines above. It now takes the first marker after it,
+before the next label, and the line in effect moves with it.
+
 **Fixed.** Anchors no longer invent modules. Several builders passed a function ID
 where `Findings.at_site/2` takes a module string, so a row whose site
 was empty or `"dynamic"` anchored at a module named after the function

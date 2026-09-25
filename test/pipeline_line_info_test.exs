@@ -48,5 +48,41 @@ defmodule Argus.PipelineLineInfoTest do
       # nothing.
       assert lines == [2, 3, 4]
     end
+
+    test "a try takes the line of the expression it protects, not the last in the listing",
+         %{tmp_dir: tmp_dir} do
+      source = """
+      defmodule ArgusTryLineProbe do
+        def parse("Bearer " <> token), do: String.trim(token)
+
+        def parse("Basic " <> auth) do
+          try do
+            Base.decode64!(auth)
+          rescue
+            _ -> :invalid
+          end
+        end
+      end
+      """
+
+      [{mod, beam} | _] = Code.compile_string(source, "nofile")
+
+      on_exit(fn ->
+        :code.purge(mod)
+        :code.delete(mod)
+      end)
+
+      path = Path.join(tmp_dir, "#{mod}.beam")
+      File.write!(path, beam)
+
+      {:ok, facts} = Pipeline.extract([path], format: :typed)
+      line_of = Map.new(facts[:line_info], &{&1.id, &1.line})
+
+      assert [try] = Enum.filter(facts[:instruction], &(&1.op == "try"))
+
+      # The first clause's String.trim/1 (line 2) comes last in the
+      # listing before the second clause's try; the try protects line 6.
+      assert Map.fetch!(line_of, try.id) == 6
+    end
   end
 end

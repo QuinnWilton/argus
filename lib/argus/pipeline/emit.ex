@@ -182,6 +182,8 @@ defmodule Argus.Pipeline.Emit do
   defp emit_instructions_loop(facts, _func_id, [], _idx, _line_table, _line), do: facts
 
   defp emit_instructions_loop(facts, func_id, [{id, instr} | rest], idx, line_table, line) do
+    line = region_line(instr, rest, line_table, line)
+
     {facts, line} =
       emit_instruction_fact(facts, id, func_id, to_string(idx), instr, line_table, line)
 
@@ -196,6 +198,31 @@ defmodule Argus.Pipeline.Emit do
 
     emit_instructions_loop(facts, func_id, rest, idx + 1, line_table, line)
   end
+
+  # A `try` or `catch` comes before the line marker of the expression it
+  # protects, and often first in a block a jump enters (a clause of its
+  # own), where the line in effect is whatever the listing held last —
+  # another clause's: ejabberd's `parse_auth/1` put its `try
+  # base64:decode(..)` on the `Bearer` clause thirteen lines below. Its
+  # line is the protected expression's, the first marker after it, when
+  # one comes before the next label.
+  defp region_line({op, _reg, _handler}, rest, line_table, line) when op in [:try, :catch] do
+    Enum.reduce_while(rest, line, fn
+      {_id, {:label, _}}, line ->
+        {:halt, line}
+
+      {_id, {:line, ref}}, line ->
+        {:halt, Map.get(line_table, ref) || line}
+
+      {_id, {:debug_line, _kind, ref, _index, _live}}, line ->
+        {:halt, Map.get(line_table, ref) || line}
+
+      _other, line ->
+        {:cont, line}
+    end)
+  end
+
+  defp region_line(_instr, _rest, _line_table, line), do: line
 
   # Record the instruction fact and dispatch to specific emitters, threading
   # the source line currently in effect so every instruction gets a
