@@ -183,7 +183,7 @@ than more; it errs loud when the same uncertainty can add a finding.
 ### Clause-aware entry
 
 - **Names.** `literal_first`, `literal_entry` and `site_clause` (calls.dl), `clause_of` (global_reach.dl), over the `clause_call` fact.
-- **Meaning.** When every call from f to g passes the same literal atom first, the call enters only g's clauses for that atom and the clauses that take any value; `clause_call(site, g, tag)` says which clause a site in g belongs to. `Router.route(:local, n)` therefore does not wait on what the `:remote` clause waits on, though a call graph by function merges the two.
+- **Meaning.** When every call from f to g passes the same literal atom first, the call enters only g's clauses for that atom and the clauses that take any value; `clause_call(site, g, tag)` says which clause a site in g belongs to. `Router.route(:local, n)` therefore does not wait on what the `:remote` clause waits on, though a call graph by function merges the two. A call that forwards f's own first argument, from a clause of f that took a literal one, passes that literal: `handle_cast(rebuild, S) -> handle_info(rebuild, S)` compiles to a forward of x0, and the literal is the tag of the clause the call sits in; every call of f to g must sit in such a clause.
 - **Direction.** A forwarded parameter, a computed value or a tuple enters every clause (loud).
 - **Used by.** blocking (per-site requests) and blocking and startup (global lock reach). `literal_first` is the one test; each walk only says which calls it asks about.
 
@@ -238,8 +238,8 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### Supervision structure
 
-- **Names.** `child_subtree`, `starts_before`, `sibling`, `sup_management_call`, `child_creating_op`, `unbounded_sup_op`, `stopping_sup_op` (supervision.dl).
-- **Meaning.** `child_subtree(sup, branch, mod)` maps every module under a supervisor, static and dynamic children at any depth, to the direct child branch it belongs to. `starts_before(sup, earlier, later, …)` joins two branches in start order: earlier is running when later's init runs, and under rest_for_one later restarts when earlier crashes. `sibling` is two direct children of one supervisor. `sup_management_call` is a call to a supervisor's API, and the op tables say which calls create a child, which wait for a whole shutdown and which stop children.
+- **Names.** `child_subtree`, `starts_before`, `boot_subtree`, `boots_before`, `template_supervisor`, `application_root`, `sibling`, `sup_management_call`, `child_creating_op`, `unbounded_sup_op`, `stopping_sup_op` (supervision.dl).
+- **Meaning.** `child_subtree(sup, branch, mod)` maps every module under a supervisor, static and dynamic children at any depth, to the direct child branch it belongs to. `starts_before(sup, earlier, later, …)` joins two branches in start order: what the earlier branch holds is running when the later's init runs, and under rest_for_one the later restarts when the earlier crashes; shutdown reads it for stop order, where whatever a branch holds stops with it. `boots_before` is the same order over `boot_subtree`, the static children a supervisor starts in its own start: a DynamicSupervisor's child and a simple_one_for_one supervisor's template child (`template_supervisor`) start when something asks, after the tree is up, and the startup rules about what an init meets during the boot read this one. `application_root(sup)` is the supervisor an Application's start/2 starts, which dies only with the application. Children come from map specs, `{Mod, args}` shorthands and OTP's tuple specs `{Id, {M, F, A}, Restart, Shutdown, Type, Modules}` (the one listed module, else the start function's). `sibling` is two direct children of one supervisor. `sup_management_call` is a call to a supervisor's API, and the op tables say which calls create a child, which wait for a whole shutdown and which stop children.
 - **Direction.** Supervision is module-level: two instances of one child module are one module here.
 - **Used by.** coupling, shutdown and startup; calls.dl limits module-level reach to supervised modules through it.
 
@@ -402,13 +402,13 @@ Work in a phase whose invariants do not hold yet: `init/1` runs inside the super
 **Property.** A supervisor S lists child C before child D (D's branch sits at a later position in S's static child list, `starts_before`), and C's `init/1`, on its own stack (not in what it spawns, a task or an agent runs: `runs_elsewhere`; not through the logging or telemetry API: `side_call`), makes a synchronous call that waits on D's process. S starts children in order and cannot start D until C's `init/1` returns, so the call cannot be answered: it exits with `:noproc` or waits, `init/1` fails, and the tree never finishes booting. The finding anchors at C's `init/1`, with the tree definition, the function that makes the call and D as related frames.
 
 **Assumptions and limits.**
-- The tree must be static and visible: a child list built at runtime places nothing, and the call is then only the "unknown place" finding below.
+- The tree must be static and visible: a child list built at runtime places nothing, and the call is then only the "unknown place" finding below. OTP's tuple specs are read since FP hunt round 3. The order is the boot's (`boots_before`): a DynamicSupervisor's child or a simple_one_for_one template child starts when asked, after the tree is up, whatever branch holds it (zotonic's z_site_sup under z_sites_sup, started by the later z_sites_manager; `boot_order_site`, quiet, beside `boot_order_early`). A template or dynamic child an init/1 of the boot starts (Elixir's start_child or Erlang's `supervisor:start_child/2`, directly or one call away) is ordered with its starter's branch; one started two calls away is missed.
 - Children and dependencies are compared by module; two instances of one module under different supervisors are not told apart.
 - Target resolution is blocking's (literal names, client wrappers, process points-to, tag attribution); a call to an unresolved pid is missed.
 - The same call is also reported as "init/1 blocks on a synchronous call" (the unknown-place rule does not exclude a later sibling; the test pins both rows).
 - Suppressed: a call made in a task `init/1` starts (`InitRecv.TaskCalls`), and a call only to a pure function of the sibling's module (`InitPureCaller`).
 
-**Fixtures.** Positive: `DeadlockOrderSupervisor` with `SyncInitServer` and `WorkerA` (test/fixtures/sync_init_fixture.ex, test/fixtures/supervision_fixture.ex); `ProcessDepSupervisor` with `InitProcessCaller` and `InitDepWorker` (test/fixtures/supervision_fixture.ex). Quiet: `PureDepSupervisor` with `InitPureCaller` and `InitDepWorker`; `InitRecv.TaskCalls.Sup` with `Early` and `Later` (test/fixtures/init_recv_fixture.ex). Asserted in test/analyses/startup_init_test.exs, startup_supervision_test.exs and singleton_shapes_test.exs.
+**Fixtures.** Positive: `DeadlockOrderSupervisor` with `SyncInitServer` and `WorkerA` (test/fixtures/sync_init_fixture.ex, test/fixtures/supervision_fixture.ex); `ProcessDepSupervisor` with `InitProcessCaller` and `InitDepWorker` (test/fixtures/supervision_fixture.ex). Quiet: `PureDepSupervisor` with `InitPureCaller` and `InitDepWorker`; `InitRecv.TaskCalls.Sup` with `Early` and `Later` (test/fixtures/init_recv_fixture.ex); `boot_order_sup`'s `boot_order_site` (a template child the manager starts once up) beside the reported `boot_order_early` (test/fixtures/erl). Reported, the nearest real bugs of the boot-order narrowing: `boot_nested_leaf` and `boot_nested_cont` (a static child two levels down an earlier branch), `boot_started_sup`'s `boot_order_site` (a template child an earlier sibling's init/1 starts) and `BootDyn.Worker` (a DynamicSupervisor child an earlier sibling's init/1 starts) (test/fixtures/erl, test/fixtures/supervision_fixture.ex). Asserted in test/analyses/startup_init_test.exs, startup_supervision_test.exs and singleton_shapes_test.exs.
 
 **Corpus.** None. The corpus has no such pair; encore's fugue benchmark seeds one (7ba8526).
 
@@ -909,12 +909,12 @@ A synchronous wait that can last forever or nest: every finding is a process wai
 
 **Assumptions and limits.**
 - Target resolution is the chain rule's; an unresolved target is missed.
-- GenServer only, and any clause of `handle_cast/2` counts: the rule does not follow which clause a cast enters.
+- GenServer only, and any clause of `handle_cast/2` counts: the rule does not follow which clause a cast enters. Past `handle_cast/2` it asks the clause-aware walk the chains ask (`site_request`): a wait only reachable through a callee clause the handler's literal argument cannot select is none (zotonic's `mod_acl_user_groups` hands `rebuild` on to handle_info/2; `TimeoutChain.ForwardingCaster`, quiet, beside `ForwardingSyncCaster` and `ForwardingAnyCaster`).
 - The finding anchors at the call in `handle_cast/2` that waits, or that enters the helper that does (`site`; `site_request`), not at the function's head: every clause compiles into one function, whose head is its first clause's line. A wait inside a closure the handler hands to a call (`Redis.rescue_timeout(fn -> ... end)`, `lists:foreach(fun ...)`) is anchored at that call (`fun_handed`). One finding per target server, at the earliest such call; a closure built into a term and called later has no site, and the finding falls back to the head.
 - The call's timeout and the target's behaviour are not read: a call to a server that answers at once is reported like an `:infinity` one. With priors on, a target the model puts at 0.8 or more as answering from inside the node (`prior_answers`, by module or registered name) steps the row down to `:info`, marked heuristic.
 - A cast handler calling its own module's process is the self-call finding, not this one.
 
-**Fixtures.** Positive: `TimeoutChain.BlockingCastServer` with `TimeoutChain.ServerC` (test/fixtures/timeout_chain_fixture.ex); `TimeoutChain.LaterClauseCastServer` (three servers waited on from its later clauses, directly, through a helper and inside a closure: each finding at its own call); `PidCalls.HandOffCaster` with `PidCalls.Named` (test/fixtures/pid_call_fixture.ex, a closure beside a child spec's fun stays the handler's own). Quiet: none. Asserted in test/analyses/blocking_chain_test.exs and blocking_pid_call_test.exs; the prior re-tier in test/priors/priors_test.exs.
+**Fixtures.** Positive: `TimeoutChain.BlockingCastServer` with `TimeoutChain.ServerC` (test/fixtures/timeout_chain_fixture.ex); `TimeoutChain.LaterClauseCastServer` (three servers waited on from its later clauses, directly, through a helper and inside a closure: each finding at its own call); `PidCalls.HandOffCaster` with `PidCalls.Named` (test/fixtures/pid_call_fixture.ex, a closure beside a child spec's fun stays the handler's own); `TimeoutChain.ForwardingSyncCaster`, `ForwardingAnyCaster`, `ForwardingTwoClauseCaster`, `ForwardingMixedCaster` and `ForwardingGuardCaster` (the forwarded literal's adversarial probes). Quiet: `TimeoutChain.ForwardingCaster`. Asserted in test/analyses/blocking_chain_test.exs and blocking_pid_call_test.exs; the prior re-tier in test/priors/priors_test.exs.
 
 **Corpus.** None.
 
@@ -1289,13 +1289,14 @@ A synchronous wait that can last forever or nest: every finding is a process wai
 - A trap_exit call counts wherever it is in the module, including in a client function that runs in its caller. A monitor counts only on the server's own stack: `def await_up, do: Process.monitor(...)` is the caller's monitor (pinned by `ClientMonitorsServer`).
 - The rule steps aside for two more specific findings on the same module. The first is `shutdown`'s `unhandled_exit_signal` "no_exit_clause", when the process traps exits and no clause compares `:EXIT` (pinned by `TrapsWithoutExitClause`). The step-aside is computed here, so a run of `mailbox` without `shutdown` reports neither. The second is `unhandled_info` "crash", when a message the module is sent names the missing clause.
 - A handle_info/2 that another module's macro wrote in full is still judged here, although the late-message source skips it.
+- Suppressed when a clause takes everything the runtime can send: every process monitor's `:DOWN` for a server that monitors on its own stack, every `:EXIT` for one that traps (`callback_takes_every`, CallbackTag: the head tests the message only for its tuple-ness, arity and tag, a `:DOWN`'s third element only against `:process`, and the state only for its struct or record type). A late `:DOWN` after a demonitor without `:flush` is a `:DOWN` like any other. A server whose own stack asks the runtime for more keeps the finding (`other_runtime_writer`): a monitor whose type is not the literal `:process` (a port's `:DOWN` says `:port`), a port it opens (its output), node monitoring (`:nodeup`/`:nodedown`). A module suppressed here falls to the late-message variant when it has a late source (`runtime_uncovered`).
 - The finding does not name a message. It is one finding per module and handler.
 
-**Fixtures.** Positive: `MonitorsWithoutCatchall` (`test/fixtures/error_handling_fixture.ex`). Quiet: `MonitorsWithCatchall`, `ClientMonitorsServer`, `TrapsWithoutExitClause` (same file). Asserted in `test/analyses/mailbox_info_test.exs`.
+**Fixtures.** Positive: `MonitorsWithoutCatchall` (its `:DOWN` clause pins the ref to the state), `MonitorsDownWhenActive` (a state field compared), `TrapsTakingNormalExits` (one exit reason), and the suppression's adversarial probes `MonitorsPortTakingProcessDowns`, `MonitorsNodesTakingDowns`, `TrapsOpeningPort`, `MonitorsDownGuardedByReason` (`test/fixtures/error_handling_fixture.ex`); `LateMessage.MonitorsInMacro` under the program's own macro. Quiet: `MonitorsWithCatchall`, `MonitorsTakingEveryDown`, `TrapsTakingEveryExit`, `ClientMonitorsServer`, `TrapsWithoutExitClause` (same file). Asserted in `test/analyses/mailbox_info_test.exs`; `callback_takes_every` in `test/extractors/callback_tag_test.exs`.
 
 **Corpus.** Fix pairs: None. Present-only: None.
 
-**Precision.** Not measured. 24c1ba3 stopped counting a monitor in a client function, but gives no count.
+**Precision.** FP hunt round 3 (2026-09-25) sampled 5 rows on the seven new programs: 0 true, all five servers taking every `:DOWN` (and every `:EXIT`) they could be sent (`runtime-messages-covered`, as 4 of round 2's). The suppression above took the class from 20 rows to 3 over the 26 live programs. 24c1ba3 stopped counting a monitor in a client function, but gives no count.
 
 ### A server with a late-message source and no handle_info/2 catch-all
 
@@ -1615,7 +1616,7 @@ On the timeout branch the monitor is still live. The `{:DOWN, ...}` arrives afte
 **Property.** A server takes monitors on its own stack (`server_side`) and keeps their refs. Some function of the module removes an entry from a map (`removal_api`), and no function of the module calls `Process.demonitor`. Suppose an entry can leave by a path other than the monitored process dying: an explicit delete, an unsubscribe, a checkin. Then its monitor stays live, one per cycle for the life of the server, and each is a future `:DOWN` for an entry that is gone.
 
 **Assumptions and limits.**
-- This is a module-wide heuristic, reported as info. Any map removal anywhere in the module counts, including the removal in the `:DOWN` handler, the one path where the monitor is already gone. e00304c kept that removal out of the evidence frames, but not out of the rule. So a server whose only removal is in its `:DOWN` clause is still reported, with no frame. Conversely, any demonitor anywhere in the module, of any ref, silences the rule.
+- This is a module-wide heuristic, reported as info. Any map removal anywhere in the module counts, including the removal in the `:DOWN` handler, the one path where the monitor is already gone. e00304c kept that removal out of the evidence frames, but not out of the rule. So a server whose only removal is in its `:DOWN` clause is still reported, with no frame (FP hunt round 3: eventstore's Config.Store, syn's scopes). Excluding the `:DOWN` clause's removals was tried and withdrawn: a `:DOWN` clause of one monitor can clear the entries of others (eventstore's AdvisoryLocks drops every lock when its database connection's monitor fires, and the owners' monitors stay live), and an entry a second monitor's insert overwrites leaves the first monitor live (exq's `Worker.Metadata`, whose `:DOWN` then fails its pinned match): both true positives would go. Conversely, any demonitor anywhere in the module, of any ref, silences the rule.
 - Removal from a set, a keyword list or an ETS table is not seen, because `removal_api` lists map functions only.
 - A monitor whose ref is discarded is the next class, not this one. A monitor in a client function runs in the caller (`MonitorLeak.ClientSideMonitor`).
 - A monitor only `terminate/2,3` takes (`on_the_way_out`) ends with the process a moment later: exq's WorkerDrainer monitors every worker from terminate/2 and waits out a grace period (`MonitorLeak.DrainsOnTerminate`, quiet). The same drain also reached from a call is reported (`DrainsOnCall`). The ref-discarded class reads the same word.
@@ -1625,7 +1626,7 @@ On the timeout branch the monitor is still live. The `{:DOWN, ...}` arrives afte
 
 **Corpus.** Fix pairs: `postgrex#781` (elixir-ecto/postgrex, 313d6c9 → 85c7cf4, Postgrex.Parameters). Present-only: None.
 
-**Precision.** Not measured. 326e156 introduced the rule as a heuristic at info.
+**Precision.** FP hunt round 3 sampled 5 rows: 2 true (zotonic_notifier_worker's detach_all, eventstore's AdvisoryLocks), 3 false (a removal only in the `:DOWN` clause; removals from unrelated containers: the rule does not tie the monitor's result to the container it removes from). 326e156 introduced the rule as a heuristic at info.
 
 ### A monitor whose ref is discarded
 
@@ -2302,12 +2303,13 @@ Another process takes or deletes the row between the check and the act, and the 
 - When the `:ets.new/2` options cannot be read, the table looks as if it had no heir and is reported.
 - The idiomatic unnamed table in a server's state is reported here and by `ets_unnamed_in_process` at the same `:ets.new/2`.
 - One finding per table and owner module, anchored at the `:ets.new/2`.
+- Suppressed for a private table (no other process reads it, so none meets it gone, and its rows are the owner's state: zotonic's `mod_logging` dedup table) and for the supervisor an Application's start/2 starts and no other supervisor in view starts (`application_root`: partisan_sup, round 2's vmq_bridge_sup), as for the Application module. OTP's tuple child specs are children since FP hunt round 3, so an Erlang tree's permanent children are excused too (zotonic's `z_file_mtime`).
 
-**Fixtures.** Positive: `EtsOwner` (test/fixtures/ets_fixture.ex), asserted by test/analyses/ets_test.exs and test/findings_test.exs. Quiet: `EtsOwner` beside `EtsPermanentSupervisor` or `ErlangStyleEtsSupervisor`, and `EtsApplicationOwner` (test/fixtures/ets_fixture.ex), asserted by test/analyses/ets_test.exs. No test asserts that a heir silences it (`EtsWellConfigured` has one, but no assertion reads its row).
+**Fixtures.** Positive: `EtsOwner` (test/fixtures/ets_fixture.ex), asserted by test/analyses/ets_test.exs and test/findings_test.exs; `tuple_spec_first` alone and `branch_sup` (test/fixtures/erl); the excuses' adversarial probes `EtsProtectedOwner`, `EtsOptionsFromArgOwner`, `EtsPrivateAndPublicOwner`, `worker_owner`, `dual_sup`, `fake_root_sup` and `tuple_restart_sup`'s temporary, transient and parameter-built children. Quiet: `EtsOwner` beside `EtsPermanentSupervisor` or `ErlangStyleEtsSupervisor`, `EtsApplicationOwner` and `EtsPrivateOwner` (test/fixtures/ets_fixture.ex), `tuple_spec_first` under `tuple_spec_sup` and `root_app_sup` under `root_app` (test/fixtures/erl), asserted by test/analyses/ets_test.exs. No test asserts that a heir silences it (`EtsWellConfigured` has one, but no assertion reads its row).
 
 **Corpus.** None.
 
-**Precision.** 15 rows in the corpus tally of 2026-09-25 (after 1a571e2), counted per checkout, at six creation sites: `DBConnection.ConnectionPool.init/1`, `Postgrex.Protocol.queries_new/0`, `Redix.Connection.init/1`, `Supavisor.ClientAuthentication.RefreshLimiter.init/1`, `Supavisor.PeepStorage.new/1` and a closure in it. Three of the six are unnamed tables `ets_unnamed_in_process` also reports at the same site. Unjudged on the corpus. In encore, chaconne's `Chaconne.Orphan.init/1` is hand-verified (frozen 2026-08-12), and three heirless named tables are pinned quiet by the permanent-child excuse.
+**Precision.** 15 rows in the corpus tally of 2026-09-25 (after 1a571e2), counted per checkout, at six creation sites: `DBConnection.ConnectionPool.init/1`, `Postgrex.Protocol.queries_new/0`, `Redix.Connection.init/1`, `Supavisor.ClientAuthentication.RefreshLimiter.init/1`, `Supavisor.PeepStorage.new/1` and a closure in it. Three of the six are unnamed tables `ets_unnamed_in_process` also reports at the same site. Unjudged on the corpus. FP hunt round 3 sampled 5 rows on the seven new programs: 0 true (two permanent children under OTP tuple specs, a private table, an application's root supervisor, a permanent child whose module is a runtime value); with the fixes above the class went 80 → 54 over the 26 live programs. In encore, chaconne's `Chaconne.Orphan.init/1` is hand-verified (frozen 2026-08-12), and three heirless named tables are pinned quiet by the permanent-child excuse.
 
 ### Table read while its owner may be restarting
 
@@ -3254,6 +3256,121 @@ Structural gaps left:
 - An owner whose every callback returns its state unchanged (ra's
   metrics keeper) cannot crash on its own, so its table's readers are
   safe; the ets rules do not read that.
+
+### Prior candidates and structural gaps from FP hunt round 3
+
+Round 3 of the FP hunt (2026-09-25) read 188 findings, a sample of up
+to five per title, over seven programs no round had analyzed (syn,
+partisan, FLAME, honeydew, eventstore, zotonic's 80 apps, Lightning):
+65 true, 121 false, 2 unclear (35%, 42% weighted by title counts), and
+29 more rows the round's own changes added (6 true, 23 false). The
+fixes are in the entries above, each suppression with its adversarial
+probes; these are the shapes left, with the rows each covers and what
+stands in the way.
+
+The priors on these programs: 22 of the 188 rows were heuristic, and 21
+re-tiers were right (value-source step-downs on stored data, the
+program's own templates, config and cluster data; peers that answer
+from state); one was wrong: Lightning's `Snapshot.Job.body`, the job's
+JavaScript source, was named a credential. Missed: three `os:cmd`
+sinks whose non-literal parts are the program's own directories and
+versions (zotonic's `m_site_update`, `z_letsencrypt_ssl`; partisan's
+`otp_test_gen`), an admin-only `binary_to_term` (zotonic's
+`admin_acl_rules`), a wait pinned to a port the program just signalled
+(Lightning's RuntimeManager).
+
+Questions for a reader (re-tier only):
+
+- *Can this try's body raise the class its handler takes?* zotonic's
+  `m_site:get/2` calls `z_sites_manager:get_site_config/1` only in a
+  `catch error:badarg` around `application:get_env/2` and a record read,
+  which cannot raise it: every init/1 and handler reaching a site's
+  config through it "waits" on z_sites_manager (dead-catch-fallback: 3
+  of the "init/1 blocks" sample, 2 of ":infinity timeout", and all 14
+  "init/1 waits on a server whose handler can block" rows the tuple
+  specs made visible). A catch fallback whose body can raise in normal
+  running (an `ets:lookup` on a table not yet created) must keep firing,
+  so the structural half is only to mark such reach conditional.
+- *Is this persistent_term write a memo of configuration?* Lightning's
+  `AdapterHelper.adapter/1` puts `Application.get_env` under a key only
+  when `persistent_term.get` misses it (txn-config-memo, 5 of 5 sampled
+  "A shared-table write inside a transaction", 10 rows).
+- *Is this atom's source bounded by the program?* (value source, as
+  before): template counters, beam-file basenames, Kubernetes pod names,
+  stored predicate names (all 5 sampled "Dynamic atom creation reachable
+  from an exported function").
+
+Structural gaps left:
+
+- A clause selected by a value's type, not a literal
+  (`infeasible-clause-path`, 3 of ":infinity timeout inside a call
+  chain"): zotonic's `z_mqtt:map_topic/2` takes a binary topic in its
+  last clause and atoms or tuples in the ones that reach
+  `z_dispatcher:hostname`; `clause_call` names first-argument literals
+  only. An untagged request's shape against a clause's
+  (`untagged-dispatcher-hop`, 4 "GenServer call chain" rows): a 2-tuple
+  request cannot enter an atom-headed clause.
+- A wrapper that starts a process on a closure calling the fun it is
+  handed (zotonic's `z_proc:spawn_link_md/1`, 3 handle_cast rows and the
+  z_site_sup TODO): a first version read it as a spawn sink and was
+  withdrawn before merging. A sound one must see that the helper neither
+  calls the fun itself (`call_fun`, `apply/2`), nor hands its parameter
+  on (`call_arg_forward`), nor returns it to a caller that calls it; the
+  first and the last are in runs_elsewhere.dl's reach, the forwarding is
+  not (it would add CallArgs to the points-to stage's inputs).
+- Coupling through an inferred facade (`coupling-inferred-facade`, 8 of
+  8 one-way coupling rows the tuple specs added in zotonic and vernemq):
+  a caller reaching B's module functions that read ETS, atomics or
+  persistent_term in the caller counts as B's client because B's module
+  casts elsewhere. Required: the reached function itself sends to B's
+  process.
+- A process's own work in a spawned sender (`spawned-worker-dep`, 2),
+  a fun reference handed to ssl's `verify_fun` (`fun-ref-escapes`, 1),
+  a call by registered name that keeps nothing (`by-name-holds-nothing`,
+  2): coupling rows the tuple specs made visible.
+- A trapping process that links nothing but its parent (`trap-no-links`,
+  3 here, 2 in round 2): no :EXIT reaches handle_info/2 unless someone
+  signals it by pid.
+- A server whose entries leave only when their monitor fires
+  (`down-only-removal`: eventstore's Config.Store and MonitoredServer,
+  syn's scopes; "Server monitors but never demonitors" and "Server drops
+  the ref of a monitor it establishes"). Excluding the `:DOWN` clause's
+  own removals was tried and withdrawn: a `:DOWN` clause of one monitor
+  can clear the entries of others (eventstore's AdvisoryLocks), and an
+  insert that overwrites an entry leaves its first monitor live (exq's
+  `Worker.Metadata`). Needed: the removal tied to the entry the firing
+  monitor's ref keys.
+- Receives on the server's own stack that take the message a rule counts
+  as unhandled (`receive-in-server-stack`, 3): a helper's selective
+  receive in `z_video_convert`'s process.
+- An idle `{:ok, s, ms}` timeout every named-message clause re-arms and
+  whose handler only reacts to idleness (`idle-timeout-rearmed`, 4 of 5
+  "init/1 relies on an idle timeout").
+- Generated copies of OTP modules with no source (`generated-otp-copy`,
+  3): partisan's `partisan_gen` and `partisan_gen_supervisor`, written by
+  a rebar3 hook from the installed `gen.erl` and `supervisor.erl`
+  (abstract code's `-file("gen.erl", 1)` under another module's name).
+- An anchor at a tuple spec list: the supervisor site of an Erlang tree
+  returned as a literal sits on the line before the list (6 of the new
+  rows).
+- mongooseim's runtime-built child list: `[..] ++
+  mongoose_cets_discovery:supervisor_specs() ++ [..]` of specs a helper
+  builds from its parameter (`worker_spec(Mod)`, called for eleven
+  modules). The tuple specs are read now, but a helper's parameter is
+  not resolved at its callers, and `erlang:'++'/2` is not followed, so
+  the list's order is unknown: the "deregistration from an earlier
+  sibling" terminate rows stay.
+
+Round 2's leftovers, unchanged this round: ra's `post_init` (a state
+entered only with an inserted `next_event`), the `whereis(?MODULE) ==
+self()` dispatch guard, the supervisor forks' pid-pinned `:DOWN` startup
+waits, a handled self-send as a late source, an rpc to the local node,
+a kill in the timeout path of a bounded stop, a keeper process whose
+callbacks cannot crash (partisan's `partisan_acknowledgement_backend` is
+a second), and the `terminate/2` deregistration from an earlier sibling.
+Consistency leftovers: `mnesia_controller:max_loaders/0` (a
+`match_delete`'s pattern key), supervisor-owned tables in emqx, and
+Phoenix `UploadChannel.join/3`'s monitor rows are not revisited.
 
 ### Prior candidates, evaluated
 
