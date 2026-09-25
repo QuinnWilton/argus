@@ -55,6 +55,23 @@ defmodule Argus.Test.Fixtures.Secret do
     def __schema__(:virtual_type, _field), do: nil
   end
 
+  defmodule ResetToken do
+    @moduledoc """
+    akkoma's `Pleroma.PasswordResetToken`: a schema named for a token,
+    whose `token` is the live bearer value of a password reset.
+    """
+    def __schema__(:fields), do: [:id, :token, :user_id, :used]
+    def __schema__(:redact_fields), do: []
+    def __schema__(_other), do: nil
+  end
+
+  defmodule Ticker do
+    @moduledoc "A `token` that names a currency, in a schema named for no token."
+    def __schema__(:fields), do: [:id, :token, :price]
+    def __schema__(:redact_fields), do: []
+    def __schema__(_other), do: nil
+  end
+
   defmodule Heuristic do
     @moduledoc """
     A secret the substring table cannot name. `totp_seed` matches none of

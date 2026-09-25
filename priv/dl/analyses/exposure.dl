@@ -57,6 +57,15 @@ matches_kind(mod, field, kind) :-
   contains(fragment, field),
   !secret_metadata(field).
 
+// A schema named for a token (akkoma's PasswordResetToken and MFA.Token,
+// phx.gen.auth's UserToken, an OAuth Token) exists to hold the bearer
+// value in its field `token`. The module's name is the signal the bare
+// field name lacks: `token` alone is also a currency ticker (blockster's
+// Hub) or a lexer's, and stays the classifier's to judge.
+matches_kind(mod, ":token", "token") :-
+  schema_field(mod, ":token", _),
+  match(".*Token", mod).
+
 // A field that names a secret but holds a fact about it — when it was
 // sent, when it expires, whether one is set — is not the secret:
 // `password_reset_sent_at`, `api_key_expires_at`, `password_changed_at`.

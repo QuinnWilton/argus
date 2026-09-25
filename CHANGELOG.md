@@ -132,6 +132,15 @@ embeds it, whose source holds the block, and the field's name refines
 the line from there; `unredacted_secret` and its inferred twin gain an
 `anchor` column. Schema 117.
 
+**Changed.** A field named `token` in a schema whose module name ends in
+`Token` is a token (`:warning`), as `auth_token` is: akkoma's
+`PasswordResetToken.token` (a live password-reset bearer, account
+takeover until used) was only the classifier's, at `:info` when priors
+were on and not at all when they were off. Over the Elixir live
+projects it adds three akkoma rows (`PasswordResetToken`, `MFA.Token`,
+`UserInviteToken`), each a bearer secret. `token` in a schema named for
+anything else stays the classifier's.
+
 ### Points-to that finishes on a large program
 
 **Fixed.** The points-to stage finishes on Ash (1,327 modules), where it

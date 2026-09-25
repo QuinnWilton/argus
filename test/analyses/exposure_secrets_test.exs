@@ -84,6 +84,20 @@ defmodule Argus.Analyses.ExposureSecretsTest do
     assert finding.title == "Secret field printed by inspect/1"
   end
 
+  test "a token schema's token is a token; a bare token field elsewhere is not" do
+    skip_without_souffle()
+
+    assert {:ok, r} = Memo.analyze([S.ResetToken, S.Ticker], :exposure)
+
+    assert [[mod, ":token", "token", "unaware", "redact", _]] =
+             Map.get(r, "unredacted_secret", [])
+
+    assert mod == inspect(S.ResetToken)
+
+    assert Exposure.finding(:unredacted_secret, [mod, ":token", "token", "unaware", "redact"]).severity ==
+             :warning
+  end
+
   test "severity separates a live third-party credential from a hash" do
     mod = Exposure
     cred = mod.finding(:unredacted_secret, ["M", ":api_key", "credential", "unaware", "redact"])
