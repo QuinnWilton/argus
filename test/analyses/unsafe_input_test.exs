@@ -180,6 +180,11 @@ defmodule Argus.Analyses.UnsafeInputTest do
       assert Enum.any?(funcs, &String.contains?(&1, "os_cmd"))
       assert Enum.any?(funcs, &String.contains?(&1, "system_cmd"))
       refute Enum.any?(funcs, &String.contains?(&1, "static_system_cmd"))
+      # A program PATH finds by a literal name is that program; a shell
+      # found or named that way, handed a script, is still code execution.
+      refute Enum.any?(funcs, &String.contains?(&1, "found_program"))
+      assert Enum.any?(funcs, &String.contains?(&1, "found_shell"))
+      assert Enum.any?(funcs, &String.contains?(&1, "shell_with_dynamic_script"))
     end
 
     test "a module using only safe APIs produces no findings", ctx do

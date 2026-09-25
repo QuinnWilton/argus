@@ -10,6 +10,21 @@ What 0.20.0 will ship; the release dates this heading and drops the
 `-dev` from `mix.exs`. Grouped by concern. Each entry opens with what it
 does: **Added**, **Changed**, **Fixed** or **Removed**.
 
+### Priors, round 3: tooling, and programs found on PATH
+
+**Fixed.** A program `System.find_executable/1` or
+`:os.find_executable/1,2` finds for a literal name is that program:
+`System.cmd` of it is no code execution, as a literal program's is not
+(akkoma's `AnalyzeMetadata.media_dimensions/1` running `ffprobe`). A
+shell found that way is still a shell.
+
+**Fixed.** A shell's or interpreter's argument list holding a value the
+extractor cannot read (`System.cmd("sh", ["-c", script])`) was taken for
+a literal list, and the call for no sink; it is code execution now. Two
+rows over the fifteen programs, both in tooling: sequin's
+`mix buildpush` logging in to Docker Hub through `sh -c`, and logflare's
+test utilities opening a browser.
+
 ### Mining, round 3: the live bugs, read against their verdicts
 
 Round 2 of the FP hunt found real bugs in the programs it read; round 3

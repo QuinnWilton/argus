@@ -42,6 +42,7 @@ defmodule Argus.Extractors.ApiCalls do
   import Argus.Extractor.Resolve,
     only: [
       arg_position: 3,
+      call_result_origin: 3,
       module_target: 3,
       node_list: 3,
       resolve_atom: 3,
@@ -617,11 +618,20 @@ defmodule Argus.Extractors.ApiCalls do
   # parsed by a shell, so caller data in them is not code execution. The
   # exception is a literal shell or interpreter, which executes whatever
   # its arguments say — that stays a finding unless the arguments are
-  # literal too. The empty argument list arrives as the atom `nil`.
+  # literal too. The empty argument list arrives as the atom `nil`. A
+  # command `find_executable/1` found for a literal name is that program
+  # wherever PATH puts it (akkoma's `ffprobe`), and is read as the name.
   defp read(:unless_static_command, ctx, _mfa, facts, _rel) do
-    command = resolve_register(ctx.instrs, ctx.idx, {:x, 0})
+    command = static_command(ctx)
     args = resolve_register(ctx.instrs, ctx.idx, {:x, 1})
-    static_args? = match?({:ok, a} when is_list(a) or is_nil(a), args)
+    # A list with a value the walk could not read (`["-c", script]`) is
+    # not literal: the shell runs whatever that value is.
+    static_args? =
+      case args do
+        {:ok, nil} -> true
+        {:ok, a} when is_list(a) -> :dynamic not in a
+        _ -> false
+      end
 
     case command do
       {:ok, c} when is_binary(c) ->
@@ -633,6 +643,32 @@ defmodule Argus.Extractors.ApiCalls do
         {:pass, facts}
     end
   end
+
+  @finders [{System, :find_executable, 1}, {:os, :find_executable, 1}, {:os, :find_executable, 2}]
+
+  defp static_command(ctx) do
+    case resolve_register(ctx.instrs, ctx.idx, {:x, 0}) do
+      {:ok, c} when is_binary(c) ->
+        {:ok, c}
+
+      _ ->
+        with {:ok, finder, at} when finder in @finders <-
+               call_result_origin(ctx.instrs, ctx.idx, {:x, 0}),
+             {:ok, name} <- resolve_register(ctx.instrs, at, {:x, 0}),
+             name when is_binary(name) <- program_name(name) do
+          {:ok, name}
+        else
+          _ -> :dynamic
+        end
+    end
+  end
+
+  defp program_name(name) when is_binary(name), do: name
+
+  defp program_name(name) when is_list(name),
+    do: if(List.ascii_printable?(name), do: List.to_string(name))
+
+  defp program_name(_name), do: nil
 
   defp arg_count(ctx, n) do
     case resolve_register(ctx.instrs, ctx.idx, {:x, n}) do

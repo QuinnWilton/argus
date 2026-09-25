@@ -32,6 +32,20 @@ defmodule Argus.Test.Fixtures.CodeExecution do
   def static_command_dynamic_args(args), do: System.cmd("fwup", args)
   def static_command_no_args, do: System.cmd("free", [])
   def shell_with_dynamic_script(script), do: System.cmd("sh", ["-c", script])
+
+  # A program PATH finds for a literal name runs only itself: not a sink.
+  def found_program(file) do
+    case System.find_executable("ffprobe") do
+      nil -> {:error, :no_ffprobe}
+      exe -> System.cmd(exe, ["-v", "error", file])
+    end
+  end
+
+  # The same lookup for a shell handed a script is still one.
+  def found_shell(script) do
+    sh = System.find_executable("bash")
+    System.cmd(sh, ["-c", script])
+  end
 end
 
 defmodule Argus.Test.Fixtures.SafeModule do

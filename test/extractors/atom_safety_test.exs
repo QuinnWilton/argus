@@ -131,6 +131,18 @@ defmodule Argus.Extractors.ApiCalls.AtomSafetyTest do
 
       assert static_cmds == []
     end
+
+    test "a program find_executable/1 found for a literal name is that program" do
+      facts = ApiCalls.extract(disassemble(Argus.Test.Fixtures.CodeExecution))
+      funcs = Enum.map(facts[:code_execution] || [], fn [_id, func, _api] -> func end)
+
+      # ffprobe runs only itself; its arguments are argv.
+      refute Enum.any?(funcs, &String.contains?(&1, "found_program"))
+      # bash found the same way still runs the script it is handed, as a
+      # literal sh handed one does.
+      assert Enum.any?(funcs, &String.contains?(&1, "found_shell"))
+      assert Enum.any?(funcs, &String.contains?(&1, "shell_with_dynamic_script"))
+    end
   end
 
   describe "extract/1 — clean module" do
