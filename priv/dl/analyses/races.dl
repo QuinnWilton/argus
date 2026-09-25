@@ -603,10 +603,10 @@ writes_after_start(g) :- runs.spawned(_, _, r), writer_walk.reaches(r, g).
 //   is deleting once (an invalidation). A delete decided by what the row
 //   holds — its owner, its expiry — can delete the row another process
 //   put there in between (a lock's next owner), and is reported, unless
-//   every row the table is written is a refill (below): then the row it
+//   every row the table is written is a fill (below): then the row it
 //   deletes is a cached copy, and losing one is a miss. A delete_object
 //   deletes only the object it names, and is not reported;
-// - a refill: a write whose value a call, or a read of another store
+// - a fill: a write whose value a call, or a read of another store
 //   (Mnesia behind an ETS cache), makes — the cache-aside `[] -> v =
 //   load(k); :ets.insert(t, {k, v})` — where both racers compute the
 //   same thing and either write is right. Not when the call mints the
@@ -761,13 +761,13 @@ writes_back(name, ks, k) :- pair_key(_, name, ks, k), write_back(w, name), !writ
 pair_key_of(f, r, w, ks, k) :- reads_then_writes(f, r, w, _, _), ets_meets(f, r, w, _, _, ks, k).
 
 // A write made by a call, or by a read of some other store (Mnesia, the
-// registry): the refill.
-.decl refill_source(kind: symbol, src: symbol)
+// registry): the fill.
+.decl fill_source(kind: symbol, src: symbol)
 
-refill_source("call", g) :- site_reads(_, _, "call", g).
-refill_source("call", g) :- call_arg_reads(_, _, _, "call", g).
-refill_source("site", r) :- site_reads(_, _, "site", r), !ets_op(r, _, _, _, _).
-refill_source("site", r) :- call_arg_reads(_, _, _, "site", r), !ets_op(r, _, _, _, _).
+fill_source("call", g) :- site_reads(_, _, "call", g).
+fill_source("call", g) :- call_arg_reads(_, _, _, "call", g).
+fill_source("site", r) :- site_reads(_, _, "site", r), !ets_op(r, _, _, _, _).
+fill_source("site", r) :- call_arg_reads(_, _, _, "site", r), !ets_op(r, _, _, _, _).
 
 // A call that mints its value: a random API, a unique integer or a ref,
 // or a project function that makes one or returns what one made.
@@ -810,7 +810,7 @@ result_leaves(h) :- rows.act(_, h, _, _, _, _), call_decided(_, _, "call", h).
 result_leaves(h) :- rows.act(_, h, _, _, _, _), call_arg_depends(_, _, _, "call", h).
 result_leaves(h) :- rows.act(_, h, _, _, _, _), returns_depends(_, "call", h).
 
-// A table some insert writes a value into that is not a refill: state
+// A table some insert writes a value into that is not a fill: state
 // of its own, not cached copies (a lock's owner, a claim, a count).
 .decl stores_state(name: symbol)
 
@@ -818,17 +818,17 @@ stores_state(name) :-
   ets_op(w, _, _, op, "write"),
   (op = "insert" ; op = "insert_new"),
   ets_op_table(w, name),
-  !refilled(w).
+  !filled(w).
 
-.decl refilled(w: symbol)
+.decl filled(w: symbol)
 
-refilled(w) :- ets_op(w, h, _, _, "write"), site_reads(w, h, kind, src), refill_source(kind, src).
+filled(w) :- ets_op(w, h, _, _, "write"), site_reads(w, h, kind, src), fill_source(kind, src).
 
-refilled(w) :-
+filled(w) :-
   ets_op(w, h, _, _, "write"),
   site_reads(w, h, "param", p),
   call_arg_reads(_, h, n, kind, src),
-  refill_source(kind, src),
+  fill_source(kind, src),
   p = to_string(n).
 
 .decl recomputed(w: symbol)
@@ -836,13 +836,13 @@ refilled(w) :-
 recomputed(w) :-
   rows.act(w, h, _, _, _, _),
   site_reads(w, h, kind, src),
-  refill_source(kind, src).
+  fill_source(kind, src).
 
 recomputed(w) :-
   rows.act(w, h, _, _, _, _),
   site_reads(w, h, "param", p),
   call_arg_reads(_, h, n, kind, src),
-  refill_source(kind, src),
+  fill_source(kind, src),
   p = to_string(n).
 
 // The decision a pair makes leaves the function: returned — by the
@@ -2003,7 +2003,7 @@ record_decision_escapes(c) :-
 //   the search was there to prevent, which no retry of either write
 //   undoes;
 // - lost_update: the write stores a value made of what the read returned
-//   (`record_pair_carries`): each racer adds to the count it read, and
+//   (`record_pair_carries_read`): each racer adds to the count it read, and
 //   one addition vanishes;
 // - guarded: the decision compares a field of the record with the value
 //   the write stores (ztlp's serial check): both pass, and the older can
@@ -2085,22 +2085,22 @@ path_param(f, r, h, to_string(n)) :-
 
 // The write stores what the read returned, or a value made of it: in the
 // function where they meet, or handed down to the write's function.
-.decl record_pair_carries(read: symbol, write: symbol)
+.decl record_pair_carries_read(read: symbol, write: symbol)
 
-record_pair_carries(r, w) :-
+record_pair_carries_read(r, w) :-
   racing_record_pair(f, r, w),
   records.act(w, f, _, _, _, _),
   site_reads(w, f, kind, src),
   record_value(f, kind, src, r).
 
-record_pair_carries(r, w) :-
+record_pair_carries_read(r, w) :-
   racing_record_pair(f, r, w),
   records.act(w, h, _, _, _, _),
   h != f,
   site_reads(w, h, "param", p),
   path_param(f, r, h, p).
 
-record_pair_carries(r, w) :-
+record_pair_carries_read(r, w) :-
   racing_record_pair(f, r, w),
   records.act(w, h, _, _, _, _),
   h != f,
@@ -2161,24 +2161,24 @@ record_race_kind(f, r, w, "unique") :-
   racing_record_pair(f, r, w),
   mnesia_op(w, _, "dirty_write", _, _, _, _, _),
   searches(r),
-  !record_pair_carries(r, w).
+  !record_pair_carries_read(r, w).
 
 record_race_kind(f, r, w, "lost_update") :-
   racing_record_pair(f, r, w),
   mnesia_op(w, _, "dirty_write", _, _, _, _, _),
-  record_pair_carries(r, w).
+  record_pair_carries_read(r, w).
 
 record_race_kind(f, r, w, "guarded") :-
   racing_record_pair(f, r, w),
   mnesia_op(w, _, "dirty_write", _, _, _, _, _),
-  !record_pair_carries(r, w),
+  !record_pair_carries_read(r, w),
   !searches(r),
   guards_record(r, w).
 
 record_race_kind(f, r, w, "claim") :-
   racing_record_pair(f, r, w),
   mnesia_op(w, _, "dirty_write", _, _, _, _, _),
-  !record_pair_carries(r, w),
+  !record_pair_carries_read(r, w),
   !searches(r),
   !guards_record(r, w),
   record_decision_escapes(r),
@@ -2210,7 +2210,7 @@ decides_more_here(f, r, w) :-
 record_race_kind(f, r, w, "decides_more") :-
   racing_record_pair(f, r, w),
   mnesia_op(w, _, "dirty_write", _, _, _, _, _),
-  !record_pair_carries(r, w),
+  !record_pair_carries_read(r, w),
   !searches(r),
   !guards_record(r, w),
   decides_more_here(f, r, w).
@@ -2218,7 +2218,7 @@ record_race_kind(f, r, w, "decides_more") :-
 record_race_kind(f, r, w, "fill") :-
   racing_record_pair(f, r, w),
   mnesia_op(w, _, "dirty_write", _, _, _, _, _),
-  !record_pair_carries(r, w),
+  !record_pair_carries_read(r, w),
   !searches(r),
   !guards_record(r, w),
   !record_decision_escapes(r).
@@ -2226,7 +2226,7 @@ record_race_kind(f, r, w, "fill") :-
 record_race_kind(f, r, w, "fill") :-
   racing_record_pair(f, r, w),
   mnesia_op(w, _, "dirty_write", _, _, _, _, _),
-  !record_pair_carries(r, w),
+  !record_pair_carries_read(r, w),
   !searches(r),
   !guards_record(r, w),
   upsert(r).
@@ -2234,7 +2234,7 @@ record_race_kind(f, r, w, "fill") :-
 record_race_kind(f, r, w, "fill") :-
   racing_record_pair(f, r, w),
   mnesia_op(w, _, "dirty_write", _, _, _, _, _),
-  !record_pair_carries(r, w),
+  !record_pair_carries_read(r, w),
   !searches(r),
   !guards_record(r, w),
   record_recomputed(r, w).
@@ -2242,7 +2242,7 @@ record_race_kind(f, r, w, "fill") :-
 record_race_kind(f, r, w, "fill") :-
   racing_record_pair(f, r, w),
   mnesia_op(w, _, "dirty_write", _, _, _, _, _),
-  !record_pair_carries(r, w),
+  !record_pair_carries_read(r, w),
   !searches(r),
   !guards_record(r, w),
   answers_with_read(f, r).
@@ -2317,9 +2317,9 @@ chosen_race(f, r, w, k) :- best_race(f, r, w, k), !outranked(f, r, w).
 // Another write of the same race: in the same function, decided by the
 // same read in the same way, later in the function (an index has no
 // leading zeros, so a shorter ID in one function is an earlier one).
-.decl later_branch(write: symbol, first: symbol)
+.decl later_record_branch(write: symbol, first: symbol)
 
-later_branch(w2, w1) :-
+later_record_branch(w2, w1) :-
   chosen_race(f, r, w1, k),
   chosen_race(f, r, w2, k),
   w1 != w2,
@@ -2332,7 +2332,7 @@ later_branch(w2, w1) :-
 
 mnesia_check_act(mod, f, t, key, r, w, op, k) :-
   chosen_race(f, r, w, k),
-  !later_branch(w, _),
+  !later_record_branch(w, _),
   reads_then_writes_record(f, r, w, t, key),
   dirty_op(w, op),
   in_module(f, mod).
@@ -2346,8 +2346,8 @@ mnesia_check_act(mod, f, t, key, r, w, op, k) :-
 .output mnesia_race_frame
 
 mnesia_race_frame(w1, "also_writes", w2, f) :-
-  later_branch(w2, w1),
-  !later_branch(w1, _),
+  later_record_branch(w2, w1),
+  !later_record_branch(w1, _),
   chosen_race(f, _, w1, _).
 
 mnesia_race_frame(w, "other_writer", o, g) :-

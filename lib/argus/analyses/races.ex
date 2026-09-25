@@ -22,14 +22,15 @@ defmodule Argus.Analyses.Races do
     the operation itself when the function reaches the accessor only
     through another call. A literal key a parameter accessor is handed
     somewhere other than where the pair meets names a row two chains
-    agree on, not a flow, and is not a pair. A delete, a refill every
+    agree on, not a flow, and is not a pair. A delete, a fill every
     racer computes alike, and a write whose decision never leaves the
     function are not lost updates, unless the program also writes the
     table back from a read or counts in it (update_counter, or an
-    `:atomics` or `:counters` array the row holds). Nor is an update or a delete of a row only its
-    holder writes: every row the table gets is made at a key minted there
-    (a reference, a monitor, a unique integer) and handed to one process,
-    and the others' writes that reach it only remove it. A table the
+    `:atomics` or `:counters` array the row holds). Nor is an update or a
+    delete of a row only its holder writes: every row the table gets is
+    made at a key minted there (a reference, a monitor, a unique integer)
+    and handed to one process, and the others' writes that reach it only
+    remove it. A table the
     program's users hand in, which nothing in view names, is `name`d by
     the parameter it arrives in (`param 0`, counted from 0): a function
     more than one process runs writes it from each caller's process,
@@ -115,7 +116,7 @@ defmodule Argus.Analyses.Races do
       Argus.Extractors.Dependence,
       Argus.Extractors.Specs,
       # Which calls mint a value (a random API, a unique integer, a ref):
-      # a refill of one each racer returns is not both racers' answer.
+      # a fill of one each racer returns is not both racers' answer.
       Argus.Extractors.Purity,
       # :global.trans, whose closures a cluster lock serializes.
       Argus.Extractors.ApiCalls,

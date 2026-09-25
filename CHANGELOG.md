@@ -3005,13 +3005,20 @@ only through another call (`set_count(next())`, `store(key, n + 1)`
 calling `put/2`) stands, reported at the operation itself rather than
 dropped. A write whose value a helper returns from an ETS read however
 many helpers down (`returns_ets_read`) carries that read, and is no
-refill. On OTP six rows come back, each a function handing
+fill. On OTP six rows come back, each a function handing
 `mnesia_lib:set/2` the literal it has just read: the lazy defaults in
 `compression_level/0` and `max_transfer_size/0`, `mnesia_monitor`'s
 init/1 and `check_protocol/2`, and `mnesia_schema`'s `use_dir` writes
 in `prepare_op/3` and `purge_tmp_files/0`. Each is a race only if some
 other writer lands on that row meanwhile, which `add/2`'s computed keys
 and the start order leave open.
+
+**Changed.** races.dl names the two stores' twin relations alike: the
+ETS rules' `refill_source`/`refilled` are `fill_source`/`filled`, as the
+Mnesia rules' `fill` kind says it; the Mnesia rules' `record_pair_carries`
+is `record_pair_carries_read`, beside `record_carries_read` and the ETS
+`carries_read`; and their `later_branch` is `later_record_branch`,
+beside `later_ets_branch`.
 
 **Changed.** `ets_check_act` is one finding per write (key `[:write]`),
 as `mnesia_check_act` is: of the pairs a write is in, the least read and
@@ -3065,7 +3072,7 @@ The kinds:
   (`upsert_x_connection/2`'s match on the X user id).
 - `lost_update`, `guarded`, `claim` and `delete` keep "Read-then-write
   race on a Mnesia record", with the prose of what each loses. A write
-  stores the read by data alone (`record_pair_carries`: the read, a
+  stores the read by data alone (`record_pair_carries_read`: the read, a
   helper that returns it by `returns_reads`, or a value made of it
   handed down the pair's own path), no longer through a value merely
   computed under the read's decision — `CheckThenAct.carries` counts

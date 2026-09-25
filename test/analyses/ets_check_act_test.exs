@@ -206,7 +206,7 @@ defmodule Argus.Analyses.EtsCheckActTest do
       assert {"bump/1", ":counted_cache", "0"} in found
     end
 
-    test "a count kept in a literal row of its own does not write the refilled rows back", ctx do
+    test "a count kept in a literal row of its own does not write the filled rows back", ctx do
       skip_without_souffle()
       assert races(ctx, [C.CacheWithHits]) == []
     end
@@ -257,7 +257,7 @@ defmodule Argus.Analyses.EtsCheckActTest do
       assert [{"hit/1", ":hits", "0"}] = races(ctx, [C.CounterClobber])
     end
 
-    test "a row holding a counter array is counted in, not refilled", ctx do
+    test "a row holding a counter array is counted in, not filled", ctx do
       skip_without_souffle()
       assert [{"hit/2", ":window_counters", _}] = races(ctx, [C.WindowCounters])
     end
