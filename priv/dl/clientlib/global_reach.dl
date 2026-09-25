@@ -12,7 +12,9 @@
 // The walk goes backward from every global_op over the edges that stay
 // on the caller's stack (runs_elsewhere, in runs_elsewhere.dl) and are
 // not side paths (side_call, in calls.dl: the logging and telemetry
-// APIs, whose machinery takes no lock of the program's), plus the
+// APIs, whose machinery takes no lock of the program's), and not after
+// the function acknowledged its start (acked_edge, init_phase.dl: the
+// lock is then the server's, blocking's finding), plus the
 // edge into a task the caller awaits (awaits_task): Task.async then
 // Task.await holds the caller for as long as the lock does. It is
 // clause-aware where a call says which clause it enters: a call whose
@@ -24,16 +26,17 @@
 // taken to enter every clause.
 //
 // Prerequisites: include clientlib/imports.dl and otp.dl (for
-// runs_elsewhere) before this file.
+// runs_elsewhere, side_call and acked_edge) before this file.
 
 .decl global_path(func: symbol, call: symbol, site: symbol)
 
-global_path(f, site, site) :- global_op(site, f, _, _, _).
+global_path(f, site, site) :- global_op(site, f, _, _, _), !start_acked(site, f).
 
 global_path(f, id, site) :-
   call_instr(f, g, id),
   !runs_elsewhere(f, g),
   !side_call(f, g),
+  !acked_edge(f, g),
   global_path(g, _, site),
   !literal_first(f, g, _).
 
@@ -41,6 +44,7 @@ global_path(f, id, site) :-
   call_instr(f, g, id),
   !runs_elsewhere(f, g),
   !side_call(f, g),
+  !acked_edge(f, g),
   literal_first(f, g, a),
   global_path(g, s, site),
   clause_of(g, s, c),
@@ -51,10 +55,12 @@ global_path(f, "", site) :-
   !call_instr(f, g, _),
   !runs_elsewhere(f, g),
   !side_call(f, g),
+  !acked_edge(f, g),
   global_path(g, _, site).
 
 global_path(f, id, site) :-
   awaits_task(f, id, g),
+  !start_acked(id, f),
   global_path(g, _, site).
 
 // The first-argument tag the clause holding `call` serves, or "any" for

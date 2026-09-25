@@ -9,8 +9,9 @@
 // named_pid: which process a pid can be, as the points-to stage derived
 // it; sends.dl and signals.dl add send_target and signal_target),
 // runs_elsewhere.dl, calls.dl (sync_dep, reaches_sync_dep,
-// stateful_module_dep, ...) and supervision.dl (child_subtree,
-// starts_before). An analysis that needs only the behaviour table may
+// stateful_module_dep, ...), supervision.dl (child_subtree,
+// starts_before) and init_phase.dl (where init/1's phase ends, and the
+// walks startup and blocking share of it). An analysis that needs only the behaviour table may
 // include behaviours.dl alone; one that includes this file must not
 // include it again.
 .include "behaviours.dl"
@@ -20,5 +21,6 @@
 .include "calls.dl"
 .include "supervision.dl"
 .include "process.dl"
+.include "init_phase.dl"
 .include "entries.dl"
 .include "startup.dl"

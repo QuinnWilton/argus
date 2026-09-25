@@ -16,7 +16,6 @@
 .include "../clientlib/resolved_calls.dl"
 .include "../clientlib/vocabulary.dl"
 .include "../clientlib/global_reach.dl"
-.include "../clientlib/init_phase.dl"
 .include "../clientlib/timer_flush.dl"
 
 // ══ The outputs ═════════════════════════════════════════════════════
@@ -127,23 +126,27 @@ init_safe_cross_supervisor(child, dep) :-
 unconditional_sync_call_in_init(mod, callee) :-
   init_function(mod, func),
   sync_site(func, callee, id),
-  !conditional_call(id).
+  !conditional_call(id),
+  !start_acked(id, func).
 
 unconditional_sync_call_in_init(mod, callee) :-
   init_function(mod, func),
   tag_resolved_site(id, func, "call", callee),
   sync_call_site(id, func, t, _),
   unresolved_target(t),
-  !conditional_call(id).
+  !conditional_call(id),
+  !start_acked(id, func).
 
 unconditional_sync_call_in_init(mod, callee) :-
   init_function(mod, func),
   unconditional_call_edge(func, g),
+  !acked_edge(func, g),
   reaches_sync_dep(g, callee).
 
 unconditional_sync_call_in_init(mod, callee) :-
   init_function(mod, func),
   unconditional_call_edge(func, g),
+  !acked_edge(func, g),
   genserver_sync_api(g, callee),
   mod != callee.
 
@@ -181,7 +184,8 @@ blocks_on_peer(mod, "init", callee, "call", "unknown", "", "", "conditional") :-
 // shutdown and which_children on the parent is the classic deadlock.
 blocks_on_peer(mod, "init", target, "sup", "", "", site, cat(api, ".", op)) :-
   init_function(mod, func),
-  sup_management_call(site, func, api, op, target).
+  sup_management_call(site, func, api, op, target),
+  !start_acked(site, func).
 
 // Backwards from the supervisor calls, which are few, over what init's
 // own process runs: a task init starts may wait on the supervisor. The
@@ -191,8 +195,9 @@ blocks_on_peer(mod, "init", target, "sup", "", "", site, cat(api, ".", op)) :-
 .init sup_reach = SameProcessReachCut
 
 sup_reach.cut(f, g) :- side_call(f, g).
+sup_reach.cut(f, g) :- acked_edge(f, g).
 
-sup_reach.seed(g, site) :- sup_management_call(site, g, _, _, _).
+sup_reach.seed(g, site) :- sup_management_call(site, g, _, _, _), !start_acked(site, g).
 
 blocks_on_peer(mod, "init", target, "sup", "", "", site, cat(api, ".", op)) :-
   init_function(mod, func),
@@ -266,6 +271,7 @@ infinite_recv(f) :- call_arg(f, g, pos, ":infinity"), infinite_recv_param(g, pos
 .init recv_reach = SameProcessReachCut
 
 recv_reach.cut(f, g) :- side_call(f, g).
+recv_reach.cut(f, g) :- acked_edge(f, g).
 
 recv_reach.seed(f, f) :- infinite_recv(f).
 
@@ -307,9 +313,12 @@ links_in(f) :- remote_call(_, f, ":erlang", "open_port", 2).
 links_in(f) :- remote_call(_, f, "Port", "open", 2).
 links_in(f) :- call_site(_, f, _, "start_link", _).
 
-// init/1 traps exits, itself or in what it runs in its own process.
-.init trap_reach = SameProcessReachSet
+// init/1 traps exits, itself or in what it runs in its own process before
+// its start is acknowledged: a flag set after the ack is not in effect
+// for a wait before it.
+.init trap_reach = SameProcessReachSetCut
 
+trap_reach.cut(f, g) :- acked_edge(f, g).
 trap_reach.seed(t) :- trap_exit(t, _).
 
 .decl init_traps_exits(mod: symbol)
@@ -324,23 +333,11 @@ exit_bounded(m, id) :-
   init_function(m, _),
   init_traps_exits(m).
 
-// Only what runs before the start is acknowledged holds the starter. An
-// init/1 that calls `:proc_lib.init_ack/1` and then enters its own loop
-// (`:gen_server.enter_loop/3`: OTP's logger_olp) waits there as the
-// server it has become, after its start returned; so does anything it
-// calls after the ack (start_acked). The edge into enter_loop is cut
-// wherever it is: what that loop waits for is the server's. An
-// enter_loop reached before any ack is a finding of its own
-// ("enter_loop", below).
-.decl acked_edge(func: symbol, callee: symbol)
-
-acked_edge(f, g) :- call_instr(f, g, id), start_acked(id, f), !unacked_call(f, g).
-acked_edge(f, g) :- call_edge(f, g), match(":gen_(server|statem):enter_loop/[0-9]+", g).
-
-.decl unacked_call(func: symbol, callee: symbol)
-
-unacked_call(f, g) :- call_instr(f, g, id), !start_acked(id, f).
-
+// Only what runs before the start is acknowledged holds the starter
+// (acked_edge, clientlib/init_phase.dl): an init/1 that calls
+// `:proc_lib.init_ack/1` and then enters its own loop waits there as the
+// server it has become. An enter_loop reached before any ack is a
+// finding of its own ("enter_loop", below).
 .decl unbounded_wait_at(func: symbol, id: symbol)
 
 unbounded_wait_at(f, id) :-
@@ -436,6 +433,7 @@ init_recv_step(mod, r, call) :-
   init_function(mod, f),
   call_instr(f, g, call),
   !runs_elsewhere(f, g),
+  !acked_edge(f, g),
   recv_reach.reaches(g, r).
 
 init_recv_step(mod, r, call) :-
@@ -477,8 +475,12 @@ connect_api(api) :- impure_call(_, _, api, "network", _), match(":httpc.request/
 .init connect_reach = SameProcessReachCut
 
 connect_reach.cut(f, g) :- side_call(f, g).
+connect_reach.cut(f, g) :- acked_edge(f, g).
 
-connect_reach.seed(f, api) :- impure_call(_, f, api, "network", _), connect_api(api).
+connect_reach.seed(f, api) :-
+  impure_call(id, f, api, "network", _),
+  connect_api(api),
+  !start_acked(id, f).
 
 // A retry needs a way back in: a timer, a self-message, a
 // handle_continue, or a gen_statem's own timeout (postgrex's connections
@@ -739,6 +741,7 @@ blocks_on_peer(init, "init", "", "remote", "", "", id, op) :-
 blocks_on_peer(func, "init", "", "remote", "", "", id, op) :-
   global_register(id, func, _, _),
   init_function(_, func),
+  !start_acked(id, func),
   op = "global_register".
 
 // Node operations in init — exclude the non-blocking ops that return
@@ -748,13 +751,15 @@ blocks_on_peer(func, "init", "", "remote", "", "", id, op) :-
 blocks_on_peer(func, "init", "", "remote", "", "", id, op) :-
   node_operation(id, func, op),
   init_function(_, func),
+  !start_acked(id, func),
   op != "list",
   op != "monitor",
   op != "monitor_nodes".
 
 blocks_on_peer(func, "init", "", "remote", "", "", id, op) :-
   distributed_store_op(id, func, _, op),
-  init_function(_, func).
+  init_function(_, func),
+  !start_acked(id, func).
 
 // ══ After the tree is up ════════════════════════════════════════════
 

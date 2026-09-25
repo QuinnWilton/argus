@@ -9,19 +9,65 @@
 // or blocking's, never both and never neither. global_reach.dl is the
 // :global half (global_path); this is the rpc half.
 //
-// Prerequisites: include clientlib/imports.dl and otp.dl before this
-// file.
+// The phase ends where init/1 acknowledges its start: a
+// `:proc_lib.init_ack/1,2`, after which the starter is released and what
+// init/1 goes on to run is the server's (acked_edge), or a
+// `:gen_server.enter_loop` that makes it the server. Every walk here, and
+// init_dep in entries.dl, stops there.
+//
+// Included by otp.dl, after calls.dl and entries.dl.
+
+// ── Where the phase ends ─────────────────────────────────────────────
+//
+// `func`'s edge to `callee` is taken only after `func` acknowledged its
+// start: every call it makes to callee runs after its own init_ack
+// (start_acked) — logger_olp's init/1 acks, then enters its loop — or
+// the callee is a gen_server or gen_statem enter_loop, which does not
+// return: what that loop waits for is the server's, wherever it is
+// entered from. An enter_loop reached before any ack is startup's
+// "enter_loop" finding. An ack made in a helper init/1 calls is not seen
+// (start_acked is per function).
+.decl acked_edge(func: symbol, callee: symbol)
+
+acked_edge(f, g) :- call_instr(f, g, id), start_acked(id, f), !unacked_call(f, g).
+acked_edge(f, g) :- call_edge(f, g), match(":gen_(server|statem):enter_loop/[0-9]+", g).
+
+.decl unacked_call(func: symbol, callee: symbol)
+
+unacked_call(f, g) :- call_instr(f, g, id), !start_acked(id, f).
+
+// init/1 functions whose own stack reaches an acknowledgement: their
+// phase ends before everything they run returns. Few: most inits are a
+// gen_server's, acknowledged when they return.
+.init ack_reach = SameProcessReachSet
+
+ack_reach.seed(f) :- acked_edge(f, _).
+
+.decl acks_in_init(init: symbol)
+
+acks_in_init(i) :- init_function(_, i), ack_reach.reaches(i).
+
+// What such an init/1 runs before its start returns: its own stack,
+// less the edges after the ack and the side paths (side_call, calls.dl).
+// Forward from those few inits; the others' phase is all they reach.
+.init before_ack = ForwardSameProcessReachCut
+
+before_ack.root(i, i) :- acks_in_init(i).
+before_ack.cut(f, g) :- acked_edge(f, g).
+before_ack.cut(f, g) :- side_call(f, g).
 
 // `init` is init/1 of a process module, and the rpc at `site` runs on its
 // stack: in init/1, or in anything init/1 calls in its own process (not
 // what a spawn, task or agent runs: runs_elsewhere), not through the
-// logging or telemetry API (side_call, calls.dl).
+// logging or telemetry API (side_call, calls.dl), and before init/1
+// acknowledges its start (acked_edge; an rpc its own function makes
+// after its ack is not one).
 .decl rpc_during_init(init: symbol, site: symbol)
 
 .init init_rpc_reach = SameProcessReachCut
 
 init_rpc_reach.cut(f, g) :- side_call(f, g).
-
-init_rpc_reach.seed(g, site) :- rpc_call(site, g, _, _).
+init_rpc_reach.cut(f, g) :- acked_edge(f, g).
+init_rpc_reach.seed(g, site) :- rpc_call(site, g, _, _), !start_acked(site, g).
 
 rpc_during_init(init, site) :- init_function(_, init), init_rpc_reach.reaches(init, site).

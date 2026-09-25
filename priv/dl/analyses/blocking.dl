@@ -14,7 +14,6 @@
 .include "../clientlib/resolved_calls.dl"
 .include "../clientlib/vocabulary.dl"
 .include "../clientlib/global_reach.dl"
-.include "../clientlib/init_phase.dl"
 .include "../clientlib/timer_flush.dl"
 .include "../clientlib/replies.dl"
 

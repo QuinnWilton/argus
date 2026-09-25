@@ -255,6 +255,17 @@ rabbitmq, emqx and the corpus; with OTP's logger in the program, a
 function that monitors and logs is no longer read as timing out on the
 logger's own gen call.
 
+**Changed.** init/1's phase ends where it acknowledges its start, in
+every walk of it (`clientlib/init_phase.dl`: `acked_edge`, moved from
+startup's receive walk; `acks_in_init`, `before_ack`): the dependencies
+init/1 makes (`init_dep`: the start-order deadlock and the synchronous
+calls of unknown place), its supervisor calls, socket waits, connects,
+rpcs, `:global` locks and exit trapping. Only a proc_lib-started server
+acks; what its init/1 runs after the ack runs as the server, and an rpc
+or a lock there is blocking's finding, no longer startup's
+(`InitAck.RpcAfter`, `LockAfter`, `CallsAfter` beside the reported
+`RpcBefore`, `LockBefore`, `CallsBefore`). blocking reads `start_acked`.
+
 **Changed.** A cast a spawn, task or agent makes is its own process's
 (`reaches_async_dep` cuts `runs_elsewhere`, as `reaches_sync_dep` does):
 a task init/1 starts that casts to a later sibling no longer makes

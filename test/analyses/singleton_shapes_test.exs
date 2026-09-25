@@ -1,7 +1,7 @@
 defmodule Argus.Analyses.SingletonShapesTest do
   use ExUnit.Case, async: true
 
-  alias Argus.Test.Fixtures.{CatchShapes, EtsOwners, InitRecv}
+  alias Argus.Test.Fixtures.{CatchShapes, EtsOwners, InitAck, InitRecv}
   alias Argus.Test.Memo
   alias Argus.Test.Rows
 
@@ -252,6 +252,62 @@ defmodule Argus.Analyses.SingletonShapesTest do
              )
 
     assert api == "Argus.Test.Fixtures.InitRecv.EntersWithoutAck:init/1"
+  end
+
+  test "what init/1 runs after it acknowledges its start is the server's, not the start's" do
+    skip_without_souffle()
+
+    {:ok, r} =
+      Memo.analyze(
+        [
+          InitAck.RpcBefore,
+          InitAck.RpcAfter,
+          InitAck.LockBefore,
+          InitAck.LockAfter,
+          InitAck.CallsBefore,
+          InitAck.CallsAfter,
+          InitAck.Later,
+          InitAck.Sup
+        ],
+        :startup
+      )
+
+    heads = fn filters ->
+      r
+      |> Rows.where(:startup, "blocks_on_peer", filters)
+      |> Enum.map(&hd/1)
+      |> Enum.uniq()
+      |> Enum.sort()
+    end
+
+    # The rpc, the lock and the call to a later sibling hold the start
+    # only before the ack.
+    assert heads.(kind: "remote") == ["Argus.Test.Fixtures.InitAck.RpcBefore:init/1"]
+
+    assert heads.(kind: ["global", "global_assumed"]) == [
+             "Argus.Test.Fixtures.InitAck.LockBefore:init/1"
+           ]
+
+    assert heads.(phase: "init", kind: "call", ordering: "later") == [
+             "Argus.Test.Fixtures.InitAck.CallsBefore"
+           ]
+
+    # After the ack they are the server's waits, and blocking's findings.
+    {:ok, b} =
+      Memo.analyze(
+        [InitAck.RpcBefore, InitAck.RpcAfter, InitAck.LockBefore, InitAck.LockAfter],
+        :blocking
+      )
+
+    waits = fn kind ->
+      b
+      |> Rows.where(:blocking, "unbounded_wait", kind: kind, drop: [:peer, :permille])
+      |> Enum.map(&hd/1)
+      |> Enum.uniq()
+    end
+
+    assert waits.("rpc") == ["Argus.Test.Fixtures.InitAck.RpcAfter:init/1"]
+    assert waits.("global") == ["Argus.Test.Fixtures.InitAck.LockAfter:init/1"]
   end
 
   test "a call a task init/1 starts makes to a later sibling is no deadlock" do
