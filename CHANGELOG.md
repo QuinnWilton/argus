@@ -141,6 +141,19 @@ projects it adds three akkoma rows (`PasswordResetToken`, `MFA.Token`,
 `UserInviteToken`), each a bearer secret. `token` in a schema named for
 anything else stays the classifier's.
 
+**Added.** unsafe_input's `rendered` proximity (`:warning`): a sink whose
+argument is made of a Phoenix template's assigns (Phoenix.Template's
+`name.format` function of its assigns, an `@assign` read through
+`Phoenix.HTML.Engine.fetch_assign!/2`, now a propagator), reached from a
+request. akkoma's OAuth authorize page makes an atom of every scope of
+the app a `client_id` names, and anyone registers an app with scopes of
+their choosing: an unauthenticated atom exhaustion that argus reported
+as a transitive path at `:info`. The flow walk stops at a template's
+assigns, since the view's render/2 dispatches on a template name the
+flow does not read (akkoma's token exchange, rendering "token.json",
+would otherwise flow into every template). Over the Elixir live
+projects it moves those three rows and no others.
+
 ### Points-to that finishes on a large program
 
 **Fixed.** The points-to stage finishes on Ash (1,327 modules), where it

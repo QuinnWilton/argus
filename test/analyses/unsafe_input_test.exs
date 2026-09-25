@@ -7,6 +7,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
   alias Argus.Test.Fixtures.Decompression, as: D
   alias Argus.Test.Fixtures.RequestSurface
   alias Argus.Test.Fixtures.Taint
+  alias Argus.Test.Fixtures.Template
   alias Argus.Test.Fixtures.UnboundedChildren, as: U
   alias Argus.Test.Memo
 
@@ -47,6 +48,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
     Taint.Controller,
     Taint.CookieController,
     Taint.AdminConfigController,
+    [Template.ScopesView, Template.OAuthController],
     Taint.PlainPlugHelpers,
     Argus.Test.Fixtures.AtomSources,
     Argus.Test.Fixtures.AtomBounds,
@@ -338,6 +340,39 @@ defmodule Argus.Analyses.UnsafeInputTest do
                {"configured/0", "transitive"},
                {"regex/1", "flow"}
              ]
+    end
+
+    test "an atom made of a template's assigns is rendered, not a bare path", ctx do
+      skip_without_souffle()
+
+      rows =
+        for [_id, func, _api, "atom", _entry, kind, proximity | _] <-
+              analyze(ctx, [Template.ScopesView, Template.OAuthController])["sink_reachable"],
+            uniq: true,
+            do: {func |> String.split(":") |> List.last(), kind, proximity}
+
+      # akkoma's OAuth scopes: one per scope the app's row holds, whichever
+      # action's render reaches the view (a row per entry, one finding per
+      # site). The literal in labels.html is no sink.
+      assert [{func, "controller", "rendered"}] = rows
+      assert func =~ "_scopes.html/1"
+
+      finding =
+        UnsafeInput.finding(:sink_reachable, [
+          "i",
+          "V:-_scopes.html/1-fun-0-/2",
+          "String.to_atom/1",
+          "atom",
+          "C:authorize/2",
+          "controller",
+          "rendered",
+          "",
+          "0",
+          ""
+        ])
+
+      assert finding.severity == :warning
+      assert finding.title =~ "made of a template's assigns"
     end
 
     test "a plug's exported helper is no action", ctx do

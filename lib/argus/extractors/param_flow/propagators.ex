@@ -104,7 +104,10 @@ defmodule Argus.Extractors.ParamFlow.Propagators do
     # (firezone's session cookies, decoded with binary_to_term), and the
     # conn is fresh rather than carry its other data along with them.
     {Plug.Conn, [:fetch_cookies], 1, [0]},
-    {Plug.Conn.Utils, :any, :any, [0]}
+    {Plug.Conn.Utils, :any, :any, [0]},
+    # `@scope` in an EEx template: the assign's value, read out of the
+    # assigns the template is rendered with.
+    {Phoenix.HTML.Engine, [:fetch_assign!], 2, [0]}
   ]
 
   @doc """

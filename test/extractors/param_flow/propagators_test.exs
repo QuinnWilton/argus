@@ -37,6 +37,7 @@ defmodule Argus.Extractors.ParamFlow.PropagatorsTest do
     assert Propagators.positions("Regex", "named_captures", 2) == [1]
     assert Propagators.positions("Regex", "replace", 4) == [1, 2]
     assert Propagators.positions(":re", "run", 3) == [0]
+    assert Propagators.positions("Phoenix.HTML.Engine", "fetch_assign!", 2) == [0]
   end
 
   # {fun, arity, argument names} for every documented function of `mod`

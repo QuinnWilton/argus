@@ -154,14 +154,27 @@ request_reaches(entry, kind, func, "transitive") :-
 // Backward from each sink's argument over call_arg_derived to a request
 // entry, then only the parameters that carry the request count.
 
-.init sink_flow = ParamReach
+// ParamReach's walk, cut at a template's assigns: the view's render/2
+// dispatches on the template's name, which the flow does not read, so a
+// controller rendering "token.json" would flow into "_scopes.html" through
+// the dispatch. What reaches a sink from a template's assigns is
+// `rendered` (below), whichever controller put it there.
+.decl sink_flow_seed(func: symbol, pos: number, target: symbol)
+.decl sink_flow_reaches(func: symbol, pos: number, target: symbol)
 
-sink_flow.seed(func, pos, id) :-
+sink_flow_reaches(f, p, t) :- sink_flow_seed(f, p, t).
+
+sink_flow_reaches(f, p, t) :-
+  call_arg_derived(f, g, k, p),
+  sink_flow_reaches(g, k, t),
+  !template_function(g).
+
+sink_flow_seed(func, pos, id) :-
   sink(id, func, _, k, _),
   k != "decompression",
   sink_arg_derived(id, func, _, pos).
 
-sink_flow.seed(func, pos, id) :-
+sink_flow_seed(func, pos, id) :-
   sink(id, func, _, "decompression", _),
   sink_data_arg(id, func, arg),
   sink_arg_derived(id, func, arg, pos).
@@ -169,9 +182,38 @@ sink_flow.seed(func, pos, id) :-
 .decl sink_flow_from(id: symbol, entry: symbol, kind: symbol)
 
 sink_flow_from(id, entry, kind) :-
-  sink_flow.reaches(entry, pos, id),
+  sink_flow_reaches(entry, pos, id),
   request_param(entry, pos),
   request_entry(entry, kind).
+
+// ── Rendered from a template's assigns ───────────────────────────
+//
+// A Phoenix template compiles to a function of its assigns
+// (`"_scopes.html"(assigns)`, Phoenix.Template's `name.format` naming),
+// rendered once per request with what the controller put there: the
+// request's params, and the records the request looked up. A sink whose
+// argument is made of the template's assigns makes a value per request
+// that no program text fixes, from data the request chose — its own, or a
+// row it asked for by id. akkoma's OAuth authorize page makes an atom of
+// each scope of the app named by `client_id`, and any client registers
+// an app with scopes of its choosing (POST /api/v1/apps, no
+// authentication): one atom per scope an attacker stores, for every
+// visitor. The render itself reaches the template only through Phoenix's
+// dispatch, which the call graph does not follow, so the path found is
+// whichever call reaches the view's render/2; the flow from assigns is
+// what makes it the request's. A flow from a request entry's own
+// parameters stays `flow`.
+.decl template_function(func: symbol)
+
+template_function(f) :-
+  function_def(f, _, name, 1, _),
+  match(".*[.](html|heex|eex|json|text|xml|js|txt)", name).
+
+.decl sink_rendered(id: symbol)
+
+sink_rendered(id) :-
+  template_function(t),
+  sink_flow_reaches(t, 0, id).
 
 // ── Findings ─────────────────────────────────────────────────────
 //
@@ -202,16 +244,24 @@ sink_reachable(id, func, api, s, entry, kind, "flow", "", 0, safety) :-
   sink(id, func, api, s, safety),
   sink_flow_from(id, entry, kind).
 
+sink_reachable(id, func, api, s, entry, kind, "rendered", "", 0, safety) :-
+  sink(id, func, api, s, safety),
+  request_reaches(entry, kind, func, _),
+  !sink_flow_from(id, _, _),
+  sink_rendered(id).
+
 sink_reachable(id, func, api, s, entry, kind, proximity, source, p, safety) :-
   sink(id, func, api, s, safety),
   request_reaches(entry, kind, func, proximity),
   !sink_flow_from(id, _, _),
+  !sink_rendered(id),
   sink_func_reads(func, source, p).
 
 sink_reachable(id, func, api, s, entry, kind, proximity, "", 0, safety) :-
   sink(id, func, api, s, safety),
   request_reaches(entry, kind, func, proximity),
   !sink_flow_from(id, _, _),
+  !sink_rendered(id),
   !sink_func_reads(func, _, _).
 
 // The same sinks where no request path exists: atom creation and code

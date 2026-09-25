@@ -101,7 +101,7 @@ defmodule Argus.Analyses.UnsafeInput do
             [
               {:entry, :symbol, "a request-handling callback that reaches it"},
               {:kind, :symbol, "which surface the entry belongs to"},
-              {:proximity, :symbol, "flow | direct | adjacent | transitive"},
+              {:proximity, :symbol, "flow | rendered | direct | adjacent | transitive"},
               {:source, :symbol,
                "what the sink's function reads, when a prior says (request | storage | config | internal | passthrough | constant), else empty"},
               {:permille, :number, "the prior's probability in thousandths, else 0"},
@@ -448,6 +448,7 @@ defmodule Argus.Analyses.UnsafeInput do
   defp severity("flow"), do: :error
   defp severity("direct"), do: :error
   defp severity("adjacent"), do: :warning
+  defp severity("rendered"), do: :warning
   defp severity(_transitive), do: :info
 
   # Code execution a request reaches is never below :warning, whatever
@@ -470,6 +471,7 @@ defmodule Argus.Analyses.UnsafeInput do
   defp reached("flow"), do: "fed by request data from"
   defp reached("direct"), do: "directly inside"
   defp reached("adjacent"), do: "one call from"
+  defp reached("rendered"), do: "made of a template's assigns, rendered from"
   defp reached(_), do: "transitively reachable from"
 
   # How the sink and the entry relate, in one sentence. A flow is a claim
@@ -487,6 +489,13 @@ defmodule Argus.Analyses.UnsafeInput do
       "a flow rather than a path — from #{surface(kind)}."
   end
 
+  defp route(func, api, entry, "rendered", kind) do
+    "#{func} calls #{api} on what its template is rendered with — the " <>
+      "assigns the controller hands it, per request: the request's params " <>
+      "and the rows it looked up, of the requester's choosing — and " <>
+      "#{entry} reaches it from #{surface(kind)}."
+  end
+
   defp route(func, api, func, _proximity, kind) do
     "#{func} calls #{api} from #{surface(kind)}."
   end
@@ -497,6 +506,10 @@ defmodule Argus.Analyses.UnsafeInput do
 
   defp route_opts("flow", _label, help) do
     [at_label: "request data reaches this call's argument", help: help]
+  end
+
+  defp route_opts("rendered", _label, help) do
+    [at_label: "a template's assigns reach this call's argument", help: help]
   end
 
   defp route_opts(_proximity, label, help), do: [at_label: label, help: help]
