@@ -379,6 +379,20 @@ names it, and `blocks_on_peer`'s `site` carries it. Over the seven
 round-3 programs, 50 of these 51 findings moved from the function's
 head to the call.
 
+**Fixed.** blocking's handler findings anchor at the call that starts
+their path, as the cast chain's already did: a "GenServer call chain" at
+the call in `handle_call/3` that makes the first hop of a shortest chain
+(`chain_site`: a request into a server whose clause is one hop fewer
+from the end), a budget finding and ":infinity timeout inside a call
+chain" at the call with that timeout (`timed_wait`: the call itself,
+the call points-to resolves, or the call into the helper or client API
+that makes it), and "RPC inside a GenServer callback" at the rpc
+(`rpc_call`'s own site, which the rule had wildcarded). `call_chain`'s
+`site` and `unbounded_wait`'s `site` carry them; empty falls back to the
+handler. Over the round-3 programs, 17 of 20 such findings moved from
+a `handle_call/3` head to the call, as far as 53 lines below it
+(zotonic's `z_pivot_rsc`).
+
 ### FP hunt, round 2: eight more programs, and the anchors round 1 left
 
 **Fixed.** A blocking cast (`call_chain` kind `cast`) anchors at the

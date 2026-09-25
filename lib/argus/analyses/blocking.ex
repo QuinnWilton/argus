@@ -114,8 +114,9 @@ defmodule Argus.Analyses.Blocking do
              "the node; else empty"},
           {:permille, :number, "the prior's probability in thousandths, else 0"},
           {:site, :symbol,
-           "for a cast, the call in handle_cast/2 that waits, or that enters the helper " <>
-             "that does; else empty"}
+           "the call in the handler that starts the path: in handle_cast/2 for a cast, " <>
+             "the first hop of a shortest chain, the timed call for a budget; the wait " <>
+             "itself or the call into the helper that makes it; empty when none"}
         ],
         # One chain finding per (from, to) pair: the depth relation is
         # recursive with only a `from != to` guard, so a genuine cycle
@@ -198,7 +199,9 @@ defmodule Argus.Analyses.Blocking do
         name: :unbounded_wait,
         fields: [
           {:func, :symbol, "the waiting function (the handle_call/3, for infinity)"},
-          {:site, :symbol, "instruction ID of the call, empty for infinity and rpc_in_callback"},
+          {:site, :symbol,
+           "instruction ID of the call; for infinity, the call in handle_call/3 on the " <>
+             "way to it, or empty"},
           {:kind, :symbol, "infinity | rpc | rpc_in_callback | global | socket"},
           {:api, :symbol, "the call target, rpc variant, or :global operation"},
           {:detail, :symbol,
@@ -256,8 +259,13 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
+  # The call in the handler that starts the path, or the handler itself
+  # when the rule found none.
+  defp handler_site("", mod, fun, arity), do: Findings.at_mfa(mod, fun, arity)
+  defp handler_site(site, mod, _fun, _arity), do: Findings.at_site(site, mod)
+
   @impl true
-  def finding(:call_chain, [from, to, "chain", depth, inferred, _, _, _, _, _]) do
+  def finding(:call_chain, [from, to, "chain", depth, inferred, _, _, _, _, site]) do
     inferred_note =
       if inferred == "tag",
         do:
@@ -273,7 +281,7 @@ defmodule Argus.Analyses.Blocking do
         "the deadlines compose unpredictably: a slow leaf times out every " <>
         "caller above it, and each level retries or crashes on its own " <>
         "schedule." <> inferred_note,
-      at: Findings.at_mfa(from, :handle_call, 3),
+      at: handler_site(site, from, :handle_call, 3),
       at_label: "a request enters the chain here",
       related: [Findings.related("innermost callee", Findings.at_module(to))],
       help:
@@ -298,11 +306,7 @@ defmodule Argus.Analyses.Blocking do
         "fire-and-forget to senders, but the server still blocks — the " <>
         "mailbox backs up invisibly because no caller ever waits on (or " <>
         "notices) the slow handler.",
-      at:
-        if(site == "",
-          do: Findings.at_mfa(mod, :handle_cast, 2),
-          else: Findings.at_site(site, mod)
-        ),
+      at: handler_site(site, mod, :handle_cast, 2),
       at_label: "this handle_cast blocks on a call",
       related: [Findings.related("call target", Findings.at_module(target))],
       help: [
@@ -323,7 +327,7 @@ defmodule Argus.Analyses.Blocking do
         downstream_timeout,
         _,
         _,
-        _
+        site
       ]) do
     Findings.new(
       :warning,
@@ -333,7 +337,7 @@ defmodule Argus.Analyses.Blocking do
         "The outer call can time out — crashing or retrying — while the inner " <>
         "work is still legitimately running, leaving duplicated effort and " <>
         "inconsistent state.",
-      at: Findings.at_mfa(caller, :handle_call, 3),
+      at: handler_site(site, caller, :handle_call, 3),
       at_label: "this call's timeout is shorter than what it waits for",
       related: [Findings.related("callee", Findings.at_module(callee))],
       help: [
@@ -343,7 +347,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:unbounded_wait, [func, _, "infinity", target, _, _, peer, p]) do
+  def finding(:unbounded_wait, [func, site, "infinity", target, _, _, peer, p]) do
     mod = String.replace_suffix(func, ":handle_call/3", "")
 
     Findings.new(
@@ -352,7 +356,7 @@ defmodule Argus.Analyses.Blocking do
       "#{mod} calls #{target} with timeout :infinity while itself serving " <>
         "synchronous callers. If anything downstream hangs, this process " <>
         "hangs forever with it — no timeout ever unblocks the chain.",
-      at: Findings.at_mfa(mod, :handle_call, 3),
+      at: Findings.at_site_in_func(site, func, mod),
       at_label: "waits with :infinity while serving callers",
       related: [Findings.related("call target", Findings.at_module(target))],
       help: [
@@ -526,7 +530,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:unbounded_wait, [func, _, "rpc_in_callback", variant, _, _, _, _]) do
+  def finding(:unbounded_wait, [func, site, "rpc_in_callback", variant, _, _, _, _]) do
     Findings.new(
       :warning,
       "RPC inside a GenServer callback",
@@ -534,7 +538,7 @@ defmodule Argus.Analyses.Blocking do
         "callback. Remote latency becomes local unavailability: every queued " <>
         "caller waits on the network round-trip, and a peer outage stalls " <>
         "the whole server.",
-      at: Findings.at_func(func),
+      at: Findings.at_site_in_func(site, func),
       at_label: "remote call inside a callback",
       help: ["make the remote call from a task and take its reply in handle_info/2"]
     )

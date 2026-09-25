@@ -289,8 +289,10 @@ defmodule Argus.Analyses.BlockingRpcTest do
 
       results = analyze(ctx, [Argus.Test.Fixtures.RpcInCallback])
 
-      assert Enum.any?(waits(results, "rpc_in_callback"), fn [func, _site, _variant] ->
-               String.contains?(func, "RpcInCallback:handle_call/3")
+      assert Enum.any?(waits(results, "rpc_in_callback"), fn [func, site, _variant] ->
+               # Anchored at the rpc itself, not at the callback's head.
+               String.contains?(func, "RpcInCallback:handle_call/3") and
+                 site =~ "RpcInCallback:handle_call/3#"
              end)
     end
 

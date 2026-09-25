@@ -225,17 +225,48 @@ request_chain_inferred(from, clause, to) :-
 
 timeout_chain_inferred(from, to) :- request_chain_inferred(from, _, to).
 
+// Where a chain starts: the call in from's handle_call/3 that makes the
+// first hop of a shortest chain to `to` — a request into `mid` whose
+// clause is `depth - 1` hops from `to`. handle_call/3 compiles every
+// clause into one function, so the function's head is some other
+// request's clause. The finding keeps the earliest (the relation's key).
+.decl chain_site(from: symbol, to: symbol, site: symbol)
+
+chain_site(from, to, id) :-
+  timeout_chain(from, to, d),
+  d >= 2,
+  handle_call_function(from, h),
+  site_request(h, id, mid, request),
+  id != "",
+  site_clause(h, id, clause),
+  request_chain(from, clause, to, d),
+  enters(mid, request, mid_clause),
+  !chain_cycle_clause(mid, mid_clause),
+  request_chain(mid, mid_clause, to, dm),
+  d = dm + 1.
+
+.decl chain_at(from: symbol, to: symbol, site: symbol)
+
+chain_at(from, to, id) :- chain_site(from, to, id).
+
+chain_at(from, to, "") :-
+  timeout_chain(from, to, d),
+  d >= 2,
+  !chain_site(from, to, _).
+
 // Chains of depth >= 2 are risky: the outermost caller's timeout must
 // accommodate the sum of all intermediate timeouts.
-chain_found(from, to, "chain", depth, "tag", 0, 0, "") :-
+chain_found(from, to, "chain", depth, "tag", 0, 0, site) :-
   timeout_chain(from, to, depth),
   depth >= 2,
-  timeout_chain_inferred(from, to).
+  timeout_chain_inferred(from, to),
+  chain_at(from, to, site).
 
-chain_found(from, to, "chain", depth, "static", 0, 0, "") :-
+chain_found(from, to, "chain", depth, "static", 0, 0, site) :-
   timeout_chain(from, to, depth),
   depth >= 2,
-  !timeout_chain_inferred(from, to).
+  !timeout_chain_inferred(from, to),
+  chain_at(from, to, site).
 
 // ── Output: blocking cast handler ────────────────────────────────────
 //
@@ -282,13 +313,14 @@ callback_sync_dep_timeout(from_mod, to_mod, timeout_ms) :-
 // misconfiguration. The boundary case is real (equal budgets leave B
 // zero processing slack) but flagging it would mark nearly every
 // two-hop chain in real code as an error.
-chain_found(a, b, "budget", 1, "", t_ab, t_bc, "") :-
+chain_found(a, b, "budget", 1, "", t_ab, t_bc, site) :-
   callback_sync_dep_timeout(a, b, t_ab),
   callback_sync_dep_timeout(b, _, t_bc),
   t_ab > 0,     // not dynamic
   t_ab != -1,   // not infinity
   t_bc > 0,     // not dynamic
-  t_ab < t_bc.
+  t_ab < t_bc,
+  timed_wait(a, b, t_ab, site).
 
 // ── Output: infinity timeout in chain ──────────────────────────────
 
@@ -297,10 +329,55 @@ chain_found(a, b, "budget", 1, "", t_ab, t_bc, "") :-
 // answers at once (answers_straight_away, below) ends the chain: nothing
 // downstream of it can hang the caller (Phoenix's CodeReloader stops its
 // own Proxy, whose :stop clause only replies).
-wait_found(cat(mod, ":handle_call/3"), "", "infinity", target, "", "") :-
+wait_found(cat(mod, ":handle_call/3"), site, "infinity", target, "", "") :-
   callback_sync_dep_timeout(mod, target, -1),
   gen_server_like(target),
-  !answers_straight_away(target).
+  !answers_straight_away(target),
+  timed_wait(mod, target, -1, site).
+
+// Where a handle_call/3 makes a wait with a given timeout (-1 for
+// :infinity): the call itself (or the tag-attributed call on a pid it
+// holds, or the call points-to resolves), or the call into the helper or
+// client API that makes it. handle_call/3 compiles every clause into one
+// function, and the clause that waits is rarely the first. Empty when the
+// wait has no call of the handler's own (a closure it hands on), and the
+// finding falls back to the function.
+.decl timed_wait_site(mod: symbol, target: symbol, ms: number, site: symbol)
+
+timed_wait_site(mod, t, ms, id) :-
+  callback_sync_dep_timeout(mod, t, ms),
+  handle_call_function(mod, h),
+  sync_call_site(id, h, t, ms).
+
+timed_wait_site(mod, t, ms, id) :-
+  callback_sync_dep_timeout(mod, t, ms),
+  handle_call_function(mod, h),
+  tag_resolved_site(id, h, "call", t),
+  sync_call_site(id, h, u, ms),
+  unresolved_target(u).
+
+timed_wait_site(mod, t, ms, anchor) :-
+  callback_sync_dep_timeout(mod, t, ms),
+  handle_call_function(mod, h),
+  process_call(h, anchor, site, "call", p),
+  server_process(p, t),
+  sync_call_site(site, _, _, ms).
+
+timed_wait_site(mod, t, ms, id) :-
+  callback_sync_dep_timeout(mod, t, ms),
+  handle_call_function(mod, h),
+  call_instr(h, g, id),
+  !runs_elsewhere(h, g),
+  !side_call(h, g),
+  reaches_sync_dep_timeout(g, t, ms).
+
+.decl timed_wait(mod: symbol, target: symbol, ms: number, site: symbol)
+
+timed_wait(mod, t, ms, id) :- timed_wait_site(mod, t, ms, id).
+
+timed_wait(mod, t, ms, "") :-
+  callback_sync_dep_timeout(mod, t, ms),
+  !timed_wait_site(mod, t, ms, _).
 
 // ── A server that answers at once ──────────────────────────────────────
 //
@@ -1120,8 +1197,8 @@ during_init(site) :- global_path(f, _, site), is_init(f).
 // as making an RPC, even when the concrete action provably routes local.
 // All 13 of the analysis's transitive findings were false; the RPC sites
 // themselves are already surfaced by rpc_without_timeout.
-wait_found(func, "", "rpc_in_callback", variant, "", "") :-
-  rpc_call(_, func, variant, _),
+wait_found(func, id, "rpc_in_callback", variant, "", "") :-
+  rpc_call(id, func, variant, _),
   handler_function(_, func).
 
 // ── Blocking :global synchronization ─────────────────────────────

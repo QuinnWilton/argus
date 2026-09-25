@@ -65,6 +65,29 @@ defmodule Argus.Analyses.BlockingChainTest do
       assert depths == ["2"]
     end
 
+    test "a chain is anchored at the call that starts its shortest path" do
+      skip_without_souffle()
+      alias Argus.Test.Fixtures.ChainShapes, as: S
+
+      modules = [S.ShortA, S.ShortB, S.ShortC, S.ShortD]
+      {:ok, %{findings: findings}} = Memo.run_analyses(modules, analyses: [:blocking])
+
+      assert [finding] =
+               Enum.filter(
+                 findings,
+                 &(&1.title == "GenServer call chain" and &1.module == S.ShortA)
+               )
+
+      # ShortA's :ask calls ShortB (three hops to ShortD) and then ShortC
+      # (two): the finding reports the two-hop chain, so it sits on the
+      # ShortC call, not on the handler's head or its first call.
+      source = Path.expand("../fixtures/chain_shapes_fixture.ex", __DIR__)
+      line = cast_line(modules, finding)
+
+      assert source |> File.read!() |> String.split("\n") |> Enum.at(line - 1) =~
+               "ChainShapes.ShortC.ask(state)"
+    end
+
     test "a chain through a synchronous call cycle is left to the cycle's finding" do
       skip_without_souffle()
       alias Argus.Test.Fixtures.ChainShapes, as: S

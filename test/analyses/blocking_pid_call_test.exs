@@ -23,7 +23,7 @@ defmodule Argus.Analyses.BlockingPidCallTest do
   test "an :infinity call through a pid the server started is an unbounded hop" do
     # Waiter keeps the Slow it started in its state; the call's target is
     # the pid, which points-to follows back to Slow's start.
-    assert [[func, "", "infinity", slow, "", ""]] =
+    assert [[func, site, "infinity", slow, "", ""]] =
              Rows.where(analyze(), :blocking, "unbounded_wait",
                kind: "infinity",
                drop: [:peer, :permille]
@@ -31,6 +31,9 @@ defmodule Argus.Analyses.BlockingPidCallTest do
 
     assert func == "#{inspect(PidCalls.Waiter)}:handle_call/3"
     assert slow == inspect(PidCalls.Slow)
+
+    # Anchored at the waiting call in the handler, not at its head.
+    assert site =~ "#{inspect(PidCalls.Waiter)}:handle_call/3#"
   end
 
   test "a chain whose hops points-to proves is not marked inferred" do
