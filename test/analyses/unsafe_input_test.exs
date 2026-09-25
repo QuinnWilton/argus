@@ -47,6 +47,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
     Taint.CookieController,
     Taint.PlainPlugHelpers,
     Argus.Test.Fixtures.AtomSources,
+    Argus.Test.Fixtures.AtomBounds,
     Argus.Test.Fixtures.AtomFromMessages,
     Argus.Test.Fixtures.AtomProcessName,
     D.FrameHandler,
@@ -468,6 +469,22 @@ defmodule Argus.Analyses.UnsafeInputTest do
       refute Enum.any?(funcs, &(&1 =~ "env_level"))
       refute Enum.any?(funcs, &(&1 =~ "cookie!"))
       refute Enum.any?(funcs, &(&1 =~ "MACRO-field"))
+    end
+
+    test "is not reported of a close integer range", ctx do
+      skip_without_souffle()
+
+      funcs =
+        ctx
+        |> analyze([Argus.Test.Fixtures.AtomBounds])
+        |> local("atom")
+        |> Enum.map(fn {func, _api} -> func |> String.split(":") |> List.last() end)
+        |> Enum.uniq()
+        |> Enum.sort()
+
+      # The twins: a float passes `n >= 1 and n <= 8`, one end bounds
+      # nothing, and a hundred thousand values are not a bound.
+      assert funcs == ["between/1", "from/1", "wide/1"]
     end
 
     test "is not reported of a server's own messages or a pipeline's own name", ctx do

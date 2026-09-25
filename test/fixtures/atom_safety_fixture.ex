@@ -77,6 +77,32 @@ defmodule Argus.Test.Fixtures.AtomSources do
   def name(id), do: String.to_atom("#{id}-pipeline")
 end
 
+defmodule Argus.Test.Fixtures.AtomBounds do
+  @moduledoc """
+  Atoms made of values a guard bounds, each beside the twin that stays
+  reported. encore's capriccio `play/2`: `n in 1..8` makes one of eight
+  atoms, as does `is_integer(n) and n >= 1 and n <= 8` and a range
+  tested in the body.
+
+  Reported: a range with no integer test (every float between its ends
+  passes), a range with one end, and a range too wide to bound anything.
+  """
+
+  def phrase(n) when n in 1..8, do: String.to_atom("phrase_#{n}")
+
+  def explicit(n) when is_integer(n) and n >= 1 and n <= 8, do: String.to_atom("p_#{n}")
+
+  def within(n) do
+    if n in 0..3, do: :erlang.list_to_atom(~c"p" ++ :erlang.integer_to_list(n)), else: :none
+  end
+
+  def between(n) when n >= 1 and n <= 8, do: String.to_atom("f_#{n}")
+
+  def from(n) when is_integer(n) and n >= 1, do: String.to_atom("o_#{n}")
+
+  def wide(n) when n in 1..100_000, do: String.to_atom("w_#{n}")
+end
+
 defmodule Argus.Test.Fixtures.AtomFromMessages do
   @moduledoc "A server makes an atom of a message it is sent: the program's own data."
   use GenServer

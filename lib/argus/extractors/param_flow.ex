@@ -22,10 +22,11 @@ defmodule Argus.Extractors.ParamFlow do
     because the finding anchors there.
   - `sink_arg_bounded(id, func, arg_pos, list_param)` — the sink's
     argument is one of a set the program wrote, on every path to it:
-    compared equal to a literal, or found in a literal list on the branch
-    where it holds (`Argus.Extractors.ParamFlow.Bounded`); `list_param`,
-    when not empty, is the function's parameter that list is, which the
-    callers must fill with a literal list.
+    compared equal to a literal, found in a literal list on the branch
+    where it holds, or an integer between two close ends
+    (`Argus.Extractors.ParamFlow.Bounded`); `list_param`, when not empty, is the function's
+    parameter that list is, which the callers must fill with a literal
+    list.
   - `call_arg_allowlist(caller, callee, arg_pos)` — every call the caller
     makes to the callee passes a literal list at `arg_pos`.
   - `sink_copy(id, func, first)` — the sink call at `id` repeats `first`,

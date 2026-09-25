@@ -28,6 +28,19 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   stack before it. What it does not follow stays unbounded: the quiet
   direction for a sanitizer, since an unbounded argument keeps its
   finding.
+
+  ## Integer ranges
+
+  `when n in 1..8` compiles to `is_integer(n)`, `n >= 1` and `8 >= n`
+  tests, and so does `is_integer(n) and n >= 1 and n <= 8`: on the
+  edge where they all hold, `n` is one of eight integers, as bounded as
+  a literal list. Both ends and the integer test are needed — `n >= 1
+  and n <= 8` alone admits every float between — and the range must be
+  narrow: at most 1,024 values, a thousandth of the default atom
+  table, since `n in 1..100_000` is bounded only in name. A pure
+  conversion of a bounded value (`Integer.to_string/1`,
+  `String.Chars.to_string/1`, ...) is bounded too: the image of a finite
+  set is finite, so `:"phrase_\#{n}"` makes one of eight atoms.
   """
 
   alias Argus.Cfg.Function, as: CfgFunction
@@ -39,13 +52,48 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
 
   @typep reg :: {:x | :y, non_neg_integer()}
 
+  # What the tests on a path have said of an integer: whether it is one,
+  # and its least and greatest value (`nil` while unknown).
+  @typep range :: {boolean(), integer() | nil, integer() | nil}
+
   @typedoc false
   @type state :: %{
           bounded: %{reg() => bound()},
           lists: %{reg() => bound()},
           groups: [[reg()]],
-          pending: %{reg() => {[reg()], bound()}}
+          pending: %{reg() => {[reg()], bound()}},
+          ranges: %{reg() => range()}
         }
+
+  # The widest integer range that bounds a value: a thousandth of the
+  # default atom table.
+  @range_limit 1024
+
+  # Conversions whose result is a function of their arguments alone: a
+  # bounded argument gives a bounded result.
+  @conversions MapSet.new([
+                 {String.Chars, :to_string, 1},
+                 {Integer, :to_string, 1},
+                 {Integer, :to_string, 2},
+                 {Integer, :to_charlist, 1},
+                 {Integer, :to_charlist, 2},
+                 {:erlang, :integer_to_binary, 1},
+                 {:erlang, :integer_to_binary, 2},
+                 {:erlang, :integer_to_list, 1},
+                 {:erlang, :integer_to_list, 2},
+                 {:erlang, :binary_to_list, 1},
+                 {:erlang, :list_to_binary, 1},
+                 {:erlang, :iolist_to_binary, 1},
+                 {:erlang, :++, 2},
+                 {:lists, :append, 2},
+                 {:lists, :concat, 1},
+                 {:lists, :flatten, 1},
+                 {List, :to_string, 1},
+                 {String, :upcase, 1},
+                 {String, :downcase, 1},
+                 {Macro, :underscore, 1},
+                 {Macro, :camelize, 1}
+               ])
 
   # The membership tests: {module, function, arity} => {element position,
   # list position}.
@@ -105,7 +153,8 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
       bounded: %{},
       lists: Map.new(0..(arity - 1)//1, &{{:x, &1}, {:param, &1}}),
       groups: [],
-      pending: %{}
+      pending: %{},
+      ranges: %{}
     }
   end
 
@@ -162,6 +211,25 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     if equal?, do: narrow_eq(after_instr, a, b), else: narrow_ne(after_instr, a, b)
   end
 
+  # An order test against an integer literal narrows the register's
+  # range on both edges: `is_ge` holds on its pass edge and fails into
+  # `is_lt`'s, and the other way round.
+  defp edge_state({:test, op, _fail, [a, b]}, kind, _succ, _state, after_instr, _fun)
+       when op in [:is_ge, :is_lt] and kind in [:branch_pass, :branch_fail] do
+    narrow_order(after_instr, a, b, op == :is_ge == (kind == :branch_pass))
+  end
+
+  defp edge_state(
+         {:test, :is_integer, _fail, [a]},
+         :branch_pass,
+         _succ,
+         _state,
+         after_instr,
+         _fun
+       ) do
+    narrow_range(after_instr, a, fn {_int, lo, hi} -> {true, lo, hi} end)
+  end
+
   # A test that fails writes nothing (a bs_start_match's context only
   # exists on its pass edge).
   defp edge_state({:test, _op, _fail, _args}, :branch_fail, _succ, state, _after, _fun), do: state
@@ -215,6 +283,7 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   def step(instr, state) do
     state_before = state
     member = member_call(instr, state)
+    converted = conversion(instr, state)
     groups = carry_groups(instr, state.groups)
 
     state = %{
@@ -222,12 +291,14 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
       | bounded: carry_map(instr, state.bounded),
         lists: carry_map(instr, state.lists),
         groups: groups,
-        pending: carry_pending(instr, state.pending)
+        pending: carry_pending(instr, state.pending),
+        ranges: carry_map(instr, state.ranges)
     }
 
     state
     |> put_constant(instr)
     |> put_made_of_bounded(instr, state_before)
+    |> put_conversion(converted, instr)
     |> put_member(member, instr)
     |> put_comparison(instr)
   end
@@ -289,16 +360,42 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
     uses = Enum.filter(Instr.uses(instr), &register?/1)
     defs = Instr.defs(instr)
 
-    cond do
-      defs == [] or uses == [] or Instr.call?(instr) or copy?(instr) ->
-        state
-
-      Enum.all?(uses, &(Map.get(before.bounded, &1) == :always)) ->
-        %{state | bounded: Enum.reduce(defs, state.bounded, &Map.put(&2, &1, :always))}
-
-      true ->
-        state
+    if defs == [] or uses == [] or Instr.call?(instr) or copy?(instr) do
+      state
+    else
+      case combine(Enum.map(uses, &Map.get(before.bounded, &1))) do
+        nil -> state
+        bound -> %{state | bounded: Enum.reduce(defs, state.bounded, &Map.put(&2, &1, bound))}
+      end
     end
+  end
+
+  # What a value made of values with these bounds is: bounded when each
+  # is always bounded.
+  defp combine([_ | _] = bounds) do
+    if Enum.all?(bounds, &(&1 == :always)), do: :always, else: nil
+  end
+
+  defp combine([]), do: nil
+
+  # The result of a conversion call, asked before the call destroys its
+  # arguments: a pure conversion of bounded arguments.
+  defp conversion(instr, state) do
+    with {:ok, mod, fun, arity} <- Helpers.match_remote_call(instr),
+         true <- MapSet.member?(@conversions, {mod, fun, arity}) do
+      combine(for i <- 0..(arity - 1)//1, do: Map.get(state.bounded, {:x, i}))
+    else
+      _ -> nil
+    end
+  end
+
+  # The call's result lands in x0, unless the call is the function's last.
+  defp put_conversion(state, nil, _instr), do: state
+
+  defp put_conversion(state, bound, instr) do
+    if Instr.tail_call?(instr),
+      do: state,
+      else: %{state | bounded: Map.put(state.bounded, {:x, 0}, bound)}
   end
 
   defp copy?(instr), do: Enum.any?(Instr.defs(instr), &(Instr.copy_source(instr, &1) != nil))
@@ -401,6 +498,54 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
   defp stronger(_bound, :always), do: :always
   defp stronger(old, _new), do: old
 
+  # `a >= b` (`ge?`) or `a < b` holds on this edge: a register compared
+  # with an integer literal gains an end.
+  defp narrow_order(state, a, b, ge?) do
+    case order_ends(Instr.register(a), Instr.register(b), ge?) do
+      {:ok, reg, lo, hi} -> narrow_range(state, reg, &at_least(&1, lo, hi))
+      :error -> state
+    end
+  end
+
+  # The ends `reg >= k`, `reg < k`, `k >= reg` and `k < reg` give an
+  # integer.
+  defp order_ends(reg, {:integer, k}, true) when is_integer(k), do: ends(reg, k, nil)
+  defp order_ends(reg, {:integer, k}, false) when is_integer(k), do: ends(reg, nil, k - 1)
+  defp order_ends({:integer, k}, reg, true) when is_integer(k), do: ends(reg, nil, k)
+  defp order_ends({:integer, k}, reg, false) when is_integer(k), do: ends(reg, k + 1, nil)
+  defp order_ends(_a, _b, _ge?), do: :error
+
+  defp ends(reg, lo, hi), do: if(register?(reg), do: {:ok, reg, lo, hi}, else: :error)
+
+  defp at_least({int, lo, hi}, new_lo, new_hi),
+    do: {int, tighter(lo, new_lo, &max/2), tighter(hi, new_hi, &min/2)}
+
+  defp tighter(nil, new, _pick), do: new
+  defp tighter(old, nil, _pick), do: old
+  defp tighter(old, new, pick), do: pick.(old, new)
+
+  # Every register holding the value learns the same of it; one whose
+  # range is now an integer's between two close ends is bounded.
+  defp narrow_range(state, reg, update) do
+    reg = Instr.register(reg)
+
+    if register?(reg) do
+      regs = holders(state, reg)
+      range = update.(Map.get(state.ranges, reg, {false, nil, nil}))
+      state = %{state | ranges: Enum.reduce(regs, state.ranges, &Map.put(&2, &1, range))}
+
+      case range do
+        {true, lo, hi} when is_integer(lo) and is_integer(hi) and hi - lo < @range_limit ->
+          bound(state, regs, :always)
+
+        _ ->
+          state
+      end
+    else
+      state
+    end
+  end
+
   # A register and the registers in its group: every register holding its
   # value here.
   defp holders(state, reg) do
@@ -441,9 +586,25 @@ defmodule Argus.Extractors.ParamFlow.Bounded do
       bounded: meet_bounds(a.bounded, b.bounded),
       lists: meet_bounds(a.lists, b.lists),
       groups: meet_groups(a.groups, b.groups),
-      pending: meet_pending(a.pending, b.pending)
+      pending: meet_pending(a.pending, b.pending),
+      ranges: meet_ranges(a.ranges, b.ranges)
     }
   end
+
+  # An integer on every way in, between the least of the lower ends and
+  # the greatest of the upper ones; an end one way lacks is unknown.
+  defp meet_ranges(a, b) do
+    for {reg, {int1, lo1, hi1}} <- a,
+        {:ok, {int2, lo2, hi2}} <- [Map.fetch(b, reg)],
+        range = {int1 and int2, both(lo1, lo2, &min/2), both(hi1, hi2, &max/2)},
+        range != {false, nil, nil},
+        into: %{},
+        do: {reg, range}
+  end
+
+  defp both(nil, _other, _pick), do: nil
+  defp both(_one, nil, _pick), do: nil
+  defp both(one, other, pick), do: pick.(one, other)
 
   defp meet_pending(a, b) do
     for {reg, {holders, bound}} <- a,

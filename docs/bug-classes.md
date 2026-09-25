@@ -2418,7 +2418,8 @@ The program's own secrets flowing out belong to `exposure`. Races between the ma
 **Property.** A call at site s in function g to `String.to_atom/1`, `:erlang.binary_to_atom/1,2` or `:erlang.list_to_atom/1` takes an argument the program does not bound. Bounded means one of the following holds on every path to s:
 - the argument is compared equal to a literal (a clause head, a guard's `in`, a `case` arm);
 - it is found in a literal list, on the branch where the membership test holds;
-- it is built from such a value and literals;
+- it is built from such a value and literals, or converted from one by a pure conversion (`Integer.to_string/1`, `String.Chars.to_string/1`, `++`, ...);
+- it is an integer tested between two ends at most 1,024 values apart (`n in 1..8`, `is_integer(n) and n >= 1 and n <= 8`);
 - it is found in a list parameter that every caller fills with a literal list.
 
 The site is then reported in one of two ways.
@@ -2435,6 +2436,7 @@ At run time, the atom table is fixed-size (1,048,576 atoms by default) and never
 - The flow summaries do not follow some shapes. A value returned from a local helper, a fun not built at the call, an argument past the fourth, and a value passed through a callee missing from the propagator table all stay a path. A missing flow row is therefore not evidence that the data comes from elsewhere.
 - The path proximities do not look at argument values, which is why `transitive` is `:info`. The prior re-tier (`prior_reads` at 0.7 and above) marks only path rows and never removes one.
 - Bounds are checked in the sink's own function. A guard in the request handler, followed by a call to a helper that converts the value, does not bound it. The only bound that crosses a call is a list parameter, and only when every caller fills it with a literal list.
+- A range needs both ends and the integer test: `n >= 1 and n <= 8` alone admits every float between. A range wider than 1,024 values bounds nothing.
 - The no-request arm counts data through any call (`call_arg_reads`), so a caller's input reaching the atom may be over-counted. It excludes configuration, literals, allowlists, a server's own messages and a value that the function's only caller names.
 - A site is one finding. A `flow` row replaces the path rows for its site. A later call of the same API on the same source line of one function folds into the first call, unless the first is bounded. That covers both a compiler copy (a body shared by two clause heads) and two conversions written on one line.
 - `String.to_existing_atom/1` and a literal argument are not sinks.
@@ -2444,7 +2446,8 @@ At run time, the atom table is fixed-size (1,048,576 atoms by default) and never
 - Positive, `flow`: `DirectPlug`, `AdjacentLiveView` and `TransitiveWorker` under `RequestSurface` (test/fixtures/request_surface_fixture.ex). Also `Controller` (`show/2`, a controller action no call reaches), `FlowLiveView`, `FlowTransitive`, `FlowClosureEnv`, `HofElement`, `OpenAllowlist` (with `Allow`) and `SameLine` (one finding for two sinks on a line) under `Taint` (test/fixtures/taint_fixture.ex).
 - Positive, path proximities (never `flow`): `StoreSourcedPlug` (direct), `StoreSourcedAdjacent` (adjacent) and `StoreSourcedWorker` (transitive), plus `SocketOnly` and `SessionOnly` (direct), all under `Taint`.
 - Positive, no request path: `UnsafeAtomCreation`, `AtomSources` (`input/1` and the closure in `keys/1`) and `ExportedSinkCaller`, all in test/fixtures/atom_safety_fixture.ex. The no-request path also covers `RequestSurface.NotAnEntryPoint`.
-- Quiet: `RequestSurface.SafeCallback`; `Taint.Controller.index/2` (to_existing_atom) and `Taint.PlainPlugHelpers` (a plug's exported helper is no action, and is reported only on the no-request arm); `Taint.LiteralAtom`, `ExistingAtom`, `GuardAllowlist`, `BodyAllowlist` and `ParamAllowlist`; `AtomSources.env_level/0` and `name/1`; `AtomFromMessages` and `AtomProcessName` (atom_safety_fixture.ex); and `Quiet.StoreSourcedSink` (test/fixtures/quiet_shapes_fixture.ex), which must never be a `flow`.
+- Positive beside the bounds: `AtomBounds`' `between/1` (no integer test), `from/1` (one end) and `wide/1` (100,000 values) (atom_safety_fixture.ex).
+- Quiet: `RequestSurface.SafeCallback`; `Taint.Controller.index/2` (to_existing_atom) and `Taint.PlainPlugHelpers` (a plug's exported helper is no action, and is reported only on the no-request arm); `Taint.LiteralAtom`, `ExistingAtom`, `GuardAllowlist`, `BodyAllowlist` and `ParamAllowlist`; `AtomSources.env_level/0` and `name/1`; `AtomBounds`' `phrase/1` (capriccio's `n in 1..8`), `explicit/1` and `within/1`; `AtomFromMessages` and `AtomProcessName` (atom_safety_fixture.ex); and `Quiet.StoreSourcedSink` (test/fixtures/quiet_shapes_fixture.ex), which must never be a `flow`.
 - Tests: test/analyses/unsafe_input_test.exs, test/analyses/quiet_shapes_test.exs, test/evidence_frames_test.exs (`sink_export`, `sink_endpoint`), and test/priors/priors_test.exs (the prior re-tier).
 
 **Corpus.** Fix pairs:
@@ -2461,6 +2464,7 @@ The absinthe_federation, tesla and membrane pairs pin "Dynamic atom creation rea
 - In 6448ef4 the no-request title went from 261 rows to 65 over the evaluation programs (four apps, the Phoenix stack, and OTP's kernel, stdlib and mnesia). Before that, a reviewer sampled eight of the 261 rows, and all eight were false. Seven of those leave; logflare's Wobserver `string_to_module/1` stays.
 - The 65 are still "mostly library API doing what it is for", with a few real finds (lib/argus/analysis/sets.ex): the vulnerable tesla Mint adapter, logflare's `Ecto.UUID.Atom.cast/1`, and a realtime LiveDashboard page (CHANGELOG unsafe_input).
 - In 7bd8963, logflare's SearchLV and hexpm's `safe_to_atom/2` stopped being reported as fed by request data, and livebook's LiveMarkdown.Import guards stopped being reported as transitive. Both were false positives.
+- Integer ranges took one row from the no-request title over the evaluation programs and ejabberd and rabbitmq: erl_scan's `list_to_atom([C])` under a 0..255 guard. encore's capriccio `play/2` (`n in 1..8`) is quiet again.
 - The request tiers were calibrated by hand when the request-surface analysis was added (CHANGELOG, request_surface entry). Every `direct` finding was real. `adjacent` was mixed: one real unvalidated URL parameter and one database primary key. Every `transitive` hit examined took its data from storage.
 - Controller actions as entries (round 2, 2026-09-25), over the corpus tally: 2 new `flow` rows, both nerves_hub_web's `DeviceController.index/2` (real; the fix pair above); 8 path rows relabelled from a LiveView, a LiveComponent or the no-request arm to the controller (the finding keeps the least entry kind), none new. Over changelog.com, firezone, sentry and exq: 1 new `adjacent` row (changelog's `NewsIssueController.template_for_issue/1`, `String.to_atom("show_#{NewsIssue.layout(issue)}")` of a stored record's layout: a path from storage, the adjacent tier's known false shape), and firezone's six signed-cookie decodes, which read as `flow` until `fetch_cookies/2` stopped carrying the conn (then path rows, as before).
 

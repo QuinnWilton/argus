@@ -10,6 +10,22 @@ What 0.20.0 will ship; the release dates this heading and drops the
 `-dev` from `mix.exs`. Grouped by concern. Each entry opens with what it
 does: **Added**, **Changed**, **Fixed** or **Removed**.
 
+### Bounds and roles a reader sees
+
+**Fixed.** An integer tested between two close ends is a bounded value
+(`Argus.Extractors.ParamFlow.Bounded`): `when n in 1..8` and `is_integer(n)
+and n >= 1 and n <= 8` compile to an integer test and two order tests,
+and on the edge where all three hold `n` is one of eight integers, as
+bounded as a literal list. Both ends and the integer test are needed —
+`n >= 1 and n <= 8` alone admits every float between — and the range
+must be at most 1,024 values wide. A pure conversion of a bounded value
+(`String.Chars.to_string/1`, `Integer.to_string/1`, `integer_to_list/1`,
+`++`, ...) is bounded too, so `:"phrase_#{n}"` makes one of eight atoms:
+encore's capriccio `Capriccio.Runtime.play/2`, reported again since
+every export became an entry, is quiet. Over the evaluation programs
+and ejabberd and rabbitmq one more row goes, erl_scan's
+`list_to_atom([C])` under its 0..255 guard.
+
 ### Mining, round 2: defects the catalog suspected, and missed instances
 
 Round 2 of the mining confirmed each rule defect the catalog suspected
