@@ -2906,6 +2906,90 @@ at a glance: each a candidate for a question type the priors round
   server, and does an `already_started` loser depend on the winner's
   init having finished.
 
+### Prior candidates and structural gaps from FP hunt round 2
+
+Round 2 of the FP hunt (2026-09-25) read 215 findings over eight
+programs no round had analyzed (ra, hackney, grpc, nerves_hub_link,
+pinchflat, vernemq, mongooseim, akkoma). The false shapes it fixed are
+in the entries above; these are the ones left, with the rows each
+covers over those eight and what stands in the way.
+
+The priors on these programs: 23 of the 215 read rows were heuristic.
+Of the re-tiers, 20 stepped a row down rightly (a configured pool or
+hook name, ra's own segment files, a Redis session store, a configured
+command, peers that answer from memory: mongoose_instrument before its
+cache, nerves_hub_link's collectors), one borderline (a Lua script
+reload behind an `:infinity` call), and two named the wrong kind of
+secret (akkoma's MFA backup codes are hashes, a step down would fit; its
+password-reset token was scored below the structural tier). Five rows
+should have stepped down and did not: grpc's route-template atoms,
+vernemq's bridge queue codec, and three akkoma code sinks (a
+`find_executable` of a literal program, two configured scripts). None of
+the re-tiered rows was a real outside-data sink: 20 of 21 decisions
+right, 5 misses.
+
+Questions for a reader (re-tier only):
+
+- *Is the key space of this table the program's own fixed set?*
+  (`bounded table keys`, already listed): 4 more rows, vernemq's metric
+  counters and timers (keys a parameter every caller fills with a
+  literal metric tuple), its message store's bucket ids (1 to a
+  compile-time constant) and mongooseim's host-types table. Consumer
+  `ets_write_only_table`.
+- *Is the program this code-execution sink runs a configured tool or
+  a literal one, handed its arguments without a shell?* 5 rows: akkoma's
+  configured `argospm`, `exiftool` and media commands, pinchflat's priv
+  script that only `exec "$@"`, vernemq's `os:find_executable("epmd")`.
+  `prior_value_source` re-tiers some of these (the configured command)
+  and misses the literal ones; a `find_executable` of a literal program
+  that is no shell or interpreter is structural first.
+- *Does this state function ever see an event the program did not
+  insert?* ra's `post_init` is entered only from `init/1` with a
+  `{next_event, internal, go}` action and leaves at once: 10 "No clause
+  for a message a gen_statem is sent" rows. Structural: a
+  `statem_transition` fact carrying the inserted event, and a state
+  whose every entry inserts one its handler leaves on. Next after the
+  tuple-shape facts.
+- *Is this terminate/2 work only deregistration from a registry the
+  same tree stops after it?* mongooseim's `gen_hook` and
+  `mongoose_instrument` removals in c2s, s2s and component terminates:
+  3 of 9 "does work that a supervisor shutdown will skip" rows. Needs
+  the supervisor's child order, which mongooseim builds at runtime
+  (`[..] ++ Mod:f() ++ [..]`).
+- *Is an admin-only request route safe?* Not a re-tier: akkoma's admin
+  config API reaches `Code.eval_string` three ways (a real remote code
+  execution for an admin token), so an admin-only surface must keep its
+  severity for code execution.
+
+Structural gaps left:
+
+- A monitor on the object of a `:DOWN` (the pid, the ref a wildcard)
+  bounds a wait only while a monitor on that pid is live: the supervisor
+  forks' two startup "init/1 waits on a message" rows each (shutdown/2's
+  wait after `exit(Pid, kill)`, monitor_child's after an `'EXIT'`)
+  need the monitor taken in the callee tied to the caller's pinned pid.
+- `whereis(?MODULE) == self()` dispatch (ejabberd_s2s's
+  `new_connection/7`): what the true branch calls runs only in the
+  registered process, but same-process reach from other servers'
+  callbacks crosses it (3 rows). Needs a reach that knows its root's
+  registered name.
+- A handle_info/2 whose only "late" source is a self-send the handler
+  takes (`self() ! resend` in init/1, mongooseim's global-distribution
+  bounce): the self-send kind is per function, not per send, and carries
+  no tag; a timer's does (`handled_self_timer`).
+- `rpc:call(node(), ...)` and a callee whose first clause takes
+  `Node == node()` (ra's server supervisor, vernemq's `set_env`): 3 of 5
+  "Distributed operation in init/1" rows; a node argument is not
+  resolved.
+- `exit(Pid, kill)` only in the timeout handler of a bounded stop or
+  call to a temporary child the server owns (hackney's connection,
+  mongooseim's broadcast worker), and the process tracking's misses
+  (`spawn_monitor`'s pair, a `GenServer.start_link` a caller runs
+  through an API): 4 "Process.exit inside a GenServer callback" rows.
+- An owner whose every callback returns its state unchanged (ra's
+  metrics keeper) cannot crash on its own, so its table's readers are
+  safe; the ets rules do not read that.
+
 ### Prior candidates, evaluated
 
 Round 2 of the priors (2026-09-25) took the judgements rounds 1 of the
