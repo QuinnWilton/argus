@@ -141,16 +141,15 @@ defmodule Scry.Analysis do
   @points_to_outputs Enum.map(Argus.Analysis.points_to_relations(), &String.to_atom/1)
 
   defquery :module_extraction, key: module, returns: {:ok, map()} | {:error, term()} do
-    # The rows are a function of argus's fact schema as much as of the
-    # beam, and the schema version rides the fingerprint — so a warm
-    # manifest cannot serve rows an older encoder wrote for an unchanged
-    # beam. Without this edge the only reader of the fingerprint was
-    # `analysis_input_relations`, and a column reorder would have
-    # misaligned every memoized projection silently.
+    # The rows are a function of the runtime as much as of the beam.
     _fingerprint = Runtime.input!(db, :env_fingerprint, :all)
 
     # And of the code argus's producers run, which moves without moving
-    # argus's version or schema: an extractor edit re-extracts.
+    # argus's version: an extractor edit re-extracts. And of the entries
+    # of argus's schema they read (`depend_on_schema/2`, below): a column
+    # reorder re-extracts the modules whose rows it holds, where a warm
+    # manifest would otherwise serve rows misaligned with every
+    # projection.
     _code = optional_input(db, :extraction_code, :all)
 
     # A retry of a failed extraction moves this.

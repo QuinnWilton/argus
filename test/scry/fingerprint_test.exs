@@ -379,13 +379,13 @@ defmodule Scry.FingerprintTest do
   end
 
   describe "env/1" do
-    test "carries the runtime, scry's code and argus's schema, and no argus code" do
+    test "carries the runtime and scry's code, and nothing of argus's, its schema included" do
+      # What every query reads: a schema edit moving it re-ran them all.
       env = Scry.Fingerprint.env()
       assert env.scry_code =~ ~r/^[0-9a-f]{32}$/
-      assert env.argus_schema == Argus.Schema.version()
 
       assert Map.keys(env) |> Enum.sort() ==
-               [:argus_schema, :elixir, :otp, :scry, :scry_code, :specs_environment]
+               [:elixir, :otp, :scry, :scry_code, :specs_environment]
     end
 
     test "carries the applications the specs are read from, less argus's own beams" do
@@ -519,23 +519,24 @@ defmodule Scry.FingerprintTest do
   end
 
   describe "extraction_code/0" do
-    test "covers every producer's code and the schema, and nothing only findings run" do
+    test "covers every producer's code but the schema's, and nothing only findings run" do
       {:ok, closure} = Scry.Fingerprint.extraction_closure()
       modules = Enum.map(closure, &elem(&1, 0))
       assert modules == Enum.sort(Enum.uniq(modules))
 
       for producer <- [:base | Scry.Analysis.all_extractors()] do
         {:ok, reached} = Argus.Cache.Code.closure(producer)
-        assert reached -- closure == [], "#{inspect(producer)} runs code the digest leaves out"
+        left_out = for {module, _beam} <- reached -- closure, do: module
+
+        # The schema's modules are data: each query depends on the
+        # entries it read of them instead (`Scry.Analysis`'s
+        # `schema_read`).
+        assert Enum.all?(left_out, &Argus.Cache.Code.schema_module?/1),
+               "#{inspect(producer)} runs code the digest leaves out: #{inspect(left_out)}"
       end
 
-      schema =
-        for module <- Application.spec(:panoptes, :modules),
-            String.starts_with?(Atom.to_string(module), "Elixir.Argus.Schema."),
-            do: module
-
-      assert schema != []
-      assert [Argus.Schema | schema] -- modules == []
+      assert Argus.Schema in Enum.map(elem(Argus.Cache.Code.closure(:base), 1), &elem(&1, 0))
+      refute Enum.any?(modules, &Argus.Cache.Code.schema_module?/1)
 
       # What argus runs only to solve and to report: an edit to it
       # extracts nothing.

@@ -5,8 +5,8 @@ defmodule Scry.Fingerprint do
 
   - `:env_fingerprint` (`env/2`) — what every query runs on: the Elixir
     and OTP versions, scry's own code (`code_digest/2`; a path
-    dependency moves its code without moving its version), argus's fact
-    schema version, and the applications on the code path
+    dependency moves its code without moving its version), and the
+    applications on the code path
     (`Argus.Specs.environment_digest/1`), whose specs extraction reads
     for every remote callee — by version, and by beams for a dependency
     outside OTP and Elixir, less argus's own and the applications the
@@ -16,8 +16,11 @@ defmodule Scry.Fingerprint do
   - `:extraction_code` (`extraction_code/0`) — the code argus's fact
     producers run: the base (`Argus.Pipeline`'s emitter and the
     derivations every extraction makes) and each extractor scry runs,
-    as `Argus.Cache.Code` walks it, joined into one digest with the
-    schema modules. Argus ships extractor changes without moving its
+    as `Argus.Cache.Code` walks it, joined into one digest — without
+    argus's schema modules, which are data: a query depends on the
+    entries of the schema it read (`Scry.Analysis`'s `schema_read`), so
+    a schema edit re-extracts only the modules whose rows read what it
+    changed. Argus ships extractor changes without moving its
     version or schema (and a path dependency never moves its version at
     all), so the version alone let a warm manifest serve rows the
     current code would not compute. Moving it re-extracts every module,
@@ -54,7 +57,6 @@ defmodule Scry.Fingerprint do
           otp: String.t(),
           scry: String.t(),
           scry_code: String.t(),
-          argus_schema: pos_integer(),
           specs_environment: String.t()
         }
 
@@ -63,8 +65,7 @@ defmodule Scry.Fingerprint do
 
   @doc """
   The environment fingerprint: runtime versions, a digest of scry's
-  code, argus's schema version, and a digest of the applications on the
-  code path — except argus's own (`argus_code/1` keys a read of its
+  code, and a digest of the applications on the code path — except argus's own (`argus_code/1` keys a read of its
   specs) and `watched`, the applications whose beams the scan reads
   itself (the project, and its dependencies with `include_deps`). Their
   beams move with every edit, and the graph already tracks each one: an
@@ -100,7 +101,6 @@ defmodule Scry.Fingerprint do
       otp: System.otp_release(),
       scry: app_vsn(:scry),
       scry_code: app_code_digest(:scry),
-      argus_schema: Argus.Schema.version(),
       # Extraction reads remote callees' specs off the code path; this
       # names every application there by version, and a dependency
       # outside OTP and Elixir also by its beams (a path dependency moves
@@ -161,60 +161,29 @@ defmodule Scry.Fingerprint do
   @doc """
   The modules argus's fact producers run, sorted, each with the beam it
   runs from, or `:absent` (a module called on the way that is not on the
-  code path): the union of `Argus.Cache.Code.closure/1` over the base
-  and every extractor scry runs (`Scry.Analysis.all_extractors/0`), and
-  `Argus.Schema` with every `Argus.Schema.*` module, which name the
-  relations and their columns every producer writes. The schema modules
-  are listed whether or not a closure reaches them: argus is moving them
-  out of the closures, to key the schema reads a producer records
-  instead, and until scry keys on those reads the schema must stay in
-  this digest.
+  code path): the union of `Argus.Cache.Code.closure/2` over the base
+  and every extractor scry runs (`Scry.Analysis.all_extractors/0`),
+  with `schema: :recorded` — `Argus.Schema` and its concern modules
+  walked through but left out. They are data, every accessor of theirs
+  records the entry it returns, and each query that reads them depends
+  on the entries it read instead.
   """
   @spec extraction_closure() ::
           {:ok, [{module(), Path.t() | :absent}]} | {:error, {:no_beam, module()}}
   def extraction_closure do
-    Enum.reduce_while(producers(), {:ok, schema_modules()}, fn producer, {:ok, acc} ->
-      case Argus.Cache.Code.closure(producer) do
+    Enum.reduce_while(producers(), {:ok, %{}}, fn producer, {:ok, acc} ->
+      case Argus.Cache.Code.closure(producer, schema: :recorded) do
         {:ok, modules} -> {:cont, {:ok, Map.merge(acc, Map.new(modules))}}
         {:error, _} = error -> {:halt, error}
       end
     end)
     |> case do
-      {:ok, modules} -> check_beams(Enum.sort(modules))
+      {:ok, modules} -> {:ok, Enum.sort(modules)}
       {:error, _} = error -> error
     end
   end
 
   defp producers, do: [:base | Scry.Analysis.all_extractors()]
-
-  defp schema_modules do
-    _ = Application.load(:panoptes)
-
-    for module <- Application.spec(:panoptes, :modules) || [],
-        schema_module?(module),
-        into: %{},
-        do: {module, where(module)}
-  end
-
-  defp schema_module?(Argus.Schema), do: true
-
-  defp schema_module?(module),
-    do: String.starts_with?(Atom.to_string(module), "Elixir.Argus.Schema.")
-
-  defp where(module) do
-    case :code.which(module) do
-      :non_existing -> :absent
-      path when is_list(path) and path != [] -> List.to_string(path)
-      _in_memory_or_cover_compiled -> :no_beam
-    end
-  end
-
-  defp check_beams(modules) do
-    case Enum.find(modules, &match?({_module, :no_beam}, &1)) do
-      nil -> {:ok, modules}
-      {module, :no_beam} -> {:error, {:no_beam, module}}
-    end
-  end
 
   @doc """
   A digest of every argus beam, debug info (where specs are read from)

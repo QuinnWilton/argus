@@ -40,11 +40,11 @@ Two layers over one `Roux.Database`:
    key or value shape without planchette in the same review.
    `Scry.Fingerprint` stamps what the graph depends on beyond the
    beams:
-   - `env_fingerprint` — the runtime, a digest of scry's ebin, argus's
-     schema version and the specs environment (every application on the
-     code path, less argus's own and the watched ones' beams) — read by
-     `module_extraction`, the stages, the solves and findings: moving it
-     re-runs everything. Hashing the dependencies' beams cost ~1 s a
+   - `env_fingerprint` — the runtime, a digest of scry's ebin and the
+     specs environment (every application on the code path, less
+     argus's own and the watched ones' beams; nothing of argus's, its
+     schema included) — read by `module_extraction`, the stages, the
+     solves and findings: moving it re-runs everything. Hashing the dependencies' beams cost ~1 s a
      run on a large project; argus keeps each ebin's hashes under a stat
      stamp (name, mtime, size, inode; an ebin with a beam younger than
      2 s is read whole) in the store `Scry.Runner.cache_dir/0`
@@ -56,10 +56,12 @@ Two layers over one `Roux.Database`:
      keeps its old hashes — the scanner's own prefilter has the same
      one.
    - `extraction_code` — ONE digest of the code argus's fact producers
-     run: the union of `Argus.Cache.Code.closure/1` over `:base` and
-     every extractor scry runs, plus `Argus.Schema` and every
-     `Argus.Schema.*` beam listed explicitly (`extraction_closure/0`),
-     each by `Argus.BeamDigest`, with the producer list. Read by
+     run: the union of `Argus.Cache.Code.closure/2` over `:base` and
+     every extractor scry runs, with `schema: :recorded`: the schema's
+     modules are walked through but left out, since each query is keyed
+     by the entries it read (`schema_read`, below)
+     (`extraction_closure/0`), each by `Argus.BeamDigest`, with the
+     producer list. Read by
      `module_extraction` (an extractor or base edit re-extracts every
      module; equal rows backdate at the semantic digest, so nothing
      above runs) and by `relation_digest`/`stage0_digest`/
@@ -121,13 +123,6 @@ Two layers over one `Roux.Database`:
    narrowest accessor (`columns/1`, `fetch/1`: `layer_3/0` or `names/0`
    move with any relation). A frontend without `argus_code`
    (planchette) records no schema edges.
-
-   **Follow-up (argus schema keys):** argus is taking the `Argus.Schema`
-   modules out of its producers' code closures and recording the schema
-   reads a producer makes instead, re-checked on cache hits. Until scry
-   keys `extraction_code` on those recorded reads, `extraction_closure/0`
-   MUST keep listing `Argus.Schema` and `Argus.Schema.*` explicitly —
-   drop that only when scry keys on the reads.
 
    Argus's shared stages are queries of their own, each a cutoff seam:
    `stage0_facts` (the call graph) and `points_to_facts` (process

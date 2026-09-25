@@ -10,7 +10,15 @@
   relation's columns; whether a relation is a prior on its own entry;
   the relations an analysis or a stage reads on each name's columns.
   An argus edit digests the entries read so far again, and reruns only
-  the queries whose entries moved.
+  the queries whose entries moved. So `:extraction_code` leaves the
+  schema's modules out (`Argus.Cache.Code.closure/2` with `schema:
+  :recorded`) and the environment fingerprint no longer carries argus's
+  schema version: a schema edit extracted every module again and re-ran
+  every solve, and now a relation added, a version bump or another
+  relation's prose extracts and solves nothing (the findings are built
+  again, as for any argus edit), while a relation's columns changed
+  re-extract the modules whose rows it holds and re-solve the programs
+  that load it.
 - A solve is keyed on its program as the solve loads it
   (`Argus.Souffle.Cache.declared_digest/2`, as argus keys its own
   solves): of argus's generated declaration files, only the
