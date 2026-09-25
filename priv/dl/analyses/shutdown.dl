@@ -674,21 +674,88 @@ shared_stop(h, via, sib) :-
 
 unhandled_exit_signal(mod, "no_handler", func) :-
   module_traps(func, mod),
-  gen_server_loop(mod),
+  gen_server_like(mod),
   !has_handle_info(mod),
   !statem_process(mod).
 
 // A process whose trapped exits gen_server hands to handle_info/2: a
-// GenServer (or a wrapper that runs one), or a GenStage. Another loop
-// takes them its own way — gen_batch_server passes `{info, {'EXIT', ...}}`
-// to handle_batch/2 (ra's WAL), a cowboy_loop handler to info/3, a
-// hand-rolled loop to its own receive — and a module no process runs
-// (grpc's Mint adapter, whose connect/2 its connection process calls
-// through a variable) has no loop at all: none of them misses a
-// handle_info/2.
-.decl gen_server_loop(mod: symbol)
+// GenServer (or a wrapper that runs one), a GenStage, or a server under
+// a behaviour the table does not list that answers calls
+// (gen_server_like, callbacks.dl: rabbit's gen_server2). Another listed
+// loop (a LiveView, a channel, a GenEvent) takes them its own way, and a
+// process under a behaviour argus does not know (gen_batch_server
+// passes `{info, {'EXIT', ...}}` to handle_batch/2, a cowboy_loop
+// handler to info/3) runs a receive argus does not see.
+//
+// ── A hand-rolled loop that traps and takes no exit ─────────────────
+//
+// A process no behaviour runs reads its mailbox in its own receive: a
+// spawn_link'ed loop, a proc_lib process. When it traps exits and none
+// of the receives it runs has a clause that can take an `{:EXIT, pid,
+// reason}` (recv_takes_exit: one for :EXIT, or one that fixes no tag), a
+// linked process's exit becomes a message nothing takes: it stays in the
+// mailbox, every receive scans past it, and the exit trapping was meant
+// to answer (the parent's shutdown among them) goes unanswered. The
+// receives are what the trapping function runs after it in its process,
+// and what a spawned function that reaches it there runs: a loop entered
+// after a setup that traps. The trap is any not on a process module's
+// own stack (trap_on_process_stack, process_kind.dl: a behaviour's loop
+// reads that mailbox, not these receives): one in a module no behaviour
+// runs, and one in what a spawn or proc_lib runs, which module_traps
+// leaves out (traps_elsewhere) because it is not the module's server's.
+// Not asked of a process that runs no receive (grpc's Mint adapter traps
+// for its caller), or one that runs code whose receives are not the
+// program's to read: a call through a fun or an apply, an enter_loop, a
+// hibernate.
+.decl trap_loop_candidate(func: symbol)
 
-gen_server_loop(m) :- behaves_as(m, b), process_behaviour(b, "gen_server_like").
+trap_loop_candidate(func) :-
+  trap_exit(func, mod),
+  !trap_on_process_stack(func),
+  !statem_process(mod).
+
+.init trap_loop_caller = SameProcessReach
+
+trap_loop_caller.seed(f, f) :- trap_loop_candidate(f).
+
+.init trap_loop = ForwardSameProcessReachCut
+
+trap_loop.cut(f, g) :- side_call(f, g).
+trap_loop.root(f, f) :- trap_loop_candidate(f).
+
+trap_loop.root(f, r) :-
+  trap_loop_candidate(f),
+  trap_loop_caller.reaches(r, f),
+  process_start(_, _, _, "spawn", r).
+
+.decl trap_loop_receives(func: symbol)
+
+trap_loop_receives(f) :- trap_loop.reaches(f, g), recv_start(_, g, _, _).
+
+.decl trap_loop_takes_exit(func: symbol)
+
+trap_loop_takes_exit(f) :- trap_loop.reaches(f, g), recv_takes_exit(_, g).
+
+.decl trap_loop_opaque(func: symbol)
+
+trap_loop_opaque(f) :- trap_loop.reaches(f, g), dynamic_call(_, g, _).
+
+trap_loop_opaque(f) :-
+  trap_loop.reaches(f, g),
+  remote_call(_, g, m, "enter_loop", _),
+  (m = ":gen_server" ; m = ":gen_statem" ; m = ":gen_event").
+
+trap_loop_opaque(f) :-
+  trap_loop.reaches(f, g),
+  remote_call(_, g, m, "hibernate", _),
+  (m = ":erlang" ; m = ":proc_lib").
+
+unhandled_exit_signal(mod, "no_receive_clause", func) :-
+  trap_loop_candidate(func),
+  function_def(func, mod, _, _, _),
+  trap_loop_receives(func),
+  !trap_loop_takes_exit(func),
+  !trap_loop_opaque(func).
 
 // ── Trap exit with a handle_info that never matches {:EXIT, ...} ──
 //

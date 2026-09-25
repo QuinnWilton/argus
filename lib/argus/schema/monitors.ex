@@ -126,6 +126,21 @@ defmodule Argus.Schema.Monitors do
         """
       },
       %{
+        name: :recv_takes_exit,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the receive's loop_rec"},
+          {:func, :symbol, "the function"}
+        ],
+        doc: """
+        A receive with a clause that can take a trapped exit, \
+        `{:EXIT, pid, reason}`: its head fixes the message's tag to `:EXIT`, \
+        or fixes none (a catch-all, a variable, a test of another element). \
+        A clause whose head fixes another tag, or matches an atom, cannot. \
+        The arity is not read (`Argus.Extractors.Monitor`).
+        """
+      },
+      %{
         name: :recv_flush,
         layer: 2,
         fields: [

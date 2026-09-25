@@ -15,8 +15,9 @@ defmodule Argus.Analyses.Shutdown do
     shutdown timeout).
   - `unhandled_exit_signal(mod, kind, witness)` — the process traps exits
     and nothing takes the `{:EXIT, ...}` message that trapping turns
-    them into: `no_handler`, or `no_exit_clause` in the handle_info it
-    has.
+    them into: `no_handler` (a gen_server with no handle_info),
+    `no_exit_clause` in the handle_info it has, or `no_receive_clause`
+    (a hand-rolled loop whose receives have no clause for it).
   - `teardown_touches_sibling(mod, sibling, phase, kind, via, sup,
     handler, site, sup_site)` —
     terminate/2 waits on a sibling that may already be gone (`terminate`,
@@ -152,7 +153,7 @@ defmodule Argus.Analyses.Shutdown do
         name: :unhandled_exit_signal,
         fields: [
           {:mod, :symbol, "module"},
-          {:kind, :symbol, "no_handler | no_exit_clause"},
+          {:kind, :symbol, "no_handler | no_exit_clause | no_receive_clause"},
           {:witness, :symbol, "function that sets trap_exit"}
         ],
         key: [:mod, :kind],
@@ -349,6 +350,25 @@ defmodule Argus.Analyses.Shutdown do
       at: Findings.at_func(witness),
       at_label: "traps exits here",
       help: ["add a `handle_info({:EXIT, pid, reason}, state)` clause"]
+    )
+  end
+
+  def finding(:unhandled_exit_signal, [mod, "no_receive_clause", witness]) do
+    Findings.new(
+      :warning,
+      "trap_exit without an :EXIT handler",
+      "#{mod} sets trap_exit in a process it runs itself, and none of the " <>
+        "receives that process runs has a clause for {:EXIT, pid, reason} or " <>
+        "one that takes any message. A linked process's exit arrives as a " <>
+        "message nothing takes: it stays in the mailbox, every receive scans " <>
+        "past it, and the exit trapping was meant to answer — the parent's " <>
+        "shutdown among them — goes unanswered.",
+      at: Findings.at_func(witness),
+      at_label: "traps exits here",
+      help: [
+        "add an `{:EXIT, pid, reason}` clause to the loop's receive that " <>
+          "decides what a linked exit means (exit with the parent's reason)"
+      ]
     )
   end
 

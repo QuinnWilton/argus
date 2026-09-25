@@ -52,6 +52,9 @@ defmodule Argus.Extractors.Monitor do
     reason: a `:DOWN` (`"down"`) or an `:EXIT` (`"exit"`)
     (`Argus.Extractors.Monitor.ExitSignal`); a `:DOWN` only where no path
     from the function's entry to the receive demonitors
+  - `recv_takes_exit(id, func)` — a receive with a clause that can take a
+    trapped `{:EXIT, pid, reason}`: its head fixes the tag to `:EXIT`, or
+    fixes none
   - `recv_flush(id, func, cancel)` — the receive runs only where the
     `cancel_timer` call at `cancel` returned `false`: the timer had fired,
     and its message is in the mailbox (`Argus.Extractors.Monitor.Flush`)
@@ -160,7 +163,8 @@ defmodule Argus.Extractors.Monitor do
       :monitor_ref_dropped,
       :recv_down,
       :recv_flush,
-      :recv_signal
+      :recv_signal,
+      :recv_takes_exit
     ]
 
   @impl true
@@ -171,6 +175,7 @@ defmodule Argus.Extractors.Monitor do
     |> emit_awaits_down_after(module_data)
     |> emit_recv_down(module_data)
     |> emit_recv_signal(module_data)
+    |> emit_recv_takes_exit(mod, functions)
     |> emit_recv_flush(module_data)
   end
 
@@ -1420,6 +1425,35 @@ defmodule Argus.Extractors.Monitor do
     end
   end
 
+  # ── A receive that can take a trapped exit ──────────────────────────
+  #
+  # A receive with a clause that can take `{:EXIT, pid, reason}`: its
+  # head fixes the message's tag to :EXIT, or fixes none (a catch-all, a
+  # variable, a test of another element). A clause whose head fixes
+  # another tag, or matches an atom, cannot. The arity is not read: a
+  # clause for `{:EXIT, pid}` counts, in the quiet direction.
+  defp emit_recv_takes_exit(facts, mod, functions) do
+    for {:function, name, arity, _entry, instrs} <- functions,
+        loop <- exit_takers(instrs),
+        reduce: facts do
+      acc ->
+        func_id = InstrId.func_id(mod, name, arity)
+        add_fact(acc, :recv_takes_exit, [InstrId.mint(func_id, loop), func_id])
+    end
+  end
+
+  defp exit_takers(instrs) do
+    tuple = List.to_tuple(instrs)
+    labels = for {{:label, l}, idx} <- Enum.with_index(instrs), into: %{}, do: {l, idx}
+
+    for {{:loop_rec, _fail, _dst}, loop} <- Enum.with_index(instrs),
+        start = %{idx: loop + 1, msg: [{:x, 0}], tags: [], refs: [], tag: nil, ref: :any},
+        [start]
+        |> take_heads(tuple, labels, %{}, [])
+        |> Enum.any?(fn {_at, state} -> state.tag in [nil, :EXIT] end),
+        do: loop
+  end
+
   # ── The :DOWN clauses of a function's receives ──────────────────────
   #
   # Where a receive takes a :DOWN: the `remove_message` of each clause
@@ -1515,6 +1549,9 @@ defmodule Argus.Extractors.Monitor do
       tag = compared_atom(state.tags, a, b) ->
         pass(narrow(state, tag)) ++ goto(state, fail, labels)
 
+      atom = compared_atom(state.msg, a, b) ->
+        pass(narrow(state, {:atom, atom})) ++ goto(state, fail, labels)
+
       other = compared_with(state.refs, a, b) ->
         pass(%{state | ref: pinned(state.idx, other)}) ++ goto(state, fail, labels)
 
@@ -1531,6 +1568,18 @@ defmodule Argus.Extractors.Monitor do
           |> Enum.chunk_every(2)
           |> Enum.flat_map(fn
             [{:atom, tag}, {:f, l}] -> goto(narrow(state, tag), l, labels)
+            [_value, {:f, l}] -> goto(state, l, labels)
+            _malformed -> []
+          end)
+
+        arms ++ goto(state, fail, labels)
+
+      held?(src, state.msg) ->
+        arms =
+          pairs
+          |> Enum.chunk_every(2)
+          |> Enum.flat_map(fn
+            [{:atom, atom}, {:f, l}] -> goto(narrow(state, {:atom, atom}), l, labels)
             [_value, {:f, l}] -> goto(state, l, labels)
             _malformed -> []
           end)
@@ -1590,8 +1639,9 @@ defmodule Argus.Extractors.Monitor do
     end
   end
 
-  # The state once the message's tag is `tag`, or nil when the path
-  # already established another: that edge cannot be taken.
+  # The state once the message's tag is `tag` (`{:atom, a}`: the message
+  # is the atom `a`, no tuple), or nil when the path already established
+  # another: that edge cannot be taken.
   defp narrow(%{tag: nil} = state, tag), do: %{state | tag: tag}
   defp narrow(%{tag: tag} = state, tag), do: state
   defp narrow(_state, _tag), do: nil

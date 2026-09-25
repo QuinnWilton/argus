@@ -207,6 +207,20 @@ defined by that walk alone: a blocking receive pinning the monitor's
 ref (`recv_down`) no longer counts on paths that leave by another
 clause.
 
+**Fixed.** Schema 124. shutdown's "trap_exit without an :EXIT handler"
+asked only of a listed GenServer (98cfdb25), so a spawn_link'ed loop and
+a server under gen_server2 that trap with nothing to take the exit went
+silent. `no_handler` now asks of `gen_server_like` (a server under an
+unlisted behaviour that answers calls included), and a new kind,
+`no_receive_clause` (same title, `:warning`), asks a process no
+behaviour runs: a trap not on a process module's own stack, a spawned
+or proc_lib function's among them, whose process runs receives and none
+that can take `{:EXIT, pid, reason}`. `recv_takes_exit(id, func)`, new
+from `Argus.Extractors.Monitor`, names a receive with a clause whose
+head fixes the tag to `:EXIT` or fixes none; the extractor's clause-head
+walk now also reads a clause that matches an atom message. Read by
+shutdown.
+
 ### Priors, round 3: tooling, and programs found on PATH
 
 **Added.** Schema 118. `tooling_module(mod, basis)` from a new
