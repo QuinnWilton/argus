@@ -101,6 +101,18 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       assert [{func, _, "exception_guarded", 3, 1}] = rows([C.UnseededRows])
       assert func =~ "UnseededRows:methods/0"
     end
+
+    test "a table the owner makes only when asked can be missing in the owner" do
+      skip_without_souffle()
+      assert [{func, _, "exception_guarded", 3, 1}] = rows([C.LazyOwner])
+      assert func =~ "LazyOwner:handle_call/3"
+    end
+
+    test "a row seeded only when an option asks can be missing" do
+      skip_without_souffle()
+      assert [{func, _, "exception_guarded", 3, 1}] = rows([C.ConditionalSeed])
+      assert func =~ "ConditionalSeed:d/0"
+    end
   end
 
   describe "what guards a call" do
@@ -294,6 +306,15 @@ defmodule Argus.Analyses.FailureConsistencyTest do
     test "is none when the site's target is unknown" do
       skip_without_souffle()
       assert targets([C.UnknownTargetBare]) == []
+    end
+
+    test "is what a helper returns when the helper builds the target" do
+      skip_without_souffle()
+
+      assert [{func, "3", "1", "what Argus.Test.Fixtures.Consistency.ViaClient:via/1 returns"}] =
+               targets([C.ViaClient])
+
+      assert func =~ "ViaClient:d/1"
     end
 
     test "draws the evidence from the deviant's own population" do

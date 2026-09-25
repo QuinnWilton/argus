@@ -36,11 +36,14 @@ defmodule Argus.Analyses.Failure do
     deviation is by chance. The population is the callee's sites on the
     same literal `target` (a table, a name), or, for a process call on
     the pid a GenServer's or gen_statem's own client function is handed,
-    that module's processes (`processes of M`); a site whose target is
-    not known takes no part. Nor does a site its arguments say cannot
-    fail: a send to anything but a local name, an ETS call that fails
-    only on a missing table made in the process that owns it, a
-    `lookup_element` of a row its owner seeds and nothing removes.
+    that module's processes (`processes of M`), or, for one on a name a
+    local helper builds, what that helper returns (`what M:via/1
+    returns`); a site whose target is not known takes no part. Nor does a
+    site its arguments say cannot fail: a send to anything but a local
+    name, an ETS call that fails only on a missing table made in the
+    process that creates it on every path through its init/1 and never
+    deletes it, a `lookup_element` of a row that init/1 always seeds and
+    nothing removes.
   """
 
   @behaviour Argus.Analysis
@@ -116,8 +119,9 @@ defmodule Argus.Analyses.Failure do
           {:agree, :number, "sites that follow the convention"},
           {:deviate, :number, "sites that break it, this one included"},
           {:target, :symbol,
-           "the literal first argument the population shares, or `processes of M` for " <>
-             "a client call of M on the pid it is handed"},
+           "the literal first argument the population shares, `processes of M` for " <>
+             "a client call of M on the pid it is handed, or `what F returns` for a " <>
+             "name the local helper F builds"},
           {:raises, :symbol,
            "for exception_guarded, the class the call raises (error | exit | *); else empty"},
           {:cover, :symbol,

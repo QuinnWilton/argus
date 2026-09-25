@@ -281,16 +281,21 @@ nil_use_caught(id, f) :- try_covers(t, f, id, "try"), catch_tag(t, f, "error", "
 // function's own parameter, in a module that runs a process loop — the
 // client API of a GenServer or a gen_statem, `def checkout(pid, ...),
 // do: :gen_statem.call(pid, ...)` — has one target too: that module's
-// processes. Any other site's target is not known, and it neither holds a
-// belief nor breaks one.
+// processes. A process call whose target a local helper builds
+// (`via(id)`, `{:via, Registry, {reg, id}}`) is scoped by where it comes
+// from: every call on what `via/1` makes names the same kind of server,
+// and holds or breaks a belief about it. Any other
+// site's target is not known, and it neither holds a belief nor breaks
+// one.
 //
 // Whether a call can fail depends on its arguments, and a site that
 // cannot takes no part either (`cannot_fail`): a send to anything but a
 // registered name, an ETS operation that fails only on a missing table,
-// made inside the process that owns the table, and a lookup_element of a
-// row the owner seeds and nothing removes. A call on a value that is
-// never a literal — a send to a pid, a timer cancelled by its reference,
-// with `async: true` or not — has no target, and so no population.
+// made inside the process that created it in init/1 and never deletes
+// it, and a lookup_element of a row the owner's init/1 always seeds and
+// nothing removes. A call on a value that is never a literal — a send to
+// a pid, a timer cancelled by its reference, with `async: true` or not —
+// has no target, and so no population.
 //
 // Known limit: an Erlang macro's expansions (mnesia's `?catch_val`, one
 // guarded lookup written once and expanded a hundred times) count as
@@ -333,6 +338,12 @@ site_scope(site, cat("processes of ", m)) :-
   function_def(f, m, _, _, _),
   behaves_as(m, b),
   process_behaviour(b, "loop").
+
+// A target a local helper returns: what that helper builds.
+site_scope(site, cat("what ", g, " returns")) :-
+  call_result(site, f, _, _, "exit", ""),
+  pid_call(site, f, _, "result", r),
+  local_call(r, f, g, _).
 
 // ── What a call's arguments rule out ────────────────────────────
 .decl cannot_fail(site: symbol)
@@ -388,16 +399,41 @@ fails_on_missing_table(":ets:take/2").
 // `func` runs only in the process of module m that created the named
 // table `t`: reached from m's callbacks in m's own process, from no other
 // module's, and no caller outside those callbacks can call it (a private
-// function, or one of m's callbacks).
+// function, or one of m's callbacks). m creates the table on every path
+// through its init/1, before the start returns and so before any
+// callback runs, and nothing deletes it: a table made later (in a
+// handle_call, on demand) or only when an option says so can be missing
+// when a callback asks, and a table `:ets.delete/1` drops is missing
+// after.
 .init own = SameProcessReach
 
 own.seed(f, f) :- ets_new(_, f, t), t != "dynamic".
 own.seed(f, f) :- call_result(_, f, c, _, _, t), t != "", fails_on_missing_table(c).
 own.seed(f, f) :- call_result(_, f, ":ets:lookup_element/3", _, _, _).
 
+// What init/1 runs on every path through it, in its own process.
+.decl init_always_runs(mod: symbol, func: symbol)
+
+init_always_runs(m, i) :- init_function(m, i).
+
+init_always_runs(m, g) :-
+  init_always_runs(m, f),
+  unconditional_call_edge(f, g),
+  !runs_elsewhere(f, g),
+  function_def(g, _, _, _, _).
+
 .decl table_owner(table: symbol, mod: symbol)
 
-table_owner(t, m) :- ets_new(_, g, t), t != "dynamic", process_entry(m, c), own.reaches(c, g).
+table_owner(t, m) :-
+  ets_new(n, g, t),
+  t != "dynamic",
+  !conditional_call(n),
+  init_always_runs(m, g),
+  !table_deleted(t).
+
+.decl table_deleted(table: symbol)
+
+table_deleted(t) :- ets_op(w, _, t, "delete", _), remote_call(w, _, ":ets", "delete", 1).
 
 .decl reached_by_other(func: symbol, mod: symbol)
 
@@ -412,18 +448,21 @@ in_owner(f, t) :-
   !reached_by_other(f, m),
   (function_def(f, _, _, _, 0) ; process_entry(m, f)).
 
-// A row the table's owner writes while it starts — in init/1, or in a
-// function init/1 runs — at a literal key, and that no operation removes:
-// no delete, take or delete_object at that key or at one not known, no
-// clearing of the table.
+// A row the table's owner writes while it starts, on every path through
+// its init/1 — in init/1, or in a function init/1 always runs — at a
+// literal key, and that no operation removes: no delete, take or
+// delete_object at that key or at one not known, no clearing of the
+// table. An insert only some starts make (`if opts[:seed]`) seeds
+// nothing a reader can count on.
 .decl seeded_row(table: symbol, key: symbol)
 
 seeded_row(t, k) :-
+  table_owner(t, m),
   ets_op(w, g, t, op, "write"),
   (op = "insert" ; op = "insert_new"),
   ets_key(w, "literal", k),
-  init_function(_, i),
-  own.reaches(i, g),
+  !conditional_call(w),
+  init_always_runs(m, g),
   !removes_row(t, k).
 
 .decl removes_row(table: symbol, key: symbol)

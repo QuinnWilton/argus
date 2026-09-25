@@ -932,6 +932,112 @@ defmodule Argus.Test.Fixtures.Consistency do
     def drop(ref), do: :ets.delete(:client_refs, ref)
   end
 
+  defmodule ViaClient do
+    @moduledoc """
+    Four calls to a server by the via name a helper builds: three catch
+    the exit, the fourth does not. The name is built, not a literal, and
+    every call on what via/1 builds is one population.
+    """
+    def a(id) do
+      GenServer.call(via(id), :a)
+    catch
+      :exit, _ -> :error
+    end
+
+    def b(id) do
+      GenServer.call(via(id), :b)
+    catch
+      :exit, _ -> :error
+    end
+
+    def c(id) do
+      GenServer.call(via(id), :c)
+    catch
+      :exit, _ -> :error
+    end
+
+    def d(id), do: GenServer.call(via(id), :d)
+
+    defp via(id), do: {:via, Registry, {Argus.Test.Fixtures.Consistency.Registry, id}}
+  end
+
+  defmodule LazyOwner do
+    @moduledoc """
+    OwnerDeletes' shape, with the table made only when a caller asks
+    (`:setup`), not in init/1: until then a lookup in the owner raises,
+    and three of its four lookups rescue that. The bare one is the
+    deviant.
+    """
+    use GenServer
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def handle_call(:setup, _from, state) do
+      :ets.new(:lazy_t, [:named_table])
+      {:reply, :ok, state}
+    end
+
+    def handle_call(:a, _from, state), do: {:reply, lookup(:a), state}
+    def handle_call(:b, _from, state), do: {:reply, lookup2(:b), state}
+    def handle_call(:c, _from, state), do: {:reply, lookup3(:c), state}
+    def handle_call(:d, _from, state), do: {:reply, :ets.lookup(:lazy_t, :d), state}
+
+    defp lookup(k) do
+      :ets.lookup(:lazy_t, k)
+    rescue
+      ArgumentError -> []
+    end
+
+    defp lookup2(k) do
+      :ets.lookup(:lazy_t, k)
+    rescue
+      ArgumentError -> []
+    end
+
+    defp lookup3(k) do
+      :ets.lookup(:lazy_t, k)
+    rescue
+      ArgumentError -> []
+    end
+  end
+
+  defmodule ConditionalSeed do
+    @moduledoc """
+    SeededRows' shape, with the row seeded only when an option asks: a
+    start without it leaves the row missing, and the bare read raises.
+    """
+    use GenServer
+
+    @impl true
+    def init(opts) do
+      :ets.new(:cond_seeded, [:named_table, :public, :set])
+      if opts[:seed], do: :ets.insert(:cond_seeded, {:mode, :fast})
+      {:ok, opts}
+    end
+
+    def a do
+      :ets.lookup_element(:cond_seeded, :mode, 2)
+    rescue
+      ArgumentError -> :slow
+    end
+
+    def b do
+      :ets.lookup_element(:cond_seeded, :mode, 2)
+    rescue
+      ArgumentError -> :slow
+    end
+
+    def c do
+      :ets.lookup_element(:cond_seeded, :mode, 2)
+    rescue
+      ArgumentError -> :slow
+    end
+
+    def d, do: :ets.lookup_element(:cond_seeded, :mode, 2)
+  end
+
   defmodule SeededRows do
     @moduledoc """
     inet_db's shape: the server seeds a row in init/1 and nothing removes

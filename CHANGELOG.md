@@ -3399,6 +3399,18 @@ the same wording.
 
 ### failure
 
+**Fixed.** `failure.inconsistent_handling` judges the sites the change
+below set aside unsoundly. A process call whose target a local helper
+builds (`GenServer.call(via(id), ...)`, sequin's `via_tuple/2` behind
+eighteen calls to its slot message stores) is scoped by that helper
+(`what M:via/1 returns`) instead of taking no part. An ETS call in the
+owner cannot fail on a missing table only when the owner creates the
+table on every path through its init/1 and nothing calls `:ets.delete/1`
+on it (`table_owner`, `init_always_runs`): a table made on demand in a
+callback, or only when an option asks, can be missing there. And a row
+counts as seeded only when init/1 inserts it on every path, not under
+an `if opts[:seed]`.
+
 **Fixed.** `failure.inconsistent_handling` keys a belief on its target
 and nothing else. A site is judged by the callee's sites on the same
 literal first argument (a table, a name), or — for a process call on
