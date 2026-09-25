@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `mix scry --format json` carries each finding's `at_label`, the label
+  of its own line (`null` when it has none). Argus's titles name the
+  class of a finding and no longer the instance (argus 1721917: the
+  message, the field or the table moved into the label and the
+  detail), so the label is what tells two findings of one class apart:
+  three unreceived messages in one file share a title, and their labels
+  read `:checked_out is sent here`, `{:job, …} is sent here` and
+  `:unknown is sent here`.
 - A warm run computes no rules digest. The digests are a function of
   argus's Datalog tree and the solver, so they are kept in the store's
   `programs/` under a digest of every file of the tree (by content) and

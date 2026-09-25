@@ -77,6 +77,7 @@ defmodule Mix.Tasks.ScryTest do
       assert first["file"] == "lib/depot/application.ex"
       assert is_integer(first["line"])
       assert first["title"] == "Coupled children under one_for_one"
+      assert first["at_label"] == "supervision tree defined here"
       assert is_binary(first["detail"])
       assert first["provenance"] == "structural"
       assert Map.has_key?(first, "confidence") and is_nil(first["confidence"])

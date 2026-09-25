@@ -14,6 +14,7 @@ defmodule Scry.Report do
           "line": 12,
           "end_line": null,
           "title": "Coupled children under one_for_one",
+          "at_label": "supervision tree defined here",
           "detail": "...",
           "help": ["..."],
           "provenance": "structural",
@@ -26,6 +27,11 @@ defmodule Scry.Report do
   (argus's layer-3 relations, `priors:` in the config), and `confidence`
   is then the prior's probability in thousandths; a structural finding's
   is `null`. `end_line` closes a multi-line span, else `null`.
+
+  `title` names the class of the finding and never the instance: the
+  values that tell two findings of one class apart (the message, the
+  field, the table) are in `at_label`, the label of the finding's own
+  line (`null` when the finding has none), and in `detail`.
   """
 
   @doc """
@@ -52,6 +58,7 @@ defmodule Scry.Report do
         line: entry.line,
         end_line: Map.get(entry, :end_line),
         title: entry.title,
+        at_label: Map.get(entry, :at_label),
         detail: entry.detail,
         help: Map.get(entry, :help, []),
         provenance: Map.get(entry, :provenance, :structural),
