@@ -1010,13 +1010,19 @@ unconsumed_monitor(mod, f, site, "never_released") :-
 // and brod's brod_supervisor3 copy it, monitors in monitor_child/1
 // without keeping the ref, and shutdown/2 waits for the child's :DOWN by
 // its pid.
+//
+// A monitor on a process the function just started and keeps for itself
+// (monitor_owns: hands its pid to no call and no send as data) stands
+// for that process's life, which its :DOWN ends: exq's worker monitors
+// the Task it starts for the job, grpc's connection its gun process.
 unconsumed_monitor(mod, f, site, "ref_discarded") :-
   server_side(mod, f),
   !on_the_way_out(mod, f),
   monitor_call(site, f, _),
   monitor_ref_dropped(site, f),
   !waited_out(site),
-  !collected_by_callers(f).
+  !collected_by_callers(f),
+  !monitor_owns(site, f).
 
 // ══ A message the module sends itself and cannot handle ═════════════
 //

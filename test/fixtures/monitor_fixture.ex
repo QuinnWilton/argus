@@ -782,4 +782,47 @@ defmodule Argus.Test.Fixtures.MonitorLeak do
       end
     end
   end
+
+  # A server that starts a worker and monitors it keeps nothing it needs
+  # in the ref: the worker's :DOWN ends the relationship. Not when the
+  # pid goes to someone else.
+
+  defmodule MonitorsOwnWorker do
+    @moduledoc "exq's worker: start the job's task, monitor it, keep its pid."
+    use GenServer
+
+    @impl true
+    def init(_), do: {:ok, %{}}
+
+    @impl true
+    def handle_cast({:run, job}, state) do
+      {:ok, pid} = Task.start_link(fn -> job.() end)
+      Process.monitor(pid)
+      {:noreply, Map.put(state, pid, job)}
+    end
+
+    @impl true
+    def handle_info({:DOWN, _ref, :process, pid, _}, state),
+      do: {:noreply, Map.delete(state, pid)}
+  end
+
+  defmodule MonitorsHandedWorker do
+    @moduledoc "The same start, but the pid is cast to a registry: it may have another owner."
+    use GenServer
+
+    @impl true
+    def init(_), do: {:ok, %{}}
+
+    @impl true
+    def handle_cast({:run, job, registry}, state) do
+      {:ok, pid} = Task.start_link(fn -> job.() end)
+      Process.monitor(pid)
+      GenServer.cast(registry, {:register, pid})
+      {:noreply, Map.put(state, pid, job)}
+    end
+
+    @impl true
+    def handle_info({:DOWN, _ref, :process, pid, _}, state),
+      do: {:noreply, Map.delete(state, pid)}
+  end
 end

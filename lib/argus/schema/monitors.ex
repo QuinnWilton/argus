@@ -41,6 +41,23 @@ defmodule Argus.Schema.Monitors do
         """
       },
       %{
+        name: :monitor_owns,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the monitor call site"},
+          {:func, :symbol, "the monitoring function"}
+        ],
+        doc: """
+        The pid monitored at this site is, on every path, one the monitoring \
+        function just started — the result of a call named `start*` or \
+        `spawn*`, or `open` (a client library's connection: `:gun.open`), \
+        or the pid of its `{:ok, pid}` — and the function hands it to no \
+        call and sends it nowhere after the start: it keeps the process for \
+        itself, in its state or its return. The relationship the monitor \
+        stands for is that process's life (`Argus.Extractors.Monitor`).
+        """
+      },
+      %{
         name: :matches_down,
         layer: 2,
         fields: [{:func, :symbol, "a function whose clause heads compare an argument to :DOWN"}],

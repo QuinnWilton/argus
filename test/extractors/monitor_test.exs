@@ -33,6 +33,13 @@ defmodule Argus.Extractors.MonitorTest do
       end
     end
 
+    test "a monitor on a pid the function started and hands to no one is owned" do
+      assert [[_, func]] = extract(M.MonitorsOwnWorker)[:monitor_owns]
+      assert func =~ "handle_cast/2"
+      refute Map.has_key?(extract(M.MonitorsHandedWorker), :monitor_owns)
+      refute Map.has_key?(extract(M.DropsRef), :monitor_owns)
+    end
+
     test "a ref that is stored, returned or waited on is not" do
       for mod <- [M.Leaks, M.NeverReleases, M.KillsMonitored, M.ClientSideMonitor] do
         refute Map.has_key?(extract(mod), :monitor_ref_dropped),

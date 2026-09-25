@@ -30,6 +30,8 @@ defmodule Argus.Extractors.Monitor do
     wrapper), else `"dynamic"`
   - `monitor_ref_dropped(id, func)` — the reference that monitor returned
     is discarded at the call site, so nothing can ever demonitor it
+  - `monitor_owns(id, func)` — the monitored pid is one the function just
+    started and hands to no call and no send after the start (below)
   - `demonitor_call(id, func, flush)` — `flush` is `"flush"` or `"no_flush"`
   - `recv_down(id, func, monitor)` — a receive with a clause that takes
     the `:DOWN` of the monitor its function took at `monitor`, so it ends
@@ -57,6 +59,23 @@ defmodule Argus.Extractors.Monitor do
   declaring no live registers. A read on any path, a return, and anything
   the scan does not understand count as kept, which is the direction
   that keeps the fact honest.
+
+  ## A monitor on a process the function keeps
+
+  A server that starts a worker (`{:ok, pid} = Task.start_link(...)`, a
+  connection's `start_link`, `:gun.open`) and monitors it without keeping
+  the ref drops nothing it needs: the relationship is the worker's life,
+  and its `:DOWN` is the end of it. That holds while the server is the
+  worker's only owner, so `monitor_owns` asks, of the pid the monitor
+  takes, that on every path it came from a start in this function (a call
+  named `start*`, `spawn*` or `open`, or the pid of its `{:ok, pid}`), and
+  that after the start no path hands it, or a term built from it, to a
+  call or a send as data: a pid registered in a table, cast to another
+  server or passed to a helper may have another owner. A call's first
+  argument and a send's destination address the process (`:gun.await_up(
+  pid, t)`) and hand it nothing. Returning it or keeping it in the state
+  keeps it in this process. A handoff through the state, in another
+  callback, is not seen.
 
   ## A monitor the caller collects
 
@@ -126,6 +145,7 @@ defmodule Argus.Extractors.Monitor do
       :demonitor_call,
       :matches_down,
       :monitor_call,
+      :monitor_owns,
       :monitor_ref_dropped,
       :recv_down,
       :recv_flush,
@@ -338,9 +358,126 @@ defmodule Argus.Extractors.Monitor do
 
     facts = add_fact(facts, :monitor_call, [id, ctx.func_id, target])
 
+    facts =
+      if owns?(module_data, ctx, pid_reg),
+        do: add_fact(facts, :monitor_owns, [id, ctx.func_id]),
+        else: facts
+
     if ref_lost?(module_data, ctx),
       do: add_fact(facts, :monitor_ref_dropped, [id, ctx.func_id]),
       else: facts
+  end
+
+  # ── A process the function keeps ──────────────────────────────────
+
+  # The start the monitored pid comes from, on every path: the call's
+  # index, when the call is named like a start.
+  defp owns?(module_data, ctx, pid_reg) do
+    with start when is_integer(start) <- start_origin(ctx.instrs, ctx.idx, pid_reg),
+         %Argus.Cfg.Function{} = fun <- cfg(module_data, ctx) do
+      kept_after?(fun, ctx.instrs, start)
+    else
+      _ -> false
+    end
+  end
+
+  defp start_origin(instrs, idx, reg) do
+    Resolve.trace(instrs, idx, reg, nil, fn
+      {at, {:get_tuple_element, src, _index, _dst}}, follow ->
+        follow.(at, src)
+
+      {at, instr}, _follow ->
+        if starts?(instr), do: at
+    end)
+  end
+
+  defp starts?(instr) do
+    name =
+      case {match_remote_call(instr), match_local_call(instr)} do
+        {{:ok, _m, f, _a}, _} -> f
+        {_, {:ok, _m, f, _a}} -> f
+        _ -> nil
+      end
+
+    case name && Atom.to_string(name) do
+      nil -> false
+      "open" -> true
+      text -> String.starts_with?(text, "start") or String.starts_with?(text, "spawn")
+    end
+  end
+
+  # Calls that take the pid without making it anyone else's.
+  @pid_bookkeeping [
+    {:erlang, :monitor, 2},
+    {Process, :monitor, 1},
+    {:erlang, :link, 1},
+    {Process, :link, 1},
+    {:erlang, :unlink, 1},
+    {Process, :unlink, 1}
+  ]
+
+  # No path after the start hands the result, or anything built from it,
+  # to a call other than the bookkeeping above, or sends it. Walked per
+  # path, carrying the registers that hold it: x0 after the start, what
+  # a move copies it to, and what an instruction builds or projects
+  # from it (`{:ok, pid}`'s pid, a state map it is put in).
+  defp kept_after?(fun, instrs, start) do
+    tuple = List.to_tuple(instrs)
+    not handed_off?([{start + 1, MapSet.new([{:x, 0}])}], fun, tuple, MapSet.new())
+  end
+
+  defp handed_off?([], _fun, _tuple, _seen), do: false
+
+  defp handed_off?([{idx, holding} = state | rest], fun, tuple, seen) do
+    cond do
+      idx >= tuple_size(tuple) or MapSet.size(holding) == 0 or MapSet.member?(seen, state) ->
+        handed_off?(rest, fun, tuple, seen)
+
+      true ->
+        instr = elem(tuple, idx)
+        used = instr |> Instr.uses() |> Enum.filter(&MapSet.member?(holding, &1))
+        used? = used != []
+
+        # The first argument of a call, and a send's destination, address
+        # the process (`:gun.await_up(pid, t)`, `GenServer.call(pid, m)`,
+        # `send(pid, m)`); anywhere else the pid is data another holder
+        # may keep.
+        as_data? = Enum.any?(used, &(&1 != {:x, 0}))
+
+        cond do
+          as_data? and (instr == :send or match?({:send}, instr)) ->
+            true
+
+          as_data? and (Instr.call?(instr) or Instr.tail_call?(instr)) and
+              not bookkeeping?(instr) ->
+            true
+
+          true ->
+            built = if used?, do: Instr.defs(instr), else: []
+            holding = MapSet.new(Instr.carry(instr, holding) ++ built)
+            next = for at <- successors(fun, tuple, idx), do: {at, holding}
+            handed_off?(next ++ rest, fun, tuple, MapSet.put(seen, state))
+        end
+    end
+  end
+
+  defp successors(fun, tuple, idx) do
+    case Argus.Cfg.Function.block_at(fun, idx) do
+      %Argus.Cfg.Block{range: {_first, last}} = block when last == idx ->
+        for {to, _kind} <- block.succs,
+            %Argus.Cfg.Block{range: {first, _}} = Map.fetch!(fun.blocks, to),
+            do: first
+
+      _ ->
+        if idx + 1 < tuple_size(tuple), do: [idx + 1], else: []
+    end
+  end
+
+  defp bookkeeping?(instr) do
+    case match_remote_call(instr) do
+      {:ok, m, f, a} -> {m, f, a} in @pid_bookkeeping
+      :none -> false
+    end
   end
 
   # A monitor made as a tail call hands its ref to whoever called the

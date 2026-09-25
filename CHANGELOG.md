@@ -179,6 +179,16 @@ rest is open. blocking's "Peer call catches :noproc but not :shutdown"
 reads it: brod's `safe_gen_call/3` catches `{Reason, _}` beside
 `{noproc, _}`, the stopping peer's `{:shutdown, _}` included.
 
+**Added.** Schema 113. `monitor_owns(id, func)` (Monitor extractor):
+the pid monitored at `id` is, on every path, one the function just
+started (a call named `start*`, `spawn*` or `open`, or its `{:ok, pid}`)
+and hands to no call and no send as data after the start (a call's
+first argument and a send's destination address it). mailbox's
+`ref_discarded` skips it: the relationship is that process's life. exq's
+worker, grpc's gun connection, firezone's Postgrex connections,
+ejabberd's MQTT-over-WebSocket session and ra's worker are quiet; a pid
+cast to a registry still reports.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

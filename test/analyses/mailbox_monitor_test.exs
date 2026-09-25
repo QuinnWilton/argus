@@ -41,7 +41,9 @@ defmodule Argus.Analyses.MailboxMonitorTest do
     M.DrainsOnTerminate,
     M.DrainsOnCall,
     M.ForkShutdown,
-    M.ForkShutdownForgets
+    M.ForkShutdownForgets,
+    M.MonitorsOwnWorker,
+    M.MonitorsHandedWorker
   ]
 
   # Every test reads the same solve of @all: solved once, read-only.
@@ -251,6 +253,16 @@ defmodule Argus.Analyses.MailboxMonitorTest do
 
       refute Enum.any?(mods(r, "ref_discarded"), &(&1 == inspect(M.ForkShutdown)))
       refute Enum.any?(mods(r, "timed_wait"), &(&1 == inspect(M.ForkShutdown)))
+    end
+
+    test "a monitor on a worker the server started and keeps needs no ref" do
+      skip_without_souffle()
+
+      discarded = mods(servers(), "ref_discarded")
+
+      # Positive: the pid is cast to another server as data.
+      assert named?(discarded, "MonitorsHandedWorker")
+      refute named?(discarded, "MonitorsOwnWorker")
     end
 
     test "a monitor in a client API function is the caller's, not the server's" do
