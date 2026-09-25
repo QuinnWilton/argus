@@ -532,4 +532,101 @@ defmodule Argus.Test.Fixtures.MonitorLeak do
     def handle_info({:DOWN, _ref, :process, pid, _}, state),
       do: {:noreply, Map.delete(state, pid)}
   end
+
+  # A monitor made as a tail call returns its ref to the caller: kept
+  # where the caller keeps it, lost where the caller throws it away.
+
+  defmodule MapsRefs do
+    @moduledoc "exq's WorkerDrainer: a ref per worker, mapped into a set and awaited."
+    use GenServer
+
+    @impl true
+    def init(_), do: {:ok, MapSet.new()}
+
+    @impl true
+    def handle_call({:drain, pids}, _from, refs) do
+      new = pids |> Enum.map(fn pid -> Process.monitor(pid) end) |> MapSet.new()
+      {:reply, :ok, MapSet.union(refs, new)}
+    end
+
+    # The :DOWN is counted, not removed: a removal elsewhere is
+    # never_released's question, not this one's.
+    @impl true
+    def handle_info({:DOWN, _ref, :process, _, _}, refs), do: {:noreply, refs}
+  end
+
+  defmodule EachDropsRefs do
+    @moduledoc "ejabberd's router init: every pid monitored in a foreach, every ref gone."
+    use GenServer
+
+    @impl true
+    def init(_), do: {:ok, %{}}
+
+    @impl true
+    def handle_call({:watch, pids}, _from, state) do
+      Enum.each(pids, fn pid -> Process.monitor(pid) end)
+      {:reply, :ok, state}
+    end
+
+    @impl true
+    def handle_info({:DOWN, _ref, :process, pid, _}, state),
+      do: {:noreply, Map.delete(state, pid)}
+  end
+
+  defmodule ForeachDropsRefs do
+    @moduledoc "The Erlang order: the fun is built, the list read, then lists:foreach runs."
+    use GenServer
+
+    @impl true
+    def init(_), do: {:ok, %{}}
+
+    @impl true
+    def handle_call({:watch, pids}, _from, state) do
+      :lists.foreach(fn pid -> Process.monitor(pid) end, Enum.filter(pids, &is_pid/1))
+      {:reply, :ok, state}
+    end
+
+    @impl true
+    def handle_info({:DOWN, _ref, :process, pid, _}, state),
+      do: {:noreply, Map.delete(state, pid)}
+  end
+
+  defmodule HelperKeepsRef do
+    @moduledoc "A helper that returns the ref; its one caller keeps it."
+    use GenServer
+
+    @impl true
+    def init(_), do: {:ok, %{}}
+
+    @impl true
+    def handle_call({:watch, pid}, _from, state) do
+      ref = watch(pid)
+      {:reply, :ok, Map.put(state, ref, pid)}
+    end
+
+    @impl true
+    def handle_info({:DOWN, _ref, :process, _, _}, state), do: {:noreply, state}
+
+    defp watch(pid), do: Process.monitor(pid)
+  end
+
+  defmodule HelperDropsRef do
+    @moduledoc "A helper that returns the ref; its one caller throws it away."
+    use GenServer
+
+    @impl true
+    def init(_), do: {:ok, %{}}
+
+    @impl true
+    def handle_call({:watch, pid}, _from, state) do
+      watch(pid)
+      {:reply, :ok, Map.put(state, pid, true)}
+    end
+
+    @impl true
+    def handle_info({:DOWN, _ref, :process, pid, _}, state),
+      do: {:noreply, Map.delete(state, pid)}
+
+    defp watch(pid), do: Process.monitor(pid)
+  end
 end

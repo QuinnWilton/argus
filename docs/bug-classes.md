@@ -1511,14 +1511,15 @@ On the timeout branch the monitor is still live. The `{:DOWN, ...}` arrives afte
 
 **Assumptions and limits.**
 - The rule reads the bytecode after the call. A read anywhere, a return, or an instruction the scan does not understand keeps the ref, in the quiet direction.
+- A monitor made as a tail call hands its ref to whoever called the function (`Enum.map(pids, &Process.monitor(&1))` compiles to a closure whose last instruction is the monitor). Its ref is lost only when every use the module shows of that function loses it: a call that drops the result (or a tail call whose own caller does, up to four hops), or a closure or local capture of it handed to a call that discards what the fun returns (`lists:foreach/2`, `maps:foreach/2`, `Enum.each/2`). An exported function, one the module never uses, and a fun kept or handed to any other call keep the ref (quiet). exq's WorkerDrainer maps the refs into a MapSet and awaits them; ra's `swap_monitor/2` returns the ref its caller stores. ejabberd's router inits monitor every route owner in a `lists:foreach` fun and still fire.
 - It does not ask whether the relationship can end another way. A server whose subscriptions end only when the subscriber dies is reported too.
 - There is one finding per site.
 
-**Fixtures.** Positive: `MonitorLeak.DropsRef` (`test/fixtures/monitor_fixture.ex`). Quiet: `MonitorLeak.NeverReleases`, `ReleasesOnDelete`, `KillsMonitored`, `ClientSideMonitor` (same file). Asserted in `test/analyses/mailbox_monitor_test.exs`.
+**Fixtures.** Positive: `MonitorLeak.DropsRef`, `EachDropsRefs` (a closure handed to `Enum.each/2`), `ForeachDropsRefs` (to `:lists.foreach/2`, the fun built before the list is read), `HelperDropsRef` (a helper returning the ref to a caller that drops it) (`test/fixtures/monitor_fixture.ex`). Quiet: `MonitorLeak.NeverReleases`, `ReleasesOnDelete`, `KillsMonitored`, `ClientSideMonitor`, `MapsRefs` (a closure handed to `Enum.map/2`), `HelperKeepsRef` (same file). Asserted in `test/analyses/mailbox_monitor_test.exs` and, for the fact, `test/extractors/monitor_test.exs`.
 
 **Corpus.** Fix pairs: `supavisor@e80c9a2` (supabase/supavisor, 0fe1410 → e80c9a2, `Supavisor.ClientHandler`: the manager monitor's ref was discarded, so any `:DOWN` read as the manager going down). Present-only: None. a3ef85b draws the shape from Phoenix PubSub's Local.
 
-**Precision.** Not measured.
+**Precision.** FP hunt round 2 (2026-09-25): of 34 rows over 21 live projects, the tail-call shape was 2 false (exq's WorkerDrainer, ra's `swap_monitor/2`), both gone; the monitor on a process the same function just started (mod_muc, exq's worker, firezone's Postgrex connections) is the open shape (see the backlog).
 
 ### A Task.async nothing awaits
 

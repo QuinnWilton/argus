@@ -18,6 +18,21 @@ defmodule Argus.Extractors.MonitorTest do
       assert [[^site, ^func, _target]] = facts[:monitor_call]
     end
 
+    test "a ref a tail call returns is lost where every caller loses it" do
+      assert [[_, func]] = extract(M.EachDropsRefs)[:monitor_ref_dropped]
+      assert func =~ "-handle_call/3-fun-"
+
+      assert [[_, func]] = extract(M.ForeachDropsRefs)[:monitor_ref_dropped]
+      assert func =~ "-handle_call/3-fun-"
+
+      assert [[_, func]] = extract(M.HelperDropsRef)[:monitor_ref_dropped]
+      assert func =~ ":watch/1"
+
+      for mod <- [M.MapsRefs, M.HelperKeepsRef] do
+        refute Map.has_key?(extract(mod), :monitor_ref_dropped), "#{inspect(mod)} keeps its ref"
+      end
+    end
+
     test "a ref that is stored, returned or waited on is not" do
       for mod <- [M.Leaks, M.NeverReleases, M.KillsMonitored, M.ClientSideMonitor] do
         refute Map.has_key?(extract(mod), :monitor_ref_dropped),

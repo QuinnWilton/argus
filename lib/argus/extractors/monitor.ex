@@ -331,9 +331,122 @@ defmodule Argus.Extractors.Monitor do
 
     facts = add_fact(facts, :monitor_call, [id, ctx.func_id, target])
 
-    if ref_dropped?(cfg(module_data, ctx), ctx.instrs, ctx.idx + 1),
+    if ref_lost?(module_data, ctx),
       do: add_fact(facts, :monitor_ref_dropped, [id, ctx.func_id]),
       else: facts
+  end
+
+  # A monitor made as a tail call hands its ref to whoever called the
+  # function: `Enum.map(pids, &Process.monitor(&1))` compiles to a closure
+  # whose last instruction is the monitor, and the list Enum.map returns
+  # holds every ref (exq's WorkerDrainer awaits them all). Nothing
+  # follows the call in its own function, so the walk below would find
+  # the ref read nowhere; the question is the callers' instead.
+  defp ref_lost?(module_data, ctx) do
+    if Instr.tail_call?(Enum.at(ctx.instrs, ctx.idx)),
+      do: returned_ref_lost?(module_data, ctx.func_id, MapSet.new()),
+      else: ref_dropped?(cfg(module_data, ctx), ctx.instrs, ctx.idx + 1)
+  end
+
+  # Whether every use the module shows of the function `func_id`, which
+  # returns a monitor's ref, loses it: a call that drops its result (or
+  # a tail call whose own caller does, a few hops up), or a closure or
+  # local capture of it handed to a call that discards what the fun
+  # returns (`lists:foreach/2`, `Enum.each/2`). An exported function's
+  # callers are outside the module, one with no use in it is called from
+  # elsewhere, and a fun kept or handed anywhere else may keep what it
+  # returns: each keeps the ref, the direction that keeps the fact honest.
+  @max_hops 4
+
+  defp returned_ref_lost?(module_data, func_id, seen) do
+    with {:ok, %{func: name, arity: arity}} <- InstrId.parse_func(func_id),
+         false <- MapSet.member?(seen, func_id) or MapSet.size(seen) >= @max_hops,
+         false <- {String.to_atom(name), arity} in module_data.exports,
+         [_ | _] = uses <- uses_of(module_data, String.to_atom(name), arity) do
+      seen = MapSet.put(seen, func_id)
+      Enum.all?(uses, &use_loses_ref?(module_data, &1, seen))
+    else
+      _ -> false
+    end
+  end
+
+  # Each place in the module that calls the function or makes a fun of
+  # it: `{:call, caller_id, caller, index}` or `{:fun, caller, index}`.
+  defp uses_of(%{module: mod, functions: functions}, name, arity) do
+    for {:function, caller, caller_arity, _entry, instrs} <- functions,
+        {instr, idx} <- Enum.with_index(instrs),
+        use = use_at(instr, mod, name, arity),
+        use != nil do
+      {use, %{func_id: InstrId.func_id(mod, caller, caller_arity), instrs: instrs, idx: idx},
+       {caller, caller_arity}}
+    end
+  end
+
+  defp use_at(instr, mod, name, arity) do
+    case {match_local_call(instr), instr} do
+      {{:ok, ^mod, ^name, ^arity}, _} -> :call
+      {_, {:make_fun3, {^mod, ^name, ^arity}, _, _, _, _}} -> :fun
+      _ -> nil
+    end
+  end
+
+  defp use_loses_ref?(module_data, {:call, ctx, {caller, arity}}, seen) do
+    if Instr.tail_call?(Enum.at(ctx.instrs, ctx.idx)),
+      do: returned_ref_lost?(module_data, ctx.func_id, seen),
+      else: ref_dropped?(cfg(module_data, caller, arity), ctx.instrs, ctx.idx + 1)
+  end
+
+  defp use_loses_ref?(_module_data, {:fun, ctx, _caller}, _seen),
+    do: handed_to_discarding_call?(ctx.instrs, ctx.idx)
+
+  # Calls that run a fun for its effects and throw away what it returns,
+  # with the argument position the fun is handed in.
+  @discarding_calls %{
+    {:lists, :foreach, 2} => 0,
+    {:maps, :foreach, 2} => 0,
+    {Enum, :each, 2} => 1
+  }
+
+  # Follows the fun `make_fun3` at `idx` writes through the registers to
+  # the call it is handed to, and asks whether that call is one that
+  # discards what the fun returns, handed the fun where it takes one. A
+  # call it is not handed to is stepped over (the fun waits in a `y`
+  # register while ejabberd's init reads the table it will fold over).
+  # Anything else — a branch, a store, another call taking it — keeps it.
+  defp handed_to_discarding_call?(instrs, idx) do
+    {:make_fun3, _target, _index, _uniq, dst, _env} = Enum.at(instrs, idx)
+
+    instrs
+    |> Enum.drop(idx + 1)
+    |> Enum.reduce_while([register(dst)], fn instr, holding ->
+      cond do
+        holding == [] ->
+          {:halt, false}
+
+        (Instr.call?(instr) or Instr.tail_call?(instr)) and discarding_call?(instr, holding) ->
+          {:halt, true}
+
+        (Instr.call?(instr) or Instr.tail_call?(instr)) and
+            Enum.any?(Instr.uses(instr), &(&1 in holding)) ->
+          {:halt, false}
+
+        Instr.tail_call?(instr) or not Instr.falls_through?(instr) or Instr.targets(instr) != [] ->
+          {:halt, false}
+
+        true ->
+          {:cont, Instr.carry(instr, holding)}
+      end
+    end)
+    |> Kernel.==(true)
+  end
+
+  defp discarding_call?(instr, holding) do
+    with {:ok, mod, name, arity} <- match_remote_call(instr),
+         {:ok, pos} <- Map.fetch(@discarding_calls, {mod, name, arity}) do
+      {:x, pos} in holding
+    else
+      _ -> false
+    end
   end
 
   @x0 {:x, 0}

@@ -32,7 +32,12 @@ defmodule Argus.Analyses.MailboxMonitorTest do
     M.ReleasesOnDelete,
     M.KillsMonitored,
     M.ClientSideMonitor,
-    M.DropsRef
+    M.DropsRef,
+    M.MapsRefs,
+    M.EachDropsRefs,
+    M.ForeachDropsRefs,
+    M.HelperKeepsRef,
+    M.HelperDropsRef
   ]
 
   # Every test reads the same solve of @all: solved once, read-only.
@@ -184,18 +189,40 @@ defmodule Argus.Analyses.MailboxMonitorTest do
 
       r = servers()
 
-      assert [[mod, site]] =
-               Rows.where(r, :mailbox, "unconsumed_monitor",
-                 kind: "ref_discarded",
-                 drop: [:func, :kind]
+      rows =
+        Rows.where(r, :mailbox, "unconsumed_monitor",
+          kind: "ref_discarded",
+          drop: [:func, :kind]
+        )
+
+      assert [site] =
+               for(
+                 [mod, site] <- rows,
+                 mod == "Argus.Test.Fixtures.MonitorLeak.DropsRef",
+                 do: site
                )
 
-      assert mod == "Argus.Test.Fixtures.MonitorLeak.DropsRef"
       assert site =~ "DropsRef:handle_call/3#"
 
       # The servers that keep their refs are not reported here, whatever
       # else they do with them.
       refute named?(mods(r, "ref_discarded"), "NeverReleases")
+    end
+
+    test "a ref a tail call returns is judged by what the caller does with it" do
+      skip_without_souffle()
+
+      discarded = mods(servers(), "ref_discarded")
+
+      # Positive: a closure handed to Enum.each, and a helper whose caller
+      # throws the ref away, lose it as surely as a bare monitor does.
+      assert named?(discarded, "EachDropsRefs")
+      assert named?(discarded, "ForeachDropsRefs")
+      assert named?(discarded, "HelperDropsRef")
+
+      # Quiet: the refs are mapped into a set, or kept in the state.
+      refute named?(discarded, "MapsRefs")
+      refute named?(discarded, "HelperKeepsRef")
     end
 
     test "a monitor in a client API function is the caller's, not the server's" do

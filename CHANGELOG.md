@@ -96,6 +96,17 @@ call (`fun_handed`) in `site_request` (clientlib/calls.dl), so a request
 chain through a closure now enters the clause of the call it is handed
 to rather than every clause.
 
+**Fixed.** `monitor_ref_dropped` no longer records a monitor made as a
+tail call: its ref goes to the caller, and the walk after the call found
+nothing and read that as a drop. The ref is lost only where every use
+the module shows of the function loses it — a call that drops the
+result (or a tail call whose caller does), or a fun of it handed to
+`lists:foreach/2`, `maps:foreach/2` or `Enum.each/2`. exq's
+WorkerDrainer (`Enum.map(workers, &Process.monitor(...))`, awaited) and
+ra's `swap_monitor/2` (the ref returned and stored) are quiet;
+ejabberd's router inits, which monitor in a `lists:foreach` fun, still
+report.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,
