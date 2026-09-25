@@ -74,6 +74,29 @@ defmodule Argus.Test.Fixtures.BoundaryRescue do
   end
 
   def logger_mod, do: :persistent_term.get(:app_logger, :logger)
+
+  # hackney's `try hackney_conn:stop(Pid) catch _:_ -> ok end`: the
+  # client API is the boundary one hop away.
+  def close(conn) do
+    try do
+      Argus.Test.Fixtures.BoundaryClient.stop(conn)
+    catch
+      _, _ -> :ok
+    end
+  end
+end
+
+defmodule Argus.Test.Fixtures.BoundaryClient do
+  @moduledoc "A client API that is nothing but a call into the server."
+
+  def stop(pid), do: :gen_statem.stop(pid)
+  def status(pid), do: GenServer.call(pid, :status, 1_000)
+
+  # Its reply matched: a bug in the match is the caller's, not the peer's.
+  def count(pid) do
+    {:ok, n} = GenServer.call(pid, :count, 1_000)
+    n
+  end
 end
 
 defmodule Argus.Test.Fixtures.LogicRescue do
@@ -122,6 +145,15 @@ defmodule Argus.Test.Fixtures.LogicRescue do
   end
 
   def apply_entry(state), do: Map.fetch!(state, :entry) + 1
+
+  # A client API whose reply it matches: a bug there is swallowed too.
+  def safe_count(pid) do
+    try do
+      Argus.Test.Fixtures.BoundaryClient.count(pid)
+    catch
+      _, _ -> 0
+    end
+  end
 
   defp decode(bin), do: :erlang.binary_to_term(bin, [:safe])
 end

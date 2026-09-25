@@ -205,6 +205,17 @@ before reading it (hackney's HTTP/3 connection table, Sentry's dedupe
 and test registry). A question asked in another function guards
 nothing.
 
+**Added.** Schema 114. `boundary_function(func)`: a function that is one
+boundary operation and nothing else that can raise (a client API such
+as `stop(Pid) -> gen_statem:stop(Pid)`); `try_wrapper_call(id, func,
+call)`: a try that protects only boundary operations, inert
+instructions and named calls, one row per such call. failure's catch-all
+rule takes a try whose every such call is to a boundary function as a
+boundary one hop away: hackney's pool and client (7 rows), vernemq's
+queue status calls (6), rabbit's gen_server2 `msend/3` (3). A client API
+that matches its reply is no boundary function. The boundary list gains
+the cast forms and gen_fsm's calls.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

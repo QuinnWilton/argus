@@ -23,6 +23,7 @@ defmodule Argus.Analyses.FailureErrorTest do
     Argus.Test.Fixtures.ExitCaller,
     Argus.Test.Fixtures.SharedKill,
     Argus.Test.Fixtures.BoundaryRescue,
+    Argus.Test.Fixtures.BoundaryClient,
     Argus.Test.Fixtures.LogicRescue
   ]
 
@@ -70,7 +71,11 @@ defmodule Argus.Analyses.FailureErrorTest do
       skip_without_souffle()
 
       results =
-        analyze(ctx, [Argus.Test.Fixtures.BoundaryRescue, Argus.Test.Fixtures.LogicRescue])
+        analyze(ctx, [
+          Argus.Test.Fixtures.BoundaryRescue,
+          Argus.Test.Fixtures.BoundaryClient,
+          Argus.Test.Fixtures.LogicRescue
+        ])
 
       funcs =
         results
@@ -82,7 +87,8 @@ defmodule Argus.Analyses.FailureErrorTest do
                "LogicRescue:apply_and_log/1",
                "LogicRescue:apply_and_log_result/1",
                "LogicRescue:ask_and_match/1",
-               "LogicRescue:notify_decoded/2"
+               "LogicRescue:notify_decoded/2",
+               "LogicRescue:safe_count/1"
              ],
              "a send, a call, a supervisor query, a named :ets.new and a log line alone are " <>
                "the peer's, the name's or the logger's to fail; a match, arithmetic or a " <>

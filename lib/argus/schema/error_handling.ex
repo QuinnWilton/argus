@@ -126,6 +126,34 @@ defmodule Argus.Schema.ErrorHandling do
         """
       },
       %{
+        name: :try_wrapper_call,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the try (or catch) instruction"},
+          {:func, :symbol, "the function"},
+          {:call, :symbol, "a call the try protects that is no boundary operation itself"}
+        ],
+        doc: """
+        The try at `id` protects only boundary operations (as \
+        `try_boundary` names them), instructions that cannot raise, and \
+        calls to named functions, `call` being one of those calls: if \
+        every such callee is a `boundary_function`, the try is a boundary \
+        one hop away (hackney's `try hackney_conn:stop(Pid) catch _:_ -> \
+        ok end`).
+        """
+      },
+      %{
+        name: :boundary_function,
+        layer: 2,
+        fields: [{:func, :symbol, "the function"}],
+        doc: """
+        A function whose body is boundary operations (a call, cast or stop \
+        of another process, a send, a registration) and instructions that \
+        cannot raise: a client API such as `stop(Pid) -> \
+        gen_statem:stop(Pid)` (`Argus.Extractors.ErrorHandling.Boundary`).
+        """
+      },
+      %{
         name: :try_boundary,
         layer: 2,
         fields: [

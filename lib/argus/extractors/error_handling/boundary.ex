@@ -77,7 +77,16 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
                     {Supervisor, :delete_child, 2},
                     {Supervisor, :restart_child, 2},
                     {:erpc, :call, 4},
-                    {:erpc, :call, 5}
+                    {:erpc, :call, 5},
+                    {:gen_statem, :cast, 2},
+                    {:gen_server, :cast, 2},
+                    {GenServer, :cast, 2},
+                    {:gen_fsm, :sync_send_event, 2},
+                    {:gen_fsm, :sync_send_event, 3},
+                    {:gen_fsm, :sync_send_all_state_event, 2},
+                    {:gen_fsm, :sync_send_all_state_event, 3},
+                    {:gen_fsm, :send_event, 2},
+                    {:gen_fsm, :send_all_state_event, 2}
                   ])
 
   # Instructions that cannot raise: they move, build and allocate, mark
@@ -155,6 +164,66 @@ defmodule Argus.Extractors.ErrorHandling.Boundary do
 
     (Enum.any?(instrs, &boundary?/1) and Enum.all?(instrs, &(boundary?(&1) or inert?(&1)))) or
       log_region?(visited, table, line_table)
+  end
+
+  # ── A region of calls, and a function that is one boundary op ───────
+  #
+  # A client API is the same boundary one hop away: hackney's
+  # `hackney_conn:stop(Pid) -> gen_statem:stop(Pid)`, vernemq's
+  # `vmq_queue:status(Pid)`. Whether the callee is one is known only once
+  # every module's functions are, so the extractor says of each function
+  # whether it is (`function?/1`), and of each try region made of calls
+  # and inert instructions which calls it would have to be
+  # (`wrapper_calls/2`); the rule joins the two.
+
+  @doc """
+  Whether a function's instructions are boundary operations and
+  instructions that cannot raise, with at least one boundary operation:
+  a one-hop client API. Returns and tail calls end it.
+  """
+  @spec function?([tuple() | atom()]) :: boolean()
+  def function?(instrs) do
+    body = Enum.reject(instrs, &(&1 == :return or match?({:func_info, _, _, _}, &1)))
+
+    Enum.any?(body, &boundary_op?/1) and
+      Enum.all?(body, &(boundary_op?(&1) or inert?(&1)))
+  end
+
+  # A boundary call as a tail call too: a wrapper's body is often one.
+  defp boundary_op?(instr) do
+    boundary?(instr) or
+      case Helpers.match_remote_call(instr) do
+        {:ok, m, f, a} -> MapSet.member?(@boundary_calls, {m, f, a})
+        :none -> false
+      end
+  end
+
+  @doc """
+  The calls in the region `visited` that are not boundary operations,
+  when every other instruction in it is a boundary operation or cannot
+  raise, and every such call names its callee: `{:ok, indices}` (at
+  least one), else `:error`.
+  """
+  @spec wrapper_calls(Enumerable.t(non_neg_integer()), tuple()) ::
+          {:ok, [non_neg_integer()]} | :error
+  def wrapper_calls(visited, table) do
+    Enum.reduce_while(Enum.sort(visited), {:ok, []}, fn idx, {:ok, acc} ->
+      instr = elem(table, idx)
+
+      cond do
+        boundary?(instr) or inert?(instr) -> {:cont, {:ok, acc}}
+        named_call?(instr) -> {:cont, {:ok, [idx | acc]}}
+        true -> {:halt, :error}
+      end
+    end)
+    |> case do
+      {:ok, [_ | _] = calls} -> {:ok, Enum.reverse(calls)}
+      _ -> :error
+    end
+  end
+
+  defp named_call?(instr) do
+    Helpers.match_remote_call(instr) != :none or Helpers.match_local_call(instr) != :none
   end
 
   # ── A try around a log line ─────────────────────────────────────────

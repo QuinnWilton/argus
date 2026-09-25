@@ -61,7 +61,25 @@
 unhandled_failure(func, id, "rescue", "", guard_end) :-
   bare_rescue(id, func, guard_end),
   !try_boundary(id, func),
+  !boundary_through_api(id, func),
   !library_written(func).
+
+// The same boundary one hop away: every call the try protects that is
+// not a boundary operation itself is a call to a client API that is
+// (boundary_function: hackney's `hackney_conn:stop(Pid) ->
+// gen_statem:stop(Pid)`, vernemq's `vmq_queue:status/1`).
+.decl boundary_through_api(id: symbol, func: symbol)
+
+boundary_through_api(id, f) :- try_wrapper_call(id, f, _), !wraps_other(id, f).
+
+.decl wraps_other(id: symbol, func: symbol)
+
+wraps_other(id, f) :-
+  try_wrapper_call(id, f, site),
+  call_instr(f, g, site),
+  !boundary_function(g).
+
+wraps_other(id, f) :- try_wrapper_call(id, f, site), !call_instr(f, _, site).
 
 // ── Exit in GenServer callback ───────────────────────────────────
 

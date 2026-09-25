@@ -49,6 +49,11 @@ defmodule Argus.Extractors.ErrorHandling do
     protects nothing but sends, signals, calls into other processes and
     name operations, or nothing but a log line and its arguments
     (`ErrorHandling.Boundary`)
+  - `try_wrapper_call(id, func, call)` — the try at `id` protects only
+    boundary operations, instructions that cannot raise and named calls,
+    `call` being one of those calls (`ErrorHandling.Boundary`)
+  - `boundary_function(func)` — `func` is one boundary operation and
+    nothing else that can raise: a client API
   - `try_covers(id, func, call, kind)` — the try (or Erlang `catch`) at
     `id` covers the call at `call`: an exception the call raises goes to
     that try's handler
@@ -185,6 +190,8 @@ defmodule Argus.Extractors.ErrorHandling do
       :trap_exit,
       :try_call,
       :try_boundary,
+      :try_wrapper_call,
+      :boundary_function,
       :try_covers,
       :try_covers_closure
     ]
@@ -211,6 +218,7 @@ defmodule Argus.Extractors.ErrorHandling do
       |> emit_timer_flows(mod, module_data.functions)
       |> emit_cancel_clauses(module_data)
       |> emit_try_coverage(module_data)
+      |> emit_boundary_functions(module_data)
 
     origins = Identity.origins_index(module_data)
 
@@ -684,6 +692,17 @@ defmodule Argus.Extractors.ErrorHandling do
   # compiler placed after the handler all fall where control puts them.
   # Erlang's `catch Expr` is the same shape, ended by `catch_end`, which
   # both paths reach.
+  # A function that is one boundary operation and nothing that can
+  # raise besides: a client API a try one hop away can guard as if it
+  # made the call itself (Boundary.function?/1).
+  defp emit_boundary_functions(facts, %{module: mod, functions: functions}) do
+    for {:function, name, arity, _entry, instrs} <- functions,
+        Boundary.function?(instrs),
+        reduce: facts do
+      acc -> add_fact(acc, :boundary_function, [Normalize.func_id(mod, name, arity)])
+    end
+  end
+
   defp emit_try_coverage(facts, module_data) do
     mod = module_data.module
 
@@ -723,9 +742,20 @@ defmodule Argus.Extractors.ErrorHandling do
     id = InstrId.mint(func_id, idx)
 
     facts =
-      if Boundary.region?(visited, table, lines),
-        do: add_fact(facts, :try_boundary, [id, func_id]),
-        else: facts
+      cond do
+        Boundary.region?(visited, table, lines) ->
+          add_fact(facts, :try_boundary, [id, func_id])
+
+        match?({:ok, _}, Boundary.wrapper_calls(visited, table)) ->
+          {:ok, calls} = Boundary.wrapper_calls(visited, table)
+
+          Enum.reduce(calls, facts, fn at, acc ->
+            add_fact(acc, :try_wrapper_call, [id, func_id, InstrId.mint(func_id, at)])
+          end)
+
+        true ->
+          facts
+      end
 
     facts =
       visited
