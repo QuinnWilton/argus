@@ -46,6 +46,20 @@ reads before every register holding it is overwritten
 timer. It was "dynamic", as a ref kept in a record or a tuple still is.
 No rule read "dynamic".
 
+**Fixed.** A regex's captures, pieces and replacement carry its
+subject's data (`Regex.run/scan/named_captures/split/replace`,
+`:re.run/split/replace` in the propagator table). akkoma's admin config
+API evaluates a pattern it reads out of `Regex.named_captures/2`
+(`Pleroma.ConfigDB.string_to_elixir_types/1`, `Code.eval_string` of a
+`~r` sigil it rebuilds): the posted value flows there, and the row was a
+path (`transitive`, `:info`). It is a flow (`:error`), as the other two
+evaluations of that request are (`Taint.AdminConfigController`). Over the
+live projects one more row appears: sentry's `extract_named_placeholder_keys/1`
+makes atoms of a log template's `%{key}` placeholders, which
+`Regex.scan/2` now hands through from its exported caller ("Dynamic atom
+creation reachable from an exported function"; the template is the
+caller's code, the value-source prior's to step down).
+
 ### Points-to that finishes on a large program
 
 **Fixed.** The points-to stage finishes on Ash (1,327 modules), where it

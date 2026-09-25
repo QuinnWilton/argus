@@ -34,6 +34,9 @@ defmodule Argus.Extractors.ParamFlow.PropagatorsTest do
     assert Propagators.positions(":lists", "reverse", 2) == [0, 1]
     assert Propagators.positions("Tuple", "insert_at", 3) == [0, 2]
     assert Propagators.positions("Map", "get", 3) == [0, 2]
+    assert Propagators.positions("Regex", "named_captures", 2) == [1]
+    assert Propagators.positions("Regex", "replace", 4) == [1, 2]
+    assert Propagators.positions(":re", "run", 3) == [0]
   end
 
   # {fun, arity, argument names} for every documented function of `mod`

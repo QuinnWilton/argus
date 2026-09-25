@@ -46,6 +46,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
     Taint.SameLineMixed,
     Taint.Controller,
     Taint.CookieController,
+    Taint.AdminConfigController,
     Taint.PlainPlugHelpers,
     Argus.Test.Fixtures.AtomSources,
     Argus.Test.Fixtures.AtomBounds,
@@ -319,6 +320,24 @@ defmodule Argus.Analyses.UnsafeInputTest do
             do: func |> String.split(":") |> List.last()
 
       assert flows == ["prefs/2"]
+    end
+
+    test "an admin config action's evaluations: two flows and a path", ctx do
+      skip_without_souffle()
+
+      rows =
+        for [_id, func, _api, "code", _entry, "controller", proximity | _] <-
+              analyze(ctx, [Taint.AdminConfigController])["sink_reachable"],
+            do: {func |> String.split(":") |> List.last(), proximity}
+
+      # A pattern read out of Regex.named_captures/2, and each element of a
+      # list inside the closure Enum.map/2 runs, are the request's; the
+      # configured script two calls away is a path.
+      assert Enum.sort(rows) == [
+               {"-args/1-fun-0-/1", "flow"},
+               {"configured/0", "transitive"},
+               {"regex/1", "flow"}
+             ]
     end
 
     test "a plug's exported helper is no action", ctx do

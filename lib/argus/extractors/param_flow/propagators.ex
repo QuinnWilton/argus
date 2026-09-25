@@ -50,6 +50,13 @@ defmodule Argus.Extractors.ParamFlow.Propagators do
     {:binary, [:replace], :any, [0, 2]},
     {:string, :any, :any, [0]},
     {:string, [:replace], :any, [0, 2]},
+    # A match's captures, a split's pieces and a replacement's result are
+    # made of the subject (and of the replacement): akkoma's ConfigDB
+    # evaluated a pattern it read out of `Regex.named_captures/2`.
+    {:re, ~w(run split)a, :any, [0]},
+    {:re, [:replace], :any, [0, 2]},
+    {Regex, ~w(run scan named_captures split)a, :any, [1]},
+    {Regex, [:replace], :any, [1, 2]},
     {:unicode, :any, :any, [0]},
     {Access, ~w(get fetch fetch!)a, :any, [0]},
     {:elixir_erl_pass, [:no_parens_remote], 2, [0]},

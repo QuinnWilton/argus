@@ -284,6 +284,55 @@ defmodule Argus.Test.Fixtures.Taint do
     end
   end
 
+  defmodule AdminConfigController do
+    @moduledoc """
+    akkoma's admin config API (Pleroma.ConfigDB): an update action hands
+    the posted values to a converter that evaluates what it parses out of
+    them. `regex/1` evaluates a pattern it read out of the value with
+    `Regex.named_captures/2`, a flow; `args/1` evaluates each element of a
+    list inside the closure `Enum.map/2` runs, a flow; `configured/0`
+    evaluates what the configuration says, two calls from the action and
+    made of nothing the request carries: a path. An admin route is still
+    a request, and code execution keeps its severity on it.
+    """
+    @behaviour Plug
+
+    def init(opts), do: opts
+
+    def call(conn, opts), do: phoenix_controller_pipeline(conn, opts)
+
+    def phoenix_controller_pipeline(conn, opts), do: action(conn, opts)
+
+    def action(%{private: %{phoenix_action: name}} = conn, _opts),
+      do: apply(__MODULE__, name, [conn, conn.params])
+
+    def update(conn, %{"value" => value, "args" => args}) do
+      {conn, regex(String.trim(value)), args(args), reload()}
+    end
+
+    def regex("~r" <> _ = value) do
+      %{"pattern" => pattern} = Regex.named_captures(~r/^~r\/(?<pattern>.+)\/$/, value)
+      {result, _} = Code.eval_string("~r/#{pattern}/")
+      result
+    end
+
+    def regex(value), do: value
+
+    def args(args) do
+      Enum.map(args, fn arg ->
+        {term, []} = Code.eval_string(arg)
+        term
+      end)
+    end
+
+    def reload, do: configured()
+
+    def configured do
+      {term, _} = Code.eval_string(Application.get_env(:probe, :boot_script, "nil"))
+      term
+    end
+  end
+
   defmodule PlainPlugHelpers do
     @moduledoc """
     A Plug that is not a controller: its exported arity-2 helper is not
