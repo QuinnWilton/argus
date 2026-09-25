@@ -112,6 +112,17 @@ its sends as four or five findings: 27 rows over six functions are now
 one per transaction, at the spawn, which is the streaming-before-commit
 bug in every one of them.
 
+**Added.** effects reads `Repo.transact` as a transaction site (Ecto
+3.13's, and the wrapper apps wrote before it), and the effect model
+knows the calls Phoenix apps most often make inside one: `Phoenix.PubSub`
+and `Phoenix.Channel.Server` (an endpoint's `broadcast/3`) are process
+modules, and Req, Finch, HTTPoison and Tesla requests, `:hackney`, and
+Swoosh and Bamboo deliveries are network writes. nerves_hub_web's
+deployment broadcast before commit (present-only pair
+`nerves_hub_web@bd1847c`: its fix left another broadcast inside) and
+ambry's broadcasts inside `Repo.transact/1` were missed for want of
+them.
+
 ### Points-to that finishes on a large program
 
 **Fixed.** The points-to stage finishes on Ash (1,327 modules), where it

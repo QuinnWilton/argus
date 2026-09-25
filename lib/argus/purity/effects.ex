@@ -105,6 +105,17 @@ defmodule Argus.Purity.Effects do
     "Code" => :code_loading,
     ":application" => :process,
     "Application" => :process,
+    # A broadcast is a message every subscriber has already received:
+    # nerves_hub_web's deployment updates and ambry's search indexer read
+    # the row before the transaction that wrote it committed. An endpoint's
+    # `broadcast/3` (the app's module, `use Phoenix.Endpoint`) reaches it
+    # through Phoenix.Channel.Server.
+    "Phoenix.PubSub" => :process,
+    "Phoenix.Channel.Server" => :process,
+    # The HTTP clients and mailers Phoenix apps call inside transactions.
+    ":hackney" => :network,
+    "Swoosh.Mailer" => :network,
+    "Bamboo.Mailer" => :network,
     ":ct" => :logging,
     ":dbg" => :logging
   }
@@ -173,6 +184,54 @@ defmodule Argus.Purity.Effects do
     {"NaiveDateTime", "utc_now"} => :time,
     {"Date", "utc_today"} => :time,
     {"Time", "utc_now"} => :time,
+
+    # HTTP requests, from the clients whose other functions build
+    # requests and parse URLs.
+    {"Req", "request"} => :network,
+    {"Req", "request!"} => :network,
+    {"Req", "run"} => :network,
+    {"Req", "run!"} => :network,
+    {"Req", "get"} => :network,
+    {"Req", "get!"} => :network,
+    {"Req", "post"} => :network,
+    {"Req", "post!"} => :network,
+    {"Req", "put"} => :network,
+    {"Req", "put!"} => :network,
+    {"Req", "patch"} => :network,
+    {"Req", "patch!"} => :network,
+    {"Req", "delete"} => :network,
+    {"Req", "delete!"} => :network,
+    {"Req", "head"} => :network,
+    {"Req", "head!"} => :network,
+    {"Finch", "request"} => :network,
+    {"Finch", "request!"} => :network,
+    {"Finch", "stream"} => :network,
+    {"Finch", "stream_while"} => :network,
+    {"Finch", "async_request"} => :network,
+    {"HTTPoison", "request"} => :network,
+    {"HTTPoison", "request!"} => :network,
+    {"HTTPoison", "get"} => :network,
+    {"HTTPoison", "get!"} => :network,
+    {"HTTPoison", "post"} => :network,
+    {"HTTPoison", "post!"} => :network,
+    {"HTTPoison", "put"} => :network,
+    {"HTTPoison", "put!"} => :network,
+    {"HTTPoison", "patch"} => :network,
+    {"HTTPoison", "patch!"} => :network,
+    {"HTTPoison", "delete"} => :network,
+    {"HTTPoison", "delete!"} => :network,
+    {"Tesla", "request"} => :network,
+    {"Tesla", "request!"} => :network,
+    {"Tesla", "get"} => :network,
+    {"Tesla", "get!"} => :network,
+    {"Tesla", "post"} => :network,
+    {"Tesla", "post!"} => :network,
+    {"Tesla", "put"} => :network,
+    {"Tesla", "put!"} => :network,
+    {"Tesla", "patch"} => :network,
+    {"Tesla", "patch!"} => :network,
+    {"Tesla", "delete"} => :network,
+    {"Tesla", "delete!"} => :network,
 
     # Ports and the outside world.
     {":erlang", "open_port"} => :port,
@@ -332,6 +391,7 @@ defmodule Argus.Purity.Effects do
                     {":erlang", "process_info"},
                     {":erlang", "is_process_alive"},
                     {":global", "whereis_name"},
+                    {"Phoenix.PubSub", "node_name"},
                     {":global", "registered_names"},
 
                     # The Erlang spellings of the same reads. Third time in

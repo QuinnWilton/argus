@@ -66,6 +66,26 @@ defmodule Argus.Analyses.EffectsTransactionTest do
       assert start =~ "Task"
     end
 
+    test "a broadcast, an HTTP request, and Repo.transact's fun" do
+      skip_without_souffle()
+
+      rows =
+        findings([
+          T.FakeRepo,
+          T.BroadcastBeforeCommit,
+          T.BroadcastAfterCommit,
+          T.TransactBeforeCommit
+        ])
+
+      assert [[_, _, "process", "Phoenix.PubSub.broadcast/3", _]] =
+               for_module(rows, "BroadcastBeforeCommit")
+
+      assert for_module(rows, "BroadcastAfterCommit") == []
+
+      assert [[_, repo, "network", "Req.post!/2", _]] = for_module(rows, "TransactBeforeCommit")
+      assert repo =~ "FakeRepo"
+    end
+
     test "an effect several calls inside the transaction is attributed to its site" do
       skip_without_souffle()
 
@@ -181,6 +201,11 @@ defmodule Argus.Analyses.EffectsTransactionTest do
       # The safe direction: a false "irreversible" costs a look, a false
       # "harmless" costs the bug.
       assert {:impure, :network, :write} = Effects.classify(":httpc", "request")
+
+      assert {:impure, :process, :write} = Effects.classify("Phoenix.PubSub", "broadcast")
+      assert {:impure, :process, :read} = Effects.classify("Phoenix.PubSub", "node_name")
+      assert {:impure, :network, :write} = Effects.classify("Req", "get!")
+      assert Effects.classify("Req", "new") != {:impure, :network, :write}
 
       # :timer arms timers, and converts units without one.
       assert {:impure, :process, :write} = Effects.classify(":timer", "send_after")

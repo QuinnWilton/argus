@@ -12,6 +12,7 @@ defmodule Argus.Test.Fixtures.Transaction do
 
     def transaction(fun), do: fun.()
     def transaction(fun, _opts), do: fun.()
+    def transact(fun), do: transaction(fun)
     def insert(x), do: {:ok, x}
   end
 
@@ -49,6 +50,49 @@ defmodule Argus.Test.Fixtures.Transaction do
       FakeRepo.transaction(fn ->
         FakeRepo.insert(names)
         :httpc.request(~c"http://hooks/notify")
+      end)
+    end
+  end
+
+  defmodule BroadcastBeforeCommit do
+    @moduledoc """
+    nerves_hub_web's `Deployments.update_deployment/2` before bd1847c: the
+    update is broadcast from inside the transaction, and subscribers that
+    reload the row read it before it commits.
+    """
+    @compile {:no_warn_undefined, Phoenix.PubSub}
+
+    def update(deployment) do
+      FakeRepo.transaction(fn ->
+        {:ok, updated} = FakeRepo.insert(deployment)
+        Phoenix.PubSub.broadcast(Hub.PubSub, "deployments", {:updated, updated})
+        updated
+      end)
+    end
+  end
+
+  defmodule BroadcastAfterCommit do
+    @moduledoc "The fix: the broadcast after the transaction returns."
+    @compile {:no_warn_undefined, Phoenix.PubSub}
+
+    def update(deployment) do
+      {:ok, updated} = FakeRepo.transaction(fn -> FakeRepo.insert(deployment) end)
+      Phoenix.PubSub.broadcast(Hub.PubSub, "deployments", {:updated, updated})
+    end
+  end
+
+  defmodule TransactBeforeCommit do
+    @moduledoc """
+    ambry before 4c80015: `Repo.transact/1` (Ecto 3.13's, or the app's
+    own wrapper) runs the fun in a transaction, and the fun posts to a
+    webhook with Req.
+    """
+    @compile {:no_warn_undefined, Req}
+
+    def create(book) do
+      FakeRepo.transact(fn ->
+        FakeRepo.insert(book)
+        Req.post!("http://indexer/books", json: book)
       end)
     end
   end

@@ -273,6 +273,14 @@ transaction_site(id, caller, repo) :-
   remote_call(id, caller, repo, "transaction", _),
   behaves_as(repo, "Ecto.Repo").
 
+// Ecto 3.13's `Repo.transact/2`, and the app-defined `transact` that
+// predates it (Saša Jurić's, ambry's): the fun it is handed runs in the
+// transaction the repo's own `transaction` opens, a call argus does not
+// follow into the caller's closure.
+transaction_site(id, caller, repo) :-
+  remote_call(id, caller, repo, "transact", _),
+  behaves_as(repo, "Ecto.Repo").
+
 // Postgrex and Ecto.Multi reach the same place by another route.
 transaction_site(id, caller, "Postgrex") :-
   remote_call(id, caller, "Postgrex", "transaction", _).

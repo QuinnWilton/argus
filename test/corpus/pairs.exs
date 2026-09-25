@@ -813,5 +813,23 @@
     otp: "27.3.3",
     elixir: "1.18.3-otp-27",
     finding: {:mailbox, "Periodic timer loop armed again while it runs"}
+  },
+  # ── effects: an effect a rollback cannot undo, inside a transaction ──
+  # nerves_hub_web: update_deployment/2 broadcast "deployments/update"
+  # from inside its Repo.transaction, and the orchestrator and device
+  # channels reloaded the deployment before the transaction committed
+  # (stale data). The fix (bd1847c) broadcasts the update on {:ok, _},
+  # after the commit, and leaves audit_changes!/2's "archives/updated"
+  # broadcast inside the transaction, so the finding stays: present-only.
+  # Found by round 3 of the mining, once Phoenix.PubSub was an effect.
+  %{
+    repo: "nerves-hub/nerves_hub_web",
+    issue: "nerves_hub_web@bd1847c",
+    module: "NervesHub.Deployments",
+    pre: "dca4c520d01aa8413130db620ec12cd906c77360",
+    # Its phoenix_html 3.3 does not compile under 1.19.
+    otp: "27.3.3",
+    elixir: "1.18.3-otp-27",
+    finding: {:effects, "A process operation inside a transaction"}
   }
 ]
