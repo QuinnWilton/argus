@@ -79,10 +79,24 @@ defmodule Argus.Analyses.Shutdown do
           {:api, :symbol, "the call performing it"},
           {:via, :symbol, "the function performing it"}
         ],
-        # An unclear row is one call the effect model cannot classify; the
-        # finding is that the module's terminate/2 does such work at all.
-        key: {:kind, %{"unclear" => [:mod], default: [:mod, :category, :api]}},
+        # A row is one cleanup call; the finding is that the module's
+        # terminate/2 does such work at all, and cleanup_site frames every
+        # call of it.
+        key: [:mod, :kind],
         doc: "terminate/2 cleanup a supervisor shutdown skips, cannot classify, or truncates."
+      },
+      %{
+        name: :cleanup_site,
+        fields: [
+          {:mod, :symbol, "the module"},
+          {:kind, :symbol, "never_runs | unclear | truncated, as its cleanup_defect"},
+          {:api, :symbol, "the call performing the cleanup"},
+          {:via, :symbol, "the function making it"},
+          {:site, :symbol, "the call"}
+        ],
+        key: [:mod, :kind, :site],
+        evidence: %{of: :cleanup_defect, on: [:mod, :kind]},
+        doc: "Every call a module's cleanup_defect finding is about, where it is."
       },
       %{
         name: :teardown_touches_sibling,
@@ -385,6 +399,10 @@ defmodule Argus.Analyses.Shutdown do
   # When the call to the sibling is in a helper, the path starts at a call
   # in terminate/2: the line a reader follows from the callback.
   @impl true
+  def evidence(:cleanup_site, [_mod, _kind, api, via, site]) do
+    Findings.related("calls #{api}", Findings.at_site_in_func(site, via))
+  end
+
   def evidence(:terminate_path, [handler, _via, ""]) do
     Findings.related("terminate/2 reaches it from here", Findings.at_func(handler))
   end

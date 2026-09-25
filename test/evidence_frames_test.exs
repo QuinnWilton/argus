@@ -95,4 +95,24 @@ defmodule Argus.EvidenceFramesTest do
     assert frame.label == "reachable from GET /orders/:field"
     assert frame.module == live_view
   end
+
+  test "cleanup_site: every cleanup a supervisor shutdown skips, on one finding" do
+    alias Fixtures.Shutdown.ReleasesAndWrites
+
+    assert [finding] =
+             [ReleasesAndWrites]
+             |> findings(:shutdown)
+             |> Enum.filter(&(&1.title =~ "cleans up in terminate/2"))
+
+    labels = finding.related |> Enum.map(& &1.label) |> Enum.sort()
+    assert [write, insert] = labels |> Enum.sort_by(&(&1 =~ "insert"))
+    assert write =~ "File.write!"
+    assert insert =~ ":ets.insert"
+    refute Enum.any?(labels, &(&1 =~ "demonitor" or &1 =~ "close"))
+
+    assert Enum.all?(finding.related, fn frame ->
+             frame.module == ReleasesAndWrites and
+               match?(%InstrId{func: "terminate", arity: 2}, frame.instr)
+           end)
+  end
 end

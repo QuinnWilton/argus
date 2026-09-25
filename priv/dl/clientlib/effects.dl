@@ -76,3 +76,33 @@ removal_api(":ets", "delete_object").
 removal_api(":ets", "take").
 removal_api(":ets", "select_delete").
 removal_api(":ets", "match_delete").
+
+// Releasing what the calling process holds: its monitors and links, the
+// timers it armed, the ports, sockets and files it owns. The runtime
+// does each of these itself when the process exits, so a skipped call
+// leaves nothing behind, and none waits on anything that could overrun
+// a deadline. Not here: `:timer.cancel/1` (an apply_after outlives the
+// process that armed it), `:ets.delete/1` (the table may be another
+// process's, or have an heir), `:ssl.close/2` (it can hand the socket
+// on), `:dets.close/1` (a shared table others may hold open).
+.decl released_at_exit(api: symbol)
+
+released_at_exit(":erlang.demonitor/1").
+released_at_exit(":erlang.demonitor/2").
+released_at_exit("Process.demonitor/1").
+released_at_exit("Process.demonitor/2").
+released_at_exit(":erlang.unlink/1").
+released_at_exit("Process.unlink/1").
+released_at_exit(":erlang.cancel_timer/1").
+released_at_exit(":erlang.cancel_timer/2").
+released_at_exit("Process.cancel_timer/1").
+released_at_exit("Process.cancel_timer/2").
+released_at_exit(":erlang.port_close/1").
+released_at_exit("Port.close/1").
+released_at_exit(":gen_tcp.close/1").
+released_at_exit(":gen_udp.close/1").
+released_at_exit(":gen_sctp.close/1").
+released_at_exit(":ssl.close/1").
+released_at_exit(":socket.close/1").
+released_at_exit(":file.close/1").
+released_at_exit("File.close/1").

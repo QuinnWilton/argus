@@ -81,6 +81,23 @@ wait. blocking runs the extractor too.
 
 ### Process rules, read against real programs
 
+**Fixed.** `shutdown.cleanup_defect` counts only the cleanup a
+supervisor stop runs and loses. terminate/2 often chooses its work by
+the reason: elixir-ls's servers return at once for `:normal`,
+`:shutdown` and `{:shutdown, _}` and write a crash report for anything
+else, and each was reported five times for skipping that report on a
+shutdown. A call terminate/2 makes counts only when the reason
+`:shutdown` reaches it (`skipped_on_shutdown`), and a helper only when
+such a call leads to it. Releasing what the process holds — a monitor,
+a link, a BIF timer, its own socket, port or file (`released_at_exit`,
+clientlib/effects.dl) — is neither cleanup nor slow work: the runtime
+releases each when the process exits, so kafka_ex's socket close and
+ejabberd_systemd's `gen_udp:close/1` are gone from "never traps exits"
+and "unbounded work inside the shutdown timeout" alike. A module's
+cleanup is one finding per kind, with a frame at every call of it
+(`cleanup_site`, an evidence relation), not one per API: elixir-ls went
+from 40 findings to 1, ejabberd from 22 to 13, kafka_ex from 3 to 1.
+
 **Fixed.** `mailbox.unhandled_info` no longer reports a timer whose
 message is a literal tuple as having no clause when a clause takes its
 tag. A literal message is spelled whole (`{:warm_up_from_cluster, 5}`)

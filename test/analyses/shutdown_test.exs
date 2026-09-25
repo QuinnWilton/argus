@@ -17,7 +17,11 @@ defmodule Argus.Analyses.ShutdownTest do
     S.UnclearTraps,
     S.Lease,
     S.Truncatable,
-    S.CleansUpElsewhere
+    S.CleansUpElsewhere,
+    S.CrashReportOnly,
+    S.CleansUpOnShutdownToo,
+    S.ReleasesOwn,
+    S.ReleasesAndWrites
   ]
 
   # Every test reads the same solve of @all: solved once, read-only.
@@ -340,6 +344,44 @@ defmodule Argus.Analyses.ShutdownTest do
 
       assert named?(mods, "Shutdown.Leaks")
       refute named?(mods, "Shutdown.Traps"), "trapping means terminate/2 actually runs"
+    end
+  end
+
+  describe "only what a supervisor stop runs is cleanup it skips" do
+    test "work terminate/2 does only for a crash is not reported", ctx do
+      skip_without_souffle()
+      r = results(ctx)
+
+      refute named?(modules(r, "cleanup_never_runs"), "CrashReportOnly"),
+             ":normal, :shutdown and {:shutdown, _} return before the write"
+
+      refute named?(modules(r, "cleanup_unclear"), "CrashReportOnly")
+
+      assert [[_mod, _b, "io", api, _via]] =
+               only(r, "cleanup_never_runs", "CleansUpOnShutdownToo"),
+             ":shutdown reaches the write when only :normal returns first"
+
+      assert api =~ "write"
+    end
+
+    test "releasing what the process holds is not cleanup a shutdown loses", ctx do
+      skip_without_souffle()
+      r = results(ctx)
+
+      refute named?(modules(r, "cleanup_never_runs"), "ReleasesOwn"),
+             "the runtime drops a dead process's monitors, timers and socket itself"
+
+      refute named?(modules(r, "cleanup_unclear"), "ReleasesOwn")
+
+      apis =
+        r
+        |> only("cleanup_never_runs", "ReleasesAndWrites")
+        |> Enum.map(fn [_mod, _b, _category, api, _via] -> api end)
+        |> Enum.sort()
+
+      assert [ets, file] = apis
+      assert ets =~ ":ets.insert"
+      assert file =~ "File.write!"
     end
   end
 

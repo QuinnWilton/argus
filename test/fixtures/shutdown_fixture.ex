@@ -154,6 +154,87 @@ defmodule Argus.Test.Fixtures.Shutdown do
     end
   end
 
+  defmodule CrashReportOnly do
+    @moduledoc """
+    terminate/2 writes only for a crash: every reason a stop passes
+    (`:normal`, `:shutdown`, `{:shutdown, _}`) returns first, as
+    elixir-ls's servers do. A supervisor shutdown skipping terminate/2
+    loses nothing it would have done.
+    """
+    @behaviour GenServer
+
+    @impl GenServer
+    def init(_), do: {:ok, %{path: "/tmp/crash_report"}}
+
+    @impl GenServer
+    def terminate(reason, state) do
+      case reason do
+        :normal -> :ok
+        :shutdown -> :ok
+        {:shutdown, _} -> :ok
+        _crash -> File.write!(state.path, inspect(reason))
+      end
+    end
+  end
+
+  defmodule CleansUpOnShutdownToo do
+    @moduledoc """
+    The twin of CrashReportOnly whose write :shutdown does reach: only
+    `:normal` returns first. A supervisor shutdown skips it: the bug.
+    """
+    @behaviour GenServer
+
+    @impl GenServer
+    def init(_), do: {:ok, %{path: "/tmp/on_shutdown"}}
+
+    @impl GenServer
+    def terminate(reason, state) do
+      case reason do
+        :normal -> :ok
+        _other -> File.write!(state.path, "final")
+      end
+    end
+  end
+
+  defmodule ReleasesOwn do
+    @moduledoc """
+    Releases only what the process holds: a monitor, a timer, its socket.
+    The runtime releases each when the process exits, trapping or not.
+    """
+    @behaviour GenServer
+
+    @impl GenServer
+    def init(_), do: {:ok, %{}}
+
+    @impl GenServer
+    def terminate(_reason, state) do
+      Process.demonitor(state.ref, [:flush])
+      Process.cancel_timer(state.timer)
+      :gen_tcp.close(state.socket)
+      :ok
+    end
+  end
+
+  defmodule ReleasesAndWrites do
+    @moduledoc """
+    The same releases beside a write and a shared-table insert: two
+    cleanups a shutdown skips, one finding with both.
+    """
+    @behaviour GenServer
+
+    @impl GenServer
+    def init(_), do: {:ok, %{}}
+
+    @impl GenServer
+    def terminate(_reason, state) do
+      Process.demonitor(state.ref, [:flush])
+      :gen_tcp.close(state.socket)
+      File.write!(state.path, "final")
+      :ets.insert(:shutdown_ledger, {self(), :stopped})
+      :ok
+    end
+  end
+
   defmodule CleansUpElsewhere do
     @moduledoc "Cleanup outside terminate/2 is not this analysis's business."
     @behaviour GenServer

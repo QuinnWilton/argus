@@ -27,14 +27,32 @@ traps_exits(mod) :- trap_exit(_, mod).
 // lease, or tells another system it is going away loses something real.
 // Reads are excluded for the same reason they are excluded from
 // transaction safety: there is nothing there to lose. The categories are
-// the effect model's durable ones (effects.dl).
+// the effect model's durable ones (effects.dl). Releasing what the
+// process holds — a monitor, a link, a timer, its own socket, port or
+// file (released_at_exit) — is not among them: the runtime releases each
+// when the process exits, however it exits.
+//
+// Only what terminate/2 does when a supervisor stops the process counts.
+// terminate/2 may choose its work by the reason, and the stop passes
+// :shutdown: work in a clause for other reasons (`terminate(:normal,
+// s)`), or on a branch :shutdown does not take (the crash report
+// elixir-ls's servers write for every reason but :normal and :shutdown),
+// was never meant for that stop, and skipping terminate/2 there loses
+// nothing (skipped_on_shutdown). A call made in terminate/2 counts when
+// it runs for :shutdown; a helper, when some call that does leads to it.
+// An edge with no call instruction (a closure built there, a function
+// reference) has no site the reason test places, and runs.
+.decl runs_on_shutdown(terminate: symbol, callee: symbol)
 
-.decl cleanup_in_terminate(mod: symbol, behaviour: symbol, category: symbol, api: symbol, via: symbol)
+runs_on_shutdown(t, g) :-
+  terminate_callback(t, _, _),
+  call_instr(t, g, id),
+  !skipped_on_shutdown(id, t).
 
-cleanup_in_terminate(mod, behaviour, category, api, func) :-
-  terminate_callback(func, mod, behaviour),
-  impure_call(_, func, api, category, "write"),
-  durable_effect(category).
+runs_on_shutdown(t, g) :-
+  terminate_callback(t, _, _),
+  call_edge(t, g),
+  !call_instr(t, g, _).
 
 // Bounded, not the full `call_reachable` closure.
 //
@@ -48,17 +66,36 @@ cleanup_in_terminate(mod, behaviour, category, api, func) :-
 // dispatch precedence was fixed for.
 //
 // Three hops covers terminate -> your cleanup function -> the API it calls,
-// which is the shape real cleanup has.
+// which is the shape real cleanup has: the first is runs_on_shutdown, the
+// walk takes the other two.
 .init terminate_reach = ForwardBoundedCallReach
 
-terminate_reach.root(func, func) :- terminate_callback(func, _, _).
-terminate_reach.limit(3).
+terminate_reach.root(t, g) :- runs_on_shutdown(t, g).
+terminate_reach.limit(2).
+
+// Each cleanup call, where it is: `site` in `via`, terminate/2 itself or a
+// function it reaches.
+.decl cleanup_call(mod: symbol, behaviour: symbol, category: symbol, api: symbol, via: symbol, site: symbol)
+
+cleanup_call(mod, behaviour, category, api, t, id) :-
+  terminate_callback(t, mod, behaviour),
+  impure_call(id, t, api, category, "write"),
+  !skipped_on_shutdown(id, t),
+  durable_effect(category),
+  !released_at_exit(api).
+
+cleanup_call(mod, behaviour, category, api, via, id) :-
+  terminate_callback(t, mod, behaviour),
+  terminate_reach.reaches(t, via, _),
+  via != t,
+  impure_call(id, via, api, category, "write"),
+  durable_effect(category),
+  !released_at_exit(api).
+
+.decl cleanup_in_terminate(mod: symbol, behaviour: symbol, category: symbol, api: symbol, via: symbol)
 
 cleanup_in_terminate(mod, behaviour, category, api, via) :-
-  terminate_callback(func, mod, behaviour),
-  terminate_reach.reaches(func, via, _),
-  impure_call(_, via, api, category, "write"),
-  durable_effect(category).
+  cleanup_call(mod, behaviour, category, api, via, _).
 
 // ── Findings ─────────────────────────────────────────────────────
 //
@@ -66,8 +103,9 @@ cleanup_in_terminate(mod, behaviour, category, api, via) :-
 // with it: "never_runs" (durable cleanup, and the process does not trap
 // exits, so a supervisor shutdown skips terminate/2 entirely), "unclear"
 // (work the effect model cannot classify, skipped the same way; category
-// is empty and one row per module), "truncated" (the module traps, but
-// the cleanup has no bound of its own inside the shutdown timeout).
+// is empty), "truncated" (the module traps, but the cleanup has no bound
+// of its own inside the shutdown timeout). One finding per module and
+// kind: the rows name one cleanup, and cleanup_site every call of it.
 .decl cleanup_defect(mod: symbol, behaviour: symbol, kind: symbol, category: symbol, api: symbol, via: symbol)
 .output cleanup_defect
 
@@ -84,16 +122,18 @@ cleanup_defect(mod, behaviour, "never_runs", category, api, via) :-
 // a supervisor shutdown will skip it. That is still the useful half of the
 // question: releasing a lease, closing a session and flushing a buffer all
 // look like an ordinary call to your own module.
-.decl unclassified_cleanup(mod: symbol, behaviour: symbol, api: symbol, via: symbol)
+.decl unclassified_cleanup(mod: symbol, behaviour: symbol, api: symbol, via: symbol, site: symbol)
 
-unclassified_cleanup(mod, behaviour, api, func) :-
-  terminate_callback(func, mod, behaviour),
-  unknown_call(_, func, api, _callee).
+unclassified_cleanup(mod, behaviour, api, t, id) :-
+  terminate_callback(t, mod, behaviour),
+  unknown_call(id, t, api, _callee),
+  !skipped_on_shutdown(id, t).
 
-unclassified_cleanup(mod, behaviour, api, via) :-
-  terminate_callback(func, mod, behaviour),
-  terminate_reach.reaches(func, via, _),
-  unknown_call(_, via, api, _callee),
+unclassified_cleanup(mod, behaviour, api, via, id) :-
+  terminate_callback(t, mod, behaviour),
+  terminate_reach.reaches(t, via, _),
+  via != t,
+  unknown_call(id, via, api, _callee),
   !structural_call(api).
 
 // Building a struct or a message is not cleanup (structural_call, in
@@ -101,12 +141,15 @@ unclassified_cleanup(mod, behaviour, api, via) :-
 // inside an exception constructor. A soundness choice made for one
 // contract should not become noise in another.
 
-// One row per unclassified call; the finding builders keep one per
-// module (the relation's key says so for this kind).
-cleanup_defect(mod, behaviour, "unclear", "", api, via) :-
-  unclassified_cleanup(mod, behaviour, api, via),
+.decl unclear_cleanup(mod: symbol, behaviour: symbol, api: symbol, via: symbol, site: symbol)
+
+unclear_cleanup(mod, behaviour, api, via, id) :-
+  unclassified_cleanup(mod, behaviour, api, via, id),
   !traps_exits(mod),
   !cleanup_in_terminate(mod, _, _, _, _).
+
+cleanup_defect(mod, behaviour, "unclear", "", api, via) :-
+  unclear_cleanup(mod, behaviour, api, via, _).
 
 // Slow work inside terminate, for a module that DOES trap exits — so the
 // callback is reached, but may not finish. Network and port calls are the
@@ -114,6 +157,23 @@ cleanup_defect(mod, behaviour, "unclear", "", api, via) :-
 
 cleanup_defect(mod, behaviour, "truncated", category, api, via) :-
   cleanup_in_terminate(mod, behaviour, category, api, via),
+  traps_exits(mod),
+  slow_effect(category).
+
+// Every call a cleanup_defect finding is about, where it is: the frames
+// of the module's finding of that kind.
+.decl cleanup_site(mod: symbol, kind: symbol, api: symbol, via: symbol, site: symbol)
+.output cleanup_site
+
+cleanup_site(mod, "never_runs", api, via, id) :-
+  cleanup_call(mod, _, _, api, via, id),
+  !traps_exits(mod).
+
+cleanup_site(mod, "unclear", api, via, id) :-
+  unclear_cleanup(mod, _, api, via, id).
+
+cleanup_site(mod, "truncated", api, via, id) :-
+  cleanup_call(mod, _, category, api, via, id),
   traps_exits(mod),
   slow_effect(category).
 
@@ -460,9 +520,15 @@ supervisor_site_or_empty(sup, "") :- dynamic_child(sup, _, _), !supervisor_site(
 
 terminate_stops_children(mod) :-
   terminate_callback(func, mod, _),
-  (via = func ; terminate_reach.reaches(func, via, _)),
+  (via = func ; teardown_reach.reaches(func, via, _)),
   sup_management_call(_, via, _, op, _),
   stopping_sup_op(op).
+
+// What terminate/2 reaches within three calls, whatever its reason.
+.init teardown_reach = ForwardBoundedCallReach
+
+teardown_reach.root(func, func) :- terminate_callback(func, _, _).
+teardown_reach.limit(3).
 
 // A tree's members by module, and by the registered name a child spec
 // gave them (`{DynamicSupervisor, name: Pool}` is a child named Pool).
