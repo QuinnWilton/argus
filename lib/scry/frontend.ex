@@ -29,9 +29,9 @@ defmodule Scry.Frontend do
     (`Scry.Fingerprint.argus_code/1`): what the findings are built by,
     and what a program calling argus reads specs from.
   - `:rules_digest` input — analysis (or `:stage0`) `=>` a digest of
-    the Datalog it runs (`Scry.Fingerprint.rules/1`); a rule edit
-    re-solves the analyses whose programs it touched and re-extracts
-    nothing.
+    the Datalog it runs, as its solve loads it
+    (`Scry.Fingerprint.rules/2`); a rule edit re-solves the analyses
+    whose programs it touched and re-extracts nothing.
   - `:module_beam` query — beam bytes, read from disk. The read itself is
     untracked; the tracked signal is the `:beam_meta` value, and roux's
     early cutoff backdates downstream work when re-read bytes compare

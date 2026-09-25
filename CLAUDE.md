@@ -73,13 +73,22 @@ Two layers over one `Roux.Database`:
      are kept in the store's `ebins/` under the same stamp as the
      dependencies' (`Argus.Specs.ebin_digests/2`): a warm run stats
      argus's beams instead of reading them.
-   - `rules_digest` per analysis — the `.dl` and its transitive
-     includes, plus the souffle version — read by
+   - `rules_digest` per analysis — the program as a solve of it loads it
+     (`Argus.Souffle.Cache.declared_digest/2` over
+     `Argus.Souffle.input_relations/2`: the `.dl` and its transitive
+     includes, but of a generated declarations file only the
+     declarations of the relations the program loads), plus the
+     solver's version (`Argus.Souffle.Cache.version/2`) — read by
      `analysis_input_relations`, `stage0_facts`, `points_to_facts` and
      `souffle_solve`, so a rule edit re-solves exactly the analyses it
-     touched and re-extracts nothing. How argus runs Souffle and reads
-     its output is keyed the way argus keys its own solves: by program
-     and solver, not by argus's code (after changing that, `--force`).
+     touched and re-extracts nothing, and a schema edit re-solves only
+     the programs that load a relation whose declaration it changed.
+     The loaded relations and the solver's version are kept in the
+     store's `programs/` (the version under a stamp of the solver's
+     binary; `--force` drops it): a warm run starts no solver. How argus
+     runs Souffle and reads its output is keyed the way argus keys its
+     own solves: by program and solver, not by argus's code (after
+     changing that, `--force`).
 
    Extraction runs `Argus.Pipeline.extract_shards/3` over every producer
    and joins their rows (sorted per relation, as `extract/2` would give

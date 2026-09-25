@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- A solve is keyed on its program as the solve loads it
+  (`Argus.Souffle.Cache.declared_digest/2`, as argus keys its own
+  solves): of argus's generated declaration files, only the
+  declarations of the relations the program loads count, and no
+  comment does. A relation added to argus's schema, a version bump or
+  an edit to a relation's prose re-solves nothing; a changed
+  declaration re-solves the programs that load it. Every schema edit
+  re-solved every analysis. `Scry.Fingerprint.program_digest/2` is
+  that digest; a program with a file missing digests as unreadable.
+  The solver is named by its whole `--version` answer, as argus names
+  it; `Scry.Fingerprint.souffle_version/0` is deprecated.
+- A warm run starts no solver. The relations each program loads and
+  the solver's `--version` answer are kept in the store's `programs/`
+  (the answer under a stamp of the solver's binary:
+  `Argus.Souffle.Cache.version/2`), where every run asked the solver
+  its version (40–66 ms of a warm run on a 350-module project). A
+  script on `PATH` — a version manager's shim — is asked every run.
+  `--force` drops `programs/`; `Scry.Fingerprint.rules/2` takes
+  `cache:` and `refresh:`.
 - argus's own beams are digested for `:argus_code` as the dependencies'
   are for the environment: kept in the store's `ebins/` under a stamp
   of their stats (`Argus.Specs.ebin_digests/2`), so a warm run stats

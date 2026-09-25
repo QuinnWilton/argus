@@ -67,8 +67,11 @@ defmodule Scry.Runner do
   keeps what outlives a VM for this project: each dependency ebin's
   beam hashes and argus's own (`ebins/`), which the fingerprints would
   otherwise read every beam for (`Scry.Fingerprint.env/2`,
-  `Scry.Fingerprint.argus_code/1`). Shared by `mix compile.scry` and
-  `mix scry`, and removed with the manifest.
+  `Scry.Fingerprint.argus_code/1`), and the relations each Datalog
+  program loads with the solver's version (`programs/`,
+  `Scry.Fingerprint.rules/2`), which a warm run would otherwise start
+  the solver for. Shared by `mix compile.scry` and `mix scry`, and
+  removed with the manifest.
   """
   @spec cache_dir() :: String.t()
   def cache_dir, do: Path.join(Mix.Project.manifest_path(), "compile.scry.cache")
@@ -81,10 +84,11 @@ defmodule Scry.Runner do
   - `:manifest` (required) — the manifest path for cross-run
     incrementality.
   - `:force` — skip the warm start and recompute everything (default
-    `false`); the store's dependency hashes are dropped and kept again.
+    `false`); what the store keeps under a stamp (the beam hashes, the
+    solver's version) is dropped and kept again.
   - `:cache` — the store argus keeps across runs (`cache_dir/0`), or
     nil (the default) for none: every run then hashes every dependency
-    and argus beam again.
+    and argus beam again, and asks the solver.
   """
   @spec run(Scry.Config.t(), keyword()) :: Result.t()
   def run(%Scry.Config{} = config, opts) do
@@ -208,7 +212,7 @@ defmodule Scry.Runner do
     :ok = Input.set(db, :project_root, :all, File.cwd!())
 
     # Only solves read the rules, and none is demanded without a solver.
-    rules_changed? = souffle? and set_rules(db, config.analyses)
+    rules_changed? = souffle? and set_rules(db, config.analyses, env_opts)
 
     # An analysis with no memo from the last run — first demanded, or
     # degraded then and so never persisted — solves this run even when
@@ -337,11 +341,11 @@ defmodule Scry.Runner do
   defp closure([key | rest], dependents, seen),
     do: closure(Map.get(dependents, key, []) ++ rest, dependents, Map.put(seen, key, true))
 
-  # Sets each demanded analysis's rules digest (and stage 0's); true when
-  # any moved.
-  defp set_rules(db, analyses) do
+  # Sets each demanded analysis's rules digest (and the stages'); true
+  # when any moved.
+  defp set_rules(db, analyses, opts) do
     analyses
-    |> Scry.Fingerprint.rules()
+    |> Scry.Fingerprint.rules(Keyword.take(opts, [:cache, :refresh]))
     |> Enum.reduce(false, fn {key, digest}, changed? ->
       set(db, :rules_digest, key, digest) or changed?
     end)

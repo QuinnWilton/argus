@@ -42,52 +42,99 @@ defmodule Scry.FingerprintTest do
     end)
   end
 
-  describe "souffle_version/0" do
-    setup do
-      %{peer: Peer.start!()}
+  # `fun` in a fresh VM — one that has asked no solver, as a run starts —
+  # with `dir` first on its PATH.
+  defp fresh_with_path(dir, fun) do
+    peer = Peer.start!()
+
+    try do
+      with_path(peer, dir, fun)
+    after
+      :peer.stop(peer)
     end
+  end
 
-    test "records the solver's version, not the banner's rule", %{tmp_dir: dir, peer: peer} do
+  describe "rules/2" do
+    test "moves when the solver's version or word size does", %{tmp_dir: dir} do
       fake_souffle!(dir, "2.5")
-
-      assert with_path(peer, dir, fn -> Scry.Fingerprint.souffle_version() end) ==
-               "2.5 (64-bit words)"
-    end
-
-    test "moves when the version or the word size does", %{tmp_dir: dir, peer: peer} do
-      fake_souffle!(dir, "2.5")
-      old = with_path(peer, dir, fn -> Scry.Fingerprint.rules([:mailbox]) end)
+      old = fresh_with_path(dir, fn -> Scry.Fingerprint.rules([:mailbox]) end)
 
       fake_souffle!(dir, "2.6")
-      new = with_path(peer, dir, fn -> Scry.Fingerprint.rules([:mailbox]) end)
+      new = fresh_with_path(dir, fn -> Scry.Fingerprint.rules([:mailbox]) end)
       assert old.mailbox != new.mailbox
       assert old.stage0 != new.stage0
 
       fake_souffle!(dir, "2.6", 32)
-      assert with_path(peer, dir, fn -> Scry.Fingerprint.rules([:mailbox]) end) != new
+      assert fresh_with_path(dir, fn -> Scry.Fingerprint.rules([:mailbox]) end) != new
+    end
+
+    @tag :souffle
+    test "keeps what each program loads, and the solver's version, in the store", %{
+      tmp_dir: dir
+    } do
+      store = Path.join(dir, "store")
+      programs = Path.join(store, "programs")
+      peer = Peer.start!()
+
+      {kept, bare} =
+        Peer.run(peer, fn ->
+          {Scry.Fingerprint.rules([:mailbox], cache: store), Scry.Fingerprint.rules([:mailbox])}
+        end)
+
+      assert kept == bare
+
+      names = File.ls!(programs)
+
+      for program <- ~w(mailbox stage0 points_to),
+          do: assert(Enum.any?(names, &String.starts_with?(&1, program <> "-")))
+
+      # --force asks again: a stamp names the solver's file, not what it
+      # runs.
+      planted = Path.join(programs, "planted-" <> String.duplicate("0", 64))
+      File.write!(planted, "")
+
+      assert Peer.run(peer, fn ->
+               Scry.Fingerprint.rules([:mailbox], cache: store, refresh: true)
+             end) == bare
+
+      refute File.exists?(planted)
+    end
+  end
+
+  describe "souffle_version/0 (deprecated)" do
+    setup do
+      %{peer: Peer.start!()}
+    end
+
+    # Deprecated: called through apply so the suite compiles clean.
+    defp souffle_version, do: apply(Scry.Fingerprint, :souffle_version, [])
+
+    test "records the solver's version, not the banner's rule", %{tmp_dir: dir, peer: peer} do
+      fake_souffle!(dir, "2.5")
+      assert with_path(peer, dir, &souffle_version/0) == "2.5 (64-bit words)"
     end
 
     test "fingerprints an unfamiliar banner whole", %{tmp_dir: dir, peer: peer} do
       path = Path.join(dir, "souffle")
       File.write!(path, "#!/bin/sh\necho 'souffle nightly abc123'\n")
       File.chmod!(path, 0o755)
-      nightly = with_path(peer, dir, fn -> Scry.Fingerprint.souffle_version() end)
+      nightly = with_path(peer, dir, &souffle_version/0)
 
       File.write!(path, "#!/bin/sh\necho 'souffle nightly def456'\n")
       assert nightly =~ "unrecognized:"
-      assert with_path(peer, dir, fn -> Scry.Fingerprint.souffle_version() end) != nightly
+      assert with_path(peer, dir, &souffle_version/0) != nightly
     end
 
     test "is unknown without a solver", %{tmp_dir: dir, peer: peer} do
       # PATH narrowed to a directory with no souffle in it.
       Peer.run(peer, fn ->
         System.put_env("PATH", dir)
-        assert Scry.Fingerprint.souffle_version() == "unknown"
+        assert souffle_version() == "unknown"
       end)
     end
   end
 
-  describe "program_digest/1" do
+  describe "program_digest/2" do
     # analyses/a.dl → ../lib/shared.dl → deep.dl; analyses/b.dl stands
     # alone; lib/unrelated.dl is included by nothing.
     defp rules_tree!(dir) do
@@ -96,17 +143,17 @@ defmodule Scry.FingerprintTest do
 
       File.write!(
         Path.join(dir, "analyses/a.dl"),
-        ~s(.include "../lib/shared.dl"\n.decl a\(x: symbol\)\n)
+        ~s(.include "../lib/shared.dl"\n.decl a\(x: symbol\)\n.output a\na\(x\) :- s\(x\).\n)
       )
 
-      File.write!(Path.join(dir, "analyses/b.dl"), ".decl b(x: symbol)\n")
+      File.write!(Path.join(dir, "analyses/b.dl"), ".decl b(x: symbol)\n.output b\nb(\"b\").\n")
 
       File.write!(
         Path.join(dir, "lib/shared.dl"),
-        ~s(  .include "deep.dl"\n.decl s\(x: symbol\)\n)
+        ~s(  .include "deep.dl"\n.decl s\(x: symbol\)\ns\(x\) :- d\(x\).\n)
       )
 
-      File.write!(Path.join(dir, "lib/deep.dl"), ".decl d(x: symbol)\n")
+      File.write!(Path.join(dir, "lib/deep.dl"), ".decl d(x: symbol)\nd(\"d\").\n")
       File.write!(Path.join(dir, "lib/unrelated.dl"), ".decl u(x: symbol)\n")
     end
 
@@ -119,7 +166,7 @@ defmodule Scry.FingerprintTest do
       rules_tree!(dir)
       {a, b} = digests(dir)
 
-      File.write!(Path.join(dir, "lib/deep.dl"), ".decl d(x: symbol, y: symbol)\n")
+      File.write!(Path.join(dir, "lib/deep.dl"), ".decl d(x: symbol)\nd(\"e\").\n")
       {a2, b2} = digests(dir)
       assert a2 != a
       assert b2 == b
@@ -133,8 +180,114 @@ defmodule Scry.FingerprintTest do
       File.rm!(Path.join(dir, "lib/deep.dl"))
       {missing, _} = digests(dir)
 
-      File.write!(Path.join(dir, "lib/deep.dl"), "")
+      File.write!(Path.join(dir, "lib/deep.dl"), ".decl d(x: symbol)\n")
       assert elem(digests(dir), 0) != missing
+    end
+
+    @tag :souffle
+    test "counts a file of declarations by the ones the program loads", %{tmp_dir: dir} do
+      # As `mix argus.gen.dl` writes one: declarations and comments alone.
+      decls = Path.join(dir, "decls.dl")
+
+      File.write!(decls, """
+      // Read by the program.
+      .decl edge(x: symbol, y: symbol)
+      .input edge
+      // Declared, never read.
+      .decl unread(x: symbol)
+      .input unread
+      """)
+
+      program = Path.join(dir, "p.dl")
+
+      File.write!(program, """
+      .include "decls.dl"
+      .decl path(x: symbol, y: symbol)
+      .output path
+      path(x, y) :- edge(x, y).
+      """)
+
+      digest = Scry.Fingerprint.program_digest(program)
+
+      edit = fn from, to ->
+        File.write!(decls, String.replace(File.read!(decls), from, to))
+        Scry.Fingerprint.program_digest(program)
+      end
+
+      # A relation added, one the program does not load changed, prose:
+      # Souffle prunes them before it loads anything.
+      assert edit.(".input unread\n", ".input unread\n.decl added(y: number)\n.input added\n") ==
+               digest
+
+      assert edit.("unread(x: symbol)", "unread(renamed: number)") == digest
+      assert edit.("// Read by the program.", "// Read by the program, reworded.") == digest
+
+      # A loaded relation's declaration moves it.
+      refute edit.("edge(x: symbol, y: symbol)", "edge(from: symbol, y: symbol)") == digest
+    end
+
+    @tag :souffle
+    test "over argus's programs, a relation added moves none; a field renamed, its loaders", %{
+      tmp_dir: dir
+    } do
+      File.cp_r!(Path.join(to_string(:code.priv_dir(:panoptes)), "dl"), Path.join(dir, "dl"))
+      layer2 = Path.join(dir, "dl/layer2.dl")
+
+      programs =
+        [Path.join(dir, "dl/stage0.dl"), Path.join(dir, "dl/points_to.dl")] ++
+          Path.wildcard(Path.join(dir, "dl/analyses/*.dl"))
+
+      digests = fn ->
+        programs
+        |> Task.async_stream(&{&1, Scry.Fingerprint.program_digest(&1)}, timeout: :infinity)
+        |> Map.new(fn {:ok, entry} -> entry end)
+      end
+
+      loads =
+        Map.new(programs, fn program ->
+          {:ok, relations} = Argus.Souffle.input_relations(program)
+          {program, relations}
+        end)
+
+      before = digests.()
+
+      # As `mix argus.gen.dl` writes a relation the schema gained.
+      File.write!(
+        layer2,
+        File.read!(layer2) <>
+          "\n// Read by nothing.\n.decl scry_probe(module: symbol)\n.input scry_probe\n"
+      )
+
+      assert digests.() == before
+
+      # A layer-2 relation some programs load and others do not, its
+      # first field renamed.
+      [_ | _] = counts = for {_program, relations} <- loads, relation <- relations, do: relation
+
+      relation =
+        counts
+        |> Enum.frequencies()
+        |> Enum.filter(fn {relation, n} ->
+          n < length(programs) and File.read!(layer2) =~ ".decl #{relation}("
+        end)
+        |> Enum.min()
+        |> elem(0)
+
+      File.write!(
+        layer2,
+        Regex.replace(
+          ~r/^\.decl #{relation}\((\w+):/m,
+          File.read!(layer2),
+          ".decl #{relation}(\\1_renamed:"
+        )
+      )
+
+      moved = digests.()
+      loaders = for {program, relations} <- loads, relation in relations, do: program
+      assert loaders != []
+
+      assert Enum.sort(for {program, digest} <- moved, digest != before[program], do: program) ==
+               Enum.sort(loaders)
     end
 
     test "the shipped programs digest, and differ per analysis" do

@@ -30,14 +30,18 @@ defmodule Scry.Fingerprint do
     their identity rules), and where a program that calls argus has its
     specs read from. Rebuilding the findings is cheap, so any argus edit
     does.
-  - `:rules_digest` (`rules/1`) — per analysis (and `:stage0`,
-    `:points_to`), the Datalog it runs: its rules file and everything
-    that file `.include`s, transitively, plus the solver's version. A
-    rule edit moves only the digests of the analyses whose programs
-    contain the edited file, so exactly those re-solve, and nothing is
-    re-extracted. How argus runs the solver and reads its output back
-    is keyed the way argus's own solve store keys it: by the program
-    and the solver, not by argus's code.
+  - `:rules_digest` (`rules/2`) — per analysis (and `:stage0`,
+    `:points_to`), the Datalog it runs as its solve loads it: its rules
+    file and everything that file `.include`s, transitively, but of
+    argus's generated declaration files only the declarations of the
+    relations the program loads (`program_digest/2`), plus the solver's
+    version. A rule edit moves only the digests of the analyses whose
+    programs contain the edited file, and a schema edit only those of
+    the programs that load a relation whose declaration it changed, so
+    exactly those re-solve, and nothing is re-extracted. How argus runs
+    the solver and reads its output back is keyed the way argus's own
+    solve store keys it: by the program and the solver, not by argus's
+    code.
 
   Anything else that changes an extraction or a solve without changing
   a beam must move a value here, or a warm manifest serves results the
@@ -243,13 +247,31 @@ defmodule Scry.Fingerprint do
   @doc """
   The rules digest of each of `analyses`, and of `:stage0` and
   `:points_to` (the shared call graph and process points-to programs
-  the solves read). Each covers the analysis's
-  rules file, every file it includes, transitively, and the solver's
-  version (`souffle_version/0`).
+  the solves read): the solver's version
+  (`Argus.Souffle.Cache.version/2`) and the program as a solve of it
+  loads it (`program_digest/2`). Keyed as argus keys a solve, less the
+  facts: a rule edit moves the programs that include the edited file,
+  a schema edit the programs that load a relation whose declaration it
+  changed, and a relation added to the schema, a version bump or an
+  edit to a relation's prose moves none.
+
+  ## Options
+
+    * `:cache` — the store (`Argus.Cache`'s layout) whose `programs/`
+      keeps what each program loads, as Souffle resolves it, and the
+      solver's version under a stamp of its binary, so a warm run asks
+      the solver nothing; nil, or stores turned off with
+      `ARGUS_NO_CACHE`, asks it once per VM.
+    * `:refresh` — drop what `programs/` kept first (`--force`), so the
+      solver is asked again: a stamp names the binary's file, not what
+      it runs.
   """
-  @spec rules([atom()]) :: %{optional(rules_key()) => String.t()}
-  def rules(analyses) do
-    souffle = souffle_version()
+  @spec rules([atom()], keyword()) :: %{optional(rules_key()) => String.t()}
+  def rules(analyses, opts \\ []) do
+    bin = Argus.Souffle.executable()
+    programs = programs_store(opts)
+    solver = if bin, do: Argus.Souffle.Cache.version(bin, programs), else: "unknown"
+    program_opts = [souffle_bin: bin, programs: programs]
 
     programs =
       [
@@ -258,57 +280,56 @@ defmodule Scry.Fingerprint do
       ] ++
         for analysis <- analyses, {:ok, path} <- [rules_path(analysis)], do: {analysis, path}
 
-    Map.new(programs, fn {key, path} -> {key, digest({souffle, program_digest(path)})} end)
+    Map.new(programs, fn {key, path} ->
+      {key, digest({solver, program_digest(path, program_opts)})}
+    end)
+  end
+
+  # The store's `programs/`, emptied first on a refresh; nil for none.
+  defp programs_store(opts) do
+    case Argus.Cache.store(cache: Keyword.get(opts, :cache)) do
+      nil ->
+        nil
+
+      store ->
+        programs = Argus.Cache.dir(store, :programs)
+        if Keyword.get(opts, :refresh, false), do: File.rm_rf(programs)
+        programs
+    end
   end
 
   @doc """
-  A digest of the Datalog program rooted at `path`: the file and every
-  file it `.include`s, transitively, by path relative to the root's
-  directory and content. A missing include is part of the digest as
-  missing, so creating it moves the value.
+  A digest of the Datalog program rooted at `path` as a solve of it
+  loads it (`Argus.Souffle.Cache.declared_digest/2`): the file and every
+  file it `.include`s, transitively, by the name the program spells and
+  content — except that a file of declarations alone (argus's generated
+  `base.dl`, `layer2.dl`, `priors.dl`) counts only by the declarations
+  of the relations the program loads (`Argus.Souffle.input_relations/2`),
+  and not by its comments. Souffle prunes every other input before it
+  loads anything. When what the program loads cannot be resolved (no
+  solver, or a program the solver rejects), every declaration counts;
+  a program with a file missing digests as unreadable, and moves when
+  the file appears.
+
+  Options: `:souffle_bin` (the solver to resolve the loaded relations
+  with, found on `PATH` by default) and `:programs` (a store's
+  `programs/`, where they are kept across VMs).
   """
-  @spec program_digest(Path.t()) :: String.t()
-  def program_digest(path) do
-    path = Path.expand(path)
-    base = Path.dirname(path)
+  @spec program_digest(Path.t(), keyword()) :: String.t()
+  def program_digest(path, opts \\ []) do
+    relations =
+      case Argus.Souffle.input_relations(path, Keyword.take(opts, [:souffle_bin, :programs])) do
+        {:ok, relations} -> relations
+        {:error, _} -> :all
+      end
 
     path
-    |> include_closure(MapSet.new())
-    |> Enum.sort()
-    |> Enum.map(fn file ->
-      content =
-        case File.read(file) do
-          {:ok, content} -> {:ok, content}
-          {:error, _} -> :missing
-        end
-
-      {Path.relative_to(file, base), content}
-    end)
-    |> digest()
-  end
-
-  # Souffle resolves an include against the including file's directory.
-  # A commented-out include is still followed: an extra file in the
-  # digest costs a spurious re-solve at worst, a missed one a stale
-  # result.
-  defp include_closure(file, seen) do
-    if MapSet.member?(seen, file) do
-      seen
-    else
-      seen = MapSet.put(seen, file)
-
-      case File.read(file) do
-        {:ok, content} ->
-          ~r/^\s*(?:\/\/\s*)?\.include\s+"([^"]+)"/m
-          |> Regex.scan(content, capture: :all_but_first)
-          |> Enum.reduce(seen, fn [include], seen ->
-            include_closure(Path.expand(include, Path.dirname(file)), seen)
-          end)
-
-        {:error, _} ->
-          seen
-      end
-    end
+    |> Argus.Souffle.Cache.declared_digest(relations)
+    |> Base.encode16(case: :lower)
+  rescue
+    # A file of the program is missing: no solve of it can run, and the
+    # digest moves when the file appears.
+    error in File.Error -> digest({:unreadable, Path.relative_to(error.path, Path.dirname(path))})
   end
 
   defp rules_path(analysis) do
@@ -372,6 +393,7 @@ defmodule Scry.Fingerprint do
   The version of the `souffle` on `PATH`, with its word size
   (`"2.5 (64-bit words)"`), or `"unknown"` when it cannot be run.
   """
+  @deprecated "The rules digest names the solver by Argus.Souffle.Cache.version/2"
   @spec souffle_version() :: String.t()
   def souffle_version do
     case System.cmd("souffle", ["--version"], stderr_to_stdout: true) do

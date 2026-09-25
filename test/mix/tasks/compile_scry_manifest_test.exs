@@ -226,7 +226,7 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
     end)
   end
 
-  test "argus keeps the dependencies' hashes beside the manifest; --force drops them", %{
+  test "argus keeps hashes and programs beside the manifest; --force drops them", %{
     copy: copy
   } do
     Fixture.checkout!(copy, @quick, :depot_quick)
@@ -245,11 +245,19 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
       stale = Path.join(ebins, "stale-" <> String.duplicate("0", 64))
       File.write!(stale, "")
 
+      # And what each program loads, which a warm run would start the
+      # solver to ask.
+      programs = Path.join(Scry.Runner.cache_dir(), "programs")
+      assert Enum.any?(File.ls!(programs), &String.starts_with?(&1, "stage0-"))
+      asked = Path.join(programs, "asked-" <> String.duplicate("0", 64))
+      File.write!(asked, "")
+
       {{status, _diagnostics}, _stderr} =
         with_io(:stderr, fn -> Mix.Task.rerun("compile.scry", ["--force"]) end)
 
       assert status in [:ok, :noop]
       refute File.exists?(stale)
+      refute File.exists?(asked)
 
       Mix.Tasks.Compile.Scry.clean()
       refute File.exists?(Scry.Runner.cache_dir())
