@@ -25,8 +25,12 @@ defmodule Scry.AnalysisRelatedTest do
     source = file |> File.read!() |> String.split("\n")
 
     # Shop.checkout/1 sends :checked_out to the Audit loop, whose receive
-    # takes only :paid.
-    assert [finding] = Enum.filter(entries, &(&1.title =~ ":checked_out"))
+    # takes only :paid. Titles carry no instance values (argus 1721917),
+    # so the fixture's three unreceived messages share one title: the
+    # anchor's label names the message.
+    assert [finding] = Enum.filter(entries, &(&1.at_label == ":checked_out is sent here"))
+    assert finding.title == "Message sent to a process whose receive never takes it"
+
     assert [frame] = Enum.filter(finding.related, &(&1.label =~ "receive it never matches"))
 
     # On the receive, bracketed to its last clause (`to_block: :receive`).
