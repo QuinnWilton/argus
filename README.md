@@ -56,7 +56,7 @@ remediation hint.
 
 ## Analyses
 
-Argus ships 13 analyses, one per concern (`mix scry --list` prints the
+Argus ships 14 analyses, one per concern (`mix scry --list` prints the
 same table). An analysis answers "what goes wrong"; the mechanism, the
 phase and the proximity to a request are columns on its relations, never
 separate analyses, so a defect has one owner.
@@ -111,7 +111,7 @@ The 0.17 entry of the CHANGELOG says where each one's findings went.
 ## Priors
 
 Some judgements an analysis needs are ones a reader makes from names —
-whether `totp_seed` is a secret, which the fifteen substrings `exposure`
+whether `totp_seed` is a secret, which the thirteen substrings `exposure`
 knows cannot say. `Argus.Priors` asks those of a System-One model
 (typesafe.ai's Jev) and writes the answers into the facts as a third
 layer of relations, `prior_*`, each row with the model's probability in

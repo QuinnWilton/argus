@@ -156,7 +156,7 @@ unredacted_secret(mod, field, kind, "unaware", via) :-
 // ── A secret the table cannot name ──────────────────────────────────
 //
 // `totp_seed`, `teams_key`, a `secret_first` beside a `secret_second`:
-// names a reader recognises and fifteen substrings do not. When priors
+// names a reader recognises and thirteen substrings do not. When priors
 // are on (Argus.Priors, off by default), `prior_sensitive` carries a
 // classifier's judgement of every field with its probability in
 // thousandths. A field the table already names is the table's; the

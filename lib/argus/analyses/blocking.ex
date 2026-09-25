@@ -12,7 +12,8 @@ defmodule Argus.Analyses.Blocking do
     that makes a synchronous call (the mailbox backs up invisibly), or a
     `budget` where the caller's timeout is shorter than the callee's own
     downstream budget.
-  - `call_cycle(mod_a, mod_b, witness_a, witness_b, phase)` — two modules
+  - `call_cycle(mod_a, mod_b, witness_a, witness_b, phase, site_a,
+    site_b)` — two modules
     whose processes synchronously call each other (`call`: each witness
     runs on its module's own process, reached from a callback; a wait
     made only while an unnamed process starts counts only where the
@@ -39,7 +40,7 @@ defmodule Argus.Analyses.Blocking do
     when it is `local`), or a `socket` call with no timeout (a recv, a
     connect, a TLS handshake) that a callback of `detail`, the server,
     runs on its own stack.
-  - `partial_noproc_catch(func, site, callee)` — a peer call whose catch
+  - `partial_noproc_catch(func, site, callee, call, guard_end)` — a peer call whose catch
     covers `:noproc` but not the peer stopping mid-call.
   """
 

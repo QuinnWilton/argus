@@ -17,11 +17,12 @@ defmodule Argus.Analyses.Shutdown do
     and nothing takes the `{:EXIT, ...}` message that trapping turns
     them into: `no_handler`, or `no_exit_clause` in the handle_info it
     has.
-  - `teardown_touches_sibling(mod, sibling, phase, kind, via, sup)` —
+  - `teardown_touches_sibling(mod, sibling, phase, kind, via, sup,
+    handler, site, sup_site)` —
     terminate/2 waits on a sibling that may already be gone (`terminate`,
     `call`), or a handler stops a sibling the supervisor owns (`handler`,
     `stop`).
-  - `foreign_dynamic_children(mod, sup, via)` — children started under a
+  - `foreign_dynamic_children(mod, sup, via, site, sup_site)` — children started under a
     DynamicSupervisor in another tree outlive this one.
   - `kills_monitored_child(mod, site, kill_site)` — a server terminates a
     process it still monitors, so the `:DOWN` reads as a crash.

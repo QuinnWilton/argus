@@ -20,7 +20,8 @@ defmodule Argus.Analyses.Mailbox do
   - `unconsumed_monitor(mod, func, site, kind)` — a monitor left live
     after a `timed_wait`, `never_released` by anything but the monitored
     process dying, or whose ref was `ref_discarded`.
-  - `timer_cancel_without_flush(mod, cancel, arm, key, message)` — a
+  - `timer_cancel_without_flush(mod, cancel, arm, key, message,
+    cancel_site, arm_site)` — a
     cancelled timer's message may already be queued and is not told
     apart from the next. The ref is kept under a state key, or (`key`
     empty) in a local of the one function that arms and cancels it.

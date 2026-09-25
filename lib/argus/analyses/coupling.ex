@@ -7,7 +7,7 @@ defmodule Argus.Analyses.Coupling do
   keeps a stale reference. The strategy decides who survives whom.
 
   - `sibling_dependency(sup, caller, callee, reason, detail, sup_site,
-    witness, site)` — a child depends on a sibling that a restart leaves
+    witness, site, basis, permille)` — a child depends on a sibling that a restart leaves
     stale. `reason` is `restart_isolation` (two branches of a
     `one_for_one` supervisor; `detail` is `call` when the caller waits on
     the sibling anywhere, `cast` when every path is one-way),
@@ -18,7 +18,8 @@ defmodule Argus.Analyses.Coupling do
   - `rest_for_one_orphaned_children(sup, owner, holder, ...)` — under
     `rest_for_one` a later child starts processes inside an earlier one;
     the owner's restart leaves them running.
-  - `dual_restart_authority(mod, sup, child, via)` — a process starts a
+  - `dual_restart_authority(mod, sup, child, via, start_site,
+    monitor_site, handler)` — a process starts a
     child under a DynamicSupervisor, monitors it and restarts it from its
     `:DOWN` handler while the supervisor restarts it too.
 

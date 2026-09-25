@@ -16,7 +16,7 @@ defmodule Argus.Analyses.Startup do
     `global` lock that retries (`dep` says whether it waits on the
     `cluster`, only the `local` node, or an `unknown` node list) or a
     `remote` operation on the boot path.
-  - `unbounded_effect_in_init(mod, kind, api)` — init/1, in its own
+  - `unbounded_effect_in_init(mod, kind, api, site)` — init/1, in its own
     process, reaches a socket `recv` with `:infinity`, a `receive` with no
     `after`, or a `connect` nothing in the module can retry.
   - `deferral_defect(mod, kind, site, detail)` — the `{:ok, state, 0}`
@@ -24,7 +24,7 @@ defmodule Argus.Analyses.Startup do
     catch in handle_continue that turns a deadlock into a restart loop
     (`continue_catch`). A mutual handle_continue cycle is blocking's
     `call_cycle` in the `continue` phase.
-  - `post_start_initialization(func, site, callee)` — shared state
+  - `post_start_initialization(func, site, callee, start)` — shared state
     written after `Supervisor.start_link` returned.
   - `ignored_start_result(func, callee)` — a start result discarded.
   """
