@@ -19,6 +19,7 @@
 .include "../clientlib/test_code.dl"
 .include "../clientlib/vocabulary.dl"
 .include "../clientlib/generated.dl"
+.include "../clientlib/timer_flush.dl"
 
 // ══ The outputs ═════════════════════════════════════════════════════
 //
@@ -297,11 +298,7 @@ param_field(f, pos, key) :-
 // `start_timer(time, ref, event)` with `event \\ :heartbeat`).
 .decl armed_message(arm: symbol, message: symbol)
 
-armed_message(a, lit) :- timer_arm(_, a, "self", "bare", _, lit).
-
-armed_message(a, lit) :-
-  timer_arm(_, a, "self", "param", pos, _),
-  resolved_arg(a, pos, lit).
+armed_message(a, lit) :- armed_literal(_, a, "self", lit).
 
 // The message the timer kept under `key` carries. A literal at the arm
 // site is it. A parameter is filled along the calls that store the ref
@@ -437,11 +434,7 @@ cancels_local(cs, c, arm_id) :-
 
 .decl local_message(arm_site: symbol, message: symbol)
 
-local_message(id, lit) :- timer_arm(id, _, "self", "bare", _, lit).
-
-local_message(id, lit) :-
-  timer_arm(id, a, "self", "param", pos, _),
-  resolved_arg(a, pos, lit).
+local_message(id, lit) :- armed_literal(id, _, "self", lit).
 
 // A ref kept under a state key: cancelled from it in one place, and
 // armed again under it — with the message it carries — in another. The

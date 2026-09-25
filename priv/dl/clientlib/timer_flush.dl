@@ -33,6 +33,20 @@
 // the module arms no timer the program can see (the ref came from a
 // caller) or arms one whose message is not a known literal, the receive
 // may take it: the quiet direction.
+// The literal message a timer carries, at the site that arms it for
+// `target` ("self" for the arming process): spelled there, or a parameter
+// the arming function's callers fill with a literal (resolved_arg:
+// nebulex's `start_timer(time, ref, event \\ :heartbeat)`). A message
+// built at runtime has no row. mailbox reads it for the stale message a
+// cancel leaves behind, this file for the message a flush takes.
+.decl armed_literal(site: symbol, func: symbol, target: symbol, message: symbol)
+
+armed_literal(id, a, t, lit) :- timer_arm(id, a, t, "bare", _, lit).
+
+armed_literal(id, a, t, lit) :-
+  timer_arm(id, a, t, "param", pos, _),
+  resolved_arg(a, pos, lit).
+
 .decl cancels_timer(func: symbol)
 
 cancels_timer(func) :-
@@ -41,12 +55,7 @@ cancels_timer(func) :-
 .decl timer_message(mod: symbol, message: symbol)
 
 timer_message(mod, lit) :-
-  timer_arm(_, a, _, "bare", _, lit),
-  function_def(a, mod, _, _, _).
-
-timer_message(mod, lit) :-
-  timer_arm(_, a, _, "param", pos, _),
-  resolved_arg(a, pos, lit),
+  armed_literal(_, a, _, lit),
   function_def(a, mod, _, _, _).
 
 .decl timer_message_unknown(mod: symbol)
