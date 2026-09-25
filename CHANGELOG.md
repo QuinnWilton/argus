@@ -3044,6 +3044,45 @@ the same wording.
 
 ### failure
 
+**Fixed.** `failure.inconsistent_handling` keys a belief on its target
+and nothing else. A site is judged by the callee's sites on the same
+literal first argument (a table, a name), or — for a process call on
+the pid a GenServer's or gen_statem's own client function is handed —
+by its module's processes (`processes of M`, the new `site_scope`).
+A site whose target is not known takes no part: the pool of every site
+of the callee is gone, and so is the belief spanning tables for
+`update_counter` and `lookup_element`. inet_db's guarded host lookups
+were judging the bare lookups of mnesia, dets_server and digraph on
+tables of their own.
+
+**Fixed.** A site its arguments say cannot fail takes no part in a
+belief (`cannot_fail`): a send to anything but a local name (a
+`{name, node}` send never raises where it is made); an ETS call that
+fails only on a missing table (`delete`, `insert`, `lookup`, ...), made
+in the process that created the named table (`in_owner`: reached from
+its own callbacks and no other module's, and not callable from
+outside); a `lookup_element` of a row the table's owner writes while it
+starts and nothing removes (`seeded_row`). `failure` now runs the ETS
+extractor. A send to a pid and a timer cancelled by its reference
+(`cancel_timer(ref, async: true)` answers `:ok`) have no literal
+target, and so no population. Known limit: an Erlang macro's
+expansions (mnesia's `?catch_val`) count as that many sites — the
+preprocessor gives each the line of its use, and the BEAM keeps nothing
+that says a macro wrote it.
+
+Over OTP (kernel, stdlib, mnesia), the Phoenix stack and sequin, 22
+findings go to 2: the fourteen `lookup_element` deviants of the
+cross-table pool, `timer:cancel/1`'s `cancel_timer`, `net_kernel`'s
+send to a caller's pid, cowboy's `cancel_timer(ref, [{async, true}])`,
+hackney_manager's two deletes in its own process, and sequin's
+`DebouncedLogger.log/4`, which was judged by the benchmark's two
+tables. supavisor's DbHandler (a client call bare where three siblings
+catch the exit) stays, and so does user_sup's `register(user, self())`
+against peer.erl's three guarded registrations of the same name. The
+sequin corpus pair for this title is removed: the belief it rested on
+was another table's, and `races.ets_missing_row` reports the bug for
+the reason it is one.
+
 **Changed.** `failure.orphan_process` reads process points-to
 (signals.dl). An exit signal from a callback to a process the sending
 module started itself — a helper kept in the state, a connection it

@@ -10,14 +10,14 @@ defmodule Argus.Test.Fixtures.Consistency do
 
   defmodule DeviantIgnore do
     @moduledoc "Five sites match start_child's result; one discards it."
-    def a(sup, spec), do: check(DynamicSupervisor.start_child(sup, spec))
-    def b(sup, spec), do: check(DynamicSupervisor.start_child(sup, spec))
-    def c(sup, spec), do: check(DynamicSupervisor.start_child(sup, spec))
-    def d(sup, spec), do: check(DynamicSupervisor.start_child(sup, spec))
-    def e(sup, spec), do: check(DynamicSupervisor.start_child(sup, spec))
+    def a(_sup, spec), do: check(DynamicSupervisor.start_child(:workers, spec))
+    def b(_sup, spec), do: check(DynamicSupervisor.start_child(:workers, spec))
+    def c(_sup, spec), do: check(DynamicSupervisor.start_child(:workers, spec))
+    def d(_sup, spec), do: check(DynamicSupervisor.start_child(:workers, spec))
+    def e(_sup, spec), do: check(DynamicSupervisor.start_child(:workers, spec))
 
-    def f(sup, spec) do
-      DynamicSupervisor.start_child(sup, spec)
+    def f(_sup, spec) do
+      DynamicSupervisor.start_child(:workers, spec)
       :ok
     end
 
@@ -26,7 +26,16 @@ defmodule Argus.Test.Fixtures.Consistency do
   end
 
   defmodule DeviantBare do
-    @moduledoc "Four sites guard GenServer.call with a try; one calls it bare."
+    @moduledoc """
+    A GenServer's client API: four functions guard GenServer.call on the
+    pid they are handed with a try; one calls it bare. The target is the
+    function's own parameter, in a module that runs a process loop: the
+    module's processes.
+    """
+    use GenServer
+
+    @impl true
+    def init(state), do: {:ok, state}
 
     def a(s) do
       GenServer.call(s, :ping)
@@ -57,11 +66,11 @@ defmodule Argus.Test.Fixtures.Consistency do
 
   defmodule WeakBelief do
     @moduledoc "Two sites check, one ignores: not enough agreement to call it a convention."
-    def a(sup, spec), do: check(DynamicSupervisor.start_child(sup, spec))
-    def b(sup, spec), do: check(DynamicSupervisor.start_child(sup, spec))
+    def a(_sup, spec), do: check(DynamicSupervisor.start_child(:workers, spec))
+    def b(_sup, spec), do: check(DynamicSupervisor.start_child(:workers, spec))
 
-    def c(sup, spec) do
-      DynamicSupervisor.start_child(sup, spec)
+    def c(_sup, spec) do
+      DynamicSupervisor.start_child(:workers, spec)
       :ok
     end
 
@@ -71,22 +80,22 @@ defmodule Argus.Test.Fixtures.Consistency do
 
   defmodule NoMajority do
     @moduledoc "Three check, three ignore: a convention either way."
-    def a(sup, spec), do: check(DynamicSupervisor.start_child(sup, spec))
-    def b(sup, spec), do: check(DynamicSupervisor.start_child(sup, spec))
-    def c(sup, spec), do: check(DynamicSupervisor.start_child(sup, spec))
+    def a(_sup, spec), do: check(DynamicSupervisor.start_child(:workers, spec))
+    def b(_sup, spec), do: check(DynamicSupervisor.start_child(:workers, spec))
+    def c(_sup, spec), do: check(DynamicSupervisor.start_child(:workers, spec))
 
-    def d(sup, spec) do
-      DynamicSupervisor.start_child(sup, spec)
+    def d(_sup, spec) do
+      DynamicSupervisor.start_child(:workers, spec)
       :ok
     end
 
-    def e(sup, spec) do
-      DynamicSupervisor.start_child(sup, spec)
+    def e(_sup, spec) do
+      DynamicSupervisor.start_child(:workers, spec)
       :ok
     end
 
-    def f(sup, spec) do
-      DynamicSupervisor.start_child(sup, spec)
+    def f(_sup, spec) do
+      DynamicSupervisor.start_child(:workers, spec)
       :ok
     end
 
@@ -96,14 +105,14 @@ defmodule Argus.Test.Fixtures.Consistency do
 
   defmodule OutsideScope do
     @moduledoc "File.write is not a process API: five checked and one ignored say nothing here."
-    def a(p, d), do: check(File.write(p, d))
-    def b(p, d), do: check(File.write(p, d))
-    def c(p, d), do: check(File.write(p, d))
-    def d(p, d), do: check(File.write(p, d))
-    def e(p, d), do: check(File.write(p, d))
+    def a(_p, d), do: check(File.write("out.log", d))
+    def b(_p, d), do: check(File.write("out.log", d))
+    def c(_p, d), do: check(File.write("out.log", d))
+    def d(_p, d), do: check(File.write("out.log", d))
+    def e(_p, d), do: check(File.write("out.log", d))
 
-    def f(p, d) do
-      File.write(p, d)
+    def f(_p, d) do
+      File.write("out.log", d)
       :ok
     end
 
@@ -113,11 +122,11 @@ defmodule Argus.Test.Fixtures.Consistency do
 
   defmodule TailReturns do
     @moduledoc "Sites that return the result hand the question to their callers; they are not deviants."
-    def a(sup, spec), do: check(DynamicSupervisor.start_child(sup, spec))
-    def b(sup, spec), do: check(DynamicSupervisor.start_child(sup, spec))
-    def c(sup, spec), do: check(DynamicSupervisor.start_child(sup, spec))
-    def d(sup, spec), do: DynamicSupervisor.start_child(sup, spec)
-    def e(sup, spec), do: DynamicSupervisor.start_child(sup, spec)
+    def a(_sup, spec), do: check(DynamicSupervisor.start_child(:workers, spec))
+    def b(_sup, spec), do: check(DynamicSupervisor.start_child(:workers, spec))
+    def c(_sup, spec), do: check(DynamicSupervisor.start_child(:workers, spec))
+    def d(_sup, spec), do: DynamicSupervisor.start_child(:workers, spec)
+    def e(_sup, spec), do: DynamicSupervisor.start_child(:workers, spec)
 
     defp check({:ok, pid}), do: pid
     defp check({:error, _}), do: nil
@@ -129,14 +138,14 @@ defmodule Argus.Test.Fixtures.Consistency do
     names no failure value (it returns the table or raises), so the
     discarded one has nothing to miss.
     """
-    def a(n), do: keep(:ets.new(n, []))
-    def b(n), do: keep(:ets.new(n, []))
-    def c(n), do: keep(:ets.new(n, []))
-    def d(n), do: keep(:ets.new(n, []))
-    def e(n), do: keep(:ets.new(n, []))
+    def a(_n), do: keep(:ets.new(:total, []))
+    def b(_n), do: keep(:ets.new(:total, []))
+    def c(_n), do: keep(:ets.new(:total, []))
+    def d(_n), do: keep(:ets.new(:total, []))
+    def e(_n), do: keep(:ets.new(:total, []))
 
-    def f(n) do
-      :ets.new(n, [:named_table])
+    def f(_n) do
+      :ets.new(:total, [:named_table])
       :ok
     end
 
@@ -219,8 +228,8 @@ defmodule Argus.Test.Fixtures.Consistency do
 
   defmodule UnknownTargetBare do
     @moduledoc """
-    The bare site's table is a parameter: it is judged against every site
-    of the callee, the four guarded ones on :gvar included.
+    The bare site's table is a parameter: its target is not known, and
+    the four guarded sites on :gvar say nothing of whatever table it is.
     """
     def a(k), do: guarded(k)
     def b(k), do: guarded2(k)
@@ -270,7 +279,7 @@ defmodule Argus.Test.Fixtures.Consistency do
     @moduledoc "A library's `use` that writes a bare GenServer.stop into the module using it."
     defmacro __using__(_opts) do
       quote do
-        def stop(server), do: GenServer.stop(server)
+        def stop(_server), do: GenServer.stop(:worker)
       end
     end
   end
@@ -283,31 +292,31 @@ defmodule Argus.Test.Fixtures.Consistency do
     """
     use Argus.Test.Fixtures.Consistency.StopMacro
 
-    def a(s), do: guarded(s)
-    def b(s), do: guarded2(s)
-    def c(s), do: guarded3(s)
-    def d(s), do: guarded4(s)
+    def a(_s), do: guarded()
+    def b(_s), do: guarded2()
+    def c(_s), do: guarded3()
+    def d(_s), do: guarded4()
 
-    defp guarded(s) do
-      GenServer.stop(s)
+    defp guarded do
+      GenServer.stop(:worker)
     catch
       :exit, _ -> :ok
     end
 
-    defp guarded2(s) do
-      GenServer.stop(s)
+    defp guarded2 do
+      GenServer.stop(:worker)
     catch
       :exit, _ -> :ok
     end
 
-    defp guarded3(s) do
-      GenServer.stop(s)
+    defp guarded3 do
+      GenServer.stop(:worker)
     catch
       :exit, _ -> :ok
     end
 
-    defp guarded4(s) do
-      GenServer.stop(s)
+    defp guarded4 do
+      GenServer.stop(:worker)
     catch
       :exit, _ -> :ok
     end
@@ -315,33 +324,33 @@ defmodule Argus.Test.Fixtures.Consistency do
 
   defmodule WrittenBare do
     @moduledoc "The same five sites, the bare one written by hand: the deviant."
-    def stop(server), do: GenServer.stop(server)
+    def stop(_server), do: GenServer.stop(:worker)
 
-    def a(s), do: guarded(s)
-    def b(s), do: guarded2(s)
-    def c(s), do: guarded3(s)
-    def d(s), do: guarded4(s)
+    def a(_s), do: guarded()
+    def b(_s), do: guarded2()
+    def c(_s), do: guarded3()
+    def d(_s), do: guarded4()
 
-    defp guarded(s) do
-      GenServer.stop(s)
+    defp guarded do
+      GenServer.stop(:worker)
     catch
       :exit, _ -> :ok
     end
 
-    defp guarded2(s) do
-      GenServer.stop(s)
+    defp guarded2 do
+      GenServer.stop(:worker)
     catch
       :exit, _ -> :ok
     end
 
-    defp guarded3(s) do
-      GenServer.stop(s)
+    defp guarded3 do
+      GenServer.stop(:worker)
     catch
       :exit, _ -> :ok
     end
 
-    defp guarded4(s) do
-      GenServer.stop(s)
+    defp guarded4 do
+      GenServer.stop(:worker)
     catch
       :exit, _ -> :ok
     end
@@ -353,14 +362,14 @@ defmodule Argus.Test.Fixtures.Consistency do
     startup.ignored_start_result reports that site, so the consistency
     rule does not report it again.
     """
-    def a(m), do: check(GenServer.start_link(m, :ok, []))
-    def b(m), do: check(GenServer.start_link(m, :ok, []))
-    def c(m), do: check(GenServer.start_link(m, :ok, []))
-    def d(m), do: check(GenServer.start_link(m, :ok, []))
-    def e(m), do: check(GenServer.start_link(m, :ok, []))
+    def a(_m), do: check(GenServer.start_link(Argus.Test.Fixtures.Consistency.Worker, :ok, []))
+    def b(_m), do: check(GenServer.start_link(Argus.Test.Fixtures.Consistency.Worker, :ok, []))
+    def c(_m), do: check(GenServer.start_link(Argus.Test.Fixtures.Consistency.Worker, :ok, []))
+    def d(_m), do: check(GenServer.start_link(Argus.Test.Fixtures.Consistency.Worker, :ok, []))
+    def e(_m), do: check(GenServer.start_link(Argus.Test.Fixtures.Consistency.Worker, :ok, []))
 
-    def f(m) do
-      GenServer.start_link(m, :ok, [])
+    def f(_m) do
+      GenServer.start_link(Argus.Test.Fixtures.Consistency.Worker, :ok, [])
       :ok
     end
 
@@ -715,9 +724,8 @@ defmodule Argus.Test.Fixtures.Consistency do
     @moduledoc """
     sequin's shape with literal tables: two sites rescue update_counter
     on :metrics and one on :counts, and log/1 calls it bare on :log, the
-    only site on that table. The belief spans two tables, so it is the
-    program's, and log/1 is judged by it, as it would be were its table
-    a variable.
+    only site on that table. What the program does with :metrics and
+    :counts is not a belief about :log: no finding.
     """
     def m1(k) do
       :ets.update_counter(:metrics, k, {2, 1})
@@ -845,5 +853,202 @@ defmodule Argus.Test.Fixtures.Consistency do
       if :ets.whereis(:missing_d) != :undefined, do: :ets.delete(:missing_d, k)
       :ok
     end
+  end
+
+  defmodule OwnerDeletes do
+    @moduledoc """
+    hackney_manager's shape: the server creates a named public table in
+    init/1 and, in its own callbacks, deletes rows bare; three client
+    functions, run in their callers' processes, delete under a rescue.
+    While the server runs its table is there, so its own deletes cannot
+    fail and break no belief.
+    """
+    use GenServer
+
+    @impl true
+    def init(state) do
+      :ets.new(:owned_refs, [:named_table, :public, :set])
+      {:ok, state}
+    end
+
+    @impl true
+    def handle_info({:done, ref}, state) do
+      forget(ref)
+      {:noreply, state}
+    end
+
+    defp forget(ref), do: :ets.delete(:owned_refs, ref)
+
+    def cancel(ref) do
+      :ets.delete(:owned_refs, ref)
+    rescue
+      ArgumentError -> :gone
+    end
+
+    def close(ref) do
+      :ets.delete(:owned_refs, ref)
+    rescue
+      ArgumentError -> :gone
+    end
+
+    def abort(ref) do
+      :ets.delete(:owned_refs, ref)
+    rescue
+      ArgumentError -> :gone
+    end
+  end
+
+  defmodule ClientDeletes do
+    @moduledoc """
+    OwnerDeletes with the bare delete in a fourth client function: it runs
+    in its caller's process, where the table can be gone. The deviant.
+    """
+    use GenServer
+
+    @impl true
+    def init(state) do
+      :ets.new(:client_refs, [:named_table, :public, :set])
+      {:ok, state}
+    end
+
+    def cancel(ref) do
+      :ets.delete(:client_refs, ref)
+    rescue
+      ArgumentError -> :gone
+    end
+
+    def close(ref) do
+      :ets.delete(:client_refs, ref)
+    rescue
+      ArgumentError -> :gone
+    end
+
+    def abort(ref) do
+      :ets.delete(:client_refs, ref)
+    rescue
+      ArgumentError -> :gone
+    end
+
+    def drop(ref), do: :ets.delete(:client_refs, ref)
+  end
+
+  defmodule SeededRows do
+    @moduledoc """
+    inet_db's shape: the server seeds a row in init/1 and nothing removes
+    it; three functions read rows callers name under a rescue, and one
+    reads the seeded row bare. A row that is always there cannot be
+    missing: no deviant.
+    """
+    use GenServer
+
+    @impl true
+    def init(state) do
+      :ets.new(:seeded, [:named_table, :public, :set])
+      :ets.insert(:seeded, {:methods, [:none]})
+      {:ok, state}
+    end
+
+    def methods, do: :ets.lookup_element(:seeded, :methods, 2)
+
+    def a(k) do
+      :ets.lookup_element(:seeded, k, 2)
+    rescue
+      ArgumentError -> nil
+    end
+
+    def b(k) do
+      :ets.lookup_element(:seeded, k, 2)
+    rescue
+      ArgumentError -> nil
+    end
+
+    def c(k) do
+      :ets.lookup_element(:seeded, k, 2)
+    rescue
+      ArgumentError -> nil
+    end
+  end
+
+  defmodule UnseededRows do
+    @moduledoc "SeededRows, and a function that deletes the seeded row: the bare read can miss."
+    use GenServer
+
+    @impl true
+    def init(state) do
+      :ets.new(:unseeded, [:named_table, :public, :set])
+      :ets.insert(:unseeded, {:methods, [:none]})
+      {:ok, state}
+    end
+
+    def methods, do: :ets.lookup_element(:unseeded, :methods, 2)
+    def reset, do: :ets.delete(:unseeded, :methods)
+
+    def a(k) do
+      :ets.lookup_element(:unseeded, k, 2)
+    rescue
+      ArgumentError -> nil
+    end
+
+    def b(k) do
+      :ets.lookup_element(:unseeded, k, 2)
+    rescue
+      ArgumentError -> nil
+    end
+
+    def c(k) do
+      :ets.lookup_element(:unseeded, k, 2)
+    rescue
+      ArgumentError -> nil
+    end
+  end
+
+  defmodule RemoteSends do
+    @moduledoc """
+    A send to a name on another node never raises where it is made: three
+    sites guard one anyway, and a fourth is bare. None can fail, so there
+    is no belief to break.
+    """
+    def a(m) do
+      send({:collector, :stats@host}, m)
+    rescue
+      ArgumentError -> :ok
+    end
+
+    def b(m) do
+      send({:collector, :stats@host}, m)
+    rescue
+      ArgumentError -> :ok
+    end
+
+    def c(m) do
+      send({:collector, :stats@host}, m)
+    rescue
+      ArgumentError -> :ok
+    end
+
+    def d(m), do: send({:collector, :stats@host}, m)
+  end
+
+  defmodule LocalSends do
+    @moduledoc "The same to a local name, which raises when nothing holds it: the bare one is the deviant."
+    def a(m) do
+      send(:collector, m)
+    rescue
+      ArgumentError -> :ok
+    end
+
+    def b(m) do
+      send(:collector, m)
+    rescue
+      ArgumentError -> :ok
+    end
+
+    def c(m) do
+      send(:collector, m)
+    rescue
+      ArgumentError -> :ok
+    end
+
+    def d(m), do: send(:collector, m)
   end
 end

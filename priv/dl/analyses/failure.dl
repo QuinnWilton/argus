@@ -246,28 +246,31 @@ unchecked_result(func, id, "Process.whereis", name) :-
 // guard it as they guard any call in the function (guarded_by_callers).
 //
 // The population a site is judged in (`scope`) is its target's own
-// sites — the table, the server, when the site's first argument is a
-// literal — once any of them agrees: the target has shown how the
-// program treats it. mnesia reads its gvar table under a catch 120
-// times and its stats table bare once, on purpose; gvar's habit is not
-// a belief about stats. A site whose target is unknown (`scope` "") is
-// judged by every site of the callee: it may be on the convention's own
-// table.
+// sites — the table, the server, the name — when the site's first
+// argument is a literal, and only then: mnesia reads its gvar table under
+// a catch 120 times and its stats table bare once, on purpose; gvar's
+// habit is not a belief about stats, and inet_db's guarded host lookups
+// say nothing of the lookups mnesia, dets_server and digraph make on
+// tables of their own. A process call whose target is the calling
+// function's own parameter, in a module that runs a process loop — the
+// client API of a GenServer or a gen_statem, `def checkout(pid, ...),
+// do: :gen_statem.call(pid, ...)` — has one target too: that module's
+// processes. Any other site's target is not known, and it neither holds a
+// belief nor breaks one.
 //
-// A known target none of whose sites agree is judged by every site of
-// the callee only when the callee fails on a missing row
-// (update_counter, lookup_element) and the agreeing sites span two
-// targets or more. Such a failure is about the table's contents, not
-// the table, so the belief holds across tables: sequin's logger learns
-// its guard from the benchmark's two stats tables, and would with
-// `@table` as with `table_name`. A callee that fails when the table or
-// the server is missing (`:ets.delete/2`, GenServer.call) keeps a belief
-// per target.
+// Whether a call can fail depends on its arguments, and a site that
+// cannot takes no part either (`cannot_fail`): a send to anything but a
+// registered name, an ETS operation that fails only on a missing table,
+// made inside the process that owns the table, and a lookup_element of a
+// row the owner seeds and nothing removes. A call on a value that is
+// never a literal — a send to a pid, a timer cancelled by its reference,
+// with `async: true` or not — has no target, and so no population.
 //
-// Known limit: an unknown target is judged by every table's sites, even
-// when the table it names always has the row (a table seeded at init);
-// resolving it through the ETS table identity (ets.dl) would narrow the
-// pool, and is not done.
+// Known limit: an Erlang macro's expansions (mnesia's `?catch_val`, one
+// guarded lookup written once and expanded a hundred times) count as
+// that many sites. The preprocessor gives the expansion the line of each
+// use, and the BEAM keeps nothing that says a macro wrote it; keying the
+// belief on the target bounds what such a count can decide.
 
 // A call site in a function another module's macro wrote — `use
 // Ecto.Repo` defines `stop/1` in every repo, on the `use` line — or in a
@@ -286,10 +289,139 @@ program_site(site, f, callee, fate, "bare", t) :-
 
 .decl program_call(site: symbol, func: symbol, callee: symbol, fate: symbol, target: symbol)
 
-program_call(site, f, callee, fate, t) :-
-  call_result(site, f, callee, fate, _, t),
+program_call(site, f, callee, fate, scope) :-
+  call_result(site, f, callee, fate, _, _),
   enclosing_function(f, owner),
-  !macro_generated(owner, _).
+  !macro_generated(owner, _),
+  !cannot_fail(site),
+  site_scope(site, scope).
+
+// ── Whose convention a site is judged by ────────────────────────
+.decl site_scope(site: symbol, scope: symbol)
+
+site_scope(site, t) :- call_result(site, _, _, _, _, t), t != "".
+
+site_scope(site, cat("processes of ", m)) :-
+  call_result(site, f, callee, _, "exit", ""),
+  call_arg_forward(f, callee, 0, _),
+  function_def(f, m, _, _, _),
+  behaves_as(m, b),
+  process_behaviour(b, "loop").
+
+// ── What a call's arguments rule out ────────────────────────────
+.decl cannot_fail(site: symbol)
+
+// A send raises only when its destination is a name nothing holds: a
+// pid, a port or a {name, node} never raises. Only a literal atom is
+// known to be a name; a send to anything else is taken to be to a pid.
+cannot_fail(site) :-
+  call_result(site, _, callee, _, _, t),
+  sends(callee),
+  !names_a_process(t).
+
+// An ETS operation that fails only when the table is gone, made inside
+// the process that created the named table: while the process runs, its
+// table is there.
+cannot_fail(site) :-
+  call_result(site, f, callee, _, _, t),
+  fails_on_missing_table(callee),
+  in_owner(f, t).
+
+// A lookup_element of a row the table's owner seeds and nothing removes.
+cannot_fail(site) :-
+  call_result(site, _, ":ets:lookup_element/3", _, _, t),
+  ets_key(site, "literal", k),
+  seeded_row(t, k).
+
+.decl sends(callee: symbol)
+
+sends(":erlang:send/2").
+sends(":erlang:send/3").
+
+// A literal destination that is an atom, not a tuple.
+.decl names_a_process(target: symbol)
+
+names_a_process(t) :- call_result(_, _, c, _, _, t), sends(c), t != "", !match("[{].*", t).
+
+// The ETS operations that raise only on a missing table (or no access to
+// it): not lookup_element or update_counter, which also raise on a
+// missing row.
+.decl fails_on_missing_table(callee: symbol)
+
+fails_on_missing_table(":ets:delete/2").
+fails_on_missing_table(":ets:delete/1").
+fails_on_missing_table(":ets:insert/2").
+fails_on_missing_table(":ets:insert_new/2").
+fails_on_missing_table(":ets:lookup/2").
+fails_on_missing_table(":ets:member/2").
+fails_on_missing_table(":ets:delete_object/2").
+fails_on_missing_table(":ets:match_delete/2").
+fails_on_missing_table(":ets:select_delete/2").
+fails_on_missing_table(":ets:take/2").
+
+// `func` runs only in the process of module m that created the named
+// table `t`: reached from m's callbacks in m's own process, from no other
+// module's, and no caller outside those callbacks can call it (a private
+// function, or one of m's callbacks).
+.init own = SameProcessReach
+
+own.seed(f, f) :- ets_new(_, f, t), t != "dynamic".
+own.seed(f, f) :- call_result(_, f, c, _, _, t), t != "", fails_on_missing_table(c).
+own.seed(f, f) :- call_result(_, f, ":ets:lookup_element/3", _, _, _).
+
+.decl table_owner(table: symbol, mod: symbol)
+
+table_owner(t, m) :- ets_new(_, g, t), t != "dynamic", process_entry(m, c), own.reaches(c, g).
+
+.decl reached_by_other(func: symbol, mod: symbol)
+
+reached_by_other(f, m) :- table_owner(_, m), process_entry(m2, c), m2 != m, own.reaches(c, f).
+
+.decl in_owner(func: symbol, table: symbol)
+
+in_owner(f, t) :-
+  table_owner(t, m),
+  process_entry(m, c),
+  own.reaches(c, f),
+  !reached_by_other(f, m),
+  (function_def(f, _, _, _, 0) ; process_entry(m, f)).
+
+// A row the table's owner writes while it starts — in init/1, or in a
+// function init/1 runs — at a literal key, and that no operation removes:
+// no delete, take or delete_object at that key or at one not known, no
+// clearing of the table.
+.decl seeded_row(table: symbol, key: symbol)
+
+seeded_row(t, k) :-
+  ets_op(w, g, t, op, "write"),
+  (op = "insert" ; op = "insert_new"),
+  ets_key(w, "literal", k),
+  init_function(_, i),
+  own.reaches(i, g),
+  !removes_row(t, k).
+
+.decl removes_row(table: symbol, key: symbol)
+
+removes_row(t, k) :-
+  ets_op(w, _, t, op, "write"),
+  ets_key(w, "literal", k),
+  (op = "delete" ; op = "take" ; op = "delete_object").
+
+removes_row(t, k) :-
+  ets_op(w, _, t, op, "write"),
+  ets_key(w, ks, _),
+  ks != "literal",
+  (op = "delete" ; op = "take" ; op = "delete_object"),
+  ets_op(w2, _, t, _, _),
+  ets_key(w2, "literal", k).
+
+removes_row(t, k) :-
+  ets_op(_, _, t, op, "write"),
+  (op = "delete_all_objects" ; op = "select_delete" ; op = "match_delete"),
+  ets_op(w2, _, t, _, _),
+  ets_key(w2, "literal", k).
+
+own.seed(f, f) :- ets_op(_, f, t, _, "write"), t != "dynamic".
 
 // ── What guards a call ──────────────────────────────────────────
 //
@@ -394,24 +526,14 @@ starts_process(f) :- hands_funs_off(f).
 
 .decl fate_count(callee: symbol, scope: symbol, fate: symbol, n: number)
 
-fate_count(callee, "", fate, n) :-
-  program_site(_, _, callee, fate, _, _),
-  n = count : { program_site(_, _, callee, fate, _, _) }.
-
 fate_count(callee, t, fate, n) :-
   program_site(_, _, callee, fate, _, t),
-  t != "",
   n = count : { program_site(_, _, callee, fate, _, t) }.
 
 .decl guard_count(callee: symbol, scope: symbol, guard: symbol, n: number)
 
-guard_count(callee, "", guard, n) :-
-  program_site(_, _, callee, _, guard, _),
-  n = count : { program_site(_, _, callee, _, guard, _) }.
-
 guard_count(callee, t, guard, n) :-
   program_site(_, _, callee, _, guard, t),
-  t != "",
   n = count : { program_site(_, _, callee, _, guard, t) }.
 
 // A result is worth checking only if the callee can fail by returning:
@@ -478,45 +600,17 @@ stance(site, c, "result_checked", "deviate", t) :- program_site(site, _, c, "ign
 stance(site, c, "exception_guarded", "agree", t) :- program_site(site, _, c, _, "try", t).
 stance(site, c, "exception_guarded", "deviate", t) :- program_site(site, _, c, _, "bare", t).
 
-// A target some of whose sites agree: it is judged by its own.
-.decl own_convention(callee: symbol, belief: symbol, target: symbol)
+// A scope some of whose sites agree: a deviant in it is judged by its
+// own.
+.decl own_convention(callee: symbol, belief: symbol, scope: symbol)
 
-own_convention(c, b, t) :- stance(_, c, b, "agree", t), t != "".
-
-// The agreeing sites span two targets or more (an unknown one counts
-// as one): a belief about the callee, not one table's habit.
-.decl agreeing_target(callee: symbol, belief: symbol, target: symbol)
-
-agreeing_target(c, b, t) :- stance(_, c, b, "agree", t).
-
-.decl shared_belief(callee: symbol, belief: symbol)
-
-shared_belief(c, b) :-
-  agreeing_target(c, b, _),
-  count : { agreeing_target(c, b, _) } >= 2.
-
-// A callee that fails on a missing row, whatever the table.
-.decl fails_on_missing_row(callee: symbol)
-
-fails_on_missing_row(":ets:update_counter/3").
-fails_on_missing_row(":ets:update_counter/4").
-fails_on_missing_row(":ets:lookup_element/3").
-fails_on_missing_row(":ets:lookup_element/4").
+own_convention(c, b, t) :- stance(_, c, b, "agree", t).
 
 .decl judged_in(site: symbol, belief: symbol, scope: symbol)
 
 judged_in(site, b, t) :-
   stance(site, c, b, "deviate", t),
   own_convention(c, b, t).
-
-judged_in(site, b, "") :- stance(site, _, b, "deviate", "").
-
-judged_in(site, b, "") :-
-  stance(site, c, b, "deviate", t),
-  t != "",
-  !own_convention(c, b, t),
-  fails_on_missing_row(c),
-  shared_belief(c, b).
 
 inconsistent_handling(func, site, callee, "result_checked", used, ignored, scope, "", "", "") :-
   ignored_where_most_are_used(func, site, callee, used, ignored, scope).
@@ -630,17 +724,14 @@ bare_where_most_are_guarded(func, site, callee, guarded, bare, scope) :-
 // handler's end, and "callers" for a site its callers guard.
 handling_site(callee, "exception_guarded", site, f, "here", guard_end, t) :-
   inconsistent_handling(_, _, callee, "exception_guarded", _, _, t, _, _, _),
-  program_site(site, f, callee, _, "try", t2),
-  guarded_here(site, guard_end),
-  (t = "" ; t = t2).
+  program_site(site, f, callee, _, "try", t),
+  guarded_here(site, guard_end).
 
 handling_site(callee, "exception_guarded", site, f, "callers", "", t) :-
   inconsistent_handling(_, _, callee, "exception_guarded", _, _, t, _, _, _),
-  program_site(site, f, callee, _, "try", t2),
-  !guarded_here(site, _),
-  (t = "" ; t = t2).
+  program_site(site, f, callee, _, "try", t),
+  !guarded_here(site, _).
 
 handling_site(callee, "result_checked", site, f, "", "", t) :-
   inconsistent_handling(_, _, callee, "result_checked", _, _, t, _, _, _),
-  program_site(site, f, callee, "used", _, t2),
-  (t = "" ; t = t2).
+  program_site(site, f, callee, "used", _, t).

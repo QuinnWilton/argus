@@ -339,7 +339,8 @@
   # :gen_statem.call/3 bare while its three sibling sites catch :exit and
   # return {:error, _}; its only caller halts on {:error, _}, so a dead or slow
   # DbHandler crashes the ClientHandler instead. No issue and no fix, so the
-  # pair is present-only.
+  # pair is present-only. The four are DbHandler's client API, each calling
+  # the pid it is handed: one population, the module's processes.
   %{
     repo: "supabase/supavisor",
     issue: "supavisor@a8463de",
@@ -476,16 +477,14 @@
   # looks a bucket up and then calls :ets.update_counter/3 bare, while the
   # flush the first call scheduled with :timer.apply_after takes the same row
   # from another process; a caller that logs in that window crashes with
-  # ArgumentError. The three other update_counter sites in the tree rescue it.
-  %{
-    repo: "sequinstream/sequin",
-    issue: "sequin@46ce4e1",
-    module: "Sequin.DebouncedLogger",
-    pre: "46ce4e1048437575ce3c40ebb3eb589a4b9e4f27",
-    finding:
-      {:failure,
-       ":ets.update_counter/3 called bare where every other call site catches its error"}
-  },
+  # ArgumentError. It was also a failure.inconsistent_handling pair, judged
+  # by the three rescued update_counter sites of Sequin.Benchmark.Stats —
+  # on the benchmark's own two tables, not the logger's, whose table is
+  # `cfg.table_name || @default_table` and no literal. A belief is now
+  # keyed on its target, and another table's convention is not this
+  # table's: that pair was right about the bug for a reason that is not
+  # evidence, and is gone. The race below is the finding that says why.
+  #
   # The same bug as the race it is: log/4's lookup decides the bucket is
   # there and update_counter/3 acts on it, while flush_bucket/4, which a
   # :timer.apply_after runs in a process of its own, takes the row. The

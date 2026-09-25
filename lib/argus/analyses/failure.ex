@@ -34,11 +34,13 @@ defmodule Argus.Analyses.Failure do
     a try, not always one that takes the class). `agree` and
     `deviate` are the counts, and the severity is how unlikely the
     deviation is by chance. The population is the callee's sites on the
-    same literal `target` (a table, a name) once any of them agrees, and
-    every site of the callee when the target is unknown (`target`
-    empty). A known target none of whose sites agree is judged by every
-    site of a callee that fails on a missing row (`update_counter`,
-    `lookup_element`) when the agreeing sites span two targets or more.
+    same literal `target` (a table, a name), or, for a process call on
+    the pid a GenServer's or gen_statem's own client function is handed,
+    that module's processes (`processes of M`); a site whose target is
+    not known takes no part. Nor does a site its arguments say cannot
+    fail: a send to anything but a local name, an ETS call that fails
+    only on a missing table made in the process that owns it, a
+    `lookup_element` of a row its owner seeds and nothing removes.
   """
 
   @behaviour Argus.Analysis
@@ -71,7 +73,10 @@ defmodule Argus.Analyses.Failure do
       Argus.Extractors.Supervision,
       # A gen_statem's state functions and data (clientlib/process_statem.dl,
       # and processes.dl in the points-to stage).
-      Argus.Extractors.GenStatem
+      Argus.Extractors.GenStatem,
+      # Which named table a process owns and which rows it seeds: an ETS
+      # call its arguments say cannot fail takes no part in a belief.
+      Argus.Extractors.ETS
     ]
 
   @impl true
@@ -111,7 +116,8 @@ defmodule Argus.Analyses.Failure do
           {:agree, :number, "sites that follow the convention"},
           {:deviate, :number, "sites that break it, this one included"},
           {:target, :symbol,
-           "the literal first argument the population shares; empty for all sites"},
+           "the literal first argument the population shares, or `processes of M` for " <>
+             "a client call of M on the pid it is handed"},
           {:raises, :symbol,
            "for exception_guarded, the class the call raises (error | exit | *); else empty"},
           {:cover, :symbol,

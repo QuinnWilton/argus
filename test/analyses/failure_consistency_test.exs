@@ -80,6 +80,27 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       assert func =~ "DeviantBare:e/1"
       assert callee =~ "GenServer:call/2"
     end
+
+    test "a send to a name elsewhere cannot fail; one to a local name can" do
+      skip_without_souffle()
+      assert rows([C.RemoteSends]) == []
+      assert [{func, _, "exception_guarded", 3, 1}] = rows([C.LocalSends])
+      assert func =~ "LocalSends:d/1"
+    end
+
+    test "an ETS call in the process that owns the table cannot fail on a missing table" do
+      skip_without_souffle()
+      assert rows([C.OwnerDeletes]) == []
+      assert [{func, _, "exception_guarded", 3, 1}] = rows([C.ClientDeletes])
+      assert func =~ "ClientDeletes:drop/1"
+    end
+
+    test "a lookup_element of a row the owner seeds and nothing removes cannot fail" do
+      skip_without_souffle()
+      assert rows([C.SeededRows]) == []
+      assert [{func, _, "exception_guarded", 3, 1}] = rows([C.UnseededRows])
+      assert func =~ "UnseededRows:methods/0"
+    end
   end
 
   describe "what guards a call" do
@@ -246,10 +267,18 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       assert func =~ "SameTargetBare:e/1"
     end
 
-    test "is every site of the callee when the belief spans targets" do
+    test "is never the other targets' sites, however many agree" do
       skip_without_souffle()
-      assert [{func, "3", "1", ""}] = targets([C.SequinLiteral])
-      assert func =~ "SequinLiteral:log/1"
+      assert targets([C.SequinLiteral]) == []
+    end
+
+    test "is the module's processes for a client call on the pid it is handed" do
+      skip_without_souffle()
+
+      assert [{func, "4", "1", "processes of Argus.Test.Fixtures.Consistency.DeviantBare"}] =
+               targets([C.DeviantBare])
+
+      assert func =~ "DeviantBare:e/1"
     end
 
     test "is the target's own sites once any of them agrees" do
@@ -262,10 +291,9 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       assert targets([C.TableMissing]) == []
     end
 
-    test "is every site of the callee when the site's target is unknown" do
+    test "is none when the site's target is unknown" do
       skip_without_souffle()
-      assert [{func, "4", "1", ""}] = targets([C.UnknownTargetBare])
-      assert func =~ "UnknownTargetBare:e/2"
+      assert targets([C.UnknownTargetBare]) == []
     end
 
     test "draws the evidence from the deviant's own population" do
