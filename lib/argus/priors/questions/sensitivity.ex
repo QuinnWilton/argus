@@ -3,7 +3,7 @@ defmodule Argus.Priors.Questions.Sensitivity do
   What an Ecto field holds, from its name, its type and the schema
   around it.
 
-  `exposure` knows fifteen substrings (`api_key`, `password`, ...). A
+  `exposure` knows thirteen substrings (`api_key`, `password`, ...). A
   field the table cannot name — `totp_seed`, `teams_key`, `nkey_seed`,
   a `secret_first` beside a `secret_second` — is one the model can, and a
   field the table over-matches (`api_key_count`) is one it can doubt.

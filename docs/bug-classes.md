@@ -2891,6 +2891,117 @@ at a glance: each a candidate for a question type the priors round
   server, and does an `already_started` loser depend on the winner's
   init having finished.
 
+### Prior candidates, evaluated
+
+Round 2 of the priors (2026-09-25) took the judgements rounds 1 of the
+FP hunt and the mining left to a reader. Three are rules now, one is a
+structural fix, and the rest are weighed here against what Jev is good
+at — names, docs and intent, one entity at a time — and weak at:
+numbers, rates, and anything that needs several hops of the call graph.
+Rows are over the evaluation programs (four apps, the Phoenix stack,
+OTP's kernel, stdlib and mnesia), ejabberd and rabbitmq unless a count
+says otherwise.
+
+Implemented:
+
+- **What a sink's value is** (`prior_value_source`, unsafe_input's
+  no-request rows): configuration or a start option, the program's
+  code, data it stored, its cluster, an operator's input to a tool, or
+  outside data. It carries three of the round's candidates at once —
+  the configured atom (a pool, cache or node name), the operator-only
+  surface (ejabberd_admin and ejabberd_ctl, ext_mod's builds, mix tasks
+  and generators, 56 of the 232 rows read) and the trusted bytes of a
+  deserialization (dets, disk_log, message stores, a cluster's Redis) —
+  because their subject and consumer are the same. 173 of 272 rows step
+  down at 98% precision.
+- **Whether a wait's peer answers** (`prior_answers`, blocking's cast
+  and `:infinity` rows, startup's init/1 waits): 49 of 88 rows step
+  down, none of the 10 peers read as ones that may not answer.
+- **TLS role** is structural (`tls_server_side`): a listener's or an
+  accepted socket's options. The residue is a wrapper whose role is in
+  an option list the program builds — ejabberd's `fast_tls:tcp_to_tls/2`
+  in `ejabberd_http:init/3`, and `ejabberd_c2s:init/1`'s options kept in
+  the state for a later STARTTLS: 2 rows. Jev could judge the role from
+  the module names (c2s, http listener) and the comment-free option
+  names; a `prior_tls_role(func, permille)` consumed by
+  `disables_verification` would take the two, but two rows do not pay
+  for a question.
+
+Parked or left:
+
+- **A key written by one process at a time** (races). Spiked as "can
+  more than one process run the function where the read meets the
+  write", over the 73 race rows: the answers separate cleanly (a
+  server's bookkeeping, a migration and a dev seed at 0.74 to 0.99; the
+  blockster, fail2ban, hackney and Sequin writers read as concurrent at
+  0.62 and below) but the question is the wrong one. A race is between
+  every writer of the key, and the meeting function is one of them:
+  realtime's `GenCounter.reset/1` is one RateCounter per key (0.97)
+  and still loses the increments `add/2` makes from request processes
+  between its lookup and its write. The right question shows the table,
+  every function that writes it and who calls each, and asks whether two
+  of those writes to one key can overlap — the multi-hop judgement Jev
+  is weakest at, and one `clientlib/concurrency.dl` already makes where
+  it can. Rows: 31 outside blockster's 42 (mnesia's gvar defaults and
+  schema steps, ejabberd's captcha and invites, rabbit's vhost
+  bookkeeping); consumer `ets_check_act` and `mnesia_check_act`.
+- **Dev-only and test-only code** (blockster's `DevSetup`, peer's
+  `start_orphan_supervision`, LiveViewTest's ClientProxy, mix tasks):
+  26 rows over six analyses sit in modules a reader knows never run in
+  production. Jev's strongest shape — a module's name and docs — and
+  one noul per module would carry it, but the consumer is every
+  analysis: a `prior_dev_only(mod, permille)` read through a clientlib
+  include each rule file adds, not one rule. Worth doing once a second
+  cross-cutting prior wants the same plumbing.
+- **Bounded table keys** (ets "only grows"): 9 rows (logflare 4,
+  ejabberd's hooks table, Sentry's sources). A name-and-literal
+  judgement Jev can make ("hook name × host", "a source file's path");
+  consumer `ets_write_only_table`. Literal keys are structural already
+  (e2f1ad6). Small; next after dev-only.
+- **An admin-only request route** (request-reachable rows, such as a
+  LiveDashboard page): the route table has the path but not
+  `pipe_through`, and Jev can read `/admin`, `/dashboard` and a
+  dashboard page's name. A few rows; consumer `sink_reachable`. Worth
+  folding into `prior_value_source`'s state (the entry's route) rather
+  than a question of its own. realtime's ReconTrace page is not one of
+  these: a LiveDashboard page is no request entry argus knows, so its
+  row is a no-request row, and `prior_value_source` leaves it at its
+  severity.
+- **Is this dependency part of the program** (Cachex judged
+  in-program in the Phoenix-stack set): a boundary the caller's
+  configuration draws (`include_deps`), not a judgement about names.
+  Not a prior.
+- **The mining backlog's judgements** (round 1, `mining-round1.md`):
+  - *A pooled or transient pid* and *which pids must be monitored*:
+    detections, not re-tiers, and both need the pid's origin across
+    calls — process points-to has it; the prior would only name the
+    pool. Low.
+  - *Ownership handoff* ("does this call hand the callee ownership"):
+    mostly a table of APIs (`:ets.give_away`, a checkout, a
+    `controlling_process`); structural first. Low.
+  - *A cast faster than its receiver drains*: a rate. Jev is weak at
+    numbers and rates; no.
+  - *An accumulator bounded by the peer* (bandit's WebSocket
+    fragments, mint's PUSH_PROMISE): a detection that wants a
+    structural pre-filter (a collection grown from decoded network input
+    with no size comparison dominating it) before any prior. Medium,
+    after the pre-filter.
+  - *Transient error reasons* (thousand_island's accept errors) and *an
+    API that raises besides returning an error tuple* (Finch's pool
+    timeout): library knowledge Jev was not trained on; a curated table
+    or the callee's spec serves better. No.
+  - *A port that exits when stdin closes* (inotifywait, fswatch,
+    `tail -f`, ffmpeg without `-nostdin`): Jev may know common programs
+    by name; a detection for a new class. Medium.
+  - *A registrar restart independent of its registrants* (Presence,
+    Registry partitions, `:pg`, PubSub): a short list of APIs; structural
+    first. Low.
+  - *A per-node resource registered cluster-wide*: the design half of
+    `liveness_check_on_remote_pid`; needs intent across modules. Low.
+  - *A library leaking socket messages into its caller* (hackney's
+    `{:ssl_closed, _}`): version-dependent library behaviour; a table
+    keyed by the locked version, not a prior. No.
+
 ## Consistency issues
 
 Found while writing this catalog (each concern drafted from its rules,
@@ -3153,7 +3264,7 @@ interaction rather than reach (L17).
 - "fifteen substrings" (the fragment table has thirteen) in
   exposure.dl, the README, the secret fixture and
   lib/argus/priors/questions/sensitivity.ex. The first three are fixed
-  in this round; the last is left to the priors branch that owns it.
+  in this round, the last in the priors round that followed.
 - The README said argus ships 13 analyses beside a table of 14. Fixed in
   this round.
 - CHANGELOG 0.20.0-dev entries that a later entry of the same unreleased
