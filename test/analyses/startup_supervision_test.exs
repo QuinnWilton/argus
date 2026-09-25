@@ -73,6 +73,81 @@ defmodule Argus.Analyses.StartupSupervisionTest do
                ":pong = GenServer.call(Argus.Test.Fixtures.InitDepWorker, :ping)"
     end
 
+    test "a simple_one_for_one template child's init does not run while the tree boots" do
+      skip_without_souffle()
+
+      modules = [
+        :boot_order_sup,
+        :boot_order_pool_sup,
+        :boot_order_site,
+        :boot_order_early,
+        :boot_order_manager
+      ]
+
+      assert {:ok, results} = Memo.analyze(modules, :startup)
+
+      # boot_order_early starts before the manager and waits on it in
+      # init/1; boot_order_site, the pool's template, starts only when the
+      # manager asks, and meets it up.
+      deadlocks = for [child, dep | _] <- later_siblings(results), do: {child, dep}
+      assert {":boot_order_early", ":boot_order_manager"} in deadlocks
+      refute Enum.any?(deadlocks, &match?({":boot_order_site", _}, &1))
+    end
+
+    test "a child the boot starts, statically or from an init, is ordered in the boot" do
+      skip_without_souffle()
+
+      # A static child two levels down an earlier branch; a template child
+      # an earlier sibling's init/1 asks the pool for; a DynamicSupervisor
+      # child an earlier sibling's init/1 starts. Each init runs before
+      # the manager it waits on has started.
+      nested = [
+        :boot_nested_sup,
+        :boot_nested_mid,
+        :boot_nested_leaf,
+        :boot_nested_cont,
+        :boot_order_manager
+      ]
+
+      assert {:ok, results} = Memo.analyze(nested, :startup)
+
+      assert {":boot_nested_leaf", ":boot_order_manager"} in for(
+               [c, d | _] <- later_siblings(results),
+               do: {c, d}
+             )
+
+      assert [[":boot_nested_cont", ":boot_order_manager" | _]] =
+               Rows.where(results, :startup, "blocks_on_peer",
+                 phase: "continue",
+                 ordering: "later",
+                 drop: [:phase, :kind, :ordering]
+               )
+
+      started = [
+        :boot_started_sup,
+        :boot_order_pool_sup,
+        :boot_starter,
+        :boot_order_site,
+        :boot_order_manager
+      ]
+
+      assert {:ok, results} = Memo.analyze(started, :startup)
+
+      assert {":boot_order_site", ":boot_order_manager"} in for(
+               [c, d | _] <- later_siblings(results),
+               do: {c, d}
+             )
+
+      alias Argus.Test.Fixtures.BootDyn
+      dynamic = [BootDyn.Sup, BootDyn.DynSup, BootDyn.Starter, BootDyn.Worker, BootDyn.Manager]
+      assert {:ok, results} = Memo.analyze(dynamic, :startup)
+
+      assert {inspect(BootDyn.Worker), inspect(BootDyn.Manager)} in for(
+               [c, d | _] <- later_siblings(results),
+               do: {c, d}
+             )
+    end
+
     test "does not flag init calling only a pure function in the sibling's module" do
       skip_without_souffle()
 

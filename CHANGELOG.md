@@ -432,6 +432,33 @@ hackney (judged below). Fixtures: `tuple_spec_sup` and
 tests and ets_test.exs (the owner reported alone, excused under the
 supervisor).
 
+**Fixed.** The startup rules about what an init meets while the tree
+boots — "Startup deadlock: init waits on a later sibling", "Child starts
+before its dependency", "handle_continue races a later sibling",
+"handle_continue calls its own supervisor" and the unknown-place note's
+step-aside — order the children a supervisor starts in its own start
+(`boots_before`, clientlib/supervision.dl), not every member of a branch
+(`starts_before`, which shutdown's order still reads: what a branch
+holds stops with it however it got there). A DynamicSupervisor's child
+and the template child of a simple_one_for_one supervisor start when
+something asks for one, after the tree is up: zotonic's z_sites_manager
+starts each site's z_site_sup under z_sites_sup, an earlier sibling's
+branch, and the site's init meets it running. Two false deadlocks
+(z_site_sup, z_file_entry) and one false start-order warning, all three
+visible once zotonic's tuple specs were read. A template or dynamic child
+an init/1 of the boot starts (start_child on its supervisor, Elixir's or
+Erlang's `supervisor:start_child/2`, directly or one call away) starts in
+that init's turn and is ordered with the starter's branch; a start two
+calls away is missed. Fixtures: `boot_order_pool_sup`'s `boot_order_site`
+(quiet: the manager starts it once up); reported, the nearest real bugs:
+`boot_order_early` (a static child calling a later one from init/1),
+`boot_nested_leaf` and `boot_nested_cont` (a static child two levels down
+an earlier branch, from init/1 and from handle_continue/2),
+`boot_started_sup`'s `boot_order_site` (a template child an earlier
+sibling's init/1 asks for) and `BootDyn.Worker` (a DynamicSupervisor
+child an earlier sibling's init/1 starts), in
+startup_supervision_test.exs.
+
 ### FP hunt, round 2: eight more programs, and the anchors round 1 left
 
 **Fixed.** A blocking cast (`call_chain` kind `cast`) anchors at the

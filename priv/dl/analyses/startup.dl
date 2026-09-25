@@ -235,7 +235,7 @@ blocks_on_peer(mod, "init", callee, "call", "unknown", "", site, "conditional") 
 
 later_sibling_call(child, dep) :-
   supervisor_site(sup, _),
-  starts_before(sup, child, dep, _, _),
+  boots_before(sup, child, dep, _, _),
   init_dep(child, dep, "call", _),
   child != dep.
 
@@ -567,7 +567,7 @@ init_effect(mod, "connect", api, "") :-
 // builders keep one per (child, dep) and the synchronous one wins.
 blocks_on_peer(child, "init", dep, kind, "later", sup, sup_site, witness) :-
   supervisor_site(sup, sup_site),
-  starts_before(sup, child, dep, _, _),
+  boots_before(sup, child, dep, _, _),
   init_dep(child, dep, kind, witness),
   child != dep.
 
@@ -579,7 +579,7 @@ blocks_on_peer(child, "init", dep, kind, "later", sup, sup_site, witness) :-
 // ── Pattern 2: handle_continue calls later-started sibling ───────────
 
 blocks_on_peer(caller, "continue", callee, "call", "later", sup, site, "") :-
-  starts_before(sup, caller, callee, _, _),
+  boots_before(sup, caller, callee, _, _),
   continue_wait(caller, callee, site).
 
 // ── Pattern 3: handle_continue calls back into parent supervisor ─────
@@ -608,7 +608,7 @@ continues_on_stack(worker, site, sup, cat(api, ".", op)) :-
 
 .decl has_later_sibling(sup: symbol, worker: symbol)
 
-has_later_sibling(sup, worker) :- starts_before(sup, worker, _, _, _).
+has_later_sibling(sup, worker) :- boots_before(sup, worker, _, _, _).
 
 blocks_on_peer(worker, "continue", sup, "parent", "parent", sup, site, detail) :-
   continues_on_stack(worker, site, sup, detail),

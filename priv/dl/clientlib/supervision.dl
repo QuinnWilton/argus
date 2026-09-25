@@ -7,6 +7,7 @@
 // Provides:
 //   child_subtree(sup, branch, mod)
 //   starts_before(sup, earlier, later, earlier_pos, later_pos)
+//   boots_before(sup, earlier, later, earlier_pos, later_pos)
 
 // ── Child subtree ─────────────────────────────────────────────────────
 
@@ -46,6 +47,87 @@ starts_before(sup, earlier, later, epos, lpos) :-
   child_subtree(sup, earlier_branch, earlier),
   supervisor_child(sup, lpos, later_branch, _, _),
   child_subtree(sup, later_branch, later),
+  epos < lpos,
+  earlier_branch != later_branch.
+
+// ── Start order at boot ──────────────────────────────────────────────
+//
+// starts_before holds for every member of a branch, a dynamic child
+// included: what the branch's supervisor holds, however it got there,
+// stops with it, and shutdown's order reads that. The order in which the
+// inits run while the tree boots is narrower. A dynamic child
+// (DynamicSupervisor.start_child) and the template child of a
+// simple_one_for_one supervisor start when something asks for one, after
+// the supervisor is up: zotonic's z_sites_manager starts each site's
+// z_site_sup under z_sites_sup, an earlier sibling's branch, and the
+// site's init runs with z_sites_manager already up, unless an init of the
+// boot asks for one (below). boot_subtree follows the static children a
+// supervisor starts in its own start, and those an init starts while the
+// tree boots; boots_before orders two of them; the startup rules about
+// what an init meets during the boot read it.
+.decl template_supervisor(sup: symbol)
+
+template_supervisor(sup) :- supervisor(sup, "simple_one_for_one").
+
+.decl boot_subtree(sup: symbol, branch: symbol, mod: symbol)
+
+boot_subtree(sup, child, child) :-
+  supervisor_child(sup, _, child, _, _),
+  !template_supervisor(sup).
+
+boot_subtree(sup, branch, descendant) :-
+  boot_subtree(sup, branch, intermediate),
+  supervisor_child(intermediate, _, descendant, _, _),
+  !template_supervisor(intermediate).
+
+// A template or dynamic child an init/1 in the boot starts — it calls
+// start_child on the child's supervisor, or a function that does, one
+// call away — starts in that init's turn, as part of the starter's
+// branch: its own init runs before what the starter's position precedes
+// has started. A start two calls away is not followed, and its child is
+// missed.
+boot_subtree(sup, branch, child) :-
+  boot_subtree(sup, branch, starter),
+  init_function(starter, f),
+  boot_start(f, pool),
+  on_demand_child(pool, child).
+
+.decl on_demand_child(pool: symbol, child: symbol)
+
+on_demand_child(pool, child) :-
+  template_supervisor(pool),
+  supervisor_child(pool, _, child, _, _).
+
+on_demand_child(pool, child) :- dynamic_child(pool, child, _).
+
+.decl boot_start(func: symbol, pool: symbol)
+
+boot_start(f, pool) :- sup_management_call(_, f, _, "start_child", pool).
+
+boot_start(f, pool) :-
+  call_edge(f, g),
+  sup_management_call(_, g, _, "start_child", pool).
+
+// Erlang's own `supervisor:start_child(Pool, Args)`, which sup_call (the
+// Elixir APIs) does not name.
+boot_start(f, pool) :- erlang_start_child(f, pool).
+boot_start(f, pool) :- call_edge(f, g), erlang_start_child(g, pool).
+
+.decl erlang_start_child(func: symbol, pool: symbol)
+
+erlang_start_child(f, pool) :-
+  remote_call(_, f, ":supervisor", "start_child", 2),
+  call_arg(f, ":supervisor:start_child/2", 0, pool),
+  pool != "dynamic".
+
+.decl boots_before(sup: symbol, earlier: symbol, later: symbol, earlier_pos: number, later_pos: number)
+
+boots_before(sup, earlier, later, epos, lpos) :-
+  supervisor(sup, _),
+  supervisor_child(sup, epos, earlier_branch, _, _),
+  boot_subtree(sup, earlier_branch, earlier),
+  supervisor_child(sup, lpos, later_branch, _, _),
+  boot_subtree(sup, later_branch, later),
   epos < lpos,
   earlier_branch != later_branch.
 

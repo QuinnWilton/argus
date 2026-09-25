@@ -548,3 +548,79 @@ defmodule Argus.Test.Fixtures.ConfigurableQueueSupervisor do
     Supervisor.init(children, strategy: :rest_for_one)
   end
 end
+
+# A DynamicSupervisor's child an earlier sibling's init/1 starts while
+# the tree boots: its init runs in the starter's turn, before the manager
+# it waits on (FP hunt round 3's boot-order probes).
+defmodule Argus.Test.Fixtures.BootDyn.DynSup do
+  @moduledoc false
+  use DynamicSupervisor
+
+  def start_link(opts), do: DynamicSupervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts), do: DynamicSupervisor.init(strategy: :one_for_one)
+end
+
+defmodule Argus.Test.Fixtures.BootDyn.Worker do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(_opts) do
+    config = GenServer.call(Argus.Test.Fixtures.BootDyn.Manager, :config)
+    {:ok, config}
+  end
+end
+
+defmodule Argus.Test.Fixtures.BootDyn.Starter do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts) do
+    {:ok, _pid} =
+      DynamicSupervisor.start_child(
+        Argus.Test.Fixtures.BootDyn.DynSup,
+        Argus.Test.Fixtures.BootDyn.Worker
+      )
+
+    {:ok, %{}}
+  end
+end
+
+defmodule Argus.Test.Fixtures.BootDyn.Manager do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts), do: {:ok, %{}}
+
+  @impl true
+  def handle_call(:config, _from, state), do: {:reply, %{}, state}
+end
+
+defmodule Argus.Test.Fixtures.BootDyn.Sup do
+  @moduledoc false
+  use Supervisor
+
+  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts) do
+    Supervisor.init(
+      [
+        Argus.Test.Fixtures.BootDyn.DynSup,
+        Argus.Test.Fixtures.BootDyn.Starter,
+        Argus.Test.Fixtures.BootDyn.Manager
+      ],
+      strategy: :one_for_one
+    )
+  end
+end
