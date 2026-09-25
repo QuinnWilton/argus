@@ -772,10 +772,14 @@ unconsumed_monitor(mod, func, id, "timed_wait") :-
 // everywhere in this rule. Phoenix's Channel.Server.close/2 gives the
 // channel a grace period, then kills it and waits for the :DOWN. Read
 // per function, as the timed wait is: that the timeout's path reaches
-// the wait is not asked.
+// the wait is not asked. So is one after which every path to the
+// function's return waits for a :DOWN (awaits_down_after): qlc's
+// stop_cursor/1 looks for an :EXIT with `after 0`, and on both branches
+// then waits for the cursor's :DOWN.
 .decl waited_out(monitor: symbol)
 
 waited_out(m) :- recv_down(r, f, m), recv_start(r, f, 1, _).
+waited_out(m) :- monitor_call(m, f, _), awaits_down_after(f, m).
 
 // A function that monitors and waits with an `after`, and neither
 // flushes nor ends its process: the monitor is live when the wait gives

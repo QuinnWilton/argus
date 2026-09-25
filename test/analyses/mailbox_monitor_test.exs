@@ -23,7 +23,8 @@ defmodule Argus.Analyses.MailboxMonitorTest do
     M.CollectedByRef,
     M.FlushedByCaller,
     M.WaitsForAnotherRef,
-    M.GraceThenKill
+    M.GraceThenKill,
+    M.StopsCursor
   ]
 
   @servers [
@@ -104,6 +105,11 @@ defmodule Argus.Analyses.MailboxMonitorTest do
   test "a kill after the grace period, then a wait for the :DOWN, waits it out", ctx do
     skip_without_souffle()
     refute named?(funcs(ctx), "MonitorLeak.GraceThenKill")
+  end
+
+  test "a look with after 0, then a wait for the :DOWN on every path, waits it out", ctx do
+    skip_without_souffle()
+    refute named?(funcs(ctx), "MonitorLeak.StopsCursor")
   end
 
   test "a flush in the helper discharges it", ctx do

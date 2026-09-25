@@ -83,6 +83,27 @@ defmodule Argus.Test.Fixtures.MonitorLeak do
     end
   end
 
+  defmodule StopsCursor do
+    @moduledoc """
+    qlc's stop_cursor/1: a look for the cursor's :EXIT with `after 0`,
+    and on both branches a wait with no `after` for its :DOWN, which
+    pins the process rather than the ref. Every path waits it out.
+    """
+    def stop(pid) do
+      Process.monitor(pid)
+      Process.unlink(pid)
+
+      receive do
+        {:EXIT, ^pid, _reason} ->
+          receive do: ({:DOWN, _, :process, ^pid, _} -> :ok)
+      after
+        0 ->
+          send(pid, {self(), :stop})
+          receive do: ({:DOWN, _, :process, ^pid, _} -> :ok)
+      end
+    end
+  end
+
   defmodule Flushes do
     @moduledoc "Same wait, but the monitor is cancelled and the mailbox cleared."
     def wait(pid) do

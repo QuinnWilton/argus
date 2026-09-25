@@ -337,6 +337,15 @@ went on past it to a later receive's `wait`: io's `execute_request/3`
 looks for an `:EXIT` with `after 0` inside a receive that waits, and the
 look was taken for a second wait with no timeout.
 
+**Fixed.** "leaves a monitor live after its wait times out"
+(`mailbox.unconsumed_monitor`, "timed_wait") takes a monitor its own
+function waits out on every path to its return (`awaits_down_after`) as
+consumed. qlc's `stop_cursor/1` looks for the cursor's `:EXIT` with
+`after 0` and then, on both branches, waits for its `:DOWN` with no
+`after`; the `after 0` look was taken for a blocking wait (above), which
+hid the shape, and once it was seen for a timed one the rule reported a
+monitor every path collects.
+
 **Added.** "init/1 enters the server loop before its start returns"
 (`unbounded_effect_in_init`, "enter_loop", an error): an init/1 that
 reaches `:gen_server.enter_loop` or `:gen_statem.enter_loop` before any
