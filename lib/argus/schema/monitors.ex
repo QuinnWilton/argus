@@ -71,6 +71,27 @@ defmodule Argus.Schema.Monitors do
         """
       },
       %{
+        name: :recv_signal,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the receive's loop_rec"},
+          {:func, :symbol, "the function"},
+          {:signal, :symbol, "'down' | 'exit'"}
+        ],
+        doc: """
+        A receive with a clause that takes the exit signal of the process \
+        a pinned register names, whatever the reason it exits with \
+        (`Argus.Extractors.Monitor.ExitSignal`): a `:DOWN` whose ref the \
+        clause pins (`"down"`; the tag may be a monitor's own, \
+        `{alias, ^ref, :process, _, _}`) or an `:EXIT` whose sender it \
+        pins (`"exit"`). Unlike recv_down, the pinned value may come from \
+        anywhere: a parameter, a `spawn_monitor`'s pair, a port the \
+        function opened. The receive ends no later than that process, \
+        while the monitor or the link is in place. A clause that tests \
+        the reason, or pins nothing, is not one.
+        """
+      },
+      %{
         name: :demonitor_call,
         layer: 2,
         fields: [

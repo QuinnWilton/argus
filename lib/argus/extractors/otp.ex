@@ -13,14 +13,31 @@ defmodule Argus.Extractors.OTP do
   - `process_link(from_mod, to_mod)` — Process.link / :erlang.link call
   - `init_continues_to(mod, tag)` — module's init/1 returns `{:continue, tag}`
   - `handle_continue_clause(mod, tag, func_id)` — handle_continue/2 clause matching `tag`
+  - `start_acked(id, func)` — the call or receive at `id` runs only after
+    `func` has acknowledged its start: every path from the function's
+    entry to it passes a `:proc_lib.init_ack/1,2`
+
+  ## After the start is acknowledged
+
+  A process started with `:proc_lib.start_link/3` holds its starter until
+  it calls `:proc_lib.init_ack/1`; an init/1 that enters its own loop
+  (`:gen_server.enter_loop/3`, OTP's logger_olp) acks first and waits
+  afterwards, and what it waits for then is its loop's business, not the
+  start's. Read on the function's graph: the instructions reached from
+  the entry along paths that have not yet passed an init_ack are the
+  start's; every other call and receive is `start_acked`. An ack made
+  in a helper the function calls is not seen.
   """
 
   @behaviour Argus.Extractor
 
+  alias Argus.Cfg.Walk
+  alias Argus.Extractor.Dispatch
   alias Argus.Extractor.Helpers
   alias Argus.Instr
+  alias Argus.InstrId
 
-  import Argus.Extractor.Helpers, only: [each_remote_call: 3, get_behaviours: 1]
+  import Argus.Extractor.Helpers, only: [cfg: 3, each_remote_call: 3, get_behaviours: 1]
   import Argus.Extractor.Facts, only: [add_fact: 3, track_dynamic: 5]
   import Argus.Extractor.Resolve, only: [arg_position: 3, resolve_callee: 1]
   import Argus.Extractor.Shapes, only: [return_shapes: 1]
@@ -31,7 +48,8 @@ defmodule Argus.Extractors.OTP do
       :handle_continue_clause,
       :implements_behaviour,
       :init_continues_to,
-      :process_link
+      :process_link,
+      :start_acked
     ]
 
   @impl true
@@ -45,7 +63,57 @@ defmodule Argus.Extractors.OTP do
     |> extract_behaviours(mod_str, module_data.attributes)
     |> extract_link_calls(mod_str, module_data)
     |> extract_continue_facts(mod, mod_str, functions)
+    |> extract_start_acked(module_data)
   end
+
+  # ── After the start is acknowledged ─────────────────────────────────
+
+  defp extract_start_acked(facts, %{module: mod, functions: functions} = module_data) do
+    Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
+      acks = for {instr, idx} <- Enum.with_index(instrs), init_ack?(instr), do: idx
+
+      case acks do
+        [] ->
+          acc
+
+        _ ->
+          emit_acked(
+            acc,
+            InstrId.func_id(mod, name, arity),
+            instrs,
+            cfg(module_data, name, arity)
+          )
+      end
+    end)
+  end
+
+  # No graph, no rows: a wait the fact cannot place after the ack stays
+  # the start's.
+  defp emit_acked(facts, _func_id, _instrs, nil), do: facts
+
+  defp emit_acked(facts, func_id, instrs, fun) do
+    {:done, before} =
+      Walk.explore(fun, instrs, [Dispatch.entry_index(instrs)],
+        on_instr: fn instr, _idx -> if init_ack?(instr), do: :prune, else: :continue end
+      )
+
+    for {instr, idx} <- Enum.with_index(instrs),
+        waits?(instr),
+        not MapSet.member?(before, idx),
+        reduce: facts do
+      acc -> add_fact(acc, :start_acked, [InstrId.mint(func_id, idx), func_id])
+    end
+  end
+
+  defp init_ack?(instr) do
+    case Helpers.match_remote_call(instr) do
+      {:ok, :proc_lib, :init_ack, arity} -> arity in [1, 2]
+      _ -> false
+    end
+  end
+
+  defp waits?({:loop_rec, _fail, _dst}), do: true
+  defp waits?(instr), do: Instr.call?(instr) or Instr.tail_call?(instr)
 
   # Two facts:
   #   - init_continues_to(mod, tag) when init/1 returns {:ok, _, {:continue, tag}}

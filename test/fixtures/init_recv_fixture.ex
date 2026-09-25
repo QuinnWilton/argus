@@ -255,3 +255,186 @@ defmodule Argus.Test.Fixtures.InitRecv.TaskCalls do
     def init(nil), do: Supervisor.init([Early, Later], strategy: :one_for_one)
   end
 end
+
+defmodule Argus.Test.Fixtures.InitRecv.AcksThenLoops do
+  @moduledoc false
+  # OTP's logger_olp: started with :proc_lib.start_link, init/1 acks its
+  # start and then becomes the server with :gen_server.enter_loop. The
+  # server loop's receive runs after the starter got its answer.
+  use GenServer
+
+  def start_link(opts), do: :proc_lib.start_link(__MODULE__, :init, [opts])
+
+  @impl true
+  def init(opts) do
+    :proc_lib.init_ack({:ok, self()})
+    :gen_server.enter_loop(__MODULE__, [], opts)
+  end
+end
+
+defmodule Argus.Test.Fixtures.InitRecv.AcksThenWaits do
+  @moduledoc false
+  # The same ack, then a receive of init/1's own and a loop it calls:
+  # both after the start.
+  use GenServer
+
+  def start_link(opts), do: :proc_lib.start_link(__MODULE__, :init, [opts])
+
+  @impl true
+  def init(opts) do
+    :proc_lib.init_ack({:ok, self()})
+
+    receive do
+      {:go, config} -> serve({opts, config})
+    end
+  end
+
+  defp serve(state) do
+    receive do
+      {:work, from} ->
+        send(from, {:done, state})
+        serve(state)
+    end
+  end
+end
+
+defmodule Argus.Test.Fixtures.InitRecv.WaitsBeforeAck do
+  @moduledoc false
+  # The receive comes before the ack: the starter waits for it.
+  use GenServer
+
+  def start_link(opts), do: :proc_lib.start_link(__MODULE__, :init, [opts])
+
+  @impl true
+  def init(opts) do
+    config =
+      receive do
+        {:go, config} -> config
+      end
+
+    :proc_lib.init_ack({:ok, self()})
+    :gen_server.enter_loop(__MODULE__, [], {opts, config})
+  end
+end
+
+defmodule Argus.Test.Fixtures.InitRecv.AsksWithMonitor do
+  @moduledoc false
+  # code_server's call/1 and gen's call: a request whose wait takes the
+  # :DOWN of the monitor on the process asked. If that process is gone,
+  # the :DOWN comes.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(server), do: {:ok, ask(server, :config)}
+
+  defp ask(server, request) do
+    ref = Process.monitor(server)
+    send(server, {:ask, self(), ref, request})
+
+    receive do
+      {^ref, reply} ->
+        Process.demonitor(ref, [:flush])
+        reply
+
+      {:DOWN, ^ref, _, _, reason} ->
+        exit(reason)
+    end
+  end
+end
+
+defmodule Argus.Test.Fixtures.InitRecv.AwaitsHandedDown do
+  @moduledoc false
+  # proc_lib's await_DOWN/2: the wait pins a ref its caller took, handed
+  # in; and code's do_par/2, a spawn_monitor's pair.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(pid) do
+    ref = Process.monitor(pid)
+    Process.exit(pid, :shutdown)
+    await_down(pid, ref)
+    {:ok, run_aside(fn -> :done end)}
+  end
+
+  defp await_down(pid, ref) do
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _} -> :ok
+    end
+  end
+
+  defp run_aside(fun) do
+    {_pid, ref} = spawn_monitor(fn -> exit(fun.()) end)
+
+    receive do
+      {:DOWN, ^ref, :process, _, result} -> result
+    end
+  end
+end
+
+defmodule Argus.Test.Fixtures.InitRecv.ClosesPort do
+  @moduledoc false
+  # peer's init/1: trapping exits, it closes the port it opened and waits
+  # for that port's exit signal, which closing it sends.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(exec) do
+    Process.flag(:trap_exit, true)
+    port = Port.open({:spawn_executable, exec}, [:binary])
+    Port.close(port)
+
+    receive do
+      {:EXIT, ^port, _} -> :ok
+    end
+
+    {:ok, exec}
+  end
+end
+
+defmodule Argus.Test.Fixtures.InitRecv.FlushesTimer do
+  @moduledoc false
+  # Livebook's session: cancel_timer said the timer fired, and the
+  # receive takes the message it already delivered.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts) do
+    ref = Process.send_after(self(), :close, 60_000)
+
+    if Process.cancel_timer(ref) == false do
+      receive do
+        :close -> :ok
+      end
+    end
+
+    {:ok, opts}
+  end
+end
+
+defmodule Argus.Test.Fixtures.InitRecv.LoopsOnParent do
+  @moduledoc false
+  # A loop init/1 enters before any ack, whose receive also takes the
+  # parent's exit: that clause ends the loop, and the loop still waits
+  # for its next message from anyone.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(parent), do: {:ok, loop(parent, [])}
+
+  defp loop(parent, acc) do
+    receive do
+      {:EXIT, ^parent, _} -> acc
+      {:item, item} -> loop(parent, [item | acc])
+    end
+  end
+end

@@ -3,6 +3,33 @@ defmodule Argus.Extractors.OTPTest do
 
   alias Argus.Extractors.{ApiCalls, OTP}
 
+  describe "extract/1 — start_acked" do
+    alias Argus.Test.Fixtures.InitRecv
+
+    defp acked(mod) do
+      {:ok, data} = BeamSpy.BeamFile.disassemble(to_string(:code.which(mod)))
+      code = data.functions |> Map.new(fn {:function, n, a, _, i} -> {"#{n}/#{a}", i} end)
+
+      for [id, func] <- Map.get(OTP.extract(data), :start_acked, []) do
+        [_, idx] = String.split(id, "#")
+        name = func |> String.split(":") |> List.last()
+        {name, code |> Map.fetch!(name) |> Enum.at(String.to_integer(idx)) |> elem(0)}
+      end
+      |> Enum.sort()
+    end
+
+    test "the calls and receives after the ack, and none before it" do
+      assert acked(InitRecv.AcksThenLoops) == [{"init/1", :call_ext_last}]
+
+      assert {"init/1", :loop_rec} in acked(InitRecv.AcksThenWaits)
+      refute Enum.any?(acked(InitRecv.WaitsBeforeAck), &match?({_, :loop_rec}, &1))
+    end
+
+    test "a function with no ack has no rows" do
+      assert acked(InitRecv.Waits) == []
+    end
+  end
+
   describe "extract/1 — behaviour detection" do
     test "detects GenServer behaviour" do
       {:ok, data} =

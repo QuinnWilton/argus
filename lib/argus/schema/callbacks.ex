@@ -135,6 +135,24 @@ defmodule Argus.Schema.Callbacks do
         deferred-startup-deadlock analysis pairs this with `init_continues_to`
         to find handle_continue bodies reachable from a module's init.
         """
+      },
+      %{
+        name: :start_acked,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "a call or a receive's loop_rec"},
+          {:func, :symbol, "the function holding it"}
+        ],
+        doc: """
+        The call or receive at `id` runs only after `func` has \
+        acknowledged its start: every path from the function's entry to \
+        it passes a `:proc_lib.init_ack/1,2` (`Argus.Extractors.OTP`). A \
+        process started with `:proc_lib.start_link/3` holds its starter \
+        until that ack; an init/1 that acks and then enters its own loop \
+        (`:gen_server.enter_loop/3`, OTP's logger_olp) waits there as the \
+        server, not as the start. An ack made in a helper the function \
+        calls is not seen.
+        """
       }
     ])
   end

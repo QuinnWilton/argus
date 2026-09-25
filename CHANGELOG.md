@@ -37,6 +37,20 @@ catch-all handle_info/2. The rules reading `recv_pattern` (the timer
 flush, `unhandled_info`, `unreceived_message`, blocking's cancel_timer
 idiom) now see those receives.
 
+**Added.** Schema 92. `recv_signal(id, func, signal)`
+(`Argus.Extractors.Monitor.ExitSignal`): a receive with a clause that
+takes the exit signal of the process a pinned register names, whatever
+its reason — a `:DOWN` whose ref it pins (`"down"`; the tag may be the
+monitor's own, gen_server's multi_call `{alias, ^ref, :process, _, _}`)
+or an `:EXIT` whose sender it pins (`"exit"`). Unlike `recv_down`, the
+pinned value may come from anywhere: a parameter (proc_lib's
+`await_DOWN/2`), a `spawn_monitor`'s pair, a port the function opened.
+A function that calls itself is a loop, and its `{:EXIT, parent, _}`
+clause ends the loop rather than bounding a wait: no "exit" row.
+`start_acked(id, func)` (`Argus.Extractors.OTP`): the call or receive
+at `id` runs only after `func` has called `:proc_lib.init_ack/1,2` on
+every path from its entry.
+
 **Added.** Schema 91. `timer_tag(id, tag)`
 (`Argus.Extractors.ErrorHandling`): the atom the message of the timer
 armed at `id` is told apart by — the message itself, or a tuple's

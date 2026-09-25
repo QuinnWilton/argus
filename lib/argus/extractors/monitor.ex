@@ -41,6 +41,10 @@ defmodule Argus.Extractors.Monitor do
     helpers that no callback name identifies
   - `awaits_down_after(func, call)` — every path in `func` from the call
     at `call` to its return waits for a `:DOWN` (below)
+  - `recv_signal(id, func, signal)` — a receive with a clause that takes
+    the exit signal of the process a pinned register names, whatever its
+    reason: a `:DOWN` (`"down"`) or an `:EXIT` (`"exit"`)
+    (`Argus.Extractors.Monitor.ExitSignal`)
 
   Whether the ref is dropped is read from the instructions after the
   call, along every path: the ref arrives in `{x, 0}`, and it is dropped
@@ -86,6 +90,7 @@ defmodule Argus.Extractors.Monitor do
 
   alias Argus.Cfg.Walk
   alias Argus.Extractor.Resolve
+  alias Argus.Extractors.Monitor.ExitSignal
   alias Argus.Instr
   alias Argus.InstrId
 
@@ -111,7 +116,8 @@ defmodule Argus.Extractors.Monitor do
       :matches_down,
       :monitor_call,
       :monitor_ref_dropped,
-      :recv_down
+      :recv_down,
+      :recv_signal
     ]
 
   @impl true
@@ -121,6 +127,36 @@ defmodule Argus.Extractors.Monitor do
     |> emit_matches_down(mod, functions)
     |> emit_awaits_down_after(module_data)
     |> emit_recv_down(module_data)
+    |> emit_recv_signal(mod, functions)
+  end
+
+  # ── A receive that ends when a particular process does ───────────────
+
+  # A function that calls itself is a loop, and the `{:EXIT, parent, _}`
+  # clause of a loop's receive ends the loop, not a wait for a reply: the
+  # loop waits for its next message, from anyone. Its :DOWN clauses stay
+  # (gen_server's multi_call waits for one reply or :DOWN per call of
+  # itself). A loop through another function is not seen.
+  defp emit_recv_signal(facts, mod, functions) do
+    Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
+      case for({{:loop_rec, _fail, _dst}, idx} <- Enum.with_index(instrs), do: idx) do
+        [] ->
+          acc
+
+        receives ->
+          func_id = InstrId.func_id(mod, name, arity)
+          code = List.to_tuple(instrs)
+          labels = labels(instrs)
+          loops? = Enum.any?(instrs, &(match_local_call(&1) == {:ok, mod, name, arity}))
+
+          for loop <- receives,
+              signal <- ExitSignal.signals(code, labels, loop),
+              not (loops? and signal == "exit"),
+              reduce: acc do
+            acc -> add_fact(acc, :recv_signal, [InstrId.mint(func_id, loop), func_id, signal])
+          end
+      end
+    end)
   end
 
   defp emit_matches_down(facts, mod, functions) do

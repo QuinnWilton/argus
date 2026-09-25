@@ -70,6 +70,31 @@ defmodule Argus.Extractors.MonitorTest do
     end
   end
 
+  describe "recv_signal" do
+    alias Argus.Test.Fixtures.InitRecv
+
+    defp signals(mod) do
+      for [_id, func, signal] <- Map.get(extract(mod), :recv_signal, []),
+          do: {func |> String.split(":") |> List.last(), signal}
+    end
+
+    test "a pinned :DOWN, whatever the ref's origin, and a pinned port's :EXIT" do
+      assert signals(InitRecv.AsksWithMonitor) == [{"ask/2", "down"}]
+
+      assert Enum.sort(signals(InitRecv.AwaitsHandedDown)) == [
+               {"await_down/2", "down"},
+               {"run_aside/1", "down"}
+             ]
+
+      assert signals(InitRecv.ClosesPort) == [{"init/1", "exit"}]
+    end
+
+    test "a loop's clause for its parent's exit, and an unpinned wait, are none" do
+      assert signals(InitRecv.LoopsOnParent) == []
+      assert signals(InitRecv.Waits) == []
+    end
+  end
+
   describe "recv_down" do
     alias Argus.Test.Fixtures.CallbackReceive, as: R
 
