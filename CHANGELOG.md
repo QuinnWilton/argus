@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- A query that reads argus's schema depends on the entries it read, not
+  on the schema's code: argus's accessors record each entry they return
+  (`Argus.Cache.Reads`), and `schema_read(entry)`, a new query, is one
+  entry's digest now. Extraction depends on the columns its producers
+  decoded and scry interned its rows by; a relation's text on that
+  relation's columns; whether a relation is a prior on its own entry;
+  the relations an analysis or a stage reads on each name's columns.
+  An argus edit digests the entries read so far again, and reruns only
+  the queries whose entries moved.
 - A solve is keyed on its program as the solve loads it
   (`Argus.Souffle.Cache.declared_digest/2`, as argus keys its own
   solves): of argus's generated declaration files, only the

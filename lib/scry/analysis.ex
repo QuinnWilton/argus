@@ -7,7 +7,9 @@ defmodule Scry.Analysis do
       module_beam(module)          extraction_code(:all)  [inputs]
            │                        │
       module_extraction(module)     ← every argus producer's rows, per
-       │              │               module (Argus.Pipeline.extract_shards)
+       │              │               module (Argus.Pipeline.extract_shards),
+       │              │               and schema_read(entry) for each entry
+       │              │               of argus's schema it read
       module_semantic_facts   module_line_table
        (digest of the facts    (anchor resolution,
         minus line_info —       consumed late)
@@ -50,6 +52,19 @@ defmodule Scry.Analysis do
   runs. An edit outside that code — the findings' prose, the analyses
   modules, the Souffle wrapper — extracts nothing: it rebuilds the
   findings (`:argus_code`), and solves nothing.
+
+  The schema-edit story: argus's schema (`Argus.Schema`) is data, and
+  every accessor of it records the entry it returned
+  (`Argus.Cache.Reads`). Every query here that reads it — extraction,
+  whose producers decode a few relations by their columns and whose
+  rows are interned by them; the relations' text; the projections'
+  relation lists — depends on each entry it read (`schema_read(entry)`,
+  its digest now), and on nothing else of the schema. So a relation
+  added, a version bump or another relation's prose reruns nothing but
+  the digests of the entries read so far; a relation's columns changed
+  re-extract the modules whose rows it holds, and re-solve only the
+  programs that load it (`:rules_digest` keys a program by the
+  declarations it loads).
 
   The line-shift immunity story: a whitespace/comment edit changes the
   beam (Line/Dbgi chunks) → `module_extraction` recomputes and differs
@@ -143,13 +158,14 @@ defmodule Scry.Analysis do
 
     case Runtime.query(db, :module_beam, module) do
       {:ok, beam} ->
-        {result, reads} =
+        {result, installed, schema} =
           case take_prewarmed(module, beam) do
             {:ok, extracted} -> extracted
             :none -> extract(module, beam, Symbols.for_db(db))
           end
 
-        :ok = track_reads(db, module, reads)
+        :ok = track_reads(db, module, installed)
+        :ok = depend_on_schema(db, schema)
         result
 
       :external ->
@@ -165,6 +181,47 @@ defmodule Scry.Analysis do
   # every validation of the reader would run it again.
   defp optional_input(db, input, key) do
     if Roux.Input.exists?(db, input, key), do: Runtime.input(db, input, key)
+  end
+
+  # One entry of argus's fact schema, by the name its accessor recorded
+  # it under (`Argus.Cache.Reads`: `"columns call_arg"`, `"fetch
+  # supervisor"`): the digest of what the entry is now
+  # (`Argus.Cache.Reads.digest/1`). A query that read the schema depends
+  # on each entry it read through this (`reading_schema/2`), not on the
+  # schema's code, so a schema edit reruns exactly the queries that read
+  # what it changed: a relation added, a version bump or another
+  # relation's prose reruns none.
+  #
+  # The entries are data compiled into argus's schema modules, so they
+  # move only with argus's code: this reads `:argus_code`, and on an
+  # argus edit every entry read so far is digested again (a few hundred
+  # small terms), backdating wherever it came out equal. A query, not an
+  # input the driver sets, because what an extraction reads is known only
+  # after it ran, often inside the graph, where no input can be set.
+  defquery :schema_read, key: read, returns: String.t() do
+    _argus = optional_input(db, :argus_code, :all)
+    Argus.Cache.Reads.digest(read)
+  end
+
+  # Runs `fun` (no query of this graph: what one read is its own) and
+  # makes the running query depend on each schema entry it read.
+  defp reading_schema(db, fun) do
+    {result, reads} = Argus.Cache.Reads.track(fun)
+    :ok = depend_on_schema(db, reads)
+    result
+  end
+
+  # An edge to each of `reads` (`schema_read`), for a frontend that keys
+  # argus's code (`:argus_code`); one that does not (planchette) relies
+  # on its fingerprint to move with argus, as it does for the rest of
+  # argus's code, and records none.
+  defp depend_on_schema(_db, []), do: :ok
+
+  defp depend_on_schema(db, reads) do
+    if Roux.Input.exists?(db, :argus_code, :all),
+      do: Enum.each(reads, &Runtime.query(db, :schema_read, &1))
+
+    :ok
   end
 
   # What the specs extractor read off the code path for this module
@@ -371,7 +428,7 @@ defmodule Scry.Analysis do
   # empty relation — the meaning of priors off — and the read is still a
   # recorded dependency, so a later `Input.set` invalidates.
   defquery :relation_rows, key: relation, returns: [tuple()] do
-    if relation in prior_relations() do
+    if reading_schema(db, fn -> prior?(relation) end) do
       prior_rows(db, relation)
     else
       db
@@ -383,6 +440,10 @@ defmodule Scry.Analysis do
   @doc "The layer-3 relation names, as `Argus.Schema` declares them."
   @spec prior_relations() :: [atom()]
   def prior_relations, do: Enum.map(Argus.Schema.layer_3(), & &1.name)
+
+  # Whether `relation` is a prior, reading that relation's entry alone:
+  # the whole of layer 3 moves with any prior's prose.
+  defp prior?(relation), do: match?({:ok, %{layer: 3}}, Argus.Schema.fetch(relation))
 
   # The frontend's digest of the Datalog `key` runs, or nil for a frontend
   # that does not set it (planchette). Only a set digest is read, so only
@@ -406,7 +467,8 @@ defmodule Scry.Analysis do
   # (planchette's supervision tree). Scry's own path never demands it.
   defquery :relation_facts, key: relation, returns: [[String.t()]] do
     rows = Runtime.query(db, :relation_rows, relation)
-    Facts.materialize(%{relation => rows}, Symbols.for_db(db))[relation]
+    symbols = Symbols.for_db(db)
+    reading_schema(db, fn -> Facts.materialize(%{relation => rows}, symbols)[relation] end)
   end
 
   # Content digest of one relation's rows as they will be written — over
@@ -426,7 +488,8 @@ defmodule Scry.Analysis do
   defquery :relation_digest, key: relation, returns: String.t() do
     _encoding = optional_input(db, :extraction_code, :all)
     rows = Runtime.query(db, :relation_rows, relation)
-    stored_digest(relation, rows, Symbols.for_db(db))
+    symbols = Symbols.for_db(db)
+    reading_schema(db, fn -> stored_digest(relation, rows, symbols) end)
   end
 
   # The same for one of stage 0's outputs: digested and stored once per
@@ -435,7 +498,7 @@ defmodule Scry.Analysis do
     _encoding = optional_input(db, :extraction_code, :all)
 
     case Runtime.query(db, :stage0_facts, :all) do
-      {:ok, facts} -> stored_digest(relation, Map.fetch!(facts, relation), Symbols.for_db(db))
+      {:ok, facts} -> stored_output_digest(db, relation, Map.fetch!(facts, relation))
       {:error, _} -> nil
     end
   end
@@ -445,9 +508,15 @@ defmodule Scry.Analysis do
     _encoding = optional_input(db, :extraction_code, :all)
 
     case Runtime.query(db, :points_to_facts, :all) do
-      {:ok, facts} -> stored_digest(relation, Map.fetch!(facts, relation), Symbols.for_db(db))
+      {:ok, facts} -> stored_output_digest(db, relation, Map.fetch!(facts, relation))
       {:error, _} -> nil
     end
+  end
+
+  # A stage output's digest, stored: its text is written by its columns.
+  defp stored_output_digest(db, relation, rows) do
+    symbols = Symbols.for_db(db)
+    reading_schema(db, fn -> stored_digest(relation, rows, symbols) end)
   end
 
   # The relations a given analysis reads, straight from argus (which
@@ -461,7 +530,7 @@ defmodule Scry.Analysis do
     _rules = rules_digest(db, analysis)
 
     case Argus.Analysis.input_relations(analysis) do
-      {:ok, relations} -> {:ok, to_relation_atoms(relations)}
+      {:ok, relations} -> {:ok, reading_schema(db, fn -> to_relation_atoms(relations) end)}
       {:error, reason} -> {:error, {:input_relations, reason}}
     end
   end
@@ -490,7 +559,7 @@ defmodule Scry.Analysis do
     _rules = rules_digest(db, :stage0)
     symbols = Symbols.for_db(db)
 
-    with {:ok, relations} <- stage0_input_relations(),
+    with {:ok, relations} <- reading_schema(db, &stage0_input_relations/0),
          entries =
            for(
              relation <- relations,
@@ -502,12 +571,17 @@ defmodule Scry.Analysis do
          :ok <- Argus.Analysis.derive_stage0(dir) do
       # Souffle wrote strings; interned like everything else this layer
       # holds.
-      {:ok,
-       Facts.intern(
-         Map.new(@stage0_outputs, &{&1, read_facts_file(Path.join(dir, "#{&1}.facts"))}),
-         symbols
-       )}
+      {:ok, reading_schema(db, fn -> intern_outputs(@stage0_outputs, dir, symbols) end)}
     end
+  end
+
+  # A stage's outputs from the directory Souffle wrote them to, interned
+  # by their columns.
+  defp intern_outputs(outputs, dir, symbols) do
+    Facts.intern(
+      Map.new(outputs, &{&1, read_facts_file(Path.join(dir, "#{&1}.facts"))}),
+      symbols
+    )
   end
 
   # The points-to stage: which process a pid can be, derived once for
@@ -525,16 +599,12 @@ defmodule Scry.Analysis do
     _rules = rules_digest(db, :points_to)
     symbols = Symbols.for_db(db)
 
-    with {:ok, relations} <- points_to_input_relations(),
+    with {:ok, relations} <- reading_schema(db, &points_to_input_relations/0),
          {:ok, stage0} <- stage0_if_read(db, relations),
          entries = Enum.map(relations, &relation_entry(db, &1, stage0, %{})),
          dir = materialize_facts(entries, "points_to", symbols),
          :ok <- Argus.Analysis.derive_points_to(dir) do
-      {:ok,
-       Facts.intern(
-         Map.new(@points_to_outputs, &{&1, read_facts_file(Path.join(dir, "#{&1}.facts"))}),
-         symbols
-       )}
+      {:ok, reading_schema(db, fn -> intern_outputs(@points_to_outputs, dir, symbols) end)}
     end
   end
 
@@ -946,7 +1016,7 @@ defmodule Scry.Analysis do
     end)
   end
 
-  # `{:ok, {result, reads}}` parked for this beam, or `:none`.
+  # `{:ok, {result, installed, schema}}` parked for this beam, or `:none`.
   defp take_prewarmed(module, beam) do
     key = {__MODULE__, :prewarmed, module}
 
@@ -960,13 +1030,15 @@ defmodule Scry.Analysis do
     end
   end
 
-  # A module's facts, `{result, reads}`: its rows from every producer —
-  # argus's base and each of `all_extractors/0` — or its error, and the
-  # modules the specs extractor read off the code path for it
-  # (`track_reads/3`). `Argus.Pipeline.extract_shards/3` hands each
-  # producer's rows back apart, and they are joined here: what matters
-  # to this graph is the module, whose rows are keyed by all of the
-  # producers' code at once (`:extraction_code`).
+  # A module's facts, `{result, installed, schema}`: its rows from every
+  # producer — argus's base and each of `all_extractors/0` — or its
+  # error; the modules the specs extractor read off the code path for it
+  # (`track_reads/3`); and the schema entries producing and interning
+  # its rows read (`depend_on_schema/2`). `Argus.Pipeline.extract_shards/3`
+  # hands each producer's rows back apart, and they are joined here: what
+  # matters to this graph is the module, whose rows are keyed by all of
+  # the producers' code at once (`:extraction_code`) and by every entry
+  # any of them read.
   #
   # Rows are memoized interned: the ids' meaning lives in the database's
   # intern table, persisted with the memo that holds them. They are
@@ -987,11 +1059,17 @@ defmodule Scry.Analysis do
       end
 
     case Argus.Pipeline.extract_shards([beam], [:base | all_extractors()], opts) do
-      {:ok, shards, %{installed: installed}} ->
-        {{:ok, shards |> join_producers() |> Facts.intern(symbols)}, installed}
+      {:ok, shards, %{installed: installed, reads: reads}} ->
+        # Interning reads each relation's columns: the rows depend on
+        # those entries as much as on the ones the producers read.
+        {facts, interned} =
+          Argus.Cache.Reads.track(fn -> shards |> join_producers() |> Facts.intern(symbols) end)
+
+        schema = [interned | Map.values(reads)] |> Enum.concat() |> Enum.uniq() |> Enum.sort()
+        {{:ok, facts}, installed, schema}
 
       {:error, reason} ->
-        {{:error, {:extraction, module, reason}}, []}
+        {{:error, {:extraction, module, reason}}, [], []}
     end
   end
 
@@ -1246,14 +1324,15 @@ defmodule Scry.Analysis do
 
   # Relation names arrive from argus as strings. Only relations the schema
   # knows can appear in an extraction, so an unknown name is dropped
-  # rather than minting an atom from external input.
+  # rather than minting an atom from external input. Each is looked up
+  # alone (its columns, not the list of every name): the caller depends
+  # on the entries it read, and a relation added elsewhere is none.
   defp to_relation_atoms(names) do
-    known = MapSet.new(Argus.Schema.names())
-
     for name <- names,
         atom = safe_existing_atom(name),
         atom != nil,
-        atom in @stage0_outputs or atom in @points_to_outputs or MapSet.member?(known, atom),
+        atom in @stage0_outputs or atom in @points_to_outputs or
+          Argus.Schema.columns(atom) != :error,
         do: atom
   end
 

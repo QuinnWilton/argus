@@ -4,7 +4,8 @@ defmodule Scry.AnalysisRulesTest do
   moving: a rule edit re-solves exactly the analyses whose programs it
   touched and re-extracts nothing; an edit to the code argus's producers
   run re-extracts every module, and solves only where the rows moved;
-  any other argus edit rebuilds the findings and extracts nothing; a
+  a schema entry that moved re-extracts the modules that read it; any
+  other argus edit rebuilds the findings and extracts nothing; a
   runtime change re-extracts and re-solves everything.
 
   The query log's telemetry handlers are VM-wide, so the graphs run in
@@ -14,7 +15,7 @@ defmodule Scry.AnalysisRulesTest do
   use ExUnit.Case, async: true
   use Scry.Test.Peer
 
-  alias Roux.Input
+  alias Roux.{Input, Memo}
   alias Scry.Test.{Graph, Peer, QueryLog}
 
   @moduletag :souffle
@@ -112,6 +113,9 @@ defmodule Scry.AnalysisRulesTest do
 
   test "an argus edit outside its producers rebuilds the findings, and extracts nothing",
        context do
+    # A finding's prose, or a relation added to the schema: no entry of
+    # the schema read so far moved (and no program loads the new
+    # relation, so no rules digest moves: `Scry.FingerprintTest`).
     in_graph(context, [warm: true], fn db, log ->
       findings!(db)
       :ok = Input.set(db, :argus_code, :all, "a finding's prose edited")
@@ -123,8 +127,52 @@ defmodule Scry.AnalysisRulesTest do
       assert Enum.sort(QueryLog.executions(log, :findings)) == @analyses
       assert QueryLog.executions(log, :module_extraction) == []
       assert QueryLog.executions(log, :relation_digest) == []
+      assert QueryLog.executions(log, :analysis_input_relations) == []
       assert QueryLog.executions(log, :stage0_facts) == []
+      assert QueryLog.executions(log, :points_to_facts) == []
       assert QueryLog.executions(log, :souffle_solve) == []
+
+      # Each schema entry read so far was digested again, and came out
+      # the same.
+      assert [_ | _] = digested = QueryLog.executions(log, :schema_read)
+      assert QueryLog.cutoffs(log, :schema_read) == digested
+    end)
+  end
+
+  test "a schema entry that moved re-extracts the modules that read it, and re-solves its loaders",
+       %{paths: paths} = context do
+    in_graph(context, [warm: true], fn db, log ->
+      findings!(db)
+      read = {:schema_read, "columns supervisor"}
+
+      readers =
+        for module <- Map.keys(paths),
+            {:ok, dependencies} = Memo.dependencies(db, {:module_extraction, module}),
+            read in dependencies,
+            do: module
+
+      # Some of the modules, not all: the ones whose rows it holds.
+      assert readers != []
+      assert length(readers) < map_size(paths)
+
+      # As if `supervisor` had other columns when these memos were made:
+      # its entry's digest then, argus's code then, and the rules digest
+      # of the one program here that loads it, whose declaration moved.
+      {:ok, entry} = Memo.get(db, read)
+      :ok = Memo.put(db, read, %{entry | value: "before", hash: :erlang.phash2("before")})
+      :ok = Input.set(db, :argus_code, :all, "supervisor's columns edited")
+      :ok = Input.set(db, :rules_digest, :coupling, "supervisor's declaration edited")
+      QueryLog.reset(log)
+
+      Graph.incremental(db, @analyses)
+      findings!(db)
+
+      assert QueryLog.executions(log, :module_extraction) == Enum.sort(readers)
+
+      # The same rows: nothing above them runs, and only the program
+      # that loads the relation solves again.
+      assert QueryLog.executions(log, :module_semantic_facts) == []
+      assert QueryLog.executions(log, :souffle_solve) == [:coupling]
     end)
   end
 

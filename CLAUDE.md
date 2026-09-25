@@ -101,6 +101,27 @@ Two layers over one `Roux.Database`:
    edit slower and the manifest 12% bigger, and scry's users edit their
    project.
 
+   Argus's schema (`Argus.Schema`) is data, and each accessor records
+   the entry it returned (`Argus.Cache.Reads`). `schema_read(entry)` is
+   one entry's digest now (`"columns call_arg"` →
+   `Argus.Cache.Reads.digest/1`), reading `argus_code`: a QUERY, not an
+   input, because an extraction's reads are known only after it ran,
+   often inside the graph, where no input can be set. Every query that
+   reads the schema runs the read inside `reading_schema/2` and depends
+   on each entry it read: `module_extraction` (the producers' decoding,
+   `extract_shards/3`'s `reads`, and scry's interning), `relation_rows`
+   (`fetch <relation>`: is it a prior), `relation_facts` and the three
+   digests (the text is written by the columns), and the relation lists
+   of `analysis_input_relations` and the stages (`columns <name>` per
+   name, never `names`), and the stages' interned outputs. An argus edit
+   re-digests the entries read so far and backdates the unchanged ones;
+   a moved entry reruns exactly its readers. Rules: never read the
+   schema in a query outside `reading_schema/2`, never demand a query
+   inside one (its reads would be charged to the caller), and read the
+   narrowest accessor (`columns/1`, `fetch/1`: `layer_3/0` or `names/0`
+   move with any relation). A frontend without `argus_code`
+   (planchette) records no schema edges.
+
    **Follow-up (argus schema keys):** argus is taking the `Argus.Schema`
    modules out of its producers' code closures and recording the schema
    reads a producer makes instead, re-checked on cache hits. Until scry
