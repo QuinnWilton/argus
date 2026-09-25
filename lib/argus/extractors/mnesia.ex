@@ -24,7 +24,7 @@ defmodule Argus.Extractors.Mnesia do
     `:_` — reads every key of its table: `any`.
   - `mnesia_write_order(func, first, then)` — two of the function's writes
     (`kind` "write" above), `then` reachable from `first` within one trip
-    through the function (`Argus.Cfg.Function.precedes?/3`). Two writes
+    through the function (`CfgFunction.precedes?/3`). Two writes
     ordered neither way are on paths that exclude each other: the two
     branches of an upsert, `[] -> write(new); [r] -> write(update(r))`.
 
@@ -44,6 +44,7 @@ defmodule Argus.Extractors.Mnesia do
 
   @behaviour Argus.Extractor
 
+  alias Argus.Cfg.Function, as: CfgFunction
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Identity
   alias Argus.Extractor.Resolve
@@ -158,7 +159,7 @@ defmodule Argus.Extractors.Mnesia do
     for first <- ids,
         then <- ids,
         first != then,
-        Argus.Cfg.Function.precedes?(fun, at[first], at[then]),
+        CfgFunction.precedes?(fun, at[first], at[then]),
         reduce: facts do
       acc -> add_fact(acc, :mnesia_write_order, [func, first, then])
     end

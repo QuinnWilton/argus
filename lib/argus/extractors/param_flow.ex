@@ -66,6 +66,7 @@ defmodule Argus.Extractors.ParamFlow do
 
   @behaviour Argus.Extractor
 
+  alias Argus.Cfg.Function, as: CfgFunction
   alias Argus.Extractor.CallSites
   alias Argus.Extractor.Helpers
   alias Argus.Extractor.Resolve
@@ -446,8 +447,7 @@ defmodule Argus.Extractors.ParamFlow do
         false
 
       graph ->
-        not Argus.Cfg.Function.precedes?(graph, a, b) and
-          not Argus.Cfg.Function.precedes?(graph, b, a)
+        not CfgFunction.precedes?(graph, a, b) and not CfgFunction.precedes?(graph, b, a)
     end
   end
 
