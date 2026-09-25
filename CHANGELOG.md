@@ -19,6 +19,12 @@ GenServer handler makes (shutdown's stops) and the table operand of an
 points-to of an arbitrary source is what the stage otherwise never
 needs. Every row an analysis joins is the same.
 
+**Changed.** Process points-to follows a term as an object only once it
+holds a process or a table, itself or in a term it holds
+(`holds_leaf`). A term that holds none cannot lead a use to a leaf, so
+every staged row is the same, and on a large program such terms are
+most of them: OTP's stdlib stage 10.6 s to 0.7 s.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

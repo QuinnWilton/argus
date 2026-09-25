@@ -841,6 +841,22 @@ defmodule Argus.Test.Fixtures.PidFlow do
     def handle_call(:ping, _from, s), do: {:reply, NamedCall.ping(NamedPeerA), s}
   end
 
+  defmodule Nested do
+    @moduledoc "Keeps its peer three terms deep, built in one function and read out in another."
+    alias Argus.Test.Fixtures.PidFlow.TargetA
+
+    def boxed do
+      {:ok, peer} = TargetA.start_link()
+      {:box, [%{inner: {:peer, peer}}]}
+    end
+
+    def unbox do
+      {:box, [m | _]} = boxed()
+      {:peer, p} = m.inner
+      GenServer.call(p, :ping)
+    end
+  end
+
   defmodule StatemClient do
     @moduledoc "Reaches a gen_statem through a wrapper that forwards its target."
     def status, do: do_call(Argus.Test.Fixtures.PidFlow.Machine, :status)

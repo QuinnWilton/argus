@@ -26,6 +26,12 @@
 // point to", and a rule that concludes something from it asks what a
 // process does NOT do.
 //
+// Only a term that holds a leaf (a process or a table, directly or in a
+// term it holds) is followed as an object. The others cannot lead a use
+// to a leaf, and the rules below only ever ask where the leaves go: every
+// row of every staged relation is the same with them or without them,
+// and on a large program they are most of the terms.
+//
 // The rules run once per program, in the points-to stage
 // (priv/dl/points_to.dl), not in every analysis that asks: the fixpoint
 // is most of what a solve over a large program costs, and it was
@@ -173,7 +179,18 @@ reads_name(f, n) :- pid_base(f, _, "name", n).
 reads_name(f, n) :- pid_signal(_, f, _, "name", n).
 
 source_pts(f, "proc", p, p) :- process_start(_, f, p, _, _).
-source_pts(f, "obj", o, o) :- pid_object(f, o, _, _, _).
+
+// A term is an object once it holds a leaf: a field of it points to one,
+// or to a term that does. Only then can a use reach a leaf through it,
+// so only then is it followed; field_pts only ever holds leaves and such
+// terms, so any row of it says the term holds a leaf.
+source_pts(f, "obj", o, o) :- pid_object(f, o, _, _, _), holds_leaf(o).
+.plan 0:(2,1)
+
+.decl holds_leaf(obj: symbol)
+
+holds_leaf(o) :- field_pts(o, _, _).
+
 source_pts(f, "param", k, x) :- param_pts(f, k, x).
 // A callee's result; a factory's fresh value is renamed where it is kept.
 source_pts(f, "result", c, x) :- pid_result(c, f, g), returns_pts(g, x), !fresh_return(g, x).

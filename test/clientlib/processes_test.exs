@@ -52,7 +52,8 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.NamedTargetA,
     PidFlow.NamedTargetB,
     PidFlow.StatemClient,
-    PidFlow.Quiet
+    PidFlow.Quiet,
+    PidFlow.Nested
   ]
 
   defp priv_dl, do: Path.join(:code.priv_dir(:panoptes), "dl")
@@ -191,6 +192,16 @@ defmodule Argus.Clientlib.ProcessesTest do
     assert Enum.any?(
              r["sync_site"],
              &match?(["UserA:handle_call/3", "TargetA", "UserA:" <> _], &1)
+           )
+  end
+
+  test "a pid held three terms deep is followed out of another function's term", ctx do
+    r = solve(ctx, ~w(process_call))
+
+    assert ["Nested:unbox/0", "call", "start Nested:boxed/0"] in for(
+             [f, _a, _s, kind, p] <- unsited(r["process_call"]),
+             f == "Nested:unbox/0",
+             do: [f, kind, p]
            )
   end
 
