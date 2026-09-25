@@ -1605,6 +1605,18 @@ carry whether a receive can block but not its timeout. Found by a talk's
 worked example; the corpus change is one row, sequin's
 `ReorderBuffer.maybe_cancel_flush_batch_timer/1`, which is that idiom.
 
+### A coupling frame at the caller's call
+
+**Fixed.** `coupling.sibling_dependency`'s "coupling call" and "coupling
+cast" frames, when the call into the sibling is several calls below the
+witness, point at the call made into the sibling from outside it, never
+at one of the sibling's own functions calling another. A default-argument
+head calling the full arity (sentry-elixir's
+`ClientReport.Sender.record_discarded_events/2`) sorted first and won the
+row, so every caller's finding showed the same line of the sibling's
+API; each now shows its own call (`metrics.ex:180`, `transport.ex:54`).
+The findings are unchanged; only these frames move.
+
 ### Frames that point where the path starts
 
 **Changed.** A related frame that names the entry a site is reached

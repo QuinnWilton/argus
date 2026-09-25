@@ -187,6 +187,43 @@ defmodule Argus.Analyses.CouplingTest do
                )
     end
 
+    test "the coupling site is the call into the sibling, not one inside it" do
+      skip_without_souffle()
+
+      # A reaches B through a helper module H. B's record/1 is a
+      # default-argument head calling record/2, B's own function: the
+      # walk reaches it through H's call, and B's inner call sorts first
+      # ("B:" < "H:"). Anchored there, every caller of B got the same
+      # line of B's API. The site is H's call into B.
+      facts = %{
+        supervisor: [["Sup", "one_for_one"]],
+        supervisor_site: [["Sup", "Sup:init/1#3"]],
+        supervisor_child: [
+          ["Sup", "0", "A", "permanent", "worker"],
+          ["Sup", "1", "B", "permanent", "worker"]
+        ],
+        function_def: [
+          ["A:h/0", "A", "h", "0", "1"],
+          ["H:report/1", "H", "report", "1", "1"],
+          ["B:record/1", "B", "record", "1", "1"],
+          ["B:record/2", "B", "record", "2", "1"]
+        ],
+        remote_call: [
+          ["A:h/0#1", "A:h/0", "H", "report", "1"],
+          ["H:report/1#2", "H:report/1", "B", "record", "1"]
+        ],
+        local_call: [["B:record/1#3", "B:record/1", "B:record/2", "2"]],
+        async_cast: [["B:record/2", "dynamic"]]
+      }
+
+      assert ["H:report/1#2"] =
+               for(
+                 [_, "A", "B", "restart_isolation", "cast", _, "A:h/0", site | _] <-
+                   coupling_rows(facts),
+                 do: site
+               )
+    end
+
     test "a cast-only dependency is graded as a one-way coupling" do
       skip_without_souffle()
 

@@ -92,17 +92,30 @@ coupling_site(w, callee_mod, id) :-
 // Walked back from the functions that call a coupled sibling, which are
 // few, rather than forward from every witness over all it calls (8.8k
 // rows against 250 on blockster).
+//
+// The call INTO the sibling: one made from outside its module. The
+// sibling's own functions call each other (a default-argument head calls
+// the full arity, a client API its helper), and the walk reaches them
+// through the call that entered; anchored there, every caller's finding
+// showed the same line of the sibling's API (sentry-elixir's
+// ClientReport.Sender.record_discarded_events/2, for each of its callers).
 .init sibling_caller_reach = CallReach
 
-sibling_caller_reach.seed(g, g) :-
+.decl sibling_entry_call(id: symbol, g: symbol, callee_mod: symbol)
+
+sibling_entry_call(id, g, callee_mod) :-
   coupling(_, _, callee_mod, _, _),
-  call_site(_, g, callee_mod, _, _).
+  call_site(id, g, callee_mod, _, _),
+  function_def(g, gm, _, _, _),
+  gm != callee_mod.
+
+sibling_caller_reach.seed(g, g) :- sibling_entry_call(_, g, _).
 
 coupling_site(w, callee_mod, id) :-
   coupling(_, _, callee_mod, _, w),
   !direct_coupling_site(w, callee_mod, _),
   sibling_caller_reach.reaches(w, g),
-  call_site(id, g, callee_mod, _, _).
+  sibling_entry_call(id, g, callee_mod).
 
 // ══ The one output: a child depending on a sibling ═══════════════════
 //
