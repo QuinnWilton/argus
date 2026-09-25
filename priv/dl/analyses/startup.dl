@@ -160,16 +160,26 @@ blocks_on_peer(mod, "init", callee, "call", "unknown", "", "", "unconditional") 
   raw_sync_call_in_init(mod, callee),
   !init_safe_sibling(mod, callee),
   !init_safe_cross_supervisor(mod, callee),
+  !later_sibling_call(mod, callee),
   unconditional_sync_call_in_init(mod, callee).
 
 blocks_on_peer(mod, "init", callee, "call", "unknown", "", "", "conditional") :-
   raw_sync_call_in_init(mod, callee),
   !init_safe_sibling(mod, callee),
   !init_safe_cross_supervisor(mod, callee),
+  !later_sibling_call(mod, callee),
   !unconditional_sync_call_in_init(mod, callee).
 
 // A call to a sibling that starts later is reported once, with the
-// tree ordering, under "Start order" below.
+// tree ordering, under "Start order" below (later_sibling_call): the
+// deadlock, not also a call of unknown place beside it.
+.decl later_sibling_call(child: symbol, dep: symbol)
+
+later_sibling_call(child, dep) :-
+  supervisor_site(sup, _),
+  starts_before(sup, child, dep, _, _),
+  init_dep(child, dep, "call", _),
+  child != dep.
 
 // ── Supervisor management calls from init/1 ──────────────────────────
 //

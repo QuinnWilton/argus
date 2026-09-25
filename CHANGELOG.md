@@ -589,6 +589,12 @@ evidence steps down one level. Moved:
   supervisor owns" is; an exit to a process known only as a value stays
   `:info`.
 
+**Changed.** A synchronous call from init/1 to a sibling that starts
+after it is one finding, "Startup deadlock: init waits on a later
+sibling" (`later_sibling_call`); it was also "init/1 blocks on a
+synchronous call" (or "can block"), the call of unknown place, beside
+it.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

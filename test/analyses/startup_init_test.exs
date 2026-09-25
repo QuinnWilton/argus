@@ -289,11 +289,10 @@ defmodule Argus.Analyses.StartupInitTest do
 
       assert {:ok, results} = Memo.analyze(modules, :startup)
 
-      # WorkerA starts AFTER SyncInitServer — NOT safe, deadlock risk.
-      init_calls = sync_calls(results)
-      assert init_calls != []
-
-      assert Enum.any?(init_calls, fn [mod, callee, _kind] ->
+      # WorkerA starts AFTER SyncInitServer — NOT safe, deadlock risk:
+      # one finding, the later-sibling deadlock, not also a call of
+      # unknown place beside it.
+      refute Enum.any?(sync_calls(results), fn [mod, callee, _kind] ->
                mod == "Argus.Test.Fixtures.SyncInitServer" and
                  callee == "Argus.Test.Fixtures.WorkerA"
              end)
