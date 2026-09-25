@@ -168,6 +168,29 @@ defmodule Argus.Analyses.BlockingChainTest do
     end
   end
 
+  describe "waits that are not the program's" do
+    alias Argus.Test.Fixtures.SidePaths, as: S
+
+    defp infinity(results),
+      do:
+        Rows.where(results, :blocking, "unbounded_wait",
+          kind: "infinity",
+          drop: [:site, :kind, :detail, :nodes]
+        )
+
+    test "a server that logs does not wait on the logger's servers" do
+      skip_without_souffle()
+
+      # OTP's own logger: :logger.error/1 reaches logger_server's
+      # :infinity call through the handler-removal path.
+      {:ok, results} =
+        Memo.analyze([S.Logs, S.CallsLogs, :logger, :logger_backend, :logger_server], :blocking)
+
+      refute Enum.any?(infinity(results), fn [_func, target] -> target == ":logger_server" end)
+      refute Enum.any?(chains(results, "chain"), fn [_, to, _, _] -> to == ":logger_server" end)
+    end
+  end
+
   describe "no chain through a pure-function reach" do
     test "a handle_call reaching only a pure function is not a chain hop" do
       skip_without_souffle()

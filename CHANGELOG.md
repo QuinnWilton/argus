@@ -37,6 +37,23 @@ catch-all handle_info/2. The rules reading `recv_pattern` (the timer
 flush, `unhandled_info`, `unreceived_message`, blocking's cancel_timer
 idiom) now see those receives.
 
+**Fixed.** A call into the logging or telemetry API (`:logger`,
+`:error_logger`, `Logger`, `:telemetry`) no longer makes its caller
+wait on those libraries' own servers (`side_call` in
+clientlib/calls.dl; every `reaches_sync_*`, `sync_dep`, `site_request`
+and `reaches_async_dep` step skips it). The handlers an event reaches
+are dispatched by value (a module in the logger's config, a fun in
+telemetry's table), so the call graph reaches only the API's machinery,
+which waits on logger_server when a handler crashes, on a handler's
+logger_olp in sync mode, on the handler table on attach — servers that
+answer from their own state and call nothing of the program's. On OTP,
+blocking's "GenServer call chain" went from 7 rows to 3, ":infinity
+timeout inside a call chain" from 24 to 13, and "Synchronous call
+cycle" from 5 to 2: global, supervisor, dets_server, disk_log_server
+and the mnesia servers log from handle_call. Startup's "init/1 can
+block on a synchronous call", blocking's fan-in and cast rules, and
+coupling's module dependencies read the same relations.
+
 **Changed.** Schema 93. `spawn_call`'s `variant` is `"start"` for
 `:proc_lib.start/3,4`, and for `/5` when its spawn options neither link
 nor monitor: no link, but the caller waits for the process's

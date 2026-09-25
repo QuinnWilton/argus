@@ -149,6 +149,37 @@ casts_other_server(func, mod) :-
   function_def(func, mod, _, _, _),
   other != mod.
 
+// ── Logging and telemetry are side paths ──────────────────────────────
+//
+// A call into the logging or telemetry API hands an event to handlers
+// the runtime dispatches by value — a handler module named in the
+// logger's config, a fun kept in telemetry's table — so the call graph
+// reaches none of them: what it reaches is the API's own machinery. That
+// machinery waits only on its own servers (logger_server when a handler
+// crashes and is removed, a handler's logger_olp in sync mode, the
+// handler table on :telemetry.attach), which answer from their own state
+// and call no process of the program's. A server that logs from a
+// callback is not waiting on a peer that can wait on it, so no wait is
+// propagated over the edge from a function outside these modules into
+// one: OTP's global, supervisor and mnesia servers log from handle_call,
+// and each was a chain, an :infinity hop and a cycle through
+// :logger_server and :logger_olp.
+.decl side_api(mod: symbol)
+
+side_api(":logger").
+side_api(":error_logger").
+side_api("Logger").
+side_api(":telemetry").
+
+.decl side_call(func: symbol, callee: symbol)
+
+side_call(f, g) :-
+  call_edge(f, g),
+  function_def(g, gm, _, _, _),
+  side_api(gm),
+  function_def(f, fm, _, _, _),
+  !side_api(fm).
+
 // ── Dependencies ───────────────────────────────────────────────────────
 //
 // sync_dep(f, m): f itself waits on m's process — a resolved sync call,
@@ -165,6 +196,7 @@ sync_dep(f, m) :-
 
 sync_dep(f, m) :-
   call_edge(f, g),
+  !side_call(f, g),
   genserver_sync_api(g, m),
   function_def(f, fm, _, _, _),
   fm != m.
@@ -191,6 +223,7 @@ sync_site(f, m, id) :-
 sync_site(f, m, id) :-
   genserver_sync_api(g, m),
   call_instr(f, g, id),
+  !side_call(f, g),
   function_def(f, fm, _, _, _),
   fm != m.
 
@@ -213,6 +246,7 @@ async_dep(f, m) :-
 
 async_dep(f, m) :-
   call_edge(f, g),
+  !side_call(f, g),
   genserver_async_api(g, m),
   function_def(f, fm, _, _, _),
   fm != m.
@@ -364,6 +398,7 @@ reaches_tag_dep(f, m) :- tag_dep(f, m).
 reaches_tag_dep(f, m) :-
   call_edge(f, g),
   !runs_elsewhere(f, g),
+  !side_call(f, g),
   reaches_tag_dep(g, m).
 
 sync_dep(f, m) :-
@@ -394,6 +429,7 @@ reaches_sync_dep(f, m) :- sync_dep(f, m).
 reaches_sync_dep(f, m) :-
   call_edge(f, g),
   !runs_elsewhere(f, g),
+  !side_call(f, g),
   reaches_sync_dep(g, m).
 
 // ── Which request ──────────────────────────────────────────────────────
@@ -473,6 +509,7 @@ sync_request_known(f, m, tag) :- sync_request_at(f, _, m, tag).
 
 sync_request_known(f, m, tag) :-
   call_edge(f, g),
+  !side_call(f, g),
   genserver_sync_api(g, m),
   function_def(f, fm, _, _, _),
   fm != m,
@@ -496,6 +533,7 @@ reaches_sync_request(f, m, tag) :- sync_request(f, m, tag).
 reaches_sync_request(f, m, tag) :-
   call_edge(f, g),
   !runs_elsewhere(f, g),
+  !side_call(f, g),
   reaches_sync_request(g, m, tag).
 
 // ── Which request, per call site ──────────────────────────────────────
@@ -534,6 +572,7 @@ site_request(f, id, m, tag) :-
   site_demand(f),
   call_instr(f, g, id),
   !runs_elsewhere(f, g),
+  !side_call(f, g),
   !literal_entry(f, g, _),
   reaches_sync_request(g, m, tag).
 
@@ -541,6 +580,7 @@ site_request(f, id, m, tag) :-
   site_demand(f),
   call_instr(f, g, id),
   !runs_elsewhere(f, g),
+  !side_call(f, g),
   literal_entry(f, g, a),
   site_request(g, s, m, tag),
   site_clause(g, s, c),
@@ -549,6 +589,7 @@ site_request(f, id, m, tag) :-
 site_request(f, id, m, tag) :-
   site_demand(f),
   call_instr(f, g, id),
+  !side_call(f, g),
   genserver_sync_api(g, m),
   function_def(f, fm, _, _, _),
   fm != m,
@@ -559,12 +600,14 @@ site_request(f, "", m, tag) :-
   call_edge(f, g),
   !call_instr(f, g, _),
   !runs_elsewhere(f, g),
+  !side_call(f, g),
   reaches_sync_request(g, m, tag).
 
 site_request(f, "", m, tag) :-
   site_demand(f),
   call_edge(f, g),
   !call_instr(f, g, _),
+  !side_call(f, g),
   genserver_sync_api(g, m),
   function_def(f, fm, _, _, _),
   fm != m,
@@ -583,6 +626,7 @@ reaches_async_dep(f, m) :- async_dep(f, m).
 
 reaches_async_dep(f, m) :-
   call_edge(f, g),
+  !side_call(f, g),
   reaches_async_dep(g, m).
 
 // With the timeout the waiting call carries: -1 is :infinity, 0 unknown.
@@ -614,6 +658,7 @@ sync_dep_timeout(f, m, ms) :-
 
 sync_dep_timeout(f, m, ms) :-
   call_edge(f, g),
+  !side_call(f, g),
   genserver_sync_api(g, m),
   sync_call_timeout(g, callee, ms),
   (callee = m ; callee = "dynamic"),
@@ -627,6 +672,7 @@ reaches_sync_dep_timeout(f, m, ms) :- sync_dep_timeout(f, m, ms).
 reaches_sync_dep_timeout(f, m, ms) :-
   call_edge(f, g),
   !runs_elsewhere(f, g),
+  !side_call(f, g),
   reaches_sync_dep_timeout(g, m, ms).
 
 // ── A process of one's own ─────────────────────────────────────────────
