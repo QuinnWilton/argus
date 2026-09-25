@@ -154,6 +154,13 @@ flow does not read (akkoma's token exchange, rendering "token.json",
 would otherwise flow into every template). Over the Elixir live
 projects it moves those three rows and no others.
 
+**Fixed.** A call cycle's direction made through the other module's
+client API points at that call, not at the witness's first line:
+nerves_hub_link's Extensions ↔ Socket cycle pushed to the Socket from a
+comprehension's closure (`Socket.push_extensions_message/2`, line 305)
+and was anchored at the closure's start (line 299). Over the live
+projects that cycle is the only one, and the only row that moves.
+
 ### Points-to that finishes on a large program
 
 **Fixed.** The points-to stage finishes on Ash (1,327 modules), where it

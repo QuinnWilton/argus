@@ -208,6 +208,35 @@ defmodule Argus.Analyses.BlockingCycleTest do
       assert cycle?(results, CallCycle.Greeter, CallCycle.Joiner)
     end
 
+    test "each direction points at the call into the other's client API" do
+      skip_without_souffle()
+
+      alias Argus.Test.Fixtures.CallCycle.{ExtensionsHub, HubSocket}
+
+      assert {:ok, results} = Memo.analyze([ExtensionsHub, HubSocket], :blocking)
+
+      rows = results["call_cycle"]
+      assert rows != []
+
+      # The detach closure's side is its HubSocket.push/1 call, not the
+      # closure's first line, and the join clause's side its
+      # ExtensionsHub.offer/1: a call into the other's client API, which
+      # left the site empty before. (handle_cast/2 itself, which only
+      # builds the closure, keeps an empty site.)
+      sites =
+        for [_, _, witness_a, witness_b, "call", site_a, site_b] <- rows,
+            {witness, site} <- [{witness_a, site_a}, {witness_b, site_b}],
+            site != "",
+            do: {witness, site}
+
+      assert {closure, push} =
+               Enum.find(sites, fn {w, _} -> String.contains?(w, "-handle_cast/2-fun-") end)
+
+      assert {:ok, %{func: "-handle_cast/2-fun-0-"}} = Argus.InstrId.parse(push)
+      assert closure =~ "ExtensionsHub"
+      assert Enum.any?(sites, fn {w, _} -> String.ends_with?(w, "HubSocket:handle_info/2") end)
+    end
+
     test "runs without error on module with no cycles" do
       skip_without_souffle()
 

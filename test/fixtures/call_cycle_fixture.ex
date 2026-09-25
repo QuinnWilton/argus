@@ -356,4 +356,47 @@ defmodule Argus.Test.Fixtures.CallCycle do
     @impl true
     def handle_call(:name, _from, s), do: {:reply, :joiner, s}
   end
+
+  defmodule ExtensionsHub do
+    @moduledoc """
+    nerves_hub_link's Extensions: a detach pushes to the socket through
+    its client API, from inside a comprehension's closure.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+    def init(state), do: {:ok, state}
+
+    def offer(advertisement), do: GenServer.call(__MODULE__, {:offer, advertisement})
+
+    def handle_call({:offer, _ad}, _from, state), do: {:reply, :ok, state}
+
+    def handle_cast({:detach, extensions}, state) do
+      state =
+        for extension <- extensions, reduce: state do
+          acc ->
+            _ = Argus.Test.Fixtures.CallCycle.HubSocket.push("#{extension}:detached")
+            Map.put(acc, extension, false)
+        end
+
+      {:noreply, state}
+    end
+  end
+
+  defmodule HubSocket do
+    @moduledoc "nerves_hub_link's Socket: the extensions topic asks for an offer."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+    def init(state), do: {:ok, state}
+
+    def push(event), do: GenServer.call(__MODULE__, {:push, event})
+
+    def handle_call({:push, _event}, _from, state), do: {:reply, :ok, state}
+
+    def handle_info({:join, payload}, state) do
+      _ = Argus.Test.Fixtures.CallCycle.ExtensionsHub.offer(payload)
+      {:noreply, state}
+    end
+  end
 end
