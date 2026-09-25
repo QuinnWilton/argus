@@ -75,6 +75,21 @@ defmodule Argus.Schema.Dependence do
         """
       },
       %{
+        name: :returns_reads,
+        layer: 2,
+        fields: [
+          {:func, :func_id, "the function"},
+          {:kind, :symbol, "param | call | site"},
+          {:source, :symbol, "as site_depends"}
+        ],
+        doc: """
+        returns_depends by data alone: the returned value is made from the \
+        source, not merely chosen under a test on it. A getter that answers \
+        what a lookup found returns the lookup; one that answers :ok or an \
+        error on what it found returns neither.
+        """
+      },
+      %{
         name: :site_reads,
         layer: 2,
         fields: [

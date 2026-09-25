@@ -41,10 +41,10 @@ defmodule Argus.Extractors.Dependence do
     `arity - env_len + i`, as in `Argus.Extractors.ParamFlow`.
   - `returns_depends(func, kind, source)` — what the function returns
     depends on the source.
-  - `site_reads(site, func, kind, source)` and `call_arg_reads(caller,
-    callee, arg_pos, kind, source)` — the same questions by data alone:
-    what the operation's or the argument's value is made of, not what it
-    runs under. A check-then-act race that writes back what it read is a
+  - `site_reads(site, func, kind, source)`, `call_arg_reads(caller,
+    callee, arg_pos, kind, source)` and `returns_reads(func, kind, source)`
+    — the same questions by data alone: what the operation's, the
+    argument's or the returned value is made of, not what it runs under. A check-then-act race that writes back what it read is a
     lost update; one whose write only runs because of the read, with a
     value from elsewhere, may be a refill both racers agree on.
   - `field_decides(func, kind, source, pos)` — a test in the function
@@ -131,6 +131,7 @@ defmodule Argus.Extractors.Dependence do
       :field_compared,
       :field_decides,
       :returns_depends,
+      :returns_reads,
       :site_depends,
       :site_reads
     ]
@@ -511,11 +512,32 @@ defmodule Argus.Extractors.Dependence do
     end
   end
 
-  # The data-only rows: a site's arguments and a call's, by what they are
-  # made of. Closures are not followed here: a captured value is made of
-  # what the closure body does with it, which is the closure's own
-  # function's question.
+  # The data-only rows: a site's arguments and a call's, and what the
+  # function returns, by what they are made of. Closures are not followed
+  # here: a captured value is made of what the closure body does with it,
+  # which is the closure's own function's question.
   defp emit_reads(facts, idx, ctx, outs) do
+    facts
+    |> emit_call_reads(idx, ctx, outs)
+    |> emit_return_reads(idx, ctx, outs)
+  end
+
+  defp emit_return_reads(facts, idx, ctx, outs) do
+    cond do
+      Map.has_key?(ctx.index.tails, idx) ->
+        inputs = inputs_of(idx, ctx, outs)
+        rows(facts, :returns_reads, [ctx.func_id], result(idx, "x0", inputs, MapSet.new(), ctx))
+
+      Map.get(ctx.index.ops, idx) == "return" ->
+        inputs = inputs_of(idx, ctx, outs)
+        rows(facts, :returns_reads, [ctx.func_id], Map.get(inputs, "x0", MapSet.new()))
+
+      true ->
+        facts
+    end
+  end
+
+  defp emit_call_reads(facts, idx, ctx, outs) do
     case Map.get(ctx.index.calls, idx) do
       nil ->
         facts

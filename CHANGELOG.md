@@ -2662,6 +2662,13 @@ has no body: nothing says whose the closure is.
 
 ### races
 
+**Added.** Schema 95. `returns_reads(func, kind, source)`
+(`Argus.Extractors.Dependence`): `returns_depends` by data alone — what
+the returned value is made of, not what it is chosen under. A getter
+that answers what its lookup found returns the lookup; `claim/1`, which
+answers `:ok` or `{:error, :taken}` on what its read found, returns
+neither. `races` reads it to tell a get-or-create from a claim (below).
+
 **Fixed.** A read-then-write that runs in one process is raced by a
 writer only a caller outside the program runs when that caller can
 exist. `ets_check_act` and `mnesia_check_act` counted every writer the

@@ -18,6 +18,7 @@ defmodule Argus.Extractors.DependenceTest do
     C.LookupHelper,
     C.DispatchHelper,
     C.MnesiaCounter,
+    C.MnesiaClaim,
     C.PublicCache,
     C.LaterBranchKey,
     C.NotifyOnce,
@@ -151,6 +152,23 @@ defmodule Argus.Extractors.DependenceTest do
       [whereis] = sites_at("LookupHelper:lookup", {Process, :whereis, 1})
 
       assert ["Argus.Test.Fixtures.CheckThenAct.LookupHelper:lookup/1", "site", whereis] in facts.returns_depends
+    end
+
+    test "returns_reads: what a function returns by data, not what it chooses under", %{
+      facts: facts
+    } do
+      [whereis] = sites_at("LookupHelper:lookup", {Process, :whereis, 1})
+
+      # The getter hands out what the lookup found.
+      assert ["Argus.Test.Fixtures.CheckThenAct.LookupHelper:lookup/1", "site", whereis] in facts.returns_reads
+
+      # claim/1 answers :ok or {:error, :taken} on what its read found: the
+      # answer depends on the read, and is made of none of it.
+      [read] = sites_at("MnesiaClaim:claim/1", {:mnesia, :dirty_read, 2})
+      claim = "Argus.Test.Fixtures.CheckThenAct.MnesiaClaim:claim/1"
+
+      assert [claim, "site", read] in facts.returns_depends
+      refute [claim, "site", read] in facts.returns_reads
     end
 
     test "a closure's captured variable is its environment parameter", %{facts: facts} do
