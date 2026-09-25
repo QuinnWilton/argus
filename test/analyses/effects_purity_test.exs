@@ -96,7 +96,7 @@ defmodule Argus.Analyses.EffectsPurityTest do
       assert {"process", ":erlang.send/2"} = find(by_func, "DirectEffects:sends/2")
       assert {"time", _} = find(by_func, "DirectEffects:reads_clock/0")
       assert {"random", ":rand.uniform/1"} = find(by_func, "DirectEffects:randomises/0")
-      assert {"process", "Process.put/2"} = find(by_func, "DirectEffects:process_dict/1")
+      assert {"process_dict", "Process.put/2"} = find(by_func, "DirectEffects:process_dict/1")
     end
 
     test "an effect several calls away is attributed to the function performing it" do
@@ -313,6 +313,22 @@ defmodule Argus.Analyses.EffectsPurityTest do
       # module for the wrong reason, which is indistinguishable from luck.
       assert Effects.classify(":timer", "tc") == {:opaque, :dot_dispatch}
       assert Effects.classify(":timer", "sleep") == {:impure, :process, :write}
+    end
+
+    test "a pure function of an impure module is pure, and the dictionary is a dictionary" do
+      # :inet is sockets and name resolution; its address parsing and
+      # printing are string work. :io_lib builds what :io would write.
+      assert Effects.classify(":inet", "ntoa") == :pure
+      assert Effects.classify(":inet", "parse_strict_address") == :pure
+      assert Effects.classify(":inet", "getaddr") == {:impure, :network, :write}
+      assert Effects.classify(":io_lib", "format") == :pure
+      assert Effects.classify(":io", "format") == {:impure, :io, :write}
+
+      # Elixir's Process module is a process module, but put/get are the
+      # process dictionary, as :erlang's are.
+      assert Effects.classify("Process", "put") == {:impure, :process_dict, :write}
+      assert Effects.classify("Process", "get") == {:impure, :process_dict, :read}
+      assert Effects.classify("Process", "send_after") == {:impure, :process, :write}
     end
 
     test "reads are impure but distinguished from writes" do

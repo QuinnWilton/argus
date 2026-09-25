@@ -57,7 +57,6 @@ defmodule Argus.Purity.Effects do
   @impure_modules %{
     "IO" => :io,
     ":io" => :io,
-    ":io_lib" => :io,
     "File" => :io,
     ":file" => :io,
     ":filelib" => :io,
@@ -134,11 +133,18 @@ defmodule Argus.Purity.Effects do
     {":erlang", "suspend_process"} => :process,
     {":erlang", "resume_process"} => :process,
 
-    # The process dictionary is mutable per-process state.
+    # The process dictionary is mutable per-process state. Elixir's
+    # Process module is a process module otherwise, but its dictionary
+    # functions are these: they leave the process no more than a rollback
+    # or a skipped terminate/2 would care about.
     {":erlang", "put"} => :process_dict,
     {":erlang", "get"} => :process_dict,
     {":erlang", "erase"} => :process_dict,
     {":erlang", "get_keys"} => :process_dict,
+    {"Process", "put"} => :process_dict,
+    {"Process", "get"} => :process_dict,
+    {"Process", "delete"} => :process_dict,
+    {"Process", "get_keys"} => :process_dict,
 
     # Reading a clock or a counter makes the result depend on when it ran.
     {":erlang", "now"} => :time,
@@ -198,6 +204,24 @@ defmodule Argus.Purity.Effects do
     {"Kernel", "make_ref"} => :time,
     {"Kernel", "node"} => :node
   }
+
+  # Functions of an otherwise impure module that compute a value and
+  # nothing else. `:inet` is sockets and name resolution, but its address
+  # parsing and printing are string work: Firezone formatting an IP inside
+  # a transaction was "network I/O inside a Repo transaction".
+  @pure_functions MapSet.new([
+                    {":inet", "ntoa"},
+                    {":inet", "parse_address"},
+                    {":inet", "parse_strict_address"},
+                    {":inet", "parse_ipv4_address"},
+                    {":inet", "parse_ipv4strict_address"},
+                    {":inet", "parse_ipv6_address"},
+                    {":inet", "parse_ipv6strict_address"},
+                    {":inet", "is_ip_address"},
+                    {":inet", "is_ipv4_address"},
+                    {":inet", "is_ipv6_address"},
+                    {":inet", "ipv4_mapped_ipv6_address"}
+                  ])
 
   # ── Open dispatch: the target is not knowable ────────────────────
   #
@@ -399,6 +423,8 @@ defmodule Argus.Purity.Effects do
   # variant, a clock read, or a process interaction is left off, and
   # therefore reported as unprovable rather than quietly assumed.
 
+  # `:io_lib` builds the characters `:io` would write — format, fwrite,
+  # write, print — and writes nothing itself.
   @pure_modules ~w(
     Enum Map MapSet List Keyword Tuple Range Stream
     String Integer Float Atom Bitwise Base
@@ -407,7 +433,7 @@ defmodule Argus.Purity.Effects do
     Jason.Encoder
     :lists :maps :sets :ordsets :orddict :dict :gb_trees :gb_sets
     :string :binary :unicode :re :array :queue :proplists :math
-    :erl_anno :beam_lib
+    :erl_anno :beam_lib :io_lib
   )
 
   # `:erlang` is mostly arithmetic, comparison, and type tests — all pure —
@@ -479,6 +505,9 @@ defmodule Argus.Purity.Effects do
 
       {module, function} in @protocol_functions ->
         {:opaque, :protocol}
+
+      MapSet.member?(@pure_functions, {module, function}) ->
+        :pure
 
       category = Map.get(@impure_functions, {module, function}) ->
         {:impure, category, mode(module, function)}

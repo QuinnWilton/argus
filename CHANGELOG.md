@@ -81,6 +81,18 @@ wait. blocking runs the extractor too.
 
 ### Process rules, read against real programs
 
+**Fixed.** The effect model (`Argus.Purity.Effects`) called string
+work I/O. `:io_lib` builds the characters `:io` writes and writes none
+itself: it is pure. `:inet`'s address parsing and printing (`ntoa/1`,
+`parse_address/1`, `parse_strict_address/1` and their kin) are pure in
+a module that is otherwise sockets and name resolution. Elixir's
+`Process.put/2`, `get/1,2`, `delete/1` and `get_keys/0` are the process
+dictionary, as `:erlang`'s are, not process operations. Firezone's dev
+seeding was three "performs network I/O inside a Portal.Repo
+transaction" for formatting and parsing IP addresses, "file I/O" for
+`:io_lib.format/2` and "a process operation" for `Repo.put_dynamic_repo/1`;
+shutdown's durable cleanup no longer counts a dictionary write either.
+
 **Fixed.** `mailbox.unhandled_info` no longer takes a gen envelope sent
 by hand for a message. rabbit's `gen_server2:cast/2` is `Dest !
 {'$gen_cast', Request}`, and every server a caller hands it had that

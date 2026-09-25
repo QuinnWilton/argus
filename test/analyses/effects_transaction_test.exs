@@ -160,7 +160,7 @@ defmodule Argus.Analyses.EffectsTransactionTest do
       # the other — which is the whole reason for two dimensions.
       assert for_module(findings(), "ReadsConfig") == []
 
-      assert {:impure, :process, :read} = Effects.classify("Process", "get")
+      assert {:impure, :process_dict, :read} = Effects.classify("Process", "get")
     end
   end
 end
