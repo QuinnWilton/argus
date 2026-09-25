@@ -78,6 +78,9 @@ defmodule Mix.Tasks.ScryTest do
       assert is_integer(first["line"])
       assert first["title"] == "Coupled children under one_for_one"
       assert is_binary(first["detail"])
+      assert first["provenance"] == "structural"
+      assert Map.has_key?(first, "confidence") and is_nil(first["confidence"])
+      assert Map.has_key?(first, "end_line")
       assert [help | _] = first["help"]
       assert help =~ "rest_for_one"
 

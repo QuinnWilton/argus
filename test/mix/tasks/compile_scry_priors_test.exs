@@ -106,6 +106,128 @@ defmodule Mix.Tasks.Compile.ScryPriorsTest do
     end)
   end
 
+  # A server that waits on another with :infinity while serving its own
+  # callers. The peer persists its count through a helper, so the rules
+  # cannot tell that it answers at once, and blocking reports the hop; a
+  # prior that the peer answers from inside the node steps it down.
+  @ledger """
+  defmodule Depot.Ledger do
+    @moduledoc false
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+    def record(entry), do: GenServer.call(__MODULE__, {:record, entry})
+
+    @impl true
+    def init(_opts), do: {:ok, []}
+
+    @impl true
+    def handle_call({:record, entry}, _from, entries) do
+      n = GenServer.call(Depot.Tally, :next, :infinity)
+      {:reply, n, [{n, entry} | entries]}
+    end
+  end
+
+  defmodule Depot.Tally do
+    @moduledoc false
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(_opts), do: {:ok, 0}
+
+    @impl true
+    def handle_call(:next, _from, n) do
+      :ok = Depot.Checkpoint.write(n + 1)
+      {:reply, n + 1, n + 1}
+    end
+  end
+
+  defmodule Depot.Checkpoint do
+    @moduledoc false
+    def write(n), do: File.write!(Path.join(System.tmp_dir!(), "depot.tally"), "\#{n}")
+  end
+  """
+
+  test "a finding a prior re-tiers is heuristic in the entry, the frame and the JSON",
+       %{peer: peer} do
+    app = :depot_priors_heuristic
+    blocking = [analyses: [:blocking]]
+    copy = Fixture.checkout!(Path.join(System.tmp_dir!(), "scry_priors_#{app}"), blocking, app)
+    File.write!(Path.join(copy, "lib/depot/ledger.ex"), @ledger)
+
+    scratch =
+      Path.join(System.tmp_dir!(), "scry_priors_heuristic_#{System.unique_integer([:positive])}")
+
+    File.rm_rf!(scratch)
+    File.mkdir_p!(scratch)
+
+    on = [
+      priors: [
+        mode: :live,
+        oracle: Scry.Test.PriorOracle,
+        oracle_opts: [choose: "local", choose_p: 0.95],
+        cache_dir: Path.join(scratch, "cache"),
+        model: "jev-test"
+      ]
+    ]
+
+    Fixture.in_peer(peer, copy, app, fn _log ->
+      assert {_status, _} = compile!()
+
+      wait = fn scry_config, manifest ->
+        config = Scry.Config.load(blocking ++ scry_config)
+        result = Scry.Runner.run(config, manifest: Path.join(scratch, manifest), force: false)
+        assert result.degraded == []
+
+        entry =
+          result
+          |> entries()
+          |> Enum.find(&(&1.title == ":infinity timeout inside a call chain"))
+
+        {config, result, entry}
+      end
+
+      # Off: the hop is a structural warning.
+      {_config, _result, off} = wait.([], "off")
+      assert %{severity: :warning, provenance: :structural, confidence: nil} = off
+      assert String.ends_with?(off.file, "lib/depot/ledger.ex")
+
+      # On: the model says Tally answers from inside the node (p = 0.95),
+      # so the same finding steps down a severity and says what it rests on.
+      {config, result, on} = wait.(on, "on")
+      assert %{severity: :info, provenance: :heuristic, confidence: 950} = on
+      assert {on.file, on.line} == {off.file, off.line}
+
+      assert "heuristic: Depot.Tally answers every call from inside the node (p=0.95)" in on.help
+
+      # The rendered frame carries the help line and the stepped-down
+      # severity; the JSON carries provenance and confidence.
+      cwd = File.cwd!()
+
+      [rendered] =
+        result.findings_by_file
+        |> Scry.Diagnostics.build(config, cwd)
+        |> Enum.filter(&(&1.diagnostic.message =~ ":infinity timeout inside a call chain"))
+
+      assert rendered.diagnostic.severity == :information
+      assert rendered.diagnostic.details =~ "help: heuristic: Depot.Tally answers every call"
+
+      json =
+        ExUnit.CaptureIO.capture_io(fn ->
+          result.findings_by_file
+          |> Scry.Diagnostics.resolve(config, cwd)
+          |> Scry.Report.json(cwd)
+        end)
+
+      assert [%{"severity" => "info", "provenance" => "heuristic", "confidence" => 950}] =
+               json
+               |> JSON.decode!()
+               |> Enum.filter(&(&1["title"] == ":infinity timeout inside a call chain"))
+    end)
+  end
+
   test "cached_only with an empty cache is the run without priors", %{peer: peer} do
     {copy, app} = checkout!(:depot_priors_empty)
 
