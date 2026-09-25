@@ -26,6 +26,10 @@ defmodule Argus.Analyses.MailboxTimerLoopTest do
     T.SameTagResend,
     T.CastFromInit,
     T.CastFromInitAndApi,
+    T.DemandRearm,
+    T.BroadwayGuard,
+    T.ThreeClauseLoop,
+    T.ContinueOnError,
     :timer_loop_reloader,
     :timer_loop_resend,
     :timer_loop_domain_db
@@ -54,6 +58,11 @@ defmodule Argus.Analyses.MailboxTimerLoopTest do
              {":timer_loop_reloader", ":reload", "handle_cast/2", ""},
              # A first load init/1 casts, that the API casts too.
              {"CastFromInitAndApi", ":refresh", "handle_cast/2", ""},
+             # A topology event arms the refresh loop that reconnects on
+             # failure (xandra#411).
+             {"ContinueOnError", ":refresh_topology", "handle_info/2", ""},
+             # Each demand arms the receive loop again (sequin#371).
+             {"DemandRearm", ":receive_messages", "handle_demand/2", ":receive_timer"},
              # A cast that runs the loop's clause with its message.
              {"DirectKick", ":poll", "handle_cast/2", ""},
              # One clause re-arms without cancelling the kept ref first,
@@ -63,7 +72,9 @@ defmodule Argus.Analyses.MailboxTimerLoopTest do
              # A kick sent to self() while the loop's timer is pending.
              {"SelfKick", ":report", "handle_cast/2", ""},
              # The reset stores over the ref the loop keeps.
-             {"SharedScheduler", ":tick", "handle_cast/2", ":timer"}
+             {"SharedScheduler", ":tick", "handle_cast/2", ":timer"},
+             # Three clauses re-arm between them; each dequeue arms again.
+             {"ThreeClauseLoop", ":check_workers", "handle_call/3", ""}
            ]
   end
 
@@ -102,6 +113,7 @@ defmodule Argus.Analyses.MailboxTimerLoopTest do
           T.Redispatch,
           T.SameTagResend,
           T.CastFromInit,
+          T.BroadwayGuard,
           :timer_loop_resend,
           :timer_loop_domain_db
         ] do

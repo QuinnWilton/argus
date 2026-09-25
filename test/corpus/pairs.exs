@@ -770,5 +770,48 @@
     pre: "b3e9fad7c9576123a96c6b8a34130cf76dfe6bbd",
     fix: "69e72793b5b2ecabe4848d6ca2088d0575c31ca9",
     finding: {:ets, "Named ETS table created in start_link fails the server's restart"}
+  },
+  # ── mailbox: a periodic timer loop armed again while it runs ─────────
+  # ant: Ant.Queue's three :check_workers clauses re-arm through
+  # schedule_check/1 and drop the ref, and every finished job's
+  # handle_call({:dequeue, _}) arms :check_workers again, so the queue
+  # polled once more per interval for every job done. The fix keeps the
+  # ref and cancels it before re-arming ("Without cancelling, the timer
+  # would fire multiple times within the check interval").
+  %{
+    repo: "MikeAndrianov/ant",
+    issue: "ant@b6f9f90",
+    module: "Ant.Queue",
+    pre: "01e5e4309e9e64493cc1bc8bcf3da996990d0a6b",
+    fix: "b6f9f90e1ee2661b478c272ccb8a0146b5195821",
+    finding: {:mailbox, "Periodic timer loop armed again while it runs"}
+  },
+  # xandra: the control connection's refresh loop re-arms
+  # :refresh_topology after every refresh and drops the ref, and each
+  # NEW_NODE or REMOVED_NODE push event (from the socket clause) arms
+  # another: one more topology query loop per topology change. The fix
+  # keeps the ref and cancels it before re-arming.
+  %{
+    repo: "whatyouhide/xandra",
+    issue: "xandra#411",
+    module: "Xandra.Cluster.ControlConnection",
+    pre: "9687585283eaae179c4eab35e4af9b23cc048727",
+    fix: "ffe09a867b1a7ff16ea7bc8005e6645ea2f96635",
+    finding: {:mailbox, "Periodic timer loop armed again while it runs"}
+  },
+  # sequin: the consumer producer's receive loop stores its ref under
+  # receive_timer and never reads it, and every handle_demand/2 enters
+  # the same function and arms another poll ("stop hammering our
+  # database"). Broadway's own producers head that function with
+  # `receive_timer: nil`; the fix arms only in init/1 and the loop.
+  %{
+    repo: "sequinstream/sequin",
+    issue: "sequin#371",
+    module: "Sequin.ConsumersRuntime.ConsumerProducer",
+    pre: "45aaaf8c849e9a92c7499f7866b57cd500ab8464",
+    fix: "f17a93ec3174e8f1698cba32aa274fd6ae1ab81d",
+    otp: "27.3.3",
+    elixir: "1.18.3-otp-27",
+    finding: {:mailbox, "Periodic timer loop armed again while it runs"}
   }
 ]

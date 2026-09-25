@@ -31,7 +31,11 @@ re-arming are not reported. Over the nineteen live projects: 3 rows,
 vernemq's acl and passwd reloaders, both real (the round-2 catalog's
 backlog item 5, parked for want of the facts below), and rabbit's
 `mirrored_supervisor`, whose second arm is a start handshake its API
-makes once. Schema 117.
+makes once. Three fix pairs, from a hunt across 580 clones: ant
+(`Ant.Queue`, a dequeue arms another poll), xandra#411 (a topology
+change arms another refresh) and sequin#371 (a demand arms another
+receive poll); a second path that arms only while the kept key is nil
+(Broadway's producers) is quiet. Schema 117.
 
 **Added.** `info_clause_always(id, func, tag)` (ClauseCall): in a
 handle_info/2, the call at `id` runs on every path the clause for the
@@ -40,7 +44,14 @@ the message reaches is reached only through it, a `{:stop, ...}` return
 and a tail call to `:erlang.error/1` and the other raises left out
 (`Argus.Extractor.Dispatch.reached_with/4`, which takes an instruction
 to avoid). `clause_call` now has a row for Erlang's `!` too (the `send`
-instruction, where Elixir's `send/2` is a call).
+instruction, where Elixir's `send/2` is a call). Sites of one clause
+that call one function, or arm one message, count together, and a
+return handing the process to handle_continue/2, or a tail call to a
+local function that only stops or continues, is no path the clause
+goes on by. `timer_dropped(site, func, callee)` names a call that
+drops the ref an arming helper returns, `field_nil_test(func, key)` a
+function that tests a map field against nil or undefined, and
+`timer_store` follows a join of one helper's results (and nil).
 
 **Changed.** `timer_ref`'s flow is "discarded" for a ref no instruction
 reads before every register holding it is overwritten
