@@ -83,7 +83,7 @@ receives_runtime_messages(mod) :-
   server_side(mod, f).
 
 partial_handler(mod, h, "runtime", "catchall", "") :-
-  (behaves_as(mod, "GenServer") ; behaves_as(mod, "GenStage")),
+  gen_server_like(mod),
   partial_handle_info(mod, h),
   receives_runtime_messages(mod),
   !trap_exit_without_exit_clause(mod, _),
@@ -233,7 +233,7 @@ late_message_source(mod) :-
 // belongs in that macro.
 
 partial_handler(mod, h, "late_message", "catchall", "") :-
-  (behaves_as(mod, "GenServer") ; behaves_as(mod, "GenStage")),
+  gen_server_like(mod),
   partial_handle_info(mod, h),
   !library_written(h),
   late_message_source(mod),
@@ -1515,7 +1515,7 @@ info_taken(h, msg) :-
 
 unhandled_info(mod, f, id, msg, source, m, h, fallback) :-
   info_message(m, f, id, msg, source),
-  (behaves_as(m, "GenServer") ; behaves_as(m, "GenStage")),
+  gen_server_like(m),
   !statem_process(m),
   info_fallback(m, msg, h, fallback),
   !info_taken(h, msg),
@@ -1527,7 +1527,7 @@ unhandled_info(mod, f, id, msg, source, m, h, fallback) :-
 // as unhandled as one whose tag none compares.
 unhandled_info(mod, f, id, msg, "timer", m, h, fallback) :-
   info_message(m, f, id, msg, "timer"),
-  (behaves_as(m, "GenServer") ; behaves_as(m, "GenStage")),
+  gen_server_like(m),
   !statem_process(m),
   info_fallback(m, msg, h, fallback),
   info_taken(h, msg),

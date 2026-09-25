@@ -2,7 +2,8 @@
 // GenServer-like behaviour, and the returns that defer its reply.
 //
 // `answers_calls(mod, func)`: `func` is `mod`'s handle_call/3, in a
-// module whose behaviour replies to calls as GenServer does.
+// module whose behaviour replies to calls as GenServer does
+// (handle_call_function, callbacks.dl).
 //
 // `defers_reply(mod, func, id)`: the return at `id` is `{:noreply, …}`
 // (callback_return): the caller's call is still waiting when the callback
@@ -14,10 +15,7 @@
 // file, and run Argus.Extractors.Reply (callback_return).
 .decl answers_calls(mod: symbol, func: symbol)
 
-answers_calls(mod, func) :-
-  function_def(func, mod, "handle_call", 3, _),
-  behaves_as(mod, behaviour),
-  process_behaviour(behaviour, "gen_server_like").
+answers_calls(mod, func) :- handle_call_function(mod, func).
 
 .decl defers_reply(mod: symbol, func: symbol, id: symbol)
 

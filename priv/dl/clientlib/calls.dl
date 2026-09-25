@@ -113,20 +113,20 @@ peer_cast("GenStateMachine:cast/2").
 
 genserver_sync_api(func, mod) :-
   function_def(func, mod, _, _, 1),
-  behaves_as(mod, "GenServer"),
+  gen_server_like(mod),
   sync_call(func, _),
   !calls_other_server(func, mod).
 
 genserver_sync_api(func, mod) :-
   function_def(func, mod, _, _, 1),
-  behaves_as(mod, "GenServer"),
+  gen_server_like(mod),
   reaches_sync_caller_in(func, mod).
 
 .decl genserver_async_api(func: symbol, mod: symbol)
 
 genserver_async_api(func, mod) :-
   function_def(func, mod, _, _, 1),
-  behaves_as(mod, "GenServer"),
+  gen_server_like(mod),
   async_cast(func, _),
   !casts_other_server(func, mod).
 
@@ -278,13 +278,11 @@ unresolved_target(t) :- async_cast(_, t), match("via:.*", t).
 
 tag_handler(mod, "call", tag) :-
   callback_tag(h, "handle_call", tag),
-  function_def(h, mod, "handle_call", 3, _),
-  behaves_as(mod, "GenServer").
+  handle_call_function(mod, h).
 
 tag_handler(mod, "cast", tag) :-
   callback_tag(h, "handle_cast", tag),
-  function_def(h, mod, "handle_cast", 2, _),
-  behaves_as(mod, "GenServer").
+  handle_cast_function(mod, h).
 
 .decl tag_handler_count(kind: symbol, tag: symbol, n: number)
 

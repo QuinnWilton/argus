@@ -139,24 +139,44 @@ process_entry(mod, func) :-
   function_def(func, mod, "terminate", 2, _),
   process_behaviour_module(mod).
 
-// The GenServer request handlers, at their contract arities.
+// The request handlers of a server that answers calls by GenServer's
+// contract (process_behaviour "gen_server_like": GenServer, the wrappers
+// behaviours.dl aliases to it, GenStage; and a server under an unlisted
+// behaviour with a handle_call/3), at their contract arities: the
+// handle_call/3 a call's request enters, whose `{:noreply, …}` defers
+// the reply, and the handle_cast/2 a cast enters. The one word for "the
+// handler that answers a call": the chains, the tag attribution
+// (calls.dl), the self-directed calls (resolved_calls.dl) and the reply
+// rules (replies.dl) all read it. A gen_statem answers calls from its
+// state functions, by another contract. A module that defines
+// handle_call/3 and runs no process answers nobody.
 .decl handle_call_function(mod: symbol, func: symbol)
 
 handle_call_function(mod, func) :-
-  otp_callback(func, mod, "handle_call", "GenServer"),
-  function_def(func, mod, _, 3, _).
+  function_def(func, mod, "handle_call", 3, _),
+  gen_server_like(mod).
 
 .decl handle_cast_function(mod: symbol, func: symbol)
 
 handle_cast_function(mod, func) :-
-  otp_callback(func, mod, "handle_cast", "GenServer"),
-  function_def(func, mod, _, 2, _).
+  function_def(func, mod, "handle_cast", 2, _),
+  gen_server_like(mod).
 
-// Any GenServer message handler: what runs once the server is up.
+// A server under a behaviour the table does not list that defines
+// handle_call/3 (unlisted_server: rabbit's gen_server2, a library's own
+// wrapper) is taken to answer by the same contract: it is what a
+// handle_call/3 in a server says.
+.decl gen_server_like(mod: symbol)
+
+gen_server_like(mod) :- behaves_as(mod, b), process_behaviour(b, "gen_server_like").
+gen_server_like(mod) :- unlisted_server(mod), function_def(_, mod, "handle_call", 3, _).
+
+// Any message handler of such a server: what runs once the server is up.
 .decl handler_function(mod: symbol, func: symbol)
 
 handler_function(mod, func) :-
-  otp_callback(func, mod, name, "GenServer"),
+  gen_server_like(mod),
+  otp_callback(func, mod, name, _),
   (name = "handle_call" ; name = "handle_cast" ; name = "handle_info" ; name = "handle_continue").
 
 // terminate/2,3 of a behaviour that calls it.

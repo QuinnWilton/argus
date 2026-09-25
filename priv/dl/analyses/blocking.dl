@@ -125,7 +125,7 @@ enters(m, request, clause) :-
 // Base case: the clause itself calls `to` (depth 1).
 request_chain(from, clause, to, 1) :-
   clause_dep(from, clause, to, _),
-  behaves_as(to, "GenServer").
+  gen_server_like(to).
 
 // Recursive case: through the clause the request enters in an
 // intermediate server. A clause on a cycle of requests is not passed
@@ -294,7 +294,7 @@ chain_found(a, b, "budget", 1, "", t_ab, t_bc, "") :-
 // own Proxy, whose :stop clause only replies).
 wait_found(cat(mod, ":handle_call/3"), "", "infinity", target, "", "") :-
   callback_sync_dep_timeout(mod, target, -1),
-  behaves_as(target, "GenServer"),
+  gen_server_like(target),
   !answers_straight_away(target).
 
 // ── A server that answers at once ──────────────────────────────────────
@@ -522,7 +522,7 @@ sync_caller(caller_mod, target_mod) :- sync_caller_witness(caller_mod, target_mo
 .output sync_call_fan_in
 
 sync_call_fan_in(target_mod, cnt) :-
-  behaves_as(target_mod, "GenServer"),
+  gen_server_like(target_mod),
   cnt = count : { sync_caller(_, target_mod) },
   cnt >= 5.
 

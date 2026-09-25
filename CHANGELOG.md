@@ -320,6 +320,18 @@ named), still one call deep: two calls down, a callback that calls a
 peer reaches gen's own timed receive. terminate/2 is a process entry of
 a process module only.
 
+**Changed.** The handler that answers a call is one word
+(`handle_call_function`, `handle_cast_function` and `handler_function`
+in `clientlib/callbacks.dl`, over `gen_server_like`: GenServer, the
+wrappers aliased to it, GenStage, and a server under an unlisted
+behaviour that defines handle_call/3, as rabbit's gen_server2 does). callbacks.dl read GenServer alone,
+replies.dl's `answers_calls` and mailbox's handle_info rules GenServer
+and GenStage, calls.dl's tag attribution GenServer, and
+resolved_calls.dl's self-directed calls any module with a handle_call/3.
+A GenStage's handle_cast/2 that calls a server is "handle_cast blocks on
+a synchronous call" (`TimeoutChain.BlockingCastStage`), its handle_call/3
+is a hop of a chain, and a tag it compares attributes a call to it.
+
 **Changed.** A cast a spawn, task or agent makes is its own process's
 (`reaches_async_dep` cuts `runs_elsewhere`, as `reaches_sync_dep` does):
 a task init/1 starts that casts to a later sibling no longer makes

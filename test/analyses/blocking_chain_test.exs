@@ -164,6 +164,21 @@ defmodule Argus.Analyses.BlockingChainTest do
              ]
     end
 
+    test "a GenStage's cast handler blocks as a GenServer's does" do
+      skip_without_souffle()
+
+      {:ok, results} =
+        Memo.analyze(
+          [
+            Argus.Test.Fixtures.TimeoutChain.BlockingCastStage,
+            Argus.Test.Fixtures.TimeoutChain.ServerC
+          ],
+          :blocking
+        )
+
+      assert [["Argus.Test.Fixtures.TimeoutChain.BlockingCastStage", _]] = chains(results, "cast")
+    end
+
     test "detects infinity timeout in chain" do
       skip_without_souffle()
 

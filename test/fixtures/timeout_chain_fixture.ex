@@ -121,6 +121,27 @@ defmodule Argus.Test.Fixtures.TimeoutChain.LaterClauseCastServer do
   end
 end
 
+defmodule Argus.Test.Fixtures.TimeoutChain.BlockingCastStage do
+  @moduledoc false
+  # A GenStage answers calls and casts by GenServer's contract: its
+  # handle_cast/2 blocks on a synchronous call as a GenServer's does.
+  use GenStage
+
+  def start_link(opts), do: GenStage.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(state), do: {:producer, state}
+
+  @impl true
+  def handle_demand(_demand, state), do: {:noreply, [], state}
+
+  @impl true
+  def handle_cast({:notify, _msg}, state) do
+    _val = Argus.Test.Fixtures.TimeoutChain.ServerC.lookup(state.server_c)
+    {:noreply, [], state}
+  end
+end
+
 defmodule Argus.Test.Fixtures.TimeoutChain.ServerWithExplicitTimeout do
   @moduledoc false
   use GenServer
