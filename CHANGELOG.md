@@ -305,6 +305,13 @@ and fails unless each records a read naming exactly what it returned.
 read of a relation's columns it makes records into the process
 dictionary of a caller that tracks what it reads.
 
+**Added.** `Argus.Cache.Code.closure/2` and `digest/2` take `schema:
+:recorded`, which leaves `Argus.Schema` and its concern modules out of
+a producer's closure (walked through, so what they call stays keyed),
+for a caller that keys on the schema entries a producer read instead;
+`schema_module?/1` names those modules. The default, `:included`, is
+the closure as before.
+
 ### What the program's other sites believe
 
 **Changed.** Schema 86. `failure.inconsistent_handling` gains `raises`,

@@ -25,10 +25,29 @@ defmodule Argus.Cache.Code do
   build in another worktree of the same code digests the same. The
   digests are taken once per VM, from the beams on disk: a VM that
   reloads changed code mid-run keys on what it started with.
+
+  ## The schema
+
+  `Argus.Schema` and its concern modules (`Argus.Schema.*`) are in
+  every producer's closure, and their beams hold every relation as
+  literals: keyed as code, an edit to any relation moves every key.
+  With `schema: :recorded` they are left out — walked through, so what
+  they call is still keyed — for a caller that keys on the entries a
+  producer read of them instead (`Argus.Cache.Reads`). That is sound
+  because they are data: every
+  export of theirs records the entry it returns
+  (`Argus.SchemaReadsTest`). By default (`schema: :included`) they are
+  keyed as any other code, for a caller that records no reads.
   """
 
   @typedoc "`:base` or an extractor module (`Argus.Pipeline.producer/0`)."
   @type producer :: Argus.Pipeline.producer()
+
+  @typedoc """
+  `schema: :recorded` leaves the schema's modules out of a closure (see
+  "The schema"); the default is `:included`.
+  """
+  @type option :: {:schema, :included | :recorded}
 
   @doc """
   The modules a producer's rows depend on, sorted, each with the beam it
@@ -38,41 +57,64 @@ defmodule Argus.Cache.Code do
   to digest (compiled in memory, or cover-compiled): no key can name its
   code.
   """
-  @spec closure(producer()) ::
+  @spec closure(producer(), [option()]) ::
           {:ok, [{module(), Path.t() | :absent}]} | {:error, {:no_beam, module()}}
-  def closure(:base) do
-    memo({:closure, :base}, fn ->
-      with {:ok, modules} <- reachable([Argus.Pipeline], %{}) do
-        {:ok, Enum.sort(modules)}
-      end
-    end)
+  def closure(producer, opts \\ []) do
+    schema = schema_option(opts)
+    memo({:closure, producer, schema}, fn -> walk(producer, schema) end)
+  end
+
+  defp walk(:base, schema) do
+    with {:ok, modules} <- reachable([Argus.Pipeline], %{}, schema) do
+      {:ok, Enum.sort(modules)}
+    end
   end
 
   # An extractor's is the base's and what the extractor reaches besides:
   # the walk from the extractor stops where the base's closure, read
   # once, already goes.
-  def closure(extractor) when is_atom(extractor) do
-    memo({:closure, extractor}, fn ->
-      with {:ok, base} <- closure(:base),
-           {:ok, modules} <- reachable([extractor], Map.new(base)) do
-        {:ok, Enum.sort(modules)}
-      end
-    end)
+  defp walk(extractor, schema) when is_atom(extractor) do
+    with {:ok, base} <- closure(:base, schema: schema),
+         {:ok, modules} <- reachable([extractor], Map.new(base), schema) do
+      {:ok, Enum.sort(modules)}
+    end
+  end
+
+  defp schema_option(opts) do
+    case Keyword.get(opts, :schema, :included) do
+      schema when schema in [:included, :recorded] ->
+        schema
+
+      other ->
+        raise ArgumentError, ":schema must be :included or :recorded, got: #{inspect(other)}"
+    end
   end
 
   @doc """
-  A digest of `closure/1`'s code: each module by name and
+  A digest of `closure/2`'s code: each module by name and
   `Argus.BeamDigest`, or as absent. Once per VM for each producer.
   """
-  @spec digest(producer()) :: {:ok, String.t()} | {:error, term()}
-  def digest(producer) do
-    memo({:digest, producer}, fn ->
-      with {:ok, modules} <- closure(producer),
+  @spec digest(producer(), [option()]) :: {:ok, String.t()} | {:error, term()}
+  def digest(producer, opts \\ []) do
+    schema = schema_option(opts)
+
+    memo({:digest, producer, schema}, fn ->
+      with {:ok, modules} <- closure(producer, schema: schema),
            {:ok, parts} <- module_parts(modules) do
         {:ok, Argus.Cache.key(parts)}
       end
     end)
   end
+
+  @doc """
+  Whether `module` is one of the schema's (`Argus.Schema` or a module
+  under it), which `schema: :recorded` leaves out of a closure.
+  """
+  @spec schema_module?(module()) :: boolean()
+  def schema_module?(Argus.Schema), do: true
+
+  def schema_module?(module) when is_atom(module),
+    do: String.starts_with?(Atom.to_string(module), "Elixir.Argus.Schema.")
 
   defp module_parts(modules) do
     modules
@@ -110,18 +152,22 @@ defmodule Argus.Cache.Code do
     end
   end
 
-  defp reachable([], seen), do: {:ok, Map.to_list(seen)}
+  # `seen` holds each module met: its beam, `:absent`, or `:walked` — a
+  # schema module under `schema: :recorded`, whose calls are followed
+  # but which is itself left out.
+  defp reachable([], seen, _schema),
+    do: {:ok, for({mod, found} <- seen, found != :walked, do: {mod, found})}
 
-  defp reachable([mod | rest], seen) do
+  defp reachable([mod | rest], seen, schema) do
     if Map.has_key?(seen, mod) do
-      reachable(rest, seen)
+      reachable(rest, seen, schema)
     else
       case where(mod) do
         :runtime ->
-          reachable(rest, seen)
+          reachable(rest, seen, schema)
 
         :absent ->
-          reachable(rest, Map.put(seen, mod, :absent))
+          reachable(rest, Map.put(seen, mod, :absent), schema)
 
         :no_beam ->
           {:error, {:no_beam, mod}}
@@ -131,7 +177,8 @@ defmodule Argus.Cache.Code do
             :beam_lib.chunks(String.to_charlist(beam), [:imports])
 
           called = for {callee, _fun, _arity} <- imports, uniq: true, do: callee
-          reachable(called ++ rest, Map.put(seen, mod, beam))
+          found = if schema == :recorded and schema_module?(mod), do: :walked, else: beam
+          reachable(called ++ rest, Map.put(seen, mod, found), schema)
       end
     end
   end

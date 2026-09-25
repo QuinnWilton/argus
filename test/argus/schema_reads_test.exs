@@ -19,9 +19,11 @@ defmodule Argus.SchemaReadsTest do
 
   @internal [module_info: 0, module_info: 1, __info__: 1]
 
+  # The modules a producer's code key leaves out under `schema:
+  # :recorded`: exactly those whose every export this checks.
   defp schema_modules do
     for mod <- Application.spec(:panoptes, :modules),
-        mod == Schema or String.starts_with?(Atom.to_string(mod), "Elixir.Argus.Schema."),
+        Argus.Cache.Code.schema_module?(mod),
         do: mod
   end
 

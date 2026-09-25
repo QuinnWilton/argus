@@ -64,6 +64,30 @@ defmodule Argus.Cache.CodeTest do
     refute Code.reads_installed?(Argus.Extractors.ETS)
   end
 
+  test "schema: :recorded leaves the schema's modules out, and keys what they call" do
+    {:ok, included} = Code.closure(:base)
+    {:ok, recorded} = Code.closure(:base, schema: :recorded)
+    included = Enum.map(included, &elem(&1, 0))
+    recorded = Enum.map(recorded, &elem(&1, 0))
+
+    # The concern modules are read at Argus.Schema's compile time: their
+    # relations reach a key as its literals.
+    assert Argus.Schema in included
+    assert Enum.filter(included, &Code.schema_module?/1) == included -- recorded
+    refute Enum.any?(recorded, &Code.schema_module?/1)
+
+    # Walked through: what records their reads is code, and keyed.
+    assert Argus.Cache.Reads in recorded
+
+    {:ok, extractor} = Code.closure(Argus.Extractors.ETS, schema: :recorded)
+    refute Enum.any?(extractor, fn {mod, _beam} -> Code.schema_module?(mod) end)
+
+    assert {:ok, one} = Code.digest(:base)
+    assert {:ok, other} = Code.digest(:base, schema: :recorded)
+    assert one != other
+    assert_raise ArgumentError, fn -> Code.digest(:base, schema: :other) end
+  end
+
   test "digests differ between producers and are stable within a VM" do
     assert {:ok, base} = Code.digest(:base)
     assert {:ok, ets} = Code.digest(Argus.Extractors.ETS)
