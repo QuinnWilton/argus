@@ -138,6 +138,11 @@ twelve catch-alls of the yecc runtime in ejabberd's and mongooseim's
 LDAP filter parsers and rabbit's SQL parser are gone. A catch-all the
 program's own macro or header wrote is still reported.
 
+**Fixed.** startup's init timeout findings name `#{ms}}` as their
+`at_source`: the return tuple has no line marker, so the bytecode's line
+was the last call's before it (exq's Manager.Server, one line above
+`{:ok, state, 0}`); scry moves the anchor to the return's line.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

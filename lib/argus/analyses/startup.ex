@@ -494,6 +494,9 @@ defmodule Argus.Analyses.Startup do
         "a PubSub broadcast init subscribed to, a call from the starter — " <>
         "cancels it, and the deferred work silently never runs.",
       at: Findings.at_site(site, mod),
+      # The return tuple has no line marker of its own: the bytecode's
+      # line is the last call's before it.
+      at_source: "0}",
       at_label: "this timeout is cancelled by any earlier message",
       help: [
         "return `{:ok, state, {:continue, :finish_init}}` and move the work " <>
@@ -513,6 +516,7 @@ defmodule Argus.Analyses.Startup do
         "timeout again or it is gone. An idle timeout is for reacting to " <>
         "silence.",
       at: Findings.at_site(site, mod),
+      at_source: "#{ms}}",
       at_label: "this timeout is cancelled by any earlier message",
       help: [
         "for work that must happen, arm a timer (Process.send_after/3) or " <>

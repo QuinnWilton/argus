@@ -193,5 +193,17 @@ defmodule Argus.Analyses.StartupContinueTest do
       assert mod == "Argus.Test.Fixtures.TimeoutDeferredInit"
       assert site =~ "TimeoutDeferredInit:init/1#"
     end
+
+    test "the finding names the return's timeout for a reader of the source" do
+      skip_without_souffle()
+
+      assert {:ok, %{findings: findings}} =
+               Memo.run_analyses([Argus.Test.Fixtures.TimeoutDeferredInit], analyses: [:startup])
+
+      # The return tuple has no line marker: the bytecode's line is the
+      # last call's before it, and `0}` carries the anchor the last step.
+      assert [%{at_source: "0}"}] =
+               Enum.filter(findings, &(&1.title == "init/1 defers work with a zero timeout"))
+    end
   end
 end

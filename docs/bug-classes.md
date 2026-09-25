@@ -562,8 +562,9 @@ Work in a phase whose invariants do not hold yet: `init/1` runs inside the super
 **Property.** The `init/1` of a process module returns a literal integer timeout, `{:ok, state, ms}`; `ms` of 0 takes the first title, any other the second. The `:timeout` message arrives only if nothing else reaches the mailbox first: any message (a datagram on a socket `init/1` opened, a broadcast it subscribed to, a call from the starter) cancels it, and the deferred work silently never runs.
 
 **Assumptions and limits.**
-- Reported for every literal timeout, whether or not anything can arrive first; the rule does not look for sockets, subscriptions or senders.
+- Reported for every literal timeout, whether or not anything can arrive first; the rule does not look for sockets, subscriptions or senders. Round 2 read 4 of 9 rows as false for that reason: vernemq's `vmq_graphite` and `vmq_ql_query` open nothing before their first timeout, and mongooseim's global-distribution worker re-arms an idle reaper on every return.
 - A timeout built at runtime is not read.
+- The return tuple has no line marker: the bytecode's line is the last call's before it (exq's Manager.Server, one line up). The finding names `#{ms}}` (`at_source`), which a consumer with the source finds on the return's line; a timeout written as a macro (`?TIMEOUT`) is not found, and the anchor stays.
 
 **Fixtures.** Positive: `TimeoutDeferredInit` (test/fixtures/continue_chain_fixture.ex). Quiet: `ContinueDeferredInit`. Asserted in test/analyses/startup_continue_test.exs.
 
