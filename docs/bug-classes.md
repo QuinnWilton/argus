@@ -422,17 +422,18 @@ Work in a phase whose invariants do not hold yet: `init/1` runs inside the super
 `blocks_on_peer` · phase=`continue`, kind=`parent`
 · titles: "handle_continue calls its own supervisor" (`:warning`)
 
-**Property.** A worker W whose `init/1` continues is a static child of supervisor S, and a `handle_continue/2` of W, on its own stack, makes a synchronous call that waits on S's process. S may still be in `start_link`, starting later children and not reading its mailbox, so W blocks until the whole child list is up; if a later child waits on W, startup deadlocks.
+**Property.** A worker W whose `init/1` continues is a static child of supervisor S and not its last one, and a `handle_continue/2` of W, on its own stack, makes a supervisor management call on S (`Supervisor.which_children/1`, `count_children/1`, `start_child/2`, ...) or a synchronous call that waits on S's process. S is still in `start_link`, starting the children after W and not reading its mailbox, so W blocks until the rest of the child list is up; if a later child waits on W, startup deadlocks. `detail` is the management call's `api.op` (empty for a plain synchronous call) and `site` the call.
 
 **Assumptions and limits.**
-- Only a call the call resolution sees as a synchronous dependency on S's process counts (a `GenServer.call` on S's name or pid). `Supervisor.which_children/1`, `count_children/1` and the other management calls are recorded as supervisor calls, not synchronous calls, and are not read, so the usual form of the bug is missed.
+- Both a management call (`sup_management_call`, read through the continue's own stack by `sup_reach`, as init/1's supervisor calls are) and a synchronous call the call resolution sees as a dependency on S's process count. A target S is the supervisor module a call names (its registered name); a pid or a computed name is not judged.
+- W as S's last child is quiet (`ContinueLastChildCaller`): its init returning is S's last wait, and S reads its mailbox as soon as the continue runs. Whether a later child actually waits on W is not asked.
 - Static trees only.
 
-**Fixtures.** `ContinueParentCallerServer` with `ContinueParentSupervisor` (test/fixtures/continue_chain_fixture.ex) is written for this rule, but no test asserts on it, and it calls `Supervisor.which_children/1`.
+**Fixtures.** Positive: `ContinueParentCallerServer` with `ContinueParentSupervisor`, whose later child is `ContinueParentLaterSibling` (test/fixtures/continue_chain_fixture.ex). Quiet: `ContinueLastChildCaller` with `ContinueLastChildSupervisor`. Asserted in test/analyses/startup_continue_test.exs.
 
 **Corpus.** None.
 
-**Precision.** Not measured.
+**Precision.** 0 rows over the corpus tally and ten live projects (ejabberd, rabbit, brod, exq, sentry, elixir-ls, changelog.com, kafka_ex, quantum, firezone's portal) in round 2 (2026-09-25), before and after management calls were read. Until then the rule could not fire on its own fixture, which calls `Supervisor.which_children/1` (a supervisor call, not a synchronous one).
 
 ### Retrying :global lock during init/1
 
@@ -3059,7 +3060,9 @@ fixture before fixing it, and says so under the item.
 2. **startup's "handle_continue calls its own supervisor"** reads
    synchronous calls, but `Supervisor.which_children` and the other
    management calls are supervisor calls: its only fixture's shape is
-   missed and no test asserts on it.
+   missed and no test asserts on it. *Resolved in round 2*: confirmed by
+   a test on the fixture; management calls on the continue's own stack
+   count, and the worker's last-child case is quiet.
 3. **The purity check never reads BIF instructions**: `self/0`, `node/0`
    and Erlang's `get/1` are silently pure, in the one analysis that
    claims soundness.

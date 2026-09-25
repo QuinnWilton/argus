@@ -502,13 +502,43 @@ blocks_on_peer(caller, "continue", callee, "call", "later", sup, "", "") :-
 
 // The worker's handle_continue calls its parent supervisor (a
 // Supervisor query or management function) while the parent is still
-// mid-start_link. The approximation: the worker's handle_continue, or
-// what it reaches, sync-calls a supervisor module (continue_dep) that
-// has the worker as a child.
+// mid-start_link, starting the children after the worker, and not
+// reading its mailbox. The worker blocks until the rest of the child
+// list is up, and a later child that waits on it deadlocks the boot.
+// The worker's last-child case is quiet: its init returning is the
+// supervisor's last wait. Supervisor.which_children and the other
+// management calls are sup_calls, not sync calls: they are read on the
+// continue's own stack (sup_reach), the call their site.
+.decl continues_on_stack(worker: symbol, site: symbol, sup: symbol, detail: symbol)
+
+continues_on_stack(worker, site, sup, cat(api, ".", op)) :-
+  init_continues_to(worker, _),
+  handle_continue_clause(worker, _, f),
+  sup_management_call(site, f, api, op, sup).
+
+continues_on_stack(worker, site, sup, cat(api, ".", op)) :-
+  init_continues_to(worker, _),
+  handle_continue_clause(worker, _, f),
+  sup_reach.reaches(f, site),
+  sup_management_call(site, _, api, op, sup).
+
+.decl has_later_sibling(sup: symbol, worker: symbol)
+
+has_later_sibling(sup, worker) :- starts_before(sup, worker, _, _, _).
+
+blocks_on_peer(worker, "continue", sup, "parent", "parent", sup, site, detail) :-
+  continues_on_stack(worker, site, sup, detail),
+  supervisor(sup, _),
+  supervisor_child(sup, _, worker, _, _),
+  has_later_sibling(sup, worker).
+
+// A plain synchronous call on the supervisor's name (a GenServer.call
+// the call resolution sees) reaches the same mailbox.
 blocks_on_peer(worker, "continue", sup, "parent", "parent", sup, "", "") :-
   continue_sync_calls(worker, sup),
   supervisor(sup, _),
-  supervisor_child(sup, _, worker, _, _).
+  supervisor_child(sup, _, worker, _, _),
+  has_later_sibling(sup, worker).
 
 // ── Defensive variant: try/catch wraps the call ──────────────────────
 

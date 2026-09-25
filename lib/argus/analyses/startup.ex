@@ -439,15 +439,21 @@ defmodule Argus.Analyses.Startup do
     )
   end
 
-  def finding(:blocks_on_peer, [worker, "continue", sup, "parent", _, _, _, _]) do
+  def finding(:blocks_on_peer, [worker, "continue", sup, "parent", _, _, site, detail]) do
+    how = if detail == "", do: "sync-calls", else: "calls #{detail} on"
+
     Findings.new(
       :warning,
       "handle_continue calls its own supervisor",
-      "#{worker}'s handle_continue sync-calls its parent #{sup} while the " <>
-        "supervisor may still be mid-start_link, not yet reading its mailbox. " <>
-        "The worker blocks until the whole child list finishes starting — and " <>
-        "if any later child waits on #{worker}, startup deadlocks.",
-      at: Findings.at_mfa(worker, :handle_continue, 2),
+      "#{worker}'s handle_continue #{how} its parent #{sup} while the " <>
+        "supervisor is still starting the children after it, not yet reading " <>
+        "its mailbox. The worker blocks until the rest of the child list is " <>
+        "up — and if any later child waits on #{worker}, startup deadlocks.",
+      at:
+        if(site == "",
+          do: Findings.at_mfa(worker, :handle_continue, 2),
+          else: Findings.at_site(site, worker)
+        ),
       at_label: "calls the parent supervisor here",
       help: [
         "move the supervisor query out of startup: pass the information as " <>

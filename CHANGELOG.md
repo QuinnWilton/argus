@@ -39,6 +39,16 @@ states whose function was not recognised; 1 unreachable, chatterbox's
 `process_frames` drops the name) and webtransport 0.4.6's
 `connecting` (init/1 enters `open` or `draining` only). Schema 105.
 
+**Fixed.** `startup`'s "handle_continue calls its own supervisor" read
+only synchronous calls, and `Supervisor.which_children/1` and the other
+management calls are supervisor calls: the rule could not fire on its
+own fixture, and no test asserted on it. A management call on the
+supervisor, on the continue's own stack, now counts (`detail` is its
+`api.op` and `site` the call, where the finding is anchored); a worker
+that is its supervisor's last child is quiet, since its init returning
+is the supervisor's last wait. 0 rows over the corpus and ten live
+projects, before and after.
+
 ### Classes mined from fixed bugs
 
 Three classes from round 1 of mining fixed bugs (178 classified; the

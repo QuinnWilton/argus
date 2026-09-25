@@ -169,7 +169,59 @@ defmodule Argus.Test.Fixtures.ContinueParentSupervisor do
 
   @impl true
   def init(_opts) do
-    children = [Argus.Test.Fixtures.ContinueParentCallerServer]
+    # The caller is not the last child: the supervisor is still starting
+    # ContinueParentLaterSibling when the caller's continue runs.
+    children = [
+      Argus.Test.Fixtures.ContinueParentCallerServer,
+      Argus.Test.Fixtures.ContinueParentLaterSibling
+    ]
+
+    Supervisor.init(children, strategy: :one_for_one)
+  end
+end
+
+defmodule Argus.Test.Fixtures.ContinueParentLaterSibling do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(opts), do: {:ok, opts}
+end
+
+# Quiet: the caller is its supervisor's last child. Its init/1 returning
+# is the supervisor's last wait, so the supervisor reads its mailbox as
+# soon as the continue runs.
+defmodule Argus.Test.Fixtures.ContinueLastChildCaller do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts), do: {:ok, %{}, {:continue, :setup}}
+
+  @impl true
+  def handle_continue(:setup, state) do
+    children = Supervisor.which_children(Argus.Test.Fixtures.ContinueLastChildSupervisor)
+    {:noreply, Map.put(state, :siblings, length(children))}
+  end
+end
+
+defmodule Argus.Test.Fixtures.ContinueLastChildSupervisor do
+  @moduledoc false
+  use Supervisor
+
+  def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts) do
+    children = [
+      Argus.Test.Fixtures.ContinueParentLaterSibling,
+      Argus.Test.Fixtures.ContinueLastChildCaller
+    ]
+
     Supervisor.init(children, strategy: :one_for_one)
   end
 end

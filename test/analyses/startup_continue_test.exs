@@ -60,6 +60,48 @@ defmodule Argus.Analyses.StartupContinueTest do
              end)
     end
 
+    test "detects continue calling its own supervisor before the tree is up (Pattern 3)" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.ContinueParentCallerServer,
+        Argus.Test.Fixtures.ContinueParentLaterSibling,
+        Argus.Test.Fixtures.ContinueParentSupervisor
+      ]
+
+      assert {:ok, results} = Memo.analyze(modules, :startup)
+
+      assert [
+               [
+                 "Argus.Test.Fixtures.ContinueParentCallerServer",
+                 sup,
+                 site,
+                 "Supervisor.which_children"
+               ]
+             ] =
+               Rows.where(results, :startup, "blocks_on_peer",
+                 phase: "continue",
+                 kind: "parent",
+                 drop: [:phase, :kind, :ordering, :sup]
+               )
+
+      assert sup == "Argus.Test.Fixtures.ContinueParentSupervisor"
+      assert site =~ "handle_continue/2"
+    end
+
+    test "does NOT flag the last child calling its supervisor from continue" do
+      skip_without_souffle()
+
+      modules = [
+        Argus.Test.Fixtures.ContinueLastChildCaller,
+        Argus.Test.Fixtures.ContinueParentLaterSibling,
+        Argus.Test.Fixtures.ContinueLastChildSupervisor
+      ]
+
+      assert {:ok, results} = Memo.analyze(modules, :startup)
+      assert Rows.where(results, :startup, "blocks_on_peer", phase: "continue") == []
+    end
+
     test "does NOT flag the safe sibling order (target started first)" do
       skip_without_souffle()
 
