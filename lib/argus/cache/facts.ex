@@ -168,11 +168,14 @@ defmodule Argus.Cache.Facts do
     written =
       case Keyword.get(opts, :relations, :all) do
         :all -> "all"
-        names -> names |> Enum.map(&to_string/1) |> Enum.sort() |> Enum.join(",")
+        {:except, names} -> "except " <> names_list(names)
+        names -> names_list(names)
       end
 
     [written, to_string(Keyword.get(opts, :trace_imprecision, false))]
   end
+
+  defp names_list(names), do: names |> Enum.map(&to_string/1) |> Enum.sort() |> Enum.join(",")
 
   defp environment(producer, store) do
     if Code.reads_installed?(producer),

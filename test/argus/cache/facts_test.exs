@@ -127,6 +127,12 @@ defmodule Argus.Cache.FactsTest do
       staged = Argus.Schema.names() -- Argus.Schema.in_process_only()
       assert {:ok, _} = Facts.extract(@modules, @extractors, [relations: staged], store)
       assert length(shards(store)) == 12
+
+      # Named by what is left out, the same rows key otherwise: a relation
+      # added to the schema moves no key of the extraction's.
+      except = {:except, Argus.Schema.in_process_only()}
+      assert {:ok, _} = Facts.extract(@modules, @extractors, [relations: except], store)
+      assert length(shards(store)) == 16
     end
 
     test "the beams key the shards, by content", %{tmp_dir: store} do

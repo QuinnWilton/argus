@@ -230,12 +230,14 @@ defmodule Argus.Analysis.Extraction do
   # The built-in programs never read the in-process-only relations, so the
   # staged directory leaves them empty. A custom program might, and there
   # is no declaration to consult without running Souffle, so it gets
-  # everything.
+  # everything. Named as what is left out, not what is kept: the option
+  # keys every shard (`Argus.Cache.Facts`), and a relation added to the
+  # schema moves no key.
   defp staged_relations(analyses) do
     if Enum.any?(analyses, &match?({:custom, _}, &1)) do
       :all
     else
-      Argus.Schema.names() -- Argus.Schema.in_process_only()
+      {:except, Argus.Schema.in_process_only()}
     end
   end
 

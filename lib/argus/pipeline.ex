@@ -93,7 +93,7 @@ defmodule Argus.Pipeline do
           extractors: [module()],
           timeout: timeout(),
           trace_imprecision: boolean(),
-          relations: :all | [atom()],
+          relations: :all | [atom()] | {:except, [atom()]},
           bases: [binary() | nil],
           keep_bases: boolean()
         ]
@@ -150,7 +150,8 @@ defmodule Argus.Pipeline do
   or `{:error, reason}`.
 
   Every schema relation gets a file (Souffle fails on a missing `.input`
-  file), but `relations:` limits which ones receive rows: the rest stay
+  file), but `relations:` limits which ones receive rows — the ones
+  named, or with `{:except, names}` every one but those: the rest stay
   empty. `Argus.Analysis.extract_facts/3` uses it to leave out the
   relations that exist only for the in-process control-flow and dataflow
   passes (`Argus.Schema.in_process_only/0`), which no Souffle program
@@ -225,12 +226,7 @@ defmodule Argus.Pipeline do
   @spec run_shards([Disassemble.module_input()], [{producer(), Path.t()}], run_opts()) ::
           {:ok, shard_info()} | {:error, term()}
   def run_shards(modules, dirs, opts \\ []) do
-    written =
-      case Keyword.get(opts, :relations, :all) do
-        :all -> nil
-        names -> MapSet.new(names)
-      end
-
+    written = Writer.written(Keyword.get(opts, :relations, :all))
     selected = MapSet.new(dirs, &elem(&1, 0))
     extractors = for {producer, _dir} <- dirs, producer != :base, do: producer
     keep? = Keyword.get(opts, :keep_bases, false)

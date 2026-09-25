@@ -47,6 +47,18 @@ defmodule Argus.Pipeline.WriterTest do
     refute Map.has_key?(appended, "label_at.facts")
   end
 
+  test "relations: names the relations written, or those left out" do
+    facts = %{jump: [["M:f/1#0", "1"]], label_at: [["M:f/1#0", "1"]], custom: [["x"]]}
+
+    assert facts |> Writer.encode(Writer.written(:all)) |> Map.keys() |> Enum.sort() ==
+             [:custom, :jump, :label_at]
+
+    assert facts |> Writer.encode(Writer.written([:jump])) |> Map.keys() == [:jump]
+
+    assert facts |> Writer.encode(Writer.written({:except, [:jump]})) |> Map.keys() |> Enum.sort() ==
+             [:custom, :label_at]
+  end
+
   test "each file's digest is its bytes', hashed as they were written", %{tmp_dir: tmp} do
     written = MapSet.new([:jump, :call_edge])
 

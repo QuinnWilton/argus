@@ -13,15 +13,30 @@ defmodule Argus.Pipeline.Writer do
   @enforce_keys [:dir, :written, :files]
   defstruct [:dir, :written, :files, hashes: %{}]
 
+  @typedoc """
+  Which relations receive rows: every one (`nil`), the ones named, or
+  every one but those named (`{:except, names}`).
+  """
+  @type written :: MapSet.t(atom()) | {:except, MapSet.t(atom())} | nil
+
   @type t :: %__MODULE__{
           dir: Path.t(),
-          written: MapSet.t(atom()) | nil,
+          written: written(),
           files: %{atom() => File.io_device()},
           hashes: %{atom() => :crypto.hash_state()}
         }
 
-  @spec new(Path.t(), MapSet.t(atom()) | nil) :: t()
+  @spec new(Path.t(), written()) :: t()
   def new(dir, written), do: %__MODULE__{dir: dir, written: written, files: %{}}
+
+  @doc """
+  The filter a `relations:` option names (`Argus.Pipeline.run/3`):
+  `:all`, a list of relations, or `{:except, relations}`.
+  """
+  @spec written(:all | [atom()] | {:except, [atom()]}) :: written()
+  def written(:all), do: nil
+  def written({:except, names}) when is_list(names), do: {:except, MapSet.new(names)}
+  def written(names) when is_list(names), do: MapSet.new(names)
 
   @spec append(t(), Argus.Pipeline.Emit.facts()) :: {:ok, t()} | {:error, term()}
   def append(writer, module_facts) do
@@ -42,14 +57,14 @@ defmodule Argus.Pipeline.Writer do
   @doc """
   A module's facts as `append_encoded/2` writes them: per relation, the
   bytes of its lines, in the order `append/2` would write the rows, for
-  the relations `written` names (every one when `nil`) that have rows.
+  the relations `written` lets through (`t:written/0`) that have rows.
   What a worker does so that the caller only writes.
   """
-  @spec encode(Argus.Pipeline.Emit.facts(), MapSet.t(atom()) | nil) :: %{atom() => binary()}
+  @spec encode(Argus.Pipeline.Emit.facts(), written()) :: %{atom() => binary()}
   def encode(module_facts, written) do
     for {relation, rows} <- module_facts,
         rows != [],
-        written == nil or MapSet.member?(written, relation),
+        written?(written, relation),
         into: %{},
         do: {relation, IO.iodata_to_binary(Argus.Tsv.encode(Enum.reverse(rows)))}
   end
@@ -82,8 +97,11 @@ defmodule Argus.Pipeline.Writer do
     end)
   end
 
-  defp skip?(%__MODULE__{written: nil}, _relation), do: false
-  defp skip?(%__MODULE__{written: written}, relation), do: not MapSet.member?(written, relation)
+  defp skip?(%__MODULE__{written: written}, relation), do: not written?(written, relation)
+
+  defp written?(nil, _relation), do: true
+  defp written?({:except, except}, relation), do: not MapSet.member?(except, relation)
+  defp written?(%MapSet{} = only, relation), do: MapSet.member?(only, relation)
 
   defp device(%__MODULE__{files: files} = writer, relation) do
     case Map.fetch(files, relation) do

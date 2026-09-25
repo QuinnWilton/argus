@@ -284,6 +284,13 @@ other file is byte-identical to before. `Argus.Findings.extraction_errors/1`
 lists the errors in that order. An extractor named twice in
 `extractors:` runs once.
 
+**Added.** `relations: {:except, names}` on `Argus.Pipeline.run/3` and
+`run_shards/3` (`Argus.Pipeline.Writer.written/1`): every relation but
+those receives rows. `Argus.Analysis.extract_facts/3` leaves the
+in-process relations out by name where it listed the ones it keeps: the
+option keys every shard, and a relation added to the schema moved every
+key; now only an in-process flag's change does.
+
 ### What the program's other sites believe
 
 **Changed.** Schema 86. `failure.inconsistent_handling` gains `raises`,
