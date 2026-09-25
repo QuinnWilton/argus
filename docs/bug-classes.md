@@ -3257,9 +3257,10 @@ Structural gaps left:
 ### Prior candidates, evaluated
 
 Round 2 of the priors (2026-09-25) took the judgements rounds 1 of the
-FP hunt and the mining left to a reader. Three are rules now, one is a
-structural fix, and the rest are weighed here against what Jev is good
-at — names, docs and intent, one entity at a time — and weak at:
+FP hunt and the mining left to a reader, and round 3 the five it ranked
+next. Four are rules now, three structural fixes, and the rest are
+weighed here against what Jev is good at — names, docs and intent, one
+entity at a time — and weak at:
 numbers, rates, and anything that needs several hops of the call graph.
 Rows are over the evaluation programs (four apps, the Phoenix stack,
 OTP's kernel, stdlib and mnesia), ejabberd and rabbitmq unless a count
@@ -3289,6 +3290,25 @@ Implemented:
   names; a `prior_tls_role(func, permille)` consumed by
   `disables_verification` would take the two, but two rows do not pay
   for a question.
+- **Code only tools and tests run** (round 3; every analysis, through
+  `Argus.Findings.Tooling`; vocabulary "Code only tools and tests
+  run"). Structural first: a module under `Mix.` and one compiled from
+  test support (`tooling_module`) decide 18 of the modules holding a
+  finding (34 findings: phoenix's generators, the Mix tasks of hexpm,
+  realtime, sequin and akkoma, LiveView's test client, nerves_hub's
+  socket test client). The prior (`prior_tooling`, one module per
+  request) asks the rest what the module is; at 0.9 it names 9 of the
+  858 undecided modules holding a finding, 8 rightly (blockster's
+  DevSetup, hexpm's fake data, nerves_hub's debugging helpers, Phoenix's
+  code reloader and asset watcher, OTP's `erts_debug`, erlc's driver,
+  logflare's development dashboard); the one it gets wrong is rabbit's
+  `code_version`. Calling ExUnit was rejected as a structural signal:
+  Livebook's doctest runner does, and is the product. OTP's `peer`,
+  a library for test suites, reads to Jev as the product (0.00): left.
+- **A program found on PATH** (round 3, structural): `System.cmd` of what
+  `find_executable/1` found for a literal program name is that program
+  (akkoma's `ffprobe`, one row), and a shell's argument list with a value
+  the walk cannot read is no longer taken for a literal one.
 
 Parked or left:
 
@@ -3308,28 +3328,46 @@ Parked or left:
   it can. Rows: 31 outside blockster's 42 (mnesia's gvar defaults and
   schema steps, ejabberd's captcha and invites, rabbit's vhost
   bookkeeping); consumer `ets_check_act` and `mnesia_check_act`.
-- **Dev-only and test-only code** (blockster's `DevSetup`, peer's
-  `start_orphan_supervision`, LiveViewTest's ClientProxy, mix tasks):
-  26 rows over six analyses sit in modules a reader knows never run in
-  production. Jev's strongest shape — a module's name and docs — and
-  one noul per module would carry it, but the consumer is every
-  analysis: a `prior_dev_only(mod, permille)` read through a clientlib
-  include each rule file adds, not one rule. Worth doing once a second
-  cross-cutting prior wants the same plumbing.
-- **Bounded table keys** (ets "only grows"): 9 rows (logflare 4,
-  ejabberd's hooks table, Sentry's sources). A name-and-literal
-  judgement Jev can make ("hook name × host", "a source file's path");
-  consumer `ets_write_only_table`. Literal keys are structural already
-  (e2f1ad6). Small; next after dev-only.
-- **An admin-only request route** (request-reachable rows, such as a
-  LiveDashboard page): the route table has the path but not
-  `pipe_through`, and Jev can read `/admin`, `/dashboard` and a
-  dashboard page's name. A few rows; consumer `sink_reachable`. Worth
-  folding into `prior_value_source`'s state (the entry's route) rather
-  than a question of its own. realtime's ReconTrace page is not one of
-  these: a LiveDashboard page is no request entry argus knows, so its
-  row is a no-request row, and `prior_value_source` leaves it at its
-  severity.
+- **Bounded table keys** (ets "only grows", 13 rows over the fifteen
+  programs: ejabberd's hooks and shapers, logflare's four, mongooseim's
+  host types, vernemq's buckets, counters and timers, Postgrex's SCRAM
+  cache, mnesia's stats). Not a re-tier: every row is already `:info`
+  (the rubric's "the harm turns on configuration"), and a prior can step
+  nothing lower. Nine of the thirteen are keyed by a fixed or configured
+  set; the promotion the other way (a table keyed by what a request
+  mints, `:warning`) is a detection that wants its own calibration, and
+  the four remaining rows are keyed by source ids a database bounds, not
+  by requests. The races rows were the other proposed consumer, and a
+  fixed key set does not make a check-then-act benign: a lost increment
+  on a metric key is lost all the same.
+- **A configured tool behind a code sink** (round 3). The literal
+  program found on PATH is structural now (above). For the configured
+  one, a version 3 of `prior_value_source` asked `System.cmd`'s program
+  alone ("its other arguments reach that program as they are, not
+  through a shell"), `:os.cmd`'s command line and `Code.eval_string`'s
+  code apart: over the 27 code rows no request reaches it moved two above 0.9
+  (Ecto's MyXQL dump, Phoenix's browser opener) and one below (Livebook's
+  git client), and left akkoma's configured translator at 0.70 and its
+  purge script at 0.84, within the spread of one request asked twice.
+  Not adopted: the 27 rows are all trusted by hand, so nothing measures
+  what the wording would cost a real sink.
+- **Terminate work that only deregisters** (shutdown, mongooseim's c2s,
+  s2s and component terminates removing their sessions and hooks). Not a
+  re-tier: the harm the finding names is a restart of the connections'
+  supervisor alone, which skips the terminates and leaves the session
+  and hook tables, whose owners keep running, with stale entries; only a
+  stop of the whole tree makes it moot. Telling the two apart needs the
+  tree's order, which mongooseim builds at run time (`[..] ++ Mod:f() ++
+  [..]`): structural when the child list is static, not a question for
+  a reader of names.
+- **An admin-only request route.** Round 3 of the mining settled code
+  execution: an admin-only route keeps its severity (akkoma's ConfigDB).
+  Over the fifteen programs three request rows sit behind an admin
+  surface: akkoma's ConfigDB atom (the same flow as its code
+  execution), blockster's `PostsAdminLive` atom and ejabberd's web admin
+  `binary_to_term` (a term decoded from a URL, the class that runs a
+  fun). Only the atoms could step down, and two rows do not pay for a
+  route in `prior_value_source`'s state. Left.
 - **Is this dependency part of the program** (Cachex judged
   in-program in the Phoenix-stack set): a boundary the caller's
   configuration draws (`include_deps`), not a judgement about names.
