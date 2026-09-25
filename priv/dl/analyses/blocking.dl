@@ -548,13 +548,28 @@ same_process_edge(caller, callee) :-
   !runs_elsewhere(caller, callee),
   !side_call(caller, callee).
 
+// An entry of a process that runs a behaviour's loop over its own
+// mailbox (process_entry: its callbacks, init/1, terminate/2, a
+// gen_statem's state functions), with the behaviour: a declared loop
+// behaviour, or the one a server the table does not list declares
+// (unlisted_server, callbacks.dl).
+.decl loop_entry(entry: symbol, mod: symbol, behaviour: symbol)
+
+loop_entry(e, m, b) :- process_entry(m, e), behaves_as(m, b), process_behaviour(b, "loop").
+loop_entry(e, m, b) :- process_entry(m, e), unlisted_server(m), behaves_as(m, b).
+
+// What an entry runs on its own stack, and how far: itself ("direct"),
+// or a function it calls in its own process ("helper"). One call deep on
+// purpose: a callback that calls a peer reaches gen's own timed receive
+// two calls down, and every server that makes a call would be reported
+// for it where OTP is in the program; the deeper waits are the
+// synchronous-call rules'.
 .decl callback_reaches(entry: symbol, func: symbol, proximity: symbol)
 
-callback_reaches(entry, entry, "direct") :-
-  otp_callback(entry, _, _, _).
+callback_reaches(entry, entry, "direct") :- loop_entry(entry, _, _).
 
 callback_reaches(entry, callee, "helper") :-
-  otp_callback(entry, _, _, _),
+  loop_entry(entry, _, _),
   same_process_edge(entry, callee).
 
 // ── Findings ─────────────────────────────────────────────────────
@@ -576,7 +591,7 @@ receive_in_callback(id, func, callback, behaviour, proximity, "false") :-
   recv_start(id, func, 1, _),
   !down_bounded(id),
   callback_reaches(callback, func, proximity),
-  otp_callback(callback, m, _, behaviour),
+  loop_entry(callback, m, behaviour),
   !trapped_exit_ends(id, func, m),
   !init_function(_, callback),
   !flush_receive(id).
@@ -601,7 +616,7 @@ receive_in_callback(id, func, callback, behaviour, proximity, "down") :-
   recv_start(id, func, 1, _),
   down_bounded(id),
   callback_reaches(callback, func, proximity),
-  otp_callback(callback, _, _, behaviour),
+  loop_entry(callback, _, behaviour),
   !init_function(_, callback),
   !flush_receive(id).
 
@@ -609,7 +624,7 @@ receive_in_callback(id, func, callback, behaviour, proximity, "down") :-
   recv_start(id, func, 1, _),
   !down_bounded(id),
   callback_reaches(callback, func, proximity),
-  otp_callback(callback, m, _, behaviour),
+  loop_entry(callback, m, behaviour),
   trapped_exit_ends(id, func, m),
   !init_function(_, callback),
   !flush_receive(id).
@@ -625,7 +640,7 @@ receive_in_callback(id, func, callback, behaviour, proximity, "down") :-
 receive_in_callback(id, func, callback, behaviour, proximity, "true") :-
   recv_start(id, func, 0, _),
   callback_reaches(callback, func, proximity),
-  otp_callback(callback, _, _, behaviour),
+  loop_entry(callback, _, behaviour),
   !flush_poll(id).
 
 // ══ A socket call with no timeout on an OTP process's own stack ══════

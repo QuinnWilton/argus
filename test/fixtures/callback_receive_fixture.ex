@@ -227,6 +227,27 @@ defmodule Argus.Test.Fixtures.CallbackReceive do
     end
   end
 
+  defmodule StatemStateReceive do
+    @moduledoc """
+    A gen_statem whose state function waits on a bare receive: a state
+    function is where the machine's own code runs, as a GenServer's
+    handle_info/2 is.
+    """
+    @behaviour :gen_statem
+
+    def callback_mode, do: :state_functions
+
+    def init(owner), do: {:ok, :connected, owner}
+
+    def connected({:call, from}, :sync, owner) do
+      receive do
+        {:synced, ^owner} -> {:keep_state_and_data, [{:reply, from, :ok}]}
+      end
+    end
+
+    def connected(_type, _content, owner), do: {:keep_state, owner}
+  end
+
   defmodule PlainProcess do
     @moduledoc "A blocking receive in a module that is not an OTP behaviour."
     def loop do

@@ -306,6 +306,20 @@ reader of `process_entry` sees the same entries. A receive in an unlisted server
 receive in a callback (`CallbackReceive.WrappedServer`); a GenServer's
 client function named `join` is not one (`JoinsInClient`).
 
+**Changed.** A server's own code starts at `process_entry` in every
+reading of it (`clientlib/process.dl`): `server_side` (the module's own
+code on its server's stack), `RunsInServer` (any module's code on it,
+mailbox's timers, monitors and sockets; was mailbox's `runs_in_server`)
+and `server_caused` (what the entries make happen in the module, in any
+process: shutdown's kill side, was its `server_code`) were rooted three
+ways (callbacks and statem states; process entries; callbacks). blocking's
+receive in a callback now starts at any process entry of a loop, so a
+receive in a gen_statem's state function is reported
+(`CallbackReceive.StatemStateReceive`, a false negative the entry
+named), still one call deep: two calls down, a callback that calls a
+peer reaches gen's own timed receive. terminate/2 is a process entry of
+a process module only.
+
 **Changed.** A cast a spawn, task or agent makes is its own process's
 (`reaches_async_dep` cuts `runs_elsewhere`, as `reaches_sync_dep` does):
 a task init/1 starts that casts to a later sibling no longer makes

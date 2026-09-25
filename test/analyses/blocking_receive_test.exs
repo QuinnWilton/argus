@@ -34,7 +34,8 @@ defmodule Argus.Analyses.BlockingReceiveTest do
     CallbackReceive.AwaitsLinkedExit,
     CallbackReceive.AwaitsUntrappedExit,
     CallbackReceive.WrappedServer,
-    CallbackReceive.JoinsInClient
+    CallbackReceive.JoinsInClient,
+    CallbackReceive.StatemStateReceive
   ]
 
   setup_all do
@@ -280,6 +281,16 @@ defmodule Argus.Analyses.BlockingReceiveTest do
                blocking
 
       assert func =~ "WrappedServer:handle_info/2"
+    end
+
+    test "a gen_statem's state function", ctx do
+      skip_without_souffle()
+
+      {blocking, _bounded} = run(ctx, [CallbackReceive.StatemStateReceive])
+
+      assert [[_id, func, cb, "GenStateMachine", "direct"]] = blocking
+      assert func =~ "StatemStateReceive:connected/3"
+      assert cb == func
     end
 
     test "a GenServer's client function named like a channel callback runs in its caller",

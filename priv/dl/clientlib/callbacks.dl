@@ -134,7 +134,10 @@ init_function(mod, func) :-
 
 process_entry(mod, func) :- otp_callback(func, mod, _, _).
 process_entry(mod, func) :- init_function(mod, func).
-process_entry(mod, func) :- function_def(func, mod, "terminate", 2, _).
+
+process_entry(mod, func) :-
+  function_def(func, mod, "terminate", 2, _),
+  process_behaviour_module(mod).
 
 // The GenServer request handlers, at their contract arities.
 .decl handle_call_function(mod: symbol, func: symbol)

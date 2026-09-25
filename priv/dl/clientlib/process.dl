@@ -98,25 +98,61 @@ trap_exit_without_exit_clause(mod, func) :-
   !callback_tag(h, "handle_info", ":EXIT"),
   !statem_process(mod).
 
-// Runs on the server's own stack: a callback, a statem state function,
-// or what those reach without leaving the module or the process. A
-// client function of the same module runs in its caller; a closure a
-// callback hands to a Task or a spawn runs in that process
-// (runs_elsewhere), and a receive or a monitor there is not the
-// server's.
+// ── What a server's own code is ─────────────────────────────────────
+//
+// Three readings, one root set: the entries of `mod`'s process
+// (process_entry, callbacks.dl: its callbacks, init/1, terminate/2, and
+// with process_statem.dl a gen_statem's state functions). A client
+// function of the same module runs in its caller, and none of them
+// counts it.
+//
+// - server_side(mod, func): the module's own code on its server's stack
+//   — what the entries reach without leaving the module or the process.
+//   A closure a callback hands to a Task or a spawn runs in that process
+//   (runs_elsewhere), and a receive or a monitor there is not the
+//   server's. What a rule attributes to `mod` itself (a monitor it takes
+//   and must release, a receive written for its own protocol) is here.
+// - RunsInServer (below): any code on the server's stack, in any module
+//   — a helper module's monitor or timer, taken in the server's process,
+//   is the server's all the same. Seeded: a rule asks it of the few
+//   functions that matter (mailbox's timers, monitors and sockets).
+// - server_caused(mod, func): what the entries make happen in the
+//   module, in any process: its own stack and the closures it spawns.
+//   Not the server's stack: a kill made from a spawned closure is still
+//   the server's doing (shutdown's kills_monitored_child), where a
+//   monitor taken there is not the server's.
 .init server_reach = ForwardIntraModuleSameProcessReach
 
-server_reach.root(mod, func) :-
-  otp_callback(func, mod, _, _).
-
-server_reach.root(mod, func) :-
-  statem_process(mod),
-  statem_state(mod, _, func),
-  function_def(func, mod, _, _, _).
+server_reach.root(mod, func) :- process_entry(mod, func).
 
 .decl server_side(mod: symbol, func: symbol)
 
 server_side(mod, func) :- server_reach.reaches(mod, func).
+
+.init server_caused_reach = ForwardIntraModuleReach
+
+server_caused_reach.root(mod, func) :- process_entry(mod, func).
+
+.decl server_caused(mod: symbol, func: symbol)
+
+server_caused(mod, func) :- server_caused_reach.reaches(mod, func).
+
+// A seeded function runs on the stack of `mod`'s server, one the program
+// starts (server_process): an entry of the server's process reaches it
+// in that process, in any module, and not through the logging or
+// telemetry API (side_call). Requires the points-to stage
+// (staged_processes.dl, through otp.dl).
+.comp RunsInServer {
+  .decl seed(func: symbol)
+  .decl runs(mod: symbol, func: symbol)
+
+  .init walk = SameProcessReachCut
+
+  walk.cut(f, g) :- side_call(f, g).
+  walk.seed(f, f) :- seed(f).
+
+  runs(m, f) :- process_entry(m, c), walk.reaches(c, f), server_process(_, m).
+}
 
 // Some function of the module demonitors.
 .decl module_demonitors(mod: symbol)

@@ -1289,22 +1289,19 @@ info_message(m, f, id, msg, "send") :-
   server_process(p, m).
 
 // A timer or a monitor in a function a server's callbacks run: the
-// callback's process arms it, so the message comes back to that server.
-.init info_reach = SameProcessReachCut
+// callback's process arms it, so the message comes back to that server
+// (RunsInServer, clientlib/process.dl: any module's code on the server's
+// stack).
+.init info_reach = RunsInServer
 
-info_reach.cut(f, g) :- side_call(f, g).
-
-info_reach.seed(f, f) :- timer_arm(id, f, "self", _, _, _), timer_tag(id, _, _).
-info_reach.seed(f, f) :- monitor_call(_, f, _).
-info_reach.seed(f, f) :- socket_activation(f, _, _).
-info_reach.seed(f, f) :- socket_opened(f, _).
+info_reach.seed(f) :- timer_arm(id, f, "self", _, _, _), timer_tag(id, _, _).
+info_reach.seed(f) :- monitor_call(_, f, _).
+info_reach.seed(f) :- socket_activation(f, _, _).
+info_reach.seed(f) :- socket_opened(f, _).
 
 .decl runs_in_server(mod: symbol, func: symbol)
 
-runs_in_server(m, f) :-
-  process_entry(m, c),
-  info_reach.reaches(c, f),
-  server_process(_, m).
+runs_in_server(m, f) :- info_reach.runs(m, f).
 
 // Judged, as a send is, when the message is an atom or a tuple with an
 // atom first (timer_tag): a literal is named as it is written, a tuple
