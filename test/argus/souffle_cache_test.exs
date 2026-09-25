@@ -185,6 +185,47 @@ defmodule Argus.Souffle.CacheTest do
     end
   end
 
+  describe "named/6" do
+    test "keys a program by the declarations it loads; named/5 resolves them", %{tmp_dir: tmp} do
+      skip_without_souffle()
+
+      File.write!(Path.join(tmp, "decls.dl"), """
+      // Declarations alone, as mix argus.gen.dl writes them.
+      .decl edge(x: symbol, y: symbol)
+      .input edge
+      .decl unread(x: symbol)
+      .input unread
+      """)
+
+      rules = Path.join(tmp, "p.dl")
+
+      File.write!(rules, """
+      .include "decls.dl"
+      .decl path(x: symbol, y: symbol)
+      .output path
+      path(x, y) :- edge(x, y).
+      """)
+
+      bin = Souffle.executable()
+      digests = [{"edge.facts", "d"}]
+      assert {:ok, ["edge"]} = Souffle.input_relations(rules)
+
+      entry = Cache.named(tmp, nil, rules, bin, digests, ["edge"])
+      refute entry == Cache.named(tmp, nil, rules, bin, digests, :all)
+
+      # Deprecated: called through apply so the suite compiles clean.
+      assert apply(Cache, :named, [tmp, nil, rules, bin, digests]) == entry
+
+      # A declaration the program does not load moves nothing.
+      File.write!(
+        Path.join(tmp, "decls.dl"),
+        File.read!(Path.join(tmp, "decls.dl")) <> ".decl added(y: number)\n.input added\n"
+      )
+
+      assert Cache.named(tmp, nil, rules, bin, digests, ["edge"]) == entry
+    end
+  end
+
   describe "stamped/2" do
     test "computes again once a file it read has moved, if only in content",
          %{tmp_dir: tmp} do

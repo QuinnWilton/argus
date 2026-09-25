@@ -712,15 +712,16 @@ defmodule Argus.Cache.Facts do
 
   # The entry, and the relation files the program reads.
   defp keyed(facts, rules_path, opts) do
+    resolve = [souffle_bin: nil, programs: Cache.dir(facts.store, :programs)]
+
     with {:ok, bin} <- souffle_bin(opts),
-         {:ok, inputs} <-
-           Souffle.input_files(rules_path,
-             souffle_bin: bin,
-             programs: Cache.dir(facts.store, :programs)
-           ) do
+         resolve = Keyword.put(resolve, :souffle_bin, bin),
+         {:ok, inputs} <- Souffle.input_files(rules_path, resolve),
+         {:ok, relations} <- Souffle.input_relations(rules_path, resolve) do
       digests = Enum.map(inputs, &{&1, digest(facts, &1)})
       solves = Cache.dir(facts.store, :solves)
-      {:ok, Souffle.Cache.named(solves, facts.group, rules_path, bin, digests), inputs}
+
+      {:ok, Souffle.Cache.named(solves, facts.group, rules_path, bin, digests, relations), inputs}
     end
   end
 

@@ -320,6 +320,23 @@ what formatting a producer's rows read (`format: :typed` and
 `:interned` decode by each relation's columns). Each worker tracks the
 base, each extractor and the base's own derivations apart.
 
+**Changed.** A solve is keyed on the program as it reads it
+(`Argus.Souffle.Cache.declared_digest/2`): of a file of declarations
+alone — the generated `base.dl`, `layer2.dl` and `priors.dl`
+(`declarations/1`) — only the declarations of the relations Souffle
+loads for it count, and no comment does. Souffle prunes the others
+before it loads anything; one that no longer compiles beside the rest
+fails the program when its inputs are resolved again, which every
+declaration moves, before a solve is keyed. A relation added to the
+schema, a version bump or an edit to a relation's prose re-solves
+nothing; a declaration's change re-solves the programs that load it.
+`Argus.Souffle.Cache.named/6` takes the relations the program loads;
+`named/5`, deprecated, resolves them itself.
+`Argus.Souffle.DeclaredDigestTest` changes every declaration each
+shipped program does not load, over the fixtures' facts, and checks
+that the program loads the same relations and writes the same files
+byte for byte under the same key.
+
 ### What the program's other sites believe
 
 **Changed.** Schema 86. `failure.inconsistent_handling` gains `raises`,

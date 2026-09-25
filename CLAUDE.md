@@ -164,8 +164,16 @@ names one with `cache:` on `Argus.run_analyses/2`, `Argus.analyze/3` or
   reads them and calls five other extractors, so an edit to any of
   those re-extracts it too.
 - **Solves** (`Argus.Souffle.Cache`): keyed by the program with its
-  includes, the solver's version and the digests of exactly the files
-  the program reads (`Argus.Souffle.input_files/2`). Stage outputs join
+  includes as the solve reads them (`declared_digest/2`: of a file of
+  declarations alone — the generated `base.dl`, `layer2.dl`,
+  `priors.dl` — only the declarations of the relations Souffle loads
+  for it, and no comment), the solver's version and the digests of
+  exactly the files the program reads (`Argus.Souffle.input_files/2`).
+  The relations a program loads are resolved again under every
+  declaration (not the comments), so a declaration that breaks a
+  program fails it before a solve is keyed; `Argus.Souffle.DeclaredDigestTest`
+  changes every declaration a shipped program does not load and
+  checks its outputs, byte for byte, and its key. Stage outputs join
   the facts by content, so a solve downstream of a stage whose output
   came out the same is read back — early cutoff.
 - **What moves a key**: an extractor edit moves that extractor's shard
@@ -173,8 +181,8 @@ names one with `cache:` on `Argus.run_analyses/2`, `Argus.analyze/3` or
   anything the base reaches (`Argus.Instr`, the extractor helpers, the
   emitter, `Writer`, `Tsv`, `Argus.Schema` — so every schema bump)
   moves every shard and every base, and then the solves run again only
-  if the facts came out different; a rule edit moves the programs that
-  include it. The solver, the stores, the analyses' prose and the
+  if the facts came out different or load a relation whose declaration
+  moved; a rule edit moves the programs that include it. The solver, the stores, the analyses' prose and the
   corpus harness move nothing. `Argus.Cache.CodeClosureTest` runs each
   producer with call counting, the extractors over kept bases too, and
   fails if one executes a module outside its key.

@@ -149,10 +149,11 @@ defmodule Argus.Souffle do
   what will actually be opened.
 
   The answer is memoized for the life of the VM, keyed by the program
-  with its includes (`Argus.Souffle.Cache.program_digest/1`) and the
-  solver: an edited rule or a swapped solver misses. `programs:` names a
-  directory where it is kept across VMs as well (`Argus.Cache`), so a
-  warm run starts no solver to ask.
+  with its includes (`Argus.Souffle.Cache.declared_digest/2`: every
+  declaration, but not the comments, of a file of declarations alone)
+  and the solver: an edited rule or declaration, or a swapped solver,
+  misses. `programs:` names a directory where it is kept across VMs as
+  well (`Argus.Cache`), so a warm run starts no solver to ask.
   """
   @spec input_relations(Path.t(), keyword()) :: {:ok, [String.t()]} | {:error, term()}
   def input_relations(rules_path, opts \\ []) do
@@ -181,7 +182,9 @@ defmodule Argus.Souffle do
         path = Path.expand(rules_path)
 
         if File.regular?(path) do
-          version = {Cache.program_digest(path), bin, Cache.version(bin)}
+          # By the declarations, not their comments: a schema edit that
+          # moves only prose resolves nothing again.
+          version = {Cache.declared_digest(path, :all), bin, Cache.version(bin)}
 
           memoized({{__MODULE__, :inputs, path}, version}, fn ->
             kept(Keyword.get(opts, :programs), path, bin, version)
@@ -205,7 +208,7 @@ defmodule Argus.Souffle do
   defp kept(nil, path, bin, _version), do: resolve_inputs(bin, path)
 
   defp kept(dir, path, bin, {program, _bin, version}) do
-    key = Argus.Cache.key(["argus-inputs-1", program, version])
+    key = Argus.Cache.key(["argus-inputs-2", program, version])
     entry = Path.join(dir, "#{Cache.program_name(path)}-#{key}")
 
     with {:ok, entry} <- Argus.Cache.fetch(entry),

@@ -7,9 +7,13 @@ defmodule Argus.Souffle.Cache do
   analysis).
 
   A solve is keyed on everything that decides its outputs: the program
-  with its transitive includes (`program_digest/1`), the solver's
-  version, and the content of exactly the relation files the program
-  reads, as Souffle resolves them (`Argus.Souffle.input_relations/2`).
+  with its transitive includes as the solve reads them
+  (`declared_digest/2`: of the generated declaration files, only the
+  declarations of the relations it loads), the solver's version, and
+  the content of exactly the relation files the program reads, as
+  Souffle resolves them (`Argus.Souffle.input_relations/2`). A schema
+  edit that adds a relation, or changes one a program does not load,
+  re-solves nothing.
   Nothing else in the facts directory takes part, so an edit that
   leaves a program's inputs byte-identical — a refactor of the
   extraction, a rule edit upstream whose stage came out the same —
@@ -39,8 +43,9 @@ defmodule Argus.Souffle.Cache do
   @typedoc "Each relation file a solve reads, by name, and its content's digest."
   @type input_digests :: [{String.t(), String.t()}]
 
-  # Moves every key: bump it when what an entry holds changes shape.
-  @format "argus-solve-cache-2"
+  # Moves every key: bump it when what an entry holds, or how a key is
+  # made, changes.
+  @format "argus-solve-cache-3"
 
   # The digests of an entry's outputs, beside them.
   @manifest ".argus-digests"
@@ -61,7 +66,8 @@ defmodule Argus.Souffle.Cache do
           {:ok, Path.t()} | nil | {:error, term()}
   def entry(rules_path, bin, facts_dir, opts) do
     with {dir, group} <- cache_option(opts),
-         {:ok, inputs} <- Argus.Souffle.input_files(rules_path, souffle_bin: bin) do
+         {:ok, inputs} <- Argus.Souffle.input_files(rules_path, souffle_bin: bin),
+         {:ok, relations} <- Argus.Souffle.input_relations(rules_path, souffle_bin: bin) do
       digests =
         Enum.map(inputs, fn file ->
           case Argus.Cache.file_digest(Path.join(facts_dir, file)) do
@@ -70,7 +76,7 @@ defmodule Argus.Souffle.Cache do
           end
         end)
 
-      {:ok, named(dir, group, rules_path, bin, digests)}
+      {:ok, named(dir, group, rules_path, bin, digests, relations)}
     end
   end
 
@@ -93,20 +99,45 @@ defmodule Argus.Souffle.Cache do
 
   @doc """
   The entry of a solve of `rules_path` under `dir`, given the digest of
-  each file it reads: `<program>-<key>`, or `<program>-<group>-<key>`.
+  each file it reads and the relations it loads
+  (`Argus.Souffle.input_relations/2`; `:all` counts every declaration):
+  `<program>-<key>`, or `<program>-<group>-<key>`.
   """
-  @spec named(Path.t(), String.t() | nil, Path.t(), String.t(), input_digests()) :: Path.t()
-  def named(dir, group, rules_path, bin, digests) do
+  @spec named(
+          Path.t(),
+          String.t() | nil,
+          Path.t(),
+          String.t(),
+          input_digests(),
+          [String.t()] | :all
+        ) :: Path.t()
+  def named(dir, group, rules_path, bin, digests, relations) do
     key =
       Argus.Cache.key([
         @format,
-        program_digest(rules_path),
+        declared_digest(rules_path, relations),
         version(bin)
         | Enum.flat_map(Enum.sort(digests), fn {file, digest} -> [file, digest] end)
       ])
 
     name = program_name(rules_path)
     Path.join(dir, if(group, do: "#{name}-#{group}-#{key}", else: "#{name}-#{key}"))
+  end
+
+  @doc """
+  `named/6`, with the relations the program loads resolved here — or,
+  when they cannot be, every declaration counted.
+  """
+  @deprecated "Use named/6 with the relations the program loads (Argus.Souffle.input_relations/2)"
+  @spec named(Path.t(), String.t() | nil, Path.t(), String.t(), input_digests()) :: Path.t()
+  def named(dir, group, rules_path, bin, digests) do
+    relations =
+      case Argus.Souffle.input_relations(rules_path, souffle_bin: bin) do
+        {:ok, relations} -> relations
+        {:error, _} -> :all
+      end
+
+    named(dir, group, rules_path, bin, digests, relations)
   end
 
   @doc """
@@ -236,6 +267,138 @@ defmodule Argus.Souffle.Cache do
       |> :crypto.hash_final()
 
     {Enum.map(files, &elem(&1, 1)), digest}
+  end
+
+  @doc """
+  A digest of a Datalog program as a solve loading `relations` reads it
+  (`:all`: as any solve of it does): its own source and every file it
+  includes, transitively, as `program_digest/1` names them — except
+  that a file of declarations alone, as `mix argus.gen.dl` writes them
+  (`declarations/1`), counts only by the declarations of `relations`,
+  in order, and not by its comments.
+
+  Souffle prunes an input relation no rule that reaches an output
+  reads, before it loads anything: a declaration it prunes decides
+  nothing a solve writes. A declaration that no longer compiles beside
+  the rest — a pruned rule that joins a relation whose type changed, a
+  name that is now declared twice — fails the program, and that is
+  caught before a solve is keyed: the relations it loads are resolved
+  again (`Argus.Souffle.input_relations/2`) under `relations = :all`,
+  which every declaration moves. `Argus.Souffle.DeclaredDigestTest`
+  changes every declaration a shipped program does not load and
+  checks that its outputs, byte for byte, and this digest do not move.
+  """
+  @spec declared_digest(Path.t(), [String.t()] | :all) :: binary()
+  def declared_digest(rules_path, relations) do
+    path = Path.expand(rules_path)
+
+    parts =
+      if shipped?(path) do
+        stamped({__MODULE__, :program_parts, path}, fn -> program_parts(path) end)
+      else
+        path |> program_parts() |> elem(1)
+      end
+
+    keep = if relations == :all, do: :all, else: MapSet.new(relations)
+
+    parts
+    |> Enum.reduce(:crypto.hash_init(:sha256), fn
+      {:text, spelled, digest}, hash ->
+        hash_parts(hash, ["text", spelled, digest])
+
+      {:declarations, spelled, blocks}, hash ->
+        kept =
+          for {relation, block} <- blocks,
+              keep == :all or MapSet.member?(keep, relation),
+              part <- [relation, block],
+              do: part
+
+        hash_parts(hash, ["declarations", spelled, Integer.to_string(length(kept)) | kept])
+    end)
+    |> :crypto.hash_final()
+  end
+
+  defp hash_parts(hash, parts) do
+    Enum.reduce(parts, hash, fn part, hash ->
+      :crypto.hash_update(hash, <<byte_size(part)::64>> <> part)
+    end)
+  end
+
+  # Each file of the program, in `program_files/1`'s order: a file of
+  # declarations alone as its declarations, any other by its content.
+  defp program_parts(path) do
+    files = program_files(path)
+
+    parts =
+      Enum.map(files, fn {spelled, file} ->
+        content = File.read!(file)
+
+        case declarations(content) do
+          {:ok, blocks} -> {:declarations, spelled, blocks}
+          :error -> {:text, spelled, :crypto.hash(:sha256, content)}
+        end
+      end)
+
+    {Enum.map(files, &elem(&1, 1)), parts}
+  end
+
+  @doc """
+  The declarations of a file that holds nothing else, as
+  `mix argus.gen.dl` writes one: `{:ok, [{relation, lines}]}`, each
+  relation's `.decl` and `.input` lines in order, or `:error` for any
+  other file.
+
+  A line is blank, a line comment, `.decl name(field: type, ...)` or
+  `.input name` right after its own `.decl` — and nothing else, not a
+  qualifier, an attribute or another comment: anything this does not
+  read is text a key holds whole. A comment ending in a backslash (or
+  the trigraph for one) splices the next line into it in Souffle's
+  preprocessor, so it is not read as a comment.
+  """
+  @spec declarations(String.t()) :: {:ok, [{String.t(), String.t()}]} | :error
+  def declarations(content) do
+    content
+    |> String.split("\n")
+    |> Enum.reduce_while({[], nil}, fn line, {blocks, pending} ->
+      case {declaration_line(line), pending} do
+        {:blank, pending} ->
+          {:cont, {blocks, pending}}
+
+        {{:decl, relation}, nil} ->
+          {:cont, {blocks, {relation, line}}}
+
+        {{:input, relation}, {relation, decl}} ->
+          {:cont, {[{relation, decl <> "\n" <> line} | blocks], nil}}
+
+        _ ->
+          {:halt, :error}
+      end
+    end)
+    |> case do
+      {blocks, nil} -> {:ok, Enum.reverse(blocks)}
+      _ -> :error
+    end
+  end
+
+  defp declaration_line(""), do: :blank
+
+  defp declaration_line("//" <> comment) do
+    if String.ends_with?(comment, "\\") or String.contains?(comment, "??/"),
+      do: :other,
+      else: :blank
+  end
+
+  defp declaration_line(line) do
+    cond do
+      match = Regex.run(~r/^\.decl ([A-Za-z_][A-Za-z0-9_]*)\([A-Za-z0-9_:, ]*\)$/, line) ->
+        {:decl, Enum.at(match, 1)}
+
+      match = Regex.run(~r/^\.input ([A-Za-z_][A-Za-z0-9_]*)$/, line) ->
+        {:input, Enum.at(match, 1)}
+
+      true ->
+        :other
+    end
   end
 
   @doc """
