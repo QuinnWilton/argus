@@ -202,6 +202,29 @@ defmodule Argus.Test.Fixtures.TrapsAndYields do
   def handle_info({:EXIT, _pid, _reason}, state), do: {:noreply, state}
 end
 
+defmodule Argus.Test.Fixtures.TrapsButYieldsInClient do
+  @moduledoc false
+  # The server traps exits; its client function runs in its caller, which
+  # the server's trap says nothing of. The yield there is the caller's.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  def fetch(item) do
+    task = Task.async(fn -> item end)
+    Task.yield(task, 1_000)
+  end
+
+  @impl true
+  def init(state) do
+    Process.flag(:trap_exit, true)
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_info({:EXIT, _pid, _reason}, state), do: {:noreply, state}
+end
+
 defmodule Argus.Test.Fixtures.LibraryPmap do
   @moduledoc false
   # ecto#2246: a parallel map in library code, linked to whoever calls it.

@@ -332,6 +332,12 @@ A GenStage's handle_cast/2 that calls a server is "handle_cast blocks on
 a synchronous call" (`TimeoutChain.BlockingCastStage`), its handle_call/3
 is a hop of a chain, and a tag it compares attributes a call to it.
 
+**Changed.** "Task.yield on a linked task cannot see it crash" asks
+whether the process the yielding function runs in traps exits, not its
+module: a trapping server's handle_call is covered, a client function of
+its module, which runs in callers, is not
+(`TrapsButYieldsInClient.fetch/1` is reported beside `TrapsAndYields`).
+
 **Changed.** A cast a spawn, task or agent makes is its own process's
 (`reaches_async_dep` cuts `runs_elsewhere`, as `reaches_sync_dep` does):
 a task init/1 starts that casts to a later sibling no longer makes

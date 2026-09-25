@@ -201,12 +201,22 @@ defmodule Argus.Analyses.MailboxTaskTest do
 
       assert {:ok, results} =
                Memo.analyze(
-                 [Argus.Test.Fixtures.YieldsLinkedTask, Argus.Test.Fixtures.TrapsAndYields],
+                 [
+                   Argus.Test.Fixtures.YieldsLinkedTask,
+                   Argus.Test.Fixtures.TrapsAndYields,
+                   Argus.Test.Fixtures.TrapsButYieldsInClient
+                 ],
                  :mailbox
                )
 
-      funcs = Enum.map(tasks(results, "yield_linked"), &hd/1)
-      assert funcs == ["Argus.Test.Fixtures.YieldsLinkedTask:fan_out/1"]
+      # The trap is the server's process's: its handle_call is covered,
+      # its client function, run in callers, is not.
+      funcs = results |> tasks("yield_linked") |> Enum.map(&hd/1) |> Enum.sort()
+
+      assert funcs == [
+               "Argus.Test.Fixtures.TrapsButYieldsInClient:fetch/1",
+               "Argus.Test.Fixtures.YieldsLinkedTask:fan_out/1"
+             ]
     end
 
     test "Task.async in a plain library function is noted; a GenServer's is not" do

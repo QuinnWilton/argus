@@ -727,15 +727,24 @@ task_result_defect(func, id, "never_awaited") :-
 // dead (whatyouhide/redix#317's cluster fan-out, whose partial-failure
 // path was unreachable). async_nolink is the tool for that shape.
 // A closure's calls belong to the function that defines it: the task is
-// usually started inside an Enum.map fn and collected outside it.
+// usually started inside an Enum.map fn and collected outside it. The
+// trap is the owner's process's, not its module's (runs_trapping).
 task_result_defect(owner, id, "yield_linked") :-
   task_async_call(f, id),
   enclosing_function(f, owner),
   !closure_def(_, owner),
   (remote_call(_, g, "Task", "yield", _) ; remote_call(_, g, "Task", "yield_many", _)),
   enclosing_function(g, owner),
-  function_def(owner, mod, _, _, _),
-  !module_traps(_, mod).
+  !runs_trapping(owner).
+
+// The function runs on the stack of a server that traps exits
+// (module_traps: the process whose entries reach the trap). A client
+// function of a trapping server's module runs in its callers, which the
+// module's trap says nothing of; a library function's callers are not
+// known, and trap or not.
+.decl runs_trapping(func: symbol)
+
+runs_trapping(f) :- server_side(mod, f), module_traps(_, mod).
 
 // ── A linked task inside library code ────────────────────────────────
 //
