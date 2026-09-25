@@ -25,9 +25,8 @@ defmodule Argus.Test.Fixtures.Transaction do
   defmodule TwoRepos do
     @moduledoc """
     One closure, two repos: the closure goes to FakeRepo, an Ecto.Multi
-    to AuditRepo. Nothing in the bytecode says which transaction runs the
-    closure, so it must not be reported as inside both — or, deduplicated,
-    as inside AuditRepo's.
+    to AuditRepo. The call the closure is handed to says which
+    transaction runs it: FakeRepo's, and not AuditRepo's.
     """
     def create(user, multi) do
       FakeRepo.transaction(fn ->
@@ -36,6 +35,21 @@ defmodule Argus.Test.Fixtures.Transaction do
       end)
 
       AuditRepo.transaction(multi)
+    end
+  end
+
+  defmodule TwoClosures do
+    @moduledoc """
+    The transaction's closure beside another the function builds: the one
+    handed to the transaction is its body, the other is not.
+    """
+    def create(users) do
+      names = Enum.map(users, fn user -> user.name end)
+
+      FakeRepo.transaction(fn ->
+        FakeRepo.insert(names)
+        :httpc.request(~c"http://hooks/notify")
+      end)
     end
   end
 

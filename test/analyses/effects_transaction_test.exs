@@ -79,14 +79,29 @@ defmodule Argus.Analyses.EffectsTransactionTest do
   end
 
   describe "the transaction a body belongs to" do
-    test "a closure in a function that opens transactions on two repos is not paired with both" do
+    test "a closure in a function that opens transactions on two repos is paired with its own" do
       skip_without_souffle()
 
       # Joining the caller's transaction sites apart from its body paired
       # the closure with every repo the function touched; the finding,
       # deduplicated on (func, context, category, api), then named
-      # whichever repo sorted first — AuditRepo, which never saw it.
-      assert for_module(findings([T.FakeRepo, T.AuditRepo, T.TwoRepos]), "TwoRepos") == []
+      # whichever repo sorted first — AuditRepo, which never saw it. The
+      # call the closure is handed to names its repo (handed_closure).
+      assert [[_caller, repo, "network", _api, _via]] =
+               for_module(findings([T.FakeRepo, T.AuditRepo, T.TwoRepos]), "TwoRepos")
+
+      assert repo =~ "FakeRepo"
+    end
+
+    test "the closure handed to the transaction is its body, beside another the function builds" do
+      skip_without_souffle()
+
+      assert [[_caller, repo, "network", api, via]] =
+               for_module(findings([T.FakeRepo, T.TwoClosures]), "TwoClosures")
+
+      assert repo =~ "FakeRepo"
+      assert api =~ "httpc.request"
+      assert via =~ "-create/1-fun-1-"
     end
 
     test "the finding anchors at the transaction call, with the effect as a frame" do

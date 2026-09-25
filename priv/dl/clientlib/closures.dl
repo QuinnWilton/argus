@@ -15,11 +15,24 @@ enclosing_function(f, f) :- function_def(f, _, _, _, _).
 enclosing_function(f, owner) :- closure_def(owner, f).
 enclosing_function(f, owner) :- closure_def(mid, f), enclosing_function(mid, owner), mid != owner.
 
-// The one closure a function builds. Associating a closure with the call
-// it is handed to needs dataflow argus does not have; with exactly one
-// closure there is nothing to confuse it with.
+// The one closure a function builds: with exactly one there is nothing
+// to confuse it with.
 .decl sole_closure(func: symbol, closure: symbol)
 
 sole_closure(func, closure) :-
   closure_def(func, closure),
   closure_count(func, 1).
+
+// The closure the call at `site` in `func` runs: the one it is handed
+// (fun_handed, from the emitter's register walk), a closure `func`
+// builds. A site no closure is handed to, in a function that builds one
+// closure, falls back to that one (sole_closure): a closure kept in a
+// variable the walk does not follow, handed on through a tuple.
+.decl handed_closure(site: symbol, func: symbol, closure: symbol)
+
+handed_closure(site, f, c) :- fun_handed(site, f, c, _), closure_def(f, c).
+
+handed_closure(site, f, c) :-
+  call_site(site, f, _, _, _),
+  !fun_handed(site, f, _, _),
+  sole_closure(f, c).

@@ -218,7 +218,8 @@ impure_closure(caller, closure, category, api, site) :-
   reaches_effect(closure, category, api, _, site).
 
 // `site` is the call handing the closure over, where the contract
-// breaks; `effect_site` the effect inside the closure.
+// breaks; `effect_site` the effect inside the closure. The closure is the
+// one that call is handed (handed_closure, clientlib/closures.dl).
 .decl impure_closure_to_pure(caller: symbol, callee: symbol, closure: symbol, category: symbol, api: symbol, site: symbol, effect_site: symbol)
 .output impure_closure_to_pure
 
@@ -227,7 +228,7 @@ impure_closure_to_pure(caller, callee, closure, category, api, site, effect_site
   call_edge(caller, callee),
   pure_contract(callee, mod, name, arity),
   call_site(site, caller, mod, name, arity),
-  sole_closure(caller, closure),
+  handed_closure(site, caller, closure),
   impure_closure(caller, closure, category, api, effect_site).
 
 // ══ Effects inside a transaction ════════════════════════════════════
@@ -278,22 +279,25 @@ transaction_site(id, caller, "Postgrex") :-
 
 // ── The closure the transaction runs ─────────────────────────────
 //
-// Associating a closure with the transaction that runs it needs dataflow
-// argus does not have, so the association is by containment: this function
-// opened a transaction and built this closure.
-//
-// Gated on the function building exactly ONE closure, for the same reason
-// as the higher-order purity check — with two there is no way to say which
-// was passed to the transaction, and naming the wrong lambda sends someone
-// to the wrong line, which is worse than saying nothing. The same holds
-// for the repo: a function that opens transactions on two repos (one with
-// the closure, one with an Ecto.Multi) cannot say whose the closure is,
-// so its body belongs to neither rather than to both.
+// The closure handed to the transaction call (handed_closure,
+// clientlib/closures.dl): the site names its body, whatever else the
+// function builds. Where no closure is handed at the site the function's
+// one closure stands in, gated as before: with two there is no way to
+// say which was passed, and naming the wrong lambda sends someone to the
+// wrong line; and a function that opens transactions on two repos (one
+// with the closure, one with an Ecto.Multi) cannot say whose that one
+// closure is, so it belongs to neither rather than to both.
 
 .decl transaction_body(site: symbol, caller: symbol, repo: symbol, body: symbol)
 
 transaction_body(site, caller, repo, body) :-
   transaction_site(site, caller, repo),
+  fun_handed(site, caller, body, _),
+  closure_def(caller, body).
+
+transaction_body(site, caller, repo, body) :-
+  transaction_site(site, caller, repo),
+  !fun_handed(site, caller, _, _),
   sole_closure(caller, body),
   !transaction_on_another_repo(caller, repo).
 

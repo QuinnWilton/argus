@@ -338,6 +338,17 @@ module: a trapping server's handle_call is covered, a client function of
 its module, which runs in callers, is not
 (`TrapsButYieldsInClient.fetch/1` is reported beside `TrapsAndYields`).
 
+**Changed.** The closure a call runs is the one it is handed
+(`handed_closure` in `clientlib/closures.dl`, over the emitter's
+`fun_handed`): effects' transaction body and its effectful closure
+handed to a pure function read it, and fall back to the function's
+only closure (`sole_closure`) only where no closure is handed at the
+site. A function that builds a closure beside the transaction's
+(`Transaction.TwoClosures`) is judged, and a closure handed to one
+repo's transaction beside another repo's is that repo's
+(`Transaction.TwoRepos`, once no finding at all). effects reads
+`fun_handed`.
+
 **Changed.** A cast a spawn, task or agent makes is its own process's
 (`reaches_async_dep` cuts `runs_elsewhere`, as `reaches_sync_dep` does):
 a task init/1 starts that casts to a later sibling no longer makes
