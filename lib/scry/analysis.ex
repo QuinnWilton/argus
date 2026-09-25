@@ -102,7 +102,8 @@ defmodule Scry.Analysis do
   `:module_beam`, `:module_map`, and `:file_of`, and the input
   `:env_fingerprint` (inputs are the frontend's to declare — this module
   defines queries only). The `:rules_digest` input (per analysis,
-  `:stage0` and `:points_to`) is optional: a frontend that never sets it
+  `:stage0`, `:points_to` and `:points_to_bounded`) is optional: a
+  frontend that never sets it
   reads it as `nil` and relies on its `:env_fingerprint` to move when
   rules do. So are `:extraction_code` (`:all`, the code argus's fact
   producers run) and `:argus_code` (`:all`, every argus beam): a
@@ -603,7 +604,12 @@ defmodule Scry.Analysis do
     key: :all,
     returns: {:ok, %{atom() => [tuple()]}} | {:error, term()} do
     _fingerprint = Runtime.input!(db, :env_fingerprint, :all)
+    # The stage runs one of two programs, the bounded one when the exact
+    # fixpoint outgrows its budget (a function of the facts), so it is
+    # keyed on both: an edit to the one it did not run may be the one a
+    # later derivation runs.
     _rules = rules_digest(db, :points_to)
+    _bounded = rules_digest(db, :points_to_bounded)
     symbols = Symbols.for_db(db)
 
     with {:ok, relations} <- reading_schema(db, &points_to_input_relations/0),

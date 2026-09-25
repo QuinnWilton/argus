@@ -86,6 +86,22 @@ defmodule Scry.AnalysisRulesTest do
     end)
   end
 
+  test "an edit to the bounded points-to program re-derives the stage, as one to the exact one",
+       context do
+    # The stage runs the bounded program in the exact one's place when
+    # the exact fixpoint outgrows its budget: keyed on the exact program
+    # alone, an edit to the bounded one served what it no longer stages.
+    in_graph(context, [warm: true], fn db, log ->
+      :ok = Input.set(db, :rules_digest, :points_to_bounded, "points_to_bounded.dl edited")
+      Graph.incremental(db, @analyses)
+
+      assert QueryLog.executions(log, :points_to_facts) == [:all]
+      assert QueryLog.executions(log, :stage0_facts) == []
+      assert QueryLog.executions(log, :souffle_solve) == []
+      assert QueryLog.executions(log, :module_extraction) == []
+    end)
+  end
+
   test "an edit to argus's producers re-extracts every module, and solves nothing it left",
        %{paths: paths} = context do
     in_graph(context, [warm: true], fn db, log ->

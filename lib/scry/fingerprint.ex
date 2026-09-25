@@ -33,8 +33,9 @@ defmodule Scry.Fingerprint do
     their identity rules), and where a program that calls argus has its
     specs read from. Rebuilding the findings is cheap, so any argus edit
     does.
-  - `:rules_digest` (`rules/2`) — per analysis (and `:stage0`,
-    `:points_to`), the Datalog it runs as its solve loads it: its rules
+  - `:rules_digest` (`rules/2`) — per analysis (and per shared stage's
+    program: `:stage0`, `:points_to`, `:points_to_bounded`), the Datalog
+    it runs as its solve loads it: its rules
     file and everything that file `.include`s, transitively, but of
     argus's generated declaration files only the declarations of the
     relations the program loads (`program_digest/2`), plus the solver's
@@ -60,7 +61,10 @@ defmodule Scry.Fingerprint do
           specs_environment: String.t()
         }
 
-  @typedoc "A `:rules_digest` key: an analysis, or a shared stage (`:stage0`, `:points_to`)."
+  @typedoc """
+  A `:rules_digest` key: an analysis, or a shared stage's program (`:stage0`,
+  `:points_to`, `:points_to_bounded`).
+  """
   @type rules_key :: atom()
 
   @doc """
@@ -218,9 +222,12 @@ defmodule Scry.Fingerprint do
   @rules_format "scry-rules-1"
 
   @doc """
-  The rules digest of each of `analyses`, and of `:stage0` and
-  `:points_to` (the shared call graph and process points-to programs
-  the solves read): the solver's version
+  The rules digest of each of `analyses`, and of `:stage0`,
+  `:points_to` and `:points_to_bounded` (the shared call graph's
+  program, and the process points-to stage's two: argus runs the
+  bounded one in place of the exact one when the exact fixpoint
+  outgrows its budget, so an edit to either can move what the stage
+  stages): the solver's version
   (`Argus.Souffle.Cache.version/2`) and the program as a solve of it
   loads it (`program_digest/2`). Keyed as argus keys a solve, less the
   facts: a rule edit moves the programs that include the edited file,
@@ -256,7 +263,8 @@ defmodule Scry.Fingerprint do
     programs =
       [
         {:stage0, Argus.Analysis.stage0_rules_path()},
-        {:points_to, Argus.Analysis.points_to_rules_path()}
+        {:points_to, Argus.Analysis.points_to_rules_path()},
+        {:points_to_bounded, Argus.Analysis.points_to_bounded_rules_path()}
       ] ++
         for analysis <- analyses, {:ok, path} <- [rules_path(analysis)], do: {analysis, path}
 

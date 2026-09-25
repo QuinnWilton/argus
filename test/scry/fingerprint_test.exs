@@ -90,7 +90,7 @@ defmodule Scry.FingerprintTest do
 
       names = File.ls!(programs)
 
-      for program <- ~w(rules mailbox stage0 points_to),
+      for program <- ~w(rules mailbox stage0 points_to points_to_bounded),
           do: assert(Enum.any?(names, &String.starts_with?(&1, program <> "-")))
 
       # A warm run reads the digests kept under the Datalog tree's
@@ -310,8 +310,13 @@ defmodule Scry.FingerprintTest do
 
     test "the shipped programs digest, and differ per analysis" do
       digests = Scry.Fingerprint.rules([:mailbox, :coupling])
-      assert Map.keys(digests) |> Enum.sort() == [:coupling, :mailbox, :points_to, :stage0]
+
+      assert Map.keys(digests) |> Enum.sort() ==
+               [:coupling, :mailbox, :points_to, :points_to_bounded, :stage0]
+
       assert digests.mailbox != digests.coupling
+      # The points-to stage's two programs, each its own key.
+      assert digests.points_to != digests.points_to_bounded
     end
   end
 

@@ -28,7 +28,8 @@ defmodule Scry.Frontend do
   - `:argus_code` input — `:all =>` a digest of every argus beam
     (`Scry.Fingerprint.argus_code/1`): what the findings are built by,
     and what a program calling argus reads specs from.
-  - `:rules_digest` input — analysis (or `:stage0`) `=>` a digest of
+  - `:rules_digest` input — analysis (or shared stage program:
+    `:stage0`, `:points_to`, `:points_to_bounded`) `=>` a digest of
     the Datalog it runs, as its solve loads it
     (`Scry.Fingerprint.rules/2`); a rule edit re-solves the analyses
     whose programs it touched and re-extracts nothing.
