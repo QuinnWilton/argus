@@ -54,9 +54,12 @@ defmodule Argus.Test.Fixtures.AtomSources do
   @moduledoc """
   Atom creation no request reaches, by where its argument comes from.
   What a caller of the program hands in reaches an atom through `input/1`
-  (an exported function nothing here calls) and through the closure
-  `keys/1` runs on each element; the rest make atoms of what the program
-  holds itself.
+  (an exported function nothing here calls), through the closure `keys/1`
+  runs on each element, and through `name/1`, an export the program also
+  calls itself with a literal: its users can call it with anything.
+  `env_level/0` and `cookie!/1` make atoms of the environment, which a
+  caller naming the variable does not choose; the macro `field/1` makes
+  one at compile time, of the code that uses it.
   """
 
   def input(name), do: String.to_atom(name)

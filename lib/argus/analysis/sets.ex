@@ -69,7 +69,7 @@ defmodule Argus.Analysis.Sets do
   # ets, blocking and the security concerns are asked for by name.
   # unsafe_input stays out: a sink a request reaches is worth a compile's
   # attention, but its atom creation no request reaches — reported where
-  # a caller's input reaches it, 65 rows over the evaluation programs
+  # a caller's input reaches it, 113 rows over the evaluation programs
   # (four apps, the Phoenix stack, OTP kernel, stdlib and mnesia) where
   # "reachable from an export" was 261 — is still mostly library API
   # doing what it is for (erl_scan, a generator, a cache naming its

@@ -3290,6 +3290,27 @@ realtime LiveDashboard page making an atom of an event's `"fun"`. Its
 set membership does not change: `unsafe_input` is `:security`'s, and
 was never `:default`'s.
 
+**Fixed.** `caller_input` reports the atoms of caller input it lost in
+three shapes. An export the program also calls itself is still its
+users' API (an Ecto type's `cast/1`, called once with a literal
+default): every export is an entry, as failure's `exposed` roots are,
+except a macro, which the compiler calls. An argument made of a
+parameter through a call no propagator table lists
+(`String.to_atom(Macro.underscore(name))`) is seeded from the new
+`sink_reads`. And a client function that hands its argument to its
+server in a call's or a cast's message carries it into handle_call/3's
+or handle_cast/2's first parameter (`message_param`: `intern(name)`
+calling `{:intern, name}`, whose clause makes the atom). The test that
+asserted `AtomSources.name/1` quiet, an export its module also calls
+with a literal, now asserts it reported. A read of the environment is not
+made of the variable's name (below), so
+`String.to_atom(System.get_env(env))` stays quiet. Over the
+evaluation programs the title goes from 65 rows to 113; what came back
+is library API handed what its users configure or type (cache and pool
+names, route and CLI option parsing, mix generators, `erl_compile`'s
+flags, a node name from a cluster notification), which only knowing
+whether a parameter is configuration or request data would set apart.
+
 **Added.** Schema 101. `sink_reads(site, func, arg_pos, kind, source)`
 (`Argus.Extractors.Dependence`): what a sink call's argument is made of,
 by data alone, the runtime's calls on the way carrying their arguments

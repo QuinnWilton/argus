@@ -41,7 +41,8 @@ defmodule Argus.Analyses.UnsafeInputTest do
     Taint.SameLine,
     Argus.Test.Fixtures.AtomSources,
     Argus.Test.Fixtures.AtomFromMessages,
-    Argus.Test.Fixtures.AtomProcessName
+    Argus.Test.Fixtures.AtomProcessName,
+    [Argus.Test.Fixtures.AtomCallerInput, Argus.Test.Fixtures.AtomCallerInput.NameServer]
   ]
 
   setup_all do
@@ -377,7 +378,40 @@ defmodule Argus.Analyses.UnsafeInputTest do
       assert Enum.any?(funcs, &(&1 =~ "AtomSources:-keys/1-fun-0-/1"))
     end
 
-    test "is not reported of configuration, or of a value its only caller names", ctx do
+    test "is reported of an export the program also calls with a literal", ctx do
+      skip_without_souffle()
+
+      funcs =
+        ctx
+        |> analyze([Argus.Test.Fixtures.AtomSources])
+        |> local("atom")
+        |> Enum.map(&elem(&1, 0))
+
+      # name/1's users can call it with anything; default_name/0's
+      # literal does not make it the program's own.
+      assert Enum.any?(funcs, &(&1 =~ "AtomSources:name/1"))
+    end
+
+    test "is reported through a call no propagator lists, and a server's message", ctx do
+      skip_without_souffle()
+
+      funcs =
+        ctx
+        |> analyze([
+          Argus.Test.Fixtures.AtomCallerInput,
+          Argus.Test.Fixtures.AtomCallerInput.NameServer
+        ])
+        |> local("atom")
+        |> Enum.map(&elem(&1, 0))
+        |> Enum.sort()
+
+      assert funcs == [
+               "Argus.Test.Fixtures.AtomCallerInput.NameServer:handle_call/3",
+               "Argus.Test.Fixtures.AtomCallerInput:key/1"
+             ]
+    end
+
+    test "is not reported of the environment, or at compile time", ctx do
       skip_without_souffle()
 
       funcs =
@@ -387,7 +421,8 @@ defmodule Argus.Analyses.UnsafeInputTest do
         |> Enum.map(&elem(&1, 0))
 
       refute Enum.any?(funcs, &(&1 =~ "env_level"))
-      refute Enum.any?(funcs, &(&1 =~ "AtomSources:name/1"))
+      refute Enum.any?(funcs, &(&1 =~ "cookie!"))
+      refute Enum.any?(funcs, &(&1 =~ "MACRO-field"))
     end
 
     test "is not reported of a server's own messages or a pipeline's own name", ctx do

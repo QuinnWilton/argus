@@ -219,34 +219,86 @@ sink_without_request_path(id, func, api, "atom", "") :-
 // configuration, of what the process read from its own state. Atom
 // creation no request reaches is reported where its argument is made of
 // what the program's callers hand in: a parameter of an exported function
-// the program does not call itself — the library's API, which its users
-// call with their own input — reached backward from the sink's argument
-// (sink_arg_derived, then Dependence's call_arg_reads, which carry data
-// through any call): tesla's
-// adapter building an atom of the URL's scheme, membrane parsing box
-// names out of the file it is handed, absinthe_federation converting the
-// keys of the representations its resolver is handed (through the
-// closure `Map.new/2` runs on each). A callback the runtime calls with
-// the program's own data is not an API: a process's callbacks and
-// init/1, Broadway's `process_name/2`, a protocol's implementation.
+// — the library's API, which its users call with their own input —
+// reached backward from the sink's argument. The sink's argument is made
+// of a parameter through the propagators ParamFlow lists
+// (sink_arg_derived) or through any call of the runtime's
+// (Dependence's sink_reads: `String.to_atom(Macro.underscore(name))`),
+// and from there through what calls are handed (call_arg_reads, which
+// carry data through any call): tesla's adapter building an atom of the
+// URL's scheme, membrane parsing box names out of the file it is handed,
+// absinthe_federation converting the keys of the representations its
+// resolver is handed (through the closure `Map.new/2` runs on each). A
+// message a client function sends its server carries the client's
+// parameter into the callback's (`message_param`): an `intern(name)`
+// that calls the server with `{:intern, name}`, whose handle_call/3
+// makes the atom. A callback the runtime calls with the program's own
+// data is not an API: a process's callbacks and init/1, Broadway's
+// `process_name/2`, a protocol's implementation.
 .init atom_input = ParamReadsReach
 
 atom_input.seed(func, to_string(pos), id) :-
   sink(id, func, _, "atom", ""),
   sink_arg_derived(id, func, 0, pos).
 
+atom_input.seed(func, p, id) :-
+  sink(id, func, _, "atom", ""),
+  sink_reads(id, func, 0, "param", p).
+
+// Made of what a local helper returns of its own parameter.
+atom_input.seed(func, p, id) :-
+  sink(id, func, _, "atom", ""),
+  sink_reads(id, func, 0, "call", g),
+  returns_reads(g, "param", q),
+  call_arg_reads(func, g, n, "param", p),
+  q = to_string(n).
+
+atom_input.reaches(f, p, t) :- message_param(f, p, h), atom_input.reaches(h, "0", t).
+
+// A client function calls (or casts to) a server running `mod`'s
+// callbacks with a message made of its parameter `pos`: the message is
+// the callback's first parameter.
+.decl message_param(client: symbol, pos: symbol, callback: symbol)
+
+message_param(f, to_string(p), h) :-
+  call_arg_derived(f, api, 1, p),
+  sync_api(api),
+  sync_call_site(_, f, m, _),
+  function_def(h, m, "handle_call", 3, _).
+
+message_param(f, to_string(p), h) :-
+  call_arg_derived(f, api, 1, p),
+  cast_api(api),
+  async_cast(f, m),
+  function_def(h, m, "handle_cast", 2, _).
+
+.decl sync_api(api: symbol)
+
+sync_api("GenServer:call/2").
+sync_api("GenServer:call/3").
+sync_api(":gen_server:call/2").
+sync_api(":gen_server:call/3").
+
+.decl cast_api(api: symbol)
+
+cast_api("GenServer:cast/2").
+cast_api(":gen_server:cast/2").
+
 .decl caller_input(id: symbol)
 
 caller_input(id) :- atom_input.reaches(f, _, id), outside_api(f).
 
-// An exported function nothing in the program calls: only its users
-// can. One the program calls itself takes what the program hands it,
-// which its other callers name.
+// An exported function: the library's users can call it with anything,
+// whether or not the program also calls it itself (an Ecto type's
+// cast/1, which the program calls once with a literal default). As
+// failure's `exposed` roots, every export is an entry. A macro is not:
+// the compiler calls it, with the code that uses it, and what it makes
+// it makes at compile time.
 .decl outside_api(func: symbol)
 
 outside_api(f) :-
   function_def(f, m, n, a, 1),
-  !call_edge(_, f),
+  !match("MACRO-.*", n),
   !runtime_callback(m, n, a),
   !function_def(_, m, "__impl__", 1, _).
 
