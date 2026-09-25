@@ -451,6 +451,39 @@ defmodule Argus.Test.Fixtures.MonitorLeak do
     end
   end
 
+  defmodule KillsMonitoredAside do
+    @moduledoc """
+    KillsMonitored with the stop made in a process the server spawns: the
+    server still monitors the child, and the :DOWN of the death it caused
+    still lands in its crash clause. A monitor the spawned process took
+    would be that process's; this one is the server's.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(_opts), do: {:ok, %{running: %{}}}
+
+    @impl true
+    def handle_call({:track, pid}, _from, state) do
+      ref = Process.monitor(pid)
+      {:reply, :ok, put_in(state.running[ref], pid)}
+    end
+
+    @impl true
+    def handle_cast({:kill, pid}, state) do
+      spawn(fn -> GenServer.stop(pid, :normal, 5_000) end)
+      {:noreply, state}
+    end
+
+    @impl true
+    def handle_info({:DOWN, ref, :process, _, reason}, state) do
+      {_, state} = pop_in(state.running[ref])
+      {:noreply, Map.put(state, :last_crash, reason)}
+    end
+  end
+
   defmodule ClientSideMonitor do
     @moduledoc """
     A GenServer module whose only monitor is in a client API function: it

@@ -33,5 +33,14 @@ defmodule Argus.Analyses.ShutdownMonitorTest do
       assert site =~ "KillsMonitored:handle_call/3#"
       assert kill_site =~ "KillsMonitored:handle_cast/2#"
     end
+
+    test "a stop the server makes from a process it spawns is still its doing" do
+      skip_without_souffle()
+
+      assert {:ok, r} = Memo.analyze([M.KillsMonitoredAside], :shutdown)
+      assert [[mod, _site, kill_site]] = r["kills_monitored_child"]
+      assert mod == "Argus.Test.Fixtures.MonitorLeak.KillsMonitoredAside"
+      assert kill_site =~ "KillsMonitoredAside:-handle_cast/2-fun-0-/1#"
+    end
   end
 end

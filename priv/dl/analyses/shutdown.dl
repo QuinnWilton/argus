@@ -702,17 +702,32 @@ unhandled_exit_signal(mod, "no_exit_clause", func) :-
 .decl kills_monitored_child(mod: symbol, site: symbol, kill_site: symbol)
 .output kills_monitored_child
 
+//
+// The monitor is the server's when it is taken on the server's own stack
+// (server_side): one a Task or a spawn the server starts takes is that
+// process's, and so is its :DOWN. The kill is the server's doing wherever
+// its callbacks make it happen, a process they start included (`spawn(fn
+// -> GenServer.stop(conn) end)`): the :DOWN still comes to the server
+// that monitors (server_code).
+.init server_code_reach = ForwardIntraModuleReach
+
+server_code_reach.root(mod, func) :- server_reach.root(mod, func).
+
+.decl server_code(mod: symbol, func: symbol)
+
+server_code(mod, func) :- server_code_reach.reaches(mod, func).
+
 kills_monitored_child(mod, site, kill_site) :-
   server_side(mod, f),
   monitor_call(site, f, _),
-  server_side(mod, g),
+  server_code(mod, g),
   sup_call(kill_site, g, _, "terminate_child", _),
   !module_demonitors(mod).
 
 kills_monitored_child(mod, site, kill_site) :-
   server_side(mod, f),
   monitor_call(site, f, _),
-  server_side(mod, g),
+  server_code(mod, g),
   remote_call(kill_site, g, "GenServer", "stop", _),
   !module_demonitors(mod).
 

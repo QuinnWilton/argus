@@ -221,6 +221,11 @@ clientlib/reach.dl, the walk `spawned_reach` already made). Blocking's
 once, walks the same stack plus a task the handler awaits
 (`ForwardIntraModuleHoldingReach`): a spawned waiter does not hold the
 caller, an awaited one does.
+Shutdown's `kills_monitored_child` keeps the kill side broad
+(`server_code`, the module's code the callbacks run or start): a monitor
+a spawned process takes is that process's, but a stop the server makes
+from a process it spawns is still the death the server caused, and its
+`:DOWN` still comes to the server.
 
 **Fixed.** "handle_info/2 has no catch-all" (`partial_handler`'s
 "late_message" source) no longer fires on a server whose only sources
