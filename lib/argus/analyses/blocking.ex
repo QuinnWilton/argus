@@ -6,10 +6,11 @@ defmodule Argus.Analyses.Blocking do
   column or a relation; the concern is the wait.
 
   - `call_chain(from, to, kind, depth, inferred, caller_ms,
-    downstream_ms)` — synchronous hops through callbacks: a `chain` of
-    `depth` `handle_call` hops whose per-hop timeouts compose
-    unpredictably (a slow leaf times out every caller), a `cast` handler
-    that makes a synchronous call (the mailbox backs up invisibly), or a
+    downstream_ms, peer, permille, site)` — synchronous hops through
+    callbacks: a `chain` of `depth` `handle_call` hops whose per-hop
+    timeouts compose unpredictably (a slow leaf times out every caller),
+    a `cast` handler that makes a synchronous call at `site` (the mailbox
+    backs up invisibly), or a
     `budget` where the caller's timeout is shorter than the callee's own
     downstream budget.
   - `call_cycle(mod_a, mod_b, witness_a, witness_b, phase, site_a,
@@ -110,12 +111,18 @@ defmodule Argus.Analyses.Blocking do
           {:peer, :symbol,
            "for a cast, 'local' when a prior is sure the server called answers from inside " <>
              "the node; else empty"},
-          {:permille, :number, "the prior's probability in thousandths, else 0"}
+          {:permille, :number, "the prior's probability in thousandths, else 0"},
+          {:site, :symbol,
+           "for a cast, the call in handle_cast/2 that waits, or that enters the helper " <>
+             "that does; else empty"}
         ],
         # One chain finding per (from, to) pair: the depth relation is
         # recursive with only a `from != to` guard, so a genuine cycle
-        # emits a row at every depth up to the cap.
+        # emits a row at every depth up to the cap. A cast handler that
+        # waits on one server from several calls is one finding, at the
+        # first of them.
         key: [:from, :to, :kind, :caller_ms, :downstream_ms],
+        earliest: :site,
         doc: "Synchronous hops through callbacks whose timeouts compose, block, or do not fit."
       },
       %{
@@ -246,7 +253,7 @@ defmodule Argus.Analyses.Blocking do
   end
 
   @impl true
-  def finding(:call_chain, [from, to, "chain", depth, inferred, _, _, _, _]) do
+  def finding(:call_chain, [from, to, "chain", depth, inferred, _, _, _, _, _]) do
     inferred_note =
       if inferred == "tag",
         do:
@@ -279,7 +286,7 @@ defmodule Argus.Analyses.Blocking do
     )
   end
 
-  def finding(:call_chain, [mod, target, "cast", _, _, _, _, peer, p]) do
+  def finding(:call_chain, [mod, target, "cast", _, _, _, _, peer, p, site]) do
     Findings.new(
       :warning,
       "handle_cast blocks on a synchronous call",
@@ -287,7 +294,11 @@ defmodule Argus.Analyses.Blocking do
         "fire-and-forget to senders, but the server still blocks — the " <>
         "mailbox backs up invisibly because no caller ever waits on (or " <>
         "notices) the slow handler.",
-      at: Findings.at_mfa(mod, :handle_cast, 2),
+      at:
+        if(site == "",
+          do: Findings.at_mfa(mod, :handle_cast, 2),
+          else: Findings.at_site(site, mod)
+        ),
       at_label: "this handle_cast blocks on a call",
       related: [Findings.related("call target", Findings.at_module(target))],
       help: [
@@ -306,6 +317,7 @@ defmodule Argus.Analyses.Blocking do
         _,
         caller_timeout,
         downstream_timeout,
+        _,
         _,
         _
       ]) do

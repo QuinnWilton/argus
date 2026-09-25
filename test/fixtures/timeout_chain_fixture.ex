@@ -68,6 +68,59 @@ defmodule Argus.Test.Fixtures.TimeoutChain.BlockingCastServer do
   end
 end
 
+# A handle_cast whose waits are in its later clauses, each on a server of
+# its own: every finding anchors at the call that waits, not at the first
+# clause's head (handle_cast/2 is one function; its head is the :tick
+# clause's line).
+defmodule Argus.Test.Fixtures.TimeoutChain.LaterClauseCastServer do
+  @moduledoc false
+  use GenServer
+
+  alias Argus.Test.Fixtures.TimeoutChain.{ServerA, ServerB, ServerC}
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_cast(:tick, state) do
+    {:noreply, Map.update(state, :ticks, 1, &(&1 + 1))}
+  end
+
+  def handle_cast({:ping, from}, state) do
+    send(from, :pong)
+    {:noreply, state}
+  end
+
+  def handle_cast(:refresh, state) do
+    value = refresh(state)
+    {:noreply, Map.put(state, :value, value)}
+  end
+
+  def handle_cast(:fetch, state) do
+    value = ServerB.fetch(state.server_b)
+    {:noreply, Map.put(state, :fetched, value)}
+  end
+
+  # The wait is in a closure the clause hands to a helper: its site is the
+  # call the closure is handed to.
+  def handle_cast(:reload, state) do
+    data = with_retry(fn -> ServerA.get_data(state.server_a) end)
+    {:noreply, Map.put(state, :data, data)}
+  end
+
+  # Public so the compiler keeps the call a call (a private helper with
+  # one caller may be inlined into the clause).
+  def refresh(state), do: ServerC.lookup(state.server_c)
+
+  def with_retry(fun) do
+    fun.()
+  rescue
+    _ -> fun.()
+  end
+end
+
 defmodule Argus.Test.Fixtures.TimeoutChain.ServerWithExplicitTimeout do
   @moduledoc false
   use GenServer

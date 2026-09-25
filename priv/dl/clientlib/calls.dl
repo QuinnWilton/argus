@@ -595,10 +595,26 @@ site_request(f, id, m, tag) :-
   fm != m,
   api_request_tag(g, tag).
 
+// A closure or fun reference f hands to a call runs inside that call
+// (fun_handed): the edge into it has no call instruction of its own, and
+// the call it is handed to is its site. exq's Manager.Server waits on
+// its Stats server inside `Redis.rescue_timeout(fn -> ... end)`, brod's
+// group subscriber inside `lists:foreach(fun(T) -> ... end, Ts)`. An edge
+// with neither (a fun built into a term and called later) has no site.
+site_request(f, id, m, tag) :-
+  site_demand(f),
+  call_edge(f, g),
+  !call_instr(f, g, _),
+  fun_handed(id, f, g, _),
+  !runs_elsewhere(f, g),
+  !side_call(f, g),
+  reaches_sync_request(g, m, tag).
+
 site_request(f, "", m, tag) :-
   site_demand(f),
   call_edge(f, g),
   !call_instr(f, g, _),
+  !fun_handed(_, f, g, _),
   !runs_elsewhere(f, g),
   !side_call(f, g),
   reaches_sync_request(g, m, tag).

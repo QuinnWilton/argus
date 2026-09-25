@@ -40,7 +40,7 @@ defmodule Argus.Analyses.BlockingPidCallTest do
              analyze()
              |> Rows.where(:blocking, "call_chain",
                kind: "chain",
-               drop: [:kind, :peer, :permille]
+               drop: [:kind, :peer, :permille, :site]
              )
              |> Enum.map(fn [a, b, d, i, c, w] ->
                [a, b, String.to_integer(d), i, String.to_integer(c), String.to_integer(w)]
@@ -52,7 +52,7 @@ defmodule Argus.Analyses.BlockingPidCallTest do
              analyze()
              |> Rows.where(:blocking, "call_chain",
                kind: "budget",
-               drop: [:kind, :peer, :permille]
+               drop: [:kind, :peer, :permille, :site]
              )
              |> Enum.map(fn [a, b, d, i, c, w] ->
                [a, b, String.to_integer(d), i, String.to_integer(c), String.to_integer(w)]
@@ -84,7 +84,7 @@ defmodule Argus.Analyses.BlockingPidCallTest do
     {:ok, r} = Memo.analyze([PidCalls.HandOffCaster, PidCalls.Named], :blocking)
 
     assert [[caster, named | _]] =
-             Rows.where(r, :blocking, "call_chain", kind: "cast", drop: [:peer, :permille])
+             Rows.where(r, :blocking, "call_chain", kind: "cast", drop: [:peer, :permille, :site])
 
     assert {caster, named} == {inspect(PidCalls.HandOffCaster), inspect(PidCalls.Named)}
   end

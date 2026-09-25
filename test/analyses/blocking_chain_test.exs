@@ -14,22 +14,40 @@ defmodule Argus.Analyses.BlockingChainTest do
     do:
       Rows.where(results, :blocking, "call_chain",
         kind: "chain",
-        drop: [:kind, :caller_ms, :downstream_ms, :peer, :permille]
+        drop: [:kind, :caller_ms, :downstream_ms, :peer, :permille, :site]
       )
 
   defp chains(results, "cast"),
     do:
       Rows.where(results, :blocking, "call_chain",
         kind: "cast",
-        drop: [:kind, :depth, :inferred, :caller_ms, :downstream_ms, :peer, :permille]
+        drop: [:kind, :depth, :inferred, :caller_ms, :downstream_ms, :peer, :permille, :site]
       )
 
   defp chains(results, "budget"),
     do:
       Rows.where(results, :blocking, "call_chain",
         kind: "budget",
-        drop: [:kind, :depth, :inferred, :peer, :permille]
+        drop: [:kind, :depth, :inferred, :peer, :permille, :site]
       )
+
+  @fixture Path.expand("../fixtures/timeout_chain_fixture.ex", __DIR__)
+
+  # The fixture's line holding `text`, found by the text so the fixture
+  # can move freely.
+  defp fixture_line(text) do
+    @fixture
+    |> File.read!()
+    |> String.split("\n")
+    |> Enum.find_index(&String.contains?(&1, text))
+    |> Kernel.+(1)
+  end
+
+  defp cast_line(modules, finding) do
+    assert finding.instr != nil, "anchored at the function, not at a call in it"
+    {:ok, facts} = Argus.Pipeline.extract(modules)
+    Argus.Lines.resolve(Argus.Lines.from_facts(facts), finding.instr)
+  end
 
   describe "call_chain: which chains" do
     test "only the shortest chain between two servers is reported" do
@@ -125,6 +143,25 @@ defmodule Argus.Analyses.BlockingChainTest do
       assert Enum.any?(blocking, fn [mod, _target] ->
                mod == "Argus.Test.Fixtures.TimeoutChain.BlockingCastServer"
              end)
+    end
+
+    test "a blocking cast is anchored at the call that waits, one finding per server" do
+      skip_without_souffle()
+      alias Argus.Test.Fixtures.TimeoutChain, as: T
+
+      modules = [T.LaterClauseCastServer, T.ServerA, T.ServerB, T.ServerC]
+      assert {:ok, %{findings: findings}} = Memo.run_analyses(modules, analyses: [:blocking])
+
+      casts =
+        for f <- findings, f.title == "handle_cast blocks on a synchronous call" do
+          {f.related |> hd() |> Map.fetch!(:module), cast_line(modules, f)}
+        end
+
+      assert Enum.sort(casts) == [
+               {T.ServerA, fixture_line("data = with_retry(fn ->")},
+               {T.ServerB, fixture_line("value = ServerB.fetch(state.server_b)")},
+               {T.ServerC, fixture_line("value = refresh(state)")}
+             ]
     end
 
     test "detects infinity timeout in chain" do

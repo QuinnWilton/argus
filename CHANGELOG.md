@@ -83,6 +83,19 @@ server and the async task at the async limiter's three calls.
 extraction through a store and `Argus.Findings.run/2` all fall back the
 same way.
 
+### FP hunt, round 2: eight more programs, and the anchors round 1 left
+
+**Fixed.** A blocking cast (`call_chain` kind `cast`) anchors at the
+call in `handle_cast/2` that waits, or that enters the helper that does,
+not at the function's head, which is its first clause's line: exq's
+Manager.Server waits in its `:cleanup_host_stats` clause, thirteen lines
+below; brod's group subscriber had three findings on one head. The
+relation gains `site` as its tenth column (`earliest`: one finding per
+target, at the first call). A closure handed to a call is sited at that
+call (`fun_handed`) in `site_request` (clientlib/calls.dl), so a request
+chain through a closure now enters the clause of the call it is handed
+to rather than every clause.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

@@ -818,10 +818,11 @@ A synchronous wait that can last forever or nest: every finding is a process wai
 **Assumptions and limits.**
 - Target resolution is the chain rule's; an unresolved target is missed.
 - GenServer only, and any clause of `handle_cast/2` counts: the rule does not follow which clause a cast enters.
+- The finding anchors at the call in `handle_cast/2` that waits, or that enters the helper that does (`site`; `site_request`), not at the function's head: every clause compiles into one function, whose head is its first clause's line. A wait inside a closure the handler hands to a call (`Redis.rescue_timeout(fn -> ... end)`, `lists:foreach(fun ...)`) is anchored at that call (`fun_handed`). One finding per target server, at the earliest such call; a closure built into a term and called later has no site, and the finding falls back to the head.
 - The call's timeout and the target's behaviour are not read: a call to a server that answers at once is reported like an `:infinity` one. With priors on, a target the model puts at 0.8 or more as answering from inside the node (`prior_answers`, by module or registered name) steps the row down to `:info`, marked heuristic.
 - A cast handler calling its own module's process is the self-call finding, not this one.
 
-**Fixtures.** Positive: `TimeoutChain.BlockingCastServer` with `TimeoutChain.ServerC` (test/fixtures/timeout_chain_fixture.ex); `PidCalls.HandOffCaster` with `PidCalls.Named` (test/fixtures/pid_call_fixture.ex, a closure beside a child spec's fun stays the handler's own). Quiet: none. Asserted in test/analyses/blocking_chain_test.exs and blocking_pid_call_test.exs; the prior re-tier in test/priors/priors_test.exs.
+**Fixtures.** Positive: `TimeoutChain.BlockingCastServer` with `TimeoutChain.ServerC` (test/fixtures/timeout_chain_fixture.ex); `TimeoutChain.LaterClauseCastServer` (three servers waited on from its later clauses, directly, through a helper and inside a closure: each finding at its own call); `PidCalls.HandOffCaster` with `PidCalls.Named` (test/fixtures/pid_call_fixture.ex, a closure beside a child spec's fun stays the handler's own). Quiet: none. Asserted in test/analyses/blocking_chain_test.exs and blocking_pid_call_test.exs; the prior re-tier in test/priors/priors_test.exs.
 
 **Corpus.** None.
 

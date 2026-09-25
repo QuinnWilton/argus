@@ -19,11 +19,14 @@
 
 // ══ The outputs ═════════════════════════════════════════════════════
 //
-// `call_chain(from, to, kind, depth, inferred, caller_ms, downstream_ms)`
+// `call_chain(from, to, kind, depth, inferred, caller_ms, downstream_ms,
+//   peer, permille, site)`
 //   — synchronous hops through callbacks: "chain" (a request into
 //   `from` traverses `depth` handle_call hops to `to`; `inferred` is
 //   "tag" when a hop was attributed by message tag), "cast" (a
-//   handle_cast that makes a synchronous call), "budget" (the caller's
+//   handle_cast that makes a synchronous call, at `site`: the call in
+//   handle_cast/2 that waits, or that enters the helper that does; ""
+//   when no call instruction carries it), "budget" (the caller's
 //   `caller_ms` timeout is shorter than the callee's own `downstream_ms`).
 // `unbounded_wait(func, site, kind, api, detail, nodes)` — a wait with no
 //   deadline: ":infinity" on a hop that itself serves callers
@@ -41,14 +44,14 @@
 //   With priors on, a "cast" chain and an "infinity" wait carry `peer`
 //   ("local") and `permille` when the model is sure the server called
 //   answers every call from inside the node (below); else "" and 0.
-.decl call_chain(from: symbol, to: symbol, kind: symbol, depth: number, inferred: symbol, caller_ms: number, downstream_ms: number, peer: symbol, permille: number)
+.decl call_chain(from: symbol, to: symbol, kind: symbol, depth: number, inferred: symbol, caller_ms: number, downstream_ms: number, peer: symbol, permille: number, site: symbol)
 .output call_chain
 
 .decl unbounded_wait(func: symbol, site: symbol, kind: symbol, api: symbol, detail: symbol, nodes: symbol, peer: symbol, permille: number)
 .output unbounded_wait
 
 // What the rules below find, before a prior says whether the peer answers.
-.decl chain_found(from: symbol, to: symbol, kind: symbol, depth: number, inferred: symbol, caller_ms: number, downstream_ms: number)
+.decl chain_found(from: symbol, to: symbol, kind: symbol, depth: number, inferred: symbol, caller_ms: number, downstream_ms: number, site: symbol)
 .decl wait_found(func: symbol, site: symbol, kind: symbol, api: symbol, detail: symbol, nodes: symbol)
 
 .decl receive_in_callback(id: symbol, func: symbol, callback: symbol, behaviour: symbol, proximity: symbol, bounded: symbol)
@@ -219,19 +222,39 @@ timeout_chain_inferred(from, to) :- request_chain_inferred(from, _, to).
 
 // Chains of depth >= 2 are risky: the outermost caller's timeout must
 // accommodate the sum of all intermediate timeouts.
-chain_found(from, to, "chain", depth, "tag", 0, 0) :-
+chain_found(from, to, "chain", depth, "tag", 0, 0, "") :-
   timeout_chain(from, to, depth),
   depth >= 2,
   timeout_chain_inferred(from, to).
 
-chain_found(from, to, "chain", depth, "static", 0, 0) :-
+chain_found(from, to, "chain", depth, "static", 0, 0, "") :-
   timeout_chain(from, to, depth),
   depth >= 2,
   !timeout_chain_inferred(from, to).
 
 // ── Output: blocking cast handler ────────────────────────────────────
+//
+// Anchored at the call that waits: handle_cast/2 compiles every clause
+// into one function, and the clause making the call is not the first
+// (exq's Manager.Server calls Redis in its :cleanup_host_stats clause,
+// thirteen lines below the head). The site is the call in handle_cast/2
+// on the way to the wait (site_request, clientlib/calls.dl): the
+// GenServer.call itself, or the call into the helper that makes it. One
+// finding per target, at the earliest such call (the relation's key).
+site_demand(h) :- handle_cast_function(_, h).
 
-chain_found(mod, target, "cast", 1, "", 0, 0) :- handler_dep(mod, "handle_cast", target, "call", _).
+.decl cast_call_site(mod: symbol, to: symbol, site: symbol)
+
+cast_call_site(mod, to, id) :-
+  handler_dep(mod, "handle_cast", to, "call", h),
+  site_request(h, id, to, _),
+  id != "".
+
+chain_found(mod, to, "cast", 1, "", 0, 0, id) :- cast_call_site(mod, to, id).
+
+chain_found(mod, to, "cast", 1, "", 0, 0, "") :-
+  handler_dep(mod, "handle_cast", to, "call", _),
+  !cast_call_site(mod, to, _).
 
 // ── Timeout-aware sync dependency ──────────────────────────────────
 
@@ -254,7 +277,7 @@ callback_sync_dep_timeout(from_mod, to_mod, timeout_ms) :-
 // misconfiguration. The boundary case is real (equal budgets leave B
 // zero processing slack) but flagging it would mark nearly every
 // two-hop chain in real code as an error.
-chain_found(a, b, "budget", 1, "", t_ab, t_bc) :-
+chain_found(a, b, "budget", 1, "", t_ab, t_bc, "") :-
   callback_sync_dep_timeout(a, b, t_ab),
   callback_sync_dep_timeout(b, _, t_bc),
   t_ab > 0,     // not dynamic
@@ -1100,14 +1123,14 @@ answering_peer(t, p) :- answers_at(t, _), p = max q : answers_at(t, q), p >= 800
 
 .decl answered_chain(from: symbol, to: symbol, kind: symbol)
 
-answered_chain(f, t, "cast") :- chain_found(f, t, "cast", _, _, _, _), answering_peer(t, _).
+answered_chain(f, t, "cast") :- chain_found(f, t, "cast", _, _, _, _, _), answering_peer(t, _).
 
-call_chain(f, t, "cast", d, i, c, dm, "local", p) :-
-  chain_found(f, t, "cast", d, i, c, dm),
+call_chain(f, t, "cast", d, i, c, dm, "local", p, s) :-
+  chain_found(f, t, "cast", d, i, c, dm, s),
   answering_peer(t, p).
 
-call_chain(f, t, k, d, i, c, dm, "", 0) :-
-  chain_found(f, t, k, d, i, c, dm),
+call_chain(f, t, k, d, i, c, dm, "", 0, s) :-
+  chain_found(f, t, k, d, i, c, dm, s),
   !answered_chain(f, t, k).
 
 .decl answered_wait(kind: symbol, api: symbol)
