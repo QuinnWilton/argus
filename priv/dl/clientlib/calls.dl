@@ -564,6 +564,52 @@ literal_first(f, g, a) :-
   !call_arg(f, g, 0, "dynamic"),
   !call_arg_forward(f, g, 0, _).
 
+// f hands g its own first argument, from clauses that each took a
+// literal one: `handle_cast(:rebuild, s) -> handle_info(:rebuild, s)`
+// compiles to a call that forwards x0 unchanged, and the literal is the
+// tag of the clause the call sits in (clause_call). The value g gets has
+// that tag (an atom, or a tuple headed by it), so g's clauses for other
+// tags cannot take it — the same abstraction site_clause reads g's side
+// with. Every call of f to g must sit in such a clause, and forward
+// nothing else first: a call from a clause that takes any argument enters
+// every clause of g.
+literal_first(f, g, a) :-
+  call_arg_forward(f, g, 0, 0),
+  !call_arg_forward_other(f, g),
+  !call_arg(f, g, 0, "dynamic"),
+  !forwards_untagged(f, g),
+  call_instr(f, g, id),
+  clause_call(id, f, a).
+
+literal_first(f, g, a) :-
+  call_arg_forward(f, g, 0, 0),
+  !call_arg_forward_other(f, g),
+  !call_arg(f, g, 0, "dynamic"),
+  !forwards_untagged(f, g),
+  call_arg(f, g, 0, a),
+  match(":.*", a).
+
+// f's first argument at position 0 of a call to g is not f's first
+// parameter.
+.decl call_arg_forward_other(func: symbol, callee: symbol)
+
+call_arg_forward_other(f, g) :- call_arg_forward(f, g, 0, k), k != 0.
+
+// A call of f to g that sits in no clause of f with a literal first
+// argument, or in one whose tag is not an atom's.
+.decl forwards_untagged(func: symbol, callee: symbol)
+
+forwards_untagged(f, g) :-
+  call_arg_forward(f, g, 0, 0),
+  call_instr(f, g, id),
+  !clause_call(id, f, _).
+
+forwards_untagged(f, g) :-
+  call_arg_forward(f, g, 0, 0),
+  call_instr(f, g, id),
+  clause_call(id, f, t),
+  !match(":.*", t).
+
 // literal_first, for the functions site_request is asked of.
 .decl literal_entry(func: symbol, callee: symbol, value: symbol)
 

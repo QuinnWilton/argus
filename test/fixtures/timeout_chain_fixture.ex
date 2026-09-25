@@ -271,3 +271,158 @@ defmodule Argus.Test.Fixtures.TimeoutChain.ChainOuter do
     {:reply, :ok, state}
   end
 end
+
+# Cast handlers that hand their message on to handle_info/2 unchanged, as
+# zotonic's mod_acl_user_groups does (`handle_cast(rebuild, S) ->
+# handle_info(rebuild, S)`): the call forwards the handler's first
+# argument from a clause that took a literal, so handle_info/2 is entered
+# at that literal's clauses only. In each, handle_info's :rebuild clause
+# waits on nothing and its {:sync, _} clause calls ServerC.
+#
+# Quiet: the :rebuild clause forwards to the :rebuild clause.
+defmodule Argus.Test.Fixtures.TimeoutChain.ForwardingCaster do
+  @moduledoc false
+  use GenServer
+
+  alias Argus.Test.Fixtures.TimeoutChain.ServerC
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_cast(:rebuild = msg, state), do: handle_info(msg, state)
+
+  @impl true
+  def handle_info(:rebuild, state), do: {:noreply, Map.put(state, :built, true)}
+
+  def handle_info({:sync, server}, state) do
+    _ = ServerC.lookup(server)
+    {:noreply, state}
+  end
+end
+
+# Reported: the {:sync, _} clause forwards to the clause that waits.
+defmodule Argus.Test.Fixtures.TimeoutChain.ForwardingSyncCaster do
+  @moduledoc false
+  use GenServer
+
+  alias Argus.Test.Fixtures.TimeoutChain.ServerC
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_cast({:sync, _} = msg, state), do: handle_info(msg, state)
+
+  @impl true
+  def handle_info(:rebuild, state), do: {:noreply, Map.put(state, :built, true)}
+
+  def handle_info({:sync, server}, state) do
+    _ = ServerC.lookup(server)
+    {:noreply, state}
+  end
+end
+
+# Reported: a clause that takes any message forwards it to every clause.
+defmodule Argus.Test.Fixtures.TimeoutChain.ForwardingAnyCaster do
+  @moduledoc false
+  use GenServer
+
+  alias Argus.Test.Fixtures.TimeoutChain.ServerC
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_cast(msg, state), do: handle_info(msg, state)
+
+  @impl true
+  def handle_info(:rebuild, state), do: {:noreply, Map.put(state, :built, true)}
+
+  def handle_info({:sync, server}, state) do
+    _ = ServerC.lookup(server)
+    {:noreply, state}
+  end
+end
+
+# Adversarial probes for the forwarded-literal entry (FP hunt round 3):
+# each forwards a literal it took, and still reaches a clause that waits.
+
+# Reported: two handle_info/2 clauses take :rebuild, and the second waits.
+defmodule Argus.Test.Fixtures.TimeoutChain.ForwardingTwoClauseCaster do
+  @moduledoc false
+  use GenServer
+
+  alias Argus.Test.Fixtures.TimeoutChain.ServerC
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_cast(:rebuild = msg, state), do: handle_info(msg, state)
+
+  @impl true
+  def handle_info(:rebuild, %{mode: :idle} = state), do: {:noreply, state}
+
+  def handle_info(:rebuild, state) do
+    _ = ServerC.lookup(state.server)
+    {:noreply, state}
+  end
+end
+
+# Reported: one clause forwards its literal, another whatever it took.
+defmodule Argus.Test.Fixtures.TimeoutChain.ForwardingMixedCaster do
+  @moduledoc false
+  use GenServer
+
+  alias Argus.Test.Fixtures.TimeoutChain.ServerC
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_cast(:rebuild = msg, state), do: handle_info(msg, state)
+  def handle_cast(other, state), do: handle_info(other, state)
+
+  @impl true
+  def handle_info(:rebuild, state), do: {:noreply, Map.put(state, :built, true)}
+
+  def handle_info({:sync, server}, state) do
+    _ = ServerC.lookup(server)
+    {:noreply, state}
+  end
+end
+
+# Reported: the clause that waits takes any atom by a guard, :rebuild too.
+defmodule Argus.Test.Fixtures.TimeoutChain.ForwardingGuardCaster do
+  @moduledoc false
+  use GenServer
+
+  alias Argus.Test.Fixtures.TimeoutChain.ServerC
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_cast(:rebuild = msg, state), do: handle_info(msg, state)
+
+  @impl true
+  def handle_info({:sync, _}, state), do: {:noreply, state}
+
+  def handle_info(msg, state) when is_atom(msg) do
+    _ = ServerC.lookup(state.server)
+    {:noreply, state}
+  end
+end

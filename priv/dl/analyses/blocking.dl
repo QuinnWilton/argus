@@ -288,8 +288,16 @@ cast_call_site(mod, to, id) :-
 
 chain_found(mod, to, "cast", 1, "", 0, 0, id) :- cast_call_site(mod, to, id).
 
+// A wait only a closure or a fun handed on makes has no site of its own.
+// A handler whose every way to the wait enters a callee through a clause
+// its literal argument cannot select waits on nothing: zotonic's
+// mod_acl_user_groups casts itself `rebuild` and hands it on to
+// handle_info(rebuild, s), whose other clauses are the ones that call
+// z_dispatcher. site_request reads the clause each call enters, as the
+// chains do; reaches_sync_dep, which handler_dep reads, does not.
 chain_found(mod, to, "cast", 1, "", 0, 0, "") :-
-  handler_dep(mod, "handle_cast", to, "call", _),
+  handler_dep(mod, "handle_cast", to, "call", h),
+  site_request(h, "", to, _),
   !cast_call_site(mod, to, _).
 
 // ── Timeout-aware sync dependency ──────────────────────────────────

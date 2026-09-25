@@ -187,6 +187,43 @@ defmodule Argus.Analyses.BlockingChainTest do
              ]
     end
 
+    test "a cast handed on to handle_info/2 enters the clauses its tag selects" do
+      skip_without_souffle()
+      alias Argus.Test.Fixtures.TimeoutChain, as: T
+
+      waits =
+        for caster <- [T.ForwardingCaster, T.ForwardingSyncCaster, T.ForwardingAnyCaster] do
+          {:ok, results} = Memo.analyze([caster, T.ServerC], :blocking)
+          {caster, chains(results, "cast")}
+        end
+
+      # :rebuild forwarded from the :rebuild clause reaches only
+      # handle_info's :rebuild clause, which waits on nothing; {:sync, _}
+      # reaches the clause that calls ServerC, and a message a clause took
+      # whatever it was reaches every clause.
+      assert waits == [
+               {T.ForwardingCaster, []},
+               {T.ForwardingSyncCaster, [[inspect(T.ForwardingSyncCaster), inspect(T.ServerC)]]},
+               {T.ForwardingAnyCaster, [[inspect(T.ForwardingAnyCaster), inspect(T.ServerC)]]}
+             ]
+    end
+
+    test "a forwarded literal that selects a waiting clause still waits" do
+      skip_without_souffle()
+      alias Argus.Test.Fixtures.TimeoutChain, as: T
+
+      # Two clauses for the literal, the second waiting; a second clause
+      # forwarding whatever it took; a waiting clause taking any atom.
+      for caster <- [
+            T.ForwardingTwoClauseCaster,
+            T.ForwardingMixedCaster,
+            T.ForwardingGuardCaster
+          ] do
+        {:ok, results} = Memo.analyze([caster, T.ServerC], :blocking)
+        assert chains(results, "cast") == [[inspect(caster), inspect(T.ServerC)]], inspect(caster)
+      end
+    end
+
     test "a GenStage's cast handler blocks as a GenServer's does" do
       skip_without_souffle()
 

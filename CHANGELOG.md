@@ -393,6 +393,26 @@ handler. Over the round-3 programs, 17 of 20 such findings moved from
 a `handle_call/3` head to the call, as far as 53 lines below it
 (zotonic's `z_pivot_rsc`).
 
+**Fixed.** A call that hands on its function's own first argument, from
+a clause that took a literal one, enters only the callee's clauses for
+that literal, as a call passing the literal does (`literal_first`,
+clientlib/calls.dl): `handle_cast(rebuild, S) -> handle_info(rebuild,
+S)` compiles to a call forwarding x0 unchanged, and the literal is the
+tag of the clause the call sits in (`clause_call`). Every call of the
+function to the callee must sit in such a clause. blocking's cast finding
+now asks the same clause-aware walk its chains do (`site_request`):
+zotonic's `mod_acl_user_groups` casts itself `rebuild`, and the calls to
+z_dispatcher, z_sites_manager and the notifier are in the other clauses
+of its handle_info/2 (they stay reported: its :rebuild clause spawns
+them through a wrapper of zotonic's own, `z_proc:spawn_link_md/1`,
+which is not read as a spawn). Fixtures: `TimeoutChain.ForwardingCaster`
+(quiet); reported, the nearest real bugs: `ForwardingSyncCaster` (the
+literal selects the waiting clause), `ForwardingAnyCaster` (a clause
+taking any message forwards to every clause), `ForwardingTwoClauseCaster`
+(two clauses take the literal, the second waits), `ForwardingMixedCaster`
+(a second clause forwards whatever it took) and `ForwardingGuardCaster`
+(the waiting clause takes any atom by a guard).
+
 ### FP hunt, round 2: eight more programs, and the anchors round 1 left
 
 **Fixed.** A blocking cast (`call_chain` kind `cast`) anchors at the
