@@ -181,6 +181,50 @@ defmodule Scry.FingerprintTest do
     end
   end
 
+  describe "argus_code/1 with a cache" do
+    # A stamp trusts no beam written within the last two seconds: a
+    # build of argus that just finished is waited out.
+    defp settled!(ebin) do
+      newest =
+        ebin
+        |> Path.join("*.beam")
+        |> Path.wildcard()
+        |> Enum.map(&File.stat!(&1, time: :posix).mtime)
+        |> Enum.max()
+
+      age = System.os_time(:second) - newest
+      if age <= 2, do: Process.sleep((3 - age) * 1_000)
+      ebin
+    end
+
+    # What a fresh VM — one that has digested nothing — computes.
+    defp fresh_argus_code(opts) do
+      peer = Peer.start!()
+
+      try do
+        Peer.run(peer, fn -> Scry.Fingerprint.argus_code(opts) end)
+      after
+        :peer.stop(peer)
+      end
+    end
+
+    test "is kept beside the dependencies' hashes, and read back from there", %{tmp_dir: dir} do
+      store = Path.join(dir, "store")
+      settled!(Path.join(to_string(:code.lib_dir(:panoptes)), "ebin"))
+      whole = Scry.Fingerprint.argus_code()
+
+      assert fresh_argus_code(cache: store) == whole
+      ebins = Path.join(store, "ebins")
+      assert [kept] = ebins |> File.ls!() |> Enum.filter(&String.starts_with?(&1, "panoptes-"))
+
+      # A fresh VM takes the kept digests as they are, without reading a
+      # beam: planted ones show.
+      File.write!(Path.join(ebins, kept), :erlang.term_to_binary([{"planted", "digest"}]))
+      refute fresh_argus_code(cache: store) == whole
+      assert fresh_argus_code([]) == whole
+    end
+  end
+
   describe "env/1" do
     test "carries the runtime, scry's code and argus's schema, and no argus code" do
       env = Scry.Fingerprint.env()

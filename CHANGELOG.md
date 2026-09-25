@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- argus's own beams are digested for `:argus_code` as the dependencies'
+  are for the environment: kept in the store's `ebins/` under a stamp
+  of their stats (`Argus.Specs.ebin_digests/2`), so a warm run stats
+  them instead of reading and digesting each one
+  (`Scry.Fingerprint.argus_code/1` takes `cache:`).
 - A warm run no longer spends a second hashing every dependency's
   beams for the environment fingerprint. argus keeps each dependency
   ebin's hashes in a store beside the manifest

@@ -65,9 +65,10 @@ defmodule Scry.Runner do
   @doc """
   The store beside the manifest (`Argus.Cache`'s layout) where argus
   keeps what outlives a VM for this project: each dependency ebin's
-  beam hashes, which the environment fingerprint would otherwise read
-  every beam of every dependency for (`Scry.Fingerprint.env/2`). Shared
-  by `mix compile.scry` and `mix scry`, and removed with the manifest.
+  beam hashes and argus's own (`ebins/`), which the fingerprints would
+  otherwise read every beam for (`Scry.Fingerprint.env/2`,
+  `Scry.Fingerprint.argus_code/1`). Shared by `mix compile.scry` and
+  `mix scry`, and removed with the manifest.
   """
   @spec cache_dir() :: String.t()
   def cache_dir, do: Path.join(Mix.Project.manifest_path(), "compile.scry.cache")
@@ -83,7 +84,7 @@ defmodule Scry.Runner do
     `false`); the store's dependency hashes are dropped and kept again.
   - `:cache` — the store argus keeps across runs (`cache_dir/0`), or
     nil (the default) for none: every run then hashes every dependency
-    beam again.
+    and argus beam again.
   """
   @spec run(Scry.Config.t(), keyword()) :: Result.t()
   def run(%Scry.Config{} = config, opts) do
@@ -202,7 +203,8 @@ defmodule Scry.Runner do
     if fingerprint_changed?, do: prune(env_opts[:cache])
 
     extraction_changed? = set(db, :extraction_code, :all, Scry.Fingerprint.extraction_code())
-    argus_changed? = set(db, :argus_code, :all, Scry.Fingerprint.argus_code())
+    store = Keyword.take(env_opts, [:cache])
+    argus_changed? = set(db, :argus_code, :all, Scry.Fingerprint.argus_code(store))
     :ok = Input.set(db, :project_root, :all, File.cwd!())
 
     # Only solves read the rules, and none is demanded without a solver.

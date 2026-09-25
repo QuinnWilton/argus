@@ -26,7 +26,7 @@ defmodule Scry.Frontend do
     extractor edit re-extracts every module, and an argus edit outside
     that code extracts nothing.
   - `:argus_code` input — `:all =>` a digest of every argus beam
-    (`Scry.Fingerprint.argus_code/0`): what the findings are built by,
+    (`Scry.Fingerprint.argus_code/1`): what the findings are built by,
     and what a program calling argus reads specs from.
   - `:rules_digest` input — analysis (or `:stage0`) `=>` a digest of
     the Datalog it runs (`Scry.Fingerprint.rules/1`); a rule edit

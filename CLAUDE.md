@@ -69,7 +69,10 @@ Two layers over one `Roux.Database`:
      extracts nothing.
    - `argus_code` — every argus beam with debug info: read by `findings`
      (rebuilt on any argus edit, cheaply) and by a `module_extraction`
-     whose specs reads reached an argus module.
+     whose specs reads reached an argus module. Its per-beam digests
+     are kept in the store's `ebins/` under the same stamp as the
+     dependencies' (`Argus.Specs.ebin_digests/2`): a warm run stats
+     argus's beams instead of reading them.
    - `rules_digest` per analysis — the `.dl` and its transitive
      includes, plus the souffle version — read by
      `analysis_input_relations`, `stage0_facts`, `points_to_facts` and

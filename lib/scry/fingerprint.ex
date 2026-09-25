@@ -25,7 +25,7 @@ defmodule Scry.Fingerprint do
     edit it does not reach — the findings' prose, the analyses modules,
     the Souffle wrapper, argus's caches, its corpus harness — extracts
     nothing.
-  - `:argus_code` (`argus_code/0`) — every argus beam, debug info
+  - `:argus_code` (`argus_code/1`) — every argus beam, debug info
     included: what the findings are built by (the analyses' prose,
     their identity rules), and where a program that calls argus has its
     specs read from. Rebuilding the findings is cheap, so any argus edit
@@ -60,7 +60,7 @@ defmodule Scry.Fingerprint do
   @doc """
   The environment fingerprint: runtime versions, a digest of scry's
   code, argus's schema version, and a digest of the applications on the
-  code path — except argus's own (`argus_code/0` keys a read of its
+  code path — except argus's own (`argus_code/1` keys a read of its
   specs) and `watched`, the applications whose beams the scan reads
   itself (the project, and its dependencies with `include_deps`). Their
   beams move with every edit, and the graph already tracks each one: an
@@ -109,14 +109,17 @@ defmodule Scry.Fingerprint do
   end
 
   defp ebins_cache(opts) do
-    case Argus.Cache.store(cache: Keyword.get(opts, :cache)) do
-      nil ->
-        []
+    with [cache: ebins] <- ebins_store(opts) do
+      if Keyword.get(opts, :refresh, false), do: File.rm_rf(ebins)
+      [cache: ebins]
+    end
+  end
 
-      store ->
-        ebins = Argus.Cache.dir(store, :ebins)
-        if Keyword.get(opts, :refresh, false), do: File.rm_rf(ebins)
-        [cache: ebins]
+  # `[cache: dir]`, the store's `ebins/`, or none.
+  defp ebins_store(opts) do
+    case Argus.Cache.store(cache: Keyword.get(opts, :cache)) do
+      nil -> []
+      store -> [cache: Argus.Cache.dir(store, :ebins)]
     end
   end
 
@@ -212,9 +215,30 @@ defmodule Scry.Fingerprint do
   @doc """
   A digest of every argus beam, debug info (where specs are read from)
   included: moves with any argus edit.
+
+  Each beam is digested as `Argus.Specs.ebin_digests/2` keeps it: under
+  a stamp of the ebin's beams' stats, in the VM and — with `:cache` —
+  in the store's `ebins/`, beside the dependencies' hashes the
+  environment digest keeps there (`env/2`, whose `refresh:` drops
+  them), so a fresh VM stats argus's beams instead of reading each one.
+  A beam written within the last two seconds is read every time.
+
+  ## Options
+
+    * `:cache` — the store (`Argus.Cache`'s layout), or nil.
   """
-  @spec argus_code() :: String.t()
-  def argus_code, do: app_code_digest(:panoptes, debug_info: true)
+  @spec argus_code(keyword()) :: String.t()
+  def argus_code(opts \\ []) do
+    case :code.lib_dir(:panoptes) do
+      {:error, _} ->
+        "unknown"
+
+      dir ->
+        ebin = Path.join(to_string(dir), "ebin")
+        %{^ebin => beams} = Argus.Specs.ebin_digests([ebin], ebins_store(opts))
+        digest(beams)
+    end
+  end
 
   @doc """
   The rules digest of each of `analyses`, and of `:stage0` and
