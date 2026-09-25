@@ -497,6 +497,104 @@
     pre: "46ce4e1048437575ce3c40ebb3eb589a4b9e4f27",
     finding: {:races, "ETS row acted on after another process may have removed it"}
   },
+  # ── Round-1 mining: fixes of classes argus already reports ───────────
+  # Each is a fix a project made for a bug argus's rule describes, found
+  # by the 2026-09-25 mining and verified on both sides.
+  #
+  # broadway_kafka: the producer waited for the coordinator's :DOWN in a
+  # blocking receive inside handle_info, and deadlocked; the fix drops the
+  # receive.
+  %{
+    repo: "dashbitco/broadway_kafka",
+    issue: "broadway_kafka@e380290",
+    module: "BroadwayKafka.Producer",
+    pre: "6ef6f41fab0fa5bcf8b322ac9129042c8ce45ceb",
+    fix: "e380290c47077fbdee96d7c49c7b25730b972fe7",
+    finding: {:blocking, "Blocking receive inside a GenStage callback"}
+  },
+  # supavisor: the client handler threw away the ref of its manager
+  # monitor, so any :DOWN read as "the manager went down".
+  %{
+    repo: "supabase/supavisor",
+    issue: "supavisor@e80c9a2",
+    module: "Supavisor.ClientHandler",
+    pre: "0fe14108d26bfeb13e403a24885179cd0abe6f4a",
+    fix: "e80c9a2cf7c56bb3fdfebb850992d913311a46c1",
+    finding: {:mailbox, "Supavisor.ClientHandler drops the ref of a monitor it establishes"}
+  },
+  # oban#532, the bug coupling's rest_for_one rule was written from: the
+  # queue producer starts jobs under the Task.Supervisor started before
+  # it, and a producer restart left the old jobs running; the fix is
+  # :one_for_all.
+  %{
+    repo: "oban-bg/oban",
+    issue: "oban#532",
+    module: "Oban.Queue.Producer",
+    pre: "5c64333de16d4707be8a04628401610912c04b07",
+    fix: "f5afde4bb41784e09069cdfc97b1307f53a6acc1",
+    finding: {:coupling, "rest_for_one restarts the owner but not the processes it started"}
+  },
+  # livebook: three Task.Supervisor.start_child results discarded; the
+  # fix matches them.
+  %{
+    repo: "livebook-dev/livebook",
+    issue: "livebook@56ecd47",
+    module: "Livebook.Hubs",
+    pre: "c70c4d9ff5ba63aa6136eebe22df578d8704398f",
+    fix: "56ecd4775f34f876fec940f07570ad19d6520404",
+    finding: {:failure, "start_child result not checked"}
+  },
+  # finch: an async HTTP/1 request ran in a bare spawn that outlived its
+  # caller; the fix links it.
+  %{
+    repo: "sneako/finch",
+    issue: "finch@9ae43ef",
+    module: "Finch.HTTP1.Pool",
+    pre: "8bae1ce64132b1866bdab33b8dae055a0e444de8",
+    fix: "9ae43ef7f71aef81583e2ff1ef74512613ce788d",
+    finding: {:failure, "Unlinked process spawned"}
+  },
+  # postgrex: SimpleConnection armed a {:timeout, ms, _} action and took
+  # it as (:info, :timeout, ...), so the idle ping never ran.
+  %{
+    repo: "elixir-ecto/postgrex",
+    issue: "postgrex@83bac66",
+    module: "Postgrex.SimpleConnection",
+    pre: "0b73cfa852d9178762ec81af86f783548386ce9e",
+    fix: "83bac660991e0d7e138e96dbb5ffff3fc22a9065",
+    finding: {:mailbox, "Timeout armed but never handled"}
+  },
+  # phoenix_live_view: UploadChannel trapped exits with no {:EXIT, ...}
+  # clause. (LiveViewTest's UploadClient keeps the shape at the fix.)
+  %{
+    repo: "phoenixframework/phoenix_live_view",
+    issue: "phoenix_live_view@2b4d182",
+    module: "Phoenix.LiveView.UploadChannel",
+    pre: "de8963239539d2f9520562c360d2afa2a10620fc",
+    fix: "2b4d182a7457d960da20fd1566e20388bd089beb",
+    finding: {:shutdown, "trap_exit without an {:EXIT, ...} clause"}
+  },
+  # bandit: the HTTP/1 handler trapped exits with no {:EXIT, ...} clause.
+  # (InitialHandler keeps the shape at the fix.)
+  %{
+    repo: "mtrudel/bandit",
+    issue: "bandit@094d3c5",
+    module: "Bandit.HTTP1.Handler",
+    pre: "f72e4e8d47558a6cd6d5314579d5c0dc77d849fa",
+    fix: "094d3c58f5bc3ce2ab90442be2ba7348d918e6b3",
+    finding: {:shutdown, "trap_exit without an {:EXIT, ...} clause"}
+  },
+  # anubis-mcp#209: Session replied to its pending callers in terminate/2
+  # and never trapped exits, so a DynamicSupervisor.terminate_child
+  # skipped it; the fix traps exits.
+  %{
+    repo: "zoedsoupe/anubis-mcp",
+    issue: "anubis-mcp#209",
+    module: "Anubis.Server.Session",
+    pre: "ca0b9631554cb2657d930c0f10a50afddf17fe95",
+    fix: "a224c00f2e5df92cd6b19a561f74ef102c54739d",
+    finding: {:shutdown, "Anubis.Server.Session cleans up in terminate/2 but never traps exits"}
+  },
   # ── blocking: a socket call with no timeout inside a callback ────────
   # kafka_ex#556: the client's reconnect ran :gen_tcp.connect/3, whose
   # timeout is the operating system's, from its handle_call/handle_info;
