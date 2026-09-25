@@ -376,8 +376,9 @@ defmodule Argus.Analyses.Mailbox do
 
         "default" ->
           {"The close of the server's socket reaches only GenServer's default handle_info/2",
-           "the module has no handle_info/2 but the one GenServer defines, which logs it " <>
-             "as an error and drops it, so the server goes on holding a socket that is gone"}
+           "the module wrote none of its handle_info/2: the one a macro wrote for it " <>
+             "(GenServer's default, which logs it as an error) drops it, so the server " <>
+             "goes on holding a socket that is gone"}
 
         "state_crash" ->
           {"No clause for the close of a gen_statem's socket",
@@ -420,8 +421,8 @@ defmodule Argus.Analyses.Mailbox do
 
         "default" ->
           {"A message is sent to a server with no handle_info/2 of its own", :warning,
-           "the module has no handle_info/2 but the one GenServer defines, which logs " <>
-             "the message as an error and drops it"}
+           "the module wrote none of its handle_info/2: the one a macro wrote for it " <>
+             "(GenServer's default, which logs the message as an error) drops it"}
 
         "state_crash" ->
           {"No clause for a message a gen_statem is sent", :warning,

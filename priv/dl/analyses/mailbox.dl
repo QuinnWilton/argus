@@ -18,7 +18,6 @@
 .include "../clientlib/replies.dl"
 .include "../clientlib/test_code.dl"
 .include "../clientlib/vocabulary.dl"
-.include "../clientlib/generated.dl"
 .include "../clientlib/timer_flush.dl"
 
 // ══ The outputs ═════════════════════════════════════════════════════
@@ -86,6 +85,7 @@ receives_runtime_messages(mod) :-
 partial_handler(mod, h, "runtime", "catchall", "") :-
   gen_server_like(mod),
   partial_handle_info(mod, h),
+  !library_written(h),
   receives_runtime_messages(mod),
   !trap_exit_without_exit_clause(mod, _),
   !info_crash(mod).
@@ -231,7 +231,7 @@ late_message_source(mod) :-
 // that library's protocol for its own messages, and the finding would
 // point at the `use` line, where the module has nothing to add a clause
 // to. One the program's own macro wrote is the program's: the clause
-// belongs in that macro.
+// belongs in that macro. Every partial_handler source asks it.
 
 partial_handler(mod, h, "late_message", "catchall", "") :-
   gen_server_like(mod),
@@ -801,12 +801,14 @@ partial_handler(mod, h, "task_nolink", "reply", s) :-
   process_entry(mod, c),
   nolink_reach.reaches(c, s),
   partial_handle_info(mod, h),
+  !library_written(h),
   !callback_ref_head(h, "handle_info").
 
 partial_handler(mod, h, "task_nolink", "down", s) :-
   process_entry(mod, c),
   nolink_reach.reaches(c, s),
   partial_handle_info(mod, h),
+  !library_written(h),
   !callback_tag(h, "handle_info", ":DOWN").
 
 // ══ Monitors nobody waits for ═══════════════════════════════════════
@@ -1477,17 +1479,21 @@ info_fallback(m, msg, h, "crash") :-
   info_message(m, _, _, msg, _),
   partial_handle_info(m, h).
 
+// A catch-all that drops the message is the module's own, or code no
+// clause of which the module wrote (macro_written, clientlib/generated.dl:
+// GenServer's default logs and drops): a handler whose first clause a
+// `use` injected ahead of the module's own clauses is the module's.
 info_fallback(m, msg, h, "catch_all") :-
   info_message(m, _, _, msg, _),
   function_def(h, m, "handle_info", 2, _),
   callback_drops(h, "handle_info"),
-  !macro_generated(h, _).
+  !macro_written(h).
 
 info_fallback(m, msg, h, "default") :-
   info_message(m, _, _, msg, _),
   function_def(h, m, "handle_info", 2, _),
   callback_drops(h, "handle_info"),
-  macro_generated(h, _).
+  macro_written(h).
 
 // A message some clause could take: its tag is compared, or a clause
 // tests the message by shape alone and a tuple of any tag, or an atom,

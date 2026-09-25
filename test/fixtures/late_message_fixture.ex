@@ -233,4 +233,62 @@ defmodule Argus.Test.Fixtures.LateMessage do
 
     defp run(fun), do: fun.()
   end
+
+  defmodule MonitorMacro do
+    @moduledoc """
+    A library's `use` that writes a server's init/1, which monitors, and
+    its partial handle_info/2: the library's protocol for its own
+    messages.
+    """
+
+    defmacro __using__(_opts) do
+      quote location: :keep, generated: true do
+        use GenServer
+
+        def init(state) do
+          Process.monitor(state.peer)
+          {:ok, state}
+        end
+
+        def handle_info({:DOWN, _ref, :process, _pid, _reason}, state),
+          do: {:stop, :normal, state}
+      end
+    end
+  end
+
+  defmodule MonitorsInMacro do
+    @moduledoc "Its monitor and its partial handle_info/2 are the macro's alone."
+    use Argus.Test.Fixtures.LateMessage.MonitorMacro
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+  end
+
+  defmodule NolinkMacro do
+    @moduledoc """
+    A library's `use` that writes a handle_call/3 starting an unlinked
+    task, and a partial handle_info/2 that takes only its reply.
+    """
+
+    defmacro __using__(_opts) do
+      quote location: :keep, generated: true do
+        use GenServer
+
+        def init(state), do: {:ok, state}
+
+        def handle_call(:run, _from, state) do
+          Task.Supervisor.async_nolink(state.tasks, fn -> :done end)
+          {:reply, :ok, state}
+        end
+
+        def handle_info({ref, :done}, state) when is_reference(ref), do: {:noreply, state}
+      end
+    end
+  end
+
+  defmodule NolinkInMacro do
+    @moduledoc "Its task and its partial handle_info/2 are the macro's alone."
+    use Argus.Test.Fixtures.LateMessage.NolinkMacro
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+  end
 end

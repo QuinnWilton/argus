@@ -496,4 +496,25 @@ defmodule Argus.Test.Fixtures.UnhandledInfo do
     def busy(:info, :poll, data), do: {:keep_state, data}
     def busy(:cast, :stop, data), do: {:next_state, :idle, data}
   end
+
+  defmodule MixedCatchAll do
+    @moduledoc """
+    A `use` puts a clause ahead of the module's own handle_info/2, whose
+    catch-all drops what no clause takes: the catch-all is the module's,
+    not GenServer's default.
+    """
+    use GenServer
+    use Argus.Test.Fixtures.LateMessage.MetricsMacro
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(opts) do
+      Process.send_after(self(), :stray, 1_000)
+      {:ok, opts}
+    end
+
+    def handle_info(:refresh, state), do: {:noreply, state}
+    def handle_info(_other, state), do: {:noreply, state}
+  end
 end

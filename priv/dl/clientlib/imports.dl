@@ -110,6 +110,8 @@ call_instr(f, g, id) :-
 .include "sinks.dl"
 // Ways in from outside the program: api_export, library_face, open_entry.
 .include "ways_in.dl"
+// Code the program did not write: library_written.
+.include "generated.dl"
 
 // How many closures a function creates — the shape a transaction body or
 // a pure higher-order function is recognised by.

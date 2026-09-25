@@ -79,6 +79,23 @@ defmodule Argus.Analyses.MailboxInfoTest do
                ["Argus.Test.Fixtures.LateMessage.Warmer"]
     end
 
+    test "a library's handler is its own under every source, the program's own macro's is not" do
+      skip_without_souffle()
+
+      # The macros are left out: they are a library's.
+      results = analyze([L.MonitorsInMacro, L.NolinkInMacro])
+      assert partial(results, "runtime") == []
+      assert partial(results, "task_nolink") == []
+
+      results = analyze([L.MonitorsInMacro, L.MonitorMacro, L.NolinkInMacro, L.NolinkMacro])
+
+      assert Enum.map(partial(results, "runtime"), fn [mod, _f] -> mod end) ==
+               ["Argus.Test.Fixtures.LateMessage.MonitorsInMacro"]
+
+      assert partial(results, "task_nolink") |> Enum.map(&hd/1) |> Enum.uniq() ==
+               ["Argus.Test.Fixtures.LateMessage.NolinkInMacro"]
+    end
+
     test "a start_timer's 3-tuple is not the idle :timeout; a captured or mixed fun is unseen" do
       skip_without_souffle()
 

@@ -28,7 +28,8 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
     U.Unjudged,
     U.TerminateWaits,
     U.TaskReceives,
-    U.TickArity
+    U.TickArity,
+    U.MixedCatchAll
   ]
 
   setup_all do
@@ -66,6 +67,10 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
     assert {"Ticker:init/1", ":tick", "send", "Ticker", "default"} in rows
   end
 
+  test "a catch-all after a clause a `use` put first is the module's own", %{rows: rows} do
+    assert {"MixedCatchAll:init/1", ":stray", "timer", "MixedCatchAll", "catch_all"} in rows
+  end
+
   test "a send points-to follows to another module's server", %{rows: rows} do
     assert {"Pinger:run/0", ":ping", "send", "PingServer", "crash"} in rows
   end
@@ -90,7 +95,7 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
   end
 
   test "exactly those, and every quiet neighbour quiet", %{rows: rows} do
-    assert length(rows) == 13, inspect(rows, pretty: true)
+    assert length(rows) == 14, inspect(rows, pretty: true)
 
     quiet =
       ~w(Handled Delegates OpenClause WaitsForDown Flushes Client PollerTakes WarmUp Unjudged

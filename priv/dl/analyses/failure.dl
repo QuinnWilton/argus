@@ -12,7 +12,6 @@
 .include "../clientlib/signals.dl"
 .include "../clientlib/specs.dl"
 .include "../clientlib/vocabulary.dl"
-.include "../clientlib/generated.dl"
 
 // ══ The three outputs ═══════════════════════════════════════════════
 //
@@ -413,10 +412,15 @@ nil_use_caught(id, f) :- try_covers(t, f, id, "try"), catch_tag(t, f, "error", "
 // use, and the BEAM keeps nothing that says a macro wrote it; keying the
 // belief on the target bounds what such a count can decide.
 
-// A call site in a function another module's macro wrote — `use
-// Ecto.Repo` defines `stop/1` in every repo, on the `use` line — or in a
-// closure inside one is the library's choice, not the program's: it
-// neither holds a belief nor breaks one. `guard` is "try" when a try
+// A call site in a function another module's macro wrote, every clause
+// of it (macro_written, clientlib/generated.dl) — `use Ecto.Repo` defines
+// `stop/1` in every repo, on the `use` line — or in a closure inside one
+// is the macro's choice, not the module's: it neither holds a belief nor
+// breaks one. The program's own macro is left out too, not only a
+// library's (library_written): its expansion repeats one line of the
+// macro in every module that uses it, and a belief would count that line
+// once per use. A function whose first clause a `use` injected ahead of
+// the module's own clauses is the module's. `guard` is "try" when a try
 // takes what the call raises (guarded_site), else "bare".
 .decl program_site(site: symbol, func: symbol, callee: symbol, fate: symbol, guard: symbol, target: symbol)
 
@@ -433,7 +437,7 @@ program_site(site, f, callee, fate, "bare", t) :-
 program_call(site, f, callee, fate, scope) :-
   call_result(site, f, callee, fate, _, _),
   enclosing_function(f, owner),
-  !macro_generated(owner, _),
+  !macro_written(owner),
   !cannot_fail(site),
   site_scope(site, scope).
 

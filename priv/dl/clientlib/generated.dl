@@ -1,17 +1,31 @@
 // Code the program did not write.
 //
-// A function every clause of which another module's macro wrote (an
-// Elixir `use`), or that an OTP header or a parser generator defined
-// (Erlang: yecc's runtime from yeccpre.hrl, an installed application's
-// include), is `macro_written` (Argus.Extractors.Generated). It is a
-// library's when its writer is none of the program's modules: its call
-// sites and handlers are the library's protocol, and a finding would
-// point at a `use` line or a generated parser, where the program has
-// nothing to change. A `use` of the program's own macro is the program's
-// code, and is judged as such.
+// Two facts say a macro wrote a function, and they make two claims
+// (Argus.Extractors.Generated):
 //
-// Requires imports.dl and an analysis that runs the Generated extractor.
-
+// - macro_written(f): every clause of f was written by another module's
+//   macro (an Elixir `use`), or marked `generated: true`, or defined by
+//   an OTP header or a parser generator (Erlang: yecc's runtime from
+//   yeccpre.hrl, an installed application's include): the module wrote
+//   none of it. The word for "the program did not write this function".
+// - macro_generated(f, by): the definition's metadata names `by`'s
+//   macro. The metadata is the FIRST clause's, so a function whose first
+//   clause a `use` injected ahead of the module's own clauses is named
+//   too (Sequin's ProcessMetrics puts a `:metrics` clause ahead of the
+//   module's handle_info/2 clauses). Read it for `by`, never alone as
+//   "generated": a rule that did judged the module's own clauses as the
+//   macro's.
+//
+// library_written(f): every clause of f a module outside the program
+// wrote (`use Cachex.Warmer`'s handle_info/2, a generated parser's yecc
+// runtime). Its call sites and handlers are the library's protocol, and
+// a finding on it points at a `use` line or a generated parser, where
+// the program has nothing to change. What the program's own macro writes
+// is the program's — the fix belongs in that macro — and a library
+// analyzed with the program is the program.
+//
+// Included by imports.dl; an analysis that reads it runs the Generated
+// extractor.
 .decl library_written(func: symbol)
 
 library_written(f) :-
@@ -19,6 +33,7 @@ library_written(f) :-
   macro_generated(f, by),
   !program_module(by).
 
+// A module the analyzed beams define.
 .decl program_module(mod: symbol)
 
 program_module(m) :- function_def(_, m, _, _, _).

@@ -432,6 +432,23 @@ its least owner. ets.dl says why failure's `table_owner` (made on every
 path through init/1, never dropped: the quiet direction) and races'
 `held_row` (a row whose key only its minter names) are other words.
 
+**Changed.** Code the program did not write is one word for every
+analysis (`clientlib/generated.dl`, now included by imports.dl where
+mailbox and failure included it): `library_written` (every clause a
+module outside the program wrote), over `macro_written` (every clause a
+macro wrote), where `macro_generated` names the macro of the
+definition's first clause only, and the file says which claim is
+which. mailbox's partial handle_info/2
+steps aside for a library's handler under every source, not only a late
+message's: the runtime's messages and an unlinked task's
+(`LateMessage.MonitorsInMacro`, `NolinkInMacro`; reported when the
+program's own macro wrote them). unhandled_info's "default" fallback
+and failure's program calls read `macro_written`: a handle_info/2 whose
+first clause a `use` put ahead of the module's own is the module's, and
+a message its catch-all drops is "catch_all", not GenServer's default
+(`UnhandledInfo.MixedCatchAll`); failure judges the module's own
+clauses of such a function.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,
