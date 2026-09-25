@@ -1,6 +1,7 @@
-// Bounded points-to: what the stage answers when its exact pass cannot
-// finish in time (Argus.Analysis.Extraction runs points_to_bounded.dl
-// then, which is points_to.dl with stage_mode("bounded")).
+// Bounded points-to: what the stage answers when its exact pass outgrows
+// the stage's budget (points_to.dl; Argus.Analysis.Extraction runs
+// points_to_bounded.dl then, which is points_to.dl with
+// stage_mode("bounded")).
 //
 // Parameters are context-insensitive (processes.dl), and on some large
 // programs that merges most of the heap into one value: helpers that
@@ -12,7 +13,15 @@
 // their number: over Ash's 1,327 modules, 13M field rows and over ten
 // minutes. What the analyses read of it is a few dozen targets.
 //
-// So when the stage runs bounded, a leaf the coarse pass below finds
+// The exact fixpoint's size is what tells such a program apart, and not
+// the coarse pass: its spread measures how far a field's shape travels,
+// not how many terms merge. Over kafka_ex it finds four leaves each held
+// by a third of the sources, over rabbitmq twelve by up to one in five,
+// as over Ash, and their exact fixpoints hold 1,332 and 19,677 rows. So
+// the coarse pass does not decide whether the stage runs bounded, only,
+// once it does, which leaves it resolves.
+//
+// When the stage runs bounded, a leaf the coarse pass below finds
 // held by more than one source in a hundred (and by more than 1000) is
 // pervasive: the exact pass leaves it out (processes.dl's leaf rules),
 // and its targets, names and the stops and tables that resolve to it are

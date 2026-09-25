@@ -1,8 +1,9 @@
 defmodule Argus.Clientlib.PervasiveTest do
   @moduledoc """
   The bounded points-to stage (`priv/dl/points_to_bounded.dl` over
-  `clientlib/pervasive.dl`): what the stage runs when the exact one does
-  not finish in time. Over the PidFlow fixtures no leaf is pervasive, so
+  `clientlib/pervasive.dl`): what the stage runs when the exact one
+  outgrows its budget (`Argus.Analysis.PointsToBudgetTest` has when it
+  does). Over the PidFlow fixtures no leaf is pervasive, so
   it must write what the exact stage writes; its coarse pass must reach
   every target the exact pass does, since a pervasive leaf's targets are
   that pass's; and a leaf made pervasive must keep its targets while
@@ -94,8 +95,10 @@ defmodule Argus.Clientlib.PervasiveTest do
   test "no leaf of a small program is pervasive, and the bounded stage writes what the exact one does",
        ctx do
     assert ctx.bounded["pervasive"] == []
+    assert ctx.exact["points_to_mode"] == [["exact"]]
+    assert ctx.bounded["points_to_mode"] == [["bounded"]]
 
-    for relation <- @staged do
+    for relation <- @staged, relation != "points_to_mode" do
       assert ctx.bounded[relation] == ctx.exact[relation], "#{relation} differs"
     end
   end
@@ -125,20 +128,6 @@ defmodule Argus.Clientlib.PervasiveTest do
       # ...and a pervasive one's rows are a superset of its exact ones.
       assert exact_pervasive != []
       assert MapSet.subset?(MapSet.new(exact_pervasive), MapSet.new(forced_pervasive))
-    end
-  end
-
-  @tag :capture_log
-  test "derive_points_to runs the bounded stage when the exact one runs out of time", ctx do
-    dir = Path.join(ctx.dir, "fallback")
-    File.cp_r!(ctx.facts_dir, dir)
-    for relation <- @staged, do: File.rm(Path.join(dir, relation <> ".facts"))
-
-    assert :ok = Analysis.derive_points_to(dir, points_to_timeout: 0)
-    assert File.exists?(Path.join(dir, "pervasive.csv"))
-
-    for relation <- @staged do
-      assert read_staged(dir)[relation] == ctx.exact[relation], "#{relation} differs"
     end
   end
 end

@@ -90,11 +90,15 @@ those frameworks need.
 - Points-to follows only terms that hold a process or a table, and a
   callee that hands its parameter back returns each call's own argument
   (`passes`): context-insensitive merging through such helpers is what
-  made the stage quadratic on a large library (Ash). When the exact
-  stage still does not finish within `:points_to_timeout`, it runs
+  made the stage quadratic on a large library (Ash). A program whose
+  exact fixpoint still outgrows the stage's budget (points_to.dl's
+  `.limitsize`: 500,000 rows of `source_pts` and of `field_pts`) runs it
   bounded (`points_to_bounded.dl`: the leaves a coarse pass finds
   pervasive are resolved by that pass, a sound superset; the rest
-  exactly). A new relation of the exact pass must keep a bounded
+  exactly). Never decide the mode by time: a result must be a function
+  of the facts, or a store, CI and scry's incremental ≡ batch parity
+  disagree about the same input. A budget is: Souffle stops at it
+  however fast it runs. A new relation of the exact pass must keep a bounded
   counterpart in `clientlib/pervasive.dl`, or a pervasive leaf loses its
   rows: `test/clientlib/pervasive_test.exs` checks the coarse pass reaches
   every exact target.

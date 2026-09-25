@@ -49,7 +49,12 @@ defmodule Argus.Findings do
   - A single analysis erroring (rules bug, Souffle timeout) → a
     `degraded` entry naming the analysis and why, while every other
     analysis still runs and reports. Stage 0 failing grounds every
-    analysis, so each gets that entry.
+    analysis, so each gets that entry; the points-to stage failing
+    (past `:souffle_timeout`, or past its row budget even bounded) grounds
+    the analyses that read it. A points-to stage that runs bounded is no
+    failure: which stage runs is a function of the facts, not of time
+    (`Argus.Analysis.Extraction.derive_points_to/2`), and a warning says
+    so.
   - A finding builder raising on a row it did not expect → that row is
     reported with its raw columns (a generic finding, or a generic frame
     for an evidence row, whose help says so) and the analysis gets a
@@ -234,9 +239,6 @@ defmodule Argus.Findings do
   - `:concurrency` — parallel Souffle solves (default: the scheduler
     count, capped at 4; each solve holds its own copy of the call graph's
     closure). Extraction always runs at scheduler width.
-  - `:points_to_timeout` — milliseconds the exact points-to stage gets
-    before the stage runs bounded (default 15 s; `:infinity` keeps it
-    exact): see `Argus.Analysis.Extraction.derive_points_to/2`.
   - All other `Argus.Analysis.run/3` options (`:extractors`,
     `:souffle_bin`, `:souffle_timeout`, ...) pass through.
 

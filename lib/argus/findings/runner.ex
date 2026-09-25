@@ -287,6 +287,22 @@ defmodule Argus.Findings.Runner do
     "The #{name} analysis failed: Souffle exited with status #{exit_code}."
   end
 
+  defp degradation_detail(name, {:points_to, :souffle_timeout}) do
+    "The #{name} analysis did not run: the process points-to it reads " <>
+      "(priv/dl/points_to.dl) did not finish within :souffle_timeout. " <>
+      "Raise :souffle_timeout to include it."
+  end
+
+  defp degradation_detail(name, {:points_to, {:over_budget, over}}) do
+    reached =
+      Enum.map_join(over, ", ", fn {relation, rows, budget} ->
+        "#{relation} reached #{rows} rows, over #{budget}"
+      end)
+
+    "The #{name} analysis did not run: the process points-to it reads " <>
+      "(priv/dl/points_to.dl) outgrew its budget even bounded (#{reached})."
+  end
+
   defp degradation_detail(name, {:points_to, reason}) do
     "The #{name} analysis did not run: the process points-to it reads " <>
       "(priv/dl/points_to.dl) could not be derived: #{inspect(reason)}."

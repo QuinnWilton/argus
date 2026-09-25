@@ -17,12 +17,13 @@
 //
 // Outputs are written as `.facts`, the format the analyses read.
 //
-// This is the stage as it runs by default: every leaf resolved exactly.
-// When that cannot finish in time, the stage runs points_to_bounded.dl
-// instead (Argus.Analysis.Extraction.derive_points_to/2): this program
-// with stage_mode("bounded"), which resolves the leaves a coarse pass
-// finds pervasive with that pass (clientlib/pervasive.dl) and every
-// other one as here. Both write the same relations.
+// This is the stage as it runs by default: every leaf resolved exactly,
+// within a budget (below). A program whose exact fixpoint outgrows it
+// runs points_to_bounded.dl instead (Argus.Analysis.Extraction.
+// derive_points_to/2): this program with stage_mode("bounded"), which
+// resolves the leaves a coarse pass finds pervasive with that pass
+// (clientlib/pervasive.dl) and every other one as here. Both write the
+// same relations, and points_to_mode says which one wrote them.
 
 .include "clientlib/imports.dl"
 .include "clientlib/behaviours.dl"
@@ -33,6 +34,60 @@
 .include "clientlib/pervasive.dl"
 
 stage_mode("exact").
+
+// ── The budget ──────────────────────────────────────────────────────
+//
+// What a source may point to (source_pts) and what a term's field may
+// hold (field_pts) are the fixpoint's bulk, and each is held to 500,000
+// rows. Over twenty evaluation programs the largest are 45k and 30k
+// rows (the Phoenix stack's 751-module deps; a 1,239-module umbrella
+// takes 5k); where the program's helpers merge most of its terms into
+// one value, the two grow with the square of those terms instead, and
+// past the budget within seconds: Ash's 1,327 modules reach 13 million
+// field rows after thirteen minutes, all of OTP and a 7,104-module
+// deps tree run past ten.
+//
+// Souffle stops a fixpoint once a relation `.limitsize` names holds that
+// many rows. The rows only grow, so a stop means the whole fixpoint
+// holds at least that many, and a fixpoint that ends below the budget is
+// complete: whether a program outgrows it is a function of the program
+// and its facts, not of how fast the solver ran. points_to_overflow
+// names the relations that reached it; their outputs are then partial,
+// and the caller runs the bounded stage in their place. The bounded
+// stage is held to the same budget (it includes this file), and a
+// program that outgrows even that has no points-to: the analyses that
+// read it degrade.
+.limitsize source_pts(n=500000)
+.limitsize field_pts(n=500000)
+
+.decl points_to_budget(rows: number)
+
+points_to_budget(500000).
+
+.decl points_to_overflow(relation: symbol, rows: number, budget: number)
+
+points_to_overflow("source_pts", n, b) :-
+  points_to_budget(b),
+  n = count : { source_pts(_, _, _, _) },
+  n >= b.
+
+points_to_overflow("field_pts", n, b) :-
+  points_to_budget(b),
+  n = count : { field_pts(_, _, _) },
+  n >= b.
+
+.output points_to_overflow(filename="points_to_overflow.csv")
+
+// Which stage wrote the relations below, staged beside them: a result
+// read back from a store says how it was made. The leaves the bounded
+// stage resolved coarsely go beside it too (none in this stage).
+.decl points_to_mode(mode: symbol)
+
+points_to_mode("exact") :- !stage_mode("bounded").
+points_to_mode("bounded") :- stage_mode("bounded").
+
+.output points_to_mode(filename="points_to_mode.facts")
+.output pervasive(filename="pervasive.csv")
 
 .output server_process(filename="server_process.facts")
 .output instance(filename="instance.facts")

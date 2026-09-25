@@ -15,8 +15,8 @@ defmodule Argus.Analysis.Extraction do
     reads it, derives which process a pid can be
     (`points_to_relations/0`) once: the fixpoint is most of a solve
     over a large program, and it is the same for every analysis that
-    asks. When it does not finish within `:points_to_timeout`, the stage
-    runs bounded instead (`priv/dl/points_to_bounded.dl`, see
+    asks. A program whose exact fixpoint outgrows the stage's budget
+    runs it bounded instead (`priv/dl/points_to_bounded.dl`, see
     `derive_points_to/2`).
   - **Priors** (`Argus.Priors`), only when `:priors` asks for them, fill
     the `prior_*` relations the heuristic rules read.
@@ -46,18 +46,16 @@ defmodule Argus.Analysis.Extraction do
   # The relations stage 0 writes; a directory holding all four is staged.
   @stage0_relations ~w(call_edge call_site unconditional_call_edge call_tag fun_handed_to)
 
-  # How long the exact points-to stage gets, in milliseconds, before the
-  # stage runs bounded instead. The exact stage takes a second or two on
-  # the largest programs it was measured on (a 1,239-module umbrella, a
-  # 751-module deps tree); the programs it does not finish on take ten
-  # minutes and more (Ash, 1,327 modules: 13 minutes), where the bounded
-  # stage takes ten seconds.
-  @points_to_timeout 15_000
-
-  # The relations the points-to stage writes (points_to.dl's outputs).
+  # The relations the points-to stage writes (points_to.dl's outputs):
+  # what the analyses read, and which stage wrote them.
   @points_to_relations ~w(server_process instance supervised_process private_process process
                           named_pid process_call process_signal call_site_target self_call
-                          source_process source_table)
+                          source_process source_table points_to_mode)
+
+  # What the points-to stage reports beside them, as `.csv` outputs read
+  # into its results: which relations outgrew its budget, and which
+  # leaves a bounded stage resolved coarsely.
+  @points_to_reports ~w(points_to_overflow pervasive)
 
   @doc """
   Extracts facts from the given modules once, for one or more analyses.
@@ -174,16 +172,23 @@ defmodule Argus.Analysis.Extraction do
 
   @doc false
   # The points-to stage solved into cached facts, bounded when the exact
-  # stage does not finish in time (`derive_points_to/2`): the facts with
+  # fixpoint outgrows its budget (`derive_points_to/2`): the facts with
   # its outputs, or `{:error, {:points_to, reason}}`, the facts still the
   # caller's (the analyses that do not read the stage can run on them).
+  # Each solve is kept, the exact one that outgrew the budget too: a
+  # warm run reads both back and runs neither.
   @spec solve_points_to(Facts.t(), keyword()) :: {:ok, Facts.t()} | {:error, term()}
   def solve_points_to(facts, opts) do
-    solve = fn rules_path, opts -> Facts.solve(facts, rules_path, opts) end
+    solve = fn rules_path, facts -> Facts.solve(facts, rules_path, opts) end
 
-    case bounded_on_timeout(solve, opts) do
-      {:ok, _results, facts} -> {:ok, facts}
-      {:error, reason} -> {:error, {:points_to, reason}}
+    case stage_points_to(solve, facts) do
+      {:ok, solved} ->
+        {:ok, solved}
+
+      {:error, reason, solved} ->
+        # A directory a solve made for itself goes with the failure.
+        if solved.work != facts.work, do: Facts.release(solved)
+        points_to_failed(reason)
     end
   end
 
@@ -215,7 +220,7 @@ defmodule Argus.Analysis.Extraction do
   # A stage solved into cached facts: the facts with its outputs, or
   # `{:error, {stage, reason}}` (the facts released). The points-to stage
   # goes through solve_points_to/2, which runs it bounded when the exact
-  # stage runs out of time.
+  # fixpoint outgrows its budget.
   @spec solve_stage(Facts.t(), Path.t(), :stage0, keyword()) ::
           {:ok, Facts.t()} | {:error, term()}
   def solve_stage(facts, rules_path, stage, opts) do
@@ -325,66 +330,148 @@ defmodule Argus.Analysis.Extraction do
   the result: its outputs move only when a process or a resolved target
   does, not on every edit that renumbers the instructions it reads.
 
-  The stage is exact unless it does not finish within
-  `:points_to_timeout` (milliseconds, 15 seconds by default; `:infinity`
-  keeps it exact whatever it takes, within `:souffle_timeout`). It then
-  runs bounded (`points_to_bounded_rules_path/0`): the leaves a coarse
-  pass finds pervasive — held by more than one source in a hundred —
-  are resolved by that pass, and every other one exactly. The bounded
-  stage writes the same relations, a superset of the exact stage's rows
-  for the pervasive leaves; a warning names how many it bounded. On
-  every program it was measured on but one the exact stage finishes in
-  a second or two; the exception (Ash, where helpers that return an
-  updated copy of their parameter merge most of the heap) takes ten
-  seconds bounded and thirteen minutes exact.
+  The stage is exact within a budget: `points_to_rules_path/0` holds its
+  fixpoint to 500,000 rows of what a source may point to and of what a
+  term's field may hold, where the largest of twenty programs it was
+  measured on holds 45,000. A program whose helpers merge most of its
+  terms into one value grows past that with the square of those terms
+  (Ash: 13 million rows after thirteen minutes) and runs bounded
+  instead (`points_to_bounded_rules_path/0`): the leaves a coarse pass
+  finds pervasive (held by more than one source in a hundred) are
+  resolved by that pass, a superset of their exact rows, and every
+  other one exactly. Souffle stops a fixpoint at the budget however
+  fast it runs, so which stage runs is a function of the facts: the
+  same facts run the same stage on any machine, under any load, afresh
+  or from a store. `points_to_mode.facts` says which one wrote the
+  relations, and a warning names the leaves a bounded stage resolved
+  coarsely. Ash outgrows the budget in six seconds and runs bounded in
+  ten.
 
-  Writes the `points_to_relations/0` files into `facts_dir`. Idempotent.
+  A stage that outgrows the budget even bounded, or does not finish
+  within `:souffle_timeout`, fails with a warning, `{:error,
+  {:points_to, reason}}`, and the analyses that read it degrade
+  (`Argus.Findings.run/2`): time can fail the stage, never change what
+  it answers.
+
+  Writes the `points_to_relations/0` files into `facts_dir`, none when
+  it fails. Idempotent.
   """
   @spec derive_points_to(Path.t(), keyword()) :: :ok | {:error, term()}
   def derive_points_to(facts_dir, opts \\ []) do
-    solve = fn rules_path, opts ->
-      Souffle.run(facts_dir, rules_path, Keyword.put(opts, :output_dir, facts_dir))
+    solve = fn rules_path, dir ->
+      result = Souffle.run(dir, rules_path, Keyword.put(opts, :output_dir, dir))
+
+      # What the stage reports (its overflow, its pervasive leaves) is
+      # read back here, not a relation the directory holds.
+      for report <- @points_to_reports, do: File.rm(Path.join(dir, report <> ".csv"))
+
+      with {:ok, results} <- result, do: {:ok, results, dir}
     end
 
-    case bounded_on_timeout(solve, opts) do
-      {:ok, _} -> :ok
-      {:error, reason} -> {:error, {:points_to, reason}}
+    case stage_points_to(solve, facts_dir) do
+      {:ok, _dir} ->
+        :ok
+
+      {:error, reason, _dir} ->
+        # A stage that outgrew its budget wrote what it had reached, none
+        # of it an answer; a directory holding every staged file is one
+        # ensure_points_to/3 takes as staged.
+        Enum.each(@points_to_relations, &File.rm(Path.join(facts_dir, "#{&1}.facts")))
+        points_to_failed(reason)
     end
   end
 
-  # Solves the exact stage within the points-to budget, and the bounded
-  # one when it runs out: `solve` takes a rules path and options and
-  # returns what `Argus.Souffle.run/3` or `Argus.Cache.Facts.solve/3`
-  # does.
-  defp bounded_on_timeout(solve, opts) do
-    case Keyword.get(opts, :points_to_timeout, @points_to_timeout) do
-      :infinity ->
-        solve.(points_to_rules_path(), opts)
-
-      budget ->
-        exact = Keyword.update(opts, :souffle_timeout, budget, &min(&1, budget))
-
-        case solve.(points_to_rules_path(), exact) do
-          {:error, :souffle_timeout} ->
-            solve.(points_to_bounded_rules_path(), opts) |> report_bounded(budget)
-
-          other ->
-            other
+  # The points-to stage: the exact program, and the bounded one when the
+  # exact fixpoint outgrows its budget. `solve` takes a rules path and
+  # what the previous solve returned (the facts it solves over: a
+  # directory, or `Argus.Cache.Facts`), and returns what
+  # `Argus.Cache.Facts.solve/3` does. The answer is `{:ok, solved}` or
+  # `{:error, reason, solved}`, `solved` what the last solve returned,
+  # for the caller to clean up after.
+  defp stage_points_to(solve, facts) do
+    case solve.(points_to_rules_path(), facts) do
+      {:ok, results, solved} ->
+        case overflow(results) do
+          {:ok, []} -> {:ok, solved}
+          {:ok, exact_over} -> bounded_points_to(solve, solved, exact_over)
+          {:error, reason} -> {:error, reason, solved}
         end
+
+      {:error, reason} ->
+        {:error, reason, facts}
     end
   end
 
-  defp report_bounded(result, budget) do
-    with {:ok, results} <- results(result) do
-      leaves = results |> Map.get("pervasive", []) |> List.flatten() |> Enum.sort()
+  # The bounded stage over the facts the exact one was solved over: it
+  # writes every relation the exact one does, so each partial one is
+  # replaced.
+  defp bounded_points_to(solve, facts, exact_over) do
+    case solve.(points_to_bounded_rules_path(), facts) do
+      {:ok, results, solved} ->
+        case overflow(results) do
+          {:ok, []} ->
+            report_bounded(exact_over, results)
+            {:ok, solved}
 
-      Logger.warning(
-        "points-to: the exact stage did not finish in #{budget} ms; ran it bounded, " <>
-          pervasive_summary(leaves)
-      )
+          {:ok, over} ->
+            {:error, {:over_budget, over}, solved}
+
+          {:error, reason} ->
+            {:error, reason, solved}
+        end
+
+      {:error, reason} ->
+        {:error, reason, facts}
     end
+  end
 
-    result
+  # The relations that reached the stage's budget, `{relation, rows,
+  # budget}`: none when the fixpoint is complete. Every stage writes the
+  # file, so a solve without it is not one of the stage's.
+  defp overflow(results) do
+    case Map.fetch(results, "points_to_overflow") do
+      {:ok, rows} ->
+        {:ok,
+         for [relation, count, budget] <- rows do
+           {relation, String.to_integer(count), String.to_integer(budget)}
+         end}
+
+      :error ->
+        {:error, {:missing_output, "points_to_overflow"}}
+    end
+  end
+
+  defp report_bounded(exact_over, results) do
+    leaves = results |> Map.get("pervasive", []) |> List.flatten() |> Enum.sort()
+
+    Logger.warning(
+      "points-to: the exact stage outgrew its budget (#{budget_summary(exact_over)}); " <>
+        "ran it bounded, " <> pervasive_summary(leaves)
+    )
+  end
+
+  # A failed stage degrades every analysis that reads it: said once
+  # here, whichever caller runs it.
+  defp points_to_failed(reason) do
+    Logger.warning(
+      "points-to: " <> failure_summary(reason) <> "; the analyses reading it degrade"
+    )
+
+    {:error, {:points_to, reason}}
+  end
+
+  defp failure_summary({:over_budget, over}),
+    do: "the stage outgrew its budget even bounded (#{budget_summary(over)})"
+
+  defp failure_summary(:souffle_timeout),
+    do: "the stage did not finish within :souffle_timeout"
+
+  defp failure_summary(reason), do: "the stage failed: #{inspect(reason)}"
+
+  defp budget_summary(over) do
+    Enum.map_join(over, ", ", fn {relation, rows, budget} ->
+      "#{relation} reached #{rows} rows, over #{budget}"
+    end)
   end
 
   defp pervasive_summary([]), do: "which found no leaf pervasive"
@@ -396,17 +483,14 @@ defmodule Argus.Analysis.Extraction do
     "resolving #{length(leaves)} pervasive leaves coarsely (#{Enum.join(shown, ", ")}#{more})"
   end
 
-  defp results({:ok, results}), do: {:ok, results}
-  defp results({:ok, results, _facts}), do: {:ok, results}
-  defp results(_error), do: :error
-
   @doc "The path to the points-to stage's rules file."
   @spec points_to_rules_path() :: Path.t()
   def points_to_rules_path, do: Catalog.priv_dl("points_to.dl")
 
   @doc """
   The path to the bounded points-to stage's rules file: what
-  `derive_points_to/2` runs when the exact stage does not finish in time.
+  `derive_points_to/2` runs when the exact stage outgrows its budget. A
+  consumer that keys the stage on its programs keys it on this one too.
   """
   @spec points_to_bounded_rules_path() :: Path.t()
   def points_to_bounded_rules_path, do: Catalog.priv_dl("points_to_bounded.dl")

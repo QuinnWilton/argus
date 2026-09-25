@@ -15,8 +15,9 @@ does: **Added**, **Changed**, **Fixed** or **Removed**.
 **Fixed.** The points-to stage finishes on Ash (1,327 modules), where it
 ran past its five-minute timeout and degraded seven analyses, and past
 25 minutes and 5.8 GB when let run: all fourteen analyses now run there
-in 42 seconds from a cold store, the stage in 25 of them (15 of the
-exact stage's attempt, at most 340 MB, then 9.4 bounded, 158 MB). The
+in 36 seconds from a cold store and half a second from a warm one, none
+degraded, the stage in 18 of them (6 for the exact stage to outgrow its
+budget, at most 186 MB, then 10 bounded, 150 MB; load average 18). The
 cause was context-insensitive merging: Ash's helpers hand a changeset or
 a query back (`def set_phase(cs, p)`, `other -> other`), or an updated
 copy of it, and merged at their parameter every caller's value became
@@ -37,7 +38,10 @@ terms, forward or backward, whose number grows exponentially with their
 length there; a copy of each returned term per call site, which
 multiplies the terms and merges them one call further up; a static
 threshold on how widely a coarse pass spreads a leaf, which cannot tell
-Ash from rabbitmq or emqx, where the exact stage takes a second.
+Ash from rabbitmq or emqx, where the exact stage takes a second; and a
+wall-clock limit on the exact stage (a first version of the last entry
+below), under which the same program staged exact rows on a fast run
+and bounded ones on a loaded one.
 
 **Changed.** `source_process` and `source_table` are staged for the
 sources the analyses ask about — the first argument of a call a
@@ -67,21 +71,43 @@ three-tuple, and the helpers' merged parameter spread it to every
 caller). Fixtures: `PassUserA`/`PassUserB` each reach their own peer
 through `Pass`'s helpers and not the other's.
 
-**Added.** When the exact stage does not finish within
-`:points_to_timeout` (15 seconds by default; `:infinity` keeps it exact,
-within `:souffle_timeout`), the stage runs bounded
-(`priv/dl/points_to_bounded.dl` over `clientlib/pervasive.dl`) instead of
-failing: a coarse pass, one field deep and naming no term, finds the
-leaves more than one source in a hundred holds (and more than 1000),
-which it resolves itself, a superset of their exact rows; every other
-leaf is resolved exactly. A warning names them. On Ash, even with the two
-changes above the exact stage takes thirteen minutes (13M field rows);
-bounded, four leaves are pervasive, and nineteen targets are staged
-where the exact stage stages thirteen: the extras are the TypeResolver
-server and the async task at the async limiter's three calls.
+**Added.** A program whose exact fixpoint outgrows the stage's budget
+(500,000 rows of `source_pts` and of `field_pts`, each, held by
+Souffle's `.limitsize` in `priv/dl/points_to.dl`) runs the stage bounded
+(`priv/dl/points_to_bounded.dl` over `clientlib/pervasive.dl`): a coarse
+pass, one field deep and naming no term, finds the leaves more than one
+source in a hundred holds (and more than 1000), which it resolves itself,
+a superset of their exact rows; every other leaf is resolved exactly.
+Souffle stops a fixpoint at the budget however fast it runs, and the rows
+only grow, so which stage runs is a function of the facts: the same
+facts run the same stage on any machine, under any load, afresh or from
+a store. The staged `points_to_mode` relation says which stage wrote the
+others, and a warning names the leaves a bounded stage resolved
+coarsely, read back from a store as well. Over the evaluation programs
+the largest exact fixpoint holds 44,885 and 30,162 rows (the Phoenix
+stack's deps; emqx's, 4,666 and 1,331). Three programs outgrow the budget,
+in seconds, where their exact stage runs for many minutes: Ash
+(field_pts stopped at 542,799 rows after 5.6 s; 13M rows in thirteen
+minutes let run), all of OTP (1,311 modules, 8.5 s) and logflare's
+whole 7,104-module build (7.6 s). Bounded, Ash has four pervasive leaves
+and nineteen staged targets where the exact stage stages thirteen: the
+extras are the TypeResolver server and the async task at the async
+limiter's three calls. A store keeps the exact stage's solve like any
+other, the one that outgrew the budget too, so a warm run solves
+neither. A stage that outgrows the budget even bounded
+(`{:points_to, {:over_budget, rows}}`) or runs past `:souffle_timeout`
+fails with a warning, and only the analyses that read it degrade, each
+with a detail saying why: time can fail the stage, never change what it
+answers. The coarse pass cannot choose the stage: it finds four leaves
+each held by a third of kafka_ex's sources and twelve held by up to a
+fifth of rabbitmq's, as a fifth of Ash's, where the exact fixpoints hold
+1,332 and 19,677 rows; bounding its pervasive leaves on every program
+would change the staged targets of eight of the eighteen and cost up to
+eight times the exact stage (emqx 10.8 s against 1.3).
 `Argus.Analysis.Extraction.derive_points_to/2` (what scry calls),
-extraction through a store and `Argus.Findings.run/2` all fall back the
-same way.
+extraction through a store and `Argus.Findings.run/2` all decide the
+same way; a consumer that keys the stage on its program keys it on
+`points_to_bounded_rules_path/0` too.
 
 ### FP hunt, round 2: eight more programs, and the anchors round 1 left
 

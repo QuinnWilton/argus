@@ -33,6 +33,8 @@ defmodule Argus.Findings.RunnerTest do
     bin
   end
 
+  # The stage's failure is a warning as well as the degradation.
+  @tag :capture_log
   test "a failed points-to stage degrades only the analyses that read it", %{tmp_dir: dir} do
     assert {:ok, %Findings{ran: ran, degraded: degraded}} =
              Runner.run([:lists],
