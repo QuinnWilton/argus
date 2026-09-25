@@ -82,6 +82,36 @@ defmodule Argus.Extractors.GenStatemTest do
     end
   end
 
+  describe "extract/1 — what a helper builds and what a state returns of a call" do
+    test "a helper's next_state is a transition from no named state" do
+      facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.HelperTransitionStatem))
+
+      assert [[_mod, func, "disconnected"]] = facts[:statem_helper_transition]
+      assert func =~ ":disconnect/2"
+    end
+
+    test "a state returning a call's result names the local callee, or dynamic" do
+      facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.HelperTransitionStatem))
+
+      calls =
+        for [_mod, func, callee] <- facts[:statem_returns_call],
+            do:
+              {func |> String.split(":") |> List.last(),
+               callee |> String.split(":") |> List.last()}
+
+      assert {"connected/3", "disconnect/2"} in calls
+      assert {"waiting/3", "dynamic"} in calls
+      refute Enum.any?(calls, fn {func, _} -> func in ["connecting/3", "disconnected/3"] end)
+    end
+
+    test "a helper computing its target is a dynamic transition" do
+      facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.PrivateHelperStatem))
+
+      assert [[_mod, func, "dynamic"]] = facts[:statem_helper_transition]
+      assert func =~ ":finalize/3"
+    end
+  end
+
   describe "extract/1 — timeouts" do
     test "detects state_timeout in timeout statem" do
       facts = GenStatem.extract(disassemble(Argus.Test.Fixtures.TimeoutStatem))

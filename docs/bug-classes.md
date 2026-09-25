@@ -2111,40 +2111,41 @@ Another process takes or deletes the row between the check and the act, and the 
 `unreachable_state`
 · titles: "Unreachable state #{state}" (`:warning`)
 
-**Property.** Take a module that declares `:gen_statem` (or GenStateMachine) and whose `callback_mode/0` resolves to `state_functions`. At least one of its transitions names its target literally, and none computes it at runtime. A state function S (exported, arity 3, not a standard callback, never called locally, and returning a gen_statem action) is entered by no transition from any other state and is not the initial state. The initial state is what `init/1` returns in `{:ok, State, _}`. Only when that is computed, a state that has outgoing transitions but no incoming one is taken as initial. The machine can never enter S: S is dead code, or a transition that should produce it is missing.
+**Property.** Take a module that declares `:gen_statem` (or GenStateMachine) and whose `callback_mode/0` resolves to `state_functions`. At least one of its transitions names its target literally, and none computes it at runtime, in a state function or in a helper. A state S (a state function: exported, arity 3, not a standard callback, never called locally, and returning a gen_statem action; or a state some transition names) is entered by no transition from another state, by no helper's `{:next_state, S, …}`, and is not the initial state. The initial state is what `init/1` returns in `{:ok, State, _}`. Only when that is computed, a state that has transitions of its own but no incoming one is taken as initial. The machine can never enter S: S is dead code, or a transition that should produce it is missing.
 
 **Assumptions and limits.**
-- A state's own `keep_state` or `repeat_state` return is extracted as a transition from the state to itself, and it counts as a way in. A dead state function with a catch-all clause that keeps the state, a common way to end one, is therefore never reported. Only a dead state whose every return leaves it is found, as in the fixture.
-- Transitions are read only from the return tuples of the state functions themselves. A transition a helper builds for a state (a locally called `disconnect/3` returning `{:next_state, :disconnected, …}`) is not read, so a state entered only that way is reported, unless it is the initial state.
-- A single transition to a computed state silences the whole module, since it could land anywhere. The rule does not fall back to the states a dynamic target could be.
-- A state entered only from `:gen_statem.enter_loop/4,5`, or from an `init/1` that returns through a helper, has no initial state read. The topological fallback then takes any state with outgoing transitions and no incoming one for initial, so a dead state that transitions out escapes.
+- A state's own `keep_state` or `repeat_state` return, and a `next_state` naming itself, is a self-loop: no way in (`ClosedForeverStatem`'s `abandoned`, whose catch-all keeps the state).
+- A transition a function that is not a state function returns (`statem_helper_transition`: a Redix-style `disconnect/2` returning `{:next_state, :disconnected, …}`, a lifted closure) is a way in from an unnamed state (`HelperTransitionStatem`). It errs quiet: a helper no state calls still counts.
+- A single transition to a computed state, a state function's or a helper's, silences the whole module, since it could land anywhere. The rule does not fall back to the states a dynamic target could be. A state name a helper carries in a tuple that is not an action (h2's `{ok, goaway_received, _}` which a caller drops) is not a transition, which is how h2's dead state is found.
+- A state entered only from `:gen_statem.enter_loop/4,5`, or from an `init/1` that returns through a helper, has no initial state read. The topological fallback then takes any state with transitions of its own and no incoming one for initial, so a dead state that transitions out escapes.
 - A state function whose body only delegates to a helper returns no action of its own and is not a state at all. A machine with no resolved transitions produces no findings (`DelegatingStatem`).
 - Modules that do not declare the behaviour, and `handle_event_function` machines, are not judged.
 
-**Fixtures.** Positive: `OrphanStateStatem` (`abandoned/3`). Quiet: `OrphanStateStatem`'s `idle` (the `init/1` state, with no incoming edge) and `running`; `SimpleStatem`, `DelegatingStatem` and `HandleEventStatem` (`test/fixtures/gen_statem_fixture.ex`). Asserted in `test/analyses/state_machine_test.exs`.
+**Fixtures.** Positive: `OrphanStateStatem` (`abandoned/3`), `ClosedForeverStatem` (`abandoned/3`, a keep-state catch-all). Quiet: `OrphanStateStatem`'s `idle` (the `init/1` state, with no incoming edge) and `running`; `HelperTransitionStatem` (`disconnected`, entered only through a helper); `RestingStatem`; `SimpleStatem`, `DelegatingStatem` and `HandleEventStatem` (`test/fixtures/gen_statem_fixture.ex`). Asserted in `test/analyses/state_machine_test.exs`.
 
 **Corpus.** Fix pairs: None. Present-only: None.
 
-**Precision.** The July 2026 audit of 15 OTP libraries found 108 gen_statem structural findings, all false. The causes were every arity-3 function taken as a state, a topologically guessed initial state, and atoms harvested as states in `handle_event_function` mode. After the fixes there are 0 findings on that corpus, with the fixture's dead state still caught (ed26d0a, 44375ed; CHANGELOG 0.5.0 "Fixed (precision — 15-project OTP corpus audit)"). No true positive is known outside the fixture.
+**Precision.** The July 2026 audit of 15 OTP libraries found 108 gen_statem structural findings, all false. The causes were every arity-3 function taken as a state, a topologically guessed initial state, and atoms harvested as states in `handle_event_function` mode. After the fixes there were 0 findings on that corpus (ed26d0a, 44375ed; CHANGELOG 0.5.0 "Fixed (precision — 15-project OTP corpus audit)"). Round 2 of the mining (2026-09-25) ran it over OTP's ssl, kernel and ssh, ejabberd and the 19 gen_statem libraries in the corpus checkouts: 2 rows, both dead states. h2 0.12.1's `goaway_received` is never entered (`handle_frame` returns `{ok, goaway_received, _}` and `process_frames` drops the name for `determine_state_transition`'s `connected`/`settings`); webtransport 0.4.6's `connecting` ("for client sessions") is entered by no transition, and init/1 returns `open` or `draining`. Chatterbox's `closing`, reported before, is entered through a helper and is quiet now.
 
 ### Terminal state that never stops
 
 `terminal_without_stop`
 · titles: "Terminal state #{state} never stops" (`:info`)
 
-**Property.** Take a gen_statem module in `state_functions` mode with at least one transition to a literal state. A state S, whether a state function or a state some transition names, has no way out: no transition leads from S to another state, and S never stops the machine. A machine that enters S stays there. Unless S is a deliberate resting state, the process idles forever, one leaked process per machine that reaches S.
+**Property.** Take a gen_statem module in `state_functions` mode with at least one transition to a literal state. A state S with an exported arity-3 function is entered from another state (a transition from a state other than S, or a helper's `{:next_state, S, …}`) and is not the initial state, and S has no way out: none of its returns is a transition to another state or a stop, and none returns what a call returns that may be one. A machine that enters S stays there. Unless S is a deliberate resting state, the process idles forever, one leaked process per machine that reaches S.
 
 **Assumptions and limits.**
-- A `keep_state` or `repeat_state` return is extracted as a transition from the state to itself, and it counts as a way out. Every function the extractor recognises as a state function returns some action, so it always has at least that edge, and is never reported. A state whose every return keeps the machine in it, the resting state this class describes, is never reported.
-- What remains reportable is a state named by some transition whose own function the extractor does not recognise. That covers a function that returns its actions through a helper, one that is called locally, and one that does not exist. Such states are false positives when the function delegates, and a mislabelled finding when it is missing (see the notes). `DelegatingStatem` is quiet only because none of its transitions resolve. No test runs a machine that mixes direct and delegating states, such as `PrivateHelperStatem`, whose `running/3` tail-calls `finalize/3`.
+- A `keep_state` or `repeat_state` return, and a `next_state` naming S, is a self-loop and no way out: the resting state this class describes returns only these (`ClosedForeverStatem`'s `closed`).
+- A state function that returns what a call returns leaves for whatever the callee may return (`statem_returns_call`): a local helper's transitions, followed through the helpers it returns the result of in turn, or anything at all for a remote call, an apply or a throw (gen_statem takes a thrown value as the result). `HelperTransitionStatem`'s `connected` leaves only through `disconnect/2`, and its `waiting` returns another module's answer in one clause: both quiet. A raise in tail position returns nothing and is no way out: the compiler ends most map-updating functions with a `{:badmap, _}` raise, and a state that crashes on a malformed event still never leaves (encore's `abyss` updates a map).
+- A machine that never leaves its initial state is a server with one state (`RestingStatem`), not a machine stuck in a terminal one: the initial state is not judged.
+- A state is judged by its exported arity-3 function, recognised as a state or only named by a transition because it returns no action of its own: a function that hands every event to a helper is judged by what the helper returns (`DelegatedAbyssStatem`, encore's Rondo.Broken `abyss`, delegating to a private keep-state helper, is reported; ssl's `hello`, delegating to another module, may leave). A state named only by transitions with no such function in the module is not judged; that missing function is an `undef` crash no rule reports yet.
 - The finding is `:info`, and its prose says to ignore a deliberate resting state.
-- The finding's site is the state function when there is one, otherwise the transition that names the state, inside another state's function.
 
-**Fixtures.** Positive: None. Quiet: `SimpleStatem`, `DelegatingStatem`, `HandleEventStatem` (`test/fixtures/gen_statem_fixture.ex`). Asserted in `test/analyses/state_machine_test.exs`.
+**Fixtures.** Positive: `ClosedForeverStatem` (`closed/3`), `DelegatedAbyssStatem` (`abyss/3`). Quiet: `HelperTransitionStatem`, `RestingStatem`, `SimpleStatem`, `DelegatingStatem`, `HandleEventStatem` (`test/fixtures/gen_statem_fixture.ex`). Asserted in `test/analyses/state_machine_test.exs`; the relations the rules read in `test/extractors/gen_statem_test.exs`.
 
 **Corpus.** Fix pairs: None. Present-only: None.
 
-**Precision.** Part of the 108 → 0 above (ed26d0a). Modelling every action form, including `repeat_state`, `stop_and_reply` and bare `:keep_state_and_data`, closed one terminal false-positive path. It also made every recognised state function non-terminal by construction, so the rule's remaining positives are extraction gaps. No true positive is known.
+**Precision.** Part of the 108 → 0 above (ed26d0a). Before round 2 every recognised state function was non-terminal by construction, and the rule's positives were extraction gaps: over OTP's ssl, xandra and pgo it made 6 rows, all states whose function it did not recognise (ssl's `hello` and `user_hello`, reached through `tls_gen_connection`). Round 2 made self-loops no way out and judges a state by its function's returns and delegations: 0 rows over OTP's ssl, kernel and ssh, ejabberd and the corpus's 19 gen_statem libraries, with the fixtures' resting states caught and encore's seeded `abyss` still reported (now at `abyss/3` rather than at the transition naming it). No true positive is known outside the fixture.
 
 ## ets
 
@@ -3044,14 +3045,17 @@ interaction rather than reach (L17).
 
 ### Suspected rule defects found while cataloguing
 
-These want a run, a fixture and a fix; none is fixed here.
+Round 1 found these while cataloguing; round 2 confirmed each with a
+fixture before fixing it, and says so under the item.
 
 1. **state_machine can barely report what it describes.** Every
    `keep_state`/`repeat_state` return is a transition from the state to
    itself, and both rules count it: unreachable_state misses a dead
    state with a keep-state catch-all, and terminal_without_stop can
    never report a recognised state function (its rows are extraction
-   gaps).
+   gaps). *Resolved in round 2*: confirmed by `ClosedForeverStatem`; a
+   self-loop is neither a way in nor a way out, helpers' transitions
+   and returned calls are read (see the two entries).
 2. **startup's "handle_continue calls its own supervisor"** reads
    synchronous calls, but `Supervisor.which_children` and the other
    management calls are supervisor calls: its only fixture's shape is

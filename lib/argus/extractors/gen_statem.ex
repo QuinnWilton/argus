@@ -36,6 +36,11 @@ defmodule Argus.Extractors.GenStatem do
   - `statem_module(mod, callback_mode)` — gen_statem module identification
   - `statem_state(mod, state)` — state in the machine
   - `statem_transition(mod, from, event, to)` — state transition
+  - `statem_helper_transition(mod, func, to)` — a transition a function
+    that is not a state function returns on a state's behalf
+  - `statem_returns_call(mod, func, callee)` — a function that may return
+    what a call returns (a tail call, a call's result, a throw): the local
+    callee, or `dynamic`
   - `statem_timeout(mod, state, type, value)` — timeout set per state
   """
 
@@ -74,11 +79,13 @@ defmodule Argus.Extractors.GenStatem do
       :statem_event_catchall,
       :statem_event_clause,
       :statem_call_unreplied,
+      :statem_helper_transition,
       :statem_info_catchall,
       :statem_info_open,
       :statem_info_tag,
       :statem_initial,
       :statem_module,
+      :statem_returns_call,
       :statem_state,
       :statem_timeout,
       :statem_transition
@@ -223,10 +230,7 @@ defmodule Argus.Extractors.GenStatem do
   # by a direct call to a sibling state would be excluded, a rare and
   # acceptable false negative.)
   defp locally_called_set(mod, functions) do
-    labels =
-      for {:function, name, arity, entry, _instrs} <- functions,
-          into: %{},
-          do: {entry, {name, arity}}
+    labels = function_labels(functions)
 
     for {:function, _n, _a, _e, instrs} <- functions,
         instr <- instrs,
@@ -235,6 +239,12 @@ defmodule Argus.Extractors.GenStatem do
         into: MapSet.new() do
       fa
     end
+  end
+
+  defp function_labels(functions) do
+    for {:function, name, arity, entry, _instrs} <- functions,
+        into: %{},
+        do: {entry, {name, arity}}
   end
 
   defp local_call_target({:call, _arity, target}, mod, labels),
@@ -319,18 +329,146 @@ defmodule Argus.Extractors.GenStatem do
       end)
 
     # Extract transitions and timeouts from each state function.
-    Enum.reduce(state_funs, facts, fn {:function, name, arity, _entry, instrs}, acc ->
-      state_name = to_string(name)
-      # The module atom itself, not one re-read from its inspected name:
-      # String.to_atom("A.B") is :"A.B", not A.B, and every site ID minted
-      # from it was unresolvable.
-      func_id = Normalize.func_id(mod, name, arity)
+    facts =
+      Enum.reduce(state_funs, facts, fn {:function, name, arity, _entry, instrs}, acc ->
+        state_name = to_string(name)
+        # The module atom itself, not one re-read from its inspected name:
+        # String.to_atom("A.B") is :"A.B", not A.B, and every site ID minted
+        # from it was unresolvable.
+        func_id = Normalize.func_id(mod, name, arity)
 
-      acc
-      |> extract_transitions(mod_str, state_name, instrs, func_id)
-      |> extract_timeouts(mod_str, state_name, instrs, func_id)
-      |> emit_event_clauses(mod_str, func_id, cfg(module_data, name, arity), instrs)
+        acc
+        |> extract_transitions(mod_str, state_name, instrs, func_id)
+        |> extract_timeouts(mod_str, state_name, instrs, func_id)
+        |> emit_event_clauses(mod_str, func_id, cfg(module_data, name, arity), instrs)
+      end)
+
+    state_set = MapSet.new(state_funs, fn {:function, name, arity, _, _} -> {name, arity} end)
+    labels = function_labels(functions)
+
+    Enum.reduce(functions, facts, fn {:function, name, arity, _, instrs} = function, acc ->
+      acc =
+        if MapSet.member?(state_set, {name, arity}),
+          do: acc,
+          else: helper_transitions(acc, mod, mod_str, function)
+
+      returned_calls(acc, mod, mod_str, Normalize.func_id(mod, name, arity), instrs, labels)
     end)
+  end
+
+  # A function that is not a state function but returns a `next_state` or
+  # `stop` action builds it for the state that called it (a Redix-style
+  # `disconnect/3`, a lifted closure in a `reduce_while`): its target is
+  # entered, and its caller may leave, from a state the graph does not
+  # name. init/1's `{:ok, State, Data}` is read by extract_initial_states.
+  defp helper_transitions(facts, mod, mod_str, {:function, name, arity, _entry, instrs}) do
+    func_id = Normalize.func_id(mod, name, arity)
+    ctx = synthetic_ctx(func_id)
+
+    instrs
+    |> return_shapes()
+    |> Enum.reduce(facts, fn {_idx, elements}, acc ->
+      case elements do
+        [{:atom, :next_state}, target | _] ->
+          to_state = resolve_element_value(target)
+
+          acc
+          |> track_dynamic(to_state, ctx, :statem_transition_target, :statem_helper_transition)
+          |> add_fact(:statem_helper_transition, [mod_str, func_id, to_state])
+
+        [{:atom, action} | _] when action in [:stop, :stop_and_reply] ->
+          add_fact(acc, :statem_helper_transition, [mod_str, func_id, "stop"])
+
+        _ ->
+          acc
+      end
+    end)
+  end
+
+  # A function returning what a call returns hands the choice of its
+  # action, and so of the state its caller leaves for, to the callee: a
+  # tail call (a raise excepted), a call whose result reaches a return,
+  # or a throw, which gen_statem takes as the callback's result. A local
+  # callee is named so the rules can ask what it returns in turn;
+  # anything else is dynamic.
+  defp returned_calls(facts, mod, mod_str, func_id, instrs, labels) do
+    instrs
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {instr, idx} ->
+      cond do
+        throw_call?(instr) -> ["dynamic"]
+        raise_call?(instr) -> []
+        Instr.tail_call?(instr) -> [callee(instr, mod, labels)]
+        Instr.call?(instr) and result_returned?(instrs, idx) -> [callee(instr, mod, labels)]
+        true -> []
+      end
+    end)
+    |> Enum.uniq()
+    |> Enum.reduce(facts, &add_fact(&2, :statem_returns_call, [mod_str, func_id, &1]))
+  end
+
+  defp callee(instr, mod, labels) do
+    case local_call_target(instr, mod, labels) do
+      {name, arity} -> Normalize.func_id(mod, name, arity)
+      nil -> "dynamic"
+    end
+  end
+
+  # A raise returns nothing: the compiler's own `{:badmap, _}` and
+  # `{:case_clause, _}` exits end most map-updating functions with one,
+  # and a state that crashes on a malformed event still never leaves.
+  @raises [{:erlang, :error, 1}, {:erlang, :error, 2}, {:erlang, :error, 3}, {:erlang, :exit, 1}]
+
+  defp raise_call?({op, _arity, {:extfunc, m, f, a}}) when op in [:call_ext, :call_ext_only],
+    do: {m, f, a} in @raises
+
+  defp raise_call?({:call_ext_last, _arity, {:extfunc, m, f, a}, _dealloc}),
+    do: {m, f, a} in @raises
+
+  defp raise_call?(_instr), do: false
+
+  defp throw_call?({op, _arity, {:extfunc, :erlang, :throw, 1}})
+       when op in [:call_ext, :call_ext_only],
+       do: true
+
+  defp throw_call?({:call_ext_last, _arity, {:extfunc, :erlang, :throw, 1}, _dealloc}), do: true
+  defp throw_call?(_instr), do: false
+
+  # Whether the value a call leaves in {x,0} is still there at a return
+  # on the path that falls through (and the jumps it meets).
+  defp result_returned?(instrs, idx) do
+    returned(Enum.drop(instrs, idx + 1), [{:x, 0}], instrs, %{})
+  end
+
+  defp returned([], _holding, _instrs, _seen), do: false
+
+  # `holding` is a list: a MapSet is opaque to dialyzer across the
+  # recursion.
+  defp returned([instr | rest], holding, instrs, seen) do
+    cond do
+      holding == [] ->
+        false
+
+      instr == :return ->
+        {:x, 0} in holding
+
+      match?({:jump, {:f, _}}, instr) ->
+        {:jump, {:f, label}} = instr
+
+        not Map.has_key?(seen, label) and
+          returned(
+            instructions_from_label(instrs, label),
+            holding,
+            instrs,
+            Map.put(seen, label, true)
+          )
+
+      not Instr.falls_through?(instr) ->
+        false
+
+      true ->
+        returned(rest, Instr.carry(instr, holding), instrs, seen)
+    end
   end
 
   defp emit_event_clauses(facts, mod_str, func_id, fun, instrs) do

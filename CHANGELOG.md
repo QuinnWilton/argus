@@ -10,6 +10,35 @@ What 0.20.0 will ship; the release dates this heading and drops the
 `-dev` from `mix.exs`. Grouped by concern. Each entry opens with what it
 does: **Added**, **Changed**, **Fixed** or **Removed**.
 
+### Mining, round 2: defects the catalog suspected, and missed instances
+
+Round 2 of the mining confirmed each rule defect the catalog suspected
+with a fixture before fixing it, and lifted the largest false negatives
+of existing classes.
+
+**Fixed.** `state_machine` read a state's own `keep_state` or
+`repeat_state` return (and a `next_state` naming itself) as both a way
+into the state and a way out of it, so `terminal_without_stop` could
+never report a state function and `unreachable_state` missed every dead
+state with a keep-state catch-all. A self-loop is now neither. A
+transition a helper builds on its caller's behalf is a way in
+(`statem_helper_transition`, a Redix-style `disconnect/2`), and a state
+function that returns what a call returns leaves for whatever that call
+may return (`statem_returns_call`: a tail call, a returned result or a
+throw; `dynamic` for a remote or applied one), so a state that leaves
+only through a helper is not terminal, and a state whose function hands
+every event to a keep-state helper is (encore's Rondo.Broken `abyss`,
+now anchored at `abyss/3`). A terminal state must be entered
+from another state: a machine that never leaves its initial state is a
+server with one state. Its only remaining findings were extraction
+gaps: over OTP's ssl, kernel and ssh, ejabberd and the corpus's 19
+gen_statem libraries the rules went from 7 findings (6 terminal, all
+states whose function was not recognised; 1 unreachable, chatterbox's
+`closing`, entered through a helper) to 2, both dead states: h2 0.12.1's
+`goaway_received` (`handle_frame` returns `{ok, goaway_received, _}` and
+`process_frames` drops the name) and webtransport 0.4.6's
+`connecting` (init/1 enters `open` or `draining` only). Schema 105.
+
 ### Classes mined from fixed bugs
 
 Three classes from round 1 of mining fixed bugs (178 classified; the

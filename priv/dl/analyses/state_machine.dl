@@ -36,19 +36,52 @@ module_has_resolved_transition(mod) :-
   to != "dynamic".
 
 // Some transition's target is runtime-computed — it could land on any
-// state, so no unreachability claim about this module is sound.
+// state, so no unreachability claim about this module is sound. A
+// helper's computed target counts too.
 .decl module_has_dynamic_transition(mod: symbol)
 
 module_has_dynamic_transition(mod) :-
   statem_transition(mod, _, _, "dynamic").
 
+module_has_dynamic_transition(mod) :-
+  statem_helper_transition(mod, _, "dynamic").
+
+// ── The graph without self-loops ─────────────────────────────────
+//
+// A state's own `keep_state`/`repeat_state` return (and a `next_state`
+// naming itself) is extracted as a transition from the state to itself.
+// It is neither a way in nor a way out: counted as either, every state
+// function with a keep-state clause was both reachable and non-terminal,
+// and terminal_without_stop could never report one.
+
+// A state function: the exported arity-3 function gen_statem calls for
+// a state — one the extractor recognised, or one a transition names
+// that returns only what it delegates to (Rondo.Broken's `abyss/3`,
+// every clause handed to a private keep-state helper), which returns no
+// action of its own. What it may return is read through its returned
+// calls, like any state's. A state named only by a transition, with no
+// such function in the module, has no function to judge.
+.decl state_function(mod: symbol, state: symbol, func: symbol)
+
+state_function(mod, state, func) :-
+  statem_state(mod, state, _),
+  function_def(func, mod, state, 3, 1).
+
 // ── State reachability ───────────────────────────────────────────
 
-// A state is the target of at least one transition.
+// A state is entered from another state, or by a helper's transition
+// (a `disconnect/2` returning `{:next_state, :disconnected, …}` on its
+// caller's behalf, which names no source state).
 .decl state_has_incoming(mod: symbol, state: symbol)
 
 state_has_incoming(mod, state) :-
-  statem_transition(mod, _, _, state),
+  statem_transition(mod, from, _, state),
+  from != state,
+  state != "stop",
+  state != "dynamic".
+
+state_has_incoming(mod, state) :-
+  statem_helper_transition(mod, _, state),
   state != "stop",
   state != "dynamic".
 
@@ -73,16 +106,13 @@ initial_state(mod, state) :-
   statem_state(mod, state, _),
   !module_has_initial(mod).
 
-// Unreachable state — defined but no transition leads to it and
-// it's not the initial state. One row per discovery site — finding
-// builders dedupe on (mod, state).
+// Unreachable state — defined but no transition from another state or
+// a helper leads to it, and it's not the initial state. One row per
+// discovery site — finding builders dedupe on (mod, state).
 //
-// NOTE the initial_state heuristic above suppresses any no-incoming
-// state that has outgoing transitions (it looks like a start state), so
-// in practice this fires for states with no extracted transitions in
-// either direction — dead state code. Reading the true initial state
-// from init/1's return would sharpen this; until then the heuristic
-// trades missed findings for zero false initial-state accusations.
+// NOTE the initial_state fallback above takes any no-incoming state that
+// has transitions of its own for the entry point when init/1's return is
+// computed, so in such a module this reports nothing.
 .decl unreachable_state(mod: symbol, state: symbol, site: symbol)
 .output unreachable_state
 
@@ -98,22 +128,46 @@ unreachable_state(mod, state, site) :-
 
 // ── Terminal states ──────────────────────────────────────────────
 
-// A state has at least one outgoing transition.
-.decl state_has_outgoing(mod: symbol, state: symbol)
+// What a function may return on some state's behalf: a transition a
+// helper builds, or whatever the function it returns the result of may
+// return (`dynamic` when that is a remote call, an apply or a throw).
+.decl may_return_transition(mod: symbol, func: symbol, to: symbol)
 
-state_has_outgoing(mod, state) :-
-  statem_transition(mod, state, _, _).
+may_return_transition(mod, func, to) :-
+  statem_helper_transition(mod, func, to).
 
-// Terminal state without stop — a state with no outgoing transitions
-// that doesn't transition to "stop". One row per discovery site —
-// finding builders dedupe on (mod, state).
+may_return_transition(mod, func, "dynamic") :-
+  statem_returns_call(mod, func, "dynamic").
+
+may_return_transition(mod, func, to) :-
+  statem_returns_call(mod, func, callee),
+  callee != "dynamic",
+  may_return_transition(mod, callee, to).
+
+// A state has a way out: a transition to another state or to stop, its
+// own or one a function it returns the result of builds.
+.decl state_leaves(mod: symbol, state: symbol)
+
+state_leaves(mod, state) :-
+  statem_transition(mod, state, _, to),
+  to != state.
+
+state_leaves(mod, state) :-
+  state_function(mod, state, func),
+  may_return_transition(mod, func, to),
+  to != state.
+
+// Terminal state without stop — a state function entered from another
+// state, with no way out and no stop. A machine that never leaves its
+// initial state is a server with one state, not a machine stuck in a
+// terminal one. One row per state function.
 .decl terminal_without_stop(mod: symbol, state: symbol, site: symbol)
 .output terminal_without_stop
 
 terminal_without_stop(mod, state, site) :-
-  statem_state(mod, state, site),
+  state_function(mod, state, site),
   state_functions_mode(mod),
   module_has_resolved_transition(mod),
-  !state_has_outgoing(mod, state),
-  state != "stop",
-  state != "dynamic".
+  state_has_incoming(mod, state),
+  !initial_state(mod, state),
+  !state_leaves(mod, state).

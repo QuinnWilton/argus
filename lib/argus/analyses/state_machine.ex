@@ -5,10 +5,12 @@ defmodule Argus.Analyses.StateMachine do
   The state machine as a graph, scoped to `state_functions` mode where
   states are function names the extractor can read.
 
-  - `unreachable_state(mod, state, site)` — a state no transition leads
-    to: dead code, or a missing transition.
-  - `terminal_without_stop(mod, state, site)` — a state with no outgoing
-    transitions that never stops the machine.
+  - `unreachable_state(mod, state, site)` — a state no transition from
+    another state (or from a helper building one) leads to, and not the
+    initial state: dead code, or a missing transition.
+  - `terminal_without_stop(mod, state, site)` — a state function entered
+    from another state with no transition to a third and no stop. A
+    state's own `keep_state` is neither a way in nor a way out.
   """
 
   @behaviour Argus.Analysis
@@ -49,7 +51,7 @@ defmodule Argus.Analyses.StateMachine do
           {:site, :symbol, "where the state is defined or matched"}
         ],
         key: [:mod, :state],
-        doc: "State with no outgoing transitions that doesn't stop."
+        doc: "State entered from another that no transition leaves and that doesn't stop."
       }
     ]
   end
@@ -72,8 +74,9 @@ defmodule Argus.Analyses.StateMachine do
     Findings.new(
       :info,
       "Terminal state #{state} never stops",
-      "#{mod}'s state #{state} has no outgoing transitions and never stops " <>
-        "the machine. The process idles in #{state} forever. If that's a " <>
+      "#{mod}'s state #{state} is entered from another state, but every " <>
+        "clause keeps the machine in it and none stops it. The process " <>
+        "idles in #{state} forever. If that's a " <>
         "deliberate final resting state, ignore this; otherwise it leaks a " <>
         "process per machine that reaches it.",
       at: Findings.at_site(site, mod),

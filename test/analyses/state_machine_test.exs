@@ -8,6 +8,8 @@ defmodule Argus.Analyses.StateMachineTest do
     unless Souffle.available?(), do: flunk("souffle not installed")
   end
 
+  defp states(rows), do: rows |> Enum.map(fn [_mod, state, _site] -> state end) |> Enum.uniq()
+
   defp analyze(modules) do
     assert {:ok, results} = Memo.analyze(modules, :state_machine)
     results
@@ -49,6 +51,47 @@ defmodule Argus.Analyses.StateMachineTest do
       # own bodies contain no gen_statem action return — they aren't even
       # registered as states. Nothing to flag.
       results = analyze([Argus.Test.Fixtures.DelegatingStatem])
+
+      assert results["unreachable_state"] == []
+      assert results["terminal_without_stop"] == []
+    end
+
+    test "a state's own keep_state is no way in and no way out" do
+      skip_without_souffle()
+
+      results = analyze([Argus.Test.Fixtures.ClosedForeverStatem])
+
+      # :closed is entered from :open and only ever keeps its state.
+      assert states(results["terminal_without_stop"]) == ["closed"]
+      # :abandoned's catch-all keeps the state: a self-loop, not an entry.
+      assert states(results["unreachable_state"]) == ["abandoned"]
+    end
+
+    test "a state whose function only delegates is judged by what it delegates to" do
+      skip_without_souffle()
+
+      results = analyze([Argus.Test.Fixtures.DelegatedAbyssStatem])
+
+      assert [[_mod, "abyss", site]] = results["terminal_without_stop"]
+      assert site =~ ":abyss/3"
+    end
+
+    test "a transition a helper builds is a way in and a way out" do
+      skip_without_souffle()
+
+      results = analyze([Argus.Test.Fixtures.HelperTransitionStatem])
+
+      # :disconnected is entered only by disconnect/2's return, :connected
+      # leaves only through it, and :waiting returns another module's
+      # answer in one clause.
+      assert results["unreachable_state"] == []
+      assert results["terminal_without_stop"] == []
+    end
+
+    test "a machine that never leaves its initial state has no terminal state" do
+      skip_without_souffle()
+
+      results = analyze([Argus.Test.Fixtures.RestingStatem])
 
       assert results["unreachable_state"] == []
       assert results["terminal_without_stop"] == []

@@ -59,6 +59,40 @@ defmodule Argus.Schema.GenStatem do
         doc: "State transition in a gen_statem."
       },
       %{
+        name: :statem_helper_transition,
+        layer: 2,
+        fields: [
+          {:mod, :symbol, "module name"},
+          {:func, :symbol, "the function that returns it, not a state function"},
+          {:to_state, :symbol, "target state, `stop`, or `dynamic` when computed"}
+        ],
+        doc: """
+        A transition a function that is not a state function returns on \
+        some state's behalf (a `disconnect/2` helper returning \
+        `{:next_state, :disconnected, data}`): a way into its target from \
+        a state the extractor does not name. Only `next_state` and `stop` \
+        returns are recorded; a helper's `keep_state` is its caller's \
+        self-loop.
+        """
+      },
+      %{
+        name: :statem_returns_call,
+        layer: 2,
+        fields: [
+          {:mod, :symbol, "module name"},
+          {:func, :symbol, "a function of a state_functions machine"},
+          {:callee, :symbol, "the local function whose result it returns, or `dynamic`"}
+        ],
+        doc: """
+        A function of a `state_functions` machine that may return what a \
+        call returns: a tail call, a call whose result reaches a return, \
+        or a throw (which gen_statem takes as the callback's result, \
+        `dynamic`). The callee is the local function called, or `dynamic` \
+        for a remote, applied or thrown value: the action it returns, and \
+        so the state it leaves for, is the callee's.
+        """
+      },
+      %{
         name: :statem_timeout,
         layer: 2,
         fields: [

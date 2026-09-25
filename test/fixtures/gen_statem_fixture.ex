@@ -457,3 +457,123 @@ defmodule Argus.Test.Fixtures.PendingCallStatem do
 
   defp bump(data), do: %{data | count: data.count + 1}
 end
+
+defmodule Argus.Test.Fixtures.ClosedForeverStatem do
+  @moduledoc """
+  A machine that closes and never stops: `:closed` is entered from
+  `:open` and every one of its clauses keeps the state, so the process
+  idles forever once it gets there (terminal_without_stop). `:abandoned`
+  is a dead state whose catch-all keeps the state: its own self-loop is
+  no way in (unreachable_state).
+  """
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :state_functions
+
+  @impl true
+  def init(_args), do: {:ok, :open, %{}}
+
+  def open(:cast, :close, data), do: {:next_state, :closed, data}
+  def open(:cast, _msg, data), do: {:keep_state, data}
+
+  def closed({:call, from}, _msg, _data), do: {:keep_state_and_data, [{:reply, from, :closed}]}
+  def closed(_type, _msg, data), do: {:keep_state, data}
+
+  def abandoned(:cast, :resume, data), do: {:next_state, :open, data}
+  def abandoned(_type, _msg, _data), do: :keep_state_and_data
+
+  @impl true
+  def terminate(_reason, _state, _data), do: :ok
+end
+
+defmodule Argus.Test.Fixtures.HelperTransitionStatem do
+  @moduledoc """
+  Quiet for both structural rules. `:disconnected` is entered only
+  through `disconnect/2`, a helper that builds the transition on its
+  caller's behalf, so it is reachable though no state function names
+  it. `:connected` leaves only through that helper and keeps its state
+  otherwise, so it is not terminal. `:waiting` returns what another
+  module's function returns in one clause: that may leave it.
+  """
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :state_functions
+
+  @impl true
+  def init(_args), do: {:ok, :connecting, %{}}
+
+  def connecting(:cast, :up, data), do: {:next_state, :connected, data}
+  def connecting(:cast, :waiting, data), do: {:next_state, :waiting, data}
+  def connecting(_type, _msg, data), do: {:keep_state, data}
+
+  def connected(:info, {:tcp_closed, _socket}, data), do: disconnect(data, :closed)
+  def connected(_type, _msg, data), do: {:keep_state, data}
+
+  def disconnected(:cast, :retry, data), do: {:next_state, :connecting, data}
+  def disconnected(_type, _msg, data), do: {:keep_state, data}
+
+  def waiting(:cast, {:handoff, handler}, data), do: handler.handle(data)
+  def waiting(_type, _msg, data), do: {:keep_state, data}
+
+  defp disconnect(data, reason), do: {:next_state, :disconnected, Map.put(data, :reason, reason)}
+
+  @impl true
+  def terminate(_reason, _state, _data), do: :ok
+end
+
+defmodule Argus.Test.Fixtures.RestingStatem do
+  @moduledoc """
+  Quiet: a machine with one state it never leaves is a server, not a
+  machine stuck in a terminal state; its state is entered by no other.
+  `ready` also re-enters itself by name, which is no way out.
+  """
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :state_functions
+
+  @impl true
+  def init(_args), do: {:ok, :ready, %{}}
+
+  def ready(:cast, :tick, data), do: {:next_state, :ready, data}
+  def ready(_type, _msg, data), do: {:keep_state, data}
+
+  @impl true
+  def terminate(_reason, _state, _data), do: :ok
+end
+
+defmodule Argus.Test.Fixtures.DelegatedAbyssStatem do
+  @moduledoc """
+  encore's Rondo.Broken: `:abyss` is entered from `:start` and hands
+  every event to a private helper that keeps the state, so its function
+  returns no action of its own and is recognised only as a transition's
+  target. It never leaves and never stops (terminal_without_stop).
+  """
+  @behaviour :gen_statem
+
+  @impl true
+  def callback_mode, do: :state_functions
+
+  @impl true
+  def init(_opts), do: {:ok, :start, %{}}
+
+  def start({:call, from}, :descend, data),
+    do: {:next_state, :abyss, data, [{:reply, from, :descending}]}
+
+  def abyss(event_type, event, data), do: linger(event_type, event, data)
+
+  # Map.put compiles to a map update whose {:badmap, _} raise is the
+  # function's last call: a raise returns nothing.
+  defp linger({:call, from}, :probe, data) do
+    count = Map.get(data, :probes, 0) + 1
+    :gen_statem.reply(from, {:lingering, count})
+    {:keep_state, Map.put(data, :probes, count)}
+  end
+
+  defp linger(_event_type, _event, data), do: {:keep_state, data}
+
+  @impl true
+  def terminate(_reason, _state, _data), do: :ok
+end
