@@ -41,8 +41,9 @@
 // `unbounded_effect_in_init(mod, kind, api)` — init/1, in its own
 //   process, reaches a socket receive with :infinity ("recv"; `api` is
 //   the function), a `receive` with no `after` ("receive"), one only the
-//   exit of the process it waits on ends ("down"), or a connect with no
-//   way to retry ("connect").
+//   exit of the process it waits on ends ("down"), a server loop entered
+//   before the start is acknowledged ("enter_loop"; `api` holds the
+//   call), or a connect with no way to retry ("connect").
 // `deferral_defect(mod, kind, site, detail)` — deferred work that will
 //   not happen as written: an init timeout of `detail` ms that any
 //   earlier message cancels ("init_timeout"), or a defensive catch in
@@ -312,7 +313,9 @@ exit_bounded(m, id) :-
 // (`:gen_server.enter_loop/3`: OTP's logger_olp) waits there as the
 // server it has become, after its start returned; so does anything it
 // calls after the ack (start_acked). The edge into enter_loop is cut
-// wherever it is: what that loop waits for is the server's.
+// wherever it is: what that loop waits for is the server's. An
+// enter_loop reached before any ack is a finding of its own
+// ("enter_loop", below).
 .decl acked_edge(func: symbol, callee: symbol)
 
 acked_edge(f, g) :- call_instr(f, g, id), start_acked(id, f), !unacked_call(f, g).
@@ -353,6 +356,39 @@ unbounded_effect_in_init(mod, "down", r, id) :-
   unbounded_wait_at(r, id),
   !peer_bounded(id),
   exit_bounded(mod, id).
+
+// ── An init/1 that becomes the server before its start returns ──
+//
+// `:gen_server.enter_loop/3` (and gen_statem's) does not return: the
+// process runs the server loop from there. A start waits on init/1 —
+// GenServer's until it returns, proc_lib's until it calls init_ack — so
+// an init/1 that reaches enter_loop before acknowledging its start holds
+// its starter, and the supervisor's start, for good. A process started
+// by a bare spawn of init/1 (`:proc_lib.spawn_link(M, :init, [args])`)
+// has no starter waiting, and is left alone.
+.decl enters_loop_at(func: symbol, id: symbol)
+
+enters_loop_at(f, id) :-
+  remote_call(id, f, m, "enter_loop", _),
+  (m = ":gen_server" ; m = ":gen_statem"),
+  !start_acked(id, f).
+
+.init enter_reach = SameProcessReachCut
+
+enter_reach.cut(f, g) :- acked_edge(f, g).
+enter_reach.seed(f, f) :- enters_loop_at(f, _).
+
+.decl spawned_bare(mod: symbol)
+
+spawned_bare(m) :-
+  spawn_call(_, _, m, "init", 1, v, _, _, _, _),
+  (v = "spawn" ; v = "spawn_link" ; v = "spawn_monitor").
+
+unbounded_effect_in_init(mod, "enter_loop", r, id) :-
+  init_function(mod, f),
+  enter_reach.reaches(f, r),
+  enters_loop_at(r, id),
+  !spawned_bare(mod).
 
 // The receive that waits: the recv call, the `receive`, or the call
 // that forwards :infinity into a helper's recv.

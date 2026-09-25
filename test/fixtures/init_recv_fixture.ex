@@ -568,3 +568,18 @@ defmodule Argus.Test.Fixtures.InitRecv.FlushesOnFalse do
     {:ok, opts}
   end
 end
+
+defmodule Argus.Test.Fixtures.InitRecv.EntersWithoutAck do
+  @moduledoc false
+  # Started by GenServer.start_link, init/1 enters the loop itself: it
+  # never returns and nothing acknowledged the start.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(state), do: :gen_server.enter_loop(__MODULE__, [], state)
+
+  @impl true
+  def handle_call(:ping, _from, state), do: {:reply, :pong, state}
+end

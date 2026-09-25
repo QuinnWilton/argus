@@ -322,6 +322,16 @@ the cancel succeeded. Blocking's receive rules read the same
 `flush_receive`; a receive with an `after` that takes a cancelled
 timer's message is `flush_poll`, as before.
 
+**Added.** "init/1 enters the server loop before its start returns"
+(`unbounded_effect_in_init`, "enter_loop", an error): an init/1 that
+reaches `:gen_server.enter_loop` or `:gen_statem.enter_loop` before any
+`:proc_lib.init_ack/1` never returns, so the start that waits on it —
+GenServer's for init/1 to return, proc_lib's for the ack — never
+completes. The walk above cut the edge into enter_loop wherever it was,
+citing a rule for the unacknowledged loop that did not exist; this is
+it. A module whose init/1 is started by a bare spawn has no starter
+waiting, and is left alone.
+
 **Added.** Schema 100. `recv_flush(id, func, cancel)`
 (`Argus.Extractors.Monitor.Flush`): the receive at `id` runs only where
 the `cancel_timer` call at `cancel`, earlier in the function, returned

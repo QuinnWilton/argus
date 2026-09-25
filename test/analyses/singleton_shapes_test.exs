@@ -185,6 +185,18 @@ defmodule Argus.Analyses.SingletonShapesTest do
     # runs is the server's, entered after the ack.
     {:ok, r} = Memo.analyze([InitRecv.AcksThenLoops, :gen_server], :startup)
     assert Rows.where(r, :startup, "unbounded_effect_in_init", kind: "receive") == []
+    assert Rows.where(r, :startup, "unbounded_effect_in_init", kind: "enter_loop") == []
+  end
+
+  test "init/1 entering the server loop before any ack holds its start for good" do
+    skip_without_souffle()
+
+    {:ok, r} = Memo.analyze([InitRecv.EntersWithoutAck, InitRecv.AcksThenLoops], :startup)
+
+    assert [["Argus.Test.Fixtures.InitRecv.EntersWithoutAck", "enter_loop", api, _site]] =
+             Rows.where(r, :startup, "unbounded_effect_in_init", kind: "enter_loop")
+
+    assert api == "Argus.Test.Fixtures.InitRecv.EntersWithoutAck:init/1"
   end
 
   test "a call a task init/1 starts makes to a later sibling is no deadlock" do

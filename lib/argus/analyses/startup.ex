@@ -19,7 +19,8 @@ defmodule Argus.Analyses.Startup do
   - `unbounded_effect_in_init(mod, kind, api, site)` — init/1, in its own
     process, reaches a socket `recv` with `:infinity`, a `receive` with no
     `after` (`down` when only the exit of the process it waits on ends
-    it), or a `connect` nothing in the module can retry.
+    it), a server loop it enters before acknowledging its start
+    (`enter_loop`), or a `connect` nothing in the module can retry.
   - `deferral_defect(mod, kind, site, detail)` — the `{:ok, state, 0}`
     idiom any earlier message cancels (`init_timeout`), or a defensive
     catch in handle_continue that turns a deadlock into a restart loop
@@ -107,8 +108,9 @@ defmodule Argus.Analyses.Startup do
         name: :unbounded_effect_in_init,
         fields: [
           {:mod, :symbol, "module whose init/1 reaches it"},
-          {:kind, :symbol, "recv | receive | down | connect"},
-          {:api, :symbol, "the receiving function, or the connect call"},
+          {:kind, :symbol, "recv | receive | down | enter_loop | connect"},
+          {:api, :symbol,
+           "the receiving function, the function entering the loop, or the connect call"},
           {:site, :symbol,
            "the socket recv or the receive, when the instruction is known; else empty"}
         ],
@@ -120,10 +122,12 @@ defmodule Argus.Analyses.Startup do
              "connect" => [:mod],
              "recv" => [:kind, :api],
              "receive" => [:kind, :api],
-             "down" => [:kind, :api]
+             "down" => [:kind, :api],
+             "enter_loop" => [:mod, :site]
            }},
         doc:
-          "init/1 waits on a socket or its mailbox without bound, or connects with no way to retry."
+          "init/1 waits on a socket or its mailbox without bound, enters its loop before its " <>
+            "start is acknowledged, or connects with no way to retry."
       },
       %{
         name: :init_reaches_recv,
@@ -253,6 +257,25 @@ defmodule Argus.Analyses.Startup do
       help: [
         "add an `after` and fail the start with an error when it fires",
         "or wait after init returns (`{:continue, :await}`) so the start completes"
+      ]
+    )
+  end
+
+  def finding(:unbounded_effect_in_init, [mod, "enter_loop", func, site]) do
+    Findings.new(
+      :error,
+      "init/1 enters the server loop before its start returns",
+      "#{mod}'s init/1 reaches `enter_loop` in #{Findings.call_name(func)} without " <>
+        "calling `:proc_lib.init_ack/1` first. The process that started it waits for " <>
+        "init/1 to return (GenServer.start_link) or to acknowledge the start " <>
+        "(`:proc_lib.start_link`), and enter_loop never returns: the start never " <>
+        "completes, and the supervisor's start hangs with it.",
+      at: Findings.at_site_in_func(site, func),
+      at_label: "never returns, and nothing acknowledged the start",
+      help: [
+        "start the process with `:proc_lib.start_link/3` and call " <>
+          "`:proc_lib.init_ack({:ok, self()})` before `enter_loop`",
+        "or return `{:ok, state}` from init/1 and let the behaviour run the loop"
       ]
     )
   end
