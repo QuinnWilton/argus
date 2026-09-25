@@ -91,7 +91,6 @@ defmodule Scry.Runner do
 
       souffle? = Argus.Souffle.available?()
       env = sync_environment(db, config, souffle?, apps)
-      if env.fingerprint_changed?, do: :ok = drop_joined_extractions(db)
 
       # A module whose extraction failed last run is extracted again: a
       # timeout under load is not a fact about the beam.
@@ -100,8 +99,8 @@ defmodule Scry.Runner do
       {findings_by_file, degraded, extraction_errors} =
         if souffle? do
           cold? = force? or prior_sources == %{} or env.fingerprint_changed?
-          plan = extraction_plan(discovered, cold?, changed ++ retried)
-          analyze(db, config, discovered, plan)
+          to_extract = if cold?, do: Map.keys(discovered), else: Enum.uniq(changed ++ retried)
+          analyze(db, config, discovered, to_extract)
         else
           {%{}, [], []}
         end
@@ -131,14 +130,14 @@ defmodule Scry.Runner do
   end
 
   # The inputs that describe the run rather than the beams: the
-  # environment fingerprint, the project root, argus's producers, and —
-  # with a solver — the rules digests. `moved?` when any of them, or an
-  # analysis without a memo from the last run, means this run has
-  # something to write down.
+  # environment fingerprint, the project root, and — with a solver — the
+  # rules digests. `moved?` when any of them, or an analysis without a
+  # memo from the last run, means this run has something to write down.
   defp sync_environment(db, config, souffle?, apps) do
-    fingerprint_changed? = set(db, :env_fingerprint, :all, Scry.Fingerprint.env(apps))
+    fingerprint = Scry.Fingerprint.env(apps)
+    fingerprint_changed? = Input.fetch(db, :env_fingerprint, :all) != {:ok, fingerprint}
+    :ok = Input.set(db, :env_fingerprint, :all, fingerprint)
     :ok = Input.set(db, :project_root, :all, File.cwd!())
-    producers_changed? = set(db, :producers, :all, Scry.Analysis.producers())
 
     # Only solves read the rules, and none is demanded without a solver.
     rules_changed? = souffle? and set_rules(db, config.analyses)
@@ -150,55 +149,19 @@ defmodule Scry.Runner do
 
     %{
       fingerprint_changed?: fingerprint_changed?,
-      moved?: fingerprint_changed? or producers_changed? or rules_changed? or unsolved?
+      moved?: fingerprint_changed? or rules_changed? or unsolved?
     }
   end
-
-  # The graph joins a module's producers where it needs them and never
-  # demands `module_extraction`, the join memoized. A manifest written
-  # before it did holds one per module, a copy of every row, and the
-  # queries that read it (the semantic digest, the line table) still
-  # list it among their dependencies: validating one of them would
-  # compute the join again, and keep it. They go together, before the
-  # graph is demanded, and the readers are recomputed from the
-  # producers. Run when the environment moved (a scry upgrade moves it),
-  # when every query above the extractions runs again anyway.
-  @joined [:module_extraction, :module_semantic_facts, :module_line_table]
-
-  defp drop_joined_extractions(db) do
-    for module <- Input.keys(db, :beam_meta), query <- @joined do
-      :ok = Memo.delete(db, {query, module})
-    end
-
-    :ok
-  end
-
-  # Sets an input; true when its value moved.
-  defp set(db, input, key, value) do
-    moved? = Input.fetch(db, input, key) != {:ok, value}
-    :ok = Input.set(db, input, key, value)
-    moved?
-  end
-
-  # What to extract ahead of the graph, `module => :all`: every module
-  # on a cold run; otherwise every module whose beam changed or whose
-  # last extraction failed.
-  defp extraction_plan(discovered, true = _cold?, _changed),
-    do: Map.new(discovered, fn {module, _path} -> {module, :all} end)
-
-  defp extraction_plan(discovered, false = _cold?, changed),
-    do: for(module <- changed, Map.has_key?(discovered, module), into: %{}, do: {module, :all})
 
   # Extracts `to_extract` ahead of the graph, then demands every
   # analysis. A failed solve is not a fact about the program — a solver
   # that crashed or timed out, a rules file it could not load — and a
   # memo of it would be replayed by every later run until an input above
   # it moved: out of the database before the manifest sees it.
-  defp analyze(db, config, discovered, plan) do
-    :ok = prewarm(db, discovered, plan)
+  defp analyze(db, config, discovered, to_extract) do
+    :ok = prewarm(db, discovered, to_extract)
     :ok = Scry.Priors.sync(db, config)
     {findings_by_file, degraded} = demand(db, config.analyses)
-    _unclaimed = Scry.Analysis.drop_prewarmed()
     if degraded != [], do: :ok = drop_degraded(db, config.analyses)
 
     extraction_errors = Scry.Analysis.extraction_errors(db, :all)
@@ -289,21 +252,20 @@ defmodule Scry.Runner do
     analyses
     |> Scry.Fingerprint.rules()
     |> Enum.reduce(false, fn {key, digest}, changed? ->
-      set(db, :rules_digest, key, digest) or changed?
+      moved? = Input.fetch(db, :rules_digest, key) != {:ok, digest}
+      :ok = Input.set(db, :rules_digest, key, digest)
+      changed? or moved?
     end)
   end
 
-  # The extractions whose memo cannot be a hit (`extraction_plan/4`),
-  # run across the schedulers before the graph asks for them one at a
-  # time.
-  defp prewarm(_db, _discovered, plan) when map_size(plan) == 0, do: :ok
+  # The modules whose extraction memo cannot be a hit — every module on a
+  # cold run, the changed ones otherwise — extracted across the schedulers
+  # before the graph asks for them one at a time.
+  defp prewarm(_db, _discovered, []), do: :ok
 
-  defp prewarm(db, discovered, plan) do
-    plan
-    |> Map.new(fn
-      {module, :all} -> {module, Map.fetch!(discovered, module)}
-      {module, producers} -> {module, {Map.fetch!(discovered, module), producers}}
-    end)
+  defp prewarm(db, discovered, modules) do
+    discovered
+    |> Map.take(modules)
     |> Scry.Analysis.prewarm_extractions(db)
   end
 

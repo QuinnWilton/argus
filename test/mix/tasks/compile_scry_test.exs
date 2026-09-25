@@ -91,7 +91,7 @@ defmodule Mix.Tasks.Compile.ScryTest do
       assert first_coupling.details =~ "coupling call"
 
       # Extraction ran for every fixture module.
-      modules = QueryLog.extracted(log)
+      modules = QueryLog.executions(log, :module_extraction)
       assert length(modules) == length(Path.wildcard(Path.join(copy, "lib/**/*.ex")))
 
       manifest = Path.join(Mix.Project.manifest_path(), "compile.scry")
@@ -106,7 +106,7 @@ defmodule Mix.Tasks.Compile.ScryTest do
       # Prior findings re-emit from memo hits: same diagnostics, zero
       # extraction, zero solves.
       assert counts_by_code(diags) == %{"coupling" => 2, "mailbox" => 3}
-      assert QueryLog.extracted(log) == []
+      assert QueryLog.executions(log, :module_extraction) == []
       assert QueryLog.executions(log, :souffle_solve) == []
 
       # The persisted diagnostics callback serves the same list.
@@ -125,7 +125,7 @@ defmodule Mix.Tasks.Compile.ScryTest do
       result = compile!()
       diags = scry_diagnostics(result)
 
-      assert QueryLog.extracted(log) == [Depot.Application]
+      assert QueryLog.executions(log, :module_extraction) == [Depot.Application]
       assert QueryLog.executions(log, :souffle_solve) == []
 
       coupling = Enum.filter(diags, &(code_of(&1) == "coupling"))
@@ -168,7 +168,7 @@ defmodule Mix.Tasks.Compile.ScryTest do
       # And a further run is a clean noop.
       QueryLog.reset(log)
       result = compile!()
-      assert QueryLog.extracted(log) == []
+      assert QueryLog.executions(log, :module_extraction) == []
       assert QueryLog.executions(log, :souffle_solve) == []
       assert length(scry_diagnostics(result)) == 1
     end)

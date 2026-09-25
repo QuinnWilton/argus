@@ -21,8 +21,6 @@ defmodule Scry.Frontend do
   - `:env_fingerprint` input — `:all =>` toolchain map
     (`Scry.Fingerprint.env/0`); `:high` durability so an upgrade
     invalidates the whole graph.
-  - `:producers` input — `:all =>` the argus producers every module's
-    facts are joined from, in order (`Scry.Analysis.producers/0`).
   - `:rules_digest` input — analysis (or `:stage0`) `=>` a digest of
     the Datalog it runs (`Scry.Fingerprint.rules/1`); a rule edit
     re-solves the analyses whose programs it touched and re-extracts
@@ -53,7 +51,6 @@ defmodule Scry.Frontend do
   definput(:module_set, durability: :medium)
   definput(:ignored_beam, durability: :medium)
   definput(:env_fingerprint, durability: :high)
-  definput(:producers, durability: :high)
   definput(:rules_digest, durability: :high)
 
   # The project's root directory, for a beam whose recorded source path
@@ -71,7 +68,7 @@ defmodule Scry.Frontend do
 
   # One key per module: 0, or a fresh value on a run that retries the
   # module's extraction because the last one failed (a timeout under load
-  # is not a fact about the beam). `producer_extraction` reads it only when
+  # is not a fact about the beam). `module_extraction` reads it only when
   # set.
   definput(:extraction_attempt, durability: :medium)
 

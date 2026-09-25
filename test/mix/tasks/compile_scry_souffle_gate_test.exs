@@ -168,7 +168,7 @@ defmodule Mix.Tasks.Compile.ScrySouffleGateTest do
                ]
 
         assert QueryLog.executions(log, :souffle_solve) == [:mailbox]
-        assert QueryLog.extracted(log) == []
+        assert QueryLog.executions(log, :module_extraction) == []
 
         # And that success is persisted: a third run is a noop.
         QueryLog.reset(log)

@@ -48,7 +48,7 @@ defmodule Mix.Tasks.ScryTest do
           Mix.Task.rerun("scry", [])
         end)
 
-      assert QueryLog.extracted(log) == []
+      assert QueryLog.executions(log, :module_extraction) == []
       assert QueryLog.executions(log, :souffle_solve) == []
 
       assert output =~ "warning[scry.coupling]"

@@ -6,14 +6,12 @@ defmodule Scry.Analysis do
 
       module_beam(module)                                 [frontend]
            │
-      producer_extraction({module, producer})  ← each argus producer's
-       │              │                         rows (`:base` or one
-       │              │                         extractor), apart
+      module_extraction(module)     ← Argus.Pipeline.extract, per module
+       │              │
       module_semantic_facts   module_line_table
-       (digest of the module's (anchor resolution,
-        producers joined,       from the base's
-        minus line_info —       line_info, consumed
-        THE cutoff seam)        late)
+       (digest of the facts    (anchor resolution,
+        minus line_info —       consumed late)
+        THE cutoff seam)
            │
       program_relation_facts(:all)  ← every module's facts merged once,
            │                          read through the digests above
@@ -37,7 +35,6 @@ defmodule Scry.Analysis do
 
   Planchette's LSP-only surface (`Planchette.SupTree`'s supervision tree,
   `Planchette.Focus`'s flowistry slices) hangs off `module_extraction`
-  (a module's producers joined, which this graph itself never demands)
   and `relation_facts` (the rows as strings) by query name from its own
   modules; nothing here depends on it.
 
@@ -46,11 +43,10 @@ defmodule Scry.Analysis do
   propagates past it only along the relations it actually moved.
 
   The line-shift immunity story: a whitespace/comment edit changes the
-  beam (Line/Dbgi chunks) → every `producer_extraction` of the module
-  recomputes, and the base's differs (its `line_info` rows changed) →
-  `module_semantic_facts` recomputes, produces an EQUAL value → roux
-  backdates it → every projection below it validates green without
-  executing. Zero Souffle runs for a comment edit.
+  beam (Line/Dbgi chunks) → `module_extraction` recomputes and differs
+  (its `line_info` rows changed) → `module_semantic_facts` recomputes,
+  produces an EQUAL value → roux backdates it → every projection below it
+  validates green without executing. Zero Souffle runs for a comment edit.
 
   The body-edit story: an edit that changes what a function COMPUTES but
   not what it CALLS moves `instruction` and friends, so the analyses that
@@ -84,15 +80,9 @@ defmodule Scry.Analysis do
   defines queries only). The `:rules_digest` input (per analysis,
   `:stage0` and `:points_to`) is optional: a frontend that never sets it
   reads it as `nil` and relies on its `:env_fingerprint` to move when
-  rules do. So is `:producers` (the join's order, `producers/0` when
-  unset). So is the `:ignored_beam` input (per module): it names the modules the
-  frontend watches without analyzing, whose specs a caller's extraction
-  reads off the code path.
-
-  Extraction left to the graph runs one module at a time: the join's
-  first producer extracts every producer of its module at once, for the
-  ones that follow it, and any other producer extracts itself alone.
-  `prewarm_extractions/2` runs the same work across the schedulers.
+  rules do. So is the `:ignored_beam` input (per module): it names the
+  modules the frontend watches without analyzing, whose specs a caller's
+  extraction reads off the code path.
   """
 
   use Roux.Query
@@ -123,33 +113,29 @@ defmodule Scry.Analysis do
   # stages them: the list moves with its rules.
   @points_to_outputs Enum.map(Argus.Analysis.points_to_relations(), &String.to_atom/1)
 
-  # One producer's rows for one module (`Argus.Pipeline.extract_shards/3`):
-  # `:base` — the emitter's facts, `def_use`, `conditional_call` — or one
-  # extractor's. A producer's rows depend on the beam and on the code it
-  # runs, and on no other producer's, so an argus edit re-runs only the
-  # producers whose digest it moved; where the rows come out equal this
-  # backdates, and the module's joined facts validate without executing.
-  defquery :producer_extraction,
-    key: {module, producer},
-    returns: {:ok, map()} | {:error, term()} do
-    # The rows are a function of argus's code and fact schema as much as
-    # of the beam, and both ride the fingerprint — so a warm manifest
-    # cannot serve rows an older extractor wrote for an unchanged beam.
+  defquery :module_extraction, key: module, returns: {:ok, map()} | {:error, term()} do
+    # The rows are a function of argus's fact schema as much as of the
+    # beam, and the schema version rides the fingerprint — so a warm
+    # manifest cannot serve rows an older encoder wrote for an unchanged
+    # beam. Without this edge the only reader of the fingerprint was
+    # `analysis_input_relations`, and a column reorder would have
+    # misaligned every memoized projection silently.
     _fingerprint = Runtime.input!(db, :env_fingerprint, :all)
 
     # A retry of a failed extraction moves this; read only when set, since
     # an edge to an input with no value validates as stale.
-    _attempt = optional_input(db, :extraction_attempt, module)
+    if Roux.Input.exists?(db, :extraction_attempt, module),
+      do: Runtime.input(db, :extraction_attempt, module)
 
     case Runtime.query(db, :module_beam, module) do
       {:ok, beam} ->
-        {result, reads} =
-          case take_prewarmed(module, producer, beam) do
-            {:ok, extracted} -> extracted
-            :none -> extract_on_demand(db, module, producer, beam)
+        result =
+          case take_prewarmed(module, beam) do
+            {:ok, result} -> result
+            :none -> extract(module, beam, Symbols.for_db(db))
           end
 
-        :ok = track_reads(db, module, reads)
+        :ok = track_installed_callees(db, module, result)
         result
 
       :external ->
@@ -160,116 +146,89 @@ defmodule Scry.Analysis do
     end
   end
 
-  # A module's facts whole, for a consumer that reads them so
-  # (planchette's focus): `module_facts/2`. Scry's own path never demands
-  # it — each query that needs a module's facts whole joins them itself,
-  # so the rows are memoized once, per producer, and not again joined.
-  defquery :module_extraction, key: module, returns: {:ok, map()} | {:error, term()} do
-    module_facts(db, module)
-  end
-
-  # A module's producers' rows joined in the frontend's producer order
-  # (`:producers`, `producers/0` when unset), a relation several
-  # producers write holding each one's rows in turn; the dependencies
-  # are on each producer's rows, so a producer re-extracted to the same
-  # rows leaves the caller green. The first error, in producer order, is
-  # the module's (a beam that cannot be read fails every producer
-  # alike).
-  defp module_facts(db, module) do
-    db
-    |> producer_list()
-    |> Enum.reduce_while({:ok, []}, fn producer, {:ok, parts} ->
-      case Runtime.query(db, :producer_extraction, {module, producer}) do
-        {:ok, facts} -> {:cont, {:ok, [facts | parts]}}
-        {:error, _} = error -> {:halt, error}
-      end
-    end)
-    |> case do
-      {:ok, parts} -> {:ok, join_producers(Enum.reverse(parts))}
-      {:error, _} = error -> error
-    end
-  end
-
-  defp join_producers(parts) do
-    parts
-    |> Enum.flat_map(&Map.to_list/1)
-    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
-    |> Map.new(fn {relation, rows} -> {relation, Enum.concat(rows)} end)
-  end
-
-  @doc """
-  The producers a module's facts are joined from, in order: argus's
-  base (`:base`) and then each of `all_extractors/0`.
-  """
-  @spec producers() :: [Argus.Pipeline.producer()]
-  def producers, do: [:base | all_extractors()]
-
-  # The frontend's producers, or this module's when it sets none.
-  defp producer_list(db) do
-    if Roux.Input.exists?(db, :producers, :all),
-      do: Runtime.input(db, :producers, :all),
-      else: producers()
-  end
-
-  defp optional_input(db, input, key) do
-    if Roux.Input.exists?(db, input, key), do: Runtime.input(db, input, key)
-  end
-
-  # Extraction the frontend did not prewarm. A module's producers are
-  # joined in order (`module_facts/2`), so the first of them to execute
-  # is the first in that order exactly when what they all read moved
-  # (the beam, argus's code, a retry): then every producer of the module
-  # is stale, and all of them are extracted in one pass (the base's work,
-  # which is most of it, done once), this one's rows returned and the
-  # others' parked for their own queries, which the join demands next. Any other
-  # producer executes for a reason of its own — a module its specs were
-  # read from moved — and is extracted alone, beside the base it reads.
-  defp extract_on_demand(db, module, producer, beam) do
-    producers =
-      case Runtime.untracked(fn -> producer_list(db) end) do
-        [^producer | _] = all -> all
-        _other -> [producer]
-      end
-
-    extracted = extract(module, beam, producers, Symbols.for_db(db))
-    {mine, others} = Map.pop!(extracted, producer)
-    park(module, :erlang.md5(beam), others)
-    mine
-  end
-
-  # What the specs extractor read off the code path for this module
-  # (`Argus.Pipeline.extract_shards/3`'s `installed`: each module whose
-  # specs or types it looked up, found or not). The environment digest
-  # in the fingerprint covers every application there but the ones the
-  # frontend watches; a read of one of those records an edge that moves
-  # with it:
+  # The specs extractor reads a remote callee's specs off the code path
+  # (`spec_return(_, _, "installed")`). When the callee is a module of
+  # this project, those rows describe a beam the environment digest does
+  # not cover, so the caller records an edge that moves with it:
   #
-  # - a module of the program: an edge to its `file_of`. The rules
-  #   ignore installed rows for a callee while it is analyzed (its own
-  #   rows win) and read them once it is gone, so what matters is that it
-  #   appears, leaves or moves; `file_of` moves exactly then and
-  #   backdates otherwise.
-  # - a module the frontend watches without analyzing (`:ignored_beam`,
+  # - an analyzed callee: an edge to its `file_of`. The rules ignore the
+  #   installed rows while the callee is analyzed (its own rows win) and
+  #   read them once it is gone, so what matters is that it appears,
+  #   leaves or moves; `file_of` moves exactly then and backdates
+  #   otherwise.
+  # - a callee the frontend watches without analyzing (`:ignored_beam`,
   #   scry's `ignore: [modules: ...]`): an edge to that input, which
   #   moves whenever its beam — and so its specs — does.
   #
-  # Which reads are which is decided without an edge. A read that found
-  # no module stays unrecorded: a module that appears later in a
-  # dependency moves the environment, and one that appears in the
-  # program is analyzed, so its own rows win.
-  defp track_reads(_db, _module, []), do: :ok
+  # Which callees are which is read without an edge; a module added
+  # later is not one these rows can describe stale.
+  defp track_installed_callees(db, module, {:ok, facts}) do
+    rows = Map.get(facts, :spec_return, [])
 
-  defp track_reads(db, module, reads) do
-    program = db |> program_modules() |> MapSet.new()
+    if rows != [] do
+      symbols = Symbols.for_db(db)
 
-    Enum.each(reads, fn read ->
-      cond do
-        read == module -> :ok
-        MapSet.member?(program, read) -> _ = Runtime.query(db, :file_of, read)
-        Roux.Input.exists?(db, :ignored_beam, read) -> _ = Runtime.input(db, :ignored_beam, read)
-        true -> :ok
-      end
-    end)
+      program = db |> program_modules() |> Map.new(&{inspect(&1), &1})
+
+      rows
+      |> Enum.flat_map(fn row ->
+        with "installed" <- Argus.Symbols.resolve(symbols, elem(row, 2)),
+             {:ok, %{module: name}} <-
+               Argus.InstrId.parse_func(Argus.Symbols.resolve(symbols, elem(row, 0))) do
+          [name]
+        else
+          _ -> []
+        end
+      end)
+      |> Enum.uniq()
+      |> Enum.each(&track_callee(db, module, program, &1))
+    end
+
+    :ok
+  end
+
+  defp track_installed_callees(_db, _module, {:error, _}), do: :ok
+
+  defp track_callee(db, module, program, name) do
+    case Map.fetch(program, name) do
+      {:ok, ^module} ->
+        :ok
+
+      {:ok, callee} ->
+        _ = Runtime.query(db, :file_of, callee)
+        :ok
+
+      :error ->
+        track_watched_callee(db, name)
+    end
+  end
+
+  # An edge to a key with no value validates as stale, so only a set key
+  # is read. Most callees here are dependencies' and OTP's modules, which
+  # the frontend does not watch.
+  defp track_watched_callee(db, name) do
+    with {:ok, callee} <- module_named(name),
+         true <- Roux.Input.exists?(db, :ignored_beam, callee) do
+      _ = Runtime.input(db, :ignored_beam, callee)
+    end
+
+    :ok
+  end
+
+  # The module a function ID names, as `inspect/1` spelled it (`Foo.Bar`,
+  # `:lists`, `:"Elixir.odd name"`), never minting an atom: a module the
+  # frontend watches is one it has already named.
+  defp module_named(":" <> _ = name) do
+    case Code.string_to_quoted(name, existing_atoms_only: true) do
+      {:ok, module} when is_atom(module) -> {:ok, module}
+      _ -> :error
+    end
+  end
+
+  defp module_named(name) do
+    {:ok, String.to_existing_atom("Elixir." <> name)}
+  rescue
+    ArgumentError -> :error
   end
 
   # The modules the frontend analyzes: the keys of its `:module_map`, as
@@ -285,10 +244,10 @@ defmodule Scry.Analysis do
   # its facts without line_info (and the vsn attribute, a checksum no rule
   # reads). A line-only edit re-extracts the module, this comes out equal,
   # and roux backdates it — THE early-cutoff seam. It holds the digest
-  # rather than the facts because the facts are the producers' already:
-  # a second copy was a sixth of the manifest.
+  # rather than the facts because the facts are module_extraction's
+  # already: a second copy was a sixth of the manifest.
   defquery :module_semantic_facts, key: module, returns: {:ok, binary()} | {:error, term()} do
-    case module_facts(db, module) do
+    case Runtime.query(db, :module_extraction, module) do
       {:ok, facts} ->
         {:ok,
          facts
@@ -301,10 +260,8 @@ defmodule Scry.Analysis do
     end
   end
 
-  # From the base's rows alone, which hold `line_info`: an edit to an
-  # extractor never reaches it.
   defquery :module_line_table, key: module, returns: {:ok, map()} | {:error, term()} do
-    case Runtime.query(db, :producer_extraction, {module, :base}) do
+    case Runtime.query(db, :module_extraction, module) do
       {:ok, facts} ->
         symbols = Symbols.for_db(db)
 
@@ -357,7 +314,8 @@ defmodule Scry.Analysis do
           # lines leaves it equal and never reaches here. The facts are
           # read without an edge, and are current — the digest was just
           # validated against them.
-          {:ok, facts} = Runtime.untracked(fn -> module_facts(db, module) end)
+          {:ok, facts} =
+            Runtime.untracked(fn -> Runtime.query(db, :module_extraction, module) end)
 
           facts
           |> semantic(symbols)
@@ -933,43 +891,24 @@ defmodule Scry.Analysis do
   Extracts `modules` in parallel ahead of the query graph.
 
   Queries execute one at a time on the demanding process, so a cold run
-  extracted every module serially. This runs the extraction for each
-  module across the schedulers — of every producer the frontend joins
-  (`:producers`, `producers/0` when unset) for a bare `module =>
-  beam_path`, of the named ones for `module => {beam_path, producers}`
-  — and parks each producer's result for its `producer_extraction` to
-  pick up: the query still executes, records its dependencies and
-  memoizes as before, it just finds its answer waiting. A result is
-  keyed by the canonical beam's digest, so a beam that changed between
-  the pre-pass and the query is extracted again. `drop_prewarmed/0`
-  clears what no query took.
+  extracted every module serially. This runs the extraction for the given
+  `module => beam_path` map across the schedulers and parks each result
+  for `module_extraction` to pick up — the query still executes, records
+  its dependencies and memoizes as before, it just finds its answer
+  waiting. A result is keyed by the canonical beam's digest, so a beam
+  that changed between the pre-pass and the query is extracted again.
   """
-  @spec prewarm_extractions(
-          %{optional(module()) => String.t() | {String.t(), [Argus.Pipeline.producer()]}},
-          Roux.Database.t()
-        ) :: :ok
-  def prewarm_extractions(plan, db) when is_map(plan) do
+  @spec prewarm_extractions(%{optional(module()) => String.t()}, Roux.Database.t()) :: :ok
+  def prewarm_extractions(paths, db) when is_map(paths) do
     symbols = Symbols.for_db(db)
 
-    all =
-      case Roux.Input.fetch(db, :producers, :all) do
-        {:ok, producers} -> producers
-        :error -> producers()
-      end
-
-    plan
+    paths
     |> Task.async_stream(
-      fn {module, entry} ->
-        {path, producers} =
-          case entry do
-            {path, producers} -> {path, producers}
-            path -> {path, all}
-          end
-
+      fn {module, path} ->
         case File.read(path) do
           {:ok, raw} ->
             beam = Scry.Beam.canonical(raw)
-            {module, :erlang.md5(beam), extract(module, beam, producers, symbols)}
+            {module, :erlang.md5(beam), extract(module, beam, symbols)}
 
           {:error, _} ->
             nil
@@ -979,86 +918,27 @@ defmodule Scry.Analysis do
       timeout: :infinity
     )
     |> Enum.each(fn
-      {:ok, {module, digest, extracted}} -> park(module, digest, extracted)
-      _ -> :ok
+      {:ok, {module, digest, result}} ->
+        Process.put({__MODULE__, :prewarmed, module}, {digest, result})
+
+      _ ->
+        :ok
     end)
   end
 
-  @doc """
-  Forgets every result `prewarm_extractions/2` (or a query extracting
-  its module's other producers) parked in this process and no query
-  took, and returns them: each module with its producers, sorted. Empty
-  when the pre-pass extracted exactly what the graph asked for.
-  """
-  @spec drop_prewarmed() :: [{module(), [Argus.Pipeline.producer()]}]
-  def drop_prewarmed do
-    for {{__MODULE__, :prewarmed, module} = key, {_digest, waiting}} <- Process.get() do
-      Process.delete(key)
-      {module, waiting |> Map.keys() |> Enum.sort()}
-    end
-    |> Enum.sort()
-  end
-
-  # One slot per module: its beam's digest and each producer's result
-  # still waiting. Results for the same beam join what is there; a
-  # different beam replaces it. A failed extraction is not parked: it
-  # fails every producer of the module alike, and the join stops at the
-  # first, so the rest would wait for a query that never comes.
-  defp park(module, digest, extracted) do
-    extracted =
-      for {producer, {{:ok, _}, _} = entry} <- extracted, into: %{}, do: {producer, entry}
-
-    if extracted != %{}, do: put_parked(module, digest, extracted)
-    :ok
-  end
-
-  defp put_parked(module, digest, extracted) do
-    key = {__MODULE__, :prewarmed, module}
-
-    parked =
-      case Process.get(key) do
-        {^digest, waiting} -> Map.merge(waiting, extracted)
-        _other -> extracted
-      end
-
-    Process.put(key, {digest, parked})
-    :ok
-  end
-
-  # A parked result for a beam that has since changed is dropped with
-  # its slot.
-  defp take_prewarmed(module, producer, beam) do
+  defp take_prewarmed(module, beam) do
     key = {__MODULE__, :prewarmed, module}
 
     case Process.get(key) do
+      {digest, result} ->
+        Process.delete(key)
+        if digest == :erlang.md5(beam), do: {:ok, result}, else: :none
+
       nil ->
         :none
-
-      {digest, waiting} ->
-        if digest == :erlang.md5(beam) do
-          take_parked(key, digest, waiting, producer)
-        else
-          Process.delete(key)
-          :none
-        end
     end
   end
 
-  defp take_parked(key, digest, waiting, producer) do
-    case Map.pop(waiting, producer) do
-      {nil, _waiting} ->
-        :none
-
-      {extracted, rest} ->
-        if rest == %{}, do: Process.delete(key), else: Process.put(key, {digest, rest})
-        {:ok, extracted}
-    end
-  end
-
-  # Each of `producers`' result for one module, `{result, reads}`: its
-  # rows, or the module's error, and what it read off the code path (the
-  # specs extractor's reads; nothing for a producer that reads none).
-  #
   # Rows are memoized interned: the ids' meaning lives in the database's
   # intern table, persisted with the memo that holds them. They are
   # sorted as strings first — an id's value depends on the order the
@@ -1066,8 +946,8 @@ defmodule Scry.Analysis do
   # sorting by id would make a module's row order (and everything
   # downstream that keeps it, such as the supervision tree's resource
   # lists) vary from run to run for the same beam.
-  defp extract(module, beam, producers, symbols) do
-    opts = [trace_imprecision: true]
+  defp extract(module, beam, symbols) do
+    opts = [extractors: all_extractors(), trace_imprecision: true]
 
     # Argus's per-module timeout unless the application sets one (tests
     # use a tiny one to see a module time out).
@@ -1077,15 +957,9 @@ defmodule Scry.Analysis do
         ms -> Keyword.put(opts, :timeout, ms)
       end
 
-    case Argus.Pipeline.extract_shards([beam], producers, opts) do
-      {:ok, shards, %{installed: installed}} ->
-        Map.new(shards, fn {producer, facts} ->
-          reads = if Argus.Cache.Code.reads_installed?(producer), do: installed, else: []
-          {producer, {{:ok, facts |> canonicalize() |> Facts.intern(symbols)}, reads}}
-        end)
-
-      {:error, reason} ->
-        Map.new(producers, &{&1, {{:error, {:extraction, module, reason}}, []}})
+    case Argus.Pipeline.extract([beam], opts) do
+      {:ok, facts} -> {:ok, facts |> canonicalize() |> Facts.intern(symbols)}
+      {:error, reason} -> {:error, {:extraction, module, reason}}
     end
   end
 
