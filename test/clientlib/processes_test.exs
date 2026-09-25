@@ -53,6 +53,9 @@ defmodule Argus.Clientlib.ProcessesTest do
     PidFlow.NamedTargetB,
     PidFlow.StatemClient,
     PidFlow.Quiet,
+    PidFlow.Pass,
+    PidFlow.PassUserA,
+    PidFlow.PassUserB,
     PidFlow.Nested
   ]
 
@@ -193,6 +196,22 @@ defmodule Argus.Clientlib.ProcessesTest do
              r["sync_site"],
              &match?(["UserA:handle_call/3", "TargetA", "UserA:" <> _], &1)
            )
+  end
+
+  test "a helper that hands its parameter back returns each caller's own value", ctx do
+    r = solve(ctx, ~w(process_call returns_pts))
+
+    targets =
+      for ["PassUser" <> _ = f, _a, _s, "call", p] <- unsited(r["process_call"]), do: {f, p}
+
+    # Each user still reaches its own peer through every helper...
+    assert {"PassUserA:handle_call/3", "start PassUserA:init/1"} in targets
+    assert {"PassUserB:handle_call/3", "start PassUserB:init/1"} in targets
+    # ...and only its own: merged at a helper's parameter, each would call both.
+    refute {"PassUserA:handle_call/3", "start PassUserB:init/1"} in targets
+    refute {"PassUserB:handle_call/3", "start PassUserA:init/1"} in targets
+    # The helpers return nothing of their own: what they hand back is the caller's.
+    refute Enum.any?(r["returns_pts"], &match?(["Pass:" <> _ | _], &1))
   end
 
   test "a pid held three terms deep is followed out of another function's term", ctx do

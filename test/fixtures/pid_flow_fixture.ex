@@ -841,6 +841,71 @@ defmodule Argus.Test.Fixtures.PidFlow do
     def handle_call(:ping, _from, s), do: {:reply, NamedCall.ping(NamedPeerA), s}
   end
 
+  defmodule Pass do
+    @moduledoc """
+    Helpers that hand their parameter back: as it came, through a second
+    helper, and after counting down to it.
+    """
+    def same(x), do: x
+    def via(x), do: same(x)
+    def after_count(x, 0), do: x
+    def after_count(x, n), do: after_count(x, n - 1)
+  end
+
+  defmodule PassUserA do
+    @moduledoc """
+    Calls its private peer after handing it through Pass's helpers, bare
+    and inside a term. PassUserB does the same with another peer: merged
+    at a helper's parameter, each would call both peers.
+    """
+    use GenServer
+
+    alias Argus.Test.Fixtures.PidFlow.{Pass, TargetA}
+
+    @impl true
+    def init(:ok) do
+      {:ok, peer} = TargetA.start_link()
+      {:ok, %{peer: peer}}
+    end
+
+    @impl true
+    def handle_call(:same, _from, s), do: {:reply, GenServer.call(Pass.same(s.peer), :ping), s}
+    def handle_call(:via, _from, s), do: {:reply, GenServer.call(Pass.via(s.peer), :ping), s}
+
+    def handle_call(:count, _from, s),
+      do: {:reply, GenServer.call(Pass.after_count(s.peer, 3), :ping), s}
+
+    def handle_call(:held, _from, s) do
+      held = Pass.same(%{held: s.peer})
+      {:reply, GenServer.call(held.held, :ping), s}
+    end
+  end
+
+  defmodule PassUserB do
+    @moduledoc false
+    use GenServer
+
+    alias Argus.Test.Fixtures.PidFlow.{Pass, TargetB}
+
+    @impl true
+    def init(:ok) do
+      {:ok, peer} = TargetB.start_link()
+      {:ok, %{peer: peer}}
+    end
+
+    @impl true
+    def handle_call(:same, _from, s), do: {:reply, GenServer.call(Pass.same(s.peer), :ping), s}
+    def handle_call(:via, _from, s), do: {:reply, GenServer.call(Pass.via(s.peer), :ping), s}
+
+    def handle_call(:count, _from, s),
+      do: {:reply, GenServer.call(Pass.after_count(s.peer, 3), :ping), s}
+
+    def handle_call(:held, _from, s) do
+      held = Pass.same(%{held: s.peer})
+      {:reply, GenServer.call(held.held, :ping), s}
+    end
+  end
+
   defmodule Nested do
     @moduledoc "Keeps its peer three terms deep, built in one function and read out in another."
     alias Argus.Test.Fixtures.PidFlow.TargetA

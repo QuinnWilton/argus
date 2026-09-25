@@ -24,13 +24,20 @@
 // Parameters are context-insensitive, like Andersen's analysis: a
 // parameter points to everything any caller passes it. That is "may
 // point to", and a rule that concludes something from it asks what a
-// process does NOT do.
+// process does NOT do. Two things keep that from costing more than the
+// answer is worth:
 //
-// Only a term that holds a leaf (a process or a table, directly or in a
-// term it holds) is followed as an object. The others cannot lead a use
-// to a leaf, and the rules below only ever ask where the leaves go: every
-// row of every staged relation is the same with them or without them,
-// and on a large program they are most of the terms.
+// - Only a term that holds a leaf (a process or a table, directly or in
+//   a term it holds) is followed as an object. The others cannot lead a
+//   use to a leaf, and the rules below only ever ask where the leaves go:
+//   every row of every staged relation is the same with them or without
+//   them, and on a large program they are most of the terms.
+// - A callee that hands its parameter back (`def put(x), do: x`, or a
+//   helper returning what such a callee returned of it) returns, at each
+//   call, what that call passed it, not everything any caller passed it.
+//   Merged at the parameter, one such helper made every caller's value
+//   every other caller's; chained, the helpers of a large library made
+//   one value of almost every term in it (see "Returns" below).
 //
 // The rules run once per program, in the points-to stage
 // (priv/dl/points_to.dl), not in every analysis that asks: the fixpoint
@@ -196,12 +203,23 @@ source_pts(f, "param", k, x) :- param_pts(f, k, x).
 source_pts(f, "result", c, x) :- pid_result(c, f, g), returns_pts(g, x), !fresh_return(g, x).
 .plan 0:(2,1)
 
+// A callee that hands its parameter back returns, at this call, what
+// this call passed it (see "Returns" below).
+source_pts(f, "result", c, x) :-
+  pid_result(c, f, g),
+  passes(g, j),
+  pid_arg(c, f, g, j, "call", sk, s),
+  source_pts(f, sk, s, x),
+  !fresh_return(g, x).
+.plan 0:(4,3,1,2)
+
 source_pts(f, "result", c, x) :-
   pid_result(c, f, g),
   fresh_return(g, x),
   pid_return(f, "result", c).
 
 source_pts(f, "result", c, cat("start ", c)) :- kept_fresh(c, f, x), process_start(_, _, x, _, _).
+
 source_pts(f, "result", c, cat("result ", c)) :- kept_fresh(c, f, x), start_object(x, _).
 source_pts(f, "name", n, p) :- reads_name(f, n), named_pid(n, p).
 source_pts(f, "self", "self", p) :- self_pid(f, p).
@@ -219,7 +237,7 @@ source_pts(f, "reply", id, x) :-
   call_site_target(id, f, "call", p),
   server_process(p, m),
   function_def(h, m, "handle_call", 3, _),
-  returns_pts(h, t),
+  returns_all(h, t),
   pid_object(_, t, "tuple", ":reply", _),
   field_pts(t, "{1}", x).
 
@@ -274,7 +292,54 @@ field_pts(o, sel, x) :- update_base(o, b), field_pts(b, sel, x), !pid_sets(o, se
 update_base(o, b) :- pid_base(f, o, bk, bs), source_pts(f, bk, bs, b).
 .plan 0:(2,1)
 
-returns_pts(f, x) :- pid_return(f, k, s), source_pts(f, k, s, x).
+// ── Returns ─────────────────────────────────────────────────────────
+//
+// What a function returns, apart from the parameters it hands back as
+// they came (`passes`): the values its callers get whoever called it.
+// A parameter handed back is the caller's own argument (the result rule
+// above), so it is kept out of here — merged here, a helper such as
+// `def set(x), do: x` gave every caller's argument to every caller. A
+// callee's result the function returns in turn is split the same way:
+// the callee's own returns, and of what it hands back, the argument this
+// function passed it unless that is one of its parameters, which it then
+// hands back itself.
+returns_pts(g, x) :- pid_return(g, k, s), k != "param", k != "result", source_pts(g, k, s, x).
+.plan 0:(2,1)
+
+returns_pts(g, x) :- pid_return(g, "result", c), pid_result(c, g, h), returns_pts(h, x), !fresh_return(h, x).
+.plan 0:(3,2,1)
+
+returns_pts(g, x) :- pid_return(g, "result", c), pid_result(c, g, h), fresh_return(h, x).
+
+returns_pts(g, x) :-
+  pid_return(g, "result", c),
+  pid_result(c, g, h),
+  passes(h, i),
+  pid_arg(c, g, h, i, "call", sk, s),
+  sk != "param",
+  source_pts(g, sk, s, x),
+  !fresh_return(h, x).
+.plan 0:(5,4,2,1,3)
+
+// `func` may return its parameter `pos` as it was passed: directly, or
+// as a callee's result that hands back what `func` passed it there.
+.decl passes(func: symbol, pos: symbol)
+
+passes(g, j) :- pid_return(g, "param", j).
+
+passes(g, j) :-
+  pid_return(g, "result", c),
+  pid_result(c, g, h),
+  passes(h, i),
+  pid_arg(c, g, h, i, "call", "param", j).
+
+// Everything a function returns, the parameters it hands back included:
+// what the process machinery gets back from a callback, which no call in
+// the program passed its arguments.
+.decl returns_all(func: symbol, x: symbol)
+
+returns_all(g, x) :- returns_pts(g, x).
+returns_all(g, x) :- passes(g, j), param_pts(g, j, x).
 .plan 0:(2,1)
 
 // A parameter is filled by the process that runs the function as an
@@ -402,7 +467,7 @@ state_in(m, f, "1") :-
 
 state_pts(m, x) :-
   state_out(m, g),
-  returns_pts(g, t),
+  returns_all(g, t),
   pid_object(_, t, "tuple", tag, n),
   state_slot(tag, n, sel),
   field_pts(t, sel, x).
@@ -636,7 +701,7 @@ statem_data_in(m, f, "2") :- statem_process(m), function_def(f, m, "terminate", 
 
 statem_data_pts(m, x) :-
   statem_data_out(m, g),
-  returns_pts(g, t),
+  returns_all(g, t),
   pid_object(_, t, "tuple", tag, n),
   statem_data_slot(tag, n, sel),
   field_pts(t, sel, x).

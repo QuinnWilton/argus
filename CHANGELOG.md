@@ -25,6 +25,21 @@ holds a process or a table, itself or in a term it holds
 every staged row is the same, and on a large program such terms are
 most of them: OTP's stdlib stage 10.6 s to 0.7 s.
 
+**Changed.** A callee that hands its parameter back as it came — directly,
+or as a callee's result that does (`passes`) — returns, at each call,
+what that call passed it, not every caller's value; what else it returns
+stays context-insensitive (`returns_pts`), and the process machinery
+still gets everything a callback returns (`returns_all`). A sound
+refinement. Over the evaluation programs one set of rows goes, none
+feeding a finding: livebook's four `source_process` rows naming a
+session `Livebook.App.handle_call/3` started as what `handle_cast/2` and
+`handle_info/2` hand on through `start_eagerly/1` and
+`shutdown_old_versions/1`, which return a state map (the session came
+in through a kept factory's `{:ok, pid}` read as the `{1}` of a
+three-tuple, and the helpers' merged parameter spread it to every
+caller). Fixtures: `PassUserA`/`PassUserB` each reach their own peer
+through `Pass`'s helpers and not the other's.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,
