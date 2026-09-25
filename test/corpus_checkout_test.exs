@@ -56,4 +56,17 @@ defmodule Argus.CorpusCheckoutTest do
     assert {"MIX_HOME", Path.expand("~/.asdf/installs/elixir/1.18.3-otp-27/.mix")} in env
     assert {"ASDF_ERLANG_VERSION", "27.3.3"} in env
   end
+
+  test "a pair's env overrides the clean environment, MIX_ENV included" do
+    env = Corpus.compile_env(Map.put(@pair, :env, %{"MIX_ENV" => "prod", "PROFILE" => "p"}))
+
+    assert {"MIX_ENV", "prod"} in env
+    refute {"MIX_ENV", "dev"} in env
+    assert {"PROFILE", "p"} in env
+  end
+
+  test "a checkout carries the app a pair names" do
+    assert %{app: "emqx_modules"} = Corpus.checkout(Map.put(@pair, :app, "emqx_modules"), :pre)
+    assert %{app: nil} = Corpus.checkout(@pair, :pre)
+  end
 end

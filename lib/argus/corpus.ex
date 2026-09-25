@@ -45,6 +45,13 @@ defmodule Argus.Corpus do
   locked Erlang dependency that no longer builds on OTP 28, like an old
   rabbit_common's `'street-address'` macro). The two go together: an
   Elixir built for OTP 28 does not load on 27.
+
+  A monorepo that builds many apps from its root names the one analyzed
+  with `app:`, and the variables its build reads with `env:` (EMQX
+  compiles with `PROFILE` and `MIX_ENV` set to `emqx-enterprise`, and
+  without its QUIC, RocksDB and jq NIFs). `env:` overrides the clean
+  environment's `MIX_ENV`; the beams are taken from whichever build
+  holds the app.
   """
 
   @type pair :: %{
@@ -55,6 +62,8 @@ defmodule Argus.Corpus do
           optional(:elixir) => String.t(),
           optional(:otp) => String.t(),
           optional(:subdir) => String.t(),
+          optional(:app) => String.t(),
+          optional(:env) => %{optional(String.t()) => String.t()},
           optional(:module) => String.t(),
           required(:finding) => {atom(), String.t()}
         }
@@ -63,9 +72,16 @@ defmodule Argus.Corpus do
   One side of a pair on disk: `dir` is the clone, `project` the Mix
   project inside it — the same directory unless the pair names a
   `subdir:` (a repository whose `mix.exs` lives under `elixir/`, one app
-  of an umbrella under `apps/`).
+  of an umbrella under `apps/`) — and `app` the app analyzed when the
+  pair names one, else the project's own.
   """
-  @type checkout :: %{name: String.t(), dir: String.t(), project: String.t(), sha: String.t()}
+  @type checkout :: %{
+          name: String.t(),
+          dir: String.t(),
+          project: String.t(),
+          sha: String.t(),
+          app: String.t() | nil
+        }
 
   # Each checkout's store, beside it.
   @facts_cache ".argus-facts"
@@ -101,7 +117,14 @@ defmodule Argus.Corpus do
       sha ->
         name = "#{Path.basename(pair.repo)}-#{String.slice(sha, 0, 7)}"
         dir = Path.join(root(), name)
-        %{name: name, dir: dir, project: Path.join(dir, Map.get(pair, :subdir, ".")), sha: sha}
+
+        %{
+          name: name,
+          dir: dir,
+          project: Path.join(dir, Map.get(pair, :subdir, ".")),
+          sha: sha,
+          app: Map.get(pair, :app)
+        }
     end
   end
 
@@ -460,6 +483,11 @@ defmodule Argus.Corpus do
         version -> [{"ASDF_ERLANG_VERSION", version} | env]
       end
 
+    env =
+      Enum.reduce(Map.get(pair, :env, %{}), env, fn {key, value}, acc ->
+        List.keystore(acc, key, 0, {key, value})
+      end)
+
     case bins do
       [] -> env
       bins -> [{"PATH", Enum.join(bins ++ [System.get_env("PATH", "")], ":")} | env]
@@ -470,8 +498,8 @@ defmodule Argus.Corpus do
   # the project and climbs to the clone. Without a subdir the two are the
   # same directory, and a checkout may hold more than one build — each
   # beam counts once, from one build, or every call-site count doubles.
-  defp beams(%{project: project, dir: dir, name: name}) do
-    app = app_name(project)
+  defp beams(%{project: project, dir: dir, name: name} = co) do
+    app = Map.get(co, :app) || app_name(project)
 
     found =
       Enum.uniq(
