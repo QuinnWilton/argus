@@ -22,6 +22,7 @@ defmodule Argus.Analyses.UnsafeInputTest do
     U.Internal,
     U.TaskLive,
     U.StreamLive,
+    U.WaitsLive,
     Argus.Test.Fixtures.UnsafeAtomCreation,
     Argus.Test.Fixtures.UnsafeDeserialization,
     Argus.Test.Fixtures.CodeExecution,
@@ -723,7 +724,8 @@ defmodule Argus.Analyses.UnsafeInputTest do
       U.CappedLive,
       U.Internal,
       U.TaskLive,
-      U.StreamLive
+      U.StreamLive,
+      U.WaitsLive
     ]
 
     defp callers(ctx) do
@@ -740,6 +742,14 @@ defmodule Argus.Analyses.UnsafeInputTest do
       assert named?(callers, "PublicLive")
       refute named?(callers, "CappedLive"), "max_children is the whole fix"
       refute named?(callers, "Internal")
+    end
+
+    test "a start the request then waits out is no child that outlives it", ctx do
+      skip_without_souffle()
+      callers = callers(ctx)
+      # Positive: PublicLive starts and returns.
+      assert named?(callers, "PublicLive")
+      refute named?(callers, "WaitsLive")
     end
 
     test "a task a request starts is reported; a stream the request enumerates is not", ctx do

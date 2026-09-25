@@ -41,6 +41,19 @@ defmodule Argus.Schema.Monitors do
         """
       },
       %{
+        name: :awaits_child_exit,
+        layer: 2,
+        fields: [{:func, :symbol, "the function"}],
+        doc: """
+        Every start `func` makes (a call named `start*` or `spawn*`) is \
+        followed, on every path to its return, by a receive with no \
+        `after` that takes the `:DOWN` of any monitor, or of a monitor the \
+        function takes after that start: what it starts lives no longer \
+        than the call (Livebook's `UniqueTask.run/2`). A path that raises \
+        is not asked (`Argus.Extractors.Monitor`).
+        """
+      },
+      %{
         name: :monitor_owns,
         layer: 2,
         fields: [

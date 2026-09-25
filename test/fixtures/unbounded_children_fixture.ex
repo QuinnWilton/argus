@@ -49,6 +49,33 @@ defmodule Argus.Test.Fixtures.UnboundedChildren do
     def render(assigns), do: assigns
   end
 
+  defmodule WaitsLive do
+    @moduledoc """
+    Livebook's UniqueTask.run/2: start the child (or find the running one),
+    monitor it and block for its :DOWN. The child lives no longer than
+    the request that waits for it.
+    """
+    @behaviour Phoenix.LiveView
+
+    def mount(_p, _s, socket), do: {:ok, socket}
+
+    def handle_event("go", _params, socket) do
+      {:ok, pid} =
+        DynamicSupervisor.start_child(
+          Argus.Test.Fixtures.UnboundedChildren.UncappedSup,
+          Argus.Test.Fixtures.UnboundedChildren.Worker
+        )
+
+      ref = Process.monitor(pid)
+
+      receive do
+        {:DOWN, ^ref, :process, ^pid, _reason} -> {:noreply, socket}
+      end
+    end
+
+    def render(assigns), do: assigns
+  end
+
   defmodule CappedLive do
     @moduledoc "Same request path, but the supervisor has a ceiling."
     @behaviour Phoenix.LiveView

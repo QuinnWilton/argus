@@ -511,7 +511,12 @@ unbounded_children_from_request(sup, child, via, kind) :-
   dynamic_child(sup, child, via),
   externally_reachable(via, _, kind),
   !disabled_transport(sup),
-  !stream_only(via, child).
+  !stream_only(via, child),
+  !awaits_child_exit(via).
+
+// A start whose caller then waits for the child's :DOWN (awaits_child_exit:
+// Livebook's UniqueTask.run/2 monitors what it started and blocks until
+// it exits) keeps no more children alive than it has callers waiting.
 
 // Tasks the request's own enumeration runs: Task.Supervisor's
 // async_stream and async_stream_nolink start at most max_concurrency

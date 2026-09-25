@@ -71,6 +71,8 @@ defmodule Argus.Analyses.UnsafeInput do
       Argus.Extractors.ParamFlow,
       Argus.Extractors.Router,
       Argus.Extractors.Supervision,
+      # A start whose caller waits for the child's :DOWN (awaits_child_exit).
+      Argus.Extractors.Monitor,
       Argus.Extractors.Endpoint,
       # What a call's arguments are made of whatever the callee
       # (call_arg_reads): whether a caller's input reaches an atom.

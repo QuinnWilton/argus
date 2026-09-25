@@ -32,6 +32,10 @@ defmodule Argus.Extractors.Monitor do
     is discarded at the call site, so nothing can ever demonitor it
   - `monitor_owns(id, func)` — the monitored pid is one the function just
     started and hands to no call and no send after the start (below)
+  - `awaits_child_exit(func)` — every start `func` makes is followed, on
+    every path to its return, by a wait for the `:DOWN` of a monitor
+    taken after the start (Livebook's `UniqueTask.run/2`): what it starts
+    lives no longer than the call
   - `demonitor_call(id, func, flush)` — `flush` is `"flush"` or `"no_flush"`
   - `recv_down(id, func, monitor)` — a receive with a clause that takes
     the `:DOWN` of the monitor its function took at `monitor`, so it ends
@@ -141,6 +145,7 @@ defmodule Argus.Extractors.Monitor do
   @impl true
   def relations,
     do: [
+      :awaits_child_exit,
       :awaits_down_after,
       :demonitor_call,
       :matches_down,
@@ -1017,6 +1022,7 @@ defmodule Argus.Extractors.Monitor do
 
     collectors = collectors(mod, functions, receives)
     tuple_collected = tuple_collected(module_data, receives, collectors)
+    facts = emit_awaits_child_exit(facts, module_data, receives)
 
     Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
       ctx = %{
@@ -1103,6 +1109,67 @@ defmodule Argus.Extractors.Monitor do
 
     match?({:done, _}, result)
   end
+
+  # ── A start whose caller waits for the child to exit ────────────────
+  #
+  # Livebook's UniqueTask.run/2 starts a child (or finds the running one),
+  # monitors it and blocks for its :DOWN: the child lives no longer than
+  # the call. Every start in the function (a call named start* or spawn*)
+  # must be followed, on every path to the function's return, by a
+  # receive with no `after` whose :DOWN clause takes any monitor's, or
+  # pins the ref of a monitor the function takes after that start. A path
+  # that raises is not asked. A start with no such wait on some path (the
+  # child outlives the call there) leaves the function without a row.
+  defp emit_awaits_child_exit(facts, %{module: mod, functions: functions} = module_data, receives) do
+    for {:function, name, arity, _entry, instrs} <- functions,
+        starts = for({instr, idx} <- Enum.with_index(instrs), starts?(instr), do: idx),
+        starts != [],
+        down = Map.fetch!(receives, {name, arity}),
+        down != %{},
+        %Argus.Cfg.Function{} = fun <- [cfg(module_data, name, arity)],
+        Enum.all?(starts, &child_awaited?(fun, instrs, down, &1)),
+        reduce: facts do
+      acc -> add_fact(acc, :awaits_child_exit, [InstrId.func_id(mod, name, arity)])
+    end
+  end
+
+  defp child_awaited?(fun, instrs, down, start) do
+    result =
+      Walk.explore(fun, instrs, [start + 1],
+        on_instr: fn instr, idx ->
+          cond do
+            waits_after?(instr, idx, down, instrs, start) -> :prune
+            Instr.exits?(instr) and not raises?(instr) -> {:halt, :returns}
+            true -> :continue
+          end
+        end
+      )
+
+    match?({:done, _}, result)
+  end
+
+  defp waits_after?({:loop_rec, _fail, _dst}, idx, down, instrs, start) do
+    down
+    |> Map.get(idx, [])
+    |> Enum.any?(fn
+      :any ->
+        true
+
+      {:pinned, at, reg} ->
+        case origin_call(instrs, at, reg) do
+          nil -> false
+          monitor -> monitor > start and monitor_call?(Enum.at(instrs, monitor))
+        end
+
+      :other ->
+        false
+    end)
+  end
+
+  defp waits_after?(_instr, _idx, _down, _instrs, _start), do: false
+
+  defp monitor_call?(instr),
+    do: match_remote_call(instr) in [{:ok, :erlang, :monitor, 2}, {:ok, Process, :monitor, 1}]
 
   # ── A monitor its callee collected on the way back ──────────────────
   #

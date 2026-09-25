@@ -221,6 +221,14 @@ that runs as a process (`process_behaviour_module`), not any module that
 declares a behaviour: a load-balancing strategy, a hook, an HTTP config
 or a `gen_mod` runs in its caller (grpc, vernemq, ejabberd: 8 rows).
 
+**Added.** Schema 115. `awaits_child_exit(func)` (Monitor extractor):
+every start `func` makes is followed, on every path to its return, by a
+receive with no `after` taking the `:DOWN` of a monitor taken after the
+start (or of any monitor). unsafe_input's unbounded-children rule skips
+such a function: Livebook's `UniqueTask.run/2` starts a child per key,
+monitors it and blocks until it exits (2 corpus rows). unsafe_input now
+runs the Monitor extractor.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

@@ -2575,9 +2575,9 @@ The site is reported by request proximity as for atoms. When no request reaches 
 - The finding's prose names `DynamicSupervisor.start_child/2` even for a Task.Supervisor start.
 - There is one finding per `(sup, child)`.
 - Tasks a function starts only through Task.Supervisor's `async_stream` or `async_stream_nolink` (`task_supervisor_start`) are not judged: the stream runs at most `max_concurrency` of them at a time for the process that enumerates it, and waits for each, so they live no longer than the request (`StreamLive`; supavisor's health-check endpoint). A function that also starts tasks another way keeps its row (`TaskLive`, `Task.Supervisor.start_child/2` from a request, still fires).
-- A start whose caller then waits for the child to exit is still reported: Livebook's `UniqueTask.run/2` starts a child per key under a `DynamicSupervisor`, monitors it and blocks for its `:DOWN`, so the children live no longer than their requests; reached from a controller since round 2, it is 2 rows over the corpus (a false shape a wait on the start's `:DOWN` would discharge).
+- A start whose caller then waits for the child to exit is not reported (`awaits_child_exit`): every start the function makes (a call named `start*` or `spawn*`) is followed, on every path to its return, by a receive with no `after` taking the `:DOWN` of a monitor it takes after the start, or of any monitor. Livebook's `UniqueTask.run/2` starts a child per key (or finds the running one), monitors it and blocks for its `:DOWN`, so the children live no longer than their requests: its 2 corpus rows are gone (`WaitsLive`, quiet). A wait on one path only, or with an `after`, keeps the row.
 
-**Fixtures.** Positive: `PublicLive` (with `UncappedSup` and `Worker`), `TaskLive`. Quiet: `CappedLive` (with `CappedSup`), `Internal` and `StreamLive`. All are under `UnboundedChildren` (test/fixtures/unbounded_children_fixture.ex). Test: test/analyses/unsafe_input_test.exs ("unbounded children"). The disabled-transport arm has no analysis fixture; test/extractors/endpoint_test.exs pins the `socket_transport` extraction it reads.
+**Fixtures.** Positive: `PublicLive` (with `UncappedSup` and `Worker`), `TaskLive`. Quiet: `CappedLive` (with `CappedSup`), `Internal`, `StreamLive` and `WaitsLive`. All are under `UnboundedChildren` (test/fixtures/unbounded_children_fixture.ex). Test: test/analyses/unsafe_input_test.exs ("unbounded children"). The disabled-transport arm has no analysis fixture; test/extractors/endpoint_test.exs pins the `socket_transport` extraction it reads.
 
 **Corpus.** None.
 
@@ -2881,9 +2881,6 @@ at a glance: each a candidate for a question type the priors round
   messages to its caller?* Backlog item 1 (hackney before 2025).
 - *Is this state a deliberate resting state?* `terminal_without_stop`,
   whose prose asks the reader to ignore one.
-- *Does the caller of this start wait for the child to exit?* The
-  unbounded-children rule (Livebook's `UniqueTask.run/2` monitors and
-  blocks for the child's `:DOWN`).
 - *Is this value one the server signed or encrypted?* A cookie or
   session value read through something other than
   `fetch_cookies/2`'s options (a custom verifier), which request flow
