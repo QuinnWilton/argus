@@ -659,38 +659,27 @@ task_yield_site(owner, "yield_linked", id) :-
   enclosing_function(g, owner).
 
 // ══ Tasks whose messages land unhandled ═════════════════════════════
+//
+// A task a function starts linked to itself (task_start_api "linked",
+// clientlib/runs_elsewhere.dl: Task.async, Task.Supervisor.async), which
+// must be awaited or yielded. Task.Supervisor.async_nolink is not one: it
+// is not linked to the caller, and its messages are the task_nolink
+// rules' below.
 .decl task_async_call(func: symbol, id: symbol)
 
 task_async_call(func, id) :-
-  remote_call(id, func, "Task", "async", _).
-
-// Also detect Task.Supervisor.async (returns a Task that must be
-// awaited/yielded, just like Task.async).
-task_async_call(func, id) :-
-  remote_call(id, func, "Task.Supervisor", "async", _).
-
-// Task.Supervisor.async_nolink is intentionally excluded: it returns a
-// task that is NOT linked to the caller. The supervisor manages the
-// lifecycle, making it safe for fire-and-forget patterns.
+  remote_call(id, func, m, a, _),
+  task_start_api(m, a, "linked").
 
 // ── Task.await/yield detection ─────────────────────────────────────────
-
+//
+// A call that takes a task's reply out of the mailbox (task_collect: an
+// await or yield, or Task.shutdown).
 .decl task_await_call(func: symbol, id: symbol)
 
 task_await_call(func, id) :-
-  remote_call(id, func, "Task", "await", _).
-
-task_await_call(func, id) :-
-  remote_call(id, func, "Task", "await_many", _).
-
-task_await_call(func, id) :-
-  remote_call(id, func, "Task", "yield", _).
-
-task_await_call(func, id) :-
-  remote_call(id, func, "Task", "yield_many", _).
-
-task_await_call(func, id) :-
-  remote_call(id, func, "Task", "shutdown", _).
+  remote_call(id, func, "Task", w, _),
+  task_collect(w).
 
 // ── Function-level await reachability ──────────────────────────────────
 

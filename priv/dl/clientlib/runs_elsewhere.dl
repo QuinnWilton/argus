@@ -154,19 +154,38 @@ hands_funs_off(f) :-
 awaits_task(f, id, g) :-
   process_start(id, f, _, "spawn", g),
   call_site(id, f, m, a, _),
-  async_start(m, a),
+  task_start_api(m, a, _),
   call_site(_, f, "Task", w, _),
   task_wait(w).
 
-.decl async_start(mod: symbol, func: symbol)
+// ── The Task API ─────────────────────────────────────────────────────
+//
+// The starts whose task replies to its caller: `{ref, result}` when it
+// returns, then the task's `:DOWN`. `link` says whether the task is
+// linked to the caller ("linked": Task.async, Task.Supervisor.async, a
+// crashing task takes the caller down, and a caller that traps exits
+// gets an `{:EXIT, ...}` too) or not ("unlinked": async_nolink, whose
+// messages are the caller's to handle). Task.start, Task.start_link and
+// Task.Supervisor.start_child reply to nobody and are not here.
+.decl task_start_api(mod: symbol, func: symbol, link: symbol)
 
-async_start("Task", "async").
-async_start("Task.Supervisor", "async").
-async_start("Task.Supervisor", "async_nolink").
+task_start_api("Task", "async", "linked").
+task_start_api("Task.Supervisor", "async", "linked").
+task_start_api("Task.Supervisor", "async_nolink", "unlinked").
 
+// Waits for what a task does: the caller holds until the task returns
+// (or the wait gives up). Task.shutdown is not one: it stops the task.
 .decl task_wait(func: symbol)
 
 task_wait("await").
 task_wait("await_many").
 task_wait("yield").
 task_wait("yield_many").
+
+// Takes a task's reply out of the caller's mailbox: the waits, and
+// Task.shutdown, which flushes the reply (or the :DOWN) of the task it
+// stops. After one of these no late message of the task is left behind.
+.decl task_collect(func: symbol)
+
+task_collect(w) :- task_wait(w).
+task_collect("shutdown").
