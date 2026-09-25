@@ -131,6 +131,26 @@ boots_before(sup, earlier, later, epos, lpos) :-
   epos < lpos,
   earlier_branch != later_branch.
 
+// ── The application's root ───────────────────────────────────────────
+//
+// The supervisor an Application's start/2 starts (`partisan_app:start/2
+// -> partisan_sup:start_link()`), the Erlang shape of an Elixir
+// Application that starts its tree inline: nothing restarts it, and when
+// it dies the application stops with it. What dies with it dies with the
+// application. Not one another supervisor in view also starts, as a
+// child or on demand: restarted there, it outlives what it held.
+.decl application_root(sup: symbol)
+
+application_root(sup) :-
+  behaves_as(app, "Application"),
+  function_def(start, app, "start", 2, _),
+  call_edge(start, g),
+  function_def(g, sup, "start_link", _, _),
+  supervisor(sup, _),
+  sup != app,
+  !supervisor_child(_, _, sup, _, _),
+  !dynamic_child(_, sup, _).
+
 // ── Siblings ─────────────────────────────────────────────────────────
 //
 // Two direct children of one supervisor: the modules whose lifetimes it

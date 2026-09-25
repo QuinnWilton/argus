@@ -100,10 +100,21 @@ ets_permanent_owner(name, mod) :-
 ets_application_owner(name, mod) :-
   ets_owner_process(name, mod, "Application", _).
 
+// The supervisor the Application starts is the application's lifetime
+// too (application_root, supervision.dl): partisan_sup keeps its
+// membership snapshot in a table it creates in init/1 so the table
+// outlives the managers it restarts.
+ets_application_owner(name, mod) :-
+  ets_owner_process(name, mod, _, _),
+  application_root(mod).
+
 // Table without heir protection in a behaviour process.
 // If the owner crashes, the table vanishes.
-// Suppressed for permanent supervisor children (table recreated on restart)
-// and Application modules (live for the entire app lifetime).
+// Suppressed for permanent supervisor children (table recreated on restart),
+// Application modules and the supervisor one starts (live for the entire
+// app lifetime), and private tables: no other process can read one, so
+// no reader meets it gone, and its rows are the owner's state, lost with
+// the process as its heap is (zotonic's mod_logging dedup table).
 // site is the :ets.new/2 instruction — the creation line.
 .decl ets_unprotected_owner(name: symbol, mod: symbol, site: symbol)
 .output ets_unprotected_owner
@@ -111,6 +122,7 @@ ets_application_owner(name, mod) :-
 ets_unprotected_owner(name, mod, id) :-
   ets_owner_process(name, mod, _, id),
   !ets_option(id, "heir", "true"),
+  !ets_option(id, "access", "private"),
   !ets_permanent_owner(name, mod),
   !ets_application_owner(name, mod).
 

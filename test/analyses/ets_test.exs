@@ -98,6 +98,71 @@ defmodule Argus.Analyses.EtsTest do
       assert owner.([:tuple_spec_first, :tuple_spec_sup]) == []
     end
 
+    test "a private table, and one the application's root supervisor holds, die with nothing" do
+      skip_without_souffle()
+
+      owners = fn modules ->
+        {:ok, results} = Memo.analyze(modules, :ets)
+
+        results["ets_unprotected_owner"]
+        |> Enum.map(fn [_name, mod, _site] -> mod end)
+        |> Enum.sort()
+      end
+
+      # EtsOwner's public table is reported beside the private one;
+      # branch_sup, which no application starts, beside root_app_sup.
+      assert owners.([Argus.Test.Fixtures.EtsOwner, Argus.Test.Fixtures.EtsPrivateOwner]) ==
+               ["Argus.Test.Fixtures.EtsOwner"]
+
+      assert owners.([:root_app, :root_app_sup, :branch_sup]) == [":branch_sup"]
+    end
+
+    test "a table another process can read, or whose owner may restart, still dies with it" do
+      skip_without_souffle()
+
+      tables = fn modules ->
+        {:ok, results} = Memo.analyze(modules, :ets)
+
+        results["ets_unprotected_owner"]
+        |> Enum.map(fn [name, _mod, _site] -> name end)
+        |> Enum.sort()
+      end
+
+      # Protected by default, options from the caller, a public table beside
+      # a private one: each is readable by another process.
+      assert tables.([
+               Argus.Test.Fixtures.EtsProtectedOwner,
+               Argus.Test.Fixtures.EtsOptionsFromArgOwner,
+               Argus.Test.Fixtures.EtsPrivateAndPublicOwner
+             ]) == [":configured_cache", ":owner_shared", ":protected_cache"]
+
+      # A temporary or transient tuple child, and one a helper's spec names
+      # by a parameter, are not restarted by their supervisor every time.
+      assert tables.([
+               :tuple_restart_sup,
+               :tuple_temp_owner,
+               :tuple_transient_owner,
+               :tuple_param_owner
+             ]) == [
+               ":tuple_param_owner_tab",
+               ":tuple_temp_owner_tab",
+               ":tuple_transient_owner_tab"
+             ]
+
+      # A worker an application's start/2 starts, a root supervisor another
+      # tree also starts as a transient child, one a start/2 that is no
+      # Application's callback starts: none dies only with the application.
+      assert tables.([
+               :worker_app,
+               :worker_owner,
+               :dual_app,
+               :dual_sup,
+               :outer_sup,
+               :fake_app,
+               :fake_root_sup
+             ]) == [":dual_snapshot", ":fake_root_snapshot", ":worker_owner_tab"]
+    end
+
     test "suppresses unprotected_owner for Application modules" do
       skip_without_souffle()
 

@@ -495,6 +495,28 @@ mailbox_info_test.exs and the CallbackTag extractor's tests;
 `LateMessage.MonitorMacro` pins its ref so `MonitorsInMacro` stays the
 program's own positive.
 
+**Fixed.** "ETS table dies with its owner" is quiet for a private table,
+and for one the application's root supervisor holds. A private table
+can be read by no other process, so no reader meets it gone, and its
+rows are the owner's state, lost with the process as its heap is
+(zotonic's `mod_logging` dedup table). The supervisor an Application's
+start/2 starts (`application_root`, clientlib/supervision.dl:
+`partisan_app:start/2 -> partisan_sup:start_link()`) dies only with the
+application, as the Application module itself, already excused, does:
+partisan_sup keeps its membership snapshot there so it outlives the
+managers it restarts; round 2's vmq_bridge_sup was the same shape. With
+the tuple specs above, the class goes 80 → 54 over the 26 live programs.
+A root another supervisor in view also starts, as a child or on demand,
+is none. Fixtures: `EtsPrivateOwner` and `root_app`/`root_app_sup`
+(quiet); reported, the nearest real bugs: `EtsOwner`, `EtsProtectedOwner`
+(the default access), `EtsOptionsFromArgOwner` (access not shown),
+`EtsPrivateAndPublicOwner` (a public table beside a private one),
+`branch_sup` (no application starts it), `worker_owner` (a worker, not a
+supervisor, start/2 starts), `dual_sup` (also a transient child of
+`outer_sup`), `fake_root_sup` (started by a start/2 that is no
+Application's), and `tuple_restart_sup`'s temporary, transient and
+parameter-built children, in ets_test.exs.
+
 ### FP hunt, round 2: eight more programs, and the anchors round 1 left
 
 **Fixed.** A blocking cast (`call_chain` kind `cast`) anchors at the

@@ -413,3 +413,63 @@ defmodule Argus.Test.Fixtures.EtsSecondHelperOwner do
     {:ok, %{}}
   end
 end
+
+defmodule Argus.Test.Fixtures.EtsPrivateOwner do
+  @moduledoc """
+  A private table: no other process can read it, so none meets it gone;
+  its rows are the owner's state, lost with it as its heap is.
+  """
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(_) do
+    table = :ets.new(:private_dedup, [:set, :private])
+    {:ok, table}
+  end
+end
+
+# Adversarial probes for the private-table excuse (FP hunt round 3): each
+# keeps a table another process can read, or one whose access the
+# bytecode does not show.
+
+defmodule Argus.Test.Fixtures.EtsProtectedOwner do
+  @moduledoc "A named table with the default access, protected: every process reads it."
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(_) do
+    table = :ets.new(:protected_cache, [:set, :named_table])
+    {:ok, table}
+  end
+end
+
+defmodule Argus.Test.Fixtures.EtsOptionsFromArgOwner do
+  @moduledoc "A named table whose options come from its caller: its access is not shown."
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts) do
+    table = :ets.new(:configured_cache, [:named_table | opts])
+    {:ok, table}
+  end
+end
+
+defmodule Argus.Test.Fixtures.EtsPrivateAndPublicOwner do
+  @moduledoc "A private table beside a public named one: the public one is still reported."
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(_) do
+    private = :ets.new(:owner_scratch, [:set, :private])
+    :ets.new(:owner_shared, [:set, :public, :named_table])
+    {:ok, private}
+  end
+end
