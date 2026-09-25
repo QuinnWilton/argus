@@ -16,6 +16,21 @@ Round 2 of the FP hunt found real bugs in the programs it read; round 3
 of the mining asked of each whether argus reports it with the right
 class, severity and anchor, and fixed what it did not.
 
+**Added.** mailbox reports a periodic timer loop that another callback
+arms again while it runs (`timer_loop_rearmed`, "Periodic timer loop
+armed again while it runs", `:warning`): a handle_info/2 clause that
+re-arms its own literal message on every path it goes on by, and a
+callback that arms the message again (a `send_after`, a send to
+`self()`, a call handing handle_info/2 the message) with no way to stop
+the running loop — the loop drops its ref, or keeps it under a key the
+second path does not cancel first. Every run of that callback adds a
+loop. Retry loops (a re-arm on one branch), a clause a join's
+`:after_join` runs once, a message handed on to handle_info/2, a
+message carrying a ref and a loop that cancels its own kept ref before
+re-arming are not reported. Over the nineteen live projects: 2 rows,
+vernemq's acl and passwd reloaders, both real (the round-2 catalog's
+backlog item 5, parked for want of the facts below). Schema 117.
+
 **Added.** `info_clause_always(id, func, tag)` (ClauseCall): in a
 handle_info/2, the call at `id` runs on every path the clause for the
 atom `tag` takes to a return that goes on — every return or tail call
@@ -23,7 +38,7 @@ the message reaches is reached only through it, a `{:stop, ...}` return
 and a tail call to `:erlang.error/1` and the other raises left out
 (`Argus.Extractor.Dispatch.reached_with/4`, which takes an instruction
 to avoid). `clause_call` now has a row for Erlang's `!` too (the `send`
-instruction, where Elixir's `send/2` is a call). Schema 117.
+instruction, where Elixir's `send/2` is a call).
 
 **Changed.** `timer_ref`'s flow is "discarded" for a ref no instruction
 reads before every register holding it is overwritten

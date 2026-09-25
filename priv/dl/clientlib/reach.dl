@@ -180,6 +180,19 @@
     function_def(h, m, _, _, _).
 }
 
+// ForwardIntraModuleSameProcessReach, less the edges the instance names
+// `cut` (mailbox: a call back into the server's handle_info/2).
+.comp ForwardIntraModuleSameProcessReachCut : Forward {
+  .decl cut(func: symbol, callee: symbol)
+  reaches(r, h) :-
+    reaches(r, g),
+    call_edge(g, h),
+    !runs_elsewhere(g, h),
+    !cut(g, h),
+    function_def(g, m, _, _, _),
+    function_def(h, m, _, _, _).
+}
+
 // The same, and a task the process waits for (awaits_task,
 // runs_elsewhere.dl): what holds the root up until it returns.
 .comp ForwardIntraModuleHoldingReach : ForwardIntraModuleSameProcessReach {

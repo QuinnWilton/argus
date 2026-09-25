@@ -90,7 +90,7 @@ classes of one risk get one severity.
 | [`shutdown`](#shutdown) | 8 | cleanup a supervisor shutdown will skip, and teardown that hurts a peer |
 | [`blocking`](#blocking) | 15 | synchronous waits that can last forever or nest: call chains, cycles, fan-in, rpc, locks, receives in callbacks |
 | [`coupling`](#coupling) | 5 | two owners of one relationship across supervisor branches |
-| [`mailbox`](#mailbox) | 20 | messages that arrive with no clause for them, and replies that never come |
+| [`mailbox`](#mailbox) | 21 | messages that arrive with no clause for them, and replies that never come |
 | [`failure`](#failure) | 10 | error paths swallowed, half-caught or ignored |
 | [`structure`](#structure) | 4 | child specs, registrations and tree shapes that are wrong on their own |
 | [`races`](#races) | 8 | check-then-act races on a process name, an ETS key or a Mnesia record that another process can write between the check and the act, ETS values published before the rows they point to, and ETS rows acted on after another process may have removed them |
@@ -1528,6 +1528,32 @@ Three cancels are not findings:
 
 No sampled rate.
 
+### A periodic timer loop armed again while it runs
+
+`timer_loop_rearmed`
+· titles: "Periodic timer loop armed again while it runs" (`:warning`)
+
+**Property.** A server M (a GenServer, GenStage, Phoenix Channel or LiveView) runs a periodic loop: the clause of its handle_info/2 for a literal message L arms a timer with L for the process itself on every path by which the clause returns and the process goes on (`info_clause_always`; a return of `{:stop, ...}` and a raise are no such path). The arm is in the clause, or on every completing path of a helper a call on every such path makes. Some callback of M that runs again and again (handle_info/2 outside that clause, handle_cast/2, handle_call/3, a Channel's handle_in/3, a LiveView's handle_event/3 or handle_params/3) arms L for the process again: a `send_after` of L, a send of L to `self()`, or a call to handle_info/2 with L. And that path cannot stop the running loop:
+- the loop's re-arm drops its timer ref on the spot (`timer_ref` "discarded": every register holding it is overwritten before any instruction reads it), so nothing can cancel the running timer; or
+- the loop keeps the ref under a state key K, the callback's clause and the function holding the second arm cancel no ref read from K (at the site, or by handing the field to a function that cancels what it is handed), and the loop's own clause does not cancel K before re-arming.
+
+At run time every run of that callback adds one more loop beside the ones already running, and the work each tick does multiplies with it: vernemq's acl and passwd reloaders reload their files once more per interval for every configuration change since start.
+
+**Assumptions and limits.**
+- Only a periodic loop is asked. A clause that re-arms on one branch (after a failed connect, while a resource is missing) is a retry loop that stops by itself, and its second arm most often comes from the event that ended the connection, when no retry runs (`RetryLoop`: ejabberd_redis's and MongooseIM's LDAP reconnects, firezone's registration retries, grpc's reconnects). A retry loop armed twice while it retries is not reported.
+- Only a literal message is asked (`timer_arm` "bare"). A message carrying a ref or a counter (`{:tick, ref}`, `start_timer`'s `{:timeout, ref, msg}`) is told apart by the loop's clause (`RefTagged`), and nerves_hub_web's extension intervals, whose message is the extension's, are out of reach.
+- A loop that keeps its ref where the walk does not follow (a record field, a tuple, a library's `assign/3`) is not judged: Erlang servers that keep the ref in a record are reported only when the loop's re-arm drops it. A loop whose clause cancels its kept ref before re-arming folds a second chain into its own at the next tick (`IdempotentLoop`); realtime's subscribe loop has that shape, and its second arm (realtime#1389) costs one stale tick, which is the flush rule's defect, not a multiplied loop.
+- init/1, handle_continue/2, mount/3 and a Channel's join/3 arm the loop the ticks then carry, and so does a handle_info/2 clause for a message the module sends itself only from those (a Channel's `:after_join`; `AfterJoin`): no second path. A message the program also sends to another process, or arms for one, is not taken to run once.
+- A call that hands a message on to handle_info/2 (a drained deferred message, vernemq's vmq_swc_store; `handle_info(:disconnect, socket)` from another clause) dispatches it to that message's clause and is no second arm (`Redispatch`); one that hands it the loop's own literal is (`DirectKick`). The same tag's other clause re-sending the tick is the loop (`SameTagResend`, `timer_loop_resend`: MongooseIM's system metrics). A clause headed by a map or a struct names no tag, so a cancel in one untagged clause of a function quiets an arm in another (the quiet direction).
+- The walk from a callback to the second arm stays in the module and in the process. A cancel in a helper between the callback and the arming function is not seen (errs loud); the arming function's cancel counts wherever it is in it.
+- One finding per place a callback arms the loop again, anchored there, with the loop's re-arm as a related frame. A callback only the tests run is not reported.
+
+**Fixtures.** Positive: `ReloadLoop`, `SharedScheduler`, `SelfKick`, `KeptRefRearm` (its reconnect clause; its resume clause cancels first), `DirectKick` under `TimerLoop` (test/fixtures/timer_loop_fixture.ex), and `timer_loop_reloader` (test/fixtures/erl/timer_loop_reloader.erl, vernemq's reloader). Quiet: `InitOnly`, `CancelFirst`, `IdempotentLoop`, `RefTagged`, `ContinueArm`, `OtherProcess`, `OneShot`, `RetryLoop`, `AfterJoin`, `Redispatch`, `SameTagResend`, and `timer_loop_resend` (test/fixtures/erl/timer_loop_resend.erl). Test: test/analyses/mailbox_timer_loop_test.exs; the facts it reads are pinned in test/argus/extractor/clause_call_test.exs (`info_clause_always`, a send as a site) and test/extractors/error_handling_test.exs (a discarded ref).
+
+**Corpus.** None: vernemq is a rebar3 tree the harness cannot build and the bug is unfixed there (2.2.1), Livebook's fix (d51abc3 → e9ea88e) is a 2022 tree that does not build, and realtime#1389 is the idempotent shape above.
+
+**Precision.** Round 3 of the mining (2026-09-25), over the nineteen live projects: 2 rows, both real (vernemq's `vmq_acl_reloader` and `vmq_passwd_reloader`, the motivating bug). The first draft reported 60 over seven projects; every row but vernemq's two was one of the shapes the limits above now leave out: retry loops (ejabberd_redis 3, MongooseIM's LDAP worker, grpc 11, nerves_hub_link's downloader 3, pinchflat's file follower, firezone's registration and presence retries), clauses a join's `:after_join` runs once (firezone 5), recursive dispatch into handle_info/2 (vernemq's vmq_swc_store, firezone's `handle_info(:disconnect, socket)` calls) and an Erlang `!` re-sending the tick from the loop's own clause (MongooseIM's system metrics).
+
 ### A monitor left live past a timed wait
 
 `unconsumed_monitor` · kind=`timed_wait`
@@ -2874,17 +2900,17 @@ way:
    nor drains the helpers' exits (mnesia, EMQX, brod). *Needs the
    request's tag tied to the receive that waits for it*, the way
    `awaits_down_after` ties a monitor's ref to its `:DOWN`.
-5. **A periodic timer loop multiplied.** A second path arms the loop's
-   message without cancelling the running one, so every event adds a loop
-   (Realtime, nerves_hub_web, Livebook). *Blocked on clause-level facts*
-   (round 2 tried it): Realtime's second arm is in another clause of the
-   same handle_info/2, one headed by a map (no tag for `clause_call`), and
-   its fix is a cancel in that clause, so the rule needs "this call is
-   preceded by a timer cancel on every path" per call site; Livebook's
-   second arm is a `send(self(), tag)`, and self-sent tags are not
-   recorded (`call_tag` has calls and casts only); nerves_hub_web's arm is
-   in a function `attach_hook(:handle_params)` registers, which no
-   callback name reveals.
+5. **A periodic timer loop multiplied.** *Covered in round 3* (see "A
+   periodic timer loop armed again while it runs" above), with vernemq's
+   reloaders as the motivating instance. What round 2 said stood in the
+   way, and how it was met: a self-send's literal is `pid_send`'s
+   (src_kind "self"), and Erlang's `!` now has a `clause_call` row; the
+   clause a call runs on every path of is `info_clause_always`; a cancel
+   is asked of the arming clause (tags) and the arming function, not per
+   path. Left: a retry loop armed twice while it retries; a loop keeping
+   its ref in a record; realtime's shape (idempotent, the flush rule's);
+   nerves_hub_web's (a message the extension chooses, armed in a function
+   `attach_hook(:handle_params)` registers).
 6. **An asserted lookup in a message handler.** A handler for a message
    carrying a key destructures a lookup that misses for a stale message
    (Oban, Horde).

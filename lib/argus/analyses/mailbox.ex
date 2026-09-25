@@ -86,7 +86,10 @@ defmodule Argus.Analyses.Mailbox do
       # What a closure captured from its builder (call_arg_derived over a
       # make_fun3's environment): a late message's source when it runs a
       # fun the builder read from its state.
-      Argus.Extractors.ParamFlow
+      Argus.Extractors.ParamFlow,
+      # Which clause of handle_info/2 a call runs in (clause_call): a
+      # periodic timer loop is the clause for its own message.
+      Argus.Extractors.ClauseCall
     ]
 
   @impl true
@@ -130,6 +133,23 @@ defmodule Argus.Analyses.Mailbox do
         # A local ref has no state key: its arming site is the timer.
         key: {:key, %{"" => [:mod, :arm_site], :default => [:mod, :key]}},
         doc: "A cancelled timer's message may already be in the mailbox and is not told apart."
+      },
+      %{
+        name: :timer_loop_rearmed,
+        fields: [
+          {:mod, :symbol, "the server module"},
+          {:message, :symbol, "the literal message the loop's timer carries"},
+          {:entry, :symbol, "the callback that arms the loop again"},
+          {:site, :symbol, "where the callback arms it, or makes the call that does"},
+          {:arm_site, :symbol, "the send_after, or the send to self(), that arms it"},
+          {:loop_site, :symbol, "the send_after the loop's own clause re-arms with"},
+          {:keeps, :symbol,
+           "the state key the loop keeps its ref under, or '' when the loop drops it"}
+        ],
+        # One per place a callback arms the loop again, however many of
+        # the loop's re-arms it multiplies.
+        key: [:mod, :message, :site],
+        doc: "A periodic timer loop that another callback arms again while it runs."
       },
       %{
         name: :timer_cancel_under_test,
@@ -327,6 +347,36 @@ defmodule Argus.Analyses.Mailbox do
       help: [
         "put the timer ref in the message (`{#{message}, ref}`) and match it against #{key}",
         "or flush after cancelling: `receive do #{message} -> :ok after 0 -> :ok end`"
+      ]
+    )
+  end
+
+  def finding(:timer_loop_rearmed, [mod, message, entry, site, _arm_site, loop_site, keeps]) do
+    {why, loop_label} =
+      case keeps do
+        "" ->
+          {"The loop's own re-arm drops the timer ref, so nothing can cancel the " <>
+             "running timer:", "the loop re-arms here and keeps no ref"}
+
+        key ->
+          {"The loop keeps its timer ref under #{key}, and this path does not cancel " <>
+             "it first:", "the loop re-arms here, keeping the ref under #{key}"}
+      end
+
+    Findings.new(
+      :warning,
+      "Periodic timer loop armed again while it runs",
+      "#{mod}'s handle_info/2 re-arms #{message} each time it takes it, a loop, " <>
+        "and #{Findings.call_name(entry)} arms #{message} again. #{why} " <>
+        "every run of #{Findings.call_name(entry)} adds one more loop beside the " <>
+        "ones already running, and the work each tick does multiplies with it.",
+      at: Findings.at_site(site, mod),
+      at_label: "arms #{message} again here",
+      related: [Findings.related(loop_label, Findings.at_site(loop_site, mod))],
+      help: [
+        "keep the loop's ref in the state and cancel it before arming again",
+        "or put a ref in the message (`{#{message}, ref}`) and let the loop drop a stale one",
+        "or leave the arming to init/1 and the loop, and do the work directly here"
       ]
     )
   end

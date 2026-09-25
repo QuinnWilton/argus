@@ -1588,3 +1588,349 @@ unhandled_info(mod, f, id, msg, source, m, h, "state_crash") :-
 .decl info_crash(mod: symbol)
 
 info_crash(m) :- unhandled_info(_, _, _, _, _, m, _, "crash").
+
+// ══ A periodic timer loop armed again while it runs ═════════════════
+//
+// A server whose handle_info/2 clause for a message arms a timer with
+// that message for itself, on every path the clause goes on by, runs a
+// periodic loop: each tick arms the next. Another callback that arms the
+// message again — a send_after of it, or a send of it to self() — while
+// the loop's timer is pending starts a second loop beside the first, and
+// each later run of that callback one more: the loop's work multiplies
+// with every config change, reset or owner change (vernemq's acl and
+// passwd reloaders, Livebook's RuntimeServer before e9ea88e).
+//
+// The second path can stop the running loop only by cancelling its
+// timer, through the ref the loop keeps:
+// - a loop whose re-arm drops its ref (timer_ref "discarded") cannot be
+//   stopped from anywhere, and every second arm multiplies it
+//   (ReloadLoop, SelfKick);
+// - a loop that keeps its ref under a state key is stopped by a second
+//   path that cancels that key first (CancelFirst), and folds a second
+//   chain into its own when its clause cancels the key before re-arming
+//   (IdempotentLoop: realtime's subscribe loop, where a second arm costs
+//   one stale tick, the flush rule's defect, not a loop);
+// - a loop whose ref goes where the walk does not follow (a record
+//   field, a tuple, a library's assign) is not judged: the quiet
+//   direction.
+// Only a periodic loop is asked: a clause that re-arms on one branch
+// only (after a failed connect) retries until it is done, and the second
+// arm of a retry loop comes, most often, from the event that stopped
+// being connected, when no retry runs (RetryLoop: ejabberd_redis's and
+// MongooseIM's LDAP reconnects). Only a literal message is asked
+// (timer_arm "bare"): one carrying a ref or a counter (`{:tick, ref}`,
+// start_timer's `{:timeout, ref, msg}`) is told apart by the loop's
+// clause (RefTagged). init/1, handle_continue/2 (most often run once,
+// from init/1), mount/3, and a handle_info/2 clause for a message only
+// those send (a Channel's `:after_join`) arm the loop the ticks then
+// carry, and are no second path (InitOnly, ContinueArm, AfterJoin).
+
+.decl timer_loop_rearmed(mod: symbol, message: symbol, entry: symbol, site: symbol, arm_site: symbol, loop_site: symbol, keeps: symbol)
+.output timer_loop_rearmed
+
+// A server that handles its own messages in handle_info/2.
+.decl looping_server(mod: symbol, handler: symbol)
+
+looping_server(mod, h) :-
+  function_def(h, mod, "handle_info", 2, _),
+  behaves_as(mod, b),
+  looping_behaviour(b).
+
+.decl looping_behaviour(behaviour: symbol)
+
+looping_behaviour("GenServer").
+looping_behaviour("GenStage").
+looping_behaviour("Phoenix.Channel").
+looping_behaviour("Phoenix.LiveView").
+
+// A literal message some timer of the module's arms for its own process.
+.decl self_timer_tag(mod: symbol, tag: symbol)
+
+self_timer_tag(mod, tag) :-
+  timer_arm(a, f, "self", "bare", _, _),
+  timer_tag(a, tag, _),
+  function_def(f, mod, _, _, _).
+
+// What a call the clause of handle_info/2 for `tag` makes on every path
+// runs in the module.
+.init tick_path = ForwardIntraModuleSameProcessReach
+
+tick_path.root(c, g) :-
+  looping_server(mod, h),
+  info_clause_always(c, h, tag),
+  self_timer_tag(mod, tag),
+  call_instr(h, g, c).
+
+// `site` re-arms the periodic loop of `lit`: a timer the clause of
+// handle_info/2 for the message's tag arms with that message for the
+// process on every path it goes on by — in the clause (`via` is `site`
+// itself), or on every completing path of what the clause's call `via`
+// runs.
+.decl loop_arm(mod: symbol, lit: symbol, site: symbol, func: symbol, via: symbol)
+
+loop_arm(mod, lit, a, h, a) :-
+  looping_server(mod, h),
+  timer_arm(a, h, "self", "bare", _, lit),
+  timer_tag(a, tag, _),
+  info_clause_always(a, h, tag).
+
+loop_arm(mod, lit, a, f, c) :-
+  looping_server(mod, h),
+  info_clause_always(c, h, tag),
+  tick_path.reaches(c, f),
+  timer_arm(a, f, "self", "bare", _, lit),
+  timer_tag(a, tag, _),
+  !conditional_call(a).
+
+// The clause the loop runs in: of the handler, for the loop's tag.
+.decl tick_clause(id: symbol, handler: symbol, lit: symbol)
+
+tick_clause(id, h, lit) :-
+  loop_arm(mod, lit, a, _, _),
+  timer_tag(a, tag, _),
+  looping_server(mod, h),
+  clause_call(id, h, tag).
+
+// A callback that runs again and again, whenever its request or message
+// comes: not init/1, handle_continue/2 or mount/3.
+.decl rearm_entry(mod: symbol, entry: symbol)
+
+rearm_entry(mod, e) :-
+  looping_server(mod, _),
+  function_def(e, mod, n, a, _),
+  rearm_callback(n, a).
+
+.decl rearm_callback(name: symbol, arity: number)
+
+rearm_callback("handle_info", 2).
+rearm_callback("handle_cast", 2).
+rearm_callback("handle_call", 3).
+rearm_callback("handle_in", 3).
+rearm_callback("handle_event", 3).
+rearm_callback("handle_params", 3).
+rearm_callback("handle_async", 3).
+
+// A message the process sends itself only from where it starts: init/1,
+// a Channel's join/3, a LiveView's mount/3, handle_continue/2. Its
+// clause runs once, as they do. Another site of the module that sends
+// or arms the literal makes it a message that can come again, as does
+// any site in the program that sends or arms it to another process (it
+// may be this one). A self-send in another module is to that module's
+// process.
+.decl starts_with(mod: symbol, func: symbol)
+
+starts_with(mod, f) :- function_def(f, mod, "init", 1, _).
+starts_with(mod, f) :- function_def(f, mod, "join", 3, _).
+starts_with(mod, f) :- function_def(f, mod, "mount", 3, _).
+starts_with(mod, f) :- function_def(f, mod, "handle_continue", 2, _).
+
+.decl sends_literal(func: symbol, lit: symbol)
+
+sends_literal(f, lit) :- pid_send(_, f, lit, _, _).
+sends_literal(f, lit) :- timer_arm(_, f, _, "bare", _, lit).
+
+// Sent or armed to a process other than the sender's own.
+.decl sends_literal_out(lit: symbol)
+
+sends_literal_out(lit) :- pid_send(_, _, lit, kind, _), kind != "self".
+sends_literal_out(lit) :- timer_arm(_, _, "other", "bare", _, lit).
+
+.decl once_message(mod: symbol, lit: symbol)
+
+once_message(mod, lit) :-
+  looping_server(mod, _),
+  pid_send(_, f, lit, "self", _),
+  starts_with(mod, f),
+  !sent_again(mod, lit).
+
+.decl sent_again(mod: symbol, lit: symbol)
+
+sent_again(mod, lit) :-
+  looping_server(mod, _),
+  sends_literal(f, lit),
+  function_def(f, mod, _, _, _),
+  !starts_with(mod, f).
+
+sent_again(mod, lit) :-
+  looping_server(mod, _),
+  once_candidate(mod, lit),
+  sends_literal_out(lit).
+
+.decl once_candidate(mod: symbol, lit: symbol)
+
+once_candidate(mod, lit) :-
+  looping_server(mod, _),
+  pid_send(_, f, lit, "self", _),
+  starts_with(mod, f).
+
+.decl once_clause(site: symbol, handler: symbol)
+
+once_clause(s, h) :-
+  looping_server(mod, h),
+  clause_call(s, h, tag),
+  once_message(mod, tag).
+
+// `site` arms the literal message `lit` for the process itself: a timer,
+// or a send to self() (pid_send spells an atom as the timer's literal
+// does; a tuple it spells `{:tag, …}`, which no literal equals).
+.decl self_arm(site: symbol, func: symbol, lit: symbol)
+
+self_arm(b, g, lit) :- timer_arm(b, g, "self", "bare", _, lit).
+self_arm(b, g, lit) :- pid_send(b, g, lit, "self", _).
+
+// What each call a looping module's callback makes runs in the module,
+// in its process, without going back into handle_info/2: a callback that
+// hands a message on to handle_info/2 (a deferred one drained later,
+// vernemq's vmq_swc_store; `handle_info(:disconnect, socket)` from
+// another clause) dispatches it to the clause that message enters, and
+// a call that hands it the loop's own literal is a second arm below.
+.init arm_path = ForwardIntraModuleSameProcessReachCut
+
+arm_path.root(c, g) :-
+  loop_arm(mod, _, _, _, _),
+  rearm_entry(mod, e),
+  call_instr(e, g, c),
+  !looping_server(mod, g).
+
+arm_path.cut(g, h) :- looping_server(_, h), call_edge(g, h).
+
+// A second arm of `lit`'s loop: `site` is where the callback `entry`
+// arms it (the arm itself) or makes the call that does (`arm_site` in
+// `func`), outside the clause of handle_info/2 the loop runs in and
+// outside a clause that runs once.
+.decl second_arm(mod: symbol, lit: symbol, entry: symbol, site: symbol, func: symbol, arm_site: symbol)
+
+second_arm(mod, lit, e, b, e, b) :-
+  loop_arm(mod, lit, _, _, _),
+  rearm_entry(mod, e),
+  self_arm(b, e, lit),
+  !tick_clause(b, e, lit),
+  !once_clause(b, e).
+
+second_arm(mod, lit, e, c, g, b) :-
+  loop_arm(mod, lit, _, _, _),
+  rearm_entry(mod, e),
+  call_instr(e, _, c),
+  arm_path.reaches(c, g),
+  self_arm(b, g, lit),
+  !tick_clause(c, e, lit),
+  !once_clause(c, e).
+
+// A callback that runs the loop's clause itself, handing handle_info/2
+// the loop's own message (`def handle_cast(:now, s), do: handle_info(:tick, s)`).
+second_arm(mod, lit, e, c, f, a) :-
+  loop_arm(mod, lit, a, f, _),
+  looping_server(mod, h),
+  rearm_entry(mod, e),
+  call_instr(e, h, c),
+  call_arg(e, h, 0, lit),
+  !tick_clause(c, e, lit),
+  !once_clause(c, e).
+
+// How the loop keeps its ref: dropped where it is armed, or under a
+// state key (timer_key: stored there, or returned to a caller that
+// stores it).
+.decl loop_drops_ref(mod: symbol, lit: symbol, site: symbol)
+
+loop_drops_ref(mod, lit, a) :-
+  loop_arm(mod, lit, a, f, _),
+  timer_ref(a, f, "discarded", _).
+
+.decl loop_key(mod: symbol, lit: symbol, site: symbol, key: symbol)
+
+loop_key(mod, lit, a, key) :-
+  loop_arm(mod, lit, a, f, _),
+  timer_ref(a, f, "stored", key).
+
+loop_key(mod, lit, a, key) :-
+  loop_arm(mod, lit, a, f, _),
+  timer_ref(a, f, "returned", _),
+  returns_to_key(f, key).
+
+// The call at `site` in `func` cancels the timer kept under `key`: the
+// cancel_timer that reads the field, or a call handing the field to a
+// function that cancels what it is handed (realtime's
+// `Helpers.cancel_timer(pg_sub_ref)`).
+.decl cancels_param(func: symbol, pos: number)
+
+cancels_param(g, pos) :- timer_cancel(_, g, "param", _, pos).
+
+cancels_param(g, pos) :-
+  call_arg_forward(g, h, hpos, pos),
+  cancels_param(h, hpos).
+
+.decl cancel_call(func: symbol, site: symbol, key: symbol)
+
+cancel_call(f, s, key) :- timer_cancel(s, f, "field", key, _).
+
+cancel_call(f, s, key) :-
+  call_arg_field(f, g, pos, key),
+  cancels_param(g, pos),
+  call_instr(f, g, s).
+
+// Two call sites of `func` run in the same clause: one the tag of its
+// first argument names for both, or two that no tag names. A clause
+// whose head is a map or a struct names no tag, so the untagged clauses
+// of one function share a verdict: a cancel in one quiets an arm in
+// another (the quiet direction). The loop's own clause always has its
+// tag.
+.decl has_clause(site: symbol)
+
+has_clause(s) :- clause_call(s, _, _).
+
+.decl same_clause(func: symbol, first: symbol, then: symbol)
+
+same_clause(f, s, t) :-
+  clause_call(s, f, tag),
+  clause_call(t, f, tag).
+
+same_clause(f, s, t) :-
+  cancel_call(f, s, _),
+  second_arm(_, _, f, t, _, _),
+  !has_clause(s),
+  !has_clause(t).
+
+// The loop's own clause cancels its kept timer before arming the next:
+// a second chain folds into it at the next tick. In the handler's clause
+// for the tag, or anywhere in the function that re-arms.
+.decl idempotent_loop(mod: symbol, lit: symbol, key: symbol)
+
+idempotent_loop(mod, lit, key) :-
+  loop_key(mod, lit, a, key),
+  loop_arm(mod, lit, a, f, _),
+  cancel_call(f, _, key),
+  !looping_server(mod, f).
+
+idempotent_loop(mod, lit, key) :-
+  loop_key(mod, lit, a, key),
+  loop_arm(mod, lit, a, _, via),
+  looping_server(mod, h),
+  cancel_call(h, s, key),
+  same_clause(h, s, via).
+
+// The second path cancels the loop's kept timer before it arms: in the
+// callback's clause that arms, or in the function holding the arm.
+.decl cancels_before(entry: symbol, site: symbol, key: symbol)
+
+cancels_before(e, c, key) :-
+  second_arm(_, _, e, c, _, _),
+  cancel_call(e, s, key),
+  same_clause(e, s, c).
+
+cancels_before(e, c, key) :-
+  second_arm(_, _, e, c, g, _),
+  g != e,
+  cancel_call(g, _, key).
+
+timer_loop_rearmed(mod, lit, e, c, b, a, "") :-
+  second_arm(mod, lit, e, c, _, b),
+  loop_drops_ref(mod, lit, a),
+  !runs_under_test(e).
+
+timer_loop_rearmed(mod, lit, e, c, b, a, key) :-
+  second_arm(mod, lit, e, c, _, b),
+  loop_key(mod, lit, a, key),
+  !loop_drops_ref(mod, lit, _),
+  !idempotent_loop(mod, lit, key),
+  !cancels_before(e, c, key),
+  !runs_under_test(e).
