@@ -96,7 +96,8 @@ defmodule Argus.Analyses.Coupling do
           {:owner_pos, :number, "owner's branch position"},
           {:holder_pos, :number, "holder's position"},
           {:site, :symbol, "the start_child / async_nolink call in the owner"},
-          {:confidence, :symbol, "named when the call names the holder, inferred otherwise"}
+          {:basis, :symbol,
+           "resolved when the call names the holder, inferred otherwise (sibling_dependency's words)"}
         ],
         key: [:sup, :owner, :holder],
         doc:
@@ -233,10 +234,10 @@ defmodule Argus.Analyses.Coupling do
     |> doubt(sibling, basis, p)
   end
 
-  def finding(:rest_for_one_orphaned_children, [sup, owner, holder, opos, hpos, site, conf]) do
+  def finding(:rest_for_one_orphaned_children, [sup, owner, holder, opos, hpos, site, basis]) do
     hedge =
-      case conf do
-        "named" ->
+      case basis do
+        "resolved" ->
           ""
 
         _ ->
@@ -244,7 +245,7 @@ defmodule Argus.Analyses.Coupling do
       end
 
     Findings.new(
-      if(conf == "named", do: :warning, else: :info),
+      if(basis == "resolved", do: :warning, else: :info),
       "rest_for_one restarts the owner but not the processes it started",
       "#{owner} (position #{opos}) starts processes under #{holder} " <>
         "(position #{hpos}) of #{sup}, a rest_for_one supervisor#{hedge}. " <>

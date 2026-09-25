@@ -259,8 +259,9 @@ uses_cached_pid(h, name) :-
 //
 // The owner is the child that calls start_child / async / async_nolink
 // (any module in its branch); the holder is an earlier direct child.
-// Two ways to connect them. `named`: the call names the holder's
-// registered name. `inferred`: the target is a runtime value and the
+// Two ways to connect them, `basis` in sibling_dependency's words.
+// `resolved`: the call names the holder's registered name. `inferred`:
+// the target is a runtime value and the
 // holder is the only earlier sibling whose module is the API called —
 // a Task.Supervisor.async_nolink into an unresolvable pid, with exactly
 // one Task.Supervisor started earlier under the same rest_for_one, is
@@ -285,10 +286,10 @@ other_earlier_sibling_of_kind(sup, pos, api, owner_pos) :-
   earlier_sibling_of_kind(sup, other, api, owner_pos),
   other != pos.
 
-.decl rest_for_one_orphaned_children(sup: symbol, owner: symbol, holder: symbol, owner_pos: number, holder_pos: number, site: symbol, confidence: symbol)
+.decl rest_for_one_orphaned_children(sup: symbol, owner: symbol, holder: symbol, owner_pos: number, holder_pos: number, site: symbol, basis: symbol)
 .output rest_for_one_orphaned_children
 
-rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "named") :-
+rest_for_one_orphaned_children(sup, owner, holder, opos, hpos, site, "resolved") :-
   supervisor(sup, "rest_for_one"),
   supervisor_child(sup, opos, owner_branch, _, _),
   child_subtree(sup, owner_branch, owner),

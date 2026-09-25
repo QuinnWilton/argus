@@ -1152,10 +1152,10 @@ A synchronous wait that can last forever or nest: every finding is a process wai
 
 ### rest_for_one restarts the owner but not the processes it started
 
-`rest_for_one_orphaned_children` · confidence=`named` | `inferred`
-· titles: "rest_for_one restarts the owner but not the processes it started" (`:warning` when `named`, `:info` when `inferred`)
+`rest_for_one_orphaned_children` · basis=`resolved` | `inferred`
+· titles: "rest_for_one restarts the owner but not the processes it started" (`:warning` when `resolved`, `:info` when `inferred`)
 
-**Property.** Some supervisor S has the literal strategy `:rest_for_one`, with a direct child H at position h and a child branch at a later position o containing module O. Some function of O starts processes inside H: a `start_child`, `async` or `async_nolink` call (`sup_management_call`, `child_creating_op`) whose supervisor argument is H's child-spec name (`named`), or is a runtime value while H is the only direct child of S before position o whose module is the API called, such as the one `Task.Supervisor` (`inferred`). When O's process crashes, S restarts it and every later child but not H, so the processes the old owner started keep running inside H while the new owner starts its own: duplicated work (Oban's jobs ran twice), or a stale process holding a resource the replacement expects to own.
+**Property.** Some supervisor S has the literal strategy `:rest_for_one`, with a direct child H at position h and a child branch at a later position o containing module O. Some function of O starts processes inside H: a `start_child`, `async` or `async_nolink` call (`sup_management_call`, `child_creating_op`) whose supervisor argument is H's child-spec name (`resolved`), or is a runtime value while H is the only direct child of S before position o whose module is the API called, such as the one `Task.Supervisor` (`inferred`). When O's process crashes, S restarts it and every later child but not H, so the processes the old owner started keep running inside H while the new owner starts its own: duplicated work (Oban's jobs ran twice), or a stale process holding a resource the replacement expects to own.
 
 **Assumptions and limits.**
 - Any function of O counts, including a client function that runs in its caller's process rather than O's.
@@ -1163,7 +1163,7 @@ A synchronous wait that can last forever or nest: every finding is a process wai
 - The `inferred` holder stands in for points-to, which does not follow a supervisor management call's supervisor argument. A custom `use DynamicSupervisor` module as H has its own module name, so it is never the "one earlier sibling of the API's kind".
 - Erlang's `:supervisor.start_child/2` is not a management call the extractor records.
 
-**Fixtures.** Positive: `NamedQueueSupervisor` with `NamedJobProducer` (`named`), `QueueSupervisor` with `JobProducer` (`inferred`) (`test/fixtures/supervision_fixture.ex`). Quiet: `AllForOneQueueSupervisor` (`:one_for_all`), `ForemanLastSupervisor` (the holder starts after the owner) (same file). Asserted in `test/analyses/coupling_supervision_test.exs`.
+**Fixtures.** Positive: `NamedQueueSupervisor` with `NamedJobProducer` (`resolved`), `QueueSupervisor` with `JobProducer` (`inferred`) (`test/fixtures/supervision_fixture.ex`). Quiet: `AllForOneQueueSupervisor` (`:one_for_all`), `ForemanLastSupervisor` (the holder starts after the owner) (same file). Asserted in `test/analyses/coupling_supervision_test.exs`.
 
 **Corpus.** Fix pairs: `oban#532` (oban-bg/oban, 5c64333 → f5afde4, `Oban.Queue.Producer`, the `inferred` holder): the bug the rule was written from, fixed with `:one_for_all`. Present-only: None.
 

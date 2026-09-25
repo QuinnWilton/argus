@@ -457,6 +457,13 @@ process), and `partial_handler.missing` spells `catch_all`, as
 `unhandled_info.fallback` does (was `catchall`). Consumers matching the
 old values must change.
 
+**Changed.** Schema 116. `coupling.rest_for_one_orphaned_children`'s
+last column is `basis` (was `confidence`), `resolved` or `inferred`
+(was `named` or `inferred`), in `sibling_dependency.basis`'s words. The
+bump also covers two inputs whose meaning moved in this round:
+`recv_signal`'s "down" rows leave out a `:DOWN` a demonitor may have
+cancelled, and `ets_op` classifies `:ets.match_delete/2` as a write.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

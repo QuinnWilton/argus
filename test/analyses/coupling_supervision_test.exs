@@ -34,7 +34,7 @@ defmodule Argus.Analyses.CouplingSupervisionTest do
 
       assert rows == [
                {"Argus.Test.Fixtures.NamedQueueSupervisor",
-                "Argus.Test.Fixtures.NamedJobProducer", "Task.Supervisor", "1", "0", "named"},
+                "Argus.Test.Fixtures.NamedJobProducer", "Task.Supervisor", "1", "0", "resolved"},
                {"Argus.Test.Fixtures.QueueSupervisor", "Argus.Test.Fixtures.JobProducer",
                 "Task.Supervisor", "1", "0", "inferred"}
              ]
