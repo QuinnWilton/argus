@@ -438,3 +438,133 @@ defmodule Argus.Test.Fixtures.InitRecv.LoopsOnParent do
     end
   end
 end
+
+defmodule Argus.Test.Fixtures.InitRecv.AsksByHand do
+  @moduledoc false
+  # A hand-written request to a sibling, and a wait for its answer or its
+  # :DOWN. The :DOWN ends the wait if the sibling dies; a sibling that
+  # lives and never answers (one that calls this server while it starts)
+  # holds the start as long as it lives.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(peer) do
+    pid = Process.whereis(peer)
+    ref = Process.monitor(pid)
+    send(pid, {:get_config, self(), ref})
+
+    receive do
+      {^ref, config} -> {:ok, config}
+      {:DOWN, ^ref, _, _, _} -> {:stop, :peer_down}
+    end
+  end
+end
+
+defmodule Argus.Test.Fixtures.InitRecv.UnlinkedExit do
+  @moduledoc false
+  # A worker spawned WITHOUT a link, and a wait for its answer or its
+  # :EXIT. No link and no trap_exit: the :EXIT never comes, and a worker
+  # that crashes first holds the start forever.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(arg) do
+    parent = self()
+    pid = spawn(fn -> send(parent, {:done, self(), arg}) end)
+
+    receive do
+      {:done, ^pid, result} -> {:ok, result}
+      {:EXIT, ^pid, reason} -> {:stop, reason}
+    end
+  end
+end
+
+defmodule Argus.Test.Fixtures.InitRecv.LinkedUntrapped do
+  @moduledoc false
+  # Linked, but not trapping exits: the :EXIT arrives as a signal, not a
+  # message. A worker that exits :normal before it sends leaves the wait
+  # with nothing to take.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(arg) do
+    parent = self()
+    pid = spawn_link(fn -> send(parent, {:done, self(), arg}) end)
+
+    receive do
+      {:done, ^pid, result} -> {:ok, result}
+      {:EXIT, ^pid, reason} -> {:stop, reason}
+    end
+  end
+end
+
+defmodule Argus.Test.Fixtures.InitRecv.CancelsHanded do
+  @moduledoc false
+  # Cancels a timer its caller handed it, without looking at the result,
+  # then waits for a config message that is no timer's.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts) do
+    Process.cancel_timer(opts.timer)
+
+    receive do
+      {:config, config} -> {:ok, config}
+    end
+  end
+end
+
+defmodule Argus.Test.Fixtures.InitRecv.FlushesUnchecked do
+  @moduledoc false
+  # Cancels its own timer and waits for the timer's message whatever the
+  # cancel said: when the cancel succeeded, the message never comes.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts) do
+    ref = Process.send_after(self(), :close, 60_000)
+    Process.cancel_timer(ref)
+
+    receive do
+      :close -> :ok
+    end
+
+    {:ok, opts}
+  end
+end
+
+defmodule Argus.Test.Fixtures.InitRecv.FlushesOnFalse do
+  @moduledoc false
+  # gen_server's mc_cancel_timer/2: the flush on the `false` clause of a
+  # case on the cancel.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(opts) do
+    ref = :erlang.start_timer(1_000, self(), :close)
+
+    case :erlang.cancel_timer(ref) do
+      false ->
+        receive do
+          {:timeout, ^ref, :close} -> :ok
+        end
+
+      _ ->
+        :ok
+    end
+
+    {:ok, opts}
+  end
+end

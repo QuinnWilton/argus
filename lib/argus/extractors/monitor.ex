@@ -45,6 +45,9 @@ defmodule Argus.Extractors.Monitor do
     the exit signal of the process a pinned register names, whatever its
     reason: a `:DOWN` (`"down"`) or an `:EXIT` (`"exit"`)
     (`Argus.Extractors.Monitor.ExitSignal`)
+  - `recv_flush(id, func, cancel)` — the receive runs only where the
+    `cancel_timer` call at `cancel` returned `false`: the timer had fired,
+    and its message is in the mailbox (`Argus.Extractors.Monitor.Flush`)
 
   Whether the ref is dropped is read from the instructions after the
   call, along every path: the ref arrives in `{x, 0}`, and it is dropped
@@ -91,6 +94,7 @@ defmodule Argus.Extractors.Monitor do
   alias Argus.Cfg.Walk
   alias Argus.Extractor.Resolve
   alias Argus.Extractors.Monitor.ExitSignal
+  alias Argus.Extractors.Monitor.Flush
   alias Argus.Instr
   alias Argus.InstrId
 
@@ -117,6 +121,7 @@ defmodule Argus.Extractors.Monitor do
       :monitor_call,
       :monitor_ref_dropped,
       :recv_down,
+      :recv_flush,
       :recv_signal
     ]
 
@@ -128,6 +133,38 @@ defmodule Argus.Extractors.Monitor do
     |> emit_awaits_down_after(module_data)
     |> emit_recv_down(module_data)
     |> emit_recv_signal(mod, functions)
+    |> emit_recv_flush(module_data)
+  end
+
+  # ── A receive that flushes a timer that has fired ───────────────────
+
+  # The graph is built only for a function that both cancels a timer and
+  # receives.
+  defp emit_recv_flush(facts, %{module: mod, functions: functions} = module_data) do
+    Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
+      if flush_candidate?(instrs) do
+        func_id = InstrId.func_id(mod, name, arity)
+
+        for {loop, cancel} <- Flush.guarded(instrs, cfg(module_data, name, arity)),
+            reduce: acc do
+          acc ->
+            add_fact(acc, :recv_flush, [
+              InstrId.mint(func_id, loop),
+              func_id,
+              InstrId.mint(func_id, cancel)
+            ])
+        end
+      else
+        acc
+      end
+    end)
+  end
+
+  defp flush_candidate?(instrs) do
+    Enum.any?(instrs, &match?({:loop_rec, _, _}, &1)) and
+      Enum.any?(instrs, fn instr ->
+        match?({:ok, _, :cancel_timer, _}, match_remote_call(instr))
+      end)
   end
 
   # ── A receive that ends when a particular process does ───────────────

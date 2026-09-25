@@ -309,6 +309,12 @@ acks and becomes the server, and its loop's receives are the server's
 `:ets.all/0`'s and `:socket.close/1`'s waits for the runtime's reply,
 win32reg's port reply, and kernel_config's boot handshakes.
 
+**Added.** Schema 100. `recv_flush(id, func, cancel)`
+(`Argus.Extractors.Monitor.Flush`): the receive at `id` runs only where
+the `cancel_timer` call at `cancel`, earlier in the function, returned
+`false` — every path from the entry passes the test of that result
+against `false` and leaves it by the `false` edge.
+
 **Added.** Schema 92. `recv_signal(id, func, signal)`
 (`Argus.Extractors.Monitor.ExitSignal`): a receive with a clause that
 takes the exit signal of the process a pinned register names, whatever

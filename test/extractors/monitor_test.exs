@@ -95,6 +95,30 @@ defmodule Argus.Extractors.MonitorTest do
     end
   end
 
+  describe "recv_flush" do
+    alias Argus.Test.Fixtures.InitRecv
+
+    defp flushes(mod) do
+      for [id, func, cancel] <- Map.get(extract(mod), :recv_flush, []) do
+        [_, recv] = String.split(id, "#")
+        [_, at] = String.split(cancel, "#")
+
+        {func |> String.split(":") |> List.last(),
+         String.to_integer(at) < String.to_integer(recv)}
+      end
+    end
+
+    test "a receive on the false side of a test of the cancel's result" do
+      assert flushes(InitRecv.FlushesTimer) == [{"init/1", true}]
+      assert flushes(InitRecv.FlushesOnFalse) == [{"init/1", true}]
+    end
+
+    test "a cancel nothing tests, or a ref a caller handed with no test, is none" do
+      assert flushes(InitRecv.FlushesUnchecked) == []
+      assert flushes(InitRecv.CancelsHanded) == []
+    end
+  end
+
   describe "recv_down" do
     alias Argus.Test.Fixtures.CallbackReceive, as: R
 

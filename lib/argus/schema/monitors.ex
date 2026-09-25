@@ -92,6 +92,24 @@ defmodule Argus.Schema.Monitors do
         """
       },
       %{
+        name: :recv_flush,
+        layer: 2,
+        fields: [
+          {:id, :symbol, "the receive's loop_rec"},
+          {:func, :symbol, "the function"},
+          {:cancel, :symbol, "the cancel_timer call whose false result it runs under"}
+        ],
+        doc: """
+        A receive that runs only where the `cancel_timer` call at `cancel`, \
+        earlier in the function, returned `false` \
+        (`Argus.Extractors.Monitor.Flush`): the timer had already fired, \
+        and its message is in the mailbox. Every path from the function's \
+        entry to the receive passes the test of that result against \
+        `false`, and leaves it by the `false` edge. A cancel whose result \
+        is not tested is not one: when it succeeds, the message never comes.
+        """
+      },
+      %{
         name: :demonitor_call,
         layer: 2,
         fields: [
