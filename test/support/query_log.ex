@@ -55,6 +55,17 @@ defmodule Scry.Test.QueryLog do
     |> Enum.sort()
   end
 
+  @doc "Keys whose memoized value `query_name` served without running, sorted."
+  @spec hits(pid(), atom()) :: [term()]
+  def hits(agent, query_name) do
+    agent
+    |> entries()
+    |> Enum.filter(fn {kind, name, _key} -> kind == :hit and name == query_name end)
+    |> Enum.map(fn {_kind, _name, key} -> key end)
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
   @doc "Keys for which `query_name` early-cutoff, sorted."
   @spec cutoffs(pid(), atom()) :: [term()]
   def cutoffs(agent, query_name) do

@@ -256,6 +256,35 @@ defmodule Mix.Tasks.Compile.ScryManifestTest do
     end)
   end
 
+  test "a warm run validates the merged relations without serving them", %{
+    peer: peer,
+    copy: copy
+  } do
+    Fixture.checkout!(copy, @quick, :depot_quick)
+
+    Fixture.in_peer(peer, copy, :depot_quick, fn log ->
+      compile!()
+      queue = Path.join(copy, "lib/depot/queue.ex")
+
+      # Nothing extracted ahead of the graph waits for the runner, so the
+      # program's relations stay in the memo table: served, they would be
+      # copied onto the runner's heap for nothing.
+      QueryLog.reset(log)
+      compile!()
+      assert QueryLog.hits(log, :program_relation_facts) == []
+      assert QueryLog.executions(log, :program_relation_facts) == []
+      assert QueryLog.hits(log, :analysis_diagnostics) == [:coupling, :mailbox]
+
+      # An edit prewarms its module, and the runner takes the relations
+      # first, where the extraction waits.
+      edit!(queue, File.read!(queue) <> "\ndefmodule Depot.Extra, do: def(one, do: 1)\n")
+      QueryLog.reset(log)
+      compile!()
+      assert QueryLog.executions(log, :program_relation_facts) == [:all]
+      assert Depot.Extra in QueryLog.executions(log, :module_extraction)
+    end)
+  end
+
   test "touch without edit is a noop past the prefilter", %{peer: peer, copy: copy} do
     Fixture.checkout!(copy, @quick, :depot_quick)
 

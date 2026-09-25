@@ -250,7 +250,7 @@ defmodule Scry.Runner do
   defp analyze(db, config, discovered, to_extract) do
     :ok = prewarm(db, discovered, to_extract)
     :ok = Scry.Priors.sync(db, config)
-    {findings_by_file, degraded} = demand(db, config.analyses)
+    {findings_by_file, degraded} = demand(db, config.analyses, prewarmed?: to_extract != [])
     if degraded != [], do: :ok = drop_degraded(db, config.analyses)
 
     extraction_errors = Scry.Analysis.extraction_errors(db, :all)
@@ -374,15 +374,21 @@ defmodule Scry.Runner do
 
   # The analyses solve concurrently: each is its own Souffle process, and
   # they share everything upstream of their fact directories, which roux
-  # computes once for whichever demands it first. The program's merged
+  # computes once for whichever demands it first. When extractions were
+  # prewarmed (`prewarmed?: true`, the default), the program's merged
   # relations are demanded here first, in this process, because the
-  # prewarmed extractions wait in its dictionary — a task demanding them
-  # would extract again.
+  # extractions wait in its dictionary — a task demanding them would
+  # extract again. Otherwise the analyses validate them where they are:
+  # served here, the relations — tens of megabytes on a large program —
+  # would be copied onto this process's heap and kept there until the
+  # run ends, for nothing (60 ms of a one-second warm run on a 350-module
+  # project).
   @doc false
-  @spec demand(Database.t(), [atom()]) ::
+  @spec demand(Database.t(), [atom()], keyword()) ::
           {%{optional(String.t()) => [map()]}, [%{analysis: atom(), reason: term()}]}
-  def demand(db, analyses) do
-    _relations = Scry.Analysis.program_relation_facts(db, :all)
+  def demand(db, analyses, opts \\ []) do
+    if Keyword.get(opts, :prewarmed?, true),
+      do: _ = Scry.Analysis.program_relation_facts(db, :all)
 
     results =
       analyses

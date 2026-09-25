@@ -111,7 +111,9 @@ Driver side (never inside queries): `Scry.Scanner` (beam discovery +
 mtime/size/hash diff vs manifest sources), `Scry.Runner` (db lifecycle,
 warm start, input sync, souffle check, demand — the analyses solve
 concurrently, one task each, after the merged relations are demanded in
-the runner's own process, where the prewarmed extractions wait), `Scry.Diagnostics`
+the runner's own process, where the prewarmed extractions wait; with
+nothing prewarmed they are left in the memo table, since serving them
+copies tens of MB onto the runner's heap), `Scry.Diagnostics`
 (resolved finding → Pentiment.Report → Diagnostic; printing; sidecar for
 `diagnostics/0`), `Mix.Tasks.Compile.Scry`, `Mix.Tasks.Scry`.
 

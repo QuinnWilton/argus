@@ -9,8 +9,9 @@
   under a stamp of its beams' stats, and a fresh VM stats the beams
   instead of reading them: on a 350-module project with 116 dependency
   ebins (3,947 beams), the digest went from about 950 ms to 180 ms.
-  scry's part of a warm `mix compile` there went from 1.73–1.83 s to
-  1.0–1.2 s.
+  With the next entry, scry's part of a warm `mix compile` there went
+  from 1.73–1.83 s to 0.93–1.00 s, and of a one-module edit from
+  5.3–5.5 s to 4.4–5.2 s.
   A beam rewritten in place with other code of the same size and its
   modification time set back keeps its old hashes, as scry's own scan
   keeps such a beam; `--force` drops the store, and every dependency is
@@ -19,6 +20,11 @@
   (past each application's three latest) are pruned when the
   environment moves. `Scry.Fingerprint.env/2` takes `cache:` and
   `refresh:`; `Scry.Runner.run/2` takes `cache:`.
+- A warm run leaves the program's merged relations in the memo table.
+  The runner demanded them itself before the analyses so that the
+  extractions it prewarmed would be found in its process; with none
+  prewarmed, that copied them (tens of megabytes on a large program)
+  onto its heap for nothing — 60 ms of a warm run on the project above.
 - The manifest records the layout of the query graph that wrote it
   (`:graph_layout`, a new frontend input), and a manifest of another
   layout — a scry whose queries are named, keyed or valued otherwise —
