@@ -1630,37 +1630,49 @@ info_crash(m) :- unhandled_info(_, _, _, _, _, m, _, "crash").
 // arm of a retry loop comes, most often, from the event that stopped
 // being connected, when no retry runs (RetryLoop: ejabberd_redis's and
 // MongooseIM's LDAP reconnects). Only a literal message is asked
-// (timer_arm "bare"): one carrying a ref or a counter (`{:tick, ref}`,
+// (armed_literal): one carrying a ref or a counter (`{:tick, ref}`,
 // start_timer's `{:timeout, ref, msg}`) is told apart by the loop's
 // clause (RefTagged). init/1, handle_continue/2 (most often run once,
-// from init/1), mount/3, and a handle_info/2 clause for a message only
-// those send (a Channel's `:after_join`) arm the loop the ticks then
-// carry, and are no second path (InitOnly, ContinueArm, AfterJoin).
+// from init/1), mount/3, and a handle_info/2 or handle_cast/2 clause for
+// a message only those send the process (a Channel's `:after_join`,
+// MongooseIM's `initial_loading` cast) arm the loop the ticks then carry,
+// and are no second path (InitOnly, ContinueArm, AfterJoin, CastFromInit).
 
 .decl timer_loop_rearmed(mod: symbol, message: symbol, entry: symbol, site: symbol, arm_site: symbol, loop_site: symbol, keeps: symbol)
 .output timer_loop_rearmed
 
-// A server that handles its own messages in handle_info/2.
+// A server that handles its own messages in handle_info/2: the callback
+// of a loop behaviour (otp_callback, a GenServer, a GenStage, a Channel,
+// a LiveView, a gen_server2) but a gen_statem's, which takes its info
+// messages in its state functions.
 .decl looping_server(mod: symbol, handler: symbol)
 
 looping_server(mod, h) :-
+  otp_callback(h, mod, "handle_info", b),
   function_def(h, mod, "handle_info", 2, _),
-  behaves_as(mod, b),
-  looping_behaviour(b).
+  b != "GenStateMachine",
+  b != "Supervisor".
 
-.decl looping_behaviour(behaviour: symbol)
+// The literal message a timer armed for the process carries
+// (armed_literal: at the site, or filled in by the arming function's
+// callers), and the tag a clause head tells it apart by: timer_tag's, or
+// the atom itself for one a caller filled in.
+.decl self_arm_tag(site: symbol, func: symbol, lit: symbol, tag: symbol)
 
-looping_behaviour("GenServer").
-looping_behaviour("GenStage").
-looping_behaviour("Phoenix.Channel").
-looping_behaviour("Phoenix.LiveView").
+self_arm_tag(a, f, lit, tag) :-
+  armed_literal(a, f, "self", lit),
+  timer_tag(a, tag, _).
+
+self_arm_tag(a, f, lit, lit) :-
+  armed_literal(a, f, "self", lit),
+  !timer_tag(a, _, _),
+  !match("[{].*", lit).
 
 // A literal message some timer of the module's arms for its own process.
 .decl self_timer_tag(mod: symbol, tag: symbol)
 
 self_timer_tag(mod, tag) :-
-  timer_arm(a, f, "self", "bare", _, _),
-  timer_tag(a, tag, _),
+  self_arm_tag(_, f, _, tag),
   function_def(f, mod, _, _, _).
 
 // What a call the clause of handle_info/2 for `tag` makes on every path
@@ -1682,16 +1694,14 @@ tick_path.root(c, g) :-
 
 loop_arm(mod, lit, a, h, a) :-
   looping_server(mod, h),
-  timer_arm(a, h, "self", "bare", _, lit),
-  timer_tag(a, tag, _),
+  self_arm_tag(a, h, lit, tag),
   info_clause_always(a, h, tag).
 
 loop_arm(mod, lit, a, f, c) :-
   looping_server(mod, h),
   info_clause_always(c, h, tag),
   tick_path.reaches(c, f),
-  timer_arm(a, f, "self", "bare", _, lit),
-  timer_tag(a, tag, _),
+  self_arm_tag(a, f, lit, tag),
   !conditional_call(a).
 
 // The clause the loop runs in: of the handler, for the loop's tag.
@@ -1699,7 +1709,7 @@ loop_arm(mod, lit, a, f, c) :-
 
 tick_clause(id, h, lit) :-
   loop_arm(mod, lit, a, _, _),
-  timer_tag(a, tag, _),
+  self_arm_tag(a, _, lit, tag),
   looping_server(mod, h),
   clause_call(id, h, tag).
 
@@ -1709,6 +1719,7 @@ tick_clause(id, h, lit) :-
 
 rearm_entry(mod, e) :-
   looping_server(mod, _),
+  otp_callback(e, mod, n, _),
   function_def(e, mod, n, a, _),
   rearm_callback(n, a).
 
@@ -1731,21 +1742,24 @@ rearm_callback("handle_async", 3).
 // process.
 .decl starts_with(mod: symbol, func: symbol)
 
-starts_with(mod, f) :- function_def(f, mod, "init", 1, _).
-starts_with(mod, f) :- function_def(f, mod, "join", 3, _).
-starts_with(mod, f) :- function_def(f, mod, "mount", 3, _).
-starts_with(mod, f) :- function_def(f, mod, "handle_continue", 2, _).
+starts_with(mod, f) :- init_function(mod, f).
+starts_with(mod, f) :- otp_callback(f, mod, "join", _), function_def(f, mod, "join", 3, _).
+starts_with(mod, f) :- otp_callback(f, mod, "mount", _), function_def(f, mod, "mount", 3, _).
+
+starts_with(mod, f) :-
+  otp_callback(f, mod, "handle_continue", _),
+  function_def(f, mod, "handle_continue", 2, _).
 
 .decl sends_literal(func: symbol, lit: symbol)
 
 sends_literal(f, lit) :- pid_send(_, f, lit, _, _).
-sends_literal(f, lit) :- timer_arm(_, f, _, "bare", _, lit).
+sends_literal(f, lit) :- armed_literal(_, f, _, lit).
 
 // Sent or armed to a process other than the sender's own.
 .decl sends_literal_out(lit: symbol)
 
 sends_literal_out(lit) :- pid_send(_, _, lit, kind, _), kind != "self".
-sends_literal_out(lit) :- timer_arm(_, _, "other", "bare", _, lit).
+sends_literal_out(lit) :- armed_literal(_, _, "other", lit).
 
 .decl once_message(mod: symbol, lit: symbol)
 
@@ -1775,19 +1789,43 @@ once_candidate(mod, lit) :-
   pid_send(_, f, lit, "self", _),
   starts_with(mod, f).
 
-.decl once_clause(site: symbol, handler: symbol)
+// A cast the process makes to itself only from where it starts
+// (`gen_server:cast(self(), initial_loading)` in init/1): no other site
+// of the program casts that tag.
+.decl once_cast(mod: symbol, tag: symbol)
+
+once_cast(mod, tag) :-
+  looping_server(mod, _),
+  call_tag(_, f, "cast", tag),
+  starts_with(mod, f),
+  !cast_again(mod, tag).
+
+.decl cast_again(mod: symbol, tag: symbol)
+
+cast_again(mod, tag) :-
+  looping_server(mod, _),
+  call_tag(_, f, "cast", tag),
+  !starts_with(mod, f).
+
+.decl once_clause(site: symbol, entry: symbol)
 
 once_clause(s, h) :-
   looping_server(mod, h),
   clause_call(s, h, tag),
   once_message(mod, tag).
 
+once_clause(s, e) :-
+  rearm_entry(mod, e),
+  function_def(e, mod, "handle_cast", 2, _),
+  clause_call(s, e, tag),
+  once_cast(mod, tag).
+
 // `site` arms the literal message `lit` for the process itself: a timer,
 // or a send to self() (pid_send spells an atom as the timer's literal
 // does; a tuple it spells `{:tag, …}`, which no literal equals).
 .decl self_arm(site: symbol, func: symbol, lit: symbol)
 
-self_arm(b, g, lit) :- timer_arm(b, g, "self", "bare", _, lit).
+self_arm(b, g, lit) :- armed_literal(b, g, "self", lit).
 self_arm(b, g, lit) :- pid_send(b, g, lit, "self", _).
 
 // What each call a looping module's callback makes runs in the module,
@@ -1879,6 +1917,14 @@ cancel_call(f, s, key) :-
   call_arg_field(f, g, pos, key),
   cancels_param(g, pos),
   call_instr(f, g, s).
+
+// A call to a function of the module that reads the field and cancels
+// it itself (MongooseIM's `maybe_cancel_timer(IsInitial, State)`).
+cancel_call(f, s, key) :-
+  call_instr(f, g, s),
+  function_def(f, mod, _, _, _),
+  function_def(g, mod, _, _, _),
+  cancel_call(g, _, key).
 
 // Two call sites of `func` run in the same clause: one the tag of its
 // first argument names for both, or two that no tag names. A clause

@@ -311,6 +311,50 @@ defmodule Argus.Test.Fixtures.TimerLoop do
     end
   end
 
+  # init/1 casts the process its own first load, which starts the loop:
+  # the cast's clause runs once, as init/1 does.
+  defmodule CastFromInit do
+    use GenServer
+
+    def init(_) do
+      GenServer.cast(self(), :initial_load)
+      {:ok, %{}}
+    end
+
+    def handle_cast(:initial_load, state) do
+      Process.send_after(self(), :refresh, 30_000)
+      {:noreply, state}
+    end
+
+    def handle_info(:refresh, state) do
+      Process.send_after(self(), :refresh, 30_000)
+      {:noreply, state}
+    end
+  end
+
+  # The same first load, also cast by the module's API: every call of
+  # reload/1 adds a loop.
+  defmodule CastFromInitAndApi do
+    use GenServer
+
+    def reload(pid), do: GenServer.cast(pid, :first_load)
+
+    def init(_) do
+      GenServer.cast(self(), :first_load)
+      {:ok, %{}}
+    end
+
+    def handle_cast(:first_load, state) do
+      Process.send_after(self(), :refresh, 30_000)
+      {:noreply, state}
+    end
+
+    def handle_info(:refresh, state) do
+      Process.send_after(self(), :refresh, 30_000)
+      {:noreply, state}
+    end
+  end
+
   # A one-shot retry, not a loop: no clause for :retry arms :retry.
   defmodule OneShot do
     use GenServer

@@ -24,8 +24,11 @@ defmodule Argus.Analyses.MailboxTimerLoopTest do
     T.AfterJoin,
     T.Redispatch,
     T.SameTagResend,
+    T.CastFromInit,
+    T.CastFromInitAndApi,
     :timer_loop_reloader,
-    :timer_loop_resend
+    :timer_loop_resend,
+    :timer_loop_domain_db
   ]
 
   setup_all do
@@ -49,6 +52,8 @@ defmodule Argus.Analyses.MailboxTimerLoopTest do
              # A loop that drops its ref cannot be stopped: the config
              # change's cancel of the ref init/1 kept is too late.
              {":timer_loop_reloader", ":reload", "handle_cast/2", ""},
+             # A first load init/1 casts, that the API casts too.
+             {"CastFromInitAndApi", ":refresh", "handle_cast/2", ""},
              # A cast that runs the loop's clause with its message.
              {"DirectKick", ":poll", "handle_cast/2", ""},
              # One clause re-arms without cancelling the kept ref first,
@@ -96,7 +101,9 @@ defmodule Argus.Analyses.MailboxTimerLoopTest do
           T.AfterJoin,
           T.Redispatch,
           T.SameTagResend,
-          :timer_loop_resend
+          T.CastFromInit,
+          :timer_loop_resend,
+          :timer_loop_domain_db
         ] do
       refute MapSet.member?(mods, inspect(quiet)), "#{inspect(quiet)} reported"
     end

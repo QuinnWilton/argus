@@ -27,9 +27,11 @@ second path does not cancel first. Every run of that callback adds a
 loop. Retry loops (a re-arm on one branch), a clause a join's
 `:after_join` runs once, a message handed on to handle_info/2, a
 message carrying a ref and a loop that cancels its own kept ref before
-re-arming are not reported. Over the nineteen live projects: 2 rows,
+re-arming are not reported. Over the nineteen live projects: 3 rows,
 vernemq's acl and passwd reloaders, both real (the round-2 catalog's
-backlog item 5, parked for want of the facts below). Schema 117.
+backlog item 5, parked for want of the facts below), and rabbit's
+`mirrored_supervisor`, whose second arm is a start handshake its API
+makes once. Schema 117.
 
 **Added.** `info_clause_always(id, func, tag)` (ClauseCall): in a
 handle_info/2, the call at `id` runs on every path the clause for the
