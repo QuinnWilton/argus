@@ -114,6 +114,7 @@ defmodule Scry.Analysis do
 
   use Roux.Query
 
+  alias Argus.Cache.Reads
   alias Argus.Facts
   alias Roux.Runtime
   alias Scry.Symbols
@@ -207,12 +208,12 @@ defmodule Scry.Analysis do
   # it (`Scry.Runner`) for the modules whose extraction read an entry
   # that moved.
   @spec schema_digest(String.t()) :: String.t()
-  def schema_digest(read), do: Argus.Cache.Reads.digest(read)
+  def schema_digest(read), do: Reads.digest(read)
 
   # Runs `fun` (no query of this graph: what one read is its own) and
   # makes the running query depend on each schema entry it read.
   defp reading_schema(db, fun) do
-    {result, reads} = Argus.Cache.Reads.track(fun)
+    {result, reads} = Reads.track(fun)
     :ok = depend_on_schema(db, reads)
     result
   end
@@ -1069,7 +1070,7 @@ defmodule Scry.Analysis do
         # Interning reads each relation's columns: the rows depend on
         # those entries as much as on the ones the producers read.
         {facts, interned} =
-          Argus.Cache.Reads.track(fn -> shards |> join_producers() |> Facts.intern(symbols) end)
+          Reads.track(fn -> shards |> join_producers() |> Facts.intern(symbols) end)
 
         schema = [interned | Map.values(reads)] |> Enum.concat() |> Enum.uniq() |> Enum.sort()
         {{:ok, facts}, installed, schema}
