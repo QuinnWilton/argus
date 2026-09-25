@@ -78,7 +78,7 @@ defmodule Argus.Analyses.ExposureSecretsTest do
 
     assert finding.mfa == {Argus.Test.Fixtures.Secret.Exposed, :__schema__, 1}
     assert finding.at_source == ":smtp_password"
-    assert finding.at_label == "declared without redact: true"
+    assert finding.at_label == "smtp_password declared without redact: true"
   end
 
   describe "a derived Inspect" do
@@ -131,7 +131,7 @@ defmodule Argus.Analyses.ExposureSecretsTest do
         ])
 
       assert finding.detail =~ "M derives Inspect with a field list that keeps :api_key"
-      assert finding.at_label == "kept by the schema's derived Inspect"
+      assert finding.at_label == "api_key kept by the schema's derived Inspect"
       assert [help] = finding.help
       assert help =~ "except:"
     end

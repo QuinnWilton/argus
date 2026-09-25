@@ -231,7 +231,7 @@ defmodule Argus.Analyses.Ets do
   def finding(:ets_write_only_table, [name, mod, site]) do
     Findings.new(
       :info,
-      "ETS table #{name} only grows",
+      "ETS table that only grows",
       "#{mod} creates #{name} and the code inserts into it outside init/1, " <>
         "but nothing ever deletes from it — no :ets.delete, delete_object, " <>
         "select_delete or take on this table anywhere. Every insert is " <>

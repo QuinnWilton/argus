@@ -473,6 +473,76 @@ effect model's categories, and the ETS operation words), and
 module is; `processes.dl` is process points-to). An analysis outside
 this repository that includes them must follow.
 
+**Changed** titles. A title names the defect, and the values that
+identify one instance of it — a module or function (the finding's
+anchor already names it), a field, a state, a table, a tag, a message,
+a callee, a repo, a supervisor or child — or that move with code a fix
+need not touch — a depth, a count, a timeout — are in the detail and
+the at-label, where a corpus pair (which matches a title and an anchor
+module) and an encore golden do not have to pin them. A value from a
+closed set stays: a restart type, an effect category, a request
+surface and how near the request is, the class a call raises, how
+`binary_to_term` is called. Old → new:
+
+- blocking: "GenServer call chain of depth N" → "GenServer call chain";
+  "High synchronous fan-in (N caller modules)" → "High synchronous
+  fan-in"; "Blocking receive inside a B callback" → "Blocking receive
+  inside an OTP callback"; "receive inside a B callback" → "Receive
+  inside an OTP callback".
+- effects: "f is declared pure but performs X" → "Function declared
+  pure performs X"; "f is declared pure but the claim cannot be
+  checked" → "Purity claim that cannot be checked"; "… dispatches
+  through a protocol" and "… reaches an unclassified call" → "Function
+  declared pure dispatches through a protocol", "Function declared pure
+  reaches an unclassified call"; "f passes an effectful closure to a
+  function declared pure" → "Effectful closure passed to a function
+  declared pure"; "f is verified pure" → "Function verified pure"; "f
+  performs X inside a R transaction" → "X inside a transaction".
+- ets: "ETS table T only grows" → "ETS table that only grows".
+- exposure: "M.field is printed by inspect/1" → "Secret field printed
+  by inspect/1" (the at-label names the field); "f turns off TLS
+  certificate verification" → "TLS certificate verification turned
+  off"; "f leaves TLS verification to the default" → "TLS verification
+  left to the library default".
+- failure: "callee result ignored where every other call site checks
+  it" (or "most call sites") → "Result ignored where other call sites
+  check it"; "callee called bare where … catches its C" → "Call made bare
+  where other call sites catch its C"; "callee called in a try that lets
+  its C through where …" → "Call in a try that lets its C through where
+  other call sites catch it"; "callee called with its C uncaught where
+  …" → "Call with its C uncaught where other call sites catch it";
+  "callee not guarded where …" → "Call not guarded where other call
+  sites catch its C".
+- mailbox: "msg is sent to a process whose receive never takes it" →
+  "Message sent to a process whose receive never takes it"; "f leaves a
+  monitor live after its wait times out" → "Monitor left live after a
+  wait times out"; "M monitors but never demonitors" → "Server monitors
+  but never demonitors"; "M drops the ref of a monitor it establishes"
+  → "Server drops the ref of a monitor it establishes"; "M sends itself
+  tag, which it cannot handle" → "Server sends itself a tag it cannot
+  handle"; "M defers a reply it cannot send" → "handle_call/3 defers a
+  reply it cannot send"; "State S has no :info catch-all" → "gen_statem
+  state without the :info catch-all its siblings have".
+- shutdown: "M cleans up in terminate/2 but never traps exits" →
+  "Cleanup in terminate/2 of a process that never traps exits"; "M's
+  terminate/2 does work that a supervisor shutdown will skip" →
+  "terminate/2 does work a supervisor shutdown will skip"; "M's
+  terminate/2 does unbounded work inside the shutdown timeout" →
+  "terminate/2 does unbounded work inside the shutdown timeout"; "M
+  terminates a process it still monitors" → "Server terminates a
+  process it still monitors".
+- startup: "init/1 relies on a Nms idle timeout" → "init/1 relies on an
+  idle timeout".
+- state_machine: "Unreachable state S" → "Unreachable gen_statem
+  state"; "Terminal state S never stops" → "Terminal gen_statem state
+  that never stops".
+- structure: "S registers C as a worker, but it is a supervisor" →
+  "Supervisor registered as a worker".
+- unsafe_input: "S starts C without limit, on request" → "Dynamic
+  supervisor starts children without limit, on request".
+
+The corpus pairs that pinned the old titles pin the new ones.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

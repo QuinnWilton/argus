@@ -126,7 +126,7 @@ defmodule Argus.EvidenceFramesTest do
     assert [finding] =
              [ReleasesAndWrites]
              |> findings(:shutdown)
-             |> Enum.filter(&(&1.title =~ "cleans up in terminate/2"))
+             |> Enum.filter(&(&1.title =~ "Cleanup in terminate/2"))
 
     labels = finding.related |> Enum.map(& &1.label) |> Enum.sort()
     assert [write, insert] = labels |> Enum.sort_by(&(&1 =~ "insert"))

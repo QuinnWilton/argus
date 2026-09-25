@@ -38,8 +38,7 @@ defmodule Argus.FindingsProseTest do
           ""
         ])
 
-      assert attrs.title ==
-               ":gen_statem.call/3 called bare where every other call site catches its exit"
+      assert attrs.title == "Call made bare where other call sites catch its exit"
     end
 
     test "an unredacted field reads as a field access, not Mod.:field" do
@@ -52,7 +51,8 @@ defmodule Argus.FindingsProseTest do
           "redact"
         ])
 
-      assert attrs.title == "MyApp.User.password_hash is printed by inspect/1"
+      assert attrs.title == "Secret field printed by inspect/1"
+      assert attrs.at_label == "password_hash declared without redact: true"
       # The source anchor still names the field as the schema spells it.
       assert attrs.at_source == ":password_hash"
     end

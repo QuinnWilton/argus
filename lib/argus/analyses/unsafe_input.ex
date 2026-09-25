@@ -312,7 +312,7 @@ defmodule Argus.Analyses.UnsafeInput do
   def finding(:unbounded_children_from_request, [sup, child, via, kind]) do
     Findings.new(
       :error,
-      "#{sup} starts #{child} without limit, on request",
+      "Dynamic supervisor starts children without limit, on request",
       "#{via} calls DynamicSupervisor.start_child/2 against #{sup}, and #{via} " <>
         "is reachable from a #{kind} entry point. #{sup} sets no max_children, " <>
         "so it takes the DynamicSupervisor default of :infinity. " <>

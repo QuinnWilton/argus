@@ -97,7 +97,7 @@ defmodule Argus.Analyses.Exposure do
       severity(kind),
       # The field as a reader writes its access, `User.password_hash`;
       # the facts spell the key as an atom, `:password_hash`.
-      "#{mod}.#{String.trim_leading(field, ":")} is printed by inspect/1",
+      "Secret field printed by inspect/1",
       why_printed(via, mod, field) <>
         ", so it appears in full wherever " <>
         "the struct is inspected — Logger calls, changeset errors, LiveView " <>
@@ -108,7 +108,7 @@ defmodule Argus.Analyses.Exposure do
       # line; the field's own line is in the source, under its name.
       at: Findings.at_mfa(mod, :__schema__, 1),
       at_source: field,
-      at_label: at_label(via),
+      at_label: at_label(via, String.trim_leading(field, ":")),
       help: [fix(via, field)]
     )
   end
@@ -127,7 +127,7 @@ defmodule Argus.Analyses.Exposure do
   def finding(:disables_verification, [func, id]) do
     Findings.new(
       :error,
-      "#{func} turns off TLS certificate verification",
+      "TLS certificate verification turned off",
       "#{func} sets verify: :verify_none, so the peer's certificate is not " <>
         "checked against any trust anchor and its hostname is not matched. " <>
         "The connection is still encrypted, which is what makes this quiet: " <>
@@ -151,7 +151,7 @@ defmodule Argus.Analyses.Exposure do
   def finding(:relies_on_default_verification, [func, id, api]) do
     Findings.new(
       :warning,
-      "#{func} leaves TLS verification to the default",
+      "TLS verification left to the library default",
       "#{func} calls #{api} with a literal option list that never mentions " <>
         ":verify, so whatever the library defaults to applies. Erlang's :ssl " <>
         "client verified nothing at all before OTP 26, and wrappers that pass " <>
@@ -191,8 +191,8 @@ defmodule Argus.Analyses.Exposure do
 
   defp why_printed(_redact, _mod, field), do: "#{field} is not declared redact: true"
 
-  defp at_label("derive"), do: "kept by the schema's derived Inspect"
-  defp at_label(_redact), do: "declared without redact: true"
+  defp at_label("derive", name), do: "#{name} kept by the schema's derived Inspect"
+  defp at_label(_redact, name), do: "#{name} declared without redact: true"
 
   # Ecto derives Inspect for its redacted fields only when the schema
   # derives none itself, so under a schema's own derive `redact: true`

@@ -26,11 +26,11 @@ defmodule Argus.Analyses.Failure do
     callee: `belief` is `result_checked` (a clear majority of the sites
     match the result; this one discards it) or `exception_guarded` (a
     clear majority wrap the call in a `try` that takes what it raises;
-    this one does not). The title says "every other call site" only when
-    this one is the sole deviant, and "most call sites" otherwise. For
+    this one does not). The title names neither the callee nor the
+    counts, which the detail says. For
     `exception_guarded`, `raises` is the class the call raises and `cover`
     says how the site stands: `none` (no try around it, here or on some
-    way in: "called bare"), `try` (inside a try whose handler takes
+    way in: "made bare"), `try` (inside a try whose handler takes
     `caught`, other classes or nothing) or `callers` (every way in passes
     a try, not always one that takes the class). `agree` and
     `deviate` are the counts, and the severity is how unlikely the
@@ -209,21 +209,18 @@ defmodule Argus.Analyses.Failure do
     total = agree + deviate
     name = Findings.call_name(callee)
 
-    # clear_majority lets a quarter of the population deviate: with more
-    # than one deviant, "every other" is not true of this one's peers.
-    {others, s, es} =
-      if deviate == 1, do: {"every other call site", "s", "es"}, else: {"most call sites", "", ""}
-
+    # The title names neither the callee nor the counts, which change with
+    # code a fix need not touch; the detail says both.
     {title, what, at_label, fix} =
       case {belief, how} do
         {"result_checked", _} ->
-          {"#{name} result ignored where #{others} check#{s} it",
+          {"Result ignored where other call sites check it",
            "discards the result of #{name}, which #{agree} of the #{total} call " <>
              "sites in this program match on", "the one site that disagrees",
            "match on the result as the other sites do"}
 
         {"exception_guarded", [raises, cover, caught]} ->
-          guarded_deviant(name, raises, cover, caught, {others, es, agree, total})
+          guarded_deviant(name, raises, cover, caught, {agree, total})
       end
 
     Findings.new(
@@ -411,7 +408,7 @@ defmodule Argus.Analyses.Failure do
   # ("none"), inside one whose handler takes other classes or nothing
   # ("try"; `caught` names what it does take), or reached only through
   # callers' tries, not all of which take the class ("callers").
-  defp guarded_deviant(name, raises, cover, caught, {others, es, agree, total}) do
+  defp guarded_deviant(name, raises, cover, caught, {agree, total}) do
     exc = raised(raises)
     peers = "#{agree} of the #{total} call sites in this program catch its #{exc}"
 
@@ -419,27 +416,27 @@ defmodule Argus.Analyses.Failure do
       "try" ->
         takes = caught_classes(caught)
 
-        {"#{name} called in a try that lets its #{exc} through where #{others} catch#{es} it",
+        {"Call in a try that lets its #{exc} through where other call sites catch it",
          "calls #{name} inside a try that #{takes}; the call raises #{article(exc)}, " <>
            "and #{peers}", "in a try that #{takes}",
          "catch the #{exc} in that try, as the other sites do"}
 
       "callers" ->
-        {"#{name} called with its #{exc} uncaught where #{others} catch#{es} it",
+        {"Call with its #{exc} uncaught where other call sites catch it",
          "calls #{name} outside any try; every way into the function passes one, " <>
            "but not always one that catches #{article(exc)}, and #{peers}",
          "outside any try; its callers' tries miss #{article(exc)}",
          "catch the #{exc} here or in the callers, as the other sites do"}
 
       "none" ->
-        {"#{name} called bare where #{others} catch#{es} its #{exc}",
+        {"Call made bare where other call sites catch its #{exc}",
          "calls #{name} with no try around it, in its own body or on some way into it; " <>
            "#{peers}", "called outside any try",
          "wrap the call in a try that catches the #{exc}, as the other sites do"}
 
       # A standing the rules do not write: say only what the belief says.
       _unknown ->
-        {"#{name} not guarded where #{others} catch#{es} its #{exc}",
+        {"Call not guarded where other call sites catch its #{exc}",
          "calls #{name} where no try that catches #{article(exc)} covers it; #{peers}",
          "no try that catches #{article(exc)} covers this call",
          "catch the #{exc} here or in the callers, as the other sites do"}

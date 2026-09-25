@@ -509,7 +509,7 @@ defmodule Argus.Analyses.Startup do
   def finding(:deferral_defect, [mod, "init_timeout", site, ms]) do
     Findings.new(
       :info,
-      "init/1 relies on a #{ms}ms idle timeout",
+      "init/1 relies on an idle timeout",
       "#{mod}.init/1 returns {:ok, state, #{ms}}. The :timeout message " <>
         "fires only after #{ms}ms of an empty mailbox, and every message " <>
         "that arrives restarts nothing — the callback must return the " <>

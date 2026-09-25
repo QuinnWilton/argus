@@ -155,7 +155,9 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       [[_, _, _, "exception_guarded", _, _, _, raises, cover, caught]] =
         results["inconsistent_handling"]
 
-      [f] = Enum.filter(result.findings, &(&1.title =~ "update_counter" or &1.title =~ "call/2"))
+      [f] =
+        Enum.filter(result.findings, &(&1.detail =~ "update_counter" or &1.detail =~ "call/2"))
+
       {{raises, cover, caught}, f}
     end
 
@@ -163,8 +165,7 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       skip_without_souffle()
       assert {{"exit", "none", ""}, f} = stands([C.DeviantBare])
 
-      assert f.title ==
-               "GenServer.call/2 called bare where every other call site catches its exit"
+      assert f.title == "Call made bare where other call sites catch its exit"
 
       assert f.detail =~ "calls GenServer.call/2 with no try around it"
       assert f.detail =~ "4 of the 5 call sites in this program catch its exit"
@@ -173,7 +174,7 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       # A helper one caller guards and another calls bare: none here, and
       # some way in passes none.
       assert {{"error", "none", ""}, f} = stands([C.HelperOutsideTry])
-      assert f.title =~ "called bare where every other call site catches its error"
+      assert f.title == "Call made bare where other call sites catch its error"
     end
 
     test "a site in a try that takes nothing says so" do
@@ -181,8 +182,7 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       assert {{"error", "try", ""}, f} = stands([C.HiddenDeviant])
 
       assert f.title ==
-               ":ets.update_counter/3 called in a try that lets its error through " <>
-                 "where every other call site catches it"
+               "Call in a try that lets its error through where other call sites catch it"
 
       assert f.detail =~
                "calls :ets.update_counter/3 inside a try that catches nothing; " <>
@@ -204,9 +204,7 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       skip_without_souffle()
       assert {{"error", "callers", ""}, f} = stands([C.CallersWrongClass])
 
-      assert f.title ==
-               ":ets.update_counter/3 called with its error uncaught " <>
-                 "where every other call site catches it"
+      assert f.title == "Call with its error uncaught where other call sites catch it"
 
       assert f.detail =~
                "outside any try; every way into the function passes one, " <>
@@ -228,7 +226,7 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       assert func =~ "GuardedByCallers:d/1"
 
       {:ok, result} = Memo.run_analyses([C.GuardedByCallers], analyses: [:failure])
-      assert [f] = Enum.filter(result.findings, &(&1.title =~ "called bare"))
+      assert [f] = Enum.filter(result.findings, &(&1.title =~ "made bare"))
       assert length(f.related) == 3
 
       assert Enum.all?(
@@ -323,7 +321,7 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       {:ok, result} =
         Memo.run_analyses([C.SameTargetBare, C.OtherTable], analyses: [:failure])
 
-      assert [f] = Enum.filter(result.findings, &(&1.title =~ "called bare"))
+      assert [f] = Enum.filter(result.findings, &(&1.title =~ "made bare"))
       assert f.related != []
       assert Enum.all?(f.related, &(elem(&1.mfa, 0) == C.SameTargetBare))
     end
@@ -375,9 +373,10 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       assert finding(3, 1).severity == :info
     end
 
-    test "says every other call site only when this one is the sole deviant" do
-      assert finding(5, 1).title =~ "where every other call site checks it"
-      assert finding(9, 3).title =~ "where most call sites check it"
+    test "one title whatever the counts, which the detail says" do
+      assert finding(5, 1).title == "Result ignored where other call sites check it"
+      assert finding(9, 3).title == "Result ignored where other call sites check it"
+      assert finding(9, 3).detail =~ "9 of the 12 call sites in this program match on"
 
       guarded =
         Failure.finding(:inconsistent_handling, [
@@ -393,13 +392,13 @@ defmodule Argus.Analyses.FailureConsistencyTest do
           ""
         ])
 
-      assert guarded.title =~ "called bare where most call sites catch its exit"
+      assert guarded.title == "Call made bare where other call sites catch its exit"
       assert guarded.detail =~ "9 of the 12 call sites in this program catch its exit"
     end
 
     test "names the counts and the callee, and anchors the deviant site" do
       f = finding(5, 1)
-      assert f.title =~ "start_child/2"
+      assert f.detail =~ "start_child/2"
       assert f.detail =~ "5 of the 6 call sites"
       assert f.at_label =~ "disagrees"
       assert f.instr != nil
@@ -409,7 +408,7 @@ defmodule Argus.Analyses.FailureConsistencyTest do
       skip_without_souffle()
       {:ok, result} = Memo.run_analyses([C.DeviantIgnore], analyses: [:failure])
 
-      assert [f] = Enum.filter(result.findings, &(&1.title =~ "result ignored"))
+      assert [f] = Enum.filter(result.findings, &(&1.title =~ "Result ignored"))
       labels = Enum.map(f.related, & &1.label)
       assert labels != [] and length(labels) <= 3
       assert Enum.all?(labels, &(&1 == "its result matched here"))

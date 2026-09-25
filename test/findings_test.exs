@@ -393,7 +393,7 @@ defmodule Argus.FindingsTest do
       }
 
       assert [finding] = Findings.build(Argus.Analyses.Blocking, relation_rows)
-      assert finding.title == "High synchronous fan-in (5 caller modules)"
+      assert finding.title == "High synchronous fan-in"
 
       # One frame per caller module, in row order, only for this target.
       assert Enum.map(finding.related, & &1.label) == ["caller A", "caller B"]

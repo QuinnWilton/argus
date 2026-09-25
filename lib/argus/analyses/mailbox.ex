@@ -333,7 +333,7 @@ defmodule Argus.Analyses.Mailbox do
   def finding(:unreceived_message, [mod, func, site, message, runs, starter, spawn, recv]) do
     Findings.new(
       :warning,
-      "#{message} is sent to a process whose receive never takes it",
+      "Message sent to a process whose receive never takes it",
       "#{Findings.call_name(func)} sends #{message} to the process spawned in " <>
         "#{Findings.call_name(starter)} to run #{Findings.call_name(runs)}, and no " <>
         "clause of a receive that process runs matches it. A " <>
@@ -341,7 +341,7 @@ defmodule Argus.Analyses.Mailbox do
         "for the life of the process, every later receive scans past it, " <>
         "and the sender never learns it went nowhere.",
       at: Findings.at_site(site, mod),
-      at_label: "the message is sent here",
+      at_label: "#{message} is sent here",
       related: [
         # The receive's loop_rec carries no line: the bytecode puts the
         # frame on the function head, and the source finds the receive.
@@ -532,7 +532,7 @@ defmodule Argus.Analyses.Mailbox do
   def finding(:unconsumed_monitor, [_mod, func, id, "timed_wait"]) do
     Findings.new(
       :error,
-      "#{func} leaves a monitor live after its wait times out",
+      "Monitor left live after a wait times out",
       "#{func} calls Process.monitor/1 and then waits in a receive with an " <>
         "after clause, without Process.demonitor(ref, [:flush]). " <>
         "On the timeout branch the monitor is still live, so the " <>
@@ -560,7 +560,7 @@ defmodule Argus.Analyses.Mailbox do
   def finding(:unconsumed_monitor, [mod, _func, site, "never_released"]) do
     Findings.new(
       :info,
-      "#{mod} monitors but never demonitors",
+      "Server monitors but never demonitors",
       "#{mod} establishes monitors from its callbacks and removes entries " <>
         "from its bookkeeping elsewhere, but calls Process.demonitor nowhere. " <>
         "If an entry can leave by a path other than the monitored process " <>
@@ -579,7 +579,7 @@ defmodule Argus.Analyses.Mailbox do
   def finding(:unconsumed_monitor, [mod, _func, site, "ref_discarded"]) do
     Findings.new(
       :info,
-      "#{mod} drops the ref of a monitor it establishes",
+      "Server drops the ref of a monitor it establishes",
       "#{mod} calls Process.monitor/1 in a callback and discards the " <>
         "result. The ref is the only handle a demonitor needs, so this " <>
         "monitor ends when the monitored process dies and not before. If " <>
@@ -599,7 +599,7 @@ defmodule Argus.Analyses.Mailbox do
   def finding(:reply_defect, [mod, sender, _, "unhandled_" <> kind, tag]) do
     Findings.new(
       :error,
-      "#{mod} sends itself #{tag}, which it cannot handle",
+      "Server sends itself a tag it cannot handle",
       "#{sender} sends #{tag} via GenServer.#{kind}/2, and #{mod}'s " <>
         "handle_#{kind} has no clause matching it and no catch-all. " <>
         consequence(kind) <>
@@ -612,10 +612,10 @@ defmodule Argus.Analyses.Mailbox do
     )
   end
 
-  def finding(:reply_defect, [mod, func, id, "dropped_from", _]) do
+  def finding(:reply_defect, [_mod, func, id, "dropped_from", _]) do
     Findings.new(
       :error,
-      "#{mod} defers a reply it cannot send",
+      "handle_call/3 defers a reply it cannot send",
       "#{func} returns {:noreply, _}, which promises a later GenServer.reply/2, " <>
         "but never reads its `from` argument. `from` is the only handle on the " <>
         "caller — an opaque {pid, tag} that exists nowhere else — so nothing in " <>
@@ -637,7 +637,7 @@ defmodule Argus.Analyses.Mailbox do
   def finding(:partial_handler, [mod, site, "statem_info", _, state]) do
     Findings.new(
       :warning,
-      "State #{state} has no :info catch-all",
+      "gen_statem state without the :info catch-all its siblings have",
       "#{mod}'s other states end with an `(:info, _msg, _data)` clause; " <>
         "#{state} does not. Any message that arrives while the machine is " <>
         "in #{state} and matches none of its clauses — a late :DOWN, a " <>

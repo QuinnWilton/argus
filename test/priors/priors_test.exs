@@ -79,12 +79,12 @@ defmodule Argus.PriorsTest do
     findings = run(priors(dir))
 
     assert [heuristic] = Enum.filter(findings, &(&1.provenance == :heuristic))
-    assert heuristic.title == "#{inspect(S.Heuristic)}.totp_seed is printed by inspect/1"
+    assert heuristic.title == "Secret field printed by inspect/1"
     assert heuristic.severity == :warning
     assert heuristic.confidence == 950
     assert List.last(heuristic.help) =~ "heuristic"
     assert List.last(heuristic.help) =~ "p=0.95"
-    assert heuristic.at_label == "declared without redact: true"
+    assert heuristic.at_label == "totp_seed declared without redact: true"
     assert heuristic.analysis == :exposure
   end
 

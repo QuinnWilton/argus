@@ -60,7 +60,7 @@ defmodule Argus.Analyses.StateMachine do
   def finding(:unreachable_state, [mod, state, site]) do
     Findings.new(
       :warning,
-      "Unreachable state #{state}",
+      "Unreachable gen_statem state",
       "#{mod} defines state #{state}, but no transition leads to it. Either " <>
         "the state is dead code, or a transition that should produce it is " <>
         "missing — both point at a hole in the machine's design.",
@@ -73,7 +73,7 @@ defmodule Argus.Analyses.StateMachine do
   def finding(:terminal_without_stop, [mod, state, site]) do
     Findings.new(
       :info,
-      "Terminal state #{state} never stops",
+      "Terminal gen_statem state that never stops",
       "#{mod}'s state #{state} is entered from another state, but every " <>
         "clause keeps the machine in it and none stops it. The process " <>
         "idles in #{state} forever. If that's a " <>

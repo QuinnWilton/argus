@@ -111,7 +111,7 @@ defmodule Argus.Analyses.Effects do
   def finding(:effect_in_context, [func, "pure_contract", _, category, api, via, site, _]) do
     Findings.new(
       :error,
-      "#{short(func)} is declared pure but performs #{effect_phrase(category)}",
+      "Function declared pure performs #{effect_phrase(category)}",
       "#{func} carries `@pure true`, but #{location(func, via)} calls #{api}, " <>
         "which is #{effect_phrase(category)}. #{consequence(category)}",
       at: Findings.at_func(func),
@@ -124,7 +124,7 @@ defmodule Argus.Analyses.Effects do
   def finding(:purity_unprovable, [func, "dynamic_call", kind, via, site]) do
     Findings.new(
       :warning,
-      "#{short(func)} is declared pure but the claim cannot be checked",
+      "Purity claim that cannot be checked",
       "#{func} carries `@pure true`, but #{location(func, via)} makes a " <>
         "#{kind} — a call through a fun value or a computed module, whose " <>
         "target is not known statically. Whatever it reaches could do " <>
@@ -140,7 +140,7 @@ defmodule Argus.Analyses.Effects do
   def finding(:purity_unprovable, [func, "protocol_dispatch", api, via, site]) do
     Findings.new(
       :warning,
-      "#{short(func)} is declared pure but dispatches through a protocol",
+      "Function declared pure dispatches through a protocol",
       "#{func} carries `@pure true`, and #{location(func, via)} calls " <>
         "#{api}, which resolves to whichever implementation the argument's " <>
         "type provides. Any module can define one, and an implementation is " <>
@@ -159,7 +159,7 @@ defmodule Argus.Analyses.Effects do
   def finding(:purity_unprovable, [func, "unclassified_call", api, via, site]) do
     Findings.new(
       :warning,
-      "#{short(func)} is declared pure but reaches an unclassified call",
+      "Function declared pure reaches an unclassified call",
       "#{func} carries `@pure true`, and #{location(func, via)} calls " <>
         "#{api}, which the effect model has no entry for. Argus does not " <>
         "assume unknown calls are harmless — that would make a verification " <>
@@ -185,7 +185,7 @@ defmodule Argus.Analyses.Effects do
       ]) do
     Findings.new(
       :error,
-      "#{short(caller)} passes an effectful closure to a function declared pure",
+      "Effectful closure passed to a function declared pure",
       "#{callee} carries `@pure true` and calls the fun it is given, so its " <>
         "purity is the caller's obligation. #{caller} builds #{closure}, " <>
         "which calls #{api} — #{effect_phrase(category)} — and hands it over. " <>
@@ -203,7 +203,7 @@ defmodule Argus.Analyses.Effects do
   def finding(:purity_verified, [func]) do
     Findings.new(
       :info,
-      "#{short(func)} is verified pure",
+      "Function verified pure",
       "Every call reachable from #{func} is known to be free of observable " <>
         "effects, including through any closures it constructs.",
       at: Findings.at_func(func)
@@ -222,7 +222,7 @@ defmodule Argus.Analyses.Effects do
       ]) do
     Findings.new(
       rollback_severity(category),
-      "#{short(caller)} performs #{rollback_phrase(category)} inside a #{repo} transaction",
+      "#{upcase_first(rollback_phrase(category))} inside a transaction",
       "#{caller} opens a #{repo}.transaction and #{via} calls #{api} inside it. " <>
         "#{rollback_consequence(category)} A rollback cannot take it back, and a retry on a " <>
         "serialization failure will do it twice. #{connection_note(category)}",
@@ -247,6 +247,10 @@ defmodule Argus.Analyses.Effects do
 
   defp location(func, func), do: "it"
   defp location(_func, via), do: "#{via}, which it reaches,"
+
+  # A title's first letter, whatever the phrase starts with ("I/O" stays
+  # as it is; String.capitalize/1 would lower the rest).
+  defp upcase_first(<<first::utf8, rest::binary>>), do: String.upcase(<<first::utf8>>) <> rest
 
   defp short(func) do
     case String.split(func, ":") do

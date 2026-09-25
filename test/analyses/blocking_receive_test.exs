@@ -265,7 +265,7 @@ defmodule Argus.Analyses.BlockingReceiveTest do
         ])
 
       assert attrs.severity == :warning
-      assert attrs.title == "receive inside a GenServer callback"
+      assert attrs.title == "Receive inside an OTP callback"
       assert attrs.detail =~ "takes the exit of the process it waits on"
       refute attrs.detail =~ "has a timeout"
     end

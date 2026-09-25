@@ -84,8 +84,8 @@ defmodule Argus.Analyses.MailboxUnreceivedTest do
       ])
 
     assert f.severity == :warning
-    assert f.title == ":checked_out is sent to a process whose receive never takes it"
-    assert f.at_label == "the message is sent here"
+    assert f.title == "Message sent to a process whose receive never takes it"
+    assert f.at_label == ":checked_out is sent here"
 
     assert Enum.map(f.related, & &1.label) == [
              "a receive it never matches",

@@ -183,7 +183,7 @@ defmodule Argus.Analyses.Shutdown do
   def finding(:cleanup_defect, [mod, behaviour, "never_runs", category, api, via]) do
     Findings.new(
       :error,
-      "#{mod} cleans up in terminate/2 but never traps exits",
+      "Cleanup in terminate/2 of a process that never traps exits",
       "#{via} calls #{api} — #{phrase(category)} — from #{mod}'s terminate/2. " <>
         "A #{behaviour} only runs terminate/2 when a callback returns {:stop, ...} " <>
         "or raises. On a supervisor shutdown the parent sends an exit signal, and " <>
@@ -204,7 +204,7 @@ defmodule Argus.Analyses.Shutdown do
   def finding(:cleanup_defect, [mod, behaviour, "unclear", _, api, via]) do
     Findings.new(
       :warning,
-      "#{mod}'s terminate/2 does work that a supervisor shutdown will skip",
+      "terminate/2 does work a supervisor shutdown will skip",
       "#{mod} does not trap exits, so a #{behaviour} shutdown from its supervisor " <>
         "kills it outright and terminate/2 never runs. #{via} calls #{api}, which " <>
         "the effect model cannot classify — so this cannot say WHAT is skipped, only " <>
@@ -306,7 +306,7 @@ defmodule Argus.Analyses.Shutdown do
   def finding(:cleanup_defect, [mod, behaviour, "truncated", category, api, via]) do
     Findings.new(
       :warning,
-      "#{mod}'s terminate/2 does unbounded work inside the shutdown timeout",
+      "terminate/2 does unbounded work inside the shutdown timeout",
       "#{via} calls #{api} — #{phrase(category)} — from #{mod}'s terminate/2. " <>
         "The module traps exits, so the callback is reached, but a #{behaviour} " <>
         "child gets only its shutdown timeout (5000ms unless the child spec says " <>
@@ -357,7 +357,7 @@ defmodule Argus.Analyses.Shutdown do
   def finding(:kills_monitored_child, [mod, site, kill_site]) do
     Findings.new(
       :info,
-      "#{mod} terminates a process it still monitors",
+      "Server terminates a process it still monitors",
       "#{mod} monitors processes from its callbacks and also terminates " <>
         "them on purpose, without demonitoring first. The {:DOWN, ...} for a " <>
         "death this server caused is delivered like any other — into the " <>

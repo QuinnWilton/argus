@@ -263,7 +263,7 @@ defmodule Argus.Analyses.Blocking do
 
     Findings.new(
       :warning,
-      "GenServer call chain of depth #{depth}",
+      "GenServer call chain",
       "A request into #{from} traverses #{depth} synchronous hops, ending at " <>
         "#{to}. GenServer.call's default 5000ms timeout applies per hop, so " <>
         "the deadlines compose unpredictably: a slow leaf times out every " <>
@@ -416,7 +416,7 @@ defmodule Argus.Analyses.Blocking do
   def finding(:sync_call_fan_in, [target_mod, cnt]) do
     Findings.new(
       :warning,
-      "High synchronous fan-in (#{cnt} caller modules)",
+      "High synchronous fan-in",
       "#{cnt} distinct modules make GenServer.call into #{target_mod}. A " <>
         "single process serializes all of them — under load, queue depth and " <>
         "call latency grow together until callers start timing out.",
@@ -429,7 +429,7 @@ defmodule Argus.Analyses.Blocking do
   def finding(:receive_in_callback, [id, func, callback, behaviour, proximity, "false"]) do
     Findings.new(
       :error,
-      "Blocking receive inside a #{behaviour} callback",
+      "Blocking receive inside an OTP callback",
       "#{func} runs a `receive` with no `after`, #{where(proximity, callback)}. It " <>
         "executes on the #{behaviour} process's own stack, so it consumes from " <>
         "the mailbox the behaviour is managing: {:system, _, _} (which is how " <>
@@ -452,7 +452,7 @@ defmodule Argus.Analyses.Blocking do
   def finding(:receive_in_callback, [id, func, callback, behaviour, proximity, "true"]) do
     Findings.new(
       :warning,
-      "receive inside a #{behaviour} callback",
+      "Receive inside an OTP callback",
       "#{func} runs a `receive`, #{where(proximity, callback)}. It has a " <>
         "timeout so it cannot hang, but it still executes on the #{behaviour} " <>
         "process's own stack and selectively consumes from the mailbox the " <>
@@ -470,7 +470,7 @@ defmodule Argus.Analyses.Blocking do
   def finding(:receive_in_callback, [id, func, callback, behaviour, proximity, "down"]) do
     Findings.new(
       :warning,
-      "receive inside a #{behaviour} callback",
+      "Receive inside an OTP callback",
       "#{func} runs a `receive` with no `after`, #{where(proximity, callback)}, " <>
         "and it takes the exit of the process it waits on: the :DOWN of the process " <>
         "it monitored, which the runtime sends once the process exits (or at once " <>

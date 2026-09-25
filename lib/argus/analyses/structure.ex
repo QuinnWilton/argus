@@ -93,7 +93,7 @@ defmodule Argus.Analyses.Structure do
   def finding(:supervisor_registered_as_worker, [sup, child, _position]) do
     Findings.new(
       :error,
-      "#{sup} registers #{child} as a worker, but it is a supervisor",
+      "Supervisor registered as a worker",
       "#{child} implements the Supervisor behaviour, and #{sup}'s child spec " <>
         "explicitly says type: :worker. " <>
         "OTP requires a supervisor child to be registered with " <>

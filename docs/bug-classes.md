@@ -558,7 +558,7 @@ Work in a phase whose invariants do not hold yet: `init/1` runs inside the super
 ### Deferred work on an init/1 timeout
 
 `deferral_defect` · kind=`init_timeout`
-· titles: "init/1 defers work with a zero timeout" (`:info`); "init/1 relies on a #{ms}ms idle timeout" (`:info`)
+· titles: "init/1 defers work with a zero timeout" (`:info`); "init/1 relies on an idle timeout" (`:info`)
 
 **Property.** The `init/1` of a process module returns a literal integer timeout, `{:ok, state, ms}`; `ms` of 0 takes the first title, any other the second. The `:timeout` message arrives only if nothing else reaches the mailbox first: any message (a datagram on a socket `init/1` opened, a broadcast it subscribed to, a call from the starter) cancels it, and the deferred work silently never runs.
 
@@ -632,7 +632,7 @@ Cleanup that cannot run, or teardown that hurts a peer. OTP runs terminate/2 whe
 ### Cleanup that a supervisor shutdown skips
 
 `cleanup_defect` · kind=`never_runs` | `unclear`
-· titles: "#{mod} cleans up in terminate/2 but never traps exits" (`:error`); "#{mod}'s terminate/2 does work that a supervisor shutdown will skip" (`:warning`)
+· titles: "Cleanup in terminate/2 of a process that never traps exits" (`:error`); "terminate/2 does work a supervisor shutdown will skip" (`:warning`)
 
 **Property.** Some module M of a behaviour that calls terminate/2 on the way down (`process_behaviour` "terminating": GenServer, GenStage, gen_statem, GenEvent, Broadway, LiveView), no function of which sets `trap_exit` to true, whose terminate/2, or a function it reaches within three calls (`ForwardBoundedCallReach`), makes a write the effect model classifies as durable (`durable_effect`: io, network, process, ets, port, node). That is kind `never_runs`, one finding per module, category and API. With no such write, a call there the effect model cannot classify, other than a structural `Kernel`, `Access`, `Enum`, `Map`, `Keyword`, `:lists` or `:maps` call (`structural_call`), is kind `unclear`, one finding per module. A supervisor stops its child with an exit signal, and a process that does not trap exits dies on it without running terminate/2: the cleanup never happens on the normal way a process stops. Tests miss it because `GenServer.stop/1` takes the path that does run terminate/2.
 
@@ -653,7 +653,7 @@ Cleanup that cannot run, or teardown that hurts a peer. OTP runs terminate/2 whe
 ### Unbounded cleanup inside the shutdown timeout
 
 `cleanup_defect` · kind=`truncated`
-· titles: "#{mod}'s terminate/2 does unbounded work inside the shutdown timeout" (`:warning`)
+· titles: "terminate/2 does unbounded work inside the shutdown timeout" (`:warning`)
 
 **Property.** Some module M that traps exits, of a behaviour that calls terminate/2, whose terminate/2 or a function it reaches within three calls makes a durable write whose category has no bound of its own: network or port (`slow_effect`). terminate/2 runs on a supervisor shutdown, but the supervisor waits only the child's shutdown timeout (5000 ms unless the spec says otherwise) before killing it, and the cleanup is cut off wherever it had got to, often worse than not starting.
 
@@ -759,7 +759,7 @@ The call exits with `:noproc`, so what it was for never happens, and terminate/2
 ### A monitored process terminated on purpose
 
 `kills_monitored_child`
-· titles: "#{mod} terminates a process it still monitors" (`:info`)
+· titles: "Server terminates a process it still monitors" (`:info`)
 
 **Property.** Some process module M whose own-stack functions (`server_side`: its callbacks and what they reach inside M) monitor some process and, in some function, terminate a supervisor's child (`terminate_child`) or stop a process (`GenServer.stop`), while no function of M ever demonitors (`module_demonitors`). The `{:DOWN, ...}` for a death M caused itself is delivered like any other, into the clause written for crashes, which may restart, reconnect or log what was a deliberate stop (Oban's producer handling its own `:DOWN` after pkill; Redix's cluster manager reconnecting the connection it had just terminated). One finding per terminate site; a monitor site is a related frame.
 
@@ -800,7 +800,7 @@ A synchronous wait that can last forever or nest: every finding is a process wai
 ### Nested call chain
 
 `call_chain` · kind=`chain`
-· titles: "GenServer call chain of depth #{depth}" (`:warning`)
+· titles: "GenServer call chain" (`:warning`)
 
 **Property.** There are GenServer modules S0, S1, ..., Sd with d ≥ 2 such that a request into some clause of S0's `handle_call/3` makes a synchronous call, on S0's own stack, whose request enters a clause of S1's `handle_call/3` that in turn calls S2, and so on to Sd. A hop is a call the clause makes itself or through functions it runs in its own process: not what a spawn, task or agent runs (`runs_elsewhere`), and not the logging or telemetry API (`side_call`). A call into a function with a literal first atom enters only the clauses that match it (`clause_call`, `site_request`); a clause the extractor cannot tell serves every request, and a request with no literal tag enters every clause. The finding names the shortest chain from S0 to Sd and does not pass through a clause that lies on a cycle of requests (that is the call cycle's finding). `inferred` is `tag` when some hop exists only because a call to a pid or name held in state was attributed by its message tag. Each hop carries its own timeout, usually GenServer.call's default five seconds, so a slow leaf times out every caller above it and each level exits or retries on its own schedule.
 
@@ -935,7 +935,7 @@ A synchronous wait that can last forever or nest: every finding is a process wai
 ### High synchronous fan-in
 
 `sync_call_fan_in`
-· titles: "High synchronous fan-in (#{cnt} caller modules)" (`:warning`)
+· titles: "High synchronous fan-in" (`:warning`)
 
 **Property.** Some GenServer module T is waited on synchronously by functions of at least five distinct other modules, each such function reaching the wait on its own stack. The callers are attached as related frames (`bottleneck_caller`, one per caller module). One process serializes all of their requests: under load its queue and every caller's latency grow together until callers start timing out.
 
@@ -953,7 +953,7 @@ A synchronous wait that can last forever or nest: every finding is a process wai
 ### Blocking receive in an OTP callback
 
 `receive_in_callback` · bounded=`false`
-· titles: "Blocking receive inside a #{behaviour} callback" (`:error`)
+· titles: "Blocking receive inside an OTP callback" (`:error`)
 
 **Property.** A `receive` with no `after` runs on the stack of a process whose behaviour owns its receive loop (GenServer, gen_statem, GenEvent, GenStage, Broadway, Supervisor, LiveView, LiveComponent, Channel): in one of its callbacks other than `init/1`, or in a function that callback calls directly on the same process (a closure it runs included, what it spawns not: `runs_elsewhere`). The receive does not take the `:DOWN` of a monitor its own function took (`recv_down`) and is not the cancel_timer flush (`flush_receive`). It consumes from the mailbox the behaviour manages (system messages, `{:EXIT, ...}` when trapping, every monitor's `:DOWN`), and with no timeout it can block forever; a supervisor's shutdown then waits out the child's timeout and kills it.
 
@@ -973,7 +973,7 @@ A synchronous wait that can last forever or nest: every finding is a process wai
 ### Bounded receive in an OTP callback
 
 `receive_in_callback` · bounded=`true`, `down`
-· titles: "receive inside a #{behaviour} callback" (`:warning`)
+· titles: "Receive inside an OTP callback" (`:warning`)
 
 **Property.** A `receive` runs on an OTP process's own stack, in a callback or one call away, and either has an `after` clause (`true`, `init/1` included) or has none but takes the `:DOWN` of a monitor its own function took (`down`, `init/1` excluded). It is not the cancel_timer flush at any bound. It cannot hang, or cannot outlast the monitored process, but it selectively consumes from the behaviour's mailbox: messages it does not match stay queued and are rescanned, system messages wait behind it, and a `down` wait holds the callback until the monitored process exits.
 
@@ -1299,7 +1299,7 @@ When the timer fires, the event raises FunctionClauseError or falls through to a
 ### A gen_statem state without the :info catch-all its siblings have
 
 `partial_handler` · source=`statem_info`
-· titles: "State #{state} has no :info catch-all" (`:warning`)
+· titles: "gen_statem state without the :info catch-all its siblings have" (`:warning`)
 
 **Property.** A gen_statem runs in `state_functions` mode. One of its state functions accepts neither every `:info` event nor every event, while some other state function of the same machine has an `:info` catch-all. Suppose a message arrives while the machine is in that state and matches none of its clauses: a late `:DOWN`, a reply to a call that timed out, a library's notification. The message is a FunctionClauseError. It takes the machine down, and under `:one_for_all` its whole tree.
 
@@ -1410,7 +1410,7 @@ The message is a literal atom or a tuple with a literal atom tag. No clause of t
 ### A message a spawned process never receives
 
 `unreceived_message`
-· titles: "#{message} is sent to a process whose receive never takes it" (`:warning`)
+· titles: "Message sent to a process whose receive never takes it" (`:warning`)
 
 **Property.** Process points-to follows a send (`send_target`) to a process started by a bare spawn. The message is a literal atom or a tuple with a literal tag. The process runs at least one receive, in the spawned function or in what that function calls in its own process (`ForwardSameProcessReach`). No clause of any of those receives names the message or matches anything. The process runs no call through a fun or an apply, no gen_server, gen_statem or gen_event `enter_loop`, and no hibernate that resumes elsewhere. The message is not dropped: it stays in the mailbox for the life of the process, every later receive scans past it, and the sender never learns it went nowhere.
 
@@ -1468,7 +1468,7 @@ No sampled rate.
 ### A monitor left live past a timed wait
 
 `unconsumed_monitor` · kind=`timed_wait`
-· titles: "#{func} leaves a monitor live after its wait times out" (`:error`)
+· titles: "Monitor left live after a wait times out" (`:error`)
 
 **Property.** A function takes a monitor and waits, in its own process, in a receive with an `after` clause. The wait may be in the function itself, in what it calls, or in a closure it runs. All of the following also hold:
 - No path of the function demonitors with `[:flush]`.
@@ -1498,7 +1498,7 @@ On the timeout branch the monitor is still live. The `{:DOWN, ...}` arrives afte
 ### A server that monitors and never demonitors
 
 `unconsumed_monitor` · kind=`never_released`
-· titles: "#{mod} monitors but never demonitors" (`:info`)
+· titles: "Server monitors but never demonitors" (`:info`)
 
 **Property.** A server takes monitors on its own stack (`server_side`) and keeps their refs. Some function of the module removes an entry from a map (`removal_api`), and no function of the module calls `Process.demonitor`. Suppose an entry can leave by a path other than the monitored process dying: an explicit delete, an unsubscribe, a checkin. Then its monitor stays live, one per cycle for the life of the server, and each is a future `:DOWN` for an entry that is gone.
 
@@ -1518,7 +1518,7 @@ On the timeout branch the monitor is still live. The `{:DOWN, ...}` arrives afte
 ### A monitor whose ref is discarded
 
 `unconsumed_monitor` · kind=`ref_discarded`
-· titles: "#{mod} drops the ref of a monitor it establishes" (`:info`)
+· titles: "Server drops the ref of a monitor it establishes" (`:info`)
 
 **Property.** A function on a server's own stack (`server_side`) calls `Process.monitor/1` or `:erlang.monitor/2`, and on every path next overwrites the result without reading it. Nothing can ever demonitor that monitor, so it ends only with the monitored process. If the relationship it stands for can end another way (an unsubscribe, a checkin, a disconnect), the monitor outlives it, one per cycle. A `:DOWN` then arrives for a process the server stopped caring about.
 
@@ -1597,7 +1597,7 @@ On the timeout branch the monitor is still live. The `{:DOWN, ...}` arrives afte
 ### A tag a module sends its own server with no clause for it
 
 `reply_defect` · kind=`unhandled_call` | `unhandled_cast`
-· titles: "#{mod} sends itself #{tag}, which it cannot handle" (`:error`)
+· titles: "Server sends itself a tag it cannot handle" (`:error`)
 
 **Property.** A function of a GenServer module makes a GenServer.call (or cast) whose message has a literal tag: an atom, or a tuple's first atom. The module's handle_call/3 (or handle_cast/2) neither compares that tag anywhere nor has a catch-all. The function is not a proxy:
 - it calls or casts no literal other module;
@@ -1621,7 +1621,7 @@ For a call, the server raises FunctionClauseError and the caller exits with it, 
 ### A handle_call that defers a reply without keeping from
 
 `reply_defect` · kind=`dropped_from`
-· titles: "#{mod} defers a reply it cannot send" (`:error`)
+· titles: "handle_call/3 defers a reply it cannot send" (`:error`)
 
 **Property.** A module's behaviour is gen_server-like. Its handle_call/3 has a `{:noreply, _}` return site that some path reaches without ever reading `from`, the second argument. Reading means mentioning its register, or making a call of arity two or more. That execution promised a later GenServer.reply/2 that nothing can send, because `from` exists nowhere else. Every caller that reaches the clause blocks for its full call timeout and then exits. The exit is raised in another module, with a message that names neither this function nor this clause.
 
@@ -1820,7 +1820,7 @@ An error path the code could have seen and did not take: an exception a catch-al
 ### A result ignored where the program checks it
 
 `inconsistent_handling` · belief=`result_checked`
-· titles: "#{callee} result ignored where every other call site checks it" (`:warning` or `:info`); "#{callee} result ignored where most call sites check it" (`:warning` or `:info`)
+· titles: "Result ignored where other call sites check it" (`:warning` or `:info`)
 
 **Property.** Some call site s of a process or OTP API c (a function of GenServer, Supervisor, DynamicSupervisor, PartitionSupervisor, Registry, Task, Task.Supervisor, Agent, Process, `:gen_server`, `:gen_statem`, `:supervisor` or `:ets`, the process half of `:erlang`, or any `start_link`, `start` or `start_child`), in a function no other module's macro wrote, discards c's result, while at least three other sites of c on the same target use it and the discarding sites are a quarter or fewer of the sites that use or discard it. The target is the call's literal first argument (a table, a registered name, a supervisor), or "processes of M" when the call raises an exit and its first argument is a parameter of a client function of M, a module that runs a process loop. c's spec must not rule out a failure value (`callee_returns`: a callee whose spec always returns a value or never returns has nothing to miss), and s is neither a Task.Supervisor.start_child site `unchecked_result` reports nor a discarded `start_link`/`start` startup reports. `agree` and `deviate` are the counts; the title says "every other" only when s is the only deviant. The program's own sites say c's result carries a failure, and here it is dropped: the caller carries on as though the call succeeded. The severity is `:warning` when the agreeing fraction lies two standard deviations or more above a coin flip (about seven sites to one), else `:info`. Up to three agreeing sites are attached (`handling_site`, "its result matched here").
 
@@ -1841,7 +1841,7 @@ An error path the code could have seen and did not take: an exception a catch-al
 ### A call left unguarded where the program guards it
 
 `inconsistent_handling` · belief=`exception_guarded` (with `cover` = `none` | `try` | `callers`)
-· titles: "#{callee} called bare where every other call site catches its #{class}"; "#{callee} called bare where most call sites catch its #{class}"; "#{callee} called in a try that lets its #{class} through where every other call site catches it"; "#{callee} called in a try that lets its #{class} through where most call sites catch it"; "#{callee} called with its #{class} uncaught where every other call site catches it"; "#{callee} called with its #{class} uncaught where most call sites catch it" (each `:warning` or `:info`, as for the result belief; `#{class}` is error, exit, throw, or exception for a call whose class is not known)
+· titles: "Call made bare where other call sites catch its #{class}"; "Call in a try that lets its #{class} through where other call sites catch it"; "Call with its #{class} uncaught where other call sites catch it" (each `:warning` or `:info`, as for the result belief; `#{class}` is error, exit, throw, or exception for a call whose class is not known)
 
 **Property.** Some call site s of such a callee c, on a known target, whose arguments do not rule out failure, is covered by no `try` that takes the class c raises, neither in s's own function nor on every way into that function, while at least three other sites of c on that target are so guarded and the unguarded sites are a quarter or fewer. A call into a process raises an exit; a BIF or an ETS operation an error. A `try` takes a class when some path through its handler establishes the class and returns without raising again (`try_takes`): an `after`, a handler that only re-raises, or `catch :exit` around an ETS badarg takes nothing the call raises, and Erlang's `catch Expr` takes every class. A function is guarded by its callers when every path from an exported function, or from a closure a process-starting function builds, passes such a try (`ForwardUnguardedSet`). A site cannot fail, and takes no part, when it is a send to anything but a literal local name, an ETS operation that fails only on a missing table made inside the process that created the named table, or a `lookup_element` of a row the table's owner writes in `init/1` and nothing removes. `raises` is the class and `cover` how s stands: `none` (no try here, and some way in passes none), `try` (a try here takes other classes or nothing; `caught` names what it takes), `callers` (every way in passes a try, not always one that takes the class). The failure the other sites catch, a `:noproc` or timeout from a dead server or a badarg from a missing table, crashes the caller here. Up to three guarded sites of the same population are attached (`handling_site`: "guarded by this {guard}", or "guarded by a try around every call of its function").
 
@@ -1853,7 +1853,7 @@ An error path the code could have seen and did not take: an exception a catch-al
 
 **Fixtures.** Positive: `Consistency.DeviantBare` (`none`, target "processes of"), `HelperOutsideTry`, `SameTargetBare`, `WrittenBare`, `LocalSends`, `ClientDeletes`, `UnseededRows`, `GuardedByCallers`, `TaskInTry`, `HiddenDeviant` (`try`, catches nothing), `WrongClassDeviant` (`try`, catches only `:exit`), `CallersWrongClass` (`callers`) (test/fixtures/consistency_fixture.ex); `:consistency_catch` (test/fixtures/erl/consistency_catch.erl, Erlang's `catch`). Quiet: `Consistency.AfterOnly`, `WrongClass`, `ReraiseOnly`, `CallerGuards`, `ClosureInTry`, `PerTarget`, `SequinLiteral`, `OwnSplit`, `TableMissing`, `UnknownTargetBare`, `GeneratedBare`, `RemoteSends`, `OwnerDeletes`, `SeededRows` (same file); the `Quiet` modules (test/fixtures/quiet_shapes_fixture.ex). Asserted in test/analyses/failure_consistency_test.exs and test/analyses/quiet_shapes_test.exs.
 
-**Corpus.** Present-only: `supavisor@a8463de` (supabase/supavisor, a8463de, Supavisor.DbHandler), ":gen_statem.call/3 called bare where every other call site catches its exit". No fix pair exists: the rule needs three guarded sites and a quarter or fewer bare, and the eleven catch-adding fixes the hunt found were all below that (maintainer notes, 2026-09-23).
+**Corpus.** Present-only: `supavisor@a8463de` (supabase/supavisor, a8463de, Supavisor.DbHandler), "Call made bare where other call sites catch its exit" (`:gen_statem.call/3`). No fix pair exists: the rule needs three guarded sites and a quarter or fewer bare, and the eleven catch-adding fixes the hunt found were all below that (maintainer notes, 2026-09-23).
 
 **Precision.** Two corpus sites at introduction, both `:ets.lookup_element` called bare where the module rescues it elsewhere (00917e6), later judged deliberate (maintainer notes). The guard-class audit took the corpus from 3 to 2 when db_connection's `Holder.hash_holder/2`, guarded by its caller, dropped out (the belief audit, 5478aa7). Keying the belief on its target took OTP kernel, stdlib and mnesia, the Phoenix stack and sequin from 22 findings to 2: supavisor's DbHandler, a real bug, and user_sup's `register(user, self())` against peer.erl's three guarded registrations of the same name, not judged in the entry (364e74b, CHANGELOG 0.20.0-dev).
 
@@ -1864,7 +1864,7 @@ An error path the code could have seen and did not take: an exception a catch-al
 ### Supervisor registered as a worker
 
 `supervisor_registered_as_worker`
-· titles: "#{sup} registers #{child} as a worker, but it is a supervisor" (`:error`)
+· titles: "Supervisor registered as a worker" (`:error`)
 
 **Property.** Some supervisor S's child list holds a spec that states `type: :worker` explicitly, and the spec's start module declares the Supervisor behaviour (`behaves_as`, so Erlang's `-behaviour(supervisor)` counts). The type decides the default shutdown: a supervisor child gets unlimited time to take its own subtree down, and a worker gets a finite one (5 s). Registered as a worker, the supervisor is killed part-way through terminating its children, and its grandchildren are orphaned rather than terminated. They keep running, holding what they held, with no supervisor above them (RabbitMQ e40387e4).
 
@@ -2134,7 +2134,7 @@ Another process takes or deletes the row between the check and the act, and the 
 ### Unreachable state
 
 `unreachable_state`
-· titles: "Unreachable state #{state}" (`:warning`)
+· titles: "Unreachable gen_statem state" (`:warning`)
 
 **Property.** Take a module that declares `:gen_statem` (or GenStateMachine) and whose `callback_mode/0` resolves to `state_functions`. At least one of its transitions names its target literally, and none computes it at runtime, in a state function or in a helper. A state S (a state function: exported, arity 3, not a standard callback, never called locally, and returning a gen_statem action; or a state some transition names) is entered by no transition from another state, by no helper's `{:next_state, S, …}`, and is not the initial state. The initial state is what `init/1` returns in `{:ok, State, _}`. Only when that is computed, a state that has transitions of its own but no incoming one is taken as initial. The machine can never enter S: S is dead code, or a transition that should produce it is missing.
 
@@ -2155,7 +2155,7 @@ Another process takes or deletes the row between the check and the act, and the 
 ### Terminal state that never stops
 
 `terminal_without_stop`
-· titles: "Terminal state #{state} never stops" (`:info`)
+· titles: "Terminal gen_statem state that never stops" (`:info`)
 
 **Property.** Take a gen_statem module in `state_functions` mode with at least one transition to a literal state. A state S with an exported arity-3 function is entered from another state (a transition from a state other than S, or a helper's `{:next_state, S, …}`) and is not the initial state, and S has no way out: none of its returns is a transition to another state or a stop, and none returns what a call returns that may be one. A machine that enters S stays there. Unless S is a deliberate resting state, the process idles forever, one leaked process per machine that reaches S.
 
@@ -2275,7 +2275,7 @@ Another process takes or deletes the row between the check and the act, and the 
 ### Table that only grows
 
 `ets_write_only_table`
-· titles: "ETS table #{name} only grows" (`:info`)
+· titles: "ETS table that only grows" (`:info`)
 
 **Property.** Some table created with `:named_table` is inserted into (`insert` or `insert_new`, by its name) from a function not named `init`, and nothing removes rows from it: no `delete` of a key or of the table, `delete_object`, `delete_all_objects`, `select_delete`, `match_delete` or `take` on that name anywhere in the program, and no removal through a table reference of unknown name in the creating module. Every insert stays for the owner's life, which for a supervised process is the VM's: when entries have a natural end (a request completing, a check-in resolving), the table is a slow memory leak (Sentry's check-in ID mapping was one).
 
@@ -2338,7 +2338,7 @@ Another process takes or deletes the row between the check and the act, and the 
 ### Effect in a function declared pure
 
 `effect_in_context` · context=`pure_contract`
-· titles: "#{short(func)} is declared pure but performs #{effect_phrase(category)}" (`:error`). The phrase is "I/O" (`io`), "a process operation" (`process`), "a process-dictionary access" (`process_dict`), "a shared-table operation" (`ets`), "a port or OS interaction" (`port`), "a distribution operation" (`node`), "a clock or counter read" (`time`), "a randomness draw" (`random`), "network I/O" (`network`), "runtime code loading" (`code_loading`), or the bare category name (`logging`).
+· titles: "Function declared pure performs #{effect_phrase(category)}" (`:error`). The phrase is "I/O" (`io`), "a process operation" (`process`), "a process-dictionary access" (`process_dict`), "a shared-table operation" (`ets`), "a port or OS interaction" (`port`), "a distribution operation" (`node`), "a clock or counter read" (`time`), "a randomness draw" (`random`), "network I/O" (`network`), "runtime code loading" (`code_loading`), or the bare category name (`logging`).
 
 **Property.** A function f carries `@pure true`, which argus reads from the beam's persisted `argus_pure` attribute. f, or some function f reaches over the call graph, performs an observable effect. The reachable functions include private helpers, applies whose module and function resolve, and closures f builds, because building a closure counts as a call. An observable effect is one of: a call the effect model classifies as impure in either mode (a write, or a read of a clock, the environment or the process dictionary); a `send` instruction; a `receive`; a spawn; an ETS operation or table creation; a port open; or a name registration. `via` names the function that performs the effect, and `site` names the instruction. At run time, the function's result depends on, or changes, state outside its arguments. A caller that memoizes the function, reorders calls to it, or relies on it being free of effects gets wrong behaviour.
 
@@ -2361,9 +2361,9 @@ Another process takes or deletes the row between the check and the act, and the 
 ### Purity claim that cannot be checked
 
 `purity_unprovable` · reason=`dynamic_call` | `protocol_dispatch` | `unclassified_call`
-· titles: "#{short(func)} is declared pure but the claim cannot be checked" (`:warning`, `dynamic_call`); "#{short(func)} is declared pure but dispatches through a protocol" (`:warning`, `protocol_dispatch`); "#{short(func)} is declared pure but reaches an unclassified call" (`:warning`, `unclassified_call`)
+· titles: "Purity claim that cannot be checked" (`:warning`, `dynamic_call`); "Function declared pure dispatches through a protocol" (`:warning`, `protocol_dispatch`); "Function declared pure reaches an unclassified call" (`:warning`, `unclassified_call`)
 
-**Property.** A function f carries `@pure true` and reaches no known effect. But f, or some function it reaches, makes a call the analysis cannot account for. `dynamic_call` covers three shapes: a call through a fun value (`call_fun`); an apply whose target does not resolve (`apply`); and `dot_dispatch`. `dot_dispatch` is Elixir's `x.field` on a value not proven to be a map, which compiles to `:elixir_erl_pass.no_parens_remote/2`, or a wrapper that runs what it is handed, such as `:timer.tc`. `protocol_dispatch` is a call into an open protocol: `String.Chars`, `Inspect`, `Enumerable`, `Collectable`, `List.Chars`, `Jason.Encoder`, `Phoenix.HTML.Safe`, `Ecto.Type`, `Kernel.inspect` or `Kernel.to_string`. `unclassified_call` is a remote call that has no entry in the effect model and whose target does not declare `@pure` itself. The claim may hold, but nothing verified it. A checker that let these calls pass would report "verified" for functions that can run arbitrary code. When f reaches neither an effect nor an opaque call, `purity_verified(f)` is emitted as an `:info` finding, "#{short(func)} is verified pure". That finding is not a defect: it tells a verified contract apart from one that was never checked.
+**Property.** A function f carries `@pure true` and reaches no known effect. But f, or some function it reaches, makes a call the analysis cannot account for. `dynamic_call` covers three shapes: a call through a fun value (`call_fun`); an apply whose target does not resolve (`apply`); and `dot_dispatch`. `dot_dispatch` is Elixir's `x.field` on a value not proven to be a map, which compiles to `:elixir_erl_pass.no_parens_remote/2`, or a wrapper that runs what it is handed, such as `:timer.tc`. `protocol_dispatch` is a call into an open protocol: `String.Chars`, `Inspect`, `Enumerable`, `Collectable`, `List.Chars`, `Jason.Encoder`, `Phoenix.HTML.Safe`, `Ecto.Type`, `Kernel.inspect` or `Kernel.to_string`. `unclassified_call` is a remote call that has no entry in the effect model and whose target does not declare `@pure` itself. The claim may hold, but nothing verified it. A checker that let these calls pass would report "verified" for functions that can run arbitrary code. When f reaches neither an effect nor an opaque call, `purity_verified(f)` is emitted as an `:info` finding, "Function verified pure". That finding is not a defect: it tells a verified contract apart from one that was never checked.
 
 **Assumptions and limits.**
 - A higher-order pure function, one that calls a fun it is handed, is always unprovable at its definition. This holds even when every caller hands it a pure closure: the call-site check (next class) does not discharge the warning.
@@ -2380,7 +2380,7 @@ Another process takes or deletes the row between the check and the act, and the 
 ### Effectful closure handed to a pure function
 
 `impure_closure_to_pure`
-· titles: "#{short(caller)} passes an effectful closure to a function declared pure" (`:error`)
+· titles: "Effectful closure passed to a function declared pure" (`:error`)
 
 **Property.** A function g declared pure calls a fun it is handed, possibly inside a lifted closure such as `Enum.map(list, fn x -> f.(x) end)`: formally, g reaches a `call_fun`. A function c calls g at site s, c builds exactly one closure k, and k reaches an observable effect. The obligation that g's claim creates falls on its callers, so c is the function that breaks the contract. The finding anchors at s, and the effect inside k is a related frame. At run time, g performs c's effect under a contract that says g has none.
 
@@ -2397,7 +2397,7 @@ Another process takes or deletes the row between the check and the act, and the 
 ### Effect a rollback cannot undo, inside a transaction
 
 `effect_in_context` · context=`transaction`
-· titles: "#{short(caller)} performs #{rollback_phrase(category)} inside a #{repo} transaction". The severity is `:error` for "network I/O" (`network`) and "an OS or port operation" (`port`). It is `:warning` for "a process operation" (`process`), "file I/O" (`io`), "a shared-table write" (`ets`) and "a distribution operation" (`node`).
+· titles: "#{rollback_phrase(category)} inside a transaction" (first letter capitalized). The severity is `:error` for "network I/O" (`network`) and "an OS or port operation" (`port`). It is `:warning` for "a process operation" (`process`), "file I/O" (`io`), "a shared-table write" (`ets`) and "a distribution operation" (`node`).
 
 **Property.** A function c calls `transaction` at site o on a module that implements `Ecto.Repo` (found by behaviour, not by name), or calls `Postgrex.transaction`. c builds exactly one closure b, and c opens transactions on no other repo. b, or some function b reaches over the call graph, makes a call that the effect model classifies as a write in one of the `durable_effect` categories: `io`, `network`, `process`, `ets`, `port` or `node`. The finding anchors at o, and the effect is a related frame. `scope` names the repo, and `via` names the function that performs the effect. At run time, a rollback leaves the effect behind, and a retry of the transaction repeats it. A network or port call also holds a pooled connection for the length of someone else's latency, which is how a slow dependency becomes pool exhaustion.
 
@@ -2563,7 +2563,7 @@ The site is reported by request proximity as for atoms. When no request reaches 
 ### Unbounded process creation from a request
 
 `unbounded_children_from_request`
-· titles: "#{sup} starts #{child} without limit, on request" (`:error`)
+· titles: "Dynamic supervisor starts children without limit, on request" (`:error`)
 
 **Property.** Function v starts a child on a supervisor s. The start is either `DynamicSupervisor.start_child/2`, or one of Task.Supervisor's `start_child`, `async`, `async_nolink`, `async_stream` or `async_stream_nolink`, in which case the child is recorded as `Task`. s is named by an atom, by a via name the extractor resolves, or by the enclosing supervisor module when the argument does not resolve. Some request entry reaches v over the call graph. No finite `max_children` is read from a `DynamicSupervisor.init/1` in s's own module. And s is not a dependency's transport supervisor that the endpoint leaves disabled: `Phoenix.Transports.LongPoll.Supervisor` is exempt unless some endpoint's literal socket options enable long polling. The finding anchors at v, with s as a related frame. At run time, the number of live children grows with the number of requests, with no ceiling. Each costs a pid, a mailbox and a heap, and the node runs out of memory in a way that looks like ordinary load.
 
@@ -2590,7 +2590,7 @@ The site is reported by request proximity as for atoms. When no request reaches 
 ### Secret field printed by inspect/1
 
 `unredacted_secret`
-· titles: "#{mod}.#{String.trim_leading(field, ":")} is printed by inspect/1" (`:error` for kind `credential`; `:warning` for `password` and `token`)
+· titles: "Secret field printed by inspect/1" (`:error` for kind `credential`; `:warning` for `password` and `token`)
 
 **Property.** A module M's `__schema__/1` lists a persisted field F whose name contains one of thirteen fragments:
 - `credential`: `api_key`, `apikey`, `secret`, `private_key`, `client_secret`, `smtp_password`, `access_key`.
@@ -2620,7 +2620,7 @@ F's name must not end in a metadata suffix: `_at`, `_on`, `_date`, `_time`, `_co
 ### Secret field printed by inspect/1, named by a classifier
 
 `unredacted_secret_inferred` (provenance `:heuristic`)
-· titles: "#{mod}.#{String.trim_leading(field, ":")} is printed by inspect/1" (`:warning` for kind `credential`; `:info` for `password` and `token`: one step below the structural finding), with a help line "heuristic: a classifier names #{field} a secret, most likely a #{kind} (p=…)"
+· titles: "Secret field printed by inspect/1" (`:warning` for kind `credential`; `:info` for `password` and `token`: one step below the structural finding), with a help line "heuristic: a classifier names #{field} a secret, most likely a #{kind} (p=…)"
 
 **Property.** This is the defect of the previous class, found by a different signal. A persisted field F of schema M matches none of the thirteen fragments. With priors on, `prior_sensitive` says F is a secret of some kind with total probability 0.9 or more, summed over credential, password and token. F is not hidden from `inspect/1`, by the same test as above. `kind` is the likeliest of the three, and `permille` is the summed probability. The runtime consequence is the same: the secret prints wherever the struct is inspected.
 
@@ -2641,7 +2641,7 @@ F's name must not end in a metadata suffix: `_at`, `_on`, `_date`, `_time`, `_co
 ### TLS certificate verification turned off
 
 `disables_verification`
-· titles: "#{func} turns off TLS certificate verification" (`:error`)
+· titles: "TLS certificate verification turned off" (`:error`)
 
 **Property.** An instruction in function f of module M names the atom `:verify_none`, either as an operand or inside a literal. No instruction in any function of M names `:verify_peer`, so M offers its callers no way to get a verified connection. The mention does not configure a server (`tls_server_side`): its value is not made, in f, only into the options of a server's call (`:ssl.listen/2`, `:ssl.handshake/2,3`, a Ranch or Cowboy TLS listener, a Plug.Cowboy, Bandit or ThousandIsland server), where `verify_none` means the server asks its clients for no certificate. The finding anchors at the instruction that names `:verify_none`. At run time, anyone able to answer for the host (through DNS, ARP, a proxy or the network) can end the session with a certificate they made themselves, and both ends report success.
 
@@ -2662,7 +2662,7 @@ F's name must not end in a metadata suffix: `_at`, `_on`, `_date`, `_time`, `_co
 ### TLS verification left to the library default
 
 `relies_on_default_verification`
-· titles: "#{func} leaves TLS verification to the default" (`:warning`)
+· titles: "TLS verification left to the library default" (`:warning`)
 
 **Property.** Function f calls `:ssl.connect/3,4`, `:ssl.handshake/2,3` or `:ssl.listen/2`. The options argument is a literal proper list, namely the last literal moved into the options register before the call, and the list has no `:verify` key. Whatever the library defaults to applies. At run time, on OTP releases before 26, the `:ssl` client verified no peer at all. The connection's security then depends on the OTP release it runs on, and nothing at the call site shows it.
 
