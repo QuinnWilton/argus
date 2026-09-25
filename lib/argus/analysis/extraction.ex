@@ -15,7 +15,9 @@ defmodule Argus.Analysis.Extraction do
     reads it, derives which process a pid can be
     (`points_to_relations/0`) once: the fixpoint is most of a solve
     over a large program, and it is the same for every analysis that
-    asks.
+    asks. When it does not finish within `:points_to_timeout`, the stage
+    runs bounded instead (`priv/dl/points_to_bounded.dl`, see
+    `derive_points_to/2`).
   - **Priors** (`Argus.Priors`), only when `:priors` asks for them, fill
     the `prior_*` relations the heuristic rules read.
 
@@ -43,6 +45,14 @@ defmodule Argus.Analysis.Extraction do
 
   # The relations stage 0 writes; a directory holding all four is staged.
   @stage0_relations ~w(call_edge call_site unconditional_call_edge call_tag fun_handed_to)
+
+  # How long the exact points-to stage gets, in milliseconds, before the
+  # stage runs bounded instead. The exact stage takes a second or two on
+  # the largest programs it was measured on (a 1,239-module umbrella, a
+  # 751-module deps tree); the programs it does not finish on take ten
+  # minutes and more (Ash, 1,327 modules: 13 minutes), where the bounded
+  # stage takes ten seconds.
+  @points_to_timeout 15_000
 
   # The relations the points-to stage writes (points_to.dl's outputs).
   @points_to_relations ~w(server_process instance supervised_process private_process process
@@ -152,9 +162,29 @@ defmodule Argus.Analysis.Extraction do
     programs = [programs: Argus.Cache.dir(facts.store, :programs)]
 
     if Keyword.get(opts, :points_to, :derive) == :derive and
-         Enum.any?(analyses, &reads_points_to?(&1, programs)),
-       do: solve_stage(facts, points_to_rules_path(), :points_to, opts),
-       else: {:ok, facts}
+         Enum.any?(analyses, &reads_points_to?(&1, programs)) do
+      with {:error, _} = error <- solve_points_to(facts, opts) do
+        Facts.release(facts)
+        error
+      end
+    else
+      {:ok, facts}
+    end
+  end
+
+  @doc false
+  # The points-to stage solved into cached facts, bounded when the exact
+  # stage does not finish in time (`derive_points_to/2`): the facts with
+  # its outputs, or `{:error, {:points_to, reason}}`, the facts still the
+  # caller's (the analyses that do not read the stage can run on them).
+  @spec solve_points_to(Facts.t(), keyword()) :: {:ok, Facts.t()} | {:error, term()}
+  def solve_points_to(facts, opts) do
+    solve = fn rules_path, opts -> Facts.solve(facts, rules_path, opts) end
+
+    case bounded_on_timeout(solve, opts) do
+      {:ok, _results, facts} -> {:ok, facts}
+      {:error, reason} -> {:error, {:points_to, reason}}
+    end
   end
 
   # Priors are asked afresh every run, as without a store: into a
@@ -183,8 +213,10 @@ defmodule Argus.Analysis.Extraction do
 
   @doc false
   # A stage solved into cached facts: the facts with its outputs, or
-  # `{:error, {stage, reason}}` (the facts released).
-  @spec solve_stage(Facts.t(), Path.t(), :stage0 | :points_to, keyword()) ::
+  # `{:error, {stage, reason}}` (the facts released). The points-to stage
+  # goes through solve_points_to/2, which runs it bounded when the exact
+  # stage runs out of time.
+  @spec solve_stage(Facts.t(), Path.t(), :stage0, keyword()) ::
           {:ok, Facts.t()} | {:error, term()}
   def solve_stage(facts, rules_path, stage, opts) do
     case Facts.solve(facts, rules_path, opts) do
@@ -293,19 +325,91 @@ defmodule Argus.Analysis.Extraction do
   the result: its outputs move only when a process or a resolved target
   does, not on every edit that renumbers the instructions it reads.
 
+  The stage is exact unless it does not finish within
+  `:points_to_timeout` (milliseconds, 15 seconds by default; `:infinity`
+  keeps it exact whatever it takes, within `:souffle_timeout`). It then
+  runs bounded (`points_to_bounded_rules_path/0`): the leaves a coarse
+  pass finds pervasive — held by more than one source in a hundred —
+  are resolved by that pass, and every other one exactly. The bounded
+  stage writes the same relations, a superset of the exact stage's rows
+  for the pervasive leaves; a warning names how many it bounded. On
+  every program it was measured on but one the exact stage finishes in
+  a second or two; the exception (Ash, where helpers that return an
+  updated copy of their parameter merge most of the heap) takes ten
+  seconds bounded and thirteen minutes exact.
+
   Writes the `points_to_relations/0` files into `facts_dir`. Idempotent.
   """
   @spec derive_points_to(Path.t(), keyword()) :: :ok | {:error, term()}
   def derive_points_to(facts_dir, opts \\ []) do
-    case Souffle.run(facts_dir, points_to_rules_path(), Keyword.put(opts, :output_dir, facts_dir)) do
+    solve = fn rules_path, opts ->
+      Souffle.run(facts_dir, rules_path, Keyword.put(opts, :output_dir, facts_dir))
+    end
+
+    case bounded_on_timeout(solve, opts) do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, {:points_to, reason}}
     end
   end
 
+  # Solves the exact stage within the points-to budget, and the bounded
+  # one when it runs out: `solve` takes a rules path and options and
+  # returns what `Argus.Souffle.run/3` or `Argus.Cache.Facts.solve/3`
+  # does.
+  defp bounded_on_timeout(solve, opts) do
+    case Keyword.get(opts, :points_to_timeout, @points_to_timeout) do
+      :infinity ->
+        solve.(points_to_rules_path(), opts)
+
+      budget ->
+        exact = Keyword.update(opts, :souffle_timeout, budget, &min(&1, budget))
+
+        case solve.(points_to_rules_path(), exact) do
+          {:error, :souffle_timeout} ->
+            solve.(points_to_bounded_rules_path(), opts) |> report_bounded(budget)
+
+          other ->
+            other
+        end
+    end
+  end
+
+  defp report_bounded(result, budget) do
+    with {:ok, results} <- results(result) do
+      leaves = results |> Map.get("pervasive", []) |> List.flatten() |> Enum.sort()
+
+      Logger.warning(
+        "points-to: the exact stage did not finish in #{budget} ms; ran it bounded, " <>
+          pervasive_summary(leaves)
+      )
+    end
+
+    result
+  end
+
+  defp pervasive_summary([]), do: "which found no leaf pervasive"
+
+  defp pervasive_summary(leaves) do
+    shown = Enum.take(leaves, 3)
+    more = if length(leaves) > length(shown), do: ", …", else: ""
+
+    "resolving #{length(leaves)} pervasive leaves coarsely (#{Enum.join(shown, ", ")}#{more})"
+  end
+
+  defp results({:ok, results}), do: {:ok, results}
+  defp results({:ok, results, _facts}), do: {:ok, results}
+  defp results(_error), do: :error
+
   @doc "The path to the points-to stage's rules file."
   @spec points_to_rules_path() :: Path.t()
   def points_to_rules_path, do: Catalog.priv_dl("points_to.dl")
+
+  @doc """
+  The path to the bounded points-to stage's rules file: what
+  `derive_points_to/2` runs when the exact stage does not finish in time.
+  """
+  @spec points_to_bounded_rules_path() :: Path.t()
+  def points_to_bounded_rules_path, do: Catalog.priv_dl("points_to_bounded.dl")
 
   @doc "The relations the points-to stage writes."
   @spec points_to_relations() :: [String.t()]

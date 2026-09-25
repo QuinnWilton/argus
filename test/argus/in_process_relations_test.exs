@@ -16,7 +16,8 @@ defmodule Argus.InProcessRelationsTest do
 
     programs = [
       Analysis.stage0_rules_path(),
-      Analysis.points_to_rules_path()
+      Analysis.points_to_rules_path(),
+      Analysis.points_to_bounded_rules_path()
       | Enum.map(Analysis.builtin_analysis_modules(), &rules_path/1)
     ]
 

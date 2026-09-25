@@ -64,7 +64,11 @@ defmodule Argus.Test.Memo do
       programs =
         if Argus.Cache.enabled?(), do: [programs: Path.join(store(), "programs")], else: []
 
-      [Argus.Analysis.stage0_rules_path(), Argus.Analysis.points_to_rules_path()]
+      [
+        Argus.Analysis.stage0_rules_path(),
+        Argus.Analysis.points_to_rules_path(),
+        Argus.Analysis.points_to_bounded_rules_path()
+      ]
       |> Kernel.++(for name <- Argus.Analysis.builtin_analyses(), do: rules_path(name))
       |> Task.async_stream(&Argus.Souffle.input_relations(&1, programs), timeout: :infinity)
       |> Stream.run()

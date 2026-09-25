@@ -54,9 +54,14 @@
 // asked apart, over the staged targets, so an analysis that asks only
 // about calls does not read every send or signal in the program.
 //
+// A leaf the stage finds pervasive (clientlib/pervasive.dl: only when the
+// stage runs bounded, points_to_bounded.dl) is left out of these rules
+// and resolved by the coarse pass there instead; in the stage as it
+// runs by default no leaf is.
+//
 // Prerequisites: include clientlib/imports.dl, behaviours.dl,
-// callbacks.dl, process_statem.dl and runs_elsewhere.dl before this file
-// (points_to.dl does).
+// callbacks.dl, process_statem.dl and runs_elsewhere.dl before this file,
+// and clientlib/pervasive.dl with it (points_to.dl does).
 
 // ── Processes ───────────────────────────────────────────────────────
 
@@ -185,7 +190,7 @@ reads_name(f, n) :- pid_field(f, _, _, "name", n).
 reads_name(f, n) :- pid_base(f, _, "name", n).
 reads_name(f, n) :- pid_signal(_, f, _, "name", n).
 
-source_pts(f, "proc", p, p) :- process_start(_, f, p, _, _).
+source_pts(f, "proc", p, p) :- process_start(_, f, p, _, _), !pervasive(p).
 
 // A term is an object once it holds a leaf: a field of it points to one,
 // or to a term that does. Only then can a use reach a leaf through it,
@@ -216,25 +221,29 @@ source_pts(f, "result", c, x) :-
 source_pts(f, "result", c, x) :-
   pid_result(c, f, g),
   fresh_return(g, x),
-  pid_return(f, "result", c).
+  pid_return(f, "result", c),
+  !pervasive(x).
 
-source_pts(f, "result", c, cat("start ", c)) :- kept_fresh(c, f, x), process_start(_, _, x, _, _).
+source_pts(f, "result", c, cat("start ", c)) :-
+  kept_fresh(c, f, x),
+  process_start(_, _, x, _, _),
+  !pervasive(cat("start ", c)).
 
 source_pts(f, "result", c, cat("result ", c)) :- kept_fresh(c, f, x), start_object(x, _).
-source_pts(f, "name", n, p) :- reads_name(f, n), named_pid(n, p).
-source_pts(f, "self", "self", p) :- self_pid(f, p).
+source_pts(f, "name", n, p) :- reads_name(f, n), named_pid(n, p), !pervasive(p).
+source_pts(f, "self", "self", p) :- self_pid(f, p), !pervasive(p).
 
 // An ETS table is an object too, allocated by the :ets.new/2 that made
 // it (clientlib/tables.dl asks where it goes). Named "table <site>", so
 // it is never a process nor a term a field is read out of: a leaf of
 // every relation below.
-source_pts(f, "table", t, t) :- table_alloc(_, f, t).
+source_pts(f, "table", t, t) :- table_alloc(_, f, t), !pervasive(t).
 
 // A GenServer.call returns the server's reply: the second field of a
 // `{:reply, reply, state}` its handle_call/3 returns. Every reply of the
 // server, whichever clause the message reaches.
 source_pts(f, "reply", id, x) :-
-  call_site_target(id, f, "call", p),
+  message_target(id, f, "call", p),
   server_process(p, m),
   function_def(h, m, "handle_call", 3, _),
   returns_all(h, t),
@@ -279,7 +288,10 @@ field_pts(o, sel, x) :- pid_field(f, o, sel, sk, s), source_pts(f, sk, s, x).
 .plan 0:(2,1)
 
 // A kept `{:ok, pid}` holds its own instance.
-field_pts(cat("result ", c), "{1}", cat("start ", c)) :- kept_fresh(c, _, x), start_object(x, _).
+field_pts(cat("result ", c), "{1}", cat("start ", c)) :-
+  kept_fresh(c, _, x),
+  start_object(x, _),
+  !pervasive(cat("start ", c)).
 
 // An update keeps the fields it does not set; a cons cell's tail holds
 // the rest of the elements.
@@ -616,6 +628,13 @@ call_site_target(id, g, kind, p) :-
   process_call(_, _, id, kind, p),
   pid_call(id, g, kind, _, _).
 
+// Where the message of a call, cast or send, and a call's reply, go: its
+// targets (and when the stage runs bounded, a pervasive one's as the
+// coarse pass resolves it, clientlib/pervasive.dl).
+.decl message_target(id: symbol, func: symbol, api_kind: symbol, proc: symbol)
+
+message_target(id, g, kind, p) :- call_site_target(id, g, kind, p).
+
 // A synchronous call that is provably to the calling process itself — to
 // self(), or to a name only the caller's module's processes hold, from
 // that module's own process — which gen exits with `calling_self`.
@@ -658,7 +677,7 @@ message_handler("info", "handle_info", 2).
 entry_pts(h, "0", x) :-
   pid_message(id, f, kind, sk, s),
   source_pts(f, sk, s, x),
-  call_site_target(id, f, kind, p),
+  message_target(id, f, kind, p),
   server_process(p, m),
   message_handler(kind, name, arity),
   function_def(h, m, name, arity, _).
@@ -713,6 +732,6 @@ entry_pts(f, k, x) :- statem_data_in(m, f, k), statem_data_pts(m, x).
 entry_pts(h, "1", x) :-
   pid_message(id, f, kind, sk, s),
   source_pts(f, sk, s, x),
-  call_site_target(id, f, kind, p),
+  message_target(id, f, kind, p),
   server_process(p, m),
   statem_event_clause(m, h, _).

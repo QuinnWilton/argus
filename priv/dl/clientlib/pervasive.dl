@@ -1,0 +1,423 @@
+// Bounded points-to: what the stage answers when its exact pass cannot
+// finish in time (Argus.Analysis.Extraction runs points_to_bounded.dl
+// then, which is points_to.dl with stage_mode("bounded")).
+//
+// Parameters are context-insensitive (processes.dl), and on some large
+// programs that merges most of the heap into one value: helpers that
+// return an updated copy of their parameter (`%{cs | tenant: t}`), or a
+// term built of it (`{:ok, query}`), give every caller the fields every
+// other caller's value had, and a pid anywhere in those terms is then
+// held by most of the program's terms and parameters. The exact pass
+// follows each such term, and its fixpoint grows with the square of
+// their number: over Ash's 1,327 modules, 13M field rows and over ten
+// minutes. What the analyses read of it is a few dozen targets.
+//
+// So when the stage runs bounded, a leaf the coarse pass below finds
+// held by more than one source in a hundred (and by more than 1000) is
+// pervasive: the exact pass leaves it out (processes.dl's leaf rules),
+// and its targets, names and the stops and tables that resolve to it are
+// the coarse pass's. Every other leaf is resolved exactly, as in the
+// default stage, except where a message or a reply goes to a pervasive
+// process (message_target takes the coarse targets then). Everything
+// here is a sound over-approximation of the exact pass: a pervasive
+// leaf's rows are a superset of the ones the exact pass would derive.
+//
+// In the default stage (stage_mode("exact")) nothing here derives a row:
+// every rule not reading another relation of this file is guarded by
+// stage_mode("bounded").
+//
+// Prerequisites: included by points_to.dl after processes.dl.
+
+.decl stage_mode(mode: symbol)
+
+// ── The coarse pass ─────────────────────────────────────────────────
+//
+// Where in a value a leaf lies, kept to one field: the value itself
+// (Top); the field `at` of it (Under); somewhere below that field
+// (Below); somewhere, at a path not known (Deep). A field is named with
+// its term's shape, as the exact pass reads it (map, tuple tag and
+// arity). No term is named: the rows are per source, and a source holds
+// at most four places per leaf and field, however many terms merge
+// into it. A store puts a leaf one field further down; a load takes it
+// one field up, or keeps it Deep when it was deeper than one field. A
+// use takes a leaf that is Top, or Deep (it may be).
+.type CoarseField = [sel: symbol, kind: symbol, tag: symbol, arity: symbol]
+.type Reach = Top {} | Under {at: CoarseField} | Below {at: CoarseField} | Deep {}
+
+.decl leaf(x: symbol)
+
+leaf(p) :- stage_mode("bounded"), process(p).
+leaf(t) :- stage_mode("bounded"), table_alloc(_, _, t).
+
+.decl coarse(func: symbol, src_kind: symbol, src: symbol, r: Reach, x: symbol)
+.decl coarse_entry(func: symbol, pos: symbol, r: Reach, x: symbol)
+.decl coarse_ret(func: symbol, r: Reach, x: symbol)
+.decl coarse_ret_all(func: symbol, r: Reach, x: symbol)
+.decl coarse_named(name: symbol, proc: symbol)
+.decl coarse_target(id: symbol, func: symbol, api_kind: symbol, proc: symbol)
+
+.decl coarse_shape(obj: symbol, kind: symbol, tag: symbol, arity: symbol)
+
+coarse_shape(o, kind, tag, ar) :- stage_mode("bounded"), pid_object(_, o, kind, tag, ar).
+
+.decl coarse_top(r: Reach)
+
+coarse_top($Top()).
+coarse_top($Deep()).
+
+coarse(f, "proc", p, $Top(), p) :- stage_mode("bounded"), process_start(_, f, p, _, _).
+coarse(f, "self", "self", $Top(), p) :- stage_mode("bounded"), self_pid(f, p).
+coarse(f, "table", t, $Top(), t) :- stage_mode("bounded"), table_alloc(_, f, t).
+coarse(f, "name", n, $Top(), p) :- reads_name(f, n), coarse_named(n, p).
+
+// A store: one field further down.
+coarse(f, "obj", o, $Under([sel, kind, tag, ar]), x) :-
+  pid_field(f, o, sel, sk, s),
+  coarse(f, sk, s, r, x),
+  r = $Top(),
+  coarse_shape(o, kind, tag, ar).
+
+coarse(f, "obj", o, $Below([sel, kind, tag, ar]), x) :-
+  pid_field(f, o, sel, sk, s),
+  coarse(f, sk, s, r, x),
+  r != $Top(),
+  coarse_shape(o, kind, tag, ar).
+
+// An update keeps the fields it does not set, as fields of its own shape.
+coarse(f, "obj", o, $Under([sel, kind, tag, ar]), x) :-
+  pid_base(f, o, bk, bs),
+  coarse(f, bk, bs, $Under([sel, _, _, _]), x),
+  !pid_sets(o, sel),
+  coarse_shape(o, kind, tag, ar).
+
+coarse(f, "obj", o, $Below([sel, kind, tag, ar]), x) :-
+  pid_base(f, o, bk, bs),
+  coarse(f, bk, bs, $Below([sel, _, _, _]), x),
+  !pid_sets(o, sel),
+  coarse_shape(o, kind, tag, ar).
+
+coarse(f, "obj", o, $Deep(), x) :- pid_base(f, o, bk, bs), coarse(f, bk, bs, $Deep(), x).
+
+// A load: the field, or a map's field under a key not known.
+coarse(f, "load", l, $Top(), x) :-
+  pid_load(f, l, sel, bk, bs),
+  coarse(f, bk, bs, $Under([sel, _, _, _]), x).
+
+coarse(f, "load", l, $Top(), x) :-
+  pid_load(f, l, _, bk, bs),
+  coarse(f, bk, bs, $Under(["*", "map", _, _]), x).
+
+coarse(f, "load", l, $Deep(), x) :-
+  pid_load(f, l, sel, bk, bs),
+  coarse(f, bk, bs, $Below([sel, _, _, _]), x).
+
+coarse(f, "load", l, $Deep(), x) :-
+  pid_load(f, l, _, bk, bs),
+  coarse(f, bk, bs, $Below(["*", "map", _, _]), x).
+
+coarse(f, "load", l, $Deep(), x) :- pid_load(f, l, _, bk, bs), coarse(f, bk, bs, $Deep(), x).
+
+// Parameters, entries, returns and results, as processes.dl splits
+// them: a callee that hands its parameter back returns this call's
+// argument, and a factory's fresh value is renamed where it is kept —
+// by the way the factory returns it (its own start's, or a callee's
+// passed straight up), where the exact pass renames the value however
+// it came: a superset of what that pass keeps.
+coarse(g, "param", k, r, x) :- coarse_entry(g, k, r, x).
+coarse(g, "param", k, r, x) :- pid_arg(_, f, g, k, "call", sk, s), coarse(f, sk, s, r, x).
+coarse_entry(g, k, r, x) :- pid_arg(_, f, g, k, via, sk, s), via != "call", coarse(f, sk, s, r, x).
+
+.decl coarse_fresh(func: symbol, r: Reach, x: symbol)
+.decl fresh_route(func: symbol, src_kind: symbol, src: symbol)
+
+fresh_route(g, "obj", t) :- stage_mode("bounded"), pid_return(g, "obj", t), start_object(t, _).
+fresh_route(g, "proc", b) :- stage_mode("bounded"), pid_return(g, "proc", b), process_start(_, g, b, _, _).
+
+coarse_fresh(g, r, x) :- fresh_route(g, k, s), coarse(g, k, s, r, x).
+coarse_fresh(g, r, x) :- pid_return(g, "result", c), pid_result(c, g, h), coarse_fresh(h, r, x).
+
+coarse_ret(g, r, x) :-
+  pid_return(g, k, s),
+  k != "param",
+  k != "result",
+  !fresh_route(g, k, s),
+  coarse(g, k, s, r, x).
+
+coarse_ret(g, r, x) :- pid_return(g, "result", c), pid_result(c, g, h), coarse_ret(h, r, x).
+
+coarse_ret(g, r, x) :-
+  pid_return(g, "result", c),
+  pid_result(c, g, h),
+  passes(h, i),
+  pid_arg(c, g, h, i, "call", sk, s),
+  sk != "param",
+  coarse(g, sk, s, r, x).
+
+coarse(f, "result", c, r, x) :- pid_result(c, f, g), coarse_ret(g, r, x).
+coarse(f, "result", c, r, x) :- pid_result(c, f, g), pid_return(f, "result", c), coarse_fresh(g, r, x).
+
+coarse(f, "result", c, r, x) :-
+  pid_result(c, f, g),
+  passes(g, j),
+  pid_arg(c, f, g, j, "call", sk, s),
+  coarse(f, sk, s, r, x).
+
+coarse(f, "result", c, $Top(), cat("start ", c)) :-
+  stage_mode("bounded"),
+  kept_fresh(c, f, x),
+  process_start(_, _, x, _, _).
+
+coarse(f, "result", c, $Under(["{1}", "", "", ""]), cat("start ", c)) :-
+  stage_mode("bounded"),
+  kept_fresh(c, f, x),
+  start_object(x, _).
+
+coarse_ret_all(g, r, x) :- coarse_ret(g, r, x).
+coarse_ret_all(g, r, x) :- coarse_fresh(g, r, x).
+coarse_ret_all(g, r, x) :- passes(g, j), coarse(g, "param", j, r, x).
+
+// The field of a returned tuple a state slot names: the value itself when
+// the leaf is that field, somewhere when it is deeper or not known.
+.decl coarse_slot(func: symbol, tag: symbol, arity: symbol, sel: symbol, r: Reach, x: symbol)
+.decl coarse_slot_wanted(tag: symbol, arity: symbol, sel: symbol)
+
+coarse_slot_wanted(tag, n, sel) :- stage_mode("bounded"), state_slot(tag, n, sel).
+coarse_slot_wanted(tag, n, sel) :- stage_mode("bounded"), statem_data_slot(tag, n, sel).
+
+coarse_slot(g, tag, n, sel, $Top(), x) :- coarse_ret_all(g, $Under([sel, "tuple", tag, n]), x).
+coarse_slot(g, tag, n, sel, $Deep(), x) :- coarse_ret_all(g, $Below([sel, "tuple", tag, n]), x).
+coarse_slot(g, tag, n, sel, $Deep(), x) :- coarse_slot_wanted(tag, n, sel), coarse_ret_all(g, $Deep(), x).
+
+coarse_entry(f, k, r, x) :-
+  state_in(m, f, k),
+  state_out(m, g),
+  state_slot(tag, n, sel),
+  coarse_slot(g, tag, n, sel, r, x).
+
+coarse_entry(f, k, r, x) :-
+  statem_data_in(m, f, k),
+  statem_data_out(m, g),
+  statem_data_slot(tag, n, sel),
+  coarse_slot(g, tag, n, sel, r, x).
+
+coarse_entry(h, "0", r, x) :-
+  pid_message(id, f, kind, sk, s),
+  coarse(f, sk, s, r, x),
+  coarse_target(id, f, kind, p),
+  server_process(p, m),
+  message_handler(kind, name, arity),
+  function_def(h, m, name, arity, _).
+
+coarse_entry(h, "1", r, x) :-
+  pid_message(id, f, kind, sk, s),
+  coarse(f, sk, s, r, x),
+  coarse_target(id, f, kind, p),
+  server_process(p, m),
+  statem_event_clause(m, h, _).
+
+coarse(f, "reply", id, $Top(), x) :-
+  coarse_target(id, f, "call", p),
+  server_process(p, m),
+  function_def(h, m, "handle_call", 3, _),
+  coarse_ret_all(h, $Under(["{1}", "tuple", ":reply", _]), x).
+
+coarse(f, "reply", id, $Deep(), x) :-
+  coarse_target(id, f, "call", p),
+  server_process(p, m),
+  function_def(h, m, "handle_call", 3, _),
+  coarse_ret_all(h, $Below(["{1}", "tuple", ":reply", _]), x).
+
+coarse(f, "reply", id, $Deep(), x) :-
+  coarse_target(id, f, "call", p),
+  server_process(p, m),
+  function_def(h, m, "handle_call", 3, _),
+  coarse_ret_all(h, $Deep(), x).
+
+// Names, as the coarse pass resolves them.
+coarse_named(n, p) :- pid_register(_, f, n, k, s), coarse(f, k, s, r, p), coarse_top(r), process(p).
+coarse_named(n, i) :- coarse_named(n, b), instance(i, b), i != b.
+
+coarse_named(n, cat("child ", cat(s, cat("#", to_string(pos))))) :-
+  stage_mode("bounded"),
+  supervisor_child_name(s, pos, n),
+  supervisor_child(s, pos, m, _, _),
+  behaves_as(m, "GenServer").
+
+coarse_named(n, p) :-
+  stage_mode("bounded"),
+  named_process(mod, n),
+  !resolved_name(n),
+  server_process(p, mod).
+
+// What field `sel` of a source holds: the leaf itself when it is that
+// field, one at a path not known otherwise.
+.decl coarse_asked(func: symbol, src_kind: symbol, src: symbol, sel: symbol)
+
+coarse_asked(f, sk, s, sel) :-
+  stage_mode("bounded"),
+  pid_use(_, f, _, "load", l),
+  pid_load(f, l, sel, sk, s),
+  sk != "param".
+
+coarse_asked(f, sk, s, sel) :-
+  stage_mode("bounded"),
+  targets_field(g, k, sel, _, _),
+  pid_arg(_, f, g, k, "call", sk, s),
+  sk != "param".
+
+.decl coarse_reads(func: symbol, src_kind: symbol, src: symbol, sel: symbol, r: Reach, x: symbol)
+
+coarse_reads(f, sk, s, sel, $Top(), x) :-
+  coarse_asked(f, sk, s, sel),
+  coarse(f, sk, s, $Under([sel, _, _, _]), x).
+
+coarse_reads(f, sk, s, sel, $Top(), x) :-
+  coarse_asked(f, sk, s, sel),
+  coarse(f, sk, s, $Under(["*", "map", _, _]), x).
+
+coarse_reads(f, sk, s, sel, $Deep(), x) :-
+  coarse_asked(f, sk, s, sel),
+  coarse(f, sk, s, $Below([sel, _, _, _]), x).
+
+coarse_reads(f, sk, s, sel, $Deep(), x) :-
+  coarse_asked(f, sk, s, sel),
+  coarse(f, sk, s, $Below(["*", "map", _, _]), x).
+
+coarse_reads(f, sk, s, sel, $Deep(), x) :- coarse_asked(f, sk, s, sel), coarse(f, sk, s, $Deep(), x).
+
+.decl coarse_entry_asked(func: symbol, pos: symbol, sel: symbol)
+
+coarse_entry_asked(f, k, sel) :-
+  stage_mode("bounded"),
+  pid_use(_, f, _, "load", l),
+  pid_load(f, l, sel, "param", k).
+
+coarse_entry_asked(f, j, sel) :-
+  stage_mode("bounded"),
+  targets_field(g, k, sel, _, _),
+  pid_arg(_, f, g, k, "call", "param", j).
+
+.decl coarse_entry_reads(func: symbol, pos: symbol, sel: symbol, r: Reach, x: symbol)
+
+coarse_entry_reads(f, k, sel, $Top(), x) :-
+  coarse_entry_asked(f, k, sel),
+  coarse_entry(f, k, $Under([sel, _, _, _]), x).
+
+coarse_entry_reads(f, k, sel, $Top(), x) :-
+  coarse_entry_asked(f, k, sel),
+  coarse_entry(f, k, $Under(["*", "map", _, _]), x).
+
+coarse_entry_reads(f, k, sel, $Deep(), x) :-
+  coarse_entry_asked(f, k, sel),
+  coarse_entry(f, k, $Below([sel, _, _, _]), x).
+
+coarse_entry_reads(f, k, sel, $Deep(), x) :-
+  coarse_entry_asked(f, k, sel),
+  coarse_entry(f, k, $Below(["*", "map", _, _]), x).
+
+coarse_entry_reads(f, k, sel, $Deep(), x) :- coarse_entry_asked(f, k, sel), coarse_entry(f, k, $Deep(), x).
+
+// What a use may reach: process_call's rules, read through the coarse
+// pass.
+.decl coarse_use(func: symbol, anchor: symbol, site: symbol, api_kind: symbol, proc: symbol)
+
+coarse_use(f, id, id, kind, p) :-
+  pid_use(id, f, kind, sk, s),
+  sk != "param",
+  sk != "load",
+  coarse(f, sk, s, r, p),
+  coarse_top(r),
+  process(p).
+
+coarse_use(f, id, id, kind, p) :-
+  pid_use(id, f, kind, "load", l),
+  !param_load(f, l),
+  coarse(f, "load", l, r, p),
+  coarse_top(r),
+  process(p).
+
+coarse_use(f, id, id, kind, p) :-
+  pid_use(id, f, kind, "load", l),
+  pid_load(f, l, sel, bk, bs),
+  bk != "param",
+  coarse_reads(f, bk, bs, sel, r, p),
+  coarse_top(r),
+  process(p).
+
+coarse_use(f, id, id, kind, p) :-
+  pid_use(id, f, kind, "param", k),
+  coarse_entry(f, k, r, p),
+  coarse_top(r),
+  process(p).
+
+coarse_use(f, id, id, kind, p) :-
+  pid_use(id, f, kind, "load", l),
+  pid_load(f, l, sel, "param", k),
+  coarse_entry_reads(f, k, sel, r, p),
+  coarse_top(r),
+  process(p).
+
+coarse_use(f, a, id, kind, p) :-
+  pid_arg(a, f, g, k, "call", sk, s),
+  sk != "param",
+  targets_param(g, k, kind, id),
+  coarse(f, sk, s, r, p),
+  coarse_top(r),
+  process(p).
+
+coarse_use(f, a, id, kind, p) :-
+  pid_arg(a, f, g, k, "call", "param", j),
+  targets_param(g, k, kind, id),
+  coarse_entry(f, j, r, p),
+  coarse_top(r),
+  process(p).
+
+coarse_use(f, a, id, kind, p) :-
+  pid_arg(a, f, g, k, "call", sk, s),
+  sk != "param",
+  targets_field(g, k, sel, kind, id),
+  coarse_reads(f, sk, s, sel, r, p),
+  coarse_top(r),
+  process(p).
+
+coarse_use(f, a, id, kind, p) :-
+  pid_arg(a, f, g, k, "call", "param", j),
+  targets_field(g, k, sel, kind, id),
+  coarse_entry_reads(f, j, sel, r, p),
+  coarse_top(r),
+  process(p).
+
+coarse_target(id, g, kind, p) :- coarse_use(_, _, id, kind, p), pid_call(id, g, kind, _, _).
+
+// ── Pervasive leaves ────────────────────────────────────────────────
+
+// The sources the coarse pass finds holding a leaf, anywhere in them.
+.decl coarse_holder(func: symbol, src_kind: symbol, src: symbol, x: symbol)
+
+coarse_holder(f, sk, s, x) :- coarse(f, sk, s, _, x).
+
+.decl leaf_spread(x: symbol, n: number)
+
+leaf_spread(x, n) :- leaf(x), n = count : { coarse_holder(_, _, _, x) }.
+
+// Every source of the program, as PidFlow names them.
+.decl pid_source(func: symbol, src_kind: symbol, src: symbol)
+
+pid_source(g, "param", k) :- stage_mode("bounded"), pid_arg(_, _, g, k, _, _, _).
+pid_source(f, sk, s) :- stage_mode("bounded"), pid_arg(_, f, _, _, _, sk, s).
+pid_source(f, "load", l) :- stage_mode("bounded"), pid_load(f, l, _, _, _).
+pid_source(f, "obj", o) :- stage_mode("bounded"), pid_object(f, o, _, _, _).
+pid_source(f, "result", c) :- stage_mode("bounded"), pid_result(c, f, _).
+
+.decl pid_sources(n: number)
+
+pid_sources(n) :- stage_mode("bounded"), n = count : { pid_source(_, _, _) }.
+
+.decl pervasive(x: symbol)
+
+pervasive(x) :- leaf_spread(x, n), pid_sources(t), n > 1000, n * 100 > t.
+
+// A pervasive leaf's targets and names are the coarse pass's.
+process_call(f, a, id, kind, p) :- coarse_use(f, a, id, kind, p), pervasive(p).
+message_target(id, g, kind, p) :- coarse_target(id, g, kind, p), pervasive(p).
+named_pid(n, p) :- coarse_named(n, p), pervasive(p).

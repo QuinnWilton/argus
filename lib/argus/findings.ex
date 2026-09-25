@@ -234,6 +234,9 @@ defmodule Argus.Findings do
   - `:concurrency` — parallel Souffle solves (default: the scheduler
     count, capped at 4; each solve holds its own copy of the call graph's
     closure). Extraction always runs at scheduler width.
+  - `:points_to_timeout` — milliseconds the exact points-to stage gets
+    before the stage runs bounded (default 15 s; `:infinity` keeps it
+    exact): see `Argus.Analysis.Extraction.derive_points_to/2`.
   - All other `Argus.Analysis.run/3` options (`:extractors`,
     `:souffle_bin`, `:souffle_timeout`, ...) pass through.
 

@@ -1,0 +1,11 @@
+// The points-to stage, bounded: what Argus.Analysis.Extraction runs when
+// the exact stage (points_to.dl) does not finish in time. The same
+// program, with the leaves a coarse pass finds pervasive resolved by that
+// pass (clientlib/pervasive.dl); it writes the same relations, and which
+// leaves it resolved so, for the caller to report.
+
+.include "points_to.dl"
+
+stage_mode("bounded").
+
+.output pervasive(filename="pervasive.csv")

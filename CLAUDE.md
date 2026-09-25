@@ -87,6 +87,17 @@ those frameworks need.
   `source_process` and `source_table` are staged only for the sources
   the analyses ask about (points_to.dl names them); a rule asking about
   another source adds it there.
+- Points-to follows only terms that hold a process or a table, and a
+  callee that hands its parameter back returns each call's own argument
+  (`passes`): context-insensitive merging through such helpers is what
+  made the stage quadratic on a large library (Ash). When the exact
+  stage still does not finish within `:points_to_timeout`, it runs
+  bounded (`points_to_bounded.dl`: the leaves a coarse pass finds
+  pervasive are resolved by that pass, a sound superset; the rest
+  exactly). A new relation of the exact pass must keep a bounded
+  counterpart in `clientlib/pervasive.dl`, or a pervasive leaf loses its
+  rows: `test/clientlib/pervasive_test.exs` checks the coarse pass reaches
+  every exact target.
 - Souffle expands a rule with k disjunctive alternatives into k rules,
   each with the whole body: a disjunction over a large join multiplies
   both compile time and the join. Test a condition on a few columns

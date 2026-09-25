@@ -16,6 +16,13 @@
 // every process and target where it was.
 //
 // Outputs are written as `.facts`, the format the analyses read.
+//
+// This is the stage as it runs by default: every leaf resolved exactly.
+// When that cannot finish in time, the stage runs points_to_bounded.dl
+// instead (Argus.Analysis.Extraction.derive_points_to/2): this program
+// with stage_mode("bounded"), which resolves the leaves a coarse pass
+// finds pervasive with that pass (clientlib/pervasive.dl) and every
+// other one as here. Both write the same relations.
 
 .include "clientlib/imports.dl"
 .include "clientlib/behaviours.dl"
@@ -23,6 +30,9 @@
 .include "clientlib/process_statem.dl"
 .include "clientlib/runs_elsewhere.dl"
 .include "clientlib/processes.dl"
+.include "clientlib/pervasive.dl"
+
+stage_mode("exact").
 
 .output server_process(filename="server_process.facts")
 .output instance(filename="instance.facts")
@@ -62,10 +72,24 @@ source_process(h, sk, s, p) :-
   source_pts(h, sk, s, p),
   process(p).
 
+source_process(h, sk, s, p) :-
+  handler_function(_, h),
+  pid_arg(_, h, _, "0", "call", sk, s),
+  coarse(h, sk, s, r, p),
+  coarse_top(r),
+  pervasive(p).
+
 .output source_process(filename="source_process.facts")
 
 .decl source_table(func: symbol, src_kind: symbol, src: symbol, table: symbol)
 
 source_table(f, sk, s, t) :- table_use(_, f, sk, s), source_pts(f, sk, s, t), table_alloc(_, _, t).
+
+source_table(f, sk, s, t) :-
+  table_use(_, f, sk, s),
+  coarse(f, sk, s, r, t),
+  coarse_top(r),
+  pervasive(t),
+  table_alloc(_, _, t).
 
 .output source_table(filename="source_table.facts")

@@ -140,9 +140,9 @@ defmodule Argus.Findings.Runner do
     programs = [programs: Argus.Cache.dir(facts.store, :programs)]
 
     if Enum.any?(names, &Analysis.Extraction.reads_points_to?(&1, programs)) do
-      case Facts.solve(facts, Analysis.points_to_rules_path(), opts) do
-        {:ok, _results, facts} -> {:ok, {:cached, facts}}
-        {:error, reason} -> {{:error, {:points_to, reason}}, source}
+      case Analysis.Extraction.solve_points_to(facts, opts) do
+        {:ok, facts} -> {:ok, {:cached, facts}}
+        {:error, _} = error -> {error, source}
       end
     else
       {:ok, source}

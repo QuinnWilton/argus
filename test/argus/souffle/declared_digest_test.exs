@@ -38,7 +38,11 @@ defmodule Argus.Souffle.DeclaredDigestTest do
     dl = Path.join(:code.priv_dir(:panoptes), "dl")
 
     programs =
-      [Path.join(dl, "stage0.dl"), Path.join(dl, "points_to.dl")] ++
+      [
+        Path.join(dl, "stage0.dl"),
+        Path.join(dl, "points_to.dl"),
+        Path.join(dl, "points_to_bounded.dl")
+      ] ++
         Enum.sort(Path.wildcard(Path.join(dl, "analyses/*.dl")))
 
     %{facts: facts, dl: dl, programs: programs}

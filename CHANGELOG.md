@@ -12,6 +12,33 @@ does: **Added**, **Changed**, **Fixed** or **Removed**.
 
 ### Points-to that finishes on a large program
 
+**Fixed.** The points-to stage finishes on Ash (1,327 modules), where it
+ran past its five-minute timeout and degraded seven analyses, and past
+25 minutes and 5.8 GB when let run: all fourteen analyses now run there
+in 42 seconds from a cold store, the stage in 25 of them (15 of the
+exact stage's attempt, at most 340 MB, then 9.4 bounded, 158 MB). The
+cause was context-insensitive merging: Ash's helpers hand a changeset or
+a query back (`def set_phase(cs, p)`, `other -> other`), or an updated
+copy of it, and merged at their parameter every caller's value became
+every other caller's; a pid anywhere in one — an
+`Ash.ProcessHelpers.async/2` task among the records `async_or_inline/4`
+may return, the async limiter a query's context keeps — was then held by
+most of the program's terms, and the fixpoint grows with the square of
+those. The entries below are the changes. Over eighteen evaluation
+programs (logflare, realtime, sequin, supavisor, blockster_v2, hexpm,
+nerves_hub, livebook, the Phoenix stack's 751-module deps, OTP's kernel,
+stdlib and mnesia, ejabberd, rabbitmq, elixir-ls, firezone, kafka_ex and
+emqx's 1,239 modules) every finding of every analysis is identical, and
+every staged relation is byte-identical but livebook's four
+`source_process` rows (below); the stage takes 1.4 s at most there.
+Rejected on the way, each measured on Ash: a demand-driven (magic-set)
+stage, which still reaches the merged terms; access paths in place of
+terms, forward or backward, whose number grows exponentially with their
+length there; a copy of each returned term per call site, which
+multiplies the terms and merges them one call further up; a static
+threshold on how widely a coarse pass spreads a leaf, which cannot tell
+Ash from rabbitmq or emqx, where the exact stage takes a second.
+
 **Changed.** `source_process` and `source_table` are staged for the
 sources the analyses ask about — the first argument of a call a
 GenServer handler makes (shutdown's stops) and the table operand of an
@@ -39,6 +66,22 @@ in through a kept factory's `{:ok, pid}` read as the `{1}` of a
 three-tuple, and the helpers' merged parameter spread it to every
 caller). Fixtures: `PassUserA`/`PassUserB` each reach their own peer
 through `Pass`'s helpers and not the other's.
+
+**Added.** When the exact stage does not finish within
+`:points_to_timeout` (15 seconds by default; `:infinity` keeps it exact,
+within `:souffle_timeout`), the stage runs bounded
+(`priv/dl/points_to_bounded.dl` over `clientlib/pervasive.dl`) instead of
+failing: a coarse pass, one field deep and naming no term, finds the
+leaves more than one source in a hundred holds (and more than 1000),
+which it resolves itself, a superset of their exact rows; every other
+leaf is resolved exactly. A warning names them. On Ash, even with the two
+changes above the exact stage takes thirteen minutes (13M field rows);
+bounded, four leaves are pervasive, and nineteen targets are staged
+where the exact stage stages thirteen: the extras are the TypeResolver
+server and the async task at the async limiter's three calls.
+`Argus.Analysis.Extraction.derive_points_to/2` (what scry calls),
+extraction through a store and `Argus.Findings.run/2` all fall back the
+same way.
 
 ### Priors for what a reader knows
 
