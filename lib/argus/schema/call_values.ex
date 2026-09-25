@@ -376,14 +376,20 @@ defmodule Argus.Schema.CallValues do
         layer: 2,
         fields: [
           {:func, :func_id, "function ID (mod:func/arity)"},
-          {:by, :symbol, "the module whose macro defined it, inspected; or generated"}
+          {:by, :symbol,
+           "the module whose macro defined it, inspected; generated; an OTP header's " <>
+             "file name; or yecc"}
         ],
         doc: """
         A function another module's macro wrote into this one — `use Ecto.Repo` \
         defines `stop/1` in the repo — read from the `context:` Elixir records \
         in each definition's debug-info metadata, or its `generated: true` \
-        marker (`generated`). Its call sites are the library's, not the \
-        program's. Erlang modules yield no rows.
+        marker (`generated`). In an Erlang module, a function the abstract \
+        code places under a `-file` attribute naming an OTP header \
+        (`yeccpre.hrl`, `leexinc.hrl`, an installed application's include), \
+        by that header's name; without abstract code, a yecc parser's \
+        `yecc*` functions (`yecc`). Its call sites are the library's, not \
+        the program's.
         """
       },
       %{
@@ -392,8 +398,8 @@ defmodule Argus.Schema.CallValues do
         fields: [{:func, :func_id, "function ID (mod:func/arity)"}],
         doc: """
         Every clause of `func` was written by another module's macro, or \
-        marked `generated: true` (`Argus.Extractors.Generated`): the \
-        module wrote none of it. `macro_generated` reads the definition's \
+        marked `generated: true`, or an OTP header or yecc defined it \
+        (`Argus.Extractors.Generated`): the module wrote none of it. `macro_generated` reads the definition's \
         metadata, which is its first clause's, and so names a function \
         whose first clause a `use` injected ahead of the module's own; \
         this reads each clause's. `use Cachex.Warmer`'s handle_info/2 is \

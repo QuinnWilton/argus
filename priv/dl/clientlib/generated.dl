@@ -1,0 +1,24 @@
+// Code the program did not write.
+//
+// A function every clause of which another module's macro wrote (an
+// Elixir `use`), or that an OTP header or a parser generator defined
+// (Erlang: yecc's runtime from yeccpre.hrl, an installed application's
+// include), is `macro_written` (Argus.Extractors.Generated). It is a
+// library's when its writer is none of the program's modules: its call
+// sites and handlers are the library's protocol, and a finding would
+// point at a `use` line or a generated parser, where the program has
+// nothing to change. A `use` of the program's own macro is the program's
+// code, and is judged as such.
+//
+// Requires imports.dl and an analysis that runs the Generated extractor.
+
+.decl library_written(func: symbol)
+
+library_written(f) :-
+  macro_written(f),
+  macro_generated(f, by),
+  !program_module(by).
+
+.decl program_module(mod: symbol)
+
+program_module(m) :- function_def(_, m, _, _, _).

@@ -18,6 +18,7 @@
 .include "../clientlib/replies.dl"
 .include "../clientlib/test_code.dl"
 .include "../clientlib/vocabulary.dl"
+.include "../clientlib/generated.dl"
 
 // ══ The outputs ═════════════════════════════════════════════════════
 //
@@ -225,21 +226,11 @@ late_message_source(mod) :-
   mailbox_reach.reaches(c).
 
 // A handle_info/2 every clause of which a library's macro wrote
-// (macro_written: `use Cachex.Warmer`'s, by a module outside the
-// program) is that library's protocol for its own messages, and the
-// finding would point at the `use` line, where the module has nothing to
-// add a clause to. One the program's own macro wrote is the program's:
-// the clause belongs in that macro.
-.decl library_written(handler: symbol)
-
-library_written(h) :-
-  macro_written(h),
-  macro_generated(h, by),
-  !program_module(by).
-
-.decl program_module(mod: symbol)
-
-program_module(m) :- function_def(_, m, _, _, _).
+// (library_written, clientlib/generated.dl: `use Cachex.Warmer`'s) is
+// that library's protocol for its own messages, and the finding would
+// point at the `use` line, where the module has nothing to add a clause
+// to. One the program's own macro wrote is the program's: the clause
+// belongs in that macro.
 
 partial_handler(mod, h, "late_message", "catchall", "") :-
   (behaves_as(mod, "GenServer") ; behaves_as(mod, "GenStage")),

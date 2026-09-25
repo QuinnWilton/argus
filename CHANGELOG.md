@@ -127,6 +127,17 @@ reaches a log call's arguments from a line no earlier than the call's.
 Work beside the log line, or logged from the line before, is still
 reported.
 
+**Changed.** `macro_generated`/`macro_written` cover Erlang: a function
+the abstract code places under a `-file` attribute naming an OTP header
+(yecc's `yeccpre.hrl`, leex's `leexinc.hrl`, an installed application's
+include) is written by that header; without abstract code (ejabberd
+builds without debug info) a module defining `yeccpars0/5` has its
+`yecc*` functions from yecc. `library_written` moves from mailbox.dl to
+clientlib/generated.dl, and failure's catch-all rule reads it: the
+twelve catch-alls of the yecc runtime in ejabberd's and mongooseim's
+LDAP filter parsers and rabbit's SQL parser are gone. A catch-all the
+program's own macro or header wrote is still reported.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,

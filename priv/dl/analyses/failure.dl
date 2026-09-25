@@ -12,6 +12,7 @@
 .include "../clientlib/signals.dl"
 .include "../clientlib/specs.dl"
 .include "../clientlib/vocabulary.dl"
+.include "../clientlib/generated.dl"
 
 // ══ The three outputs ═══════════════════════════════════════════════
 //
@@ -52,12 +53,15 @@
 // Catch-all rescue that silently discards exceptions: around the
 // program's own logic, where it turns a bug into silence. A try that
 // protects only sends, signals, calls into other processes and name
-// operations (try_boundary) takes a dead peer, a timeout or a taken
-// name, which is what it was written to tolerate, and the peer that
-// crashed logged its own crash.
+// operations, or a log line (try_boundary), takes a dead peer, a
+// timeout, a taken name or a failed log handler, which is what it was
+// written to tolerate. A catch-all a library wrote (library_written,
+// clientlib/generated.dl: yecc's runtime in a generated parser, a
+// `use`'s expansion) is the library's, not the program's.
 unhandled_failure(func, id, "rescue", "", guard_end) :-
   bare_rescue(id, func, guard_end),
-  !try_boundary(id, func).
+  !try_boundary(id, func),
+  !library_written(func).
 
 // ── Exit in GenServer callback ───────────────────────────────────
 

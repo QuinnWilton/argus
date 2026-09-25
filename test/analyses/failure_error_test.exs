@@ -89,6 +89,17 @@ defmodule Argus.Analyses.FailureErrorTest do
                "helper beside them, or work whose result is logged, is not"
     end
 
+    test "a catch-all an OTP header wrote into a generated parser is OTP's" do
+      skip_without_souffle()
+
+      assert {:ok, results} = Memo.analyze([:header_catchall], :failure)
+      funcs = results |> swallowed() |> Enum.map(&hd/1) |> Enum.sort()
+
+      # Positive: the module's own catch-all, and one in a header of the
+      # program's own, are the program's.
+      assert funcs == [":header_catchall:from_own_header/1", ":header_catchall:own/1"]
+    end
+
     test "does not flag a handler that reifies the exception into a value", ctx do
       skip_without_souffle()
 
