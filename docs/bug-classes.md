@@ -2422,13 +2422,13 @@ The program's own secrets flowing out belong to `exposure`. Races between the ma
 - it is found in a list parameter that every caller fills with a literal list.
 
 The site is then reported in one of two ways.
-- **A request reaches it.** Some request entry e reaches g. The entries are: a Plug's `call/2`; a Phoenix controller's actions; a LiveView's `mount/3`, `handle_params/3` or `handle_event/3`; a LiveComponent's `handle_event/3`; a Channel's `handle_in/3`; an Oban worker's `perform/1`; a Broadway `handle_message/3` or `handle_batch/4`. The proximity is `flow` when one of e's request-carrying parameters reaches the argument through the per-function derivation summaries: destructuring, tuple and binary building, the known propagators, and an element handed to the closure of a higher-order call. Otherwise it is `direct` (g is e), `adjacent` (e calls g) or `transitive`.
+- **A request reaches it.** Some request entry e reaches g. The entries are: a Plug's `call/2`; a Phoenix controller's actions; a LiveView's `mount/3`, `handle_params/3` or `handle_event/3`; a LiveComponent's `handle_event/3`; a Channel's `handle_in/3`; an Oban worker's `perform/1`; a Broadway `handle_message/3` or `handle_batch/4`; a ThousandIsland handler's `handle_data/3`; a WebSock handler's `handle_in/2`. The proximity is `flow` when one of e's request-carrying parameters reaches the argument through the per-function derivation summaries: destructuring, tuple and binary building, the known propagators, and an element handed to the closure of a higher-order call. Otherwise it is `direct` (g is e), `adjacent` (e calls g) or `transitive`.
 - **No request reaches it.** Some exported function reaches g, and the argument is made of a parameter of an exported function that nothing in the program calls. Process callbacks, Broadway's `process_name/2` and protocol implementations do not count as such functions.
 
 At run time, the atom table is fixed-size (1,048,576 atoms by default) and never garbage collected. Every distinct value an attacker supplies takes a slot for good, until the node aborts and takes every process on it down.
 
 **Assumptions and limits.**
-- Request entries are recognised by `@behaviour` plus callback name and arity. Only some parameters carry the request: the conn; a controller action's conn and params; a LiveView event's name and params; `handle_params`' params and URI; `mount/3`'s params but not its session, which the endpoint signs; a component's event and params; a channel's event and payload; an Oban job; Broadway messages.
+- Request entries are recognised by `@behaviour` plus callback name and arity. Only some parameters carry the request: the conn; a controller action's conn and params; a LiveView event's name and params; `handle_params`' params and URI; `mount/3`'s params but not its session, which the endpoint signs; a component's event and params; a channel's event and payload; an Oban job; Broadway messages; the bytes a ThousandIsland handler reads and the frame a WebSock handler is handed.
 - A Phoenix controller's actions are entries of their own (kind `controller`): the call graph enters them only through Phoenix's `action/2`, which applies an action name read from the conn at run time, and argus follows an apply only when its target resolves. A controller is a Plug that defines `phoenix_controller_pipeline/2`; every exported arity-2 function of it other than `call`, `action` and the pipeline counts, routed or not (a function plug the pipeline calls also takes the conn). A Plug that is not a controller has no such entries (`Taint.PlainPlugHelpers`). Until round 2 (2026-09-25) the actions were reachable from no entry, and a sink in one was at best "reachable from an exported function".
 - A cookie fetched with `Plug.Conn.fetch_cookies/2` is the server's: the options name the cookies to verify (`signed:`, `encrypted:`), and the propagator table does not carry the conn through that call (`Taint.CookieController`: a signed cookie decoded is quiet, one fetched with `fetch_cookies/1` is a flow). The price is the rest of that conn: its params read after the call are no flow.
 - A Channel's `join/3` and a Socket's `connect/3` are not request entries, although their topic, payload and params come from the client.
@@ -2748,44 +2748,65 @@ F's name must not end in a metadata suffix: `_at`, `_on`, `_date`, `_time`, `_co
 Round 1 of the mining (2026-09-25) classified 178 fixed bugs from
 Elixir and Erlang projects: 54 in classes argus has, 97 in classes it
 could formalize and does not, 15 that need a reader's judgement (prior
-candidates) and 12 out of scope. Three of the uncovered classes are now
-entries above (the close of a socket the server holds, a socket call
-with no timeout inside a callback, a named table created in a server's
-start function). The rest, ranked by how many projects fixed them, how
-badly they fail and how directly the bytecode shows them:
+candidates) and 12 out of scope. Three of the uncovered classes became
+entries above in round 1 (the close of a socket the server holds, a
+socket call with no timeout inside a callback, a named table created in
+a server's start function), and round 2 added the decompression sink.
+The rest, ranked by how many projects fixed them, how badly they fail
+and how directly the bytecode shows them, each with what stands in its
+way:
 
 1. **Socket messages a library leaves in its caller.** A server that
    calls hackney (HTTPoison, ExAws, Tesla's hackney adapter) in its own
    process receives a leaked `{:ssl_closed, _}`; with a partial
    handle_info/2 it crashes (hackney#464; fixed in a dozen applications
    by adding the clause). Mint in active mode and Plug.Test leave
-   messages the same way. It depends on the library's version.
-2. **Unbounded decompression of network bytes.** `:zlib` inflate, gunzip
-   or unzip of a request or response body with no size bound (three
-   advisories: Bandit, Tesla, Req). A sink family for unsafe_input.
-   *Covered in round 2*: see "Unbounded decompression of network bytes"
-   above; `:zip` and `:erl_tar` extraction remain.
+   messages the same way. *Blocked on the library's version*: hackney
+   stopped leaking in 2025, and nothing in the program's beams says which
+   hackney it runs with. A sound rule needs a fact read from the
+   dependency's `.app` (as the Specs extractor reads installed ebins) and
+   a curated table of library, version range and leaked message, each
+   row citing the fix; without it the rule reports every server that
+   calls a modern hackney. Also a prior candidate (below).
+2. **Unbounded decompression of network bytes.** *Covered in round 2*
+   (see "Unbounded decompression of network bytes" above). `:zip` and
+   `:erl_tar` extraction, to memory or to disk, remain.
 3. **A resource released only on the success path.** A monitor, a
    checked-out socket or a started process that an error return or a
    raise in a caller's fun leaves behind (Finch, Mint, Ranch, ejabberd,
-   Bitcask, ExUnit).
+   Bitcask, ExUnit). *Needs path-sensitive resource facts*: which
+   acquisition reaches which exit path unreleased, per function; the
+   release-on-every-path walk (`awaits_down_after`'s) is the model.
 4. **Leftovers in a caller's mailbox after a timed wait.** A function
    running in its caller sends a tagged request or links helpers, waits
    with `after`, and on the timeout path neither flushes the late reply
-   nor drains the helpers' exits (mnesia, EMQX, brod).
+   nor drains the helpers' exits (mnesia, EMQX, brod). *Needs the
+   request's tag tied to the receive that waits for it*, the way
+   `awaits_down_after` ties a monitor's ref to its `:DOWN`.
 5. **A periodic timer loop multiplied.** A second path arms the loop's
    message without cancelling the running one, so every event adds a loop
-   (Realtime, nerves_hub_web, Livebook).
+   (Realtime, nerves_hub_web, Livebook). *Blocked on clause-level facts*
+   (round 2 tried it): Realtime's second arm is in another clause of the
+   same handle_info/2, one headed by a map (no tag for `clause_call`), and
+   its fix is a cancel in that clause, so the rule needs "this call is
+   preceded by a timer cancel on every path" per call site; Livebook's
+   second arm is a `send(self(), tag)`, and self-sent tags are not
+   recorded (`call_tag` has calls and casts only); nerves_hub_web's arm is
+   in a function `attach_hook(:handle_params)` registers, which no
+   callback name reveals.
 6. **An asserted lookup in a message handler.** A handler for a message
    carrying a key destructures a lookup that misses for a stale message
    (Oban, Horde).
 7. **A named ETS table created at compile time.** A Plug's `init/1`
    runs when Plug.Builder compiles the pipeline, so a table it creates
    does not exist at runtime (lowendinsight): the compile-time twin of
-   the start-function entry above.
+   the start-function entry above. One sighting.
 8. **A liveness check then an act.** `Process.alive?` or a pool lookup
    decides a call to the same pid with no exit catch (hackney, brod;
-   grpc's remote pid raises).
+   grpc's remote pid raises). Formalizable over check_then_act.dl
+   (check: the alive test; act: a peer call on the same value; quiet
+   under a try taking `exit`), but every fix pair is a rebar3 tree the
+   corpus harness cannot build.
 9. **A deferred reply that is never sent** when the socket closes, or a
    grant for a caller that already timed out (eredis, poolex).
 10. **Blocking work in a dynamic child's init/1**, which serializes the
@@ -2798,16 +2819,67 @@ badly they fail and how directly the bytecode shows them:
 13. **Side effects inside a Mnesia transaction**, which retries the fun
     on conflict: the effects concern's transaction rule, for
     `:mnesia.transaction/1`.
+14. **A multicall's bad nodes asserted empty** (round 2, from EMQX's
+    audit, 1a23541): `{plugins, []} = proto:get_plugins(nodes)` crashes
+    with a badmatch when any node is down. The multicall arm of the rpc
+    rule reads only whether the pair is matched, which `{replies, _bad}`
+    always is; this shape needs the bad-nodes element matched against
+    `[]`.
+15. **An rpc answer handed to a function that assumes success** (EMQX
+    98804509: `hocon_pp:do(Conf, #{})` of an `rpc:call` answer). The
+    result is passed on, which the rpc rule reads as handled; following
+    it into the callee's clauses is the step.
 
 The mining also found instances that existing classes miss as written.
-The largest are rpc results judged only where the rpc is made (EMQX
-fixed about fifteen wrapper sites in one audit; round 2 follows the
-answer through wrappers), `trap_exit` keyed by
-the module that sets it rather than the process that runs it, callback
-timeouts outside init/1, an unlinked `GenServer.start` not counted as a
-spawn, `insert_new` as the check of a missing-row race, and a library's
-API function in a behaviour module, which `linked_in_library` skips with
-the module's callbacks (elixir-nodejs#45).
+Round 2 lifted four: rpc answers returned through wrappers are judged
+where their caller matches them (EMQX's audit, emqx#18287), `trap_exit`
+is keyed by the process that runs it, a process module's client API is
+judged by `linked_in_library` (elixir-nodejs#45), and Phoenix controller
+actions are request entries. Still open: callback timeouts outside
+init/1, an unlinked `GenServer.start` not counted as a spawn, and
+`insert_new` as the check of a missing-row race.
+
+### Prior candidates
+
+Questions a rule cannot answer from the bytecode and a reader answers
+at a glance: each a candidate for a question type the priors round
+(`Argus.Priors`) could ask, with the rule that would read the answer.
+
+- *Does the data this function decompresses come from the network, or
+  from a source the program trusts?* The decompression sink's
+  no-request arm (Tesla's response body, yes; Oban's own notification
+  payloads, OTP's compressed files, no).
+- *Does this client library, at the version installed, leak socket
+  messages to its caller?* Backlog item 1 (hackney before 2025).
+- *Is this state a deliberate resting state?* `terminal_without_stop`,
+  whose prose asks the reader to ignore one.
+- *Does the caller of this start wait for the child to exit?* The
+  unbounded-children rule (Livebook's `UniqueTask.run/2` monitors and
+  blocks for the child's `:DOWN`).
+- *Is this value one the server signed or encrypted?* A cookie or
+  session value read through something other than
+  `fetch_cookies/2`'s options (a custom verifier), which request flow
+  still counts as the request's.
+- *Does this branch treat a failure tuple as the safe answer?* The rpc
+  boolean arm (rabbit's `is_booted/1` sends `{:badrpc, _}` to
+  `_ -> false`).
+- From round 1: is the pid this call targets a pooled or transient
+  connection that may vanish (xandra); which pids inside a handle the
+  process must monitor (broadway_rabbitmq); does a call transfer
+  ownership of data to the callee (sequin); can a cast site fire faster
+  than its receiver drains (electric); is an accumulator's growth
+  bounded by something the peer does not control (bandit, mint); which
+  error reasons of a call are transient per peer (thousand_island);
+  does an API raise besides returning its error tuple (hexpm, Finch);
+  does a port's executable exit when its stdin closes (file_system);
+  does a receiver depend on X arriving before Y (syn); is a registrar
+  meant to restart independently of its registrants (firezone); does a
+  linked helper of another application touch that application's state
+  in its terminate (opentelemetry-erlang); is a caller long-lived, so
+  linked helpers it forgets accumulate (hologram); is a named process a
+  per-node resource (grpc); does a callee do slow I/O inside a pool
+  server, and does an `already_started` loser depend on the winner's
+  init having finished.
 
 ## Consistency issues
 
@@ -3080,8 +3152,9 @@ interaction rather than reach (L17).
 
 ### Suspected rule defects found while cataloguing
 
-Round 1 found these while cataloguing; round 2 confirmed each with a
-fixture before fixing it, and says so under the item.
+Round 1 found these while cataloguing. Round 2 took the first four,
+confirmed each with a fixture before fixing it, and says so under the
+item; 5 to 8 are still open.
 
 1. **state_machine can barely report what it describes.** Every
    `keep_state`/`repeat_state` return is a transition from the state to
@@ -3124,7 +3197,23 @@ fixture before fixing it, and says so under the item.
 8. **effects' model lacks `:telemetry`**, so a terminate/2 that emits
    telemetry is shutdown's `unclear` cleanup.
 
-### Fixed in this round
+### Fixed in round 2
+
+- The four suspected defects above (state_machine self-loops, startup's
+  continue calling its supervisor, the purity check's BIFs, Phoenix
+  controller actions), each with a positive fixture and, where it
+  suppresses anything, a quiet one beside it.
+- New suppressions, each beside a positive that still fires: a task
+  stream a request enumerates (`StreamLive`, beside `TaskLive`), a
+  signed cookie (`CookieController.session/2`, beside `prefs/2`), a
+  multicall wrapper's pair and a predicate wrapper (the rpc wrapper arm,
+  beside `RpcWrapperCaller`), a behaviour module that runs no process
+  (`linked_in_library`, beside `PoolCallSupervisor`), a trap no process
+  reaches (beside `TrapsThroughHelper`).
+- Request entries gained Phoenix controller actions, ThousandIsland
+  handlers and WebSock handlers.
+
+### Fixed in round 1
 
 - A gen_statem `:info` clause that asks anything of the data (or, in
   handle_event/4, the state) is a catch-all (391ecc6), the lesson
