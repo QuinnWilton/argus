@@ -23,7 +23,8 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
     U.PollerTakes,
     U.Retry,
     U.WarmUp,
-    U.Unjudged
+    U.Unjudged,
+    U.TerminateWaits
   ]
 
   setup_all do
@@ -73,7 +74,8 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
     assert length(rows) == 9, inspect(rows, pretty: true)
 
     quiet =
-      ~w(Handled Delegates OpenClause WaitsForDown Flushes Client PollerTakes WarmUp Unjudged)
+      ~w(Handled Delegates OpenClause WaitsForDown Flushes Client PollerTakes WarmUp Unjudged
+         TerminateWaits)
 
     refute Enum.any?(rows, fn {_, _, _, server, _} -> server in quiet end)
   end

@@ -27,6 +27,16 @@ tag tells `partial_handler`'s "late_message" source that a server
 takes the timer it arms for itself: a `{:tick, at}` timer beside a
 `{:tick, _}` clause is no late message.
 
+**Fixed.** `recv_pattern` is read in anonymous functions too. A `for`
+or an `Enum.each` whose body receives compiles that body into one, and
+its receives were skipped with the compiler's other generated
+functions: Broadway's `Topology.Terminator` monitors each process from
+a `for` in terminate/2 and waits for its `:DOWN` there, and
+`mailbox.unhandled_info` reported that `:DOWN` as reaching only the
+catch-all handle_info/2. The rules reading `recv_pattern` (the timer
+flush, `unhandled_info`, `unreceived_message`, blocking's cancel_timer
+idiom) now see those receives.
+
 **Added.** Schema 91. `timer_tag(id, tag)`
 (`Argus.Extractors.ErrorHandling`): the atom the message of the timer
 armed at `id` is told apart by — the message itself, or a tuple's

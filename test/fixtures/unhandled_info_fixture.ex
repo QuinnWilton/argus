@@ -189,6 +189,38 @@ defmodule Argus.Test.Fixtures.UnhandledInfo do
     end
   end
 
+  defmodule TerminateWaits do
+    @moduledoc """
+    Broadway's Terminator: a catch-all drops every message, and
+    terminate/2 monitors each process in a `for` and waits for its
+    :DOWN there — in the anonymous function the comprehension compiles
+    into.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    @impl true
+    def init(names), do: {:ok, names}
+
+    @impl true
+    def handle_info(_, state), do: {:noreply, state}
+
+    @impl true
+    def terminate(_, names) do
+      for name <- names, pid = GenServer.whereis(name) do
+        ref = Process.monitor(pid)
+
+        receive do
+          {:done, ^pid} -> :ok
+          {:DOWN, ^ref, _, _, _} -> :ok
+        end
+      end
+
+      :ok
+    end
+  end
+
   defmodule Unjudged do
     @moduledoc "A timer whose message is a binary, not an atom or a tagged tuple: not judged."
     use GenServer

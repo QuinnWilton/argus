@@ -623,18 +623,21 @@ defmodule Argus.Extractors.ErrorHandling do
 
   # Per function: which map keys receive a call's result (timer_store),
   # which callee's result the function returns (returns_call), and what
-  # each receive matches (recv_pattern).
+  # each receive matches (recv_pattern). A receive in an anonymous
+  # function is as much the process's as one in a named function (a
+  # `for` in terminate/2 that waits for each monitor's :DOWN compiles
+  # its body into one), so recv_pattern is read in every function.
   defp emit_timer_flows(facts, mod, functions) do
     Enum.reduce(functions, facts, fn {:function, name, arity, _entry, instrs}, acc ->
+      func_id = InstrId.func_id(mod, name, arity)
+      acc = emit_recv_patterns(acc, func_id, instrs)
+
       if generated?(name) do
         acc
       else
-        func_id = InstrId.func_id(mod, name, arity)
-
         acc
         |> emit_stores(mod, func_id, instrs)
         |> emit_returns(mod, func_id, instrs)
-        |> emit_recv_patterns(func_id, instrs)
       end
     end)
   end
