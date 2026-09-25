@@ -81,6 +81,21 @@ wait. blocking runs the extractor too.
 
 ### Process rules, read against real programs
 
+**Fixed.** `name_lookup`'s `checked` reads a comparison whose boolean
+is a value as a check, as it read one in a guard: `whereis(?MODULE) =/=
+undefined` returned from ejabberd_redis_sup's `is_started/0`, and
+`is_pid(erlang:whereis(Name))` (rabbit_ff_controller, elixir-ls's
+ExUnitFormatter), were "whereis result used without a nil check". A
+comparison with a value that is never nil — self(), a literal other
+than nil — checks too when the pid is not read again where the two
+differ: ejabberd's `case whereis(?MODULE) == self() of true -> ...;
+false -> gen_server:call(?MODULE, ...)`, the "am I the registered
+process?" dispatch, calls by name on the branch where the pid may be
+nil. `failure.unchecked_result` also leaves a lookup whose nil use a
+rescue of the badarg takes (rabbit_vm's `process_info(whereis(..))`
+under `catch error:badarg`). ejabberd 3 rows to 0, rabbitmq 3 to 1,
+elixir-ls 8 to 5.
+
 **Fixed.** `shutdown.cleanup_defect` counts only the cleanup a
 supervisor stop runs and loses. terminate/2 often chooses its work by
 the reason: elixir-ls's servers return at once for `:normal`,

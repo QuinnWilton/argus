@@ -229,7 +229,18 @@ watched_spawn(id) :-
 // edit to look at nothing. `spawn_call` now carries its caller.
 
 unchecked_result(func, id, "Process.whereis", name) :-
-  name_lookup(id, func, "whereis", _, "literal", name, "unchecked").
+  name_lookup(id, func, "whereis", _, "literal", name, "unchecked"),
+  !nil_use_caught(id, func).
+
+// A lookup inside a try that takes the badarg a BIF raises on a nil or
+// :undefined pid (`process_info(whereis(n), ...)` under `catch
+// error:badarg`, rabbit_vm's memory/0): its missing case is handled
+// where it is used. Only the error class: a call to the name exits
+// instead, and that is not what these catches take.
+.decl nil_use_caught(id: symbol, func: symbol)
+
+nil_use_caught(id, f) :- covered_by_catch(id, f, _, "error").
+nil_use_caught(id, f) :- try_covers(t, f, id, "try"), catch_tag(t, f, "error", ":badarg").
 
 // ── The belief the other call sites hold ────────────────────────
 //

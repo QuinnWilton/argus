@@ -28,6 +28,19 @@ defmodule Argus.Analyses.FailureWhereisTest do
              end)
     end
 
+    test "a lookup whose nil use is rescued is not flagged; one rescuing else is" do
+      skip_without_souffle()
+
+      funcs =
+        [Argus.Test.Fixtures.StaticWhereis]
+        |> analyze()
+        |> whereis()
+        |> Enum.map(fn [func | _] -> func |> String.split(":") |> List.last() end)
+
+      refute "memory/0" in funcs, "the ArgumentError rescue takes nil's badarg"
+      assert "memory_or_raise/0" in funcs, "a KeyError rescue does not"
+    end
+
     test "does not flag whereis on a runtime-computed name" do
       skip_without_souffle()
 

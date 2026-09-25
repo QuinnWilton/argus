@@ -324,14 +324,32 @@ defmodule Argus.Extractors.ProcessRegistry do
   # decides: one of the value (nil is also `[]`, so a Registry.lookup
   # result compared against the empty list is checked the same way), a
   # type test on it, or a select over it that lists nil means the caller
-  # handles the missing case. Any other use of the value first, or
-  # reaching the end of the straight line, means it does not.
+  # handles the missing case. A comparison in a guard is a test; one
+  # whose boolean is a value (`whereis(m) =/= :undefined` returned,
+  # `is_pid(Process.whereis(n))`) is a bif, and decides the same way.
+  # Any other use of the value first, or reaching the end of the
+  # straight line, means it does not.
+  #
+  # A comparison with a value that is never nil — self(), a literal
+  # other than nil — asks a question of its own (`whereis(m) == self()`:
+  # am I the registered process?) and uses the value in no way nil can
+  # break. It decides when the value is not read again where the two
+  # differ, the one place it may still be nil: the branch taken when
+  # they differ for a test, anywhere after for a bif. That walk gives up
+  # as this one does.
   @nil_atoms [{:atom, nil}, {:atom, :undefined}]
   @equality_tests [:is_eq_exact, :is_ne_exact, :is_eq, :is_ne]
+  @equality_bifs [:==, :"/=", :"=:=", :"=/="]
   @type_tests [:is_atom, :is_pid, :is_port, :is_nil, :is_list, :is_nonempty_list]
+  @type_bifs [:is_atom, :is_pid, :is_port, :is_list]
 
   defp nil_checked?(instrs, idx) do
-    instrs |> Enum.drop(idx + 1) |> checked_walk([{:x, 0}])
+    labels = label_index(instrs)
+    checked_walk(Enum.drop(instrs, idx + 1), [{:x, 0}], [], {instrs, labels})
+  end
+
+  defp label_index(instrs) do
+    for {{:label, l}, i} <- Enum.with_index(instrs), into: %{}, do: {l, i}
   end
 
   # Before the deciding test the value is followed through the registers
@@ -339,29 +357,108 @@ defmodule Argus.Extractors.ProcessRegistry do
   # clobber ends a register's hold on it. The walk gives up where the
   # value is read, where no register holds it any more, and where control
   # does not fall through (a return, a jump, a tail call, a raise).
-  defp checked_walk([], _regs), do: false
-  defp checked_walk(_instrs, []), do: false
+  # `selfs` are the registers holding self().
+  defp checked_walk([], _regs, _selfs, _fun), do: false
+  defp checked_walk(_instrs, [], _selfs, _fun), do: false
 
-  defp checked_walk([{:test, op, _fail, args} | _rest], regs) when op in @equality_tests do
-    args = Enum.map(args, &Instr.register/1)
-    Enum.any?(args, &(&1 in regs)) and Enum.any?(args, &(&1 in @nil_atoms))
+  defp checked_walk([{:test, op, fail, args} | rest], regs, selfs, fun)
+       when op in @equality_tests do
+    case compared(args, regs, selfs) do
+      nil -> true
+      :never_nil -> unread_where_differ(op, fail, rest, regs, fun)
+      :other -> false
+    end
   end
 
-  defp checked_walk([{:test, op, _fail, [reg | _]} | _rest], regs) when op in @type_tests do
+  defp checked_walk([{:test, op, _fail, [reg | _]} | _rest], regs, _selfs, _fun)
+       when op in @type_tests do
     Instr.register(reg) in regs
   end
 
-  defp checked_walk([{:select_val, reg, _fail, {:list, cases}} | _rest], regs) do
+  defp checked_walk([{:select_val, reg, _fail, {:list, cases}} | _rest], regs, _selfs, _fun) do
     Instr.register(reg) in regs and Enum.any?(cases, &(&1 in @nil_atoms))
   end
 
-  defp checked_walk([instr | rest], regs) do
+  defp checked_walk([{:bif, op, _fail, args, _dst} = instr | rest], regs, selfs, _fun)
+       when op in @equality_bifs do
+    case compared(args, regs, selfs) do
+      nil -> true
+      :never_nil -> unread?(rest, Instr.carry(instr, regs))
+      :other -> false
+    end
+  end
+
+  defp checked_walk([{:bif, op, _fail, [reg], _dst} | _rest], regs, _selfs, _fun)
+       when op in @type_bifs do
+    Instr.register(reg) in regs
+  end
+
+  defp checked_walk([{:bif, :self, _fail, [], dst} = instr | rest], regs, selfs, fun) do
+    checked_walk(rest, Instr.carry(instr, regs), [Instr.register(dst) | selfs], fun)
+  end
+
+  defp checked_walk([instr | rest], regs, selfs, fun) do
     cond do
       not Instr.falls_through?(instr) -> false
       reads?(instr, regs) -> false
-      true -> checked_walk(rest, Instr.carry(instr, regs))
+      true -> checked_walk(rest, Instr.carry(instr, regs), Instr.carry(instr, selfs), fun)
     end
   end
+
+  # What a comparison of the value is with: nil (or :undefined), a value
+  # that is never nil, or anything else (another register, or a
+  # comparison that does not read the value at all).
+  defp compared(args, regs, selfs) do
+    args = Enum.map(args, &Instr.register/1)
+
+    case Enum.split_with(args, &(&1 in regs)) do
+      {[_ | _], [other]} ->
+        cond do
+          other in @nil_atoms -> nil
+          other in selfs or never_nil_literal?(other) -> :never_nil
+          true -> :other
+        end
+
+      _ ->
+        :other
+    end
+  end
+
+  defp never_nil_literal?({:atom, a}), do: a not in [nil, :undefined]
+  defp never_nil_literal?({:integer, _}), do: true
+  defp never_nil_literal?({:float, _}), do: true
+  defp never_nil_literal?({:literal, l}), do: l not in [nil, :undefined]
+  defp never_nil_literal?(_other), do: false
+
+  # Where a test finds the two different: its fail label for an equality
+  # test, the next instruction for an inequality.
+  defp unread_where_differ(op, {:f, label}, _rest, regs, {instrs, labels})
+       when op in [:is_eq_exact, :is_eq] do
+    case Map.fetch(labels, label) do
+      {:ok, at} -> unread?(Enum.drop(instrs, at + 1), regs)
+      :error -> false
+    end
+  end
+
+  defp unread_where_differ(_op, _fail, rest, regs, _fun), do: unread?(rest, regs)
+
+  # The value is not read again along the straight line: every register
+  # holding it is written or clobbered first. A branch, a jump or the
+  # end of the line gives up; a return reads x0.
+  defp unread?(_instrs, []), do: true
+  defp unread?([], _regs), do: false
+
+  defp unread?([instr | rest], regs) do
+    cond do
+      reads?(instr, regs) -> false
+      not Instr.falls_through?(instr) -> false
+      branches?(instr) -> false
+      true -> unread?(rest, Instr.carry(instr, regs))
+    end
+  end
+
+  defp branches?(instr) when elem(instr, 0) in [:test, :select_val, :select_tuple_arity], do: true
+  defp branches?(_instr), do: false
 
   # Whether `instr` reads the value other than to copy it.
   defp reads?(instr, regs) do

@@ -136,6 +136,33 @@ defmodule Argus.Extractors.ProcessRegistryTest do
       assert by_func["unchecked_whereis/1"] == "unchecked"
       assert by_func["find_process/1"] == "unchecked"
     end
+
+    test "a comparison whose boolean is a value checks, as a test does" do
+      facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.WhereisModule))
+
+      by_func =
+        Map.new(facts[:name_lookup], fn [_id, func, _api, _scope, _source, _key, checked] ->
+          {func |> String.split(":") |> List.last(), checked}
+        end)
+
+      assert by_func["started?/1"] == "checked"
+      assert by_func["alive?/1"] == "checked"
+    end
+
+    test "a comparison with self() checks when the pid is not read where they differ" do
+      facts = ProcessRegistry.extract(disassemble(Argus.Test.Fixtures.WhereisModule))
+
+      by_func =
+        Map.new(facts[:name_lookup], fn [_id, func, _api, _scope, _source, _key, checked] ->
+          {func |> String.split(":") |> List.last(), checked}
+        end)
+
+      assert by_func["dispatch/2"] == "checked"
+      assert by_func["registered_self?/1"] == "checked"
+
+      assert by_func["dispatch_by_pid/2"] == "unchecked",
+             "the branch where the pid is not self() sends to it, and it may be nil"
+    end
   end
 
   describe "extract/1 — registered and unregister" do

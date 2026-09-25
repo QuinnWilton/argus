@@ -74,6 +74,29 @@ defmodule Argus.Test.Fixtures.WhereisModule do
   def unchecked_whereis(name) do
     send(Process.whereis(name), :hello)
   end
+
+  # A comparison whose boolean is the value returned is a bif, not a
+  # test, and checks all the same.
+  def started?(name), do: Process.whereis(name) != nil
+
+  def alive?(name), do: is_pid(Process.whereis(name))
+
+  # Am I the registered process? Where the two differ the pid may be nil,
+  # and this branch calls by name instead.
+  def dispatch(name, msg) do
+    if Process.whereis(name) == self(),
+      do: {:local, msg},
+      else: GenServer.call(name, msg)
+  end
+
+  def registered_self?(name), do: Process.whereis(name) == self()
+
+  # The same question, but the branch where they differ sends to the pid,
+  # which may be nil there.
+  def dispatch_by_pid(name, msg) do
+    pid = Process.whereis(name)
+    if pid == self(), do: {:local, msg}, else: send(pid, msg)
+  end
 end
 
 defmodule Argus.Test.Fixtures.RegistryUser do
@@ -120,6 +143,23 @@ defmodule Argus.Test.Fixtures.StaticWhereis do
   # (TOCTOU) and this call site is what whereis_race flags.
   def lookup do
     Process.whereis(:my_process)
+  end
+
+  # The nil a missing process leaves is a badarg where it is used, and
+  # the rescue takes it.
+  def memory do
+    {:memory, bytes} = Process.info(Process.whereis(:my_metrics), :memory)
+    bytes
+  rescue
+    ArgumentError -> 0
+  end
+
+  # The same use, rescuing something else: nil's badarg is not taken.
+  def memory_or_raise do
+    {:memory, bytes} = Process.info(Process.whereis(:my_metrics), :memory)
+    bytes
+  rescue
+    KeyError -> 0
   end
 end
 
