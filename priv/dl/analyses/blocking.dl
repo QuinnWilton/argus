@@ -553,7 +553,8 @@ bottleneck_caller(caller_mod, target_mod, witness) :-
 
 same_process_edge(caller, callee) :-
   call_edge(caller, callee),
-  !runs_elsewhere(caller, callee).
+  !runs_elsewhere(caller, callee),
+  !side_call(caller, callee).
 
 .decl callback_reaches(entry: symbol, func: symbol, proximity: symbol)
 
@@ -662,7 +663,9 @@ socket_infinity_at(g, p, c) :-
   call_arg_forward(f, g, p, q),
   socket_infinity_at(f, q, c).
 
-.init socket_reach = SameProcessReach
+.init socket_reach = SameProcessReachCut
+
+socket_reach.cut(f, g) :- side_call(f, g).
 
 socket_reach.seed(h, h) :- socket_wait_infinity(_, _, _, h).
 
@@ -970,6 +973,10 @@ answers_in_time(id) :- out_call(_, id, mod, fun, _), quick_api(mod, fun).
 answers_in_time(id) :- out_call(_, id, mod, fun, _), answers_from_os(mod, fun).
 answers_in_time(id) :- out_call(_, id, mod, fun, n), self_bounded_api(mod, fun, n).
 answers_in_time(id) :- out_call(_, id, mod, _, _), computes_only(mod).
+// A call into the logging or telemetry API (side_api, calls.dl): its
+// machinery waits only on its own servers, which answer from their own
+// state and call no process of the program's.
+answers_in_time(id) :- out_call(_, id, mod, _, _), side_api(mod).
 answers_in_time(id) :- out_call(_, id, ":erlang", fun, _), !erlang_waits(fun).
 // `x.field` on a value the compiler could not prove a map compiles to
 // this helper: on a map it reads the field. On an atom it would call

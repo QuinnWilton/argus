@@ -133,6 +133,35 @@ defmodule Argus.Analyses.MailboxMonitorTest do
     refute named?(funcs(ctx), "MonitorLeak.FlushesInHelper")
   end
 
+  test "a timed wait in the logger's machinery is not the monitoring function's" do
+    skip_without_souffle()
+
+    # With OTP's logger and gen in the program, :logger.error/1 reaches
+    # gen's timed receive through a handler's removal: a side path
+    # (side_call), whose waits are on the logger's own monitors.
+    assert {:ok, r} =
+             Memo.analyze(
+               [
+                 M.LogsAfterMonitor,
+                 M.LogsAndLeaks,
+                 :logger,
+                 :logger_backend,
+                 :logger_server,
+                 :gen_server,
+                 :gen
+               ],
+               :mailbox
+             )
+
+    leaks =
+      r
+      |> Rows.where(:mailbox, "unconsumed_monitor", kind: "timed_wait")
+      |> Enum.map(&Enum.at(&1, 1))
+
+    assert "Argus.Test.Fixtures.MonitorLeak.LogsAndLeaks:watch/1" in leaks
+    refute "Argus.Test.Fixtures.MonitorLeak.LogsAfterMonitor:watch/1" in leaks
+  end
+
   describe "a monitor the caller goes on to collect" do
     test "the supervisor shutdown shape is not reported", ctx do
       skip_without_souffle()

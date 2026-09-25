@@ -261,6 +261,26 @@ defmodule Argus.Analyses.BlockingChainTest do
              ]
     end
 
+    test "a server that logs and replies answers at once; one that logs and waits does not" do
+      skip_without_souffle()
+
+      # A call into the logging API is a side path: its machinery waits on
+      # its own servers, so it answers in time. The receive beside it does
+      # not.
+      {:ok, results} =
+        Memo.analyze(
+          [S.AsksLogs, S.Logs, S.AsksLogsThenWaits, S.LogsThenWaits, :logger, :logger_backend],
+          :blocking
+        )
+
+      assert infinity(results) == [
+               [
+                 "Argus.Test.Fixtures.SidePaths.AsksLogsThenWaits:handle_call/3",
+                 "Argus.Test.Fixtures.SidePaths.LogsThenWaits"
+               ]
+             ]
+    end
+
     test "a server that parks the request and replies later does not answer at once" do
       skip_without_souffle()
 

@@ -20,6 +20,33 @@ defmodule Argus.Test.Fixtures.MonitorLeak do
     end
   end
 
+  defmodule LogsAfterMonitor do
+    @moduledoc """
+    Monitors and logs, and hands the ref back: it waits for nothing
+    itself. A timed receive the logger's machinery makes on the way (gen's
+    call when a handler is removed) is on that machinery's own monitor.
+    """
+    def watch(pid) do
+      ref = Process.monitor(pid)
+      :logger.error(~c"watching")
+      ref
+    end
+  end
+
+  defmodule LogsAndLeaks do
+    @moduledoc "The same log beside a timed wait of its own: the monitor is live when it gives up."
+    def watch(pid) do
+      ref = Process.monitor(pid)
+      :logger.error(~c"watching")
+
+      receive do
+        {:DOWN, ^ref, :process, _, _} -> :down
+      after
+        1000 -> :timeout
+      end
+    end
+  end
+
   defmodule InEach do
     @moduledoc "The same leak in a closure Enum.each runs, in the caller's process."
     def wait_all(pids) do

@@ -162,6 +162,18 @@ defmodule Argus.Analyses.SingletonShapesTest do
            |> Enum.map(&hd/1)
            |> Enum.uniq() == ["Argus.Test.Fixtures.InitRecv.HandsOffAndWaits"]
 
+    # Logging on the way is a side path; the wait beside it still holds
+    # the start.
+    {:ok, logs} = Memo.analyze([InitRecv.LogsAndWaits, :logger, :logger_backend], :startup)
+
+    assert logs
+           |> Rows.where(:startup, "unbounded_effect_in_init",
+             kind: "receive",
+             drop: [:peer, :permille]
+           )
+           |> Enum.map(&hd/1)
+           |> Enum.uniq() == ["Argus.Test.Fixtures.InitRecv.LogsAndWaits"]
+
     {:ok, findings} =
       Memo.run_analyses([InitRecv.Waits, InitRecv.SpawnsLoop], analyses: [:startup])
 

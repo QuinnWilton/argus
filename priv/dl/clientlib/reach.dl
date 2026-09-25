@@ -151,6 +151,13 @@
   reaches(r, h) :- reaches(r, g), call_edge(g, h), !runs_elsewhere(g, h).
 }
 
+// ForwardSameProcessReach, less the edges the instance names `cut` (a
+// side path, side_call in calls.dl).
+.comp ForwardSameProcessReachCut : Forward {
+  .decl cut(func: symbol, callee: symbol)
+  reaches(r, h) :- reaches(r, g), call_edge(g, h), !runs_elsewhere(g, h), !cut(g, h).
+}
+
 // Forward, staying inside the root's module: a server's own stack.
 .comp ForwardIntraModuleReach : Forward {
   reaches(r, h) :-

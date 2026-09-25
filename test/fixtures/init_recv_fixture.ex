@@ -92,6 +92,25 @@ defmodule Argus.Test.Fixtures.InitRecv.Waits do
   end
 end
 
+defmodule Argus.Test.Fixtures.InitRecv.LogsAndWaits do
+  @moduledoc false
+  # Logs, then waits for a message with no `after`: the logging API is a
+  # side path, and the receive beside it still holds the start.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(parent) do
+    :logger.info(~c"starting")
+    send(parent, {:ready, self()})
+
+    receive do
+      {:go, config} -> {:ok, config}
+    end
+  end
+end
+
 defmodule Argus.Test.Fixtures.InitRecv.SpawnsLoop do
   @moduledoc false
   # init/1 spawns a loop that waits forever: the wait is the loop's

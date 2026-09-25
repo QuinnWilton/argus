@@ -37,6 +37,57 @@ defmodule Argus.Test.Fixtures.SidePaths do
     def handle_call(:relay, _from, state), do: {:reply, Logs.work(), state}
   end
 
+  defmodule AsksLogs do
+    @moduledoc "Waits with :infinity on Logs, whose handle_call logs and replies: it answers at once."
+    use GenServer
+
+    alias Argus.Test.Fixtures.SidePaths.Logs
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+
+    @impl true
+    def handle_call(:relay, _from, state),
+      do: {:reply, GenServer.call(Logs, :work, :infinity), state}
+  end
+
+  defmodule AsksLogsThenWaits do
+    @moduledoc "Waits with :infinity on LogsThenWaits, which logs and then waits: a wait all the same."
+    use GenServer
+
+    alias Argus.Test.Fixtures.SidePaths.LogsThenWaits
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+
+    @impl true
+    def handle_call(:relay, _from, state),
+      do: {:reply, GenServer.call(LogsThenWaits, :work, :infinity), state}
+  end
+
+  defmodule LogsThenWaits do
+    @moduledoc "Logs from handle_call, then waits for a message of its own."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+
+    @impl true
+    def handle_call(:work, _from, state) do
+      :logger.error(~c"waiting")
+
+      receive do
+        {:done, result} -> {:reply, result, state}
+      end
+    end
+  end
+
   defmodule StopsProxy do
     @moduledoc "Phoenix's CodeReloader: stops a proxy with :infinity; the proxy's clause only replies."
     use GenServer

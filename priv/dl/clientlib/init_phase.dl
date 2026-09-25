@@ -14,10 +14,13 @@
 
 // `init` is init/1 of a process module, and the rpc at `site` runs on its
 // stack: in init/1, or in anything init/1 calls in its own process (not
-// what a spawn, task or agent runs: runs_elsewhere).
+// what a spawn, task or agent runs: runs_elsewhere), not through the
+// logging or telemetry API (side_call, calls.dl).
 .decl rpc_during_init(init: symbol, site: symbol)
 
-.init init_rpc_reach = SameProcessReach
+.init init_rpc_reach = SameProcessReachCut
+
+init_rpc_reach.cut(f, g) :- side_call(f, g).
 
 init_rpc_reach.seed(g, site) :- rpc_call(site, g, _, _).
 

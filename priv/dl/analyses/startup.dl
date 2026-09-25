@@ -184,8 +184,13 @@ blocks_on_peer(mod, "init", target, "sup", "", "", site, cat(api, ".", op)) :-
   sup_management_call(site, func, api, op, target).
 
 // Backwards from the supervisor calls, which are few, over what init's
-// own process runs: a task init starts may wait on the supervisor.
-.init sup_reach = SameProcessReach
+// own process runs: a task init starts may wait on the supervisor. The
+// logging and telemetry APIs are side paths (side_call, calls.dl): their
+// machinery waits on its own servers, which call no process of the
+// program's.
+.init sup_reach = SameProcessReachCut
+
+sup_reach.cut(f, g) :- side_call(f, g).
 
 sup_reach.seed(g, site) :- sup_management_call(site, g, _, _, _).
 
@@ -216,7 +221,9 @@ handler_blocks(mod, h, site) :-
   remote_call(site, h, "GenServer", "call", _),
   sync_call_site(site, h, _, -1).
 
-.init infinite_call_reach = SameProcessReach
+.init infinite_call_reach = SameProcessReachCut
+
+infinite_call_reach.cut(f, g) :- side_call(f, g).
 
 infinite_call_reach.seed(g, site) :-
   remote_call(site, g, "GenServer", "call", _),
@@ -255,8 +262,10 @@ infinite_recv(f) :- remote_call(_, f, ":ssl", "recv", 2).
 infinite_recv(f) :- call_arg(f, g, pos, ":infinity"), infinite_recv_param(g, pos).
 
 // Only what init's own process runs: a loop init spawns waits in its own
-// process, and init returns without it.
-.init recv_reach = SameProcessReach
+// process, and init returns without it; and not through a side path.
+.init recv_reach = SameProcessReachCut
+
+recv_reach.cut(f, g) :- side_call(f, g).
 
 recv_reach.seed(f, f) :- infinite_recv(f).
 
@@ -342,6 +351,7 @@ unbounded_wait_at(f, id) :-
 .init receive_reach = SameProcessReachCut
 
 receive_reach.cut(f, g) :- acked_edge(f, g).
+receive_reach.cut(f, g) :- side_call(f, g).
 receive_reach.seed(f, f) :- unbounded_wait_at(f, _).
 
 init_effect(mod, "receive", r, id) :-
@@ -383,6 +393,7 @@ enters_loop_at(f, id) :-
 .init enter_reach = SameProcessReachCut
 
 enter_reach.cut(f, g) :- acked_edge(f, g).
+enter_reach.cut(f, g) :- side_call(f, g).
 enter_reach.seed(f, f) :- enters_loop_at(f, _).
 
 .decl spawned_bare(mod: symbol)
@@ -463,7 +474,9 @@ connect_api(api) :- impure_call(_, _, api, "network", _), match(":ssl.connect/.*
 connect_api(api) :- impure_call(_, _, api, "network", _), match(":gen_udp.open/.*", api).
 connect_api(api) :- impure_call(_, _, api, "network", _), match(":httpc.request/.*", api).
 
-.init connect_reach = SameProcessReach
+.init connect_reach = SameProcessReachCut
+
+connect_reach.cut(f, g) :- side_call(f, g).
 
 connect_reach.seed(f, api) :- impure_call(_, f, api, "network", _), connect_api(api).
 

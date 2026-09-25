@@ -617,7 +617,9 @@ flushes_after_cancel(cancel, msg) :-
 
 // The functions the cancel_timer `cancel` belongs to, and what they run
 // in their own process.
-.init cancel_scope = ForwardSameProcessReach
+.init cancel_scope = ForwardSameProcessReachCut
+
+cancel_scope.cut(f, g) :- side_call(f, g).
 
 cancel_scope.root(cancel, c) :- timer_cancel(cancel, c, _, _, _).
 cancel_scope.root(cancel, g) :- hands_down_ref(cancel, g).
@@ -787,7 +789,9 @@ runs_in_callers(func, mod) :-
 // default handle_info logs and ignores, so only a module with its own
 // partial handle_info/2 is at risk. An async_nolink inside a task the
 // server starts sends its messages to the task.
-.init nolink_reach = SameProcessReach
+.init nolink_reach = SameProcessReachCut
+
+nolink_reach.cut(f, g) :- side_call(f, g).
 
 nolink_reach.seed(f, f) :- mailbox_writer(_, f, "task_nolink").
 
@@ -804,11 +808,17 @@ partial_handler(mod, h, "task_nolink", "down", s) :-
   !callback_tag(h, "handle_info", ":DOWN").
 
 // ══ Monitors nobody waits for ═══════════════════════════════════════
-.init timed_wait = SameProcessReachSet
+// What the function runs in its own process, apart from the logging and
+// telemetry APIs (side_call, calls.dl): a timed receive or a demonitor
+// in that machinery is on its own monitor, not the function's.
+.init timed_wait = SameProcessReachSetCut
 
+timed_wait.cut(f, g) :- side_call(f, g).
 timed_wait.seed(func) :- timed_receive(func).
 
-.init flush = SameProcessReachSet
+.init flush = SameProcessReachSetCut
+
+flush.cut(f, g) :- side_call(f, g).
 
 flush.seed(func) :- demonitor_call(_, func, "flush").
 
@@ -1189,7 +1199,9 @@ spawned_target(runs) :-
   instance(p, b),
   process_start(_, _, b, "spawn", runs).
 
-.init spawned_reach = ForwardSameProcessReach
+.init spawned_reach = ForwardSameProcessReachCut
+
+spawned_reach.cut(f, g) :- side_call(f, g).
 
 spawned_reach.root(r, r) :- spawned_target(r).
 
@@ -1278,7 +1290,9 @@ info_message(m, f, id, msg, "send") :-
 
 // A timer or a monitor in a function a server's callbacks run: the
 // callback's process arms it, so the message comes back to that server.
-.init info_reach = SameProcessReach
+.init info_reach = SameProcessReachCut
+
+info_reach.cut(f, g) :- side_call(f, g).
 
 info_reach.seed(f, f) :- timer_arm(id, f, "self", _, _, _), timer_tag(id, _, _).
 info_reach.seed(f, f) :- monitor_call(_, f, _).
@@ -1307,7 +1321,9 @@ info_message(m, f, id, cat("{", tag, ", …}"), "timer") :-
 
 // A monitor its own function waits on, in a receive or behind a
 // demonitor with :flush, is consumed where it is taken.
-.init receive_reach = SameProcessReachSet
+.init receive_reach = SameProcessReachSetCut
+
+receive_reach.cut(f, g) :- side_call(f, g).
 
 receive_reach.seed(f) :- recv_pattern(_, f, _).
 

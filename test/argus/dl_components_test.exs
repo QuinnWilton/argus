@@ -34,6 +34,8 @@ defmodule Argus.DlComponentsTest do
   .init forward = ForwardCallReach
   .init forward_intra = ForwardIntraModuleReach
   .init forward_set = ForwardCallReachSet
+  .init forward_same = ForwardSameProcessReach
+  .init forward_cut = ForwardSameProcessReachCut
   .init bounded = ForwardBoundedCallReach
 
   call.seed(f, "x") :- call_edge(f, "sink").
@@ -43,6 +45,9 @@ defmodule Argus.DlComponentsTest do
   forward.root("a", "a").
   forward_intra.root("a", "a").
   forward_set.root("a").
+  forward_same.root("a", "a").
+  forward_cut.root("e", "e").
+  forward_cut.cut("k", "sink").
   bounded.root("a", "a").
   bounded.limit(1).
 
@@ -55,6 +60,8 @@ defmodule Argus.DlComponentsTest do
   out("forward", f) :- forward.reaches("a", f).
   out("forward_intra", f) :- forward_intra.reaches("a", f).
   out("forward_set", f) :- forward_set.reaches(f).
+  out("forward_same", f) :- forward_same.reaches("a", f).
+  out("forward_cut", f) :- forward_cut.reaches("e", f).
   out("bounded", f) :- bounded.reaches("a", f, _).
   """
 
@@ -109,6 +116,10 @@ defmodule Argus.DlComponentsTest do
     assert out["forward"] == ~w(a b c sink)
     assert out["forward_intra"] == ~w(a b c sink)
     assert out["forward_set"] == ~w(a b c sink)
+    # The edge into what the spawn runs, b -> c, is not followed.
+    assert out["forward_same"] == ~w(a b)
+    # e's closure k runs in e's process; the instance cuts k -> sink.
+    assert out["forward_cut"] == ~w(e k)
     # One hop past the root.
     assert out["bounded"] == ~w(a b)
   end
