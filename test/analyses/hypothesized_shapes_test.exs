@@ -135,6 +135,22 @@ defmodule Argus.Analyses.HypothesizedShapesTest do
            ]
   end
 
+  test "a helper that cancels the field it reads with maps:get/3: the caller's flush is its" do
+    skip_without_souffle()
+
+    {:ok, r} = Memo.analyze([:timer_flush_maps_get, :timer_loop_domain_db], :mailbox)
+
+    reported =
+      r
+      |> Map.get("timer_cancel_without_flush", [])
+      |> Enum.map(fn [mod, _cancel, _arm, key, message | _] -> {mod, key, message} end)
+      |> Enum.uniq()
+
+    # MongooseIM's service_domain_db flushes beside the call to its
+    # cancelling helper; the other has no flush.
+    assert reported == [{":timer_flush_maps_get", ":tref", ":check"}]
+  end
+
   test "a cancel in the clause of the timer's own message is not the finding; another cancel is" do
     skip_without_souffle()
 

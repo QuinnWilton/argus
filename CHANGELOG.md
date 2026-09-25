@@ -73,6 +73,17 @@ never matches). A proven flow stays `:error` on any route. Over the
 nineteen live projects one row moves (akkoma's third evaluation, which
 the regex propagators above make a flow anyway).
 
+**Fixed.** A timer ref read with `maps:get/2,3` or `Map.get/2,3` is the
+field's (`timer_cancel` source "field"), as a `state.timer` read is,
+including the compiler's inlined `maps:get(tref, State, undefined)`,
+whose miss moves the default in: MongooseIM's `service_domain_db` and
+most Erlang servers keep their timer refs that way. And the flush of a
+cancel made in a helper that reads the field itself is its caller's
+too (`cancel_scope`): service_domain_db flushes beside its call to
+`maybe_cancel_timer/2`, and the first draft read it as unflushed. Over
+the nineteen live projects the flush rule's four rows are unchanged
+(`timer_flush_maps_get` pins the unflushed case).
+
 ### Points-to that finishes on a large program
 
 **Fixed.** The points-to stage finishes on Ash (1,327 modules), where it

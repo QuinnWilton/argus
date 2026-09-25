@@ -361,6 +361,16 @@ defmodule Argus.Extractors.ErrorHandlingTest do
       assert Enum.sort(flows) == [{"stored", ":poll"}, {"stored", ":timer"}]
     end
 
+    test "a ref read with maps:get/3 is cancelled from that field" do
+      {:ok, facts} =
+        Argus.Pipeline.extract([:timer_loop_domain_db],
+          extractors: [Argus.Extractors.ErrorHandling]
+        )
+
+      assert [[_id, func, "field", ":check_tref", "-1"]] = facts[:timer_cancel]
+      assert func =~ "maybe_cancel_timer/2"
+    end
+
     test "a ref nothing reads before it is overwritten is discarded; one put in a term is not" do
       [{_mod, bin}] =
         Code.compile_string("""

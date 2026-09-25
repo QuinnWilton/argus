@@ -667,12 +667,96 @@ defmodule Argus.Extractors.ErrorHandling do
         {"field", key, -1}
 
       :dynamic ->
-        case arg_position(ctx.instrs, ctx.idx, {:x, 0}) do
-          {:ok, n} -> {"param", "", n}
-          :no -> local_cancel_source(ctx)
+        case map_read_key(ctx.instrs, ctx.idx) do
+          {:ok, key} ->
+            {"field", key, -1}
+
+          :no ->
+            case arg_position(ctx.instrs, ctx.idx, {:x, 0}) do
+              {:ok, n} -> {"param", "", n}
+              :no -> local_cancel_source(ctx)
+            end
         end
     end
   end
+
+  # The functions that read a map's value under a key, and the position
+  # of the key: Erlang's `maps:get(tref, State, undefined)`, Elixir's
+  # `Map.get(state, :timer)`. The ref they hand back is the field's, as a
+  # `state.timer` read is.
+  @map_readers %{
+    {:maps, :get, 2} => 0,
+    {:maps, :get, 3} => 0,
+    {Map, :get, 2} => 1,
+    {Map, :get, 3} => 1,
+    {Map, :fetch!, 2} => 1
+  }
+
+  defp map_read_key(instrs, idx) do
+    with {:ok, mfa, at} <- Resolve.call_result_origin(instrs, idx, {:x, 0}),
+         {:ok, pos} <- Map.fetch(@map_readers, mfa),
+         {:ok, key} when is_atom(key) and key != :dynamic <-
+           resolve_register(instrs, at, {:x, pos}) do
+      {:ok, inspect(key)}
+    else
+      _ -> field_or_default(instrs, idx)
+    end
+  end
+
+  # The compiler inlines `maps:get(tref, State, undefined)` into a
+  # get_map_elements whose miss moves the default in: the ref is the
+  # field's on one path and an atom that is no ref on the other. Every
+  # write that reaches the register is the field under one key, or a
+  # literal nil or undefined.
+  defp field_or_default(instrs, idx) do
+    answers = default_walk(instrs, idx, {:x, 0}, %{})
+    keys = for {:key, key} <- answers, uniq: true, do: key
+
+    case keys do
+      [key] -> if :no in answers, do: :no, else: {:ok, key}
+      _ -> :no
+    end
+  end
+
+  defp default_walk(instrs, idx, reg, seen) do
+    if Map.has_key?(seen, {idx, reg}) do
+      []
+    else
+      seen = Map.put(seen, {idx, reg}, true)
+
+      instrs
+      |> Reaching.sources(idx, reg)
+      |> Enum.flat_map(fn
+        {:param, _k} -> [:no]
+        at -> default_writer(instrs, at, Reaching.at(instrs, at), reg, seen)
+      end)
+    end
+  end
+
+  defp default_writer(instrs, at, instr, reg, seen) do
+    case {Instr.copy_source(instr, reg), instr} do
+      {{kind, _} = source, _} when kind in [:x, :y] ->
+        default_walk(instrs, at, source, seen)
+
+      {nil, {:get_map_elements, _fail, _src, {:list, pairs}}} ->
+        case map_key_for(pairs, reg) do
+          {:atom, key} -> [{:key, inspect(key)}]
+          _ -> [:no]
+        end
+
+      {{:atom, atom}, _} when atom in [nil, :undefined] ->
+        [:default]
+
+      _ ->
+        [:no]
+    end
+  end
+
+  defp map_key_for([key, dst | rest], reg) do
+    if Instr.register(dst) == reg, do: key, else: map_key_for(rest, reg)
+  end
+
+  defp map_key_for(_pairs, _reg), do: nil
 
   defp local_cancel_source(ctx) do
     case key_identity(ctx.instrs, ctx.idx, {:x, 0}, Map.get(ctx, :origins)) do
