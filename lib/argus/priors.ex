@@ -47,6 +47,7 @@ defmodule Argus.Priors do
     Argus.Priors.Questions.ProcessRole,
     Argus.Priors.Questions.Reads,
     Argus.Priors.Questions.Sensitivity,
+    Argus.Priors.Questions.Tooling,
     Argus.Priors.Questions.ValueSource
   ]
 

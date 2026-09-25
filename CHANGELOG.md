@@ -44,6 +44,34 @@ generators and the Mix tasks of hexpm, realtime, sequin and akkoma
 them), LiveView's and Plug's test helpers, nerves_hub's socket test
 client, logflare's test utilities.
 
+**Added.** Schema 119. `prior_tooling(mod, kind, kind_permille,
+permille)` from `Argus.Priors.Questions.Tooling`: whether a module is
+the product the deployed system runs, a tool only developers run (a
+generator, seeds, a benchmark, a debugging helper, a code reloader) or
+support for tests, asked of every module `tooling_module` leaves
+undecided but a protocol's implementation and a module with no exported
+function of its own, one module per request (its name, behaviours,
+exported functions, the modules it calls and those that call it).
+`permille` is the mass of `development` and `test`; `tooling.dl` names a
+module at 0.9 or more (`basis` `prior`), never one the structure named,
+and its findings step down heuristic, at the prior's probability (the
+lower of two when another prior had moved the finding already). On the
+modules holding a finding over the fifteen programs, read by hand (858
+the structure leaves, 13 of them tooling), it names 9 at 0.9, 8
+rightly: blockster's `DevSetup`, hexpm's fake-data generator,
+nerves_hub's debugging helpers, logflare's development dashboard,
+Phoenix's code reloader and asset watcher, OTP's `erts_debug` and
+erlc's driver. The wrong one is rabbit's `code_version`, which patches
+modules in the running release: its one finding is `:info` and stays
+there. One module per request because a batch of a namespace's modules
+moved each answer with its neighbours (`erl_lint` 0.83 in one batch,
+0.99 in another). In the evaluation run it steps 35 findings in 13
+modules, 25 of them from `:warning` to `:info` (the eight above, and
+four a reader cannot call either way: OTP's shell commands in `c`, the
+compiler's `erl_lint` and `erl_features`, sequin's benchmark
+statistics). Cost over the fifteen programs: 6,300 modules, 3.9M input
+tokens, $0.16.
+
 **Fixed.** A program `System.find_executable/1` or
 `:os.find_executable/1,2` finds for a literal name is that program:
 `System.cmd` of it is no code execution, as a literal program's is not

@@ -14,11 +14,16 @@ defmodule Argus.Findings.Tooling do
   anchored in such a module down one level (`retier/2`) and says why.
   An `:info` finding stays `:info`; nothing is removed.
 
-  How the module is known is the row's `basis`: `mix` and
-  `test_support` are structural (`Argus.Extractors.Tooling`: a module
-  under `Mix.`, or compiled from a `test/support/` directory or a `test/`
-  directory within a `lib/`). The finding keeps its provenance; its help
-  says what the module is.
+  How the module is known is the row's `basis`:
+
+  - `mix` and `test_support` are structural (`Argus.Extractors.Tooling`:
+    a module under `Mix.`, or compiled from a `test/support/` directory or
+    a `test/` directory within a `lib/`). The finding keeps its
+    provenance; its help says what the module is.
+  - `prior` is the tooling prior's (`Argus.Priors.Questions.Tooling`, at
+    0.9 or more): the finding is heuristic, and its confidence is the
+    prior's probability, or the lower of the two when another prior had
+    already moved it.
   """
 
   @basis %{
@@ -37,8 +42,8 @@ defmodule Argus.Findings.Tooling do
       name: :tooling,
       fields: [
         {:mod, :symbol, "the module, inspected"},
-        {:basis, :symbol, "mix | test_support — how the module is known to be tooling"},
-        {:permille, :number, "1000 for a structural basis"}
+        {:basis, :symbol, "mix | test_support | prior — how the module is known to be tooling"},
+        {:permille, :number, "1000 for a structural basis; the prior's probability for `prior`"}
       ],
       doc:
         "A module only developers' tools or tests run (clientlib/tooling.dl): a finding " <>
@@ -60,6 +65,7 @@ defmodule Argus.Findings.Tooling do
   @spec retier(map(), %{String.t() => {String.t(), 0..1000}}) :: map()
   def retier(%{module: module} = finding, index) when not is_nil(module) do
     case Map.fetch(index, inspect(module)) do
+      {:ok, {"prior", p}} -> prior(finding, p)
       {:ok, {basis, _p}} -> structural(finding, basis)
       :error -> finding
     end
@@ -70,7 +76,12 @@ defmodule Argus.Findings.Tooling do
   @doc "The `tooling` rows by module, as `retier/2` reads them."
   @spec index([[String.t()]]) :: %{String.t() => {String.t(), 0..1000}}
   def index(rows) do
-    Enum.reduce(rows, %{}, fn [mod, basis, p], acc ->
+    # A module both structure and the prior name is the structure's:
+    # tooling.dl asks the prior only where the structure is silent, and a
+    # structural basis sorts first here in any case.
+    rows
+    |> Enum.sort_by(fn [_mod, basis, _p] -> basis == "prior" end)
+    |> Enum.reduce(%{}, fn [mod, basis, p], acc ->
       Map.put_new(acc, mod, {basis, String.to_integer(p)})
     end)
   end
@@ -80,6 +91,27 @@ defmodule Argus.Findings.Tooling do
       finding
       | severity: step_down(finding.severity),
         help: finding.help ++ ["tooling: #{Map.get(@basis, basis, basis)}"]
+    }
+  end
+
+  defp prior(finding, p) do
+    confidence =
+      case finding do
+        %{provenance: :heuristic, confidence: c} when is_integer(c) -> min(c, p)
+        _ -> p
+      end
+
+    %{
+      finding
+      | severity: step_down(finding.severity),
+        provenance: :heuristic,
+        confidence: confidence,
+        help:
+          finding.help ++
+            [
+              "heuristic: the module is a developer's tool or test support, not the " <>
+                "deployed system (p=#{:erlang.float_to_binary(p / 1000, decimals: 2)})"
+            ]
     }
   end
 

@@ -420,7 +420,8 @@ defmodule Argus.Schema.CallValues do
         path compile_info records says (`Argus.Extractors.Tooling`): a Mix \
         task or the helpers Mix tasks share, a project's test support compiled \
         into a dev build, the test helpers a library ships in its own lib/. \
-        Every analysis steps a finding there down (clientlib/tooling.dl).
+        Every analysis steps a finding there down (clientlib/tooling.dl); \
+        the tooling prior asks about the modules this leaves undecided.
         """
       },
       %{

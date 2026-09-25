@@ -15,14 +15,15 @@ end
 defmodule Argus.Test.Fixtures.Tooling.Product do
   @moduledoc false
 
-  # The same call in the product: the finding at its structural severity.
+  # The same call in the product: the finding at its structural severity,
+  # whatever the tooling prior says of the module beside it.
   def run(command), do: :os.cmd(String.to_charlist(command))
 end
 
 defmodule Argus.Test.Fixtures.Tooling.DevSetup do
   @moduledoc false
 
-  # A development-only setup no structure names: its finding stays
-  # `:error`.
+  # A development-only setup no structure names: the tooling prior's to
+  # judge. Without a prior, or below 0.9, its finding stays `:error`.
   def run(command), do: :os.cmd(String.to_charlist(command))
 end

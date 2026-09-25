@@ -9,8 +9,12 @@
 //
 // tooling(mod, basis, permille): the module is tooling because its
 // name or source path says so (`tooling_module`: basis "mix" or
-// "test_support", permille 1000). A module neither names is the
-// product: the word errs quiet, toward the structural severity.
+// "test_support", permille 1000), or because the tooling prior is sure
+// of it (basis "prior": the probability that it is a developer's tool
+// or test support, at 0.9 or more; Argus.Priors.Questions.Tooling). The
+// prior is asked only about modules the structure leaves undecided, and
+// a module the prior is unsure of stays the product: the word errs
+// quiet, toward the structural severity.
 //
 // An analysis includes this file and declares `.output tooling`; its
 // rows re-tier the analysis's findings and are no findings themselves.
@@ -18,3 +22,10 @@
 .decl tooling(mod: symbol, basis: symbol, permille: number)
 
 tooling(m, basis, 1000) :- tooling_module(m, basis).
+
+// 0.9 is where the calibration measured 8 of 9 re-tiers right over the
+// modules holding a finding in the evaluation programs.
+tooling(m, "prior", p) :-
+  prior_tooling(m, _, _, p),
+  p >= 900,
+  !tooling_module(m, _).

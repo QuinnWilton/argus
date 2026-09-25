@@ -9,7 +9,8 @@ defmodule Argus.Extractors.Tooling do
   inside its own `lib/` (`Phoenix.ConnTest`, `Phoenix.LiveViewTest`,
   `Plug.Adapters.Test.Conn`). A defect there costs a developer's command
   or a test run, and every analysis steps it down
-  (`Argus.Findings.Tooling`).
+  (`Argus.Findings.Tooling`); the modules no structure decides are the
+  tooling prior's (`Argus.Priors.Questions.Tooling`).
 
   ## Emitted facts
 

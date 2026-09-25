@@ -105,6 +105,27 @@ defmodule Argus.Schema.Priors do
         """
       },
       %{
+        name: :prior_tooling,
+        layer: 3,
+        fields: [
+          {:mod, :symbol, "the module, inspected"},
+          {:kind, :symbol, "product | development | test — the likeliest"},
+          {:kind_permille, :number, "the model's probability for `kind`, in thousandths"},
+          {:permille, :number,
+           "the probability that the module is tooling — the mass of `development` and " <>
+             "`test` — in thousandths"}
+        ],
+        doc: """
+        Whether a module is part of the product the deployed system runs, a \
+        tool only developers run (a generator, seeds, a benchmark, a debugging \
+        helper, a code reloader) or support for tests, judged from its name, \
+        its functions and the modules it calls and that call it \
+        (Argus.Priors.Questions.Tooling). Asked about the modules \
+        `tooling_module` leaves undecided, so every analysis can step a \
+        finding in tooling down (clientlib/tooling.dl).
+        """
+      },
+      %{
         name: :prior_talks_to_process,
         layer: 3,
         fields: [

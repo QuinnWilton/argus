@@ -75,9 +75,10 @@ classes of one risk get one severity.
 - **Tooling.** A finding in code only developers' tools or tests run
   steps down one level from the severity its class gives it, and says
   why: a Mix task or a helper Mix tasks share, a project's test support
-  compiled into the build, or the test helpers a library ships in its
-  `lib/`. Its defect costs a developer's command or a test run, not the
-  running system (`Argus.Findings.Tooling`).
+  compiled into the build, the test helpers a library ships in its
+  `lib/`, or a module the tooling prior names at 0.9 or more (then
+  `provenance: :heuristic`). Its defect costs a developer's command or a
+  test run, not the running system (`Argus.Findings.Tooling`).
 - **Sinks.** unsafe_input grades by what the sink does with outside
   data and how near a way in it is: at the sink's own severity when data
   from a request flows to it or it sits in the request handler, a step
@@ -264,9 +265,9 @@ than more; it errs loud when the same uncertainty can add a finding.
 
 ### Code only tools and tests run
 
-- **Names.** `tooling` (tooling.dl), over the `tooling_module` fact.
-- **Meaning.** `tooling(mod, basis, permille)`: only developers' tools or tests run mod. `tooling_module` says so by the module's name (`mix`: an Elixir module under `Mix.`, which a release does not ship) or by the path compile_info records (`test_support`: a `test/support/` directory, or a `test/` directory within three of a `lib/`, where Phoenix, Plug and LiveView keep the test helpers they ship). Every analysis outputs the rows, and `Argus.Findings.Build` steps each finding anchored in such a module down one level.
-- **Direction.** Quiet, toward the structural severity: a module neither signal names is the product, a project's `test/fixtures` (its stand-ins for the product) is not test support, and calling ExUnit is no signal (Livebook runs its users' doctests with it). A finding anchored in the product about tooling code (a supervisor starting a dev-only child) stays where it is.
+- **Names.** `tooling` (tooling.dl), over the `tooling_module` fact and the `prior_tooling` prior.
+- **Meaning.** `tooling(mod, basis, permille)`: only developers' tools or tests run mod. `tooling_module` says so by the module's name (`mix`: an Elixir module under `Mix.`, which a release does not ship) or by the path compile_info records (`test_support`: a `test/support/` directory, or a `test/` directory within three of a `lib/`, where Phoenix, Plug and LiveView keep the test helpers they ship); the tooling prior (`Argus.Priors.Questions.Tooling`) says so of a module neither names, at 0.9 or more. Every analysis outputs the rows, and `Argus.Findings.Build` steps each finding anchored in such a module down one level.
+- **Direction.** Quiet, toward the structural severity: a module the prior is unsure of is the product, a project's `test/fixtures` (its stand-ins for the product) is not test support, and calling ExUnit is no signal (Livebook runs its users' doctests with it). A finding anchored in the product about tooling code (a supervisor starting a dev-only child) stays where it is.
 - **Used by.** Every analysis but coverage, through `Argus.Findings.Tooling`.
 
 ### Code the program did not write
