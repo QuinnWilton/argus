@@ -65,6 +65,7 @@ defmodule Argus.Findings.Build do
             attrs
             |> Map.update(:related, [], &(&1 ++ Evidence.for_row(evidence, joins, relation, row)))
             |> Tooling.retier(tooling)
+            |> Map.delete(:floor)
             |> Map.put(:analysis, mod.name())
             |> Map.put(:concern, mod.name())
             |> Names.render()

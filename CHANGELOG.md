@@ -44,6 +44,13 @@ generators and the Mix tasks of hexpm, realtime, sequin and akkoma
 them), LiveView's and Plug's test helpers, nerves_hub's socket test
 client, logflare's test utilities.
 
+**Changed.** Finding attributes may carry `floor:`, the lowest severity
+the tooling step may give the finding; `Argus.Findings.build/2` drops it
+once the step is taken. unsafe_input's code execution a request reaches
+sets it to `:warning`, the floor round 3 of the mining gave it against
+every distance and prior: a module the tooling prior wrongly names
+cannot take such a finding to `:info`.
+
 **Added.** Schema 119. `prior_tooling(mod, kind, kind_permille,
 permille)` from `Argus.Priors.Questions.Tooling`: whether a module is
 the product the deployed system runs, a tool only developers run (a

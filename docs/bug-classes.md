@@ -78,7 +78,8 @@ classes of one risk get one severity.
   compiled into the build, the test helpers a library ships in its
   `lib/`, or a module the tooling prior names at 0.9 or more (then
   `provenance: :heuristic`). Its defect costs a developer's command or a
-  test run, not the running system (`Argus.Findings.Tooling`).
+  test run, not the running system (`Argus.Findings.Tooling`). Code
+  execution a request reaches keeps its floor of `:warning` here too.
 - **Sinks.** unsafe_input grades by what the sink does with outside
   data and how near a way in it is: at the sink's own severity when data
   from a request flows to it or it sits in the request handler, a step

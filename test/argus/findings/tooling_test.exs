@@ -48,6 +48,14 @@ defmodule Argus.Findings.ToolingTest do
     assert index == %{"M" => {"mix", 1000}}
   end
 
+  test "a floor the builder sets bounds the step" do
+    floored = Map.put(finding(:warning, "App.DevSetup"), :floor, :warning)
+    assert %{severity: :warning, provenance: :heuristic} = Tooling.retier(floored, @index)
+
+    erred = Map.put(finding(:error, "Mix.Tasks.Seed"), :floor, :warning)
+    assert %{severity: :warning} = Tooling.retier(erred, @index)
+  end
+
   test "an Erlang module is matched as its rows spell it" do
     index = Tooling.index([[":erts_debug", "prior", "960"]])
     assert %{severity: :warning} = Tooling.retier(finding(:error, ":erts_debug"), index)

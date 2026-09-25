@@ -12,7 +12,11 @@ defmodule Argus.Findings.Tooling do
   outputs its `tooling` rows beside its findings (`relation/0` declares
   them, `retier: :tooling`); `Argus.Findings.Build` steps each finding
   anchored in such a module down one level (`retier/2`) and says why.
-  An `:info` finding stays `:info`; nothing is removed.
+  An `:info` finding stays `:info`; nothing is removed. A builder that
+  puts `floor: severity` in its attributes bounds the step, and Build
+  drops the key: unsafe_input's code execution a request reaches is
+  never below `:warning`, whatever a prior says (the rubric's Sinks
+  paragraph).
 
   How the module is known is the row's `basis`:
 
@@ -89,7 +93,7 @@ defmodule Argus.Findings.Tooling do
   defp structural(finding, basis) do
     %{
       finding
-      | severity: step_down(finding.severity),
+      | severity: step_down(finding),
         help: finding.help ++ ["tooling: #{Map.get(@basis, basis, basis)}"]
     }
   end
@@ -103,7 +107,7 @@ defmodule Argus.Findings.Tooling do
 
     %{
       finding
-      | severity: step_down(finding.severity),
+      | severity: step_down(finding),
         provenance: :heuristic,
         confidence: confidence,
         help:
@@ -115,6 +119,8 @@ defmodule Argus.Findings.Tooling do
     }
   end
 
-  defp step_down(:error), do: :warning
-  defp step_down(_warning_or_info), do: :info
+  defp step_down(%{severity: :info}), do: :info
+  defp step_down(%{severity: :error}), do: :warning
+  defp step_down(%{floor: :warning}), do: :warning
+  defp step_down(%{severity: :warning}), do: :info
 end

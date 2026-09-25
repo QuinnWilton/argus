@@ -611,6 +611,19 @@ defmodule Argus.Analyses.UnsafeInputTest do
       # The atom sink beside it keeps its tiers.
       atom = row.("adjacent", "config", "900") |> List.replace_at(3, "atom")
       assert %{severity: :info} = UnsafeInput.finding(:sink_reachable, atom)
+
+      # Nor does the tooling step take it lower: the floor rides with the
+      # row into Build, which drops it once the step is taken.
+      assert %{floor: :warning} = stepped
+
+      findings =
+        Argus.Findings.build(UnsafeInput, %{
+          "sink_reachable" => [row.("transitive", "", "0") |> List.replace_at(0, "M:f/1#3")],
+          "tooling" => [["M", "prior", "990"]]
+        })
+
+      assert [%{severity: :warning, provenance: :heuristic} = built] = findings
+      refute Map.has_key?(built, :floor)
     end
 
     test "a flow says so, anchors the argument and tells the reader what to do" do

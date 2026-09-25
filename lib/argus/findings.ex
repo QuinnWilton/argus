@@ -125,8 +125,13 @@ defmodule Argus.Findings do
   """
   @type provenance :: :structural | :heuristic
 
-  @typedoc "What an analysis module's `finding/2` callback returns."
+  @typedoc """
+  What an analysis module's `finding/2` callback returns. `floor`, when
+  a builder sets it, is the lowest severity the tooling step may give
+  the finding (`Argus.Findings.Tooling`); `build/2` drops it.
+  """
   @type attrs :: %{
+          optional(:floor) => severity(),
           severity: severity(),
           title: String.t(),
           detail: String.t(),

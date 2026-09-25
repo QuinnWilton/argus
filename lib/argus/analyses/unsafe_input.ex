@@ -244,6 +244,7 @@ defmodule Argus.Analyses.UnsafeInput do
     )
     |> retier(func, proximity, source, p)
     |> at_least(:warning)
+    |> Map.put(:floor, :warning)
   end
 
   def finding(:sink_reachable, [id, func, api, "atom", entry, kind, proximity, source, p, _s]) do
@@ -461,7 +462,8 @@ defmodule Argus.Analyses.UnsafeInput do
   # the finding. An admin-only route is no exception: argus cannot see
   # `pipe_through`, and an administrator's token reaching code on the
   # host is an escalation past the application's own authority (akkoma's
-  # ConfigDB evaluated posted config three ways).
+  # ConfigDB evaluated posted config three ways). `floor:` holds it there
+  # past the tooling step too (Argus.Findings.Tooling).
   defp code_severity(proximity), do: at_least(severity(proximity), :warning)
 
   defp at_least(%{severity: severity} = attrs, floor),
