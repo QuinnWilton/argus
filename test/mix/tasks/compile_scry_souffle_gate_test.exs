@@ -90,7 +90,7 @@ defmodule Mix.Tasks.Compile.ScrySouffleGateTest do
         # findings appear — the degraded run healed completely.
         assert {:ok, diagnostics} = compile!()
         diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
-        assert length(diags) == 5
+        assert length(diags) == 4
         assert QueryLog.executions(log, :souffle_solve) != []
       end)
     end
@@ -159,13 +159,7 @@ defmodule Mix.Tasks.Compile.ScrySouffleGateTest do
         {_status, diagnostics} = compile!()
         diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
 
-        assert Enum.sort(codes(diags)) == [
-                 "coupling",
-                 "coupling",
-                 "mailbox",
-                 "mailbox",
-                 "mailbox"
-               ]
+        assert Enum.sort(codes(diags)) == ["coupling", "coupling", "mailbox", "mailbox"]
 
         assert QueryLog.executions(log, :souffle_solve) == [:mailbox]
         assert QueryLog.executions(log, :module_extraction) == []
@@ -196,7 +190,7 @@ defmodule Mix.Tasks.Compile.ScrySouffleGateTest do
         QueryLog.reset(log)
         {_status, diagnostics} = compile!()
         diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
-        assert length(diags) == 5
+        assert length(diags) == 4
         assert QueryLog.executions(log, :stage0_facts) == [:all]
       end)
     end

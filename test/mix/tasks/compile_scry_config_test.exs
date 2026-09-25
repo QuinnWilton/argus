@@ -71,7 +71,7 @@ defmodule Mix.Tasks.Compile.ScryConfigTest do
 
         unsafe = Enum.filter(diagnostics, &String.contains?(&1.message, "[scry.mailbox]"))
 
-        assert length(unsafe) == 3
+        assert length(unsafe) == 2
         assert Enum.all?(unsafe, &(&1.severity == :error))
       end)
     end
@@ -85,12 +85,12 @@ defmodule Mix.Tasks.Compile.ScryConfigTest do
         diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
 
         # The coupling findings anchor in the ignored file: reports
-        # suppressed. The mailbox findings (archive.ex, sonar.ex) are
+        # suppressed. The mailbox findings (archive.ex) are
         # untouched. That the
         # coupling ROWS were computed at all is asserted by the unfiltered
         # runs in the main suite; here the ignored file's facts still
         # participated (the analyses ran over the full module set).
-        assert codes(diags) == ["mailbox", "mailbox", "mailbox"]
+        assert codes(diags) == ["mailbox", "mailbox"]
       end)
     end
 
@@ -103,10 +103,9 @@ defmodule Mix.Tasks.Compile.ScryConfigTest do
         diags = Enum.filter(diagnostics, &(&1.compiler_name == "scry"))
 
         # No Archive extraction, so no task findings; the couplings
-        # (Sonar/Queue against Notifier via Application) and Sonar's
-        # handle_info are unaffected.
+        # (Sonar/Queue against Notifier via Application) are unaffected.
         refute Depot.Archive in QueryLog.executions(log, :module_extraction)
-        assert Enum.sort(codes(diags)) == ["coupling", "coupling", "mailbox"]
+        assert Enum.sort(codes(diags)) == ["coupling", "coupling"]
       end)
     end
 

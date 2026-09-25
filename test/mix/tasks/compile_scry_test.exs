@@ -69,9 +69,11 @@ defmodule Mix.Tasks.Compile.ScryTest do
       diags = scry_diagnostics(result)
 
       # The fixture goldens: two coupling findings at the tree
-      # definition, two task findings and Sonar's handle_info without a
-      # catch-all. Nothing else from the default set.
-      assert counts_by_code(diags) == %{"coupling" => 2, "mailbox" => 3}
+      # definition and two task findings. Nothing else from the default
+      # set: Sonar's handle_info/2 has no catch-all, but nothing writes
+      # its mailbox that it does not take — the one call it makes out is
+      # a timed GenServer.call, whose late reply an alias drops.
+      assert counts_by_code(diags) == %{"coupling" => 2, "mailbox" => 2}
 
       coupling = Enum.filter(diags, &(code_of(&1) == "coupling"))
       assert Enum.all?(coupling, &String.ends_with?(&1.file, "lib/depot/application.ex"))
@@ -105,7 +107,7 @@ defmodule Mix.Tasks.Compile.ScryTest do
 
       # Prior findings re-emit from memo hits: same diagnostics, zero
       # extraction, zero solves.
-      assert counts_by_code(diags) == %{"coupling" => 2, "mailbox" => 3}
+      assert counts_by_code(diags) == %{"coupling" => 2, "mailbox" => 2}
       assert QueryLog.executions(log, :module_extraction) == []
       assert QueryLog.executions(log, :souffle_solve) == []
 
@@ -146,31 +148,32 @@ defmodule Mix.Tasks.Compile.ScryTest do
       result = compile!()
       diags = scry_diagnostics(result)
 
-      assert counts_by_code(diags) == %{"mailbox" => 3}
+      assert counts_by_code(diags) == %{"mailbox" => 2}
       assert :coupling in QueryLog.executions(log, :souffle_solve)
 
       # ── deleted file ────────────────────────────────────────────────
       # Removing the module with the leaked task prunes its beam; the
-      # input is GC'd and the finding disappears.
+      # input is GC'd and the findings disappear.
       # The diagnostic's file is absolute (and realpath'd — /private/var
       # while the checkout says /var); remove it directly.
-      # Both task findings anchor in the same file; Sonar's stays.
-      [unsafe | _] = Enum.filter(diags, &String.ends_with?(&1.file, "archive.ex"))
+      # Both task findings anchor in the same file, and they were the
+      # last ones: the mailbox analysis re-solves to nothing.
+      assert Enum.all?(diags, &String.ends_with?(&1.file, "archive.ex"))
+      [unsafe | _] = diags
       File.rm!(unsafe.file)
 
       QueryLog.reset(log)
       result = compile!()
-      diags = scry_diagnostics(result)
 
-      assert counts_by_code(diags) == %{"mailbox" => 1}
-      assert Enum.all?(diags, &String.ends_with?(&1.file, "sonar.ex"))
+      assert scry_diagnostics(result) == []
+      assert :mailbox in QueryLog.executions(log, :souffle_solve)
 
       # And a further run is a clean noop.
       QueryLog.reset(log)
       result = compile!()
       assert QueryLog.executions(log, :module_extraction) == []
       assert QueryLog.executions(log, :souffle_solve) == []
-      assert length(scry_diagnostics(result)) == 1
+      assert scry_diagnostics(result) == []
     end)
   end
 end

@@ -231,7 +231,7 @@ Optional longer explanation.
   `Mix.Project.in_project/3` + `Mix.Task.rerun("compile")`, in a peer
   (`Fixture.in_peer/4`) — the real chain, so `:elixir` genuinely produces the beams scry reads. The
   fixture's cold-build findings (two couplings at the tree definition,
-  one leaked task) and rendered frames are golden-pinned; keep it
+  two task findings in archive.ex) and rendered frames are golden-pinned; keep it
   self-contained and dependency-free.
 - Telemetry edit-replay tests assert exact recompute sets
   (`test/support/query_log.ex`).
