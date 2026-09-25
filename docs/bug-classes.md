@@ -615,7 +615,7 @@ Work in a phase whose invariants do not hold yet: `init/1` runs inside the super
 **Property.** A function calls `GenServer.start_link`/`start`, `Supervisor.start_link`, `Agent.start_link`/`start` or `:gen_server.start_link`/`start` in a non-tail position, and the instruction after the call overwrites the result without reading it. An `{:error, reason}` goes unnoticed: the process is not running, and the first symptom is a crash later at a call site that assumed it was.
 
 **Assumptions and limits.**
-- The API list is fixed: `:supervisor`, `:gen_statem`, `DynamicSupervisor` and `Task` starts are not read; a discarded `start_child` result is failure's "start_child result not checked".
+- The API list is fixed: `:supervisor`, `:gen_statem`, `DynamicSupervisor` and `Task` starts are not read; a discarded `start_child` result is failure's "start_child result ignored".
 - The result's fate is read from the next instruction only; a result saved and never tested is not reported.
 - The finding anchors at the calling function, not the call.
 
@@ -738,7 +738,7 @@ The call exits with `:noproc`, so what it was for never happens, and terminate/2
 ### Children left under another tree's supervisor
 
 `foreign_dynamic_children`
-· titles: "children started under another tree outlive their owner" (`:warning`)
+· titles: "Children started under another tree outlive their owner" (`:warning`)
 
 **Property.** Some process module M whose callbacks reach a function f, not defined in the supervisor's own module, that starts children under a supervisor S named by a literal (`DynamicSupervisor.start_child`, or a Task.Supervisor `start_child`, `async`, `async_nolink`, `async_stream` or `async_stream_nolink`), where some supervision subtree holds S, as a module or by the name a child spec gives it, but not M, and no terminate/2 of M, within three calls, terminates a child or stops a supervisor. The children's lifetime follows S's tree, not M's: when M's tree shuts down they keep running, reconnecting, logging, calling into applications that have already stopped (postgrex#763: pool connections under `:db_connection`'s supervisor outliving the user's Repo).
 
@@ -1744,7 +1744,7 @@ An error path the code could have seen and did not take: an exception a catch-al
 ### A Task.Supervisor.start_child result discarded
 
 `unchecked_result` · api=`Task.Supervisor.start_child`
-· titles: "start_child result not checked" (`:warning`)
+· titles: "start_child result ignored" (`:warning`)
 
 **Property.** Some call to `Task.Supervisor.start_child` in a function f that is not in tail position and after which f has no branch at all. An `{:error, reason}` return (the supervisor at `max_children`, not started yet, a bad child spec) is dropped, and a failed launch looks exactly like a successful one.
 
@@ -2016,10 +2016,10 @@ An operation that is the whole body of an accessor (one ETS operation on a named
 
 **Precision.** 19 rows in the 2026-09-25 corpus tally, counted per checkout: Hammer 12 over three checkouts, Sequin 4 over three (`Sequin.Functions.TestMessages`), ztlp 2, blockster_v2 1. Judged: every Hammer row is a race (5819e47: the three `hit/5`s #130 fixed, `FixWindow.inc/4` and `set/4` it missed, and the ETS backends' lookup-then-insert; CHANGELOG `### Check-then-act, read closer`); ztlp's `RateLimiter` and `RegistrationAuth` are unserialized lookup-then-inserts, one run in a task per UDP packet (dece7d0, d5d5361); blockster's `claim_sync_slot/2` is a claim reported by design (41a2ae3); the Sequin rows are unjudged. False positives removed on the way: `Postgrex.Parameters.put/3` in every Postgrex tree (26d48dc), blockster's two settings caches (0e44564), supavisor's `CircuitBreaker.record_failures/3` (9d17082), nerves_hub_web's `CLISessionCache` and ztlp's `AdminApiRateLimiter` (dece7d0, "ETS rows 10 to 7"). On OTP's mnesia, kernel and stdlib the accessor rule took 34 findings to 4: three read-modify-writes of a shared variable and a guarded maximum over a serial (24aa6ab); whether mnesia's own locks order those writes the rule does not see (d5d5361).
 
-### Uniqueness check then insert race on a Mnesia table
+### Uniqueness check-then-insert race on a Mnesia table
 
 `mnesia_check_act` · kind=`unique`
-· titles: "Uniqueness check then insert race on a Mnesia table" (`:warning`)
+· titles: "Uniqueness check-then-insert race on a Mnesia table" (`:warning`)
 
 **Property.** Some function f in which a dirty read of table T that finds records by something other than their key (`:mnesia.dirty_index_read/3`, `dirty_index_match_object`, `dirty_select`, or `dirty_match_object` whose key is a wildcard) decides a `dirty_write` of a record not made of what the search returned, and another process can write T in the window: f runs in more than one process and is not serialized by a `:global.trans/2` lock every writer of T takes, or f runs in one process and some writer of T (a dirty write, a transaction's write, or `dirty_update_counter`) runs in a process other than f's. Two callers that search in the same window both find nothing and both insert, each under a key of its own: the table keeps the duplicate the search was there to prevent, and neither write overwrites the other.
 

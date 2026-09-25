@@ -287,7 +287,7 @@ defmodule Argus.Analyses.Shutdown do
   def finding(:foreign_dynamic_children, [mod, sup, via, site, sup_site]) do
     Findings.new(
       :warning,
-      "children started under another tree outlive their owner",
+      "Children started under another tree outlive their owner",
       "#{via} starts children under #{sup}, a DynamicSupervisor #{mod} does not sit " <>
         "under. Their lifetime follows #{sup}'s tree, not #{mod}'s: when #{mod}'s tree " <>
         "shuts down they keep running — reconnecting, logging, calling into " <>

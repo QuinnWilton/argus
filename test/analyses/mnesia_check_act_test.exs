@@ -381,7 +381,7 @@ defmodule Argus.Analyses.MnesiaCheckActTest do
       f = Races.finding(:mnesia_check_act, row)
 
       assert f.severity == :warning
-      assert f.title == "Uniqueness check then insert race on a Mnesia table"
+      assert f.title == "Uniqueness check-then-insert race on a Mnesia table"
       assert f.detail =~ "both insert"
       assert [%{label: "the search that found nothing"}] = f.related
     end

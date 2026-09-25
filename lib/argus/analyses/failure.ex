@@ -344,7 +344,7 @@ defmodule Argus.Analyses.Failure do
   def finding(:unchecked_result, [func, id, "Task.Supervisor.start_child", _]) do
     Findings.new(
       :warning,
-      "start_child result not checked",
+      "start_child result ignored",
       "#{func} discards the result of Task.Supervisor.start_child. A " <>
         "{:error, reason} return — supervisor at max_children, not yet " <>
         "started, bad child spec — is silently ignored, so failed launches " <>

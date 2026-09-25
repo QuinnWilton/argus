@@ -24,7 +24,7 @@
     issue: "postgrex#763",
     module: "DBConnection.Ownership.Manager",
     pre: "6c4e5c2a3eec47a80537704187e314dbeb6cfbe4",
-    finding: {:shutdown, "children started under another tree outlive their owner"}
+    finding: {:shutdown, "Children started under another tree outlive their owner"}
   },
   %{
     repo: "sneako/finch",
@@ -635,7 +635,7 @@
     module: "Livebook.Hubs",
     pre: "c70c4d9ff5ba63aa6136eebe22df578d8704398f",
     fix: "56ecd4775f34f876fec940f07570ad19d6520404",
-    finding: {:failure, "start_child result not checked"}
+    finding: {:failure, "start_child result ignored"}
   },
   # finch: an async HTTP/1 request ran in a bare spawn that outlived its
   # caller; the fix links it.

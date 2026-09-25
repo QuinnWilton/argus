@@ -312,7 +312,7 @@ defmodule Argus.Analyses.Races do
   def finding(:mnesia_check_act, [mod, func, table, _key, read, write, _op, "unique"]) do
     Findings.new(
       :warning,
-      "Uniqueness check then insert race on a Mnesia table",
+      "Uniqueness check-then-insert race on a Mnesia table",
       "#{func} searches #{table} with a dirty read#{Findings.elsewhere(read, func)} — by an " <>
         "index or a pattern, not by the record's key — and, finding nothing, inserts a new " <>
         "record with a dirty write#{Findings.elsewhere(write, func)}. Dirty operations bypass " <>

@@ -543,6 +543,15 @@ surface and how near the request is, the class a call raises, how
 
 The corpus pairs that pinned the old titles pin the new ones.
 
+**Changed** titles, for one style: "children started under another
+tree outlive their owner" → "Children started under another tree
+outlive their owner" (the one title that began with a lowercase word
+that is not code); "start_child result not checked" → "start_child
+result ignored", beside startup's "Start result ignored"; "Uniqueness
+check then insert race on a Mnesia table" → "Uniqueness
+check-then-insert race on a Mnesia table", hyphenated as the other
+check-then-act titles are.
+
 ### Priors for what a reader knows
 
 **Added.** Schema 110. `prior_value_source(func, sink, source,
