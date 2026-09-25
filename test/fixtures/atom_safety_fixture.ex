@@ -49,3 +49,42 @@ defmodule Argus.Test.Fixtures.ExportedSinkCaller do
 
   defp to_tag(input), do: String.to_atom(input)
 end
+
+defmodule Argus.Test.Fixtures.AtomSources do
+  @moduledoc """
+  Atom creation no request reaches, by where its argument comes from.
+  What a caller of the program hands in reaches an atom through `input/1`
+  (an exported function nothing here calls) and through the closure
+  `keys/1` runs on each element; the rest make atoms of what the program
+  holds itself.
+  """
+
+  def input(name), do: String.to_atom(name)
+
+  def keys(map), do: Map.new(map, fn {k, v} -> {String.to_atom(k), v} end)
+
+  def env_level, do: String.to_atom(System.get_env("LOG_LEVEL") || "info")
+
+  def default_name, do: name("main")
+
+  def name(id), do: String.to_atom("#{id}-pipeline")
+end
+
+defmodule Argus.Test.Fixtures.AtomFromMessages do
+  @moduledoc "A server makes an atom of a message it is sent: the program's own data."
+  use GenServer
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_info({:rename, name}, state),
+    do: {:noreply, Map.put(state, :name, String.to_atom(name))}
+end
+
+defmodule Argus.Test.Fixtures.AtomProcessName do
+  @moduledoc "Broadway's process_name/2: the pipeline's own name, from its own configuration."
+  @behaviour Broadway
+
+  def process_name({:via, _module, {name, _id}}, base), do: String.to_atom("#{name}-#{base}")
+end

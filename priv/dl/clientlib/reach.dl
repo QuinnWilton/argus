@@ -94,6 +94,23 @@
   reaches(f, p, t) :- call_arg_derived(f, g, k, p), reaches(g, k, t).
 }
 
+// The same walk over Argus.Extractors.Dependence's data-only rows
+// (call_arg_reads) as well: a call's result is made of its arguments
+// whatever the callee, where call_arg_derived follows only the
+// propagators it knows — and call_arg_derived's own rows, which carry an
+// element into the closure a higher-order call runs on it. Wider —
+// `Tesla.build_url(env.url, env.query)` carries the URL here and not
+// there — for a question whose answer may over-count: "is this made of
+// something a caller handed in at all". A position is a symbol, as the
+// rows spell a parameter.
+.comp ParamReadsReach {
+  .decl seed(func: symbol, pos: symbol, target: symbol)
+  .decl reaches(func: symbol, pos: symbol, target: symbol)
+  reaches(f, p, t) :- seed(f, p, t).
+  reaches(f, p, t) :- call_arg_reads(f, g, k, "param", p), reaches(g, to_string(k), t).
+  reaches(f, to_string(p), t) :- call_arg_derived(f, g, k, p), reaches(g, to_string(k), t).
+}
+
 // ── Backward, as a set: which functions reach any seed ───────────────
 
 .comp BackwardSet {

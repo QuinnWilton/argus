@@ -66,7 +66,15 @@ defmodule Argus.Analysis.Sets do
 
   # What scry runs unconfigured: the OTP concerns whose findings are
   # structural and low-noise enough to report on every compile. effects,
-  # ets, blocking and the security concerns are asked for by name. races
+  # ets, blocking and the security concerns are asked for by name.
+  # unsafe_input stays out: a sink a request reaches is worth a compile's
+  # attention, but its atom creation no request reaches — reported where
+  # a caller's input reaches it, 65 rows over the evaluation programs
+  # (four apps, the Phoenix stack, OTP kernel, stdlib and mnesia) where
+  # "reachable from an export" was 261 — is still mostly library API
+  # doing what it is for (erl_scan, a generator, a cache naming its
+  # processes), with a few real finds among it (a dependency's vulnerable
+  # tesla adapter, an Ecto type casting any string to an atom). races
   # is here because its rows are few and real: over the closed-issue
   # corpus and four large programs, one registry race (tesla's), ETS
   # races in postgrex, hammer, ztlp and blockster and OTP's own mnesia

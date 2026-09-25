@@ -60,7 +60,10 @@ defmodule Argus.Analyses.UnsafeInput do
       Argus.Extractors.ParamFlow,
       Argus.Extractors.Router,
       Argus.Extractors.Supervision,
-      Argus.Extractors.Endpoint
+      Argus.Extractors.Endpoint,
+      # What a call's arguments are made of whatever the callee
+      # (call_arg_reads): whether a caller's input reaches an atom.
+      Argus.Extractors.Dependence
     ]
 
   @sink_fields [

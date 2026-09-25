@@ -29,12 +29,12 @@
 // so the absence of a flow row is not evidence the data comes from
 // elsewhere.
 //
-// A sink no request reaches is reported once, on its own: unsafe atom
-// creation and code execution when some exported function reaches it
-// (in a library that is very nearly everything, so this is "is this
-// code live", not "can an attacker reach it"), and every
-// deserialization without :safe, since the caller's input is the
-// question. Entry points are identified by OTP behaviour plus callback
+// A sink no request reaches is reported once, on its own: code
+// execution when some exported function reaches it (in a library that is
+// very nearly everything, so this is "is this code live", not "can an
+// attacker reach it"), atom creation when what a caller hands in reaches
+// its argument (caller_input, below), and every deserialization without
+// :safe, since the caller's input is the question. Entry points are identified by OTP behaviour plus callback
 // name/arity, which is exactly the information beam attributes carry.
 
 .include "../clientlib/imports.dl"
@@ -201,11 +201,77 @@ export_reach.root(func) :- function_def(func, _, _, _, 1).
 .decl sink_without_request_path(id: symbol, func: symbol, api: symbol, sink: symbol, safety: symbol)
 .output sink_without_request_path
 
-sink_without_request_path(id, func, api, s, "") :-
-  sink(id, func, api, s, ""),
-  (s = "atom" ; s = "code"),
+sink_without_request_path(id, func, api, "code", "") :-
+  sink(id, func, api, "code", ""),
   export_reach.reaches(func),
   !sink_reachable(id, _, _, _, _, _, _, _, _, _).
+
+sink_without_request_path(id, func, api, "atom", "") :-
+  sink(id, func, api, "atom", ""),
+  export_reach.reaches(func),
+  caller_input(id),
+  !sink_reachable(id, _, _, _, _, _, _, _, _, _).
+
+// ── Atoms made of what a caller hands in ─────────────────────────
+//
+// Reachable from an exported function says the code is live, not that a
+// caller's data reaches the atom: the atom may be made of a literal, of
+// configuration, of what the process read from its own state. Atom
+// creation no request reaches is reported where its argument is made of
+// what the program's callers hand in: a parameter of an exported function
+// the program does not call itself — the library's API, which its users
+// call with their own input — reached backward from the sink's argument
+// (sink_arg_derived, then Dependence's call_arg_reads, which carry data
+// through any call): tesla's
+// adapter building an atom of the URL's scheme, membrane parsing box
+// names out of the file it is handed, absinthe_federation converting the
+// keys of the representations its resolver is handed (through the
+// closure `Map.new/2` runs on each). A callback the runtime calls with
+// the program's own data is not an API: a process's callbacks and
+// init/1, Broadway's `process_name/2`, a protocol's implementation.
+.init atom_input = ParamReadsReach
+
+atom_input.seed(func, to_string(pos), id) :-
+  sink(id, func, _, "atom", ""),
+  sink_arg_derived(id, func, 0, pos).
+
+.decl caller_input(id: symbol)
+
+caller_input(id) :- atom_input.reaches(f, _, id), outside_api(f).
+
+// An exported function nothing in the program calls: only its users
+// can. One the program calls itself takes what the program hands it,
+// which its other callers name.
+.decl outside_api(func: symbol)
+
+outside_api(f) :-
+  function_def(f, m, n, a, 1),
+  !call_edge(_, f),
+  !runtime_callback(m, n, a),
+  !function_def(_, m, "__impl__", 1, _).
+
+// What the runtime calls a process module with: its own start arguments,
+// its own messages, its own name.
+.decl runtime_callback(mod: symbol, name: symbol, arity: number)
+
+runtime_callback(m, n, a) :-
+  behaves_as(m, b),
+  process_behaviour(b, "loop"),
+  process_callback(n, a),
+  function_def(_, m, n, a, _).
+
+.decl process_callback(name: symbol, arity: number)
+
+process_callback("init", 1).
+process_callback("handle_call", 3).
+process_callback("handle_cast", 2).
+process_callback("handle_info", 2).
+process_callback("handle_continue", 2).
+process_callback("terminate", 2).
+process_callback("code_change", 3).
+process_callback("format_status", 1).
+process_callback("format_status", 2).
+process_callback("process_name", 2).
 
 sink_without_request_path(id, func, api, "deserialization", safety) :-
   sink(id, func, api, "deserialization", safety),

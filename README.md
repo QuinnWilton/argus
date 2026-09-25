@@ -87,7 +87,9 @@ their own.
 
 Named sets stand in for a list: `:all` (everything but `coverage`),
 `:default` (what scry runs unconfigured), `:security`, `:effects` and
-`:otp`. The names these replaced in 0.17 (`supervision`,
+`:otp`. `unsafe_input` and `exposure` are `:security`'s, not
+`:default`'s: a sink a request reaches is worth reading, but atom
+creation no request reaches is mostly library API doing what it is for. The names these replaced in 0.17 (`supervision`,
 `error_handling`, `sync_call_in_init`, ...) ran through an alias table
 until 0.20, which removed it: a retired name is an unknown analysis now.
 The 0.17 entry of the CHANGELOG says where each one's findings went.

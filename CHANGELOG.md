@@ -3007,6 +3007,31 @@ relation are unchanged.
 
 ### unsafe_input
 
+**Fixed.** "Dynamic atom creation reachable from an exported function"
+is reported where what a caller hands in reaches the atom, not wherever
+an export reaches the call (`caller_input`): the atom's argument is made
+of a parameter (`sink_arg_derived`), and walking back — over
+`call_arg_derived` and `Argus.Extractors.Dependence`'s `call_arg_reads`,
+which carry data through any call (the new `ParamReadsReach` in
+clientlib/reach.dl) — reaches a parameter of an exported function the
+program does not call itself: the library's API. A callback the runtime
+calls with the program's own data is not one: a process's callbacks and
+init/1, Broadway's `process_name/2`, a protocol's implementation. An
+atom of configuration (`System.get_env`), of a literal or an allowlist
+(above), of a server's own message, or of what the function's only
+in-program caller names is no longer reported. `unsafe_input` now runs
+the Dependence extractor. Over the evaluation programs (four apps, the
+Phoenix stack, OTP kernel, stdlib and mnesia) the title goes from 261
+rows to 65; of the eight a reviewer sampled, all false, seven go
+(livebook's TeamClient and Config, its shortcut component, hexpm's
+email flags, sequin's camelized struct keys, logflare's Broadway
+`process_name/2`); logflare's Wobserver `string_to_module/1` stays.
+Among the 65: the vulnerable tesla Mint adapter logflare depends on
+(CVE-2026-48597's shape), logflare's `Ecto.UUID.Atom.cast/1`, and a
+realtime LiveDashboard page making an atom of an event's `"fun"`. Its
+set membership does not change: `unsafe_input` is `:security`'s, and
+was never `:default`'s.
+
 **Fixed.** A sink whose argument is one of a set the program wrote, on
 every path to it, is not a sink (`bounded_input`): compared equal to a
 literal in a clause head, a guard's `in` or a case arm, found in a

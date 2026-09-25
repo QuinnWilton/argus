@@ -38,7 +38,10 @@ defmodule Argus.Analyses.UnsafeInputTest do
     Taint.HofElement,
     Taint.GuardAllowlist,
     Taint.BodyAllowlist,
-    Taint.SameLine
+    Taint.SameLine,
+    Argus.Test.Fixtures.AtomSources,
+    Argus.Test.Fixtures.AtomFromMessages,
+    Argus.Test.Fixtures.AtomProcessName
   ]
 
   setup_all do
@@ -356,6 +359,46 @@ defmodule Argus.Analyses.UnsafeInputTest do
     test "two atoms made on one line are one finding", ctx do
       skip_without_souffle()
       assert [_] = atom_rows(ctx, [Taint.SameLine])
+    end
+  end
+
+  describe "atom creation no request reaches" do
+    test "is reported where a caller's input reaches it: an uncalled export, a closure over one",
+         ctx do
+      skip_without_souffle()
+
+      funcs =
+        ctx
+        |> analyze([Argus.Test.Fixtures.AtomSources])
+        |> local("atom")
+        |> Enum.map(&elem(&1, 0))
+
+      assert Enum.any?(funcs, &(&1 =~ "AtomSources:input/1"))
+      assert Enum.any?(funcs, &(&1 =~ "AtomSources:-keys/1-fun-0-/1"))
+    end
+
+    test "is not reported of configuration, or of a value its only caller names", ctx do
+      skip_without_souffle()
+
+      funcs =
+        ctx
+        |> analyze([Argus.Test.Fixtures.AtomSources])
+        |> local("atom")
+        |> Enum.map(&elem(&1, 0))
+
+      refute Enum.any?(funcs, &(&1 =~ "env_level"))
+      refute Enum.any?(funcs, &(&1 =~ "AtomSources:name/1"))
+    end
+
+    test "is not reported of a server's own messages or a pipeline's own name", ctx do
+      skip_without_souffle()
+
+      assert ctx
+             |> analyze([
+               Argus.Test.Fixtures.AtomFromMessages,
+               Argus.Test.Fixtures.AtomProcessName
+             ])
+             |> local("atom") == []
     end
   end
 
