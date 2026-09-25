@@ -10,7 +10,7 @@ defmodule Argus.Schema.Supervision do
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
   @spec relations() :: [Argus.Schema.declaration()]
   def relations do
-    [
+    Argus.Cache.Reads.record("relations #{__MODULE__}", [
       %{
         name: :supervisor,
         layer: 2,
@@ -155,6 +155,6 @@ defmodule Argus.Schema.Supervision do
         that are present and not `false`, which is how Phoenix reads them.
         """
       }
-    ]
+    ])
   end
 end

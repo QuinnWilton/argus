@@ -4,9 +4,10 @@ defmodule Argus.Facts do
 
   `Argus.Pipeline.Emit` produces facts as lists of string fields — the right
   shape for Souffle `.facts` files, but stringly for Elixir consumers. This
-  module decodes those rows against `Argus.Schema`: each row becomes a map
-  keyed by the schema's field names, with values decoded by field kind
-  (numbers and labels to integers, instruction IDs to `Argus.InstrId`
+  module decodes those rows against the relations' columns
+  (`Argus.Schema.columns/1`, its one read of the schema): each row becomes
+  a map keyed by the schema's field names, with values decoded by field
+  kind (numbers and labels to integers, instruction IDs to `Argus.InstrId`
   structs).
 
   Decoding is *strict*: a row that doesn't match its relation's schema (wrong
@@ -18,8 +19,6 @@ defmodule Argus.Facts do
   Eventually emission itself may become typed, with stringification pushed to
   the `.facts` writer; this decoder is the compatible first step.
   """
-
-  use Argus.Purity
 
   alias Argus.{InstrId, Schema, Symbols}
 
@@ -36,8 +35,10 @@ defmodule Argus.Facts do
   @doc """
   Decode a raw facts map (`relation => [[String.t()]]`) into typed rows.
   """
+  # Not `@pure` (`Argus.Purity`): reading a relation's columns records the
+  # read in the process dictionary of a producer that tracks its reads
+  # (`Argus.Cache.Reads`), an effect by that analysis's definition.
   @spec decode(%{atom() => [[String.t()]]}) :: t()
-  @pure true
   def decode(raw) when is_map(raw) do
     # A module's instruction IDs recur across its relations (an
     # instruction's own row, its defs, its uses, its fall-through), so a
@@ -53,9 +54,8 @@ defmodule Argus.Facts do
   end
 
   defp decode_relation(relation, rows, ids) do
-    case Schema.fetch(relation) do
-      {:ok, %{fields: fields}} ->
-        fields = Enum.map(fields, fn {name, kind, _doc} -> {name, kind} end)
+    case Schema.columns(relation) do
+      {:ok, fields} ->
         width = length(fields)
         Enum.map_reduce(rows, ids, &decode_row(relation, fields, width, &1, &2))
 
@@ -195,8 +195,8 @@ defmodule Argus.Facts do
     # (every ETS read is a copy).
     {decoded, _seen} =
       Enum.map_reduce(interned, %{}, fn {relation, rows}, seen ->
-        case Schema.fetch(relation) do
-          {:ok, %{fields: fields}} ->
+        case Schema.columns(relation) do
+          {:ok, fields} ->
             {rows, seen} =
               Enum.map_reduce(rows, seen, fn row, seen ->
                 decode_interned_row(relation, fields, row, symbols, seen)
@@ -220,8 +220,8 @@ defmodule Argus.Facts do
   # Field kinds in order; an unknown relation is all symbols, as wide as
   # its rows (`:symbol` repeated is what `Stream.cycle` gives the zips).
   defp field_kinds(relation) do
-    case Schema.fetch(relation) do
-      {:ok, %{fields: fields}} -> Enum.map(fields, fn {_name, kind, _doc} -> kind end)
+    case Schema.columns(relation) do
+      {:ok, fields} -> Enum.map(fields, fn {_name, kind} -> kind end)
       :error -> Stream.cycle([:symbol])
     end
   end
@@ -271,14 +271,14 @@ defmodule Argus.Facts do
       fields
       |> Enum.zip(Tuple.to_list(row))
       |> Enum.map_reduce(seen, fn
-        {{name, kind, _doc}, value}, seen when kind in [:number, :label] ->
+        {{name, kind}, value}, seen when kind in [:number, :label] ->
           {{name, value}, seen}
 
-        {{name, :instr_id, _doc}, id}, seen ->
+        {{name, :instr_id}, id}, seen ->
           {instr_id, seen} = instr_id_cached!(relation, symbols, id, seen)
           {{name, instr_id}, seen}
 
-        {{name, _kind, _doc}, id}, seen ->
+        {{name, _kind}, id}, seen ->
           {string, seen} = resolve_cached(symbols, id, seen)
           {{name, string}, seen}
       end)

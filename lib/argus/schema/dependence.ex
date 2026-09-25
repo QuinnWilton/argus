@@ -9,7 +9,7 @@ defmodule Argus.Schema.Dependence do
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
   @spec relations() :: [Argus.Schema.declaration()]
   def relations do
-    [
+    Argus.Cache.Reads.record("relations #{__MODULE__}", [
       %{
         name: :site_depends,
         layer: 2,
@@ -159,6 +159,6 @@ defmodule Argus.Schema.Dependence do
         on the source. Project calls are call_decided's. Function-level.
         """
       }
-    ]
+    ])
   end
 end

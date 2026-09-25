@@ -9,7 +9,7 @@ defmodule Argus.Schema.OwnedResources do
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
   @spec relations() :: [Argus.Schema.declaration()]
   def relations do
-    [
+    Argus.Cache.Reads.record("relations #{__MODULE__}", [
       %{
         name: :ets_new,
         layer: 2,
@@ -66,6 +66,6 @@ defmodule Argus.Schema.OwnedResources do
             "when it terminates — so, like an ETS table, it attributes to that " <>
             "process in the supervision tree."
       }
-    ]
+    ])
   end
 end

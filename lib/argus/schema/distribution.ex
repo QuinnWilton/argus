@@ -9,7 +9,7 @@ defmodule Argus.Schema.Distribution do
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
   @spec relations() :: [Argus.Schema.declaration()]
   def relations do
-    [
+    Argus.Cache.Reads.record("relations #{__MODULE__}", [
       %{
         name: :process_register,
         layer: 2,
@@ -149,6 +149,6 @@ defmodule Argus.Schema.Distribution do
         ],
         doc: "Mnesia or DETS distributed store operation."
       }
-    ]
+    ])
   end
 end

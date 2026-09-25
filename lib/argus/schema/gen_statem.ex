@@ -9,7 +9,7 @@ defmodule Argus.Schema.GenStatem do
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
   @spec relations() :: [Argus.Schema.declaration()]
   def relations do
-    [
+    Argus.Cache.Reads.record("relations #{__MODULE__}", [
       %{
         name: :statem_module,
         layer: 2,
@@ -152,6 +152,6 @@ defmodule Argus.Schema.GenStatem do
         doc:
           "Some clause of the callback accepts any event: a body is reachable from the entry by failure branches alone."
       }
-    ]
+    ])
   end
 end

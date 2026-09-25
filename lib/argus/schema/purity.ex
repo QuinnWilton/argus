@@ -9,7 +9,7 @@ defmodule Argus.Schema.Purity do
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
   @spec relations() :: [Argus.Schema.declaration()]
   def relations do
-    [
+    Argus.Cache.Reads.record("relations #{__MODULE__}", [
       %{
         name: :pure_contract,
         layer: 2,
@@ -87,6 +87,6 @@ defmodule Argus.Schema.Purity do
         verification report success far more often and mean nothing.
         """
       }
-    ]
+    ])
   end
 end

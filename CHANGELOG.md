@@ -291,6 +291,20 @@ in-process relations out by name where it listed the ones it keeps: the
 option keys every shard, and a relation added to the schema moved every
 key; now only an in-process flag's change does.
 
+**Added.** Every function of `Argus.Schema` and of its concern modules
+records the entry it returns (`Argus.Cache.Reads`: `track/1` runs a
+function and returns what it read of the schema, by name;
+`Argus.Schema.reread/1` answers a read again). `Argus.Schema.columns/1`
+returns a relation's columns without their prose, and is what
+`Argus.Facts` decodes by, where it read the whole relation.
+`Argus.SchemaReadsTest` calls every export with every valid argument
+and fails unless each records a read naming exactly what it returned.
+`Argus.Schema.fetch/1` takes an atom only.
+
+**Changed.** `Argus.Facts.decode/1` is no longer declared `@pure`: the
+read of a relation's columns it makes records into the process
+dictionary of a caller that tracks what it reads.
+
 ### What the program's other sites believe
 
 **Changed.** Schema 86. `failure.inconsistent_handling` gains `raises`,

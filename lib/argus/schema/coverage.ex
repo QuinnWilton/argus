@@ -10,7 +10,7 @@ defmodule Argus.Schema.Coverage do
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
   @spec relations() :: [Argus.Schema.declaration()]
   def relations do
-    [
+    Argus.Cache.Reads.record("relations #{__MODULE__}", [
       %{
         name: :imprecision,
         layer: 2,
@@ -33,6 +33,6 @@ defmodule Argus.Schema.Coverage do
         coverage diff tooling can keep stable keys.
         """
       }
-    ]
+    ])
   end
 end

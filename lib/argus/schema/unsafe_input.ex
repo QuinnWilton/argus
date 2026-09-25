@@ -8,7 +8,7 @@ defmodule Argus.Schema.UnsafeInput do
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
   @spec relations() :: [Argus.Schema.declaration()]
   def relations do
-    [
+    Argus.Cache.Reads.record("relations #{__MODULE__}", [
       %{
         name: :unsafe_atom_creation,
         layer: 2,
@@ -40,6 +40,6 @@ defmodule Argus.Schema.UnsafeInput do
         ],
         doc: "Dynamic code execution or OS command call."
       }
-    ]
+    ])
   end
 end

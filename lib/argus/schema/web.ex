@@ -10,7 +10,7 @@ defmodule Argus.Schema.Web do
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
   @spec relations() :: [Argus.Schema.declaration()]
   def relations do
-    [
+    Argus.Cache.Reads.record("relations #{__MODULE__}", [
       %{
         name: :http_route,
         layer: 2,
@@ -87,6 +87,6 @@ defmodule Argus.Schema.Web do
         with no row here is hidden from `inspect/1`.
         """
       }
-    ]
+    ])
   end
 end

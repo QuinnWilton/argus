@@ -8,7 +8,7 @@ defmodule Argus.Schema.Tls do
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
   @spec relations() :: [Argus.Schema.declaration()]
   def relations do
-    [
+    Argus.Cache.Reads.record("relations #{__MODULE__}", [
       %{
         name: :tls_verification,
         layer: 2,
@@ -39,6 +39,6 @@ defmodule Argus.Schema.Tls do
         configures itself properly is worse than silence.
         """
       }
-    ]
+    ])
   end
 end

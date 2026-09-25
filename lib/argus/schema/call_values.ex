@@ -11,7 +11,7 @@ defmodule Argus.Schema.CallValues do
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
   @spec relations() :: [Argus.Schema.declaration()]
   def relations do
-    [
+    Argus.Cache.Reads.record("relations #{__MODULE__}", [
       %{
         name: :call_arg,
         layer: 2,
@@ -406,6 +406,6 @@ defmodule Argus.Schema.CallValues do
         parameter to the sink's argument: a proven flow rather than a call path.
         """
       }
-    ]
+    ])
   end
 end

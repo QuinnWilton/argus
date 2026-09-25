@@ -10,7 +10,20 @@ defmodule Argus.Schema do
 
   - **Layer 1** — generic bytecode facts extracted from any BEAM module.
   - **Layer 2** — domain-specific facts from pluggable extractors.
+
+  ## Reading the schema
+
+  The schema is data, read only through the functions of this module
+  and of its concern modules, each of which records the entry it
+  returns (`Argus.Cache.Reads`): what a producer's rows depend on is
+  then the entries it read, not this module's code. A new accessor
+  records what it returns, as the others do — `Argus.SchemaReadsTest`
+  calls every export and fails otherwise — and `columns/1` is the read
+  to make when a relation's columns are all a caller needs: its prose
+  is then no part of what the caller read.
   """
+
+  alias Argus.Cache.Reads
 
   @typedoc """
   The semantic kind of a relation field.
@@ -98,6 +111,19 @@ defmodule Argus.Schema do
 
   @relations_by_name Map.new(@all_relations, fn r -> {r.name, r} end)
 
+  @columns_by_name Map.new(@all_relations, fn r ->
+                     {r.name, Enum.map(r.fields, fn {name, kind, _doc} -> {name, kind} end)}
+                   end)
+
+  @names Enum.map(@all_relations, & &1.name)
+
+  # Every accessor records the entry it returns (`Argus.Cache.Reads`):
+  # an accessor that returned schema data without recording it would
+  # hide from a caller keyed on the reads what its rows depend on.
+  # `Argus.SchemaReadsTest` calls every export here and in the concern
+  # modules, and fails unless each records a read naming exactly what it
+  # returned; `reread/1` answers each read again.
+
   @doc """
   The fact-schema version, asserted by in-process consumers at compile time.
 
@@ -106,53 +132,49 @@ defmodule Argus.Schema do
   package version.
   """
   @spec version() :: pos_integer()
-  def version, do: @schema_version
+  def version, do: Reads.record("version", @schema_version)
 
   @doc """
   Returns all relation definitions.
   """
   @spec all() :: [relation()]
-  def all, do: @all_relations
+  def all, do: Reads.record("all", @all_relations)
 
   @doc """
   Returns layer 1 (generic bytecode) relation definitions.
   """
   @spec layer_1() :: [relation()]
-  def layer_1, do: @layer_1_relations
+  def layer_1, do: Reads.record("layer_1", @layer_1_relations)
 
   @doc """
   Returns layer 2 (domain extractor) relation definitions.
   """
   @spec layer_2() :: [relation()]
-  def layer_2, do: @layer_2_relations
+  def layer_2, do: Reads.record("layer_2", @layer_2_relations)
 
   @doc """
   Returns layer 3 (prior) relation definitions: facts a classifier
   supplies, not an extractor. See `Argus.Priors`.
   """
   @spec layer_3() :: [relation()]
-  def layer_3, do: @layer_3_relations
+  def layer_3, do: Reads.record("layer_3", @layer_3_relations)
 
   @doc """
   Looks up a relation by name.
   """
   @spec fetch(atom()) :: {:ok, relation()} | :error
-  def fetch(name) do
-    case @relations_by_name do
-      %{^name => rel} -> {:ok, rel}
-      _ -> :error
-    end
-  end
+  def fetch(name) when is_atom(name),
+    do: Reads.record("fetch #{name}", Map.fetch(@relations_by_name, name))
 
-  defp souffle_decl(name) do
-    rel = Map.fetch!(@relations_by_name, name)
-
-    fields_str =
-      rel.fields
-      |> Enum.map_join(", ", fn {fname, ftype, _doc} -> "#{fname}: #{souffle_type(ftype)}" end)
-
-    ".decl #{name}(#{fields_str})"
-  end
+  @doc """
+  A relation's columns: each field's name and kind, in order, without
+  the prose. What a reader of rows needs (`Argus.Facts.decode/1`), and
+  all it depends on: an edit to a relation's documentation moves no
+  key that reads only its columns.
+  """
+  @spec columns(atom()) :: {:ok, [{atom(), field_type()}]} | :error
+  def columns(name) when is_atom(name),
+    do: Reads.record("columns #{name}", Map.fetch(@columns_by_name, name))
 
   @doc """
   Renders a complete `.dl` declaration file for a layer.
@@ -174,20 +196,24 @@ defmodule Argus.Schema do
   `layer` is `:layer_1`, `:layer_2`, `:layer_3`, or `:all`.
   """
   @spec souffle_decls(:layer_1 | :layer_2 | :layer_3 | :all) :: String.t()
-  def souffle_decls(layer) do
+  def souffle_decls(layer) when layer in [:layer_1, :layer_2, :layer_3, :all],
+    do: Reads.record("souffle_decls #{layer}", render_decls(layer))
+
+  defp render_decls(layer) do
     {relations, title, source} =
       case layer do
         :layer_1 ->
-          {layer_1(), "Layer 1 — generic bytecode facts", "Argus.Schema.layer_1/0"}
+          {@layer_1_relations, "Layer 1 — generic bytecode facts", "Argus.Schema.layer_1/0"}
 
         :layer_2 ->
-          {layer_2(), "Layer 2 — domain extractor facts", "Argus.Schema.layer_2/0"}
+          {@layer_2_relations, "Layer 2 — domain extractor facts", "Argus.Schema.layer_2/0"}
 
         :layer_3 ->
-          {layer_3(), "Layer 3 — priors, a classifier's answers", "Argus.Schema.layer_3/0"}
+          {@layer_3_relations, "Layer 3 — priors, a classifier's answers",
+           "Argus.Schema.layer_3/0"}
 
         :all ->
-          {all(), "All fact relations", "Argus.Schema.all/0"}
+          {@all_relations, "All fact relations", "Argus.Schema.all/0"}
       end
 
     body =
@@ -196,7 +222,7 @@ defmodule Argus.Schema do
       |> Enum.map_join("\n\n", fn rel ->
         """
         #{comment(rel.doc)}
-        #{souffle_decl(rel.name)}
+        #{souffle_decl(rel)}
         .input #{rel.name}\
         """
       end)
@@ -213,6 +239,15 @@ defmodule Argus.Schema do
 
     #{body}
     """
+  end
+
+  defp souffle_decl(rel) do
+    fields_str =
+      Enum.map_join(rel.fields, ", ", fn {fname, ftype, _doc} ->
+        "#{fname}: #{souffle_type(ftype)}"
+      end)
+
+    ".decl #{rel.name}(#{fields_str})"
   end
 
   # Relation docs are prose and frequently run to several lines. Every line
@@ -237,11 +272,60 @@ defmodule Argus.Schema do
   Returns all relation names.
   """
   @spec names() :: [atom()]
-  def names, do: Enum.map(@all_relations, & &1.name)
+  def names, do: Reads.record("names", @names)
 
   @doc """
   Relations that only the in-process passes read; no Souffle program does.
   """
   @spec in_process_only() :: [atom()]
-  def in_process_only, do: @in_process_only
+  def in_process_only, do: Reads.record("in_process_only", @in_process_only)
+
+  @doc """
+  What `read` (`t:Argus.Cache.Reads.read/0`) names now: the answer the
+  accessor that recorded it gives today, asked again (and recorded
+  again). How a store checks the reads a producer made
+  (`Argus.Cache.Reads.digest/1`); a read no accessor makes names
+  `{:unknown_read, read}`.
+
+  A read's relation name that is no atom in this VM names no relation:
+  every relation's name is an atom of this module's literals, made when
+  it was loaded.
+  """
+  @spec reread(Reads.read()) :: term()
+  def reread(read) when is_binary(read) do
+    case String.split(read, " ", parts: 2) do
+      ["version"] -> version()
+      ["all"] -> all()
+      ["layer_1"] -> layer_1()
+      ["layer_2"] -> layer_2()
+      ["layer_3"] -> layer_3()
+      ["names"] -> names()
+      ["in_process_only"] -> in_process_only()
+      ["fetch", name] -> by_name(read, name, &fetch/1)
+      ["columns", name] -> by_name(read, name, &columns/1)
+      ["souffle_decls", layer] -> reread_decls(read, layer)
+      ["relations", module] -> reread_concern(read, module)
+      _ -> {:unknown_read, read}
+    end
+  end
+
+  defp by_name(read, name, accessor) do
+    accessor.(String.to_existing_atom(name))
+  rescue
+    ArgumentError -> Reads.record(read, :error)
+  end
+
+  defp reread_decls(read, layer) do
+    case Enum.find([:layer_1, :layer_2, :layer_3, :all], &(Atom.to_string(&1) == layer)) do
+      nil -> {:unknown_read, read}
+      layer -> souffle_decls(layer)
+    end
+  end
+
+  defp reread_concern(read, module) do
+    case Enum.find(@concerns, &(Atom.to_string(&1) == module)) do
+      nil -> {:unknown_read, read}
+      concern -> concern.relations()
+    end
+  end
 end

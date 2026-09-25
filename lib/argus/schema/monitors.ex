@@ -10,7 +10,7 @@ defmodule Argus.Schema.Monitors do
   @doc "The relations, in the order `Argus.Schema.all/0` lists them."
   @spec relations() :: [Argus.Schema.declaration()]
   def relations do
-    [
+    Argus.Cache.Reads.record("relations #{__MODULE__}", [
       %{
         name: :monitor_call,
         layer: 2,
@@ -106,6 +106,6 @@ defmodule Argus.Schema.Monitors do
         closure or another module is not seen.
         """
       }
-    ]
+    ])
   end
 end
