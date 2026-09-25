@@ -25,6 +25,35 @@ defmodule Argus.Extractors.ErrorHandlingTest do
     end
   end
 
+  describe "extract/1 — timer_tag" do
+    alias Argus.Test.Fixtures.UnhandledInfo
+
+    defp tags(mod) do
+      facts = ErrorHandling.extract(disassemble(mod))
+      arms = Map.new(facts[:timer_arm], fn [id, func | _] -> {id, func} end)
+
+      for [id, tag] <- Map.get(facts, :timer_tag, []) do
+        {arms |> Map.fetch!(id) |> String.split(":") |> List.last(), tag}
+      end
+      |> Enum.sort()
+    end
+
+    test "an atom, a literal tuple and a built tuple are told apart by their tag" do
+      assert tags(UnhandledInfo.WarmUp) == [
+               {"handle_info/2", ":expire"},
+               {"handle_info/2", ":warm_up"},
+               {"init/1", ":expire"},
+               {"init/1", ":warm_up"}
+             ]
+
+      assert tags(UnhandledInfo.Retry) == [{"handle_info/2", ":backoff"}, {"init/1", ":retry"}]
+    end
+
+    test "a message that is neither an atom nor a tagged tuple has no tag" do
+      assert tags(UnhandledInfo.Unjudged) == []
+    end
+  end
+
   describe "extract/1 — returns_call" do
     test "a function returns a local callee's result only from a tail call" do
       facts = ErrorHandling.extract(disassemble(Argus.Test.Fixtures.ReturnsCall))

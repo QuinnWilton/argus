@@ -10,6 +10,29 @@ What 0.20.0 will ship; the release dates this heading and drops the
 `-dev` from `mix.exs`. Grouped by concern. Each entry opens with what it
 does: **Added**, **Changed**, **Fixed** or **Removed**.
 
+### Process rules, read against real programs
+
+**Fixed.** `mailbox.unhandled_info` no longer reports a timer whose
+message is a literal tuple as having no clause when a clause takes its
+tag. A literal message is spelled whole (`{:warm_up_from_cluster, 5}`)
+and was compared to the tags handle_info/2 discriminates on, which no
+tuple's spelling equals: nerves_hub's `CLISessionCache` was "No
+handle_info/2 clause" for a message its `{:warm_up_from_cluster,
+attempts}` clause takes. A timer's message is now told apart by its
+tag (`timer_tag`), and a tuple the arming site builds around a literal
+tag (`{:retry, attempts - 1}`) is judged as a send's `{:tag, …}` is.
+A timer whose message is neither an atom nor a tuple with an atom
+first (a binary, a number) is not judged, as a send's is not. The same
+tag tells `partial_handler`'s "late_message" source that a server
+takes the timer it arms for itself: a `{:tick, at}` timer beside a
+`{:tick, _}` clause is no late message.
+
+**Added.** Schema 91. `timer_tag(id, tag)`
+(`Argus.Extractors.ErrorHandling`): the atom the message of the timer
+armed at `id` is told apart by — the message itself, or a tuple's
+first element, literal or built. Read by mailbox.dl's `info_message`,
+`tag_of` and `handled_self_timer`.
+
 ### Waits that end on their own
 
 **Fixed.** "RPC without a bounded timeout" judges a closure the rpc

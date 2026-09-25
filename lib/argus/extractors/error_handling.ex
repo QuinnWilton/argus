@@ -62,6 +62,8 @@ defmodule Argus.Extractors.ErrorHandling do
     to self()), `apply` (the function runs a caller-supplied function,
     which may do anything with this mailbox — the Flow producer of
     gen_stage#238 ran user code that called hackney)
+  - `timer_tag(id, tag)` — the atom the message of the timer armed at
+    `id` is told apart by: the message itself, or a tuple's first element
   - `cancel_clause(id, func, message)` — a cancel_timer inside a
     `handle_info/2` clause whose head is the literal `message`
   - `rpc_result(id, func, handling)` — how the result of an :rpc/:erpc
@@ -164,6 +166,7 @@ defmodule Argus.Extractors.ErrorHandling do
       :timer_cancel,
       :timer_ref,
       :timer_store,
+      :timer_tag,
       :trap_exit,
       :try_call,
       :try_covers,
@@ -411,6 +414,7 @@ defmodule Argus.Extractors.ErrorHandling do
           literal
         ])
         |> add_fact(:timer_ref, [id, ctx.func_id, flow, key])
+        |> emit_timer_tag(id, timer_tag(ctx, msg_reg))
 
       {:ok, "cancel"} ->
         id = InstrId.mint(ctx.func_id, ctx.idx)
@@ -453,6 +457,30 @@ defmodule Argus.Extractors.ErrorHandling do
         end
     end
   end
+
+  # The atom a receive or a clause head tells the timer's message apart
+  # by: the message itself when it is an atom, or the first element of a
+  # tuple, literal or built (`{:retry, attempts - 1}`, whose other
+  # elements the resolver leaves `:dynamic`). Nil for any other message,
+  # and for one the resolver cannot follow.
+  defp timer_tag(ctx, msg_reg) do
+    case resolve_register(ctx.instrs, ctx.idx, {:x, msg_reg}) do
+      {:ok, atom} when is_atom(atom) and atom != :dynamic ->
+        inspect(atom)
+
+      {:ok, tuple} when is_tuple(tuple) and tuple_size(tuple) > 0 ->
+        case elem(tuple, 0) do
+          tag when is_atom(tag) and tag != :dynamic -> inspect(tag)
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp emit_timer_tag(facts, _id, nil), do: facts
+  defp emit_timer_tag(facts, id, tag), do: add_fact(facts, :timer_tag, [id, tag])
 
   # Where the timer ref goes after the arming call: returned by the
   # function (a helper like `defp arm(ms), do: Process.send_after(...)`),

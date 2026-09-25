@@ -133,7 +133,77 @@ defmodule Argus.Test.Fixtures.UnhandledInfo do
     def handle_info(:pong, state), do: {:noreply, state}
   end
 
+  defmodule Retry do
+    @moduledoc "Arms a literal `{:retry, 3}` and re-arms a built `{:backoff, n}`; no clause takes either."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(opts) do
+      Process.send_after(self(), {:retry, 3}, 1_000)
+      {:ok, opts}
+    end
+
+    @impl true
+    def handle_info(:reset, state) do
+      Process.send_after(self(), {:backoff, state}, 1_000)
+      {:noreply, state}
+    end
+  end
+
   # ── Quiet ─────────────────────────────────────────────────────────
+
+  defmodule WarmUp do
+    @moduledoc """
+    nerves_hub's CLISessionCache: init arms a literal `{:warm_up, 5}`,
+    the clause for it re-arms a built `{:warm_up, n - 1}`, and the heads
+    dispatch on tuple arity first (a 4-tuple, a 2-tuple, an atom).
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(_opts) do
+      Process.send_after(self(), {:warm_up, 5}, 250)
+      Process.send_after(self(), :expire, 60_000)
+      {:ok, %{}}
+    end
+
+    @impl true
+    def handle_info({:put, origin, _key, _value}, state) when origin == node(),
+      do: {:noreply, state}
+
+    def handle_info({:put, _origin, key, value}, state),
+      do: {:noreply, Map.put(state, key, value)}
+
+    def handle_info(:expire, state) do
+      Process.send_after(self(), :expire, 60_000)
+      {:noreply, state}
+    end
+
+    def handle_info({:warm_up, attempts}, state) do
+      if attempts > 1, do: Process.send_after(self(), {:warm_up, attempts - 1}, 250)
+      {:noreply, state}
+    end
+  end
+
+  defmodule Unjudged do
+    @moduledoc "A timer whose message is a binary, not an atom or a tagged tuple: not judged."
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+    @impl true
+    def init(opts) do
+      Process.send_after(self(), "refresh", 1_000)
+      {:ok, opts}
+    end
+
+    @impl true
+    def handle_info("refresh", state), do: {:noreply, state}
+  end
 
   defmodule Handled do
     @moduledoc "Arms :refresh and has a clause for it; monitors and takes :DOWN."

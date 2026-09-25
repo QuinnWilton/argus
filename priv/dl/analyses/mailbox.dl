@@ -107,17 +107,19 @@ partial_handler(mod, h, "runtime", "catchall", "") :-
 mailbox_reach.seed(f) :- mailbox_writer(id, f, kind), kind != "cancel", !handled_self_timer(id).
 mailbox_reach.seed(f) :- sync_call_timeout(f, _, ms), ms != -1.
 
-// A timer the process arms for itself with a literal message its own
-// handle_info/2 has a clause for leaves nothing unhandled behind: the
-// late message is one the process takes (a janitor's :purge, a
-// metrics loop's :check). A cancel writes nothing; the timer it stops
-// was armed somewhere, and that arm is the source if any.
+// A timer the process arms for itself whose message's tag (timer_tag:
+// the atom, or a tuple's first element) its own handle_info/2 compares
+// leaves nothing unhandled behind: the late message is one the process
+// takes (a janitor's :purge, a metrics loop's :check, a warmer's
+// `{:warm, nil}`). A cancel writes nothing; the timer it stops was
+// armed somewhere, and that arm is the source if any.
 .decl handled_self_timer(id: symbol)
 
 handled_self_timer(id) :-
-  timer_arm(id, f, "self", "bare", _, lit),
+  timer_arm(id, f, "self", _, _, _),
+  timer_tag(id, tag),
   function_def(f, mod, _, _, _),
-  callback_tag(h, "handle_info", lit),
+  callback_tag(h, "handle_info", tag),
   function_def(h, mod, _, _, _).
 
 .decl late_message_source(mod: symbol)
@@ -1121,7 +1123,7 @@ info_message(m, f, id, msg, "send") :-
 // callback's process arms it, so the message comes back to that server.
 .init info_reach = SameProcessReach
 
-info_reach.seed(f, f) :- timer_arm(_, f, "self", "bare", _, _).
+info_reach.seed(f, f) :- timer_arm(id, f, "self", _, _, _), timer_tag(id, _).
 info_reach.seed(f, f) :- monitor_call(_, f, _).
 
 .decl runs_in_server(mod: symbol, func: symbol)
@@ -1131,8 +1133,17 @@ runs_in_server(m, f) :-
   info_reach.reaches(c, f),
   server_process(_, m).
 
+// Judged, as a send is, when the message is an atom or a tuple with an
+// atom first (timer_tag): a literal is named as it is written, a tuple
+// the site builds as pid_send spells one, `{:tag, …}`.
 info_message(m, f, id, lit, "timer") :-
   timer_arm(id, f, "self", "bare", _, lit),
+  timer_tag(id, _),
+  runs_in_server(m, f).
+
+info_message(m, f, id, cat("{", tag, ", …}"), "timer") :-
+  timer_arm(id, f, "self", "dynamic", _, _),
+  timer_tag(id, tag),
   runs_in_server(m, f).
 
 // A monitor its own function waits on, in a receive or behind a
@@ -1149,8 +1160,12 @@ info_message(m, f, id, "{:DOWN, …}", "monitor") :-
 
 // Whether `tag` is what `message` is told apart by: the atom itself, or
 // a tuple's literal tag (`{:tag, …}`, as pid_send spells it). Joined from
-// the tag's side with cat/2: the message is not parsed.
+// the tag's side with cat/2: the message is not parsed. A timer's is its
+// timer_tag: a literal tuple (`{:warm_up, 5}`) is spelled whole, and the
+// join would find no tag for it.
 .decl tag_of(message: symbol, tag: symbol)
+
+tag_of(msg, tag) :- info_message(_, _, id, msg, "timer"), timer_tag(id, tag).
 
 tag_of(msg, tag) :- info_message(_, _, _, msg, _), callback_tag(_, "handle_info", tag), msg = tag.
 

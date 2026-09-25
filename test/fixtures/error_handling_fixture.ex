@@ -249,8 +249,27 @@ end
 defmodule Argus.Test.Fixtures.PartialInfoServer do
   @moduledoc false
   # Handles one message and nothing else; monitors nothing, traps nothing —
-  # but arms a timer whose message is computed, which the one clause
-  # cannot be shown to take.
+  # but arms a timer whose message is computed whole (read from the
+  # state), which the one clause cannot be shown to take.
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+  @impl true
+  def init(state) do
+    Process.send_after(self(), Map.get(state, :message), 1_000)
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_info({:tick, _at}, state), do: {:noreply, state}
+end
+
+defmodule Argus.Test.Fixtures.TaggedTimerServer do
+  @moduledoc false
+  # Arms a timer whose message it builds around a literal tag,
+  # `{:tick, at}`, and has the clause for that tag: the late message is
+  # one it takes.
   use GenServer
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
@@ -279,7 +298,7 @@ defmodule Argus.Test.Fixtures.TaskTimerPartialInfoServer do
   @impl true
   def handle_cast(:poll, state) do
     Task.start(fn ->
-      Process.send_after(self(), {:tick, System.monotonic_time()}, 1_000)
+      Process.send_after(self(), Map.get(state, :message), 1_000)
     end)
 
     {:noreply, state}
@@ -431,7 +450,7 @@ defmodule Argus.Test.Fixtures.InlineOrTaskPartialInfoServer do
 
   @impl true
   def handle_cast(:poll, state) do
-    work = fn -> Process.send_after(self(), {:tick, System.monotonic_time()}, 1_000) end
+    work = fn -> Process.send_after(self(), Map.get(state, :message), 1_000) end
 
     case Process.whereis(:pollers) do
       nil -> work.()

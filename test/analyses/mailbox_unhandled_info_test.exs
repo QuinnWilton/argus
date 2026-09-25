@@ -20,7 +20,10 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
     U.Flushes,
     U.Client,
     U.Poller,
-    U.PollerTakes
+    U.PollerTakes,
+    U.Retry,
+    U.WarmUp,
+    U.Unjudged
   ]
 
   setup_all do
@@ -61,10 +64,17 @@ defmodule Argus.Analyses.MailboxUnhandledInfoTest do
     assert {"Poller:init/1", ":poll", "timer", "Poller", "state_crash"} in rows
   end
 
-  test "exactly those, and every quiet neighbour quiet", %{rows: rows} do
-    assert length(rows) == 7, inspect(rows, pretty: true)
+  test "a literal tuple, and one the site builds, are told apart by their tag", %{rows: rows} do
+    assert {"Retry:init/1", "{:retry, 3}", "timer", "Retry", "crash"} in rows
+    assert {"Retry:handle_info/2", "{:backoff, …}", "timer", "Retry", "crash"} in rows
+  end
 
-    quiet = ~w(Handled Delegates OpenClause WaitsForDown Flushes Client PollerTakes)
+  test "exactly those, and every quiet neighbour quiet", %{rows: rows} do
+    assert length(rows) == 9, inspect(rows, pretty: true)
+
+    quiet =
+      ~w(Handled Delegates OpenClause WaitsForDown Flushes Client PollerTakes WarmUp Unjudged)
+
     refute Enum.any?(rows, fn {_, _, _, server, _} -> server in quiet end)
   end
 

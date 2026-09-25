@@ -36,7 +36,8 @@ defmodule Argus.Analyses.MailboxInfoTest do
           Argus.Test.Fixtures.MonitorsWithoutCatchall,
           Argus.Test.Fixtures.HandledTimerServer,
           Argus.Test.Fixtures.TaskTimerPartialInfoServer,
-          Argus.Test.Fixtures.InlineOrTaskPartialInfoServer
+          Argus.Test.Fixtures.InlineOrTaskPartialInfoServer,
+          Argus.Test.Fixtures.TaggedTimerServer
         ])
 
       partial = Enum.map(partial(results, "late_message"), fn [mod, _f] -> mod end) |> Enum.sort()
