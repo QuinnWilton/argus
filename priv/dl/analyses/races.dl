@@ -836,9 +836,9 @@ makes_row(w) :-
   ets_op(w, _, _, "update_counter", "write"),
   remote_call(w, _, ":ets", "update_counter", 4).
 
-.decl removes_row(write: symbol)
+.decl removal(write: symbol)
 
-removes_row(w) :- ets_op(w, _, _, op, "write"), ets_removal_op(op).
+removal(w) :- ets_op(w, _, _, op, "write"), ets_removal_op(op).
 
 // A write that changes what the row holds: stores a value, counts in it,
 // or removes it.
@@ -918,7 +918,7 @@ makes_own_row(w) :- makes_row(w), !refill_row(w).
 // what makes a refill stale.
 .decl invalidates(write: symbol, func: symbol)
 
-invalidates(w, h) :- rival_write(w, h, _, _, _), removes_row(w).
+invalidates(w, h) :- rival_write(w, h, _, _, _), removal(w).
 invalidates(w, h) :- rival_write(w, h, _, _, _), value_write(w), !refill_row(w).
 invalidates(w, h) :- counts_in(w, h).
 
@@ -1228,13 +1228,13 @@ ets_harm_by(f, r, w, "lost_update", w2, h) :-
   value_write(w),
   rival(f, r, w, w2, h),
   changes_row(w2),
-  !removes_row(w2).
+  !removal(w2).
 
 ets_harm_by(f, r, w, "lost_update", w2, h) :-
   ets_carried.carries(f, r, w),
   makes_row(w),
   rival(f, r, w, w2, h),
-  removes_row(w2).
+  removal(w2).
 
 ets_harm_by(f, r, w, "clobber", w2, h) :-
   value_write(w),
@@ -1252,14 +1252,14 @@ ets_harm_by(f, r, w, "stale_fill", w2, h) :-
   rival(f, r, w, w2, h),
   other_site(f, w, w2, h),
   invalidates(w2, h),
-  !removes_row(w2).
+  !removal(w2).
 
 ets_harm_by(f, r, w, "stale_fill", w2, h) :-
   fills_from_source(f, r, w),
   makes_row(w),
   rival(f, r, w, w2, h),
   other_site(f, w, w2, h),
-  removes_row(w2).
+  removal(w2).
 
 ets_harm_by(f, r, w, "state_delete", w2, h) :-
   ets_op(w, _, _, "delete", _),
@@ -1895,14 +1895,6 @@ called_unguarded(f) :- rescue_asked(f), call_edge(h, f), !call_instr(h, f, _).
 
 callers_rescue(f) :- rescue_asked(f), call_instr(_, f, _), !called_unguarded(f).
 
-// In `func`, the check's result decides the act, on one key of `table`
-// (CheckThenAct's meets, followed across calls).
-.decl act_depends_on_check(func: symbol, check: symbol, act: symbol, table: EtsTable)
-
-act_depends_on_check(func, check, act, [tk, t]) :-
-  missing.meets(func, check, act, lifted_kind, t, _, _),
-  table_kind_as(tk, lifted_kind).
-
 // The act's table is one another process can read. A named table the
 // program does not show being made — by a dependency, or under a name
 // that arrives at runtime (`:ets.new(name, ...)` in a function nothing
@@ -1931,7 +1923,15 @@ removes_rows(d, [tk, t]) :-
 .decl found_row_act(func: symbol, table: EtsTable)
 
 found_row_act(func, table) :-
-  act_depends_on_check(func, _, act, table),
+  decides(func, _, act, [table, _, _]),
+  fails_if_row_missing(act, func),
+  shared_table(act, table).
+
+// The keys of those pairs, the only keys a removal's key is compared with.
+.decl found_key(key_kind: symbol, key: symbol)
+
+found_key(ks, k) :-
+  decides(func, _, act, [table, ks, k]),
   fails_if_row_missing(act, func),
   shared_table(act, table).
 
@@ -1942,80 +1942,87 @@ remover_in(d, h) :- found_row_act(_, table), removes_rows(d, table), ets_op(d, h
 runs.seed(f) :- found_row_act(f, _).
 runs.seed(h) :- remover_in(_, h).
 
-// The remover can run while `func` is between the check and the act,
-// and take the row a pair in `func` acts on: `func` runs in more than one
-// process, or the remover runs in a process other than the one `func`
-// runs in (runs_beside, clientlib/concurrency.dl), whether or not that
-// one runs the remover too.
-.decl can_run_in_between(remover: symbol, func: symbol)
-
-can_run_in_between(d, f) :-
-  found_row_act(f, table),
-  removes_rows(d, table),
-  may_remove_pair_row(d, f),
-  !runs.single_process(f).
-
-can_run_in_between(d, f) :-
-  found_row_act(f, table),
-  removes_rows(d, table),
-  may_remove_pair_row(d, f),
-  remover_in(d, h),
-  runs.single_process(f),
-  runs.entry_reaches(m, f),
-  runs.runs_beside(m, f, h, h).
-
-// The key of a pair `func` reports, and whether a remover's key can be it.
-.decl found_pair_key(func: symbol, table: EtsTable, key_kind: symbol, key: symbol)
-
-found_pair_key(f, [tk, t], ks, k) :-
-  missing.meets(f, _, a, lifted_kind, t, ks, k),
-  table_kind_as(tk, lifted_kind),
-  fails_if_row_missing(a, f),
-  shared_table(a, [tk, t]).
-
-.decl may_remove_pair_row(remover: symbol, func: symbol)
-
-may_remove_pair_row(d, f) :-
-  found_pair_key(f, table, ks, k),
-  removes_rows(d, table),
-  !keyed_apart(d, ks, k).
-
 // The remover's key can never be the pair's key (ks, k).
 .decl keyed_apart(remover: symbol, key_kind: symbol, key: symbol)
 
 keyed_apart(d, "self", "") :- remover_in(d, _), ets_key(d, "self", "").
 keyed_apart(d, "self", "") :- remover_in(d, _), ets_key(d, "literal", _).
-keyed_apart(d, "literal", k) :- remover_in(d, _), ets_key(d, "self", ""), found_pair_key(_, _, "literal", k).
+keyed_apart(d, "literal", k) :- remover_in(d, _), ets_key(d, "self", ""), found_key("literal", k).
 
 keyed_apart(d, "literal", k) :-
   remover_in(d, _),
   ets_key(d, "literal", k2),
-  found_pair_key(_, _, "literal", k),
+  found_key("literal", k),
   k != k2.
 
 keyed_apart(d, ks, k) :-
   remover_in(d, _),
   ets_key(d, "literal", _),
-  found_pair_key(_, _, ks, k),
+  found_key(ks, k),
   ks != "literal",
   ks != "self",
   ks != "any".
 
-.decl missing_row_race(func: symbol, table: EtsTable, check: symbol, act: symbol, remover: symbol)
+// A row: a table and one key of it, as CheckThenAct lifts the key
+// (key_kind names what the key is: a literal, the caller's argument, ...).
+.type EtsRow = [table: EtsTable, key_kind: symbol, key: symbol]
 
-missing_row_race(func, table, check, act, remover) :-
+// In `func`, the check's result decides whether the use runs, on one row
+// (CheckThenAct's meets, followed across calls).
+.decl decides(func: symbol, check: symbol, use: symbol, row: EtsRow)
+
+decides(func, check, use, [[tk, t], ks, k]) :-
+  missing.meets(func, check, use, lifted_kind, t, ks, k),
+  table_kind_as(tk, lifted_kind).
+
+// The use's table is one other processes can reach.
+.decl on_shared_table(use: symbol) inline
+
+on_shared_table(use) :- ets_table(use, tk, t), shared_table(use, [tk, t]).
+
+// A removal on the row's table whose key can be the row's key.
+.decl removes_row(remove: symbol, row: EtsRow) inline
+
+removes_row(remove, [table, ks, k]) :-
+  removes_rows(remove, table),
+  !keyed_apart(remove, ks, k).
+
+// The removal runs in a process other than the one running `func`: `func`
+// runs in more than one process, or the removal runs beside it
+// (runs_beside, clientlib/concurrency.dl). Nothing orders two processes,
+// so another process can always run between the check and the use.
+.decl runs_in_another_process(remove: symbol, func: symbol)
+
+runs_in_another_process(d, f) :-
+  found_row_act(f, table),
+  removes_rows(d, table),
+  !runs.single_process(f).
+
+runs_in_another_process(d, f) :-
+  found_row_act(f, table),
+  removes_rows(d, table),
+  remover_in(d, h),
+  runs.single_process(f),
+  runs.entry_reaches(m, f),
+  runs.runs_beside(m, f, h, h).
+
+// A check decides a row is there, a use that fails when the row is missing
+// relies on it, and another process can remove the row in between.
+.decl missing_row_race(func: symbol, check: symbol, use: symbol, remove: symbol, row: EtsRow)
+
+missing_row_race(func, check, use, remove, row) :-
   checks_row_exists(check),
-  fails_if_row_missing(act, func),
-  act_depends_on_check(func, check, act, table),
-  shared_table(act, table),
-  removes_rows(remover, table),
-  can_run_in_between(remover, func).
+  decides(func, check, use, row),
+  fails_if_row_missing(use, func),
+  on_shared_table(use),
+  removes_row(remove, row),
+  runs_in_another_process(remove, func).
 
 .decl ets_missing_row(mod: symbol, func: symbol, table_kind: symbol, table: symbol, check: symbol, act: symbol, remover: symbol)
 .output ets_missing_row
 
-ets_missing_row(mod, func, table_kind, table, check, act, remover) :-
-  missing_row_race(func, [table_kind, table], check, act, remover),
+ets_missing_row(mod, func, table_kind, table, check, use, remove) :-
+  missing_row_race(func, check, use, remove, [[table_kind, table], _, _]),
   in_module(func, mod).
 
 // ── Dirty read, then dirty write ─────────────────────────────────
