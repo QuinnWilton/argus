@@ -673,20 +673,54 @@ nil_use_caught(lookup, f) :-
 
 // ══ Processes nobody watches ════════════════════════════════════════
 
-orphan_process(func, id, "spawn", "", "") :-
-  spawn_call(id, func, _, _, _, "spawn", _, _, _, _),
-  !watched_spawn(id).
+// A bare spawn starts a process nothing monitors or links to, so its
+// crash goes unnoticed.
+.decl unwatched_spawn(func: symbol, spawn: symbol)
 
-// `:proc_lib.start` waits for the process's init_ack and hands back a
-// failed start as a value, but the ack covers only the start: a worker
-// that goes on to loop after it is as unwatched as one proc_lib:spawn
-// started, and dies unnoticed. Not a process whose life ends at the ack,
-// the start the caller waited on being all of it.
-orphan_process(func, id, "start", "", "") :-
-  spawn_call(id, func, _, _, _, "start", _, _, _, _),
-  process_start(id, func, _, "spawn", g),
-  !ends_at_ack(g),
-  !watched_spawn(id).
+unwatched_spawn(func, spawn) :-
+  bare_spawn(spawn, func),
+  !watched_spawn(spawn).
+
+orphan_process(func, spawn, "spawn", "", "") :-
+  unwatched_spawn(func, spawn).
+
+// A :proc_lib.start's process goes on past its ack, and nothing monitors
+// or links to it.
+.decl unwatched_start(func: symbol, start: symbol)
+
+unwatched_start(func, start) :-
+  proc_lib_start(start, func),
+  lives_past_ack(start, func),
+  !watched_spawn(start).
+
+orphan_process(func, start, "start", "", "") :-
+  unwatched_start(func, start).
+
+// The call at `spawn` is a spawn with nothing of its own watching the
+// process: not spawn_link or spawn_monitor (spawn_call's variant
+// "spawn"). `spawn_call` carries its caller, so this analysis does not
+// join `instruction`, the largest relation in the schema, to find it:
+// that cost 1.56 s an edit on a 531-module project with no spawn at all.
+.decl bare_spawn(spawn: symbol, func: symbol) inline
+
+bare_spawn(spawn, func) :- spawn_call(spawn, func, _, _, _, "spawn", _, _, _, _).
+
+// The call at `start` is a `:proc_lib.start` (spawn_call's variant
+// "start"). It waits for the process's init_ack and hands back a failed
+// start as a value, but the ack covers only the start: a worker that goes
+// on to loop after it is as unwatched as one proc_lib:spawn started, and
+// dies unnoticed.
+.decl proc_lib_start(start: symbol, func: symbol) inline
+
+proc_lib_start(start, func) :- spawn_call(start, func, _, _, _, "start", _, _, _, _).
+
+// The process the start runs does more after its ack: not a process whose
+// life ends at the ack, the start the caller waited on being all of it.
+.decl lives_past_ack(start: symbol, func: symbol) inline
+
+lives_past_ack(start, func) :-
+  process_start(start, func, _, "spawn", started),
+  !ends_at_ack(started).
 
 // The started function acknowledges its start and then makes no call
 // and no receive (start_acked has no row for it): it returns, and its
@@ -699,23 +733,12 @@ ends_at_ack(g) :-
 
 // A spawn whose process something monitors or links to afterwards
 // (signals.dl): its crash is observed.
-.decl watched_spawn(id: symbol)
+.decl watched_spawn(spawn: symbol)
 
-watched_spawn(id) :-
-  process_start(id, _, b, _, _),
+watched_spawn(spawn) :-
+  process_start(spawn, _, b, _, _),
   instance(p, b),
   watched_process(p, _).
-
-// This analysis used to join `instruction(id, func, _, _)` purely to
-// recover the spawning function. Its input set was therefore
-// {instruction, spawn_call} — and `instruction` is the largest relation in
-// the schema. On a 531-module project that is 343,352 rows serialized and
-// re-read to accompany a `spawn_call` relation with ZERO rows: 1.56s per
-// edit to look at nothing. `spawn_call` now carries its caller.
-
-unchecked_result(func, id, "Process.whereis", name) :-
-  name_lookup(id, func, "whereis", _, "literal", name, "unchecked"),
-  !nil_use_caught(id, func).
 
 // ── The belief the other call sites hold ────────────────────────
 //
