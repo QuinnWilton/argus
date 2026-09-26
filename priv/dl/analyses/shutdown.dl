@@ -250,44 +250,51 @@ cleanup_defect(mod, behaviour, "never_runs", category, api, via) :-
 // a supervisor shutdown will skip it. That is still the useful half of the
 // question: releasing a lease, closing a session and flushing a buffer all
 // look like an ordinary call to your own module.
-.decl unclassified_cleanup(mod: symbol, behaviour: symbol, api: symbol, via: symbol, site: symbol)
 
-// Work terminate/2 does only for reasons other than :shutdown is not
-// what a supervisor stop skips (runs_holding).
-unclassified_cleanup(mod, behaviour, api, t, id) :-
-  terminate_callback(t, mod, behaviour),
-  unknown_call(id, t, api, _callee),
+// A terminate/2 callback does work the effect model cannot classify, its
+// process doesn't trap exits, and it does no cleanup the model knows: a
+// supervisor's shutdown skips what may be cleanup.
+.decl unclear_cleanup(mod: symbol, terminate: symbol, work: symbol)
+
+unclear_cleanup(mod, terminate, work) :-
+  terminate_callback(terminate, mod, _),
+  does_unclassified_work(terminate, work),
+  !traps_exits(mod),
+  !terminate_does_cleanup(mod).
+
+// terminate/2 makes the call at `work` on the path a supervisor stop
+// takes, and the effect model has no entry for it (unknown_call): a call
+// in terminate/2 that runs for :shutdown (runs_holding), or one in a
+// function it reaches (terminate_reach). In a function it reaches,
+// building a struct or a message is not cleanup (structural_call,
+// effect_model.dl): DBConnection.Connection was reported for
+// `Kernel.struct!/2` inside an exception constructor. A soundness choice
+// made for one contract should not become noise in another.
+.decl does_unclassified_work(terminate: symbol, work: symbol)
+
+does_unclassified_work(t, id) :-
+  terminate_callback(t, _, _),
+  unknown_call(id, t, _, _),
   runs_holding(t, 0, id).
 
-unclassified_cleanup(mod, behaviour, api, via, id) :-
-  terminate_callback(t, mod, behaviour),
+does_unclassified_work(t, id) :-
+  terminate_callback(t, _, _),
   terminate_reach.reaches(t, via, _),
   via != t,
-  unknown_call(id, via, api, _callee),
+  unknown_call(id, via, api, _),
   !structural_call(api).
 
-// Building a struct or a message is not cleanup (structural_call, in
-// effect_model.dl): DBConnection.Connection was reported for `Kernel.struct!/2`
-// inside an exception constructor. A soundness choice made for one
-// contract should not become noise in another.
-
-// terminate/2 in `mod` does cleanup the effect model knows.
+// terminate/2 in `mod` does cleanup the effect model knows: a module
+// whose terminate/2 does is reported "never_runs" already, and "unclear"
+// would repeat it less surely.
 .decl terminate_does_cleanup(mod: symbol)
 
 terminate_does_cleanup(mod) :- terminate_callback(t, mod, _), does_cleanup(t, _).
 
-// A module that traps exits runs its terminate/2 on a supervisor stop,
-// and one whose terminate/2 does known durable cleanup is reported
-// "never_runs" already: "unclear" would repeat it less surely.
-.decl unclear_cleanup(mod: symbol, behaviour: symbol, api: symbol, via: symbol, site: symbol)
-
-unclear_cleanup(mod, behaviour, api, via, id) :-
-  unclassified_cleanup(mod, behaviour, api, via, id),
-  !traps_exits(mod),
-  !terminate_does_cleanup(mod).
-
 cleanup_defect(mod, behaviour, "unclear", "", api, via) :-
-  unclear_cleanup(mod, behaviour, api, via, _).
+  unclear_cleanup(mod, terminate, work),
+  terminate_callback(terminate, mod, behaviour),
+  unknown_call(work, via, api, _).
 
 // Slow work inside terminate, for a module that DOES trap exits — so the
 // callback is reached, but may not finish.
@@ -324,7 +331,8 @@ cleanup_site(mod, "never_runs", api, via, id) :-
   impure_call(id, via, api, _, _).
 
 cleanup_site(mod, "unclear", api, via, id) :-
-  unclear_cleanup(mod, _, api, via, id).
+  unclear_cleanup(mod, _, id),
+  unknown_call(id, via, api, _).
 
 cleanup_site(mod, "truncated", api, via, id) :-
   truncated_cleanup(mod, _, id),
